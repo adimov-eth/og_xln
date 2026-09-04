@@ -3280,15 +3280,23 @@ fn apply_remove_book_order(
     );
     // TS acks only a cancel-request removal (it carries sourceAccountId);
     // settlement removals carry none and get no ack.
+    // ACK with this book's own progress: the requester's copy may be stale.
+    let ack_route = state
+        .cross_jurisdiction_swaps
+        .as_ref()
+        .and_then(|values| values.get(&order_id))
+        .cloned()
+        .unwrap_or_else(|| route.clone());
     let outputs = match source_account {
         Some(source_account) => {
-            let source_hub = nested_text(&route, "source", "counterpartyEntityId")
+            let route = &ack_route;
+            let source_hub = nested_text(route, "source", "counterpartyEntityId")
                 .map(normalized)
                 .ok_or_else(|| invalid(tx.kind, "SOURCE_HUB_MISSING"))?;
             if source_hub.is_empty() || source_hub == normalized(&state.entity_id) {
                 return Err(invalid(tx.kind, "CROSS_J_BOOK_REMOVAL_ACK_TARGET_INVALID"));
             }
-            if route_signer(&route, &source_hub).is_none() {
+            if route_signer(route, &source_hub).is_none() {
                 return Err(invalid(tx.kind, "CROSS_J_BOOK_REMOVAL_ACK_SIGNER_MISSING"));
             }
             let ack = projected(
@@ -3302,7 +3310,7 @@ fn apply_remove_book_order(
                     ("reason".into(), string(reason)),
                 ]),
             )?;
-            vec![routed_for_route(&route, &source_hub, vec![ack], tx.kind)?]
+            vec![routed_for_route(route, &source_hub, vec![ack], tx.kind)?]
         }
         None => Vec::new(),
     };
@@ -3360,17 +3368,41 @@ fn apply_book_order_removed(
         .cross_jurisdiction_swaps
         .as_ref()
         .and_then(|values| values.get(&order_id))
+        .cloned()
         .ok_or_else(|| invalid(tx.kind, "CROSS_J_BOOK_REMOVAL_ACK_SOURCE_STATE_MISSING"))?;
-    if text(current, "routeHash").map(normalized) != text(&route, "routeHash").map(normalized) {
+    if text(&current, "routeHash").map(normalized) != text(&route, "routeHash").map(normalized) {
         return Err(invalid(
             tx.kind,
             "CROSS_J_BOOK_REMOVAL_ACK_ROUTE_HASH_MISMATCH",
         ));
     }
+    let pending_dispute_removal = account_views
+        .get(&source_account)
+        .and_then(|view| view.dispute.as_ref())
+        .filter(|dispute| dispute.status == "dispute_preparing")
+        .and_then(|dispute| dispute.dispute_prepare.as_ref())
+        .and_then(|prepare| field(prepare, "pendingOrderbookRemovalIds"))
+        .is_some_and(|ids| {
+            matches!(ids, CanonicalValue::Array(values) if values.iter().any(|value| value == &string(&order_id)))
+        });
+    // The remote book owner removed the row: the same cancel progress the local
+    // book owner would have applied, so one function decides the clear.
+    if pending_dispute_removal {
+        return Ok(CrossJurisdictionApplyResult {
+            events: vec![EntityFrameEvent::Status {
+                message: format!("🌉 Cross-j dispute book removal confirmed {order_id}"),
+            }],
+            account_envelope_mutations: vec![(
+                source_account,
+                crate::AccountEnvelopeMutation::ConfirmDisputeBookRemoval { order_id },
+            )],
+            ..Default::default()
+        });
+    }
     // Exact removal ACKs can race the atomic close/finality that retires the
     // source offer. Once the route is terminal there is no remaining removal
     // to confirm, and another clear output would resurrect completed work.
-    if terminal_route(current) {
+    if terminal_route(&current) {
         return Ok(CrossJurisdictionApplyResult::default());
     }
     let admission_key = format!("{source_entity}:{order_id}");
@@ -3391,76 +3423,45 @@ fn apply_book_order_removed(
         collection(&mut state.cross_jurisdiction_book_admissions)
             .insert(admission_key, admission)?;
     }
-    let pending_dispute_removal = account_views
-        .get(&source_account)
-        .and_then(|view| view.dispute.as_ref())
-        .filter(|dispute| dispute.status == "dispute_preparing")
-        .and_then(|dispute| dispute.dispute_prepare.as_ref())
-        .and_then(|prepare| field(prepare, "pendingOrderbookRemovalIds"))
-        .is_some_and(|ids| {
-            matches!(ids, CanonicalValue::Array(values) if values.iter().any(|value| value == &string(&order_id)))
-        });
-    // The remote book owner removed the row: the same cancel progress the local
-    // book owner would have applied, so one function decides the clear.
-    let mut result = CrossJurisdictionApplyResult::default();
-    let message = if pending_dispute_removal {
-        format!("🌉 Cross-j dispute book removal confirmed {order_id}")
+    // The ACK carries the book owner's committed progress; it may be ahead of
+    // this mirror when its fill notice is still in flight. Cancel from the
+    // later of the two so the clear never settles below what the book filled.
+    let current_seq = unsigned(&current, "fillSeq").unwrap_or(0);
+    let carried_seq = unsigned(&route, "fillSeq").unwrap_or(0);
+    let progress = if carried_seq > current_seq {
+        &route
     } else {
-        let current = state
-            .cross_jurisdiction_swaps
-            .as_ref()
-            .and_then(|values| values.get(&order_id))
-            .cloned()
-            .ok_or_else(|| invalid(tx.kind, "CROSS_J_BOOK_REMOVAL_ACK_SOURCE_STATE_MISSING"))?;
-        let (ratio, _, _) = committed_fill(&current, tx.kind)?;
-        let mut fields = vec![("orderId".into(), string(&order_id))];
-        if let Some(route_hash) = text(&current, "routeHash").filter(|value| !value.is_empty()) {
-            fields.push(("routeHash".into(), string(route_hash)));
-        }
-        fields.extend([
-            (
-                "fillSeq".into(),
-                number(
-                    unsigned(&current, "fillSeq").unwrap_or(0),
-                    tx.kind,
-                    "FILL_SEQ",
-                )?,
-            ),
-            (
-                "cumulativeFillRatio".into(),
-                number(ratio, tx.kind, "FILL_RATIO")?,
-            ),
-            ("cancelRemainder".into(), CanonicalValue::Bool(true)),
-        ]);
-        let applied = committed::apply_source_hub_fill_progress(
-            state,
-            &CanonicalValue::Object(fields),
-            tx.kind,
-        )?;
-        let message = if applied.is_some() {
-            format!("🌉 Cross-j book removal committed {order_id}")
-        } else {
-            format!("🌉 Cross-j book removal already cleared {order_id}")
-        };
-        if let Some(applied) = applied {
-            extend_cross_jurisdiction_result(&mut result, applied);
-        }
-        message
+        &current
     };
+    let (ratio, _, _) = committed_fill(progress, tx.kind)?;
+    let mut fields = vec![("orderId".into(), string(&order_id))];
+    if let Some(route_hash) = text(&current, "routeHash").filter(|value| !value.is_empty()) {
+        fields.push(("routeHash".into(), string(route_hash)));
+    }
+    fields.extend([
+        (
+            "fillSeq".into(),
+            number(current_seq.max(carried_seq), tx.kind, "FILL_SEQ")?,
+        ),
+        (
+            "cumulativeFillRatio".into(),
+            number(ratio, tx.kind, "FILL_RATIO")?,
+        ),
+        ("cancelRemainder".into(), CanonicalValue::Bool(true)),
+    ]);
+    let applied =
+        committed::apply_source_hub_fill_progress(state, &CanonicalValue::Object(fields), tx.kind)?;
+    let message = if applied.is_some() {
+        format!("🌉 Cross-j book removal committed {order_id}")
+    } else {
+        format!("🌉 Cross-j book removal already cleared {order_id}")
+    };
+    let mut result = CrossJurisdictionApplyResult::default();
+    if let Some(applied) = applied {
+        extend_cross_jurisdiction_result(&mut result, applied);
+    }
     result.events.push(EntityFrameEvent::Status { message });
-    Ok(CrossJurisdictionApplyResult {
-        outputs: result.outputs,
-        proposal_work: result.proposal_work,
-        events: result.events,
-        orderbook_deltas: result.orderbook_deltas,
-        account_envelope_mutations: pending_dispute_removal
-            .then_some((
-                source_account,
-                crate::AccountEnvelopeMutation::ConfirmDisputeBookRemoval { order_id },
-            ))
-            .into_iter()
-            .collect(),
-    })
+    Ok(result)
 }
 
 fn close_binary_hash(binary: &str, kind: EntityTxKind) -> Result<String, EntityKernelError> {
@@ -3470,6 +3471,44 @@ fn close_binary_hash(binary: &str, kind: EntityTxKind) -> Result<String, EntityK
         .ok_or_else(|| invalid(kind, "CLOSE_BINARY_HEX"))?;
     let bytes = ::hex::decode(payload).map_err(|_| invalid(kind, "CLOSE_BINARY_HEX"))?;
     Ok(format!("0x{}", hex(&Keccak256::digest(bytes))))
+}
+
+/// TS `withCrossJurisdictionCloseProofProgress`: the proof ratio and amounts
+/// become the mirror's committed progress, with the exact fraction.
+pub(super) fn apply_close_proof_fields(
+    route: &mut CanonicalValue,
+    proof: &CanonicalValue,
+    kind: EntityTxKind,
+) -> Result<(), EntityKernelError> {
+    let ratio = unsigned(proof, "fillRatio")
+        .ok_or_else(|| invalid(kind, "PROOF_FIELD_MISSING:fillRatio"))?;
+    for (target, source) in [
+        ("cumulativeFillRatio", "fillRatio"),
+        ("claimedRatio", "fillRatio"),
+        ("filledSourceAmount", "cumulativeSourceAmount"),
+        ("filledTargetAmount", "cumulativeTargetAmount"),
+        ("sourceClaimed", "cumulativeSourceAmount"),
+        ("targetClaimed", "cumulativeTargetAmount"),
+    ] {
+        set(
+            route,
+            target,
+            field(proof, source)
+                .cloned()
+                .ok_or_else(|| invalid(kind, format!("PROOF_FIELD_MISSING:{source}")))?,
+        )?;
+    }
+    set(
+        route,
+        "fillNumerator",
+        CanonicalValue::BigInt(BigInt::from(ratio)),
+    )?;
+    set(
+        route,
+        "fillDenominator",
+        CanonicalValue::BigInt(BigInt::from(65_535u64)),
+    )?;
+    Ok(())
 }
 
 fn close_proofs_match(left: &CanonicalValue, right: &CanonicalValue) -> bool {
@@ -3656,8 +3695,19 @@ fn apply_cross_pull_close(
         }
     }
     let (route_ratio, _, _) = committed_fill(&route, tx.kind)?;
+    if verified < route_ratio {
+        return Err(invalid(
+            tx.kind,
+            format!("PROOF_RATIO_ROLLBACK:{order_id}:{verified}:{route_ratio}"),
+        ));
+    }
     if source_role || route_ratio > 0 {
-        let expected = build_close_proof(&route, binary, tx.kind)?;
+        // Off-chain progress never gates the close: the hub's real fill may
+        // run ahead of this mirror, so the expectation is built at the
+        // proof's ratio (TS `proofRouteError`).
+        let mut projected = route.clone();
+        apply_close_proof_fields(&mut projected, proof, tx.kind)?;
+        let expected = build_close_proof(&projected, binary, tx.kind)?;
         if !close_proofs_match(&expected, proof) {
             return Err(invalid(
                 tx.kind,
@@ -3667,22 +3717,7 @@ fn apply_cross_pull_close(
     }
     set(&mut route, "sourceCloseProof", proof.clone())?;
     if target_role {
-        for (target, source) in [
-            ("cumulativeFillRatio", "fillRatio"),
-            ("claimedRatio", "fillRatio"),
-            ("filledSourceAmount", "cumulativeSourceAmount"),
-            ("filledTargetAmount", "cumulativeTargetAmount"),
-            ("sourceClaimed", "cumulativeSourceAmount"),
-            ("targetClaimed", "cumulativeTargetAmount"),
-        ] {
-            set(
-                &mut route,
-                target,
-                field(proof, source)
-                    .cloned()
-                    .ok_or_else(|| invalid(tx.kind, format!("PROOF_FIELD_MISSING:{source}")))?,
-            )?;
-        }
+        apply_close_proof_fields(&mut route, proof, tx.kind)?;
         set(&mut route, "clearingPolicy", string("cancel_and_clear"))?;
         if field(&route, "pendingClearRequestedAt").is_none() {
             set(
@@ -5067,6 +5102,15 @@ pub(crate) fn build_cross_jurisdiction_book_fill(
     if fill_ratio <= market.previous_fill_ratio {
         return Ok(None);
     }
+    // Both legs must step: a ratio that moves only one floor(total·r/65535)
+    // claim is absorbed by the Hub like a sub-step fill.
+    let numerator = BigInt::from(fill_ratio);
+    let denominator = BigInt::from(65_535u64);
+    if scaled_amount(&market.source_total, &numerator, &denominator) <= market.filled_source
+        || scaled_amount(&market.target_total, &numerator, &denominator) <= market.filled_target
+    {
+        return Ok(None);
+    }
     // A full fill is terminal through the ratio itself; `cancelRemainder` is
     // only the matcher's explicit cancel of an unfilled remainder.
     let fill_seq = unsigned(&route, "fillSeq").unwrap_or(0).saturating_add(1);
@@ -5101,6 +5145,16 @@ fn committed_fill(
         return Ok((0, BigInt::from(0), BigInt::from(0)));
     }
     let (numerator, denominator, ratio) = exact_fill(route, kind)?;
+    for name in ["cumulativeFillRatio", "claimedRatio"] {
+        if let Some(coarse) = unsigned(route, name)
+            && coarse.min(65_535) != ratio
+        {
+            return Err(invalid(
+                kind,
+                format!("COARSE_EXACT_RATIO_MISMATCH:{name}:{coarse}:{ratio}"),
+            ));
+        }
+    }
     let source = field(route, "source").ok_or_else(|| invalid(kind, "SOURCE_MISSING"))?;
     let target = field(route, "target").ok_or_else(|| invalid(kind, "TARGET_MISSING"))?;
     let source_amount = required_bigint(source, "amount", kind)?;
