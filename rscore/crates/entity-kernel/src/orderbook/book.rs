@@ -41,6 +41,8 @@ pub(crate) struct AddOrder {
     pub side: Side,
     pub price_ticks: BigInt,
     pub qty_lots: BigInt,
+    /// TS `TIF`: 0 = GTC (rest the remainder), 1 = IOC (drop it), 2 = FOK.
+    pub time_in_force: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -356,7 +358,10 @@ where
         return Err(EntityKernelError::orderbook("BOOK_ADD_INVALID"));
     }
     // The Entity transition owns this book value and drops it on any error.
-    // A second transactional clone here would make a sweep O(orders * offers).
+    // A second transactional clone here would make a sweep O(orders * offers);
+    // only FOK keeps one, because a partial FOK match must leave no trace (TS
+    // `forkBookState`).
+    let fok_snapshot = (input.time_in_force == 2).then(|| state.clone());
     let mut events = Vec::new();
     let matched = match_order(
         state,
@@ -366,7 +371,19 @@ where
         &mut execution_price,
         &mut events,
     )?;
-    if matched.remaining > BigInt::from(0) && matched.blocking_order_id.is_none() {
+    if let Some(snapshot) = fok_snapshot
+        && matched.remaining > BigInt::from(0)
+    {
+        *state = snapshot;
+        return Ok(vec![BookEvent::Reject {
+            reason: "FOK cannot fill entirely",
+            blocking_order_id: None,
+        }]);
+    }
+    if matched.remaining > BigInt::from(0)
+        && matched.blocking_order_id.is_none()
+        && input.time_in_force == 0
+    {
         let multiple = exact_quote_lot_multiple(dimensions, &input.price_ticks)?;
         let resting = execution_qty(&matched.remaining, &multiple);
         if resting > BigInt::from(0) {
@@ -416,6 +433,7 @@ where
         side: taker_order.side,
         price_ticks: taker_order.price_ticks.clone(),
         qty_lots: taker_order.qty_lots.clone(),
+        time_in_force: 0,
     };
     let mut events = Vec::new();
     let matched = match_order(
@@ -456,6 +474,7 @@ mod tests {
             side,
             price_ticks: BigInt::from(25_000_000),
             qty_lots: BigInt::from(1),
+            time_in_force: 0,
         }
     }
 
@@ -521,5 +540,69 @@ mod tests {
             }
         )));
         assert_eq!(state.trade_count, 0);
+    }
+    #[test]
+    fn ioc_taker_fills_and_drops_the_remainder() {
+        let mut state = BookState::empty(16, 0);
+        apply_gtc(
+            &mut state,
+            order("maker", "m", Side::Ask),
+            dimensions(),
+            |_| Ok(MakerDisposition::Eligible),
+        )
+        .expect("maker accepted");
+        let events = apply_gtc(
+            &mut state,
+            AddOrder {
+                qty_lots: BigInt::from(3),
+                time_in_force: 1,
+                ..order("taker", "t", Side::Bid)
+            },
+            dimensions(),
+            |_| Ok(MakerDisposition::Eligible),
+        )
+        .expect("ioc applied");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, BookEvent::Trade { .. }))
+                .count(),
+            1
+        );
+        assert!(!events.iter().any(|event| matches!(event, BookEvent::Ack)));
+        assert!(!state.orders.contains_key("taker"));
+        assert_eq!(state.trade_count, 1);
+    }
+
+    #[test]
+    fn fok_taker_that_cannot_fill_entirely_leaves_the_book_untouched() {
+        let mut state = BookState::empty(16, 0);
+        apply_gtc(
+            &mut state,
+            order("maker", "m", Side::Ask),
+            dimensions(),
+            |_| Ok(MakerDisposition::Eligible),
+        )
+        .expect("maker accepted");
+        let before = state.clone();
+        let events = apply_gtc(
+            &mut state,
+            AddOrder {
+                qty_lots: BigInt::from(3),
+                time_in_force: 2,
+                ..order("taker", "t", Side::Bid)
+            },
+            dimensions(),
+            |_| Ok(MakerDisposition::Eligible),
+        )
+        .expect("fok applied");
+        assert!(matches!(
+            events.as_slice(),
+            [BookEvent::Reject {
+                reason: "FOK cannot fill entirely",
+                ..
+            }]
+        ));
+        assert_eq!(state, before);
     }
 }

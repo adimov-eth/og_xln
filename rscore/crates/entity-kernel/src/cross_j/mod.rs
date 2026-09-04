@@ -104,6 +104,11 @@ fn invalid(kind: EntityTxKind, detail: impl Into<String>) -> EntityKernelError {
     }
 }
 
+/// TS `MalformedEntityFrameInputError`: the command is wrong, not the runtime.
+fn rejected(kind: EntityTxKind, detail: impl Into<String>) -> EntityKernelError {
+    EntityKernelError::rejected(kind.as_str(), detail)
+}
+
 fn object(value: &CanonicalValue) -> Option<&[(String, CanonicalValue)]> {
     match value {
         CanonicalValue::Object(fields) => Some(fields),
@@ -1823,7 +1828,8 @@ fn validate_materialize_proposer(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| invalid(tx.kind, "MATERIALIZE_ADMITTED_SIGNER_MISSING"))?;
     if claimed != expected || admitted != claimed {
-        return Err(invalid(
+        // TS CROSS_J_CLEAR_MATERIALIZE_PROPOSER_INVALID: rejected, never a halt.
+        return Err(rejected(
             tx.kind,
             format!("MATERIALIZE_PROPOSER_INVALID:{admitted}:{claimed}:{expected}"),
         ));
@@ -2300,7 +2306,9 @@ fn insert_exact(
         if existing == &value {
             return Ok(());
         }
-        return Err(invalid(kind, format!("CONFLICT:{key}")));
+        // A different route reusing one orderId is the submitter's fault
+        // (TS CROSS_J_USER_AUTH_CONFLICT / CROSS_J_RAW_PREPARE_CONFLICT).
+        return Err(rejected(kind, format!("CONFLICT:{key}")));
     }
     target.insert(key.to_string(), value)?;
     Ok(())
@@ -5137,6 +5145,7 @@ pub(crate) fn build_cross_jurisdiction_book_fill(
     route: CanonicalValue,
     execution_source_amount: BigInt,
     execution_target_amount: BigInt,
+    cancel_remainder: bool,
 ) -> Result<Option<CrossJurisdictionBookFill>, EntityKernelError> {
     let kind = EntityTxKind::CrossJurisdictionFillNotice;
     if execution_source_amount <= BigInt::from(0) || execution_target_amount <= BigInt::from(0) {
@@ -5179,7 +5188,10 @@ pub(crate) fn build_cross_jurisdiction_book_fill(
             "cumulativeFillRatio".into(),
             number(fill_ratio, kind, "FILL_RATIO")?,
         ),
-        ("cancelRemainder".into(), CanonicalValue::Bool(false)),
+        (
+            "cancelRemainder".into(),
+            CanonicalValue::Bool(cancel_remainder),
+        ),
     ]);
     Ok(Some(CrossJurisdictionBookFill {
         route,

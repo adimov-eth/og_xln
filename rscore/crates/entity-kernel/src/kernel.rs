@@ -1009,13 +1009,27 @@ pub(crate) fn apply_entity_transitions(
                 let authority = entity_authority.ok_or_else(|| {
                     EntityKernelError::local("crossJurisdiction", "ENTITY_AUTHORITY_REQUIRED")
                 })?;
-                let applied = apply_cross_jurisdiction_entity_txs(
+                let applied = match apply_cross_jurisdiction_entity_txs(
                     &mut state,
                     local_account_views,
                     &[tx],
                     Some(&signer_id),
                     authority,
-                )?;
+                ) {
+                    Ok(applied) => applied,
+                    Err(EntityKernelError::RejectedEntityTx { kind, detail })
+                        if !crate::error::reject_fail_fast() =>
+                    {
+                        // Owner canon: a user can never take the hub down. The
+                        // handler rejected before any mutation; log and drop.
+                        eprintln!(
+                            "[ERROR][reject] entity tx rejected and dropped: entity={} signer={signer_id} kind={kind} detail={detail}",
+                            state.entity_id
+                        );
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
                 deltas.extend(applied.orderbook_deltas);
                 for work in applied.proposal_work {
                     for tx in work.txs {

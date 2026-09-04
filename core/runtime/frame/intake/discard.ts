@@ -3,6 +3,8 @@ import type { RoutedEntityInput, RuntimeInput, RuntimeReplica } from '../../type
 import { RuntimeEntityInputApplyError } from '../../mempool/entity-inputs';
 import { ENV_REPLAY_MODE_KEY, readRuntimeMetadata } from '../../loop/loop-environment.ts';
 import { safeStringify } from '../../../protocol/serialization';
+import { haltRuntimeFailure } from '../../../protocol/errors/failure-taxonomy';
+import { rejectFailFast } from '../../../support/process/runtime-process';
 
 const discardLog = createStructuredLogger('runtime.input_discard');
 
@@ -62,7 +64,14 @@ export const discardRejectedEntityInput = (
     cause: error.cause instanceof Error ? error.cause.message : String(error.cause),
     rejectedInputsDump: safeStringify(rejected),
   };
-  if (!quietLogs) discardLog.error('entity_input.discarded', payload);
+  // Always logged: this line is the audit trail of hostile/buggy peers.
+  discardLog.error('entity_input.discarded', quietLogs ? { ...payload, rejectedInputsDump: undefined } : payload);
+  if (rejectFailFast()) {
+    throw haltRuntimeFailure(
+      'REMOTE_INPUT_REJECTED',
+      `REMOTE_INPUT_REJECTED: entity=${error.entityId} signer=${error.signerId} source=${error.sourceRuntimeId ?? 'local'} cause=${payload.cause}`,
+    );
+  }
   return remaining;
 };
 

@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { readEntityFrameEventMessages } from '../../../entity/frame-events';
 
@@ -254,6 +254,11 @@ import type { EntityTx } from '../../../types/entity-tx';
 import { installCanonicalRegisteredBoardAuthority } from '../../helpers/registration-evidence';
 
 import { ethers } from 'ethers';
+
+// Production reject policy for the discard tests below (default is fail-fast).
+afterEach(() => {
+  delete process.env['XLN_REJECT_FAIL_FAST'];
+});
 
 const makeSingleSignerConfig = (): EntityState['config'] => ({
   mode: 'proposer-based',
@@ -821,6 +826,7 @@ describe('audit fail-fast regressions', () => {
   });
 
   test('live runtime discards remote cross-j ingress without retaining attacker bytes', async () => {
+    process.env['XLN_REJECT_FAIL_FAST'] = '0';
     const env = createEmptyEnv('cross-j-live-ingress-drop');
     env.scenarioMode = false;
     env.quietRuntimeLogs = true;
@@ -958,6 +964,7 @@ describe('audit fail-fast regressions', () => {
   });
 
   test('runtime discards only the malformed remote origin lane', () => {
+    process.env['XLN_REJECT_FAIL_FAST'] = '0';
     const entityInput = {
       entityId: `0x${'98'.repeat(32)}`,
       signerId: `0x${'99'.repeat(20)}`,

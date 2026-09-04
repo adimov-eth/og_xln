@@ -12,6 +12,11 @@ pub enum EntityKernelError {
     JEventInvalid { detail: String },
     #[error("ENTITY_LOCAL_TX_INVALID:{kind}:{detail}")]
     InvalidLocalEntityTx { kind: &'static str, detail: String },
+    /// A user/peer-authored tx that is invalid against committed state. Never a
+    /// runtime fault: logged and dropped in production, fail-fast elsewhere
+    /// (`reject_fail_fast`). Handlers return it before any mutation.
+    #[error("ENTITY_TX_REJECTED:{kind}:{detail}")]
+    RejectedEntityTx { kind: &'static str, detail: String },
     #[error("ENTITY_KERNEL_OUTPUT_MISMATCH:{detail}")]
     AccountOutputMismatch { detail: String },
     #[error("ENTITY_KERNEL_ACCOUNT_MISSING:{account_id}")]
@@ -42,7 +47,35 @@ pub enum EntityKernelError {
     HubRebalanceHandlerMissing,
 }
 
+/// Owner canon 2026-09-05, mirrored in TS `rejectFailFast`: rejected
+/// remote input halts by default (tests/dev) and is only logged+dropped in
+/// production. `XLN_REJECT_FAIL_FAST=0|false|off` forces log-and-drop, `=1`
+/// forces fail-fast; otherwise `NODE_ENV=production` means log-and-drop.
+pub fn reject_fail_fast() -> bool {
+    static POLICY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *POLICY.get_or_init(|| {
+        if let Ok(raw) = std::env::var("XLN_REJECT_FAIL_FAST")
+            && !raw.trim().is_empty()
+        {
+            return !matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "off" | "no"
+            );
+        }
+        std::env::var("NODE_ENV")
+            .map(|value| value != "production")
+            .unwrap_or(true)
+    })
+}
+
 impl EntityKernelError {
+    pub(crate) fn rejected(kind: &'static str, detail: impl Into<String>) -> Self {
+        Self::RejectedEntityTx {
+            kind,
+            detail: detail.into(),
+        }
+    }
+
     pub(crate) fn local(kind: &'static str, detail: impl Into<String>) -> Self {
         Self::InvalidLocalEntityTx {
             kind,

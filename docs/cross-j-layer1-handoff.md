@@ -75,20 +75,23 @@ grok) — see memory note `crossj-layer1-worktree-2026-09-04`. Round D scores: g
 deepseek 960, grok 880, gemini 800, glm 660 (their remaining items are fixed in 52ce4288a
 or listed below).
 
+## Reject policy (owner canon 2026-09-05, implemented) — see `docs/reject-policy.md`
+A user or peer can never take a Runtime down. Sender-caused failures are rejections:
+logged, fail-fast by default (tests/dev), log-and-drop in production
+(`NODE_ENV=production` or `XLN_REJECT_FAIL_FAST=0`). TS: `MalformedEntityFrameInputError`
++ `rejectFailFast()`; Rust: `EntityKernelError::RejectedEntityTx` (returned before any
+mutation) + `reject_fail_fast()`, `kernel.rs` drops the tx, `resident.rs` drops a rejected
+inbound Account frame. IOC/FOK are supported in the Rust book and matcher (TS parity).
+
 ## Open items (owner decision, not fixed)
-- Rust kernel has NO "reject tx without halting" disposition: TS skips a user-authored
-  conflicting prepare/materialize (`skippedError`), Rust returns `Err` for the frame.
-  Rewrite target: add a reject disposition to the Rust kernel dispatcher.
-- Rust resident fail-stops on ANY rejected inbound Account frame
-  (`resident.rs reject_failed_inbound_frames` → session stop); TS discards remote
-  malformed ingress. Parity-time policy?
-- Rust has no IOC (`UnsupportedTimeInForce` for tif != 0); TS matcher supports it.
+- In log-and-drop mode TS drops the whole remote input origin (and retries the round);
+  Rust drops the single rejected tx and continues the frame — multi-tx remote inputs
+  carrying one rejected tx can differ. Fail-fast mode halts in both.
 - Rust Account layer does not recompute `routeHash` at `cross_pull_lock` (TS rejects a
   non-canonical route); a bad hash is caught at Entity commit in Rust.
 - Rust drafts `disputeStart` after a book-removal ACK in a later wake, TS in the same frame.
 - Remote book owner's mirror stays `partially_filled` on a duplicate same-seq cancel (UI only).
-- Rust entity `committed_pull_close` re-verifies the ladder (`verify_hash_ladder_binary`)
-  where TS only decodes — perf only.
+- Rust entity `committed_pull_close` re-verifies the ladder where TS only decodes — perf only.
 
 ## Your task: "ideal cross-J in rscore" — minimum code, same invariants
 Step 0 — decide the open items above with the owner; the rest of this file is the plan.
