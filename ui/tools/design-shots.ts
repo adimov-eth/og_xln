@@ -101,95 +101,125 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 	await enterSandbox(page);
 	files.push(...(await shot(page, dir, '01-home', variant)));
 
-	await page.getByTestId('home-pay').click();
-	await page.getByTestId('pay-to').fill('Meridian Desk');
-	await page.getByTestId('pay-amount').fill('25');
-	await page.getByTestId('pay-submit').waitFor();
-	await page.getByTestId('pay-submit').isEnabled();
-	await page.waitForFunction(() => !(document.querySelector('[data-testid="pay-submit"]') as HTMLButtonElement | null)?.disabled);
-	files.push(...(await shot(page, dir, '02-pay', variant)));
+	// Each screen is its own attempt: on a live stack a flow may be blocked (no funds yet, a hub offline);
+	// the review still gets every other screen, and the skipped ones are named.
+	const attempt = async (name: string, flow: () => Promise<void>): Promise<void> => {
+		try {
+			await flow();
+			files.push(...(await shot(page, dir, name, variant)));
+		} catch (error) {
+			process.stderr.write(`[${variant.name}] skip ${name}: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}\n`);
+		}
+	};
+	// Back to Home through the UI (a reload would lock the vault): the tab where it shows, the back control in a flow.
+	const home = async (): Promise<void> => {
+		for (let hops = 0; hops < 4 && !(await page.getByTestId('home-total').isVisible().catch(() => false)); hops += 1) {
+			const nav = page.getByTestId('nav-home').locator('visible=true').first();
+			const back = page.getByTestId('back').locator('visible=true').first();
+			if (await nav.isVisible().catch(() => false)) await nav.click();
+			else if (await back.isVisible().catch(() => false)) await back.click();
+			else await page.keyboard.press('Escape');
+			await page.waitForTimeout(300);
+		}
+		await page.getByTestId('home-total').waitFor();
+	};
 
-	await page.getByTestId('pay-submit').click();
-	await page.getByTestId('payment-receipt').waitFor({ timeout: STEP_TIMEOUT });
-	await page.getByTestId('receipt-title').waitFor();
-	await page.waitForTimeout(500);
-	files.push(...(await shot(page, dir, '03-receipt', variant)));
-	await page.getByTestId('receipt-done').click();
-
-	await page.getByTestId('home-receive').click();
-	files.push(...(await shot(page, dir, '04-receive', variant)));
-	await page.goBack();
-	await page.getByTestId('home-total').waitFor();
-
-	await page.getByTestId('home-swap').click();
-	await page.getByTestId('swap-give').fill('100');
-	files.push(...(await shot(page, dir, '05-swap', variant)));
-	await page.goBack();
-	await page.getByTestId('home-total').waitFor();
-
-	await page.getByTestId('account-row').first().click();
-	files.push(...(await shot(page, dir, '06-account', variant)));
-	await page.goBack();
-	await page.getByTestId('home-total').waitFor();
-
-	await page.getByRole('link', { name: 'Activity' }).first().click();
-	await page.getByTestId('activity-row').first().waitFor();
-	files.push(...(await shot(page, dir, '07-activity', variant)));
-	await page.getByTestId('activity-row').first().click();
-	files.push(...(await shot(page, dir, '08-activity-detail', variant)));
-	// On mobile the detail opens as a sheet over the tab bar; close it before navigating on.
+	await attempt('02-pay', async () => {
+		await page.getByTestId('home-pay').click();
+		await page.getByTestId('pay-to').fill('H2');
+		await page.getByTestId('pay-amount').fill('25');
+		await page.getByTestId('pay-submit').waitFor();
+		await page.waitForFunction(() => !(document.querySelector('[data-testid="pay-submit"]') as HTMLButtonElement | null)?.disabled, undefined, { timeout: 20_000 });
+	});
+	await attempt('03-receipt', async () => {
+		if (!(await page.getByTestId('pay-submit').isEnabled().catch(() => false))) throw new Error('payment not possible on this stack yet');
+		await page.getByTestId('pay-submit').click();
+		await page.getByTestId('payment-receipt').waitFor({ timeout: 60_000 });
+		await page.getByTestId('receipt-title').waitFor();
+		await page.waitForTimeout(500);
+	});
+	await home();
+	await attempt('04-receive', async () => {
+		await page.getByTestId('home-receive').click();
+		await page.getByTestId('receive-amount').waitFor();
+	});
+	await home();
+	await attempt('05-swap', async () => {
+		await page.getByTestId('home-swap').click();
+		await page.getByTestId('swap-give').fill('100');
+		await page.waitForTimeout(1_500);
+	});
+	await home();
+	await attempt('06-account', async () => {
+		await page.getByTestId('account-row').first().click();
+		await page.getByTestId('account-status').waitFor();
+	});
+	await home();
+	await attempt('07-activity', async () => {
+		await page.getByRole('link', { name: 'Activity' }).first().click();
+		await page.getByTestId('activity-row').first().waitFor({ timeout: 20_000 });
+	});
+	await attempt('08-activity-detail', async () => {
+		await page.getByTestId('activity-row').first().click();
+		await page.waitForTimeout(400);
+	});
 	if (variant.mobile) {
 		await page.keyboard.press('Escape');
 		await page.waitForTimeout(300);
 	}
-
-	await page.getByRole('link', { name: 'Home' }).first().click();
-	await page.getByTestId('home-total').waitFor();
-	await page.getByTestId('home-move').click();
-	await page.getByTestId('move-amount').waitFor();
-	await page.getByTestId('move-amount').fill('250');
-	files.push(...(await shot(page, dir, '10-move', variant)));
-	// Flows hide the phone tab bar; leave through the back control.
-	await page.goBack();
-	await page.getByTestId('home-total').waitFor();
-
-	await page.getByRole('link', { name: 'Manage' }).first().click();
-	await page.getByTestId('attention').waitFor();
-	files.push(...(await shot(page, dir, '11-manage', variant)));
-	await page.getByTestId('manage-assets').click();
-	await page.getByTestId('external-balance-USDC').waitFor({ timeout: 60_000 });
-	files.push(...(await shot(page, dir, '12-assets', variant)));
-	await page.goBack();
-	await page.getByTestId('manage-lend').click();
-	await page.getByTestId('lend-submit').waitFor();
-	files.push(...(await shot(page, dir, '13-lend', variant)));
-	await page.goBack();
-	await page.getByTestId('manage-ownership').click();
-	await page.getByTestId('board').waitFor();
-	files.push(...(await shot(page, dir, '14-ownership', variant)));
-
-	await page.goBack();
-	await page.getByTestId('manage-sovereignty').click();
-	await page.getByTestId('sovereignty-hero').waitFor();
-	files.push(...(await shot(page, dir, '15-sovereignty', variant)));
-
+	await home();
+	await attempt('10-move', async () => {
+		await page.getByTestId('home-move').click();
+		await page.getByTestId('move-amount').waitFor();
+		await page.getByTestId('move-amount').fill('250');
+	});
+	await home();
+	await attempt('11-manage', async () => {
+		await page.getByRole('link', { name: 'Manage' }).first().click();
+		await page.getByTestId('attention').waitFor();
+	});
+	await attempt('12-assets', async () => {
+		await page.getByTestId('manage-assets').click();
+		await page.getByTestId('faucets').waitFor();
+		await page.waitForTimeout(1_500);
+	});
+	await home();
+	await attempt('13-lend', async () => {
+		await page.getByRole('link', { name: 'Manage' }).first().click();
+		await page.getByTestId('manage-lend').click();
+		await page.getByTestId('lend-submit').waitFor();
+	});
+	await home();
+	await attempt('14-ownership', async () => {
+		await page.getByRole('link', { name: 'Manage' }).first().click();
+		await page.getByTestId('manage-ownership').click();
+		await page.getByTestId('board').waitFor();
+	});
+	await home();
+	await attempt('15-sovereignty', async () => {
+		await page.getByRole('link', { name: 'Manage' }).first().click();
+		await page.getByTestId('manage-sovereignty').click();
+		await page.getByTestId('sovereignty-hero').waitFor();
+	});
 	if (!variant.mobile) {
-		await page.getByRole('link', { name: 'Settings' }).first().click();
-		await page.getByTestId('density-desk').click();
-		await page.getByRole('link', { name: 'Home' }).first().click();
-		await page.getByTestId('desk-table').waitFor();
-		files.push(...(await shot(page, dir, '16-desk', variant)));
-		await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
-		await page.getByTestId('palette').waitFor();
-		files.push(...(await shot(page, dir, '17-palette', variant)));
+		await attempt('16-desk', async () => {
+			await page.getByRole('link', { name: 'Settings' }).first().click();
+			await page.getByTestId('density-desk').click();
+			await page.getByRole('link', { name: 'Home' }).first().click();
+			await page.getByTestId('desk-table').waitFor();
+		});
+		await attempt('17-palette', async () => {
+			await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
+			await page.getByTestId('palette').waitFor();
+		});
 		await page.keyboard.press('Escape');
 		await page.getByRole('link', { name: 'Settings' }).first().click();
 		await page.getByTestId('density-comfort').click();
 	}
-
-	await page.getByRole('link', { name: 'Settings' }).first().click();
-	await page.getByText('Dollars per pixel').waitFor();
-	files.push(...(await shot(page, dir, '09-settings', variant)));
+	await attempt('09-settings', async () => {
+		await page.getByRole('link', { name: 'Settings' }).first().click();
+		await page.getByText('Dollars per pixel').waitFor();
+	});
 
 	await context.close();
 	if (errors.length > 0) {
