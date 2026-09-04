@@ -1,45 +1,43 @@
-# Cross-J Layer 1 → rscore rewrite: handoff prompt
+# Cross-J: Layer 1 is merged → rscore rewrite handoff
 
 Paste this to the next agent (Claude / Codex / GPT) as-is.
 
 ---
 
-You continue the XLN cross-jurisdiction swap simplification. Work ONLY in the git
-worktree `/Users/zigota/xln-layer1` (branch `crossj-layer1-progress`, top commit
-latest commit on the branch; base `adde297ae`). Never edit or merge `main`. One stable commit per
-step. Answer in Russian, tersely. Owner rules: delete more than you add; TS canon
-first, then Rust parity; cancel is decided by the book owner/hub, the user only
-requests; ask the owner before choosing LLM models for quorums (use the newest).
+You continue the XLN cross-jurisdiction swap simplification. Layer 1 (fill progress out
+of consensus/committed state/cohort) is MERGED into `main` (merge `24de5964c`, branch
+`crossj-layer1-progress`, base `adde297ae`). Work in a NEW worktree off current `main`
+(`git worktree add /Users/zigota/xln-crossj-rs -b crossj-rscore main`). Never edit `main`
+directly. One stable commit per step. Answer in Russian, tersely. Owner rules: delete
+more than you add; TS canon first, then Rust parity; cancel is decided by the book
+owner/hub, the user only requests; ask the owner which LLM models to use for quorums
+(always the newest); no praise, no padding.
 
-## State you inherit (all gates green on the branch head)
-Layer 1 is DONE: fill progress is Hub-internal, one uint16 ratio per order.
+## State you inherit (gates green on main after the merge)
 - matcher → `CrossJurisdictionFillInstruction` (`core/extensions/cross-j/orderbook.ts`)
   → book owner applies it in the same Entity frame
   (`core/entity/tx/handlers/cross-j/book-order.ts: applyCrossJurisdictionBookFillToState`)
-  → source hub applies the same ratio locally or via ONE non-authoritative sibling tx
+  → source hub applies the same uint16 ratio locally or via ONE non-authoritative sibling tx
   `crossJurisdictionFillNotice` (`core/entity/tx/handlers/account-cross-j-followups.ts:
-  applySourceHubCrossJurisdictionFillProgress`) → terminal ⇒ `requestCrossJurisdictionClear`
-  self-output → proposer materializes the paired `cross_pull_close` at the committed ratio.
+  applySourceHubCrossJurisdictionFillProgress`, the single decision point: terminal fill and
+  removal-ACK both go through it) → terminal ⇒ `requestCrossJurisdictionClear` self-output
+  → proposer materializes the paired `cross_pull_close` at the committed ratio.
 - Account layer: `cross_pull_close` (`core/account/tx/handlers/settlement/pull.ts`) checks
   ladder-verified ratio == proof ratio, this leg == floor(|amount|·r/65535), binaryHash,
   hub authorship; deletes the source offer. Pull binding = `{orderId, routeHash, leg, status}`.
-- Removed: `cross_swap_fill_ack`, `cross_pull_progress`, `applyCrossJurisdictionBookProgress`,
-  `pendingCrossJurisdictionFillAcks`, settlementPolicy/priceImprovement, pendingFill/pendingCancel,
-  dust terminality, cohort progress pairing. Route hash ABI shrank.
+- Runtime close cohort (`core/runtime/delivery/topology/entity-routing.ts crossCloseKey`)
+  is the cross-leg ratio equality: unpaired or mismatching closes are rejected on the
+  receiving (user) runtime. Do not add an Account-level ratio marker.
 - Rust mirror: `rscore/crates/entity-kernel/src/cross_j/{mod.rs,committed.rs}`
   (`with_fill_progress`, `apply_source_hub_fill_progress`, `apply_book_fill_to_state`,
   `commit_cross_jurisdiction_book_fill`, `apply_cross_jurisdiction_cancel_request`),
   `orderbook/matcher.rs::apply_cross_jurisdiction_fill_deltas`, engine `apply_pull_close`.
-- Invariants that MUST survive: ladder reveal is the only settlement authority; both legs
-  claim floor(total·r/65535) for one r (enforced by the Runtime close cohort: unpaired or
-  mismatching closes are rejected on the receiving runtime, `core/runtime/delivery/topology/
-  entity-routing.ts crossCloseKey`); partial reveal stays disputable on-chain; atomic
-  opening/close cohorts unchanged; TS and Rust produce identical outputs/state.
-- Tests for the new path: `core/__tests__/cross-j/swap/cross-jurisdiction-fill-progress.test.ts`,
-  `cross-jurisdiction-removal-ack-idempotence.test.ts`. Fixtures regenerated
-  (`rscore/fixtures/{account-semantics,cross-j-entity-kinds,cross-j-opening}`, tx-wire vectors).
+- Tests for the path: `core/__tests__/cross-j/swap/cross-jurisdiction-fill-progress.test.ts`,
+  `cross-jurisdiction-removal-ack-idempotence.test.ts`. Fixtures:
+  `rscore/fixtures/{account-semantics,cross-j-entity-kinds,cross-j-opening}`, tx-wire vectors.
 - Known pre-existing red (not yours): `DisputeStarted relays payment secrets` test,
   E2E payment `.receipt-card`, `security:failure-taxonomy` (missing `core/runtime/frame/clone.ts`).
+  Compare every TS failure list against a clean `main` worktree: zero new names.
 
 ## Gates (run before every commit)
 ```
@@ -50,47 +48,46 @@ CARGO_TARGET_DIR=/Users/zigota/xln/rscore/target bun tools/run-rscore-tests.ts
 XLN_RSCORE_REQUIRE_BINARY=1 bun core/scripts/checks/rscore/check-rscore-parity.ts
 XLN_RUNTIME_SEED=$(openssl rand -hex 32) bun core/scripts/e2e/runners/run-with-test-cleanup.ts --reason=mm-mesh -- bun core/scenarios/run.ts mm-mesh
 ```
-Use `CARGO_TARGET_DIR=/Users/zigota/xln/rscore/target` for cargo (dependency cache);
-the parity gate builds its own release binary inside the worktree. Never run the
-stand scenarios in parallel with other heavy runs (mm-mesh false-fails on contention).
+Use `CARGO_TARGET_DIR=/Users/zigota/xln/rscore/target` for cargo (dependency cache); the
+parity gate builds its own release binary inside the worktree. Never run stand scenarios in
+parallel with other heavy runs (mm-mesh false-fails on contention).
+
+## Owner decisions (2026-09-04) — implement, do not reopen
+1. Account `cross_pull_close` outcome: plain "applied" + delete the source offer, in BOTH.
+   Drop TS `swap_cancelled` and its orderbook-cancel event (the Entity followup already
+   removes the book row). Regenerate `account-semantics` fixtures.
+2. Entity-level close check, ONE rule in both: `cumulativeSourceAmount == floor(sourceTotal·r/65535)`
+   and `cumulativeTargetAmount == floor(targetTotal·r/65535)` computed from the PROOF ratio,
+   plus `r >= mirror ratio`. Replace Rust `committed_fill`/mirror-amount comparison
+   (`ECONOMICS_MISMATCH`) and the TS rollback-only check with this.
+3. `cross_pull_close` for an unknown pullId → REJECT at Account validation (delete the
+   "already closed" no-op path) in TS and Rust. Repeat delivery is prevented by the cohort.
+4. No FillNotice to the target hub; it learns progress from the carried route at close.
+5. Invalid/foreign `crossJurisdictionFillNotice` keeps fail-stop (siblings are same-runtime by
+   construction; same code tag in TS and Rust, Rust wraps it in `ENTITY_LOCAL_TX_INVALID`).
+6. No Account-level ratio marker; multisig hubs out of scope (`validators[0]` self-signer
+   stays); sub-lot remainders rest until expiry sweep or cancel.
 
 ## Your task: "ideal cross-J in rscore" — minimum code, same invariants
-1. Read `docs/consensus-invariants.md` (cross-J section) and the memory note
-   `cross-j-atomic-cohort-simplification-2026-09-04.md` (design analysis + quorum: keep
-   Design A, source-first close, no target-first close — theft found by Kimi K3).
-2. In Rust, collapse the cross-J entity surface to ONE module with the minimal state
-   machine: route mirror `{orderId, routeHash, legs, pulls, fillSeq, ratio, status,
-   clearingPolicy, closeProofs}`; admission `{status, route}`; transitions
-   admit → fill(ratio) → clear_requested → clearing → settled|cancelled|expired, plus
-   dispute/salvage. Delete every second path that decides the same thing (the TS side
-   listed two: removal-ACK vs terminal-fill both requesting clear; keep the fence).
-   Keep the Rust orderbook's SameJOffer/resolving model only if deleting it costs more
-   than it saves.
-3. Every deletion must keep `rscore:parity` exact against the TS fixtures; when TS has
-   dead code that Rust exposes, delete it in TS first (TS canon), regenerate fixtures,
-   then Rust.
-4. Report per step: net LOC, list of deleted surfaces, gate results. No praise.
+Step 0 — apply decisions 1–3 in TS first (canon), regenerate fixtures, then Rust; commit.
+Step 1 — read `docs/consensus-invariants.md` (cross-J section) and the memory note
+  `cross-j-atomic-cohort-simplification-2026-09-04.md` (keep Design A: source-first close,
+  no target-first close — theft found by Kimi K3).
+Step 2 — in Rust collapse the cross-J entity surface to ONE module with the minimal state
+  machine: route mirror `{orderId, routeHash, legs, pulls, fillSeq, ratio, status,
+  clearingPolicy, closeProofs}`; admission `{status, route}`; transitions
+  admit → fill(ratio) → clear_requested → clearing → settled|cancelled|expired, plus
+  dispute/salvage. Rust orderbook: mutate the cross-J row in place; delete the
+  `offers` + `resolving_offers` re-materialization detour
+  (`apply_cross_jurisdiction_fill_deltas`) if parity stays exact.
+Step 3 — every deletion keeps `rscore:parity` exact against the TS fixtures; when TS has
+  dead code that Rust exposes, delete it in TS first, regenerate fixtures, then Rust.
+Step 4 — per step report: net LOC, list of deleted surfaces, gate tails. Before the final
+  commit run a 5-model quorum audit (ask the owner for the model list) and fix what ≥2
+  models confirm with a traced code path; reject claims without file:line evidence.
 
-Owner decisions already taken (do not reopen): no Account-level ratio marker — the
-Runtime close cohort is the cross-leg ratio equality; ONE decision point for the clear
-(removal-ACK and terminal fill both go through `applySourceHubCrossJurisdictionFillProgress`
-/ `apply_source_hub_fill_progress`); TS and Rust both fail-stop on invalid sibling data
-(same code tag, Rust wraps it in `ENTITY_LOCAL_TX_INVALID`); multisig hubs are out of scope;
-sub-lot remainders rest until expiry sweep or cancel.
-
-Open items (decide with the owner):
-- Rust `committed_pull_close` requires proof amounts == committed mirror amounts
-  (`ECONOMICS_MISMATCH`); TS only forbids a ratio rollback. Same-ratio inputs agree
-  (mirror amounts are floor(total·r/65535)); pick one rule for both.
-- A cross-J `cross_pull_close` for an unknown pullId returns "already closed" (TS and
-  Rust alike) — decide whether to reject.
-- TS `handleCrossPullClose` reports `swap_cancelled` (source offer retired) while Rust
-  emits `SwapOfferRemove`; parity fixtures accept both — collapse to one outcome.
-- Rust orderbook keeps a separate `offers` map + `resolving_offers` suspension set and
-  re-materializes cross-J rows from offers; TS resizes the book row in place.
-  `apply_cross_jurisdiction_fill_deltas` mimics TS inside that model — in the rewrite,
-  mutate the row directly and drop the detour.
-- The target hub's route mirror learns progress only from the carried `crossPullClose`
-  route (no notice reaches the target hub when the source hub owns the book); fine for
-  settlement, blind for UI/salvage until close — decide whether the target hub needs the notice.
+Invariants that MUST survive: ladder reveal is the only settlement authority; both legs
+claim floor(total·r/65535) for one r (Runtime close cohort); partial reveal stays
+disputable on-chain; atomic opening/close cohorts unchanged; TS and Rust produce identical
+ordered outputs and state.
 ---
