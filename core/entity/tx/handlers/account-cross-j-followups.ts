@@ -594,9 +594,12 @@ export const applySourceHubCrossJurisdictionFillProgress = (
   // Once the clear is requested the ladder reveal is the only remaining
   // authority: a late fill must never re-open or raise the ratio.
   if (route.status === 'clear_requested' || route.status === 'clearing') return false;
-  const ratio = Math.max(0, Math.min(CROSS_J_MAX_FILL_RATIO, Math.floor(Number(fill.cumulativeFillRatio) || 0)));
+  if (!Number.isSafeInteger(fill.fillSeq) || !Number.isSafeInteger(fill.cumulativeFillRatio)) {
+    throw haltRuntimeFailure("CROSS_J_FILL_NOTICE_INVALID", `CROSS_J_FILL_NOTICE_INVALID: order=${fill.orderId} seq=${String(fill.fillSeq)} ratio=${String(fill.cumulativeFillRatio)}`);
+  }
+  const ratio = Math.max(0, Math.min(CROSS_J_MAX_FILL_RATIO, fill.cumulativeFillRatio));
   const currentSeq = Math.max(0, Math.floor(Number(route.fillSeq ?? 0) || 0));
-  const incomingSeq = Math.floor(Number(fill.fillSeq));
+  const incomingSeq = fill.fillSeq;
   const isCancel = Boolean(fill.cancelRemainder) && incomingSeq === currentSeq;
   if (incomingSeq === currentSeq && ratio !== committedCrossJurisdictionRatio(route)) {
     throw haltRuntimeFailure("CROSS_J_FILL_NOTICE_STALE_CONFLICT", `CROSS_J_FILL_NOTICE_STALE_CONFLICT: order=${fill.orderId} seq=${incomingSeq} ratio=${ratio}`);

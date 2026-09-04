@@ -3441,7 +3441,15 @@ fn apply_book_order_removed(
     fields.extend([
         (
             "fillSeq".into(),
-            number(current_seq.max(carried_seq), tx.kind, "FILL_SEQ")?,
+            number(
+                if carried_seq > current_seq {
+                    current_seq + 1
+                } else {
+                    current_seq
+                },
+                tx.kind,
+                "FILL_SEQ",
+            )?,
         ),
         (
             "cumulativeFillRatio".into(),
@@ -4744,6 +4752,17 @@ fn apply_clear_request(
         field(data, "cancelRemainder"),
         Some(CanonicalValue::Bool(true))
     );
+    let status_only = |message: String| CrossJurisdictionApplyResult {
+        events: vec![EntityFrameEvent::Status { message }],
+        ..CrossJurisdictionApplyResult::default()
+    };
+    if terminal_route(&route) {
+        // A replayed cancel or a late sweep after the close: nothing left to decide.
+        return Ok(status_only(format!(
+            "🌉 Cross-j clear {order_id} ignored: route {}",
+            text(&route, "status").unwrap_or("")
+        )));
+    }
     let local = normalized(&state.entity_id);
     let source_user = nested_text(&route, "source", "entityId")
         .map(normalized)
@@ -4771,7 +4790,9 @@ fn apply_clear_request(
             return Err(invalid(tx.kind, format!("SOURCE_OFFER_MISSING:{order_id}")));
         }
         if !cancel_remainder && ratio == 0 {
-            return Ok(CrossJurisdictionApplyResult::default());
+            return Ok(status_only(format!(
+                "🌉 Cross-j clear {order_id} ignored: no pending fill"
+            )));
         }
         set(&mut route, "status", string("clear_requested"))?;
         set(
@@ -4792,7 +4813,12 @@ fn apply_clear_request(
         return Ok(CrossJurisdictionApplyResult {
             proposal_work: vec![AccountProposalWork {
                 account_id: source_hub,
-                txs: vec![AccountTx::SwapCancelRequest { offer_id: order_id }],
+                txs: vec![AccountTx::SwapCancelRequest {
+                    offer_id: order_id.clone(),
+                }],
+            }],
+            events: vec![EntityFrameEvent::Status {
+                message: format!("🌉 Cross-j clear {order_id} queued through source Account"),
             }],
             ..CrossJurisdictionApplyResult::default()
         });
@@ -4808,9 +4834,11 @@ fn apply_clear_request(
             ..CrossJurisdictionApplyResult::default()
         });
     }
-    let view = account_views
-        .get(&source_user)
-        .ok_or_else(|| invalid(tx.kind, format!("ACCOUNT_VIEW_MISSING:{source_user}")))?;
+    let Some(view) = account_views.get(&source_user) else {
+        return Ok(status_only(format!(
+            "❌ Cross-j clear {order_id} blocked: no source account with {source_user}"
+        )));
+    };
     // The user-side Account offer stays open until the pull close deletes it;
     // only a still-resting local book row has to leave before the reveal.
     let mut prelude = CrossJurisdictionApplyResult::default();
@@ -4834,8 +4862,15 @@ fn apply_clear_request(
             .ok_or_else(|| invalid(tx.kind, "SOURCE_PULL_ID_MISSING"))?
             .to_string();
         if ratio == 0 {
-            if !cancel_remainder || !view.pulls.contains_key(&source_pull_id) {
-                return Ok(CrossJurisdictionApplyResult::default());
+            if !cancel_remainder {
+                return Ok(status_only(format!(
+                    "🌉 Cross-j clear {order_id} ignored: no pending fill"
+                )));
+            }
+            if !view.pulls.contains_key(&source_pull_id) {
+                return Ok(status_only(format!(
+                    "🌉 Cross-j clear {order_id} waiting for source close proof"
+                )));
             }
             let proof = build_close_proof(&route, "0x", tx.kind)?;
             set(&mut route, "sourceCloseProof", proof.clone())?;
@@ -4881,10 +4916,15 @@ fn apply_clear_request(
                 ..CrossJurisdictionApplyResult::default()
             });
         }
-        if !view.pulls.contains_key(&source_pull_id)
-            || view.pending_cross_pull_close_ids.contains(&source_pull_id)
-        {
-            return Ok(CrossJurisdictionApplyResult::default());
+        if !view.pulls.contains_key(&source_pull_id) {
+            return Ok(status_only(format!(
+                "🌉 Cross-j clear {order_id} ignored: source pull already closed"
+            )));
+        }
+        if view.pending_cross_pull_close_ids.contains(&source_pull_id) {
+            return Ok(status_only(format!(
+                "🌉 Cross-j clear {order_id} ignored: source pull close already queued"
+            )));
         }
         set(&mut route, "status", string("clear_requested"))?;
         set(
@@ -5091,7 +5131,7 @@ pub(crate) fn build_cross_jurisdiction_book_fill(
     if &market.filled_source + &execution_source_amount > market.source_total
         || &market.filled_target + &execution_target_amount > market.target_total
     {
-        return Err(invalid(kind, "CROSS_J_FILL_EXECUTION_OVERFLOW"));
+        return Ok(None);
     }
     let fill_ratio = exact_fill_ratio_to_u16(
         &(&market.filled_target + &execution_target_amount),

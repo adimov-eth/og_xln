@@ -63,7 +63,7 @@ export function routeRemoteCrossJurisdictionBookCancels(
       ?.state.swapOffers
       ?.get(cancel.offerId)
       ?.crossJurisdiction;
-    if (!route) {
+    if (!route || !sourceHubState.crossJurisdictionSwaps?.has(cancel.offerId)) {
       localBookCancels.push(cancel);
       continue;
     }
