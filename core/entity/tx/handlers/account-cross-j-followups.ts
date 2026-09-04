@@ -77,6 +77,9 @@ const assertTerminalPullReplay = (
     (
       suppliedProof.orderId !== proof.orderId ||
       normalizeEntityRef(suppliedProof.routeHash) !== normalizeEntityRef(proof.routeHash) ||
+      suppliedProof.sourcePullId !== proof.sourcePullId ||
+      suppliedProof.targetPullId !== proof.targetPullId ||
+      suppliedProof.closeMode !== proof.closeMode ||
       suppliedProof.fillRatio !== proof.fillRatio ||
       suppliedProof.cumulativeSourceAmount !== proof.cumulativeSourceAmount ||
       suppliedProof.cumulativeTargetAmount !== proof.cumulativeTargetAmount ||
@@ -95,6 +98,15 @@ const assertCrossPullCloseAllowed = (
   hubCommitted: boolean,
   proof: Extract<AccountTx, { type: 'cross_pull_close' }>['data']['proof'],
 ): void => {
+  // The proof must name this route (Rust PROOF_MISMATCH).
+  if (
+    proof.orderId !== route.orderId ||
+    normalizeEntityRef(proof.routeHash) !== normalizeEntityRef(route.routeHash || '') ||
+    proof.sourcePullId !== route.sourcePull?.pullId ||
+    proof.targetPullId !== route.targetPull?.pullId
+  ) {
+    throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_PROOF_MISMATCH", `CROSS_J_PULL_CLOSE_PROOF_MISMATCH: route=${route.orderId}`);
+  }
   // ONE economics rule (TS = Rust): both cumulative amounts are the proof
   // ratio projected onto the route totals, and the ratio never rolls back
   // below what this mirror already recorded.
@@ -420,7 +432,6 @@ const applyCrossPullCloseFollowup = (
   outputs: EntityInput[],
   storageChanges: RuntimeOverlayRecord[],
 ): boolean => {
-  if (!newState.crossJurisdictionSwaps?.size) return true;
   const fillRatio = requireCrossPullCloseFillRatio(accountTx.data.proof.fillRatio);
   const decoded = decodeHashLadderBinary(accountTx.data.binary);
   if (decoded.fillRatio !== fillRatio) {
@@ -429,7 +440,8 @@ const applyCrossPullCloseFollowup = (
   const currentEntityId = normalizeEntityRef(newState.entityId);
   const counterpartyEntityId = normalizeEntityRef(counterpartyId);
 
-  for (const route of newState.crossJurisdictionSwaps.values()) {
+  let matched = false;
+  for (const route of newState.crossJurisdictionSwaps?.values() ?? []) {
     const sourceUserId = normalizeEntityRef(route.source.entityId);
     const sourceHubId = normalizeEntityRef(route.source.counterpartyEntityId);
     const targetHubId = normalizeEntityRef(route.target.entityId);
@@ -445,6 +457,7 @@ const applyCrossPullCloseFollowup = (
       counterpartyEntityId === sourceHubId;
 
     if (isSourceHubClose || isSourceUserClose) {
+      matched = true;
       if (assertTerminalPullReplay(route, fillRatio, accountTx.data.binary, accountTx.data.proof)) {
         if (isSourceHubClose) {
           removeOrRouteCrossJurisdictionBookOrder(
@@ -488,6 +501,7 @@ const applyCrossPullCloseFollowup = (
       currentEntityId === targetHubId &&
       counterpartyEntityId === targetUserId;
     if (isTargetUserClose || isTargetHubClose) {
+      matched = true;
       if (assertTerminalPullReplay(route, fillRatio, accountTx.data.binary, accountTx.data.proof)) continue;
       // Account consensus already proved that the target Hub authored this
       // cross_pull_close. currentEntityId only identifies which side is
@@ -507,6 +521,9 @@ const applyCrossPullCloseFollowup = (
         ratio: fillRatio,
       });
     }
+  }
+  if (!matched) {
+    throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_ROUTE_MISSING", `CROSS_J_PULL_CLOSE_ROUTE_MISSING: pull=${accountTx.data.pullId} order=${accountTx.data.proof.orderId}`);
   }
   return true;
 };
