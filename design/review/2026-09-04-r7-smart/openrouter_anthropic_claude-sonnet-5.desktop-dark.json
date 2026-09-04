@@ -1,0 +1,398 @@
+{
+  "reviewer": "openrouter/anthropic/claude-sonnet-5",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 760,
+        "typography": 760,
+        "color": 740,
+        "data_legibility": 650,
+        "layout": 700,
+        "visceral_value": 300,
+        "responsive": 700,
+        "consistency": 700,
+        "trust": 650
+      },
+      "total": 674,
+      "top_issues": [
+        "Home: all values are $0.00 (empty state) so the one-scale bar principle cannot be judged — 'Balances' section shows only an empty-state string, no bar at all, defeating the core visceral_value concept on the flagship screen.",
+        "Home: the legend row under total balance (On-chain/Reserve/Secured/At risk) is four colored dots with numbers that duplicate what a bar should show visually; without any bar present this reads as a plain data table, not the promised visceral bar.",
+        "Home: right rail 'Accounts' row shows an em-dash for balance and 'no tokens' — ambiguous empty state, unclear if this is an error or a fresh account."
+      ],
+      "fixes": [
+        "Home: even in zero-balance state, render the ghost/outline bar at 0 width with tick marks so the scale mechanic is visible before user has funds.",
+        "Home: replace the em-dash in Accounts row with an explicit '$0.00' to keep tabular-number alignment consistent with the rest of the screen.",
+        "Home: move the 1px=$10·auto scale note closer to where a bar will render, currently orphaned above an empty list."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 820,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 700,
+        "layout": 780,
+        "visceral_value": 400,
+        "responsive": 720,
+        "consistency": 750,
+        "trust": 720
+      },
+      "total": 723,
+      "top_issues": [
+        "Receive: no bilateral bar showing 'receive up to' capacity anywhere except a small text line ('receive up to 0.00 instantly') — the visceral bar principle from the rubric is absent on a money-receiving screen.",
+        "Receive: QR code is stark white square with no border/inset shadow that separates it from the dark card — looks visually heavy and slightly clashes with the otherwise restrained obsidian material.",
+        "Receive: entity ID block wraps mid-hex with no copy button — a raw wrapped hex string is low-trust and hard to tap/select precisely."
+      ],
+      "fixes": [
+        "Receive: add a copy icon button next to 'YOUR ENTITY ID' hex string, and truncate to 0x1234…abcd with a tooltip/expand, matching truncation pattern used in Account screen (06).",
+        "Receive: give the QR white card a 1px hairline border matching card borders elsewhere, and reduce its corner radius to match other cards.",
+        "Receive: render a small horizontal receive-capacity bar above/below the amount field instead of only text, at the global px-per-$ scale."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 650,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 600,
+        "layout": 680,
+        "visceral_value": 200,
+        "responsive": 700,
+        "consistency": 680,
+        "trust": 580
+      },
+      "total": 619,
+      "top_issues": [
+        "Swap: BOOK panel shows a literal placeholder string 'MARKET_WIRE_JSON_REQUIRED' — an internal dev/debug token leaking into shipped UI, breaks trust and premium feel immediately.",
+        "Swap: 'PRICE USDC / SIZE WETH' column headers have no rows beneath them, an empty order book with no empty-state message ('no open orders' or similar), reads as broken.",
+        "Swap button is rendered in a washed/lighter indigo than the Pay button on other screens (06, 16) — same primary action color should not visibly desaturate when disabled state differs from a hover/press state elsewhere."
+      ],
+      "fixes": [
+        "Swap: remove 'MARKET_WIRE_JSON_REQUIRED' string entirely; replace with 'Order book syncing…' consistent with the syncing dot already shown.",
+        "Swap: add an explicit empty-state under the book headers, e.g. 'No resting orders yet.'",
+        "Swap: disabled Swap button should use a fixed disabled-token color (e.g. 40% opacity of indigo) rather than an arbitrary muted purple that reads as a separate color from active Pay elsewhere."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 800,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 700,
+        "layout": 780,
+        "visceral_value": 250,
+        "responsive": 730,
+        "consistency": 750,
+        "trust": 740
+      },
+      "total": 705,
+      "top_issues": [
+        "Account: this is exactly where the bilateral two-half bar (send-left/receive-right with zero notch) should anchor the page per rubric, but the page shows only a text card ('THIS ACCOUNT') with rows — no bar at all.",
+        "Account: 'Frames signed: 0' sits next to 'Status: Open' with no visual distinction of what 0 frames means for trust (new vs stale) — a first-time user cannot tell if this is expected.",
+        "Account: the four action buttons (Pay/Extend credit/Swap/Manage) are equal-weight grey except Pay; 'Extend credit' is arguably as important as Pay for a fresh zero-credit account and gets no visual priority."
+      ],
+      "fixes": [
+        "Account: add the two-half bilateral bar (send | receive, hatched holds, zero notch) directly under the header, per rubric's core deliverable, even at $0 scale as a ghost outline.",
+        "Account: add a one-line caption near 'Frames signed: 0' such as 'no history yet' to disambiguate zero-state from stale/broken.",
+        "Account: promote 'Extend credit' with a lighter indigo outline when credit line is zero, since it's the next required action."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 750,
+        "typography": 740,
+        "color": 720,
+        "data_legibility": 700,
+        "layout": 700,
+        "visceral_value": 500,
+        "responsive": 700,
+        "consistency": 760,
+        "trust": 760
+      },
+      "total": 703,
+      "top_issues": [
+        "Activity/08-activity-detail (duplicate frames): the two screenshots (07 and 08) are pixel-identical — same detail card open, same list — so no distinct 'list vs detail' state is actually shown despite being named as different screens.",
+        "Activity: filter pills (All/Payments/Swaps/Settlement/Accounts) have no counts and no indication which will have zero results, causing dead-end taps in this near-empty account.",
+        "Activity: detail panel duplicates the row's icon+title already visible in the list at 2x size with no added information beyond Frame/Time — low information density for the space given."
+      ],
+      "fixes": [
+        "Activity: differentiate 07 (list view, no selection) from 08 (detail expanded) — currently identical, so ship the actual empty/unselected list state for 07.",
+        "Activity: grey out or badge-count filter pills for categories with 0 items.",
+        "Activity: replace the oversized restated title in the detail card with a compact header + a proof/hash line (e.g. signature icons) to add trust-relevant content, matching Sovereignty screen's evidence-bundle pattern."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 750,
+        "typography": 740,
+        "color": 720,
+        "data_legibility": 700,
+        "layout": 700,
+        "visceral_value": 500,
+        "responsive": 700,
+        "consistency": 760,
+        "trust": 760
+      },
+      "total": 703,
+      "top_issues": [
+        "See 07-activity.png: identical screenshot, same issue about missing distinct detail state.",
+        "Activity detail: 'From your runtime's committed frames' green dot label is good provability language but is the only trust signal on the card — no hash/signature preview shown despite this being the single most consensus-relevant screen in the set."
+      ],
+      "fixes": [
+        "Activity detail: add the frame hash (truncated) and signer confirmation checkmarks beneath 'Time', reusing the truncated-hex + copy pattern from Receive/Ownership screens.",
+        "See 07-activity.png fixes."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 650,
+        "premium": 700,
+        "typography": 740,
+        "color": 730,
+        "data_legibility": 680,
+        "layout": 600,
+        "visceral_value": 700,
+        "responsive": 650,
+        "consistency": 700,
+        "trust": 650
+      },
+      "total": 680,
+      "top_issues": [
+        "Settings: page is a single unbroken long scroll mixing scale config, appearance, design tokens, tour, runtime debug info and vault danger-zone actions — seven distinct concern groups with only small caps labels to separate them, weak information architecture for desktop width.",
+        "Settings: the 'AT THIS SCALE' reference card on the right (good micro-lesson on the bar principle) is orphaned next to the scale slider only, then the rest of the page (Home toggles, Appearance, Design, Tour, Runtime, Vault) has no matching right-rail content, leaving a huge empty gap for ~70% of the page height.",
+        "Settings: 'Forget vault' destructive action sits inline with 'Reveal recovery phrase' and 'Lock' at equal button weight/size, differentiated only by red text — a two-tap destructive account-deletion action needs stronger isolation (confirmation, spacing, or a separate danger section)."
+      ],
+      "fixes": [
+        "Settings: split into tabbed or accordioned sections (Scale, Home, Appearance, Design, Runtime, Vault) so desktop width isn't a single 1900px-tall scroll with a mostly-empty right column.",
+        "Settings: keep the right rail populated per section (e.g. show current theme preview beside Appearance, key fingerprint beside Vault) instead of only for Scale.",
+        "Settings: separate 'Forget vault' into its own bordered danger zone with a confirming dialog, per trust/error-prevention rubric criterion."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 800,
+        "typography": 780,
+        "color": 780,
+        "data_legibility": 760,
+        "layout": 800,
+        "visceral_value": 550,
+        "responsive": 760,
+        "consistency": 780,
+        "trust": 700
+      },
+      "total": 751,
+      "top_issues": [
+        "Move: the tiny grey bar slivers at the bottom of each From/To card (Wallet/Reserve/Account) are the only visceral-bar element on the page and are too small/subtle to read as the promised 'one absolute scale' bars — at $0.00 they're indistinguishable decoration.",
+        "Move: error text 'Amount exceeds what is available here' appears in red at the bottom after a fully filled, seemingly valid-looking form (250 amount, valid from/to selection) — the error is disconnected from which specific field/card triggered it.",
+        "Move: 'Sign & send' primary button is enabled/blue-looking despite the validation error below it being visible — button should be visually disabled while the error is showing."
+      ],
+      "fixes": [
+        "Move: when amount exceeds source balance, add a red ring/border directly on the offending Reserve/Account source card, not just a floating text line below the whole form.",
+        "Move: disable/grey 'Sign & send' whenever the exceeds-available error is present; currently it reads as clickable/blue.",
+        "Move: increase the From/To capacity bar height to be legible even near-zero (e.g. minimum 2px stub) so it reads as a bar, not a border artifact."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 820,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 740,
+        "layout": 800,
+        "visceral_value": 400,
+        "responsive": 760,
+        "consistency": 800,
+        "trust": 720
+      },
+      "total": 738,
+      "top_issues": [
+        "Manage: this is a pure navigation hub (6 tiles + 1 list) with zero dollar amounts or bars anywhere, missing an opportunity to surface e.g. total on-chain assets or total lending exposure at a glance before drilling in.",
+        "Manage: 'NEEDS ATTENTION' card says 'Nothing waiting on you' in the same low-emphasis grey as every other label — a state meant to reassure users of safety gets no distinct positive-state styling (e.g. green check) matching the language used on Sovereignty ('nothing at risk')."
+      ],
+      "fixes": [
+        "Manage: add a subtotal line under Assets tile (on-chain total) and Lending tile (active principal) so the hub previews real numbers, not just descriptions.",
+        "Manage: give 'Nothing waiting on you' a small green check icon consistent with the 'nothing at risk' treatment on Sovereignty (15) for cross-screen consistency."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 800,
+        "typography": 780,
+        "color": 800,
+        "data_legibility": 760,
+        "layout": 780,
+        "visceral_value": 300,
+        "responsive": 760,
+        "consistency": 780,
+        "trust": 720
+      },
+      "total": 726,
+      "top_issues": [
+        "Assets: token rows (USDC/WETH/USDT) show only numeric balances with no bar at all, despite this being exactly the 'on-chain wallet' money location the rubric requires to be shown at the global px/$ scale alongside Home.",
+        "Assets: four faucet action buttons are all filled indigo at equal weight ('Hub pays me...', 'USDC to my wallet', 'Gas to my wallet', 'USDC to my reserve') — indigo is meant to be reserved for the one action that moves real money, but here it's used for four different test-only actions, diluting its meaning.",
+        "Assets: 'Depository may pull 0.00' repeated identically on all three token rows is a redundant technical label at full row height; could be tightened to one shared line since the value is currently the same across all tokens."
+      ],
+      "fixes": [
+        "Assets: render each token row's balance bar at the global scale, matching the rest of the app.",
+        "Assets: demote faucet buttons to outline/secondary style since this is test-only functionality, reserving solid indigo for 'Move into reserve'.",
+        "Assets: collapse 'Depository may pull X' into a single caption line under the section header when it's identical across rows, rather than repeating per-row."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 790,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 760,
+        "layout": 780,
+        "visceral_value": 250,
+        "responsive": 760,
+        "consistency": 770,
+        "trust": 690
+      },
+      "total": 712,
+      "top_issues": [
+        "Lending: no bar visualization for Available/Borrowed/Active principal in the H1 Pool card, though these three numbers are exactly the kind of stacked-bar comparison the rubric's visceral principle calls for.",
+        "Lending: '1 day' term button is selected with a blue outline identical to the Hub selector's selected style above it, but 'H1 · 0 lanes' hub selector box uses filled dark-blue background for selection while Term uses only an outline — same selection concept, two different visual treatments on one page.",
+        "Lending: '100 = 1.00% per term' basis points helper math is placed to the right of the input at small size, easy to miss; a user could misread 100bps as 100% without noticing the correct conversion."
+      ],
+      "fixes": [
+        "Lending: add a stacked mini-bar in the H1 Pool card showing Available vs Borrowed vs Active at the global scale.",
+        "Lending: unify selection style — use filled background for selected state consistently for both Hub and Term selectors.",
+        "Lending: increase size/contrast of the '= 1.00% per term' conversion text, or move it inline directly under the basis-points input."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 750,
+        "premium": 800,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 760,
+        "layout": 760,
+        "visceral_value": 700,
+        "responsive": 740,
+        "consistency": 770,
+        "trust": 760
+      },
+      "total": 758,
+      "top_issues": [
+        "Ownership: correctly has no bars since there's no money on this screen — good restraint, but 'Threshold: 1 of 1' and 'Kind: Lazy' are dense governance jargon with zero inline explanation beyond one small paragraph at the bottom; a non-technical owner won't parse 'Lazy (hash of its board)' quickly.",
+        "Ownership: 'TAKE CONTROL OF ANOTHER ENTITY' card negative-state message ('Nothing to take over...') takes the same visual weight/size as an actionable card elsewhere (e.g. Accounts card on Manage screen), risking users expecting it to be clickable."
+      ],
+      "fixes": [
+        "Ownership: add a tooltip or inline glossary link on 'Lazy' governance kind, one tap away, rather than only the paragraph below the table.",
+        "Ownership: reduce visual card treatment (remove border/shadow) for the empty 'take control' state so it reads clearly as non-interactive information, not a disabled action card."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 820,
+        "typography": 800,
+        "color": 800,
+        "data_legibility": 780,
+        "layout": 800,
+        "visceral_value": 600,
+        "responsive": 770,
+        "consistency": 800,
+        "trust": 840
+      },
+      "total": 783,
+      "top_issues": [
+        "Sovereignty: this screen best executes the green/violet semantic split with an explicit legend right under the total, which is exactly the rubric's intended language — strong screen, but still shows no actual bar, only colored-dot + number pairs, so visceral_value is capped by absence of the promised bar geometry.",
+        "Sovereignty: 'PER COUNTERPARTY' H1 row shows 'awaiting their signature · no proof yet · they answer in 1 d, you in 1 d' as one long comma-run string — three distinct facts crammed into a single sentence with no visual separation, hard to scan under time pressure.",
+        "Sovereignty: 'Save evidence bundle' primary indigo button sits directly below zero-value ledger stats with no clear reason to click it yet (nothing to save) — button should likely be disabled/secondary until there's a signed frame worth exporting."
+      ],
+      "fixes": [
+        "Sovereignty: render the green/violet totals as a two-segment stacked bar (matching the rubric's bar language) instead of only text+dot legend.",
+        "Sovereignty: break 'awaiting their signature · no proof yet · they answer in 1 d, you in 1 d' into two stacked lines: status, then the SLA times.",
+        "Sovereignty: grey out 'Save evidence bundle' when Accounts co-signed = 0, since there's nothing meaningful to export yet."
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 700,
+        "typography": 740,
+        "color": 740,
+        "data_legibility": 620,
+        "layout": 650,
+        "visceral_value": 600,
+        "responsive": 600,
+        "consistency": 720,
+        "trust": 700
+      },
+      "total": 683,
+      "top_issues": [
+        "Desk: the swap book panel on the right is clipped mid-column ('WETH/USDC/H1' with left edge cut off, 'FR' column header truncated at the table edge) — content overflow/clipping on the flagship dense desktop layout is a real bug, not a density choice.",
+        "Desk: the account table header row (ACCOUNT·LANE / POSITION / SECURED / AT RISK / YOU OWE / SEND·RECEIVE / LINES OUT/IN / FR...) has 8 columns crammed with no visible column widths tuned to content, and the single data row ('Reserve · on-chain') doesn't actually match several headers (e.g. 'LINES OUT/IN' shows a dollar pair, not a line count) — column/data mismatch undermines trust in this dense view.",
+        "Desk: legend at bottom (on-chain/reserve/collateral/at risk/you owe/credit room/in flight — 7 colored dash swatches) is small, low-contrast grey text competing with the table just above it for eye attention, and duplicates color meaning already established in Sovereignty's legend with a different label set ('collateral' vs 'secured', 'trust only' vs 'at risk')."
+      ],
+      "fixes": [
+        "Desk: fix the swap book panel's clipped right edge so 'H1' hub name and 'FR' (likely 'FRAME') column are fully visible, not cut by the card boundary.",
+        "Desk: align table column labels to actual data semantics (rename 'LINES OUT/IN' or fix the underlying data render), and set explicit min-widths so numeric columns don't wrap/clip on 1280px viewport.",
+        "Desk: standardize the legend vocabulary across Desk and Sovereignty (pick one of 'secured'/'collateral' and one of 'at risk'/'trust only') so the same concept has one name everywhere per the consistency rubric parameter."
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 800,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 760,
+        "layout": 780,
+        "visceral_value": 500,
+        "responsive": 740,
+        "consistency": 780,
+        "trust": 700
+      },
+      "total": 740,
+      "top_issues": [
+        "Palette: command list mixes primary money actions (Pay, Receive, Swap, Move) with navigation destinations (Home, Desk, Activity, Manage, Sovereignty, Assets, Lending) in one flat undifferentiated list with identical row styling — no visual grouping (e.g. a divider or section label) between 'actions' and 'destinations' despite them being conceptually different.",
+        "Palette: selected first row 'Pay' has a solid filled highlight while every other row is plain — good default-selection affordance, but the palette overlay's backdrop dimming leaves the underlying Home page fully legible behind it including its own $0.00 numbers, creating visual competition with the palette's own text at the same size."
+      ],
+      "fixes": [
+        "Palette: add a subtle section divider/label ('Actions' vs 'Go to') splitting Pay/Receive/Swap/Move from Home/Desk/Activity/etc.",
+        "Palette: increase backdrop dimming opacity behind the palette overlay so background numerals don't visually compete with the palette's own row labels."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 719,
+    "verdict": "The design system is calm, consistent, and typographically confident, with genuinely strong dedicated screens for trust language (Sovereignty) and money movement (Move), but it systematically fails to deliver the rubric's core differentiator: the single-scale visceral bar. Almost every money screen (Home, Account, Assets, Lending, Swap) substitutes colored dots and numbers for the promised comparable horizontal bars, and a few screens ship visible bugs (placeholder debug string on Swap, clipped table on Desk, duplicate Activity screenshots).",
+    "priority_fixes": [
+      "Implement the actual two-half bilateral account bar (send|receive, hatched holds, zero notch) on Account and Desk — currently absent everywhere it matters most.",
+      "Render real balance bars at the global px/$ scale on Home, Assets and Lending instead of text-only rows, even at $0 as ghost/ticked outlines.",
+      "Remove the leaked debug string 'MARKET_WIRE_JSON_REQUIRED' on Swap and add a proper empty-state for the order book.",
+      "Fix Desk's clipped right-hand swap panel and reconcile the account table's column labels with the data actually rendered.",
+      "Unify color/label vocabulary for account-state terms (secured/collateral, at risk/trust only) across Sovereignty and Desk, and ship distinct list vs. detail states for Activity (07/08 are currently identical)."
+    ]
+  }
+}

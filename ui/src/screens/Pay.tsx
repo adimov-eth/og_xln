@@ -403,7 +403,7 @@ export function Pay() {
 
 					<button
 						type="button"
-						className="btn"
+						className="btn primary"
 						data-testid="pay-submit"
 						disabled={!chosen || !parsedAmount || sending || Boolean(modeError) || !wallet.signerId}
 						onClick={() => void send()}

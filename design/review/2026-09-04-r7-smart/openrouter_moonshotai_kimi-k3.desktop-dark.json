@@ -1,0 +1,428 @@
+{
+  "reviewer": "openrouter/moonshotai/kimi-k3",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 720,
+        "typography": 750,
+        "color": 780,
+        "data_legibility": 700,
+        "layout": 640,
+        "visceral_value": 450,
+        "responsive": 620,
+        "consistency": 740,
+        "trust": 700
+      },
+      "total": 688,
+      "top_issues": [
+        "Home desktop: the tier legend under the total (On-chain/Reserve/Secured/At risk) repeats four $0.00 numbers that add nothing at zero state; it reads as noise exactly where the eye lands second",
+        "Home desktop: no bar is drawn anywhere, not even a zero-width track at the declared '1 px = $10 · auto' scale, so the one-scale principle is invisible on the very screen that should teach it",
+        "Home desktop: the bottom 60% of the viewport is empty while the right rail cards (ACCOUNTS, RECENT) float high; the layout does not use the desktop canvas",
+        "Home desktop: Receive and Swap are heavy bordered boxes visually near-equal to Pay; only the indigo fill differentiates the money action"
+      ],
+      "fixes": [
+        "Home: collapse the four-tier legend into a single caption line under the total bar ('$0 yours · $0 at risk'), showing the split only when non-zero",
+        "Home: render the total as a bar track at the pinned scale even at $0 (empty track + notch), so the scale metaphor exists before money does",
+        "Home: make Receive/Swap ghost buttons (no border box, icon+label), keeping Pay as the sole solid indigo block",
+        "Home: anchor BALANCES empty state with a sample-scale tick row so the empty area still communicates the px-per-dollar rule"
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 700,
+        "typography": 660,
+        "color": 680,
+        "data_legibility": 680,
+        "layout": 720,
+        "visceral_value": 500,
+        "responsive": 720,
+        "consistency": 740,
+        "trust": 700
+      },
+      "total": 686,
+      "top_issues": [
+        "Receive desktop: three competing copy affordances (grey 'Copy invoice', indigo 'Copy link', plus a tiny 'Copy xln:// app link' text link) — the indigo accent is spent on a non-money action, violating the one-accent rule",
+        "Receive desktop: YOUR ENTITY ID shows the full 40-char hex wrapping mid-string across two lines; ugly and unreadable, when the truncated form is used everywhere else",
+        "Receive desktop: the amount placeholder '0.00' in mid-grey is indistinguishable from a typed zero value; a user cannot tell whether an amount is set",
+        "Receive desktop: 'receive up to 0.00 instantly' is the right data in the right place but at 0 there is no cue how to raise it except the banner far below"
+      ],
+      "fixes": [
+        "Receive: make 'Copy invoice' the single primary (invoice carries amount+note), demote 'Copy link' to a text button, delete the third 'xln://' link",
+        "Receive: truncate the entity id to 0x25ee…b6ed with a copy-on-click, matching the truncation used on Ownership/Settings",
+        "Receive: use a true placeholder style (lighter grey, no currency precision) or an empty field with 'Amount' label; never render placeholder as a valid value",
+        "Receive: inline-link '0.00 instantly' to the Open H1 action so the limit and its fix sit together"
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 560,
+        "typography": 620,
+        "color": 700,
+        "data_legibility": 560,
+        "layout": 720,
+        "visceral_value": 400,
+        "responsive": 700,
+        "consistency": 740,
+        "trust": 480
+      },
+      "total": 618,
+      "top_issues": [
+        "Swap desktop: the book panel shows the raw internal error 'MARKET_WIRE_JSON_REQUIRED' to the user — a dev-facing string in a money UI destroys trust at the exact moment of price discovery",
+        "Swap + Desk desktop: '1 tick = 1/10,000 USDC' is protocol jargon exposed as help text; no user can act on it",
+        "Swap desktop: the disabled Swap button keeps a washed-out indigo fill with grey label, reading as 'broken primary' rather than 'unavailable'; disabled money actions should go fully neutral",
+        "Swap desktop: 'Up to 0.00 with H1' and 'from H1' are good context, but with a syncing book and typed 100 in, the receive side shows a grey 0.00 that looks like a quote of zero — dangerous ambiguity"
+      ],
+      "fixes": [
+        "Swap: replace MARKET_WIRE_JSON_REQUIRED with 'Book unavailable — reconnecting to H1' and log the raw code to console only",
+        "Swap: when the book is not live, show '—' (em dash) in 'You receive' instead of 0.00 so no fake quote is implied",
+        "Swap: disabled money buttons render as neutral dark surface with muted label; indigo appears only when the action is live",
+        "Swap: replace the tick footnote with 'Tap a price in the book to fill this ticket'"
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 520,
+        "premium": 620,
+        "typography": 700,
+        "color": 720,
+        "data_legibility": 480,
+        "layout": 520,
+        "visceral_value": 250,
+        "responsive": 540,
+        "consistency": 720,
+        "trust": 660
+      },
+      "total": 573,
+      "top_issues": [
+        "Account desktop: the signature bilateral bar (send half / receive half / zero notch) is completely absent on the account detail screen — the one screen where the two-half bar is the whole point; visceral_value fails here by omission",
+        "Account desktop: no credit line, collateral, or owed numbers appear in the main column at all; 'Frames signed 0' in the side card is the only state, so the screen cannot answer 'what is my position with H1'",
+        "Account desktop: four action buttons (Pay / Extend credit / Swap / Manage) occupy the top and the remaining ~70% of the viewport is void",
+        "Account desktop: 'Extend credit' carries a '+' icon and equal visual weight to Pay, splitting the money-action emphasis"
+      ],
+      "fixes": [
+        "Account: render the full-width bilateral bar directly under the header — left half send-capacity (green secured + violet owed), right half receive room, zero notch, hatched holds — even when all segments are zero-width tracks",
+        "Account: add a numbers row under the bar: 'you can send $0 · you can receive $0 · collateral $0 · credit line $0' in tabular numerals",
+        "Account: demote Extend credit/Swap/Manage to a secondary row; Pay alone stays indigo",
+        "Account: fill the empty lower region with this account's recent frames list (it exists on Home/Activity already)"
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 700,
+        "typography": 700,
+        "color": 760,
+        "data_legibility": 760,
+        "layout": 660,
+        "visceral_value": 550,
+        "responsive": 700,
+        "consistency": 780,
+        "trust": 820
+      },
+      "total": 717,
+      "top_issues": [
+        "Activity desktop: header reads '1 movements' — ungrammatical pluralization in the top-right summary",
+        "Activity + Activity detail desktop: the five filter chips are bordered pills, adding five outlines of visual noise above a single-row list",
+        "Activity desktop: the detail card is strong ('From your runtime's committed frames', Frame #7) but the list row's state is a lowercase dot + 'created' while the card uses uppercase 'CREATED' — two vocabularies for one state",
+        "Activity desktop: list column ends at ~60% width and the detail card leaves the right quarter empty; two-column balance is off"
+      ],
+      "fixes": [
+        "Activity: pluralize the counter ('1 movement' / 'N movements')",
+        "Activity: convert filter chips to borderless text tabs with an indigo underline on the active one",
+        "Activity: unify state vocabulary — lowercase 'created' with dot in both row and card, or uppercase eyebrow in both",
+        "Activity: widen the list to ~55% and let the detail card take the remainder with a fixed gutter"
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 700,
+        "typography": 700,
+        "color": 760,
+        "data_legibility": 760,
+        "layout": 660,
+        "visceral_value": 550,
+        "responsive": 700,
+        "consistency": 780,
+        "trust": 820
+      },
+      "total": 717,
+      "top_issues": [
+        "Activity detail desktop: this file is pixel-identical to 07-activity.png — the detail state is not a distinct view; selection state on the list row is not visibly indicated, so the 'detail' screen cannot be told apart from the list",
+        "Activity detail desktop: the detail card leads with a 28px 'Account opened' duplicating the row title, while the provable facts (Frame #7, counterparty id, time) are smaller — hierarchy favors the label over the evidence",
+        "Activity detail desktop: same '1 movements' grammar error and bordered filter chips as 07"
+      ],
+      "fixes": [
+        "Activity detail: give the selected row a persistent indigo left-edge marker or elevated surface so list↔detail linkage is visible",
+        "Activity detail: promote Frame #7 and the counterparty id to the card's primary line; demote the title to an eyebrow",
+        "Activity detail: add the frame hash (truncated, copyable) to the card — the receipt claim ('committed frames') should be inspectable in one click"
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 620,
+        "typography": 720,
+        "color": 520,
+        "data_legibility": 780,
+        "layout": 660,
+        "visceral_value": 820,
+        "responsive": 680,
+        "consistency": 720,
+        "trust": 740
+      },
+      "total": 696,
+      "top_issues": [
+        "Settings desktop: 'Risk color' offers Violet/Red/Orange customization — the product spec fixes position colors as semantic and immutable; letting users recolor 'what is owed to you at risk' breaks cross-screen color literacy",
+        "Settings desktop: the DESIGN sample bar is a green→indigo gradient; the spec's bars are flat semantic segments — the one decorative gradient in the app lives in the screen that defines the design system",
+        "Settings desktop: 'AT THIS SCALE' preview card (10px/100px/1,000px/10,000px bars) is the best visceral-scale execution in the whole build — but it sits in Settings instead of being visible where bars actually render",
+        "Settings desktop: six segmented controls (Comfort/Desk, Dark/Light, Material, Accent, Numbers, Risk color) plus eight dollar chips make the page read as a control panel, not a calm settings surface"
+      ],
+      "fixes": [
+        "Settings: delete the Risk color picker; semantic colors are fixed by spec",
+        "Settings: replace the gradient sample bar with flat green/violet/grey segments at the current px scale",
+        "Settings: move the 'AT THIS SCALE' mini-preview next to the Home total (or show it on hover of the '1 px = $10' caption) so the scale is explained in context",
+        "Settings: group Material/Accent/Numbers into one collapsed 'Design presets' row that expands on click, cutting the segmented-control count on first paint"
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 660,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 720,
+        "layout": 720,
+        "visceral_value": 520,
+        "responsive": 700,
+        "consistency": 720,
+        "trust": 780
+      },
+      "total": 696,
+      "top_issues": [
+        "Move desktop: the six From/To tiles each repeat '0.00 USDC' with a barely-visible bar sliver — six identical numbers of noise; the slivers are too small to read as the one-scale bar system",
+        "Move desktop: 'Sign & send' is disabled with no inline reason on the button itself; the red 'Amount exceeds what is available here' sits ~80px below, disconnected from the control it disables",
+        "Move desktop: the amount '250' is typed against 'up to 0.00 USDC' — good error prevention, but the field does not visually flag (no red underline/field state), only the detached caption does",
+        "Move desktop: 'Add to batch' and 'Sign & send' disabled states are nearly identical greys; the primary action loses its identity entirely when unavailable"
+      ],
+      "fixes": [
+        "Move: drop the per-tile balance line in favor of one real scale bar per tile (height 4px, pinned scale), letting length carry the comparison the numbers currently repeat",
+        "Move: put the failure reason on the disabled button itself ('Sign & send — exceeds available') or as a tooltip on hover",
+        "Move: add a red field state (1px underline + red 'up to' caption) when amount exceeds available",
+        "Move: keep a faint indigo outline on the disabled primary so its role survives its state"
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 700,
+        "typography": 680,
+        "color": 740,
+        "data_legibility": 640,
+        "layout": 560,
+        "visceral_value": 400,
+        "responsive": 580,
+        "consistency": 740,
+        "trust": 700
+      },
+      "total": 642,
+      "top_issues": [
+        "Manage desktop: the five destination cards (Sovereignty/Move/Assets/Lending/Ownership) end at 40% viewport height; everything below is void — the weakest desktop space use in the set",
+        "Manage desktop: the H1 account row reads '0 lanes · 0 frames · open' — three pipe-middot facts, two of which ('lanes', 'frames') are protocol jargon a user never asked for",
+        "Manage desktop: 'NEEDS ATTENTION — Nothing waiting on you' is a good honest empty state, but it renders as a bordered empty box, doubling chrome for zero content"
+      ],
+      "fixes": [
+        "Manage: render account rows with the bilateral mini-bar (same component as Home/Desk) instead of the 'lanes · frames' string",
+        "Manage: when NEEDS ATTENTION is empty, render a single quiet text line without the card chrome",
+        "Manage: move the ACCOUNTS card into the left column as the primary content and demote the five navigation cards to a compact secondary row, filling the viewport with state instead of menu"
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 560,
+        "typography": 700,
+        "color": 540,
+        "data_legibility": 680,
+        "layout": 680,
+        "visceral_value": 420,
+        "responsive": 660,
+        "consistency": 700,
+        "trust": 720
+      },
+      "total": 628,
+      "top_issues": [
+        "Assets desktop: the FAUCETS panel stacks four full-width solid indigo buttons ('Hub pays me…', 'USDC to my…', 'Gas (ETH)…', 'USDC straight into…') — the single-action indigo is spent four times on one panel, and on test-money utilities rather than real money movement",
+        "Assets desktop: the faucet token picker (USDC/WETH/USDT/TRX/SUN bordered buttons) adds a five-button grid of chrome inside an already button-heavy panel",
+        "Assets desktop: 'Depository may pull 0.00' is repeated under all three token rows verbatim; the information is right but the repetition reads as a template bug at zero state",
+        "Assets desktop: token rows carry no scale bars, so USDC/WETH/USDT balances cannot be compared at a glance — the one-scale principle stops at Home"
+      ],
+      "fixes": [
+        "Assets: collapse the four faucet buttons into one indigo 'Get test tokens' that opens a sheet with the four routes as list options",
+        "Assets: replace the token button grid with a compact segmented control",
+        "Assets: at zero balances, show 'Depository may pull —' once as a card-level caption instead of per-row",
+        "Assets: append the pinned-scale bar to each token row, right-aligned before the number"
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 640,
+        "typography": 620,
+        "color": 640,
+        "data_legibility": 700,
+        "layout": 600,
+        "visceral_value": 420,
+        "responsive": 660,
+        "consistency": 700,
+        "trust": 620
+      },
+      "total": 622,
+      "top_issues": [
+        "Lending desktop: the 'Token' row renders as an empty dark field with the Lend/Borrow segmented control floating beneath it — the token is unset with no label of that fact, and the segmented control looks like it belongs to the empty field",
+        "Lending desktop: term options render as 1 hour / 1 day on one row and 1 month alone below at a different width — an uneven 2-over-1 grid that reads as a layout accident",
+        "Lending desktop: '= 1.00% per term' wraps to two lines inside the interest field's right edge, colliding with the field boundary",
+        "Lending desktop: 'Offer to the pool' is disabled with a washed indigo fill and no stated reason (amount is 0.00 — but the UI never says so)"
+      ],
+      "fixes": [
+        "Lending: give the Token row a real placeholder ('Select token') or default to USDC; visually detach Lend/Borrow as the form's mode switch above the Hub card",
+        "Lending: make the three term buttons equal-width in a single row (33/33/33)",
+        "Lending: move the APR conversion below the field as a caption ('= 1.00% per term') instead of inline-wrapped",
+        "Lending: disabled state reads 'Offer to the pool — enter an amount' in muted label text"
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 700,
+        "typography": 700,
+        "color": 720,
+        "data_legibility": 620,
+        "layout": 540,
+        "visceral_value": 400,
+        "responsive": 560,
+        "consistency": 720,
+        "trust": 740
+      },
+      "total": 638,
+      "top_issues": [
+        "Ownership desktop: 'Kind: Lazy (hash of its board)' is raw protocol vocabulary presented as a primary fact; the explainer below does the teaching the label should do",
+        "Ownership desktop: content occupies the top ~40% of the viewport; the rest is void — same under-fill problem as Account and Manage",
+        "Ownership desktop: TAKE CONTROL empty state is honest but the two cards sit at different heights with no grid relationship, leaving a ragged right edge"
+      ],
+      "fixes": [
+        "Ownership: relabel Kind to 'Unregistered entity' with the lazy-hash detail moved into the explainer",
+        "Ownership: align the two cards to a shared top and equal min-height",
+        "Ownership: add a board-members section (even if just 'you') to fill the lower space with the data this screen owns"
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 700,
+        "typography": 720,
+        "color": 720,
+        "data_legibility": 700,
+        "layout": 720,
+        "visceral_value": 480,
+        "responsive": 700,
+        "consistency": 780,
+        "trust": 860
+      },
+      "total": 718,
+      "top_issues": [
+        "Sovereignty desktop: the legend row (On-chain/Reserve/Collateral behind what you are owed/Trust only) repeats four $0.00s, and the two full prose paragraphs below re-explain the same semantics — the same lesson is taught three times in one viewport",
+        "Sovereignty desktop: 'Save evidence bundle' is a full solid indigo button — a strong trust feature, but it spends the money-action accent on an export",
+        "Sovereignty desktop: 'Can dispute without asking: 0 of 1' in amber reads as a warning when it is actually the expected state of a fresh account; the color implies a problem that does not exist",
+        "Sovereignty desktop: per-counterparty line 'awaiting their signature · no proof yet · they answer in 1 d, you in 1 d' packs four facts with middots — the most information-dense line in the app at the smallest size"
+      ],
+      "fixes": [
+        "Sovereignty: keep the legend, cut the two paragraphs into a single 2-line caption with a 'How this works' expander",
+        "Sovereignty: restyle 'Save evidence bundle' as a bordered secondary with a shield icon; reserve indigo for money movement",
+        "Sovereignty: render '0 of 1' dispute coverage in neutral grey until it diverges from the safe default; amber only when a counterparty is actually uncooperative",
+        "Sovereignty: split the counterparty line into two lines — state ('awaiting their signature') and timing ('answers in 1 d · you in 1 d')"
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 600,
+        "typography": 600,
+        "color": 620,
+        "data_legibility": 640,
+        "layout": 540,
+        "visceral_value": 560,
+        "responsive": 600,
+        "consistency": 660,
+        "trust": 520
+      },
+      "total": 608,
+      "top_issues": [
+        "Desk desktop: the table's last column header is clipped at the right edge ('FR…') — the table overflows its container under the book panel; a dense console that cuts its own columns reads as broken, not dense",
+        "Desk desktop: three solid indigo buttons (Pay / Swap / Move) sit side by side in the header — the one-action accent rule is spent three times in the app's densest screen",
+        "Desk + Swap desktop: 'MARKET_WIRE_JSON_REQUIRED' raw error appears again in the book panel",
+        "Desk desktop: the seven-swatch legend (on-chain/reserve/collateral/at risk/you owe/credit room/in flight) is the correct semantic vocabulary, but three of the swatches are near-identical greens at 10px size — indistinguishable at a glance"
+      ],
+      "fixes": [
+        "Desk: fix the table container to the grid column width (or make the table horizontally scrollable with a shadow cue) so FRAMES column is never clipped",
+        "Desk: keep Pay indigo; restyle Swap and Move as quiet bordered buttons",
+        "Desk: replace the raw error string with 'Book unavailable — reconnecting' and a retry affordance",
+        "Desk: differentiate the three greens by luminance steps (on-chain brightest, reserve mid, collateral deep) and verify 3:1 separation at 10px"
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 780,
+        "typography": 740,
+        "color": 760,
+        "data_legibility": 640,
+        "layout": 760,
+        "visceral_value": 500,
+        "responsive": 740,
+        "consistency": 740,
+        "trust": 700
+      },
+      "total": 714,
+      "top_issues": [
+        "Palette desktop: right-side hints are cryptic fragments — 'batch, attention, doors' for Manage uses 'doors', an internal metaphor no user can decode; 'dense console' for Desk is a designer's description, not a user's",
+        "Palette desktop: Ownership is a navigable screen (from Manage) but has no entry here, so ⌘K cannot reach a real destination",
+        "Palette desktop: the list shows eleven static entries with the input empty — no recents, accounts (H1), or actions ('Pay H1 $50') pre-seeded, underselling the palette as a command surface"
+      ],
+      "fixes": [
+        "Palette: rewrite hints in user verbs — Manage: 'accounts, batches, approvals'; Desk: 'everything at once'",
+        "Palette: add Ownership (and Settings) entries so every screen is reachable",
+        "Palette: seed the empty state with recents and account-scoped actions ('Open H1', 'Pay H1…')"
+      ]
+    }
+  ],
+  "overall": {
+    "total": 667,
+    "verdict": "The shell is genuinely premium — calm obsidian surfaces, disciplined type, strong provability cues (committed frames, evidence bundles) and a Settings scale-explainer that proves the team understands the visceral-value idea. But the idea is executed almost nowhere: the bilateral bar is missing from the Account screen itself, zero states draw no scale tracks, raw dev errors leak into money screens, and the single-indigo rule is repeatedly broken (faucets, desk header, copy-link, export).",
+    "priority_fixes": [
+      "Render the two-half bilateral bar (with zero-notch and empty tracks at $0) on the Account detail screen and as mini-bars on Home/Manage/Desk rows — the signature component currently exists only as a legend",
+      "Replace MARKET_WIRE_JSON_REQUIRED and all internal strings in user-facing surfaces (Swap, Desk) with plain-language states; log codes to console",
+      "Enforce one-indigo discipline: demote the four faucet buttons (Assets), two of three Desk header buttons, 'Copy link' (Receive) and 'Save evidence bundle' (Sovereignty) to secondary styles",
+      "Delete the 'Risk color' customization in Settings and the gradient sample bar — semantic colors are fixed by spec, and Settings should teach that, not sell it",
+      "Fix the Desk table overflow clipping its last column, and fill the void lower halves of Account/Manage/Ownership with the state data those screens own"
+    ]
+  }
+}

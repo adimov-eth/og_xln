@@ -197,7 +197,7 @@ export function Assets() {
 							</div>
 						</div>
 						<div style={{ display: 'grid', gap: 8 }}>
-							<button type="button" className="btn" disabled={busy !== null || hubs.length === 0} onClick={() => void faucet('offchain')} data-testid="faucet-offchain">
+							<button type="button" className="btn primary" disabled={busy !== null || hubs.length === 0} onClick={() => void faucet('offchain')} data-testid="faucet-offchain">
 								{busy === 'faucet-offchain' ? 'Asking…' : `Hub pays me ${faucetMeta.symbol} over credit`}
 							</button>
 							<button type="button" className="btn" disabled={busy !== null} onClick={() => void faucet('erc20')} data-testid="faucet-erc20">

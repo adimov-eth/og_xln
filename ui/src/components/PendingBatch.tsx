@@ -113,7 +113,7 @@ export function PendingBatch({ wallet, compact = false }: { wallet: WalletView; 
 			<div className="actions" style={{ marginTop: 12 }}>
 				{mode === 'draft' ? (
 					<>
-						<button type="button" className="btn" disabled={busy !== null || sentCount > 0} onClick={() => void run('broadcast')} data-testid="batch-broadcast">
+						<button type="button" className="btn primary" disabled={busy !== null || sentCount > 0} onClick={() => void run('broadcast')} data-testid="batch-broadcast">
 							<Icon name="check" size={15} />
 							{busy === 'broadcast' ? 'Signing…' : 'Sign & send'}
 						</button>
