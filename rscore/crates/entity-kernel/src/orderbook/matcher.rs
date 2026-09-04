@@ -757,6 +757,42 @@ fn process_events(
             _ => None,
         })
         .collect();
+    if !rejects.is_empty()
+        && trades == 0
+        && let Some(route) = &current_offer.cross_jurisdiction
+    {
+        // TS `processCrossOrderbookOffer`: an expected lifecycle reject cancels
+        // the order through the route/ladder lifecycle; anything else is a
+        // projection fault (TS ORDERBOOK_LIVE_PROJECTION_REJECT).
+        let reasons = rejects
+            .iter()
+            .map(|value| value.0)
+            .collect::<Vec<_>>()
+            .join(",");
+        if !rejects.iter().all(|(reason, _)| {
+            matches!(
+                *reason,
+                "no fill" | "FOK cannot fill entirely" | "STP cancel taker"
+            )
+        }) {
+            return Err(EntityKernelError::orderbook(format!(
+                "ORDERBOOK_LIVE_PROJECTION_REJECT:{}:{reasons}",
+                current_offer.offer_id
+            )));
+        }
+        let key = (
+            materialized.account_id.clone(),
+            current_offer.offer_id.clone(),
+        );
+        state.resolving_offers.insert(key);
+        effects.cross_jurisdiction_fills.push(
+            crate::cross_j::build_cross_jurisdiction_cancel_fill(
+                &current_offer.offer_id,
+                route.clone(),
+            )?,
+        );
+        return Ok(());
+    }
     if !rejects.is_empty() && trades == 0 {
         let comment = rejects
             .iter()

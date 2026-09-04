@@ -375,9 +375,25 @@ export const handleRemoveCrossJurisdictionBookOrderEntityTx = (
 ) => {
   const newState = stateForEntityTx(entityState, options);
   const now = deterministicEntityTimestamp(newState, env);
-  const route = entityTx.data.route
-    ? withCanonicalCrossJurisdictionRouteHash(entityTx.data.route)
-    : undefined;
+  // Same fences as Rust `apply_remove_book_order`: the removal must name this
+  // book's admitted route.
+  if (!entityTx.data.route) {
+    throw haltRuntimeFailure("CROSS_J_BOOK_REMOVAL_ROUTE_MISSING", `CROSS_J_BOOK_REMOVAL_ROUTE_MISSING:${entityTx.data.orderId}`);
+  }
+  const route = withCanonicalCrossJurisdictionRouteHash(entityTx.data.route);
+  if (
+    route.orderId !== entityTx.data.orderId ||
+    normalizeEntityRef(route.source.entityId) !== normalizeEntityRef(entityTx.data.sourceEntityId) ||
+    crossJurisdictionBookOwnerRef(route) !== normalizeEntityRef(newState.entityId)
+  ) {
+    throw haltRuntimeFailure("CROSS_J_BOOK_REMOVAL_ROUTE_MISMATCH", `CROSS_J_BOOK_REMOVAL_ROUTE_MISMATCH:${entityTx.data.orderId}`);
+  }
+  const admission = newState.crossJurisdictionBookAdmissions?.get(
+    crossJurisdictionBookAdmissionKeyFor(entityTx.data.sourceEntityId, entityTx.data.orderId),
+  );
+  if (admission && normalizeEntityRef(admission.routeHash || '') !== normalizeEntityRef(route.routeHash || '')) {
+    throw haltRuntimeFailure("CROSS_J_CANCEL_ADMISSION_ROUTE_MISMATCH", `CROSS_J_CANCEL_ADMISSION_ROUTE_MISMATCH:${entityTx.data.orderId}`);
+  }
   const removed = removeCrossJurisdictionBookOrderByRouteId(
     newState,
     entityTx.data.sourceEntityId,
@@ -386,7 +402,7 @@ export const handleRemoveCrossJurisdictionBookOrderEntityTx = (
   );
   // ACK with this book's own progress: the requester's copy may be stale.
   const ackRoute = newState.crossJurisdictionSwaps?.get(entityTx.data.orderId) ?? route;
-  const outputs = ackRoute && entityTx.data.sourceAccountId
+  const outputs = entityTx.data.sourceAccountId
     ? [buildCrossJurisdictionBookRemovalAckOutput(
         newState,
         ackRoute,
