@@ -92,7 +92,20 @@ const assertCrossPullCloseAllowed = (
   route: CrossJurisdictionSwapRoute,
   fillRatio: number,
   leg: 'source' | 'target',
+  proof: Extract<AccountTx, { type: 'cross_pull_close' }>['data']['proof'],
 ): void => {
+  // ONE economics rule (TS = Rust): both cumulative amounts are the proof
+  // ratio projected onto the route totals. The Account layer proved this leg;
+  // the mirror re-derives both legs from the same ratio.
+  const ratio = BigInt(fillRatio);
+  const max = BigInt(CROSS_J_MAX_FILL_RATIO);
+  const project = (total: bigint): bigint => (ratio >= max ? total : (total * ratio) / max);
+  if (
+    proof.cumulativeSourceAmount !== project(BigInt(route.source.amount)) ||
+    proof.cumulativeTargetAmount !== project(BigInt(route.target.amount))
+  ) {
+    throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_ECONOMICS_MISMATCH", `CROSS_J_PULL_CLOSE_ECONOMICS_MISMATCH: route=${route.orderId} ratio=${fillRatio}`);
+  }
   if (fillRatio <= 0) return;
   if (isCrossJurisdictionTerminalStatus(route.status)) {
     throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_STATE_INVALID", `CROSS_J_PULL_CLOSE_STATE_INVALID: route=${route.orderId} status=${route.status}`);
@@ -457,7 +470,7 @@ const applyCrossPullCloseFollowup = (
         }
         continue;
       }
-      assertCrossPullCloseAllowed(route, fillRatio, 'source');
+      assertCrossPullCloseAllowed(route, fillRatio, 'source', accountTx.data.proof);
       const writable = claimWritableCrossJRoute(newState, route.orderId);
       Object.assign(
         writable,
@@ -491,7 +504,7 @@ const applyCrossPullCloseFollowup = (
       // Account consensus already proved that the target Hub authored this
       // cross_pull_close. currentEntityId only identifies which side is
       // projecting the committed bilateral frame; it never changes authorship.
-      assertCrossPullCloseAllowed(route, fillRatio, 'target');
+      assertCrossPullCloseAllowed(route, fillRatio, 'target', accountTx.data.proof);
       const writable = claimWritableCrossJRoute(newState, route.orderId);
       Object.assign(
         writable,

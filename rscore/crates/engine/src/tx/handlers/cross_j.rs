@@ -544,10 +544,10 @@ pub(crate) fn apply_pull_close(
         Err(error) => return Ok(reject(error)),
     };
     let Some(pull_value) = account.state().pull(&pull_id).cloned() else {
-        return Ok(MutationDecision::applied(vec![format!(
-            "🪝 Cross-j pull close ignored: {}... already closed",
+        return Ok(reject(format!(
+            "Cross-j close pull missing: {}...",
             crate::state::identity::js_prefix(&pull_id, 8),
-        )]));
+        )));
     };
     let outcome = (|| -> Result<_, String> {
         let pull = fields(&pull_value)?;
@@ -717,10 +717,6 @@ pub(crate) fn apply_pull_close(
             "🌉 Cross-j offer {} closed with pull",
             crate::state::identity::js_prefix(&order_id, 8),
         ));
-        // The Entity cross-j transition owns remote-book removal and clear
-        // followup. Publishing a same-j Account removal here would create a
-        // second orderbook authority.
-        return Ok(MutationDecision::applied(events));
     }
     Ok(MutationDecision::applied(events))
 }

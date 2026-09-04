@@ -20,7 +20,7 @@ import { commitDeltaDraft, createDeltaDraft } from '../../delta-utils';
 import { deriveTransferOffdeltaChange } from '../../../../protocol/transform/delta-movement';
 import { createDefaultDelta } from '../../../state/delta';
 import type { ApplyAccountTxResult } from '../../apply-types';
-import { accountTxApplied, accountTxSwapCancelled, accountTxValidationRejected } from '../../apply-result';
+import { accountTxApplied, accountTxValidationRejected } from '../../apply-result';
 
 type PullLockTx = Extract<AccountTx, { type: 'cross_pull_lock' }>;
 type CrossPullCloseTx = Extract<AccountTx, { type: 'cross_pull_close' }>;
@@ -271,7 +271,7 @@ export async function handleCrossPullClose(
   const events: string[] = [];
   const pull = account.pulls?.get(pullId);
   if (!pull) {
-    return accountTxApplied([`🪝 Cross-j pull close ignored: ${pullId.slice(0, 8)}... already closed`]);
+    return accountTxValidationRejected(`Cross-j close pull missing: ${pullId.slice(0, 8)}...`, events);
   }
   const binding = pull.crossJurisdiction;
   if (!binding) return accountTxValidationRejected(`Cross-j close requires pull binding`, events);
@@ -336,10 +336,6 @@ export async function handleCrossPullClose(
   if (offer?.crossJurisdiction) {
     account.swapOffers.del(binding.orderId);
     events.push(`🌉 Cross-j offer ${binding.orderId.slice(0, 8)} closed with pull`);
-    return accountTxSwapCancelled(events, {
-      offerId: binding.orderId,
-      accountId: offer.makerIsLeft ? account.leftEntity : account.rightEntity,
-    });
   }
   return accountTxApplied(events);
 }
