@@ -346,7 +346,6 @@ fn remove_book(
         CanonicalValue::Object(vec![
             ("orderId".into(), string(order_id)),
             ("sourceEntityId".into(), string(&source_entity)),
-            ("sourceAccountId".into(), string(&source_entity)),
             ("route".into(), route.clone()),
             ("reason".into(), string(reason)),
         ]),
@@ -360,6 +359,19 @@ fn remove_book(
         )?],
         ..Default::default()
     })
+}
+
+/// TS `assertTerminalPullReplay`: field-wise, hash-normalized proof equality.
+fn close_proof_matches(stored: Option<&CanonicalValue>, proof: &CanonicalValue) -> bool {
+    let Some(stored) = stored else {
+        return false;
+    };
+    text(stored, "orderId") == text(proof, "orderId")
+        && text(stored, "routeHash").map(normalized) == text(proof, "routeHash").map(normalized)
+        && unsigned(stored, "fillRatio") == unsigned(proof, "fillRatio")
+        && bigint(stored, "cumulativeSourceAmount") == bigint(proof, "cumulativeSourceAmount")
+        && bigint(stored, "cumulativeTargetAmount") == bigint(proof, "cumulativeTargetAmount")
+        && text(stored, "binaryHash").map(normalized) == text(proof, "binaryHash").map(normalized)
 }
 
 fn committed_pull_close(
@@ -436,7 +448,7 @@ fn committed_pull_close(
         ));
     }
     if terminal_route(&route) {
-        if field(&route, "sourceCloseProof") != Some(proof) {
+        if !close_proof_matches(field(&route, "sourceCloseProof"), proof) {
             return Err(committed_invalid(
                 kind,
                 format!("TERMINAL_REPLAY_MISMATCH:{order_id}"),
@@ -448,7 +460,11 @@ fn committed_pull_close(
             Ok(Default::default())
         };
     }
-    if ratio > 0 {
+    // Only a hub mirror must already be in the clearing states (the hub
+    // authored the clear); a user's mirror learns everything from the close.
+    let target_hub_committed =
+        nested_text(&route, "target", "entityId").is_some_and(|value| normalized(value) == local);
+    if ratio > 0 && (source_hub_committed || target_hub_committed) {
         let allowed = if leg == "source" {
             matches!(text(&route, "status"), Some("clearing" | "clear_requested"))
         } else {
@@ -478,6 +494,16 @@ fn committed_pull_close(
             required_field(proof, source, kind)?.clone(),
         )?;
     }
+    set(
+        &mut route,
+        "fillNumerator",
+        CanonicalValue::BigInt(BigInt::from(ratio)),
+    )?;
+    set(
+        &mut route,
+        "fillDenominator",
+        CanonicalValue::BigInt(BigInt::from(MAX_FILL_RATIO)),
+    )?;
     set(&mut route, "sourceCloseProof", proof.clone())?;
     set(&mut route, "targetCloseProof", proof.clone())?;
     let terminal = if ratio > 0 {
@@ -646,7 +672,7 @@ pub(super) fn apply_source_hub_fill_progress(
     let cancel = canonical_bool(data, "cancelRemainder");
     let is_cancel = cancel && incoming_seq == current_seq;
     let (current_ratio, _, _) = committed_fill(&route, kind)?;
-    if !is_cancel && incoming_seq == current_seq && ratio != current_ratio {
+    if incoming_seq == current_seq && ratio != current_ratio {
         return Err(committed_invalid(
             prefix,
             format!("CROSS_J_FILL_NOTICE_STALE_CONFLICT:{order_id}:{incoming_seq}:{ratio}"),

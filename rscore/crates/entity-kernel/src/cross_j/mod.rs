@@ -3239,7 +3239,7 @@ fn apply_remove_book_order(
     let route = canonical_route(supplied_route, tx.kind)?;
     let order_id = required_text(data, "orderId", tx)?;
     let source_entity = required_text(data, "sourceEntityId", tx)?;
-    let source_account = required_text(data, "sourceAccountId", tx)?;
+    let source_account = text(data, "sourceAccountId").filter(|value| !value.is_empty());
     let reason = text(data, "reason").unwrap_or("cancel_request");
     let removal_message = format!(
         "🌉 Cross-j book remove {order_id}{} {}",
@@ -3264,51 +3264,58 @@ fn apply_remove_book_order(
         .map(normalized)
         .ok_or_else(|| invalid(tx.kind, "ROUTE_HASH_MISSING"))?;
     let admission_key = format!("{source_entity}:{order_id}");
-    let mut admission = state
+    let admission = state
         .cross_jurisdiction_book_admissions
         .as_ref()
         .and_then(|values| values.get(&admission_key))
-        .cloned()
-        .ok_or_else(|| {
-            invalid(
-                tx.kind,
-                format!("CROSS_J_CANCEL_ADMISSION_MISSING:{order_id}:{source_entity}"),
-            )
-        })?;
-    if text(&admission, "routeHash").map(normalized) != Some(route_hash) {
+        .cloned();
+    if let Some(admission) = &admission
+        && text(admission, "routeHash").map(normalized) != Some(route_hash)
+    {
         return Err(invalid(tx.kind, "CROSS_J_CANCEL_ADMISSION_ROUTE_MISMATCH"));
     }
     let now = CanonicalValue::Number(
         CanonicalNumber::try_from_u64(state.timestamp)
             .map_err(|_| invalid(tx.kind, "TIMESTAMP_UNSAFE"))?,
     );
-    let source_hub = nested_text(&route, "source", "counterpartyEntityId")
-        .map(normalized)
-        .ok_or_else(|| invalid(tx.kind, "SOURCE_HUB_MISSING"))?;
-    if source_hub.is_empty() || source_hub == normalized(&state.entity_id) {
-        return Err(invalid(tx.kind, "CROSS_J_BOOK_REMOVAL_ACK_TARGET_INVALID"));
+    // TS acks only a cancel-request removal (it carries sourceAccountId);
+    // settlement removals carry none and get no ack.
+    let outputs = match source_account {
+        Some(source_account) => {
+            let source_hub = nested_text(&route, "source", "counterpartyEntityId")
+                .map(normalized)
+                .ok_or_else(|| invalid(tx.kind, "SOURCE_HUB_MISSING"))?;
+            if source_hub.is_empty() || source_hub == normalized(&state.entity_id) {
+                return Err(invalid(tx.kind, "CROSS_J_BOOK_REMOVAL_ACK_TARGET_INVALID"));
+            }
+            if route_signer(&route, &source_hub).is_none() {
+                return Err(invalid(tx.kind, "CROSS_J_BOOK_REMOVAL_ACK_SIGNER_MISSING"));
+            }
+            let ack = projected(
+                EntityTxKind::CrossJurisdictionBookOrderRemoved,
+                CanonicalValue::Object(vec![
+                    ("orderId".into(), string(&order_id)),
+                    ("sourceEntityId".into(), string(&source_entity)),
+                    ("sourceAccountId".into(), string(source_account)),
+                    ("route".into(), route.clone()),
+                    ("removedAt".into(), now.clone()),
+                    ("reason".into(), string(reason)),
+                ]),
+            )?;
+            vec![routed_for_route(&route, &source_hub, vec![ack], tx.kind)?]
+        }
+        None => Vec::new(),
+    };
+    if let Some(mut admission) = admission {
+        set(&mut admission, "status", string("closed"))?;
+        set(&mut admission, "closedAt", now.clone())?;
+        set(&mut admission, "closeReason", string(reason))?;
+        set(&mut admission, "updatedAt", now)?;
+        collection(&mut state.cross_jurisdiction_book_admissions)
+            .insert(admission_key, admission)?;
     }
-    if route_signer(&route, &source_hub).is_none() {
-        return Err(invalid(tx.kind, "CROSS_J_BOOK_REMOVAL_ACK_SIGNER_MISSING"));
-    }
-    let ack = projected(
-        EntityTxKind::CrossJurisdictionBookOrderRemoved,
-        CanonicalValue::Object(vec![
-            ("orderId".into(), string(&order_id)),
-            ("sourceEntityId".into(), string(&source_entity)),
-            ("sourceAccountId".into(), string(&source_account)),
-            ("route".into(), route.clone()),
-            ("removedAt".into(), now.clone()),
-            ("reason".into(), string(reason)),
-        ]),
-    )?;
-    set(&mut admission, "status", string("closed"))?;
-    set(&mut admission, "closedAt", now.clone())?;
-    set(&mut admission, "closeReason", string(reason))?;
-    set(&mut admission, "updatedAt", now)?;
-    collection(&mut state.cross_jurisdiction_book_admissions).insert(admission_key, admission)?;
     Ok(CrossJurisdictionApplyResult {
-        outputs: vec![routed_for_route(&route, &source_hub, vec![ack], tx.kind)?],
+        outputs,
         proposal_work: Vec::new(),
         events: vec![EntityFrameEvent::Status {
             message: removal_message,
@@ -3559,9 +3566,6 @@ fn apply_cross_pull_close(
         .and_then(|routes| routes.get(&order_id))
         .cloned()
         .ok_or_else(|| invalid(tx.kind, format!("ROUTE_MISSING:{order_id}")))?;
-    if terminal_route(&route) {
-        return Ok(CrossJurisdictionApplyResult::default());
-    }
     let local = normalized(&state.entity_id);
     let source_pull =
         field(&route, "sourcePull").ok_or_else(|| invalid(tx.kind, "SOURCE_PULL_MISSING"))?;
@@ -3586,8 +3590,22 @@ fn apply_cross_pull_close(
     if !state.known_accounts.contains(&counterparty) {
         return Err(invalid(tx.kind, format!("ACCOUNT_MISSING:{counterparty}")));
     }
-    if source_role && !matches!(text(&route, "status"), Some("clearing" | "clear_requested")) {
-        return Ok(CrossJurisdictionApplyResult::default());
+    let blocked = |message: String| CrossJurisdictionApplyResult {
+        events: vec![EntityFrameEvent::Status { message }],
+        ..Default::default()
+    };
+    let leg = if source_role { "source" } else { "target" };
+    let short_pull: String = pull_id.chars().take(8).collect();
+    let status = text(&route, "status").unwrap_or("");
+    if terminal_route(&route) {
+        return Ok(blocked(format!(
+            "❌ Cross-j {leg} pull close {short_pull} blocked: route {status}"
+        )));
+    }
+    if source_role && !matches!(status, "clearing" | "clear_requested") {
+        return Ok(blocked(format!(
+            "❌ Cross-j source pull close {short_pull} blocked: route {status}"
+        )));
     }
     if text(proof, "routeHash").map(normalized) != text(&route, "routeHash").map(normalized)
         || text(proof, "orderId") != Some(order_id.as_str())
@@ -4686,7 +4704,6 @@ fn apply_clear_request(
         .as_ref()
         .and_then(|values| values.get(&order_id))
         .cloned()
-        .or_else(|| field(data, "route").cloned())
         .ok_or_else(|| invalid(tx.kind, format!("ROUTE_MISSING:{order_id}")))?;
     let cancel_remainder = matches!(
         field(data, "cancelRemainder"),

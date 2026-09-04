@@ -4,19 +4,13 @@ import { deterministicEntityTimestamp } from '../../../../orderbook/cross-j/orde
 import {
   isCrossJurisdictionRouteExpired,
   isCrossJurisdictionTerminalStatus,
-  withCanonicalCrossJurisdictionRouteHash,
 } from '../../../../extensions/cross-j/index';
 import { prepareEntityTxState } from '../../../state-clone';
 import { addMessage } from '../../../frame-events';
-import type { CrossJurisdictionSwapRoute } from '../../../../types/cross-jurisdiction';
 import type { EntityInput, EntityState } from '../../../types';
 import type { EntityRuntimeContext } from '../../../runtime-context';
 import type { EntityTx } from '../../../../types/entity-tx';
 import type { RuntimeOverlayRecord } from '../../../../types/account';
-import {
-  findCrossJurisdictionOfferRoute,
-  mergeCrossJurisdictionRoute,
-} from '../../j-events-htlc/cross-jurisdiction-helpers';
 import type { AccountTxTarget } from '../account';
 import { handleRequestCrossJurisdictionClearEntityTx } from './clear';
 
@@ -29,22 +23,6 @@ type CrossJurisdictionSweepResult = {
 };
 
 
-const refreshSweepRoute = (
-  state: EntityState,
-  orderId: string,
-  storedRoute: CrossJurisdictionSwapRoute,
-): CrossJurisdictionSwapRoute => {
-  const offerRoute = findCrossJurisdictionOfferRoute(state, orderId);
-  if (!offerRoute) return storedRoute;
-  // A conflicting Account/Entity route is consensus corruption, not a cleanup
-  // condition. Sweeping a detached copy could close the wrong financial leg.
-  const route = mergeCrossJurisdictionRoute(
-    storedRoute,
-    withCanonicalCrossJurisdictionRouteHash(offerRoute.route),
-  );
-  state.crossJurisdictionSwaps?.set(orderId, route);
-  return route;
-};
 
 export const handleOrderbookSweepCrossJurisdictionEntityTx = (
   env: EntityRuntimeContext,
@@ -61,8 +39,7 @@ export const handleOrderbookSweepCrossJurisdictionEntityTx = (
   let closedOffers = 0;
   let waitingRoutes = 0;
 
-  for (const [orderId, storedRoute] of [...(newState.crossJurisdictionSwaps?.entries?.() ?? [])]) {
-    const route = refreshSweepRoute(newState, orderId, storedRoute);
+  for (const [orderId, route] of [...(newState.crossJurisdictionSwaps?.entries?.() ?? [])]) {
     if (isCrossJurisdictionTerminalStatus(route.status)) continue;
 
     // Book TTL sweep only — pull reveal deadlines are not sealed into the route.

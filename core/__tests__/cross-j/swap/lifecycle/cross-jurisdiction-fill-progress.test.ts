@@ -17,6 +17,7 @@ import {
   buildCrossJurisdictionPullReveal,
   buildPreparedCrossJurisdictionRoute,
   deriveCrossJurisdictionPrivateSeed,
+  getCrossJurisdictionCommittedFillAmounts,
 } from '../../../../extensions/cross-j/index';
 import {
   buildCrossJurisdictionCancelInstruction,
@@ -25,7 +26,10 @@ import {
   mergeCrossJurisdictionBookAdmission,
   type CrossJurisdictionFillInstruction,
 } from '../../../../extensions/cross-j/orderbook';
-import { applyCrossJurisdictionOrderbookFill } from '../../../../entity/tx/handlers/account-cross-j-followups';
+import {
+  applyCommittedCrossJurisdictionAccountTxFollowup,
+  applyCrossJurisdictionOrderbookFill,
+} from '../../../../entity/tx/handlers/account-cross-j-followups';
 import { buildCrossMarketOfferFromBookOrder } from '../../../../entity/tx/handlers/account/orderbook/helpers';
 import { createBook, getBookOrder } from '../../../../orderbook';
 import { replaceOrderbookPair } from '../../../../orderbook/order-index';
@@ -380,5 +384,45 @@ describe('cross-j ratio-only fill progress', () => {
     expect(result.ok ? result.outcome : undefined).toBe('applied');
     expect(account.state.swapOffers.has(prepared.orderId)).toBe(false);
     expect(account.state.pulls?.has(sourcePull.pullId)).toBe(false);
+  });
+
+  test('source user mirror at resting settles from the committed close alone', () => {
+    const env = createEmptyEnv('fill-progress-user-close');
+    env.state.timestamp = NOW;
+    const prepared = prepareRoute('fill-user-close', sourceHub, env.runtimeSeed!);
+    const fillRatio = 0x8000;
+    const privateSeed = deriveCrossJurisdictionPrivateSeed(env.runtimeSeed!, prepared);
+    const binary = buildCrossJurisdictionPullReveal(prepared, fillRatio, privateSeed).binary;
+    const filledSource = (SOURCE_TOTAL * BigInt(fillRatio)) / 65_535n;
+    const filledTarget = (TARGET_TOTAL * BigInt(fillRatio)) / 65_535n;
+    const proof = buildCrossJurisdictionCloseProof({
+      ...prepared,
+      status: 'clearing',
+      cumulativeFillRatio: fillRatio,
+      claimedRatio: fillRatio,
+      fillNumerator: BigInt(fillRatio),
+      fillDenominator: 65_535n,
+      filledSourceAmount: filledSource,
+      filledTargetAmount: filledTarget,
+      sourceClaimed: filledSource,
+      targetClaimed: filledTarget,
+    }, binary);
+    // The user never sees fill progress: its mirror still says resting.
+    const state = makeState(sourceUser, addr('b1'), eth, sourceHub);
+    state.timestamp = NOW;
+    state.crossJurisdictionSwaps?.set(prepared.orderId, { ...prepared, status: 'resting' });
+    const outputs: EntityInput[] = [];
+    const handled = applyCommittedCrossJurisdictionAccountTxFollowup(
+      env,
+      state,
+      sourceHub,
+      { type: 'cross_pull_close', data: { pullId: prepared.sourcePull!.pullId, binary, proof } },
+      outputs,
+    );
+    expect(handled).toBe(true);
+    const route = state.crossJurisdictionSwaps!.get(prepared.orderId)!;
+    expect(route.status).toBe('settled');
+    expect(getCrossJurisdictionCommittedFillAmounts(route).filledSourceAmount).toBe(filledSource);
+    expect(outputs).toEqual([]);
   });
 });

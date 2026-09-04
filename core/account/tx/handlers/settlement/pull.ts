@@ -298,22 +298,9 @@ export async function handleCrossPullClose(
   const delta = createDeltaDraft(account, pull.tokenId);
 
   const absAmount = absBigInt(pull.amount);
-  const previousRatio = Math.max(0, Math.min(HASHLADDER_MAX_FILL_RATIO, Math.floor(Number(pull.claimedRatio ?? 0) || 0)));
-  if (ratio < previousRatio) {
-    return accountTxValidationRejected(`Cross-j close ratio regression: ${ratio} < ${previousRatio}`, events);
-  }
-  const previousClaimed = pull.claimedAmount ?? ((absAmount * BigInt(previousRatio)) / BigInt(HASHLADDER_MAX_FILL_RATIO));
-  const cumulativeClaimed = binding.leg === 'source'
-    ? proof.cumulativeSourceAmount
-    : proof.cumulativeTargetAmount;
-  if (cumulativeClaimed < previousClaimed) {
-    return accountTxValidationRejected(`Cross-j close amount regression: ${cumulativeClaimed} < ${previousClaimed}`, events);
-  }
-  if (cumulativeClaimed > absAmount) {
-    return accountTxValidationRejected(`Cross-j close amount overflow: ${cumulativeClaimed} > ${absAmount}`, events);
-  }
-  const applied = cumulativeClaimed - previousClaimed;
-  const remainingHold = absAmount > cumulativeClaimed ? absAmount - cumulativeClaimed : 0n;
+  // validateCrossPullCloseEvidence proved this leg == floor(|amount|·r/65535).
+  const applied = binding.leg === 'source' ? proof.cumulativeSourceAmount : proof.cumulativeTargetAmount;
+  const remainingHold = absAmount - applied;
   const payerIsLeft = !beneficiaryIsLeft;
   const debitHold = applied + remainingHold;
   const holdError = releaseHold(
