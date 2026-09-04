@@ -21,13 +21,8 @@ export async function getXLN(): Promise<XLNModule> {
 	if (loadPromise) return loadPromise;
 
 	loadPromise = (async () => {
-		// One wallet, a handful of accounts: the inline account transition is the
-		// canonical path and boots faster than a pool of module workers. The pool's
-		// URL is also root-absolute inside the runtime bundle, which breaks under a
-		// path prefix such as /ui/ (docs/audit/2026-09-04-wallet-ui-core-findings.md #13).
-		const processShim = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process ?? {};
-		processShim.env = { ...(processShim.env ?? {}), XLN_TS_ACCOUNT_WORKERS: '0' };
-		(globalThis as { process?: unknown }).process = processShim;
+		// The account transition must run the same way as every other runtime on the network
+		// (worker pool); an inline-only shim here produced bilateral prev-hash mismatches against the hub.
 		const url = new URL(`${import.meta.env.BASE_URL}runtime.js?v=${Date.now()}`, window.location.origin).href;
 		const module: unknown = await import(/* @vite-ignore */ url);
 		if (!isXLNModuleLoaded(module)) {

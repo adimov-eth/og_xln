@@ -434,7 +434,7 @@ export function Swap() {
 
 					{disabledReason && (giveText || wantText) ? <p style={{ color: 'var(--dispute)', fontSize: 12.5 }}>{disabledReason}</p> : null}
 
-					<button type="button" className="btn" data-testid="swap-submit" disabled={!prepared || Boolean(disabledReason) || submitting || !wallet.signerId} onClick={() => void place()}>
+					<button type="button" className="btn primary" data-testid="swap-submit" disabled={!prepared || Boolean(disabledReason) || submitting || !wallet.signerId} onClick={() => void place()}>
 						<Icon name="swap" size={15} />
 						{submitting ? 'Placing…' : prepared ? `Swap ${giveMeta.symbol} for ${wantMeta.symbol}` : 'Swap'}
 					</button>

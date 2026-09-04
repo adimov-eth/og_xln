@@ -5,9 +5,11 @@
  * http://localhost:5183) or any origin with an xln API; skips on a static host.
  */
 import { expect, test } from '@playwright/test';
+import { HDNodeWallet } from 'ethers';
 
 const BOOT_TIMEOUT = 180_000;
-const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+/** A fresh phrase every run: the stack remembers accounts, a re-imported old phrase would replay a stale height. */
+const PHRASE = HDNodeWallet.createRandom().mnemonic?.phrase ?? '';
 
 test.describe('wallet UI on a hosted stack', () => {
 	test('imports a phrase and opens an account with the stack hub', { tag: '@functional' }, async ({ page, baseURL }) => {

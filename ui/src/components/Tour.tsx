@@ -77,7 +77,7 @@ export function Tour() {
 		[setTour, steps.length],
 	);
 
-	// Enter: skip what the sandbox cannot show, record baselines, reset the card.
+	// Enter: skip what this network cannot show, record baselines, reset the card.
 	useEffect(() => {
 		if (!step || !wallet.entityId) return;
 		if (entered.current === step.id) return;

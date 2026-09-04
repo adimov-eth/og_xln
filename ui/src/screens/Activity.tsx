@@ -196,7 +196,7 @@ export function ActivityScreen() {
 			<div className="screen-header">
 				<span className="screen-title">Activity</span>
 				<span className="faint" style={{ fontSize: 12 }}>
-					{movements.length} movements
+					{movements.length} {movements.length === 1 ? 'movement' : 'movements'}
 				</span>
 			</div>
 			<div className="two-col activity">

@@ -3,9 +3,9 @@
  * off-chain account, then bubble committed effects back to the entity runtime.
  */
 
-import { noteAccountFrameForShadow, shadowClockUs, shadowPreFrameState } from '../../rscore/shadow-hook';
 import {
   noteAuthorityAccountInputResult,
+  noteAuthorityCommittedOutputs,
   noteAuthorityEntityClock,
   noteRawAccountInput,
 } from '../../rscore/authority-wave';
@@ -17,7 +17,6 @@ import type {
   AccountFrame,
   AccountInput,
   AccountOutput,
-  AccountState,
 } from '../../types/account';
 import type { AccountConsensusContext } from './context';
 import {
@@ -122,8 +121,6 @@ type AccountSwapCancelRequest = { offerId: string; accountId: string };
 
 type IncomingFrameValidation = {
   clonedMachine: AccountReplica;
-  /** Reducer time for this frame's txs; zero unless the shadow mirror is on. */
-  tsApplyUs: number;
   proofResult: ReturnType<typeof buildAccountProofBodyFromJurisdictions>;
   candidateEffects: AccountOutput[];
   txResults: ApplyAccountTxOk[];
@@ -240,7 +237,6 @@ const replayIncomingFrameOnClone = async (
   const replay: IncomingFrameReplay = {
     processEvents: [],
     revealedSecrets: [],
-    tsApplyUs: 0,
     swapOffersCreated: [],
     swapCancelRequests: [],
     swapOffersCancelled: [],
@@ -250,7 +246,6 @@ const replayIncomingFrameOnClone = async (
   };
   for (const accountTx of receivedFrame.accountTxs) {
     const beforeSettlement = captureSettlementVector(clonedMachine);
-    const startedUs = shadowClockUs();
     const result = await applyAccountTx(
       clonedMachine,
       accountTx,
@@ -281,7 +276,6 @@ const replayIncomingFrameOnClone = async (
       accountLog.debug('receiver.tx.processed', { type: accountTx.type, success: true });
     }
     replay.processEvents.push(...result.events);
-    replay.tsApplyUs += shadowClockUs() - startedUs;
     replay.txResults.push(result);
     replay.candidateEffects.push(...(result.candidateEffects ?? []));
     collectIncomingOkOutcome(result, replay, input.fromEntityId);
@@ -430,7 +424,6 @@ async function validateIncomingFrameOnDraft(
 }
 
 async function commitIncomingFrameOnRealState(
-  runtimeId: string | undefined,
   accountAuthorityFrameId: string | null | undefined,
   account: AccountReplica,
   input: AccountInput,
@@ -460,25 +453,11 @@ async function commitIncomingFrameOnRealState(
   // restore its losing proposal to the live mempool first and then publish the
   // already-validated winning transition without executing its AccountTxs a
   // second time.
-  // Captured before the publish: the pre-frame state is what the mirror seeds
-  // a never-seen account from, so its first frame is executed, not imported.
-  const preFrameState = shadowPreFrameState(account.state);
   publishAccountOverlay(account, validation.clonedMachine);
   if (account.state !== validation.clonedMachine.state) {
     throw new Error('ACCOUNT_OVERLAY_PUBLISH_STATE_IDENTITY_MISMATCH');
   }
-  noteCommittedIncomingFrameForShadow({
-    runtimeId,
-    accountAuthorityFrameId,
-    account,
-    receivedFrame,
-    proposerIsLeft,
-    validation,
-    ownerEntityId: ourEntityId,
-    counterpartyEntityId: cpForCommitLog,
-    securityContext,
-    preFrameState,
-  });
+  noteAuthorityCommittedOutputs(accountAuthorityFrameId, ourEntityId, cpForCommitLog, validation.txResults);
   timedOutHashlocks.push(...validation.timedOutHashlocks);
   candidateEffects.push(...validation.candidateEffects);
   if (validation.accountJClaimNodeChanges) {
@@ -526,43 +505,6 @@ async function commitIncomingFrameOnRealState(
     events.push(`🔄 Auto-rebalance queued ${postCommitAutoRebalanceTxs.length} tx(s) after frame commit`);
   }
 }
-
-const noteCommittedIncomingFrameForShadow = (value: Readonly<{
-  runtimeId: string | undefined;
-  accountAuthorityFrameId: string | null | undefined;
-  account: AccountReplica;
-  receivedFrame: AccountFrame;
-  proposerIsLeft: boolean;
-  validation: IncomingFrameValidation;
-  ownerEntityId: string;
-  counterpartyEntityId: string;
-  securityContext: AccountInputSecurityContext;
-  preFrameState: AccountState | undefined;
-}>): void => {
-  const { receivedFrame, validation, securityContext } = value;
-  const shadowJHeight = receivedFrame.jHeight ?? value.account.state.lastFinalizedJHeight ?? 0;
-  noteAccountFrameForShadow({
-    ...(value.runtimeId === undefined ? {} : { runtimeId: value.runtimeId }),
-    ...(value.accountAuthorityFrameId === undefined
-      ? {}
-      : { accountAuthorityFrameId: value.accountAuthorityFrameId }),
-    ownerEntityId: value.ownerEntityId,
-    counterpartyEntityId: value.counterpartyEntityId,
-    frameHeight: receivedFrame.height,
-    byLeft: value.proposerIsLeft,
-    timestamp: receivedFrame.timestamp,
-    jHeight: shadowJHeight,
-    // Enforcement uses the receiving Entity's clock, never the signed frame's.
-    enforcementTimestamp: securityContext.entityTimestamp,
-    enforcementJHeight: securityContext.finalizedJHeight,
-    accountTxs: receivedFrame.accountTxs,
-    txResults: validation.txResults,
-    tsApplyUs: validation.tsApplyUs,
-    committedStateRoot: receivedFrame.accountStateRoot,
-    account: value.account,
-    ...(value.preFrameState ? { preFrameState: value.preFrameState } : {}),
-  });
-};
 
 type IncomingAckFrameMaterial = {
   response: Extract<AccountInput, { kind: 'ack' }>;
@@ -914,7 +856,6 @@ async function handleIncomingAccountFrame(
   }
 
   await commitIncomingFrameOnRealState(
-    context.runtimeId,
     context.accountAuthorityFrameId,
     account,
     input,

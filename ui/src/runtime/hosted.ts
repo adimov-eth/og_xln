@@ -2,8 +2,10 @@ import { getXLN } from './xln-loader';
 import { connectEmbedded, getEmbeddedEnv, requireAdapter } from './adapter';
 import { deriveAddress, derivePrivateKeyBytes } from './keys';
 import { readJson } from './http';
+import { getTokenMeta } from './format';
 import { DEFAULT_ACCOUNT_DISPUTE_CONFIG, waitFor } from './tx';
-import { accountReady, findReplicaState, sendEntity } from './sandbox';
+import type { EntityTx, RuntimeReplica } from '@xln/core/api/public/runtime-module';
+import { HDNodeWallet } from 'ethers';
 import { useApp, type VaultKind } from './store';
 
 /**
@@ -23,9 +25,34 @@ export type StackJurisdiction = {
 	contracts: { account: string; depository: string; entityProvider: string; deltaTransformer: string };
 };
 export type StackHub = { entityId: string; name: string; online: boolean };
-export type Stack = { apiBase: string; relayUrl: string; jurisdiction: StackJurisdiction; hubs: StackHub[] };
+/** `jurisdiction` is the primary (the entity's home chain); `jurisdictions` lists every active chain, primary first. */
+export type Stack = { apiBase: string; relayUrl: string; jurisdiction: StackJurisdiction; jurisdictions: StackJurisdiction[]; hubs: StackHub[] };
 
 const USDC = 1;
+const HUB_CREDIT_LINE_USD = 10_000n;
+
+export function findReplicaState(env: RuntimeReplica, entityId: string) {
+	for (const [key, replica] of env.state.eReplicas?.entries?.() ?? []) {
+		const keyEntityId = String(key).split(':')[0] ?? '';
+		if (keyEntityId.toLowerCase() === entityId.toLowerCase()) return replica;
+	}
+	return undefined;
+}
+
+export function accountReady(env: RuntimeReplica, entityId: string, counterpartyId: string): boolean {
+	return Boolean(findReplicaState(env, entityId)?.state?.accounts?.get?.(counterpartyId));
+}
+
+export async function sendEntity(entityId: string, signerId: string, entityTxs: EntityTx[]): Promise<void> {
+	await requireAdapter().send({ runtimeTxs: [], entityInputs: [{ entityId, signerId, entityTxs }] });
+}
+
+/** "Learn xln": a throwaway phrase on the live network. The user can keep it afterwards. */
+export async function bootLearnVault(stack: Stack, onStep?: (step: string) => void): Promise<void> {
+	const phrase = HDNodeWallet.createRandom().mnemonic?.phrase;
+	if (!phrase) throw new Error('MNEMONIC_GENERATION_FAILED');
+	await bootHostedVault(phrase, { vaultId: `tour-${Date.now().toString(36)}`, vaultName: 'Tour wallet', kind: 'mnemonic', selfLabel: 'Alice', stack, ...(onStep ? { onStep } : {}) });
+}
 declare const __XLN_STACK_ORIGIN__: string;
 /** Same origin as the API (proxied in dev), except a TLS stack the dev server cannot WebSocket-proxy. */
 const socketOrigin = (apiBase: string): string =>
@@ -44,7 +71,7 @@ export const relayUrlFor = (apiBase: string): string => {
 	return url.toString();
 };
 
-function pickJurisdiction(payload: Record<string, unknown>, apiBase: string): StackJurisdiction | null {
+function pickJurisdictions(payload: Record<string, unknown>, apiBase: string): StackJurisdiction[] {
 	const entries = Object.entries(asRecord(payload['jurisdictions']));
 	const usable = entries.flatMap(([key, raw]) => {
 		const config = asRecord(raw);
@@ -75,7 +102,8 @@ function pickJurisdiction(payload: Record<string, unknown>, apiBase: string): St
 			},
 		];
 	});
-	return (usable.find(entry => entry.primary) ?? usable[0])?.jurisdiction ?? null;
+	const primary = usable.find(entry => entry.primary) ?? usable[0];
+	return primary ? [primary.jurisdiction, ...usable.filter(entry => entry !== primary).map(entry => entry.jurisdiction)] : [];
 }
 
 async function fetchApi(apiBase: string, path: string): Promise<Record<string, unknown>> {
@@ -92,12 +120,13 @@ async function fetchApi(apiBase: string, path: string): Promise<Record<string, u
 
 /** Null when this origin serves no xln API: the wallet then offers only the offline sandbox. */
 export async function detectStack(apiBase: string = window.location.origin): Promise<Stack | null> {
-	let jurisdiction: StackJurisdiction | null;
+	let jurisdictions: StackJurisdiction[];
 	try {
-		jurisdiction = pickJurisdiction(await fetchApi(apiBase, '/api/jurisdictions'), apiBase);
+		jurisdictions = pickJurisdictions(await fetchApi(apiBase, '/api/jurisdictions'), apiBase);
 	} catch {
 		return null;
 	}
+	const jurisdiction = jurisdictions[0];
 	if (!jurisdiction) return null;
 	let hubs: StackHub[] = [];
 	try {
@@ -110,7 +139,7 @@ export async function detectStack(apiBase: string = window.location.origin): Pro
 	} catch {
 		hubs = [];
 	}
-	return { apiBase, relayUrl: relayUrlFor(socketOrigin(apiBase)), jurisdiction, hubs };
+	return { apiBase, relayUrl: relayUrlFor(socketOrigin(apiBase)), jurisdiction, jurisdictions, hubs };
 }
 
 export type HostedVaultOptions = {
@@ -144,27 +173,29 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 		const entityId = String(xln.generateLazyEntityId([signerId], 1n)).toLowerCase();
 		const j = stack.jurisdiction;
 
-		step(`Joining ${j.name}`);
-		const jReady = (): boolean => Boolean(env.state.jReplicas?.get?.(j.name)?.contracts?.depository);
-		if (!jReady()) {
+		// Every chain the stack runs: the entity lives on the primary, swaps may cross into the others.
+		for (const chain of stack.jurisdictions) {
+			step(`Joining ${chain.name}`);
+			const ready = (): boolean => Boolean(env.state.jReplicas?.get?.(chain.name)?.contracts?.depository);
+			if (ready()) continue;
 			await adapter.send({
 				runtimeTxs: [
 					{
 						type: 'importJ',
 						data: {
-							name: j.name,
-							chainId: j.chainId,
+							name: chain.name,
+							chainId: chain.chainId,
 							ticker: 'USDC',
-							rpcs: [j.rpcUrl],
-							entityProviderDeploymentBlock: j.entityProviderDeploymentBlock,
-							blockTimeMs: j.blockTimeMs,
-							contracts: j.contracts,
+							rpcs: [chain.rpcUrl],
+							entityProviderDeploymentBlock: chain.entityProviderDeploymentBlock,
+							blockTimeMs: chain.blockTimeMs,
+							contracts: chain.contracts,
 						},
 					},
 				],
 				entityInputs: [],
 			});
-			await waitFor(jReady, `importJ ${j.name}`, 45_000);
+			await waitFor(ready, `importJ ${chain.name}`, 45_000);
 		}
 
 		step('Creating your entity');
@@ -228,7 +259,9 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 			await sendEntity(entityId, signerId, [
 				{
 					type: 'openAccount',
-					data: { targetEntityId: hub.entityId, creditAmount: 0n, tokenId: USDC, disputeConfig: DEFAULT_ACCOUNT_DISPUTE_CONFIG },
+					// Our credit line to the hub: what it may owe us, so it can pay us (faucet, incoming payments) without
+					// touching the chain. Same default as the SvelteKit onboarding's soft limit.
+					data: { targetEntityId: hub.entityId, creditAmount: HUB_CREDIT_LINE_USD * 10n ** BigInt(getTokenMeta(USDC).decimals), tokenId: USDC, disputeConfig: DEFAULT_ACCOUNT_DISPUTE_CONFIG },
 				},
 			]);
 			try {

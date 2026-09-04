@@ -3,7 +3,7 @@ import { useApp } from './store';
 /**
  * HTTP origin of the runtime this wallet talks to. A remote vault derives it
  * from the WebSocket URL the way the SvelteKit frontend does; an embedded
- * runtime (sandbox, brainvault, mnemonic) has no server of its own, so the
+ * runtime (brainvault, mnemonic) uses the page origin, the stack that serves it, so the
  * page origin is the only candidate and callers must expect 404s there.
  */
 export function resolveApiBase(): string {

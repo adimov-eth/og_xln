@@ -4,20 +4,11 @@
  * rendering their state without a hosted API.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { enterStack } from './stack';
 
 const BOOT_TIMEOUT = 180_000;
 const CHAIN_TIMEOUT = 90_000;
 
-async function enterSandbox(page: Page): Promise<void> {
-	await page.goto('/');
-	const existing = page.getByRole('button', { name: /Sandbox/ }).first();
-	if (await existing.isVisible({ timeout: 2_000 }).catch(() => false)) await existing.click();
-	else await page.getByTestId('gate-sandbox').click();
-	await expect(page.getByTestId('home-total')).toBeVisible({ timeout: BOOT_TIMEOUT });
-	await expect(page.getByTestId('token-net-USDC')).toBeVisible({ timeout: CHAIN_TIMEOUT });
-	// The sandbox shapes the signer wallet (2,500 USDC + 1 WETH); wait for the on-chain tier so totals are stable.
-	await expect(page.getByTestId('home-onchain')).not.toContainText('$0.00', { timeout: CHAIN_TIMEOUT });
-}
 
 const money = (text: string | null): number => Number(String(text || '0').replace(/[^0-9.-]/g, ''));
 
@@ -26,7 +17,7 @@ test.describe('wallet UI manage', () => {
 		const pageErrors: string[] = [];
 		page.on('pageerror', error => pageErrors.push(error.message));
 
-		await enterSandbox(page);
+		await enterStack(page);
 		const usdcBefore = money(await page.getByTestId('token-net-USDC').textContent());
 
 		await page.getByRole('link', { name: 'Manage' }).first().click();

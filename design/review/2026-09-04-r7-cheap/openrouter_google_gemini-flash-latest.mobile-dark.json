@@ -1,0 +1,458 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/01-home.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 740,
+        "typography": 750,
+        "color": 720,
+        "data_legibility": 740,
+        "layout": 710,
+        "visceral_value": 520,
+        "responsive": 780,
+        "consistency": 760,
+        "trust": 780
+      },
+      "total": 726,
+      "top_issues": [
+        "Home mobile: The primary action row gives equal button geometry to 'Pay', 'Receive', and 'Swap', but tints only 'Pay' with indigo (#6E7CFF), breaking button group visual symmetry without establishing why 'Receive' is demoted to a hollow wireframe container.",
+        "Home mobile: The zero-state hides the visceral value bar entirely under an empty string ('Nothing here yet...'), forfeiting the opportunity to anchor the scale (1 px = $10) with an idle zero-axis rule and baseline tick.",
+        "Home mobile: The four tiny legend dots (On-chain, Reserve, Secured, At risk) stack in two lines below $0.00 with inconsistent horizontal spacing and clutter the top hierarchy before any balances exist."
+      ],
+      "fixes": [
+        "Home mobile: In the top balance breakdown, replace the wrapped multi-line legend dots with a single horizontal segmented rail with fixed slot widths and mono numerical values right-aligned.",
+        "Home mobile: Render an empty-state visceral baseline bar with a vertical 0-notch and visible subtle grid lines so the user immediately understands '1 px = $10 · auto' before receiving funds.",
+        "Home mobile: Unify primary action button styles: keep 'Pay' filled indigo (#6E7CFF), but elevate 'Receive' and 'Swap' to solid surface containers (e.g. background rgba(255, 255, 255, 0.06)) instead of thin low-contrast borders."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/04-receive-bottom.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 690,
+        "typography": 700,
+        "color": 670,
+        "data_legibility": 710,
+        "layout": 660,
+        "visceral_value": 500,
+        "responsive": 670,
+        "consistency": 680,
+        "trust": 730
+      },
+      "total": 669,
+      "top_issues": [
+        "Receive bottom mobile: The screen content is heavily vertically fragmented into five separate rounded card outlines (Amount, Note, Warning banner, Share, Entity ID), creating card fatigue and noisy stacked borders.",
+        "Receive bottom mobile: Action buttons 'Copy invoice' and 'Copy link' violate the accent rule: 'Copy link' uses filled primary indigo (#6E7CFF) reserved strictly for actions that move money, while it is only a clipboard string copy.",
+        "Receive bottom mobile: The raw 66-character Entity ID hex string wraps across three awkward lines in low contrast with no one-tap copy button or chunked formatting."
+      ],
+      "fixes": [
+        "Receive bottom mobile: Demote 'Copy link' and 'Copy invoice' to secondary ghost or subtle elevated surface buttons (bg #18191E, text #F3F4F6) and remove the #6E7CFF fill.",
+        "Receive bottom mobile: Merge 'Amount', 'Note', and 'Inbound room status' into a single grouped form container with 1px hairline dividers (#22242D) instead of 5 isolated floating cards.",
+        "Receive bottom mobile: Truncate the Entity ID with a middle ellipsis (e.g. 0x0eeb…3803) or format it into 4-character monospace clusters, paired with a dedicated trailing inline copy icon."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/04-receive.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 760,
+        "typography": 730,
+        "color": 740,
+        "data_legibility": 780,
+        "layout": 720,
+        "visceral_value": 500,
+        "responsive": 740,
+        "consistency": 700,
+        "trust": 790
+      },
+      "total": 725,
+      "top_issues": [
+        "Receive mobile: The oversized pure white QR plate (#FFFFFF container with stark rounded corners) creates jarring contrast glare against the Obsidian canvas, overpowering the screen title and input card.",
+        "Receive mobile: Viewport scroll cutting: the Amount card is cut in half at the fold, concealing whether this screen is meant to be an invoice builder or a fixed address dispenser.",
+        "Receive mobile: No visceral value feedback exists to visually depict the incoming capacity or maximum channel headroom against existing channels."
+      ],
+      "fixes": [
+        "Receive mobile: Reduce QR code outer card padding from ~32px to 16px, soften the background to an off-white cream or slight zinc (#ECEEF2), and cap QR size at 220x220px to fit Amount inputs above the mobile fold.",
+        "Receive mobile: Anchor the active Inbound Room indicator (receive up to 0.00 instantly) right under the header as a horizontal capacity bar before the QR container.",
+        "Receive mobile: Add a direct 'Set Amount' prompt on the QR display so the recipient knows the QR dynamically updates when typing."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/05-swap.png",
+      "scores": {
+        "hierarchy": 710,
+        "premium": 680,
+        "typography": 700,
+        "color": 690,
+        "data_legibility": 660,
+        "layout": 690,
+        "visceral_value": 540,
+        "responsive": 730,
+        "consistency": 700,
+        "trust": 650
+      },
+      "total": 675,
+      "top_issues": [
+        "Swap mobile: Under BOOK section, raw debug string 'MARKET_WIRE_JSON_REQUIRED' is dumped in monospace directly on the production surface, severely degrading trust and polish.",
+        "Swap mobile: The primary action button 'Swap' uses a disabled/faded muted indigo (#3E457B) that fails WCAG AA contrast against its white text label while appearing neither clearly active nor clean disabled.",
+        "Swap mobile: The network mode pill toggle ('Same network' vs 'Across networks') is positioned high in the header bar with clumsy horizontal padding and weak selected-state contrast."
+      ],
+      "fixes": [
+        "Swap mobile: Replace 'MARKET_WIRE_JSON_REQUIRED' with a polished loading skeleton or an explicit empty state ('Connecting to H1 orderbook…').",
+        "Swap mobile: Standardize disabled action button state: dark neutral fill (rgba(255, 255, 255, 0.08)), text rgba(255, 255, 255, 0.35), removing washed-out indigo tones entirely until inputs are valid.",
+        "Swap mobile: Move the network switcher directly above the 'You pay' card as an integrated segmented control with 32px height and distinct active pill indicator."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06-account.png",
+      "scores": {
+        "hierarchy": 770,
+        "premium": 760,
+        "typography": 780,
+        "color": 790,
+        "data_legibility": 780,
+        "layout": 740,
+        "visceral_value": 520,
+        "responsive": 800,
+        "consistency": 760,
+        "trust": 820
+      },
+      "total": 752,
+      "top_issues": [
+        "Account mobile: Action buttons grid is asymmetric: three buttons on top ('Pay', 'Extend credit', 'Swap') and a solitary wide 'Manage' button below, leaving an awkward blank hole in the 2x2 grid.",
+        "Account mobile: Bilateral account state lacks its core visual deliverable: there is no two-half capacity bar showing own credit line, collateral, or what the counterparty owes.",
+        "Account mobile: 'Status: Open' uses green text, but green is strictly reserved for non-custodial / collateralized money; semantic status should be neutral zinc (#9CA3AF) or teal."
+      ],
+      "fixes": [
+        "Account mobile: Refactor action buttons into a balanced 4-column icon-plus-label strip (Pay, Credit, Swap, Manage) with equal square hit targets.",
+        "Account mobile: Insert the canonical bilateral account split bar directly below the H1 title: left half = send capacity, right half = receive capacity, with a centered zero notch.",
+        "Account mobile: Change 'Open' status pill color from money-green (#22C55E) to neutral slate badge with a subtle 6px status pip."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/07-activity.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 810,
+        "typography": 790,
+        "color": 800,
+        "data_legibility": 810,
+        "layout": 780,
+        "visceral_value": 510,
+        "responsive": 830,
+        "consistency": 810,
+        "trust": 830
+      },
+      "total": 779,
+      "top_issues": [
+        "Activity mobile: Filter pills at top ('All', 'Payments', 'Swaps', 'Settlement', 'Account') run off-screen on the right with no scroll fade affordance or snap alignment.",
+        "Activity mobile: The counter '1 movements' has poor grammatical casing/pluralization and sits orphaned at the far right of the page title in faint low-contrast grey.",
+        "Activity mobile: The single list item 'Account opened' does not display an execution timestamp or state badge, only an ambiguous grey dot labeled 'created'."
+      ],
+      "fixes": [
+        "Activity mobile: Fix grammatical string interpolation: '1 movement' (singular) and position it beneath the 'Activity' title in text-xs mono zinc (#71717A).",
+        "Activity mobile: Add a right-edge linear gradient mask (to transparent) on the filter pill row to indicate horizontal scrollability on narrow viewports.",
+        "Activity mobile: Replace '• created' with timestamp ('19:39') in JetBrains Mono and a distinct state badge indicating settlement finality."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/08-activity-detail.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 820,
+        "typography": 810,
+        "color": 830,
+        "data_legibility": 820,
+        "layout": 810,
+        "visceral_value": 510,
+        "responsive": 840,
+        "consistency": 820,
+        "trust": 880
+      },
+      "total": 797,
+      "top_issues": [
+        "Activity detail mobile: 'From your runtime's committed frames' uses money-green (#22C55E) for an informational integrity caption; green is strictly reserved for fully collateralized assets.",
+        "Activity detail mobile: Modal bottom sheet height leaves massive empty black dead space across the upper 55% of the screen without dimming the background activity row adequately.",
+        "Activity detail mobile: Frame '#7' and Time '19:39:39' are rendered right-aligned in normal font size, missing an opportunity to show cryptographic commitment hashes or block depth."
+      ],
+      "fixes": [
+        "Activity detail mobile: Change footer status indicator dot and text from green to subtle violet (#A78BFA) or muted blue-gray (#94A3B8) with a lock icon for cryptographic provability.",
+        "Activity detail mobile: Increase backdrop scrim opacity from ~0.4 to 0.75 blur to focus the sheet modal and suppress background item distraction.",
+        "Activity detail mobile: Add a copyable frame commitment digest row (e.g. 'Commitment: 0x7f3a…c9') beneath Frame #7 in 11px JetBrains Mono."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/10-move-bottom.png",
+      "scores": {
+        "hierarchy": 730,
+        "premium": 710,
+        "typography": 740,
+        "color": 720,
+        "data_legibility": 730,
+        "layout": 700,
+        "visceral_value": 560,
+        "responsive": 710,
+        "consistency": 730,
+        "trust": 750
+      },
+      "total": 708,
+      "top_issues": [
+        "Move bottom mobile: The error message 'Amount exceeds what is available here' is rendered in plain red text floating loosely in negative space below the action buttons rather than attached directly to the Amount input.",
+        "Move bottom mobile: Action buttons 'Sign & send' and 'Add to batch' are placed above the error message and above the 'WHAT HAPPENS' explanation card, reversing the natural mental progression (Input -> Preview -> Action).",
+        "Move bottom mobile: The destination selector cards at top are cut off horizontally and vertically, confusing the user regarding what source is being transferred."
+      ],
+      "fixes": [
+        "Move bottom mobile: Relocate error notification directly beneath the 'Amount' input card with an error icon and shake animation, clearing it from the button footer.",
+        "Move bottom mobile: Move 'Sign & send' and 'Add to batch' to a sticky bottom container below 'WHAT HAPPENS' so the user reviews the operational route before executing.",
+        "Move bottom mobile: Change the error text color from saturated red (#EF4444) to standard warning coral (#F87171) and disable 'Sign & send' explicitly."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/10-move.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 730,
+        "typography": 740,
+        "color": 740,
+        "data_legibility": 730,
+        "layout": 710,
+        "visceral_value": 600,
+        "responsive": 730,
+        "consistency": 740,
+        "trust": 760
+      },
+      "total": 722,
+      "top_issues": [
+        "Move mobile: The three-location model (Wallet, Reserve, Account) is duplicated identically into two stacked rows ('FROM' and 'TO') with 6 identical-looking rectangular cards, creating severe visual clutter and cognitive load.",
+        "Move mobile: Small horizontal capacity meters at the bottom of each location card (under '0.00 USDC') are too thin (2px) and illegible to communicate capacity or balance ratios.",
+        "Move mobile: The token selector in the header ('USDC') is visually disconnected from the amount input field below."
+      ],
+      "fixes": [
+        "Move mobile: Redesign the 'FROM' and 'TO' tier selection into a unified segmented carousel or visual transfer vector diagram (Source -> Arrow -> Destination) saving 140px of vertical height.",
+        "Move mobile: Thicken the mini position bars inside the location cards from 2px to 4px and apply strict semantic colors (green for Wallet/Reserve, violet for Account).",
+        "Move mobile: Embed the token picker pill directly inside the 'Amount' input field card right-aligned with the numeral."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/11-manage.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 800,
+        "typography": 800,
+        "color": 810,
+        "data_legibility": 800,
+        "layout": 780,
+        "visceral_value": 500,
+        "responsive": 820,
+        "consistency": 810,
+        "trust": 820
+      },
+      "total": 775,
+      "top_issues": [
+        "Manage mobile: The 2x2+1 grid leaves 'Ownership' as an awkward full-width or single-column orphan card below 'Assets' and 'Lending', breaking the 2-column symmetry.",
+        "Manage mobile: Cards mix navigational arrow icons ('-> Move') with descriptive status icons ('Shield', 'Wallet', 'Bank'), creating inconsistent card signifiers.",
+        "Manage mobile: 'Accounts' list entry ('H1 hub · 0 lanes · 0 frames · open') is text-heavy and lacks visual indication of counterparty balance or risk tier."
+      ],
+      "fixes": [
+        "Manage mobile: Restructure the top management tiles into an even 2x3 grid or a clean vertical list menu with uniform trailing chevrons and consistent leading icon treatments.",
+        "Manage mobile: Unify card icon styling: use consistent outlined glyphs inside 32x32 rounded squircle containers with no ad-hoc inline arrow prefixes.",
+        "Manage mobile: Add a compact bilateral balance bar to the H1 item under ACCOUNTS to preview credit state at a glance."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/12-assets-bottom.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 650,
+        "typography": 700,
+        "color": 640,
+        "data_legibility": 700,
+        "layout": 650,
+        "visceral_value": 500,
+        "responsive": 670,
+        "consistency": 670,
+        "trust": 690
+      },
+      "total": 653,
+      "top_issues": [
+        "Assets bottom mobile: The FAUCETS section features a vertical stack of four large bright indigo buttons (#6E7CFF), dominating the entire viewport and violating the rule that indigo is reserved for the ONE action that moves money.",
+        "Assets bottom mobile: Faucet token selector buttons ('USDC', 'WETH', 'USDT', 'TRX', 'SUN') form an irregular 2-column grid with a dangling 'SUN' button on row 3.",
+        "Assets bottom mobile: Testnet utility tooling is given first-class prominence on an otherwise production-grade fintech screen."
+      ],
+      "fixes": [
+        "Assets bottom mobile: Downgrade all four faucet claim buttons from solid indigo (#6E7CFF) to secondary dark outlined buttons or a single dropdown with one secondary 'Request test funds' button.",
+        "Assets bottom mobile: Organize token chips into a clean single-row horizontal scrolling chip rail instead of an uneven multi-row grid.",
+        "Assets bottom mobile: Wrap the entire Faucets panel inside an expandable disclosure accordion ('Developer Faucets · Testnet only') defaulted to collapsed."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/12-assets.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 760,
+        "typography": 770,
+        "color": 760,
+        "data_legibility": 780,
+        "layout": 740,
+        "visceral_value": 530,
+        "responsive": 770,
+        "consistency": 760,
+        "trust": 800
+      },
+      "total": 743,
+      "top_issues": [
+        "Assets mobile: 'Move into reserve' button inside the ON-CHAIN WALLET card is stranded as a clumsy left-aligned box beneath the token rows, disturbing the list flow.",
+        "Assets mobile: Token rows (USDC, WETH, USDT) lack asset balance visual weight: the '0.00' balance numeral has the exact same font size and weight as the token symbol title.",
+        "Assets mobile: Subtitle 'Depository may pull 0.00' is repeated identically on three lines, creating redundant visual noise without clarifying allowance vs balance."
+      ],
+      "fixes": [
+        "Assets mobile: Move the 'Move into reserve' CTA to the card header beside 'Refresh' as a compact secondary button or an inline row action.",
+        "Assets mobile: Differentiate token rows with tabular bold numerals (font-medium text-base JetBrains Mono) for amounts and subtle grey (text-xs #71717A) for allowances.",
+        "Assets mobile: Replace redundant 'Depository may pull 0.00' with a clear status label like 'Approved: $0.00'."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/13-lend-bottom.png",
+      "scores": {
+        "hierarchy": 710,
+        "premium": 710,
+        "typography": 730,
+        "color": 720,
+        "data_legibility": 730,
+        "layout": 700,
+        "visceral_value": 510,
+        "responsive": 720,
+        "consistency": 720,
+        "trust": 740
+      },
+      "total": 699,
+      "top_issues": [
+        "Lend bottom mobile: Term selector buttons ('1 hour', '1 day', '1 month') are arranged as an awkward 2x2 grid with an empty slot next to '1 month'.",
+        "Lend bottom mobile: The screen relies on repetitive stacked outline cards (Token, Lend/Borrow, Amount, Term, Interest, Pool Stats), resulting in cramped vertical scrolling and hidden action triggers.",
+        "Lend bottom mobile: 'Offer to the pool' button uses disabled muted purple/indigo with poor contrast against the card background."
+      ],
+      "fixes": [
+        "Lend bottom mobile: Render Term durations as a single 3-column segmented button row with equal flex-1 widths ('1h', '1d', '1mo').",
+        "Lend bottom mobile: Consolidate Term and Interest basis points into a single composite loan parameters card.",
+        "Lend bottom mobile: Keep 'Offer to the pool' pinned above the bottom tab bar when scrolled so the user does not have to scroll past H1 POOL metrics to submit."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/13-lend.png",
+      "scores": {
+        "hierarchy": 730,
+        "premium": 720,
+        "typography": 740,
+        "color": 730,
+        "data_legibility": 730,
+        "layout": 710,
+        "visceral_value": 510,
+        "responsive": 740,
+        "consistency": 730,
+        "trust": 750
+      },
+      "total": 709,
+      "top_issues": [
+        "Lend mobile: Top 'Hub' card has an empty right half and an unstyled blue border around 'H1 0 lanes' that looks like an unfinished focus ring.",
+        "Lend mobile: 'Lend' and 'Borrow' toggle pills sit detached between the 'Token' card and 'Amount' card with no container bounding box.",
+        "Lend mobile: The screen lacks any pool depth or yield visualization to show visceral liquidity distribution across term tiers."
+      ],
+      "fixes": [
+        "Lend mobile: Anchor the 'Lend / Borrow' segment switcher at the very top of the page directly beneath the navigation bar header.",
+        "Lend mobile: Style the Hub selector as a clean dropdown row with hub identity avatar, balance, and trailing selector arrow.",
+        "Lend mobile: Add a proportional bar in the pool stats showing available vs borrowed capital at the selected term."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/14-ownership.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 800,
+        "typography": 790,
+        "color": 810,
+        "data_legibility": 800,
+        "layout": 790,
+        "visceral_value": 500,
+        "responsive": 810,
+        "consistency": 810,
+        "trust": 840
+      },
+      "total": 775,
+      "top_issues": [
+        "Ownership mobile: Signer chip 'you' uses low-contrast purple pill that blends into the background hex string.",
+        "Ownership mobile: The lower card 'TAKE CONTROL OF ANOTHER ENTITY' gives equal visual card prominence to an empty dead-end state ('Nothing to take over...').",
+        "Ownership mobile: The page is purely informational and lacks clear actionable hierarchy for registering on EntityProvider."
+      ],
+      "fixes": [
+        "Ownership mobile: Replace the purple 'you' tag with a distinct high-contrast zinc badge (bg #27272A, text #FAFAFA, border #3F3F46).",
+        "Ownership mobile: Demote 'Take control of another entity' to a collapsed subtle footer row or text link rather than a full heavyweight container card.",
+        "Ownership mobile: Convert 'Register it on the EntityProvider to issue shares' into an explicit actionable secondary button or linked chevron item."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/15-sovereignty-bottom.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 780,
+        "typography": 790,
+        "color": 770,
+        "data_legibility": 780,
+        "layout": 750,
+        "visceral_value": 520,
+        "responsive": 770,
+        "consistency": 780,
+        "trust": 820
+      },
+      "total": 755,
+      "top_issues": [
+        "Sovereignty bottom mobile: The button 'Save evidence bundle' violates the core color principle by using filled primary indigo (#6E7CFF); downloading local cryptographic proof is an archival action, not an action that moves money.",
+        "Sovereignty bottom mobile: Warning metrics ('Accounts co-signed: 0 of 1', 'Can dispute without asking: 0 of 1') use bright amber (#F59E0B) numerals with zero explanatory tooltip or remedial action inline.",
+        "Sovereignty bottom mobile: Card borders and content are truncated at the bottom of the viewport with ambiguous scrolling bounds above the tab bar."
+      ],
+      "fixes": [
+        "Sovereignty bottom mobile: Recolor 'Save evidence bundle' to a secondary dark glass button (rgba(255, 255, 255, 0.08) with 1px border #27272A) to preserve indigo strictly for funds movement.",
+        "Sovereignty bottom mobile: Provide an inline tap-to-explain popover or subline explaining why co-signing is 0 of 1 and how to request counterparty signature.",
+        "Sovereignty bottom mobile: Pad the bottom of the scroll container with 96px safe-area space so the 'PER COUNTERPARTY' card clears the tab bar completely."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/15-sovereignty.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 780,
+        "typography": 780,
+        "color": 770,
+        "data_legibility": 780,
+        "layout": 760,
+        "visceral_value": 540,
+        "responsive": 790,
+        "consistency": 780,
+        "trust": 820
+      },
+      "total": 760,
+      "top_issues": [
+        "Sovereignty mobile: The four balance categories (On-chain, Reserve, Collateral behind what you are owed, Trust only) are presented as a plain bulleted text list with dot pips rather than an integrated visceral bar breakdown.",
+        "Sovereignty mobile: Long explanatory prose paragraph ('Green is yours whatever anyone does...') creates heavy visual text density right under the primary balance header.",
+        "Sovereignty mobile: The term 'Trust only' uses violet dot, but the header balance claims 'Enforceable right now $0.00' which directly contradicts counterparty risk definitions."
+      ],
+      "fixes": [
+        "Sovereignty mobile: Replace the 4 bullet text items with an interactive stacked horizontal breakdown bar using strict semantic colors (green for enforceable on-chain/reserve/collateral, violet for trust-only).",
+        "Sovereignty mobile: Move the explanatory risk text into an info sheet modal triggered via an 'ⓘ' icon beside the 'Enforceable right now' headline.",
+        "Sovereignty mobile: Align terminology: display 'Enforceable ($0.00)' in green and 'At risk / Trust only ($0.00)' in violet as two distinct paired ledger metrics."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 732,
+    "verdict": "The mobile dark implementation establishes a solid, credible Obsidian aesthetic with clean typography and high-trust cryptographic receipts. However, it severely dilutes its signature features through indiscriminate use of the reserved indigo accent on non-movement buttons, card-stacking clutter, and almost complete absence of the promised 'visceral value' single-scale balance bars.",
+    "priority_fixes": [
+      "Strictly enforce the indigo (#6E7CFF) color invariant: immediately strip indigo from 'Copy link' (Receive), 'Save evidence bundle' (Sovereignty), and Faucet buttons (Assets), restricting it exclusively to irreversible value transfers (Pay, Move, Sign & send).",
+      "Implement the 'Visceral Value' single-scale horizontal bar across all zero and active account views (Home, Account, Move, Sovereignty) with an explicit zero-notch rule and visible 1px = $N scale indicator.",
+      "Eliminate multi-card fatigue on mobile form screens (Receive, Move, Lend) by grouping inputs into unified surfaces separated by subtle 1px dividers rather than stacking 5+ isolated outline boxes.",
+      "Replace raw technical leakages ('MARKET_WIRE_JSON_REQUIRED' in Swap, unwrapped 66-character hex strings in Receive/Ownership) with production-ready status representations and chunked monospace formatting.",
+      "Fix button group grid alignments and hierarchy: resolve asymmetric 3+1 layouts in Account, unbalanced 2x2 grids in Lend term selection, and unify disabled button states across the entire application."
+    ]
+  }
+}

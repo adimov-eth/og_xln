@@ -1,0 +1,469 @@
+{
+  "reviewer": "openrouter/moonshotai/kimi-k3",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 720,
+        "typography": 800,
+        "color": 760,
+        "data_legibility": 740,
+        "layout": 620,
+        "visceral_value": 550,
+        "responsive": 640,
+        "consistency": 740,
+        "trust": 720
+      },
+      "total": 707,
+      "top_issues": [
+        "Home: the RECENT card slides under the bottom tab bar — 'Account opened' row and its icon are cut in half behind the Home/Activity/Manage/Settings bar; content scroll region ignores the tab bar safe area.",
+        "Home: five '$0.00' figures (total + 4 legend items + instant line showing two more) dominate the hero in zero state; the legend swatch row repeats numbers that could live as captions under one stacked bar.",
+        "Home: the one-scale bar system is announced ('1 px = $10 · auto') but no bar is drawn anywhere on the screen — the BALANCES section is pure text empty state, so the core 'visceral value' promise is invisible on the most important screen.",
+        "Home: 'Instant: send up to $0.00, receive up to $0.00' buries the send/receive asymmetry in one prose line; the bilateral two-half framing (sendable vs receivable) that defines the product is lost."
+      ],
+      "fixes": [
+        "Add bottom padding equal to tab bar height + safe area to the Home scroll view so the RECENT card clears the tab bar.",
+        "Draw the stacked total bar (green on-chain/reserve/secured, violet at-risk, 1 px = $10) directly under the total even at zero — a 1-2 px baseline track with the scale caption — so the scale legend has a referent.",
+        "Split the instant line into two columns aligned with the legend: 'send up to X' / 'receive up to Y', matching the account bar's two halves."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 700,
+        "typography": 720,
+        "color": 740,
+        "data_legibility": 720,
+        "layout": 680,
+        "visceral_value": 300,
+        "responsive": 720,
+        "consistency": 700,
+        "trust": 680
+      },
+      "total": 672,
+      "top_issues": [
+        "Receive: three sharing affordances compete — 'Copy invoice' (secondary button), 'Copy link' (indigo primary), and 'Copy xln:// app link' (text link) — the user cannot tell which one to hand a payer.",
+        "Receive: the amount placeholder '0.00' is rendered in the same dim white as a real entered value; combined with 'receive up to 0.00 instantly' top-right, the card reads as already filled.",
+        "Receive: 'receive up to 0.00 instantly' is plain text where the product's signature two-half bar (inbound room) should visualize the limit.",
+        "Receive: the QR card is unbranded and unlabeled — no amount, no token, no entity hint — so a screenshot of it carries no context."
+      ],
+      "fixes": [
+        "Collapse to one primary 'Share request' (indigo) that opens copy options; keep 'Copy invoice' secondary; delete the tertiary xln:// text link or fold it into the sheet.",
+        "Render empty amount as a lighter placeholder glyph (e.g. grey '0' at 40% opacity) and only switch to value weight on input.",
+        "Replace the 'receive up to' text with a thin inbound-room bar (violet portion + grey room) drawn at the global px-per-$ scale."
+      ]
+    },
+    {
+      "file": "04-receive-bottom.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 680,
+        "typography": 700,
+        "color": 720,
+        "data_legibility": 700,
+        "layout": 640,
+        "visceral_value": 300,
+        "responsive": 660,
+        "consistency": 700,
+        "trust": 660
+      },
+      "total": 646,
+      "top_issues": [
+        "Receive (scrolled): a clipped white rounded shape (bottom of the QR card) hangs at the top edge with no fade or header — reads as a rendering glitch rather than scrolled content.",
+        "Receive: the YOUR ENTITY ID card shows the full 64-char hex wrapping across two lines with no copy button on the card itself — the one artifact a payer might need manually is the hardest to grab.",
+        "Receive: 'No inbound room yet' banner uses the indigo bolt icon plus indigo 'Open H1' link inside a bordered card — three emphasis treatments for one informational notice."
+      ],
+      "fixes": [
+        "Pin a small 'Receive' header (or fade gradient) at the top of the scroll container so clipped cards never touch the viewport edge raw.",
+        "Add a copy icon button to the entity id card and truncate the id to 0x0eeb…a3803 with tap-to-expand.",
+        "Drop the card border on the notice; keep icon + text + single link at 80% opacity."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 560,
+        "typography": 680,
+        "color": 620,
+        "data_legibility": 600,
+        "layout": 660,
+        "visceral_value": 300,
+        "responsive": 680,
+        "consistency": 620,
+        "trust": 420
+      },
+      "total": 582,
+      "top_issues": [
+        "Swap: the order book renders the raw internal constant 'MARKET_WIRE_JSON_REQUIRED' in place of levels — a shipped screen leaking a developer error string is the single worst trust break in the set.",
+        "Swap: 'You pay 100' is entered and 'You receive 0.00', yet the only feedback is the helper text 'Set the amount you want' — the user did set it; the real blocker (book unavailable / no price) is never stated in user language.",
+        "Swap: the USDC chip contains a nested 'Testnet' pill inside the token selector — a chip inside a chip, duplicating the network info already implied by context.",
+        "Swap: the disabled Swap CTA keeps the indigo fill at low brightness with grey label — from a distance it looks tappable; disabled state is not visually distinct from a dimmed primary.",
+        "Swap: 'syncing' status uses amber/yellow, a hue outside the declared semantic palette (green/violet/grey/red + indigo accent)."
+      ],
+      "fixes": [
+        "Replace the constant with an empty-book state: 'No orders yet — your order will rest at the top of the book.' and log the wire error to console only.",
+        "When the book cannot price the order, disable the CTA with reason: 'Book unavailable — try again' under the button.",
+        "Move 'Testnet' out of the token chip into the screen header or the 'Up to 0.00 with H1' line.",
+        "Render disabled primaries as surface fill + 40% label, never dimmed indigo."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 600,
+        "premium": 700,
+        "typography": 740,
+        "color": 720,
+        "data_legibility": 620,
+        "layout": 600,
+        "visceral_value": 250,
+        "responsive": 640,
+        "consistency": 680,
+        "trust": 700
+      },
+      "total": 625,
+      "top_issues": [
+        "Account (H1): the screen's reason to exist — the bilateral bar with own-credit/collateral/owed halves, zero notch, and unused room — is entirely absent; the account with 'no tokens' shows only four action tiles and a metadata table.",
+        "Account (H1): the action grid is 3 tiles on row one and a lone 'Manage' tile on row two, leaving a ragged asymmetric block at the top of the screen.",
+        "Account (H1): 'Manage' as an account-level action collides with the 'Manage' tab in the bottom bar (same word, different scope).",
+        "Account (H1): the lower two-thirds of the viewport is dead black space while key facts (0 frames signed, Open) sit in a sparse table."
+      ],
+      "fixes": [
+        "Add the canonical bilateral bar directly under the header: left half sendable (green/collateral + own credit), right half receivable, notch at zero, hatched holds, drawn at the global scale — even when zero, show the track and limits.",
+        "Make the action row a 2×2 grid or a single row of 4 compact buttons; no orphan tile.",
+        "Rename the account action to 'Limits' or 'Settings' to disambiguate from the Manage tab."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 700,
+        "typography": 700,
+        "color": 720,
+        "data_legibility": 700,
+        "layout": 600,
+        "visceral_value": 200,
+        "responsive": 620,
+        "consistency": 720,
+        "trust": 680
+      },
+      "total": 632,
+      "top_issues": [
+        "Activity: header reads '1 movements' — pluralization bug in the most visible count on the screen.",
+        "Activity: the filter chip row is clipped mid-chip ('Accou…') with no fade or scroll indicator, so users cannot discover the hidden filters.",
+        "Activity: one row of content leaves ~70% of the viewport empty with no empty-state guidance (e.g. 'Payments you make will appear here with their frame receipts').",
+        "Activity: rows show no amount visualization; even a zero-state row could carry the mini directional bar that makes activity scannable."
+      ],
+      "fixes": [
+        "Pluralize: '1 movement' / 'N movements'.",
+        "Add a right-edge fade + allow horizontal scroll on the chip row, or wrap chips to two rows on narrow widths.",
+        "Add a quiet empty-state block under TODAY when the day has < 3 entries, explaining receipts come from committed frames."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 760,
+        "typography": 760,
+        "color": 740,
+        "data_legibility": 760,
+        "layout": 720,
+        "visceral_value": 300,
+        "responsive": 740,
+        "consistency": 740,
+        "trust": 820
+      },
+      "total": 710,
+      "top_issues": [
+        "Activity detail: the eyebrow 'ACCOUNT · CREATED' and the title 'Account opened' say the same thing twice in adjacent lines.",
+        "Activity detail: the receipt shows Frame #7 and time but no frame hash or signature excerpt — for a product whose promise is 'provable from committed frames', the proof artifact itself is not inspectable here.",
+        "Activity detail: the sheet's dimmed backdrop still shows the list's clipped filter chips ('Accou…'), compounding the clipping issue from 07."
+      ],
+      "fixes": [
+        "Drop the eyebrow or change it to the counterparty ('WITH H1'); keep one title.",
+        "Add a mono 'Frame hash 0x…' row with copy, plus 'Verified against your runtime' state, to make the receipt self-proving.",
+        "Fix the chip-row clipping on the underlying Activity screen (see 07)."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 640,
+        "typography": 720,
+        "color": 700,
+        "data_legibility": 680,
+        "layout": 640,
+        "visceral_value": 450,
+        "responsive": 680,
+        "consistency": 660,
+        "trust": 780
+      },
+      "total": 665,
+      "top_issues": [
+        "Move: FROM and TO render six near-identical cards (same titles, same 0.00 balances) — the only difference is an indigo border; at a glance the two rows are indistinguishable and mis-taps are likely.",
+        "Move: each card carries a hairline balance bar under the amount, but at 0.00 the bar is invisible — the one-scale principle is technically present yet imperceptible exactly when users learn the UI.",
+        "Move: 'Sign & send' (primary action, disabled due to error) is styled identically to the secondary 'Add to batch' — button hierarchy collapses precisely in the error state where guidance matters most.",
+        "Move: 'Amount exceeds what is available here' is good prevention, but 'here' is ambiguous when six cards are on screen — which source is short?"
+      ],
+      "fixes": [
+        "Differentiate FROM/TO cards: keep the selected card's indigo border but add a persistent 'From'/'To' corner tag on each selected card, and dim unselected cards to 60%.",
+        "Draw the card bars as visible tracks (grey room) even at zero balance so scale is learnable.",
+        "Keep 'Sign & send' in primary indigo whenever the form is valid; when invalid, surface style + the specific reason ('Reserve holds 0.00 USDC')."
+      ]
+    },
+    {
+      "file": "10-move-bottom.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 620,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 660,
+        "layout": 600,
+        "visceral_value": 450,
+        "responsive": 620,
+        "consistency": 660,
+        "trust": 760
+      },
+      "total": 645,
+      "top_issues": [
+        "Move (scrolled): the viewport top cuts through the FROM card row and the header pill — no sticky header or fade, so the user loses orientation of which token is being moved.",
+        "Move: 'Recipient entity · leave empty for yourself' with placeholder '0x… entity id' is a power-user field presented at equal weight with the main flow, inviting accidental self-sends confusion.",
+        "Move: the WHAT HAPPENS radio row ('Fund you through H1') uses a radio affordance for a single non-selectable explainer item — affordance promises a choice that does not exist."
+      ],
+      "fixes": [
+        "Make the token chip + 'Move' header sticky on scroll.",
+        "Collapse 'Recipient entity' behind an 'Advanced' disclosure; default is self.",
+        "Replace the radio circle with a plain info icon or numbered step marker."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 740,
+        "typography": 720,
+        "color": 720,
+        "data_legibility": 680,
+        "layout": 740,
+        "visceral_value": 200,
+        "responsive": 740,
+        "consistency": 720,
+        "trust": 700
+      },
+      "total": 668,
+      "top_issues": [
+        "Manage: the H1 account row's subtitle '0 lanes · 0 frames · open' is protocol jargon — 'lanes' is never explained anywhere in the visible UI.",
+        "Manage: tile icons mix metaphors — 'Move' uses a bare arrow '→' while others use outlined icons; the Move tile's subtitle 'Wallet ↔ reserve ↔ accounts' uses a third arrow style.",
+        "Manage: 'NEEDS ATTENTION — Nothing waiting on you.' spends a full card on a null state; when empty it could disappear entirely."
+      ],
+      "fixes": [
+        "Replace '0 lanes' with user language ('no capacity yet' / 'credit not set') and keep 'lanes' for a details view.",
+        "Give every tile an outlined icon of the same family; drop inline arrows from subtitles.",
+        "Hide the NEEDS ATTENTION card when empty."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 620,
+        "typography": 700,
+        "color": 600,
+        "data_legibility": 700,
+        "layout": 600,
+        "visceral_value": 250,
+        "responsive": 660,
+        "consistency": 620,
+        "trust": 680
+      },
+      "total": 611,
+      "top_issues": [
+        "Assets: the 'Move into reserve' button renders its arrow icon stacked above the label, left-aligned inside a tall card — looks like a broken layout rather than a button.",
+        "Assets: token icons use brand colors (green USDT circle) that collide with the semantic system where green = 'yours whatever anyone does'; a green USDT badge on a 0.00 row sends a false ownership signal.",
+        "Assets: 'Depository may pull 0.00' repeats identically under all three tokens — triple redundancy that adds noise without information.",
+        "Assets: token rows show no balance bars — the one-scale bar is again absent where amounts are listed."
+      ],
+      "fixes": [
+        "Make 'Move into reserve' a standard horizontal button (icon left of label, centered) or a full-width secondary.",
+        "Render token icons in neutral surface + monochrome glyph; reserve green/violet for position semantics only.",
+        "Show 'Depository may pull' once as a card-level footnote, or only when the pullable amount is non-zero.",
+        "Add a thin per-token bar at the global px-per-$ scale under each balance."
+      ]
+    },
+    {
+      "file": "12-assets-bottom.png",
+      "scores": {
+        "hierarchy": 600,
+        "premium": 540,
+        "typography": 680,
+        "color": 560,
+        "data_legibility": 680,
+        "layout": 620,
+        "visceral_value": 200,
+        "responsive": 640,
+        "consistency": 600,
+        "trust": 620
+      },
+      "total": 574,
+      "top_issues": [
+        "Assets / Faucets: four stacked full-width indigo primary buttons ('Hub pays me USDC over credit', 'USDC to my on-chain wallet', 'Gas (ETH)…', 'USDC straight into my reserve') — indigo is supposed to mark THE one money-moving action per screen; here it marks four.",
+        "Assets / Faucets: content continues under the bottom tab bar (chips partially visible behind it) — same safe-area bug as Home.",
+        "Assets / Faucets: the DEBTS card explains debts with a three-line paragraph in a state where the correct content is nothing at all."
+      ],
+      "fixes": [
+        "Keep one indigo faucet CTA ('Get test USDC') and demote the other three to secondary surface buttons or a single 'Advanced faucet options' disclosure.",
+        "Apply tab-bar + safe-area bottom padding to the Assets scroll view.",
+        "Collapse the DEBTS empty state to a single grey line 'No debts' without the explainer card."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 640,
+        "typography": 680,
+        "color": 700,
+        "data_legibility": 660,
+        "layout": 600,
+        "visceral_value": 200,
+        "responsive": 660,
+        "consistency": 660,
+        "trust": 680
+      },
+      "total": 614,
+      "top_issues": [
+        "Lending: the Token card is an empty bordered box with the 'Lend / Borrow' segmented control floating detached below it — unclear whether the toggle belongs to the token field or the amount; layout implies a broken form.",
+        "Lending: the Hub card shows 'H1 — 0 lanes' again using unexplained 'lanes' jargon at the primary selection point of the flow.",
+        "Lending: 'Offer to the pool' is disabled-indigo with grey text — same weak disabled treatment as Swap; no inline reason why it is disabled (amount is 0.00).",
+        "Lending: no token appears selected while the amount card says 'USDC' — contradictory state (empty Token card, USDC suffix)."
+      ],
+      "fixes": [
+        "Move the Lend/Borrow segmented control above the amount card as the flow's mode switch; fill the Token card with the selected token chip.",
+        "Replace '0 lanes' with 'no credit set'.",
+        "Show the disabled reason inline: 'Enter an amount to offer'."
+      ]
+    },
+    {
+      "file": "13-lend-bottom.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 640,
+        "typography": 680,
+        "color": 700,
+        "data_legibility": 660,
+        "layout": 620,
+        "visceral_value": 200,
+        "responsive": 640,
+        "consistency": 660,
+        "trust": 680
+      },
+      "total": 614,
+      "top_issues": [
+        "Lending: the interest field's computed value '= 1.00% per term' wraps to two right-aligned lines while '100' sits left — the most important derived number is the least readable element.",
+        "Lending: H1 POOL stats (Available / Borrowed / Active principal, all 0.00) show three identical zeros with no bar or ratio — a pool utilization bar at the global scale would make this glanceable.",
+        "Lending (scrolled): bottom content is cut by the tab bar ('Borrowed…0.00' half-visible behind it) — the recurring safe-area defect."
+      ],
+      "fixes": [
+        "Put the computed rate on its own line right-aligned at label size: '100 bps = 1.00% per 1-day term' as one string.",
+        "Add a thin utilization bar (borrowed vs available) to the pool card at the global scale.",
+        "Apply the tab-bar bottom padding fix globally."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 720,
+        "typography": 700,
+        "color": 720,
+        "data_legibility": 680,
+        "layout": 680,
+        "visceral_value": 150,
+        "responsive": 680,
+        "consistency": 700,
+        "trust": 700
+      },
+      "total": 643,
+      "top_issues": [
+        "Ownership: the copy tells the user to 'Register it on the EntityProvider to issue shares or change owners' but offers no button, link, or path to do so — a documented dead end.",
+        "Ownership: 'Kind — Lazy (hash of its board)' is internal terminology presented as a primary fact; 'lazy entity' means nothing to a user.",
+        "Ownership: two cards of content then ~50% empty viewport; the 'you' chip next to the signer is good but the screen earns no other interaction."
+      ],
+      "fixes": [
+        "Add the primary action the copy promises: 'Register entity' (indigo) that starts the EntityProvider flow.",
+        "Rename the row to 'Type — Personal (single signer)' and keep 'lazy/hash of board' for a details disclosure."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 740,
+        "typography": 740,
+        "color": 680,
+        "data_legibility": 720,
+        "layout": 720,
+        "visceral_value": 400,
+        "responsive": 720,
+        "consistency": 700,
+        "trust": 860
+      },
+      "total": 706,
+      "top_issues": [
+        "Sovereignty: 'Accounts co-signed 0 of 1' and 'Can dispute without asking 0 of 1' use amber — a hue outside the green/violet/grey/red + indigo palette — and '0 of 1' never says which account is the laggard (it is H1, but the row cannot be tapped).",
+        "Sovereignty: the legend swatches for On-chain / Reserve / Collateral are three identical green squares — correct per the semantic rule, but then the swatch adds nothing the word doesn't; the differentiation should come from the stacked bar, which is absent.",
+        "Sovereignty: 'Enforceable right now $0.00' hero has no bar at the 1 px = $N scale even though this screen is the purest expression of the visceral-value thesis.",
+        "Trade-off worth noting: the 'Save evidence bundle' indigo CTA with frame-hash explainer is the strongest trust element in the whole set — exactly the right use of the accent."
+      ],
+      "fixes": [
+        "Make the two '0 of 1' rows tappable, deep-linking to the H1 account's signature state; use grey for 'not yet' and reserve amber for nothing (or add amber to the declared palette deliberately).",
+        "Draw the enforceable-vs-at-risk stacked bar (green segments + violet) under the hero number at the global scale.",
+        "Replace three identical green swatches with one green swatch labeled 'yours whatever anyone does' spanning the three labels."
+      ]
+    },
+    {
+      "file": "15-sovereignty-bottom.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 720,
+        "typography": 700,
+        "color": 660,
+        "data_legibility": 660,
+        "layout": 680,
+        "visceral_value": 400,
+        "responsive": 680,
+        "consistency": 700,
+        "trust": 840
+      },
+      "total": 676,
+      "top_issues": [
+        "Sovereignty / PER COUNTERPARTY: the H1 row's subtitle 'awaiting their signature · no proof yet · they answer in 1 d…' is clipped at the right edge — the most decision-relevant fact on the row (response deadline) is truncated.",
+        "Sovereignty (scrolled): the viewports top edge cuts the 'Trust only $0.00' legend line mid-row with no sticky summary — scrolling loses the enforceable total context.",
+        "Sovereignty: 'nothing at risk' in green is the correct semantic, but it sits on the same row as the truncated grey warning text, mixing reassurance and unresolved state without an ordering."
+      ],
+      "fixes": [
+        "Wrap the counterparty subtitle to two lines instead of truncating; never clip a deadline.",
+        "Pin a compact summary strip (enforceable $ / at-risk $) under the header when scrolled.",
+        "Order row content as: counterparty, green status, then grey pending detail on its own line."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 645,
+    "verdict": "A calm, coherent dark shell with genuinely good bones — restrained palette, strong hero numerals, letterspaced eyebrows, and a best-in-class trust story on Sovereignty and the receipt sheet. But the product's defining feature, the one-scale bilateral bar, is missing from Home, Account, Assets, Lending and Sovereignty, and shipping defects (raw MARKET_WIRE_JSON_REQUIRED error, content sliding under the tab bar, four indigo faucet CTAs, '1 movements') keep it well short of premium.",
+    "priority_fixes": [
+      "Draw the canonical bars everywhere value is shown: stacked total bar on Home, two-half bilateral bar with notch on the H1 Account screen, per-token bars on Assets, utilization bar on Lending — all at the declared 1 px = $N scale; today the core differentiator exists only as a caption.",
+      "Kill the Swap book's 'MARKET_WIRE_JSON_REQUIRED' raw constant; render a human empty-book state and route wire errors to logs.",
+      "Fix scroll safe areas globally: content (Home RECENT, Assets faucets, Lending pool, Move header) must never render under or be clipped by the bottom tab bar.",
+      "Enforce one indigo action per screen: demote three of the four faucet buttons, and give disabled primaries (Swap, Move, Lending) a non-indigo surface style plus an inline reason.",
+      "Polish the details that break trust at reading distance: pluralize '1 movement(s)', stop truncating deadlines and filter chips, resolve the '0 of 1' rows into tappable deep links, and rename jargon ('lanes', 'Lazy (hash of its board)') into user language."
+    ]
+  }
+}

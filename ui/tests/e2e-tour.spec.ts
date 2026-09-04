@@ -62,17 +62,9 @@ test.describe('wallet UI guided tour', () => {
 		});
 
 		await page.goto('/');
-		const existing = page.getByRole('button', { name: /^Sandbox/ }).first();
-		if (await existing.isVisible({ timeout: 2_000 }).catch(() => false)) {
-			await existing.click();
-			await expect(page.getByTestId('home-total')).toBeVisible({ timeout: BOOT_TIMEOUT });
-			await page.getByTestId('nav-settings').locator('visible=true').first().click();
-			await page.getByTestId('tour-replay').click();
-			await page.getByTestId('nav-home').locator('visible=true').first().click();
-		} else {
-			await page.getByTestId('gate-learn').click();
-			await expect(page.getByTestId('home-total')).toBeVisible({ timeout: BOOT_TIMEOUT });
-		}
+		await expect(page.getByTestId('gate-stack')).toHaveAttribute('data-state', 'online', { timeout: 20_000 });
+		await page.getByTestId('gate-learn').click();
+		await expect(page.getByTestId('home-total')).toBeVisible({ timeout: BOOT_TIMEOUT });
 		const tour = page.getByTestId('tour');
 		await expect(tour).toHaveAttribute('data-step', 'welcome', { timeout: STEP_TIMEOUT });
 		await expect(page.locator('.tour-scrim')).toHaveCount(0);

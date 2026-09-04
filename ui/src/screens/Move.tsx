@@ -274,7 +274,7 @@ export function Move() {
 									{busy === 'approve' ? 'Allowing…' : `Allow ${meta.symbol}`}
 								</button>
 							) : null}
-							<button type="button" className="btn" disabled={busy !== null || Boolean(nowIssue) || needsAllowance} onClick={() => void go('now')} data-testid="move-now">
+							<button type="button" className="btn primary" disabled={busy !== null || Boolean(nowIssue) || needsAllowance} onClick={() => void go('now')} data-testid="move-now">
 								<Icon name="check" size={15} />
 								{busy === 'now' ? 'Sending…' : from === 'account' ? 'Propose settlement' : 'Sign & send'}
 							</button>

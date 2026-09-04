@@ -91,7 +91,7 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'welcome',
 		chapter: 'Start',
 		title: 'Meet your wallet',
-		body: "You're Alice. Two others share this playground: Hub One, a service that passes payments along, and Meridian Desk, a shop. Everything you do here is real. The money is play money, and it never leaves this tab. The tour only points; you press every button yourself.",
+		body: "You're Alice. On this network you meet hubs, services that pass payments along, and other members. Everything you do here is real. The money is play money, and it never leaves this tab. The tour only points; you press every button yourself.",
 		more: 'Three separate xln runtimes run inside this page, one per participant, next to a local test chain. The tour drives nothing; it watches the runtime for the effect of what you did.',
 		target: ctx => viaHome(ctx, 'home-total'),
 		mode: 'read',
@@ -100,7 +100,7 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'bars',
 		chapter: 'Start',
 		title: 'One glance, the whole picture',
-		body: 'Every bar is drawn to the same scale, so a dollar is the same width everywhere. Green is money that is yours no matter what anyone does. Violet is money someone owes you and has only promised to pay. Right now Hub One owes you $10,000 on a promise.',
+		body: 'Every bar is drawn to the same scale, so a dollar is the same width everywhere. Green is money that is yours no matter what anyone does. Violet is money someone owes you and has only promised to pay. Right now your hub owes you $10,000 on a promise.',
 		more: 'Every account obeys one line: −L_left ≤ Δ ≤ C + L_right. Δ is who owes whom, C is collateral on-chain, L are the two credit lines. Green covers the on-chain wallet, the Depository reserve and collateral; violet is the part of Δ beyond C, the promise.',
 		target: ctx => viaHome(ctx, 'home-risk'),
 		mode: 'read',
@@ -109,10 +109,10 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'quiz-colors',
 		chapter: 'Start',
 		title: 'Quick check',
-		body: 'Hub One vanishes tonight, servers off, phone dead. Which part of your money is gone?',
+		body: 'Your hub vanishes tonight, servers off, phone dead. Which part of your money is gone?',
 		mode: 'quiz',
 		options: [
-			{ label: 'The violet part', correct: true, why: 'Right. Violet is a promise from Hub One. Everything green is yours by contract or on-chain, whatever the hub does.' },
+			{ label: 'The violet part', correct: true, why: 'Right. Violet is a promise from your hub. Everything green is yours by contract or on-chain, whatever the hub does.' },
 			{ label: 'The green part', why: 'No. Green is the part the blockchain guarantees. It does not depend on the hub existing.' },
 			{ label: 'All of it', why: 'No. Only the violet part depends on the hub. The green part is enforceable without it.' },
 		],
@@ -132,7 +132,7 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'ledger',
 		chapter: 'Keys',
 		title: 'Both of you sign every change',
-		body: 'Your account with Hub One is a shared ledger. Every update is signed by you and by the hub, so neither side can rewrite it alone. "Co-signed 1 of 1" means the latest page is final. "Can dispute without asking" means you already hold the hub\'s signature to take that page to the blockchain by yourself.',
+		body: 'Your account with your hub is a shared ledger. Every update is signed by you and by the hub, so neither side can rewrite it alone. "Co-signed 1 of 1" means the latest page is final. "Can dispute without asking" means you already hold the hub\'s signature to take that page to the blockchain by yourself.',
 		more: "Each frame carries both parties' hankos. The counterparty's dispute-proof hanko on the newest state lets you start an on-chain dispute unilaterally.",
 		target: ctx => (at(ctx, '/sovereignty') ? 'sovereignty-ledger' : viaHome(ctx, 'home-sovereignty')),
 		mode: 'read',
@@ -141,7 +141,7 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'faucet',
 		chapter: 'Credit',
 		title: `Get paid ${money(TOUR_FAUCET_USD)} instantly`,
-		body: 'Hub One trusts you with a credit line, so it can pay you without touching the blockchain. Go to Manage → Assets and press "Hub pays me USDC over credit". It lands in about a second.',
+		body: 'Your hub trusts you with a credit line, so it can pay you without touching the blockchain. Go to Manage → Assets and press "Hub pays me USDC over credit". It lands in about a second.',
 		more: 'The hub sends a direct payment over the bilateral account: a new frame is proposed, acknowledged and committed by both runtimes. No chain transaction is involved.',
 		target: ctx => (at(ctx, '/assets') ? 'faucet-offchain' : at(ctx, '/manage') ? 'manage-assets' : ctx.dom.has('nav-manage') ? 'nav-manage' : 'back'),
 		hint: ctx => (at(ctx, '/assets') ? `The amount is already ${TOUR_FAUCET_USD}. Press the first faucet button.` : at(ctx, '/manage') ? 'Open Assets.' : 'Open Manage.'),
@@ -161,7 +161,7 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'pay',
 		chapter: 'Pay',
 		title: `Pay the shop ${money(TOUR_PAY_USD)}`,
-		body: `You have no account with Meridian Desk, so Hub One passes the payment along. Either both legs happen or neither does; the hub cannot keep your money on the way. Press Pay, pick Meridian Desk, enter ${TOUR_PAY_USD}, confirm.`,
+		body: `You have no account with the recipient, so your hub passes the payment along. Either both legs happen or neither does; the hub cannot keep your money on the way. Press Pay, pick the shop, enter ${TOUR_PAY_USD}, confirm.`,
 		more: 'A two-hop payment with a hash lock on each hop; one secret releases both. Route and fee come from the payment planner, and the whole thing settles in bilateral state with no block to wait for.',
 		target: ctx => {
 			if (!at(ctx, '/pay')) return viaHome(ctx, 'home-pay');
@@ -171,7 +171,7 @@ export const TOUR_STEPS: TourStep[] = [
 		},
 		hint: ctx => {
 			if (!at(ctx, '/pay')) return homeHint(ctx, 'Press Pay.');
-			if (!ctx.dom.value('pay-to').trim()) return 'Tap the "To" field and pick Meridian Desk.';
+			if (!ctx.dom.value('pay-to').trim()) return 'Tap the "To" field and pick another hub, any but your own.';
 			if (!ctx.dom.value('pay-amount').trim()) return `Type ${TOUR_PAY_USD}.`;
 			return 'Confirm the payment.';
 		},
@@ -193,7 +193,7 @@ export const TOUR_STEPS: TourStep[] = [
 		chapter: 'Receive',
 		title: `Bill the shop ${money(TOUR_INVOICE_USD)}`,
 		body: `Press Receive and type ${TOUR_INVOICE_USD}. That builds a payment link and a QR code with your address and the amount. In the playground the shop pays the moment the bill exists; in life you would show the QR or send the link.`,
-		more: 'The invoice is a canonical xln link (entity, token, amount, note). The shop\'s runtime quotes a route through Hub One and pays it with the same planner you used a minute ago.',
+		more: 'The invoice is a canonical xln link (entity, token, amount, note). The payer\'s runtime quotes a route through your hub and pays it with the same planner you used a minute ago.',
 		target: ctx => (at(ctx, '/receive') ? 'receive-amount' : viaHome(ctx, 'home-receive')),
 		hint: ctx => (at(ctx, '/receive') ? `Type ${TOUR_INVOICE_USD}.` : homeHint(ctx, 'Press Receive.')),
 		mode: 'do',
@@ -206,7 +206,7 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'move',
 		chapter: 'Collateral',
 		title: `Lock ${money(TOUR_MOVE_USD)} as collateral`,
-		body: `Part of your money sits in a shared vault on the blockchain, your reserve. Move ${money(TOUR_MOVE_USD)} of it into your account with Hub One. It becomes collateral: the blockchain itself now guarantees that part of your balance.`,
+		body: `Part of your money sits in a shared vault on the blockchain, your reserve. Move ${money(TOUR_MOVE_USD)} of it into your account with your hub. It becomes collateral: the blockchain itself now guarantees that part of your balance.`,
 		more: 'A reserve → collateral operation inside a signed Depository batch. The chain answers with a ReserveToCollateral event that both runtimes apply to the account. In the playground the chain is an in-page EVM.',
 		target: ctx => {
 			if (!at(ctx, '/move')) return viaHome(ctx, 'home-move');
@@ -230,7 +230,7 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'move-read',
 		chapter: 'Collateral',
 		title: 'A promise became a guarantee',
-		body: `"Secured" is the part of what you are owed that collateral covers. ${money(TOUR_MOVE_USD)} of violet turned green: if Hub One disappeared tomorrow, that ${money(TOUR_MOVE_USD)} is yours by contract. Back on Home you can see it.`,
+		body: `"Secured" is the part of what you are owed that collateral covers. ${money(TOUR_MOVE_USD)} of violet turned green: if your hub disappeared tomorrow, that ${money(TOUR_MOVE_USD)} is yours by contract. Back on Home you can see it.`,
 		target: ctx => viaHome(ctx, 'home-risk'),
 		mode: 'read',
 	},
@@ -238,7 +238,7 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'rebalance',
 		chapter: 'Collateral',
 		title: 'Make the hub put up collateral',
-		body: `The hub can also lock its own money as collateral for you, for a small fee it published up front. Open your account with Hub One, then Manage → Collateral, ask for ${TOUR_COLLATERAL_USD}. The hub posts it on-chain within a moment.`,
+		body: `The hub can also lock its own money as collateral for you, for a small fee it published up front. Open your account with your hub, then Manage → Collateral, ask for ${TOUR_COLLATERAL_USD}. The hub posts it on-chain within a moment.`,
 		more: 'requestCollateral quotes the fee from the hub\'s committed policy (base + gas + liquidity basis points). The hub\'s scheduler answers with a reserve → collateral batch paid from its own Depository reserve.',
 		target: ctx => {
 			if (!at(ctx, hubPath(ctx))) return viaHub(ctx, '');
@@ -247,7 +247,7 @@ export const TOUR_STEPS: TourStep[] = [
 			return 'collateral-request';
 		},
 		hint: ctx => {
-			if (!at(ctx, hubPath(ctx))) return homeHint(ctx, 'Open the Hub One account.');
+			if (!at(ctx, hubPath(ctx))) return homeHint(ctx, 'Open your hub account.');
 			if (!ctx.dom.has('collateral-request')) return 'Open Manage; the Collateral tab is first.';
 			if (!ctx.dom.value('collateral-amount').trim()) return `Type ${TOUR_COLLATERAL_USD}.`;
 			return 'Request collateral.';
@@ -261,7 +261,7 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'trade',
 		chapter: 'Trade',
 		title: `Make ${TRADES_TO_MAKE} trades`,
-		body: 'Hub One runs a marketplace for its members and Meridian Desk has left offers on both sides. Tap a price in the book to fill your ticket, then place the order. Buy some ETH, sell some back, buy again: three fills.',
+		body: 'Your hub runs a marketplace for its members and its market makers keep offers on both sides. Tap a price in the book to fill your ticket, then place the order. Buy some ETH, sell some back, buy again: three fills.',
 		more: 'Same-hub swaps: your order hits the hub\'s book and matches the merchant\'s resting offer. Both accounts commit the fill in one frame each; the hub takes the spread it published.',
 		target: ctx => (at(ctx, '/swap') ? (ctx.dom.value('swap-give').trim() ? 'swap-submit' : 'orderbook') : viaHome(ctx, 'home-swap')),
 		hint: ctx => (at(ctx, '/swap') ? (ctx.dom.value('swap-give').trim() ? 'Place the order.' : 'Tap a price. Red rows sell you ETH, green rows buy it from you.') : homeHint(ctx, 'Press Swap.')),
@@ -276,7 +276,7 @@ export const TOUR_STEPS: TourStep[] = [
 	{
 		id: 'quiz-hub-dark',
 		chapter: 'Dispute',
-		title: 'Hub One stops answering',
+		title: 'Your hub stops answering',
 		body: 'Your payments hang. The hub does not sign anything. It still owes you a lot of violet. What do you do?',
 		mode: 'quiz',
 		options: [
@@ -288,8 +288,8 @@ export const TOUR_STEPS: TourStep[] = [
 	{
 		id: 'dispute',
 		chapter: 'Dispute',
-		title: 'Do it: dispute Hub One',
-		body: 'Open your account with Hub One, then Manage → Dispute → "Dispute this account", and confirm. It freezes the account, pulls your open orders and gets your latest signed page ready for the blockchain. This is a playground, so go ahead.',
+		title: 'Do it: dispute your hub',
+		body: 'Open your account with your hub, then Manage → Dispute → "Dispute this account", and confirm. It freezes the account, pulls your open orders and gets your latest signed page ready for the blockchain. This is a playground, so go ahead.',
 		more: 'prepareDispute freezes the account, withdraws your orders from the hub\'s book and drafts a disputeStart with the newest co-signed proof into your on-chain batch.',
 		target: ctx => {
 			if (!at(ctx, hubPath(ctx))) return viaHub(ctx, '');
@@ -299,7 +299,7 @@ export const TOUR_STEPS: TourStep[] = [
 			return 'account-manage';
 		},
 		hint: ctx => {
-			if (!at(ctx, hubPath(ctx))) return homeHint(ctx, 'Open the Hub One account.');
+			if (!at(ctx, hubPath(ctx))) return homeHint(ctx, 'Open your hub account.');
 			if (ctx.dom.has('dispute-prepare-confirm')) return 'Confirm.';
 			if (ctx.dom.has('dispute-prepare')) return 'Press "Dispute this account".';
 			if (ctx.dom.has('manage-tab-dispute')) return 'Open the Dispute tab.';

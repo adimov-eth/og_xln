@@ -185,9 +185,7 @@ const PROFILING_ENV_KEYS = [
   'XLN_HUB_LOG_LEVEL', 'XLN_LOAD_LANE_LOG_LEVEL', 'XLN_ENTITY_PROPOSAL_TRACE', 'XLN_HEAVY_LOGS',
   'XLN_STORAGE_FRAME_ENCODE_PROFILE',
   'XLN_CRYPTO_POOL_WORKERS', 'XLN_CRYPTO_SIGN_WORKERS',
-  // Rust account-engine shadow mirror (diagnostic; off unless explicitly set).
-  'XLN_RSCORE_SHADOW', 'XLN_RSCORE_SHADOW_ENTITY', 'XLN_RSCORE_SHADOW_WORKERS',
-  'XLN_RSCORE_SHADOW_MAX_ENTITIES', 'XLN_RSCORE_SHADOW_TRACE', 'XLN_RSCORE_BINARY',
+  'XLN_RSCORE_BINARY',
   // Rust account authority, enabled per hub (XLN_HUB_RSCORE_AUTHORITY_H1=1).
   // The mesh runs every hub in one orchestrator, so this is never a
   // process-wide switch: an Entity the engine cannot sign for must not be

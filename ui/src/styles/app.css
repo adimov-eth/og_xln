@@ -996,13 +996,19 @@ textarea.input.boxed {
 	gap: 8px;
 	font-weight: 600;
 	font-size: 15px;
-	background: var(--accent);
-	color: var(--btn-ink);
+	/* Neutral by default: indigo is reserved for the one action that moves money (.primary). */
+	background: var(--surface-2);
+	color: var(--ink);
 	width: 100%;
 	transition:
 		background var(--dur-fast) var(--ease),
 		opacity var(--dur-fast) var(--ease);
 	white-space: nowrap;
+}
+
+.btn.primary {
+	background: var(--accent);
+	color: var(--btn-ink);
 }
 
 .btn:hover:not(:disabled) {

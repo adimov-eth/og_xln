@@ -164,7 +164,7 @@ function SettlementCard({ account, wallet }: { account: AccountView; wallet: Wal
 				</p>
 			) : null}
 			{view.phase === 'awaiting_you' ? (
-				<button type="button" className="btn" style={{ marginTop: 12 }} disabled={busy || !wallet.signerId} onClick={() => void sign()} data-testid="settlement-sign">
+				<button type="button" className="btn primary" style={{ marginTop: 12 }} disabled={busy || !wallet.signerId} onClick={() => void sign()} data-testid="settlement-sign">
 					<Icon name="check" size={15} />
 					{busy ? 'Signing…' : 'Sign settlement'}
 				</button>
@@ -286,7 +286,7 @@ function ManageSheet({ account, wallet, onClose }: { account: AccountView; walle
 							{account.label} has not published a fee policy for {meta.symbol} on this account yet. The request needs their committed policy frame.
 						</p>
 					)}
-					<button type="button" className="btn" disabled={busy || !policy || amount <= 0n || net <= 0n} onClick={() => void run(`Collateral request sent to ${account.label}`, async () => { await send([buildRequestCollateralTx(counterpartyId, tokenId, amount, policy!)]); })} data-testid="collateral-request">
+					<button type="button" className="btn primary" disabled={busy || !policy || amount <= 0n || net <= 0n} onClick={() => void run(`Collateral request sent to ${account.label}`, async () => { await send([buildRequestCollateralTx(counterpartyId, tokenId, amount, policy!)]); })} data-testid="collateral-request">
 						{busy ? 'Sending…' : 'Request collateral'}
 					</button>
 				</div>
@@ -317,7 +317,7 @@ function ManageSheet({ account, wallet, onClose }: { account: AccountView; walle
 					</div>
 					<button
 						type="button"
-						className="btn"
+						className="btn primary"
 						disabled={busy || !creditText.trim()}
 						onClick={() =>
 							void run('Credit requested from the hub', async () => {
@@ -331,7 +331,7 @@ function ManageSheet({ account, wallet, onClose }: { account: AccountView; walle
 						{busy ? 'Asking…' : 'Request credit'}
 					</button>
 					<p className="note" style={{ marginTop: 8 }}>
-						Goes to the hub's HTTP API. A sandbox has no hub server, so the request fails there.
+						Goes to the hub's HTTP API.
 					</p>
 				</div>
 			) : null}
@@ -354,7 +354,7 @@ function ManageSheet({ account, wallet, onClose }: { account: AccountView; walle
 							</div>
 						</div>
 					)}
-					<button type="button" className="btn" disabled={busy || addTokenId === null} onClick={() => void run(`${getTokenMeta(addTokenId ?? 0).symbol} lane proposed`, async () => { await send([buildAddTokenTx(counterpartyId, addTokenId!)]); })} data-testid="add-token-submit">
+					<button type="button" className="btn primary" disabled={busy || addTokenId === null} onClick={() => void run(`${getTokenMeta(addTokenId ?? 0).symbol} lane proposed`, async () => { await send([buildAddTokenTx(counterpartyId, addTokenId!)]); })} data-testid="add-token-submit">
 						{busy ? 'Proposing…' : 'Add token'}
 					</button>
 				</div>
@@ -371,7 +371,7 @@ function ManageSheet({ account, wallet, onClose }: { account: AccountView; walle
 								{dispute.timeout > 0 ? `Challenge window closes ${new Date(dispute.timeout * 1000).toLocaleString()}. ` : ''}
 								Finalize only after it passes on-chain; the finalization joins your next batch.
 							</p>
-							<button type="button" className="btn danger" disabled={busy || dispute.finalizeQueued} onClick={() => void run('Dispute finalization queued', async () => { await send([buildDisputeFinalizeTx(counterpartyId)]); })} data-testid="dispute-finalize">
+							<button type="button" className="btn primary danger" disabled={busy || dispute.finalizeQueued} onClick={() => void run('Dispute finalization queued', async () => { await send([buildDisputeFinalizeTx(counterpartyId)]); })} data-testid="dispute-finalize">
 								{dispute.finalizeQueued ? 'Finalize already queued' : busy ? 'Queuing…' : 'Queue dispute finalize'}
 							</button>
 						</>
@@ -420,7 +420,7 @@ function ManageSheet({ account, wallet, onClose }: { account: AccountView; walle
 								</button>
 							) : (
 								<div className="actions">
-									<button type="button" className="btn danger" disabled={busy} onClick={() => void run('Dispute prepared; the on-chain start joins your batch', async () => { await send([buildPrepareDisputeTx(counterpartyId)]); })} data-testid="dispute-prepare-confirm">
+									<button type="button" className="btn primary danger" disabled={busy} onClick={() => void run('Dispute prepared; the on-chain start joins your batch', async () => { await send([buildPrepareDisputeTx(counterpartyId)]); })} data-testid="dispute-prepare-confirm">
 										{busy ? 'Preparing…' : 'Yes, dispute'}
 									</button>
 									<button type="button" className="btn ghost" disabled={busy} onClick={() => setConfirmDispute(false)}>

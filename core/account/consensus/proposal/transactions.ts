@@ -11,7 +11,6 @@ import {
 } from '../../state/candidate-overlay';
 import { isLeftEntity } from '../../utils';
 import { HEAVY_LOGS } from '../../../support/debug-flags';
-import { shadowClockUs } from '../../../rscore/shadow-hook';
 import { applyAccountTx } from '../../tx/apply';
 import { createStructuredLogger, shortHash } from '../../../support/logger';
 import {
@@ -50,8 +49,6 @@ export type ProposalTransactionEffects = {
   candidateEffects: AccountOutput[];
   /** Exact successful result for each committed tx, in AccountFrame order. */
   txResults: ApplyAccountTxOk[];
-  /** Reducer time spent applying those txs, for the shadow speed comparison. */
-  applyUs: number;
   timedOutHashlocks: string[];
 };
 
@@ -78,8 +75,6 @@ type AppliedProposalTx = {
   tx: AccountTx;
   preparedTx: AccountTx;
   result: Awaited<ReturnType<typeof applyAccountTx>>;
-  /** Microseconds this reducer call took; zero unless the shadow mirror is on. */
-  applyUs: number;
 };
 
 const createTransactionEffects = (): ProposalTransactionEffects => ({
@@ -91,7 +86,6 @@ const createTransactionEffects = (): ProposalTransactionEffects => ({
   failedHtlcLocks: [],
   candidateEffects: [],
   txResults: [],
-  applyUs: 0,
   timedOutHashlocks: [],
 });
 
@@ -148,7 +142,6 @@ const applyProposalTransaction = async (
   tx: AccountTx,
   jClaimSession: ReturnType<typeof createAccountJClaimSession>,
 ): Promise<AppliedProposalTx> => {
-  const startedUs = shadowClockUs();
   const preparedTx = tx.type === 'j_event_claim'
     ? prepareAccountJClaimTx(machine.state, tx, getAccountStateDomain(machine.state), jClaimSession)
     : tx;
@@ -162,7 +155,7 @@ const applyProposalTransaction = async (
     context.consensusContext,
     jClaimSession,
   );
-  return { tx, preparedTx, result, applyUs: shadowClockUs() - startedUs };
+  return { tx, preparedTx, result };
 };
 
 const collectSuccessfulTransaction = (
@@ -177,7 +170,6 @@ const collectSuccessfulTransaction = (
   validTxs.push(preparedTx);
   validMempoolTxs.push(tx);
   effects.txResults.push(result);
-  effects.applyUs += applied.applyUs;
   effects.events.push(...result.events);
   effects.candidateEffects.push(...(result.candidateEffects ?? []));
   if (HEAVY_LOGS) {

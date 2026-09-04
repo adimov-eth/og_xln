@@ -3,18 +3,11 @@
  * tokens follow, the choice survives a reload, and the default comes back.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { enterStack } from './stack';
 
 const BOOT_TIMEOUT = 180_000;
 const CHAIN_TIMEOUT = 90_000;
 
-async function enterSandbox(page: Page): Promise<void> {
-	await page.goto('/');
-	const existing = page.getByRole('button', { name: /Sandbox/ }).first();
-	if (await existing.isVisible({ timeout: 2_000 }).catch(() => false)) await existing.click();
-	else await page.getByTestId('gate-sandbox').click();
-	await expect(page.getByTestId('home-total')).toBeVisible({ timeout: BOOT_TIMEOUT });
-	await expect(page.getByTestId('token-net-USDC')).toBeVisible({ timeout: CHAIN_TIMEOUT });
-}
 
 const cssVar = (page: Page, name: string): Promise<string> => page.evaluate(variable => getComputedStyle(document.documentElement).getPropertyValue(variable).trim(), name);
 
@@ -23,7 +16,7 @@ test.describe('wallet UI design presets', () => {
 		const pageErrors: string[] = [];
 		page.on('pageerror', error => pageErrors.push(error.message));
 
-		await enterSandbox(page);
+		await enterStack(page);
 		await page.getByRole('link', { name: 'Settings' }).first().click();
 		await expect(page.getByTestId('design-sample')).toBeVisible();
 		const html = page.locator('html');
@@ -54,7 +47,7 @@ test.describe('wallet UI design presets', () => {
 		await expect(html).toHaveAttribute('data-numbers', 'serif');
 
 		// The reload locks the vault; re-enter the sandbox, then put the stock look back for other specs.
-		await enterSandbox(page);
+		await enterStack(page);
 		await page.getByRole('link', { name: 'Settings' }).first().click();
 		await page.getByTestId('design-accent-indigo').click();
 		await page.getByTestId('design-risk-violet').click();

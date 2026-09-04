@@ -59,7 +59,7 @@ export function Palette() {
 			{ id: 'lend', title: 'Lending', icon: 'bank', run: go('/lend') },
 			{ id: 'ownership', title: 'Ownership', icon: 'shield', run: go('/ownership') },
 			{ id: 'settings', title: 'Settings', icon: 'settings', run: go('/settings') },
-			{ id: 'tour', title: 'Guided tour', hint: 'five minutes, live sandbox', icon: 'bolt', run: () => setTour({ active: true, index: 0 }), keywords: 'learn tutorial help' },
+			{ id: 'tour', title: 'Guided tour', hint: 'five minutes on the live network', icon: 'bolt', run: () => setTour({ active: true, index: 0 }), keywords: 'learn tutorial help' },
 			{ id: 'theme', title: theme === 'dark' ? 'Light theme' : 'Dark theme', icon: theme === 'dark' ? 'sun' : 'moon', run: () => setTheme(theme === 'dark' ? 'light' : 'dark'), keywords: 'theme appearance' },
 			{ id: 'density', title: density === 'desk' ? 'Comfort layout' : 'Desk layout', icon: 'filter', run: () => setDensity(density === 'desk' ? 'comfort' : 'desk'), keywords: 'layout density' },
 		];

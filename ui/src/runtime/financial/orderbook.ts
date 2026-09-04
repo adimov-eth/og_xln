@@ -175,9 +175,11 @@ function useRelayBook(input: { enabled: boolean; hubId: string; relayUrl: string
 		};
 		socket.onmessage = event => {
 			if (cancelled) return;
+			// The market wire is tagged JSON text; the decoder parses it itself. Binary frames are not market messages.
+			if (typeof event.data !== 'string') return;
 			let message: ReturnType<typeof decodeMarketWireResponse>;
 			try {
-				message = decodeMarketWireResponse(JSON.parse(String(event.data)));
+				message = decodeMarketWireResponse(event.data);
 			} catch (decodeError) {
 				setError(decodeError instanceof Error ? decodeError.message : String(decodeError));
 				return;

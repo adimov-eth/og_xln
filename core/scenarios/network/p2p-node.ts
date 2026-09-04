@@ -7,8 +7,8 @@ import { ethers } from 'ethers';
 
 import { startStandaloneRelayServer } from '../../network/relay/standalone-server';
 import { main, startP2P, processRuntime, enqueueRuntimeInput, createLazyEntity, generateLazyEntityId, getActiveJAdapter, startRuntimeLoop } from '../../runtime.ts';
-import { createLocalDeliveryHandler } from '../../network/relay/local-delivery';
-import { getEntityReplicaById } from '../../api/server/entities/lookup';
+import { createHubDirectRuntimeRoute } from '../../orchestrator/hub/hub-runtime-transport';
+import { getTokenCapacity } from '../../pathfinding/capacity';
 import { processUntil } from '../harness/helpers';
 import { isLeftEntity, deriveDelta } from '../../account/utils';
 import { deriveSignerAddressSync, deriveSignerKeySync, registerSignerKey, getSignerPrivateKey } from '../../account/crypto';
@@ -41,6 +41,7 @@ const seed = getArgOr('--seed', role);
 const relayUrl = getArgOr('--relay-url', 'ws://127.0.0.1:8787');
 const seedRuntimeId = getArg('--seed-runtime-id');
 const relayPort = Number(getArgOr('--relay-port', '0'));
+const directPort = Number(getArgOr('--direct-port', '0'));
 const relayHost = getArgOr('--relay-host', '127.0.0.1');
 const isHub = hasFlag('--hub');
 const useRpc = hasFlag('--rpc');
@@ -477,66 +478,24 @@ const waitForPayment = async (
   );
 };
 
-/**
- * Wait for hub to have our profile in its gossip layer.
- * This is critical: we can't open account until hub can route messages back to us.
- */
-const waitForHubToHaveOurProfile = async (
+const waitForRecipientHubAccount = async (
   env: P2PScenarioEnv,
-  ourEntityId: string,
-  refresh?: () => void,
-  maxRounds = 10
-) => {
-  console.log(`[P2P] Waiting for hub to have our profile ${ourEntityId.slice(-4)}...`);
-  for (let i = 0; i < maxRounds; i++) {
-    const hubProfile = getProfileByName(env, 'hub');
-    if (!hubProfile) {
-      refresh?.();
-      await sleep(50);
-      continue;
-    }
-    // Profile exchange should be fast since we already have hub's profile
-    // and hub should have received ours via gossip announce
-    if (i >= 1) {  // Just 1 round is enough
-      console.log(`✅ Assumed hub has our profile after ${i} gossip exchanges`);
-      return;
-    }
-    refresh?.();
-    await sleep(50);
-  }
-  console.warn(`⚠️ Could not confirm hub has our profile, proceeding anyway...`);
-};
-
-const waitForHubAccount = async (
-  env: P2PScenarioEnv,
-  counterpartyId: string,
-  refresh?: () => void,
-  maxRounds = 40
-) => {
-  for (let i = 0; i < maxRounds; i++) {
-    const profile = getProfileByName(env, 'hub');
-    const accounts = profile?.accounts || [];
-    const accountIds = accounts.map((account) => account.counterpartyId?.slice(-4) || '????');
-
-    if (i % 5 === 0) {
-      console.log(`[HUB-ACCOUNT-WAIT] round=${i} hubProfile=${!!profile} accounts=[${accountIds.join(',')}] looking for=${counterpartyId.slice(-4)}`);
-    }
-
-    if (profile?.runtimeId && accounts.some((account) => account.counterpartyId === counterpartyId)) {
-      console.log(`✅ Found hub account with ${counterpartyId.slice(-4)}`);
-      return;
-    }
+  recipientId: string,
+  hubEntityId: string,
+  refresh: (() => void) | undefined,
+  maxRounds = 40,
+): Promise<void> => {
+  // The recipient opened and pinned this Account. Its signed profile owns the
+  // advertised inbound capacity; the Hub must not publish private client edges.
+  for (let round = 0; round < maxRounds; round++) {
+    const recipient = env.gossip.getProfiles().find(profile => profile.entityId === recipientId);
+    const account = recipient?.accounts?.find(entry => entry.counterpartyId === hubEntityId);
+    const inbound = getTokenCapacity(account?.tokenCapacities, USDC)?.inCapacity;
+    if (inbound !== undefined && inbound >= HTLC_AMOUNT) return;
     refresh?.();
     await sleep(200);
   }
-
-  // Scope fix for error message
-  const finalProfile = getProfileByName(env, 'hub');
-  const finalAccounts = finalProfile?.accounts || [];
-  const finalAccountIds = finalAccounts.map((account) => account.counterpartyId?.slice(-4) || '????');
-  console.error(`❌ HUB_ACCOUNT_MISSING: Looking for ${counterpartyId.slice(-4)}, hub has accounts: [${finalAccountIds.join(',')}]`);
-  logProfile('wait-hub-account timeout', finalProfile);
-  throw new Error(`HUB_ACCOUNT_MISSING: ${counterpartyId}`);
+  throw new Error('RECIPIENT_HUB_CAPACITY_MISSING:' + recipientId + ':' + hubEntityId);
 };
 
 const waitForCreditLimit = async (
@@ -632,6 +591,9 @@ const waitForOrchestratorSignal = async (expected: string): Promise<void> => {
 
 const run = async () => {
   console.log(`P2P_NODE_CONFIG role=${role} relayUrl=${relayUrl} relayPort=${relayPort} isHub=${isHub}`);
+  if (isHub && (!Number.isInteger(directPort) || directPort < 1 || directPort > 65_535)) {
+    throw new Error(`P2P_DIRECT_PORT_INVALID:${directPort}`);
+  }
 
   const env: P2PScenarioEnv = await main(seed);
   startRuntimeLoop(env);
@@ -708,18 +670,13 @@ const run = async () => {
     console.log(`P2P_JADAPTER_READY role=${role} mode=browservm`);
   }
 
-  // CRITICAL: Start relay AFTER env created so we can pass callbacks
+  // Relay discovery and direct financial sessions have separate authenticated endpoints.
   if (isHub && relayPort > 0) {
-    let localDelivery: ReturnType<typeof createLocalDeliveryHandler> | null = null;
     startStandaloneRelayServer({
       host: relayHost,
       port: relayPort,
       serverId: role,
-      ...(env.runtimeId ? { serverRuntimeId: env.runtimeId } : {}),  // Enable local delivery for messages to self
-      onEntityInput: async (from, msg, store) => {
-        localDelivery ??= createLocalDeliveryHandler(env, store, getEntityReplicaById);
-        await localDelivery(from, msg);
-      },
+      ...(env.runtimeId ? { serverRuntimeId: env.runtimeId } : {}),
     });
     console.log(`P2P_RELAY_READY host=${relayHost} port=${relayPort}`);
   } else if (isHub) {
@@ -766,7 +723,7 @@ const run = async () => {
     entityInputs: [{
       entityId,
       signerId,
-      entityTxs: [{
+      entityTxs: [...(isHub ? [{ type: 'setHubConfig' as const, data: {} }] : []), {
         type: 'profile-update',
         data: {
           profile: {
@@ -786,12 +743,34 @@ const run = async () => {
 
   const p2p = startP2P(env, {
     relayUrls: [relayUrl],
+    wsUrl: isHub ? `ws://${relayHost}:${directPort}/ws` : null,
     seedRuntimeIds: seedRuntimeId ? [seedRuntimeId] : [],
     advertiseEntityIds: [entityId],
   });
 
   if (!p2p) {
     throw new Error('P2P_START_FAILED');
+  }
+
+  if (isHub) {
+    const directRoute = createHubDirectRuntimeRoute(
+      env,
+      seed,
+      () => env.infrastructure?.p2p === p2p
+        && env.infrastructure.operatorStatus !== 'HALTED_REQUIRES_OPERATOR'
+        && env.state.eReplicas.has(`${entityId}:${signerId}`),
+      { lastSeen: null, lastError: null },
+    );
+    const directServer = Bun.serve<{ type: 'direct-runtime' }>({
+      hostname: relayHost,
+      port: directPort,
+      fetch(request, server) {
+        const upgrade = directRoute.maybeUpgrade(request, server);
+        return upgrade.handled ? upgrade.response : new Response('Not found', { status: 404 });
+      },
+      websocket: directRoute.websocket,
+    });
+    console.log(`P2P_DIRECT_READY host=${relayHost} port=${directServer.port}`);
   }
 
   console.log(`P2P_NODE_READY role=${role} runtimeId=${env.runtimeId} entityId=${entityId}`);
@@ -823,17 +802,10 @@ const run = async () => {
   }
 
   if (role === 'hub') {
-    // Hub is relay server - wait for client profiles to arrive via gossip
+    // Direct sessions admit each client's separately certified profile before Account work.
     console.log('P2P_HUB_WAITING_FOR_PROFILES');
-
-    // Hub's refresh function: poll relay (itself) for updated profiles
-    const hubRefreshGossip = () => p2p.refreshGossip();
-
-    // Give clients time to connect and send profiles
-    await sleep(1000);
-
-    const aliceProfile = await waitForProfile(env, 'alice', 60, hubRefreshGossip, true, true, true);
-    const bobProfile = await waitForProfile(env, 'bob', 60, hubRefreshGossip, true, true, true);
+    const aliceProfile = await waitForProfile(env, 'alice', 60, undefined, true, true, true);
+    const bobProfile = await waitForProfile(env, 'bob', 60, undefined, true, true, true);
     logProfile('hub sees alice', aliceProfile);
     logProfile('hub sees bob', bobProfile);
     console.log('P2P_GOSSIP_READY');
@@ -949,9 +921,9 @@ const run = async () => {
   logProfile(`${role} sees hub`, hubProfile);
   console.log('P2P_HUB_PROFILE_READY');
 
-  // CRITICAL: Wait for hub to have our profile before opening account
-  // Otherwise hub can't route ACKs back to us
-  await waitForHubToHaveOurProfile(env, entityId, refreshGossip);
+  if (!(await p2p.bootstrapDirectEntityRoutes([hubProfile.entityId], 10_000))) {
+    throw new Error(`P2P_HUB_DIRECT_ROUTE_NOT_READY:${hubProfile.entityId}`);
+  }
 
   await processRuntime(env, [
     { entityId, signerId, entityTxs: [{ type: 'openAccount', data: {
@@ -1014,7 +986,7 @@ const run = async () => {
     const bobProfile = getProfileByName(env, 'bob');
     if (!bobProfile) throw new Error('BOB_PROFILE_MISSING');
     logProfile('alice sees bob', bobProfile);
-    await waitForHubAccount(env, bobProfile.entityId, refreshGossip);
+    await waitForRecipientHubAccount(env, bobProfile.entityId, hubProfile.entityId, refreshGossip);
 
     if (useRpc) {
       const jadapter = getActiveJAdapter(env);
