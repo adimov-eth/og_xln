@@ -271,7 +271,7 @@ export function SettingsScreen() {
 			<div className="setting first">
 				<div>
 					<div className="t">Guided tour</div>
-					<div className="s">{tour.completed ? 'Finished once. Replay any time on the sandbox.' : tour.index > 0 ? `Paused at step ${tour.index + 1}.` : 'Credit, payment, collateral, swap, dispute: five minutes on a live sandbox.'}</div>
+					<div className="s">{tour.completed ? 'Finished once. Replay any time.' : tour.index > 0 ? `Paused at step ${tour.index + 1}.` : 'Credit, payment, collateral, swap, dispute: five minutes on a live sandbox.'}</div>
 				</div>
 				<span className="segc">
 					{tour.index > 0 && !tour.completed ? (

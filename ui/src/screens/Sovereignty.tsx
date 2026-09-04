@@ -40,7 +40,7 @@ export function Sovereignty() {
 				? 'A recovery phrase unlocked on this device; it never leaves the page.'
 				: vault?.kind === 'remote'
 					? `Held by the runtime at ${vault.remote?.wsUrl ?? '—'}. This device only reads and, with an admin key, instructs.`
-					: 'A throwaway sandbox phrase. Test money only.';
+					: 'A throwaway tour phrase on the live network. Test money only.';
 
 	const exportEvidence = (): void => {
 		const text = serializeEvidence(evidenceBundle(wallet.frame, wallet.accounts, wallet.entityId));

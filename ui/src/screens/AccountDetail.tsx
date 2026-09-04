@@ -331,7 +331,7 @@ function ManageSheet({ account, wallet, onClose }: { account: AccountView; walle
 						{busy ? 'Asking…' : 'Request credit'}
 					</button>
 					<p className="note" style={{ marginTop: 8 }}>
-						Goes to the hub's HTTP API. A sandbox has no hub server, so the request fails there.
+						Goes to the hub's HTTP API.
 					</p>
 				</div>
 			) : null}

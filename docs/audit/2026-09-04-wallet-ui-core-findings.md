@@ -330,6 +330,24 @@ finalize is offered only from `activeDispute`.
 - Where to look: `core/network/p2p/ws-client.ts` session-key derivation vs the direct-server side of the mesh
   hub; the SvelteKit wallet on the same stack is the control case.
 
+- **Impact (2026-09-04, `bun run dev`):** this is not cosmetic. After the failed direct handshake the hub keeps
+  the peer as a *direct* route (`core/network/p2p/p2p.ts:975-993`: a profile with a direct endpoint selects one
+  route, never a relay substitute; `core/runtime/delivery/dispatch.ts:392` refuses relay fallback after a direct
+  miss), logs `DIRECT_RUNTIME_PEER_OFFLINE` for the browser runtime and its account frame 2 (credit limit /
+  faucet payment) stays `pendingFrameHeight: 2` forever. `/api/faucet/offchain` answers 200 `accountReady:false`,
+  the wallet never sees a USDC lane. Every browser wallet against a hub that advertises `wsUrl` is dead after
+  `openAccount`; on xln.finance all six hubs advertise `wss://xln.finance:809x/ws`.
+- **Narrowed down:** `x25519SharedSecret` (node path vs noble) and `hmacSha256` (fast vs noble) agree byte-for-byte
+  (20/50 random probes, 0 mismatches), so the divergence is in the MAC preimage
+  (`ws-protocol.ts frameAuthPreimage` → `flatSortedFrame` / `packPreorderedBinaryPayload` vs `encodeBinaryPayload`)
+  or in nonce/audience binding between `direct-runtime-bun.ts:596-605` and `ws-client.ts:583-587`. The failing
+  check is `hello-auth.ts:74-76` on the first server→client session frame.
+
+- **Control (isolated runner, SvelteKit wallet, same tree, 2026-09-04 16:29):** the canonical
+  `tests/e2e-payment.spec.ts` shows the same signature — H1 `[network.direct_ws] session.closed` for the browser
+  runtime plus `DIRECT_RUNTIME_PEER_OFFLINE` on H1/H2/H3 (`.logs/e2e-parallel/20260904-162950-863/shard-0/logs/e2e.log`).
+  So this is not the React wallet's bootstrap; every browser runtime loses the hub's direct link on this tree.
+
 ## 18. Production relay refuses every browser: `400 WebSocket audience not configured` (ops)
 
 - `wss://xln.finance/relay` answers `HTTP/1.1 400 … WebSocket audience not configured` to any upgrade (verified
@@ -339,3 +357,13 @@ finalize is offered only from `activeDispute`.
   sets `PUBLIC_WS_BASE_URL=wss://xln.finance` but the running pm2 process (11 days up, checkout 452 commits
   behind) does not have the audience configured, so no hosted wallet can join the network until it is restarted
   with the current script/flags.
+
+## 19. Canonical E2E is red on the working tree: `RUNTIME_ACTIVITY_VIEW_FRAME_MISSING:14`
+
+- `bun core/scripts/e2e/runners/run-e2e-parallel-isolated.ts … --pw-files=tests/e2e-payment.spec.ts`
+  (2026-09-04 16:29, run 20260904-162950-863) fails in `page.evaluate` with
+  `RUNTIME_ACTIVITY_VIEW_FRAME_MISSING:14`: the wallet reads the runtime-activity view for a height whose view
+  frame was never materialized (same subsystem as #14, `core/storage/history/runtime-activity-view.ts`). The
+  first attempt aborted with `E2E_CODE_DRIFT` because the tree changed during the build — the owner's refactor is
+  in flight, so both the SvelteKit and the React wallet E2E cannot be green against this tree until the activity
+  view (#14/#19) and the direct link (#17) land.

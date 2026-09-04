@@ -9,7 +9,6 @@ import { useEffect } from 'react';
 import { isAddress } from 'ethers';
 import { postJson } from '../http';
 import { useApp } from '../store';
-import { demoFaucet, getDemoTopology } from '../sandbox';
 import { hostedJAdapter } from './move';
 
 export type ExternalWalletRow = {
@@ -96,32 +95,6 @@ export async function requestFaucet(
 		default:
 			throw new Error(`Unknown faucet ${String(kind)}`);
 	}
-}
-
-/** True when the page hosts the demo chain and hub, so faucets can run locally. */
-export function sandboxFaucetsAvailable(): boolean {
-	return getDemoTopology() !== null;
-}
-
-/**
- * Sandbox faucets: the hub pays over credit (off-chain) or the BrowserVM
- * deployer tops the signer up (on-chain). `fundSignerWallet` funds *to* a
- * target balance, so the target is the current balance plus the request.
- * Gas is not offered: the BrowserVM keeps every funded signer at 1000 ETH.
- */
-export async function sandboxFaucet(kind: 'offchain' | 'erc20', input: { entityId: string; signerId: string; tokenSymbol: string; amount: bigint }): Promise<void> {
-	if (kind === 'offchain') {
-		await demoFaucet(input.entityId, input.amount);
-		return;
-	}
-	const jadapter = await hostedJAdapter(input.entityId, input.signerId);
-	if (!jadapter.fundSignerWallet) throw new Error('This chain cannot mint to a wallet');
-	const registry = await jadapter.getTokenRegistry();
-	const token = registry.find(entry => entry.symbol.toUpperCase() === input.tokenSymbol.toUpperCase());
-	if (!token) throw new Error(`Unknown sandbox token ${input.tokenSymbol}`);
-	const snapshot = await jadapter.readWalletSnapshot({ owner: input.signerId, tokenAddresses: [token.address] });
-	const current = snapshot.tokenBalances[0] ?? 0n;
-	await jadapter.fundSignerWallet(input.signerId, current + input.amount, token.symbol);
 }
 
 /**

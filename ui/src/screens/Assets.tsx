@@ -5,10 +5,10 @@ import { CopyId } from '../components/CopyId';
 import { Icon } from '../components/Icons';
 import { TokenIcon } from '../components/TokenPicker';
 import { useApp } from '../runtime/store';
-import { formatMoney, getTokenMeta, knownTokenIds, parseAmount, shortId } from '../runtime/format';
+import { formatMoney, getTokenMeta, knownTokenIds, shortId } from '../runtime/format';
 import { usdOf } from '../runtime/financial/prices';
 import { useWallet } from '../runtime/views';
-import { requestFaucet, readExternalWallet, sandboxFaucet, sandboxFaucetsAvailable, type ExternalWallet, type FaucetKind } from '../runtime/financial/external';
+import { requestFaucet, readExternalWallet, type ExternalWallet, type FaucetKind } from '../runtime/financial/external';
 import { debtGroups, enforceDebts, type DebtGroup } from '../runtime/financial/debts';
 import { getAdapter } from '../runtime/adapter';
 
@@ -29,7 +29,6 @@ export function Assets() {
 	const [busy, setBusy] = useState<string | null>(null);
 	const [faucetAmount, setFaucetAmount] = useState('100');
 	const [faucetTokenId, setFaucetTokenId] = useState(1);
-	const sandbox = sandboxFaucetsAvailable();
 	const debts = debtGroups(wallet.frame);
 	const hubs = wallet.accounts.filter(account => account.isHub);
 	const faucetMeta = getTokenMeta(faucetTokenId);
@@ -68,15 +67,6 @@ export function Assets() {
 	const faucet = (kind: FaucetKind): Promise<void> =>
 		run(`faucet-${kind}`, `Faucet request sent (${kind})`, async () => {
 			const amount = faucetAmount.trim() || '0';
-			if (sandbox && (kind === 'offchain' || kind === 'erc20')) {
-				await sandboxFaucet(kind, {
-					entityId: wallet.entityId,
-					signerId: wallet.signerId,
-					tokenSymbol: faucetMeta.symbol,
-					amount: parseAmount(amount, faucetMeta.decimals),
-				});
-				return;
-			}
 			await requestFaucet(kind, {
 				entityId: wallet.entityId,
 				signerId: wallet.signerId,
@@ -187,7 +177,7 @@ export function Assets() {
 					<div className="card" data-testid="faucets">
 						<h3 className="caps">Faucets</h3>
 						<p className="note" style={{ marginTop: 8 }}>
-							{sandbox ? 'Test money on the sandbox chain and hub. Nothing here is real.' : 'Test money from the runtime you are connected to. Only test networks answer.'}
+							Test money from the network you are connected to. Only test networks answer.
 						</p>
 						<div className="field">
 							<span className="field-label">Token</span>
@@ -213,16 +203,12 @@ export function Assets() {
 							<button type="button" className="btn" disabled={busy !== null} onClick={() => void faucet('erc20')} data-testid="faucet-erc20">
 								{busy === 'faucet-erc20' ? 'Minting…' : `${faucetMeta.symbol} to my on-chain wallet`}
 							</button>
-							{!sandbox ? (
-								<>
-									<button type="button" className="btn" disabled={busy !== null} onClick={() => void faucet('gas')} data-testid="faucet-gas">
+																<button type="button" className="btn" disabled={busy !== null} onClick={() => void faucet('gas')} data-testid="faucet-gas">
 										{busy === 'faucet-gas' ? 'Sending…' : 'Gas (ETH) to my on-chain wallet'}
 									</button>
 									<button type="button" className="btn" disabled={busy !== null} onClick={() => void faucet('reserve')} data-testid="faucet-reserve">
 										{busy === 'faucet-reserve' ? 'Asking…' : `${faucetMeta.symbol} straight into my reserve`}
 									</button>
-								</>
-							) : null}
 						</div>
 					</div>
 				</div>

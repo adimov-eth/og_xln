@@ -4,27 +4,18 @@
  * from the batch notice and comes back as DisputeStarted from the sandbox chain.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { enterStack } from './stack';
 
 const BOOT_TIMEOUT = 180_000;
 const CHAIN_TIMEOUT = 90_000;
 
-async function enterSandbox(page: Page): Promise<void> {
-	await page.goto('/');
-	const existing = page.getByRole('button', { name: /Sandbox/ }).first();
-	if (await existing.isVisible({ timeout: 2_000 }).catch(() => false)) await existing.click();
-	else await page.getByTestId('gate-sandbox').click();
-	await expect(page.getByTestId('home-total')).toBeVisible({ timeout: BOOT_TIMEOUT });
-	await expect(page.getByTestId('token-net-USDC')).toBeVisible({ timeout: CHAIN_TIMEOUT });
-	// The sandbox shapes the signer wallet (2,500 USDC + 1 WETH); wait for the on-chain tier so totals are stable.
-	await expect(page.getByTestId('home-onchain')).not.toContainText('$0.00', { timeout: CHAIN_TIMEOUT });
-}
 
 test.describe('wallet UI account management', () => {
 	test('adds a token lane, then prepares and signs a dispute', { tag: '@functional' }, async ({ page }) => {
 		const pageErrors: string[] = [];
 		page.on('pageerror', error => pageErrors.push(error.message));
 
-		await enterSandbox(page);
+		await enterStack(page);
 		await page.getByTestId('account-row').first().click();
 		await expect(page.getByTestId('account-status')).toHaveText('Open', { timeout: CHAIN_TIMEOUT });
 

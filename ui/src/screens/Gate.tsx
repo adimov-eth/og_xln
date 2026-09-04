@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../components/Icons';
 import { Logo } from '../components/Logo';
 import { useApp } from '../runtime/store';
-import { bootEmbeddedDemo, connectSandbox } from '../runtime/sandbox';
-import { bootHostedVault, detectStack, type Stack } from '../runtime/hosted';
+import { bootHostedVault, bootLearnVault, detectStack, type Stack } from '../runtime/hosted';
 import {
 	FACTOR_PRESETS,
 	customWork,
@@ -69,16 +68,13 @@ export function Gate() {
 		}
 	};
 
-	const enterSandbox = (): void => {
-		void run(async () => {
-			await connectSandbox(step => setBusyStep(step));
-		});
-	};
+	const NO_STACK = 'No xln network answers at this address. Open the wallet from a running stack (bun run dev, or xln.finance/ui).';
 
-	/** Same sandbox, with the guided tour open from step one. */
+	/** A throwaway wallet on the live network, with the guided tour open from step one. */
 	const learn = (): void => {
 		void run(async () => {
-			await connectSandbox(step => setBusyStep(step));
+			if (!stack) throw new Error(NO_STACK);
+			await bootLearnVault(stack, step => setBusyStep(step));
 			useApp.getState().setTour({ active: true, index: 0 });
 		});
 	};
@@ -104,8 +100,8 @@ export function Gate() {
 			setProgress(null);
 			const vaultId = runtimeIdForSeed(result.mnemonic).toLowerCase();
 			const vaultOptions = { vaultId, vaultName: name.trim(), kind: 'brainvault' as const, selfLabel: name.trim(), onStep: (step: string) => setBusyStep(step) };
-			if (stack) await bootHostedVault(result.mnemonic, { ...vaultOptions, stack });
-			else await bootEmbeddedDemo(result.mnemonic, vaultOptions);
+			if (!stack) throw new Error(NO_STACK);
+			await bootHostedVault(result.mnemonic, { ...vaultOptions, stack });
 			toast('Vault created. Write nothing down: your name and passphrase are the backup.');
 		});
 	};
@@ -116,8 +112,8 @@ export function Gate() {
 			if (!isValidMnemonic(seed)) throw new Error('That is not a valid BIP39 phrase');
 			const vaultId = runtimeIdForSeed(seed).toLowerCase();
 			const vaultOptions = { vaultId, vaultName: 'Imported vault', kind: 'mnemonic' as const, selfLabel: 'Main', onStep: (step: string) => setBusyStep(step) };
-			if (stack) await bootHostedVault(seed, { ...vaultOptions, stack });
-			else await bootEmbeddedDemo(seed, vaultOptions);
+			if (!stack) throw new Error(NO_STACK);
+			await bootHostedVault(seed, { ...vaultOptions, stack });
 		});
 	};
 
@@ -130,7 +126,6 @@ export function Gate() {
 	};
 
 	const unlockVault = (kind: string): void => {
-		if (kind === 'sandbox') return enterSandbox();
 		if (kind === 'brainvault') {
 			setMode('create');
 			return;
@@ -188,7 +183,7 @@ export function Gate() {
 					? 'Looking for a network at this address…'
 					: stack
 						? `${stack.jurisdiction.name} · hub ${stack.hubs[0]?.name ?? 'none'} · ${new URL(stack.apiBase).host}`
-						: 'No xln network at this address. Vaults boot the offline sandbox.'}
+						: 'No xln network at this address. Open the wallet from a running stack.'}
 			</p>
 
 			{error ? (
@@ -199,7 +194,7 @@ export function Gate() {
 
 			{mode === 'landing' && (
 				<div className="gate-cards fade-in">
-					{vaults.map(vault => (
+					{vaults.filter(vault => vault.kind !== 'sandbox').map(vault => (
 						<button key={vault.id} type="button" className="gate-card" onClick={() => unlockVault(vault.kind)}>
 							<span className="gate-card-icon">
 								<Icon name={vault.kind === 'remote' ? 'bank' : 'lock'} size={18} />
@@ -207,7 +202,7 @@ export function Gate() {
 							<span>
 								<span className="gate-card-title">{vault.name}</span>
 								<span className="gate-card-sub muted">
-									{vault.kind === 'sandbox' ? 'Local sandbox' : vault.kind === 'remote' ? 'Remote runtime' : 'Unlock'}
+									{vault.kind === 'remote' ? 'Remote runtime' : 'Unlock'}
 								</span>
 							</span>
 							<Icon name="chevronRight" size={16} />
@@ -253,12 +248,9 @@ export function Gate() {
 						</span>
 						<span>
 							<span className="gate-card-title">Learn xln in five minutes</span>
-							<span className="gate-card-sub muted">A guided tour on a live sandbox: credit, payment, collateral, a swap and a dispute</span>
+							<span className="gate-card-sub muted">A guided tour on the live network: credit, a payment, collateral, swaps across two chains and a dispute</span>
 						</span>
 						<Icon name="chevronRight" size={16} />
-					</button>
-					<button type="button" className="btn quiet gate-sandbox" onClick={enterSandbox} data-testid="gate-sandbox">
-						Enter the sandbox without the tour
 					</button>
 				</div>
 			)}

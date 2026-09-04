@@ -5,7 +5,7 @@ import { defineConfig, devices } from '@playwright/test';
  * sandbox, so no anvil, orchestrator or relay is needed: one dev server, one
  * browser, real consensus in the page.
  */
-const PORT = Number(process.env['UI_E2E_PORT'] || '5183');
+const PORT = process.env['UI_E2E_PORT'] || '5183';
 const BASE_URL = process.env['UI_E2E_BASE_URL'] || `http://localhost:${PORT}`;
 
 export default defineConfig({
@@ -27,9 +27,10 @@ export default defineConfig({
 		launchOptions: { args: ['--disable-gpu', '--use-gl=swiftshader', '--disable-dev-shm-usage'] },
 	},
 	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], channel: 'chromium' } }],
+	// The wallet is tested against the real stack: `bun run dev` serves it on :5183 with /api proxied.
 	webServer: {
-		command: 'bun run dev',
-		url: BASE_URL,
+		command: 'cd .. && bun run dev',
+		url: `${BASE_URL.replace(/\/$/, '')}/api/jurisdictions`,
 		reuseExistingServer: true,
 		timeout: 240_000,
 	},

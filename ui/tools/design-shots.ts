@@ -9,6 +9,7 @@
  * Each variant boots its own sandbox in a fresh browser context, so the shots
  * are reproducible and the payment in the flow never accumulates.
  */
+import { HDNodeWallet } from 'ethers';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -39,14 +40,14 @@ async function assertServer(): Promise<void> {
 }
 
 async function enterSandbox(page: Page): Promise<void> {
-	await page.goto('/');
-	const existing = page.getByRole('button', { name: /Sandbox/ }).first();
-	if (await existing.isVisible({ timeout: 2_000 }).catch(() => false)) await existing.click();
-	else await page.getByTestId('gate-sandbox').click();
+	// The wallet is shot on the running stack (bun run dev): a fresh phrase, the account with the stack hub.
+	await page.goto(BASE_URL);
+	await page.getByTestId('gate-stack').waitFor({ timeout: 20_000 });
+	await page.getByRole('button', { name: /Import a phrase/ }).click();
+	await page.locator('textarea').fill(HDNodeWallet.createRandom().mnemonic?.phrase ?? '');
+	await page.locator('button[type="submit"]').click();
 	await page.getByTestId('home-total').waitFor({ timeout: BOOT_TIMEOUT });
-	await page.getByTestId('token-net-USDC').waitFor({ timeout: STEP_TIMEOUT });
-	// Let the entrance animations finish before the first frame.
-	await page.waitForTimeout(600);
+	await page.getByTestId('account-row').first().waitFor({ timeout: 90_000 });
 }
 
 /**

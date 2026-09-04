@@ -4,25 +4,18 @@
  * account. The sandbox merchant makes a two-sided WETH/USDC market on boot.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { enterStack } from './stack';
 
 const BOOT_TIMEOUT = 180_000;
 const CONSENSUS_TIMEOUT = 60_000;
 
-async function enterSandbox(page: Page): Promise<void> {
-	await page.goto('/');
-	const existing = page.getByRole('button', { name: /Sandbox/ }).first();
-	if (await existing.isVisible({ timeout: 2_000 }).catch(() => false)) await existing.click();
-	else await page.getByTestId('gate-sandbox').click();
-	await expect(page.getByTestId('home-total')).toBeVisible({ timeout: BOOT_TIMEOUT });
-	await expect(page.getByTestId('token-net-USDC')).toBeVisible({ timeout: CONSENSUS_TIMEOUT });
-}
 
 test.describe('wallet UI swap', () => {
 	test('shows the hub book, fills the ticket from a level and takes it', { tag: '@functional' }, async ({ page }) => {
 		const pageErrors: string[] = [];
 		page.on('pageerror', error => pageErrors.push(error.message));
 
-		await enterSandbox(page);
+		await enterStack(page);
 		await page.getByTestId('home-swap').click();
 
 		// The book renders once for phones and once for the desktop aside; take the one on screen.
