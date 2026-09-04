@@ -369,6 +369,9 @@ fn close_proof_matches(stored: Option<&CanonicalValue>, proof: &CanonicalValue) 
     };
     text(stored, "orderId") == text(proof, "orderId")
         && text(stored, "routeHash").map(normalized) == text(proof, "routeHash").map(normalized)
+        && text(stored, "sourcePullId") == text(proof, "sourcePullId")
+        && text(stored, "targetPullId") == text(proof, "targetPullId")
+        && text(stored, "closeMode") == text(proof, "closeMode")
         && unsigned(stored, "fillRatio") == unsigned(proof, "fillRatio")
         && bigint(stored, "cumulativeSourceAmount") == bigint(proof, "cumulativeSourceAmount")
         && bigint(stored, "cumulativeTargetAmount") == bigint(proof, "cumulativeTargetAmount")
@@ -529,6 +532,12 @@ pub(super) fn with_fill_progress(
         return Err(committed_invalid(
             prefix,
             format!("FILL_SEQ:{previous_seq}:{next_seq}"),
+        ));
+    }
+    if ratio > MAX_FILL_RATIO {
+        return Err(committed_invalid(
+            prefix,
+            format!("FILL_RATIO_RANGE:{ratio}"),
         ));
     }
     let (previous_ratio, previous_source, previous_target) = committed_fill(route, kind)?;

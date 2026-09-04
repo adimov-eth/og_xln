@@ -964,15 +964,6 @@ const commitOrderbookMatchResult = (
       .join(', ');
     throw haltRuntimeFailure("ORDERBOOK_LIVE_PROJECTION_REJECT", `ORDERBOOK_LIVE_PROJECTION_REJECT: ${detail}`);
   }
-  if (result.crossJurisdictionFills.length > 0) {
-    entityLog.info('crossj.firm_fills_recorded', { count: result.crossJurisdictionFills.length });
-    // Fill progress is Hub-internal: apply it to the admitted route and book
-    // row now, and hand the same progress to the source Hub (locally or as a
-    // sibling output). The Account offers only learn the outcome at close.
-    for (const fill of result.crossJurisdictionFills) {
-      applyCrossJurisdictionOrderbookFill(env, state, fill, context.allOutputs, storageChanges);
-    }
-  }
   const ext = state.orderbookExt as OrderbookExtState;
   const previousTradeCounts = new Map<string, number>();
   let matchedSwaps = 0;
@@ -987,6 +978,17 @@ const commitOrderbookMatchResult = (
     previousTradeCounts.set(pairId, book.tradeCount);
     replaceOrderbookPair(ext, pairId, book);
     recordFrameBookChange(storageChanges, state.entityId, pairId);
+  }
+  if (result.crossJurisdictionFills.length > 0) {
+    entityLog.info('crossj.firm_fills_recorded', { count: result.crossJurisdictionFills.length });
+    // Fill progress is Hub-internal: apply it to the admitted route and book
+    // row AFTER the matcher book is installed, so the row rests at the
+    // quantized remainder floor(total·r/65535) (Rust re-materializes the same),
+    // not at the executed lots. The source Hub gets the same progress locally
+    // or as a sibling output; the Account offers only learn the outcome at close.
+    for (const fill of result.crossJurisdictionFills) {
+      applyCrossJurisdictionOrderbookFill(env, state, fill, context.allOutputs, storageChanges);
+    }
   }
   if (matchedSwaps > 0) {
     candidateEffects.push({

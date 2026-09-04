@@ -4797,6 +4797,11 @@ fn apply_clear_request(
         set(&mut route, "status", string("clear_requested"))?;
         set(
             &mut route,
+            "updatedAt",
+            number(state.timestamp, tx.kind, "TIMESTAMP")?,
+        )?;
+        set(
+            &mut route,
             "pendingClearRequestedAt",
             number(state.timestamp, tx.kind, "TIMESTAMP")?,
         )?;
@@ -4927,6 +4932,11 @@ fn apply_clear_request(
             )));
         }
         set(&mut route, "status", string("clear_requested"))?;
+        set(
+            &mut route,
+            "updatedAt",
+            number(state.timestamp, tx.kind, "TIMESTAMP")?,
+        )?;
         set(
             &mut route,
             "pendingClearRequestedAt",
