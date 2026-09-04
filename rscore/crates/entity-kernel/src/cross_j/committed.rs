@@ -413,11 +413,22 @@ fn committed_pull_close(
             format!("PROOF_MISMATCH:{order_id}"),
         ));
     }
-    let (committed_ratio, committed_source, committed_target) =
-        committed_fill(&route, EntityTxKind::CrossPullClose)?;
+    // ONE economics rule (TS = Rust): both cumulative amounts are the proof
+    // ratio projected onto the route totals; the ratio never rolls back.
+    let (committed_ratio, _, _) = committed_fill(&route, EntityTxKind::CrossPullClose)?;
+    let numerator = BigInt::from(ratio);
+    let denominator = BigInt::from(MAX_FILL_RATIO);
+    let project = |leg: &'static str| -> Result<BigInt, EntityKernelError> {
+        let total = required_bigint(
+            required_field(&route, leg, kind)?,
+            "amount",
+            EntityTxKind::CrossPullClose,
+        )?;
+        Ok(scaled_amount(&total, &numerator, &denominator))
+    };
     if ratio < committed_ratio
-        || bigint(proof, "cumulativeSourceAmount") != Some(committed_source)
-        || bigint(proof, "cumulativeTargetAmount") != Some(committed_target)
+        || bigint(proof, "cumulativeSourceAmount") != Some(project("source")?)
+        || bigint(proof, "cumulativeTargetAmount") != Some(project("target")?)
     {
         return Err(committed_invalid(
             kind,

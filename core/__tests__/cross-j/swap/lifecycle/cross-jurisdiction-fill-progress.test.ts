@@ -377,7 +377,7 @@ describe('cross-j ratio-only fill progress', () => {
       1,
     );
     expect(result.ok ? 'ok' : result.rejection.message).toBe('ok');
-    expect(result.ok ? result.outcome : undefined).toBe('swap_cancelled');
+    expect(result.ok ? result.outcome : undefined).toBe('applied');
     expect(account.state.swapOffers.has(prepared.orderId)).toBe(false);
     expect(account.state.pulls?.has(sourcePull.pullId)).toBe(false);
   });
