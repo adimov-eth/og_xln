@@ -14,10 +14,11 @@ use crate::scheduler::{ScheduledHook, ScheduledHookKind, cancel_hook, schedule_h
 use crate::{EntityFrameEvent, EntityKernelError, EntityStateSlice, EntityTxKind};
 
 use super::{
-    CrossJurisdictionApplyResult, bigint, canonical_bool, close_binary_hash, collection,
-    committed_fill, field, nested_text, normalized, number, projected, required_bigint,
-    route_book_owner, route_hash_matches, route_runtime_expired, route_signer, routed,
-    routed_for_route, scaled_amount, set, string, terminal_route, text, unsigned,
+    CrossJurisdictionApplyResult, apply_close_proof_fields, bigint, canonical_bool,
+    close_binary_hash, collection, committed_fill, field, nested_text, normalized, number,
+    projected, required_bigint, route_book_owner, route_hash_matches, route_runtime_expired,
+    route_signer, routed, routed_for_route, scaled_amount, set, string, terminal_route, text,
+    unsigned,
 };
 
 const MAX_FILL_RATIO: u64 = 65_535;
@@ -480,30 +481,7 @@ fn committed_pull_close(
             ));
         }
     }
-    for (target, source) in [
-        ("cumulativeFillRatio", "fillRatio"),
-        ("claimedRatio", "fillRatio"),
-        ("filledSourceAmount", "cumulativeSourceAmount"),
-        ("filledTargetAmount", "cumulativeTargetAmount"),
-        ("sourceClaimed", "cumulativeSourceAmount"),
-        ("targetClaimed", "cumulativeTargetAmount"),
-    ] {
-        set(
-            &mut route,
-            target,
-            required_field(proof, source, kind)?.clone(),
-        )?;
-    }
-    set(
-        &mut route,
-        "fillNumerator",
-        CanonicalValue::BigInt(BigInt::from(ratio)),
-    )?;
-    set(
-        &mut route,
-        "fillDenominator",
-        CanonicalValue::BigInt(BigInt::from(MAX_FILL_RATIO)),
-    )?;
+    apply_close_proof_fields(&mut route, proof, EntityTxKind::CrossPullClose)?;
     set(&mut route, "sourceCloseProof", proof.clone())?;
     set(&mut route, "targetCloseProof", proof.clone())?;
     let terminal = if ratio > 0 {

@@ -1,5 +1,6 @@
 import { normalizeEntityRef } from '../../entity/tx/account-key';
 import {
+  CROSS_J_MAX_FILL_RATIO,
   cloneCrossJurisdictionBookAdmission,
   cloneCrossJurisdictionRoute,
   compareCrossJurisdictionRouteStatus,
@@ -519,16 +520,13 @@ export const buildCrossJurisdictionMarketOffer = (
 const currentFillSeq = (route: CrossJurisdictionSwapRoute): number =>
   Math.max(0, Math.floor(Number(route.fillSeq ?? 0) || 0));
 
-export const buildCrossJurisdictionFillInstruction = (
-  accountId: string,
-  offerId: string,
-  namespacedOrderId: string,
+/** Executed book amounts of one aggregated fill in route (source/target) terms. */
+export const crossJurisdictionExecutionAmounts = (
   meta: CrossMarketOffer,
   fill: CrossOrderbookFill,
-): CrossJurisdictionFillInstruction | null => {
+): { executionSourceAmount: bigint; executionTargetAmount: bigint } | null => {
   const filledLotsBig = BigInt(fill.filledLots);
   if (filledLotsBig <= 0n || fill.weightedCost <= 0n) return null;
-
   const executionBaseWei = baseAmountFromLots(meta.baseTokenId, filledLotsBig);
   const executionQuoteWei = quoteAmountFromWeightedLots(
     meta.baseTokenId,
@@ -538,6 +536,19 @@ export const buildCrossJurisdictionFillInstruction = (
   const executionSourceAmount = meta.side === 1 ? executionBaseWei : executionQuoteWei;
   const executionTargetAmount = meta.side === 1 ? executionQuoteWei : executionBaseWei;
   if (executionSourceAmount <= 0n || executionTargetAmount <= 0n) return null;
+  return { executionSourceAmount, executionTargetAmount };
+};
+
+export const buildCrossJurisdictionFillInstruction = (
+  accountId: string,
+  offerId: string,
+  namespacedOrderId: string,
+  meta: CrossMarketOffer,
+  fill: CrossOrderbookFill,
+): CrossJurisdictionFillInstruction | null => {
+  const execution = crossJurisdictionExecutionAmounts(meta, fill);
+  if (!execution) return null;
+  const { executionSourceAmount, executionTargetAmount } = execution;
 
   const {
     sourceTotal,
@@ -559,6 +570,12 @@ export const buildCrossJurisdictionFillInstruction = (
     previousTargetClaimed + executionTargetAmount,
   ));
   if (fillRatio <= previousCumulativeRatio) return null;
+  // Both legs must step: a ratio that moves only one floor(total·r/65535)
+  // claim is absorbed by the Hub like a sub-step fill.
+  const ratioBig = BigInt(fillRatio);
+  const max = BigInt(CROSS_J_MAX_FILL_RATIO);
+  const project = (total: bigint): bigint => (ratioBig >= max ? total : (total * ratioBig) / max);
+  if (project(sourceTotal) <= previousSourceClaimed || project(targetTotal) <= previousTargetClaimed) return null;
   // A full fill is terminal through the ratio itself; `cancelRemainder` is
   // only the matcher's explicit cancel of an unfilled remainder.
   return {

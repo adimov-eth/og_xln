@@ -71,6 +71,9 @@ const validateCrossPullCloseEvidence = (
   if (!Number.isSafeInteger(proof.fillRatio) || proof.fillRatio < 0 || proof.fillRatio > HASHLADDER_MAX_FILL_RATIO) {
     return { ok: false, error: `Cross-j close proof ratio out of uint16 range: ${proof.fillRatio}` };
   }
+  if (proof.closeMode !== 'full' && proof.closeMode !== 'partial_cancel_remainder' && proof.closeMode !== 'pure_cancel') {
+    return { ok: false, error: `Cross-j close mode invalid: ${String(proof.closeMode)}` };
+  }
   const proofError = crossProofMatchesBinding(binding, proof, pull);
   if (proofError) return { ok: false, error: `Cross-j close proof mismatch: ${proofError}` };
   const binaryHash = hashCrossJurisdictionCloseBinary(binary);
@@ -129,6 +132,7 @@ const validateCrossJurisdictionPullRoute = (account: AccountState, tx: PullLockT
   ) {
     return 'Cross-j pull opening must be a zero-progress resting route';
   }
+  if (binding.leg !== 'source' && binding.leg !== 'target') return 'Cross-j pull binding leg invalid';
   if (safeStringify(binding) !== safeStringify(buildCrossJurisdictionPullBinding(route, binding.leg))) {
     return 'Cross-j pull binding does not match route';
   }
@@ -298,15 +302,14 @@ export async function handleCrossPullClose(
   const delta = createDeltaDraft(account, pull.tokenId);
 
   const absAmount = absBigInt(pull.amount);
-  // validateCrossPullCloseEvidence proved this leg == floor(|amount|·r/65535).
+  // validateCrossPullCloseEvidence proved this leg == floor(|amount|·r/65535);
+  // the whole hold is released and the claimed part moves.
   const applied = binding.leg === 'source' ? proof.cumulativeSourceAmount : proof.cumulativeTargetAmount;
-  const remainingHold = absAmount - applied;
   const payerIsLeft = !beneficiaryIsLeft;
-  const debitHold = applied + remainingHold;
   const holdError = releaseHold(
     delta,
     payerIsLeft ? 'left' : 'right',
-    debitHold,
+    absAmount,
     () => `Pull ${payerIsLeft ? 'left' : 'right'} hold underflow`,
   );
   if (holdError) return accountTxValidationRejected(holdError, events);
@@ -316,7 +319,7 @@ export async function handleCrossPullClose(
 
   commitDeltaDraft(account, delta);
   account.pulls.del(pullId);
-  events.push(`🪝 Cross-j pull closed: ${pullId.slice(0, 8)}... ratio ${ratio}/${HASHLADDER_MAX_FILL_RATIO} claimed ${applied} released ${remainingHold}`);
+  events.push(`🪝 Cross-j pull closed: ${pullId.slice(0, 8)}... ratio ${ratio}/${HASHLADDER_MAX_FILL_RATIO} claimed ${applied} released ${absAmount - applied}`);
   // The source offer is bound to this pull; the close is the only Account tx
   // that retires it (fill progress never touches the Account offer).
   const offer = binding.leg === 'source' ? account.swapOffers?.get(binding.orderId) : undefined;

@@ -33,21 +33,10 @@ export const handleCrossJurisdictionBookOrderRemovedEntityTx = async (
   if (normalizeEntityRef(currentRoute.routeHash || '') !== normalizeEntityRef(route.routeHash || '')) {
     throw haltRuntimeFailure('CROSS_J_BOOK_REMOVAL_ACK_ROUTE_HASH_MISMATCH', `CROSS_J_BOOK_REMOVAL_ACK_ROUTE_HASH_MISMATCH:order=${route.orderId}`);
   }
-  if (isCrossJurisdictionTerminalStatus(currentRoute.status)) {
-    return { newState, outputs: [], accountTxs: [] };
-  }
-  if (!visible || !offer?.crossJurisdiction) {
-    throw haltRuntimeFailure('CROSS_J_BOOK_REMOVAL_ACK_SOURCE_STATE_MISSING', `CROSS_J_BOOK_REMOVAL_ACK_SOURCE_STATE_MISSING:order=${route.orderId}:account=${entityTx.data.sourceAccountId}`);
-  }
-  markCrossJurisdictionBookAdmissionClosed(
-    newState,
-    route.source.entityId,
-    route.orderId,
-    entityTx.data.removedAt,
-    entityTx.data.reason || 'cancel_request',
-  );
-  const pendingDisputeRemovals = visible.disputePrepare?.pendingOrderbookRemovalIds;
-  if ((visible.status ?? 'active') === 'dispute_preparing' && pendingDisputeRemovals?.includes(route.orderId)) {
+  // A dispute waiting on this removal must be released even when the route
+  // already settled: the ACK can race the close that retired the offer.
+  const pendingDisputeRemovals = visible?.disputePrepare?.pendingOrderbookRemovalIds;
+  if ((visible?.status ?? 'active') === 'dispute_preparing' && pendingDisputeRemovals?.includes(route.orderId)) {
     const account = getEntityAccountForWrite(newState.accounts, entityTx.data.sourceAccountId);
     if (!account?.disputePrepare) throw new Error(`CROSS_J_BOOK_REMOVAL_WRITE_ACCOUNT_MISSING:${entityTx.data.sourceAccountId}`);
     applyEntityAccountEnvelopeUpdate(env, entityTx.data.sourceAccountId, account, {
@@ -64,12 +53,31 @@ export const handleCrossJurisdictionBookOrderRemovedEntityTx = async (
     );
     return { newState: drafted.newState, outputs: drafted.outputs, accountTxs: [] };
   }
+  if (isCrossJurisdictionTerminalStatus(currentRoute.status)) {
+    return { newState, outputs: [], accountTxs: [] };
+  }
+  if (!visible || !offer?.crossJurisdiction) {
+    throw haltRuntimeFailure('CROSS_J_BOOK_REMOVAL_ACK_SOURCE_STATE_MISSING', `CROSS_J_BOOK_REMOVAL_ACK_SOURCE_STATE_MISSING:order=${route.orderId}:account=${entityTx.data.sourceAccountId}`);
+  }
+  markCrossJurisdictionBookAdmissionClosed(
+    newState,
+    route.source.entityId,
+    route.orderId,
+    entityTx.data.removedAt,
+    entityTx.data.reason || 'cancel_request',
+  );
   const outputs: EntityInput[] = [];
+  // The ACK carries the book owner's committed progress; it may be ahead of
+  // this mirror when its fill notice is still in flight. Cancel from the
+  // later of the two so the clear never settles below what the book filled.
+  const currentSeq = Math.max(0, Math.floor(Number(currentRoute.fillSeq ?? 0) || 0));
+  const carriedSeq = Math.max(0, Math.floor(Number(route.fillSeq ?? 0) || 0));
+  const progress = carriedSeq > currentSeq ? route : currentRoute;
   const applied = applySourceHubCrossJurisdictionFillProgress(env, newState, {
     orderId: route.orderId,
     ...(currentRoute.routeHash ? { routeHash: currentRoute.routeHash } : {}),
-    fillSeq: Math.max(0, Math.floor(Number(currentRoute.fillSeq ?? 0) || 0)),
-    cumulativeFillRatio: getCrossJurisdictionCommittedProofRatio(currentRoute),
+    fillSeq: Math.max(currentSeq, carriedSeq),
+    cumulativeFillRatio: getCrossJurisdictionCommittedProofRatio(progress),
     cancelRemainder: true,
   }, outputs, options?.storageChanges ?? []);
   addMessage(

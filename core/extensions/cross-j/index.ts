@@ -442,7 +442,7 @@ function requireCrossJurisdictionFillProgress(
 ): CrossJurisdictionFillProgress {
   const validatedFill = validateCrossJurisdictionFillProgress(route, input);
   if (!validatedFill.ok) {
-    throw new Error(`${errorPrefix}: route=${route.orderId} ${validatedFill.error}`);
+    throw haltRuntimeFailure(errorPrefix, `${errorPrefix}: route=${route.orderId} ${validatedFill.error}`);
   }
   return validatedFill.value;
 }

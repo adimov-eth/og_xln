@@ -384,10 +384,12 @@ export const handleRemoveCrossJurisdictionBookOrderEntityTx = (
     entityTx.data.orderId,
     options?.storageChanges ?? [],
   );
-  const outputs = route && entityTx.data.sourceAccountId
+  // ACK with this book's own progress: the requester's copy may be stale.
+  const ackRoute = newState.crossJurisdictionSwaps?.get(entityTx.data.orderId) ?? route;
+  const outputs = ackRoute && entityTx.data.sourceAccountId
     ? [buildCrossJurisdictionBookRemovalAckOutput(
         newState,
-        route,
+        ackRoute,
         entityTx.data.sourceAccountId,
         now,
         entityTx.data.reason || 'cancel_request',

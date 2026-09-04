@@ -4,6 +4,7 @@ import { createStructuredLogger, shortOrder } from '../../../../../../support/lo
 import { compareCanonicalText } from '../../../../../../orderbook/swap-execution';
 import {
   buildCrossJurisdictionFillInstruction,
+  crossJurisdictionExecutionAmounts,
   type CrossJurisdictionFillInstruction,
 } from '../../../../../../extensions/cross-j/orderbook';
 import { crossJurisdictionAssetKey } from '../../../../../../extensions/cross-j/market';
@@ -16,28 +17,7 @@ import type { CrossOrderbookPass } from './types';
 
 const orderbookCrossLog = createStructuredLogger('orderbook.cross');
 
-const assertPlannedCrossFillConservation = (
-  plans: readonly CrossJurisdictionFillInstruction[],
-): void => {
-  const netByAsset = new Map<string, bigint>();
-  for (const instruction of plans) {
-    const sourceKey = crossJurisdictionAssetKey(
-      instruction.route.source.jurisdiction,
-      instruction.route.source.tokenId,
-    );
-    const targetKey = crossJurisdictionAssetKey(
-      instruction.route.target.jurisdiction,
-      instruction.route.target.tokenId,
-    );
-    netByAsset.set(
-      sourceKey,
-      (netByAsset.get(sourceKey) ?? 0n) - instruction.executionSourceAmount,
-    );
-    netByAsset.set(
-      targetKey,
-      (netByAsset.get(targetKey) ?? 0n) + instruction.executionTargetAmount,
-    );
-  }
+const assertCrossFillConservation = (netByAsset: ReadonlyMap<string, bigint>): void => {
   const mismatches = [...netByAsset.entries()]
     .filter(([, net]) => net !== 0n)
     .sort(([left], [right]) => compareCanonicalText(left, right));
@@ -49,6 +29,9 @@ const assertPlannedCrossFillConservation = (
 
 const planCrossFills = (pass: CrossOrderbookPass): CrossJurisdictionFillInstruction[] => {
   const planned: CrossJurisdictionFillInstruction[] = [];
+  // Conservation is over every executed amount, including fills the Hub
+  // absorbs below one uint16 step (Rust nets the same set).
+  const netByAsset = new Map<string, bigint>();
   const orderIds = [...pass.aggregatedFills.keys()].sort(compareCanonicalText);
   for (const orderId of orderIds) {
     const fill = pass.aggregatedFills.get(orderId);
@@ -58,6 +41,13 @@ const planCrossFills = (pass: CrossOrderbookPass): CrossJurisdictionFillInstruct
       buildCrossMarketOfferFromBookOrder(pass.hubState, orderId);
     if (!meta) {
       throw haltRuntimeFailure("ORDERBOOK_CROSS_J_FILL_META_MISSING", `ORDERBOOK_CROSS_J_FILL_META_MISSING: order=${orderId}`);
+    }
+    const execution = crossJurisdictionExecutionAmounts(meta, fill);
+    if (execution) {
+      const sourceKey = crossJurisdictionAssetKey(meta.route.source.jurisdiction, meta.route.source.tokenId);
+      const targetKey = crossJurisdictionAssetKey(meta.route.target.jurisdiction, meta.route.target.tokenId);
+      netByAsset.set(sourceKey, (netByAsset.get(sourceKey) ?? 0n) - execution.executionSourceAmount);
+      netByAsset.set(targetKey, (netByAsset.get(targetKey) ?? 0n) + execution.executionTargetAmount);
     }
     const { accountId, offerId } = parseNamespacedOrderId(
       orderId,
@@ -82,6 +72,7 @@ const planCrossFills = (pass: CrossOrderbookPass): CrossJurisdictionFillInstruct
     }
     planned.push(instruction);
   }
+  assertCrossFillConservation(netByAsset);
   return planned;
 };
 
@@ -123,6 +114,5 @@ export const finalizeCrossOrderbookFills = (
   pass: CrossOrderbookPass,
 ): void => {
   const planned = planCrossFills(pass);
-  assertPlannedCrossFillConservation(planned);
   for (const instruction of planned) commitCrossFill(pass, instruction);
 };

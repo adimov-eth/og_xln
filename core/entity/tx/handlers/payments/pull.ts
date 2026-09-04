@@ -6,7 +6,9 @@ import {
   isCrossJurisdictionTerminalStatus,
   transitionCrossJurisdictionRouteStatus,
   cloneCrossJurisdictionCloseProof,
+  withCrossJurisdictionCloseProofProgress,
 } from '../../../../extensions/cross-j/index';
+import { haltRuntimeFailure } from '../../../../protocol/errors/failure-taxonomy';
 import { verifyHashLadderBinary } from '../../../../protocol/htlc/hash-ladder';
 import { prepareEntityTxState } from '../../../state-clone';
 import { addMessage } from '../../../frame-events';
@@ -112,8 +114,14 @@ const proofRouteError = (
     if (!closeProofsMatch(sourceProof, proof)) return 'source close proof mismatch';
   }
   const routeRatio = getCrossJurisdictionCommittedProofRatio(route);
+  if (proof.fillRatio < routeRatio) return `ratio ${proof.fillRatio} < informed ${routeRatio}`;
   if (leg === 'source' || routeRatio > 0) {
-    const expectedProof = buildCrossJurisdictionCloseProof(route, binary);
+    // Off-chain progress never gates the close: the hub's real fill may run
+    // ahead of this mirror, so the expectation is built at the proof's ratio.
+    const expectedProof = buildCrossJurisdictionCloseProof(
+      withCrossJurisdictionCloseProofProgress(route, proof, route.updatedAt),
+      binary,
+    );
     if (proof.fillRatio !== expectedProof.fillRatio) return `ratio ${proof.fillRatio} != ${expectedProof.fillRatio}`;
     if (proof.cumulativeSourceAmount !== expectedProof.cumulativeSourceAmount) {
       return `source amount ${proof.cumulativeSourceAmount} != ${expectedProof.cumulativeSourceAmount}`;
@@ -130,11 +138,11 @@ export const handleCrossPullCloseEntityTx = (env: EntityRuntimeContext, state: E
   const result = createResult(state, options);
   const { counterpartyEntityId, pullId, binary, proof, route: commandRoute } = tx.data;
   const accountId = resolveCounterparty(result, counterpartyEntityId);
-  if (!accountId) return result;
+  if (!accountId) throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_ACCOUNT_MISSING", `CROSS_J_PULL_CLOSE_ACCOUNT_MISSING:${counterpartyEntityId}`);
   const sourceRoute = findCrossSourceRoute(result.newState, pullId, counterpartyEntityId);
   const targetRoute = findCrossTargetHubRoute(result.newState, pullId, counterpartyEntityId);
   const found = sourceRoute ?? targetRoute;
-  if (!found) return fail(result, `❌ Cross-j pull close ${pullId.slice(0, 8)} blocked: route missing`);
+  if (!found) throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_ROUTE_MISSING", `CROSS_J_PULL_CLOSE_ROUTE_MISSING:${pullId}`);
   const leg = sourceRoute ? 'source' : 'target';
   if (isCrossJurisdictionTerminalStatus(found.status)) {
     return fail(result, `❌ Cross-j ${leg} pull close ${pullId.slice(0, 8)} blocked: route ${found.status}`);
@@ -142,8 +150,10 @@ export const handleCrossPullCloseEntityTx = (env: EntityRuntimeContext, state: E
   if (leg === 'source' && found.status !== 'clearing' && found.status !== 'clear_requested') {
     return fail(result, `❌ Cross-j source pull close ${pullId.slice(0, 8)} blocked: route ${found.status}`);
   }
+  // Invalid sibling close data is a runtime fault (owner canon): fail-stop,
+  // like Rust. Only the terminal/status fences above stay soft.
   const proofError = proofRouteError(found, proof, binary, leg, commandRoute);
-  if (proofError) return fail(result, `❌ Cross-j ${leg} pull close ${pullId.slice(0, 8)} blocked: ${proofError}`);
+  if (proofError) throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_PROOF_INVALID", `CROSS_J_PULL_CLOSE_PROOF_INVALID:${pullId}:${proofError}`);
   // Every gate runs before any mutation: a soft-fail return must not leak
   // route economics into the committed mirror while the Account tx was never
   // queued.
@@ -160,12 +170,7 @@ export const handleCrossPullCloseEntityTx = (env: EntityRuntimeContext, state: E
   }
   route.sourceCloseProof = cloneCrossJurisdictionCloseProof(proof);
   if (leg === 'target') {
-    route.cumulativeFillRatio = proof.fillRatio;
-    route.claimedRatio = proof.fillRatio;
-    route.filledSourceAmount = proof.cumulativeSourceAmount;
-    route.filledTargetAmount = proof.cumulativeTargetAmount;
-    route.sourceClaimed = proof.cumulativeSourceAmount;
-    route.targetClaimed = proof.cumulativeTargetAmount;
+    Object.assign(route, withCrossJurisdictionCloseProofProgress(route, proof, route.updatedAt));
     route.clearingPolicy = 'cancel_and_clear';
     route.pendingClearRequestedAt ||= now(result.newState, env);
     transitionCrossJurisdictionRouteStatus(route, 'clearing', result.newState.timestamp || env.state.timestamp);

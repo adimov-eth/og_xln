@@ -182,3 +182,65 @@ test('remote removal ack after close/retirement is an exact idempotent no-op', a
     data: { ...ack.data, route: conflictingRoute },
   })).rejects.toThrow(/CROSS_J_BOOK_REMOVAL_ACK_ROUTE_HASH_MISMATCH/);
 });
+
+test('removal ack ahead of a stale source mirror cancels at the book progress', async () => {
+  const env = createEmptyEnv('ahead-removal-ack');
+  env.state.timestamp = NOW;
+  const route = preparedRoute(env.runtimeSeed ?? 'ahead-removal-ack');
+  const ratio = 0x8000;
+  const progressed: CrossJurisdictionSwapRoute = {
+    ...route,
+    status: 'partially_filled',
+    fillSeq: 1,
+    cumulativeFillRatio: ratio,
+    claimedRatio: ratio,
+    fillNumerator: BigInt(ratio),
+    fillDenominator: 65_535n,
+    filledSourceAmount: (1_000n * BigInt(ratio)) / 65_535n,
+    filledTargetAmount: (900n * BigInt(ratio)) / 65_535n,
+    sourceClaimed: (1_000n * BigInt(ratio)) / 65_535n,
+    targetClaimed: (900n * BigInt(ratio)) / 65_535n,
+  };
+
+  // The remote book already filled seq 1; its notice has not reached the source Hub yet.
+  const remoteBook = makeState(targetHub, targetHubSigner, targetJ, targetUser);
+  remoteBook.timestamp = NOW;
+  remoteBook.crossJurisdictionSwaps?.set(route.orderId, progressed);
+  mergeCrossJurisdictionBookAdmission(remoteBook, progressed, NOW).status = 'admitted';
+  const removal = handleRemoveCrossJurisdictionBookOrderEntityTx(env, remoteBook, {
+    type: 'removeCrossJurisdictionBookOrder',
+    data: { orderId: route.orderId, sourceEntityId: sourceUser, sourceAccountId: sourceUser, route, reason: 'cancel_request' },
+  });
+  const ack = removal.outputs.flatMap(output => output.entityTxs ?? [])[0];
+  if (!ack || ack.type !== 'crossJurisdictionBookOrderRemoved') throw new Error('TEST_REMOVAL_ACK_MISSING');
+  expect(ack.data.route.fillSeq).toBe(1);
+
+  const sourceState = makeState(sourceHub, sourceHubSigner, sourceJ, sourceUser);
+  sourceState.timestamp = NOW;
+  sourceState.crossJurisdictionSwaps?.set(route.orderId, { ...route });
+  mergeCrossJurisdictionBookAdmission(sourceState, route, NOW).status = 'resolving';
+  const account = getTestAccountForWrite(sourceState, sourceUser);
+  putTestAccountSwapOffer(account, {
+    offerId: route.orderId,
+    ...getStaticSwapTokenDimensions(1, 1),
+    giveTokenId: 1,
+    giveAmount: 1_000n,
+    wantTokenId: 1,
+    wantAmount: 900n,
+    maxFee: 0n,
+    minNetReceive: 900n,
+    priceTicks: 900n,
+    timeInForce: 0,
+    makerIsLeft: account.state.leftEntity === sourceUser,
+    createdHeight: 0,
+    crossJurisdiction: route,
+  });
+
+  const acked = await handleCrossJurisdictionBookOrderRemovedEntityTx(env, sourceState, ack);
+  const mirror = acked.newState.crossJurisdictionSwaps?.get(route.orderId);
+  expect(mirror?.status).toBe('clear_requested');
+  expect(mirror?.fillSeq).toBe(1);
+  expect(mirror?.cumulativeFillRatio).toBe(ratio);
+  expect(mirror?.clearingPolicy).toBe('cancel_and_clear');
+  expect(acked.outputs.flatMap(output => output.entityTxs ?? []).map(tx => tx.type)).toEqual(['requestCrossJurisdictionClear']);
+});

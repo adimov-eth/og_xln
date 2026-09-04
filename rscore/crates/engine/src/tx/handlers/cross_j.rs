@@ -545,6 +545,13 @@ pub(crate) fn apply_pull_close(
                 "Cross-j close proof ratio out of uint16 range: {ratio}"
             ));
         }
+        let close_mode = string(proof, "closeMode")?;
+        if !matches!(
+            close_mode.as_str(),
+            "full" | "partial_cancel_remainder" | "pure_cancel"
+        ) {
+            return Err(format!("Cross-j close mode invalid: {close_mode}"));
+        }
         let proof_order_id = string(proof, "orderId")?;
         if proof_order_id != order_id {
             return Err(format!(
@@ -636,7 +643,7 @@ pub(crate) fn apply_pull_close(
             .state()
             .delta_or_zero(token_id)
             .map_err(|error| error.to_string())?;
-        let release = &applied + &remaining;
+        let release = absolute.clone();
         if delta.hold(payer) < &release {
             return Err(format!(
                 "Pull {} hold underflow",
