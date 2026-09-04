@@ -3,10 +3,11 @@ import { createAccountConsensusContext } from '../../../entity/account/account-c
 
 import { proposeAccountFrame } from '../../../account/consensus/proposal/propose';
 import { createSettlementWorkspaceHash } from '../../../account/tx/handlers/settlement/transition';
+import { buildSignedEntityCommand } from '../../../entity/command';
+import { signedEntityCommandTx } from '../../../entity/command/command-codec';
 import { applyEntityInput } from '../../../entity/consensus';
 import { generateLazyEntityId } from '../../../entity/factory';
 import { createEmptyEnv, hasRuntimeWork } from '../../../runtime';
-import { buildEntityFrameAuthority, computeCanonicalEntityConsensusStateHash } from '../../../entity/consensus/state-root';
 import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from '../../../jurisdiction/machine/event-observation';
 import { recordValidatorJHistory } from '../../../jurisdiction/machine/local-history';
 import { buildLocalJPrefixAttestation } from '../../../jurisdiction/machine/history/j-prefix-consensus';
@@ -131,7 +132,6 @@ describe('deferred Account mempool scheduling', () => {
   test('a semantic J prefix finalizes even while an unrelated repayment is frozen', async () => {
     const { env, replica, account, entityId, signerId } = frozenRepaymentReplica();
     env.state.timestamp = 2_000;
-    replica.state.prevFrameHash = `0x${'50'.repeat(32)}`;
     const jHeight = 1;
     const jBlockHash = `0x${'51'.repeat(32)}`;
     const event: JurisdictionEvent = {
@@ -152,7 +152,7 @@ describe('deferred Account mempool scheduling', () => {
       },
     };
     const jurisdictionRef = getJEventJurisdictionRef(replica.state.config.jurisdiction);
-    replica.jHistory = recordValidatorJHistory(undefined, {
+    const jHistory = recordValidatorJHistory(undefined, {
       jurisdictionRef,
       scannedThroughHeight: jHeight,
       tipBlockHash: jBlockHash,
@@ -165,23 +165,26 @@ describe('deferred Account mempool scheduling', () => {
         events: [event],
       }],
     }, replica.state);
-    const attestation = buildLocalJPrefixAttestation(env, replica);
+    const attestation = buildLocalJPrefixAttestation(env, replica, jHistory);
     if (!attestation) throw new Error('TEST_J_PREFIX_ATTESTATION_MISSING');
-    // A peer Account frame may commit after the watcher signs but before its
-    // attestation reaches Entity consensus. The old vote is terminally stale;
-    // the same durable local J event must be re-attested for the new parent.
-    replica.state.height += 1;
-    replica.state.prevFrameHash = `0x${'53'.repeat(32)}`;
-    replica.certifiedFrameAnchor = {
+    // An unrelated signed Entity command commits before the watcher observation
+    // reaches consensus. Its old vote is stale; the same local J history must
+    // be re-attested against the genuinely certified new parent.
+    const parent = await applyEntityInput(env, replica, {
       entityId,
-      height: replica.state.height,
-      frameHash: replica.state.prevFrameHash,
-      stateRoot: computeCanonicalEntityConsensusStateHash(replica.state),
-      authority: buildEntityFrameAuthority(replica.state),
-    };
-    const heightBeforeApply = replica.state.height;
+      signerId,
+      entityTxs: [signedEntityCommandTx(buildSignedEntityCommand(env, replica.state, signerId, [{
+        type: 'chat',
+        data: { from: signerId, message: 'advance parent before watcher delivery' },
+      }]))],
+    });
+    expect(parent.outcome).toEqual({ kind: 'committed' });
+    expect(parent.workingReplica.state.height).toBe(replica.state.height + 1);
+    expect(parent.workingReplica.certifiedFrameHead).toBeDefined();
+    parent.workingReplica.jHistory = jHistory;
+    const heightBeforeApply = parent.workingReplica.state.height;
 
-    const result = await applyEntityInput(env, replica, {
+    const result = await applyEntityInput(env, parent.workingReplica, {
       entityId,
       signerId,
       jPrefixAttestations: new Map([[signerId, attestation]]),

@@ -1,6 +1,6 @@
 /**
  * P2P relay orchestration test.
- * Spins up hub + alice + bob nodes and verifies a payment crosses the relay.
+ * Discovers a hub through the relay, then pays through authenticated direct sessions.
  */
 
 import { spawn } from 'child_process';
@@ -289,7 +289,7 @@ const killAll = async (procs: ProcInfo[]): Promise<void> => {
 const procs: ProcInfo[] = [];
 
 const run = async () => {
-  const lease = await acquireLocalTestPortLease({ requiredOffsets: [0], timeoutMs: 25_000 });
+  const lease = await acquireLocalTestPortLease({ requiredOffsets: [0, 1], timeoutMs: 25_000 });
   const relayPort = lease.basePort;
   const scenarioDbRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'xln-p2p-relay-'));
   let hub: ProcInfo | null = null;
@@ -309,6 +309,8 @@ const run = async () => {
     '--hub',
     '--relay-port',
     String(relayPort),
+    '--direct-port',
+    String(relayPort + 1),
     '--relay-host',
     '127.0.0.1',
   ]);

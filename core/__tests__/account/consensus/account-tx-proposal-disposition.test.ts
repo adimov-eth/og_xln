@@ -108,12 +108,12 @@ describe('Account tx proposal disposition', () => {
     expect(account.state.deltas.get(1)?.offdelta).toBe(-7n);
 
     const secret = HEX32('44');
-    const lockId = 'lock-l2-secret';
+    const lockId = hashHtlcSecret(secret);
     const locked = await applyAccountTxToMutableReplica(account, {
       type: 'htlc_lock',
       data: {
         lockId,
-        hashlock: hashHtlcSecret(secret),
+        hashlock: lockId,
         timelock: 60_000n,
         revealBeforeHeight: 10,
         amount: 3n,

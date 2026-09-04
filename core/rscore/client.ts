@@ -21,7 +21,6 @@ import { safeStringify } from '../protocol/serialization';
 import {
   decodeRscoreCheckpointChanges,
   decodeRscoreCheckpointToken,
-  rscoreCheckpointBytes,
   type RscoreCheckpointChanges,
   type RscoreCheckpointToken,
 } from './checkpoint/checkpoint-wire';
@@ -731,60 +730,6 @@ export class RscoreProcessClient {
         throw this.#poisonAuthority(cause);
       }
     });
-  }
-
-  /**
-   * Prepare one wave and return the candidate together with the token that
-   * commits it. The opaque server capability is distinct from protocol request
-   * sequencing and is invalid after abort, commit, session change or restart.
-   */
-  async prepareCandidate(jobs: RscoreWireValue[]): Promise<{
-    candidate: unknown;
-    token: Buffer;
-  }> {
-    const prepared = await this.#requestWithId(RSCORE_OP.executeWave, [jobs]);
-    try {
-      if (!Array.isArray(prepared.result) || prepared.result.length !== 7) {
-        throw new Error('RSCORE_CLIENT_PREPARED_BATCH_ARITY');
-      }
-      return {
-        candidate: prepared.result.slice(0, 6),
-        token: Buffer.from(rscoreCheckpointBytes(
-          prepared.result[6],
-          32,
-          'CANDIDATE_TOKEN',
-        )),
-      };
-    } catch (cause) {
-      throw this.#poisonAuthority(cause);
-    }
-  }
-
-  async commit(candidateToken: Buffer): Promise<unknown> {
-    return this.#request(RSCORE_OP.commitRuntime, [candidateToken]);
-  }
-
-  async abort(candidateToken: Buffer): Promise<unknown> {
-    return this.#request(RSCORE_OP.abortRuntime, [candidateToken]);
-  }
-
-  /** Create or replace accounts between waves; replies [revision, accountsRoot]. */
-  async upsertAccounts(accounts: RscoreWireValue[]): Promise<unknown> {
-    return this.#request(RSCORE_OP.upsertAccounts, [accounts]);
-  }
-
-  /**
-   * Replace replica shells only. Financial state stays exactly where the
-   * engine's own execution left it, so this can never paper over a divergence
-   * the way a reseed would.
-   */
-  async updateAccountShells(shells: RscoreWireValue[]): Promise<unknown> {
-    return this.#request(RSCORE_OP.updateAccountShells, [shells]);
-  }
-
-  /** Drop accounts the mirror stopped following, so the trees stay comparable. */
-  async removeAccounts(accountIds: RscoreWireValue[]): Promise<unknown> {
-    return this.#request(RSCORE_OP.removeAccounts, [accountIds]);
   }
 
   async readCapacityBatch(rows: Array<[Uint8Array, number, number]>): Promise<unknown> {

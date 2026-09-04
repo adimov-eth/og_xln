@@ -14,12 +14,6 @@ import {
   printAuthorityDriverReport,
   shutdownAuthorityDriver,
 } from '../../../../rscore/authority-driver';
-import {
-  assertShadowParity,
-  currentShadowMirror,
-  primeShadowFromRuntimeState,
-  shadowStrictEnabled,
-} from '../../../../rscore/shadow-hook';
 import { configureCryptoPoolEntry } from '../../../../protocol/crypto/crypto-pool';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -105,8 +99,8 @@ type EconomicCounters = Readonly<{
 }>;
 
 /**
- * A replay that stops making progress (a wedged shadow child, a stalled
- * recovery read) used to sit on the machine for hours holding its engine
+ * A replay that stops making progress on a recovery read used to sit on the
+ * machine for hours holding its engine
  * children. Every replayed frame is progress; nothing else counts.
  */
 /**
@@ -485,7 +479,6 @@ const runTrial = async (offeredEntityInputsPerSecond: number): Promise<ReplayTri
   // excluded alongside sockets and durable writes.
   env.quietRuntimeLogs = true;
   prewarmRecordedHubSigners(env);
-  if (shadowStrictEnabled()) await primeShadowFromRuntimeState(env.state);
   const economicBaseline = readEconomicCounters(env);
   await startRuntimeSamplingProfiler('hlt-replay-tail');
   resetPerfPhases();
@@ -504,7 +497,7 @@ const runTrial = async (offeredEntityInputsPerSecond: number): Promise<ReplayTri
   try {
     if (
       offeredEntityInputsPerSecond === 0 && !frameProfileEnabled &&
-      !shadowStrictEnabled() && !parityEvidence && diagnosticEventsHeight === null
+      !parityEvidence && diagnosticEventsHeight === null
     ) {
       // Max mode measures the canonical recovery primitive over its native WAL
       // tail shape. Re-entering the public replay boundary for every frame
@@ -613,9 +606,6 @@ const runTrial = async (offeredEntityInputsPerSecond: number): Promise<ReplayTri
             },
           )}`);
         }
-        // Strict shadow: both engines have now consumed the same Runtime frame,
-        // so their account trees must be identical before the next one starts.
-        if (shadowStrictEnabled()) await assertShadowParity(`r-frame:${frame.height}`, env.state);
         if (frameProfileEnabled) {
           const economicAfter = readEconomicCounters(env);
           frameProfile.push({
@@ -808,4 +798,3 @@ console.error(`RSCORE_TRANSPORT ${safeStringify(rscoreTransportBytes)}`);
 await shutdownAuthorityDriver();
 const opCountersPath = dumpOpCounters('hlt-replay', 'complete');
 if (opCountersPath) console.log(`HLT_REPLAY_OP_COUNTERS path=${opCountersPath}`);
-await currentShadowMirror()?.shutdown();

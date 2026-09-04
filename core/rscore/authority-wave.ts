@@ -2,11 +2,9 @@
  * One Runtime frame's raw work, collected as the authoritative engine would
  * receive it.
  *
- * The mirror (shadow.ts) follows TypeScript: it is handed committed frames and
- * reseeded from TypeScript state, so it can only ever agree with a history it
- * was told about. An authority is handed these same raw inputs before
- * TypeScript mutates anything and must reach the same result on its own —
- * which is the only arrangement where a disagreement means something.
+ * Raw inputs are captured before TypeScript mutates anything. Independent
+ * replay must reach the same committed result from those inputs and the
+ * previous state.
  *
  * This module is the collector, not the driver: it captures what arrived, in
  * the order it arrived, with the clock each Entity used, and assembles the

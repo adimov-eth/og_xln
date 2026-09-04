@@ -424,6 +424,23 @@ const claimWritableCrossJRoute = (
   return route;
 };
 
+const applyCrossPullCloseProgress = (
+  state: EntityState,
+  orderId: string,
+  proof: Extract<AccountTx, { type: 'cross_pull_close' }>['data']['proof'],
+  fillRatio: number,
+): { writable: CrossJurisdictionSwapRoute; terminal: ReturnType<typeof transitionTargetLegTerminal> } => {
+  // Both mirrors project the same committed Account proof after the caller
+  // validates its route binding, economics, and Hub authorship.
+  const writable = claimWritableCrossJRoute(state, orderId);
+  Object.assign(writable, withCrossJurisdictionCloseProofProgress(writable, proof, state.timestamp));
+  writable.sourceCloseProof = cloneCrossJurisdictionCloseProof(proof);
+  writable.targetCloseProof = cloneCrossJurisdictionCloseProof(proof);
+  const terminal = transitionTargetLegTerminal(writable, state.timestamp, fillRatio);
+  if (state.crontabState) cancelHook(state.crontabState, `cross-j-expiry:${writable.orderId}`);
+  return { writable, terminal };
+};
+
 const applyCrossPullCloseFollowup = (
   env: EntityRuntimeContext,
   newState: EntityState,
@@ -472,15 +489,7 @@ const applyCrossPullCloseFollowup = (
         continue;
       }
       assertCrossPullCloseAllowed(route, fillRatio, 'source', isSourceHubClose, accountTx.data.proof);
-      const writable = claimWritableCrossJRoute(newState, route.orderId);
-      Object.assign(
-        writable,
-        withCrossJurisdictionCloseProofProgress(writable, accountTx.data.proof, newState.timestamp),
-      );
-      writable.sourceCloseProof = cloneCrossJurisdictionCloseProof(accountTx.data.proof);
-      writable.targetCloseProof = cloneCrossJurisdictionCloseProof(accountTx.data.proof);
-      const terminal = transitionTargetLegTerminal(writable, newState.timestamp, fillRatio);
-      if (newState.crontabState) cancelHook(newState.crontabState, `cross-j-expiry:${writable.orderId}`);
+      const { writable, terminal } = applyCrossPullCloseProgress(newState, route.orderId, accountTx.data.proof, fillRatio);
 
       if (isSourceHubClose) {
         removeOrRouteCrossJurisdictionBookOrder(env, newState, writable, outputs, terminal, storageChanges);
@@ -507,15 +516,7 @@ const applyCrossPullCloseFollowup = (
       // cross_pull_close. currentEntityId only identifies which side is
       // projecting the committed bilateral frame; it never changes authorship.
       assertCrossPullCloseAllowed(route, fillRatio, 'target', isTargetHubClose, accountTx.data.proof);
-      const writable = claimWritableCrossJRoute(newState, route.orderId);
-      Object.assign(
-        writable,
-        withCrossJurisdictionCloseProofProgress(writable, accountTx.data.proof, newState.timestamp),
-      );
-      writable.sourceCloseProof = cloneCrossJurisdictionCloseProof(accountTx.data.proof);
-      writable.targetCloseProof = cloneCrossJurisdictionCloseProof(accountTx.data.proof);
-      transitionTargetLegTerminal(writable, newState.timestamp, fillRatio);
-      if (newState.crontabState) cancelHook(newState.crontabState, `cross-j-expiry:${writable.orderId}`);
+      const { writable } = applyCrossPullCloseProgress(newState, route.orderId, accountTx.data.proof, fillRatio);
       crossJFollowupLog.debug('pull.close.settled', {
         route: shortOrder(writable.orderId, 12),
         ratio: fillRatio,

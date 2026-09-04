@@ -1,4 +1,4 @@
-/** Runs independent package gates concurrently with compact, ordered output. */
+/** Runs independent package gates concurrently and reports each result immediately. */
 
 const gateNames = process.argv.slice(2);
 if (gateNames.length === 0 || gateNames.some(name => !/^[a-z0-9:-]+$/.test(name))) {
@@ -24,7 +24,6 @@ type Result = Readonly<{
   name: string;
   exitCode: number;
   durationMs: number;
-  output: string;
 }>;
 
 const results: Result[] = [];
@@ -37,22 +36,22 @@ const runLane = async (): Promise<void> => {
     const startedAt = performance.now();
     const child = Bun.spawn(['bun', 'run', name], {
       cwd: process.cwd(),
-      stdout: 'pipe',
-      stderr: 'pipe',
+      // Nested gates must expose the first failure even while another lane
+      // is still running. Inherited streams also cannot hold result delivery
+      // hostage to an unrelated descendant keeping a captured pipe open.
+      stdout: 'inherit',
+      stderr: 'inherit',
     });
     active.add(child);
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ]);
+    const exitCode = await child.exited;
     active.delete(child);
-    results.push({
+    const result: Result = {
       name,
       exitCode,
       durationMs: Math.round(performance.now() - startedAt),
-      output: stdout + stderr,
-    });
+    };
+    results.push(result);
+    console.log(`${exitCode === 0 ? 'PASS' : 'FAIL'} ${name} ${result.durationMs}ms`);
     if (exitCode !== 0) stopChildren();
   }
 };
@@ -61,13 +60,6 @@ await Promise.all(Array.from(
   { length: Math.min(MAX_CONCURRENT_GATES, gateNames.length) },
   runLane,
 ));
-
-for (const name of gateNames) {
-  const result = results.find(candidate => candidate.name === name);
-  if (!result) continue;
-  console.log(`${result.exitCode === 0 ? 'PASS' : 'FAIL'} ${name} ${result.durationMs}ms`);
-  if (result.exitCode !== 0 && result.output.trim()) console.error(result.output.trim());
-}
 
 const failed = results.find(result => result.exitCode !== 0);
 if (failed) process.exit(failed.exitCode || 1);

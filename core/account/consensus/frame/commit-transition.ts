@@ -20,7 +20,7 @@ import {
 } from '../../state/candidate-overlay';
 import { applyAccountTx } from '../../tx/apply';
 import type { ApplyAccountTxOk } from '../../tx/apply-types';
-import { noteAccountFrameForShadow, shadowClockUs, shadowPreFrameState } from '../../../rscore/shadow-hook';
+import { noteAuthorityCommittedOutputs } from '../../../rscore/authority-wave';
 import type { AccountConsensusContext } from '../context';
 import type { HtlcEnforcementClock } from '../../htlc-deadline';
 import { assertLiveCommitMatchesFrame } from '../incoming/commit-root';
@@ -60,16 +60,11 @@ export const commitAccountFrameTransition = async (
   const candidateEffects: AccountOutput[] = [];
   const timedOutHashlocks: string[] = [];
   const txResults: ApplyAccountTxOk[] = [];
-  let tsApplyUs = 0;
   const jHeight = frame.jHeight ?? account.state.lastFinalizedJHeight ?? 0;
-  // Read before the overlay is published: the mirror seeds a never-seen
-  // account from the state its first frame started in, then executes it.
-  const preFrameState = shadowPreFrameState(account.state);
 
   try {
     await timePerfPhase('account.commit.applyTxs', async () => {
       for (const tx of frame.accountTxs) {
-        const startedUs = shadowClockUs();
         const result = await applyAccountTx(
           draft,
           tx,
@@ -87,7 +82,6 @@ export const commitAccountFrameTransition = async (
             `Frame ${frame.height} commit failed: ${tx.type} - ${result.rejection.message}`,
           );
         }
-        tsApplyUs += shadowClockUs() - startedUs;
         txResults.push(result);
         candidateEffects.push(...(result.candidateEffects ?? []));
         if (result.outcome === 'htlc_error') timedOutHashlocks.push(result.hashlock);
@@ -109,28 +103,12 @@ export const commitAccountFrameTransition = async (
         committed.accountStateRoot,
       );
     });
-    // Fire-and-forget: mirror this committed frame into the Rust account
-    // engine when shadow mode is on (no-op otherwise, one env check).
-    noteAccountFrameForShadow({
-      ...(options.context.runtimeId === undefined ? {} : { runtimeId: options.context.runtimeId }),
-      ...(options.context.accountAuthorityFrameId === undefined
-        ? {}
-        : { accountAuthorityFrameId: options.context.accountAuthorityFrameId }),
-      ownerEntityId: account.proofHeader.fromEntity,
-      counterpartyEntityId: account.proofHeader.toEntity,
-      frameHeight: frame.height,
-      byLeft: options.proposerIsLeft,
-      timestamp: frame.timestamp,
-      jHeight,
-      enforcementTimestamp: options.htlcEnforcementClock?.timestamp ?? frame.timestamp,
-      enforcementJHeight: options.htlcEnforcementClock?.jHeight ?? jHeight,
-      accountTxs: frame.accountTxs,
+    noteAuthorityCommittedOutputs(
+      options.context.accountAuthorityFrameId,
+      account.proofHeader.fromEntity,
+      account.proofHeader.toEntity,
       txResults,
-      tsApplyUs,
-      committedStateRoot: committed.accountStateRoot,
-      account,
-      ...(preFrameState ? { preFrameState } : {}),
-    });
+    );
     return Object.freeze({
       accountStateRoot: committed.accountStateRoot,
       candidateEffects: Object.freeze(candidateEffects),
