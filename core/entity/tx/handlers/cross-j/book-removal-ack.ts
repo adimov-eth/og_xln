@@ -76,7 +76,7 @@ export const handleCrossJurisdictionBookOrderRemovedEntityTx = async (
   const applied = applySourceHubCrossJurisdictionFillProgress(env, newState, {
     orderId: route.orderId,
     ...(currentRoute.routeHash ? { routeHash: currentRoute.routeHash } : {}),
-    fillSeq: Math.max(currentSeq, carriedSeq),
+    fillSeq: carriedSeq > currentSeq ? currentSeq + 1 : currentSeq,
     cumulativeFillRatio: getCrossJurisdictionCommittedProofRatio(progress),
     cancelRemainder: true,
   }, outputs, options?.storageChanges ?? []);

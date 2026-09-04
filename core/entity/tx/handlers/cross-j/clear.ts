@@ -1,3 +1,4 @@
+import { MalformedEntityFrameInputError } from '../../processing/invariant-errors';
 import { haltRuntimeFailure } from "../../../../protocol/errors/failure-taxonomy";
 
 import { deterministicEntityTimestamp } from '../../../../orderbook/cross-j/orderbook';
@@ -6,6 +7,7 @@ import {
   buildCrossJurisdictionCloseProof,
   cloneCrossJurisdictionRoute,
   getCrossJurisdictionCommittedFillAmounts,
+  isCrossJurisdictionTerminalStatus,
   transitionCrossJurisdictionRouteStatus,
   withCanonicalCrossJurisdictionRouteHash,
   cloneCrossJurisdictionCloseProof,
@@ -207,6 +209,11 @@ export const handleRequestCrossJurisdictionClearEntityTx = (
   if (!routes || !route) {
     throw haltRuntimeFailure("CROSS_J_CLEAR_ROUTE_MISSING", `CROSS_J_CLEAR_ROUTE_MISSING:${orderId}`);
   }
+  if (isCrossJurisdictionTerminalStatus(route.status)) {
+    // A replayed cancel or a late sweep after the close: nothing left to decide.
+    addMessage(newState, `🌉 Cross-j clear ${orderId} ignored: route ${route.status}`);
+    return { newState, outputs, accountTxs };
+  }
 
   const offerRoute = findCrossJurisdictionOfferRoute(newState, orderId);
   if (offerRoute) {
@@ -259,7 +266,7 @@ const validateClearMaterialization = (
   const expectedProposer = normalizeEntityRef(state.config.validators[0] || '');
   const claimedProposer = normalizeEntityRef(entityTx.data.proposerSignerId);
   if (!expectedProposer || claimedProposer !== expectedProposer) {
-    throw haltRuntimeFailure("CROSS_J_CLEAR_MATERIALIZE_PROPOSER_INVALID", `CROSS_J_CLEAR_MATERIALIZE_PROPOSER_INVALID:${claimedProposer || 'missing'}:${expectedProposer || 'missing'}`);
+    throw new MalformedEntityFrameInputError('materializeCrossJurisdictionClear', `CROSS_J_CLEAR_MATERIALIZE_PROPOSER_INVALID:${claimedProposer || 'missing'}:${expectedProposer || 'missing'}`);
   }
   const storedRoute = state.crossJurisdictionSwaps?.get(orderId);
   if (!storedRoute || storedRoute.status !== 'clear_requested') {

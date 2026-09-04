@@ -479,11 +479,13 @@ describe('cross-jurisdiction hashledger swap', () => {
     });
     const conflictingUserAuthorizations = structuredClone(env.runtimeMempool!.entityInputs);
     env.runtimeMempool!.entityInputs = [];
-    await expect(applyEntityTx(
+    // A conflicting user authorization is rejected (skipped), never a halt.
+    const authConflict = await applyEntityTx(
       env,
       targetRetry.newState,
       conflictingUserAuthorizations[0]!.entityTxs![0]!,
-    )).rejects.toThrow('CROSS_J_USER_AUTH_CONFLICT');
+    );
+    expect(authConflict.skippedError).toContain('CROSS_J_USER_AUTH_CONFLICT');
     const targetReceivingState = env.state.eReplicas
       .get(`${targetUser}:${targetUserSigner}`)!.state;
     const targetReceivingAccount = getEntityAccountForWrite(targetReceivingState.accounts, targetHub);

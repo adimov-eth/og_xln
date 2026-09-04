@@ -684,12 +684,12 @@ describe('cross-jurisdiction hashledger swap', () => {
       routeHash: undefined,
       targetSignerId: addr('99'),
     });
-    await expect(
-      applyEntityTx(proposerEnv, proposerRaw.newState, {
-        type: 'prepareCrossJurisdictionSwap',
-        data: { route: conflictingIntent },
-      }),
-    ).rejects.toThrow('CROSS_J_RAW_PREPARE_CONFLICT');
+    // A user-authored conflict is rejected (skipped), never a runtime halt.
+    const rawConflict = await applyEntityTx(proposerEnv, proposerRaw.newState, {
+      type: 'prepareCrossJurisdictionSwap',
+      data: { route: conflictingIntent },
+    });
+    expect(rawConflict.skippedError).toContain('CROSS_J_RAW_PREPARE_CONFLICT');
     expect(proposerRaw.newState.crossJurisdictionSwaps?.get(baseRoute.orderId)).toEqual(baseRoute);
 
     // Regression: a hub must absorb a duplicate raw intent naming a route it
@@ -715,12 +715,12 @@ describe('cross-jurisdiction hashledger swap', () => {
       replayAfterMaterialization.newState.crossJurisdictionSwaps?.get(baseRoute.orderId)?.sourcePull,
     ).toEqual(preparedRoute.sourcePull);
     // A different route reusing one orderId is still a real conflict.
-    await expect(
-      applyEntityTx(proposerEnv, createEntityFrameCandidateState(delayedProposerRegistered.newState), {
-        type: 'prepareCrossJurisdictionSwap',
-        data: { route: conflictingIntent },
-      }),
-    ).rejects.toThrow('CROSS_J_RAW_PREPARE_AFTER_MATERIALIZATION');
+    const materializedConflict = await applyEntityTx(
+      proposerEnv,
+      createEntityFrameCandidateState(delayedProposerRegistered.newState),
+      { type: 'prepareCrossJurisdictionSwap', data: { route: conflictingIntent } },
+    );
+    expect(materializedConflict.skippedError).toContain('CROSS_J_RAW_PREPARE_AFTER_MATERIALIZATION');
 
     // An authoritative Account dispute may cancel the raw intent after input
     // admission already appended its exact proposer materialization. Both that

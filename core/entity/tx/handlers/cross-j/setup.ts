@@ -1,3 +1,4 @@
+import { MalformedEntityFrameInputError } from '../../processing/invariant-errors';
 import { haltRuntimeFailure } from "../../../../protocol/errors/failure-taxonomy";
 
 import { deterministicEntityTimestamp } from '../../../../orderbook/cross-j/orderbook';
@@ -117,7 +118,7 @@ const authorizeCrossJurisdictionIntent = (
   const existing = state.crossJurisdictionAuthorizations.get(route.orderId);
   if (existing) {
     if (exactRouteBytes(existing) !== exactRouteBytes(route)) {
-      throw haltRuntimeFailure("CROSS_J_USER_AUTH_CONFLICT", `CROSS_J_USER_AUTH_CONFLICT:${route.orderId}`);
+      throw new MalformedEntityFrameInputError('prepareCrossJurisdictionSwap', `CROSS_J_USER_AUTH_CONFLICT:${route.orderId}`);
     }
     // Identical auth is an honest retry (lost certified command / late hub).
     // Re-emit the source→hub prepare; do not absorb as a silent no-op.
@@ -187,7 +188,7 @@ const prepareRawCrossJurisdictionIntent = (
     && !existing.targetPull
   ) {
     if (materializedIntentBytes(route, existing) !== exactRouteBytes(existing)) {
-      throw haltRuntimeFailure("CROSS_J_RAW_PREPARE_CONFLICT", `CROSS_J_RAW_PREPARE_CONFLICT:${route.orderId}`);
+      throw new MalformedEntityFrameInputError('prepareCrossJurisdictionSwap', `CROSS_J_RAW_PREPARE_CONFLICT:${route.orderId}`);
     }
     // A certified retry can outlive the raw intent that Account dispute
     // start/finality cancelled. It carries no exposure and is absorbed only
@@ -226,11 +227,11 @@ const prepareRawCrossJurisdictionIntent = (
       addMessage(state, `🌉 Cross-j prepare ${route.orderId} already materialized; replay ignored`);
       return { newState: state, outputs };
     }
-    throw haltRuntimeFailure("CROSS_J_RAW_PREPARE_AFTER_MATERIALIZATION", `CROSS_J_RAW_PREPARE_AFTER_MATERIALIZATION:${route.orderId}`);
+    throw new MalformedEntityFrameInputError('prepareCrossJurisdictionSwap', `CROSS_J_RAW_PREPARE_AFTER_MATERIALIZATION:${route.orderId}`);
   }
   if (existing) {
     if (exactRouteBytes(existing) !== exactRouteBytes(route)) {
-      throw haltRuntimeFailure("CROSS_J_RAW_PREPARE_CONFLICT", `CROSS_J_RAW_PREPARE_CONFLICT:${route.orderId}`);
+      throw new MalformedEntityFrameInputError('prepareCrossJurisdictionSwap', `CROSS_J_RAW_PREPARE_CONFLICT:${route.orderId}`);
     }
     return { newState: state, outputs };
   }

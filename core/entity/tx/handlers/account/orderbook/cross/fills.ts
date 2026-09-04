@@ -3,6 +3,7 @@ import { haltRuntimeFailure } from "../../../../../../protocol/errors/failure-ta
 import { createStructuredLogger, shortOrder } from '../../../../../../support/logger';
 import { compareCanonicalText } from '../../../../../../orderbook/swap-execution';
 import {
+  buildCrossJurisdictionCancelInstruction,
   buildCrossJurisdictionFillInstruction,
   crossJurisdictionExecutionAmounts,
   type CrossJurisdictionFillInstruction,
@@ -60,6 +61,11 @@ const planCrossFills = (pass: CrossOrderbookPass): CrossJurisdictionFillInstruct
       meta,
       fill,
     );
+    if (!instruction && fill.cancelRemainder) {
+      // The taker's remainder is cancelled even when its own fill is absorbed.
+      planned.push(buildCrossJurisdictionCancelInstruction(accountId, offerId, orderId, meta.route));
+      continue;
+    }
     if (!instruction) {
       // A fill below one uint16 step does not move the ratio; the Hub absorbs
       // it and the next fill carries the cumulative progress.

@@ -2,7 +2,6 @@ import {
   buildCrossJurisdictionCloseProof,
   getCrossJurisdictionCommittedProofRatio,
   hashCrossJurisdictionCloseBinary,
-  isCrossJurisdictionRouteTransitionAllowed,
   isCrossJurisdictionTerminalStatus,
   transitionCrossJurisdictionRouteStatus,
   cloneCrossJurisdictionCloseProof,
@@ -157,9 +156,6 @@ export const handleCrossPullCloseEntityTx = (env: EntityRuntimeContext, state: E
   // Every gate runs before any mutation: a soft-fail return must not leak
   // route economics into the committed mirror while the Account tx was never
   // queued.
-  if (leg === 'target' && !isCrossJurisdictionRouteTransitionAllowed(found.status, 'clearing')) {
-    return fail(result, `❌ Cross-j target pull close ${pullId.slice(0, 8)} blocked: route ${found.status}->clearing`);
-  }
   const routes = result.newState.crossJurisdictionSwaps;
   if (!routes) {
     throw new Error(`CROSS_J_PULL_CLOSE_COLLECTION_MISSING:${found.orderId}`);
