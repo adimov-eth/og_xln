@@ -2493,7 +2493,14 @@ fn apply_book_fill_to_state(
         }
         collection(&mut state.cross_jurisdiction_book_admissions)
             .insert(admission_key, admission)?;
-        return Ok(Vec::new());
+        return Ok(if cancel {
+            vec![SameJOutputDelta::Remove {
+                account_id: source_entity.to_string(),
+                offer_id: order_id,
+            }]
+        } else {
+            Vec::new()
+        });
     }
     if incoming_seq <= current_seq {
         return Err(invalid(
@@ -2650,19 +2657,29 @@ pub(crate) fn apply_cross_jurisdiction_cancel_request(
         .and_then(|admission| field(admission, "route"))
         .cloned()
         .unwrap_or_else(|| route.clone());
-    let (ratio, _, _) = committed_fill(&admitted, kind)?;
+    commit_cross_jurisdiction_book_fill(
+        state,
+        build_cross_jurisdiction_cancel_fill(offer_id, admitted)?,
+    )
+}
+
+/// TS `buildCrossJurisdictionCancelInstruction`: cancel the remainder at the
+/// committed progress (same fillSeq, same ratio). The book row leaves when the
+/// fill commits (`apply_book_fill_to_state`).
+pub(crate) fn build_cross_jurisdiction_cancel_fill(
+    offer_id: &str,
+    route: CanonicalValue,
+) -> Result<CrossJurisdictionBookFill, EntityKernelError> {
+    let kind = EntityTxKind::RemoveCrossJurisdictionBookOrder;
+    let (ratio, _, _) = committed_fill(&route, kind)?;
     let mut fields = vec![("orderId".into(), string(offer_id))];
-    if let Some(route_hash) = text(&admitted, "routeHash").filter(|value| !value.is_empty()) {
+    if let Some(route_hash) = text(&route, "routeHash").filter(|value| !value.is_empty()) {
         fields.push(("routeHash".into(), string(route_hash)));
     }
     fields.extend([
         (
             "fillSeq".into(),
-            number(
-                unsigned(&admitted, "fillSeq").unwrap_or(0),
-                kind,
-                "FILL_SEQ",
-            )?,
+            number(unsigned(&route, "fillSeq").unwrap_or(0), kind, "FILL_SEQ")?,
         ),
         (
             "cumulativeFillRatio".into(),
@@ -2670,22 +2687,10 @@ pub(crate) fn apply_cross_jurisdiction_cancel_request(
         ),
         ("cancelRemainder".into(), CanonicalValue::Bool(true)),
     ]);
-    let mut result = CrossJurisdictionApplyResult {
-        orderbook_deltas: vec![SameJOutputDelta::Remove {
-            account_id: account_id.to_string(),
-            offer_id: offer_id.to_string(),
-        }],
-        ..CrossJurisdictionApplyResult::default()
-    };
-    let committed = commit_cross_jurisdiction_book_fill(
-        state,
-        CrossJurisdictionBookFill {
-            route: admitted,
-            data: CanonicalValue::Object(fields),
-        },
-    )?;
-    extend_cross_jurisdiction_result(&mut result, committed);
-    Ok(result)
+    Ok(CrossJurisdictionBookFill {
+        route,
+        data: CanonicalValue::Object(fields),
+    })
 }
 
 /// Book-owner entry point for a matched or cancelled cross-j order (TS
