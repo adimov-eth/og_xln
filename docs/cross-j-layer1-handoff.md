@@ -52,24 +52,46 @@ Use `CARGO_TARGET_DIR=/Users/zigota/xln/rscore/target` for cargo (dependency cac
 parity gate builds its own release binary inside the worktree. Never run stand scenarios in
 parallel with other heavy runs (mm-mesh false-fails on contention).
 
-## Owner decisions (2026-09-04) — implement, do not reopen
-1. Account `cross_pull_close` outcome: plain "applied" + delete the source offer, in BOTH.
-   Drop TS `swap_cancelled` and its orderbook-cancel event (the Entity followup already
-   removes the book row). Regenerate `account-semantics` fixtures.
-2. Entity-level close check, ONE rule in both: `cumulativeSourceAmount == floor(sourceTotal·r/65535)`
-   and `cumulativeTargetAmount == floor(targetTotal·r/65535)` computed from the PROOF ratio,
-   plus `r >= mirror ratio`. Replace Rust `committed_fill`/mirror-amount comparison
-   (`ECONOMICS_MISMATCH`) and the TS rollback-only check with this.
-3. `cross_pull_close` for an unknown pullId → REJECT at Account validation (delete the
-   "already closed" no-op path) in TS and Rust. Repeat delivery is prevented by the cohort.
-4. No FillNotice to the target hub; it learns progress from the carried route at close.
-5. Invalid/foreign `crossJurisdictionFillNotice` keeps fail-stop (siblings are same-runtime by
-   construction; same code tag in TS and Rust, Rust wraps it in `ENTITY_LOCAL_TX_INVALID`).
-6. No Account-level ratio marker; multisig hubs out of scope (`validators[0]` self-signer
-   stays); sub-lot remainders rest until expiry sweep or cancel.
+## Owner decisions (2026-09-04) — already implemented on main, do not reopen
+1. Account `cross_pull_close` outcome: plain "applied" + delete the source offer (TS = Rust).
+   Unknown pullId is rejected; binding leg and closeMode are validated at admission.
+2. Entity close check, ONE rule in both: `cumulativeSourceAmount == floor(S·r/65535)`,
+   `cumulativeTargetAmount == floor(T·r/65535)` from the PROOF ratio, `r >= mirror ratio`,
+   proof binds this route (orderId/routeHash/pullIds). Only HUB mirrors must be in the
+   clearing states; a user's mirror settles from the close alone.
+3. No FillNotice to the target hub; it learns at close. Invalid sibling data fail-stops.
+4. Removal ACK carries the book owner's progress; the source hub cancels from the later of
+   mirror/ACK at `currentSeq + 1`. A removal ACK releases a waiting dispute even after settle.
+5. Sibling `crossPullClose`: expectation built at the proof ratio, rollback only is rejected.
+6. User-authored conflicts (prepare/materialize) are `MalformedEntityFrameInputError`
+   (skipped, never a halt). Clear on a terminal route is a soft no-op.
+7. Matcher: fills applied AFTER the matcher book is installed (row rests at the quantized
+   remainder); fills that move only one leg claim are absorbed; conservation nets every
+   executed fill; an absorbed IOC taker fill still cancels the remainder.
+8. No Account-level ratio marker; multisig hubs out of scope; sub-lot dust rests until sweep.
+
+Audit history: 4 quorum rounds (gpt-5.4, gemini-3.1-pro, deepseek-v4-pro, glm-5.3, kimi-k3,
+grok) — see memory note `crossj-layer1-worktree-2026-09-04`. Round D scores: gpt 1000,
+deepseek 960, grok 880, gemini 800, glm 660 (their remaining items are fixed in 52ce4288a
+or listed below).
+
+## Open items (owner decision, not fixed)
+- Rust kernel has NO "reject tx without halting" disposition: TS skips a user-authored
+  conflicting prepare/materialize (`skippedError`), Rust returns `Err` for the frame.
+  Rewrite target: add a reject disposition to the Rust kernel dispatcher.
+- Rust resident fail-stops on ANY rejected inbound Account frame
+  (`resident.rs reject_failed_inbound_frames` → session stop); TS discards remote
+  malformed ingress. Parity-time policy?
+- Rust has no IOC (`UnsupportedTimeInForce` for tif != 0); TS matcher supports it.
+- Rust Account layer does not recompute `routeHash` at `cross_pull_lock` (TS rejects a
+  non-canonical route); a bad hash is caught at Entity commit in Rust.
+- Rust drafts `disputeStart` after a book-removal ACK in a later wake, TS in the same frame.
+- Remote book owner's mirror stays `partially_filled` on a duplicate same-seq cancel (UI only).
+- Rust entity `committed_pull_close` re-verifies the ladder (`verify_hash_ladder_binary`)
+  where TS only decodes — perf only.
 
 ## Your task: "ideal cross-J in rscore" — minimum code, same invariants
-Step 0 — apply decisions 1–3 in TS first (canon), regenerate fixtures, then Rust; commit.
+Step 0 — decide the open items above with the owner; the rest of this file is the plan.
 Step 1 — read `docs/consensus-invariants.md` (cross-J section) and the memory note
   `cross-j-atomic-cohort-simplification-2026-09-04.md` (keep Design A: source-first close,
   no target-first close — theft found by Kimi K3).
