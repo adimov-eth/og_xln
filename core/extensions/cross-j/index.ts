@@ -601,6 +601,8 @@ export function withCrossJurisdictionCloseProofProgress(
   return {
     ...route,
     cumulativeFillRatio: proof.fillRatio,
+    fillNumerator: BigInt(proof.fillRatio),
+    fillDenominator: BigInt(CROSS_J_MAX_FILL_RATIO),
     claimedRatio: proof.fillRatio,
     filledSourceAmount: proof.cumulativeSourceAmount,
     filledTargetAmount: proof.cumulativeTargetAmount,

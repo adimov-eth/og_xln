@@ -71,14 +71,6 @@ fn bigint(fields: &Fields, key: &str) -> Result<BigInt, String> {
     }
 }
 
-fn optional_bigint(fields: &Fields, key: &str) -> Result<Option<BigInt>, String> {
-    match get(fields, key) {
-        None => Ok(None),
-        Some(CanonicalValue::BigInt(value)) => Ok(Some(value.clone())),
-        _ => Err(format!("Cross-j field must be bigint: {key}")),
-    }
-}
-
 fn number_u64(value: &CanonicalNumber, key: &str) -> Result<u64, String> {
     let text = value.as_str();
     if text.contains(['.', 'e', 'E']) {
@@ -91,14 +83,6 @@ fn number_u64(value: &CanonicalNumber, key: &str) -> Result<u64, String> {
 fn uint(fields: &Fields, key: &str) -> Result<u64, String> {
     match required(fields, key)? {
         CanonicalValue::Number(value) => number_u64(value, key),
-        _ => Err(format!("Cross-j field must be number: {key}")),
-    }
-}
-
-fn optional_uint(fields: &Fields, key: &str) -> Result<Option<u64>, String> {
-    match get(fields, key) {
-        None => Ok(None),
-        Some(CanonicalValue::Number(value)) => number_u64(value, key).map(Some),
         _ => Err(format!("Cross-j field must be number: {key}")),
     }
 }
@@ -640,28 +624,8 @@ pub(crate) fn apply_pull_close(
         if proposer != hub {
             return Err(format!("Only the {leg} Hub can close cross-j pull"));
         }
-        let previous_ratio = optional_uint(pull, "claimedRatio")?
-            .unwrap_or(0)
-            .min(MAX_FILL_RATIO);
-        if ratio < previous_ratio {
-            return Err(format!(
-                "Cross-j close ratio regression: {ratio} < {previous_ratio}"
-            ));
-        }
-        let previous_claimed = optional_bigint(pull, "claimedAmount")?.unwrap_or_else(|| {
-            &absolute * BigInt::from(previous_ratio) / BigInt::from(MAX_FILL_RATIO)
-        });
-        if cumulative < previous_claimed {
-            return Err(format!(
-                "Cross-j close amount regression: {cumulative} < {previous_claimed}"
-            ));
-        }
-        if cumulative > absolute {
-            return Err(format!(
-                "Cross-j close amount overflow: {cumulative} > {absolute}"
-            ));
-        }
-        let applied = &cumulative - &previous_claimed;
+        // The chain-proportional check above proved cumulative == floor(|amount|·r/65535).
+        let applied = cumulative.clone();
         let remaining = &absolute - &cumulative;
         let payer = beneficiary.opposite();
         let token_id = TokenId::new(

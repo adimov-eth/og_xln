@@ -92,11 +92,12 @@ const assertCrossPullCloseAllowed = (
   route: CrossJurisdictionSwapRoute,
   fillRatio: number,
   leg: 'source' | 'target',
+  hubCommitted: boolean,
   proof: Extract<AccountTx, { type: 'cross_pull_close' }>['data']['proof'],
 ): void => {
   // ONE economics rule (TS = Rust): both cumulative amounts are the proof
-  // ratio projected onto the route totals. The Account layer proved this leg;
-  // the mirror re-derives both legs from the same ratio.
+  // ratio projected onto the route totals, and the ratio never rolls back
+  // below what this mirror already recorded.
   const ratio = BigInt(fillRatio);
   const max = BigInt(CROSS_J_MAX_FILL_RATIO);
   const project = (total: bigint): bigint => (ratio >= max ? total : (total * ratio) / max);
@@ -106,33 +107,20 @@ const assertCrossPullCloseAllowed = (
   ) {
     throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_ECONOMICS_MISMATCH", `CROSS_J_PULL_CLOSE_ECONOMICS_MISMATCH: route=${route.orderId} ratio=${fillRatio}`);
   }
-  if (fillRatio <= 0) return;
-  if (isCrossJurisdictionTerminalStatus(route.status)) {
-    throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_STATE_INVALID", `CROSS_J_PULL_CLOSE_STATE_INVALID: route=${route.orderId} status=${route.status}`);
-  }
-  if (leg === 'source' && route.status !== 'clearing' && route.status !== 'clear_requested') {
-    throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_STATE_INVALID", `CROSS_J_PULL_CLOSE_STATE_INVALID: route=${route.orderId} leg=source status=${route.status}`);
-  }
-  if (
-    leg === 'target' &&
-    route.status !== 'resting' &&
-    route.status !== 'partially_filled' &&
-    route.status !== 'clear_requested' &&
-    route.status !== 'clearing'
-  ) {
-    throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_STATE_INVALID", `CROSS_J_PULL_CLOSE_STATE_INVALID: route=${route.orderId} leg=target status=${route.status}`);
-  }
-  // CANON (owner, 2026-08-07): Hub-internal fill progress never gates a close.
-  // The Account layer already verified the ladder reveal against partialRoot
-  // at exactly this ratio, and the hub's real fill legally runs AHEAD of the
-  // last progress this mirror saw, so a close above the mirrored ratio is
-  // normal. Only a rollback BELOW mirrored fill is invalid: progress is
-  // monotonic, and un-matching what the Hub already recorded would be the hub
-  // rewriting history, not lagging delivery.
   const committedRatio = committedCrossJurisdictionRatio(route);
   if (fillRatio < committedRatio) {
     throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_ROLLBACK", `CROSS_J_PULL_CLOSE_ROLLBACK: route=${route.orderId} ` +
       `ratio=${fillRatio} informed=${committedRatio}`);
+  }
+  // Only a hub mirror must already be in the clearing states: the hub authored
+  // the clear. A user's mirror learns everything from the close itself.
+  if (fillRatio <= 0 || !hubCommitted) return;
+  const allowed = leg === 'source'
+    ? route.status === 'clearing' || route.status === 'clear_requested'
+    : route.status === 'resting' || route.status === 'partially_filled' ||
+      route.status === 'clear_requested' || route.status === 'clearing';
+  if (!allowed) {
+    throw haltRuntimeFailure("CROSS_J_PULL_CLOSE_STATE_INVALID", `CROSS_J_PULL_CLOSE_STATE_INVALID: route=${route.orderId} leg=${leg} status=${route.status}`);
   }
 };
 
@@ -470,7 +458,7 @@ const applyCrossPullCloseFollowup = (
         }
         continue;
       }
-      assertCrossPullCloseAllowed(route, fillRatio, 'source', accountTx.data.proof);
+      assertCrossPullCloseAllowed(route, fillRatio, 'source', isSourceHubClose, accountTx.data.proof);
       const writable = claimWritableCrossJRoute(newState, route.orderId);
       Object.assign(
         writable,
@@ -504,7 +492,7 @@ const applyCrossPullCloseFollowup = (
       // Account consensus already proved that the target Hub authored this
       // cross_pull_close. currentEntityId only identifies which side is
       // projecting the committed bilateral frame; it never changes authorship.
-      assertCrossPullCloseAllowed(route, fillRatio, 'target', accountTx.data.proof);
+      assertCrossPullCloseAllowed(route, fillRatio, 'target', isTargetHubClose, accountTx.data.proof);
       const writable = claimWritableCrossJRoute(newState, route.orderId);
       Object.assign(
         writable,
@@ -610,7 +598,7 @@ export const applySourceHubCrossJurisdictionFillProgress = (
   const currentSeq = Math.max(0, Math.floor(Number(route.fillSeq ?? 0) || 0));
   const incomingSeq = Math.floor(Number(fill.fillSeq));
   const isCancel = Boolean(fill.cancelRemainder) && incomingSeq === currentSeq;
-  if (!isCancel && incomingSeq === currentSeq && ratio !== committedCrossJurisdictionRatio(route)) {
+  if (incomingSeq === currentSeq && ratio !== committedCrossJurisdictionRatio(route)) {
     throw haltRuntimeFailure("CROSS_J_FILL_NOTICE_STALE_CONFLICT", `CROSS_J_FILL_NOTICE_STALE_CONFLICT: order=${fill.orderId} seq=${incomingSeq} ratio=${ratio}`);
   }
   if (!isCancel && incomingSeq <= currentSeq) return false;
