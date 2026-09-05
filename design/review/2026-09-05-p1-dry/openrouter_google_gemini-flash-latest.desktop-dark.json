@@ -1,0 +1,497 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/01-home.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 820,
+        "typography": 810,
+        "color": 840,
+        "data_legibility": 780,
+        "layout": 760,
+        "visceral_value": 750,
+        "responsive": 700,
+        "consistency": 850,
+        "trust": 800
+      },
+      "total": 790,
+      "top_issues": [
+        "Empty state leaves over 65% of the viewport completely blank below primary actions, dampening visceral product appeal.",
+        "Color breakdown dots (On-chain, Reserve, Secured, At risk) all display '$0.00' without visual hierarchy or explanation of what 'Secured' vs 'At risk' means to a newcomer.",
+        "The micro-label '1 px = $10 · auto' appears floating on the right of BALANCES with zero introductory context for users unfamiliar with the absolute bar scale."
+      ],
+      "fixes": [
+        "Add a guided first-action card or interactive deposit onboarding flow directly in the empty BALANCES canvas area.",
+        "Include an inline tooltip or subtle descriptor under balance categories distinguishing on-chain escrow from counterparty credit risk.",
+        "Relocate the scale indicator '1 px = $10' adjacent to an explicit inactive ruler preview bar."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/04-receive.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 800,
+        "typography": 780,
+        "color": 810,
+        "data_legibility": 790,
+        "layout": 770,
+        "visceral_value": 760,
+        "responsive": 720,
+        "consistency": 830,
+        "trust": 810
+      },
+      "total": 789,
+      "top_issues": [
+        "The prominent QR code sits in high-contrast solid white against dark slate without rounded corners or padding, creating severe visual harshness.",
+        "Warning banner 'No inbound room yet. Extend a credit line to a hub...' appears at the very bottom in low contrast, despite being a hard operational blocker for receiving funds.",
+        "The Entity ID string in 'YOUR ENTITY ID' card is a raw 66-character hex string with small monospace text that is difficult to visually verify."
+      ],
+      "fixes": [
+        "Style the QR code container with softened rounded inner corners and a subtle muted border to integrate into desktop-dark.",
+        "Elevate the 'No inbound room yet' warning state directly beneath the Amount input or provide an immediate 1-click CTA button to open inbound credit.",
+        "Format the Entity ID with visual 4-character chunking and an explicit copy feedback badge."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/05-swap.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 680,
+        "typography": 720,
+        "color": 750,
+        "data_legibility": 660,
+        "layout": 720,
+        "visceral_value": 620,
+        "responsive": 700,
+        "consistency": 790,
+        "trust": 610
+      },
+      "total": 699,
+      "top_issues": [
+        "Unrendered raw development string 'MARKET_WIRE_JSON_REQUIRED' in the order book card destroys user trust and looks broken.",
+        "Order book status shows yellow 'syncing' indefinitely without a skeleton loader, ticker depth chart, or last trade price.",
+        "No exchange rate, slippage tolerance, routing path, or estimated fee breakdown is shown between paying 100 USDC and receiving WETH."
+      ],
+      "fixes": [
+        "Replace raw debug text 'MARKET_WIRE_JSON_REQUIRED' with empty state placeholder rows or animated tabular book skeleton.",
+        "Render an explicit exchange rate line (e.g. '1 WETH ≈ 3,420 USDC') and execution price impact preview before the Swap button.",
+        "Disable the primary 'Swap' button with an explanatory disabled tooltip when order book feeds are disconnected or unsynced."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/06-account.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 770,
+        "typography": 790,
+        "color": 800,
+        "data_legibility": 780,
+        "layout": 710,
+        "visceral_value": 690,
+        "responsive": 700,
+        "consistency": 820,
+        "trust": 780
+      },
+      "total": 760,
+      "top_issues": [
+        "Extreme negative space occupying roughly 70% of the screen below the 4 top action buttons and sidebar summary card.",
+        "The bilateral channel details show 'Frames signed: 0' and 'Status: Open', but fail to display current credit limit, collateral posted, or directional balances.",
+        "The explanation paragraph inside 'THIS ACCOUNT' is dense, unformatted small text that blends into the background."
+      ],
+      "fixes": [
+        "Display a visual bilateral balance bar (Local balance, Remote balance, Credit line, Enforceable reserve) across the center view.",
+        "Break the account parameters into structured data tiles: Your Collateral, Hub Collateral, Credit In, Credit Out.",
+        "Fill the lower body with an account-specific frame timeline or audit history log."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/07-activity.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 810,
+        "typography": 800,
+        "color": 820,
+        "data_legibility": 810,
+        "layout": 790,
+        "visceral_value": 750,
+        "responsive": 730,
+        "consistency": 840,
+        "trust": 830
+      },
+      "total": 798,
+      "top_issues": [
+        "Master-detail arrangement on wide screen leaves massive empty black canvas between the item list and detail panel.",
+        "Detail drawer header displays 'Account opened' with full hub hex '0x23d8a3...21b7' concatenated tightly next to the label 'H1'.",
+        "Lack of actionability on selected receipt (no raw JSON export, no shareable proof link, no dispute initiation trigger)."
+      ],
+      "fixes": [
+        "Constrain list and detail split-pane widths to a unified centered container to eliminate dead black canvas.",
+        "Format counterparty addresses cleanly with an icon, tag, and dedicated copy button.",
+        "Add 'Export proof bundle' and 'Verify frame signature' CTA buttons directly into the detail pane."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/08-activity-detail.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 810,
+        "typography": 800,
+        "color": 820,
+        "data_legibility": 810,
+        "layout": 790,
+        "visceral_value": 750,
+        "responsive": 730,
+        "consistency": 840,
+        "trust": 830
+      },
+      "total": 798,
+      "top_issues": [
+        "Duplicate screen state to 07-activity without additional interaction states, demonstrating repetitive empty viewports.",
+        "The frame metadata displays '#7' and timestamp without hash or cryptographic commitment root visible to auditing users.",
+        "No visual state indicator for on-chain anchoring vs off-chain bilateral settlement."
+      ],
+      "fixes": [
+        "Provide expandable cryptographic proof section showing state Merkle root and dual signatures.",
+        "Include quick deep-link to the exact counterparty account inspect page from the activity detail view.",
+        "Offer download of signed EIP-712 / frame envelope as JSON."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/09-settings.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 860,
+        "typography": 830,
+        "color": 860,
+        "data_legibility": 840,
+        "layout": 840,
+        "visceral_value": 850,
+        "responsive": 760,
+        "consistency": 880,
+        "trust": 860
+      },
+      "total": 843,
+      "top_issues": [
+        "Page length requires deep scrolling with high cognitive density mixing mathematical bar scale settings, design theme tokens, and cryptographic keys.",
+        "The preview widget for '$1,284,500.00' is static and non-interactive, which can mislead users into thinking it reflects real balance.",
+        "'Forget vault' is placed directly beside 'Lock' and 'Reveal recovery phrase' with minimal safety buffer."
+      ],
+      "fixes": [
+        "Segment settings into tabbed navigation: Display & Scale, Channels & Appearance, Security & Vault.",
+        "Add explicit 'PREVIEW ONLY' watermark or badge over the balance customization card.",
+        "Isolate destructive action 'Forget vault' into a distinct red-bordered Danger Zone at the page base."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/10-move.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 810,
+        "typography": 820,
+        "color": 830,
+        "data_legibility": 800,
+        "layout": 810,
+        "visceral_value": 790,
+        "responsive": 740,
+        "consistency": 840,
+        "trust": 820
+      },
+      "total": 808,
+      "top_issues": [
+        "The 3x2 matrix of source (Wallet, Reserve, Account) and target (Wallet, Reserve, Account) tiles is abstract; the flow direction requires deciphering tiny borders.",
+        "Validation error 'Amount exceeds what is available here' is placed below disabled buttons at the bottom edge instead of under the Amount input field.",
+        "Side explanation 'Fund you through H1' in WHAT HAPPENS does not explain fees or on-chain transaction gas costs required for the Reserve-to-Account transition."
+      ],
+      "fixes": [
+        "Add explicit directional arrows connecting the active Source card directly to the Destination card.",
+        "Render the error message 'Amount exceeds what is available here' directly under the Amount input container in red text.",
+        "Add estimated L1 gas fee and settlement time in the 'WHAT HAPPENS' card."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/11-manage.png",
+      "scores": {
+        "hierarchy": 770,
+        "premium": 780,
+        "typography": 790,
+        "color": 810,
+        "data_legibility": 780,
+        "layout": 740,
+        "visceral_value": 710,
+        "responsive": 710,
+        "consistency": 820,
+        "trust": 800
+      },
+      "total": 771,
+      "top_issues": [
+        "Six card buttons of uneven conceptual hierarchy (Sovereignty, Move, Assets, Lending, Ownership, Needs Attention) arranged in a sparse 2-column grid.",
+        "Right-hand 'ACCOUNTS' pane shows 'H1 hub: 0 lanes · 0 frames · open' with zero financial metrics (liquidity, credit, balance).",
+        "Over 60% of lower screen real estate is completely blank."
+      ],
+      "fixes": [
+        "Reorganize cards into functional groups: Capital Operations (Move, Assets, Lending) and Governance/Security (Sovereignty, Ownership).",
+        "Enrich the Accounts summary item with total collateral held and available routing capacity.",
+        "Collapse dead vertical space by adopting a structured dashboard grid."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/12-assets.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 760,
+        "typography": 790,
+        "color": 800,
+        "data_legibility": 820,
+        "layout": 790,
+        "visceral_value": 730,
+        "responsive": 720,
+        "consistency": 810,
+        "trust": 770
+      },
+      "total": 780,
+      "top_issues": [
+        "Prominent FAUCETS panel occupies half the screen with four stacked blue primary buttons, giving the UI a test-harness prototype appearance rather than fintech-grade production.",
+        "Asset rows repeat 'Depository may pull 0.00' without explaining smart contract approvals or allowance state.",
+        "Zero token contract addresses, decimal standards, or direct links to block explorers."
+      ],
+      "fixes": [
+        "Move testnet Faucets into an expandable drawer or bottom utility section, prioritizing actual On-Chain & Depository holdings.",
+        "Add explicit 'Approve Depository' toggle/status badge alongside token balances.",
+        "Provide external explorer links and contract hashes next to Signer and Depository addresses."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/13-lend.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 780,
+        "typography": 790,
+        "color": 800,
+        "data_legibility": 780,
+        "layout": 780,
+        "visceral_value": 750,
+        "responsive": 720,
+        "consistency": 820,
+        "trust": 770
+      },
+      "total": 778,
+      "top_issues": [
+        "H1 POOL on the right displays 'Available 0.00, Borrowed 0.00, Active principal 0.00' with zero context on historical yield or default protection.",
+        "Token selection input is an empty blank card with no placeholder or selectable dropdown.",
+        "Basis point math '= 1.00% per term' lacks annualized APY calculation (e.g. 1% per 1 day vs 1% per 1 month)."
+      ],
+      "fixes": [
+        "Populate Token selector with selectable assets (e.g., USDC, USDT) and available wallet balances.",
+        "Calculate and display effective APY alongside the nominal basis points per term.",
+        "Add explicit liquidation and counterparty default guarantees or collateral coverage ratio in the pool summary."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/14-ownership.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 770,
+        "typography": 780,
+        "color": 800,
+        "data_legibility": 760,
+        "layout": 740,
+        "visceral_value": 720,
+        "responsive": 710,
+        "consistency": 820,
+        "trust": 790
+      },
+      "total": 767,
+      "top_issues": [
+        "Cryptic terminology 'Kind: Lazy (hash of its board)' confuses users without deep internal protocol knowledge.",
+        "The 'TAKE CONTROL OF ANOTHER ENTITY' card is purely passive text with no input field to import or claim an entity.",
+        "The screen lacks governance actions: no button to propose new signers, adjust threshold (currently 1 of 1), or register on EntityProvider."
+      ],
+      "fixes": [
+        "Add explanatory subtitle for entity types and an active CTA: 'Register on EntityProvider to enable multi-sig'.",
+        "Add interactive input for Entity address claim or takeover transfer under the right-hand panel.",
+        "Provide explicit 'Add Signer' and 'Change Threshold' action modals."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/15-sovereignty.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 850,
+        "typography": 840,
+        "color": 860,
+        "data_legibility": 840,
+        "layout": 830,
+        "visceral_value": 850,
+        "responsive": 740,
+        "consistency": 870,
+        "trust": 880
+      },
+      "total": 842,
+      "top_issues": [
+        "Dispute parameters show 'Can dispute without asking: 0 of 1' without clear next steps or explanation of why co-signing is required or blocked.",
+        "'Save evidence bundle' button lacks a visual indicator of bundle size, hash, or format (.json / .zip).",
+        "Per-counterparty card displays 'awaiting their signature · no proof yet' in faint text with no manual ping/re-request button."
+      ],
+      "fixes": [
+        "Provide a concrete diagnostic state explaining why dispute readiness is 0/1 and what is needed to unlock unilateral dispute.",
+        "Display the SHA-256 hash of the evidence bundle directly adjacent to the 'Save evidence bundle' CTA.",
+        "Add a 'Request Co-signature' or 'Sync State' action to the counterparty card."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/16-desk.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 820,
+        "color": 840,
+        "data_legibility": 810,
+        "layout": 820,
+        "visceral_value": 830,
+        "responsive": 750,
+        "consistency": 850,
+        "trust": 810
+      },
+      "total": 820,
+      "top_issues": [
+        "Raw error text 'MARKET_WIRE_JSON_REQUIRED' appears again in the right-side order book widget.",
+        "Table row contains 'No accounts yet. Open one from Home.' leaving all header columns (POSITION, SECURED, AT RISK, YOU OWE, SEND/RECEIVE, LINES) empty.",
+        "Top status shows 'frame #7 · 1 px = $10' without an explanation of whether the table scales visually row by row."
+      ],
+      "fixes": [
+        "Fix the market data feed ingestion so the order book displays live bid/ask ladders or clean offline message.",
+        "Render populated sample account rows or a comprehensive empty state explaining table columns.",
+        "Provide a table toggle to switch between absolute proportional visual bar mode and raw numeric tabular mode."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/17-palette.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 850,
+        "typography": 840,
+        "color": 850,
+        "data_legibility": 850,
+        "layout": 850,
+        "visceral_value": 820,
+        "responsive": 760,
+        "consistency": 880,
+        "trust": 860
+      },
+      "total": 842,
+      "top_issues": [
+        "Action shortcuts in the command palette have low-contrast shortcut hints ('send money', 'invoice, QR', 'book at the hub') that blend into dark grey background.",
+        "No category grouping (Actions, Navigation, System) in the command palette list.",
+        "Selecting entries that require open accounts (e.g., 'Swap', 'Move') lacks status badges indicating readiness."
+      ],
+      "fixes": [
+        "Group command palette items into distinct sections: 'Quick Actions', 'Navigation', and 'Security'.",
+        "Increase contrast ratio of right-aligned descriptive subtitles to WCAG AA compliance.",
+        "Add subtle keyboard navigation shortcuts (e.g. 'P', 'R', 'S') alongside commands."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 790,
+    "verdict": "The xln desktop wallet exhibits a disciplined, dark aesthetic with exceptional cryptographic rigor in the Sovereignty and Settings views. However, persistent unhandled backend errors in the Swap book and stark empty-state voids across desktop views create severe friction for new and non-technical users.",
+    "priority_fixes": [
+      "Eliminate broken debug artifacts ('MARKET_WIRE_JSON_REQUIRED') in Swap and Desk views by providing clean fallbacks or live order book streams.",
+      "Integrate an automated onboarding step on Home and Receive that prompts opening an account and setting inbound credit when balances are zero.",
+      "Replace vast expanses of dead space on wide desktop screens (Home, Account, Manage, Activity) with structured summary cards, liquidity depth, and audit logs.",
+      "Relocate validation errors (e.g. Move screen balance excess) immediately adjacent to input fields rather than detached below disabled buttons.",
+      "Demystify cryptographic jargon ('Lazy board', 'Can dispute without asking: 0 of 1', 'Depository pull') with inline plain-English tooltips and explicit status explanations."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 18,
+        "verdict": "I have zero crypto and have no idea how to get $20 in or what 'Reserve', 'Inbound room', or 'Depository' mean.",
+        "blockers": [
+          "Cannot fund with fiat or card anywhere on 01-home or 12-assets",
+          "04-receive blocks instant payments with confusing 'No inbound room yet' error"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 82,
+        "verdict": "I immediately grasp the credit versus collateral distinction, though I need to see inbound routing capacity bars drawn out visually.",
+        "blockers": [
+          "06-account shows zero visual credit vs collateral allocation bars when open",
+          "16-desk table is completely unpopulated without live lane capacity"
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 15,
+        "verdict": "I cannot swap anything because the order book crashes on an unparsed wire JSON error and has no price impact data.",
+        "blockers": [
+          "05-swap displays 'MARKET_WIRE_JSON_REQUIRED' instead of an executable order book",
+          "No slippage tolerance or execution route preview"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 84,
+        "verdict": "The separation of on-chain reserve from uncollateralized risk is exactly what my DAO board needs, but I need an automated export report.",
+        "blockers": [
+          "15-sovereignty has 'Save evidence bundle' but lacks board-friendly PDF/CSV audit summary export",
+          "14-ownership provides no interactive threshold modification UI for multi-sig"
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 40,
+        "verdict": "I can generate an invoice link, but it tells me there is no inbound room so my client won't be able to pay me.",
+        "blockers": [
+          "04-receive requires pre-arranged hub credit line before receiving funds",
+          "07-activity detail has no shareable web receipt or PDF invoice download for clients"
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 91,
+        "verdict": "The Sovereignty view is fantastic: dual-signed frames, enforceable Depository escrow, and raw evidence bundles give me total off-chain independence.",
+        "blockers": [
+          "15-sovereignty indicates 'Can dispute without asking: 0 of 1' without displaying the unilateral timeout counter or challenge initiation trigger"
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 12,
+        "verdict": "These wide desktop views would be completely unusable on my phone, and there's no single-tap checkout mode visible.",
+        "blockers": [
+          "Desktop-only layout with multiple detached panels",
+          "Missing mobile viewport screens in review set"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 72,
+        "verdict": "The Desk view has the right mental model for net counterparty exposure, but the unpopulated table and broken order book prevent real desk operation.",
+        "blockers": [
+          "16-desk displays an empty account lane table without aggregate credit limits",
+          "Order book fails to load market depth"
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 25,
+        "verdict": "I can see testnet faucets for different tokens, but I cannot find how to bridge or route USDT between two networks with transparent fees.",
+        "blockers": [
+          "05-swap 'Across networks' tab is disabled/unselected and shows no bridge routing",
+          "10-move only transfers between Wallet, Reserve, and Account within the same jurisdiction"
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 78,
+        "verdict": "The mathematical absolute scale and explicit 'Trust only / At risk' accounting prove this isn't standard crypto vaporware, but the broken market feeds raise concerns about production readiness.",
+        "blockers": [
+          "05-swap and 16-desk expose raw development error strings",
+          "09-settings design sandbox can be mistaken for real wallet state"
+        ]
+      }
+    ]
+  }
+}

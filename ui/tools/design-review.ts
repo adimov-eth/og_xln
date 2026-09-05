@@ -18,7 +18,7 @@ import { join, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(import.meta.dir, '../..');
 const SHOTS_ROOT = join(REPO_ROOT, 'design/screenshots/ui');
-const RUBRIC = join(REPO_ROOT, 'design/review/rubric.md');
+const RUBRIC_DEFAULT = 'design/review/rubric.md';
 /**
  * Two juries. `cheap` (default) runs after every iteration: four vision models
  * from four vendors, pennies per pass. `smart` runs once at the end of a polish
@@ -42,7 +42,7 @@ type ScreenReview = {
 type Review = {
 	reviewer: string;
 	screens: ScreenReview[];
-	overall: { total: number; verdict: string; priority_fixes: string[] };
+	overall: { total: number; verdict: string; priority_fixes: string[]; personas?: Array<{ name: string; satisfied: number; verdict: string; blockers: string[] }> };
 };
 
 const argValue = (flag: string): string | undefined => {
@@ -50,6 +50,8 @@ const argValue = (flag: string): string | undefined => {
 	return index >= 0 ? process.argv[index + 1] : undefined;
 };
 
+/** --rubric design/review/personas.md scores the same screens through ten users. */
+const RUBRIC = join(REPO_ROOT, argValue('--rubric') || RUBRIC_DEFAULT);
 const models = (argValue('--models') || DEFAULT_MODELS.join(',')).split(',').map(m => m.trim()).filter(Boolean);
 const variantFilter = new Set((argValue('--variants') || '').split(',').map(v => v.trim()).filter(Boolean));
 const runDir = join(REPO_ROOT, 'design/review', argValue('--run') || new Date().toISOString().slice(0, 10));
@@ -163,6 +165,29 @@ function summarize(results: Array<{ model: string; variant: string; review: Revi
 	}
 	const grand = totals.length ? Math.round(totals.reduce((a, b) => a + b, 0) / totals.length) : 0;
 	lines.push('', `**Overall: ${grand} / 1000** (mean of screen totals across reviewers)`, '');
+	const personaRows = new Map<string, Array<{ model: string; satisfied: number; verdict: string; blockers: string[] }>>();
+	for (const { model, review } of results) {
+		for (const persona of review.overall?.personas ?? []) {
+			const list = personaRows.get(persona.name) ?? [];
+			list.push({ model, satisfied: Number(persona.satisfied) || 0, verdict: persona.verdict, blockers: persona.blockers ?? [] });
+			personaRows.set(persona.name, list);
+		}
+	}
+	if (personaRows.size > 0) {
+		lines.push('## Ten users', '', '| user | satisfied | blockers |', '|---|---:|---|');
+		const means: number[] = [];
+		for (const [name, entries] of personaRows) {
+			const mean = Math.round(entries.reduce((sum, e) => sum + e.satisfied, 0) / entries.length);
+			means.push(mean);
+			const blockers = [...new Set(entries.flatMap(e => e.blockers))].slice(0, 3).join('; ');
+			lines.push(`| ${name} | ${mean} | ${blockers} |`);
+		}
+		lines.push('', `**Users satisfied (mean): ${Math.round(means.reduce((a, b) => a + b, 0) / means.length)} / 100** · target 95 for all ten`, '');
+		for (const [name, entries] of personaRows) {
+			for (const e of entries) if (e.verdict) lines.push(`- ${name} (${e.model.split('/').pop()}, ${e.satisfied}): ${e.verdict}`);
+		}
+		lines.push('');
+	}
 	lines.push('## Priority fixes by reviewer', '');
 	for (const { model, variant, review } of results) {
 		lines.push(`### ${model} · ${variant} · ${review.overall?.total ?? '?'}`, '', review.overall?.verdict ?? '', '');
