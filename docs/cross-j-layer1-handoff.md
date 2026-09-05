@@ -83,15 +83,19 @@ logged, fail-fast by default (tests/dev), log-and-drop in production
 mutation) + `reject_fail_fast()`, `kernel.rs` drops the tx, `resident.rs` drops a rejected
 inbound Account frame. IOC/FOK are supported in the Rust book and matcher (TS parity).
 
-## Open items (owner decision, not fixed)
-- In log-and-drop mode TS drops the whole remote input origin (and retries the round);
-  Rust drops the single rejected tx and continues the frame — multi-tx remote inputs
-  carrying one rejected tx can differ. Fail-fast mode halts in both.
-- Rust Account layer does not recompute `routeHash` at `cross_pull_lock` (TS rejects a
-  non-canonical route); a bad hash is caught at Entity commit in Rust.
-- Rust drafts `disputeStart` after a book-removal ACK in a later wake, TS in the same frame.
-- Remote book owner's mirror stays `partially_filled` on a duplicate same-seq cancel (UI only).
-- Rust entity `committed_pull_close` re-verifies the ladder where TS only decodes — perf only.
+## Open items — all closed 2026-09-05
+- Rust production log-and-drop now purges the rejected signer's remaining lane in the frame
+  (TS drops the origin input); only txs of that lane already applied earlier in the same
+  frame differ, and fail-fast mode halts in both.
+- Rust Account layer admits only the canonical route at `cross_pull_lock`
+  (`engine::cross_j_route::canonical_route`, shared with the Entity kernel; TS parity).
+- Rust drafts `disputeStart` in the same frame after a book-removal ACK
+  (`draft_prepared_dispute_start_after_removal`, TS `draftPreparedDisputeStartIfReady`).
+- A remote book owner's mirror moves to `clear_requested` on a duplicate same-seq cancel
+  (TS = Rust).
+- Rust `committed_pull_close` decodes the ladder ratio (`decode_hash_ladder_ratio`) instead
+  of re-hashing; the Account layer verified it.
+- IOC/FOK supported in the Rust book and matcher.
 
 ## Your task: "ideal cross-J in rscore" — minimum code, same invariants
 Step 0 — decide the open items above with the owner; the rest of this file is the plan.

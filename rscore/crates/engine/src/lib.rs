@@ -12,6 +12,7 @@
 // side. Anything without a TypeScript twin says so in its own header.
 mod commitment;
 mod consensus;
+pub mod cross_j_route;
 mod crypto;
 mod dispute;
 mod error;
@@ -110,6 +111,11 @@ pub fn verify_hash_ladder_binary(
     binary: &str,
 ) -> Result<u64, String> {
     tx::handlers::cross_j::verify_ladder(full_hash, partial_root, binary)
+}
+/// Ratio carried by a hash-ladder wire without re-hashing it (TS
+/// `decodeHashLadderBinary`): the Account layer already verified the reveal.
+pub fn decode_hash_ladder_ratio(binary: &str) -> Result<u64, String> {
+    tx::handlers::cross_j::decode_ladder_ratio(binary)
 }
 pub use tx::handlers::rebalance::{BilateralRebalanceFeePolicy, RebalanceFeePolicySnapshot};
 pub use tx::handlers::settlement::{

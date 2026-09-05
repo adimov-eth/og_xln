@@ -324,6 +324,14 @@ pub(crate) fn apply_pull_lock(
         )?;
         let binding = object(data, "crossJurisdiction")?;
         let route = object(data, "crossJurisdictionRoute")?;
+        // TS `validateCrossJurisdictionPullRoute`: the supplied route must be
+        // its own canonical form (defaults filled, routeHash recomputed).
+        let supplied = CanonicalValue::Object(route.to_vec());
+        let canonical = crate::cross_j_route::canonical_route(&supplied)
+            .map_err(|detail| format!("Cross-j pull route invalid: {detail}"))?;
+        if !same_canonical_object(&canonical, &supplied)? {
+            return Err("Cross-j pull route is not canonical".into());
+        }
         if string(route, "status")? != "resting" || string(binding, "status")? != "resting" {
             return Err("Cross-j pull opening must be a zero-progress resting route".into());
         }
@@ -468,6 +476,22 @@ pub(crate) fn apply_pull_lock(
         "🪝 Pull locked: {}... amount {amount} token{token_id}",
         crate::state::identity::js_prefix(&pull_id, 8),
     )]))
+}
+
+pub(crate) fn decode_ladder_ratio(binary: &str) -> Result<u64, String> {
+    let bytes = variable_hex_bytes(binary, "cross-j close binary")?;
+    match bytes.len() {
+        0 => Ok(0),
+        32 => Ok(MAX_FILL_RATIO),
+        130 => {
+            let ratio = u64::from(u16::from_be_bytes([bytes[0], bytes[1]]));
+            if ratio == 0 || ratio == MAX_FILL_RATIO {
+                return Err("HASHLADDER_PARTIAL_BINARY_RATIO_INVALID".into());
+            }
+            Ok(ratio)
+        }
+        length => Err(format!("HASHLADDER_BINARY_INVALID_LENGTH:{length}")),
+    }
 }
 
 pub(crate) fn verify_ladder(
@@ -755,8 +779,7 @@ mod tests {
         .expect("replica")
     }
 
-    fn lock_tx() -> AccountTx {
-        let route_hash = format!("0x{}", "aa".repeat(32));
+    fn lock_route() -> CanonicalValue {
         let full_hash = format!("0x{}", "bb".repeat(32));
         let partial_root = format!("0x{}", "cc".repeat(32));
         let source = object(vec![
@@ -787,14 +810,43 @@ mod tests {
             ("fullHash", text(full_hash.clone())),
             ("partialRoot", text(partial_root.clone())),
         ]);
-        let route = object(vec![
+        let target_pull = object(vec![
+            ("pullId", text("pull-2")),
+            ("tokenId", number(2).expect("number")),
+            ("amount", CanonicalValue::BigInt(20.into())),
+            ("signedAmount", CanonicalValue::BigInt(20.into())),
+            ("fullHash", text(full_hash.clone())),
+            ("partialRoot", text(partial_root.clone())),
+        ]);
+        let dispute = || {
+            object(vec![
+                ("leftResponseSeconds", number(10).expect("number")),
+                ("rightResponseSeconds", number(10).expect("number")),
+            ])
+        };
+        // The Account layer admits only the canonical route (TS parity).
+        crate::cross_j_route::canonical_route(&object(vec![
             ("orderId", text("order-1")),
-            ("routeHash", text(route_hash.clone())),
             ("source", source),
             ("target", target),
             ("sourcePull", source_pull),
+            ("targetPull", target_pull),
+            ("sourceDisputeConfig", dispute()),
+            ("targetDisputeConfig", dispute()),
             ("status", text("resting")),
-        ]);
+        ]))
+        .expect("canonical route")
+    }
+
+    fn lock_route_hash() -> String {
+        string(fields(&lock_route()).expect("route"), "routeHash").expect("route hash")
+    }
+
+    fn lock_tx() -> AccountTx {
+        let full_hash = format!("0x{}", "bb".repeat(32));
+        let partial_root = format!("0x{}", "cc".repeat(32));
+        let route = lock_route();
+        let route_hash = string(fields(&route).expect("route"), "routeHash").expect("route hash");
         let binding = object(vec![
             ("orderId", text("order-1")),
             ("routeHash", text(route_hash)),
@@ -819,7 +871,8 @@ mod tests {
     fn bound_offer_replica() -> AccountReplica {
         let base = replica();
         let identity = base.state().identity().clone();
-        let route_hash = format!("0x{}", "aa".repeat(32));
+        let route_hash =
+            string(fields(&lock_route()).expect("route"), "routeHash").expect("route hash");
         let source_pull = object(vec![
             ("pullId", text("pull-1")),
             ("tokenId", number(1).expect("number")),
@@ -957,7 +1010,7 @@ mod tests {
                     "proof",
                     object(vec![
                         ("orderId", text("order-1")),
-                        ("routeHash", text(format!("0x{}", "aa".repeat(32)))),
+                        ("routeHash", text(lock_route_hash())),
                         ("sourcePullId", text("pull-1")),
                         ("targetPullId", text("target-pull")),
                         ("fillRatio", number(0).expect("number")),
@@ -1031,7 +1084,7 @@ mod tests {
                     "proof",
                     object(vec![
                         ("orderId", text("order-1")),
-                        ("routeHash", text(format!("0x{}", "aa".repeat(32)))),
+                        ("routeHash", text(lock_route_hash())),
                         ("sourcePullId", text("pull-1")),
                         ("targetPullId", text("target-pull")),
                         ("fillRatio", number(0).expect("number")),
@@ -1075,7 +1128,7 @@ mod tests {
                     "proof",
                     object(vec![
                         ("orderId", text("order-1")),
-                        ("routeHash", text(format!("0x{}", "aa".repeat(32)))),
+                        ("routeHash", text(lock_route_hash())),
                         ("sourcePullId", text("pull-1")),
                         ("targetPullId", text("target-pull")),
                         ("fillRatio", number(0).expect("number")),

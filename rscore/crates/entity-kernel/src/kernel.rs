@@ -1022,9 +1022,14 @@ pub(crate) fn apply_entity_transitions(
                     {
                         // Owner canon: a user can never take the hub down. The
                         // handler rejected before any mutation; log and drop.
+                        // TS discards the whole origin lane: drop what is still
+                        // queued from this signer in the frame as well.
+                        let before = local_txs.len();
+                        local_txs.retain(|queued| queued.signer_id != signer_id);
                         eprintln!(
-                            "[ERROR][reject] entity tx rejected and dropped: entity={} signer={signer_id} kind={kind} detail={detail}",
-                            state.entity_id
+                            "[ERROR][reject] entity tx rejected and dropped: entity={} signer={signer_id} kind={kind} detail={detail} laneDropped={}",
+                            state.entity_id,
+                            before - local_txs.len()
                         );
                         continue;
                     }
@@ -1036,9 +1041,34 @@ pub(crate) fn apply_entity_transitions(
                         local_account_txs.push((work.account_id.clone(), tx));
                     }
                 }
+                // TS drafts disputeStart in the same frame once a removal ACK
+                // released the last pending orderbook removal.
+                let confirmed_removals: Vec<(String, String)> = applied
+                    .account_envelope_mutations
+                    .iter()
+                    .filter_map(|(account, mutation)| match mutation {
+                        crate::AccountEnvelopeMutation::ConfirmDisputeBookRemoval { order_id } => {
+                            Some((account.clone(), order_id.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
                 account_envelope_mutations.extend(applied.account_envelope_mutations);
                 routed_entity_outputs.extend(applied.outputs);
                 local_events.extend(applied.events);
+                for (account, order_id) in confirmed_removals {
+                    crate::local_financial::draft_prepared_dispute_start_after_removal(
+                        &mut state,
+                        &paybook_changes,
+                        &account,
+                        local_account_views,
+                        &order_id,
+                        runtime_seed,
+                        &mut account_envelope_mutations,
+                        &mut routed_entity_outputs,
+                        &mut local_events,
+                    )?;
+                }
             }
             LocalEntityTx::RuntimeOutput(output) => {
                 // Authorization observes the pre-output state, exactly like TS
