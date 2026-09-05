@@ -348,6 +348,19 @@ finalize is offered only from `activeDispute`.
   runtime plus `DIRECT_RUNTIME_PEER_OFFLINE` on H1/H2/H3 (`.logs/e2e-parallel/20260904-162950-863/shard-0/logs/e2e.log`).
   So this is not the React wallet's bootstrap; every browser runtime loses the hub's direct link on this tree.
 
+- **ROOT CAUSE + FIX (2026-09-05):** the MAC preimage is msgpack of the frame via `packPreorderedBinaryPayload`,
+  and msgpackr encodes a plain `Uint8Array` differently per platform: under Node/Bun (`ByteArray === Buffer`) a
+  Uint8Array takes the typed-array extension (`c7/c8/c9 len 0x74 0x01 bytes`), in browsers (`ByteArray ===
+  Uint8Array`) it takes msgpack `bin` (`c4/c5/c6 len bytes`) — two bytes shorter. Instrumented both ends of one
+  frame (msg_663): same key, nonce, audience, fields; preimage `len=3879` on the hub vs `3877` in the browser. Every
+  encrypted `payload` therefore MACed differently and the first session frame failed. Fixed in
+  `core/protocol/serialization/binary-codec.ts`: a msgpackr extension for `Uint8Array` that writes the typed-array
+  form on every platform (and keeps `bin` for `Buffer`), byte-identical to what Bun already produced — so stored
+  hashes and Rust parity are unchanged (`core/__tests__/protocol/serialization/binary-codec-bytes-form.test.ts`,
+  wire-boundary + direct-runtime suites 55/55). Verified on `bun run dev`: browser boots, joins the relay, opens the
+  hub account with zero `WS_DIRECT_FATAL` (previously two per session). The same divergence affected every
+  browser-side canonical hash of a frame carrying bytes.
+
 ## 18. Production relay refuses every browser: `400 WebSocket audience not configured` (ops)
 
 - `wss://xln.finance/relay` answers `HTTP/1.1 400 … WebSocket audience not configured` to any upgrade (verified

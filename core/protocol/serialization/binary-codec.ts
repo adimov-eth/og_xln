@@ -37,6 +37,70 @@ const msgpackCodec = new Packr({
   moreTypes: true,
 });
 
+/**
+ * msgpackr encodes a plain Uint8Array as its typed-array extension under Node/Bun (where `Buffer` is
+ * the native byte array) but as msgpack `bin` in browsers. Frame hashes and socket MACs are computed
+ * over these bytes on both ends of a link, so the two encodings made every browser→hub direct session
+ * fail its first MAC. Pin one form on every platform: the typed-array extension exactly as Node/Bun
+ * already write it (`c7/c8/c9 len 0x74 0x01 bytes`), and `bin` for Buffer instances exactly as before,
+ * so Bun output — and the Rust parity certified against it — is byte-identical.
+ */
+const TYPED_ARRAY_EXTENSION = 0x74;
+const TYPED_ARRAY_NAMES = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array'];
+type ExtensionWriter = (size: number) => { target: Uint8Array; targetView: DataView; position: number };
+const writeByteLengthPrefixed = (
+  allocateForWrite: ExtensionWriter,
+  bytes: Uint8Array,
+  markers: readonly [number, number, number],
+  extra: number,
+  tail: readonly number[],
+): void => {
+  const length = bytes.byteLength + extra;
+  const headerBytes = length < 0x100 ? 2 : length < 0x10000 ? 3 : 5;
+  const { target, targetView, position: start } = allocateForWrite(headerBytes + tail.length + bytes.byteLength);
+  let position = start;
+  if (length < 0x100) {
+    target[position++] = markers[0];
+    target[position++] = length;
+  } else if (length < 0x10000) {
+    target[position++] = markers[1];
+    target[position++] = length >> 8;
+    target[position++] = length & 0xff;
+  } else {
+    target[position++] = markers[2];
+    targetView.setUint32(position, length);
+    position += 4;
+  }
+  for (const byte of tail) target[position++] = byte;
+  target.set(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), position);
+};
+addExtension({
+  Class: Uint8Array,
+  type: TYPED_ARRAY_EXTENSION,
+  pack(value: Uint8Array, allocateForWrite: ExtensionWriter): void {
+    if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) {
+      // msgpack bin, as msgpackr writes a Buffer.
+      writeByteLengthPrefixed(allocateForWrite, value, [0xc4, 0xc5, 0xc6], 0, []);
+      return;
+    }
+    // typed-array extension: length counts the type byte; 0x74 't', then the Uint8Array index.
+    writeByteLengthPrefixed(allocateForWrite, value, [0xc7, 0xc8, 0xc9], 1, [TYPED_ARRAY_EXTENSION, 1]);
+  },
+  unpack(data: Uint8Array): unknown {
+    // Same decoder msgpackr ships for 0x74: the first byte names the typed array (16 = ArrayBuffer, 17 = DataView).
+    const typeCode = data[0];
+    const buffer = Uint8Array.prototype.slice.call(data, 1).buffer;
+    const name = TYPED_ARRAY_NAMES[typeCode ?? -1];
+    if (!name) {
+      if (typeCode === 16) return buffer;
+      if (typeCode === 17) return new DataView(buffer);
+      throw new Error(`XLN_BINARY_CODEC_TYPED_ARRAY_UNKNOWN:${String(typeCode)}`);
+    }
+    const TypedArray = (globalThis as unknown as Record<string, new (buffer: ArrayBuffer) => ArrayBufferView>)[name];
+    return new TypedArray(buffer);
+  },
+} as Parameters<typeof addExtension>[0]);
+
 const HEX_BYTES_EXTENSION = 0x48;
 const HEX_BYTES_MIN_LENGTH = 16;
 const CANONICAL_HEX_BYTES = /^0x[0-9a-f]+$/;
