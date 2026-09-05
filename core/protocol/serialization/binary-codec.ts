@@ -46,8 +46,18 @@ const msgpackCodec = new Packr({
  * so Bun output — and the Rust parity certified against it — is byte-identical.
  */
 const TYPED_ARRAY_EXTENSION = 0x74;
-const TYPED_ARRAY_NAMES = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array'];
+const TYPED_ARRAY_CONSTRUCTORS = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array] as const;
 type ExtensionWriter = (size: number) => { target: Uint8Array; targetView: DataView; position: number };
+// msgpackr/pack.js supports direct writes through its allocation callback. Its
+// published one-argument pack declaration omits that existing runtime overload.
+declare module 'msgpackr' {
+  function addExtension(extension: {
+    Class: typeof Uint8Array;
+    type: number;
+    pack(value: Uint8Array, allocateForWrite: ExtensionWriter): void;
+    unpack(data: Uint8Array): unknown;
+  }): void;
+}
 const writeByteLengthPrefixed = (
   allocateForWrite: ExtensionWriter,
   bytes: Uint8Array,
@@ -89,17 +99,16 @@ addExtension({
   unpack(data: Uint8Array): unknown {
     // Same decoder msgpackr ships for 0x74: the first byte names the typed array (16 = ArrayBuffer, 17 = DataView).
     const typeCode = data[0];
-    const buffer = Uint8Array.prototype.slice.call(data, 1).buffer;
-    const name = TYPED_ARRAY_NAMES[typeCode ?? -1];
-    if (!name) {
+    const buffer = new Uint8Array(data.subarray(1)).buffer;
+    const TypedArray = TYPED_ARRAY_CONSTRUCTORS[typeCode ?? -1];
+    if (!TypedArray) {
       if (typeCode === 16) return buffer;
       if (typeCode === 17) return new DataView(buffer);
       throw new Error(`XLN_BINARY_CODEC_TYPED_ARRAY_UNKNOWN:${String(typeCode)}`);
     }
-    const TypedArray = (globalThis as unknown as Record<string, new (buffer: ArrayBuffer) => ArrayBufferView>)[name];
     return new TypedArray(buffer);
   },
-} as unknown as Parameters<typeof addExtension>[0]);
+});
 
 const HEX_BYTES_EXTENSION = 0x48;
 const HEX_BYTES_MIN_LENGTH = 16;
