@@ -97,7 +97,19 @@ inbound Account frame. IOC/FOK are supported in the Rust book and matcher (TS pa
   of re-hashing; the Account layer verified it.
 - IOC/FOK supported in the Rust book and matcher.
 
-## Your task: "ideal cross-J in rscore" — minimum code, same invariants
+## rscore "collapse" assessment (2026-09-05)
+- Tooling finds no dead cross-J surface: `check:unused-surface` OK, every `pub`/`pub(crate)`
+  Rust cross-J fn is referenced, no TS cross-J export is production-unreferenced except four
+  test-only helpers (`isCrossJurisdictionSiblingPair`, `hasCrossJurisdictionCommittedFill`,
+  `crossJurisdictionLegUsdMicros`, `findCrossJurisdictionBookAdmissionForAck`) — move them
+  into `core/__tests__/helpers` when touching those tests.
+- The Rust orderbook `offers` + `resolving_offers` + `SameJOutputDelta::{Upsert,Remove}`
+  path is the SAME mechanism same-J uses (kernel.rs 225-302); mutating cross-J rows
+  directly would add a second path. Keep.
+- Remaining size is live logic mirrored 1:1 from TS (mod.rs 6.1k, committed.rs 0.7k,
+  opening_proposal 0.6k). Moving functions between files gains no LOC; not done.
+
+## Your task: "ideal cross-J in rscore" — minimum code, same invariants (see assessment above; only do this if the owner still wants a re-layout)
 Step 0 — decide the open items above with the owner; the rest of this file is the plan.
 Step 1 — read `docs/consensus-invariants.md` (cross-J section) and the memory note
   `cross-j-atomic-cohort-simplification-2026-09-04.md` (keep Design A: source-first close,
