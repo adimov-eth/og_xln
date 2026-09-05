@@ -16,7 +16,6 @@ const USDC = 1;
 export const TOUR_FAUCET_USD = 100;
 export const TOUR_PAY_USD = 25;
 export const TOUR_MOVE_USD = 100;
-export const TOUR_COLLATERAL_USD = 500;
 export const TOUR_INVOICE_USD = 40;
 
 export function demoHub(wallet: WalletView) {

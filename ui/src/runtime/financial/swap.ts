@@ -128,13 +128,30 @@ export async function planSwap(request: SwapPlanRequest): Promise<SwapCommandPla
 
 	const sourceRoles = partyRoles({
 		entityId: request.source.entityId,
+/**
+ * The hub's signer for a swap command. A hub hosted in this runtime shows its signer in the entity summary;
+ * a remote hub does not (gossip carries no signer), so fall back to the runtime's proposer resolution, which
+ * knows the hub runtime's signer from its verified profile route, the same way the SvelteKit swap panel does.
+ */
+function hubSignerIdFor(xln: Awaited<ReturnType<typeof getXLN>>, hubEntityId: string, summary: RuntimeAdapterEntitySummary | undefined): string {
+	const fromSummary = normalizeId(summary?.signerId || '');
+	if (fromSummary) return fromSummary;
+	const env = getEmbeddedEnv();
+	if (!env) return '';
+	try {
+		return normalizeId(xln.resolveEntityProposerId(env, normalizeId(hubEntityId), 'swap-plan') || '');
+	} catch {
+		return '';
+	}
+}
+
 		hubEntityId: request.source.hubEntityId,
 		roles,
 		summaries,
 		label: 'SOURCE',
 	});
 	const sourceHub = summaries.find(summary => normalizeId(summary.entityId) === normalizeId(request.source.hubEntityId));
-	const sourceHubSignerId = normalizeId(sourceHub?.signerId || '');
+	const sourceHubSignerId = hubSignerIdFor(xln, request.source.hubEntityId, sourceHub);
 	if (!sourceHubSignerId) throw new Error(`SWAP_HUB_SIGNER_UNAVAILABLE:${request.source.hubEntityId}`);
 
 	const net =
@@ -157,7 +174,7 @@ export async function planSwap(request: SwapPlanRequest): Promise<SwapCommandPla
 	if (request.mode === 'cross') {
 		if (!request.target) throw new Error('Select the account on the other network.');
 		const targetHub = summaries.find(summary => normalizeId(summary.entityId) === normalizeId(request.target?.hubEntityId));
-		const targetHubSignerId = normalizeId(targetHub?.signerId || '');
+		const targetHubSignerId = hubSignerIdFor(xln, request.target.hubEntityId, targetHub);
 		if (!targetHubSignerId) throw new Error(`SWAP_HUB_SIGNER_UNAVAILABLE:${request.target.hubEntityId}`);
 		target = {
 			entityId: request.target.entityId,

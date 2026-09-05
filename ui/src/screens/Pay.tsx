@@ -88,7 +88,9 @@ export function Pay() {
 			wallet.summaries
 				.map(summary => ({ entityId: summary.entityId.toLowerCase(), label: summary.label || '', isHub: summary.isHub === true }))
 				.filter(entry => entry.entityId && entry.entityId !== self),
-		[wallet.summaries, self],
+				// Hubs on another chain carry the same labels; a direct payment stays inside our own jurisdiction.
+				.filter(summary => !summary.jurisdiction?.name || !wallet.jurisdiction || summary.jurisdiction.name === wallet.jurisdiction)
+		[wallet.summaries, wallet.jurisdiction, self],
 	);
 	const recents = useMemo(() => wallet.accounts.filter(account => !account.disputed).slice(0, 4), [wallet.accounts]);
 

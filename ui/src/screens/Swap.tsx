@@ -97,13 +97,21 @@ export function Swap() {
 			// Someone sells base at this price: we pay quote, we get base.
 			setGiveTokenId(book.quoteTokenId);
 			setWantTokenId(book.baseTokenId);
+		// A resting level is often larger than what we can send; take the price, but only as much of the size as we can pay for.
+		const spendable = (tokenId: number): bigint => hub?.tokens.find(token => token.tokenId === tokenId)?.derived.outCapacity ?? 0n;
 			setGiveText(plainAmount(quoteAmount, quote.decimals));
 			setWantText(plainAmount(level.size, base.decimals));
+			const cap = spendable(book.quoteTokenId);
+			const give = cap > 0n && quoteAmount > cap ? cap : quoteAmount;
+			const want = give === quoteAmount || quoteAmount === 0n ? level.size : (level.size * give) / quoteAmount;
 		} else {
 			setGiveTokenId(book.baseTokenId);
 			setWantTokenId(book.quoteTokenId);
 			setGiveText(plainAmount(level.size, base.decimals));
 			setWantText(plainAmount(quoteAmount, quote.decimals));
+			const cap = spendable(book.baseTokenId);
+			const give = cap > 0n && level.size > cap ? cap : level.size;
+			const want = give === level.size || level.size === 0n ? quoteAmount : (quoteAmount * give) / level.size;
 		}
 	};
 	const giveToken = hub?.tokens.find(token => token.tokenId === giveTokenId) ?? null;

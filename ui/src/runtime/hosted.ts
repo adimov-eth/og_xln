@@ -31,6 +31,45 @@ export type Stack = { apiBase: string; relayUrl: string; jurisdiction: StackJuri
 const USDC = 1;
 const HUB_CREDIT_LINE_USD = 10_000n;
 
+/** Blocks the watcher's scan may trail the chain head and still count as caught up. */
+const CHAIN_SCAN_TOLERANCE_BLOCKS = 5;
+
+/**
+ * Wait until the J watcher has scanned history up to the chain head. A fresh wallet replays every
+ * block since the deployment in 256-block ranges; the entity's certified height only advances inside
+ * an entity frame, so the frames the boot sends next (profile, account) carry the whole gap at once.
+ * Payments derive their deadlines from that certified height: sent before the catch-up they are
+ * rejected as "revealBeforeHeight already passed" (core finding #20).
+ */
+async function waitForChainScan(xln: Awaited<ReturnType<typeof getXLN>>, env: RuntimeReplica, entityId: string, signerId: string, timeoutMs: number): Promise<void> {
+	const jadapter = xln.getEntityJAdapter(env, entityId, signerId);
+	if (!jadapter) return;
+	const readHead = async (): Promise<number> => Number(await (jadapter.getCurrentBlockNumber?.() ?? jadapter.provider.getBlockNumber()));
+	const scanned = (): number => {
+		const replica = findReplicaState(env, entityId) as { jHistory?: { scannedThroughHeight?: number }; state?: { lastFinalizedJHeight?: number } } | undefined;
+		return Math.max(Number(replica?.jHistory?.scannedThroughHeight ?? 0), Number(replica?.state?.lastFinalizedJHeight ?? 0));
+	};
+	let head = await readHead();
+	let headReadAt = Date.now();
+	const startedAt = Date.now();
+	try {
+		await waitFor(
+			async () => {
+				if (Date.now() - headReadAt > 2_000) {
+					head = await readHead();
+					headReadAt = Date.now();
+				}
+				return scanned() + CHAIN_SCAN_TOLERANCE_BLOCKS >= head;
+			},
+			'chain scan',
+			timeoutMs,
+			250,
+		);
+	} finally {
+		console.info('[hosted] chain scan', { scanned: scanned(), head, elapsedMs: Date.now() - startedAt });
+	}
+}
+
 export function findReplicaState(env: RuntimeReplica, entityId: string) {
 	for (const [key, replica] of env.state.eReplicas?.entries?.() ?? []) {
 		const keyEntityId = String(key).split(':')[0] ?? '';
@@ -230,6 +269,13 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 			});
 			await waitFor(() => Boolean(findReplicaState(env, entityId)), 'importReplica self', 45_000);
 		}
+		step('Syncing with the chain');
+		try {
+			await waitForChainScan(xln, env, entityId, signerId, 60_000);
+		} catch {
+			useApp.getState().toast('Still syncing with the chain; payments may be refused until it catches up.');
+		}
+
 
 		step('Connecting to the network');
 		if (!xln.getP2P(env)) {
