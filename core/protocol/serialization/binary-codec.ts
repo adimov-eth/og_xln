@@ -99,7 +99,7 @@ addExtension({
     const TypedArray = (globalThis as unknown as Record<string, new (buffer: ArrayBuffer) => ArrayBufferView>)[name];
     return new TypedArray(buffer);
   },
-} as Parameters<typeof addExtension>[0]);
+} as unknown as Parameters<typeof addExtension>[0]);
 
 const HEX_BYTES_EXTENSION = 0x48;
 const HEX_BYTES_MIN_LENGTH = 16;
