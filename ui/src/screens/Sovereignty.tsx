@@ -93,7 +93,7 @@ export function Sovereignty() {
 								<i className="sw c-coll" /> Collateral behind what you are owed <b className="num">{formatUsd(totals.secured)}</b>
 							</span>
 							<span data-testid="sovereignty-risk">
-								<i className="sw c-risk" /> Trust only <b className="num">{formatUsd(totals.risk)}</b>
+								<i className="sw c-risk" /> Hub promise <b className="num">{formatUsd(totals.risk)}</b>
 							</span>
 						</div>
 						<p className="note" style={{ marginTop: 10 }}>
@@ -187,8 +187,8 @@ export function Sovereignty() {
 											{entry.disputePhase !== 'none' ? <span className="state st-dispute">dispute</span> : null}
 										</span>
 										<span className="s">
-											{entry.frameCosigned ? 'co-signed' : 'awaiting their signature'} · {entry.canDisputeAlone ? 'proof on file' : 'no proof yet'} · they answer in{' '}
-											{formatDuration(entry.theirResponseSeconds)}, you in {formatDuration(entry.ourResponseSeconds)}
+											{entry.frameCosigned ? 'co-signed' : 'awaiting their signature'} · {entry.canDisputeAlone ? 'proof on file: you can dispute alone' : 'no proof yet'} · they answer in{' '}
+											{formatDuration(entry.theirResponseSeconds)}, you in {formatDuration(entry.ourResponseSeconds)} · open → Manage → Dispute
 										</span>
 									</span>
 									<span className="r">

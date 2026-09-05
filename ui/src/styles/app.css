@@ -390,7 +390,7 @@
 .dcap {
 	display: flex;
 	justify-content: space-between;
-	font-size: 11.5px;
+	font-size: 12.5px;
 	color: var(--ink-3);
 	margin-top: 6px;
 	font-variant-numeric: tabular-nums;
@@ -481,7 +481,7 @@ button.bk-row:hover {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 8px 18px;
-	font-size: 11.5px;
+	font-size: 12.5px;
 	color: var(--ink-3);
 }
 
@@ -570,7 +570,7 @@ button.bk-row:hover {
 
 .rt .r .u {
 	display: block;
-	font-size: 11.5px;
+	font-size: 12.5px;
 	color: var(--ink-2);
 	margin-top: 2px;
 }
@@ -606,7 +606,7 @@ button.bk-row:hover {
 	border-radius: 6px;
 	background: var(--surface-2);
 	color: var(--ink-2);
-	font-size: 11px;
+	font-size: 12px;
 	font-weight: 500;
 	white-space: nowrap;
 }
@@ -1269,7 +1269,7 @@ textarea.input.boxed {
 }
 
 .tl .ev .tm {
-	font-size: 11px;
+	font-size: 12px;
 	color: var(--ink-3);
 	font-family: var(--font-mono);
 	margin-top: 2px;
@@ -1587,7 +1587,7 @@ textarea.input.boxed {
 }
 
 .gate-factor-shards {
-	font-size: 11px;
+	font-size: 12px;
 	color: var(--ink-2);
 }
 
@@ -1761,7 +1761,7 @@ textarea.input.boxed {
 }
 
 .mode-card .d {
-	font-size: 11.5px;
+	font-size: 12.5px;
 	color: var(--ink-2);
 }
 
@@ -2140,3 +2140,35 @@ textarea.input.boxed {
 	margin: -6px 0 18px;
 	font-variant-numeric: tabular-nums;
 }
+.receive-spectrum {
+	width: 100%;
+	padding: 18px;
+	border: 1px solid var(--line-2);
+	border-radius: var(--radius-l);
+	background: linear-gradient(130deg, color-mix(in srgb, var(--coll) 7%, var(--surface)), color-mix(in srgb, var(--risk) 6%, var(--surface)));
+	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent);
+}
+.receive-spectrum .field-head { flex-wrap: wrap; gap: 6px; }
+.receive-spectrum .note { margin: 10px 0; }
+.receive-spectrum input[type='range'] {
+	appearance: none; width: 100%; height: 44px; margin: 0;
+	background: linear-gradient(90deg, var(--coll), var(--risk)) center / 100% 5px no-repeat;
+	cursor: pointer;
+}
+.receive-spectrum input[type='range']::-webkit-slider-thumb {
+	appearance: none; width: 28px; height: 28px; border-radius: 50%;
+	background: color-mix(in srgb, var(--surface) 80%, transparent);
+	border: 2px solid var(--ink); backdrop-filter: blur(12px);
+	box-shadow: 0 2px 10px color-mix(in srgb, var(--ink) 15%, transparent), inset 0 1px 4px var(--line-2);
+}
+.receive-spectrum input[type='range']::-moz-range-thumb {
+	width: 25px; height: 25px; border-radius: 50%; background: var(--surface); border: 2px solid var(--ink);
+}
+.spectrum-ends, .spectrum-amounts { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+.spectrum-amounts { flex-wrap: wrap; }
+.spectrum-amounts b { display: block; color: var(--ink); margin-top: 4px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.spectrum-presets { flex-wrap: wrap; gap: 4px; margin-top: 12px; }
+.spectrum-presets .active { color: var(--ink); background: var(--surface-2); }
+.spectrum-buffer { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.spectrum-buffer input { min-width: 18px; min-height: 18px; accent-color: var(--risk); }
+.receive-spectrum .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

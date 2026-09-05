@@ -23,8 +23,7 @@ export async function fundFromHub(page: Page, amount = '100'): Promise<void> {
 	await page.getByTestId('faucet-amount').fill(amount);
 	const spectrum = page.getByTestId('receive-spectrum');
 	if (await spectrum.isVisible()) {
-		await page.getByTestId('receive-spectrum-slider').focus();
-		await page.keyboard.press('End');
+		await page.getByRole('button', { name: '0% collateral', exact: true }).click();
 		await page.getByTestId('receive-spectrum-confirm').click();
 		await expect(spectrum).toHaveCount(0, { timeout: 15_000 });
 	}

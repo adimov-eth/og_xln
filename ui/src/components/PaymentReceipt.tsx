@@ -62,7 +62,7 @@ export function PaymentReceiptSheet() {
 					<span className="k">Settled</span>
 					<span className="v st-settled">
 						{clock ? <span className="mono" style={{ color: 'var(--ink-2)', marginRight: 8 }}>{clock}</span> : null}
-						{elapsed ? `in ${elapsed} ms` : 'Instantly'}
+						{elapsed === null ? 'Instantly' : elapsed < 1_000 ? 'in under a second' : `in ${Math.round(elapsed / 1000)} s`}
 					</span>
 				</div>
 				<div className="kv">
@@ -81,9 +81,30 @@ export function PaymentReceiptSheet() {
 			<div className="state st-settled" style={{ justifyContent: 'center', display: 'flex' }}>
 				Verified by your runtime
 			</div>
-			<button type="button" className="btn primary" onClick={dismiss} data-testid="receipt-done">
-				Done
-			</button>
+			<div className="actions" style={{ display: 'flex', gap: 8 }}>
+				<button
+					type="button"
+					className="btn"
+					style={{ flex: 1 }}
+					data-testid="receipt-copy"
+					onClick={() => {
+						const lines = [
+							`${sent ? 'Paid' : 'Received'} ${formatMoney(amount, meta.decimals)} ${meta.symbol} ${sent ? 'to' : 'from'} ${counterparty ? displayEntityName(names, counterparty) : '—'}`,
+							description ? `For: ${description}` : '',
+							clock ? `Settled: ${clock}` : '',
+							`Frame: #${receipt.height}`,
+							proof ? `Proof: ${proof}` : '',
+							'Signed by both parties · xln',
+						].filter(Boolean);
+						void navigator.clipboard?.writeText(lines.join('\n'));
+					}}
+				>
+					Copy receipt
+				</button>
+				<button type="button" className="btn primary" style={{ flex: 1 }} onClick={dismiss} data-testid="receipt-done">
+					Done
+				</button>
+			</div>
 		</Sheet>
 	);
 }

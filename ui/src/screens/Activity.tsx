@@ -69,7 +69,8 @@ export function ActivityRow({
 	const party = movementParty(movement, names);
 	// A credit limit or collateral figure is a setting, not money that moved: keep it out of the money column.
 	const amountInline = movement.kind === 'account' || movement.kind === 'settlement';
-	const subtitle = [party, amountInline && amount ? amount : '', movement.detail].filter(Boolean).join(' · ') || `frame #${movement.height}`;
+	// People read clocks, not frame numbers; the frame stays in the detail view for whoever needs the proof.
+	const subtitle = [party, amountInline && amount ? amount : '', movement.detail].filter(Boolean).join(' · ') || (movement.timestamp ? formatClock(movement.timestamp) : `frame #${movement.height}`);
 	// Money that moved is drawn at the wallet's one scale, like every other bar.
 	const bar =
 		movement.kind === 'payment' && movement.amount !== null && movement.tokenId !== null
@@ -171,6 +172,38 @@ function MovementDetail({ movement, names }: { movement: Movement; names: Map<st
 	);
 }
 
+
+/** A statement for the books: one line per movement, with the frame that carries it. */
+function exportCsv(movements: Movement[]): void {
+	const cell = (value: string | number | null | undefined): string => `"${String(value ?? '').replace(/"/g, '""')}"`;
+	const lines = [
+		['date', 'title', 'direction', 'amount', 'token', 'counterparty', 'via', 'state', 'detail', 'frame', 'hash'].join(','),
+		...movements.map(movement => {
+			const meta = movement.tokenId !== null ? getTokenMeta(movement.tokenId) : null;
+			return [
+				movement.timestamp ? new Date(movement.timestamp).toISOString() : '',
+				movement.title,
+				movement.direction,
+				movement.amount !== null && meta ? formatMoney(movement.amount, meta.decimals, meta.decimals) : '',
+				meta?.symbol ?? '',
+				movement.counterpartyId ?? '',
+				movement.viaId ?? '',
+				movement.state,
+				movement.detail,
+				movement.height,
+				movement.hash ?? '',
+			].map(cell).join(',');
+		}),
+	];
+	const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+	const url = URL.createObjectURL(blob);
+	const link = document.createElement('a');
+	link.href = url;
+	link.download = `xln-activity-${new Date().toISOString().slice(0, 10)}.csv`;
+	link.click();
+	setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
 export function ActivityScreen() {
 	const entityId = useApp(s => s.activeEntityId);
 	const wallet = useWallet(entityId);
@@ -195,6 +228,11 @@ export function ActivityScreen() {
 		<div className="screen fade-in">
 			<div className="screen-header">
 				<span className="screen-title">Activity</span>
+				{movements.length > 0 ? (
+					<button type="button" className="btn quiet sm" onClick={() => exportCsv(movements)} data-testid="activity-export" title="Every movement shown here, with frame height and hash, for your books">
+						Export CSV
+					</button>
+				) : null}
 				<span className="faint" style={{ fontSize: 12 }}>
 					{movements.length} {movements.length === 1 ? 'movement' : 'movements'}
 				</span>

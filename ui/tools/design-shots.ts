@@ -50,6 +50,117 @@ async function enterSandbox(page: Page): Promise<void> {
 	await page.getByTestId('account-row').first().waitFor({ timeout: 90_000 });
 }
 
+
+/** Back to Home through the UI (a reload would lock the vault): the tab where it shows, the back control in a flow. */
+async function goHome(page: Page): Promise<void> {
+	// A receipt or sheet left open swallows every click that follows.
+	const done = page.getByTestId('receipt-done');
+	if (await done.isVisible().catch(() => false)) await done.click().catch(() => undefined);
+	for (let hops = 0; hops < 4 && !(await page.getByTestId('home-total').isVisible().catch(() => false)); hops += 1) {
+		const nav = page.getByTestId('nav-home').locator('visible=true').first();
+		const back = page.getByTestId('back').locator('visible=true').first();
+		if (await nav.isVisible().catch(() => false)) await nav.click();
+		else if (await back.isVisible().catch(() => false)) await back.click();
+		else await page.keyboard.press('Escape');
+		await page.waitForTimeout(300);
+	}
+	await page.getByTestId('home-total').waitFor();
+}
+
+/** The consent panel: slide to pure credit and extend the limit; gone once the hub countersigns. */
+async function grantCapacity(page: Page): Promise<void> {
+	const spectrum = page.getByTestId('receive-spectrum');
+	if (!(await spectrum.isVisible().catch(() => false))) return;
+	// Pure credit: the preset button works with touch emulation too, where End on the slider does not.
+	await page.getByRole('button', { name: '0% collateral', exact: true }).click();
+	const confirm = page.getByTestId('receive-spectrum-confirm');
+	await confirm.waitFor({ timeout: 10_000 });
+	await confirm.click();
+	await spectrum.waitFor({ state: 'detached', timeout: 60_000 });
+}
+
+async function waitEnabled(page: Page, testId: string, timeout = 60_000): Promise<void> {
+	await page.waitForFunction(
+		id => !(document.querySelector(`[data-testid="${id}"]`) as HTMLButtonElement | null)?.disabled,
+		testId,
+		{ timeout },
+	);
+}
+
+async function openAssets(page: Page): Promise<void> {
+	await goHome(page);
+	await page.getByTestId('nav-manage').locator('visible=true').first().click();
+	await page.getByTestId('manage-assets').click();
+	await page.getByTestId('faucets').waitFor();
+}
+
+/** Text of a Home total, as a number. */
+async function homeNumber(page: Page, testId: string): Promise<number> {
+	const text = (await page.getByTestId(testId).textContent().catch(() => '')) ?? '';
+	return Number(text.replace(/[^0-9.]/g, '')) || 0;
+}
+
+/** Live in the wallet for a minute: the same actions the guided tour asks for, on the real stack. */
+async function liveIn(page: Page): Promise<void> {
+	const at = (step: string): void => { process.stderr.write(`  live-in: ${step}\n`); };
+	// Credit line + $100 from the hub.
+	at('credit + faucet');
+	await openAssets(page);
+	await page.getByTestId('faucet-amount').fill('100');
+	await grantCapacity(page);
+	await waitEnabled(page, 'faucet-offchain', 30_000);
+	await page.getByTestId('faucet-offchain').click();
+	// Gas and a $100 reserve on the chain.
+	await page.getByTestId('faucet-gas').click();
+	await page.waitForTimeout(800);
+	await page.getByTestId('faucet-reserve').click();
+	await goHome(page);
+	await page.getByTestId('token-net-USDC').waitFor({ timeout: 90_000 });
+	// Pay $25 to another hub.
+	at('pay');
+	await page.getByTestId('home-pay').click();
+	await page.getByTestId('pay-to').click();
+	await page.getByTestId('pay-suggestion-H2').first().click();
+	await page.getByTestId('pay-amount').fill('25');
+	await waitEnabled(page, 'pay-submit', 60_000);
+	await page.getByTestId('pay-submit').click();
+	await page.getByTestId('payment-receipt').waitFor({ timeout: 60_000 }).catch(() => undefined);
+	if (await page.getByTestId('receipt-done').isVisible().catch(() => false)) await page.getByTestId('receipt-done').click();
+	// A $40 bill paid by the hub (the network faucet stands in for the payer).
+	at('bill');
+	await openAssets(page);
+	await page.getByTestId('faucet-amount').fill('40');
+	await grantCapacity(page);
+	await waitEnabled(page, 'faucet-offchain', 30_000);
+	await page.getByTestId('faucet-offchain').click();
+	await goHome(page);
+	// $100 of reserve into the hub account as collateral (the reserve faucet needs a block and a watcher poll to land).
+	await page.waitForTimeout(6_000);
+	at('move');
+	await page.getByTestId('home-move').click();
+	await page.getByTestId('move-amount').fill('60');
+	await waitEnabled(page, 'move-now', 30_000);
+	await page.getByTestId('move-now').click();
+	await goHome(page);
+	// One swap at the best ask, with consent for the coin we receive.
+	await page.getByTestId('home-swap').click();
+	const book = page.getByTestId('orderbook').locator('visible=true').first();
+	await page.waitForFunction(() => document.querySelector('[data-testid="orderbook"]')?.getAttribute('data-status') === 'live', undefined, { timeout: 60_000 });
+	at('swap');
+	// A small ticket at the best price: the phone layout keeps the book folded, so the ticket quotes itself.
+	const askRow = book.locator('.bk-row.ask').last();
+	if (await askRow.isVisible().catch(() => false)) await askRow.click();
+	await page.getByTestId('swap-give').fill('20');
+	await page.waitForTimeout(600);
+	await grantCapacity(page);
+	await waitEnabled(page, 'swap-submit', 60_000);
+	await page.getByTestId('swap-submit').click();
+	await page.waitForTimeout(2_500);
+	await goHome(page);
+	// Let the fills and receipts land.
+	await page.waitForTimeout(4_000);
+}
+
 /**
  * Desktop: one full-page frame. Mobile: viewport frames (the fixed tab bar
  * would otherwise be painted mid-page), plus a second frame scrolled one
@@ -99,8 +210,17 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 	page.on('pageerror', error => errors.push(error.message));
 
 	await enterSandbox(page);
+	// A lived-in wallet, the way the tour leaves it: consent, hub credit, a payment, a bill paid, reserve + gas,
+	// collateral, one swap. Reviewers judge the product, not an empty $0.00 shell.
+	try {
+		await liveIn(page);
+	} catch (error) {
+		process.stderr.write(`[${variant.name}] live-in incomplete: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}\n`);
+	}
+	await goHome(page);
 	files.push(...(await shot(page, dir, '01-home', variant)));
 
+	const home = (): Promise<void> => goHome(page);
 	// Each screen is its own attempt: on a live stack a flow may be blocked (no funds yet, a hub offline);
 	// the review still gets every other screen, and the skipped ones are named.
 	const attempt = async (name: string, flow: () => Promise<void>): Promise<void> => {
@@ -111,19 +231,6 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 			process.stderr.write(`[${variant.name}] skip ${name}: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}\n`);
 		}
 	};
-	// Back to Home through the UI (a reload would lock the vault): the tab where it shows, the back control in a flow.
-	const home = async (): Promise<void> => {
-		for (let hops = 0; hops < 4 && !(await page.getByTestId('home-total').isVisible().catch(() => false)); hops += 1) {
-			const nav = page.getByTestId('nav-home').locator('visible=true').first();
-			const back = page.getByTestId('back').locator('visible=true').first();
-			if (await nav.isVisible().catch(() => false)) await nav.click();
-			else if (await back.isVisible().catch(() => false)) await back.click();
-			else await page.keyboard.press('Escape');
-			await page.waitForTimeout(300);
-		}
-		await page.getByTestId('home-total').waitFor();
-	};
-
 	await attempt('02-pay', async () => {
 		await page.getByTestId('home-pay').click();
 		await page.getByTestId('pay-to').fill('H2');
@@ -138,6 +245,7 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 		await page.getByTestId('receipt-title').waitFor();
 		await page.waitForTimeout(500);
 	});
+	if (await page.getByTestId('receipt-done').isVisible().catch(() => false)) await page.getByTestId('receipt-done').click();
 	await home();
 	await attempt('04-receive', async () => {
 		await page.getByTestId('home-receive').click();
@@ -171,7 +279,7 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 	await attempt('10-move', async () => {
 		await page.getByTestId('home-move').click();
 		await page.getByTestId('move-amount').waitFor();
-		await page.getByTestId('move-amount').fill('250');
+		await page.getByTestId('move-amount').fill('25');
 	});
 	await home();
 	await attempt('11-manage', async () => {
@@ -218,7 +326,7 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 	}
 	await attempt('09-settings', async () => {
 		await page.getByRole('link', { name: 'Settings' }).first().click();
-		await page.getByText('Dollars per pixel').waitFor();
+		await page.getByText('Bar scale').waitFor();
 	});
 
 	await context.close();

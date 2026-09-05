@@ -109,8 +109,8 @@ export function Receive() {
 							<Icon name="bolt" size={18} />
 						</span>
 						<div className="note">
-							<b style={{ color: 'var(--ink)', fontWeight: 600 }}>No inbound room yet.</b> Extend a credit line to a hub and it can pay you instantly, no
-							pre-funding.
+							<b style={{ color: 'var(--ink)', fontWeight: 600 }}>Type an amount to get paid.</b> The wallet then asks how much of your hub&apos;s
+							promise you accept for it; once you agree, anyone can pay you instantly and the hub passes it along.
 							{hub ? (
 								<>
 									{' '}

@@ -1,0 +1,731 @@
+{
+  "reviewer": "openrouter/qwen/qwen3.8-flash",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 800,
+        "typography": 810,
+        "color": 780,
+        "data_legibility": 600,
+        "layout": 760,
+        "visceral_value": 760,
+        "responsive": 800,
+        "consistency": 820,
+        "trust": 720
+      },
+      "total": 767,
+      "top_issues": [
+        "Total-balance bar under '$115.00' is ~110px wide yet Settings declares 1px=$10 (=>11.5px); the signature 'one absolute scale' promise is already broken on the first screen.",
+        "'At risk $115.00' with On-chain/Reserve/Secured all $0.00 reads as an alarm to a first-timer; 'send up to $215.00, receive up to $0.50' is channel jargon."
+      ],
+      "fixes": [
+        "Render the $115 bar at the declared scale (or auto-fit and label the rate inline, e.g. 'bar = $115 @ 1px=$10').",
+        "Recolor 'At risk' to neutral violet with a one-line gloss and replace 'send/receive up to' with 'can pay now / can accept now'."
+      ]
+    },
+    {
+      "file": "01-home-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 800,
+        "color": 780,
+        "data_legibility": 640,
+        "layout": 780,
+        "visceral_value": 740,
+        "responsive": 800,
+        "consistency": 810,
+        "trust": 720
+      },
+      "total": 766,
+      "top_issues": [
+        "Recent rows lead with 'frame #106 / #94' instead of who/what; the tiny 'send up to 215.00 / receive up to 0.50' under H1 is unreadable at mobile size.",
+        "The H1 capacity bar mixes green+purple+grey segments with no legend on this screen."
+      ],
+      "fixes": [
+        "Swap 'frame #N' for counterparty name; move frame id to the detail sheet.",
+        "Add the legend chip row (collateral/at risk/you owe/credit room) directly under the H1 bar."
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 820,
+        "typography": 820,
+        "color": 800,
+        "data_legibility": 680,
+        "layout": 800,
+        "visceral_value": 800,
+        "responsive": 810,
+        "consistency": 820,
+        "trust": 760
+      },
+      "total": 794,
+      "top_issues": [
+        "'To H2' is confirmed only by a raw 0x92c2d7… hex wall; Maya cannot verify she is paying a friend.",
+        "Fee shown as '0.000050 USDC' — six decimals of noise with no fiat equivalent."
+      ],
+      "fixes": [
+        "Show a verified display name + short id with a 'verify' check; collapse the hex behind it.",
+        "Round fee to '$0.00 (0.00005 USDC)'."
+      ]
+    },
+    {
+      "file": "02-pay-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 810,
+        "typography": 810,
+        "color": 800,
+        "data_legibility": 700,
+        "layout": 810,
+        "visceral_value": 810,
+        "responsive": 810,
+        "consistency": 820,
+        "trust": 780
+      },
+      "total": 797,
+      "top_issues": [
+        "Two route cards differ only by 'Fee 0.000050' vs '0.000075' — the user can't see why one is better; no hop-count or trust tradeoff.",
+        "Truncated 0x hash at the very top is orphaned context."
+      ],
+      "fixes": [
+        "Label routes 'cheapest' / 'fewest hops' and show fee in fiat.",
+        "Remove the orphan hash; it belongs on the To-field."
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 850,
+        "typography": 840,
+        "color": 820,
+        "data_legibility": 700,
+        "layout": 840,
+        "visceral_value": 850,
+        "responsive": 840,
+        "consistency": 850,
+        "trust": 820
+      },
+      "total": 827,
+      "top_issues": [
+        "'Settled … in 60832 ms' directly contradicts the 'Instant' promise made on Pay/Home; 60s is not instant and the millisecond precision looks like a leaked debug value.",
+        "Proof is a truncated 0x34dc92a…4966 with no 'view/verify proof' affordance."
+      ],
+      "fixes": [
+        "Show human time ('settled in ~60s, frame #180') and reserve 'Instant' for sub-frame confirms; drop ms.",
+        "Make Proof a tappable row opening the evidence bundle."
+      ]
+    },
+    {
+      "file": "03-receipt-bottom.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 830,
+        "color": 810,
+        "data_legibility": 690,
+        "layout": 820,
+        "visceral_value": 830,
+        "responsive": 830,
+        "consistency": 840,
+        "trust": 810
+      },
+      "total": 813,
+      "top_issues": [
+        "Same '60832 ms' vs 'Instant' contradiction over a dimmed Home whose 'At risk $90' now shifts as the receipt animates — disorienting.",
+        "Done CTA is the only action; no 'share receipt' even though Sofia must forward it."
+      ],
+      "fixes": [
+        "Fix settle-time copy as above.",
+        "Add 'Share receipt' next to Done."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 810,
+        "typography": 810,
+        "color": 800,
+        "data_legibility": 660,
+        "layout": 800,
+        "visceral_value": 780,
+        "responsive": 800,
+        "consistency": 810,
+        "trust": 740
+      },
+      "total": 783,
+      "top_issues": [
+        "'25.50 capacity via H1' and 'H1·Testnet' leak channel + dev-environment jargon onto a customer-facing QR screen.",
+        "QR has no fallback for when the sender has no route to you."
+      ],
+      "fixes": [
+        "Hide 'Testnet' behind a dev toggle; say 'ready to receive up to $25.50'.",
+        "Add 'no route? open an account' link."
+      ]
+    },
+    {
+      "file": "04-receive-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 650,
+        "layout": 780,
+        "visceral_value": 760,
+        "responsive": 790,
+        "consistency": 800,
+        "trust": 730
+      },
+      "total": 769,
+      "top_issues": [
+        "'YOUR ENTITY ID' is a full 64-char hex wall with 'inbound room' jargon below it — meaningless to Maya, copy-paste-only for power users.",
+        "Three near-identical share buttons (Copy invoice / Copy link / Copy xln:// app link) with no guidance on which to send."
+      ],
+      "fixes": [
+        "Collapse entity id to short form + 'copy'; replace 'inbound room' with 'how much you can accept'.",
+        "Make 'Copy invoice' the primary; demote the other two."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 800,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 600,
+        "layout": 780,
+        "visceral_value": 780,
+        "responsive": 800,
+        "consistency": 810,
+        "trust": 740
+      },
+      "total": 770,
+      "top_issues": [
+        "Default behavior is a resting limit order ('Set the amount you want. The order rests on your account at that price until H1 fills it') — Anya asked to swap at a fair price now, not to post a ticket.",
+        "'Hub fee 1 bps', 'Lot rounding 0.000004 USDC stays with you', 'Testnet' chip: three jargon leaks in one card.",
+        "'You receive 0.00' with no indicative price is a dead state."
+      ],
+      "fixes": [
+        "Default to immediate market fill showing expected receive + price; expose limit order as an advanced mode.",
+        "Show fee as % / fiat, hide lot rounding unless non-zero, gate 'Testnet'."
+      ]
+    },
+    {
+      "file": "05-swap-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 820,
+        "typography": 830,
+        "color": 820,
+        "data_legibility": 760,
+        "layout": 820,
+        "visceral_value": 820,
+        "responsive": 810,
+        "consistency": 820,
+        "trust": 800
+      },
+      "total": 812,
+      "top_issues": [
+        "Depth bars look absolute but inherit the broken global scale, so ask/bid sizes aren't comparable to balances elsewhere.",
+        "'live·relay' and '1 tick = 1/10,000 USDC' are operator terms on a consumer screen."
+      ],
+      "fixes": [
+        "Normalize book bars to the same px=$ rule and label the max.",
+        "Add a one-line gloss or move to a tooltip."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 820,
+        "typography": 820,
+        "color": 800,
+        "data_legibility": 720,
+        "layout": 810,
+        "visceral_value": 810,
+        "responsive": 810,
+        "consistency": 820,
+        "trust": 800
+      },
+      "total": 804,
+      "top_issues": [
+        "The segmented H1 bar (green/purple/grey) is the key risk visual but the legend only appears on the bottom scroll, so the top view is uninterpretable in isolation.",
+        "'send up to 190.00 / receive up to 25.50' repeats channel jargon."
+      ],
+      "fixes": [
+        "Pin the legend under the bar on both account views.",
+        "Plain-language the capacities."
+      ]
+    },
+    {
+      "file": "06-account-bottom.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 810,
+        "typography": 810,
+        "color": 800,
+        "data_legibility": 720,
+        "layout": 800,
+        "visceral_value": 790,
+        "responsive": 800,
+        "consistency": 810,
+        "trust": 800
+      },
+      "total": 795,
+      "top_issues": [
+        "'Your credit line to them 115.50' vs 'Collateral 100.00' is exactly Tomasz's risk question and reads well, but there is no 'at-risk exposure' number tying them together.",
+        "'Frames signed 12 / Status Open' is operator telemetry with no user action."
+      ],
+      "fixes": [
+        "Add 'you are trusting H1 for $15.50 beyond collateral' computed line.",
+        "Move frames/status behind 'Ledger detail'."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 810,
+        "typography": 810,
+        "color": 800,
+        "data_legibility": 720,
+        "layout": 800,
+        "visceral_value": 780,
+        "responsive": 800,
+        "consistency": 810,
+        "trust": 800
+      },
+      "total": 795,
+      "top_issues": [
+        "Filter chips scroll horizontally and 'Accou…' is clipped with no fade/affordance, so users won't know more filters exist.",
+        "Rows repeat 'frame #106/#94' as the subtitle instead of counterparty."
+      ],
+      "fixes": [
+        "Add edge fade + snap, or wrap chips.",
+        "Subtitle = counterparty; frame id to detail."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 830,
+        "color": 810,
+        "data_legibility": 740,
+        "layout": 820,
+        "visceral_value": 820,
+        "responsive": 820,
+        "consistency": 830,
+        "trust": 820
+      },
+      "total": 816,
+      "top_issues": [
+        "'Frames 2 committed entries' is the strongest provability line in the product but Proof is again a truncated hash with no open action.",
+        "No 'export this receipt' even though Ravi needs board-proof."
+      ],
+      "fixes": [
+        "Tappable proof -> bundle.",
+        "Add 'Export receipt' to the sheet."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 830,
+        "typography": 820,
+        "color": 810,
+        "data_legibility": 760,
+        "layout": 820,
+        "visceral_value": 800,
+        "responsive": 820,
+        "consistency": 830,
+        "trust": 780
+      },
+      "total": 810,
+      "top_issues": [
+        "The scale slider + Auto is the right control, but nothing here shows the user that Home/Account bars currently violate it.",
+        "'On-chain wallet / Reserve / Accounts' toggles hide money sources without warning what disappears from Home."
+      ],
+      "fixes": [
+        "Add a live mini-preview bar at the chosen scale.",
+        "State the consequence of each toggle."
+      ]
+    },
+    {
+      "file": "09-settings-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 800,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 720,
+        "layout": 780,
+        "visceral_value": 780,
+        "responsive": 800,
+        "consistency": 810,
+        "trust": 700
+      },
+      "total": 778,
+      "top_issues": [
+        "'Reveal recovery phrase' and 'Forget vault' (red) sit adjacent with no confirm distance — a single mis-tap can expose or destroy the seed.",
+        "'AT THIS SCALE' demo is great but contradicts the real bars elsewhere."
+      ],
+      "fixes": [
+        "Separate reveal vs forget with a destructive-action confirm and spacing.",
+        "Make the demo reflect actual rendering."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 800,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 680,
+        "layout": 760,
+        "visceral_value": 780,
+        "responsive": 790,
+        "consistency": 800,
+        "trust": 780
+      },
+      "total": 778,
+      "top_issues": [
+        "Six FROM/TO cards each repeating 'On-chain, in your signer / Depository escrow / Bilateral, instant' is dense and the selected Reserve card shows '0.00 USDC' while the user typed 250 — the error only appears at the bottom.",
+        "No chain/network selector despite Fatima's two-network task."
+      ],
+      "fixes": [
+        "Compact to a source/destination picker with one line each; show 'available 0.00' inline next to Amount.",
+        "Add explicit network chips."
+      ]
+    },
+    {
+      "file": "10-move-bottom.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 790,
+        "typography": 790,
+        "color": 790,
+        "data_legibility": 700,
+        "layout": 770,
+        "visceral_value": 780,
+        "responsive": 790,
+        "consistency": 800,
+        "trust": 800
+      },
+      "total": 780,
+      "top_issues": [
+        "'Amount exceeds what is available here' is correct but appears below two disabled buttons, so the cause (Reserve=0) is far from the message.",
+        "'WHAT HAPPENS: Fund you through H1' is good but doesn't state the fee."
+      ],
+      "fixes": [
+        "Move the error directly under the Amount field and highlight the empty source card.",
+        "Add fee line to WHAT HAPPENS."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 820,
+        "color": 810,
+        "data_legibility": 780,
+        "layout": 820,
+        "visceral_value": 820,
+        "responsive": 820,
+        "consistency": 830,
+        "trust": 820
+      },
+      "total": 819,
+      "top_issues": [
+        "'WHERE YOUR MONEY STANDS / Yours whatever a hub does $0 / Promised by hubs $90' is the single best mental-model copy in the set, but the five-tile grid above it competes for attention.",
+        "'Nothing waiting on you' under NEEDS ATTENTION is good but offers no jump when something does appear."
+      ],
+      "fixes": [
+        "Lead the screen with the money-stands card; demote the tile grid.",
+        "Make NEEDS ATTENTION rows tappable."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 800,
+        "typography": 800,
+        "color": 800,
+        "data_legibility": 720,
+        "layout": 790,
+        "visceral_value": 780,
+        "responsive": 800,
+        "consistency": 810,
+        "trust": 780
+      },
+      "total": 789,
+      "top_issues": [
+        "'Depository may pull 0.00' under every token is alarming phrasing for a zero balance.",
+        "Signer/Depository hex ids dominate the header for a screen a treasurer would export from."
+      ],
+      "fixes": [
+        "Rephrase to 'available to move: 0.00'.",
+        "Shorten ids, full value on tap."
+      ]
+    },
+    {
+      "file": "12-assets-bottom.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 780,
+        "typography": 780,
+        "color": 780,
+        "data_legibility": 660,
+        "layout": 740,
+        "visceral_value": 760,
+        "responsive": 780,
+        "consistency": 790,
+        "trust": 760
+      },
+      "total": 761,
+      "top_issues": [
+        "A collateral slider + 'Collateral unavailable' + 'Receive USDC from H1' + three more receive buttons stack into a wall; the disabled primary CTA next to enabled secondary ones is contradictory.",
+        "'Available 25.500023 USDC · Need 74.499977 USDC more' over-precision on a faucet sheet."
+      ],
+      "fixes": [
+        "Show one primary receive action; collapse the rest into 'more options'.",
+        "Round to 2 decimals."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 800,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 720,
+        "layout": 790,
+        "visceral_value": 780,
+        "responsive": 800,
+        "consistency": 810,
+        "trust": 780
+      },
+      "total": 788,
+      "top_issues": [
+        "'H1 3 lanes' is operator vocabulary; the user can't see what a lane is or why it matters to a loan.",
+        "Token cards show no balance, so 'Amount to lend' has no visible ceiling."
+      ],
+      "fixes": [
+        "Replace '3 lanes' with 'supports USDC, WETH, USDT'.",
+        "Show per-token balance on the card."
+      ]
+    },
+    {
+      "file": "13-lend-bottom.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 790,
+        "typography": 790,
+        "color": 790,
+        "data_legibility": 720,
+        "layout": 780,
+        "visceral_value": 770,
+        "responsive": 790,
+        "consistency": 800,
+        "trust": 790
+      },
+      "total": 781,
+      "top_issues": [
+        "'Interest you ask · basis points 100 = 1.00% per term' is good but 'per term' is ambiguous across the 1hour/1day/1month choices.",
+        "H1 POOL Available/Borrowed/Active principal all 0.00 with no APR or utilization signal for Marcus."
+      ],
+      "fixes": [
+        "Compute and show the annualized rate.",
+        "Add utilization % and a one-line risk note."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 800,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 640,
+        "layout": 800,
+        "visceral_value": 760,
+        "responsive": 800,
+        "consistency": 810,
+        "trust": 760
+      },
+      "total": 776,
+      "top_issues": [
+        "'Kind Lazy (hash of its board)' and 'Register it on the EntityProvider' are contract-level terms that will confuse Ravi and Dmitri.",
+        "No visible action to add signers or change threshold — the board is read-only-looking."
+      ],
+      "fixes": [
+        "Plain-language: 'You are the only signer (1 of 1)'; hide 'Lazy/EntityProvider' behind details.",
+        "Add 'Manage signers' CTA."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 850,
+        "typography": 840,
+        "color": 820,
+        "data_legibility": 800,
+        "layout": 840,
+        "visceral_value": 860,
+        "responsive": 840,
+        "consistency": 850,
+        "trust": 860
+      },
+      "total": 842,
+      "top_issues": [
+        "'Enforceable right now $0.00 / Trust only $90.00' is the product's thesis in two lines — but there is no 'Dispute' action anywhere on this screen, so Kenji's task dead-ends here.",
+        "Green/violet explanation is excellent yet the bars still don't match the global scale."
+      ],
+      "fixes": [
+        "Add a prominent 'Open dispute' button with the challenge window.",
+        "Align bars to the declared scale."
+      ]
+    },
+    {
+      "file": "15-sovereignty-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 820,
+        "typography": 820,
+        "color": 810,
+        "data_legibility": 760,
+        "layout": 810,
+        "visceral_value": 820,
+        "responsive": 820,
+        "consistency": 830,
+        "trust": 840
+      },
+      "total": 815,
+      "top_issues": [
+        "'they answer in 1d, you in 1d' is the challenge window Kenji needs but it's clipped at the right edge and not labeled as a dispute timer.",
+        "'Accounts co-signed 1 of 1 / Can dispute without asking 1 of 1' is great trust signal yet has no link to the evidence it refers to."
+      ],
+      "fixes": [
+        "Wrap the response-window text and label it 'Dispute window'.",
+        "Make co-signed rows open the evidence bundle."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 799,
+    "verdict": "A coherent, trust-forward dark wallet whose Sovereignty, Manage and Account views articulate a genuinely different (bilateral, provable, enforceable) model better than most crypto UIs. It is held back from 'strong' because its signature 'one absolute scale' promise is visibly broken by the bars, dev-environment and operator jargon (Testnet, bps, frame #, 60832 ms 'Instant', hex walls) leak onto consumer surfaces, and the dispute/challenge and cross-network flows the panel needs are absent.",
+    "priority_fixes": [
+      "Honor the declared 1px=$X scale on every bar (or auto-fit and label the rate inline) — the core differentiator is currently contradicted on Home, Account and the book.",
+      "Never show 'Instant' beside 'in 60832 ms'; use human settle time and drop millisecond precision on receipts.",
+      "Strip dev/operator jargon from user screens (Testnet, bps, lot rounding, EntityProvider, Lazy, 'may pull', '3 lanes') behind a single advanced toggle.",
+      "Add a visible 'Open dispute' action with a labeled challenge-window countdown on Account and Sovereignty.",
+      "Make Swap default to an immediate priced fill (limit order as advanced) and add an explicit cross-network fee line to Move/Swap."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 45,
+        "verdict": "I just want to send $20 to my friend but everything says 'at risk', 'capacity', 'frame', and a long number I can't read.",
+        "blockers": [
+          "01-home 'At risk $115' alarm and 'send/receive up to' jargon",
+          "02-pay 'To H2' raw hex with no name to trust",
+          "no onboarding/get-money-in screen exists in the set"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 78,
+        "verdict": "Credit vs collateral is finally legible on the Account view, though I had to scroll to find the legend and the bars don't tell me absolute size.",
+        "blockers": [
+          "06-account legend only on the bottom scroll",
+          "broken global scale hides real exposure magnitude"
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 62,
+        "verdict": "The order book is solid but the default 'swap' is actually a resting limit order with no indicative fill price — that's not how I trade.",
+        "blockers": [
+          "05-swap defaults to limit order, 'You receive 0.00'",
+          "no USDC-denominated fee/price impact shown"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 70,
+        "verdict": "Export CSV plus 'Save evidence bundle' and 'Enforceable right now' give me real board proof, but 'Testnet' on customer screens makes the whole thing look unfinished.",
+        "blockers": [
+          "'Testnet' chip on 04-receive and 05-swap",
+          "no one-click signed PDF proof export"
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 80,
+        "verdict": "I can copy an invoice with a note and hand over a settled receipt — close to done, I just can't see which invoices are still unpaid.",
+        "blockers": [
+          "no invoice status/list screen in the set (only Receive + Activity)"
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 55,
+        "verdict": "I can save the evidence bundle and see co-signing, but there is no Dispute button and the challenge window is a clipped footnote — I can't act when a hub misbehaves.",
+        "blockers": [
+          "no Dispute action on 15-sovereignty or 06-account",
+          "15-sovereignty-bottom 'they answer in 1d' is cut off and unlabeled"
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 50,
+        "verdict": "Paying at checkout takes more than ten seconds and one thumb because the receipt itself admits it settled in 60 seconds.",
+        "blockers": [
+          "03-receipt '60832 ms' breaks the <10s one-hand promise",
+          "multi-step To/Amount/Route on 02-pay"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 82,
+        "verdict": "Desk-style credit lines, collateral and the segmented risk bar let me judge exposure fast; I only want a computed 'uncollateralized trust' number.",
+        "blockers": [
+          "06-account-bottom lacks an explicit at-risk exposure figure"
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 52,
+        "verdict": "There's an 'Across networks' toggle but no screen actually shows me the cross-chain route or its fee, so I can't move USDT between chains with confidence.",
+        "blockers": [
+          "no visible cross-network fee/route on 05-swap or 10-move",
+          "10-move has no chain selector"
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 66,
+        "verdict": "Sovereignty and the receipt model make the 'why this is safe' argument in three minutes, but a wallet that says 'Instant' then '60832 ms' and shows 'Testnet' undercuts the polish I'd invest behind.",
+        "blockers": [
+          "broken scale promise + 'Testnet'/'ms' leaks on 01-home, 03-receipt, 05-swap"
+        ]
+      }
+    ]
+  }
+}

@@ -88,12 +88,12 @@ export function SettingsScreen() {
 			<div className="two-col">
 			<div>
 			<div className="sect" style={{ marginTop: 0 }}>
-				<h3 className="caps">Scale</h3>
+				<h3 className="caps">Bar scale</h3>
 				<span className="more num">1 px = ${roundUsd(usdPerPx)}</span>
 			</div>
 			<div className="setting first" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
 				<div>
-					<div className="t">Dollars per pixel</div>
+					<div className="t">What one pixel of bar is worth</div>
 					<div className="s">
 						Every bar in the wallet is drawn to this one scale, so amounts stay comparable at a glance.
 						{scaleMode === 'auto' ? ' Auto follows your largest balance; pick a value to pin it.' : ' Pinned; choose Auto to follow your largest balance.'}

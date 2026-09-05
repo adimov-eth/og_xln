@@ -39,8 +39,8 @@ async function followTo(page: Page, tour: Locator, ...wanted: string[]): Promise
 async function grantCapacity(page: Page): Promise<boolean> {
 	const spectrum = page.getByTestId('receive-spectrum');
 	if (!(await spectrum.isVisible().catch(() => false))) return false;
-	await page.getByTestId('receive-spectrum-slider').focus();
-	await page.keyboard.press('End');
+	// Pure credit: the preset button works with touch emulation too, where End on the slider does not.
+	await page.getByRole('button', { name: '0% collateral', exact: true }).click();
 	const confirm = page.getByTestId('receive-spectrum-confirm');
 	await expect(confirm).toBeEnabled({ timeout: 10_000 });
 	await confirm.click();

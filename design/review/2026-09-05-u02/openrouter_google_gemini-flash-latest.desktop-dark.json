@@ -1,0 +1,499 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/01-home.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 850,
+        "typography": 860,
+        "color": 830,
+        "data_legibility": 840,
+        "layout": 850,
+        "visceral_value": 820,
+        "responsive": 800,
+        "consistency": 870,
+        "trust": 860
+      },
+      "total": 842,
+      "top_issues": [
+        "Legend dot cluster under $115.00 ('On-chain', 'Reserve', 'Secured', 'At risk') feels like small dense metadata rather than a core financial breakdown.",
+        "The single scale bar in the Accounts widget is subtle; without immediate context, first-timers do not recognize violet as counterparty debt exposure."
+      ],
+      "fixes": [
+        "Increase contrast and tap target size for the breakdown pill indicators under main balance.",
+        "Add a direct human tooltip or micro-label on the bar explaining 'Violet: Hub owes you without collateral'."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/02-pay.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 870,
+        "typography": 880,
+        "color": 860,
+        "data_legibility": 890,
+        "layout": 870,
+        "visceral_value": 850,
+        "responsive": 810,
+        "consistency": 890,
+        "trust": 900
+      },
+      "total": 870,
+      "top_issues": [
+        "Right sidebar card 'Your account with H1' before/after bars are mathematically precise but require significant cognitive load to parse quickly.",
+        "The '2 Routes' selector looks clickable but the secondary route details could be confused with an executed state."
+      ],
+      "fixes": [
+        "Highlight the net delta on the 'After' bar directly in the graphic with an animated or contrasted anchor.",
+        "Add explicit radio buttons or segmented control styling around the route options."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/03-receipt.png",
+      "scores": {
+        "hierarchy": 900,
+        "premium": 880,
+        "typography": 890,
+        "color": 880,
+        "data_legibility": 910,
+        "layout": 890,
+        "visceral_value": 870,
+        "responsive": 850,
+        "consistency": 900,
+        "trust": 920
+      },
+      "total": 889,
+      "top_issues": [
+        "Modal is clean but lacks a dedicated 'Share / Export PDF' or raw cryptographic receipt export button for accounting/DAO use.",
+        "Proof hash is truncated ('0x08ec58b0...aa05') without an explicit copy icon beside it."
+      ],
+      "fixes": [
+        "Add 'Copy proof' and 'Export receipt' secondary actions beside or above the primary 'Done' button.",
+        "Show a copy-to-clipboard toast icon next to the frame and proof fields."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/04-receive.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 840,
+        "typography": 860,
+        "color": 840,
+        "data_legibility": 850,
+        "layout": 840,
+        "visceral_value": 820,
+        "responsive": 810,
+        "consistency": 870,
+        "trust": 870
+      },
+      "total": 846,
+      "top_issues": [
+        "The QR code sits centrally above input fields with stark white background that overpowers dark mode contrast.",
+        "The inbound capacity constraint ('25.50 capacity via H1') is easy to miss, risking failed payment requests from senders."
+      ],
+      "fixes": [
+        "Soft-pad or invert the QR code border to integrate more smoothly into the dark surface.",
+        "Make inbound capacity an alert badge or persistent helper banner right below the amount input."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/05-swap.png",
+      "scores": {
+        "hierarchy": 890,
+        "premium": 890,
+        "typography": 900,
+        "color": 890,
+        "data_legibility": 910,
+        "layout": 890,
+        "visceral_value": 880,
+        "responsive": 830,
+        "consistency": 900,
+        "trust": 900
+      },
+      "total": 888,
+      "top_issues": [
+        "No visible fill history or recent trades tab in the order book card.",
+        "Tab for 'Across networks' at the top right is separated from the main ticket, making its behavior on routing ambiguous."
+      ],
+      "fixes": [
+        "Add a compact 'My Orders / Recent Fills' toggle panel directly under the book.",
+        "Integrate the 'Same network / Across networks' switcher inside the Swap card header."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/06-account.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 860,
+        "typography": 880,
+        "color": 870,
+        "data_legibility": 880,
+        "layout": 860,
+        "visceral_value": 850,
+        "responsive": 820,
+        "consistency": 880,
+        "trust": 890
+      },
+      "total": 866,
+      "top_issues": [
+        "The difference between 'Their credit line to you' (0.00) and 'Your credit line to them' (115.50) requires prior mental model knowledge.",
+        "Dispute action is buried behind 'Manage' instead of being visible on the account status card."
+      ],
+      "fixes": [
+        "Provide an inline subtitle: 'Credit line = maximum unsecured debt you permit them to run'.",
+        "Place an emergency 'Dispute / Close account' link directly inside 'This Account' overview panel."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/07-activity.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 870,
+        "typography": 890,
+        "color": 870,
+        "data_legibility": 900,
+        "layout": 880,
+        "visceral_value": 840,
+        "responsive": 830,
+        "consistency": 890,
+        "trust": 890
+      },
+      "total": 874,
+      "top_issues": [
+        "Detail inspector on the right is static and lacks an interactive 'Verify signature / view frame JSON' viewer.",
+        "Export CSV link is small text without date range or filtering controls."
+      ],
+      "fixes": [
+        "Add a secondary button 'Download raw frame bundle' in the detail inspector panel.",
+        "Turn 'Export CSV' into an action button with visible scope indicators (e.g., 'Export 7 movements (CSV)')."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/08-activity-detail.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 870,
+        "typography": 890,
+        "color": 870,
+        "data_legibility": 900,
+        "layout": 880,
+        "visceral_value": 840,
+        "responsive": 830,
+        "consistency": 890,
+        "trust": 890
+      },
+      "total": 874,
+      "top_issues": [
+        "Identical capture to screen 07; does not demonstrate multi-hop inspection drill-down or dispute trigger.",
+        "Lack of interactive expanders on individual frame proof entries."
+      ],
+      "fixes": [
+        "Expose clickable frame sequence tree (#131, #130) showing bilateral state transitions."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/09-settings.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 880,
+        "typography": 880,
+        "color": 880,
+        "data_legibility": 890,
+        "layout": 860,
+        "visceral_value": 870,
+        "responsive": 800,
+        "consistency": 890,
+        "trust": 890
+      },
+      "total": 870,
+      "top_issues": [
+        "Single scale calibration bar ($100 to $100,000) is visually brilliant but takes up prime vertical space.",
+        "Dangerous vault actions ('Forget vault') sit alongside routine theme/appearance presets on a single long scroll."
+      ],
+      "fixes": [
+        "Separate Key/Vault management into an isolated high-security tab or card.",
+        "Add confirmation barrier or visual boundary above 'Forget vault'."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/10-move.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 860,
+        "typography": 870,
+        "color": 850,
+        "data_legibility": 880,
+        "layout": 860,
+        "visceral_value": 840,
+        "responsive": 810,
+        "consistency": 880,
+        "trust": 880
+      },
+      "total": 860,
+      "top_issues": [
+        "Error 'Amount exceeds what is available here' is placed below the submit button in plain red text, disconnected from the input field.",
+        "Grid selection for From/To (Wallet, Reserve, Account) has identical cards in two rows that look redundant when amounts are 0.00."
+      ],
+      "fixes": [
+        "Place balance validation error directly under the amount input field.",
+        "Dim or disable unbacked source options with inline hint 'Deposit to On-chain wallet first'."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/11-manage.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 870,
+        "color": 850,
+        "data_legibility": 860,
+        "layout": 850,
+        "visceral_value": 840,
+        "responsive": 820,
+        "consistency": 880,
+        "trust": 870
+      },
+      "total": 854,
+      "top_issues": [
+        "Navigational cards ('Sovereignty', 'Move', 'Assets', 'Lending', 'Ownership') lack visual differentiation from summary cards below.",
+        "'Where your money stands' card provides critical security data ('Promised by hubs: $90.00') that should be visible on Home."
+      ],
+      "fixes": [
+        "Style navigation items as explicit icon-action tiles or an upper toolbar.",
+        "Surface the 'Promised by hubs vs Enforceable' breakdown directly on the main dashboard balance widget."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/12-assets.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 850,
+        "typography": 870,
+        "color": 840,
+        "data_legibility": 860,
+        "layout": 850,
+        "visceral_value": 830,
+        "responsive": 810,
+        "consistency": 870,
+        "trust": 860
+      },
+      "total": 850,
+      "top_issues": [
+        "Faucet controls are prominent on the main assets screen, signaling testnet/developer product rather than financial production software.",
+        "Collateral slider (100%, 50%, 0%) disables button with 'Collateral unavailable' without an explicit actionable alternative."
+      ],
+      "fixes": [
+        "Move faucets to a collapsible dev drawer or dedicated testnet modal.",
+        "Provide direct link to 'Fund Reserve' when collateral is unavailable."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/13-lend.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 870,
+        "color": 860,
+        "data_legibility": 860,
+        "layout": 850,
+        "visceral_value": 820,
+        "responsive": 820,
+        "consistency": 880,
+        "trust": 850
+      },
+      "total": 851,
+      "top_issues": [
+        "Lend/Borrow toggle is small and unassuming relative to the large input card.",
+        "Counterparty risk disclosure is purely textual at the footer ('Your offer sits in the hub pool...')."
+      ],
+      "fixes": [
+        "Elevate Lend/Borrow switch to full-width segmented tab header.",
+        "Add visual collateralization coverage indicator for the hub pool."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/14-ownership.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 820,
+        "typography": 860,
+        "color": 840,
+        "data_legibility": 850,
+        "layout": 830,
+        "visceral_value": 800,
+        "responsive": 800,
+        "consistency": 870,
+        "trust": 880
+      },
+      "total": 838,
+      "top_issues": [
+        "Jargon heavy: 'Lazy (hash of its board)' and 'EntityProvider' without immediate explainer.",
+        "Sparse layout leaves 60% of desktop viewport empty with solitary card."
+      ],
+      "fixes": [
+        "Add diagram illustrating Signer -> Board -> Entity relationship.",
+        "Replace raw terminology with governance terms ('Multisig Board', 'On-chain Registration')."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/15-sovereignty.png",
+      "scores": {
+        "hierarchy": 900,
+        "premium": 900,
+        "typography": 910,
+        "color": 890,
+        "data_legibility": 910,
+        "layout": 890,
+        "visceral_value": 910,
+        "responsive": 840,
+        "consistency": 910,
+        "trust": 930
+      },
+      "total": 899,
+      "top_issues": [
+        "Dispute CTA is an inline text link ('Dispute' inside counterparty description) rather than a prominent safety action.",
+        "The $0.00 'Enforceable right now' headline is alarmingly stark without immediate guidance on how to make it non-zero."
+      ],
+      "fixes": [
+        "Make 'Dispute Hub' an explicit bordered secondary button with countdown/challenge window preview.",
+        "Add a primary button 'Request Collateral / Settle to Reserve' right beside Enforceable balance."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/16-desk.png",
+      "scores": {
+        "hierarchy": 910,
+        "premium": 910,
+        "typography": 920,
+        "color": 900,
+        "data_legibility": 920,
+        "layout": 910,
+        "visceral_value": 900,
+        "responsive": 820,
+        "consistency": 920,
+        "trust": 910
+      },
+      "total": 902,
+      "top_issues": [
+        "Dense table header columns ('ACCOUNT · LANE', 'POSITION', 'SECURED', 'AT RISK', 'YOU OWE', 'SEND · RECEIVE', 'LINES OUT · IN') demand high financial literacy.",
+        "Jump shortcut (⌘K) is shown in header but could conflict with standard browser keys unless emphasized."
+      ],
+      "fixes": [
+        "Provide column header hover tooltips explaining the calculation of each column.",
+        "Include filter pills (All, High Risk, Hubs, People) above the desk ledger table."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/17-palette.png",
+      "scores": {
+        "hierarchy": 910,
+        "premium": 900,
+        "typography": 910,
+        "color": 890,
+        "data_legibility": 900,
+        "layout": 900,
+        "visceral_value": 880,
+        "responsive": 840,
+        "consistency": 910,
+        "trust": 900
+      },
+      "total": 894,
+      "top_issues": [
+        "Command palette items lack keyboard navigation keyhints (arrow keys, Enter) in the footer.",
+        "Search input lacks an explicit filter placeholder tag indicating whether it searches routes, counterparties, or settings."
+      ],
+      "fixes": [
+        "Add keyboard navigation hint bar at bottom of modal ('↑↓ to navigate, ↵ to select, esc to dismiss').",
+        "Enable fuzzy search across counterparties and ledger transactions, not just navigation items."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 868,
+    "verdict": "The xln wallet desktop dark mode delivers an exceptionally rigorous, high-precision financial interface with unmatched transparency into counterparty risk and verifiable state. It triumphs for institutional treasurers, hub operators, and security maximalists, but demands lower cognitive overhead and friendlier onboarding guardrails for non-technical users.",
+    "priority_fixes": [
+      "Surface a prominent 'Dispute Hub / Challenge' modal with automated evidence compilation directly from the Sovereignty and Account screens.",
+      "Add one-click 'Export Accounting Receipt' (PDF/JSON with cryptographic proofs) on Receipt and Activity Detail screens.",
+      "Provide plain-language onboarding tooltips and microcopy clarifying 'Credit vs Collateral vs At Risk' for retail users on Home and Pay.",
+      "Integrate cross-chain route estimation and network badges directly into Swap and Move workflows.",
+      "Relocate testnet faucets and debug tools to a secondary developer drawer to maintain institutional production trust."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 42,
+        "verdict": "I'm terrified I'll lose money because terms like 'bilateral credit room' and 'at risk' sound like a legal contract rather than just sending $20.",
+        "blockers": [
+          "01-home.png and 02-pay.png present credit lines and risk bars before standard fiat equivalents; no fiat on-ramp visible."
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 94,
+        "verdict": "Finally a system that exposes credit limits, inbound room, and counterparty collateral on a single unified scale without hiding capacity bottlenecks.",
+        "blockers": []
+      },
+      {
+        "name": "Anya",
+        "satisfied": 86,
+        "verdict": "The live order book and tick sizing are sharp, but I need execution fill history and slippage protection controls right next to the swap ticket.",
+        "blockers": [
+          "05-swap.png lacks a visible historical fill log and price chart."
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 88,
+        "verdict": "The exact separation of on-chain enforceable assets versus off-chain promises is brilliant, though I need batch CSV/PDF export of cryptographic proofs for our auditors.",
+        "blockers": [
+          "03-receipt.png and 07-activity.png lack signed PDF/audit bundle export."
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 72,
+        "verdict": "I can create a payment link and see it settle fast, but I can't generate a professional client invoice with business details or download a clean tax receipt.",
+        "blockers": [
+          "04-receive.png only creates a raw crypto payment request; lacks invoice metadata fields."
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 91,
+        "verdict": "Having bilateral frame signatures, nonces, and the 'Save evidence bundle' button right in Sovereignty gives me complete autonomous enforcement power.",
+        "blockers": [
+          "15-sovereignty.png lacks an active dispute simulation/preview view."
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 58,
+        "verdict": "The desktop view is information-dense, but looking at these screens makes me worried it won't be one-hand navigable at a cashier counter.",
+        "blockers": [
+          "Evaluated desktop screens; 02-pay.png and 04-receive.png require multiple precision clicks and complex modal verification."
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 96,
+        "verdict": "The Desk console gives me the exact matrix of exposures, collateral coverage, and open credit lines across every hub lane at a single scale.",
+        "blockers": []
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 65,
+        "verdict": "I see that cross-network swapping exists in the tabs, but the bridge fees, destination chain confirmations, and delivery times are not made explicit.",
+        "blockers": [
+          "05-swap.png and 10-move.png do not clearly show destination chain gas fees or multi-network bridge status."
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 93,
+        "verdict": "In three minutes on Sovereignty and Desk, I understand the protocol thesis: bilateral credit off-chain with deterministic on-chain depository settlement.",
+        "blockers": []
+      }
+    ]
+  }
+}

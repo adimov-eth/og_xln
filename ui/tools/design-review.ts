@@ -25,7 +25,9 @@ const RUBRIC_DEFAULT = 'design/review/rubric.md';
  * round. Pick with --tier or override with --models.
  */
 const TIERS: Record<string, string[]> = {
-	cheap: ['zai-coding-cn/glm-5.3-flash', 'openrouter/google/gemini-flash-latest', 'openrouter/mistralai/mistral-small-2603', 'openrouter/minimax/minimax-m3:free'],
+	// mistral-small-2603 and minimax-m3:free never answered with JSON (8/8 REVIEW_NOT_JSON on 2026-09-05); qwen3.8-flash and
+	// deepseek-v4-flash-vision take images and are as cheap.
+	cheap: ['zai-coding-cn/glm-5.3-flash', 'openrouter/google/gemini-flash-latest', 'openrouter/qwen/qwen3.8-flash', 'openrouter/deepseek/deepseek-v4-flash-vision-exp'],
 	smart: ['openrouter/moonshotai/kimi-k3', 'openrouter/google/gemini-pro-latest', 'openrouter/x-ai/grok-latest', 'openrouter/anthropic/claude-sonnet-5'],
 };
 const DEFAULT_MODELS = TIERS[process.argv[process.argv.indexOf('--tier') + 1] ?? ''] ?? TIERS['cheap']!;
