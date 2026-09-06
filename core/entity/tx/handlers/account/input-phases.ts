@@ -29,6 +29,7 @@ import { haltRuntimeFailure } from '../../../../protocol/errors/failure-taxonomy
 import { safeStringify } from '../../../../protocol/serialization';
 import { countOp } from '../../../../support/performance/op-counters';
 import { MalformedEntityFrameInputError } from '../../processing/invariant-errors';
+import { rejectFailFast } from '../../../../support/process/runtime-process';
 import {
   applySuccessfulAccountInput,
   type CommittedAccountEffects,
@@ -160,9 +161,18 @@ const finishRejectedAccountInput = (
       error: failureMessage,
     });
     addMessage(state, `❌ ${failureMessage}`);
-    throw haltRuntimeFailure(
-      'FRAME_CONSENSUS_FAILED',
-      `FRAME_CONSENSUS_FAILED: ${failureMessage || 'unknown'}`,
+    // Owner canon: a peer can never take the Runtime down. Fail-fast by
+    // default (tests/dev); in production the authenticated peer input is
+    // rejected and dropped like any malformed ingress.
+    if (rejectFailFast()) {
+      throw haltRuntimeFailure(
+        'FRAME_CONSENSUS_FAILED',
+        `FRAME_CONSENSUS_FAILED: ${failureMessage || 'unknown'}`,
+      );
+    }
+    throw new MalformedEntityFrameInputError(
+      'accountInput',
+      `ACCOUNT_INPUT_FRAME_REJECTED:${result.rejection.kind}:${failureMessage || 'unknown'}`,
     );
   }
   return assertNeverAccountResult(result.rejection);

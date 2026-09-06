@@ -340,6 +340,77 @@ fn active_dispute_value(
     ]))
 }
 
+/// TS `draftPreparedDisputeStartIfReady` after a book-removal ACK: the
+/// confirmation of `confirmed_order_id` is an envelope mutation applied after
+/// this frame, so the draft runs against the confirmed view and queues
+/// `disputeStart` in the same frame when the evidence is stable.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draft_prepared_dispute_start_after_removal(
+    state: &mut EntityStateSlice,
+    paybook: &PaybookChanges,
+    counterparty: &str,
+    account_views: &std::collections::BTreeMap<String, LocalAccountFinancialView>,
+    confirmed_order_id: &str,
+    runtime_seed: Option<&str>,
+    mutations: &mut Vec<(String, AccountEnvelopeMutation)>,
+    routed_outputs: &mut Vec<LocalEntityOutput>,
+    events: &mut Vec<EntityFrameEvent>,
+) -> Result<(), EntityKernelError> {
+    let Some(base) = account_views.get(counterparty) else {
+        return Ok(());
+    };
+    let Some(dispute) = base.dispute.as_ref() else {
+        return Ok(());
+    };
+    if dispute.status != "dispute_preparing" {
+        return Ok(());
+    }
+    let Some(prepare) = dispute.dispute_prepare.as_ref() else {
+        return Ok(());
+    };
+    let fields = object(prepare, "disputeStart", "DISPUTE_PREPARE")?;
+    let ready_after = u64_field(fields, "readyAfter").unwrap_or(0);
+    let is_confirmed = |row: &CanonicalValue| matches!(row, CanonicalValue::String(id) if id == confirmed_order_id);
+    let pending = match field(fields, "pendingOrderbookRemovalIds") {
+        Some(CanonicalValue::Array(rows)) => rows.iter().filter(|row| !is_confirmed(row)).count(),
+        None => 0,
+        Some(_) => return Err(invalid("disputeStart", "PENDING_REMOVALS")),
+    };
+    if ready_after > state.timestamp || pending > 0 {
+        return Ok(());
+    }
+    let mut confirmed_view = base.clone();
+    if let Some(dispute) = confirmed_view.dispute.as_mut()
+        && let Some(CanonicalValue::Object(prepare)) = dispute.dispute_prepare.as_mut()
+    {
+        for (name, value) in prepare.iter_mut() {
+            if name == "pendingOrderbookRemovalIds"
+                && let CanonicalValue::Array(rows) = value
+            {
+                rows.retain(|row| !is_confirmed(row));
+            }
+        }
+    }
+    let mut views = std::collections::BTreeMap::new();
+    views.insert(counterparty.to_string(), confirmed_view);
+    let intent = field(fields, "startIntent")
+        .map(|value| object(value, "prepareDispute", "START_INTENT"))
+        .transpose()?;
+    start(
+        state,
+        paybook,
+        counterparty,
+        intent.and_then(|fields| text_field(fields, "description")),
+        intent.and_then(|fields| text_field(fields, "crossJurisdictionRouteId")),
+        intent.and_then(|fields| text_field(fields, "starterInitialArguments")),
+        &views,
+        runtime_seed,
+        mutations,
+        routed_outputs,
+        events,
+    )
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the dispute transition keeps signed evidence and every output sink explicit"
@@ -1391,6 +1462,75 @@ mod tests {
             events,
             [EntityFrameEvent::Status {
                 message: "⏳ disputeStart blocked until evidence is stable for 0202: cooldown:100ms; orderbookRemovals:1".into(),
+            }],
+        );
+    }
+
+    #[test]
+    fn removal_ack_drafts_dispute_start_in_the_same_frame_when_evidence_is_stable() {
+        let prepare = |pending: Vec<&str>| {
+            CanonicalValue::Object(vec![
+                (
+                    "readyAfter".into(),
+                    CanonicalValue::Number(CanonicalNumber::try_from_u64(900).expect("number")),
+                ),
+                (
+                    "pendingOrderbookRemovalIds".into(),
+                    CanonicalValue::Array(
+                        pending
+                            .into_iter()
+                            .map(|id| CanonicalValue::String(id.into()))
+                            .collect(),
+                    ),
+                ),
+            ])
+        };
+        // Another removal still pending: nothing is drafted.
+        let views = account_view(
+            "dispute_preparing",
+            Some(prepare(vec!["offer-1", "offer-2"])),
+            None,
+            None,
+        );
+        let mut state = state(1_000);
+        let (mut mutations, mut routed_outputs, mut events) = (Vec::new(), Vec::new(), Vec::new());
+        draft_prepared_dispute_start_after_removal(
+            &mut state,
+            &PaybookChanges::default(),
+            PEER,
+            &views,
+            "offer-1",
+            None,
+            &mut mutations,
+            &mut routed_outputs,
+            &mut events,
+        )
+        .expect("draft");
+        assert!(events.is_empty());
+        // The confirmed removal was the last one: the draft runs (TS
+        // draftPreparedDisputeStartIfReady) and reports the missing hanko.
+        let views = account_view(
+            "dispute_preparing",
+            Some(prepare(vec!["offer-1"])),
+            None,
+            None,
+        );
+        draft_prepared_dispute_start_after_removal(
+            &mut state,
+            &PaybookChanges::default(),
+            PEER,
+            &views,
+            "offer-1",
+            None,
+            &mut mutations,
+            &mut routed_outputs,
+            &mut events,
+        )
+        .expect("draft");
+        assert_eq!(
+            events,
+            [EntityFrameEvent::Status {
+                message: "❌ Missing counterparty dispute hanko - cannot start dispute".into(),
             }],
         );
     }

@@ -397,21 +397,10 @@ fn committed_pull_close(
     let local = normalized(&state.entity_id);
     let counterparty = normalized(counterparty);
     let (leg, source_hub_committed) = pull_role(&route, &local, &counterparty, pull_id)?;
-    let commitment = required_field(
-        &route,
-        if leg == "source" {
-            "sourcePull"
-        } else {
-            "targetPull"
-        },
-        kind,
-    )?;
-    let ratio = xln_rscore_engine::verify_hash_ladder_binary(
-        text(commitment, "fullHash").unwrap_or(""),
-        text(commitment, "partialRoot").unwrap_or(""),
-        binary,
-    )
-    .map_err(|detail| committed_invalid(kind, detail))?;
+    // The Account layer verified the reveal against this commitment; the
+    // mirror only decodes the carried ratio (TS `decodeHashLadderBinary`).
+    let ratio = xln_rscore_engine::decode_hash_ladder_ratio(binary)
+        .map_err(|detail| committed_invalid(kind, detail))?;
     if unsigned(proof, "fillRatio") != Some(ratio)
         || text(proof, "routeHash").map(normalized) != text(&route, "routeHash").map(normalized)
         || text(proof, "sourcePullId")

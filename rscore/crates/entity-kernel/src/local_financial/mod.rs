@@ -2,6 +2,7 @@ mod decode;
 #[path = "payments/direct_payment.rs"]
 mod direct_payment;
 mod dispute;
+pub(crate) use dispute::draft_prepared_dispute_start_after_removal;
 mod extend_credit;
 #[path = "payments/htlc_payment.rs"]
 mod htlc_payment;

@@ -75,22 +75,41 @@ grok) — see memory note `crossj-layer1-worktree-2026-09-04`. Round D scores: g
 deepseek 960, grok 880, gemini 800, glm 660 (their remaining items are fixed in 52ce4288a
 or listed below).
 
-## Open items (owner decision, not fixed)
-- Rust kernel has NO "reject tx without halting" disposition: TS skips a user-authored
-  conflicting prepare/materialize (`skippedError`), Rust returns `Err` for the frame.
-  Rewrite target: add a reject disposition to the Rust kernel dispatcher.
-- Rust resident fail-stops on ANY rejected inbound Account frame
-  (`resident.rs reject_failed_inbound_frames` → session stop); TS discards remote
-  malformed ingress. Parity-time policy?
-- Rust has no IOC (`UnsupportedTimeInForce` for tif != 0); TS matcher supports it.
-- Rust Account layer does not recompute `routeHash` at `cross_pull_lock` (TS rejects a
-  non-canonical route); a bad hash is caught at Entity commit in Rust.
-- Rust drafts `disputeStart` after a book-removal ACK in a later wake, TS in the same frame.
-- Remote book owner's mirror stays `partially_filled` on a duplicate same-seq cancel (UI only).
-- Rust entity `committed_pull_close` re-verifies the ladder (`verify_hash_ladder_binary`)
-  where TS only decodes — perf only.
+## Reject policy (owner canon 2026-09-05, implemented) — see `docs/reject-policy.md`
+A user or peer can never take a Runtime down. Sender-caused failures are rejections:
+logged, fail-fast by default (tests/dev), log-and-drop in production
+(`NODE_ENV=production` or `XLN_REJECT_FAIL_FAST=0`). TS: `MalformedEntityFrameInputError`
++ `rejectFailFast()`; Rust: `EntityKernelError::RejectedEntityTx` (returned before any
+mutation) + `reject_fail_fast()`, `kernel.rs` drops the tx, `resident.rs` drops a rejected
+inbound Account frame. IOC/FOK are supported in the Rust book and matcher (TS parity).
 
-## Your task: "ideal cross-J in rscore" — minimum code, same invariants
+## Open items — all closed 2026-09-05
+- Rust production log-and-drop now purges the rejected signer's remaining lane in the frame
+  (TS drops the origin input); only txs of that lane already applied earlier in the same
+  frame differ, and fail-fast mode halts in both.
+- Rust Account layer admits only the canonical route at `cross_pull_lock`
+  (`engine::cross_j_route::canonical_route`, shared with the Entity kernel; TS parity).
+- Rust drafts `disputeStart` in the same frame after a book-removal ACK
+  (`draft_prepared_dispute_start_after_removal`, TS `draftPreparedDisputeStartIfReady`).
+- A remote book owner's mirror moves to `clear_requested` on a duplicate same-seq cancel
+  (TS = Rust).
+- Rust `committed_pull_close` decodes the ladder ratio (`decode_hash_ladder_ratio`) instead
+  of re-hashing; the Account layer verified it.
+- IOC/FOK supported in the Rust book and matcher.
+
+## rscore "collapse" assessment (2026-09-05)
+- Tooling finds no dead cross-J surface: `check:unused-surface` OK, every `pub`/`pub(crate)`
+  Rust cross-J fn is referenced, no TS cross-J export is production-unreferenced except four
+  test-only helpers (`isCrossJurisdictionSiblingPair`, `hasCrossJurisdictionCommittedFill`,
+  `crossJurisdictionLegUsdMicros`, `findCrossJurisdictionBookAdmissionForAck`) — move them
+  into `core/__tests__/helpers` when touching those tests.
+- The Rust orderbook `offers` + `resolving_offers` + `SameJOutputDelta::{Upsert,Remove}`
+  path is the SAME mechanism same-J uses (kernel.rs 225-302); mutating cross-J rows
+  directly would add a second path. Keep.
+- Remaining size is live logic mirrored 1:1 from TS (mod.rs 6.1k, committed.rs 0.7k,
+  opening_proposal 0.6k). Moving functions between files gains no LOC; not done.
+
+## Your task: "ideal cross-J in rscore" — minimum code, same invariants (see assessment above; only do this if the owner still wants a re-layout)
 Step 0 — decide the open items above with the owner; the rest of this file is the plan.
 Step 1 — read `docs/consensus-invariants.md` (cross-J section) and the memory note
   `cross-j-atomic-cohort-simplification-2026-09-04.md` (keep Design A: source-first close,

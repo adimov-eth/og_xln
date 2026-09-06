@@ -34,6 +34,7 @@ fn order(
         side,
         price_ticks: BigInt::from(price_ticks),
         qty_lots: BigInt::from(1_u8),
+        time_in_force: 0,
     })
 }
 

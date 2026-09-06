@@ -72,6 +72,18 @@ export const runtimeProcessEnv =
     : undefined;
 
 export const isProductionRuntime = runtimeProcessEnv?.['NODE_ENV'] === 'production';
+/**
+ * Rejected remote input policy (owner canon 2026-09-05): a peer or user can
+ * never take a Runtime down — the offending input is logged and dropped in
+ * production. Everywhere else the same log is a fail-fast halt so a hostile or
+ * buggy peer surfaces in tests instead of in production logs.
+ * `XLN_REJECT_FAIL_FAST=0|false|off` forces log-and-drop; `=1` forces fail-fast.
+ */
+export const rejectFailFast = (): boolean => {
+  const raw = runtimeProcessEnv?.['XLN_REJECT_FAIL_FAST'];
+  if (raw !== undefined && raw.trim() !== '') return !['0', 'false', 'off', 'no'].includes(raw.trim().toLowerCase());
+  return !isProductionRuntime;
+};
 export const nodeProcess = !runtimeIsBrowser && typeof globalThis.process !== 'undefined'
   ? globalThis.process
   : undefined;

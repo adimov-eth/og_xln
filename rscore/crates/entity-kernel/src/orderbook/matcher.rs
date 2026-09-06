@@ -151,6 +151,7 @@ struct MaterializedOffer {
     qty_lots: BigInt,
     owner_id: String,
     order_id: String,
+    time_in_force: u8,
 }
 
 fn order_id(account_id: &str, offer_id: &str) -> Result<String, EntityKernelError> {
@@ -179,10 +180,11 @@ fn materialize(
     offer: &SameJOffer,
     minimum_trade_size: &BigInt,
 ) -> Result<MaterializedOffer, EntityKernelError> {
-    if let Some(tif) = offer.time_in_force
-        && tif != 0
-    {
-        return Err(EntityKernelError::UnsupportedTimeInForce { value: tif });
+    let time_in_force = offer.time_in_force.unwrap_or(0);
+    if time_in_force > 2 {
+        return Err(EntityKernelError::UnsupportedTimeInForce {
+            value: time_in_force,
+        });
     }
     if let Some(route) = &offer.cross_jurisdiction {
         let market = crate::cross_j::cross_jurisdiction_market(route)?;
@@ -207,6 +209,7 @@ fn materialize(
             qty_lots,
             owner_id: market.maker_id,
             order_id: order_id(account_id, &offer.offer_id)?,
+            time_in_force,
         });
     }
     let (_, _, pair_id) = canonical_pair(offer.give_token_id, offer.want_token_id);
@@ -251,6 +254,7 @@ fn materialize(
             offer.right_entity.clone()
         },
         order_id: order_id(account_id, &offer.offer_id)?,
+        time_in_force,
     })
 }
 
@@ -660,6 +664,8 @@ fn process_cross_jurisdiction_events(
     state: &mut OrderbookState,
     effects: &mut OrderbookEffects,
     events: &[BookEvent],
+    taker_order_id: &str,
+    cancel_taker_remainder: bool,
 ) -> Result<(), EntityKernelError> {
     let mut aggregates: BTreeMap<String, (BigInt, BigInt)> = BTreeMap::new();
     for event in events {
@@ -708,13 +714,21 @@ fn process_cross_jurisdiction_events(
         *net_by_asset
             .entry(market.target_asset_key)
             .or_insert_with(|| BigInt::from(0)) += &execution_target;
-        if let Some(fill) = crate::cross_j::build_cross_jurisdiction_book_fill(
+        // TS `aggregateCrossTrades`: an IOC/FOK taker cancels its remainder.
+        let cancel_remainder = order_id == taker_order_id && cancel_taker_remainder;
+        match crate::cross_j::build_cross_jurisdiction_book_fill(
             &offer_id,
             route.clone(),
             execution_source,
             execution_target,
+            cancel_remainder,
         )? {
-            effects.cross_jurisdiction_fills.push(fill);
+            Some(fill) => effects.cross_jurisdiction_fills.push(fill),
+            // TS `planCrossFills`: an absorbed sub-step fill still cancels the remainder.
+            None if cancel_remainder => effects.cross_jurisdiction_fills.push(
+                crate::cross_j::build_cross_jurisdiction_cancel_fill(&offer_id, route.clone())?,
+            ),
+            None => {}
         }
         state.resolving_offers.insert(key);
     }
@@ -823,7 +837,13 @@ fn process_events(
             .matched_swaps
             .checked_add(trades)
             .ok_or_else(|| EntityKernelError::orderbook("ORDERBOOK_MATCH_COUNT_OVERFLOW"))?;
-        return process_cross_jurisdiction_events(state, effects, events);
+        return process_cross_jurisdiction_events(
+            state,
+            effects,
+            events,
+            current_order_id,
+            materialized.time_in_force != 0,
+        );
     }
     let book = state
         .books
@@ -984,6 +1004,7 @@ fn process_one_offer<'a>(
             side: materialized.side,
             price_ticks: offer.price_ticks.clone(),
             qty_lots: materialized.qty_lots.clone(),
+            time_in_force: materialized.time_in_force,
         };
         let events = if is_cross_jurisdiction {
             apply_gtc_with_execution_price(
@@ -1272,6 +1293,7 @@ pub(crate) fn apply_cross_jurisdiction_fill_deltas(
                             side: materialized.side,
                             price_ticks: offer.price_ticks.clone(),
                             qty_lots: materialized.qty_lots.clone(),
+                            time_in_force: 0,
                         },
                     )?;
                     index_order_pair(state, &pair_id, &materialized.order_id);

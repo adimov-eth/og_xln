@@ -104,6 +104,11 @@ fn invalid(kind: EntityTxKind, detail: impl Into<String>) -> EntityKernelError {
     }
 }
 
+/// TS `MalformedEntityFrameInputError`: the command is wrong, not the runtime.
+fn rejected(kind: EntityTxKind, detail: impl Into<String>) -> EntityKernelError {
+    EntityKernelError::rejected(kind.as_str(), detail)
+}
+
 fn object(value: &CanonicalValue) -> Option<&[(String, CanonicalValue)]> {
     match value {
         CanonicalValue::Object(fields) => Some(fields),
@@ -217,197 +222,16 @@ fn number(
     ))
 }
 
-fn positive_u256(
-    value: &BigInt,
-    kind: EntityTxKind,
-    name: &'static str,
-) -> Result<U256, EntityKernelError> {
-    if value.sign() == Sign::Minus {
-        return Err(invalid(kind, format!("{name}:NEGATIVE")));
-    }
-    let bytes = value.to_biguint().unwrap_or_default().to_bytes_be();
-    if bytes.len() > 32 {
-        return Err(invalid(kind, format!("{name}:UINT256")));
-    }
-    Ok(U256::from_big_endian(&bytes))
-}
-
-fn signed_u256(
-    value: &BigInt,
-    kind: EntityTxKind,
-    name: &'static str,
-) -> Result<U256, EntityKernelError> {
-    let limit = BigInt::from(1_u8) << 255_u32;
-    if value < &-limit.clone() || value >= &limit {
-        return Err(invalid(kind, format!("{name}:INT256")));
-    }
-    let bits: BigUint = if value.sign() == Sign::Minus {
-        ((BigInt::from(1_u8) << 256_u32) + value)
-            .to_biguint()
-            .ok_or_else(|| invalid(kind, format!("{name}:INT256")))?
-    } else {
-        value.to_biguint().unwrap_or_default()
-    };
-    Ok(U256::from_big_endian(&bits.to_bytes_be()))
-}
-
 fn parse_stack(value: &str, kind: EntityTxKind) -> Result<(u64, String), EntityKernelError> {
-    let normalized = value.trim().to_ascii_lowercase();
-    let mut parts = normalized.split(':').map(str::to_string);
-    let prefix = parts.next().unwrap_or_default();
-    let chain = parts.next().unwrap_or_default();
-    let address = parts.next().unwrap_or_default();
-    if prefix != "stack"
-        || parts.next().is_some()
-        || address.len() != 42
-        || !address.starts_with("0x")
-        || !address[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(invalid(kind, format!("JURISDICTION_INVALID:{value}")));
-    }
-    let chain = chain
-        .parse::<u64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| invalid(kind, format!("JURISDICTION_INVALID:{value}")))?;
-    Ok((chain, address))
-}
-
-fn optional_address(value: Option<&str>) -> String {
-    value
-        .map(normalized)
-        .filter(|value| {
-            value.len() == 42
-                && value.starts_with("0x")
-                && value[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
-        })
-        .unwrap_or_default()
+    xln_rscore_engine::cross_j_route::parse_stack(value).map_err(|detail| invalid(kind, detail))
 }
 
 fn canonical_book_and_venue(
     route: &CanonicalValue,
     kind: EntityTxKind,
 ) -> Result<(String, String), EntityKernelError> {
-    let source = field(route, "source").ok_or_else(|| invalid(kind, "SOURCE_MISSING"))?;
-    let target = field(route, "target").ok_or_else(|| invalid(kind, "TARGET_MISSING"))?;
-    let source_j =
-        text(source, "jurisdiction").ok_or_else(|| invalid(kind, "SOURCE_JURISDICTION"))?;
-    let target_j =
-        text(target, "jurisdiction").ok_or_else(|| invalid(kind, "TARGET_JURISDICTION"))?;
-    let source_stack = parse_stack(source_j, kind)?;
-    let target_stack = parse_stack(target_j, kind)?;
-    if source_stack == target_stack {
-        return Err(invalid(kind, "DISTINCT_STACKS_REQUIRED"));
-    }
-    let source_hub = nested_text(route, "source", "counterpartyEntityId")
-        .map(normalized)
-        .ok_or_else(|| invalid(kind, "SOURCE_HUB_MISSING"))?;
-    let target_hub = nested_text(route, "target", "entityId")
-        .map(normalized)
-        .ok_or_else(|| invalid(kind, "TARGET_HUB_MISSING"))?;
-    let book_owner = if source_stack < target_stack {
-        source_hub
-    } else {
-        target_hub
-    };
-    let source_token = required_u32(source, "tokenId", kind)?;
-    let target_token = required_u32(target, "tokenId", kind)?;
-    let source_key = format!("stack:{}:{}:{source_token}", source_stack.0, source_stack.1);
-    let target_key = format!("stack:{}:{}:{target_token}", target_stack.0, target_stack.1);
-    let source_liquid = crate::is_canonical_liquid_token(source_token);
-    let target_liquid = crate::is_canonical_liquid_token(target_token);
-    let source_is_base = if source_liquid != target_liquid {
-        !source_liquid
-    } else {
-        source_key <= target_key
-    };
-    let (base, quote) = if source_is_base {
-        (source_key, target_key)
-    } else {
-        (target_key, source_key)
-    };
-    Ok((book_owner, format!("cross:{base}/{quote}")))
-}
-
-fn canonical_dispute_config(
-    route: &CanonicalValue,
-    field_name: &'static str,
-    kind: EntityTxKind,
-) -> Result<(u32, u32), EntityKernelError> {
-    let config =
-        field(route, field_name).ok_or_else(|| invalid(kind, format!("{field_name}:MISSING")))?;
-    let left = required_u32(config, "leftResponseSeconds", kind)?;
-    let right = required_u32(config, "rightResponseSeconds", kind)?;
-    if u64::from(left) + u64::from(right) > 365 * 24 * 60 * 60 {
-        return Err(invalid(kind, format!("{field_name}:TOTAL")));
-    }
-    Ok((left, right))
-}
-
-fn route_hash(route: &CanonicalValue, kind: EntityTxKind) -> Result<String, EntityKernelError> {
-    let source = field(route, "source").ok_or_else(|| invalid(kind, "SOURCE_MISSING"))?;
-    let target = field(route, "target").ok_or_else(|| invalid(kind, "TARGET_MISSING"))?;
-    let domain = field(route, "domain").ok_or_else(|| invalid(kind, "DOMAIN_MISSING"))?;
-    let time = field(route, "timePolicy").ok_or_else(|| invalid(kind, "TIME_POLICY_MISSING"))?;
-    let source_dispute = canonical_dispute_config(route, "sourceDisputeConfig", kind)?;
-    let target_dispute = canonical_dispute_config(route, "targetDisputeConfig", kind)?;
-    let source_amount = required_bigint(source, "amount", kind)?;
-    let target_amount = required_bigint(target, "amount", kind)?;
-    let source_token = required_u32(source, "tokenId", kind)?;
-    let target_token = required_u32(target, "tokenId", kind)?;
-    let price_ticks = bigint(route, "priceTicks").unwrap_or_default();
-    let expires_at = unsigned(route, "expiresAt").unwrap_or(0);
-    let runtime_expires = unsigned(time, "runtimeExpiresAtMs")
-        .ok_or_else(|| invalid(kind, "RUNTIME_EXPIRES_MISSING"))?;
-    let s = |value: Option<&str>| Token::String(value.map(normalized).unwrap_or_default());
-    let raw = |value: Option<&str>| Token::String(value.unwrap_or_default().to_string());
-    let tokens = vec![
-        raw(text(route, "orderId")),
-        s(text(route, "bookOwnerEntityId")),
-        raw(text(route, "venueId")),
-        s(text(route, "makerEntityId")),
-        s(text(route, "hubEntityId")),
-        s(text(route, "sourceSignerId")),
-        s(text(route, "sourceHubSignerId")),
-        s(text(route, "targetHubSignerId")),
-        s(text(route, "targetSignerId")),
-        s(text(route, "bookHubSignerId")),
-        s(text(source, "jurisdiction")),
-        s(text(source, "entityId")),
-        s(text(source, "counterpartyEntityId")),
-        Token::Uint(U256::from(source_token)),
-        Token::Uint(positive_u256(&source_amount, kind, "SOURCE_AMOUNT")?),
-        s(text(target, "jurisdiction")),
-        s(text(target, "entityId")),
-        s(text(target, "counterpartyEntityId")),
-        Token::Uint(U256::from(target_token)),
-        Token::Uint(positive_u256(&target_amount, kind, "TARGET_AMOUNT")?),
-        Token::Bool(field(route, "priceTicks").is_some()),
-        Token::Int(signed_u256(&price_ticks, kind, "PRICE_TICKS")?),
-        Token::Uint(U256::from(expires_at)),
-        raw(text(route, "riskMode")),
-        raw(text(domain, "protocol")),
-        raw(text(domain, "hashSchema")),
-        raw(text(domain, "sourceStackId")),
-        raw(text(domain, "targetStackId")),
-        raw(text(domain, "sourceEntityProviderAddress")),
-        raw(text(domain, "targetEntityProviderAddress")),
-        raw(text(domain, "sourceDeltaTransformerAddress")),
-        raw(text(domain, "targetDeltaTransformerAddress")),
-        raw(text(domain, "sourceAssetRef")),
-        raw(text(domain, "targetAssetRef")),
-        raw(text(time, "runtimeClock")),
-        raw(text(time, "settlementClock")),
-        raw(text(time, "deadlineConversion")),
-        Token::Uint(U256::from(runtime_expires)),
-        raw(text(time, "finalityPolicy")),
-        Token::Uint(U256::from(source_dispute.0)),
-        Token::Uint(U256::from(source_dispute.1)),
-        Token::Uint(U256::from(target_dispute.0)),
-        Token::Uint(U256::from(target_dispute.1)),
-    ];
-    let encoded = ethabi::encode(&tokens);
-    Ok(format!("0x{}", hex(&Keccak256::digest(encoded))))
+    xln_rscore_engine::cross_j_route::canonical_book_and_venue(route)
+        .map_err(|detail| invalid(kind, detail))
 }
 
 fn canonical_route(
@@ -417,123 +241,7 @@ fn canonical_route(
     if object(route).is_none() {
         return Err(invalid(kind, "ROUTE_OBJECT"));
     }
-    let mut canonical = route.clone();
-    let (default_book_owner, default_venue) = canonical_book_and_venue(&canonical, kind)?;
-    let book_owner = text(&canonical, "bookOwnerEntityId")
-        .map(normalized)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(default_book_owner);
-    let venue = text(&canonical, "venueId")
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or(default_venue);
-    let hub = text(&canonical, "hubEntityId")
-        .map(normalized)
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| book_owner.clone());
-    set(&mut canonical, "bookOwnerEntityId", string(book_owner))?;
-    set(&mut canonical, "venueId", string(venue))?;
-    set(&mut canonical, "hubEntityId", string(hub))?;
-
-    let source = field(&canonical, "source").ok_or_else(|| invalid(kind, "SOURCE_MISSING"))?;
-    let target = field(&canonical, "target").ok_or_else(|| invalid(kind, "TARGET_MISSING"))?;
-    let source_j = text(source, "jurisdiction")
-        .map(normalized)
-        .ok_or_else(|| invalid(kind, "SOURCE_JURISDICTION"))?;
-    let target_j = text(target, "jurisdiction")
-        .map(normalized)
-        .ok_or_else(|| invalid(kind, "TARGET_JURISDICTION"))?;
-    let source_token = required_u32(source, "tokenId", kind)?;
-    let target_token = required_u32(target, "tokenId", kind)?;
-    let source_amount = required_bigint(source, "amount", kind)?;
-    let target_amount = required_bigint(target, "amount", kind)?;
-    if source_amount <= BigInt::from(0) || target_amount <= BigInt::from(0) {
-        return Err(invalid(kind, "AMOUNT_NON_POSITIVE"));
-    }
-
-    let supplied_domain = field(&canonical, "domain");
-    let mut domain = vec![
-        ("protocol".into(), string("xln-cross-j")),
-        ("hashSchema".into(), string("route-domain")),
-        ("sourceStackId".into(), string(source_j.clone())),
-        ("targetStackId".into(), string(target_j.clone())),
-    ];
-    for name in [
-        "sourceEntityProviderAddress",
-        "targetEntityProviderAddress",
-        "sourceDeltaTransformerAddress",
-        "targetDeltaTransformerAddress",
-    ] {
-        let address = optional_address(supplied_domain.and_then(|value| text(value, name)));
-        if !address.is_empty() {
-            domain.push((name.into(), string(address)));
-        }
-    }
-    domain.push((
-        "sourceAssetRef".into(),
-        string(
-            supplied_domain
-                .and_then(|value| text(value, "sourceAssetRef"))
-                .map(normalized)
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| format!("{source_j}:{source_token}")),
-        ),
-    ));
-    domain.push((
-        "targetAssetRef".into(),
-        string(
-            supplied_domain
-                .and_then(|value| text(value, "targetAssetRef"))
-                .map(normalized)
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| format!("{target_j}:{target_token}")),
-        ),
-    ));
-    set(&mut canonical, "domain", CanonicalValue::Object(domain))?;
-
-    let supplied_time = field(&canonical, "timePolicy");
-    let runtime_expires = supplied_time
-        .and_then(|value| unsigned(value, "runtimeExpiresAtMs"))
-        .or_else(|| unsigned(&canonical, "expiresAt"))
-        .unwrap_or(0);
-    set(
-        &mut canonical,
-        "timePolicy",
-        CanonicalValue::Object(vec![
-            ("runtimeClock".into(), string("unix_ms")),
-            ("settlementClock".into(), string("unix_seconds")),
-            (
-                "deadlineConversion".into(),
-                string("floor_ms_to_unix_seconds"),
-            ),
-            (
-                "runtimeExpiresAtMs".into(),
-                number(runtime_expires, kind, "RUNTIME_EXPIRES")?,
-            ),
-            (
-                "finalityPolicy".into(),
-                string("independent_beneficiary_windows_pull_sum_finality"),
-            ),
-        ]),
-    )?;
-    let risk = text(&canonical, "riskMode").unwrap_or("fully_collateralized");
-    if risk != "fully_collateralized" {
-        return Err(invalid(kind, format!("RISK_MODE:{risk}")));
-    }
-    set(&mut canonical, "riskMode", string("fully_collateralized"))?;
-    canonical_dispute_config(&canonical, "sourceDisputeConfig", kind)?;
-    canonical_dispute_config(&canonical, "targetDisputeConfig", kind)?;
-    let expected = route_hash(&canonical, kind)?;
-    if let Some(actual) = text(route, "routeHash")
-        && normalized(actual) != expected
-    {
-        return Err(invalid(
-            kind,
-            format!("ROUTE_HASH_MISMATCH:{actual}:{expected}"),
-        ));
-    }
-    set(&mut canonical, "routeHash", string(expected))?;
-    Ok(canonical)
+    xln_rscore_engine::cross_j_route::canonical_route(route).map_err(|detail| invalid(kind, detail))
 }
 
 fn route(tx: &CanonicalEntityTx) -> Result<CanonicalValue, EntityKernelError> {
@@ -1823,7 +1531,8 @@ fn validate_materialize_proposer(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| invalid(tx.kind, "MATERIALIZE_ADMITTED_SIGNER_MISSING"))?;
     if claimed != expected || admitted != claimed {
-        return Err(invalid(
+        // TS CROSS_J_CLEAR_MATERIALIZE_PROPOSER_INVALID: rejected, never a halt.
+        return Err(rejected(
             tx.kind,
             format!("MATERIALIZE_PROPOSER_INVALID:{admitted}:{claimed}:{expected}"),
         ));
@@ -2300,7 +2009,9 @@ fn insert_exact(
         if existing == &value {
             return Ok(());
         }
-        return Err(invalid(kind, format!("CONFLICT:{key}")));
+        // A different route reusing one orderId is the submitter's fault
+        // (TS CROSS_J_USER_AUTH_CONFLICT / CROSS_J_RAW_PREPARE_CONFLICT).
+        return Err(rejected(kind, format!("CONFLICT:{key}")));
     }
     target.insert(key.to_string(), value)?;
     Ok(())
@@ -2487,20 +2198,39 @@ fn apply_book_fill_to_state(
         unsigned(data, "cumulativeFillRatio").ok_or_else(|| invalid(kind, "FILL_RATIO_MISSING"))?;
     let cancel = canonical_bool(data, "cancelRemainder");
     if current_seq == incoming_seq && current_ratio == ratio {
-        set(&mut admission, "updatedAt", now)?;
+        set(&mut admission, "updatedAt", now.clone())?;
         if cancel {
             mark_admission_closed(&mut admission, state.timestamp, "cancel_request", kind)?;
         }
         collection(&mut state.cross_jurisdiction_book_admissions)
             .insert(admission_key, admission)?;
-        return Ok(if cancel {
-            vec![SameJOutputDelta::Remove {
-                account_id: source_entity.to_string(),
-                offer_id: order_id,
-            }]
-        } else {
-            Vec::new()
-        });
+        if !cancel {
+            return Ok(Vec::new());
+        }
+        // A remote book owner keeps its informational mirror coherent (TS).
+        let source_hub = nested_text(&route, "source", "counterpartyEntityId")
+            .map(normalized)
+            .unwrap_or_default();
+        if source_hub != local
+            && let Some(mut mirror) = state
+                .cross_jurisdiction_swaps
+                .as_ref()
+                .and_then(|routes| routes.get(&order_id))
+                .cloned()
+            && matches!(
+                text(&mirror, "status"),
+                Some("resting" | "partially_filled")
+            )
+        {
+            set(&mut mirror, "status", string("clear_requested"))?;
+            set(&mut mirror, "clearingPolicy", string("cancel_and_clear"))?;
+            set(&mut mirror, "updatedAt", now)?;
+            collection(&mut state.cross_jurisdiction_swaps).insert(order_id.clone(), mirror)?;
+        }
+        return Ok(vec![SameJOutputDelta::Remove {
+            account_id: source_entity.to_string(),
+            offer_id: order_id,
+        }]);
     }
     if incoming_seq <= current_seq {
         return Err(invalid(
@@ -5137,6 +4867,7 @@ pub(crate) fn build_cross_jurisdiction_book_fill(
     route: CanonicalValue,
     execution_source_amount: BigInt,
     execution_target_amount: BigInt,
+    cancel_remainder: bool,
 ) -> Result<Option<CrossJurisdictionBookFill>, EntityKernelError> {
     let kind = EntityTxKind::CrossJurisdictionFillNotice;
     if execution_source_amount <= BigInt::from(0) || execution_target_amount <= BigInt::from(0) {
@@ -5179,7 +4910,10 @@ pub(crate) fn build_cross_jurisdiction_book_fill(
             "cumulativeFillRatio".into(),
             number(fill_ratio, kind, "FILL_RATIO")?,
         ),
-        ("cancelRemainder".into(), CanonicalValue::Bool(false)),
+        (
+            "cancelRemainder".into(),
+            CanonicalValue::Bool(cancel_remainder),
+        ),
     ]);
     Ok(Some(CrossJurisdictionBookFill {
         route,
@@ -6149,7 +5883,7 @@ mod tests {
             Token::Array(vec![Token::Tuple(vec![
                 Token::Uint(U256::from(0)),
                 Token::Int(
-                    signed_u256(&signed_amount, EntityTxKind::DisputeStart, "AMOUNT")
+                    xln_rscore_engine::cross_j_route::signed_u256(&signed_amount, "AMOUNT")
                         .expect("signed amount"),
                 ),
                 Token::Uint(U256::from(0)),

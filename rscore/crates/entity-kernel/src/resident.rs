@@ -371,10 +371,18 @@ fn reject_failed_inbound_frames(
 ) -> Result<(), ResidentEntityError> {
     for row in rows {
         if let Some(reason) = rejected_inbound_frame_reason(&row.verdict) {
-            return Err(ResidentEntityError::InboundFrameRejected {
-                account_id: account_text(row.account_id),
-                reason: reason.to_owned(),
-            });
+            if crate::error::reject_fail_fast() {
+                return Err(ResidentEntityError::InboundFrameRejected {
+                    account_id: account_text(row.account_id),
+                    reason: reason.to_owned(),
+                });
+            }
+            // Owner canon: a peer can never take the Runtime down. The Account
+            // recorded the rejection verdict; log it and keep serving.
+            eprintln!(
+                "[ERROR][reject] inbound account frame rejected and dropped: account={} reason={reason}",
+                account_text(row.account_id)
+            );
         }
     }
     Ok(())

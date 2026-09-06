@@ -305,6 +305,20 @@ export const applyCrossJurisdictionBookFillToState = (
     admission.updatedAt = now;
     if (data.cancelRemainder) {
       markCrossJurisdictionBookAdmissionClosed(newState, route.source.entityId, route.orderId, now, 'cancel_request');
+      // A remote book owner keeps its informational mirror coherent.
+      const mirror = newState.crossJurisdictionSwaps?.get(route.orderId);
+      if (
+        mirror &&
+        normalizeEntityRef(route.source.counterpartyEntityId) !== normalizeEntityRef(newState.entityId) &&
+        (mirror.status === 'resting' || mirror.status === 'partially_filled')
+      ) {
+        newState.crossJurisdictionSwaps!.set(route.orderId, {
+          ...mirror,
+          status: 'clear_requested',
+          clearingPolicy: 'cancel_and_clear',
+          updatedAt: now,
+        });
+      }
     }
     return false;
   }
