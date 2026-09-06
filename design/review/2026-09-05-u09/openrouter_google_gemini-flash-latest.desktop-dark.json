@@ -1,0 +1,533 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 640,
+        "typography": 630,
+        "color": 600,
+        "data_legibility": 610,
+        "layout": 620,
+        "visceral_value": 600,
+        "responsive": 580,
+        "consistency": 640,
+        "trust": 610
+      },
+      "total": 615,
+      "top_issues": [
+        "Primary breakdown bar and explainer banner compete heavily for focal attention.",
+        "Disparity between total balance and instant capacity numbers confuses entry-level users."
+      ],
+      "fixes": [
+        "Collapse the tutorial banner into a dismissible info badge next to balance.",
+        "Add explicit tooltips explaining the relationship between balance and routing capacity."
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 620,
+        "typography": 630,
+        "color": 610,
+        "data_legibility": 620,
+        "layout": 630,
+        "visceral_value": 590,
+        "responsive": 570,
+        "consistency": 630,
+        "trust": 640
+      },
+      "total": 618,
+      "top_issues": [
+        "Before/After account state cards take up excessive visual weight relative to destination input.",
+        "Route details display technical node identifiers that increase cognitive load."
+      ],
+      "fixes": [
+        "Condense the Before/After state comparison into a single delta visualization.",
+        "Default to showing human-readable peer aliases with expandable hex hashes."
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 650,
+        "typography": 640,
+        "color": 630,
+        "data_legibility": 650,
+        "layout": 640,
+        "visceral_value": 620,
+        "responsive": 600,
+        "consistency": 650,
+        "trust": 670
+      },
+      "total": 641,
+      "top_issues": [
+        "Action buttons share identical visual weights at the bottom of the modal.",
+        "Cryptographic proof hash is truncated without a direct copy action."
+      ],
+      "fixes": [
+        "Promote 'Done' to primary accent style and keep export options subtle secondary.",
+        "Add an inline tap-to-copy icon on the proof hash line."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 610,
+        "premium": 600,
+        "typography": 620,
+        "color": 590,
+        "data_legibility": 630,
+        "layout": 610,
+        "visceral_value": 580,
+        "responsive": 570,
+        "consistency": 620,
+        "trust": 610
+      },
+      "total": 604,
+      "top_issues": [
+        "High-contrast light QR code background creates a jarring glare in dark mode.",
+        "Inbound capacity constraints are placed away from the primary amount input."
+      ],
+      "fixes": [
+        "Recolor QR container with subdued off-white or themed dark-inversion borders.",
+        "Group incoming capacity limits directly within the amount input field boundary."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 630,
+        "typography": 640,
+        "color": 610,
+        "data_legibility": 630,
+        "layout": 620,
+        "visceral_value": 610,
+        "responsive": 560,
+        "consistency": 630,
+        "trust": 620
+      },
+      "total": 618,
+      "top_issues": [
+        "Dual order book columns create density overload alongside the basic swap inputs.",
+        "Collateral fine print is presented in dense low-contrast paragraphs."
+      ],
+      "fixes": [
+        "Provide a simple/pro toggle to conceal the raw order book for standard swaps.",
+        "Structure fee and tariff terms into a scannable two-column key-value list."
+      ]
+    },
+    {
+      "file": "05b-swap-cross.png",
+      "scores": {
+        "hierarchy": 600,
+        "premium": 610,
+        "typography": 620,
+        "color": 590,
+        "data_legibility": 590,
+        "layout": 600,
+        "visceral_value": 580,
+        "responsive": 550,
+        "consistency": 610,
+        "trust": 600
+      },
+      "total": 595,
+      "top_issues": [
+        "Red warning text at bottom conflicts with violet credit extension callout.",
+        "Multi-step leg progression on the right panel lacks status indicators."
+      ],
+      "fixes": [
+        "Consolidate capacity extension actions into a unified modal workflow.",
+        "Add explicit numbered progress indicators showing atomic lock stages."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 630,
+        "typography": 630,
+        "color": 600,
+        "data_legibility": 620,
+        "layout": 620,
+        "visceral_value": 600,
+        "responsive": 570,
+        "consistency": 630,
+        "trust": 630
+      },
+      "total": 615,
+      "top_issues": [
+        "Multiple action buttons across the top header disperse focus across varied tasks.",
+        "Status indicators and credit limits use multiple colors without an inline key."
+      ],
+      "fixes": [
+        "Group management operations like dispute and extend into an overflow menu.",
+        "Attach a persistent legend for bar segments directly within the card frame."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 620,
+        "typography": 630,
+        "color": 610,
+        "data_legibility": 640,
+        "layout": 630,
+        "visceral_value": 590,
+        "responsive": 580,
+        "consistency": 640,
+        "trust": 630
+      },
+      "total": 620,
+      "top_issues": [
+        "Split view leaves significant empty canvas space on the right side.",
+        "Repeating transaction states clutter list scanning with redundant pill badges."
+      ],
+      "fixes": [
+        "Expand the transaction list width dynamically when no item is selected.",
+        "Simplify status indicators into clean, compact monochrome status icons."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 620,
+        "typography": 630,
+        "color": 610,
+        "data_legibility": 640,
+        "layout": 630,
+        "visceral_value": 590,
+        "responsive": 580,
+        "consistency": 640,
+        "trust": 630
+      },
+      "total": 620,
+      "top_issues": [
+        "Duplicate screen state to 07 with no state transition or data variation.",
+        "Technical frame indices overshadow user-relevant timestamps and dates."
+      ],
+      "fixes": [
+        "Surface transaction fee breakdowns and settlement latency metrics in side panel.",
+        "De-emphasize internal consensus frame IDs below standard wall-clock time."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 610,
+        "premium": 630,
+        "typography": 630,
+        "color": 620,
+        "data_legibility": 620,
+        "layout": 600,
+        "visceral_value": 600,
+        "responsive": 560,
+        "consistency": 620,
+        "trust": 620
+      },
+      "total": 611,
+      "top_issues": [
+        "Pixel scale controls appear abstract and overly technical for non-designers.",
+        "Long scrolling vertical stack houses too many unrelated configuration tiers."
+      ],
+      "fixes": [
+        "Replace pixel scale slider with intuitive density presets like Compact and Spaced.",
+        "Segment settings into distinct tabs for Display, Networks, and Security."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 610,
+        "typography": 620,
+        "color": 600,
+        "data_legibility": 620,
+        "layout": 610,
+        "visceral_value": 580,
+        "responsive": 560,
+        "consistency": 620,
+        "trust": 620
+      },
+      "total": 606,
+      "top_issues": [
+        "Matrix of source and destination accounts creates repetitive card grids.",
+        "Explainer box on the right remains detached from user inputs on the left."
+      ],
+      "fixes": [
+        "Convert balance source selection into a standard unified transfer selector.",
+        "Embed the operational summary directly above the submit button."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 600,
+        "premium": 610,
+        "typography": 620,
+        "color": 600,
+        "data_legibility": 610,
+        "layout": 590,
+        "visceral_value": 580,
+        "responsive": 570,
+        "consistency": 620,
+        "trust": 610
+      },
+      "total": 601,
+      "top_issues": [
+        "Large empty void dominates the bottom-right portion of the layout.",
+        "Navigation cards look identical to operational data panels."
+      ],
+      "fixes": [
+        "Adopt a clean grid layout that groups administrative sub-pages logically.",
+        "Style navigation links distinctly from data presentation cards."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 610,
+        "premium": 600,
+        "typography": 620,
+        "color": 590,
+        "data_legibility": 610,
+        "layout": 600,
+        "visceral_value": 570,
+        "responsive": 560,
+        "consistency": 610,
+        "trust": 600
+      },
+      "total": 597,
+      "top_issues": [
+        "Testnet faucet triggers sit alongside real wallet balances without segregation.",
+        "Multiple action buttons stacked at the right base create visual noise."
+      ],
+      "fixes": [
+        "Move developer faucet utilities into a clearly marked debug overlay.",
+        "Consolidate on-chain asset actions into standard deposit and withdraw buttons."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 610,
+        "typography": 620,
+        "color": 600,
+        "data_legibility": 610,
+        "layout": 610,
+        "visceral_value": 580,
+        "responsive": 570,
+        "consistency": 620,
+        "trust": 610
+      },
+      "total": 605,
+      "top_issues": [
+        "Pool metric sidebar lacks context regarding utilization and historical yield.",
+        "Term duration pill buttons provide limited standard tenure selections."
+      ],
+      "fixes": [
+        "Add APY estimates and active utilization rates to the right pool overview.",
+        "Allow custom tenure date inputs alongside fixed term selections."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 610,
+        "premium": 600,
+        "typography": 620,
+        "color": 590,
+        "data_legibility": 610,
+        "layout": 600,
+        "visceral_value": 570,
+        "responsive": 570,
+        "consistency": 620,
+        "trust": 620
+      },
+      "total": 601,
+      "top_issues": [
+        "Extremely sparse layout with substantial dead space on the right side.",
+        "Governance and multisig concepts are presented in dense body text blocks."
+      ],
+      "fixes": [
+        "Visualize signer threshold rules with interactive signer membership avatars.",
+        "Balance page density by bringing governance actions into two structured columns."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 630,
+        "typography": 630,
+        "color": 610,
+        "data_legibility": 630,
+        "layout": 620,
+        "visceral_value": 610,
+        "responsive": 570,
+        "consistency": 630,
+        "trust": 660
+      },
+      "total": 622,
+      "top_issues": [
+        "Crucial proof export actions are placed at the bottom of a technical card.",
+        "Dispute mechanism requirements are explained in text without clear step flows."
+      ],
+      "fixes": [
+        "Elevate 'Save evidence bundle' into a primary button at the top header.",
+        "Diagram the dispute challenge window stages visually."
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 630,
+        "typography": 640,
+        "color": 620,
+        "data_legibility": 630,
+        "layout": 630,
+        "visceral_value": 620,
+        "responsive": 550,
+        "consistency": 630,
+        "trust": 630
+      },
+      "total": 622,
+      "top_issues": [
+        "Table columns become cramped, truncating key financial quantities.",
+        "Header stat metrics lack clear separation between on-chain and off-chain exposure."
+      ],
+      "fixes": [
+        "Add horizontal scrolling or column customization toggles for dense tabular rows.",
+        "Clarify header card titles with explicit custody tags."
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 630,
+        "typography": 640,
+        "color": 620,
+        "data_legibility": 630,
+        "layout": 630,
+        "visceral_value": 610,
+        "responsive": 560,
+        "consistency": 640,
+        "trust": 620
+      },
+      "total": 622,
+      "top_issues": [
+        "Command palette obscures relevant background context entirely.",
+        "List items display varying descriptive subtitles causing uneven line heights."
+      ],
+      "fixes": [
+        "Apply a soft backdrop blur to preserve underlying operational awareness.",
+        "Standardize command row heights and align secondary descriptions."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 614,
+    "verdict": "The interface demonstrates a disciplined, mathematically coherent design system tailored for verifiable balance mechanics. However, dense protocol concepts and uneven screen compositions hinder broader mainstream usability.",
+    "priority_fixes": [
+      "Streamline collateral terminology and capacity bars into clear available-to-spend metrics.",
+      "Separate developer testnet tools and faucet buttons from production balance screens.",
+      "Refactor multi-step cross-chain swap capacity checks into an automated flow.",
+      "Balance asymmetric layouts by restructuring wide empty cards across desktop views.",
+      "Elevate evidence export and dispute execution controls on sovereignty screens."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 48,
+        "verdict": "The words like collateral and promised money confuse me when all I want to do is send twenty dollars.",
+        "blockers": [
+          "01-home.png jargon bar",
+          "02-pay.png technical before/after accounts"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 68,
+        "verdict": "The credit room breakdown makes sense, though the visual bars feel slightly compressed for fast reading.",
+        "blockers": [
+          "06-account.png credit limit settings"
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 62,
+        "verdict": "I can see the order book, but having to manually extend credit limits before swapping slows down execution.",
+        "blockers": [
+          "05-swap.png missing direct slippage controls",
+          "05b-swap-cross.png incoming capacity blocker"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 65,
+        "verdict": "The verifiable state breakdown is solid for our audit needs, though board reports require cleaner exports.",
+        "blockers": [
+          "15-sovereignty.png export buried at bottom",
+          "08-activity-detail.png lack of batch receipt export"
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 58,
+        "verdict": "Generating a payment request works fine, but the receive screen looks more like a developer portal than a billing tool.",
+        "blockers": [
+          "04-receive.png capacity constraints on incoming invoices"
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 69,
+        "verdict": "Evidence bundles and signed frames are visible, but dispute triggering should be more prominent.",
+        "blockers": [
+          "15-sovereignty.png dispute window progression missing"
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 45,
+        "verdict": "This desktop layout clearly does not translate down to a fast one-handed mobile experience.",
+        "blockers": [
+          "All screens: excessive data density and wide desktop spacing"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 67,
+        "verdict": "The desk view aggregates exposures well, though tabular views need better row density for larger book sizes.",
+        "blockers": [
+          "16-desk.png column truncation on small widths"
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 54,
+        "verdict": "Cross-network fees are shown, but the required credit setup creates friction before sending.",
+        "blockers": [
+          "05b-swap-cross.png incoming capacity error"
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 64,
+        "verdict": "The unified absolute bar scale is clever, though it takes several minutes to parse what is genuinely secured.",
+        "blockers": [
+          "01-home.png multi-tiered balance definitions"
+        ]
+      }
+    ]
+  }
+}

@@ -330,7 +330,11 @@ export function Pay() {
 							<div className="kv">
 								<span className="k">Fee</span>
 								<span className={`v ${chosen.totalFee === 0n ? 'st-settled' : 'num'}`}>
-									{chosen.totalFee === 0n ? 'Free' : `${formatMoney(chosen.totalFee, meta.decimals, 6)} ${meta.symbol}`}
+									{chosen.totalFee === 0n
+										? 'Free'
+										: chosen.totalFee * 100n < 10n ** BigInt(meta.decimals)
+											? `under 0.01 ${meta.symbol}`
+											: `${formatMoney(chosen.totalFee, meta.decimals)} ${meta.symbol}`}
 								</span>
 							</div>
 							<div className="kv">
@@ -370,8 +374,10 @@ export function Pay() {
 								</div>
 							)}
 							{usable.length > 1 && (
-								<div className="stack" style={{ gap: 6, padding: '8px 0 10px' }}>
-									<span className="caps">{usable.length} routes</span>
+								<details className="stack" style={{ gap: 6, padding: '8px 0 10px' }}>
+									<summary className="caps" style={{ cursor: 'pointer' }}>
+										{usable.length - 1} other {usable.length - 1 === 1 ? 'route' : 'routes'}
+									</summary>
 									{usable.map((route, index) => (
 										<button key={route.path.join('>')} type="button" className={`route-card${route === chosen ? ' active' : ''}`} onClick={() => setRouteIndex(index)}>
 											<span className="hops" style={{ justifyContent: 'flex-start' }}>
@@ -388,7 +394,7 @@ export function Pay() {
 											</span>
 										</button>
 									))}
-								</div>
+								</details>
 							)}
 						</div>
 					)}

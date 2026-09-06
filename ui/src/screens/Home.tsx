@@ -15,6 +15,22 @@ import { USER_ACTIVITY_TYPES, useMovements } from '../runtime/financial/movement
 import { ActivityRow } from './Activity';
 
 export function Home() {
+	const [explained, setExplained] = useState(() => {
+		try {
+			return localStorage.getItem('xln.ui.explainer') === 'done';
+		} catch {
+			return false;
+		}
+	});
+	const [addingMoney, setAddingMoney] = useState(false);
+	const dismissExplainer = (): void => {
+		setExplained(true);
+		try {
+			localStorage.setItem('xln.ui.explainer', 'done');
+		} catch {
+			/* private mode: the card simply comes back next time */
+		}
+	};
 	const entityId = useApp(s => s.activeEntityId);
 	const places = useApp(s => s.places);
 	const usdPerPx = useApp(s => s.usdPerPx);
@@ -111,7 +127,7 @@ export function Home() {
 							{places.accounts && (
 								<span data-testid="home-risk">
 									<i className="sw c-risk" />
-									<span title="A hub owes you this and has only promised to pay. Move it into collateral, or dispute, to make the chain enforce it.">Hub promise</span> <b className="num">{formatUsd(wallet.usd.risk)}</b>
+									<span title="A hub owes you this and has only promised to pay. Move it into collateral, or dispute, to make the chain enforce it.">Promised</span> <b className="num">{formatUsd(wallet.usd.risk)}</b>
 									{wallet.usd.owed > 0 ? (
 										<span className="num" style={{ color: 'var(--debt)' }}>
 											{' '}
@@ -121,6 +137,49 @@ export function Home() {
 								</span>
 							)}
 						</div>
+						{addingMoney ? (
+							<Sheet title="Add money" onClose={() => setAddingMoney(false)}>
+								<div className="stack" style={{ gap: 10 }}>
+									<button type="button" className="row tappable first" onClick={() => { setAddingMoney(false); navigate('/assets'); }} data-testid="add-money-hub">
+										<span className="rt">
+											<span className="tx">
+												<span className="t">From a hub, instantly</span>
+												<span className="s">A hub pays you over the credit line you grant it. On this test network the faucet plays the hub&apos;s payer.</span>
+											</span>
+										</span>
+									</button>
+									<button type="button" className="row tappable" onClick={() => { setAddingMoney(false); navigate('/receive'); }} data-testid="add-money-request">
+										<span className="rt">
+											<span className="tx">
+												<span className="t">Ask someone to pay you</span>
+												<span className="s">A payment link or QR code with the amount filled in. They pay from any xln wallet.</span>
+											</span>
+										</span>
+									</button>
+									<button type="button" className="row tappable" onClick={() => { setAddingMoney(false); navigate('/assets'); }} data-testid="add-money-onchain">
+										<span className="rt">
+											<span className="tx">
+												<span className="t">From the blockchain</span>
+												<span className="s">Send tokens to your on-chain address{wallet.signerId ? ` (${shortId(wallet.signerId)})` : ''}, then move them into your reserve.</span>
+											</span>
+										</span>
+									</button>
+									<p className="note">Card and bank deposits arrive with partner hubs on the main network; this network has test money only.</p>
+								</div>
+							</Sheet>
+						) : null}
+						{places.accounts && !explained ? (
+							<div className="card" style={{ marginTop: 10, padding: '12px 14px' }} data-testid="home-explainer">
+								<p className="note" style={{ margin: 0 }}>
+									<b style={{ color: 'var(--ink)' }}>How to read this.</b> Every bar is drawn to one scale, so a dollar is the same width everywhere. Green is money the chain
+									guarantees you: on-chain, in reserve, or as collateral. Violet is what a hub has promised and could still fail to pay; move it into
+									collateral, or dispute, to make it green.
+								</p>
+								<button type="button" className="btn quiet sm" style={{ marginTop: 8 }} onClick={dismissExplainer} data-testid="home-explainer-done">
+									Got it
+								</button>
+							</div>
+						) : null}
 						{places.accounts && (
 							<div className="tiers" style={{ marginTop: 8 }}>
 								<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -155,6 +214,9 @@ export function Home() {
 
 					<div className="sect">
 						<h3 className="caps">Balances</h3>
+						<button type="button" className="more" style={{ marginRight: 12 }} onClick={() => setAddingMoney(true)} data-testid="home-add-money" title="Every way money can come in">
+							Add money
+						</button>
 						<button type="button" className="more" style={{ marginRight: 12 }} onClick={() => navigate('/move')} data-testid="home-move">
 							Move
 						</button>

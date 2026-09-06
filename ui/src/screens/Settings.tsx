@@ -69,6 +69,7 @@ export function SettingsScreen() {
 	const height = useApp(s => s.height);
 	const toast = useApp(s => s.toast);
 	const [revealing, setRevealing] = useState(false);
+	const [revealConfirmed, setRevealConfirmed] = useState(false);
 
 	const adapter = getAdapter();
 	const activeVault = vaults.find(v => v.id === activeVaultId) ?? null;
@@ -87,10 +88,10 @@ export function SettingsScreen() {
 
 			<div className="two-col">
 			<div>
-			<div className="sect" style={{ marginTop: 0 }}>
-				<h3 className="caps">Bar scale</h3>
-				<span className="more num">1 px = ${roundUsd(usdPerPx)}</span>
-			</div>
+			<details className="card" style={{ marginTop: 0 }} data-testid="settings-advanced">
+				<summary className="caps" style={{ cursor: 'pointer' }}>
+					Advanced · bar scale <span className="more num" style={{ marginLeft: 8 }}>1 px = ${roundUsd(usdPerPx)}</span>
+				</summary>
 			<div className="setting first" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
 				<div>
 					<div className="t">What one pixel of bar is worth</div>
@@ -121,6 +122,7 @@ export function SettingsScreen() {
 					))}
 				</div>
 			</div>
+			</details>
 
 			<div className="sect">
 				<h3 className="caps">Home</h3>
@@ -335,11 +337,17 @@ export function SettingsScreen() {
 			</div>
 
 			{revealing && seed && (
-				<Sheet title="Recovery phrase" onClose={() => setRevealing(false)}>
+				<Sheet title="Recovery phrase" onClose={() => { setRevealing(false); setRevealConfirmed(false); }}>
 					<p className="note">Anyone with these words controls the money. Read them in private.</p>
+					{!revealConfirmed ? (
+						<button type="button" className="btn" onClick={() => setRevealConfirmed(true)} data-testid="reveal-confirm">
+							<Icon name="eye" size={14} /> I am alone, show the words
+						</button>
+					) : (
 					<p className="mono" style={{ fontSize: 14, lineHeight: 1.9, userSelect: 'all' }}>
 						{seed}
 					</p>
+					)}
 					<button
 						type="button"
 						className="btn ghost"

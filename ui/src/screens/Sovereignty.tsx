@@ -93,7 +93,7 @@ export function Sovereignty() {
 								<i className="sw c-coll" /> Collateral behind what you are owed <b className="num">{formatUsd(totals.secured)}</b>
 							</span>
 							<span data-testid="sovereignty-risk">
-								<i className="sw c-risk" /> Hub promise <b className="num">{formatUsd(totals.risk)}</b>
+								<i className="sw c-risk" /> Promised <b className="num">{formatUsd(totals.risk)}</b>
 							</span>
 						</div>
 						<p className="note" style={{ marginTop: 10 }}>
@@ -159,6 +159,16 @@ export function Sovereignty() {
 								{alone} of {safety.length}
 							</span>
 						</div>
+						{safety.length > 0 ? (
+							<p className="note" style={{ marginTop: 10 }} data-testid="evidence-preview">
+								Inside: {safety.length} {safety.length === 1 ? 'account' : 'accounts'} ·{' '}
+								{safety.map(entry => `${entry.label} at frame #${entry.frameHeight}${entry.frameCosigned ? ', co-signed' : ''}`).join(' · ')} · both parties&apos;
+								signatures and dispute proofs, as JSON. Nothing in it lets anyone spend.
+							</p>
+						) : null}
+						<button type="button" className="btn quiet" style={{ marginTop: 12, marginRight: 8 }} onClick={() => window.print()} data-testid="sovereignty-print" title="This page as a printed report or PDF, for a board or an auditor">
+							Print report / PDF
+						</button>
 						<button type="button" className="btn" style={{ marginTop: 12 }} onClick={exportEvidence} disabled={safety.length === 0} data-testid="evidence-export">
 							<Icon name="shield" size={15} />
 							Save evidence bundle

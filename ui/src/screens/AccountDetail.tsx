@@ -6,8 +6,10 @@ import { Icon } from '../components/Icons';
 import { Sheet } from '../components/Sheet';
 import { TokenIcon } from '../components/TokenPicker';
 import { useApp } from '../runtime/store';
+import { accountSafety, formatDuration } from '../runtime/financial/sovereignty';
+import { usdOf } from '../runtime/financial/prices';
 import { sendEntityTxs } from '../runtime/tx';
-import { formatMoney, formatSigned, getTokenMeta, knownTokenIds, parseAmount } from '../runtime/format';
+import { formatMoney, formatSigned, formatUsd, getTokenMeta, knownTokenIds, parseAmount } from '../runtime/format';
 import { useWallet, type AccountTokenView, type AccountView, type WalletView } from '../runtime/views';
 import {
 	buildAddTokenTx,
@@ -414,6 +416,13 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 								Disputing freezes this account, withdraws your orders at the hub and puts the latest signed state on-chain. Use it when {account.label} stops
 								responding or refuses a settlement. It cannot be undone.
 							</p>
+							<ol className="note" style={{ margin: '0 0 12px', paddingLeft: 18, display: 'grid', gap: 4 }} data-testid="dispute-window-note">
+								<li>You start it: the latest page both of you signed goes on-chain with your next batch. The account freezes.</li>
+								<li>
+									{account.label} has <b>{formatDuration(accountSafety(account).theirResponseSeconds)}</b> to answer with a newer signed page. The newer page wins.
+								</li>
+								<li>When the window closes you finalize, and the chain pays out exactly what the winning page says.</li>
+							</ol>
 							{!confirmDispute ? (
 								<button type="button" className="btn danger" disabled={busy} onClick={() => setConfirmDispute(true)} data-testid="dispute-prepare">
 									Dispute this account…
@@ -604,6 +613,35 @@ export function AccountDetail() {
 						<span className="k">Frames signed</span>
 						<span className="v num">{(account?.frameHeight ?? 0).toLocaleString('en-US')}</span>
 					</div>
+					{account ? (
+						(() => {
+							const safety = accountSafety(account);
+							return (
+								<>
+									<div className="kv" data-testid="account-exposure">
+										<span className="k">They owe you, uncovered</span>
+										<span className="v num" style={{ color: safety.riskUsd > 0 ? 'var(--risk)' : undefined }}>{formatUsd(safety.riskUsd)}</span>
+									</div>
+									<div className="kv">
+										<span className="k">Their debt covered by collateral</span>
+										<span className="v num" style={{ color: safety.securedUsd > 0 ? 'var(--coll)' : undefined }}>{formatUsd(safety.securedUsd)}</span>
+									</div>
+									<div className="kv">
+										<span className="k">Collateral you posted</span>
+										<span className="v num">{formatUsd(account.tokens.reduce((sum, token) => sum + usdOf(token.tokenId, token.derived.collateral), 0))}</span>
+									</div>
+									<div className="kv">
+										<span className="k">You owe</span>
+										<span className="v num" style={{ color: safety.owedUsd > 0 ? 'var(--debt)' : undefined }}>{formatUsd(safety.owedUsd)}</span>
+									</div>
+									<div className="kv">
+										<span className="k">If you dispute, they answer within</span>
+										<span className="v num">{formatDuration(safety.theirResponseSeconds)}</span>
+									</div>
+								</>
+							);
+						})()
+					) : null}
 					<div className="kv">
 						<span className="k">Status</span>
 						<span className={`v ${dispute && dispute.phase !== 'none' ? 'st-dispute' : account?.settlement === 'awaiting_you' ? 'st-pending' : 'st-settled'}`} data-testid="account-status">

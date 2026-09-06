@@ -1,0 +1,514 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/01-home.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 690,
+        "typography": 670,
+        "color": 660,
+        "data_legibility": 670,
+        "layout": 680,
+        "visceral_value": 670,
+        "responsive": 650,
+        "consistency": 690,
+        "trust": 680
+      },
+      "total": 674,
+      "top_issues": [
+        "Primary breakdown under total balance compresses multiple novel concepts into faint legend markers.",
+        "Absolute scale bars under assets are subtle and lack explicit scale calibration markers."
+      ],
+      "fixes": [
+        "Increase font contrast for balance categories under the main headline.",
+        "Add subtle tick marks to indicate capacity thresholds on horizontal balance bars."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/02-pay.png",
+      "scores": {
+        "hierarchy": 690,
+        "premium": 680,
+        "typography": 670,
+        "color": 670,
+        "data_legibility": 680,
+        "layout": 690,
+        "visceral_value": 680,
+        "responsive": 650,
+        "consistency": 700,
+        "trust": 700
+      },
+      "total": 681,
+      "top_issues": [
+        "Route comparison details compete with payment summary fields for visual dominance.",
+        "Before and after balance delta graphics require close inspection to distinguish change."
+      ],
+      "fixes": [
+        "De-emphasize the multi-hop routing card background to focus on recipient confirmation.",
+        "Add an explicit directional arrow between before and after account states."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/03-receipt.png",
+      "scores": {
+        "hierarchy": 710,
+        "premium": 690,
+        "typography": 680,
+        "color": 690,
+        "data_legibility": 700,
+        "layout": 700,
+        "visceral_value": 690,
+        "responsive": 660,
+        "consistency": 700,
+        "trust": 710
+      },
+      "total": 693,
+      "top_issues": [
+        "Cryptographic proof hash is truncated without a visible one-click verification trigger.",
+        "Settlement metadata lacks an explicit link to export standard accounting artifacts."
+      ],
+      "fixes": [
+        "Add an inline verification badge next to the proof hash.",
+        "Expose an explicit export format dropdown on the primary modal actions."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/04-receive.png",
+      "scores": {
+        "hierarchy": 670,
+        "premium": 660,
+        "typography": 670,
+        "color": 650,
+        "data_legibility": 680,
+        "layout": 660,
+        "visceral_value": 660,
+        "responsive": 650,
+        "consistency": 680,
+        "trust": 680
+      },
+      "total": 666,
+      "top_issues": [
+        "Large raw QR code sits in an uncontained container with stark background contrast.",
+        "Entity ID string is presented in a dense monospace block without clear visual grouping."
+      ],
+      "fixes": [
+        "Frame the QR code inside a subtle dark-bordered card to match surrounding panels.",
+        "Format entity strings into four-character chunks for human scanning."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/05-swap.png",
+      "scores": {
+        "hierarchy": 670,
+        "premium": 680,
+        "typography": 660,
+        "color": 670,
+        "data_legibility": 660,
+        "layout": 670,
+        "visceral_value": 670,
+        "responsive": 640,
+        "consistency": 680,
+        "trust": 670
+      },
+      "total": 667,
+      "top_issues": [
+        "Collateral preparation controls dominate the swap ticket, obscuring base execution terms.",
+        "Order book depth bars use bright dual tones that distract from order entry validation."
+      ],
+      "fixes": [
+        "Collapse collateral configuration into a progressive disclosure section below the swap CTA.",
+        "Tone down secondary order book bar saturation to prioritize execution metrics."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/06-account.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 670,
+        "typography": 670,
+        "color": 660,
+        "data_legibility": 680,
+        "layout": 680,
+        "visceral_value": 660,
+        "responsive": 650,
+        "consistency": 690,
+        "trust": 690
+      },
+      "total": 673,
+      "top_issues": [
+        "Distinction between credit line and posted collateral relies heavily on small labels.",
+        "Dispute action button sits alongside routine action buttons with equal weight."
+      ],
+      "fixes": [
+        "Group enforceable collateral and discretionary credit into explicit distinct sub-cards.",
+        "Style the dispute action with a dedicated defensive border to prevent accidental clicks."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/07-activity.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 670,
+        "typography": 670,
+        "color": 670,
+        "data_legibility": 690,
+        "layout": 670,
+        "visceral_value": 660,
+        "responsive": 650,
+        "consistency": 690,
+        "trust": 690
+      },
+      "total": 674,
+      "top_issues": [
+        "Empty space on the right side of the main list leaves the screen feeling unbalanced.",
+        "Transaction status badges use minimal color indicators that lack high contrast."
+      ],
+      "fixes": [
+        "Center the master-detail split layout or expand default card widths.",
+        "Increase font weight and pill background contrast on settlement tags."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/08-activity-detail.png",
+      "scores": {
+        "hierarchy": 690,
+        "premium": 670,
+        "typography": 670,
+        "color": 670,
+        "data_legibility": 690,
+        "layout": 680,
+        "visceral_value": 660,
+        "responsive": 650,
+        "consistency": 690,
+        "trust": 700
+      },
+      "total": 677,
+      "top_issues": [
+        "Detail panel floats on the right with significant empty negative canvas space below.",
+        "Cryptographic proof hash offers no immediate visual tree or inspector view."
+      ],
+      "fixes": [
+        "Anchor detail views in an explicit sheet or constrained dual-column view.",
+        "Provide an expandable raw frame payload inspector inside the detail pane."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/09-settings.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 670,
+        "typography": 670,
+        "color": 660,
+        "data_legibility": 670,
+        "layout": 660,
+        "visceral_value": 650,
+        "responsive": 640,
+        "consistency": 680,
+        "trust": 680
+      },
+      "total": 664,
+      "top_issues": [
+        "Global absolute bar-scale configuration is overly technical for average settings exploration.",
+        "Form controls combine toggles, sliders, and pills across a long single vertical scroll."
+      ],
+      "fixes": [
+        "Group bar scale and appearance under a specialized Advanced Display subsection.",
+        "Standardize segmented choice controls across theme, numbers, and layout pickers."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/10-move.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 670,
+        "typography": 670,
+        "color": 670,
+        "data_legibility": 680,
+        "layout": 680,
+        "visceral_value": 670,
+        "responsive": 650,
+        "consistency": 690,
+        "trust": 690
+      },
+      "total": 675,
+      "top_issues": [
+        "Three-state matrix (Wallet, Reserve, Account) introduces cognitive load during selection.",
+        "Explanatory copy in the helper panel is text-heavy and delays action commitment."
+      ],
+      "fixes": [
+        "Use a clear source-to-destination transfer arrow layout rather than parallel grid blocks.",
+        "Condense movement explanations into short microcopy directly under inputs."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/11-manage.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 660,
+        "typography": 660,
+        "color": 660,
+        "data_legibility": 670,
+        "layout": 660,
+        "visceral_value": 650,
+        "responsive": 640,
+        "consistency": 670,
+        "trust": 680
+      },
+      "total": 661,
+      "top_issues": [
+        "Top navigation cards act as loose jump links without clear category hierarchy.",
+        "Risk summary section lacks immediate actionable recommendations for open exposure."
+      ],
+      "fixes": [
+        "Restructure management links into a consolidated sidebar or structured category list.",
+        "Add explicit status chips indicating healthy vs exposed balances."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/12-assets.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 660,
+        "typography": 660,
+        "color": 660,
+        "data_legibility": 670,
+        "layout": 660,
+        "visceral_value": 650,
+        "responsive": 640,
+        "consistency": 670,
+        "trust": 670
+      },
+      "total": 660,
+      "top_issues": [
+        "Testnet faucets occupy prominent primary real estate alongside core sovereign assets.",
+        "Collateral setup card repeats complex sliders inside an asset management context."
+      ],
+      "fixes": [
+        "Isolate developer test faucets into a clearly delimited developer tab.",
+        "Simplify the on-chain wallet balance card to prioritize immediate deposit and reserve funding."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/13-lend.png",
+      "scores": {
+        "hierarchy": 670,
+        "premium": 660,
+        "typography": 660,
+        "color": 660,
+        "data_legibility": 670,
+        "layout": 670,
+        "visceral_value": 650,
+        "responsive": 640,
+        "consistency": 680,
+        "trust": 670
+      },
+      "total": 663,
+      "top_issues": [
+        "Empty pool statistics provide insufficient market context for pricing interest offers.",
+        "Basis point input requires mental translation to standard annual percentage yields."
+      ],
+      "fixes": [
+        "Display current benchmark rates and historical utilization alongside input fields.",
+        "Add an automatic APY equivalent readout beside the term basis points field."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/14-ownership.png",
+      "scores": {
+        "hierarchy": 670,
+        "premium": 660,
+        "typography": 660,
+        "color": 650,
+        "data_legibility": 670,
+        "layout": 660,
+        "visceral_value": 650,
+        "responsive": 640,
+        "consistency": 670,
+        "trust": 680
+      },
+      "total": 661,
+      "top_issues": [
+        "Technical board governance terms like Lazy Entity are presented with dense explanation.",
+        "Secondary takeover pane on the right lacks visual weight and context."
+      ],
+      "fixes": [
+        "Summarize multisig and board threshold settings with visual avatar slots.",
+        "Move takeover actions into a dedicated modal triggered by specific discovery."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/15-sovereignty.png",
+      "scores": {
+        "hierarchy": 690,
+        "premium": 680,
+        "typography": 680,
+        "color": 680,
+        "data_legibility": 690,
+        "layout": 680,
+        "visceral_value": 680,
+        "responsive": 650,
+        "consistency": 700,
+        "trust": 710
+      },
+      "total": 684,
+      "top_issues": [
+        "Evidence bundle export button is visually understated given its disaster recovery role.",
+        "Dispute timeline rules are explained purely via text strings without visual stages."
+      ],
+      "fixes": [
+        "Highlight the evidence bundle action with high-visibility primary card styling.",
+        "Add a visual countdown or timeline diagram representing challenge windows."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/16-desk.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 680,
+        "typography": 680,
+        "color": 670,
+        "data_legibility": 680,
+        "layout": 670,
+        "visceral_value": 670,
+        "responsive": 630,
+        "consistency": 690,
+        "trust": 690
+      },
+      "total": 674,
+      "top_issues": [
+        "High information density causes column headers and metrics to feel tightly packed.",
+        "Horizontal scale visualization inside table rows is subtle at low row heights."
+      ],
+      "fixes": [
+        "Add subtle alternating row fills to maintain horizontal tracking across wide data tables.",
+        "Increase height of embedded bar markers within tabular account positions."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/17-palette.png",
+      "scores": {
+        "hierarchy": 690,
+        "premium": 680,
+        "typography": 680,
+        "color": 670,
+        "data_legibility": 690,
+        "layout": 690,
+        "visceral_value": 670,
+        "responsive": 650,
+        "consistency": 700,
+        "trust": 690
+      },
+      "total": 681,
+      "top_issues": [
+        "Command palette obscures underlying context without retaining clear breadcrumb depth.",
+        "Navigation shortcuts lack category section headers to divide actions from views."
+      ],
+      "fixes": [
+        "Group command palette entries under explicit section headings like Actions and Views.",
+        "Ensure backdrop blur retains slight spatial awareness of active screens."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 674,
+    "verdict": "The desktop interface provides rigorous mathematical accounting and provable settlement clarity across advanced clearing states. However, dense protocol abstractions and subtle bar scaling hinder immediate usability for mainstream workflows.",
+    "priority_fixes": [
+      "Simplify the home balance hierarchy to lead with spendable funds while grouping reserve and promised debt under secondary inspection.",
+      "Separate routine swapping and payment flows from bilateral collateral adjustment controls to prevent checkout paralysis.",
+      "Expose prominent one-click cryptographic export and proof bundle actions on activity details and dispute dashboards.",
+      "Isolate developer tools, testnet faucets, and governance management into an explicit advanced settings boundary.",
+      "Introduce standardized visual milestones and explicit timelines for dispute challenge windows and settlement netting."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 48,
+        "verdict": "There are too many technical terms about reserves and promises when I just want to send twenty dollars.",
+        "blockers": [
+          "01-home.png balance breakdown shows confusing categories",
+          "02-pay.png displays routing graphs and bilateral net notes instead of a simple send confirmation"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 68,
+        "verdict": "The balance between enforceable collateral and promised capacity is transparent once you understand the color codes.",
+        "blockers": [
+          "06-account.png requires reading tiny labels to separate credit from posted collateral"
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 62,
+        "verdict": "The order book looks real, but having to configure inbound collateral before I can execute a trade is unusual.",
+        "blockers": [
+          "05-swap.png blocks order execution until collateral is prepared",
+          "05-swap.png lacks clear historical fill records"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 65,
+        "verdict": "The distinction between on-chain enforceable assets and hub promises gives me the safety verification my board requires.",
+        "blockers": [
+          "03-receipt.png lacks immediate one-click PDF board summary export",
+          "08-activity-detail.png does not provide a raw frame tree view"
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 52,
+        "verdict": "Generating a payment request works, but managing hub inbound capacity before a client can pay me adds friction.",
+        "blockers": [
+          "04-receive.png requires preparing incoming account capacity",
+          "03-receipt.png download format is not clearly framed as an invoice settlement receipt"
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 69,
+        "verdict": "The ability to export offline evidence bundles and dispute without asking the counterparty satisfies my baseline requirements.",
+        "blockers": [
+          "15-sovereignty.png lacks a live visual countdown for the challenge window",
+          "06-account.png dispute button has identical weight to basic account actions"
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 42,
+        "verdict": "This setup is far too dense for quick mobile interaction on the move.",
+        "blockers": [
+          "Missing mobile viewport captures in the provided evaluation set",
+          "02-pay.png contains too many detailed route choices for quick hand-held checkout"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 67,
+        "verdict": "Desk gives a solid unified view of net exposure and multi-lane credit limits across accounts.",
+        "blockers": [
+          "16-desk.png tight row heights make embedded visual capacity bars difficult to track at speed"
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 49,
+        "verdict": "Finding how to send money across chains without manual collateral management is difficult.",
+        "blockers": [
+          "10-move.png three-way matrix confuses bridge transfers with internal escrow",
+          "02-pay.png multi-hop fees are shown in tiny fractional text"
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 66,
+        "verdict": "The visual separation of sovereign on-chain funds from hub credit promises makes the architectural risk model evident.",
+        "blockers": [
+          "01-home.png absolute scale bars lack clear dollar markings on the home screen",
+          "14-ownership.png relies on complex terminology like Lazy Entity"
+        ]
+      }
+    ]
+  }
+}

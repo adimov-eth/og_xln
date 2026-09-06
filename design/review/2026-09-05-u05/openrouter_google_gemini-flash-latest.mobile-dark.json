@@ -1,0 +1,777 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 800,
+        "typography": 840,
+        "color": 830,
+        "data_legibility": 810,
+        "layout": 820,
+        "visceral_value": 850,
+        "responsive": 800,
+        "consistency": 850,
+        "trust": 840
+      },
+      "total": 826,
+      "top_issues": [
+        "Sub-balance breakdown below $187.99 repeats green square bullets for three distinct categories (On-chain, Reserve, Secured) which confuses color semantic mapping with the unified bar",
+        "Action buttons ('Pay', 'Receive', 'Swap') look slightly generic and 'Pay' has unequal visual weight compared to the middle/right actions",
+        "Secondary balance row text ('send up to $207.99, receive up to $25.80') is dense and low contrast against dark card background"
+      ],
+      "fixes": [
+        "Use distinct visual iconography or tinted dot markers matching exact bar segments for On-chain vs Reserve vs Secured",
+        "Increase font-size and vertical padding for quick action cards; add higher contrast to capacity row",
+        "Elevate 'Add money' shortcut from plain text link to an accessible primary action chip"
+      ]
+    },
+    {
+      "file": "01-home-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 820,
+        "color": 810,
+        "data_legibility": 820,
+        "layout": 800,
+        "visceral_value": 780,
+        "responsive": 820,
+        "consistency": 840,
+        "trust": 820
+      },
+      "total": 810,
+      "top_issues": [
+        "Accounts card shows '+120.00 owes you' with capacity limits below it, but the progress bar scale lacks numerical tick marks or visual boundary cues",
+        "'Recent' transactions list lacks date groupings or clear transaction type visual anchors beyond tiny arrow badges",
+        "Floating navigation bar sits very close to list items with no blur/separation backdrop"
+      ],
+      "fixes": [
+        "Add subtle tick marks or anchor labels under the account balance bar for min/max thresholds",
+        "Add explicit date/status badges with distinct color pills for 'filled', 'open', and 'settled'",
+        "Increase bottom safe area margin above bottom navigation bar by 8px"
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 780,
+        "typography": 830,
+        "color": 820,
+        "data_legibility": 800,
+        "layout": 790,
+        "visceral_value": 800,
+        "responsive": 770,
+        "consistency": 820,
+        "trust": 830
+      },
+      "total": 805,
+      "top_issues": [
+        "Sticky 'Pay 25.00 USDC' CTA floating at the bottom obscures the lower route selector card content ('2 ROUTES')",
+        "Recipient address field displays a raw truncated hex 0x92c2... hash without an ENS/human alias or contact badge",
+        "Dual progress bar under amount input ('This payment' vs 'Your account with H1') is hard to visually decode at a glance"
+      ],
+      "fixes": [
+        "Add 96px bottom padding to scroll container to prevent primary button from obscuring route cards",
+        "Add counterparty alias pill and verified checkmark directly beside recipient hex",
+        "Label bar segments explicitly with small inline tags ('Payment', 'Remaining Balance')"
+      ]
+    },
+    {
+      "file": "02-pay-bottom.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 770,
+        "typography": 810,
+        "color": 810,
+        "data_legibility": 790,
+        "layout": 780,
+        "visceral_value": 790,
+        "responsive": 760,
+        "consistency": 810,
+        "trust": 820
+      },
+      "total": 793,
+      "top_issues": [
+        "Selected route container has thick purple stroke while inner badge is also purple, creating visual noise and competing hierarchy",
+        "'Fee 0.000050 USDC' and 'Arrives Instantly' rows are separated from the route choice cards, creating duplicate fee displays",
+        "The bottom action bar covers the optional 'Add a note' toggle when scrolled partially"
+      ],
+      "fixes": [
+        "Consolidate summary fee section and route picker cards into a single cohesive accordion",
+        "Subdue route card active state border from 2px bright blue/purple to 1px subtle glow",
+        "Ensure safe inset below 'Add a note' so tap target remains clear of floating CTA"
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 860,
+        "typography": 860,
+        "color": 870,
+        "data_legibility": 880,
+        "layout": 860,
+        "visceral_value": 890,
+        "responsive": 850,
+        "consistency": 880,
+        "trust": 900
+      },
+      "total": 872,
+      "top_issues": [
+        "Settled duration 'in 9 s' is in green, which reads like a financial gain rather than elapsed latency",
+        "Proof hash '0x835dd4ff...695a' is static text with no direct copy icon or on-chain explorer link",
+        "Dimmed background behind bottom sheet still shows complex numbers, competing with receipt focus"
+      ],
+      "fixes": [
+        "Change latency indicator 'in 9 s' color from accent green to muted neutral secondary text",
+        "Make proof line tap-to-copy with a small clipboard icon and toast notification",
+        "Increase background overlay opacity behind bottom modal from 60% to 80%"
+      ]
+    },
+    {
+      "file": "03-receipt-bottom.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 840,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 860,
+        "layout": 840,
+        "visceral_value": 860,
+        "responsive": 840,
+        "consistency": 870,
+        "trust": 890
+      },
+      "total": 855,
+      "top_issues": [
+        "Three action buttons ('Copy receipt', 'Download', 'Done') crowded into a single bottom row creates small tap targets on narrow screens",
+        "Verified by your runtime' green dot lacks tooltip or disclosure explaining what signed runtime proof implies",
+        "Modal grab handle at top has minimal affordance for swipe-to-dismiss"
+      ],
+      "fixes": [
+        "Stack 'Done' as full-width primary button with 'Copy receipt' and 'Download' as secondary side-by-side buttons above it",
+        "Make 'Verified by your runtime' tappable to reveal runtime signature details",
+        "Increase grab handle contrast and add slight drag resistance styling"
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 830,
+        "typography": 840,
+        "color": 840,
+        "data_legibility": 850,
+        "layout": 830,
+        "visceral_value": 840,
+        "responsive": 820,
+        "consistency": 860,
+        "trust": 870
+      },
+      "total": 844,
+      "top_issues": [
+        "Huge QR code takes up >50% of the viewport, pushing amount and incoming account preparation far below fold",
+        "Cream/off-white QR code container clashes with dark theme neutral slate background",
+        "'48.00 capacity via H1' is positioned ambiguously as header text above the amount input"
+      ],
+      "fixes": [
+        "Reduce QR code size by 20% to allow amount and token selector to appear above the fold",
+        "Use pure monochrome high-contrast rounded container with proper 16px quiet zone for the QR code",
+        "Place capacity badge inside an informative pill adjacent to token selector"
+      ]
+    },
+    {
+      "file": "04-receive-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 800,
+        "typography": 830,
+        "color": 820,
+        "data_legibility": 820,
+        "layout": 810,
+        "visceral_value": 810,
+        "responsive": 820,
+        "consistency": 850,
+        "trust": 860
+      },
+      "total": 824,
+      "top_issues": [
+        "YOUR ENTITY ID box exposes a 64-character unformatted hex string that is overwhelming and error-prone to inspect manually",
+        "'Prepare incoming account' dropdown does not indicate what happens if sender chooses another route",
+        "'Other ways to share' collapsed disclosure has low affordance and looks disabled"
+      ],
+      "fixes": [
+        "Format entity id as chunked 4x4 monospace blocks with one-tap copy and checksum verification badge",
+        "Add inline help tooltip explaining bilateral route inbound capacity",
+        "Style 'Other ways to share' as secondary button outline instead of plain text link"
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 820,
+        "typography": 840,
+        "color": 830,
+        "data_legibility": 810,
+        "layout": 820,
+        "visceral_value": 830,
+        "responsive": 800,
+        "consistency": 850,
+        "trust": 840
+      },
+      "total": 827,
+      "top_issues": [
+        "Primary CTA 'Swap USDC for WETH' overlaps the 'Prepare to receive' collateral slider at the bottom of the viewport",
+        "Top segmented toggle ('Same network' vs 'Across networks') looks disconnected from current pair selection",
+        "Collateral slider percentage chips ('100% collateral', '50%', '0%') are cramped under the floating action button"
+      ],
+      "fixes": [
+        "Ensure floating CTA has fixed bottom dock with backdrop-filter and scroll padding prevents content clipping",
+        "Move collateral selection into an expandable sheet or dedicated preparatory step before trade confirmation",
+        "Make token input cards larger with prominent exchange rate badge between inputs"
+      ]
+    },
+    {
+      "file": "05-swap-bottom.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 790,
+        "typography": 820,
+        "color": 830,
+        "data_legibility": 840,
+        "layout": 800,
+        "visceral_value": 810,
+        "responsive": 780,
+        "consistency": 830,
+        "trust": 830
+      },
+      "total": 814,
+      "top_issues": [
+        "Orderbook depth bars are identical length despite different sizes (e.g. 30.6000 vs 8.7533), violating the 'one absolute scale' wallet promise",
+        "Spread and last price text is cramped in tiny gray text between ask and bid tables",
+        "Primary swap CTA covers bottom rows of the bid order book"
+      ],
+      "fixes": [
+        "Render depth bar widths proportional to cumulative volume or relative level size",
+        "Increase font size and background contrast of the central spread indicator row",
+        "Add scroll clearance padding of 80px above the floating CTA button"
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 820,
+        "typography": 850,
+        "color": 840,
+        "data_legibility": 830,
+        "layout": 830,
+        "visceral_value": 850,
+        "responsive": 820,
+        "consistency": 860,
+        "trust": 860
+      },
+      "total": 840,
+      "top_issues": [
+        "Top action bar features five disparate action buttons ('Pay', 'Extend credit', 'Swap', 'Manage', 'Dispute') creating cognitive overload",
+        "'Dispute' button carries neutral styling instead of caution/danger warning treatment",
+        "Bar chart legend ('secured', 'promised', 'you owe', 'credit room', 'in flight') uses tiny text and identical line weights"
+      ],
+      "fixes": [
+        "Demote 'Dispute' and 'Manage' to an overflow kebab menu or dedicated secondary risk panel",
+        "Apply distinct warning tint (amber/rose) to dispute action",
+        "Increase legend badge sizing and group into 'Assets' vs 'Liabilities' categories"
+      ]
+    },
+    {
+      "file": "06-account-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 810,
+        "typography": 830,
+        "color": 830,
+        "data_legibility": 840,
+        "layout": 820,
+        "visceral_value": 830,
+        "responsive": 810,
+        "consistency": 850,
+        "trust": 860
+      },
+      "total": 830,
+      "top_issues": [
+        "WETH card shows 'they owe you +0.01' but the bar is a tiny purple dot that gives zero scale context",
+        "'Show 1 empty lane · USDT' is easy to miss as plain low-contrast muted text",
+        "Card explanation text at bottom ('Every frame here is signed by both of you...') is small, dense, and hard to read on mobile"
+      ],
+      "fixes": [
+        "Add minimum render width (4px) with clear zero/cap markers for micro-balances",
+        "Transform empty lanes into a clearly styled dashed card button ('+ Add USDT lane')",
+        "Convert legal/security explanation into a dismissible info card with highlighted key terms"
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 840,
+        "typography": 860,
+        "color": 850,
+        "data_legibility": 870,
+        "layout": 860,
+        "visceral_value": 840,
+        "responsive": 850,
+        "consistency": 880,
+        "trust": 870
+      },
+      "total": 857,
+      "top_issues": [
+        "Filter chips row ('All', 'Payments', 'Swaps', 'Settlement', 'Accou...') clips on the right without gradient fade indicator",
+        "Only four transactions shown in entire viewport with huge empty dead space below",
+        "Timestamp format is inconsistent: some show elapsed/status while others show HH:MM:SS"
+      ],
+      "fixes": [
+        "Add CSS mask fade to horizontal scroll chips to signal horizontal overflow",
+        "Standardize timestamps to relative time ('2m ago') with full ISO on click",
+        "Add summary monthly totals or empty-state placeholder graphic when items are sparse"
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 860,
+        "typography": 870,
+        "color": 860,
+        "data_legibility": 880,
+        "layout": 870,
+        "visceral_value": 870,
+        "responsive": 860,
+        "consistency": 880,
+        "trust": 900
+      },
+      "total": 872,
+      "top_issues": [
+        "Bottom sheet lacks explicit primary action button (e.g. 'Share Proof', 'Download JSON') beyond the top close icon",
+        "Proof hash truncates with an awkward mid-string ellipsis ('0x835dd4ff...6e695a') with no copy button",
+        "'2 committed entries' line item is unexplained jargon to non-consensus engineers"
+      ],
+      "fixes": [
+        "Add explicit 'Export Signed Proof' and 'Verify On-Chain' action buttons at bottom of sheet",
+        "Make proof row tappable with dedicated copy icon and validation status",
+        "Add explanatory tooltip explaining '2 committed entries' (Alice proposal + Hub ACK)"
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 850,
+        "color": 840,
+        "data_legibility": 850,
+        "layout": 840,
+        "visceral_value": 860,
+        "responsive": 830,
+        "consistency": 870,
+        "trust": 860
+      },
+      "total": 847,
+      "top_issues": [
+        "'Dollars per pixel' slider handle and step chips ('Auto', '$1', '$2', '$5'...) are visually busy and difficult to use accurately on mobile touchscreens",
+        "Home toggle switches lack clear immediate feedback on what visual modules disappear",
+        "'Layout on wide screens' toggle appears on a mobile viewport where it has zero applicability"
+      ],
+      "fixes": [
+        "Replace multi-chip slider with simplified stepped segment control ('Auto', 'Compact', 'Detail')",
+        "Add small visual thumbnail previews next to toggles showing home layout components",
+        "Hide or disable desktop layout preferences when client user-agent is mobile"
+      ]
+    },
+    {
+      "file": "09-settings-bottom.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 820,
+        "typography": 840,
+        "color": 830,
+        "data_legibility": 850,
+        "layout": 830,
+        "visceral_value": 840,
+        "responsive": 830,
+        "consistency": 860,
+        "trust": 860
+      },
+      "total": 839,
+      "top_issues": [
+        "'AT THIS SCALE' preview card displays horizontal bars that visually resemble progress bars rather than ruler scales",
+        "'Forget vault' destructive action is given high visual hierarchy with red text and icon right below recovery controls",
+        "Runtime ID shows full 64-character unformatted hex that runs close to card margin"
+      ],
+      "fixes": [
+        "Add tick lines and caliper brackets to ruler preview bars to reinforce scale metaphor",
+        "Move 'Forget vault' into a separated danger zone card with required confirmation modal",
+        "Format Runtime ID with monospace font and copy-to-clipboard pill"
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 790,
+        "typography": 820,
+        "color": 810,
+        "data_legibility": 800,
+        "layout": 780,
+        "visceral_value": 800,
+        "responsive": 770,
+        "consistency": 830,
+        "trust": 830
+      },
+      "total": 804,
+      "top_issues": [
+        "Dual FROM / TO grids of three identical cards ('Wallet', 'Reserve', 'Account') create intense visual repetition and accidental tap errors",
+        "Primary action button 'Sign & send' floats directly over the form fields and 'WHAT HAPPENS' card",
+        "USDC dropdown at top right looks detached from the actual transfer configuration"
+      ],
+      "fixes": [
+        "Replace 3x2 matrix with an interactive transfer bridge diagram (Source -> Arrow -> Destination)",
+        "Fix sticky footer positioning to prevent overlap with explanatory text",
+        "Place asset selector directly inside the transfer amount input field"
+      ]
+    },
+    {
+      "file": "10-move-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 780,
+        "typography": 810,
+        "color": 810,
+        "data_legibility": 790,
+        "layout": 770,
+        "visceral_value": 790,
+        "responsive": 760,
+        "consistency": 820,
+        "trust": 820
+      },
+      "total": 795,
+      "top_issues": [
+        "'Add to batch' button sits stranded on the left with arbitrary whitespace around it",
+        "'WHAT HAPPENS' explanation card is clipped by viewport boundary and floating button",
+        "'Recipient entity · leave empty for yourself' placeholder text is faint and easily overlooked"
+      ],
+      "fixes": [
+        "Group 'Add to batch' alongside 'Sign & send' as secondary button in sticky action footer",
+        "Add sufficient bottom scroll padding so explanatory card is 100% visible before CTA",
+        "Provide explicit toggle switch: 'Transfer to myself' vs 'Transfer to counterparty'"
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 850,
+        "color": 840,
+        "data_legibility": 850,
+        "layout": 840,
+        "visceral_value": 850,
+        "responsive": 840,
+        "consistency": 870,
+        "trust": 870
+      },
+      "total": 848,
+      "top_issues": [
+        "Navigation grid at top has five uneven cards (2x2 grid plus one orphan 'Ownership' card stretching halfway)",
+        "'Yours whatever a hub does' vs 'Promised by hubs' is informal jargon that lacks direct contract definition",
+        "'Needs attention' card is empty slate with no historical indicator or verification badge"
+      ],
+      "fixes": [
+        "Restructure top grid into a balanced 2x3 layout or a unified list with clear navigation chevrons",
+        "Add information icon linking to legal & cryptographic enforceability spec for promised funds",
+        "Show green check icon inside 'Needs attention' ('All channels balanced and verified')"
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 810,
+        "typography": 840,
+        "color": 830,
+        "data_legibility": 850,
+        "layout": 830,
+        "visceral_value": 820,
+        "responsive": 830,
+        "consistency": 860,
+        "trust": 850
+      },
+      "total": 835,
+      "top_issues": [
+        "Three zero-balance tokens listed with identical subtitle 'Depository may pull 0.00', which sounds confusing and slightly alarming to beginners",
+        "'Move into reserve' button is isolated inside an awkward nested card with abundant empty padding",
+        "'Faucets' card is clipped at the bottom of the screen with poor visual hierarchy"
+      ],
+      "fixes": [
+        "Clarify 'Depository may pull' to 'Authorized allowance: 0.00' with quick 'Approve' action",
+        "Make 'Move into reserve' an action row button aligned with token list headers",
+        "Give testnet faucets clear badge and button group styling above the fold"
+      ]
+    },
+    {
+      "file": "12-assets-bottom.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 770,
+        "typography": 800,
+        "color": 810,
+        "data_legibility": 800,
+        "layout": 780,
+        "visceral_value": 780,
+        "responsive": 770,
+        "consistency": 820,
+        "trust": 810
+      },
+      "total": 793,
+      "top_issues": [
+        "Screen displays the bottom of a 'Prepare to receive' collateral modal over an unknown context instead of an assets list",
+        "Stack of four dark full-width pill buttons creates extreme vertical button clutter without clear priority",
+        "Warning text 'Collateral for a future receipt is not available yet...' is dense and disheartening"
+      ],
+      "fixes": [
+        "Fix file/route navigation so asset management does not cross-render unconfirmed receive flows",
+        "Consolidate multiple receive destination buttons into a single primary action with segmented destination picker",
+        "Highlight positive path ('Accept as credit') with primary accent styling"
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 810,
+        "typography": 840,
+        "color": 820,
+        "data_legibility": 830,
+        "layout": 830,
+        "visceral_value": 820,
+        "responsive": 820,
+        "consistency": 850,
+        "trust": 840
+      },
+      "total": 829,
+      "top_issues": [
+        "Selection state between 'Hub' cards and 'Token' cards uses identical styling, making it difficult to distinguish context",
+        "Lend / Borrow toggle is tiny and placed awkwardly below token selection cards",
+        "Bottom action button 'Offer to the pool' is clipped below the visible screen area"
+      ],
+      "fixes": [
+        "Place Lend/Borrow segmented control at the very top of the screen as primary mode selector",
+        "Use compact horizontal chips for Token selection rather than bulky stacked cards",
+        "Ensure pool offer button is pinned or clearly visible above bottom navigation"
+      ]
+    },
+    {
+      "file": "13-lend-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 800,
+        "typography": 830,
+        "color": 820,
+        "data_legibility": 830,
+        "layout": 810,
+        "visceral_value": 810,
+        "responsive": 810,
+        "consistency": 840,
+        "trust": 830
+      },
+      "total": 820,
+      "top_issues": [
+        "'Interest you ask · basis points' with input '100' and '= 1.00% per term' is intimidating math for retail users",
+        "Term chips ('1 hour', '1 day', '1 month') lack intermediate durations (e.g. 7 days)",
+        "H1 POOL statistics show all 0.00 values with no indication of network activity or pool health"
+      ],
+      "fixes": [
+        "Allow direct APR/APY percentage input with auto-calculated basis points under the hood",
+        "Add 7-day and custom term options to duration selector",
+        "Add pool utilization percentage bar and historical return chart"
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 830,
+        "typography": 860,
+        "color": 840,
+        "data_legibility": 850,
+        "layout": 850,
+        "visceral_value": 860,
+        "responsive": 840,
+        "consistency": 880,
+        "trust": 880
+      },
+      "total": 854,
+      "top_issues": [
+        "'Kind: Lazy (hash of its board)' uses internal engineering jargon that alarms serious corporate treasurers",
+        "Signer list lacks public key export or multisig setup wizard action directly from this screen",
+        "Bottom card 'Take control of another entity' is a dead end with negative copy ('Nothing to take over')"
+      ],
+      "fixes": [
+        "Replace 'Lazy' label with descriptive status badge: 'Deterministic Board (Off-chain quorum)'",
+        "Add explicit 'Rotate Board' and 'Add Co-Signer' action buttons",
+        "Replace dead-end card with an 'Import External Entity / Multisig' action trigger"
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 850,
+        "typography": 870,
+        "color": 860,
+        "data_legibility": 880,
+        "layout": 870,
+        "visceral_value": 890,
+        "responsive": 850,
+        "consistency": 880,
+        "trust": 910
+      },
+      "total": 872,
+      "top_issues": [
+        "Promised balance $122.99 is visually prominent in violet, yet explanatory text notes 'if they vanish, that is the most you can lose' without immediate remediation CTA",
+        "'Save evidence bundle' button is secondary outlined style despite being the most critical self-custody guarantee",
+        "Signer and Entity addresses are truncated in keys card with no easy side-by-side comparison"
+      ],
+      "fixes": [
+        "Add an inline 'Request Collateral' or 'De-risk Now' button next to the $122.99 promised warning",
+        "Elevate 'Save evidence bundle' to high-contrast solid button with export icon",
+        "Provide one-tap verification modal showing state root commitments"
+      ]
+    },
+    {
+      "file": "15-sovereignty-bottom.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 860,
+        "layout": 840,
+        "visceral_value": 870,
+        "responsive": 840,
+        "consistency": 870,
+        "trust": 900
+      },
+      "total": 855,
+      "top_issues": [
+        "Counterparty row 'H1 hub' notes 'nothing at risk' in green, contradicting the $122.99 promised exposure shown at the top of the same screen",
+        "Dispute timing note ('they answer in 1 d, you in 1 d') is overly terse and lacks jurisdictional context",
+        "'Save evidence bundle' appears twice across scroll states without sticky persistence"
+      ],
+      "fixes": [
+        "Clarify counterparty status: differentiate uncollateralized credit from active dispute exposure",
+        "Add 'View Dispute Rules' disclosure detailing challenge periods and slash mechanics",
+        "Pin evidence export action to screen header or persistent action bar"
+      ]
+    }
+  ],
+  "overall": {
+    "total": 834,
+    "verdict": "The xln dark mobile wallet establishes an extraordinary standard of financial transparency, deterministic verification, and absolute bar scaling that blows away conventional Web3 interfaces. However, mobile interaction bugs—specifically floating primary CTA buttons frequently clipping inputs and scroll containers—alongside pervasive consensus-level jargon currently hamper onboarding for ordinary users.",
+    "priority_fixes": [
+      "Fix floating action button container styling across Pay, Swap, and Move screens by establishing a rigid 96px bottom-safe scroll margin so inputs and disclosures are never occluded.",
+      "Calibrate order book depth bars on Swap screen to reflect genuine absolute/relative volume scales rather than uniform fixed widths.",
+      "Translate raw protocol mechanics into accessible plain-language tooltips across On-chain vs Reserve vs Promised balances, especially demystifying 'Lazy board' and 'Depository may pull'.",
+      "Restructure multi-card selection matrices (notably the 3x2 Move screen and Lend/Borrow flow) into intuitive directional steppers to eliminate touch ambiguity.",
+      "Add one-tap share, CSV/PDF export, and clipboard triggers to all receipt, transaction detail, and evidence bundle views."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 42,
+        "verdict": "I'm terrified of pressing the wrong button because terms like 'Reserve Depository escrow' and 'Lazy hash' make me feel like I need a cryptography degree just to send $20.",
+        "blockers": [
+          "No simplified fiat onramp or plain '$20 to friend' flow on 01-home.png",
+          "Intimidating credit/collateral sliders on 02-pay.png and 05-swap.png"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 94,
+        "verdict": "This is the first off-chain wallet that visually captures bilateral channel balance, credit lines, and counterparty risk with total mathematical honesty.",
+        "blockers": [
+          "06-account.png needs explicit sub-satoshi/tick markings on channel capacity bars"
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 72,
+        "verdict": "The limit price and spread details are sharp, but identical bar lengths in the order book feel fake, and the swap button covers the bid depth.",
+        "blockers": [
+          "05-swap-bottom.png order book depth bars do not honor relative sizing",
+          "05-swap.png CTA covers collateral controls"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 88,
+        "verdict": "The instant cryptographic audit trail and evidence export are exceptional for board governance, though I need structured CSV/PDF reports rather than raw JSON bundles.",
+        "blockers": [
+          "08-activity-detail.png and 15-sovereignty.png lack formal signed PDF audit export",
+          "14-ownership.png lacks multisig quorum configuration UI"
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 70,
+        "verdict": "I can create a payment link and see instant settlement, but the receipt doesn't have my client's name or a professional invoice format I can attach to QuickBooks.",
+        "blockers": [
+          "04-receive.png does not generate formal invoice metadata or PDF export",
+          "03-receipt.png lacks counterparty note and invoice reference fields"
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 96,
+        "verdict": "Pure sovereign bliss: local runtime verification, exact frame commitment counters, and a zero-trust evidence bundle downloadable straight to my device.",
+        "blockers": [
+          "15-sovereignty-bottom.png lacks a direct simulation dry-run for unilateral on-chain exit disputes"
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 65,
+        "verdict": "The app looks gorgeous in dark mode, but the massive 'Pay' and 'Swap' buttons keep blocking the bottom fields whenever I try to navigate one-handed.",
+        "blockers": [
+          "02-pay.png and 05-swap.png have fixed bottom CTAs that overlap interactive form fields on mobile"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 91,
+        "verdict": "Being able to inspect counterparty credit lines, posted collateral, and bilateral frame counters at a glance gives me instantaneous risk assessment for my hub liquidity.",
+        "blockers": [
+          "13-lend-bottom.png shows all zeroes for pool utilization without historical yield curves"
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 76,
+        "verdict": "I can see the fee clearly down to five decimals, but moving funds between chains requires decoding ambiguous route hops across testnets.",
+        "blockers": [
+          "02-pay.png does not make destination chain clear beyond raw hub hops H1->H2",
+          "10-move.png multi-step cross-chain bridging is cluttered and confusing"
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 95,
+        "verdict": "In three minutes on the Sovereignty and Home screens, the absolute scale and green-versus-violet solvency model proved this is genuinely self-custodial finance, not another paper exchange.",
+        "blockers": []
+      }
+    ]
+  }
+}

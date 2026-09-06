@@ -1631,10 +1631,13 @@ textarea.input.boxed {
 /* ---------- qr ---------- */
 
 .qr {
-	background: #f6f4ef;
-	padding: 14px;
-	border-radius: 20px;
+	/* Scanners need a light field; a warm tone, a hairline and a soft shadow keep it from glaring on the dark page. */
+	background: #f1eee7;
+	padding: 12px;
+	border-radius: 18px;
 	display: inline-block;
+	border: 1px solid var(--line);
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
 }
 
 .qr img {
@@ -1863,6 +1866,7 @@ textarea.input.boxed {
 	text-align: left;
 }
 .desk-table td {
+	font-variant-numeric: tabular-nums;
 	text-align: right;
 	padding: 8px 10px;
 	border-bottom: 1px solid var(--line);
@@ -2172,3 +2176,29 @@ textarea.input.boxed {
 .spectrum-buffer { display: flex; align-items: center; gap: 8px; min-height: 44px; }
 .spectrum-buffer input { min-width: 18px; min-height: 18px; accent-color: var(--risk); }
 .receive-spectrum .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+
+/* The dispute action reads as the serious, unilateral step it is. */
+[data-testid='account-dispute'] {
+	border-color: color-mix(in srgb, var(--dispute) 55%, transparent);
+	color: var(--dispute);
+}
+[data-testid='account-dispute']:hover {
+	background: color-mix(in srgb, var(--dispute) 12%, transparent);
+}
+
+
+/* Paper: receipts, the sovereignty page and payment requests print as clean documents. */
+@media print {
+	.rail, .tabbar, .tour, .toasts, .icon-btn, .btn, nav, [data-testid='nav-home'], [data-testid='nav-manage'], [data-testid='nav-settings'], [data-testid='nav-activity'] {
+		display: none !important;
+	}
+	body, .app, .screen, .card, .sheet, .sheet-card {
+		background: #fff !important;
+		color: #111 !important;
+		box-shadow: none !important;
+	}
+	.two-col { display: block !important; }
+	.card, .sheet-card { border: 1px solid #ccc !important; page-break-inside: avoid; }
+	a::after { content: ''; }
+}

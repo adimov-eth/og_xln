@@ -168,6 +168,45 @@ function MovementDetail({ movement, names }: { movement: Movement; names: Map<st
 			<div className="state st-settled" style={{ justifyContent: 'center', display: 'flex' }}>
 				From your runtime's committed frames
 			</div>
+			<div className="actions" style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+				<button
+					type="button"
+					className="btn quiet"
+					style={{ flex: 1 }}
+					data-testid="movement-copy"
+					onClick={() => {
+						const lines = [
+							`${movement.title}${party ? ` ${party}` : ''}${amount ? ` · ${amount}` : ''}`,
+							`State: ${movement.state}`,
+							movement.timestamp ? `When: ${new Date(movement.timestamp).toISOString()}` : '',
+							`Frame: #${movement.height}`,
+							movement.hash ? `Proof: ${movement.hash}` : '',
+							'Signed by both parties · xln',
+						].filter(Boolean);
+						void navigator.clipboard?.writeText(lines.join('\n'));
+					}}
+				>
+					Copy
+				</button>
+				<button
+					type="button"
+					className="btn quiet"
+					style={{ flex: 1 }}
+					data-testid="movement-download"
+					title="This entry with its frame, proof and every committed event, as a file for the books"
+					onClick={() => {
+						const blob = new Blob([JSON.stringify(movement, (_key, value) => (typeof value === 'bigint' ? String(value) : value), 2)], { type: 'application/json' });
+						const url = URL.createObjectURL(blob);
+						const link = document.createElement('a');
+						link.href = url;
+						link.download = `xln-proof-frame-${movement.height}.json`;
+						link.click();
+						setTimeout(() => URL.revokeObjectURL(url), 1_000);
+					}}
+				>
+					Download proof
+				</button>
+			</div>
 		</>
 	);
 }

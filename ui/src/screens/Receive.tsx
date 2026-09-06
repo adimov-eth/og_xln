@@ -129,24 +129,19 @@ export function Receive() {
 				<div className="card">
 					<h3 className="caps">Share</h3>
 					<p className="note" style={{ marginTop: 10 }}>
-						The link opens this wallet with the amount and note filled in. The invoice is the same request as text, for any xln wallet.
+						Send the link or show the code. It opens in any browser with the amount and note filled in; the payer just confirms.
 					</p>
-					<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
-						<button type="button" className="btn ghost" onClick={() => void copy(invoice, 'Invoice')}>
-							<Icon name="copy" size={14} /> Copy invoice
-						</button>
-						<button type="button" className="btn" onClick={() => void copy(walletHref, 'Payment link')}>
-							<Icon name="link" size={14} /> Copy link
-						</button>
-					</div>
-					<button type="button" className="btn quiet" style={{ marginTop: 6 }} onClick={() => void copy(deepLink, 'App link')}>
-						Copy xln:// app link
+					<button type="button" className="btn primary" style={{ marginTop: 14, width: '100%' }} onClick={() => void copy(walletHref, 'Payment link')} data-testid="receive-copy-link">
+						<Icon name="link" size={14} /> Copy payment link
+					</button>
+					<button type="button" className="btn quiet" style={{ marginTop: 8, width: '100%' }} onClick={() => window.print()} data-testid="receive-print" title="The code and the amount on paper, or as a PDF to attach to an invoice">
+						Print / PDF
 					</button>
 				</div>
 				<div className="card">
 					<h3 className="caps">Your entity id</h3>
 					<p style={{ marginTop: 8 }}>
-						<CopyId value={entityId} label="Entity id" full />
+						<CopyId value={entityId} label="Entity id" head={10} tail={6} />
 					</p>
 					<p className="note" style={{ marginTop: 10 }}>
 						Anyone with an account route to you can pay this id directly. Payments arrive instantly up to your inbound room.
@@ -155,5 +150,16 @@ export function Receive() {
 			</div>
 			</div>
 		</div>
+					<details style={{ marginTop: 8 }}>
+						<summary className="note" style={{ cursor: 'pointer' }}>Other ways to share</summary>
+						<div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+							<button type="button" className="btn quiet" style={{ flex: 1 }} onClick={() => void copy(invoice, 'Invoice')} title="The same request as plain text, for a wallet that has no browser">
+								Copy as text
+							</button>
+							<button type="button" className="btn quiet" style={{ flex: 1 }} onClick={() => void copy(deepLink, 'App link')} title="Opens the installed xln app directly">
+								Copy app link
+							</button>
+						</div>
+					</details>
 	);
 }

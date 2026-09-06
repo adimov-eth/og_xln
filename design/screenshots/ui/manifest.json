@@ -1,12 +1,16 @@
 {
   "baseUrl": "http://localhost:5183",
-  "takenAt": "2026-09-04T16:42:57.746Z",
+  "takenAt": "2026-09-06T02:03:41.568Z",
   "variants": {
     "desktop-dark": [
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/01-home.png",
+      "/Users/zigota/xln/design/screenshots/ui/desktop-dark/02-pay.png",
+      "/Users/zigota/xln/design/screenshots/ui/desktop-dark/03-receipt.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/04-receive.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/05-swap.png",
+      "/Users/zigota/xln/design/screenshots/ui/desktop-dark/05b-swap-cross.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/06-account.png",
+      "/Users/zigota/xln/design/screenshots/ui/desktop-dark/06b-dispute.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/07-activity.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/08-activity-detail.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/10-move.png",
@@ -19,29 +23,22 @@
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/17-palette.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/09-settings.png"
     ],
-    "desktop-light": [
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/01-home.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/04-receive.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/05-swap.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/06-account.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/07-activity.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/08-activity-detail.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/10-move.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/11-manage.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/12-assets.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/13-lend.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/14-ownership.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/15-sovereignty.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/16-desk.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/17-palette.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-light/09-settings.png"
-    ],
     "mobile-dark": [
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/01-home.png",
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/01-home-bottom.png",
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/02-pay.png",
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/03-receipt.png",
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/03-receipt-bottom.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/04-receive.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/04-receive-bottom.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/05-swap.png",
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/05-swap-bottom.png",
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/05b-swap-cross.png",
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/05b-swap-cross-bottom.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06-account.png",
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06-account-bottom.png",
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06b-dispute.png",
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06b-dispute-bottom.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/07-activity.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/08-activity-detail.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/10-move.png",
@@ -52,27 +49,7 @@
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/13-lend.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/13-lend-bottom.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/14-ownership.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/15-sovereignty.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/15-sovereignty-bottom.png"
-    ],
-    "mobile-light": [
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/01-home.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/04-receive.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/04-receive-bottom.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/05-swap.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/06-account.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/07-activity.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/08-activity-detail.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/10-move.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/10-move-bottom.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/11-manage.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/12-assets.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/12-assets-bottom.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/13-lend.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/13-lend-bottom.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/14-ownership.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/15-sovereignty.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-light/15-sovereignty-bottom.png"
+      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/15-sovereignty.png"
     ]
   }
 }

@@ -125,10 +125,6 @@ export function Swap() {
 			return null;
 		}
 	}, [giveText, giveMeta.decimals]);
-	const parsedWant = useMemo(() => {
-		try {
-			const value = parseAmount(wantText || impliedWantText || '0', wantMeta.decimals);
-			return value > 0n ? value : null;
 	// No price typed yet: quote at the best resting level, so the ticket never sits at 0.00 while the book is live.
 	const impliedWantText = useMemo(() => {
 		if (!book || wantText.trim() || !giveText.trim()) return '';
@@ -158,6 +154,10 @@ export function Swap() {
 		}
 	}, [wantText, impliedWantText, wantMeta.decimals]);
 
+	const parsedWant = useMemo(() => {
+		try {
+			const value = parseAmount(wantText || impliedWantText || '0', wantMeta.decimals);
+			return value > 0n ? value : null;
 	const prepared = useMemo(() => {
 		if (!xln || !parsedGive || !parsedWant || giveTokenId === wantTokenId) return null;
 		try {

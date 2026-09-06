@@ -16,7 +16,7 @@ import { join, resolve } from 'node:path';
 
 const BASE_URL = process.env['UI_BASE_URL'] || 'http://localhost:5183';
 const OUT_ROOT = resolve(import.meta.dir, '../../design/screenshots/ui');
-const BOOT_TIMEOUT = 180_000;
+const BOOT_TIMEOUT = 240_000;
 const STEP_TIMEOUT = 60_000;
 
 type Variant = { name: string; width: number; height: number; theme: 'dark' | 'light'; mobile: boolean };
@@ -47,7 +47,19 @@ async function enterSandbox(page: Page): Promise<void> {
 	await page.locator('textarea').fill(HDNodeWallet.createRandom().mnemonic?.phrase ?? '');
 	await page.locator('button[type="submit"]').click();
 	await page.getByTestId('home-total').waitFor({ timeout: BOOT_TIMEOUT });
-	await page.getByTestId('account-row').first().waitFor({ timeout: 90_000 });
+	try {
+		await page.getByTestId('account-row').first().waitFor({ timeout: 90_000 });
+	} catch (error) {
+		// The hub did not answer this wallet in time; a second fresh wallet usually does.
+		process.stderr.write(`hub account did not open, retrying with a new wallet: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}\n`);
+		await page.goto(BASE_URL);
+		await page.getByTestId('gate-stack').waitFor({ timeout: 20_000 });
+		await page.getByRole('button', { name: /Import a phrase/ }).click();
+		await page.locator('textarea').fill(HDNodeWallet.createRandom().mnemonic?.phrase ?? '');
+		await page.locator('button[type="submit"]').click();
+		await page.getByTestId('home-total').waitFor({ timeout: BOOT_TIMEOUT });
+		await page.getByTestId('account-row').first().waitFor({ timeout: 90_000 });
+	}
 }
 
 
@@ -258,10 +270,32 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 		await page.waitForTimeout(1_500);
 	});
 	await home();
+	await attempt('05b-swap-cross', async () => {
+		await page.getByTestId('home-swap').click();
+		const cross = page.getByRole('button', { name: 'Across networks', exact: true });
+		await cross.waitFor({ timeout: 10_000 });
+		if (await cross.isDisabled()) throw new Error('no entity on another network yet');
+		await cross.click();
+		const open = page.getByRole('button', { name: /Open incoming account with/ });
+		if (await open.isVisible().catch(() => false)) {
+			await open.click();
+			await open.waitFor({ state: 'detached', timeout: 90_000 }).catch(() => undefined);
+		}
+		await page.getByTestId('swap-give').fill('20');
+		await page.waitForTimeout(1_500);
+	});
+	await home();
 	await attempt('06-account', async () => {
 		await page.getByTestId('account-row').first().click();
 		await page.getByTestId('account-status').waitFor();
 	});
+	await attempt('06b-dispute', async () => {
+		await page.getByTestId('account-dispute').click();
+		await page.getByTestId('dispute-prepare').waitFor({ timeout: 10_000 });
+		await page.waitForTimeout(400);
+	});
+	await page.keyboard.press('Escape');
+	await page.waitForTimeout(300);
 	await home();
 	await attempt('07-activity', async () => {
 		await page.getByRole('link', { name: 'Activity' }).first().click();
@@ -325,7 +359,8 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 		await page.getByTestId('density-comfort').click();
 	}
 	await attempt('09-settings', async () => {
-		await page.getByRole('link', { name: 'Settings' }).first().click();
+		await goHome(page);
+		await page.getByTestId('nav-settings').locator('visible=true').first().click();
 		await page.getByText('Bar scale').waitFor();
 	});
 

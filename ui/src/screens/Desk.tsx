@@ -94,7 +94,7 @@ export function Desk() {
 					</div>
 				</div>
 				<div className="card">
-					<div className="k">At risk</div>
+					<div className="k">Promised</div>
 					<div className="v num" style={{ color: 'var(--risk)' }}>
 						{formatUsd(wallet.usd.risk)}
 					</div>
@@ -117,10 +117,10 @@ export function Desk() {
 									<th>Account · lane</th>
 									<th>Position</th>
 									<th>Secured</th>
-									<th>At risk</th>
+									<th>Promised</th>
 									<th>You owe</th>
 									<th>Send · receive</th>
-									<th>Lines out · in</th>
+									<th style={{ whiteSpace: 'nowrap' }}>Credit out · in</th>
 									<th>Frame</th>
 									<th className="bar-cell">−send ‖ receive+</th>
 								</tr>
@@ -139,9 +139,9 @@ export function Desk() {
 												<span className="faint"> · {getTokenMeta(token.tokenId).symbol}</span>
 											</td>
 											<td className={`num ${token.signed > 0n ? 'st-settled' : token.signed < 0n ? 'st-pending' : ''}`}>{formatSigned(token.signed, getTokenMeta(token.tokenId).decimals)}</td>
-											<td className="num" style={{ color: 'var(--coll)' }}>{secured > 0n ? money(token.tokenId, secured) : '·'}</td>
-											<td className="num" style={{ color: risk > 0n ? 'var(--risk)' : undefined }}>{risk > 0n ? money(token.tokenId, risk) : '·'}</td>
-											<td className="num" style={{ color: owed > 0n ? 'var(--debt)' : undefined }}>{owed > 0n ? money(token.tokenId, owed) : '·'}</td>
+											<td className="num" style={{ color: 'var(--coll)' }}>{secured > 0n ? money(token.tokenId, secured) : '—'}</td>
+											<td className="num" style={{ color: risk > 0n ? 'var(--risk)' : undefined }}>{risk > 0n ? money(token.tokenId, risk) : '—'}</td>
+											<td className="num" style={{ color: owed > 0n ? 'var(--debt)' : undefined }}>{owed > 0n ? money(token.tokenId, owed) : '—'}</td>
 											<td className="num faint">
 												{money(token.tokenId, d.outCapacity)} · {money(token.tokenId, d.inCapacity)}
 											</td>

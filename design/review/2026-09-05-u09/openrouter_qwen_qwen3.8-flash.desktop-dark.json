@@ -1,0 +1,608 @@
+{
+  "reviewer": "openrouter/qwen/qwen3.8-flash",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 810,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 770,
+        "layout": 780,
+        "visceral_value": 820,
+        "responsive": 680,
+        "consistency": 800,
+        "trust": 830
+      },
+      "total": 790,
+      "top_issues": [
+        "The 'How to read this' tutorial block is too prominent and uses credit, promised, and collateral jargon before a first-time user can act.",
+        "Violet promised $115.00 is the largest balance component but is not visually marked as unsecured risk.",
+        "The recent list shows 'Swap placed 18.58 USDC' without clear direction, counterparty exposure, or next action."
+      ],
+      "fixes": [
+        "Collapse the tutorial into a dismissible one-line explanation with a 'Learn how bars work' link.",
+        "Add an 'unsecured' or 'at risk' badge beside violet promised amounts and a coverage percentage.",
+        "Make open swap rows actionable with 'View fill', 'Cancel', or 'Settled' state."
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 820,
+        "typography": 810,
+        "color": 800,
+        "data_legibility": 790,
+        "layout": 820,
+        "visceral_value": 840,
+        "responsive": 700,
+        "consistency": 810,
+        "trust": 860
+      },
+      "total": 810,
+      "top_issues": [
+        "The raw recipient hex address dominates the 'To' field and makes a simple payment feel unsafe.",
+        "Fee is shown as 'under 0.01 USDC' and route fee text is microscopic, so cost certainty is weak.",
+        "The before/after account card uses 'owes you' in a way that can be read as either party's debt."
+      ],
+      "fixes": [
+        "Show recipient display name or H2 badge first, with address truncated behind copy.",
+        "Replace 'under 0.01' with exact fee in USDC and a small fiat estimate.",
+        "Label the account card 'H1 owes you 115.00' and 'After: H1 owes you 90.00'."
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 840,
+        "typography": 830,
+        "color": 820,
+        "data_legibility": 800,
+        "layout": 830,
+        "visceral_value": 870,
+        "responsive": 760,
+        "consistency": 820,
+        "trust": 880
+      },
+      "total": 833,
+      "top_issues": [
+        "'Settled 04:50:31 in 8 s' mixes timestamp and duration awkwardly.",
+        "The proof hash is truncated with no visible copy or verify action.",
+        "The receipt omits fee, recipient address, and counterparty identity needed for forwarding."
+      ],
+      "fixes": [
+        "Use 'Settled in 8 s at 04:50:31' or separate duration and time.",
+        "Add copy and open-proof actions next to the full hash.",
+        "Include recipient, fee, route, and frame hash in the receipt body."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 800,
+        "typography": 810,
+        "color": 790,
+        "data_legibility": 740,
+        "layout": 800,
+        "visceral_value": 780,
+        "responsive": 690,
+        "consistency": 780,
+        "trust": 800
+      },
+      "total": 781,
+      "top_issues": [
+        "'Prepare incoming account' and 'inbound room' are Lightning/channel jargon that Maya and Sofia will not understand.",
+        "The screen is effectively an invoice but is not labeled as an invoice or payment request.",
+        "There is no visible status for whether the requested payment has arrived."
+      ],
+      "fixes": [
+        "Title the screen 'Request payment' and add 'Create invoice' wording.",
+        "Replace 'inbound room' with 'incoming capacity'.",
+        "Show live status: waiting, paid, or settled, with receipt link."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 800,
+        "typography": 790,
+        "color": 780,
+        "data_legibility": 750,
+        "layout": 800,
+        "visceral_value": 800,
+        "responsive": 700,
+        "consistency": 790,
+        "trust": 820
+      },
+      "total": 784,
+      "top_issues": [
+        "'Up to 150.00 with H1' above the pay amount is ambiguous: limit, balance, or capacity?",
+        "Hub fee is given as '1 bps up to 0.0000 WETH', which is not actionable for a power user.",
+        "The order book bars lack a visible scale, depth totals, and clear side labels."
+      ],
+      "fixes": [
+        "Label the capacity line 'You can pay up to 150.00 USDC with H1'.",
+        "Show exact fee in both WETH and USDC, plus worst-case fill price.",
+        "Add axis or max-depth label to book bars and show total ask/bid size."
+      ]
+    },
+    {
+      "file": "05b-swap-cross.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 760,
+        "typography": 750,
+        "color": 740,
+        "data_legibility": 690,
+        "layout": 700,
+        "visceral_value": 760,
+        "responsive": 640,
+        "consistency": 750,
+        "trust": 820
+      },
+      "total": 737,
+      "top_issues": [
+        "The tooltip overlaps the collateral slider and obscures the state needed to continue.",
+        "Collateral controls are contradictory: '100% collateral' label, '0% collateral' value, and slider position do not read as one state.",
+        "The primary CTA is disabled with only a red error line and no direct next action.",
+        "Cross-network fee and total cost are absent, which breaks Fatima's task."
+      ],
+      "fixes": [
+        "Move tooltip content into a persistent 'Why capacity is needed' panel.",
+        "Show selected collateral as one clear control with exact resulting credit.",
+        "Replace disabled Swap button with 'Prepare incoming capacity' CTA.",
+        "Add fee summary: hub fees, gas, collateral tariff, and net received."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 810,
+        "typography": 800,
+        "color": 800,
+        "data_legibility": 780,
+        "layout": 810,
+        "visceral_value": 820,
+        "responsive": 700,
+        "consistency": 800,
+        "trust": 860
+      },
+      "total": 801,
+      "top_issues": [
+        "'they owe you' is grammatically weak and can confuse bilateral credit direction.",
+        "The WETH lane shows a nearly empty bar with 'receive up to 0.07', making scale and risk hard to judge.",
+        "Dispute is present as a button but the account screen does not summarize active risk or challenge window prominently."
+      ],
+      "fixes": [
+        "Use 'H1 owes you' and 'You owe H1' consistently.",
+        "Add collateral coverage percentage and uncovered amount badges to each lane.",
+        "Make Dispute a primary risk action with visible 'answer within 1 d' countdown."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 790,
+        "color": 780,
+        "data_legibility": 750,
+        "layout": 790,
+        "visceral_value": 780,
+        "responsive": 690,
+        "consistency": 780,
+        "trust": 830
+      },
+      "total": 778,
+      "top_issues": [
+        "The selected row highlight is too subtle, making the detail panel feel disconnected.",
+        "'Swap placed 18.58 USDC' lacks side, asset pair, and fill status.",
+        "Proof hash is truncated and there is no copy, open, or dispute action in the detail panel."
+      ],
+      "fixes": [
+        "Increase selected-row contrast and connect it to the detail panel with a pointer.",
+        "Add subtitles such as 'Buy WETH with USDC at 2,500.50'.",
+        "Add copy proof, open evidence, and dispute actions."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 790,
+        "typography": 790,
+        "color": 780,
+        "data_legibility": 770,
+        "layout": 790,
+        "visceral_value": 780,
+        "responsive": 690,
+        "consistency": 790,
+        "trust": 840
+      },
+      "total": 783,
+      "top_issues": [
+        "The detail panel proves the event but gives no user action for verification or forwarding.",
+        "Timestamp lacks timezone, which weakens auditability for Ravi and Kenji.",
+        "The proof hash remains truncated and visually low-contrast."
+      ],
+      "fixes": [
+        "Add 'Copy receipt', 'Open proof', and 'Export frame' buttons.",
+        "Show UTC plus local time, e.g. '04:50:31 UTC'.",
+        "Increase proof hash contrast and allow full-hash expansion."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 790,
+        "typography": 760,
+        "color": 770,
+        "data_legibility": 730,
+        "layout": 700,
+        "visceral_value": 750,
+        "responsive": 650,
+        "consistency": 760,
+        "trust": 780
+      },
+      "total": 745,
+      "top_issues": [
+        "Bar-scale configuration is abstract and placed before practical wallet settings.",
+        "Design controls such as Material, Accent, Numbers, and Risk color make the product feel unfinished or toy-like for Dmitri.",
+        "Vault actions at the bottom have weak hierarchy despite being security-critical."
+      ],
+      "fixes": [
+        "Move bar scale under Appearance with a live preview and Auto default.",
+        "Hide or collapse design presets behind an advanced section.",
+        "Promote Vault, recovery phrase, lock, and runtime identity into a Security card."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 780,
+        "typography": 780,
+        "color": 770,
+        "data_legibility": 740,
+        "layout": 780,
+        "visceral_value": 780,
+        "responsive": 690,
+        "consistency": 780,
+        "trust": 810
+      },
+      "total": 770,
+      "top_issues": [
+        "'Account' as a destination is ambiguous because it does not show with whom the account is.",
+        "The flow lacks fee, arrival time, and on-chain versus instant cost distinction.",
+        "'Add to batch' appears without any visible batch queue or confirmation."
+      ],
+      "fixes": [
+        "Show 'Account with H1' in the destination card.",
+        "Add a summary row: fee, settlement type, and expected arrival.",
+        "Show a batch preview panel when Add to batch is available."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 750,
+        "premium": 760,
+        "typography": 760,
+        "color": 740,
+        "data_legibility": 720,
+        "layout": 680,
+        "visceral_value": 730,
+        "responsive": 650,
+        "consistency": 760,
+        "trust": 780
+      },
+      "total": 733,
+      "top_issues": [
+        "Manage is mostly a directory and does not help the user act on the account shown.",
+        "Sovereignty, Ownership, and Assets overlap conceptually, creating navigation uncertainty.",
+        "The large 'Needs attention' panel is empty and wastes prime screen space."
+      ],
+      "fixes": [
+        "Merge Manage into Home or Settings as contextual actions.",
+        "Rename Ownership to 'Board and signers' and Assets to 'On-chain assets'.",
+        "Show pending disputes, credit requests, or open swaps in Needs attention, or hide the panel when empty."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 750,
+        "typography": 740,
+        "color": 740,
+        "data_legibility": 690,
+        "layout": 700,
+        "visceral_value": 720,
+        "responsive": 640,
+        "consistency": 730,
+        "trust": 770
+      },
+      "total": 722,
+      "top_issues": [
+        "The faucet flow mixes token selection, receiving, collateral, and credit extension into one overloaded column.",
+        "'Depository may pull 0.00' is repeated and unclear.",
+        "The 'Receive USDC from H1' button appears disabled without a visible reason.",
+        "Long decimals such as 74.499977 and 81.949975 reduce legibility."
+      ],
+      "fixes": [
+        "Separate faucet request from account preparation.",
+        "Explain Depository in one plain sentence and show only relevant pull risk.",
+        "Add disabled-state reason and validation next to Receive.",
+        "Round display amounts to 4 decimals with full precision behind details."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 730,
+        "premium": 740,
+        "typography": 730,
+        "color": 730,
+        "data_legibility": 680,
+        "layout": 700,
+        "visceral_value": 700,
+        "responsive": 660,
+        "consistency": 740,
+        "trust": 750
+      },
+      "total": 716,
+      "top_issues": [
+        "Pool stats are all zero, so the user cannot judge utilization, rate, or counterparty risk.",
+        "The flow does not show what happens if the hub defaults or the loan is not repaid.",
+        "The CTA is disabled with no validation message.",
+        "Term and interest controls are cramped and do not feel like a serious lending product."
+      ],
+      "fixes": [
+        "Show available, borrowed, utilization, APY, and worst-case loss.",
+        "Add enforceability line: collateral, dispute window, and settlement path.",
+        "Enable CTA only after amount and term are valid, with inline errors.",
+        "Use a compact table for terms and rates."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 720,
+        "typography": 730,
+        "color": 700,
+        "data_legibility": 680,
+        "layout": 600,
+        "visceral_value": 680,
+        "responsive": 620,
+        "consistency": 720,
+        "trust": 790
+      },
+      "total": 694,
+      "top_issues": [
+        "The screen explains ownership but offers no action to add signers, change threshold, or rotate the board.",
+        "'Take control of another entity' is an empty panel with no useful next step.",
+        "There is no export or proof of the board state for a DAO treasurer.",
+        "The layout leaves most of the screen empty."
+      ],
+      "fixes": [
+        "Add 'Add signer', 'Change threshold', and 'Rotate board' actions.",
+        "Show board hash and export proof button.",
+        "Remove or contextualize the empty take-over panel.",
+        "Compact the board card into a settings-style table."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 820,
+        "typography": 810,
+        "color": 800,
+        "data_legibility": 780,
+        "layout": 780,
+        "visceral_value": 850,
+        "responsive": 680,
+        "consistency": 800,
+        "trust": 900
+      },
+      "total": 806,
+      "top_issues": [
+        "The right 'Per counterparty' text appears truncated after 'Manage -> Dispute'.",
+        "There is no direct Dispute action from the risk card despite being the key security task.",
+        "'Save evidence bundle' does not preview what files or signatures it contains.",
+        "The $90.00 at risk figure is not linked to a concrete remediation action."
+      ],
+      "fixes": [
+        "Make the counterparty card full width and add a Dispute button.",
+        "Show bundle contents: frames, signatures, hashes, and JSON size.",
+        "Add 'Collateralize promise' or 'Open dispute' beside at-risk amount.",
+        "Use a risk table with coverage, uncovered, and deadline."
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 800,
+        "typography": 760,
+        "color": 750,
+        "data_legibility": 690,
+        "layout": 700,
+        "visceral_value": 800,
+        "responsive": 620,
+        "consistency": 760,
+        "trust": 820
+      },
+      "total": 748,
+      "top_issues": [
+        "The screen is labeled 'Main' even though the file and settings call it Desk.",
+        "Table columns are clipped, especially 'CREDIT OUT', without a visible scroll affordance.",
+        "The order book touches the right edge and lacks full price/size context.",
+        "The dense layout is powerful but not readable at a glance for Marcus."
+      ],
+      "fixes": [
+        "Title the screen 'Desk' and add a back-to-home control.",
+        "Add horizontal scroll, column resizing, or sticky column headers.",
+        "Give the order book a fixed minimum width and axis labels.",
+        "Add risk heat colors for uncovered exposure."
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 800,
+        "typography": 790,
+        "color": 780,
+        "data_legibility": 760,
+        "layout": 800,
+        "visceral_value": 820,
+        "responsive": 720,
+        "consistency": 790,
+        "trust": 720
+      },
+      "total": 778,
+      "top_issues": [
+        "The palette shows no search query or input caret state, so it feels static.",
+        "The background scrim is too transparent, leaving the dense desk content visually competing with the command list.",
+        "There are no recent commands, keyboard hints, or result counts."
+      ],
+      "fixes": [
+        "Show an active text cursor and placeholder 'Jump to...'.",
+        "Increase scrim opacity and blur the background.",
+        "Add recent items and arrow/enter hints."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 767,
+    "verdict": "The desktop-dark set communicates a genuinely differentiated proof-and-risk wallet, with receipt, account, and sovereignty screens carrying most of the trust burden. It is not yet a broad consumer product because jargon, incomplete cross-network fees, missing dispute and invoice flows, and dense truncation force users to decode the model before acting.",
+    "priority_fixes": [
+      "Add a plain-language mode that replaces frames, promised, inbound room, bilateral, and Depository with user-actionable wording and tooltips.",
+      "Make risk explicit everywhere violet appears: unsecured badge, collateral coverage percentage, uncovered amount, and a direct Dispute or Collateralize action.",
+      "Complete cross-network swap with fee summary, disabled-state reason, and a primary 'Prepare capacity' action instead of a dead Swap button.",
+      "Turn Receive into a real invoice/payment-request flow with status, copyable link, amount, note, and forwardable receipt.",
+      "Fix dense layout truncation in Desk, Activity detail, and Sovereignty by adding full proof actions, scroll affordances, and stronger selected states."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 62,
+        "verdict": "I can probably pay if someone points at the big button, but too many words make me nervous.",
+        "blockers": [
+          "01-home.png: 'How to read this' and promised/collateral jargon appear before action.",
+          "02-pay.png: raw hex recipient address makes the payment feel unsafe.",
+          "04-receive.png: 'inbound room' and 'prepare incoming account' are unclear.",
+          "01-home.png: 'Add money' is low contrast and not a clear primary path."
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 74,
+        "verdict": "The credit-versus-collateral model is real, but I need a faster risk read and the actual dispute flow.",
+        "blockers": [
+          "01-home.png: violet promised balance is not marked as unsecured.",
+          "06-account.png: credit line, collateral, and debt direction need clearer labels.",
+          "Missing screen: no dispute detail or challenge-window timer is shown.",
+          "15-sovereignty.png: at-risk amount is not linked to a one-click dispute action."
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 66,
+        "verdict": "The order book is promising, but fees, depth, and fill history are not professional enough for daily swaps.",
+        "blockers": [
+          "05-swap.png: fee and book depth are imprecise.",
+          "05b-swap-cross.png: cross-network fee is missing and controls are contradictory.",
+          "07-activity.png: swap history lacks side, price, and fill status.",
+          "08-activity-detail.png: no copy/open proof actions for a traded frame."
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 78,
+        "verdict": "The proof and frame language is strong for board reporting, but governance and evidence export are incomplete.",
+        "blockers": [
+          "14-ownership.png: no way to add signers, change threshold, or rotate board.",
+          "08-activity-detail.png: proof hash is truncated and not directly exportable.",
+          "15-sovereignty.png: evidence bundle contents are not previewed.",
+          "Missing screen: multi-entity or DAO account management."
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 72,
+        "verdict": "I can get paid and show a receipt, but the receive screen does not feel like an invoice product.",
+        "blockers": [
+          "04-receive.png: not labeled as invoice and lacks request status.",
+          "03-receipt.png: proof hash truncated and missing fee/recipient details.",
+          "Missing screen: invoice list or sent-request tracking.",
+          "02-pay.png: recipient address presentation is unfriendly for client-facing payments."
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 68,
+        "verdict": "The on-chain proof story is good, but I cannot verify or dispute from the screens shown.",
+        "blockers": [
+          "Missing screen: dispute flow and challenge-window countdown.",
+          "03-receipt.png: no full proof hash or verification action.",
+          "15-sovereignty.png: evidence bundle action lacks contents and verification path.",
+          "08-activity-detail.png: no copy, open, or dispute actions."
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 45,
+        "verdict": "This is a desktop product in these screenshots; I cannot judge one-hand checkout at all.",
+        "blockers": [
+          "No mobile-dark screenshots are provided.",
+          "02-pay.png: desktop two-column form is not one-hand usable.",
+          "04-receive.png: QR screen may work but no mobile variant is shown.",
+          "16-desk.png and 17-palette.png are desktop-only patterns."
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 70,
+        "verdict": "The Desk and Account views have the right data density, but truncation and weak risk highlighting slow operator judgment.",
+        "blockers": [
+          "16-desk.png: table columns and order book are clipped.",
+          "06-account.png: collateral coverage and uncovered exposure are not glanceable.",
+          "15-sovereignty.png: per-counterparty risk text is truncated.",
+          "Missing view: counterparty risk heat or exposure ranking."
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 55,
+        "verdict": "The cross-network concept is visible, but I cannot move USDT across chains or see the fee from these screens.",
+        "blockers": [
+          "05b-swap-cross.png: no fee summary.",
+          "05b-swap-cross.png: flow is USDC to WETH, not USDT cross-border transfer.",
+          "05b-swap-cross.png: disabled CTA does not guide the next step.",
+          "Missing screen: dedicated cross-chain transfer or hub routing flow."
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 73,
+        "verdict": "I can tell this is different because of frames, proofs, and risk bars, but the product still feels unfinished around governance and settings.",
+        "blockers": [
+          "09-settings.png: design controls distract from the core value proposition.",
+          "11-manage.png: sparse and conceptual rather than actionable.",
+          "14-ownership.png: ownership screen has no operating actions.",
+          "01-home.png: first-time explanation is too dense and jargon-heavy."
+        ]
+      }
+    ]
+  }
+}

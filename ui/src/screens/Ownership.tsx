@@ -92,7 +92,7 @@ export function Ownership() {
 						</div>
 						<div className="kv">
 							<span className="k">Kind</span>
-							<span className="v">{numbered ? 'Registered on the EntityProvider' : 'Lazy (hash of its board)'}</span>
+							<span className="v">{numbered ? 'Registered on the EntityProvider' : 'Self-issued (its id is the hash of its board)'}</span>
 						</div>
 						<div className="kv">
 							<span className="k">Threshold</span>
@@ -100,6 +100,12 @@ export function Ownership() {
 								{threshold.toString()} of {validators.length}
 							</span>
 						</div>
+						{validators.length === 1 ? (
+							<p className="note" style={{ marginTop: 8 }}>
+								One key runs this entity today: yours. A board can grow to several signers with a quorum (2 of 3, 3 of 5); every change is a rotation
+								signed by the current board and published on-chain, so a lost key never means a lost entity.
+							</p>
+						) : null}
 						{validators.map(validator => (
 							<div key={validator} className="kv">
 								<span className="k">Signer</span>

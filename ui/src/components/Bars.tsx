@@ -96,10 +96,10 @@ export function Legend({ places = false }: { places?: boolean }) {
 				</>
 			) : null}
 			<span>
-				<i className="c-coll" /> collateral
+				<i className="c-coll" /> secured (collateral)
 			</span>
 			<span>
-				<i className="c-risk" /> at risk
+				<i className="c-risk" /> promised
 			</span>
 			<span>
 				<i className="c-debt" /> you owe

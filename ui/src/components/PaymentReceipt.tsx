@@ -101,6 +101,27 @@ export function PaymentReceiptSheet() {
 				>
 					Copy receipt
 				</button>
+				<button
+					type="button"
+					className="btn"
+					style={{ flex: 1 }}
+					data-testid="receipt-download"
+					title="The receipt with its frame, proof and every event, as a file for your books"
+					onClick={() => {
+						const blob = new Blob([JSON.stringify({ kind: sent ? 'paid' : 'received', amount: formatMoney(amount, meta.decimals), token: meta.symbol, counterparty, via: via || undefined, description: description || undefined, settledAt: clock || undefined, frame: receipt.height, proof: proof || undefined, event: receipt.name, data }, (_key, value) => (typeof value === 'bigint' ? String(value) : value), 2)], { type: 'application/json' });
+						const url = URL.createObjectURL(blob);
+						const link = document.createElement('a');
+						link.href = url;
+						link.download = `xln-receipt-frame-${receipt.height}.json`;
+						link.click();
+						setTimeout(() => URL.revokeObjectURL(url), 1_000);
+					}}
+				>
+					Download
+				</button>
+				<button type="button" className="btn" style={{ flex: 1 }} onClick={() => window.print()} data-testid="receipt-print" title="Print, or save as PDF from the print dialog">
+					Print / PDF
+				</button>
 				<button type="button" className="btn primary" style={{ flex: 1 }} onClick={dismiss} data-testid="receipt-done">
 					Done
 				</button>

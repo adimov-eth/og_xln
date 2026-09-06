@@ -1,0 +1,584 @@
+{
+  "reviewer": "zai-coding-cn/glm-5.3-flash",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 800,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 640,
+        "layout": 760,
+        "visceral_value": 740,
+        "responsive": 600,
+        "consistency": 800,
+        "trust": 780
+      },
+      "total": 748,
+      "top_issues": [
+        "Bar legend ('On-chain/Reserve/Secured/Hub promise') uses near-identical green dots for three different segments — users cannot map legend to bar",
+        "'Total balance $162.99' vs itemized $0+$40+$122.99 double-counts visually; no on-bar value labels",
+        "Accounts card bars show '155.00'/'20.50' without currency or what the grey segment means",
+        "Large empty area below balances wastes the layout on 1280px viewport"
+      ],
+      "fixes": [
+        "Color-code bar segments to match legend (on-chain=green, reserve=teal, secured=blue, hub promise=violet) and add value tooltips",
+        "Show segmented amounts directly at bar segment boundaries, not only in legend",
+        "Label account bars 'send room USDC 155.00' / 'receive room 20.50'",
+        "Add a bottom row (fees, network, frame height) to use the empty space and reinforce trust"
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 820,
+        "typography": 800,
+        "color": 780,
+        "data_legibility": 820,
+        "layout": 820,
+        "visceral_value": 840,
+        "responsive": 600,
+        "consistency": 820,
+        "trust": 840
+      },
+      "total": 800,
+      "top_issues": [
+        "Full 40-char recipient hash in the To field is unreadable noise; the human-readable 'H2' is de-emphasized",
+        "Before/After bars in 'Your account with H1' differ by only a few pixels — change is not visually legible",
+        "'Send up to 155.00'/'receive up to 20.50' units unstated",
+        "Two-route list: route pills 'You→H1→H2' repeat the same info as the ROUTE panel to the right"
+      ],
+      "fixes": [
+        "Truncate hash to 0x92c2…cbf0 with copy affordance; promote 'H2' as the primary recipient line",
+        "Show Before/After numeric deltas ('+25.00 sent room', '−25.00 owed to H1') instead of relying on bar motion",
+        "Append token to capacity labels ('155.00 USDC')",
+        "Collapse duplicate route info: keep selected-route detail only in the right ROUTE panel"
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 800,
+        "typography": 800,
+        "color": 760,
+        "data_legibility": 820,
+        "layout": 800,
+        "visceral_value": 860,
+        "responsive": 600,
+        "consistency": 820,
+        "trust": 860
+      },
+      "total": 796,
+      "top_issues": [
+        "'Settled 05:36:11 in 8 s' mixes timestamp and duration in one line — ambiguous",
+        "'Proof 0xc64e83c2…3207' is not clickable; no link to explorer or raw frame",
+        "Frame '#136' is jargon with no explanation for a first-time user",
+        "Modal covers the exact balance change; no 'new balance' line"
+      ],
+      "fixes": [
+        "Split into 'Time 05:36:11' and 'Settled in 8 s' rows",
+        "Make proof hash a copyable/linkable element with a 'verify' affordance",
+        "Rename to 'Frame #136 (settlement batch)' or add a hover gloss",
+        "Add 'New balance $137.99' row inside the modal"
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 760,
+        "typography": 780,
+        "color": 720,
+        "data_legibility": 700,
+        "layout": 780,
+        "visceral_value": 700,
+        "responsive": 620,
+        "consistency": 780,
+        "trust": 760
+      },
+      "total": 738,
+      "top_issues": [
+        "QR has no address under it and no copy affordance near the code itself",
+        "'Your entity id' full 72-char hash is unreadable; no truncation or copy button",
+        "'45.50 capacity via H1' unit and meaning (USDC inbound room) unclear",
+        "'Prepare incoming account' terminology is protocol jargon exposed to receivers"
+      ],
+      "fixes": [
+        "Print truncated address under the QR with a copy button",
+        "Truncate entity id to 0x75b2…77ef with copy; move full value to a reveal",
+        "Label 'Inbound room: 45.50 USDC via H1'",
+        "Rename to 'Receive via account: H1 · Testnet'"
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 820,
+        "typography": 800,
+        "color": 800,
+        "data_legibility": 840,
+        "layout": 780,
+        "visceral_value": 740,
+        "responsive": 600,
+        "consistency": 800,
+        "trust": 760
+      },
+      "total": 776,
+      "top_issues": [
+        "Primary CTA is disabled with a red warning 'Prepare incoming capacity before swapping' — but the fix ('Accept it as credit instead') looks like a secondary suggestion; blocking path unclear",
+        "Collateral slider with 3 preset buttons duplicates the same control three ways",
+        "'Collateral for a future receipt is not available yet' — unfinished-feature copy in a production screen",
+        "Order book fills the whole right column pushing account summary below the fold"
+      ],
+      "fixes": [
+        "Make the unblocking action the primary button state ('Accept as credit and swap'), with a single clear reason line",
+        "Replace slider + 3 buttons with one segmented control (100/50/0%)",
+        "Remove or hide unavailable collateral copy until shipped",
+        "Pin account summary above the book, or make the book collapsible by default"
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 780,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 800,
+        "layout": 780,
+        "visceral_value": 760,
+        "responsive": 600,
+        "consistency": 800,
+        "trust": 820
+      },
+      "total": 770,
+      "top_issues": [
+        "Legend row (collateral/at risk/you owe/credit room/in flight) is tiny, low-contrast, and unexplained on this screen",
+        "'send up to 130.00' vs 'Your credit line to them 115.50' — numbers don't obviously reconcile; no derivation shown",
+        "WETH lane bar is nearly invisible at this scale ($0.01 at same absolute scale)",
+        "'Dispute' button sits at the same visual level as everyday actions; no risk context beside it"
+      ],
+      "fixes": [
+        "Move the color legend into a hoverable tooltip attached to the bar and boost label contrast",
+        "Add a one-line reconciliation ('115.50 line + collateral = 130.00 send room')",
+        "For sub-pixel amounts show '— (<0.01)' instead of a sliver bar",
+        "Separate Dispute into a danger-styled overflow with confirmation copy"
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 780,
+        "typography": 800,
+        "color": 780,
+        "data_legibility": 820,
+        "layout": 800,
+        "visceral_value": 760,
+        "responsive": 620,
+        "consistency": 820,
+        "trust": 820
+      },
+      "total": 782,
+      "top_issues": [
+        "Tiny colored bar under each row has no scale or label — its meaning is a guess",
+        "Filter chips (All/Payments/Swaps/Settlement/Accounts) mix a transaction taxonomy that excludes 'Account opened' (shows only under All)",
+        "'From your runtime's committed frames' is internal jargon",
+        "Detail panel shows 'Frames: 2 committed entries' with no drill-down"
+      ],
+      "fixes": [
+        "Label the row bar with its amount at the shared scale, or drop it",
+        "Include account lifecycle events in a filter chip or rename chips to match states",
+        "Rewrite as 'Signed and verifiable on your device'",
+        "Make '2 committed entries' expandable to the actual frame list"
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 760,
+        "typography": 780,
+        "color": 740,
+        "data_legibility": 740,
+        "layout": 700,
+        "visceral_value": 620,
+        "responsive": 600,
+        "consistency": 700,
+        "trust": 700
+      },
+      "total": 712,
+      "top_issues": [
+        "This screen is pixel-identical to 07-activity.png — the 'detail' variant shows no additional detail beyond the already-open panel",
+        "Proof hash '0xc64e83c2…9f3207' has no verify/export/copy affordance",
+        "No link from the payment to the underlying signed frame or route history",
+        "Right panel bottom is empty below the detail card"
+      ],
+      "fixes": [
+        "Ship a real distinct detail view: full route, per-hop deltas, signatures, raw frame JSON",
+        "Add 'Copy proof' and 'Verify' actions on the proof row",
+        "Add timeline (placed → routed → settled) to the empty area",
+        "Differentiate the screenshot set or fix the underlying navigation state"
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 760,
+        "typography": 760,
+        "color": 720,
+        "data_legibility": 780,
+        "layout": 700,
+        "visceral_value": 560,
+        "responsive": 600,
+        "consistency": 780,
+        "trust": 740
+      },
+      "total": 716,
+      "top_issues": [
+        "Very long single scroll mixing unrelated groups (bar scale, appearance, design, runtime, vault); no anchor nav",
+        "'AT THIS SCALE' panel shows '10,000 px' bars that visibly overflow the card — demonstrates a failure mode of the feature",
+        "Design preview sample ($1,284,500 with green full-width bar) contradicts the 1px=$1 scale demo",
+        "Reveal recovery phrase / Forget vault sit at page bottom with little isolation; safety-critical actions need stronger separation"
+      ],
+      "fixes": [
+        "Add sticky section nav (Bar scale / Appearance / Design / Runtime / Vault)",
+        "Clip or cap demo bars with 'clipped at 320px' annotation",
+        "Make the design preview obey the currently selected scale",
+        "Isolate vault actions in a bordered danger zone with confirmation"
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 780,
+        "typography": 780,
+        "color": 740,
+        "data_legibility": 800,
+        "layout": 780,
+        "visceral_value": 720,
+        "responsive": 600,
+        "consistency": 800,
+        "trust": 780
+      },
+      "total": 760,
+      "top_issues": [
+        "From/To card grids use identical visuals for source and destination — selection state (blue border) is the only differentiator; risk of wrong-direction moves",
+        "'What happens' panel has a single bullet and leaves most of the card empty; the on-chain vs instant consequence deserves more",
+        "Reserve row shows same '$40.00' bar scale barely visible at 40px=$1",
+        "'Sign & send' vs 'Add to batch' — batch semantics unexplained"
+      ],
+      "fixes": [
+        "Add explicit 'FROM'/'TO' headers visually anchored with arrow between grids (already labeled but weak) plus a swap-direction button",
+        "Expand What-happens into steps: '1. Reserve −25 · 2. Collateral posted on-chain · 3. Account +25 instant'",
+        "Show exact amounts as text next to bars",
+        "Tooltip on 'Add to batch' explaining deferred signing"
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 740,
+        "typography": 760,
+        "color": 720,
+        "data_legibility": 780,
+        "layout": 700,
+        "visceral_value": 640,
+        "responsive": 600,
+        "consistency": 780,
+        "trust": 760
+      },
+      "total": 726,
+      "top_issues": [
+        "Five nav cards + right account card leave the whole lower half of the screen empty",
+        "'Promised by hubs $97.99' colored violet inline but the derivation from account lanes is not shown",
+        "Card labels like 'Sovereignty — Keys, proofs, what is at risk' assume jargon fluency",
+        "'NEEDS ATTENTION: Nothing waiting on you.' is an entire card for an empty state"
+      ],
+      "fixes": [
+        "Merge Manage into a single console with cards beside a persistent summary, eliminating dead space",
+        "Make '$97.99' link to the H1 account lane breakdown",
+        "Plain-language subtitles: 'Sovereignty — prove and recover your money'",
+        "Fold empty state into the summary card as one line"
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 720,
+        "typography": 760,
+        "color": 700,
+        "data_legibility": 660,
+        "layout": 680,
+        "visceral_value": 560,
+        "responsive": 600,
+        "consistency": 740,
+        "trust": 680
+      },
+      "total": 684,
+      "top_issues": [
+        "Right column stacks faucet token grid, amount, collateral slider, presets, disclaimer, CTA and three more buttons — heavy vertical clutter with competing CTAs",
+        "'Depository may pull 0.00' per token is alarming and unexplained at first glance",
+        "'Prepare to receive' block (borrowing capacity with collateral slider) duplicated from Swap — wrong home for it on an Assets/faucet screen",
+        "Main on-chain wallet column shows all-zero balances; page communicates emptiness, not capability"
+      ],
+      "fixes": [
+        "Restructure faucet as a simple two-step form (token, amount) with one CTA; move collateral/credit controls into an advanced disclosure",
+        "Rename to 'Allowance held by Depository: 0.00' with tooltip",
+        "Remove the receive-capacity block here; link to Receive instead",
+        "Lead with 'Move into reserve' / 'Get test tokens' as primary empty-state actions"
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 700,
+        "typography": 760,
+        "color": 680,
+        "data_legibility": 640,
+        "layout": 660,
+        "visceral_value": 520,
+        "responsive": 600,
+        "consistency": 740,
+        "trust": 660
+      },
+      "total": 668,
+      "top_issues": [
+        "Hub pool panel shows Available 0.00 / Borrowed 0.00 / Active principal 0.00 — no rate history, utilization or risk; nothing to judge the offer by",
+        "'Interest you ask · basis points 100' with '= 100% per term' is a startling number with no market comparison",
+        "Term picker shows 1 hour / 1 day / 1 month as equal-width text buttons; the 1-day default selection is only a thin outline",
+        "Lend/Borrow toggle styled like a disabled segmented control; Borrow mode not visible"
+      ],
+      "fixes": [
+        "Enrich H1 pool card with utilization, last cleared rate and your exposure",
+        "Show APY-equivalent and a market reference rate beside basis points input",
+        "Style selected term as a filled chip; add expected return ('You receive X USDC at term end')",
+        "Show both Lend and Borrow as tabs with mode-specific fields"
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 600,
+        "premium": 640,
+        "typography": 720,
+        "color": 640,
+        "data_legibility": 620,
+        "layout": 560,
+        "visceral_value": 400,
+        "responsive": 600,
+        "consistency": 700,
+        "trust": 640
+      },
+      "total": 612,
+      "top_issues": [
+        "Screen is ~85% empty; a 4-row table and two small cards constitute the entire content",
+        "'Lazy (hash of its board)' and 'Register it on the EntityProvider' are raw protocol internals, unexplained",
+        "No actionable path: how does one issue shares or add a board member from here?",
+        "'TAKE CONTROL OF ANOTHER ENTITY' reads hostile/sinister for what is presumably governance takeover"
+      ],
+      "fixes": [
+        "Merge Ownership into Manage or add board-member management (add signer, change threshold) to fill the screen with function",
+        "Explain lazy entities in one plain sentence with a link to docs",
+        "Add primary actions: 'Add signer', 'Change threshold', 'Issue shares'",
+        "Rename to 'Add an entity you control'"
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 800,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 800,
+        "layout": 760,
+        "visceral_value": 820,
+        "responsive": 600,
+        "consistency": 800,
+        "trust": 900
+      },
+      "total": 784,
+      "top_issues": [
+        "Header per-counterparty card overflows: '…dispute alone · they answer in 1 d · you in 1 d · open → Manage → Dispute' is clipped at the right edge",
+        "'Enforceable right now $40.00' but total including hub promise is $137.99 — relationship needs one more sentence at top",
+        "Keys/Ledger cards repeat runtime id/entity id shown in Settings without copy buttons",
+        "'Save evidence bundle' is the single most important action yet styled as a plain secondary button"
+      ],
+      "fixes": [
+        "Fix card overflow; break the dispute instructions into stacked lines with a direct 'Dispute H1' button",
+        "Add summary sentence: '$97.99 more is backed by H1's signature; dispute to enforce'",
+        "Add copy affordances to all hashes",
+        "Promote 'Save evidence bundle' to primary accent button"
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 820,
+        "typography": 800,
+        "color": 800,
+        "data_legibility": 840,
+        "layout": 840,
+        "visceral_value": 820,
+        "responsive": 500,
+        "consistency": 820,
+        "trust": 840
+      },
+      "total": 792,
+      "top_issues": [
+        "Account lane table uses '·' (dot) for zero values across SECURED/YOU OWE — ambiguous between 'zero' and 'not applicable'",
+        "Order book right edge clips ('live · relay' and last-size column cut at viewport)",
+        "Summary stat cards (NET/YOURS ON-CHAIN/AT RISK) don't visually connect to the table rows that compose them",
+        "Legend row of seven colors is dense and low-contrast"
+      ],
+      "fixes": [
+        "Render explicit '0.00' or '—' with a legend note distinguishing n/a",
+        "Fix right-column overflow; reserve padding for the relay badge",
+        "Add hover-linked highlighting from stat card to contributing rows",
+        "Increase legend contrast and add tooltips"
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 760,
+        "typography": 760,
+        "color": 720,
+        "data_legibility": 700,
+        "layout": 720,
+        "visceral_value": 600,
+        "responsive": 600,
+        "consistency": 720,
+        "trust": 700
+      },
+      "total": 704,
+      "top_issues": [
+        "Command palette overlays the Desk page but the page behind stays fully bright — no scrim, so the two layers compete",
+        "Palette floats mid-left with no title context and actions mixing money moves with navigation destinations",
+        "Hints ('send money', 'invoice, QR', 'book at the hub') right-aligned and low-contrast",
+        "Duplicate navigation with the sidebar and top action buttons — three ways to reach Pay"
+      ],
+      "fixes": [
+        "Add a dimming scrim behind the palette",
+        "Group entries: Money / Views / System, with section headers",
+        "Boost hint contrast to ≥4.5:1",
+        "Acceptable duplication, but hide sidebar-highlighted duplicates while palette is open"
+      ]
+    }
+  ],
+  "overall": {
+    "total": 732,
+    "verdict": "A visually disciplined, premium-feeling dark wallet with genuinely differentiated honesty (provable payments, evidence bundles, one absolute bar scale), held back by jargon leakage, duplicate or half-finished controls, and several near-empty screens. Legibility of the core risk model — green yours vs violet promised — is close but not yet self-explanatory.",
+    "priority_fixes": [
+      "Unify the bar-scale system: match segment colors to legend on every screen, label segment values in text, and handle sub-pixel amounts explicitly",
+      "Fix broken/overlapping layouts: 15-sovereignty header overflow, 16-desk order-book clipping, 17-palette missing scrim, and the large dead space on 01/11/14",
+      "Replace or finish the Swap collateral-credit dead end (05-swap): one primary unblocking action, remove 'not available yet' copy",
+      "De-jargonize: rename 'entity id', 'Frame #', 'Prepare incoming account', 'Lazy board', 'Depository may pull', with plain-language subtitles and glosses",
+      "Differentiate activity detail (08): real per-payment drill-down with route timeline, per-hop deltas, and copy/verify proof actions"
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 62,
+        "verdict": "Paying $20 works in a few clicks and 'Instantly' reassures me, but 'hub promise', 'frame', and entity hashes make me afraid of doing something wrong.",
+        "blockers": [
+          "No guided onboarding visible on 01-home for funding from fiat/none",
+          "Full wallet hash on 02-pay and jargon labels on 03-receipt"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 78,
+        "verdict": "Credit vs collateral and send/receive room are actually legible, but I have to derive my own risk math from unexplained bars.",
+        "blockers": [
+          "06-account doesn't reconcile credit line vs send room",
+          "No per-account dispute timer/challenge window shown"
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 70,
+        "verdict": "A real order book with spread and last price is great, but the blocked CTA and unshipped-collateral copy break my flow.",
+        "blockers": [
+          "05-swap primary button disabled with unclear fix path",
+          "No order/fill history view beyond generic activity list"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 80,
+        "verdict": "'Enforceable right now' and 'Save evidence bundle' plus CSV export answer my board questions — this is rare and good.",
+        "blockers": [
+          "Evidence bundle contents not previewed before save",
+          "15-sovereignty dispute instructions clipped mid-sentence"
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 72,
+        "verdict": "Receive with QR, note, and a forwardable PAID receipt covers invoicing end to end.",
+        "blockers": [
+          "No invoice list/management screen in this set",
+          "04-receive lacks a shareable amount-prefilled summary preview"
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 76,
+        "verdict": "Dispute, evidence bundle, and co-signed frames on 15-sovereignty are exactly my language — but challenge windows and evidence contents are not inspectable in advance.",
+        "blockers": [
+          "No dispute flow screen in the set (only the button on 06-account)",
+          "Proof hashes not verifiable in-app on 03/08"
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 30,
+        "verdict": "These are desktop screenshots with dense two-column layouts and keyboard hints; on a phone this collapses to guesswork.",
+        "blockers": [
+          "No mobile variant in this review set",
+          "02-pay and 16-desk layouts have no evident one-hand, single-column path"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 82,
+        "verdict": "Desk is the dense per-lane console I want — position, secured, at-risk, lines out/in at a glance.",
+        "blockers": [
+          "16-desk book clips off-screen and zero markers are ambiguous",
+          "No counterparty comparison view across multiple hubs"
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 58,
+        "verdict": "'Across networks' exists as a tab on Swap and routing is explicit, but no screen shows a cross-chain amount, bridge fee, or arrival chain.",
+        "blockers": [
+          "Cross-network swap mode not shown in this set",
+          "Fee display on 02-pay is hub-only; no total cross-network cost"
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 74,
+        "verdict": "Provable instant payments with on-chain enforceability is a clear differentiator I can see in three minutes — but the empty lending/ownership screens undercut shipping credibility.",
+        "blockers": [
+          "14-ownership and 13-lend look unfinished",
+          "Jargon ('lazy entity', 'frame #') without a one-line story"
+        ]
+      }
+    ]
+  }
+}

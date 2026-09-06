@@ -454,3 +454,16 @@ finalize is offered only from `activeDispute`.
   undefined;` at the top of `resolveJurisdictionTransport` (the importJ config already carries `mode`, and the
   `TRON_CHAIN_IDS` fallback in `factory.ts` still applies) — the owner may prefer to thread the transport through
   the importJ payload instead.
+
+## 23. A fresh wallet's boot grows with the chain: the J watcher replays from the deployment block 256 blocks per poll
+
+- `bun run dev` after ~26 h: both anvils at block ~93 000 (1 s blocks). A new browser wallet imports the jurisdiction with
+  `entityProviderDeploymentBlock` ≈ 2 and the RPC watcher scans forward in 256-block ranges, one per 300 ms poll
+  (`core/jurisdiction/adapter/rpc/watcher/rpc-watcher-poll.ts`, `resolveWatcherPollToBlock`), each range then
+  entity-certified before the next. Measured with the boot diagnostics of #20: 256 → 4 610 blocks in ~5 s early on,
+  but at 93 000 blocks the scan takes ~2 min, the wallet's 60 s "Syncing with the chain" step gives up, and the
+  React E2E/screenshot runs failed on `home-total` until the stack was restarted (2026-09-06 04:40). Nothing in that
+  history concerns a brand-new entity: it has no events before its own registration.
+- Suggested core fix: start a *new* entity's scan at the chain head (or at its registration block) instead of the
+  Depository deployment block, and scan idle ranges in larger chunks (`eth_getLogs` over 256 blocks is cheap on any
+  RPC); keep the full replay only for restored entities that may have missed events.

@@ -1,0 +1,473 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/01-home.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 650,
+        "typography": 630,
+        "color": 610,
+        "data_legibility": 640,
+        "layout": 620,
+        "visceral_value": 600,
+        "responsive": 590,
+        "consistency": 640,
+        "trust": 630
+      },
+      "total": 623,
+      "top_issues": [
+        "Primary breakdown bar under total balance combines multiple low-contrast colored dots that compete visually with the action buttons."
+      ],
+      "fixes": [
+        "Consolidate balance sub-labels into a single legible card row with higher typographic contrast."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/02-pay.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 660,
+        "typography": 630,
+        "color": 620,
+        "data_legibility": 650,
+        "layout": 630,
+        "visceral_value": 620,
+        "responsive": 600,
+        "consistency": 650,
+        "trust": 660
+      },
+      "total": 636,
+      "top_issues": [
+        "Right-hand route and balance breakdown panels create duplicate visual weight against the core input column."
+      ],
+      "fixes": [
+        "Demote secondary route details into an expandable accordion beneath the primary fee row."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/03-receipt.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 670,
+        "typography": 650,
+        "color": 640,
+        "data_legibility": 660,
+        "layout": 650,
+        "visceral_value": 640,
+        "responsive": 610,
+        "consistency": 660,
+        "trust": 680
+      },
+      "total": 652,
+      "top_issues": [
+        "Modal card dims background completely but lacks direct one-click external proof export or explorer link."
+      ],
+      "fixes": [
+        "Add explicit 'Export proof' icon action adjacent to the frame verification tag."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/04-receive.png",
+      "scores": {
+        "hierarchy": 610,
+        "premium": 640,
+        "typography": 620,
+        "color": 600,
+        "data_legibility": 630,
+        "layout": 600,
+        "visceral_value": 610,
+        "responsive": 590,
+        "consistency": 630,
+        "trust": 630
+      },
+      "total": 616,
+      "top_issues": [
+        "Oversized pure-white QR code creates severe glare and visual detachment from the dark canvas."
+      ],
+      "fixes": [
+        "Frame QR code inside an off-white surface container with integrated token icon badge."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/05-swap.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 660,
+        "typography": 640,
+        "color": 620,
+        "data_legibility": 650,
+        "layout": 620,
+        "visceral_value": 630,
+        "responsive": 580,
+        "consistency": 640,
+        "trust": 640
+      },
+      "total": 631,
+      "top_issues": [
+        "Orderbook depth bars and collateral slider overload user before price execution confirmation."
+      ],
+      "fixes": [
+        "Group collateral capacity options into a collapsible settings drawer to focus on trade ticket."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/06-account.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 650,
+        "typography": 630,
+        "color": 620,
+        "data_legibility": 640,
+        "layout": 620,
+        "visceral_value": 610,
+        "responsive": 590,
+        "consistency": 650,
+        "trust": 650
+      },
+      "total": 629,
+      "top_issues": [
+        "Subtle multi-segment risk bars require high mental translation without inline labels on track."
+      ],
+      "fixes": [
+        "Add micro-labels directly beneath segmented balance tracks showing exact collateral split."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/07-activity.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 650,
+        "typography": 640,
+        "color": 630,
+        "data_legibility": 660,
+        "layout": 640,
+        "visceral_value": 620,
+        "responsive": 600,
+        "consistency": 650,
+        "trust": 660
+      },
+      "total": 639,
+      "top_issues": [
+        "Right-side movement inspector is sparse when viewing standard single-hop transactions."
+      ],
+      "fixes": [
+        "Expand transaction detail panel to include raw signature bundle and dispute eligibility state."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/08-activity-detail.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 650,
+        "typography": 640,
+        "color": 630,
+        "data_legibility": 660,
+        "layout": 640,
+        "visceral_value": 620,
+        "responsive": 600,
+        "consistency": 650,
+        "trust": 660
+      },
+      "total": 639,
+      "top_issues": [
+        "Duplicate screen state with identical visual weight and low distinctiveness from main feed."
+      ],
+      "fixes": [
+        "Highlight active row selection state with distinct border accent in feed list."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/09-settings.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 640,
+        "typography": 630,
+        "color": 620,
+        "data_legibility": 640,
+        "layout": 610,
+        "visceral_value": 600,
+        "responsive": 580,
+        "consistency": 640,
+        "trust": 640
+      },
+      "total": 622,
+      "top_issues": [
+        "Long scrolling single-column configuration layout mixes visual customization with protocol security."
+      ],
+      "fixes": [
+        "Separate bar scale visual presets and key vault management into distinct sub-navigation tabs."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/10-move.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 650,
+        "typography": 630,
+        "color": 620,
+        "data_legibility": 640,
+        "layout": 620,
+        "visceral_value": 610,
+        "responsive": 590,
+        "consistency": 640,
+        "trust": 650
+      },
+      "total": 628,
+      "top_issues": [
+        "From/To matrix tiles look visually identical, making transfer direction ambiguous at a glance."
+      ],
+      "fixes": [
+        "Introduce directional connector graphic or distinct background styling between source and target containers."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/11-manage.png",
+      "scores": {
+        "hierarchy": 610,
+        "premium": 630,
+        "typography": 620,
+        "color": 610,
+        "data_legibility": 630,
+        "layout": 600,
+        "visceral_value": 590,
+        "responsive": 580,
+        "consistency": 630,
+        "trust": 630
+      },
+      "total": 613,
+      "top_issues": [
+        "Sparse button grid leaves excessive empty dead space on wide desktop viewports."
+      ],
+      "fixes": [
+        "Adopt two-column card structure combining summary metrics directly beside navigation tiles."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/12-assets.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 640,
+        "typography": 630,
+        "color": 610,
+        "data_legibility": 640,
+        "layout": 620,
+        "visceral_value": 600,
+        "responsive": 590,
+        "consistency": 640,
+        "trust": 640
+      },
+      "total": 623,
+      "top_issues": [
+        "Faucet controls occupy equal screen real estate as real production account balances."
+      ],
+      "fixes": [
+        "Move faucet controls into a distinct collapsible testnet utility drawer."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/13-lend.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 640,
+        "typography": 630,
+        "color": 610,
+        "data_legibility": 630,
+        "layout": 620,
+        "visceral_value": 600,
+        "responsive": 590,
+        "consistency": 640,
+        "trust": 630
+      },
+      "total": 621,
+      "top_issues": [
+        "Pool health metrics on right card lack depth regarding utilization and default risk."
+      ],
+      "fixes": [
+        "Display historical yield chart and counterparty exposure ratio inside pool stats panel."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/14-ownership.png",
+      "scores": {
+        "hierarchy": 600,
+        "premium": 620,
+        "typography": 620,
+        "color": 600,
+        "data_legibility": 620,
+        "layout": 590,
+        "visceral_value": 580,
+        "responsive": 580,
+        "consistency": 630,
+        "trust": 620
+      },
+      "total": 606,
+      "top_issues": [
+        "Extreme negative space with single small configuration card leaves view looking incomplete."
+      ],
+      "fixes": [
+        "Center entity ownership topology visualizer showing keys, signers, and threshold states."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/15-sovereignty.png",
+      "scores": {
+        "hierarchy": 650,
+        "premium": 660,
+        "typography": 640,
+        "color": 630,
+        "data_legibility": 660,
+        "layout": 640,
+        "visceral_value": 640,
+        "responsive": 600,
+        "consistency": 650,
+        "trust": 680
+      },
+      "total": 645,
+      "top_issues": [
+        "Action to export dispute evidence is buried at the bottom of technical ledger details."
+      ],
+      "fixes": [
+        "Promote 'Save evidence bundle' to top-level action card beside counterparty risk."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/16-desk.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 680,
+        "typography": 650,
+        "color": 640,
+        "data_legibility": 670,
+        "layout": 650,
+        "visceral_value": 650,
+        "responsive": 580,
+        "consistency": 660,
+        "trust": 670
+      },
+      "total": 651,
+      "top_issues": [
+        "Dense data table lacks row borders or alternate striping, causing eye drift across long metric columns."
+      ],
+      "fixes": [
+        "Add subtle hairline borders between table rows and fix header alignment over numeric values."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/desktop-dark/17-palette.png",
+      "scores": {
+        "hierarchy": 650,
+        "premium": 670,
+        "typography": 650,
+        "color": 630,
+        "data_legibility": 660,
+        "layout": 640,
+        "visceral_value": 630,
+        "responsive": 600,
+        "consistency": 660,
+        "trust": 660
+      },
+      "total": 645,
+      "top_issues": [
+        "Command palette items lack shortcut indicators or categorization groupings."
+      ],
+      "fixes": [
+        "Group command items into sections (Actions, Navigation, System) with keyboard access badges."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 633,
+    "verdict": "The interface demonstrates rigorous financial state modeling and consistent technical restraint across views. Complex multi-tier balance concepts occasionally overwhelm standard flows, requiring clearer visual hierarchy.",
+    "priority_fixes": [
+      "Clarify multi-tiered balance headers across screens by standardizing collateral vs credit color indicators.",
+      "Add direct one-click cryptographic evidence bundle export from activity details and receipts.",
+      "Reduce dead space on desktop settings, ownership, and manage screens via balanced multi-column cards.",
+      "Introduce directional visual cues in the Move matrix to prevent source/target confusion.",
+      "Separate testnet faucet utilities from production asset balances into a dedicated panel."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 46,
+        "verdict": "There are too many technical terms about reserves and hubs just to send cash.",
+        "blockers": [
+          "01-home.png shows technical split balances",
+          "02-pay.png displays routing graphs"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 68,
+        "verdict": "The balance scale and inbound headroom are visible, though risk bars need faster scanning.",
+        "blockers": [
+          "06-account.png multi-segment bars lack immediate numerical labels"
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 62,
+        "verdict": "The order book is clean, but collateral staging introduces extra friction before executing.",
+        "blockers": [
+          "05-swap.png blocks swap button behind capacity configuration"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 65,
+        "verdict": "Clear distinction between on-chain enforceable amounts and off-chain commitments.",
+        "blockers": [
+          "15-sovereignty.png lacks board-ready automated PDF audit report export"
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 58,
+        "verdict": "I can copy an invoice, but client receipt forwarding options are too developer-focused.",
+        "blockers": [
+          "04-receive.png does not provide plain text shareable payment links"
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 70,
+        "verdict": "Signed frame proofs and independent dispute triggers are prominently verified.",
+        "blockers": [
+          "06-account.png dispute button requires navigating into sub-settings"
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 42,
+        "verdict": "Desktop layouts show high density that will not easily collapse to quick one-handed mobile use.",
+        "blockers": [
+          "All desktop views lack compact mobile quick-pay affordances"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 71,
+        "verdict": "The Desk view gives a competent consolidated glance across counterparty positions.",
+        "blockers": [
+          "16-desk.png lacks multi-hub filtering controls"
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 52,
+        "verdict": "Routing paths show fees, but multi-network bridge guarantees remain ambiguous.",
+        "blockers": [
+          "02-pay.png fee breakdowns do not highlight cross-chain settlement times"
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 64,
+        "verdict": "The mathematical model is visible on screen, proving real self-custody principles.",
+        "blockers": [
+          "01-home.png requires technical crypto literacy to appreciate differences"
+        ]
+      }
+    ]
+  }
+}
