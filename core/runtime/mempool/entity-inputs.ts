@@ -24,6 +24,11 @@ import {
   atomicPairInputsMatch,
 } from '../admit/entity-input-atomic.ts';
 import { drainImmediateCrossJurisdictionOutputs } from '../admit/entity-input-output.ts';
+import {
+  collectRuntimeEntityContext,
+  describeEntityInputCommitShape,
+} from '../admit/entity-context-collection.ts';
+import type { EntityInfraContext } from '../../types/entity/infra-context';
 import { getPerfMs } from '../../support/time';
 
 export {
@@ -69,6 +74,7 @@ const createDeferredProposalBatch = (
   const flush = async (): Promise<void> => {
     for (const { entityId, signerId } of [...replicas.values()]) {
       const input: RoutedEntityInput = { entityId, signerId, entityTxs: [] };
+      let evictedAttemptContext: EntityInfraContext | undefined;
       for (let eviction = 0; ; eviction += 1) {
         try {
           const staged = await applyExternalEntityInput(env, input, flushIndex, options, context, false);
@@ -95,6 +101,26 @@ const createDeferredProposalBatch = (
             rejection: cause.rejection,
           });
           replica.mempool = replica.mempool.filter(tx => tx !== cause.frameTx);
+          evictedAttemptContext ??= cause.attemptedEntityContext;
+        }
+      }
+      // A proposal attempt that ended in eviction still consumed live infra
+      // context. Replay looks that context up by replica and height before it
+      // can apply and reject the same tx, so journal it when no certified
+      // frame recorded one at the same key (set-if-absent keeps the committed
+      // context authoritative and avoids a collision with it).
+      if (evictedAttemptContext) {
+        const replicaKey = `${entityId}:${signerId}`;
+        const contextKey = `${replicaKey.toLowerCase()}:${evictedAttemptContext.height}`;
+        if (!context.entityContexts.has(contextKey)) {
+          collectRuntimeEntityContext(
+            context.entityContexts,
+            entityId,
+            replicaKey,
+            evictedAttemptContext,
+            describeEntityInputCommitShape({ ...input, from: 'evicted-proposal-attempt' }),
+            context.entityCommitInputShapes,
+          );
         }
       }
       flushIndex += 1;

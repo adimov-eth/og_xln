@@ -419,7 +419,12 @@ const fitAndApplyEntityProposal = async (
     selection.proposalTxs,
     env.state.timestamp,
     !fitted.replayed,
-  );
+  ).catch((error: unknown) => {
+    // The Runtime journals this context when the eviction leaves no frame:
+    // live consumed it, so replay must find it instead of a missing key.
+    if (error instanceof MalformedEntityFrameInputError) error.attemptedEntityContext ??= fitted.entityContext;
+    throw error;
+  });
   profile.checkpoint('frameApply');
   if (!shouldKeepPreparedEntityFrame(selection, applied.accountsToProposeFramesCount)) return null;
   return {

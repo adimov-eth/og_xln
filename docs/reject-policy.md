@@ -15,6 +15,16 @@ validation) is a **rejection**, never a runtime fault.
 ## The log line to watch
 - TS: `runtime.input_discard` → `entity_input.discarded` (error level, always emitted), and
   `REMOTE_INPUT_REJECTED` / `FRAME_CONSENSUS_FAILED` halts in fail-fast mode.
+- TS: `runtime.entity_inputs` → `entity_input.rejected` (local ingress) / `entity_input.discarded`
+  (remote ingress) with `inputIndex` and `rejectionCode` (error level, so it survives the
+  production WARN threshold). The E2E fatal-log scanner treats these as audit lines, not halts:
+  typed business rejections (e.g. insufficient HTLC capacity) are exercised on purpose.
+- TS: `runtime.entity_inputs` → `entity_input.batch_tx_evicted` (warn): a deferred proposal
+  attempt rejected its last tx and the Runtime evicted it from the mempool. The infra context
+  that attempt consumed is journaled in the WAL under `entity:signer:height` (set-if-absent,
+  `core/runtime/mempool/entity-inputs.ts`) so recovery replay rebuilds the same attempt,
+  rejects the same tx and evicts it identically instead of failing with
+  `ENTITY_REPLAY_CONTEXT_MISSING` (company-ipo scenario, 2-of-3 board, seed-dependent).
 - Rust: stderr `[ERROR][reject] entity tx rejected and dropped …` and
   `[ERROR][reject] inbound account frame rejected and dropped …`.
 

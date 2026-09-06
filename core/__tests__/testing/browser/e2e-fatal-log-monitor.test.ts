@@ -98,6 +98,28 @@ test('typed Entity transaction rejection remains observable without aborting the
   });
 });
 
+test('error-level rejected-input audit lines stay observable without aborting the E2E stack', () => {
+  // docs/reject-policy.md: rejections are always logged at error level so they
+  // survive the production WARN threshold; they are audit evidence, not a halt.
+  withLog(path => {
+    const scanner = createIncrementalRuntimeFatalLogScanner(path);
+    appendFileSync(
+      path,
+      '[ERROR][runtime.entity_inputs] entity_input.rejected '
+      + '{"inputIndex":3,"rejectionCode":"ENTITY_FRAME_TX_FAILED: type=htlcPayment '
+      + 'error=HTLC_PAYMENT_OUTBOUND_CAPACITY_INSUFFICIENT","cause":"ENTITY_FRAME_TX_FAILED: type=htlcPayment '
+      + 'error=HTLC_PAYMENT_OUTBOUND_CAPACITY_INSUFFICIENT"}\n',
+    );
+    expect(scanner.scan()).toBeNull();
+    appendFileSync(
+      path,
+      '[ERROR][runtime.input_discard] entity_input.discarded '
+      + '{"action":"discarded","discardedInputs":1,"cause":"ENTITY_FRAME_TX_FAILED: type=accountInput error=X"}\n',
+    );
+    expect(scanner.scan()).toBeNull();
+  });
+});
+
 test('recoverable child exits remain observable without aborting the E2E stack', () => {
   withLog(path => {
     const scanner = createIncrementalRuntimeFatalLogScanner(path);

@@ -4,11 +4,20 @@ import {
   type FailureDisposition,
 } from '../../../protocol/errors/failure-taxonomy.ts';
 
+import type { EntityInfraContext } from '../../../types/entity/infra-context';
+
 export class MalformedEntityFrameInputError extends FailureDispositionError {
   readonly txType: string;
   readonly rejection: string;
   /** Top-level frame transaction that failed; a local proposer may evict it and retry. */
   frameTx?: unknown;
+  /**
+   * Infra context the proposer materialized for the attempt that rejected
+   * `frameTx`. When the attempt ends without any certified frame (the Runtime
+   * evicts the last tx), the WAL still journals this context so replay can
+   * rebuild the same attempt, reject the same tx and evict it identically.
+   */
+  attemptedEntityContext?: EntityInfraContext;
 
   constructor(txType: string, rejection: string) {
     super('reject', rejection, `ENTITY_FRAME_TX_FAILED: type=${txType} error=${rejection}`);
