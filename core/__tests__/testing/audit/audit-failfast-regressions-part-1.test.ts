@@ -975,7 +975,7 @@ describe('audit fail-fast regressions', () => {
     localEnv.scenarioMode = false;
     const cause = new MalformedEntityFrameInputError('openAccount', 'RUNTIME_REPLICA_NOT_FOUND: test');
     const localError = new RuntimeEntityInputApplyError(entityInput, false, cause);
-    expect(discardRejectedEntityInput(localEnv, runtimeInput, localError, true)).toBeNull();
+    expect(discardRejectedEntityInput(localEnv, runtimeInput, localError)).toBeNull();
 
     const unroutableError = new RuntimeEntityInputApplyError(
       entityInput,
@@ -983,7 +983,7 @@ describe('audit fail-fast regressions', () => {
       cause,
       'unroutable-ingress',
     );
-    expect(discardRejectedEntityInput(localEnv, runtimeInput, unroutableError, true))
+    expect(discardRejectedEntityInput(localEnv, runtimeInput, unroutableError))
       .toEqual({ runtimeTxs: [], entityInputs: [] });
 
     const sameReplicaLane = {
@@ -1002,7 +1002,6 @@ describe('audit fail-fast regressions', () => {
       localEnv,
       { runtimeTxs: [], entityInputs: [entityInput, sameReplicaLane, otherReplicaLane] },
       unroutableError,
-      true,
     )?.entityInputs).toEqual([otherReplicaLane]);
 
     const remoteEntityInput = { ...entityInput, from: `0x${'97'.repeat(20)}` };
@@ -1018,7 +1017,6 @@ describe('audit fail-fast regressions', () => {
       remoteEnv,
       { runtimeTxs: [], entityInputs: [remoteEntityInput, unrelatedInput] },
       remoteError,
-      true,
     );
     expect(retained?.entityInputs).toEqual([unrelatedInput]);
   });

@@ -840,9 +840,8 @@ fn order_proposal_work_by_first_touch(
 /// touched right after the input that produced it — not after every input of
 /// the frame. Move each origin-bearing candidate to that position; anything
 /// without an inbound origin keeps its stage order.
-fn interleave_first_touch(
-    candidates: Vec<AccountId>,
-    inbound_count: usize,
+fn interleave_account_touch_positions(
+    candidates: impl IntoIterator<Item = (AccountId, Option<usize>)>,
     proposal_origins: &[(String, usize)],
 ) -> Result<Vec<AccountId>, ResidentEntityError> {
     let mut by_origin = BTreeMap::<usize, Vec<AccountId>>::new();
@@ -853,16 +852,14 @@ fn interleave_first_touch(
             by_origin.entry(*position).or_default().push(account);
         }
     }
-    let mut ordered = Vec::with_capacity(candidates.len());
-    let (inbound, rest) = candidates.split_at(inbound_count.min(candidates.len()));
-    for (position, account) in inbound.iter().enumerate() {
-        ordered.push(*account);
-        if let Some(targets) = by_origin.remove(&position) {
+    let mut ordered = Vec::new();
+    for (account, position) in candidates {
+        ordered.push(account);
+        if let Some(targets) = position.and_then(|position| by_origin.remove(&position)) {
             ordered.extend(targets);
         }
     }
     ordered.extend(by_origin.into_values().flatten());
-    ordered.extend(rest.iter().copied());
     Ok(ordered)
 }
 
@@ -1468,6 +1465,68 @@ fn collect_round_certification(
     Ok((events, hashes, presigned))
 }
 
+fn account_input_succeeded(verdict: &AccountInputVerdict) -> bool {
+    match verdict {
+        AccountInputVerdict::FrameCommitted { .. }
+        | AccountInputVerdict::FrameCollisionIgnored { .. }
+        | AccountInputVerdict::FrameDuplicate { .. }
+        | AccountInputVerdict::FrameStale { .. }
+        | AccountInputVerdict::AckCommitted { .. }
+        | AccountInputVerdict::AckAccepted { .. }
+        | AccountInputVerdict::DisputeApplied
+        | AccountInputVerdict::BoardHankoRefreshApplied { .. } => true,
+        AccountInputVerdict::AckFrameApplied { ack, frame } => {
+            account_input_succeeded(ack) && account_input_succeeded(frame)
+        }
+        AccountInputVerdict::FrameDisputeRequired { .. }
+        | AccountInputVerdict::FrameRejected { .. }
+        | AccountInputVerdict::AckRejected { .. }
+        | AccountInputVerdict::AckFrameRejected { .. }
+        | AccountInputVerdict::DisputeRejected { .. }
+        | AccountInputVerdict::BoardHankoRefreshRejected { .. }
+        | AccountInputVerdict::Failed(_) => false,
+    }
+}
+
+fn schedule_committed_account_work(
+    state: &mut EntityStateSlice,
+    rows: &[xln_rscore_batch::AccountInputResult],
+) -> Result<(), EntityKernelError> {
+    if state.hub_rebalance_config.is_none() {
+        return Ok(());
+    }
+    let Some(crontab) = state.crontab.as_mut() else {
+        return Ok(());
+    };
+    if crontab
+        .tasks
+        .get(&crate::CrontabTaskMethod::HubRebalance)
+        .is_some_and(|task| task.last_run >= state.timestamp)
+    {
+        return Ok(());
+    }
+    for row in rows {
+        if !row.rebalance_work_after_input || !account_input_succeeded(&row.verdict) {
+            continue;
+        }
+        // Readiness belongs to this successful input, not the final Account
+        // batch. A later input may clear it; that must not erase the earlier
+        // kick. Original row order also owns replacement of the shared hook.
+        crate::schedule_hook(
+            crontab,
+            crate::ScheduledHook {
+                id: "hub-rebalance-kick".into(),
+                trigger_at: state.timestamp,
+                kind: ScheduledHookKind::HubRebalanceKick {
+                    reason: "account_frame_committed".into(),
+                    counterparty_id: account_text(row.account_id),
+                },
+            },
+        )?;
+    }
+    Ok(())
+}
+
 fn ordered_commits(
     inbound: &mut EntityRoundResult,
 ) -> Result<Vec<OrderedAccountCommit>, ResidentEntityError> {
@@ -1785,6 +1844,85 @@ type ScheduledWakeResult = (
     Vec<(String, crate::AccountEnvelopeMutation)>,
 );
 
+fn is_scheduled_collective_output(owner: &str, output: &crate::LocalEntityOutput) -> bool {
+    output.entity_id.eq_ignore_ascii_case(owner)
+        && !output.entity_txs.is_empty()
+        && output.entity_txs.iter().all(|tx| {
+            let crate::LocalEntityOutputTx::Projected(tx) = tx else {
+                return false;
+            };
+            !crate::is_individual_entity_command_tx_kind(tx.kind)
+                && !matches!(
+                    tx.kind,
+                    crate::EntityTxKind::AccountInput
+                        | crate::EntityTxKind::BoardHandover
+                        | crate::EntityTxKind::EntityCommand
+                        | crate::EntityTxKind::JEvent
+                        | crate::EntityTxKind::RuntimeOutput
+                        | crate::EntityTxKind::ScheduledWake
+                )
+        })
+}
+
+fn scheduled_collective_txs(
+    state: &EntityStateSlice,
+    request: &ResidentEntityRequest,
+    outputs: &mut Vec<crate::LocalEntityOutput>,
+) -> Result<Vec<crate::AdmittedLocalEntityTx>, ResidentEntityError> {
+    let mut approved = Vec::new();
+    let mut external = Vec::new();
+    for output in std::mem::take(outputs) {
+        if !is_scheduled_collective_output(&state.entity_id, &output) {
+            external.push(output);
+            continue;
+        }
+        for tx in output.entity_txs {
+            let crate::LocalEntityOutputTx::Projected(tx) = tx else {
+                unreachable!("collective output classification excludes AccountInput");
+            };
+            approved.push(crate::decode_local_entity_tx(&tx)?.ok_or_else(|| {
+                EntityKernelError::local(
+                    "scheduledWake",
+                    format!("ENTITY_TX_NATIVE_UNSUPPORTED:{}", tx.kind.as_str()),
+                )
+            })?);
+        }
+    }
+    *outputs = external;
+    if approved.is_empty() {
+        return Ok(Vec::new());
+    }
+    let board_epoch = match request.local_certified_board_authority {
+        xln_rscore_batch::AccountInputBoardAuthority::Lazy => 0,
+        xln_rscore_batch::AccountInputBoardAuthority::Certified(authority) => {
+            state
+                .certified_board_state
+                .as_ref()
+                .and_then(|registry| registry.resolve(&authority.entity_id))
+                .ok_or_else(|| {
+                    EntityKernelError::local("scheduledWake", "CERTIFIED_BOARD_RECORD_REQUIRED")
+                })?
+                .board_epoch
+        }
+        xln_rscore_batch::AccountInputBoardAuthority::Unresolved => {
+            return Err(
+                EntityKernelError::local("scheduledWake", "BOARD_AUTHORITY_UNRESOLVED").into(),
+            );
+        }
+    };
+    // The certified, due scheduledWake authorizes only its own all-collective
+    // outputs. They execute in this signed frame, without a new command nonce;
+    // routing JBroadcast through Runtime instead creates a stale extra frame.
+    Ok(approved
+        .into_iter()
+        .map(|tx| crate::AdmittedLocalEntityTx {
+            signer_id: request.expected_proposer_signer_id.clone(),
+            board_epoch,
+            tx,
+        })
+        .collect())
+}
+
 fn apply_scheduled_wake(
     accounts: &mut ResidentConsensusEngine,
     state: &mut EntityStateSlice,
@@ -2029,7 +2167,6 @@ fn apply_resident_entity_round_core_attempt(
         .iter()
         .map(|row| row.account_id)
         .collect::<Vec<_>>();
-    let inbound_touch_count = touch_candidates.len();
     let owner_entity_id = request.inbound.owner_entity_id;
     let clock = request.inbound.clock;
     let expected_root = request.inbound.expected_accounts_root;
@@ -2118,10 +2255,19 @@ fn apply_resident_entity_round_core_attempt(
     let mut ordered_hashes = Vec::new();
     let mut ordered_presigned = PresignedManifest::new();
     let mut collisions = Vec::<CollisionFixup>::new();
+    // Stage 1 physically applies every inbound Account first. TS adds new
+    // Account work and history touches in original EntityTx order: an earlier
+    // extendCredit admission precedes a later inbound touch (R4 h28/h34).
+    // Already-proposable Accounts retain their separately captured prefix.
+    let mut input_touch_positions = Vec::<(AccountId, Option<usize>)>::new();
 
     for operation in operations {
         match operation {
             ResidentEntityOperation::AccountRange { start, len } => {
+                input_touch_positions.extend(
+                    (start..start + len)
+                        .map(|position| (touch_candidates[position], Some(position))),
+                );
                 let segment_applied = applied_slots[start..start + len]
                     .iter_mut()
                     .enumerate()
@@ -2286,6 +2432,7 @@ fn apply_resident_entity_round_core_attempt(
                         entity_apply_micros.saturating_add(phase_started.elapsed().as_micros());
                     state = accumulated.merge(next);
                 }
+                schedule_committed_account_work(&mut state, &segment.applied)?;
                 ordered_applied.append(&mut segment.applied);
             }
             ResidentEntityOperation::Local(local_txs) => {
@@ -2303,6 +2450,14 @@ fn apply_resident_entity_round_core_attempt(
                     request.runtime_seed.as_deref(),
                     context,
                 )?;
+                for work in &next.proposal_work {
+                    input_touch_positions.push((account_id(&work.account_id)?, None));
+                }
+                input_touch_positions.extend(
+                    next.account_creates
+                        .iter()
+                        .map(|seed| (seed.account_id, None)),
+                );
                 ordered_events.append(&mut next.local_events);
                 ordered_hashes.append(&mut next.local_hashes_to_sign);
                 entity_apply_micros =
@@ -2328,6 +2483,7 @@ fn apply_resident_entity_round_core_attempt(
     accumulated
         .account_envelope_mutations
         .extend(scheduled_account_envelope_mutations);
+    let mut scheduled_local_txs = Vec::new();
     if scheduled_commands
         .iter()
         .any(|command| matches!(command, SchedulerCommand::HubRebalance))
@@ -2386,6 +2542,22 @@ fn apply_resident_entity_round_core_attempt(
             &views,
             manual_broadcast_in_input,
         )?;
+        // The scheduled rebalance explicitly returns submitted Accounts in
+        // TS accountChanges. Other envelope writes (such as prepareDispute)
+        // still do not create Account-history rows merely because a leaf moved.
+        let submitted_accounts = rebalance
+            .envelope_mutations
+            .iter()
+            .filter(|(_, update)| {
+                matches!(
+                    update,
+                    crate::AccountEnvelopeMutation::SetRebalanceSubmittedAt { .. }
+                )
+            })
+            .map(|(account, _)| account_id(account))
+            .collect::<Result<Vec<_>, _>>()?;
+        touch_candidates.extend(canonical_entity_tx_account_changes(submitted_accounts));
+        scheduled_local_txs = scheduled_collective_txs(&state, &request, &mut rebalance.outputs)?;
         accumulated
             .routed_entity_outputs
             .append(&mut rebalance.outputs);
@@ -2394,14 +2566,16 @@ fn apply_resident_entity_round_core_attempt(
             .append(&mut rebalance.envelope_mutations);
         accumulated.outputs.append(&mut rebalance.effects);
     }
+    let scheduled_views =
+        local_account_views(accounts, &state, &scheduled_local_txs, &[], &[], context)?;
     let phase_started = Instant::now();
     let final_transition = apply_entity_transitions(
         state,
         std::mem::take(&mut accumulated.paybook_changes),
         Vec::new(),
         &BTreeSet::new(),
-        Vec::new(),
-        &BTreeMap::new(),
+        scheduled_local_txs,
+        &scheduled_views,
         request.local_account_genesis_policy.as_ref(),
         request.entity_authority.as_ref(),
         request.runtime_seed.as_deref(),
@@ -2692,11 +2866,13 @@ fn apply_resident_entity_round_core_attempt(
     // post-stage membership set. Reapply the canonical TS queue: work already
     // pending at frame start, then each Account's first accepted input/local
     // touch. A BTree/radix key order must never become flat-outbox order.
-    let mut touch_candidates = interleave_first_touch(
-        touch_candidates,
-        inbound_touch_count,
-        &kernel.proposal_origins,
-    )?;
+    let input_touches =
+        interleave_account_touch_positions(input_touch_positions, &kernel.proposal_origins)?;
+    let mut touch_candidates = input_touches
+        .iter()
+        .copied()
+        .chain(touch_candidates)
+        .collect::<Vec<_>>();
     let proposal_work = order_proposal_work_by_first_touch(
         proposal_work,
         &initially_proposable,
@@ -2783,7 +2959,10 @@ fn apply_resident_entity_round_core_attempt(
     // committed by the Entity root but do not create Account-history rows.
     // Only transitions that TS exposes through `accountChanges` or an actual
     // Account proposal are candidates; the intersection rejects no-op work.
-    let account_touch_order = canonical_account_touch_order(touch_candidates, &actual_touches);
+    let account_touch_order = canonical_account_touch_order(
+        input_touches.into_iter().chain(touch_candidates),
+        &actual_touches,
+    );
     let finalize_micros = phase_started.elapsed().as_micros();
     report_resident_round_profile(
         [
@@ -2848,6 +3027,109 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn cross_j_r6_h69_scheduled_collective_partition_preserves_external_and_mixed_outputs() {
+        let projected = |kind| {
+            crate::LocalEntityOutputTx::Projected(
+                crate::CanonicalEntityTx::from_frame_projection(
+                    kind,
+                    CanonicalValue::Object(Vec::new()),
+                )
+                .unwrap(),
+            )
+        };
+        let mut output = crate::LocalEntityOutput {
+            entity_id: "HUB".into(),
+            target_signer_id: None,
+            entity_txs: vec![projected(crate::EntityTxKind::JBroadcast)],
+        };
+        assert!(is_scheduled_collective_output("hub", &output));
+        output.entity_id = "peer".into();
+        assert!(!is_scheduled_collective_output("hub", &output));
+        output.entity_id = "hub".into();
+        for kind in [
+            crate::EntityTxKind::Chat,
+            crate::EntityTxKind::MaterializeCrossJurisdictionClear,
+            crate::EntityTxKind::RuntimeOutput,
+            crate::EntityTxKind::ScheduledWake,
+        ] {
+            output.entity_txs.push(projected(kind));
+            assert!(
+                !is_scheduled_collective_output("hub", &output),
+                "mixed outputs must remain whole in the external lane: {kind:?}"
+            );
+            output.entity_txs.pop();
+        }
+        output.entity_txs.clear();
+        assert!(!is_scheduled_collective_output("hub", &output));
+    }
+
+    #[test]
+    fn cross_j_r6_h68_committed_account_kick_uses_each_successful_input_in_order() {
+        let mut state = EntityStateSlice::empty(format!("0x{}", "11".repeat(32)), 2_000);
+        state.hub_rebalance_config = Some(CanonicalValue::Object(Vec::new()));
+        let row = |position, account, ready| xln_rscore_batch::AccountInputResult {
+            operation_index: position,
+            account_id: AccountId::from_bytes([account; 32]),
+            verdict: AccountInputVerdict::AckAccepted { height: 1 },
+            force_ack: None,
+            rebalance_work_after_input: ready,
+        };
+        let first = row(0, 0xbb, true);
+        let cleared_later = row(1, 0xbb, false);
+        schedule_committed_account_work(&mut state, &[first, cleared_later]).unwrap();
+        let hook = state
+            .crontab
+            .as_ref()
+            .unwrap()
+            .hooks
+            .values()
+            .next()
+            .unwrap();
+        assert_eq!(hook.trigger_at, 2_000);
+        assert_eq!(
+            hook.kind,
+            ScheduledHookKind::HubRebalanceKick {
+                reason: "account_frame_committed".into(),
+                counterparty_id: format!("0x{}", "bb".repeat(32)),
+            }
+        );
+        let later = row(2, 0xaa, true);
+        schedule_committed_account_work(&mut state, std::slice::from_ref(&later)).unwrap();
+        let expected = state.crontab.clone();
+        assert_eq!(expected.as_ref().unwrap().hooks.len(), 1);
+        assert!(
+            matches!(expected.as_ref().unwrap().hooks.values().next().unwrap().kind,
+            ScheduledHookKind::HubRebalanceKick { ref counterparty_id, .. }
+                if counterparty_id == &format!("0x{}", "aa".repeat(32)))
+        );
+
+        let mut rejected = row(3, 0xcc, true);
+        rejected.verdict = AccountInputVerdict::AckRejected {
+            reason: "invalid signature".into(),
+        };
+        schedule_committed_account_work(&mut state, &[rejected]).unwrap();
+        assert_eq!(state.crontab, expected);
+        state
+            .crontab
+            .as_mut()
+            .unwrap()
+            .tasks
+            .get_mut(&crate::CrontabTaskMethod::HubRebalance)
+            .unwrap()
+            .last_run = state.timestamp;
+        let already_ran = state.crontab.clone();
+        schedule_committed_account_work(&mut state, &[row(4, 0xdd, true)]).unwrap();
+        assert_eq!(
+            state.crontab, already_ran,
+            "same logical tick cannot rearm the task"
+        );
+        let mut non_hub = EntityStateSlice::empty(state.entity_id.clone(), state.timestamp);
+        let before = non_hub.crontab.clone();
+        schedule_committed_account_work(&mut non_hub, &[later]).unwrap();
+        assert_eq!(non_hub.crontab, before);
+    }
 
     fn admitted_cross_j(kind: crate::EntityTxKind) -> crate::AdmittedLocalEntityTx {
         crate::AdmittedLocalEntityTx {
@@ -3140,6 +3422,62 @@ mod tests {
             vec![account_text(first), account_text(second)],
         );
         assert!(ordered[0].2, "the first-touch forced ACK keeps its slot");
+    }
+
+    #[test]
+    fn cross_j_r4_h28_credit_before_inbound_first_touch_keeps_primed_prefix() {
+        let credit =
+            account_id("0xe9607455f42b2e29f49728922dd42b798a068a09c691d1c631bb0ea5cbc9fcf5")
+                .unwrap();
+        let inbound =
+            account_id("0xeb3418da09e219acab1d25cd97c4b948a706a27f6ce8b9fdb0fcbadfc3c715f3")
+                .unwrap();
+        let changed = BTreeSet::from([credit, inbound]);
+        let touches = interleave_account_touch_positions(
+            [
+                (credit, None),
+                (credit, None),
+                (credit, None),
+                (inbound, Some(0)),
+            ],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            canonical_account_touch_order(touches.iter().copied(), &changed),
+            vec![credit, inbound]
+        );
+        let primed = AccountId::from_bytes([0x11; 32]);
+        let proposals = order_proposal_work_by_first_touch(
+            vec![
+                (inbound, Vec::new(), true),
+                (credit, Vec::new(), false),
+                (primed, Vec::new(), false),
+            ],
+            &[primed],
+            &touches,
+        )
+        .unwrap();
+        assert_eq!(
+            proposals
+                .iter()
+                .map(|(account, _, _)| *account)
+                .collect::<Vec<_>>(),
+            vec![primed, credit, inbound],
+            "initially-ready work precedes new work in original EntityTx order",
+        );
+        assert!(proposals[2].2, "the later inbound keeps its forced ACK");
+
+        let forwarded = AccountId::from_bytes([0x33; 32]);
+        let later = AccountId::from_bytes([0x44; 32]);
+        assert_eq!(
+            interleave_account_touch_positions(
+                [(credit, None), (inbound, Some(0)), (later, Some(1))],
+                &[(account_text(forwarded), 0)],
+            )
+            .unwrap(),
+            vec![credit, inbound, forwarded, later]
+        );
     }
 
     #[test]

@@ -115,6 +115,15 @@ impl OrderbookPairJob {
         let mut swept = BTreeSet::new();
         let mut batch = BTreeMap::new();
         let mut effects = Vec::with_capacity(self.commands.len());
+        // Cross-J matches are previews until canonical route fill progress is
+        // committed. Publishing their working book double-applies the fill
+        // and changes counters/roots (R6 S77). Only the resting prefix before
+        // the first trade is publishable; later commands keep using the preview.
+        let mut published_cross_book = self
+            .pair_id
+            .starts_with("cross:")
+            .then(|| (self.state.books.clone(), self.state.pair_by_order.clone()));
+        let mut cross_trade_previewed = false;
         let execution = OfferExecutionContext {
             deterministic: context,
             usd_quote_authority: self.usd_quote_authority.as_ref(),
@@ -132,7 +141,24 @@ impl OrderbookPairJob {
             ) {
                 return Err((*ordinal, error));
             }
+            if let Some((books, pair_by_order)) = &mut published_cross_book {
+                let published_trade_count =
+                    books.get(&self.pair_id).map_or(0, |book| book.trade_count);
+                cross_trade_previewed |= self
+                    .state
+                    .books
+                    .get(&self.pair_id)
+                    .is_some_and(|book| book.trade_count != published_trade_count);
+                if !cross_trade_previewed {
+                    books.clone_from(&self.state.books);
+                    pair_by_order.clone_from(&self.state.pair_by_order);
+                }
+            }
             effects.push((*ordinal, command_effects));
+        }
+        if let Some((books, pair_by_order)) = published_cross_book {
+            self.state.books = books;
+            self.state.pair_by_order = pair_by_order;
         }
         Ok(OrderbookPairOutcome {
             pair_id: self.pair_id,
@@ -534,10 +560,12 @@ fn classify_maker(
 
 pub(super) fn validate_restored_state(state: &OrderbookState) -> Result<(), EntityKernelError> {
     for (pair_id, book) in &state.books {
-        let expected_dimensions = state
-            .pair_dimensions
-            .get(pair_id)
-            .ok_or_else(|| EntityKernelError::orderbook("ORDERBOOK_PAIR_DIMENSIONS_MISSING"))?;
+        let expected_dimensions = state.pair_dimensions.get(pair_id);
+        if expected_dimensions.is_none() && !pair_id.starts_with("cross:") {
+            return Err(EntityKernelError::orderbook(
+                "ORDERBOOK_PAIR_DIMENSIONS_MISSING",
+            ));
+        }
         for order in book.orders.values() {
             classify_maker(&state.offers, &state.resolving_offers, order)?;
             let (account_id, offer_id) = split_order_id(&order.order_id)?;
@@ -546,7 +574,12 @@ pub(super) fn validate_restored_state(state: &OrderbookState) -> Result<(), Enti
                 .get(&(account_id.clone(), offer_id))
                 .ok_or_else(|| EntityKernelError::orderbook("ORDERBOOK_SAME_SNAPSHOT_MISSING"))?;
             let materialized = materialize(&account_id, offer, &BigInt::from(0))?;
-            if materialized.pair_id != *pair_id || &materialized.dimensions != expected_dimensions {
+            // Cross-J dimensions belong to each authenticated route, not the
+            // same-J pairDimensions map. Materialization still verifies every
+            // restored order against its canonical route and venue.
+            if materialized.pair_id != *pair_id
+                || expected_dimensions.is_some_and(|value| value != &materialized.dimensions)
+            {
                 return Err(EntityKernelError::orderbook(
                     "ORDERBOOK_RESTORED_PAIR_MISMATCH",
                 ));
@@ -831,12 +864,8 @@ fn process_events(
         return Ok(());
     }
     if current_offer.cross_jurisdiction.is_some() {
-        let trades = u64::try_from(trades)
-            .map_err(|_| EntityKernelError::orderbook("ORDERBOOK_MATCH_COUNT_ENCODING"))?;
-        effects.matched_swaps = effects
-            .matched_swaps
-            .checked_add(trades)
-            .ok_or_else(|| EntityKernelError::orderbook("ORDERBOOK_MATCH_COUNT_OVERFLOW"))?;
+        // SwapMatched counts committed book tradeCount changes. Cross-J
+        // previews create route fill work, not committed book trades.
         return process_cross_jurisdiction_events(
             state,
             effects,
@@ -970,9 +999,13 @@ fn process_one_offer<'a>(
     // makes a rejected first offer mutate pairDimensions/books and forks the
     // Entity root even though both engines emit the same cancel transaction.
     if !pair_already_exists {
-        state
-            .pair_dimensions
-            .insert(materialized.pair_id.clone(), materialized.dimensions);
+        // TS commits pairDimensions only for same-J markets. R6 h44 proved
+        // that adding a Cross-J entry forks the Entity root despite exact books.
+        if offer.cross_jurisdiction.is_none() {
+            state
+                .pair_dimensions
+                .insert(materialized.pair_id.clone(), materialized.dimensions);
+        }
         state.books.insert(
             materialized.pair_id.clone(),
             BookState::empty(state.max_orders_per_pair, policy.book_bucket_width_ticks),
@@ -1527,6 +1560,40 @@ mod tests {
         apply_pair_index_events(&mut state, pair_id, "taker", &[]);
         assert!(!state.pair_by_order.contains_key("taker"));
         assert_eq!(state.pair_by_order.len(), 4_097);
+    }
+
+    #[test]
+    fn same_j_book_restore_requires_committed_pair_dimensions() {
+        let mut state = OrderbookState::empty(20_000);
+        apply_orderbook_outputs(
+            &mut state,
+            &[SameJOutputDelta::Upsert {
+                account_id: "account-a".to_string(),
+                offer: Box::new(resting_ask(
+                    "account-a",
+                    "same-j-dimensions",
+                    2,
+                    18,
+                    25_000_000,
+                    1,
+                )),
+            }],
+            &DeterministicContext::hlt_default(),
+            "hub",
+        )
+        .expect("accepted same-J offer");
+        let mut snapshot = state.snapshot().expect("same-J snapshot");
+        assert_eq!(snapshot.books.len(), 1);
+        assert_eq!(snapshot.pair_dimensions.len(), 1);
+        assert_eq!(OrderbookState::restore(snapshot.clone()).unwrap(), state);
+        snapshot.pair_dimensions.clear();
+        assert!(
+            OrderbookState::restore(snapshot)
+                .unwrap_err()
+                .to_string()
+                .contains("ORDERBOOK_PAIR_DIMENSIONS_MISSING"),
+            "Cross-J route dimensions do not make same-J metadata optional",
+        );
     }
 
     #[test]

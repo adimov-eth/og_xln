@@ -10,6 +10,7 @@ use xln_rscore_protocol::{CanonicalNumber, CanonicalValue, encode_account_state_
 
 use crate::swap::{MAX_ACCOUNT_CROSS_J_SWAP_OFFERS, MAX_ACCOUNT_SWAP_OFFERS};
 use crate::tx::apply_types::MutationDecision;
+use crate::tx::offdelta::validate_transfer;
 use crate::{
     AccountRejection, AccountReplica, Side, StateError, TokenId, TransitionError,
     ValidationRejection,
@@ -312,7 +313,8 @@ pub(crate) fn apply_pull_lock(
             return Err("Pull amount must be non-zero".into());
         }
         let absolute = abs(&amount);
-        if absolute < BigInt::from(1) || absolute > ((BigInt::from(1) << 128) - 1) {
+        let signed_boundary = BigInt::from(1) << 255_usize;
+        if amount < -&signed_boundary || amount >= signed_boundary {
             return Err(format!("Pull amount out of bounds: {absolute}"));
         }
         let full_hash =
@@ -441,7 +443,7 @@ pub(crate) fn apply_pull_lock(
         }
         delta
             .add_hold(loser, &absolute)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.message())?;
         let event_amount = amount.clone();
         let pull = CanonicalValue::Object(vec![
             ("pullId".into(), CanonicalValue::String(pull_id.clone())),
@@ -677,17 +679,20 @@ pub(crate) fn apply_pull_close(
         delta
             .release_hold(payer, &release)
             .map_err(|error| error.to_string())?;
-        if applied > BigInt::from(0) {
-            delta
-                .apply_transfer(payer, &applied)
-                .map_err(|error| error.to_string())?;
-        }
-        Ok((delta, ratio, applied, remaining, leg, order_id))
+        Ok((delta, ratio, applied, remaining, leg, order_id, payer))
     })();
-    let (delta, ratio, applied, remaining, leg, order_id) = match outcome {
+    let (mut delta, ratio, applied, remaining, leg, order_id, payer) = match outcome {
         Ok(value) => value,
         Err(error) => return Ok(reject(error)),
     };
+    if let Err(rejection) = validate_transfer(account, &delta, payer, &applied, None) {
+        return Ok(MutationDecision::rejected(AccountRejection::Validation(
+            rejection,
+        )));
+    }
+    if applied > BigInt::from(0) {
+        delta.apply_transfer(payer, &applied)?;
+    }
     account.state_mut().put_delta(delta).map_err(map_state)?;
     account
         .state_mut()
@@ -978,6 +983,28 @@ mod tests {
         })
         .expect("bound offer state");
         AccountReplica::new(entity(0x11), state).expect("bound offer replica")
+    }
+
+    #[test]
+    fn cross_j_r6_h43_pull_created_height_uses_jurisdiction_height() {
+        for frame_j_height in [24, 34] {
+            // The signed frame owns the pull's clock. Account height and the
+            // receiver's enforcement clock must not change its committed leaf.
+            let context = AccountExecutionContext::new(1_000, 2_000, 99, 4, frame_j_height);
+            let locked = SequentialAccountEngine::apply_with_context(
+                &replica(),
+                Side::Left,
+                &lock_tx(),
+                &context,
+            )
+            .expect("lock")
+            .committed()
+            .expect("lock candidate");
+            let pull =
+                fields(locked.state().pull("pull-1").expect("stored pull")).expect("pull fields");
+            assert_eq!(uint(pull, "createdHeight").expect("height"), frame_j_height);
+            assert_eq!(uint(pull, "createdTimestamp").expect("timestamp"), 1_000);
+        }
     }
 
     #[test]

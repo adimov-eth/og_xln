@@ -740,9 +740,11 @@ pub fn proposer_materialization_account_view_requests(
     Ok(requests)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_proposer_materializations(
     state: &EntityStateSlice,
     runtime_seed: &str,
+    runtime_timestamp: u64,
     proposer_signer_id: &str,
     authority: &EntityFrameAuthority,
     account_views: &std::collections::BTreeMap<
@@ -797,7 +799,9 @@ pub fn build_proposer_materializations(
                 ("proposerSignerId".into(), string(&proposer)),
                 (
                     "route".into(),
-                    prepared_route(route, runtime_seed, state.timestamp)?,
+                    // TS uses env.state.timestamp here. The last certified
+                    // Entity timestamp may predate this wake (R4 h45).
+                    prepared_route(route, runtime_seed, runtime_timestamp)?,
                 ),
             ]),
         )?);
@@ -835,8 +839,9 @@ pub fn build_proposer_materializations(
         let Some(view) = account_views.get(&source_user) else {
             continue;
         };
-        if view.swap_offer_ids.contains(order_id)
-            || !view.pull_ids.contains(source_pull_id)
+        // The Account offer is removed by the pull close itself. Waiting for
+        // its absence prevents the proposer reveal and deadlocks a filled route.
+        if !view.pull_ids.contains(source_pull_id)
             || view.pending_cross_pull_close_ids.contains(source_pull_id)
         {
             continue;
@@ -2003,18 +2008,18 @@ fn insert_exact(
     key: &str,
     value: CanonicalValue,
     kind: EntityTxKind,
-) -> Result<(), EntityKernelError> {
+) -> Result<bool, EntityKernelError> {
     let target = collection(target);
     if let Some(existing) = target.get(key) {
         if existing == &value {
-            return Ok(());
+            return Ok(false);
         }
         // A different route reusing one orderId is the submitter's fault
         // (TS CROSS_J_USER_AUTH_CONFLICT / CROSS_J_RAW_PREPARE_CONFLICT).
         return Err(rejected(kind, format!("CONFLICT:{key}")));
     }
     target.insert(key.to_string(), value)?;
-    Ok(())
+    Ok(true)
 }
 
 fn projected(
@@ -2551,14 +2556,22 @@ fn apply_prepare(
     if local != source_hub {
         return Err(invalid(tx.kind, format!("WRONG_ENTITY:{order_id}:{local}")));
     }
-    insert_exact(
+    let inserted = insert_exact(
         &mut state.cross_jurisdiction_swaps,
         &order_id,
         route,
         tx.kind,
     )?;
+    // The source hub signs the acceptance event once. An exact intent retry
+    // neither creates another event nor another local continuation in TS.
+    if !inserted {
+        return Ok(CrossJurisdictionApplyResult::default());
+    }
     Ok(CrossJurisdictionApplyResult {
         outputs: vec![LocalEntityOutput::non_mutating_wake(local)],
+        events: vec![EntityFrameEvent::Status {
+            message: format!("🌉 Cross-j swap {order_id} awaiting source-hub proposer commitments"),
+        }],
         ..CrossJurisdictionApplyResult::default()
     })
 }
@@ -2976,6 +2989,14 @@ fn apply_remove_book_order(
     let source_entity = required_text(data, "sourceEntityId", tx)?;
     let source_account = text(data, "sourceAccountId").filter(|value| !value.is_empty());
     let reason = text(data, "reason").unwrap_or("cancel_request");
+    let namespaced_order_id = format!("{source_entity}:{order_id}");
+    let order_present = state.orderbook.as_ref().is_some_and(|orderbook| {
+        orderbook
+            .pair_by_order
+            .get(&namespaced_order_id)
+            .and_then(|pair| orderbook.books.get(pair))
+            .is_some_and(|book| book.orders.contains_key(&namespaced_order_id))
+    });
     let removal_message = format!(
         "🌉 Cross-j book remove {order_id}{} {}",
         if reason.is_empty() {
@@ -2983,7 +3004,7 @@ fn apply_remove_book_order(
         } else {
             format!(": {reason}")
         },
-        if state.orderbook.is_some() {
+        if order_present {
             "removed"
         } else {
             "not-present"
@@ -5420,6 +5441,212 @@ mod tests {
     }
 
     #[test]
+    fn cross_j_r6_h67_trade_preview_preserves_committed_book_until_fill_progress() {
+        use crate::orderbook::{
+            apply_cross_jurisdiction_fill_deltas, install_orderbook_outputs,
+            prepare_orderbook_outputs, validate_orderbook_outputs,
+        };
+
+        let kind = EntityTxKind::AdmitCrossJurisdictionBookOrder;
+        let mut ask_raw = route("resting", true);
+        let mut ask_target = field(&ask_raw, "target").unwrap().clone();
+        set(
+            &mut ask_target,
+            "amount",
+            CanonicalValue::BigInt(BigInt::from(2_500_000_000_u64)),
+        )
+        .unwrap();
+        set(&mut ask_raw, "target", ask_target).unwrap();
+        let ask = canonical_route(&ask_raw, kind).expect("canonical resting ask route");
+        let mut bid_raw = ask_raw.clone();
+        let mut bid_source = field(&ask_raw, "target").unwrap().clone();
+        set(&mut bid_source, "entityId", string("target-user")).unwrap();
+        set(
+            &mut bid_source,
+            "counterpartyEntityId",
+            string("target-hub"),
+        )
+        .unwrap();
+        let mut bid_target = field(&ask_raw, "source").unwrap().clone();
+        set(&mut bid_target, "entityId", string("source-hub")).unwrap();
+        set(
+            &mut bid_target,
+            "counterpartyEntityId",
+            string("source-user"),
+        )
+        .unwrap();
+        for (name, value) in [
+            ("orderId", string("order-2")),
+            ("makerEntityId", string("target-user")),
+            ("source", bid_source),
+            ("target", bid_target),
+            ("sourceSignerId", string("target-user-signer")),
+            ("sourceHubSignerId", string("target-hub-signer")),
+            ("targetHubSignerId", string("source-hub-signer")),
+            ("targetSignerId", string("source-user-signer")),
+        ] {
+            set(&mut bid_raw, name, value).unwrap();
+        }
+        let bid = canonical_route(&bid_raw, kind).expect("canonical reciprocal bid route");
+        let mut tail_raw = ask_raw;
+        set(&mut tail_raw, "orderId", string("order-3")).unwrap();
+        set(&mut tail_raw, "makerEntityId", string("zz-tail-user")).unwrap();
+        let mut tail_source = field(&tail_raw, "source").unwrap().clone();
+        set(&mut tail_source, "entityId", string("zz-tail-user")).unwrap();
+        set(&mut tail_raw, "source", tail_source).unwrap();
+        let tail = canonical_route(&tail_raw, kind).expect("canonical later resting route");
+        let context = crate::DeterministicContext::hlt_default();
+        let match_orders = |book: &mut crate::OrderbookState, deltas: &[SameJOutputDelta]| {
+            let mut prepared =
+                prepare_orderbook_outputs(book, deltas, &context, "source-hub", None)
+                    .expect("prepare canonical matcher");
+            let results = prepared
+                .take_jobs()
+                .into_iter()
+                .map(|job| job.apply(&context))
+                .collect();
+            let validated =
+                validate_orderbook_outputs(prepared, results).expect("validate canonical matcher");
+            install_orderbook_outputs(book, validated)
+        };
+        let mut owner = EntityStateSlice::empty("source-hub", 2_000);
+        owner.orderbook = Some(crate::OrderbookState::empty(10_000));
+        let first = apply_admit(&mut owner, &tx(kind, ask)).expect("admit resting ask");
+        let first_effects =
+            match_orders(owner.orderbook.as_mut().unwrap(), &first.orderbook_deltas);
+        assert!(first_effects.cross_jurisdiction_fills.is_empty());
+        let before = owner
+            .orderbook
+            .as_ref()
+            .unwrap()
+            .books
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        let bid = apply_admit(&mut owner, &tx(kind, bid)).expect("admit crossing bid");
+        let tail = apply_admit(&mut owner, &tx(kind, tail)).expect("admit later resting offer");
+        let mut deltas = bid.orderbook_deltas;
+        deltas.extend(tail.orderbook_deltas);
+        let effects = match_orders(owner.orderbook.as_mut().unwrap(), &deltas);
+        assert_eq!(
+            effects.cross_jurisdiction_fills.len(),
+            2,
+            "both reciprocal fills are produced"
+        );
+        assert_eq!(
+            effects.matched_swaps, 0,
+            "a speculative Cross-J match must not emit a committed SwapMatched effect"
+        );
+        let previewed = owner
+            .orderbook
+            .as_ref()
+            .unwrap()
+            .books
+            .values()
+            .next()
+            .unwrap();
+        assert_eq!(
+            previewed.trade_count, before.trade_count,
+            "speculative crossing must not publish trade counters"
+        );
+        assert_eq!(
+            previewed, &before,
+            "TS publishes neither the trade preview nor later resting commands after the first speculative trade in the same pair job",
+        );
+        for fill in effects.cross_jurisdiction_fills {
+            let committed = commit_cross_jurisdiction_book_fill(&mut owner, fill)
+                .expect("commit canonical fill progress");
+            apply_cross_jurisdiction_fill_deltas(
+                owner.orderbook.as_mut().unwrap(),
+                &committed.orderbook_deltas,
+            )
+            .expect("apply canonical fill book projection");
+        }
+        let final_book = owner
+            .orderbook
+            .as_ref()
+            .unwrap()
+            .books
+            .values()
+            .next()
+            .unwrap();
+        assert!(
+            final_book.orders.is_empty(),
+            "terminal fill removes the committed maker"
+        );
+        assert_eq!(final_book.trade_count, before.trade_count);
+        assert_eq!(final_book.trade_qty_sum, before.trade_qty_sum);
+        assert_eq!(
+            final_book.last_trade_price_ticks,
+            before.last_trade_price_ticks
+        );
+        assert_eq!(final_book.next_seq, before.next_seq);
+        assert_ne!(
+            final_book.event_hash, before.event_hash,
+            "canonical maker removal records its cancellation event"
+        );
+    }
+
+    #[test]
+    fn cross_j_r4_h44_source_hub_prepare_events_follow_accepted_intent_order() {
+        let mut state = EntityStateSlice::empty("source-hub", 1);
+        let order_ids = ["order-3", "order-1", "order-2"];
+        let txs = order_ids.map(|order_id| {
+            let mut intent = route("intent", false);
+            set(&mut intent, "orderId", string(order_id)).unwrap();
+            let intent = canonical_route(&intent, EntityTxKind::PrepareCrossJurisdictionSwap)
+                .expect("exact route hash binding");
+            tx(EntityTxKind::PrepareCrossJurisdictionSwap, intent)
+        });
+        let result = apply_cross_jurisdiction_entity_txs(
+            &mut state,
+            &std::collections::BTreeMap::new(),
+            &txs,
+            Some("source-hub-signer"),
+            &authority(
+                "source-hub-signer",
+                1,
+                "0x1111111111111111111111111111111111111111",
+            ),
+        )
+        .expect("accepted source-hub intents");
+        assert_eq!(
+            result.events,
+            order_ids.map(|order_id| EntityFrameEvent::Status {
+                message: format!(
+                    "🌉 Cross-j swap {order_id} awaiting source-hub proposer commitments"
+                ),
+            }),
+        );
+        assert_eq!(result.outputs.len(), order_ids.len());
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| { output.entity_id == "source-hub" && output.entity_txs.is_empty() })
+        );
+        let root = state.cross_jurisdiction_swaps.as_ref().unwrap().root_hash();
+        let duplicate = apply_cross_jurisdiction_entity_txs(
+            &mut state,
+            &std::collections::BTreeMap::new(),
+            &txs,
+            Some("source-hub-signer"),
+            &authority(
+                "source-hub-signer",
+                1,
+                "0x1111111111111111111111111111111111111111",
+            ),
+        )
+        .expect("exact intent retries");
+        assert!(duplicate.events.is_empty() && duplicate.outputs.is_empty());
+        assert_eq!(
+            state.cross_jurisdiction_swaps.as_ref().unwrap().root_hash(),
+            root
+        );
+    }
+
+    #[test]
     fn source_user_authorization_is_radix_owned_and_routes_prepare() {
         let mut state = EntityStateSlice::empty("source-user", 1);
         let result = apply_cross_jurisdiction_entity_txs(
@@ -5539,6 +5766,37 @@ mod tests {
             Some(
                 "cross:stack:1:0x1111111111111111111111111111111111111111:2/stack:2:0x2222222222222222222222222222222222222222:1"
             )
+        );
+    }
+
+    #[test]
+    fn cross_j_r6_h68_absent_book_order_reports_not_present() {
+        let kind = EntityTxKind::RemoveCrossJurisdictionBookOrder;
+        let canonical = canonical_route(&route("settled", true), kind).expect("route");
+        let mut owner = EntityStateSlice::empty("source-hub", 2_000);
+        owner.orderbook = Some(crate::orderbook::OrderbookState::empty(10_000));
+        let removal = CanonicalEntityTx::from_frame_projection(
+            kind,
+            obj(vec![
+                ("orderId", string("order-1")),
+                ("sourceEntityId", string("source-user")),
+                ("route", canonical),
+                ("reason", string("settled")),
+            ]),
+        )
+        .expect("settlement removal");
+        let result = apply_remove_book_order(&mut owner, &removal).expect("remove absent order");
+        assert!(result.outputs.is_empty());
+        assert!(matches!(
+            result.orderbook_deltas.as_slice(),
+            [SameJOutputDelta::Remove { account_id, offer_id }]
+                if account_id == "source-user" && offer_id == "order-1"
+        ));
+        assert_eq!(
+            result.events,
+            [EntityFrameEvent::Status {
+                message: "🌉 Cross-j book remove order-1: settled not-present".into(),
+            }]
         );
     }
 
@@ -5775,6 +6033,75 @@ mod tests {
     }
 
     #[test]
+    fn cross_j_r6_h67_clear_materializes_with_live_pull_and_account_offer() {
+        let authority = authority(
+            "source-hub-signer",
+            1,
+            "0x1111111111111111111111111111111111111111",
+        );
+        let mut prepared =
+            prepared_route(&route("intent", false), "runtime-seed", 1_000).expect("prepared route");
+        committed::with_fill_progress(
+            &mut prepared,
+            1,
+            u64::from(u16::MAX),
+            2_000,
+            EntityTxKind::CrossJurisdictionFillNotice,
+            "COMMITTED_FILL",
+        )
+        .expect("terminal committed fill");
+        assert_eq!(text(&prepared, "status"), Some("clear_requested"));
+        let pull_id = field(&prepared, "sourcePull")
+            .and_then(|pull| text(pull, "pullId"))
+            .expect("source pull")
+            .to_string();
+        let mut state = EntityStateSlice::empty("source-hub", 2_000);
+        state.cross_jurisdiction_swaps = Some(
+            EntityCanonicalCollection::from_entries([("order-1".into(), prepared)])
+                .expect("committed route"),
+        );
+        let view = xln_rscore_batch::ResidentCrossJMaterializationView {
+            pull_ids: [pull_id.clone()].into_iter().collect(),
+            swap_offer_ids: ["order-1".into()].into_iter().collect(),
+            pending_cross_pull_close_ids: Default::default(),
+        };
+        let materialize = |view, signer| {
+            build_proposer_materializations(
+                &state,
+                "runtime-seed",
+                state.timestamp,
+                signer,
+                &authority,
+                &[("source-user".into(), view)].into_iter().collect(),
+                &Default::default(),
+                false,
+            )
+            .expect("clear materialization")
+        };
+        let mut missing_pull = view.clone();
+        missing_pull.pull_ids.clear();
+        assert!(materialize(missing_pull, "source-hub-signer").is_empty());
+        let mut queued_close = view.clone();
+        queued_close.pending_cross_pull_close_ids.insert(pull_id);
+        assert!(materialize(queued_close, "source-hub-signer").is_empty());
+        assert!(materialize(view.clone(), "attacker").is_empty());
+
+        // Pull-close removes the Account offer. Its presence cannot prevent
+        // the authorized proposer from revealing a committed terminal fill.
+        let additions = materialize(view, "source-hub-signer");
+        assert_eq!(additions.len(), 1, "live source pull must schedule clear");
+        assert_eq!(
+            additions[0].kind,
+            EntityTxKind::MaterializeCrossJurisdictionClear
+        );
+        let data = additions[0].frame_data().expect("clear data");
+        assert_eq!(text(data, "orderId"), Some("order-1"));
+        assert_eq!(text(data, "proposerSignerId"), Some("source-hub-signer"));
+        assert!(field(data, "proof").is_some());
+        assert!(text(data, "binary").is_some_and(|binary| binary != "0x"));
+    }
+
+    #[test]
     fn default_proposer_materialization_matches_typescript_hash_ladder_vector() {
         let authority = authority(
             "source-hub-signer",
@@ -5793,6 +6120,7 @@ mod tests {
         let materialized = build_proposer_materializations(
             &state,
             "runtime-seed",
+            state.timestamp,
             "source-hub-signer",
             &authority,
             &std::collections::BTreeMap::new(),

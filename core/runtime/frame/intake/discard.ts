@@ -34,7 +34,6 @@ export const discardRejectedEntityInput = (
   env: RuntimeReplica,
   input: RuntimeInput,
   error: unknown,
-  quietLogs: boolean,
 ): RuntimeInput | null => {
   if (env.scenarioMode || readRuntimeMetadata(env, ENV_REPLAY_MODE_KEY) === true) return null;
   if (!(error instanceof RuntimeEntityInputApplyError) || !error.isDiscardableIngress) {
@@ -64,8 +63,9 @@ export const discardRejectedEntityInput = (
     cause: error.cause instanceof Error ? error.cause.message : String(error.cause),
     rejectedInputsDump: safeStringify(rejected),
   };
-  // Always logged: this line is the audit trail of hostile/buggy peers.
-  discardLog.error('entity_input.discarded', quietLogs ? { ...payload, rejectedInputsDump: undefined } : payload);
+  // Rejected ingress has no WAL row: this evidence must survive quiet mode.
+  // It is the audit trail of hostile/buggy peers (docs/reject-policy.md).
+  discardLog.error('entity_input.discarded', payload);
   if (rejectFailFast()) {
     throw haltRuntimeFailure(
       'REMOTE_INPUT_REJECTED',
