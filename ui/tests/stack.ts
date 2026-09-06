@@ -21,6 +21,13 @@ export async function fundFromHub(page: Page, amount = '100'): Promise<void> {
 	await page.getByTestId('nav-manage').locator('visible=true').first().click();
 	await page.getByTestId('manage-assets').click();
 	await page.getByTestId('faucet-amount').fill(amount);
+	const spectrum = page.getByTestId('receive-spectrum');
+	if (await spectrum.isVisible()) {
+		await page.getByRole('button', { name: '0% collateral', exact: true }).click();
+		await page.getByTestId('receive-spectrum-confirm').click();
+		await expect(spectrum).toHaveCount(0, { timeout: 15_000 });
+	}
+	await expect(page.getByTestId('faucet-offchain')).toBeEnabled();
 	await page.getByTestId('faucet-offchain').click();
 	await page.getByTestId('nav-home').locator('visible=true').first().click();
 	await expect(page.getByTestId('token-net-USDC')).toBeVisible({ timeout: 90_000 });

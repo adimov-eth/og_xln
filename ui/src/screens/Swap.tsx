@@ -97,13 +97,21 @@ export function Swap() {
 			// Someone sells base at this price: we pay quote, we get base.
 			setGiveTokenId(book.quoteTokenId);
 			setWantTokenId(book.baseTokenId);
+		// A resting level is often larger than what we can send; take the price, but only as much of the size as we can pay for.
+		const spendable = (tokenId: number): bigint => hub?.tokens.find(token => token.tokenId === tokenId)?.derived.outCapacity ?? 0n;
 			setGiveText(plainAmount(quoteAmount, quote.decimals));
 			setWantText(plainAmount(level.size, base.decimals));
+			const cap = spendable(book.quoteTokenId);
+			const give = cap > 0n && quoteAmount > cap ? cap : quoteAmount;
+			const want = give === quoteAmount || quoteAmount === 0n ? level.size : (level.size * give) / quoteAmount;
 		} else {
 			setGiveTokenId(book.baseTokenId);
 			setWantTokenId(book.quoteTokenId);
 			setGiveText(plainAmount(level.size, base.decimals));
 			setWantText(plainAmount(quoteAmount, quote.decimals));
+			const cap = spendable(book.baseTokenId);
+			const give = cap > 0n && level.size > cap ? cap : level.size;
+			const want = give === level.size || level.size === 0n ? quoteAmount : (quoteAmount * give) / level.size;
 		}
 	};
 	const giveToken = hub?.tokens.find(token => token.tokenId === giveTokenId) ?? null;
@@ -119,12 +127,36 @@ export function Swap() {
 	}, [giveText, giveMeta.decimals]);
 	const parsedWant = useMemo(() => {
 		try {
-			const value = parseAmount(wantText || '0', wantMeta.decimals);
+			const value = parseAmount(wantText || impliedWantText || '0', wantMeta.decimals);
 			return value > 0n ? value : null;
+	// No price typed yet: quote at the best resting level, so the ticket never sits at 0.00 while the book is live.
+	const impliedWantText = useMemo(() => {
+		if (!book || wantText.trim() || !giveText.trim()) return '';
+		let give: bigint;
+		try {
+			give = parseAmount(giveText, giveMeta.decimals);
+		} catch {
+			return '';
+		}
+		if (give <= 0n) return '';
+		const base = getTokenMeta(book.baseTokenId);
+		const quote = getTokenMeta(book.quoteTokenId);
+		if (giveTokenId === book.quoteTokenId && wantTokenId === book.baseTokenId) {
+			const level = book.asks[0];
+			if (!level) return '';
+			const quoteForLevel = quoteForBase(level.size, level.priceTicks, base.decimals, quote.decimals);
+			return quoteForLevel > 0n ? plainAmount((level.size * give) / quoteForLevel, base.decimals) : '';
+		}
+		if (giveTokenId === book.baseTokenId && wantTokenId === book.quoteTokenId) {
+			const level = book.bids[0];
+			return level ? plainAmount(quoteForBase(give, level.priceTicks, base.decimals, quote.decimals), quote.decimals) : '';
+		}
+		return '';
+	}, [book, wantText, giveText, giveTokenId, wantTokenId, giveMeta.decimals]);
 		} catch {
 			return null;
 		}
-	}, [wantText, wantMeta.decimals]);
+	}, [wantText, impliedWantText, wantMeta.decimals]);
 
 	const prepared = useMemo(() => {
 		if (!xln || !parsedGive || !parsedWant || giveTokenId === wantTokenId) return null;
@@ -299,7 +331,7 @@ export function Swap() {
 							<input
 								className="input big"
 								style={{ color: 'var(--accent-2)' }}
-								placeholder="0.00"
+								placeholder={impliedWantText ? plainAmount(parseAmount(impliedWantText, wantMeta.decimals), wantMeta.decimals).replace(/(\.\d{6})\d+$/, '$1') : '0.00'}
 								inputMode="decimal"
 								value={wantText}
 								onChange={event => setWantText(event.target.value)}
@@ -314,7 +346,9 @@ export function Swap() {
 						</div>
 						{giveText.trim() && !wantText.trim() ? (
 							<div className="note" style={{ marginTop: 8 }}>
-								Set the amount you want. The order rests on your account at that price until {hub?.label ?? 'the hub'} fills it.
+								{impliedWantText
+									? `Quoted at the best price in the book right now. Type your own amount to set a limit; the order then rests on your account until ${hub?.label ?? 'the hub'} fills it.`
+									: `Set the amount you want. The order rests on your account at that price until ${hub?.label ?? 'the hub'} fills it.`}
 							</div>
 						) : null}
 					</div>

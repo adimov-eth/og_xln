@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { Icon, type IconName } from '../components/Icons';
 import { PendingBatch } from '../components/PendingBatch';
 import { useApp } from '../runtime/store';
-import { formatMoney, getTokenMeta } from '../runtime/format';
+import { formatMoney, formatUsd, getTokenMeta } from '../runtime/format';
 import { useWallet } from '../runtime/views';
 import { debtGroups } from '../runtime/financial/debts';
 
@@ -49,6 +49,14 @@ export function Manage() {
 						))}
 					</div>
 
+					<div className="card" data-testid="manage-position">
+						<h3 className="caps">Where your money stands</h3>
+						<div className="kv"><span className="k">Total</span><span className="v num">{formatUsd(wallet.usd.net)}</span></div>
+						<div className="kv"><span className="k">Yours whatever a hub does</span><span className="v num" style={{ color: 'var(--secured)' }}>{formatUsd(wallet.usd.onchain + wallet.usd.reserve + wallet.usd.secured)}</span></div>
+						<div className="kv"><span className="k">Promised by hubs</span><span className="v num" style={{ color: 'var(--risk)' }}>{formatUsd(wallet.usd.risk)}</span></div>
+						<div className="kv"><span className="k">You owe</span><span className="v num">{formatUsd(wallet.usd.owed)}</span></div>
+						<p className="note">Green is yours whatever a hub does. Violet is a hub&apos;s promise; move it into collateral or dispute if the hub misbehaves.</p>
+					</div>
 					<div className="card" data-testid="attention">
 						<h3 className="caps">Needs attention</h3>
 						{needsSignature.length === 0 && disputed.length === 0 && settling.length === 0 && owed === 0n ? (

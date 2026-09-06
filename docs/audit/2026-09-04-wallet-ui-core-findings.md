@@ -380,3 +380,77 @@ finalize is offered only from `activeDispute`.
   first attempt aborted with `E2E_CODE_DRIFT` because the tree changed during the build — the owner's refactor is
   in flight, so both the SvelteKit and the React wallet E2E cannot be green against this tree until the activity
   view (#14/#19) and the direct link (#17) land.
+
+## 20. A payment admitted while the J watcher is still catching up is rejected by the sender's own account frame
+
+- Observed on `bun run dev` (chains at block ~2660, 1 s blocks) with the React wallet, 2026-09-05 03:24. A fresh
+  wallet imports the jurisdiction and the RPC watcher replays history from the deployment block in ranges
+  (`3-258`, `259-1794`, `1795-2050`, `2051-2660`; each range must be entity-certified before the next is
+  scanned, `watcher.waiting_for_durable_history_range`). A `htlcPayment` sent ~6 s after boot was admitted with
+  `input.state.lastFinalizedJHeight = 2050` (`core/entity/paybook/payment-admission.ts:189-196`,
+  `resolvePaymentDeadlineWindow` → base `2050 + 50`, `calculateHopRevealHeight` → `2106`). The range `2051-2660`
+  landed in the same runtime frame after the payment tx, so when the account frame validated the lock the entity's
+  height was already 2660: `[WARN][account] frame.validation_failed {"rejection":{"code":"ACCOUNT_TX_VALIDATION",
+  "message":"revealBeforeHeight 2106 already passed (current J height: 2660)"},"txType":"htlc_lock"}`
+  (`core/account/tx/handlers/htlc/lock.ts:46`). The payment vanished: no toast, no receipt, balance unchanged,
+  and the entity kept re-applying the same input every tick (`input.received … mempool:1, proposal:none` with
+  identical `ts`, ~0.7 s apart) — a rejected lock is retried, not dropped.
+- Both heights come from the same entity state (`securityContext.finalizedJHeight = state.lastFinalizedJHeight`,
+  `core/entity/tx/handlers/account/input-phases.ts:212`), so the skew is purely intra-frame: any J range ≥ 50
+  blocks applied after a payment tx in the same frame kills it. On the isolated E2E the chain is fresh (block
+  < 100) so the catch-up is one range and the window never trips; on a stack that has run for an hour it trips on
+  every fresh wallet for the first ~10 s, and again after any watcher pause (`j_watch_paused_persistence_quiescing`,
+  a laptop sleep) that lets ≥ 50 blocks pile up.
+- Why the gap lands *in the payment's frame* (measured 2026-09-05 with boot diagnostics, headless Chromium, no
+  throttling): the watcher scans to the head within seconds and records every header into the validator history
+  (`replica.jHistory.scannedThroughHeight` 258 → 4885 in 90 s, contiguous), but the entity's certified height
+  (`state.lastFinalizedJHeight`, `jHistoryFinality.finalizedThroughHeight`) stayed at 258 for the whole idle
+  wait: empty tails only reach the entity through `history-ingress.ts` when a frame is being built for it
+  (`scanDistanceMayReachLiveness`, `hasDueLocalJPrefixAdvance` = attestable pending *event*), so an idle entity
+  never finalizes. The first entity input after the pause (here `extend_credit`) produced one frame carrying
+  `259-4117`; a payment sent as that first input is admitted at the stale height and validated at the new one.
+  Consequence for users on any 1 s chain: the first payment after ≥ 50 s without entity activity is rejected;
+  on the dev stack it is deterministic. The SvelteKit wallet shares the path.
+- Wallet-side mitigation (this commit, `ui/src/runtime/hosted.ts` `waitForChainScan`): right after the entity
+  import, boot waits until the watcher's scan reaches the head (≈ 5–10 s on a 5 000-block chain), so the
+  profile/account frames that follow carry the whole catch-up and the wallet is "Ready" with a current
+  certified height. It cannot cover the idle case. Core options for the owner: advance the certified prefix on
+  the liveness cadence without an entity input (or let the runtime loop wake for it), apply queued J-range inputs
+  ahead of user txs when the proposer assembles a frame (deterministic — the frame's tx order is what validators
+  replay) or admit the payment against the height the frame will end at, and drop, not retry, a lock whose reveal
+  height has passed.
+
+## 21. Disposable activity view in the browser: every reader call re-runs a full tail replay and the live append keeps reporting gaps
+
+- Same session as #20 (React wallet on `bun run dev`, trace console). Each committed frame produced
+  `[WARN][runtime.storage] activity_view.write_failed {"error":"RUNTIME_ACTIVITY_VIEW_GAP:height=N"}` for N = 20 … 27
+  (one per height, never `written`), and between them the whole entity history replayed again and again:
+  `history.finalized_by_entity 3-258 / 259-1794 / 1795-2050`, `extend_credit.queued`, `input.received … htlcPayment`
+  (identical `ts`) and even the same `frame.validation_failed` — 7 identical passes ~0.7 s apart, plus
+  `jadapter.rpc contracts.connect_from_replica.start` ×4 / `watcher.stopped` ×2 (a restored replay env).
+- Mechanism: `scheduleDisposableActivityView` (`core/storage/index.ts:1593`) appends the view frame fire-and-forget
+  after the WAL commit. The wallet's payment terminal reads `readPersistedRuntimeActivityJournal(env, height)` on every
+  committed height (`frontend/src/lib/stores/network/paymentTerminalMonitor.ts`, shared by both wallets); that reader
+  first runs `ensureRuntimeActivityView` → `repairRuntimeActivityView` (`core/storage/history/runtime-activity-repair.ts:122`),
+  which compares the view head with the WAL head *before the async append has landed*, restores a checkpoint env and
+  `replayActivityTail` re-executes every frame from the base (`deps.replayRecoveryFrameJournals`) to rebuild the view.
+  The repair's appends and the live append then interleave, the live one lands on a head it did not expect and
+  returns `gap` (`appendFrame`: `frame.height !== head.latestHeight + 1`), so the next read repairs again — a
+  steady state of one full history replay per frame, in the user's tab. On a fresh E2E the tail is a handful of
+  frames so it goes unnoticed; on a wallet with hundreds of frames it is the dominant CPU cost and the reason
+  receipts arrive late or not at all (#14/#19 are the same subsystem).
+- Suggested core fix: make the live append part of the commit's awaited work (or keep a per-env in-flight promise
+  the reader awaits before deciding to repair), and never repair when the view head is exactly one behind a frame
+  whose append is in flight. The wallet cannot work around it: every journal read goes through the repair gate.
+
+## 22. Working tree: browser `importJ` halts the runtime — `resolveJurisdictionTransport` calls `loadJurisdictions()`
+
+- Uncommitted `core/jurisdiction/adapter/kernel/factory.ts` (`resolveAdapterTransport`, 2026-09-05) resolves the
+  Tron/RPC transport through `resolveJurisdictionTransport(chainId, depository)` in `jurisdiction-loader.ts`, which
+  reads `loadJurisdictions()`. In a browser that throws (`loadJurisdictions() not available in browser`), so every
+  hosted wallet dies at boot: `[ERROR][runtime.jurisdiction_import] jurisdiction.import_failed` →
+  `RUNTIME_LOOP_HALTED`. Seen on `bun run dev` with the React wallet the moment the bundle picked the change up
+  (04:37); the SvelteKit wallet loads the same `runtime.js`. Guarded in this tree with `if (isBrowser) return
+  undefined;` at the top of `resolveJurisdictionTransport` (the importJ config already carries `mode`, and the
+  `TRON_CHAIN_IDS` fallback in `factory.ts` still applies) — the owner may prefer to thread the transport through
+  the importJ payload instead.

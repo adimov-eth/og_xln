@@ -1,0 +1,496 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 860,
+        "typography": 850,
+        "color": 830,
+        "data_legibility": 810,
+        "layout": 850,
+        "visceral_value": 840,
+        "responsive": 800,
+        "consistency": 870,
+        "trust": 860
+      },
+      "total": 841,
+      "top_issues": [
+        "In the primary balance header, 'At risk $300.91 · you owe $100.00' mixes liability and credit counterparty risk in the same visual weight as net balance, confusing net worth with gross exposure.",
+        "The absolute scale ruler label '1 px = $1 · auto · 1 empty hidden' is quiet and easy to miss, meaning users don't immediately realize the horizontal violet bar represents true linear proportionality.",
+        "Under ACCOUNTS (H1 hub), the dual mini-bar has an unbalanced right label 'receive up to 215.50' vs 'send up to 0.00', lacking an explicit visual zero anchor."
+      ],
+      "fixes": [
+        "Separate 'Net Equity ($200.91)' from 'Active Counterparty Exposure / Debt' using a distinct badge or sub-row.",
+        "Add a subtle ticks/ruler legend directly underneath the asset bar cards so the 1 px = $1 metaphor is self-explanatory.",
+        "Label the bilateral credit line bar with clear explicit markers: [You Owe | Zero | They Owe]."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 840,
+        "typography": 830,
+        "color": 820,
+        "data_legibility": 790,
+        "layout": 800,
+        "visceral_value": 780,
+        "responsive": 760,
+        "consistency": 850,
+        "trust": 830
+      },
+      "total": 812,
+      "top_issues": [
+        "The oversized QR code sits on an inverted harsh white rounded square in the center of an otherwise dark UI, pulling 90% of visual weight away from the input fields.",
+        "The capacity constraint indicator '215.50 capacity via H1' sits above the amount field with zero explanation of what happens if someone pays 250 USDC.",
+        "The entity ID '0xd791...dc91' is truncated without a direct 1-click verify checksum or human-readable alias."
+      ],
+      "fixes": [
+        "Tame the QR card container with a subtle quiet border or dark-mode compliant QR styling with high-contrast quiet zone.",
+        "Add an inline alert when entered amount exceeds inbound capacity with an immediate 'Request Hub Inbound Credit' action.",
+        "Display Entity ID with split checksum blocks and an instant 'Copy ID' button beside 'Copy invoice'."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 900,
+        "typography": 870,
+        "color": 860,
+        "data_legibility": 890,
+        "layout": 880,
+        "visceral_value": 870,
+        "responsive": 810,
+        "consistency": 890,
+        "trust": 880
+      },
+      "total": 873,
+      "top_issues": [
+        "Error message 'Prepare incoming capacity before swapping' is rendered in red below the inputs, but provides no one-click action to resolve or reserve the incoming route.",
+        "Order book right column shows depth bars, but doesn't show cumulative sum or your own placed order marker directly in the ladder.",
+        "The toggle between 'Same network' and 'Across networks' in top right is decoupled from the swap input card."
+      ],
+      "fixes": [
+        "Turn 'Prepare incoming capacity before swapping' into an interactive actionable link button that prompts the needed credit line change.",
+        "Add a cumulative depth visual curve and explicit price tick highlight on the book when tapping a price row.",
+        "Embed the route type ('Same network / Across networks') directly into the token selector or execution path box."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 880,
+        "typography": 870,
+        "color": 850,
+        "data_legibility": 860,
+        "layout": 870,
+        "visceral_value": 870,
+        "responsive": 800,
+        "consistency": 890,
+        "trust": 890
+      },
+      "total": 864,
+      "top_issues": [
+        "In USDC lane, '-100.00 you owe them' with green bar under Collateral 100.00 creates cognitive conflict (green usually means positive balance, here it signifies posted collateral).",
+        "The distinction between 'Their credit line to you (0.00)' and 'Your credit line to them (115.50)' requires deep mental translation for non-Lightning users.",
+        "Action buttons 'Pay', 'Extend credit', 'Swap', 'Manage' at the top don't specify which currency lane they apply to when multiple lanes (USDC, WETH) exist."
+      ],
+      "fixes": [
+        "Add visual legend directly above the lane cards tying green strictly to on-chain collateral and violet/amber to unsecured credit lines.",
+        "Rewrite lines to conversational terms: 'Max they can owe you' vs 'Max you can owe them'.",
+        "Group lane-specific actions into the lane cards themselves or provide a currency context selector."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 840,
+        "typography": 860,
+        "color": 840,
+        "data_legibility": 870,
+        "layout": 820,
+        "visceral_value": 810,
+        "responsive": 820,
+        "consistency": 880,
+        "trust": 870
+      },
+      "total": 846,
+      "top_issues": [
+        "Massive dead void on the right and lower half of the screen; the activity feed occupies only a narrow band, wasting desktop canvas.",
+        "Detail panel for 'Swap filled' in the upper right is tiny, detached, and shows only Frame #63 and Time, missing executed rate, fill amounts, counterparty, and cryptographic proof hash.",
+        "No search, counterparty filter, or export CSV/proof bundle button visible on the main activity interface."
+      ],
+      "fixes": [
+        "Expand the detail panel into a full-height right inspector showing complete state transition: before/after balance, signed frame hash, and audit proof.",
+        "Add an 'Export audit proof' and 'Download CSV' action bar next to the filter pills.",
+        "Populate the activity row with counterparty badge and asset icons for faster visual parsing."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 840,
+        "typography": 860,
+        "color": 840,
+        "data_legibility": 870,
+        "layout": 820,
+        "visceral_value": 810,
+        "responsive": 820,
+        "consistency": 880,
+        "trust": 870
+      },
+      "total": 846,
+      "top_issues": [
+        "Identical to 07-activity; selecting a transaction does not change layout to a true deep dive or show cryptographic frame signatures.",
+        "Lack of transaction receipt sharing mechanism (no link to copy, no printable receipt for clients).",
+        "Shows 'From your runtime's committed frames' without a clickable raw JSON or Merkle verification link."
+      ],
+      "fixes": [
+        "Include a 'Share Receipt' button that generates a verified payment slip link or signed receipt image.",
+        "Provide an expandable drawer for cryptographic verification: Frame root, Hub sig, Client sig, State delta.",
+        "Fill the vast empty canvas with a two-pane master-detail layout where selecting an item updates a detailed inspection sheet."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 890,
+        "premium": 910,
+        "typography": 890,
+        "color": 880,
+        "data_legibility": 880,
+        "layout": 880,
+        "visceral_value": 910,
+        "responsive": 840,
+        "consistency": 910,
+        "trust": 900
+      },
+      "total": 889,
+      "top_issues": [
+        "The 'At this scale' preview card on the top right is purely illustrative and detached from actual active wallet balances.",
+        "Danger zone action 'Forget vault' is in red next to 'Lock', but lacks explicit warning about unbacked state channels or in-flight settlement risk.",
+        "Guided tour button is relegated to a small standard secondary button near the bottom instead of being accessible during onboarding."
+      ],
+      "fixes": [
+        "Include a toggle in the scale card to 'Preview my balances at this scale' directly in the preview card.",
+        "Add a pre-check modal on 'Forget vault' stating active locked bilateral channel balances that would be forfeited.",
+        "Move onboarding and sandbox tour triggers into a dedicated top-level banner or help menu."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 870,
+        "typography": 870,
+        "color": 850,
+        "data_legibility": 860,
+        "layout": 860,
+        "visceral_value": 860,
+        "responsive": 810,
+        "consistency": 890,
+        "trust": 870
+      },
+      "total": 860,
+      "top_issues": [
+        "Error message 'Amount exceeds what is available here' sits at the bottom left below the primary action button rather than inline next to the input.",
+        "The distinction between moving to 'Wallet', 'Reserve', and 'Account' is abstract; the small text 'Depository escrow' and 'Bilateral, instant' requires reading all cards to grasp the architecture.",
+        "The right-side 'WHAT HAPPENS' card explains 'Fund you through H1' but does not itemize on-chain gas costs vs instant zero-fee state changes."
+      ],
+      "fixes": [
+        "Place available balance helper directly clickable (e.g. 'Max: 0.00') inside the amount input field, disabling submit before click.",
+        "Add an interactive architectural diagram icon linking Wallet (L1) -> Reserve (Escrow) -> Account (Hub Channel).",
+        "Itemize fees explicitly in 'WHAT HAPPENS': Gas estimate (L1 tx required) vs Protocol fee ($0.00)."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 800,
+        "typography": 820,
+        "color": 810,
+        "data_legibility": 800,
+        "layout": 750,
+        "visceral_value": 760,
+        "responsive": 800,
+        "consistency": 860,
+        "trust": 830
+      },
+      "total": 802,
+      "top_issues": [
+        "Sparse navigation hub with enormous unused negative space; 5 small cards occupy the top-left quadrant leaving 70% of the screen blank.",
+        "Navigation cards look like static status cards rather than clickable navigation routes.",
+        "Right sidebar shows H1 hub account with '3 lanes · 13 frames · open' but gives no quick actions or summary metrics directly."
+      ],
+      "fixes": [
+        "Turn Manage into a rich executive dashboard showing overall system health, open disputes, proof status, and counterparty summaries.",
+        "Add explicit chevron icons and hover elevation states to Sovereignty, Move, Assets, Lending, Ownership tiles.",
+        "Show real-time counterparty risk and pending frame confirmations inside the Accounts card."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 850,
+        "color": 830,
+        "data_legibility": 850,
+        "layout": 840,
+        "visceral_value": 790,
+        "responsive": 800,
+        "consistency": 870,
+        "trust": 850
+      },
+      "total": 835,
+      "top_issues": [
+        "The FAUCETS panel on the right takes up equal hierarchy with actual user assets, looking like a developer testnet console rather than a financial application.",
+        "The statement 'Depository may pull 0.00' is technical contract jargon that provides zero clarity to an end user.",
+        "Debts card at bottom is flat text; lacks visual representation of potential liquidation or margin call conditions."
+      ],
+      "fixes": [
+        "Collapse testnet faucets into a dedicated 'Testnet Tools' modal or drawer, replacing that column with real deposit/withdraw on-chain flows.",
+        "Change 'Depository may pull' to 'Approved for reserve deposit: $0.00' with an 'Approve' action button.",
+        "Give Debts a dedicated state indicator showing 'Clean record (0 obligations)' with collateral threshold warnings."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 860,
+        "typography": 860,
+        "color": 840,
+        "data_legibility": 860,
+        "layout": 850,
+        "visceral_value": 840,
+        "responsive": 820,
+        "consistency": 880,
+        "trust": 850
+      },
+      "total": 851,
+      "top_issues": [
+        "Interest rate input asks for 'basis points' (100) — while it converts to '= 1.00% per term', expecting users to input basis points creates unnecessary friction.",
+        "The toggle between 'Lend' and 'Borrow' is small, subdued, and placed awkwardly between token selection and amount input.",
+        "The right-side 'H1 POOL' stats show Available 0.00, Borrowed 0.00, Principal 0.00 without any utilization rate or pool health graphs."
+      ],
+      "fixes": [
+        "Make APR/APY the primary input field with automatic basis-points translation underneath.",
+        "Place the Lend / Borrow segment switch at the very top of the form as the primary intention selector.",
+        "Add pool utilization visual progress bars and historical yield indicators in the H1 Pool panel."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 840,
+        "typography": 850,
+        "color": 830,
+        "data_legibility": 830,
+        "layout": 780,
+        "visceral_value": 780,
+        "responsive": 810,
+        "consistency": 870,
+        "trust": 860
+      },
+      "total": 827,
+      "top_issues": [
+        "Massive empty screen real estate with only one card 'BOARD' and a tiny 'TAKE CONTROL' placeholder.",
+        "Terms like 'Lazy (hash of its board)' and 'EntityProvider' leak internal protocol abstractions with zero plain-English explanation.",
+        "No management actions available for adding signers, changing threshold, or initiating entity transfer."
+      ],
+      "fixes": [
+        "Replace internal jargon ('Lazy entity') with clear multi-sig / governance governance labels (e.g., 'Off-chain Key Threshold: 1 of 1').",
+        "Add actionable controls: 'Add Co-Signer', 'Export Governance Spec', and 'Register On-Chain'.",
+        "Provide an activity log of board changes and signature threshold history."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 890,
+        "premium": 910,
+        "typography": 890,
+        "color": 880,
+        "data_legibility": 900,
+        "layout": 880,
+        "visceral_value": 920,
+        "responsive": 830,
+        "consistency": 910,
+        "trust": 930
+      },
+      "total": 894,
+      "top_issues": [
+        "Text in the right card overlaps or compresses uncomfortably: 'they answer in... you owe 100.00' text collisions appear in the counterparty card.",
+        "The dispute trigger is absent: 'Can dispute without asking: 1 of 1' is shown, but there is no 'Initiate Dispute / Challenge Hub' action button.",
+        "'Save evidence bundle' downloads data, but doesn't show what the bundle contains (frame signatures, state tree hashes, channel nonces)."
+      ],
+      "fixes": [
+        "Fix the CSS text collision in the 'PER COUNTERPARTY' card by wrapping liability details into a structured two-column grid.",
+        "Add a visible, protected 'Initiate Challenge / Exit to L1' button with challenge timer preview.",
+        "Include an 'Inspect Bundle' modal to preview the cryptographic proof before saving."
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 920,
+        "premium": 940,
+        "typography": 910,
+        "color": 890,
+        "data_legibility": 930,
+        "layout": 920,
+        "visceral_value": 940,
+        "responsive": 850,
+        "consistency": 930,
+        "trust": 920
+      },
+      "total": 915,
+      "top_issues": [
+        "Dense table header columns ('LINES OUT · IN', 'SEND · RECEIVE') lack explicit hover tooltips explaining directional flow relative to client vs hub.",
+        "Order book and account table sit side-by-side but clicking an account lane does not automatically switch the book pair to that asset.",
+        "Top status strip shows 'NET $200.91', 'YOURS ON-CHAIN $0.00', 'AT RISK $300.91', but does not show aggregate liquidation distance or health factor."
+      ],
+      "fixes": [
+        "Add explicit tooltips or column glossaries on table headers for institutional operator clarity.",
+        "Link account lane selection directly to the active order book pair (e.g. clicking WETH row loads WETH/USDC book).",
+        "Add an overall Account Health / Risk ratio gauge in the top summary band."
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 900,
+        "premium": 920,
+        "typography": 890,
+        "color": 900,
+        "data_legibility": 910,
+        "layout": 900,
+        "visceral_value": 900,
+        "responsive": 850,
+        "consistency": 930,
+        "trust": 910
+      },
+      "total": 901,
+      "top_issues": [
+        "Command palette modal is positioned slightly high, leaving keyboard shortcut hints ('⌘K') somewhat detached from the input bar.",
+        "No categorized section headers (e.g. 'Actions', 'Views', 'Settings') in the results list, making it a flat unorganized list.",
+        "Subtitles for actions are uneven ('batch, attention, doors' vs 'on-chain wallet, faucets, debts' vs 'send money')."
+      ],
+      "fixes": [
+        "Group command palette entries under clear group dividers: 'Navigation', 'Finances', 'System & Security'.",
+        "Standardize command descriptions with uniform imperative phrasing.",
+        "Add quick keyboard hotkey hints on individual item rows (e.g., 'P' for Pay, 'S' for Swap)."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 857,
+    "verdict": "The design establishes a masterclass in deterministic dark-mode financial density, replacing crypto hand-waving with honest, mathematically scaled representations of bilateral risk and on-chain collateral. However, it still suffers from technical jargon leakage, occasional layout emptiness on secondary screens, and missing end-to-end receipt and dispute execution controls.",
+    "priority_fixes": [
+      "Add explicit, step-by-step dispute and on-chain challenge buttons to Sovereignty (15) and Account (06) rather than passive status indicators.",
+      "Replace developer-centric jargon ('Lazy entity', 'Depository pull', 'basis points', 'Lines out/in') with intuitive institutional financial terms across all views.",
+      "Implement a complete transaction receipt sharing and proof-verification sheet in Activity (07, 08).",
+      "Connect incoming capacity warnings directly to 1-click credit extension requests on Swap (05) and Receive (04).",
+      "Redistribute wide-screen layouts on Manage (11), Ownership (14), and Activity (07) to eliminate dead voids and display multi-pane inspectors."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 42,
+        "verdict": "I'm terrified I'll lose money because words like 'Depository escrow' and 'you owe 100.00' make me feel like I did something wrong.",
+        "blockers": [
+          "01-home and 06-account show '-100.00 you owe' without explaining that this is normal credit balance",
+          "04-receive requires understanding incoming capacity via H1 before getting paid $20"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 91,
+        "verdict": "Finally a team that understands bilateral capacity and proportional balance visualization; the absolute pixel scaling is pure genius.",
+        "blockers": [
+          "06-account doesn't visually separate local uncommitted state from bilateral signed frames as clearly as Lightning channel status"
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 86,
+        "verdict": "The order book next to the account balance is sleek and responsive, though I need deeper order history and fill breakdowns.",
+        "blockers": [
+          "05-swap blocks order entry with 'Prepare incoming capacity' without an instant autofill route",
+          "07-activity detail doesn't show slippage, effective fill price, or fee breakdowns"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 79,
+        "verdict": "The Sovereignty view is exactly what a corporate treasury needs, but I can't export a verifiable proof report for my board.",
+        "blockers": [
+          "15-sovereignty only offers an uninspected raw evidence bundle download instead of a cryptographic audit report",
+          "07-activity lacks CSV/board export functionality"
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 58,
+        "verdict": "I can copy an invoice link, but once the client pays I have no receipt or invoice view to send them proving it settled.",
+        "blockers": [
+          "04-receive has no invoice generator with client name or line items",
+          "08-activity-detail lacks a shareable/printable proof receipt"
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 72,
+        "verdict": "The dual-signed frame counter and evidence bundle are legitimate, but there is no button to actually broadcast a challenge against H1.",
+        "blockers": [
+          "15-sovereignty shows 'Can dispute without asking: 1 of 1' but lacks the actual 'Initiate Dispute' transaction trigger",
+          "No dispute challenge window countdown screen present"
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 35,
+        "verdict": "This desktop interface is way too packed with dual-column cards and tiny buttons to use with one hand on my phone.",
+        "blockers": [
+          "All screens reviewed are desktop-dark; mobile checkout and single-tap QR pay flow is missing from this set",
+          "04-receive button hierarchy is spread across wide margins"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 95,
+        "verdict": "The Desk screen is phenomenal; having absolute balance scales, gross counterparty debt, and the live book in one dense view is unmatched.",
+        "blockers": [
+          "16-desk needs lane clicking to automatically bind to the right orderbook pair"
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 48,
+        "verdict": "I see a toggle for 'Across networks' on swap, but nowhere does it clearly show the bridge route, target network, or total gas fee.",
+        "blockers": [
+          "05-swap 'Across networks' modal/configuration screen is missing from the review set",
+          "10-move doesn't show cross-network destination chains or transfer fees"
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 88,
+        "verdict": "The green-versus-violet sovereignty breakdown explains self-custody risk faster than any whitepaper I have read.",
+        "blockers": [
+          "11-manage and 14-ownership look half-finished with huge empty areas that make the system seem pre-alpha",
+          "12-assets relies on testnet faucet buttons which undermines institutional trust"
+        ]
+      }
+    ]
+  }
+}

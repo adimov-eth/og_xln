@@ -111,7 +111,7 @@ export function Home() {
 							{places.accounts && (
 								<span data-testid="home-risk">
 									<i className="sw c-risk" />
-									At risk <b className="num">{formatUsd(wallet.usd.risk)}</b>
+									<span title="A hub owes you this and has only promised to pay. Move it into collateral, or dispute, to make the chain enforce it.">Hub promise</span> <b className="num">{formatUsd(wallet.usd.risk)}</b>
 									{wallet.usd.owed > 0 ? (
 										<span className="num" style={{ color: 'var(--debt)' }}>
 											{' '}
@@ -158,10 +158,11 @@ export function Home() {
 						<button type="button" className="more" style={{ marginRight: 12 }} onClick={() => navigate('/move')} data-testid="home-move">
 							Move
 						</button>
-						<button type="button" className="more" onClick={() => navigate('/settings')} title="Every bar is drawn to this scale. Change it in Settings.">
-							<span className="num">1 px = ${usdPerPx.toLocaleString('en-US')}{scaleMode === 'auto' ? ' · auto' : ''}</span>
-							{wallet.totals.length > activeTotals.length ? ` · ${wallet.totals.length - activeTotals.length} empty hidden` : ''}
-						</button>
+						{wallet.totals.length > activeTotals.length ? (
+							<button type="button" className="more" onClick={() => navigate('/settings')} title={`Every bar is drawn to one scale: 1 px = $${usdPerPx.toLocaleString('en-US')}${scaleMode === 'auto' ? ' (auto)' : ''}. Empty balances are hidden.`}>
+								Show {wallet.totals.length - activeTotals.length} empty
+							</button>
+						) : null}
 					</div>
 					{activeTotals.map((total, index) => (
 						<TokenRow

@@ -175,11 +175,11 @@ function SettlementCard({ account, wallet }: { account: AccountView; wallet: Wal
 
 type ManageTab = 'collateral' | 'credit' | 'token' | 'dispute';
 
-function ManageSheet({ account, wallet, onClose }: { account: AccountView; wallet: WalletView; onClose: () => void }) {
+function ManageSheet({ account, wallet, onClose, initialTab }: { account: AccountView; wallet: WalletView; onClose: () => void; initialTab?: ManageTab }) {
 	const navigate = useNavigate();
 	const toast = useApp(s => s.toast);
 	const selectedTokenId = useApp(s => s.selectedTokenId);
-	const [tab, setTab] = useState<ManageTab>(account.dispute !== 'none' ? 'dispute' : 'collateral');
+	const [tab, setTab] = useState<ManageTab>(initialTab ?? (account.dispute !== 'none' ? 'dispute' : 'collateral'));
 	const [tokenId, setTokenId] = useState(selectedTokenId);
 	const [amountText, setAmountText] = useState('');
 	const [creditText, setCreditText] = useState('');
@@ -444,7 +444,7 @@ export function AccountDetail() {
 	const toast = useApp(s => s.toast);
 	const wallet = useWallet(entityId);
 	const [showEmpty, setShowEmpty] = useState(false);
-	const [managing, setManaging] = useState(false);
+	const [managing, setManaging] = useState<false | ManageTab>(false);
 	const account = wallet.accounts.find(entry => entry.counterpartyId === counterpartyId.toLowerCase()) ?? null;
 	// A lane with no position, no credit either way and no collateral is plumbing until money touches it.
 	const lanes = useMemo(() => {
@@ -542,10 +542,16 @@ export function AccountDetail() {
 						Receive
 					</button>
 				)}
-				<button type="button" className="btn" disabled={!account} onClick={() => setManaging(true)} data-testid="account-manage">
+				<button type="button" className="btn" disabled={!account} onClick={() => setManaging('collateral')} data-testid="account-manage">
 					<Icon name="settings" size={18} />
 					Manage
 				</button>
+				{account && account.dispute === 'none' ? (
+					<button type="button" className="btn" onClick={() => setManaging('dispute')} data-testid="account-dispute" title="Take the last page you both signed to the chain. You never need the other side's permission.">
+						<Icon name="shield" size={18} />
+						Dispute
+					</button>
+				) : null}
 			</div>
 
 			{!account && !wallet.loading && <p className="note">No account with this counterparty yet.</p>}
@@ -629,7 +635,7 @@ export function AccountDetail() {
 					</button>
 				</Sheet>
 			)}
-			{managing && account ? <ManageSheet account={account} wallet={wallet} onClose={() => setManaging(false)} /> : null}
+			{managing && account ? <ManageSheet account={account} wallet={wallet} initialTab={managing} onClose={() => setManaging(false)} /> : null}
 		</div>
 	);
 }

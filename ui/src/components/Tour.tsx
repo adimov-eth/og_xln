@@ -36,6 +36,11 @@ const dom: TourContext['dom'] = {
 		const node = nodeFor(testId);
 		return node && 'value' in node ? String((node as HTMLInputElement).value ?? '') : '';
 	},
+	enabled: testId => {
+		const node = nodeFor(testId);
+		return node !== null && !(node as HTMLButtonElement).disabled;
+	},
+	text: testId => nodeFor(testId)?.textContent ?? '',
 };
 
 /**
@@ -54,6 +59,8 @@ export function Tour() {
 	const { pathname } = useLocation();
 	const [rect, setRect] = useState<Rect | null>(null);
 	const [targetId, setTargetId] = useState<string | undefined>(undefined);
+	/** Which step the current target was resolved for; Next stays off until the new step has been measured. */
+	const [resolvedFor, setResolvedFor] = useState<string | undefined>(undefined);
 	const [more, setMore] = useState(false);
 	const [picked, setPicked] = useState<number | null>(null);
 	const [tick, setTick] = useState(0);
@@ -90,6 +97,7 @@ export function Tour() {
 		setPicked(null);
 		// Never show the previous step's ring while the new target resolves.
 		setTargetId(undefined);
+		setResolvedFor(undefined);
 		setRect(null);
 		step.enter?.(ctx);
 	}, [step, ctx, index, go, wallet.entityId]);
@@ -120,6 +128,7 @@ export function Tour() {
 			// A receipt that popped up over the page comes first: close it, then follow the step.
 			const resolved = step.id !== 'receipt' && dom.has('receipt-done') ? 'receipt-done' : step.target?.(ctx) || undefined;
 			setTargetId(previous => (previous === resolved ? previous : resolved));
+			setResolvedFor(previous => (previous === step.id ? previous : step.id));
 			const next = measure(resolved);
 			setRect(previous =>
 				previous && next && Math.abs(previous.top - next.top) < 1 && Math.abs(previous.left - next.left) < 1 && Math.abs(previous.width - next.width) < 1 && Math.abs(previous.height - next.height) < 1
@@ -179,7 +188,8 @@ export function Tour() {
 	const progress = step.progress?.(ctx);
 	const pickedOption = picked !== null ? step.options?.[picked] : undefined;
 	// A read step turns its page only once the user stands where it points, not on a waypoint towards it.
-	const ready = step.mode === 'read' && (!step.target || (targetId !== undefined && rect !== null && !WAYPOINTS.has(targetId)));
+	const ready =
+		step.mode === 'read' && resolvedFor === step.id && (!step.target || (targetId !== undefined && rect !== null && !WAYPOINTS.has(targetId)));
 
 	return (
 		<div className="tour" data-testid="tour" data-step={step.id} data-target={targetId ?? ''}>
