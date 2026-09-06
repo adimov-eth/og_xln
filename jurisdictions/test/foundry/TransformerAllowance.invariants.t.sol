@@ -127,8 +127,8 @@ contract TransformerAllowanceInvariants is XlnFixture {
       pairs: pairs
     });
     _submit(left, b);
-    (, int256 ondelta) = dep._collaterals(XlnHanko.accountKey(entity[left], entity[right]), 1);
-    assertEq(ondelta, 1_000, "control setup: ondelta");
+    (, Int512 memory ondelta) = dep._collaterals(XlnHanko.accountKey(entity[left], entity[right]), 1);
+    assertEq(WideMath.toInt(ondelta), 1_000, "control setup: ondelta");
   }
 
   /// @notice CONTROL (gate fires): collateral 1000, ondelta 1000, offdelta 100
@@ -214,8 +214,8 @@ contract TransformerAllowanceInvariants is XlnFixture {
     faultPb.watchSeed = watchSeed;
     faultPb.leftResponseSeconds = 50;
     faultPb.rightResponseSeconds = 50;
-    faultPb.offdeltas = new int256[](1);
-    faultPb.offdeltas[0] = 100;
+    faultPb.offdeltas = new Int512[](1);
+    faultPb.offdeltas[0] = WideMath.fromInt(100);
     faultPb.tokenIds = new uint256[](1);
     faultPb.tokenIds[0] = 1;
     faultPb.transformers = new TransformerClause[](1);
@@ -289,8 +289,8 @@ contract TransformerAllowanceInvariants is XlnFixture {
     cleanPb.watchSeed = watchSeed;
     cleanPb.leftResponseSeconds = 50;
     cleanPb.rightResponseSeconds = 50;
-    cleanPb.offdeltas = new int256[](1);
-    cleanPb.offdeltas[0] = 100;
+    cleanPb.offdeltas = new Int512[](1);
+    cleanPb.offdeltas[0] = WideMath.fromInt(100);
     cleanPb.tokenIds = new uint256[](1);
     cleanPb.tokenIds[0] = 1;
     cleanPb.transformers = new TransformerClause[](1);

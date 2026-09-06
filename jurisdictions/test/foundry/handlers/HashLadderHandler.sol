@@ -204,7 +204,7 @@ contract HashLadderHandler is CommonBase, StdCheats, StdUtils {
     pb.watchSeed = watchSeed;
     pb.leftResponseSeconds = LEFT_RESPONSE_SECONDS;
     pb.rightResponseSeconds = RIGHT_RESPONSE_SECONDS;
-    pb.offdeltas = new int256[](1);
+    pb.offdeltas = new Int512[](1);
     pb.tokenIds = new uint256[](1);
     pb.tokenIds[0] = 1;
     pb.transformers = new TransformerClause[](0);
@@ -279,7 +279,7 @@ contract HashLadderHandler is CommonBase, StdCheats, StdUtils {
     pb.watchSeed = g.watchSeed;
     pb.leftResponseSeconds = LEFT_RESPONSE_SECONDS;
     pb.rightResponseSeconds = RIGHT_RESPONSE_SECONDS;
-    pb.offdeltas = new int256[](1);
+    pb.offdeltas = new Int512[](1);
     pb.tokenIds = new uint256[](1);
     pb.tokenIds[0] = 1;
     pb.transformers = new TransformerClause[](0);

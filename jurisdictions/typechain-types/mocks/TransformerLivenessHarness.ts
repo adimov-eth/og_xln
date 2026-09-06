@@ -20,13 +20,27 @@ import type {
   TypedContractMethod,
 } from "../common";
 
+export type Int768Struct = {
+  high: BigNumberish;
+  middle: BigNumberish;
+  low: BigNumberish;
+};
+
+export type Int768StructOutput = [high: bigint, middle: bigint, low: bigint] & {
+  high: bigint;
+  middle: bigint;
+  low: bigint;
+};
+
 export interface TransformerLivenessHarnessInterface extends Interface {
-  getFunction(nameOrSignature: "applyBatch" | "encode"): FunctionFragment;
+  getFunction(
+    nameOrSignature: "applyBatch" | "encode" | "encodeWide"
+  ): FunctionFragment;
 
   encodeFunctionData(
     functionFragment: "applyBatch",
     values: [
-      BigNumberish[],
+      Int768Struct[],
       BigNumberish[],
       BytesLike,
       BytesLike,
@@ -45,9 +59,14 @@ export interface TransformerLivenessHarnessInterface extends Interface {
     functionFragment: "encode",
     values: [BigNumberish, BigNumberish, BigNumberish, BigNumberish]
   ): string;
+  encodeFunctionData(
+    functionFragment: "encodeWide",
+    values: [BigNumberish, BigNumberish, Int768Struct, BigNumberish]
+  ): string;
 
   decodeFunctionResult(functionFragment: "applyBatch", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "encode", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "encodeWide", data: BytesLike): Result;
 }
 
 export interface TransformerLivenessHarness extends BaseContract {
@@ -95,7 +114,7 @@ export interface TransformerLivenessHarness extends BaseContract {
 
   applyBatch: TypedContractMethod<
     [
-      deltas: BigNumberish[],
+      deltas: Int768Struct[],
       tokenIds: BigNumberish[],
       encodedBatch: BytesLike,
       arg3: BytesLike,
@@ -109,7 +128,7 @@ export interface TransformerLivenessHarness extends BaseContract {
       arg11: BigNumberish,
       arg12: BigNumberish
     ],
-    [bigint[]],
+    [Int768StructOutput[]],
     "view"
   >;
 
@@ -124,6 +143,17 @@ export interface TransformerLivenessHarness extends BaseContract {
     "view"
   >;
 
+  encodeWide: TypedContractMethod<
+    [
+      mode: BigNumberish,
+      deltaIndex: BigNumberish,
+      value: Int768Struct,
+      expectedTokenId: BigNumberish
+    ],
+    [string],
+    "view"
+  >;
+
   getFunction<T extends ContractMethod = ContractMethod>(
     key: string | FunctionFragment
   ): T;
@@ -132,7 +162,7 @@ export interface TransformerLivenessHarness extends BaseContract {
     nameOrSignature: "applyBatch"
   ): TypedContractMethod<
     [
-      deltas: BigNumberish[],
+      deltas: Int768Struct[],
       tokenIds: BigNumberish[],
       encodedBatch: BytesLike,
       arg3: BytesLike,
@@ -146,7 +176,7 @@ export interface TransformerLivenessHarness extends BaseContract {
       arg11: BigNumberish,
       arg12: BigNumberish
     ],
-    [bigint[]],
+    [Int768StructOutput[]],
     "view"
   >;
   getFunction(
@@ -156,6 +186,18 @@ export interface TransformerLivenessHarness extends BaseContract {
       mode: BigNumberish,
       deltaIndex: BigNumberish,
       value: BigNumberish,
+      expectedTokenId: BigNumberish
+    ],
+    [string],
+    "view"
+  >;
+  getFunction(
+    nameOrSignature: "encodeWide"
+  ): TypedContractMethod<
+    [
+      mode: BigNumberish,
+      deltaIndex: BigNumberish,
+      value: Int768Struct,
       expectedTokenId: BigNumberish
     ],
     [string],

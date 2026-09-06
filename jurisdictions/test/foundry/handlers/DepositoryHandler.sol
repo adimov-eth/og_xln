@@ -101,12 +101,17 @@ contract DepositoryHandler is CommonBase, StdCheats, StdUtils {
   function _observeDebt() internal {
     for (uint256 i = 0; i < ACTORS; i++) {
       for (uint256 k = 0; k < 3; k++) {
-        if (dep.debtOutstanding(entityOf[i], TOKENS[k]) > 0) {
+        if (_hasDebt(entityOf[i], TOKENS[k])) {
           debtObservations++;
           return;
         }
       }
     }
+  }
+
+  function _hasDebt(bytes32 entityId, uint256 tokenId) internal view returns (bool) {
+    (uint256 high, uint256 middle, uint256 low) = dep.debtOutstanding(entityId, tokenId);
+    return high != 0 || middle != 0 || low != 0;
   }
 
   function _bump(string memory name) internal {
@@ -218,14 +223,14 @@ contract DepositoryHandler is CommonBase, StdCheats, StdUtils {
     amount = bound(amount, 0, col + 1);
 
     bool isLeft = me < other;
-    int256 signedAmount = int256(amount);
+
     SettlementDiff[] memory diffs = new SettlementDiff[](1);
     diffs[0] = SettlementDiff({
       tokenId: t,
-      leftDiff: isLeft ? signedAmount : int256(0),
-      rightDiff: isLeft ? int256(0) : signedAmount,
-      collateralDiff: -signedAmount,
-      ondeltaDiff: isLeft ? -signedAmount : int256(0)
+      leftDiff: SignedAmount(false, isLeft ? amount : 0),
+      rightDiff: SignedAmount(false, isLeft ? 0 : amount),
+      collateralDiff: SignedAmount(amount != 0, amount),
+      ondeltaDiff: SignedAmount(isLeft && amount != 0, isLeft ? amount : 0)
     });
 
     bytes memory key = XlnHanko.accountKey(me, other);
@@ -267,10 +272,10 @@ contract DepositoryHandler is CommonBase, StdCheats, StdUtils {
     SettlementDiff[] memory diffs = new SettlementDiff[](1);
     diffs[0] = SettlementDiff({
       tokenId: t,
-      leftDiff: leftDiff,
-      rightDiff: -leftDiff - collateralDiff,
-      collateralDiff: collateralDiff,
-      ondeltaDiff: collateralDiff
+      leftDiff: WideMath.movement(leftDiff),
+      rightDiff: WideMath.movement(-leftDiff - collateralDiff),
+      collateralDiff: WideMath.movement(collateralDiff),
+      ondeltaDiff: WideMath.movement(collateralDiff)
     });
 
     uint256[] memory forgiveIds = new uint256[](forgive ? 1 : 0);
@@ -302,14 +307,14 @@ contract DepositoryHandler is CommonBase, StdCheats, StdUtils {
     bytes32 me = entityOf[from];
     bytes32 other = entityOf[cp];
     bool isLeft = me < other;
-    int256 signedAmount = int256(amount);
+
     SettlementDiff[] memory diffs = new SettlementDiff[](1);
     diffs[0] = SettlementDiff({
       tokenId: t,
-      leftDiff: isLeft ? signedAmount : int256(0),
-      rightDiff: isLeft ? int256(0) : signedAmount,
-      collateralDiff: -signedAmount,
-      ondeltaDiff: isLeft ? -signedAmount : int256(0)
+      leftDiff: SignedAmount(false, isLeft ? amount : 0),
+      rightDiff: SignedAmount(false, isLeft ? 0 : amount),
+      collateralDiff: SignedAmount(amount != 0, amount),
+      ondeltaDiff: SignedAmount(isLeft && amount != 0, isLeft ? amount : 0)
     });
     uint256 nonce = _accountNonce(me, other) + 1;
     bytes32 h = XlnHanko.cooperativeUpdateHash(
@@ -355,7 +360,7 @@ contract DepositoryHandler is CommonBase, StdCheats, StdUtils {
     uint256 to = _actor(toSeed);
     if (to == from) to = (to + 1) % ACTORS;
     uint256 t = _token(tokenSeed);
-    if (dep.debtOutstanding(entityOf[from], t) != 0) return;
+    if (_hasDebt(entityOf[from], t)) return;
     uint256 col = _collateral(entityOf[from], entityOf[cp], t);
     if (col == 0) {
       if (!_seedCollateral(from, cp, t, bound(pull, 1, 1e21))) return;
@@ -404,7 +409,7 @@ contract DepositoryHandler is CommonBase, StdCheats, StdUtils {
     if (to == a) to = (to + 1) % ACTORS;
     ERC20Mock tok = useA ? tokenA : tokenB;
     uint256 t = useA ? 1 : 2;
-    if (dep.debtOutstanding(entityOf[a], t) != 0) return;
+    if (_hasDebt(entityOf[a], t)) return;
     uint256 col = _collateral(entityOf[a], entityOf[cp], t);
     if (col == 0) {
       if (!_seedCollateral(a, cp, t, bound(pull, 1, 1e21))) return;
@@ -464,9 +469,10 @@ contract DepositoryHandler is CommonBase, StdCheats, StdUtils {
   function flashDeniedToDebtor(uint256 fromSeed, uint256 cpSeed, uint256 tokenSeed, uint256 extra) external {
     (uint256 from, uint256 cp) = _distinct(fromSeed, cpSeed);
     uint256 t = _token(tokenSeed);
-    uint256 owed = dep.debtOutstanding(entityOf[from], t);
+    (uint256 high, uint256 middle, uint256 low) = dep.debtOutstanding(entityOf[from], t);
     uint256 pre = _reserve(from, t);
-    if (owed == 0 || owed <= pre) return; // enforcement inside the batch could clear it
+    // Enforcement could clear only a debt that fits and is covered by reserve.
+    if (high == 0 && middle == 0 && low <= pre) return;
     uint256 col = _collateral(entityOf[from], entityOf[cp], t);
     extra = bound(extra, 1, 1e24);
 
@@ -544,8 +550,8 @@ contract DepositoryHandler is CommonBase, StdCheats, StdUtils {
     pb.watchSeed = watchSeed;
     pb.leftResponseSeconds = LEFT_RESPONSE_SECONDS;
     pb.rightResponseSeconds = RIGHT_RESPONSE_SECONDS;
-    pb.offdeltas = new int256[](1);
-    pb.offdeltas[0] = offdelta;
+    pb.offdeltas = new Int512[](1);
+    pb.offdeltas[0] = WideMath.fromInt(offdelta);
     pb.tokenIds = new uint256[](1);
     pb.tokenIds[0] = tokenId;
     pb.transformers = new TransformerClause[](0);

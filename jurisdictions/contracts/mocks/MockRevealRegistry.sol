@@ -38,7 +38,7 @@ contract MockRevealRegistry is IHashLadderRevealRegistry {
 
   function applyBatchViaRegistry(
     DeltaTransformer transformer,
-    int[] calldata deltas,
+    Int768[] calldata deltas,
     uint[] calldata tokenIds,
     bytes calldata encodedBatch,
     bytes calldata leftArguments,
@@ -51,7 +51,7 @@ contract MockRevealRegistry is IHashLadderRevealRegistry {
     uint256 disputeTimeout,
     uint32 leftResponseSeconds,
     uint32 rightResponseSeconds
-  ) external view returns (int[] memory) {
+  ) external view returns (Int768[] memory) {
     return transformer.applyBatch(
       deltas,
       tokenIds,

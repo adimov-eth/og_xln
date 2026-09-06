@@ -32,6 +32,9 @@ interface IERC20 {
 // IERC1155 already defined in @openzeppelin/contracts (imported via EntityProvider.sol)
 
 contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
+  // Account emits this shared tuple through DELEGATECALL, at this address.
+  // Keep the event in Depository's public ABI for its canonical watcher.
+  event AccountSettled(AccountSettlement[] settled);
   struct ReserveMint {
     bytes32 entity;
     uint tokenId;
@@ -41,7 +44,6 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
 
   // Shared E2..E10 / transformer errors: Types.sol.
   // Depository-only codes stay here — not used by the Account library.
-  error E1(); // ZeroAmount
   error E11(); // UnsupportedToken
   // Registry conflict: a Source retry changed ratio, a Target retry lowered
   // ratio, the signed role mismatched, or a first Source write missed its
@@ -74,7 +76,7 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
   // the current debt index to pay
   mapping (bytes32 => mapping (uint => uint)) public _debtIndex;
   // total reserve locked by unpaid debt, scoped by debtor and token
-  mapping (bytes32 => mapping (uint => uint)) public debtOutstanding;
+  mapping (bytes32 => mapping (uint => Uint768)) public debtOutstanding;
   // Number of live (unpaid) debt entries per entity across all tokens. One
   // observability counter, not per token: watchers only need "has debts".
   mapping (bytes32 => uint256) public activeDebts;
@@ -95,16 +97,16 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
   // larger transfers remain losslessly expressible across sequential nonces.
   // Runtime permits up to 1,000 open swaps in one account proof. The canonical
   // DeltaTransformer path is regression-tested below this cap.
-  event DebtCreated(bytes32 indexed debtor, bytes32 indexed creditor, uint256 indexed tokenId, uint256 amount, uint256 debtIndex);
-  event DebtEnforced(bytes32 indexed debtor, bytes32 indexed creditor, uint256 indexed tokenId, uint256 amountPaid, uint256 remainingAmount, uint256 newDebtIndex);
-  event DebtForgiven(bytes32 indexed debtor, bytes32 indexed creditor, uint256 indexed tokenId, uint256 amountForgiven, uint256 debtIndex);
+  event DebtCreated(bytes32 indexed debtor, bytes32 indexed creditor, uint256 indexed tokenId, Uint512 amount, uint256 debtIndex);
+  event DebtEnforced(bytes32 indexed debtor, bytes32 indexed creditor, uint256 indexed tokenId, uint256 amountPaid, Uint512 remainingAmount, uint256 newDebtIndex);
+  event DebtForgiven(bytes32 indexed debtor, bytes32 indexed creditor, uint256 indexed tokenId, Uint512 amountForgiven, uint256 debtIndex);
   event TransformerDeltaClamped(
     bytes32 indexed accountKeyHash,
     uint256 indexed clauseIndex,
     address indexed transformer,
     uint256 tokenId,
-    int256 requestedValue,
-    int256 appliedValue
+    Int768 requestedValue,
+    Int768 appliedValue
   );
 
   modifier onlyLocalDevAdmin() {
@@ -561,7 +563,7 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
     uint256 touched = scratch.tokens.length;
     for (uint256 i = 0; i < touched; i++) {
       uint256 tokenId = scratch.tokens[i];
-      if (scratch.deficit[tokenId] != 0) revert E3();
+      if (!WideMath.isZero(scratch.deficit[tokenId])) revert E3();
     }
     delete scratch.tokens;
     scratch.initiator = bytes32(0);
@@ -576,7 +578,7 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
 
   // DebtSnapshot moved to DepositoryView.sol
 
-  function _addDebt(bytes32 debtor, uint256 tokenId, bytes32 creditor, uint256 amount) internal {
+  function _addDebt(bytes32 debtor, uint256 tokenId, bytes32 creditor, Uint512 memory amount) internal {
     if (creditor == bytes32(0) || debtor == creditor) revert E2();
     Account.addDebt(
       _debts,
@@ -598,19 +600,12 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
     }
   }
 
-  function _reduceDebtOutstanding(bytes32 entity, uint256 tokenId, uint256 amount) internal {
-    if (amount == 0) return;
-    uint256 outstanding = debtOutstanding[entity][tokenId];
-    if (outstanding < amount) revert E3();
-    unchecked {
-      debtOutstanding[entity][tokenId] = outstanding - amount;
-    }
+  function _reduceDebtOutstanding(bytes32 entity, uint256 tokenId, Uint512 memory amount) internal {
+    debtOutstanding[entity][tokenId] = WideMath.sub(debtOutstanding[entity][tokenId], WideMath.expand(amount));
   }
 
   function _spendableReserve(bytes32 entity, uint256 tokenId) internal view returns (uint256) {
-    uint256 reserve = _reserves[entity][tokenId];
-    uint256 outstanding = debtOutstanding[entity][tokenId];
-    return reserve > outstanding ? reserve - outstanding : 0;
+    return WideMath.spendable(debtOutstanding[entity][tokenId], _reserves[entity][tokenId]);
   }
 
   /// @dev Outflow gate incl. the initiator's implicit flash allowance.
@@ -627,8 +622,8 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
       Settlement memory settlement = settlements[i];
       for (uint256 j = 0; j < settlement.diffs.length; j++) {
         SettlementDiff memory diff = settlement.diffs[j];
-        if (diff.leftDiff < 0) _enforceDebts(settlement.leftEntity, diff.tokenId, DEBT_ENFORCEMENT_CHUNK);
-        if (diff.rightDiff < 0) _enforceDebts(settlement.rightEntity, diff.tokenId, DEBT_ENFORCEMENT_CHUNK);
+        if (diff.leftDiff.negative) _enforceDebts(settlement.leftEntity, diff.tokenId, DEBT_ENFORCEMENT_CHUNK);
+        if (diff.rightDiff.negative) _enforceDebts(settlement.rightEntity, diff.tokenId, DEBT_ENFORCEMENT_CHUNK);
       }
     }
   }
@@ -757,63 +752,10 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
     // debts must be paid before any transfers from reserve 
     _enforceDebts(entity, tokenId, DEBT_ENFORCEMENT_CHUNK);
 
-    uint256 totalAmount = 0;
-    for (uint i = 0; i < params.pairs.length; i++) {
-      uint256 amount = params.pairs[i].amount;
-      if (amount == 0) revert E1();
-      if (params.pairs[i].entity == bytes32(0) || params.pairs[i].entity == receivingEntity) revert E7();
-      if (amount > MAX_MONEY) revert E8();
-      totalAmount += amount;
-    }
-    if (!_canSpend(entity, tokenId, totalAmount)) return false;
-
-    for (uint i = 0; i < params.pairs.length; i++) {
-      bytes32 counterentity = params.pairs[i].entity;
-      uint amount = params.pairs[i].amount;
-
-      bytes memory acct_key = _accountKey(receivingEntity, counterentity);
-
-      
-        AccountCollateral storage col = _collaterals[acct_key][tokenId];
-        int256 signedAmount = int256(amount);
-
-        _decreaseReserve(entity, tokenId, amount);
-        // Per-call amount is already ≤ int256.max above, but collateral
-        // accumulates across pairs and senders and shares Account's ceiling.
-        Account.increaseCollateral(col, amount);
-        if (receivingEntity < counterentity) { // if receiver is left
-          col.ondelta += signedAmount;
-          if (col.ondelta > MAX_MONEY_INT) revert E8();
-        }
-
-        // Emit unionified AccountSettled event (canonical ordering: left < right)
-        bytes32 leftEntity = receivingEntity < counterentity ? receivingEntity : counterentity;
-        bytes32 rightEntity = receivingEntity < counterentity ? counterentity : receivingEntity;
-
-        // R2C doesn't increment nonce (no bilateral signature required)
-        TokenSettlement[] memory tokens = new TokenSettlement[](1);
-        tokens[0] = TokenSettlement({
-          tokenId: tokenId,
-          leftReserve: _reserves[leftEntity][tokenId],
-          rightReserve: _reserves[rightEntity][tokenId],
-          collateral: col.collateral,
-          ondelta: col.ondelta
-        });
-        AccountSettlement[] memory settled = new AccountSettlement[](1);
-        if (_accounts[_accountKey(leftEntity, rightEntity)].nonce > JS_SAFE_NONCE_MAX) revert E10();
-        settled[0] = AccountSettlement({
-          left: leftEntity,
-          right: rightEntity,
-          tokens: tokens,
-          nonce: _accounts[_accountKey(leftEntity, rightEntity)].nonce
-        });
-        emit Account.AccountSettled(settled);
-    }
-
-
-    return true;
+    return Account.processR2C(
+      _reserves, debtOutstanding, _accounts, _collaterals, entity, params
+    );
   }
-
 
 
   function _forgiveDebtsBetweenEntities(bytes32 debtor, bytes32 creditor, uint tokenId)
@@ -824,13 +766,13 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
     uint256 len = queue.length;
     if (idx >= len) return (false, false);
     Debt storage current = queue[idx];
-    uint256 amount = current.amount;
+    Uint512 memory amount = current.amount;
     // Forgiveness is deliberately FIFO and O(1): a bilateral settlement may
     // forgive only the debtor's current debt when that debt belongs to the
     // counterparty. It must never scan or partially process an unbounded tail.
-    if (amount == 0) return (false, false);
+    if (WideMath.isZero(amount)) return (false, false);
     if (current.creditor != creditor) return (true, false);
-    current.amount = 0;
+    delete current.amount;
     _reduceDebtOutstanding(debtor, tokenId, amount);
     _afterDebtCleared(debtor);
     emit DebtForgiven(debtor, creditor, tokenId, amount, idx);
@@ -957,7 +899,7 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
 
     // Account owns bilateral delta arithmetic and signed transformer execution;
     // Depository owns only the resulting custody, reserve, and debt effects.
-    int[] memory transformerDeltas = Account.prepareSettlementDeltas(
+    Int768[] memory transformerDeltas = Account.prepareSettlementDeltas(
       _collaterals,
       acct_key,
       proofbody,
@@ -974,12 +916,12 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
       rightResponseSeconds
     );
 
-    // Every term is MAX_MONEY-bounded (see Types.sol), so the delta is a plain
-    // int256 and its magnitude is exact.
+    // The signed intermediate is wider than every accepted proof operand.
+    // Allowance clamps run before converting the final debt magnitude.
     for (uint256 i = 0; i < proofbody.tokenIds.length; i++) {
-      int256 delta = transformerDeltas[i];
-      bool negativeDelta = delta < 0;
-      uint256 deltaMagnitude = negativeDelta ? uint256(-delta) : uint256(delta);
+      Int768 memory delta = transformerDeltas[i];
+      bool negativeDelta = delta.high < 0;
+      Uint512 memory deltaMagnitude = WideMath.magnitude(delta);
       _applyAccountDelta(
         acct_key,
         proofbody.tokenIds[i],
@@ -1000,7 +942,7 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
     bytes32 leftEntity,
     bytes32 rightEntity,
     bool negativeDelta,
-    uint256 deltaMagnitude
+    Uint512 memory deltaMagnitude
   ) private {
     AccountCollateral storage col = _collaterals[acct_key][tokenId];
     uint256 collateral = col.collateral;
@@ -1018,24 +960,24 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
     // - If Δ ≤ 0: LEFT gets 0, RIGHT gets all collateral, and LEFT owes −Δ (credit/debt).
     // - If 0 < Δ < collateral: split collateral (LEFT = Δ, RIGHT = collateral − Δ).
     // - If Δ ≥ collateral: LEFT gets all collateral and RIGHT owes Δ − collateral (credit/debt).
-    if (negativeDelta || deltaMagnitude == 0) {
+    if (negativeDelta || WideMath.isZero(deltaMagnitude)) {
       if (collateral > 0) _increaseReserve(rightEntity, tokenId, collateral);
-      if (deltaMagnitude > 0) {
+      if (!WideMath.isZero(deltaMagnitude)) {
         _settleShortfall(leftEntity, rightEntity, tokenId, deltaMagnitude);
       }
     } else {
-      uint256 desired = deltaMagnitude;
-      if (desired >= collateral) {
+      Uint512 memory desired = deltaMagnitude;
+      if (desired.high != 0 || desired.low >= collateral) {
         if (collateral > 0) _increaseReserve(leftEntity, tokenId, collateral);
-        uint256 shortfall = desired - collateral;
-        if (shortfall > 0) _settleShortfall(rightEntity, leftEntity, tokenId, shortfall);
+        Uint512 memory shortfall = WideMath.subtract(desired, collateral);
+        if (!WideMath.isZero(shortfall)) _settleShortfall(rightEntity, leftEntity, tokenId, shortfall);
       } else {
-        _increaseReserve(leftEntity, tokenId, desired);
-        _increaseReserve(rightEntity, tokenId, collateral - desired);
+        _increaseReserve(leftEntity, tokenId, desired.low);
+        _increaseReserve(rightEntity, tokenId, collateral - desired.low);
       }
     }
     col.collateral = 0;
-    col.ondelta = 0;
+    delete col.ondelta;
   }
 
   /// @notice Settle shortfall via reserves, then debt
@@ -1048,19 +990,17 @@ contract Depository is ReentrancyGuardLite, IDepositoryDelegateErrorAbi {
   ///      line is therefore exactly: "I trust this counterparty's future J-reserve
   ///      inflows and reputation up to this amount." Hubs must size credit by
   ///      that, not by any assumption of on-chain recourse.
-  function _settleShortfall(bytes32 debtor, bytes32 creditor, uint256 tokenId, uint256 amount) private {
-    if (amount == 0) return;
-
+  function _settleShortfall(bytes32 debtor, bytes32 creditor, uint256 tokenId, Uint512 memory amount) private {
     _enforceDebts(debtor, tokenId, DEBT_ENFORCEMENT_CHUNK);
     uint256 available = _spendableReserve(debtor, tokenId);
-    uint256 payAmount = available >= amount ? amount : available;
+    uint256 payAmount = WideMath.payableAmount(amount, available);
     if (payAmount > 0) {
       _decreaseReserve(debtor, tokenId, payAmount);
       _increaseReserve(creditor, tokenId, payAmount);
     }
 
-    uint256 remaining = amount - payAmount;
-    if (remaining > 0) {
+    Uint512 memory remaining = WideMath.subtract(amount, payAmount);
+    if (!WideMath.isZero(remaining)) {
       _addDebt(debtor, tokenId, creditor, remaining);
     }
   }

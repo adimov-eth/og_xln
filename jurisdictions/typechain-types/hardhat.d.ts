@@ -94,6 +94,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.IEntityShareDepository__factory>;
     getContractFactory(
+      name: "WideMath",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.WideMath__factory>;
+    getContractFactory(
       name: "DepositoryDebtHarness",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.DepositoryDebtHarness__factory>;
@@ -259,6 +263,11 @@ declare module "hardhat/types/runtime" {
       signer?: ethers.Signer
     ): Promise<Contracts.IEntityShareDepository>;
     getContractAt(
+      name: "WideMath",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.WideMath>;
+    getContractAt(
       name: "DepositoryDebtHarness",
       address: string | ethers.Addressable,
       signer?: ethers.Signer
@@ -420,6 +429,10 @@ declare module "hardhat/types/runtime" {
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IEntityShareDepository>;
     deployContract(
+      name: "WideMath",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.WideMath>;
+    deployContract(
       name: "DepositoryDebtHarness",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.DepositoryDebtHarness>;
@@ -584,6 +597,11 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.IEntityShareDepository>;
+    deployContract(
+      name: "WideMath",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.WideMath>;
     deployContract(
       name: "DepositoryDebtHarness",
       args: any[],

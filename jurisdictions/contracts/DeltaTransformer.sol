@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import "./math/WideMath.sol";
+
 /// @notice The Depository's hash-ladder reveal registry. The transformer reads
 /// it through msg.sender: applyBatch only ever runs (via Account's DELEGATECALL
 /// chain) with the settling Depository as the immediate caller, so the registry
@@ -19,11 +21,11 @@ interface IHashLadderRevealRegistry {
 
 /* 
 Subcontracts - Programmable Delta Transformers
-  function applyBatch(int[] memory deltas, uint[] memory tokenIds,
+  function applyBatch(Int768[] memory deltas, uint[] memory tokenIds,
                       bytes calldata encodedBatch, bytes calldata leftArguments,
                       bytes calldata rightArguments, uint leftArgumentsTimestamp,
                       uint rightArgumentsTimestamp)
-    → int[] memory newDeltas
+    → Int768[] memory newDeltas
 
   What you can do:
   - HTLCs (conditional payments based on secret reveal)
@@ -47,7 +49,6 @@ contract DeltaTransformer {
   // Former hashToBlock / hashRevealed / cleanSecret were a closed dead set —
   // dispute resolution only reads this mapping.
   mapping(bytes32 => uint) public hashToTimestamp;
-  uint256 constant MAX_FILL_RATIO = type(uint16).max;
 
   struct Batch {
     Payment[] payment;
@@ -58,7 +59,7 @@ contract DeltaTransformer {
   // actual subcontract structs
   struct Payment {
     uint deltaIndex;
-    int amount;
+    SignedAmount amount;
     uint revealedUntilTimestamp;
     bytes32 hash;
   }
@@ -75,7 +76,7 @@ contract DeltaTransformer {
 
   struct Pull {
     uint deltaIndex;
-    int amount;
+    SignedAmount amount;
     uint16 claimedRatio;
     // Settlement clock is dispute-relative, not a sealed route deadline.
     // Market/route expiry is not settlement authority — deleted.
@@ -129,7 +130,7 @@ contract DeltaTransformer {
   ///      are intentionally not duplicated in calldata; a transformer that
   ///      needs token metadata can read the calling Depository registry.
   function applyBatch(
-    int[] calldata deltas,
+    Int768[] calldata deltas,
     uint[] calldata tokenIds,
     bytes calldata encodedBatch,
     bytes calldata leftArguments,
@@ -142,7 +143,7 @@ contract DeltaTransformer {
     uint256 disputeTimeout,
     uint32 leftResponseSeconds,
     uint32 rightResponseSeconds
-  ) external view returns (int[] memory) {
+  ) external view returns (Int768[] memory) {
     if (tokenIds.length != deltas.length) revert ContextLengthMismatch();
     return _applyBatch(
       deltas,
@@ -161,7 +162,7 @@ contract DeltaTransformer {
   }
 
   function _applyBatch(
-    int[] memory deltas,
+    Int768[] memory deltas,
     bytes calldata encodedBatch,
     bytes calldata leftArguments,
     bytes calldata rightArguments,
@@ -173,7 +174,7 @@ contract DeltaTransformer {
     uint256 disputeTimeout,
     uint32 leftResponseSeconds,
     uint32 rightResponseSeconds
-  ) private view returns (int[] memory) {
+  ) private view returns (Int768[] memory) {
     // A clause failure is fatal to the whole finalization: the ProofBody is
     // signed executable state, so malformed data, a revert, OOG, or malformed
     // output must roll back the processBatch transaction and keep the dispute
@@ -255,13 +256,16 @@ contract DeltaTransformer {
   }
 
   function applyPayment(
-    int[] memory deltas,
+    Int768[] memory deltas,
     Payment memory payment,
     bytes32[] memory lSecrets,
     bytes32[] memory rSecrets,
     uint leftArgumentsTimestamp,
     uint rightArgumentsTimestamp
   ) private view {
+    // Signed clause data has one representation even when its condition is
+    // inactive; otherwise (negative, zero) would become evidence-dependent.
+    Int768 memory amount = WideMath.expand(payment.amount);
     // Apply amount when the hash was revealed on chain or supplied in dispute
     // calldata before the side-specific argument timestamp. Argument timestamps
     // matter because the starter's evidence is frozen at disputeStart while the
@@ -282,7 +286,7 @@ contract DeltaTransformer {
     if (!revealed) return;
     if (payment.deltaIndex >= deltas.length) revert InvalidDeltaIndex();
 
-    deltas[payment.deltaIndex] += payment.amount;
+    deltas[payment.deltaIndex] = WideMath.add(deltas[payment.deltaIndex], amount);
   }
 
   function matchesSecret(bytes32 hashlock, bytes32[] memory secrets) private pure returns (bool) {
@@ -294,23 +298,23 @@ contract DeltaTransformer {
     return false;
   }
 
-  function applySwap(int[] memory deltas, Swap memory swap, uint16 fillRatio) private pure {
+  function applySwap(Int768[] memory deltas, Swap memory swap, uint16 fillRatio) private pure {
     if (swap.addDeltaIndex >= deltas.length || swap.subDeltaIndex >= deltas.length) revert InvalidDeltaIndex();
-    int give = int(swap.addAmount * fillRatio / MAX_FILL_RATIO);
-    int want = int(swap.subAmount * fillRatio / MAX_FILL_RATIO);
+    uint256 give = WideMath.fill(swap.addAmount, fillRatio);
+    uint256 want = WideMath.fill(swap.subAmount, fillRatio);
     // Delta is LEFT's allocation. A left maker gives the give token (negative)
     // and receives the want token (positive); a right maker is the inverse.
     if (swap.ownerIsLeft) {
-      deltas[swap.addDeltaIndex] -= give;
-      deltas[swap.subDeltaIndex] += want;
+      deltas[swap.addDeltaIndex] = WideMath.subUint(deltas[swap.addDeltaIndex], give);
+      deltas[swap.subDeltaIndex] = WideMath.addUint(deltas[swap.subDeltaIndex], want);
     } else {
-      deltas[swap.addDeltaIndex] += give;
-      deltas[swap.subDeltaIndex] -= want;
+      deltas[swap.addDeltaIndex] = WideMath.addUint(deltas[swap.addDeltaIndex], give);
+      deltas[swap.subDeltaIndex] = WideMath.subUint(deltas[swap.subDeltaIndex], want);
     }
   }
 
   function applyPull(
-    int[] memory deltas,
+    Int768[] memory deltas,
     Pull memory pull,
     bytes32 leftEntity,
     bytes32 rightEntity,
@@ -320,7 +324,7 @@ contract DeltaTransformer {
     uint32 rightResponseSeconds
   ) private view {
     if (pull.deltaIndex >= deltas.length) revert InvalidDeltaIndex();
-    if (pull.amount == 0) revert InvalidPullAmount();
+    if (pull.amount.magnitude == 0) revert InvalidPullAmount();
 
     // Canon (owner 2026-08): dispute period T is jurisdiction SECONDS from the
     // start of THIS dispute. Finalizing before T lets a hub settle one leg at 0
@@ -346,7 +350,7 @@ contract DeltaTransformer {
     // never dispute calldata. Signed left/right entities derive the exact
     // bilateral Account namespace; the signed Pull then supplies beneficiary,
     // ladder and role. A record published under a false counterparty is inert.
-    bytes32 beneficiary = pull.amount >= 0 ? leftEntity : rightEntity;
+    bytes32 beneficiary = pull.amount.negative ? rightEntity : leftEntity;
     bytes32 counterparty = beneficiary == leftEntity ? rightEntity : leftEntity;
     bytes32 ladderHash = keccak256(abi.encodePacked(pull.fullHash, pull.partialRoot));
     (bool registryOk, bytes memory registryData) = msg.sender.staticcall(
@@ -380,16 +384,13 @@ contract DeltaTransformer {
 
     if (fillRatio == 0 || fillRatio <= pull.claimedRatio) return;
 
-    uint absAmount = pull.amount >= 0 ? uint(pull.amount) : uint(-pull.amount);
-    uint newClaim = absAmount * uint(fillRatio) / MAX_FILL_RATIO;
-    uint previousClaim = absAmount * uint(pull.claimedRatio) / MAX_FILL_RATIO;
+    uint newClaim = WideMath.fill(pull.amount.magnitude, fillRatio);
+    uint previousClaim = WideMath.fill(pull.amount.magnitude, pull.claimedRatio);
     if (newClaim <= previousClaim) return;
-    int applied = int(newClaim - previousClaim);
-    if (pull.amount >= 0) {
-      deltas[pull.deltaIndex] += applied;
-    } else {
-      deltas[pull.deltaIndex] -= applied;
-    }
+    uint256 applied = newClaim - previousClaim;
+    deltas[pull.deltaIndex] = pull.amount.negative
+      ? WideMath.subUint(deltas[pull.deltaIndex], applied)
+      : WideMath.addUint(deltas[pull.deltaIndex], applied);
   }
 
 

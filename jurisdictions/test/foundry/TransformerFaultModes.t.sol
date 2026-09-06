@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import "../../contracts/Account.sol";
 import "../../contracts/DeltaTransformer.sol";
 import "../../contracts/Types.sol";
@@ -16,8 +17,8 @@ import {SettlementDeltasHarness} from "./helpers/SettlementDeltasHarness.sol";
 ///         never executed with non-empty wrappers.
 ///
 /// Everything here runs the REAL Account.prepareSettlementDeltas bytecode via
-/// SettlementDeltasHarness (extended in wave 2 with `runWithArguments` and
-/// `runTwoDeltas`; `run` is untouched so the Halmos lemma paths are stable).
+/// SettlementDeltasHarness with all three limbs preserved through `run`, `runWithArguments` and
+/// `runTwoDeltas`. Historical symbolic path counts require a fresh run.
 ///
 /// Properties:
 /// - Every fault mode collapses to a REAL revert (never the tolerated halmos
@@ -38,6 +39,76 @@ contract TransformerFaultModes is Test {
     decoder = new DeltaTransformer();
   }
 
+  function _assertDelta(Int768 memory actual, int256 expected, string memory reason) internal pure {
+    assertEq(actual.high, expected < 0 ? int256(-1) : int256(0), reason);
+    assertEq(actual.middle, expected < 0 ? type(uint256).max : 0, reason);
+    assertEq(actual.low, uint256(expected), reason);
+  }
+
+  function _maxAllowanceClauses(bool negative) internal view returns (TransformerClause[] memory clauses) {
+    clauses = new TransformerClause[](32);
+    Int768 memory request = negative
+      ? Int768(type(int256).min, 0, 0)
+      : Int768(type(int256).max, type(uint256).max, type(uint256).max);
+    for (uint256 i = 0; i < clauses.length; i++) {
+      Allowance[] memory allowances = new Allowance[](1);
+      allowances[0] = Allowance(0, negative ? type(uint256).max : 0, negative ? 0 : type(uint256).max);
+      clauses[i] = TransformerClause(
+        address(transformer), transformer.encodeWide(TransformerLivenessHarness.Mode.Absolute, 0, request, 1), allowances
+      );
+    }
+  }
+
+  function _assertClampPrefix(Vm.Log memory entry, bool negative, uint256 index) internal view {
+    assertEq(entry.emitter, address(harness), "clamp emitter");
+    assertEq(entry.topics.length, 4, "clamp indexed fields");
+    assertEq(entry.topics[0], keccak256(
+      "TransformerDeltaClamped(bytes32,uint256,address,uint256,(int256,uint256,uint256),(int256,uint256,uint256))"
+    ), "clamp event signature");
+    assertEq(entry.topics[1], keccak256(abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)))), "account key");
+    assertEq(entry.topics[2], bytes32(index), "clause must keep its exact input position");
+    assertEq(entry.topics[3], bytes32(uint256(uint160(address(transformer)))), "signed transformer");
+    (uint256 tokenId, Int768 memory requested, Int768 memory applied) = abi.decode(entry.data, (uint256, Int768, Int768));
+    assertEq(tokenId, 1);
+    assertEq(requested.high, negative ? type(int256).min : type(int256).max);
+    assertEq(requested.middle, negative ? 0 : type(uint256).max);
+    assertEq(requested.low, negative ? 0 : type(uint256).max);
+    // Base is +/-2^511. The kth clause adds/subtracts k * (2^256 - 1).
+    uint256 k = index + 1;
+    assertEq(applied.high, negative ? int256(-1) : int256(0));
+    assertEq(applied.middle, negative ? (uint256(1) << 255) - k : (uint256(1) << 255) + k - 1);
+    assertEq(applied.low, negative ? k : type(uint256).max - k + 1);
+  }
+
+  function _assert32ClampSequence(bool negative) internal {
+    TransformerClause[] memory clauses = _maxAllowanceClauses(negative);
+    Int512 memory ondelta = Int512(0, negative ? 0 : 1);
+    Int512 memory offdelta = negative
+      ? Int512(type(int256).min, 0) : Int512(type(int256).max, type(uint256).max);
+    vm.recordLogs();
+    (Int768 memory delta, uint256 bitmap, bool reverted, bool gasArtifact) = harness.runClauses(ondelta, offdelta, 1, clauses);
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    assertFalse(reverted, "all 32 signed allowance clauses must remain executable");
+    assertFalse(gasArtifact);
+    assertEq(logs.length, 32, "every requested extreme must emit its own clamp");
+    for (uint256 i = 0; i < logs.length; i++) _assertClampPrefix(logs[i], negative, i);
+    assertEq(bitmap, negative ? 1 : 0);
+    assertEq(delta.high, negative ? int256(-1) : int256(0));
+    assertEq(delta.middle, negative ? (uint256(1) << 255) - 32 : (uint256(1) << 255) + 31);
+    assertEq(delta.low, negative ? 32 : type(uint256).max - 31);
+    Uint512 memory magnitude = WideMath.magnitude(delta);
+    assertEq(magnitude.high, (uint256(1) << 255) + 31, "final debt fits unsigned512 exactly");
+    assertEq(magnitude.low, type(uint256).max - 31, "final debt low word");
+  }
+
+  function test_32PositiveMaxAllowancesPreserveEveryWideClampPrefix() public {
+    _assert32ClampSequence(false);
+  }
+
+  function test_32NegativeMaxAllowancesPreserveEveryWideClampPrefix() public {
+    _assert32ClampSequence(true);
+  }
+
   // ═══════════════ fault modes vs the allowance gate and clamp ═══════════════
 
   /// @notice Every fault mode must fail CLOSED: a real revert, not the halmos
@@ -52,11 +123,11 @@ contract TransformerFaultModes is Test {
       TransformerLivenessHarness.Mode.ReturnBomb
     ];
     for (uint256 i = 0; i < faults.length; i++) {
-      (int256 delta0, , bool reverted, bool gasArtifact) =
+      (Int768 memory delta0, , bool reverted, bool gasArtifact) =
         harness.run(100, 0, 1, faults[i], 5_000, true, 50, 50);
       assertTrue(reverted, "fault mode must revert");
       assertFalse(gasArtifact, "fault mode must NOT hide behind the gas artifact");
-      assertEq(delta0, 0, "fault mode must not apply a delta");
+      _assertDelta(delta0, 0, "fault mode must not apply a delta");
     }
   }
 
@@ -79,28 +150,69 @@ contract TransformerFaultModes is Test {
   /// @notice A well-behaved control proving the harness entry itself is fine:
   ///         Add with allowance applies the exact value (no clamp at 50+50).
   function test_wellBehavedAddAppliesExactValue() public {
-    (int256 delta0, uint256 bitmap, bool reverted, bool gasArtifact) =
-      harness.run(100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, MAX_MONEY, MAX_MONEY);
+    (Int768 memory delta0, uint256 bitmap, bool reverted, bool gasArtifact) =
+      harness.run(100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, type(uint256).max, type(uint256).max);
     assertFalse(reverted, "well-behaved Add must not revert");
     assertFalse(gasArtifact, "no gas artifact on a real EVM run");
-    assertEq(delta0, 107, "Add must apply exactly");
+    _assertDelta(delta0, 107, "Add must apply exactly");
     assertEq(bitmap, 0, "positive result must clear the negative bitmap");
   }
 
-  /// @notice MAX_MONEY: an allowance above 2^200 fails _validateAllowances, so
-  ///         the signed clause cannot execute and the batch reverts
-  ///         (TransformerExecutionFailed), exactly like any other malformed
-  ///         clause. The boundary itself is accepted (see the control above).
-  function test_allowanceAboveMaxMoneyFailsTheClause() public {
-    (int256 delta0, , bool reverted, bool gasArtifact) =
-      harness.run(100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, MAX_MONEY + 1, 0);
-    assertTrue(reverted, "rightAllowance > MAX_MONEY must fail the clause");
-    assertFalse(gasArtifact, "cap rejection is not the gas artifact");
-    assertEq(delta0, 0);
-    (, , reverted, gasArtifact) =
-      harness.run(100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, 0, MAX_MONEY + 1);
-    assertTrue(reverted, "leftAllowance > MAX_MONEY must fail the clause");
+  /// @notice A signed offdelta may precede a unilateral left R2C of one.
+  ///         The new ondelta is 1, so settlement owes LEFT exactly +2^255;
+  ///         the later top-up must neither invalidate the proof nor flip its sign.
+  function test_signedOffdeltaIntMaxThenLeftR2COneMustSettle() public {
+    (Int768 memory delta0, uint256 bitmap, bool reverted, bool gasArtifact) = harness.runWide(
+      Int512(0, 1), Int512(0, uint256(type(int256).max)), 1,
+      TransformerLivenessHarness.Mode.Add, Int768(0, 0, 0), false, 0, 0
+    );
+    assertFalse(gasArtifact, "boundary settlement is not a gas-model artifact");
+    assertFalse(reverted, "signed INT_MAX offdelta plus left R2C(1) must remain settleable");
+    assertEq(bitmap, 0, "left R2C must preserve the positive allocation sign");
+    assertEq(delta0.high, 0, "allocation must retain its positive sign");
+    assertEq(delta0.middle, 0, "allocation must not create an extra word");
+    assertEq(delta0.low, uint256(1) << 255, "allocation must retain the exact wide magnitude");
+  }
+
+  function test_signed512OffsetsRetainTheirExactSumOutsideSigned512() public {
+    Int512 memory maximum = Int512(type(int256).max, type(uint256).max);
+    (Int768 memory delta0, uint256 bitmap, bool reverted, bool gasArtifact) = harness.runWide(
+      maximum, maximum, 1, TransformerLivenessHarness.Mode.Add, Int768(0, 0, 0), false, 0, 0
+    );
+    assertFalse(reverted, "two signed512 offsets must have a wide intermediate");
     assertFalse(gasArtifact);
+    assertEq(bitmap, 0);
+    assertEq(delta0.high, 0);
+    assertEq(delta0.middle, type(uint256).max);
+    assertEq(delta0.low, type(uint256).max - 1);
+  }
+
+  function test_transformerIntermediateSigned768OverflowReverts() public {
+    (, , bool reverted, bool gasArtifact) = harness.runWide(
+      Int512(0, 1), Int512(0, 0), 1, TransformerLivenessHarness.Mode.Add,
+      Int768(type(int256).max, type(uint256).max, type(uint256).max),
+      true, type(uint256).max, type(uint256).max
+    );
+    assertTrue(reverted, "true representation overflow must reject the signed clause");
+    assertFalse(gasArtifact, "representation overflow is not a gas artifact");
+  }
+
+  /// @notice The full ERC20 magnitude is valid on either allowance side.
+  function test_uint256MaxAllowancesPreserveExactSignedRequests() public {
+    (Int768 memory delta0, uint256 bitmap, bool reverted, bool gasArtifact) = harness.run(
+      100, 0, 1, TransformerLivenessHarness.Mode.Absolute, type(int256).min, true, type(uint256).max, 0
+    );
+    assertFalse(reverted, "full right allowance must execute");
+    assertFalse(gasArtifact, "real execution must not be a gas artifact");
+    _assertDelta(delta0, type(int256).min, "right allowance must preserve the exact negative request");
+    assertEq(bitmap, 1, "negative request must set its sign bit");
+    (delta0, bitmap, reverted, gasArtifact) = harness.run(
+      100, 0, 1, TransformerLivenessHarness.Mode.Absolute, type(int256).max, true, 0, type(uint256).max
+    );
+    assertFalse(reverted, "full left allowance must execute");
+    assertFalse(gasArtifact, "real execution must not be a gas artifact");
+    _assertDelta(delta0, type(int256).max, "left allowance must preserve the exact positive request");
+    assertEq(bitmap, 0, "positive request must clear its sign bit");
   }
 
   // ═══════════════ partial allowances across two delta indices ═══════════════
@@ -116,11 +228,11 @@ contract TransformerFaultModes is Test {
 
     // Control: the SAME shape with the allowance on the clause's own index
     // (index 1) executes; band ±50 admits the Add 40 unclamped.
-    (int256 d0, int256 d1, , bool reverted2, ) =
+    (Int768 memory d0, Int768 memory d1, , bool reverted2, ) =
       harness.runTwoDeltas(100, 0, 0, TransformerLivenessHarness.Mode.Add, 40, 1, 1, 50, 50);
     assertFalse(reverted2, "allowanced index must execute");
-    assertEq(d0, 100, "untouched index must keep its delta");
-    assertEq(d1, 40, "allowanced index applies the requested Add exactly");
+    _assertDelta(d0, 100, "untouched index must keep its delta");
+    _assertDelta(d1, 40, "allowanced index applies the requested Add exactly");
   }
 
   /// @notice Allowance-window bracket: no allowance anywhere + a change on
@@ -133,10 +245,10 @@ contract TransformerFaultModes is Test {
     assertTrue(reverted, "un-allowanced change on index 1 must revert");
 
     // Allowance on index 1 + change on index 1 -> executes and clamps exactly.
-    (, int256 d1, , bool reverted2, ) =
+    (, Int768 memory d1, , bool reverted2, ) =
       harness.runTwoDeltas(100, 0, 0, TransformerLivenessHarness.Mode.Absolute, 500, 1, 1, 30, 20);
     assertFalse(reverted2, "allowanced absolute change must execute");
-    assertEq(d1, 20, "clamp: band is prev(0) [+(-right),+left] = [-30,+20]; 500 -> 20");
+    _assertDelta(d1, 20, "clamp: band is prev(0) [+(-right),+left] = [-30,+20]; 500 -> 20");
   }
 
   // ═══════════════ the argument-decoder path (Account.sol:1096-1110) ═══════════════
@@ -149,12 +261,12 @@ contract TransformerFaultModes is Test {
     leftList[0] = hex"deadbeef";
     bytes memory wrapper = abi.encode(leftList);
 
-    (int256 delta0, , bool reverted, bool gasArtifact) = harness.runWithArguments(
+    (Int768 memory delta0, , bool reverted, bool gasArtifact) = harness.runWithArguments(
       100, 0, 1, TransformerLivenessHarness.Mode.Absolute, 5_000, true, 50, 50, wrapper, "", address(decoder)
     );
     assertFalse(reverted, "well-formed arguments must not revert");
     assertFalse(gasArtifact, "no gas artifact on a real EVM run");
-    assertEq(delta0, 150, "clamp: band [50,150]; requested 5000 -> 150");
+    _assertDelta(delta0, 150, "clamp: band [50,150]; requested 5000 -> 150");
   }
 
   /// @notice A MALFORMED wrapper soft-decodes to empty evidence (never a
@@ -175,11 +287,11 @@ contract TransformerFaultModes is Test {
       assertFalse(gasArtifact, "gate revert is not the gas artifact");
 
       // With allowance + no clamp pressure: executes with the empty evidence.
-      (int256 delta0, , bool reverted2, ) = harness.runWithArguments(
-        100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, MAX_MONEY, MAX_MONEY, bad[i], "", address(decoder)
+      (Int768 memory delta0, , bool reverted2, ) = harness.runWithArguments(
+        100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, type(uint256).max, type(uint256).max, bad[i], "", address(decoder)
       );
       assertFalse(reverted2, "malformed evidence soft-decodes; clause still runs");
-      assertEq(delta0, 107, "Add applies exactly over empty evidence");
+      _assertDelta(delta0, 107, "Add applies exactly over empty evidence");
     }
   }
 
@@ -193,19 +305,19 @@ contract TransformerFaultModes is Test {
     );
     assertTrue(revertedGate, "gate must hold under oversized evidence");
 
-    (int256 delta0, , bool reverted2, ) = harness.runWithArguments(
-      100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, MAX_MONEY, MAX_MONEY, oversized, "", address(decoder)
+    (Int768 memory delta0, , bool reverted2, ) = harness.runWithArguments(
+      100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, type(uint256).max, type(uint256).max, oversized, "", address(decoder)
     );
     assertFalse(reverted2, "oversized evidence soft-decodes; clause still runs");
-    assertEq(delta0, 107, "Add applies exactly over empty (oversized) evidence");
+    _assertDelta(delta0, 107, "Add applies exactly over empty (oversized) evidence");
 
     // Just under the bound: decodes (empty inner list) and still executes.
     bytes memory edge = new bytes((1 << 18) - 1);
-    (int256 delta1, , bool reverted3, ) = harness.runWithArguments(
-      100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, MAX_MONEY, MAX_MONEY, edge, "", address(decoder)
+    (Int768 memory delta1, , bool reverted3, ) = harness.runWithArguments(
+      100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, type(uint256).max, type(uint256).max, edge, "", address(decoder)
     );
     assertFalse(reverted3, "edge-size evidence must decode, not revert");
-    assertEq(delta1, 107, "Add applies exactly over the edge-size evidence");
+    _assertDelta(delta1, 107, "Add applies exactly over the edge-size evidence");
   }
 
   /// @notice A decoder that HAS code but fails (wrong contract: the liveness
@@ -222,16 +334,16 @@ contract TransformerFaultModes is Test {
     );
     assertTrue(revertedGate, "gate must hold when the decoder call fails");
 
-    (int256 delta0, , bool reverted2, ) = harness.runWithArguments(
-      100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, MAX_MONEY, MAX_MONEY, hex"01", "", address(transformer)
+    (Int768 memory delta0, , bool reverted2, ) = harness.runWithArguments(
+      100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, type(uint256).max, type(uint256).max, hex"01", "", address(transformer)
     );
     assertFalse(reverted2, "failed decoder call soft-decodes; clause still runs");
-    assertEq(delta0, 107, "Add applies exactly over empty evidence");
+    _assertDelta(delta0, 107, "Add applies exactly over empty evidence");
 
     // Codeless decoder: staticcall returns success + empty returndata, so the
     // strict decode reverts — fatal, not soft.
     (, , bool reverted3, ) = harness.runWithArguments(
-      100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, MAX_MONEY, MAX_MONEY, hex"01", "", address(0xdead)
+      100, 0, 1, TransformerLivenessHarness.Mode.Add, 7, true, type(uint256).max, type(uint256).max, hex"01", "", address(0xdead)
     );
     assertTrue(reverted3, "codeless decoder must be fatal, never silently empty");
   }

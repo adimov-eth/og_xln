@@ -78,26 +78,33 @@ export type CollateralToReserveStructOutput = [
   sig: string;
 };
 
+export type SignedAmountStruct = { negative: boolean; magnitude: BigNumberish };
+
+export type SignedAmountStructOutput = [
+  negative: boolean,
+  magnitude: bigint
+] & { negative: boolean; magnitude: bigint };
+
 export type SettlementDiffStruct = {
   tokenId: BigNumberish;
-  leftDiff: BigNumberish;
-  rightDiff: BigNumberish;
-  collateralDiff: BigNumberish;
-  ondeltaDiff: BigNumberish;
+  leftDiff: SignedAmountStruct;
+  rightDiff: SignedAmountStruct;
+  collateralDiff: SignedAmountStruct;
+  ondeltaDiff: SignedAmountStruct;
 };
 
 export type SettlementDiffStructOutput = [
   tokenId: bigint,
-  leftDiff: bigint,
-  rightDiff: bigint,
-  collateralDiff: bigint,
-  ondeltaDiff: bigint
+  leftDiff: SignedAmountStructOutput,
+  rightDiff: SignedAmountStructOutput,
+  collateralDiff: SignedAmountStructOutput,
+  ondeltaDiff: SignedAmountStructOutput
 ] & {
   tokenId: bigint;
-  leftDiff: bigint;
-  rightDiff: bigint;
-  collateralDiff: bigint;
-  ondeltaDiff: bigint;
+  leftDiff: SignedAmountStructOutput;
+  rightDiff: SignedAmountStructOutput;
+  collateralDiff: SignedAmountStructOutput;
+  ondeltaDiff: SignedAmountStructOutput;
 };
 
 export type SettlementStruct = {
@@ -123,6 +130,13 @@ export type SettlementStructOutput = [
   forgiveDebtsInTokenIds: bigint[];
   sig: string;
   nonce: bigint;
+};
+
+export type Int512Struct = { high: BigNumberish; low: BigNumberish };
+
+export type Int512StructOutput = [high: bigint, low: bigint] & {
+  high: bigint;
+  low: bigint;
 };
 
 export type AllowanceStruct = {
@@ -157,7 +171,7 @@ export type ProofBodyStruct = {
   watchSeed: BytesLike;
   leftResponseSeconds: BigNumberish;
   rightResponseSeconds: BigNumberish;
-  offdeltas: BigNumberish[];
+  offdeltas: Int512Struct[];
   tokenIds: BigNumberish[];
   transformers: TransformerClauseStruct[];
 };
@@ -166,14 +180,14 @@ export type ProofBodyStructOutput = [
   watchSeed: string,
   leftResponseSeconds: bigint,
   rightResponseSeconds: bigint,
-  offdeltas: bigint[],
+  offdeltas: Int512StructOutput[],
   tokenIds: bigint[],
   transformers: TransformerClauseStructOutput[]
 ] & {
   watchSeed: string;
   leftResponseSeconds: bigint;
   rightResponseSeconds: bigint;
-  offdeltas: bigint[];
+  offdeltas: Int512StructOutput[];
   tokenIds: bigint[];
   transformers: TransformerClauseStructOutput[];
 };

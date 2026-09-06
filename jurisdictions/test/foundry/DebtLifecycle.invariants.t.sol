@@ -46,6 +46,15 @@ contract DebtLifecycleInvariants is XlnFixture {
 
   // ═══════════════ aggregation helpers ═══════════════
 
+  /// @dev The lifecycle ghost generates bounded sums; upper limbs must vanish.
+  function _boundedOutstanding(bytes32 e, uint256 t) internal view returns (uint256 low) {
+    uint256 high;
+    uint256 middle;
+    (high, middle, low) = dep.debtOutstanding(e, t);
+    assertEq(high, 0, "bounded ghost: outstanding high");
+    assertEq(middle, 0, "bounded ghost: outstanding middle");
+  }
+
   function _totalReserves(uint256 tokenId) internal view returns (uint256 total) {
     for (uint256 i = 0; i < ACTORS; i++) {
       total += dep._reserves(entity[i], tokenId);
@@ -159,7 +168,7 @@ contract DebtLifecycleInvariants is XlnFixture {
     handler.finalizeDebtDispute(0, 1); // non-starter finalizes immediately
 
     assertEq(handler.disputesFinalized(), 1, "control: finalize not accepted");
-    assertEq(dep.debtOutstanding(entity[_leftActor()], 1), 800, "control: exact debt not booked");
+    assertEq(_boundedOutstanding(entity[_leftActor()], 1), 800, "control: exact debt not booked");
     (bytes32 creditor,) = dep._debts(entity[_leftActor()], 1, 0);
     assertEq(creditor, entity[_rightActor()], "control: wrong creditor");
     assertEq(handler.ghostLiveDebt(1), 800, "control: ghost live debt wrong");
@@ -179,18 +188,18 @@ contract DebtLifecycleInvariants is XlnFixture {
     handler.openDebtDispute(_leftActor(), _rightActor(), 0, 400, 0, 1);
     handler.finalizeDebtDispute(0, 1);
     // 300−100 spendable = 200 booked, then 400 with zero spendable = 600 total.
-    assertEq(dep.debtOutstanding(entity[_leftActor()], 1), 600, "control: two debts not stacked");
+    assertEq(_boundedOutstanding(entity[_leftActor()], 1), 600, "control: two debts not stacked");
     assertEq(handler.debtsCreated(), 2, "control: debt count");
 
     // Partial enforcement with cap 1 and reserve for exactly one debt.
     handler.mint(_leftActor(), 0, 300);
     handler.enforceDebt(_leftActor(), 0, 1 /*capSeed 1 → maxIterations 1*/);
-    assertEq(dep.debtOutstanding(entity[_leftActor()], 1), 400, "control: partial enforcement wrong");
+    assertEq(_boundedOutstanding(entity[_leftActor()], 1), 400, "control: partial enforcement wrong");
     assertEq(dep._debtIndex(entity[_leftActor()], 1), 1, "control: cursor must rest on entry 1");
 
     // Forgiveness removes ONLY the live head (entry 1, amount 400).
     handler.forgiveDebt(_leftActor(), _rightActor(), 0, 0);
-    assertEq(dep.debtOutstanding(entity[_leftActor()], 1), 0, "control: head not forgiven");
+    assertEq(_boundedOutstanding(entity[_leftActor()], 1), 0, "control: head not forgiven");
     assertEq(handler.ghostDebtForgiven(), 400, "control: forgiven amount wrong");
     assertEq(handler.forgivenessSettlements(), 1, "control: settlement not accepted");
     assertEq(handler.checkDebtBooks(), 0, "control: books desynced");
@@ -209,7 +218,7 @@ contract DebtLifecycleInvariants is XlnFixture {
 
     // Token 1 head creditor is RIGHT → bilateral forgiveness succeeds.
     handler.forgiveDebt(_leftActor(), _rightActor(), 0, 0);
-    assertEq(dep.debtOutstanding(entity[_leftActor()], 1), 0, "token-1 head not forgiven");
+    assertEq(_boundedOutstanding(entity[_leftActor()], 1), 0, "token-1 head not forgiven");
 
     // Now stack: RIGHT owes LEFT on token 1 (reverse direction)…
     handler.mint(_rightActor(), 0, 10);
@@ -224,8 +233,8 @@ contract DebtLifecycleInvariants is XlnFixture {
     // The settlement must still succeed through the RIGHT head and forgive
     // exactly RIGHT's debt to LEFT.
     handler.forgiveDebt(_leftActor(), _rightActor(), 0, 0);
-    assertEq(dep.debtOutstanding(entity[_rightActor()], 1), 0, "right head not forgiven");
-    assertGt(dep.debtOutstanding(entity[_leftActor()], 1), 0, "third-party head must survive");
+    assertEq(_boundedOutstanding(entity[_rightActor()], 1), 0, "right head not forgiven");
+    assertGt(_boundedOutstanding(entity[_leftActor()], 1), 0, "third-party head must survive");
   }
 
   function pairIndex(uint256 a, uint256 b) internal pure returns (uint256) {
@@ -243,12 +252,17 @@ contract DebtLifecycleInvariants is XlnFixture {
     handler.mint(_leftActor(), 0, 100);
     handler.openDebtDispute(_leftActor(), _rightActor(), 0, 300, 0, 1);
     handler.finalizeDebtDispute(0, 1);
-    assertGt(dep.debtOutstanding(entity[_leftActor()], 1), 0, "meta: no debt to corrupt");
+    assertGt(_boundedOutstanding(entity[_leftActor()], 1), 0, "meta: no debt to corrupt");
 
     bytes32 slot = _findOutstandingSlot(entity[_leftActor()], 1);
-    vm.store(address(dep), slot, bytes32(uint256(1)));
-    vm.expectRevert();
-    this.invariant_debtBooksMirrorGhost();
+    for (uint256 limb = 0; limb < 3; limb++) {
+      bytes32 limbSlot = bytes32(uint256(slot) + limb);
+      bytes32 original = vm.load(address(dep), limbSlot);
+      vm.store(address(dep), limbSlot, bytes32(uint256(1)));
+      vm.expectRevert();
+      this.invariant_debtBooksMirrorGhost();
+      vm.store(address(dep), limbSlot, original);
+    }
   }
 
   /// @notice Corrupt the ghost live-debt aggregate and confirm the aggregate
@@ -264,17 +278,17 @@ contract DebtLifecycleInvariants is XlnFixture {
 
   /// @dev Locates debtOutstanding[entity][token] by sentinel-writing each
   ///      candidate slot and reading the public getter back (no hardcoded
-  ///      layout). mapping(bytes32 => mapping(uint => uint)) nests as
-  ///      keccak256(t, keccak256(e, base)).
+  ///      layout). The mapping entry starts with Uint768.high; middle and low
+  ///      follow in the next two slots.
   function _findOutstandingSlot(bytes32 e, uint256 t) internal returns (bytes32) {
-    uint256 real = dep.debtOutstanding(e, t);
     for (uint256 base = 0; base < 60; base++) {
       bytes32 outer = keccak256(abi.encode(e, uint256(base)));
       bytes32 slot = keccak256(abi.encode(t, outer));
       bytes32 original = vm.load(address(dep), slot);
       vm.store(address(dep), slot, bytes32(uint256(987_654_321)));
-      if (dep.debtOutstanding(e, t) == 987_654_321) {
-        vm.store(address(dep), slot, bytes32(real));
+      (uint256 high,,) = dep.debtOutstanding(e, t);
+      if (high == 987_654_321) {
+        vm.store(address(dep), slot, original);
         return slot;
       }
       vm.store(address(dep), slot, original);

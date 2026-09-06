@@ -112,8 +112,10 @@ contract ConservationHandler is CommonBase, StdCheats, StdUtils {
 
   function _spendable(uint256 actor, uint256 tokenId) internal view returns (uint256) {
     uint256 r = _reserve(actor, tokenId);
-    uint256 d = dep.debtOutstanding(entityOf[actor], tokenId);
-    return r > d ? r - d : 0;
+    (uint256 high, uint256 middle, uint256 low) = dep.debtOutstanding(entityOf[actor], tokenId);
+    // Compare the complete debt before subtracting a uint256 reserve.
+    if (high != 0 || middle != 0 || low >= r) return 0;
+    return r - low;
   }
 
   function _collateral(bytes32 e1, bytes32 e2, uint256 tokenId) internal view returns (uint256 c) {
@@ -247,14 +249,14 @@ contract ConservationHandler is CommonBase, StdCheats, StdUtils {
       uint256 col = _collateral(entityOf[a], entityOf[cp], t);
       uint256 amount = bound(s6, 0, col + 1);
       bool isLeft = entityOf[a] < entityOf[cp];
-      int256 signedAmount = int256(amount);
+
       SettlementDiff[] memory diffs = new SettlementDiff[](1);
       diffs[0] = SettlementDiff({
         tokenId: t,
-        leftDiff: isLeft ? signedAmount : int256(0),
-        rightDiff: isLeft ? int256(0) : signedAmount,
-        collateralDiff: -signedAmount,
-        ondeltaDiff: isLeft ? -signedAmount : int256(0)
+        leftDiff: SignedAmount(false, isLeft ? amount : 0),
+        rightDiff: SignedAmount(false, isLeft ? 0 : amount),
+        collateralDiff: SignedAmount(amount != 0, amount),
+        ondeltaDiff: SignedAmount(isLeft && amount != 0, isLeft ? amount : 0)
       });
       bytes memory key = XlnHanko.accountKey(entityOf[a], entityOf[cp]);
       uint256 acctNonce = _accountNonce(entityOf[a], entityOf[cp]) + 1;
@@ -286,10 +288,10 @@ contract ConservationHandler is CommonBase, StdCheats, StdUtils {
       SettlementDiff[] memory diffs = new SettlementDiff[](1);
       diffs[0] = SettlementDiff({
         tokenId: t,
-        leftDiff: leftDiff,
-        rightDiff: -leftDiff - collateralDiff,
-        collateralDiff: collateralDiff,
-        ondeltaDiff: collateralDiff
+        leftDiff: WideMath.movement(leftDiff),
+        rightDiff: WideMath.movement(-leftDiff - collateralDiff),
+        collateralDiff: WideMath.movement(collateralDiff),
+        ondeltaDiff: WideMath.movement(collateralDiff)
       });
       bytes memory key = XlnHanko.accountKey(me, other);
       uint256 acctNonce = _accountNonce(me, other) + 1;

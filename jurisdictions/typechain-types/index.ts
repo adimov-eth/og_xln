@@ -11,6 +11,8 @@ import type * as custody from "./custody";
 export type { custody };
 import type * as interfaces from "./interfaces";
 export type { interfaces };
+import type * as math from "./math";
+export type { math };
 import type * as mocks from "./mocks";
 export type { mocks };
 export type { Account } from "./Account";
@@ -54,6 +56,8 @@ export { HashLadderRegistry__factory } from "./factories/HashLadderRegistry__fac
 export { IEntityProvider__factory } from "./factories/IEntityProvider__factory";
 export type { IEntityShareDepository } from "./interfaces/IEntityShareDepository";
 export { IEntityShareDepository__factory } from "./factories/interfaces/IEntityShareDepository__factory";
+export type { WideMath } from "./math/WideMath";
+export { WideMath__factory } from "./factories/math/WideMath__factory";
 export type { DepositoryDebtHarness } from "./mocks/DepositoryDebtHarness";
 export { DepositoryDebtHarness__factory } from "./factories/mocks/DepositoryDebtHarness__factory";
 export type { EntityProviderSupplyHarness } from "./mocks/EntityProviderSupplyHarness";

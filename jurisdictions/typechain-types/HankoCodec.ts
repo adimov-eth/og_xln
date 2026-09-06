@@ -21,26 +21,33 @@ import type {
   TypedContractMethod,
 } from "./common";
 
+export type SignedAmountStruct = { negative: boolean; magnitude: BigNumberish };
+
+export type SignedAmountStructOutput = [
+  negative: boolean,
+  magnitude: bigint
+] & { negative: boolean; magnitude: bigint };
+
 export type SettlementDiffStruct = {
   tokenId: BigNumberish;
-  leftDiff: BigNumberish;
-  rightDiff: BigNumberish;
-  collateralDiff: BigNumberish;
-  ondeltaDiff: BigNumberish;
+  leftDiff: SignedAmountStruct;
+  rightDiff: SignedAmountStruct;
+  collateralDiff: SignedAmountStruct;
+  ondeltaDiff: SignedAmountStruct;
 };
 
 export type SettlementDiffStructOutput = [
   tokenId: bigint,
-  leftDiff: bigint,
-  rightDiff: bigint,
-  collateralDiff: bigint,
-  ondeltaDiff: bigint
+  leftDiff: SignedAmountStructOutput,
+  rightDiff: SignedAmountStructOutput,
+  collateralDiff: SignedAmountStructOutput,
+  ondeltaDiff: SignedAmountStructOutput
 ] & {
   tokenId: bigint;
-  leftDiff: bigint;
-  rightDiff: bigint;
-  collateralDiff: bigint;
-  ondeltaDiff: bigint;
+  leftDiff: SignedAmountStructOutput;
+  rightDiff: SignedAmountStructOutput;
+  collateralDiff: SignedAmountStructOutput;
+  ondeltaDiff: SignedAmountStructOutput;
 };
 
 export interface HankoCodecInterface extends Interface {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
+import "./math/WideMath.sol";
+
 /**
  * Types.sol - Shared type definitions for Depository and Account library
  * Both contracts import this to ensure type compatibility
@@ -8,11 +10,12 @@ pragma solidity ^0.8.24;
 
 // ========== SHARED ERRORS ==========
 // Selectors are name-derived. Declared once so Account (library) and Depository
-// cannot drift. Depository-only codes (E1/E11/E12) stay on Depository.
+// cannot drift. Depository-only codes (E11/E12) stay on Depository.
 // Account-only errors bubble through Depository's DELEGATECALL boundary. The
 // ABI-only interface below exposes those same zero-argument selectors without
 // unreachable constructor branches.
 
+error E1(); // ZeroAmount
 error E2(); // Unauthorized / StaleNonce
 error E3(); // InsufficientBalance
 error E4(); // InvalidSigner
@@ -24,13 +27,9 @@ error E10(); // BatchTooLarge
 // This bound does not apply to money or other true uint256 quantities.
 uint256 constant JS_SAFE_NONCE_MAX = 9007199254740991;
 
-// Every financial magnitude (reserve, collateral, |ondelta|, |offdelta|,
-// transformer allowance) is capped at 2^200 ≈ 1.6e60 base units. This keeps
-// ondelta + offdelta and every clamp bound inside int256 with 50+ bits to
-// spare, so settlement arithmetic is plain checked int256: no 257-bit
-// sign/magnitude encoding, no ordered-uint clamping, no int256.min sentinel.
-uint256 constant MAX_MONEY = 1 << 200;
-int256 constant MAX_MONEY_INT = int256(1 << 200);
+// Asset custody uses uint256. Individual signed movements carry a sign and
+// that same magnitude; cumulative offsets and settlement arithmetic are wider.
+// There is no monetary policy ceiling below these representations.
 
 interface IDepositoryDelegateErrorAbi {
   // E5 is emitted only inside the linked Account library. Keeping the same
@@ -80,17 +79,25 @@ struct AccountInfo {
 
 struct AccountCollateral {
   uint collateral;
-  int ondelta;
+  // Reachability: every collateral decrease either consumes a strictly newer
+  // Account nonce (C2R/cooperative settlement) or resets collateral AND ondelta
+  // (dispute finalization). No path resets the nonce. Between those decreases,
+  // left R2C adds equally to this allocation and uint256 collateral. With
+  // N < 2^53 nonce changes and each signed movement <= U = uint256.max,
+  // |ondelta| <= (2*N+1)*U < 2^310. Int512 therefore never narrows a reachable
+  // allocation. Three signed zero-custody ondelta movements already exceed
+  // U; using sign+uint256 here would incorrectly freeze the third settlement.
+  Int512 ondelta;
 }
 
 // ========== SETTLEMENT ==========
 
 struct SettlementDiff {
   uint tokenId;
-  int leftDiff;
-  int rightDiff;
-  int collateralDiff;
-  int ondeltaDiff;
+  SignedAmount leftDiff;
+  SignedAmount rightDiff;
+  SignedAmount collateralDiff;
+  SignedAmount ondeltaDiff;
 }
 
 // Per-token state snapshot after settlement (used in AccountSettled event)
@@ -99,7 +106,7 @@ struct TokenSettlement {
   uint leftReserve;
   uint rightReserve;
   uint collateral;
-  int ondelta;
+  Int512 ondelta;
 }
 
 // Per-account settlement result (groups all tokens for one bilateral pair)
@@ -114,7 +121,10 @@ struct AccountSettlement {
 
 struct Debt {
   bytes32 creditor;
-  uint amount;
+  // Final allocation magnitude is < 2^512 (Account.prepareSettlementDeltas).
+  // The queue length is uint256, so its unsigned aggregate fits Uint768 even
+  // when several independently authorized debts cross the lower word.
+  Uint512 amount;
 }
 
 // ========== TRANSFORMERS (was Subcontracts) ==========
@@ -137,7 +147,7 @@ struct ProofBody {
   // Zero is intentional same-block policy; the sum may not exceed 365 days.
   uint32 leftResponseSeconds;
   uint32 rightResponseSeconds;
-  int[] offdeltas;
+  Int512[] offdeltas;
   uint[] tokenIds;
   TransformerClause[] transformers;
 }
@@ -346,7 +356,7 @@ struct Batch {
 ///      without inflated reserves being visible to anyone mid-batch.
 struct BatchScratch {
   bytes32 initiator;
-  mapping(uint256 => uint256) deficit;
+  mapping(uint256 => Uint512) deficit;
   uint256[] tokens;
 }
 

@@ -22,6 +22,25 @@ import type {
   TypedContractMethod,
 } from "../common";
 
+export type Int768Struct = {
+  high: BigNumberish;
+  middle: BigNumberish;
+  low: BigNumberish;
+};
+
+export type Int768StructOutput = [high: bigint, middle: bigint, low: bigint] & {
+  high: bigint;
+  middle: bigint;
+  low: bigint;
+};
+
+export type SignedAmountStruct = { negative: boolean; magnitude: BigNumberish };
+
+export type SignedAmountStructOutput = [
+  negative: boolean,
+  magnitude: bigint
+] & { negative: boolean; magnitude: bigint };
+
 export declare namespace DeltaTransformer {
   export type ArgumentsStruct = {
     fillRatios: BigNumberish[];
@@ -35,19 +54,19 @@ export declare namespace DeltaTransformer {
 
   export type PaymentStruct = {
     deltaIndex: BigNumberish;
-    amount: BigNumberish;
+    amount: SignedAmountStruct;
     revealedUntilTimestamp: BigNumberish;
     hash: BytesLike;
   };
 
   export type PaymentStructOutput = [
     deltaIndex: bigint,
-    amount: bigint,
+    amount: SignedAmountStructOutput,
     revealedUntilTimestamp: bigint,
     hash: string
   ] & {
     deltaIndex: bigint;
-    amount: bigint;
+    amount: SignedAmountStructOutput;
     revealedUntilTimestamp: bigint;
     hash: string;
   };
@@ -76,7 +95,7 @@ export declare namespace DeltaTransformer {
 
   export type PullStruct = {
     deltaIndex: BigNumberish;
-    amount: BigNumberish;
+    amount: SignedAmountStruct;
     claimedRatio: BigNumberish;
     fullHash: BytesLike;
     partialRoot: BytesLike;
@@ -85,14 +104,14 @@ export declare namespace DeltaTransformer {
 
   export type PullStructOutput = [
     deltaIndex: bigint,
-    amount: bigint,
+    amount: SignedAmountStructOutput,
     claimedRatio: bigint,
     fullHash: string,
     partialRoot: string,
     targetRole: boolean
   ] & {
     deltaIndex: bigint;
-    amount: bigint;
+    amount: SignedAmountStructOutput;
     claimedRatio: bigint;
     fullHash: string;
     partialRoot: string;
@@ -133,7 +152,7 @@ export interface DeltaTransformerInterface extends Interface {
   encodeFunctionData(
     functionFragment: "applyBatch",
     values: [
-      BigNumberish[],
+      Int768Struct[],
       BigNumberish[],
       BytesLike,
       BytesLike,
@@ -258,7 +277,7 @@ export interface DeltaTransformer extends BaseContract {
 
   applyBatch: TypedContractMethod<
     [
-      deltas: BigNumberish[],
+      deltas: Int768Struct[],
       tokenIds: BigNumberish[],
       encodedBatch: BytesLike,
       leftArguments: BytesLike,
@@ -272,7 +291,7 @@ export interface DeltaTransformer extends BaseContract {
       leftResponseSeconds: BigNumberish,
       rightResponseSeconds: BigNumberish
     ],
-    [bigint[]],
+    [Int768StructOutput[]],
     "view"
   >;
 
@@ -312,7 +331,7 @@ export interface DeltaTransformer extends BaseContract {
     nameOrSignature: "applyBatch"
   ): TypedContractMethod<
     [
-      deltas: BigNumberish[],
+      deltas: Int768Struct[],
       tokenIds: BigNumberish[],
       encodedBatch: BytesLike,
       leftArguments: BytesLike,
@@ -326,7 +345,7 @@ export interface DeltaTransformer extends BaseContract {
       leftResponseSeconds: BigNumberish,
       rightResponseSeconds: BigNumberish
     ],
-    [bigint[]],
+    [Int768StructOutput[]],
     "view"
   >;
   getFunction(

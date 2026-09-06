@@ -29,13 +29,11 @@ contract SettlementDeltasHarness {
     transformer = _transformer;
   }
 
-  /// @dev prepareSettlementDeltas returns plain int256[] since MAX_MONEY (every
-  ///      term is bounded, no 257-bit sign/magnitude any more); the bitmap the
-  ///      lemmas consume is derived here from the signs so their contract with
-  ///      Depository._disputeFinalizeInternal (delta < 0 => negative) stays checked.
-  function _signBitmap(int[] memory deltas) internal pure returns (uint256 bitmap) {
+  /// @dev Preserve all three production limbs and derive the sign bitmap from
+  ///      the signed high limb; positive allocations above int256 remain positive.
+  function _signBitmap(Int768[] memory deltas) internal pure returns (uint256 bitmap) {
     for (uint256 i = 0; i < deltas.length; i++) {
-      if (deltas[i] < 0) bitmap |= 1 << i;
+      if (deltas[i].high < 0) bitmap |= 1 << i;
     }
   }
 
@@ -58,27 +56,67 @@ contract SettlementDeltasHarness {
     uint256 leftAllowance
   )
     external
-    returns (int256 delta0, uint256 negativeDeltaBitmap, bool reverted, bool gasArtifact)
+    returns (Int768 memory delta0, uint256 negativeDeltaBitmap, bool reverted, bool gasArtifact)
   {
-    ProofBody memory pb;
-    pb.watchSeed = bytes32("halmos");
-    pb.leftResponseSeconds = 0;
-    pb.rightResponseSeconds = 0;
-    pb.offdeltas = new int256[](1);
-    pb.offdeltas[0] = offdelta;
-    pb.tokenIds = new uint256[](1);
-    pb.tokenIds[0] = tokenId;
-    pb.transformers = new TransformerClause[](1);
+    return _runWide(
+      WideMath.fromInt(ondelta), WideMath.fromInt(offdelta), tokenId, mode,
+      WideMath.expand(WideMath.fromInt(value)), withAllowance, rightAllowance, leftAllowance
+    );
+  }
+
+  function runWide(
+    Int512 memory ondelta,
+    Int512 memory offdelta,
+    uint256 tokenId,
+    TransformerLivenessHarness.Mode mode,
+    Int768 memory value,
+    bool withAllowance,
+    uint256 rightAllowance,
+    uint256 leftAllowance
+  ) external returns (Int768 memory delta0, uint256 negativeDeltaBitmap, bool reverted, bool gasArtifact) {
+    return _runWide(ondelta, offdelta, tokenId, mode, value, withAllowance, rightAllowance, leftAllowance);
+  }
+
+  function _runWide(
+    Int512 memory ondelta,
+    Int512 memory offdelta,
+    uint256 tokenId,
+    TransformerLivenessHarness.Mode mode,
+    Int768 memory value,
+    bool withAllowance,
+    uint256 rightAllowance,
+    uint256 leftAllowance
+  ) internal returns (Int768 memory delta0, uint256 negativeDeltaBitmap, bool reverted, bool gasArtifact) {
+    TransformerClause[] memory clauses = new TransformerClause[](1);
     Allowance[] memory allowances = new Allowance[](withAllowance ? 1 : 0);
     if (withAllowance) {
       allowances[0] =
         Allowance({ deltaIndex: 0, rightAllowance: rightAllowance, leftAllowance: leftAllowance });
     }
-    pb.transformers[0] = TransformerClause({
+    clauses[0] = TransformerClause({
       transformerAddress: address(transformer),
-      encodedBatch: transformer.encode(mode, 0, value, tokenId),
+      encodedBatch: transformer.encodeWide(mode, 0, value, tokenId),
       allowances: allowances
     });
+    return _runClauses(ondelta, offdelta, tokenId, clauses);
+  }
+
+  function runClauses(
+    Int512 memory ondelta, Int512 memory offdelta, uint256 tokenId, TransformerClause[] memory clauses
+  ) external returns (Int768 memory delta0, uint256 negativeDeltaBitmap, bool reverted, bool gasArtifact) {
+    return _runClauses(ondelta, offdelta, tokenId, clauses);
+  }
+
+  function _runClauses(
+    Int512 memory ondelta, Int512 memory offdelta, uint256 tokenId, TransformerClause[] memory clauses
+  ) internal returns (Int768 memory delta0, uint256 negativeDeltaBitmap, bool reverted, bool gasArtifact) {
+    ProofBody memory pb;
+    pb.watchSeed = bytes32("halmos");
+    pb.offdeltas = new Int512[](1);
+    pb.offdeltas[0] = offdelta;
+    pb.tokenIds = new uint256[](1);
+    pb.tokenIds[0] = tokenId;
+    pb.transformers = clauses;
 
     bytes memory acctKey = abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)));
     collaterals[acctKey][tokenId].ondelta = ondelta;
@@ -98,7 +136,7 @@ contract SettlementDeltasHarness {
       0,
       0,
       0
-    ) returns (int[] memory deltas) {
+    ) returns (Int768[] memory deltas) {
       delta0 = deltas[0];
       negativeDeltaBitmap = _signBitmap(deltas);
       reverted = false;
@@ -153,8 +191,8 @@ contract SettlementDeltasHarness {
 
   // ═══════════════ C4-hardening wave-2 extensions (fault modes, argument
   //                 decoder, multi-index allowances) ═══════════════
-  // `run` above is deliberately left untouched: the five Halmos lemmas
-  // symbolically execute it, and any change would shift their path counts.
+  // The five Halmos lemmas use the same production wide-delta ABI as Forge.
+  // Prior symbolic path counts are not evidence for this representation.
 
   /// @dev Same single-delta pipeline as `run`, but forwards NON-EMPTY argument
   ///      wrappers and a real argument decoder, reaching
@@ -174,14 +212,14 @@ contract SettlementDeltasHarness {
     address argumentDecoder
   )
     external
-    returns (int256 delta0, uint256 negativeDeltaBitmap, bool reverted, bool gasArtifact)
+    returns (Int768 memory delta0, uint256 negativeDeltaBitmap, bool reverted, bool gasArtifact)
   {
     ProofBody memory pb;
     pb.watchSeed = bytes32("halmos");
     pb.leftResponseSeconds = 0;
     pb.rightResponseSeconds = 0;
-    pb.offdeltas = new int256[](1);
-    pb.offdeltas[0] = offdelta;
+    pb.offdeltas = new Int512[](1);
+    pb.offdeltas[0] = WideMath.fromInt(offdelta);
     pb.tokenIds = new uint256[](1);
     pb.tokenIds[0] = tokenId;
     pb.transformers = new TransformerClause[](1);
@@ -197,7 +235,7 @@ contract SettlementDeltasHarness {
     });
 
     bytes memory acctKey = abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)));
-    collaterals[acctKey][tokenId].ondelta = ondelta;
+    collaterals[acctKey][tokenId].ondelta = WideMath.fromInt(ondelta);
 
     try Account.prepareSettlementDeltas(
       collaterals,
@@ -214,7 +252,7 @@ contract SettlementDeltasHarness {
       0,
       0,
       0
-    ) returns (int[] memory deltas) {
+    ) returns (Int768[] memory deltas) {
       delta0 = deltas[0];
       negativeDeltaBitmap = _signBitmap(deltas);
       reverted = false;
@@ -244,16 +282,16 @@ contract SettlementDeltasHarness {
     uint256 leftAllowance
   )
     external
-    returns (int256 delta0, int256 delta1, uint256 negativeDeltaBitmap, bool reverted, bool gasArtifact)
+    returns (Int768 memory delta0, Int768 memory delta1, uint256 negativeDeltaBitmap, bool reverted, bool gasArtifact)
   {
     uint256[2] memory tokenIds = [uint256(7), uint256(9)];
     ProofBody memory pb;
     pb.watchSeed = bytes32("halmos");
     pb.leftResponseSeconds = 0;
     pb.rightResponseSeconds = 0;
-    pb.offdeltas = new int256[](2);
-    pb.offdeltas[0] = offdelta0;
-    pb.offdeltas[1] = offdelta1;
+    pb.offdeltas = new Int512[](2);
+    pb.offdeltas[0] = WideMath.fromInt(offdelta0);
+    pb.offdeltas[1] = WideMath.fromInt(offdelta1);
     pb.tokenIds = new uint256[](2);
     pb.tokenIds[0] = tokenIds[0];
     pb.tokenIds[1] = tokenIds[1];
@@ -271,8 +309,8 @@ contract SettlementDeltasHarness {
     });
 
     bytes memory acctKey = abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)));
-    collaterals[acctKey][tokenIds[0]].ondelta = ondelta;
-    collaterals[acctKey][tokenIds[1]].ondelta = 0;
+    collaterals[acctKey][tokenIds[0]].ondelta = WideMath.fromInt(ondelta);
+    collaterals[acctKey][tokenIds[1]].ondelta = WideMath.fromInt(0);
 
     try Account.prepareSettlementDeltas(
       collaterals,
@@ -289,7 +327,7 @@ contract SettlementDeltasHarness {
       0,
       0,
       0
-    ) returns (int[] memory deltas) {
+    ) returns (Int768[] memory deltas) {
       delta0 = deltas[0];
       delta1 = deltas[1];
       negativeDeltaBitmap = _signBitmap(deltas);

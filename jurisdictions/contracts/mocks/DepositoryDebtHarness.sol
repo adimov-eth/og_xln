@@ -9,6 +9,10 @@ contract DepositoryDebtHarness is Depository {
   {}
 
   function harnessAddDebt(bytes32 debtor, uint256 tokenId, bytes32 creditor, uint256 amount) external {
+    _addDebt(debtor, tokenId, creditor, Uint512(0, amount));
+  }
+
+  function harnessAddWideDebt(bytes32 debtor, uint256 tokenId, bytes32 creditor, Uint512 memory amount) external {
     _addDebt(debtor, tokenId, creditor, amount);
   }
 

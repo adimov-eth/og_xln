@@ -70,9 +70,19 @@ contract DepositoryInvariants is XlnFixture {
     }
   }
 
-  function _totalDebt(uint256 tokenId) internal view returns (uint256 total) {
+  function _outstanding(bytes32 e, uint256 t) internal view returns (Uint768 memory value) {
+    (value.high, value.middle, value.low) = dep.debtOutstanding(e, t);
+  }
+
+  function _assertDebtEq(Uint768 memory actual, Uint768 memory expected, string memory reason) internal pure {
+    assertEq(actual.high, expected.high, string.concat(reason, ": high"));
+    assertEq(actual.middle, expected.middle, string.concat(reason, ": middle"));
+    assertEq(actual.low, expected.low, string.concat(reason, ": low"));
+  }
+
+  function _totalDebt(uint256 tokenId) internal view returns (Uint768 memory total) {
     for (uint256 i = 0; i < ACTORS; i++) {
-      total += dep.debtOutstanding(entity[i], tokenId);
+      total = WideMath.add(total, _outstanding(entity[i], tokenId));
     }
   }
 
@@ -103,9 +113,14 @@ contract DepositoryInvariants is XlnFixture {
   function invariant_reservesPlusCollateralPlusDebtNotInflated() public view {
     for (uint256 k = 0; k < 3; k++) {
       uint256 t = TOKENS[k];
-      uint256 sum = _totalReserves(t) + _totalCollateral(t) + _totalDebt(t);
-      uint256 ceiling = handler.ghostMinted(t) + _externalBacking(t) + _totalDebt(t);
-      assertLe(sum, ceiling, "reserves+collateral+debt exceeded backing");
+      Uint768 memory debt = _totalDebt(t);
+      Uint768 memory sum = WideMath.add(debt, Uint768(0, 0, _totalReserves(t) + _totalCollateral(t)));
+      Uint768 memory ceiling = WideMath.add(debt, Uint768(0, 0, handler.ghostMinted(t) + _externalBacking(t)));
+      assertTrue(
+        sum.high < ceiling.high || (sum.high == ceiling.high &&
+          (sum.middle < ceiling.middle || (sum.middle == ceiling.middle && sum.low <= ceiling.low))),
+        "reserves+collateral+debt exceeded backing"
+      );
     }
   }
 
@@ -141,8 +156,8 @@ contract DepositoryInvariants is XlnFixture {
     for (uint256 i = 0; i < ACTORS; i++) {
       for (uint256 k = 0; k < 3; k++) {
         uint256 t = TOKENS[k];
-        (uint256 sum,) = _walkDebtQueue(entity[i], t);
-        assertEq(sum, dep.debtOutstanding(entity[i], t), "debtOutstanding desynced from queue");
+        (Uint768 memory sum,) = _walkDebtQueue(entity[i], t);
+        _assertDebtEq(sum, _outstanding(entity[i], t), "debtOutstanding desynced from queue");
       }
     }
   }
@@ -174,8 +189,8 @@ contract DepositoryInvariants is XlnFixture {
         }
         // Everything before the cursor must already be settled.
         for (uint256 idx = 0; idx < cursor && idx < len; idx++) {
-          (, uint256 amount) = dep._debts(entity[i], t, idx);
-          assertEq(amount, 0, "cursor skipped an unpaid debt");
+          (, Uint512 memory amount) = dep._debts(entity[i], t, idx);
+          assertTrue(WideMath.isZero(amount), "cursor skipped an unpaid debt");
         }
       }
     }
@@ -184,17 +199,17 @@ contract DepositoryInvariants is XlnFixture {
   function _debtQueueLength(bytes32 e, uint256 t) internal view returns (uint256 len) {
     // Debt[] has no length getter; probe the public array getter until it panics.
     for (uint256 i = 0; i < 128; i++) {
-      try dep._debts(e, t, i) returns (bytes32, uint256) { len = i + 1; }
+      try dep._debts(e, t, i) returns (bytes32, Uint512 memory) { len = i + 1; }
       catch { break; }
     }
   }
 
-  function _walkDebtQueue(bytes32 e, uint256 t) internal view returns (uint256 sum, uint256 live) {
+  function _walkDebtQueue(bytes32 e, uint256 t) internal view returns (Uint768 memory sum, uint256 live) {
     uint256 len = _debtQueueLength(e, t);
     for (uint256 i = 0; i < len; i++) {
-      (, uint256 amount) = dep._debts(e, t, i);
-      if (amount != 0) {
-        sum += amount;
+      (, Uint512 memory amount) = dep._debts(e, t, i);
+      if (!WideMath.isZero(amount)) {
+        sum = WideMath.add(sum, WideMath.expand(amount));
         live++;
       }
     }
@@ -268,13 +283,22 @@ contract DepositoryInvariants is XlnFixture {
   /// @notice Same for the debt bookkeeping check: corrupt debtOutstanding
   ///         directly in storage and confirm the queue walk disagrees.
   function test_meta_debtInvariantIsSensitive() public {
-    // debtOutstanding is the 6th declared mapping; find its slot by brute force
-    // rather than hardcoding a layout that a future edit would silently break.
+    // Find the first limb without hardcoding the mapping's storage position.
+    // Corrupt each limb separately: ignoring any word must make this test fail.
     bytes32 slot = _findDebtOutstandingSlot();
-    vm.store(address(dep), slot, bytes32(uint256(777)));
-    assertEq(dep.debtOutstanding(entity[0], 1), 777, "storage probe missed");
-    vm.expectRevert();
-    this.invariant_debtOutstandingMatchesQueue();
+    for (uint256 limb = 0; limb < 3; limb++) {
+      bytes32 limbSlot = bytes32(uint256(slot) + limb);
+      bytes32 original = vm.load(address(dep), limbSlot);
+      vm.store(address(dep), limbSlot, bytes32(uint256(777)));
+      Uint768 memory expected;
+      if (limb == 0) expected.high = 777;
+      else if (limb == 1) expected.middle = 777;
+      else expected.low = 777;
+      _assertDebtEq(_outstanding(entity[0], 1), expected, "storage probe missed");
+      vm.expectRevert();
+      this.invariant_debtOutstandingMatchesQueue();
+      vm.store(address(dep), limbSlot, original);
+    }
   }
 
   /// @dev Locates `debtOutstanding[entity[0]][1]` by writing a sentinel into each
@@ -286,7 +310,7 @@ contract DepositoryInvariants is XlnFixture {
       bytes32 slot = keccak256(abi.encode(uint256(1), inner));
       bytes32 original = vm.load(address(dep), slot);
       vm.store(address(dep), slot, bytes32(uint256(12345)));
-      if (dep.debtOutstanding(entity[0], 1) == 12345) {
+      if (_outstanding(entity[0], 1).high == 12345) {
         vm.store(address(dep), slot, original);
         return slot;
       }

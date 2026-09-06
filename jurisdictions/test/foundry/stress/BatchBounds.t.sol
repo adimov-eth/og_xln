@@ -171,7 +171,9 @@ contract BatchBoundsTest is XlnFixture {
       SettlementDiff[] memory diffs = new SettlementDiff[](diffsPer);
       for (uint256 j = 0; j < diffsPer; j++) {
         diffs[j] = SettlementDiff({
-          tokenId: j + 1, leftDiff: 0, rightDiff: 0, collateralDiff: 0, ondeltaDiff: 0
+          tokenId: j + 1,
+          leftDiff: SignedAmount(false, 0), rightDiff: SignedAmount(false, 0),
+          collateralDiff: SignedAmount(false, 0), ondeltaDiff: SignedAmount(false, 0)
         });
       }
       // Signature is invalid on purpose: the item is skipped *after* every
@@ -234,11 +236,11 @@ contract BatchBoundsTest is XlnFixture {
     pb.watchSeed = seed;
     pb.leftResponseSeconds = LEFT_RESPONSE_SECONDS;
     pb.rightResponseSeconds = RIGHT_RESPONSE_SECONDS;
-    pb.offdeltas = new int256[](tokenCount);
+    pb.offdeltas = new Int512[](tokenCount);
     pb.tokenIds = new uint256[](tokenCount);
     for (uint256 i = 0; i < tokenCount; i++) {
       pb.tokenIds[i] = i + 1; // strictly ascending, as _validateProofBody requires
-      pb.offdeltas[i] = offdelta;
+      pb.offdeltas[i] = WideMath.fromInt(offdelta);
     }
     pb.transformers = new TransformerClause[](0);
   }

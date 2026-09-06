@@ -21,6 +21,18 @@ import type {
   TypedContractMethod,
 } from "../common";
 
+export type Int768Struct = {
+  high: BigNumberish;
+  middle: BigNumberish;
+  low: BigNumberish;
+};
+
+export type Int768StructOutput = [high: bigint, middle: bigint, low: bigint] & {
+  high: bigint;
+  middle: bigint;
+  low: bigint;
+};
+
 export interface MockRevealRegistryInterface extends Interface {
   getFunction(
     nameOrSignature:
@@ -34,7 +46,7 @@ export interface MockRevealRegistryInterface extends Interface {
     functionFragment: "applyBatchViaRegistry",
     values: [
       AddressLike,
-      BigNumberish[],
+      Int768Struct[],
       BigNumberish[],
       BytesLike,
       BytesLike,
@@ -127,7 +139,7 @@ export interface MockRevealRegistry extends BaseContract {
   applyBatchViaRegistry: TypedContractMethod<
     [
       transformer: AddressLike,
-      deltas: BigNumberish[],
+      deltas: Int768Struct[],
       tokenIds: BigNumberish[],
       encodedBatch: BytesLike,
       leftArguments: BytesLike,
@@ -141,7 +153,7 @@ export interface MockRevealRegistry extends BaseContract {
       leftResponseSeconds: BigNumberish,
       rightResponseSeconds: BigNumberish
     ],
-    [bigint[]],
+    [Int768StructOutput[]],
     "view"
   >;
 
@@ -184,7 +196,7 @@ export interface MockRevealRegistry extends BaseContract {
   ): TypedContractMethod<
     [
       transformer: AddressLike,
-      deltas: BigNumberish[],
+      deltas: Int768Struct[],
       tokenIds: BigNumberish[],
       encodedBatch: BytesLike,
       leftArguments: BytesLike,
@@ -198,7 +210,7 @@ export interface MockRevealRegistry extends BaseContract {
       leftResponseSeconds: BigNumberish,
       rightResponseSeconds: BigNumberish
     ],
-    [bigint[]],
+    [Int768StructOutput[]],
     "view"
   >;
   getFunction(

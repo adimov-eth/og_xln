@@ -184,12 +184,22 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     return dep._reserves(entityOf[actor], tokenId);
   }
 
+  /// @dev This ghost generates bounded amounts. Any unexpected upper limb is
+  ///      a failed oracle, never silently discarded to fit the ghost model.
+  function _boundedOutstanding(bytes32 e, uint256 tokenId) internal view returns (uint256 low) {
+    uint256 high;
+    uint256 middle;
+    (high, middle, low) = dep.debtOutstanding(e, tokenId);
+    require(high == 0 && middle == 0, "debt exceeds bounded ghost");
+  }
+
   function _collateral(bytes32 e1, bytes32 e2, uint256 tokenId) internal view returns (uint256 c) {
     (c,) = dep._collaterals(XlnHanko.accountKey(e1, e2), tokenId);
   }
 
   function _ondelta(bytes32 e1, bytes32 e2, uint256 tokenId) internal view returns (int256 d) {
-    (, d) = dep._collaterals(XlnHanko.accountKey(e1, e2), tokenId);
+    (, Int512 memory value) = dep._collaterals(XlnHanko.accountKey(e1, e2), tokenId);
+    return WideMath.toInt(value);
   }
 
   function _accountNonce(bytes32 e1, bytes32 e2) internal view returns (uint256 n) {
@@ -307,7 +317,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
   function _checkBooks(uint256 a, uint256 t) internal {
     DebtQueue storage g = debtGhosts[a][t];
     uint256 len = g.queue.length;
-    if (dep.debtOutstanding(entityOf[a], t) != _ghostOutstanding(a, t)) bookDesyncs++;
+    if (_boundedOutstanding(entityOf[a], t) != _ghostOutstanding(a, t)) bookDesyncs++;
     if (dep.activeDebts(entityOf[a]) != _ghostActiveCountAll(a)) bookDesyncs++;
     if (len == 0) {
       if (dep._debtIndex(entityOf[a], t) != 0) bookDesyncs++;
@@ -315,8 +325,8 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     }
     if (dep._debtIndex(entityOf[a], t) != g.cursor) bookDesyncs++;
     for (uint256 i = 0; i < len; i++) {
-      try dep._debts(entityOf[a], t, i) returns (bytes32 creditor, uint256 amount) {
-        if (creditor != g.queue[i].creditor || amount != g.queue[i].amount) bookDesyncs++;
+      try dep._debts(entityOf[a], t, i) returns (bytes32 creditor, Uint512 memory amount) {
+        if (creditor != g.queue[i].creditor || amount.high != 0 || amount.low != g.queue[i].amount) bookDesyncs++;
       } catch {
         bookDesyncs++; // real queue shorter than the ghost
       }
@@ -342,7 +352,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
   /// @dev debtOutstanding may rise only inside finalize (shortfall booking);
   ///      `baseline` is the post-implicit-enforcement expectation.
   function _bookForeignIncreases(uint256 a, uint256 t, uint256 baseline) internal {
-    if (dep.debtOutstanding(entityOf[a], t) > baseline) foreignDebtCreation++;
+    if (_boundedOutstanding(entityOf[a], t) > baseline) foreignDebtCreation++;
   }
 
   /// @dev A wrapping batch reverted: processBatch is atomic, so real state is
@@ -351,8 +361,9 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     DebtQueue storage g = debtGhosts[a][t];
     delete g.queue;
     for (uint256 i = 0; i < 256; i++) {
-      try dep._debts(entityOf[a], t, i) returns (bytes32 creditor, uint256 amount) {
-        g.queue.push(GhostDebt({ creditor: creditor, amount: amount }));
+      try dep._debts(entityOf[a], t, i) returns (bytes32 creditor, Uint512 memory amount) {
+        require(amount.high == 0, "queue exceeds bounded ghost");
+        g.queue.push(GhostDebt({ creditor: creditor, amount: amount.low }));
       } catch {
         break;
       }
@@ -363,8 +374,8 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
   /// @dev Live head exists at the real cursor for (entity, token).
   function _headAlive(bytes32 e, uint256 t) internal view returns (bool alive) {
     uint256 cursor = dep._debtIndex(e, t);
-    try dep._debts(e, t, cursor) returns (bytes32, uint256 amt) {
-      if (amt > 0) alive = true;
+    try dep._debts(e, t, cursor) returns (bytes32, Uint512 memory amt) {
+      if (!WideMath.isZero(amt)) alive = true;
     } catch {}
   }
 
@@ -375,10 +386,11 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     returns (bool forgivable, uint256 amount)
   {
     uint256 cursor = dep._debtIndex(debtor, t);
-    try dep._debts(debtor, t, cursor) returns (bytes32 headCreditor, uint256 amt) {
-      if (amt > 0 && headCreditor == creditor) {
+    try dep._debts(debtor, t, cursor) returns (bytes32 headCreditor, Uint512 memory amt) {
+      if (!WideMath.isZero(amt) && headCreditor == creditor) {
+        require(amt.high == 0, "head exceeds bounded ghost");
         forgivable = true;
-        amount = amt;
+        amount = amt.low;
       }
     } catch {}
   }
@@ -407,7 +419,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     (uint256 from, uint256 cp) = _distinct(fromSeed, cpSeed);
     uint256 t = _token(tokenSeed);
 
-    uint256 outstandingBefore = dep.debtOutstanding(entityOf[from], t);
+    uint256 outstandingBefore = _boundedOutstanding(entityOf[from], t);
     uint256 paid = _ghostEnforce(from, t, DEBT_ENFORCEMENT_CHUNK, _reserve(from, t));
     uint256 outstanding = _ghostOutstanding(from, t);
     uint256 reserve = _reserve(from, t) - paid;
@@ -441,7 +453,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     (uint256 from, uint256 to) = _distinct(fromSeed, toSeed);
     uint256 t = _token(tokenSeed);
 
-    uint256 outstandingBefore = dep.debtOutstanding(entityOf[from], t);
+    uint256 outstandingBefore = _boundedOutstanding(entityOf[from], t);
     uint256 paid = _ghostEnforce(from, t, DEBT_ENFORCEMENT_CHUNK, _reserve(from, t));
     uint256 outstanding = _ghostOutstanding(from, t);
     uint256 reserve = _reserve(from, t) - paid;
@@ -500,7 +512,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     uint256 spendable;
     {
       uint256 r = _reserve(debtorActor, t);
-      uint256 o = dep.debtOutstanding(entityOf[debtorActor], t);
+      uint256 o = _boundedOutstanding(entityOf[debtorActor], t);
       spendable = r > o ? r - o : 0;
     }
     uint256 base =
@@ -520,8 +532,8 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     pb.watchSeed = watchSeed;
     pb.leftResponseSeconds = LEFT_RESPONSE_SECONDS;
     pb.rightResponseSeconds = RIGHT_RESPONSE_SECONDS;
-    pb.offdeltas = new int256[](1);
-    pb.offdeltas[0] = offdelta;
+    pb.offdeltas = new Int512[](1);
+    pb.offdeltas[0] = WideMath.fromInt(offdelta);
     pb.tokenIds = new uint256[](1);
     pb.tokenIds[0] = t;
     pb.transformers = new TransformerClause[](0);
@@ -571,8 +583,8 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     pb.watchSeed = g.watchSeed;
     pb.leftResponseSeconds = LEFT_RESPONSE_SECONDS;
     pb.rightResponseSeconds = RIGHT_RESPONSE_SECONDS;
-    pb.offdeltas = new int256[](1);
-    pb.offdeltas[0] = g.offdelta;
+    pb.offdeltas = new Int512[](1);
+    pb.offdeltas[0] = WideMath.fromInt(g.offdelta);
     pb.tokenIds = new uint256[](1);
     pb.tokenIds[0] = g.tokenId;
     pb.transformers = new TransformerClause[](0);
@@ -638,7 +650,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     uint256 paid;
     uint256 outstandingBefore;
     if (debtorActor != type(uint256).max) {
-      outstandingBefore = dep.debtOutstanding(entityOf[debtorActor], t);
+      outstandingBefore = _boundedOutstanding(entityOf[debtorActor], t);
       paid = _ghostEnforce(debtorActor, t, DEBT_ENFORCEMENT_CHUNK, _reserve(debtorActor, t));
       uint256 outstanding = _ghostOutstanding(debtorActor, t);
       uint256 reserve = _reserve(debtorActor, t) - paid;
@@ -687,7 +699,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
           ghostLiveDebt[t] += magnitude;
           debtsCreated++;
         }
-        if (dep.debtOutstanding(entityOf[debtorActor], t) != _ghostOutstanding(debtorActor, t)) {
+        if (_boundedOutstanding(entityOf[debtorActor], t) != _ghostOutstanding(debtorActor, t)) {
           shortfallDesyncs++;
         }
         _bookForeignIncreases(debtorActor, t, outstandingBefore - paid + magnitude);
@@ -779,7 +791,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
     });
 
     PoolSnapshot memory pool = _poolNow();
-    uint256 outstandingBefore = dep.debtOutstanding(leftE, t) + dep.debtOutstanding(rightE, t);
+    uint256 outstandingBefore = _boundedOutstanding(leftE, t) + _boundedOutstanding(rightE, t);
     if (_submit(from, b)) {
       forgivenessSettlements++;
       _bump("forgiveDebt");
@@ -790,7 +802,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
       if (leftForgivable && !_ghostForgive(leftActor, t, rightE)) forgivenessDesyncs++;
       if (rightForgivable && !_ghostForgive(rightActor, t, leftE)) forgivenessDesyncs++;
       uint256 expectedForgiven = (leftForgivable ? leftAmount : 0) + (rightForgivable ? rightAmount : 0);
-      uint256 outstandingAfter = dep.debtOutstanding(leftE, t) + dep.debtOutstanding(rightE, t);
+      uint256 outstandingAfter = _boundedOutstanding(leftE, t) + _boundedOutstanding(rightE, t);
       if (outstandingBefore - outstandingAfter != expectedForgiven) forgivenessDesyncs++;
       if (expectedForgiven > 0) {
         ghostDebtForgiven += expectedForgiven;
@@ -830,7 +842,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
         uint256 t = TOKENS[ti];
         DebtQueue storage g = debtGhosts[a][t];
         uint256 len = g.queue.length;
-        if (dep.debtOutstanding(entityOf[a], t) != _ghostOutstanding(a, t)) violations++;
+        if (_boundedOutstanding(entityOf[a], t) != _ghostOutstanding(a, t)) violations++;
         if (dep.activeDebts(entityOf[a]) != _ghostActiveCountAll(a)) violations++;
         if (len == 0) {
           if (dep._debtIndex(entityOf[a], t) != 0) violations++;
@@ -838,8 +850,8 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
         }
         if (dep._debtIndex(entityOf[a], t) != g.cursor) violations++;
         for (uint256 i = 0; i < len; i++) {
-          try dep._debts(entityOf[a], t, i) returns (bytes32 creditor, uint256 amount) {
-            if (creditor != g.queue[i].creditor || amount != g.queue[i].amount) violations++;
+          try dep._debts(entityOf[a], t, i) returns (bytes32 creditor, Uint512 memory amount) {
+            if (creditor != g.queue[i].creditor || amount.high != 0 || amount.low != g.queue[i].amount) violations++;
           } catch {
             violations++;
           }
@@ -851,7 +863,7 @@ contract DebtLifecycleHandler is CommonBase, StdCheats, StdUtils {
   /// @dev Σ real debtOutstanding per token, for the aggregate debt oracle.
   function realOutstandingTotal(uint256 t) external view returns (uint256 total) {
     for (uint256 a = 0; a < ACTORS; a++) {
-      total += dep.debtOutstanding(entityOf[a], t);
+      total += _boundedOutstanding(entityOf[a], t);
     }
   }
 

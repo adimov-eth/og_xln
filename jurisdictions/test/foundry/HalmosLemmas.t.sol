@@ -56,7 +56,7 @@ contract HalmosLemmas is Test {
 
     TransformerLivenessHarness.Mode mode =
       modeSel == 0 ? TransformerLivenessHarness.Mode.Add : TransformerLivenessHarness.Mode.Absolute;
-    (int256 delta0, , bool reverted, bool gasArtifact) =
+    (Int768 memory delta0, , bool reverted, bool gasArtifact) =
       harness.run(ondelta, offdelta, 1, mode, value, false, 0, 0);
 
     int256 prev = ondelta + offdelta;
@@ -69,7 +69,7 @@ contract HalmosLemmas is Test {
       "gate: accepted batch must leave the delta untouched without an allowance"
     );
     if (!reverted) {
-      assertEq(delta0, prev, "gate: un-allowanced run must return the untouched delta");
+      assertTrue(WideMath.equal(delta0, WideMath.expand(WideMath.fromInt(prev))), "gate: un-allowanced run must return the untouched delta");
     }
   }
 
@@ -108,7 +108,7 @@ contract HalmosLemmas is Test {
 
     TransformerLivenessHarness.Mode mode =
       modeSel == 0 ? TransformerLivenessHarness.Mode.Add : TransformerLivenessHarness.Mode.Absolute;
-    (int256 delta0, uint256 bitmap, bool reverted, bool gasArtifact) =
+    (Int768 memory delta0, uint256 bitmap, bool reverted, bool gasArtifact) =
       harness.run(ondelta, offdelta, 1, mode, value, true, rightAllowance, leftAllowance);
 
     assertTrue(!reverted || gasArtifact, "clamp: allowanced clause must never revert here");
@@ -120,8 +120,8 @@ contract HalmosLemmas is Test {
     int256 upper = prev + int256(leftAllowance);
     int256 expected = requested < lower ? lower : (requested > upper ? upper : requested);
 
-    assertEq(delta0, expected, "clamp: applied delta is not the exact band clamp");
-    assertEq(delta0 < 0, bitmap & 1 == 1, "clamp: sign/bitmap disagreement");
+    assertTrue(WideMath.equal(delta0, WideMath.expand(WideMath.fromInt(expected))), "clamp: applied delta is not the exact band clamp");
+    assertEq(delta0.high < 0, bitmap & 1 == 1, "clamp: sign/bitmap disagreement");
   }
 
   function test_clampExact_halmos(
@@ -247,10 +247,10 @@ contract HalmosLemmas is Test {
   /// gas revert additionally exists at Account.sol:1102-1104 — do NOT
   /// copy the tolerance into a multi-clause or non-empty-arguments harness.
   function _gateZeroConcreteBody() internal {
-    (int256 delta0, , bool reverted, bool gasArtifact) =
+    (Int768 memory delta0, , bool reverted, bool gasArtifact) =
       harness.run(5, 0, 1, TransformerLivenessHarness.Mode.Add, 7, false, 0, 0);
     assertTrue(reverted && !gasArtifact, "EVM gate must fire with a real error, not the gas artifact");
-    assertEq(delta0, 0, "no delta may be applied without an allowance");
+    assertTrue(WideMath.equal(delta0, Int768(0, 0, 0)), "no delta may be applied without an allowance");
   }
 
   /// @dev Halmos-collected form (check_* prefix): expected to FAIL under

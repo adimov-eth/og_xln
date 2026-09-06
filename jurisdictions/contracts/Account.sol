@@ -59,8 +59,8 @@ library Account {
     bool proposerIsLeft,
     bytes32 proofbodyHash
   );
-  event DebtCreated(bytes32 indexed debtor, bytes32 indexed creditor, uint256 indexed tokenId, uint256 amount, uint256 debtIndex);
-  event DebtEnforced(bytes32 indexed debtor, bytes32 indexed creditor, uint256 indexed tokenId, uint256 amountPaid, uint256 remainingAmount, uint256 newDebtIndex);
+  event DebtCreated(bytes32 indexed debtor, bytes32 indexed creditor, uint256 indexed tokenId, Uint512 amount, uint256 debtIndex);
+  event DebtEnforced(bytes32 indexed debtor, bytes32 indexed creditor, uint256 indexed tokenId, uint256 amountPaid, Uint512 remainingAmount, uint256 newDebtIndex);
   // This signature intentionally matches Depository's public event ABI. The
   // library executes by DELEGATECALL, so logs are emitted from Depository.
   event TransformerDeltaClamped(
@@ -68,8 +68,8 @@ library Account {
     uint256 indexed clauseIndex,
     address indexed transformer,
     uint256 tokenId,
-    int256 requestedValue,
-    int256 appliedValue
+    Int768 requestedValue,
+    Int768 appliedValue
   );
 
   // Shared errors (E2..E10, transformer) live in Types.sol.
@@ -123,7 +123,7 @@ library Account {
       supply := mload(data)
     }
     if (!success || returnSize != 32) return (0, false);
-    valid = supply > 0 && supply <= MAX_MONEY;
+    valid = supply > 0;
   }
 
   function readFixedTokenSupply(
@@ -140,18 +140,18 @@ library Account {
   function addDebt(
     mapping(bytes32 => mapping(uint256 => Debt[])) storage debts,
     mapping(bytes32 => mapping(uint256 => uint256)) storage debtIndex,
-    mapping(bytes32 => mapping(uint256 => uint256)) storage debtOutstanding,
+    mapping(bytes32 => mapping(uint256 => Uint768)) storage debtOutstanding,
     bytes32 debtor,
     uint256 tokenId,
     bytes32 creditor,
-    uint256 amount
+    Uint512 memory amount
   ) external {
-    if (amount == 0) return;
-    uint256 outstanding = debtOutstanding[debtor][tokenId];
+    if (WideMath.isZero(amount)) return;
+    Uint768 memory outstanding = debtOutstanding[debtor][tokenId];
     debts[debtor][tokenId].push(Debt({ amount: amount, creditor: creditor }));
     uint256 index = debts[debtor][tokenId].length - 1;
     if (index == 0) debtIndex[debtor][tokenId] = 0;
-    debtOutstanding[debtor][tokenId] = outstanding + amount;
+    debtOutstanding[debtor][tokenId] = WideMath.add(outstanding, WideMath.expand(amount));
     emit DebtCreated(debtor, creditor, tokenId, amount, index);
   }
 
@@ -162,7 +162,7 @@ library Account {
     mapping(bytes32 => mapping(uint256 => uint256)) storage reserves,
     mapping(bytes32 => mapping(uint256 => Debt[])) storage debts,
     mapping(bytes32 => mapping(uint256 => uint256)) storage debtIndex,
-    mapping(bytes32 => mapping(uint256 => uint256)) storage debtOutstanding,
+    mapping(bytes32 => mapping(uint256 => Uint768)) storage debtOutstanding,
     mapping(bytes32 => uint256) storage activeDebts,
     bytes32 entity,
     uint256 tokenId,
@@ -184,29 +184,26 @@ library Account {
     while (cursor < length && steps < iterationCap) {
       steps++;
       Debt storage debt = queue[cursor];
-      uint256 amount = debt.amount;
-      if (amount == 0) {
+      Uint512 memory amount = debt.amount;
+      if (WideMath.isZero(amount)) {
         cursor++;
         continue;
       }
       if (available == 0) break;
 
       bytes32 creditor = debt.creditor;
-      uint256 payableAmount = available < amount ? available : amount;
+      uint256 payableAmount = WideMath.payableAmount(amount, available);
       _decreaseReserve(reserves, entity, tokenId, payableAmount);
       _increaseReserve(reserves, creditor, tokenId, payableAmount);
-      uint256 outstanding = debtOutstanding[entity][tokenId];
-      if (outstanding < payableAmount) revert E3();
-      unchecked {
-        debtOutstanding[entity][tokenId] = outstanding - payableAmount;
-      }
+      debtOutstanding[entity][tokenId] = WideMath.sub(
+        debtOutstanding[entity][tokenId], Uint768(0, 0, payableAmount)
+      );
       available -= payableAmount;
-      amount -= payableAmount;
+      amount = WideMath.subtract(amount, payableAmount);
 
-      uint256 totalPaid = debt.amount - amount;
-      if (amount == 0) {
-        debt.amount = 0;
-        emit DebtEnforced(entity, creditor, tokenId, totalPaid, 0, cursor + 1);
+      if (WideMath.isZero(amount)) {
+        delete debt.amount;
+        emit DebtEnforced(entity, creditor, tokenId, payableAmount, amount, cursor + 1);
         uint256 active = activeDebts[entity];
         if (active > 0) {
           unchecked {
@@ -217,7 +214,7 @@ library Account {
         cursor++;
       } else {
         debt.amount = amount;
-        emit DebtEnforced(entity, creditor, tokenId, totalPaid, amount, cursor);
+        emit DebtEnforced(entity, creditor, tokenId, payableAmount, amount, cursor);
       }
     }
 
@@ -249,16 +246,15 @@ library Account {
     // spent ahead of holding it.
     BatchScratch storage scratch = BatchScratchLib.get();
     if (entity == scratch.initiator) {
-      uint256 owed = scratch.deficit[tokenId];
-      if (owed != 0) {
-        uint256 repaid = amount < owed ? amount : owed;
-        scratch.deficit[tokenId] = owed - repaid;
+      Uint512 memory owed = scratch.deficit[tokenId];
+      if (!WideMath.isZero(owed)) {
+        uint256 repaid = WideMath.payableAmount(owed, amount);
+        scratch.deficit[tokenId] = WideMath.subtract(owed, repaid);
         amount -= repaid;
         if (amount == 0) return;
       }
     }
     uint256 current = reserves[entity][tokenId];
-    if (current > MAX_MONEY || amount > MAX_MONEY - current) revert E8();
     reserves[entity][tokenId] = current + amount;
     emit ReserveUpdated(entity, tokenId, current + amount);
   }
@@ -270,12 +266,6 @@ library Account {
     uint256 amount
   ) external {
     _decreaseReserve(reserves, entity, tokenId, amount);
-  }
-
-  /// @dev |ondelta| ≤ MAX_MONEY after every mutation, so ondelta + offdelta
-  ///      always fits int256 (see Types.MAX_MONEY).
-  function _requireBoundedOndelta(int256 ondelta) private pure {
-    if (ondelta > MAX_MONEY_INT || ondelta < -MAX_MONEY_INT) revert E8();
   }
 
   function _decreaseReserve(
@@ -299,10 +289,9 @@ library Account {
     BatchScratch storage scratch = BatchScratchLib.get();
     if (entity == bytes32(0) || entity != scratch.initiator) revert E3();
     uint256 shortfall = amount - current;
-    uint256 owed = scratch.deficit[tokenId];
-    if (owed == 0) scratch.tokens.push(tokenId);
-    if (shortfall > MAX_MONEY - owed) revert E8();
-    scratch.deficit[tokenId] = owed + shortfall;
+    Uint512 memory owed = scratch.deficit[tokenId];
+    if (WideMath.isZero(owed)) scratch.tokens.push(tokenId);
+    scratch.deficit[tokenId] = WideMath.add(owed, Uint512(0, shortfall));
     reserves[entity][tokenId] = 0;
     emit ReserveUpdated(entity, tokenId, 0);
   }
@@ -312,38 +301,33 @@ library Account {
   ///      initiator (implicit flash, repaid before the batch ends).
   function _canSpend(
     mapping(bytes32 => mapping(uint256 => uint256)) storage reserves,
-    mapping(bytes32 => mapping(uint256 => uint256)) storage debtOutstanding,
+    mapping(bytes32 => mapping(uint256 => Uint768)) storage debtOutstanding,
     bytes32 entity,
     uint256 tokenId,
-    uint256 amount
+    Uint512 memory amount
   ) private view returns (bool) {
-    if (amount <= _spendableReserve(reserves, debtOutstanding, entity, tokenId)) return true;
+    if (amount.high == 0 && amount.low <= _spendableReserve(reserves, debtOutstanding, entity, tokenId)) return true;
     return entity != bytes32(0)
       && entity == BatchScratchLib.get().initiator
-      && debtOutstanding[entity][tokenId] == 0;
+      && WideMath.isZero(debtOutstanding[entity][tokenId]);
   }
 
   function canSpend(
     mapping(bytes32 => mapping(uint256 => uint256)) storage reserves,
-    mapping(bytes32 => mapping(uint256 => uint256)) storage debtOutstanding,
+    mapping(bytes32 => mapping(uint256 => Uint768)) storage debtOutstanding,
     bytes32 entity,
     uint256 tokenId,
     uint256 amount
   ) external view returns (bool) {
-    return _canSpend(reserves, debtOutstanding, entity, tokenId, amount);
+    return _canSpend(reserves, debtOutstanding, entity, tokenId, Uint512(0, amount));
   }
 
-  /// @dev Same MAX_MONEY ceiling as `_increaseReserve`.
-  function _increaseCollateral(AccountCollateral storage col, uint256 amount) private {
-    if (amount == 0) return;
-    uint256 current = col.collateral;
-    if (current > MAX_MONEY || amount > MAX_MONEY - current) revert E8();
-    col.collateral = current + amount;
-  }
-
-  /// @dev Canonical collateral ceiling shared with Depository's direct R2C path.
-  function increaseCollateral(AccountCollateral storage col, uint256 amount) external {
-    _increaseCollateral(col, amount);
+  /// @dev Custody uses the exact uint256 asset representation.
+  function _increaseCollateral(AccountCollateral storage col, uint256 amount) private returns (uint256 updated) {
+    updated = col.collateral;
+    if (amount == 0) return updated;
+    updated += amount;
+    col.collateral = updated;
   }
 
   function _decreaseCollateral(AccountCollateral storage col, uint256 amount) private {
@@ -365,7 +349,7 @@ library Account {
   // registry keyed by the pull beneficiary, and a transformer must never derive
   // them from untrusted argument bytes.
   bytes4 private constant APPLY_TRANSFORMER_BATCH_SELECTOR =
-    bytes4(keccak256("applyBatch(int256[],uint256[],bytes,bytes,bytes,uint256,uint256,bytes32,bytes32,uint256,uint256,uint32,uint32)"));
+    bytes4(keccak256("applyBatch((int256,uint256,uint256)[],uint256[],bytes,bytes,bytes,uint256,uint256,bytes32,bytes32,uint256,uint256,uint32,uint32)"));
   bytes4 private constant DECODE_TRANSFORMER_ARGUMENT_LIST_SELECTOR =
     bytes4(keccak256("decodeTransformerArgumentListStrict(bytes)"));
   bytes4 private constant CONTAINS_PULL_SELECTOR = bytes4(keccak256("containsPull(bytes)"));
@@ -495,8 +479,6 @@ library Account {
     if (proofbody.transformers.length > MAX_DISPUTE_TRANSFORMERS) revert E10();
     for (uint256 i = 0; i < proofbody.tokenIds.length; i++) {
       if (i > 0 && proofbody.tokenIds[i - 1] >= proofbody.tokenIds[i]) revert E8();
-      int256 offdelta = proofbody.offdeltas[i];
-      if (offdelta > MAX_MONEY_INT || offdelta < -MAX_MONEY_INT) revert E8();
     }
     bytes memory encodedProofbody = abi.encode(proofbody);
     if (encodedProofbody.length > MAX_DISPUTE_PROOF_BODY_BYTES) revert E10();
@@ -884,7 +866,7 @@ library Account {
   /// revert the whole finalization and leave the dispute active. We forward all
   /// remaining gas except the fixed Depository settlement reserve.
   function _applyTransformer(
-    int[] memory deltas,
+    Int768[] memory deltas,
     uint[] memory tokenIds,
     TransformerClause memory tc,
     bytes memory leftArguments,
@@ -897,7 +879,7 @@ library Account {
     uint256 disputeTimeout,
     uint32 leftResponseSeconds,
     uint32 rightResponseSeconds
-  ) private view returns (int[] memory newDeltas) {
+  ) private view returns (Int768[] memory newDeltas) {
     if (tc.transformerAddress.code.length == 0) revert IDepositoryDelegateErrorAbi.TransformerExecutionFailed();
     if (tc.encodedBatch.length + leftArguments.length + rightArguments.length >> 18 != 0) {
       revert IDepositoryDelegateErrorAbi.TransformerExecutionFailed();
@@ -957,7 +939,7 @@ library Account {
       revert IDepositoryDelegateErrorAbi.TransformerExecutionFailed();
     }
 
-    uint256 expectedReturnSize = 0x40 + deltas.length * 0x20;
+    uint256 expectedReturnSize = 0x40 + deltas.length * 0x60;
     if (returnSize != expectedReturnSize) revert IDepositoryDelegateErrorAbi.TransformerExecutionFailed();
 
     bytes memory returnData = new bytes(returnSize);
@@ -972,21 +954,14 @@ library Account {
     }
     if (arrayOffset != 0x20 || arrayLength != deltas.length) revert IDepositoryDelegateErrorAbi.TransformerExecutionFailed();
 
-    newDeltas = new int[](arrayLength);
-    for (uint256 i = 0; i < arrayLength; i++) {
-      int256 value;
-      assembly ("memory-safe") {
-        value := mload(add(add(returnData, 0x60), mul(i, 0x20)))
-      }
-      newDeltas[i] = value;
-    }
+    newDeltas = abi.decode(returnData, (Int768[]));
     return newDeltas;
   }
 
   function _applyTransformers(
     bytes32 accountKeyHash,
     ProofBody memory proofbody,
-    int[] memory deltas,
+    Int768[] memory deltas,
     bytes memory leftArguments,
     bytes memory rightArguments,
     uint256 leftArgumentsTimestamp,
@@ -998,7 +973,7 @@ library Account {
     uint256 disputeTimeout,
     uint32 leftResponseSeconds,
     uint32 rightResponseSeconds
-  ) private returns (int[] memory) {
+  ) private returns (Int768[] memory) {
     if (proofbody.transformers.length == 0) return deltas;
     bytes[] memory decodedLeft = _decodeTransformerArgumentList(leftArguments, argumentDecoder);
     bytes[] memory decodedRight = _decodeTransformerArgumentList(rightArguments, argumentDecoder);
@@ -1008,7 +983,7 @@ library Account {
         revert IDepositoryDelegateErrorAbi.TransformerExecutionFailed();
       }
 
-      int[] memory newDeltas = _applyTransformer(
+      Int768[] memory newDeltas = _applyTransformer(
         deltas,
         proofbody.tokenIds,
         tc,
@@ -1025,7 +1000,7 @@ library Account {
       );
 
       for (uint256 j = 0; j < deltas.length; j++) {
-        if (newDeltas[j] != deltas[j] && !_hasTransformerAllowance(tc.allowances, j)) {
+        if (!WideMath.equal(newDeltas[j], deltas[j]) && !_hasTransformerAllowance(tc.allowances, j)) {
           revert IDepositoryDelegateErrorAbi.TransformerExecutionFailed();
         }
       }
@@ -1033,14 +1008,14 @@ library Account {
       for (uint256 j = 0; j < tc.allowances.length; j++) {
         Allowance memory allow = tc.allowances[j];
         uint256 deltaIndex = allow.deltaIndex;
-        int256 requestedValue = newDeltas[deltaIndex];
-        int256 appliedValue = _clampTransformerValue(
+        Int768 memory requestedValue = newDeltas[deltaIndex];
+        Int768 memory appliedValue = _clampTransformerValue(
           deltas[deltaIndex],
           requestedValue,
           allow.rightAllowance,
           allow.leftAllowance
         );
-        if (appliedValue != requestedValue) {
+        if (!WideMath.equal(appliedValue, requestedValue)) {
           emit TransformerDeltaClamped(
             accountKeyHash,
             i,
@@ -1061,6 +1036,14 @@ library Account {
   /// @dev Account owns signed delta arithmetic and execution of every transformer
   ///      clause signed in ProofBody. Depository consumes only the resulting
   ///      signed-magnitude values when moving collateral, reserves, and debt.
+  ///      Every signed admission calls _validateProofBody; finalization repeats
+  ///      that validation, including the watchtower path. Its <=32 clauses each
+  ///      permit at most uint256.max movement per token. Starting from signed512
+  ///      offdelta + reachable |ondelta|<2^310, every applied result has magnitude
+  ///      <2^511 + 2^310 + 32*2^256 <2^512. Arbitrary transformer return values
+  ///      are compared/clamped in Int768 BEFORE narrowing the final magnitude.
+  ///      In particular, a signed offdelta at its positive endpoint followed by
+  ///      a left R2C remains executable; later custody never invalidates its sum.
   function prepareSettlementDeltas(
     mapping(bytes => mapping(uint256 => AccountCollateral)) storage collaterals,
     bytes memory acctKey,
@@ -1076,14 +1059,16 @@ library Account {
     uint256 disputeTimeout,
     uint32 leftResponseSeconds,
     uint32 rightResponseSeconds
-  ) external returns (int[] memory deltas) {
+  ) external returns (Int768[] memory deltas) {
     uint256 tokenCount = proofbody.tokenIds.length;
-    deltas = new int[](tokenCount);
+    deltas = new Int768[](tokenCount);
     for (uint256 i = 0; i < tokenCount; i++) {
       uint256 tokenId = proofbody.tokenIds[i];
       if (i > 0 && proofbody.tokenIds[i - 1] >= tokenId) revert E8();
-      // Both terms are bounded by MAX_MONEY, so plain checked int256 is exact.
-      deltas[i] = collaterals[acctKey][tokenId].ondelta + proofbody.offdeltas[i];
+      deltas[i] = WideMath.add(
+        WideMath.expand(collaterals[acctKey][tokenId].ondelta),
+        WideMath.expand(proofbody.offdeltas[i])
+      );
     }
 
     // Every signed clause must execute. Missing code, revert/OOG, malformed
@@ -1137,7 +1122,6 @@ library Account {
     if (allowances.length > deltaCount) return false;
     for (uint256 i = 0; i < allowances.length; i++) {
       if (allowances[i].deltaIndex >= deltaCount) return false;
-      if (allowances[i].leftAllowance > MAX_MONEY || allowances[i].rightAllowance > MAX_MONEY) return false;
       for (uint256 j = 0; j < i; j++) {
         if (allowances[j].deltaIndex == allowances[i].deltaIndex) return false;
       }
@@ -1145,18 +1129,18 @@ library Account {
     return true;
   }
 
-  /// @dev Plain int256 clamp. previousValue is bounded by 2·MAX_MONEY and each
-  ///      allowance by MAX_MONEY, so both bounds fit int256 with room to spare.
+  /// Each signed clause authorizes at most one uint256 swing per token. The
+  /// next clause sees the exact previous result; opposite allowances never net.
   function _clampTransformerValue(
-    int256 previousValue,
-    int256 requestedValue,
+    Int768 memory previousValue,
+    Int768 memory requestedValue,
     uint256 rightAllowance,
     uint256 leftAllowance
-  ) private pure returns (int256) {
-    int256 lower = previousValue - int256(rightAllowance);
-    int256 upper = previousValue + int256(leftAllowance);
-    if (requestedValue < lower) return lower;
-    if (requestedValue > upper) return upper;
+  ) private pure returns (Int768 memory) {
+    Int768 memory lower = WideMath.subUint(previousValue, rightAllowance);
+    Int768 memory upper = WideMath.addUint(previousValue, leftAllowance);
+    if (WideMath.compare(requestedValue, lower) < 0) return lower;
+    if (WideMath.compare(requestedValue, upper) > 0) return upper;
     return requestedValue;
   }
 
@@ -1167,7 +1151,7 @@ library Account {
   ///      E3 balance) directly from the library; there is no soft-fail path.
   function processSettlements(
     mapping(bytes32 => mapping(uint256 => uint256)) storage _reserves,
-    mapping(bytes32 => mapping(uint256 => uint256)) storage debtOutstanding,
+    mapping(bytes32 => mapping(uint256 => Uint768)) storage debtOutstanding,
     mapping(bytes => AccountInfo) storage _accounts,
     mapping(bytes => mapping(uint256 => AccountCollateral)) storage _collaterals,
     bytes32 entityId,
@@ -1185,6 +1169,71 @@ library Account {
         entityProvider
       );
     }
+  }
+
+  /// Depository has checked the receiving party and enforced existing debts.
+  /// Keep each pair's reserve debit, collateral update and two event snapshots
+  /// in their original order. One delegatecall owns the whole item; no repeated
+  /// ABI roundtrip is needed for each Account-local custody helper.
+  function processR2C(
+    mapping(bytes32 => mapping(uint256 => uint256)) storage _reserves,
+    mapping(bytes32 => mapping(uint256 => Uint768)) storage debtOutstanding,
+    mapping(bytes => AccountInfo) storage _accounts,
+    mapping(bytes => mapping(uint256 => AccountCollateral)) storage _collaterals,
+    bytes32 entity,
+    ReserveToCollateral memory params
+  ) external returns (bool) {
+    uint256 tokenId = params.tokenId;
+    bytes32 receivingEntity = params.receivingEntity;
+    Uint512 memory totalAmount;
+    for (uint i = 0; i < params.pairs.length; i++) {
+      uint256 amount = params.pairs[i].amount;
+      if (amount == 0) revert E1();
+      if (params.pairs[i].entity == bytes32(0) || params.pairs[i].entity == receivingEntity) revert E7();
+      totalAmount = WideMath.add(totalAmount, Uint512(0, amount));
+    }
+    if (!_canSpend(_reserves, debtOutstanding, entity, tokenId, totalAmount)) return false;
+
+    // Reuse only the transient fixed-shape event buffers. Each emit encodes
+    // its own immutable bytes before the next pair changes these fields.
+    TokenSettlement[] memory tokens = new TokenSettlement[](1);
+    AccountSettlement[] memory settled = new AccountSettlement[](1);
+    tokens[0].tokenId = tokenId;
+    settled[0].tokens = tokens;
+    for (uint i = 0; i < params.pairs.length; i++) {
+      bytes32 counterentity = params.pairs[i].entity;
+      uint amount = params.pairs[i].amount;
+
+      bytes memory acct_key = _accountKey(receivingEntity, counterentity);
+      AccountCollateral storage col = _collaterals[acct_key][tokenId];
+
+      _decreaseReserve(_reserves, entity, tokenId, amount);
+      // Reuse the exact values just stored for this pair's event, avoiding
+      // rereads while preserving the intermediate custody/allocation snapshot.
+      uint256 collateral = _increaseCollateral(col, amount);
+      Int512 memory ondelta = col.ondelta;
+      bool receiverIsLeft = receivingEntity < counterentity;
+      if (receiverIsLeft) {
+        ondelta = WideMath.addAmount(ondelta, SignedAmount(false, amount));
+        col.ondelta = ondelta;
+      }
+
+      bytes32 leftEntity = receiverIsLeft ? receivingEntity : counterentity;
+      bytes32 rightEntity = receiverIsLeft ? counterentity : receivingEntity;
+      // R2C doesn't increment nonce (no bilateral signature required).
+      tokens[0].leftReserve = _reserves[leftEntity][tokenId];
+      tokens[0].rightReserve = _reserves[rightEntity][tokenId];
+      tokens[0].collateral = collateral;
+      tokens[0].ondelta = ondelta;
+      uint256 nonce = _accounts[acct_key].nonce;
+      if (nonce > JS_SAFE_NONCE_MAX) revert E10();
+      settled[0].left = leftEntity;
+      settled[0].right = rightEntity;
+      settled[0].nonce = nonce;
+      emit AccountSettled(settled);
+    }
+
+    return true;
   }
 
   /// @notice Process C2R shortcut directly (skip Settlement[] allocation)
@@ -1209,19 +1258,19 @@ library Account {
     if (c2r.nonce <= _accounts[acct_key].nonce) revert E2();
 
     uint amount = c2r.amount;
-    if (amount > MAX_MONEY) revert E8();
-    int256 signedAmount = int256(amount);
+    SignedAmount memory positive = SignedAmount(false, amount);
+    SignedAmount memory negative = SignedAmount(amount != 0, amount);
+    SignedAmount memory zero;
 
     // Reconstruct diffs for signature verification (C2R is a calldata shortcut).
-    // Every financial delta lives in the signed int256 domain. Checking before
-    // conversion is consensus-critical: uint256 -> int256 otherwise wraps.
+    // Sign+magnitude keeps the entire ERC20 uint256 domain without a cast.
     SettlementDiff[] memory diffs = new SettlementDiff[](1);
     diffs[0] = SettlementDiff({
       tokenId: c2r.tokenId,
-      leftDiff: isLeft ? signedAmount : int256(0),
-      rightDiff: isLeft ? int256(0) : signedAmount,
-      collateralDiff: -signedAmount,
-      ondeltaDiff: isLeft ? -signedAmount : int256(0)
+      leftDiff: isLeft ? positive : zero,
+      rightDiff: isLeft ? zero : positive,
+      collateralDiff: negative,
+      ondeltaDiff: isLeft ? negative : zero
     });
 
     // Verify counterparty signature (hash includes signedNonce, not storedNonce)
@@ -1240,8 +1289,7 @@ library Account {
     _increaseReserve(_reserves, entityId, tokenId, amount);
     _decreaseCollateral(col, amount);
     if (isLeft) {
-      col.ondelta -= signedAmount;
-      _requireBoundedOndelta(col.ondelta);
+      col.ondelta = WideMath.addAmount(col.ondelta, negative);
     }
 
     // SET nonce (not increment)
@@ -1451,7 +1499,7 @@ library Account {
 
   function _settleDiffs(
     mapping(bytes32 => mapping(uint256 => uint256)) storage _reserves,
-    mapping(bytes32 => mapping(uint256 => uint256)) storage debtOutstanding,
+    mapping(bytes32 => mapping(uint256 => Uint768)) storage debtOutstanding,
     mapping(bytes => AccountInfo) storage _accounts,
     mapping(bytes => mapping(uint256 => AccountCollateral)) storage _collaterals,
     bytes32 initiator,
@@ -1514,50 +1562,52 @@ library Account {
     for (uint j = 0; j < s.diffs.length; j++) {
       SettlementDiff memory diff = s.diffs[j];
       uint tokenId = diff.tokenId;
-      if (diff.leftDiff + diff.rightDiff + diff.collateralDiff != 0) revert E2();
+      Int768 memory conservation = WideMath.add(
+        WideMath.add(WideMath.expand(diff.leftDiff), WideMath.expand(diff.rightDiff)),
+        WideMath.expand(diff.collateralDiff)
+      );
+      if (!WideMath.equal(conservation, Int768(0, 0, 0))) revert E2();
+      // Validate the independent, signed allocation movement before any write.
+      WideMath.expand(diff.ondeltaDiff);
       if (
-        diff.leftDiff < 0 &&
-        !_canSpend(_reserves, debtOutstanding, leftEntity, tokenId, uint(-diff.leftDiff))
+        diff.leftDiff.negative &&
+        !_canSpend(_reserves, debtOutstanding, leftEntity, tokenId, Uint512(0, diff.leftDiff.magnitude))
       ) revert E3();
       if (
-        diff.rightDiff < 0 &&
-        !_canSpend(_reserves, debtOutstanding, rightEntity, tokenId, uint(-diff.rightDiff))
+        diff.rightDiff.negative &&
+        !_canSpend(_reserves, debtOutstanding, rightEntity, tokenId, Uint512(0, diff.rightDiff.magnitude))
       ) revert E3();
       if (
-        diff.collateralDiff < 0 &&
-        _collaterals[acct_key][tokenId].collateral < uint(-diff.collateralDiff)
+        diff.collateralDiff.negative &&
+        _collaterals[acct_key][tokenId].collateral < diff.collateralDiff.magnitude
       ) revert E3();
     }
 
-    // Apply diffs through the same int256.max-capped reserve helpers used by
-    // mint/deposit/R2R/C2R. Raw `+=` here used to let a settlement drain two
-    // buckets into one and push the target above int256.max (pragma 0.8 still
-    // panics at 2^256, but the off-chain signed model would already disagree).
-    // Helpers emit ReserveUpdated once — do not re-emit around these calls.
+    // Custody helpers preserve uint256 balances and emit each reserve update.
+    // Allocation arithmetic is wider than an individual asset movement.
     for (uint j = 0; j < s.diffs.length; j++) {
       SettlementDiff memory diff = s.diffs[j];
       uint tokenId = diff.tokenId;
 
-      if (diff.leftDiff < 0) {
-        _decreaseReserve(_reserves, leftEntity, tokenId, uint(-diff.leftDiff));
-      } else if (diff.leftDiff > 0) {
-        _increaseReserve(_reserves, leftEntity, tokenId, uint(diff.leftDiff));
+      if (diff.leftDiff.negative) {
+        _decreaseReserve(_reserves, leftEntity, tokenId, diff.leftDiff.magnitude);
+      } else if (diff.leftDiff.magnitude != 0) {
+        _increaseReserve(_reserves, leftEntity, tokenId, diff.leftDiff.magnitude);
       }
 
-      if (diff.rightDiff < 0) {
-        _decreaseReserve(_reserves, rightEntity, tokenId, uint(-diff.rightDiff));
-      } else if (diff.rightDiff > 0) {
-        _increaseReserve(_reserves, rightEntity, tokenId, uint(diff.rightDiff));
+      if (diff.rightDiff.negative) {
+        _decreaseReserve(_reserves, rightEntity, tokenId, diff.rightDiff.magnitude);
+      } else if (diff.rightDiff.magnitude != 0) {
+        _increaseReserve(_reserves, rightEntity, tokenId, diff.rightDiff.magnitude);
       }
 
       AccountCollateral storage col = _collaterals[acct_key][tokenId];
-      if (diff.collateralDiff < 0) {
-        _decreaseCollateral(col, uint(-diff.collateralDiff));
-      } else if (diff.collateralDiff > 0) {
-        _increaseCollateral(col, uint(diff.collateralDiff));
+      if (diff.collateralDiff.negative) {
+        _decreaseCollateral(col, diff.collateralDiff.magnitude);
+      } else if (diff.collateralDiff.magnitude != 0) {
+        _increaseCollateral(col, diff.collateralDiff.magnitude);
       }
-      col.ondelta += diff.ondeltaDiff;
-      _requireBoundedOndelta(col.ondelta);
+      col.ondelta = WideMath.addAmount(col.ondelta, diff.ondeltaDiff);
     }
 
     // SET nonce = signedNonce (not +1)
@@ -1620,13 +1670,12 @@ library Account {
 
   function _spendableReserve(
     mapping(bytes32 => mapping(uint256 => uint256)) storage _reserves,
-    mapping(bytes32 => mapping(uint256 => uint256)) storage debtOutstanding,
+    mapping(bytes32 => mapping(uint256 => Uint768)) storage debtOutstanding,
     bytes32 entity,
     uint256 tokenId
   ) private view returns (uint256) {
     uint256 reserve = _reserves[entity][tokenId];
-    uint256 debt = debtOutstanding[entity][tokenId];
-    return reserve > debt ? reserve - debt : 0;
+    return WideMath.spendable(debtOutstanding[entity][tokenId], reserve);
   }
 
   // ========== DISPUTE START ==========

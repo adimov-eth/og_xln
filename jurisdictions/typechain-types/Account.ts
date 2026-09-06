@@ -23,12 +23,19 @@ import type {
   TypedContractMethod,
 } from "./common";
 
+export type Int512Struct = { high: BigNumberish; low: BigNumberish };
+
+export type Int512StructOutput = [high: bigint, low: bigint] & {
+  high: bigint;
+  low: bigint;
+};
+
 export type TokenSettlementStruct = {
   tokenId: BigNumberish;
   leftReserve: BigNumberish;
   rightReserve: BigNumberish;
   collateral: BigNumberish;
-  ondelta: BigNumberish;
+  ondelta: Int512Struct;
 };
 
 export type TokenSettlementStructOutput = [
@@ -36,13 +43,13 @@ export type TokenSettlementStructOutput = [
   leftReserve: bigint,
   rightReserve: bigint,
   collateral: bigint,
-  ondelta: bigint
+  ondelta: Int512StructOutput
 ] & {
   tokenId: bigint;
   leftReserve: bigint;
   rightReserve: bigint;
   collateral: bigint;
-  ondelta: bigint;
+  ondelta: Int512StructOutput;
 };
 
 export type AccountSettlementStruct = {
@@ -62,6 +69,25 @@ export type AccountSettlementStructOutput = [
   right: string;
   tokens: TokenSettlementStructOutput[];
   nonce: bigint;
+};
+
+export type Uint512Struct = { high: BigNumberish; low: BigNumberish };
+
+export type Uint512StructOutput = [high: bigint, low: bigint] & {
+  high: bigint;
+  low: bigint;
+};
+
+export type Int768Struct = {
+  high: BigNumberish;
+  middle: BigNumberish;
+  low: BigNumberish;
+};
+
+export type Int768StructOutput = [high: bigint, middle: bigint, low: bigint] & {
+  high: bigint;
+  middle: bigint;
+  low: bigint;
 };
 
 export type AllowanceStruct = {
@@ -96,7 +122,7 @@ export type ProofBodyStruct = {
   watchSeed: BytesLike;
   leftResponseSeconds: BigNumberish;
   rightResponseSeconds: BigNumberish;
-  offdeltas: BigNumberish[];
+  offdeltas: Int512Struct[];
   tokenIds: BigNumberish[];
   transformers: TransformerClauseStruct[];
 };
@@ -105,14 +131,14 @@ export type ProofBodyStructOutput = [
   watchSeed: string,
   leftResponseSeconds: bigint,
   rightResponseSeconds: bigint,
-  offdeltas: bigint[],
+  offdeltas: Int512StructOutput[],
   tokenIds: bigint[],
   transformers: TransformerClauseStructOutput[]
 ] & {
   watchSeed: string;
   leftResponseSeconds: bigint;
   rightResponseSeconds: bigint;
-  offdeltas: bigint[];
+  offdeltas: Int512StructOutput[];
   tokenIds: bigint[];
   transformers: TransformerClauseStructOutput[];
 };
@@ -338,21 +364,21 @@ export namespace DebtCreatedEvent {
     debtor: BytesLike,
     creditor: BytesLike,
     tokenId: BigNumberish,
-    amount: BigNumberish,
+    amount: Uint512Struct,
     debtIndex: BigNumberish
   ];
   export type OutputTuple = [
     debtor: string,
     creditor: string,
     tokenId: bigint,
-    amount: bigint,
+    amount: Uint512StructOutput,
     debtIndex: bigint
   ];
   export interface OutputObject {
     debtor: string;
     creditor: string;
     tokenId: bigint;
-    amount: bigint;
+    amount: Uint512StructOutput;
     debtIndex: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
@@ -367,7 +393,7 @@ export namespace DebtEnforcedEvent {
     creditor: BytesLike,
     tokenId: BigNumberish,
     amountPaid: BigNumberish,
-    remainingAmount: BigNumberish,
+    remainingAmount: Uint512Struct,
     newDebtIndex: BigNumberish
   ];
   export type OutputTuple = [
@@ -375,7 +401,7 @@ export namespace DebtEnforcedEvent {
     creditor: string,
     tokenId: bigint,
     amountPaid: bigint,
-    remainingAmount: bigint,
+    remainingAmount: Uint512StructOutput,
     newDebtIndex: bigint
   ];
   export interface OutputObject {
@@ -383,7 +409,7 @@ export namespace DebtEnforcedEvent {
     creditor: string;
     tokenId: bigint;
     amountPaid: bigint;
-    remainingAmount: bigint;
+    remainingAmount: Uint512StructOutput;
     newDebtIndex: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
@@ -472,24 +498,24 @@ export namespace TransformerDeltaClampedEvent {
     clauseIndex: BigNumberish,
     transformer: AddressLike,
     tokenId: BigNumberish,
-    requestedValue: BigNumberish,
-    appliedValue: BigNumberish
+    requestedValue: Int768Struct,
+    appliedValue: Int768Struct
   ];
   export type OutputTuple = [
     accountKeyHash: string,
     clauseIndex: bigint,
     transformer: string,
     tokenId: bigint,
-    requestedValue: bigint,
-    appliedValue: bigint
+    requestedValue: Int768StructOutput,
+    appliedValue: Int768StructOutput
   ];
   export interface OutputObject {
     accountKeyHash: string;
     clauseIndex: bigint;
     transformer: string;
     tokenId: bigint;
-    requestedValue: bigint;
-    appliedValue: bigint;
+    requestedValue: Int768StructOutput;
+    appliedValue: Int768StructOutput;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -712,7 +738,7 @@ export interface Account extends BaseContract {
       CounterDisputeRegisteredEvent.OutputObject
     >;
 
-    "DebtCreated(bytes32,bytes32,uint256,uint256,uint256)": TypedContractEvent<
+    "DebtCreated(bytes32,bytes32,uint256,tuple,uint256)": TypedContractEvent<
       DebtCreatedEvent.InputTuple,
       DebtCreatedEvent.OutputTuple,
       DebtCreatedEvent.OutputObject
@@ -723,7 +749,7 @@ export interface Account extends BaseContract {
       DebtCreatedEvent.OutputObject
     >;
 
-    "DebtEnforced(bytes32,bytes32,uint256,uint256,uint256,uint256)": TypedContractEvent<
+    "DebtEnforced(bytes32,bytes32,uint256,uint256,tuple,uint256)": TypedContractEvent<
       DebtEnforcedEvent.InputTuple,
       DebtEnforcedEvent.OutputTuple,
       DebtEnforcedEvent.OutputObject
@@ -756,7 +782,7 @@ export interface Account extends BaseContract {
       ReserveUpdatedEvent.OutputObject
     >;
 
-    "TransformerDeltaClamped(bytes32,uint256,address,uint256,int256,int256)": TypedContractEvent<
+    "TransformerDeltaClamped(bytes32,uint256,address,uint256,tuple,tuple)": TypedContractEvent<
       TransformerDeltaClampedEvent.InputTuple,
       TransformerDeltaClampedEvent.OutputTuple,
       TransformerDeltaClampedEvent.OutputObject

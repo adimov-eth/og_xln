@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
+import "../math/WideMath.sol";
+
 /// @dev Adversarial transformer used by the real Depository dispute tests.
 ///      Every mode implements the canonical production ABI so the test exercises
 ///      Depository's call boundary rather than a synthetic wrapper.
@@ -25,11 +27,17 @@ contract TransformerLivenessHarness {
     pure
     returns (bytes memory)
   {
+    return abi.encode(mode, deltaIndex, WideMath.expand(WideMath.fromInt(value)), expectedTokenId);
+  }
+
+  function encodeWide(Mode mode, uint256 deltaIndex, Int768 memory value, uint256 expectedTokenId)
+    external pure returns (bytes memory)
+  {
     return abi.encode(mode, deltaIndex, value, expectedTokenId);
   }
 
   function applyBatch(
-    int256[] calldata deltas,
+    Int768[] calldata deltas,
     uint256[] calldata tokenIds,
     bytes calldata encodedBatch,
     bytes calldata,
@@ -42,9 +50,9 @@ contract TransformerLivenessHarness {
     uint256,
     uint32,
     uint32
-  ) external pure returns (int256[] memory result) {
-    (Mode mode, uint256 deltaIndex, int256 value, uint256 expectedTokenId) =
-      abi.decode(encodedBatch, (Mode, uint256, int256, uint256));
+  ) external pure returns (Int768[] memory result) {
+    (Mode mode, uint256 deltaIndex, Int768 memory value, uint256 expectedTokenId) =
+      abi.decode(encodedBatch, (Mode, uint256, Int768, uint256));
 
     if (mode == Mode.RevertCall) revert HarnessRevert();
     if (mode == Mode.ExhaustGas) {
@@ -59,7 +67,7 @@ contract TransformerLivenessHarness {
       }
     }
     if (mode == Mode.MalformedReturn) {
-      uint256 expectedSize = 0x40 + deltas.length * 0x20;
+      uint256 expectedSize = 0x40 + deltas.length * 0x60;
       assembly ("memory-safe") {
         let output := mload(0x40)
         mstore(output, 0)
@@ -83,9 +91,9 @@ contract TransformerLivenessHarness {
     }
 
     uint256 outputLength = mode == Mode.WrongLength ? deltas.length + 1 : deltas.length;
-    result = new int256[](outputLength);
+    result = new Int768[](outputLength);
     for (uint256 i = 0; i < deltas.length; i++) result[i] = deltas[i];
-    if (mode == Mode.Add) result[deltaIndex] += value;
+    if (mode == Mode.Add) result[deltaIndex] = WideMath.add(result[deltaIndex], value);
     if (mode == Mode.Absolute) result[deltaIndex] = value;
   }
 }

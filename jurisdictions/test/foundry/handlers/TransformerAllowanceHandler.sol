@@ -146,7 +146,14 @@ contract TransformerAllowanceHandler is CommonBase, StdCheats, StdUtils {
   }
 
   function _ondelta(bytes32 e1, bytes32 e2, uint256 tokenId) internal view returns (int256 d) {
-    (, d) = dep._collaterals(XlnHanko.accountKey(e1, e2), tokenId);
+    (, Int512 memory ondelta) = dep._collaterals(XlnHanko.accountKey(e1, e2), tokenId);
+    d = WideMath.toInt(ondelta);
+  }
+
+  function _outstanding(bytes32 entity, uint256 tokenId) internal view returns (uint256 low) {
+    (uint256 high, uint256 middle, uint256 value) = dep.debtOutstanding(entity, tokenId);
+    require(high == 0 && middle == 0 && value <= uint256(type(int256).max), "bounded debt oracle overflow");
+    return value;
   }
 
   function _accountNonce(bytes32 e1, bytes32 e2) internal view returns (uint256 n) {
@@ -161,8 +168,8 @@ contract TransformerAllowanceHandler is CommonBase, StdCheats, StdUtils {
     pb.watchSeed = g.watchSeed;
     pb.leftResponseSeconds = LEFT_RESPONSE_SECONDS;
     pb.rightResponseSeconds = RIGHT_RESPONSE_SECONDS;
-    pb.offdeltas = new int256[](1);
-    pb.offdeltas[0] = g.offdelta;
+    pb.offdeltas = new Int512[](1);
+    pb.offdeltas[0] = WideMath.fromInt(g.offdelta);
     pb.tokenIds = new uint256[](1);
     pb.tokenIds[0] = g.tokenId;
     pb.transformers = new TransformerClause[](1);
@@ -343,7 +350,7 @@ contract TransformerAllowanceHandler is CommonBase, StdCheats, StdUtils {
       if (entityOf[i] == rightE) rightActor = i;
     }
     bool clean =
-      dep.debtOutstanding(leftE, g.tokenId) == 0 && dep.debtOutstanding(rightE, g.tokenId) == 0;
+      _outstanding(leftE, g.tokenId) == 0 && _outstanding(rightE, g.tokenId) == 0;
     uint256 reserveLBefore = _reserve(leftActor, g.tokenId);
     uint256 reserveRBefore = _reserve(rightActor, g.tokenId);
     uint256[2] memory poolBefore;
@@ -365,7 +372,7 @@ contract TransformerAllowanceHandler is CommonBase, StdCheats, StdUtils {
       // Reconstruct the applied delta from custody movement (signed math: a
       // shortfall payment legitimately decreases the payer's reserve).
       int256 deltaObserved = int256(int256(_reserve(leftActor, g.tokenId)) - int256(reserveLBefore))
-        - int256(dep.debtOutstanding(leftE, g.tokenId)) + int256(dep.debtOutstanding(rightE, g.tokenId));
+        - int256(_outstanding(leftE, g.tokenId)) + int256(_outstanding(rightE, g.tokenId));
 
       int256 requested = g.mode == 0 ? prev + g.value : g.value;
       if (requested != prev && !g.hasAllowance) {
@@ -399,7 +406,7 @@ contract TransformerAllowanceHandler is CommonBase, StdCheats, StdUtils {
   function repayDebt(uint256 actorSeed, uint256 tokenSeed, uint256 amount) external {
     uint256 a = _actor(actorSeed);
     uint256 t = _token(tokenSeed);
-    uint256 outstanding = dep.debtOutstanding(entityOf[a], t);
+    uint256 outstanding = _outstanding(entityOf[a], t);
     if (outstanding == 0) return;
     amount = bound(amount, outstanding, outstanding + 1e21);
     vm.prank(admin);
@@ -409,7 +416,7 @@ contract TransformerAllowanceHandler is CommonBase, StdCheats, StdUtils {
       return;
     }
     dep.enforceDebts(entityOf[a], t, 0); // uncapped drain
-    if (dep.debtOutstanding(entityOf[a], t) == 0) debtRepairs++;
+    if (_outstanding(entityOf[a], t) == 0) debtRepairs++;
   }
 
   /// @notice Warps exactly to a live dispute's timeout so the starter's legal
