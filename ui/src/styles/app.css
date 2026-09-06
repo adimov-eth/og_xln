@@ -226,7 +226,7 @@
 	display: flex;
 	flex-wrap: wrap;
 	gap: 6px 18px;
-	font-size: 12px;
+	font-size: 14px;
 	color: var(--ink-2);
 	margin-top: 10px;
 	align-items: center;

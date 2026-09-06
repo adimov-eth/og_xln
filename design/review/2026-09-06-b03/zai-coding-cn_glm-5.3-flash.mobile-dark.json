@@ -1,0 +1,249 @@
+{
+  "reviewer": "zai-coding-cn/glm-5.3-flash",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 860,
+        "typography": 870,
+        "color": 820,
+        "data_legibility": 840,
+        "layout": 830,
+        "visceral_value": 850,
+        "responsive": 820,
+        "consistency": 860,
+        "trust": 880
+      },
+      "total": 851,
+      "top_issues": [
+        "The 'Two colours, one rule' explainer card still occupies prime first-scroll space on home; once read it is noise and pushes balances and actions down",
+        "Balance composition legend relies on colour swatches (green/violet squares) with no shape differentiation; colour-blind users lose the secured-vs-promised distinction",
+        "'Show 1 empty' and 'Add money'/'Move' sit on the same line as the BALANCES label at small sizes; tap targets ~30px are below the 44px comfortable minimum",
+        "Total balance bar (green+violet) has no axis or tick; the 'one scale' rule is asserted in text but not visible on home itself"
+      ],
+      "fixes": [
+        "Dismiss the explainer permanently after 'Got it' and replace with a one-line hint until first dispute or first credit change",
+        "Add a pattern (solid vs hatched) to violet 'promised' segments so meaning survives without colour",
+        "Raise BALANCES row action tap targets to 44px and move 'Add money' into the primary action row"
+      ]
+    },
+    {
+      "file": "01-home-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 830,
+        "typography": 850,
+        "color": 800,
+        "data_legibility": 760,
+        "layout": 780,
+        "visceral_value": 790,
+        "responsive": 810,
+        "consistency": 850,
+        "trust": 820
+      },
+      "total": 809,
+      "top_issues": [
+        "H1 account card: '+115.00 owes you' is the biggest number, but the bar's green/violet split and the tiny in-flight tick after the bar are unexplained on this screen",
+        "'Swap closed / closed' row has no amount; the user cannot tell what value the closed swap settled without tapping through",
+        "'All activity' link is bottom-left and low contrast; the natural thumb action is missing a full-width affordance",
+        "Two progress-bar languages on one screen: account card bar (green/violet/room) and activity rows' small status bars (green/violet) with no legend"
+      ],
+      "fixes": [
+        "Show the settled amounts inline on swap rows (e.g. '18.58 USDC → 0.0074 WETH · closed')",
+        "Add a one-tap info affordance on the account bar that opens the same colour legend as home",
+        "Make 'All activity' a full-width row with chevron"
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 860,
+        "typography": 870,
+        "color": 830,
+        "data_legibility": 860,
+        "layout": 860,
+        "visceral_value": 850,
+        "responsive": 840,
+        "consistency": 860,
+        "trust": 870
+      },
+      "total": 857,
+      "top_issues": [
+        "Address shown in full wraps to two lines in mono grey; no copy button and no resolved-name confirmation beyond '✓ H2' — Rosa cannot verify who she pays",
+        "'receive up to 0.50' is the hub's inbound room, but nothing tells the user this number limits what H2 can send back; jargon risk",
+        "Fee 'under 0.01 USDC' is vague next to route 2 showing exact 0.000050; the primary route should show the exact fee too",
+        "'1 OTHER ROUTE' collapsed disclosure is easy to miss; users cannot compare fees without expanding"
+      ],
+      "fixes": [
+        "Show a human-readable recipient line (name, avatar, truncated address with copy) above the raw address",
+        "Replace 'under 0.01' with the exact fee and keep '≈' only for pre-quote states",
+        "Auto-expand other routes when the fee delta exceeds 20%"
+      ]
+    },
+    {
+      "file": "02-pay-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 840,
+        "typography": 850,
+        "color": 810,
+        "data_legibility": 780,
+        "layout": 800,
+        "visceral_value": 820,
+        "responsive": 820,
+        "consistency": 850,
+        "trust": 830
+      },
+      "total": 822,
+      "top_issues": [
+        "Route comparison cards repeat the same route chip row as the summary 'Route' row directly above — duplicated information costs a full screen of scroll",
+        "The bar under 'Your account with H1' now shows a credit-room segment but the amount row says 120.00 while 'send up to 180.00' — three numbers for capacity without an explicit tie",
+        "Amount keyboard: no quick 'Max' or percentage chips; typing 180 by hand is error-prone",
+        "'You send 25.00' on both route cards is identical, so the only differentiator is fee rendered in small grey text"
+      ],
+      "fixes": [
+        "Collapse the summary Route row when the route picker is expanded",
+        "Label capacity explicitly: 'room 120 = balance 25 + credit 155' or link to the account bar",
+        "Add Max / 50% / 25% chips next to the amount field and render the fee delta bold on route cards"
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 900,
+        "premium": 880,
+        "typography": 880,
+        "color": 850,
+        "data_legibility": 880,
+        "layout": 860,
+        "visceral_value": 920,
+        "responsive": 840,
+        "consistency": 870,
+        "trust": 910
+      },
+      "total": 879,
+      "top_issues": [
+        "'Settled 05:24:03 · in 9 s' mixes absolute and relative time without a unit label for 'in' (looks like countdown vs duration)",
+        "Proof hash truncated '0x00109fe5…6bec' with no tap-to-copy or view-full; Elena-style audit needs the full value",
+        "Four equal-width action buttons (Copy receipt / Download / Print / PDF / Done) give Done no visual priority until colour, and Copy/Download overlap in meaning",
+        "Background home card is visible but dimmed to near-illegibility; the H1 balance behind no longer matches the pre-payment numbers, which may confuse on close"
+      ],
+      "fixes": [
+        "Label the duration explicitly: 'settled in 9 s at 05:24:03'",
+        "Make the proof row tappable: copy on tap, long-press or chevron for full hash and signature",
+        "Merge Copy/Download into one 'Share receipt' and give Done the full-width primary slot"
+      ]
+    }
+  ],
+  "overall": {
+    "total": 843,
+    "verdict": "A coherent, premium dark wallet whose colour discipline (green = yours, violet = promised) and receipt/proof surfaces are genuinely ahead of most shipping wallets. It is held back by jargon density (rooms, lanes, capacity, collateral tariffs) and small dense tap targets that will lose Rosa and Lucas even as Wei and Ingrid approve.",
+    "priority_fixes": [
+      "Add a persistent, tap-anywhere colour/bar legend so green-vs-violet and the one-scale rule are decodable without reading paragraphs",
+      "Replace jargon labels (capacity, room, lanes, inbound room) with plain sentences plus the number on Pay, Receive and account screens",
+      "Give human-readable recipients (names/avatars, truncated address, copy) on Pay instead of raw wrapped hashes",
+      "Raise all small action tap targets (BALANCES row, route chips, receipt buttons) to 44px and make primary actions full-width",
+      "Show exact fees everywhere and auto-surface route alternatives when the fee difference is material"
+    ],
+    "personas": [
+      {
+        "name": "Rosa",
+        "satisfied": 55,
+        "verdict": "The big $155 number is lovely, but 'promised' versus 'secured' still needs reading glasses and a paragraph to trust.",
+        "blockers": [
+          "Colour-only meaning on home balance squares",
+          "Explainer card requires reading a full paragraph to feel safe",
+          "'receive up to 0.50' and 'owes you' on home are unexplained jargon"
+        ]
+      },
+      {
+        "name": "Jamal",
+        "satisfied": 80,
+        "verdict": "Payments landing with 'settled' badges and a spendable-now number is exactly what I want at a red light.",
+        "blockers": [
+          "No filter or badge on home for incoming-only activity",
+          "Swap 'open' row shows no amount until tapped"
+        ]
+      },
+      {
+        "name": "Priya",
+        "satisfied": 78,
+        "verdict": "Copy payment link and instant settlement badges would run my counter, but closing-time reconciliation means scrolling, not a summary.",
+        "blockers": [
+          "No settlement summary or end-of-day view among the screens",
+          "Payment request flow (request with fixed amount as primary) is not shown as a first-class action"
+        ]
+      },
+      {
+        "name": "Wei",
+        "satisfied": 85,
+        "verdict": "A real book with spread, tick size and tap-to-fill is better than most retail apps; I just want deeper order controls.",
+        "blockers": [
+          "The order book screen in the set is cut off above the ticket — no visible limit-order entry, open orders or fills list",
+          "Book was provided only as a partial screenshot"
+        ]
+      },
+      {
+        "name": "Elena",
+        "satisfied": 88,
+        "verdict": "Export CSV, per-entry settled badges, frame numbers and proofs — the paper trail is nearly audit-ready.",
+        "blockers": [
+          "Proof hashes truncated with no copy in the receipt",
+          "No evidence-bundle export reachable from the activity screen in the set"
+        ]
+      },
+      {
+        "name": "Noah",
+        "satisfied": 90,
+        "verdict": "Frames, co-signed states, bilateral settlement and disputes map cleanly onto the screens; this UI teaches the protocol honestly.",
+        "blockers": [
+          "'Runtime id / Frame #44' in settings is unexplained for newcomers",
+          "'Lane' terminology on H1 account is undefined"
+        ]
+      },
+      {
+        "name": "Aisha",
+        "satisfied": 80,
+        "verdict": "Across-networks swap with atomic both-legs-or-neither and a clear collateral slider answers my fee-and-when question.",
+        "blockers": [
+          "The cross-network prepare-to-receive state ends in a red error with no guided recovery path shown",
+          "No offline/weak-connection indication anywhere in the set"
+        ]
+      },
+      {
+        "name": "Lucas",
+        "satisfied": 62,
+        "verdict": "Paying is fast, but buying ETH confronts me with 'collateral tariff', 'basis points' and 'lot rounding' — I just want to tap buy.",
+        "blockers": [
+          "Swap screen shows a nine-line tariff paragraph before the buy button",
+          "No simple express mode hiding credit/collateral mechanics"
+        ]
+      },
+      {
+        "name": "Ingrid",
+        "satisfied": 88,
+        "verdict": "Enforceable-versus-promised per counterparty, collateral posted, and dispute windows per account — this is my exposure report.",
+        "blockers": [
+          "No aggregate per-counterparty exposure table across hubs (only per-account detail in the set)",
+          "Sovereignty screen mixes enforceable total with key management without a clear separation"
+        ]
+      },
+      {
+        "name": "Omar",
+        "satisfied": 70,
+        "verdict": "I can infer what a hub does from the account screens, but nothing speaks to me as an operator: no fees earned, no capacity offered, no hub dashboard.",
+        "blockers": [
+          "No screen showing hub earnings, collateral tariff configuration or operator risk — missing from the set entirely"
+        ]
+      },
+      {
+        "name": "Jamal",
+        "satisfied": 80,
+        "verdict": "",
+        "blockers": []
+      }
+    ]
+  }
+}

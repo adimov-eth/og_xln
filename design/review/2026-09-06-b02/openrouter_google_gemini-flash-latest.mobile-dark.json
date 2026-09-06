@@ -1,0 +1,836 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/01-home.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 870,
+        "typography": 860,
+        "color": 890,
+        "data_legibility": 830,
+        "layout": 850,
+        "visceral_value": 880,
+        "responsive": 860,
+        "consistency": 880,
+        "trust": 870
+      },
+      "total": 863,
+      "top_issues": [
+        "Small subtitle text under total balance ('On-chain', 'Reserve', 'Secured', 'Promised') has very low contrast against dark background, making quick scanning hard for senior eyes.",
+        "Educational callout banner ('Two colours, one rule') takes up prime screen space directly above core actions, pushing active accounts off the first viewport fold."
+      ],
+      "fixes": [
+        "Increase font-size to 13px and text color to #94A3B8 on balance breakdown metadata labels.",
+        "Allow dismissible state with persistent collapse on 'Two colours, one rule' banner to prioritize primary transaction cards."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/01-home-bottom.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 850,
+        "typography": 840,
+        "color": 870,
+        "data_legibility": 840,
+        "layout": 820,
+        "visceral_value": 850,
+        "responsive": 850,
+        "consistency": 870,
+        "trust": 860
+      },
+      "total": 848,
+      "top_issues": [
+        "The '+ Open account' button looks orphaned inside the Accounts card and lacks explanation of why/when a user needs another account.",
+        "Recent activity list displays timestamps like '05:12:27' without dates or relative timing, reducing clarity for retail users."
+      ],
+      "fixes": [
+        "Convert timestamps from raw HH:MM:SS to relative markers ('Just now', '2m ago') or contextual date stamps.",
+        "Place subtle counterparty avatar/badge beside 'to H2 via H1' to clarify bilateral routing hops."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/02-pay.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 860,
+        "typography": 870,
+        "color": 880,
+        "data_legibility": 860,
+        "layout": 880,
+        "visceral_value": 860,
+        "responsive": 870,
+        "consistency": 890,
+        "trust": 880
+      },
+      "total": 873,
+      "top_issues": [
+        "Destination recipient address hash takes 2 full lines of truncated hex without checksum truncation or human contact alias.",
+        "The dual display of 'Up to 175.00 instantly' above the input versus account capacity bar below causes minor cognitive conflict about spend limits."
+      ],
+      "fixes": [
+        "Format hex addresses with standard middle truncation (e.g. 0x92c2...cbf0) unless expanded by user.",
+        "Bind input validation border color dynamically to capacity limit warnings."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/02-pay-bottom.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 850,
+        "color": 870,
+        "data_legibility": 860,
+        "layout": 850,
+        "visceral_value": 860,
+        "responsive": 860,
+        "consistency": 880,
+        "trust": 870
+      },
+      "total": 860,
+      "top_issues": [
+        "Fee precision display shows '0.000050 USDC', which creates visual noise and intimidates non-technical users.",
+        "Route cards display identical endpoints with small fee diffs without explaining why H3 is offered or latency implications."
+      ],
+      "fixes": [
+        "Round micro-fees to '< $0.0001' with expandable exact wei/satoshi precision on tap.",
+        "Add a 'Cheapest' or 'Fastest' recommendation badge to the top route card."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/03-receipt.png",
+      "scores": {
+        "hierarchy": 900,
+        "premium": 890,
+        "typography": 890,
+        "color": 900,
+        "data_legibility": 880,
+        "layout": 890,
+        "visceral_value": 910,
+        "responsive": 880,
+        "consistency": 900,
+        "trust": 920
+      },
+      "total": 896,
+      "top_issues": [
+        "Settled duration 'in 9 s' in green text can be misconstrued as an off-chain failure if users expected sub-second execution.",
+        "Bottom action buttons ('Copy receipt', 'Download', 'Print / PDF', 'Done') crowd the bottom row with tight tap targets."
+      ],
+      "fixes": [
+        "Combine secondary export actions into a 'Share / Export' menu sheet to give 'Done' full prominent width.",
+        "Add explanatory tooltip on Frame #73 to clarify bilateral ledger finality."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/03-receipt-bottom.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 880,
+        "typography": 880,
+        "color": 890,
+        "data_legibility": 870,
+        "layout": 870,
+        "visceral_value": 890,
+        "responsive": 870,
+        "consistency": 890,
+        "trust": 910
+      },
+      "total": 883,
+      "top_issues": [
+        "Background scrim behind modal dims the updated balance card slightly too much, making it hard to verify updated balance without dismissing.",
+        "Button text 'Print / PDF' is desktop-centric terminology for a mobile operating system."
+      ],
+      "fixes": [
+        "Rename 'Print / PDF' to 'Share Receipt' using native OS share sheets on mobile.",
+        "Ensure live background balance visibly flashes or updates state behind the dismissal layer."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/04-receive.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 860,
+        "typography": 860,
+        "color": 880,
+        "data_legibility": 870,
+        "layout": 860,
+        "visceral_value": 860,
+        "responsive": 860,
+        "consistency": 880,
+        "trust": 880
+      },
+      "total": 868,
+      "top_issues": [
+        "QR code container has large stark white padding which creates harsh glare in dark mode.",
+        "Inbound capacity limit '0.50 capacity via H1' is quiet and easy to miss, risking failed incoming transfers if someone sends more."
+      ],
+      "fixes": [
+        "Soften QR code container background from stark #FFFFFF to warm off-white #F8FAFC with rounded interior quiet zone.",
+        "Highlight incoming capacity ceiling prominently next to the amount input with a warning pill if amount exceeds 0.50."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/04-receive-bottom.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 840,
+        "typography": 840,
+        "color": 860,
+        "data_legibility": 830,
+        "layout": 840,
+        "visceral_value": 830,
+        "responsive": 850,
+        "consistency": 870,
+        "trust": 860
+      },
+      "total": 846,
+      "top_issues": [
+        "The QR code scrolls out of view completely on mobile viewport, requiring counter merchants to scroll back and forth.",
+        "Entity ID explanation text 'Payments arrive instantly up to your inbound room' introduces confusing terminology ('inbound room')."
+      ],
+      "fixes": [
+        "Keep QR code sticky or minimized as a header badge while user configures incoming amount.",
+        "Replace 'inbound room' with 'inbound capacity' to keep protocol terminology coherent."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/05-swap.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 880,
+        "typography": 870,
+        "color": 880,
+        "data_legibility": 850,
+        "layout": 860,
+        "visceral_value": 880,
+        "responsive": 870,
+        "consistency": 880,
+        "trust": 870
+      },
+      "total": 871,
+      "top_issues": [
+        "The collateral slider ('100% collateral' to '0% collateral') at the bottom creates sudden cognitive load in what looked like an ordinary AMM swap.",
+        "High precision values ('0.043991 WETH') without fiat dollar estimates underneath force manual mental conversions."
+      ],
+      "fixes": [
+        "Display estimated USD equivalents beneath both 'You pay' and 'You receive' lines.",
+        "Provide a simple collapsed mode for the collateral slider with default safe collateral settings."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/05-swap-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 840,
+        "typography": 830,
+        "color": 850,
+        "data_legibility": 820,
+        "layout": 810,
+        "visceral_value": 840,
+        "responsive": 830,
+        "consistency": 850,
+        "trust": 850
+      },
+      "total": 834,
+      "top_issues": [
+        "Orderbook depth visualization is completely hidden at the bottom of the swap view and lacks a clear CTA button to execute.",
+        "Spread indicator ('spread 1.0000 USDC · 0.04%') lacks visual separation from depth level rows."
+      ],
+      "fixes": [
+        "Float a sticky 'Review Swap' primary action bar over the scrollable order book.",
+        "Style the mid-market spread row with a distinct pill background and clear market mid-price label."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/05b-swap-cross.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 860,
+        "typography": 860,
+        "color": 870,
+        "data_legibility": 840,
+        "layout": 850,
+        "visceral_value": 860,
+        "responsive": 860,
+        "consistency": 880,
+        "trust": 860
+      },
+      "total": 859,
+      "top_issues": [
+        "Alert block 'Account opening requested with zero credit' sits awkwardly between the quote block and collateral slider.",
+        "The phrase 'Atomic · both legs or neither' is good technical detail but does not clarify execution timing across chains."
+      ],
+      "fixes": [
+        "Convert zero-credit warning into an inline step banner showing 'Step 1: Open Tron account (auto)' before swap execution.",
+        "Add estimated cross-chain settlement latency under settlement description."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/05b-swap-cross-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 820,
+        "typography": 810,
+        "color": 830,
+        "data_legibility": 790,
+        "layout": 800,
+        "visceral_value": 810,
+        "responsive": 820,
+        "consistency": 840,
+        "trust": 820
+      },
+      "total": 814,
+      "top_issues": [
+        "Red warning text 'Prepare incoming capacity before swapping' appears without clear action linkage to the primary button below it.",
+        "The dense paragraph detailing 'H3 collateral tariff: 0.1 WETH base + 0 WETH gas + 1 bps' reads like smart contract bytecode comments rather than consumer UI."
+      ],
+      "fixes": [
+        "Replace raw fee tariff formula with a structured fee breakdown table (Base fee, Gas, Rate).",
+        "Group the 'Extend credit limit' action directly above the error state it resolves."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06-account.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 880,
+        "typography": 870,
+        "color": 890,
+        "data_legibility": 860,
+        "layout": 870,
+        "visceral_value": 880,
+        "responsive": 870,
+        "consistency": 890,
+        "trust": 890
+      },
+      "total": 877,
+      "top_issues": [
+        "Five top action buttons ('Pay', 'Extend credit', 'Swap', 'Manage', 'Dispute') arranged in uneven grid rows (3 top, 2 bottom) with inconsistent emphasis.",
+        "Legend elements ('secured', 'promised', 'you owe', 'credit room', 'in flight') create a crowded horizontal cluster."
+      ],
+      "fixes": [
+        "Consolidate top actions into a standardized 4-button quick bar with overflow in 'Manage'.",
+        "Make legend items tap-interactive to filter or highlight corresponding bar segments."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06-account-bottom.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 860,
+        "typography": 850,
+        "color": 870,
+        "data_legibility": 870,
+        "layout": 860,
+        "visceral_value": 870,
+        "responsive": 860,
+        "consistency": 880,
+        "trust": 890
+      },
+      "total": 867,
+      "top_issues": [
+        "Contrasting lines 'They owe you, uncovered $115.00' and 'Collateral you posted $60.00' use identical visual weight despite drastically different risk profiles.",
+        "Bottom explanation text is small and easy to miss after scrolling through 8 lines of table numbers."
+      ],
+      "fixes": [
+        "Use subtle risk badges (amber/violet for uncovered debt, emerald for posted collateral) directly on row values.",
+        "Add an anchor link from 'If you dispute, they answer within 1 d' directly to dispute terms."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06b-dispute.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 870,
+        "typography": 880,
+        "color": 870,
+        "data_legibility": 880,
+        "layout": 870,
+        "visceral_value": 900,
+        "responsive": 870,
+        "consistency": 890,
+        "trust": 910
+      },
+      "total": 882,
+      "top_issues": [
+        "The bottom sheet opens behind an already open view, creating multiple visual layers of gray cards that confuse mobile back-navigation.",
+        "The red 'Dispute this account...' button conveys danger but does not summarize the exact dollar amount that will be frozen."
+      ],
+      "fixes": [
+        "Explicitly list affected balance on the button: 'Dispute & Freeze $115.00 USDC'.",
+        "Darken the backdrop scrim to 80% opacity to isolate modal instructions from the background ledger."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06b-dispute-bottom.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 870,
+        "typography": 870,
+        "color": 870,
+        "data_legibility": 870,
+        "layout": 870,
+        "visceral_value": 890,
+        "responsive": 870,
+        "consistency": 890,
+        "trust": 900
+      },
+      "total": 877,
+      "top_issues": [
+        "Numbered steps (1, 2, 3) use tight line spacing, making legalistic dispute procedures strenuous to read under stress.",
+        "No explicit gas fee estimate is shown for submitting the dispute transaction to L1/jurisdiction chain."
+      ],
+      "fixes": [
+        "Add a line indicating 'Estimated L1 dispute gas fee: ~$X.XX' before the user initiates.",
+        "Increase paragraph leading from 1.3 to 1.5 on dispute process steps."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/07-activity.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 860,
+        "typography": 860,
+        "color": 870,
+        "data_legibility": 870,
+        "layout": 870,
+        "visceral_value": 860,
+        "responsive": 870,
+        "consistency": 880,
+        "trust": 880
+      },
+      "total": 869,
+      "top_issues": [
+        "Pill filters ('All', 'Payments', 'Swaps', 'Settlement', 'Accounts') clip on right margin without a visible scroll cue or fade edge.",
+        "'Swap placed' row displays amount '18.58 USDC' with open status indicator in yellow, but does not state the asset being bought."
+      ],
+      "fixes": [
+        "Add subtle right gradient fade to indicate horizontal scrollability on filter pills.",
+        "Display target pair for swaps (e.g. '18.58 USDC → WETH') on list rows."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/08-activity-detail.png",
+      "scores": {
+        "hierarchy": 890,
+        "premium": 880,
+        "typography": 890,
+        "color": 890,
+        "data_legibility": 890,
+        "layout": 890,
+        "visceral_value": 890,
+        "responsive": 880,
+        "consistency": 900,
+        "trust": 920
+      },
+      "total": 892,
+      "top_issues": [
+        "Receipt specifies '2 committed entries' under Frames without letting the user tap to view the raw transition payloads.",
+        "Download proof button lacks format clarification (JSON vs PDF vs cryptographic bundle)."
+      ],
+      "fixes": [
+        "Make '2 committed entries' expandable to inspect bilateral signatures and frame inputs.",
+        "Label button 'Download Proof (.json)' or provide explicit export selector."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/09-settings.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 850,
+        "typography": 860,
+        "color": 860,
+        "data_legibility": 860,
+        "layout": 860,
+        "visceral_value": 850,
+        "responsive": 860,
+        "consistency": 880,
+        "trust": 870
+      },
+      "total": 861,
+      "top_issues": [
+        "Dollars per pixel slider ('1 px = $10') is prominent at the very top of settings, elevating an experimental visual feature over security/account toggles.",
+        "The toggle descriptions under 'Home' ('Slow, fully yours', 'Enforceable on-chain') are poetic but brief."
+      ],
+      "fixes": [
+        "Move 'Dollars per pixel' into an Appearance sub-category rather than the primary settings hero position.",
+        "Add explicit informational tooltip next to Depository Escrow toggle."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/09-settings-bottom.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 840,
+        "typography": 840,
+        "color": 850,
+        "data_legibility": 850,
+        "layout": 840,
+        "visceral_value": 840,
+        "responsive": 850,
+        "consistency": 870,
+        "trust": 880
+      },
+      "total": 850,
+      "top_issues": [
+        "'At this scale' chart visualizes pixel widths ($100 = 10 px, $1,000 = 100 px), which introduces developer-centric debug aesthetics into end-user settings.",
+        "Buttons 'Reveal recovery phrase' and 'Lock' sit right above destructive 'Forget vault' with minimal visual demarcation."
+      ],
+      "fixes": [
+        "Separate critical Vault security controls into their own bordered security section with biometric confirmation.",
+        "Move scale calibration chart into an advanced developer drawer."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/10-move.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 870,
+        "typography": 870,
+        "color": 880,
+        "data_legibility": 870,
+        "layout": 880,
+        "visceral_value": 880,
+        "responsive": 870,
+        "consistency": 890,
+        "trust": 890
+      },
+      "total": 878,
+      "top_issues": [
+        "The 3x3 matrix between 'FROM' (Wallet, Reserve, Account) and 'TO' (Wallet, Reserve, Account) can create confusion when the same tier is highlighted in both.",
+        "Under TO > Account, balance shows '175.00 USDC' which is credit headroom rather than settled assets."
+      ],
+      "fixes": [
+        "Disable or gray out the identical source card in the 'TO' row once selected in 'FROM'.",
+        "Disambiguate balance display on Account card between 'Balance' and 'Available Capacity'."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/10-move-bottom.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 860,
+        "typography": 860,
+        "color": 870,
+        "data_legibility": 860,
+        "layout": 860,
+        "visceral_value": 870,
+        "responsive": 860,
+        "consistency": 880,
+        "trust": 880
+      },
+      "total": 866,
+      "top_issues": [
+        "Dual submit buttons ('Sign & send' vs 'Add to batch') have conflicting visual weight and lack explanation for why a retail user would batch.",
+        "Recipient entity input field placeholder '0x... entity id' suggests hexadecimal address without alias lookup."
+      ],
+      "fixes": [
+        "Make 'Sign & send' full width and reduce 'Add to batch' to a secondary text action or dropdown option.",
+        "Support local alias and contact auto-complete for Recipient entity."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/11-manage.png",
+      "scores": {
+        "hierarchy": 880,
+        "premium": 870,
+        "typography": 870,
+        "color": 880,
+        "data_legibility": 870,
+        "layout": 880,
+        "visceral_value": 870,
+        "responsive": 870,
+        "consistency": 890,
+        "trust": 890
+      },
+      "total": 877,
+      "top_issues": [
+        "2x2+1 navigation grid at the top ('Sovereignty', 'Move', 'Assets', 'Lending', 'Ownership') gives equal hierarchy to core fund movement and esoteric governance tools.",
+        "'Where your money stands' summary duplicates the home screen legend without adding new actionable controls."
+      ],
+      "fixes": [
+        "Restructure management hubs into grouped sections (Capital & Liquidity vs Cryptographic Governance).",
+        "Make rows in 'Where your money stands' clickable shortcuts to corresponding rebalancing flows."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/12-assets.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 860,
+        "typography": 860,
+        "color": 870,
+        "data_legibility": 870,
+        "layout": 860,
+        "visceral_value": 850,
+        "responsive": 860,
+        "consistency": 880,
+        "trust": 880
+      },
+      "total": 865,
+      "top_issues": [
+        "Subtext 'Depository may pull 0.00' is technical ERC-20 allowance jargon that alarms users unfamiliar with token approval semantics.",
+        "Button 'Move into reserve' is detached inside the card under token list rows rather than anchored to the bottom."
+      ],
+      "fixes": [
+        "Replace 'Depository may pull 0.00' with simple 'Allowance: $0.00' with an 'Adjust' link.",
+        "Move 'Move into reserve' action into a unified bottom action sheet."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/12-assets-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 830,
+        "typography": 830,
+        "color": 840,
+        "data_legibility": 820,
+        "layout": 820,
+        "visceral_value": 830,
+        "responsive": 840,
+        "consistency": 850,
+        "trust": 850
+      },
+      "total": 833,
+      "top_issues": [
+        "Faucet trigger buttons at the bottom ('USDC to my on-chain wallet', 'Gas (ETH)...') mingle testnet faucet functionality directly with core account operations.",
+        "Slider for collateral/credit adjustments on H1 appears without clear confirmation of whether funds will move on-chain."
+      ],
+      "fixes": [
+        "Isolate testnet faucets into an explicit 'Developer / Testnet Faucets' modal or banner.",
+        "Provide explicit confirmation modal showing network gas cost when moving funds from faucet to reserve."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/13-lend.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 860,
+        "typography": 850,
+        "color": 870,
+        "data_legibility": 860,
+        "layout": 850,
+        "visceral_value": 850,
+        "responsive": 860,
+        "consistency": 870,
+        "trust": 860
+      },
+      "total": 858,
+      "top_issues": [
+        "Token selection cards (USDC, WETH, USDT) consume excessive vertical height on mobile, pushing term and yield settings below fold.",
+        "Interest rate input states '100 basis points = 1.00% per term' without indicating annualized APY/APR."
+      ],
+      "fixes": [
+        "Display both term rate and calculated annualized APY (e.g. '1.00%/day ≈ 365% APR').",
+        "Compress token selection into a compact horizontal segment control."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/13-lend-bottom.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 850,
+        "typography": 840,
+        "color": 860,
+        "data_legibility": 850,
+        "layout": 840,
+        "visceral_value": 850,
+        "responsive": 850,
+        "consistency": 870,
+        "trust": 860
+      },
+      "total": 851,
+      "top_issues": [
+        "H1 Pool statistics card shows all zeroes without explaining whether the pool is inactive, unfunded, or failing to query node state.",
+        "Action button 'Offer to the pool' has identical visual style to instant transfers despite committing capital to a term loan."
+      ],
+      "fixes": [
+        "Add empty-state explanation: 'H1 has no active liquidity requests. Offers will queue.'",
+        "Use distinct styling or confirmation modal detailing credit lockup duration before offer submission."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/14-ownership.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 870,
+        "typography": 870,
+        "color": 870,
+        "data_legibility": 860,
+        "layout": 860,
+        "visceral_value": 860,
+        "responsive": 860,
+        "consistency": 880,
+        "trust": 880
+      },
+      "total": 867,
+      "top_issues": [
+        "Dense technical prose ('A lazy entity is identified by the hash of its board. Register it on the EntityProvider...') overwhelms general users.",
+        "Threshold '1 of 1' lacks visual indicator showing how multisig keys or quorum members can be added."
+      ],
+      "fixes": [
+        "Add an obvious '+ Add Co-signer / Key' button next to Threshold display.",
+        "Simplify explanation to 'This account is governed exclusively by your device key'."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/15-sovereignty.png",
+      "scores": {
+        "hierarchy": 890,
+        "premium": 890,
+        "typography": 880,
+        "color": 900,
+        "data_legibility": 880,
+        "layout": 880,
+        "visceral_value": 910,
+        "responsive": 880,
+        "consistency": 900,
+        "trust": 920
+      },
+      "total": 893,
+      "top_issues": [
+        "Headline hero displays '$40.00' as 'Enforceable right now' while total wallet shows $155.00, creating immediate anxiety if users do not understand hub credit lines.",
+        "Truncated address hashes across Signer, Entity, Runtime, and Depository create dense hex clutter."
+      ],
+      "fixes": [
+        "Include small info pill next to $40.00: '$115.00 in hub promises backed by dispute proofs'.",
+        "Allow tapping on hashes to reveal copyable verified badges or QR codes."
+      ]
+    },
+    {
+      "file": "/Users/zigota/xln/design/screenshots/ui/mobile-dark/15-sovereignty-bottom.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 880,
+        "typography": 870,
+        "color": 890,
+        "data_legibility": 870,
+        "layout": 870,
+        "visceral_value": 890,
+        "responsive": 870,
+        "consistency": 890,
+        "trust": 910
+      },
+      "total": 881,
+      "top_issues": [
+        "'Save evidence bundle' button saves a JSON file without stating where it is stored or how another device imports it.",
+        "Counterparty card 'H1 hub: nothing at risk' appears right after showing $115 in uncollateralized hub credit, confusing the definition of risk."
+      ],
+      "fixes": [
+        "Clarify counterparty row label: 'H1: $115 promised, 0 overdue disputes (backed by Frame #12)'.",
+        "Add cloud sync or multi-device export flow beside raw evidence bundle download."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 864,
+    "verdict": "The mobile-dark interface establishes exceptional cryptographic transparency and rigorous state accounting that far outclasses standard web3 wallets. However, its uncompromising exposure of protocol primitives (pixels-per-dollar, tariffs, bilateral frames, and uncollateralized credit mechanics) creates severe cognitive friction for everyday retail personas while brilliantly serving compliance officers and developers.",
+    "priority_fixes": [
+      "Streamline Home balance hierarchy: replace the persistent pixel-scale educational banner with an expandable balance breakdown card and clarify spendable vs guaranteed balances.",
+      "Simplify incoming payment capacity in Receive flow: raise inbound headroom automatically or present an intuitive 1-tap 'Increase Inbound Capacity' action before showing the QR code.",
+      "Demystify Swap fees and collateral tariffs: replace raw algebraic formula text ('0.1 WETH base + 0 WETH gas + 1 bps') with a clean, itemized fee schedule and dollar conversions.",
+      "Humanize address and proof inspection: add verified address aliasing, middle-truncated checksums, and tap-to-expand receipt verification sheets across activity logs.",
+      "De-escalate Settings and Sovereignty visual anxiety: relocate debug calibration tools ('Dollars per pixel' charts) to an Advanced drawer and explicitly reconcile 'Enforceable right now' with total balance."
+    ],
+    "personas": [
+      {
+        "name": "Rosa",
+        "satisfied": 42,
+        "verdict": "There are so many strange words like 'bilateral', 'tariffs', and 'frames' that I'm terrified of pressing the wrong button and losing my money.",
+        "blockers": [
+          "01-home.png: tiny grey breakdown text under total balance is hard to read",
+          "02-pay.png: long truncated raw hex recipient address gives no human name confirmation",
+          "15-sovereignty.png: seeing '$40 enforceable' when she thought she had '$155' causes immediate panic"
+        ]
+      },
+      {
+        "name": "Jamal",
+        "satisfied": 65,
+        "verdict": "I love that payments land instantly, but why does my receive screen say I can only receive 50 cents unless I configure something?",
+        "blockers": [
+          "04-receive.png: inbound capacity capped at $0.50 blocks receiving incoming daily earnings",
+          "01-home-bottom.png: raw second-precision timestamps make it hard to quickly scan today's completed rides",
+          "10-move.png: distinguishing between moving to 'Reserve' versus 'Account' is confusing when trying to cash out"
+        ]
+      },
+      {
+        "name": "Priya",
+        "satisfied": 68,
+        "verdict": "The instant receipts with frame proofs give me confidence, but the receive QR code gets pushed off my screen and setup takes too many taps.",
+        "blockers": [
+          "04-receive-bottom.png: QR code scrolls off screen on phone view while setting amounts",
+          "04-receive.png: incoming capacity restriction prevents taking an unexpected $60 dinner payment",
+          "07-activity.png: cannot filter today's payments by counter till or aggregate daily totals easily"
+        ]
+      },
+      {
+        "name": "Wei",
+        "satisfied": 84,
+        "verdict": "The bilateral orderbook depth and tick visibility are first-class, though I need explicit cross-hub execution routing and margin collateral control.",
+        "blockers": [
+          "05-swap-bottom.png: cannot submit limit orders directly from depth chart rows without scrolling back up",
+          "05b-swap-cross.png: lacks depth book visualization on cross-network routes",
+          "06-account.png: needs real-time counterparty exposure limits per market maker pair"
+        ]
+      },
+      {
+        "name": "Elena",
+        "satisfied": 94,
+        "verdict": "The dual-signed frame receipts, downloadable cryptographic bundles, and auditable proof records provide the exact paper trail required for institutional compliance.",
+        "blockers": [
+          "08-activity-detail.png: proof bundle download lacks embedded timestamped RFC3161 notarization",
+          "07-activity.png: CSV export does not batch the complete raw cryptographic signature payloads for all 7 movements"
+        ]
+      },
+      {
+        "name": "Noah",
+        "satisfied": 96,
+        "verdict": "The mental model maps 1:1 to the state machine—seeing frames, bilateral accounts, depository escrow, and dispute timers directly in the UI makes integration completely intuitive.",
+        "blockers": [
+          "09-settings.png: layout on wide screens toggle cannot be tested directly in mobile viewport",
+          "14-ownership.png: needs clear schema sample for registering lazy entity boards on-chain"
+        ]
+      },
+      {
+        "name": "Aisha",
+        "satisfied": 58,
+        "verdict": "I need to pay workers across networks without surprises, but the Tron swap screen is blocked by a red warning about incoming capacity tariffs.",
+        "blockers": [
+          "05b-swap-cross-bottom.png: cryptic red warning 'Prepare incoming capacity before swapping' halts cross-chain transfer",
+          "05b-swap-cross-bottom.png: complex fee tariff equation ('0.1 WETH base + 0 WETH gas + 1 bps') makes it impossible to predict exact landed fiat payroll",
+          "10-move.png: missing clear latency indicator for cross-chain settlement completion"
+        ]
+      },
+      {
+        "name": "Lucas",
+        "satisfied": 62,
+        "verdict": "It looks super clean and futuristic, but there are way too many sliders and confusing terms about collateral just to buy a piece of ETH.",
+        "blockers": [
+          "05-swap.png: 100% vs 0% collateral slider is confusing for a straightforward token swap",
+          "04-receive.png: receive screen asks to 'prepare incoming account' instead of just showing an address",
+          "09-settings.png: 'Dollars per pixel' slider makes no sense to a first-time crypto user"
+        ]
+      },
+      {
+        "name": "Ingrid",
+        "satisfied": 91,
+        "verdict": "The strict mathematical distinction between promised hub credit and enforceable on-chain collateral is the most transparent risk model in decentralized finance.",
+        "blockers": [
+          "06-account.png: uncollateralized exposure ($115) should provide a direct 'Request Hub Collateral' rebalancing trigger",
+          "15-sovereignty.png: needs aggregated portfolio Value-at-Risk across multiple concurrent hub counterparties",
+          "13-lend.png: term lending pool lacks counterparty risk rating or default insurance metrics"
+        ]
+      },
+      {
+        "name": "Omar",
+        "satisfied": 88,
+        "verdict": "I can clearly see how credit lines, collateralization tariffs, and dispute timeframes operate, giving me the exact blueprint for running a profitable liquidity node.",
+        "blockers": [
+          "13-lend-bottom.png: pool statistics do not display historical spread earnings or utilization rates",
+          "06-account-bottom.png: hub operator side of unilateral rebalance and settlement trigger is not directly simulated in client view",
+          "05b-swap-cross-bottom.png: tariff breakdown should show hub operator gross margin versus network gas cost"
+        ]
+      }
+    ]
+  }
+}

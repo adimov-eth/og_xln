@@ -1,0 +1,602 @@
+{
+  "reviewer": "openrouter/deepseek/deepseek-v4-flash-vision-exp",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 780,
+        "typography": 820,
+        "color": 830,
+        "data_legibility": 840,
+        "layout": 810,
+        "visceral_value": 760,
+        "responsive": 700,
+        "consistency": 820,
+        "trust": 850
+      },
+      "total": 803,
+      "top_issues": [
+        "'Promised $122.99' sits next to 'Reserve $40.00' with only the colour rule to separate safety from promise; a colour-only distinction is fragile for low-vision users (persona Rosa), the legend under the bar is small.",
+        "The recent-activity rows are text-only with no inline 'move to reserve' or 'view' affordance; spendability is not shown relative to each Recent entry.",
+        "The 'Two colours, one rule' callout is strong but pushes the balance bar down and, at 1px/$, green blocks that should be visually identical differ in width because Reserve is a separate lane."
+      ],
+      "fixes": [
+        "Add a plain-language line under the rule: 'Green is yours now, violet is only promised' in 14px+ and repeat it inside the Pay flow.",
+        "Give each Recent row a one-tap context action (move to Reserve, view proof) and show 'instantly spendable' as a per-row tag.",
+        "Make Reserve/On-chain/Account bars share the same lane width reference so equal dollar values render as equal widths."
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 770,
+        "typography": 800,
+        "color": 800,
+        "data_legibility": 820,
+        "layout": 790,
+        "visceral_value": 750,
+        "responsive": 700,
+        "consistency": 810,
+        "trust": 830
+      },
+      "total": 787,
+      "top_issues": [
+        "The 'Provable' callout uses domain jargon ('frame signed by both sides of each account') with no glossary and no routing explanation; a non-technical payer may not know what 'frame' means (personas Lucas, Rosa).",
+        "'Before/After' account bars are excellent but the 'receive up to 20.50' label uses 'credit room' terminology that is undefined elsewhere on this screen.",
+        "The H2 recipient full ID is truncated to '8x92c2d7c3...', which is fine for normal payers but blocks a compliance user from confirming the exact destination."
+      ],
+      "fixes": [
+        "Add a small 'what is a frame' tooltip near the Provable box, or relabel to 'a signed receipt of both sides' in plain language.",
+        "Rename 'credit room' to 'incoming capacity' across screens for consistency.",
+        "Add a tap-to-copy/reveal-full-ID affordance on the recipient and H1/H2 hub addresses."
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 800,
+        "typography": 820,
+        "color": 780,
+        "data_legibility": 850,
+        "layout": 800,
+        "visceral_value": 800,
+        "responsive": 700,
+        "consistency": 810,
+        "trust": 880
+      },
+      "total": 802,
+      "top_issues": [
+        "The confirmation modal is excellent, but the Proof row shows a truncated hash '0xec998be...68e4' with no reveal/copy affordance on the hash itself; a compliance user needs the full hash inline.",
+        "'Verified by your runtime' is a good trust signal but doesn't say which runtime or how to re-verify from an external copy.",
+        "The modal sits over a dimmed home and the four CTA buttons (Copy receipt / Download / Print / PDF / Done) are the only next step; there's no direct 'view in Activity' link."
+      ],
+      "fixes": [
+        "Make the proof hash tap-to-copy with full expansion and a 'verify externally' hint.",
+        "Label the verifier as 'runtime 0x9d4...' so it's traceable, and add a row count of signed frames in the receipt.",
+        "Add a 'View in Activity' link next to Done."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 760,
+        "typography": 790,
+        "color": 760,
+        "data_legibility": 820,
+        "layout": 790,
+        "visceral_value": 740,
+        "responsive": 700,
+        "consistency": 800,
+        "trust": 800
+      },
+      "total": 774,
+      "top_issues": [
+        "The QR is white-on-dark and large, which is good, but it is the only visual anchor on an otherwise sparse screen; the 'Amount optional 0.00' field is not obviously the amount the payer will fill.",
+        "'45.50 capacity via H1' is not explained and a sender choosing a different route may see a different capacity, which is confusing at the point of request.",
+        "Entity ID is truncated and not copyable directly; 'Payment link' is the only share target, with no per-network or per-account variant."
+      ],
+      "fixes": [
+        "Show a live 'capacity you can receive now' value under the amount field and mark it as 'via H1' with a link to change route.",
+        "Make the QR open a copyable payment URL and add an entity-ID copy button next to the truncated id.",
+        "Clarify that the request amount is a hint the payer can override, and that capacity depends on the chosen route."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 770,
+        "premium": 740,
+        "typography": 760,
+        "color": 760,
+        "data_legibility": 780,
+        "layout": 740,
+        "visceral_value": 720,
+        "responsive": 700,
+        "consistency": 780,
+        "trust": 760
+      },
+      "total": 751,
+      "top_issues": [
+        "The main CTA 'Swap USDC for WETH' is disabled (dimmed indigo) while a red line below says 'Prepare incoming capacity before swapping'; red + disabled indigo reads as an error, not a prerequisite step, and the required action (extend credit) is already done above.",
+        "The collateral slider 100%→0% and the '100% collateral / 0% collateral' labels are dense; 'New credit 0.04311 WETH' near a tiny circle is easy to miss, and the slider rail is thin.",
+        "'Quoted at the best price in the book right now' is a big claim next to an orderbook; the 'live relay' tag in the header appears as 'live rely' in this screenshot — an inconsistency.",
+        "No 'BTC'/'Orderbook' price check: 'spread 1.0000 USDC: 0.04%' is good but there is no refresh time or last-update stamp."
+      ],
+      "fixes": [
+        "Replace the red + disabled-button state with a single actionable prompt: 'Extend credit to unlock this swap' in one accent colour, and enable the CTA once the condition is met.",
+        "Add a refresh timestamp and a 'live relay' label spelled consistently; fix the 'rely' typo.",
+        "Label the slider as 'choose your collateral' with a % readout, and give the new-credit figure a visible highlight next to the slider."
+      ]
+    },
+    {
+      "file": "05b-swap-cross.png",
+      "scores": {
+        "hierarchy": 750,
+        "premium": 730,
+        "typography": 750,
+        "color": 740,
+        "data_legibility": 740,
+        "layout": 720,
+        "visceral_value": 700,
+        "responsive": 690,
+        "consistency": 740,
+        "trust": 730
+      },
+      "total": 729,
+      "top_issues": [
+        "The tooltip 'Account opening requested with zero credit. Prepare incoming capacity after confirmation.' overlaps the collateral slider and the 'Pending' rail, hiding the slider’s current state and the 100%/0% labels.",
+        "The 'Legs' panel orders Testnet then Tron but the fee line 'H3 collateral tariff: 0.1 WETH base + 0 WETH gas + 1bps' is dense and mixes a base-token charge with a percentage; a user can't tell the total fee in USDC.",
+        "'Atomic: both legs or neither' is promising but there's no explicit completion-time or failure-recovery copy for the cross-network path.",
+        "The CTA 'Swap USDC for WETH' is disabled with the red 'Prepare incoming capacity' line again, which here is especially confusing because the whole point is a cross-network account open."
+      ],
+      "fixes": [
+        "Move the zero-credit note to a fixed inline banner and give the slider full width and visible labels (100% / 0%) without overlap.",
+        "Show total fee in USDC: 'estimated 0.1 WETH (~$X) + 1bps', and separate base fee from spread.",
+        "Add a time-to-credit estimate and a 'what happens if Tron leg fails' note under Atomic.",
+        "Make the cross-network CTA read 'Open account and swap' with a single-color actionable state instead of red+disabled."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 760,
+        "typography": 800,
+        "color": 820,
+        "data_legibility": 850,
+        "layout": 800,
+        "visceral_value": 760,
+        "responsive": 700,
+        "consistency": 810,
+        "trust": 860
+      },
+      "total": 796,
+      "top_issues": [
+        "The legend (secured/promised/you owe/credit room/in flight) is a single thin row of tiny labels; the in-flight vs credit-room distinction is hard to see on the bar.",
+        "'They owe you uncovered $97.99' vs 'Their debt covered by collateral $0.00' is exactly what a risk analyst needs, but there is no 'coverage ratio' number and no time-to-dispute here (it's only in the right rail).",
+        "The lane titles 'send up to 130.00' and 'receive up to 45.50' are clear, but '45.50' changes with the bar and has no explanation of the credit-room dependency."
+      ],
+      "fixes": [
+        "Make the legend interactive (tap a term to highlight), and give the in-flight/credit-room segments a distinct pattern, not just colour.",
+        "Add a coverage ratio (e.g. '61% covered') and a perpetual 'dispute deadline' to the right rail.",
+        "Add a one-line note under 'receive up to X': 'limited by H1's credit room to you'."
+      ]
+    },
+    {
+      "file": "06b-dispute.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 700,
+        "typography": 680,
+        "color": 700,
+        "data_legibility": 620,
+        "layout": 680,
+        "visceral_value": 650,
+        "responsive": 680,
+        "consistency": 720,
+        "trust": 720
+      },
+      "total": 685,
+      "top_issues": [
+        "The modal text is truncated and garbled: 'This account will... OWE? X' and 'Adjudication: X' are cut off / unreadable; the 'X' badge and overlapping content make the dispute state illegible.",
+        "The three numbered steps are clipped at the bottom and the 'Dispute this account' action is greyed and cut off, so the user can't read the full flow or the cost.",
+        "The modal overlaps the right rail's 'SCREEN BANK'/'ADJUDICATION' content, hiding the account's exposure and the dispute consequences, which is the exact info a user needs before disputing."
+      ],
+      "fixes": [
+        "Make the dispute modal full-height with scroll and no clipping: render the full freeze explanation, the three co-signed-state steps, and the adjudication window in readable text.",
+        "Replace the 'X' badge with a clear status ('Awaiting hub response / 1d') and show the dispute fee in USDC and in time.",
+        "Move the modal to a clean overlay that never overlaps the 'THIS ACCOUNT' rail; keep the important 'you'll lose X' consequences in view."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 780,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 830,
+        "layout": 800,
+        "visceral_value": 740,
+        "responsive": 700,
+        "consistency": 810,
+        "trust": 840
+      },
+      "total": 790,
+      "top_issues": [
+        "Filter chips (All/Payments/Swaps/Settlement/Accounts) are good but 'Settlement' vs 'Payments' overlap for a hub settlement — a user can't tell the difference without trying.",
+        "The detail pane shows frame #74, proof hash, and '2 committed entries', which is excellent, but there's no 'signed by' list naming both counterparties and no explicit 'both sides' indicator per entry.",
+        "The left list and right detail are both long; on a narrower window the detail pane pushes the list off-screen and there's no collapse toggle."
+      ],
+      "fixes": [
+        "Rename 'Settlement' to 'Settlements' and add tooltips on each chip explaining the filter.",
+        "Add a 'co-signed by H1 and H2' line under the frame number in the detail pane, with signer addresses.",
+        "Make the detail pane collapsible so the list stays usable at 1024px width."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 760,
+        "typography": 790,
+        "color": 780,
+        "data_legibility": 800,
+        "layout": 770,
+        "visceral_value": 730,
+        "responsive": 690,
+        "consistency": 790,
+        "trust": 820
+      },
+      "total": 771,
+      "top_issues": [
+        "This screen is a near-duplicate of 07 — the detail pane shows the same 'Sent -25.00 USDC' row and there is no distinct detail view (no per-entry proof expansion, no settlement/swap metadata).",
+        "The 'Download proof' and 'Copy' buttons don't show what they export; a compliance user can't tell if a proof includes counterparty signatures or just the runtime's frame.",
+        "No co-signed-frame indices or route details (via H1/H2) are shown for the detailed entry, so the 'detail' is only a larger version of the list row."
+      ],
+      "fixes": [
+        "Build a real detail view: expanded proof hash + signed-by-both-sides frames, route (via H1/H2), and the full co-signed state.",
+        "Label 'Download proof' with its contents ('proof: co-signed frame(s) + hashes') and link to the Activity export.",
+        "Add a 'view the exact committed frames' action that opens the frame IDs for that entry."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 780,
+        "typography": 780,
+        "color": 770,
+        "data_legibility": 790,
+        "layout": 780,
+        "visceral_value": 730,
+        "responsive": 700,
+        "consistency": 800,
+        "trust": 780
+      },
+      "total": 770,
+      "top_issues": [
+        "The 'Advanced bar scale' toggle and the 'At this scale' chart ($100/$1k/$10k/$100k) are clear, but the scale demo shows a purple bar at 100k that is visually identical in length to the 10k bar — the axis only makes sense with the tick labels, and the widths are not proportional.",
+        "The indigo accent (Indigo/violet) is the most saturated element on the screen and competes with the purple bars used for 'promised' elsewhere; the accent shows up in buttons throughout and occasionally reads as a status colour.",
+        "Home switches toggle 'On-chain wallet / Reserve / Accounts' but there's no explanation that turning these off hides the lanes; a user might toggle and lose a lane without understanding why."
+      ],
+      "fixes": [
+        "Make the sample chart bars strictly proportional to their values with a log/normal notice, or keep the linear contrast but label it.",
+        "Reconcile the accent colour: use a single indigo for interactive elements and reserve violet exclusively for 'promised' status to avoid semantic collision.",
+        "Add a one-line caption under the Home switches: 'Off hides the lane from the home balance, not your funds.'"
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 760,
+        "typography": 790,
+        "color": 770,
+        "data_legibility": 810,
+        "layout": 780,
+        "visceral_value": 730,
+        "responsive": 700,
+        "consistency": 800,
+        "trust": 810
+      },
+      "total": 774,
+      "top_issues": [
+        "From/To cards (Wallet/Reserve/Account) are clear, but the selected Account card is violet-tinted while Reserve is green — the same colour-as-status collision seen in 09; a user could read the selection as a 'promise'.",
+        "The 'Fund you through H1' explainer is good but there's no explicit gas or on-chain fee shown for moving Reserve→Account, only the statement that it posts collateral on-chain.",
+        "'Add to batch' is a useful power feature but is not explained; a user may not know what batching does."
+      ],
+      "fixes": [
+        "Use the neutral card outline for selection and reserve violet exclusively for 'promised' data, not for selection state.",
+        "Add the actual on-chain gas cost below 'Fund you through H1' (e.g. '~0.001 ETH gas') so the move cost is visible.",
+        "Add a tooltip on 'Add to batch': 'combine with a swap or payment so they settle as one frame'."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 760,
+        "typography": 780,
+        "color": 770,
+        "data_legibility": 810,
+        "layout": 790,
+        "visceral_value": 730,
+        "responsive": 700,
+        "consistency": 810,
+        "trust": 810
+      },
+      "total": 776,
+      "top_issues": [
+        "'Promised by hubs $97.99' uses violet, which is the best use of the colour here, but it appears in a line of grey text with no bar; the number alone without the colour legend is less trustworthy.",
+        "'3 lanes 15 frames open' is opaque — a user doesn't know what a 'lane' or 'open frame' is, and there's no path to resolve."
+      ],
+      "fixes": [
+        "Add the small colour-dot legend next to 'Where your money stands' and a mini-bar for the Promised vs Yours split.",
+        "Replace '3 lanes 15 frames open' with '3 accounts, 9 frames not yet settled' and link to Activity/Settlement."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 750,
+        "typography": 770,
+        "color": 750,
+        "data_legibility": 780,
+        "layout": 760,
+        "visceral_value": 720,
+        "responsive": 690,
+        "consistency": 780,
+        "trust": 760
+      },
+      "total": 754,
+      "top_issues": [
+        "The right panel is a testnet faucet but it's heavily populated with swap-like fields (amount, collateral slider, Extend credit limit) which overwhelms the intent of 'get test tokens'; the 'Receive USDC from H1' vs 'USDC to my on-chain wallet' buttons are good but buried below the slider.",
+        "The collateral slider appears here again with identical labels, which is consistent but redundant — on a faucet screen a user shouldn't need to set collateral to receive test funds.",
+        "On-chain balance shows 'Gas 0.1000 ETH' as a single value with no gas-price context."
+      ],
+      "fixes": [
+        "Split the faucet into a simple 'get test tokens' card (amount + get button) and move the collateral/slider to a separate 'open credit' step; the 0.1000 ETH gas should show its on-chain conversion.",
+        "Keep the 'Receive USDC from H1' as a primary CTA and de-emphasise 'Extend credit limit' on this screen."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 720,
+        "typography": 730,
+        "color": 720,
+        "data_legibility": 700,
+        "layout": 740,
+        "visceral_value": 690,
+        "responsive": 680,
+        "consistency": 750,
+        "trust": 680
+      },
+      "total": 717,
+      "top_issues": [
+        "The interest line 'Interest you ask: basis points 100' is labelled '= 100% per term' — 100 basis points is 1.00%, not 100%; this is a factual/display error that directly breaks trust for a trader or hub operator.",
+        "The 'Offer to the pool' button is dimmed (amount is 0.00) and there is no clear 'term' conversion to APR, so a lender can't compare a 1-day 1% offer against other terms.",
+        "Term chips (1 hour / 1 day / 1 month) are clear, but there's no 'expected return in USDC' figure, which is what a lender actually needs."
+      ],
+      "fixes": [
+        "Fix the basis-point conversion: show '100 bp = 1.00% per term' and add an annualized APR for each term (1 day ≈ 365%, 1 month ≈ 12%).",
+        "Enable the CTA once amount > 0 and add '~USDC 0.01 interest at term end' as a live figure under amount.",
+        "Clarify that returns settle to the account at term end and show the equivalent annual yield."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 770,
+        "premium": 740,
+        "typography": 760,
+        "color": 740,
+        "data_legibility": 770,
+        "layout": 750,
+        "visceral_value": 700,
+        "responsive": 690,
+        "consistency": 770,
+        "trust": 770
+      },
+      "total": 746,
+      "top_issues": [
+        "'Self-issued (its id is the hash of its board)' is correct but dense; there's no visualisation of the board quorum (1 of 1) or what 'a board can grow to several signers' implies.",
+        "The 'Take control of another entity' is empty with useful copy, but there's no route to register a lazy entity on an EntityProvider from here, despite the note mentioning it.",
+        "Threshold 1 of 1 with a single signer is accurate but doesn't communicate recovery risk if the key is lost — only the body text alludes to it."
+      ],
+      "fixes": [
+        "Add a small quorum visual (1 key needed of N) and a 'share/trustee' hint for the recovery path.",
+        "Add a 'Register on EntityProvider' action link so the lazy-entity note is actionable.",
+        "Show 'if this key is lost you need this backup' as a prominent line near the signer."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 790,
+        "typography": 800,
+        "color": 800,
+        "data_legibility": 840,
+        "layout": 800,
+        "visceral_value": 770,
+        "responsive": 700,
+        "consistency": 820,
+        "trust": 880
+      },
+      "total": 801,
+      "top_issues": [
+        "This is the strongest trust screen: 'Enforceable right now $40.00', 'Promised $97.99', and the per-counterparty '$97.99 at risk' are exactly what a risk analyst needs. The only gap is the absence of a per-counterparty 'time to dispute' and coverage ratio here (only on 06).",
+        "The 'Accounts co-signed 1 of 1' and 'Can dispute without asking 1 of 1' are good but not explained; a non-lawyer won't know what '1 of 1' means for safety.",
+        "The 'Save evidence bundle' is a single button with no indication of what files it exports or how a verifier uses them."
+      ],
+      "fixes": [
+        "Add a 'coverage ratio' and a 'dispute deadline' row to the Per-Counterparty card.",
+        "Replace bare '1 of 1' with '1 signature required of 1 signer' so the quorum meaning is clear.",
+        "Label the evidence bundle contents: 'frame hashes + both signatures + proof hashes' and add a verify-externally note."
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 740,
+        "typography": 730,
+        "color": 740,
+        "data_legibility": 800,
+        "layout": 720,
+        "visceral_value": 700,
+        "responsive": 690,
+        "consistency": 760,
+        "trust": 750
+      },
+      "total": 739,
+      "top_issues": [
+        "This is a power-user 'desk' view with high data density: an account/lane table, a live orderbook, and a recent feed all on one screen. The legend at the bottom is the only key to the many lane colours and the table's 'POSITION/SECURED/PROMISED/YOU OWE' columns are dense.",
+        "The orderbook and table compete for attention; there's no way to collapse the orderbook or filter the lane table, so a first-time power user is overwhelmed.",
+        "The in-flight/credit-room segments in the table bars are tiny and rely on the bottom legend to understand."
+      ],
+      "fixes": [
+        "Add collapsible panels (orderbook / table / recent) and a 'focus' mode for the lane table.",
+        "Make the legend sticky at the top of the table and add hover-highlight for each lane segment.",
+        "Add a header explainer tooltip on each table column so the desk is self-documenting."
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 750,
+        "typography": 770,
+        "color": 750,
+        "data_legibility": 780,
+        "layout": 760,
+        "visceral_value": 730,
+        "responsive": 700,
+        "consistency": 790,
+        "trust": 780
+      },
+      "total": 759,
+      "top_issues": [
+        "The ⌘K palette is a strong power feature with descriptions for each action, but 'Desk' is described as 'dense console' which is too terse, and there's no description for 'Lending' beyond 'lend to a hub pool or borrow'.",
+        "The palette covers global actions well but doesn't include the cross-network swap or a 'receive' variant that opens the exact QR, so a fast user has to still navigate.",
+        "The palette's 'Sovereignty — keys, proofs, exposure' is the best description; the rest are inconsistent in tone (some terse, some verbose)."
+      ],
+      "fixes": [
+        "Standardise description tone and length across all palette entries.",
+        "Add 'Cross-network swap' and 'Receive with QR' as direct palette actions.",
+        "Add a 'Dispute' entry so a user can jump straight to the dispute flow."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 764,
+    "verdict": "A strong, self-custodial wallet where the everyday paths (home, pay, receive, activity) are clear and unusually trust-building — the green/violet 'yours vs promised' rule and the per-frame proofs are the standout. The product is pulled down by a truncated/illegible dispute modal (06b), a factually wrong basis-point label in Lending (13), and overlapping/disabled states on the swap flows (05, 05b), all of which break trust exactly for the power users the model is designed to serve.",
+    "priority_fixes": [
+      "Fix the dispute modal (06b): render the full freeze explanation, the three co-signed-state steps, and the adjudication window without clipping or overlap; show dispute consequences (what you lose, cost, time) in view.",
+      "Fix the Lending basis-point label (13): 100 bp = 1.00%, not '100% per term'; add per-term APR and an expected-return figure so a lender can compare terms.",
+      "Replace the red + disabled-CTA state on Swap (05, 05b) with one actionable, single-colour prerequisite prompt and a live 'ready to swap' indicator once the condition is met.",
+      "Fix the cross-network swap tooltip overlap (05b) so the collateral slider, Pending rail, and zero-credit note are fully visible with an inline, non-overlapping placement.",
+      "Give Activity a real detail view (08) — expand proof hash, co-signed frame IDs, route, and both-signature indicators — instead of a copy of the list row."
+    ],
+    "personas": [
+      {
+        "name": "Rosa",
+        "satisfied": 80,
+        "verdict": "Я сразу вижу, сколько у меня и что зелёное — моё, а фиолетовое — только обещание, но слово 'Promised' и 'кредитная линия' меня немного смущают.",
+        "blockers": [
+          "01-home: 'Promised $122.99' vs 'Reserve $40.00' needs a plain-language line below the rule (I read small text carefully).",
+          "02-pay: 'frame', 'provable' and 'credit room' are jargon; I don't know what a frame is."
+        ]
+      },
+      {
+        "name": "Jamal",
+        "satisfied": 82,
+        "verdict": "Отлично видно, какие платежи пришли и что можно сразу тратить, а перевести деньги в резерв — пара кликов.",
+        "blockers": [
+          "01-home: no one-tap 'move this to Reserve' on a Recent row; 'Spendable now' should update live next to each payment.",
+          "I want a weekly total of settled inbound payments to know what to cash out."
+        ]
+      },
+      {
+        "name": "Priya",
+        "satisfied": 82,
+        "verdict": "QR и ссылка на оплату открываются мгновенно, а галочка 'settled' видна сразу — закрыть смену легко.",
+        "blockers": [
+          "04-receive: capacity 'via H1' is not explained and may change with the route.",
+          "07-activity: reconciliation needs a per-day settled total and the CSV is only on Activity, not per-day."
+        ]
+      },
+      {
+        "name": "Wei",
+        "satisfied": 84,
+        "verdict": "Книга, лимитка и 'сколько мне должен хаб' — всё на месте, но подготовка ёмкости перед свопом замедляет исполнение.",
+        "blockers": [
+          "05-swap: red 'Prepare incoming capacity' + disabled CTA stops me from placing a limit order fast; I want it to queue and fill from the book.",
+          "06-account: 'receive up to X' depends on the hub credit room which I can't see changing in real time."
+        ]
+      },
+      {
+        "name": "Elena",
+        "satisfied": 88,
+        "verdict": "Экспорт, proof с хешем и фреймом, и 'signed by both sides' — именно то, что нужно для аудита.",
+        "blockers": [
+          "07/08: the proof hash is truncated and 'Download proof' doesn't state it includes counterparty signatures.",
+          "15-sovereignty: I want the evidence bundle to list co-signed frame IDs per counterparty, not just hashes."
+        ]
+      },
+      {
+        "name": "Noah",
+        "satisfied": 85,
+        "verdict": "Схема считывается честно: фрейм #74, кредитная линия, залог, спор — всё видно в UI, и это не врёт.",
+        "blockers": [
+          "05/06/16: 'lane', 'credit room', 'Depository' appear without a glossary; the model is mostly readable but these terms need a tooltip or a map in docs.",
+          "02-pay: 'Provable' is a strong label but needs a one-line protocol explanation."
+        ]
+      },
+      {
+        "name": "Aisha",
+        "satisfied": 76,
+        "verdict": "Своп через две сети показан с комиссией и атомарностью, но предупреждение про нулевой кредит пугает — непонятно, доедет ли.",
+        "blockers": [
+          "05b: tooltip overlap hides the fee/path and the 'Account opening requested with zero credit' state is scary — I need a clear 'it will resolve in X' with a retry.",
+          "05b: total fee is not in USDC, only '0.1 WETH base + 1bps'."
+        ]
+      },
+      {
+        "name": "Lucas",
+        "satisfied": 70,
+        "verdict": "Получить $10 — быстро, но купить ETH — слишком много слов: 'bilateral', 'basis points', 'collateral'.",
+        "blockers": [
+          "05-swap: jargon-dense; I need a plain-English one-liner and a clear path, not 'Prepare incoming capacity'.",
+          "04/05: the colour rule is good, but the swap screen has no simple 'this will cost about $2 and take 2 minutes'."
+        ]
+      },
+      {
+        "name": "Ingrid",
+        "satisfied": 90,
+        "verdict": "Вижу 'выполнимо сейчас' против 'обещано' и расшифровку по контрагенту — точно то, что мне нужно для оценки риска.",
+        "blockers": [
+          "06/15: add a per-counterparty coverage ratio and time-to-dispute; now only 'at risk' is shown, not how enforceable each part is.",
+          "06-account: 'collateral you posted $60.00' shows exposure but not the ratio of collateral to the promised amount."
+        ]
+      },
+      {
+        "name": "Omar",
+        "satisfied": 74,
+        "verdict": "Что делает хаб — кредит, залог по запросу, спор — видно, но сколько он зарабатывает, смазано: 100 б.п. подписано как 100%.",
+        "blockers": [
+          "13-lend: 100 bp = 100% is wrong/confusing; I need the actual yield and hub economics (fees + spread).",
+          "13: no annualized APR or 'return in USDC', so I can't judge if lending is worth it; the earner income is not shown from the wallet."
+        ]
+      }
+    ]
+  }
+}

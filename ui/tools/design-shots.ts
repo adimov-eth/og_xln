@@ -182,19 +182,19 @@ async function shot(page: Page, dir: string, name: string, variant: Variant): Pr
 	await page.waitForTimeout(350);
 	if (!variant.mobile) {
 		const file = join(dir, `${name}.png`);
-		await page.screenshot({ path: file, fullPage: true });
+		await page.screenshot({ path: file, fullPage: true, animations: 'disabled' });
 		return [file];
 	}
 	await page.evaluate(() => window.scrollTo(0, 0));
 	await page.waitForTimeout(150);
 	const files = [join(dir, `${name}.png`)];
-	await page.screenshot({ path: files[0]!, fullPage: false });
+	await page.screenshot({ path: files[0]!, fullPage: false, animations: 'disabled' });
 	const overflow = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
 	if (overflow > 120) {
 		await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
 		await page.waitForTimeout(250);
 		const second = join(dir, `${name}-bottom.png`);
-		await page.screenshot({ path: second, fullPage: false });
+		await page.screenshot({ path: second, fullPage: false, animations: 'disabled' });
 		files.push(second);
 		await page.evaluate(() => window.scrollTo(0, 0));
 	}
@@ -292,7 +292,7 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 	await attempt('06b-dispute', async () => {
 		await page.getByTestId('account-dispute').click();
 		await page.getByTestId('dispute-prepare').waitFor({ timeout: 10_000 });
-		await page.waitForTimeout(400);
+		await page.waitForTimeout(900);
 	});
 	await page.keyboard.press('Escape');
 	await page.waitForTimeout(300);
@@ -301,10 +301,13 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 		await page.getByRole('link', { name: 'Activity' }).first().click();
 		await page.getByTestId('activity-row').first().waitFor({ timeout: 20_000 });
 	});
-	await attempt('08-activity-detail', async () => {
-		await page.getByTestId('activity-row').first().click();
-		await page.waitForTimeout(400);
-	});
+	// On a wide screen the detail is the right-hand panel already shown in 07; only the phone opens a separate sheet.
+	if (variant.mobile) {
+		await attempt('08-activity-detail', async () => {
+			await page.getByTestId('activity-row').first().click();
+			await page.waitForTimeout(400);
+		});
+	}
 	if (variant.mobile) {
 		await page.keyboard.press('Escape');
 		await page.waitForTimeout(300);
@@ -360,7 +363,15 @@ async function captureVariant(browser: Browser, variant: Variant): Promise<strin
 	}
 	await attempt('09-settings', async () => {
 		await goHome(page);
-		await page.getByTestId('nav-settings').locator('visible=true').first().click();
+		const tab = page.getByTestId('nav-settings').locator('visible=true').first();
+		if (await tab.isVisible().catch(() => false)) await tab.click({ timeout: 10_000 }).catch(() => undefined);
+		if (!page.url().endsWith('/settings')) {
+			// Client-side navigation keeps the vault unlocked (a reload would lock it).
+			await page.evaluate(() => {
+				window.history.pushState({}, '', '/settings');
+				window.dispatchEvent(new PopStateEvent('popstate'));
+			});
+		}
 		await page.getByText('Bar scale').waitFor();
 	});
 

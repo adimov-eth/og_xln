@@ -1,6 +1,6 @@
 {
   "baseUrl": "http://localhost:5183",
-  "takenAt": "2026-09-06T02:03:41.568Z",
+  "takenAt": "2026-09-06T02:38:25.228Z",
   "variants": {
     "desktop-dark": [
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/01-home.png",
@@ -12,7 +12,6 @@
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/06-account.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/06b-dispute.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/07-activity.png",
-      "/Users/zigota/xln/design/screenshots/ui/desktop-dark/08-activity-detail.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/10-move.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/11-manage.png",
       "/Users/zigota/xln/design/screenshots/ui/desktop-dark/12-assets.png",
@@ -27,8 +26,6 @@
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/01-home.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/01-home-bottom.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/02-pay.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/03-receipt.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/03-receipt-bottom.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/04-receive.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/04-receive-bottom.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/05-swap.png",
@@ -39,8 +36,6 @@
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06-account-bottom.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06b-dispute.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/06b-dispute-bottom.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/07-activity.png",
-      "/Users/zigota/xln/design/screenshots/ui/mobile-dark/08-activity-detail.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/10-move.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/10-move-bottom.png",
       "/Users/zigota/xln/design/screenshots/ui/mobile-dark/11-manage.png",

@@ -170,10 +170,9 @@ export function Home() {
 						) : null}
 						{places.accounts && !explained ? (
 							<div className="card" style={{ marginTop: 10, padding: '12px 14px' }} data-testid="home-explainer">
-								<p className="note" style={{ margin: 0 }}>
-									<b style={{ color: 'var(--ink)' }}>How to read this.</b> Every bar is drawn to one scale, so a dollar is the same width everywhere. Green is money the chain
-									guarantees you: on-chain, in reserve, or as collateral. Violet is what a hub has promised and could still fail to pay; move it into
-									collateral, or dispute, to make it green.
+								<p className="note" style={{ margin: 0, fontSize: 13.5, color: 'var(--ink-2)' }}>
+									<b style={{ color: 'var(--ink)' }}>Two colours, one rule.</b> <span style={{ color: 'var(--coll)' }}>Green</span> is yours no matter what.{' '}
+									<span style={{ color: 'var(--risk)' }}>Violet</span> is a promise from a hub. Bars are drawn to one scale: a dollar is the same width everywhere.
 								</p>
 								<button type="button" className="btn quiet sm" style={{ marginTop: 8 }} onClick={dismissExplainer} data-testid="home-explainer-done">
 									Got it
@@ -187,7 +186,7 @@ export function Home() {
 										<Icon name="bolt" size={13} />
 									</span>
 									<span data-testid="home-send-capacity">
-										Instant: send up to <b className="num">{formatUsd(wallet.usd.sendCapacity)}</b>, receive up to{' '}
+										Spendable now <b className="num">{formatUsd(wallet.usd.sendCapacity)}</b> · can receive{' '}
 										<b className="num">{formatUsd(wallet.usd.receiveCapacity)}</b>
 									</span>
 								</span>

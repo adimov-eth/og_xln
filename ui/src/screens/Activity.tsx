@@ -4,7 +4,7 @@ import { CopyId } from '../components/CopyId';
 import { Icon, type IconName } from '../components/Icons';
 import { Sheet } from '../components/Sheet';
 import { useApp } from '../runtime/store';
-import { dayLabel, formatClock, formatMoney, getTokenMeta } from '../runtime/format';
+import { dayLabel, formatClock, formatMoney, formatUsd, getTokenMeta } from '../runtime/format';
 import { displayEntityName, useWallet } from '../runtime/views';
 import { usdOf } from '../runtime/financial/prices';
 import { USER_ACTIVITY_TYPES, useMovements, type Movement } from '../runtime/financial/movements';
@@ -70,7 +70,9 @@ export function ActivityRow({
 	// A credit limit or collateral figure is a setting, not money that moved: keep it out of the money column.
 	const amountInline = movement.kind === 'account' || movement.kind === 'settlement';
 	// People read clocks, not frame numbers; the frame stays in the detail view for whoever needs the proof.
-	const subtitle = [party, amountInline && amount ? amount : '', movement.detail].filter(Boolean).join(' · ') || (movement.timestamp ? formatClock(movement.timestamp) : `frame #${movement.height}`);
+	const subtitle =
+		[party, amountInline && amount ? amount : '', movement.detail].filter(Boolean).join(' · ') ||
+		(movement.timestamp ? new Date(movement.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : `frame #${movement.height}`);
 	// Money that moved is drawn at the wallet's one scale, like every other bar.
 	const bar =
 		movement.kind === 'payment' && movement.amount !== null && movement.tokenId !== null
@@ -255,6 +257,23 @@ export function ActivityScreen() {
 	const desktop = typeof window !== 'undefined' && window.matchMedia('(min-width: 1101px)').matches;
 	const selected = movements.find(movement => movement.id === selectedId) ?? (desktop ? (movements[0] ?? null) : null);
 
+	// The day at a glance, for whoever closes the till: what came in, what went out, how many movements.
+	const today = useMemo(() => {
+		const startOfDay = new Date();
+		startOfDay.setHours(0, 0, 0, 0);
+		let received = 0;
+		let sent = 0;
+		let count = 0;
+		for (const movement of movements) {
+			if (!movement.timestamp || movement.timestamp < startOfDay.getTime() || movement.amount === null || movement.tokenId === null) continue;
+			const usd = usdOf(movement.tokenId, movement.amount);
+			if (movement.direction === 'in') received += usd;
+			else if (movement.direction === 'out') sent += usd;
+			count += 1;
+		}
+		return { received, sent, count };
+	}, [movements]);
+
 	let lastDay = '';
 	const rows = movements.map(movement => {
 		const day = movement.timestamp ? dayLabel(movement.timestamp) : `Frame ${movement.height}`;
@@ -267,6 +286,11 @@ export function ActivityScreen() {
 		<div className="screen fade-in">
 			<div className="screen-header">
 				<span className="screen-title">Activity</span>
+				{today.count > 0 ? (
+					<span className="note num" data-testid="activity-today" style={{ marginLeft: 12 }}>
+						Today · in {formatUsd(today.received)} · out {formatUsd(today.sent)} · {today.count} {today.count === 1 ? 'movement' : 'movements'}
+					</span>
+				) : null}
 				{movements.length > 0 ? (
 					<button type="button" className="btn quiet sm" onClick={() => exportCsv(movements)} data-testid="activity-export" title="Every movement shown here, with frame height and hash, for your books">
 						Export CSV

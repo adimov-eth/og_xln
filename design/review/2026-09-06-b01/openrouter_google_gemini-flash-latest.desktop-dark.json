@@ -1,0 +1,516 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 680,
+        "typography": 640,
+        "color": 630,
+        "data_legibility": 620,
+        "layout": 650,
+        "visceral_value": 650,
+        "responsive": 600,
+        "consistency": 670,
+        "trust": 650
+      },
+      "total": 645,
+      "top_issues": [
+        "Dense stacked visual explanations overpower primary balance metrics."
+      ],
+      "fixes": [
+        "Simplify bar breakdown card and increase contrast on smaller labels."
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 670,
+        "premium": 660,
+        "typography": 640,
+        "color": 640,
+        "data_legibility": 650,
+        "layout": 660,
+        "visceral_value": 640,
+        "responsive": 610,
+        "consistency": 670,
+        "trust": 660
+      },
+      "total": 650,
+      "top_issues": [
+        "Multiple before/after balance bars create cognitive friction during payment."
+      ],
+      "fixes": [
+        "Collapse comparative state into an expandable secondary panel."
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 670,
+        "typography": 650,
+        "color": 660,
+        "data_legibility": 670,
+        "layout": 670,
+        "visceral_value": 660,
+        "responsive": 620,
+        "consistency": 680,
+        "trust": 690
+      },
+      "total": 665,
+      "top_issues": [
+        "Proof hash and verification indicators use low-emphasis text weight."
+      ],
+      "fixes": [
+        "Promote verification state and simplify actions bar."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 650,
+        "premium": 650,
+        "typography": 630,
+        "color": 640,
+        "data_legibility": 640,
+        "layout": 640,
+        "visceral_value": 630,
+        "responsive": 600,
+        "consistency": 660,
+        "trust": 660
+      },
+      "total": 640,
+      "top_issues": [
+        "QR presentation lacks visual priority against secondary capacity selectors."
+      ],
+      "fixes": [
+        "Center QR block and elevate primary share mechanism."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 680,
+        "typography": 650,
+        "color": 660,
+        "data_legibility": 640,
+        "layout": 650,
+        "visceral_value": 660,
+        "responsive": 600,
+        "consistency": 670,
+        "trust": 660
+      },
+      "total": 653,
+      "top_issues": [
+        "Order book depth lines crowd the trade execution ticket."
+      ],
+      "fixes": [
+        "Clarify separation between input form and book depth metrics."
+      ]
+    },
+    {
+      "file": "05b-swap-cross.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 630,
+        "typography": 620,
+        "color": 610,
+        "data_legibility": 610,
+        "layout": 620,
+        "visceral_value": 610,
+        "responsive": 590,
+        "consistency": 640,
+        "trust": 620
+      },
+      "total": 617,
+      "top_issues": [
+        "Overlapping tooltip and collateral sliders obscure submission controls."
+      ],
+      "fixes": [
+        "Reposition tooltip and untangle credit limit adjustments."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 650,
+        "premium": 660,
+        "typography": 640,
+        "color": 630,
+        "data_legibility": 630,
+        "layout": 650,
+        "visceral_value": 630,
+        "responsive": 600,
+        "consistency": 660,
+        "trust": 660
+      },
+      "total": 641,
+      "top_issues": [
+        "Uncovered debt versus collateral terminology requires technical inference."
+      ],
+      "fixes": [
+        "Add visual grouping around net position and guarantee status."
+      ]
+    },
+    {
+      "file": "06b-dispute.png",
+      "scores": {
+        "hierarchy": 600,
+        "premium": 610,
+        "typography": 600,
+        "color": 590,
+        "data_legibility": 580,
+        "layout": 590,
+        "visceral_value": 590,
+        "responsive": 580,
+        "consistency": 620,
+        "trust": 610
+      },
+      "total": 597,
+      "top_issues": [
+        "Modal transparency causes severe readability drop over underlying text."
+      ],
+      "fixes": [
+        "Make modal backdrop solid and clarify dispute resolution steps."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 670,
+        "premium": 670,
+        "typography": 650,
+        "color": 650,
+        "data_legibility": 670,
+        "layout": 670,
+        "visceral_value": 650,
+        "responsive": 610,
+        "consistency": 680,
+        "trust": 670
+      },
+      "total": 659,
+      "top_issues": [
+        "Status pills and metadata tags blend together without strong rhythm."
+      ],
+      "fixes": [
+        "Differentiate settlement markers with distinct shape and placement."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 670,
+        "premium": 670,
+        "typography": 650,
+        "color": 650,
+        "data_legibility": 670,
+        "layout": 670,
+        "visceral_value": 650,
+        "responsive": 610,
+        "consistency": 680,
+        "trust": 670
+      },
+      "total": 659,
+      "top_issues": [
+        "Sidebar panel shares identical visual weight with background feed."
+      ],
+      "fixes": [
+        "Increase elevation contrast on active transaction inspector."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 640,
+        "typography": 630,
+        "color": 620,
+        "data_legibility": 620,
+        "layout": 630,
+        "visceral_value": 610,
+        "responsive": 590,
+        "consistency": 650,
+        "trust": 640
+      },
+      "total": 626,
+      "top_issues": [
+        "Extreme customization toggles shift focus away from key management."
+      ],
+      "fixes": [
+        "Group aesthetic settings separately from security controls."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 650,
+        "typography": 630,
+        "color": 630,
+        "data_legibility": 640,
+        "layout": 640,
+        "visceral_value": 630,
+        "responsive": 600,
+        "consistency": 650,
+        "trust": 650
+      },
+      "total": 636,
+      "top_issues": [
+        "Matrix of From/To cards presents high cognitive load for routine transfers."
+      ],
+      "fixes": [
+        "Adopt clearer stepped source-and-destination visual path."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 640,
+        "typography": 620,
+        "color": 620,
+        "data_legibility": 620,
+        "layout": 620,
+        "visceral_value": 610,
+        "responsive": 590,
+        "consistency": 640,
+        "trust": 630
+      },
+      "total": 622,
+      "top_issues": [
+        "Card grid feels sparse and disconnected from balance summaries."
+      ],
+      "fixes": [
+        "Consolidate hub management actions into structured list views."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 630,
+        "typography": 620,
+        "color": 610,
+        "data_legibility": 610,
+        "layout": 620,
+        "visceral_value": 600,
+        "responsive": 590,
+        "consistency": 630,
+        "trust": 620
+      },
+      "total": 616,
+      "top_issues": [
+        "Testnet faucet operations occupy primary dashboard real estate."
+      ],
+      "fixes": [
+        "Separate development tools from production asset balances."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 650,
+        "typography": 630,
+        "color": 630,
+        "data_legibility": 630,
+        "layout": 640,
+        "visceral_value": 620,
+        "responsive": 600,
+        "consistency": 650,
+        "trust": 640
+      },
+      "total": 633,
+      "top_issues": [
+        "Lending pool health and liquidity depth lack immediate context."
+      ],
+      "fixes": [
+        "Surface counterparty pool utilization alongside offer parameters."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 630,
+        "premium": 640,
+        "typography": 620,
+        "color": 620,
+        "data_legibility": 620,
+        "layout": 630,
+        "visceral_value": 610,
+        "responsive": 590,
+        "consistency": 650,
+        "trust": 650
+      },
+      "total": 626,
+      "top_issues": [
+        "Dense cryptographic governance copy lacks visual guidance."
+      ],
+      "fixes": [
+        "Implement a clear quorum threshold visualization diagram."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 670,
+        "typography": 650,
+        "color": 640,
+        "data_legibility": 650,
+        "layout": 660,
+        "visceral_value": 660,
+        "responsive": 610,
+        "consistency": 670,
+        "trust": 680
+      },
+      "total": 655,
+      "top_issues": [
+        "Evidence bundle export is under-prioritized relative to technical IDs."
+      ],
+      "fixes": [
+        "Elevate download actions and streamline cryptographic metadata."
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 650,
+        "premium": 670,
+        "typography": 640,
+        "color": 640,
+        "data_legibility": 620,
+        "layout": 630,
+        "visceral_value": 650,
+        "responsive": 580,
+        "consistency": 650,
+        "trust": 650
+      },
+      "total": 638,
+      "top_issues": [
+        "Information density causes severe scanning fatigue across wide table."
+      ],
+      "fixes": [
+        "Provide clear cell borders and align related numeric columns."
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 660,
+        "typography": 640,
+        "color": 640,
+        "data_legibility": 650,
+        "layout": 660,
+        "visceral_value": 640,
+        "responsive": 610,
+        "consistency": 660,
+        "trust": 660
+      },
+      "total": 648,
+      "top_issues": [
+        "Command palette options lack contextual category dividers."
+      ],
+      "fixes": [
+        "Group jump commands by task domain with distinct section headers."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 643,
+    "verdict": "The interface demonstrates rigorous protocol concepts through consistent dark-mode styling and systematic bar visualizations. Usability remains constrained by heavy cryptographic jargon and dense technical controls across common flows.",
+    "priority_fixes": [
+      "Simplify multi-part balance bar graphics into plain language totals.",
+      "Fix modal backdrop opacity to eliminate background bleeding on overlays.",
+      "Separate everyday payment flows from technical credit and collateral parameters.",
+      "Group command palette and settings options by high-level task domains.",
+      "Provide plain-language summaries for bilateral disputes and proof verification."
+    ],
+    "personas": [
+      {
+        "name": "Rosa",
+        "satisfied": 48,
+        "verdict": "There are too many tiny numbers and strange words about hubs for me to know my money is safe.",
+        "blockers": [
+          "Screen 01-home and 02-pay rely on low-contrast technical bars to explain safety."
+        ]
+      },
+      {
+        "name": "Jamal",
+        "satisfied": 62,
+        "verdict": "I can see the payments landing, but moving funds out feels confusing with all these account layers.",
+        "blockers": [
+          "Screen 10-move makes choosing between wallet, reserve, and account confusing."
+        ]
+      },
+      {
+        "name": "Priya",
+        "satisfied": 58,
+        "verdict": "Generating the code is easy, but verifying final counter settlement takes too much hunting.",
+        "blockers": [
+          "Screen 04-receive buries inbound limit capacity under technical settings."
+        ]
+      },
+      {
+        "name": "Wei",
+        "satisfied": 68,
+        "verdict": "The order book is clear enough, though managing credit lines mid-trade gets in the way.",
+        "blockers": [
+          "Screen 05b-swap-cross forces manual credit extension before placing fills."
+        ]
+      },
+      {
+        "name": "Elena",
+        "satisfied": 67,
+        "verdict": "The proof IDs and receipt exports exist, but I need cleaner comprehensive reports.",
+        "blockers": [
+          "Screen 07-activity and 15-sovereignty lack consolidated multi-account audit summaries."
+        ]
+      },
+      {
+        "name": "Noah",
+        "satisfied": 72,
+        "verdict": "The screens map directly to runtime state machines, accounts, and bilateral dispute rules.",
+        "blockers": [
+          "None; the interface transparently exposes underlying protocol concepts."
+        ]
+      },
+      {
+        "name": "Aisha",
+        "satisfied": 55,
+        "verdict": "Crossing chains works, but the intermediate hub lock steps do not clearly show final arrival times.",
+        "blockers": [
+          "Screen 05b-swap-cross lacks clear multi-leg timing and fee breakdowns."
+        ]
+      },
+      {
+        "name": "Lucas",
+        "satisfied": 52,
+        "verdict": "I just want to swap for ETH without reading an essay on bilateral settlement.",
+        "blockers": [
+          "Screen 05-swap presents overwhelming accounting terminology for simple trades."
+        ]
+      },
+      {
+        "name": "Ingrid",
+        "satisfied": 69,
+        "verdict": "The distinction between enforceable reserves and promised hub exposure is explicitly visible.",
+        "blockers": [
+          "Screen 15-sovereignty requires manual aggregation across separate counterparty views."
+        ]
+      },
+      {
+        "name": "Omar",
+        "satisfied": 64,
+        "verdict": "I understand the fee mechanisms, though hub yield dynamics remain somewhat fragmented.",
+        "blockers": [
+          "Screen 13-lending gives minimal insight into system-wide routing volume or return rates."
+        ]
+      }
+    ]
+  }
+}

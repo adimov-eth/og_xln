@@ -1,0 +1,838 @@
+{
+  "reviewer": "openrouter/qwen/qwen3.8-flash",
+  "screens": [
+    {
+      "file": "01-home-bottom.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 760,
+        "typography": 690,
+        "color": 680,
+        "data_legibility": 740,
+        "layout": 680,
+        "visceral_value": 700,
+        "responsive": 640,
+        "consistency": 760,
+        "trust": 730
+      },
+      "total": 710,
+      "top_issues": [
+        "Accounts card shows 'send up to 175.00' and 'receive up to 0.50' in tiny grey text, so the real spending limit and inbound risk are unclear.",
+        "Recent rows use unlabeled mini-bars and color-only status dots, forcing users to infer settlement state."
+      ],
+      "fixes": [
+        "Label the account row as 'Instant spend limit: $175.00' and 'Inbound room: $0.50' with warning color when room is low.",
+        "Replace mini-bars with explicit status text such as 'Settled', 'Open', 'Created', and add a legend for bar colors."
+      ]
+    },
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 800,
+        "typography": 740,
+        "color": 700,
+        "data_legibility": 730,
+        "layout": 700,
+        "visceral_value": 760,
+        "responsive": 720,
+        "consistency": 720,
+        "trust": 780
+      },
+      "total": 741,
+      "top_issues": [
+        "Total balance $155.00 sits above 'Spendable now $175.00' without explaining that credit makes spendable higher than owned balance.",
+        "The violet Pay button conflicts with violet Promised, mixing action color with risk color."
+      ],
+      "fixes": [
+        "Show a one-line reconciliation: 'Total $155 = Reserve $40 + Hub promise $115; can spend $175 using H1 credit'.",
+        "Make the primary Pay action neutral or green, and reserve violet only for promised/credit amounts."
+      ]
+    },
+    {
+      "file": "02-pay-bottom.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 730,
+        "typography": 660,
+        "color": 650,
+        "data_legibility": 680,
+        "layout": 640,
+        "visceral_value": 690,
+        "responsive": 670,
+        "consistency": 700,
+        "trust": 720
+      },
+      "total": 684,
+      "top_issues": [
+        "Fee '0.000050 USDC' is microscopic and not normalized to fiat, so the user cannot judge cost.",
+        "The selected route and '2 ROUTES' chips are small and do not explain why one route is better."
+      ],
+      "fixes": [
+        "Show fee as '≈ $0.00' plus exact USDC, and add 'cheapest' or 'fewest hops' badges to routes.",
+        "Make route selection a larger card with fee, hops, and settlement guarantee visible."
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 760,
+        "typography": 700,
+        "color": 690,
+        "data_legibility": 670,
+        "layout": 700,
+        "visceral_value": 720,
+        "responsive": 730,
+        "consistency": 760,
+        "trust": 700
+      },
+      "total": 715,
+      "top_issues": [
+        "The raw 64-character address dominates the recipient card and is hard to verify.",
+        "'fee under 0.01 USDC' hides the exact cost and may feel imprecise for a payment screen."
+      ],
+      "fixes": [
+        "Show recipient name or short address with copy/verify controls, and expose full address only when needed.",
+        "Display exact fee plus fiat estimate, not only a range."
+      ]
+    },
+    {
+      "file": "03-receipt-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 820,
+        "typography": 760,
+        "color": 750,
+        "data_legibility": 760,
+        "layout": 720,
+        "visceral_value": 800,
+        "responsive": 680,
+        "consistency": 780,
+        "trust": 760
+      },
+      "total": 763,
+      "top_issues": [
+        "Proof hash is truncated and there is no copy-proof action.",
+        "'Download' does not specify whether it downloads a receipt, proof, or PDF."
+      ],
+      "fixes": [
+        "Add 'Copy proof' and 'Download signed receipt (PDF/JSON)' labels.",
+        "Move close and Done controls into thumb reach on mobile."
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 820,
+        "typography": 760,
+        "color": 750,
+        "data_legibility": 750,
+        "layout": 730,
+        "visceral_value": 800,
+        "responsive": 690,
+        "consistency": 790,
+        "trust": 770
+      },
+      "total": 767,
+      "top_issues": [
+        "The sheet covers the balance explanation, making the receipt feel like a one-off popup rather than durable evidence.",
+        "No fee or counterparty address is visible in the receipt summary."
+      ],
+      "fixes": [
+        "Add fee, recipient short id, and 'Both parties signed' line to the receipt card.",
+        "Provide a persistent 'View full evidence' link instead of only truncated proof text."
+      ]
+    },
+    {
+      "file": "04-receive-bottom.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 720,
+        "typography": 670,
+        "color": 680,
+        "data_legibility": 660,
+        "layout": 640,
+        "visceral_value": 660,
+        "responsive": 650,
+        "consistency": 720,
+        "trust": 700
+      },
+      "total": 678,
+      "top_issues": [
+        "'0.50 capacity via H1' is tiny and ambiguous for someone expecting to receive money.",
+        "The entity id is truncated but has no copy button, and QR is not visible in this bottom view."
+      ],
+      "fixes": [
+        "Show 'Inbound room: $0.50' as a prominent warning chip with a link to increase capacity.",
+        "Add copy buttons for payment link and entity id, and keep QR visible or provide a QR thumbnail."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 780,
+        "typography": 700,
+        "color": 710,
+        "data_legibility": 680,
+        "layout": 700,
+        "visceral_value": 740,
+        "responsive": 720,
+        "consistency": 760,
+        "trust": 730
+      },
+      "total": 726,
+      "top_issues": [
+        "The QR is large but unlabeled; the user must infer what it encodes.",
+        "'Prepare incoming account' sounds like a task and obscures that this is the receiving path."
+      ],
+      "fixes": [
+        "Title the screen 'Show this QR to get paid' and label QR content as 'xln payment request'.",
+        "Rename to 'Receive into: H1' and show inbound room as a status, not a form field."
+      ]
+    },
+    {
+      "file": "05-swap-bottom.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 720,
+        "typography": 640,
+        "color": 620,
+        "data_legibility": 660,
+        "layout": 620,
+        "visceral_value": 680,
+        "responsive": 600,
+        "consistency": 700,
+        "trust": 690
+      },
+      "total": 661,
+      "top_issues": [
+        "The order book is dense and color-only, with no total depth, mid price, or selected-price impact.",
+        "Rows are small for mobile one-handed use, and 'Tap a level' does not preview the resulting order."
+      ],
+      "fixes": [
+        "Add Buy/Sell labels, total depth, mid, spread, and a tap-to-preview sheet showing amount, fee, and settlement.",
+        "Increase row height and show numeric depth values, not only bars."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 780,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 720,
+        "layout": 680,
+        "visceral_value": 730,
+        "responsive": 660,
+        "consistency": 740,
+        "trust": 760
+      },
+      "total": 719,
+      "top_issues": [
+        "The primary swap action is below the fold and not visually anchored.",
+        "'Hub fee 1 bps · up to 0.0000 WETH' is imprecise and may hide real cost."
+      ],
+      "fixes": [
+        "Add a sticky CTA: 'Swap 100 USDC for 0.039992 WETH'.",
+        "Show exact fee, fiat estimate, and worst-case rounding before confirmation."
+      ]
+    },
+    {
+      "file": "05b-swap-cross-bottom.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 700,
+        "typography": 620,
+        "color": 640,
+        "data_legibility": 650,
+        "layout": 600,
+        "visceral_value": 620,
+        "responsive": 610,
+        "consistency": 680,
+        "trust": 700
+      },
+      "total": 646,
+      "top_issues": [
+        "The red 'Prepare incoming capacity before swapping' blocker does not give a single clear next action.",
+        "Permanent credit extension is presented as routine despite increasing counterparty risk."
+      ],
+      "fixes": [
+        "Replace the warning with a primary action: 'Add inbound room first', and show what happens after confirmation.",
+        "Add a risk confirmation: 'H3 may owe you 0.008798 WETH without collateral.'"
+      ]
+    },
+    {
+      "file": "05b-swap-cross.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 750,
+        "typography": 680,
+        "color": 690,
+        "data_legibility": 690,
+        "layout": 640,
+        "visceral_value": 700,
+        "responsive": 630,
+        "consistency": 720,
+        "trust": 740
+      },
+      "total": 694,
+      "top_issues": [
+        "The modal covers the prepare-to-receive section, hiding the blocker that prevents the swap.",
+        "Cross-network fee, gas, and landing time are not summarized."
+      ],
+      "fixes": [
+        "Move the sheet to bottom half or collapse it so the blocker remains visible.",
+        "Add 'Estimated fee: X USDC + gas, lands: instant/unknown' before confirm."
+      ]
+    },
+    {
+      "file": "06-account-bottom.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 760,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 740,
+        "layout": 700,
+        "visceral_value": 720,
+        "responsive": 680,
+        "consistency": 760,
+        "trust": 800
+      },
+      "total": 728,
+      "top_issues": [
+        "'They owe you, uncovered $115.00' relies on violet color and does not state enforceability clearly.",
+        "The dispute window is buried in a row, and there is no dispute CTA in this card."
+      ],
+      "fixes": [
+        "Add 'Uncovered exposure: $115.00; enforceable by dispute' and a visible Dispute button.",
+        "Show last signed frame time and proof status in the account summary."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 790,
+        "typography": 720,
+        "color": 700,
+        "data_legibility": 730,
+        "layout": 710,
+        "visceral_value": 750,
+        "responsive": 700,
+        "consistency": 750,
+        "trust": 780
+      },
+      "total": 737,
+      "top_issues": [
+        "The legend is tiny and color-only, so secured, promised, you owe, credit room, and in flight are hard to learn.",
+        "Pay uses violet, conflicting with the violet Promised meaning on the same screen."
+      ],
+      "fixes": [
+        "Use text labels next to legend colors and a collapsible 'What this means' explanation.",
+        "Make Pay neutral/green and reserve violet for credit/promised values."
+      ]
+    },
+    {
+      "file": "06b-dispute-bottom.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 740,
+        "typography": 680,
+        "color": 700,
+        "data_legibility": 700,
+        "layout": 660,
+        "visceral_value": 680,
+        "responsive": 650,
+        "consistency": 720,
+        "trust": 780
+      },
+      "total": 701,
+      "top_issues": [
+        "The dispute sheet covers the account evidence the user may need before starting a dispute.",
+        "'Dispute this account...' is destructive but does not show the exact frame/proof being submitted."
+      ],
+      "fixes": [
+        "Show 'Submitting frame #12, proof 0x...' and a 'Review evidence' link before the danger button.",
+        "Add a bottom 'Cancel' control within thumb reach."
+      ]
+    },
+    {
+      "file": "06b-dispute.png",
+      "scores": {
+        "hierarchy": 710,
+        "premium": 750,
+        "typography": 690,
+        "color": 700,
+        "data_legibility": 700,
+        "layout": 670,
+        "visceral_value": 690,
+        "responsive": 660,
+        "consistency": 730,
+        "trust": 780
+      },
+      "total": 708,
+      "top_issues": [
+        "The dimmed Pay button remains violet, confusing the danger flow and diluting the dispute warning.",
+        "The close control is top-right and hard for one-handed use."
+      ],
+      "fixes": [
+        "Disable or gray background actions during a dispute modal.",
+        "Add a prominent 'Cancel' button at the bottom of the sheet."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 790,
+        "typography": 720,
+        "color": 700,
+        "data_legibility": 730,
+        "layout": 720,
+        "visceral_value": 760,
+        "responsive": 700,
+        "consistency": 780,
+        "trust": 770
+      },
+      "total": 743,
+      "top_issues": [
+        "The filter chip 'Acco...' is cut off, hiding available filters.",
+        "'Swap placed 18.58 USDC' lacks sign, counterparty, and whether it is an order or fill."
+      ],
+      "fixes": [
+        "Make filters horizontally scrollable with full labels and a visible overflow indicator.",
+        "Show '+18.58 USDC order with H1' or 'Open order' with amount and direction."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 810,
+        "typography": 740,
+        "color": 740,
+        "data_legibility": 750,
+        "layout": 720,
+        "visceral_value": 780,
+        "responsive": 680,
+        "consistency": 780,
+        "trust": 790
+      },
+      "total": 758,
+      "top_issues": [
+        "Proof and recipient addresses are truncated with no copy or expand control.",
+        "'Frames 2 committed entries' is technical and does not explain audit value."
+      ],
+      "fixes": [
+        "Add copy buttons for proof and recipient, and a 'Both parties signed' evidence row.",
+        "Replace '2 committed entries' with '2 signed frames' plus a link to full ledger evidence."
+      ]
+    },
+    {
+      "file": "09-settings-bottom.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 750,
+        "typography": 700,
+        "color": 710,
+        "data_legibility": 720,
+        "layout": 680,
+        "visceral_value": 680,
+        "responsive": 670,
+        "consistency": 720,
+        "trust": 740
+      },
+      "total": 707,
+      "top_issues": [
+        "'Reveal recovery phrase' and 'Forget vault' have similar visual weight despite different risk levels.",
+        "Runtime id and frame diagnostics conflict with frame numbers seen in receipts and sovereignty screens."
+      ],
+      "fixes": [
+        "Make reveal phrase a destructive secondary with confirmation, and separate vault deletion into a danger section.",
+        "Reconcile frame/runtime identifiers or explain why different ledgers are shown."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 730,
+        "premium": 780,
+        "typography": 720,
+        "color": 730,
+        "data_legibility": 700,
+        "layout": 700,
+        "visceral_value": 690,
+        "responsive": 710,
+        "consistency": 760,
+        "trust": 750
+      },
+      "total": 727,
+      "top_issues": [
+        "Dollars-per-pixel is a power-user concept placed above core wallet settings.",
+        "Comfort/Desk wide-screen layout is irrelevant on mobile and consumes hierarchy."
+      ],
+      "fixes": [
+        "Move scale to Advanced and default to readable bars with numeric values.",
+        "Hide desktop layout controls on mobile and surface security/network settings first."
+      ]
+    },
+    {
+      "file": "10-move-bottom.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 760,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 700,
+        "layout": 700,
+        "visceral_value": 720,
+        "responsive": 710,
+        "consistency": 740,
+        "trust": 730
+      },
+      "total": 718,
+      "top_issues": [
+        "'Fund you through H1' is vague and does not explain settlement, fee, or risk.",
+        "Sign & send lacks a review summary of source, destination, amount, and effect."
+      ],
+      "fixes": [
+        "Show 'Instant, fee $0.00, signed by both sides' before confirmation.",
+        "Add a review sheet listing From, To, amount, route, and enforceable effect."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 780,
+        "typography": 710,
+        "color": 710,
+        "data_legibility": 720,
+        "layout": 700,
+        "visceral_value": 730,
+        "responsive": 700,
+        "consistency": 760,
+        "trust": 740
+      },
+      "total": 729,
+      "top_issues": [
+        "From and To cards use identical blue selection styling, making direction ambiguous.",
+        "'Recipient entity · leave empty for yourself' is confusing and error-prone."
+      ],
+      "fixes": [
+        "Label selected cards explicitly with 'From' and 'To' and use directional arrows.",
+        "Default to 'To my account' and only reveal external entity id when needed."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 790,
+        "typography": 720,
+        "color": 720,
+        "data_legibility": 730,
+        "layout": 720,
+        "visceral_value": 740,
+        "responsive": 700,
+        "consistency": 760,
+        "trust": 780
+      },
+      "total": 742,
+      "top_issues": [
+        "'Where your money stands' is clear, but there is no actionable CTA to increase enforceable funds.",
+        "'Needs attention' says nothing waiting, but does not show risk thresholds or upcoming dispute windows."
+      ],
+      "fixes": [
+        "Add 'Increase enforceable' and 'Review hub exposure' CTAs.",
+        "Show alert count, last sync time, and any counterparty response deadlines."
+      ]
+    },
+    {
+      "file": "12-assets-bottom.png",
+      "scores": {
+        "hierarchy": 660,
+        "premium": 720,
+        "typography": 650,
+        "color": 660,
+        "data_legibility": 670,
+        "layout": 640,
+        "visceral_value": 650,
+        "responsive": 650,
+        "consistency": 700,
+        "trust": 720
+      },
+      "total": 672,
+      "top_issues": [
+        "'Receive USDC from H1' is disabled without a visible reason.",
+        "Extending a permanent credit limit is presented as a routine button despite increasing unsecured exposure."
+      ],
+      "fixes": [
+        "Show why the receive action is disabled, such as 'Inbound room is 0.50 USDC'.",
+        "Add a risk confirmation for permanent credit: 'H1 may owe you X without collateral.'"
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 730,
+        "premium": 770,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 710,
+        "layout": 700,
+        "visceral_value": 700,
+        "responsive": 700,
+        "consistency": 750,
+        "trust": 760
+      },
+      "total": 722,
+      "top_issues": [
+        "'Depository may pull 0.00' is scary and unclear for a zero balance.",
+        "Signer and Depository addresses are truncated without copy controls."
+      ],
+      "fixes": [
+        "Rename to 'Reserve can use for collateral: $0.00' with a short explanation.",
+        "Add copy buttons for signer and depository addresses."
+      ]
+    },
+    {
+      "file": "13-lend-bottom.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 740,
+        "typography": 680,
+        "color": 690,
+        "data_legibility": 680,
+        "layout": 680,
+        "visceral_value": 660,
+        "responsive": 680,
+        "consistency": 720,
+        "trust": 710
+      },
+      "total": 694,
+      "top_issues": [
+        "'Offer to the pool' is disabled without explaining that an amount is required.",
+        "H1 pool stats are all zero, giving no yield estimate or utilization context."
+      ],
+      "fixes": [
+        "Show 'Enter amount to offer' near the disabled button.",
+        "Add estimated APR, borrowed ratio, and active principal from the hub pool."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 760,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 690,
+        "layout": 700,
+        "visceral_value": 680,
+        "responsive": 700,
+        "consistency": 740,
+        "trust": 720
+      },
+      "total": 711,
+      "top_issues": [
+        "No market rate, pool utilization, or risk context is shown before lending.",
+        "'3 lanes' and 'basis points' are jargon for a first-time lender."
+      ],
+      "fixes": [
+        "Add 'H1 pool rate: X%, borrowed Y%' and plain-language risk note.",
+        "Show estimated return in USD and explain that principal is exposed to hub credit/collateral terms."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 730,
+        "premium": 770,
+        "typography": 700,
+        "color": 710,
+        "data_legibility": 710,
+        "layout": 700,
+        "visceral_value": 700,
+        "responsive": 700,
+        "consistency": 750,
+        "trust": 780
+      },
+      "total": 725,
+      "top_issues": [
+        "Entity and signer IDs are truncated without copy buttons.",
+        "'Lazy entity' and 'EntityProvider' are protocol jargon that can mislead a non-developer."
+      ],
+      "fixes": [
+        "Add copy controls and a 'Verify address' action.",
+        "Replace jargon with 'This wallet can add co-signers; register the entity to transfer ownership.'"
+      ]
+    },
+    {
+      "file": "15-sovereignty-bottom.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 780,
+        "typography": 700,
+        "color": 710,
+        "data_legibility": 730,
+        "layout": 710,
+        "visceral_value": 740,
+        "responsive": 690,
+        "consistency": 750,
+        "trust": 800
+      },
+      "total": 735,
+      "top_issues": [
+        "'nothing at risk' conflicts with the $115 promised balance shown elsewhere.",
+        "Per-counterparty evidence lacks amount at risk and proof count."
+      ],
+      "fixes": [
+        "Show 'Promise at risk: $115 if H1 vanishes; enforceable via dispute'.",
+        "Add frame count, last proof hash, and response deadline per counterparty."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 810,
+        "typography": 730,
+        "color": 730,
+        "data_legibility": 750,
+        "layout": 720,
+        "visceral_value": 780,
+        "responsive": 700,
+        "consistency": 680,
+        "trust": 820
+      },
+      "total": 750,
+      "top_issues": [
+        "Enforceable right now $40 against total $155 is alarming without a CTA to increase enforceable funds.",
+        "Signer and entity IDs differ from the bottom sovereignty view, creating consistency and trust doubt."
+      ],
+      "fixes": [
+        "Add 'Move promised to collateral' or 'Request collateral' as the primary action.",
+        "Reconcile keys/ledger identifiers across all sovereignty screenshots."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 717,
+    "verdict": "The product has a distinctive, honest balance model and strong settlement receipts, but mobile shipping is blocked by ambiguous capacity math, color-primary conflicts, and proof/fee details that are too small or truncated. It can become premium once every financial action states source, fee, speed, and enforceable risk in plain language.",
+    "priority_fixes": [
+      "Resolve the violet conflict: use violet only for promised/credit amounts, not for the primary Pay/Swap action.",
+      "Make total versus spendable explicit everywhere: show total, reserve, promised, credit room, and inbound room as labeled numbers.",
+      "Add verification and evidence controls: copyable full addresses, exact fees in fiat, proof hashes, and 'both parties signed' summaries.",
+      "Fix mobile one-handed ergonomics: move close/copy/confirm into thumb reach, prevent clipped filters, and keep blockers visible.",
+      "Replace jargon and color-only data with plain labels: inbound room, uncovered exposure, enforceable, dispute window, and risk warnings."
+    ],
+    "personas": [
+      {
+        "name": "Rosa",
+        "satisfied": 68,
+        "verdict": "I see the big number, but I do not know if sending $50 is safe or what the tiny fee really means.",
+        "blockers": [
+          "01-home.png: total $155 versus spendable $175 is confusing.",
+          "02-pay.png: raw address and 'under 0.01 USDC' fee are too small to trust.",
+          "03-receipt-bottom.png: proof is truncated and download options are vague."
+        ]
+      },
+      {
+        "name": "Jamal",
+        "satisfied": 72,
+        "verdict": "I can watch money arrive, but I cannot instantly tell which dollars are truly spendable today.",
+        "blockers": [
+          "01-home-bottom.png: 'send up to 175.00' and 'receive up to 0.50' are buried.",
+          "07-activity.png: timestamps lack dates and open swap amount is ambiguous.",
+          "10-move-bottom.png: no fee, speed, or settlement summary before moving earnings."
+        ]
+      },
+      {
+        "name": "Priya",
+        "satisfied": 74,
+        "verdict": "The QR is fast, but I cannot tell whether a customer payment will fit my inbound room.",
+        "blockers": [
+          "04-receive.png: '0.50 capacity via H1' is tiny and alarming.",
+          "07-activity.png: filter chip is cut off and statuses rely on color.",
+          "08-activity-detail.png: no fee or customer-facing confirmation detail."
+        ]
+      },
+      {
+        "name": "Wei",
+        "satisfied": 66,
+        "verdict": "I can read prices, but I would not place five figures without depth, exact fees, and exposure math.",
+        "blockers": [
+          "05-swap-bottom.png: book lacks total depth, mid, and order preview.",
+          "05-swap.png: hub fee 'up to 0.0000 WETH' is imprecise.",
+          "06-account-bottom.png: hub exposure is not summarized as enforceable versus uncovered."
+        ]
+      },
+      {
+        "name": "Elena",
+        "satisfied": 70,
+        "verdict": "There is a CSV and proof hash, but not enough visible signed evidence for a serious audit.",
+        "blockers": [
+          "08-activity-detail.png: proof and recipient are truncated with no copy/expand control.",
+          "15-sovereignty-bottom.png: evidence bundle lacks count, size, and per-counterparty exposure.",
+          "07-activity.png: no visible date range, account filter, or audit export format."
+        ]
+      },
+      {
+        "name": "Noah",
+        "satisfied": 76,
+        "verdict": "I can map frames, disputes, and bilateral settlement, but inconsistent IDs make me doubt the state model.",
+        "blockers": [
+          "09-settings-bottom.png: frame #44 conflicts with receipt #73 and sovereignty #213.",
+          "15-sovereignty-bottom.png: signer/entity IDs differ from 15-sovereignty.png.",
+          "05b-swap-cross-bottom.png: capacity and credit extension flow is not clearly protocol-owned."
+        ]
+      },
+      {
+        "name": "Aisha",
+        "satisfied": 58,
+        "verdict": "I cannot move payroll across networks without seeing fee, landing time, and whether inbound capacity will block it.",
+        "blockers": [
+          "05b-swap-cross.png: no cross-network fee, gas, or arrival estimate.",
+          "05b-swap-cross-bottom.png: capacity blocker appears with ambiguous next action.",
+          "04-receive.png: inbound capacity of 0.50 is far below a $10 payroll payment."
+        ]
+      },
+      {
+        "name": "Lucas",
+        "satisfied": 64,
+        "verdict": "I can show a QR, but buying ETH feels like paperwork and I do not know if my $10 will even arrive.",
+        "blockers": [
+          "04-receive.png: $10 may exceed the visible 0.50 inbound room.",
+          "05-swap.png: prepare-to-receive credit slider is confusing jargon.",
+          "05-swap.png: no obvious sticky confirm button for the swap."
+        ]
+      },
+      {
+        "name": "Ingrid",
+        "satisfied": 70,
+        "verdict": "The enforceable versus promised split is strong, but per-counterparty risk is not yet quantified cleanly.",
+        "blockers": [
+          "15-sovereignty-bottom.png: 'nothing at risk' contradicts $115 promised exposure.",
+          "06-account-bottom.png: uncovered debt and collateral are not netted into a risk figure.",
+          "12-assets-bottom.png: permanent credit extension lacks explicit risk warning."
+        ]
+      },
+      {
+        "name": "Omar",
+        "satisfied": 62,
+        "verdict": "I see what a hub does, but not what it earns, how to attract users, or how fees are calculated.",
+        "blockers": [
+          "06-account.png: no hub fee or earnings summary.",
+          "13-lend.png: pool lacks rates, utilization, and operator economics.",
+          "05-swap.png: fee shown as 'up to 0.0000 WETH' is not operator-grade."
+        ]
+      }
+    ]
+  }
+}

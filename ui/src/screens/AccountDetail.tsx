@@ -592,7 +592,7 @@ export function AccountDetail() {
 			))}
 			{lanes.empty.length > 0 ? (
 				<button type="button" className="btn quiet" style={{ marginBottom: 14 }} onClick={() => setShowEmpty(value => !value)}>
-					{showEmpty ? 'Hide' : 'Show'} {lanes.empty.length} empty {lanes.empty.length === 1 ? 'lane' : 'lanes'} ·{' '}
+					{showEmpty ? 'Hide' : 'Show'} {lanes.empty.length} unused {lanes.empty.length === 1 ? 'token' : 'tokens'} ·{' '}
 					{lanes.empty.map(token => getTokenMeta(token.tokenId).symbol).join(', ')}
 				</button>
 			) : null}
@@ -620,7 +620,14 @@ export function AccountDetail() {
 								<>
 									<div className="kv" data-testid="account-exposure">
 										<span className="k">They owe you, uncovered</span>
-										<span className="v num" style={{ color: safety.riskUsd > 0 ? 'var(--risk)' : undefined }}>{formatUsd(safety.riskUsd)}</span>
+										<span className="v num" style={{ color: safety.riskUsd > 0 ? 'var(--risk)' : undefined }}>
+											{formatUsd(safety.riskUsd)}
+											{safety.riskUsd > 0 && account.isHub && account.dispute === 'none' ? (
+												<button type="button" className="btn quiet sm" style={{ marginLeft: 8 }} onClick={() => setManaging('collateral')} data-testid="account-cover" title="Ask the hub to lock its own collateral for what it owes you">
+													Cover it
+												</button>
+											) : null}
+										</span>
 									</div>
 									<div className="kv">
 										<span className="k">Their debt covered by collateral</span>
