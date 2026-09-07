@@ -1110,7 +1110,7 @@ describe('storage frame journal retention', () => {
     await closeInfraDb(env);
   });
 
-  test('persists the bounded transport outbox and refuses automatic restore delivery', async () => {
+  test('persists the bounded transport outbox and restores the exact committed delivery', async () => {
     const seed = `storage-transport-outbox ${Date.now()} alpha beta gamma`;
     const runtimeId = deriveSignerAddressSync(seed, '1').toLowerCase();
     const dbRoot = process.env.XLN_DB_PATH || 'db-tmp/runtime';
@@ -1219,7 +1219,8 @@ describe('storage frame journal retention', () => {
     const verification = await verifyRuntimeChain(runtimeId, seed);
     expect(verification.ok).toBe(true);
     const restored = await loadEnvFromDB(runtimeId, seed);
-    expect(restored?.pendingNetworkOutputs).toEqual([]);
+    expect(restored?.pendingNetworkOutputs).toEqual([pendingOutput]);
+    expect(restored?.state.height).toBe(rawFrame.height);
     if (restored) {
       await closeRuntimeDb(restored);
       await closeInfraDb(restored);

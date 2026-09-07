@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { Contract, ContractFactory, HDNodeWallet, JsonRpcProvider, Wallet, ethers } from 'ethers';
 
 import { buildSingleSignerHanko } from '../../../hanko/batch';
+import { decodeInt512, encodeInt512 } from '../../../protocol/crypto/abi-money';
+import { safeStringify } from '../../../protocol/serialization';
 import { computeBatchHankoHash, createEmptyBatch, encodeJBatch, type JBatch } from '../../../jurisdiction/machine/batch';
 import { linkArtifactBytecode } from '../../../jurisdiction/adapter/rpc-utils';
 import { computeAccountKey } from '../../../jurisdiction/adapter/events/contract-codec';
@@ -24,7 +26,7 @@ import type { StoredTowerActionReceipt } from '../../../watchtower/store';
 const DEFAULT_HARDHAT_MNEMONIC = 'test test test test test test test test test test test junk';
 const DISPUTE_PROOF = 1;
 const PROOF_BODY_ABI =
-  'tuple(bytes32 watchSeed,uint32 leftResponseSeconds,uint32 rightResponseSeconds,int256[] offdeltas,uint256[] tokenIds,tuple(address transformerAddress,bytes encodedBatch,tuple(uint256 deltaIndex,uint256 rightAllowance,uint256 leftAllowance)[] allowances)[] transformers)';
+  'tuple(bytes32 watchSeed,uint32 leftResponseSeconds,uint32 rightResponseSeconds,tuple(int256 high,uint256 low)[] offdeltas,uint256[] tokenIds,tuple(address transformerAddress,bytes encodedBatch,tuple(uint256 deltaIndex,uint256 rightAllowance,uint256 leftAllowance)[] allowances)[] transformers)';
 
 const tempRoots: string[] = [];
 const servers: StandaloneWatchtowerServer[] = [];
@@ -84,8 +86,12 @@ const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 const derivePrivateKey = (index: number): string =>
   HDNodeWallet.fromPhrase(DEFAULT_HARDHAT_MNEMONIC, undefined, `m/44'/60'/0'/0/${index}`).privateKey;
 
+const proofBodyForAbi = (proofbody: Record<string, unknown>) => ({
+  ...proofbody,
+  offdeltas: (proofbody['offdeltas'] as bigint[]).map(encodeInt512),
+});
 const proofBodyHash = (proofbody: Record<string, unknown>): string =>
-  ethers.keccak256(abiCoder.encode([PROOF_BODY_ABI], [proofbody]));
+  ethers.keccak256(abiCoder.encode([PROOF_BODY_ABI], [proofBodyForAbi(proofbody)]));
 
 const proofBody = (watchSeed: string, offdeltas: bigint[], tokenIds: bigint[], transformers: unknown[] = []): Record<string, unknown> => ({
   watchSeed,
@@ -196,17 +202,17 @@ const deployWatchtowerContracts = async (
   const entityProvider = await deploy(
     entityProviderArtifact,
     linkArtifactBytecode(entityProviderArtifact.bytecode, {
-      'contracts/HankoVerifier.sol:HankoVerifier': await hankoVerifier.getAddress(),
+      'project/contracts/HankoVerifier.sol:HankoVerifier': await hankoVerifier.getAddress(),
     }),
     [deployer.address],
   );
   const depository = await new ContractFactory(
     depositoryArtifact.abi,
     linkArtifactBytecode(depositoryArtifact.bytecode, {
-      'contracts/Account.sol:Account': await account.getAddress(),
-      'contracts/DepositoryBounds.sol:DepositoryBounds': await bounds.getAddress(),
-      'contracts/HashLadderRegistry.sol:HashLadderRegistry': await registry.getAddress(),
-      'contracts/custody/NftCustody.sol:NftCustody': await nftCustody.getAddress(),
+      'project/contracts/Account.sol:Account': await account.getAddress(),
+      'project/contracts/DepositoryBounds.sol:DepositoryBounds': await bounds.getAddress(),
+      'project/contracts/HashLadderRegistry.sol:HashLadderRegistry': await registry.getAddress(),
+      'project/contracts/custody/NftCustody.sol:NftCustody': await nftCustody.getAddress(),
     }),
     deployer,
   ).deploy(await entityProvider.getAddress(), await transformer.getAddress(), {
@@ -317,7 +323,7 @@ describe('watchtower rpc last-resort integration', () => {
       nonce: disputeNonce,
       proposerIsLeft: true,
       proofbodyHash: initialProofbodyHash,
-      initialProofbody,
+      initialProofbody: proofBodyForAbi(initialProofbody),
       watchSeed,
       sig: startSig,
       starterInitialArguments,
@@ -446,7 +452,7 @@ describe('watchtower rpc last-resort integration', () => {
     const upload = await fetch(`http://127.0.0.1:${towerServer.server.port}/api/tower/appointment`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(appointment),
+      body: safeStringify(appointment),
     });
     expect(upload.ok).toBe(true);
 
@@ -533,7 +539,7 @@ describe('watchtower rpc last-resort integration', () => {
     expect(finalizedAccount.nonce).toBe(finalNonce);
     expect(finalizedAccount.disputeHash).toBe(ethers.ZeroHash);
     expect(collateralAfter.collateral).toBe(0n);
-    expect(collateralAfter.ondelta).toBe(0n);
+    expect(decodeInt512(collateralAfter.ondelta)).toBe(0n);
     expect(await depository._reserves(watched.entityId, tokenId)).toBe(800n);
     expect(await depository._reserves(counterparty.entityId, tokenId)).toBe(200n);
 
@@ -611,7 +617,7 @@ describe('watchtower rpc last-resort integration', () => {
       nonce: disputeNonce,
       proposerIsLeft: true,
       proofbodyHash: initialProofbodyHash,
-      initialProofbody,
+      initialProofbody: proofBodyForAbi(initialProofbody),
       watchSeed,
       sig: startSig,
       starterInitialArguments,
@@ -740,7 +746,7 @@ describe('watchtower rpc last-resort integration', () => {
     const upload = await fetch(`http://127.0.0.1:${towerServer.server.port}/api/tower/appointment`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(appointment),
+      body: safeStringify(appointment),
     });
     expect(upload.ok).toBe(true);
 
@@ -755,7 +761,7 @@ describe('watchtower rpc last-resort integration', () => {
       finalNonce: userFinalNonce,
       proposerIsLeft: false,
       initialProofbodyHash,
-      finalProofbody: userProofbody,
+      finalProofbody: proofBodyForAbi(userProofbody),
       starterArguments: starterCounterArguments,
       otherArguments: '0x',
       sig: userFinalSig,

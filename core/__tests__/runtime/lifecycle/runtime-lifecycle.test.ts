@@ -15,6 +15,7 @@ import {
 } from '../../../runtime';
 import type { RuntimeReplica } from '../../../runtime/types';
 import { reportFatalLoopError } from '../../../runtime/loop/loop-failure';
+import { setRuntimeDeliveryReady } from '../../../runtime/envelope/p2p-lifecycle';
 
 describe('runtime lifecycle', () => {
   test('uses one explicit phase as the lifecycle source of truth', () => {
@@ -93,6 +94,18 @@ describe('runtime lifecycle', () => {
 
     expect(env.infrastructure?.lifecyclePhase).toBe('running');
     env.infrastructure?.stopLoop?.();
+  });
+
+  test('closes new commands through J catchup without changing committed state', () => {
+    const env = createEmptyEnv('runtime-j-catchup-readiness');
+    env.infrastructure = { lifecyclePhase: 'running', loopActive: true };
+    const committedState = env.state;
+    setRuntimeDeliveryReady(env, false);
+    expect(() => assertRuntimeCommandReady(env)).toThrow('RUNTIME_COMMAND_NOT_READY:j-catchup');
+    expect(env.state).toBe(committedState);
+    setRuntimeDeliveryReady(env, true);
+    expect(() => assertRuntimeCommandReady(env)).not.toThrow();
+    expect(env.state).toBe(committedState);
   });
 
   test('durable resume clears the persistence fence before restarting the loop', async () => {

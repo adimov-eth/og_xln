@@ -5,7 +5,13 @@ import {
   qaRunTestCategory,
   qaTestCategoryFromTags,
 } from '../../../qa/test-categories';
-import { parsePlaywrightTestMetadata } from '../../../scripts/e2e/harness/playwright-test-metadata';
+import { listPlaywrightTestMetadata, parsePlaywrightTestMetadata } from '../../../scripts/e2e/harness/playwright-test-metadata';
+
+test('Playwright loads custody Runtime wire decoders without importing server configuration', () => {
+  const tests = listPlaywrightTestMetadata(['tests/e2e-custody.spec.ts']);
+  expect(tests.length).toBeGreaterThan(0);
+  expect(tests.every(entry => entry.file === 'tests/e2e-custody.spec.ts')).toBe(true);
+});
 
 test('classifies exactly one native Playwright QA category tag', () => {
   expect(qaTestCategoryFromTags(['@functional'])).toBe('functional');

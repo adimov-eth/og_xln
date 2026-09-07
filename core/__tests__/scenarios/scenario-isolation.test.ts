@@ -38,7 +38,8 @@ test('cross-j uses the assigned port batch and isolated child databases', () => 
   expect(parent).toContain("path.join(scenarioDbRoot, role)");
   expect(parent).not.toContain("path.join(process.cwd(), 'db-tmp')");
   expect(child).not.toContain('reservePort');
-  expect(p2p).toContain('acquireLocalTestPortLease({ requiredOffsets: [0]');
+  expect(p2p).toContain('acquireLocalTestPortLease({ requiredOffsets: [0, 1]');
+  expect(p2p).toContain("'--direct-port',\n    String(relayPort + 1)");
   expect(p2p).toContain('buildScenarioIsolatedEnv(process.env, dbPath');
   expect(p2p).not.toContain('getFreePort');
 });

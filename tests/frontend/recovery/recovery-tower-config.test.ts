@@ -17,7 +17,8 @@ import {
 } from '../../../frontend/src/lib/stores/vault/vaultStore';
 import * as xln from '../../../core/runtime';
 import { decryptTowerPayloadWithWatchSeed } from '../../../core/storage/recovery/bundle/crypto';
-import { deserializeTaggedJson } from '../../../core/protocol/serialization';
+import { deserializeTaggedJson, safeStringify } from '../../../core/protocol/serialization';
+import { decodeTowerCounterDisputeRemedy } from '../../../core/watchtower/action';
 import type { EncryptedRuntimeRecoveryBundleV1, RuntimeReplica, XLNModule } from '../../../core/api/public/runtime-module';
 import { makeAccount } from '../../../core/__tests__/helpers/cross-j';
 
@@ -188,7 +189,7 @@ test('vault runtime recovery and restore diagnostics use persistent error log', 
 
   expect(recoverySource).toContain("errorLog.log('Runtime metadata snapshot persistence failed', 'Runtime Recovery', error)");
   expect(recoverySource).toContain('Tower recovery upload failed');
-  expect(bootstrapSource).toContain("errorLog.log('Faucet failed', 'Runtime Funding'");
+  expect(bootstrapSource).not.toContain('/api/faucet');
   expect(cleanupSource).toContain('RUNTIME_CLEANUP_STORAGE_FAILED');
   expect(cleanupSource).toContain("'Runtime Cleanup'");
   expect(cleanupSource).toContain('throw err;');
@@ -211,7 +212,12 @@ test('vaultStore diagnostics do not use raw console output', () => {
   expect(source).toContain("errorLog.log('Resume refresh failed', 'Runtime Resume', error)");
   expect(source).toContain('Broadcast refresh failed');
   expect(source).toContain("errorLog.log('Failed to load runtimes; preserved corrupted storage for recovery', 'Runtime Storage', error)");
-  expect(source).toContain("errorLog.log('Failed to save runtimes', 'Runtime Storage', error)");
+  const persistence = source.slice(
+    source.indexOf('const persistVaultStateOrThrow ='),
+    source.indexOf('const readPersistedVaultProtection ='),
+  );
+  expect(persistence).toContain('localStorage.setItem(VAULT_STORAGE_KEY, serializeVaultState(get(runtimesState)))');
+  expect(persistence).not.toContain('catch');
   expect(source).toContain('createRuntime failed for ${id.slice(0, 12)}');
   expect(source).toContain("errorLog.log('Failed to register key/create entity', 'Runtime Creation'");
   expect(source).toContain("errorLog.log('Failed to get balance', 'Runtime Balance'");
@@ -340,10 +346,13 @@ test('delayed last-resort appointments require encrypted tower action payloads',
   expect(encryptedRemedy).not.toContain('counter_dispute_remedy');
 
   const plaintext = await decryptTowerPayloadWithWatchSeed(encryptedRemedy, testWatchSeed);
-  const remedy = JSON.parse(plaintext) as { type?: string; towerAddress?: string; watchedEntityId?: string };
+  const remedy = await decodeTowerCounterDisputeRemedy(plaintext);
   expect(remedy.type).toBe('counter_dispute_remedy');
   expect(remedy.towerAddress).toBe(towerWallet.address.toLowerCase());
   expect(remedy.watchedEntityId).toBe(entityId);
+  expect(remedy.latestProof.finalProofbody.offdeltas).toEqual([0n]);
+  expect(remedy.latestProof.finalProofbody.leftResponseSeconds).toBe(3_600n);
+  expect(remedy.latestProof.finalProofbody.rightResponseSeconds).toBe(86_400n);
 });
 
 test('tower restore checks discovery before restore to avoid expected missing-backup 404s', async () => {
@@ -354,7 +363,7 @@ test('tower restore checks discovery before restore to avoid expected missing-ba
     calls.push(String(input));
     expect(init?.method).toBe('POST');
     expect(String(input)).toContain('/api/recovery/discover');
-    return new Response(JSON.stringify({
+    return new Response(safeStringify({
       ok: true,
       lookupKey,
       available: false,
@@ -426,7 +435,7 @@ test('runtime recovery discovery asks every tower and sorts candidates by runtim
     const towerUrl = Object.keys(bundleByTower).find((tower) => url.includes(tower));
     if (!towerUrl) return new Response('not found', { status: 404 });
     if (url.includes('/api/recovery/discover')) {
-      return new Response(JSON.stringify({
+      return new Response(safeStringify({
         ok: true,
         lookupKey,
         available: true,
@@ -436,7 +445,7 @@ test('runtime recovery discovery asks every tower and sorts candidates by runtim
         headers: { 'content-type': 'application/json' },
       });
     }
-    return new Response(JSON.stringify({
+    return new Response(safeStringify({
       ok: true,
       bundle: bundleByTower[towerUrl],
     }), {
@@ -505,7 +514,7 @@ test('runtime recovery discovery classifies expected empty and transient failure
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes('/api/recovery/discover')) {
-      return new Response(JSON.stringify({
+      return new Response(safeStringify({
         ok: true,
         lookupKey,
         available: false,
@@ -603,7 +612,7 @@ test('local runtime backup file is parsed as an explicit recovery candidate', as
 
   const candidate = await parseRuntimeRecoveryCandidateFile(
     testMnemonic,
-    JSON.stringify({ version: 1, bundles: [encrypted] }),
+    safeStringify({ version: 1, bundles: [encrypted] }),
     {
       sourceLabel: 'flash-drive-backup.json',
       xln: {

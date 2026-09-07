@@ -56,9 +56,12 @@ describe('server jurisdiction writer', () => {
   test('returns the selected jurisdiction key and preserves its configured display name', async () => {
     const path = withJurisdictionsPath({
       version: '1',
+      lastUpdated: '2026-09-07T00:00:00.000Z',
+      defaults: { timeout: 30000, retryAttempts: 3, gasLimit: 1000000 },
       jurisdictions: {
         renamedPrimary: {
           name: 'Base Local',
+          blockTimeMs: 1000, explorer: '', currency: 'ETH',
           primary: true,
           status: 'active',
           chainId: 31337,

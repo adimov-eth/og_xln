@@ -24,6 +24,7 @@ import { requirePersistentAccountStateMap } from '../../../account/state/persist
 import {
   entity,
   makeAccount,
+  openWritableEntityAccounts,
   makeJurisdiction,
   makeState,
 } from '../../helpers/cross-j';
@@ -122,7 +123,7 @@ describe('Entity Account work indexes', () => {
         toEntityId: counterparty,
       },
     });
-    state.accounts = state.accounts.updated(counterparty, account);
+    openWritableEntityAccounts(state).set(counterparty, account);
 
     expect(shouldQueueCommittedAccountWork(true, state, false, false)).toBe(true);
     expect(shouldQueueCommittedAccountWork(true, state, true, false)).toBe(false);
@@ -163,7 +164,7 @@ describe('Entity Account work indexes', () => {
           toEntityId: counterparty,
         },
       });
-      state.accounts = state.accounts.updated(counterparty, account);
+      openWritableEntityAccounts(state).set(counterparty, account);
     };
     queuePayment(sourceState, targetId);
     queuePayment(targetState, sourceId);

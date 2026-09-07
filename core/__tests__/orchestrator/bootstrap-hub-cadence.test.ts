@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test';
 import { bootstrapHub } from '../../../scripts/bootstrap-hub';
 import { createEmptyEnv, hasRuntimeWork } from '../../runtime';
 
-test('hub bootstrap waits for cadence-gated Entity and config commits', async () => {
+test('hub bootstrap commits config once and preserves idempotence across repeated startup', async () => {
   const seed = 'hub-bootstrap-cadence-regression';
   const env = createEmptyEnv(seed);
   env.quietRuntimeLogs = true;
@@ -48,5 +48,25 @@ test('hub bootstrap waits for cadence-gated Entity and config commits', async ()
   expect(replica).toBeDefined();
   expect(replica?.state.hubRebalanceConfig?.routingFeePPM).toBe(17);
   expect(env.state.height).toBe(2);
+  expect(hasRuntimeWork(env)).toBe(false);
+
+  // Repeating startup must not sign another Entity frame: setHubConfig fans
+  // rebalance_policy proposals out to existing Accounts before peers reconnect.
+  const repeated = await bootstrapHub(env, {
+    name: 'Cadence Hub', seed, signerId: 'hub-validator', routingFeePPM: 17,
+  });
+  expect(repeated).toEqual(result);
+  expect(env.state.height).toBe(2);
+  expect(hasRuntimeWork(env)).toBe(false);
+
+  await bootstrapHub(env, {
+    name: 'Cadence Hub', seed, signerId: 'hub-validator', routingFeePPM: 18,
+    rebalanceLiquidityFeeBps: 2n,
+  });
+  const updated = env.state.eReplicas.get(`${result.entityId}:${result.signerId}`);
+  expect(updated?.state.hubRebalanceConfig?.routingFeePPM).toBe(18);
+  expect(updated?.state.hubRebalanceConfig?.rebalanceLiquidityFeeBps).toBe(2n);
+  expect(updated?.state.hubRebalanceConfig?.policyVersion).toBe(2);
+  expect(env.state.height).toBe(3);
   expect(hasRuntimeWork(env)).toBe(false);
 });

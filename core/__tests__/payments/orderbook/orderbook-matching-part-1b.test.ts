@@ -1757,6 +1757,7 @@ describe('orderbook matching execution mapping', () => {
     const entityState = {
       entityId: HUB_ENTITY,
       accounts: new Map([[NEW_TAKER_ACCOUNT, makeAccountMachine([takerOffer])]]),
+      paybook: { entries: PersistentEntityCollectionMap.empty('paybookHashlock'), feesEarned: 0n },
       crossJurisdictionSwaps: new Map([['old-cross', staleRoute]]),
       crossJurisdictionBookAdmissions: new Map([
         [
@@ -1912,6 +1913,7 @@ describe('orderbook matching execution mapping', () => {
         [MAKER_ENTITY, makeAccountMachine([makerOffer])],
         [NEW_TAKER_ACCOUNT, makeAccountMachine([takerOffer])],
       ]),
+      paybook: { entries: PersistentEntityCollectionMap.empty('paybookHashlock'), feesEarned: 0n },
       crossJurisdictionSwaps: new Map([['old-cross', staleRoute]]),
       crossJurisdictionBookAdmissions: new Map([
         [

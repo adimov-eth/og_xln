@@ -208,7 +208,7 @@ describe('production swap load evidence', () => {
         lastFinalizedJHeight: 0, disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 20 },
         jNonce: 0, requestedRebalance: new Map(), requestedRebalanceFeeState: new Map(),
       },
-      status: 'active', mempool: [], currentFrame: {}, currentHeight: 0,
+      status: 'active', mempool: [], mempoolCount: 3, currentFrame: {}, currentHeight: 0,
       rollbackCount: 0, proofHeader: {},
       pendingWithdrawals: new Map(), shadow: {},
       pendingFrame,
@@ -220,6 +220,12 @@ describe('production swap load evidence', () => {
     const decoded = decodeAccountPage(page);
     expect(decoded?.state.deltas.get(1)?.rightCreditLimit).toBe(20n);
     expect(decoded?.state.disputeConfig).toEqual({ leftResponseSeconds: 10, rightResponseSeconds: 20 });
+    // The compact API omits queued transactions while retaining their count.
+    for (const mempoolCount of [-1, 0.5, '3', undefined]) {
+      expect(() => decodeAccountPage({
+        ...page, items: [{ ...item, mempoolCount }],
+      })).toThrow('PRODUCTION_SWAP_LOAD_ACCOUNT_MEMPOOL_COUNT_INVALID');
+    }
     expect(() => decodeAccountPage({
       ...page,
       items: [{ ...item, pendingFrame: { ...pendingFrame, extra: true } }],

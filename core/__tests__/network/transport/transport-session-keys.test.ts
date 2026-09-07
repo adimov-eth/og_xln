@@ -96,8 +96,10 @@ describe('direct runtime session keys', () => {
       },
     });
     clients.push(client);
+    route.setReady(true);
+    client.setReady(true);
     await client.connect();
-    await waitFor(() => client.isOpen());
+    await waitFor(() => client.canDeliver() && route.canDeliver(CLIENT_RUNTIME_ID));
 
     // hello: runtime-signed, offers the ephemeral key. hello_ack: runtime-signed, answers with the server key.
     const hello = clientFrames.find(frame => frame.type === 'hello');

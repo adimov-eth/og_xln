@@ -5,8 +5,12 @@ import { expect, test } from 'bun:test';
 import { createHmac } from 'crypto';
 import { computeAddress, hexlify, keccak256, recoverAddress, SigningKey, toUtf8Bytes } from 'ethers';
 
+import { safeStringify } from '../../../protocol/serialization';
+import { computeFrameHash } from '../../../account/consensus/frame/hash';
 import { createEmptyAccountJClaimAccumulator } from '../../../account/j-claims/j-claim-accumulator';
 import { PersistentAccountStateMap } from '../../../account/state/persistent-state-map';
+import { createDefaultDelta } from '../../../account/state/delta';
+import { applyAccountDisputeFinality, applyAccountDisputeStarted } from '../../../account/settlement/j-finality';
 
 import {
   deriveRuntimeAdapterCapabilityToken,
@@ -39,6 +43,7 @@ import {
   assertRuntimeAdapterGraphFrameWireBudget,
   resolveRuntimeAdapterRead,
   type RuntimeAdapterGraphFrame,
+  type RuntimeAdapterViewFrame,
 } from '../../../api/runtime-adapter/resolve';
 
 import { decryptRuntimeRecoveryBundle, deriveRuntimeRecoveryLookupKey } from '../../../storage/recovery/bundle/crypto';
@@ -56,6 +61,11 @@ import {
 
 import { decodeBuffer, encodeBuffer } from '../../../storage/codec/codec';
 
+import { prepareEntityStorageLayout } from '../../../storage/schema/entity/layout';
+import { PersistentEntityCollectionMap } from '../../../entity/state/persistent-collection-map';
+import { createSnapshot } from '../../../storage/database/lifecycle';
+import { projectStorageBookHeader, projectStorageBookGraphRows } from '../../../storage/schema/book-graph-codec';
+import { createBook, getBookSideLevels, materializeCommittedRemainder } from '../../../orderbook/core';
 import { prepareAccountStorageLayout } from '../../../storage/schema/account-layout';
 
 import { verifyLiveStorageIntegrity } from '../../../storage/read/integrity/live';
@@ -65,6 +75,7 @@ import {
   STORAGE_SCHEMA_VERSION,
   hexBytes,
   keyLiveAccount,
+  keyLiveBook,
   keyLiveEntity,
   keySnapshotAccountPrefix,
   keySnapshotBookPrefix,
@@ -125,7 +136,7 @@ const makeHubProfile = (id: string, name: string, lastUpdated = 7): Profile =>
     signingSeed: `radapter-live-profile:${id}:${name}`,
     name,
     lastUpdated,
-    runtimeId: `runtime:${name.toLowerCase()}`,
+    runtimeId: deriveSignerAddressSync(`radapter-live-profile:${id}:${name}`, '1').toLowerCase(),
     runtimeEncPubKey: `0x${'11'.repeat(32)}`,
     isHub: true,
     jurisdiction: {
@@ -153,6 +164,7 @@ const makeEnv = (): RuntimeReplica =>
             isProposer: true,
             state: {
               entityId,
+              entityEncryptionPublicKey: `0x${'44'.repeat(32)}`,
               height: 7,
               timestamp: 700,
               nonces: new Map(),
@@ -257,70 +269,41 @@ const prepareAccountFixtureForGraph = (account: AccountReplica): AccountReplica 
     'rebalanceShadowSubmitted',
     account.shadow.rebalance.submittedAtByToken,
   );
+  const frame = account.currentFrame;
+  account.currentFrame = {
+    height: frame.height, timestamp: frame.timestamp, jHeight: frame.jHeight,
+    accountTxs: frame.accountTxs, prevFrameHash: frame.prevFrameHash,
+    accountStateRoot: frame.accountStateRoot, stateHash: computeFrameHash(frame),
+  };
   return account;
 };
 
-const makeBook = (_price: bigint): BookState => ({
-  params: { bucketWidthTicks: 1n, maxOrders: 100, stpPolicy: 0 },
-  orders: new Map(),
-  bidBuckets: new Map(),
-  askBuckets: new Map(),
-  bidBucketIdsDesc: [],
-  askBucketIdsAsc: [],
-  nextSeq: 1,
-  tradeCount: 0,
-  tradeQtySum: 0n,
-  lastTradePriceTicks: 0n,
-  lastAcceptedUsdAskPriceTicks: 0n,
-  eventHash: 0n,
-});
+const entityLayoutRows = (replica: EntityReplica): Array<[Buffer, Buffer]> => {
+  const state = { ...replica.state,
+    paybook: { ...replica.state.paybook, entries: PersistentEntityCollectionMap.from(replica.state.paybook.entries, 'paybookHashlock') },
+    deferredAccountProposals: PersistentEntityCollectionMap.from(replica.state.deferredAccountProposals ?? new Map()),
+  };
+  return prepareEntityStorageLayout(entityId, keyLiveEntity(entityId), state).puts.map(({ key, value }) => [key, value]);
+};
+
+const makeBook = (_price: bigint): BookState => createBook({ bucketWidthTicks: 1n, maxOrders: 100, stpPolicy: 0 });
 
 const makeCrowdedBidLevelBook = (price: bigint, orderCount: number): BookState => {
-  const orderIds = Array.from({ length: orderCount }, (_, index) => `order-${index.toString().padStart(2, '0')}`);
-  const orders = new Map(
-    orderIds.map((orderId, index) => [
-      orderId,
-      {
-        orderId,
-        ownerId: `0x${(index + 1).toString(16).padStart(64, '0')}`,
-        side: 0 as const,
-        priceTicks: price,
-        qtyLots: 1n,
-        seq: index + 1,
-        bucketId: price,
-      },
-    ]),
-  );
-  return {
-    ...makeBook(price),
-    orders,
-    bidBuckets: new Map([
-      [
-        price.toString(),
-        {
-          bucketId: price,
-          pricesAsc: [price],
-          levels: new Map([
-            [
-              price.toString(),
-              {
-                priceTicks: price,
-                orderIds,
-                totalQtyLots: BigInt(orderCount),
-              },
-            ],
-          ]),
-        },
-      ],
-    ]),
-    bidBucketIdsDesc: [price],
-    nextSeq: orderCount + 1,
-  };
+  let book = makeBook(price);
+  for (let index = 0; index < orderCount; index++) {
+    book = materializeCommittedRemainder(book, {
+      orderId: `order-${index.toString().padStart(2, '0')}`,
+      ownerId: `0x${(index + 1).toString(16).padStart(64, '0')}`,
+      side: 0, priceTicks: price, qtyLots: 1n,
+    });
+  }
+  return book;
 };
 
 const makeOrderbookExt = (books: Map<string, BookState>): OrderbookExtState => ({
   books,
   orderPairs: new Map(),
+  pairDimensions: new Map(),
   referrals: new Map(),
   hubProfile: {
     entityId,
@@ -496,13 +479,12 @@ test('runtime adapter view-frame excludes unbounded account internals from remot
       type: 'memo',
       data: { index, note: 'x'.repeat(160) },
     })),
-    deltas: Array.from({ length: 5_000 }, (_, index) => ({
-      tokenId: index,
-      ondelta: BigInt(index),
-      offdelta: -BigInt(index),
-      collateral: 0n,
-    })),
   };
+  // Deltas belong to AccountState; AccountFrame contains their root, never another leaf array.
+  account.state.deltas = new Map(Array.from({ length: 5_000 }, (_, index) => {
+    const tokenId = index + 1;
+    return [tokenId, { ...createDefaultDelta(tokenId), ondelta: BigInt(tokenId), offdelta: -BigInt(tokenId) }];
+  }));
   account.pendingFrame = {
     ...account.currentFrame,
     height: account.currentFrame.height + 1,
@@ -518,40 +500,153 @@ test('runtime adapter view-frame excludes unbounded account internals from remot
   account.state.settlementWorkspace = { notes: 's'.repeat(500_000) };
   prepareAccountFixtureForGraph(account);
 
-  const frame = await resolveRuntimeAdapterRead<{
-    activeEntity: {
-      accounts: {
-        items: Array<{
-          watchSeed: string;
-          mempool: unknown[];
-          currentFrame: { accountTxs: unknown[]; deltas: unknown[] };
-          pendingFrame?: { accountTxs: unknown[]; deltas: unknown[] };
-          settlementWorkspace?: unknown;
-          leftPendingJClaims: { root: string; count: bigint };
-          rightPendingJClaims: { root: string; count: bigint };
-          boardHankoRefreshMigration?: {
-            activationJHeight: number;
-            activationLogIndex: number;
-            reason: string;
-          };
-        }>;
-      };
-    } | null;
-  }>({ env }, 'view-frame', { entityId, accountsLimit: 1, booksLimit: 1 });
+  const frame = await resolveRuntimeAdapterRead<RuntimeAdapterViewFrame>({ env }, 'view-frame', { entityId, accountsLimit: 1, booksLimit: 1 });
   const encoded = encodeRuntimeAdapterMessage({ v: XLN_PROTOCOL_VERSION, inReplyTo: 'account-budget', ok: true, payload: frame });
   const compact = frame.activeEntity?.accounts.items[0];
+  if (!compact) throw new Error('BOUNDED_VIEW_ACCOUNT_RESULT_MISSING');
 
   expect(encoded.byteLength).toBeLessThan(1_048_576);
-  expect(compact?.state.watchSeed).toBe('');
-  expect(compact?.mempool).toHaveLength(0);
-  expect(compact?.currentFrame.accountTxs.length ?? 0).toBeLessThanOrEqual(20);
-  expect(compact?.currentFrame.deltas.length ?? 0).toBeLessThanOrEqual(100);
-  expect(compact?.pendingFrame?.accountTxs.length ?? 0).toBeLessThanOrEqual(20);
-  expect(compact?.pendingFrame?.deltas.length ?? 0).toBeLessThanOrEqual(100);
-  expect(compact?.state.settlementWorkspace).toBeUndefined();
-  expect(compact?.state.leftPendingJClaims).toEqual(createEmptyAccountJClaimAccumulator());
-  expect(compact?.state.rightPendingJClaims).toEqual(createEmptyAccountJClaimAccumulator());
-  expect(compact?.boardHankoRefreshMigration).toEqual(account.boardHankoRefreshMigration);
+  expect(compact.state.watchSeed).toBe('');
+  expect(compact.mempool).toHaveLength(0);
+  expect(compact.mempoolCount).toBe(30_000);
+  expect(compact.currentFrame.accountTxs).toHaveLength(20);
+  expect(compact.currentFrame).not.toHaveProperty('deltas');
+  expect(compact.pendingFrame?.accountTxs).toHaveLength(20);
+  expect(compact.pendingFrame).not.toHaveProperty('deltas');
+  expect(compact.state.deltas.size).toBe(100);
+  expect(account.state.deltas.size).toBe(5_000);
+  for (const [tokenId, delta] of compact.state.deltas) expect(delta).toEqual(account.state.deltas.get(tokenId));
+  expect(compact.state.settlementWorkspace).toBeUndefined();
+  expect(compact.state.leftPendingJClaims).toEqual(createEmptyAccountJClaimAccumulator());
+  expect(compact.state.rightPendingJClaims).toEqual(createEmptyAccountJClaimAccumulator());
+  expect(compact.boardHankoRefreshMigration).toEqual(account.boardHankoRefreshMigration);
+});
+
+test('runtime adapter preserves dispute preparation, observed finality and clearing without proof material or history reads', async () => {
+  const env = makeEnv();
+  const replica = env.state.eReplicas.get(`${entityId}:signer`);
+  const account = replica?.state.accounts.get(counterpartyId);
+  if (!account) throw new Error('DISPUTE_VIEW_ACCOUNT_FIXTURE_MISSING');
+  prepareAccountFixtureForGraph(account);
+  const proofHash = `0x${'61'.repeat(32)}`;
+  const counterCommitment = `0x${'62'.repeat(32)}`;
+  const proofArguments = `0x${'ab'.repeat(32_000)}`;
+  account.status = 'dispute_preparing';
+  account.disputePrepare = {
+    startedAt: 700_000,
+    readyAfter: 701_000,
+    reason: 'user requested dispute',
+    pendingOrderbookRemovalIds: ['cross-order-to-remove'],
+    startIntent: { starterInitialArguments: proofArguments, description: 'original private start intent' },
+    crossJurisdictionRecovery: { requiredPullIds: ['cross-pull-to-recover'], resultsByPullId: {} },
+  };
+  const read = async () => {
+    // No historical loaders or DB are supplied: this must remain a latest-state point read.
+    const frame = await resolveRuntimeAdapterRead<RuntimeAdapterViewFrame>(
+      { env }, 'view-frame', { entityId, accountId: counterpartyId, accountsLimit: 1, booksLimit: 1 },
+    );
+    const compact = frame.activeEntity?.accounts.items[0];
+    if (!compact) throw new Error('DISPUTE_VIEW_ACCOUNT_RESULT_MISSING');
+    const message = { v: XLN_PROTOCOL_VERSION, inReplyTo: 'dispute-view', ok: true as const, payload: frame };
+    const bytes = encodeRuntimeAdapterMessage(message);
+    expect(bytes.byteLength).toBeLessThan(16_384);
+    expect(decodeRuntimeAdapterMessage(bytes)).toEqual(message);
+    expect(await resolveRuntimeAdapterRead<unknown>({ env }, `entity/${entityId}/account/${counterpartyId}`)).toEqual(compact);
+    return compact;
+  };
+  const preparing = await read();
+  expect(preparing.status).toBe('dispute_preparing');
+  expect(preparing.disputePrepare).toEqual({ startedAt: 700_000, readyAfter: 701_000, reason: 'user requested dispute' });
+  expect(preparing.activeDispute).toBeUndefined();
+
+  const placeholder = {
+    startedByLeft: true,
+    initialProofbodyHash: proofHash,
+    initialNonce: 0,
+    initialProposerIsLeft: false,
+    disputeTimeout: 0,
+    jNonce: 0,
+    starterCounterProofCommitment: counterCommitment,
+    observedOnChain: false,
+    observedBlockNumber: 0,
+    batchNonce: 0,
+    finalizeQueued: false,
+  };
+  account.status = 'disputed';
+  account.activeDispute = { ...placeholder, starterInitialArguments: proofArguments, starterCounterArguments: proofArguments };
+  const pending = await read();
+  expect(pending.activeDispute).toEqual(placeholder);
+  expect(pending.activeDispute?.observedOnChain).toBe(false);
+
+  applyAccountDisputeStarted(account, {
+    kind: 'dispute_started',
+    starterEntityId: entityId,
+    initialProofbodyHash: proofHash,
+    initialNonce: 14,
+    initialProposerIsLeft: false,
+    disputeStartTimestamp: 800,
+    disputeTimeout: 820,
+    leftResponseSeconds: 10,
+    rightResponseSeconds: 10,
+    jNonce: 3,
+    starterInitialArguments: proofArguments,
+    starterCounterArguments: proofArguments,
+    starterCounterProofCommitment: counterCommitment,
+    observedBlockNumber: 77,
+    batchNonce: 2,
+  });
+  const observed = await read();
+  expect(observed.activeDispute).toEqual({
+    ...placeholder,
+    initialNonce: 14,
+    disputeStartTimestamp: 800,
+    disputeTimeout: 820,
+    jNonce: 3,
+    observedOnChain: true,
+    observedBlockNumber: 77,
+    batchNonce: 2,
+  });
+  expect(observed.disputePrepare).toBeUndefined();
+  expect(account.activeDispute?.starterInitialArguments).toBe(proofArguments);
+  expect(account.activeDispute?.crossJurisdictionRecovery?.requiredPullIds).toEqual(['cross-pull-to-recover']);
+  if (!account.activeDispute) throw new Error('DISPUTE_VIEW_OBSERVED_STATE_MISSING');
+  Object.assign(account.activeDispute, {
+    selectedCounterNonce: 15,
+    selectedCounterProofbodyHash: counterCommitment,
+    selectedCounterProposerIsLeft: false,
+    finalizeQueued: true,
+  });
+  expect((await read()).activeDispute).toEqual({
+    ...observed.activeDispute,
+    selectedCounterNonce: 15,
+    selectedCounterProofbodyHash: counterCommitment,
+    selectedCounterProposerIsLeft: false,
+    finalizeQueued: true,
+  });
+  applyAccountDisputeFinality(account, 4, []);
+  const finalized = await read();
+  expect(finalized.status).toBe('disputed');
+  expect(finalized.activeDispute).toBeUndefined();
+  expect(finalized.disputePrepare).toBeUndefined();
+  expect(finalized.mempoolCount).toBe(0);
+});
+
+test('runtime adapter reports the actual Account mempool count while keeping transaction bodies redacted', async () => {
+  const env = makeEnv();
+  const account = env.state.eReplicas.get(`${entityId}:signer`)?.state.accounts.get(counterpartyId);
+  if (!account) throw new Error('MEMPOOL_VIEW_ACCOUNT_FIXTURE_MISSING');
+  prepareAccountFixtureForGraph(account);
+  account.mempool = [{
+    type: 'direct_payment',
+    data: { tokenId: 1, amount: 1n, route: [entityId, counterpartyId], fromEntityId: entityId, toEntityId: counterpartyId, deliveryMode: 'direct' },
+  }];
+  const frame = await resolveRuntimeAdapterRead<RuntimeAdapterViewFrame>({ env }, 'view-frame', { entityId, accountsLimit: 1 });
+  const compact = frame.activeEntity?.accounts.items[0];
+  expect(compact?.mempool).toEqual([]);
+  expect(compact?.mempoolCount).toBe(1);
+  expect(account.mempool).toHaveLength(1);
+  const message = { v: XLN_PROTOCOL_VERSION, inReplyTo: 'mempool-count', ok: true as const, payload: frame };
+  expect(decodeRuntimeAdapterMessage(encodeRuntimeAdapterMessage(message))).toEqual(message);
 });
 
 test('runtime adapter returns an owned projection after releasing the committed-read lease', async () => {
@@ -598,28 +693,29 @@ test('storage-backed historical view pages support desc account and book cursors
     epochReplayBytes: 0,
     retainedWalBytes: 0,
   };
-  const manifest: StorageSnapshotManifest = { height: snapshotHeight, createdAt: 400, docCount: 7 };
-  const core = projectEntityCoreDoc(replica.state);
-  const db = makeMemoryDb([
-    [KEY_HEAD, encodeBuffer(head)],
-    [keySnapshotManifest(snapshotHeight), encodeBuffer(manifest)],
-    [keySnapshotEntity(snapshotHeight, entityId), encodeBuffer(core)],
-    ...accountIds.map(
-      id =>
-        [
-          snapshotAccountKey(snapshotHeight, entityId, id),
-          encodeBuffer(
-            projectAccountDoc({
-              ...baseAccount,
-              state: { ...baseAccount.state, rightEntity: id },
-              proofHeader: { ...baseAccount.proofHeader, toEntity: id },
-            }),
-          ),
-        ] as [Buffer, Buffer],
-    ),
-    [snapshotBookKey(snapshotHeight, entityId, '1/1'), encodeBuffer(makeBook(101n))],
-    [snapshotBookKey(snapshotHeight, entityId, '1/2'), encodeBuffer(makeBook(102n))],
-  ]);
+  const liveDb = makeMemoryDb(entityLayoutRows(replica));
+  for (const id of accountIds) {
+    const account = prepareAccountFixtureForGraph({ ...baseAccount,
+      state: { ...baseAccount.state, rightEntity: id },
+      proofHeader: { ...baseAccount.proofHeader, toEntity: id },
+    });
+    const layout = await prepareAccountStorageLayout(liveDb, entityId, id, keyLiveAccount(entityId, id), account);
+    const batch = liveDb.batch();
+    for (const row of layout.puts) batch.put(row.key, row.value);
+    await batch.write();
+  }
+  const bookBatch = liveDb.batch();
+  for (const pairId of ['1/1', '1/2']) {
+    const book = makeBook(100n);
+    bookBatch.put(keyLiveBook(entityId, pairId), encodeBuffer(projectStorageBookHeader(book)));
+    for (const row of projectStorageBookGraphRows(entityId, pairId, book)) bookBatch.put(row.key, row.value);
+  }
+  await bookBatch.write();
+  const db = makeMemoryDb([[KEY_HEAD, encodeBuffer({ ...head, latestSnapshotHeight: 0 })]]);
+  await createSnapshot(liveDb, db, snapshotHeight, 400);
+  const publish = db.batch();
+  publish.put(KEY_HEAD, encodeBuffer(head));
+  await publish.write();
 
   const first = await loadEntityViewPageFromStorage({
     env,
@@ -668,7 +764,7 @@ test('storage readers reject requested heights beyond the persisted head', async
   };
   const db = makeMemoryDb([
     [KEY_HEAD, encodeBuffer(head)],
-    [keyLiveEntity(entityId), encodeBuffer(projectEntityCoreDoc(replica.state))],
+    ...entityLayoutRows(replica),
     [keyLiveAccount(entityId, counterpartyId), encodeBuffer(projectAccountDoc(account))],
   ]);
   const futureHeight = env.state.height + 1;
@@ -718,7 +814,7 @@ test('storage startup verifies canonical live Entity and Account key bindings', 
     projectAccountDoc(account),
   );
   const entries: Array<[Buffer, Buffer]> = [
-    [keyLiveEntity(entityId), encodeBuffer(projectEntityCoreDoc(replica.state))],
+    ...entityLayoutRows(replica),
     ...layout.puts.map(({ key, value }) => [key, value] as [Buffer, Buffer]),
   ];
 
@@ -779,24 +875,20 @@ test('runtime adapter books path is bounded and paged', async () => {
 test('runtime adapter compact book view preserves full level depth while trimming visible orders', async () => {
   const env = makeEnv();
   const replica = Array.from(env.state.eReplicas.values())[0]!;
-  replica.state.orderbookExt = makeOrderbookExt(new Map([['1/2', makeCrowdedBidLevelBook(100n, 25)]]));
-
-  const frame = await resolveRuntimeAdapterRead<{
-    activeEntity: {
-      books: {
-        items: Array<{ pairId: string; book: BookState }>;
-      };
-    } | null;
-  }>({ env, loadEntityViewPage: makeTestViewPageLoader(env) }, 'view-frame', {
-    entityId,
-    booksLimit: 1,
-  });
-  const book = frame.activeEntity?.books.items[0]?.book;
-  const level = book?.bidBuckets.get('100')?.levels.get('100');
-
-  expect(book?.orders.size).toBe(20);
-  expect(level?.orderIds).toHaveLength(20);
-  expect(level?.totalQtyLots).toBe(25n);
+  const source = makeCrowdedBidLevelBook(100n, 25);
+  replica.state.orderbookExt = makeOrderbookExt(new Map([['1/2', source]]));
+  const frame = await resolveRuntimeAdapterRead<RuntimeAdapterViewFrame>(
+    { env, loadEntityViewPage: makeTestViewPageLoader(env) }, 'view-frame', { entityId, booksLimit: 1 },
+  );
+  const book = frame.activeEntity!.books.items[0]!.book;
+  const visibleOrders = Array.from(book.bidPages.values()).flatMap(page => page.slots.filter(slot => slot !== null));
+  expect(visibleOrders).toHaveLength(20);
+  expect(book.bidLevels).toEqual([{ priceTicks: 100n, qtyLots: 25n }]);
+  expect(book.askLevels).toEqual([]);
+  expect(source.orders.size).toBe(25);
+  expect(getBookSideLevels(source, 0, 1)[0]!.qtyLots).toBe(25n);
+  const wire = { v: XLN_PROTOCOL_VERSION, inReplyTo: 'book-depth', ok: true as const, payload: frame };
+  expect(decodeRuntimeAdapterMessage(encodeRuntimeAdapterMessage(wire))).toEqual(wire);
 });
 
 test('runtime adapter binary codec preserves structured payloads', () => {
@@ -1888,7 +1980,7 @@ test('BrainVault mnemonic export is owner-lane only and redacts the secret', asy
     const mnemonicExports = auditEvents.filter(event => event['scope'] === 'runtime.radapter'
       && event['message'] === 'brainvault.mnemonic_exported');
     expect(mnemonicExports).toHaveLength(1);
-    expect(JSON.stringify(auditEvents)).not.toContain(mnemonic24);
+    expect(safeStringify(auditEvents)).not.toContain(mnemonic24);
   } finally {
     unregister();
   }
@@ -2128,8 +2220,8 @@ test('runtime publication callbacks expose only an immutable scalar notice', () 
     'runtimeId',
     'timestamp',
   ]);
-  expect(JSON.stringify(published)).not.toContain('eReplicas');
-  expect(JSON.stringify(published)).not.toContain('accounts');
+  expect(safeStringify(published)).not.toContain('eReplicas');
+  expect(safeStringify(published)).not.toContain('accounts');
 });
 
 test('runtime publication coalesces in-flight notices until the frame is durable', () => {

@@ -26,7 +26,7 @@ test('dev wallet uses one shared web-origin list for relay authorization and rea
   );
 
   expect(devChild).toContain('--relay-url "ws://127.0.0.1:${API_PORT}/relay"');
-  expect(dev).toContain('DEV_RELAY_WEB_URLS="${DEV_WEB_SCHEME}://localhost:${WEB_PORT},http://localhost:${WEB_HTTP_PORT}"');
+  expect(dev).toContain('DEV_RELAY_WEB_URLS="${DEV_WEB_SCHEME}://localhost:${WEB_PORT},http://localhost:${WEB_HTTP_PORT},http://localhost:${UI_PORT}"');
   expect(devChild).toContain('--relay-web-urls "$DEV_RELAY_WEB_URLS"');
   expect(devChild).toContain('--web-url "http://localhost:${WEB_HTTP_PORT}"');
   expect(devChild).toContain('XLN_PUBLIC_FAUCET="${XLN_PUBLIC_FAUCET:-1}"');
@@ -40,6 +40,7 @@ test('relay proxy selects only exact configured HTTP and HTTPS browser audiences
     'ws://127.0.0.1:8082/relay',
     relayAudienceFromWebUrl('http://localhost:8081'),
     relayAudienceFromWebUrl('https://localhost:8080'),
+    relayAudienceFromWebUrl('http://localhost:5183'),
   ]);
   expect(resolveConfiguredRelayAudience({
     requestUrl: 'ws://127.0.0.1:8082/relay',
@@ -51,6 +52,11 @@ test('relay proxy selects only exact configured HTTP and HTTPS browser audiences
     origin: 'https://localhost:8080',
     configuredAudiences: audiences,
   })).toBe('wss://localhost:8080/relay');
+  expect(resolveConfiguredRelayAudience({
+    requestUrl: 'ws://127.0.0.1:8082/relay',
+    origin: 'http://localhost:5183',
+    configuredAudiences: audiences,
+  })).toBe('ws://localhost:5183/relay');
   expect(resolveConfiguredRelayAudience({
     requestUrl: 'ws://127.0.0.1:8082/relay',
     origin: 'https://attacker.invalid',

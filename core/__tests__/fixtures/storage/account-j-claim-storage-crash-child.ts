@@ -58,7 +58,7 @@ const [seed, requestedBoundary] = Bun.argv.slice(2);
 if (!seed || !requestedBoundary) throw new Error('account J crash seed and boundary are required');
 if (![
   'before-authoritative-history-commit',
-  'after-authoritative-history-commit',
+  'after-authoritative-commit',
   'after-current-cache-commit',
 ].includes(requestedBoundary)) {
   throw new Error(`ACCOUNT_J_CRASH_BOUNDARY_INVALID:${requestedBoundary}`);

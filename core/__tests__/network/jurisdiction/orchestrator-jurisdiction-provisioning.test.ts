@@ -4,10 +4,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { safeStringify } from '../../../protocol/serialization';
 
 import type { JAdapter } from '../../../jurisdiction/adapter/types';
 import { getLiveJAdapter } from '../../../runtime/j-submit/live-jadapters';
-import { normalizeJurisdictionImportRequest } from '../../../runtime/j-submit/jurisdiction-import';
+import { normalizeJurisdictionImportRequest } from '../../../runtime/j-submit/jurisdiction-import-request';
 import { findMissingRpcContractCode } from '../../../orchestrator/bootstrap/contract-readiness';
 import {
   assertDeterministicRpcStackAddresses,
@@ -130,14 +131,19 @@ test('local reset clears Anvil history and refuses non-loopback RPCs', async () 
   const root = await mkdtemp(join(tmpdir(), 'xln-local-anvil-reset-'));
   const rpcUrl = `http://127.0.0.1:${port}`;
   const child = startAnvil(port, CHAIN_ID, root, 'state.json');
+  const nativeConfigPath = join(root, 'native-jurisdictions.json');
   try {
     await waitForRpc(rpcUrl);
     await rpcCall(rpcUrl, 'anvil_mine', ['0x10']);
     expect(Number.parseInt(String(await rpcCall(rpcUrl, 'eth_blockNumber')).slice(2), 16)).toBeGreaterThan(0);
 
+    await writeFile(nativeConfigPath, safeStringify({ jurisdictions: { tron: {
+      mode: 'tron', chainId: 1_208_511_695, rpc: '/rpc2',
+      tronFullHost: 'http://127.0.0.1:19090',
+    } } }));
     await resetLocalAnvilChains({
-      shardJurisdictionsPath: '/unused',
-      rpc2Url: '',
+      shardJurisdictionsPath: nativeConfigPath,
+      rpc2Url: 'http://127.0.0.1:1',
       rpcUrls: { 1: rpcUrl },
     });
 
@@ -274,8 +280,8 @@ test('orchestrator provisions exact primary contracts before RPC import', async 
     )) as {
       deployedLinkReferences: Record<string, Record<string, Array<{ start: number; length: number }>>>;
     };
-    const registryLink = depositoryArtifact
-      .deployedLinkReferences['contracts/HashLadderRegistry.sol']?.['HashLadderRegistry']?.[0];
+    const registryLink = Object.values(depositoryArtifact.deployedLinkReferences)
+      .flatMap(libraries => libraries['HashLadderRegistry'] ?? [])[0];
     if (!registryLink || registryLink.length !== 20) {
       throw new Error('TEST_HASH_LADDER_REGISTRY_LINK_REFERENCE_MISSING');
     }

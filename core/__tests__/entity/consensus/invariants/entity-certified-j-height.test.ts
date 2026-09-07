@@ -134,13 +134,7 @@ describe('two-validator replay uses Entity-certified jurisdiction height', () =>
 
     expect(proof?.finalNonce).toBe(1);
     const expectedFinalBody = buildAccountProofBody(account, '').proofBodyStruct;
-    expect(proof?.finalProofbody).toEqual({
-      ...expectedFinalBody,
-      // ABI canonicalization returns uint32 fields as bigint. Compare that
-      // actual wire representation rather than the pre-encoding JS numbers.
-      leftResponseSeconds: BigInt(expectedFinalBody.leftResponseSeconds),
-      rightResponseSeconds: BigInt(expectedFinalBody.rightResponseSeconds),
-    });
+    expect(proof?.finalProofbody).toEqual(expectedFinalBody);
     expect(proof?.sig).toBe('0x');
     expect(proof?.initialProofbodyHash).toBe(initialHash);
     expect(proof?.submitNotBeforeTimestamp).toBe(120);

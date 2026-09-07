@@ -21,6 +21,35 @@ const token = (
 });
 
 describe('deriveDisputeTokenFinalization', () => {
+  test('records a complete two-word debt and three-word aggregate', () => {
+    const previous = (1n << 512n) + 3n;
+    const result = deriveDisputeTokenFinalization(token({
+      leftReserve: 0n, rightReserve: 0n, collateral: 0n,
+      ondelta: 0n, offdelta: -(1n << 256n),
+      existingDebtOutstanding: { left: previous, right: 0n },
+    }));
+    expect(result.newDebt.leftToRight).toBe(1n << 256n);
+    expect(result.after.debtOutstanding.left).toBe(previous + (1n << 256n));
+    expect(result.conservation.conserved).toBe(true);
+  });
+
+  test('cumulative allocation and proof cancel exactly above uint256', () => {
+    const result = deriveDisputeTokenFinalization(token({
+      leftReserve: 0n, rightReserve: 0n, collateral: 0n,
+      ondelta: 1n << 300n, offdelta: -(1n << 300n) - 7n,
+    }));
+    expect(result.finalDelta).toBe(-7n);
+    expect(result.newDebt.leftToRight).toBe(7n);
+  });
+
+  test('a debt aggregate rejects true unsigned768 overflow', () => {
+    expect(() => deriveDisputeTokenFinalization(token({
+      leftReserve: 0n, rightReserve: 0n, collateral: 0n,
+      ondelta: 0n, offdelta: -1n,
+      existingDebtOutstanding: { left: (1n << 768n) - 1n, right: 0n },
+    }))).toThrow('after.debtOutstanding.left must fit uint768');
+  });
+
   test('matches the Depository counter-dispute reserve regression', () => {
     const result = deriveDisputeTokenFinalization(token({
       leftReserve: 700n,
@@ -110,9 +139,9 @@ describe('deriveDisputeTokenFinalization', () => {
       .toThrow('ondelta must be a bigint');
     expect(() => deriveDisputeTokenFinalization({
       ...token(),
-      ondelta: -(1n << 255n),
-      offdelta: -(1n << 255n),
-    })).toThrow('finalDelta magnitude exceeds uint256');
+      ondelta: -(1n << 511n),
+      offdelta: -(1n << 511n),
+    })).toThrow('finalDelta magnitude exceeds uint512');
   });
 
   test('matches Solidity wide-delta finalization after same-nonce R2C crosses int256.max', () => {

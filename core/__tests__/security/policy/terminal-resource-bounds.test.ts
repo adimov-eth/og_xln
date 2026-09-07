@@ -3,11 +3,11 @@ import { expect, test } from 'bun:test';
 import { createEmptyAccountJClaimAccumulator } from '../../../account/j-claims/j-claim-accumulator';
 import { EMPTY_ACCOUNT_STATE_ROOT } from '../../../account/commitment/state-root';
 import { LIMITS } from '../../../config/constants';
-import {
-  consumeHtlcRuntimeEvent,
-  indexCertifiedEntityFrameNotes,
-} from '../../../entity/paybook/note-index';
-import { terminateHtlcRoute } from '../../../entity/tx/j-events-htlc/route-lifecycle';
+import { failOriginatedPayment } from '../../../entity/paybook/lifecycle';
+import { validatePreparedHtlcPayment } from '../../../entity/paybook/payment-admission';
+import { validateHtlcPreparedInfraContext } from '../../../entity/paybook/prepared-context-validation';
+import { getEffectiveHtlcFrameTxs } from '../../../entity/paybook/materialize-context';
+import { applyBookIntentProgram, createBookIntentProgram } from '../../../entity/books/book-intents';
 import { applyHtlcTimeoutFollowups } from '../../../entity/tx/handlers/account/committed-htlc-followups';
 import { createEmptyEnv } from '../../../runtime';
 import { readRuntimeFrameEvents , publishEntityCandidateEffects } from '../../../runtime/observability/env-events';
@@ -62,8 +62,6 @@ const makeAccount = (): AccountReplica => ({
   rollbackCount: 0,
   proofHeader: { fromEntity: leftEntity, toEntity: rightEntity, nextProofNonce: 1 },
   pendingWithdrawals: new Map(),
-  requestedRebalance: new Map(),
-  requestedRebalanceFeeState: new Map(),
   shadow: { rebalance: { policy: new Map(), submittedAtByToken: new Map() } },
 });
 
@@ -103,200 +101,137 @@ const makeReplica = (state = makeEntity()): EntityReplica => ({
   isProposer: true,
 });
 
-test('terminal event consumption removes the canonical hashlock note', () => {
-  const replica = makeReplica();
-  const { state } = replica;
-  const hashlock = `0x${'99'.repeat(32)}`;
-  const lockId = `0x${'aa'.repeat(32)}`;
-  state.htlcRoutes.set(hashlock, {
-    hashlock,
-    outboundEntity: rightEntity,
-    outboundLockId: lockId,
-    createdTimestamp: 1,
-  });
-  replica.htlcNotes = new Map([[`hashlock:${hashlock}`, 'coffee']]);
-
-  terminateHtlcRoute(state, hashlock, 2);
-  expect(state.htlcRoutes).toHaveLength(0);
-  expect(replica.htlcNotes).toHaveLength(1);
-  expect(consumeHtlcRuntimeEvent(replica, 'HtlcFailed', { hashlock, lockId })).toEqual({
-    hashlock,
-    lockId,
-    description: 'coffee',
-  });
-  expect(replica.htlcNotes).toBeUndefined();
+const payment = (description: string): Extract<EntityTx, { type: 'htlcPayment' }> => ({
+  type: 'htlcPayment', data: {
+    targetEntityId: rightEntity, tokenId: 1, amount: 1n, maxSenderDebit: 1n,
+    route: [leftEntity, rightEntity], deliveryMode: 'instant',
+    hashlock: `0x${'99'.repeat(32)}`, description,
+  },
 });
 
-test('timeout terminal activity is emitted before its HTLC notes are removed', () => {
+const finalContext = (description: string) => ({
+  version: 1, originated: [], entries: [{
+    binding: {
+      fromEntityId: leftEntity, toEntityId: rightEntity,
+      domain: { chainId: 31337, depositoryAddress: `0x${'11'.repeat(20)}` },
+      accountFrameHash: `0x${'12'.repeat(32)}`, accountHeight: 1,
+      envelopeHash: `0x${'14'.repeat(32)}`, hashlock: `0x${'34'.repeat(32)}`,
+      tokenId: 1, amount: 1n, timelock: 1n, revealBeforeHeight: 1,
+    },
+    outcome: { kind: 'final', secret: `0x${'15'.repeat(32)}`, description },
+  }],
+});
+
+test('terminal failure removes its Paybook description and exact retry emits nothing', () => {
+  const state = makeEntity();
+  const hashlock = `0x${'99'.repeat(32)}`;
+  state.paybook.entries.set(hashlock, {
+    hashlock, outboundEntity: rightEntity, createdTimestamp: 1, description: 'coffee',
+  });
+  const effects: EntityCandidateEffect[] = [];
+  expect(failOriginatedPayment(state, effects, hashlock, 'timeout')).toBe(true);
+  expect(state.paybook.entries.size).toBe(0);
+  expect(effects).toEqual([{
+    kind: 'runtimeEvent', eventName: 'HtlcFailed',
+    data: { hashlock, lockId: hashlock, reason: 'timeout', entityId: leftEntity, description: 'coffee' },
+  }]);
+  expect(failOriginatedPayment(state, effects, hashlock, 'timeout')).toBe(false);
+  expect(effects).toHaveLength(1);
+  expect(state.paybook.entries.size).toBe(0);
+});
+
+test('timeout stages the description in its event before deleting the Paybook entry', () => {
   const replica = makeReplica();
   const { state } = replica;
   const account = makeAccount();
   const hashlock = `0x${'ab'.repeat(32)}`;
-  const lockId = `0x${'cd'.repeat(32)}`;
   state.accounts.set(rightEntity, account);
-  state.htlcRoutes.set(hashlock, {
-    hashlock,
-    outboundEntity: rightEntity,
-    outboundLockId: lockId,
-    createdTimestamp: 1,
+  state.paybook.entries.set(hashlock, {
+    hashlock, outboundEntity: rightEntity, createdTimestamp: 1, description: 'timeout note',
   });
-  replica.htlcNotes = new Map([[`hashlock:${hashlock}`, 'timeout note']]);
   const env = createEmptyEnv('terminal-note-timeout');
   env.state.eReplicas.set(`${replica.entityId}:${replica.signerId}`, replica);
   const candidateEffects: EntityCandidateEffect[] = [];
-
-  applyHtlcTimeoutFollowups({
-    env,
-    state,
-    newState: state,
-    input: { fromEntityId: rightEntity, toEntityId: leftEntity, watchSeed: account.state.watchSeed },
-    account,
-    outputs: [],
-    accountTxs: [],
-    candidateEffects,
-  }, [hashlock]);
-
-  expect(candidateEffects.some((effect) => effect.kind === 'runtimeEvent' && effect.eventName === 'HtlcFailed')).toBe(true);
-  expect(state.htlcRoutes).toHaveLength(0);
+  const program = createBookIntentProgram();
+  const context = {
+    env, state, newState: state,
+    input: { fromEntityId: rightEntity, toEntityId: leftEntity,
+      watchSeed: account.state.watchSeed, domain: account.state.domain },
+    account, outputs: [], accountTxs: [], candidateEffects, bookIntentSlot: program.openSlot(),
+  };
+  applyHtlcTimeoutFollowups(context, [hashlock]);
+  expect(candidateEffects).toMatchObject([{
+    kind: 'runtimeEvent', eventName: 'HtlcFailed', data: { description: 'timeout note', hashlock },
+  }]);
+  expect(state.paybook.entries.size).toBe(1);
+  expect(readRuntimeFrameEvents(env)).toHaveLength(0);
+  applyBookIntentProgram(state, program);
+  expect(state.paybook.entries.size).toBe(0);
   publishEntityCandidateEffects(env, replica, candidateEffects);
   expect(readRuntimeFrameEvents(env).find(entry => entry.message === 'HtlcFailed')?.data?.description).toBe('timeout note');
-  expect(replica.htlcNotes).toBeUndefined();
+  applyHtlcTimeoutFollowups({ ...context, bookIntentSlot: createBookIntentProgram().openSlot() }, [hashlock]);
+  expect(candidateEffects).toHaveLength(1);
 });
 
-test('HTLC note insertion rejects atomically at the Entity cap', () => {
-  const replica = makeReplica();
-  replica.htlcNotes = new Map(Array.from(
-    { length: LIMITS.MAX_ENTITY_HTLC_NOTES },
-    (_, index) => [`hashlock:${index}` as const, 'note'],
-  ));
-  const hashlock = `0x${'de'.repeat(32)}`;
-
-  expect(() => indexCertifiedEntityFrameNotes(replica, { txs: [{
-    type: 'htlcPayment',
-    data: {
-      targetEntityId: rightEntity, tokenId: 1, amount: 1n, maxSenderDebit: 1n, route: [leftEntity, rightEntity],
-      deliveryMode: 'instant', hashlock, description: 'new note',
-    },
-  }] })).toThrow(
-    'ENTITY_HTLC_NOTE_LIMIT_EXCEEDED',
-  );
-  expect(replica.htlcNotes).toHaveLength(LIMITS.MAX_ENTITY_HTLC_NOTES);
-  expect(replica.htlcNotes.has(`hashlock:${hashlock}`)).toBe(false);
+test('UTF-8 payment description admission rejects atomically above 256 bytes', () => {
+  const state = makeEntity();
+  const description = 'я'.repeat(LIMITS.MAX_ENTITY_HTLC_NOTE_LENGTH / 2 + 1);
+  expect(description.length).toBeLessThan(LIMITS.MAX_ENTITY_HTLC_NOTE_LENGTH);
+  expect(() => validatePreparedHtlcPayment(state, payment(description), undefined))
+    .toThrow('HTLC_PAYMENT_DESCRIPTION_INVALID');
+  expect(state.paybook.entries.size).toBe(0);
+  expect(state.paybook.feesEarned).toBe(0n);
+  expect(() => validatePreparedHtlcPayment(state, payment('я'.repeat(128)), undefined))
+    .toThrow('HTLC_PAYMENT_INFRA_CONTEXT_REQUIRED');
 });
 
-test('HTLC note text validation rejects before adding the hashlock key', () => {
-  const replica = makeReplica();
-  const hashlock = `0x${'12'.repeat(32)}`;
-  expect(() => indexCertifiedEntityFrameNotes(replica, { txs: [{
-    type: 'htlcPayment',
-    data: {
-      targetEntityId: rightEntity,
-      tokenId: 1,
-      amount: 1n,
-      maxSenderDebit: 1n,
-      route: [leftEntity, rightEntity],
-      deliveryMode: 'instant',
-      hashlock,
-      description: 'x'.repeat(LIMITS.MAX_ENTITY_HTLC_NOTE_LENGTH + 1),
-    },
-  }] })).toThrow('ENTITY_HTLC_NOTE_INVALID_LENGTH');
-  expect(replica.htlcNotes).toBeUndefined();
+test('ASCII payment description validation rejects before adding its hashlock', () => {
+  const state = makeEntity();
+  expect(() => validatePreparedHtlcPayment(state, payment('x'.repeat(LIMITS.MAX_ENTITY_HTLC_NOTE_LENGTH + 1)), undefined))
+    .toThrow('HTLC_PAYMENT_DESCRIPTION_INVALID');
+  expect(state.paybook.entries.size).toBe(0);
 });
 
-test('certified final onion context indexes the recipient private note', () => {
-  const replica = makeReplica();
-  const hashlock = `0x${'34'.repeat(32)}`;
-  indexCertifiedEntityFrameNotes(replica, {
-    txs: [],
-    entityContext: {
-      version: 1,
-      proposerReplicaId: `${replica.entityId}:${replica.signerId}`,
-      entityId: replica.entityId,
-      proposerSignerId: replica.signerId,
-      parentFrameHash: 'genesis',
-      height: 1,
-      gossipProfiles: [],
-      peerAssertions: [],
-      htlc: {
-        version: 1,
-        originated: [],
-        entries: [{
-          binding: {
-            fromEntityId: leftEntity,
-            toEntityId: rightEntity,
-            domain: { chainId: 31337, depositoryAddress: `0x${'11'.repeat(20)}` },
-            accountFrameHash: `0x${'12'.repeat(32)}`,
-            accountHeight: 1,
-            lockId: `0x${'13'.repeat(32)}`,
-            envelopeHash: `0x${'14'.repeat(32)}`,
-            hashlock,
-            tokenId: 1,
-            amount: 1n,
-            timelock: 1n,
-            revealBeforeHeight: 1,
-          },
-          outcome: { kind: 'final', secret: `0x${'15'.repeat(32)}`, description: 'recipient invoice' },
-        }],
-      },
-    },
+test('certified final context preserves the recipient description without a replica note index', () => {
+  const source = finalContext('recipient invoice');
+  const validated = validateHtlcPreparedInfraContext(source);
+  expect(validated).toEqual(source);
+  expect(validated.entries[0]?.outcome).toEqual({
+    kind: 'final', secret: `0x${'15'.repeat(32)}`, description: 'recipient invoice',
   });
-  expect(replica.htlcNotes?.get(`hashlock:${hashlock}`)).toBe('recipient invoice');
+  source.entries[0]!.outcome.description = 'modified after validation';
+  expect(validated.entries[0]?.outcome).toMatchObject({ description: 'recipient invoice' });
 });
 
-test('certified proposal frames index nested HTLC descriptions without terminal proposal state', () => {
-  const hashlock = `0x${'45'.repeat(32)}`;
-  const nestedPayment = {
-    type: 'htlcPayment',
-    data: {
-      targetEntityId: rightEntity,
-      tokenId: 1,
-      amount: 1n,
-      maxSenderDebit: 1n,
-      route: [leftEntity, rightEntity],
-      deliveryMode: 'instant',
-      hashlock,
-      description: 'nested invoice',
-    },
-  } satisfies EntityTx;
+test('proposal and threshold vote expose the same nested payment description without a terminal proposal copy', () => {
+  const nestedPayment = payment('nested invoice');
   const action = {
     type: 'entity_transaction',
     data: { version: 1, actionHash: `0x${'67'.repeat(32)}`, txs: [nestedPayment] },
   } as const;
-
-  const proposedReplica = makeReplica();
-  indexCertifiedEntityFrameNotes(proposedReplica, { txs: [{
-    type: 'propose',
-    data: { proposer, action },
-  }] });
-  expect(proposedReplica.htlcNotes?.get(`hashlock:${hashlock}`)).toBe('nested invoice');
-
+  const state = makeEntity();
+  expect(getEffectiveHtlcFrameTxs(state, [{ type: 'propose', data: { proposer, action } }]))
+    .toEqual([nestedPayment]);
+  expect(state.proposals.size).toBe(0);
   const proposalId = `0x${'78'.repeat(32)}`;
-  proposedReplica.state.proposals.set(proposalId, {
-    id: proposalId,
-    proposer,
-    boardHash: `0x${'89'.repeat(32)}`,
-    boardEpoch: 0,
-    action,
-    actionHash: action.data.actionHash,
-    votes: new Map(),
-    created: 1,
-  } satisfies Proposal);
-  indexCertifiedEntityFrameNotes(proposedReplica, { txs: [{
-    type: 'vote',
-    data: { proposalId, voter: proposer, choice: 'yes' },
-  }] });
-  expect(proposedReplica.htlcNotes?.get(`hashlock:${hashlock}`)).toBe('nested invoice');
+  const proposal = {
+    id: proposalId, proposer, boardHash: `0x${'89'.repeat(32)}`, boardEpoch: 0,
+    action, actionHash: action.data.actionHash, votes: new Map(), created: 1,
+  } satisfies Proposal;
+  state.proposals.set(proposalId, proposal);
+  expect(getEffectiveHtlcFrameTxs(state, [{ type: 'vote', data: { proposalId, voter: proposer, choice: 'yes' } }]))
+    .toEqual([nestedPayment]);
+  expect(state.proposals.get(proposalId)).toBe(proposal);
+  expect(proposal.votes.size).toBe(0);
 });
 
-test('decode validation rejects oversized HTLC notes', () => {
-  const replica = makeReplica();
-  replica.htlcNotes = new Map(Array.from(
-    { length: LIMITS.MAX_ENTITY_HTLC_NOTES + 1 },
-    (_, index) => [`hashlock:${index}` as const, 'note'],
-  ));
-  expect(() => validateEntityReplica(replica, 'oversizedHtlcNotes')).toThrow(
-    'ENTITY_HTLC_NOTE_LIMIT_EXCEEDED',
-  );
+test('prepared context decode rejects oversized UTF-8 descriptions without mutating source', () => {
+  const source = finalContext('я'.repeat(129));
+  const before = structuredClone(source);
+  expect(() => validateHtlcPreparedInfraContext(source)).toThrow('HTLC_PREPARED_DESCRIPTION_INVALID');
+  expect(source).toEqual(before);
+  const exact = finalContext('я'.repeat(128));
+  expect(validateHtlcPreparedInfraContext(exact)).toEqual(exact);
 });
 
 test('decode validation accepts signed pull amounts and rejects zero', () => {

@@ -15,14 +15,11 @@ import { decodeAccountTx } from '../../../account/tx-validation';
 import { validateAccountReplica } from '../../../account/validation/state-validation';
 import { buildEntityTransactionProposalAction } from '../../../entity/auth/authorization';
 import { validateEntityTx } from '../../../entity/tx-validation';
-import {
-  computeSwapPriceTicks,
-  getStaticSwapTokenDimensions,
-  SWAP_LOT_SCALE,
-} from '../../../orderbook/types';
+import { computeSwapPriceTicks, getStaticSwapTokenDimensions, SWAP_LOT_SCALE } from '../../../orderbook/types';
 import { exactFillRatioToUint16 } from '../../../orderbook/swap-execution';
 import type { AccountReplica, SwapOffer } from '../../../types/account';
 import { makeAccount } from '../../helpers/cross-j';
+import { INT512_MAX, INT512_MIN, UINT256_MAX } from '../../../protocol/boundary/integer-ranges';
 
 const authorizationOffer = (overrides: Partial<SwapOffer> = {}): SwapOffer => ({
   offerId: 'net-authorized-offer',
@@ -67,6 +64,81 @@ const resolvableAccount = (): AccountReplica => {
 };
 
 describe('swap net authorization', () => {
+  test('swap_resolve accepts final net int512 state when its fee cancels an oversized intermediate receive', async () => {
+    const account = resolvableAccount();
+    const wantBefore = account.state.deltas.get(1);
+    if (!wantBefore) throw new Error('TEST_WANT_DELTA_MISSING');
+    account.state.deltas = account.state.deltas.updated(1, {
+      ...wantBefore,
+      // Keep economic capacity small while exercising the wide persisted limb.
+      offdelta: INT512_MAX - SWAP_LOT_SCALE + 100n,
+      ondelta: -INT512_MAX + SWAP_LOT_SCALE - 100n,
+      rightCreditLimit: UINT256_MAX,
+    });
+    const draft = beginAccountStateDraft(account).draft;
+    const result = await handleSwapResolve(
+      draft,
+      {
+        type: 'swap_resolve',
+        data: {
+          offerId: 'net-authorized-offer',
+          fillRatio: exactFillRatioToUint16({ numerator: 1n, denominator: 2n }),
+          fillNumerator: 1n,
+          fillDenominator: 2n,
+          cancelRemainder: false,
+          executionGiveAmount: SWAP_LOT_SCALE,
+          executionWantAmount: SWAP_LOT_SCALE,
+          feeTokenId: 1,
+          feeAmount: 100n,
+        },
+      },
+      false,
+      2,
+    );
+    expect(result.ok).toBe(true);
+    expect(draft.state.deltas.get(1)?.offdelta).toBe(INT512_MAX);
+    expect(draft.state.deltas.get(2)?.offdelta).toBe(-SWAP_LOT_SCALE);
+  });
+
+  test('swap_resolve rejects an overflowing token before changing either token or the remaining offer', async () => {
+    const account = resolvableAccount();
+    const giveBefore = account.state.deltas.get(2);
+    if (!giveBefore) throw new Error('TEST_GIVE_DELTA_MISSING');
+    account.state.deltas = account.state.deltas.updated(2, {
+      ...giveBefore,
+      // Both limbs are representable; their sum is -1 before the swap debit.
+      offdelta: INT512_MIN,
+      ondelta: INT512_MAX,
+      leftCreditLimit: UINT256_MAX,
+    });
+    const draft = beginAccountStateDraft(account).draft;
+    const result = await handleSwapResolve(
+      draft,
+      {
+        type: 'swap_resolve',
+        data: {
+          offerId: 'net-authorized-offer',
+          fillRatio: exactFillRatioToUint16({ numerator: 1n, denominator: 2n }),
+          fillNumerator: 1n,
+          fillDenominator: 2n,
+          cancelRemainder: false,
+          executionGiveAmount: SWAP_LOT_SCALE,
+          executionWantAmount: SWAP_LOT_SCALE,
+          feeTokenId: 1,
+          feeAmount: 100n,
+        },
+      },
+      false,
+      2,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('TEST_EXPECTED_REPRESENTATION_REJECTION');
+    expect(result.rejection.message).toBe(`Offdelta outside int512: ${INT512_MIN - SWAP_LOT_SCALE}`);
+    expect([...draft.state.deltas]).toEqual([...account.state.deltas]);
+    expect([...draft.state.swapOffers]).toEqual([...account.state.swapOffers]);
+    expect(result.events).toEqual([]);
+  });
+
   test('derives deterministic 0/1/9999 bps limits and rejects 10000 bps', () => {
     expect(deriveSwapNetAuthorization(10_000n, 0)).toEqual({
       maxFee: 0n,
@@ -80,19 +152,15 @@ describe('swap net authorization', () => {
       maxFee: 9_999n,
       minNetReceive: 1n,
     });
-    expect(() => deriveSwapNetAuthorization(10_000n, 10_000))
-      .toThrow('SWAP_NET_AUTH_MAX_FEE_INVALID');
+    expect(() => deriveSwapNetAuthorization(10_000n, 10_000)).toThrow('SWAP_NET_AUTH_MAX_FEE_INVALID');
   });
 
   test('bounds every partial fill without letting price improvement enlarge fee authority', () => {
     const offer = authorizationOffer();
     expect(() => assertSwapNetAuthorization(offer, 50n, 50n, 5n, false)).not.toThrow();
-    expect(() => assertSwapNetAuthorization(offer, 50n, 50n, 6n, false))
-      .toThrow('SWAP_NET_AUTH_MAX_FEE_EXCEEDED');
-    expect(() => assertSwapNetAuthorization(offer, 50n, 49n, 5n, false))
-      .toThrow('SWAP_NET_AUTH_MIN_RECEIVE_NOT_MET');
-    expect(() => assertSwapNetAuthorization(offer, 100n, 200n, 11n, false))
-      .toThrow('SWAP_NET_AUTH_MAX_FEE_EXCEEDED');
+    expect(() => assertSwapNetAuthorization(offer, 50n, 50n, 6n, false)).toThrow('SWAP_NET_AUTH_MAX_FEE_EXCEEDED');
+    expect(() => assertSwapNetAuthorization(offer, 50n, 49n, 5n, false)).toThrow('SWAP_NET_AUTH_MIN_RECEIVE_NOT_MET');
+    expect(() => assertSwapNetAuthorization(offer, 100n, 200n, 11n, false)).toThrow('SWAP_NET_AUTH_MAX_FEE_EXCEEDED');
   });
 
   test('terminal price improvement may consume full signed authority exactly once', () => {
@@ -104,15 +172,10 @@ describe('swap net authorization', () => {
     });
     const executionGive = 75_000_000n;
     const executionWant = offer.wantAmount;
-    expect(() => assertSwapNetAuthorization(offer, executionGive, executionWant, offer.maxFee, false))
-      .toThrow('SWAP_NET_AUTH_MAX_FEE_EXCEEDED');
-    expect(() => assertSwapNetAuthorization(
-      offer,
-      executionGive,
-      executionWant,
-      offer.maxFee,
-      true,
-    )).not.toThrow();
+    expect(() => assertSwapNetAuthorization(offer, executionGive, executionWant, offer.maxFee, false)).toThrow(
+      'SWAP_NET_AUTH_MAX_FEE_EXCEEDED',
+    );
+    expect(() => assertSwapNetAuthorization(offer, executionGive, executionWant, offer.maxFee, true)).not.toThrow();
   });
 
   test('terminal progress cannot amplify fee authority across prior partial fills', () => {
@@ -126,8 +189,9 @@ describe('swap net authorization', () => {
     });
     expect(() => assertSwapNetAuthorization(remaining, 40n, 50n, 5n, true)).not.toThrow();
     expect(5n + 5n).toBe(first.maxFee);
-    expect(() => assertSwapNetAuthorization({ ...first, maxFee: 0n, minNetReceive: 100n }, 75n, 100n, 1n, true))
-      .toThrow('SWAP_NET_AUTH_MAX_FEE_EXCEEDED');
+    expect(() =>
+      assertSwapNetAuthorization({ ...first, maxFee: 0n, minNetReceive: 100n }, 75n, 100n, 1n, true),
+    ).toThrow('SWAP_NET_AUTH_MAX_FEE_EXCEEDED');
   });
 
   test('derives policy fee from the same progress and rounding as signed authority', () => {
@@ -139,11 +203,15 @@ describe('swap net authorization', () => {
   test('requantizes remaining authorization conservatively across repeated partial fills', () => {
     const first = requantizeSwapNetAuthorization(authorizationOffer(), 50n, 50n);
     expect(first).toEqual({ maxFee: 5n, minNetReceive: 45n });
-    const second = requantizeSwapNetAuthorization({
-      giveAmount: 50n,
-      wantAmount: 50n,
-      ...first,
-    }, 25n, 25n);
+    const second = requantizeSwapNetAuthorization(
+      {
+        giveAmount: 50n,
+        wantAmount: 50n,
+        ...first,
+      },
+      25n,
+      25n,
+    );
     expect(second).toEqual({ maxFee: 3n, minNetReceive: 22n });
   });
 
@@ -158,11 +226,9 @@ describe('swap net authorization', () => {
       maxFee: 1n,
       minNetReceive: 99n,
     };
-    expect(() => decodeAccountTx({ type: 'swap_offer', data }, 'TEST_SWAP'))
-      .not.toThrow();
+    expect(() => decodeAccountTx({ type: 'swap_offer', data }, 'TEST_SWAP')).not.toThrow();
     const { minNetReceive: _removed, ...missing } = data;
-    expect(() => decodeAccountTx({ type: 'swap_offer', data: missing }, 'TEST_SWAP'))
-      .toThrow('TEST_SWAP_DATA_FIELDS');
+    expect(() => decodeAccountTx({ type: 'swap_offer', data: missing }, 'TEST_SWAP')).toThrow('TEST_SWAP_DATA_FIELDS');
   });
 
   test('persists authorized offers through the nested Entity proposal boundary', () => {
@@ -193,38 +259,48 @@ describe('swap net authorization', () => {
   test('validates and commits authorization into canonical Account offer state', async () => {
     const amount = 2n * SWAP_LOT_SCALE;
     const account = beginAccountStateDraft(makeAccount('alice', 'hub')).draft;
-    const accepted = await handleSwapOffer(account, {
-      type: 'swap_offer',
-      data: {
-        offerId: 'committed-authorization',
-        giveTokenId: 1,
-        ...getStaticSwapTokenDimensions(1, 2),
-        giveAmount: amount,
-        wantTokenId: 2,
-        wantAmount: amount,
-        maxFee: 200n,
-        minNetReceive: amount - 200n,
+    const accepted = await handleSwapOffer(
+      account,
+      {
+        type: 'swap_offer',
+        data: {
+          offerId: 'committed-authorization',
+          giveTokenId: 1,
+          ...getStaticSwapTokenDimensions(1, 2),
+          giveAmount: amount,
+          wantTokenId: 2,
+          wantAmount: amount,
+          maxFee: 200n,
+          minNetReceive: amount - 200n,
+        },
       },
-    }, true, 1);
+      true,
+      1,
+    );
     expect(accepted.ok).toBe(true);
     expect(account.state.swapOffers.get('committed-authorization')).toMatchObject({
       maxFee: 200n,
       minNetReceive: amount - 200n,
     });
 
-    const invalid = await handleSwapOffer(account, {
-      type: 'swap_offer',
-      data: {
-        offerId: 'invalid-authorization',
-        giveTokenId: 1,
-        ...getStaticSwapTokenDimensions(1, 2),
-        giveAmount: amount,
-        wantTokenId: 2,
-        wantAmount: amount,
-        maxFee: amount,
-        minNetReceive: 1n,
+    const invalid = await handleSwapOffer(
+      account,
+      {
+        type: 'swap_offer',
+        data: {
+          offerId: 'invalid-authorization',
+          giveTokenId: 1,
+          ...getStaticSwapTokenDimensions(1, 2),
+          giveAmount: amount,
+          wantTokenId: 2,
+          wantAmount: amount,
+          maxFee: amount,
+          minNetReceive: 1n,
+        },
       },
-    }, true, 1);
+      true,
+      1,
+    );
     expect(invalid.ok).toBe(false);
     if (invalid.ok) throw new Error('expected invalid swap auth');
     expect(invalid.rejection.message).toBe('SWAP_NET_AUTH_INITIAL_TERMS_INVALID');
@@ -237,53 +313,62 @@ describe('swap net authorization', () => {
     const offer = account.state.swapOffers.get('net-authorized-offer')!;
     const invalidOffer: Partial<SwapOffer> = { ...offer };
     delete invalidOffer.maxFee;
-    account.state.swapOffers = PersistentAccountStateMap.fromEntries('swapOffers', [[
-      offer.offerId,
-      invalidOffer as SwapOffer,
-    ]]);
-    expect(() => validateAccountReplica(account))
-      .toThrow('AccountReplica.state.swapOffers.net-authorized-offer authorization is invalid');
+    account.state.swapOffers = PersistentAccountStateMap.fromEntries('swapOffers', [
+      [offer.offerId, invalidOffer as SwapOffer],
+    ]);
+    expect(() => validateAccountReplica(account)).toThrow(
+      'AccountReplica.state.swapOffers.net-authorized-offer authorization is invalid',
+    );
   });
 
   test('rejects an over-cap Account fill and scales authorization on the committed remainder', async () => {
     const overCap = beginAccountStateDraft(resolvableAccount()).draft;
     const amount = SWAP_LOT_SCALE;
     const fillRatio = exactFillRatioToUint16({ numerator: 1n, denominator: 2n });
-    const rejected = await handleSwapResolve(overCap, {
-      type: 'swap_resolve',
-      data: {
-        offerId: 'net-authorized-offer',
-        fillRatio,
-        fillNumerator: 1n,
-        fillDenominator: 2n,
-        cancelRemainder: false,
-        executionGiveAmount: amount,
-        executionWantAmount: amount,
-        feeTokenId: 1,
-        feeAmount: 101n,
+    const rejected = await handleSwapResolve(
+      overCap,
+      {
+        type: 'swap_resolve',
+        data: {
+          offerId: 'net-authorized-offer',
+          fillRatio,
+          fillNumerator: 1n,
+          fillDenominator: 2n,
+          cancelRemainder: false,
+          executionGiveAmount: amount,
+          executionWantAmount: amount,
+          feeTokenId: 1,
+          feeAmount: 101n,
+        },
       },
-    }, false, 2);
+      false,
+      2,
+    );
     expect(rejected.ok).toBe(false);
     if (rejected.ok) throw new Error('expected over-cap swap fill');
     expect(rejected.rejection.message).toBe('SWAP_NET_AUTH_MAX_FEE_EXCEEDED');
-    expect(overCap.state.swapOffers.get('net-authorized-offer')?.giveAmount)
-      .toBe(2n * amount);
+    expect(overCap.state.swapOffers.get('net-authorized-offer')?.giveAmount).toBe(2n * amount);
 
     const accepted = beginAccountStateDraft(resolvableAccount()).draft;
-    const result = await handleSwapResolve(accepted, {
-      type: 'swap_resolve',
-      data: {
-        offerId: 'net-authorized-offer',
-        fillRatio,
-        fillNumerator: 1n,
-        fillDenominator: 2n,
-        cancelRemainder: false,
-        executionGiveAmount: amount,
-        executionWantAmount: amount,
-        feeTokenId: 1,
-        feeAmount: 100n,
+    const result = await handleSwapResolve(
+      accepted,
+      {
+        type: 'swap_resolve',
+        data: {
+          offerId: 'net-authorized-offer',
+          fillRatio,
+          fillNumerator: 1n,
+          fillDenominator: 2n,
+          cancelRemainder: false,
+          executionGiveAmount: amount,
+          executionWantAmount: amount,
+          feeTokenId: 1,
+          feeAmount: 100n,
+        },
       },
-    }, false, 2);
+      false,
+      2,
+    );
     expect(result.ok).toBe(true);
     expect(accepted.state.swapOffers.get('net-authorized-offer')).toMatchObject({
       giveAmount: amount,

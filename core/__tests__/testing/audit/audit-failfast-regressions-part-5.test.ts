@@ -52,7 +52,6 @@ import { resolveAutoRebalanceFeePolicy, runPostFrameAutoRebalanceCheck } from '.
 import { HTLC, LIMITS } from '../../../config/constants';
 
 import { executeCrontab, initCrontab } from '../../../entity/scheduler';
-import { HTLC_SECRET_ACK_TIMEOUT_MS } from '../../../entity/tx/j-events-htlc/route-lifecycle';
 
 import { encodeBoard, generateLazyEntityId, generateNumberedEntityId, hashBoard } from '../../../entity/factory';
 
@@ -110,7 +109,6 @@ import { applyCommittedCrossJurisdictionAccountTxFollowup } from '../../../entit
 
 import { buildCrossJurisdictionEntityOutput } from '../../../entity/tx/j-events-htlc/cross-j-outputs';
 
-import { handleHtlcOnionAdvance } from '../../../entity/tx/handlers/htlc/onion-advance';
 
 import {
   handleAdmitCrossJurisdictionBookOrderEntityTx,
@@ -194,6 +192,7 @@ import { buildJSubmitAttemptId, registerPendingCommittedJOutbox } from '../../..
 import { buffersEqual, safeStringify } from '../../../protocol/serialization';
 
 import type { ProofBodyStruct } from '../../../protocol/dispute/proof-body';
+import { decodeInt512, encodeInt512 } from '../../../protocol/crypto/abi-money';
 
 import { projectAccountDoc } from '../../../storage/read/projections';
 
@@ -217,7 +216,6 @@ import { attachAccountDraftHankosAsEntity } from '../../../qa/account/draft';
 
 import { computeHtlcEnvelopeContextHash, computeHtlcSecretOfferContextHash } from '../../../protocol/htlc/codec/envelope';
 
-import { buildHtlcOnionAdvanceTx } from '../../../entity/paybook/onion-advance';
 import { hashEncryptedHtlcLayer } from '../../../protocol/htlc/codec/onion-layer';
 
 import { encodeHtlcSecretOffer, encodeOnionLayer } from '../../../protocol/htlc/codec/onion';
@@ -636,7 +634,7 @@ const makeDisputeFinalizedFixture = (seed: string, finalProofbody: ProofBodyStru
         const tokenId = Number(rawTokenId);
         return [tokenId, {
           ...createDefaultDelta(tokenId),
-          offdelta: finalProofbody.offdeltas[index]!,
+          offdelta: decodeInt512(finalProofbody.offdeltas[index]),
         }] as const;
       }),
     );
@@ -892,7 +890,7 @@ describe('audit fail-fast regressions', () => {
       watchSeed: account.state.watchSeed,
       leftResponseSeconds: account.state.disputeConfig.leftResponseSeconds,
       rightResponseSeconds: account.state.disputeConfig.rightResponseSeconds,
-      offdeltas: [50n],
+      offdeltas: [encodeInt512(50n)],
       tokenIds: [1n],
       transformers: [],
     };
@@ -1114,7 +1112,7 @@ describe('audit fail-fast regressions', () => {
       watchSeed: `0x${'f1'.repeat(32)}`,
       leftResponseSeconds: 10,
       rightResponseSeconds: 10,
-      offdeltas: [50n],
+      offdeltas: [encodeInt512(50n)],
       tokenIds: [1n],
       transformers: [],
     };
@@ -1136,7 +1134,7 @@ describe('audit fail-fast regressions', () => {
       watchSeed: `0x${'f1'.repeat(32)}`,
       leftResponseSeconds: 10,
       rightResponseSeconds: 10,
-      offdeltas: [50n],
+      offdeltas: [encodeInt512(50n)],
       tokenIds: [1n],
       transformers: [],
     };
@@ -1158,7 +1156,7 @@ describe('audit fail-fast regressions', () => {
       watchSeed: `0x${'f1'.repeat(32)}`,
       leftResponseSeconds: 10,
       rightResponseSeconds: 10,
-      offdeltas: [50n],
+      offdeltas: [encodeInt512(50n)],
       tokenIds: [1n],
       transformers: [],
     };
@@ -1209,7 +1207,7 @@ describe('audit fail-fast regressions', () => {
       watchSeed: `0x${'f1'.repeat(32)}`,
       leftResponseSeconds: 10,
       rightResponseSeconds: 10,
-      offdeltas: [50n, 75n],
+      offdeltas: [encodeInt512(50n), encodeInt512(75n)],
       tokenIds: [1n, 2n],
       transformers: [],
     };
@@ -1256,7 +1254,7 @@ describe('audit fail-fast regressions', () => {
       watchSeed: `0x${'f2'.repeat(32)}`,
       leftResponseSeconds: 10,
       rightResponseSeconds: 10,
-      offdeltas: [50n],
+      offdeltas: [encodeInt512(50n)],
       tokenIds: [1n],
       transformers: [],
     };
@@ -1427,7 +1425,7 @@ describe('audit fail-fast regressions', () => {
     expect(finalization?.finalNonce).toBe(2);
     expect(finalization?.sig).toBe('0x1234');
     expect(finalization?.initialProofbodyHash).toBe(initialProof.proofBodyHash);
-    expect(finalization?.finalProofbody.offdeltas).toEqual([75n]);
+    expect(finalization?.finalProofbody.offdeltas.map(decodeInt512)).toEqual([75n]);
     expect(finalization?.finalProofbody.tokenIds).toEqual([1n]);
     expect(finalization?.starterArguments).toBe('0x2222');
     expect(finalization?.otherArguments).toBe('0x');

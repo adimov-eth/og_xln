@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { calculateSolvency, verifySolvency } from '../../../runtime/swap-cmd/solvency';
+import { computeCanonicalEntityConsensusStateHash, computeEntityAccountValueHash } from '../../../entity/consensus/state-root';
+import { PersistentEntityAccountMap } from '../../../entity/state/persistent-account-map';
 import type { RuntimeReplica } from '../../../runtime/types';
 
 const ENTITY_A = `0x${'11'.repeat(32)}`;
@@ -45,6 +47,7 @@ const makeEnv = (): RuntimeReplica => ({
           },
         },
         reserves: new Map([[1, 3n]]),
+        paybook: { entries: new Map(), feesEarned: 0n },
         accounts: new Map([
           [ENTITY_B, {
             state: {
@@ -87,7 +90,6 @@ test('calculate and verify solvency keep every jurisdiction asset independent', 
     tokenId: 1,
     reserves: 3n,
     confirmedCollateral: 3n,
-    pendingCollateral: 0n,
     internalValue: 6n,
     expectedInternalValue: 6n,
     delta: 0n,
@@ -216,8 +218,8 @@ test('multiple validator replicas of one Entity are counted once', () => {
   const firstReplica = env.state.eReplicas.values().next().value!;
   firstReplica.entityId = ENTITY_A;
   firstReplica.signerId = 'validator-b';
-  firstReplica.state.accounts = new Map();
-  const secondReplica = structuredClone(firstReplica);
+  firstReplica.state.accounts = PersistentEntityAccountMap.empty(ENTITY_A, computeEntityAccountValueHash);
+  const secondReplica = { ...firstReplica, state: { ...firstReplica.state } };
   secondReplica.signerId = 'validator-a';
   env.state.eReplicas.set('second-validator', secondReplica);
 
@@ -231,11 +233,16 @@ test('same-height divergent validator replicas fail loud', () => {
   const firstReplica = env.state.eReplicas.values().next().value!;
   firstReplica.entityId = ENTITY_A;
   firstReplica.signerId = 'validator-a';
-  firstReplica.state.accounts = new Map();
-  const conflictingReplica = structuredClone(firstReplica);
+  firstReplica.state.accounts = PersistentEntityAccountMap.empty(ENTITY_A, computeEntityAccountValueHash);
+  const conflictingReplica = { ...firstReplica, state: { ...firstReplica.state } };
   conflictingReplica.signerId = 'validator-b';
   conflictingReplica.state.reserves = new Map([[1, 4n]]);
   env.state.eReplicas.set('conflicting-validator', conflictingReplica);
 
-  expect(() => calculateSolvency(env)).toThrow('SOLVENCY_ENTITY_REPLICA_DIVERGENCE');
+  const originalRoot = computeCanonicalEntityConsensusStateHash(firstReplica.state);
+  const conflictingRoot = computeCanonicalEntityConsensusStateHash(conflictingReplica.state);
+  expect(originalRoot).not.toBe(conflictingRoot);
+  expect(() => calculateSolvency(env)).toThrow(
+    `SOLVENCY_ENTITY_REPLICA_DIVERGENCE:${ENTITY_A}:1:${originalRoot}:${conflictingRoot}`,
+  );
 });

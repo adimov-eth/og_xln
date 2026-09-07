@@ -96,8 +96,10 @@ const entityWithAccount = (replica: ReturnType<typeof makeAccount>): EntityState
     computeEntityAccountValueHash,
   ),
   lastFinalizedJHeight: 0,
-  htlcRoutes: PersistentEntityCollectionMap.empty(),
-  lockBook: PersistentEntityCollectionMap.empty(),
+  paybook: {
+    entries: PersistentEntityCollectionMap.empty('paybookHashlock'),
+    feesEarned: 0n,
+  },
 }) as EntityState;
 
 const writableEntityAccount = (

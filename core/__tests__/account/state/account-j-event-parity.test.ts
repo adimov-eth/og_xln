@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
+import {
+  accountTransitionView,
+  beginAccountTransition,
+  commitAccountTransition,
+} from '../../../account/state/candidate-overlay';
 import { computeAccountStateRoot } from '../../../account/commitment/state-root';
 import { handleJEventClaim } from '../../../account/tx/handlers/j-events/claim';
 import { ACCOUNT_TX_REJECTION_CODES } from '../../../account/tx/apply-types';
@@ -16,6 +21,7 @@ import { createEmptyEnv } from '../../../runtime';
 import type { AccountReplica, AccountTx } from '../../../types/account';
 import type { RuntimeReplica } from '../../../runtime/types';
 import type { JurisdictionEvent } from '../../../types/jurisdiction-events';
+import { PersistentAccountStateMap } from '../../../account/state/persistent-state-map';
 import { createDefaultDelta } from '../../../account/state/delta';
 
 const LEFT = `0x${'11'.repeat(32)}`;
@@ -43,16 +49,16 @@ const machine = (): AccountReplica => ({
     rightEntity: RIGHT,
     domain: DOMAIN,
     watchSeed: `0x${'55'.repeat(32)}`,
-    deltas: new Map([[1, createDefaultDelta(1)]]),
-    locks: new Map(),
-    swapOffers: new Map(),
+    deltas: PersistentAccountStateMap.fromEntries('deltas', [[1, createDefaultDelta(1)]]),
+    locks: PersistentAccountStateMap.empty('locks'),
+    swapOffers: PersistentAccountStateMap.empty('swapOffers'),
     leftPendingJClaims: createEmptyAccountJClaimAccumulator(),
     rightPendingJClaims: createEmptyAccountJClaimAccumulator(),
     lastFinalizedJHeight: 0,
     disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 10 },
     jNonce: 0,
-    requestedRebalance: new Map(),
-    requestedRebalanceFeeState: new Map(),
+    requestedRebalance: PersistentAccountStateMap.empty('requestedRebalance'),
+    requestedRebalanceFeeState: PersistentAccountStateMap.empty('requestedRebalanceFeeState'),
   },
   status: 'active',
   mempool: [],
@@ -60,9 +66,12 @@ const machine = (): AccountReplica => ({
   currentHeight: 0,
   rollbackCount: 0,
   proofHeader: { fromEntity: LEFT, toEntity: RIGHT, nextProofNonce: 1 },
-  pendingWithdrawals: new Map(),
-  shadow: { rebalance: { policy: new Map(), submittedAtByToken: new Map() } },
-} as AccountState);
+  pendingWithdrawals: PersistentAccountStateMap.empty('pendingWithdrawals'),
+  shadow: { rebalance: {
+    policy: PersistentAccountStateMap.empty('rebalanceShadowPolicy'),
+    submittedAtByToken: PersistentAccountStateMap.empty('rebalanceShadowSubmitted'),
+  } },
+} as AccountReplica);
 
 const env = (): RuntimeReplica => {
   const value = createEmptyEnv('account-j-parity');
@@ -109,27 +118,35 @@ const rawClaim = (): Extract<AccountTx, { type: 'j_event_claim' }> => ({
 describe('account J-event validate/commit parity', () => {
   test('independently verifies both proofs, applies once, and retains no finalized body', () => {
     const runtime = env();
-    const initial = machine();
+    const live = machine();
+    const firstTransition = beginAccountTransition(live);
+    const firstDraft = accountTransitionView(firstTransition);
     const firstSession = createAccountJClaimSession(getAccountJClaimNodeStore(runtime));
-    const leftClaim = prepareAccountJClaimTx(initial.state, rawClaim(), DOMAIN, firstSession);
-    expect(handleJEventClaim(initial, leftClaim, true, 99, LEFT, [], runtime.state, firstSession).ok)
+    const leftClaim = prepareAccountJClaimTx(firstDraft.state, rawClaim(), DOMAIN, firstSession);
+    expect(handleJEventClaim(firstDraft, leftClaim, true, 99, LEFT, [], runtime.state, firstSession).ok)
       .toBe(true);
+    expect(live.state.leftPendingJClaims.count).toBe(0n);
+    const initial = commitAccountTransition(firstTransition).account;
     cacheCommittedAccountJClaimNodeChanges(runtime, firstSession.changes());
     expect(initial.state.leftPendingJClaims.count).toBe(1n);
 
     const proofSession = createAccountJClaimSession(getAccountJClaimNodeStore(runtime));
     const rightClaim = prepareAccountJClaimTx(initial.state, rawClaim(), DOMAIN, proofSession);
-    const validation = structuredClone(initial);
-    const commit = structuredClone(initial);
+    const validationTransition = beginAccountTransition(initial);
+    const commitTransition = beginAccountTransition(initial);
     const validationSession = createAccountJClaimSession(getAccountJClaimNodeStore(runtime));
     const commitSession = createAccountJClaimSession(getAccountJClaimNodeStore(runtime));
     const validationResult = handleJEventClaim(
-      validation, rightClaim, false, 100, LEFT, [], runtime.state, validationSession,
+      accountTransitionView(validationTransition), rightClaim, false, 100, LEFT, [], runtime.state, validationSession,
     );
     const commitResult = handleJEventClaim(
-      commit, rightClaim, false, 100, LEFT, [], runtime.state, commitSession,
+      accountTransitionView(commitTransition), rightClaim, false, 100, LEFT, [], runtime.state, commitSession,
     );
 
+    expect(initial.state.lastFinalizedJHeight).toBe(0);
+    expect(initial.state.leftPendingJClaims.count).toBe(1n);
+    const validation = commitAccountTransition(validationTransition).account;
+    const commit = commitAccountTransition(commitTransition).account;
     expect(validationResult.ok).toBe(true);
     expect(commitResult.ok).toBe(true);
     expect(computeAccountStateRoot(validation.state)).toBe(computeAccountStateRoot(commit.state));
@@ -142,7 +159,7 @@ describe('account J-event validate/commit parity', () => {
 
   test('keeps exact retries idempotent and rejects a conflicting claim without mutation', () => {
     const runtime = env();
-    const account = machine();
+    const account = accountTransitionView(beginAccountTransition(machine()));
     const firstSession = createAccountJClaimSession(getAccountJClaimNodeStore(runtime));
     const first = prepareAccountJClaimTx(account.state, rawClaim(), DOMAIN, firstSession);
     expect(handleJEventClaim(account, first, true, 99, LEFT, [], runtime.state, firstSession).ok)

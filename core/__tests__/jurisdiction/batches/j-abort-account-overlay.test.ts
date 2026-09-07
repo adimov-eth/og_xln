@@ -1,9 +1,10 @@
+import { commitEntityFrameCandidateState } from "../../../entity/state-clone";
 import { expect, test } from 'bun:test';
 
 import { createEmptyEnv } from '../../../runtime';
 import { createEmptyBatch } from '../../../jurisdiction/machine/batch';
 import { handleJAbortSentBatch } from '../../../entity/tx/handlers/j-batch/j-abort-sent-batch';
-import { makeAccount, makeJurisdiction, makeState, entity } from '../../helpers/cross-j';
+import { makeAccount, openWritableEntityAccounts, makeJurisdiction, makeState, entity } from '../../helpers/cross-j';
 
 test('aborting a finalize claims an Account overlay without mutating the certified base', async () => {
   const entityId = entity('31');
@@ -19,7 +20,8 @@ test('aborting a finalize claims an Account overlay without mutating the certifi
     initialNonce: 5,
     finalizeQueued: true,
   };
-  state.accounts = state.accounts.updated(counterpartyId, account);
+  openWritableEntityAccounts(state).set(counterpartyId, account);
+  commitEntityFrameCandidateState(state);
   const certifiedAccount = state.accounts.get(counterpartyId);
   const certifiedRoot = state.accounts.rootHash();
   state.jBatchState = {

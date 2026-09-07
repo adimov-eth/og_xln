@@ -9,7 +9,7 @@ import {
 } from '../../../frontend/src/lib/components/Entity/payments/pending-batch-preview';
 
 const batch = (input: Partial<JBatch>): JBatch => ({
-  flashloans: [],
+  counterDisputes: [],
   reserveToCollateral: [],
   collateralToReserve: [],
   settlements: [],
@@ -26,7 +26,7 @@ const batch = (input: Partial<JBatch>): JBatch => ({
 describe('pending batch helpers', () => {
   test('counts every visible batch operation bucket', () => {
     expect(countBatchOps(batch({
-      flashloans: [{}] as any,
+      counterDisputes: [{}] as any,
       reserveToCollateral: [{ tokenId: 1, pairs: [] }] as any,
       collateralToReserve: [{ tokenId: 1, amount: 1n }] as any,
       settlements: [{}] as any,

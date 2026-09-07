@@ -12,8 +12,8 @@ const parallelGateNames = (scriptName: string): string[] =>
 const srcGateNames = (): string[] => parallelGateNames('check:src');
 
 describe('full check orchestration', () => {
-  test('runs independent Rust, TypeScript, and frontend gates concurrently', () => {
-    expect(packageJson.scripts['check']).toBe('bun tools/run-parallel-checks.ts check:short check:long');
+  test('runs short gates before parallel Rust, TypeScript, and frontend gates', () => {
+    expect(packageJson.scripts['check']).toBe('bun run check:short && bun run check:long');
     expect(parallelGateNames('check:long')).toEqual(['check:src', 'check:frontend']);
     expect(srcGateNames().slice(0, 2)).toEqual(['soundcheck:fast', 'rscore:check']);
     expect(packageJson.scripts['check:src:parallel']).toBeUndefined();
@@ -21,9 +21,11 @@ describe('full check orchestration', () => {
 
   test('parallel runner preserves child failure output and stops siblings', () => {
     const runner = readFileSync(join(repoRoot, 'tools/run-parallel-checks.ts'), 'utf8');
-    expect(runner).toContain('output: stdout + stderr');
+    expect(runner).toContain("stdout: 'inherit'");
+    expect(runner).toContain("stderr: 'inherit'");
     expect(runner).toContain('if (exitCode !== 0) stopChildren()');
-    expect(runner).toContain('console.error(result.output.trim())');
+    expect(runner).toContain("child.kill('SIGTERM')");
+    expect(runner).toContain('if (failed) process.exit(failed.exitCode || 1)');
   });
 });
 

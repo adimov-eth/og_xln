@@ -151,7 +151,6 @@ export const installPersistedProposalValidator = async (): Promise<{
     name: jurisdiction.name,
     rpcs: [],
     chainId: jurisdiction.chainId,
-    contracts: { depository: jurisdiction.depositoryAddress, entityProvider: jurisdiction.entityProviderAddress },
     contracts: {
       depository: jurisdiction.depositoryAddress,
       entityProvider: jurisdiction.entityProviderAddress,
@@ -306,15 +305,18 @@ export const deliverEncryptedProposal = async (
   frame: EntityFrame,
 ): Promise<{
   inboundResults: unknown[];
+  deliveryFailures: string[];
   remoteRuntimeId: string;
   remoteEnv: RuntimeReplica;
 }> => {
   const remoteSeed = `${durableProposalRuntimeSeed}:remote`;
   const remoteRuntimeId = deriveSignerAddressSync(remoteSeed, '1').toLowerCase();
   const inboundResults: unknown[] = [];
+  const deliveryFailures: string[] = [];
   const route = createDirectRuntimeWsRoute({
     runtimeId: env.runtimeId!,
     runtimeSeed: durableProposalRuntimeSeed,
+    onDeliveryFailure: failure => { deliveryFailures.push(failure.error); },
     onEntityInputs: (from, envelope, timestamp) => {
       inboundResults.push(handleInboundP2PEntityInputs(env, from, envelope, timestamp));
     },
@@ -331,7 +333,13 @@ export const deliverEncryptedProposal = async (
     socket.ws,
     serializeWsMessage(hello),
   );
-  if (socket.sent.at(-1)?.type !== 'hello_ack') throw new Error('TEST_DIRECT_HELLO_ACK_MISSING');
+  const ack = socket.sent.find(message => message.type === 'hello_ack');
+  if (ack?.from !== env.runtimeId || ack.to !== remoteRuntimeId) {
+    throw new Error('TEST_DIRECT_HELLO_ACK_MISSING');
+  }
+  // The persisted validator is initialized. Advertise its actual readiness
+  // before sending the encrypted proposal through normal direct ingress.
+  route.setReady(true);
   const remoteEnv = createEmptyEnv(remoteSeed);
   const envelope: RuntimeEntityInputsEnvelope = signRuntimeEntityInputsEnvelope(remoteEnv, env.runtimeId!, {
     sourceRuntimeId: remoteRuntimeId,
@@ -367,7 +375,7 @@ export const deliverEncryptedProposal = async (
       ),
     },
   }));
-  return { inboundResults, remoteRuntimeId, remoteEnv };
+  return { inboundResults, deliveryFailures, remoteRuntimeId, remoteEnv };
 };
 
 export const restartPersistedProposalValidator = async (

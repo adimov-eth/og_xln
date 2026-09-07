@@ -10,6 +10,7 @@ import {
 } from '../../../entity/account/account-j-claim-node-store';
 import { prepareAccountJClaimTx } from '../../../account/j-claims/j-claim-transition';
 import { handleJEventClaim } from '../../../account/tx/handlers/j-events/claim';
+import { FailureDispositionError } from '../../../protocol/errors/failure-taxonomy';
 import { createSettlementWorkspaceHash } from '../../../account/tx/handlers/settlement/transition';
 import { applyEntityFrameWithMaterializedTestInfraContext } from '../../helpers/entity-frame';
 import { selectSettlementContinuation } from '../../../entity/consensus/account/settlement-continuation';
@@ -311,7 +312,6 @@ const installProofStack = (env: RuntimeReplica, state: EntityState): void => {
   env.state.jReplicas.set(jurisdiction.name, {
     name: jurisdiction.name,
     chainId: jurisdiction.chainId,
-    contracts: { depository: jurisdiction.depositoryAddress, entityProvider: jurisdiction.entityProviderAddress },
     contracts: {
       depository: jurisdiction.depositoryAddress,
       entityProvider: jurisdiction.entityProviderAddress,
@@ -560,7 +560,9 @@ describe('atomic settlement Account transition', () => {
     );
     const queued = execution.newState.accounts.get(leftEntity)!;
 
-    expect(execution.collectedHashes?.map(({ type }) => type)).toEqual(['settlement', 'dispute']);
+    // The genesis Entity frame also certifies its public profile; all three
+    // hashes participate in quorum signing, but only two authorize Account work.
+    expect(execution.collectedHashes?.map(({ type }) => type)).toEqual(['settlement', 'dispute', 'profile']);
     expect(queued.mempool).toHaveLength(1);
     expect(queued.mempool[0]).toMatchObject({
       type: 'settle_transition',
@@ -583,7 +585,7 @@ describe('atomic settlement Account transition', () => {
     );
     const witness = new Map<string, HankoWitnessEntry>();
     hashesToSign.forEach((entry, index) => {
-      if (entry.type !== 'settlement' && entry.type !== 'dispute') {
+      if (entry.type !== 'settlement' && entry.type !== 'dispute' && entry.type !== 'profile') {
         throw new Error(`TEST_SETTLEMENT_HASH_TYPE_INVALID:${entry.type}`);
       }
       const hanko = hankos[index];
@@ -657,7 +659,7 @@ describe('atomic settlement Account transition', () => {
     const materialized = await applyEntityFrameWithMaterializedTestInfraContext(env, approved.newState, [], 2_000);
     const hankoTx = materialized.newState.accounts.get(counterparty)?.mempool[0];
     expect(materialized.newState.deferredAccountProposals?.has(counterparty)).toBe(false);
-    expect(materialized.collectedHashes?.map(({ type }) => type)).toEqual(['settlement', 'dispute']);
+    expect(materialized.collectedHashes?.map(({ type }) => type)).toEqual(['settlement', 'dispute', 'profile']);
     expect(hankoTx).toMatchObject({
       type: 'settle_transition',
       data: { kind: 'hanko', settlementNonce: 6, postProof: { nonce: 7 } },
@@ -677,7 +679,7 @@ describe('atomic settlement Account transition', () => {
     const refreshed = await applyEntityFrameWithMaterializedTestInfraContext(env, materialized.newState, [], 2_001);
     const refreshedAccount = refreshed.newState.accounts.get(counterparty)!;
     expect(refreshed.newState.deferredAccountProposals?.has(counterparty)).toBe(false);
-    expect(refreshed.collectedHashes?.map(({ type }) => type)).toEqual(['settlement', 'dispute']);
+    expect(refreshed.collectedHashes?.map(({ type }) => type)).toEqual(['settlement', 'dispute', 'profile']);
     expect(refreshedAccount.mempool).toHaveLength(1);
     expect(refreshedAccount.mempool[0]).toMatchObject({
       type: 'settle_transition',
@@ -764,7 +766,7 @@ describe('atomic settlement Account transition', () => {
     const materializedAccount = materialized.newState.accounts.get(rightEntity)!;
 
     expect(materialized.newState.deferredAccountProposals?.has(rightEntity)).toBe(false);
-    expect(materialized.collectedHashes?.map(({ type }) => type)).toEqual(['dispute']);
+    expect(materialized.collectedHashes?.map(({ type }) => type)).toEqual(['dispute', 'profile']);
     expect(materializedAccount.mempool.map(tx => tx.type)).toEqual([
       'direct_payment',
       'settle_transition',
@@ -1204,6 +1206,33 @@ describe('atomic settlement Account transition', () => {
       executorIsLeft: true,
     })).ok).toBe(true);
     expect(canAutoApproveWorkspace(mixedForgiveness.state.settlementWorkspace!, false)).toBe(false);
+  });
+
+  test('duplicate execute is a typed rejection that preserves signed settlement and queued work', async () => {
+    const env = createEmptyEnv('settlement-duplicate-execute');
+    const jurisdiction = makeJurisdiction('settlement-duplicate-execute', 31337, 'a1', 'b2');
+    const signer = registerTestSigner(env, 'settlement-duplicate-execute', '1');
+    const state = makeState(LEFT, signer, jurisdiction, RIGHT);
+    const account = await signedWorkspaceAccount(7);
+    account.mempool.push(transition({
+      kind: 'submit', revision: 1,
+      workspaceHash: account.state.settlementWorkspace!.workspaceHash,
+    }));
+    openWritableEntityAccounts(state).set(RIGHT, account);
+    sealWritableAccounts(state);
+    const beforeRoot = computeCanonicalEntityConsensusStateHash(state);
+    const beforeAccount = forkAccountReplicaShell(account);
+
+    const execution = handleSettleExecute(state, {
+      type: 'settle_execute', data: { counterpartyEntityId: RIGHT },
+    }, env);
+    await expect(execution).rejects.toBeInstanceOf(FailureDispositionError);
+    await expect(execution).rejects.toMatchObject({
+      disposition: 'reject', code: 'SETTLEMENT_TRANSITION_ALREADY_PENDING',
+    });
+    expect(computeCanonicalEntityConsensusStateHash(state)).toBe(beforeRoot);
+    expect(state.accounts.get(RIGHT)).toEqual(beforeAccount);
+    expect(state.jBatchState).toBeUndefined();
   });
 
   test('non-executor settlement execution fails before creating any J batch state', async () => {

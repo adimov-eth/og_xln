@@ -250,7 +250,11 @@ test('production RPC registration resumes exact WAL bytes after restart and impo
       onerror: (() => void) | null = null;
       onclose: (() => void) | null = null;
       private readonly serverSocket = {
-        send: (message: unknown) => setTimeout(() => this.onmessage?.({ data: message }), 0),
+        send: (message: unknown): void => {
+          // Bun timers are objects with a numeric-looking string conversion;
+          // they are not the byte count returned by a server WebSocket send.
+          setTimeout(() => this.onmessage?.({ data: message }), 0);
+        },
         close: () => {
           this.readyState = RpcBridgeWebSocket.CLOSED;
           this.onclose?.();

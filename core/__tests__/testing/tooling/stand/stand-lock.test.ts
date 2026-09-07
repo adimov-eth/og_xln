@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { safeStringify } from '../../../protocol/serialization';
+import { safeStringify } from '../../../../protocol/serialization';
 import {
   STAND_LOCK_SLOTS_ENV,
   STAND_LOCK_TOKEN_ENV,
@@ -14,7 +14,7 @@ import {
   releaseStandLock,
   standLockCapacity,
   standLockStatus,
-} from '../../../../tools/stand-lock';
+} from '../../../../../tools/stand-lock';
 
 /**
  * The semaphore serializes heavy stands across agent worktrees on one machine.
@@ -93,6 +93,24 @@ describe('stand lock', () => {
     expect(readStandLockHolder(root, 0)?.reason).toBe('holder');
     releaseStandLock(held);
     expect(readStandLockHolder(root, 0)).toBeNull();
+  });
+
+  test('a live owner is never evicted because its run is old', async () => {
+    const grant = await acquireStandLock({ reason: 'long-run', waitMs: 0, root });
+    const holder = readStandLockHolder(root, 0);
+    writeFileSync(join(root, 'slot-0', 'holder.json'), safeStringify({
+      ...holder, startedAt: '2000-01-01T00:00:00.000Z',
+    }));
+    expect(reapStandLockSlots(root)).toBe(0);
+    await expect(acquireStandLock({ reason: 'intruder', waitMs: 0, root })).rejects.toThrow('STAND_LOCK_BUSY');
+    releaseStandLock(grant);
+  });
+
+  test('an unpublished holder fails closed instead of being stolen or released', async () => {
+    mkdirSync(join(root, 'slot-0'));
+    expect(reapStandLockSlots(root)).toBe(0);
+    releaseStandLock({ root, slot: 0, token: 'unknown' });
+    await expect(acquireStandLock({ reason: 'intruder', waitMs: 0, root })).rejects.toThrow('STAND_LOCK_BUSY');
   });
 
   test('status names the holder so a contended measurement is explainable', async () => {

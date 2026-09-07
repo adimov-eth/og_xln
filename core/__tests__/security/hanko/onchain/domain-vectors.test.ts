@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { createVM } from '@ethereumjs/vm';
+import { getBytes, hexlify, Interface, keccak256 } from 'ethers';
 
 import {
   ONCHAIN_HANKO_GOLDEN_ACTION_CANCEL_RECEIPT,
@@ -76,6 +78,27 @@ const DIFFS = [{
 const GOLDEN_PAYLOADS = ONCHAIN_HANKO_GOLDEN_PAYLOADS;
 
 describe('on-chain Hanko domain golden vectors', () => {
+  test('settlement golden equals compiled Solidity with independent signed-magnitude limbs', async () => {
+    const artifact = await Bun.file(new URL(
+      '../../../../../jurisdictions/artifacts/contracts/HankoCodec.sol/HankoCodec.json', import.meta.url,
+    )).json();
+    const codec = new Interface(artifact.abi);
+    const method = 'encodeCooperativeUpdateHankoPayloadForDomain';
+    // HankoEncoding.sol binds domain, parties, nonce and all four signed
+    // changes. Do not derive these limbs from the TS encoder under test.
+    const args = [CHAIN_ID, DEPOSITORY, ACCOUNT_KEY, 7, [
+      [9, [true, 7n], [false, 2n], [false, 5n], [true, 3n]],
+    ], [12]];
+    const vm = await createVM();
+    const result = await vm.evm.runCode({
+      code: getBytes(artifact.deployedBytecode), data: getBytes(codec.encodeFunctionData(method, args)),
+    });
+    if (result.exceptionError) throw result.exceptionError;
+    const [payload] = codec.decodeFunctionResult(method, hexlify(result.returnValue));
+    expect(payload).toBe(GOLDEN_PAYLOADS.settlement);
+    expect(keccak256(payload)).toBe(ONCHAIN_HANKO_GOLDEN_HASHES.settlement);
+  });
+
   test('pins exact bytes for active payloads and the reserved FinalDisputeProof vector', () => {
     expect({
       settlement: encodeCooperativeUpdateHankoPayload(DOMAIN, ACCOUNT_KEY, 7, DIFFS, [12]),

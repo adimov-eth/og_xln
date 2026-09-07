@@ -2,16 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { ethers } from 'ethers';
 import { createEmptyAccountJClaimAccumulator } from '../../../account/j-claims/j-claim-accumulator';
 
-import {
-  buildCurrentDisputeArgumentPlan,
-  buildDisputeArgumentsFromState,
-} from '../../../protocol/dispute/arguments';
+import { buildCurrentDisputeArgumentPlan, buildDisputeArgumentsFromState } from '../../../protocol/dispute/arguments';
 import {
   J_BATCH_CONTRACT_LIMITS,
   sanitizeOptionalDisputeArgument,
   sanitizeOptionalDisputeStarterArgumentPair,
 } from '../../../jurisdiction/machine/batch';
 import { LIMITS } from '../../../config/constants';
+import { buildCanonicalProofBatches } from '../../../protocol/dispute/proof-builder';
 import type { AccountReplica, AccountTx, SwapOffer } from '../../../types/account';
 const TEST_WATCH_SEED = `0x${'d1'.repeat(32)}`;
 
@@ -40,8 +38,32 @@ function accountWithSwaps(swaps: Array<[string, SwapOffer]>): AccountReplica {
       },
       watchSeed: TEST_WATCH_SEED,
       deltas: new Map([
-        [1, { tokenId: 1, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n, leftAllowance: 0n, rightAllowance: 0n }],
-        [2, { tokenId: 2, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n, leftAllowance: 0n, rightAllowance: 0n }],
+        [
+          1,
+          {
+            tokenId: 1,
+            collateral: 0n,
+            ondelta: 0n,
+            offdelta: 0n,
+            leftCreditLimit: 0n,
+            rightCreditLimit: 0n,
+            leftAllowance: 0n,
+            rightAllowance: 0n,
+          },
+        ],
+        [
+          2,
+          {
+            tokenId: 2,
+            collateral: 0n,
+            ondelta: 0n,
+            offdelta: 0n,
+            leftCreditLimit: 0n,
+            rightCreditLimit: 0n,
+            leftAllowance: 0n,
+            rightAllowance: 0n,
+          },
+        ],
       ]),
       locks: new Map(),
       pulls: new Map(),
@@ -79,18 +101,80 @@ function decodeFirstRatio(wrapped: string): number {
   if (wrapped === '0x') return 0;
   const abi = ethers.AbiCoder.defaultAbiCoder();
   const [items] = abi.decode(['bytes[]'], wrapped) as unknown as [string[]];
-  const [decoded] = abi.decode(
-    ['tuple(uint16[] fillRatios, bytes32[] secrets)'],
-    items[0]!,
-  ) as unknown as [{ fillRatios: bigint[] }];
+  const [decoded] = abi.decode(['tuple(uint16[] fillRatios, bytes32[] secrets)'], items[0]!) as unknown as [
+    { fillRatios: bigint[] },
+  ];
   return Number(decoded.fillRatios[0] || 0n);
 }
 
 describe('frozen AccountState dispute arguments', () => {
-  test('derives a detached positional plan from the one canonical AccountState', () => {
-    const account = accountWithSwaps([
-      ['left-owned', offer('left-owned', true, 1, 2)],
+  test('each split swap clause receives its own counterparty ratios without reusing an earlier order', () => {
+    const orders: Array<[string, SwapOffer]> = Array.from({ length: 34 }, (_, index) => {
+      const id = `order-${index.toString().padStart(2, '0')}`;
+      return [id, offer(id, index % 2 === 0, 1, 2)];
+    });
+    const account = accountWithSwaps(orders);
+    account.mempool = orders.map(([offerId], index) => ({
+      type: 'swap_resolve',
+      data: { offerId, fillRatio: index + 1_000, cancelRemainder: false },
+    }));
+    const chunks = buildCanonicalProofBatches(account);
+    expect(chunks.map(batch => batch.swaps.length)).toEqual([29, 5]);
+    const args = buildDisputeArgumentsFromState(account, { secretsSide: 'none' }, []);
+    const decodeRatios = (wrapped: string): bigint[][] => {
+      const [slots] = ethers.AbiCoder.defaultAbiCoder().decode(['bytes[]'], wrapped);
+      return Array.from(slots, slot => {
+        const [decoded] = ethers.AbiCoder.defaultAbiCoder().decode(
+          ['tuple(uint16[] fillRatios, bytes32[] secrets)'],
+          slot,
+        );
+        return Array.from(decoded.fillRatios);
+      });
+    };
+    expect(decodeRatios(args.leftArguments)).toEqual([
+      Array.from({ length: 14 }, (_, index) => BigInt(1_001 + index * 2)),
+      [1_029n, 1_031n, 1_033n],
     ]);
+    expect(decodeRatios(args.rightArguments)).toEqual([
+      Array.from({ length: 15 }, (_, index) => BigInt(1_000 + index * 2)),
+      [1_030n, 1_032n],
+    ]);
+  });
+
+  test('the thirty-second signed HTLC keeps its secret argument after the payment atom splits', () => {
+    const account = accountWithSwaps([]);
+    const secret = `0x${'ab'.repeat(32)}`;
+    for (let index = 0; index < 32; index += 1) {
+      const lockId = `lock-${index.toString().padStart(2, '0')}`;
+      account.state.locks.set(lockId, {
+        lockId,
+        hashlock: index === 31 ? ethers.keccak256(secret) : `0x${index.toString(16).padStart(64, '0')}`,
+        timelock: 100_000n,
+        amount: 1n,
+        tokenId: 1,
+        senderIsLeft: true,
+        createdHeight: 1,
+        createdTimestamp: 1,
+      });
+    }
+    const chunks = buildCanonicalProofBatches(account);
+    expect(chunks.map(batch => batch.payments.length)).toEqual([29, 3]);
+    expect(chunks.flatMap(batch => batch.payments).at(-1)?.hash).toBe(ethers.keccak256(secret));
+    const args = buildDisputeArgumentsFromState(account, { secretsSide: 'left' }, [secret]);
+    const [slots] = ethers.AbiCoder.defaultAbiCoder().decode(['bytes[]'], args.leftArguments);
+    expect(slots).toHaveLength(2);
+    for (const slot of slots) {
+      const [decoded] = ethers.AbiCoder.defaultAbiCoder().decode(
+        ['tuple(uint16[] fillRatios, bytes32[] secrets)'],
+        slot,
+      );
+      expect(Array.from(decoded.secrets)).toEqual([secret]);
+    }
+    expect(args.rightArguments).toBe('0x');
+  });
+
+  test('derives a detached positional plan from the one canonical AccountState', () => {
+    const account = accountWithSwaps([['left-owned', offer('left-owned', true, 1, 2)]]);
     const plan = buildCurrentDisputeArgumentPlan(account);
 
     account.state.swapOffers.clear();
@@ -104,19 +188,18 @@ describe('frozen AccountState dispute arguments', () => {
     const result = sanitizeOptionalDisputeArgument('0x1234', 'dispute.test');
 
     expect(result.value).toBe('0x');
-    expect(result.warnings).toEqual([{
-      code: 'DISPUTE_OPTIONAL_ARGUMENT_MALFORMED',
-      context: 'dispute.test',
-      originalBytes: 2,
-      limitBytes: 64 * 1024,
-    }]);
+    expect(result.warnings).toEqual([
+      {
+        code: 'DISPUTE_OPTIONAL_ARGUMENT_MALFORMED',
+        context: 'dispute.test',
+        originalBytes: 2,
+        limitBytes: 64 * 1024,
+      },
+    ]);
   });
 
   test('reduces oversized dynamic transformer arguments to empty evidence with a warning', () => {
-    const oversized = ethers.AbiCoder.defaultAbiCoder().encode(
-      ['bytes[]'],
-      [[`0x${'ab'.repeat(64 * 1024)}`]],
-    );
+    const oversized = ethers.AbiCoder.defaultAbiCoder().encode(['bytes[]'], [[`0x${'ab'.repeat(64 * 1024)}`]]);
     const result = sanitizeOptionalDisputeArgument(oversized, 'dispute.test');
 
     expect(result.value).toBe('0x');
@@ -151,17 +234,17 @@ describe('frozen AccountState dispute arguments', () => {
     ): string => {
       const transformerArgs = abi.encode(
         ['tuple(uint16[] fillRatios, bytes32[] secrets)'],
-        [{
-          fillRatios: Array.from({ length: fillRatioCount }, () => 0xffff),
-          secrets: Array.from(
-            { length: secretCount },
-            (_, index) => `0x${(index + 1).toString(16).padStart(64, '0')}`,
-          ),
-        }],
+        [
+          {
+            fillRatios: Array.from({ length: fillRatioCount }, () => 0xffff),
+            secrets: Array.from(
+              { length: secretCount },
+              (_, index) => `0x${(index + 1).toString(16).padStart(64, '0')}`,
+            ),
+          },
+        ],
       );
-      return abi.encode(['bytes[]'], [
-        Array.from({ length: canonicalArgumentClauseCount }, () => transformerArgs),
-      ]);
+      return abi.encode(['bytes[]'], [Array.from({ length: canonicalArgumentClauseCount }, () => transformerArgs)]);
     };
     const encodedBytes = (value: string): number => ethers.getBytes(value).length;
     const maxOffers = LIMITS.MAX_ACCOUNT_SAME_J_SWAP_OFFERS;
@@ -171,9 +254,7 @@ describe('frozen AccountState dispute arguments', () => {
     // may reveal a secret on that same side. This is the largest honest wrapper
     // one participant can supply for the signed DeltaTransformer plan.
     const maximumSide = encodeArguments(maxOffers, maxSecrets, 2);
-    expect(encodedBytes(maximumSide)).toBeLessThanOrEqual(
-      J_BATCH_CONTRACT_LIMITS.maxDisputeStarterArgumentsBytes,
-    );
+    expect(encodedBytes(maximumSide)).toBeLessThanOrEqual(J_BATCH_CONTRACT_LIMITS.maxDisputeStarterArgumentsBytes);
     expect(sanitizeOptionalDisputeArgument(maximumSide, 'dispute.max-side')).toEqual({
       value: maximumSide,
       warnings: [],
@@ -184,12 +265,8 @@ describe('frozen AccountState dispute arguments', () => {
     // must preserve without erasing either side's honest evidence.
     const left = encodeArguments(Math.ceil(maxOffers / 2), maxSecrets, 2);
     const right = encodeArguments(Math.floor(maxOffers / 2), 0, 2);
-    expect(encodedBytes(left)).toBeLessThanOrEqual(
-      J_BATCH_CONTRACT_LIMITS.maxDisputeStarterArgumentsBytes,
-    );
-    expect(encodedBytes(right)).toBeLessThanOrEqual(
-      J_BATCH_CONTRACT_LIMITS.maxDisputeStarterArgumentsBytes,
-    );
+    expect(encodedBytes(left)).toBeLessThanOrEqual(J_BATCH_CONTRACT_LIMITS.maxDisputeStarterArgumentsBytes);
+    expect(encodedBytes(right)).toBeLessThanOrEqual(J_BATCH_CONTRACT_LIMITS.maxDisputeStarterArgumentsBytes);
     const sanitizedPair = sanitizeOptionalDisputeStarterArgumentPair(left, right, 'dispute.max-account');
     expect(sanitizedPair).toEqual({ initial: left, counter: right, warnings: [] });
     expect(sanitizedPair.initial).not.toBe('0x');
@@ -213,9 +290,7 @@ describe('frozen AccountState dispute arguments', () => {
   });
 
   test('aligns one argument tuple with both canonical payment and swap clauses', () => {
-    const account = accountWithSwaps([
-      ['right-owned', offer('right-owned', false, 2, 1)],
-    ]);
+    const account = accountWithSwaps([['right-owned', offer('right-owned', false, 2, 1)]]);
     account.state.locks.set('lock', {
       lockId: 'lock',
       hashlock: `0x${'ab'.repeat(32)}`,
@@ -229,20 +304,17 @@ describe('frozen AccountState dispute arguments', () => {
     const plan = buildCurrentDisputeArgumentPlan(account);
     expect(plan.paymentHashlocks).toHaveLength(1);
     expect(plan.leftSwapOfferIds.length + plan.rightSwapOfferIds.length).toBe(1);
-    account.mempool = [{
-      type: 'swap_resolve',
-      data: { offerId: 'right-owned', fillRatio: 32_768, cancelRemainder: false },
-    }];
+    account.mempool = [
+      {
+        type: 'swap_resolve',
+        data: { offerId: 'right-owned', fillRatio: 32_768, cancelRemainder: false },
+      },
+    ];
     const secret = `0x${'cd'.repeat(32)}`;
-    const built = buildDisputeArgumentsFromState(
-      account,
-      { secretsSide: 'left' },
-      [secret],
-    );
-    const [clauses] = ethers.AbiCoder.defaultAbiCoder().decode(
-      ['bytes[]'],
-      built.leftArguments,
-    ) as unknown as [string[]];
+    const built = buildDisputeArgumentsFromState(account, { secretsSide: 'left' }, [secret]);
+    const [clauses] = ethers.AbiCoder.defaultAbiCoder().decode(['bytes[]'], built.leftArguments) as unknown as [
+      string[],
+    ];
     expect(clauses).toHaveLength(2);
     expect(clauses[0]).toBe(clauses[1]);
     const [decoded] = ethers.AbiCoder.defaultAbiCoder().decode(
@@ -255,13 +327,16 @@ describe('frozen AccountState dispute arguments', () => {
 
   test('uses a late Account mempool fill omitted from the optimistic pending frame', () => {
     const account = accountWithSwaps([
-      ['remaining-left-owned', {
-        ...offer('remaining-left-owned', true, 1, 2),
-        giveAmount: 50n,
-        wantAmount: 100n,
-        quantizedGive: 50n,
-        quantizedWant: 100n,
-      }],
+      [
+        'remaining-left-owned',
+        {
+          ...offer('remaining-left-owned', true, 1, 2),
+          giveAmount: 50n,
+          wantAmount: 100n,
+          quantizedGive: 50n,
+          quantizedWant: 100n,
+        },
+      ],
     ]);
     account.pendingFrame = {
       height: 2,
@@ -273,22 +348,16 @@ describe('frozen AccountState dispute arguments', () => {
       byLeft: false,
       deltas: [],
     };
-    account.mempool = [{
-      type: 'swap_resolve',
-      data: { offerId: 'remaining-left-owned', fillRatio: 32_768, cancelRemainder: false },
-    }];
-    const args = buildDisputeArgumentsFromState(
-      account,
-      { secretsSide: 'left' },
-      [],
-    );
+    account.mempool = [
+      {
+        type: 'swap_resolve',
+        data: { offerId: 'remaining-left-owned', fillRatio: 32_768, cancelRemainder: false },
+      },
+    ];
+    const args = buildDisputeArgumentsFromState(account, { secretsSide: 'left' }, []);
     expect(decodeFirstRatio(args.rightArguments)).toBe(32768);
     account.mempool = [];
-    const withoutIntent = buildDisputeArgumentsFromState(
-      account,
-      { secretsSide: 'left' },
-      [],
-    );
+    const withoutIntent = buildDisputeArgumentsFromState(account, { secretsSide: 'left' }, []);
     expect(withoutIntent.rightArguments).toBe('0x');
   });
 
@@ -302,17 +371,12 @@ describe('frozen AccountState dispute arguments', () => {
       { type: 'swap_resolve', data: { offerId: 'valid', fillRatio: 32_768, cancelRemainder: false } },
       { type: 'swap_resolve', data: { offerId: 'unplanned', fillRatio: 12_345, cancelRemainder: false } },
     ];
-    const args = buildDisputeArgumentsFromState(
-      account,
-      { secretsSide: 'left' },
-      [],
-    );
+    const args = buildDisputeArgumentsFromState(account, { secretsSide: 'left' }, []);
     const abi = ethers.AbiCoder.defaultAbiCoder();
     const [wrapped] = abi.decode(['bytes[]'], args.rightArguments) as unknown as [string[]];
-    const [decoded] = abi.decode(
-      ['tuple(uint16[] fillRatios, bytes32[] secrets)'],
-      wrapped[0]!,
-    ) as unknown as [{ fillRatios: bigint[] }];
+    const [decoded] = abi.decode(['tuple(uint16[] fillRatios, bytes32[] secrets)'], wrapped[0]!) as unknown as [
+      { fillRatios: bigint[] },
+    ];
     expect(Array.from(decoded.fillRatios, Number)).toEqual([0, 32_768]);
   });
 
@@ -335,16 +399,24 @@ describe('frozen AccountState dispute arguments', () => {
       fullHash: `0x${'cd'.repeat(32)}`,
       partialRoot: `0x${'ef'.repeat(32)}`,
       crossJurisdiction: {
-        orderId: 'order', routeHash: `0x${'12'.repeat(32)}`, leg: 'source', status: 'resting',
+        orderId: 'order',
+        routeHash: `0x${'12'.repeat(32)}`,
+        leg: 'source',
+        status: 'resting',
       },
       createdHeight: 1,
       createdTimestamp: 1,
     });
     const closeProof = {
-      orderId: 'order', routeHash: `0x${'12'.repeat(32)}`,
-      sourcePullId: 'pull', targetPullId: 'target', fillRatio: 1,
-      cumulativeSourceAmount: 1n, cumulativeTargetAmount: 1n,
-      binaryHash: `0x${'34'.repeat(32)}`, closeMode: 'partial_cancel_remainder' as const,
+      orderId: 'order',
+      routeHash: `0x${'12'.repeat(32)}`,
+      sourcePullId: 'pull',
+      targetPullId: 'target',
+      fillRatio: 1,
+      cumulativeSourceAmount: 1n,
+      cumulativeTargetAmount: 1n,
+      binaryHash: `0x${'34'.repeat(32)}`,
+      closeMode: 'partial_cancel_remainder' as const,
     };
     account.mempool = [
       { type: 'cross_pull_close', data: { pullId: 'pull', binary: '0x1234', proof: closeProof } },

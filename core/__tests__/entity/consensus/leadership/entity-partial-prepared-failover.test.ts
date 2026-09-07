@@ -1,4 +1,6 @@
+import { createEntityFrameCandidateState } from '../../../../entity/state-clone';
 import { describe, expect, test } from 'bun:test';
+import { emptyEntityAccountMap } from '../../../helpers/entity-account-map';
 
 import { deriveSignerAddressSync, deriveSignerKeySync, signAccountFrame } from '../../../../account/crypto';
 import { deriveEntityEncryptionPublicKey, provisionEntityEncryptionKey } from '../../../../entity/auth/crypto';
@@ -33,7 +35,7 @@ const makeBaseState = (
   proposals: new Map(),
   config,
   reserves: new Map(),
-  accounts: new Map(),
+  accounts: emptyEntityAccountMap(entityId),
   lastFinalizedJHeight: 0,
   profile: { name: '', isHub: false, avatar: '', bio: '', website: '' },
   paybook: { entries: new Map(), feesEarned: 0n },
@@ -86,7 +88,7 @@ describe('partial prepared failover', () => {
     const proposer: EntityReplica = {
       entityId,
       signerId: proposerId,
-      state: structuredClone(base),
+      state: createEntityFrameCandidateState(base),
       mempool: [],
       isProposer: true,
       lastConsensusProgressAt: 0,
@@ -103,7 +105,7 @@ describe('partial prepared failover', () => {
     const validator2: EntityReplica = {
       entityId,
       signerId: '2',
-      state: structuredClone(base),
+      state: createEntityFrameCandidateState(base),
       mempool: [nextCommand],
       isProposer: false,
       lastConsensusProgressAt: 0,
@@ -119,7 +121,7 @@ describe('partial prepared failover', () => {
     const validator3: EntityReplica = {
       entityId,
       signerId: '3',
-      state: structuredClone(base),
+      state: createEntityFrameCandidateState(base),
       mempool: [],
       isProposer: false,
       lastConsensusProgressAt: 0,

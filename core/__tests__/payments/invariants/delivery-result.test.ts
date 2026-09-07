@@ -6,11 +6,32 @@ import {
   deliveryDeferred,
   deliveryFailure,
   isDeliveryDelivered,
+  isDeliveryRecipientNotReady,
   isDeliveryResult,
   requireDeliveryDelivered,
   requireDeliveryResult,
   shouldRetryDelivery,
 } from '../../../protocol/payments/delivery-result';
+
+test('only an exact recipient-readiness deferral can retain an unsent outbox unit', () => {
+  for (const code of [
+    'ROUTE_DIRECT_SESSION_NOT_READY',
+    'ROUTE_DIRECT_RECIPIENT_NOT_READY',
+    'P2P_DIRECT_RECIPIENT_NOT_READY',
+  ]) {
+    const waiting = deliveryDeferred({ outcome: 'deferred', code });
+    expect(isDeliveryRecipientNotReady(waiting)).toBe(true);
+    expect(isDeliveryRecipientNotReady({ ...waiting, outcome: 'failed' })).toBe(false);
+    expect(isDeliveryRecipientNotReady({ ...waiting, outcome: 'queued' })).toBe(false);
+    expect(isDeliveryRecipientNotReady({ ...waiting, retryable: false })).toBe(false);
+    expect(isDeliveryRecipientNotReady({ ...waiting, fatal: true })).toBe(false);
+    expect(isDeliveryRecipientNotReady({ ...waiting, terminal: true })).toBe(false);
+  }
+  expect(isDeliveryRecipientNotReady(deliveryDeferred({
+    outcome: 'deferred', code: 'ROUTE_DIRECT_MISS_FAILOVER',
+  }))).toBe(false);
+  expect(isDeliveryRecipientNotReady(deliveryAccepted())).toBe(false);
+});
 
 test('delivery result helpers validate the shared delivery contract', () => {
   const delivered = deliveryAccepted('DELIVERED');

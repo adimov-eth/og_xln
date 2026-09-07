@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { waitForObservedRemoteCommand } from '../../../frontend/src/lib/stores/commands/remote-command-observation';
 import { readFileSync } from 'node:fs';
 import { runtimeAdapterHeight } from '../../../frontend/src/lib/stores/runtimeControllerStore';
 import {
@@ -46,10 +47,9 @@ test('runtime query client exposes typed projection reads and bounded cache', ()
   expect(source).toContain('readSolvencySummary');
   expect(source).toContain('readSwapHistory');
   expect(source).toContain('/swap-history`');
-  expect(source).toContain('readReceiptStatus');
+  expect(source).not.toContain('readReceiptStatus');
   expect(source).toContain('readRecoveryBundles');
   expect(source).toContain("'solvency-summary'");
-  expect(source).toContain("`receipt/${encodeURIComponent(id)}`");
   expect(source).toContain("`recovery/bundles/${encodeURIComponent(key)}`");
   expect(source).toContain('MAX_QUERY_CACHE_ENTRIES = 200');
   expect(source).toContain('clearRuntimeQueryCache');
@@ -393,26 +393,56 @@ test('runtime query cache follows custom adapter height during remote validation
   expect(reads).toHaveLength(2);
 });
 
-test('runtime receipt status reads through typed query client without cache reuse', async () => {
-  const reads: Array<{ path: string; query?: unknown }> = [];
+test('remote command observation retries exact identity until its frontier commits, despite unrelated heights', async () => {
+  const sends: unknown[] = [];
+  const options: unknown[] = [];
+  const input = { runtimeTxs: [], entityInputs: [], jInputs: [] };
+  const command = { commandId: 'receipt id/1', commandSequence: 7 };
   const adapter = {
-    read: async (path: string, query?: unknown) => {
-      reads.push({ path, query });
-      return { status: reads.length === 1 ? 'accepted' : 'observed', observedHeight: reads.length };
+    send: async (sent: unknown, sentOptions: unknown) => {
+      sends.push(sent);
+      options.push(sentOptions);
+      return { status: sends.length < 3 ? 'pending' as const : 'observed' as const, height: sends.length < 3 ? 999 : 42, commandSequence: 7 };
     },
   };
-  const queryClient = new RuntimeQueryClient(() => adapter as never, 'receipt-runtime');
+  const accepted: number[] = [];
+  const result = await waitForObservedRemoteCommand({ adapter, input, command, isCurrent: () => true, accepted: height => { accepted.push(height); }, pollMs: 1 });
+  expect(result).toEqual({ status: 'observed', height: 42, commandSequence: 7 });
+  expect(accepted).toEqual([999]);
+  expect(sends).toEqual([input, input, input]);
+  expect(options).toEqual([command, command, command]);
+  expect(sends[0]).toBe(sends[2]);
+  expect(options[0]).toBe(options[2]);
+});
 
-  const first = await queryClient.readReceiptStatus('receipt id/1');
-  const second = await queryClient.readReceiptStatus('receipt id/1');
+test('already observed remote command completes at its committed height without another frame', async () => {
+  let sends = 0;
+  const result = await waitForObservedRemoteCommand({
+    adapter: { send: async () => { sends += 1; return { status: 'observed', height: 12, commandSequence: 1 }; } },
+    input: { runtimeTxs: [], entityInputs: [], jInputs: [] }, command: { commandId: 'idle', commandSequence: 1 },
+    isCurrent: () => true, accepted: () => {},
+  });
+  expect(result.height).toBe(12);
+  expect(sends).toBe(1);
+});
 
-  expect(first.status).toBe('accepted');
-  expect(second.status).toBe('observed');
-  expect(reads).toEqual([
-    { path: 'receipt/receipt%20id%2F1', query: undefined },
-    { path: 'receipt/receipt%20id%2F1', query: undefined },
-  ]);
-  await expect(queryClient.readReceiptStatus('')).rejects.toThrow('REMOTE_RUNTIME_RECEIPT_ID_MISSING');
+test('remote command observation times out a pending command without claiming observation', async () => {
+  await expect(waitForObservedRemoteCommand({
+    adapter: { send: async () => ({ status: 'pending', height: 999, commandSequence: 1 }) },
+    input: { runtimeTxs: [], entityInputs: [], jInputs: [] }, command: { commandId: 'pending', commandSequence: 1 },
+    isCurrent: () => true, accepted: () => {}, timeoutMs: 5, pollMs: 1,
+  })).rejects.toThrow('REMOTE_RUNTIME_COMMAND_OBSERVATION_TIMEOUT');
+});
+
+test('remote command observation rejects runtime switches before retry or observed publication', async () => {
+  let current = true;
+  let sends = 0;
+  await expect(waitForObservedRemoteCommand({
+    adapter: { send: async () => { sends += 1; current = false; return { status: 'observed', height: 12, commandSequence: 1 }; } },
+    input: { runtimeTxs: [], entityInputs: [], jInputs: [] }, command: { commandId: 'switch', commandSequence: 1 },
+    isCurrent: () => current, accepted: () => { throw new Error('stale acceptance published'); },
+  })).rejects.toThrow('REMOTE_RUNTIME_COMMAND_OBSERVATION_SUPERSEDED');
+  expect(sends).toBe(1);
 });
 
 test('runtime recovery bundles read through typed query client without cache reuse', async () => {
@@ -473,7 +503,7 @@ test('runtime controller exposes only typed debug projection queries', () => {
   expect(queryClientSource).toContain('runtimeQueryClient.readEntities(query)');
   expect(queryClientSource).toContain('runtimeQueryClient.readViewFrame(query)');
   expect(queryClientSource).toContain('runtimeQueryClient.readHistoryFrameBatch(query)');
-  expect(queryClientSource).toContain('runtimeQueryClient.readReceiptStatus(receiptId)');
+  expect(queryClientSource).not.toContain('readReceiptStatus');
   expect(queryClientSource).toContain("registerDebugSurface('adapter'");
   expect(controllerSource).not.toContain("import('./runtimeQueryClient')");
   expect(controllerSource).not.toContain("registerDebugSurface('adapter'");
@@ -484,7 +514,7 @@ test('runtime controller exposes only typed debug projection queries', () => {
   expect(controllerSource).not.toContain('send: runtimeAdapterSend');
   expect(appTypes).not.toContain('__xlnRuntimeAdapter');
   expect(appTypes).not.toContain('read: <T = unknown>');
-  expect(storeSource).toContain('runtimeQueryClient.readReceiptStatus(id)');
+  expect(storeSource).toContain('waitForObservedRemoteCommand({ adapter, input, command, isCurrent, accepted: progress.accepted })');
   expect(storeSource).not.toContain("adapter.read<RuntimeReceiptStatus>(`receipt/");
   expect(storeSource).not.toContain("adapter.read<RemoteRuntimeReceiptStatus>(`receipt/");
   expect(queryClientSource).not.toContain('export const runtimeQueryRead');

@@ -65,6 +65,7 @@ const createDirectRuntimeWsRoute = (
   options: Parameters<typeof createProductionDirectRuntimeWsRoute>[0],
 ): ReturnType<typeof createProductionDirectRuntimeWsRoute> => {
   const route = createProductionDirectRuntimeWsRoute(options);
+  route.setReady(true);
   const sessions = new Map<object, { challenge: string; audience: string }>();
   const productionMessage = route.websocket.message;
   return {
@@ -124,6 +125,27 @@ const createDirectRuntimeWsRoute = (
           }
         }
         await productionMessage(ws, serializeWsMessage(message));
+        if (message.type === 'hello' && identity && ws.readyState === 1 && route.hasOpenSession(message.from!)) {
+          const binding = sessions.get(ws)!;
+          const ready: RuntimeWsMessage = {
+            type: 'delivery_ready',
+            id: 'test-peer-ready',
+            from: message.from!,
+            fromEncryptionPubKey: message.fromEncryptionPubKey!,
+            to: options.runtimeId,
+            payload: true,
+          };
+          const timestamp = nextTestAuthTimestamp();
+          await productionMessage(ws, serializeWsMessage({
+            ...ready,
+            auth: {
+              nonce: binding.challenge,
+              timestamp,
+              signature: signDigest(identity.seed, identity.signerId,
+                hashRuntimeWsFrame(ready, binding.audience, binding.challenge, timestamp)),
+            },
+          }));
+        }
       },
     },
   };
@@ -275,7 +297,7 @@ describe('direct runtime websocket route', () => {
     const acceptedAudience = acceptedBinding.audience;
     const acceptedHello = makeAuthedHello(clientSeed, clientRuntimeId, '1', acceptedChallenge, acceptedAudience);
     await route.websocket.message(accepted.ws, serializeWsMessage(acceptedHello));
-    expect(accepted.sent.at(-1)).toMatchObject({
+    expect(accepted.sent.find(message => message.type === 'hello_ack')).toMatchObject({
       type: 'hello_ack',
       from: serverRuntimeId,
       to: clientRuntimeId,
@@ -343,7 +365,7 @@ describe('direct runtime websocket route', () => {
     const { ws, sent } = makeFakeWs();
     route.websocket.open(ws);
     await route.websocket.message(ws, serializeWsMessage(makeAuthedHello(clientSeed, clientRuntimeId)));
-    expect(sent.at(-1)?.type).toBe('hello_ack');
+    expect(sent.find(message => message.type === 'hello_ack')?.type).toBe('hello_ack');
 
     const sentBeforeDebug = sent.length;
     await route.websocket.message(ws, serializeWsMessage({
@@ -405,7 +427,7 @@ describe('direct runtime websocket route', () => {
       terminal: true,
     });
 
-    const outbound = sent[1];
+    const outbound = sent.find(message => message.type === 'entity_inputs');
     expect(outbound?.type).toBe('entity_inputs');
     expect(outbound?.from).toBe(serverRuntimeId);
     expect(outbound?.to).toBe(clientRuntimeId);
@@ -788,11 +810,11 @@ describe('direct runtime websocket route', () => {
       sourceRuntimeTimestamp: 1,
       entityInputs: [outboundInput as RuntimeEntityInputsEnvelope['entityInputs'][number]],
     })).toMatchObject({
-      outcome: 'failed',
-      code: 'ROUTE_DIRECT_SESSION_MISSING',
-      retryable: false,
-      fatal: true,
-      terminal: true,
+      outcome: 'deferred',
+      code: 'ROUTE_DIRECT_SESSION_NOT_READY',
+      retryable: true,
+      fatal: false,
+      terminal: false,
     });
   });
 
@@ -878,11 +900,11 @@ describe('direct runtime websocket route', () => {
       return 0;
     };
     expect(route.sendEntityInputsDelivery(clientRuntimeId, envelope)).toMatchObject({
-      outcome: 'failed',
-      code: 'ROUTE_DIRECT_SESSION_MISSING',
-      retryable: false,
-      fatal: true,
-      terminal: true,
+      outcome: 'deferred',
+      code: 'ROUTE_DIRECT_SESSION_NOT_READY',
+      retryable: true,
+      fatal: false,
+      terminal: false,
     });
     expect(route.getSessionState()).toEqual([]);
   });
@@ -910,7 +932,7 @@ describe('direct runtime websocket route', () => {
     const { ws, sent } = makeFakeWs();
     route.websocket.open(ws);
     await route.websocket.message(ws, serializeWsMessage(makeAuthedHello(clientSeed, clientRuntimeId)));
-    expect(sent.at(-1)?.type).toBe('hello_ack');
+    expect(sent.find(message => message.type === 'hello_ack')?.type).toBe('hello_ack');
 
     // The socket stays fully open (readyState untouched); only this one
     // send reports the ambiguous "dropped" result.

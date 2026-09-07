@@ -9,6 +9,7 @@ import {
 import { encodeAccountStateValue } from '../../../account/commitment/state-root';
 import { proofBodyHasPulls } from '../../../entity/tx/handlers/dispute/start-admission';
 import { encodeBuffer } from '../../../storage/codec/codec';
+import { INT512_MIN, INT512_MAX, UINT256_MAX } from '../../../protocol/boundary/integer-ranges';
 
 const DEPOSITORY = '0x4ed7c70F96B99c776995fB64377f0d4aB3B0e1C1';
 const HANKO_DOMAIN = { chainId: 31337, depositoryAddress: DEPOSITORY } as const;
@@ -16,67 +17,75 @@ const PROOF_BODY_HASH = '0x216659016a52d3f9df41568d0c85bd6870ee46705ada7366c9f68
 const TEST_WATCH_SEED = `0x${'11'.repeat(32)}`;
 
 describe('proof-builder dispute hash', () => {
-  const proofAccount = (
-    input: Map<number, { ondelta: bigint; offdelta: bigint }> | Record<string, unknown>,
-  ) => ({
-    state: {
-      leftEntity: `0x${'01'.repeat(32)}`,
-      rightEntity: `0x${'02'.repeat(32)}`,
-      locks: new Map(),
-      swapOffers: new Map(),
-      pulls: new Map(),
-      watchSeed: TEST_WATCH_SEED,
-      disputeConfig: { leftResponseSeconds: 3_600, rightResponseSeconds: 86_400 },
-      ...(input instanceof Map ? { deltas: input } : input),
-    },
-    proofHeader: { nextProofNonce: 1 },
-  }) as any;
+  const proofAccount = (input: Map<number, { ondelta: bigint; offdelta: bigint }> | Record<string, unknown>) =>
+    ({
+      state: {
+        leftEntity: `0x${'01'.repeat(32)}`,
+        rightEntity: `0x${'02'.repeat(32)}`,
+        locks: new Map(),
+        swapOffers: new Map(),
+        pulls: new Map(),
+        watchSeed: TEST_WATCH_SEED,
+        disputeConfig: { leftResponseSeconds: 3_600, rightResponseSeconds: 86_400 },
+        ...(input instanceof Map ? { deltas: input } : input),
+      },
+      proofHeader: { nextProofNonce: 1 },
+    }) as any;
 
   const disputeAccount = (leftEntity: string, rightEntity: string) => ({
     state: { leftEntity, rightEntity, watchSeed: TEST_WATCH_SEED },
     proofHeader: { nextProofNonce: 1 },
   });
 
-  const proofWithSameJOffers = (
-    count: number,
-    pullCount = 0,
-    lockCount = 0,
-  ) => buildAccountProofBody(proofAccount({
-    deltas: new Map([[1, { offdelta: 0n }], [2, { offdelta: 0n }]]),
-    locks: new Map(Array.from({ length: lockCount }, (_, index) => [
-      `lock-${index}`,
-      {
-        tokenId: index % 2 === 0 ? 1 : 2,
-        senderIsLeft: index % 2 === 0,
-        amount: 1n,
-        timelock: 100_000n,
-        revealBeforeHeight: 100,
-        hashlock: `0x${(index + 501).toString(16).padStart(64, '0')}`,
-      },
-    ])),
-    pulls: new Map(Array.from({ length: pullCount }, (_, index) => [
-      `pull-${index}`,
-      {
-        tokenId: 1,
-        amount: 1n,
-        claimedRatio: 0,
-        fullHash: `0x${(index + 1).toString(16).padStart(64, '0')}`,
-        partialRoot: `0x${(index + 101).toString(16).padStart(64, '0')}`,
-        crossJurisdiction: { leg: 'target' },
-      },
-    ])),
-    swapOffers: new Map(Array.from({ length: count }, (_, index) => [
-      `offer-${index}`,
-      {
-        makerIsLeft: index % 2 === 0,
-        giveTokenId: index % 2 === 0 ? 1 : 2,
-        giveAmount: 1_000n,
-        wantTokenId: index % 2 === 0 ? 2 : 1,
-        wantAmount: 1_000n,
-      },
-    ])),
-    watchSeed: TEST_WATCH_SEED,
-  }), DEPOSITORY);
+  const proofWithSameJOffers = (count: number, pullCount = 0, lockCount = 0) =>
+    buildAccountProofBody(
+      proofAccount({
+        deltas: new Map([
+          [1, { offdelta: 0n }],
+          [2, { offdelta: 0n }],
+        ]),
+        locks: new Map(
+          Array.from({ length: lockCount }, (_, index) => [
+            `lock-${index}`,
+            {
+              tokenId: index % 2 === 0 ? 1 : 2,
+              senderIsLeft: index % 2 === 0,
+              amount: 1n,
+              timelock: 100_000n,
+              revealBeforeHeight: 100,
+              hashlock: `0x${(index + 501).toString(16).padStart(64, '0')}`,
+            },
+          ]),
+        ),
+        pulls: new Map(
+          Array.from({ length: pullCount }, (_, index) => [
+            `pull-${index}`,
+            {
+              tokenId: 1,
+              amount: 1n,
+              claimedRatio: 0,
+              fullHash: `0x${(index + 1).toString(16).padStart(64, '0')}`,
+              partialRoot: `0x${(index + 101).toString(16).padStart(64, '0')}`,
+              crossJurisdiction: { leg: 'target' },
+            },
+          ]),
+        ),
+        swapOffers: new Map(
+          Array.from({ length: count }, (_, index) => [
+            `offer-${index}`,
+            {
+              makerIsLeft: index % 2 === 0,
+              giveTokenId: index % 2 === 0 ? 1 : 2,
+              giveAmount: 1_000n,
+              wantTokenId: index % 2 === 0 ? 2 : 1,
+              wantAmount: 1_000n,
+            },
+          ]),
+        ),
+        watchSeed: TEST_WATCH_SEED,
+      }),
+      DEPOSITORY,
+    );
 
   test('keeps every growing transformer atom inside the physical storage-row budget', () => {
     const proof = proofWithSameJOffers(20, 18, 32);
@@ -84,27 +93,37 @@ describe('proof-builder dispute hash', () => {
     // is a Patricia graph whose actual scalar records remain independently
     // storable. This is the exact MM + cross-j combination that wedged H3.
     expect(encodeAccountStateValue(proof.proofBodyStruct).byteLength).toBeGreaterThan(9_000);
-    expect(proof.runtimeProofBody.transformers).toHaveLength(3);
-    const [paymentClause, marketClause, pullClause] = proof.runtimeProofBody.transformers;
-    expect(paymentClause?.batch.payments).toHaveLength(32);
-    expect(paymentClause?.batch.swaps).toHaveLength(0);
-    expect(paymentClause?.batch.pulls).toHaveLength(0);
-    expect(marketClause?.batch.payments).toHaveLength(0);
-    expect(marketClause?.batch.swaps).toHaveLength(20);
-    expect(marketClause?.batch.pulls).toHaveLength(0);
-    expect(pullClause?.batch.payments).toHaveLength(0);
-    expect(pullClause?.batch.swaps).toHaveLength(0);
-    expect(pullClause?.batch.pulls).toHaveLength(18);
+    const batches = proof.runtimeProofBody.transformers.flatMap(clause => ('batch' in clause ? [clause.batch] : []));
+    expect(batches.map(batch => [batch.payments.length, batch.swaps.length, batch.pulls.length])).toEqual([
+      [29, 0, 0],
+      [3, 0, 0],
+      [0, 20, 0],
+      [0, 0, 18],
+    ]);
+    const expectedHashes = Array.from({ length: 32 }, (_, index) => `lock-${index}`)
+      .sort()
+      .map(lockId => `0x${(Number(lockId.slice(5)) + 501).toString(16).padStart(64, '0')}`);
+    expect(batches.flatMap(batch => batch.payments.map(payment => payment.hash))).toEqual(expectedHashes);
     for (const transformer of proof.proofBodyStruct.transformers) {
-      expect(encodeBuffer({ kind: 'atom', value: transformer.encodedBatch }).byteLength)
-        .toBeLessThan(MAX_ACCOUNT_DISPUTE_PROOF_ATOM_BYTES);
+      expect(encodeBuffer({ kind: 'atom', value: transformer.encodedBatch }).byteLength).toBeLessThan(
+        MAX_ACCOUNT_DISPUTE_PROOF_ATOM_BYTES,
+      );
     }
   });
 
-  test('rejects an oversized signed program before its hash enters consensus', () => {
-    expect(() => proofWithSameJOffers(30)).toThrow(
-      'ACCOUNT_DISPUTE_PROOF_ATOM_BYTES_EXCEEDED',
-    );
+  test('rejects an indivisible oversized custom signed program before its hash enters consensus', () => {
+    const account = proofAccount(new Map([[1, { ondelta: 0n, offdelta: 0n }]]));
+    account.state.subcontracts = new Map([
+      [
+        'oversized',
+        {
+          transformerAddress: DEPOSITORY,
+          encodedBatch: `0x${'ab'.repeat(5_000)}`,
+          allowances: [],
+        },
+      ],
+    ]);
+    expect(() => buildAccountProofBody(account, DEPOSITORY)).toThrow('ACCOUNT_DISPUTE_PROOF_ATOM_BYTES_EXCEEDED');
   });
 
   test('uses canonical sorted account key regardless of local left/right orientation', () => {
@@ -112,10 +131,7 @@ describe('proof-builder dispute hash', () => {
       '0x1ee7a317604eea0486bd28ef857fa194171f6e844f5933cb13efecf3cd36ec73',
       '0xbf2891acf55a366fb4f28727dfc301b1f5cd70eb0f3b8a029a31b2ac4478e1da',
     );
-    const rightOriented = disputeAccount(
-      leftOriented.state.rightEntity,
-      leftOriented.state.leftEntity,
-    );
+    const rightOriented = disputeAccount(leftOriented.state.rightEntity, leftOriented.state.leftEntity);
 
     const sortedKey = ethers.solidityPacked(
       ['bytes32', 'bytes32'],
@@ -140,7 +156,9 @@ describe('proof-builder dispute hash', () => {
       '0xbf2891acf55a366fb4f28727dfc301b1f5cd70eb0f3b8a029a31b2ac4478e1da',
     );
     const missingAddress = { chainId: 31337, depositoryAddress: '' };
-    expect(() => createDisputeProofHash(account, PROOF_BODY_HASH, missingAddress, true)).toThrow('INVALID_HANKO_DEPOSITORY_ADDRESS:missing');
+    expect(() => createDisputeProofHash(account, PROOF_BODY_HASH, missingAddress, true)).toThrow(
+      'INVALID_HANKO_DEPOSITORY_ADDRESS:missing',
+    );
     expect(() => createDisputeProofHashWithNonce(account.state, PROOF_BODY_HASH, missingAddress, 1, true)).toThrow(
       'INVALID_HANKO_DEPOSITORY_ADDRESS:missing',
     );
@@ -151,12 +169,9 @@ describe('proof-builder dispute hash', () => {
       '0x1ee7a317604eea0486bd28ef857fa194171f6e844f5933cb13efecf3cd36ec73',
       '0xbf2891acf55a366fb4f28727dfc301b1f5cd70eb0f3b8a029a31b2ac4478e1da',
     );
-    expect(() => createDisputeProofHash(
-      account,
-      PROOF_BODY_HASH,
-      { chainId: 0, depositoryAddress: DEPOSITORY },
-      true,
-    )).toThrow('INVALID_HANKO_DOMAIN_CHAIN_ID:0');
+    expect(() =>
+      createDisputeProofHash(account, PROOF_BODY_HASH, { chainId: 0, depositoryAddress: DEPOSITORY }, true),
+    ).toThrow('INVALID_HANKO_DOMAIN_CHAIN_ID:0');
   });
 
   test('fails fast when transformer address is missing for HTLC/swaps', () => {
@@ -190,17 +205,26 @@ describe('proof-builder dispute hash', () => {
   });
 
   test('maps exclusive runtime HTLC expiry to the inclusive Solidity deadline', () => {
-    const proofForTimelock = (timelock: bigint) => buildAccountProofBody(proofAccount({
-      deltas: new Map([[1, { offdelta: 0n }]]),
-      locks: new Map([['lock-deadline', {
-        tokenId: 1,
-        senderIsLeft: true,
-        amount: 1n,
-        timelock,
-        revealBeforeHeight: 123,
-        hashlock: `0x${'11'.repeat(32)}`,
-      }]]),
-    }), DEPOSITORY).runtimeProofBody.transformers[0]?.batch?.payments[0]?.revealedUntilTimestamp;
+    const proofForTimelock = (timelock: bigint) =>
+      buildAccountProofBody(
+        proofAccount({
+          deltas: new Map([[1, { offdelta: 0n }]]),
+          locks: new Map([
+            [
+              'lock-deadline',
+              {
+                tokenId: 1,
+                senderIsLeft: true,
+                amount: 1n,
+                timelock,
+                revealBeforeHeight: 123,
+                hashlock: `0x${'11'.repeat(32)}`,
+              },
+            ],
+          ]),
+        }),
+        DEPOSITORY,
+      ).runtimeProofBody.transformers[0]?.batch?.payments[0]?.revealedUntilTimestamp;
 
     expect(proofForTimelock(10_000n)).toBe(9);
     expect(proofForTimelock(10_001n)).toBe(10);
@@ -210,14 +234,17 @@ describe('proof-builder dispute hash', () => {
     const accountMachine = proofAccount({
       deltas: new Map([[1, { offdelta: 0n }]]),
       locks: new Map([
-        ['lock-missing-token', {
-          tokenId: 2,
-          senderIsLeft: true,
-          amount: 10n,
-          timelock: 123_000n,
-          revealBeforeHeight: 123,
-          hashlock: '0x' + '11'.repeat(32),
-        }],
+        [
+          'lock-missing-token',
+          {
+            tokenId: 2,
+            senderIsLeft: true,
+            amount: 10n,
+            timelock: 123_000n,
+            revealBeforeHeight: 123,
+            hashlock: '0x' + '11'.repeat(32),
+          },
+        ],
       ]),
       swapOffers: new Map(),
       pulls: new Map(),
@@ -234,13 +261,16 @@ describe('proof-builder dispute hash', () => {
       deltas: new Map([[1, { offdelta: 0n }]]),
       locks: new Map(),
       swapOffers: new Map([
-        ['swap-missing-token', {
-          makerIsLeft: true,
-          giveTokenId: 1,
-          giveAmount: 17n,
-          wantTokenId: 2,
-          wantAmount: 19n,
-        }],
+        [
+          'swap-missing-token',
+          {
+            makerIsLeft: true,
+            giveTokenId: 1,
+            giveAmount: 17n,
+            wantTokenId: 2,
+            wantAmount: 19n,
+          },
+        ],
       ]),
       pulls: new Map(),
       watchSeed: TEST_WATCH_SEED,
@@ -257,13 +287,16 @@ describe('proof-builder dispute hash', () => {
       locks: new Map(),
       swapOffers: new Map(),
       pulls: new Map([
-        ['pull-missing-token', {
-          tokenId: 2,
-          amount: 23n,
-          claimedRatio: 0,
-          fullHash: '0x' + '33'.repeat(32),
-          partialRoot: '0x' + '44'.repeat(32),
-        }],
+        [
+          'pull-missing-token',
+          {
+            tokenId: 2,
+            amount: 23n,
+            claimedRatio: 0,
+            fullHash: '0x' + '33'.repeat(32),
+            partialRoot: '0x' + '44'.repeat(32),
+          },
+        ],
       ]),
       watchSeed: TEST_WATCH_SEED,
     });
@@ -281,45 +314,60 @@ describe('proof-builder dispute hash', () => {
         [3, { offdelta: 0n }],
       ]),
       locks: new Map([
-        ['lock-left-sends', {
-          tokenId: 1,
-          senderIsLeft: true,
-          amount: 11n,
-          timelock: 123_000n,
-          revealBeforeHeight: 123,
-          hashlock: '0x' + '11'.repeat(32),
-        }],
-        ['lock-right-sends', {
-          tokenId: 2,
-          senderIsLeft: false,
-          amount: 13n,
-          timelock: 123_000n,
-          revealBeforeHeight: 123,
-          hashlock: '0x' + '22'.repeat(32),
-        }],
+        [
+          'lock-left-sends',
+          {
+            tokenId: 1,
+            senderIsLeft: true,
+            amount: 11n,
+            timelock: 123_000n,
+            revealBeforeHeight: 123,
+            hashlock: '0x' + '11'.repeat(32),
+          },
+        ],
+        [
+          'lock-right-sends',
+          {
+            tokenId: 2,
+            senderIsLeft: false,
+            amount: 13n,
+            timelock: 123_000n,
+            revealBeforeHeight: 123,
+            hashlock: '0x' + '22'.repeat(32),
+          },
+        ],
       ]),
       swapOffers: new Map([
-        ['swap-1', {
-          makerIsLeft: true,
-          giveTokenId: 1,
-          giveAmount: 17n,
-          wantTokenId: 2,
-          wantAmount: 19n,
-        }],
+        [
+          'swap-1',
+          {
+            makerIsLeft: true,
+            giveTokenId: 1,
+            giveAmount: 17n,
+            wantTokenId: 2,
+            wantAmount: 19n,
+          },
+        ],
       ]),
       pulls: new Map([
-        ['pull-positive', {
-          tokenId: 3,
-          amount: 23n,
-          fullHash: '0x' + '33'.repeat(32),
-          partialRoot: '0x' + '44'.repeat(32),
-        }],
-        ['pull-negative', {
-          tokenId: 1,
-          amount: -29n,
-          fullHash: '0x' + '55'.repeat(32),
-          partialRoot: '0x' + '66'.repeat(32),
-        }],
+        [
+          'pull-positive',
+          {
+            tokenId: 3,
+            amount: 23n,
+            fullHash: '0x' + '33'.repeat(32),
+            partialRoot: '0x' + '44'.repeat(32),
+          },
+        ],
+        [
+          'pull-negative',
+          {
+            tokenId: 1,
+            amount: -29n,
+            fullHash: '0x' + '55'.repeat(32),
+            partialRoot: '0x' + '66'.repeat(32),
+          },
+        ],
       ]),
       watchSeed: TEST_WATCH_SEED,
     });
@@ -346,30 +394,36 @@ describe('proof-builder dispute hash', () => {
       locks: new Map(),
       swapOffers: new Map(),
       pulls: new Map([
-        ['source-pull', {
-          tokenId: 1,
-          amount: 11n,
-          claimedRatio: 0,
-          fullHash: '0x' + '11'.repeat(32),
-          partialRoot: '0x' + '22'.repeat(32),
-          crossJurisdiction: {
-            orderId: 'order-1',
-            routeHash: '0x' + 'aa'.repeat(32),
-            leg: 'source',
+        [
+          'source-pull',
+          {
+            tokenId: 1,
+            amount: 11n,
+            claimedRatio: 0,
+            fullHash: '0x' + '11'.repeat(32),
+            partialRoot: '0x' + '22'.repeat(32),
+            crossJurisdiction: {
+              orderId: 'order-1',
+              routeHash: '0x' + 'aa'.repeat(32),
+              leg: 'source',
+            },
           },
-        }],
-        ['target-pull', {
-          tokenId: 1,
-          amount: -13n,
-          claimedRatio: 0,
-          fullHash: '0x' + '33'.repeat(32),
-          partialRoot: '0x' + '44'.repeat(32),
-          crossJurisdiction: {
-            orderId: 'order-1',
-            routeHash: '0x' + 'aa'.repeat(32),
-            leg: 'target',
+        ],
+        [
+          'target-pull',
+          {
+            tokenId: 1,
+            amount: -13n,
+            claimedRatio: 0,
+            fullHash: '0x' + '33'.repeat(32),
+            partialRoot: '0x' + '44'.repeat(32),
+            crossJurisdiction: {
+              orderId: 'order-1',
+              routeHash: '0x' + 'aa'.repeat(32),
+              leg: 'target',
+            },
           },
-        }],
+        ],
       ]),
       watchSeed: TEST_WATCH_SEED,
     });
@@ -388,13 +442,18 @@ describe('proof-builder dispute hash', () => {
       deltas: new Map([[1, { offdelta: 0n }]]),
       locks: new Map(),
       swapOffers: new Map(),
-      pulls: new Map([['pull', {
-        tokenId: 1,
-        amount: 11n,
-        claimedRatio: 0,
-        fullHash: `0x${'77'.repeat(32)}`,
-        partialRoot: `0x${'88'.repeat(32)}`,
-      }]]),
+      pulls: new Map([
+        [
+          'pull',
+          {
+            tokenId: 1,
+            amount: 11n,
+            claimedRatio: 0,
+            fullHash: `0x${'77'.repeat(32)}`,
+            partialRoot: `0x${'88'.repeat(32)}`,
+          },
+        ],
+      ]),
       watchSeed: TEST_WATCH_SEED,
     });
     const proof = buildAccountProofBody(accountMachine, DEPOSITORY).proofBodyStruct;
@@ -403,7 +462,7 @@ describe('proof-builder dispute hash', () => {
     const customAddress = `0x${'99'.repeat(20)}`;
     const customOnly = {
       ...proof,
-      transformers: proof.transformers.map((transformer) => ({
+      transformers: proof.transformers.map(transformer => ({
         ...transformer,
         transformerAddress: customAddress,
       })),
@@ -412,22 +471,19 @@ describe('proof-builder dispute hash', () => {
 
     const malformedCanonical = {
       ...proof,
-      transformers: [{
-        ...proof.transformers[0]!,
-        encodedBatch: '0x1234',
-      }],
+      transformers: [
+        {
+          ...proof.transformers[0]!,
+          encodedBatch: '0x1234',
+        },
+      ],
     };
-    expect(() => proofBodyHasPulls(malformedCanonical, DEPOSITORY)).toThrow(
-      'DISPUTE_CANONICAL_DELTA_BATCH_INVALID:0',
-    );
+    expect(() => proofBodyHasPulls(malformedCanonical, DEPOSITORY)).toThrow('DISPUTE_CANONICAL_DELTA_BATCH_INVALID:0');
   });
 
   test('rejects 129-token proof bodies before their hash can be signed', () => {
     const deltas = new Map(
-      Array.from({ length: 129 }, (_, index) => [
-        index + 1,
-        { ondelta: 0n, offdelta: 0n },
-      ] as const),
+      Array.from({ length: 129 }, (_, index) => [index + 1, { ondelta: 0n, offdelta: 0n }] as const),
     );
 
     expect(() => buildAccountProofBody(proofAccount(deltas), '')).toThrow(
@@ -437,14 +493,16 @@ describe('proof-builder dispute hash', () => {
 
   test('rejects 33 transformer clauses before their hash can be signed', () => {
     const account = proofAccount(new Map([[1, { ondelta: 0n, offdelta: 0n }]]));
-    account.state.subcontracts = new Map(Array.from({ length: 33 }, (_, index) => [
-      `subcontract-${index.toString().padStart(2, '0')}`,
-      {
-        transformerAddress: DEPOSITORY,
-        encodedBatch: '0x',
-        allowances: [],
-      },
-    ]));
+    account.state.subcontracts = new Map(
+      Array.from({ length: 33 }, (_, index) => [
+        `subcontract-${index.toString().padStart(2, '0')}`,
+        {
+          transformerAddress: DEPOSITORY,
+          encodedBatch: '0x',
+          allowances: [],
+        },
+      ]),
+    );
 
     expect(() => buildAccountProofBody(account, '')).toThrow(
       'J_DISPUTE_PROOFBODY_TRANSFORMER_LIMIT:account.signing:33',
@@ -453,32 +511,64 @@ describe('proof-builder dispute hash', () => {
 
   test('rejects a ProofBody above 176 KiB before its hash can be signed', () => {
     const account = proofAccount(new Map([[1, { ondelta: 0n, offdelta: 0n }]]));
-    account.state.subcontracts = new Map([['oversized', {
-      transformerAddress: DEPOSITORY,
-      encodedBatch: `0x${'ab'.repeat(177 * 1024)}`,
-      allowances: [],
-    }]]);
+    account.state.subcontracts = new Map([
+      [
+        'oversized',
+        {
+          transformerAddress: DEPOSITORY,
+          encodedBatch: `0x${'ab'.repeat(177 * 1024)}`,
+          allowances: [],
+        },
+      ],
+    ]);
 
-    expect(() => buildAccountProofBody(account, '')).toThrow(
-      'J_DISPUTE_PROOFBODY_BYTES_EXCEEDED:account.signing',
-    );
+    expect(() => buildAccountProofBody(account, '')).toThrow('J_DISPUTE_PROOFBODY_BYTES_EXCEEDED:account.signing');
   });
 
-  test('rejects ondelta plus offdelta overflow before their hash can be signed', () => {
-    const int256Max = (1n << 255n) - 1n;
-    const deltas = new Map([[1, { ondelta: int256Max, offdelta: 1n }]]);
-
-    expect(() => buildAccountProofBody(proofAccount(deltas), '')).toThrow(
-      'DISPUTE_PROOFBODY_FINAL_DELTA_OVERFLOW:token=1',
-    );
+  test('accepts accumulated allocations past int256 and rejects values outside Int512', () => {
+    const deltas = new Map([[1, { ondelta: INT512_MAX, offdelta: 1n }]]);
+    expect(buildAccountProofBody(proofAccount(deltas), '').runtimeProofBody.offdeltas).toEqual([1n]);
+    deltas.set(1, { ondelta: INT512_MAX + 1n, offdelta: 1n });
+    expect(() => buildAccountProofBody(proofAccount(deltas), '')).toThrow('ABI_MONEY_WIDTH:PROOFBODY_ONDELTA:token=1');
   });
 
-  test('rejects int256.min final delta before its hash can be signed', () => {
-    const int256Min = -(1n << 255n);
-    const deltas = new Map([[1, { ondelta: int256Min, offdelta: 0n }]]);
+  test('encodes the negative Int512 endpoint and rejects one below it', () => {
+    const deltas = new Map([[1, { ondelta: 0n, offdelta: INT512_MIN }]]);
+    expect(buildAccountProofBody(proofAccount(deltas), '').proofBodyStruct.offdeltas).toEqual([
+      { high: -(1n << 255n), low: 0n },
+    ]);
+    deltas.set(1, { ondelta: 0n, offdelta: INT512_MIN - 1n });
+    expect(() => buildAccountProofBody(proofAccount(deltas), '')).toThrow('ABI_MONEY_WIDTH:PROOFBODY_OFFDELTA:token=1');
+  });
 
-    expect(() => buildAccountProofBody(proofAccount(deltas), '')).toThrow(
-      'DISPUTE_PROOFBODY_FINAL_DELTA_INT256_MIN:token=1',
+  test('retains full uint256 HTLC obligations by splitting overflowing allowance words', () => {
+    const locks = new Map(
+      ['a', 'b'].map((lockId, index) => [
+        lockId,
+        {
+          tokenId: 1,
+          senderIsLeft: true,
+          amount: UINT256_MAX,
+          timelock: 100_000n,
+          hashlock: `0x${(index + 1).toString(16).padStart(64, '0')}`,
+        },
+      ]),
     );
+    const proof = buildAccountProofBody(
+      proofAccount({
+        deltas: new Map([[1, { ondelta: 0n, offdelta: 0n }]]),
+        locks,
+      }),
+      DEPOSITORY,
+    );
+    const batches = proof.runtimeProofBody.transformers.flatMap(clause => ('batch' in clause ? [clause.batch] : []));
+    expect(batches.map(batch => batch.payments.map(payment => payment.amount))).toEqual([
+      [-UINT256_MAX],
+      [-UINT256_MAX],
+    ]);
+    expect(proof.runtimeProofBody.transformers.map(clause => clause.allowances)).toEqual([
+      [{ deltaIndex: 0, leftAllowance: 0n, rightAllowance: UINT256_MAX }],
+      [{ deltaIndex: 0, leftAllowance: 0n, rightAllowance: UINT256_MAX }],
+    ]);
   });
 });

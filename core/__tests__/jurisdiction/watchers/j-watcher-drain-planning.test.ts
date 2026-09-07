@@ -3,9 +3,9 @@ import { describe, expect, test } from 'bun:test';
 import {
   isJWatcherDrainComplete,
   needsJWatcherPoll,
-  observeJWatcherDrainProgress,
   type JWatcherDrainStatus,
-} from '../../../jurisdiction/adapter/operations/backlog-drain';
+} from '../../../jurisdiction/adapter/operations/backlog-drain-status';
+import { observeJWatcherDrainProgress } from '../../../jurisdiction/adapter/operations/backlog-drain';
 
 const status = (overrides: Partial<JWatcherDrainStatus> = {}): JWatcherDrainStatus => ({
   chainId: 31337,
@@ -39,6 +39,30 @@ describe('scenario J-watcher drain planning', () => {
         pendingDueFinality: false,
       }],
     }))).toBe(false);
+  });
+
+  test('funded wallet reload accepts the authenticated 1136–1186 empty tail, but waits for financial finality', () => {
+    // The live reload trace retained Entity height 1135 while the watcher
+    // authenticated 51 empty blocks. Empty suffixes below the 100-block
+    // liveness interval must not require another financial frame to open UI.
+    const emptyTail = status({
+      targetBlock: 1186,
+      committedCursor: 1135,
+      authenticatedThrough: 1186,
+      replicas: [{
+        key: 'entity:validator',
+        localScannedThrough: 1135,
+        authenticatedThrough: 1186,
+        entityFinalizedThrough: 1135,
+        pendingDueFinality: false,
+      }],
+    });
+    expect(isJWatcherDrainComplete(emptyTail)).toBe(true);
+    expect(needsJWatcherPoll(emptyTail)).toBe(false);
+    expect(isJWatcherDrainComplete({
+      ...emptyTail,
+      replicas: emptyTail.replicas.map(replica => ({ ...replica, pendingDueFinality: true })),
+    })).toBe(false);
   });
 
   test('does not require a global cursor beyond the common durable Entity prefix', () => {

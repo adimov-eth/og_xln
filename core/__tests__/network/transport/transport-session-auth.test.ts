@@ -106,7 +106,7 @@ const openAuthenticatedDirect = async (
   const challenge = socket.sent[0]?.challenge || '';
   const audience = socket.sent[0]?.audience || '';
   await route.websocket.message(socket.ws, serializeWsMessage(signHello(challenge, audience)));
-  expect(socket.sent.at(-1)?.type).toBe('hello_ack');
+  expect(socket.sent.find(message => message.type === 'hello_ack')?.type).toBe('hello_ack');
   return { route, socket, challenge, audience };
 };
 

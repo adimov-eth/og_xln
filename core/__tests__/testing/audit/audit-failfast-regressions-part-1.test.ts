@@ -1,3 +1,7 @@
+import { PersistentAccountStateMap } from '../../../account/state/persistent-state-map';
+import { beginAccountStateDraft } from '../../../account/state/account-state-draft';
+import { PersistentEntityAccountMap } from '../../../entity/state/persistent-account-map';
+import { createEntityFrameCandidateState } from '../../../entity/state-clone';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { readEntityFrameEventMessages } from '../../../entity/frame-events';
@@ -52,7 +56,6 @@ import { resolveAutoRebalanceFeePolicy, runPostFrameAutoRebalanceCheck } from '.
 import { HTLC, LIMITS } from '../../../config/constants';
 
 import { executeCrontab, initCrontab } from '../../../entity/scheduler';
-import { HTLC_SECRET_ACK_TIMEOUT_MS } from '../../../entity/tx/j-events-htlc/route-lifecycle';
 
 import { encodeBoard, generateLazyEntityId, generateNumberedEntityId, hashBoard } from '../../../entity/factory';
 import { provisionTestEntityEncryptionKey } from '../../helpers/cross-j';
@@ -80,6 +83,7 @@ import {
   buildEntityFrameAuthority,
   computeCanonicalEntityConsensusStateHash,
   computeCanonicalEntityConsensusStateHashCold,
+  computeEntityAccountValueHash,
   computeEntityFrameAuthorityRoot,
 } from '../../../entity/consensus/state-root';
 
@@ -109,7 +113,6 @@ import { applyCommittedCrossJurisdictionAccountTxFollowup } from '../../../entit
 
 import { buildCrossJurisdictionEntityOutput } from '../../../entity/tx/j-events-htlc/cross-j-outputs';
 
-import { handleHtlcOnionAdvance } from '../../../entity/tx/handlers/htlc/onion-advance';
 
 import {
   handleAdmitCrossJurisdictionBookOrderEntityTx,
@@ -183,7 +186,7 @@ import { createRuntimeEntityInputBatchContext } from '../../../runtime/admit/ent
 import { rejectMalformedEntityInput } from '../../../runtime/admit/entity-input-staging.ts';
 import { discardRejectedEntityInput } from '../../../runtime/frame/intake/discard';
 
-import { MalformedEntityFrameInputError } from '../../../entity/tx/processing/invariant-errors';
+import { MalformedEntityFrameInputError, classifyEntityInputApplyFailure } from '../../../entity/tx/processing/invariant-errors';
 
 import { applyStorageChanges } from '../../../runtime/observability/env-events';
 import {
@@ -226,7 +229,6 @@ import { signEntityHashes, verifyHankoForHash } from '../../../hanko/signing';
 
 import { computeHtlcEnvelopeContextHash, computeHtlcSecretOfferContextHash } from '../../../protocol/htlc/codec/envelope';
 
-import { buildHtlcOnionAdvanceTx } from '../../../entity/paybook/onion-advance';
 import { hashEncryptedHtlcLayer } from '../../../protocol/htlc/codec/onion-layer';
 
 import { encodeHtlcSecretOffer, encodeOnionLayer } from '../../../protocol/htlc/codec/onion';
@@ -355,16 +357,16 @@ const makeProposalAccount = (mempool: AccountTx[], leftEntity: string, rightEnti
         entityId: leftEntity,
         counterpartyId: rightEntity,
       }),
-      deltas: new Map(),
-      locks: new Map(),
-      swapOffers: new Map(),
+      deltas: PersistentAccountStateMap.empty('deltas'),
+      locks: PersistentAccountStateMap.empty('locks'),
+      swapOffers: PersistentAccountStateMap.empty('swapOffers'),
       leftPendingJClaims: createEmptyAccountJClaimAccumulator(),
       rightPendingJClaims: createEmptyAccountJClaimAccumulator(),
       lastFinalizedJHeight: 0,
       disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 10 },
       jNonce: 0,
-      requestedRebalance: new Map(),
-      requestedRebalanceFeeState: new Map(),
+      requestedRebalance: PersistentAccountStateMap.empty('requestedRebalance'),
+      requestedRebalanceFeeState: PersistentAccountStateMap.empty('requestedRebalanceFeeState'),
     },
     status: 'active',
     mempool: [...mempool],
@@ -382,8 +384,13 @@ const makeProposalAccount = (mempool: AccountTx[], leftEntity: string, rightEnti
     currentHeight: 0,
     rollbackCount: 0,
     proofHeader: { fromEntity: leftEntity, toEntity: rightEntity, nextProofNonce: 0 },
-    pendingWithdrawals: new Map(),
-    shadow: { rebalance: { policy: new Map(), submittedAtByToken: new Map() } },
+    pendingWithdrawals: PersistentAccountStateMap.empty('pendingWithdrawals'),
+    shadow: {
+      rebalance: {
+        policy: PersistentAccountStateMap.empty('rebalanceShadowPolicy'),
+        submittedAtByToken: PersistentAccountStateMap.empty('rebalanceShadowSubmitted'),
+      },
+    },
   };
 };
 
@@ -571,7 +578,7 @@ const makeReplicaMissingPrevFrameHash = (): EntityReplica => ({
     proposals: new Map(),
     config: makeSingleSignerConfig(),
     reserves: new Map(),
-    accounts: new Map(),
+    accounts: PersistentEntityAccountMap.empty(`0x${'11'.repeat(32)}`, computeEntityAccountValueHash),
     deferredAccountProposals: new Map(),
     lastFinalizedJHeight: 0,
     profile: {
@@ -587,7 +594,7 @@ const makeReplicaMissingPrevFrameHash = (): EntityReplica => ({
   },
 });
 
-const makeEntityState = (entityId: string): EntityState => ({
+const makeEntityState = (entityId: string): EntityState => createEntityFrameCandidateState({
   entityId,
   entityEncryptionPublicKey: `0x${'44'.repeat(32)}`,
   height: 0,
@@ -596,7 +603,7 @@ const makeEntityState = (entityId: string): EntityState => ({
   proposals: new Map(),
   config: makeSingleSignerConfig(),
   reserves: new Map(),
-  accounts: new Map(),
+  accounts: PersistentEntityAccountMap.empty(entityId, computeEntityAccountValueHash),
   deferredAccountProposals: new Map(),
   lastFinalizedJHeight: 0,
   profile: {
@@ -923,6 +930,7 @@ describe('audit fail-fast regressions', () => {
   });
 
   test('live runtime drops a remote stale-signer input without halting', async () => {
+    process.env['XLN_REJECT_FAIL_FAST'] = '0';
     const env = createEmptyEnv('stale-signer-live-drop');
     env.scenarioMode = false;
     env.quietRuntimeLogs = true;
@@ -1049,6 +1057,7 @@ describe('audit fail-fast regressions', () => {
   });
 
   test('malformed frames are isolated while invalid local schema remains fatal', async () => {
+    process.env['XLN_REJECT_FAIL_FAST'] = '0';
     const makeRuntime = (seed: string) => {
       const env = createEmptyEnv(seed);
       const storageBase = resolveDbPath(env);
@@ -1238,7 +1247,7 @@ describe('audit fail-fast regressions', () => {
     const applyRemoteAgainstBrokenState = async (
       seed: string,
       failure: Error,
-    ): Promise<RuntimeEntityInputApplyError> => {
+    ): Promise<ReturnType<typeof classifyEntityInputApplyFailure>> => {
       const broken = makeRuntime(seed);
       Object.defineProperty(broken.state, 'accounts', {
         configurable: true,
@@ -1272,18 +1281,16 @@ describe('audit fail-fast regressions', () => {
           },
         );
       } catch (error) {
-        expect(error).toBeInstanceOf(RuntimeEntityInputApplyError);
-        return error as RuntimeEntityInputApplyError;
+        expect(error).toBe(failure);
+        return classifyEntityInputApplyFailure(error);
       }
       throw new Error('TEST_REMOTE_BROKEN_STATE_DID_NOT_FAIL');
     };
     expect(
-      (await applyRemoteAgainstBrokenState('remote-storage-failure-fatal', storageFailure('STORAGE_NODE_HASH_MISMATCH')))
-        .failureKind,
+      (await applyRemoteAgainstBrokenState('remote-storage-failure-fatal', storageFailure('STORAGE_NODE_HASH_MISMATCH'))),
     ).toBe('storage');
     expect(
-      (await applyRemoteAgainstBrokenState('remote-local-bug-fatal', new TypeError('unexpected undefined state')))
-        .failureKind,
+      (await applyRemoteAgainstBrokenState('remote-local-bug-fatal', new TypeError('unexpected undefined state'))),
     ).toBe('local-bug');
 
     const invariant = makeRuntime('remote-business-rejection-discard');
@@ -1844,7 +1851,8 @@ describe('audit fail-fast regressions', () => {
     );
 
     const result = await applyJEventRange(state, { ...common, ...signed }, env);
-    expect(result.newState.jBlockChain.length).toBe(1);
+    expect(result.newState.lastFinalizedJHeight).toBe(2);
+    expect(result.newState.jHistoryFinality?.finalizedThroughHeight).toBe(2);
     expect(result.newState.reserves.get(1)).toBe(100n);
   });
 
@@ -2062,16 +2070,20 @@ describe('audit fail-fast regressions', () => {
       state,
       [
         { type: 'chatMessage', data: { message: 'first mutation' } } as any,
-        { type: 'definitely_unknown_entity_tx', data: {} } as any,
+        { type: 'directPayment', data: { targetEntityId: `0x${'62'.repeat(32)}`, tokenId: 1, amount: 1n } } as any,
         { type: 'chatMessage', data: { message: 'late mutation' } } as any,
       ],
       frameTimestamp,
     );
     env.overlay = new Map();
     if (env.infrastructure) env.infrastructure.currentStorageOverlayMarks = new Map();
-    await expect(applyEntityFrameWithMaterializedTestInfraContext(env, state, frameTxs, frameTimestamp)).rejects.toThrow(
-      'ENTITY_FRAME_TX_FAILED: type=definitely_unknown_entity_tx',
-    );
+    const failure: unknown = await applyEntityFrameWithMaterializedTestInfraContext(env, state, frameTxs, frameTimestamp)
+      .then(() => { throw new Error("AUDIT_EXPECTED_FRAME_REJECTION"); }, (error: unknown) => error);
+    expect(failure).toBeInstanceOf(MalformedEntityFrameInputError);
+    if (!(failure instanceof MalformedEntityFrameInputError)) throw failure;
+    expect(failure.message).toContain("ENTITY_FRAME_TX_FAILED: type=directPayment");
+    expect(frameTxs).toHaveLength(1);
+    expect(failure.frameTx).toBe(frameTxs[0]);
 
     expect(readEntityFrameEventMessages(state)).toHaveLength(0);
     expect(state.nonces.has(signer)).toBe(false);
@@ -2248,8 +2260,10 @@ describe('audit fail-fast regressions', () => {
       },
       { runtimeSeed: 'cross-source-commit-resting', now: 10_000 },
     );
-    const sourceHubState = makeEntityState(sourceHub);
-    sourceHubState.crossJurisdictionSwaps = new Map([[route.orderId, route]]);
+    const sourceHubState = createEntityFrameCandidateState({
+      ...makeEntityState(sourceHub),
+      crossJurisdictionSwaps: new Map([[route.orderId, route]]),
+    });
     attachSigningReplica(env, sourceHub, '1');
     const outputs: EntityInput[] = [];
     const swapOffersCreated: SwapOfferEvent[] = [];
@@ -2340,7 +2354,7 @@ describe('audit fail-fast regressions', () => {
     } satisfies CrossJurisdictionSwapRoute;
     const admittedRoute = route;
     const account = makeProposalAccount([], sourceUser, sourceHub);
-    account.state.pulls = new Map([
+    account.state.pulls = PersistentAccountStateMap.fromEntries('pulls', [
       [
         sourcePull.pullId,
         {
@@ -2350,8 +2364,9 @@ describe('audit fail-fast regressions', () => {
       ],
     ]);
 
+    const draft = beginAccountStateDraft(account).draft;
     const result = await handleSwapOffer(
-      account,
+      draft,
       {
         type: 'swap_offer',
         data: {
@@ -2372,7 +2387,7 @@ describe('audit fail-fast regressions', () => {
     );
 
     expect(result.ok).toBe(true);
-    const offer = account.state.swapOffers.get(route.orderId);
+    const offer = draft.state.swapOffers.get(route.orderId);
     expect(offer?.giveAmount).toBe(route.source.amount);
     expect(offer?.wantAmount).toBe(route.target.amount);
     expect(offer?.priceTicks).toBe(20_000n);
@@ -2452,7 +2467,7 @@ describe('audit fail-fast regressions', () => {
         updatedAt: 1_001,
       });
       const account = makeProposalAccount([], sourceMm, sourceHub);
-      account.state.pulls = new Map([
+      account.state.pulls = PersistentAccountStateMap.fromEntries('pulls', [
         [
           route.sourcePull!.pullId,
           {
@@ -2470,8 +2485,9 @@ describe('audit fail-fast regressions', () => {
         ],
       ]);
 
+      const draft = beginAccountStateDraft(account).draft;
       const result = await handleSwapOffer(
-        account,
+        draft,
         {
           type: 'swap_offer',
           data: {
@@ -2495,7 +2511,7 @@ describe('audit fail-fast regressions', () => {
 
       expect(result.ok ? undefined : result.rejection.message).toBeUndefined();
       expect(result.ok).toBe(true);
-      const offer = account.state.swapOffers.get(restingRoute.orderId);
+      const offer = draft.state.swapOffers.get(restingRoute.orderId);
       expect(offer?.giveAmount).toBe(amounts.sourceAmount);
       expect(offer?.wantAmount).toBe(amounts.targetAmount);
       expect(offer?.priceTicks).toBe(amounts.priceTicks);
@@ -2571,8 +2587,8 @@ describe('audit fail-fast regressions', () => {
     const amount = 1000n;
     const delta = createDefaultDelta(1);
     delta.leftHold = amount;
-    account.state.deltas.set(1, delta);
-    account.state.locks.set('lock-1', {
+    account.state.deltas = account.state.deltas.updated(1, delta);
+    account.state.locks = account.state.locks.updated('lock-1', {
       lockId: 'lock-1',
       hashlock: `0x${'77'.repeat(32)}`,
       timelock: 10_000n,
@@ -2584,26 +2600,27 @@ describe('audit fail-fast regressions', () => {
       createdTimestamp: 0,
     });
 
+    const draft = beginAccountStateDraft(account).draft;
     const payerResult = await handleHtlcResolve(
-      account.state,
+      draft.state,
       { type: 'htlc_resolve', data: { lockId: 'lock-1', outcome: 'error', reason: 'downstream_error' } },
       true,
       1,
       1_000,
     );
     expect(payerResult.ok).toBe(false);
-    expect(account.state.locks.has('lock-1')).toBe(true);
-    expect(account.state.deltas.get(1)?.leftHold).toBe(amount);
+    expect(draft.state.locks.has('lock-1')).toBe(true);
+    expect(draft.state.deltas.get(1)?.leftHold).toBe(amount);
 
     const beneficiaryResult = await handleHtlcResolve(
-      account.state,
+      draft.state,
       { type: 'htlc_resolve', data: { lockId: 'lock-1', outcome: 'error', reason: 'downstream_error' } },
       false,
       1,
       1_000,
     );
     expect(beneficiaryResult.ok).toBe(true);
-    expect(account.state.locks.has('lock-1')).toBe(false);
-    expect(account.state.deltas.get(1)?.leftHold).toBe(0n);
+    expect(draft.state.locks.has('lock-1')).toBe(false);
+    expect(draft.state.deltas.get(1)?.leftHold).toBe(0n);
   });
 });

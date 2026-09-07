@@ -16,12 +16,14 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { createEmptyAccountJClaimAccumulator } from '../../../account/j-claims/j-claim-accumulator';
+import { beginAccountStateDraft, type AccountDraftReplica } from '../../../account/state/account-state-draft';
+import { PersistentAccountStateMap } from '../../../account/state/persistent-state-map';
+import { makeAccount } from '../../helpers/cross-j';
 import { createBook, applyCommand, type BookState, type BookEvent } from '../../../orderbook/core';
 import { ORDERBOOK_PRICE_SCALE, SWAP_LOT_SCALE, computeSwapPriceTicks, deriveSide } from '../../../orderbook/types';
 import { handleSwapResolve } from '../../../account/tx/handlers/swap/resolve/index';
 import { deriveCanonicalSwapFillRatio } from '../../../orderbook/swap-execution';
-import type { AccountReplica, AccountTx, SwapOffer } from '../../../types/account';
+import type { AccountTx, SwapOffer } from '../../../types/account';
 import { createDefaultDelta } from '../../../account/state/delta';
 import {
   accountTxFailureMessage,
@@ -91,7 +93,7 @@ function committedOffer(
   };
 }
 
-function makeAccountMachine(offer: SwapOffer): AccountReplica {
+function makeAccountMachine(offer: SwapOffer): AccountDraftReplica {
   const heldGiveAmount = offer.quantizedGive;
   const giveDelta = createDefaultDelta(offer.giveTokenId);
   giveDelta.leftCreditLimit = 10n ** 30n;
@@ -106,48 +108,13 @@ function makeAccountMachine(offer: SwapOffer): AccountReplica {
   wantDelta.leftCreditLimit = 10n ** 30n;
   wantDelta.rightCreditLimit = 10n ** 30n;
 
-  return {
-    state: {
-      leftEntity: 'maker',
-      rightEntity: 'hub',
-      domain: {
-        chainId: 31337,
-        depositoryAddress: '0x1111111111111111111111111111111111111111',
-      },
-      watchSeed: `0x${'11'.repeat(32)}`,
-      deltas: new Map([
-        [offer.giveTokenId, giveDelta],
-        [offer.wantTokenId, wantDelta],
-      ]),
-      locks: new Map(),
-      swapOffers: new Map([[offer.offerId, offer]]),
-      requestedRebalance: new Map(),
-      requestedRebalanceFeeState: new Map(),
-      leftPendingJClaims: createEmptyAccountJClaimAccumulator(),
-      rightPendingJClaims: createEmptyAccountJClaimAccumulator(),
-      lastFinalizedJHeight: 0,
-      disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 10 },
-      jNonce: 0,
-    },
-    status: 'active',
-    mempool: [],
-    currentFrame: {
-      height: 0,
-      timestamp: 0,
-      jHeight: 0,
-      accountTxs: [],
-      prevFrameHash: '',
-      accountStateRoot: `0x${'00'.repeat(32)}`,
-      deltas: [],
-      stateHash: '',
-      byLeft: true,
-    },
-    currentHeight: 0,
-    rollbackCount: 0,
-    proofHeader: { fromEntity: 'maker', toEntity: 'hub', nextProofNonce: 0 },
-    pendingWithdrawals: new Map(),
-    shadow: { rebalance: { policy: new Map(), submittedAtByToken: new Map() } },
-  };
+  const account = makeAccount('alice', 'hub');
+  account.state.deltas = PersistentAccountStateMap.fromEntries('deltas', [
+    [offer.giveTokenId, giveDelta],
+    [offer.wantTokenId, wantDelta],
+  ]);
+  account.state.swapOffers = PersistentAccountStateMap.fromEntries('swapOffers', [[offer.offerId, offer]]);
+  return beginAccountStateDraft(account).draft;
 }
 
 describe('price improvement', () => {
@@ -508,7 +475,9 @@ describe('price improvement', () => {
         createdHeight: 0,
       });
       const accountMachine = makeAccountMachine(offer);
-      accountMachine.state.deltas.get(1)!.rightCreditLimit = executionQuoteAmount - 1n;
+      accountMachine.state.deltas.put(1, {
+        ...accountMachine.state.deltas.get(1)!, rightCreditLimit: executionQuoteAmount - 1n,
+      });
       const accountTx: Extract<AccountTx, { type: 'swap_resolve' }> = {
         type: 'swap_resolve',
         data: {
@@ -596,7 +565,9 @@ describe('price improvement', () => {
         createdHeight: 0,
       });
       const accountMachine = makeAccountMachine(offer);
-      accountMachine.state.deltas.get(2)!.leftHold = giveAmount - 1n;
+      accountMachine.state.deltas.put(2, {
+        ...accountMachine.state.deltas.get(2)!, leftHold: giveAmount - 1n,
+      });
       const accountTx: Extract<AccountTx, { type: 'swap_resolve' }> = {
         type: 'swap_resolve',
         data: {

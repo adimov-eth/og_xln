@@ -554,7 +554,9 @@ describe('EntityProvider action flow', () => {
     expect(applied.newState.entityProviderActionState?.pending?.payload.kind)
       .toBe('entityTransferTokens');
     expect(applied.collectedHashes.some(({ type }) => type === 'entityProviderAction')).toBe(true);
-    expect(Array.from(applied.newState.proposals.values())[0]?.status).toBe('executed');
+    // Executed governance work leaves the live proposal map; its action and
+    // signed frame carry the result instead of an unbounded terminal record.
+    expect(applied.newState.proposals.size).toBe(0);
   });
 
   test('clears pending only for the exact canonical nonce/hash/kind receipt', async () => {
@@ -984,7 +986,11 @@ describe('EntityProvider action flow', () => {
       5_002,
     );
     commitEntityFrameCandidateState(twoVotes.newState);
-    expect(twoVotes.newState.proposals.get(proposalId)?.status).toBe('pending');
+    const pendingProposal = twoVotes.newState.proposals.get(proposalId);
+    expect(pendingProposal).toBeDefined();
+    expect([...pendingProposal!.votes]).toEqual([[signers[0]!, 'yes'], [signers[1]!, 'yes']]);
+    expect(twoVotes.newState.entityProviderActionState?.pending).toBeUndefined();
+    expect(twoVotes.collectedHashes.some(({ type }) => type === 'entityProviderAction')).toBe(false);
 
     const makeIsolated = (index: number) => {
       const signerId = signers[index]!;
@@ -1061,6 +1067,7 @@ describe('EntityProvider action flow', () => {
       leader = await applyEntityInput(proposer.env, leader.workingReplica, structuredClone(precommit));
     }
     expect(leader.workingReplica.state.height).toBe(twoVotes.newState.height + 1);
+    expect(leader.workingReplica.state.proposals.has(proposalId)).toBe(false);
     const certified = requireActionJTx(leader.jOutputs[0]?.jTxs[0]);
     expect(certified.data.intent.actionHash).toBe(actionManifest.hash);
     expect(certified.data.signerId).toBe(proposer.signerId);

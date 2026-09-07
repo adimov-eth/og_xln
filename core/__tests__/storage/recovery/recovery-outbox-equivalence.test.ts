@@ -1,12 +1,12 @@
 import { expect, test } from 'bun:test';
 
-import { assertRecoveryOutboxMatches } from '../../../storage/recovery/journal/verification';
+import { assertRecoveryOutboxMatches, selectRetainedRecoveryOutbox } from '../../../storage/recovery/journal/verification';
 import { prepareRuntimeOutputRows } from '../../../storage/wal/outbox-payload';
 import type { RoutedEntityInput } from '../../../runtime/types';
 
 const output = (targetByte: string): RoutedEntityInput => ({
   runtimeId: `0x${targetByte.repeat(20)}`,
-  entityId: `0x${'22'.repeat(32)}`,
+  entityId: `0x${targetByte.repeat(32)}`,
   signerId: `0x${'33'.repeat(20)}`,
   sourceRuntimeFrame: { height: 7, timestamp: 9_000 },
   entityTxs: [],
@@ -20,4 +20,38 @@ test('recovery replay requires the exact ordered committed outbox bytes', () => 
     .toThrow('RECOVERY_JOURNAL_OUTBOX_HASH_MISMATCH:height=7');
   expect(() => assertRecoveryOutboxMatches(expected, [output('1c'), expected[1]!], commitment, 7))
     .toThrow('RECOVERY_JOURNAL_OUTBOX_HASH_MISMATCH:height=7');
+});
+
+test('deferred frame N output survives unrelated N+1 and retires independently in N+2', () => {
+  const first = output('1a');
+  const second = output('1b');
+  const previous = [first, second];
+  const next = selectRetainedRecoveryOutbox(previous, structuredClone(previous), 8);
+  expect(next).toEqual(previous);
+  expect(next[0]).toBe(first);
+  const commitment = prepareRuntimeOutputRows(8, next).commitment;
+  expect(() => assertRecoveryOutboxMatches(previous, next, commitment, 8)).not.toThrow();
+  expect(selectRetainedRecoveryOutbox(next, [second], 9)).toEqual([second]);
+  expect(selectRetainedRecoveryOutbox([second], [], 10)).toEqual([]);
+});
+
+test('retained WAL rows cannot fabricate, alter, repeat, or reorder previous output evidence', () => {
+  const previous = [output('1a'), output('1b')];
+  expect(() => selectRetainedRecoveryOutbox(previous, [output('1c')], 8))
+    .toThrow('RECOVERY_OUTBOX_RETAINED_OUTPUT_UNPROVEN');
+  expect(() => selectRetainedRecoveryOutbox(previous, [
+    { ...previous[0]!, sourceRuntimeFrame: { height: 6, timestamp: 9_000 } },
+  ], 8)).toThrow('RECOVERY_OUTBOX_RETAINED_OUTPUT_UNPROVEN');
+  expect(() => selectRetainedRecoveryOutbox(previous, [...previous].reverse(), 8))
+    .toThrow('RECOVERY_OUTBOX_RETAINED_ORDER_INVALID');
+  expect(() => selectRetainedRecoveryOutbox(previous, [previous[0]!, previous[0]!], 8))
+    .toThrow('RECOVERY_OUTBOX_RETAINED_ORDER_INVALID');
+});
+
+test('retained output permits a new Runtime route without changing its financial evidence', () => {
+  const previous = output('1a');
+  const rebound = { ...previous, runtimeId: `0x${'1b'.repeat(20)}` };
+  expect(selectRetainedRecoveryOutbox([previous], [rebound], 8)).toEqual([rebound]);
+  expect(() => selectRetainedRecoveryOutbox([previous], [{ ...rebound, signerId: `0x${'44'.repeat(20)}` }], 8))
+    .toThrow('RECOVERY_OUTBOX_RETAINED_OUTPUT_UNPROVEN');
 });

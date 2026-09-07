@@ -1,3 +1,7 @@
+import { PersistentAccountStateMap } from "../../../account/state/persistent-state-map";
+import { PersistentEntityAccountMap } from "../../../entity/state/persistent-account-map";
+import { computeEntityAccountValueHash } from "../../../entity/consensus/state-root";
+import { createEntityFrameCandidateState } from "../../../entity/state-clone";
 import { expect, spyOn, test } from 'bun:test';
 import { createAccountConsensusContext } from '../../../entity/account/account-consensus-context';
 
@@ -52,13 +56,13 @@ const makeAccount = (mempool: AccountTx[] = []): AccountReplica => ({
       depositoryAddress: jurisdiction.depositoryAddress,
     },
     watchSeed,
-    deltas: new Map(),
+    deltas: PersistentAccountStateMap.empty('deltas'),
     disputeConfig: { leftResponseSeconds: 576, rightResponseSeconds: 576 },
-    requestedRebalance: new Map(),
-    requestedRebalanceFeeState: new Map(),
-    locks: new Map(),
-    swapOffers: new Map(),
-    pulls: new Map(),
+    requestedRebalance: PersistentAccountStateMap.empty('requestedRebalance'),
+    requestedRebalanceFeeState: PersistentAccountStateMap.empty('requestedRebalanceFeeState'),
+    locks: PersistentAccountStateMap.empty('locks'),
+    swapOffers: PersistentAccountStateMap.empty('swapOffers'),
+    pulls: PersistentAccountStateMap.empty('pulls'),
     leftPendingJClaims: createEmptyAccountJClaimAccumulator(),
     rightPendingJClaims: createEmptyAccountJClaimAccumulator(),
     lastFinalizedJHeight: 0,
@@ -73,18 +77,16 @@ const makeAccount = (mempool: AccountTx[] = []): AccountReplica => ({
     accountTxs: [],
     prevFrameHash: '',
     accountStateRoot: EMPTY_ACCOUNT_STATE_ROOT,
-    deltas: [],
     stateHash: '',
-    byLeft: true,
   },
   currentHeight: 0,
   rollbackCount: 0,
   proofHeader: { fromEntity: entityId, toEntity: counterpartyId, nextProofNonce: 1 },
-  pendingWithdrawals: new Map(),
-  shadow: { rebalance: { policy: new Map(), submittedAtByToken: new Map() } },
+  pendingWithdrawals: PersistentAccountStateMap.empty('pendingWithdrawals'),
+  shadow: { rebalance: { policy: PersistentAccountStateMap.empty('rebalanceShadowPolicy'), submittedAtByToken: PersistentAccountStateMap.empty('rebalanceShadowSubmitted') } },
 });
 
-const makeState = (): EntityState => ({
+const makeState = (): EntityState => createEntityFrameCandidateState({
   entityId,
   entityEncryptionPublicKey: `0x${'66'.repeat(32)}`,
   height: 0,
@@ -99,7 +101,7 @@ const makeState = (): EntityState => ({
     jurisdiction,
   },
   reserves: new Map(),
-  accounts: new Map(),
+  accounts: PersistentEntityAccountMap.empty(entityId, computeEntityAccountValueHash),
   lastFinalizedJHeight: 0,
   profile: { name: 'bounds', isHub: false, avatar: '', bio: '', website: '' },
   paybook: { entries: new Map(), feesEarned: 0n },
@@ -288,7 +290,6 @@ test('only an accepted signed genesis can reserve an Account slot', async () => 
   ]);
   proposer.state.leftEntity = isLeftEntity(sourceEntityId, targetEntityId) ? sourceEntityId : targetEntityId;
   proposer.state.rightEntity = isLeftEntity(sourceEntityId, targetEntityId) ? targetEntityId : sourceEntityId;
-  proposer.currentFrame.byLeft = sourceEntityId === proposer.state.leftEntity;
   proposer.proofHeader = { fromEntity: sourceEntityId, toEntity: targetEntityId, nextProofNonce: 1 };
   proposer.currentFrame.accountStateRoot = computeAccountStateRoot(proposer.state);
   proposer.currentFrame.stateHash = proposer.currentFrame.accountStateRoot;
@@ -381,12 +382,13 @@ test('single and batch Account mempool enqueue reject atomically at the shared c
   expect(nearlyFull.mempool).toEqual(before);
 });
 
-test('every committed Entity transition emits a size measurement without consumption changes', async () => {
+test('opted-in committed Entity transition emits a size measurement without consumption changes', async () => {
   const env = createEmptyEnv('entity-size-every-commit');
   env.state.timestamp = 2_000;
   env.scenarioMode = true;
   const signerId = deriveSignerAddressSync(env.runtimeSeed!, 'validator').toLowerCase();
   registerSignerKey(env, signerId, deriveSignerKeySync(env.runtimeSeed!, 'validator'));
+  env.runtimeConfig = { ...env.runtimeConfig, entityConsensusStateWarningBytes: 1_000_000 };
   const state = makeState();
   state.config = {
     ...state.config,

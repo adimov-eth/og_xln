@@ -1,3 +1,9 @@
+import { applyEntityAccountEnvelopeUpdate } from "../../../entity/account-envelope-update";
+import { rejectFrozenAccountInput } from "../../../entity/tx/handlers/account/frozen-input";
+import { DEFAULT_SPREAD_DISTRIBUTION } from '../../../orderbook/types';
+import { PersistentAccountStateMap } from '../../../account/state/persistent-state-map';
+import { PersistentEntityAccountMap } from '../../../entity/state/persistent-account-map';
+import { createEntityFrameCandidateState } from '../../../entity/state-clone';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createAccountConsensusContext } from '../../../entity/account/account-consensus-context';
 import { readEntityFrameEventMessages } from '../../../entity/frame-events';
@@ -47,7 +53,6 @@ import { resolveAutoRebalanceFeePolicy, runPostFrameAutoRebalanceCheck } from '.
 import { HTLC, LIMITS } from '../../../config/constants';
 
 import { executeCrontab, initCrontab } from '../../../entity/scheduler';
-import { HTLC_SECRET_ACK_TIMEOUT_MS } from '../../../entity/tx/j-events-htlc/route-lifecycle';
 
 import { encodeBoard, generateLazyEntityId, generateNumberedEntityId, hashBoard } from '../../../entity/factory';
 
@@ -78,6 +83,7 @@ import {
   buildEntityFrameAuthority,
   computeCanonicalEntityConsensusStateHash,
   computeCanonicalEntityConsensusStateHashCold,
+  computeEntityAccountValueHash,
   computeEntityFrameAuthorityRoot,
 } from '../../../entity/consensus/state-root';
 
@@ -330,16 +336,16 @@ const makeProposalAccount = (mempool: AccountTx[], leftEntity: string, rightEnti
         entityId: leftEntity,
         counterpartyId: rightEntity,
       }),
-      deltas: new Map(),
-      locks: new Map(),
-      swapOffers: new Map(),
+      deltas: PersistentAccountStateMap.empty('deltas'),
+      locks: PersistentAccountStateMap.empty('locks'),
+      swapOffers: PersistentAccountStateMap.empty('swapOffers'),
       leftPendingJClaims: createEmptyAccountJClaimAccumulator(),
       rightPendingJClaims: createEmptyAccountJClaimAccumulator(),
       lastFinalizedJHeight: 0,
       disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 10 },
       jNonce: 0,
-      requestedRebalance: new Map(),
-      requestedRebalanceFeeState: new Map(),
+      requestedRebalance: PersistentAccountStateMap.empty('requestedRebalance'),
+      requestedRebalanceFeeState: PersistentAccountStateMap.empty('requestedRebalanceFeeState'),
     },
     status: 'active',
     mempool: [...mempool],
@@ -357,8 +363,13 @@ const makeProposalAccount = (mempool: AccountTx[], leftEntity: string, rightEnti
     currentHeight: 0,
     rollbackCount: 0,
     proofHeader: { fromEntity: leftEntity, toEntity: rightEntity, nextProofNonce: 0 },
-    pendingWithdrawals: new Map(),
-    shadow: { rebalance: { policy: new Map(), submittedAtByToken: new Map() } },
+    pendingWithdrawals: PersistentAccountStateMap.empty('pendingWithdrawals'),
+    shadow: {
+      rebalance: {
+        policy: PersistentAccountStateMap.empty('rebalanceShadowPolicy'),
+        submittedAtByToken: PersistentAccountStateMap.empty('rebalanceShadowSubmitted'),
+      },
+    },
   };
 };
 
@@ -555,7 +566,7 @@ const makeReplicaMissingPrevFrameHash = (): EntityReplica => ({
     proposals: new Map(),
     config: makeSingleSignerConfig(),
     reserves: new Map(),
-    accounts: new Map(),
+    accounts: PersistentEntityAccountMap.empty(`0x${'11'.repeat(32)}`, computeEntityAccountValueHash),
     deferredAccountProposals: new Map(),
     lastFinalizedJHeight: 0,
     profile: {
@@ -571,7 +582,7 @@ const makeReplicaMissingPrevFrameHash = (): EntityReplica => ({
   },
 });
 
-const makeEntityState = (entityId: string): EntityState => ({
+const makeEntityState = (entityId: string): EntityState => createEntityFrameCandidateState({
   entityId,
   entityEncryptionPublicKey: `0x${'44'.repeat(32)}`,
   height: 0,
@@ -580,7 +591,7 @@ const makeEntityState = (entityId: string): EntityState => ({
   proposals: new Map(),
   config: makeSingleSignerConfig(),
   reserves: new Map(),
-  accounts: new Map(),
+  accounts: PersistentEntityAccountMap.empty(entityId, computeEntityAccountValueHash),
   deferredAccountProposals: new Map(),
   lastFinalizedJHeight: 0,
   profile: {
@@ -813,7 +824,7 @@ describe('audit fail-fast regressions', () => {
     const hubState = makeEntityState(hubId);
     hubState.config = makeSingleSignerConfigFor('hub-signer');
     const account = makeProposalAccount([], hubId, userId);
-    account.state.swapOffers.set(offerId, {
+    account.state.swapOffers = account.state.swapOffers.updated(offerId, {
       offerId,
       giveTokenId: 1,
       giveAmount: 1_000n,
@@ -843,7 +854,10 @@ describe('audit fail-fast regressions', () => {
       books: new Map([[pairId, book]]),
       orderPairs: new Map([[namespacedOrderId, [pairId]]]),
       referrals: new Map(),
-    } as unknown as OrderbookExtState;
+      pairDimensions: new Map(),
+      hubProfile: { entityId: hubId, name: 'Audit Hub', spreadDistribution: DEFAULT_SPREAD_DISTRIBUTION,
+        referenceTokenId: 1, usdQuoteAuthorityEntityId: hubId, minTradeSize: 0n, supportedPairs: [pairId] },
+    } satisfies OrderbookExtState;
 
     const result = await handlePrepareDispute(
       hubState,
@@ -905,7 +919,7 @@ describe('audit fail-fast regressions', () => {
       },
       { runtimeSeed: 'dispute-start-cross-j-remote-book', now: env.state.timestamp },
     );
-    account.state.swapOffers.set(offerId, {
+    account.state.swapOffers = account.state.swapOffers.updated(offerId, {
       offerId,
       giveTokenId: 1,
       giveAmount: 1_000n,
@@ -965,7 +979,7 @@ describe('audit fail-fast regressions', () => {
     const hubState = makeEntityState(hubId);
     hubState.config = makeSingleSignerConfigFor('hub-signer');
     const account = makeProposalAccount([], hubId, userId);
-    account.state.swapOffers.set(offerId, {
+    account.state.swapOffers = account.state.swapOffers.updated(offerId, {
       offerId,
       giveTokenId: 1,
       giveAmount: 1_000n,
@@ -995,7 +1009,10 @@ describe('audit fail-fast regressions', () => {
       books: new Map([[pairId, book]]),
       orderPairs: new Map([[namespacedOrderId, [pairId]]]),
       referrals: new Map(),
-    } as unknown as OrderbookExtState;
+      pairDimensions: new Map(),
+      hubProfile: { entityId: hubId, name: 'Audit Hub', spreadDistribution: DEFAULT_SPREAD_DISTRIBUTION,
+        referenceTokenId: 1, usdQuoteAuthorityEntityId: hubId, minTradeSize: 0n, supportedPairs: [pairId] },
+    } satisfies OrderbookExtState;
 
     const result = await handlePrepareDispute(
       hubState,
@@ -1054,23 +1071,17 @@ describe('audit fail-fast regressions', () => {
     );
     hubState.accounts.set(userId, account);
     const hashlock = `0x${'44'.repeat(32)}`;
-    hubState.htlcRoutes.set(hashlock, {
+    hubState.paybook.entries.set(hashlock, {
       hashlock,
       tokenId: 1,
       amount: 10n,
       inboundEntity: userId,
-      inboundLockId: 'await-secret-lock',
       createdTimestamp: hubState.timestamp,
     });
-    hubState.lockBook.set('await-secret-lock', {
-      lockId: 'await-secret-lock',
-      accountId: userId,
-      tokenId: 1,
-      amount: 10n,
-      hashlock,
-      timelock: BigInt(hubState.timestamp + 60_000),
-      direction: 'incoming',
-      createdAt: BigInt(hubState.timestamp),
+    account.state.locks = account.state.locks.updated(hashlock, {
+      lockId: hashlock, hashlock, tokenId: 1, amount: 10n,
+      timelock: BigInt(hubState.timestamp + 60_000), revealBeforeHeight: 100,
+      senderIsLeft: false, createdHeight: 1, createdTimestamp: hubState.timestamp,
     });
 
     const prepared = await handlePrepareDispute(
@@ -1102,12 +1113,11 @@ describe('audit fail-fast regressions', () => {
     const hubState = makeEntityState(hubId);
     hubState.config = makeSingleSignerConfigFor('hub-signer');
     hubState.accounts.set(userId, makeProposalAccount([], hubId, userId));
-    hubState.htlcRoutes.set(`0x${'45'.repeat(32)}`, {
+    hubState.paybook.entries.set(`0x${'45'.repeat(32)}`, {
       hashlock: `0x${'45'.repeat(32)}`,
       tokenId: 1,
       amount: 10n,
       inboundEntity: userId,
-      inboundLockId: 'stale-timeout-lock',
       createdTimestamp: hubState.timestamp,
     });
 
@@ -1228,7 +1238,7 @@ describe('audit fail-fast regressions', () => {
       },
     };
     const account = makeProposalAccount([closeTx], hubId, userId);
-    account.state.pulls = new Map([
+    account.state.pulls = PersistentAccountStateMap.fromEntries('pulls', [
       [
         route.sourcePull!.pullId,
         {
@@ -1247,7 +1257,7 @@ describe('audit fail-fast regressions', () => {
     ]);
     const delta = createDefaultDelta(route.sourcePull!.tokenId);
     delta.rightHold = BigInt(route.sourcePull!.amount);
-    account.state.deltas.set(route.sourcePull!.tokenId, delta);
+    account.state.deltas = account.state.deltas.updated(route.sourcePull!.tokenId, delta);
     const proposed = await proposeAccountFrame(createAccountConsensusContext(env), account, env.state.timestamp);
     expect(isProposedAccountFrame(proposed)).toBe(true);
     const pendingHeight = proposed.accountInput!.proposal.frame.height;
@@ -1281,9 +1291,9 @@ describe('audit fail-fast regressions', () => {
     hubState.config = makeSingleSignerConfigFor('hub-signer');
     attachSigningReplica(env, hubId, 'hub-signer');
     const account = makeProposalAccount([], hubId, userId);
-    account.state.deltas.set(1, createDefaultDelta(1));
-    const awaitSecretLockId = `0x${'54'.repeat(32)}`;
-    account.state.locks.set(awaitSecretLockId, {
+    account.state.deltas = account.state.deltas.updated(1, createDefaultDelta(1));
+    const awaitSecretLockId = `0x${'55'.repeat(32)}`;
+    account.state.locks = account.state.locks.updated(awaitSecretLockId, {
       lockId: awaitSecretLockId,
       hashlock: `0x${'55'.repeat(32)}`,
       timelock: BigInt(hubState.timestamp + 60_000),
@@ -1295,20 +1305,6 @@ describe('audit fail-fast regressions', () => {
       createdTimestamp: hubState.timestamp,
     });
     const initialProof = buildAccountProofBody(account, hex20('99'));
-    account.status = 'disputed';
-    account.activeDispute = {
-      startedByLeft: false,
-      initialProofbodyHash: initialProof.proofBodyHash,
-      initialNonce: 1,
-      disputeTimeout: 1700000100,
-      disputeStartTimestamp: 1700000000,
-      jNonce: 1,
-      starterInitialArguments: '0x',
-      starterCounterArguments: '0x',
-        starterCounterProofCommitment: '0x0000000000000000000000000000000000000000000000000000000000000000',
-      observedOnChain: true,
-      finalizeQueued: false,
-    };
     setSyntheticPendingAccountProposal(
       account,
       [
@@ -1325,26 +1321,35 @@ describe('audit fail-fast regressions', () => {
         data: { tokenId: 1, amount: 11n },
       } as AccountTx,
     ];
+    const lateInput = account.pendingAccountInput;
+    if (!lateInput) throw new Error("AUDIT_PENDING_INPUT_MISSING");
+    applyEntityAccountEnvelopeUpdate(env, userId, account, {
+      type: "applyDisputeStarted",
+      finality: {
+        kind: "dispute_started", starterEntityId: userId,
+        initialProofbodyHash: initialProof.proofBodyHash, initialNonce: 1, initialProposerIsLeft: false,
+        disputeStartTimestamp: 1700000000, disputeTimeout: 1700000020,
+        leftResponseSeconds: 10, rightResponseSeconds: 10, jNonce: 1,
+        starterInitialArguments: "0x", starterCounterArguments: "0x",
+        starterCounterProofCommitment: "0x" + "00".repeat(32), observedBlockNumber: 1,
+      },
+    });
+    expect(account.status).toBe("disputed");
+    expect(account.pendingFrame).toBeUndefined();
+    expect(account.mempool).toEqual([]);
+    expect(rejectFrozenAccountInput(hubState, account, lateInput, userId)).toBe(true);
+    expect(account.pendingFrame).toBeUndefined();
+    expect(account.mempool).toEqual([]);
     hubState.accounts.set(userId, account);
     const hashlock = `0x${'55'.repeat(32)}`;
-    hubState.htlcRoutes.set(hashlock, {
+    hubState.paybook.entries.set(hashlock, {
       hashlock,
       tokenId: 1,
       amount: 10n,
       inboundEntity: userId,
-      inboundLockId: awaitSecretLockId,
       createdTimestamp: hubState.timestamp,
     });
-    hubState.lockBook.set(awaitSecretLockId, {
-      lockId: awaitSecretLockId,
-      accountId: userId,
-      tokenId: 1,
-      amount: 10n,
-      hashlock,
-      timelock: BigInt(hubState.timestamp + 60_000),
-      direction: 'incoming',
-      createdAt: BigInt(hubState.timestamp),
-    });
+
 
     const result = await handleDisputeFinalize(
       hubState,
@@ -1361,13 +1366,20 @@ describe('audit fail-fast regressions', () => {
     expect(finalization?.initialProofbodyHash).toBe(initialProof.proofBodyHash);
     expect(finalization?.finalProofbody).toEqual({
       ...initialProof.proofBodyStruct,
-      leftResponseSeconds: 10n,
-      rightResponseSeconds: 10n,
+      leftResponseSeconds: 10,
+      rightResponseSeconds: 10,
     });
     expect(finalization?.starterArguments).toBe('0x');
     expect(finalization?.otherArguments).toBe('0x');
     expect(readEntityFrameEventMessages(result.newState).some(msg => msg.includes('htlcAwaitingSecret'))).toBe(false);
     expect(nextAccount.pendingFrame).toBeUndefined();
     expect(nextAccount.mempool).toEqual([]);
+    const duplicate = await handleDisputeFinalize(result.newState, {
+      type: "disputeFinalize", data: { counterpartyEntityId: userId },
+    }, env);
+    expect(duplicate.newState.jBatchState?.batch.disputeFinalizations).toEqual([finalization]);
+    expect(duplicate.newState.accounts.get(userId)?.pendingFrame).toBeUndefined();
+    expect(duplicate.newState.accounts.get(userId)?.mempool).toEqual([]);
+
   });
 });

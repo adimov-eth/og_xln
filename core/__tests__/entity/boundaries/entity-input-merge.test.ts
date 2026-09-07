@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { mergeEntityInputs } from '../../../entity/consensus/input/merge';
 import type { EntityLeaderTimeoutVote } from '../../../entity/types';
 import type { RoutedEntityInput } from '../../../runtime/types';
+import { assertExternalEntityInputAllowed } from '../../../runtime/admit/entity-input-admission';
 
 const entityId = (suffix: string): string => `0x${suffix.padStart(64, '0')}`;
 
@@ -29,6 +30,45 @@ const leaderVote = (voterId: string, signature: string): EntityLeaderTimeoutVote
 });
 
 describe('mergeEntityInputs', () => {
+  test('retains authenticated ACK and Runtime output boundaries in both arrival orders', () => {
+    const base = {
+      entityId: entityId('2'), signerId: `0x${'22'.repeat(20)}`,
+      from: `0x${'11'.repeat(20)}`, runtimeId: `0x${'33'.repeat(20)}`,
+      sourceRuntimeFrame: { height: 18, timestamp: 1800 },
+    };
+    const ack: RoutedEntityInput = { ...base, entityTxs: [{
+      type: 'accountInput', data: {
+        kind: 'ack', fromEntityId: entityId('1'), toEntityId: entityId('2'),
+        domain: { chainId: 1, jurisdiction: `0x${'44'.repeat(20)}` },
+        disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 10 },
+        ack: { height: 2, frameHash: `0x${'55'.repeat(32)}`, frameHanko: '0xaa' },
+      },
+    }] };
+    const output = (orderId: string): RoutedEntityInput => ({ ...base, entityTxs: [{
+      type: 'runtimeOutput', data: {
+        protocol: 'cross-j', sourceEntityId: entityId('1'), sourceSignerId: base.signerId,
+        targetEntityId: base.entityId,
+        entityTxs: [{ type: 'crossJurisdictionFillNotice', data: { orderId, fillSeq: 1, cumulativeFillRatio: 100 } }],
+      },
+    }] });
+    const first = output('first');
+    const second = output('second');
+    const nextFrame = { ...first, sourceRuntimeFrame: { height: 19, timestamp: 1900 } };
+    for (const inputs of [[ack, first], [first, ack], [ack, first, ack], [first, second, nextFrame]]) {
+      inputs.forEach(assertExternalEntityInputAllowed);
+      const merged = mergeEntityInputs(inputs);
+      expect(merged).toEqual(inputs);
+      merged.forEach(assertExternalEntityInputAllowed);
+    }
+    expect(mergeEntityInputs([first, structuredClone(first)])).toEqual([first]);
+    const laterAck = structuredClone(ack);
+    const laterTx = laterAck.entityTxs?.[0];
+    if (laterTx?.type !== 'accountInput' || laterTx.data.kind !== 'ack') throw new Error('TEST_ACCOUNT_ACK_REQUIRED');
+    laterTx.data.ack.height = 3;
+    expect(mergeEntityInputs([first, ack, structuredClone(first), laterAck]))
+      .toEqual(mergeEntityInputs([first, ack, laterAck]));
+  });
+
   test('retains accepted arrival order instead of sorting independent inputs', () => {
     const left = inputFor('1');
     const right = inputFor('2');

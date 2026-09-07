@@ -6,6 +6,7 @@ import {
   resolveFinalizedPullFillRatio,
 } from '../../../account/pull-registry-settlement';
 import { BATCH_ABI, type ProofBodyStruct } from '../../../protocol/dispute/proof-body';
+import { encodeSignedAmount } from '../../../protocol/crypto/abi-money';
 import type { CrossJurisdictionPullLeg } from '../../../types/cross-jurisdiction';
 import { entity, makeAccount, makeJurisdiction, secret } from '../../helpers/cross-j';
 
@@ -22,7 +23,7 @@ const pull: CrossJurisdictionPullLeg = {
   partialRoot: secret('42'),
 };
 
-const proofbody = (claimedRatio: number, targetRole = true): ProofBodyStruct => ({
+const proofbody = (claimedRatio: number, targetRole = true, signedAmount = pull.signedAmount): ProofBodyStruct => ({
   watchSeed: secret('43'),
   leftResponseSeconds: 10,
   rightResponseSeconds: 20,
@@ -37,7 +38,7 @@ const proofbody = (claimedRatio: number, targetRole = true): ProofBodyStruct => 
         swap: [],
         pull: [{
           deltaIndex: 0,
-          amount: pull.signedAmount,
+          amount: encodeSignedAmount(signedAmount),
           claimedRatio,
           fullHash: pull.fullHash,
           partialRoot: pull.partialRoot,
@@ -117,15 +118,27 @@ describe('finalized Pull registry settlement parity', () => {
   });
 
   test('accepts both inclusive beneficiary-window boundaries', () => {
-    for (const revealedAt of [100, 110]) {
-      expect(resolveFinalizedPullFillRatio({
-        account: activeAccount(),
-        proofbody: proofbody(0x1000),
-        canonicalDeltaTransformerAddress: deltaTransformerAddress,
-        expectedPull: pull,
-        targetRole: true,
-        record: { fillRatio: 0x2000, revealedAt },
-      })).toBe(0x2000);
+    for (const [signedAmount, end] of [[100n, 110], [-100n, 120]] as const) {
+      for (const revealedAt of [100, end]) {
+        expect(resolveFinalizedPullFillRatio({
+          account: activeAccount(),
+          proofbody: proofbody(0x1000, true, signedAmount),
+          canonicalDeltaTransformerAddress: deltaTransformerAddress,
+          expectedPull: { ...pull, signedAmount },
+          targetRole: true,
+          record: { fillRatio: 0x2000, revealedAt },
+        })).toBe(0x2000);
+      }
+      for (const revealedAt of [99, end + 1]) {
+        expect(resolveFinalizedPullFillRatio({
+          account: activeAccount(),
+          proofbody: proofbody(0x1000, true, signedAmount),
+          canonicalDeltaTransformerAddress: deltaTransformerAddress,
+          expectedPull: { ...pull, signedAmount },
+          targetRole: true,
+          record: { fillRatio: 0x2000, revealedAt },
+        })).toBe(0x1000);
+      }
     }
   });
 

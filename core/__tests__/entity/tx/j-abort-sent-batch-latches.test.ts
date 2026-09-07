@@ -4,7 +4,7 @@ import { handleJAbortSentBatch } from '../../../entity/tx/handlers/j-batch/j-abo
 import { createEmptyBatch } from '../../../jurisdiction/machine/batch';
 import { createEmptyEnv } from '../../../runtime';
 import { addr, entity, makeJurisdiction, makeState } from '../../helpers/cross-j';
-import { EntityAccountCandidateMap , PersistentEntityAccountMap } from '../../../entity/state/persistent-account-map';
+import { getEntityAccountForWrite } from '../../../entity/state/persistent-account-map';
 import { requirePersistentAccountStateMap } from '../../../account/state/persistent-state-map';
 
 const LEFT = entity('11');
@@ -29,15 +29,12 @@ const sentR2CBatch = () => ({
 
 const abortState = () => {
   const state = makeState(LEFT, addr('35'), makeJurisdiction('abort-latch', 31337, 'a1', 'b2'), RIGHT);
-  if (!(state.accounts instanceof PersistentEntityAccountMap)) throw new Error('TEST_ACCOUNTS_NOT_PERSISTENT');
-  const accounts = new EntityAccountCandidateMap(state.accounts);
-  const account = accounts.getForWrite(RIGHT);
+  const account = getEntityAccountForWrite(state.accounts, RIGHT);
   if (!account) throw new Error('TEST_ACCOUNT_MISSING');
   account.shadow.rebalance.submittedAtByToken = requirePersistentAccountStateMap(
     account.shadow.rebalance.submittedAtByToken,
     'rebalanceShadowSubmitted',
   ).updated(1, 123).updated(2, 456);
-  state.accounts = accounts.sealCandidate();
   state.jBatchState = {
     batch: createEmptyBatch(),
     jurisdiction: null,

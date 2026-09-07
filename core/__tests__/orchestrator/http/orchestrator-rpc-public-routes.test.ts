@@ -126,7 +126,9 @@ describe('orchestrator public RPC routes', () => {
           },
         },
       }))).toThrow(
-        `PUBLIC_RPC_JURISDICTION_ENTITY_PROVIDER_DEPLOYMENT_BLOCK_INVALID:primary:${String(entityProviderDeploymentBlock)}`,
+        entityProviderDeploymentBlock === undefined
+          ? 'PUBLIC_RPC_JURISDICTION_ENTITY_PROVIDER_DEPLOYMENT_BLOCK_INVALID:primary:undefined'
+          : 'PUBLIC_JURISDICTIONS_JSON_INVALID:jurisdiction=primary_FIELDS_INVALID',
       );
     }
 

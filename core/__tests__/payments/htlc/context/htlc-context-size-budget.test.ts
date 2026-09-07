@@ -35,7 +35,7 @@ test('100-hop minimal full-profile context fits protocol but transport remains t
   expect(contextBytes).toBeLessThan(LIMITS.MAX_FRAME_SIZE_BYTES);
 
   const encryptedPayload = encryptPayload({ entityInputs: [{ entityId: id(1), signerId: address, entityTxs: [{ type: 'fixture', data: context }] }] }, deriveEncryptionKeyPair('context-size-target').publicKey);
-  expect(() => serializeWsMessage({ type: 'entity_inputs', from: 'source', to: 'target', payload: encryptedPayload, encrypted: true }))
+  expect(() => serializeWsMessage({ type: 'entity_inputs', id: 'context-size-budget', from: 'source', to: 'target', payload: encryptedPayload, encrypted: true }))
     .not.toThrow();
   expect(contextBytes).toBeLessThan(resolveRuntimeWsMaxMessageBytes());
 });

@@ -1,18 +1,26 @@
+import { encodeInt512, encodeSignedAmount } from '../../protocol/crypto/abi-money';
 import { describe, expect, test } from 'bun:test';
 import { ethers } from 'ethers';
 
 import { abiSchemaFromFragment, abiSchemaFromType, encodeAbi, encodeAbiParams } from '../../protocol/crypto/abi-encode';
 import { BATCH_ABI, PROOF_BODY_ABI } from '../../protocol/dispute/proof-body';
+import { Depository__factory } from '../../../jurisdictions/typechain-types/factories/Depository.sol/Depository__factory';
+import { DeltaTransformer__factory } from '../../../jurisdictions/typechain-types/factories/DeltaTransformer.sol/DeltaTransformer__factory';
 
 const CODER = ethers.AbiCoder.defaultAbiCoder();
-const PROOF_BODY_PARAM = ethers.ParamType.from(PROOF_BODY_ABI);
-const BATCH_PARAM = ethers.ParamType.from(BATCH_ABI);
+const PROOF_BODY_PARAM = Depository__factory.createInterface()
+  .getFunction('watchtowerCounterDispute')
+  ?.inputs[1]?.components?.find(field => field.name === 'finalProofbody');
+const BATCH_PARAM = DeltaTransformer__factory.createInterface().getFunction('encodeBatch')?.inputs[0];
+if (!PROOF_BODY_PARAM || !BATCH_PARAM) throw new Error('GENERATED_DISPUTE_ABI_MISSING');
 const proofBodySchema = abiSchemaFromFragment(PROOF_BODY_ABI);
 const batchSchema = abiSchemaFromFragment(BATCH_ABI);
 
 let seed = 0x2545f491;
 const rand = (): number => {
-  seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+  seed ^= seed << 13;
+  seed ^= seed >>> 17;
+  seed ^= seed << 5;
   return (seed >>> 0) / 0x1_0000_0000;
 };
 const randInt = (max: number): number => Math.floor(rand() * (max + 1));
@@ -40,7 +48,7 @@ const randAddress = (): string => {
 const randBatch = () => ({
   payment: Array.from({ length: randInt(3) }, () => ({
     deltaIndex: BigInt(randInt(10)),
-    amount: randInt256(),
+    amount: encodeSignedAmount(randInt256()),
     revealedUntilTimestamp: randUint(64),
     hash: randHex(32),
   })),
@@ -53,7 +61,7 @@ const randBatch = () => ({
   })),
   pull: Array.from({ length: randInt(2) }, () => ({
     deltaIndex: BigInt(randInt(10)),
-    amount: randInt256(),
+    amount: encodeSignedAmount(randInt256()),
     claimedRatio: randUint(16),
     fullHash: randHex(32),
     partialRoot: randHex(32),
@@ -67,7 +75,7 @@ const randProofBody = () => {
     watchSeed: randHex(32),
     leftResponseSeconds: randUint(32),
     rightResponseSeconds: randUint(32),
-    offdeltas: Array.from({ length: tokens }, randInt256),
+    offdeltas: Array.from({ length: tokens }, () => encodeInt512(randInt256())),
     tokenIds: Array.from({ length: tokens }, () => randUint(32)),
     transformers: Array.from({ length: randInt(3) }, () => ({
       transformerAddress: randAddress(),
@@ -98,7 +106,19 @@ describe('direct ABI encoder', () => {
 
   test('encodes parameter lists (strings, arrays, ints, bools) byte-identically to AbiCoder', () => {
     const alphabet = ['', 'a', 'xln:route', 'ünïcödé', '🙂🙂', 'x'.repeat(31), 'y'.repeat(32), 'z'.repeat(70)];
-    const types = ['string', 'uint256', 'bool', 'int256', 'uint32', 'bytes32', 'uint64[]', 'bytes32[]', 'string', 'address', 'bytes'];
+    const types = [
+      'string',
+      'uint256',
+      'bool',
+      'int256',
+      'uint32',
+      'bytes32',
+      'uint64[]',
+      'bytes32[]',
+      'string',
+      'address',
+      'bytes',
+    ];
     const schemas = types.map(abiSchemaFromType);
     for (let round = 0; round < 1500; round += 1) {
       const values: unknown[] = [
@@ -125,9 +145,14 @@ describe('direct ABI encoder', () => {
     const cases: Array<Record<string, unknown>> = [
       { ...body, watchSeed: randHex(31) },
       { ...body, leftResponseSeconds: 1n << 32n },
-      { ...body, offdeltas: [1n << 255n] },
+      { ...body, offdeltas: [{ high: 1n << 255n, low: 0n }] },
       { ...body, tokenIds: [-1n] },
-      { ...body, transformers: [{ transformerAddress: '0xAbcdEF0000000000000000000000000000000001', encodedBatch: '0x', allowances: [] }] },
+      {
+        ...body,
+        transformers: [
+          { transformerAddress: '0xAbcdEF0000000000000000000000000000000001', encodedBatch: '0x', allowances: [] },
+        ],
+      },
       { ...body, transformers: [{ transformerAddress: randHex(19), encodedBatch: '0x', allowances: [] }] },
       { ...body, transformers: [{ transformerAddress: randHex(20), encodedBatch: '0x1', allowances: [] }] },
     ];

@@ -18,9 +18,10 @@ describe('RPC batch transport timeouts', () => {
   });
 
   test('fails fast when upstream accepts the request but never responds', async () => {
+    const upstream = Promise.withResolvers<Response>();
     const server = Bun.serve({
       port: 0,
-      fetch: () => new Promise<Response>(() => {}),
+      fetch: () => upstream.promise,
     });
     const startedAt = performance.now();
     try {
@@ -32,6 +33,8 @@ describe('RPC batch transport timeouts', () => {
       }], 25)).rejects.toThrow('RPC_BATCH_TIMEOUT:25');
       expect(performance.now() - startedAt).toBeLessThan(1_000);
     } finally {
+      // The provider stays silent through both timeout assertions; teardown owns its pending handler.
+      upstream.resolve(new Response(null, { status: 204 }));
       await server.stop(true);
     }
   }, 2_000);

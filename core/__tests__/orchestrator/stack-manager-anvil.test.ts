@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { JsonRpcProvider, Wallet, getBytes } from 'ethers';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { deployJurisdictionStack } from '../../jurisdiction/adapter/stack-manager/deploy';
 import { decodeDeployJurisdictionStackRequest } from '../../jurisdiction/adapter/stack-manager/validation';
 import { validateJurisdictionsDataValue } from '../../jurisdiction/adapter/kernel/jurisdiction-loader';
+import { readCompilerBytecodeEvidence } from '../../jurisdiction/adapter/stack-manager/compiler-bytecode';
+import { safeStringify } from '../../protocol/serialization';
 
 const ANVIL_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const anvilProcesses: Bun.Subprocess[] = [];
@@ -42,6 +45,29 @@ afterEach(async () => {
 });
 
 describe('Stack Manager real Anvil deployment', () => {
+  test('binds Hardhat compiler output to its input before trusting immutable slots', async () => {
+    const source = new URL('../../../jurisdictions/artifacts/build-info/', import.meta.url);
+    const directory = await mkdtemp(join(tmpdir(), 'xln-compiler-binding-'));
+    const target = pathToFileURL(`${directory}/`);
+    try {
+      for (const file of await readdir(source)) {
+        if (file.endsWith('.json')) await copyFile(new URL(file, source), new URL(file, target));
+      }
+      const evidence = await readCompilerBytecodeEvidence(target, 'contracts/Depository.sol', 'Depository');
+      expect(Object.keys(evidence.immutableReferences).sort()).toEqual(['admin', 'deltaTransformer', 'entityProvider']);
+      for (const file of await readdir(target)) {
+        if (!file.endsWith('.output.json')) continue;
+        const output: unknown = JSON.parse(await readFile(new URL(file, target), 'utf8'));
+        if (!output || typeof output !== 'object' || Array.isArray(output)) throw new Error('TEST_BUILD_OUTPUT_INVALID');
+        await writeFile(new URL(file, target), safeStringify({ ...output, id: 'different-compiler-input' }));
+      }
+      await expect(readCompilerBytecodeEvidence(target, 'contracts/Depository.sol', 'Depository'))
+        .rejects.toThrow('STACK_MANAGER_BUILD_OUTPUT_BINDING_INVALID');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test('deploys, verifies, and persists the canonical V1 stack', async () => {
     const anvil = Bun.which('anvil');
     if (!anvil) throw new Error('ANVIL_BINARY_REQUIRED');

@@ -6,14 +6,15 @@ import { computeAccountStateRoot, encodeAccountStateValue } from '../../../../ac
 import { createEmptyAccountJClaimAccumulator } from '../../../../account/j-claims/j-claim-accumulator';
 import { createDefaultDelta } from '../../../../account/state/delta';
 import { computeCanonicalEntityConsensusStateHash } from '../../../../entity/consensus/state-root';
-import { HASHABLE_LOCK_BOOK_ENTRY_FIELDS } from '../../../../entity/state/lock-book-fields';
+import { PersistentAccountStateMap } from '../../../../account/state/persistent-state-map';
+import { emptyEntityAccountMap } from '../../../helpers/entity-account-map';
 import { BATCH_ABI, PROOF_BODY_ABI } from '../../../../protocol/dispute/proof-body';
-import type { AccountState, Delta, HtlcLock, HtlcRoute, SettlementWorkspace } from '../../../../types/account';
-import type { EntityState } from '../../../../entity/types';
+import type { AccountState, Delta, HtlcLock, SettlementWorkspace } from '../../../../types/account';
+import type { EntityState, PaybookEntry } from '../../../../entity/types';
 import {
   HASHABLE_DELTA_FIELDS,
   HASHABLE_HTLC_LOCK_FIELDS,
-  HASHABLE_HTLC_ROUTE_FIELDS,
+  HASHABLE_PAYBOOK_ENTRY_FIELDS,
   HASHABLE_SETTLEMENT_WORKSPACE_FIELDS,
 } from '../../../../types/hash-coverage/account-nested';
 import { NESTED_HASH_COVERAGE } from '../../../../types/hash-coverage/catalog';
@@ -33,16 +34,16 @@ const accountState = (): AccountState => ({
   rightEntity: RIGHT,
   domain: { chainId: 31337, depositoryAddress: `0x${'33'.repeat(20)}` },
   watchSeed: HEX32('44'),
-  deltas: new Map([[1, createDefaultDelta(1)]]),
-  locks: new Map(),
-  swapOffers: new Map(),
+  deltas: PersistentAccountStateMap.fromEntries('deltas', [[1, createDefaultDelta(1)]]),
+  locks: PersistentAccountStateMap.empty('locks'),
+  swapOffers: PersistentAccountStateMap.empty('swapOffers'),
   jNonce: 0,
   disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 10 },
   lastFinalizedJHeight: 0,
   leftPendingJClaims: createEmptyAccountJClaimAccumulator(),
   rightPendingJClaims: createEmptyAccountJClaimAccumulator(),
-  requestedRebalance: new Map(),
-  requestedRebalanceFeeState: new Map(),
+  requestedRebalance: PersistentAccountStateMap.empty('requestedRebalance'),
+  requestedRebalanceFeeState: PersistentAccountStateMap.empty('requestedRebalanceFeeState'),
 });
 
 const lock = (): HtlcLock => ({
@@ -68,12 +69,12 @@ const workspace = (): SettlementWorkspace => ({
   executorIsLeft: true,
 });
 
-const route = (): HtlcRoute => ({
+const route = (): PaybookEntry => ({
   hashlock: HEX32('71'),
   createdTimestamp: 1_000,
 });
 
-const entityState = (htlcRoute: HtlcRoute): EntityState => ({
+const entityState = (payment: PaybookEntry): EntityState => ({
   entityId: LEFT,
   entityEncryptionPublicKey: HEX32('44'),
   height: 1,
@@ -82,7 +83,7 @@ const entityState = (htlcRoute: HtlcRoute): EntityState => ({
   proposals: new Map(),
   config: { mode: 'proposer-based', threshold: 1n, validators: ['1'], shares: { '1': 1n } },
   reserves: new Map(),
-  accounts: new Map(),
+  accounts: emptyEntityAccountMap(LEFT),
   lastFinalizedJHeight: 0,
   certifiedBoardState: {
     stackKey: HEX32('01'),
@@ -92,9 +93,7 @@ const entityState = (htlcRoute: HtlcRoute): EntityState => ({
     eventHistoryRoot: HEX32('04'),
   },
   profile: { name: 'nested-hash', isHub: false, avatar: '', bio: '', website: '' },
-  htlcRoutes: new Map([[HEX32('71'), htlcRoute]]),
-  htlcFeesEarned: 0n,
-  lockBook: new Map(),
+  paybook: { entries: new Map([[payment.hashlock, payment]]), feesEarned: 0n },
 });
 
 const deltaMutators = {
@@ -131,32 +130,31 @@ describe('nested hash-reachable field coverage', () => {
     const base = accountState();
     const root = computeAccountStateRoot(base);
     for (const field of HASHABLE_DELTA_FIELDS) {
-      const changed = structuredClone(base);
-      deltaMutators[field](changed.deltas.get(1)!);
+      const changed = accountState();
+      const delta = createDefaultDelta(1);
+      deltaMutators[field](delta);
+      changed.deltas = PersistentAccountStateMap.fromEntries('deltas', [[1, delta]]);
       expect(computeAccountStateRoot(changed), field).not.toBe(root);
     }
   });
 
   test('every HtlcLock catalog field is committed by the Account state root', () => {
     const base = accountState();
-    base.locks.set(lock().lockId, lock());
+    base.locks = PersistentAccountStateMap.fromEntries('locks', [[lock().lockId, lock()]]);
     const root = computeAccountStateRoot(base);
     for (const field of HASHABLE_HTLC_LOCK_FIELDS) {
-      const changed = structuredClone(base);
-      const current = changed.locks.get(lock().lockId)!;
+      const changed = accountState();
+      const current = lock();
       lockMutators[field](current);
-      if (field === 'lockId') {
-        changed.locks.delete(lock().lockId);
-        changed.locks.set(current.lockId, current);
-      }
+      changed.locks = PersistentAccountStateMap.fromEntries('locks', [[current.lockId, current]]);
       expect(computeAccountStateRoot(changed), field).not.toBe(root);
     }
   });
 
-  test('SettlementWorkspace and HtlcRoute catalog fields change committed roots', () => {
+  test('SettlementWorkspace and PaybookEntry catalog fields change committed roots', () => {
     const base = accountState();
     const emptyRoot = computeAccountStateRoot(base);
-    const withWorkspace = structuredClone(base);
+    const withWorkspace = accountState();
     withWorkspace.settlementWorkspace = workspace();
     expect(computeAccountStateRoot(withWorkspace)).not.toBe(emptyRoot);
     withWorkspace.settlementWorkspace = {
@@ -172,8 +170,8 @@ describe('nested hash-reachable field coverage', () => {
     const other = route();
     other.amount = 9n;
     expect(computeCanonicalEntityConsensusStateHash(entityState(other))).not.toBe(routeRoot);
-    expect(HASHABLE_HTLC_ROUTE_FIELDS).toContain('amount');
-    expect(HASHABLE_LOCK_BOOK_ENTRY_FIELDS).toContain('lockId');
+    expect(HASHABLE_PAYBOOK_ENTRY_FIELDS).toContain('amount');
+    expect(HASHABLE_HTLC_LOCK_FIELDS).toContain('lockId');
   });
 
   test('an unclassified own-key on Delta changes Account RLP bytes', () => {

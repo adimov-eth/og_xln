@@ -1,11 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-  assertCrossJurisdictionSwapTargetReady,
-  planSwapCommand,
-} from '../../../runtime/swap-cmd/swap-command-plan';
+import { assertCrossJurisdictionSwapTargetReady, planSwapCommand } from '../../../runtime/swap-cmd/swap-command-plan';
 import { createDefaultDelta } from '../../../account/state/delta';
-import { entity, makeAccount } from '../../helpers/cross-j';
+import { UINT256_MAX } from '../../../protocol/boundary/integer-ranges';
+import { entity, makeAccount, putTestAccountDelta } from '../../helpers/cross-j';
 
 const sourceUser = entity('11');
 const sourceHub = entity('22');
@@ -26,8 +24,9 @@ const partyRoles = (entityId: string, entityIsHub: boolean, hubEntityId: string,
 
 const sourceAccount = () => {
   const account = makeAccount(sourceUser, sourceHub);
-  const token = account.state.deltas.get(1)!;
-  token.offdelta = 1_000n;
+  const token = account.state.deltas.get(1);
+  if (!token) throw new Error('TEST_SOURCE_TOKEN_MISSING');
+  putTestAccountDelta(account, { ...token, offdelta: 1_000n });
   return account;
 };
 
@@ -55,9 +54,25 @@ const baseInput = () => ({
 });
 
 describe('runtime-owned swap command plan', () => {
+  test('rejects unavailable inbound credit instead of treating its empty setup as ready', () => {
+    const account = sourceAccount();
+    putTestAccountDelta(account, {
+      ...createDefaultDelta(3),
+      rightCreditLimit: UINT256_MAX,
+      rightHold: UINT256_MAX,
+    });
+    expect(() =>
+      planSwapCommand({
+        ...baseInput(),
+        mode: 'same',
+        source: { ...baseInput().source, account: account.state },
+      }),
+    ).toThrow('SWAP_COMMAND_INBOUND_CREDIT_LIMIT_EXCEEDED');
+  });
+
   test('builds one exact same-j RuntimeInput including capacity setup and offer', () => {
     const account = sourceAccount();
-    account.state.deltas.delete(3);
+    expect(account.state.deltas.has(3)).toBe(false);
     const plan = planSwapCommand({
       ...baseInput(),
       mode: 'same',
@@ -117,36 +132,40 @@ describe('runtime-owned swap command plan', () => {
     });
 
     expect(plan.mode).toBe('cross');
-    expect(plan.targetSetupInput?.entityInputs[0]?.entityTxs).toEqual([{
-      type: 'openAccount',
-      data: {
-        targetEntityId: targetHub,
-        disputeConfig: { leftResponseSeconds: 86_400, rightResponseSeconds: 3_600 },
-        tokenId: 1,
-        creditAmount: 1_000n,
+    expect(plan.targetSetupInput?.entityInputs[0]?.entityTxs).toEqual([
+      {
+        type: 'openAccount',
+        data: {
+          targetEntityId: targetHub,
+          disputeConfig: { leftResponseSeconds: 86_400, rightResponseSeconds: 3_600 },
+          tokenId: 1,
+          creditAmount: 1_000n,
+        },
       },
-    }]);
+    ]);
     expect(plan.crossJurisdictionIntent.routeHash).toMatch(/^0x[0-9a-f]{64}$/);
     expect(plan.crossJurisdictionIntent.source.amount).toBe(1_000n);
     expect(plan.crossJurisdictionIntent.target.amount).toBe(1_000n);
   });
 
   test('planner failure emits no command and target readiness blocks M1 until setup exists', () => {
-    expect(() => planSwapCommand({
-      ...baseInput(),
-      mode: 'cross',
-      wantTokenId: 1,
-      target: {
-        entityId: targetUser,
-        signerId: targetSigner,
-        hubEntityId: targetHub,
-        hubSignerId: targetHubSigner,
-        jurisdiction: targetJurisdiction,
-        ...partyRoles(targetUser, false, targetHub),
-        account: null,
-      },
-      allowOpenTargetAccount: false,
-    })).toThrow('SWAP_INBOUND_ACCOUNT_MISSING');
+    expect(() =>
+      planSwapCommand({
+        ...baseInput(),
+        mode: 'cross',
+        wantTokenId: 1,
+        target: {
+          entityId: targetUser,
+          signerId: targetSigner,
+          hubEntityId: targetHub,
+          hubSignerId: targetHubSigner,
+          jurisdiction: targetJurisdiction,
+          ...partyRoles(targetUser, false, targetHub),
+          account: null,
+        },
+        allowOpenTargetAccount: false,
+      }),
+    ).toThrow('RECEIVE_CAPACITY_ACCOUNT_MISSING');
 
     const planned = planSwapCommand({
       ...baseInput(),
@@ -163,19 +182,25 @@ describe('runtime-owned swap command plan', () => {
       },
       allowOpenTargetAccount: true,
     });
-    expect(() => assertCrossJurisdictionSwapTargetReady(
-      planned.crossJurisdictionIntent,
-      null,
-    )).toThrow('SWAP_INBOUND_ACCOUNT_MISSING');
+    expect(() => assertCrossJurisdictionSwapTargetReady(planned.crossJurisdictionIntent, null)).toThrow(
+      'RECEIVE_CAPACITY_ACCOUNT_MISSING',
+    );
 
     const readyAccount = makeAccount(targetUser, targetHub);
     const targetToken = createDefaultDelta(1);
     targetToken.rightCreditLimit = 1_000n;
-    readyAccount.state.deltas.set(1, targetToken);
-    expect(() => assertCrossJurisdictionSwapTargetReady(
-      planned.crossJurisdictionIntent,
-      readyAccount.state,
-    )).not.toThrow();
+    putTestAccountDelta(readyAccount, targetToken);
+    expect(() =>
+      assertCrossJurisdictionSwapTargetReady(planned.crossJurisdictionIntent, readyAccount.state),
+    ).not.toThrow();
+    putTestAccountDelta(readyAccount, {
+      ...targetToken,
+      rightCreditLimit: UINT256_MAX,
+      rightHold: UINT256_MAX,
+    });
+    expect(() => assertCrossJurisdictionSwapTargetReady(planned.crossJurisdictionIntent, readyAccount.state)).toThrow(
+      'CROSS_J_TARGET_INBOUND_NOT_READY',
+    );
   });
 
   test('uses the committed Hub role for a missing Hub target account', () => {
@@ -203,39 +228,46 @@ describe('runtime-owned swap command plan', () => {
   });
 
   test('rejects a target advertised as a Hub without a verified Hub role', () => {
-    expect(() => planSwapCommand({
-      ...baseInput(),
-      mode: 'cross',
-      wantTokenId: 1,
-      target: {
-        entityId: targetUser,
-        signerId: targetSigner,
-        hubEntityId: targetHub,
-        hubSignerId: targetHubSigner,
-        jurisdiction: targetJurisdiction,
-        ...partyRoles(targetUser, false, targetHub, false),
-        account: null,
-      },
-      allowOpenTargetAccount: true,
-    })).toThrow('SWAP_COMMAND_TARGET_PARTY_INVALID');
+    expect(() =>
+      planSwapCommand({
+        ...baseInput(),
+        mode: 'cross',
+        wantTokenId: 1,
+        target: {
+          entityId: targetUser,
+          signerId: targetSigner,
+          hubEntityId: targetHub,
+          hubSignerId: targetHubSigner,
+          jurisdiction: targetJurisdiction,
+          ...partyRoles(targetUser, false, targetHub, false),
+          account: null,
+        },
+        allowOpenTargetAccount: true,
+      }),
+    ).toThrow('SWAP_COMMAND_TARGET_PARTY_INVALID');
   });
 
   test('committed User role vetoes a conflicting remote Hub advertisement', () => {
-    expect(() => planSwapCommand({
-      ...baseInput(),
-      mode: 'cross',
-      wantTokenId: 1,
-      target: {
-        entityId: targetUser,
-        signerId: targetSigner,
-        hubEntityId: targetHub,
-        hubSignerId: targetHubSigner,
-        jurisdiction: targetJurisdiction,
-        ...partyRoles(targetUser, false, targetHub),
-        committedRoles: new Map([[targetUser, false], [targetHub, false]]),
-        account: null,
-      },
-      allowOpenTargetAccount: true,
-    })).toThrow(`ACCOUNT_ROLE_EVIDENCE_COMMITTED_CONFLICT:${targetHub}`);
+    expect(() =>
+      planSwapCommand({
+        ...baseInput(),
+        mode: 'cross',
+        wantTokenId: 1,
+        target: {
+          entityId: targetUser,
+          signerId: targetSigner,
+          hubEntityId: targetHub,
+          hubSignerId: targetHubSigner,
+          jurisdiction: targetJurisdiction,
+          ...partyRoles(targetUser, false, targetHub),
+          committedRoles: new Map([
+            [targetUser, false],
+            [targetHub, false],
+          ]),
+          account: null,
+        },
+        allowOpenTargetAccount: true,
+      }),
+    ).toThrow(`ACCOUNT_ROLE_EVIDENCE_COMMITTED_CONFLICT:${targetHub}`);
   });
 });

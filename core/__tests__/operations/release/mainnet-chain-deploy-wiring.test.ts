@@ -154,9 +154,7 @@ describe('mainnet chain deployment wiring', () => {
     expect(script).toContain("TRON_MAINNET_USDT");
     expect(script).toContain("base58: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'");
     expect(script).toContain("base58: 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf'");
-    expect(script).toContain(
-      "const hankoVerifier = await deployTronContract(tronWeb, 'HankoVerifier');",
-    );
+    expect(script).toContain("'DeltaTransformer', 'HankoVerifier']");
     expect(script).toContain('{ HankoVerifier: hankoVerifier }');
     expect(script).toContain('hankoVerifier: hankoVerifier.evm');
     expect(script).toContain('hankoVerifier,');
@@ -244,7 +242,7 @@ describe('mainnet chain deployment wiring', () => {
     expect(preflightIndex).toBeLessThan(script.indexOf('if (options.dryRun)', preflightIndex));
     expect(preflightIndex).toBeLessThan(script.indexOf('const privateKey = requireHexPrivateKey()', preflightIndex));
     expect(preflightIndex).toBeLessThan(script.indexOf("run('bun', ['scripts/compile-tron.cjs'", preflightIndex));
-    expect(preflightIndex).toBeLessThan(script.indexOf("deployTronContract(tronWeb, 'Account')", preflightIndex));
+    expect(preflightIndex).toBeLessThan(script.indexOf("await Promise.all(['Account'", preflightIndex));
   });
 
   test('TRON compiler uses pinned standard-json solc artifacts outside git', () => {
@@ -263,7 +261,9 @@ describe('mainnet chain deployment wiring', () => {
     expect(rpc).toContain('const TRON_CHAIN_IDS = new Set<number>([728126428, 3448148188])');
     expect(rpc).toContain('/walletsolidity/getnowblock');
     expect(rpc).toContain('TRON_CONFIRMATION_DEPTH_FORBIDDEN');
-    expect(rpc).toContain('isTronChainId(config.chainId) ? readTronSolidifiedBlockNumber(config)');
+    expect(rpc).toContain("config.mode === 'tron' ? readTronSolidifiedBlockNumber(config, provider) : readCurrentBlockNumber()");
+    expect(rpc).toContain("provider.send('eth_getBlockByNumber', [ethers.toQuantity(height), false])");
+    expect(rpc).toContain('TRON_SOLIDIFIED_HEAD_BLOCK_HASH_MISMATCH');
     expect(rpc).not.toContain('TRON_FINALITY_DEPTH');
   });
 

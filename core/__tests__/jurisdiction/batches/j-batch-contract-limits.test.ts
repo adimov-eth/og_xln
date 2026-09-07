@@ -1,3 +1,4 @@
+import { encodeInt512 } from "../../../protocol/crypto/abi-money";
 import { describe, expect, test } from 'bun:test';
 
 import {
@@ -101,7 +102,7 @@ describe('j-batch contract limits', () => {
       watchSeed: secret(91),
       leftResponseSeconds: 3_600,
       rightResponseSeconds: 86_400,
-      offdeltas: [0n],
+      offdeltas: [encodeInt512(0n)],
       tokenIds: [1n],
       transformers: [],
     };

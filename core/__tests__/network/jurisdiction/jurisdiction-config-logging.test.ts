@@ -13,11 +13,14 @@ test('canonical jurisdiction path follows the repository contract config', () =>
 
 test('jurisdiction config loader uses structured logging without direct console output', () => {
   const source = readFileSync(join(process.cwd(), 'core/jurisdiction/adapter/kernel/config.ts'), 'utf8');
+  const loader = readFileSync(join(process.cwd(), 'core/jurisdiction/adapter/kernel/jurisdiction-loader.ts'), 'utf8');
 
   expect(source).toContain("const jurisdictionConfigLog = createStructuredLogger('runtime.jurisdiction_config');");
-  expect(source).toContain('JURISDICTIONS_BROWSER_FETCH_FAILED');
-  expect(source).toContain("jurisdictionConfigLog.error('browser_config_invalid'");
-  expect(source).toContain('JURISDICTIONS_BROWSER_CONFIG_INVALID');
+  expect(source).toContain('await loadJurisdictionsAsync()');
+  expect(source).not.toContain('fetch(');
+  expect(loader).toContain('JURISDICTIONS_BROWSER_FETCH_FAILED');
+  expect(loader).toContain("jurisdictionLoaderLog.error('browser_config_invalid'");
+  expect(loader).toContain('JURISDICTIONS_BROWSER_CONFIG_INVALID');
   expect(source).not.toContain('console.');
 });
 

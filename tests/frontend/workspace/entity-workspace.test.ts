@@ -270,7 +270,8 @@ test('remote projection entity panel does not hide account surface behind Runtim
   expect(assets).not.toContain('EnvSnapshot');
   expect(assets).toContain('export let entityNames: Map<string, string>');
   expect(assets).not.toContain('export let activeLiveEnv');
-  expect(debt).toContain('export let entityStateOverride: EntityState | null = null');
+  expect(debt).toContain("type DebtState = Pick<EntityState, 'entityId' | 'outDebtsByToken' | 'inDebtsByToken' | 'reserves'>");
+  expect(debt).toContain('export let entityStateOverride: DebtState | null = null');
   expect(debt).toContain('export let entityNames: Map<string, string>');
   expect(debt).not.toContain('export let sourceEnv');
   expect(debt).not.toContain('sourceEnvResolver');

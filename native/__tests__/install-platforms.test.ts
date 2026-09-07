@@ -7,13 +7,13 @@ describe('install channel manifest', () => {
 		expect(INSTALL_CHANNELS.map(channel => channel.id)).toEqual(['cli', 'web', 'desktop', 'mobile', 'extension']);
 	});
 
-	test('states the fundamental web risk and uses the published GitHub launcher', () => {
+	test('states the fundamental web risk and uses the configured npm launcher', () => {
 		const web = INSTALL_CHANNELS.find(channel => channel.id === 'web');
 		const cli = INSTALL_CHANNELS.find(channel => channel.id === 'cli');
 
 		expect(web?.tradeoff).toContain('fundamental');
-		expect(cli?.command).toContain('bunx --bun xlnfinance@https://github.com/xlnfinance/xln/releases/download/v');
-		expect(cli?.command).toContain('/xlnfinance-');
+		expect(cli?.command).toBe('bunx --bun xlnfinance');
+		expect(cli?.href).toBe('https://www.npmjs.com/package/xlnfinance');
 		expect(cli?.benefit).toContain('full admin control');
 		expect(INSTALL_CHANNELS.find(channel => channel.id === 'extension')?.platforms).toEqual(['Google Chrome']);
 	});

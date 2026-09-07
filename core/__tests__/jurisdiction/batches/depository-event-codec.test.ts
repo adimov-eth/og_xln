@@ -1,3 +1,4 @@
+import { encodeInt768 } from "../../../protocol/crypto/abi-money";
 import { describe, expect, test } from 'bun:test';
 import { Depository__factory } from '../../../../jurisdictions/typechain-types/index.ts';
 import {
@@ -19,7 +20,7 @@ describe('Depository watcher event codec', () => {
   test.each([
     {
       name: 'TransformerDeltaClamped',
-      values: [word('1'), 2n, '0x0000000000000000000000000000000000000003', 4n, -5n, -4n],
+      values: [word('1'), 2n, '0x0000000000000000000000000000000000000003', 4n, encodeInt768(-5n), encodeInt768(-4n)],
     },
     {
       name: 'CooperativeClose',

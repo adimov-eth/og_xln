@@ -55,15 +55,20 @@ test('authority evidence captures materialized H1 before MM bootstrap', () => {
   const reset = orchestrator.indexOf('const runReset = async');
   const startupCall = orchestrator.indexOf('await completeResetStartup({', reset);
   const authorityBranch = resetStartup.indexOf(
-    "if (process.env['XLN_HLT_AUTHORITY_EVIDENCE'] !== '1') {",
+    "if (process.env['XLN_HLT_AUTHORITY_EVIDENCE'] !== '1' || startup.preserveState) {",
   );
   const nonAuthorityReturn = resetStartup.indexOf('return;', authorityBranch);
-  const meshReady = resetStartup.indexOf('await startup.waitForMesh();', nonAuthorityReturn);
+  const meshReady = resetStartup.indexOf(
+    'await Promise.all([startup.waitForMesh(), startup.driveH1Bootstrap()]);', nonAuthorityReturn,
+  );
   const capture = resetStartup.indexOf('await captureAuthorityEvidenceBase(startup.h1, startup.host);', meshReady);
-  const parallel = resetStartup.indexOf('await parallel();', capture);
+  const parallel = resetStartup.indexOf(
+    'await Promise.all([startup.startMarketMaker(), startup.startCustody()]);', capture,
+  );
 
   expect(reset).toBeGreaterThanOrEqual(0);
   expect(startupCall).toBeGreaterThan(reset);
+  expect(orchestrator.slice(startupCall, startupCall + 160)).toContain('preserveState');
   expect(authorityBranch).toBeGreaterThanOrEqual(0);
   expect(meshReady).toBeGreaterThan(nonAuthorityReturn);
   expect(capture).toBeGreaterThan(meshReady);

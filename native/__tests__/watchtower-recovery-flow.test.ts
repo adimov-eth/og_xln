@@ -322,7 +322,10 @@ describe('watchtower recovery full flow', () => {
     });
     await xln.processRuntime(env);
 
+    const frame = env.state.height > 0 ? await xln.readPersistedFrameJournal(env, env.state.height) : null;
+    if (env.state.height > 0 && !frame) throw new Error('RESTORE_FLOW_TIP_JOURNAL_MISSING');
     const bundle = xln.buildRuntimeRecoveryBundle(env, {
+      frames: frame ? [frame] : [],
       signers: [{
         index: 0,
         derivationIndex: 0,

@@ -60,8 +60,8 @@ describe('Entity frame shell overlay', () => {
     if (!(candidate.accounts instanceof EntityAccountCandidateMap)) {
       throw new Error('TEST_ENTITY_SHELL_ACCOUNT_OVERLAY_MISSING');
     }
-    if (!(candidate.htlcRoutes instanceof EntityCollectionCandidateMap)) {
-      throw new Error('TEST_ENTITY_SHELL_HTLC_OVERLAY_MISSING');
+    if (!(candidate.paybook.entries instanceof EntityCollectionCandidateMap)) {
+      throw new Error('TEST_ENTITY_SHELL_PAYBOOK_OVERLAY_MISSING');
     }
 
     expect(candidate.accounts.stats()).toEqual({ base: 1, changed: 0, deleted: 0 });

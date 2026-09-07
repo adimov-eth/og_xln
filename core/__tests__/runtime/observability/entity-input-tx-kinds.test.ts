@@ -33,7 +33,7 @@ test('FRAME_LOG histogram splits raw AccountInput kinds from Entity transactions
   expect(counted.senders).toBe(2);
   expect(counted.txKinds).toEqual({
     'accountInput:ack': 1,
-    'accountInput:frame': 1,
+    'accountInput:ack_frame': 1,
     chat: 1,
   });
 });

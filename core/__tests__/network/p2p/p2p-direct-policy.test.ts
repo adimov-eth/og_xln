@@ -79,6 +79,7 @@ describe('RuntimeP2P direct transport policy', () => {
     p2p.closed = false;
     p2p.backgroundIoPaused = false;
     p2p.directClients = new Map([[targetRuntimeId, directClient]]);
+    p2p.directPublishedProfiles = new WeakMap();
     p2p.getLocalProfilesForEntities = async () => [profile];
     p2p.rememberAnnouncedProfile = () => undefined;
     p2p.env = { gossip: { announce: () => undefined } };

@@ -36,8 +36,10 @@ describe('account economic swap limits', () => {
       data: {
         offerId: 'malformed-cross-j-auth',
         giveTokenId: 1,
+        giveTokenDecimals: 6,
         giveAmount: 1n,
         wantTokenId: 2,
+        wantTokenDecimals: 18,
         wantAmount: 2n,
         maxFee: 1n,
         minNetReceive: 1n,
@@ -45,7 +47,7 @@ describe('account economic swap limits', () => {
       },
     } as Parameters<typeof validateSwapOfferAdmission>[1], true);
 
-    expect(result).toEqual({ error: 'CROSS_J_SWAP_NET_AUTH_INVALID' });
+    expect(result).toEqual({ ok: false, message: 'CROSS_J_SWAP_NET_AUTH_INVALID' });
     expect(account.state.swapOffers.size).toBe(0);
   });
 

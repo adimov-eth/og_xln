@@ -70,7 +70,7 @@ describe('HLT Rust Runtime authority evidence', () => {
     expect(Object.keys(evidence.expectations)).toEqual(['runtimeFrames', 'effects']);
   });
 
-  test('rejects disabled lending from the canonical Runtime WAL input', () => {
+  test('binds the actual WAL before transaction-kind completeness audit', () => {
     const lending: EntityTx = {
       type: 'lendingRepay',
       data: {
@@ -80,8 +80,10 @@ describe('HLT Rust Runtime authority evidence', () => {
         amount: 1n,
       },
     };
-    expect(() => buildHltAuthorityEvidence([journal([lending])]))
-      .toThrow('HLT_AUTHORITY_SCOPE_ENTITY_TX_FORBIDDEN:lendingRepay');
+    const evidence = buildHltAuthorityEvidence([journal([lending])]);
+    expect(evidence.expectations.runtimeFrames).toHaveLength(1);
+    expect(evidence.expectations.effects[0]?.orderedOutputDigest).toBe(`0x${'07'.repeat(32)}`);
+    expect(() => assertCompleteHltAuthorityEvidence(evidence)).toThrow();
   });
 
   test('binds current Runtime output events rather than the next inbound proposal', async () => {

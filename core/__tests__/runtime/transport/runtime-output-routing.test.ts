@@ -188,6 +188,17 @@ const dispatchFrameOutputs = (outputs: DeliverableEntityInput[]): DeliverableEnt
 };
 
 describe('runtime output routing', () => {
+  test('retained same-lane outputs keep their distinct committed Runtime frame envelopes', () => {
+    const outputs = [14, 15].map((height): DeliverableEntityInput => ({
+      runtimeId: runtimeId('81'),
+      entityId: entityId('82'),
+      signerId: runtimeId('83'),
+      sourceRuntimeFrame: { height, timestamp: height * 100 },
+      entityTxs: [{ type: 'chatMessage', data: { message: `committed-${height}`, timestamp: height * 100 } }],
+    }));
+    expect(dispatchFrameOutputs(outputs)).toHaveLength(2);
+  });
+
   test('batches same-lane runtime outputs inside one authenticated wrapper', () => {
     const targetRuntimeId = runtimeId('81');
     const targetEntityId = entityId('82');
@@ -752,7 +763,7 @@ describe('runtime output routing', () => {
     expect(p2pCalls).toHaveLength(0);
   });
 
-  test('treats a typed direct dispatch defer as fatal and never touches P2P', () => {
+  test('retains a not-ready recipient in the existing outbox and never touches P2P', () => {
     const targetRuntimeId = runtimeId('25');
     const p2pCalls: Array<{ targetRuntimeId: string; envelope: RuntimeEntityInputsEnvelope; ingressTimestamp?: number }> = [];
     const env = {
@@ -763,7 +774,7 @@ describe('runtime output routing', () => {
       infrastructure: {
         directEntityInputsDispatch: () => ({
           outcome: 'deferred',
-          code: 'ROUTE_DIRECT_MISS_FAILOVER',
+          code: 'ROUTE_DIRECT_RECIPIENT_NOT_READY',
           retryable: true,
           fatal: false,
           terminal: false,
@@ -795,7 +806,8 @@ describe('runtime output routing', () => {
       resolveSoleLocalSignerForEntity: () => null,
       resolveRuntimeIdForEntity: () => targetRuntimeId,
       resolveRuntimeIdForCrossJurisdictionEntity: () => targetRuntimeId,
-    })).toThrow('ROUTE_DIRECT_NOT_DELIVERED');
+    })).not.toThrow();
+    expect(env.pendingNetworkOutputs).toEqual([output]);
 
     expect(p2pCalls).toHaveLength(0);
   });

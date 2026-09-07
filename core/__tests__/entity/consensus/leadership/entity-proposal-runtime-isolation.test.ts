@@ -65,8 +65,13 @@ describe('Entity proposal Runtime isolation', () => {
     const { env, signerId } = await installPersistedProposalValidator();
     expect(env.state.height).toBe(1);
     const frame = await buildAuthenticatedInvalidProposal(env, signerId);
-    const { inboundResults, remoteRuntimeId, remoteEnv } = await deliverEncryptedProposal(env, frame);
-    expect(inboundResults).toEqual([expect.objectContaining({ kind: 'queued' })]);
+    const { inboundResults, deliveryFailures, remoteRuntimeId, remoteEnv } = await deliverEncryptedProposal(env, frame);
+    // The canonical encrypted-envelope decoder authenticates nested commands
+    // before Runtime admission; this invalid signature must never be queued.
+    expect(inboundResults).toEqual([]);
+    expect(deliveryFailures).toEqual([
+      'ENTITY_FRAME_TX_FAILED: type=entityCommand error=ENTITY_COMMAND_SIGNATURE_INVALID',
+    ]);
 
     const claimsBefore = getAccountJClaimNodeStore(env).size;
     await processRuntime(env, []);

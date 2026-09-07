@@ -5,7 +5,7 @@ import { Wallet, ethers } from 'ethers';
 
 import { deriveSignerKeySync } from '../../../account/crypto';
 import { generateLazyEntityId } from '../../../entity/factory';
-import { createEmptyEnv, enqueueRuntimeInput, processRuntime } from '../../../runtime.ts';
+import { createEmptyEnv, enqueueRuntimeInput, processRuntime, readPersistedFrameJournal } from '../../../runtime.ts';
 import { buildRuntimeRecoveryBundle } from '../../../storage/recovery/bundle';
 import {
   buildTowerAppointmentOwnerMessage,
@@ -89,7 +89,10 @@ const createBackupAppointment = async () => {
     entityInputs: [],
   });
   await processRuntime(env);
+  const frame = env.state.height > 0 ? await readPersistedFrameJournal(env, env.state.height) : null;
+  if (env.state.height > 0 && !frame) throw new Error('WATCHTOWER_RESTART_TIP_JOURNAL_MISSING');
   const bundle = buildRuntimeRecoveryBundle(env, {
+    frames: frame ? [frame] : [],
     signers: [{
       index: 0,
       derivationIndex: 0,

@@ -213,8 +213,9 @@ test('retained checkpoint roots preserve board witnesses until snapshot pruning 
       roots.push(updated.root);
       records.push(record);
 
+      // Check both permanent-path replacement and the later snapshot deletion.
+      expect((await readStorageHead(historyDb))?.retainedWalBytes).toBe(await measureRetainedBytes());
       if (epoch === 1) {
-        expect((await readStorageHead(historyDb))?.retainedWalBytes).toBe(await measureRetainedBytes());
         const stats = await inspectStorage({
           env,
           tryOpenDb: async () => true,

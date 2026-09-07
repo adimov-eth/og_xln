@@ -105,7 +105,7 @@ describe('push wake registration frontend contract', () => {
     expect(verifiedRegistration.runtimeId).toBe(runtimeId);
     expect(verifiedRegistration.entityId).toBe(targetEntityId);
     expect(verifiedRegistration.tokenHash).toBe(hashPushToken(device.token));
-    expect(verifiedRegistration.rpcUrl).toBe('http://127.0.0.1:8545');
+    expect(verifiedRegistration.rpcUrl).toBe('http://127.0.0.1:8545/');
 
     const unregisterPayload = buildPushWakeUnregisterPayload(runtimeId, registrationPayload.tokenHash, signedAt);
     const unregisterSignature = await wallet.signMessage(unregisterPayload.message);

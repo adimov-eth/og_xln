@@ -65,8 +65,7 @@ const replicaFixture = (): EntityReplica => ({
   proposal: { height: 9, hash: '0xpending9' } as EntityReplica['proposal'],
   lockedFrame: { height: 9, hash: '0xlocked9' } as EntityReplica['lockedFrame'],
   leaderVotes: new Map([['bob', {} as never]]),
-  certifiedFrameLineage: [{} as never, {} as never],
-  certifiedFrameAnchor: { height: 6, frameHash: '0xanchor6' } as EntityReplica['certifiedFrameAnchor'],
+  certifiedFrameHead: { frame: { height: 8, hash: '0xcertified8' } } as EntityReplica['certifiedFrameHead'],
   hankoWitness: new Map(),
   lastConsensusProgressAt: 1_233,
 });
@@ -87,7 +86,9 @@ describe('entity consensus settings projection', () => {
     expect(view.hooks).toEqual([{ id: 'hook-1', type: 'watchdog', triggerAt: 1_500 }]);
     expect(view.pendingFrameHash).toBe('0xpending9');
     expect(view.lockedFrameHash).toBe('0xlocked9');
-    expect(view.certifiedLineageLength).toBe(2);
+    expect(view.certifiedLineageLength).toBe(1);
+    expect(view.certifiedAnchorHeight).toBe(8);
+    expect(view.certifiedAnchorHash).toBe('0xcertified8');
   });
 
   test('fails loudly when a stored proposal contains an unknown voter', () => {

@@ -5,9 +5,30 @@
  * (real hubs, real chain over RPC, no mocks) and finish.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import type { RuntimeAdapterViewFrame } from '../../core/api/public/runtime-module';
+import type { RuntimeAdapter } from '../../core/api/runtime-adapter/types';
 
-const BOOT_TIMEOUT = 180_000;
-const STEP_TIMEOUT = 120_000;
+const BOOT_TIMEOUT = 20_000;
+const STEP_TIMEOUT = 20_000;
+
+const readDisputeConfirmation = (page: Page) => page.evaluate(async () => {
+	const debug = (window as Window & { __xln?: { adapter: () => RuntimeAdapter | null; store: { getState: () => { activeEntityId: string | null } } } }).__xln;
+	if (!debug) throw new Error('Wallet diagnostics unavailable');
+	const adapter = debug.adapter();
+	const entityId = debug.store.getState().activeEntityId;
+	if (!adapter || !entityId) throw new Error('Tutorial owner unavailable');
+	const frame = await adapter.read<RuntimeAdapterViewFrame>('view-frame', { entityId });
+	if (!frame.activeEntity) throw new Error('Tutorial committed Entity unavailable');
+	const accounts = frame.activeEntity.accounts.items;
+	const batch = frame.activeEntity.core.jBatchState;
+	return {
+		active: accounts.some(account => account.activeDispute?.observedOnChain === true),
+		height: frame.height,
+		accounts: accounts.map(account => ({ status: account.status, dispute: Boolean(account.activeDispute), pending: Boolean(account.pendingFrame) })),
+		draftStarts: batch?.batch.disputeStarts.length ?? 0,
+		sent: batch?.sentBatch ? { txHash: batch.sentBatch.txHash, terminalFailure: batch.sentBatch.terminalFailure } : null,
+	};
+});
 
 async function currentStep(tour: Locator): Promise<string> {
 	return (await tour.isVisible().catch(() => false)) ? (await tour.getAttribute('data-step')) ?? '' : 'closed';
@@ -72,7 +93,7 @@ async function takeLevel(page: Page, side: 'ask' | 'bid'): Promise<void> {
 
 test.describe('wallet UI guided tour', () => {
 	test('a person walks the whole tour on the live stack with the real controls', { tag: '@functional' }, async ({ page }) => {
-		test.setTimeout(1_200_000);
+		test.setTimeout(50_000);
 		const pageErrors: string[] = [];
 		page.on('pageerror', error => pageErrors.push(error.message));
 		// A halted runtime looks like a stuck tour; the browser console names the invariant that halted it.
@@ -151,7 +172,7 @@ test.describe('wallet UI guided tour', () => {
 					await expect(page.getByTestId('move-now')).toBeEnabled({ timeout: 30_000 });
 					await page.getByTestId('move-now').click();
 					break;
-				case 'rebalance':
+				case 'rebalance': {
 					await followTo(page, tour, 'account-manage');
 					await page.getByTestId('account-manage').click();
 					// The hub collateralizes what it owes uncovered; the hint names that amount.
@@ -161,6 +182,7 @@ test.describe('wallet UI guided tour', () => {
 					await expect(page.getByTestId('collateral-request')).toBeEnabled({ timeout: STEP_TIMEOUT });
 					await page.getByTestId('collateral-request').click();
 					break;
+				}
 				case 'trade': {
 					await followTo(page, tour, 'orderbook');
 					await takeLevel(page, 'ask');
@@ -181,6 +203,7 @@ test.describe('wallet UI guided tour', () => {
 					await followTo(page, tour, 'batch-broadcast');
 					await expect(page.getByTestId('batch-broadcast')).toBeEnabled({ timeout: STEP_TIMEOUT });
 					await page.getByTestId('batch-broadcast').click();
+					await expect.poll(() => readDisputeConfirmation(page), { timeout: STEP_TIMEOUT }).toMatchObject({ active: true });
 					break;
 				default: {
 					// A read step: walk to where the ring points, then turn the page.

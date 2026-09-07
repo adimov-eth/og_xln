@@ -10,6 +10,15 @@ import {
   createEmptyEnv,
   enqueueRuntimeInput,
   getRuntimeWalDb,
+  getPersistedLatestHeight,
+  listPersistedCheckpointHeights,
+  loadEnvFromStorageByReplay,
+  readPersistedStorageFrameRecord,
+  readPersistedStorageFramePayloads,
+  replayRecoveryFrameJournals,
+  restoreEnvFromRecoveryBundles,
+  tryOpenStorageDb,
+  tryOpenRuntimeWalDb,
   processRuntime,
   readPersistedRuntimeActivityJournal,
   readPersistedRuntimeActivityPage,
@@ -21,6 +30,18 @@ import {
   resetRuntimeActivityViewAtFloor,
 } from '../../../storage/history/runtime-activity-view';
 import { readStorageFrameRecord } from '../../../storage';
+import { getStorageDb, withStorageConsistentRead } from '../../../storage/runtime-dbs';
+import { ensureRuntimeActivityView } from '../../../storage/history/runtime-activity-repair';
+import { buildRecoveryJournalFromStorageFrame } from '../../../storage/queries/history';
+import type { PersistenceQueryDeps } from '../../../storage/queries/deps';
+
+const barrier = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => {
+    resolve = done;
+  });
+  return { promise, resolve };
+};
 
 const cleanup = (runtimeId: string): void => {
   const root = process.env['XLN_DB_PATH'] || 'db-tmp/runtime';
@@ -64,6 +85,64 @@ const commitRuntimeTick = async (env: ReturnType<typeof createEmptyEnv>): Promis
 };
 
 describe('disposable Runtime activity view', () => {
+  test('an activity read cannot rewind a newer committed view while awaiting WAL I/O', async () => {
+    const { env, runtimeId } = await createStoredRuntime('activity-live-append-race');
+    const captured = barrier<number>();
+    const resume = barrier<void>();
+    let repair: Promise<void> | null = null;
+    try {
+      await commitRuntimeTick(env);
+      const original = await readRuntimeActivityViewStatus(env);
+      expect(original?.latestHeight).toBe(2);
+      const frameBefore = await readPersistedStorageFrameRecord(env, 2);
+      const deps: PersistenceQueryDeps = {
+        tryOpenStorageDb,
+        getStorageDb,
+        tryOpenRuntimeWalDb,
+        getRuntimeWalDb,
+        // Only the schedule is controlled: this is the real committed LevelDB HEAD.
+        resolvePersistedLatestHeight: async source => {
+          const height = await getPersistedLatestHeight(source);
+          captured.resolve(height);
+          await resume.promise;
+          return height;
+        },
+        resolvePersistedCheckpointHeights: listPersistedCheckpointHeights,
+        readPersistedStorageFrameRecord,
+        readPersistedStorageFramePayloads,
+        loadEnvFromStorageByReplay,
+        replayRecoveryFrameJournals,
+        closeRuntimeDb,
+        closeInfraDb,
+        restoreEnvFromRecoveryBundles,
+        withStorageConsistentRead,
+      };
+      repair = ensureRuntimeActivityView(deps, env, buildRecoveryJournalFromStorageFrame);
+      expect(await captured.promise).toBe(2);
+      // WAL commit must remain independent of the disposable-view repair lock.
+      await commitRuntimeTick(env);
+      expect(await getPersistedLatestHeight(env)).toBe(3);
+      const viewAfterAppend = readRuntimeActivityViewStatus(env);
+      resume.resolve();
+      await repair;
+      expect(await viewAfterAppend).toEqual({ ...original, latestHeight: 3 });
+      expect(await readRuntimeActivityViewStatus(env)).toEqual({ ...original, latestHeight: 3 });
+      expect(await readPersistedStorageFrameRecord(env, 2)).toEqual(frameBefore);
+      expect((await readPersistedRuntimeActivityJournal(env, 3))?.logs.map(log => log.message)).toEqual([
+        'RuntimeTick',
+      ]);
+      await commitRuntimeTick(env);
+      expect((await readRuntimeActivityViewStatus(env))?.latestHeight).toBe(4);
+      expect(env.infrastructure?.runtimeActivityViewFailure).toBeUndefined();
+    } finally {
+      resume.resolve();
+      await repair;
+      await closeRuntimeDb(env);
+      await closeInfraDb(env);
+      cleanup(runtimeId);
+    }
+  });
+
   test('keeps v5 frames log-free and restores deterministic activity after reopen', async () => {
     const { env, runtimeId, seed } = await createStoredRuntime('activity-reopen');
     await commitRuntimeTick(env);
@@ -125,8 +204,7 @@ describe('disposable Runtime activity view', () => {
       height: 2,
       message: 'RUNTIME_ACTIVITY_VIEW_GAP:height=2',
     });
-    expect((await readPersistedRuntimeActivityJournal(env, 2))?.logs.map(log => log.message))
-      .toEqual(['RuntimeTick']);
+    expect((await readPersistedRuntimeActivityJournal(env, 2))?.logs.map(log => log.message)).toEqual(['RuntimeTick']);
     expect(env.infrastructure?.runtimeActivityViewFailure).toBeUndefined();
     await closeRuntimeDb(env);
     await closeInfraDb(env);

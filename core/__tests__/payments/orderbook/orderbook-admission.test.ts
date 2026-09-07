@@ -17,9 +17,8 @@ import { getStaticSwapTokenDimensions, SWAP_LOT_SCALE } from '../../../orderbook
 import type { EntityRuntimeContext } from '../../../entity/runtime-context';
 import type { EntityState } from '../../../entity/types';
 import { createEntityFrameCandidateState } from '../../../entity/state-clone';
-import { PersistentEntityAccountMap } from '../../../entity/state/persistent-account-map';
 import type { SwapOffer } from '../../../types/account';
-import { addr, entity, makeAccount, makeJurisdiction, makeState } from '../../helpers/cross-j';
+import { addr, entity, makeAccount, makeJurisdiction, makeState, openWritableEntityAccounts } from '../../helpers/cross-j';
 
 const MAKER = entity('a1');
 const TAKER = entity('a2');
@@ -69,11 +68,8 @@ const makeAdmissionState = (
     });
   }
   account.currentHeight = 1;
-  if (!(state.accounts instanceof PersistentEntityAccountMap)) {
-    throw new Error('ORDERBOOK_ADMISSION_TEST_ACCOUNT_MAP_INVALID');
-  }
-  state.accounts = state.accounts.updated(TAKER, account);
-  return createEntityFrameCandidateState(state);
+  openWritableEntityAccounts(state).set(TAKER, account);
+  return state;
 };
 
 /** The book candidate the Entity derives from the committed offer event. */

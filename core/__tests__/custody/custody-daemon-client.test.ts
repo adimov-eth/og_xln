@@ -166,8 +166,6 @@ describe('custody daemon rAdapter transport', () => {
                 },
               }
             : { height: 8, status: 'observed', commandSequence: request.commandSequence };
-        } else if (request.path === 'receipt/receipt-1') {
-          payload = { status: 'observed' };
         } else {
           expect(request.path).toBe('frame-receipts');
           expect(request.query?.fromHeight).toBe(8);
@@ -232,7 +230,7 @@ describe('custody daemon rAdapter transport', () => {
       onCommandPrepared: sequence => { persistedSequences.push(sequence); },
     });
 
-    expect(seenOps).toEqual(['auth', 'send', 'read', 'read']);
+    expect(seenOps).toEqual(['auth', 'send', 'read']);
     expect(persistedSequences).toEqual([9]);
     expect(sentInput?.op).toBe('send');
     if (!sentInput || sentInput.op !== 'send') throw new Error('TEST_SEND_REQUEST_MISSING');

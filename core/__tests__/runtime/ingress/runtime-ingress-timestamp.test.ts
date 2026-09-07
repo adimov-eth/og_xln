@@ -29,6 +29,7 @@ import type { JurisdictionEvent } from '../../../types/jurisdiction-events';
 import { getWallClockMs } from '../../../support/time';
 import { attachLiveJAdapter } from '../../../runtime/j-submit/live-jadapters';
 import { rebuildScheduledWakeIndex } from '../../../runtime/mempool/scheduled-wake';
+import { waitForPromiseBeforeTimeout } from '../../../runtime/loop/loop-drain';
 import type { JAdapter } from '../../../jurisdiction/adapter/types';
 import {
   applyEntityInputFrameCap,
@@ -744,16 +745,68 @@ describe('runtime ingress timestamp', () => {
       data: {},
     });
 
+    const committedWake = Promise.withResolvers<void>();
+    const unsubscribe = registerRuntimeFrameCommitCallback(env, ({ runtimeInput }) => {
+      if (runtimeInput.entityInputs.some(input => input.entityId === entityId &&
+        input.entityTxs?.some(tx => tx.type === 'scheduledWake'))) committedWake.resolve();
+    });
     const stop = startRuntimeLoop(env, { tickDelayMs: 5 });
     try {
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(await waitForPromiseBeforeTimeout(committedWake.promise, 2500)).toBe(true);
     } finally {
+      unsubscribe();
       stop();
+      await env.infrastructure?.loopPromise;
     }
 
     expect(env.state.timestamp).toBeGreaterThanOrEqual(dueAt);
     const updatedReplica = env.state.eReplicas.get(`${entityId}:${signerId}`);
     expect(updatedReplica?.state.crontabState?.hooks?.has('watchdog:idle-loop-due-after-wall-clock')).toBe(false);
+  });
+
+  test('idle runtime loop admits overdue wakes at observed host time after downtime', async () => {
+    const env = createIsolatedEnv('runtime-overdue-wake-after-downtime');
+    env.quietRuntimeLogs = true;
+    const resumedAt = getWallClockMs();
+    env.state.timestamp = resumedAt - 48 * 60 * 60 * 1000;
+    const { replica } = addSignableReplica(env, env.state.timestamp);
+    const crontab = replica.state.crontabState;
+    if (!crontab) throw new Error('TEST_CRONTAB_MISSING');
+    const dueTimes = [env.state.timestamp + 1000, resumedAt - 1];
+    for (const [index, triggerAt] of dueTimes.entries()) {
+      scheduleHook(crontab, {
+        id: `watchdog:overdue-${index}`,
+        triggerAt,
+        type: 'watchdog',
+        data: {},
+      });
+    }
+    const firstWake = Promise.withResolvers<{ timestamp: number; dueAt: number; jobs: string[] }>();
+    const unsubscribe = registerRuntimeFrameCommitCallback(env, ({ runtimeInput }) => {
+      const wake = runtimeInput.entityInputs.flatMap(input => input.entityTxs ?? [])
+        .find(tx => tx.type === 'scheduledWake');
+      if (!wake) return;
+      firstWake.resolve({
+        timestamp: env.state.timestamp,
+        dueAt: wake.data.dueAt,
+        jobs: wake.data.jobs.map(job => job.id),
+      });
+    });
+    const stop = startRuntimeLoop(env, { tickDelayMs: 5 });
+    try {
+      expect(await waitForPromiseBeforeTimeout(firstWake.promise, 2500)).toBe(true);
+      const committed = await firstWake.promise;
+      // The Runtime records when it observes overdue work. Its signed deadline
+      // diagnostics keep their original order; reducers replay the frame time.
+      expect(committed.timestamp).toBeGreaterThanOrEqual(resumedAt);
+      expect(committed.timestamp).toBeLessThanOrEqual(getWallClockMs() + TIMING.TIMESTAMP_DRIFT_MS);
+      expect(committed.dueAt).toBe(dueTimes[0]);
+      expect(committed.jobs).toEqual(['watchdog:overdue-0', 'watchdog:overdue-1']);
+    } finally {
+      unsubscribe();
+      stop();
+      await env.infrastructure?.loopPromise;
+    }
   });
 
   test('non-hub pending account frames do not create an automatic wake', () => {

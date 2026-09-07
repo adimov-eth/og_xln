@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { PersistentEntityAccountMap } from '../../../../entity/state/persistent-account-map';
+import { createEntityFrameCandidateState } from '../../../../entity/state-clone';
+import { forkEntityReplicaForInput } from '../../../../entity/replica/replica-clone';
+import { provisionTestEntityEncryptionKey } from '../../../helpers/cross-j';
 
 import {
   buildEntityLeaderVoteBody,
@@ -24,6 +28,7 @@ import { createEntityFrameHash, createEntityFrameHashFromStateRoot } from '../..
 import { buildEntityHashesToSign } from '../../../../entity/consensus/input/hanko-witness';
 import {
   buildEntityFrameAuthority,
+  computeEntityAccountValueHash,
   computeCanonicalEntityConsensusStateHash,
   computeEntityFrameAuthorityRoot,
 } from '../../../../entity/consensus/state-root';
@@ -74,9 +79,9 @@ const state = (leaderState?: EntityState['leaderState']): EntityState => ({
   proposals: new Map(),
   config: config(),
   prevFrameHash: '0xframe7',
-  leaderState,
+  ...(leaderState ? { leaderState } : {}),
   reserves: new Map(),
-  accounts: new Map(),
+  accounts: PersistentEntityAccountMap.empty('entity', computeEntityAccountValueHash),
   lastFinalizedJHeight: 0,
   profile: { name: '', isHub: false, avatar: '', bio: '', website: '' },
   paybook: { entries: new Map(), feesEarned: 0n },
@@ -175,6 +180,7 @@ describe('entity leader policy', () => {
     };
     const base = state();
     base.entityId = hashBoard(encodeBoard(board, env)).toLowerCase();
+    base.entityEncryptionPublicKey = provisionTestEntityEncryptionKey(env, base.entityId);
     base.height = 0;
     base.timestamp = 0;
     base.prevFrameHash = undefined;
@@ -189,7 +195,7 @@ describe('entity leader policy', () => {
         entityId: base.entityId,
         signerId,
         entityEncPubKey: '',
-        state: structuredClone(base),
+        state: createEntityFrameCandidateState(base),
         mempool: signerId === proposerId ? [] : [command],
         isProposer: signerId === proposerId,
         lastConsensusProgressAt: 0,
@@ -429,7 +435,7 @@ describe('entity leader policy', () => {
       entityId: base.entityId,
       signerId,
       entityEncPubKey: '',
-      state: structuredClone(base),
+      state: createEntityFrameCandidateState(base),
       mempool: [],
       isProposer: signerId === proposerId,
       jHistory: history(),
@@ -502,7 +508,7 @@ describe('entity leader policy', () => {
     failoverReplica.candidate = {
       frameHash: preparedHash,
       height: 1,
-      state: structuredClone(preparedState),
+      state: createEntityFrameCandidateState(preparedState),
       outputs: structuredClone(replay.outputs),
       jOutputs: structuredClone(replay.jOutputs),
       hashesToSign: structuredClone(hashesToSign),
@@ -594,6 +600,7 @@ describe('entity leader policy', () => {
     };
     const base = state();
     base.entityId = hashBoard(encodeBoard(board, env)).toLowerCase();
+    base.entityEncryptionPublicKey = provisionTestEntityEncryptionKey(env, base.entityId);
     base.height = 0;
     base.timestamp = 0;
     base.prevFrameHash = undefined;
@@ -664,7 +671,7 @@ describe('entity leader policy', () => {
       entityId: base.entityId,
       signerId: '2',
       entityEncPubKey: '',
-      state: structuredClone(base),
+      state: createEntityFrameCandidateState(base),
       mempool: [signedEntityCommandTx(buildSignedEntityCommand(env, base, '2', [{
         type: 'chat',
         data: { from: '2', message: 'must not create F1' },
@@ -673,7 +680,7 @@ describe('entity leader policy', () => {
       candidate: {
         frameHash: preparedHash,
         height: 1,
-        state: structuredClone(preparedState),
+        state: createEntityFrameCandidateState(preparedState),
         outputs: structuredClone(preparedResult.outputs),
         jOutputs: structuredClone(preparedResult.jOutputs),
         hashesToSign: structuredClone(preparedManifest),
@@ -783,7 +790,7 @@ describe('entity leader policy', () => {
         hashEntityLeaderVoteBody(conflictVote),
       );
     }
-    let conflictAttempt = { workingReplica: structuredClone(replica) };
+    let conflictAttempt = { workingReplica: forkEntityReplicaForInput(replica) };
     for (const conflictVote of conflictVotes) {
       conflictAttempt = await applyEntityInput(env, conflictAttempt.workingReplica, {
         entityId: base.entityId,
@@ -819,7 +826,7 @@ describe('entity leader policy', () => {
         hashEntityLeaderVoteBody(poisonedVote),
       );
     }
-    let poisonedAttempt = { workingReplica: structuredClone(replica) };
+    let poisonedAttempt = { workingReplica: forkEntityReplicaForInput(replica) };
     for (const poisonedVote of poisonedVotes) {
       poisonedAttempt = await applyEntityInput(env, poisonedAttempt.workingReplica, {
         entityId: base.entityId,
@@ -869,7 +876,7 @@ describe('entity leader policy', () => {
       preparedResult.entityContext,
     )).toBe(preparedHash);
 
-    let reordered = { workingReplica: structuredClone(replica) };
+    let reordered = { workingReplica: forkEntityReplicaForInput(replica) };
     for (const vote of [vote4, vote2, vote3]) {
       reordered = await applyEntityInput(env, reordered.workingReplica, {
         entityId: base.entityId,
@@ -884,7 +891,7 @@ describe('entity leader policy', () => {
     expect(Array.from(certified.workingReplica.pendingLeaderCertificate?.votes.keys() ?? []))
       .toEqual(['2', '3', '4']);
 
-    const restored = validateEntityReplica(structuredClone(certified.workingReplica));
+    const restored = validateEntityReplica(forkEntityReplicaForInput(certified.workingReplica));
     expect(restored.pendingLeaderCertificate?.preparedFrameHash).toBe(preparedHash);
     const transitionBody = buildEntityLeaderVoteBody(restored.state);
     let transition = { ...certified, workingReplica: restored };

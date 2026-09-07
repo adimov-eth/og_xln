@@ -35,6 +35,7 @@ import type { EntityLeaderTimeoutVote, EntityReplica, EntityState, JurisdictionC
 import type { RuntimeReplica } from '../../../../runtime/types';
 import { createTestEntityImportRuntimeTx } from '../../../../qa/entity-creation-fixture';
 import { createTestJReplica } from '../../../helpers/j-replica';
+import { emptyEntityAccountMap } from '../../../helpers/entity-account-map';
 
 const cleanupRuntimeStorage = (runtimeId: string): void => {
   const namespacePath = join(dbRootPath, runtimeId);
@@ -63,7 +64,7 @@ const installVoteTarget = (env: RuntimeReplica): {
       shares: { [signerId]: 1n, [voterId]: 1n },
     },
     reserves: new Map(),
-    accounts: new Map(),
+    accounts: emptyEntityAccountMap(entityId),
     deferredAccountProposals: new Map(),
     crontabState: initCrontab(),
     lastFinalizedJHeight: 0,
@@ -77,7 +78,7 @@ const installVoteTarget = (env: RuntimeReplica): {
     signerId,
     state,
     mempool: [],
-    isProposer: false,
+    isProposer: true,
   };
   env.state.eReplicas.set(`${entityId}:${signerId}`, replica);
   const voteBody = buildEntityLeaderVoteBody(state);
@@ -147,6 +148,10 @@ describe('leader timeout vote durability', () => {
   test('restores a standalone sub-quorum vote from authoritative LevelDB history', async () => {
     const seed = `leader-timeout-vote-restore-${process.pid}`;
     const env = createEmptyEnv(seed);
+    env.runtimeConfig = {
+      ...env.runtimeConfig,
+      storage: { ...env.runtimeConfig.storage, canonicalHashPeriodFrames: 1 },
+    };
     env.runtimeId = env.runtimeId!.toLowerCase();
     env.dbNamespace = env.runtimeId;
     env.quietRuntimeLogs = true;
@@ -171,7 +176,7 @@ describe('leader timeout vote durability', () => {
             shares: { [signerId]: 1n, [voterId]: 1n },
             jurisdiction,
           },
-          isProposer: false,
+          isProposer: true,
           profileName: 'leader vote durability',
         },
       })],
@@ -189,7 +194,10 @@ describe('leader timeout vote durability', () => {
       entityId,
       jurisdiction: jurisdiction.name,
     }];
+    const snapshotFrame = env.state.height > 0 ? await readPersistedFrameJournal(env, env.state.height) : null;
+    if (env.state.height > 0 && !snapshotFrame) throw new Error('LEADER_TIMEOUT_VOTE_SNAPSHOT_JOURNAL_MISSING');
     const snapshotBundle = buildRuntimeRecoveryBundle(env, {
+      frames: snapshotFrame ? [snapshotFrame] : [],
       signers: recoverySigners,
       createdAt: 1_000,
     });
@@ -307,7 +315,7 @@ describe('leader timeout vote durability', () => {
 
     const unsignedTail = structuredClone(tailBundle);
     delete (unsignedTail as Partial<typeof unsignedTail>).signature;
-    expect(() => validateRuntimeRecoveryBundle(unsignedTail)).toThrow('RECOVERY_BUNDLE_SIGNATURE_INVALID');
+    expect(() => validateRuntimeRecoveryBundle(unsignedTail)).toThrow('RECOVERY_BUNDLE_SIGNATURE_REQUIRED');
 
     const restored = await loadEnvFromDB(env.runtimeId, seed);
     if (!restored) throw new Error('LEADER_TIMEOUT_VOTE_RESTORE_MISSING');

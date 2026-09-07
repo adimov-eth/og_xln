@@ -19,7 +19,7 @@ const disputeStartedInterface = new Interface([
 const abiCoder = AbiCoder.defaultAbiCoder();
 const emptyCounterProofCommitment = `0x${'00'.repeat(32)}`;
 const proofBodyParam = ParamType.from(
-  'tuple(bytes32 watchSeed,uint32 leftResponseSeconds,uint32 rightResponseSeconds,int256[] offdeltas,uint256[] tokenIds,tuple(address transformerAddress,bytes encodedBatch,tuple(uint256 deltaIndex,uint256 rightAllowance,uint256 leftAllowance)[] allowances)[] transformers)',
+  'tuple(bytes32 watchSeed,uint32 leftResponseSeconds,uint32 rightResponseSeconds,tuple(int256 high,uint256 low)[] offdeltas,uint256[] tokenIds,tuple(address transformerAddress,bytes encodedBatch,tuple(uint256 deltaIndex,uint256 rightAllowance,uint256 leftAllowance)[] allowances)[] transformers)',
 );
 const makeProofBody = (watchSeed: string, offdeltas: bigint[] = [-1n]): Record<string, unknown> => ({
   watchSeed,
@@ -30,7 +30,14 @@ const makeProofBody = (watchSeed: string, offdeltas: bigint[] = [-1n]): Record<s
   transformers: [],
 });
 const proofBodyHashOf = (proofBody: Record<string, unknown>): string =>
-  keccak256(abiCoder.encode([proofBodyParam], [proofBody]));
+  keccak256(abiCoder.encode([proofBodyParam], [{
+    ...proofBody,
+    // Independent two's-complement projection of Types.sol's Int512 limbs.
+    offdeltas: (proofBody['offdeltas'] as bigint[]).map(value => ({
+      high: value >> 256n,
+      low: value & ((1n << 256n) - 1n),
+    })),
+  }]));
 
 const tempRoots: string[] = [];
 
@@ -873,6 +880,8 @@ describe('watchtower delayed last-resort sweep', () => {
     });
     await store.upsertAppointment({
       ...baseAppointment,
+      // Keep both candidates: same-slot replacement would not test selection.
+      slot: 1,
       bundle: {
         ...baseAppointment.bundle,
         height: 11,

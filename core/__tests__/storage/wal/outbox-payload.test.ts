@@ -11,6 +11,7 @@ import {
   readEntityContextPayloads,
 } from '../../../storage/wal/entity-context-payload';
 import {
+  decodeRuntimeMachineGraphLeaves,
   prepareRuntimeMachineGraphRows,
   readRuntimeMachineGraph,
 } from '../../../storage/wal/runtime-machine-graph';
@@ -24,7 +25,7 @@ import {
 import { validateDurableRuntimeMachineSnapshot } from '../../../storage/wal/runtime-machine-schema';
 import { createEmptyEnv } from '../../../runtime';
 import { encodeBuffer } from '../../../storage/codec/codec';
-import { keyEntityContextPayload } from '../../../storage/keys';
+import { KEY_RUNTIME_MACHINE_LEAF, keyEntityContextPayload, parseRuntimeMachineLeafKey } from '../../../storage/keys';
 
 const ENTITY_ID = `0x${'11'.repeat(32)}`;
 const SIGNER_ID = `0x${'22'.repeat(20)}`;
@@ -475,6 +476,36 @@ describe('Patricia-addressed Runtime checkpoints', () => {
       prepared.root,
     );
     expect(restored).toEqual(machine);
+  });
+
+  test('exported Runtime leaves preserve the authenticated machine and reject altered ownership evidence', () => {
+    const env = createEmptyEnv('runtime-machine-exported-leaves');
+    env.infrastructure = { entityEncryptionSeeds: new Map([['0x' + '12'.repeat(32), '0x' + '34'.repeat(64)]]) };
+    const machine = buildDurableRuntimeMachineSnapshot(env);
+    const prepared = prepareRuntimeMachineGraphRows(machine);
+    if (!prepared.root) throw new Error('TEST_RUNTIME_MACHINE_ROOT_MISSING');
+    const root = prepared.root;
+    const leaves = prepared.rows
+      .filter(row => row.key[0] === KEY_RUNTIME_MACHINE_LEAF)
+      .map(row => ({ pathBytes: parseRuntimeMachineLeafKey(row.key).payload, valueBytes: row.value }));
+    const first = leaves[0];
+    if (!first) throw new Error('TEST_RUNTIME_MACHINE_LEAF_MISSING');
+
+    expect(decodeRuntimeMachineGraphLeaves(leaves, root)).toEqual(machine);
+    expect(() => decodeRuntimeMachineGraphLeaves([...leaves, first], root))
+      .toThrow('PERSISTENT_RADIX_DUPLICATE_KEY');
+    expect(() => decodeRuntimeMachineGraphLeaves(leaves.slice(1), root))
+      .toThrow('STORAGE_RUNTIME_MACHINE_GRAPH_ROOT_MISMATCH');
+    expect(() => decodeRuntimeMachineGraphLeaves(leaves, { ...root, leafCount: root.leafCount + 1 }))
+      .toThrow('STORAGE_RUNTIME_MACHINE_GRAPH_ROOT_MISMATCH');
+    const changed = leaves.map((row, index) => index === 0
+      ? { ...row, valueBytes: encodeBuffer({ kind: 'atom', value: 'changed' }) }
+      : row);
+    expect(() => decodeRuntimeMachineGraphLeaves(changed, root))
+      .toThrow('STORAGE_RUNTIME_MACHINE_GRAPH_ROOT_MISMATCH');
+    expect(() => decodeRuntimeMachineGraphLeaves([
+      { ...first, pathBytes: Buffer.from([0x03, 0xdc, 0x00, 0x00]) },
+    ], root)).toThrow('STORAGE_RUNTIME_MACHINE_LEAF_PATH_NON_CANONICAL');
   });
 
   test('stores a previously oversized infrastructure map as bounded graph rows', async () => {

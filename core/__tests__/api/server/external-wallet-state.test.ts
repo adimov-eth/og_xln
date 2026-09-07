@@ -1,3 +1,5 @@
+import { PersistentEntityAccountMap } from "../../../entity/state/persistent-account-map";
+import { computeEntityAccountValueHash } from "../../../entity/consensus/state-root";
 import { describe, expect, test } from 'bun:test';
 
 import { deriveSignerAddressSync, deriveSignerKeySync, registerSignerKey } from '../../../account/crypto';
@@ -71,7 +73,7 @@ const makeState = (entityId: string, signerId: string): EntityState => ({
   proposals: new Map(),
   config: makeConfig(signerId),
   reserves: new Map(),
-  accounts: new Map(),
+  accounts: PersistentEntityAccountMap.empty(entityId, computeEntityAccountValueHash),
   deferredAccountProposals: new Map(),
   lastFinalizedJHeight: 0,
   profile: {

@@ -92,7 +92,7 @@ describe('production startup wiring', () => {
       .toThrow('RUNTIME_MIN_FRAME_DELAY_MS_INVALID:-1');
     expect(orchestrator).not.toContain('XLN_HUB_MIN_FRAME_DELAY_MS');
     expect(replayRecord).not.toContain('XLN_HUB_MIN_FRAME_DELAY_MS');
-    expect(orchestrator).toContain('env: sanitizeChildProcessEnv(buildHubChildProcessEnv({');
+    expect(orchestrator).toMatch(/env: sanitizeChildProcessEnv\(\s*buildHubChildProcessEnv\(\{/);
     expect(buildHubEngineArgs('h1', {
       XLN_HUB_ENGINE_ARGS_H1: ' --cpu-prof   --smol ',
     })).toEqual(['--cpu-prof', '--smol']);
@@ -337,22 +337,33 @@ describe('production startup wiring', () => {
     }
   });
 
-  test('production nodes start their commit loop before resuming registrations and expose P2P last', () => {
+  test('production nodes authenticate P2P early and open financial ingress only after J catchup and registrations', () => {
     const hubSource = readFileSync(join(repoRoot, 'core/orchestrator/hub-node.ts'), 'utf8');
+    const hubDeliveryBlocked = hubSource.indexOf('setRuntimeDeliveryReady(env, false);');
+    const hubIngressBlocked = hubSource.indexOf('externalIngressReady: false,');
+    const hubCatchup = hubSource.indexOf('const watcherDrain = await drainJWatcherBacklog(');
     const hubLoopStart = hubSource.indexOf('startRuntimeLoop(env, {');
     const hubResume = hubSource.indexOf('await ensurePendingNumberedRegistrationsResumed(env);', hubLoopStart);
-    const hubIngressReady = hubSource.indexOf('live.externalIngressReady = true;', hubResume);
+    const hubIngressReady = hubSource.indexOf('live.externalIngressReady = true;');
+    const hubDeliveryReady = hubSource.indexOf('setRuntimeDeliveryReady(env, true);');
+    const hubDirectReady = hubSource.indexOf('httpSurface.directRuntimeWs.setReady(true);');
     const hubP2PStart = hubSource.indexOf('live.p2p = startP2P(env, {');
     const hubP2PReady = hubSource.indexOf("if (!live.p2p) throw new Error('P2P_START_FAILED');", hubP2PStart);
-    expect(hubLoopStart).toBeGreaterThan(0);
+    expect(hubDeliveryBlocked).toBeGreaterThan(0);
+    expect(hubIngressBlocked).toBeGreaterThan(hubDeliveryBlocked);
+    expect(hubP2PStart).toBeGreaterThan(hubIngressBlocked);
+    expect(hubP2PReady).toBeGreaterThan(hubP2PStart);
+    expect(hubCatchup).toBeGreaterThan(hubP2PReady);
+    expect(hubLoopStart).toBeGreaterThan(hubCatchup);
     expect(hubResume).toBeGreaterThan(hubLoopStart);
     expect(hubIngressReady).toBeGreaterThan(hubResume);
-    expect(hubP2PStart).toBeGreaterThan(0);
-    expect(hubP2PStart).toBeGreaterThan(hubIngressReady);
-    expect(hubP2PReady).toBeGreaterThan(hubP2PStart);
+    expect(hubDeliveryReady).toBeGreaterThan(hubIngressReady);
+    expect(hubDirectReady).toBeGreaterThan(hubDeliveryReady);
 
     const mmSource = readMarketMakerNodeSource();
     const mmInitialization = mmSource.indexOf('const initializeMarketMakerContexts = async (');
+    const mmDeliveryBlocked = mmSource.indexOf('setRuntimeDeliveryReady(env, false);');
+    const mmContextCreated = mmSource.indexOf('const context = createMarketMakerNodeContext(env,');
     const mmLoopStart = mmSource.indexOf('startRuntimeLoop(env, {');
     const mmServicesStart = mmSource.indexOf('const startMarketMakerServices = async (');
     const mmServicesCall = mmSource.indexOf('await startMarketMakerServices(context)', mmLoopStart);
@@ -372,20 +383,36 @@ describe('production startup wiring', () => {
       'await ensurePendingNumberedRegistrationsResumed(env);',
       mmInitializationCall,
     );
-    const mmIngressReady = mmSource.indexOf('state.externalIngressReady = true;', mmResume);
-    const mmP2PStart = mmSource.indexOf('const p2p = startP2P(env, {', mmInitializationCall);
+    const mmCatchup = mmSource.indexOf('const watcherDrain = await drainJWatcherBacklog(');
+    const mmIngressReady = mmSource.indexOf('state.externalIngressReady = true;');
+    const mmDeliveryReady = mmSource.indexOf('setRuntimeDeliveryReady(env, true);');
+    const mmDirectReady = mmSource.indexOf('directRuntimeWs.setReady(true);');
+    const mmP2PStart = mmSource.indexOf('const p2p = startP2P(env, {', mmServicesStart);
     const mmP2PReady = mmSource.indexOf("if (!p2p) throw new Error('P2P_START_FAILED');", mmP2PStart);
     expect(mmInitialization).toBeGreaterThan(0);
     expect(mmPrimaryContext).toBeGreaterThan(mmInitialization);
     expect(mmSecondaryContexts).toBeGreaterThan(mmPrimaryContext);
-    expect(mmLoopStart).toBeGreaterThan(0);
+    expect(mmDeliveryBlocked).toBeGreaterThan(0);
+    expect(mmContextCreated).toBeGreaterThan(mmDeliveryBlocked);
+    expect(mmLoopStart).toBeGreaterThan(mmContextCreated);
     expect(mmServicesCall).toBeGreaterThan(mmLoopStart);
-    expect(mmInitializationCall).toBeGreaterThan(mmServicesStart);
-    expect(mmResume).toBeGreaterThan(mmInitializationCall);
-    expect(mmIngressReady).toBeGreaterThan(mmResume);
-    expect(mmP2PStart).toBeGreaterThan(mmInitializationCall);
-    expect(mmP2PStart).toBeGreaterThan(mmIngressReady);
+    expect(mmServicesStart).toBeGreaterThan(0);
+    expect(mmP2PStart).toBeGreaterThan(mmServicesStart);
     expect(mmP2PReady).toBeGreaterThan(mmP2PStart);
+    expect(mmInitializationCall).toBeGreaterThan(mmP2PReady);
+    expect(mmCatchup).toBeGreaterThan(mmInitializationCall);
+    expect(mmResume).toBeGreaterThan(mmCatchup);
+    expect(mmIngressReady).toBeGreaterThan(mmResume);
+    expect(mmDeliveryReady).toBeGreaterThan(mmIngressReady);
+    expect(mmDirectReady).toBeGreaterThan(mmDeliveryReady);
+    const mmContext = extractSourceBlock(
+      mmSource,
+      'const createMarketMakerNodeContext = (',
+      'type StartedMarketMakerServices =',
+    );
+    expect(mmContext).toContain('externalIngressReady: false,');
+    expect(mmSource).toContain("if (!state.externalIngressReady) throw new Error('RUNTIME_STARTUP_J_CATCHUP_PENDING');");
+    expect(mmSource).toContain('isMutatingIngressReady: () => state.externalIngressReady,');
 
     const orchestrator = readOrchestratorSource();
     expect(orchestrator).toContain('const MARKET_MAKER_RESTART_FENCING_GRACE_MS = STORAGE_WRITER_LOCK_TTL_MS + 1_000;');
@@ -1179,8 +1206,22 @@ describe('production startup wiring', () => {
     expect(p2pNode).toContain('console.log(`P2P_JADAPTER_READY role=${role} mode=browservm`)');
     expect(p2pNode).toContain('rpcs: []');
     expect(p2pNode).toContain('profileName: role');
-    expect(p2pNode).toContain('createLocalDeliveryHandler(env, store, getEntityReplicaById)');
+    expect(p2pNode).toContain('const directRoute = createHubDirectRuntimeRoute(');
+    expect(p2pNode).toContain('const upgrade = directRoute.maybeUpgrade(request, server);');
+    expect(p2pNode).toContain('websocket: directRoute.websocket,');
+    expect(p2pNode).toContain('() => env.infrastructure?.p2p === p2p');
+    expect(p2pNode).toContain("env.infrastructure.operatorStatus !== 'HALTED_REQUIRES_OPERATOR'");
+    expect(p2pNode).toContain('env.state.eReplicas.has(`${entityId}:${signerId}`)');
+    expect(p2pNode).not.toContain('createLocalDeliveryHandler(');
     expect(p2pNode).not.toContain('env.networkInbox.push(routedInput)');
+    const hubTransport = readFileSync(join(repoRoot, 'core/orchestrator/hub/hub-runtime-transport.ts'), 'utf8');
+    const directInput = hubTransport.slice(hubTransport.indexOf('onEntityInputs: async'));
+    const sourceVerified = directInput.indexOf(
+      'assertRuntimeEntityInputsEnvelopeSource(env, from, envelope, sessionAuthenticated === true);',
+    );
+    const admitted = directInput.indexOf('const admission = handleInboundP2PEntityInputs(');
+    expect(sourceVerified).toBeGreaterThan(0);
+    expect(admitted).toBeGreaterThan(sourceVerified);
   });
 
   test('fatal log monitor ignores a resolved liveness warning but reports a real fatal marker', () => {
@@ -1363,7 +1404,7 @@ describe('production startup wiring', () => {
     expect(ensureConnectivity).not.toContain('remoteCreditInputs');
     expect(ensureConnectivity).not.toContain('sendEntityInput');
     expect(mmNode).not.toContain('RoutedEntityInput');
-    expect(orchestrator).toContain("'--support-peer-identities-json', safeStringify(deps.getMarketMakerIdentities())");
+    expect(orchestrator).toMatch(/'--support-peer-identities-json',\s*safeStringify\(deps.getMarketMakerIdentities\(\)\)/);
     expect(orchestrator).not.toContain('--mesh-hub-identities-json');
   });
 
@@ -1511,7 +1552,7 @@ describe('production startup wiring', () => {
     expect(reset).toContain('const startConfiguredCustody = async (): Promise<void> => {');
     expect(reset).toContain('driveH1Bootstrap: () => driveH1Bootstrap(h1, shouldStartMarketMaker)');
     expect(resetStartupSource).toContain(
-      'startup.driveH1Bootstrap(), startup.startMarketMaker(), startup.startCustody(),',
+      'startup.driveH1Bootstrap(), startup.startMarketMaker(), startup.startCustody()',
     );
     expect(resetStartupSource).toContain('await Promise.all([startup.waitForMesh(), parallel()]);');
     expect(orchestrator).not.toContain('continuing market maker startup before failing reset');

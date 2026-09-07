@@ -1,3 +1,4 @@
+import { normalizeJurisdictionImportRequest } from '../../../runtime/j-submit/jurisdiction-import-request';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { rmSync } from 'fs';
 import { join } from 'path';
@@ -9,7 +10,6 @@ import { bootScenario } from '../../../scenarios/harness/boot';
 import { setScenarioStorageEnabled } from '../../../scenarios/harness/helpers';
 import {
   buildJurisdictionImportRequestHash,
-  normalizeJurisdictionImportRequest,
 } from '../../../runtime/j-submit/jurisdiction-import';
 import {
   createEmptyEnv,

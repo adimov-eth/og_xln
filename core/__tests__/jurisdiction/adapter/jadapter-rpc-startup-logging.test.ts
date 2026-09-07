@@ -107,7 +107,8 @@ test('runtime dev startup status logs stay structured', () => {
   // Keep the retired delay-config path deleted: dispute clocks now come only
   // from the bilateral signed account agreement, never from a local reader.
   expect(existsSync(retiredLocalConfigPath)).toBe(false);
-  expect(logger).toContain("process.env['XLN_LOG_WARN_STDOUT'] === '1' ? console.log : console.warn");
+  expect(logger).toContain("warnStdout: process.env['XLN_LOG_WARN_STDOUT'] === '1'");
+  expect(logger).toContain('runtime.warnStdout ? console.log : console.warn');
   expect(devRunner).toContain('XLN_LOG_WARN_STDOUT="${XLN_LOG_WARN_STDOUT:-1}"');
   expect(devRunner).toContain('RUNTIME_VERBOSE_LOGS XLN_LOG_WARN_STDOUT');
 

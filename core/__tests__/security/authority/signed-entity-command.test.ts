@@ -238,7 +238,7 @@ describe('signed Entity command admission', () => {
   test('signs a local collective command before WAL apply and executes it through proposal quorum', async () => {
     const { env, signerId, state } = setup('local-runtime-admission');
     state.profile = { ...state.profile, name: 'Local command admission' };
-    env.runtimeConfig = { storage: { enabled: false } };
+    env.runtimeConfig = { ...env.runtimeConfig, storage: { enabled: false } };
     enqueueRuntimeInput(env, {
       runtimeTxs: [],
       entityInputs: [{
@@ -1028,12 +1028,16 @@ describe('signed Entity command admission', () => {
 
   test('does not consume a command nonce when nested execution fails', async () => {
     const { env, state, replica } = setup('failed-frame');
-    const invalidTx = { type: 'notARealEntityTx', data: {} } as unknown as EntityTx;
+    const invalidTx: EntityTx = {
+      type: 'setHubConfig',
+      data: { rebalanceLiquidityFeeBps: 10_001n },
+    };
     await expect(applyEntityInput(env, replica, {
       entityId: state.entityId,
       signerId: replica.signerId,
       entityTxs: [invalidTx],
-    })).rejects.toThrow('ENTITY_FRAME_TX_FAILED');
+    })).rejects.toThrow('HUB_REBALANCE_LIQUIDITY_FEE_BPS_INVALID:10001');
     expect(replica.state.entityCommandNonces).toBeUndefined();
+    expect(replica.state.hubRebalanceConfig).toBeUndefined();
   });
 });

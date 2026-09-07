@@ -20,6 +20,7 @@ import {
 import { flushDeferredHashLadderReveals } from '../../../entity/tx/j-events-htlc';
 import type { CrossJurisdictionSwapRoute } from '../../../types/cross-jurisdiction';
 import { addr, entity, makeJurisdiction, makeState } from '../../helpers/cross-j';
+import { createEntityFrameCandidateState } from '../../../entity/state-clone';
 
 const hash = (byte: string): string => `0x${byte.repeat(64)}`;
 
@@ -154,11 +155,14 @@ describe('hash-ladder / dispute batch ordering', () => {
     state.crossJurisdictionSwaps = new Map([[route.orderId, route]]);
     state.jBatchState = initJBatch();
 
-    terminalizeCrossJurisdictionRoutesOnFinality(state, [{ route, settledRatio: 0 }]);
-    expect(route.pendingSourceRegistryReveal).toBeUndefined();
-    expect(route.pendingTargetRegistryReveal).toBeUndefined();
-    expect(route.status).toBe('cancelled');
-    expect(flushDeferredHashLadderReveals(state)).toBe(0);
+    const candidate = createEntityFrameCandidateState(state);
+    terminalizeCrossJurisdictionRoutesOnFinality(candidate, [{ route, settledRatio: 0 }]);
+    const terminal = candidate.crossJurisdictionSwaps!.get(route.orderId)!;
+    expect(terminal.pendingSourceRegistryReveal).toBeUndefined();
+    expect(terminal.pendingTargetRegistryReveal).toBeUndefined();
+    expect(terminal.status).toBe('cancelled');
+    expect(route.status).toBe('resting');
+    expect(flushDeferredHashLadderReveals(candidate)).toBe(0);
   });
 
   test('Account finality cancels a raw cross-j intent before any Pull exposure exists', () => {
@@ -179,10 +183,12 @@ describe('hash-ladder / dispute batch ordering', () => {
     } as CrossJurisdictionSwapRoute;
     state.crossJurisdictionSwaps = new Map([[route.orderId, route]]);
 
-    terminalizeCrossJurisdictionRoutesOnFinality(state, [{ route, settledRatio: 0 }]);
-
-    expect(route.status).toBe('cancelled');
-    expect(route.sourcePull).toBeUndefined();
-    expect(route.targetPull).toBeUndefined();
+    const candidate = createEntityFrameCandidateState(state);
+    terminalizeCrossJurisdictionRoutesOnFinality(candidate, [{ route, settledRatio: 0 }]);
+    const terminal = candidate.crossJurisdictionSwaps!.get(route.orderId)!;
+    expect(terminal.status).toBe('cancelled');
+    expect(terminal.sourcePull).toBeUndefined();
+    expect(terminal.targetPull).toBeUndefined();
+    expect(route.status).toBe('intent');
   });
 });

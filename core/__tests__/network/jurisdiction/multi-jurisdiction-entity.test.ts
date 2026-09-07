@@ -23,7 +23,7 @@ import {
   getSignerAddress,
   registerSignerKey,
 } from '../../../account/crypto';
-import { generateLazyEntityId } from '../../../entity/factory';
+import { generateLazyEntityId, generateNumberedEntityId } from '../../../entity/factory';
 import { getEntityConfigBoardHash } from '../../../hanko/signing';
 import { DEFAULT_ACCOUNT_TOKEN_IDS } from '../../../account/config/defaults';
 import { accountStateDomainFromJurisdiction } from '../../../account/commitment/state-root';
@@ -39,7 +39,7 @@ import { SigningKey, computeAddress } from 'ethers';
 import { attachLiveJAdapter } from '../../../runtime/j-submit/live-jadapters';
 
 const addr = (byte: string): string => `0x${byte.repeat(20)}`;
-const entity = (byte: string): string => `0x${byte.repeat(32)}`;
+const entity = (byte: string): string => generateNumberedEntityId(Number.parseInt(byte, 16));
 let envSequence = 0;
 const createdEnvs: RuntimeReplica[] = [];
 

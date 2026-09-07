@@ -338,4 +338,10 @@ if (phase === 'crash') {
   await runCrashPhase();
 } else {
   await runRecoverPhase();
+  // Resident TS Account workers are process-owned. This CLI exits only after
+  // exact-once proofs, both durable reopens and all DB/RPC closes complete.
+  await new Promise<void>(resolve => {
+    process.stdout.write('J_SUBMIT_REAL_RPC_RECOVERY_COMPLETE\n', () => resolve());
+  });
+  process.exit(0);
 }

@@ -379,7 +379,8 @@ test('onboarding recovery check renders typed discovery failures', () => {
   const source = readFileSync('frontend/src/lib/components/Entity/onboarding/OnboardingPanel.svelte', 'utf8');
   expect(source).toContain('formatRuntimeRecoveryDiscoveryFailure');
   expect(source).toContain('recoveryDiscoveryFailureLabels');
-  expect(source).toContain('data-testid="runtime-recovery-check-failures"');
+  expect(source).toContain('data-testid="runtime-recovery-check-status"');
+  expect(source).toContain('{#each recoveryDiscoveryFailureLabels as failureLabel}<small>{failureLabel}</small>{/each}');
 });
 
 test('formatRecoveryBytes keeps recovery coverage labels compact', () => {

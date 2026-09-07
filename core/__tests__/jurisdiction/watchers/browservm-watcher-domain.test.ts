@@ -1,3 +1,4 @@
+import { normalizeJurisdictionImportRequest } from '../../../runtime/j-submit/jurisdiction-import-request';
 import { expect, test } from 'bun:test';
 import { ethers } from 'ethers';
 
@@ -5,7 +6,6 @@ import { createJAdapter, DEFAULT_PRIVATE_KEY } from '../../../jurisdiction/adapt
 import {
   applyCompleteImportJurisdiction,
   buildJurisdictionImportRequestHash,
-  normalizeJurisdictionImportRequest,
 } from '../../../runtime/j-submit/jurisdiction-import';
 import { createEmptyEnv } from '../../../runtime';
 import { createJReplica } from '../../../scenarios/harness/boot';
@@ -69,6 +69,7 @@ test('jurisdiction import rejects a duplicate watcher domain before publication'
       stateRoot: null,
       watcherConfirmationDepth: 0,
       entityProviderDeploymentBlock: 1,
+      tokenRegistry: [],
       contracts,
     },
   })).toThrow('IMPORT_J_WATCHER_IDENTITY_CONFLICT:duplicate:primary');

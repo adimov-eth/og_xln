@@ -3,10 +3,14 @@ import { describe, expect, test } from 'bun:test';
 import { createEmptyEnv } from '../../../runtime.ts';
 import { createPreparedOutputGraph } from '../../../runtime/delivery/prepared-output';
 import { dispatchCommittedEntityOutputs } from '../../../runtime/frame/dispatch';
+import { notifyRuntimeStateChanged } from '../../../runtime/frame/notifications';
+import { createRuntimeRoutingApi } from '../../../runtime/loop/loop-routing';
+import { deliveryAccepted, deliveryDeferred } from '../../../protocol/payments/delivery-result';
 import type { RoutedEntityInput } from '../../../runtime/types';
 
 const targetRuntimeId = `0x${'22'.repeat(20)}`;
 const targetEntityId = `0x${'33'.repeat(32)}`;
+const routing = createRuntimeRoutingApi({ notifyEnvChange: notifyRuntimeStateChanged }).getRuntimeOutputRoutingDeps();
 
 const output = (): RoutedEntityInput => ({
   runtimeId: targetRuntimeId,
@@ -23,21 +27,35 @@ const planFor = (pending: RoutedEntityInput) => ({
 });
 
 describe('committed Runtime output dispatch', () => {
-  test('fails loud and retains the forensic outbox when lazy route bootstrap refuses', async () => {
+  test('retains the committed outbox without halting when lazy route bootstrap is not ready', async () => {
     const env = createEmptyEnv('committed-output-bootstrap-refused');
     const pending = output();
     env.pendingNetworkOutputs = [pending];
+    let ready = false;
+    let attempts = 0;
     env.infrastructure!.p2p = {
-      bootstrapDirectEntityRoutes: async () => false,
+      bootstrapDirectEntityRoutes: async () => ready,
+      enqueueEntityInputsDelivery: () => {
+        attempts += 1;
+        return ready ? deliveryAccepted() : deliveryDeferred({
+          outcome: 'deferred',
+          code: 'P2P_DIRECT_RECIPIENT_NOT_READY',
+        });
+      },
     } as never;
 
     await expect(dispatchCommittedEntityOutputs(
       env,
       new Set(),
       planFor(pending),
-      {} as never,
-    )).rejects.toThrow('DIRECT_OUTPUT_ROUTE_NOT_READY');
+      routing,
+    )).resolves.toBeUndefined();
     expect(env.pendingNetworkOutputs).toEqual([pending]);
+    expect(attempts).toBe(1);
+    ready = true;
+    await dispatchCommittedEntityOutputs(env, new Set(), planFor(pending), routing);
+    expect(attempts).toBe(2);
+    expect(env.pendingNetworkOutputs).toEqual([]);
   });
 
   test('propagates lazy route bootstrap errors and retains the forensic outbox', async () => {
@@ -54,7 +72,7 @@ describe('committed Runtime output dispatch', () => {
       env,
       new Set(),
       planFor(pending),
-      {} as never,
+      routing,
     )).rejects.toThrow('TEST_ROUTE_BOOTSTRAP_FAILED');
     expect(env.pendingNetworkOutputs).toEqual([pending]);
   });

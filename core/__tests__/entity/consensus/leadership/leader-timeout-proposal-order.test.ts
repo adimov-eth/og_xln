@@ -1,4 +1,6 @@
+import { createEntityFrameCandidateState } from '../../../../entity/state-clone';
 import { describe, expect, test } from 'bun:test';
+import { emptyEntityAccountMap } from '../../../helpers/entity-account-map';
 
 import { deriveSignerAddressSync, signAccountFrame } from '../../../../account/crypto';
 import { buildSignedEntityCommand } from '../../../../entity/command';
@@ -49,7 +51,7 @@ const baseState = (env: RuntimeReplica): EntityState => {
     proposals: new Map(),
     config: board,
     reserves: new Map(),
-    accounts: new Map(),
+    accounts: emptyEntityAccountMap(hashBoard(encodeBoard(board, env)).toLowerCase()),
     deferredAccountProposals: new Map(),
     lastFinalizedJHeight: 0,
     profile: { name: '', isHub: false, avatar: '', bio: '', website: '' },
@@ -63,7 +65,7 @@ const replica = (state: EntityState, signerId: string): EntityReplica => ({
   entityId: state.entityId,
   signerId,
   entityEncPubKey: '',
-  state: structuredClone(state),
+  state: createEntityFrameCandidateState(state),
   mempool: [],
   isProposer: signerId === state.config.validators[0],
   lastConsensusProgressAt: 0,
@@ -81,9 +83,10 @@ const buildFixture = async (label: string): Promise<RaceFixture> => {
   const env = createEmptyEnv(`${label}-${RUN_ID}`);
   env.scenarioMode = true;
   env.quietRuntimeLogs = true;
-  env.runtimeConfig = { storage: { enabled: false } };
+  env.runtimeConfig = { ...env.runtimeConfig, storage: { enabled: false } };
   env.state.timestamp = 20_000;
   const state = baseState(env);
+  state.entityEncryptionPublicKey = provisionTestEntityEncryptionKey(env, state.entityId);
   const proposerId = state.config.validators[0]!;
   const proposer = replica(state, proposerId);
   proposer.mempool = [
@@ -145,14 +148,13 @@ const buildCertifiedCommitInput = async (fixture: RaceFixture): Promise<RoutedEn
   const proposerId = fixture.state.config.validators[0]!;
   let proposerResult = { workingReplica: fixture.proposer, outputs: [] as EntityInput[] };
   for (const signerId of ['2', '3']) {
-    const validated = await applyEntityInput(fixture.env, replica(fixture.state, signerId), {
-      ...structuredClone(fixture.proposalInput),
-      signerId,
-    });
-    if (signerId === '2') {
-      fixture.env.state.eReplicas.set(`${fixture.state.entityId}:2`, validated.workingReplica);
-    }
-    const precommit = validated.outputs.find(
+    const input = { ...structuredClone(fixture.proposalInput), signerId };
+    // The local validator prepares and commits through the same Runtime-owned
+    // worker coordinator; the other validator is an external consensus peer.
+    const outputs = signerId === '2'
+      ? (await applyRuntimeInput(fixture.env, { runtimeTxs: [], entityInputs: [input] })).entityOutbox
+      : (await applyEntityInput(fixture.env, replica(fixture.state, signerId), input)).outputs;
+    const precommit = outputs.find(
       output => output.signerId === proposerId && (output.hashPrecommits?.size ?? 0) > 0,
     );
     if (!precommit) throw new Error(`TEST_PRECOMMIT_MISSING:${signerId}`);

@@ -6,7 +6,8 @@ import { createSettlementWorkspaceHash } from '../../../account/tx/handlers/sett
 import { deriveDelta } from '../../../account/utils';
 import { validateDelta } from '../../../account/validation/delta-validation';
 import { PersistentAccountStateMap } from '../../../account/state/persistent-state-map';
-import { FINANCIAL, LIMITS, TOKENS } from '../../../config/constants';
+import { LIMITS, TOKENS } from '../../../config/constants';
+import { UINT256_MAX } from '../../../protocol/boundary/integer-ranges';
 import { decodeValidatedBuffer, encodeBuffer } from '../../../storage/codec/codec';
 import { hydrateAccountDocFromStorage, projectAccountDoc } from '../../../storage/read/projections';
 import {
@@ -67,7 +68,6 @@ const makeFixture = async (): Promise<ValidationContext> => {
   const owner = entity('11');
   const counterparty = entity('22');
   const account = makeAccount(owner, counterparty);
-  const delta = account.state.deltas.get(1)!;
   account.state.locks = account.state.locks.updated(TEST_LOCK_ID, {
     lockId: TEST_LOCK_ID,
     hashlock: digest('31'),
@@ -79,21 +79,26 @@ const makeFixture = async (): Promise<ValidationContext> => {
     createdHeight: 1,
     createdTimestamp: 1_000,
   });
-  account.state.pulls = PersistentAccountStateMap.fromEntries('pulls', [['pull-1', {
-    pullId: 'pull-1',
-    tokenId: 1,
-    amount: 5n,
-    fullHash: digest('32'),
-    partialRoot: digest('33'),
-    createdHeight: 1,
-    createdTimestamp: 1_000,
-    crossJurisdiction: {
-      orderId: 'cross-storage-1',
-      routeHash: digest('34'),
-      leg: 'source',
-      status: 'resting',
-    },
-  }]]);
+  account.state.pulls = PersistentAccountStateMap.fromEntries('pulls', [
+    [
+      'pull-1',
+      {
+        pullId: 'pull-1',
+        tokenId: 1,
+        amount: 5n,
+        fullHash: digest('32'),
+        partialRoot: digest('33'),
+        createdHeight: 1,
+        createdTimestamp: 1_000,
+        crossJurisdiction: {
+          orderId: 'cross-storage-1',
+          routeHash: digest('34'),
+          leg: 'source',
+          status: 'resting',
+        },
+      },
+    ],
+  ]);
   account.state.swapOffers = account.state.swapOffers.updated('offer-1', {
     offerId: 'offer-1',
     giveTokenId: 1,
@@ -111,11 +116,16 @@ const makeFixture = async (): Promise<ValidationContext> => {
     quantizedGive: 5n,
     quantizedWant: 10n,
   });
-  account.state.subcontracts = PersistentAccountStateMap.fromEntries('subcontracts', [['transformer-1', {
-    transformerAddress: `0x${'44'.repeat(20)}`,
-    encodedBatch: '0x1234',
-    allowances: [{ deltaIndex: 0, rightAllowance: 1n, leftAllowance: 2n }],
-  }]]);
+  account.state.subcontracts = PersistentAccountStateMap.fromEntries('subcontracts', [
+    [
+      'transformer-1',
+      {
+        transformerAddress: `0x${'44'.repeat(20)}`,
+        encodedBatch: '0x1234',
+        allowances: [{ deltaIndex: 0, rightAllowance: 1n, leftAllowance: 2n }],
+      },
+    ],
+  ]);
   const workspace = {
     workspaceHash: digest('00'),
     ops: [{ type: 'r2c' as const, tokenId: 1, amount: 1n }],
@@ -130,14 +140,19 @@ const makeFixture = async (): Promise<ValidationContext> => {
     ...workspace,
     workspaceHash: createSettlementWorkspaceHash(account.state, workspace),
   };
-  account.pendingWithdrawals = PersistentAccountStateMap.fromEntries('pendingWithdrawals', [['withdraw-1', {
-    requestId: 'withdraw-1',
-    tokenId: 1,
-    amount: 3n,
-    requestedAt: 1_000,
-    direction: 'outgoing',
-    status: 'pending',
-  }]]);
+  account.pendingWithdrawals = PersistentAccountStateMap.fromEntries('pendingWithdrawals', [
+    [
+      'withdraw-1',
+      {
+        requestId: 'withdraw-1',
+        tokenId: 1,
+        amount: 3n,
+        requestedAt: 1_000,
+        direction: 'outgoing',
+        status: 'pending',
+      },
+    ],
+  ]);
   account.proofHeader.nextProofNonce = 1;
   account.currentHeight = 1;
   account.currentFrame = {
@@ -148,52 +163,56 @@ const makeFixture = async (): Promise<ValidationContext> => {
     prevFrameHash: 'genesis',
     accountStateRoot: computeAccountStateRoot(account.state),
     stateHash: '',
-    byLeft: true,
-    deltas: [{ ...delta }],
   };
   account.currentFrame.stateHash = computeFrameHash(account.currentFrame);
   return { doc: mutableAccountDoc(projectAccountDoc(account)), owner, counterparty };
 };
 
-const admit = (value: ValidationContext) => hydrateAccountDocFromStorage(
-  assertStorageAccountDocBinding(
-    decodeValidatedBuffer(encodeBuffer(value.doc), validateStorageAccountDocValue),
-    value.owner,
-    value.counterparty,
-    'mutation-table',
-  ),
-);
+const admit = (value: ValidationContext) =>
+  hydrateAccountDocFromStorage(
+    assertStorageAccountDocBinding(
+      decodeValidatedBuffer(encodeBuffer(value.doc), validateStorageAccountDocValue),
+      value.owner,
+      value.counterparty,
+      'mutation-table',
+    ),
+  );
 
 const mutations: Mutation[] = [
   {
     name: 'third-party proofHeader.fromEntity',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.proofHeader.fromEntity = digest('91'); },
+    mutate: ({ doc }) => {
+      doc.proofHeader.fromEntity = digest('91');
+    },
   },
   {
     name: 'swapped proofHeader endpoints',
     expected: 'reject',
     mutate: ({ doc }) => {
-      [doc.proofHeader.fromEntity, doc.proofHeader.toEntity] = [
-        doc.proofHeader.toEntity,
-        doc.proofHeader.fromEntity,
-      ];
+      [doc.proofHeader.fromEntity, doc.proofHeader.toEntity] = [doc.proofHeader.toEntity, doc.proofHeader.fromEntity];
     },
   },
   {
     name: 'swapped storage owner and counterparty',
     expected: 'reject',
-    mutate: (value) => { [value.owner, value.counterparty] = [value.counterparty, value.owner]; },
+    mutate: value => {
+      [value.owner, value.counterparty] = [value.counterparty, value.owner];
+    },
   },
   {
     name: 'storage owner equals counterparty',
     expected: 'reject',
-    mutate: (value) => { value.counterparty = value.owner; },
+    mutate: value => {
+      value.counterparty = value.owner;
+    },
   },
   {
     name: 'currentHeight differs from currentFrame.height',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.currentHeight = 2; },
+    mutate: ({ doc }) => {
+      doc.currentHeight = 2;
+    },
   },
   {
     name: 'self-consistent but digest-stale frame height',
@@ -207,7 +226,9 @@ const mutations: Mutation[] = [
   {
     name: 'forged schema-valid currentFrame.stateHash',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.currentFrame.stateHash = digest('93'); },
+    mutate: ({ doc }) => {
+      doc.currentFrame.stateHash = digest('93');
+    },
   },
   {
     name: 'forged accountStateRoot with recomputed frame hash',
@@ -228,105 +249,141 @@ const mutations: Mutation[] = [
   {
     name: 'negative collateral',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.state.deltas.get(1)!.collateral = -1n; },
+    mutate: ({ doc }) => {
+      doc.state.deltas.get(1)!.collateral = -1n;
+    },
   },
   {
     name: 'negative credit limit',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.state.deltas.get(1)!.leftCreditLimit = -1n; },
+    mutate: ({ doc }) => {
+      doc.state.deltas.get(1)!.leftCreditLimit = -1n;
+    },
   },
   {
-    name: 'credit limit above the transition ceiling',
+    name: 'credit limit above uint256 representation',
     expected: 'reject',
     mutate: ({ doc }) => {
-      doc.state.deltas.get(1)!.leftCreditLimit = FINANCIAL.MAX_PAYMENT_AMOUNT * 1000n + 1n;
+      doc.state.deltas.get(1)!.leftCreditLimit = UINT256_MAX + 1n;
     },
   },
   {
     name: 'negative allowance',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.state.deltas.get(1)!.rightAllowance = -1n; },
+    mutate: ({ doc }) => {
+      doc.state.deltas.get(1)!.rightAllowance = -1n;
+    },
   },
   {
     name: 'negative hold',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.state.deltas.get(1)!.leftHold = -1n; },
+    mutate: ({ doc }) => {
+      doc.state.deltas.get(1)!.leftHold = -1n;
+    },
   },
   {
-    name: 'negative allowance inside currentFrame',
+    name: 'retired deltas field inside currentFrame',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.currentFrame.deltas[0]!.leftAllowance = -1n; },
+    mutate: ({ doc }) => {
+      object(doc.currentFrame)['deltas'] = [{ leftAllowance: -1n }];
+    },
   },
   {
     name: 'non-canonical string HTLC hashlock',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.locks.get(TEST_LOCK_ID))['hashlock'] = 'not-a-hash'; },
+    mutate: ({ doc }) => {
+      object(doc.state.locks.get(TEST_LOCK_ID))['hashlock'] = 'not-a-hash';
+    },
   },
   {
     name: 'negative HTLC lock amount',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.locks.get(TEST_LOCK_ID))['amount'] = -1n; },
+    mutate: ({ doc }) => {
+      object(doc.state.locks.get(TEST_LOCK_ID))['amount'] = -1n;
+    },
   },
   {
     name: 'non-string HTLC hashlock',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.locks.get(TEST_LOCK_ID))['hashlock'] = { nested: true }; },
+    mutate: ({ doc }) => {
+      object(doc.state.locks.get(TEST_LOCK_ID))['hashlock'] = { nested: true };
+    },
   },
   {
     name: 'HTLC lock map above the transition limit',
     expected: 'reject',
     mutate: ({ doc }) => {
       const lock = doc.state.locks.get(TEST_LOCK_ID)!;
-      doc.state.locks = new Map(Array.from(
-        { length: LIMITS.MAX_ACCOUNT_HTLC_LOCKS + 1 },
-        (_, index) => [`lock-${index}`, { ...lock, lockId: `lock-${index}` }],
-      ));
+      doc.state.locks = new Map(
+        Array.from({ length: LIMITS.MAX_ACCOUNT_HTLC_LOCKS + 1 }, (_, index) => [
+          `lock-${index}`,
+          { ...lock, lockId: `lock-${index}` },
+        ]),
+      );
     },
   },
   {
     name: 'malformed bounded pull',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.pulls?.get('pull-1'))['fullHash'] = 'not-a-hash'; },
+    mutate: ({ doc }) => {
+      object(doc.state.pulls?.get('pull-1'))['fullHash'] = 'not-a-hash';
+    },
   },
   {
     name: 'zero-amount pull',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.pulls?.get('pull-1'))['amount'] = 0n; },
+    mutate: ({ doc }) => {
+      object(doc.state.pulls?.get('pull-1'))['amount'] = 0n;
+    },
   },
   {
     name: 'pull without its canonical cross-j binding',
     expected: 'reject',
-    mutate: ({ doc }) => { delete object(doc.state.pulls?.get('pull-1'))['crossJurisdiction']; },
+    mutate: ({ doc }) => {
+      delete object(doc.state.pulls?.get('pull-1'))['crossJurisdiction'];
+    },
   },
   {
     name: 'zero-amount bounded swap offer',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.swapOffers.get('offer-1'))['wantAmount'] = 0n; },
+    mutate: ({ doc }) => {
+      object(doc.state.swapOffers.get('offer-1'))['wantAmount'] = 0n;
+    },
   },
   {
     name: 'swap offer token above the protocol maximum',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.swapOffers.get('offer-1'))['giveTokenId'] = TOKENS.MAX_TOKEN_ID + 1; },
+    mutate: ({ doc }) => {
+      object(doc.state.swapOffers.get('offer-1'))['giveTokenId'] = TOKENS.MAX_TOKEN_ID + 1;
+    },
   },
   {
     name: 'zero swap offer price ticks',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.swapOffers.get('offer-1'))['priceTicks'] = 0n; },
+    mutate: ({ doc }) => {
+      object(doc.state.swapOffers.get('offer-1'))['priceTicks'] = 0n;
+    },
   },
   {
     name: 'zero swap offer quantized give amount',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.swapOffers.get('offer-1'))['quantizedGive'] = 0n; },
+    mutate: ({ doc }) => {
+      object(doc.state.swapOffers.get('offer-1'))['quantizedGive'] = 0n;
+    },
   },
   {
     name: 'swap offer quantized want amount above its remaining authorization',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.swapOffers.get('offer-1'))['quantizedWant'] = 11n; },
+    mutate: ({ doc }) => {
+      object(doc.state.swapOffers.get('offer-1'))['quantizedWant'] = 11n;
+    },
   },
   {
     name: 'malformed bounded subcontract',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.subcontracts?.get('transformer-1'))['transformerAddress'] = digest('95'); },
+    mutate: ({ doc }) => {
+      object(doc.state.subcontracts?.get('transformer-1'))['transformerAddress'] = digest('95');
+    },
   },
   {
     name: 'negative subcontract allowance',
@@ -340,71 +397,89 @@ const mutations: Mutation[] = [
   {
     name: 'malformed settlement workspace',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state.settlementWorkspace)['revision'] = 0; },
+    mutate: ({ doc }) => {
+      object(doc.state.settlementWorkspace)['revision'] = 0;
+    },
   },
   {
     name: 'zero-amount pending withdrawal',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.pendingWithdrawals.get('withdraw-1'))['amount'] = 0n; },
+    mutate: ({ doc }) => {
+      object(doc.pendingWithdrawals.get('withdraw-1'))['amount'] = 0n;
+    },
   },
   {
     name: 'retired pending payment-forward side channel',
     expected: 'reject',
     mutate: ({ doc, owner, counterparty }) => {
-      object(doc)['pendingForwards'] = [{
-        tokenId: 1,
-        amount: 1n,
-        route: [owner, counterparty],
-        deliveryMode: 'trusted',
-        trustedGatewayEntityId: owner,
-      }];
+      object(doc)['pendingForwards'] = [
+        {
+          tokenId: 1,
+          amount: 1n,
+          route: [owner, counterparty],
+          deliveryMode: 'trusted',
+          trustedGatewayEntityId: owner,
+        },
+      ];
     },
   },
   {
     name: 'invalid watchSeed',
     expected: 'reject',
-    mutate: ({ doc }) => { object(doc.state)['watchSeed'] = { nested: true }; },
+    mutate: ({ doc }) => {
+      object(doc.state)['watchSeed'] = { nested: true };
+    },
   },
   {
     name: 'negative jNonce',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.state.jNonce = -1; },
+    mutate: ({ doc }) => {
+      doc.state.jNonce = -1;
+    },
   },
   {
     name: 'out-of-range disputeConfig',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.state.disputeConfig.leftResponseSeconds = 365 * 24 * 60 * 60 + 1; },
+    mutate: ({ doc }) => {
+      doc.state.disputeConfig.leftResponseSeconds = 365 * 24 * 60 * 60 + 1;
+    },
   },
   {
     name: 'negative proof nonce',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.proofHeader.nextProofNonce = -1; },
+    mutate: ({ doc }) => {
+      doc.proofHeader.nextProofNonce = -1;
+    },
   },
   {
     name: 'unrelated storage-key endpoint control',
     expected: 'reject',
-    mutate: (value) => { value.counterparty = digest('96'); },
+    mutate: value => {
+      value.counterparty = digest('96');
+    },
   },
   {
     name: 'negative currentHeight control',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.currentHeight = -1; },
+    mutate: ({ doc }) => {
+      doc.currentHeight = -1;
+    },
   },
   {
     name: 'malformed accountStateRoot control',
     expected: 'reject',
-    mutate: ({ doc }) => { doc.currentFrame.accountStateRoot = '0x1234'; },
+    mutate: ({ doc }) => {
+      doc.currentFrame.accountStateRoot = '0x1234';
+    },
   },
   {
-    name: 'self-consistent frame above the Account token-row limit',
+    name: 'state above the Account token-row limit',
     expected: 'reject',
-    mutate: async ({ doc }) => {
-      const delta = doc.currentFrame.deltas[0]!;
-      doc.currentFrame.deltas = Array.from(
-        { length: LIMITS.MAX_ACCOUNT_TOKEN_ROWS + 1 },
-        (_, tokenId) => ({ ...delta, tokenId }),
+    mutate: ({ doc }) => {
+      const delta = doc.state.deltas.get(1)!;
+      doc.state.deltas = new Map(
+        Array.from({ length: LIMITS.MAX_ACCOUNT_TOKEN_ROWS + 1 }, (_, tokenId) => [tokenId, { ...delta, tokenId }]),
       );
-      doc.currentFrame.stateHash = computeFrameHash(doc.currentFrame);
     },
   },
 ];
@@ -441,10 +516,8 @@ describe('persisted AccountReplica semantic boundary', () => {
     const cleanDelta = clean.doc.state.deltas.get(1)!;
     const baseline = deriveDelta(cleanDelta, true).outCapacity;
     cleanDelta.leftHold = -1n;
-    expect(() => deriveDelta(cleanDelta, true))
-      .toThrow('leftHold must be non-negative');
-    expect(() => validateDelta(cleanDelta, 'replica-meta restore'))
-      .toThrow('leftHold must be non-negative');
+    expect(() => deriveDelta(cleanDelta, true)).toThrow('leftHold must be non-negative');
+    expect(() => validateDelta(cleanDelta, 'replica-meta restore')).toThrow('leftHold must be non-negative');
     expect(() => admit(clean)).toThrow('STORAGE_ACCOUNT_DOC_INVALID_STATE_DELTA_leftHold');
 
     const admitted = admit(await makeFixture());
@@ -463,7 +536,6 @@ describe('persisted AccountReplica semantic boundary', () => {
       fixture.doc.proofHeader.toEntity,
       fixture.doc.proofHeader.fromEntity,
     ];
-    expect(() => admit(fixture))
-      .toThrow('STORAGE_ACCOUNT_DOC_OWNER_MISMATCH');
+    expect(() => admit(fixture)).toThrow('STORAGE_ACCOUNT_DOC_OWNER_MISMATCH');
   });
 });

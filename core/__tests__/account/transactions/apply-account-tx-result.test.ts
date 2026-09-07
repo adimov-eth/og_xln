@@ -152,7 +152,7 @@ describe('ApplyAccountTxResult payment/HTLC/settlement dispositions', () => {
     const draft = accountTransitionView(transition);
     const secret = HEX32('44');
     const hashlock = hashHtlcSecret(secret);
-    const lockId = 'lock-secret-ok';
+    const lockId = hashlock;
     const locked = await handleHtlcLock(draft, {
       type: 'htlc_lock',
       data: {

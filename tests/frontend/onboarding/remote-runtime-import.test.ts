@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { safeStringify } from '../../../core/protocol/serialization';
 
 import {
   MAX_REMOTE_RUNTIME_IMPORTS,
@@ -292,7 +293,7 @@ describe('remote runtime import manager utilities', () => {
       ...makeStored('Custody', 8088, 1),
       token: `xlnra1.full.${Date.now() - 1}.aud.kid.jti.sig`,
     };
-    sessionStorage.setItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY, JSON.stringify([expired]));
+    sessionStorage.setItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY, safeStringify([expired]));
 
     expect(() => readStoredRemoteRuntimeImports()).toThrow('REMOTE_RUNTIME_TOKEN_EXPIRED:Custody');
 
@@ -305,7 +306,7 @@ describe('remote runtime import manager utilities', () => {
 
   test('fresh import merge reads the canonical session-scoped entry array', () => {
     const stored = makeStored('Stored H1', 8092, 1);
-    sessionStorage.setItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY, JSON.stringify([stored]));
+    sessionStorage.setItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY, safeStringify([stored]));
 
     expect(readStoredRemoteRuntimeImports()[0]?.label).toBe('Stored H1');
     const fresh = makeStored('MM', 8095, 2);
@@ -316,13 +317,13 @@ describe('remote runtime import manager utilities', () => {
   });
 
   test('fresh import merge drops invalid remote-runtime cache without weakening strict reads', () => {
-    sessionStorage.setItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY, JSON.stringify({ ok: true, ready: false }));
+    sessionStorage.setItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY, safeStringify({ ok: true, ready: false }));
 
     expect(() => readStoredRemoteRuntimeImports()).toThrow('REMOTE_RUNTIME_IMPORT_ENTRIES_MISSING');
     expect(readStoredRemoteRuntimeImports({ dropInvalid: true })).toEqual([]);
     expect(sessionStorage.getItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY)).toBeNull();
 
-    sessionStorage.setItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY, JSON.stringify({ ok: true, ready: false }));
+    sessionStorage.setItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY, safeStringify({ ok: true, ready: false }));
     const fresh = makeStored('Custody', 8088, 2);
     const merged = persistRemoteRuntimeImports([fresh], { merge: true });
 
@@ -342,7 +343,7 @@ describe('remote runtime import manager utilities', () => {
 
   test('discards old persistent remote runtime capabilities', () => {
     const admin = makeStored('H1 admin', 8092, 1, 'admin');
-    localStorage.setItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY, JSON.stringify([admin]));
+    localStorage.setItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY, safeStringify([admin]));
 
     expect(readStoredRemoteRuntimeImports()).toEqual([]);
     expect(sessionStorage.getItem(REMOTE_RUNTIME_IMPORT_STORAGE_KEY)).toBeNull();
@@ -529,10 +530,11 @@ describe('remote runtime import manager utilities', () => {
       helloAudience: `xln-runtime:${peerRuntimeId}`,
       signerId: '7',
       seed: 'test test test test test test test test test test test junk',
-      maxReconnectAttempts: 1,
     });
     expect((clientOptions[0] as { encryptionKeyPair?: { publicKey?: Uint8Array; privateKey?: Uint8Array } })
       .encryptionKeyPair?.publicKey?.length).toBe(32);
+    expect(clientOptions).toHaveLength(1);
+    expect(opened).toBe(true);
     expect(closed).toBe(true);
   });
 

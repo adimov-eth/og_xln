@@ -49,7 +49,7 @@ afterEach(() => {
 describe('Account J-claim real storage crash recovery', () => {
   for (const boundary of [
     'before-authoritative-history-commit',
-    'after-authoritative-history-commit',
+    'after-authoritative-commit',
     'after-current-cache-commit',
   ] as const) {
     test(`publishes Account root and path-keyed nodes atomically across SIGKILL ${boundary}`, async () => {

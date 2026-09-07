@@ -10,6 +10,7 @@ import { deriveSignerAddressSync, deriveSignerKeySync, registerSignerKey } from 
 import { buildSignedEntityCommand } from '../../../entity/command';
 import { signedEntityCommandTx } from '../../../entity/command/command-codec';
 import { provisionTestEntityEncryptionKey } from '../../../qa/entity-creation-fixture';
+import { deriveEntityEncryptionPublicKey } from '../../../entity/auth/crypto';
 import { generateLazyEntityId } from '../../../entity/factory';
 import { applyEntityInput } from '../../../entity/consensus/index';
 import { applyEntityFrameWithMaterializedTestInfraContext } from '../../helpers/entity-frame';
@@ -63,6 +64,9 @@ const commandJurisdiction = {
 
 const makeState = (id: string, proposer: string, timestamp: number): EntityState => ({
   entityId: id,
+  entityEncryptionPublicKey: deriveEntityEncryptionPublicKey(
+    `0x${Buffer.from(deriveSignerKeySync(id, 'entity-encryption')).toString('hex')}`, id,
+  ),
   height: 0,
   timestamp,
   nonces: new Map(),
@@ -256,7 +260,7 @@ describe('runtime scheduled wake', () => {
     const env = createEmptyEnv(seed);
     env.state.timestamp = 1;
     env.scenarioMode = true;
-    env.runtimeConfig = { storage: { enabled: false } };
+    env.runtimeConfig = { ...env.runtimeConfig, storage: { enabled: false } };
     const proposer = deriveSignerAddressSync(seed, '1').toLowerCase();
     registerSignerKey(env, proposer, deriveSignerKeySync(seed, '1'));
     const id = generateLazyEntityId([proposer], 1n).toLowerCase();

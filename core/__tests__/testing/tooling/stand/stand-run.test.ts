@@ -1,0 +1,62 @@
+import { expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { acquireStandLock, readStandLockHolder } from '../../../../../tools/stand-lock';
+import { runStandChild } from '../../../../../tools/stand/run';
+import { safeStringify } from '../../../../protocol/serialization';
+
+for (const code of [0, 7]) {
+  test(`stand supervisor cleans remaining children after exit ${code}`, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'xln-stand-run-test-'));
+    const pidFile = join(root, 'child.pid');
+    try {
+      const grant = await acquireStandLock({ reason: 'supervisor-test', waitMs: 0, root });
+      const source = `import {spawn} from 'node:child_process';
+        import {writeFileSync} from 'node:fs';
+        const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+        writeFileSync(${safeStringify(pidFile)},String(child.pid));
+        process.exit(${code});`;
+      expect(await runStandChild(grant, [process.execPath, '-e', source], 3_000)).toBe(code);
+      expect(readStandLockHolder(root, 0)).toBeNull();
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+test('stand timeout waits for termination before releasing', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'xln-stand-run-test-'));
+  try {
+    const grant = await acquireStandLock({ reason: 'timeout-test', waitMs: 0, root });
+    expect(await runStandChild(grant, [process.execPath, '-e', 'setInterval(()=>{},1000)'], 100)).toBe(124);
+    expect(readStandLockHolder(root, 0)).toBeNull();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('independent competing processes never overlap slot ownership', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'xln-stand-race-test-'));
+  const events = join(root, 'events');
+  const modulePath = new URL('../../../../../tools/stand-lock.ts', import.meta.url).pathname;
+  const source = `import {acquireStandLock,releaseStandLock} from ${safeStringify(modulePath)};
+    import {appendFileSync} from 'node:fs';
+    const grant=await acquireStandLock({root:${safeStringify(root)},reason:'race',waitMs:3000,pollMs:2});
+    appendFileSync(${safeStringify(events)},'start '+process.pid+'\\n');
+    await Bun.sleep(10);
+    appendFileSync(${safeStringify(events)},'end '+process.pid+'\\n');
+    releaseStandLock(grant);`;
+  const children = Array.from({ length: 12 }, () => Bun.spawn([process.execPath, '-e', source], { stdout: 'ignore', stderr: 'inherit' }));
+  try {
+    expect(await Promise.all(children.map(child => child.exited))).toEqual(Array(12).fill(0));
+    const rows = readFileSync(events, 'utf8').trim().split('\n');
+    expect(rows.length).toBe(24);
+    for (let index = 0; index < rows.length; index += 2) {
+      expect(rows[index]).toMatch(/^start \d+$/);
+      expect(rows[index + 1]).toBe(rows[index]!.replace('start ', 'end '));
+    }
+  } finally {
+    for (const child of children) if (child.exitCode === null) child.kill();
+    await Promise.all(children.map(child => child.exited));
+    rmSync(root, { recursive: true, force: true });
+  }
+});

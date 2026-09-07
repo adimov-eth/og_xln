@@ -81,7 +81,7 @@ describe('production startup wiring', () => {
     expect(helperRestore).toBeGreaterThanOrEqual(0);
     expect(helperRestore).toBeLessThan(helperReady);
     expect(transport).toContain("throw new Error('BRAINVAULT_OWNER_STARTUP_PENDING')");
-    expect(orchestrator).toContain("brainvaultOwnerPath: join(child.dbPath, 'brainvault-owner.json')");
+    expect(readFileSync(join(repoRoot, 'core/orchestrator/process/spawn/hub.ts'), 'utf8')).toContain("brainvaultOwnerPath: join(child.dbPath, 'brainvault-owner.json')");
     expect(hubChildEnv).toContain('XLN_BRAINVAULT_OWNER_PATH: options.brainvaultOwnerPath');
   });
 
@@ -238,7 +238,8 @@ describe('production startup wiring', () => {
     const process = readFileSync(join(repoRoot, 'core/runtime/frame/process.ts'), 'utf8');
     const recoveryOutput = readFileSync(join(repoRoot, 'core/runtime/delivery/recovery-output.ts'), 'utf8');
     const postCommit = readFileSync(join(repoRoot, 'core/runtime/frame/lifecycle/post-commit.ts'), 'utf8');
-    const durableOutbox = recoveryOutput.indexOf('env.pendingNetworkOutputs = buildPendingNetworkOutputs(');
+    const durableOutbox = recoveryOutput.indexOf("env.pendingNetworkOutputs = timePerfPhase('recovery.output.remotePending'");
+    expect(recoveryOutput.indexOf('buildPendingNetworkOutputs(', durableOutbox)).toBeGreaterThan(durableOutbox);
     const save = process.indexOf('const outcome = await deps.storage.saveEnvToDB(');
     const plan = process.indexOf('const outputPlan = planRuntimeFrameOutputs(');
     const commit = process.indexOf('const commit = await commitRuntimeFrame(', plan);
@@ -328,10 +329,13 @@ describe('production startup wiring', () => {
     const mmNode = readMarketMakerNodeSource();
     const runtimeLoop = readFileSync(join(repoRoot, 'core/runtime/loop/loop-failure.ts'), 'utf8');
 
-    expect(orchestrator.match(/stdio: \['pipe', 'pipe', 'pipe', 'ipc'\]/g)).toHaveLength(2);
-    expect(orchestrator.match(/attachManagedChildFatalIpc\(/g)).toHaveLength(2);
-    expect(orchestrator).toContain('persistManagedChildFatalReport(child, report)');
-    expect(orchestrator).toContain('persistManagedChildFatalReport(marketMakerChild, report)');
+    const spawners = ['hub.ts', 'market-maker.ts'].map(file =>
+      readFileSync(join(repoRoot, 'core/orchestrator/process/spawn', file), 'utf8'));
+    for (const spawner of spawners) {
+      expect(spawner).toContain("['pipe', 'pipe', 'pipe', 'ipc']");
+      expect(spawner.match(/attachManagedChildFatalIpc\(/g)).toHaveLength(1);
+      expect(spawner).toContain('persistManagedChildFatalReport(child, report)');
+    }
     expect(hubNode).toContain('await reportManagedChildFatal({');
     expect(mmNode).toContain('await reportManagedChildFatal({');
     expect(runtimeLoop).toContain('await config.onFatal({');
@@ -562,7 +566,8 @@ describe('production startup wiring', () => {
     expect(script).not.toContain('MARKET_MAKER_BOOTSTRAP_CROSS_OFFERS_PER_ACCOUNT_PER_TICK');
     expect(script).not.toContain('MARKET_MAKER_BOOTSTRAP_MAX_NEW_CROSS_OFFERS_PER_TICK');
 
-    const orchestrator = readFileSync(join(repoRoot, 'core/orchestrator/orchestrator.ts'), 'utf8');
+    const orchestrator = ['orchestrator.ts', 'process/spawn/hub.ts', 'process/spawn/market-maker.ts', 'market-maker/identity-resolver.ts']
+      .map(file => readFileSync(join(repoRoot, 'core/orchestrator', file), 'utf8')).join('\n');
     const marketMakerPoller = readFileSync(join(repoRoot, 'core/orchestrator/market-maker/health/market-maker-child-poll.ts'), 'utf8');
     const marketMakerAggregation = readFileSync(
       join(repoRoot, 'core/orchestrator/market-maker/health/market-maker-aggregated-health.ts'),
@@ -632,7 +637,8 @@ describe('production startup wiring', () => {
       "const predeployedJurisdictionKey = String(process.env['XLN_PREDEPLOYED_JURISDICTION_KEY'] || '').trim();",
     );
     expect(standaloneServer).toContain('trustedJurisdictionRpcBindings: resolveTrustedServerRestoreRpcBindings(),');
-    expect(standaloneServer).toContain('const jurisdictionRef = getJurisdictionIdentityRef(selected);');
+    expect(readFileSync(join(repoRoot, 'core/api/server/catalog/restore-rpc-bindings.ts'), 'utf8'))
+      .toContain('const jurisdictionRef = getJurisdictionIdentityRef(selected);');
     expect(standaloneServer).toContain('selectPredeployedJurisdiction(jurisdictions, anvilRpc, jurisdictionKey)');
     expect(standaloneServer).toContain(
       'entityProviderDeploymentBlock: Number(predeployedConfig.entityProviderDeploymentBlock)',
@@ -719,13 +725,13 @@ describe('production startup wiring', () => {
       "return await proxyRpc(request, args.rpcUrls[rpcProxyIndex] || '', operatorAuthorized);",
     );
     expect(orchestrator).not.toContain('XLN_RUNTIME_EXIT_ON_FATAL');
-    expect(orchestrator).toContain(
+    expect(readFileSync(join(repoRoot, 'core/orchestrator/process/spawn/market-maker.ts'), 'utf8')).toContain(
       "XLN_STORAGE_WRITE_TIMEOUT_MS: process.env['XLN_STORAGE_WRITE_TIMEOUT_MS'] ?? '60000'",
     );
     expect(orchestrator).not.toContain('HUB_BOOTSTRAP_PAUSE_STORAGE');
     expect(orchestrator).not.toContain('HUB_READY_SNAPSHOT');
-    expect(orchestrator).toContain(
-      "XLN_LOG_LEVEL: process.env['XLN_HUB_LOG_LEVEL'] ?? process.env['XLN_LOG_LEVEL'] ?? 'warn'",
+    expect(readFileSync(join(repoRoot, 'core/orchestrator/process/hub-runtime-env.ts'), 'utf8')).toContain(
+      "XLN_LOG_LEVEL: source['XLN_HUB_LOG_LEVEL'] ?? source['XLN_LOG_LEVEL'] ?? 'warn'",
     );
     expect(runtimeEntityRouting).not.toContain('deps.startRuntimeLoop(env);');
     expect(runtimeEntityRouting).not.toContain('processRuntime(env)');
@@ -736,29 +742,26 @@ describe('production startup wiring', () => {
     expect(runtimeLoopSource).not.toContain('shouldExitOnRuntimeFatal');
     expect(orchestrator).toContain("XLN_STORAGE_SYNC_WRITES: process.env['XLN_STORAGE_SYNC_WRITES'] ?? '1'");
     expect(orchestrator).not.toContain('XLN_MARKET_MAKER_DISABLE_STORAGE');
-    expect(orchestrator).toContain(
-      "XLN_DISABLE_RUNTIME_RESTORE: process.env['XLN_MARKET_MAKER_DISABLE_RESTORE'] ?? process.env['XLN_DISABLE_RUNTIME_RESTORE'] ?? '0'",
-    );
+    expect(orchestrator).toMatch(/XLN_DISABLE_RUNTIME_RESTORE:\s*process.env\['XLN_MARKET_MAKER_DISABLE_RESTORE'\] \?\? process.env\['XLN_DISABLE_RUNTIME_RESTORE'\] \?\? '0'/);
     expect(orchestrator).not.toContain('XLN_MARKET_MAKER_PERSIST_READY_SNAPSHOT');
     expect(orchestrator).toContain(
       "XLN_LOG_LEVEL: process.env['XLN_MARKET_MAKER_LOG_LEVEL'] ?? process.env['XLN_LOG_LEVEL'] ?? 'warn'",
     );
     expect(orchestrator).not.toContain('XLN_MARKET_MAKER_SKIP_CROSS_BOOTSTRAP');
     expect(orchestrator).toContain('const getMarketMakerIdentities = (): MarketMakerSupportPeerIdentity[] => {');
+    const identities = orchestrator.slice(orchestrator.indexOf('const getMarketMakerIdentities = (): MarketMakerSupportPeerIdentity[] => {'));
+    expect(identities.indexOf('resetMeshJurisdictionsCache();')).toBeLessThan(identities.indexOf('resolveMeshJurisdictionConfig(deps.args.rpcUrl)'));
+    expect(orchestrator).toMatch(/resetMeshJurisdictionsCache\(\);\s*const primary = resolveMeshJurisdictionConfig\(deps.args.rpcUrl\);/);
     expect(orchestrator).toContain(
-      'const getMarketMakerIdentities = (): MarketMakerSupportPeerIdentity[] => {\n  // Reset may atomically replace',
-    );
-    expect(orchestrator).toContain('resetMeshJurisdictionsCache();\n  const primary = resolveMeshJurisdictionConfig(args.rpcUrl);');
-    expect(orchestrator).toContain(
-      'deriveMarketMakerEntityId(signerId, toMarketMakerEntityJurisdictionConfig(jurisdiction))',
+      'deriveMarketMakerEntityId(signerId, toJurisdictionConfig(jurisdiction))',
     );
     expect(orchestrator).toContain('blockTimeMs: requireJurisdictionBlockTimeMs(jurisdiction)');
     expect(orchestrator).toContain('resolveSecondaryJurisdictions(primary.rpc)');
-    expect(orchestrator).toContain('`${marketMakerChild.signerLabel}:${secondaryName}`');
+    expect(orchestrator).toContain('`${deps.marketMakerChild.signerLabel}:${secondaryName}`');
     expect(orchestrator).toContain('jurisdictionName: jurisdiction.name');
     expect(orchestrator).toContain('chainId: Number(jurisdiction.chainId || 0)');
     expect(orchestrator).toContain('depositoryAddress: jurisdiction.contracts.depository');
-    expect(orchestrator).toContain("'--support-peer-identities-json', JSON.stringify(getMarketMakerIdentities())");
+    expect(orchestrator).toMatch(/'--support-peer-identities-json',\s*safeStringify\(deps.getMarketMakerIdentities\(\)\)/);
     expect(orchestrator).not.toContain('JSON.stringify([getMarketMakerIdentity()])');
     expect(orchestrator).toContain('const getExitedHubChild = (): HubChild | null =>');
     expect(orchestrator).toContain('HUB_EXITED_DURING_MM_READY name=${exitedHub.name}');

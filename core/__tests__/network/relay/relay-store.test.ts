@@ -9,7 +9,7 @@ import {
   setDebugIncidentState,
   storeVerifiedGossipProfile,
 } from '../../../network/relay/store';
-import { classifyWebSocketSendResult } from '../../../network/websocket-send-result';
+import { classifyWebSocketSendResult, type WebSocketSendResult } from '../../../network/websocket-send-result';
 import type { Profile } from '../../../entity/profile';
 import {
   buildCryptographicProfileFixture,
@@ -34,6 +34,17 @@ test('websocket send result classifier covers the complete server/client matrix'
   expect(() => classifyWebSocketSendResult(-2)).toThrow('WEBSOCKET_SEND_RESULT_INVALID');
   expect(() => classifyWebSocketSendResult(Number.NaN)).toThrow('WEBSOCKET_SEND_RESULT_INVALID');
   expect(() => classifyWebSocketSendResult(Number.POSITIVE_INFINITY)).toThrow('WEBSOCKET_SEND_RESULT_INVALID');
+  const timer = setTimeout(() => {}, 0);
+  try {
+    // An async test bridge once returned its timer from send(). Its printed
+    // value looked like accepted bytes while its actual type was an object.
+    expect(typeof timer).toBe('object');
+    expect(Number(timer)).toBeGreaterThan(0);
+    expect(() => classifyWebSocketSendResult(timer as unknown as WebSocketSendResult))
+      .toThrow('WEBSOCKET_SEND_RESULT_INVALID');
+  } finally {
+    clearTimeout(timer);
+  }
 });
 
 test('relay incidents group repeated root errors and reopen after a new occurrence', () => {

@@ -8,6 +8,9 @@ import { getRenderedExternalBalance, getRenderedReserveBalance } from '../../uti
 import { startDisputeFromManageUi } from '../../utils/e2e-account-workspace';
 import { capturePageScreenshot } from '../../utils/e2e-screenshots';
 import { enqueueEntityTxs, enqueueRuntimeInput } from '../../utils/runtime/e2e-runtime-input';
+import { safeStringify } from '../../../core/protocol/serialization';
+import { RemoteRuntimeAdapter } from '../../../core/api/runtime-adapter/remote';
+import type { StorageEntityCoreDoc, StorageAccountDoc } from '../../../core/storage/types';
 import { deriveDelta, getTokenInfo } from '../../../core/account/utils';
 
 const TOKEN_ID_USDC = 1;
@@ -15,6 +18,9 @@ const TOKEN_DECIMALS = getTokenInfo(TOKEN_ID_USDC).decimals;
 const TOKEN_SCALE = 10n ** BigInt(TOKEN_DECIMALS);
 const USD_150 = (150n * TOKEN_SCALE).toString();
 const ERC20_BALANCE_OF = new Interface(['function balanceOf(address) view returns (uint256)']);
+const DEPOSITORY_BATCH_EVENTS = new Interface([
+  'event HankoBatchProcessed(bytes32 indexed entityId, bytes32 indexed batchHash, uint256 nonce)',
+]);
 const DEPOSITORY_RESERVES = new Interface([
   'function _reserves(bytes32 entity, uint256 tokenId) view returns (uint256)',
 ]);
@@ -95,7 +101,7 @@ async function rpcCall<T>(page: Page, method: string, params: unknown[]): Promis
   });
   expect(response.ok(), `${method} RPC must succeed`).toBe(true);
   const body = await response.json().catch(() => ({})) as { error?: unknown; result?: T };
-  expect(body.error, `${method} RPC must not return error: ${JSON.stringify(body.error || null)}`).toBeUndefined();
+  expect(body.error, `${method} RPC must not return error: ${safeStringify(body.error || null)}`).toBeUndefined();
   return body.result as T;
 }
 
@@ -160,28 +166,14 @@ async function openAccountsWorkspace(page: Page): Promise<void> {
   await expect(accountWorkspaceNav).toBeVisible({ timeout: 20_000 });
 }
 
-async function openAccountWorkspaceTab(
-  page: Page,
-  tabId: 'open' | 'history' | 'configure' | 'pay' | 'receive' | 'swap' | 'move' | 'activity' | 'appearance',
-): Promise<void> {
-  await openAccountsWorkspace(page);
-  const navs = page.locator('nav[aria-label="Account workspace"]');
-  const navCount = await navs.count();
-  let tab: ReturnType<Page['getByTestId']> | null = null;
-  for (let i = 0; i < navCount; i += 1) {
-    const nav = navs.nth(i);
-    if (!(await nav.isVisible().catch(() => false))) continue;
-    const candidate = nav.getByTestId(`account-workspace-tab-${tabId}`).first();
-    if (await candidate.isVisible().catch(() => false)) {
-      tab = candidate;
-      break;
-    }
-  }
-  if (!tab) {
-    tab = page.getByTestId(`account-workspace-tab-${tabId}`).first();
-  }
-  await expect(tab).toBeVisible({ timeout: 20_000 });
-  await tab.click();
+async function openEntityHistory(page: Page): Promise<void> {
+  // Dispute preparation freezes the only Account and removes its workspace tabs.
+  // Entity batch history remains reachable through Assets throughout finality.
+  await openAssetsTab(page);
+  const history = page.getByTestId('asset-tab-history');
+  await expect(history).toBeVisible({ timeout: 20_000 });
+  await history.click();
+  await expect(history).toHaveClass(/active/);
 }
 
 async function openAssetsTab(page: Page): Promise<void> {
@@ -266,12 +258,42 @@ async function readAccountProgress(
   }, { entityId, signerId, counterpartyId });
 }
 
+// Explicit counts/booleans only: never log transactions or transport payloads.
+async function readAccountOpenDiagnostic(page: Page, entityId: string, signerId: string, counterpartyId: string) {
+  return page.evaluate(({ entityId, signerId, counterpartyId }) => {
+    const env = (window as any).isolatedEnv;
+    const connectivity = (window as any).__xln?.runtimeConnectivity;
+    const key = Array.from(env?.state?.eReplicas?.keys?.() ?? []).find((key) =>
+      String(key).toLowerCase() === `${entityId}:${signerId}`.toLowerCase());
+    const replica = key ? env.state.eReplicas.get(key) : null;
+    const account = replica?.state?.accounts?.get?.(counterpartyId);
+    const profiles = env?.gossip?.getProfiles?.() ?? [];
+    const profile = profiles.find((item: any) => String(item.entityId).toLowerCase() === counterpartyId.toLowerCase());
+    return {
+      exists: Boolean(account), entityHeight: Number(replica?.state?.height ?? 0),
+      accountHeight: Number(account?.currentHeight ?? 0), pendingFrame: Boolean(account?.pendingFrame),
+      pendingAck: account?.pendingAccountInput?.kind === 'ack_frame', mempoolCount: account?.mempool?.length ?? 0,
+      pendingFrameTxCount: account?.pendingFrame?.accountTxs?.length ?? 0,
+      targetProfileExists: Boolean(profile), targetRuntimeRouteExists: Boolean(profile?.runtimeId),
+      targetAdvertisesSelf: (profile?.accounts ?? []).some((item: any) =>
+        String(item.counterpartyId).toLowerCase() === entityId.toLowerCase()),
+      targetAdvertisedAccountCount: profile?.accounts?.length ?? 0, profileCount: profiles.length,
+      connected: connectivity?.connected ?? null, connecting: connectivity?.connecting ?? null,
+      discoveryAvailable: typeof connectivity?.ensureProfiles === 'function',
+      outboundTargetCount: connectivity?.queue?.targetCount ?? null,
+      outboundMessageCount: connectivity?.queue?.totalMessages ?? null,
+      oldestOutboundAgeMs: connectivity?.queue?.oldestEntryAge ?? null,
+    };
+  }, { entityId, signerId, counterpartyId });
+}
+
 async function ensurePrivateAccountOpenWithClock(
   page: Page,
   entityId: string,
   signerId: string,
   counterpartyId: string,
   responseSeconds: number,
+  peer: { page: Page; runtime: RuntimeRef },
 ): Promise<void> {
   const already = await readAccountProgress(page, entityId, signerId, counterpartyId);
   if (already.exists && !already.pendingFrame && already.currentHeight > 0) return;
@@ -289,10 +311,21 @@ async function ensurePrivateAccountOpenWithClock(
     },
   }]);
 
+  const waitStarted = Date.now();
+  let capturedPending = false;
   await expect
     .poll(async () => {
       const state = await readAccountProgress(page, entityId, signerId, counterpartyId);
-      return state.exists && !state.pendingFrame && state.currentHeight > 0;
+      const ready = state.exists && !state.pendingFrame && state.currentHeight > 0;
+      if (!ready && !capturedPending && Date.now() - waitStarted >= 10_000) {
+        capturedPending = true;
+        const [local, remote] = await Promise.all([
+          readAccountOpenDiagnostic(page, entityId, signerId, counterpartyId),
+          readAccountOpenDiagnostic(peer.page, peer.runtime.entityId, peer.runtime.signerId, entityId),
+        ]);
+        console.log(`[debt-e2e] account-open-pending ${safeStringify({ local, remote })}`);
+      }
+      return ready;
     }, { timeout: 60_000, intervals: [500, 1000, 2000] })
     .toBe(true);
 }
@@ -307,7 +340,8 @@ async function readJBatchSnapshot(
   sentDisputeStarts: number;
   sentDisputeFinalizations: number;
   sentExists: boolean;
-  batchHistoryCount: number;
+  lastFinalizedJHeight: number;
+  entityNonce: number;
   mempoolTxTypes: string[];
   hasProposal: boolean;
   hasLockedFrame: boolean;
@@ -322,7 +356,8 @@ async function readJBatchSnapshot(
         sentDisputeStarts: 0,
         sentDisputeFinalizations: 0,
         sentExists: false,
-        batchHistoryCount: 0,
+        lastFinalizedJHeight: 0,
+        entityNonce: 0,
         mempoolTxTypes: [],
         hasProposal: false,
         hasLockedFrame: false,
@@ -337,10 +372,6 @@ async function readJBatchSnapshot(
     const rep = key ? env.state.eReplicas.get(key) : null;
     const pending = rep?.state?.jBatchState?.batch;
     const sent = rep?.state?.jBatchState?.sentBatch?.batch;
-    const history = Array.from(rep?.state?.jBlockChain || []).flatMap((block: any) =>
-      Array.from(block?.events || []).filter((event: any) =>
-        event?.type === 'HankoBatchProcessed'
-        && String(event?.data?.entityId || '').toLowerCase() === String(entityId).toLowerCase()));
     const messages = Array.isArray(rep?.state?.messages) ? rep.state.messages.slice(-6) : [];
     const mempool = Array.isArray(rep?.mempool) ? rep.mempool : [];
     return {
@@ -359,7 +390,8 @@ async function readJBatchSnapshot(
       sentDisputeStarts: Number(sent?.disputeStarts?.length || 0),
       sentDisputeFinalizations: Number(sent?.disputeFinalizations?.length || 0),
       sentExists: !!rep?.state?.jBatchState?.sentBatch,
-      batchHistoryCount: Number(history.length || 0),
+      lastFinalizedJHeight: Number(rep?.state?.lastFinalizedJHeight || 0),
+      entityNonce: Number(rep?.state?.jBatchState?.entityNonce || 0),
       mempoolTxTypes: mempool.map((tx: { type?: unknown }) => String(tx?.type || '')),
       hasProposal: !!rep?.proposal,
       hasLockedFrame: !!rep?.lockedFrame,
@@ -372,20 +404,15 @@ async function readAllBatchSnapshots(page: Page): Promise<Array<{
   key: string;
   pendingCount: number;
   sentCount: number;
-  historyCount: number;
+  lastFinalizedJHeight: number;
 }>> {
   return page.evaluate(() => {
     const env = (window as any).isolatedEnv;
     if (!env?.state?.eReplicas) return [];
-    const rows: Array<{ key: string; pendingCount: number; sentCount: number; historyCount: number }> = [];
+    const rows: Array<{ key: string; pendingCount: number; sentCount: number; lastFinalizedJHeight: number }> = [];
     for (const [key, replica] of env.state.eReplicas.entries()) {
       const batch = replica?.state?.jBatchState?.batch;
       const sent = replica?.state?.jBatchState?.sentBatch?.batch;
-      const history = Array.from(replica?.state?.jBlockChain || []).flatMap((block: any) =>
-        Array.from(block?.events || []).filter((event: any) =>
-          event?.type === 'HankoBatchProcessed'
-          && String(event?.data?.entityId || '').toLowerCase()
-            === String(replica?.state?.entityId || '').toLowerCase()));
       const pendingCount =
         Number(batch?.externalTokenToReserve?.length || 0) +
         Number(batch?.reserveToCollateral?.length || 0) +
@@ -406,7 +433,7 @@ async function readAllBatchSnapshots(page: Page): Promise<Array<{
         key: String(key),
         pendingCount,
         sentCount,
-        historyCount: Number(history.length || 0),
+        lastFinalizedJHeight: Number(replica?.state?.lastFinalizedJHeight || 0),
       });
     }
     return rows;
@@ -523,7 +550,7 @@ async function sendDirectPayment(
     ]);
     throw new Error(
       `${error instanceof Error ? error.message : String(error)}\n` +
-      `Direct payment state: ${JSON.stringify({ sender, recipient })}`,
+      `Direct payment state: ${safeStringify({ sender, recipient })}`,
     );
   }
   await expect
@@ -628,12 +655,12 @@ async function broadcastDraftBatch(
       `batch draft did not appear within 30s:` +
       ` expectedKinds=${expectedPendingKinds.join(',') || 'any'}` +
       ` toast=${String(toastMessage || '').trim()}` +
-      ` snapshot=${JSON.stringify(snapshot)}` +
+      ` snapshot=${safeStringify(snapshot)}` +
       ` moveStatus=${moveStatus}` +
-      ` moveUi=${JSON.stringify(moveUi)}` +
-      ` activeRoot=${JSON.stringify(activeRoot)}` +
-      ` foreignPending=${JSON.stringify(foreignPending)}` +
-      ` allBatches=${JSON.stringify(allBatches)}`,
+      ` moveUi=${safeStringify(moveUi)}` +
+      ` activeRoot=${safeStringify(activeRoot)}` +
+      ` foreignPending=${safeStringify(foreignPending)}` +
+      ` allBatches=${safeStringify(allBatches)}`,
     );
   }
 
@@ -675,12 +702,32 @@ async function broadcastDraftBatch(
   if (dialogMessage || String(toastMessage || '').trim()) {
     throw new Error(
       `settle-sign-broadcast failed: ${dialogMessage || String(toastMessage || '').trim()}` +
-      ` snapshot=${JSON.stringify(afterClickSnapshot)}` +
-      ` console=${JSON.stringify(consoleMessages)}`,
+      ` snapshot=${safeStringify(afterClickSnapshot)}` +
+      ` console=${safeStringify(consoleMessages)}`,
     );
   }
   if (debugStepLabel) console.log(`[debt-e2e] ${debugStepLabel}-broadcasted`);
   return { consoleMessages, afterClickSnapshot };
+}
+
+async function readConfirmedDisputeBatch(
+  page: Page, depository: string, entityId: string, nonce: number, fromBlock: string,
+): Promise<boolean> {
+  type BatchLog = { address: string; topics: string[]; data: string; transactionHash: string; blockHash: string; removed?: boolean };
+  const logs = await rpcCall<BatchLog[]>(page, 'eth_getLogs', [{ address: depository, fromBlock, toBlock: 'latest',
+    topics: DEPOSITORY_BATCH_EVENTS.encodeFilterTopics('HankoBatchProcessed', [entityId]) }]);
+  const matching = logs.filter(log => DEPOSITORY_BATCH_EVENTS.parseLog(log)?.args.nonce === BigInt(nonce));
+  expect(matching.length, 'one receipt for the exact Entity batch nonce').toBeLessThanOrEqual(1);
+  const log = matching[0];
+  if (!log) return false;
+  expect(log.removed).not.toBe(true);
+  expect(log.address.toLowerCase()).toBe(depository.toLowerCase());
+  const receipt = await rpcCall<{ status: string; transactionHash: string; blockHash: string }>(page,
+    'eth_getTransactionReceipt', [log.transactionHash]);
+  expect(receipt.status).toBe('0x1');
+  expect(receipt.transactionHash.toLowerCase()).toBe(log.transactionHash.toLowerCase());
+  expect(receipt.blockHash.toLowerCase()).toBe(log.blockHash.toLowerCase());
+  return true;
 }
 
 async function queueAndBroadcastDisputeStart(
@@ -690,6 +737,8 @@ async function queueAndBroadcastDisputeStart(
   counterpartyId: string,
 ): Promise<void> {
   const before = await readJBatchSnapshot(page, entityId, signerId);
+  const fromBlock = await rpcCall<string>(page, 'eth_blockNumber', []);
+  const depository = await getDepositoryAddress(page);
   await startDisputeFromManageUi(page, counterpartyId, async () =>
     (await readJBatchSnapshot(page, entityId, signerId)).pendingDisputeStarts > before.pendingDisputeStarts,
   );
@@ -699,13 +748,12 @@ async function queueAndBroadcastDisputeStart(
       intervals: [500, 1000, 1500],
     })
     .toBeGreaterThan(before.pendingDisputeStarts);
-  await openAccountWorkspaceTab(page, 'history');
   const broadcastDebug = await broadcastDraftBatch(page, entityId, signerId, ['disputeStarts']);
   try {
     await expect
       .poll(async () => {
-        const snapshot = await readJBatchSnapshot(page, entityId, signerId);
-        return snapshot.sentDisputeStarts > 0 || snapshot.batchHistoryCount > before.batchHistoryCount;
+        const confirmed = await readConfirmedDisputeBatch(page, depository, entityId, before.entityNonce + 1, fromBlock);
+        return confirmed;
       }, {
         timeout: 60_000,
         intervals: [500, 1000, 1500],
@@ -715,10 +763,10 @@ async function queueAndBroadcastDisputeStart(
     const snapshot = await readJBatchSnapshot(page, entityId, signerId);
     throw new Error(
       `dispute-start broadcast not observed.` +
-      ` before=${JSON.stringify(before)}` +
-      ` afterClick=${JSON.stringify(broadcastDebug.afterClickSnapshot)}` +
-      ` final=${JSON.stringify(snapshot)}` +
-      ` console=${JSON.stringify(broadcastDebug.consoleMessages)}`,
+      ` before=${safeStringify(before)}` +
+      ` afterClick=${safeStringify(broadcastDebug.afterClickSnapshot)}` +
+      ` final=${safeStringify(snapshot)}` +
+      ` console=${safeStringify(broadcastDebug.consoleMessages)}`,
     );
   }
 }
@@ -760,7 +808,7 @@ async function postRpc(page: Page, method: string, params: unknown[]): Promise<{
     body = { error: text.slice(0, 500) };
   }
   if (!response.ok()) throw new Error(`${method} RPC HTTP ${response.status()}: ${text.slice(0, 500)}`);
-  if (body.error) throw new Error(`${method} RPC error: ${JSON.stringify(body.error)}`);
+  if (body.error) throw new Error(`${method} RPC error: ${safeStringify(body.error)}`);
   return body;
 }
 
@@ -772,7 +820,7 @@ async function readCurrentChainTimestamp(page: Page): Promise<number> {
   const body = await postRpc(page, 'eth_getBlockByNumber', ['latest', false]);
   const timestamp = (body.result as { timestamp?: unknown } | undefined)?.timestamp;
   if (typeof timestamp !== 'string') {
-    throw new Error(`unexpected latest block timestamp: ${JSON.stringify(body)}`);
+    throw new Error(`unexpected latest block timestamp: ${safeStringify(body)}`);
   }
   return Number.parseInt(timestamp, 16);
 }
@@ -1104,7 +1152,7 @@ async function openOutstandingDebtToken(page: Page, symbol = 'USDC'): Promise<vo
         replicas,
       };
     });
-    throw new Error(`${error instanceof Error ? error.message : String(error)}\nDebt UI diagnostics: ${JSON.stringify(diagnostics)}`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nDebt UI diagnostics: ${safeStringify(diagnostics)}`);
   });
   if (!(await debtPanel.evaluate((node) => node.hasAttribute('open')))) {
     await debtPanel.locator('summary').first().click();
@@ -1116,8 +1164,39 @@ async function openOutstandingDebtToken(page: Page, symbol = 'USDC'): Promise<vo
   }
 }
 
+type HubCore = StorageEntityCoreDoc & { signerId: string };
+
+async function connectSovereignHubReader(page: Page, hubId: string): Promise<RemoteRuntimeAdapter> {
+  const health = await ensureE2EBaseline(page, { requireMarketMaker: false });
+  const hub = health.hubs?.find((entry) => entry.entityId?.toLowerCase() === hubId.toLowerCase());
+  expect(hub?.runtimeId, 'selected sovereign Hub must expose its runtime identity').toBeTruthy();
+  const response = await page.request.get(`${APP_BASE_URL}/api/runtime-import?access=admin&allowPartial=1`);
+  expect(response.ok(), 'existing runtime import capability must be available').toBe(true);
+  const payload = await response.json();
+  const entry = payload.manifest.entries.find((item: { label: string }) => item.label === hub!.name);
+  expect(entry, 'runtime import must include the selected Hub').toBeTruthy();
+  const adapter = new RemoteRuntimeAdapter();
+  await adapter.connect({ mode: 'remote', wsUrl: entry.wsUrl, authKey: entry.token, runtimeId: hub!.runtimeId });
+  const core = await adapter.read<HubCore>(`/entity/${hubId}`);
+  expect(core.entityId.toLowerCase()).toBe(hubId.toLowerCase());
+  return adapter;
+}
+
+async function readHubDebts(adapter: RemoteRuntimeAdapter, hubId: string, counterpartyId: string): Promise<DebtSnapshot[]> {
+  const core = await adapter.read<HubCore>(`/entity/${hubId}`);
+  const rows: DebtSnapshot[] = [];
+  for (const [direction, ledger] of [['out', core.outDebtsByToken], ['in', core.inDebtsByToken]] as const) {
+    for (const entry of ledger?.get(TOKEN_ID_USDC)?.values() ?? []) {
+      if (entry.counterparty.toLowerCase() !== counterpartyId.toLowerCase()) continue;
+      rows.push({ debtId: entry.debtId, direction, status: entry.status,
+        createdAmount: entry.createdAmount, paidAmount: entry.paidAmount, remainingAmount: entry.remainingAmount });
+    }
+  }
+  return rows;
+}
+
 test.describe('debt ledger', () => {
-  test('creates one mirrored debt on both sides after dispute finalize', { tag: '@resilience' }, async ({ browser }, testInfo) => {
+  test('browser dispute with sovereign Hub creates exactly one mirrored debt on both owners', { tag: '@resilience' }, async ({ browser }, testInfo) => {
     test.setTimeout(LONG_E2E ? 360_000 : 240_000);
     const step = (label: string) => console.log(`[debt-e2e] ${label}`);
 
@@ -1129,135 +1208,124 @@ test.describe('debt ledger', () => {
     await setupContext.close();
 
     const aliceRuntime = await newRuntimePage(browser, 'alice');
-    const bobRuntime = await newRuntimePage(browser, 'bob');
     const alicePage = aliceRuntime.page;
-    const bobPage = bobRuntime.page;
     const alice = aliceRuntime.runtime;
-    const bob = bobRuntime.runtime;
+    const hub = await connectSovereignHubReader(alicePage, hubId);
+    try {
+      step('open-browser-hub-account');
+      await connectHub(alicePage, hubId, { disputeConfig: { leftResponseSeconds: 5, rightResponseSeconds: 5 } });
+      const hubCore = await hub.read<HubCore>(`/entity/${hubId}`);
+      const hubAccountPath = `/entity/${hubId}/account/${alice.entityId}`;
+      const hubBefore = await hub.read<StorageAccountDoc>(hubAccountPath);
+      step('hub-grants-credit');
+      await hub.send({ runtimeTxs: [], entityInputs: [{ entityId: hubId, signerId: hubCore.signerId,
+        entityTxs: [{ type: 'extendCredit', data: { counterpartyEntityId: alice.entityId,
+          tokenId: TOKEN_ID_USDC, amount: 1000n * TOKEN_SCALE } }] }] }, {
+        commandId: `debt-e2e-credit-${crypto.randomUUID()}`, commandSequence: hub.nextCommandSequence!,
+      });
+      await expect.poll(async () => (await hub.read<StorageAccountDoc>(hubAccountPath)).currentHeight)
+        .toBeGreaterThan(hubBefore.currentHeight);
+      const aliceBefore = await readAccountProgress(alicePage, alice.entityId, alice.signerId, hubId);
+      step('alice-pays-hub-on-credit');
+      await enqueueEntityTxs(alicePage, alice.entityId, alice.signerId, [{ type: 'directPayment', data: {
+        targetEntityId: hubId, tokenId: TOKEN_ID_USDC, amount: BigInt(USD_150),
+        route: [alice.entityId, hubId], deliveryMode: 'direct', description: 'debt-e2e-browser-to-sovereign-hub',
+      } }]);
+      await expect.poll(async () => (await readAccountProgress(alicePage, alice.entityId, alice.signerId, hubId)).currentHeight)
+        .toBeGreaterThan(aliceBefore.currentHeight);
+      const expectedDelta = alice.entityId.toLowerCase() < hubId.toLowerCase() ? `-${USD_150}` : USD_150;
+      await expect.poll(async () => (await readAccountDeltaSnapshot(alicePage, alice.entityId, alice.signerId, hubId))?.total)
+        .toBe(expectedDelta);
+      await expect.poll(async () => {
+        const account = await hub.read<StorageAccountDoc>(hubAccountPath);
+        const delta = account.state.deltas.get(TOKEN_ID_USDC)!;
+        return deriveDelta(delta, hubId.toLowerCase() < alice.entityId.toLowerCase()).delta.toString();
+      }).toBe(expectedDelta);
 
-    await connectHub(alicePage, hubId);
-    await connectHub(bobPage, hubId);
+      step('dispute-start');
+      await queueAndBroadcastDisputeStart(alicePage, alice.entityId, alice.signerId, hubId);
+      await expect
+        .poll(async () => (await readAccountState(alicePage, alice.entityId, alice.signerId, hubId)).activeDispute, {
+          timeout: 45_000,
+          intervals: [500, 1000, 1500],
+        })
+        .toBe(true);
 
-    step('open-accounts');
-    await ensurePrivateAccountOpenWithClock(alicePage, alice.entityId, alice.signerId, bob.entityId, 5);
-    await ensurePrivateAccountOpenWithClock(bobPage, bob.entityId, bob.signerId, alice.entityId, 5);
+      let disputeState = await readAccountState(alicePage, alice.entityId, alice.signerId, hubId);
+      await expect
+        .poll(async () => {
+          disputeState = await readAccountState(alicePage, alice.entityId, alice.signerId, hubId);
+          return disputeState.activeDispute && disputeState.disputeTimeout > 0 ? 'ready' : 'pending';
+        }, {
+          timeout: 45_000,
+          intervals: [500, 1000, 1500],
+        })
+        .toBe('ready');
+      await openEntityHistory(alicePage);
+      await capturePageScreenshot(alicePage, testInfo, 'dispute-active-history-desktop.png', {
+        fullPage: true,
+        ux: {
+          title: 'desktop active dispute history',
+          group: 'Disputes',
+          description: 'Entity history while its Hub account dispute is active and waiting for finality.',
+          platform: 'desktop',
+          tags: ['dispute', 'history'],
+        },
+      });
 
-    step('extend-credit');
-    await extendCreditDirect(alicePage, alice.entityId, alice.signerId, bob.entityId, TOKEN_ID_USDC, 1000n * TOKEN_SCALE);
-    step('direct-payment');
-    await sendDirectPayment(
-      bobPage,
-      bob.entityId,
-      bob.signerId,
-      alicePage,
-      alice.entityId,
-      alice.signerId,
-      alice.entityId,
-      '150',
-    );
-    await expect
-      .poll(async () => (await readAccountDeltaSnapshot(alicePage, alice.entityId, alice.signerId, bob.entityId))?.total || '0', {
-        timeout: 45_000,
-        intervals: [500, 1000, 1500],
-      })
-      .not.toBe('0');
-    await expect
-      .poll(async () => (await readAccountDeltaSnapshot(bobPage, bob.entityId, bob.signerId, alice.entityId))?.total || '0', {
-        timeout: 45_000,
-        intervals: [500, 1000, 1500],
-      })
-      .not.toBe('0');
+      await waitForUnixSeconds(alicePage, disputeState.disputeTimeout);
 
-    step('dispute-start');
-    await queueAndBroadcastDisputeStart(alicePage, alice.entityId, alice.signerId, bob.entityId);
-    await expect
-      .poll(async () => (await readAccountState(alicePage, alice.entityId, alice.signerId, bob.entityId)).activeDispute, {
-        timeout: 45_000,
-        intervals: [500, 1000, 1500],
-      })
-      .toBe(true);
+      step('dispute-finalize-auto');
+      await expect
+        .poll(async () => {
+          const state = await readAccountState(alicePage, alice.entityId, alice.signerId, hubId);
+          return !state.activeDispute && state.status === 'disputed';
+        }, {
+          timeout: 120_000,
+          intervals: [500, 1000, 2000],
+        })
+        .toBe(true);
+      await openEntityHistory(alicePage);
+      await capturePageScreenshot(alicePage, testInfo, 'dispute-finalized-history-desktop.png', {
+        fullPage: true,
+        ux: {
+          title: 'desktop finalized dispute history',
+          group: 'Disputes',
+          description: 'History after the dispute finalizes and debt evidence is mirrored.',
+          platform: 'desktop',
+          tags: ['dispute', 'history', 'debt'],
+        },
+      });
 
-    let disputeState = await readAccountState(alicePage, alice.entityId, alice.signerId, bob.entityId);
-    await expect
-      .poll(async () => {
-        disputeState = await readAccountState(alicePage, alice.entityId, alice.signerId, bob.entityId);
-        return disputeState.activeDispute && disputeState.disputeTimeout > 0 ? 'ready' : 'pending';
-      }, {
-        timeout: 45_000,
-        intervals: [500, 1000, 1500],
-      })
-      .toBe('ready');
-    await openAccountWorkspaceTab(alicePage, 'history');
-    await capturePageScreenshot(alicePage, testInfo, 'dispute-active-history-desktop.png', {
-      fullPage: true,
-      ux: {
-        title: 'desktop active dispute history',
-        group: 'Disputes',
-        description: 'Account history while a dispute is active and waiting for finality.',
-        platform: 'desktop',
-        tags: ['dispute', 'history'],
-      },
-    });
-
-    await waitForUnixSeconds(alicePage, disputeState.disputeTimeout);
-
-    step('dispute-finalize-auto');
-    await expect
-      .poll(async () => {
-        const state = await readAccountState(alicePage, alice.entityId, alice.signerId, bob.entityId);
-        return !state.activeDispute && state.status === 'disputed';
-      }, {
-        timeout: 120_000,
-        intervals: [500, 1000, 2000],
-      })
-      .toBe(true);
-    await openAccountWorkspaceTab(alicePage, 'history');
-    await capturePageScreenshot(alicePage, testInfo, 'dispute-finalized-history-desktop.png', {
-      fullPage: true,
-      ux: {
-        title: 'desktop finalized dispute history',
-        group: 'Disputes',
-        description: 'History after the dispute finalizes and debt evidence is mirrored.',
-        platform: 'desktop',
-        tags: ['dispute', 'history', 'debt'],
-      },
-    });
-
-    step('wait-debt-mirror');
-    const mirrored = await waitForMirroredDebtSnapshots(
-      alicePage,
-      alice.entityId,
-      alice.signerId,
-      bobPage,
-      bob.entityId,
-      bob.signerId,
-      USD_150,
-    );
-
-    expect(mirrored.left.createdAmount).toBe(BigInt(USD_150));
-    expect(mirrored.left.remainingAmount).toBe(BigInt(USD_150));
-    expect(mirrored.left.paidAmount).toBe(0n);
-    expect(mirrored.right.createdAmount).toBe(BigInt(USD_150));
-    expect(mirrored.right.remainingAmount).toBe(BigInt(USD_150));
-    expect(mirrored.right.paidAmount).toBe(0n);
-    expect(mirrored.left.direction).not.toBe(mirrored.right.direction);
-
-    await Promise.all([
-      openOutstandingDebtToken(alicePage),
-      openOutstandingDebtToken(bobPage),
-    ]);
-    const [aliceDebtText, bobDebtText] = await Promise.all([
-      alicePage.getByTestId('debt-panel').first().textContent(),
-      bobPage.getByTestId('debt-panel').first().textContent(),
-    ]);
-    const aliceSummary = String(aliceDebtText || '');
-    const bobSummary = String(bobDebtText || '');
-    expect(aliceSummary).toMatch(/150(?:\.0+)?\s*USDC/i);
-    expect(bobSummary).toMatch(/150(?:\.0+)?\s*USDC/i);
-    expect(aliceSummary).toContain(mirrored.left.direction === 'out' ? 'we owe' : 'owed to us');
-    expect(bobSummary).toContain(mirrored.right.direction === 'out' ? 'we owe' : 'owed to us');
-
-    await alicePage.context().close();
-    await bobPage.context().close();
+      step('verify-both-committed-debt-owners');
+      const readBoth = async () => Promise.all([
+        readDebtSnapshotsForCounterparty(alicePage, alice.entityId, alice.signerId, hubId),
+        readHubDebts(hub, hubId, alice.entityId),
+      ]);
+      await expect.poll(async () => {
+        const [aliceRows, hubRows] = await readBoth();
+        return [aliceRows.length, hubRows.length];
+      }, { timeout: 45_000 }).toEqual([1, 1]);
+      const mirrored = await readBoth();
+      for (const [index, rows] of mirrored.entries()) {
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ direction: index === 0 ? 'out' : 'in',
+          createdAmount: BigInt(USD_150), remainingAmount: BigInt(USD_150), paidAmount: 0n });
+      }
+      expect(mirrored[0][0]!.debtId).toBe(mirrored[1][0]!.debtId);
+      const hubFinal = await hub.read<StorageAccountDoc>(hubAccountPath);
+      expect(hubFinal.activeDispute).toBeUndefined();
+      expect(hubFinal.status).toBe('disputed');
+      await openOutstandingDebtToken(alicePage);
+      const summary = String(await alicePage.getByTestId('debt-panel').first().textContent());
+      expect(summary).toMatch(/150(?:\.0+)?\s*USDC/i);
+      expect(summary).toContain('we owe');
+      // A further real chain block and repeated committed reads must preserve the single debt.
+      await mineOneBlock(alicePage);
+      await expect.poll(readBoth).toEqual(mirrored);
+    } finally {
+      hub.disconnect();
+      await alicePage.context().close();
+    }
   });
 });

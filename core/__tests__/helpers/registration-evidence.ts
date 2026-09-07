@@ -40,7 +40,7 @@ export const installCanonicalRegistrationEvidence = async (
     source?: CertifiedRegistrationEvidence['source'];
     activationHeight?: number;
   } = {},
-): Promise<CertifiedRegistrationEvidence> => {
+): Promise<Extract<CertifiedRegistrationEvidence, { receiptsRoot: string }>> => {
   const source = options.source ?? 'EntityRegistered';
   const activationHeight = options.activationHeight ?? 5;
   const stackKey = getCertifiedBoardStackKey(jurisdiction);
@@ -105,6 +105,7 @@ export const installCanonicalRegistrationEvidence = async (
     observedHeadHeight: activationHeight + replica.watcherConfirmationDepth,
     confirmationDepth: replica.watcherConfirmationDepth,
   });
+  if (evidence.receiptKind === 'tron-rpc-attested') throw new Error('TEST_REGISTRATION_EXPECTED_MPT_EVIDENCE');
   await applyRuntimeTx(env, markLocalJAuthorityRuntimeTx({
     type: 'recordAuthenticatedJAuthority',
     data: evidence,

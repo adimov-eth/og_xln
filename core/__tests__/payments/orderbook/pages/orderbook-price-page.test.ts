@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { encodeBuffer } from '../../../../storage/codec/codec';
+import { decodeBuffer, encodeBuffer } from '../../../../storage/codec/codec';
 import {
   appendBookPricePageOrder,
   BOOK_PRICE_PAGE_CAPACITY,
@@ -97,7 +97,9 @@ test('canonical page capacity stays comfortably below the 10KB record invariant'
   const page = tree.get({ priceTicks: 1n, pageSequence: 0 });
   expect(page).toBeDefined();
   expect(encodeBuffer(page).byteLength).toBeLessThan(10_000);
-  expect(encodeBuffer(page).byteLength).toBe(6_731);
+  expect(decodeBookPricePage(decodeBuffer(encodeBuffer(page)))).toEqual(page);
+  expect(page!.liveCount).toBe(BOOK_PRICE_PAGE_CAPACITY);
+  expect(page!.totalQtyLots).toBe(BigInt(BOOK_PRICE_PAGE_CAPACITY) * 10n ** 24n);
 });
 
 test('partial fill updates one page without changing FIFO location', () => {

@@ -1,3 +1,8 @@
+import { PersistentAccountStateMap } from '../../../account/state/persistent-state-map';
+import { accountTransitionView, beginAccountTransition, publishAccountTransition, discardAccountTransition } from '../../../account/state/candidate-overlay';
+import { forkAccountReplicaShell } from '../../../account/state/account-replica-shell';
+import { PersistentEntityAccountMap } from '../../../entity/state/persistent-account-map';
+import { createEntityFrameCandidateState } from '../../../entity/state-clone';
 import { describe, expect, spyOn, test } from 'bun:test';
 
 import { x25519 } from '@noble/curves/ed25519.js';
@@ -49,7 +54,6 @@ import { resolveAutoRebalanceFeePolicy, runPostFrameAutoRebalanceCheck } from '.
 import { HTLC, LIMITS } from '../../../config/constants';
 
 import { executeCrontab, initCrontab } from '../../../entity/scheduler';
-import { HTLC_SECRET_ACK_TIMEOUT_MS } from '../../../entity/tx/j-events-htlc/route-lifecycle';
 
 import { encodeBoard, generateLazyEntityId, generateNumberedEntityId, hashBoard } from '../../../entity/factory';
 
@@ -75,6 +79,7 @@ import { buildEntityHashesToSign } from '../../../entity/consensus/input/hanko-w
 
 import {
   buildEntityFrameAuthority,
+  computeEntityAccountValueHash,
   computeCanonicalEntityConsensusStateHash,
   computeCanonicalEntityConsensusStateHashCold,
   computeEntityFrameAuthorityRoot,
@@ -106,7 +111,6 @@ import { applyCommittedCrossJurisdictionAccountTxFollowup } from '../../../entit
 
 import { buildCrossJurisdictionEntityOutput } from '../../../entity/tx/j-events-htlc/cross-j-outputs';
 
-import { handleHtlcOnionAdvance } from '../../../entity/tx/handlers/htlc/onion-advance';
 
 import {
   handleAdmitCrossJurisdictionBookOrderEntityTx,
@@ -189,7 +193,7 @@ import { buffersEqual, safeStringify } from '../../../protocol/serialization';
 
 import type { ProofBodyStruct } from '../../../protocol/dispute/proof-body';
 
-import { hydrateAccountDocFromStorage, projectAccountDoc } from '../../../storage/read/projections';
+import { hydrateAccountDocFromStorage, projectPortableAccountDoc } from '../../../storage/read/projections';
 
 import { validateStorageAccountDocValue } from '../../../storage/schema/authoritative-schema';
 
@@ -213,7 +217,6 @@ import { signEntityHashes, verifyHankoForHash } from '../../../hanko/signing';
 
 import { computeHtlcEnvelopeContextHash, computeHtlcSecretOfferContextHash } from '../../../protocol/htlc/codec/envelope';
 
-import { buildHtlcOnionAdvanceTx } from '../../../entity/paybook/onion-advance';
 import { hashEncryptedHtlcLayer } from '../../../protocol/htlc/codec/onion-layer';
 
 import { encodeHtlcSecretOffer, encodeOnionLayer } from '../../../protocol/htlc/codec/onion';
@@ -339,16 +342,16 @@ const makeProposalAccount = (mempool: AccountTx[], leftEntity: string, rightEnti
         entityId: leftEntity,
         counterpartyId: rightEntity,
       }),
-      deltas: new Map(),
-      locks: new Map(),
-      swapOffers: new Map(),
+      deltas: PersistentAccountStateMap.empty('deltas'),
+      locks: PersistentAccountStateMap.empty('locks'),
+      swapOffers: PersistentAccountStateMap.empty('swapOffers'),
       leftPendingJClaims: createEmptyAccountJClaimAccumulator(),
       rightPendingJClaims: createEmptyAccountJClaimAccumulator(),
       lastFinalizedJHeight: 0,
       disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 10 },
       jNonce: 0,
-      requestedRebalance: new Map(),
-      requestedRebalanceFeeState: new Map(),
+      requestedRebalance: PersistentAccountStateMap.empty('requestedRebalance'),
+      requestedRebalanceFeeState: PersistentAccountStateMap.empty('requestedRebalanceFeeState'),
     },
     status: 'active',
     mempool: [...mempool],
@@ -359,15 +362,13 @@ const makeProposalAccount = (mempool: AccountTx[], leftEntity: string, rightEnti
       accountTxs: [],
       prevFrameHash: '',
       accountStateRoot: `0x${'00'.repeat(32)}`,
-      deltas: [],
       stateHash: '',
-      byLeft: true,
     },
     currentHeight: 0,
     rollbackCount: 0,
     proofHeader: { fromEntity: leftEntity, toEntity: rightEntity, nextProofNonce: 0 },
-    pendingWithdrawals: new Map(),
-    shadow: { rebalance: { policy: new Map(), submittedAtByToken: new Map() } },
+    pendingWithdrawals: PersistentAccountStateMap.empty('pendingWithdrawals'),
+    shadow: { rebalance: { policy: PersistentAccountStateMap.empty('rebalanceShadowPolicy'), submittedAtByToken: PersistentAccountStateMap.empty('rebalanceShadowSubmitted') } },
   };
 };
 
@@ -547,7 +548,7 @@ const makeReplicaMissingPrevFrameHash = (): EntityReplica => ({
   entityEncPubKey: '',
   mempool: [],
   isProposer: true,
-  state: {
+  state: createEntityFrameCandidateState({
     entityId: `0x${'11'.repeat(32)}`,
     height: 1,
     timestamp: 0,
@@ -555,7 +556,7 @@ const makeReplicaMissingPrevFrameHash = (): EntityReplica => ({
     proposals: new Map(),
     config: makeSingleSignerConfig(),
     reserves: new Map(),
-    accounts: new Map(),
+    accounts: PersistentEntityAccountMap.empty(`0x${'11'.repeat(32)}`, computeEntityAccountValueHash),
     deferredAccountProposals: new Map(),
     lastFinalizedJHeight: 0,
     profile: {
@@ -568,10 +569,10 @@ const makeReplicaMissingPrevFrameHash = (): EntityReplica => ({
     paybook: { entries: new Map(), feesEarned: 0n },
     swapTradingPairs: [],
     crontabState: initCrontab(),
-  },
+  }),
 });
 
-const makeEntityState = (entityId: string): EntityState => ({
+const makeEntityState = (entityId: string): EntityState => createEntityFrameCandidateState({
   entityId,
   entityEncryptionPublicKey: `0x${'44'.repeat(32)}`,
   height: 0,
@@ -580,7 +581,7 @@ const makeEntityState = (entityId: string): EntityState => ({
   proposals: new Map(),
   config: makeSingleSignerConfig(),
   reserves: new Map(),
-  accounts: new Map(),
+  accounts: PersistentEntityAccountMap.empty(entityId, computeEntityAccountValueHash),
   deferredAccountProposals: new Map(),
   lastFinalizedJHeight: 0,
   profile: {
@@ -736,6 +737,17 @@ const installAuditJAdapter = (env: RuntimeReplica, adapter: JAdapter): void => {
   attachLiveJAdapter(env, 'Testnet', adapter);
 };
 
+const applyDraftAccountTx = async (
+  account: AccountReplica,
+  ...args: [AccountTx, boolean, number, number]
+) => {
+  const transition = beginAccountTransition(account);
+  const result = await applyAccountTx(accountTransitionView(transition), ...args);
+  if (result.ok) publishAccountTransition(account, transition);
+  else discardAccountTransition(transition);
+  return result;
+};
+
 describe('audit fail-fast regressions', () => {
   test('finalized j-events mark mutated account docs dirty for storage replay', async () => {
     const seed = 'j-event-account-storage-mark seed alpha beta gamma';
@@ -770,7 +782,7 @@ describe('audit fail-fast regressions', () => {
       entityIsLeft ? entityId : counterpartyId,
       entityIsLeft ? counterpartyId : entityId,
     );
-    const finalProofbody = makeEmptyProofBody();
+    const finalProofbody = buildAccountProofBody(account, '').proofBodyStruct;
     const finalProofbodyHash = hashProofBodyStruct(finalProofbody);
     account.activeDispute = {
       startedByLeft: true,
@@ -1837,7 +1849,7 @@ describe('audit fail-fast regressions', () => {
 
     expect(resolveAutoRebalanceFeePolicy(account, entityId, 1)).toBeUndefined();
 
-    account.state.rebalanceFeePolicies = new Map([
+    account.state.rebalanceFeePolicies = PersistentAccountStateMap.fromEntries('rebalanceFeePolicies', [
       [
         1,
         {
@@ -1863,7 +1875,7 @@ describe('audit fail-fast regressions', () => {
     const leftId = `0x${'15'.repeat(32)}`;
     const rightId = `0x${'f5'.repeat(32)}`;
     const account = makeProposalAccount([], leftId, rightId);
-    account.state.deltas.set(1, createDefaultDelta(1));
+    account.state.deltas = account.state.deltas.updated(1, createDefaultDelta(1));
     const tx: AccountTx = {
       type: 'rebalance_policy',
       data: {
@@ -1875,7 +1887,7 @@ describe('audit fail-fast regressions', () => {
       },
     };
 
-    const result = await applyAccountTx(account, tx, true, 123, 0);
+    const result = await applyDraftAccountTx(account, tx, true, 123, 0);
 
     expect(result.ok).toBe(true);
     expect(account.state.rebalanceFeePolicies?.get(1)?.left).toEqual({
@@ -1887,12 +1899,12 @@ describe('audit fail-fast regressions', () => {
     });
     expect(account.state.rebalanceFeePolicies?.get(1)?.right).toBeUndefined();
 
-    const retry = await applyAccountTx(account, tx, true, 999, 0);
+    const retry = await applyDraftAccountTx(account, tx, true, 999, 0);
     expect(retry.ok).toBe(true);
     expect(account.state.rebalanceFeePolicies?.get(1)?.left?.updatedAt).toBe(123);
 
     const beforeConflict = computeAccountStateRoot(account.state);
-    const conflict = await applyAccountTx(
+    const conflict = await applyDraftAccountTx(
       account,
       {
         ...tx,
@@ -1905,7 +1917,7 @@ describe('audit fail-fast regressions', () => {
     expect(conflict).toMatchObject({ ok: false, rejection: { message: expect.stringContaining('REBALANCE_POLICY_EQUIVOCATION') } });
     expect(computeAccountStateRoot(account.state)).toBe(beforeConflict);
 
-    const stale = await applyAccountTx(
+    const stale = await applyDraftAccountTx(
       account,
       {
         ...tx,
@@ -1918,7 +1930,7 @@ describe('audit fail-fast regressions', () => {
     expect(stale.ok).toBe(true);
     expect(computeAccountStateRoot(account.state)).toBe(beforeConflict);
 
-    const right = await applyAccountTx(
+    const right = await applyDraftAccountTx(
       account,
       {
         ...tx,
@@ -1937,14 +1949,14 @@ describe('audit fail-fast regressions', () => {
     const leftId = `0x${'18'.repeat(32)}`;
     const rightId = `0x${'f8'.repeat(32)}`;
     const account = makeProposalAccount([], leftId, rightId);
-    account.state.deltas.set(1, createDefaultDelta(1));
+    account.state.deltas = account.state.deltas.updated(1, createDefaultDelta(1));
     const before = computeAccountStateRoot(account.state);
     const malformed = {
       type: 'rebalance_policy',
       data: { tokenId: 1, policyVersion: 1, baseFee: 7, liquidityFeeBps: 5, gasFee: 11 },
     } as unknown as AccountTx;
 
-    const result = await applyAccountTx(account, malformed, true, 123, 0);
+    const result = await applyDraftAccountTx(account, malformed, true, 123, 0);
 
     expect(result).toMatchObject({ ok: false, rejection: { message: expect.stringContaining('invalid fee types') } });
     expect(computeAccountStateRoot(account.state)).toBe(before);
@@ -1959,13 +1971,13 @@ describe('audit fail-fast regressions', () => {
       const delta = createDefaultDelta(tokenId);
       delta.offdelta = 1_000n;
       delta.rightCreditLimit = 2_000n;
-      account.state.deltas.set(tokenId, delta);
-      account.shadow.rebalance.policy.set(tokenId, {
+      account.state.deltas = account.state.deltas.updated(tokenId, delta);
+      account.shadow.rebalance.policy = account.shadow.rebalance.policy.updated(tokenId, {
         r2cRequestSoftLimit: 100n,
         hardLimit: 2_000n,
         maxAcceptableFee: 100n,
       });
-      const policies = account.state.rebalanceFeePolicies ?? new Map();
+      const policies = new Map(account.state.rebalanceFeePolicies);
       policies.set(tokenId, {
         right: {
           policyVersion: 1,
@@ -1975,10 +1987,10 @@ describe('audit fail-fast regressions', () => {
           updatedAt: 1,
         },
       });
-      account.state.rebalanceFeePolicies = policies;
+      account.state.rebalanceFeePolicies = PersistentAccountStateMap.fromEntries('rebalanceFeePolicies', policies);
     }
     const restored = hydrateAccountDocFromStorage(
-      decodeValidatedBuffer(encodeBuffer(projectAccountDoc(account)), validateStorageAccountDocValue),
+      decodeValidatedBuffer(encodeBuffer(projectPortableAccountDoc(account)), validateStorageAccountDocValue),
     );
 
     const liveTxs = checkAutoRebalance(account, entityId, hubId);
@@ -1994,8 +2006,8 @@ describe('audit fail-fast regressions', () => {
     const userId = `0x${'f6'.repeat(32)}`;
     const state = makeEntityState(hubId);
     const account = makeProposalAccount([], hubId, userId);
-    account.state.deltas.set(1, createDefaultDelta(1));
-    account.state.deltas.set(2, createDefaultDelta(2));
+    account.state.deltas = account.state.deltas.updated(1, createDefaultDelta(1));
+    account.state.deltas = account.state.deltas.updated(2, createDefaultDelta(2));
     state.accounts.set(userId, account);
 
     const result = handleSetHubConfigEntityTx(env, state, {
@@ -2035,8 +2047,8 @@ describe('audit fail-fast regressions', () => {
     const leftId = `0x${'17'.repeat(32)}`;
     const rightId = `0x${'f7'.repeat(32)}`;
     const account = makeProposalAccount([], leftId, rightId);
-    account.state.deltas.set(1, createDefaultDelta(1));
-    account.state.rebalanceFeePolicies = new Map([
+    account.state.deltas = account.state.deltas.updated(1, createDefaultDelta(1));
+    account.state.rebalanceFeePolicies = PersistentAccountStateMap.fromEntries('rebalanceFeePolicies', [
       [
         1,
         {
@@ -2048,13 +2060,13 @@ describe('audit fail-fast regressions', () => {
     const root = computeAccountStateRoot(account.state);
 
     const restored = hydrateAccountDocFromStorage(
-      decodeValidatedBuffer(encodeBuffer(projectAccountDoc(account)), validateStorageAccountDocValue),
+      decodeValidatedBuffer(encodeBuffer(projectPortableAccountDoc(account)), validateStorageAccountDocValue),
     );
 
     expect(restored.state.rebalanceFeePolicies).toEqual(account.state.rebalanceFeePolicies);
     expect(computeAccountStateRoot(restored.state)).toBe(root);
 
-    const corrupt = projectAccountDoc(account);
+    const corrupt = structuredClone(projectPortableAccountDoc(account));
     const left = corrupt.state.rebalanceFeePolicies?.get(1)?.left;
     if (!left) throw new Error('TEST_REBALANCE_POLICY_REQUIRED');
     (left as typeof left & { unexpected: boolean }).unexpected = true;
@@ -2067,7 +2079,7 @@ describe('audit fail-fast regressions', () => {
     const entityId = `0x${'15'.repeat(32)}`;
     const hubId = `0x${'f5'.repeat(32)}`;
     const account = makeProposalAccount([], entityId, hubId);
-    account.state.rebalanceFeePolicies = new Map([
+    account.state.rebalanceFeePolicies = PersistentAccountStateMap.fromEntries('rebalanceFeePolicies', [
       [
         1,
         {
@@ -2081,7 +2093,7 @@ describe('audit fail-fast regressions', () => {
         },
       ],
     ]);
-    account.shadow.rebalance.policy.set(1, {
+    account.shadow.rebalance.policy = account.shadow.rebalance.policy.updated(1, {
       r2cRequestSoftLimit: 500n,
       hardLimit: 100_000n,
       maxAcceptableFee: 1_000n,
@@ -2089,7 +2101,7 @@ describe('audit fail-fast regressions', () => {
     const delta = createDefaultDelta(1);
     delta.offdelta = 60_000n;
     delta.rightCreditLimit = 100_000n;
-    account.state.deltas.set(1, delta);
+    account.state.deltas = account.state.deltas.updated(1, delta);
     const withSibling = createEmptyEnv('rebalance-explicit-role-with-sibling');
     const withoutSibling = createEmptyEnv('rebalance-explicit-role-without-sibling');
     const misleadingOwner = makeEntityState(entityId);
@@ -2107,8 +2119,8 @@ describe('audit fail-fast regressions', () => {
     } as never);
 
     const [withResult, withoutResult] = await Promise.all([
-      runPostFrameAutoRebalanceCheck(structuredClone(account), entityId, hubId, 1, false),
-      runPostFrameAutoRebalanceCheck(structuredClone(account), entityId, hubId, 1, false),
+      runPostFrameAutoRebalanceCheck(forkAccountReplicaShell(account), entityId, hubId, 1, false),
+      runPostFrameAutoRebalanceCheck(forkAccountReplicaShell(account), entityId, hubId, 1, false),
     ]);
 
     expect(withResult).toEqual(withoutResult);
@@ -2122,7 +2134,7 @@ describe('audit fail-fast regressions', () => {
     const usd = 10n ** 18n;
     const state = makeEntityState(entityId);
     const account = makeProposalAccount([], entityId, hubId);
-    account.state.rebalanceFeePolicies = new Map([
+    account.state.rebalanceFeePolicies = PersistentAccountStateMap.fromEntries('rebalanceFeePolicies', [
       [
         1,
         {
@@ -2136,7 +2148,7 @@ describe('audit fail-fast regressions', () => {
         },
       ],
     ]);
-    account.state.deltas.set(1, {
+    account.state.deltas = account.state.deltas.updated(1, {
       tokenId: 1,
       collateral: 0n,
       ondelta: 0n,
@@ -2279,6 +2291,7 @@ describe('audit fail-fast regressions', () => {
     replica.signerId = signerId;
     replica.state.entityId = entityId;
     replica.state.config = makeSingleSignerConfigFor(signerId);
+    replica.state.entityEncryptionPublicKey = provisionTestEntityEncryptionKey(env, entityId).publicKey;
     const entityInput: EntityInput = {
       entityId: replica.entityId,
       entityTxs: [

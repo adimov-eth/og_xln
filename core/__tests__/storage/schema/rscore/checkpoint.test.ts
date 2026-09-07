@@ -141,9 +141,13 @@ const checkpoint = (
       ],
       null,
       null,
+      null,
     ],
-    [null, null, null, null, null],
+    [null, null, null, null, null, null, null, null],
     [puts, dels],
+    emptyTree,
+    emptyTree,
+    emptyTree,
     emptyTree,
     emptyTree,
     emptyTree,
@@ -172,6 +176,12 @@ describe('rscore physical checkpoint storage', () => {
       bit: 9,
       representativeKey,
     });
+    expect(key[65]).toBe(7);
+    expect(key.subarray(0, 66)).not.toEqual(keyRscoreAccountNodePrefix(OWNER, ACCOUNT, 6));
+    const retiredKey = Buffer.from(key);
+    retiredKey[65] = 6;
+    expect(() => parseRscoreAccountJClaimPathNodeKey(retiredKey))
+      .toThrow('STORAGE_RSCORE_J_CLAIM_PATH_KEY_INVALID');
     const parsed = parseRscoreAccountJClaimPathNodeKey(key);
     expect(parsed.side).toBe(1);
     expect(parsed.path).toEqual({
@@ -211,20 +221,28 @@ describe('rscore physical checkpoint storage', () => {
       input(checkpoint(0, 1, { jClaimPuts: [put] })),
     );
     await apply(db, inserted);
-    expect((await loadRscoreCheckpoint(db, OWNER))?.accounts[0]?.[8]).toEqual([put]);
+    expect((await loadRscoreCheckpoint(db, OWNER))?.accounts[0]?.[11]).toEqual([put]);
     const pathKey = keyRscoreAccountJClaimPathNode(OWNER, ACCOUNT, 0, {
       kind: 'leaf',
       key: node.key,
     });
     expect(rows.has(pathKey.toString('hex'))).toBe(true);
     expect(pathKey.subarray(pathKey.byteLength - 32).equals(hashBytes)).toBe(false);
+    // Namespace 6 owns pulls. An old J-claim row must fail closed there,
+    // never overwrite a pull or be recovered through a compatibility reader.
+    const retiredKey = Buffer.from(pathKey);
+    retiredKey[65] = 6;
+    const persistedClaim = await db.get(pathKey);
+    rows.set(retiredKey.toString('hex'), { key: retiredKey, value: persistedClaim });
+    await expect(loadRscoreCheckpoint(db, OWNER)).rejects.toThrow('RSCORE_CHECKPOINT_STORED_LEAF_ARITY');
+    rows.delete(retiredKey.toString('hex'));
 
     const deleted = await prepareRscoreCheckpointStorage(
       db,
       input(checkpoint(1, 2, { jClaimDels: [hashBytes] })),
     );
     await apply(db, deleted);
-    expect((await loadRscoreCheckpoint(db, OWNER))?.accounts[0]?.[8]).toEqual([]);
+    expect((await loadRscoreCheckpoint(db, OWNER))?.accounts[0]?.[11]).toEqual([]);
   });
 
   test('rejects a semantic leaf stored under a different physical key', async () => {

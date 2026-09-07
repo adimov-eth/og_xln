@@ -1,3 +1,4 @@
+import { createEmptyEnv, saveEnvToDB, closeRuntimeDb, closeInfraDb } from '../../../runtime';
 import { XLN_PROTOCOL_VERSION } from '../../../protocol/version';
 import { readFileSync } from 'node:fs';
 
@@ -96,6 +97,8 @@ const entityId = `0x${'aa'.repeat(32)}`;
 
 const counterpartyId = `0x${'bb'.repeat(32)}`;
 
+const hubRuntimeId = deriveSignerAddressSync('radapter-local-hub', '1').toLowerCase();
+
 const adapterAuthChallenge = `0x${'41'.repeat(32)}`;
 
 process.env['XLN_RADAPTER_AUTH_SEED'] = process.env['XLN_RADAPTER_AUTH_SEED'] || 'seed';
@@ -111,7 +114,7 @@ const makeHubProfile = (id: string, name: string, lastUpdated = 7): Profile =>
     signingSeed: `radapter-live-profile:${id}:${name}`,
     name,
     lastUpdated,
-    runtimeId: `runtime:${name.toLowerCase()}`,
+    runtimeId: deriveSignerAddressSync(`radapter-live-profile:${id}:${name}`, '1').toLowerCase(),
     runtimeEncPubKey: `0x${'11'.repeat(32)}`,
     isHub: true,
     jurisdiction: {
@@ -280,6 +283,7 @@ const makeCrowdedBidLevelBook = (price: bigint, orderCount: number): BookState =
 const makeOrderbookExt = (books: Map<string, BookState>): OrderbookExtState => ({
   books,
   orderPairs: new Map(),
+  pairDimensions: new Map(),
   referrals: new Map(),
   hubProfile: {
     entityId,
@@ -464,7 +468,6 @@ test('runtime adapter solvency-summary returns per-stack asset conservation', as
         tokenId: 1,
         reserves: 100n,
         confirmedCollateral: 100n,
-        pendingCollateral: 50n,
         // reserves + collateral is what a Runtime owns; the Depository total it
         // must equal is not knowable from an off-chain read, so this endpoint
         // reports the quantity and withholds a verdict rather than inventing one.
@@ -768,7 +771,8 @@ test('runtime adapter direct read paths return compact read snapshots', async ()
     expect(doc.state.watchSeed).toBe('');
     expect(doc.mempool).toHaveLength(0);
     expect(doc.currentFrame.accountTxs.length).toBeLessThanOrEqual(20);
-    expect(doc.currentFrame.deltas.length).toBeLessThanOrEqual(100);
+    expect('deltas' in doc.currentFrame).toBe(false);
+    expect(doc.state.deltas.size).toBeLessThanOrEqual(100);
     expect(doc.state.settlementWorkspace).toBeUndefined();
     expect(doc.state.swapOffers.size).toBe(100);
     expect(doc.state.swapOffers.has('offer-0')).toBe(false);
@@ -807,7 +811,7 @@ test('current stored view frame overlays local identity without mixing a later l
   const env = makeEnv();
   const replica = Array.from(env.state.eReplicas.values())[0]!;
   replica.state.prevFrameHash = 'frame-h7';
-  replica.htlcNotes = new Map([['hashlock:local-h7', 'local note h7']]);
+  replica.state.paybook.entries = new Map([['0x1717171717171717171717171717171717171717171717171717171717171717', { hashlock: '0x1717171717171717171717171717171717171717171717171717171717171717', amount: 7n, createdTimestamp: 700 }]]);
   const storedCore = structuredClone(projectEntityCoreDoc(replica.state));
   const frame = await resolveRuntimeAdapterRead<{
     height: number;
@@ -821,7 +825,7 @@ test('current stored view frame overlays local identity without mixing a later l
         prevFrameHash?: string;
         profile: { name: string };
         reserves: Map<number, bigint>;
-        htlcNotes?: Map<string, string>;
+        paybook: { entries: Map<string, { hashlock: string; amount: bigint; createdTimestamp: number }> };
       };
     } | null;
   }>(
@@ -850,7 +854,7 @@ test('current stored view frame overlays local identity without mixing a later l
         replica.state.profile = { ...replica.state.profile, name: 'Later live frame' };
         replica.state.reserves = new Map([[1, 800n]]);
         replica.entityEncPubKey = 'pub-h8';
-        replica.htlcNotes = new Map([['hashlock:local-h8', 'local note h8']]);
+        replica.state.paybook.entries = new Map([['0x1818181818181818181818181818181818181818181818181818181818181818', { hashlock: '0x1818181818181818181818181818181818181818181818181818181818181818', amount: 8n, createdTimestamp: 800 }]]);
         return {
           core: storedCore,
           accounts: { items: [], nextCursor: null },
@@ -871,7 +875,7 @@ test('current stored view frame overlays local identity without mixing a later l
   expect(frame.activeEntity?.core.isProposer).toBe(true);
   expect(frame.activeEntity?.core.entityEncryptionPublicKey).toBe(`0x${'44'.repeat(32)}`);
   expect('entityEncPrivKey' in (frame.activeEntity?.core ?? {})).toBe(false);
-  expect(frame.activeEntity?.core.htlcNotes).toEqual(new Map([['hashlock:local-h7', 'local note h7']]));
+  expect(frame.activeEntity?.core.paybook.entries).toEqual(new Map([['0x1717171717171717171717171717171717171717171717171717171717171717', { hashlock: '0x1717171717171717171717171717171717171717171717171717171717171717', amount: 7n, createdTimestamp: 700 }]]));
 });
 
 test('runtime adapter view-frame includes live gossip summaries for visible account peers', async () => {
@@ -901,7 +905,7 @@ test('runtime adapter view-frame includes live gossip summaries for visible acco
 
 test('runtime adapter graph-frame keeps gossip peers and complete local account edges', async () => {
   const env = makeEnv();
-  env.runtimeId = 'runtime:h1';
+  env.runtimeId = hubRuntimeId;
   env.gossip = createGossipLayer();
   env.gossip.announce(makeHubProfile(entityId, 'H1'));
   env.gossip.announce(makeHubProfile(counterpartyId, 'H2'));
@@ -938,7 +942,7 @@ test('runtime adapter graph-frame keeps gossip peers and complete local account 
     },
   );
 
-  expect(frame.runtimeId).toBe('runtime:h1');
+  expect(frame.runtimeId).toBe(hubRuntimeId);
   expect(frame.height).toBe(7);
   expect(frame.timestamp).toBe(700);
   expect(frame.stateHash).toBe('');
@@ -993,7 +997,7 @@ test('runtime adapter graph-frame keeps gossip peers and complete local account 
 
 test('runtime adapter live graph-frame never reads a prunable storage generation', async () => {
   const env = makeEnv();
-  env.runtimeId = 'runtime:h1';
+  env.runtimeId = hubRuntimeId;
   let storagePageReads = 0;
 
   const frame = await resolveRuntimeAdapterRead<RuntimeAdapterGraphFrame>(
@@ -1221,7 +1225,7 @@ test('runtime adapter graph-frame synthesizes missing account endpoint nodes', a
 
 test('runtime adapter historical graph-frame derives its timestamp from the selected frame', async () => {
   const env = makeEnv();
-  env.runtimeId = 'runtime:h1';
+  env.runtimeId = hubRuntimeId;
   const liveLoader = makeTestViewPageLoader(env);
   const historicalHeight = 6;
   const historicalTimestamp = 600;
@@ -1279,7 +1283,7 @@ test('runtime adapter entity summaries preserve gossip jurisdiction for live hub
 
   const hub = entities.find(entry => entry.entityId === entityId);
   expect(hub?.label).toBe('H1');
-  expect(hub?.runtimeId).toBe('runtime:h1');
+  expect(hub?.runtimeId).toBe(makeHubProfile(entityId, 'H1').runtimeId);
   expect(hub?.isHub).toBe(true);
   expect(hub?.jurisdiction?.name).toBe('Testnet');
   expect(hub?.jurisdiction?.chainId).toBe(31337);
@@ -1381,6 +1385,7 @@ test('runtime adapter view frame defaults to the live entity with real relations
       orderbookExt: {
         books: new Map(),
         orderPairs: new Map(),
+        pairDimensions: new Map(),
         referrals: new Map(),
         hubProfile: {
           entityId: emptyEntityId,
@@ -1423,6 +1428,7 @@ test('runtime adapter historical batch without entityId defaults to live entity 
       orderbookExt: {
         books: new Map(),
         orderPairs: new Map(),
+        pairDimensions: new Map(),
         referrals: new Map(),
         hubProfile: {
           entityId: emptyEntityId,
@@ -1555,7 +1561,7 @@ test('runtime adapter timeline-index returns a bounded compact timestamp page', 
           height,
           timestamp: height * 1_000,
           postStateHash: `post-state-${height}`,
-          stateHash: `state-${height}`,
+          canonicalStateHash: `state-${height}`,
           materializedState: height % 2 === 0,
           runtimeInput: { runtimeTxs: [], entityInputs: [], jInputs: [] },
           touchedEntities: [],
@@ -1667,37 +1673,46 @@ test('runtime adapter timeline-index reports an empty timeline before the first 
 });
 
 test('runtime adapter recovery bundle read is gated by seed-derived lookup key', async () => {
-  const env = makeEnv();
-  env.runtimeSeed = 'test test test test test test test test test test test junk';
-  env.runtimeId = deriveSignerAddressSync(env.runtimeSeed, '1').toLowerCase();
-  const lookupKey = deriveRuntimeRecoveryLookupKey(env.runtimeId, env.runtimeSeed);
+  const env = createEmptyEnv(`radapter-recovery-${crypto.randomUUID()}`);
+  env.quietRuntimeLogs = true;
+  env.state.height = 1;
+  env.state.timestamp = 100;
+  try {
+    const lookupKey = deriveRuntimeRecoveryLookupKey(env.runtimeId, env.runtimeSeed);
+    await expect(resolveRuntimeAdapterRead({ env }, `recovery/bundles/${lookupKey}`))
+      .rejects.toThrow('RECOVERY_BUNDLE_CHECKPOINT_FRAME_MISSING');
+    await saveEnvToDB(env, { runtimeTxs: [], entityInputs: [] }, [], new Map());
 
-  const response = await resolveRuntimeAdapterRead<{
-    ok: true;
-    runtimeId: string;
-    lookupKey: string;
-    bundle: Parameters<typeof decryptRuntimeRecoveryBundle>[0];
-    bundles: Array<Parameters<typeof decryptRuntimeRecoveryBundle>[0]>;
-  }>({ env }, `recovery/bundles/${encodeURIComponent(lookupKey)}`);
+    const response = await resolveRuntimeAdapterRead<{
+      ok: true;
+      runtimeId: string;
+      lookupKey: string;
+      bundle: Parameters<typeof decryptRuntimeRecoveryBundle>[0];
+      bundles: Array<Parameters<typeof decryptRuntimeRecoveryBundle>[0]>;
+    }>({ env }, `recovery/bundles/${encodeURIComponent(lookupKey)}`);
 
-  expect(response.ok).toBe(true);
-  expect(response.runtimeId).toBe(env.runtimeId);
-  expect(response.lookupKey).toBe(lookupKey);
-  expect(response.bundle.lookupKey).toBe(lookupKey);
-  expect(response.bundles).toHaveLength(1);
-  const decrypted = await decryptRuntimeRecoveryBundle(response.bundle, env.runtimeSeed);
-  expect(decrypted.runtimeId).toBe(env.runtimeId);
-  expect(decrypted.runtimeHeight).toBe(env.state.height);
-  expect(decrypted.signers[0]?.address).toBe(env.runtimeId);
+    expect(response.ok).toBe(true);
+    expect(response.runtimeId).toBe(env.runtimeId);
+    expect(response.lookupKey).toBe(lookupKey);
+    expect(response.bundle.lookupKey).toBe(lookupKey);
+    expect(response.bundles).toHaveLength(1);
+    const decrypted = await decryptRuntimeRecoveryBundle(response.bundle, env.runtimeSeed);
+    expect(decrypted.runtimeId).toBe(env.runtimeId);
+    expect(decrypted.runtimeHeight).toBe(env.state.height);
+    expect(decrypted.signers[0]?.address).toBe(env.runtimeId);
 
-  await expect(resolveRuntimeAdapterRead({ env }, `recovery/bundles/0x${'00'.repeat(32)}`)).rejects.toThrow(
-    'recovery bundle not found',
-  );
+    await expect(resolveRuntimeAdapterRead({ env }, `recovery/bundles/0x${'00'.repeat(32)}`)).rejects.toThrow(
+      'recovery bundle not found',
+    );
 
-  const noSeedEnv = { ...env, runtimeSeed: undefined } as RuntimeReplica;
-  await expect(
-    resolveRuntimeAdapterRead({ env: noSeedEnv }, `recovery/bundles/${encodeURIComponent(lookupKey)}`),
-  ).rejects.toThrow('recovery bundle reads require runtimeSeed');
+    const noSeedEnv = { ...env, runtimeSeed: undefined } as RuntimeReplica;
+    await expect(
+      resolveRuntimeAdapterRead({ env: noSeedEnv }, `recovery/bundles/${encodeURIComponent(lookupKey)}`),
+    ).rejects.toThrow('recovery bundle reads require runtimeSeed');
+  } finally {
+    await closeRuntimeDb(env);
+    await closeInfraDb(env);
+  }
 });
 
 test('runtime adapter view frame defaults to 10 accounts and cursor pagination', async () => {

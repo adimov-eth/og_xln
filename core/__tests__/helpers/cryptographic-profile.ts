@@ -4,7 +4,9 @@ import {
   signDigest,
 } from '../../account/crypto';
 import { generateLazyEntityId } from '../../entity/factory';
-import { buildSingleSignerHanko } from '../../hanko/batch';
+import { getBytes } from 'ethers';
+import { asHankoBytes32, encodeSignedHanko } from '../../hanko/codec';
+import { resolveHankoBoardDelays } from '../../hanko/claims';
 import type {
   Profile,
   ProfileAccount,
@@ -90,7 +92,21 @@ export const certifySingleSignerProfileFixture = (
     ...profile,
     metadata: {
       ...profile.metadata,
-      profileHanko: buildSingleSignerHanko(profile.entityId, profileHash, signer.privateKey),
+      // Gossip carries the full offchain proof; 65-byte compaction belongs
+      // only at the jurisdiction submission boundary.
+      profileHanko: encodeSignedHanko({
+        digest: profileHash,
+        privateKeys: [getBytes(signer.privateKey)],
+        placeholders: [],
+        claims: [{
+          entityId: asHankoBytes32(profile.entityId, 'ENTITY_ID'),
+          entityIndexes: [0n],
+          weights: [1n],
+          threshold: 1n,
+          ...resolveHankoBoardDelays(),
+        }],
+        memberSignatures: [],
+      }),
     },
   });
   return canonicalizeProfile({

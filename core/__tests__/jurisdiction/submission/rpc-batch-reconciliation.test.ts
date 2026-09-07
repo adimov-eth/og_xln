@@ -1,3 +1,4 @@
+import { encodeInt512 } from "../../../protocol/crypto/abi-money";
 import { expect, test } from 'bun:test';
 import { ethers } from 'ethers';
 import { Depository__factory } from '../../../../jurisdictions/typechain-types';
@@ -257,7 +258,7 @@ test('receipt reader canonicalizes DisputeFinalized nonce before binding calldat
       watchSeed: bytes32('55'),
       leftResponseSeconds: 10,
       rightResponseSeconds: 10,
-      offdeltas: [5n, -3n],
+      offdeltas: [encodeInt512(5n), encodeInt512(-3n)],
       tokenIds: [1n, 2n],
       transformers: [],
     },

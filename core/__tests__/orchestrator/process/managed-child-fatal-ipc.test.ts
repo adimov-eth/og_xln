@@ -39,7 +39,7 @@ test('fatal report parser accepts only bounded allowlisted metadata', () => {
   expect(parseManagedChildFatalReport({ type: 'xln:managed-child-fatal' })).toBeNull();
 });
 
-test('runtime fatal waits for parent fsync acknowledgement before non-zero exit', async () => {
+test('runtime fatal awaits parent fsync acknowledgement and isolates its loop while the host stays live', async () => {
   const root = mkdtempSync(join(tmpdir(), 'xln-managed-child-fatal-'));
   tempPaths.push(root);
   const journalPath = join(root, 'incidents.jsonl');
@@ -84,8 +84,10 @@ test('runtime fatal waits for parent fsync acknowledgement before non-zero exit'
   const output = `${stdout}\n${stderr}`;
   const restored = openRelayIncidentJournal(journalPath);
 
-  expect(exitCode, output).toBe(1);
+  expect(exitCode, output).toBe(0);
   expect(output).toContain('MANAGED_CHILD_FATAL_IPC_ACK:runtime_tx_unknown-');
+  expect(output).toContain('RUNTIME_LOOP_HALTED');
+  expect(output).toContain('MANAGED_CHILD_FATAL_IPC_ISOLATION_CONFIRMED');
   expect(output).not.toContain('MANAGED_CHILD_FATAL_IPC_FIXTURE_TIMEOUT');
   expect(restored.incidents).toHaveLength(1);
   expect(restored.incidents[0]).toMatchObject({

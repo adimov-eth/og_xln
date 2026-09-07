@@ -11,29 +11,50 @@ import {
 } from '../../../orchestrator/process/hub-engine-plan';
 import { buildRustHubGenesisConfig } from '../../../orchestrator/process/rust-hub-genesis';
 import { safeStringify } from '../../../protocol/serialization';
+import { planNativeHubBootstrapPeers } from '../../../orchestrator/process/reset-startup';
+
+test('native two-jurisdiction bootstrap requires primary hub mesh and every MM owner in input order', () => {
+  const owner = (name: string, jurisdictionName: string) => ({
+    entityId: `${name}:${jurisdictionName}`, signerId: `${name}:${jurisdictionName}:signer`, jurisdictionName,
+  });
+  const primary = owner('H1', 'Testnet');
+  const secondary = owner('H1', 'Tron');
+  const hubs = ['H2', 'H3'].map(name => ({ name, owners: [owner(name, 'Tron'), owner(name, 'Testnet')] }));
+  const support = [
+    ...Array.from({ length: 3 }, (_, index) => ({ name: `MM${index + 1}`, chainId: 31337, ...owner(`MM${index + 1}`, 'Testnet'), depositoryAddress: 'testnet-depository' })),
+    ...Array.from({ length: 10 }, (_, index) => ({ name: `MM${index + 1}`, chainId: 31338, ...owner(`MM${index + 1}`, 'Tron'), depositoryAddress: 'tron-depository' })),
+  ];
+  // Native info is key-ordered: the secondary owner may precede the primary.
+  const peers = planNativeHubBootstrapPeers(primary.entityId, [secondary, primary], hubs, support);
+  expect(peers).toHaveLength(15);
+  expect(peers.map(peer => [peer.entityId, peer.ownerEntityId, peer.ownerSignerId, peer.tokenIds])).toEqual([
+    ...Array.from({ length: 10 }, (_, index) => [`MM${index + 1}:Tron`, secondary.entityId, secondary.signerId, [1, 2, 3, 4, 5]]),
+    ...['H2', 'H3'].map(name => [`${name}:Testnet`, primary.entityId, primary.signerId, [1, 3, 2]]),
+    ...Array.from({ length: 3 }, (_, index) => [`MM${index + 1}:Testnet`, primary.entityId, primary.signerId, [1, 2, 3]]),
+  ]);
+  expect(peers.filter(peer => peer.isHub).map(peer => peer.name)).toEqual(['H2', 'H3']);
+  expect(planNativeHubBootstrapPeers(primary.entityId, [secondary, primary], hubs, [])).toEqual(peers.filter(peer => peer.isHub));
+});
 
 test('the explicit plan engine selects H1 while H2/H3 remain TypeScript', () => {
   expect(['H1', 'H2', 'H3'].map(name => canonicalHubEngine(name, { XLN_HLT_ENGINE: 'ts' }))).toEqual([
-    'typescript', 'typescript', 'typescript',
+    'typescript',
+    'typescript',
+    'typescript',
   ]);
   expect(['H1', 'H2', 'H3'].map(name => canonicalHubEngine(name, { XLN_HLT_ENGINE: 'rust' }))).toEqual([
-    'rust', 'typescript', 'typescript',
+    'rust',
+    'typescript',
+    'typescript',
   ]);
   expect(canonicalHubEngine('H1', {})).toBe('typescript');
-  expect(() => canonicalHubEngine('H1', { XLN_HLT_ENGINE: 'native' }))
-    .toThrow('HUB_ENGINE_SELECTOR_INVALID:native');
+  expect(() => canonicalHubEngine('H1', { XLN_HLT_ENGINE: 'native' })).toThrow('HUB_ENGINE_SELECTOR_INVALID:native');
   expect(() => canonicalHubEngine('MM')).toThrow('HUB_ENGINE_NAME_INVALID:MM');
 });
 
 test('mesh supervisor dispatches canonical per-hub process kinds', () => {
-  const supervisor = readFileSync(
-    join(import.meta.dir, '../../../orchestrator/orchestrator.ts'),
-    'utf8',
-  );
-  const hubSpawner = readFileSync(
-    join(import.meta.dir, '../../../orchestrator/process/spawn/hub.ts'),
-    'utf8',
-  );
+  const supervisor = readFileSync(join(import.meta.dir, '../../../orchestrator/orchestrator.ts'), 'utf8');
+  const hubSpawner = readFileSync(join(import.meta.dir, '../../../orchestrator/process/spawn/hub.ts'), 'utf8');
   const source = `${supervisor}\n${hubSpawner}`;
   expect(supervisor).toContain('const engine = canonicalHubEngine(name)');
   expect(supervisor).toContain('engine,');
@@ -50,7 +71,7 @@ test('mesh supervisor dispatches canonical per-hub process kinds', () => {
   expect(source).not.toContain('offlineTsImport');
   expect(source).not.toContain('rust-handoff');
   expect(hubSpawner).toContain("const custodyRuntimeSeed = deps.runtimeSeedFor('CUSTODY')");
-  expect(hubSpawner).toContain('const routes = [...hubRoutes, ...supportRoutes');
+  expect(hubSpawner).toMatch(/const routes = \[\s*\.\.\.hubRoutes,\s*\.\.\.supportRoutes/);
 });
 
 test('dev verifies native bytes only when the explicit engine selects Rust H1', () => {
@@ -77,9 +98,7 @@ test('live Rust H1 smoke rejects a stale production binary', () => {
     'utf8',
   );
   expect(smoke).toContain("if (process.env['XLN_HLT_ENGINE'] === 'rust')");
-  expect(smoke).toContain(
-    "assertRustHubBinaryFresh(repoRoot, process.env['XLN_RSCORE_BINARY'])",
-  );
+  expect(smoke).toContain("assertRustHubBinaryFresh(repoRoot, process.env['XLN_RSCORE_BINARY'])");
 });
 
 test('Rust H1 process plan has no TS bootstrap/import/handoff path', () => {
@@ -88,14 +107,22 @@ test('Rust H1 process plan has no TS bootstrap/import/handoff path', () => {
   writeFileSync(binary, 'binary');
   try {
     const plan = buildRustHubProcessPlan({
-      name: 'H1', apiHost: '127.0.0.1', apiPort: 21001,
-      directHost: '127.0.0.1', directPort: 22001,
-      dbPath: join(root, 'h1'), runtimeSeedFile: join(root, 'seed'),
-      entityKeyFile: join(root, 'entity-key'), routesFile: join(root, 'routes.json'),
+      name: 'H1',
+      apiHost: '127.0.0.1',
+      apiPort: 21001,
+      directHost: '127.0.0.1',
+      directPort: 22001,
+      dbPath: join(root, 'h1'),
+      runtimeSeedFile: join(root, 'seed'),
+      entityKeyFile: join(root, 'entity-key'),
+      routesFile: join(root, 'routes.json'),
       genesisFile: join(root, 'genesis.json'),
-      jurisdictionsPath: join(root, 'jurisdictions.json'), runtimeSignerLabel: '1',
-      entitySignerLabel: 'h1-hub', primaryEntityId: `0x${'11'.repeat(32)}`,
-      workers: 8, binary,
+      jurisdictionsPath: join(root, 'jurisdictions.json'),
+      runtimeSignerLabel: '1',
+      entitySignerLabel: 'h1-hub',
+      primaryEntityId: `0x${'11'.repeat(32)}`,
+      workers: 8,
+      binary,
     });
     expect(plan.executable).toBe(binary);
     expect(plan.args).toContain('--jurisdictions');
@@ -110,15 +137,26 @@ test('Rust H1 process plan has no TS bootstrap/import/handoff path', () => {
 });
 
 test('Rust H1 refuses to bind its HTTP and direct listeners to one socket', () => {
-  expect(() => buildRustHubProcessPlan({
-    name: 'H1', apiHost: '127.0.0.1', apiPort: 21001,
-    directHost: '127.0.0.1', directPort: 21001,
-    dbPath: '/tmp/h1', runtimeSeedFile: '/tmp/seed', entityKeyFile: '/tmp/key',
-    routesFile: '/tmp/routes', genesisFile: '/tmp/genesis', jurisdictionsPath: '/tmp/j',
-    runtimeSignerLabel: '1', entitySignerLabel: 'h1-hub',
-    primaryEntityId: `0x${'11'.repeat(32)}`, workers: 8,
-    binary: process.execPath,
-  })).toThrow('RUST_HUB_LISTENER_COLLISION:127.0.0.1:21001');
+  expect(() =>
+    buildRustHubProcessPlan({
+      name: 'H1',
+      apiHost: '127.0.0.1',
+      apiPort: 21001,
+      directHost: '127.0.0.1',
+      directPort: 21001,
+      dbPath: '/tmp/h1',
+      runtimeSeedFile: '/tmp/seed',
+      entityKeyFile: '/tmp/key',
+      routesFile: '/tmp/routes',
+      genesisFile: '/tmp/genesis',
+      jurisdictionsPath: '/tmp/j',
+      runtimeSignerLabel: '1',
+      entitySignerLabel: 'h1-hub',
+      primaryEntityId: `0x${'11'.repeat(32)}`,
+      workers: 8,
+      binary: process.execPath,
+    }),
+  ).toThrow('RUST_HUB_LISTENER_COLLISION:127.0.0.1:21001');
 });
 
 test('dev freshness detector rejects stale native H1 bytes before the bounded build', () => {
@@ -134,9 +172,7 @@ test('dev freshness detector rejects stale native H1 bytes before the bounded bu
     const older = new Date(now.getTime() - 1_000);
     utimesSync(binary, older, older);
     utimesSync(source, now, now);
-    expect(() => assertRustHubBinaryFresh(root)).toThrow(
-      'RUST_HUB_BINARY_STALE:',
-    );
+    expect(() => assertRustHubBinaryFresh(root)).toThrow('RUST_HUB_BINARY_STALE:');
     utimesSync(binary, now, now);
     expect(assertRustHubBinaryFresh(root)).toBe(binary);
   } finally {
@@ -146,13 +182,22 @@ test('dev freshness detector rejects stale native H1 bytes before the bounded bu
 
 test('Rust stdout readiness is strict and process-owned', () => {
   expect(parseRustHubStatus('noise')).toBeNull();
-  expect(parseRustHubStatus(safeStringify({
-    status: 'ready', runtimeId: `0x${'11'.repeat(20)}`, listen: '127.0.0.1:22001', height: 0,
-  }))).toEqual({
-    status: 'ready', runtimeId: `0x${'11'.repeat(20)}`, listen: '127.0.0.1:22001', height: 0,
+  expect(
+    parseRustHubStatus(
+      safeStringify({
+        status: 'ready',
+        runtimeId: `0x${'11'.repeat(20)}`,
+        listen: '127.0.0.1:22001',
+        height: 0,
+      }),
+    ),
+  ).toEqual({
+    status: 'ready',
+    runtimeId: `0x${'11'.repeat(20)}`,
+    listen: '127.0.0.1:22001',
+    height: 0,
   });
-  expect(() => parseRustHubStatus('{"status":"ready","height":0}'))
-    .toThrow('RUST_HUB_READY_IDENTITY_INVALID');
+  expect(() => parseRustHubStatus('{"status":"ready","height":0}')).toThrow('RUST_HUB_READY_IDENTITY_INVALID');
 });
 
 test('Rust H1 genesis is explicit native machine configuration, not imported state', () => {
@@ -160,34 +205,78 @@ test('Rust H1 genesis is explicit native machine configuration, not imported sta
   const genesis = buildRustHubGenesisConfig({
     name: 'H1',
     runtimeId: address('1'),
-    entityEncryptionPublicKey: `0x${'22'.repeat(32)}`,
+    seed: 'native-genesis-test',
+    signerLabel: 'h1-hub',
     jurisdictionsJson: safeStringify({
       jurisdictions: {
         arrakis: {
-          name: 'Testnet', primary: true, status: 'active', chainId: 31337,
-          rpc: '/rpc', blockTimeMs: 10_000, entityProviderDeploymentBlock: 3,
+          name: 'Testnet',
+          primary: true,
+          status: 'active',
+          chainId: 31337,
+          rpc: '/rpc',
+          blockTimeMs: 10_000,
+          entityProviderDeploymentBlock: 3,
           contracts: {
-            account: address('3'), depository: address('4'),
-            entityProvider: address('5'), deltaTransformer: address('6'),
+            account: address('3'),
+            depository: address('4'),
+            entityProvider: address('5'),
+            deltaTransformer: address('6'),
           },
-          tokenRegistry: [{
-            symbol: 'USDC', name: 'USD Coin', address: address('7'), decimals: 6,
-            tokenId: 1, tokenType: 0, externalTokenId: '0',
-          }],
+          tokenRegistry: [
+            {
+              symbol: 'USDC',
+              name: 'USD Coin',
+              address: address('7'),
+              decimals: 6,
+              tokenId: 1,
+              tokenType: 0,
+              externalTokenId: '0',
+            },
+          ],
+        },
+        tron: {
+          name: 'Tron',
+          primary: false,
+          status: 'active',
+          chainId: 31338,
+          rpc: '/rpc2',
+          blockTimeMs: 3_000,
+          entityProviderDeploymentBlock: 3,
+          contracts: {
+            account: address('3'),
+            depository: address('4'),
+            entityProvider: address('5'),
+            deltaTransformer: address('6'),
+          },
+          tokenRegistry: [
+            {
+              symbol: 'USDC',
+              name: 'USD Coin',
+              address: address('7'),
+              decimals: 6,
+              tokenId: 1,
+              tokenType: 0,
+              externalTokenId: '0',
+            },
+          ],
         },
       },
     }),
-    rpcUrls: { 1: 'http://127.0.0.1:8545' },
+    rpcUrls: { 1: 'http://127.0.0.1:8545', 2: 'http://127.0.0.1:8546' },
     minFrameDelayMs: 5,
   }) as {
     machine: { runtimeId: string; activeJurisdiction: string; jReplicas: unknown[] };
-    entityProfile: { name: string; isHub: boolean };
+    entities: { signerLabel: string; entityProfile: { name: string; isHub: boolean } }[];
   };
   expect(genesis.machine.runtimeId).toBe(address('1'));
   expect(genesis.machine.activeJurisdiction).toBe('Testnet');
-  expect(genesis.machine.jReplicas).toHaveLength(1);
+  expect(genesis.machine.jReplicas).toHaveLength(2);
+  expect(genesis.entities.map(owner => owner.signerLabel)).toEqual(['h1-hub', 'h1-hub:Tron']);
+  expect(genesis).not.toHaveProperty('entityProfile');
+  expect(genesis.entities[1]!.entityProfile).toMatchObject({ name: 'H1', isHub: true });
   expect(safeStringify(genesis.machine.jReplicas)).toContain('tokenRegistry');
-  expect(genesis.entityProfile).toMatchObject({ name: 'H1', isHub: true });
+  expect(genesis.entities[0]!.entityProfile).toMatchObject({ name: 'H1', isHub: true });
   expect(safeStringify(genesis)).not.toContain('checkpoint');
   expect(safeStringify(genesis)).not.toContain('import');
 });

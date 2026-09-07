@@ -12,7 +12,7 @@ import { hashHtlcSecret } from '../../../protocol/htlc/utils';
 import { applyCommittedAccountFrameFollowups } from '../../../entity/tx/handlers/account/index';
 import { applyHtlcSecretFollowups } from '../../../entity/tx/handlers/account/committed-htlc-followups';
 import { handleResolveHtlcLockEntityTx } from '../../../entity/tx/handlers/htlc/direct';
-import { assertOriginatedHtlcRoutesHaveLiveLocks } from '../../../entity/tx/j-events-htlc/route-lifecycle';
+import { applyBookIntentProgram, createBookIntentProgram } from '../../../entity/books/book-intents';
 import {
   publishEntityCandidateEffects,
   readRuntimeFrameEvents,
@@ -31,6 +31,35 @@ import {
   PersistentAccountStateMap,
   requirePersistentAccountStateMap,
 } from '../../../account/state/persistent-state-map';
+
+const resolveWithBooks = (
+  state: EntityReplica['state'],
+  tx: Parameters<typeof handleResolveHtlcLockEntityTx>[1],
+) => {
+  const program = createBookIntentProgram();
+  const result = handleResolveHtlcLockEntityTx(state, tx, false, program.openSlot());
+  applyBookIntentProgram(result.newState, program);
+  return result;
+};
+
+const commitFollowups = (
+  ...args: Parameters<typeof applyCommittedAccountFrameFollowups>
+): void => {
+  const program = createBookIntentProgram();
+  applyCommittedAccountFrameFollowups(
+    args[0], args[1], args[2], args[3], args[4], args[5], args[6], program.openSlot(),
+  );
+  applyBookIntentProgram(args[0], program);
+};
+
+const secretFollowups = (
+  context: Parameters<typeof applyHtlcSecretFollowups>[0],
+  secrets: Parameters<typeof applyHtlcSecretFollowups>[1],
+): void => {
+  const program = createBookIntentProgram();
+  applyHtlcSecretFollowups({ ...context, bookIntentSlot: program.openSlot() }, secrets);
+  applyBookIntentProgram(context.newState, program);
+};
 
 const makeReplica = (entityId: string, counterpartyId: string): EntityReplica => {
   const account: AccountReplica = {
@@ -122,9 +151,9 @@ describe('htlc event contract and dispute tail', () => {
   test('persists a verified out-of-band preimage before the counterparty ACKs', () => {
     const entityId = `0x${'22'.repeat(32)}`;
     const counterpartyId = `0x${'11'.repeat(32)}`;
-    const lockId = `0x${'33'.repeat(32)}`;
     const secret = `0x${'44'.repeat(32)}`;
     const hashlock = hashHtlcSecret(secret);
+    const lockId = hashlock;
     const replica = makeReplica(entityId, counterpartyId);
     const account = getEntityAccountForWrite(replica.state.accounts, counterpartyId)!;
     account.state.leftEntity = counterpartyId;
@@ -141,7 +170,7 @@ describe('htlc event contract and dispute tail', () => {
       createdTimestamp: replica.state.timestamp - 1_000,
     });
 
-    const result = handleResolveHtlcLockEntityTx(replica.state, {
+    const result = resolveWithBooks(replica.state, {
       type: 'resolveHtlcLock',
       data: { counterpartyEntityId: counterpartyId, lockId, secret },
     });
@@ -150,40 +179,38 @@ describe('htlc event contract and dispute tail', () => {
       accountId: counterpartyId,
       tx: { type: 'htlc_resolve', data: { lockId, outcome: 'secret', secret } },
     }]);
-    expect(result.newState.htlcRoutes.get(hashlock)).toMatchObject({
+    expect(result.newState.paybook.entries.get(hashlock)).toMatchObject({
       hashlock,
       tokenId: 1,
       amount: 10n,
       inboundEntity: counterpartyId,
-      inboundLockId: lockId,
       secret,
     });
-    expect(replica.state.htlcRoutes.has(hashlock)).toBe(false);
+    expect(replica.state.paybook.entries.has(hashlock)).toBe(false);
 
-    expect(() => handleResolveHtlcLockEntityTx(replica.state, {
+    expect(() => resolveWithBooks(replica.state, {
       type: 'resolveHtlcLock',
       data: { counterpartyEntityId: counterpartyId, lockId, secret: `0x${'55'.repeat(32)}` },
     })).toThrow(`HTLC_RESOLVE_HASHLOCK_MISMATCH:${lockId}`);
-    expect(replica.state.htlcRoutes.has(hashlock)).toBe(false);
+    expect(replica.state.paybook.entries.has(hashlock)).toBe(false);
 
-    expect(() => handleResolveHtlcLockEntityTx(replica.state, {
+    expect(() => resolveWithBooks(replica.state, {
       type: 'resolveHtlcLock',
       data: { counterpartyEntityId: counterpartyId, lockId: `0x${'77'.repeat(32)}`, secret },
     })).toThrow('HTLC_RESOLVE_LOCK_MISSING');
 
     const conflicted = createEntityFrameCandidateState(replica.state);
-    conflicted.htlcRoutes.set(hashlock, {
+    conflicted.paybook.entries.set(hashlock, {
       hashlock,
       tokenId: 1,
       amount: 10n,
       inboundEntity: `0x${'66'.repeat(32)}`,
-      inboundLockId: lockId,
       createdTimestamp: conflicted.timestamp,
     });
-    expect(() => handleResolveHtlcLockEntityTx(conflicted, {
+    expect(() => resolveWithBooks(conflicted, {
       type: 'resolveHtlcLock',
       data: { counterpartyEntityId: counterpartyId, lockId, secret },
-    })).toThrow('HTLC_ROUTE_ENTITY_CONFLICT');
+    })).toThrow('PAYBOOK_ENTITY_CONFLICT');
   });
 
   test('builds explicit HtlcReceived and HtlcFinalized payloads', () => {
@@ -246,26 +273,26 @@ describe('htlc event contract and dispute tail', () => {
   test('preserves the final decrypted note in the durable HtlcReceived event', () => {
     const entityId = `0x${'11'.repeat(32)}`;
     const counterpartyId = `0x${'22'.repeat(32)}`;
-    const lockId = 'received-lock';
     const secret = `0x${'44'.repeat(32)}`;
     const hashlock = hashHtlcSecret(secret);
+    const lockId = hashlock;
     const env = createEmptyEnv('htlc-received-description-seed');
     env.quietRuntimeLogs = true;
     const replica = makeReplica(entityId, counterpartyId);
     env.state.eReplicas.set(`${entityId}:${replica.signerId}`, replica);
-    replica.state.htlcRoutes.set(hashlock, {
+    replica.state.paybook.entries.set(hashlock, {
       hashlock,
       tokenId: 1,
       amount: 10n,
       startedAtMs: replica.state.timestamp - 250,
+      description: 'uid:customer-7',
       inboundEntity: counterpartyId,
-      inboundLockId: lockId,
       createdTimestamp: replica.state.timestamp - 500,
     });
-    replica.htlcNotes = new Map([[`hashlock:${hashlock}`, 'uid:customer-7']]);
+
 
     const candidateEffects: EntityCandidateEffect[] = [];
-    applyCommittedAccountFrameFollowups(replica.state, counterpartyId, {
+    commitFollowups(replica.state, counterpartyId, {
       height: 1,
       timestamp: replica.state.timestamp,
       jHeight: 0,
@@ -300,23 +327,29 @@ describe('htlc event contract and dispute tail', () => {
   test('uses the exact producing replica when sibling validators host the same Entity', () => {
     const recipientEntityId = `0x${'22'.repeat(32)}`;
     const counterpartyId = `0x${'33'.repeat(32)}`;
-    const hashlock = `0x${'44'.repeat(32)}`;
+    const secret = `0x${'44'.repeat(32)}`;
+    const hashlock = hashHtlcSecret(secret);
     const env = createEmptyEnv('multi-validator-event-enrichment');
     const recipientReplica = makeReplica(recipientEntityId, counterpartyId);
     const siblingReplica = makeReplica(recipientEntityId, counterpartyId);
     siblingReplica.signerId = '2';
-    recipientReplica.htlcNotes = new Map([[`hashlock:${hashlock}`, 'uid:recipient-7']]);
+    for (const [target, description] of [
+      [recipientReplica, 'uid:recipient-7'], [siblingReplica, 'uid:sibling-incorrect'],
+    ] as const) {
+      target.state.paybook.entries.set(hashlock, {
+        hashlock, inboundEntity: counterpartyId, description, createdTimestamp: target.state.timestamp,
+      });
+    }
     env.state.eReplicas.set(`${recipientEntityId}:${recipientReplica.signerId}`, recipientReplica);
     env.state.eReplicas.set(`${recipientEntityId}:${siblingReplica.signerId}`, siblingReplica);
 
-    const effects: EntityCandidateEffect[] = [{
-      kind: 'runtimeEvent',
-      eventName: 'HtlcReceived',
-      data: {
-        entityId: recipientEntityId,
-        hashlock,
-      },
-    }];
+    const effects: EntityCandidateEffect[] = [];
+    commitFollowups(recipientReplica.state, counterpartyId, {
+      height: 1, timestamp: recipientReplica.state.timestamp, jHeight: 0,
+      accountTxs: [{ type: 'htlc_resolve', data: { lockId: hashlock, outcome: 'secret', secret } }],
+      prevFrameHash: '', accountStateRoot: '', stateHash: '',
+    }, true, [], env, effects);
+    expect(siblingReplica.state.paybook.entries.get(hashlock)?.description).toBe('uid:sibling-incorrect');
 
     publishEntityCandidateEffects(env, recipientReplica, effects);
   expect(readRuntimeFrameEvents(env).find((entry) => entry.message === 'HtlcReceived')?.data).toMatchObject({
@@ -329,8 +362,8 @@ describe('htlc event contract and dispute tail', () => {
   test('queues prepareDispute when secret-ack removal stalls after recipient-side receive', async () => {
     const entityId = `0x${'11'.repeat(32)}`;
     const counterpartyId = `0x${'22'.repeat(32)}`;
-    const inboundLockId = 'lock-inbound';
     const hashlock = `0x${'44'.repeat(32)}`;
+    const inboundLockId = hashlock;
     const env = createEmptyEnv('htlc-dispute-tail-seed');
     env.quietRuntimeLogs = true;
     const replica = makeReplica(entityId, counterpartyId);
@@ -343,12 +376,11 @@ describe('htlc event contract and dispute tail', () => {
       timelock: 100000n,
       revealBeforeHeight: 10,
     });
-    replica.state.htlcRoutes.set(hashlock, {
+    replica.state.paybook.entries.set(hashlock, {
       hashlock,
       tokenId: 1,
       amount: 10n,
       inboundEntity: counterpartyId,
-      inboundLockId,
       createdTimestamp: replica.state.timestamp - 1000,
       secret: `0x${'55'.repeat(32)}`,
       secretAckPending: true,
@@ -359,6 +391,7 @@ describe('htlc event contract and dispute tail', () => {
     const outputs = await executeCrontab(env, replica, replica.state.crontabState!, {
       manualBroadcastInInput: false,
       accountChanges: new Set(),
+      bookIntentSlot: createBookIntentProgram().openSlot(),
     });
 
     expect(outputs).toHaveLength(1);
@@ -377,9 +410,9 @@ describe('htlc event contract and dispute tail', () => {
   test('clears secretAckPending route when committed ACK frame finalizes htlc_resolve(secret)', () => {
     const entityId = `0x${'11'.repeat(32)}`;
     const counterpartyId = `0x${'22'.repeat(32)}`;
-    const inboundLockId = 'lock-inbound';
     const secret = `0x${'55'.repeat(32)}`;
     const hashlock = hashHtlcSecret(secret);
+    const inboundLockId = hashlock;
     const replica = makeReplica(entityId, counterpartyId);
     const account = getEntityAccountForWrite(replica.state.accounts, counterpartyId)!;
     account.state.locks = requirePersistentAccountStateMap(account.state.locks, 'locks').updated(inboundLockId, {
@@ -390,12 +423,11 @@ describe('htlc event contract and dispute tail', () => {
       timelock: 100000n,
       revealBeforeHeight: 10,
     });
-    replica.state.htlcRoutes.set(hashlock, {
+    replica.state.paybook.entries.set(hashlock, {
       hashlock,
       tokenId: 1,
       amount: 10n,
       inboundEntity: counterpartyId,
-      inboundLockId,
       createdTimestamp: replica.state.timestamp - 1000,
       secret,
       secretAckPending: true,
@@ -403,7 +435,7 @@ describe('htlc event contract and dispute tail', () => {
       secretAckDeadlineAt: replica.state.timestamp + 30_000,
     });
 
-    applyCommittedAccountFrameFollowups(replica.state, counterpartyId, {
+    commitFollowups(replica.state, counterpartyId, {
       height: 1,
       timestamp: replica.state.timestamp,
       jHeight: 0,
@@ -420,7 +452,7 @@ describe('htlc event contract and dispute tail', () => {
       stateHash: '',
     }, true, [], undefined, []);
 
-    expect(replica.state.htlcRoutes.has(hashlock)).toBe(false);
+    expect(replica.state.paybook.entries.has(hashlock)).toBe(false);
     expect(collectDerivedDeadlines(replica.state).some((deadline) => deadline.id === `htlc-secret-ack:${hashlock}`)).toBe(false);
   });
 
@@ -428,23 +460,21 @@ describe('htlc event contract and dispute tail', () => {
     const entityId = `0x${'11'.repeat(32)}`;
     const inboundEntityId = `0x${'22'.repeat(32)}`;
     const outboundEntityId = `0x${'33'.repeat(32)}`;
-    const inboundLockId = 'lock-inbound-forwarded';
-    const outboundLockId = 'lock-outbound-forwarded';
     const secret = `0x${'55'.repeat(32)}`;
     const hashlock = hashHtlcSecret(secret);
+    const inboundLockId = hashlock;
+    const outboundLockId = hashlock;
     const replica = makeReplica(entityId, outboundEntityId);
-    replica.state.htlcRoutes.set(hashlock, {
+    replica.state.paybook.entries.set(hashlock, {
       hashlock,
       tokenId: 1,
       amount: 10n,
       inboundEntity: inboundEntityId,
-      inboundLockId,
       outboundEntity: outboundEntityId,
-      outboundLockId,
       createdTimestamp: replica.state.timestamp - 1_000,
     });
 
-    applyCommittedAccountFrameFollowups(replica.state, outboundEntityId, {
+    commitFollowups(replica.state, outboundEntityId, {
       height: 1,
       timestamp: replica.state.timestamp,
       jHeight: 0,
@@ -457,13 +487,13 @@ describe('htlc event contract and dispute tail', () => {
       stateHash: '',
     }, true, [], undefined, []);
 
-    expect(replica.state.htlcRoutes.has(hashlock)).toBe(true);
+    expect(replica.state.paybook.entries.has(hashlock)).toBe(true);
 
     const accountTxs: Array<{
       accountId: string;
       tx: { type: 'htlc_resolve'; data: { lockId: string; outcome: 'secret'; secret: string } };
     }> = [];
-    applyHtlcSecretFollowups({
+    secretFollowups({
       env: createEmptyEnv('htlc-forwarded-secret-seed'),
       state: replica.state,
       newState: replica.state,
@@ -479,7 +509,7 @@ describe('htlc event contract and dispute tail', () => {
         data: { lockId: inboundLockId, outcome: 'secret', secret },
       },
     }]);
-    expect(replica.state.htlcRoutes.get(hashlock)).toMatchObject({
+    expect(replica.state.paybook.entries.get(hashlock)).toMatchObject({
       secret,
       secretAckPending: true,
     });
@@ -493,18 +523,16 @@ describe('htlc event contract and dispute tail', () => {
     const secret = `0x${'55'.repeat(32)}`;
     const hashlock = hashHtlcSecret(secret);
     const replica = makeReplica(entityId, outboundEntityId);
-    replica.state.htlcRoutes.set(hashlock, {
+    replica.state.paybook.entries.set(hashlock, {
       hashlock,
       originated: true,
       inboundEntity: inboundEntityId,
-      inboundLockId: 'self-inbound',
       outboundEntity: outboundEntityId,
-      outboundLockId: 'self-outbound',
       createdTimestamp: replica.state.timestamp,
     });
     const accountTxs: Parameters<typeof applyHtlcSecretFollowups>[0]['accountTxs'] = [];
 
-    applyHtlcSecretFollowups({
+    secretFollowups({
       env: createEmptyEnv('htlc-self-cycle-secret-seed'),
       state: replica.state,
       newState: replica.state,
@@ -516,7 +544,7 @@ describe('htlc event contract and dispute tail', () => {
     expect(accountTxs).toEqual([
       {
         accountId: inboundEntityId,
-        tx: { type: 'htlc_resolve', data: { lockId: 'self-inbound', outcome: 'secret', secret } },
+        tx: { type: 'htlc_resolve', data: { lockId: hashlock, outcome: 'secret', secret } },
       },
     ]);
   });
@@ -524,9 +552,9 @@ describe('htlc event contract and dispute tail', () => {
   test('emits HtlcFinalized before pruning originated outbound route on committed resolve', () => {
     const entityId = `0x${'11'.repeat(32)}`;
     const counterpartyId = `0x${'22'.repeat(32)}`;
-    const outboundLockId = 'lock-outbound';
     const secret = `0x${'55'.repeat(32)}`;
     const hashlock = hashHtlcSecret(secret);
+    const outboundLockId = hashlock;
     const env = createEmptyEnv('htlc-finalized-commit-seed');
     env.quietRuntimeLogs = true;
     env.activeJurisdiction = 'Testnet';
@@ -544,14 +572,14 @@ describe('htlc event contract and dispute tail', () => {
         revealBeforeHeight: 10,
       },
     });
-    replica.htlcNotes = new Map([[`hashlock:${hashlock}`, 'invoice-42']]);
-    replica.state.htlcRoutes.set(hashlock, {
+
+    replica.state.paybook.entries.set(hashlock, {
       hashlock,
       tokenId: 1,
       amount: 10n,
       startedAtMs: replica.state.timestamp - 750,
+      description: 'invoice-42',
       outboundEntity: counterpartyId,
-      outboundLockId,
       createdTimestamp: replica.state.timestamp - 1000,
     });
 
@@ -573,7 +601,7 @@ describe('htlc event contract and dispute tail', () => {
       stateHash: '',
     };
     installCommittedAccountFrameHead(account, committedFrame);
-    applyCommittedAccountFrameFollowups(
+    commitFollowups(
       replica.state,
       counterpartyId,
       committedFrame,
@@ -583,7 +611,7 @@ describe('htlc event contract and dispute tail', () => {
       candidateEffects,
     );
 
-    expect(replica.state.htlcRoutes.has(hashlock)).toBe(false);
+    expect(replica.state.paybook.entries.has(hashlock)).toBe(false);
     expect(account.mempool).toEqual([]);
   expect(readRuntimeFrameEvents(env).filter((entry) => entry.message === 'HtlcFinalized')).toHaveLength(0);
     publishEntityCandidateEffects(env, replica, candidateEffects);
@@ -612,8 +640,8 @@ describe('htlc event contract and dispute tail', () => {
     const inboundEntity = `0x${'33'.repeat(32)}`;
     const secret = `0x${'55'.repeat(32)}`;
     const hashlock = hashHtlcSecret(secret);
-    const outboundLockId = 'self-outbound';
-    const inboundLockId = 'self-inbound';
+    const inboundLockId = hashlock;
+    const outboundLockId = hashlock;
 
     for (const order of ['inbound-first', 'outbound-first'] as const) {
       const env = createEmptyEnv(`htlc-self-cycle-${order}`);
@@ -625,21 +653,22 @@ describe('htlc event contract and dispute tail', () => {
       }
       const inboundAccount = inboundReplica.state.accounts.snapshotCandidate().get(inboundEntity)!;
       replica.state.accounts.set(inboundEntity, inboundAccount);
-      replica.state.htlcRoutes.set(hashlock, {
+      replica.state.paybook.entries.set(hashlock, {
         hashlock,
         tokenId: 1,
         amount: 10n,
         startedAtMs: replica.state.timestamp - 500,
         originated: true,
         outboundEntity,
-        outboundLockId,
+
         inboundEntity,
-        inboundLockId,
+
         createdTimestamp: replica.state.timestamp - 1_000,
       });
+      replica.state.paybook.feesEarned = 13n;
       const candidateEffects: EntityCandidateEffect[] = [];
       const commit = (counterpartyId: string, lockId: string, secret: string) =>
-        applyCommittedAccountFrameFollowups(replica.state, counterpartyId, {
+        commitFollowups(replica.state, counterpartyId, {
           height: 1,
           timestamp: replica.state.timestamp,
           jHeight: 0,
@@ -662,94 +691,65 @@ describe('htlc event contract and dispute tail', () => {
           ];
 
       commits[0]!();
-      expect(replica.state.htlcRoutes.has(hashlock), `${order}: first leg must retain route`).toBe(true);
+      expect(replica.state.paybook.entries.has(hashlock), `${order}: first leg must retain route`).toBe(true);
+      const retained = replica.state.paybook.entries.get(hashlock)!;
+      expect(retained.inboundSettled).toBe(order === 'inbound-first' ? true : undefined);
+      expect(retained.outboundSettled).toBe(order === 'outbound-first' ? true : undefined);
+      expect(candidateEffects.filter(effect => effect.kind === 'runtimeEvent' && effect.eventName === 'HtlcFinalized'))
+        .toHaveLength(order === 'outbound-first' ? 1 : 0);
+      expect(replica.state.paybook.feesEarned).toBe(13n);
       commits[1]!();
-      expect(replica.state.htlcRoutes.has(hashlock), `${order}: both legs terminate route`).toBe(false);
+      expect(replica.state.paybook.feesEarned).toBe(13n);
+      expect(replica.state.paybook.entries.has(hashlock), `${order}: both legs terminate route`).toBe(false);
       expect(candidateEffects.filter(effect => effect.kind === 'runtimeEvent' && effect.eventName === 'HtlcReceived')).toHaveLength(1);
       expect(candidateEffects.filter(effect => effect.kind === 'runtimeEvent' && effect.eventName === 'HtlcFinalized')).toHaveLength(1);
     }
   });
 
-  test('keeps originated outbound route while lock is still queued for account consensus', () => {
-    const entityId = `0x${'11'.repeat(32)}`;
-    const counterpartyId = `0x${'22'.repeat(32)}`;
-    const outboundLockId = 'lock-pending';
-    const hashlock = `0x${'88'.repeat(32)}`;
-    const replica = makeReplica(entityId, counterpartyId);
-    const account = getEntityAccountForWrite(replica.state.accounts, counterpartyId)!;
-    account.mempool.push({
-      type: 'htlc_lock',
-      data: {
-        lockId: outboundLockId,
-        hashlock,
-        tokenId: 1,
-        amount: 10n,
-        timelock: 100000n,
-        revealBeforeHeight: 10,
-      },
-    });
-    replica.state.htlcRoutes.set(hashlock, {
-      hashlock,
-      tokenId: 1,
-      amount: 10n,
-      outboundEntity: counterpartyId,
-      outboundLockId,
-      createdTimestamp: replica.state.timestamp - 1000,
-    });
+  for (const evidence of ['queued', 'historical'] as const) {
+    test(`rejects secret resolution authorized only by ${evidence} evidence, then accepts a live lock`, () => {
+      const entityId = `0x${'11'.repeat(32)}`;
+      const counterpartyId = `0x${'22'.repeat(32)}`;
+      const secret = `0x${'88'.repeat(32)}`;
+      const hashlock = hashHtlcSecret(secret);
+      const replica = makeReplica(entityId, counterpartyId);
+      const account = getEntityAccountForWrite(replica.state.accounts, counterpartyId)!;
+      const lock = {
+        lockId: hashlock, hashlock, tokenId: 1, amount: 10n,
+        timelock: 100000n, revealBeforeHeight: 10,
+      };
+      const tx = { type: 'htlc_lock' as const, data: lock };
+      if (evidence === 'queued') account.mempool.push(tx);
+      else account.currentFrame = { ...account.currentFrame, accountTxs: [tx] };
+      replica.state.paybook.entries.set(hashlock, {
+        hashlock, tokenId: 1, amount: 10n, outboundEntity: counterpartyId,
+        createdTimestamp: replica.state.timestamp - 1000,
+      });
+      const beforeEntries = [...replica.state.paybook.entries];
+      const beforeMempool = [...account.mempool];
+      const beforeFrame = account.currentFrame;
+      const resolve = { type: 'resolveHtlcLock' as const, data: {
+        counterpartyEntityId: counterpartyId, lockId: hashlock, secret,
+      } };
+      expect(() => resolveWithBooks(replica.state, resolve)).toThrow(
+        `HTLC_RESOLVE_LOCK_MISSING:${counterpartyId}:${hashlock}`,
+      );
+      expect([...replica.state.paybook.entries]).toEqual(beforeEntries);
+      expect(account.mempool).toEqual(beforeMempool);
+      expect(account.currentFrame).toBe(beforeFrame);
+      expect(account.state.locks.size).toBe(0);
 
-    expect(() => assertOriginatedHtlcRoutesHaveLiveLocks(replica.state)).not.toThrow();
-    expect(replica.state.htlcRoutes.has(hashlock)).toBe(true);
-
-    account.mempool = [];
-    expect(() => assertOriginatedHtlcRoutesHaveLiveLocks(replica.state)).toThrow(
-      `HTLC_ORIGINATED_ROUTE_LIVE_LOCK_MISSING:${hashlock}:${outboundLockId}`,
-    );
-    expect(replica.state.htlcRoutes.has(hashlock)).toBe(true);
-  });
-
-  test('rejects an originated route whose lock exists only in historical committed evidence', () => {
-    const entityId = `0x${'11'.repeat(32)}`;
-    const counterpartyId = `0x${'22'.repeat(32)}`;
-    const outboundLockId = 'lock-stale-current-frame';
-    const hashlock = `0x${'89'.repeat(32)}`;
-    const replica = makeReplica(entityId, counterpartyId);
-    const account = getEntityAccountForWrite(replica.state.accounts, counterpartyId)!;
-    account.currentFrame = {
-      ...account.currentFrame,
-      accountTxs: [{
-        type: 'htlc_lock',
-        data: {
-          lockId: outboundLockId,
-          hashlock,
-          tokenId: 1,
-          amount: 10n,
-          timelock: 100000n,
-          revealBeforeHeight: 10,
-        },
-      }],
-    };
-    replica.state.lockBook.set(outboundLockId, {
-      lockId: outboundLockId,
-      hashlock,
-      tokenId: 1,
-      amount: 10n,
-      direction: 'outgoing',
-      counterpartyEntityId: counterpartyId,
-      createdTimestamp: replica.state.timestamp - 1000,
+      account.state.locks = requirePersistentAccountStateMap(account.state.locks, 'locks').updated(hashlock, {
+        ...lock, senderIsLeft: true, createdHeight: 1, createdTimestamp: replica.state.timestamp,
+      });
+      const result = resolveWithBooks(replica.state, resolve);
+      expect(result.accountTxs).toEqual([{
+        accountId: counterpartyId,
+        tx: { type: 'htlc_resolve', data: { lockId: hashlock, outcome: 'secret', secret } },
+      }]);
+      expect(result.newState.paybook.entries.get(hashlock)?.secret).toBe(secret);
+      expect([...replica.state.paybook.entries]).toEqual(beforeEntries);
+      expect(account.mempool).toEqual(beforeMempool);
     });
-    replica.state.htlcRoutes.set(hashlock, {
-      hashlock,
-      tokenId: 1,
-      amount: 10n,
-      outboundEntity: counterpartyId,
-      outboundLockId,
-      createdTimestamp: replica.state.timestamp - 1000,
-    });
-
-    expect(() => assertOriginatedHtlcRoutesHaveLiveLocks(replica.state)).toThrow(
-      `HTLC_ORIGINATED_ROUTE_LIVE_LOCK_MISSING:${hashlock}:${outboundLockId}`,
-    );
-    expect(replica.state.lockBook.has(outboundLockId)).toBe(true);
-    expect(replica.state.htlcRoutes.has(hashlock)).toBe(true);
-  });
+  }
 });

@@ -1,3 +1,5 @@
+import { createEmptyEnv } from "../../../runtime";
+import { deriveSignerAddressSync, deriveSignerKeySync, registerSignerKey, signAccountFrame } from "../../../account/crypto";
 import { describe, expect, test } from 'bun:test';
 import {
   collectQueuedSwapOfferIds,
@@ -7,7 +9,7 @@ import {
   hasQueuedSwapOffer,
 } from '../../../orchestrator/mesh/mesh-common';
 import { buildCollectiveEntityProposalTx } from '../../../entity/auth/authorization';
-import { hashEntityCommandTxs } from '../../../entity/command/command-codec';
+import { hashEntityCommand, hashEntityCommandTxs, signedEntityCommandTx } from '../../../entity/command/command-codec';
 import type { EntityTx } from '../../../types/entity-tx';
 import type { RuntimeReplica } from '../../../runtime/types';
 
@@ -82,7 +84,10 @@ describe('mesh queued work detection', () => {
   });
 
   test('finds bootstrap work nested in a signed collective proposal already in replica mempool', () => {
-    const author = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const seed = 'mesh-queued-signed-collective';
+    const signingEnv = createEmptyEnv(seed);
+    const author = deriveSignerAddressSync(seed, '1');
+    registerSignerKey(signingEnv, author, deriveSignerKeySync(seed, '1'));
     const collectiveTxs: EntityTx[] = [{
       type: 'openAccount',
       data: { targetEntityId: counterpartyId, tokenId: 2, creditAmount: 1000n },
@@ -102,10 +107,8 @@ describe('mesh queued work detection', () => {
     }];
     const proposal = buildCollectiveEntityProposalTx(author, collectiveTxs);
     const commandTxs = [proposal];
-    const signedCommand: EntityTx = {
-      type: 'entityCommand',
-      data: {
-        version: 1,
+    const command = {
+        version: 1 as const,
         entityId,
         stackKey: `0x${'01'.repeat(32)}`,
         boardHash: `0x${'02'.repeat(32)}`,
@@ -115,9 +118,10 @@ describe('mesh queued work detection', () => {
         nonce: 1n,
         txsHash: hashEntityCommandTxs(commandTxs),
         txs: commandTxs,
-        signature: `0x${'03'.repeat(65)}`,
-      },
     };
+    const signedCommand = signedEntityCommandTx({ ...command,
+      signature: signAccountFrame(signingEnv, author, hashEntityCommand(command)),
+    });
     const env = {
       runtimeMempool: { runtimeTxs: [], entityInputs: [] },
       state: {

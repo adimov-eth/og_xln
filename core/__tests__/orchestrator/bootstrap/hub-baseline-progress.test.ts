@@ -4,7 +4,7 @@ import {
   evaluateHubBaselineDeadlines,
 } from '../../../orchestrator/hub/hub-baseline-progress';
 import type { HubHealthPayload } from '../../../orchestrator/orchestrator-types';
-import { validateHubHealthPayload } from '../../../orchestrator/bootstrap/bootstrap-health-validation';
+import { validateHubHealthPayload, validateHubInfoPayload } from '../../../orchestrator/bootstrap/bootstrap-health-validation';
 
 const health = (overrides: Partial<HubHealthPayload> = {}): HubHealthPayload => ({
   height: 1,
@@ -31,6 +31,17 @@ const p2pReady = {
 } as HubHealthPayload['timings'];
 
 describe('hub baseline progress', () => {
+  test('native identity alone does not imply financial delivery readiness', () => {
+    const identity = { entityId: `0x${'11'.repeat(32)}` };
+    expect(validateHubInfoPayload(identity).deliveryReady).toBeUndefined();
+    expect(validateHubInfoPayload({ ...identity, deliveryReady: false }).deliveryReady).toBe(false);
+    expect(validateHubInfoPayload({ ...identity, deliveryReady: true }).deliveryReady).toBe(true);
+    for (const deliveryReady of [1, 'true', null]) {
+      expect(() => validateHubInfoPayload({ ...identity, deliveryReady }))
+        .toThrow('BOOTSTRAP_HEALTH_PAYLOAD_INVALID:path=info.deliveryReady:expected=boolean');
+    }
+  });
+
   test('rejects malformed observed collections before they can fabricate progress', () => {
     expect(() => validateHubHealthPayload({
       height: 1,

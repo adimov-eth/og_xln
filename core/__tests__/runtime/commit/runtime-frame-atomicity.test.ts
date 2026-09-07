@@ -103,7 +103,6 @@ const installJurisdiction = (env: RuntimeReplica): void => {
     name: jurisdiction.name,
     rpcs: [jurisdiction.address!],
     chainId: jurisdiction.chainId,
-    contracts: { depository: jurisdiction.depositoryAddress, entityProvider: jurisdiction.entityProviderAddress },
     contracts: {
       account: address('a1'),
       depository: jurisdiction.depositoryAddress,
@@ -273,7 +272,10 @@ describe('runtime frame atomicity', () => {
     // object. The public storage schema separately rejects this shape loudly;
     // here we confirm the projector itself never repopulates runtimeMempool
     // from any snapshot field, regardless of what that field contains.
-    restoreDurableRuntimeSnapshot(restored, { runtimeInput });
+    const snapshot = buildDurableRuntimeMachineSnapshot(restored);
+    enqueueRuntimeInput(restored, runtimeInput);
+    expect(restored.runtimeMempool.runtimeTxs.length).toBeGreaterThan(0);
+    restoreDurableRuntimeSnapshot(restored, { ...snapshot, runtimeInput });
 
     expect(restored.runtimeMempool).toEqual({ runtimeTxs: [], entityInputs: [] });
   });
@@ -581,16 +583,18 @@ describe('runtime frame atomicity', () => {
       [hash('21'), { runtimeId: address('22'), seenAt: control.state.timestamp }],
       [controlReplica.entityId, { runtimeId: address('23'), seenAt: control.state.timestamp }],
     ]);
-    enqueueRuntimeInput(control, {
+    await applyRuntimeInput(control, {
       runtimeTxs: [structuredClone(imported)],
       entityInputs: [structuredClone(first)],
       timestamp: control.state.timestamp,
     });
-    await processRuntime(control);
     expect(control.state.eReplicas.get(`${controlReplica.entityId}:${validator}`)?.mempool).toHaveLength(1);
     expect(control.infrastructure?.entityRuntimeHints?.get(remoteEntityId)?.runtimeId).toBe(remoteRuntimeId);
-    expect(control.state.eReplicas.get(`${imported.entityId}:${imported.signerId}`)?.certifiedFrameAnchor)
-      .toBeDefined();
+    // Import creates the local replica; a 2-of-2 board cannot certify an
+    // Entity frame before collecting both signatures.
+    const controlImported = control.state.eReplicas.get(`${imported.entityId}:${imported.signerId}`);
+    expect(controlImported).toBeDefined();
+    expect(controlImported!.state.config).toEqual(imported.data.config);
 
     const replicaBefore = safeStringify(buildCanonicalEntityReplicaSnapshot(replica));
     const hintsBefore = safeStringify(env.infrastructure!.entityRuntimeHints);

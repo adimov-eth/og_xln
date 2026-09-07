@@ -43,7 +43,8 @@ import {
   computeCanonicalEntityConsensusStateHash,
   computeEntityFrameAuthorityRoot,
 } from '../../../entity/consensus/state-root';
-import { buildSingleSignerHanko } from '../../../hanko/batch';
+import { asHankoBytes32, encodeSignedHanko } from '../../../hanko/codec';
+import { resolveHankoBoardDelays } from '../../../hanko/claims';
 import { deriveEncryptionKeyPair, pubKeyToHex } from '../../../protocol/crypto/p2p-crypto';
 import { computeProfileHash, signProfileRuntimeRoute } from '../../../entity/profile/profile-signing';
 import { createTestJReplica } from '../.././helpers/j-replica';
@@ -117,6 +118,10 @@ const buildRuntimeEnv = async () => {
   }
   env.dbNamespace = `${runtimeId}-${Date.now()}-${runtimeCounter}`;
   env.quietRuntimeLogs = true;
+  env.runtimeConfig = {
+    ...env.runtimeConfig,
+    storage: { ...env.runtimeConfig?.storage, canonicalHashPeriodFrames: 1, materializePeriodFrames: 1 },
+  };
 
   const jurisdiction = installJurisdiction(env);
   const entityId = generateLazyEntityId([runtimeId], 1n, env).toLowerCase();
@@ -143,6 +148,12 @@ const buildRuntimeEnv = async () => {
   await processRuntime(env);
 
   return { env, runtimeSeed, runtimeId, entityId, wallet, jurisdiction };
+};
+
+const readCheckpointFrames = async (env: ReturnType<typeof createEmptyEnv>) => {
+  const frame = await readPersistedFrameJournal(env, env.state.height);
+  if (!frame) throw new Error('RECOVERY_TEST_CHECKPOINT_FRAME_MISSING');
+  return [frame];
 };
 
 const buildRecoveryHubProfile = async (
@@ -181,10 +192,23 @@ const buildRecoveryHubProfile = async (
     accounts: [],
   };
   const profileHash = computeProfileHash(profile);
-  profile.metadata.profileHanko = buildSingleSignerHanko(entityId, profileHash, wallet.privateKey);
+  const certifiedProfile = {
+    ...profile,
+    metadata: { ...profile.metadata, profileHanko: encodeSignedHanko({
+      digest: profileHash,
+      privateKeys: [getBytes(wallet.privateKey)],
+      placeholders: [],
+      claims: [{
+        entityId: asHankoBytes32(entityId, 'TEST_PROFILE_ENTITY'),
+        entityIndexes: [0n], weights: [1n], threshold: 1n,
+        ...resolveHankoBoardDelays(),
+      }],
+      memberSignatures: [],
+    }) },
+  };
   const signingEnv = createEmptyEnv('recovery-profile-route-fixture');
   registerSignerKey(signingEnv, runtimeId, getBytes(wallet.privateKey));
-  return signProfileRuntimeRoute(signingEnv, profile, runtimeId);
+  return signProfileRuntimeRoute(signingEnv, certifiedProfile, runtimeId);
 };
 
 describe('runtime recovery tower', () => {
@@ -246,6 +270,7 @@ describe('runtime recovery tower', () => {
     env.pendingOutputs = [{ entityId, signerId: runtimeId, runtimeId, entityTxs: [] }];
     env.networkInbox = [{ entityId, signerId: runtimeId, runtimeId, entityTxs: [] }];
     const bundle = buildRuntimeRecoveryBundle(env, {
+      frames: await readCheckpointFrames(env),
       signers: [{
         index: 0,
         derivationIndex: 0,
@@ -322,6 +347,7 @@ describe('runtime recovery tower', () => {
     env.gossip!.announce(hubProfile);
 
     const bundle = buildRuntimeRecoveryBundle(env, {
+      frames: await readCheckpointFrames(env),
       signers: [{
         index: 0,
         derivationIndex: 0,
@@ -409,6 +435,7 @@ describe('runtime recovery tower', () => {
     };
 
     const bundle = buildRuntimeRecoveryBundle(env, {
+      frames: await readCheckpointFrames(env),
       signers: [{
         index: 0,
         derivationIndex: 0,
@@ -493,6 +520,7 @@ describe('runtime recovery tower', () => {
     }];
     const snapshotBundle = buildRuntimeRecoveryBundle(env, {
       signers,
+      frames: await readCheckpointFrames(env),
       createdAt: 10_000,
     });
     const baseHeight = snapshotBundle.runtimeHeight;
@@ -579,6 +607,7 @@ describe('runtime recovery tower', () => {
   test('tower stores blind backup appointments and serves restore payloads', async () => {
     const { env, runtimeSeed, runtimeId, entityId, wallet, jurisdiction } = await buildRuntimeEnv();
     const bundle = buildRuntimeRecoveryBundle(env, {
+      frames: await readCheckpointFrames(env),
       signers: [{
         index: 0,
         derivationIndex: 0,

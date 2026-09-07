@@ -129,6 +129,7 @@ const runFixture = async (
   proofPath: string,
   recoveryPath: string,
 ): Promise<{ exitCode: number; signalCode: string | null; stdout: string; stderr: string }> => {
+  console.info(`J_SUBMIT_REAL_RPC_CHILD_START:${phase}`);
   const child = Bun.spawn({
     cmd: [process.execPath, fixture, phase, seed, anvil.rpcUrl, proofPath, recoveryPath],
     cwd: repoRoot,
@@ -141,11 +142,13 @@ const runFixture = async (
     stdout: 'pipe',
     stderr: 'pipe',
   });
-  const exitCode = await child.exited;
-  const [stdout, stderr] = await Promise.all([
+  // Drain both pipes while the real RPC child runs; boot logs may fill a pipe.
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
+  console.info(`J_SUBMIT_REAL_RPC_CHILD_EXIT:${phase}:${exitCode}:${child.signalCode}`);
   return { exitCode, signalCode: child.signalCode, stdout, stderr };
 };
 

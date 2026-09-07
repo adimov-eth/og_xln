@@ -3,7 +3,7 @@ import { join } from 'path';
 
 const fixture = join(import.meta.dir, '..', '..', 'fixtures/process/runtime-fatal-exit-child.ts');
 
-test('an unhandled Node Runtime error always terminates the child process', async () => {
+test('an unhandled Runtime error halts its loop while the host remains live', async () => {
   const child = Bun.spawn({
     cmd: [process.execPath, fixture],
     cwd: join(import.meta.dir, '..', '..', '..', '..'),
@@ -18,7 +18,9 @@ test('an unhandled Node Runtime error always terminates the child process', asyn
   ]);
   const output = `${stdout}\n${stderr}`;
 
-  expect(exitCode, output).toBe(1);
+  expect(exitCode, output).toBe(0);
   expect(output).toContain('RUNTIME_TX_UNKNOWN: fatal-exit-fixture');
+  expect(output).toContain('RUNTIME_LOOP_HALTED');
+  expect(output).toContain('RUNTIME_FATAL_ISOLATION_CONFIRMED');
   expect(output).not.toContain('RUNTIME_FATAL_EXIT_FIXTURE_TIMEOUT');
 }, 10_000);

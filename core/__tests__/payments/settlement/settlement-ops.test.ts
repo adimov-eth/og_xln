@@ -56,19 +56,20 @@ test('auto-approval rejects ondelta-only theft of either side collateral share',
 test('compileOps rejects settlements the Solidity ABI or Account contract cannot execute', () => {
   const int256Max = (1n << 255n) - 1n;
   const int256Min = -(1n << 255n);
+  const uint256Max = (1n << 256n) - 1n;
 
   expect(() => compileOps([
     {
       type: 'rawDiff',
       tokenId: 1,
-      leftDiff: int256Max + 1n,
-      rightDiff: -(int256Max + 1n),
+      leftDiff: uint256Max + 1n,
+      rightDiff: -(uint256Max + 1n),
       collateralDiff: 0n,
       ondeltaDiff: 0n,
     },
-  ], true)).toThrow('SETTLEMENT_INT256_RANGE:leftDiff:token=1');
+  ], true)).toThrow('SETTLEMENT_SIGNED_AMOUNT_RANGE:leftDiff:token=1');
 
-  expect(() => compileOps([
+  expect(compileOps([
     {
       type: 'rawDiff',
       tokenId: 2,
@@ -77,9 +78,9 @@ test('compileOps rejects settlements the Solidity ABI or Account contract cannot
       collateralDiff: 1n,
       ondeltaDiff: 0n,
     },
-  ], true)).toThrow('SETTLEMENT_INT256_NEGATION:leftDiff:token=2');
+  ], true).diffs[0]?.leftDiff).toBe(int256Min);
 
-  expect(() => compileOps([
+  expect(compileOps([
     {
       type: 'rawDiff',
       tokenId: 3,
@@ -88,7 +89,7 @@ test('compileOps rejects settlements the Solidity ABI or Account contract cannot
       collateralDiff: int256Min,
       ondeltaDiff: 0n,
     },
-  ], true)).toThrow('SETTLEMENT_INT256_ADD_OVERFLOW:token=3');
+  ], true).diffs[0]?.collateralDiff).toBe(int256Min);
 
   expect(() => compileOps(
     Array.from({ length: 33 }, (_, tokenId) => ({

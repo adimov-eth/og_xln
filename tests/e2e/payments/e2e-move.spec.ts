@@ -1,9 +1,10 @@
 import { expect, test, type Page } from '../../global-setup.mts';
 import { Interface, MaxUint256, formatUnits, parseUnits } from 'ethers';
 import { deriveDelta } from '../../../core/account/utils';
+import type { JBatch } from '../../../core/jurisdiction/machine/batch';
 import { ensureE2EBaseline, API_BASE_URL, APP_BASE_URL, waitForNamedHubs } from '../../utils/e2e-baseline';
 import { createRuntimeIdentity, gotoApp, selectDemoMnemonic, switchToRuntimeId } from '../../utils/e2e-demo-users';
-import { connectRuntimeToHub, connectRuntimeToHubWithCredit } from '../../utils/e2e-connect';
+import { connectRuntimeToHub, connectRuntimeToHubWithCredit, waitForReceiveReadyGossipProfiles } from '../../utils/e2e-connect';
 import {
   getRenderedAccountSpendableBalance,
   getRenderedExternalBalance,
@@ -28,6 +29,9 @@ const ERC20_BALANCE_OF = new Interface([
 ]);
 const ERC20_ALLOWANCE = new Interface([
   'function allowance(address owner, address spender) view returns (uint256)',
+]);
+const DEPOSITORY_BATCH_EVENTS = new Interface([
+  'event HankoBatchProcessed(bytes32 indexed entityId, bytes32 indexed batchHash, uint256 nonce)',
 ]);
 const DEPOSITORY_RESERVES = new Interface([
   'function _reserves(bytes32 entity, uint256 tokenId) view returns (uint256)',
@@ -182,21 +186,20 @@ type MoveBatchSnapshot = {
   pendingExternalToReserve: number;
   pendingReserveToCollateral: number;
   pendingCollateralToReserve: number;
+  pendingSettlements: number;
   pendingReserveToReserve: number;
   pendingReserveToExternal: number;
   pendingOpCount: number;
   sentExternalToReserve: number;
   sentReserveToCollateral: number;
   sentCollateralToReserve: number;
+  sentSettlements: number;
   sentReserveToReserve: number;
   sentReserveToExternal: number;
   sentOpCount: number;
   sentExists: boolean;
   entityNonce: number;
   sentEntityNonce: number | null;
-  batchHistoryCount: number;
-  lastHistoryEntityNonce: number | null;
-  lastHistoryStatus: string;
   recentMessages: string[];
 };
 
@@ -242,21 +245,20 @@ async function readMoveBatchSnapshot(
         pendingExternalToReserve: 0,
         pendingReserveToCollateral: 0,
         pendingCollateralToReserve: 0,
+        pendingSettlements: 0,
         pendingReserveToReserve: 0,
         pendingReserveToExternal: 0,
         pendingOpCount: 0,
         sentExternalToReserve: 0,
         sentReserveToCollateral: 0,
         sentCollateralToReserve: 0,
+        sentSettlements: 0,
         sentReserveToReserve: 0,
         sentReserveToExternal: 0,
         sentOpCount: 0,
         sentExists: false,
         entityNonce: 0,
         sentEntityNonce: null,
-        batchHistoryCount: 0,
-        lastHistoryEntityNonce: null,
-        lastHistoryStatus: '',
         recentMessages: [],
       };
     }
@@ -269,37 +271,29 @@ async function readMoveBatchSnapshot(
       state?: {
         jBatchState?: {
           entityNonce?: number;
-          batch?: Record<string, unknown>;
-          sentBatch?: { entityNonce?: number; batch?: Record<string, unknown> };
+          batch?: Partial<JBatch>;
+          sentBatch?: { entityNonce?: number; batch?: Partial<JBatch> };
         };
-        batchHistory?: Array<{ entityNonce?: number; status?: string }>;
         messages?: unknown[];
       };
     } | undefined : undefined;
-    const pending = replica?.state?.jBatchState?.batch as Record<string, unknown> | undefined;
+    const pending = replica?.state?.jBatchState?.batch;
     const sentBatch = replica?.state?.jBatchState?.sentBatch;
-    const sent = sentBatch?.batch as Record<string, unknown> | undefined;
-    const history = Array.from(replica?.state?.jBlockChain || []).flatMap((block: any) =>
-      Array.from(block?.events || [])
-        .filter((event: any) =>
-          event?.type === 'HankoBatchProcessed'
-          && String(event?.data?.entityId || '').toLowerCase() === String(entityId).toLowerCase())
-        .map((event: any) => ({
-          entityNonce: Number(event?.data?.nonce || 0),
-          status: 'confirmed',
-        })));
-    const lastHistory = history.length > 0 ? history[history.length - 1] : null;
+    const sent = sentBatch?.batch;
     const recentMessages = Array.isArray(replica?.state?.messages)
       ? replica.state.messages.slice(-8).map((message) => String(message || ''))
       : [];
-    const count = (batch: Record<string, unknown> | undefined, key: string): number => {
+    const count = (batch: Partial<JBatch> | undefined, key: keyof JBatch): number => {
       const value = batch?.[key];
       return Array.isArray(value) ? value.length : 0;
     };
-    const countTotal = (batch: Record<string, unknown> | undefined): number => (
+    // Observational Move readiness: cooperative C2R is queued in settlements,
+    // while raw collateralToReserve is a separate contract operation.
+    const countTotal = (batch: Partial<JBatch> | undefined): number => (
       count(batch, 'externalTokenToReserve')
       + count(batch, 'reserveToCollateral')
       + count(batch, 'collateralToReserve')
+      + count(batch, 'settlements')
       + count(batch, 'reserveToReserve')
       + count(batch, 'reserveToExternalToken')
     );
@@ -307,21 +301,20 @@ async function readMoveBatchSnapshot(
       pendingExternalToReserve: count(pending, 'externalTokenToReserve'),
       pendingReserveToCollateral: count(pending, 'reserveToCollateral'),
       pendingCollateralToReserve: count(pending, 'collateralToReserve'),
+      pendingSettlements: count(pending, 'settlements'),
       pendingReserveToReserve: count(pending, 'reserveToReserve'),
       pendingReserveToExternal: count(pending, 'reserveToExternalToken'),
       pendingOpCount: countTotal(pending),
       sentExternalToReserve: count(sent, 'externalTokenToReserve'),
       sentReserveToCollateral: count(sent, 'reserveToCollateral'),
       sentCollateralToReserve: count(sent, 'collateralToReserve'),
+      sentSettlements: count(sent, 'settlements'),
       sentReserveToReserve: count(sent, 'reserveToReserve'),
       sentReserveToExternal: count(sent, 'reserveToExternalToken'),
       sentOpCount: countTotal(sent),
       sentExists: Boolean(sentBatch),
       entityNonce: Number(replica?.state?.jBatchState?.entityNonce || 0),
       sentEntityNonce: typeof sentBatch?.entityNonce === 'number' ? Number(sentBatch.entityNonce) : null,
-      batchHistoryCount: Number(history.length || 0),
-      lastHistoryEntityNonce: typeof lastHistory?.entityNonce === 'number' ? Number(lastHistory.entityNonce) : null,
-      lastHistoryStatus: String(lastHistory?.status || ''),
       recentMessages,
     };
   }, { entityId, signerId });
@@ -367,15 +360,132 @@ async function waitForMoveActionToSettle(page: Page): Promise<void> {
     .not.toBe('Working...');
 }
 
+type MinedBatchLog = { address: string; topics: string[]; data: string; transactionHash: string; blockHash: string; removed?: boolean };
+
+async function readConfirmedMoveBatch(
+  page: Page, depository: string, entityId: string, nonce: number, fromBlock: string,
+): Promise<MinedBatchLog | null> {
+  const logs = await rpcCall<MinedBatchLog[]>(page, 'eth_getLogs', [{
+    address: depository, fromBlock, toBlock: 'latest',
+    topics: DEPOSITORY_BATCH_EVENTS.encodeFilterTopics('HankoBatchProcessed', [entityId]),
+  }]);
+  const matching = logs.filter(log => {
+    const event = DEPOSITORY_BATCH_EVENTS.parseLog(log);
+    return event?.args.nonce === BigInt(nonce);
+  });
+  expect(matching.length, 'one committed batch receipt per exact Entity nonce').toBeLessThanOrEqual(1);
+  const log = matching[0];
+  if (!log) return null;
+  const event = DEPOSITORY_BATCH_EVENTS.parseLog(log)!;
+  expect(String(event.args.entityId).toLowerCase()).toBe(entityId.toLowerCase());
+  expect(event.args.nonce).toBe(BigInt(nonce));
+  expect(log.removed, 'confirmed batch log must not be removed').not.toBe(true);
+  expect(log.address.toLowerCase()).toBe(depository.toLowerCase());
+  const receipt = await rpcCall<{ status: string; transactionHash: string; blockHash: string } | null>(
+    page, 'eth_getTransactionReceipt', [log.transactionHash],
+  );
+  expect(receipt, 'mined batch must have its successful transaction receipt').not.toBeNull();
+  expect(receipt!.status).toBe('0x1');
+  expect(receipt!.transactionHash.toLowerCase()).toBe(log.transactionHash.toLowerCase());
+  expect(receipt!.blockHash.toLowerCase()).toBe(log.blockHash.toLowerCase());
+  return log;
+}
+
+async function readMoveVisibleDiagnostic(page: Page) {
+  return page.evaluate(() => {
+    const picker = document.querySelector('[data-testid="move-source-account-picker"]');
+    return {
+      sourceAccountLabel: picker?.querySelector('.item-name')?.textContent?.trim() ?? null,
+      sourceAccountDisplayedId: picker?.querySelector('.item-id')?.textContent?.trim() ?? null,
+      sourceAccountInput: picker?.querySelector('input')?.value ?? null,
+      toasts: Array.from(document.querySelectorAll('.toast.error, .toast.info, .toast.warning'))
+        .filter(node => node.getClientRects().length > 0)
+        .map(node => ({ type: node.className, message: node.querySelector('.message')?.textContent?.trim() ?? '' })),
+    };
+  });
+}
+
+async function captureMoveSettlementDiagnostic(
+  page: Page, entity: LocalEntityRef, initialSurface: Awaited<ReturnType<typeof readMoveVisibleDiagnostic>>,
+): Promise<void> {
+  const local = await page.evaluate(({ entityId, signerId }) => {
+    const env = (window as any).isolatedEnv;
+    const replicaKey = Array.from(env?.state?.eReplicas?.keys() ?? []).find(
+      (key: any) => String(key).toLowerCase() === `${entityId}:${signerId}`.toLowerCase(),
+    );
+    const replica = env?.state?.eReplicas?.get(replicaKey);
+    const accounts = Array.from(replica?.state?.accounts?.entries?.() ?? [], ([counterpartyId, account]: any) => {
+      const workspace = account.state.settlementWorkspace;
+      const continuation = replica.state.settlementContinuations?.get(counterpartyId);
+      return {
+        counterpartyId, height: account.currentHeight, pendingFrame: Boolean(account.pendingFrame),
+        pendingAck: account.pendingAccountInput?.kind === 'ack_frame',
+        mempoolKinds: (account.mempool ?? []).map((tx: any) => tx.type),
+        pendingFrameKinds: (account.pendingFrame?.accountTxs ?? []).map((tx: any) => tx.type),
+        workspace: workspace ? {
+          status: workspace.status, revision: workspace.revision, workspaceHash: workspace.workspaceHash,
+          settlementHash: workspace.settlementHash ?? null, executorIsLeft: workspace.executorIsLeft,
+          leftHanko: Boolean(workspace.leftHanko), rightHanko: Boolean(workspace.rightHanko),
+          postLeftHanko: Boolean(workspace.postSettlementDisputeProof?.leftHanko),
+          postRightHanko: Boolean(workspace.postSettlementDisputeProof?.rightHanko),
+        } : null,
+        continuation: continuation ? { workspaceHash: continuation.workspaceHash, broadcast: continuation.broadcast } : null,
+        deferredApproval: replica.state.deferredAccountProposals?.get(counterpartyId) ?? null,
+      };
+    });
+    return {
+      replicaPresent: Boolean(replica), runtimeHeight: env?.state?.height ?? null,
+      entityHeight: replica?.state?.height ?? null,
+      entityMempoolKinds: (replica?.mempool ?? []).map((tx: any) => tx.type),
+      proposalKinds: (replica?.proposal?.txs ?? []).map((tx: any) => tx.type),
+      accounts,
+    };
+  }, entity);
+  const hubs = await Promise.all(local.accounts.map(async account => {
+    const url = new URL('/api/hub/account-status', API_BASE_URL);
+    url.searchParams.set('hubEntityId', String(account.counterpartyId));
+    url.searchParams.set('counterpartyEntityId', entity.entityId);
+    const response = await page.request.get(url.href, { timeout: 3000 });
+    const status = await response.json();
+    return {
+      counterpartyId: account.counterpartyId, httpStatus: response.status(),
+      hasAccount: status.hasAccount ?? null, height: status.currentHeight ?? null,
+      pendingFrameHeight: status.pendingFrameHeight ?? null, mempoolCount: status.mempool ?? null,
+      entityMempoolKinds: status.replica?.mempool ?? null, proposalKinds: status.replica?.proposalTxs ?? null,
+      lockedFrameKinds: status.replica?.lockedFrameTxs ?? null,
+      runtimeHeight: status.runtime?.height ?? null,
+      halted: status.runtime?.halted ?? null, framePhase: status.runtime?.framePhase ?? null,
+      outboundCount: status.runtime?.pendingNetworkOutputs ?? null,
+      workspaceEvidence: 'not_exposed_by_account_status',
+    };
+  }));
+  const surface = await readMoveVisibleDiagnostic(page);
+  const { recentMessages: _messages, ...batch } = await readMoveBatchSnapshot(page, entity.entityId, entity.signerId);
+  console.log(`[E2E-MOVE-SETTLEMENT] ${JSON.stringify({ entity, initialSurface, surface, local, hubs, batch })}`);
+}
+
 async function broadcastDraftBatch(
   page: Page,
   entity?: LocalEntityRef,
   timeoutMs = ROUTE_TIMEOUT_MS,
 ): Promise<void> {
   const localEntity = entity ?? await getLocalEntity(page);
+  const initial = await readMoveBatchSnapshot(page, localEntity.entityId, localEntity.signerId);
+  console.log(`[E2E-BATCH] waiting ${JSON.stringify({
+    pendingOpCount: initial.pendingOpCount, sentOpCount: initial.sentOpCount,
+    pendingSettlements: initial.pendingSettlements, sentSettlements: initial.sentSettlements,
+    entityNonce: initial.entityNonce,
+  })}`);
+  const waitStarted = Date.now();
+  const initialSurface = await readMoveVisibleDiagnostic(page);
+  let capturedPending = false;
   await expect
     .poll(async () => {
       const snapshot = await readMoveBatchSnapshot(page, localEntity.entityId, localEntity.signerId);
+      if (snapshot.pendingOpCount === 0 && !capturedPending && Date.now() - waitStarted >= 10_000) {
+        capturedPending = true;
+        await captureMoveSettlementDiagnostic(page, localEntity, initialSurface);
+      }
       return snapshot.pendingOpCount;
     }, { timeout: timeoutMs })
     .toBeGreaterThan(0);
@@ -385,27 +495,28 @@ async function broadcastDraftBatch(
   await expect(broadcast).toBeEnabled({ timeout: 20_000 });
   const before = await readMoveBatchSnapshot(page, localEntity.entityId, localEntity.signerId);
   const expectedNonce = before.entityNonce + 1;
+  const depository = await getDepositoryAddress(page);
+  const fromBlock = await rpcCall<string>(page, 'eth_blockNumber', []);
   await broadcast.click();
   const deadline = Date.now() + timeoutMs;
   let lastSnapshot = before;
 
   while (Date.now() < deadline) {
     lastSnapshot = await readMoveBatchSnapshot(page, localEntity.entityId, localEntity.signerId);
-    if (lastSnapshot.batchHistoryCount > before.batchHistoryCount) {
-      // HankoBatchProcessed is the durable proof that broadcast ran. sentBatch
-      // is intentionally ephemeral and may be created and cleared between two
-      // browser polls on a fast local stack.
-      expect(lastSnapshot.sentExists, `sentBatch must clear after confirmation: ${JSON.stringify(lastSnapshot)}`).toBe(false);
-      expect(lastSnapshot.entityNonce, `entity nonce must advance after confirmed batch: ${JSON.stringify(lastSnapshot)}`).toBeGreaterThanOrEqual(expectedNonce);
-      expect(lastSnapshot.lastHistoryEntityNonce, `batchHistory must record confirmed nonce ${expectedNonce}: ${JSON.stringify(lastSnapshot)}`).toBe(expectedNonce);
-      expect(lastSnapshot.lastHistoryStatus, `batchHistory entry must be confirmed: ${JSON.stringify(lastSnapshot)}`).toBe('confirmed');
+    const confirmed = await readConfirmedMoveBatch(page, depository, localEntity.entityId, expectedNonce, fromBlock);
+    // Receipt proves the exact successful nonce; the replica must also ingest
+    // its acknowledgement and clear the live sent batch before we continue.
+    if (confirmed && !lastSnapshot.sentExists && lastSnapshot.entityNonce >= expectedNonce) {
+      expect(lastSnapshot.sentExists).toBe(false);
+      expect(lastSnapshot.entityNonce).toBeGreaterThanOrEqual(expectedNonce);
+      console.log(`[E2E-BATCH] confirmed nonce=${expectedNonce} tx=${confirmed.transactionHash}`);
       return;
     }
     await page.waitForTimeout(250);
   }
 
   throw new Error(
-    `Batch broadcast did not finalize within ${timeoutMs}ms: expectedNonce=${expectedNonce} observedBroadcast=${observedBroadcast} snapshot=${JSON.stringify(lastSnapshot)}`,
+    `Batch broadcast did not finalize within ${timeoutMs}ms: expectedNonce=${expectedNonce} snapshot=${JSON.stringify(lastSnapshot)}`,
   );
 }
 
@@ -453,26 +564,11 @@ async function waitForRecipientCounterpartyProfile(
   recipientEntityId: string,
   counterpartyEntityId: string,
 ): Promise<void> {
-  const recipient = recipientEntityId.toLowerCase();
-  const counterparty = counterpartyEntityId.toLowerCase();
-  await expect
-    .poll(async () => page.evaluate(({ recipient, counterparty }) => {
-      const env = (window as typeof window & {
-        isolatedEnv?: {
-          gossip?: {
-            getProfiles?: () => Array<{
-              entityId?: string;
-              accounts?: Array<{ counterpartyId?: string }>;
-            }>;
-          };
-        };
-      }).isolatedEnv;
-      const profiles = env?.gossip?.getProfiles?.() || [];
-      const profile = profiles.find((item) => String(item?.entityId || '').toLowerCase() === recipient);
-      return Array.isArray(profile?.accounts)
-        && profile.accounts.some((account) => String(account?.counterpartyId || '').toLowerCase() === counterparty);
-    }, { recipient, counterparty }), { timeout: ROUTE_TIMEOUT_MS })
-    .toBe(true);
+  // Recipient discovery is on demand; request its canonical profile before
+  // waiting for the advertised counterparty edge used by the Move route.
+  await waitForReceiveReadyGossipProfiles(
+    page, [recipientEntityId], counterpartyEntityId, ROUTE_TIMEOUT_MS,
+  );
 }
 
 async function getApiTokens(page: Page): Promise<ApiTokenEntry[]> {

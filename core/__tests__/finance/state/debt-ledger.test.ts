@@ -17,7 +17,8 @@ import {
 import { deriveSignerAddressSync, deriveSignerKeySync, registerSignerKey } from '../../../account/crypto';
 import { createEmptyEnv, generateLazyEntityId } from '../../../runtime';
 import { applyJEvent } from '../../../entity/tx/j-events';
-import { computeCanonicalEntityConsensusStateHash } from '../../../entity/consensus/state-root';
+import { computeCanonicalEntityConsensusStateHash, computeEntityAccountValueHash } from '../../../entity/consensus/state-root';
+import { PersistentEntityAccountMap } from '../../../entity/state/persistent-account-map';
 import { applyEntityTx } from '../../../entity/tx/apply';
 import { hydrateEntityStateFromStorage, projectEntityCoreDoc } from '../../../storage/read/projections';
 import type { StorageEntityCoreDoc } from '../../../storage/types';
@@ -56,7 +57,7 @@ const makeState = (entityId: string, signerId: string): EntityState => ({
   proposals: new Map(),
   config: makeConfig(signerId),
   reserves: new Map(),
-  accounts: new Map(),
+  accounts: PersistentEntityAccountMap.empty(entityId, computeEntityAccountValueHash),
   deferredAccountProposals: new Map(),
   lastFinalizedJHeight: 0,
   profile: {
@@ -82,7 +83,6 @@ const installJurisdiction = (env: ReturnType<typeof createEmptyEnv>): void => {
     rpcs: [JURISDICTION.address!],
     chainId: JURISDICTION.chainId,
     watcherConfirmationDepth: 0,
-    contracts: { depository: JURISDICTION.depositoryAddress, entityProvider: JURISDICTION.entityProviderAddress },
     contracts: {
       depository: JURISDICTION.depositoryAddress,
       entityProvider: JURISDICTION.entityProviderAddress,

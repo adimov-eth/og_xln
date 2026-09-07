@@ -51,7 +51,7 @@ const coveredEntity = <K extends EntityTx['type']>(
 });
 
 const ACCOUNT_BALANCE_EVIDENCE = [
-  'rscore/crates/engine/tests/balance_parity.rs',
+  'rscore/crates/engine/tests/monetary/balance_parity.rs',
 ] as const;
 const ACCOUNT_HTLC_EVIDENCE = [
   'rscore/crates/engine/tests/htlc_parity.rs',
