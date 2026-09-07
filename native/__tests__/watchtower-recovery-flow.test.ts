@@ -6,7 +6,6 @@ import { AbiCoder, HDNodeWallet, Interface, Mnemonic, Wallet, getIndexedAccountP
 import { createEntityFrameCandidateState, commitEntityFrameCandidateState } from '../../core/entity/state-clone';
 import { putEntityAccountCandidate } from '../../core/entity/state/persistent-account-map';
 import * as xln from '../../core/runtime.ts';
-import { getLiveJAdapter } from '../../core/runtime/j-submit/live-jadapters';
 import { startStandaloneWatchtowerServer, type StandaloneWatchtowerServer } from '../../core/watchtower/standalone-server';
 import {
   buildTowerAppointmentOwnerMessage,
@@ -70,9 +69,6 @@ const canonicalProofBodyHashOf = (
 const deriveFrontendWallet = (seed: string, index: number): HDNodeWallet =>
   HDNodeWallet.fromMnemonic(Mnemonic.fromPhrase(seed), getIndexedAccountPath(index));
 
-const deriveFrontendAddress = (seed: string, index: number): string =>
-  deriveFrontendWallet(seed, index).address.toLowerCase();
-
 afterEach(async () => {
   while (servers.length > 0) {
     const server = servers.pop();
@@ -85,10 +81,19 @@ afterEach(async () => {
   }
 });
 
-const installJurisdiction = (env: ReturnType<typeof xln.createEmptyEnv>, name = 'TowerFlow'): JurisdictionConfig => {
+const installJurisdiction = (
+  env: ReturnType<typeof xln.createEmptyEnv>,
+  name = 'TowerFlow',
+  // The watchtower builder needs a real endpoint to put in the remedy, so that
+  // is the default. Pass [] for the restore flow: with no endpoint and no
+  // BrowserVM snapshot, restore derives no live J-adapter at all
+  // (core/runtime/recovery/j-adapter-restore.ts:160) and therefore needs no
+  // reachable chain.
+  rpcs: readonly string[] = ['http://127.0.0.1:8545'],
+): JurisdictionConfig => {
   const jurisdiction: JurisdictionConfig = {
     name,
-    address: 'http://127.0.0.1:8545',
+    address: rpcs[0] ?? 'http://127.0.0.1:8545',
     chainId: 31337,
     depositoryAddress: addr('11'),
     entityProviderAddress: addr('12'),
@@ -101,7 +106,7 @@ const installJurisdiction = (env: ReturnType<typeof xln.createEmptyEnv>, name = 
     mempool: [],
     blockDelayMs: 0,
     lastBlockTimestamp: 0,
-    rpcs: [jurisdiction.address],
+    rpcs: [...rpcs],
     chainId: jurisdiction.chainId,
     watcherConfirmationDepth: 0,
     depositoryAddress: jurisdiction.depositoryAddress,
@@ -275,17 +280,66 @@ describe('watchtower recovery full flow', () => {
     await resetRuntimeStorage(env);
     env.quietRuntimeLogs = true;
     env.scenarioMode = true;
-    // An RPC-backed jurisdiction, not a BrowserVM one. What this test proves is
-    // the tower bundle round trip, and a BrowserVM Runtime cannot reach it:
-    // `importJ` with no RPCs stores the whole simulated EVM trie in
-    // `browserVMState.trieData`, whose contract-code nodes are ~45 KB and blow
-    // the 10 KB durable Runtime-machine row bound
-    // (core/storage/wal/runtime-machine-graph.ts:42) on the very first
-    // materialization. That bound is a separate product finding, not this
-    // flow's subject.
-    const jurisdiction = installJurisdiction(env, 'RestoreFlow');
+    // This flow deliberately carries no BrowserVM snapshot. `importJ` with no
+    // RPCs stores the whole simulated EVM trie in `browserVMState.trieData`,
+    // whose contract-code nodes are ~45 KB and exceed the 10 KB durable
+    // Runtime-machine row bound (core/storage/wal/runtime-machine-graph.ts:42)
+    // on the first materialization, restore included. That bound is a separate
+    // product defect, not this flow's subject: what is proven here is the
+    // tower bundle round trip.
+    const jurisdiction = installJurisdiction(env, 'RestoreFlow', []);
     const entityId = xln.generateLazyEntityId([runtimeId], 1n).toLowerCase();
 
+    const signers = [{
+      index: 0,
+      derivationIndex: 0,
+      address: runtimeId,
+      name: 'Signer 1',
+      entityId,
+      jurisdiction: jurisdiction.name,
+    }];
+    const uploadBundleToSlot = async (slot: number) => {
+      const height = env.state.height;
+      const frame = height > 0 ? await xln.readPersistedFrameJournal(env, height) : null;
+      if (height > 0 && !frame) throw new Error('RESTORE_FLOW_TIP_JOURNAL_MISSING');
+      const uploaded = xln.buildRuntimeRecoveryBundle(env, {
+        frames: frame ? [frame] : [],
+        signers,
+      });
+      const encrypted = await encryptRuntimeRecoveryBundle(uploaded, runtimeSeed);
+      const signedAt = Date.now();
+      const signature = await wallet.signMessage(
+        buildTowerAppointmentOwnerMessage(
+          runtimeId,
+          'blind_backup',
+          encrypted.lookupKey,
+          slot,
+          encrypted,
+          signedAt,
+          undefined,
+        ),
+      );
+      const appointment: TowerAppointmentV1 = {
+        type: 'tower_appointment',
+        version: 1,
+        towerMode: 'blind_backup',
+        lookupKey: encrypted.lookupKey,
+        slot,
+        bundle: encrypted,
+        ownerProof: {
+          runtimeId,
+          signedAt,
+          signature,
+        },
+      };
+      await towerServer.store.upsertAppointment(appointment);
+      return uploaded;
+    };
+
+    // The tower holds two owner-signed backups for the same lookup key and the
+    // stale one sits in the lower slot, so slot order cannot stand in for tip
+    // order: only a real height comparison picks the bundle asserted below.
+    const staleBundle = await uploadBundleToSlot(0);
     xln.enqueueRuntimeInput(env, {
       runtimeTxs: [xln.importEntity({
         entityId,
@@ -306,47 +360,9 @@ describe('watchtower recovery full flow', () => {
       entityInputs: [],
     });
     await xln.processRuntime(env);
-
-    const frame = env.state.height > 0 ? await xln.readPersistedFrameJournal(env, env.state.height) : null;
-    if (env.state.height > 0 && !frame) throw new Error('RESTORE_FLOW_TIP_JOURNAL_MISSING');
-    const bundle = xln.buildRuntimeRecoveryBundle(env, {
-      frames: frame ? [frame] : [],
-      signers: [{
-        index: 0,
-        derivationIndex: 0,
-        address: runtimeId,
-        name: 'Signer 1',
-        entityId,
-        jurisdiction: jurisdiction.name,
-      }],
-    });
-    const encrypted = await encryptRuntimeRecoveryBundle(bundle, runtimeSeed);
-    const signedAt = Date.now();
-    const signature = await wallet.signMessage(
-      buildTowerAppointmentOwnerMessage(
-        runtimeId,
-        'blind_backup',
-        encrypted.lookupKey,
-        0,
-        encrypted,
-        signedAt,
-        undefined,
-      ),
-    );
-    const appointment: TowerAppointmentV1 = {
-      type: 'tower_appointment',
-      version: 1,
-      towerMode: 'blind_backup',
-      lookupKey: encrypted.lookupKey,
-      slot: 0,
-      bundle: encrypted,
-      ownerProof: {
-        runtimeId,
-        signedAt,
-        signature,
-      },
-    };
-    await towerServer.store.upsertAppointment(appointment);
+    const bundle = await uploadBundleToSlot(1);
+    expect(bundle.runtimeHeight).toBeGreaterThan(staleBundle.runtimeHeight);
+    expect(staleBundle.checkpoint?.eReplicas?.length ?? 0).toBe(0);
 
     const runtime: Runtime = {
       id: runtimeId,
@@ -372,6 +388,7 @@ describe('watchtower recovery full flow', () => {
     const restored = await tryRestoreRuntimeEnvFromTower(runtime, xln);
     expect(restored).not.toBeNull();
     expect(restored?.bundle.runtimeHeight).toBe(bundle.runtimeHeight);
+    expect(restored?.bundle.runtimeHeight).not.toBe(staleBundle.runtimeHeight);
     expect(restored?.env.runtimeId).toBe(runtimeId);
     expect(restored?.env.state.eReplicas.size).toBe(env.state.eReplicas.size);
     expect(runtime.signers[0]?.entityId).toBe(entityId);
