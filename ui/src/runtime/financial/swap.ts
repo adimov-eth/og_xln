@@ -2,18 +2,17 @@ import type {
 	AccountReplica,
 	AccountState,
 	CrossJurisdictionSwapRoute,
-	Profile,
 	RuntimeAdapterEntitySummary,
 	RuntimeAdapterViewFrame,
 } from '@xln/core/api/public/runtime-module';
 import { getJurisdictionStackId } from '@xln/core/api/public/runtime-module';
-import type { AccountRoleEvidence } from '@xln/core/account/config/dispute-config';
 import { defaultAccountDisputeConfigForRoleEvidence } from '@xln/core/account/config/dispute-config';
 import type { SwapCommandPlan, SwapCommandPlanInput } from '@xln/core/runtime/swap-cmd/swap-command-plan';
 
 import { getEmbeddedEnv, requireAdapter } from '../adapter';
 import { getXLN } from '../xln-loader';
 import { sendEntityTxs } from '../tx';
+import { committedRoles, gossipProfile, partyRoles } from './roles';
 
 const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
@@ -26,64 +25,14 @@ export type SwapParty = {
 	account: AccountState | null;
 };
 
-/**
- * Committed hub roles: only signer-backed replicas (our own entities) are
- * committed authority. Remote gossip summaries carry no signer and cannot
- * masquerade as committed roles. Mirrors buildSwapPanelRuntimeView.
- */
-export function committedRoles(summaries: readonly RuntimeAdapterEntitySummary[]): Map<string, boolean> {
-	const roles = new Map<string, boolean>();
-	for (const summary of summaries) {
-		const entityId = normalizeId(summary.entityId);
-		if (entityId && summary.signerId && typeof summary.isHub === 'boolean') roles.set(entityId, summary.isHub);
-	}
-	return roles;
-}
-
 export function jurisdictionRef(frame: RuntimeAdapterViewFrame | null): string {
 	const config = frame?.activeEntity?.core?.config?.jurisdiction;
 	return config ? getJurisdictionStackId(config) : '';
 }
 
-function hubGossipProfile(hubEntityId: string): Profile | null {
-	const env = getEmbeddedEnv();
-	const profile = env?.gossip?.getProfile?.(hubEntityId);
-	return profile ?? null;
-}
-
-function hubIsHub(hubEntityId: string, summaries: readonly RuntimeAdapterEntitySummary[]): boolean {
-	const gossip = hubGossipProfile(hubEntityId);
-	if (gossip?.metadata?.isHub === true) return true;
-	return summaries.some(summary => normalizeId(summary.entityId) === hubEntityId && summary.isHub === true);
-}
-
-/** Same rule as resolveSameJSwapPartyRoles: the party role must be committed, the hub must be a hub. */
-export function partyRoles(input: {
-	entityId: string;
-	hubEntityId: string;
-	roles: ReadonlyMap<string, boolean>;
-	summaries: readonly RuntimeAdapterEntitySummary[];
-	label: 'SOURCE' | 'TARGET';
-}): { entityRoleEvidence: AccountRoleEvidence; hubRoleEvidence: AccountRoleEvidence } {
-	const entityId = normalizeId(input.entityId);
-	const hubEntityId = normalizeId(input.hubEntityId);
-	const entityIsHub = input.roles.get(entityId);
-	if (!entityId || !hubEntityId || typeof entityIsHub !== 'boolean' || !hubIsHub(hubEntityId, input.summaries)) {
-		throw new Error(`SWAP_${input.label}_PARTY_ROLE_UNAVAILABLE:${entityId}:${hubEntityId}`);
-	}
-	return {
-		entityRoleEvidence: { entityId, isHub: entityIsHub, source: 'committed-profile' },
-		hubRoleEvidence: {
-			entityId: hubEntityId,
-			isHub: true,
-			source: input.roles.get(hubEntityId) === true ? 'committed-profile' : 'verified-gossip-profile',
-		},
-	};
-}
-
 /** The hub's published taker fee. No fee policy means no order: the runtime would reject an unauthorized net. */
 export function hubTakerFeeBps(hubEntityId: string): number {
-	const feeBps = hubGossipProfile(normalizeId(hubEntityId))?.metadata?.swapTakerFeeBps;
+	const feeBps = gossipProfile(normalizeId(hubEntityId))?.metadata?.swapTakerFeeBps;
 	if (!Number.isSafeInteger(feeBps)) throw new Error('SWAP_FEE_POLICY_UNAVAILABLE');
 	return Number(feeBps);
 }

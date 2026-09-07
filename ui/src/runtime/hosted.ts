@@ -2,8 +2,10 @@ import { getXLN } from './xln-loader';
 import { connectEmbedded, getEmbeddedEnv, requireAdapter } from './adapter';
 import { deriveAddress, derivePrivateKeyBytes } from './keys';
 import { readJson } from './http';
-import { DEFAULT_ACCOUNT_DISPUTE_CONFIG, waitFor } from './tx';
-import type { EntityTx, RuntimeReplica } from '@xln/core/api/public/runtime-module';
+import { waitFor } from './tx';
+import { accountDisputeConfig } from './financial/roles';
+import type { EntityTx, RuntimeAdapterEntitySummary, RuntimeReplica } from '@xln/core/api/public/runtime-module';
+import type { AccountDisputeConfig } from '@xln/core/account/config/dispute-config';
 import { deriveJurisdictionSignerIndex } from '@xln/core/jurisdiction/machine/config/signer-derivation';
 import { HDNodeWallet } from 'ethers';
 import { useApp, type VaultKind } from './store';
@@ -311,22 +313,39 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 		if (hub && online && !accountReady(env, entityId, hub.entityId)) {
 			step(`Opening an account with ${hub.name}`);
 			await xln.ensureGossipProfiles(env, [hub.entityId]);
-			await sendEntity(entityId, signerId, [
-				{
-					type: 'openAccount',
-					// Opening an account grants no unsecured exposure; Receive asks for explicit credit consent.
-					data: {
-						targetEntityId: hub.entityId,
-						creditAmount: 0n,
-						tokenId: USDC,
-						disputeConfig: DEFAULT_ACCOUNT_DISPUTE_CONFIG,
-					},
-				},
-			]);
+			// The response clocks are signed into the Account for its whole life, so
+			// they are derived from the two parties' roles, never assumed. A hub whose
+			// role we cannot establish gets no account rather than a user's window.
+			let disputeConfig: AccountDisputeConfig | null = null;
 			try {
-				await waitFor(() => accountReady(env, entityId, hub.entityId), `account with ${hub.name}`, 60_000);
-			} catch {
-				useApp.getState().toast(`${hub.name} has not answered yet; the account opens when it does.`);
+				const summaries = await requireAdapter().read<RuntimeAdapterEntitySummary[]>('entities');
+				disputeConfig = accountDisputeConfig({ entityId, counterpartyId: hub.entityId, summaries });
+			} catch (error) {
+				useApp
+					.getState()
+					.toast(
+						`${hub.name} has not published its role yet, so the dispute window cannot be set. Open the account from Home once it is online. (${error instanceof Error ? error.message : String(error)})`,
+						'danger',
+					);
+			}
+			if (disputeConfig) {
+				await sendEntity(entityId, signerId, [
+					{
+						type: 'openAccount',
+						// Opening an account grants no unsecured exposure; Receive asks for explicit credit consent.
+						data: {
+							targetEntityId: hub.entityId,
+							creditAmount: 0n,
+							tokenId: USDC,
+							disputeConfig,
+						},
+					},
+				]);
+				try {
+					await waitFor(() => accountReady(env, entityId, hub.entityId), `account with ${hub.name}`, 60_000);
+				} catch {
+					useApp.getState().toast(`${hub.name} has not answered yet; the account opens when it does.`);
+				}
 			}
 		}
 

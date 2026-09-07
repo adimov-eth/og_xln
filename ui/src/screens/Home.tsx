@@ -7,7 +7,8 @@ import { PendingBatch } from '../components/PendingBatch';
 import { Sheet } from '../components/Sheet';
 import { TokenIcon } from '../components/TokenPicker';
 import { useApp } from '../runtime/store';
-import { DEFAULT_ACCOUNT_DISPUTE_CONFIG, sendEntityTxs } from '../runtime/tx';
+import { sendEntityTxs } from '../runtime/tx';
+import { accountDisputeConfig } from '../runtime/financial/roles';
 import { formatMoney, formatSigned, formatUsd, getTokenMeta, parseAmount, shortId } from '../runtime/format';
 import { isUsdStable, usdOf } from '../runtime/financial/prices';
 import { useWallet, type AccountView, type TokenTotals, type WalletView } from '../runtime/views';
@@ -513,6 +514,11 @@ function OpenAccountSheet({ wallet, onClose }: { wallet: WalletView; onClose: ()
 				if (r2cRequestSoftLimit <= 0n || hardLimit < r2cRequestSoftLimit || maxAcceptableFee < 0n) throw new Error('Soft limit must be positive and the hard limit at least as large');
 				rebalancePolicy = { r2cRequestSoftLimit, hardLimit, maxAcceptableFee };
 			}
+			// A hub answers a dispute in an hour and a person in a day. The pair is
+			// signed into the Account and can never be renegotiated, so it is derived
+			// from both parties' committed or gossiped roles; an unknown role refuses
+			// the proposal instead of granting the counterparty a day it is not owed.
+			const disputeConfig = accountDisputeConfig({ entityId: wallet.entityId, counterpartyId: targetId, summaries: wallet.summaries });
 			await sendEntityTxs(wallet.entityId, wallet.signerId, [
 				{
 					type: 'openAccount',
@@ -520,7 +526,7 @@ function OpenAccountSheet({ wallet, onClose }: { wallet: WalletView; onClose: ()
 						targetEntityId: targetId,
 						creditAmount,
 						tokenId: selectedTokenId,
-						disputeConfig: DEFAULT_ACCOUNT_DISPUTE_CONFIG,
+						disputeConfig,
 						...(rebalancePolicy ? { rebalancePolicy } : {}),
 					},
 				},

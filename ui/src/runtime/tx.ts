@@ -2,9 +2,6 @@ import type { EntityTx, RuntimeInput } from '@xln/core/api/public/runtime-module
 import type { RuntimeAdapterSendResult } from '@xln/core/api/runtime-adapter/types';
 import { requireAdapter } from './adapter';
 
-/** Standard 24h bilateral response window — matches the protocol's non-hub default. */
-export const DEFAULT_ACCOUNT_DISPUTE_CONFIG = { leftResponseSeconds: 86_400, rightResponseSeconds: 86_400 };
-
 export function buildEntityInput(entityId: string, signerId: string, entityTxs: EntityTx[]): RuntimeInput {
 	return {
 		runtimeTxs: [],
