@@ -29,8 +29,6 @@ import {
 } from '../../runtime.ts';
 import { createHubDirectRuntimeRoute } from '../../orchestrator/hub/hub-runtime-transport';
 import { startStandaloneRelayServer } from '../../network/relay/standalone-server';
-import { createLocalDeliveryHandler } from '../../network/relay/local-delivery';
-import { getEntityReplicaById } from '../../api/server/entities/lookup';
 import {
   deriveSignerAddressSync,
   deriveSignerKeySync,
@@ -400,16 +398,11 @@ const runHubs = async (): Promise<void> => {
   await bindDeployedStack(env, target, targetAdapter, { x: 400, y: 600, z: 0 });
 
   if (!(relayPort > 0)) throw new Error('CROSS_J_RELAY_PORT_MISSING');
-  let localDelivery: ReturnType<typeof createLocalDeliveryHandler> | null = null;
   startStandaloneRelayServer({
     host: relayHost,
     port: relayPort,
     serverId: 'hubs',
     ...(env.runtimeId ? { serverRuntimeId: env.runtimeId } : {}),
-    onEntityInput: async (from, msg, store) => {
-      localDelivery ??= createLocalDeliveryHandler(env, store, getEntityReplicaById);
-      await localDelivery(from, msg);
-    },
   });
   console.log(`P2P_RELAY_READY host=${relayHost} port=${relayPort}`);
 

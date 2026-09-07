@@ -2802,10 +2802,14 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
+  // Printing usage starts nothing, so it must not take the machine-wide lock
+  // (which also resolves a git common dir and therefore cannot run outside a
+  // checkout). `main` answers --help before parsing anything else.
+  const usageOnly = process.argv.slice(2).some(arg => arg === '--help' || arg === '-h');
   // One machine, several agent worktrees: a browser batch and an HLT stand
   // must not share 32 cores, or both results are noise. See tools/stand-lock.ts.
   const standLock =
-    process.env[STAND_LOCK_DISABLE_ENV] === '1' || process.env[STAND_LOCK_TOKEN_ENV]
+    usageOnly || process.env[STAND_LOCK_DISABLE_ENV] === '1' || process.env[STAND_LOCK_TOKEN_ENV]
       ? null
       : await acquireStandLock({
           reason: 'e2e-parallel-isolated',

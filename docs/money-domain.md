@@ -1,6 +1,6 @@
 # Removing arbitrary monetary ceilings
 
-Status: owner approved implementation on 2026-09-06: «да снимай все лимиты в солидити».
+Status: owner approved implementation on 2026-09-06: "yes, remove all the limits in Solidity" (owner quote, translated from Russian).
 This authorizes coherent arithmetic/ABI changes to remove arbitrary monetary ceilings;
 it does not authorize deleting existing funds, signed states or history.
 

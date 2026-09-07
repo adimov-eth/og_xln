@@ -265,7 +265,6 @@ const relayHelloChallenges = createHelloChallengeRegistry();
 const routerConfig: RelayRouterConfig = {
   store: relayStore,
   localRuntimeId: 'mesh-relay',
-  localDeliver: async () => {},
   send: (ws, data) => ws.send(data),
   consumeHelloChallenge: (ws, challenge) => relayHelloChallenges.consume(ws, challenge),
 };

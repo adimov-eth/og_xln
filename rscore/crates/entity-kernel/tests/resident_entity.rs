@@ -25,10 +25,11 @@ use xln_rscore_entity_kernel::{
     EntityKernelCommitments, EntityKernelOutput, EntityLeaderState, EntityStateSlice, EntityTxKind,
     ExtendCreditEntityTx, FinalizedJEventBatch, HtlcPaymentEntityTx, JClaimIngress, JReserveUpdate,
     LocalEntityControlTx, LocalEntityFinancialTx, LocalEntityTx, OrderbookState,
-    OriginatedHtlcDeliveryMode, PreparedOriginatedHtlcPayment, ResidentEntityError,
-    ResidentEntityOperation, ResidentEntityRequest, ResidentJEventProjection, ScheduledHook,
-    ScheduledWake, SchedulerError, apply_resident_entity_round, apply_resident_entity_round_core,
-    collect_due_scheduled_wake_jobs, decode_local_entity_financial_tx,
+    OriginatedHtlcDeliveryMode, PreparedOriginatedHtlcPayment, RejectedInboundAccountInput,
+    ResidentEntityError, ResidentEntityOperation, ResidentEntityRequest, ResidentJEventProjection,
+    ScheduledHook, ScheduledWake, SchedulerError, apply_resident_entity_round,
+    apply_resident_entity_round_core, collect_due_scheduled_wake_jobs,
+    decode_local_entity_financial_tx,
 };
 use xln_rscore_protocol::{CanonicalNumber, CanonicalValue};
 
@@ -298,6 +299,7 @@ fn cross_j_r4_h34_credit_before_inbound_proposal_order() {
                 post_accounts: false,
                 runtime_seed: None,
                 scheduled_wake: None,
+                propose_accounts_now: Vec::new(),
                 expected_proposer_signer_id: hub_label.into(),
                 finalized_j_events: None,
                 entity_authority: None,
@@ -412,6 +414,7 @@ fn entity_owned_envelope_change_moves_root_without_account_history_touch() {
             post_accounts: false,
             runtime_seed: None,
             scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "envelope-touch-hub".into(),
             finalized_j_events: None,
             entity_authority: None,
@@ -487,6 +490,7 @@ fn real_account_input_remains_an_account_history_touch() {
             post_accounts: false,
             runtime_seed: None,
             scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "input-touch-hub".into(),
             finalized_j_events: None,
             entity_authority: None,
@@ -642,6 +646,7 @@ fn inbound_genesis_bundles_required_ack_with_hub_policy_proposal() {
             post_accounts: false,
             runtime_seed: None,
             scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "hub".to_string(),
             finalized_j_events: None,
             entity_authority: Some(single_signer_authority("hub")),
@@ -760,6 +765,7 @@ fn accepted_and_duplicate_account_proposals_force_the_same_pure_ack() {
                 post_accounts: false,
                 runtime_seed: None,
                 scheduled_wake: None,
+                propose_accounts_now: Vec::new(),
                 expected_proposer_signer_id: "force-ack-hub".to_string(),
                 finalized_j_events: None,
                 entity_authority: None,
@@ -1015,6 +1021,7 @@ fn later_pure_ack_clears_earlier_duplicate_force_in_one_inbound_batch() {
             post_accounts: false,
             runtime_seed: None,
             scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "cancel-force-hub".to_string(),
             finalized_j_events: None,
             entity_authority: None,
@@ -1129,6 +1136,7 @@ fn authenticated_j_projection_joins_the_single_outbound_account_visit() {
             post_accounts: false,
             runtime_seed: None,
             scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "hub".into(),
             finalized_j_events: Some(ResidentJEventProjection {
                 scanned_through: 43,
@@ -1284,6 +1292,7 @@ fn local_direct_and_originated_htlc_join_one_resident_account_proposal() {
             post_accounts: false,
             runtime_seed: None,
             scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "hub".into(),
             finalized_j_events: None,
             entity_authority: None,
@@ -1473,6 +1482,7 @@ fn resident_entity_fuses_inbound_paybook_and_outbound_account_visit() {
             post_accounts: false,
             runtime_seed: None,
             scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "hub".to_string(),
             finalized_j_events: None,
             entity_authority: None,
@@ -1598,6 +1608,7 @@ fn resident_entity_same_j_swap_is_root_identical_across_worker_counts() {
                 post_accounts: false,
                 runtime_seed: None,
                 scheduled_wake: None,
+                propose_accounts_now: Vec::new(),
                 expected_proposer_signer_id: "hub".to_string(),
                 finalized_j_events: None,
                 entity_authority: Some(single_signer_authority("hub")),
@@ -1752,6 +1763,7 @@ fn failed_books_stage_rolls_back_account_candidate_and_exact_retry_matches_fresh
         post_accounts: false,
         runtime_seed: None,
         scheduled_wake: None,
+        propose_accounts_now: Vec::new(),
         expected_proposer_signer_id: "books-rollback-hub".to_string(),
         finalized_j_events: None,
         entity_authority: None,
@@ -1979,6 +1991,7 @@ fn cross_j_r6_h69_scheduled_rebalance_broadcasts_in_the_same_entity_frame() {
                 due_at: TIMESTAMP,
                 jobs,
             }),
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "hub".into(),
             finalized_j_events: None,
             entity_authority: Some(authority),
@@ -2134,6 +2147,7 @@ fn due_htlc_timeout_is_admitted_and_proposed_in_the_same_resident_round() {
                 due_at,
                 jobs,
             }),
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "hub".to_string(),
             finalized_j_events: None,
             entity_authority: None,
@@ -2237,6 +2251,7 @@ fn forged_scheduled_wake_is_rejected_before_resident_account_mutation() {
                 due_at: 150,
                 jobs,
             }),
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "hub".to_string(),
             finalized_j_events: None,
             entity_authority: None,
@@ -2258,9 +2273,10 @@ fn forged_scheduled_wake_is_rejected_before_resident_account_mutation() {
 }
 
 /// A signed peer lock that leaves no 30-second enforcement reserve is an
-/// authenticated input rejection, not an idle Account result. The Entity
-/// boundary must fail-stop so Runtime cannot consume the WAL position while
-/// leaving the unsafe input absent from committed state.
+/// authenticated input rejection, not an idle Account result. Owner canon
+/// (AGENTS.md REJECT POLICY): the kernel decides the typed reject without
+/// reading env, records it on the round result and mutates nothing; the
+/// Runtime loop alone applies fail-fast or log-and-drop.
 #[test]
 fn short_lock_fails_the_resident_entity_round_without_account_mutation() {
     let hub_identity = identity("short-lock-hub");
@@ -2378,6 +2394,7 @@ fn short_lock_fails_the_resident_entity_round_without_account_mutation() {
             post_accounts: false,
             runtime_seed: None,
             scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "short-lock-hub".to_string(),
             finalized_j_events: None,
             entity_authority: None,
@@ -2387,22 +2404,22 @@ fn short_lock_fails_the_resident_entity_round_without_account_mutation() {
         },
         &DeterministicContext::hlt_default(),
     );
-    let Err(error) = result else {
-        panic!("unsafe short lock must fail the Entity/Runtime boundary")
-    };
-
-    assert!(matches!(
-        error,
-        ResidentEntityError::InboundFrameRejected { ref account_id, ref reason }
-            if account_id == &peer.to_string()
-                && reason == &format!(
-                    "HTLC_LOCK_ENFORCEMENT_WINDOW_TOO_SHORT: lock={hashlock} localTimestamp={TIMESTAMP} localJHeight=100 frameTimestamp={TIMESTAMP} frameJHeight=100"
-                )
-    ));
+    let result = result.expect("a rejected peer frame is a typed reject, never a round fault");
+    assert_eq!(
+        result.rejected_inbound_inputs,
+        vec![RejectedInboundAccountInput {
+            operation_index: 0,
+            account_id: peer.to_string(),
+            verdict: "FrameRejected",
+            reason: format!(
+                "HTLC_LOCK_ENFORCEMENT_WINDOW_TOO_SHORT: lock={hashlock} localTimestamp={TIMESTAMP} localJHeight=100 frameTimestamp={TIMESTAMP} frameJHeight=100"
+            ),
+        }],
+    );
     assert_eq!(
         accounts.accounts_root(),
         accounts_root_before,
-        "failed Entity round must abort the staged Account candidate",
+        "a rejected peer frame must leave the Account unchanged",
     );
 }
 
@@ -2645,6 +2662,7 @@ fn reserve_window_secret_is_consumed_by_the_resident_entity_dispute_flow() {
             post_accounts: false,
             runtime_seed: None,
             scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: "reserve-dispute-hub".to_string(),
             finalized_j_events: None,
             entity_authority: None,
@@ -2749,5 +2767,278 @@ fn reserve_window_secret_is_consumed_by_the_resident_entity_dispute_flow() {
     assert_eq!(
         evidence_field("frameHanko"),
         &CanonicalValue::String(expected_frame_hanko),
+    );
+}
+
+/// `proposeAccountsNow` recovery. Parity target:
+/// `core/entity/tx/handlers/account/propose-accounts-now.ts` — for each
+/// counterparty the handler re-emits the exact retained `pendingAccountInput`,
+/// in reducer emission order, and mutates nothing. Rust rebuilds those bytes on
+/// the Account worker that owns them, so this test compares the resent input
+/// against the original proposal byte for byte and pins the Accounts root.
+#[test]
+fn propose_accounts_now_reemits_retained_proposals_in_marker_order() {
+    let hub_label = "resend-hub";
+    let hub = entity(&identity(hub_label));
+    let first = entity(&identity("resend-counterparty-a"));
+    let second = entity(&identity("resend-counterparty-b"));
+    let idle = entity(&identity("resend-counterparty-idle"));
+    let (low, high) = if first < second {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    let low_id = AccountId::from_bytes(*low.as_bytes());
+    let high_id = AccountId::from_bytes(*high.as_bytes());
+    let idle_id = AccountId::from_bytes(*idle.as_bytes());
+    let seed = |counterparty: &EntityId| AccountSeed {
+        account_id: AccountId::from_bytes(*counterparty.as_bytes()),
+        replica: AccountReplica::new(hub.clone(), account_state(&hub, counterparty))
+            .expect("hub replica"),
+        consensus: None,
+    };
+    let mut accounts = ResidentConsensusEngine::restore(
+        EngineGeneration::from_bytes([0x77; 8]),
+        1,
+        0,
+        derive_signer_key(SEED, hub_label).expect("hub key"),
+        hub_label.to_string(),
+        support::market(),
+        vec![seed(&low), seed(&high), seed(&idle)],
+    )
+    .expect("resident accounts");
+    let mut state = EntityStateSlice::empty(hub.to_string(), TIMESTAMP);
+    state.known_accounts =
+        BTreeSet::from([low.to_string(), high.to_string(), idle.to_string()]).into();
+
+    let credit = |counterparty: &EntityId| AdmittedLocalEntityTx {
+        signer_id: hub_label.into(),
+        board_epoch: 0,
+        tx: LocalEntityTx::Financial(LocalEntityFinancialTx::ExtendCredit(ExtendCreditEntityTx {
+            counterparty_entity_id: counterparty.to_string(),
+            token_id: TokenId::new(1).expect("token"),
+            amount: BigInt::from(9),
+        })),
+    };
+    let request =
+        |accounts_root: [u8; 32],
+         entity_height: u64,
+         operations: Vec<ResidentEntityOperation>,
+         propose_accounts_now: Vec<xln_rscore_entity_kernel::ProposeAccountsNow>| {
+            ResidentEntityRequest {
+                inbound: EntityInboundRequest {
+                    owner_entity_id: *hub.as_bytes(),
+                    owning_entity_is_hub: false,
+                    expected_accounts_root: accounts_root,
+                    clock: ReceiverClock {
+                        entity_timestamp: TIMESTAMP + entity_height,
+                        finalized_j_height: 100,
+                    },
+                    rows: Vec::new(),
+                    post_accounts: false,
+                },
+                local_certified_board_authority: xln_rscore_batch::AccountInputBoardAuthority::Lazy,
+                entity_height,
+                outbound_timestamp: TIMESTAMP + entity_height,
+                outbound_j_height: 100,
+                checkpoint_due: false,
+                post_accounts: false,
+                runtime_seed: None,
+                scheduled_wake: None,
+                propose_accounts_now,
+                expected_proposer_signer_id: hub_label.to_string(),
+                finalized_j_events: None,
+                entity_authority: Some(single_signer_authority(hub_label)),
+                local_account_genesis_policy: None,
+                cross_j_opening_sibling_views: Vec::new(),
+                operations,
+            }
+        };
+
+    let genesis_root = accounts.accounts_root();
+    let proposed = apply_resident_entity_round_core(
+        &mut accounts,
+        state,
+        request(
+            genesis_root,
+            1,
+            vec![ResidentEntityOperation::Local(vec![
+                credit(&low),
+                credit(&high),
+            ])],
+            Vec::new(),
+        ),
+        &DeterministicContext::hlt_default(),
+    )
+    .expect("hub proposes to both counterparties");
+    let retained = |account_id: AccountId| {
+        proposed
+            .outbound
+            .proposals
+            .iter()
+            .find(|row| row.account_id == account_id)
+            .and_then(|row| row.outbound_input.clone())
+            .unwrap_or_else(|| panic!("original proposal for {account_id:?}"))
+    };
+    // `AccountInput` is intentionally not `PartialEq` (it carries signature
+    // material); the exact debug rendering is a total projection of every
+    // field, which is what "byte for byte" means for this comparison.
+    let retained_low = format!("{:?}", retained(low_id));
+    let retained_high = format!("{:?}", retained(high_id));
+    assert!(
+        proposed
+            .outbound
+            .proposals
+            .iter()
+            .all(|row| row.account_id != idle_id),
+        "the third counterparty never proposed, so it retains nothing",
+    );
+    let root_after_proposal = accounts.accounts_root();
+
+    // Two markers, so the emission order can be the reverse of Account id
+    // order: within one marker TS requires a strictly ascending list.
+    let marker = |counterparty: &EntityId| xln_rscore_entity_kernel::ProposeAccountsNow {
+        version: 1,
+        proposer_signer_id: hub_label.to_string(),
+        counterparties: vec![counterparty.to_string()],
+    };
+    let resent = apply_resident_entity_round_core(
+        &mut accounts,
+        proposed.state,
+        request(
+            root_after_proposal,
+            2,
+            Vec::new(),
+            vec![
+                marker(&high),
+                marker(&low),
+                xln_rscore_entity_kernel::ProposeAccountsNow {
+                    version: 1,
+                    proposer_signer_id: hub_label.to_string(),
+                    counterparties: vec![idle.to_string()],
+                },
+            ],
+        ),
+        &DeterministicContext::hlt_default(),
+    )
+    .expect("recovery marker round");
+
+    assert_eq!(
+        resent
+            .outbound
+            .proposals
+            .iter()
+            .map(|row| row.account_id)
+            .collect::<Vec<_>>(),
+        vec![high_id, low_id],
+        "marker emission order wins; Account ids never choose publication order",
+    );
+    assert_eq!(
+        format!("{:?}", resent.outbound.proposals[0].outbound_input),
+        format!("{:?}", Some(retained(high_id))),
+        "the exact retained proposal bytes are re-emitted, not a new frame",
+    );
+    assert_eq!(
+        format!("{:?}", resent.outbound.proposals[1].outbound_input),
+        format!("{:?}", Some(retained(low_id))),
+    );
+    assert!(
+        retained_high != retained_low,
+        "distinct Accounts, distinct bytes"
+    );
+    assert!(
+        resent
+            .outbound
+            .proposals
+            .iter()
+            .all(|row| row.proposed.is_none() && row.dropped.is_empty()),
+        "a resend is a pure read: no frame is rebuilt and nothing is dropped",
+    );
+    assert_eq!(
+        accounts.accounts_root(),
+        root_after_proposal,
+        "recovery mutates no Account state",
+    );
+    assert!(
+        resent.account_touch_order.is_empty(),
+        "a resend writes no Account history row: TS `storageChanges` stays empty",
+    );
+}
+
+/// The marker carries exactly one authority: the committed active leader
+/// authored it. Parity target: TS `assertProposeAccountsNowMatchesState`.
+#[test]
+fn propose_accounts_now_from_a_non_leader_is_rejected_before_account_mutation() {
+    let hub_label = "resend-authority-hub";
+    let hub = entity(&identity(hub_label));
+    let peer = entity(&identity("resend-authority-peer"));
+    let mut accounts = ResidentConsensusEngine::restore(
+        EngineGeneration::from_bytes([0x78; 8]),
+        1,
+        0,
+        derive_signer_key(SEED, hub_label).expect("hub key"),
+        hub_label.to_string(),
+        support::market(),
+        vec![AccountSeed {
+            account_id: AccountId::from_bytes(*peer.as_bytes()),
+            replica: AccountReplica::new(hub.clone(), account_state(&hub, &peer))
+                .expect("hub replica"),
+            consensus: None,
+        }],
+    )
+    .expect("resident accounts");
+    let mut state = EntityStateSlice::empty(hub.to_string(), TIMESTAMP);
+    state.known_accounts = BTreeSet::from([peer.to_string()]).into();
+    let expected_accounts_root = accounts.accounts_root();
+    let rejection = apply_resident_entity_round_core(
+        &mut accounts,
+        state,
+        ResidentEntityRequest {
+            inbound: EntityInboundRequest {
+                owner_entity_id: *hub.as_bytes(),
+                owning_entity_is_hub: false,
+                expected_accounts_root,
+                clock: ReceiverClock {
+                    entity_timestamp: TIMESTAMP,
+                    finalized_j_height: 100,
+                },
+                rows: Vec::new(),
+                post_accounts: false,
+            },
+            local_certified_board_authority: xln_rscore_batch::AccountInputBoardAuthority::Lazy,
+            entity_height: 1,
+            outbound_timestamp: TIMESTAMP,
+            outbound_j_height: 100,
+            checkpoint_due: false,
+            post_accounts: false,
+            runtime_seed: None,
+            scheduled_wake: None,
+            propose_accounts_now: vec![xln_rscore_entity_kernel::ProposeAccountsNow {
+                version: 1,
+                proposer_signer_id: "imposter".to_string(),
+                counterparties: vec![peer.to_string()],
+            }],
+            expected_proposer_signer_id: hub_label.to_string(),
+            finalized_j_events: None,
+            entity_authority: Some(single_signer_authority(hub_label)),
+            local_account_genesis_policy: None,
+            cross_j_opening_sibling_views: Vec::new(),
+            operations: Vec::new(),
+        },
+        &DeterministicContext::hlt_default(),
+    );
+    let Err(error) = rejection else {
+        panic!("a forged marker must not execute");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("PROPOSE_ACCOUNTS_NOW_PROPOSER_MISMATCH"),
+        "unexpected rejection: {error}",
+    );
+    assert_eq!(
+        accounts.accounts_root(),
+        expected_accounts_root,
+        "the forged marker is judged before any Account mutation",
     );
 }

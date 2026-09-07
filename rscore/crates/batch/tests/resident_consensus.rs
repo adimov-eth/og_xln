@@ -110,7 +110,12 @@ fn outbound_request(
         creates: Vec::new(),
         envelope_updates: Vec::new(),
         unsigned_settlement_txs: Vec::new(),
-        proposal_work: vec![(account_id, txs, BatchAccountSelection::WholeMempool, false)],
+        proposal_work: vec![(
+            account_id,
+            txs,
+            BatchAccountSelection::WholeMempool,
+            xln_rscore_batch::AccountResponseObligation::default(),
+        )],
         checkpoint_due: false,
         post_accounts: true,
     }
@@ -122,7 +127,7 @@ fn force_ack_request(
     txs: Vec<AccountTx>,
 ) -> EntityOutboundRequest {
     let mut request = outbound_request(owner, account_id, txs);
-    request.proposal_work[0].3 = true;
+    request.proposal_work[0].3.ack = true;
     request
 }
 
@@ -724,7 +729,7 @@ fn entity_owned_rebalance_submitted_marker_sets_and_releases_one_token() {
                     pair.payer_account,
                     Vec::new(),
                     BatchAccountSelection::WholeMempool,
-                    false,
+                    xln_rscore_batch::AccountResponseObligation::default(),
                 )],
                 checkpoint_due: false,
                 post_accounts: true,
@@ -818,7 +823,7 @@ fn entity_owned_rebalance_policy_updates_the_resident_leaf_and_checkpoint_body()
                 pair.payer_account,
                 Vec::new(),
                 BatchAccountSelection::WholeMempool,
-                false,
+                xln_rscore_batch::AccountResponseObligation::default(),
             )],
             checkpoint_due: false,
             post_accounts: true,
@@ -1049,7 +1054,7 @@ fn failed_htlc_uses_one_exact_continuation_and_matches_workers() {
                         envelope: None,
                     })],
                     BatchAccountSelection::WholeMempool,
-                    false,
+                    xln_rscore_batch::AccountResponseObligation::default(),
                 )],
                 checkpoint_due: false,
                 post_accounts: true,
@@ -1565,13 +1570,16 @@ fn create_admit_propose_and_force_ack_share_one_outbound_worker_wave() {
                         pair.payer_account,
                         local_tx.clone(),
                         BatchAccountSelection::WholeMempool,
-                        true,
+                        xln_rscore_batch::AccountResponseObligation {
+                            ack: true,
+                            resend_pending_proposal: false,
+                        },
                     ),
                     (
                         created_account,
                         vec![create_tx.clone()],
                         BatchAccountSelection::WholeMempool,
-                        false,
+                        xln_rscore_batch::AccountResponseObligation::default(),
                     ),
                 ],
                 checkpoint_due: false,
@@ -1864,13 +1872,13 @@ fn failed_outbound_restores_the_exact_post_inbound_head() {
                 pair.payer_account,
                 fixture::payment(&pair, 25).1,
                 BatchAccountSelection::WholeMempool,
-                false,
+                xln_rscore_batch::AccountResponseObligation::default(),
             ),
             (
                 AccountId::from_bytes([0xfe; 32]),
                 Vec::new(),
                 BatchAccountSelection::WholeMempool,
-                false,
+                xln_rscore_batch::AccountResponseObligation::default(),
             ),
         ],
         checkpoint_due: false,

@@ -1,239 +1,239 @@
-# Аренда ликвидности и подготовка ёмкости
+# Liquidity Lease and Capacity Preparation
 
-Статус: исследование; уточнение владельца 2026-09-06 — **под конкретный запрос с таймаутом**.
-Финансовая реализация гарантированного исполнения запроса ещё не завершена.
-UI и направления: [receive-capacity.md](receive-capacity.md).
-Нормативные ограничения: [fints.md](fints.md), [rjea-architecture.md](core/rjea-architecture.md).
+Status: research; owner clarification 2026-09-06 — **per specific request with a timeout**.
+The financial implementation of guaranteed request execution is not yet complete.
+UI and directions: [receive-capacity.md](receive-capacity.md).
+Regulatory constraints: [fints.md](fints.md), [rjea-architecture.md](core/rjea-architecture.md).
 
-## Решение в одном абзаце
+## Decision in One Paragraph
 
-Входящий Spectrum готовит недостающую ёмкость конкретного Account/token.
-Для отправки владелец выбрал простой переход в заполненный Move из Pay:
-собственный reserve/on-chain wallet→собственный collateral, затем подтверждение Pay.
-Исходящий кредитный Spectrum исключён из текущей фичи.
-Для получения: collateral, принадлежащий хабу и выделенный в этот Account, либо
-постоянный credit grant пользователя хабу. Хаб резервирует капитал для конкретного
-принятого запроса до его исполнения либо таймаута. Пользователь видит цену, deadline,
-риск и результат до подписи. Произвольная срочная аренда исключена из v1.
+Inbound Spectrum prepares the missing capacity of a specific Account/token.
+For sending, the owner chose a simple transition into a filled Move from Pay:
+own reserve/on-chain wallet→own collateral, then Pay confirmation.
+Outbound credit Spectrum is excluded from the current feature.
+For receiving: collateral belonging to the hub and allocated to this Account, or
+a permanent credit grant from the user to the hub. The hub reserves capital for the specific
+accepted request until its execution or timeout. The user sees the price, the deadline,
+the risk, and the result before signing. Arbitrary term-based lease is excluded from v1.
 
-## Что взято из Lightning
+## What Is Taken From Lightning
 
-| Механизм                                                                                 | Проверенный смысл                                                                                                                   | Применение в xln                                                         |
+| Mechanism                                                                                 | Verified meaning                                                                                                                     | Application in xln                                                       |
 | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| [Loop](https://docs.lightning.engineering/lightning-network-tools/loop)                  | Out освобождает inbound обменом LN-баланса на on-chain; In пополняет outbound                                                       | Перемещение своих денег отдельно от аренды чужих                         |
-| [Loop CLI](https://docs.lightning.engineering/lightning-network-tools/loop/the-loop-cli) | Раздельные fees/лимиты; prepay защищает уже потраченный ресурс от незавершения клиентом                                             | Ограниченная предоплата подготовки, ясный максимум невозвратных расходов |
-| [Pool](https://lightning.engineering/posts/2021-12-16-pool-prod-update/)                 | Аренда channel liquidity на срок; script-enforced lease ограничивает ранний вывод продавца                                          | Обязательство на J-срок, а не флаг в UI                                  |
-| [CLN Liquidity Ads](https://docs.corelightning.org/reference/funderupdate)               | Lease на 4032 блока в описанном механизме, base/proportional/funding fees, reserve tank и limits                                    | Резерв хаба, ограничение концентрации, явная цена                        |
-| [LSPS1](https://github.com/lightning/blips/blob/master/blip-0051.md)                     | Заказ, funding deadline, confirmations, срок, refund; покупка не объявляется атомарной                                              | Полная машина исполнения и возврата                                      |
-| [LSPS2](https://github.com/lightning/blips/blob/master/blip-0052.md)                     | JIT-подготовка при поступлении; fee из первого платежа; minimum lifetime/max delay; описан griefing через offline/withheld preimage | Подготовка по запросу, ограничение capital-lock хвоста                   |
-| [Phoenix](https://acinq.co/blog/phoenix-splicing-update)                                 | Изменение существующего канала и понятная стоимость управления                                                                      | Один Account, общий UX, без отдельных продуктов на каждой странице       |
-| [Autoloop](https://docs.lightning.engineering/lightning-network-tools/loop/autoloop)     | Пороги, бюджет, fee limits, backoff                                                                                                 | Самобалансировка с ограниченным churn                                    |
+| [Loop](https://docs.lightning.engineering/lightning-network-tools/loop)                  | Out frees inbound by exchanging LN balance for on-chain; In replenishes outbound                                                     | Moving your own money separately from leasing someone else's             |
+| [Loop CLI](https://docs.lightning.engineering/lightning-network-tools/loop/the-loop-cli) | Separate fees/limits; prepay protects the already-spent resource from non-completion by the client                                  | Limited prepayment for preparation, a clear maximum of non-refundable costs |
+| [Pool](https://lightning.engineering/posts/2021-12-16-pool-prod-update/)                 | Leasing channel liquidity for a term; script-enforced lease limits the seller's early withdrawal                                     | A commitment for a J-term, not a flag in the UI                          |
+| [CLN Liquidity Ads](https://docs.corelightning.org/reference/funderupdate)               | Lease for 4032 blocks in the described mechanism, base/proportional/funding fees, reserve tank and limits                            | Hub reserve, concentration limit, explicit price                         |
+| [LSPS1](https://github.com/lightning/blips/blob/master/blip-0051.md)                     | Order, funding deadline, confirmations, term, refund; the purchase is not declared atomic                                            | Full execution and refund state machine                                  |
+| [LSPS2](https://github.com/lightning/blips/blob/master/blip-0052.md)                     | JIT preparation on arrival; fee from the first payment; minimum lifetime/max delay; griefing via offline/withheld preimage is described | On-demand preparation, limiting the capital-lock tail                    |
+| [Phoenix](https://acinq.co/blog/phoenix-splicing-update)                                 | Modifying an existing channel and understandable management cost                                                                     | One Account, shared UX, without separate products on every page          |
+| [Autoloop](https://docs.lightning.engineering/lightning-network-tools/loop/autoloop)     | Thresholds, budget, fee limits, backoff                                                                                              | Self-balancing with limited churn                                        |
 
-Loop не является срочной арендой капитала. Lease не обещает доступность всех
-маршрутов или постоянную свободную capacity после её расходования.
-Поддержка Pool script-enforced lease дополнительно проверена в
+Loop is not a term lease of capital. Lease does not promise the availability of all
+routes or permanent free capacity after it has been spent.
+Support for Pool's script-enforced lease was additionally verified in
 [channel_acceptor.go](https://github.com/lightninglabs/pool/blob/master/channel_acceptor.go);
-старые страницы Pool о её отсутствии устарели. Рыночная доступность и текущие
-тарифы сервисов не проверялись. Страница текущих Phoenix fees вернула 403.
-Арифметику чужого псевдокода нельзя переносить без собственных векторов.
+older Pool pages about its absence are outdated. Market availability and current
+service tariffs were not verified. The page with current Phoenix fees returned 403.
+Someone else's pseudocode arithmetic cannot be carried over without our own test vectors.
 
-## Что именно арендуется
+## What Exactly Is Leased
 
-Принятый v1: **выделенный капитал под запрос до исполнения или таймаута**, с доказанной
-usable capacity для выбранной операции. После получения денег часть обеспечения может
-уже поддерживать возникшее обязательство. Это не снова свободный капитал хаба.
+Accepted for v1: **capital allocated for a request until execution or timeout**, with proven
+usable capacity for the chosen operation. After receiving the money, part of the collateral may
+already be supporting the resulting obligation. This is not free hub capital again.
 
-Гарантия «всегда держать свободными X входящих» потребовала бы постоянного пополнения,
-новых лимитов оборота и иной цены. Её не включаем молча в обычную аренду.
-Таймаут завершает неисполненный запрос, но не стирает существующий долг или права сторон.
-Вывод допустим только для действительно свободной доли и по каноническому settlement.
+A guarantee of "always keep X inbound free" would require constant replenishment,
+new turnover limits, and a different price. We do not include it silently in the regular lease.
+A timeout ends an unexecuted request, but does not erase existing debt or the parties' rights.
+Withdrawal is permitted only for the genuinely free portion and via canonical settlement.
 
-Для SEND внесение денег хаба в USER allocation само по себе не создаёт долг:
-[Depository.sol:780](../jurisdictions/contracts/Depository.sol#L780) списывает reserve
-спонсора и выделяет collateral получателю. Последний может его потратить.
-Возврат не следует автоматически из личности спонсора;
-[Account.sol:1227](../jurisdictions/contracts/Account.sol#L1227) требует согласованного
-перехода. Поэтому текущий SEND использует собственное пополнение через Move.
-Нельзя реализовать его как бесплатный rent-to-user R→C; отдельный loan-протокол
-не входит в эту фичу.
+For SEND, depositing the hub's money into the USER allocation does not by itself create debt:
+[Depository.sol:780](../jurisdictions/contracts/Depository.sol#L780) debits the sponsor's reserve
+and allocates collateral to the recipient. The latter can spend it.
+Repayment does not follow automatically from the sponsor's identity;
+[Account.sol:1227](../jurisdictions/contracts/Account.sol#L1227) requires an agreed-upon
+transition. Therefore the current SEND uses its own replenishment via Move.
+It cannot be implemented as a free rent-to-user R→C; a separate loan protocol
+is not part of this feature.
 
-## Котировка
+## Quote
 
-Предлагаемые условия одной подписанной котировки:
+Proposed terms of a single signed quote:
 
-- domain/jurisdiction/contract, hub, recipient, Account, token, направление, nonce;
-- полезный объём, источник principal и его allocation, точный gross/net;
-- отдельные service fee, funding/return cost, risk/reservation fee, fee token;
-- последний J-момент принятия, funding deadline, operation deadline, точная привязка запроса;
-- требуемая финальность, release/dispute условия, refund и максимальная плата клиента.
+- domain/jurisdiction/contract, hub, recipient, Account, token, direction, nonce;
+- useful volume, the source of the principal and its allocation, exact gross/net;
+- separate service fee, funding/return cost, risk/reservation fee, fee token;
+- the last J-moment for acceptance, funding deadline, operation deadline, exact request binding;
+- required finality, release/dispute conditions, refund and the client's maximum payment.
 
-Подпись связывает все экономические поля. Пользователь принимает конкретную цену;
-хаб не пересчитывает принятую котировку после роста gas или загрузки.
-Просроченная котировка или смена существенных условий требуют нового согласия.
-Неиспользованная котировка не резервирует капитал навечно. Финальное резервирование
-происходит при committed принятии, после повторной проверки доступных ресурсов.
+The signature binds all economic fields. The user accepts a specific price;
+the hub does not recalculate an accepted quote after a rise in gas or load.
+An expired quote or a change of material terms requires new consent.
+An unused quote does not reserve capital forever. Final reservation
+happens on committed acceptance, after a repeated check of available resources.
 
-Взаимозаменяемые ERC-20/TVM token amounts нельзя складывать между юрисдикциями.
-При оплате другой валютой фиксируется согласованный conversion quote и его срок;
-UI не приносит цену из внешнего API внутрь детерминированного перехода.
+Fungible ERC-20/TVM token amounts cannot be added across jurisdictions.
+When paying in a different currency, an agreed conversion quote and its term are fixed;
+the UI does not bring a price from an external API into the deterministic transition.
 
-## Три времени
+## Three Times
 
-1. **Quote expiry:** до какого подтверждённого J-момента можно принять цену.
-2. **Funding deadline:** когда должна стать доступна обещанная ёмкость либо сработать refund.
-3. **Operation deadline:** до какого J-момента можно исполнить конкретный запрос;
-   готовность наступает только после подтверждённого funding. Это не отдельный срок аренды.
+1. **Quote expiry:** up to which confirmed J-moment the price can be accepted.
+2. **Funding deadline:** when the promised capacity must become available, or the refund fires.
+3. **Operation deadline:** up to which J-moment the specific request can be executed;
+   readiness occurs only after confirmed funding. This is not a separate lease term.
 
-Отдельно показывается **dispute tail** — возможная задержка освобождения капитала.
-Рекомендуемый v1 использует финализированные J-блоки в конкретной юрисдикции.
-Длительность человеку показывается как оценка времени, не как точный перевод блоков
-в секунды. Если выбирается J timestamp, это другой явно зафиксированный clock mode,
-а не автоматический fallback на локальные часы. Cross-j сохраняет clock каждой ноги.
+Separately shown is the **dispute tail** — the possible delay in releasing capital.
+The recommended v1 uses finalized J-blocks in a specific jurisdiction.
+Duration is shown to the human as a time estimate, not as an exact conversion of blocks
+to seconds. If a J timestamp is chosen, that is a different, explicitly fixed clock mode,
+not an automatic fallback to local clocks. Cross-j preserves the clock of each leg.
 
-В xln нет готового lease clock: существующие локальные timestamps/Account heights
-не заменяют подтверждённое J-время. Reorg/recovery должны проходить через текущий
-канонический watcher и правила финальности; UI таймер не запускает финансовый переход.
+There is no ready-made lease clock in xln: existing local timestamps/Account heights
+do not substitute for confirmed J-time. Reorg/recovery must go through the current
+canonical watcher and finality rules; a UI timer does not trigger a financial transition.
 
-## Машина исполнения
+## Execution State Machine
 
 ```text
 quote → accepted/reserved → funding → ready → request_executed → releasing → released
                               └ failure/deadline → refund_due → refunded
 ```
 
-Это предложение финансовых фаз, не инструкция создать второй durable workflow store.
-Термины accepted, funded и ready не взаимозаменяемы:
+This is a proposal of financial phases, not an instruction to create a second durable workflow store.
+The terms accepted, funded, and ready are not interchangeable:
 
-- Drag изменяет только preview. Никаких tx или скрытого повышения credit.
-- Accept связывает подписи, резерв и допустимую оплату; exact duplicate идемпотентен.
-- После WAL commit Runtime выполняет существующий J batch/output.
-- Ready выводится только из committed Account delta после подтверждённого J event.
-- Дальше свежий planner заново проверяет capacity, quote и holds для самого платежа.
+- Drag changes only the preview. No tx and no hidden credit increase.
+- Accept binds the signatures, the reserve, and the permissible payment; an exact duplicate is idempotent.
+- After WAL commit, Runtime executes the existing J batch/output.
+- Ready is derived only from a committed Account delta after a confirmed J event.
+- Further on, a fresh planner re-checks capacity, quote, and holds for the payment itself.
 
-Если операция изменилась за время funding, не посылать устаревший swap автоматически.
-Автопродолжение разрешено лишь в пределах заранее подписанных amount/slippage/fee limits.
-UI может разблокировать форму без автоматической отправки — это разные согласия.
+If the operation changed during funding, do not send the stale swap automatically.
+Auto-continuation is permitted only within pre-signed amount/slippage/fee limits.
+The UI may unlock the form without automatic sending — these are different consents.
 
-Funding deadline не делает возможным мгновенный возврат уже включённого R→C.
-Если подтверждение запоздало, нужен один канонический исход: позднее funding сверяется
-с обязательством, производится допустимый release/компенсация, а не одновременно
-полный refund и бесплатное обеспечение. Две стороны не могут получить один principal.
+Funding deadline does not make an instant reversal of an already-included R→C possible.
+If confirmation arrives late, one canonical outcome is needed: late funding is reconciled
+against the obligation, a permissible release/compensation is produced, rather than simultaneously
+a full refund and free collateral. Two parties cannot receive the same principal.
 
-## Цена и 5% маржи
+## Price and 5% Margin
 
-Предложение: прозрачная себестоимость + целевая **gross margin 5%**, не обещание
-гарантированной фактической прибыльности каждой сделки.
+Proposal: transparent cost + target **gross margin of 5%**, not a promise
+of guaranteed actual profitability for every deal.
 
 ```text
 C = funding/return gas + capital-time cost + operating cost + priced risk
 price = ceil(C / 0.95)
 ```
 
-`C × 1.05` означает 5% наценки и примерно 4,76% gross margin.
-Риск/резервирование включаются в C один раз; не брать ту же стоимость повторно
-под названием security deposit. Цена и округление фиксируются в base units.
+`C × 1.05` means a 5% markup and approximately 4.76% gross margin.
+Risk/reservation is included in C once; do not take the same cost again
+under the name security deposit. Price and rounding are fixed in base units.
 
-Capital-time учитывает полезный срок **и ожидаемый хвост освобождения**, включая
-dispute delay. Gas буфер и правила возврата неиспользованной части видны в quote.
-Модель стоимости принадлежит котирующему хабу; детерминированный Account проверяет
-подписанные условия, а не воспроизводит коммерческие прогнозы хаба.
+Capital-time accounts for the useful term **and the expected release tail**, including
+dispute delay. The gas buffer and the rules for returning the unused portion are visible in the quote.
+The cost model belongs to the quoting hub; the deterministic Account verifies
+the signed terms, rather than reproducing the hub's commercial forecasts.
 
-Пример арифметики, не тариф: при C=9,50 USDT цена=10 USDT, прибыль=0,50,
-маржа=5%. Без измеренных gas, cost of capital и потерь нельзя обещать экономику.
+Example arithmetic, not a tariff: at C=9.50 USDT, price=10 USDT, profit=0.50,
+margin=5%. Without measured gas, cost of capital, and losses, the economics cannot be promised.
 
-## Griefing: платить за ресурс, не запрещать защиту
+## Griefing: Pay for the Resource, Do Not Prohibit Protection
 
-**Невозвратная комиссия резервирования/риска** покрывает совершённую подготовку
-и согласованное обязательство держать капитал. Её максимум известен заранее.
-Клиентская отмена после принятия не обязана отменять уже понесённые расходы.
-До принятия quote расходов нет. Ошибка хаба не должна превращаться в его доход.
+**A non-refundable reservation/risk fee** covers the completed preparation
+and the agreed commitment to hold capital. Its maximum is known in advance.
+Client cancellation after acceptance does not have to cancel costs already incurred.
+Before quote acceptance there are no costs. A hub's error must not turn into its income.
 
-**Возвратный bond** имеет смысл только при объективном нарушении с доказательством
-и исполнимым удержанием. Сам факт dispute не доказывает злоупотребление: честный
-пользователь обязан иметь возможность защититься от плохого хаба.
-Для v1 предпочтительнее понятная risk fee + ограничения выдачи. Отдельный slashable
-bond добавлять лишь после точного adversarial сценария, не как универсальный штраф.
+**A refundable bond** makes sense only in the case of an objective violation with proof
+and enforceable withholding. The mere fact of a dispute does not prove abuse: an honest
+user must have the ability to defend against a bad hub.
+For v1, an understandable risk fee + issuance limits is preferable. A separate slashable
+bond should be added only after a precise adversarial scenario, not as a universal penalty.
 
-Предоплаты недостаточно для защиты от богатого атакующего. Нужны:
+Prepayment alone is not enough to defend against a well-funded attacker. Needed:
 
-- лимиты капитала и числа pending leases на Account/peer; дробление по новым identity
-  не должно обходить общий лимит хаба;
-- отдельный safety reserve на gas/dispute и ограничения концентрации;
-- ограниченное время бесплатной quote/reservation работы и стоимость реального funding;
-- запрет выдавать один доступный reserve в несколько принятых обещаний;
-- остановка новых предложений при исчерпанном риск-бюджете, без нарушения старых.
+- limits on capital and on the number of pending leases per Account/peer; splitting across new identities
+  must not bypass the hub's overall limit;
+- a separate safety reserve for gas/dispute and concentration limits;
+- a limited free time window for quote/reservation work and the cost of real funding;
+- a prohibition on issuing one available reserve into several accepted promises;
+- stopping new offers when the risk budget is exhausted, without violating old ones.
 
-Stress budget оценивает хвост допустимых блокировок, а не только среднюю частоту
-dispute. Максимальная J-задержка и contract dispute path входят в цену/лимиты.
-Без достаточного капитала вариант становится недоступным; slider не уходит в кредит сам.
+The stress budget estimates the tail of permissible lockups, not just the average frequency
+of dispute. The maximum J-delay and the contract dispute path are included in the price/limits.
+Without sufficient capital, the option becomes unavailable; the slider does not drift into credit on its own.
 
-## Самобалансировка хаба
+## Hub Self-Balancing
 
-Доступно для новых обязательств: подтверждённый reserve минус принятые ещё не
-профинансированные обязательства и safety reserve. Уже внесённый collateral нельзя
-второй раз вычитать из reserve; его риски и будущий возврат учитываются отдельно.
+Available for new obligations: confirmed reserve minus accepted but not yet
+funded obligations and the safety reserve. Already-deposited collateral cannot
+be subtracted from the reserve a second time; its risks and future return are accounted for separately.
 
-Это derived view канонического состояния, не новый баланс. В частности, заявленная
-tx на возврат ещё не увеличивает доступные деньги. Все acceptance проходят одного
-финансового владельца, чтобы два Account jobs не израсходовали один ресурс.
+This is a derived view of the canonical state, not a new balance. In particular, a submitted
+refund tx does not yet increase the available money. All acceptances go through one
+financial owner, so that two Account jobs do not spend the same resource.
 
-При высокой загрузке хаб повышает цену **новых** quotes и ограничивает размер.
-При низкой — снижает цену до устойчивого floor. Обновление accepted fee запрещено.
-Управление использует hysteresis, cooldown и минимальный экономически разумный batch:
-не гонять R→C→R при колебании вокруг одного порога. Объединять J effects можно только
-в существующем порядке финансового pipeline, не сортируя их по цене или клиенту.
+Under high load, the hub raises the price of **new** quotes and limits the size.
+Under low load, it lowers the price down to a stable floor. Updating an accepted fee is prohibited.
+Control uses hysteresis, cooldown, and a minimum economically sensible batch:
+do not chase R→C→R while oscillating around a single threshold. J effects can only be combined
+within the existing order of the financial pipeline, not sorted by price or client.
 
-Автоматический release выключен для капитала, который обещан активной lease или
-нужен для уже возникшего обязательства. После maturity он становится кандидатом на
-канонический release, а не исчезает из обеспечения по таймеру.
-Renewal — новая котировка и согласие, если пользователь не дал ограниченную политику
-автопродления с максимальными amount/fee/duration.
+Automatic release is disabled for capital that is promised to an active lease or
+needed for an obligation that has already arisen. After maturity, it becomes a candidate for
+canonical release, rather than disappearing from collateral on a timer.
+Renewal is a new quote and consent, unless the user has given a limited
+auto-renewal policy with maximum amount/fee/duration.
 
-## Низкая связность и durable owner
+## Low Coupling and Durable Owner
 
-UI получает чистый preview, статусы и действия. Общий capacity planner владеет
-проекцией `deriveDelta`, границами риска и требуемыми Account actions.
-Hub quote policy отвечает за коммерческую цену и доступность; J adapter — за
-существующие batch/receipt события. Ни один из них не читает DOM или UI timer.
+The UI receives a clean preview, statuses, and actions. The shared capacity planner owns
+the `deriveDelta` projection, the risk boundaries, and the required Account actions.
+Hub quote policy is responsible for the commercial price and availability; the J adapter — for
+the existing batch/receipt events. None of them reads the DOM or a UI timer.
 
-Новая lease — реальный протокол, а не дополнительные поля в Manage form.
-Перед кодом требуется однозначно определить владельца обязательства в каноническом
-Account/Entity state и membership в root. Срок/цена/остаток удержания нужны после
-crash, если их нельзя вывести из другого committed состояния. Запрещён sidecar
-lease DB или отдельная «истина» о зарезервированных деньгах.
+A new lease is a real protocol, not additional fields in the Manage form.
+Before code, the owner of the obligation must be unambiguously defined in the canonical
+Account/Entity state and membership in the root. Term/price/remaining hold are needed after
+a crash if they cannot be derived from other committed state. A sidecar
+lease DB or a separate "truth" about reserved money is prohibited.
 
-Минимальный recovery-контрпример: два принятых заказа, crash после оплаты первого,
-до его J effect; после replay нельзя продать его резерв второму, списать fee повторно
-или вывести обещанный collateral. Проверяются WAL, roots и ordered outputs.
-Попытку раннего C→R должен отвергать владелец финансового инварианта, а не один
-дружелюбный scheduler. Если нужную lease protection нельзя enforce при споре текущим
-контрактом, требуется отдельное изменение контракта с owner bytecode/hash review;
-UI и подпись quote сами по себе не дают on-chain enforcement.
+Minimal recovery counter-example: two accepted orders, a crash after payment of the first,
+before its J effect; after replay it must not be possible to sell its reserve to the second, charge the fee again,
+or withdraw promised collateral. WAL, roots, and ordered outputs are verified.
+An attempted early C→R must be rejected by the owner of the financial invariant, not just a
+friendly scheduler. If the needed lease protection cannot be enforced in a dispute by the current
+contract, a separate contract change is required with an owner bytecode/hash review;
+the UI and the quote signature alone do not give on-chain enforcement.
 
-## Что уже есть и чего нет
+## What Already Exists and What Does Not
 
-Есть: credit limits, R→C/C→R, J batching/finality, Account signatures,
+Exists: credit limits, R→C/C→R, J batching/finality, Account signatures,
 rebalance policy, prepaid collateral request, swap inbound planner.
 
-Нет доказанного пути: future lease reservation, обязательный срок удержания,
-автоматический refund по funding deadline, fee из будущего входящего платежа,
-защита lease от враждебного unilateral/dispute выхода. Существующий requestCollateral
-ограничен уже возникшим unsecured exposure, а free Hub collateral выводится scheduler.
-Эти ограничения нельзя исправить переименованием кнопки.
+No proven path exists for: future lease reservation, a mandatory hold term,
+automatic refund on funding deadline, fee from a future inbound payment,
+protection of the lease from a hostile unilateral/dispute exit. The existing requestCollateral
+is limited to already-arisen unsecured exposure, and free Hub collateral is withdrawn by the scheduler.
+These limitations cannot be fixed by renaming a button.
 
-## Векторы до production
+## Vectors Before Production
 
-- LEFT/RIGHT входящего Account, старый долг, holds, fee в другом token, маленькие units.
-- Два заказа на один reserve, повтор quote/signature, смена Account/J/token, expiry boundary.
-- Partial funding, stale policy, insufficient gas/reserve, crash/replay и позднее J событие.
-- Недоступный клиент, withheld cooperation, timeout с долгом и законный dispute.
-- Хаб пытается ранний вывод/двойной refund; outage/reorg не снимает обеспечение молча.
-- +10% ко всему требуемому credit limit; 100% collateral не выдаёт скрытого credit.
-- Cross-j funding сначала, свежий swap admission потом; прежняя atomicity сохраняется.
-- Экономический stress: все допустимые клиенты одновременно удерживают капитал до
-  максимального recovery tail; новые выдачи ограничены, старые обещания соблюдаются.
+- LEFT/RIGHT of the inbound Account, old debt, holds, fee in a different token, small units.
+- Two orders on one reserve, repeated quote/signature, a change of Account/J/token, expiry boundary.
+- Partial funding, stale policy, insufficient gas/reserve, crash/replay, and a late J event.
+- Unavailable client, withheld cooperation, timeout with debt, and a legitimate dispute.
+- The hub attempts an early withdrawal/double refund; outage/reorg does not silently remove collateral.
+- +10% to the entire required credit limit; 100% collateral does not issue hidden credit.
+- Cross-j funding first, fresh swap admission after; the previous atomicity is preserved.
+- Economic stress: all eligible clients simultaneously hold capital up to
+  the maximum recovery tail; new issuances are limited, old promises are honored.
 
-Следующий production шаг после согласования lease terms: один Account, один token,
-запрос→J funding→готовность→платёж либо timeout→release/refund, затем adversarial replay.
-Общий входящий UI в receive/swap/cross/lending подключается к работающему primitive.
-Pay использует собственное пополнение через существующий Move без нового кредитного выбора.
+The next production step after agreeing on lease terms: one Account, one token,
+request→J funding→readiness→payment or timeout→release/refund, then adversarial replay.
+The shared inbound UI in receive/swap/cross/lending connects to the working primitive.
+Pay uses its own replenishment via the existing Move, without a new credit option.

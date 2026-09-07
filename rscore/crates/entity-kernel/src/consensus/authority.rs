@@ -328,6 +328,11 @@ impl EntityFrameAuthority {
         Ok(keccak_bytes(&encoded))
     }
 
+    /// Canonical single-signer predicate (quorum verdict 2026-09-07, shared
+    /// with TS `isSingleSignerEntity`): exactly one validator, and that
+    /// validator's own share reaches the threshold. A weighted sole validator
+    /// (share above threshold) is still a single signer; requiring
+    /// `threshold == share` used to push it onto the multi-signer path.
     pub fn is_single_signer(&self) -> Result<bool, EntityAuthorityError> {
         let normalized = self.validate_and_normalize()?;
         let signer = normalized
@@ -341,7 +346,7 @@ impl EntityFrameAuthority {
             .get(signer)
             .copied()
             .ok_or_else(|| EntityAuthorityError::ShareMissing(signer.clone()))?;
-        Ok(normalized.config.validators.len() == 1 && normalized.config.threshold == share)
+        Ok(normalized.config.validators.len() == 1 && share >= normalized.config.threshold)
     }
 }
 
@@ -396,6 +401,42 @@ mod tests {
             authority.root().expect("authority root"),
             "0x88bc0b422d4d903a1630c3b2665df65fda9009e2a338c656d8bedc844f386081",
         );
+    }
+
+    #[test]
+    fn is_single_signer_matches_typescript_for_weighted_sole_validator() {
+        // Sole validator whose share exceeds the threshold: TS
+        // `isSingleSignerEntity` (validators.length === 1 && share >= threshold
+        // after the quorum alignment) says single signer; the old Rust
+        // `threshold == share` said multi-signer.
+        let mut weighted = authority();
+        weighted.config.shares = BTreeMap::from([("H1-Hub".into(), 3)]);
+        weighted.config.threshold = 2;
+        assert!(
+            weighted
+                .is_single_signer()
+                .expect("weighted sole validator")
+        );
+        weighted.config.threshold = 3;
+        assert!(
+            weighted
+                .is_single_signer()
+                .expect("exact-share sole validator")
+        );
+        weighted.config.threshold = 1;
+        assert!(
+            weighted
+                .is_single_signer()
+                .expect("threshold-1 sole validator")
+        );
+        // Two validators are never a single signer, whatever the threshold.
+        let mut board = authority();
+        board.config.validators.push("h1-user".into());
+        board.config.shares.insert("h1-user".into(), 1);
+        board.config.threshold = 1;
+        assert!(!board.is_single_signer().expect("two-validator board"));
+        board.config.threshold = 2;
+        assert!(!board.is_single_signer().expect("two-validator quorum"));
     }
 
     #[test]

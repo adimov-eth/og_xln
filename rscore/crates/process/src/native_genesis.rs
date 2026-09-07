@@ -653,5 +653,5 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "native_genesis_multi_tests.rs"]
+#[path = "tests/native_genesis_multi_tests.rs"]
 mod multi_tests;

@@ -242,17 +242,20 @@ const collectEntityTxResult = (
       context.accountJClaimReplacedNodeHashes.add(hash);
     }
   }
-  if (result.accountInputWork) {
-    const accountId = result.accountInputWork.accountId.toLowerCase();
+  // Entries stay in reducer-emitted order so a later lane never reorders an
+  // earlier obligation. Ordinary Account inputs emit one; a `proposeAccountsNow`
+  // recovery marker emits one per retained proposal it re-emits.
+  for (const work of result.accountInputWorks ?? []) {
+    const accountId = work.accountId.toLowerCase();
     // This is Channel.ts's one flushable lane with an explicit force bit.
     // A later pure ACK sets false and therefore cannot trigger an ACK loop.
     setProposableAccountForce(
       context.proposableAccounts,
       accountId,
-      result.accountInputWork.force,
+      work.force,
     );
-    if (result.accountInputWork.force) {
-      const response = result.accountInputWork.response;
+    if (work.force) {
+      const response = work.response;
       if (response === undefined) {
         throw new Error(`ACCOUNT_FORCED_RESPONSE_BYTES_MISSING:${accountId}`);
       }
@@ -262,7 +265,7 @@ const collectEntityTxResult = (
     }
     const account = result.newState.accounts.get(accountId);
     if (!account) throw new Error(`ACCOUNT_INPUT_WORK_ACCOUNT_MISSING:${accountId}`);
-    if (result.accountInputWork.force) {
+    if (work.force) {
       traceAccountFlushHop(
         'entity-response-required',
         result.newState.entityId,

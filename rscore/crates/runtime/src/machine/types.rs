@@ -332,10 +332,28 @@ impl RuntimeEntityInput {
                     wire_digest,
                 });
             } else {
+                if projection.kind == xln_rscore_entity_kernel::EntityTxKind::ProposeAccountsNow {
+                    // The recovery marker is authored locally by the Entity's
+                    // own Runtime. Accepting it from a peer's transport would
+                    // let an adversary drive another Entity's Account flush.
+                    // Parity target: TS `assertProposeAccountsNowTxAuthorized`.
+                    if is_remote_output || object.contains_key("from") {
+                        return Err(RuntimeMachineError::EntityInputTransportInvalid(
+                            "PROPOSE_ACCOUNTS_NOW_EXTERNAL_INGRESS_REJECTED".into(),
+                        ));
+                    }
+                    // Typed admission, not a generic object parse: a malformed
+                    // marker is rejected here rather than at the frame stage.
+                    xln_rscore_entity_kernel::decode_propose_accounts_now(&projection.wire_data)
+                        .map_err(|error| {
+                            RuntimeMachineError::EntityTxPayloadInvalid(error.to_string())
+                        })?;
+                }
                 if matches!(
                     projection.kind,
                     xln_rscore_entity_kernel::EntityTxKind::ScheduledWake
                         | xln_rscore_entity_kernel::EntityTxKind::BoardHandover
+                        | xln_rscore_entity_kernel::EntityTxKind::ProposeAccountsNow
                 ) {
                     if !local_projected.is_empty() {
                         pending_work.push(EntityPendingWork::LocalBatch {
@@ -343,9 +361,10 @@ impl RuntimeEntityInput {
                             native: std::mem::take(&mut local_native),
                         });
                     }
-                    // Runtime-generated wake inputs and the exact board
-                    // handover preimage are already protocol transactions.
-                    // Wrapping either in an EntityCommand would change the
+                    // Runtime-generated wake inputs, the exact board handover
+                    // preimage and the locally authored `proposeAccountsNow`
+                    // recovery marker are already protocol transactions.
+                    // Wrapping any of them in an EntityCommand would change the
                     // certified bytes and authority. Handover is admitted only
                     // into the atomic `[j_event, boardHandover]` frame below.
                     pending_work.push(EntityPendingWork::Projected(projection));
@@ -1508,6 +1527,10 @@ pub enum RuntimeMachineError {
     EntityInputTxsArrayRequired,
     #[error("RUNTIME_ENTITY_TX_EXECUTION_UNSUPPORTED:{0}")]
     EntityTxExecutionUnsupported(&'static str),
+    /// One typed protocol-tx payload the native decoder rejected. The detail
+    /// is the exact TypeScript rejection code.
+    #[error("RUNTIME_ENTITY_TX_PAYLOAD_INVALID:{0}")]
+    EntityTxPayloadInvalid(String),
     #[error("RUNTIME_OUTPUT_RAW_CROSS_J_FORBIDDEN:{0}")]
     RawRemoteCrossJurisdictionForbidden(&'static str),
     #[error("RUNTIME_ENTITY_FINANCIAL:{0}")]

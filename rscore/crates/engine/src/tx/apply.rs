@@ -178,6 +178,14 @@ pub(crate) fn apply_to_candidate(
             },
         ));
     }
+    // Parity target: mutation.ts checks the signed-settlement freeze right
+    // after the dispute status, still before routing. Without this gate a
+    // Rust proposer would include a payment, lock or offer over a signed
+    // workspace and the TypeScript validator would reject the frame.
+    if let Some(rejection) = crate::tx::handlers::settlement::signed_workspace_freeze(candidate, tx)
+    {
+        return Ok(MutationDecision::rejected(rejection));
+    }
     match tx {
         AccountTx::JEventClaim(tx) => {
             crate::tx::handlers::j_events::apply_j_event_claim(candidate, tx, proposer)

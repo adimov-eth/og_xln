@@ -445,6 +445,27 @@ pub(crate) fn outbound_ack_input(account: &AccountConsensus) -> Option<AccountIn
     })
 }
 
+/// The exact proposal this Account already signed and sent, rebuilt from the
+/// retained pending frame it still owns.
+///
+/// Parity target: the `pendingAccountInput` bytes the TypeScript
+/// `proposeAccountsNow` handler clones out of committed Account state. The
+/// coordinator carries only the obligation, so the authoritative bytes are
+/// rebuilt here, on the worker that owns the Account, and never from a stale
+/// Entity-side mirror. Nothing is mutated: a resend is a pure read.
+pub(crate) fn pending_proposal_input(account: &AccountConsensus) -> Option<AccountInput> {
+    account.pending().map(|pending| {
+        outgoing_account_input(
+            account,
+            pending.frame.clone(),
+            pending.state_hash,
+            pending.hanko.clone(),
+            pending.proposal_dispute(),
+            pending.bundled_ack(),
+        )
+    })
+}
+
 pub(crate) fn force_ack_directive(pure_ack: bool, verdict: &AccountInputVerdict) -> Option<bool> {
     let requires_ack = match verdict {
         AccountInputVerdict::FrameCommitted { .. } | AccountInputVerdict::FrameDuplicate { .. } => {
@@ -1211,6 +1232,68 @@ pub(crate) fn active(account: &AccountConsensus) -> Result<bool, BatchError> {
     )
 }
 
+/// Parity twin of `is_signed`
+/// (rscore/crates/engine/src/tx/handlers/settlement.rs:1685), which itself
+/// mirrors `getSignedSettlementWorkspaceTxError`
+/// (core/account/tx/handlers/settlement/transition.ts:636-648). The engine
+/// item is `pub(crate)`, so the Entity-side eligibility read reproduces the
+/// exact marker set and truthiness instead of importing it. Empty strings and
+/// `null` are absent, exactly like the TypeScript `!value` checks.
+fn settlement_workspace_is_signed(workspace: &CanonicalValue) -> bool {
+    let CanonicalValue::Object(fields) = workspace else {
+        return false;
+    };
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find_map(|(key, value)| (key == name).then_some(value))
+    };
+    let marker = |name: &str| matches!(field(name), Some(CanonicalValue::String(value)) if !value.is_empty());
+    marker("settlementHash")
+        || marker("leftHanko")
+        || marker("rightHanko")
+        || field("postSettlementDisputeProof")
+            .is_some_and(|proof| !matches!(proof, CanonicalValue::Null))
+}
+
+/// The exemption half of the same rule: once the workspace is signed only the
+/// transitions that finish that settlement (`hanko`, `submit`) and J-event
+/// claims may still touch the Account. Every other kind stays queued as retry
+/// material until the Depository result is observed, so it is not proposable
+/// work.
+fn survives_signed_settlement_freeze(tx: &AccountTx) -> bool {
+    match tx {
+        AccountTx::JEventClaim(_) => true,
+        AccountTx::SettleTransition { data } => matches!(
+            data,
+            CanonicalValue::Object(fields)
+                if matches!(
+                    fields
+                        .iter()
+                        .find_map(|(key, value)| (key == "kind").then_some(value)),
+                    Some(CanonicalValue::String(kind)) if kind == "hanko" || kind == "submit"
+                )
+        ),
+        _ => false,
+    }
+}
+
+/// Parity target: `accountHasProposableMempoolForEntity`
+/// (core/entity/consensus/account/mempool-eligibility.ts:14-32). A durable
+/// mempool is not runnable work: at least one queued transaction must survive
+/// both the HTLC slot cap and the signed-settlement freeze, or waking the
+/// Entity for this Account only manufactures empty Entity heights.
+///
+/// The post-commit Hanko half of the TypeScript predicate
+/// (`accountTxAwaitsPostCommitHanko`, mempool-eligibility.ts:24) is already
+/// handled on the resident path: `materialize_deferred_settlement_approvals`
+/// collects those Accounts into `deferred_accounts`, and
+/// `entity_outbound_round` (rscore/crates/entity-kernel/src/resident.rs)
+/// retains them out of `proposable_account_ids()` before the outbound stage,
+/// while the certified witness is attached in the same Runtime frame by
+/// `attach_certified_settlement_hankos`
+/// (rscore/crates/runtime/src/machine/apply.rs). Repeating it here would be a
+/// second copy of that lifecycle, not a parity fix.
 pub(crate) fn proposable(account: &AccountConsensus) -> Result<bool, BatchError> {
     if account.pending().is_some() {
         return Ok(false);
@@ -1218,11 +1301,15 @@ pub(crate) fn proposable(account: &AccountConsensus) -> Result<bool, BatchError>
     if !active(account)? {
         return Ok(false);
     }
-    let locks_full = account.replica().state().htlc_slots_full();
-    Ok(account
-        .mempool()
-        .iter()
-        .any(|tx| !locks_full || !matches!(tx, AccountTx::HtlcLock(_))))
+    let state = account.replica().state();
+    let locks_full = state.htlc_slots_full();
+    let frozen = state
+        .settlement_workspace()
+        .is_some_and(settlement_workspace_is_signed);
+    Ok(account.mempool().iter().any(|tx| {
+        (!locks_full || !matches!(tx, AccountTx::HtlcLock(_)))
+            && (!frozen || survives_signed_settlement_freeze(tx))
+    }))
 }
 
 /// Exact Rust twin of `core/entity/account/account-work-flags.ts`.
@@ -1556,4 +1643,226 @@ fn hex_of(bytes: &[u8]) -> String {
         let _ = write!(output, "{byte:02x}");
     }
     output
+}
+
+#[cfg(test)]
+mod proposable_settlement_freeze_tests {
+    use super::proposable;
+    use xln_rscore_engine::{
+        AccountConsensus, AccountDisputeConfig, AccountDomain, AccountIdentity, AccountReplica,
+        AccountState, AccountStateSeed, AccountTx, CanonicalValue, DepositoryAddress, EntityId,
+        TokenId, WatchSeed,
+    };
+
+    const LEFT: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const RIGHT: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
+
+    fn account(workspace: Option<CanonicalValue>, txs: Vec<AccountTx>) -> AccountConsensus {
+        let domain = AccountDomain::new(
+            31_337,
+            DepositoryAddress::parse(&format!("0x{}", "88".repeat(20))).expect("depository"),
+        )
+        .expect("domain");
+        let identity = AccountIdentity::new(
+            domain,
+            EntityId::parse(LEFT).expect("left"),
+            EntityId::parse(RIGHT).expect("right"),
+            WatchSeed::parse(&format!("0x{}", "99".repeat(32))).expect("watch seed"),
+        )
+        .expect("identity");
+        let state = AccountState::restore_full(AccountStateSeed {
+            identity,
+            dispute_config: AccountDisputeConfig::new(10, 10).expect("dispute config"),
+            deltas: Vec::new(),
+            locks: Vec::new(),
+            j_nonce: 0,
+            last_finalized_j_height: 0,
+            carried: Default::default(),
+            rebalance_fee_policies: Vec::new(),
+            swap_offers: Vec::new(),
+            lending_intents: Vec::new(),
+            pulls: Vec::new(),
+            settlement_workspace: workspace,
+        })
+        .expect("state");
+        let replica =
+            AccountReplica::new(EntityId::parse(LEFT).expect("owner"), state).expect("replica");
+        let mut consensus = AccountConsensus::new(replica);
+        consensus
+            .admit_txs(txs, "proposable_settlement_freeze_tests")
+            .expect("admit");
+        consensus
+    }
+
+    fn workspace(extra: Vec<(String, CanonicalValue)>) -> CanonicalValue {
+        let mut fields = vec![
+            (
+                "workspaceHash".to_string(),
+                CanonicalValue::String(format!("0x{}", "33".repeat(32))),
+            ),
+            (
+                "status".to_string(),
+                CanonicalValue::String("awaiting_counterparty".to_string()),
+            ),
+            ("ops".to_string(), CanonicalValue::Array(Vec::new())),
+        ];
+        fields.extend(extra);
+        CanonicalValue::Object(fields)
+    }
+
+    fn signed_workspace() -> CanonicalValue {
+        workspace(vec![(
+            "settlementHash".to_string(),
+            CanonicalValue::String(format!("0x{}", "55".repeat(32))),
+        )])
+    }
+
+    fn frozen_txs() -> Vec<AccountTx> {
+        vec![
+            AccountTx::AddDelta {
+                token_id: TokenId::new(1).expect("token"),
+            },
+            AccountTx::SetCreditLimit {
+                token_id: TokenId::new(1).expect("token"),
+                amount: 5.into(),
+            },
+        ]
+    }
+
+    fn settle_hanko_tx() -> AccountTx {
+        AccountTx::SettleTransition {
+            data: CanonicalValue::Object(vec![
+                ("kind".into(), CanonicalValue::String("hanko".into())),
+                (
+                    "settlementHash".into(),
+                    CanonicalValue::String(format!("0x{}", "55".repeat(32))),
+                ),
+                (
+                    "postProof".into(),
+                    CanonicalValue::Object(vec![(
+                        "disputeHash".into(),
+                        CanonicalValue::String(format!("0x{}", "66".repeat(32))),
+                    )]),
+                ),
+            ]),
+        }
+    }
+
+    fn j_event_claim_tx() -> AccountTx {
+        AccountTx::JEventClaim(xln_rscore_engine::JEventClaimTx {
+            j_height: 8,
+            j_block_hash: [0x88; 32],
+            events: vec![xln_rscore_engine::JurisdictionEvent::AccountSettled(
+                xln_rscore_engine::AccountSettledEvent {
+                    metadata: xln_rscore_engine::JEventMetadata::default(),
+                    left_entity: EntityId::parse(LEFT).expect("left"),
+                    right_entity: EntityId::parse(RIGHT).expect("right"),
+                    token_id: TokenId::new(1).expect("token"),
+                    left_reserve: 0.into(),
+                    right_reserve: 0.into(),
+                    collateral: 100.into(),
+                    ondelta: 0.into(),
+                    nonce: 1,
+                },
+            )],
+            left_proof: None,
+            right_proof: None,
+        })
+    }
+
+    /// Parity target: core/entity/consensus/account/mempool-eligibility.ts:29-31.
+    /// A signed settlement freezes ordinary mutations, so a mempool holding
+    /// only frozen kinds is durable retry material and must not wake the
+    /// Entity for another Account proposal.
+    #[test]
+    fn signed_settlement_workspace_makes_a_fully_frozen_mempool_unproposable() {
+        assert!(
+            !proposable(&account(Some(signed_workspace()), frozen_txs())).expect("proposable"),
+            "every queued tx is rejected by the signed-settlement freeze",
+        );
+    }
+
+    /// The same signed workspace with one exempt transaction stays proposable:
+    /// `j_event_claim` and the `hanko`/`submit` settle transitions are exactly
+    /// the kinds `getSignedSettlementWorkspaceTxError` lets through.
+    #[test]
+    fn exempt_transactions_keep_a_frozen_account_proposable() {
+        for exempt in [settle_hanko_tx(), j_event_claim_tx()] {
+            let mut txs = frozen_txs();
+            txs.push(exempt.clone());
+            assert!(
+                proposable(&account(Some(signed_workspace()), txs)).expect("proposable"),
+                "{} survives the freeze",
+                exempt.wire_name(),
+            );
+        }
+    }
+
+    /// Regression guard: no workspace, and an unsigned workspace, freeze
+    /// nothing. Only `settlementHash`/`leftHanko`/`rightHanko`/
+    /// `postSettlementDisputeProof` mark a workspace as signed, and an empty
+    /// string or `null` there is absent exactly like TypeScript `!value`.
+    #[test]
+    fn unsigned_workspace_leaves_eligibility_unchanged() {
+        assert!(
+            proposable(&account(None, frozen_txs())).expect("proposable"),
+            "no workspace freezes nothing",
+        );
+        assert!(
+            proposable(&account(Some(workspace(Vec::new())), frozen_txs())).expect("proposable"),
+            "an unsigned workspace freezes nothing",
+        );
+        for absent in [
+            ("settlementHash", CanonicalValue::String(String::new())),
+            ("leftHanko", CanonicalValue::String(String::new())),
+            ("rightHanko", CanonicalValue::String(String::new())),
+            ("postSettlementDisputeProof", CanonicalValue::Null),
+        ] {
+            assert!(
+                proposable(&account(
+                    Some(workspace(vec![(absent.0.to_string(), absent.1)])),
+                    frozen_txs(),
+                ))
+                .expect("proposable"),
+                "{} must not count as signed",
+                absent.0,
+            );
+        }
+    }
+
+    /// Every other marker freezes the same way, so the eligibility gate and
+    /// the engine mutation gate cannot disagree about one workspace.
+    #[test]
+    fn every_signed_marker_freezes_an_ordinary_mempool() {
+        for marker in [
+            (
+                "settlementHash",
+                CanonicalValue::String(format!("0x{}", "55".repeat(32))),
+            ),
+            ("leftHanko", CanonicalValue::String("0x01".into())),
+            ("rightHanko", CanonicalValue::String("0x02".into())),
+            (
+                "postSettlementDisputeProof",
+                CanonicalValue::Object(Vec::new()),
+            ),
+        ] {
+            assert!(
+                !proposable(&account(
+                    Some(workspace(vec![(marker.0.to_string(), marker.1)])),
+                    frozen_txs(),
+                ))
+                .expect("proposable"),
+                "{} must freeze the mempool",
+                marker.0,
+            );
+        }
+    }
+
+    /// An empty mempool was never proposable; the freeze must not change that
+    /// answer in either direction.
+    #[test]
+    fn empty_mempool_stays_unproposable_with_and_without_a_signed_workspace() {
+        assert!(!proposable(&account(None, Vec::new())).expect("proposable"));
+        assert!(!proposable(&account(Some(signed_workspace()), Vec::new())).expect("proposable"));
+    }
 }

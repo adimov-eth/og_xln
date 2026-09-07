@@ -93,6 +93,36 @@ pub enum AccountEnvelopeUpdate {
     },
 }
 
+/// One frame-local Account response obligation, mirroring the TypeScript
+/// `forcedAccountInputs` entry that travels beside the worklist force bit.
+///
+/// Only the obligation crosses the coordinator: the exact response bytes stay
+/// worker-resident, because rebuilding them from a stale Entity-side Account
+/// mirror would make the Rust cutover non-authoritative.
+///
+/// * `ack` — the ordinary bilateral duty created by an inbound frame.
+/// * `resend_pending_proposal` — the `proposeAccountsNow` recovery marker
+///   asking for the exact retained proposal bytes again. The Account may hold
+///   nothing; that is ordinary progress and emits nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AccountResponseObligation {
+    pub ack: bool,
+    pub resend_pending_proposal: bool,
+}
+
+impl AccountResponseObligation {
+    /// One Account may be named by several lanes in the same frame. An
+    /// obligation is never erased by a later lane that simply does not have it.
+    pub fn merge(&mut self, other: Self) {
+        self.ack |= other.ack;
+        self.resend_pending_proposal |= other.resend_pending_proposal;
+    }
+
+    pub const fn is_empty(self) -> bool {
+        !self.ack && !self.resend_pending_proposal
+    }
+}
+
 /// Everything one Entity input carries outward.
 #[derive(Debug)]
 pub struct EntityOutboundRequest {
@@ -119,9 +149,14 @@ pub struct EntityOutboundRequest {
     /// Entity supplies new admissions and its independent exact proposal
     /// selection. The resident worker admits first, then derives ACK/proposal
     /// behavior from the Account state it exclusively owns and seals the final
-    /// leaf. The bool is the same-round response obligation and remains
+    /// leaf. The obligation is the same-round response duty and remains
     /// independent of selection.
-    pub proposal_work: Vec<(AccountId, Vec<AccountTx>, BatchAccountSelection, bool)>,
+    pub proposal_work: Vec<(
+        AccountId,
+        Vec<AccountTx>,
+        BatchAccountSelection,
+        AccountResponseObligation,
+    )>,
     /// Export every Account changed since the previous durable checkpoint.
     /// Export itself is repeatable and non-acknowledging. The next inbound
     /// expected root implicitly advances the worker-local durable baseline

@@ -155,7 +155,17 @@ export type RuntimeWsClientOptions = {
   onOpen?: () => void;
   onDeliveryReadyChange?: (ready: boolean) => void;
   onError?: (error: Error) => void;
+  /**
+   * The authenticated direct peer violated the session protocol (rejected an
+   * output we never sent, or broke the encSeq order). The client has already
+   * closed that socket; the owner retires this client so the next dispatch
+   * dials a fresh session. Never a Runtime fault: this is not `onError`.
+   */
+  onPeerSessionRejected?: (error: Error) => void;
 };
+
+/** Bounded like the server route: only a recent committed output can be rejected. */
+const MAX_OUTSTANDING_ENTITY_INPUT_IDS = 4096;
 
 const isBrowser = typeof window !== 'undefined' && typeof WebSocket !== 'undefined';
 let nodeWebSocketConstructor: Promise<typeof import('ws')['default']> | null = null;
@@ -220,7 +230,12 @@ export class RuntimeWsClient {
   /** Ephemeral X25519 offered in the direct hello; consumed on hello_ack. */
   private sessionEphemeral: P2PKeyPair | null = null;
   private sessionKeys: RuntimeWsSessionKeys | null = null;
+  /** Last encSeq the socket accepted from us; advanced only after a successful write. */
   private outboundEncSeq = 0;
+  /** Last encSeq accepted from the direct peer; the next frame must carry exactly +1. */
+  private inboundEncSeq = 0;
+  /** entity_inputs ids this client sent that a correlated peer `error` may still reject. */
+  private readonly outstandingEntityInputIds = new Set<string>();
   private messageTimestamp = 0;
   private readonly encryptionPubKeyHex: string | null;
   private readonly pendingRecoveryBundleRequests = new Map<string, PendingRecoveryBundleRequest>();
@@ -263,6 +278,8 @@ export class RuntimeWsClient {
     this.sessionEphemeral = null;
     this.sessionKeys = null;
     this.outboundEncSeq = 0;
+    this.inboundEncSeq = 0;
+    this.outstandingEntityInputIds.clear();
     this.suppressNextClose = false;
     const generation = ++this.lifecycleGeneration;
     const attempt = this.connectForGeneration(generation);
@@ -346,6 +363,8 @@ export class RuntimeWsClient {
       `buffered=${Number(this.ws && isNodeWebSocket(this.ws) ? this.ws.bufferedAmount ?? 0 : 0)}`;
     this.helloAcknowledged = false;
     this.sessionKeys = null;
+    this.inboundEncSeq = 0;
+    this.outstandingEntityInputIds.clear();
     if (!authenticated) {
       wsLog.warn('initial_connect.closed', { summary });
       return;
@@ -410,6 +429,41 @@ export class RuntimeWsClient {
     socket.onmessage = event => this.dispatchMessage(event.data, generation);
     socket.onclose = event => this.handleSocketClose(generation, event.code, event.reason, event.wasClean);
     socket.onerror = event => this.handleSocketError(generation, new Error(`WebSocket error: ${event.type}`));
+  }
+
+  private isDirectPeerSession(): boolean {
+    return this.options.helloAudience.startsWith('xln-runtime:');
+  }
+
+  /**
+   * Peer misbehaviour closes exactly this session. The close is deliberate,
+   * so it is not reported as an unexpected transport close; the owner learns
+   * about it once through `onPeerSessionRejected` and re-dials on demand.
+   */
+  private rejectPeerSession(code: string, details: Record<string, unknown>): void {
+    wsLog.error('peer_session.rejected', { code, runtimeId: this.options.runtimeId, url: this.options.url, ...details });
+    countOp(`socket.direct.peerSessionRejected.${code}`);
+    this.helloAcknowledged = false;
+    this.sessionKeys = null;
+    this.inboundEncSeq = 0;
+    this.outstandingEntityInputIds.clear();
+    this.updatePeerReady(false);
+    this.rejectPendingRecoveryBundleRequests(new Error(code));
+    const socket = this.ws;
+    if (socket && readSocketReadyState(socket) < 2) {
+      this.suppressNextClose = true;
+      socket.close();
+    }
+    this.options.onPeerSessionRejected?.(new Error(`${code}:${safeStringify(details)}`));
+  }
+
+  private rememberOutstandingEntityInput(messageId: string): void {
+    this.outstandingEntityInputIds.add(messageId);
+    while (this.outstandingEntityInputIds.size > MAX_OUTSTANDING_ENTITY_INPUT_IDS) {
+      const oldest = this.outstandingEntityInputIds.values().next();
+      if (oldest.done) break;
+      this.outstandingEntityInputIds.delete(oldest.value);
+    }
   }
 
   private rejectPendingRecoveryBundleRequests(error: Error): void {
@@ -688,8 +742,20 @@ export class RuntimeWsClient {
     }
     let envelope: RuntimeEntityInputsEnvelope;
     const sessionKeys = this.sessionKeys;
+    if (sessionKeys) {
+      // Mirrors the server route and the Rust transport: exactly last+1, never 0.
+      if (msg.encSeq !== this.inboundEncSeq + 1) {
+        this.rejectPeerSession('P2P_SESSION_ENC_SEQ_ORDER', {
+          messageId: String(msg.id || ''),
+          from: msg.from,
+          encSeq: msg.encSeq ?? null,
+          expected: this.inboundEncSeq + 1,
+        });
+        return true;
+      }
+      this.inboundEncSeq += 1;
+    }
     try {
-      if (sessionKeys && msg.encSeq === undefined) throw new Error('P2P_SESSION_ENC_SEQ_MISSING');
       envelope = decodeRuntimeEntityInputsEnvelope(
         sessionKeys && msg.encSeq !== undefined
           ? decryptSessionPayload(msg.payload as Uint8Array, sessionKeys.s2c, msg.encSeq)
@@ -777,14 +843,30 @@ export class RuntimeWsClient {
       this.updatePeerReady(msg.payload === true);
       return true;
     }
-    // This is a negative result only, never a positive receipt. Account
-    // consensus still owns completion, but a rejected committed output must
-    // halt loudly because no transport retry or route substitution is allowed.
     if (msg.type === 'error' && typeof msg.inReplyTo === 'string') {
       const reason = typeof msg.error === 'string' ? msg.error : String(msg.error ?? 'unknown');
+      if (!this.isDirectPeerSession()) {
+        // A relay carries directory/control traffic only; its correlated
+        // errors concern gossip or recovery requests, never a committed output.
+        wsLog.warn('relay.error_frame', { url: this.options.url, inReplyTo: msg.inReplyTo, reason });
+        return true;
+      }
+      // Only an output this client actually sent can be rejected by the peer.
+      // Any other correlation id is a forged negative signal about nothing.
+      if (!this.outstandingEntityInputIds.delete(msg.inReplyTo)) {
+        this.rejectPeerSession('P2P_PEER_ERROR_UNCORRELATED', {
+          messageId: String(msg.id || ''),
+          from: msg.from,
+          inReplyTo: msg.inReplyTo,
+          reason,
+        });
+        return true;
+      }
+      // Negative result only, never a positive receipt: Account consensus
+      // still owns completion. The owner applies the reject policy once.
       this.sendDebugEvent({
         level: 'error',
-        code: 'P2P_RELAY_SEND_REJECTED',
+        code: 'P2P_DIRECT_SEND_REJECTED',
         message: reason,
         inReplyTo: msg.inReplyTo,
       });
@@ -881,7 +963,9 @@ export class RuntimeWsClient {
     // Encrypt - throws on error (fail-fast, never send plaintext). A keyed
     // direct session seals under the c2s key with a counter nonce.
     const sessionKeys = this.sessionKeys;
-    const encSeq = sessionKeys ? ++this.outboundEncSeq : undefined;
+    // The counter advances only after the socket accepted the frame: a failed
+    // write must not leave a gap the strict receiver would reject.
+    const encSeq = sessionKeys ? this.outboundEncSeq + 1 : undefined;
     let payload: Uint8Array;
     if (sessionKeys && encSeq !== undefined) {
       payload = encryptSessionPayload(envelope, sessionKeys.c2s, encSeq);
@@ -893,9 +977,10 @@ export class RuntimeWsClient {
       payload = encryptPayload(signed, targetPubKey);
     }
 
-    return this.sendRaw({
+    const id = makeMessageId();
+    const sent = this.sendRaw({
       type: 'entity_inputs',
-      id: makeMessageId(),
+      id,
       from: this.options.runtimeId,
       fromEncryptionPubKey: this.encryptionPubKeyHex ?? pubKeyToHex(this.options.encryptionKeyPair.publicKey),
       to,
@@ -911,6 +996,11 @@ export class RuntimeWsClient {
         : {}),
       txs: envelope.entityInputs.reduce((count, input) => count + (input.entityTxs?.length ?? 0), 0),
     }, envelope);
+    if (sent) {
+      if (encSeq !== undefined) this.outboundEncSeq = encSeq;
+      this.rememberOutstandingEntityInput(id);
+    }
+    return sent;
   }
 
   sendGossipRequest(to: string, payload: unknown): boolean {

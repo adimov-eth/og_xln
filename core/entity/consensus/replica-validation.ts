@@ -139,14 +139,25 @@ export const isEntityInputWellFormed = (input: EntityInput): boolean => {
 const isCrossJurisdictionLocalRuntimeTx = (tx: EntityTx): boolean =>
   tx.type === 'runtimeOutput' && tx.data.protocol === 'cross-j';
 
-export const isSingleSignerEntity = (state: EntityState): boolean => {
-  if (state.config.validators.length !== 1) return false;
+/**
+ * Quorum rule shared with the Rust `EntityFrameAuthority::is_single_signer`:
+ * exactly one validator, and that validator's share alone reaches the
+ * threshold. `{A:5,t:1}` and `{A:5,t:5}` are single-signer; `{A:1,t:5}` never
+ * reaches quorum and `{A,B}` needs a second signature, so neither is.
+ */
+export const isSingleSignerBoard = (config: ConsensusConfig): boolean => {
+  const signer = config.validators.length === 1 ? config.validators[0] : undefined;
+  const share = signer === undefined ? undefined : config.shares[signer];
+  if (share === undefined) return false;
   try {
-    return BigInt(state.config.threshold ?? 0) === 1n;
+    return BigInt(share) >= BigInt(config.threshold ?? 0);
   } catch {
     return false;
   }
 };
+
+export const isSingleSignerEntity = (state: EntityState): boolean =>
+  isSingleSignerBoard(state.config);
 
 export const getEntityMempoolAdmissionError = (
   replica: EntityReplica,

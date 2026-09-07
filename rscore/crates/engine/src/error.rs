@@ -298,6 +298,12 @@ pub enum AccountRejection {
         status: String,
         tx_type: &'static str,
     },
+    /// Parity target: `settlementFrozenRejection`
+    /// (core/account/tx/apply-result.ts). A signed settlement workspace freezes
+    /// every financial AccountTx until the Depository result is observed.
+    SettlementSignedAccountFrozen {
+        tx_type: &'static str,
+    },
     DeltaRowLimitExceeded {
         attempted: usize,
         maximum: usize,
@@ -312,6 +318,7 @@ impl AccountRejection {
         match self {
             Self::Validation(_) => "ACCOUNT_TX_VALIDATION",
             Self::ClosedForDispute { .. } => "ACCOUNT_CLOSED_FOR_DISPUTE",
+            Self::SettlementSignedAccountFrozen { .. } => "SETTLEMENT_SIGNED_ACCOUNT_FROZEN",
             Self::DeltaRowLimitExceeded { .. } => "ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED",
             Self::HtlcLockCapacity { .. } => "ACCOUNT_HTLC_LOCK_CAPACITY",
         }
@@ -322,6 +329,9 @@ impl AccountRejection {
             Self::Validation(reason) => reason.message(),
             Self::ClosedForDispute { status, tx_type } => {
                 format!("ACCOUNT_CLOSED_FOR_DISPUTE:status={status};tx={tx_type}")
+            }
+            Self::SettlementSignedAccountFrozen { tx_type } => {
+                format!("SETTLEMENT_SIGNED_ACCOUNT_FROZEN:{tx_type}")
             }
             Self::DeltaRowLimitExceeded { attempted, maximum } => {
                 format!("ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED:insert:{attempted}:{maximum}")

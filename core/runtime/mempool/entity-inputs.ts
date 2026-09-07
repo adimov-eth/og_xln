@@ -18,7 +18,9 @@ import { isProposalDeferrableEntityInput } from '../../entity/consensus/input/co
 import { RuntimeEntityInputApplyError } from '../admit/entity-input-contract.ts';
 import { resolveEntityInputReplica } from '../admit/entity-input-admission.ts';
 import { MalformedEntityFrameInputError } from '../../entity/tx/processing/invariant-errors';
+import { AccountFrameRejectionError } from '../../entity/tx/handlers/account/input-phases';
 import type { EntityTx } from '../../types/entity-tx';
+import type { RejectedEntityIngressEvidence } from '../frame/intake/discard';
 import {
   applyAtomicEntityInputPair,
   atomicPairInputsMatch,
@@ -43,11 +45,140 @@ export {
 
 type EntityInputBatchContext = ReturnType<typeof createRuntimeEntityInputBatchContext>;
 
+/**
+ * Per-replica proposal attempts one Runtime frame spends evicting rejected
+ * transactions. Each attempt rebuilds the proposal from the live mempool, so a
+ * queue of N rejected txs costs O(N) attempts of O(N) work; the bound keeps
+ * one frame from stalling on a hostile queue. The remainder stays in the
+ * replica mempool and is certified by the next wake, one tx at a time.
+ */
+export const MAX_REPLICA_FLUSH_EVICTIONS = 8;
+
+export type RuntimeEntityInputBatchResult = RuntimeEntityInputApplyResult & {
+  /** Typed rejections decided inside this frame; the Runtime loop applies the policy once. */
+  rejectedIngress: readonly RejectedEntityIngressEvidence[];
+};
+
+const rejectedInputEvidence = (
+  error: RuntimeEntityInputApplyError,
+): RejectedEntityIngressEvidence => ({
+  origin: error.isRemoteIngress ? 'remote' : 'local',
+  entityId: error.entityId,
+  signerId: error.signerId,
+  sourceRuntimeId: error.sourceRuntimeId,
+  rejectionCode: error.rejectionCode,
+});
+
+/**
+ * One rejected proposal attempt: evict the exact offending tx from the replica
+ * mempool and decide whether another attempt is worth spending this frame.
+ * Deterministic local cleanup, never a transport retry — no envelope is resent
+ * and none is silently accepted.
+ */
+const evictRejectedProposalTx = (
+  env: RuntimeReplica,
+  input: RoutedEntityInput,
+  error: unknown,
+  eviction: number,
+  flushIndex: number,
+  rejectedIngress: RejectedEntityIngressEvidence[],
+): { retry: boolean; evictedAttemptContext: EntityInfraContext | undefined } => {
+  const { entityId, signerId } = input;
+  const cause = error instanceof RuntimeEntityInputApplyError ? error.cause : undefined;
+  const replica = resolveEntityInputReplica(env, input).replica;
+  if (
+    !(cause instanceof MalformedEntityFrameInputError) ||
+    cause.frameTx === undefined ||
+    !replica.mempool.includes(cause.frameTx as EntityTx)
+  ) throw error;
+  entityInputLog.warn('entity_input.batch_tx_evicted', {
+    entity: entityId,
+    signer: signerId,
+    txType: cause.txType,
+    rejection: cause.rejection,
+  });
+  replica.mempool = replica.mempool.filter(tx => tx !== cause.frameTx);
+  if (cause instanceof AccountFrameRejectionError) {
+    // A counterparty's Account frame is peer evidence even when it reached
+    // this replica through a local continuation; the tx is gone and only the
+    // Runtime loop decides halt-or-drop.
+    entityInputLog.error('entity_input.discarded', {
+      entityId,
+      signerId,
+      sourceRuntimeId: undefined,
+      inputIndex: flushIndex,
+      txType: cause.txType,
+      rejectionCode: cause.rejection,
+      cause: cause.message,
+    });
+    rejectedIngress.push({
+      origin: 'peer-evidence',
+      entityId,
+      signerId,
+      sourceRuntimeId: undefined,
+      rejectionCode: cause.rejection,
+      txType: cause.txType,
+    });
+  }
+  const evictedAttemptContext = cause.attemptedEntityContext;
+  if (eviction + 1 < MAX_REPLICA_FLUSH_EVICTIONS || replica.mempool.length === 0) {
+    return { retry: true, evictedAttemptContext };
+  }
+  // Bounded work per frame: the rest of this replica's queue waits for the
+  // next wake instead of costing another rebuild now. A typed rejection of the
+  // attempt, never a Runtime halt.
+  entityInputLog.error('entity_input.flush_dropped', {
+    entityId,
+    signerId,
+    inputIndex: flushIndex,
+    evictions: eviction + 1,
+    remainingMempoolTxs: replica.mempool.length,
+    rejectionCode: 'ENTITY_FLUSH_EVICTION_CAP',
+  });
+  rejectedIngress.push({
+    // The eviction cap defers this replica's remaining queue to the next wake.
+    // It is this Runtime's own bounded work, not a rejected sender, so the
+    // reject policy must not surface it the way it surfaces a rejected tx.
+    origin: 'deferral',
+    entityId,
+    signerId,
+    sourceRuntimeId: undefined,
+    rejectionCode: 'ENTITY_FLUSH_EVICTION_CAP',
+  });
+  return { retry: false, evictedAttemptContext };
+};
+
+/**
+ * A proposal attempt that ended in eviction still consumed live infra context.
+ * Replay looks that context up by replica and height before it can apply and
+ * reject the same tx, so journal it when no certified frame recorded one at
+ * the same key (set-if-absent keeps the committed context authoritative).
+ */
+const journalEvictedAttemptContext = (
+  input: RoutedEntityInput,
+  evictedAttemptContext: EntityInfraContext,
+  context: EntityInputBatchContext,
+): void => {
+  const { entityId, signerId } = input;
+  const replicaKey = `${entityId}:${signerId}`;
+  const contextKey = `${replicaKey.toLowerCase()}:${evictedAttemptContext.height}`;
+  if (context.entityContexts.has(contextKey)) return;
+  collectRuntimeEntityContext(
+    context.entityContexts,
+    entityId,
+    replicaKey,
+    evictedAttemptContext,
+    describeEntityInputCommitShape({ ...input, from: 'evicted-proposal-attempt' }),
+    context.entityCommitInputShapes,
+  );
+};
+
 const createDeferredProposalBatch = (
   env: RuntimeReplica,
   initialFlushIndex: number,
   options: RuntimeEntityInputApplyOptions,
   context: EntityInputBatchContext,
+  rejectedIngress: RejectedEntityIngressEvidence[],
 ) => {
   const replicas = new Map<string, { entityId: string; signerId: string }>();
   const outcomeSlots = new Map<string, number[]>();
@@ -71,60 +202,36 @@ const createDeferredProposalBatch = (
     slots.push(slot);
     outcomeSlots.set(staged.replicaKey, slots);
   };
+  const flushReplica = async (input: RoutedEntityInput): Promise<void> => {
+    let evictedAttemptContext: EntityInfraContext | undefined;
+    for (let eviction = 0; ; eviction += 1) {
+      try {
+        const staged = await applyExternalEntityInput(env, input, flushIndex, options, context, false);
+        const appliedIndex = context.appliedEntityInputs.lastIndexOf(staged.result.appliedInput);
+        if (appliedIndex >= 0) context.appliedEntityInputs.splice(appliedIndex, 1);
+        noteStaged(staged, false);
+        break;
+      } catch (error) {
+        const evicted = evictRejectedProposalTx(
+          env,
+          input,
+          error,
+          eviction,
+          flushIndex,
+          rejectedIngress,
+        );
+        evictedAttemptContext ??= evicted.evictedAttemptContext;
+        if (evicted.retry) continue;
+        break;
+      }
+    }
+    if (evictedAttemptContext) journalEvictedAttemptContext(input, evictedAttemptContext, context);
+    flushIndex += 1;
+    await drainImmediateCrossJurisdictionOutputs(env, options, context);
+  };
   const flush = async (): Promise<void> => {
     for (const { entityId, signerId } of [...replicas.values()]) {
-      const input: RoutedEntityInput = { entityId, signerId, entityTxs: [] };
-      let evictedAttemptContext: EntityInfraContext | undefined;
-      for (let eviction = 0; ; eviction += 1) {
-        try {
-          const staged = await applyExternalEntityInput(env, input, flushIndex, options, context, false);
-          const appliedIndex = context.appliedEntityInputs.lastIndexOf(staged.result.appliedInput);
-          if (appliedIndex >= 0) context.appliedEntityInputs.splice(appliedIndex, 1);
-          noteStaged(staged, false);
-          break;
-        } catch (error) {
-          // This is deterministic local mempool cleanup, not transport retry:
-          // the exact rejected tx is removed once and the remaining admitted
-          // batch is evaluated. No envelope is resent or silently accepted.
-          const cause = error instanceof RuntimeEntityInputApplyError ? error.cause : undefined;
-          const replica = resolveEntityInputReplica(env, input).replica;
-          if (
-            !(cause instanceof MalformedEntityFrameInputError) ||
-            cause.frameTx === undefined ||
-            !replica.mempool.includes(cause.frameTx as EntityTx) ||
-            eviction >= 8
-          ) throw error;
-          entityInputLog.warn('entity_input.batch_tx_evicted', {
-            entity: entityId,
-            signer: signerId,
-            txType: cause.txType,
-            rejection: cause.rejection,
-          });
-          replica.mempool = replica.mempool.filter(tx => tx !== cause.frameTx);
-          evictedAttemptContext ??= cause.attemptedEntityContext;
-        }
-      }
-      // A proposal attempt that ended in eviction still consumed live infra
-      // context. Replay looks that context up by replica and height before it
-      // can apply and reject the same tx, so journal it when no certified
-      // frame recorded one at the same key (set-if-absent keeps the committed
-      // context authoritative and avoids a collision with it).
-      if (evictedAttemptContext) {
-        const replicaKey = `${entityId}:${signerId}`;
-        const contextKey = `${replicaKey.toLowerCase()}:${evictedAttemptContext.height}`;
-        if (!context.entityContexts.has(contextKey)) {
-          collectRuntimeEntityContext(
-            context.entityContexts,
-            entityId,
-            replicaKey,
-            evictedAttemptContext,
-            describeEntityInputCommitShape({ ...input, from: 'evicted-proposal-attempt' }),
-            context.entityCommitInputShapes,
-          );
-        }
-      }
-      flushIndex += 1;
-      await drainImmediateCrossJurisdictionOutputs(env, options, context);
+      await flushReplica({ entityId, signerId, entityTxs: [] });
     }
     replicas.clear();
   };
@@ -168,13 +275,14 @@ export const applyMergedEntityInputs = async (
   inputs: RoutedEntityInput[],
   initialJOutbox: JInput[],
   options: RuntimeEntityInputApplyOptions,
-): Promise<RuntimeEntityInputApplyResult> => {
+): Promise<RuntimeEntityInputBatchResult> => {
   const context = createRuntimeEntityInputBatchContext(initialJOutbox);
+  const rejectedIngress: RejectedEntityIngressEvidence[] = [];
   const startedAt = getPerfMs();
   // R → E → A cascade: plain transaction inputs only fill their replica's
   // mempool; each touched replica then proposes once, so a Runtime frame with
   // hundreds of user inputs yields one Entity frame per Entity, not hundreds.
-  const deferred = createDeferredProposalBatch(env, inputs.length, options, context);
+  const deferred = createDeferredProposalBatch(env, inputs.length, options, context, rejectedIngress);
   for (let index = 0; index < inputs.length;) {
     const input = inputs[index]!;
     const next = inputs[index + 1];
@@ -199,16 +307,12 @@ export const applyMergedEntityInputs = async (
         );
       } catch (error) {
         if (
-          !rejectMalformedEntityInput(
-            env,
-            error,
-            index,
-            context,
-            options,
-          )
+          !(error instanceof RuntimeEntityInputApplyError) ||
+          !rejectMalformedEntityInput(env, error, index, context, options)
         ) {
           throw error;
         }
+        rejectedIngress.push(rejectedInputEvidence(error));
       }
       index += 1;
     }
@@ -218,5 +322,5 @@ export const applyMergedEntityInputs = async (
 
   const elapsedMs = Math.round(getPerfMs() - startedAt);
   logEntityInputBatchProfile(env, inputs, context, elapsedMs);
-  return context;
+  return { ...context, rejectedIngress };
 };

@@ -5,12 +5,22 @@ Runtime rejects because the *sender* is wrong (malformed remote EntityInput, a c
 user-authored prepare/materialize, an authenticated peer Account frame whose tx fails
 validation) is a **rejection**, never a runtime fault.
 
+The transition types the rejection and logs it **without reading process env**;
+the Runtime loop reads the policy once per frame attempt and decides what the
+frame does with the recorded outcome.
+
 | mode | when | behaviour |
 |---|---|---|
-| fail-fast (default) | tests, dev, CI, any `NODE_ENV != production` | the rejection is logged **and halts** the Runtime, so a hostile or buggy peer surfaces in tests |
+| fail-fast (default) | tests, dev, CI, any `NODE_ENV != production` | the rejection is logged **and surfaced to the caller of the Runtime loop**, so a hostile or buggy peer surfaces in tests |
 | log-and-drop | `NODE_ENV=production` or `XLN_REJECT_FAIL_FAST=0` | the rejection is logged and the offending input/tx is dropped; the Runtime keeps serving |
 
 `XLN_REJECT_FAIL_FAST=1` forces fail-fast even in production.
+
+Surfacing is not a corrupted-state halt: the Runtime is never marked
+mutated-and-unreadable by a sender-caused rejection. An ingress rejected before
+mutation keeps its exact input queued and re-raises the typed error; a rejection
+decided inside a frame is raised only after that frame is durable, so honest
+work committed beside it is never rolled back.
 
 ## The log line to watch
 - TS: `runtime.input_discard` → `entity_input.discarded` (error level, always emitted), and
@@ -32,9 +42,15 @@ Every such line in a test, scenario or stand run is a bug to investigate (fail-f
 it a halt). In production it is the audit trail of peers to inspect.
 
 ## Where it is enforced
-- TS `core/support/process/runtime-process.ts` `rejectFailFast()`.
-- TS `core/runtime/frame/intake/discard.ts` (remote malformed ingress),
-  `core/entity/tx/handlers/account/input-phases.ts` (peer Account frame rejected).
+- TS `core/support/process/runtime-process.ts` `rejectFailFast()` — the only env read.
+- TS `core/runtime/frame/intake/discard.ts` `rejectedIngressPolicy()` wraps it; the
+  two callers are `discardRejectedEntityInput` (ingress rejected before mutation,
+  during the frame's own rollback) and `applyRejectedIngressPolicy`, which
+  `core/runtime/frame/process.ts` calls once per frame **after commit** on the
+  `rejectedIngress` list the reducer carried out of the transition.
+- TS `core/entity/tx/handlers/account/input-phases.ts` only *types* the rejection
+  (`AccountFrameRejectionError`); the parent Entity tx is evicted in
+  `core/runtime/mempool/entity-inputs.ts`, which records `peer-evidence` for the loop.
 - Rust `entity-kernel/src/error.rs` `reject_fail_fast()` + `EntityKernelError::RejectedEntityTx`
   (handlers return it **before any mutation**), `kernel.rs` (cross-J tx drop),
   `resident.rs reject_failed_inbound_frames` (peer Account frame drop).

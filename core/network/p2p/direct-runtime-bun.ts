@@ -67,8 +67,10 @@ type DirectRuntimeWsOptions = {
   signEnvelope?: (to: string, envelope: RuntimeEntityInputsEnvelope) => RuntimeEntityInputsEnvelope;
   /**
    * Negative delivery signal only. There are deliberately no positive
-   * transport receipts and no retries: the owning Runtime must halt and dump
-   * the rejected committed Account envelope for operator investigation.
+   * transport receipts and no retries. An `outbound` failure is always
+   * correlated with an entity_inputs id this route actually sent to that
+   * peer; the owner applies the reject policy (fail-fast halt in tests/dev,
+   * log + close session in production) exactly once.
    */
   onDeliveryFailure?: (failure: Readonly<{
     direction: 'inbound' | 'outbound';
@@ -128,7 +130,12 @@ type DirectWsSession = {
   outboundAuthTimestamp: number;
   /** Direction keys derived from the hello-bound ephemeral exchange; null = per-frame ECDSA session. */
   sessionKeys: RuntimeWsSessionKeys | null;
+  /** Last encSeq written to the socket; advanced only after an accepted send. */
   outboundEncSeq: number;
+  /** Last encSeq accepted from the peer; the next frame must carry exactly +1. */
+  inboundEncSeq: number;
+  /** entity_inputs ids sent on this session that a peer `error` may still reject. */
+  outstandingOutputIds: Set<string>;
   lastSeen: number;
   /** `send() === -1` means queued by Bun, not dropped. Retain the streak only
    *  for observability; never close, retry, or send the same financial
@@ -160,6 +167,22 @@ type DirectRuntimeWsContext = {
 };
 
 const DEFAULT_HELLO_SKEW_MS = 5 * 60 * 1000;
+/**
+ * A peer may only reject an output this route actually sent it. The set is
+ * bounded because there is no positive transport receipt to retire entries;
+ * the oldest id is forgotten first, so a rejection can only ever correlate
+ * with a recent committed output.
+ */
+const MAX_OUTSTANDING_OUTPUT_IDS = 4096;
+
+const rememberOutstandingOutput = (session: DirectWsSession, messageId: string): void => {
+  session.outstandingOutputIds.add(messageId);
+  while (session.outstandingOutputIds.size > MAX_OUTSTANDING_OUTPUT_IDS) {
+    const oldest = session.outstandingOutputIds.values().next();
+    if (oldest.done) break;
+    session.outstandingOutputIds.delete(oldest.value);
+  }
+};
 
 const countEntityInputEnvelopeKinds = (
   prefix: string,
@@ -330,12 +353,39 @@ const ensureSession = (context: DirectRuntimeWsContext, ws: DirectWebSocket): Di
     outboundAuthTimestamp: 0,
     sessionKeys: null,
     outboundEncSeq: 0,
+    inboundEncSeq: 0,
+    outstandingOutputIds: new Set(),
     lastSeen: Date.now(),
     consecutiveBackpressuredSends: 0,
     backpressureStartedAt: 0,
   };
   context.sessions.set(ws, created);
   return created;
+};
+
+/**
+ * Peer misbehaviour on an authenticated session (uncorrelated rejection,
+ * encSeq out of order) closes exactly that session. The peer re-dials with a
+ * fresh hello and fresh session keys; nothing here reaches the Runtime halt.
+ */
+const closePeerSession = (
+  context: DirectRuntimeWsContext,
+  session: DirectWsSession,
+  code: number,
+  reason: string,
+): void => {
+  directWsLog.error('session.closed_for_peer_misbehaviour', {
+    runtimeId: session.runtimeId,
+    code,
+    reason,
+    bufferedAmount: session.ws.getBufferedAmount?.() ?? null,
+  });
+  countOp(`socket.directServer.close.${reason}`);
+  try {
+    session.ws.close(code, reason);
+  } finally {
+    forgetSession(context, session.ws);
+  }
 };
 
 const forgetSession = (context: DirectRuntimeWsContext, ws: DirectWebSocket): void => {
@@ -501,7 +551,9 @@ const sendEntityInputsDelivery = (
       toRuntimeId: target.targetKey,
     });
     const sessionKeys = target.session.sessionKeys;
-    const encSeq = sessionKeys ? ++target.session.outboundEncSeq : undefined;
+    // The counter advances only after the socket accepted the frame: a
+    // dropped send must not leave a gap the strict receiver would reject.
+    const encSeq = sessionKeys ? target.session.outboundEncSeq + 1 : undefined;
     msg = {
       type: 'entity_inputs',
       id: makeMessageId(),
@@ -539,7 +591,12 @@ const sendEntityInputsDelivery = (
     });
   }
   const attempt = trySend(target.session.ws, signSessionFrame(context, target.session, msg));
-  if (!attempt.sent) forgetIfDisconnected(context, target.session.ws);
+  if (attempt.sent) {
+    if (msg.encSeq !== undefined) target.session.outboundEncSeq = msg.encSeq;
+    rememberOutstandingOutput(target.session, String(msg.id));
+  } else {
+    forgetIfDisconnected(context, target.session.ws);
+  }
   noteSendOutcome(target.session, attempt);
   directWsLog.debug('entity_inputs.send_attempt', {
     id: msg.id,
@@ -613,6 +670,8 @@ const handleHandshake = (
   session.lastAuthTimestamp = 0;
   session.outboundAuthTimestamp = 0;
   session.outboundEncSeq = 0;
+  session.inboundEncSeq = 0;
+  session.outstandingOutputIds.clear();
   session.peerEncryptionPubKey = peerKey;
   session.sessionKeys = null;
   let ackSessionPubKey: string | undefined;
@@ -771,14 +830,31 @@ const handleEntityInputs = async (
   }
   const fromRuntimeId = validateMessageRoute(context, session, msg, 'Direct');
   if (!fromRuntimeId) return;
+  const sessionKeys = session.sessionKeys;
+  if (sessionKeys) {
+    // Same rule as the Rust transport (`enc-seq-order`): every keyed frame
+    // consumes exactly the next counter nonce, starting at 1. A gap, a replay
+    // or a zero is peer misbehaviour and ends this session; the counter tracks
+    // the wire order even when the payload below is rejected, so a readiness
+    // race cannot desynchronise an honest peer.
+    if (msg.encSeq !== session.inboundEncSeq + 1) {
+      directWsLog.error('entity_inputs.enc_seq_order', {
+        id: msg.id,
+        from: fromRuntimeId,
+        encSeq: msg.encSeq ?? null,
+        expected: session.inboundEncSeq + 1,
+      });
+      closePeerSession(context, session, 4006, 'enc-seq-order');
+      return;
+    }
+    session.inboundEncSeq += 1;
+  }
   if (!context.localReady) {
     rejectDirectMessage(context, session, msg, 'DIRECT_RECIPIENT_NOT_READY');
     return;
   }
   let envelope: RuntimeEntityInputsEnvelope | undefined;
-  const sessionKeys = session.sessionKeys;
   try {
-    if (sessionKeys && msg.encSeq === undefined) throw new Error('Direct session entity_inputs must carry encSeq');
     const decryptAt = OP_COUNTERS_ENABLED ? getPerfMs() : 0;
     const plaintext = sessionKeys && msg.encSeq !== undefined
       ? decryptSessionPayload(msg.payload, sessionKeys.c2s, msg.encSeq)
@@ -850,6 +926,19 @@ const handlePeerDeliveryFailure = (
   if (msg.type !== 'error' || typeof msg.inReplyTo !== 'string') return false;
   const fromRuntimeId = validateMessageRoute(context, session, msg, 'Direct error');
   if (!fromRuntimeId) return true;
+  // Only an output this session actually carried can be rejected by the peer.
+  // Any other correlation id is a forged negative signal: it says nothing
+  // about a committed output, so it never reaches the delivery-failure owner.
+  if (!session.outstandingOutputIds.delete(msg.inReplyTo)) {
+    directWsLog.error('peer_error.uncorrelated', {
+      id: msg.id,
+      from: fromRuntimeId,
+      inReplyTo: msg.inReplyTo,
+      error: String(msg.error || ''),
+    });
+    closePeerSession(context, session, 4004, 'uncorrelated-peer-error');
+    return true;
+  }
   context.options.onDeliveryFailure?.({
     direction: 'outbound',
     peerRuntimeId: fromRuntimeId,
@@ -973,6 +1062,13 @@ export const createDirectRuntimeWsRoute = (options: DirectRuntimeWsOptions) => {
       if (!targetRuntimeId) return false;
       const session = context.sessionsByRuntime.get(targetRuntimeId);
       return Boolean(session?.handshakeDone && isSocketOpen(session.ws));
+    },
+    /** Reject-policy hook: close one peer session without touching the Runtime. */
+    closeSession: (runtimeId: string, code: number, reason: string): boolean => {
+      const session = context.sessionsByRuntime.get(normalizeRuntimeId(runtimeId));
+      if (!session) return false;
+      closePeerSession(context, session, code, reason);
+      return true;
     },
     getSessionState: (): DirectRuntimeSessionState[] =>
       Array.from(context.sessionsByRuntime.values())

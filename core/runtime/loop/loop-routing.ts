@@ -33,6 +33,7 @@ import {
 } from '../envelope/p2p-lifecycle.ts';
 import { ensureRuntimeInfrastructure } from '../envelope/replica-envelope.ts';
 import { assertScheduledWakeTxAuthorized } from '../mempool/scheduled-wake.ts';
+import { assertProposeAccountsNowTxAuthorized } from '../mempool/propose-accounts-now.ts';
 import { assertRuntimeCommandReady } from '../replica/lifecycle.ts';
 import { MAX_PENDING_NETWORK_OUTPUTS, sendEntityInputWithRouting } from '../delivery/topology/output-routing.ts';
 import { normalizeDbNamespace } from '../../storage/runtime-dbs.ts';
@@ -175,7 +176,10 @@ const validateRuntimeInputAdmission = (
     importedSigners.set(entityId, signers);
   }
   runtimeInput.entityInputs.forEach((input, index) => {
-    for (const tx of input.entityTxs ?? []) assertScheduledWakeTxAuthorized(tx, false);
+    for (const tx of input.entityTxs ?? []) {
+      assertScheduledWakeTxAuthorized(tx, false);
+      assertProposeAccountsNowTxAuthorized(tx, false);
+    }
     const validated = normalizeRuntimeEntityInput(env, decodeRoutedEntityInput(input), `runtimeInput[${index}]`);
     const localSignerIds = [
       ...getLocalSignerIdsForEntity(env, validated.entityId),

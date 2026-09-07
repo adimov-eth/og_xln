@@ -14,6 +14,8 @@ mod j_prefix;
 mod lineage;
 #[path = "output.rs"]
 mod output;
+#[path = "propose_accounts_now.rs"]
+mod propose_accounts_now;
 #[path = "single_signer.rs"]
 mod single_signer;
 #[path = "transition.rs"]
@@ -39,6 +41,10 @@ pub use lineage::{
 pub use output::{
     EntityHankoWitness, EntityHankoWitnessMap, EntityOutputError, LocalEntityOutput,
     LocalEntityOutputTx,
+};
+pub use propose_accounts_now::{
+    MAX_PROPOSE_ACCOUNTS_NOW_COUNTERPARTIES, ProposeAccountsNow, ProposeAccountsNowError,
+    assert_propose_accounts_now_matches_state, decode_propose_accounts_now,
 };
 pub use single_signer::{
     CertifiedEntityProposal, EntityCertificationError, EntitySingleSigner, PresignedManifest,

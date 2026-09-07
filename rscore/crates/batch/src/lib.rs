@@ -46,8 +46,9 @@ pub use resident_consensus::{
     ResidentOrderbookAccountSnapshot,
 };
 pub use round::{
-    AccountEnvelopeUpdate, BatchAccountSelection, EntityAccountGenesisPolicy, EntityInboundRequest,
-    EntityOutboundRequest, EntityRoundResult, FailedHtlcFollowup,
+    AccountEnvelopeUpdate, AccountResponseObligation, BatchAccountSelection,
+    EntityAccountGenesisPolicy, EntityInboundRequest, EntityOutboundRequest, EntityRoundResult,
+    FailedHtlcFollowup,
 };
 pub use types::{AccountId, AccountSeed, EngineGeneration};
 pub use xln_rscore_engine::CommittedFrameEvidence;

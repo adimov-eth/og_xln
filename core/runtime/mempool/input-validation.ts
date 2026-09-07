@@ -103,6 +103,7 @@ export const validateRuntimeInputShapeAndLimits = (
 
 const OUTBOX_BACKPRESSURE_EXEMPT_TXS = new Set<EntityTx['type']>([
   'scheduledWake',
+  'proposeAccountsNow',
   'accountInput',
   'j_event',
   'processHtlcTimeouts',

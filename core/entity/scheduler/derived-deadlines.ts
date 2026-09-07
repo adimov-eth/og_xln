@@ -11,6 +11,7 @@ import type { EntityState } from '../types';
 import type { ScheduledHookBase } from './types';
 import { isSecretAckPendingPayment } from '../paybook/views';
 import { compareStableText } from '../../protocol/serialization';
+import { canProcessAccountTxForDisputeStatus } from '../../account/consensus/dispute/policy';
 
 type DerivedHtlcTimeout = ScheduledHookBase<'htlc_timeout', {
   accountId: string;
@@ -38,6 +39,11 @@ const htlcTimeoutAt = (timelock: bigint | number | undefined): number | null => 
 /**
  * Every derived deadline of the Entity, optionally only those due by `now`.
  * Sorted by (`triggerAt`, id) — the same key the hook map drained by.
+ *
+ * A non-active Account (dispute preparing/disputed) has no Account tx
+ * consumer: its `htlc_resolve` would be suppressed after the wake, so the
+ * same past timelock would re-arm every Runtime frame for the whole dispute
+ * window. Its locks contribute no deadline until on-chain finality owns them.
  */
 export const collectDerivedDeadlines = (
   state: EntityState,
@@ -45,6 +51,7 @@ export const collectDerivedDeadlines = (
 ): DerivedDeadline[] => {
   const due: DerivedDeadline[] = [];
   for (const [accountId, account] of state.accounts.entries()) {
+    if (!canProcessAccountTxForDisputeStatus(account.status)) continue;
     for (const lock of account.state.locks.values()) {
       const triggerAt = htlcTimeoutAt(lock.timelock);
       if (triggerAt === null || (now !== undefined && triggerAt > now)) continue;
@@ -74,6 +81,7 @@ export const collectDerivedDeadlines = (
 export const earliestDerivedDeadline = (state: EntityState): number | null => {
   let earliest = Infinity;
   for (const account of state.accounts.values()) {
+    if (!canProcessAccountTxForDisputeStatus(account.status)) continue;
     for (const lock of account.state.locks.values()) {
       const triggerAt = htlcTimeoutAt(lock.timelock);
       if (triggerAt !== null && triggerAt < earliest) earliest = triggerAt;

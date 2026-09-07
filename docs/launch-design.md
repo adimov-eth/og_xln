@@ -1,28 +1,28 @@
-# xln: запуск сети ликвидности
+# xln: liquidity network launch
 
-Дата: 2026-09-05; решения владельца обновлены 2026-09-06. Статус: **принятый launch-дизайн**.
-Исследованный SHA: `b97c454d605e750a08da7ff6baab645330175468`; рабочее дерево содержит дальнейшие изменения.
-Документ задаёт продукт и критерии запуска. Принятие дизайна не выполняет deployment,
-переводы средств или повышение действующего лимита.
+Date: 2026-09-05; owner decisions updated 2026-09-06. Status: **accepted launch design**.
+Investigated SHA: `b97c454d605e750a08da7ff6baab645330175468`; the working tree contains further changes.
+This document defines the product and launch criteria. Accepting the design does not perform deployment,
+fund transfers, or raise the current limit.
 
-## Один первый продукт
+## One first product
 
-**USDT · Tron ⇄ USDT · Ethereum.** Пользователь получает рабочую ликвидность
-в нужной сети через финансируемые Accounts и исполнимую котировку.
-Первые клиенты — treasury/OTC-команды с повторяющимся потоком между выплатами
-в Tron и использованием капитала в Ethereum.
+**USDT · Tron ⇄ USDT · Ethereum.** The user gets working liquidity
+on the needed network through funded Accounts and an executable quote.
+The first customers are treasury/OTC teams with a recurring flow between payouts
+on Tron and capital use on Ethereum.
 
-- Обязательный продукт: платежи, same-J swaps и cross-J swaps. Payment-only запуск не закрывает эту цель.
-- Первый маршрут: пополнение → платёж → same-J обмен → cross-J обмен → вывод → восстановление после сбоя.
-- «Instant private liquidity network» — внутреннее целевое позиционирование. Публичное обещание скорости и приватности ограничено измеренными условиями и раскрытой моделью угроз.
-- Ethereum, Tron, Base и экспериментальная XLNC остаются в архитектуре. Первая продаваемая стрелка не требует одновременно открывать капитал и все рынки во всех четырёх сетях.
+- Required product: payments, same-J swaps, and cross-J swaps. A payment-only launch does not close this goal.
+- First route: funding → payment → same-J swap → cross-J swap → withdrawal → recovery after failure.
+- "Instant private liquidity network" is an internal target positioning. The public promise of speed and privacy is limited to measured conditions and a disclosed threat model.
+- Ethereum, Tron, Base, and experimental XLNC remain in the architecture. The first sellable arrow does not require simultaneously opening capital and all markets on all four networks.
 
-Архитектура четырёх сетей, финальность и границы XLNC описаны в
-[xlnc-soft-mainnet.md](xlnc-soft-mainnet.md). Привлечение клиентов, онбординг
-и экономика пилота остаются в [launch-pilot.md](launch-pilot.md).
-При расхождении первого рынка, состава MM и лестницы запуска действует этот более поздний дизайн.
+The four-network architecture, finality, and XLNC boundaries are described in
+[xlnc-soft-mainnet.md](xlnc-soft-mainnet.md). Customer acquisition, onboarding,
+and pilot economics remain in [launch-pilot.md](launch-pilot.md).
+Where the first market, MM composition, and launch ladder diverge, this later design governs.
 
-## Наши три хаба и MM
+## Our three hubs and MM
 
 ```text
         H1                    H2                    H3
@@ -34,131 +34,131 @@
                       MM1          MM2
 ```
 
-- Решение владельца от 2026-09-06: **H1/H2/H3 и MM управляем мы**. Привлечение независимых операторов не блокирует первый запуск. Отдельные ключи, процессы и восстановление не означают независимое владение.
-- Каждый владелец держит свои jurisdiction-specific sibling Entities в своём Runtime. Account связывает конкретных контрагентов; Foundation не становится единым оператором финансового ledger.
-- MM предоставляют наш инвентарь на обеих сторонах. Предложенная топология двух MM сохраняется, но их независимость и рыночная конкуренция не заявляются. Баланс, доступная ёмкость, обязательства и время пополнения измеряются отдельно.
-- Отключение H2 должно оставлять доступные независимые маршруты H1↔H3 работоспособными. Счета, ликвидность и операции, зависящие от H2, не объявляются автоматически доступными.
+- Owner decision from 2026-09-06: **we operate H1/H2/H3 and MM**. Recruiting independent operators does not block the first launch. Separate keys, processes, and recovery do not mean independent ownership.
+- Each owner holds their jurisdiction-specific sibling Entities in their own Runtime. An Account links specific counterparties; the Foundation does not become a single operator of the financial ledger.
+- MMs provide our inventory on both sides. The proposed two-MM topology is preserved, but their independence and market competition are not claimed. Balance, available capacity, obligations, and replenishment time are measured separately.
+- Disabling H2 must leave the available independent H1↔H3 routes operational. Accounts, liquidity, and operations that depend on H2 are not declared automatically available.
 
-Свои H1–H3/MM используются и в разработке, и на первом сетевом запуске.
-Независимые операторы — последующий этап. Наличие второго MM не доказывается двумя
-именами, использующими один и тот же неразделённый запас средств.
+Our own H1–H3/MM are used both in development and at the first network launch.
+Independent operators are a subsequent stage. The existence of a second MM is not proven by two
+names using the same undivided pool of funds.
 
-## Активы и операции
+## Assets and operations
 
-| Операция             | Первое предложение                                       | Что должно быть явно показано                                           |
-| -------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Payment              | USDT · Tron → USDT · Tron; затем маршруты между H1/H2/H3 | Получатель, сумма, комиссии, доступная входящая ёмкость                 |
-| Same-J swap          | **WETH/USDT · Ethereum**                                 | Конкретные зарегистрированные токены, цена, minimum receive, комиссии   |
-| Cross-J swap         | USDT · Tron ⇄ USDT · Ethereum                            | Обе юрисдикции, обе стороны обмена, срок котировки и условия исполнения |
-| Payment + conversion | Alice платит USDT · Tron; Bob получает USDT · Ethereum   | Единая подтверждаемая котировка и завершённый результат у Bob           |
+| Operation             | First offering                                       | What must be explicitly shown                                           |
+| -------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Payment              | USDT · Tron → USDT · Tron; then routes between H1/H2/H3 | Recipient, amount, fees, available receive capacity                 |
+| Same-J swap          | **WETH/USDT · Ethereum**                                 | Specific registered tokens, price, minimum receive, fees   |
+| Cross-J swap         | USDT · Tron ⇄ USDT · Ethereum                            | Both jurisdictions, both sides of the swap, quote validity period and execution conditions |
+| Payment + conversion | Alice pays USDT · Tron; Bob receives USDT · Ethereum   | A single verifiable quote and a completed result for Bob           |
 
-В текущем [каталоге рынка](../core/account/utils.ts) и
-[исполняемом сценарии](../core/scenarios/market/swap-market.ts) актив называется
-**WETH**, а не native ETH. До доказанного wrap/unwrap-пути нельзя обещать
-получение native ETH или скрывать обёртку за подписью «ETH».
-Локальный токен с таким символом также не подтверждает backing реального WETH.
-Публичный запуск требует зарегистрированного адреса, decimals, issuer/backing
-и проверенного пополнения/вывода выбранного актива.
+In the current [market catalog](../core/account/utils.ts) and
+[executable scenario](../core/scenarios/market/swap-market.ts) the asset is called
+**WETH**, not native ETH. Until a proven wrap/unwrap path exists, receipt of
+native ETH cannot be promised, nor can the wrapper be hidden behind an "ETH" label.
+A local token with that symbol also does not confirm backing by real WETH.
+Public launch requires a registered address, decimals, issuer/backing,
+and a verified deposit/withdrawal of the chosen asset.
 
-`USDT_TRON` и `USDT_ETH` — удобные подписи разных активов. Каноническая идентичность
-привязана к jurisdiction stack и локальному token ID, а не к ticker:
+`USDT_TRON` and `USDT_ETH` are convenient labels for different assets. Canonical identity
+is bound to the jurisdiction stack and the local token ID, not to the ticker:
 [cross-j market](../core/extensions/cross-j/market.ts).
-Токен XLNC с названием USDT не становится автоматически тем же активом или требованием к Tether.
+An XLNC token named USDT does not automatically become the same asset or a claim on Tether.
 
-Payment + conversion — следующая объединённая пользовательская операция после
-доказанного cross-J обмена. Нельзя объявлять два самостоятельно завершившихся шага
-единым атомарным платежом без соответствующего production-пути и recovery-проверки.
-Lending/credit остаются частью Account-архитектуры; отдельный lending-продукт не должен
-задерживать первый рабочий коридор.
+Payment + conversion is the next combined user operation after
+the cross-J swap is proven. Two independently completed steps cannot be declared
+a single atomic payment without a corresponding production path and recovery verification.
+Lending/credit remain part of the Account architecture; a separate lending product must not
+delay the first working corridor.
 
-## Главная метрика: исполнимая ликвидность
+## The key metric: executable liquidity
 
-**Сколько пользователь может получить сейчас, по какой полной цене и с какой вероятностью завершения.**
-Баланс MM и нарисованная глубина книги сами по себе не являются исполнимой ликвидностью.
+**How much a user can get right now, at what full price, and with what probability of completion.**
+MM balance and drawn order-book depth are not, by themselves, executable liquidity.
 
-| На каждый запрос | Обязательные данные                                                                        |
+| For each request | Required data                                                                        |
 | ---------------- | ------------------------------------------------------------------------------------------ |
-| Идентичность     | Source/target jurisdiction-local asset, сумма, направление, размер сделки                  |
-| Котировка        | Net receive, полная комиссия/spread, minimum receive, срок действия, момент наблюдения     |
-| Исполнение       | Канонический маршрут/рынок, доступный инвентарь MM и ёмкость задействованных Accounts      |
-| Результат        | Accepted/completed/rejected/expired/cancelled, причина, время до экономического завершения |
-| Внешний цикл     | Отдельные время/стоимость funding, rebalancing, J-finality и withdrawal                    |
+| Identity     | Source/target jurisdiction-local asset, amount, direction, trade size                  |
+| Quote        | Net receive, full fee/spread, minimum receive, expiration, observation moment     |
+| Execution       | Canonical route/market, available MM inventory, and the capacity of the involved Accounts      |
+| Result        | Accepted/completed/rejected/expired/cancelled, reason, time to economic completion |
+| External cycle     | Separate time/cost for funding, rebalancing, J-finality, and withdrawal                    |
 
-- UI должен использовать канонические quote/route/Account interfaces; наличие готового API этим дизайном не подтверждено. Если нужной котировки ещё нет, расширить существующий runtime quote path. Не добавлять второй расчёт цены, ёмкости или отдельный «landing liquidity engine».
-- Исполнимость проверяется при допуске операции; старый snapshot или рекламная котировка не гарантируют исполнение. Резервирование и освобождение используют существующий финансовый путь.
-- Лучшей считается доступная пользователю цена с учётом полного маршрута и комиссий, а не самый красивый headline MM. Изменение matcher priority требует отдельного обоснования, не возникает из дизайна страницы.
-- При нехватке входящей ёмкости используется единый [receive-capacity primitive](receive-capacity.md): подготовить collateral/credit выбранным пользователем способом, дождаться подтверждённой ёмкости, затем подтвердить актуальную операцию.
+- The UI must use canonical quote/route/Account interfaces; the existence of a ready-made API is not confirmed by this design. If the needed quote does not yet exist, extend the existing runtime quote path. Do not add a second price/capacity calculation or a separate "landing liquidity engine."
+- Executability is checked at operation admission; a stale snapshot or a promotional quote does not guarantee execution. Reservation and release use the existing financial path.
+- The best price is the one actually available to the user accounting for the full route and fees, not the most attractive headline MM. Changing matcher priority requires separate justification; it does not arise from page design.
+- When receive capacity is insufficient, the single [receive-capacity primitive](receive-capacity.md) is used: prepare collateral/credit by the method the user selected, wait for confirmed capacity, then confirm the actual operation.
 
-Измерять отдельно оба направления и согласованные с клиентами размеры сделок:
-quote availability по **всем запросам**, completion по **принятым котировкам**,
-p50/p95 времени, полную стоимость, связанный капитал и время восстановления запасов MM.
-Время финансируемого off-chain исполнения не включает и не подменяет время банковского
-перевода, chain deposit или on-chain withdrawal.
+Measure both directions separately, along with trade sizes agreed with customers:
+quote availability across **all requests**, completion across **accepted quotes**,
+p50/p95 time, full cost, capital tied up, and MM inventory restoration time.
+The time of funded off-chain execution does not include or substitute for the time of a bank
+transfer, chain deposit, or on-chain withdrawal.
 
-## Лестница капитала
+## Capital ladder
 
-Владелец принял следующий дизайн расширения. Это **проектные потолки экспозиции**,
-а не текущие балансы, выданные лимиты или выполненные переводы.
+The owner has accepted the following expansion design. These are **design exposure ceilings**,
+not current balances, issued limits, or executed transfers.
 
-| Этап            |      Принятый ориентир | Проверяемое основание перехода                                                                    |
+| Stage            |      Accepted target | Verifiable basis for transition                                                                    |
 | --------------- | ---------------------: | ------------------------------------------------------------------------------------------------- |
-| Public testnet  | Только тестовые активы | Полный продукт, сверка учёта, отказ/выход/restart; обычные ресурсные ограничения сохраняются      |
-| Canary          |                $10 000 | Исполняемый cap, ограниченная экспозиция, обнаружение/остановка ошибок, доказанное восстановление |
-| Pilot I         |               $100 000 | Операционная надёжность, повторные клиентские операции, сверка и доступный выход                  |
-| Pilot II        |               $500 000 | Реальное поведение двух MM, доступные котировки и пополнение ликвидности                          |
-| Production beta |               $2–5 млн | Повторяемая treasury-экономика, риск концентрации и устойчивость операций                         |
-| Mainnet         |     Динамический лимит | Доказанный risk engine и явно принятая политика повышения/снижения лимитов                        |
+| Public testnet  | Test assets only | Full product, accounting reconciliation, failure/exit/restart; normal resource constraints remain      |
+| Canary          |                $10 000 | Executable cap, limited exposure, error detection/stop, proven recovery |
+| Pilot I         |               $100 000 | Operational reliability, repeated customer operations, reconciliation, and available exit                  |
+| Pilot II        |               $500 000 | Real behavior of two MMs, available quotes, and liquidity replenishment                          |
+| Production beta |               $2–5 million | Repeatable treasury economics, concentration risk, and operational resilience                         |
+| Mainnet         |     Dynamic limit | Proven risk engine and an explicitly accepted policy for raising/lowering limits                        |
 
-Ранее зафиксированные $1 000 относятся к предыдущему плану ограниченного эксперимента.
-Владелец повторно подтвердил лестницу 2026-09-06; она описывает launch-дизайн;
-фактический первый транш, операторы и переход между ступенями фиксируются явно.
-**В рамках принятия этого документа средства не перемещались.**
+The previously recorded $1 000 relates to the prior limited-experiment plan.
+The owner reconfirmed the ladder on 2026-09-06; it describes the launch design;
+the actual first tranche, operators, and transition between stages are recorded explicitly.
+**No funds were moved as part of accepting this document.**
 
-[Текущая policy](../ops/capped-testnet-policy.json) по-прежнему содержит
-`riskCapUsd: null` и `riskCapEnforcement: not_implemented`. Ни $1 000, ни $10 000
-сейчас нельзя называть программно обеспеченной защитой.
+The [current policy](../ops/capped-testnet-policy.json) still contains
+`riskCapUsd: null` and `riskCapEnforcement: not_implemented`. Neither $1 000 nor $10 000
+can currently be called a programmatically enforced protection.
 
-Cap должен охватывать допускаемую экспозицию и обязательства, включая ожидающие
-операции, credit и аренду collateral; не обходиться параллельными admissions или restart.
-Не суммировать один и тот же актив повторно как reserve, collateral и Account claim.
-Операционные расходы, gas/resources и dispute reserve показывать отдельно от
-клиентской ликвидности. Точная область агрегирования и оценка риска принадлежат
-risk policy, а не UI-слайдеру. Ошибка учёта/выхода останавливает движение средств;
-переход на следующую ступень не происходит автоматически по календарю.
+The cap must cover admitted exposure and obligations, including pending
+operations, credit, and collateral lease; it must not be bypassed by parallel admissions or restart.
+Do not sum the same asset repeatedly as reserve, collateral, and Account claim.
+Show operating expenses, gas/resources, and dispute reserve separately from
+customer liquidity. The exact aggregation scope and risk assessment belong to
+risk policy, not a UI slider. An accounting/exit error halts fund movement;
+transition to the next stage does not happen automatically on a calendar schedule.
 
-## Discovery и landing
+## Discovery and landing
 
-- Foundation verification — **подписанные trust metadata**: кто подтвердил, что именно, для какого артефакта/оператора и на какой срок. Это не разрешение консенсуса.
-- Владелец 2026-09-06 подтвердил: deployment и первоначальные endorsements подписываем мы; фактические ключи задаются локальной конфигурацией.
-- По умолчанию показывать endorsed-участников; unendorsed остаются доступны при соблюдении обычных протокольных требований. Подпись, endorsement, состояние соединения и ликвидность — разные поля.
-- Первый экран: направление и размер → реальная доступная котировка → полная стоимость → открыть Account/продолжить. Рядом: стадия сети, операторы, MM и свежесть данных.
-- Отсутствующие данные маркировать «не измерено»/«котировка недоступна». Не подставлять демонстрационные значения как live metrics.
+- Foundation verification is **signed trust metadata**: who confirmed, what exactly, for which artifact/operator, and for what period. This is not consensus permission.
+- The owner confirmed on 2026-09-06: we sign deployment and the initial endorsements; the actual keys are set by local configuration.
+- By default, show endorsed participants; unendorsed ones remain available subject to the usual protocol requirements. Signature, endorsement, connection state, and liquidity are separate fields.
+- First screen: direction and size → real available quote → full cost → open Account/continue. Alongside: network stage, operators, MM, and data freshness.
+- Mark missing data as "not measured"/"quote unavailable." Do not substitute demo values as live metrics.
 
-Из принятого концепта **не публикуются как факты**: $23.7 млрд/day, 1.06 млн accounts/day,
-примерные курсы MM, fee $0.84, исполнения 420/430 ms, liquidity $428k/$842k,
-оборот $1.8m и completion 99.99%. Рыночные величины требуют собственной актуальной
-атрибуции; числа интерфейсного примера — реальных измерений с точным описанием
-стенда и ссылкой на артефакт.
+From the accepted concept, **the following are not published as facts**: $23.7 billion/day, 1.06 million accounts/day,
+sample MM rates, fee $0.84, execution 420/430 ms, liquidity $428k/$842k,
+turnover $1.8m, and completion 99.99%. Market figures require their own current
+attribution; interface-example numbers — real measurements with a precise description
+of the test rig and a link to the artifact.
 
-«Private» раскрывает наблюдателей и доступные им данные. «Instant» требует измеренного
-порогового времени и условий prefunding/доступности. Exit зависит от конкретной J,
-финальности и включения транзакций; локальный fullnode сам по себе не гарантирует вывод.
-Не заявлять анонимность, отсутствие доверия или гарантированное время on-chain выхода.
+"Private" discloses the observers and the data available to them. "Instant" requires a measured
+threshold time and prefunding/availability conditions. Exit depends on the specific J,
+finality, and transaction inclusion; a local fullnode by itself does not guarantee withdrawal.
+Do not claim anonymity, trustlessness, or guaranteed on-chain exit time.
 
-## Доказательства и следующий production-путь
+## Evidence and the next production path
 
-Сохранённый [replay-report](../.logs/qa/hlt/replays/1788552944285-parity.json)
-содержит **111 кадров, `equivalent: true` для TS/Rust W1/W4/W8**.
-Это историческое локальное доказательство на его записанных артефактах:
-не текущий clean-SHA release gate, не public-testnet readiness и не live TPS.
+The saved [replay-report](../.logs/qa/hlt/replays/1788552944285-parity.json)
+contains **111 frames, `equivalent: true` for TS/Rust W1/W4/W8**.
+This is historical local evidence on its recorded artifacts:
+not a current clean-SHA release gate, not public-testnet readiness, and not live TPS.
 
-1. Закрыть первый production recovery divergence; повторить exact replay/restart на исправленном кандидате.
-2. Доказать полный payment/same-J/cross-J/withdraw путь и исполнимые котировки двух MM с canonical capacity checks.
-3. Пройти настоящие Sepolia/Nile J-границы и проверку public deployments; локальный «Tron» на Anvil не заменяет TVM/receipt/finality.
-4. Реализовать и доказать cap, затем допустить выбранную ступень капитала и независимых операторов; Base/XLNC проходят собственные J-gates.
-5. Опубликовать landing из тех же проверяемых продуктовых данных. Полный `bun run check` и релевантные release gates обязательны; readiness не определяется мнением моделей.
+1. Close the first production recovery divergence; repeat exact replay/restart on the fixed candidate.
+2. Prove the full payment/same-J/cross-J/withdraw path and executable quotes from two MMs with canonical capacity checks.
+3. Pass real Sepolia/Nile J-boundaries and public-deployment verification; a local "Tron" on Anvil does not substitute for TVM/receipt/finality.
+4. Implement and prove the cap, then admit the selected capital stage and independent operators; Base/XLNC pass their own J-gates.
+5. Publish the landing page from the same verifiable product data. A full `bun run check` and relevant release gates are mandatory; readiness is not determined by model opinion.
 
-MML считает уникальную завершённую экономическую стоимость: платёж один раз,
-обмен без суммы обеих legs, без повторного settlement, технических перегонов,
-самоторговли и faucet-трафика. Ближайшая цель — повторное полезное использование
-с доступной ликвидностью; throughput измеряется отдельно по production TPS-контракту.
+MML counts unique completed economic value: a payment once,
+a swap without summing both legs, without repeat settlement, technical relays,
+self-trading, and faucet traffic. The near-term goal is repeated useful use
+with available liquidity; throughput is measured separately under the production TPS contract.

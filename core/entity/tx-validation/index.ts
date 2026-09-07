@@ -78,6 +78,16 @@ const validateScheduledWake = (value: unknown, code: string): void => {
   });
 };
 
+const validateProposeAccountsNow = (value: unknown, code: string): void => {
+  const data = requireBoundaryRecord(value, code);
+  requireExactBoundaryKeys(data, ['version', 'proposerSignerId', 'counterparties'], [], `${code}_FIELDS`);
+  if (data['version'] !== 1) throw new Error(`${code}_VERSION`);
+  requireString(data['proposerSignerId'], `${code}_PROPOSER`);
+  requireArray(data['counterparties'], `${code}_COUNTERPARTIES`).forEach((raw, index) => {
+    requireString(raw, `${code}_COUNTERPARTY_${index}`);
+  });
+};
+
 const validateBoardHandover = (value: unknown, code: string): void => {
   const data = requireBoundaryRecord(value, code);
   requireExactBoundaryKeys(data, ['board'], [], `${code}_FIELDS`);
@@ -176,6 +186,7 @@ function assertEntityTxRecord(
   else if (type === 'propose') validateProposal(tx['data'], `${code}_DATA`, depth);
   else if (type === 'runtimeOutput') validateRuntimeOutput(tx['data'], `${code}_DATA`, depth);
   else if (type === 'scheduledWake') validateScheduledWake(tx['data'], `${code}_DATA`);
+  else if (type === 'proposeAccountsNow') validateProposeAccountsNow(tx['data'], `${code}_DATA`);
   else if (type === 'htlcPayment') validatePreparedHtlcPayment(tx['data'], `${code}_DATA`);
   else if (type === 'accountInput') decodeAccountInput(tx['data'], `${code}_DATA`);
   else if (type === 'materializeCrossJurisdictionClear') validateCrossJClearMaterialization(tx['data'], `${code}_DATA`);

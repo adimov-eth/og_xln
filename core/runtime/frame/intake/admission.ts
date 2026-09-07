@@ -8,6 +8,7 @@ import {
   RuntimeEntityInputApplyError,
 } from '../../mempool/entity-inputs';
 import { assertScheduledWakeTxAuthorized } from '../../mempool/scheduled-wake';
+import { assertProposeAccountsNowTxAuthorized } from '../../mempool/propose-accounts-now';
 import { validateRuntimeInputShapeAndLimits } from '../../mempool/input-validation';
 
 const runtimeLog = createStructuredLogger('runtime');
@@ -61,6 +62,7 @@ const validateEntityInputs = (
     try {
       for (const tx of input.entityTxs ?? []) {
         assertScheduledWakeTxAuthorized(tx, isReplay);
+        assertProposeAccountsNowTxAuthorized(tx, isReplay);
       }
       return deps.normalizeEntityInput(
         env,

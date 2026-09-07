@@ -1,7 +1,27 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { isSingleSignerBoard } from '../../entity/consensus/replica-validation';
+import type { ConsensusConfig } from '../../entity/types';
+
 export type HubEngineKind = 'rust' | 'typescript';
+
+/**
+ * The Rust engine hosts single-signer Entities only: its kernel has no
+ * multi-validator PROPOSE/PRECOMMIT/COMMIT path (native restore already
+ * refuses `SINGLE_SIGNER_REQUIRED`). Refuse loudly where a board is bound to
+ * the engine, before any process or genesis file exists.
+ */
+export const assertRustEngineSingleSignerBoard = (
+  board: ConsensusConfig,
+  label: string,
+): ConsensusConfig => {
+  if (isSingleSignerBoard(board)) return board;
+  throw new Error(
+    `RUST_ENGINE_SINGLE_SIGNER_ONLY:${label}:validators=${String(board.validators.length)}` +
+      `:threshold=${String(board.threshold)}`,
+  );
+};
 
 export const canonicalHubEngine = (
   hubName: string,

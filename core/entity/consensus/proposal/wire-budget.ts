@@ -11,6 +11,7 @@ import {
 } from '../frame';
 import { LIMITS } from '../../../config/constants';
 import { getPrevFrameHash } from '../frame/lineage';
+import { resolveEntityProposalTimestamp } from './clock';
 import { entityLog } from '../entity-log';
 import { timePerfPhase } from '../../../support/performance/profile';
 import { countOp } from '../../../support/performance/op-counters';
@@ -35,7 +36,7 @@ const proposalWireTemplate = (
 ) => ({
   prevFrameHash: getPrevFrameHash(replica.state),
   height: replica.state.height + 1,
-  timestamp: env.state.timestamp,
+  timestamp: resolveEntityProposalTimestamp(env, replica.state),
   events: [] as EntityFrameEvent[],
   entityId: replica.state.entityId,
   stateRoot: DUMMY_ROOT,

@@ -117,7 +117,6 @@ export type RelayStore = {
   gossipJurisdictions: Map<string, JurisdictionGossipAnnouncement>;
   officialFoundationSignerId?: string | undefined;
   runtimeEncryptionKeys: Map<string, string>;
-  applicationBudgets: Map<string, { windowStartedAt: number; messageCount: number; bytes: number }>;
   debugEvents: RelayDebugEvent[];
   debugEventByteLengths: number[];
   debugEventBytes: number;
@@ -196,7 +195,6 @@ export const createRelayStore = (serverId: string, options: RelayStoreOptions = 
       ? { officialFoundationSignerId: options.officialFoundationSignerId }
       : {}),
     runtimeEncryptionKeys: new Map(),
-    applicationBudgets: new Map(),
     debugEvents: [],
     debugEventByteLengths: [],
     debugEventBytes: 0,

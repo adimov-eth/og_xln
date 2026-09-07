@@ -744,7 +744,6 @@ assertNotIncludes(runtimeP2PLifecycle, 'console.', runtimeP2PLifecyclePath);
 
 for (const relayLoggingPath of [
   'core/network/relay/router.ts',
-  'core/network/relay/local-delivery.ts',
   'core/network/relay/standalone-server.ts',
 ]) {
   assertNotIncludes(readText(relayLoggingPath), 'console.', relayLoggingPath);

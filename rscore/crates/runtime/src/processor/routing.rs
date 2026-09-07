@@ -47,12 +47,19 @@ pub(crate) enum BoundEntityOutput {
 /// immutable output to one explicit validator/runtime route before the output
 /// enters the same fsynced batch as its Runtime frame. Missing routes are a
 /// hard error; guessing from local replicas or gossip would make replay depend
-/// on whichever process happened to answer first.
+/// on whichever process happened to answer first. The only non-operator,
+/// non-Profile source is this Runtime's own fsynced outbox: a destination it
+/// already bound is the same fact native replay derives its table from.
 #[derive(Clone, Debug)]
 pub struct EntityRouteTable {
     by_entity: Arc<BTreeMap<String, BoundEntityRoute>>,
     direct_routes: DirectRouteTable,
 }
+
+/// Signed Profile clocks are validated `>= 1`. A destination recovered from
+/// the durable outbox sits below every Profile so the peer's next
+/// transport-authenticated announcement supersedes it.
+const RECOVERED_OUTBOX_ROUTE_CLOCK: u64 = 0;
 
 #[derive(Debug, Error)]
 pub enum EntityRouteError {
@@ -272,6 +279,44 @@ impl EntityRouteTable {
                 Ok(updated)
             }
         }
+    }
+
+    /// Install a destination this Runtime already bound and fsynced in its own
+    /// flat outbox. Profile routes are RAM transport state, so after a restart
+    /// the first frame addressing a peer that has not re-announced would
+    /// otherwise fail-stop on `RRS_ENTITY_ROUTE_MISSING` even though the
+    /// destination is committed in the WAL and native replay derives its route
+    /// table from these same rows. A later row for the same Entity replaces an
+    /// earlier recovered one; operator routes and signed Profile routes are
+    /// never displaced. Nothing new becomes durable.
+    pub(crate) fn with_recovered_output_route(
+        &mut self,
+        entity_id: &str,
+        runtime_id: &str,
+        signer_id: &str,
+    ) -> Result<(), EntityRouteError> {
+        let entity_id = normalized_entity_id(entity_id)?;
+        let runtime_id = normalized_runtime_id(runtime_id)?;
+        let signer_id = signer_id.trim().to_ascii_lowercase();
+        if signer_id.is_empty() {
+            return Err(EntityRouteError::SignerId(entity_id));
+        }
+        let routes = Arc::make_mut(&mut self.by_entity);
+        if routes
+            .get(&entity_id)
+            .is_some_and(|existing| existing.last_updated != Some(RECOVERED_OUTBOX_ROUTE_CLOCK))
+        {
+            return Ok(());
+        }
+        routes.insert(
+            entity_id,
+            BoundEntityRoute {
+                runtime_id,
+                signer_id,
+                last_updated: Some(RECOVERED_OUTBOX_ROUTE_CLOCK),
+            },
+        );
+        Ok(())
     }
 
     #[cfg(test)]
@@ -685,6 +730,94 @@ mod tests {
         assert!(matches!(
             routes.validate_inbound_runtime_outputs(&wrong_peer, &[valid]),
             Err(EntityRouteError::InboundRuntimeOutputEnvelope(0)),
+        ));
+    }
+
+    #[test]
+    fn recovered_outbox_route_binds_until_operator_or_signed_profile_supersedes_it() {
+        let peer = entity("33");
+        let bound_runtime = |routes: &EntityRouteTable, target: &str| {
+            let encoded = routes
+                .bind_and_encode(
+                    vec![json!({
+                        "entityId": target,
+                        "entityTxs": [{"type":"accountInput","data":{"kind":"ack"}}],
+                    })],
+                    7,
+                    99,
+                    &entity("44"),
+                    "local",
+                )
+                .expect("bind");
+            let decoded = crate::decode_storage_payload(&encoded.rows[0]).expect("decode");
+            (
+                decoded["runtimeId"].as_str().expect("runtime").to_owned(),
+                decoded["signerId"].as_str().expect("signer").to_owned(),
+            )
+        };
+        let mut routes = routes();
+        assert!(matches!(
+            routes.bind_and_encode(
+                vec![json!({"entityId": peer, "entityTxs": []})],
+                7,
+                99,
+                &entity("44"),
+                "local",
+            ),
+            Err(EntityRouteError::Missing(_)),
+        ));
+        routes
+            .with_recovered_output_route(&peer, &runtime("44"), "0xAA")
+            .expect("recovered row");
+        assert_eq!(
+            bound_runtime(&routes, &peer),
+            (runtime("44"), "0xaa".into())
+        );
+        // A later durable row for the same peer is the newer destination.
+        routes
+            .with_recovered_output_route(&peer, &runtime("55"), "0xbb")
+            .expect("later recovered row");
+        assert_eq!(
+            bound_runtime(&routes, &peer),
+            (runtime("55"), "0xbb".into())
+        );
+        // Recovered routes are dynamic: the peer is offline without a session.
+        assert!(
+            !routes
+                .is_paybook_peer_online(&peer, &InboundSessionTable::default())
+                .expect("recovered route liveness")
+        );
+        // An operator route is never displaced by an older durable row.
+        routes
+            .with_recovered_output_route(&entity("11"), &runtime("66"), "other")
+            .expect("row for an operator-pinned peer");
+        assert_eq!(
+            bound_runtime(&routes, &entity("11")),
+            (runtime("22"), "peer".into())
+        );
+        // The peer's next signed Profile supersedes and is never downgraded.
+        let mut routes = routes
+            .with_verified_profile(super::super::profile_route::VerifiedProfileRoute {
+                entity_id: peer.clone(),
+                runtime_id: runtime("77"),
+                signer_id: "0xcc".into(),
+                last_updated: 1,
+            })
+            .expect("signed profile");
+        assert_eq!(
+            bound_runtime(&routes, &peer),
+            (runtime("77"), "0xcc".into())
+        );
+        routes
+            .with_recovered_output_route(&peer, &runtime("55"), "0xbb")
+            .expect("stale recovered row after a profile");
+        assert_eq!(
+            bound_runtime(&routes, &peer),
+            (runtime("77"), "0xcc".into())
+        );
+        assert!(matches!(
+            routes.with_recovered_output_route(&peer, &runtime("55"), " "),
+            Err(EntityRouteError::SignerId(_)),
         ));
     }
 

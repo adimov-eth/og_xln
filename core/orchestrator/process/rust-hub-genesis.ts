@@ -1,4 +1,5 @@
 import { deriveManagedEntityIdentity } from '../daemon-control';
+import { assertRustEngineSingleSignerBoard } from './hub-engine-plan';
 import { canonicalEntitySeed } from '../../runtime/registration/entity-creation';
 import { deriveEntityEncryptionPrivateKey } from '../../runtime/registration/entity-creation/crypto';
 import { deriveEntityEncryptionPublicKey } from '../../entity/auth/crypto';
@@ -111,6 +112,7 @@ export const buildRustHubGenesisConfig = (input: RustHubGenesisInput): Record<st
     const jurisdictionName = String(value.name || key).trim();
     const signerLabel = key === primaryKey ? input.signerLabel : `${input.signerLabel}:${jurisdictionName}`;
     const identity = deriveManagedEntityIdentity({ name, seed: input.seed, signerLabel });
+    assertRustEngineSingleSignerBoard(identity.consensusConfig, `${name}:${signerLabel}`);
     const privateKey = deriveEntityEncryptionPrivateKey(custodySeed, identity.entityId);
     const contracts = requireBoundaryRecord(value.contracts, `RUST_HUB_GENESIS_CONTRACTS:${key}`);
     return {

@@ -57,7 +57,15 @@ const stackOrigin = process.env['XLN_UI_STACK_ORIGIN'] ?? (process.env['API_PORT
 export default defineConfig({
 	base,
 	// A TLS stack (xln.finance) cannot be WebSocket-proxied by this dev server; the wallet dials its relay directly.
-	define: { __XLN_STACK_ORIGIN__: JSON.stringify(stackOrigin) },
+	// The wallet compiles ../core from source, so the browser process shim in
+	// core/support/process/runtime-process.ts needs the same build-time NODE_ENV
+	// that scripts/build-runtime.sh injects into the prebuilt runtime bundle the
+	// SvelteKit wallet loads. Without it the shim has no value to carry and the
+	// page boots with dev semantics.
+	define: {
+		__XLN_STACK_ORIGIN__: JSON.stringify(stackOrigin),
+		'process.env.NODE_ENV': JSON.stringify(process.env['NODE_ENV'] ?? 'development'),
+	},
 	plugins: [react(), ...(sharedBundleDir ? [sharedRuntimeBundle(sharedBundleDir)] : [])],
 	server: {
 		port: 5183,

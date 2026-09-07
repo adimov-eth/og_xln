@@ -75,13 +75,16 @@ pub use consensus::{
     EntitySingleSigner, EntityTransitionCertificationRequest, EntityTransitionError,
     EntityTxCatalogError, EntityTxKind, HashToSign, HashType, JPrefixRangeClaim, LocalEntityOutput,
     LocalEntityOutputTx, MAX_ENTITY_FRAME_BYTES, MAX_ENTITY_FRAME_TX_BYTES, MAX_ENTITY_FRAME_TXS,
-    MAX_ENTITY_PROPOSAL_WIRE_BYTES, PendingNonMutatingWake, PresignedManifest,
-    PresignedManifestEntry, ResidentEntityConsensusReplica, build_certified_entity_frame_link,
+    MAX_ENTITY_PROPOSAL_WIRE_BYTES, MAX_PROPOSE_ACCOUNTS_NOW_COUNTERPARTIES,
+    PendingNonMutatingWake, PresignedManifest, PresignedManifestEntry, ProposeAccountsNow,
+    ProposeAccountsNowError, ResidentEntityConsensusReplica,
+    assert_propose_accounts_now_matches_state, build_certified_entity_frame_link,
     build_entity_hash_manifest, build_required_j_prefix_certificate, certify_entity_transition,
     certify_single_signer_entity_frame, compute_entity_consensus_root,
     compute_entity_events_parity_digest, compute_entity_frame_hash, compute_entity_section_digest,
-    encode_entity_frame_context, is_entity_owned_consensus_field, measure_entity_frame_tx_bytes,
-    measure_entity_frame_wire, project_entity_consensus_sections, sign_j_event_range,
+    decode_propose_accounts_now, encode_entity_frame_context, is_entity_owned_consensus_field,
+    measure_entity_frame_tx_bytes, measure_entity_frame_wire, project_entity_consensus_sections,
+    sign_j_event_range,
 };
 pub use cross_j::{
     CrossJOpeningProposalSelection, CrossJOpeningSelectionError, CrossJOpeningSiblingAccountView,
@@ -95,7 +98,7 @@ pub use debt::{
     DebtDirection, DebtEntry, DebtEventType, DebtLedger, canonical_debt_entry,
     canonical_debt_ledger, decode_canonical_debt_entry, decode_canonical_debt_ledger,
 };
-pub use error::EntityKernelError;
+pub use error::{EntityKernelError, reject_fail_fast};
 pub use external_wallet::{
     ExternalWalletAllowanceRecord, ExternalWalletBalanceRecord, ExternalWalletState,
     canonical_external_wallet, decode_canonical_external_wallet,
@@ -160,9 +163,9 @@ pub use provider_action::{
     hash_entity_provider_action,
 };
 pub use resident::{
-    ResidentEntityCoreResult, ResidentEntityError, ResidentEntityOperation, ResidentEntityRequest,
-    ResidentEntityResult, ResidentJEventProjection, apply_resident_entity_round,
-    apply_resident_entity_round_core,
+    RejectedInboundAccountInput, ResidentEntityCoreResult, ResidentEntityError,
+    ResidentEntityOperation, ResidentEntityRequest, ResidentEntityResult, ResidentJEventProjection,
+    apply_resident_entity_round, apply_resident_entity_round_core,
 };
 pub use scheduler::{
     CrontabState, CrontabTaskMethod, CrontabTaskParam, CrontabTaskState, ScheduledHook,

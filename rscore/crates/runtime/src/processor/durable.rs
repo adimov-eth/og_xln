@@ -420,11 +420,12 @@ impl Committer {
 impl DurableRuntimeProcessor {
     pub fn new(
         replica: RuntimeReplica,
-        store: NativeRuntimeStore,
+        mut store: NativeRuntimeStore,
         routes: EntityRouteTable,
         source_seed: impl Into<String>,
         source_signer_label: RuntimeSignerLabel,
     ) -> Result<Self, DurableRuntimeProcessorError> {
+        let routes = recover_outbox_routes(&mut store, &replica, routes)?;
         Self::with_publication_target(
             replica,
             store,
@@ -1012,6 +1013,66 @@ impl DurableRuntimeProcessor {
         self.replica = None;
         Err(error)
     }
+}
+
+/// Rebind the live route table from this Runtime's own fsynced flat outbox
+/// before the first frame after a restart. Signed Profile routes are RAM
+/// transport state; without this scan the first frame that addresses a peer
+/// which has not re-announced yet (a J event for a known user, for example)
+/// fail-stops in projection on `RRS_ENTITY_ROUTE_MISSING` although the exact
+/// destination is committed in the WAL. Native replay derives its route table
+/// from these same rows in the same height order, so live and replay bind the
+/// new output identically. Rows without `runtimeId` are the local-output form
+/// the publisher already recognizes. A routed row addressed to one of this
+/// Runtime's own Entities is corrupt, not a route.
+fn recover_outbox_routes(
+    store: &mut NativeRuntimeStore,
+    replica: &RuntimeReplica,
+    mut routes: EntityRouteTable,
+) -> Result<EntityRouteTable, DurableRuntimeProcessorError> {
+    let local_entities = replica
+        .state
+        .e_replicas
+        .values()
+        .map(|state| state.entity.entity_id.trim().to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+    for height in 1..=store.latest_height() {
+        for (index, row) in store.read_outputs_at(height)?.iter().enumerate() {
+            let value = crate::decode_storage_payload(row).map_err(|error| {
+                DurableRuntimeProcessorError::Route(format!(
+                    "RECOVERED_OUTBOX_ROW:{height}:{index}:{error}"
+                ))
+            })?;
+            let field = |name: &str| {
+                value
+                    .get(name)
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                    .ok_or_else(|| {
+                        DurableRuntimeProcessorError::Route(format!(
+                            "RECOVERED_OUTBOX_ROW_FIELD:{height}:{index}:{name}"
+                        ))
+                    })
+            };
+            if value.get("runtimeId").is_none() {
+                continue;
+            }
+            let entity_id = field("entityId")?;
+            if local_entities.contains(&entity_id.trim().to_ascii_lowercase()) {
+                return Err(DurableRuntimeProcessorError::Route(format!(
+                    "RECOVERED_OUTBOX_LOCAL_ENTITY:{height}:{index}:{entity_id}"
+                )));
+            }
+            routes
+                .with_recovered_output_route(entity_id, field("runtimeId")?, field("signerId")?)
+                .map_err(|error| {
+                    DurableRuntimeProcessorError::Route(format!(
+                        "RECOVERED_OUTBOX_ROW:{height}:{index}:{error}"
+                    ))
+                })?;
+        }
+    }
+    Ok(routes)
 }
 
 fn process_report(report: PublicationReport) -> RuntimeProcessReport {

@@ -44,6 +44,10 @@ import {
 } from './transaction';
 import { createRuntimeProcessProfile, type RuntimeProcessProfile } from './process-profile';
 import { restoreUndurableRuntimeInput } from './intake/recovery';
+import {
+  applyRejectedIngressPolicy,
+  type RejectedEntityIngressEvidence,
+} from './intake/discard';
 import { startRuntimeFrame, type RuntimeFrameStart } from './lifecycle/start';
 import { prepareRuntimeFrameInput } from './lifecycle/prepare';
 import { applyPreparedRuntimeFrame } from './apply';
@@ -568,7 +572,11 @@ const applyAndCommitRuntimeFrame = async (
   profile: RuntimeProcessProfile,
   started: RuntimeFrameStart,
   deps: RuntimeProcessDeps,
-): Promise<{ env: RuntimeReplica; staleWriterStopped: boolean }> => {
+): Promise<{
+  env: RuntimeReplica;
+  staleWriterStopped: boolean;
+  rejectedIngress: readonly RejectedEntityIngressEvidence[];
+}> => {
   ensureRuntimeInfrastructure(liveEnv).runtimeFramePhase = 'candidate.open';
   const candidate = openRuntimeFrameCandidate(
     liveEnv,
@@ -635,7 +643,7 @@ const applyAndCommitRuntimeFrame = async (
   }, deps);
   if (commit.staleWriterStopped) {
     await failStopAuthorityFrame(env);
-    return commit;
+    return { ...commit, rejectedIngress: applied.rejectedIngress };
   }
   candidate.state.runtimeFramePhase = 'commit.empty-close';
   await closeEmptyAuthorityFrameWithoutWal(env, frameAdvanced);
@@ -651,7 +659,11 @@ const applyAndCommitRuntimeFrame = async (
       notifyEnvChange: deps.notifyEnvChange,
     },
   );
-  return { env: commit.env, staleWriterStopped: false };
+  return {
+    env: commit.env,
+    staleWriterStopped: false,
+    rejectedIngress: applied.rejectedIngress,
+  };
 };
 
 export const createRuntimeProcessor = (deps: RuntimeProcessDeps) => (
@@ -708,6 +720,13 @@ const processRuntimeFrameOnce = async (
     env = committed.env;
     if (committed.staleWriterStopped) return env;
     profile.outcome = 'completed';
+    // Owner canon (docs/reject-policy.md): the transition typed and dropped
+    // each sender-caused rejection without reading process env; this is the
+    // loop's single policy read for the frame, and it runs only once the frame
+    // is durable. A halt here therefore never rolls back honest work and never
+    // marks the Runtime mutated-and-unreadable — fail-fast surfaces the peer
+    // or the bug to the caller, production keeps serving.
+    applyRejectedIngressPolicy(committed.rejectedIngress);
     return env;
   } catch (error) {
     if (frame.commitDisposition === 'undurable') {

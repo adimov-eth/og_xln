@@ -27,8 +27,9 @@ import {
   validateRuntimeInputAdmission,
 } from '../../runtime';
 import type { RuntimeReplica } from '../../runtime/types';
-import { haltRuntimeRequiresOperator } from '../../runtime/replica/lifecycle';
+import { applyTransportPeerFailurePolicy } from '../../network/p2p/transport-peer-failure-policy';
 import { requestRuntimeLoopWake } from '../../runtime/mempool/input-queue';
+import { enqueuePeerReadyProposeAccountsNow } from '../../runtime/mempool/propose-accounts-now';
 import { getEffectiveEntityInputTxs } from '../../entity/consensus/output/envelope';
 import {
   crossJurisdictionRouteProfileEntityIds,
@@ -119,7 +120,7 @@ export const createHubDirectRuntimeRoute = (
         `recovery/bundles/${encodeURIComponent(lookupKey)}`,
       ),
     onDeliveryFailure: failure => {
-      const error = new Error(`DIRECT_ACCOUNT_DELIVERY_FATAL:${safeStringify(failure)}`);
+      const code = failure.direction === 'inbound' ? 'DIRECT_INBOUND_REJECTED' : 'DIRECT_OUTPUT_REJECTED_BY_PEER';
       debug.lastError = {
         at: Date.now(),
         stage: 'rejected',
@@ -130,27 +131,36 @@ export const createHubDirectRuntimeRoute = (
         txTypes: failure.envelope?.entityInputs.flatMap(input =>
           (input.entityTxs || []).map(tx => String(tx?.type || ''))
         ) ?? [],
-        error: error.message,
+        error: `${code}:${safeStringify(failure)}`,
       };
       // An inbound failure is a rejected Account input: the session already got
       // the typed rejection, and genuine internal contradictions halt through
-      // their own halt paths during apply. Only a peer refusing our committed
-      // output (outbound) is a fatal delivery contradiction for this Hub.
+      // their own halt paths during apply.
       if (failure.direction === 'inbound') {
-        env.error?.('network', 'DIRECT_INBOUND_REJECTED', failure);
+        env.error?.('network', code, failure);
         return;
       }
-      env.error?.('network', 'DIRECT_ACCOUNT_DELIVERY_FATAL', failure);
-      haltRuntimeRequiresOperator(env, error);
+      // The peer refused a committed output this route actually sent it (the
+      // route correlates every peer error against its outstanding ids). The
+      // reject policy is applied exactly once here: tests/dev halt so the
+      // contradiction surfaces; production logs, closes that peer session and
+      // leaves the outbox rows for the outbox owner. Never a retry.
+      applyTransportPeerFailurePolicy(
+        env,
+        code,
+        failure,
+        () => { route.closeSession(failure.peerRuntimeId, 4005, 'peer-rejected-output'); },
+      );
     },
     onSessionClose: failure => {
       if (!hasUndeliveredDirectRuntimeSessionBytes(failure)) {
         env.warn?.('network', 'DIRECT_RUNTIME_PEER_OFFLINE', failure);
         return;
       }
-      const error = new Error(`DIRECT_RUNTIME_SESSION_CLOSED:${safeStringify(failure)}`);
-      env.error?.('network', 'DIRECT_RUNTIME_SESSION_CLOSED', failure);
-      haltRuntimeRequiresOperator(env, error);
+      // Bytes Bun accepted but never flushed before the peer closed are an
+      // audit line, not a Hub fault: the session is already gone and the
+      // outbox owner decides what to do with the rows behind those bytes.
+      env.error?.('network', 'DIRECT_RUNTIME_SESSION_CLOSED_UNDELIVERED', failure);
     },
     onEntityInputs: async (from, envelope, ingressTimestamp, sessionAuthenticated) => {
       if (!isIngressReady()) {
@@ -195,7 +205,11 @@ export const createHubDirectRuntimeRoute = (
     },
   });
   route.setReady(isIngressReady());
-  route.onDeliveryReadyChange(() => requestRuntimeLoopWake(env));
+  // Offline -> online edge only (see core/runtime/mempool/propose-accounts-now.ts).
+  route.onDeliveryReadyChange((peerRuntimeId, ready) => {
+    enqueuePeerReadyProposeAccountsNow(env, peerRuntimeId, ready);
+    requestRuntimeLoopWake(env);
+  });
   env.infrastructure = env.infrastructure ?? {};
   env.infrastructure.canDeliverEntityInputs = targetRuntimeId => route.hasOpenSession(targetRuntimeId)
     ? route.canDeliver(targetRuntimeId)

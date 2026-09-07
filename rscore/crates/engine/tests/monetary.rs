@@ -12,3 +12,6 @@ mod representation;
 mod swap;
 #[path = "monetary/transfer.rs"]
 mod transfer;
+
+#[path = "authority/settlement_freeze.rs"]
+mod settlement_freeze;

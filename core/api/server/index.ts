@@ -55,7 +55,6 @@ import {
   type RuntimeWsMessage,
 } from '../../network/p2p/ws-protocol';
 import { createHelloChallengeRegistry } from '../../network/p2p/auth/hello-challenge';
-import { createLocalDeliveryHandler } from '../../network/relay/local-delivery';
 import { resolveJurisdictionsJsonPath } from '../../jurisdiction/adapter/jurisdictions-path';
 import { createStructuredLogger, registerStructuredLogSink, shortId } from '../../support/logger';
 import { startParentLivenessWatch } from '../../support/process/parent-watch';
@@ -1486,11 +1485,9 @@ const configureServerRelayRouter = (
   env: RuntimeReplica,
   bound: BoundServerSession,
 ): void => {
-  const localDeliver = createLocalDeliveryHandler(env, relayStore, getEntityReplicaById);
   bound.session.routerConfig = {
     store: relayStore,
     localRuntimeId: String(env.runtimeId),
-    localDeliver,
     send: (ws, data) => ws.send(data),
     consumeHelloChallenge: (ws, challenge) => bound.session.relayHelloChallenges.consume(ws, challenge),
     onGossipStore: profile => {

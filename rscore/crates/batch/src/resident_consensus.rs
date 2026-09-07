@@ -22,8 +22,9 @@ use crate::consensus::{
     AccountAdmissionResult, AccountAdmissionVerdict, AccountInputResult, AccountInputRow,
     ProposalRow, UpstreamHtlcResolutionRow, active, apply_one, apply_one_without_mutation,
     build_signing_identity, force_ack_directive, has_rebalance_work, inbound_genesis_account,
-    leaf_root, outbound_ack_input, proposable, proposal_row, restore_checkpoint_account,
-    restore_seed_account, state_error, validate_genesis_seed, verdict_commits_genesis,
+    leaf_root, outbound_ack_input, pending_proposal_input, proposable, proposal_row,
+    restore_checkpoint_account, restore_seed_account, state_error, validate_genesis_seed,
+    verdict_commits_genesis,
 };
 use crate::parallel::{OutboundContinuationKind, ResidentAccountAction, ResidentAccountForest};
 use crate::round::{
@@ -96,7 +97,7 @@ struct OutboundWork {
     /// always applied before this exact post-admission proposal selection.
     proposal_selection: Option<BatchAccountSelection>,
     /// Same-round response obligation only. It is never Account state.
-    force_ack: bool,
+    obligation: crate::AccountResponseObligation,
     seal: bool,
 }
 
@@ -2045,7 +2046,7 @@ impl ResidentConsensusEngine {
                             envelope_updates: Vec::new(),
                             admissions: txs.clone(),
                             proposal_selection: Some(BatchAccountSelection::Selected(txs)),
-                            force_ack: false,
+                            obligation: crate::AccountResponseObligation::default(),
                             seal: true,
                         },
                     )
@@ -2481,7 +2482,7 @@ fn apply_outbound_work(
         .map_err(|error| state_error(account_id, &error))?;
         changed = true;
         let mut row = proposal_row(account_id, outcome, &account)?;
-        if work.force_ack && row.outbound_input.is_none() {
+        if work.obligation.ack && row.outbound_input.is_none() {
             row.outbound_input =
                 Some(
                     outbound_ack_input(&account).ok_or_else(|| BatchError::AccountsTree {
@@ -2490,7 +2491,7 @@ fn apply_outbound_work(
                     })?,
                 );
         }
-        if work.force_ack
+        if work.obligation.ack
             && !row.outbound_input.as_ref().is_some_and(|input| {
                 matches!(
                     &input.kind,
@@ -2504,8 +2505,14 @@ fn apply_outbound_work(
                 detail: "ACCOUNT_FORCE_ACK_NOT_BUNDLED".to_string(),
             });
         }
+        // A frame proposed in this very round supersedes any retained
+        // recovery bytes, exactly as the TypeScript flush prefers its fresh
+        // `proposal.accountInput` over the forced response.
+        if work.obligation.resend_pending_proposal && row.outbound_input.is_none() {
+            row.outbound_input = pending_proposal_input(&account);
+        }
         Some(row)
-    } else if work.force_ack {
+    } else if work.obligation.ack {
         Some(ProposalRow {
             account_id,
             outbound_input: Some(outbound_ack_input(&account).ok_or_else(|| {
@@ -2514,6 +2521,17 @@ fn apply_outbound_work(
                     detail: "ACCOUNT_FORCE_ACK_STATE_MISSING".to_string(),
                 }
             })?),
+            proposed: None,
+            dropped: Vec::new(),
+            failed_htlc_locks: Vec::new(),
+        })
+    } else if work.obligation.resend_pending_proposal {
+        // `proposeAccountsNow` recovery: an Account that retains nothing owes
+        // nothing. TS logs the skip and emits no work; a missing retained
+        // proposal is never an error here either.
+        pending_proposal_input(&account).map(|input| ProposalRow {
+            account_id,
+            outbound_input: Some(input),
             proposed: None,
             dropped: Vec::new(),
             failed_htlc_locks: Vec::new(),
@@ -2540,7 +2558,12 @@ fn apply_outbound_work(
 }
 
 fn admission_results(
-    admits: &[(AccountId, Vec<AccountTx>, BatchAccountSelection, bool)],
+    admits: &[(
+        AccountId,
+        Vec<AccountTx>,
+        BatchAccountSelection,
+        crate::AccountResponseObligation,
+    )],
 ) -> Vec<AccountAdmissionResult> {
     admits
         .iter()
@@ -2668,7 +2691,7 @@ fn outbound_work(request: &mut EntityOutboundRequest) -> Result<OutboundWorkSet,
                     envelope_updates: Vec::new(),
                     admissions: Vec::new(),
                     proposal_selection: None,
-                    force_ack: false,
+                    obligation: crate::AccountResponseObligation::default(),
                     seal: true,
                 },
             )
@@ -2689,7 +2712,7 @@ fn outbound_work(request: &mut EntityOutboundRequest) -> Result<OutboundWorkSet,
                 envelope_updates: Vec::new(),
                 admissions: Vec::new(),
                 proposal_selection: None,
-                force_ack: false,
+                obligation: crate::AccountResponseObligation::default(),
                 seal: true,
             })
             .admissions
@@ -2697,7 +2720,7 @@ fn outbound_work(request: &mut EntityOutboundRequest) -> Result<OutboundWorkSet,
     }
     let unsigned_accounts = selected.clone();
     let mut proposal_order = Vec::with_capacity(request.proposal_work.len());
-    for (account_id, txs, selection, force_ack) in std::mem::take(&mut request.proposal_work) {
+    for (account_id, txs, selection, obligation) in std::mem::take(&mut request.proposal_work) {
         if !selected.insert(account_id) {
             // A same-round ACK obligation may target the Account whose
             // settlement transition is waiting for this Entity frame's
@@ -2710,7 +2733,8 @@ fn outbound_work(request: &mut EntityOutboundRequest) -> Result<OutboundWorkSet,
             grouped
                 .get_mut(&account_id)
                 .expect("unsigned settlement row exists")
-                .force_ack |= force_ack;
+                .obligation
+                .merge(obligation);
             continue;
         }
         proposal_order.push(account_id);
@@ -2719,12 +2743,12 @@ fn outbound_work(request: &mut EntityOutboundRequest) -> Result<OutboundWorkSet,
             envelope_updates: Vec::new(),
             admissions: Vec::new(),
             proposal_selection: None,
-            force_ack,
+            obligation,
             seal: true,
         });
         work.admissions.extend(txs);
         work.proposal_selection = Some(selection);
-        work.force_ack |= force_ack;
+        work.obligation.merge(obligation);
     }
     for (account_id, updates) in std::mem::take(&mut request.envelope_updates) {
         grouped
@@ -2734,7 +2758,7 @@ fn outbound_work(request: &mut EntityOutboundRequest) -> Result<OutboundWorkSet,
                 envelope_updates: Vec::new(),
                 admissions: Vec::new(),
                 proposal_selection: None,
-                force_ack: false,
+                obligation: crate::AccountResponseObligation::default(),
                 seal: true,
             })
             .envelope_updates

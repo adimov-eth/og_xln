@@ -45,6 +45,7 @@ import {
   computeEntityFrameAuthorityRoot,
 } from '../state-root';
 import { fitEntityProposalToWireBudget } from './wire-budget';
+import { resolveEntityProposalTimestamp } from './clock';
 import { primeProposalHankos } from './hanko/prime-hankos';
 import { countOp, OP_COUNTERS_ENABLED } from '../../../support/performance/op-counters';
 import { assertEstimatedCertifiedEntityFrameWire } from '../frame/validation';
@@ -417,7 +418,7 @@ const fitAndApplyEntityProposal = async (
     workingReplica.state,
     fitted.entityContext,
     selection.proposalTxs,
-    env.state.timestamp,
+    resolveEntityProposalTimestamp(env, workingReplica.state),
     !fitted.replayed,
   ).catch((error: unknown) => {
     // The Runtime journals this context when the eviction leaves no frame:
@@ -445,7 +446,7 @@ const certifyEntityProposal = async (
   const { env, workingReplica } = context;
   const { txs, entityContext, applied, leader, jPrefixCertificate } = prepared;
   const height = workingReplica.state.height + 1;
-  const timestamp = env.state.timestamp;
+  const timestamp = resolveEntityProposalTimestamp(env, workingReplica.state);
   markProposalPhase(env, 'apply.entity.proposal.state');
   const state = buildProposalState(env, workingReplica, applied.newState, txs, height, timestamp, leader.view);
   const parentFrameHash = getPrevFrameHash(workingReplica.state);

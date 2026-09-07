@@ -29,7 +29,7 @@ import { deriveEncryptionKeyPair, pubKeyToHex, hexToPubKey, type P2PKeyPair } fr
 import { asFailFastPayload, failfastAssert } from './failfast';
 import { normalizeRuntimeId, isRuntimeId } from './auth/runtime-id';
 import { compareStableText, safeStringify } from '../../protocol/serialization';
-import { haltRuntimeRequiresOperator } from '../../runtime/replica/lifecycle';
+import { applyTransportPeerFailurePolicy } from './transport-peer-failure-policy';
 import { traceAccountDeliveryHop } from '../../support/performance/account-delivery-trace';
 import {
   DEFAULT_GOSSIP_BATCH_LIMIT,
@@ -79,14 +79,18 @@ const DEFAULT_RELAY_URL = 'wss://xln.finance/relay';
 const p2pLog = createStructuredLogger('p2p');
 const MIN_GOSSIP_POLL_MS = 250;
 const SLOW_BROWSER_TIMER_MS = 32;
-const hltDirectFinancialTransportRequired = (): boolean =>
-  typeof process !== 'undefined' && process.env?.['XLN_HLT_DIRECT_ONLY'] === '1';
-export const reportRelayClientError = (env: RuntimeReplica, relay: string, error: Error): void => {
-  env.error?.('network', 'WS_RELAY_FATAL', { relay, error: error.message });
-  // Relay still carries gossip, but a Runtime cannot prove that an unexpected
-  // socket failure excluded committed financial bytes. Never reconnect or
-  // downgrade the event to a warning; freeze the exact live state for audit.
-  haltRuntimeRequiresOperator(env, error);
+/**
+ * A relay carries directory/control traffic only (never financial bytes), so
+ * its socket failing cannot strand a committed output. Reject policy applies:
+ * tests/dev halt, production logs and retires that relay client.
+ */
+export const reportRelayClientError = (
+  env: RuntimeReplica,
+  relay: string,
+  error: Error,
+  closeSession: () => void = () => undefined,
+): void => {
+  applyTransportPeerFailurePolicy(env, 'WS_RELAY_FATAL', { relay, error: error.message }, closeSession);
 };
 
 export const reportDirectClientError = (
@@ -94,6 +98,7 @@ export const reportDirectClientError = (
   endpoint: string,
   targetRuntimeId: string,
   error: Error,
+  closeSession: () => void = () => undefined,
 ): 'transport-error' => {
   if (env.infrastructure?.persistenceQuiescing === true) {
     env.warn?.('network', 'WS_DIRECT_QUIESCE_CLOSE', {
@@ -103,12 +108,12 @@ export const reportDirectClientError = (
     });
     return 'transport-error';
   }
-  env.error?.('network', 'WS_DIRECT_FATAL', {
-    endpoint,
-    targetRuntimeId,
-    error: error.message,
-  });
-  haltRuntimeRequiresOperator(env, error);
+  applyTransportPeerFailurePolicy(
+    env,
+    'WS_DIRECT_FATAL',
+    { endpoint, targetRuntimeId, error: error.message },
+    closeSession,
+  );
   return 'transport-error';
 };
 
@@ -404,7 +409,8 @@ export class RuntimeP2P {
    * the same signed profile and peers skip it on the timestamp compare.
    */
   private signedLocalProfiles = new Map<string, { key: string; profile: Profile }>();
-  private directPublishedProfiles = new WeakMap<RuntimeWsClient, Map<string, Profile>>();
+  /** Profiles already announced per open direct client; cleared when the client retires. */
+  private directPublishedProfiles = new Map<RuntimeWsClient, Map<string, Profile>>();
   private directClientUrls = new Map<string, string>();
   private directClientErrors = new Map<string, { at: number; error: string }>();
   private retiringClients = new Map<RuntimeWsClient, { kind: 'relay' | 'direct'; key: string }>();
@@ -553,7 +559,7 @@ export class RuntimeP2P {
           }
         },
         onError: error => {
-          reportRelayClientError(this.env, url, error);
+          reportRelayClientError(this.env, url, error, () => this.retireRelayClient(client));
         },
       });
       this.clients.push(client);
@@ -1125,10 +1131,14 @@ export class RuntimeP2P {
     timestamp: number | undefined,
     sessionAuthenticated = false,
   ): Promise<void> {
-    if (hltDirectFinancialTransportRequired() && transport !== 'direct') {
+    // Financial bytes travel only over an authenticated direct session (see
+    // enqueueEntityInputsDelivery). A relay never forwards entity_inputs, so
+    // anything arriving here through a relay client is a forged or misrouted
+    // envelope and is rejected before any admission work.
+    if (transport !== 'direct') {
       throw new Error(
-        `HLT_RELAY_ENTITY_INPUT_FORBIDDEN:source=${from}:target=${this.runtimeId}:` +
-        `envelope=${safeStringify(envelope)}`,
+        `P2P_RELAY_ENTITY_INPUTS_FORBIDDEN:source=${from}:target=${this.runtimeId}:` +
+        `entityInputs=${envelope.entityInputs.length}`,
       );
     }
     if (this.closing || this.closed) {
@@ -1531,7 +1541,12 @@ export class RuntimeP2P {
     // signature. Write it on this authenticated socket before the financial
     // envelope; a peer must not commit an Account whose ACK has no return route.
     // A fresh socket has no publication cache, including after process restart.
-    this.publishDirectProfiles(targetRuntimeId, client, sourceIds.map(entityId => this.signedLocalProfiles.get(entityId)!.profile));
+    const profiles = sourceIds.map(entityId => {
+      const signed = this.signedLocalProfiles.get(entityId);
+      if (!signed) throw new Error(`P2P_DIRECT_PROFILE_SIGNED_ROUTE_MISSING:${entityId}`);
+      return signed.profile;
+    });
+    this.publishDirectProfiles(targetRuntimeId, client, profiles);
     return true;
   }
 
@@ -1905,6 +1920,7 @@ export class RuntimeP2P {
     for (const [runtimeId, client] of this.directClients.entries()) {
       this.retireClient(client, 'direct', runtimeId);
     }
+    this.directPublishedProfiles.clear();
     this.directClients.clear();
     this.directClientUrls.clear();
     this.directClientErrors.clear();
@@ -1920,8 +1936,14 @@ export class RuntimeP2P {
     client.close();
   }
 
+  private retireRelayClient(client: RuntimeWsClient): void {
+    this.clients = this.clients.filter(candidate => candidate !== client);
+    this.retireClient(client, 'relay', client.getUrl());
+  }
+
   private retireDirectClient(runtimeId: string, client: RuntimeWsClient): void {
     this.retireClient(client, 'direct', runtimeId);
+    this.directPublishedProfiles.delete(client);
     if (this.directClients.get(runtimeId) === client) this.directClients.delete(runtimeId);
     this.directClientUrls.delete(runtimeId);
     this.directClientErrors.delete(runtimeId);
@@ -2051,11 +2073,17 @@ export class RuntimeP2P {
             this.directClients.get(normalizedTargetRuntimeId) !== client
           ) return;
           const cause = error instanceof Error ? error : new Error(String(error));
-          reportDirectClientError(this.env, endpoint, normalizedTargetRuntimeId, cause);
           this.directClientErrors.set(normalizedTargetRuntimeId, {
             at: Date.now(),
             error: cause.message,
           });
+          reportDirectClientError(
+            this.env,
+            endpoint,
+            normalizedTargetRuntimeId,
+            cause,
+            () => this.retireDirectClient(normalizedTargetRuntimeId, client),
+          );
         });
       },
       onDeliveryReadyChange: ready => {
@@ -2074,11 +2102,31 @@ export class RuntimeP2P {
           this.closing || this.closed ||
           this.directClients.get(normalizedTargetRuntimeId) !== client
         ) return;
-        reportDirectClientError(this.env, endpoint, normalizedTargetRuntimeId, error);
         this.directClientErrors.set(normalizedTargetRuntimeId, {
           at: Date.now(),
           error: error.message,
         });
+        reportDirectClientError(
+          this.env,
+          endpoint,
+          normalizedTargetRuntimeId,
+          error,
+          () => this.retireDirectClient(normalizedTargetRuntimeId, client),
+        );
+      },
+      onPeerSessionRejected: error => {
+        if (
+          this.closing || this.closed ||
+          this.directClients.get(normalizedTargetRuntimeId) !== client
+        ) return;
+        // The client already closed the misbehaving socket. Retire it so the
+        // next dispatch dials a fresh session; never a Runtime fault.
+        this.env.error?.('network', 'WS_DIRECT_PEER_SESSION_REJECTED', {
+          endpoint,
+          targetRuntimeId: normalizedTargetRuntimeId,
+          error: error.message,
+        });
+        this.retireDirectClient(normalizedTargetRuntimeId, client);
       },
     });
     this.directClients.set(normalizedTargetRuntimeId, client);
@@ -2091,6 +2139,7 @@ export class RuntimeP2P {
         endpoint,
         normalizedTargetRuntimeId,
         error instanceof Error ? error : new Error(String(error)),
+        () => this.retireDirectClient(normalizedTargetRuntimeId, client),
       );
     });
   }

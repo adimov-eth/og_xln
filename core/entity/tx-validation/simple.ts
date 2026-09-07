@@ -24,6 +24,7 @@ type SpecializedEntityTxType =
   | 'materializeCrossJurisdictionClear'
   | 'materializeCrossJurisdictionSwap'
   | 'propose'
+  | 'proposeAccountsNow'
   | 'runtimeOutput'
   | 'scheduledWake'
   | 'vote';

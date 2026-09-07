@@ -7,7 +7,7 @@
 use thiserror::Error;
 
 /// Closed canonical EntityTx discriminant set shared with TypeScript.
-pub const ENTITY_TX_TYPES: [&str; 62] = [
+pub const ENTITY_TX_TYPES: [&str; 63] = [
     "accountInput",
     "admitCrossJurisdictionBookOrder",
     "boardHandover",
@@ -49,6 +49,7 @@ pub const ENTITY_TX_TYPES: [&str; 62] = [
     "processHtlcTimeouts",
     "profile-update",
     "propose",
+    "proposeAccountsNow",
     "proposeCancelSwap",
     "r2c",
     "r2e",
@@ -117,6 +118,7 @@ pub enum EntityTxKind {
     ProcessHtlcTimeouts,
     ProfileUpdate,
     Propose,
+    ProposeAccountsNow,
     ProposeCancelSwap,
     R2c,
     R2e,
@@ -190,6 +192,7 @@ impl EntityTxKind {
             "processHtlcTimeouts" => Self::ProcessHtlcTimeouts,
             "profile-update" => Self::ProfileUpdate,
             "propose" => Self::Propose,
+            "proposeAccountsNow" => Self::ProposeAccountsNow,
             "proposeCancelSwap" => Self::ProposeCancelSwap,
             "r2c" => Self::R2c,
             "r2e" => Self::R2e,
@@ -259,6 +262,7 @@ impl EntityTxKind {
             Self::ProcessHtlcTimeouts => "processHtlcTimeouts",
             Self::ProfileUpdate => "profile-update",
             Self::Propose => "propose",
+            Self::ProposeAccountsNow => "proposeAccountsNow",
             Self::ProposeCancelSwap => "proposeCancelSwap",
             Self::R2c => "r2c",
             Self::R2e => "r2e",

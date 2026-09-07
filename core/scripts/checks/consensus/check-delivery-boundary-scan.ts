@@ -260,8 +260,6 @@ for (const [path, markers] of [
     'const sendRelayDelivery = (',
     'const disposition = classifyWebSocketSendResult(result);',
     "disposition === 'dropped'",
-    'delivery: relayDelivery',
-    'local-delivery-failed',
   ]],
   ['core/orchestrator/hub/hub-runtime-transport.ts', [
     'route.sendEntityInputsDelivery(',

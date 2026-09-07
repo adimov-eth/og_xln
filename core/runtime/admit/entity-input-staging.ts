@@ -295,16 +295,20 @@ export const applyExternalEntityInput = async (
  * The candidate has no live State or node-cache ownership, so a malformed
  * local command is no more fatal than malformed peer bytes. Storage failures,
  * reducer invariants, and unknown bugs retain their distinct fatal classes.
+ *
+ * Scenarios take this same path: the Runtime loop applies the reject policy
+ * (fail-fast or log-and-drop) once per frame from the recorded outcome, so a
+ * scenario never needs a private halt branch here. Replay never rejects: a
+ * rejected input has no WAL row, so meeting one in replay must surface.
  */
 export const rejectMalformedEntityInput = (
-  env: RuntimeReplica,
+  _env: RuntimeReplica,
   error: unknown,
   inputIndex: number,
   context: RuntimeEntityInputBatchContext,
   options: RuntimeEntityInputApplyOptions,
 ): boolean => {
   if (
-    env.scenarioMode ||
     options.isReplay ||
     !(error instanceof RuntimeEntityInputApplyError) ||
     (error.failureKind !== 'malformed-ingress' &&

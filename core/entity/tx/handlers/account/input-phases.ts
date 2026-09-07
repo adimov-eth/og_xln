@@ -25,11 +25,9 @@ import {
 import { verifyHankoForHash } from '../../../../hanko/signing';
 import type { AccountJClaimNodeChanges } from '../../../../types/finance/account-j-claims';
 import type { ApplyEntityTxOptions } from '../../apply';
-import { haltRuntimeFailure } from '../../../../protocol/errors/failure-taxonomy';
 import { safeStringify } from '../../../../protocol/serialization';
 import { countOp } from '../../../../support/performance/op-counters';
 import { MalformedEntityFrameInputError } from '../../processing/invariant-errors';
-import { rejectFailFast } from '../../../../support/process/runtime-process';
 import {
   applySuccessfulAccountInput,
   type CommittedAccountEffects,
@@ -41,6 +39,21 @@ import {
 } from './lifecycle/result';
 
 const accountHandlerLog = createStructuredLogger('account.handler');
+
+/**
+ * A counterparty's authenticated Account frame failed inside the Account
+ * transition (a tx rejected on replay, a state-root/hanko mismatch, or an
+ * input carrying no consensus action at all). The decision is typed here,
+ * without reading process env; the Runtime loop alone applies the reject
+ * policy (fail-fast halt in tests/dev, log-and-drop in production) once it
+ * evicts the exact parent Entity transaction (docs/reject-policy.md).
+ */
+export class AccountFrameRejectionError extends MalformedEntityFrameInputError {
+  constructor(rejection: string) {
+    super('accountInput', rejection);
+    this.name = 'AccountFrameRejectionError';
+  }
+}
 
 export type AccountInputPhaseContext = {
   env: EntityRuntimeContext;
@@ -78,7 +91,7 @@ const rejectEmptyAccountInput = (context: AccountInputPhaseContext): never => {
     to: shortId(input.toEntityId),
   });
   addMessage(state, `❌ ${error}`);
-  throw new Error(error);
+  throw new AccountFrameRejectionError(error);
 };
 
 const finishAppliedAccountInput = async (
@@ -161,17 +174,10 @@ const finishRejectedAccountInput = (
       error: failureMessage,
     });
     addMessage(state, `❌ ${failureMessage}`);
-    // Owner canon: a peer can never take the Runtime down. Fail-fast by
-    // default (tests/dev); in production the authenticated AccountInput is
-    // rejected and dropped like any malformed ingress.
-    if (rejectFailFast()) {
-      throw haltRuntimeFailure(
-        'FRAME_CONSENSUS_FAILED',
-        `FRAME_CONSENSUS_FAILED: ${failureMessage || 'unknown'}`,
-      );
-    }
-    throw new MalformedEntityFrameInputError(
-      'accountInput',
+    // Owner canon: a peer can never take the Runtime down. The transition only
+    // types the rejection; the Runtime loop evicts the exact parent Entity
+    // transaction and applies fail-fast or log-and-drop outside this machine.
+    throw new AccountFrameRejectionError(
       `ACCOUNT_INPUT_FRAME_REJECTED:${result.rejection.kind}:${failureMessage || 'unknown'}`,
     );
   }

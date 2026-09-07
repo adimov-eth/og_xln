@@ -68,6 +68,7 @@ fn cross_j_r7_expiry_executes_collective_sweep_in_the_same_frame_w1_w4() {
                     // The diagnostic prefix cannot suppress another due hook.
                     jobs: jobs.into_iter().take(1).collect(),
                 }),
+                propose_accounts_now: Vec::new(),
                 expected_proposer_signer_id: "hub".into(),
                 finalized_j_events: None,
                 entity_authority: Some(single_signer_authority("hub")),

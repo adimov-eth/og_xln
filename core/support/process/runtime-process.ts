@@ -16,6 +16,19 @@ export const readRuntimeEnv = (name: string): string | undefined => {
   }
 };
 
+/**
+ * Build-time NODE_ENV, or undefined when no bundler replaced it. Guarded so a
+ * missing `define` degrades to dev semantics rather than a ReferenceError that
+ * kills the page before the shim is installed.
+ */
+const injectedNodeEnv = (): string | undefined => {
+  try {
+    return process.env['NODE_ENV'];
+  } catch {
+    return undefined;
+  }
+};
+
 const ensureBrowserProcessShim = (): void => {
   if (!runtimeIsBrowser || typeof globalThis.process !== 'undefined') return;
 
@@ -48,7 +61,10 @@ const ensureBrowserProcessShim = (): void => {
   const processShim: BrowserProcessShim = {
     // The standalone page and worker bundles explicitly define this value.
     // An empty shim makes hostile input halt production browsers as if in dev.
-    env: { NODE_ENV: process.env['NODE_ENV'] },
+    // The read stays in this exact form so a bundler `define` still replaces
+    // it, but it cannot throw: this branch runs only when `process` is absent,
+    // so an undefined build leaves a wallet white-screened instead of running.
+    env: { NODE_ENV: injectedNodeEnv() },
     browser: true,
     version: '0',
     versions: { node: '0' },

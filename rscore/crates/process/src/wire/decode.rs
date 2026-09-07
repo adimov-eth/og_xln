@@ -139,6 +139,7 @@ fn decode_entity_round(fields: &[AbiValue]) -> Result<Command, ProcessError> {
             post_accounts: strict_boolean(&fields[5], "postAccounts")?,
             runtime_seed: None,
             scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: String::new(),
             finalized_j_events: None,
             entity_authority: None,

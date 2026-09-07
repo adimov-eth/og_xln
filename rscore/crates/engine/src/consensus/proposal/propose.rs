@@ -44,11 +44,16 @@ pub enum Disposition {
 /// Whether a rejected transaction goes back on the queue or is dropped.
 ///
 /// Parity target: `proposalFailureDisposition`
-/// (core/account/consensus/proposal/transactions.ts): a capacity rejection is
-/// a "not yet", so the transaction is deferred to the next frame rather than
-/// deleted. Everything else is a decision about the transaction itself.
+/// (core/account/consensus/proposal/transactions.ts): a capacity rejection or
+/// the signed-settlement freeze is a "not yet", so the transaction is deferred
+/// to the next frame rather than deleted. Everything else is a decision about
+/// the transaction itself.
 const fn is_retryable(rejection: &AccountRejection) -> bool {
-    matches!(rejection, AccountRejection::HtlcLockCapacity { .. })
+    matches!(
+        rejection,
+        AccountRejection::HtlcLockCapacity { .. }
+            | AccountRejection::SettlementSignedAccountFrozen { .. }
+    )
 }
 
 /// Transactions whose rejection is a fault of the machine that queued them,
@@ -490,12 +495,21 @@ mod tests {
         assert_eq!(critical_kind(&payment), None);
     }
 
-    /// Only a capacity rejection is a retry; a payer's own invalid transaction
-    /// is not requeued for ever.
+    /// Only a capacity rejection or the signed-settlement freeze is a retry; a
+    /// payer's own invalid transaction is not requeued for ever.
     #[test]
-    fn only_capacity_is_retried() {
+    fn only_capacity_and_settlement_freeze_are_retried() {
         assert!(is_retryable(&AccountRejection::HtlcLockCapacity {
             maximum: 32
+        }));
+        assert!(is_retryable(
+            &AccountRejection::SettlementSignedAccountFrozen {
+                tx_type: "direct_payment"
+            }
+        ));
+        assert!(!is_retryable(&AccountRejection::ClosedForDispute {
+            status: "disputed".into(),
+            tx_type: "direct_payment"
         }));
         assert!(!is_retryable(&AccountRejection::DeltaRowLimitExceeded {
             attempted: 9,

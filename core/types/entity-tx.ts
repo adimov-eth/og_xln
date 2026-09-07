@@ -123,6 +123,26 @@ type EntityTxPayload =
       };
     }
   | {
+      /**
+       * Consensus-visible re-emission marker for retained Account proposals.
+       *
+       * Outbox delivery is best effort and nothing is ever resent silently, so
+       * a peer that was offline at dispatch time leaves this Entity holding an
+       * unanswered `pendingFrame` plus the exact `pendingAccountInput` bytes it
+       * already signed. When that peer becomes deliverable again, the local
+       * runtime may create this marker only for its proposer replica; every
+       * validator replays the same list from committed EntityState and re-emits
+       * the same retained bytes. It never rebuilds, replaces or drops a frame.
+       */
+      type: 'proposeAccountsNow';
+      data: {
+        version: 1;
+        proposerSignerId: string;
+        /** Lowercase counterparty entity ids, strictly ascending and unique. */
+        counterparties: string[];
+      };
+    }
+  | {
       type: 'chat';
       data: { from: string; message: string };
     }

@@ -6,13 +6,13 @@ use num_bigint::BigInt;
 use xln_rscore_engine::{
     ACCOUNT_MEMPOOL_SIZE, AccountConsensus, AccountDisputeConfig, AccountDisputeFinality,
     AccountDomain, AccountEnvelope, AccountIdentity, AccountInputEnvelope, AccountOutput,
-    AccountProposalSelection, AccountReplica, AccountSettledEvent, AccountState, AccountTx,
-    AckFrameOutcome, BoardDelays, BoardHankoRefreshInput, CanonicalValue, CertifiedBoardAuthority,
-    CounterpartyDispute, DeliveryMode, Delta, DepositoryAddress, DisputeDraft, EntityId,
-    IncomingAck, IncomingFrame, IncomingOutcome, JEventClaimTx, JEventMetadata, JurisdictionEvent,
-    ProposalOutcome, ProposedFrame, ReceiverClock, RolledBackProposal, SettlementHankoDraft,
-    SigningIdentity, StandaloneInputOutcome, StateError, TokenId, WatchSeed,
-    apply_board_hanko_refresh, apply_incoming_ack as apply_exact_incoming_ack,
+    AccountProposalSelection, AccountReplica, AccountSettledEvent, AccountState, AccountStateSeed,
+    AccountTx, AckFrameOutcome, BoardDelays, BoardHankoRefreshInput, CanonicalValue,
+    CertifiedBoardAuthority, CounterpartyDispute, DeliveryMode, Delta, DepositoryAddress,
+    DisputeDraft, EntityId, IncomingAck, IncomingFrame, IncomingOutcome, JEventClaimTx,
+    JEventMetadata, JurisdictionEvent, ProposalOutcome, ProposedFrame, ReceiverClock,
+    RolledBackProposal, SettlementHankoDraft, SigningIdentity, StandaloneInputOutcome, StateError,
+    TokenId, WatchSeed, apply_board_hanko_refresh, apply_incoming_ack as apply_exact_incoming_ack,
     apply_incoming_frame as apply_exact_incoming_frame, apply_standalone_dispute,
     canonical_tx_value, dispute_proof_hash, propose_account_frame,
     propose_account_frame_with_selection,
@@ -46,6 +46,15 @@ fn entity_hex(bytes: &[u8; 32]) -> String {
 }
 
 fn account_state(left: &EntityId, right: &EntityId, collateral: i64) -> AccountState {
+    account_state_with_workspace(left, right, collateral, None)
+}
+
+fn account_state_with_workspace(
+    left: &EntityId,
+    right: &EntityId,
+    collateral: i64,
+    settlement_workspace: Option<CanonicalValue>,
+) -> AccountState {
     let domain = AccountDomain::new(
         31_337,
         DepositoryAddress::parse(&format!("0x{}", "88".repeat(20))).expect("depository"),
@@ -71,11 +80,20 @@ fn account_state(left: &EntityId, right: &EntityId, collateral: i64) -> AccountS
         BigInt::from(0),
     )
     .expect("delta");
-    AccountState::new(
+    AccountState::restore_full(AccountStateSeed {
         identity,
-        AccountDisputeConfig::new(10, 10).expect("dispute config"),
-        vec![delta],
-    )
+        dispute_config: AccountDisputeConfig::new(10, 10).expect("dispute config"),
+        deltas: vec![delta],
+        locks: Vec::new(),
+        j_nonce: 0,
+        last_finalized_j_height: 0,
+        carried: Default::default(),
+        rebalance_fee_policies: Vec::new(),
+        swap_offers: Vec::new(),
+        lending_intents: Vec::new(),
+        pulls: Vec::new(),
+        settlement_workspace,
+    })
     .expect("state")
 }
 
@@ -86,17 +104,49 @@ fn parties() -> (Party, Party) {
 }
 
 fn parties_with_transformer(delta_transformer: Option<[u8; 20]>) -> (Party, Party) {
-    parties_with_collateral_and_transformer(1_000_000, delta_transformer, false)
+    parties_with_collateral_and_transformer(1_000_000, delta_transformer, false, None)
 }
 
 fn parties_with_collateral(collateral: i64) -> (Party, Party) {
-    parties_with_collateral_and_transformer(collateral, None, true)
+    parties_with_collateral_and_transformer(collateral, None, true, None)
+}
+
+/// Both parties already hold a settlement workspace that Left has signed.
+fn parties_with_signed_workspace() -> (Party, Party) {
+    let workspace = CanonicalValue::Object(vec![
+        (
+            "workspaceHash".into(),
+            CanonicalValue::String(format!("0x{}", "ab".repeat(32))),
+        ),
+        ("ops".into(), CanonicalValue::Array(Vec::new())),
+        ("lastModifiedByLeft".into(), CanonicalValue::Bool(true)),
+        (
+            "status".into(),
+            CanonicalValue::String("awaiting_counterparty".into()),
+        ),
+        (
+            "revision".into(),
+            CanonicalValue::Number(xln_rscore_protocol::CanonicalNumber::from_u16(1)),
+        ),
+        (
+            "createdAt".into(),
+            CanonicalValue::Number(xln_rscore_protocol::CanonicalNumber::from_u16(1)),
+        ),
+        (
+            "lastUpdatedAt".into(),
+            CanonicalValue::Number(xln_rscore_protocol::CanonicalNumber::from_u16(1)),
+        ),
+        ("executorIsLeft".into(), CanonicalValue::Bool(true)),
+        ("leftHanko".into(), CanonicalValue::String("0x01".into())),
+    ]);
+    parties_with_collateral_and_transformer(1_000_000, None, false, Some(workspace))
 }
 
 fn parties_with_collateral_and_transformer(
     collateral: i64,
     delta_transformer: Option<[u8; 20]>,
     with_rebalance_shadow: bool,
+    settlement_workspace: Option<CanonicalValue>,
 ) -> (Party, Party) {
     let first = SigningIdentity::lazy_from_seed(SEED, "1", 1, 1, BoardDelays::default())
         .expect("identity 1");
@@ -110,7 +160,12 @@ fn parties_with_collateral_and_transformer(
         } else {
             (second_entity, first_entity, second, first)
         };
-    let state = account_state(&left_entity, &right_entity, collateral);
+    let state = account_state_with_workspace(
+        &left_entity,
+        &right_entity,
+        collateral,
+        settlement_workspace,
+    );
     let mut left_replica =
         AccountReplica::new(left_entity.clone(), state.clone()).expect("left replica");
     let mut right_replica =
@@ -2793,6 +2848,47 @@ fn the_proposal_window_defers_a_capacity_rejection() {
     );
 
     let _ = right;
+}
+
+/// Parity target: `proposalFailureDisposition`
+/// (core/account/consensus/proposal/transactions.ts:243) keeps a payment that
+/// hit the signed-settlement freeze queued for after the settlement lands,
+/// and `getSignedSettlementWorkspaceTxError` rejects it in mutation.ts before
+/// routing. A Rust hub over the same signed workspace must neither propose
+/// the payment nor forget it.
+#[test]
+fn the_proposal_window_defers_a_payment_frozen_by_a_signed_settlement() {
+    let (mut left, right) = parties_with_signed_workspace();
+    let payment = payment(&left.entity_id, &right.entity_id, 1);
+    left.account
+        .admit_txs(vec![payment.clone()], "signed-workspace")
+        .expect("admit");
+    let outcome = propose_account_frame(
+        &mut left.account,
+        &left.identity,
+        1_700_000_000_000,
+        7,
+        &market(),
+    )
+    .expect("propose");
+    let ProposalOutcome::Idle { dropped } = outcome else {
+        panic!("a frozen payment was proposed");
+    };
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(
+        dropped[0].rejection.code(),
+        "SETTLEMENT_SIGNED_ACCOUNT_FROZEN"
+    );
+    assert_eq!(
+        dropped[0].rejection.message(),
+        "SETTLEMENT_SIGNED_ACCOUNT_FROZEN:direct_payment"
+    );
+    assert_eq!(
+        dropped[0].disposition,
+        xln_rscore_engine::Disposition::Deferred
+    );
+    assert!(left.account.pending().is_none());
+    assert_eq!(left.account.mempool(), [payment]);
 }
 
 /// A frame's effects do not leave the account until the peer has committed

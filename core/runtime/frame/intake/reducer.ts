@@ -32,6 +32,7 @@ import {
   summarizeAtomicCrossJAccountInput,
 } from '../cross-j/evidence';
 import { validateRuntimeInputIngress, type RuntimeInputAdmissionDeps } from './admission';
+import type { RejectedEntityIngressEvidence } from './discard';
 import { advanceAppliedRuntimeFrame, buildAppliedRuntimeInput } from './finalize';
 import { safeStringify } from '../../../protocol/serialization';
 import { nodeProcess } from '../../../support/process/runtime-process';
@@ -58,6 +59,15 @@ type AppliedRuntimeInput = {
   mergedInputs: RoutedEntityInput[];
   jOutbox: JInput[];
   appliedRuntimeInput: RuntimeInput;
+  /**
+   * Typed rejections this transition decided and already dropped per tx. The
+   * transition never reads the reject policy for them: the Runtime loop
+   * applies fail-fast or log-and-drop once, after the frame has settled
+   * (`core/runtime/frame/process.ts`). Replay reports none — a committed WAL
+   * frame re-derives the identical evictions in every environment, so no
+   * policy read may reach it.
+   */
+  rejectedIngress: readonly RejectedEntityIngressEvidence[];
 };
 
 export type RuntimeInputReducer = {
@@ -220,6 +230,7 @@ const finalizeRuntimeInputApply = (
   prepared: PreparedAtomicCrossJ,
   batch: AppliedEntityBatch,
   profile: ApplyProfiler,
+  isReplay: boolean,
 ): AppliedRuntimeInput => {
   if (atomicCrossJPairIndexesThatDidNotCommit(prepared.pairs, batch.inputOutcomes).size) {
     throw new Error('RUNTIME_CROSS_J_ACCOUNT_PAIR_COMMIT_DIVERGED_FROM_ADMISSION');
@@ -244,6 +255,7 @@ const finalizeRuntimeInputApply = (
     mergedInputs: batch.appliedEntityInputs,
     jOutbox: batch.jOutbox,
     appliedRuntimeInput,
+    rejectedIngress: isReplay ? [] : batch.rejectedIngress,
   };
 };
 
@@ -287,6 +299,7 @@ const applyRuntimeInputPhases = async (
       prepared,
       batch,
       profile,
+      isReplay,
     );
     markRuntimeApplyPhase(env, 'apply.authority-capture');
     // The authoritative engine is handed this frame after the Runtime's own

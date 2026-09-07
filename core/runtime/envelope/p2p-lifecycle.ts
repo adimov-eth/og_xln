@@ -19,6 +19,7 @@ import {
 import type { RuntimeInboundEntityInputsResult, RuntimeInboundEntityInputOptions } from '../delivery/topology/entity-routing';
 import { ensureRuntimeInfrastructure } from './replica-envelope';
 import { requestRuntimeLoopWake } from '../mempool/input-queue';
+import { enqueuePeerReadyProposeAccountsNow } from '../mempool/propose-accounts-now';
 
 export type { P2PConfig } from '../../network/p2p/p2p';
 
@@ -221,7 +222,13 @@ export const startRuntimeP2P = (
 
   state.p2p = new RuntimeP2P(buildRuntimeP2POptions(env, config, resolvedRuntimeId, deps));
   state.p2p.setReady(state.entityInputsReady !== false);
-  state.p2p.onDeliveryReadyChange(() => requestRuntimeLoopWake(env));
+  // Offline -> online edge only: the transport fires this callback on change.
+  // A peer that never received our proposal is owed one explicit, consensus
+  // visible re-emission, never a silent transport resend.
+  state.p2p.onDeliveryReadyChange((peerRuntimeId, ready) => {
+    enqueuePeerReadyProposeAccountsNow(env, peerRuntimeId, ready);
+    requestRuntimeLoopWake(env);
+  });
   state.observeOnlineEntityIds = entityIds => {
     const online = new Set(state.p2p?.observeOnlineEntityIds(entityIds) ?? []);
     for (const entityId of state.observeDirectOnlineEntityIds?.(entityIds) ?? []) {

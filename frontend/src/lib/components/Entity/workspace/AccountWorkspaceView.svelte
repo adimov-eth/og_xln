@@ -13,6 +13,7 @@ import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-ty
   import AccountWorkspaceRail from './AccountWorkspaceRail.svelte';
   import EntityActivityPanel from '../activity/EntityActivityPanel.svelte';
   import LendingPanel from '../payments/LendingPanel.svelte';
+  import { isAccountTxKindAvailable } from '@xln/core/account/tx/admission-policy';
   import LiveRequiredState from './shell/LiveRequiredState.svelte';
   import MoveWorkspace from '../MoveWorkspace.svelte';
   import PaymentPanel from '../payments/PaymentPanel.svelte';
@@ -193,19 +194,25 @@ import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-ty
   export let onMoveVisualRoot: (node: HTMLDivElement | null) => void;
   export let handleMoveWorkspaceError: (error: unknown) => void;
 
+  // The live admission profile owns which actions a client may offer: lending is
+  // outside the production profile (core/account/tx/admission-policy.ts), so the
+  // tab exists only when the profile admits lending_fund.
+  const lendingAvailable = isAccountTxKindAvailable('lending_fund');
   const accountWorkspaceTabs: IconTabConfig<AccountWorkspaceTab>[] = [
     { id: 'open', icon: PlusCircle, label: 'Open Account' },
     { id: 'send', icon: ArrowUpRight, label: 'Pay' },
     { id: 'receive', icon: ArrowDownLeft, label: 'Receive' },
     { id: 'swap', icon: Repeat, label: 'Swap' },
     { id: 'move', icon: Landmark, label: 'Move' },
-    { id: 'lending', icon: Banknote, label: 'Lending' },
+    ...(lendingAvailable ? [{ id: 'lending' as const, icon: Banknote, label: 'Lending' }] : []),
     { id: 'history', icon: Activity, label: 'History' },
     { id: 'configure', icon: SettingsIcon, label: 'Manage' },
     { id: 'activity', icon: Activity, label: 'Activity' },
     { id: 'appearance', icon: SlidersHorizontal, label: 'Appearance' },
   ];
-  const accountWorkspacePrimaryTabIds: AccountWorkspaceTab[] = ['open', 'send', 'receive', 'swap', 'move', 'lending'];
+  const accountWorkspacePrimaryTabIds: AccountWorkspaceTab[] = [
+    'open', 'send', 'receive', 'swap', 'move', ...(lendingAvailable ? ['lending' as const] : []),
+  ];
 
   $: hasWorkspaceAccounts = workspaceAccountIds.length > 0;
   $: visibleAccountWorkspaceTabs = hasWorkspaceAccounts

@@ -18,6 +18,7 @@ import {
 } from './process-profile';
 import { assertCrossJLocalCohorts } from '../delivery/topology/cross-j-topology';
 import type { EntityInfraContext } from '../../types/entity/infra-context';
+import type { RejectedEntityIngressEvidence } from './intake/discard';
 
 const runtimeLog = createStructuredLogger('runtime');
 
@@ -26,6 +27,8 @@ export type RuntimeInputApplyResult = {
   entityOutbox: RoutedEntityInput[];
   jOutbox: JInput[];
   appliedRuntimeInput: RuntimeInput;
+  /** Typed rejections the transition recorded; the loop applies the policy. */
+  rejectedIngress: readonly RejectedEntityIngressEvidence[];
 };
 
 export type RuntimeFrameApplyDeps = {
@@ -39,6 +42,11 @@ export type RuntimeFrameApplyOutput = {
   jOutbox: JInput[];
   queuedJSubmitRetries: RuntimeTx[];
   changedEntityIds: Set<string>;
+  /**
+   * Carried out of the transition untouched: the reject policy is read once
+   * per frame by the Runtime loop, after this frame has settled.
+   */
+  rejectedIngress: readonly RejectedEntityIngressEvidence[];
 };
 
 const collectChangedEntityIds = (
@@ -79,6 +87,7 @@ export const applyPreparedRuntimeFrame = async (
   let jOutbox: JInput[] = [];
   let queuedJSubmitRetries: RuntimeTx[] = [];
   let changedEntityIds = new Set<string>();
+  let rejectedIngress: readonly RejectedEntityIngressEvidence[] = [];
   if (hasInput) {
     if (!quietLogs) {
       runtimeLog.debug('tick.input.processing', {
@@ -112,6 +121,7 @@ export const applyPreparedRuntimeFrame = async (
       queuedJSubmitRetries = split.retries;
       jOutbox = split.maintenance;
       appliedInput = result.appliedRuntimeInput;
+      rejectedIngress = result.rejectedIngress;
       frame.entityContexts = result.entityContexts;
       changedEntityIds = collectChangedEntityIds(input, result.appliedRuntimeInput);
       // Output planning runs due hooks before publish performs its full rebuild.
@@ -124,5 +134,12 @@ export const applyPreparedRuntimeFrame = async (
     }
   }
   jOutbox = [...(env.infrastructure?.pendingCommittedJOutbox ?? []), ...jOutbox];
-  return { appliedInput, entityOutbox, jOutbox, queuedJSubmitRetries, changedEntityIds };
+  return {
+    appliedInput,
+    entityOutbox,
+    jOutbox,
+    queuedJSubmitRetries,
+    changedEntityIds,
+    rejectedIngress,
+  };
 };

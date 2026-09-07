@@ -8,6 +8,9 @@ const NESTED_PROTOCOL_TXS = new Set<EntityTx['type']>([
   'entityCommand',
   'runtimeOutput',
   'scheduledWake',
+  // Locally authored recovery marker: it must never re-enter through a peer's
+  // authenticated runtime output wrapper.
+  'proposeAccountsNow',
 ]);
 
 const getRuntimeOutputNestedTxs = (

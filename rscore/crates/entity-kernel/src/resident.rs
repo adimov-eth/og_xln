@@ -341,8 +341,6 @@ pub enum ResidentEntityError {
     FrameHash { detail: String },
     #[error("ENTITY_RESIDENT_FRAME_HASH_MISMATCH:account={account_id}:height={height}")]
     FrameHashMismatch { account_id: String, height: u64 },
-    #[error("FRAME_CONSENSUS_FAILED:ACCOUNT_INPUT_INPUT_REJECTED:account={account_id}:{reason}")]
-    InboundFrameRejected { account_id: String, reason: String },
     #[error(
         "ENTITY_RESIDENT_OUTPUT_BINDING:account={account_id}:height={height}:txs={txs}:rows={rows}"
     )]
@@ -362,36 +360,92 @@ pub enum ResidentEntityError {
     Scheduler(#[from] SchedulerError),
 }
 
-fn rejected_inbound_frame_reason(verdict: &AccountInputVerdict) -> Option<&str> {
+/// One authenticated inbound Account input the resident engine rejected as
+/// sender-caused. The Account recorded the verdict without mutating; the
+/// kernel logs the audit line and reports the reject here so the Runtime
+/// loop evicts the exact parent `accountInput` Entity transaction and rebuilds
+/// the round, exactly like TS `buildEntityProposalEvictingRejected`. No env is
+/// read on this path. `AccountInputVerdict::Failed` is not a reject: it stays a
+/// fatal engine fault.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RejectedInboundAccountInput {
+    /// Position of the rejected row inside `EntityInboundRequest::rows`, i.e.
+    /// the same index space as `AccountInputRow::operation_index`.
+    ///
+    /// This is deliberately NOT the position inside
+    /// `ResidentEntityRequest::operations`: one `AccountRange` operation covers
+    /// a whole contiguous run of rows, and every row in that run is its own
+    /// parent `accountInput` Entity transaction. TS rejects "the exact parent
+    /// Entity transaction" (`core/entity/tx/handlers/account/input-phases.ts`),
+    /// so an operation-plan index would be too coarse and would evict an
+    /// innocent sibling row. The Runtime maps this row index to its work item
+    /// through `SelectedEntityWork::row_work_indices`, never through
+    /// `operation_work_indices` (that vector is keyed by operation and only
+    /// records the first work item of each `AccountRange`).
+    pub operation_index: u64,
+    pub account_id: String,
+    /// Verdict variant that rejected: `FrameRejected`, `AckRejected`,
+    /// `AckFrameRejected`, `DisputeRejected` or `BoardHankoRefreshRejected`.
+    pub verdict: &'static str,
+    pub reason: String,
+}
+
+fn rejected_inbound_verdict(verdict: &AccountInputVerdict) -> Option<(&'static str, String)> {
     match verdict {
-        AccountInputVerdict::FrameRejected { reason } => Some(reason),
-        AccountInputVerdict::AckFrameApplied { ack, frame } => {
-            rejected_inbound_frame_reason(ack).or_else(|| rejected_inbound_frame_reason(frame))
+        AccountInputVerdict::FrameRejected { reason } => Some(("FrameRejected", reason.clone())),
+        AccountInputVerdict::AckRejected { reason } => Some(("AckRejected", reason.clone())),
+        AccountInputVerdict::AckFrameRejected { phase, reason } => {
+            Some(("AckFrameRejected", format!("{phase}:{reason}")))
         }
-        _ => None,
+        AccountInputVerdict::DisputeRejected { reason } => {
+            Some(("DisputeRejected", reason.clone()))
+        }
+        AccountInputVerdict::BoardHankoRefreshRejected { reason } => {
+            Some(("BoardHankoRefreshRejected", reason.clone()))
+        }
+        AccountInputVerdict::AckFrameApplied { ack, frame } => {
+            rejected_inbound_verdict(ack).or_else(|| rejected_inbound_verdict(frame))
+        }
+        AccountInputVerdict::FrameCommitted { .. }
+        | AccountInputVerdict::FrameCollisionIgnored { .. }
+        | AccountInputVerdict::FrameDuplicate { .. }
+        | AccountInputVerdict::FrameStale { .. }
+        | AccountInputVerdict::FrameDisputeRequired { .. }
+        | AccountInputVerdict::AckCommitted { .. }
+        | AccountInputVerdict::AckAccepted { .. }
+        | AccountInputVerdict::DisputeApplied
+        | AccountInputVerdict::BoardHankoRefreshApplied { .. }
+        | AccountInputVerdict::Failed(_) => None,
     }
 }
 
-fn reject_failed_inbound_frames(
+/// Owner canon: a peer can never take the Runtime down. Every rejected inbound
+/// verdict is logged as a `[ERROR][reject]` audit line and returned as data;
+/// no env is consulted here.
+///
+/// `rows` is `EntityRoundResult::applied`, which the Account engine rebuilds by
+/// row position (`applied_by_position`), so the enumerate position here is the
+/// authoritative index into `EntityInboundRequest::rows` and therefore names the
+/// exact parent `accountInput` Entity transaction the Runtime must evict.
+fn collect_rejected_inbound_inputs(
     rows: &[xln_rscore_batch::AccountInputResult],
-) -> Result<(), ResidentEntityError> {
-    for row in rows {
-        if let Some(reason) = rejected_inbound_frame_reason(&row.verdict) {
-            if crate::error::reject_fail_fast() {
-                return Err(ResidentEntityError::InboundFrameRejected {
-                    account_id: account_text(row.account_id),
-                    reason: reason.to_owned(),
-                });
-            }
-            // Owner canon: a peer can never take the Runtime down. The Account
-            // recorded the rejection verdict; log it and keep serving.
+) -> Vec<RejectedInboundAccountInput> {
+    rows.iter()
+        .enumerate()
+        .filter_map(|(row_index, row)| {
+            let (verdict, reason) = rejected_inbound_verdict(&row.verdict)?;
+            let account_id = account_text(row.account_id);
             eprintln!(
-                "[ERROR][reject] inbound account frame rejected and dropped: account={} reason={reason}",
-                account_text(row.account_id)
+                "[ERROR][reject] inbound account input rejected and dropped: row={row_index} account={account_id} verdict={verdict} reason={reason}"
             );
-        }
-    }
-    Ok(())
+            Some(RejectedInboundAccountInput {
+                operation_index: row_index as u64,
+                account_id,
+                verdict,
+                reason,
+            })
+        })
+        .collect()
 }
 
 /// Runtime-owned facts that surround one Entity transition. Account state is
@@ -455,6 +509,10 @@ pub struct ResidentEntityRequest {
     /// public cross-J ladder witnesses. It is never committed or checkpointed.
     pub runtime_seed: Option<String>,
     pub scheduled_wake: Option<ScheduledWake>,
+    /// `proposeAccountsNow` recovery markers carried by this frame, in frame
+    /// order. Each one asks this Entity to re-send Account proposals a peer
+    /// never received; none of them mutates Entity or Account state.
+    pub propose_accounts_now: Vec<crate::ProposeAccountsNow>,
     pub expected_proposer_signer_id: String,
     /// One receipt-root-authenticated J prefix selected by Runtime priority.
     /// Runtime must place it in an Entity-only frame; this layer merges the
@@ -602,6 +660,9 @@ pub struct ResidentEntityResult {
     pub non_mutating_wake_targets: Vec<String>,
     pub routed_entity_outputs: Vec<crate::LocalEntityOutput>,
     pub j_outputs: Vec<crate::EntityJOutput>,
+    /// Sender-caused inbound rejects this round recorded (see
+    /// `ResidentEntityCoreResult::rejected_inbound_inputs`).
+    pub rejected_inbound_inputs: Vec<RejectedInboundAccountInput>,
 }
 
 /// Production result before canonical Entity commitments are materialized.
@@ -634,6 +695,12 @@ pub struct ResidentEntityCoreResult {
     /// Entity-transition order.
     pub account_touch_order: Vec<AccountId>,
     pub pending_settlement_hankos: Vec<xln_rscore_batch::PendingSettlementHankoDraft>,
+    /// Authenticated inbound Account inputs the engine rejected as
+    /// sender-caused, in input (row) order. Nothing they touched was published:
+    /// `apply_resident_entity_round_core` aborts a round that carries any of
+    /// them, so the Runtime evicts the exact parent `accountInput` transactions
+    /// and rebuilds the round from the same base. No env is read on this path.
+    pub rejected_inbound_inputs: Vec<RejectedInboundAccountInput>,
     proposal_work: Vec<crate::AccountProposalWork>,
 }
 
@@ -651,6 +718,7 @@ impl ResidentEntityCoreResult {
             non_mutating_wake_targets: self.non_mutating_wake_targets,
             routed_entity_outputs: self.routed_entity_outputs,
             j_outputs: self.j_outputs,
+            rejected_inbound_inputs: self.rejected_inbound_inputs,
         })
     }
 }
@@ -702,8 +770,37 @@ fn forced_ack_accounts(applied: &[xln_rscore_batch::AccountInputResult]) -> Vec<
     forced.into_iter().flatten().collect()
 }
 
-type AccountProposalRow = (AccountId, Vec<AccountTx>, bool);
-type SelectedAccountProposalRow = (AccountId, Vec<AccountTx>, BatchAccountSelection, bool);
+const OBLIGATION_NONE: xln_rscore_batch::AccountResponseObligation =
+    xln_rscore_batch::AccountResponseObligation {
+        ack: false,
+        resend_pending_proposal: false,
+    };
+
+const OBLIGATION_ACK: xln_rscore_batch::AccountResponseObligation =
+    xln_rscore_batch::AccountResponseObligation {
+        ack: true,
+        resend_pending_proposal: false,
+    };
+
+/// One `proposeAccountsNow` counterparty: re-send the exact retained proposal,
+/// admit nothing and mutate nothing.
+const OBLIGATION_RESEND: xln_rscore_batch::AccountResponseObligation =
+    xln_rscore_batch::AccountResponseObligation {
+        ack: false,
+        resend_pending_proposal: true,
+    };
+
+type AccountProposalRow = (
+    AccountId,
+    Vec<AccountTx>,
+    xln_rscore_batch::AccountResponseObligation,
+);
+type SelectedAccountProposalRow = (
+    AccountId,
+    Vec<AccountTx>,
+    BatchAccountSelection,
+    xln_rscore_batch::AccountResponseObligation,
+);
 
 fn cross_j_setup_kind(kind: crate::EntityTxKind) -> bool {
     matches!(
@@ -738,12 +835,12 @@ fn suppress_setup_frame_proposals(
     rows: Vec<AccountProposalRow>,
 ) -> Vec<SelectedAccountProposalRow> {
     rows.into_iter()
-        .map(|(account, admissions, force)| {
+        .map(|(account, admissions, obligation)| {
             (
                 account,
                 admissions,
                 BatchAccountSelection::WaitForSibling,
-                force,
+                obligation,
             )
         })
         .collect()
@@ -785,7 +882,7 @@ fn select_cross_j_proposal_work(
         .map(|view| Ok((account_id(&view.counterparty_entity_id)?, view.mempool)))
         .collect::<Result<HashMap<_, _>, ResidentEntityError>>()?;
     rows.into_iter()
-        .map(|(account, admissions, force)| {
+        .map(|(account, admissions, obligation)| {
             let mut mempool =
                 take_local_opening_mempool(&mut local_mempools, account, created_accounts)?;
             mempool.extend(admissions.iter().cloned());
@@ -805,7 +902,7 @@ fn select_cross_j_proposal_work(
                     BatchAccountSelection::Selected(txs)
                 }
             };
-            Ok((account, admissions, selection, force))
+            Ok((account, admissions, selection, obligation))
         })
         .collect()
 }
@@ -1864,6 +1961,7 @@ fn is_scheduled_collective_output(owner: &str, output: &crate::LocalEntityOutput
                         | crate::EntityTxKind::BoardHandover
                         | crate::EntityTxKind::EntityCommand
                         | crate::EntityTxKind::JEvent
+                        | crate::EntityTxKind::ProposeAccountsNow
                         | crate::EntityTxKind::RuntimeOutput
                         | crate::EntityTxKind::ScheduledWake
                 )
@@ -2128,6 +2226,16 @@ pub fn apply_resident_entity_round_core(
 ) -> Result<ResidentEntityCoreResult, ResidentEntityError> {
     let result = apply_resident_entity_round_core_attempt(accounts, state, request, context);
     match result {
+        // A round that rejected an authenticated inbound Account input is an
+        // attempt, not a transition: the Runtime evicts the exact parent
+        // `accountInput` transaction and rebuilds the round from this same base
+        // (TS `buildEntityProposalEvictingRejected` rebuilds the whole frame the
+        // same way). Publishing the attempt would leave the Account overlays of
+        // a frame that never becomes a certified Entity frame.
+        Ok(result) if !result.rejected_inbound_inputs.is_empty() => {
+            accounts.abort_entity_round()?;
+            Ok(result)
+        }
         Ok(result) => {
             accounts.complete_entity_round();
             Ok(result)
@@ -2137,6 +2245,27 @@ pub fn apply_resident_entity_round_core(
             Err(error)
         }
     }
+}
+
+/// Flatten every `proposeAccountsNow` marker in this frame into the exact
+/// counterparty order its reducers emitted. The marker carries no authority of
+/// its own beyond "the committed active leader authored it", so that is the
+/// only check made here; the retained bytes are read later, from the Account
+/// worker that owns them.
+fn resolve_propose_accounts_now(
+    request: &ResidentEntityRequest,
+) -> Result<Vec<String>, ResidentEntityError> {
+    let mut counterparties = Vec::new();
+    for marker in &request.propose_accounts_now {
+        let leader = request
+            .entity_authority
+            .as_ref()
+            .map(|authority| authority.leader_state.active_validator_id.as_str());
+        crate::assert_propose_accounts_now_matches_state(leader, marker)
+            .map_err(|error| EntityKernelError::local("proposeAccountsNow", error.to_string()))?;
+        counterparties.extend(marker.counterparties.iter().cloned());
+    }
+    Ok(counterparties)
 }
 
 fn apply_resident_entity_round_core_attempt(
@@ -2167,6 +2296,9 @@ fn apply_resident_entity_round_core_attempt(
     if let Some(wake) = request.scheduled_wake.as_ref() {
         validate_scheduled_wake(wake, &request.expected_proposer_signer_id, state.timestamp)?;
     }
+    // Judged before any mutation, from committed authority alone: a validator
+    // replaying this proposed frame never sees the proposer's transport.
+    let resend_pending_proposals = resolve_propose_accounts_now(&request)?;
     let mut touch_candidates = request
         .inbound
         .rows
@@ -2217,12 +2349,12 @@ fn apply_resident_entity_round_core_attempt(
         },
         false,
     )?;
-    // TS `finishRejectedAccountInput` fail-stops an authenticated peer frame
-    // rejection. Treating the typed Account verdict as telemetry here would
-    // silently consume its Runtime WAL position and diverge at the Entity
-    // boundary. The enclosing resident round abort restores every staged
-    // Account mutation, including an ACK paired with a rejected frame.
-    reject_failed_inbound_frames(&inbound.applied)?;
+    // Owner canon (AGENTS.md REJECT POLICY): an authenticated peer input the
+    // Account engine rejected is a typed reject disposition decided here
+    // without reading process env. It is logged and carried on the result by
+    // row position; the Runtime evicts that exact parent `accountInput`
+    // transaction and rebuilds the round.
+    let rejected_inbound_inputs = collect_rejected_inbound_inputs(&inbound.applied);
     // TS primes the frame-local Account worklist after the inbound Account
     // stage (prepare → primeEntityFrameAccountWork): an ACK admitted this
     // frame already made its Account proposable, and that sorted post-inbound
@@ -2872,13 +3004,14 @@ fn apply_resident_entity_round_core_attempt(
     let prepare_outbound_started = Instant::now();
     // One final Account-stage set. Keep the existing canonical proposal order,
     // merge Entity AccountTxs into it, then append inbound-only Accounts that
-    // need their final leaf sealed. Only the transient force bit crosses the
-    // coordinator; exact ACK/Hanko bytes stay worker-resident until emission.
+    // need their final leaf sealed. Only the transient response obligation
+    // crosses the coordinator; exact ACK/proposal bytes stay worker-resident
+    // until emission.
     let mut proposal_positions = HashMap::<AccountId, usize>::new();
     let mut proposal_work = Vec::<AccountProposalRow>::new();
     for target in propose.drain(..) {
         proposal_positions.insert(target, proposal_work.len());
-        proposal_work.push((target, Vec::new(), false));
+        proposal_work.push((target, Vec::new(), OBLIGATION_NONE));
     }
     for work in &kernel.proposal_work {
         let target = account_id(&work.account_id)?;
@@ -2887,7 +3020,7 @@ fn apply_resident_entity_round_core_attempt(
             proposal_work[position].1.extend(work.txs.iter().cloned());
         } else {
             proposal_positions.insert(target, proposal_work.len());
-            proposal_work.push((target, work.txs.clone(), false));
+            proposal_work.push((target, work.txs.clone(), OBLIGATION_NONE));
         }
     }
     // TS `openAccount` returns the created Account in `accountChanges` even
@@ -2896,10 +3029,31 @@ fn apply_resident_entity_round_core_attempt(
     touch_candidates.extend(kernel.account_creates.iter().map(|seed| seed.account_id));
     for target in forced_acks {
         if let Some(position) = proposal_positions.get(&target).copied() {
-            proposal_work[position].2 = true;
+            proposal_work[position].2.ack = true;
         } else {
             proposal_positions.insert(target, proposal_work.len());
-            proposal_work.push((target, Vec::new(), true));
+            proposal_work.push((target, Vec::new(), OBLIGATION_ACK));
+        }
+    }
+    // `proposeAccountsNow` recovery, in the exact reducer emission order the
+    // marker listed. Ids never choose publication order, so a counterparty
+    // discovered only here keeps the position this loop appends it at.
+    for counterparty in &resend_pending_proposals {
+        if !kernel.state.known_accounts.contains(counterparty) {
+            // No Account for this counterparty is ordinary progress: nothing
+            // is owed, so nothing is emitted. TS logs the same skip.
+            eprintln!(
+                "RSCORE_PROPOSE_ACCOUNTS_NOW_SKIP entity={} account={counterparty} reason=no_account",
+                kernel.state.entity_id,
+            );
+            continue;
+        }
+        let target = account_id(counterparty)?;
+        if let Some(position) = proposal_positions.get(&target).copied() {
+            proposal_work[position].2.resend_pending_proposal = true;
+        } else {
+            proposal_positions.insert(target, proposal_work.len());
+            proposal_work.push((target, Vec::new(), OBLIGATION_RESEND));
         }
     }
     for (target, _) in &inbound.touched {
@@ -2909,7 +3063,7 @@ fn apply_resident_entity_round_core_attempt(
         // twice and either propose before certification or fail as duplicate.
         if !deferred_accounts.contains(target) && !proposal_positions.contains_key(target) {
             proposal_positions.insert(*target, proposal_work.len());
-            proposal_work.push((*target, Vec::new(), false));
+            proposal_work.push((*target, Vec::new(), OBLIGATION_NONE));
         }
     }
     // The workers return values to fixed positions, but `propose` above is a
@@ -3057,6 +3211,7 @@ fn apply_resident_entity_round_core_attempt(
         j_outputs: kernel.j_outputs,
         account_touch_order,
         pending_settlement_hankos,
+        rejected_inbound_inputs,
         proposal_work: kernel.proposal_work,
     })
 }
@@ -3339,7 +3494,7 @@ mod tests {
         let held = select_cross_j_proposal_work(
             &mut accounts,
             &owner.to_string(),
-            vec![(account, vec![admitted.clone()], false)],
+            vec![(account, vec![admitted.clone()], OBLIGATION_NONE)],
             &BTreeSet::new(),
             &[],
             true,
@@ -3361,7 +3516,7 @@ mod tests {
         let released = select_cross_j_proposal_work(
             &mut accounts,
             &owner.to_string(),
-            vec![(account, Vec::new(), false)],
+            vec![(account, Vec::new(), OBLIGATION_NONE)],
             &BTreeSet::new(),
             &[],
             false,
@@ -3457,8 +3612,10 @@ mod tests {
         let second =
             account_id("0xb08ede7cef128e8ea974eb0cafb00b35127a2563f4f08bab4c1b7ef0b26fdb12")
                 .expect("second H324 target");
-        let post_stage_membership_order =
-            vec![(second, Vec::new(), false), (first, Vec::new(), true)];
+        let post_stage_membership_order = vec![
+            (second, Vec::new(), OBLIGATION_NONE),
+            (first, Vec::new(), OBLIGATION_ACK),
+        ];
 
         let ordered =
             order_proposal_work_by_first_touch(post_stage_membership_order, &[], &[first, second])
@@ -3471,7 +3628,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![account_text(first), account_text(second)],
         );
-        assert!(ordered[0].2, "the first-touch forced ACK keeps its slot");
+        assert!(
+            ordered[0].2.ack,
+            "the first-touch forced ACK keeps its slot"
+        );
     }
 
     #[test]
@@ -3500,9 +3660,9 @@ mod tests {
         let primed = AccountId::from_bytes([0x11; 32]);
         let proposals = order_proposal_work_by_first_touch(
             vec![
-                (inbound, Vec::new(), true),
-                (credit, Vec::new(), false),
-                (primed, Vec::new(), false),
+                (inbound, Vec::new(), OBLIGATION_ACK),
+                (credit, Vec::new(), OBLIGATION_NONE),
+                (primed, Vec::new(), OBLIGATION_NONE),
             ],
             &[primed],
             &touches,
@@ -3516,7 +3676,7 @@ mod tests {
             vec![primed, credit, inbound],
             "initially-ready work precedes new work in original EntityTx order",
         );
-        assert!(proposals[2].2, "the later inbound keeps its forced ACK");
+        assert!(proposals[2].2.ack, "the later inbound keeps its forced ACK");
 
         let forwarded = AccountId::from_bytes([0x33; 32]);
         let later = AccountId::from_bytes([0x44; 32]);

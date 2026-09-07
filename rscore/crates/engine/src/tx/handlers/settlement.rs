@@ -6,8 +6,8 @@ use xln_rscore_protocol::{CanonicalNumber, CanonicalValue, encode_account_state_
 
 use crate::tx::apply_types::MutationDecision;
 use crate::{
-    AccountExecutionContext, AccountRejection, AccountReplica, Side, TokenId, TransitionError,
-    ValidationRejection,
+    AccountExecutionContext, AccountRejection, AccountReplica, AccountTx, Side, TokenId,
+    TransitionError, ValidationRejection,
 };
 
 const WORKSPACE_DOMAIN: &str = "xln:settlement-workspace:v1";
@@ -80,11 +80,7 @@ pub(crate) fn apply_finalized_account_settlement(
         return Ok(None);
     };
     let workspace = workspace_view(&stored)?;
-    let signed = optional_nonempty_string(workspace.fields, "settlementHash").is_some()
-        || optional_nonempty_string(workspace.fields, "leftHanko").is_some()
-        || optional_nonempty_string(workspace.fields, "rightHanko").is_some()
-        || field(workspace.fields, "postSettlementDisputeProof").is_some();
-    if !signed {
+    if !is_signed(workspace.fields) {
         clear_finalized_workspace(account, &workspace)?;
         return Ok(None);
     }
@@ -1682,6 +1678,49 @@ fn publish_deltas(
     Ok(())
 }
 
+/// Parity target: `getSignedSettlementWorkspaceTxError`
+/// (core/account/tx/handlers/settlement/transition.ts). A workspace is signed
+/// once either side attached evidence to it; empty strings and `null` count as
+/// absent exactly like the TypeScript truthiness check.
+fn is_signed(workspace: &[(String, CanonicalValue)]) -> bool {
+    optional_nonempty_string(workspace, "settlementHash").is_some()
+        || optional_nonempty_string(workspace, "leftHanko").is_some()
+        || optional_nonempty_string(workspace, "rightHanko").is_some()
+        || field(workspace, "postSettlementDisputeProof")
+            .is_some_and(|proof| !matches!(proof, CanonicalValue::Null))
+}
+
+/// Parity target: `getSignedSettlementWorkspaceTxError` (same file), which
+/// core/account/tx/mutation.ts applies right after the dispute status and
+/// before routing any AccountTx. Once the workspace is signed only the
+/// transitions that finish that settlement (`hanko`, `submit`) and J-event
+/// claims may touch the Account; every other kind is frozen until the
+/// Depository result is observed. Both sides evaluate this on the same
+/// committed state, so a proposer that skipped it would build frames its
+/// TypeScript validator rejects.
+pub(crate) fn signed_workspace_freeze(
+    account: &AccountReplica,
+    tx: &AccountTx,
+) -> Option<AccountRejection> {
+    let Some(CanonicalValue::Object(workspace)) = account.state().settlement_workspace() else {
+        return None;
+    };
+    if !is_signed(workspace) {
+        return None;
+    }
+    let exempt = match tx {
+        AccountTx::JEventClaim(_) => true,
+        AccountTx::SettleTransition { data } => matches!(
+            object(data, "").ok().and_then(|fields| field(fields, "kind")),
+            Some(CanonicalValue::String(kind)) if kind == "hanko" || kind == "submit"
+        ),
+        _ => false,
+    };
+    (!exempt).then(|| AccountRejection::SettlementSignedAccountFrozen {
+        tx_type: tx.wire_name(),
+    })
+}
+
 fn is_unsigned(workspace: &WorkspaceView<'_>) -> bool {
     matches!(workspace.status, "draft" | "awaiting_counterparty")
         && [
@@ -2169,5 +2208,137 @@ mod tests {
             .expect("transition"),
             MutationDecision::Rejected { .. }
         ));
+    }
+
+    /// Parity target: `getSignedSettlementWorkspaceTxError`
+    /// (core/account/tx/handlers/settlement/transition.ts:636-648) — the
+    /// exact marker fields, exempt kinds and truthiness of that rule.
+    #[test]
+    fn signed_workspace_freeze_matches_typescript_markers_and_exemptions() {
+        let settle = |kind: &str| AccountTx::SettleTransition {
+            data: CanonicalValue::Object(vec![(
+                "kind".into(),
+                CanonicalValue::String(kind.into()),
+            )]),
+        };
+        let payment = AccountTx::DirectPayment {
+            token_id: TokenId::new(1).expect("token"),
+            amount: 1.into(),
+            route: vec![format!("0x{}", "22".repeat(32))],
+            description: None,
+            from_entity_id: format!("0x{}", "11".repeat(32)),
+            to_entity_id: format!("0x{}", "22".repeat(32)),
+            delivery_mode: crate::DeliveryMode::Direct,
+            trusted_gateway_entity_id: None,
+        };
+        let claim = AccountTx::JEventClaim(crate::JEventClaimTx {
+            j_height: 8,
+            j_block_hash: [0x88; 32],
+            events: Vec::new(),
+            left_proof: None,
+            right_proof: None,
+        });
+        let frozen = |tx_type: &'static str| {
+            Some(AccountRejection::SettlementSignedAccountFrozen { tx_type })
+        };
+
+        // No workspace and an unsigned workspace freeze nothing.
+        let mut account = replica();
+        assert_eq!(signed_workspace_freeze(&account, &payment), None);
+        let context = AccountExecutionContext::new(1_000, 1_000, 10, 0, 10);
+        assert!(matches!(
+            apply(&mut account, &upsert(), Side::Left, &context).expect("apply"),
+            MutationDecision::Applied { .. }
+        ));
+        assert_eq!(signed_workspace_freeze(&account, &payment), None);
+        assert_eq!(signed_workspace_freeze(&account, &settle("clear")), None);
+        let unsigned = account
+            .state()
+            .settlement_workspace()
+            .expect("workspace")
+            .clone();
+        let unsigned_fields = object(&unsigned, "workspace").expect("object");
+
+        // Empty strings and null are absent, exactly like TypeScript `!value`.
+        for absent in [
+            ("settlementHash", CanonicalValue::String(String::new())),
+            ("leftHanko", CanonicalValue::String(String::new())),
+            ("postSettlementDisputeProof", CanonicalValue::Null),
+        ] {
+            let mut fields = unsigned_fields.to_vec();
+            fields.push((absent.0.into(), absent.1));
+            account
+                .state_mut()
+                .set_settlement_workspace(CanonicalValue::Object(fields));
+            assert_eq!(
+                signed_workspace_freeze(&account, &payment),
+                None,
+                "{} must not count as signed",
+                absent.0
+            );
+        }
+
+        // Any one marker freezes every kind except j_event_claim and the
+        // settle_transition kinds that finish the signed settlement.
+        for marker in [
+            (
+                "settlementHash",
+                CanonicalValue::String(hex_hash([0x55; 32])),
+            ),
+            ("leftHanko", CanonicalValue::String("0x01".into())),
+            ("rightHanko", CanonicalValue::String("0x02".into())),
+            (
+                "postSettlementDisputeProof",
+                CanonicalValue::Object(Vec::new()),
+            ),
+        ] {
+            let mut fields = unsigned_fields.to_vec();
+            fields.push((marker.0.into(), marker.1));
+            account
+                .state_mut()
+                .set_settlement_workspace(CanonicalValue::Object(fields));
+            assert_eq!(
+                signed_workspace_freeze(&account, &payment),
+                frozen("direct_payment"),
+                "{}",
+                marker.0
+            );
+            assert_eq!(
+                signed_workspace_freeze(
+                    &account,
+                    &AccountTx::SetCreditLimit {
+                        token_id: TokenId::new(1).expect("token"),
+                        amount: 5.into(),
+                    }
+                ),
+                frozen("set_credit_limit"),
+            );
+            assert_eq!(
+                signed_workspace_freeze(&account, &settle("upsert")),
+                frozen("settle_transition"),
+            );
+            assert_eq!(
+                signed_workspace_freeze(&account, &settle("clear")),
+                frozen("settle_transition"),
+            );
+            assert_eq!(
+                signed_workspace_freeze(
+                    &account,
+                    &AccountTx::SettleTransition {
+                        data: CanonicalValue::Object(Vec::new()),
+                    }
+                ),
+                frozen("settle_transition"),
+                "a settle_transition without a kind is not a completion kind",
+            );
+            assert_eq!(signed_workspace_freeze(&account, &settle("hanko")), None);
+            assert_eq!(signed_workspace_freeze(&account, &settle("submit")), None);
+            assert_eq!(signed_workspace_freeze(&account, &claim), None);
+        }
+        assert_eq!(
+            frozen("direct_payment").expect("rejection").message(),
+            "SETTLEMENT_SIGNED_ACCOUNT_FROZEN:direct_payment",
+            "core/__tests__/payments/settlement/settlement-transition.test.ts vector",
+        );
     }
 }

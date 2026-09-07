@@ -24,7 +24,7 @@ export const ENTITY_TX_TYPES = [
   'lendingOffer', 'lendingRepay', 'mintReserves', 'openAccount',
   'orderbookSweepCrossJurisdiction', 'placeSwapOffer',
   'prepareCrossJurisdictionSwap', 'prepareDispute', 'processHtlcTimeouts', 'profile-update',
-  'propose', 'proposeCancelSwap', 'r2c', 'r2e', 'r2r',
+  'propose', 'proposeAccountsNow', 'proposeCancelSwap', 'r2c', 'r2e', 'r2r',
   'registerCrossJurisdictionSwap', 'removeCrossJurisdictionBookOrder',
   'requestCollateral', 'requestCrossJurisdictionClear',
   'materializeCrossJurisdictionClear', 'materializeCrossJurisdictionSwap',

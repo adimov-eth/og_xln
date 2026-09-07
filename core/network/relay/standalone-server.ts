@@ -23,7 +23,6 @@ type StandaloneRelayOptions = {
   serverId: string;
   audience?: string;
   serverRuntimeId?: string;
-  onEntityInput?: (from: string | undefined, msg: RuntimeWsMessage, store: RelayStore) => Promise<void> | void;
 };
 
 export type StandaloneRelayServer = {
@@ -48,9 +47,6 @@ export const startStandaloneRelayServer = (options: StandaloneRelayOptions): Sta
   const routerConfig: RelayRouterConfig = {
     store,
     localRuntimeId,
-    localDeliver: async (from, msg) => {
-      await options.onEntityInput?.(from, msg, store);
-    },
     send: (ws, data) => ws.send(data),
     consumeHelloChallenge: (ws, challenge) => helloChallenges.consume(ws, challenge),
   };

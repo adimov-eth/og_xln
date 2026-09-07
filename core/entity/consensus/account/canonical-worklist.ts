@@ -6,7 +6,20 @@
  * `forcedAccountInputs` map beside this bit; reconstructing them from a stale
  * Entity-side Account mirror would make the Rust cutover non-authoritative.
  */
+import type { AccountInput } from '../../../types/account';
+
 export type ProposableAccountMap = Map<string, boolean>;
+
+/**
+ * One reducer's contribution to that authority: the Account lane it touched,
+ * whether a peer response is now mandatory, and — when it is — the exact bytes
+ * the flush must emit unchanged.
+ */
+export type EntityAccountInputWork = Readonly<{
+  accountId: string;
+  force: boolean;
+  response?: AccountInput;
+}>;
 
 type CanonicalAccountWork = Readonly<{
   accountId: string;

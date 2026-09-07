@@ -1692,7 +1692,15 @@ fn fit_live_entity_prefix(
 }
 
 struct SelectedEntityWork {
+    /// `operations` position -> position of the work item that opened it.
+    /// Only the FIRST work item of a merged `AccountRange` is recorded here, so
+    /// this vector may only be used to evict a whole `Local` operation.
     operation_work_indices: Vec<usize>,
+    /// `rows` position -> position of the work item that contributed it. Each
+    /// `EntityPendingWork::Account` is exactly one row and exactly one parent
+    /// `accountInput` Entity tx, so this is the map a rejected inbound Account
+    /// input needs; `operation_work_indices` is too coarse for it.
+    row_work_indices: Vec<usize>,
     txs: Vec<CanonicalEntityTx>,
     rows: Vec<xln_rscore_batch::AccountInputRow>,
     operations: Vec<ResidentEntityOperation>,
@@ -1717,6 +1725,7 @@ fn take_entity_prefix(
     }
     let mut selected = SelectedEntityWork {
         operation_work_indices: Vec::new(),
+        row_work_indices: Vec::new(),
         txs: Vec::with_capacity(count),
         rows: Vec::new(),
         operations: Vec::new(),
@@ -1732,6 +1741,7 @@ fn take_entity_prefix(
                 selected.txs.push(projected);
                 let start = selected.rows.len();
                 selected.rows.push(*row);
+                selected.row_work_indices.push(work_index);
                 match selected.operations.last_mut() {
                     Some(ResidentEntityOperation::AccountRange {
                         start: prior_start,
@@ -3687,6 +3697,18 @@ fn apply_entity_group(
                     proposer_signature: prepared.signature.clone(),
                 },
             );
+        // Recovery markers in this exact certified prefix, in frame order.
+        // Order is the reducer emission order the Entity flush must preserve;
+        // Account ids never choose it.
+        let propose_accounts_now = selected
+            .txs
+            .iter()
+            .filter(|tx| tx.kind == EntityTxKind::ProposeAccountsNow)
+            .map(|tx| {
+                xln_rscore_entity_kernel::decode_propose_accounts_now(&tx.wire_data)
+                    .map_err(|error| RuntimeMachineError::EntityTxPayloadInvalid(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, RuntimeMachineError>>()?;
         let request = ResidentEntityRequest {
             inbound: EntityInboundRequest {
                 owner_entity_id: group.entity_id,
@@ -3712,6 +3734,7 @@ fn apply_entity_group(
             post_accounts: false,
             runtime_seed: Some(proposer_runtime_seed.to_string()),
             scheduled_wake: group.wake.as_ref().and_then(|wake| wake.scheduled.clone()),
+            propose_accounts_now,
             expected_proposer_signer_id: group.signer_id.clone(),
             finalized_j_events,
             entity_authority: Some(slot.replica.entity_consensus.state.authority.clone()),
@@ -3749,6 +3772,52 @@ fn apply_entity_group(
             request,
             &context.execution,
         ) {
+            // Owner canon (AGENTS.md REJECT POLICY): an authenticated peer
+            // Account input the Account engine rejected is a sender-caused
+            // reject, never a halt. The kernel already wrote the
+            // `[ERROR][reject]` audit line and aborted the round, so nothing it
+            // touched was published and no env is read here. TS
+            // `buildEntityProposalEvictingRejected` evicts one rejected tx per
+            // attempt and rebuilds the frame; mirror that exactly — evict the
+            // first reject's parent `accountInput` tx and rebuild, letting the
+            // retry surface any further reject.
+            Ok(core) if !core.rejected_inbound_inputs.is_empty() => {
+                let reject = &core.rejected_inbound_inputs[0];
+                let row_index = usize::try_from(reject.operation_index)
+                    .map_err(|_| RuntimeMachineError::InputCountOverflow)?;
+                // A rejected row names one parent `accountInput` transaction.
+                // `operation_work_indices` is keyed by operation and a merged
+                // `AccountRange` covers many rows, so it would evict the range's
+                // first tx instead of the failing one.
+                let work_index = *selected
+                    .row_work_indices
+                    .get(row_index)
+                    .ok_or(RuntimeMachineError::InputCountOverflow)?;
+                commit_phase_work.evict_selected(work_index)?;
+                eprintln!(
+                    "RSCORE_ENTITY_INBOUND_INPUT_EVICTED:entity={}:work={work_index}:row={row_index}:account={}:{}:{}",
+                    slot.state.entity.entity_id, reject.account_id, reject.verdict, reject.reason
+                );
+                if commit_phase_work.selected.is_empty() {
+                    slot.replica.entity_mempool = commit_phase_work.into_remaining()?;
+                    let pending_count = slot.replica.entity_mempool.len();
+                    return Ok(AppliedEntityGroup {
+                        evicted_context: Some((group_key, next_entity_height, context)),
+                        state: slot.state,
+                        replica: slot.replica,
+                        outputs: None,
+                        account_commits: Vec::new(),
+                        touched_accounts: Vec::new(),
+                        book_touched: false,
+                        synthetic_input,
+                        selected_count: 0,
+                        pending_count,
+                        post_commit_j_actions: Vec::new(),
+                        apply_profile,
+                    });
+                }
+                continue;
+            }
             Ok(core) => core,
             Err(xln_rscore_entity_kernel::ResidentEntityError::LocalCommandRejected {
                 operation_index,
@@ -5159,6 +5228,62 @@ mod tests {
         }))
         .expect("canonical Account proposal");
         work.pop().expect("one Account work")
+    }
+
+    /// The index trap behind the reject-eviction path.
+    ///
+    /// `RejectedInboundAccountInput::operation_index` is a position inside
+    /// `EntityInboundRequest::rows`, and a contiguous run of `accountInput`
+    /// work merges into ONE `AccountRange` operation. `operation_work_indices`
+    /// is keyed by operation, so it records only the first work item of that
+    /// run: indexing it with a row position either evicts an innocent sibling
+    /// `accountInput` tx or runs off the end. `row_work_indices` is the only
+    /// map that names the exact parent tx of each rejected row.
+    #[test]
+    fn account_rows_map_to_their_own_work_item_not_the_merged_range() {
+        let mut replica =
+            crate::machine::tests::replica(crate::RuntimeLimits::hlt()).expect("runtime replica");
+        let signer_id = crate::machine::tests::entity_signer_id();
+        let entity_key =
+            crate::RuntimeEntityKey::new(crate::machine::tests::owner_bytes(), &signer_id)
+                .expect("fixture Entity key");
+        let (state, entity_replica) = replica
+            .take_entity_slot(&entity_key.entity_id, &entity_key.signer_id)
+            .expect("fixture Entity slot");
+        let slot = super::EntityApplySlot {
+            state,
+            replica: entity_replica,
+        };
+        let digest = |byte: &str| format!("0x{}", byte.repeat(32));
+        let mut work = VecDeque::from([
+            EntityPendingWork::Projected(
+                CanonicalEntityTx::from_frame_projection(
+                    EntityTxKind::DirectPayment,
+                    CanonicalValue::Null,
+                )
+                .expect("ordinary projected tx"),
+            ),
+            replay_account_work(&digest("11"), &digest("aa")),
+            replay_account_work(&digest("22"), &digest("bb")),
+            replay_account_work(&digest("33"), &digest("cc")),
+        ]);
+        let taken = take_entity_prefix(&slot, &mut work, 4).expect("take prefix");
+        assert_eq!(taken.rows.len(), 3);
+        assert_eq!(
+            taken.operations.len(),
+            1,
+            "three consecutive Account work items merge into one AccountRange",
+        );
+        assert_eq!(
+            taken.operation_work_indices,
+            vec![1],
+            "operation index space records only the work item that opened the range",
+        );
+        assert_eq!(
+            taken.row_work_indices,
+            vec![1, 2, 3],
+            "row index space names the parent accountInput tx of every row",
+        );
     }
 
     #[test]

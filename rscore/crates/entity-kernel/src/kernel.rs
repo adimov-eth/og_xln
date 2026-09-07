@@ -812,6 +812,27 @@ fn append_scheduled_entity_outputs(
     Ok(())
 }
 
+/// Owner canon (AGENTS.md REJECT POLICY): a user can never take the hub down.
+/// The handler rejected before any mutation. Log the audit line and return the
+/// typed reject unchanged: the resident round maps it to
+/// `ResidentEntityError::LocalCommandRejected { operation_index }` and the
+/// Runtime loop evicts exactly that one command (frame tx) and retries the
+/// round with the rest of the signer's queue, the same atomic per-frame-tx
+/// eviction as TS `buildEntityProposalEvictingRejected`. Nothing here reads
+/// process env, and no other queued tx is dropped for this one.
+fn log_local_reject(
+    entity_id: &str,
+    signer_id: &str,
+    error: EntityKernelError,
+) -> EntityKernelError {
+    if let EntityKernelError::RejectedEntityTx { kind, detail } = &error {
+        eprintln!(
+            "[ERROR][reject] entity tx rejected and dropped: entity={entity_id} signer={signer_id} kind={kind} detail={detail}"
+        );
+    }
+    error
+}
+
 pub(crate) struct EntityTransitionResult {
     pub(crate) state: EntityStateSlice,
     pub(crate) account_creates: Vec<xln_rscore_batch::AccountSeed>,
@@ -979,7 +1000,10 @@ pub(crate) fn apply_entity_transitions(
                     local_account_views,
                     local_account_genesis_policy,
                     runtime_seed,
-                )?;
+                )
+                .map_err(|error| {
+                    log_local_reject(&state.entity_id, &signer_id, error.into_user_reject())
+                })?;
                 account_creates.extend(applied.account_creates);
                 local_account_txs.extend(applied.account_txs);
                 local_outputs.extend(applied.outputs);
@@ -999,7 +1023,10 @@ pub(crate) fn apply_entity_transitions(
                     &mut local_events,
                     authority,
                     board_epoch,
-                )?;
+                )
+                .map_err(|error| {
+                    log_local_reject(&state.entity_id, &signer_id, error.into_user_reject())
+                })?;
                 j_outputs.extend(applied.j_outputs);
                 local_hashes_to_sign.extend(applied.hashes_to_sign);
                 for approved in applied.approved_entity_txs.into_iter().rev() {
@@ -1014,32 +1041,14 @@ pub(crate) fn apply_entity_transitions(
                 let authority = entity_authority.ok_or_else(|| {
                     EntityKernelError::local("crossJurisdiction", "ENTITY_AUTHORITY_REQUIRED")
                 })?;
-                let applied = match apply_cross_jurisdiction_entity_txs(
+                let applied = apply_cross_jurisdiction_entity_txs(
                     &mut state,
                     local_account_views,
                     &[tx],
                     Some(&signer_id),
                     authority,
-                ) {
-                    Ok(applied) => applied,
-                    Err(EntityKernelError::RejectedEntityTx { kind, detail })
-                        if !crate::error::reject_fail_fast() =>
-                    {
-                        // Owner canon: a user can never take the hub down. The
-                        // handler rejected before any mutation; log and drop.
-                        // TS discards the whole origin lane: drop what is still
-                        // queued from this signer in the frame as well.
-                        let before = local_txs.len();
-                        local_txs.retain(|queued| queued.signer_id != signer_id);
-                        eprintln!(
-                            "[ERROR][reject] entity tx rejected and dropped: entity={} signer={signer_id} kind={kind} detail={detail} laneDropped={}",
-                            state.entity_id,
-                            before - local_txs.len()
-                        );
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                };
+                )
+                .map_err(|error| log_local_reject(&state.entity_id, &signer_id, error))?;
                 deltas.extend(applied.orderbook_deltas);
                 for work in applied.proposal_work {
                     for tx in work.txs {

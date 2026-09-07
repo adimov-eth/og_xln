@@ -146,7 +146,7 @@ impl NativeRuntimeStore {
         })
     }
 
-    pub(super) fn read_outputs_at(
+    pub(crate) fn read_outputs_at(
         &mut self,
         height: u64,
     ) -> Result<Vec<Vec<u8>>, NativeStorageError> {

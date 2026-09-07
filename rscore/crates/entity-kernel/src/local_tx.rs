@@ -175,6 +175,9 @@ fn decode_runtime_output(
                 | EntityTxKind::BoardHandover
                 | EntityTxKind::EntityCommand
                 | EntityTxKind::JEvent
+                // Locally authored recovery marker: it must never re-enter
+                // through a peer's authenticated runtime output wrapper.
+                | EntityTxKind::ProposeAccountsNow
                 | EntityTxKind::RuntimeOutput
                 | EntityTxKind::ScheduledWake
         ) {
@@ -276,6 +279,22 @@ mod tests {
             error
                 .to_string()
                 .contains("RUNTIME_OUTPUT_SEMANTIC_VARIANT_FORBIDDEN:setHubConfig")
+        );
+    }
+
+    /// Parity target: the `NESTED_PROTOCOL_TXS` set in
+    /// `core/entity/consensus/output/envelope.ts`. The recovery marker is
+    /// authored locally; a peer must not be able to smuggle it inside an
+    /// authenticated Runtime output wrapper and drive our Account flush.
+    #[test]
+    fn runtime_output_may_not_nest_the_propose_accounts_now_marker() {
+        let error = decode_local_entity_tx(&runtime_output("proposeAccountsNow"))
+            .expect_err("a nested recovery marker must be refused");
+        assert!(
+            error
+                .to_string()
+                .contains("RUNTIME_OUTPUT_NESTED_PROTOCOL_TX_FORBIDDEN:proposeAccountsNow"),
+            "unexpected rejection: {error}",
         );
     }
 }

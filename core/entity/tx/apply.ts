@@ -1,4 +1,4 @@
-import type { AccountInput, RuntimeOverlayRecord } from '../../types/account';
+import type { RuntimeOverlayRecord } from '../../types/account';
 import type { EntityState, EntityOutput, HashType, EntityCandidateEffect } from '../types';
 import type { EntityRuntimeContext } from '../runtime-context';
 import type { JInput } from '../../jurisdiction/machine/input';
@@ -8,6 +8,7 @@ import type { AccountConsensusContext } from '../../account/consensus/context';
 import type { EntityInfraContext } from '../../types/entity/infra-context';
 import type { PreparedHtlcEntry } from '../../types/entity/htlc-infra-context';
 import type { BookIntentSlotWriter } from '../books/book-intents';
+import type { EntityAccountInputWork } from '../consensus/account/canonical-worklist';
 import { createAccountConsensusContext } from '../account/account-consensus-context';
 import {
   applyAccountInputToEntity,
@@ -87,6 +88,7 @@ import {
 } from './handlers/cross-j/book-order';
 import { handleCrossJurisdictionBookOrderRemovedEntityTx } from './handlers/cross-j/book-removal-ack';
 import { handleScheduledWakeEntityTx } from './handlers/system/scheduled-wake';
+import { handleProposeAccountsNowEntityTx } from './handlers/account/propose-accounts-now';
 import {
   handleEntityProviderCancelAction,
   handleEntityProviderReleaseControlShares,
@@ -109,12 +111,12 @@ export interface ApplyEntityTxResult {
   jOutputs?: JInput[];
   // Pure events for entity-level orchestration
   accountTxs?: AccountTxTarget[];
-  /** Final Channel.ts-style work state for one AccountInput. */
-  accountInputWork?: Readonly<{
-    accountId: string;
-    force: boolean;
-    response?: AccountInput;
-  }>;
+  /**
+   * Final Channel.ts-style work state per touched Account lane. Ordinary
+   * Account inputs contribute exactly one entry; the `proposeAccountsNow`
+   * recovery marker contributes one per retained proposal it re-emits.
+   */
+  accountInputWorks?: readonly EntityAccountInputWork[];
   accountJClaimNodeChanges?: AccountJClaimNodeChanges;
   swapOffersCreated?: SwapOfferEvent[];
   swapCancelRequests?: SwapCancelRequestEvent[];
@@ -254,13 +256,13 @@ const accountHandlerResultToEntityTxResult = (
     ...(result.forceAccountFlush === undefined
       ? {}
       : {
-          accountInputWork: {
+          accountInputWorks: [{
             accountId: counterpartyId,
             force: result.forceAccountFlush,
             ...(result.forcedAccountInput === undefined
               ? {}
               : { response: result.forcedAccountInput }),
-          },
+          }],
         }),
     ...(result.accountJClaimNodeChanges ? { accountJClaimNodeChanges: result.accountJClaimNodeChanges } : {}),
     ...(result.hashesToSign && result.hashesToSign.length > 0 && { hashesToSign: result.hashesToSign }),
@@ -321,6 +323,10 @@ const entityTxDispatchers = {
     tx as Extract<EntityTx, { type: 'scheduledWake' }>,
     options?.manualBroadcastInInput === true,
     options?.bookIntentSlot,
+  ),
+  proposeAccountsNow: (_env, state, tx) => handleProposeAccountsNowEntityTx(
+    state,
+    tx as Extract<EntityTx, { type: 'proposeAccountsNow' }>,
   ),
   chat: (_env, state, tx, options) => handleChatEntityTx(
     state,

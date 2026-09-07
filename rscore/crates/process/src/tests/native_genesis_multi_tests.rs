@@ -8,7 +8,7 @@ use xln_rscore_runtime::{
 #[test]
 fn native_two_jurisdiction_owners_match_ts_identity_and_survive_exact_checkpoint_wal_restart() {
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../fixtures/native-cross-genesis-v1.json"
+        "../../../../fixtures/native-cross-genesis-v1.json"
     ))
     .unwrap();
     let genesis = NativeGenesisConfig::decode(&fixture["genesis"]).unwrap();

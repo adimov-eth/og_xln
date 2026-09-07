@@ -1458,6 +1458,135 @@ fn restart_stages_inbound_only_outbox_without_blocking_new_input() {
     std::fs::remove_dir_all(path).expect("remove inbound-only fixture");
 }
 
+/// Restart boundary: the previous process bound the peer through its signed
+/// Profile (RAM). After the restart no operator route and no re-announced
+/// Profile exist, yet a new committed output for that peer must bind through
+/// the destination already fsynced in the flat outbox instead of fail-stopping
+/// on `RRS_ENTITY_ROUTE_MISSING`. Both rows stay in the publication backlog
+/// until the peer's authenticated session exists, then publish exactly once in
+/// durable order.
+#[test]
+fn restart_rebinds_a_known_peer_from_the_durable_outbox_and_publishes_once() {
+    let path = path();
+    let _ = std::fs::remove_dir_all(&path);
+    let user_seed = "rrs-recovered-route-user";
+    let user_signer = "user";
+    let user_runtime_id = derive_local_runtime_id(user_seed, user_signer).expect("user runtime id");
+    let peer_entity_id = format!("0x{}", "ff".repeat(32));
+    let peer_signer_id = format!("0x{}", "66".repeat(20));
+    let encoded = build_runtime_frame_commit(
+        CanonicalRuntimeFrameDraft {
+            height: 1,
+            timestamp: 150,
+            prev_frame_hash: [0; 32],
+            replica_meta_digest: [0x11; 32],
+            runtime_component_digests: Vec::new(),
+            materialized_state: false,
+            canonical_state: None,
+            runtime_input: json!({"runtimeTxs": [], "entityInputs": []}),
+            runtime_machine_root: None,
+            account_authority_checkpoints: Vec::new(),
+            touched_entities: Vec::new(),
+            touched_accounts: Vec::new(),
+            touched_book_entities: Vec::new(),
+        },
+        crate::storage::native::EntityContextPayloadRows::empty(),
+        vec![live_socket_output(
+            &user_runtime_id,
+            &peer_entity_id,
+            &peer_signer_id,
+        )],
+        None,
+    )
+    .expect("durable row bound before the restart");
+    let frame_hash = encoded.frame_hash;
+    let mut store = NativeRuntimeStore::open(&path, NativeStorageConfig::default())
+        .expect("recovered-route store");
+    store
+        .append_frame(encoded.commit)
+        .expect("recovered-route fsync");
+    let mut replica = processor_replica();
+    replica.state.height = 1;
+    replica
+        .durable
+        .advance_frame_hash([0; 32], frame_hash)
+        .expect("recovered-route lineage");
+    let mut processor = DurableRuntimeProcessor::new(
+        replica,
+        store,
+        EntityRouteTable::new([]).expect("no operator route and no re-announced profile"),
+        SOURCE_SEED,
+        RuntimeSignerLabel::new(SOURCE_SIGNER).expect("recovered-route signer"),
+    )
+    .expect("restart binds the peer from its own durable outbox");
+    let ingress = attached_test_ingress(&mut processor, SOURCE_SEED, SOURCE_SIGNER);
+    let staged = processor
+        .retry_publication()
+        .expect("resend while the peer is offline")
+        .expect("the recovered frame is staged for resend");
+    assert_eq!(
+        (staged.durable_height, staged.outputs_published),
+        (Some(1), 0)
+    );
+    let backlog = processor.publication_backlog();
+    assert_eq!((backlog.targets, backlog.rows), (1, 1));
+    assert_eq!(
+        backlog.failures.keys().collect::<Vec<_>>(),
+        vec![&user_runtime_id],
+        "the recovered row waits for the peer's session; it is neither dropped nor fatal",
+    );
+
+    let payment = direct_payment_input(processor.replica().expect("restarted replica"));
+    let mut report = processor
+        .process(payment)
+        .expect("a new committed output binds through the recovered route");
+    merge_synced(
+        &mut report,
+        processor.sync_committed().expect("payment WAL fsync"),
+    );
+    assert_eq!(report.durable_height, Some(2));
+    assert_eq!(report.outputs_published, 0);
+    assert_eq!(processor.publication_backlog().rows, 2);
+    let proposal = processor
+        .read_durable_frame(2)
+        .expect("durable payment frame");
+    assert_payment_proposal(&proposal.outputs);
+    let bound = crate::decode_storage_payload(&proposal.outputs[0]).expect("bound row");
+    assert_eq!(bound["runtimeId"], user_runtime_id);
+    assert_eq!(bound["signerId"], peer_signer_id);
+
+    let mut user = DirectSession::connect(SessionConfig {
+        url: &format!("ws://{}/ws", ingress.local_address()),
+        target_runtime_id: ingress.runtime_id(),
+        source_runtime_id: &user_runtime_id,
+        source_seed: user_seed,
+        source_signer_id: user_signer,
+        identity: &encryption_identity(user_seed),
+        io_timeout: std::time::Duration::from_secs(3),
+        max_message_bytes: 32 * 1024 * 1024,
+    })
+    .expect("peer reconnects after the restart");
+    user.set_delivery_ready(true)
+        .expect("peer startup complete");
+    wait_for_processor_publication(&mut processor, &mut report, 2);
+    let first = user.recv_envelope().expect("recovered frame-1 row");
+    assert_eq!(first["sourceRuntimeHeight"], 1);
+    let second = user.recv_envelope().expect("new frame-2 proposal");
+    assert_eq!(second["sourceRuntimeHeight"], 2);
+    assert!(
+        processor.retry_publication().expect("idle retry").is_none(),
+        "each row publishes exactly once",
+    );
+    let backlog = processor.publication_backlog();
+    assert_eq!((backlog.targets, backlog.rows), (0, 0));
+    assert!(backlog.failures.is_empty());
+    assert!(!processor.has_pending_publication());
+    user.close();
+    drop(ingress);
+    drop(processor);
+    std::fs::remove_dir_all(path).expect("remove recovered-route fixture");
+}
+
 #[test]
 fn canonical_hash_cadence_does_not_materialize_path_nodes() {
     let path = path();

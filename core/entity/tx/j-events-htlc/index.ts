@@ -795,7 +795,8 @@ export function queueCrossJurisdictionSiblingDisputeFanout(
     signerId: string;
     txs: NonNullable<EntityInput['entityTxs']>;
   }>();
-  for (const route of state.crossJurisdictionSwaps?.values?.() ?? []) {
+  const routes = state.crossJurisdictionSwaps;
+  for (const route of routes?.values?.() ?? []) {
     if (isCrossJurisdictionTerminalStatus(route.status)) continue;
     if (!routeTouchesDisputedAccount(route, self, counterparty)) continue;
     if (!route.sourcePull || !route.targetPull) {
@@ -803,8 +804,19 @@ export function queueCrossJurisdictionSiblingDisputeFanout(
         // A persisted raw intent has no bilateral lock and therefore no sibling
         // clock to start. Authoritative Account dispute start cancels that
         // zero-exposure preparation instead of wedging J-event ingestion.
+        // The committed leaf is sealed: claim the candidate's writable fork
+        // before transitioning, exactly like the reveal flush above.
+        const writable = Object.isFrozen(route) && routes
+          ? getEntityCollectionValueForWrite(routes, route.orderId)
+          : route;
+        if (!writable) {
+          throw haltRuntimeFailure(
+            'CROSS_J_SIBLING_DISPUTE_ROUTE_FORK_MISSING',
+            `CROSS_J_SIBLING_DISPUTE_ROUTE_FORK_MISSING:${route.orderId}`,
+          );
+        }
         transitionCrossJurisdictionRouteStatus(
-          route,
+          writable,
           'cancelled',
           Number(state.timestamp || 0),
         );

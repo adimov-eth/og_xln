@@ -6,7 +6,6 @@
  */
 
 import { asFailFastPayload, failfastAssert } from '../p2p/failfast';
-import { HEAVY_LOGS } from '../../support/debug-flags';
 import { serializeWsMessage, type RuntimeWsMessage } from '../p2p/ws-protocol';
 import {
   type RelaySocketLike,
@@ -57,11 +56,6 @@ type GossipBudgetRelaySocket = object & {
 };
 const GOSSIP_BUDGET_WINDOW_MS = 60_000;
 const GOSSIP_PROFILES_PER_WINDOW = 10_000;
-const NON_RECOVERABLE_LOCAL_DELIVERY_ERRORS = [
-  'invalid tag',
-  'P2P_DECRYPT_ERROR',
-  'NO_LOCAL_REPLICA',
-];
 const LIVE_RECOVERY_MESSAGE_TYPES = new Set([
   'recovery_bundle_request',
   'recovery_bundle_response',
@@ -71,10 +65,9 @@ const relayLog = process.env['RELAY_VERBOSE_LOGS'] === '1'
   ? (message: string): void => relayRouterLog.debug('verbose', { line: message })
   : (_message: string): void => {};
 
-type RelayMeterCategory = 'financial' | 'gossip' | 'recovery' | 'debug' | 'control' | 'error';
+type RelayMeterCategory = 'gossip' | 'recovery' | 'debug' | 'control' | 'error';
 
 const relayMeterCategory = (type: string): RelayMeterCategory => {
-  if (type === 'entity_inputs') return 'financial';
   if (type.startsWith('gossip_')) return 'gossip';
   if (type.startsWith('recovery_bundle_')) return 'recovery';
   if (type === 'debug_event') return 'debug';
@@ -206,11 +199,17 @@ const consumeGossipBudget = (ws: RelaySocketLike, profileCount: number, now = Da
 // Config
 // ---------------------------------------------------------------------------
 
+/**
+ * A relay is a directory/control plane: hello, gossip, live recovery reads and
+ * their correlated relay-originated errors. Financial `entity_inputs` travel
+ * only over an authenticated direct session (core/network/p2p/p2p.ts
+ * enqueueEntityInputsDelivery); a relay never forwards them and never
+ * forwards a peer `error` frame, so a relay registration alone can never
+ * inject a negative delivery signal into another Runtime.
+ */
 export type RelayRouterConfig = {
   store: RelayStore;
   localRuntimeId: string;
-  /** Called when an entity_inputs envelope targets this runtime. */
-  localDeliver: (from: string | undefined, msg: RuntimeWsMessage) => Promise<void>;
   /** Thin wrapper over the binary production WebSocket codec. */
   send: (ws: RelaySocketLike, data: Uint8Array) => RelaySendResult;
   /** Hook to mirror gossip into env. */
@@ -218,11 +217,6 @@ export type RelayRouterConfig = {
   helloSkewMs?: number;
   consumeHelloChallenge?: (ws: object, claim: unknown) => HelloChallengeBinding | null;
   verifyProfile?: (profile: Profile) => Promise<ProfileVerifyResult> | ProfileVerifyResult;
-  applicationBudget?: Partial<{
-    windowMs: number;
-    maxMessages: number;
-    maxBytes: number;
-  }>;
 };
 
 const DEFAULT_HELLO_SKEW_MS = 5 * 60 * 1000;
@@ -305,12 +299,6 @@ const createRelayRouteContext = (
     fromEncryptionPubKey: typeof msg.fromEncryptionPubKey === 'string'
       ? msg.fromEncryptionPubKey
       : null,
-    deliveryEntityId: typeof msg.entityId === 'string' && msg.entityId.length > 0
-      ? msg.entityId
-      : undefined,
-    deliveryTxCount: typeof msg.txs === 'number' && Number.isFinite(msg.txs)
-      ? msg.txs
-      : undefined,
   };
 };
 
@@ -328,38 +316,6 @@ const relayMessageByteLength = (context: RelayRouteContext): number => {
   } catch {
     return 1;
   }
-};
-
-const DEFAULT_APPLICATION_BUDGET = {
-  windowMs: 60_000,
-  maxMessages: 10_000,
-  maxBytes: 512 * 1024 * 1024,
-} as const;
-
-const consumeApplicationBudget = (
-  context: RelayRouteContext,
-  bytes: number,
-  now = Date.now(),
-): boolean => {
-  const { config, fromKey } = context;
-  if (!fromKey) return false;
-  const limits = { ...DEFAULT_APPLICATION_BUDGET, ...config.applicationBudget };
-  let budget = config.store.applicationBudgets.get(fromKey);
-  if (!budget || now - budget.windowStartedAt >= limits.windowMs) {
-    for (const [runtimeId, candidate] of config.store.applicationBudgets) {
-      if (now - candidate.windowStartedAt >= limits.windowMs) {
-        config.store.applicationBudgets.delete(runtimeId);
-      }
-    }
-    budget = { windowStartedAt: now, messageCount: 0, bytes: 0 };
-  }
-  if (budget.messageCount + 1 > limits.maxMessages || budget.bytes + bytes > limits.maxBytes) {
-    return false;
-  }
-  budget.messageCount += 1;
-  budget.bytes += bytes;
-  config.store.applicationBudgets.set(fromKey, budget);
-  return true;
 };
 
 const handleHello = (context: RelayRouteContext): boolean => {
@@ -700,15 +656,45 @@ const handleSimpleRelayMessage = (context: RelayRouteContext): boolean => {
     config.send(ws, serializeWsMessage({ type: 'pong', ...(id ? { inReplyTo: id } : {}) }));
     return true;
   }
+  if (type === 'error') {
+    // A peer's negative delivery signal is meaningful only on the direct
+    // session that carried the output. The relay records it for audit and
+    // drops it; forwarding would let any relay registration reject another
+    // Runtime's committed output. No reply: an error for an error would loop.
+    pushDebugEvent(config.store, {
+      event: 'error',
+      from,
+      to,
+      msgType: type,
+      status: 'rejected',
+      reason: 'RELAY_ERROR_FRAME_NOT_ROUTABLE',
+      details: { traceId, inReplyTo: typeof context.msg.inReplyTo === 'string' ? context.msg.inReplyTo : null },
+    });
+    return true;
+  }
+  if (type === 'entity_inputs') {
+    const code = 'RELAY_ENTITY_INPUTS_FORBIDDEN';
+    pushDebugEvent(config.store, {
+      event: 'error',
+      from,
+      to,
+      msgType: type,
+      status: 'rejected',
+      reason: code,
+      details: { traceId },
+    });
+    config.send(ws, serializeWsMessage({
+      type: 'error',
+      error: code,
+      ...(id ? { inReplyTo: id } : {}),
+      ...(to ? { to } : {}),
+    }));
+    return true;
+  }
   return false;
 };
 
 const isRoutableRelayType = (type: string): boolean =>
-  type === 'entity_inputs' ||
-  // A correlated peer error is the negative half of AccountInput delivery.
-  // Relay must forward it to the original sender; consuming it locally makes
-  // a rejected committed envelope indistinguishable from successful handoff.
-  type === 'error' ||
   type === 'gossip_response' ||
   LIVE_RECOVERY_MESSAGE_TYPES.has(type);
 
@@ -741,8 +727,6 @@ const rejectUnauthenticatedRoutableMessage = (context: RelayRouteContext): boole
 
 const routeDeliveryDetails = (context: RelayRouteContext): Record<string, unknown> => ({
   traceId: context.traceId,
-  ...(context.deliveryEntityId ? { entityId: context.deliveryEntityId } : {}),
-  ...(context.deliveryTxCount !== undefined ? { txs: context.deliveryTxCount } : {}),
 });
 
 /** A socket that keeps queuing sends into backpressure without draining is
@@ -762,11 +746,6 @@ const forwardToRemoteRuntime = (
   if (!target || isLocalTarget) return false;
   const attempt = sendRelayDelivery(config, target.ws, msg, resolveRelayWireBytes(context));
   const delivery = attempt.delivery;
-  if (type === 'entity_inputs' && HEAVY_LOGS) {
-    relayLog(
-      `[RELAY-REMOTE] entity_inputs from=${String(from || '').slice(-8)} to=${String(to || '').slice(-8)} outcome=${delivery.outcome}:${delivery.code}`,
-    );
-  }
   if (isDeliveryDelivered(delivery)) {
     if (attempt.backpressured) {
       const now = Date.now();
@@ -823,67 +802,8 @@ const forwardToRemoteRuntime = (
   return false;
 };
 
-type LocalDeliveryDisposition = 'delivered' | 'rejected' | 'unavailable';
-
-const deliverToLocalRuntime = async (
-  context: RelayRouteContext,
-  isLocalTarget: boolean,
-): Promise<LocalDeliveryDisposition> => {
-  const { config, ws, msg, type, from, to, payload, traceId } = context;
-  const isApplicationMessage = type === 'entity_inputs';
-  if (!isApplicationMessage || !payload || !isLocalTarget) return 'unavailable';
-  try {
-    await config.localDeliver(from, msg);
-    if (HEAVY_LOGS) {
-      relayLog(`[RELAY-FORWARD] entity_inputs from=${String(from || '').slice(-8)} to=${String(to || '').slice(-8)}`);
-    }
-    return 'delivered';
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    relayLog(`[RELAY] Local delivery failed: ${reason}`);
-    pushDebugEvent(config.store, {
-      event: 'error',
-      from,
-      to,
-      msgType: type,
-      status: 'local-delivery-failed',
-      reason,
-      delivery: relayDeliveryMetadata('local-delivery-failed', reason),
-      details: { traceId },
-    });
-    // Poisoned ciphertext and unknown local replicas cannot become valid by
-    // replaying. Reject them instead of creating an immortal pending loop.
-    if (NON_RECOVERABLE_LOCAL_DELIVERY_ERRORS.some(part => reason.includes(part))) {
-      config.send(ws, serializeWsMessage({ type: 'error', error: reason }));
-      return 'rejected';
-    }
-    return 'unavailable';
-  }
-};
-
-const rejectUnavailableEntityInputs = (context: RelayRouteContext): boolean => {
+const rejectUnavailableRecovery = (context: RelayRouteContext): boolean => {
   const { config, ws, msg, type, from, to, id } = context;
-  if (type === 'entity_inputs') {
-    const code = 'ENTITY_INPUT_TARGET_NOT_CONNECTED';
-    relayLog(`[RELAY] → rejected ${type} (target not connected)`);
-    pushDebugEvent(config.store, {
-      event: 'delivery',
-      from,
-      to,
-      msgType: type,
-      encrypted: msg.encrypted === true,
-      status: 'rejected',
-      reason: code,
-      details: routeDeliveryDetails(context),
-    });
-    config.send(ws, serializeWsMessage({
-      type: 'error',
-      error: code,
-      ...(id ? { inReplyTo: id } : {}),
-      ...(to ? { to } : {}),
-    }));
-    return true;
-  }
   if (!LIVE_RECOVERY_MESSAGE_TYPES.has(type)) return false;
   const code = 'RECOVERY_TARGET_NOT_CONNECTED';
   relayLog(`[RELAY] → rejected ${type} (target not connected)`);
@@ -907,7 +827,7 @@ const rejectUnavailableEntityInputs = (context: RelayRouteContext): boolean => {
 };
 
 const handleRoutableMessage = async (context: RelayRouteContext): Promise<boolean> => {
-  const { config, ws, msg, type, from, to, payload, toKey, traceId } = context;
+  const { config, ws, msg, type, from, to, toKey, traceId } = context;
   if (!isRoutableRelayType(type)) return false;
   if (rejectUnauthenticatedRoutableMessage(context)) return true;
   if (!toKey) {
@@ -926,72 +846,11 @@ const handleRoutableMessage = async (context: RelayRouteContext): Promise<boolea
     }));
     return true;
   }
-  if (type === 'error' && typeof msg.inReplyTo !== 'string') {
-    pushDebugEvent(config.store, {
-      event: 'error',
-      from,
-      to,
-      msgType: type,
-      status: 'rejected',
-      reason: 'ROUTABLE_ERROR_CORRELATION_MISSING',
-      details: { traceId },
-    });
-    config.send(ws, serializeWsMessage({
-      type: 'error',
-      error: 'ROUTABLE_ERROR_CORRELATION_MISSING',
-      ...(context.id ? { inReplyTo: context.id } : {}),
-    }));
-    return true;
-  }
-  if (type === 'entity_inputs' && (msg.encrypted !== true || !(payload instanceof Uint8Array))) {
-    pushDebugEvent(config.store, {
-      event: 'error',
-      from,
-      to,
-      msgType: type,
-      status: 'rejected',
-      reason: 'ENTITY_INPUT_MUST_BE_ENCRYPTED',
-      delivery: relayDeliveryMetadata('rejected', 'ENTITY_INPUT_MUST_BE_ENCRYPTED'),
-      details: { traceId },
-    });
-    config.send(ws, serializeWsMessage({
-      type: 'error',
-      error: 'ENTITY_INPUT_MUST_BE_ENCRYPTED',
-      ...(context.id ? { inReplyTo: context.id } : {}),
-      ...(to ? { to } : {}),
-    }));
-    return true;
-  }
-  if (
-    type === 'entity_inputs' &&
-    !consumeApplicationBudget(context, relayMessageByteLength(context))
-  ) {
-    const code = 'ENTITY_INPUT_RATE_LIMITED';
-    pushDebugEvent(config.store, {
-      event: 'delivery',
-      from,
-      to,
-      msgType: type,
-      status: 'deferred',
-      reason: code,
-      delivery: relayDeliveryMetadata('queued', code),
-      details: routeDeliveryDetails(context),
-    });
-    config.send(ws, serializeWsMessage({
-      type: 'error',
-      error: code,
-      ...(context.id ? { inReplyTo: context.id } : {}),
-      ...(to ? { to } : {}),
-    }));
-    return true;
-  }
   relayLog(`[RELAY] ${type} from=${from || 'none'} to=${to || 'none'} encrypted=${msg.encrypted ?? false}`);
   const localRuntimeKey = normalizeRuntimeKey(config.localRuntimeId);
   const isLocalTarget = !!localRuntimeKey && toKey === localRuntimeKey;
   if (forwardToRemoteRuntime(context, isLocalTarget)) return true;
-  const local = await deliverToLocalRuntime(context, isLocalTarget);
-  if (local !== 'unavailable') return true;
-  if (rejectUnavailableEntityInputs(context)) return true;
+  if (rejectUnavailableRecovery(context)) return true;
   const code = 'GOSSIP_TARGET_NOT_CONNECTED';
   relayLog(`[RELAY] → rejected ${type} (target not connected)`);
   pushDebugEvent(config.store, {
