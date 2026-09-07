@@ -1,0 +1,195 @@
+{
+  "reviewer": "openrouter/google/gemini-pro-latest",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 850,
+        "typography": 850,
+        "color": 900,
+        "data_legibility": 900,
+        "layout": 850,
+        "visceral_value": 850,
+        "responsive": 800,
+        "consistency": 850,
+        "trust": 900
+      },
+      "total": 855,
+      "top_issues": [
+        "The main action buttons (Pay, Receive, Swap) take up too much vertical space compared to balance info"
+      ],
+      "fixes": [
+        "Reduce the padding/height of the main action buttons slightly to show more of the account list below"
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 850,
+        "layout": 800,
+        "visceral_value": 800,
+        "responsive": 800,
+        "consistency": 850,
+        "trust": 850
+      },
+      "total": 835,
+      "top_issues": [
+        "The 'To' field showing full hex address is visually overwhelming"
+      ],
+      "fixes": [
+        "Truncate the hex address in the 'To' field (e.g., 0x92c2...cbf0) unless focused"
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 750,
+        "premium": 800,
+        "typography": 800,
+        "color": 850,
+        "data_legibility": 800,
+        "layout": 750,
+        "visceral_value": 800,
+        "responsive": 800,
+        "consistency": 850,
+        "trust": 850
+      },
+      "total": 805,
+      "top_issues": [
+        "The order book is extremely dense and hard to parse quickly on mobile"
+      ],
+      "fixes": [
+        "Increase row height in the order book and emphasize the spread/last price more clearly"
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 800,
+        "typography": 850,
+        "color": 900,
+        "data_legibility": 900,
+        "layout": 850,
+        "visceral_value": 800,
+        "responsive": 850,
+        "consistency": 850,
+        "trust": 900
+      },
+      "total": 855,
+      "top_issues": [
+        "The breakdown of credit vs collateral might be confusing to novices"
+      ],
+      "fixes": [
+        "Add a small info tooltip next to 'Collateral' and 'Your credit line to them'"
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 850,
+        "color": 900,
+        "data_legibility": 850,
+        "layout": 850,
+        "visceral_value": 900,
+        "responsive": 850,
+        "consistency": 850,
+        "trust": 950
+      },
+      "total": 870,
+      "top_issues": [
+        "Text-heavy explanation of green vs violet slows down comprehension"
+      ],
+      "fixes": [
+        "Use a simpler bulleted format or icons instead of a dense paragraph for the color rules"
+      ]
+    }
+  ],
+  "overall": {
+    "total": 842,
+    "verdict": "A strong, premium mobile interface that masterfully uses color (green/violet) and scale to convey complex financial states. It succeeds in building trust for power users but risks overwhelming beginners with dense information and technical concepts.",
+    "priority_fixes": [
+      "Truncate long hex addresses by default across all screens",
+      "Simplify the onboarding/explanation text for the green/violet rule",
+      "Make the order book easier to read on mobile by increasing row spacing",
+      "Add contextual help for terms like 'Collateral' and 'Credit line'",
+      "Tighten the main action buttons on Home to reveal more context below the fold"
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 60,
+        "verdict": "I managed to send the money, but all this talk about hubs, credit lines, and hex codes makes me nervous.",
+        "blockers": [
+          "The 'To' field showing a massive hex address on the Pay screen",
+          "Dense terminology about reserves and accounts"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 95,
+        "verdict": "The absolute scale bars are brilliant; I instantly see my exposure and inbound room without doing math in my head.",
+        "blockers": []
+      },
+      {
+        "name": "Anya",
+        "satisfied": 85,
+        "verdict": "I can get my swap done at a precise price, though the book is a bit cramped on my phone screen.",
+        "blockers": [
+          "Order book on mobile (05-swap.png) is very dense"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 90,
+        "verdict": "The Sovereignty and Asset views tell me exactly what is enforceable on-chain, which is exactly what the board demands.",
+        "blockers": []
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 85,
+        "verdict": "Generating a payment link and getting a clear receipt works well for my client billing.",
+        "blockers": []
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 95,
+        "verdict": "Being able to save the evidence bundle and clearly see the dispute rules makes me completely comfortable trusting the hub.",
+        "blockers": []
+      },
+      {
+        "name": "Lena",
+        "satisfied": 75,
+        "verdict": "It works, but sometimes I have to scroll past a lot of technical details just to tap 'Pay'.",
+        "blockers": [
+          "Information density on action screens requires scrolling (02-pay-bottom.png)"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 90,
+        "verdict": "The Account view gives me exactly what I need to assess a counterparty's risk profile instantly.",
+        "blockers": []
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 90,
+        "verdict": "The cross-network swap screen explains the route and settlement perfectly, though the collateral setup is a bit complex.",
+        "blockers": []
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 95,
+        "verdict": "The visual consistency (one scale, strict green/violet meaning) proves this team actually understands financial risk.",
+        "blockers": []
+      }
+    ]
+  }
+}

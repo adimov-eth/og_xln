@@ -1,8 +1,9 @@
 /** Runs every compiled Rust test target concurrently, then runs doctests. */
 
 import { availableParallelism } from 'node:os';
+import { basename } from 'node:path';
 
-const ROOT = import.meta.dir + '/..';
+const ROOT = import.meta.dir + '/../..';
 const MANIFEST = ROOT + '/rscore/Cargo.toml';
 // Test binaries are internally small but collectively allocation-heavy. Using
 // every host CPU here competes with the sibling source gates and makes the
@@ -50,6 +51,8 @@ const runLane = async (): Promise<void> => {
   while (nextIndex < executables.length && failures.length === 0) {
     const executable = executables[nextIndex++];
     if (!executable) break;
+    const startedAt = performance.now();
+    console.log(`RSCORE_TEST_START:${basename(executable)}`);
     const child = Bun.spawn([executable, `--test-threads=${String(threadsPerBinary)}`], {
       cwd: ROOT,
       stdout: 'pipe',
@@ -62,6 +65,11 @@ const runLane = async (): Promise<void> => {
       child.exited,
     ]);
     active.delete(child);
+    const summary = stdout.split('\n').find(line => line.startsWith('test result:'));
+    console.log(
+      `RSCORE_TEST_DONE:${basename(executable)}:exit=${exitCode} ` +
+      `wallMs=${Math.round(performance.now() - startedAt)} ${summary ?? 'test summary unavailable'}`,
+    );
     if (exitCode !== 0) failures.push({
       executable,
       exitCode,

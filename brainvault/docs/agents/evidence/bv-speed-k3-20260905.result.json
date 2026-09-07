@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "result",
+  "id": "bv-speed-k3-20260905.result",
+  "runId": "bv-speed-k3-20260905",
+  "recordedAt": "2026-09-04T23:57:10.174Z",
+  "harnessVersion": "0.84.4",
+  "servedProvider": null,
+  "status": "completed",
+  "elapsedMs": 29695,
+  "exitCode": 0,
+  "costUsd": 0.101571,
+  "response": "{\"verdict\":\"ANSWER\",\"answer\":\"Experiment: keep 8 processes but raise arenas per process from 40 to 80 (8p80), holding the 8320/1680 GPU/CPU split and everything else fixed.\\n\\nWhy it's new: you tested 4p80 (worse, 17.8s) and 16p40 (worse, 34s), but never doubled arenas while keeping process count. 8p40 runs 208 sequential batches; each batch is a commit + waitUntilCompleted, so the GPU drains fully between batches and the post-prefetch dependent slices (latency-bound random 1KiB reference reads in slices 2-3) run at only 320 concurrent warps. 8p80 doubles in-flight shards to 640, doubling memory-level parallelism exactly where the kernel is latency-limited, and halves per-batch commit/setup/blit overhead. No parameter, root, or count change: workers is purely a batching knob (read from header, MAX_WORKERS=256 allows 80).\\n\\nExact code point: invocation only - set workers=80 in the header consumed at brainvault_argon2_metal.m main; buffer sizing (bytes_per_shard*workers) and the device.maxBufferLength guard (~line 168) already handle 20GiB/process; the batch loop (~line 196) and dispatch math are workers-agnostic. Zero code edits.\\n\\nRisk: 4p80's regression hints arena count may interact with CPU-side balance, so keep the CPU shard assignment identical to the 14.26s run; watch for allocation failure (guarded) and memory pressure (8x20GiB=160GiB, fine on 512GiB). Measure with BRAINVAULT_METAL_PROFILE: if GPU command time doesn't drop below ~11.6s, the bottleneck is the serial dependency chain, not concurrency - stop. Verify root equality before timing.\",\"references\":[\"brainvault/src/native/source/metal/brainvault_argon2_metal.m:168\",\"brainvault/src/native/source/metal/brainvault_argon2_metal.m:196\",\"brainvault/src/native/source/metal/argon2.metal:373\"]}",
+  "responseHash": "sha256:f8f4c80143e9f1730ea01af1dd36444ff9f5bd11be26ca7908745d86bd174896",
+  "stdoutHash": "sha256:a07a77d2254c81ff9f5957ab72def38bb609f09069f3bab8290d70b57ba03e1c",
+  "stderrHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "error": null
+}

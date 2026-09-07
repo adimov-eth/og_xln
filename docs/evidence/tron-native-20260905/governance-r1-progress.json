@@ -1,0 +1,112 @@
+{
+  "deployment": {
+    "chainId": 1208511695,
+    "contracts": {
+      "account": "0x2306e668264f76ce0925b345565118e096b9e5f7",
+      "deltaTransformer": "0x7d5c7d5ccdc41bd45f4171138d7f21aafc1ae692",
+      "depository": "0x51c6eea257ec7ae26ef93db6d24bdf6dea642e16",
+      "depositoryBounds": "0xd9e1faeb1b56a15de8203a838cb080421365fadc",
+      "entityProvider": "0xab6abc55418b5bcb067cf909725500fe08a125dc",
+      "hankoVerifier": "0xdebe2de21119ce29e132a98d42d8b14951ad35e0",
+      "hashLadderRegistry": "0x45a65c2509be064528f2de521e7ceed34726e2b7",
+      "nftCustody": "0x93e61be998fcc18e93617ddc1246cc1321221a2d"
+    },
+    "entityProviderDeploymentBlock": 25
+  },
+  "deposit": {
+    "afterDeposit": {
+      "external": {
+        "__xlnType": "BigInt",
+        "value": "999999000000"
+      },
+      "nonce": {
+        "__xlnType": "BigInt",
+        "value": "1"
+      },
+      "reserve": {
+        "__xlnType": "BigInt",
+        "value": "1000000"
+      }
+    },
+    "amount": {
+      "__xlnType": "BigInt",
+      "value": "1000000"
+    },
+    "before": {
+      "external": {
+        "__xlnType": "BigInt",
+        "value": "1000000000000"
+      },
+      "nonce": {
+        "__xlnType": "BigInt",
+        "value": "0"
+      },
+      "reserve": {
+        "__xlnType": "BigInt",
+        "value": "0"
+      }
+    },
+    "depositEvent": {
+      "args": {
+        "entity": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "newBalance": {
+          "__xlnType": "BigInt",
+          "value": "1000000"
+        },
+        "tokenId": {
+          "__xlnType": "BigInt",
+          "value": "1"
+        }
+      },
+      "blockHash": "0x0000000000000032287417dc1a5a0c93463f16860e2904a86d516e411573c9d9",
+      "blockNumber": 50,
+      "logIndex": 1,
+      "name": "ReserveUpdated",
+      "transactionHash": "0xd619b6311e620d17337ac27590371645a14acea4d8950f6834c939b89e319261"
+    },
+    "entity": "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "holder": "0x928C9af0651632157ef27A2cf17Ca72c575a4d21",
+    "token": "0x6c4e1ee99c5a44cb5dfa612bb807d5de3fa440cc"
+  },
+  "evidenceKind": "direct-native-tvm-contract",
+  "fixtureAuthority": {
+    "entity": "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "keyPath": "/tmp/xln-tron-native-20260905/governance-board-0000000000000000000000000000000000000000000000000000000000000002-a38512D88cAf78100836b784f382f1d8A8397d0F.key",
+    "nextAddress": "0xa38512D88cAf78100836b784f382f1d8A8397d0F"
+  },
+  "kind": "NATIVE_TRON_BOARD_ROTATION_DEPOSIT_WITHDRAW",
+  "registration": {
+    "actionHash": "0xf4026016f7e6cd30a716a831320e48f4903a3d799736581b4adc4d1e8ee626ef",
+    "argumentsHash": "0x8990f7a667173872923a4d46f6ef475c27e499f1cb4fd67caf92c5b517463bc8",
+    "blockNumber": 49,
+    "boardHash": "0xaf753962fee609c6524d70d99be856ff1fdae7e822b56bb1730cead828d8dd47",
+    "controlId": {
+      "__xlnType": "BigInt",
+      "value": "2"
+    },
+    "dividendId": {
+      "__xlnType": "BigInt",
+      "value": "57896044618658097711785492504343953926634992332820282019728792003956564819970"
+    },
+    "entity": "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "entityNumber": {
+      "__xlnType": "BigInt",
+      "value": "2"
+    },
+    "foundationNonceAfter": {
+      "__xlnType": "BigInt",
+      "value": "2"
+    },
+    "foundationNonceBefore": {
+      "__xlnType": "BigInt",
+      "value": "1"
+    },
+    "supply": {
+      "__xlnType": "BigInt",
+      "value": "100000000000"
+    },
+    "treasury": "0xE1638c28532Fb221773c6D78ea49Dc4Ac19b6226",
+    "txHash": "0xec7ef84e84bdb9818843d2733bb0ebee37ccb38411dc1472e48f1a7f04b946ee"
+  },
+  "runtimeJAuthorityProof": false
+}

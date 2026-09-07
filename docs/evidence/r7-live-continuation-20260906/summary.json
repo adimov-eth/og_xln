@@ -1,0 +1,56 @@
+{
+  "sourceBaseSha": "744817492d41a9ef854d24459e98d90bd259fc0f",
+  "sourceCandidate": "R13 dirty source bound by build-source.json; later formatting and contract changes require new evidence",
+  "scope": "Same immutable R7 exact restore, ordinary native J catch-up, new operator policy commit and WAL reopening",
+  "command": "bun run stand:run --reason r7-live-continuation-r6 --timeout-ms 180000 -- bun /tmp/xln-r7-live-continuation-20260906.ts",
+  "validation": {
+    "restoredHeight": 90,
+    "readyHeight": 92,
+    "commandHeight": 93,
+    "restoredFrames": 67,
+    "workers": 4,
+    "elapsedMs": 1652,
+    "originalAccountsRoots": {
+      "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761:0x83dd36ca656d1fffd5d4eeef5dfc2931f1fa3977": "0x5aeec20ceca7c1e6ad1fce718fe61d5e054e5e2059db1d311ff4281fa24d332b",
+      "0x7093aaaa4f5fcf1b82fe3fb5254ead0af4bb453a7b4982bbefc94c75596d6ba0:0x9e12787132c20677da461cc419ecf3ca138691f6": "0xa5d7b2cd86d898a40b780b961015654dc03ffa743d08fbd6bdfee84d802141a3"
+    },
+    "readyAndAfterPolicyAccountsRoot": "0x8b37a9778d8507495b4be36a6ef1452d068f1aa2b39c357fc34c88a81006c22a",
+    "sourceCopiesUnchanged": true,
+    "h90OutboxUnchanged": true,
+    "linksVerified": 3,
+    "ownedProcessGroupsGone": 3
+  },
+  "limits": [
+    "The policy command is not a financial payment or TPS.",
+    "Due expiry work creates cancellation proposals before readiness; remote ACK settlement is not proven here.",
+    "Two restored local EVM jurisdictions are not Native Tron.",
+    "Historical R7 retains one pending output; this is not a drained workload.",
+    "Full repository check and final release gates remain required."
+  ],
+  "entries": [
+    {
+      "file": "result.json",
+      "sha256": "0c5f59fe468844507a63afb8684c1777bf4871d4d1de33d42d0178a09afc1be7"
+    },
+    {
+      "file": "continuation-roots.json",
+      "sha256": "50a3078765a07368a14fa164fccceb52d0b7841e2152ec993031c77befb8cc17"
+    },
+    {
+      "file": "cleanup.json",
+      "sha256": "4fdab0156932d81a352345ff87842c59511d0978dc747c5230de821b006f83e6"
+    },
+    {
+      "file": "rust-replay-comparison.json",
+      "sha256": "41438c6ff8511654edacfabf639eed539db15ea8447a1c2f51ffb320c4bd8992"
+    },
+    {
+      "file": "build-source.json",
+      "sha256": "4f22a0236311dd81f5e4f6b3c2157d968acfc90e13228772e6a7fa516cafc3cb"
+    },
+    {
+      "file": "driver.ts",
+      "sha256": "31ea456f19a0c8eeb781491365bb51d90fd043d5c8a0223e48bddd6fbe367cb7"
+    }
+  ]
+}

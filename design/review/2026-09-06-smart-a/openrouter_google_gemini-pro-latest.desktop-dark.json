@@ -1,0 +1,510 @@
+{
+  "reviewer": "openrouter/google/gemini-pro-latest",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 800,
+        "typography": 850,
+        "color": 900,
+        "data_legibility": 850,
+        "layout": 800,
+        "visceral_value": 850,
+        "responsive": 750,
+        "consistency": 900,
+        "trust": 850
+      },
+      "total": 840,
+      "top_issues": [
+        "The main explanation card ('Two colours, one rule') pushes primary actions (Pay/Receive) down the visual hierarchy."
+      ],
+      "fixes": [
+        "Move the legend tooltips to an info icon or a collapsible banner after first dismissal."
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 850,
+        "color": 900,
+        "data_legibility": 900,
+        "layout": 850,
+        "visceral_value": 850,
+        "responsive": 700,
+        "consistency": 900,
+        "trust": 950
+      },
+      "total": 860,
+      "top_issues": [
+        "Dense information architecture on the right side ('ROUTE' and 'YOUR ACCOUNT WITH H1') competes with the main payment flow."
+      ],
+      "fixes": [
+        "Place route and account details in an expandable 'Advanced Details' accordion to keep the primary payment form clean for novices."
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 900,
+        "premium": 850,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 900,
+        "layout": 900,
+        "visceral_value": 800,
+        "responsive": 850,
+        "consistency": 900,
+        "trust": 950
+      },
+      "total": 875,
+      "top_issues": [
+        "The 'Done' button and action buttons (Copy, Download, Print) have equal visual weight in the container row."
+      ],
+      "fixes": [
+        "Make 'Done' a clear primary filled button, and convert the utility actions to secondary outlined buttons or icons."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 800,
+        "typography": 800,
+        "color": 850,
+        "data_legibility": 900,
+        "layout": 850,
+        "visceral_value": 800,
+        "responsive": 800,
+        "consistency": 900,
+        "trust": 850
+      },
+      "total": 840,
+      "top_issues": [
+        "The QR code is massively scaled, dominating the screen disproportionately to the inputs below it."
+      ],
+      "fixes": [
+        "Constrain the max-width of the QR code and align it alongside the capacity parameters on wider screens."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 900,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 850,
+        "layout": 850,
+        "visceral_value": 900,
+        "responsive": 700,
+        "consistency": 900,
+        "trust": 900
+      },
+      "total": 850,
+      "top_issues": [
+        "The order book spread (1.0000 USDC) is subtle and easily missed between the dense bid/ask tables."
+      ],
+      "fixes": [
+        "Increase the contrast and typographical hierarchy of the spread indicator row in the orderbook."
+      ]
+    },
+    {
+      "file": "05b-swap-cross.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 850,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 800,
+        "layout": 800,
+        "visceral_value": 850,
+        "responsive": 700,
+        "consistency": 900,
+        "trust": 850
+      },
+      "total": 825,
+      "top_issues": [
+        "The popover for 'Account opening requested' obscures the collateral selection buttons."
+      ],
+      "fixes": [
+        "Position toast notifications or system tooltips above or below active interaction zones, not over them."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 850,
+        "color": 900,
+        "data_legibility": 850,
+        "layout": 850,
+        "visceral_value": 800,
+        "responsive": 750,
+        "consistency": 900,
+        "trust": 900
+      },
+      "total": 850,
+      "top_issues": [
+        "'They owe you, uncovered' and 'Their debt covered by collateral' rows require high cognitive load to map to the bar colors."
+      ],
+      "fixes": [
+        "Add small color-coded dot indicators directly next to the text labels in the right-hand summary pane."
+      ]
+    },
+    {
+      "file": "06b-dispute.png",
+      "scores": {
+        "hierarchy": 900,
+        "premium": 850,
+        "typography": 850,
+        "color": 900,
+        "data_legibility": 900,
+        "layout": 850,
+        "visceral_value": 850,
+        "responsive": 800,
+        "consistency": 900,
+        "trust": 950
+      },
+      "total": 875,
+      "top_issues": [
+        "The destructive action 'Dispute this account...' is the only button, making backing out rely solely on the small 'x'."
+      ],
+      "fixes": [
+        "Add an explicit 'Cancel' secondary button next to the 'Dispute' button."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 900,
+        "layout": 850,
+        "visceral_value": 800,
+        "responsive": 800,
+        "consistency": 900,
+        "trust": 850
+      },
+      "total": 850,
+      "top_issues": [
+        "The right-side detail panel feels detached from the selected row on the left."
+      ],
+      "fixes": [
+        "Add a visual active state (e.g., highlighted background or border) to the selected transaction row in the list."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 900,
+        "layout": 850,
+        "visceral_value": 800,
+        "responsive": 800,
+        "consistency": 900,
+        "trust": 900
+      },
+      "total": 855,
+      "top_issues": [
+        "Very similar to 07-activity; distinguishing between 'settled' and 'filled' states relies heavily on small green text."
+      ],
+      "fixes": [
+        "Use distinct iconography for different transaction end-states (e.g., checkmark for settled, stacked coins for filled)."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 900,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 850,
+        "layout": 850,
+        "visceral_value": 850,
+        "responsive": 800,
+        "consistency": 900,
+        "trust": 900
+      },
+      "total": 860,
+      "top_issues": [
+        "The 'Danger' zone (Forget vault) is grouped closely with standard runtime settings without a distinct visual separator."
+      ],
+      "fixes": [
+        "Enclose the 'Vault' section in a subtly distinct background or add a clearer visual divider to indicate high-risk actions."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 850,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 850,
+        "layout": 750,
+        "visceral_value": 800,
+        "responsive": 750,
+        "consistency": 900,
+        "trust": 850
+      },
+      "total": 825,
+      "top_issues": [
+        "The 'From' and 'To' grid matrix lacks clear directional flow, making the movement axis ambiguous."
+      ],
+      "fixes": [
+        "Introduce a downward directional arrow between the 'From' row and the 'To' row to reinforce the flow of funds."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 800,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 850,
+        "layout": 800,
+        "visceral_value": 750,
+        "responsive": 800,
+        "consistency": 900,
+        "trust": 850
+      },
+      "total": 825,
+      "top_issues": [
+        "The top navigation cards (Sovereignty, Move, etc.) look like informational panels rather than actionable navigation buttons."
+      ],
+      "fixes": [
+        "Add subtle hover states or trailing chevron icons to the top cards to indicate they are clickable navigation nodes."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 850,
+        "layout": 850,
+        "visceral_value": 800,
+        "responsive": 750,
+        "consistency": 900,
+        "trust": 850
+      },
+      "total": 840,
+      "top_issues": [
+        "The stack of primary-colored action buttons on the bottom right (Receive, USDC to wallet, Gas to wallet, etc.) creates choice paralysis."
+      ],
+      "fixes": [
+        "Condense the specific asset transfer buttons into a single primary 'Withdraw/Transfer' dropdown or focused action flow."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 800,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 850,
+        "layout": 800,
+        "visceral_value": 750,
+        "responsive": 800,
+        "consistency": 900,
+        "trust": 850
+      },
+      "total": 825,
+      "top_issues": [
+        "The 'Term' inputs (1 hour, 1 day, 1 month) function as radio selections but look like empty text input fields."
+      ],
+      "fixes": [
+        "Style the term selections clearly as a segmented control or selectable chips rather than input boxes."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 900,
+        "layout": 850,
+        "visceral_value": 800,
+        "responsive": 800,
+        "consistency": 900,
+        "trust": 900
+      },
+      "total": 855,
+      "top_issues": [
+        "Lengthy explanatory text blocks reduce the scannability of the actual threshold and signer data."
+      ],
+      "fixes": [
+        "Move the educational copy ('One key runs this entity today...') into expandable tooltips or a side 'Learn' panel."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 850,
+        "typography": 850,
+        "color": 900,
+        "data_legibility": 850,
+        "layout": 850,
+        "visceral_value": 850,
+        "responsive": 800,
+        "consistency": 900,
+        "trust": 950
+      },
+      "total": 865,
+      "top_issues": [
+        "The 'Save evidence bundle' button is visually disconnected from the counterparty list it applies to."
+      ],
+      "fixes": [
+        "Ensure the evidence bundle action is contextually grouped with the specific counterparty or clearly labeled as a global export."
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 900,
+        "premium": 950,
+        "typography": 850,
+        "color": 900,
+        "data_legibility": 900,
+        "layout": 900,
+        "visceral_value": 950,
+        "responsive": 600,
+        "consistency": 900,
+        "trust": 900
+      },
+      "total": 875,
+      "top_issues": [
+        "Extremely high information density; the absolute scale bars in the table cells become too small to read accurately at low balances."
+      ],
+      "fixes": [
+        "Implement a hover state over table rows that temporarily magnifies the scale bar and shows exact unrounded numerical tooltips."
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 900,
+        "premium": 900,
+        "typography": 900,
+        "color": 850,
+        "data_legibility": 900,
+        "layout": 900,
+        "visceral_value": 850,
+        "responsive": 850,
+        "consistency": 900,
+        "trust": 850
+      },
+      "total": 880,
+      "top_issues": [
+        "The palette darkens the background but keeps the dense 'Desk' data visible, which can cause visual interference with the menu text."
+      ],
+      "fixes": [
+        "Increase the background blur (backdrop-filter) behind the command palette to better isolate it from complex underlying screens."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 851,
+    "verdict": "A highly technical, trustworthy, and visually sophisticated interface that perfectly serves power users and liquidity operators. However, its uncompromising commitment to exposing raw mechanics (channels, collateral, frames) creates a steep learning curve that will overwhelm everyday consumers.",
+    "priority_fixes": [
+      "Implement a 'Simple/Advanced' toggle globally to hide route, frame, and collateral mechanics for novice users.",
+      "Add explicit visual directional flow (arrows) to the 'Move' and 'Swap' matrix screens to reduce cognitive load.",
+      "Condense stacked action buttons (like in Assets) into clear primary/secondary hierarchies to prevent choice paralysis.",
+      "Ensure mobile/responsive layouts (currently completely absent in desktop-centric designs) adapt complex tables into stacked cards.",
+      "Replace dense explanatory text blocks with progressive disclosure (tooltips/info icons) to clean up form views."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 40,
+        "verdict": "I have no idea what a 'hub', 'collateral', or 'frame' is; I just want to send twenty bucks.",
+        "blockers": [
+          "01-home.png (confused by on-chain vs reserve vs promised)",
+          "02-pay.png (overwhelmed by route and account technicals)"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 95,
+        "verdict": "The absolute scale bars instantly show me my liquidity layout better than any Lightning wallet I've ever used.",
+        "blockers": []
+      },
+      {
+        "name": "Anya",
+        "satisfied": 90,
+        "verdict": "Integrating an order book directly into the bilateral swap view is incredibly powerful.",
+        "blockers": [
+          "05-swap.png (needs better visibility on the spread and depth grouping)"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 85,
+        "verdict": "I can easily export the deterministic receipts for the board, though managing multi-sig thresholds looks a bit static.",
+        "blockers": [
+          "14-ownership.png (needs clearer UI for executing multi-party threshold signatures)"
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 88,
+        "verdict": "Creating an invoice with the exact capacity routed is brilliant, and the receipts look highly professional.",
+        "blockers": [
+          "04-receive.png (QR code is huge, form feels unoptimized for quick invoice generation)"
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 98,
+        "verdict": "This is the most transparent, deterministic self-custody UI I have ever audited; the dispute flow is beautiful.",
+        "blockers": []
+      },
+      {
+        "name": "Lena",
+        "satisfied": 45,
+        "verdict": "I literally can't read these tables on my phone, and there's too much text to parse while in line at a register.",
+        "blockers": [
+          "16-desk.png (impossible on mobile)",
+          "02-pay.png (too dense for one-handed operation)"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 98,
+        "verdict": "The 'Desk' view feels like a Bloomberg terminal for channel liquidity; it's exactly what I need to run my node.",
+        "blockers": []
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 85,
+        "verdict": "I can see the exact route across networks, though understanding the collateral buffer requirement takes a minute.",
+        "blockers": [
+          "05b-swap-cross.png (the overlapping popover made me miss the collateral selector)"
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 90,
+        "verdict": "The uncompromising 'bars to scale' rule and 'Provable' explanations instantly signal that this product takes security seriously.",
+        "blockers": []
+      }
+    ]
+  }
+}

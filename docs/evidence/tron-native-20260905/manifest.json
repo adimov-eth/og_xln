@@ -1,0 +1,88 @@
+{
+  "sourceBaseSha": "b97c454d605e750a08da7ff6baab645330175468",
+  "contractTree": "49bb4e4e95e5e166af95eb3b5264c8c1e17654a5",
+  "nativeRuntime": "java-tron 4.8.2.1 stock ARM JAR",
+  "scope": "Native private TVM graph, canonical JAdapter reserve roundtrip, numbered Entity2 CONTROL/DIVIDEND supply, board rotation with old-board rejection/new-board payout, and explicit recovery of an unsolid activation rolled back on restart. No Runtime authority-proof, public consensus, real USDT, full cross-J or TS/Rust parity claim.",
+  "entries": [
+    {
+      "file": "deployed-graph.json",
+      "sha256": "ac060674c93dbf9dd3e056e39465fa870da0397221da18c21f5362a185a44da0"
+    },
+    {
+      "file": "compiler-artifacts.json",
+      "sha256": "72ca65f6f6f3486d62ece2b3ea04d929026b6c519f957a9e38919c5e657e0f8a"
+    },
+    {
+      "file": "mainnet-parameters.json",
+      "sha256": "c36f9830aed426c3b3fcbbf85487b4c9da8777f8db5cd7b3c7f763713c95ae7a"
+    },
+    {
+      "file": "hanko-diagnosis.json",
+      "sha256": "63dae13ffbf54b3fe8a33a5183088cf94edd9df1eb29968a13641cbf8b703898"
+    },
+    {
+      "file": "calibration-vm.json",
+      "sha256": "846472f55dc8bc71f6eaf2539c2dc01118f9bb0e0563f1462e434957766c3b09"
+    },
+    {
+      "file": "economic.json",
+      "sha256": "05eccd4db4cb8f7a54f34d69a44ba97f3358104d68f351e13dc9a389f46fb2d4"
+    },
+    {
+      "file": "probe.json",
+      "sha256": "a351309cc3fd20143f0127a4290a03dcf4e672ec69b8ebea6b7e342583389fc4"
+    },
+    {
+      "file": "prepared-transactions.json",
+      "sha256": "a75c06b2ddad0d907d61329e143f2dd89bb1ae411d9c5b466bdefeac450228d4"
+    },
+    {
+      "file": "bytecode-metadata-review.json",
+      "sha256": "bb6dce7bce721149b6a82193984e5b39dc7d9e0e0458ff77f2cdb5238ab79e05"
+    },
+    {
+      "file": "runtime-import-first-red.log",
+      "sha256": "b39a9c1db99e8913a0c5aacc641340da27001293a9cb35064fcb2c88ecdb38c0"
+    },
+    {
+      "file": "native-provision.log",
+      "sha256": "64f44a7633bb466aca4a24e928d3d154948bb1a89e6bb9be53e9f7f561f6a2ab"
+    },
+    {
+      "file": "runtime-import-economic.json",
+      "sha256": "5375ebc7079945edce9190d6238c43b2587acb6b9013f8f0a7d338a154c4b877"
+    },
+    {
+      "file": "runtime-import-boundary.json",
+      "sha256": "082ae0a12d12c96cf90b701a35ba4ede11d62edb178dcab644bc4483600d8125"
+    },
+    {
+      "file": "governance-economic.json",
+      "sha256": "3807d64edac9313d8cba73b17579e75b033a1755b6d9859a9e54c83dc32fb41f"
+    },
+    {
+      "file": "governance-summary.json",
+      "sha256": "71bc43da60a0211b77cd7af9675be19efea5f1c01e2bce04e3da2e0eef29d3db"
+    },
+    {
+      "file": "governance-r1-first-red.log",
+      "sha256": "48d2ea5dd7633a430dc7267967f201b4dede633710404295108f84228624868f"
+    },
+    {
+      "file": "governance-r1-resume-first-red.log",
+      "sha256": "8294e22976da5d404a4fe113138035cd443959b047a042d38b85739a68ab0a8d"
+    },
+    {
+      "file": "governance-recovery.log",
+      "sha256": "1a3eb9a9d655b76c9ee24f67177ad26b1ed7cab80abf8df39c2cab9586526d29"
+    },
+    {
+      "file": "governance-unsolid-rollback.json",
+      "sha256": "c226999631ed934b696412f4900557b9b0ec34640b7b94c300cf2aaa46b30174"
+    },
+    {
+      "file": "governance-r1-progress.json",
+      "sha256": "0c0f5184e6ca389eabdd9c81df3b6837085e04585584834173371f09d2bc651b"
+    }
+  ]
+}

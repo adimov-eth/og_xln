@@ -4,6 +4,12 @@ Status: **canonical engineering axiom**
 Scope: architecture, implementation, security, reliability, performance, UX,
 operations, and release readiness in any codebase.
 
+Execution policy comes from the project's `AGENTS.md`; in xln, follow
+[the agent workflow](agent-workflow.md) on `main`, one implementer per area.
+This audit protocol is used when its audit/release scope is requested. It does
+not authorize external model calls or insert an audit before the first required
+production artifact. Reviewer opinions never substitute for its evidence gates.
+
 The governing rule is simple:
 
 > No quality claim outranks current, reproducible evidence attached to an exact
@@ -268,21 +274,22 @@ Roles are separated:
    immutable scope without seeing A’s conclusions.
 4. **Adjudicator:** traces real reachability and rejects findings that ignore the
    system’s state, nonce, authority, or consensus model.
-5. **Fixer:** implements only confirmed root causes in an isolated worktree.
+5. **Fixer:** implements the confirmed root cause in its exclusively owned area,
+   following the project's workspace policy.
 6. **Verifier:** independently reruns the counterexample, L1, L2, and owning
    broad gate on the final candidate SHA.
 
-Use available concurrency for independent modules, not multiple writers in one
-worktree. The integrator alone resolves overlaps and owns the final candidate.
+Use available concurrency for disjoint areas. In xln, writers share `main` with
+exclusive file ownership; the integrator resolves overlaps and owns commits.
 
 Canonical staffing for one release epoch:
 
-- exactly one writer owns the mutable integration worktree;
+- exactly one implementer owns each area; one integrator owns the candidate;
 - zero to three read-only auditors inspect bounded scopes in parallel;
 - auditors work from an immutable SHA whenever a verdict can affect a gate;
 - no auditor commits, rebases, merges, or fixes inside the writer worktree;
-- a new writer starts only after the previous epoch lands in clean `main` or is
-  explicitly abandoned.
+- reviewers start after their area's diff is stable; writers stop before a
+  shared-tree commit and unrelated changes are preserved.
 
 Recommended reviewer allocation by task class:
 
@@ -486,8 +493,8 @@ The protocol is working when a new engineer can answer, from generated data:
 One release epoch has one scope, one writer, and one immutable candidate:
 
 1. Declare the product paths being released and the modules explicitly deferred.
-2. Start one writer worktree from current `main`; preserve unrelated user work
-   in place and integrate it only by content-aware commit or merge.
+2. Work on current `main` with exclusive area ownership; preserve unrelated
+   user work in place. Only the integrator commits after writers stop.
 3. Run read-only investigations in parallel. Adjudicate P0/P1 twice before
    editing when the root cause or ownership boundary is uncertain.
 4. Fix in priority order: irreversible money/authority, deterministic replay,
@@ -500,22 +507,20 @@ One release epoch has one scope, one writer, and one immutable candidate:
 6. Prove every fix with its recorded exact commands: L1 then L2, followed by
    `bun run check`. Create a candidate commit only when the mutable worktree has
    no unexplained changes.
-7. Pin two blind independent auditors from different model families to the
+7. When the owner requests an external quorum, pin its independent auditors from different model families to the
    exact candidate SHA and invariant question. The primary adjudicates concrete
    claims against the code and trust model; scores and votes do not close a
    finding. Any semantic fix creates a new candidate and invalidates affected
    tests and quorum.
-8. On the final unchanged candidate, run browser/F12 evidence and the owning L3
-   gate exactly once, then integrate directly into `main`. A gate failure returns
+8. On the final unchanged candidate, run browser/F12 evidence for frontend or
+   browser-runtime changes and the owning L3 gate, then checkpoint `main`. A gate failure returns
    to the smallest reproducing L1/L2; never rerun an unchanged broad gate.
-9. Remove merged temporary worktrees and branches. Preserve an annotated audit
-   or release tag when the snapshot must remain addressable.
+9. Preserve the candidate SHA and evidence. Never remove another owner's
+   workspace or branch as housekeeping.
 
-The handoff packet contains: final SHA, scope and deferrals, open findings,
-current evidence commands/results, module fingerprints, frozen boundaries,
-operator constraints, and the first three tasks of the next phase. A handoff is
-valid only from clean `main`; a new main agent never inherits an unexplained
-dirty integration worktree.
+The handoff contains only: current SHA, last green command, first red
+command/error, artifact path, next single command, and remaining final gates.
+The artifact holds detailed evidence and records any existing dirty work.
 
 When a core-to-product phase boundary is declared, the verified core becomes a
 change-controlled dependency. Product/UI work may consume its public API but

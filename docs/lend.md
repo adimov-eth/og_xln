@@ -1,10 +1,16 @@
 # XLN Lend/Borrow
 
-**Status:** design target, not part of the current production gate.
+**Status:** required for first launch by owner instruction on 2026-09-07
+(Istanbul time); implementation is not yet production-ready.
 
-This document parks the Lending workstream outside the swap/release TODO so the
-current production baseline can stay focused on direct payments and direct
-same-chain/cross-chain swaps.
+The owner now requires a hub-enabled Lending extension: users explicitly move
+current balances into N-day term positions, and the hub manually approves
+borrowers after underwriting. This supersedes the former out-of-release scope
+decision. Existing live admission still rejects the six Lending AccountTx kinds;
+changing that gate alone does not implement the owner's requested economics.
+The code review must first resolve term-claim enforcement, principal accounting,
+approval authority and default handling. The design below predates this update;
+it is context, not evidence that those requirements already work.
 
 ## Product Shape
 
@@ -115,4 +121,3 @@ Implement only with tests that prove the full lifecycle:
 - third-party secondary loan trading;
 - multihop lending routes;
 - external oracle pricing.
-

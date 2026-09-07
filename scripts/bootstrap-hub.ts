@@ -22,6 +22,9 @@ import { requireJurisdictionBlockTimeMs } from '../core/orchestrator/mesh/mesh-j
 import type { ConsensusConfig } from '../core/entity/types';
 import type { RuntimeReplica } from '../core/runtime/types';
 import { importEntity } from '../core/runtime/registration/entity-creation';
+import { buildHubConfig } from '../core/entity/tx/handlers/account/lifecycle/admin';
+import { canonicalConsensusValuesEqual } from '../core/protocol/serialization/binary-codec';
+import type { EntityTx } from '../core/types/entity-tx';
 
 const args = process.argv.slice(2);
 
@@ -191,34 +194,38 @@ export async function bootstrapHub(env?: RuntimeReplica, config?: Partial<HubCon
     });
   }
 
-  enqueueRuntimeInput(env, {
-    runtimeTxs: [],
-    entityInputs: [{
-      entityId,
-      signerId: signerAddress,
-      entityTxs: [
-        {
-          type: 'setHubConfig',
-          data: {
-            hubName: hubConfig.name,
-            matchingStrategy: hubConfig.matchingStrategy ?? 'amount',
-            ...(hubConfig.policyVersion !== undefined ? { policyVersion: hubConfig.policyVersion } : {}),
-            routingFeePPM: hubConfig.routingFeePPM ?? 100,
-            baseFee: hubConfig.baseFee ?? 0n,
-            swapTakerFeeBps: hubConfig.swapTakerFeeBps ?? 1,
-            disputeAutoFinalizeMode: hubConfig.disputeAutoFinalizeMode ?? 'auto',
-            ...(hubConfig.minCollateralThreshold !== undefined ? { minCollateralThreshold: hubConfig.minCollateralThreshold } : {}),
-            ...(hubConfig.c2rWithdrawSoftLimit !== undefined ? { c2rWithdrawSoftLimit: hubConfig.c2rWithdrawSoftLimit } : {}),
-            ...(hubConfig.rebalanceBaseFee !== undefined ? { rebalanceBaseFee: hubConfig.rebalanceBaseFee } : {}),
-            ...(hubConfig.rebalanceLiquidityFeeBps !== undefined ? { rebalanceLiquidityFeeBps: hubConfig.rebalanceLiquidityFeeBps } : {}),
-            ...(hubConfig.rebalanceGasFee !== undefined ? { rebalanceGasFee: hubConfig.rebalanceGasFee } : {}),
-            ...(hubConfig.rebalanceTimeoutMs !== undefined ? { rebalanceTimeoutMs: hubConfig.rebalanceTimeoutMs } : {}),
-          },
-        },
-      ],
-    }],
-  });
-  await drainBootstrapInput(env, 'hub-config');
+  const configInput: Extract<EntityTx, { type: 'setHubConfig' }> = {
+    type: 'setHubConfig',
+    data: {
+      hubName: hubConfig.name,
+      matchingStrategy: hubConfig.matchingStrategy ?? 'amount',
+      ...(hubConfig.policyVersion !== undefined ? { policyVersion: hubConfig.policyVersion } : {}),
+      routingFeePPM: hubConfig.routingFeePPM ?? 100,
+      baseFee: hubConfig.baseFee ?? 0n,
+      swapTakerFeeBps: hubConfig.swapTakerFeeBps ?? 1,
+      disputeAutoFinalizeMode: hubConfig.disputeAutoFinalizeMode ?? 'auto',
+      ...(hubConfig.minCollateralThreshold !== undefined ? { minCollateralThreshold: hubConfig.minCollateralThreshold } : {}),
+      ...(hubConfig.c2rWithdrawSoftLimit !== undefined ? { c2rWithdrawSoftLimit: hubConfig.c2rWithdrawSoftLimit } : {}),
+      ...(hubConfig.rebalanceBaseFee !== undefined ? { rebalanceBaseFee: hubConfig.rebalanceBaseFee } : {}),
+      ...(hubConfig.rebalanceLiquidityFeeBps !== undefined ? { rebalanceLiquidityFeeBps: hubConfig.rebalanceLiquidityFeeBps } : {}),
+      ...(hubConfig.rebalanceGasFee !== undefined ? { rebalanceGasFee: hubConfig.rebalanceGasFee } : {}),
+      ...(hubConfig.rebalanceTimeoutMs !== undefined ? { rebalanceTimeoutMs: hubConfig.rebalanceTimeoutMs } : {}),
+    },
+  };
+  const previousConfig = findHubReplica(env, entityId)?.state.hubRebalanceConfig;
+  // Restart reuses the committed policy. Re-admitting an identical config
+  // signs fresh Account policy proposals while peer sessions are still down.
+  // Canonical normalization also keeps real changes on the normal transaction path.
+  if (!previousConfig || !canonicalConsensusValuesEqual(
+    previousConfig,
+    buildHubConfig(previousConfig, configInput.data).config,
+  )) {
+    enqueueRuntimeInput(env, {
+      runtimeTxs: [],
+      entityInputs: [{ entityId, signerId: signerAddress, entityTxs: [configInput] }],
+    });
+    await drainBootstrapInput(env, 'hub-config');
+  }
   if (!findHubReplica(env, entityId)?.state.hubRebalanceConfig) {
     throw new Error(`HUB_BOOTSTRAP_CONFIG_COMMIT_MISSING:${entityId}`);
   }

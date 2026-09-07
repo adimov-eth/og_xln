@@ -35,7 +35,19 @@ async function localGates(): Promise<string> {
   gate(html.includes('<title>BrainVault — Your wallet, mined from memory</title>'), 'title drifted');
   gate(html.includes('<link rel="canonical" href="https://brainvault.sh/" />'), 'canonical URL drifted');
   gate(html.includes('bunx brainvault'), 'primary launch command disappeared');
-  gate(html.includes('brainvault@2.2.0'), 'audited package version disappeared');
+  gate(!/brainvault@\d/.test(html), 'landing install commands must use latest');
+  gate((html.match(/data-variant-button=/g) ?? []).length === 3, 'exactly three A/B/C options required');
+  gate(['a', 'b', 'c'].every(name => html.includes(`data-variant-button="${name}"`)), 'A/B/C options drifted');
+  const installer = html.match(/<div class="installer"[\s\S]*?<\/section>/)?.[0];
+  gate(installer && !installer.includes('--ignore-scripts'), 'advanced flags belong in the audit guide');
+  const bodyWords = html.replace(/<head>[\s\S]*?<\/head>/g, '').replace(/<svg[\s\S]*?<\/svg>/g, '').replace(/<[^>]*>/g, ' ').trim().split(/\s+/).length;
+  gate(bodyWords <= 250, 'landing copy exceeds its 250-word budget, including collapsed content');
+  gate((html.match(/<section\b/g) ?? []).length === 3, 'landing must stay at three sections');
+  gate(!html.includes('<video autoplay'), 'demo must remain opt-in');
+  const schema = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
+  gate(schema, 'structured metadata missing');
+  const schemaHash = new Bun.CryptoHasher('sha256').update(schema).digest('base64');
+  gate(headers.includes(`'sha256-${schemaHash}'`), 'CSP structured metadata hash drifted');
   gate(html.includes('data-copy-target="#audit-prompt"'), 'copyable audit prompt disappeared');
   gate(html.includes('never a safety score'), 'adversarial audit instructions drifted');
   gate(!html.includes('__cf_email__') && !html.includes('/cdn-cgi/'), 'Cloudflare rewrote source HTML');
@@ -77,7 +89,7 @@ async function liveGates(localHtml: string): Promise<void> {
 
   const liveHtml = await response.text();
   gate(liveHtml === localHtml, 'deployed HTML differs byte-for-byte from source');
-  gate(liveHtml.includes('brainvault@2.2.0'), 'Cloudflare corrupted the pinned npm command');
+  gate(liveHtml.includes('npm install -g brainvault'), 'Cloudflare corrupted the npm command');
   gate(!liveHtml.includes('__cf_email__') && !liveHtml.includes('/cdn-cgi/'), 'Cloudflare injected email decoding');
 
   for (const asset of [

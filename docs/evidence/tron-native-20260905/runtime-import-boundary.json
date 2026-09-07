@@ -1,0 +1,76 @@
+{
+  "name": "native-runtime-foundation-receipt-proof-missing",
+  "candidateBaseSha": "436835aaf476dfb07a5f8749fe4f3056348aba22",
+  "candidateIncludesSharedWorkingTree": true,
+  "javaTronSourceSha": "f8b05d40abc949fa588ab64d8fd8fd82845ebeed",
+  "chainId": 1208511695,
+  "kind": "production-runtime-import-first-red",
+  "command": "bun run stand:run --reason native-runtime-import --wait-ms 1000 --timeout-ms 60000 -- bun /tmp/xln-tron-native-20260905/run-runtime-import.ts",
+  "standLockHeld": true,
+  "wallBudgetMs": 60000,
+  "exitCode": 1,
+  "firstRed": {
+    "code": "J_AUTHORITY_RECEIPT_MPT_PROOF_MISSING",
+    "event": "FoundationBootstrapped",
+    "blockNumber": 25,
+    "transactionHash": "0xf8884178ffab0c191f8c798f8d424f6f191eee28305e471d6cdfad0085120b1b",
+    "logIndex": 3,
+    "lastSyncedBlock": 24,
+    "observedThroughBlock": 47,
+    "watcherFailureStep": "authenticatedReceipts"
+  },
+  "precedingEconomicResult": {
+    "file": "runtime-import-economic.json",
+    "reserveBefore": "0",
+    "reserveAfterDeposit": "1000000",
+    "reserveAfterWithdrawal": "0",
+    "externalBefore": "1000000000000",
+    "externalAfter": "1000000000000",
+    "nonceBefore": "3",
+    "nonceAfter": "4",
+    "depositBlock": 46,
+    "withdrawalBlock": 47
+  },
+  "protocolBoundary": "Native Transaction Merkle commitment includes ret status but not TransactionInfo logs/returned bytes. Existing certified authority requires Ethereum receipt MPT. No proof bypass applied.",
+  "pendingOwnerChoice": "Bind a distinct native authority evidence variant to managed validating FullNode execution, or keep native authority import closed pending independently verifiable execution proof.",
+  "remainingGates": [
+    "approved native authority trust contract and evidence schema",
+    "native watcher to Entity to batch to receipt",
+    "native/EVM full-fill cross-J scenario",
+    "native/EVM partial-fill, close and crash recovery",
+    "identical native-observation WAL TS/Rust roots and ordered outputs",
+    "full bun run check"
+  ],
+  "logs": ["runtime-import-first-red.log"],
+  "scope": "Actual private java-tron TVM execution and fail-closed production import boundary. No native authority, full cross-J, mainnet, or TPS success claim. Native processes were stopped and the stand released.",
+  "candidateSourceHashes": [
+    {
+      "path": "core/jurisdiction/adapter/kernel/config.ts",
+      "sha256": "a350ca147632df4437d48aab8e24fbbea364a1af3fc279eae7bc203dce1dd692"
+    },
+    {
+      "path": "core/jurisdiction/adapter/kernel/jurisdiction-loader.ts",
+      "sha256": "9235a956006647d845d47b6ad80c2a26d3738bc7cc384349e2197000a418732b"
+    },
+    {
+      "path": "core/jurisdiction/adapter/kernel/retry.ts",
+      "sha256": "b7a62878d196698b45006c888097f3d43165d58756d177eb6150904e691735b1"
+    },
+    {
+      "path": "core/orchestrator/j-select/jurisdictions.ts",
+      "sha256": "6123354edd4c591457863af2b577c78a5f76a4cff5c38a53541b11d07a90427c"
+    },
+    {
+      "path": "core/orchestrator/j-select/jurisdiction-select.ts",
+      "sha256": "249424907c2bd51728c14c7892be19f6c9abb8733c3d55314fcde9dcc8b3c351"
+    },
+    {
+      "path": "core/orchestrator/bootstrap/contract-readiness.ts",
+      "sha256": "b12e4a3e2d03a3e9a7cd95b812b10a45c0ab59c5bc77ed3a8ab798918bb0cbbc"
+    },
+    {
+      "path": "jurisdictions/scripts/compile-tron.cjs",
+      "sha256": "15eb1968ce064c74cb920745f53d64715ab6258f8417e4ceb57524671b41dd8e"
+    }
+  ]
+}

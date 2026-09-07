@@ -1,0 +1,429 @@
+{
+  "durationMs": 9734,
+  "info": {
+    "beginSyncNum": 39,
+    "block": "Num:40,ID:0000000000000028a9bb9c1cb3695670d80d090b59a865576191e98cbb1987d6",
+    "solidityBlock": "Num:40,ID:0000000000000028a9bb9c1cb3695670d80d090b59a865576191e98cbb1987d6",
+    "currentConnectCount": 0,
+    "activeConnectCount": 0,
+    "passiveConnectCount": 0,
+    "totalFlow": 0,
+    "peerList": [],
+    "configNodeInfo": {
+      "codeVersion": "4.8.2.1",
+      "versionNum": "18825",
+      "p2pVersion": "20260905",
+      "listenPort": 19888,
+      "discoverEnable": false,
+      "activeNodeSize": 0,
+      "passiveNodeSize": 0,
+      "sendNodeSize": 0,
+      "maxConnectCount": 30,
+      "sameIpMaxConnectCount": 2,
+      "backupListenPort": 19001,
+      "backupMemberSize": 0,
+      "backupPriority": 0,
+      "dbVersion": 2,
+      "minParticipationRate": 0,
+      "supportConstant": true,
+      "minTimeRatio": 0,
+      "maxTimeRatio": 5,
+      "allowCreationOfContracts": 1,
+      "allowAdaptiveEnergy": 0
+    },
+    "machineInfo": {
+      "threadCount": 85,
+      "deadLockThreadCount": 0,
+      "cpuCount": 32,
+      "totalMemory": 549755813888,
+      "freeMemory": 404924628992,
+      "cpuRate": 0,
+      "javaVersion": "17.0.20.1",
+      "osName": "Mac OS X 26.6.2",
+      "jvmTotalMemory": 2147483648,
+      "jvmFreeMemory": 1843396608,
+      "processCpuRate": 0,
+      "memoryDescInfoList": [
+        {
+          "name": "CodeHeap 'non-nmethods'",
+          "initSize": 2555904,
+          "useSize": 3760512,
+          "maxSize": 8208384,
+          "useRate": 0.45813061377245506
+        },
+        {
+          "name": "Metaspace",
+          "initSize": 0,
+          "useSize": 54389760,
+          "maxSize": -1,
+          "useRate": 0.9939184131736527
+        },
+        {
+          "name": "ZHeap",
+          "initSize": 8388608,
+          "useSize": 304087040,
+          "maxSize": 2147483648,
+          "useRate": 0.1416015625
+        },
+        {
+          "name": "CodeHeap 'profiled nmethods'",
+          "initSize": 2555904,
+          "useSize": 14973568,
+          "maxSize": 121716736,
+          "useRate": 0.12301979573293849
+        },
+        {
+          "name": "Compressed Class Space",
+          "initSize": 0,
+          "useSize": 6245696,
+          "maxSize": 1073741824,
+          "useRate": 0.005816757678985596
+        },
+        {
+          "name": "CodeHeap 'non-profiled nmethods'",
+          "initSize": 2555904,
+          "useSize": 4269184,
+          "maxSize": 121733120,
+          "useRate": 0.03507002860026918
+        }
+      ],
+      "deadLockThreadInfoList": []
+    },
+    "cheatWitnessInfoMap": {}
+  },
+  "parameters": {
+    "chainParameter": [
+      {
+        "key": "getMaintenanceTimeInterval",
+        "value": 21600000
+      },
+      {
+        "key": "getAccountUpgradeCost",
+        "value": 9999000000
+      },
+      {
+        "key": "getCreateAccountFee",
+        "value": 100000
+      },
+      {
+        "key": "getTransactionFee",
+        "value": 1000
+      },
+      {
+        "key": "getAssetIssueFee",
+        "value": 1024000000
+      },
+      {
+        "key": "getWitnessPayPerBlock",
+        "value": 8000000
+      },
+      {
+        "key": "getWitnessStandbyAllowance",
+        "value": 115200000000
+      },
+      {
+        "key": "getCreateNewAccountFeeInSystemContract",
+        "value": 1000000
+      },
+      {
+        "key": "getCreateNewAccountBandwidthRate",
+        "value": 1
+      },
+      {
+        "key": "getAllowCreationOfContracts",
+        "value": 1
+      },
+      {
+        "key": "getRemoveThePowerOfTheGr"
+      },
+      {
+        "key": "getEnergyFee",
+        "value": 100
+      },
+      {
+        "key": "getExchangeCreateFee",
+        "value": 1024000000
+      },
+      {
+        "key": "getMaxCpuTimeOfOneTx",
+        "value": 80
+      },
+      {
+        "key": "getAllowUpdateAccountName"
+      },
+      {
+        "key": "getAllowSameTokenName",
+        "value": 1
+      },
+      {
+        "key": "getAllowDelegateResource",
+        "value": 1
+      },
+      {
+        "key": "getTotalEnergyLimit",
+        "value": 180000000000
+      },
+      {
+        "key": "getAllowTvmTransferTrc10",
+        "value": 1
+      },
+      {
+        "key": "getTotalEnergyCurrentLimit",
+        "value": 180000000000
+      },
+      {
+        "key": "getAllowMultiSign",
+        "value": 1
+      },
+      {
+        "key": "getAllowAdaptiveEnergy"
+      },
+      {
+        "key": "getTotalEnergyTargetLimit",
+        "value": 12500000
+      },
+      {
+        "key": "getTotalEnergyAverageUsage"
+      },
+      {
+        "key": "getUpdateAccountPermissionFee",
+        "value": 100000000
+      },
+      {
+        "key": "getMultiSignFee",
+        "value": 1000000
+      },
+      {
+        "key": "getAllowAccountStateRoot"
+      },
+      {
+        "key": "getAllowProtoFilterNum"
+      },
+      {
+        "key": "getAllowTvmConstantinople",
+        "value": 1
+      },
+      {
+        "key": "getAllowTvmSolidity059",
+        "value": 1
+      },
+      {
+        "key": "getAllowTvmIstanbul",
+        "value": 1
+      },
+      {
+        "key": "getAllowShieldedTRC20Transaction",
+        "value": 1
+      },
+      {
+        "key": "getForbidTransferToContract"
+      },
+      {
+        "key": "getAdaptiveResourceLimitTargetRatio",
+        "value": 10
+      },
+      {
+        "key": "getAdaptiveResourceLimitMultiplier",
+        "value": 1000
+      },
+      {
+        "key": "getChangeDelegation",
+        "value": 1
+      },
+      {
+        "key": "getWitness127PayPerBlock",
+        "value": 128000000
+      },
+      {
+        "key": "getAllowMarketTransaction"
+      },
+      {
+        "key": "getMarketSellFee"
+      },
+      {
+        "key": "getMarketCancelFee"
+      },
+      {
+        "key": "getAllowPBFT"
+      },
+      {
+        "key": "getAllowTransactionFeePool"
+      },
+      {
+        "key": "getMaxFeeLimit",
+        "value": 15000000000
+      },
+      {
+        "key": "getAllowOptimizeBlackHole",
+        "value": 1
+      },
+      {
+        "key": "getAllowNewResourceModel"
+      },
+      {
+        "key": "getAllowTvmFreeze"
+      },
+      {
+        "key": "getAllowTvmVote",
+        "value": 1
+      },
+      {
+        "key": "getAllowTvmLondon",
+        "value": 1
+      },
+      {
+        "key": "getAllowTvmCompatibleEvm"
+      },
+      {
+        "key": "getAllowAccountAssetOptimization"
+      },
+      {
+        "key": "getFreeNetLimit",
+        "value": 600
+      },
+      {
+        "key": "getTotalNetLimit",
+        "value": 43200000000
+      },
+      {
+        "key": "getAllowHigherLimitForMaxCpuTimeOfOneTx",
+        "value": 1
+      },
+      {
+        "key": "getAllowAssetOptimization",
+        "value": 1
+      },
+      {
+        "key": "getAllowNewReward",
+        "value": 1
+      },
+      {
+        "key": "getMemoFee",
+        "value": 1000000
+      },
+      {
+        "key": "getAllowDelegateOptimization",
+        "value": 1
+      },
+      {
+        "key": "getUnfreezeDelayDays",
+        "value": 14
+      },
+      {
+        "key": "getAllowOptimizedReturnValueOfChainId",
+        "value": 1
+      },
+      {
+        "key": "getAllowDynamicEnergy",
+        "value": 1
+      },
+      {
+        "key": "getDynamicEnergyThreshold",
+        "value": 5000000000
+      },
+      {
+        "key": "getDynamicEnergyIncreaseFactor",
+        "value": 2000
+      },
+      {
+        "key": "getDynamicEnergyMaxFactor",
+        "value": 34000
+      },
+      {
+        "key": "getAllowTvmShangHai",
+        "value": 1
+      },
+      {
+        "key": "getAllowCancelAllUnfreezeV2",
+        "value": 1
+      },
+      {
+        "key": "getMaxDelegateLockPeriod",
+        "value": 864000
+      },
+      {
+        "key": "getAllowOldRewardOpt",
+        "value": 1
+      },
+      {
+        "key": "getAllowEnergyAdjustment",
+        "value": 1
+      },
+      {
+        "key": "getMaxCreateAccountTxSize",
+        "value": 1000
+      },
+      {
+        "key": "getAllowStrictMath",
+        "value": 1
+      },
+      {
+        "key": "getConsensusLogicOptimization",
+        "value": 1
+      },
+      {
+        "key": "getAllowTvmCancun",
+        "value": 1
+      },
+      {
+        "key": "getAllowTvmBlob",
+        "value": 1
+      },
+      {
+        "key": "getAllowTvmSelfdestructRestriction",
+        "value": 1
+      },
+      {
+        "key": "getProposalExpireTime",
+        "value": 259200000
+      },
+      {
+        "key": "getAllowTvmOsaka",
+        "value": 1
+      },
+      {
+        "key": "getAllowTvmPrague",
+        "value": 1
+      },
+      {
+        "key": "getAllowHardenResourceCalculation"
+      },
+      {
+        "key": "getAllowHardenExchangeCalculation"
+      }
+    ]
+  },
+  "block": {
+    "blockID": "0000000000000028a9bb9c1cb3695670d80d090b59a865576191e98cbb1987d6",
+    "block_header": {
+      "raw_data": {
+        "timestamp": 1788568272000,
+        "txTrieRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+        "parentHash": "00000000000000275945ae7d1f986c428228228b0b719f7a0e5aa5faeea4a575",
+        "number": 40,
+        "witness_address": "41928c9af0651632157ef27a2cf17ca72c575a4d21",
+        "version": 36
+      },
+      "witness_signature": "cd5ef0891d879480d14cc0b037a821bf836d7ce16f6539fb45cc2f96b7d23737251d9f4c68051a7dce26cb7c72b751e851de98133f225b73e406966ad519b6e100"
+    }
+  },
+  "solid": {
+    "blockID": "00000000000000275945ae7d1f986c428228228b0b719f7a0e5aa5faeea4a575",
+    "block_header": {
+      "raw_data": {
+        "timestamp": 1788568173000,
+        "txTrieRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+        "parentHash": "00000000000000269fcf7e82719a2c03c8ddd1f7c4da9cb5e970ab760f27af97",
+        "number": 39,
+        "witness_address": "41928c9af0651632157ef27a2cf17ca72c575a4d21",
+        "version": 36
+      },
+      "witness_signature": "10337745662ff976b776cc3b54491778759aa56a38ee7adc879d6d75b2b2201166d535209f8b16b34606d716e525e9c4e99d5061ea73eb22b196297ae2d7a2a300"
+    }
+  },
+  "chainId": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": "0x48086ccf"
+  }
+}

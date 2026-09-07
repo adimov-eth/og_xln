@@ -1,0 +1,512 @@
+{
+  "reviewer": "openrouter/anthropic/claude-sonnet-5",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 800,
+        "typography": 800,
+        "color": 780,
+        "data_legibility": 760,
+        "layout": 800,
+        "visceral_value": 760,
+        "responsive": 750,
+        "consistency": 800,
+        "trust": 780
+      },
+      "total": 785,
+      "top_issues": [
+        "Green/violet legend explainer takes prime real estate on first load",
+        "Balance bar has tiny sliver hard to read at small $ amounts"
+      ],
+      "fixes": [
+        "Move onboarding tip to a dismissible tooltip anchored to the bar, not a full card",
+        "Add numeric labels on bar segments over ~2px width"
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 820,
+        "typography": 820,
+        "color": 800,
+        "data_legibility": 820,
+        "layout": 830,
+        "visceral_value": 800,
+        "responsive": 760,
+        "consistency": 820,
+        "trust": 840
+      },
+      "total": 815,
+      "top_issues": [
+        "Route panel and 'before/after' panel both compete for right column attention",
+        "Fee 'under 0.01 USDC' phrasing inconsistent with precision elsewhere"
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 840,
+        "typography": 830,
+        "color": 810,
+        "data_legibility": 840,
+        "layout": 820,
+        "visceral_value": 840,
+        "responsive": 770,
+        "consistency": 830,
+        "trust": 870
+      },
+      "total": 831,
+      "top_issues": [
+        "Frame # and proof hash shown but no explicit chain/jurisdiction context here",
+        "Modal covers home context fully, no quick undo view"
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 790,
+        "color": 770,
+        "data_legibility": 780,
+        "layout": 790,
+        "visceral_value": 760,
+        "responsive": 740,
+        "consistency": 800,
+        "trust": 770
+      },
+      "total": 779,
+      "top_issues": [
+        "QR code lacks amount overlay confirmation before generation",
+        "'Prepare incoming account' concept unexplained for first-timers"
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 800,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 750,
+        "layout": 790,
+        "visceral_value": 810,
+        "responsive": 730,
+        "consistency": 800,
+        "trust": 770
+      },
+      "total": 785,
+      "top_issues": [
+        "Order book red/green colors clash with app's violet=risk convention, could confuse",
+        "Dense numeric book columns not aligned decimal-to-decimal cleanly at a glance"
+      ]
+    },
+    {
+      "file": "05b-swap-cross.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 790,
+        "typography": 790,
+        "color": 760,
+        "data_legibility": 730,
+        "layout": 770,
+        "visceral_value": 780,
+        "responsive": 710,
+        "consistency": 770,
+        "trust": 760
+      },
+      "total": 764,
+      "top_issues": [
+        "Collateral slider + tooltip overlapping buttons creates visual clutter",
+        "Cross-network atomic swap concept (HTLC-like legs) not explained simply enough for non-experts"
+      ],
+      "fixes": [
+        "Separate collateral prep into its own step/screen instead of overlay on swap form",
+        "Add plain-language 'why two steps' one-liner above legs panel"
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 820,
+        "typography": 810,
+        "color": 800,
+        "data_legibility": 840,
+        "layout": 820,
+        "visceral_value": 810,
+        "responsive": 770,
+        "consistency": 820,
+        "trust": 850
+      },
+      "total": 818,
+      "top_issues": [
+        "'Cover it' CTA color same violet as informational text, could be missed",
+        "WETH row all zeros adds noise without toggle to hide"
+      ]
+    },
+    {
+      "file": "06b-dispute.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 810,
+        "typography": 800,
+        "color": 780,
+        "data_legibility": 800,
+        "layout": 810,
+        "visceral_value": 840,
+        "responsive": 760,
+        "consistency": 810,
+        "trust": 880
+      },
+      "total": 812,
+      "top_issues": [
+        "Irreversible action button same size/weight as normal buttons risking misclick",
+        "No explicit confirmation step shown before dispute submission"
+      ],
+      "fixes": [
+        "Require secondary confirm (typed amount or hold-to-confirm) for dispute",
+        "Increase visual weight/warning color intensity on final CTA"
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 790,
+        "typography": 800,
+        "color": 770,
+        "data_legibility": 800,
+        "layout": 800,
+        "visceral_value": 760,
+        "responsive": 760,
+        "consistency": 810,
+        "trust": 800
+      },
+      "total": 790,
+      "top_issues": [
+        "Filter tabs (All/Payments/Swaps...) lack active-state emphasis besides subtle fill",
+        "Detail panel proof hash truncated without copy affordance visible at rest"
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 800,
+        "color": 770,
+        "data_legibility": 800,
+        "layout": 790,
+        "visceral_value": 760,
+        "responsive": 760,
+        "consistency": 800,
+        "trust": 800
+      },
+      "total": 787,
+      "top_issues": [
+        "Duplicate near-identical screen to 07 wastes review signal, swap-filled state barely differs",
+        "'2 committed entries' phrase unexplained jargon"
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 810,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 770,
+        "layout": 800,
+        "visceral_value": 770,
+        "responsive": 740,
+        "consistency": 800,
+        "trust": 780
+      },
+      "total": 786,
+      "top_issues": [
+        "Extremely long single-column settings page requires heavy scrolling",
+        "'Reveal recovery phrase' and 'Forget vault' sit close together with similar button weight, risky adjacency"
+      ],
+      "fixes": [
+        "Group into collapsible sections or sidebar sub-nav",
+        "Separate destructive vault actions into their own confirmed danger zone with more spacing"
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 800,
+        "typography": 810,
+        "color": 790,
+        "data_legibility": 810,
+        "layout": 820,
+        "visceral_value": 780,
+        "responsive": 750,
+        "consistency": 810,
+        "trust": 800
+      },
+      "total": 800,
+      "top_issues": [
+        "Wallet tiles showing 0.00 for unused rails add clutter without collapse option",
+        "'Add to batch' feature unexplained, no tooltip"
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 790,
+        "typography": 800,
+        "color": 780,
+        "data_legibility": 790,
+        "layout": 800,
+        "visceral_value": 760,
+        "responsive": 760,
+        "consistency": 800,
+        "trust": 790
+      },
+      "total": 788,
+      "top_issues": [
+        "Six similarly-weighted tile choices with no visual priority for most common task (Pay/Move)",
+        "'Where your money stands' duplicates home screen bar without added insight"
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 790,
+        "color": 780,
+        "data_legibility": 780,
+        "layout": 790,
+        "visceral_value": 800,
+        "responsive": 750,
+        "consistency": 790,
+        "trust": 790
+      },
+      "total": 786,
+      "top_issues": [
+        "Faucet section (testnet-only) visually equal weight to production wallet balances, confusing for a real user",
+        "Collateral slider reused from swap screen crammed into faucet flow, overloaded panel"
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 780,
+        "typography": 790,
+        "color": 770,
+        "data_legibility": 760,
+        "layout": 790,
+        "visceral_value": 770,
+        "responsive": 750,
+        "consistency": 790,
+        "trust": 760
+      },
+      "total": 776,
+      "top_issues": [
+        "No APY/market rate context shown, just raw bps input with no benchmark",
+        "H1 pool stats (Available/Borrowed/Active) all zero with no historical chart or utilization info"
+      ],
+      "fixes": [
+        "Show market average rate and utilization % beside input",
+        "Add small sparkline/history for pool utilization"
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 790,
+        "typography": 800,
+        "color": 770,
+        "data_legibility": 790,
+        "layout": 790,
+        "visceral_value": 740,
+        "responsive": 750,
+        "consistency": 800,
+        "trust": 800
+      },
+      "total": 782,
+      "top_issues": [
+        "Very sparse screen for single-signer case, feels unfinished/empty",
+        "'Lazy entity' and 'quorum' jargon without inline glossary link"
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 820,
+        "typography": 820,
+        "color": 800,
+        "data_legibility": 810,
+        "layout": 810,
+        "visceral_value": 840,
+        "responsive": 760,
+        "consistency": 820,
+        "trust": 880
+      },
+      "total": 819,
+      "top_issues": [
+        "'Per counterparty' card right-edge text ('you in 1d, open -> Manage -> Dispute') clipped/truncated",
+        "Evidence bundle save has no preview of contents before download"
+      ],
+      "fixes": [
+        "Fix truncation with wrap or shorten copy",
+        "Add expandable preview of evidence JSON structure"
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 830,
+        "typography": 820,
+        "color": 800,
+        "data_legibility": 800,
+        "layout": 840,
+        "visceral_value": 860,
+        "responsive": 700,
+        "consistency": 830,
+        "trust": 830
+      },
+      "total": 816,
+      "top_issues": [
+        "Order book table clipped at right edge (cut off column)",
+        "Dense table lacks zebra striping or hover state cues for scanning many rows"
+      ],
+      "fixes": [
+        "Fix table overflow/clip on right panel",
+        "Add subtle row hover/alt-row shading for the account table"
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 820,
+        "typography": 830,
+        "color": 800,
+        "data_legibility": 820,
+        "layout": 830,
+        "visceral_value": 800,
+        "responsive": 760,
+        "consistency": 840,
+        "trust": 800
+      },
+      "total": 814,
+      "top_issues": [
+        "Command palette list has no keyboard shortcut hints per item besides global ⌘K",
+        "No recent/frequent commands surfaced first"
+      ]
+    }
+  ],
+  "overall": {
+    "total": 796,
+    "verdict": "A coherent, premium dark fintech UI with a genuinely clever green/violet scale metaphor consistently applied across screens. It loses points on settings sprawl, destructive-action safety, and a few clipped/cluttered secondary screens (swap-cross, desk, lending) that need tightening before it reads as fully shipped.",
+    "priority_fixes": [
+      "Add a hard confirmation step (typed amount/hold) before any dispute or vault-deletion action",
+      "Fix table/panel clipping on Desk and cross-network swap screens",
+      "Restructure Settings into collapsible sections, isolate destructive vault actions",
+      "Separate testnet faucet UI visually from production balances on Assets screen",
+      "Add inline glossary/tooltips for jargon (lazy entity, quorum, collateral tariff, HTLC legs)"
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 62,
+        "verdict": "I got money in and paid $20, but the green/violet explainer and 'credit vs collateral' words on the account screen made me nervous I didn't fully get it.",
+        "blockers": [
+          "Two-color explainer card on Home requires reading before proceeding",
+          "Account screen (06) credit-line jargon has no beginner tooltip"
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 84,
+        "verdict": "The account screen bar and 'they owe you / your credit line' split is exactly the mental model I need, took me under 30s.",
+        "blockers": [
+          "No aggregate risk view across all hubs on one screen (only per-account)"
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 78,
+        "verdict": "Order book and swap ticket are solid, but red-for-asks feels inconsistent with the app's own risk-color convention.",
+        "blockers": [
+          "Book color scheme clashes with app palette on 05/16",
+          "No trade history/fills list distinct from generic activity feed"
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 80,
+        "verdict": "Sovereignty screen gives me exactly the enforceable-now number and an evidence bundle I can hand to the board.",
+        "blockers": [
+          "Evidence bundle content isn't previewable before export",
+          "No multi-signer/board treasury view for larger orgs beyond single signer shown"
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 74,
+        "verdict": "Receive/QR flow and the receipt with proof/frame are great, I can forward a real receipt to a client.",
+        "blockers": [
+          "Receive screen doesn't clearly show a generated invoice list/history for repeat clients"
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 82,
+        "verdict": "The dispute modal explains the challenge window and evidence process well, and Sovereignty confirms my exposure is provable.",
+        "blockers": [
+          "Dispute action button not gated by a strong secondary confirmation, risks accidental irreversible trigger"
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 55,
+        "verdict": "No mobile screenshots were given to me in this desktop-dark set, so I can't judge one-handed checkout speed at all.",
+        "blockers": [
+          "Mobile variant screens entirely missing from this review set"
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 79,
+        "verdict": "Desk view gives me the dense multi-account table I want, though the right panel is clipped and needs polish.",
+        "blockers": [
+          "Desk (16) order book table cut off at right edge",
+          "No sort/filter controls visible on Desk's account table"
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 70,
+        "verdict": "The cross-network swap shows the fee and two legs clearly, but the atomic HTLC-style mechanic needs simpler language for a non-technical sender.",
+        "blockers": [
+          "Collateral-prep tooltip overlapping the form on 05b makes the flow feel unfinished",
+          "No aggregated 'total cost across both legs' summary line"
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 76,
+        "verdict": "In three minutes the green/violet on-chain-vs-promise metaphor and the Sovereignty/dispute screens convinced me this is more transparent than a typical custodial wallet.",
+        "blockers": [
+          "Settings screen sprawl undercuts the premium-product first impression",
+          "Several secondary screens (lending, ownership) look sparse/placeholder-like, weakening trust in overall polish"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "finding": "Activation was observed before native solidification; restart recovered53 and reminted empty54",
+  "lines": [
+    "07:31:42.023 INFO  [DPosMiner] [DB](DynamicPropertiesStore.java:2227) Update latest block header id = 0000000000000036b691a01e69b18d9f33b5c0bac42e0d1404198a8b1890498a.",
+    "07:46:53.862 INFO  [main] [DB](Manager.java:569) Current headNum is: 53.",
+    "07:46:57.023 INFO  [DPosMiner] [DB](Manager.java:1302) Block num: 54, re-push-size: 0, pending-size: 0, block-tx-size: 0, verify-tx-size: 0",
+    "07:46:57.052 INFO  [DPosMiner] [DB](DynamicPropertiesStore.java:2227) Update latest block header id = 00000000000000367efd5224a2139f7347881b04b9312ad778b11c0a3f0564eb."
+  ]
+}

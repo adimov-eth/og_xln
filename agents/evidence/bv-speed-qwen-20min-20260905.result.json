@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "result",
+  "id": "bv-speed-qwen-20min-20260905.result",
+  "runId": "bv-speed-qwen-20min-20260905",
+  "recordedAt": "2026-09-05T00:16:42.190Z",
+  "harnessVersion": "0.84.4",
+  "servedProvider": null,
+  "status": "failed",
+  "elapsedMs": 550119,
+  "exitCode": null,
+  "costUsd": null,
+  "response": "",
+  "responseHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdoutHash": "sha256:f3c7e62873bec88ab60b7e7cc6b2fd2e29eed23d20bf60d4f6062dea86e11ca2",
+  "stderrHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "error": "output_limit"
+}

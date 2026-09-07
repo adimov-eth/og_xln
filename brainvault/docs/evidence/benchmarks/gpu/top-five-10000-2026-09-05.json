@@ -1,0 +1,321 @@
+{
+  "date": "2026-09-05",
+  "candidate": "b97c454d605e750a08da7ff6baab645330175468",
+  "hardware": "Apple M3 Ultra, 32 CPU cores, 80 GPU cores, 512 GiB",
+  "os": "macOS 26.6.2 (25G83)",
+  "bun": "1.4.0",
+  "method": "Sequential runs under repository stand lock; forward/reverse/forward order. Warm machine. Synthetic public benchmark-user/benchmark-password, multiplier 1. totalTimeMs includes derivation orchestration and final root fold, excludes Bun/import startup and wallet presentation. n=3 descriptive range, not confidence interval.",
+  "command": "bun run stand:status; bun run stand:run --reason brainvault-10k-r<round>-<backend> -- bun brainvault/src/native/source/benchmark.ts --backend=<backend> --shards=10000 --workers=32",
+  "caveats": [
+    "Production Metal assigns 80% to GPU; generic 64%; OpenCL 49.6%. This compares configured paths, not isolated kernels.",
+    "OpenCL internally chooses 30 CPU workers despite requested 32.",
+    "Rust secure, not no-wipe. No production changes. Existing C final-arena-wipe policy is unchanged; this benchmark does not resolve prior memory-hygiene findings.",
+    "Temperature and aggregate process-tree/GPU peak RAM not measured. Initial pmset reported no thermal warning.",
+    "Calculated live Argon arenas: Metal 88 GiB, OpenCL 69.5 GiB, C/Rust 8 GiB; excludes overhead.",
+    "Rust samples exceeded the ordinary 60-second verification budget (61.55–65.15 seconds); future runs need an explicit longer per-run budget or a timeout-aware supervisor."
+  ],
+  "summary": {
+    "metal-v1": {
+      "samples": 3,
+      "bestMs": 14450.005,
+      "medianMs": 14781.381,
+      "worstMs": 14903.437,
+      "shardsPerSecond": 676.5267737838569
+    },
+    "metal-generic": {
+      "samples": 3,
+      "bestMs": 20490.586,
+      "medianMs": 20958.868,
+      "worstMs": 21041.389,
+      "shardsPerSecond": 477.12500503366886
+    },
+    "opencl": {
+      "samples": 3,
+      "bestMs": 27797.556,
+      "medianMs": 28234.926,
+      "worstMs": 28757.381,
+      "shardsPerSecond": 354.1712841747841
+    },
+    "c-neon": {
+      "samples": 3,
+      "bestMs": 50978.512,
+      "medianMs": 52185.059,
+      "worstMs": 52928.846,
+      "shardsPerSecond": 191.62572950238496
+    },
+    "rust-pool": {
+      "samples": 3,
+      "bestMs": 61548.164,
+      "medianMs": 61672.876,
+      "worstMs": 65152.798,
+      "shardsPerSecond": 162.14583539123424
+    }
+  },
+  "runs": [
+    {
+      "backend": "metal-v1",
+      "round": 1,
+      "totalTimeMs": 14781.381,
+      "derivationTimeMs": 14766.722,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "plan": {
+        "cpuShards": 2000,
+        "cpuWorkers": 32,
+        "acceleratorShards": 8000,
+        "acceleratorWorkers": 40,
+        "acceleratorProcesses": 8
+      }
+    },
+    {
+      "backend": "metal-generic",
+      "round": 1,
+      "totalTimeMs": 20490.586,
+      "derivationTimeMs": 20477.005,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "plan": {
+        "cpuShards": 3600,
+        "cpuWorkers": 32,
+        "acceleratorShards": 6400,
+        "acceleratorWorkers": 40,
+        "acceleratorProcesses": 8
+      }
+    },
+    {
+      "backend": "opencl",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "plan": {
+        "cpuShards": 5040,
+        "cpuWorkers": 30,
+        "acceleratorShards": 4960,
+        "acceleratorWorkers": 248,
+        "acceleratorProcesses": 1
+      },
+      "derivationTimeMs": 27782.8,
+      "totalTimeMs": 27797.556,
+      "shardsPerSecond": 359.935,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 1
+    },
+    {
+      "backend": "c-neon",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "cpuVariant": "m3",
+      "derivationTimeMs": 50963.04,
+      "totalTimeMs": 50978.512,
+      "shardsPerSecond": 196.221,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 1
+    },
+    {
+      "backend": "rust-pool",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "rustCpuVariant": "m3",
+      "derivationTimeMs": 61532.859,
+      "totalTimeMs": 61548.164,
+      "shardsPerSecond": 162.515,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 1
+    },
+    {
+      "backend": "rust-pool",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "rustCpuVariant": "m3",
+      "derivationTimeMs": 61657.99,
+      "totalTimeMs": 61672.876,
+      "shardsPerSecond": 162.185,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 2
+    },
+    {
+      "backend": "c-neon",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "cpuVariant": "m3",
+      "derivationTimeMs": 52913.035,
+      "totalTimeMs": 52928.846,
+      "shardsPerSecond": 188.989,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 2
+    },
+    {
+      "backend": "opencl",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "plan": {
+        "cpuShards": 5040,
+        "cpuWorkers": 30,
+        "acceleratorShards": 4960,
+        "acceleratorWorkers": 248,
+        "acceleratorProcesses": 1
+      },
+      "derivationTimeMs": 28742.47,
+      "totalTimeMs": 28757.381,
+      "shardsPerSecond": 347.917,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 2
+    },
+    {
+      "backend": "metal-generic",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "plan": {
+        "cpuShards": 3600,
+        "cpuWorkers": 32,
+        "acceleratorShards": 6400,
+        "acceleratorWorkers": 40,
+        "acceleratorProcesses": 8
+      },
+      "derivationTimeMs": 21027.383,
+      "totalTimeMs": 21041.389,
+      "shardsPerSecond": 475.57,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 2
+    },
+    {
+      "backend": "metal-v1",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "plan": {
+        "cpuShards": 2000,
+        "cpuWorkers": 32,
+        "acceleratorShards": 8000,
+        "acceleratorWorkers": 40,
+        "acceleratorProcesses": 8
+      },
+      "derivationTimeMs": 14435.161,
+      "totalTimeMs": 14450.005,
+      "shardsPerSecond": 692.753,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 2
+    },
+    {
+      "backend": "metal-v1",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "plan": {
+        "cpuShards": 2000,
+        "cpuWorkers": 32,
+        "acceleratorShards": 8000,
+        "acceleratorWorkers": 40,
+        "acceleratorProcesses": 8
+      },
+      "derivationTimeMs": 14889.392,
+      "totalTimeMs": 14903.437,
+      "shardsPerSecond": 671.619,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 3
+    },
+    {
+      "backend": "metal-generic",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "plan": {
+        "cpuShards": 3600,
+        "cpuWorkers": 32,
+        "acceleratorShards": 6400,
+        "acceleratorWorkers": 40,
+        "acceleratorProcesses": 8
+      },
+      "derivationTimeMs": 20944.252,
+      "totalTimeMs": 20958.868,
+      "shardsPerSecond": 477.458,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 3
+    },
+    {
+      "backend": "opencl",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "plan": {
+        "cpuShards": 5040,
+        "cpuWorkers": 30,
+        "acceleratorShards": 4960,
+        "acceleratorWorkers": 248,
+        "acceleratorProcesses": 1
+      },
+      "derivationTimeMs": 28219.835,
+      "totalTimeMs": 28234.926,
+      "shardsPerSecond": 354.361,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 3
+    },
+    {
+      "backend": "c-neon",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "cpuVariant": "m3",
+      "derivationTimeMs": 52169.831,
+      "totalTimeMs": 52185.059,
+      "shardsPerSecond": 191.682,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 3
+    },
+    {
+      "backend": "rust-pool",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "factor": 5,
+      "workers": 32,
+      "memoryKiBPerShard": 262144,
+      "multiplier": 1,
+      "rustCpuVariant": "m3",
+      "derivationTimeMs": 65137.624,
+      "totalTimeMs": 65152.798,
+      "shardsPerSecond": 153.521,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+      "round": 3
+    }
+  ]
+}

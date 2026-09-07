@@ -1,9 +1,13 @@
 # Advisor scorecard
 
-Compact routing memory for external and subagent reviews. Scores measure this
-repository's observed audit value, not general model quality.
+Historical routing notes, frozen at 2026-08-10. These informal scores lack exact
+model-version/sample provenance and are not current model rankings. Do not update
+this table or import its numbers as verified evaluations.
 
-## Selection
+New evaluations follow [the agent workflow](../agent-workflow.md) and its
+immutable advisor event store. Audit findings stay in `audits/registry.json`.
+
+## Historical selection method (retired)
 
 - Score = precision 30 + xln consensus reasoning 30 + rare-path coverage 20 +
   reproducible evidence 15 + efficiency 5.
@@ -12,7 +16,7 @@ repository's observed audit value, not general model quality.
 - Update only after the primary agent verifies or disproves a concrete claim.
   Store the verdict and decisive evidence, not full transcripts.
 
-## Current evidence
+## Historical claims (reverify before use)
 
 | Advisor | Score / weight | Decisive evidence |
 |---|---:|---|

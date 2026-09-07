@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "bv-speed-qwen-20min-20260905",
+  "project": "brainvault",
+  "task": "architecture",
+  "sourceSha": "b97c454d605e750a08da7ff6baab645330175468",
+  "harness": "pi",
+  "provider": "openrouter",
+  "model": "qwen/qwen3.8-max",
+  "family": "qwen",
+  "effort": "high",
+  "timeoutMs": 1200000,
+  "question": "Bounded performance consultation, <=250 words. Frozen BrainVault Argon2id v19 m262144KiB t1 p1 out32, 10k independent shards, ordered root. M3Ultra32CPU80GPU512GiB. Baseline GPU8000 in8processes*40arenas plusCPU2000 workers32 ~15.16s. GPUcommand14.3s/setup0.2-0.6s/wipe0.02s. Already tested one-step prefetch in data-independent firsthalf (GPUcommand12.3s) +8320GPU/1680CPU: repeatedAB med14.26s, CPUtail noisy12.5-15.6s. CPU24, public reference table, explicit uint2 arithmetic, two-step prefetch: no proven further win. Moreprocesses16p40=34s;4p80=17.8s. Need ONE genuinely new small experiment implementable in a small isolated experiment plausibly >5% end-to-end, explain exactcodepoint and risk. No weaker wipes, parameters, changingroot or count-specific tricks. If none credible say STOP. Evidence is baseline SHA; described experiments are uncommitted observations, not in snapshot. Do not repeat tested suggestions.",
+  "evidence": [
+    {
+      "path": "brainvault/src/native/source/metal/brainvault_argon2_metal.m",
+      "sha256": "sha256:b401efb4357edf2186b190f118c2f69c26502ab6856ee98fa60d877b49fbb7b0"
+    }
+  ],
+  "kind": "run",
+  "recordedAt": "2026-09-05T00:07:32.063Z",
+  "candidateHash": "sha256:9578c1feb4a5b5fecb66a7719e5ba00a0f5e24b4fa9431dfb1c0712074ac0782",
+  "promptHash": "sha256:d886ba6510a16ce9244dabf5abedf0408883e95660ce1de62814a5e2f590d0e5"
+}

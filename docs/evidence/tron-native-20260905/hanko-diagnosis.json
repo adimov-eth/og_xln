@@ -1,0 +1,18 @@
+{
+  "kind": "TRON_HANKO_FIRST_DIVERGENCE",
+  "chainId": "0x48086ccf",
+  "nonce": "0",
+  "expectedHash": "0x754b4c49b06631e13015e607ed279703e2207396481171f0a3a8396b8bf387b2",
+  "onchainHash": "0x754b4c49b06631e13015e607ed279703e2207396481171f0a3a8396b8bf387b2",
+  "oldBytes": 704,
+  "currentBytes": 768,
+  "oldResult": {
+    "error": "Error: REVERT opcode executed"
+  },
+  "currentResult": [
+    "0x0000000000000000000000000000000000000000000000000000000000000001",
+    true
+  ],
+  "foundationDeployer": "41928c9af0651632157ef27a2cf17ca72c575a4d21",
+  "shareDepository": "4151c6eea257ec7ae26ef93db6d24bdf6dea642e16"
+}

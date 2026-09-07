@@ -1,0 +1,482 @@
+{
+  "reviewer": "openrouter/x-ai/grok-latest",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 740,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 720,
+        "layout": 780,
+        "visceral_value": 680,
+        "responsive": 800,
+        "consistency": 780,
+        "trust": 760
+      },
+      "total": 762,
+      "top_issues": [
+        "Home desktop: the four-dot legend under $17,500.00 repeats On-chain/Reserve/Secured/At risk already encoded in the bar; it crowds the total and fights the quiet-data rule.",
+        "Home desktop: BALANCES USDC bar (~14k) is shorter than the Hub One account bar (~10k send) in ACCOUNTS, so 1 px = $N is broken across columns.",
+        "Home desktop: BALANCES header has a faint 'Move' and '1 px = $50 · auto · 1 empty hidden' that look like stray chrome, not a control.",
+        "Home desktop: Pay is a huge indigo slab while Receive/Swap are ghost tiles; three equal money verbs should share one weight except for a single default."
+      ],
+      "fixes": [
+        "Home: delete the four-number legend; keep only Instant send/receive as a single caption under the bar.",
+        "Home: draw USDC, WETH, Hub One, and the total on the same $50/px scale (or show overflow fade as Settings describes).",
+        "Home: make 'Move' a real text button aligned to BALANCES; hide the scale string or put it in Settings only.",
+        "Home: Pay/Receive/Swap same height, same fill treatment; indigo only on Pay."
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 780,
+        "typography": 760,
+        "color": 800,
+        "data_legibility": 740,
+        "layout": 820,
+        "visceral_value": 720,
+        "responsive": 840,
+        "consistency": 800,
+        "trust": 860
+      },
+      "total": 796,
+      "top_issues": [
+        "Pay desktop: To card repeats Meridian Desk as title and as a green check chip; the 0x… hex is full-width noise.",
+        "Pay desktop: Amount card stacks 25, This payment 25.00, Hub One 10,000.00, and a bilateral bar — four read of the same payment.",
+        "Pay desktop: left amount bar and right Before/After bars are the same account drawn twice; trust is good, premium suffers.",
+        "Pay desktop: Fee 0.000050 USDC at 8 decimals vs amount 25 with no decimals — tabular money is inconsistent."
+      ],
+      "fixes": [
+        "Pay: one To line — name + truncated 0x499d…ef2bd; drop the duplicate Meridian Desk chip.",
+        "Pay: keep Amount + bilateral preview; move Before/After exclusively to the right column.",
+        "Pay: format all USDC with two decimals (25.00 / 0.00) and fees as 0.000050 only in Fee row.",
+        "Pay: primary CTA 'Pay 25.00 USDC' stays full-bleed; Add a note as inline field, not a separate link."
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 800,
+        "typography": 780,
+        "color": 820,
+        "data_legibility": 800,
+        "layout": 760,
+        "visceral_value": 400,
+        "responsive": 780,
+        "consistency": 760,
+        "trust": 900
+      },
+      "total": 766,
+      "top_issues": [
+        "Receipt modal: no money bar — visceral value is absent on the one screen that proves settlement.",
+        "Receipt: '04:47:41 in 2707 ms' mixes clock time and latency in one row; latency should be secondary (2707 ms).",
+        "Receipt: Proof 0x697b66fe…199d is truncated with no copy affordance; trust cue without action.",
+        "Receipt: modal covers Home total/legend mid-string ('Reserve $1,500') which looks like a broken overlay, not a sheet."
+      ],
+      "fixes": [
+        "Receipt: add a 25.00 USDC debit tick on the Hub One bilateral bar at the same $N/px as Home.",
+        "Receipt: Settled = 04:47:41; put 2.707 s under PAID in caption size.",
+        "Receipt: Proof as copyable mono chip.",
+        "Receipt: dim Home fully; don't clip legend text through the card."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 760,
+        "typography": 740,
+        "color": 780,
+        "data_legibility": 680,
+        "layout": 740,
+        "visceral_value": 520,
+        "responsive": 760,
+        "consistency": 740,
+        "trust": 780
+      },
+      "total": 720,
+      "top_issues": [
+        "Receive desktop: QR is the visual hero while Amount is 0.00 — hierarchy lands on scan, not request value.",
+        "Receive: green hairline under 0.00 reads as a filled bar of money; at 0 it should be empty or a receive-capacity ghost.",
+        "Receive: SHARE copy is three sentences of product explanation next to Copy invoice / Copy link / Copy xln:// — three copy verbs.",
+        "Receive: YOUR ENTITY ID dumps a wrapped 40-char hex as body text."
+      ],
+      "fixes": [
+        "Receive: Amount field first, QR scales with requested amount (ghost QR until >0).",
+        "Receive: empty amount = no fill; optional mint ghost for 'receive up to 40,025.00'.",
+        "Receive: one primary Copy link; Invoice and xln:// as overflow.",
+        "Receive: Entity ID as truncated mono + copy, not a paragraph."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 720,
+        "typography": 740,
+        "color": 760,
+        "data_legibility": 700,
+        "layout": 760,
+        "visceral_value": 580,
+        "responsive": 780,
+        "consistency": 740,
+        "trust": 720
+      },
+      "total": 714,
+      "top_issues": [
+        "Swap desktop: You receive 0.00 while You pay 100 — CTA Swap is enabled-looking indigo-muted; user cannot tell if it's dead.",
+        "Swap: book size bars (amber/green ticks) are not on the wallet $N/px scale; they look like decoration next to Hub One account bar.",
+        "Swap: Same network / Across networks segmented control is unexplained and Across is disabled without reason.",
+        "Swap: helper 'Set the amount you want…' and book footer '1 tick = 1/10,000 USDC' compete with the ticket."
+      ],
+      "fixes": [
+        "Swap: disable Swap until You receive > 0; ghost the button (opacity + no fill).",
+        "Swap: book depth bars on a labeled size scale, not the money pixel scale; don't sit them next to the account bar without a caption.",
+        "Swap: hide Across networks until a route exists.",
+        "Swap: drop the paragraph under You receive; keep one line on the account card."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 760,
+        "typography": 780,
+        "color": 800,
+        "data_legibility": 820,
+        "layout": 780,
+        "visceral_value": 840,
+        "responsive": 800,
+        "consistency": 820,
+        "trust": 840
+      },
+      "total": 804,
+      "top_issues": [
+        "Account Hub One: Pay / Extend credit / Swap / Manage — Manage is a fourth action on a second row, orphaned half-width.",
+        "Account: color legend (collateral / at risk / you owe / credit room / in flight) sits above USDC with five keys for a bar that only shows purple+grey.",
+        "Account: USDC +9,975.00 vs send up to 59,975.00 — numbers are clear but credit lines 50,000.00 / 50,000.00 repeat the bar ends in a table.",
+        "Account: WETH even 0.00 still gets a full card + three-row table; empty lane should collapse."
+      ],
+      "fixes": [
+        "Account: one action row of three; Manage as text link under the header.",
+        "Account: show legend swatches only for inks present on this account.",
+        "Account: keep the notch bar; move credit-line numbers into a single Ledger detail sheet.",
+        "Account: collapse WETH to one line until position ≠ 0."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 740,
+        "typography": 760,
+        "color": 760,
+        "data_legibility": 740,
+        "layout": 800,
+        "visceral_value": 560,
+        "responsive": 840,
+        "consistency": 800,
+        "trust": 820
+      },
+      "total": 760,
+      "top_issues": [
+        "Activity desktop: six 'Swap placed · open' rows with amber dots dominate TODAY; settled −25.00 is selected but visually similar weight.",
+        "Activity: only Received has a green bar; Sent and swaps have none — visceral scale is optional decoration.",
+        "Activity: right inspector duplicates the selected row (PAYMENT · SETTLED −25.00) plus To/Via already in the subtitle.",
+        "Activity + 08-activity-detail: identical screenshot pair — no extra detail density on 'detail'."
+      ],
+      "fixes": [
+        "Activity: selected row + inspector share one proof block; list stays compact.",
+        "Activity: every monetary row gets a same-scale tick (send left, receive right).",
+        "Activity: group open swaps under one 'Open swaps (6)' disclosure.",
+        "If 08 is detail, add frame ladder / counterparties; don't ship a duplicate frame."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 740,
+        "typography": 760,
+        "color": 760,
+        "data_legibility": 740,
+        "layout": 800,
+        "visceral_value": 560,
+        "responsive": 840,
+        "consistency": 800,
+        "trust": 820
+      },
+      "total": 760,
+      "top_issues": [
+        "Activity detail desktop: same as 07-activity.png — no deeper proof, no bar, no extra hierarchy.",
+        "Inspector Proof still truncated; Frames '5 committed entries' is a count not a list."
+      ],
+      "fixes": [
+        "Detail: expand committed entries as a 5-row frame list with hashes.",
+        "Detail: copyable proof; bilateral delta bar for −25.00 USDC."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 680,
+        "typography": 740,
+        "color": 760,
+        "data_legibility": 780,
+        "layout": 700,
+        "visceral_value": 820,
+        "responsive": 640,
+        "consistency": 740,
+        "trust": 760
+      },
+      "total": 734,
+      "top_issues": [
+        "Settings desktop: page is a long single column (Scale → Home → Appearance → Design → Runtime → Vault) while the right 'AT THIS SCALE' card is tiny — desktop width wasted.",
+        "Settings: 1 px = $200 appears three times (header, slider, chips) plus Auto vs $1–$1000 chips fighting the slider.",
+        "Settings: Design section (Material/Accent/Numbers/Risk) plus live $1,284,500.00 sample turns Settings into a theme workshop above Reveal recovery phrase.",
+        "Settings: Comfort/Desk and Dark/Light are the real layout controls but sit mid-scroll after three Home toggles."
+      ],
+      "fixes": [
+        "Settings: two columns — left controls, right sticky scale preview + sample wallet.",
+        "Settings: one scale readout; chips set the slider, don't duplicate the label.",
+        "Settings: move Design/presets behind 'Edit theme'; keep Theme + Layout + Scale on first screen.",
+        "Settings: Vault actions (Reveal / Lock) sticky at bottom of left column."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 780,
+        "typography": 760,
+        "color": 800,
+        "data_legibility": 740,
+        "layout": 760,
+        "visceral_value": 640,
+        "responsive": 780,
+        "consistency": 760,
+        "trust": 780
+      },
+      "total": 756,
+      "top_issues": [
+        "Move desktop: FROM/TO 3-up tiles (Wallet/Reserve/Account) have hairline bars that don't share Home's $50/px — Account 59,975 looks like Reserve 1,500.",
+        "Move: Sign & send is a ghost equal to Add to batch; primary money action is under-emphasized vs Pay on Home.",
+        "Move: Recipient entity field shown while funding self through Hub One — empty 0x placeholder invites a wrong-address send.",
+        "Move: WHAT HAPPENS radio 'Fund you through Hub One' is a single option, not a choice."
+      ],
+      "fixes": [
+        "Move: tile bars on the global scale; overflow fade on Account.",
+        "Move: Sign & send = indigo primary; Add to batch = text.",
+        "Move: hide Recipient entity unless To = Account and counterparty ≠ self.",
+        "Move: WHAT HAPPENS as a caption, not a radio."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 700,
+        "typography": 720,
+        "color": 740,
+        "data_legibility": 640,
+        "layout": 560,
+        "responsive": 520,
+        "visceral_value": 200,
+        "consistency": 700,
+        "trust": 680
+      },
+      "total": 608,
+      "top_issues": [
+        "Manage desktop: five nav tiles + empty NEEDS ATTENTION + one Hub One row leave ~60% of the canvas black — not calm, vacant.",
+        "Manage: no balances, no bars — visceral value is zero on the accounts hub.",
+        "Manage: Sovereignty/Move/Assets/Lending/Ownership are a sitemap, not a manage surface; duplicates the left rail.",
+        "Manage: ACCOUNTS card is a single list item that should have been the page."
+      ],
+      "fixes": [
+        "Manage: full-height account list with bilateral bars at global scale.",
+        "Manage: drop the 2×2 sitemap; keep Move/Assets as row actions on each account.",
+        "Manage: NEEDS ATTENTION only if count > 0.",
+        "Manage: use the right column for the selected account inspector (same as Activity)."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 720,
+        "typography": 760,
+        "color": 740,
+        "data_legibility": 760,
+        "layout": 760,
+        "visceral_value": 500,
+        "responsive": 780,
+        "consistency": 720,
+        "trust": 700
+      },
+      "total": 718,
+      "top_issues": [
+        "Assets desktop: USDC 2,500.00 vs WETH 1.00 bars look similar length — scale is local-to-row not 1 px = $N.",
+        "Assets: FAUCETS ('Nothing here is real') sit equal-weight to ON-CHAIN WALLET; two indigo CTAs (Hub pays me / USDC to my on-chain wallet) scream louder than Move into reserve.",
+        "Assets: Depository may pull 0.00 repeated on every token is redundant copy.",
+        "Assets: USDT 0.00 still listed with a bar stub."
+      ],
+      "fixes": [
+        "Assets: bars on global $ scale; 0.00 tokens have no bar.",
+        "Assets: faucet as a collapsed 'Test funds' disclosure; one primary CTA.",
+        "Assets: one Depository caption on the card, not per row.",
+        "Assets: Move into reserve indigo; faucet buttons secondary."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 700,
+        "typography": 720,
+        "color": 700,
+        "data_legibility": 680,
+        "layout": 720,
+        "visceral_value": 180,
+        "responsive": 740,
+        "consistency": 700,
+        "trust": 640
+      },
+      "total": 646,
+      "top_issues": [
+        "Lending desktop: Amount to lend 0.00 but Offer to the pool is a large filled (muted) button — error prevention fails.",
+        "Lending: right card is an amber warning 'no lending API' while the whole left form still collects Hub/Token/Term/Interest — a dead end that looks live.",
+        "Lending: no pool TVL/rate bar; visceral value missing.",
+        "Lending: Term chips (1 hour / 1 day / 1 month) and Interest 100 bp = 1.00% per term need a worked example ($0)."
+      ],
+      "fixes": [
+        "Lending: if API missing, replace the form with the warning and a disabled outline; don't collect 0.00 offers.",
+        "Lending: when live, disable Offer until amount > 0.",
+        "Lending: show pool depth on the global money scale.",
+        "Lending: preview 'You offer 0.00 USDC for 1 day at 1.00%'."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 740,
+        "typography": 760,
+        "color": 760,
+        "data_legibility": 720,
+        "layout": 520,
+        "visceral_value": 150,
+        "responsive": 560,
+        "consistency": 720,
+        "trust": 780
+      },
+      "total": 641,
+      "top_issues": [
+        "Ownership desktop: one BOARD table and an empty TAKE CONTROL card in a sea of black — desktop width unused.",
+        "Ownership: Kind 'Lazy (hash of its board)' is jargon without a value visualization.",
+        "Ownership: no shares/threshold bar (1 of 1 could be a single mint segment)."
+      ],
+      "fixes": [
+        "Ownership: two-column — board + signer list with 1-of-1 threshold bar.",
+        "Ownership: hide TAKE CONTROL when count is 0.",
+        "Ownership: Kind as a caption under Entity, not a scary parenthetical."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 800,
+        "typography": 780,
+        "color": 820,
+        "data_legibility": 800,
+        "layout": 800,
+        "visceral_value": 780,
+        "responsive": 820,
+        "consistency": 800,
+        "trust": 900
+      },
+      "total": 814,
+      "top_issues": [
+        "Sovereignty desktop: $7,500.00 'Enforceable right now' vs Home total $17,500 — two grand totals with different definitions; user must read a paragraph to reconcile.",
+        "Sovereignty: legend still lists four buckets under the bar (same Home issue) plus two sentences of green/violet tutorial.",
+        "Sovereignty: PER COUNTERPARTY Hub One $9,975.00 at risk bar is not obviously the same px scale as the hero $7,500 bar."
+      ],
+      "fixes": [
+        "Sovereignty: label hero 'Secured $7,500.00' not a competing total; cross-link Home net.",
+        "Sovereignty: one caption, drop the green/violet essay or move under Save evidence.",
+        "Sovereignty: force identical px scale on per-counterparty bars; overflow fade."
+      ]
+    },
+    {
+      "file": "16-desk.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 640,
+        "typography": 720,
+        "color": 740,
+        "data_legibility": 680,
+        "layout": 660,
+        "visceral_value": 420,
+        "responsive": 700,
+        "consistency": 640,
+        "trust": 740
+      },
+      "total": 664,
+      "top_issues": [
+        "Desk desktop: four KPI tiles (NET / YOURS ON-CHAIN / AT RISK / INSTANT SEND·RECEIVE) plus a dense table with dots for empty cells — spreadsheet, not visceral bars.",
+        "Desk: Reserve·on-chain row jams $7,500 / $0 / $9,975 / $0 / $94,975–$75,025 into one line; tabular but unreadable at a glance.",
+        "Desk: top Pay/Swap/Move pills duplicate Home actions and fight ⌘K jump.",
+        "Desk: book ticks and table share no bar language with Comfort Home — consistency break for the 'dense console' that should still be one scale."
+      ],
+      "fixes": [
+        "Desk: replace KPI tiles with one notch bar per lane in the table (position column = bar, not +9,975.00 text only).",
+        "Desk: wrap send·receive; don't inline six numbers on Reserve·on-chain.",
+        "Desk: one primary action (Pay); Swap/Move in ⌘K.",
+        "Desk: book depth labeled as size, not money-px."
+      ]
+    },
+    {
+      "file": "17-palette.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 700,
+        "typography": 760,
+        "color": 760,
+        "data_legibility": 740,
+        "layout": 700,
+        "visceral_value": 200,
+        "responsive": 720,
+        "consistency": 780,
+        "trust": 700
+      },
+      "total": 678,
+      "top_issues": [
+        "Palette/⌘K overlay: Jump to… covers NET and the book; dim is uneven (bottom of RECENT still bright).",
+        "Palette: rows mix destinations (Pay) with layout modes (Desk) and have right-side hints of uneven length — scannable but not premium.",
+        "Palette: no money, no bars — fine for a launcher, but it sits on Desk which already failed visceral value."
+      ],
+      "fixes": [
+        "Palette: full-scrim 40% black; panel max 420px, not overlapping KPIs.",
+        "Palette: group Money / Places; equal hint column.",
+        "Palette: selected row indigo wash, not a heavy filled block."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 726,
+    "verdict": "Comfort Home, Pay, Account and Sovereignty are close to a calm indigo fintech, but the one-scale bar is broken whenever two surfaces share a window, and Manage/Lending/Ownership/Desk abandon bars for vacant chrome or spreadsheets. Trust copy (frames, proofs, runtime) is ahead of visual hierarchy.",
+    "priority_fixes": [
+      "Enforce one $N/px (Home Settings value) on every money bar including Home USDC vs Hub One, Move tiles, Assets rows, Sovereignty counterparties; overflow fade instead of rescaling.",
+      "Kill duplicate number legends under totals (Home, Sovereignty) and duplicate account bars on Pay (left preview vs right Before/After).",
+      "Rebuild Manage as an account list with bars; don't use a sitemap of tiles on a mostly empty desktop canvas.",
+      "Dead-end states: disable Swap/Offer/Sign until amount > 0; if lending API is missing, don't show a live form.",
+      "Desk must keep the notch-bar language in the position column or it is a second product; four KPI tiles repeating Home math should go."
+    ]
+  }
+}

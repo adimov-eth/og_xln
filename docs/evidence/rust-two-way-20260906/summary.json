@@ -1,0 +1,77 @@
+{
+  "head": "744817492d41a9ef854d24459e98d90bd259fc0f",
+  "sharedDirtyWorktree": true,
+  "observedAt": "2026-09-06T18:08:19.546Z",
+  "tests": {
+    "realTwoRuntimeSameSocketPaymentAck": {
+      "passed": true,
+      "elapsedMs": 580
+    },
+    "realDialedSaturationFsyncBeforeDrain": {
+      "passed": true,
+      "elapsedMs": 550
+    },
+    "transport": "18/18",
+    "productionClippy": "passed"
+  },
+  "replay": {
+    "artifact": "R7",
+    "checkpoint": 23,
+    "workers": [
+      1,
+      4
+    ],
+    "sameNativeRestart": true,
+    "report": {
+      "frames": 67,
+      "ingress": 108,
+      "egress": 104,
+      "directPayments": 0,
+      "effectDigestsCompared": 67,
+      "eventDigestsCompared": 67,
+      "localContinuationsCompared": 67,
+      "outboxDigestsCompared": 67,
+      "postStateHashesCompared": 67,
+      "runtimeRootsCompared": 68,
+      "accountsRoots": {
+        "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761:0x83dd36ca656d1fffd5d4eeef5dfc2931f1fa3977": "0x5aeec20ceca7c1e6ad1fce718fe61d5e054e5e2059db1d311ff4281fa24d332b",
+        "0x7093aaaa4f5fcf1b82fe3fb5254ead0af4bb453a7b4982bbefc94c75596d6ba0:0x9e12787132c20677da461cc419ecf3ca138691f6": "0xa5d7b2cd86d898a40b780b961015654dc03ffa743d08fbd6bdfee84d802141a3"
+      }
+    }
+  },
+  "build": {
+    "unchangedInputs": 451,
+    "elapsedMs": 26479.548584,
+    "source": {
+      "path": "/tmp/xln-cross-j-parity-r6-20260905/rust-canonical-two-way-r11-20260906-build-source.json",
+      "sha256": "cffa61e9921f3cec098023f142d50f514384d50af49fe75b762ba399ab212d69"
+    }
+  },
+  "sources": [
+    {
+      "path": "/tmp/xln-rust-two-runtime-ack-final-l1.log",
+      "sha256": "b9250d7697346f2f07d944d1dea37c79e0aef2ff2004bbea9e845a788a176c71"
+    },
+    {
+      "path": "/tmp/xln-rust-two-way-dialed-saturation-l1.log",
+      "sha256": "62befcaedc1e75b42329d309eb97d29e547959ed2098ff67f1616fff215d8e35"
+    },
+    {
+      "path": "/tmp/xln-cross-j-parity-r7-20260905/rust-canonical-two-way-r11-w1-20260906.log",
+      "sha256": "50174867da0f8286e100cd6e91bf2b8a0f1c65846c54506a461ab6ba21f3d268"
+    },
+    {
+      "path": "/tmp/xln-cross-j-parity-r7-20260905/rust-canonical-two-way-r11-w4-20260906.log",
+      "sha256": "e12133801c1ee60dd229878934c65a1a743d938b4189241d9c5de0d6f51c171e"
+    },
+    {
+      "path": "/tmp/xln-rust-two-way-production-clippy-r2.log",
+      "sha256": "6dddb70f385d917cdc62b7544159cc0dedf99d5f3d0dd3fe558dff775f7b3a42"
+    }
+  ],
+  "limits": [
+    "Ordinary R7 live continuation reached J watcher and failed with TOKEN_REGISTRY_MISSING; the canonical live reader fix is pending.",
+    "This is semantic replay and socket regression evidence, not production TPS.",
+    "Final cfg(test), full check and release gates remain open."
+  ]
+}

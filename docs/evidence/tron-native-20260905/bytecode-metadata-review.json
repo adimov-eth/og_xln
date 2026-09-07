@@ -1,0 +1,68 @@
+{
+  "comparedTo": "frozen-artifacts from native deployment",
+  "rows": [
+    {
+      "name": "Account",
+      "creationTemplateSha256": "7d801ed27bff1d15f27ac7a9b4b641537dde3ea33bdf0a9f672b4429a8bd27e9",
+      "runtimeTemplateSha256": "d2f7054c2eb4b77abe4fc726d2421a08a9686f467bd46278bfd42b101a1da214",
+      "unchanged": true,
+      "abiUnchanged": true
+    },
+    {
+      "name": "DepositoryBounds",
+      "creationTemplateSha256": "4a1a4846039dcbd4850b8bf9c8b64c0da41b13d8c2925331292dfa0c31530276",
+      "runtimeTemplateSha256": "9ac6e1c6d790db132e1be76da4741c08521c2893b6214db90d34f4007d902c63",
+      "unchanged": true,
+      "abiUnchanged": true
+    },
+    {
+      "name": "HashLadderRegistry",
+      "creationTemplateSha256": "8759da764d656a148a63c7b5331f79505c99f4f9526e45674dfbaa362a2e7dab",
+      "runtimeTemplateSha256": "968f0c6c20e176cdc955045c7fc37cb1ecd5c1982e2f32f40cf2f4ee1d6c74e0",
+      "unchanged": true,
+      "abiUnchanged": true
+    },
+    {
+      "name": "NftCustody",
+      "creationTemplateSha256": "b52868a2523a7ac701285178722f6c598f426abb4b996927ba528d5b0026ed76",
+      "runtimeTemplateSha256": "ab1988a2c66ac007e423e05f2171877eeda61625cf9dce865db96d26023162bc",
+      "unchanged": true,
+      "abiUnchanged": true
+    },
+    {
+      "name": "DeltaTransformer",
+      "creationTemplateSha256": "85fd92e7e8ad7ea78d654b7a86529ae79455ad0cb55dcd0dcaf5bf99aadcbee0",
+      "runtimeTemplateSha256": "52419f3bcc5759b9e3d5fdc4de18d4cfd610d161119e8ac5b2c11a68ba231610",
+      "unchanged": true,
+      "abiUnchanged": true
+    },
+    {
+      "name": "HankoVerifier",
+      "creationTemplateSha256": "82d8846716c7f88496d781f0e3f0852f681238f39f1f88be7c79481bd27e73d8",
+      "runtimeTemplateSha256": "f84d7a6d0430024c81519dee06078111b41dda24a6b32cd7223ca895d3d981c0",
+      "unchanged": true,
+      "abiUnchanged": true
+    },
+    {
+      "name": "EntityProvider",
+      "creationTemplateSha256": "fd438c6242ec28e168b733d8e00d5bfd895a9f496ef7a57119eaa84ba54cfaf4",
+      "runtimeTemplateSha256": "13e2ee880e5bad95295428a33dd2173287e23682a160dfad21fb1e8035eeedcd",
+      "unchanged": true,
+      "abiUnchanged": true
+    },
+    {
+      "name": "Depository",
+      "creationTemplateSha256": "56a306399b599a5cc6953a418aedffd45324ab6d2fb0fe1ea835bb8f0e9fd9a2",
+      "runtimeTemplateSha256": "47c91a2b13221fec6cb53fd1ef6bd39437b3e20948450a71675e07426a1dd364",
+      "unchanged": true,
+      "abiUnchanged": true
+    },
+    {
+      "name": "ERC20Mock",
+      "creationTemplateSha256": "8adc91832d2205f0f214d3bd57688a78a35035b25d897cb14d65a881b76d429c",
+      "runtimeTemplateSha256": "4b7c47ace528427ea40271be282430418818c2acabbf1c1d4d6126a5de4f7637",
+      "unchanged": true,
+      "abiUnchanged": true
+    }
+  ]
+}

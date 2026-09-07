@@ -1,0 +1,673 @@
+{
+  "reviewer": "openrouter/x-ai/grok-latest",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 620,
+        "typography": 740,
+        "color": 680,
+        "data_legibility": 640,
+        "layout": 700,
+        "visceral_value": 720,
+        "responsive": 760,
+        "consistency": 720,
+        "trust": 700
+      },
+      "total": 706,
+      "top_issues": [
+        "Home: four-line legend under $17,500.00 (On-chain / Reserve / Secured $0.00 / At risk) plus Instant send/receive restates the bar; Secured $0.00 is dead weight.",
+        "Home: BALANCES meta '1 px = $100 · auto · 1 empty hidden' is developer chrome competing with USDC 14,000.00.",
+        "Home: Pay/Receive/Swap tiles are equal-height; Pay indigo fill is correct but Receive/Swap ghost borders add card noise.",
+        "Home: Hub One 'hub' chip next to the name is redundant with the H avatar."
+      ],
+      "fixes": [
+        "Collapse the four legend lines into one caption under the bar: 'On-chain $6,000 · Reserve $1,500 · At risk $10,000'; drop Secured $0.",
+        "Move scale to Settings only; on Home show a 10px muted '1px=$100' next to BALANCES, not a full sentence.",
+        "Make Receive/Swap borderless 1px hairlines; keep Pay as the only filled tile.",
+        "Delete the hub chip; keep H avatar + Hub One."
+      ]
+    },
+    {
+      "file": "01-home-bottom.png",
+      "scores": {
+        "hierarchy": 560,
+        "premium": 580,
+        "typography": 700,
+        "color": 660,
+        "data_legibility": 680,
+        "layout": 640,
+        "visceral_value": 700,
+        "responsive": 720,
+        "consistency": 740,
+        "trust": 680
+      },
+      "total": 666,
+      "top_issues": [
+        "Home bottom: ACCOUNTS card + RECENT card stacked with nested radii; RECENT is four identical 'Swap placed · open' rows so the eye never lands on a payment.",
+        "Home bottom: WETH 1.00 / ≈$3,500.00 sits above accounts with a tiny green bar that does not read against the Hub One 60k/40k bilateral bar (scale collision vs home total bar).",
+        "Home + Activity: 'All activity' text button vs tab bar Activity duplicates navigation."
+      ],
+      "fixes": [
+        "Unpin RECENT to 2 rows max; prefer last settled payment over four open swaps.",
+        "Draw token bars and Hub One send/receive halves on the same 1px=$100 scale; if Hub bar would overflow, fade at card edge as Settings copy already describes.",
+        "Remove All activity; tab bar is enough."
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 680,
+        "typography": 720,
+        "color": 740,
+        "data_legibility": 700,
+        "layout": 740,
+        "visceral_value": 620,
+        "responsive": 820,
+        "consistency": 760,
+        "trust": 780
+      },
+      "total": 732,
+      "top_issues": [
+        "Pay: To card repeats Meridian Desk three times (green check, big name, full 80-char hex wrap).",
+        "Pay: Amount 25 vs 'This payment 25.00' vs CTA 'Pay 25.00 USDC' is triple echo; stray caret under This payment.",
+        "Pay: Hub One bilateral bar is useful but send/receive captions duplicate 'Up to 60,000.00 instantly' in the amount header."
+      ],
+      "fixes": [
+        "One name + truncated 0x499d…f2bd; move verified check to the name row only.",
+        "Drop This payment row; keep amount field + CTA.",
+        "Keep the notch bar; drop the duplicate Up to instantly header or the send-up captions, not both."
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 760,
+        "typography": 780,
+        "color": 800,
+        "data_legibility": 760,
+        "layout": 780,
+        "visceral_value": 200,
+        "responsive": 840,
+        "consistency": 740,
+        "trust": 880
+      },
+      "total": 736,
+      "top_issues": [
+        "Receipt sheet: no money bar despite Home/Settings preaching 1px=$100; 25.00 is type-only.",
+        "Receipt: Settled 04:48:18 in 3396 ms is engineer latency; mint should be on PAID/check, not milliseconds.",
+        "Receipt vs Activity detail: PAID 25.00 vs −25.00 USDC sign convention disagrees."
+      ],
+      "fixes": [
+        "Add a 0.25px-at-$100 mint bar under 25.00 (or raise scale locally and label it).",
+        "Show Settled 04:48:18; hide 3396 ms or put in a long-press debug sheet.",
+        "Always signed amounts on receipts: −25.00 when sending."
+      ]
+    },
+    {
+      "file": "03-receipt-bottom.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 620,
+        "typography": 720,
+        "color": 700,
+        "data_legibility": 700,
+        "layout": 580,
+        "visceral_value": 200,
+        "responsive": 700,
+        "consistency": 720,
+        "trust": 860
+      },
+      "total": 644,
+      "top_issues": [
+        "Receipt over Home: sheet covers Pay/Receive/Swap and the total, so the $17,475.00 update is unreadable; dim is too light to commit focus.",
+        "Same latency + unsigned 25.00 issues as 03-receipt.png."
+      ],
+      "fixes": [
+        "Dim Home to 40% and peek only the total + Hub One delta (+9,975) above the sheet.",
+        "Same amount/latency fixes as 03-receipt.png."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 700,
+        "typography": 720,
+        "color": 680,
+        "data_legibility": 660,
+        "layout": 720,
+        "visceral_value": 480,
+        "responsive": 780,
+        "consistency": 700,
+        "trust": 720
+      },
+      "total": 690,
+      "top_issues": [
+        "Receive: cream QR is the only high-contrast object; Amount 0.00 plus full-width mint bar implies a request that is not set.",
+        "Receive SHARE: paragraph + Copy invoice + Copy link + Copy xln:// is three verbs for one action.",
+        "Receive: YOUR ENTITY ID wraps raw hex under the fold with instructional prose that belongs in Settings."
+      ],
+      "fixes": [
+        "Default amount empty/placeholder, not 0.00; hide the mint bar until amount > 0.",
+        "Primary: Copy link; secondary text: Copy invoice. Drop xln:// or tuck under overflow.",
+        "Entity id: 0xf581…476b one line + copy icon; move the inbound-room sentence to a tooltip."
+      ]
+    },
+    {
+      "file": "04-receive-bottom.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 660,
+        "typography": 700,
+        "color": 660,
+        "data_legibility": 640,
+        "layout": 600,
+        "visceral_value": 420,
+        "responsive": 640,
+        "consistency": 700,
+        "trust": 700
+      },
+      "total": 634,
+      "top_issues": [
+        "Receive bottom: QR clipped at top, Entity ID card clipped at bottom; no title/back in frame so the screen feels like a mid-scroll dump.",
+        "Same 0.00 + mint bar false positive as 04-receive.png."
+      ],
+      "fixes": [
+        "Pin QR below a 44px Receive header; keep SHARE fully in first viewport; Entity ID below fold.",
+        "Empty amount: no bar."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 640,
+        "typography": 680,
+        "color": 720,
+        "data_legibility": 740,
+        "layout": 700,
+        "visceral_value": 580,
+        "responsive": 760,
+        "consistency": 680,
+        "trust": 700
+      },
+      "total": 690,
+      "top_issues": [
+        "Swap: You receive 0.00 while You pay 100; primary Swap button is disabled-purple-on-purple with no reason code in the button.",
+        "Swap BOOK size bars are amber/green ticks not on the wallet $ scale (1px=$100 would make 1 WETH huge); they lie relative to Home bars.",
+        "Swap: sandbox chip on USDC and Same network / Across networks segment fight the title for width."
+      ],
+      "fixes": [
+        "Until receive > 0, label the CTA 'Set receive amount' at 40% opacity.",
+        "Book depth bars use a declared size scale (e.g. 1px=0.01 WETH) captioned in BOOK, never the dollar scale.",
+        "Put network in a single text control under title; drop sandbox chip or move to Settings vault."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 600,
+        "typography": 720,
+        "color": 700,
+        "data_legibility": 760,
+        "layout": 620,
+        "visceral_value": 780,
+        "responsive": 700,
+        "consistency": 740,
+        "trust": 760
+      },
+      "total": 702,
+      "top_issues": [
+        "Account Hub One: Pay / Extend credit / Swap plus a leftover Manage tile wrapping to row 2 — four actions, one orphan.",
+        "Account: five-item legend (collateral / at risk / you owe / credit room / in flight) sits above a bar that only shows purple+grey; unused swatches are noise.",
+        "Account: credit line 50,000.00 / 50,000.00 / Collateral 0.00 repeats the bar captions."
+      ],
+      "fixes": [
+        "One row of three: Pay, Swap, overflow (Extend credit, Manage).",
+        "Legend only for colors present on this account.",
+        "Keep bar + send/receive; move credit-line numbers behind Ledger detail."
+      ]
+    },
+    {
+      "file": "06-account-bottom.png",
+      "scores": {
+        "hierarchy": 580,
+        "premium": 620,
+        "typography": 700,
+        "color": 680,
+        "data_legibility": 720,
+        "layout": 640,
+        "visceral_value": 740,
+        "responsive": 680,
+        "consistency": 720,
+        "trust": 740
+      },
+      "total": 682,
+      "top_issues": [
+        "Account bottom: WETH even 0.00 with 10/10 credit lines and empty grey bar occupies a full card; 'Show 1 empty lane · USDT' is a debug affordance.",
+        "THIS ACCOUNT Status Open plus Hub/sandbox/9 frames is a spec sheet, not a money screen."
+      ],
+      "fixes": [
+        "Collapse even/empty lanes to one line: 'WETH even · 10 / 10' until tapped.",
+        "Move THIS ACCOUNT into Ledger detail; keep Status as a single mint Open next to Hub One."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 580,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 640,
+        "layout": 660,
+        "visceral_value": 360,
+        "responsive": 700,
+        "consistency": 680,
+        "trust": 720
+      },
+      "total": 636,
+      "top_issues": [
+        "Activity: filter chips All / Payments / Swaps / Settlement / Accou… clip Accou; five chips on mobile is a carousel tax.",
+        "Activity: six 'Swap placed · open' rows dominate; only Received has a visceral bar; Sent −25.00 has none.",
+        "Activity: 11 movements in the header is inventory, not hierarchy."
+      ],
+      "fixes": [
+        "Three chips: All, Money, Rest; or scroll with Accou fully spelled Accounts.",
+        "Give Sent −25.00 the same mint/indigo bar as Received; group open swaps under '6 open swaps'.",
+        "Drop 11 movements."
+      ]
+    },
+    {
+      "file": "07-activity-bottom.png",
+      "scores": {
+        "hierarchy": 600,
+        "premium": 600,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 680,
+        "layout": 680,
+        "visceral_value": 340,
+        "responsive": 740,
+        "consistency": 720,
+        "trust": 700
+      },
+      "total": 646,
+      "top_issues": [
+        "Activity bottom: Credit limit updated / Account opened rows have no amounts and grey dots; they dilute money history.",
+        "Shared with 07-activity.png: swap-open spam, missing bars on most rows."
+      ],
+      "fixes": [
+        "Filter protocol events behind Accounts chip; default All = payments + fills.",
+        "One bar language: settled mint, open amber, protocol none."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 720,
+        "typography": 760,
+        "color": 760,
+        "data_legibility": 740,
+        "layout": 760,
+        "visceral_value": 180,
+        "responsive": 800,
+        "consistency": 700,
+        "trust": 860
+      },
+      "total": 706,
+      "top_issues": [
+        "Activity receipt: To 'Meridian Desk 0x499d0d…f2bd' crams name+hex on one right column; wraps poorly.",
+        "Activity receipt vs Pay receipt: RECEIPT / PAYMENT · SETTLED vs PAID check — two receipt systems.",
+        "No bar; Proof truncated with no copy control."
+      ],
+      "fixes": [
+        "Unify with Pay receipt: check, amount, counterparty, Frame, Proof, Done.",
+        "To on two lines: name, then hex + copy.",
+        "Proof row: full copy icon, not ellipsis-only."
+      ]
+    },
+    {
+      "file": "08-activity-detail-bottom.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 680,
+        "typography": 740,
+        "color": 740,
+        "data_legibility": 720,
+        "layout": 700,
+        "visceral_value": 180,
+        "responsive": 760,
+        "consistency": 700,
+        "trust": 840
+      },
+      "total": 676,
+      "top_issues": [
+        "Same dual-receipt and no-bar issues as 08-activity-detail.png; scrim still shows clipped Sent row and a stray blue caret.",
+        "Sheet lacks Done; only X — inconsistent with Pay receipt Done CTA."
+      ],
+      "fixes": [
+        "Add Done; match Pay receipt.",
+        "Kill stray carets in list rows behind sheets."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 740,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 800,
+        "layout": 780,
+        "visceral_value": 860,
+        "responsive": 800,
+        "consistency": 760,
+        "trust": 740
+      },
+      "total": 778,
+      "top_issues": [
+        "Settings: SCALE repeats '1 px = $100' in the section header and beside the slider.",
+        "Settings: $1–$100 chip row clips $100; Auto selected while slider also shows $100 — dual source of truth.",
+        "Settings: Layout on wide screens Comfort/Desk is a desktop control on a phone."
+      ],
+      "fixes": [
+        "One live value beside the slider; chips include $100 fully or in a second row.",
+        "If Auto, slider is a preview not a second label.",
+        "Hide Layout on wide screens when width < desktop breakpoint."
+      ]
+    },
+    {
+      "file": "09-settings-bottom.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 680,
+        "typography": 720,
+        "color": 700,
+        "data_legibility": 680,
+        "layout": 660,
+        "visceral_value": 700,
+        "responsive": 720,
+        "consistency": 680,
+        "trust": 760
+      },
+      "total": 694,
+      "top_issues": [
+        "Settings bottom: RUNTIME Mode embedded, Runtime id hex, Frame #72 is operator telemetry on a consumer tab.",
+        "VAULT Sandbox / sandbox doubled; Reveal recovery phrase + Lock are unequal width.",
+        "AT THIS SCALE legend is excellent but $100 1px sample is a 1px sliver users will miss."
+      ],
+      "fixes": [
+        "Move Runtime id/frame to a Developer disclosure.",
+        "Equal-width Lock and Reveal; one Sandbox label.",
+        "Minimum sample bar 4px with caption 'below 4px we tick'."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 560,
+        "typography": 640,
+        "color": 700,
+        "data_legibility": 520,
+        "layout": 600,
+        "visceral_value": 540,
+        "responsive": 620,
+        "consistency": 640,
+        "trust": 700
+      },
+      "total": 620,
+      "top_issues": [
+        "Move: FROM/TO 3-up cards truncate '1,500.00 US…' and '59,975.00 U…' — money is unreadable.",
+        "Move: selected Reserve/Account indigo rings on near-black fill have ~3:1 contrast; Wallet 0.00 still looks tappable as source.",
+        "Move: Sign & send and Add to batch are equal ghost tiles — no primary."
+      ],
+      "fixes": [
+        "Stack FROM/TO as full-width rows: label, full amount, bar.",
+        "Disable Wallet when 0.00; selected state = indigo fill like Pay.",
+        "Primary filled Sign & send; Add to batch text-only."
+      ]
+    },
+    {
+      "file": "10-move-bottom.png",
+      "scores": {
+        "hierarchy": 600,
+        "premium": 560,
+        "typography": 640,
+        "color": 680,
+        "data_legibility": 500,
+        "layout": 580,
+        "visceral_value": 500,
+        "responsive": 600,
+        "consistency": 640,
+        "trust": 680
+      },
+      "total": 598,
+      "top_issues": [
+        "Move bottom: Sign & send / Add to batch sit above WHAT HAPPENS with no filled CTA; amount 250 vs cap 1,500 is fine but destination Hub One is easy to miss.",
+        "Same truncation as 10-move.png on the TO row peeking at top."
+      ],
+      "fixes": [
+        "Sticky filled Sign & send above tab bar.",
+        "Full-width source/dest rows."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 720,
+        "typography": 740,
+        "color": 720,
+        "data_legibility": 700,
+        "layout": 760,
+        "visceral_value": 120,
+        "responsive": 800,
+        "consistency": 740,
+        "trust": 680
+      },
+      "total": 668,
+      "top_issues": [
+        "Manage: 2+2+1 tile grid leaves Ownership as a widow; NEEDS ATTENTION empty card is a blank trophy.",
+        "Manage: no money, no bars — Hub One row hides +9,975 at risk that Sovereignty cares about."
+      ],
+      "fixes": [
+        "Five tiles as list rows, or 2×3 with a spacer, not a dangling fifth card.",
+        "Drop empty NEEDS ATTENTION or collapse to one line.",
+        "Account row: show at-risk bar + $9,975."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 640,
+        "typography": 700,
+        "color": 700,
+        "data_legibility": 720,
+        "layout": 700,
+        "visceral_value": 560,
+        "responsive": 740,
+        "consistency": 700,
+        "trust": 720
+      },
+      "total": 686,
+      "top_issues": [
+        "Assets: Gas 10,000.0000 ETH dominates USDC 2,500.00; four-decimal ETH vs two-decimal tokens.",
+        "Assets: every token repeats 'Depository may pull 0.00'.",
+        "Assets: Move into reserve is a small ghost in the wallet card, disconnected from Move tab."
+      ],
+      "fixes": [
+        "Gas as caption under Signer, not a money row; 2–4 decimals by magnitude.",
+        "One pull line on the section, not per token.",
+        "Reuse Move tile styling or deep-link to Move."
+      ]
+    },
+    {
+      "file": "12-assets-bottom.png",
+      "scores": {
+        "hierarchy": 540,
+        "premium": 580,
+        "typography": 680,
+        "color": 720,
+        "data_legibility": 640,
+        "layout": 620,
+        "visceral_value": 200,
+        "responsive": 700,
+        "consistency": 660,
+        "trust": 640
+      },
+      "total": 598,
+      "top_issues": [
+        "Assets FAUCETS: two full-width indigo CTAs ('Hub pays me USDC over credit', 'USDC to my on-chain wallet') scream louder than Home Pay — sandbox tools outrank money.",
+        "DEBTS empty essay plus FAUCETS 'Nothing here is real' is correct copy in the wrong visual weight."
+      ],
+      "fixes": [
+        "Faucet CTAs outline, not indigo fill; indigo reserved for Pay/Sign.",
+        "Collapse Debts to one line when zero."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 620,
+        "premium": 600,
+        "typography": 680,
+        "color": 660,
+        "data_legibility": 640,
+        "layout": 660,
+        "visceral_value": 80,
+        "responsive": 700,
+        "consistency": 640,
+        "trust": 520
+      },
+      "total": 580,
+      "top_issues": [
+        "Lending: Amount 0.00 and disabled Offer to the pool while the form is fully built — dead primary.",
+        "Lending: 100 bp '= 1.00% per term' next to 1 day is easy to misread as APY.",
+        "Lending: no money bar, no pool TVL."
+      ],
+      "fixes": [
+        "Don't show Offer until amount > 0; show pool liquidity first.",
+        "Label '1.00% for 1 day (not APY)'.",
+        "If no API, don't present a live form — one empty state."
+      ]
+    },
+    {
+      "file": "13-lend-bottom.png",
+      "scores": {
+        "hierarchy": 480,
+        "premium": 540,
+        "typography": 660,
+        "color": 620,
+        "data_legibility": 600,
+        "layout": 560,
+        "visceral_value": 80,
+        "responsive": 520,
+        "consistency": 620,
+        "trust": 480
+      },
+      "total": 516,
+      "top_issues": [
+        "Lending bottom: amber 'This runtime has no lending API' under a still-tappable Offer — trust breaker.",
+        "Tab bar covers the helper paragraph; Offer is purple-disabled against indigo chrome."
+      ],
+      "fixes": [
+        "Hard-disable the whole form; replace Offer with the amber empty state as the only module.",
+        "Safe-area padding above tab bar ≥ 16px."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 640,
+        "premium": 700,
+        "typography": 740,
+        "color": 720,
+        "data_legibility": 680,
+        "layout": 720,
+        "visceral_value": 80,
+        "responsive": 780,
+        "consistency": 700,
+        "trust": 700
+      },
+      "total": 646,
+      "top_issues": [
+        "Ownership: BOARD is a key-value dump (Lazy hash of its board) with no visual owner map; TAKE CONTROL empty card is another blank.",
+        "No visceral value by nature; still uses the same heavy cards as money screens so it feels like a failed wallet page."
+      ],
+      "fixes": [
+        "One signer row with you chip; Kind/Threshold as captions.",
+        "Hide TAKE CONTROL when empty."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 740,
+        "typography": 760,
+        "color": 780,
+        "data_legibility": 760,
+        "layout": 740,
+        "visceral_value": 800,
+        "responsive": 760,
+        "consistency": 740,
+        "trust": 860
+      },
+      "total": 776,
+      "top_issues": [
+        "Sovereignty: $7,500.00 enforce vs $9,975 Trust only is the right story, but the paragraph under the legend is three sentences of tutorial on a money hero.",
+        "Sovereignty KEYS still says throwaway sandbox on a screen that otherwise feels production-trust.",
+        "Ledger Jurisdiction wraps Depository 0x0b71… onto two ragged right-aligned lines."
+      ],
+      "fixes": [
+        "Keep four-line color caption; move the essay to a first-run tooltip.",
+        "Sandbox vault: one amber pill in the header, not a paragraph in KEYS.",
+        "Jurisdiction one line + copy."
+      ]
+    },
+    {
+      "file": "15-sovereignty-bottom.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 720,
+        "typography": 740,
+        "color": 760,
+        "data_legibility": 740,
+        "layout": 700,
+        "visceral_value": 760,
+        "responsive": 720,
+        "consistency": 740,
+        "trust": 840
+      },
+      "total": 744,
+      "top_issues": [
+        "Sovereignty bottom: Save evidence bundle is the right trust CTA; PER COUNTERPARTY Hub One '$9,975.00 at risk' purple bar is good but 'they answer in 1d, you in 1d' is cramped legal.",
+        "Tab bar overlaps the evidence helper text in the paired 15-sovereignty.png crop — same safe-area miss as Lending."
+      ],
+      "fixes": [
+        "Dispute windows on two lines or icon+tooltip.",
+        "16px safe area above tabs on all long screens."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 670,
+    "verdict": "Mobile dark has a real product spine—hero totals, indigo Pay, bilateral notch bars, frame/proof receipts—but it is not yet a calm fintech surface: legends, chips, hex, faucet CTAs and swap-open spam fight the money. Visceral value is honored on Home/Account/Sovereignty and abandoned on receipts, activity, Move truncation and Lending.",
+    "priority_fixes": [
+      "One receipt component (Pay sheet = Activity sheet): signed amount, frame, proof+copy, Done; drop ms latency.",
+      "Home: delete Secured $0 and the 1px=$100 sentence; one bar caption; no hub chip.",
+      "Move FROM/TO as full-width rows with untruncated amounts and a filled Sign & send; never clip 1,500.00 US…",
+      "Activity: cluster open swaps; bars on sent/received only; stop clipping Accou chips.",
+      "Indigo fill only for money commits (Pay, Sign & send, Done). Faucets, Offer-to-pool, Copy invoice, disabled Swap are outline or hidden. Hard-empty Lending when there is no API."
+    ]
+  }
+}

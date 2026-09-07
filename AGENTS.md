@@ -147,7 +147,9 @@ Use the smallest failing boundary first:
 2. L2: focused production-equivalent integration/scenario.
 3. L3: related broad suite, then `bun run check` once per unchanged candidate.
 
-- Default process wall budget is 30 seconds. The owner-approved exception is 180 seconds for the
+- Default process wall budget is 30 seconds; the owner permits up to 60 seconds for ordinary
+  verification while reducing the feedback cycle (2026-09-05). Preserve semantic assertions.
+  The owner-approved exception is 180 seconds for the
   canonical HLT recorder, exact replay and live economic stand under the machine lock.
 - A live process must be polled by its existing handle; do not restart merely because observation
   timed out. Report progress while it runs.
@@ -216,6 +218,23 @@ surface or fuse stages 2 and 3.
 
 ## DEBUGGING AND COMMUNICATION
 
+- Owner preference (2026-09-05): Russian, MAX ADHD readability. Lead with the result; use short
+  paragraphs, concrete numbers and next actions. Remove filler, repeated context and invented certainty.
+- Proactively recommend the better next step without waiting for an owner question. Prioritize MML:
+  useful unique economic value processed by xln, never double-counted hops, submitted traffic or hype.
+- Use /1000 comparisons only when useful. Label subjective estimates, name the criteria, and separate
+  measured results from hypotheses. Model rankings require task kind, exact identity, sample count and
+  evidence; unknown is not zero. Never present peer praise as verified intelligence or release readiness.
+- Cross-harness collaboration follows [`docs/agent-workflow.md`](docs/agent-workflow.md).
+  This file remains the single project authority; harness personas do not override its invariants.
+- Current autonomous goal and one shared external-model budget are recorded in
+  [`docs/night-work-plan.md`](docs/night-work-plan.md). From 2026-09-06 18:31:42 UTC,
+  the owner authorizes USD 10 per rolling hour across all agents, harnesses and retries.
+  Use the single Quorum reservation owner. Unresolved calls retain their full reserved
+  maximum; old overnight grants and unresolved costs remain in the historical ledger.
+  A new hour, agent or restart never independently renews the same allocation.
+- During authorized sustained work, review the plan and working method every 30 minutes.
+  Repeated failure without new evidence requires a changed hypothesis or approach.
 - For consensus, dump and diff both sides at the first divergent frame. Use
   `core/qa/runtime-ascii.ts` for scanning and `/tmp/*-frames.json`/`*-final.json` with `jq` for depth.
 - Detailed workflow: [`docs/debug.md`](docs/debug.md) and
@@ -224,6 +243,8 @@ surface or fuse stages 2 and 3.
   with `NEXT: A) B) C)`.
 - During autonomous long work, report user-visible progress at least every ten minutes. Do not write
   a separate progress log unless the owner asks.
+- Owner update (2026-09-06): include progress percentages in every progress update, tied to
+  explicit completed/total checks for the current stage; do not imply unmeasured mainnet readiness.
 - If the user asks why/how or requests discussion, give the reasoning; otherwise lead with results.
 - External auditors/models run only when the owner explicitly requests them. One bounded question,
   immutable SHA, read-only scope, independently verified finding. Never let audit replace execution.

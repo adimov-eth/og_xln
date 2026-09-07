@@ -10,21 +10,23 @@
  *
  * The lock lives next to the main checkout (`<git-common-dir>/../`), so every
  * worktree of this repository resolves the exact same directory. A slot is a
- * directory: `mkdir` is atomic on APFS, so the first process to create it owns
- * it. Capacity is one today; an owner may raise it once concurrent stands are
+ * directory. A kernel advisory lock serializes its publication, reaping and
+ * release, so a stale reader cannot delete a new owner. Capacity is one today;
+ * an owner may raise it once concurrent stands are
  * proven not to distort each other.
  */
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { withStandMetadata } from './stand/metadata';
+import { safeStringify } from '../core/protocol/serialization';
 
 export const STAND_LOCK_DIR_NAME = '.xln-stand-lock';
 export const STAND_LOCK_SLOTS_ENV = 'XLN_STAND_LOCK_SLOTS';
 export const STAND_LOCK_TOKEN_ENV = 'XLN_STAND_LOCK_TOKEN';
 export const STAND_LOCK_DISABLE_ENV = 'XLN_STAND_LOCK_DISABLED';
-/** A held slot whose owner is gone is reclaimed; liveness is the primary test. */
-export const STAND_LOCK_STALE_MS = 30 * 60_000;
 
 export const buildStandLockChildEnv = (
   env: NodeJS.ProcessEnv,
@@ -37,6 +39,7 @@ export type StandLockHolder = Readonly<{
   worktree: string;
   startedAt: string;
   token: string;
+  childGroup?: number;
 }>;
 
 export const standLockRoot = (): string => {
@@ -63,7 +66,11 @@ const pidAlive = (pid: number): boolean => {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
+    if (error instanceof Error && 'code' in error) {
+      if (error.code === 'EPERM') return true;
+      if (error.code === 'ESRCH') return false;
+    }
+    throw error;
   }
 };
 
@@ -71,22 +78,28 @@ export const readStandLockHolder = (root: string, slot: number): StandLockHolder
   const path = holderPath(root, slot);
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as StandLockHolder;
+    const value = JSON.parse(readFileSync(path, 'utf8'));
+    if (!value || !Number.isSafeInteger(value.pid) || value.pid <= 0
+      || typeof value.reason !== 'string' || typeof value.worktree !== 'string'
+      || typeof value.token !== 'string' || !value.token
+      || typeof value.startedAt !== 'string' || !Number.isFinite(Date.parse(value.startedAt))
+      || (value.childGroup !== undefined && (!Number.isSafeInteger(value.childGroup) || value.childGroup <= 0))) return null;
+    return value;
   } catch {
     return null;
   }
 };
 
 const holderIsStale = (holder: StandLockHolder | null): boolean => {
-  if (!holder) return true;
-  if (pidAlive(holder.pid)) {
-    return Date.now() - Date.parse(holder.startedAt) > STAND_LOCK_STALE_MS;
-  }
-  return true;
+  // Missing/corrupt metadata is not evidence of death. In particular another
+  // process may have created the directory but not published its holder yet.
+  if (!holder) return false;
+  if (holder.childGroup && pidAlive(-holder.childGroup)) return false;
+  return !pidAlive(holder.pid);
 };
 
 /** Drop slots whose owner exited without releasing, so a crash cannot wedge the machine. */
-export const reapStandLockSlots = (root: string): number => {
+const reapSlots = (root: string): number => {
   if (!existsSync(root)) return 0;
   let reaped = 0;
   for (const entry of readdirSync(root)) {
@@ -99,17 +112,30 @@ export const reapStandLockSlots = (root: string): number => {
   return reaped;
 };
 
+export const reapStandLockSlots = (root: string): number =>
+  withStandMetadata(root, () => reapSlots(root));
+
 const claimSlot = (root: string, slot: number, holder: StandLockHolder): boolean => {
   try {
     mkdirSync(join(root, `slot-${slot}`), { recursive: false, mode: 0o700 });
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'EEXIST') return false;
+    throw error;
   }
-  writeFileSync(holderPath(root, slot), `${JSON.stringify(holder, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(holderPath(root, slot), `${safeStringify(holder)}\n`, { mode: 0o600 });
   return true;
 };
 
 export type StandLockGrant = Readonly<{ root: string; slot: number; token: string }>;
+
+export const registerStandGroup = (grant: StandLockGrant, pid: number): void => {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('STAND_LOCK_CHILD_PID_INVALID');
+  withStandMetadata(grant.root, () => {
+    const holder = readStandLockHolder(grant.root, grant.slot);
+    if (!holder || holder.token !== grant.token) throw new Error('STAND_LOCK_OWNER_LOST');
+    writeFileSync(holderPath(grant.root, grant.slot), safeStringify({ ...holder, childGroup: pid }), { mode: 0o600 });
+  });
+};
 
 const sleep = (ms: number): Promise<void> => new Promise(done => setTimeout(done, ms));
 
@@ -128,7 +154,7 @@ export const acquireStandLock = async (options: Readonly<{
   const root = options.root ?? standLockRoot();
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const capacity = standLockCapacity();
-  const token = `${process.pid}-${Date.now()}-${Math.floor(performance.now())}`;
+  const token = randomUUID();
   const holder: StandLockHolder = {
     pid: process.pid,
     reason: options.reason,
@@ -139,10 +165,14 @@ export const acquireStandLock = async (options: Readonly<{
   const deadline = Date.now() + options.waitMs;
   let announced = false;
   for (;;) {
-    reapStandLockSlots(root);
-    for (let slot = 0; slot < capacity; slot += 1) {
-      if (claimSlot(root, slot, holder)) return { root, slot, token };
-    }
+    const claimed = withStandMetadata(root, () => {
+      reapSlots(root);
+      for (let slot = 0; slot < capacity; slot += 1) {
+        if (claimSlot(root, slot, holder)) return { root, slot, token };
+      }
+      return null;
+    });
+    if (claimed) return claimed;
     if (Date.now() >= deadline) {
       const busy = Array.from({ length: capacity }, (_unused, slot) => readStandLockHolder(root, slot))
         .map(entry => (entry ? `${entry.reason}@${entry.worktree}#${entry.pid}` : 'free'))
@@ -158,20 +188,22 @@ export const acquireStandLock = async (options: Readonly<{
 };
 
 export const releaseStandLock = (grant: StandLockGrant): void => {
-  const holder = readStandLockHolder(grant.root, grant.slot);
-  if (holder && holder.token !== grant.token) return;
-  rmSync(join(grant.root, `slot-${grant.slot}`), { recursive: true, force: true });
+  withStandMetadata(grant.root, () => {
+    const holder = readStandLockHolder(grant.root, grant.slot);
+    if (!holder || holder.token !== grant.token) return;
+    if (holder.childGroup && pidAlive(-holder.childGroup)) throw new Error('STAND_LOCK_CHILDREN_STILL_ALIVE');
+    rmSync(join(grant.root, `slot-${grant.slot}`), { recursive: true, force: true });
+  });
 };
 
 export const standLockStatus = (rootOverride?: string): string => {
   const root = rootOverride ?? standLockRoot();
   const capacity = standLockCapacity();
-  reapStandLockSlots(root);
   const rows = Array.from({ length: capacity }, (_unused, slot) => {
     const holder = readStandLockHolder(root, slot);
     return holder
       ? `slot-${slot} HELD pid=${holder.pid} since=${holder.startedAt} reason=${holder.reason} worktree=${holder.worktree}`
-      : `slot-${slot} free`;
+      : existsSync(join(root, `slot-${slot}`)) ? `slot-${slot} BLOCKED unknown owner` : `slot-${slot} free`;
   });
   return [`root=${root}`, `capacity=${capacity}`, ...rows].join('\n');
 };
@@ -200,16 +232,8 @@ if (import.meta.main) {
       reason: flag('reason') || child.join(' ').slice(0, 60),
       waitMs: Number(flag('wait-ms') || '1800000'),
     });
-    process.on('exit', () => releaseStandLock(grant));
-    const result = spawnSync(child[0]!, child.slice(1), {
-      stdio: 'inherit',
-      // Wired stands treat the token as proof that this child already owns
-      // the machine slot. Without it, `stand:run` deadlocks when the wrapped
-      // command reaches an auto-wired local-prod/e2e entrypoint.
-      env: buildStandLockChildEnv(process.env, grant.token),
-    });
-    releaseStandLock(grant);
-    process.exit(result.status ?? 1);
+    const { runStandChild } = await import('./stand/run');
+    process.exit(await runStandChild(grant, child, Number(flag('timeout-ms') || '30000')));
   } else if (command === 'release') {
     const slot = Number(flag('slot'));
     if (!Number.isSafeInteger(slot) || slot < 0) throw new Error('STAND_LOCK_RELEASE_SLOT_REQUIRED');

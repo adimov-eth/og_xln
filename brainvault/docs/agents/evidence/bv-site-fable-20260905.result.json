@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "result",
+  "id": "bv-site-fable-20260905.result",
+  "runId": "bv-site-fable-20260905",
+  "recordedAt": "2026-09-04T23:59:35.627Z",
+  "harnessVersion": "0.84.4",
+  "servedProvider": null,
+  "status": "completed",
+  "elapsedMs": 24781,
+  "exitCode": 0,
+  "costUsd": 0.16899,
+  "response": "{\"verdict\":\"ANSWER\",\"answer\":\"Cut to three sections: Hero+Run, How, Safety.\\n\\nDelete: metrics strip (76–80), Found/Lost pair (86), comparison cards (88–92), demo video (105), 14.379 s speed block (106), run-notes and duplicate run-command (117–118), audit verify:source paragraph (122). Merge `#why` into hero subcopy; move install tabs and the collapsed audit prompt into Safety unchanged.\\n\\nHero: “Your wallet, mined from memory.”\\nSubcopy: “You wait once. An attacker waits for every guess. No seed to store. No server. Not mining: Argon2id recomputation. A weak or reused password stays weak; a random seed still holds more entropy.”\\n\\nHow: keep steps 100–102 and the collapsed recipe; keep protocol-note.\\n\\nSafety: “Use one strong secret used nowhere else. Enter username, password, shard count, multiplier exactly—case and spaces count. Forget one, lose the wallet; nothing resets it. Before funding, verify the full first address independently.”\",\"references\":[\"brainvault/site/index.html:44\",\"brainvault/site/index.html:45\",\"brainvault/site/index.html:48\",\"brainvault/site/index.html:76\",\"brainvault/site/index.html:86\",\"brainvault/site/index.html:88\",\"brainvault/site/index.html:100\",\"brainvault/site/index.html:105\",\"brainvault/site/index.html:106\",\"brainvault/site/index.html:117\",\"brainvault/site/index.html:119\",\"brainvault/site/index.html:121\"]}",
+  "responseHash": "sha256:8b588f9077a8bbe474da96cdc640e8825f0ff8f7b5b575d5faac338c6cbd6b4d",
+  "stdoutHash": "sha256:672f3abd33e2536fa235955f828a28b8821cd23f7f18f88d5c5a510bd4dd19d7",
+  "stderrHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "error": null
+}

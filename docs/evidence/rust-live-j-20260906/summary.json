@@ -1,0 +1,134 @@
+{
+  "observedAt": "2026-09-06T17:16:23.468Z",
+  "head": "744817492d41a9ef854d24459e98d90bd259fc0f",
+  "sharedDirtyWorktree": true,
+  "evidence": "functional-smoke",
+  "engine": "rust",
+  "workers": 4,
+  "users": 1000,
+  "runtimesPerProcess": 200,
+  "processes": 5,
+  "offeredWindowMs": 5000,
+  "offeredPayments": 5000,
+  "completedPayments": 5000,
+  "authenticatedSessions": 1000,
+  "rejectedSessions": 0,
+  "outboxFailures": 0,
+  "outboxRowsPending": 0,
+  "drain": {
+    "accountMempoolTxs": 0,
+    "openHubPeers": 1000,
+    "pendingAccountFrames": 0,
+    "pendingRuntimeWork": 0,
+    "runtimes": 1000
+  },
+  "systemReadyMs": 3443,
+  "scenarioElapsedMs": 19386,
+  "settlementElapsedMs": 1197,
+  "settlement": {
+    "accountHeightBefore": 23,
+    "accountHeightFinalized": 29,
+    "accountHeightReady": 26,
+    "accountHeightSubmitted": 27,
+    "counterpartyEntityId": "0x87c289ffee392199b5e47231a717fb8cc36588c46741e52e9b2e5e78a2cd630d",
+    "evidence": "functional-smoke",
+    "hubEntityId": "0x772258f5db6ff74a7c6500ec90ca12bc825ce8b4582d1ec89f3a500653f4257d",
+    "jNonceBefore": 0,
+    "jNonceFinalized": 24,
+    "runtimeHeightBefore": 66,
+    "runtimeHeightFinalized": 77
+  },
+  "replay": {
+    "recording": "r7",
+    "checkpoint": 23,
+    "frames": 67,
+    "workers": [
+      1,
+      4
+    ],
+    "sameNativeRestart": true,
+    "reports": [
+      {
+        "frames": 67,
+        "ingress": 108,
+        "egress": 104,
+        "directPayments": 0,
+        "effectDigestsCompared": 67,
+        "eventDigestsCompared": 67,
+        "localContinuationsCompared": 67,
+        "outboxDigestsCompared": 67,
+        "postStateHashesCompared": 67,
+        "runtimeRootsCompared": 68,
+        "accountsRoots": {
+          "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761:0x83dd36ca656d1fffd5d4eeef5dfc2931f1fa3977": "0x5aeec20ceca7c1e6ad1fce718fe61d5e054e5e2059db1d311ff4281fa24d332b",
+          "0x7093aaaa4f5fcf1b82fe3fb5254ead0af4bb453a7b4982bbefc94c75596d6ba0:0x9e12787132c20677da461cc419ecf3ca138691f6": "0xa5d7b2cd86d898a40b780b961015654dc03ffa743d08fbd6bdfee84d802141a3"
+        }
+      },
+      {
+        "frames": 67,
+        "ingress": 108,
+        "egress": 104,
+        "directPayments": 0,
+        "effectDigestsCompared": 67,
+        "eventDigestsCompared": 67,
+        "localContinuationsCompared": 67,
+        "outboxDigestsCompared": 67,
+        "postStateHashesCompared": 67,
+        "runtimeRootsCompared": 68,
+        "accountsRoots": {
+          "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761:0x83dd36ca656d1fffd5d4eeef5dfc2931f1fa3977": "0x5aeec20ceca7c1e6ad1fce718fe61d5e054e5e2059db1d311ff4281fa24d332b",
+          "0x7093aaaa4f5fcf1b82fe3fb5254ead0af4bb453a7b4982bbefc94c75596d6ba0:0x9e12787132c20677da461cc419ecf3ca138691f6": "0xa5d7b2cd86d898a40b780b961015654dc03ffa743d08fbd6bdfee84d802141a3"
+        }
+      }
+    ],
+    "evidence": [
+      {
+        "path": "/tmp/xln-cross-j-parity-r7-20260905/rust-readiness-r8-w1-20260906.log",
+        "sha256": "8cee314746d3a50524f248d125bdf80dd3911cc6feb480b68709183c48750f9b"
+      },
+      {
+        "path": "/tmp/xln-cross-j-parity-r7-20260905/rust-readiness-r8-w4-20260906.log",
+        "sha256": "407445c275a3a8da8d7a877896830be3166553a70d2937bdc1131480d5a24fdb"
+      }
+    ]
+  },
+  "build": {
+    "sourceFiles": 409,
+    "durationMs": 20006.961917,
+    "unchanged": true,
+    "source": {
+      "path": "/tmp/xln-cross-j-parity-r6-20260905/rust-readiness-r8-20260906-build-source.json",
+      "sha256": "78355c6d456911a75a3485b90c2fa6b9c85f0e5236d25d269be1a09387182e3f"
+    },
+    "binary": {
+      "path": "/Users/zigota/xln/rscore/target/release/xlnrs",
+      "sha256": "c240201f907de880e14f268c92b23cf143d3773fa5e9b32f429b1f7c9bd14bd9"
+    }
+  },
+  "sources": [
+    {
+      "path": "/tmp/xln-rust-live-j-ready-r9-20260906.log",
+      "sha256": "b950c21b961048e0f9447f7e66153418ed5d8e16d9e5d7eec5897df2d741e462"
+    },
+    {
+      "path": "/tmp/xln-rust-live-j-ready-r9-20260906/server.log",
+      "sha256": "55f05569bd2f242f525ef933fa5b502bc8f499f0302831a6419449dcbe6dc7cf"
+    },
+    {
+      "path": "/tmp/xln-rust-live-j-ready-r9-20260906/hlt-rust-h1-account-settlement-smoke.json",
+      "sha256": "8882a2e528c0ef48ecc01809fd1b1435e6ba4685000b18c362da21ca180d1538"
+    },
+    {
+      "path": "/tmp/xln-rust-bootstrap-readiness-l1-20260906.log",
+      "sha256": "c310fb910a122ce613b0b73589ce5b9de43e25582b059739048e348baa71ae63"
+    }
+  ],
+  "limits": [
+    "Five-second functional workload is not the required 20-second production TPS gate.",
+    "Native Rust genesis does not prove a TS-to-Rust live authority cutover.",
+    "Local EVM jurisdiction 31337; the second Anvil is not native Tron TVM.",
+    "Dialed production Rust sessions still require a real financial-reply regression and fix.",
+    "Final completeness, full check and release gates remain open.",
+    "Successful observed financial finality is not an independent standalone receipt-proof artifact."
+  ]
+}

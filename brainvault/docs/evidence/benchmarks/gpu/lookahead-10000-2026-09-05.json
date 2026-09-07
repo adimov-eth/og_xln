@@ -1,0 +1,238 @@
+{
+  "date": "2026-09-05",
+  "baseSha": "b97c454d605e750a08da7ff6baab645330175468",
+  "hardware": {
+    "cpu": "Apple M3 Ultra",
+    "cpuCores": 32,
+    "gpuCores": 80,
+    "ramBytes": 549755813888,
+    "os": "macOS 26.6.2 (25G83)",
+    "bun": "1.4.0",
+    "metal": "32023.883",
+    "lowPowerMode": 0,
+    "temperature": "not measured"
+  },
+  "measurement": "Native orchestration wall from experimental/public benchmark harness. Excludes input salt preparation, final root fold and full CLI startup; includes native host setup and wipe. Not directly identical to the previous common benchmark totalTimeMs. Shared developer machine, exclusive stand lock during every run, unrelated uncoordinated load not ruled out.",
+  "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298",
+  "arenaGiB": 88,
+  "quorum": {
+    "kind": "two read-only in-session peers, not external provider/model comparisons",
+    "ideas": [
+      "one-step data-independent reference prefetch",
+      "CPU24 contention reduction",
+      "shared public reference table",
+      "overlap wave staging if measured significant"
+    ],
+    "review": "one peer statically checked one-step boundary behavior 127/128/129 and65535; not security certification"
+  },
+  "exploratory": [
+    {
+      "variant": "lookahead2-8320",
+      "gpuShards": 8320,
+      "cpuWorkers": 32,
+      "timeMs": 13850.007,
+      "cpuMs": 12671.461,
+      "metalMs": 13848.016
+    },
+    {
+      "variant": "stock-profile",
+      "gpuShards": 8000,
+      "cpuWorkers": 32,
+      "timeMs": 14925.919,
+      "cpuMs": 13079.48,
+      "metalMs": 14923.756
+    },
+    {
+      "variant": "stock-cpu24",
+      "gpuShards": 8000,
+      "cpuWorkers": 24,
+      "timeMs": 15222.975,
+      "cpuMs": 14907.785,
+      "metalMs": 15220.778
+    },
+    {
+      "variant": "lookahead1-first",
+      "gpuShards": 8000,
+      "cpuWorkers": 32,
+      "timeMs": 14514.265,
+      "cpuMs": 14514.035,
+      "metalMs": 14059.788
+    },
+    {
+      "variant": "lookahead1-8400",
+      "gpuShards": 8400,
+      "cpuWorkers": 32,
+      "timeMs": 13771.634,
+      "cpuMs": 11945.044,
+      "metalMs": 13769.978
+    },
+    {
+      "variant": "paired32-lookahead1",
+      "gpuShards": 8000,
+      "cpuWorkers": 32,
+      "timeMs": 14392.171,
+      "cpuMs": 14391.932,
+      "metalMs": 13237.898
+    },
+    {
+      "variant": "lookahead1-8320",
+      "gpuShards": 8320,
+      "cpuWorkers": 32,
+      "timeMs": 12881.126,
+      "cpuMs": 12313.891,
+      "metalMs": 12880.277
+    },
+    {
+      "variant": "public-table-lookahead1",
+      "gpuShards": 8320,
+      "cpuWorkers": 32,
+      "timeMs": 14404.33,
+      "cpuMs": 13462.371,
+      "metalMs": 14402.815
+    }
+  ],
+  "ab": [
+    {
+      "variant": "A",
+      "command": "bun run stand:run --reason brainvault-10k-ab-1-A -- bun brainvault/src/native/source/metal/benchmark.ts --mode=hybrid --shards=10000 --cpu-workers=32 --metal-workers=40 --metal-processes=8 --gpu-shards=8000",
+      "status": "$ bun tools/stand-lock.ts status\nroot=/Users/zigota/xln/.xln-stand-lock\ncapacity=1\nslot-0 free\n",
+      "mode": "hybrid",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "cpuWorkers": 32,
+      "metalWorkers": 40,
+      "metalProcesses": 8,
+      "simdgroups": 4,
+      "kernel": "v1special",
+      "memory": "private",
+      "gpuShards": 8000,
+      "timeMs": 15600.839,
+      "cpuMs": 14932.242,
+      "metalMs": 15599.999,
+      "tailDeltaMs": -667.757,
+      "shardsPerSecond": 640.991,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298"
+    },
+    {
+      "variant": "B",
+      "command": "bun run stand:run --reason brainvault-10k-ab-2-B -- bun brainvault/src/native/source/experimental/benchmark.ts --mode=hybrid --shards=10000 --cpu-workers=32 --metal-workers=40 --metal-processes=8 --gpu-shards=8320",
+      "status": "$ bun tools/stand-lock.ts status\nroot=/Users/zigota/xln/.xln-stand-lock\ncapacity=1\nslot-0 free\n",
+      "mode": "hybrid",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "cpuWorkers": 32,
+      "metalWorkers": 40,
+      "metalProcesses": 8,
+      "simdgroups": 4,
+      "kernel": "v1special",
+      "memory": "private",
+      "gpuShards": 8320,
+      "timeMs": 15637.712,
+      "cpuMs": 15637.474,
+      "metalMs": 13288.667,
+      "tailDeltaMs": 2348.807,
+      "shardsPerSecond": 639.48,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298"
+    },
+    {
+      "variant": "B",
+      "command": "bun run stand:run --reason brainvault-10k-ab-3-B -- bun brainvault/src/native/source/experimental/benchmark.ts --mode=hybrid --shards=10000 --cpu-workers=32 --metal-workers=40 --metal-processes=8 --gpu-shards=8320",
+      "status": "$ bun tools/stand-lock.ts status\nroot=/Users/zigota/xln/.xln-stand-lock\ncapacity=1\nslot-0 free\n",
+      "mode": "hybrid",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "cpuWorkers": 32,
+      "metalWorkers": 40,
+      "metalProcesses": 8,
+      "simdgroups": 4,
+      "kernel": "v1special",
+      "memory": "private",
+      "gpuShards": 8320,
+      "timeMs": 14261.466,
+      "cpuMs": 14261.21,
+      "metalMs": 13552.106,
+      "tailDeltaMs": 709.104,
+      "shardsPerSecond": 701.19,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298"
+    },
+    {
+      "variant": "A",
+      "command": "bun run stand:run --reason brainvault-10k-ab-4-A -- bun brainvault/src/native/source/metal/benchmark.ts --mode=hybrid --shards=10000 --cpu-workers=32 --metal-workers=40 --metal-processes=8 --gpu-shards=8000",
+      "status": "$ bun tools/stand-lock.ts status\nroot=/Users/zigota/xln/.xln-stand-lock\ncapacity=1\nslot-0 free\n",
+      "mode": "hybrid",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "cpuWorkers": 32,
+      "metalWorkers": 40,
+      "metalProcesses": 8,
+      "simdgroups": 4,
+      "kernel": "v1special",
+      "memory": "private",
+      "gpuShards": 8000,
+      "timeMs": 15062.31,
+      "cpuMs": 14796.167,
+      "metalMs": 15060.837,
+      "tailDeltaMs": -264.67,
+      "shardsPerSecond": 663.909,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298"
+    },
+    {
+      "variant": "A",
+      "command": "bun run stand:run --reason brainvault-10k-ab-5-A -- bun brainvault/src/native/source/metal/benchmark.ts --mode=hybrid --shards=10000 --cpu-workers=32 --metal-workers=40 --metal-processes=8 --gpu-shards=8000",
+      "status": "$ bun tools/stand-lock.ts status\nroot=/Users/zigota/xln/.xln-stand-lock\ncapacity=1\nslot-0 free\n",
+      "mode": "hybrid",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "cpuWorkers": 32,
+      "metalWorkers": 40,
+      "metalProcesses": 8,
+      "simdgroups": 4,
+      "kernel": "v1special",
+      "memory": "private",
+      "gpuShards": 8000,
+      "timeMs": 15163.815,
+      "cpuMs": 14505.798,
+      "metalMs": 15162.191,
+      "tailDeltaMs": -656.393,
+      "shardsPerSecond": 659.465,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298"
+    },
+    {
+      "variant": "B",
+      "command": "bun run stand:run --reason brainvault-10k-ab-6-B -- bun brainvault/src/native/source/experimental/benchmark.ts --mode=hybrid --shards=10000 --cpu-workers=32 --metal-workers=40 --metal-processes=8 --gpu-shards=8320",
+      "status": "$ bun tools/stand-lock.ts status\nroot=/Users/zigota/xln/.xln-stand-lock\ncapacity=1\nslot-0 free\n",
+      "mode": "hybrid",
+      "specId": "brainvault/argon2id-sharded/v1.0|argon2id-v19-m262144-t1-p1|out32|nfkd-utf8",
+      "shardCount": 10000,
+      "cpuWorkers": 32,
+      "metalWorkers": 40,
+      "metalProcesses": 8,
+      "simdgroups": 4,
+      "kernel": "v1special",
+      "memory": "private",
+      "gpuShards": 8320,
+      "timeMs": 13760.467,
+      "cpuMs": 12549.232,
+      "metalMs": 13757.405,
+      "tailDeltaMs": -1208.173,
+      "shardsPerSecond": 726.72,
+      "root": "5557e8b96514ba45d0f3af0450616c68d41625731a8de9fbe54046cce1de0298"
+    }
+  ],
+  "summary": {
+    "aMedianMs": 15163.815,
+    "bMedianMs": 14261.466,
+    "latencyReductionPercent": 5.950672703406101,
+    "nPerVariant": 3,
+    "aRangeMs": [
+      15062.31,
+      15600.839
+    ],
+    "bRangeMs": [
+      13760.467,
+      15637.712
+    ],
+    "target20PercentAchieved": false,
+    "productionPromoted": false
+  }
+}

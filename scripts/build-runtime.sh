@@ -11,6 +11,7 @@ mkdir -p "$(dirname "$OUT")" "$(dirname "$WORKER_OUT")"
 
 echo "[build-runtime] bundling core/api/public/browser.ts -> $OUT"
 bun build core/api/public/browser.ts --target=browser --outfile="$OUT" --minify \
+  --define 'process.env.NODE_ENV="production"' \
   --external http --external https --external zlib \
   --external fs --external path \
   --external stream --external buffer --external url \
@@ -19,6 +20,7 @@ bun build core/api/public/browser.ts --target=browser --outfile="$OUT" --minify 
 
 echo "[build-runtime] bundling core/rscore/ts-worker/worker.ts -> $WORKER_OUT"
 bun build core/rscore/ts-worker/worker.ts --target=browser --outfile="$WORKER_OUT" --minify \
+  --define 'process.env.NODE_ENV="production"' \
   --external http --external https --external zlib \
   --external fs --external path \
   --external stream --external buffer --external url \

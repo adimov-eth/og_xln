@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "result",
+  "id": "bv-site-qwen-20260905.result",
+  "runId": "bv-site-qwen-20260905",
+  "recordedAt": "2026-09-04T23:59:39.667Z",
+  "harnessVersion": "1.18.20",
+  "servedProvider": null,
+  "status": "timeout",
+  "elapsedMs": 30014,
+  "exitCode": null,
+  "costUsd": null,
+  "response": "",
+  "responseHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdoutHash": "sha256:5d0f587aee2f2acf804f0a8f5374af5b2d524ef5ca03cec4c81698bc86da0e36",
+  "stderrHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "error": "wall_timeout"
+}

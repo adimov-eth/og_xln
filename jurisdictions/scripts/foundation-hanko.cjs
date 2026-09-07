@@ -11,14 +11,7 @@
  * and EntityProvider.computeFoundationActionHash / _authorizeFoundation.
  */
 
-const HANKO_ABI = [
-  'tuple(' +
-    'bytes32[] placeholders,' +
-    'bytes packedSignatures,' +
-    'tuple(bytes32 entityId, uint256[] entityIndexes, uint256[] weights, uint256 threshold,' +
-      ' uint32 boardChangeDelay, uint32 controlChangeDelay, uint32 dividendChangeDelay)[] claims' +
-  ')',
-];
+const { buildSingleSignerHanko } = require('../../core/hanko/batch.ts');
 
 const foundationEntityId = (ethers) => ethers.zeroPadValue(ethers.toBeHex(1), 32);
 
@@ -41,24 +34,6 @@ const tokenListingArgumentsHash = (ethers, { depository, tokenType, contractAddr
     ['address', 'uint8', 'address', 'uint256'],
     [depository, tokenType, contractAddress, BigInt(externalTokenId)],
   ));
-
-/**
- * 1-of-1 Foundation Hanko over a raw 32-byte digest (no EIP-191 prefix):
- * packedSignatures = r || s || recoveryBits (bit 0 set when v == 28),
- * placeholders = [], claims = [[bytes32(1), [0], [1], 1, 0, 0, 0]].
- */
-const buildSingleSignerFoundationHanko = (ethers, actionHash, privateKey) => {
-  const key = privateKey.startsWith('0x') ? privateKey : `0x${privateKey}`;
-  const signature = new ethers.SigningKey(key).sign(ethers.getBytes(actionHash));
-  const recoveryBits = new Uint8Array(1);
-  if (signature.v === 28) recoveryBits[0] |= 1;
-  const packedSignatures = ethers.concat([signature.r, signature.s, ethers.hexlify(recoveryBits)]);
-  return ethers.AbiCoder.defaultAbiCoder().encode(HANKO_ABI, [[
-    [],
-    packedSignatures,
-    [[foundationEntityId(ethers), [0], [1], 1, 0, 0, 0]],
-  ]]);
-};
 
 /**
  * Build the (hankoData, actionNonce) pair for
@@ -88,17 +63,19 @@ const buildFoundationTokenListing = (ethers, {
     actionNonce,
     argumentsHash,
     actionHash,
-    hankoData: buildSingleSignerFoundationHanko(ethers, actionHash, privateKey),
+    // Numbered Foundation authority uses the same complete envelope as Runtime;
+    // a copied deployment ABI silently omitted memberSignatures and reverted on TVM.
+    hankoData: buildSingleSignerHanko(
+      foundationEntityId(ethers), actionHash, privateKey.startsWith('0x') ? privateKey : `0x${privateKey}`,
+    ),
   };
 };
 
 module.exports = {
-  HANKO_ABI,
   foundationEntityId,
   foundationActionDomain,
   foundationRegisterTokenAction,
   computeFoundationActionHash,
   tokenListingArgumentsHash,
-  buildSingleSignerFoundationHanko,
   buildFoundationTokenListing,
 };

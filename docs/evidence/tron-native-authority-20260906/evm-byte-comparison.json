@@ -1,0 +1,34 @@
+{
+  "kind": "IMMUTABLE_HEAD_CURRENT_EVM_BYTE_COMPARISON",
+  "reference": {
+    "sha": "744817492d41a9ef854d24459e98d90bd259fc0f",
+    "paths": [
+      "core/jurisdiction/machine/registration-evidence/index.ts",
+      "core/storage/wal/snapshot.ts"
+    ],
+    "transformation": "Relative imports and ethers package resolved to absolute local paths; logic unchanged."
+  },
+  "vectors": [
+    {
+      "source": "FoundationBootstrapped",
+      "bytes": 1859,
+      "sha256": "c5caeab5a9703d89804ed5d9af38c95d3e5be751793cb55f262bf3a33ffe6816",
+      "evidenceHash": "0x54a11e038af4ceb681f6f4ab6b8d0a9c92eedc79c67444d0d414805ffa713705",
+      "claimHash": "0x0742629c33c3b3795cf0993fff198a6b206f1f3ec79a83a70def736d20e00451",
+      "exact": true
+    },
+    {
+      "source": "EntityRegistered",
+      "bytes": 1755,
+      "sha256": "33a2f9a2b975e62542163b98c6c9be2d2f540f95d569e312cc2288b0b5890adf",
+      "evidenceHash": "0x04c243742ca41a0556675200863614b5f86ae43cba91d06151ba96459b87ac6a",
+      "claimHash": "0x7e16cd42aec695f0fb90dbff04ad1cacce88f648d8a61c2d85c6dd72de1e9278",
+      "exact": true
+    }
+  ],
+  "jSnapshot": {
+    "bytes": 273,
+    "sha256": "36abc1c1227ff845386440fbb29a0ba6bcf8495b09f0539e139a0f823a0896ff",
+    "exact": true
+  }
+}

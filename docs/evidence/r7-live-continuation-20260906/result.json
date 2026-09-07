@@ -1,0 +1,63 @@
+{
+  "command": {
+    "height": 93,
+    "nextSwapTakerFeeBps": 2,
+    "previousSwapTakerFeeBps": 1,
+    "type": "setHubConfig"
+  },
+  "elapsedMs": 1652,
+  "final": {
+    "frameHash": "0x9cf44ec53f0a52743daabf4d233be2f17c834d38fe9fc1d43201342ff7c069fd",
+    "height": 93,
+    "lineageLinksVerified": 3
+  },
+  "initial": {
+    "accountsRoot": "0x5aeec20ceca7c1e6ad1fce718fe61d5e054e5e2059db1d311ff4281fa24d332b",
+    "height": 90,
+    "listen": "127.0.0.1:20012",
+    "minFrameDelayMs": 100,
+    "restoreMicros": 158812,
+    "restoredFrames": 67,
+    "runtimeFrameHash": "0x6d12102ad51fea7c1d0dee0229c9af305017386d0399e2ee26f1e37b1e834332",
+    "runtimeId": "0xa77006ba4be22e3106043deeed40ba968a7ca78c",
+    "status": "j_catchup",
+    "workers": 4
+  },
+  "runRoot": "/tmp/xln-r7-live-continuation-prep-20260906/run-32P6tU",
+  "schema": "xln-r7-live-continuation-v1",
+  "source": {
+    "accountsRoots": {
+      "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761:0x83dd36ca656d1fffd5d4eeef5dfc2931f1fa3977": "0x5aeec20ceca7c1e6ad1fce718fe61d5e054e5e2059db1d311ff4281fa24d332b",
+      "0x7093aaaa4f5fcf1b82fe3fb5254ead0af4bb453a7b4982bbefc94c75596d6ba0:0x9e12787132c20677da461cc419ecf3ca138691f6": "0xa5d7b2cd86d898a40b780b961015654dc03ffa743d08fbd6bdfee84d802141a3"
+    },
+    "canonicalEntityHashes": [
+      {
+        "cellCount": 1,
+        "entityId": "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761",
+        "hash": "0xaa1ef6acac8d8b40912b0b647b4017b3cece4436a109b97ef05f6ebebef168b3"
+      },
+      {
+        "cellCount": 1,
+        "entityId": "0x7093aaaa4f5fcf1b82fe3fb5254ead0af4bb453a7b4982bbefc94c75596d6ba0",
+        "hash": "0x0b02c5a275005976f242e7c5f3eb9ec1d04620d43019ec0b3ffb9c4a78631f8b"
+      }
+    ],
+    "canonicalStateHash": "0xa997347465e48825afab1fa824441938d67d9ac6e3a07158605a9451cb1c0848",
+    "frameHash": "0x6d12102ad51fea7c1d0dee0229c9af305017386d0399e2ee26f1e37b1e834332",
+    "h90OutputCount": 1,
+    "h90OutputsDigest": "0x7c8e5220a35d8ca0698261990031323dcea301bf47277462997c4d5d79f105c2",
+    "height": 90,
+    "postStateHash": "0x63c7b5c9d28394320fdf1a31214e300e90794bdfb9a317304010522fbb9fae2d",
+    "prevFrameHash": "0x988bd99e248d232cf9e1ba412b33ce4ad1cac8f6402cf4ec32526f8f2c49623e",
+    "primaryEntityId": "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761",
+    "runtimeId": "0xa77006ba4be22e3106043deeed40ba968a7ca78c",
+    "sourceHashes": {
+      "native": "7819544d3b66d93965cf9383436467466633e006acffd070e80bffe8e00167c0",
+      "wal": "a22e04f4952695debaa9e2eaa68c498e2d66df97904451249f26c7941ca6fd23"
+    },
+    "tsReportedFinalPendingOutbox": 1
+  },
+  "sourceNative": "/tmp/xln-cross-j-parity-r7-20260905/rust-canonical-expiry-r13-w1-20260906-native",
+  "sourceWal": "/tmp/xln-cross-j-parity-r7-20260905/source-wal",
+  "status": "passed"
+}

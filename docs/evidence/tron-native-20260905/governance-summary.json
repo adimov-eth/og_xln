@@ -1,0 +1,77 @@
+{
+  "kind": "native-tvm-numbered-entity-governance-and-recovery",
+  "candidateBaseSha": "0d979aa026ec1c0911631505c9d62cd5ad069f44",
+  "candidateDirty": true,
+  "driverSha256": "43481c6c4e8e94c9982809e4554448bcf8c4fd30d95306462012d48236744fb0",
+  "entity": "0x0000000000000000000000000000000000000000000000000000000000000002",
+  "controlSupply": "100000000000",
+  "dividendSupply": "100000000000",
+  "reserve": [
+    "0",
+    "1000000",
+    "0"
+  ],
+  "nonce": [
+    "0",
+    "1",
+    "1",
+    "2"
+  ],
+  "externalBalance": [
+    "1000000000000",
+    "999999000000",
+    "1000000000000"
+  ],
+  "oldBoardRejection": {
+    "block": 58,
+    "tx": "0xd84ab8dee3642d86564a636b01ac6928b66bd01971563b97e9ab7e302625ccd5",
+    "status": 0,
+    "error": "E4",
+    "oldCurrentAuthority": false,
+    "oldHistoricalAuthority": true,
+    "currentAuthority": true
+  },
+  "reactivation": {
+    "block": 55,
+    "tx": "0xf2ec285a003e6282156bb1de59f16d1eebf14fd61fbb4c1fd3b156bb1ee904ee",
+    "timestamp": "2026-09-05T04:51:21.000Z"
+  },
+  "payout": {
+    "block": 59,
+    "tx": "0xa4b0e02a998da111e34f71750f76c9bf8f723eb7b7604fc6dd548561d2d9f63b",
+    "timestamp": "2026-09-05T04:51:33.000Z",
+    "timestampSource": "native fullnode log: block59 hash matches payout receipt"
+  },
+  "solidReceiptRange": [
+    49,
+    59
+  ],
+  "solidLogCount": 14,
+  "bootMs": 11513,
+  "economicResumeMs": 20761,
+  "standBudgetMs": 60000,
+  "exitCode": 0,
+  "originalUnsolidActivationRolledBack": true,
+  "privateKeysCopied": false,
+  "runtimeJAuthorityProof": false,
+  "nativeSolidity": [
+    {
+      "phase": "activation",
+      "waitCompleted": true,
+      "safeBlockAtLeast": 55,
+      "receiptBlockHash": "0x0000000000000037809b1a88fc10b069951c9a1a37274e81ed8a20be88689100",
+      "exactObservedSolidHeight": null,
+      "exactObservedSolidHash": null
+    },
+    {
+      "phase": "payout",
+      "waitCompleted": true,
+      "safeBlockAtLeast": 59,
+      "receiptBlockHash": "0x000000000000003b3a85b90cd3bdc5e0fa4fbdd6a06c580fa292a9fb97b65f1f",
+      "exactObservedSolidHeight": null,
+      "exactObservedSolidHash": null
+    }
+  ],
+  "exactSolidHeadNote": "The executed wait logged no exact solidity API response; lower bounds follow the completed canonical wait and are not fabricated exact head values.",
+  "postRunMetadataClarification": "Original failed manifest kind/error were copied into the successful activation coordinates at runtime; only that inherited metadata was removed here. Raw execution log is preserved."
+}

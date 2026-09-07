@@ -1,0 +1,53 @@
+{
+  "kind": "NATIVE_TRON_DEPOSIT_WITHDRAW",
+  "before": "0",
+  "afterDeposit": "1000000",
+  "after": "0",
+  "externalBefore": "1000000000000",
+  "externalAfter": "1000000000000",
+  "nonceBefore": "3",
+  "nonceAfter": "4",
+  "depositEvent": {
+    "name": "ReserveUpdated",
+    "args": {
+      "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "tokenId": "1",
+      "newBalance": "1000000"
+    },
+    "blockNumber": 46,
+    "blockHash": "0x000000000000002edd79119a46f2cdcf8385ea97ee04a6ba52638e13bac24469",
+    "transactionHash": "0xf01a6385977cc55a90b08f7e13a176dd8e0c1864d46b4c4428057a0e6ec8f3aa",
+    "logIndex": 1
+  },
+  "withdrawn": {
+    "txHash": "0xadec3b74220a13e049dc09f80cac56cc34c7e0109d1b068c64ed7e5a3881a8f8",
+    "blockNumber": 47,
+    "events": [
+      {
+        "name": "ReserveUpdated",
+        "args": {
+          "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "tokenId": "1",
+          "newBalance": "0"
+        },
+        "blockNumber": 47,
+        "blockHash": "0x000000000000002faf35987932dbc0f0df5d3eb3c0b94075f229bec23dd45c18",
+        "transactionHash": "0xadec3b74220a13e049dc09f80cac56cc34c7e0109d1b068c64ed7e5a3881a8f8",
+        "logIndex": 0
+      },
+      {
+        "name": "HankoBatchProcessed",
+        "args": {
+          "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "batchHash": "0xe203cae54ba253011d8b66bcb00d9e7c01d76c61fc2323a28b7ca0703efa2420",
+          "nonce": "4"
+        },
+        "blockNumber": 47,
+        "blockHash": "0x000000000000002faf35987932dbc0f0df5d3eb3c0b94075f229bec23dd45c18",
+        "transactionHash": "0xadec3b74220a13e049dc09f80cac56cc34c7e0109d1b068c64ed7e5a3881a8f8",
+        "logIndex": 2
+      }
+    ]
+  },
+  "authenticatedLogs": 3
+}

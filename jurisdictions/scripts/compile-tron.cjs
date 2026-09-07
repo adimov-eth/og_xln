@@ -11,6 +11,12 @@ const buildRoot = path.join(repoRoot, 'build-tron');
 const artifactsRoot = path.join(buildRoot, 'contracts');
 const quiet = process.argv.includes('--quiet');
 const expectedCompiler = '0.8.25';
+const contractArgument = process.argv.slice(2).find((argument) => argument.startsWith('--contracts='));
+const selectedContracts = contractArgument ? contractArgument.slice('--contracts='.length).split(',') : ['*'];
+if (selectedContracts.some((name) => !/^([A-Za-z_][A-Za-z0-9_]*|\*)$/.test(name))) {
+  throw new Error('TRON_SOLC_CONTRACT_SELECTION_INVALID');
+}
+if (contractArgument && process.argv.includes('--all')) throw new Error('TRON_SOLC_SELECTION_CONFLICT');
 
 const sourceFiles = (directory) => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
   const absolute = path.join(directory, entry.name);
@@ -49,16 +55,15 @@ const input = {
     viaIR: true,
     evmVersion: 'cancun',
     outputSelection: {
-      '*': {
-        '*': [
+      '*': Object.fromEntries(selectedContracts.map((name) => [name, [
           'abi',
           'metadata',
           'evm.bytecode.object',
           'evm.bytecode.linkReferences',
           'evm.deployedBytecode.object',
           'evm.deployedBytecode.linkReferences',
-        ],
-      },
+          'evm.deployedBytecode.immutableReferences',
+        ]])),
     },
   },
 };
@@ -89,6 +94,10 @@ for (const diagnostic of diagnostics) {
 if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
   throw new Error('TRON_SOLC_COMPILE_FAILED');
 }
+const emittedNames = new Set(Object.values(output.contracts || {}).flatMap((contracts) => Object.keys(contracts)));
+for (const name of selectedContracts) {
+  if (name !== '*' && !emittedNames.has(name)) throw new Error(`TRON_SOLC_CONTRACT_NOT_FOUND:${name}`);
+}
 
 rmSync(artifactsRoot, { recursive: true, force: true });
 mkdirSync(artifactsRoot, { recursive: true });
@@ -99,10 +108,11 @@ for (const [sourceName, contracts] of Object.entries(output.contracts || {})) {
       contractName,
       sourceName,
       abi: contract.abi,
-      bytecode: contract.evm.bytecode.object,
-      deployedBytecode: contract.evm.deployedBytecode.object,
+      bytecode: `0x${contract.evm.bytecode.object}`,
+      deployedBytecode: `0x${contract.evm.deployedBytecode.object}`,
       linkReferences: contract.evm.bytecode.linkReferences,
       deployedLinkReferences: contract.evm.deployedBytecode.linkReferences,
+      immutableReferences: contract.evm.deployedBytecode.immutableReferences,
       compiler: { name: 'solc', version: compilerVersion },
       metadata: contract.metadata,
     };

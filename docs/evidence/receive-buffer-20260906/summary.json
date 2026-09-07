@@ -1,0 +1,58 @@
+{
+  "head": "744817492d41a9ef854d24459e98d90bd259fc0f",
+  "sharedDirtyWorktree": true,
+  "observedAt": "2026-09-06T18:08:19.545Z",
+  "checks": {
+    "l1": "12/12",
+    "browser": "1/1",
+    "build": "passed"
+  },
+  "scope": "Optional ten-percent buffer on the entire required credit limit; incoming default collateral; outgoing Move with explicit payment review",
+  "exampleUsdc": {
+    "previousLimit": "27.50",
+    "requiredLimit": "52.50",
+    "newLimit": "57.75",
+    "increase": "30.25"
+  },
+  "startupMs": 18585,
+  "browserProcessMs": 12043,
+  "browserTestMs": 11300,
+  "assertions": [
+    "default 100% collateral on each new request",
+    "no Account mutation before confirmation",
+    "buffer toggle does not compound the limit",
+    "exact committed limit after confirmation",
+    "mobile no horizontal overflow",
+    "reserve Move amount includes fee",
+    "one funding batch",
+    "return to unchanged payment draft without sending",
+    "zero page errors and authentication errors"
+  ],
+  "sources": [
+    {
+      "path": "/tmp/xln-receive-total-limit-browser-r3-20260906.log",
+      "sha256": "39c317d1bc81f9d618e94d3c0969712171fc62910cefa5a080943c93244cb4b4"
+    },
+    {
+      "path": "/tmp/xln-react-capacity-1788717907884/browser.log",
+      "sha256": "4771326837af0142628f1ef53ec67010ec4b76a576d95114d95e5460d7173c7d"
+    },
+    {
+      "path": "/Users/zigota/xln/ui/tests/e2e-capacity.spec.ts",
+      "sha256": "80eaaf29b8f3c0866883669e9b201fef37d68b89c1c895fcdb8b7ab40a99559a"
+    },
+    {
+      "path": "/Users/zigota/xln/core/account/capacity-plan.ts",
+      "sha256": "04f5df047ae943232c08bfa2d71dd31aa5a864cc1dc28ef28addb1cb7bbf53e9"
+    },
+    {
+      "path": "/Users/zigota/xln/ui/src/components/ReceiveCapacity.tsx",
+      "sha256": "9992323ffa12ec57156a7200bc465859a57a6bfd8b5118ea9e7c53d6de0a1bbf"
+    }
+  ],
+  "limits": [
+    "Guaranteed request-bound collateral reservation remains unimplemented.",
+    "One earlier Bun/JSC worker crash remains unexplained; this success is not an engine fix.",
+    "Full repository check and release gates remain open."
+  ]
+}

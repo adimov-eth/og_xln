@@ -2,7 +2,6 @@
  * Deploy full XLN contract stack
  * Usage: npx hardhat run scripts/deploy-stack.cjs --network localhost
  */
-const hre = require("hardhat");
 
 const { mkdirSync, writeFileSync } = require("node:fs");
 const { dirname } = require("node:path");
@@ -15,15 +14,15 @@ const DEFAULT_HARDHAT_MNEMONIC = "test test test test test test test test test t
  * stablecoin needs its raw key (DEPLOYER_PRIVATE_KEY, or the well-known
  * Hardhat/Anvil account #0 on local nodes that unlock it).
  */
-const resolveFoundationSignerKey = (deployerAddress) => {
+const resolveFoundationSignerKey = (ethers, deployerAddress) => {
   const configured = String(process.env.DEPLOYER_PRIVATE_KEY || "").trim();
   const candidates = [];
   if (configured) candidates.push(configured.startsWith("0x") ? configured : `0x${configured}`);
   candidates.push(
-    hre.ethers.HDNodeWallet.fromPhrase(DEFAULT_HARDHAT_MNEMONIC, undefined, "m/44'/60'/0'/0/0").privateKey,
+    ethers.HDNodeWallet.fromPhrase(DEFAULT_HARDHAT_MNEMONIC, undefined, "m/44'/60'/0'/0/0").privateKey,
   );
   for (const key of candidates) {
-    if (new hre.ethers.Wallet(key).address.toLowerCase() === deployerAddress.toLowerCase()) return key;
+    if (new ethers.Wallet(key).address.toLowerCase() === deployerAddress.toLowerCase()) return key;
   }
   throw new Error(`FOUNDATION_SIGNER_KEY_UNAVAILABLE:${deployerAddress}`);
 };
@@ -43,16 +42,19 @@ const deploymentEvidence = async (contract, address, label) => {
 };
 
 async function main() {
+  const { network: networkManager } = await import("hardhat");
+  const connection = await networkManager.create();
+  const { ethers } = connection;
   console.log("🚀 Deploying XLN Contract Stack...\n");
-  const network = await hre.ethers.provider.getNetwork();
-  const [deployer] = await hre.ethers.getSigners();
-  const foundationRecipient = hre.ethers.getAddress(
+  const network = await ethers.provider.getNetwork();
+  const [deployer] = await ethers.getSigners();
+  const foundationRecipient = ethers.getAddress(
     process.env.XLN_FOUNDATION_ADDRESS || deployer.address
   );
 
   // 1. Deploy Account library
   console.log("1️⃣ Deploying Account library...");
-  const Account = await hre.ethers.getContractFactory("Account");
+  const Account = await ethers.getContractFactory("Account");
   const account = await Account.deploy();
   await account.waitForDeployment();
   const accountAddr = await account.getAddress();
@@ -61,7 +63,7 @@ async function main() {
 
   // 2. Deploy bounded Hanko verifier and linked EntityProvider
   console.log("2️⃣ Deploying HankoVerifier + EntityProvider...");
-  const HankoVerifier = await hre.ethers.getContractFactory("HankoVerifier");
+  const HankoVerifier = await ethers.getContractFactory("HankoVerifier");
   const hankoVerifier = await HankoVerifier.deploy();
   await hankoVerifier.waitForDeployment();
   const hankoVerifierAddr = await hankoVerifier.getAddress();
@@ -70,7 +72,7 @@ async function main() {
     hankoVerifierAddr,
     "HANKO_VERIFIER",
   );
-  const EntityProvider = await hre.ethers.getContractFactory("EntityProvider", {
+  const EntityProvider = await ethers.getContractFactory("EntityProvider", {
     libraries: { HankoVerifier: hankoVerifierAddr },
   });
   const entityProvider = await EntityProvider.deploy(foundationRecipient);
@@ -87,7 +89,7 @@ async function main() {
 
   // 3. Deploy the immutable canonical transformer and both code-size libraries.
   console.log("3️⃣ Deploying DeltaTransformer + Depository libraries...");
-  const DeltaTransformer = await hre.ethers.getContractFactory("DeltaTransformer");
+  const DeltaTransformer = await ethers.getContractFactory("DeltaTransformer");
   const deltaTransformer = await DeltaTransformer.deploy();
   await deltaTransformer.waitForDeployment();
   const deltaTransformerAddr = await deltaTransformer.getAddress();
@@ -96,7 +98,7 @@ async function main() {
     deltaTransformerAddr,
     "DELTA_TRANSFORMER",
   );
-  const DepositoryBounds = await hre.ethers.getContractFactory("DepositoryBounds");
+  const DepositoryBounds = await ethers.getContractFactory("DepositoryBounds");
   const depositoryBounds = await DepositoryBounds.deploy();
   await depositoryBounds.waitForDeployment();
   const depositoryBoundsAddr = await depositoryBounds.getAddress();
@@ -105,7 +107,7 @@ async function main() {
     depositoryBoundsAddr,
     "DEPOSITORY_BOUNDS",
   );
-  const HashLadderRegistry = await hre.ethers.getContractFactory("HashLadderRegistry");
+  const HashLadderRegistry = await ethers.getContractFactory("HashLadderRegistry");
   const hashLadderRegistry = await HashLadderRegistry.deploy();
   await hashLadderRegistry.waitForDeployment();
   const hashLadderRegistryAddr = await hashLadderRegistry.getAddress();
@@ -114,7 +116,7 @@ async function main() {
     hashLadderRegistryAddr,
     "HASH_LADDER_REGISTRY",
   );
-  const NftCustody = await hre.ethers.getContractFactory("NftCustody");
+  const NftCustody = await ethers.getContractFactory("NftCustody");
   const nftCustody = await NftCustody.deploy();
   await nftCustody.waitForDeployment();
   const nftCustodyAddr = await nftCustody.getAddress();
@@ -122,7 +124,7 @@ async function main() {
 
   // 4. Deploy Depository with one immutable transformer and all linked logic.
   console.log("4️⃣ Deploying Depository...");
-  const Depository = await hre.ethers.getContractFactory("Depository", {
+  const Depository = await ethers.getContractFactory("Depository", {
     libraries: {
       Account: accountAddr,
       DepositoryBounds: depositoryBoundsAddr,
@@ -159,12 +161,12 @@ async function main() {
     if (process.env.XLN_DEPLOY_TEST_STABLECOIN !== "1") {
       throw new Error("XLN_STABLECOIN_ADDRESS_REQUIRED");
     }
-    const ERC20Mock = await hre.ethers.getContractFactory("ERC20Mock");
+    const ERC20Mock = await ethers.getContractFactory("ERC20Mock");
     const stablecoin = await ERC20Mock.deploy(
       "Tether USD Test",
       "USDT",
       6,
-      hre.ethers.parseUnits("1000000", 6),
+      ethers.parseUnits("1000000", 6),
     );
     await stablecoin.waitForDeployment();
     stablecoinAddress = await stablecoin.getAddress();
@@ -174,9 +176,9 @@ async function main() {
       "TEST_STABLECOIN",
     );
   } else {
-    stablecoinAddress = hre.ethers.getAddress(stablecoinAddress);
+    stablecoinAddress = ethers.getAddress(stablecoinAddress);
   }
-  const stablecoin = new hre.ethers.Contract(
+  const stablecoin = new ethers.Contract(
     stablecoinAddress,
     ["function decimals() external view returns (uint8)"],
     deployer,
@@ -194,11 +196,11 @@ async function main() {
       `FOUNDATION_LISTING_SIGNER_MISMATCH:foundation=${foundationRecipient}:deployer=${deployer.address}`,
     );
   }
-  const foundationSignerKey = resolveFoundationSignerKey(deployer.address);
-  const listing = buildFoundationTokenListing(hre.ethers, {
+  const foundationSignerKey = resolveFoundationSignerKey(ethers, deployer.address);
+  const listing = buildFoundationTokenListing(ethers, {
     chainId: network.chainId,
     entityProviderAddress: entityProviderAddr,
-    foundationNonce: await entityProvider.entityActionNonces(foundationEntityId(hre.ethers)),
+    foundationNonce: await entityProvider.entityActionNonces(foundationEntityId(ethers)),
     depository: depositoryAddr,
     tokenType: 0,
     contractAddress: stablecoinAddress,
@@ -233,7 +235,7 @@ async function main() {
 
   const result = {
     stackVersion: "V1",
-    network: hre.network.name,
+    network: connection.networkName,
     chainId: Number(network.chainId),
     deployer: deployer.address,
     foundationRecipient,

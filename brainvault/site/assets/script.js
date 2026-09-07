@@ -1,3 +1,24 @@
+// Three editorial options share installation and safety behavior.
+const variants = {
+  a: { hero: 'Your wallet.\nFrom memory.', thesis: 'Nothing to carry.', how: 'Hard to guess.\nYours to recover.', explain: 'Argon2id makes guessing expensive. Not weak passwords strong.', safety: 'Recover first.\nFund second.' },
+  b: { hero: 'Carry less.\nRemember more.', thesis: 'Your secret becomes your wallet.', how: 'One secret.\nA costly guess.', explain: 'You wait to recover. Attackers work for every guess.', safety: 'Prove recovery.\nThen trust it.' },
+  c: { hero: 'Make every\nguess expensive.', thesis: 'A wallet derived from what you remember.', how: 'Memory,\nput to work.', explain: 'Argon2id adds work. Your password supplies the strength.', safety: 'Test it.\nThen fund it.' },
+};
+const variantButtons = [...document.querySelectorAll('[data-variant-button]')];
+function selectVariant(name) {
+  if (!Object.hasOwn(variants, name)) return;
+  for (const node of document.querySelectorAll('[data-copy-key]')) {
+    node.textContent = variants[name][node.dataset.copyKey];
+  }
+  for (const button of variantButtons) {
+    button.setAttribute('aria-pressed', String(button.dataset.variantButton === name));
+  }
+  document.body.dataset.variant = name;
+}
+for (const button of variantButtons) {
+  button.addEventListener('click', () => selectVariant(button.dataset.variantButton));
+}
+
 const menuButton = document.querySelector('.menu-toggle');
 const navigation = document.querySelector('#nav');
 

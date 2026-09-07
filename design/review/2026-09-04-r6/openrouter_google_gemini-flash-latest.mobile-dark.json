@@ -1,0 +1,678 @@
+{
+  "reviewer": "openrouter/google/gemini-flash-latest",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 790,
+        "typography": 780,
+        "color": 810,
+        "data_legibility": 770,
+        "layout": 780,
+        "visceral_value": 820,
+        "responsive": 760,
+        "consistency": 810,
+        "trust": 820
+      },
+      "total": 798,
+      "top_issues": [
+        "Home: the four-item balance breakdown below the main total ($17,500.00) wraps into noisy multi-line text with redundant square bullets and low visual breathing room",
+        "Home: the scale indicator '1 px = $100 · auto · 1 empty hidden' is crammed into the section header row against 'BALANCES' and 'Move', making it look like unparsed technical debug text",
+        "Home: the instant capacity lightning-bolt line ('Instant: send up to $95,000.00...') is low-contrast and competes awkwardly with the breakdown pills right above it"
+      ],
+      "fixes": [
+        "Home: format the balance breakdown as a neat 2x2 compact grid or segmented metric strip with fixed 12px label / 13px mono value alignment",
+        "Home: move '1 px = $100' into a subtle tappable badge on the far right with a clean pill container, separating '1 empty hidden' into an explicit list footer link",
+        "Home: give the primary action buttons ('Pay', 'Receive', 'Swap') consistent icon stroke weights and align vertical internal padding to 14px"
+      ]
+    },
+    {
+      "file": "01-home-bottom.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 780,
+        "typography": 790,
+        "color": 800,
+        "data_legibility": 800,
+        "layout": 750,
+        "visceral_value": 780,
+        "responsive": 740,
+        "consistency": 800,
+        "trust": 810
+      },
+      "total": 784,
+      "top_issues": [
+        "Home bottom: the list item for WETH at the very top is cut off without clear scroll cueing, leaving an orphaned green bar sliver",
+        "Home bottom: 'RECENT' section repeats 'Swap placed' entries with identical icons and minimal metadata differentiation, lacking counterparty or direction clarity",
+        "Home bottom: '+ Open account' button uses a heavy dark pill with an icon that looks like a secondary modal trigger rather than a primary card action"
+      ],
+      "fixes": [
+        "Home bottom: add safe content padding-bottom of 96px above the fixed bottom navigation bar to prevent sticky cards from docking against tab blur",
+        "Home bottom: replace repetitive 'Swap placed' labels with pair syntax ('USDC → WETH') and show relative timestamps ('2m ago') alongside frame tags",
+        "Home bottom: style '+ Open account' as an outlined ghost button with 12px typography to keep focus on the active bilateral bar"
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 830,
+        "typography": 840,
+        "color": 840,
+        "data_legibility": 820,
+        "layout": 820,
+        "visceral_value": 850,
+        "responsive": 840,
+        "consistency": 830,
+        "trust": 860
+      },
+      "total": 838,
+      "top_issues": [
+        "Pay: full hex address under 'Meridian Desk' is 66 characters long, breaks across two awkward lines, and degrades the fintech feel",
+        "Pay: 'This payment' mini bar below the 25 input is so small (1-2px) at scale 1px=$100 that it looks like a rendering glitch or dead divider line",
+        "Pay: 'Delivery: Instant Change' runs text and interactive action together without visual distinction or affordance"
+      ],
+      "fixes": [
+        "Pay: truncate recipient hex address to '0x499d...f2bd' with a tap-to-expand or copy tooltip",
+        "Pay: set a minimum visible threshold (4px width) for 'This payment' indicator on the visceral bar or show an active glow highlight",
+        "Pay: make 'Change' a distinct text button in indigo accent color (#6E7CFF) with an arrow chevron or subtle pill background"
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 870,
+        "premium": 850,
+        "typography": 850,
+        "color": 860,
+        "data_legibility": 840,
+        "layout": 840,
+        "visceral_value": 750,
+        "responsive": 860,
+        "consistency": 850,
+        "trust": 910
+      },
+      "total": 848,
+      "top_issues": [
+        "Receipt: background scrim is not dimmed enough, leaving high-contrast text and numbers from the home screen bleeding around the sheet",
+        "Receipt: 'in 3396 ms' in bright green immediately next to '04:48:18' lacks visual hierarchy and looks unpolished for human settlement timing",
+        "Receipt: sheet handle pill at top is very close to the close icon '✕', causing visual conflict in the header zone"
+      ],
+      "fixes": [
+        "Receipt: increase backdrop overlay opacity from current ~40% to 70% black (#000000B3) with backdrop-filter: blur(8px)",
+        "Receipt: style duration as 'Settled in 3.4s' in muted slate (#94A3B8) and keep timestamp as secondary tabular data",
+        "Receipt: ensure consistent 16px top margin between drag handle and the close button baseline"
+      ]
+    },
+    {
+      "file": "03-receipt-bottom.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 820,
+        "typography": 830,
+        "color": 850,
+        "data_legibility": 810,
+        "layout": 800,
+        "visceral_value": 740,
+        "responsive": 800,
+        "consistency": 830,
+        "trust": 890
+      },
+      "total": 820,
+      "top_issues": [
+        "Receipt bottom: the background content peeking out is the bottom half of home, creating visual clutter behind the modal",
+        "Receipt bottom: 'Done' button sits right against bottom viewport safe area without sufficient home indicator clearance"
+      ],
+      "fixes": [
+        "Receipt bottom: increase modal sheet backdrop opacity to full dark dimming to mask background scrolling state entirely",
+        "Receipt bottom: add safe-area-inset-bottom padding (min 24px) below the 'Done' primary action button"
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 780,
+        "typography": 800,
+        "color": 810,
+        "data_legibility": 820,
+        "layout": 790,
+        "visceral_value": 780,
+        "responsive": 800,
+        "consistency": 820,
+        "trust": 840
+      },
+      "total": 807,
+      "top_issues": [
+        "Receive: QR code card is stark raw white with sharp corners on an otherwise rounded dark surface, feeling jarring and unintegrated",
+        "Receive: 'Copy xln:// app link' text link floats loosely under two large primary-weight buttons ('Copy invoice' and 'Copy link')",
+        "Receive: green visceral line under the 0.00 amount has no scale context or notch marker, looking like an active input focus underline"
+      ],
+      "fixes": [
+        "Receive: place QR code inside a refined 16px rounded card with an off-white background (#F8FAFC) and subtle inner border",
+        "Receive: turn 'Copy xln:// app link' into a secondary ghost row inside the share section or integrate it into an action sheet",
+        "Receive: add capacity limit tick and notch to the green bar under the amount input to maintain the bilateral bar language"
+      ]
+    },
+    {
+      "file": "04-receive-bottom.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 790,
+        "typography": 800,
+        "color": 820,
+        "data_legibility": 780,
+        "layout": 780,
+        "visceral_value": 760,
+        "responsive": 790,
+        "consistency": 810,
+        "trust": 830
+      },
+      "total": 797,
+      "top_issues": [
+        "Receive bottom: QR code is heavily clipped at the top, showing poor vertical scrolling architecture for compact mobile viewports",
+        "Receive bottom: 'YOUR ENTITY ID' hex string is shown as a massive raw block with low contrast (#475569) that is hard to verify"
+      ],
+      "fixes": [
+        "Receive bottom: shrink the default QR module size on mobile screens <700px height so the entire card and amount fit above the fold without scrolling",
+        "Receive bottom: format entity ID as 4-character chunks with monospace tabular font and provide a dedicated 1-tap copy chip"
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 840,
+        "typography": 860,
+        "color": 850,
+        "data_legibility": 850,
+        "layout": 840,
+        "visceral_value": 830,
+        "responsive": 850,
+        "consistency": 840,
+        "trust": 860
+      },
+      "total": 848,
+      "top_issues": [
+        "Swap: order book depth bars (amber and green) use arbitrary widths that do not clearly share the global 1px=$100 scale of the rest of the app",
+        "Swap: network toggle 'Same network / Across networks' in top navigation bar has awkward pills with cramped horizontal padding",
+        "Swap: 'Swap' button is in a disabled muted state with poor contrast against dark card backgrounds"
+      ],
+      "fixes": [
+        "Swap: align order book depth visual bars strictly to the visceral value scale or add a dedicated depth scale legend inside the BOOK card",
+        "Swap: refine the segmented control in the top bar to standard 28px height with 12px medium typography",
+        "Swap: provide clear disabled helper text or empty-state guidance on the 'Swap' button explaining missing input or quote calculation"
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 820,
+        "typography": 820,
+        "color": 830,
+        "data_legibility": 830,
+        "layout": 810,
+        "visceral_value": 860,
+        "responsive": 800,
+        "consistency": 840,
+        "trust": 860
+      },
+      "total": 831,
+      "top_issues": [
+        "Account: horizontal action bar ('Pay', 'Extend credit', 'Swap', 'Manage') wraps into two mismatched rows (3 buttons above, 1 wide button below)",
+        "Account: legend row ('collateral', 'at risk', 'you owe', 'credit room', 'in flight') spans across two tight rows with tiny dots, creating visual noise",
+        "Account: bottom navigation bar overlaps the scrollable list container, cutting through the second WETH card"
+      ],
+      "fixes": [
+        "Account: render the 4 action buttons as a single scrollable row of 4 square/compact icon-plus-label action tiles",
+        "Account: move the bar color legend into an expandable bottom drawer or a single quiet info tooltip beside the balance",
+        "Account: set main container padding-bottom to 84px to prevent list clipping under the fixed tab bar"
+      ]
+    },
+    {
+      "file": "06-account-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 810,
+        "typography": 820,
+        "color": 830,
+        "data_legibility": 820,
+        "layout": 790,
+        "visceral_value": 810,
+        "responsive": 770,
+        "consistency": 830,
+        "trust": 850
+      },
+      "total": 813,
+      "top_issues": [
+        "Account bottom: 'THIS ACCOUNT' metadata card has a long descriptive paragraph at the bottom with 12px low-contrast text that looks like boilerplate legal disclaimer",
+        "Account bottom: 'Show 1 empty lane · USDT' is an understated text button that looks disconnected floating between two cards"
+      ],
+      "fixes": [
+        "Account bottom: shorten explanatory footer copy to one concise sentence: 'Co-signed balance enforceable on-chain via collateral.'",
+        "Account bottom: enclose 'Show 1 empty lane · USDT' in a clean dashed card or subtle secondary row aligned with card margins"
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 850,
+        "color": 840,
+        "data_legibility": 840,
+        "layout": 830,
+        "visceral_value": 800,
+        "responsive": 830,
+        "consistency": 850,
+        "trust": 860
+      },
+      "total": 837,
+      "top_issues": [
+        "Activity: '11 movements' sublabel is tiny and unaligned on the top right, competing with the screen title 'Activity'",
+        "Activity: multiple 'Swap placed' items share identical icons, titles, and 'open' status pills, making scanning repetitive and uninformative",
+        "Activity: horizontal filter chips ('All', 'Payments', 'Swaps', 'Settlement', 'Account') truncate awkwardly off-screen on the right edge"
+      ],
+      "fixes": [
+        "Activity: align '11 movements' directly under the 'Activity' H1 as a quiet 13px secondary subhead",
+        "Activity: include token swap pair and direction directly in the row title (e.g., 'Swap USDC → WETH')",
+        "Activity: add subtle right-edge fade gradient to filter scroll container to clearly indicate overflow"
+      ]
+    },
+    {
+      "file": "07-activity-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 820,
+        "typography": 830,
+        "color": 840,
+        "data_legibility": 830,
+        "layout": 800,
+        "visceral_value": 800,
+        "responsive": 790,
+        "consistency": 840,
+        "trust": 860
+      },
+      "total": 823,
+      "top_issues": [
+        "Activity bottom: 'Account opened' and 'Credit limit updated' entries have no amount figures, making right-hand column alignment ragged",
+        "Activity bottom: visceral green indicator under '+10,000.00 USDC' is abruptly cut off on both ends and lacks bar scale context"
+      ],
+      "fixes": [
+        "Activity bottom: display explicit limit values or frame delta badges in the amount column for lifecycle events to maintain tabular alignment",
+        "Activity bottom: wrap transaction visceral bars in standard micro-tracks with background rails to show scale relative to account size"
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 840,
+        "typography": 850,
+        "color": 850,
+        "data_legibility": 840,
+        "layout": 830,
+        "visceral_value": 750,
+        "responsive": 840,
+        "consistency": 850,
+        "trust": 900
+      },
+      "total": 841,
+      "top_issues": [
+        "Activity detail: modal sheet opens over Activity screen with weak scrim darkness, causing background text ('Swap placed') to visually interfere with sheet headers",
+        "Activity detail: missing visceral bar representing the relative size of this -25.00 USDC payment against the account or global scale",
+        "Activity detail: close button '✕' is small and has a tight tap target (<32px)"
+      ],
+      "fixes": [
+        "Activity detail: increase modal backdrop blur and dimming to 80% dark overlay",
+        "Activity detail: add a mini 1px=$100 visceral comparison bar right beneath the main '-25.00 USDC' display",
+        "Activity detail: expand modal close button touch target to minimum 44x44px"
+      ]
+    },
+    {
+      "file": "08-activity-detail-bottom.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 840,
+        "color": 840,
+        "data_legibility": 830,
+        "layout": 820,
+        "visceral_value": 750,
+        "responsive": 810,
+        "consistency": 840,
+        "trust": 890
+      },
+      "total": 829,
+      "top_issues": [
+        "Activity detail bottom: 'From your runtime's committed frames' footer with green bullet looks like an unfinished link rather than an audit badge",
+        "Activity detail bottom: sheet bottom terminates abruptly without safe-area padding or home handle bar"
+      ],
+      "fixes": [
+        "Activity detail bottom: style proof line as an enclosed verification card: '✓ Runtime Verified · Frame #71' with subtle border",
+        "Activity detail bottom: add 32px safe-area inset at sheet bottom"
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 820,
+        "typography": 830,
+        "color": 830,
+        "data_legibility": 820,
+        "layout": 810,
+        "visceral_value": 890,
+        "responsive": 820,
+        "consistency": 830,
+        "trust": 840
+      },
+      "total": 834,
+      "top_issues": [
+        "Settings: scale preset pill strip ('Auto', '$1', '$2', '$5', '$10', '$25', '$100') has 7 buttons crowded into a single line, causing tight tap targets",
+        "Settings: slider track and thumb are plain and lack tactile graduation marks for the scale steps",
+        "Settings: toggle switch descriptions ('Tokens held by your signer on the chain itself...') are wordy for a high-frequency settings pane"
+      ],
+      "fixes": [
+        "Settings: turn scale presets into a 4-column segmented grid or keep only key milestones ('Auto', '$1', '$10', '$100', '$1k')",
+        "Settings: add discrete step ticks on the slider bar corresponding to the available preset scales",
+        "Settings: tighten toggle descriptions to single punchy sentences under 60 characters"
+      ]
+    },
+    {
+      "file": "09-settings-bottom.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 810,
+        "typography": 830,
+        "color": 830,
+        "data_legibility": 820,
+        "layout": 800,
+        "visceral_value": 900,
+        "responsive": 800,
+        "consistency": 830,
+        "trust": 850
+      },
+      "total": 830,
+      "top_issues": [
+        "Settings bottom: 'AT THIS SCALE' preview card is educational and excellent, but '$100,000 = 1,000 px' bar extends out with a gradient fade that feels unfinished",
+        "Settings bottom: 'Reveal recovery phrase' and 'Lock' buttons sit side-by-side with identical dark ghost styling, despite vast difference in operational risk"
+      ],
+      "fixes": [
+        "Settings bottom: add an explicit truncation pip or bracket on overflowing bars with a label '+ overflow'",
+        "Settings bottom: give 'Reveal recovery phrase' an amber/warning outline or distinct caution iconography"
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 810,
+        "typography": 810,
+        "color": 830,
+        "data_legibility": 790,
+        "layout": 780,
+        "visceral_value": 850,
+        "responsive": 790,
+        "consistency": 820,
+        "trust": 840
+      },
+      "total": 814,
+      "top_issues": [
+        "Move: 'FROM' and 'TO' tier selector cards ('Wallet', 'Reserve', 'Account') are repeated identically twice, occupying more than 60% of vertical screen space",
+        "Move: numbers inside the cards truncate ('1,500.00 US...', '59,975.00 U...') because the 3-column mobile layout is too narrow",
+        "Move: blue outline highlight on selected cards is subtle and ambiguous between source and destination"
+      ],
+      "fixes": [
+        "Move: replace redundant 3x2 card matrix with a compact horizontal Source → Destination switcher pill group or stepper selector",
+        "Move: format card amounts as compact currency ('$1.5k', '$60k') to prevent truncation on mobile screens",
+        "Move: use distinct semantic accent rings (e.g., Indigo for From, Mint for To) to clarify transfer direction"
+      ]
+    },
+    {
+      "file": "10-move-bottom.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 800,
+        "typography": 810,
+        "color": 820,
+        "data_legibility": 800,
+        "layout": 790,
+        "visceral_value": 800,
+        "responsive": 790,
+        "consistency": 820,
+        "trust": 830
+      },
+      "total": 807,
+      "top_issues": [
+        "Move bottom: 'Sign & send' and 'Add to batch' buttons share the same row, but 'Sign & send' has a checkmark icon that implies completed status rather than an action trigger",
+        "Move bottom: 'Recipient entity · leave empty for yourself' input card feels like a secondary setting shoved into a primary flow"
+      ],
+      "fixes": [
+        "Move bottom: change 'Sign & send' icon to a send/pen icon and make it full-width primary, placing 'Add to batch' as a secondary text option below",
+        "Move bottom: collapse recipient entity input behind an expandable 'Change destination address' trigger"
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 820,
+        "typography": 830,
+        "color": 830,
+        "data_legibility": 830,
+        "layout": 810,
+        "visceral_value": 750,
+        "responsive": 820,
+        "consistency": 840,
+        "trust": 850
+      },
+      "total": 821,
+      "top_issues": [
+        "Manage: navigation grid has five cards, resulting in a single orphaned full-width card ('Ownership') beneath two 2-column rows",
+        "Manage: 'NEEDS ATTENTION' card with 'Nothing waiting on you.' takes up prime screen space with empty passive state",
+        "Manage: lacks any monetary summary or visceral bar presence, making the tab feel disconnected from the wallet's financial reality"
+      ],
+      "fixes": [
+        "Manage: balance the grid by grouping tools into a clean vertical list with row chevrons and trailing badges, matching standard iOS settings conventions",
+        "Manage: hide 'NEEDS ATTENTION' card entirely when count is 0, or collapse to a quiet inline checkmark pill",
+        "Manage: add a high-level sovereignty health indicator bar at the top of the screen"
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 820,
+        "typography": 830,
+        "color": 830,
+        "data_legibility": 820,
+        "layout": 800,
+        "visceral_value": 840,
+        "responsive": 800,
+        "consistency": 830,
+        "trust": 840
+      },
+      "total": 824,
+      "top_issues": [
+        "Assets: 'Move into reserve' button is placed inside an awkward floating mini-card inside the token list, breaking list cadence",
+        "Assets: 'Depository may pull 0.00' repeated three times in low-emphasis gray creates repetitive visual clutter",
+        "Assets: 'Gas: 10,000.0000 ETH' displays four trailing zeros without tabular alignment, distracting from core balances"
+      ],
+      "fixes": [
+        "Assets: move 'Move into reserve' to a sticky bottom action bar or card header action",
+        "Assets: hide 'Depository may pull 0.00' allowance lines unless an active non-zero allowance is configured",
+        "Assets: format gas balance to readable precision ('10.0 ETH') and display estimated USD value beside it"
+      ]
+    },
+    {
+      "file": "12-assets-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 780,
+        "typography": 810,
+        "color": 810,
+        "data_legibility": 820,
+        "layout": 780,
+        "visceral_value": 740,
+        "responsive": 790,
+        "consistency": 810,
+        "trust": 820
+      },
+      "total": 796,
+      "top_issues": [
+        "Assets bottom: 'FAUCETS' section dominates the bottom view with sandbox-specific developer controls, diluting the premium fintech feel",
+        "Assets bottom: two stacked high-saturation purple buttons ('Hub pays me USDC over credit' and 'USDC to my on-chain wallet') look like primary production actions",
+        "Assets bottom: token pill grid (USDC, WETH, USDT, TRX, SUN) has uneven margins and inconsistent heights"
+      ],
+      "fixes": [
+        "Assets bottom: tuck sandbox faucets inside an expandable developer drawer or settings sub-menu",
+        "Assets bottom: style faucet buttons as muted secondary ghost buttons with clear sandbox tag styling",
+        "Assets bottom: standardize token selection pills to a uniform 36px height segmented group"
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 810,
+        "typography": 820,
+        "color": 830,
+        "data_legibility": 810,
+        "layout": 800,
+        "visceral_value": 750,
+        "responsive": 810,
+        "consistency": 830,
+        "trust": 830
+      },
+      "total": 811,
+      "top_issues": [
+        "Lending: 'Lend / Borrow' segmented control is floating awkwardly between token selection and amount input without a section header",
+        "Lending: 'Term' selector buttons ('1 hour', '1 day', '1 month') are arranged as an unbalanced 2-row layout with an orphan button on row 2",
+        "Lending: 'Token' selection cards take up massive vertical space for only three items"
+      ],
+      "fixes": [
+        "Lending: move 'Lend / Borrow' segmented switch to the very top header level above Hub selection",
+        "Lending: place term options ('1h', '1d', '1w', '1m') into a single horizontal 4-segment control",
+        "Lending: replace large multi-row token cards with a compact horizontal token carousel or dropdown selector"
+      ]
+    },
+    {
+      "file": "13-lend-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 810,
+        "color": 800,
+        "data_legibility": 800,
+        "layout": 780,
+        "visceral_value": 740,
+        "responsive": 790,
+        "consistency": 820,
+        "trust": 810
+      },
+      "total": 794,
+      "top_issues": [
+        "Lending bottom: 'HUB ONE POOL' warning text 'This runtime has no lending API...' is highlighted in amber, looking like a system failure rather than an informative notice",
+        "Lending bottom: 'Offer to the pool' action button is disabled and low contrast with no tooltip explaining prerequisite steps",
+        "Lending bottom: scroll cutoff at top hides the selected token, making it unclear which currency is being configured"
+      ],
+      "fixes": [
+        "Lending bottom: restyle the warning box as an informative banner with neutral slate border rather than error amber",
+        "Lending bottom: display an active inline validation error (e.g., 'Enter amount > 0') when tapping the disabled offer button",
+        "Lending bottom: lock token and balance summary in a sticky header card during vertical scrolling"
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 830,
+        "typography": 840,
+        "color": 830,
+        "data_legibility": 830,
+        "layout": 820,
+        "visceral_value": 760,
+        "responsive": 840,
+        "consistency": 840,
+        "trust": 870
+      },
+      "total": 830,
+      "top_issues": [
+        "Ownership: screen is sparse and mostly empty; two quiet cards with plain key-value rows make the page feel like an unstyled developer view",
+        "Ownership: 'Lazy (hash of its board)' uses developer internal jargon that conveys little legal or economic meaning to an end user",
+        "Ownership: 'TAKE CONTROL OF ANOTHER ENTITY' header sounds adversarial and unsettling for a corporate governance view"
+      ],
+      "fixes": [
+        "Ownership: add an explanatory diagram or visual board-member token badge illustrating current threshold (1 of 1 signature)",
+        "Ownership: replace jargon 'Lazy' with user-facing classification like 'Direct Key Governance (Local)' with a learn-more popover",
+        "Ownership: rename section header to 'Import External Entity' or 'Claim Existing Entity'"
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 840,
+        "typography": 850,
+        "color": 860,
+        "data_legibility": 840,
+        "layout": 830,
+        "visceral_value": 890,
+        "responsive": 830,
+        "consistency": 850,
+        "trust": 900
+      },
+      "total": 855,
+      "top_issues": [
+        "Sovereignty: four-bullet color legend ('Green is yours...', 'Violet is what...') is a heavy block of text below the total that dampens scanability",
+        "Sovereignty: main visceral value bar correctly breaks into green/violet segments, but lacks numerical direct callouts on the bar itself",
+        "Sovereignty: 'LEDGER' card repeats internal hexadecimal runtime hash without quick tap-to-copy cue"
+      ],
+      "fixes": [
+        "Sovereignty: replace the 4-line text paragraph with two distinct structured metric chips: 'Secured ($7,500)' and 'Counterparty Risk ($9,975)'",
+        "Sovereignty: place small percentage or absolute tags directly above or below the visceral bar notch",
+        "Sovereignty: add a copy icon next to the runtime hash in the Ledger card"
+      ]
+    },
+    {
+      "file": "15-sovereignty-bottom.png",
+      "scores": {
+        "hierarchy": 850,
+        "premium": 830,
+        "typography": 840,
+        "color": 850,
+        "data_legibility": 840,
+        "layout": 820,
+        "visceral_value": 870,
+        "responsive": 810,
+        "consistency": 840,
+        "trust": 890
+      },
+      "total": 844,
+      "top_issues": [
+        "Sovereignty bottom: 'Save evidence bundle' button is bright indigo with a shield icon, dominating the page even though it is a rare emergency export action",
+        "Sovereignty bottom: 'PER COUNTERPARTY' list is cut off at the bottom and the visceral risk bar sits right above the bottom tab navigation bar",
+        "Sovereignty bottom: co-signed proof status has tiny 11px text ('they answer in 1 d, you in 1 d') that is hard to read on mobile"
+      ],
+      "fixes": [
+        "Sovereignty bottom: demote 'Save evidence bundle' to a secondary outlined action button with shield icon to keep primary focus on counterparty health",
+        "Sovereignty bottom: add 96px bottom padding to allow full clearance above tab bar",
+        "Sovereignty bottom: increase dispute window duration text to 12px with a clock icon"
+      ]
+    }
+  ],
+  "overall": {
+    "total": 823,
+    "verdict": "xln mobile dark delivers an exceptionally coherent and serious fintech aesthetic with genuine cryptographic transparency and innovative visceral value bars. However, cramped touch layouts, unmasked modal backdrops, and technical jargon currently hold it back from feeling like a polished consumer-ready application.",
+    "priority_fixes": [
+      "Fix background scrim opacity on modal bottom sheets (Pay, Receipt, Activity Detail) by increasing backdrop dimming to 75% black with blur to eliminate background text bleed.",
+      "Redesign the 3x2 tier selection grid in Move (10-move.png) into a compact segmented control or horizontal route stepper so numbers never truncate.",
+      "Add 88px-96px bottom padding across all scrollable views (Home, Account, Activity, Manage, Sovereignty) to prevent content being docked or clipped behind the fixed navigation tab bar.",
+      "Clean up technical developer noise across user-facing screens by hiding zero-allowance labels in Assets, moving Faucets into an advanced developer drawer, and replacing 'Lazy' in Ownership.",
+      "Refine the visceral value bar legends and scale indicators (Home, Settings, Sovereignty) by replacing long paragraph descriptions with structured metric pills and clear tap targets."
+    ]
+  }
+}

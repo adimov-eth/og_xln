@@ -1,0 +1,42 @@
+{
+  "baseSha": "b97c454d605e750a08da7ff6baab645330175468",
+  "note": "Exact canonical Solidity sources; unchanged working tree verified separately; selected upstreamsolc0.8.25 artifacts",
+  "entries": [
+    {
+      "file": "ERC20Mock.json",
+      "sha256": "387778077724cc4a8dbc762a4ecb670958063245f39c9499795d37957177d9e9"
+    },
+    {
+      "file": "DeltaTransformer.json",
+      "sha256": "a672cbefcc82effa47ff159cc6b599a8e06ef3858328973c95414adcab19325e"
+    },
+    {
+      "file": "EntityProvider.json",
+      "sha256": "94d73235cedd537b86ecfceb181eacff0697343096445c4c605c723f2ef9e254"
+    },
+    {
+      "file": "Depository.json",
+      "sha256": "b9f628a48e2e63fe2368b061d8788d29be448adb999d206f42579f2fb2c38257"
+    },
+    {
+      "file": "DepositoryBounds.json",
+      "sha256": "d69e564a02b9d7ea5253808bdb2fa1a48ae1d96fbaaac90d64d6fe1f88d78155"
+    },
+    {
+      "file": "Account.json",
+      "sha256": "24773075cb408e790631935448e71dd0dc810ced5121f0433b8c823dd347c768"
+    },
+    {
+      "file": "NftCustody.json",
+      "sha256": "2e21bf56a1e20b177ec24907eeaa5fa227aa5f8bad1394b3ccfc9f9562338385"
+    },
+    {
+      "file": "HashLadderRegistry.json",
+      "sha256": "f4981535244b406f62701557eae2236e5cfa0e79462cb62ecd5630853bfb831c"
+    },
+    {
+      "file": "HankoVerifier.json",
+      "sha256": "e0f937341b88a11882971958404915ca9e860109ae604c8208bf5f7b29b18a54"
+    }
+  ]
+}

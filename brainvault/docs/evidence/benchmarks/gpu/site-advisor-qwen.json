@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "bv-site-qwen-20260905",
+  "project": "brainvault",
+  "task": "design",
+  "sourceSha": "b97c454d605e750a08da7ff6baab645330175468",
+  "harness": "opencode",
+  "provider": "opencode-go",
+  "model": "qwen3.8-max",
+  "family": "qwen",
+  "effort": null,
+  "timeoutMs": 30000,
+  "question": "Act as an exacting terminal-tool copy editor. Existing monochrome landing page supplied. User wants extreme clarity, minimalism, every extra word earns its place. Keep hero 'Your wallet, mined from memory.' Suggest ONE final cut plan, max150 words: which redundant blocks to delete/merge plus exact concise replacement hero/subcopy and safety copy. Target 3 sections total, retain installation tabs/copy and collapsed self-audit prompt. No fake audits/scores, no guaranteed safety, no claims stronger than random seeds; must retain strong unique secret, exact username/password/shardcount/multiplier, irrecoverability and independent fulladdress check. Do not discuss implementation. Return immediately in requested JSON.",
+  "evidence": [
+    {
+      "path": "brainvault/site/index.html",
+      "sha256": "sha256:20d829f0a1d51eca85f9fabc1c2a01369e34758d476ee0160424c172d0ff99c9"
+    }
+  ]
+}

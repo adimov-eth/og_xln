@@ -1,0 +1,23 @@
+{
+  "sameRecording": true,
+  "workers": [
+    1,
+    4
+  ],
+  "report": {
+    "frames": 67,
+    "ingress": 108,
+    "egress": 104,
+    "directPayments": 0,
+    "effectDigestsCompared": 67,
+    "eventDigestsCompared": 67,
+    "localContinuationsCompared": 67,
+    "outboxDigestsCompared": 67,
+    "postStateHashesCompared": 67,
+    "runtimeRootsCompared": 68,
+    "accountsRoots": {
+      "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761:0x83dd36ca656d1fffd5d4eeef5dfc2931f1fa3977": "0x5aeec20ceca7c1e6ad1fce718fe61d5e054e5e2059db1d311ff4281fa24d332b",
+      "0x7093aaaa4f5fcf1b82fe3fb5254ead0af4bb453a7b4982bbefc94c75596d6ba0:0x9e12787132c20677da461cc419ecf3ca138691f6": "0xa5d7b2cd86d898a40b780b961015654dc03ffa743d08fbd6bdfee84d802141a3"
+    }
+  }
+}

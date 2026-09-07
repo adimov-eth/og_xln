@@ -1,0 +1,125 @@
+{
+  "sourceBaseSha": "744817492d41a9ef854d24459e98d90bd259fc0f",
+  "scope": "TS production native RPC-attested J import, real WAL recovery, restored native watcher fresh observations and authority idempotency. Configured RPC trust; no portable execution proof, Rust native, Entity financial or cross-J claim.",
+  "nativeRuntime": "java-tron 4.8.2.1 stock ARM JAR, existing private TVM fixture, no new financial mutations",
+  "command": "bun run stand:run --reason tron-native-rpc-authority-restart-r5 --wait-ms 1000 --timeout-ms 60000 -- bun /tmp/xln-tron-native-authority-r5-20260906/run.ts",
+  "originalStateRoot": "/tmp/xln-tron-native-authority-r3-20260906",
+  "originalEvidence": "../tron-native-20260905/manifest.json",
+  "validation": {
+    "focusedTests": 6,
+    "assertions": 26,
+    "wallMs": 856,
+    "nativeBootMs": 10268,
+    "observedAuthorityThroughBefore": 60,
+    "observedAuthorityThroughAfter": 68,
+    "watcherErrors": 0
+  },
+  "sourceFiles": [
+    {
+      "file": "core/types/jurisdiction-runtime.ts",
+      "sha256": "49bf4f9a434d57f69339fac874e37bd85a13f911aa19f7f8c8ca621a98b35c59"
+    },
+    {
+      "file": "core/runtime/types.ts",
+      "sha256": "15743f7556b2d4e516113adb8d15dce61f1fc95f1ebc61636693506d3c7f9dbb"
+    },
+    {
+      "file": "core/runtime/j-submit/jurisdiction-import.ts",
+      "sha256": "ac2d7ceef91221394010f04ccae2c710243300c9f3cd0543cf17f959ac43cb48"
+    },
+    {
+      "file": "core/runtime/decode/runtime-tx.ts",
+      "sha256": "bacaa8edcc89610de49e0e70e26370f6ded9ce11afbe055707095ccb6356a7ec"
+    },
+    {
+      "file": "core/storage/wal/snapshot.ts",
+      "sha256": "51e6073520adeebb41cb48a0cb694c499f5d95131d9bacbd8c8fdcb2e7b5d9ca"
+    },
+    {
+      "file": "core/storage/wal/runtime-machine-schema/j.ts",
+      "sha256": "629701f41012be19a04053ec123d59ea49697687e34bde2a761db4a6198ab5fe"
+    },
+    {
+      "file": "core/jurisdiction/machine/receipt-codec/index.ts",
+      "sha256": "f63345c2f1adbf40826876825e4f9542bcb85fde4b11870ca666df7792b4a8e8"
+    },
+    {
+      "file": "core/jurisdiction/adapter/receipt/reader.ts",
+      "sha256": "f88336e4e20c2f3489b753d63a6798532784db8fa4ff1fc7e27c3ee93f8df64d"
+    },
+    {
+      "file": "core/jurisdiction/adapter/rpc/watcher/rpc-watcher-ingress.ts",
+      "sha256": "b6dad053dbfa83c5b87fc9e63c2cafed2d77f32bc4ea28d3b8159a9830bfbcba"
+    },
+    {
+      "file": "core/jurisdiction/adapter/rpc/watcher/rpc-watcher-poll.ts",
+      "sha256": "605842991a6e52f0b98c7e8f7bcd036a6c40be14d16fd5a7e9531841915c3402"
+    },
+    {
+      "file": "core/jurisdiction/adapter/rpc/rpc-chain-io.ts",
+      "sha256": "b9db0f3c9296f53e04f638411c69c681af82811a6fdc46b890ac3c1eeabbb4f6"
+    },
+    {
+      "file": "core/jurisdiction/machine/registration-evidence/index.ts",
+      "sha256": "c6ffeb1c43bc483b366fb94b93bb14bb5966cf8cf5953c569b3eb3b23d8be39a"
+    },
+    {
+      "file": "core/runtime/decode/registrations.ts",
+      "sha256": "9cde9351aa4ed6e22d65cdddf1123e3351555e3cadb6f33e6114bda28c5ba7a1"
+    },
+    {
+      "file": "core/runtime/tx/tx-handlers.ts",
+      "sha256": "bd9dc43e0f5395b6143bb9b582ec118a9260c9f81433f3da0a49db5df6f0ed96"
+    },
+    {
+      "file": "core/jurisdiction/adapter/kernel/factory.ts",
+      "sha256": "e6b15c6b3af0b22cd5ac32af441618e6104b43bcabdfc6b8bc8d370bf6ac3d78"
+    },
+    {
+      "file": "core/runtime/recovery/j-adapter-restore.ts",
+      "sha256": "ff51e0014ab9c044de23d88a2962faeb3ff7c0b36277f80c8689b3780de7ae1c"
+    },
+    {
+      "file": "core/__tests__/registration/invariants/registration-authority-evidence.test.ts",
+      "sha256": "2daab15f827bf16295c569bf3c3e114bebe215e2a79968f75a88011eebb39f9b"
+    },
+    {
+      "file": "core/__tests__/helpers/registration-evidence.ts",
+      "sha256": "de22002934031d290da629528ba68c65fbf53bc318c573e5fd0fe6489cbd1ae4"
+    }
+  ],
+  "entries": [
+    {
+      "file": "compare-evm-bytes.ts",
+      "sha256": "39240f4ed92a635500266b88ae8ce34af2408decacf45927dbb2ed56774c5319"
+    },
+    {
+      "file": "evm-byte-comparison.json",
+      "sha256": "ad83837697e3c095587a1527ff496324f98ea94de308e3c6a6969d4f2ff72ab3"
+    },
+    {
+      "file": "initial-committed-authority.json",
+      "sha256": "bc01d77fdb1f36bee3f132a88152c866885e26a6f3fe5e7f1d3b46b30f428d1a"
+    },
+    {
+      "file": "read-accepted-poll.ts",
+      "sha256": "0adf0efb4ce6b2d4f272dfe82cb29561b3fc141a934f4340b3e468aef1d00587"
+    },
+    {
+      "file": "restored-accepted-poll.json",
+      "sha256": "7f4acbebfa46aa97134001613bfdb611a581233017fe0b7f8aa5b4a2d9d1f3eb"
+    },
+    {
+      "file": "restored-runtime.json",
+      "sha256": "4db53ea5f9338959fbb99b936c53cdb909cc23bc5a399ae3f32005c6ed2254cf"
+    },
+    {
+      "file": "restored-runtime.log",
+      "sha256": "ad60ea11f0b1d16cd7ee2c037a71529c06a48349baccc1ce5dabd8258e3cdf87"
+    },
+    {
+      "file": "runtime-import-driver.ts",
+      "sha256": "208b3bb98442cf49e009e94cc532082af2b86e83f527f157d056e47c01e3685f"
+    }
+  ]
+}

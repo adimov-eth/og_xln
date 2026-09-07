@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import "../../contracts/math/WideMath.sol";
+import "../../../contracts/math/WideMath.sol";
 
 contract WideMathTest is Test {
   uint256 internal constant MAX = type(uint256).max;

@@ -62,12 +62,12 @@ completed, attributable customer activity and sustained usable quotes; exclude
 self-trades and manufactured round trips. Do not promise uncapped inventory or
 liquidity guarantees.
 
-Pricing is an unapproved experiment: zero platform fees for the first 30 days,
+Owner-approved pricing (2026-09-06): zero platform fees for the first 30 days,
 then 1 basis point per completed payment and 3 basis points per completed swap,
 plus disclosed hub fees, spread and chain gas. Show the total quote before
-acceptance. Neither a protocol fee change nor an external offer is authorized by
-this document; obtain the owner's business decision before either. Testnet can
-show a hypothetical fee without booking it as revenue.
+acceptance. The business terms are approved; canonical fee accounting, the configured
+fee recipient and actual deployment still need implementation evidence. Testnet can
+show the approved fee schedule without booking fixture activity as real revenue.
 
 The useful intermediaries are the two distribution partners, independent hub
 operators, MMs, recovery/watchtower providers, and reviewers who can verify the

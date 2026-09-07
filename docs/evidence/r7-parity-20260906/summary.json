@@ -1,0 +1,112 @@
+{
+  "observedAt": "2026-09-06T16:47:22.373Z",
+  "head": "744817492d41a9ef854d24459e98d90bd259fc0f",
+  "sharedDirtyWorktree": true,
+  "recording": "/tmp/xln-cross-j-wal-r7-20260905/recording-manifest.json",
+  "checkpoint": 23,
+  "from": 24,
+  "to": 90,
+  "frames": 67,
+  "entityInputs": 108,
+  "outboxOutputs": 104,
+  "workers": [
+    1,
+    4
+  ],
+  "typescript": {
+    "durationMs": [
+      2909,
+      3031
+    ],
+    "exactFields": [
+      "runtimeFrames",
+      "effects",
+      "entityEffects",
+      "entityFrameEvents",
+      "localContinuations"
+    ],
+    "unchangedAgainstOriginalR7": true
+  },
+  "rust": {
+    "frames": 67,
+    "runtimeRootComparisons": 68,
+    "sameNativeRestart": true,
+    "workers": [
+      1,
+      4
+    ],
+    "reports": [
+      {
+        "frames": 67,
+        "ingress": 108,
+        "egress": 104,
+        "directPayments": 0,
+        "effectDigestsCompared": 67,
+        "eventDigestsCompared": 67,
+        "localContinuationsCompared": 67,
+        "outboxDigestsCompared": 67,
+        "postStateHashesCompared": 67,
+        "runtimeRootsCompared": 68,
+        "accountsRoots": {
+          "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761:0x83dd36ca656d1fffd5d4eeef5dfc2931f1fa3977": "0x5aeec20ceca7c1e6ad1fce718fe61d5e054e5e2059db1d311ff4281fa24d332b",
+          "0x7093aaaa4f5fcf1b82fe3fb5254ead0af4bb453a7b4982bbefc94c75596d6ba0:0x9e12787132c20677da461cc419ecf3ca138691f6": "0xa5d7b2cd86d898a40b780b961015654dc03ffa743d08fbd6bdfee84d802141a3"
+        }
+      },
+      {
+        "frames": 67,
+        "ingress": 108,
+        "egress": 104,
+        "directPayments": 0,
+        "effectDigestsCompared": 67,
+        "eventDigestsCompared": 67,
+        "localContinuationsCompared": 67,
+        "outboxDigestsCompared": 67,
+        "postStateHashesCompared": 67,
+        "runtimeRootsCompared": 68,
+        "accountsRoots": {
+          "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761:0x83dd36ca656d1fffd5d4eeef5dfc2931f1fa3977": "0x5aeec20ceca7c1e6ad1fce718fe61d5e054e5e2059db1d311ff4281fa24d332b",
+          "0x7093aaaa4f5fcf1b82fe3fb5254ead0af4bb453a7b4982bbefc94c75596d6ba0:0x9e12787132c20677da461cc419ecf3ca138691f6": "0xa5d7b2cd86d898a40b780b961015654dc03ffa743d08fbd6bdfee84d802141a3"
+        }
+      }
+    ],
+    "driverDurationMs": [
+      1444.26975,
+      607.237875
+    ]
+  },
+  "build": {
+    "exit": 0,
+    "durationMs": 20509.623041,
+    "sourceFiles": 407,
+    "unchanged": true
+  },
+  "boundaryFixed": "canonical encoded Map key order differs from String index order across Entity height widths",
+  "evidence": {
+    "ts": {
+      "path": "/tmp/xln-cross-j-parity-r7-20260906-1633/ts-worker-comparison.json",
+      "sha256": "c14c59a5d9050ac24e16ff8ac4eecc382edc1eb002e1816e31582192f77385f3"
+    },
+    "rust": {
+      "path": "/tmp/xln-cross-j-parity-r7-20260906-1633/rust-worker-comparison.json",
+      "sha256": "82b58337887b7e52fd0aea505efd04e4a71ddc7b0523d69f74ce2b46a9f50866"
+    },
+    "build": {
+      "path": "/tmp/xln-cross-j-parity-r6-20260905/rust-context29-resume-20260906-build-source.json",
+      "sha256": "5429376750784ccd20e3944f0a1dfb0a6581c295c90e9e019e30ae2501a7bfc2"
+    },
+    "red": {
+      "path": "/tmp/xln-cross-j-parity-r7-20260905/rust-context29-restart-l1-red.log",
+      "sha256": "3cb0803a26ee66e5c51f80f9dc9346e02e2cffe456a3789bedc8c8dadf2b5cf5"
+    },
+    "green": {
+      "path": "/tmp/xln-cross-j-parity-r7-20260905/rust-context29-restart-l1-green.log",
+      "sha256": "11bb34e0e18adf3ff92b145caf40ee11c9f40e3b2d5a64d45630f8f294646ab9"
+    }
+  },
+  "limits": [
+    "Replay is not live TPS or mainnet readiness.",
+    "Native TVM Tron is separate evidence; this recording uses local EVM jurisdictions.",
+    "Live Rust J attempt stopped at unsupported authenticated delivery_ready before payments; that separate transport fix is pending.",
+    "Final completeness, full check and release gates are not complete."
+  ]
+}

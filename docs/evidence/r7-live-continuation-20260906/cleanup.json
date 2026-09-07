@@ -1,0 +1,20 @@
+[
+  {
+    "exit": -1,
+    "groupGone": true,
+    "name": "native",
+    "pid": 50548
+  },
+  {
+    "exit": 0,
+    "groupGone": true,
+    "name": "anvil2",
+    "pid": 50542
+  },
+  {
+    "exit": 0,
+    "groupGone": true,
+    "name": "anvil",
+    "pid": 50536
+  }
+]

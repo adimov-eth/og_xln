@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import "../../contracts/DeltaTransformer.sol";
-import "../../contracts/math/WideMath.sol";
+import "../../../contracts/DeltaTransformer.sol";
+import "../../../contracts/math/WideMath.sol";
 
 contract WideTransformerTest is Test {
   DeltaTransformer internal transformer;

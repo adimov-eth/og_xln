@@ -1,0 +1,401 @@
+{
+  "proposalIds": [
+    3,
+    4,
+    5,
+    6,
+    1,
+    2,
+    11,
+    12,
+    13,
+    7,
+    8,
+    9,
+    10
+  ],
+  "createTxs": [
+    "9172b693bf51cba231da69f3dfe57ab7a01745cdc01d74843ad346a30a6192b7",
+    "6c3f39e2f3f6c833c56c977edd2ebcbc0932540924d772a579e80993bd895389",
+    "a8a4fbdd36fd2c64a338cd37d566f80676ddd7d127c4f926707dc66930fb4494",
+    "d76387d9e4eb38ef2fa4f985b5dd7b7cc221b628e5f419bd4c1380a9f63a582f",
+    "e84719ddbd6c93780545fd970d288019c7c11836eb929e74818ad0bac4425f99",
+    "b1f44c4ffb01cbfea8bf0479afb04d29ccf40e78d57e86a44071844fbe08b180",
+    "ec88c34842328ca1986344ca9b88992fefac2799f968097191f943c5eb8b8d55",
+    "55ba59b0e4a065cbcd8b5dd36f8b8427715526e461310dc3f010caa9ff578304",
+    "36275f987f7136f5282c33c5f7f508c0744172870f8fc1de123ca51e1458e75a",
+    "28100d02ce01408163f6ee17f12f9c7ab7ffd9b6b89a653c06e364529e4e68fd",
+    "1bda042b8ef413ff4206c8cdbb04462c6c4fdb0c7f6e2a6c434959f8f7d897b7",
+    "12c7b007ce61c4aa89b08dbf0522dd502489f219d0620eebf886e10a3bda12b9",
+    "d98df6456e8879a36d876ee45df7eac11d3907a54d61b347226524b90c014801"
+  ],
+  "voteTxs": [
+    "d0ac6c3144773914408e424d1350b7af848b9db2f31c298db86a565d4a9d2e77",
+    "cb7c3d29bcbf9bf2d064c2578154b29f61353b31196fd5b7f85bc811436033ba",
+    "edebfb7abb612232025f6aa8cd601bdf6f2706f587f21e66926bac0fd34416dd",
+    "5a0e84111ae66743f65505328d57b61dc48c27cde07c47bea394774825581a3d",
+    "06340a76cd3aa387f7791ccb9817a232d7bbea6666bbdbde9c825e94a2e575cf",
+    "fd3a149d54904e087c228e69f8b63c44127034b7c391400286a9b3e0cee47e38",
+    "5ccd53b9cb9d62cb37e172a8c84fd8feac9468399ef70343388a9a965d20f368",
+    "b8186a25f14f096cd76916cbee4862e12d699e10363a69043e45f041de10b98c",
+    "28b1b42d196531bbf108ea41641f9a75293e0669ec1556b2042c7e2b66d138a8",
+    "8a2c67ba377fd7c0a66a1dc665213627cdc7a99ab2034ce8e85e57f56be078e5",
+    "74676dbbb713c0a4ff5637f1aa54a6bbf4f3083ee9656db940a23d54a3e3e301",
+    "24fd9877fee8d2a17b669ce0026de8eb347c114efea7573d3d0d6b3a16a80e60",
+    "6df902cf92a7c7ac0978318d7247f6b5547b6034666f9c329a9dc1837996cc4e"
+  ],
+  "parameters": [
+    {
+      "key": 3,
+      "value": 1000
+    },
+    {
+      "key": 5,
+      "value": 8000000
+    },
+    {
+      "key": 7,
+      "value": 1000000
+    },
+    {
+      "key": 13,
+      "value": 80
+    },
+    {
+      "key": 19,
+      "value": 180000000000
+    },
+    {
+      "key": 31,
+      "value": 128000000
+    },
+    {
+      "key": 47,
+      "value": 15000000000
+    },
+    {
+      "key": 61,
+      "value": 600
+    },
+    {
+      "key": 77,
+      "value": 1
+    },
+    {
+      "key": 78,
+      "value": 864000
+    },
+    {
+      "key": 94,
+      "value": 1
+    },
+    {
+      "key": 95,
+      "value": 1
+    },
+    {
+      "key": 96,
+      "value": 1
+    }
+  ],
+  "final": [
+    {
+      "key": "getMaintenanceTimeInterval",
+      "value": 27000
+    },
+    {
+      "key": "getAccountUpgradeCost",
+      "value": 9999000000
+    },
+    {
+      "key": "getCreateAccountFee",
+      "value": 100000
+    },
+    {
+      "key": "getTransactionFee",
+      "value": 1000
+    },
+    {
+      "key": "getAssetIssueFee",
+      "value": 1024000000
+    },
+    {
+      "key": "getWitnessPayPerBlock",
+      "value": 8000000
+    },
+    {
+      "key": "getWitnessStandbyAllowance",
+      "value": 115200000000
+    },
+    {
+      "key": "getCreateNewAccountFeeInSystemContract",
+      "value": 1000000
+    },
+    {
+      "key": "getCreateNewAccountBandwidthRate",
+      "value": 1
+    },
+    {
+      "key": "getAllowCreationOfContracts",
+      "value": 1
+    },
+    {
+      "key": "getRemoveThePowerOfTheGr"
+    },
+    {
+      "key": "getEnergyFee",
+      "value": 100
+    },
+    {
+      "key": "getExchangeCreateFee",
+      "value": 1024000000
+    },
+    {
+      "key": "getMaxCpuTimeOfOneTx",
+      "value": 80
+    },
+    {
+      "key": "getAllowUpdateAccountName"
+    },
+    {
+      "key": "getAllowSameTokenName",
+      "value": 1
+    },
+    {
+      "key": "getAllowDelegateResource",
+      "value": 1
+    },
+    {
+      "key": "getTotalEnergyLimit",
+      "value": 180000000000
+    },
+    {
+      "key": "getAllowTvmTransferTrc10",
+      "value": 1
+    },
+    {
+      "key": "getTotalEnergyCurrentLimit",
+      "value": 180000000000
+    },
+    {
+      "key": "getAllowMultiSign",
+      "value": 1
+    },
+    {
+      "key": "getAllowAdaptiveEnergy"
+    },
+    {
+      "key": "getTotalEnergyTargetLimit",
+      "value": 12500000
+    },
+    {
+      "key": "getTotalEnergyAverageUsage"
+    },
+    {
+      "key": "getUpdateAccountPermissionFee",
+      "value": 100000000
+    },
+    {
+      "key": "getMultiSignFee",
+      "value": 1000000
+    },
+    {
+      "key": "getAllowAccountStateRoot"
+    },
+    {
+      "key": "getAllowProtoFilterNum"
+    },
+    {
+      "key": "getAllowTvmConstantinople",
+      "value": 1
+    },
+    {
+      "key": "getAllowTvmSolidity059",
+      "value": 1
+    },
+    {
+      "key": "getAllowTvmIstanbul",
+      "value": 1
+    },
+    {
+      "key": "getAllowShieldedTRC20Transaction",
+      "value": 1
+    },
+    {
+      "key": "getForbidTransferToContract"
+    },
+    {
+      "key": "getAdaptiveResourceLimitTargetRatio",
+      "value": 10
+    },
+    {
+      "key": "getAdaptiveResourceLimitMultiplier",
+      "value": 1000
+    },
+    {
+      "key": "getChangeDelegation",
+      "value": 1
+    },
+    {
+      "key": "getWitness127PayPerBlock",
+      "value": 128000000
+    },
+    {
+      "key": "getAllowMarketTransaction"
+    },
+    {
+      "key": "getMarketSellFee"
+    },
+    {
+      "key": "getMarketCancelFee"
+    },
+    {
+      "key": "getAllowPBFT"
+    },
+    {
+      "key": "getAllowTransactionFeePool"
+    },
+    {
+      "key": "getMaxFeeLimit",
+      "value": 15000000000
+    },
+    {
+      "key": "getAllowOptimizeBlackHole",
+      "value": 1
+    },
+    {
+      "key": "getAllowNewResourceModel"
+    },
+    {
+      "key": "getAllowTvmFreeze"
+    },
+    {
+      "key": "getAllowTvmVote",
+      "value": 1
+    },
+    {
+      "key": "getAllowTvmLondon",
+      "value": 1
+    },
+    {
+      "key": "getAllowTvmCompatibleEvm"
+    },
+    {
+      "key": "getAllowAccountAssetOptimization"
+    },
+    {
+      "key": "getFreeNetLimit",
+      "value": 600
+    },
+    {
+      "key": "getTotalNetLimit",
+      "value": 43200000000
+    },
+    {
+      "key": "getAllowHigherLimitForMaxCpuTimeOfOneTx",
+      "value": 1
+    },
+    {
+      "key": "getAllowAssetOptimization",
+      "value": 1
+    },
+    {
+      "key": "getAllowNewReward",
+      "value": 1
+    },
+    {
+      "key": "getMemoFee",
+      "value": 1000000
+    },
+    {
+      "key": "getAllowDelegateOptimization",
+      "value": 1
+    },
+    {
+      "key": "getUnfreezeDelayDays",
+      "value": 14
+    },
+    {
+      "key": "getAllowOptimizedReturnValueOfChainId",
+      "value": 1
+    },
+    {
+      "key": "getAllowDynamicEnergy",
+      "value": 1
+    },
+    {
+      "key": "getDynamicEnergyThreshold",
+      "value": 5000000000
+    },
+    {
+      "key": "getDynamicEnergyIncreaseFactor",
+      "value": 2000
+    },
+    {
+      "key": "getDynamicEnergyMaxFactor",
+      "value": 34000
+    },
+    {
+      "key": "getAllowTvmShangHai",
+      "value": 1
+    },
+    {
+      "key": "getAllowCancelAllUnfreezeV2",
+      "value": 1
+    },
+    {
+      "key": "getMaxDelegateLockPeriod",
+      "value": 864000
+    },
+    {
+      "key": "getAllowOldRewardOpt",
+      "value": 1
+    },
+    {
+      "key": "getAllowEnergyAdjustment",
+      "value": 1
+    },
+    {
+      "key": "getMaxCreateAccountTxSize",
+      "value": 1000
+    },
+    {
+      "key": "getAllowStrictMath",
+      "value": 1
+    },
+    {
+      "key": "getConsensusLogicOptimization",
+      "value": 1
+    },
+    {
+      "key": "getAllowTvmCancun",
+      "value": 1
+    },
+    {
+      "key": "getAllowTvmBlob",
+      "value": 1
+    },
+    {
+      "key": "getAllowTvmSelfdestructRestriction",
+      "value": 1
+    },
+    {
+      "key": "getProposalExpireTime",
+      "value": 12000
+    },
+    {
+      "key": "getAllowTvmOsaka",
+      "value": 1
+    },
+    {
+      "key": "getAllowTvmPrague",
+      "value": 1
+    },
+    {
+      "key": "getAllowHardenResourceCalculation"
+    },
+    {
+      "key": "getAllowHardenExchangeCalculation"
+    }
+  ]
+}

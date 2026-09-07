@@ -1,24 +1,11 @@
----
-agent: {reviewer-name}
-session_id: {session-id}
-reviewing: {feature-name}
-reviewed_commit: {git-sha}
-status: approved | changes-requested
-created: {ISO-timestamp}
----
+# {bounded review question}
 
-# Review #{N}
+- Candidate: {immutable SHA, evidence packet digest}
+- Reviewer: {exact model/provider/harness/version, or human}
+- Scope: {paths/invariant; exclusions}
+- Finding: {severity, source line, reachable counterexample, evidence}
+- Verification: {command and observed result; distinguish code trace from execution}
+- Verdict: {supported / disproved / unresolved; missing evidence}
+- Evaluation: {optional advisor event ID; peer opinion is provisional}
 
-## Findings (highest severity first)
-- {SEVERITY} `path/to/file:line` - {issue}
-
-## Tests Performed
-- `{command}` -> {result}
-
-## Verdict
-- Status: approved | changes-requested
-- Merge blockers:
-  - [ ] CRITICAL = 0
-  - [ ] HIGH = 0
-- Required fixes before merge:
-  - {item}
+No response, missing evidence or a timeout is not approval. Scores never replace release gates.

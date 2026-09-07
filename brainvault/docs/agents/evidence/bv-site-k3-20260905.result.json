@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "result",
+  "id": "bv-site-k3-20260905.result",
+  "runId": "bv-site-k3-20260905",
+  "recordedAt": "2026-09-04T23:59:13.521Z",
+  "harnessVersion": "0.84.4",
+  "servedProvider": null,
+  "status": "completed",
+  "elapsedMs": 5057,
+  "exitCode": 0,
+  "costUsd": 0.017682,
+  "response": "{\"verdict\":\"ANSWER\",\"answer\":\"Cut plan: delete metrics strip (repeats How), choice-list, Found/Lost lines, speed-block, demo video, quick-try run-notes; merge Why+How into one section. 3 sections: Hero (keep installer tabs), How it works, Run & safety. Hero subcopy: 'You wait once per recovery. An attacker pays for every guess. No seed copy. No server.' How: 'Four exact inputs—username, password, shard count, multiplier—feed 10,000 Argon2id jobs (256 MiB each) into one BLAKE3 root and two BIP-39 wallets. Hardware changes only the wait. Recipe is public.' Safety copy: 'Use one strong, unique secret used nowhere else—guessing cost is not entropy. Record inputs exactly; case and spaces matter. Forget any input and the wallet is unrecoverable—no reset. Verify the full first address independently before funding. A typo creates a different wallet.' Keep collapsed audit prompt unchanged.\",\"references\":[\"brainvault/site/index.html:52\",\"brainvault/site/index.html:91\",\"brainvault/site/index.html:117\",\"brainvault/site/index.html:139\",\"brainvault/site/index.html:147\"]}",
+  "responseHash": "sha256:972d1561c1d4e24fca45d97f460eb4bc1fa7df70d07e7b358d0396b6c657bfaf",
+  "stdoutHash": "sha256:3c81cf4c3b4ba8700cf871ac5dbdd9c8efc8efaed397ec04a63ca6df4482bb03",
+  "stderrHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "error": null
+}

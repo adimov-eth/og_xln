@@ -1,0 +1,884 @@
+{
+  "reviewer": "openrouter/x-ai/grok-latest",
+  "screens": [
+    {
+      "file": "01-home.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 780,
+        "typography": 800,
+        "color": 810,
+        "data_legibility": 760,
+        "layout": 740,
+        "visceral_value": 820,
+        "responsive": 780,
+        "consistency": 830,
+        "trust": 790
+      },
+      "total": 793,
+      "top_issues": [
+        "Home packs tutorial copy, four-way legend, spendable line, CTAs, and asset list so Pay is below the fold on a phone.",
+        "On-chain $0.00 and Secured $0.00 share green with Reserve, so the $155 total reads richer than enforceable money.",
+        "Tab bar overlaps the H1 account card; send/receive caps are clipped."
+      ],
+      "fixes": [
+        "Pin Pay/Receive/Swap under the hero; collapse the colour explainer to one line after Got it.",
+        "Make On-chain/Reserve/Secured one green family and Promised the only violet; hide $0 buckets by default.",
+        "Give the tab bar a solid scrim so the last card never sits under Home."
+      ]
+    },
+    {
+      "file": "01-home-bottom.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 760,
+        "typography": 790,
+        "color": 800,
+        "data_legibility": 770,
+        "layout": 760,
+        "visceral_value": 750,
+        "responsive": 790,
+        "consistency": 840,
+        "trust": 780
+      },
+      "total": 782,
+      "top_issues": [
+        "Recent bars are tiny vs the $155 hero; the one-scale rule is almost invisible here.",
+        "Received rows show time but Sent shows route only, so the list feels unfinished.",
+        "Open account sits in the same card as the live H1 position and looks like a second hub."
+      ],
+      "fixes": [
+        "Keep activity bars at the same px/$ as Home.",
+        "Always show counterpart + time on every row.",
+        "Move Open account to a text link under the account list."
+      ]
+    },
+    {
+      "file": "02-pay.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 800,
+        "typography": 810,
+        "color": 790,
+        "data_legibility": 820,
+        "layout": 830,
+        "visceral_value": 780,
+        "responsive": 810,
+        "consistency": 850,
+        "trust": 800
+      },
+      "total": 813,
+      "top_issues": [
+        "Full 80-char address wraps under H2 and crowds the amount.",
+        "Fee is 'under 0.01 USDC' while the expanded sheet shows 0.000050 — precision is inconsistent.",
+        "Scan icon in the header has no label; Lena cannot discover it one-handed."
+      ],
+      "fixes": [
+        "Show H2 + last 6 chars; expand address on tap.",
+        "Always print exact fee next to Instant.",
+        "Make the scan control a labeled 'Scan' chip."
+      ]
+    },
+    {
+      "file": "02-pay-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 800,
+        "color": 780,
+        "data_legibility": 810,
+        "layout": 770,
+        "visceral_value": 760,
+        "responsive": 760,
+        "consistency": 830,
+        "trust": 790
+      },
+      "total": 789,
+      "top_issues": [
+        "Two route cards plus exact micro-fees bury the primary Pay button on small phones.",
+        "You→H1→H2 vs You→H1→H3→H2 is unexplained; H3 appears with no risk copy.",
+        "Grey receive-up-to 23.00 vs 0.50 on the previous shot looks like a different state without a caption."
+      ],
+      "fixes": [
+        "Default to one selected route; keep others behind a chevron.",
+        "Add one line: extra hop = extra counterparty.",
+        "Never change capacity numbers between stacked screenshots without a state badge."
+      ]
+    },
+    {
+      "file": "03-receipt.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 830,
+        "typography": 840,
+        "color": 820,
+        "data_legibility": 800,
+        "layout": 810,
+        "visceral_value": 880,
+        "responsive": 800,
+        "consistency": 820,
+        "trust": 850
+      },
+      "total": 831,
+      "top_issues": [
+        "Sheet sits over a dimmed Home whose $130 conflicts with the just-paid $25 story.",
+        "Proof is truncated; board-grade evidence is a tap away, not visible.",
+        "Four equal actions (Copy/Download/Print/Done) fight for the thumb."
+      ],
+      "fixes": [
+        "Blur Home numbers or show post-pay balance matching the receipt.",
+        "Add Share proof as the second primary.",
+        "Keep Done primary; nest Print under Download."
+      ]
+    },
+    {
+      "file": "03-receipt-bottom.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 760,
+        "typography": 780,
+        "color": 770,
+        "data_legibility": 720,
+        "layout": 680,
+        "visceral_value": 800,
+        "responsive": 700,
+        "consistency": 760,
+        "trust": 780
+      },
+      "total": 749,
+      "top_issues": [
+        "Sheet opens over a WETH 0.00 asset page, so the paid USDC story is visually contradicted.",
+        "Same receipt chrome as 03-receipt.png but a different backdrop breaks continuity."
+      ],
+      "fixes": [
+        "Always present receipt over Pay or Home, never a random asset.",
+        "Lock modal dim to the originating screen."
+      ]
+    },
+    {
+      "file": "04-receive.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 790,
+        "color": 780,
+        "data_legibility": 700,
+        "layout": 760,
+        "visceral_value": 750,
+        "responsive": 780,
+        "consistency": 800,
+        "trust": 720
+      },
+      "total": 767,
+      "top_issues": [
+        "QR is huge but amount is 0.00 with 0.50 capacity — Sofia cannot invoice $20.",
+        "Prepare incoming account / H1·Testnet / inbound room is Lightning jargon for Maya.",
+        "Copy payment link is below the fold; QR-only is not enough for remote clients."
+      ],
+      "fixes": [
+        "Default amount to a keypad; show remaining inbound in plain English.",
+        "Rename to 'Get paid via H1'.",
+        "Put Copy link directly under the QR."
+      ]
+    },
+    {
+      "file": "04-receive-bottom.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 770,
+        "typography": 780,
+        "color": 770,
+        "data_legibility": 740,
+        "layout": 750,
+        "visceral_value": 680,
+        "responsive": 770,
+        "consistency": 800,
+        "trust": 730
+      },
+      "total": 755,
+      "top_issues": [
+        "Entity ID and inbound-room copy appear without a request amount.",
+        "Print/PDF and Other ways compete with Copy.",
+        "No invoice number, due date, or share-as-image for a freelancer."
+      ],
+      "fixes": [
+        "Add Invoice # / memo / amount as required for 'create invoice'.",
+        "One share stack: Link, QR image, PDF."
+      ]
+    },
+    {
+      "file": "05-swap.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 800,
+        "typography": 790,
+        "color": 800,
+        "data_legibility": 770,
+        "layout": 740,
+        "visceral_value": 760,
+        "responsive": 720,
+        "consistency": 810,
+        "trust": 780
+      },
+      "total": 775,
+      "top_issues": [
+        "Ticket + limit + hub fee + collateral slider means Anya cannot swap 1 ETH in one glance; CTA is off-screen.",
+        "Hub fee 1 bps · up to 0.0000 WETH looks broken.",
+        "0% collateral / New credit 0.043991 is a credit grant hidden inside Swap."
+      ],
+      "fixes": [
+        "Market swap: amount, quote, fee, Swap. Push credit slider behind Advanced.",
+        "Never show 0.0000 as a fee cap.",
+        "If credit must be extended, use a blocking sheet with one verb."
+      ]
+    },
+    {
+      "file": "05-swap-bottom.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 810,
+        "typography": 800,
+        "color": 840,
+        "data_legibility": 860,
+        "layout": 800,
+        "visceral_value": 790,
+        "responsive": 700,
+        "consistency": 780,
+        "trust": 800
+      },
+      "total": 800,
+      "top_issues": [
+        "Full book is excellent for Anya, absent from the ticket, so fills are a hidden second screen.",
+        "Ten decimal prices on a 390px width are dense; last/spread line wraps.",
+        "No depth axis label; bars could be size or cumulative."
+      ],
+      "fixes": [
+        "Preview top-of-book on the ticket; tap opens this book.",
+        "Tabular figures, 2–4 decimals by default.",
+        "Label depth bars 'size at level'."
+      ]
+    },
+    {
+      "file": "05b-swap-cross.png",
+      "scores": {
+        "hierarchy": 700,
+        "premium": 760,
+        "typography": 770,
+        "color": 780,
+        "data_legibility": 720,
+        "layout": 650,
+        "visceral_value": 740,
+        "responsive": 680,
+        "consistency": 790,
+        "trust": 750
+      },
+      "total": 734,
+      "top_issues": [
+        "Toast 'Account opening requested with zero credit' covers the collateral control Fatima must use.",
+        "Across networks is selected but Testnet→H1→Tron is still cryptic as a bridge.",
+        "No all-in fee in USDT/USDC for the cross-network hop."
+      ],
+      "fixes": [
+        "Queue account-open as a full-screen step before the ticket.",
+        "Show 'USDT on Testnet → WETH on Tron' plus fee.",
+        "Keep toasts below the primary CTA."
+      ]
+    },
+    {
+      "file": "05b-swap-cross-bottom.png",
+      "scores": {
+        "hierarchy": 680,
+        "premium": 740,
+        "typography": 760,
+        "color": 770,
+        "data_legibility": 690,
+        "layout": 640,
+        "visceral_value": 620,
+        "responsive": 670,
+        "consistency": 770,
+        "trust": 720
+      },
+      "total": 706,
+      "top_issues": [
+        "Gross receive / H3 collateral tariff wall of text before Extend credit.",
+        "Checkbox 'Add 10% buffer' wraps mid-number.",
+        "Primary is Extend credit limit, not Swap — task hijack."
+      ],
+      "fixes": [
+        "One sentence: 'H3 may owe you 0.0088 WETH unsecured.' ",
+        "Keep buffer on one line.",
+        "Disable Swap until credit is set; don't replace Swap with Extend."
+      ]
+    },
+    {
+      "file": "06-account.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 790,
+        "typography": 790,
+        "color": 810,
+        "data_legibility": 830,
+        "layout": 760,
+        "visceral_value": 780,
+        "responsive": 740,
+        "consistency": 840,
+        "trust": 850
+      },
+      "total": 799,
+      "top_issues": [
+        "Five equal tiles (Pay/Extend/Swap/Manage/Dispute) flatten hierarchy.",
+        "+115 they owe you vs credit line 115.50 vs collateral 60 needs a one-line risk sentence at top.",
+        "Tab bar again clips THIS ACCOUNT."
+      ],
+      "fixes": [
+        "Keep Pay primary; Dispute as text.",
+        "Lead with 'Uncovered $115 · collateral $60 · they answer in 1d'.",
+        "Pad bottom for the tab bar."
+      ]
+    },
+    {
+      "file": "06-account-bottom.png",
+      "scores": {
+        "hierarchy": 790,
+        "premium": 770,
+        "typography": 780,
+        "color": 800,
+        "data_legibility": 840,
+        "layout": 770,
+        "visceral_value": 760,
+        "responsive": 760,
+        "consistency": 840,
+        "trust": 860
+      },
+      "total": 797,
+      "top_issues": [
+        "They owe you, uncovered $115 Cover it is the right control but easy to miss in a long definition list.",
+        "Frames signed 12 is not board-exportable proof.",
+        "Show 2 unused tokens is a low-value link above the risk table."
+      ],
+      "fixes": [
+        "Promote Cover it to a full-width button.",
+        "Add Export latest signed frame.",
+        "Move unused tokens under Ledger detail."
+      ]
+    },
+    {
+      "file": "06b-dispute.png",
+      "scores": {
+        "hierarchy": 820,
+        "premium": 780,
+        "typography": 800,
+        "color": 790,
+        "data_legibility": 810,
+        "layout": 800,
+        "visceral_value": 700,
+        "responsive": 790,
+        "consistency": 830,
+        "trust": 870
+      },
+      "total": 799,
+      "top_issues": [
+        "Excellent 1–2–3 copy, but no live challenge timer or evidence preview before irreversible tap.",
+        "Pay tile stays visually primary behind the sheet.",
+        "Ellipsis on Dispute this account... feels unfinished."
+      ],
+      "fixes": [
+        "Show window = 1d, attach evidence bundle, then confirm.",
+        "Dim/disable Pay while disputing.",
+        "Button: Dispute account — cannot undo."
+      ]
+    },
+    {
+      "file": "06b-dispute-bottom.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 770,
+        "typography": 800,
+        "color": 780,
+        "data_legibility": 800,
+        "layout": 790,
+        "visceral_value": 690,
+        "responsive": 780,
+        "consistency": 830,
+        "trust": 860
+      },
+      "total": 791,
+      "top_issues": [
+        "Same sheet without the account numbers in view; Kenji cannot see what he is freezing.",
+        "No on-chain tx / challenge countdown UI in this set."
+      ],
+      "fixes": [
+        "Pin H1 + $115 uncovered in the sheet header.",
+        "Add a post-dispute status screen to the product (missing)."
+      ]
+    },
+    {
+      "file": "07-activity.png",
+      "scores": {
+        "hierarchy": 740,
+        "premium": 760,
+        "typography": 750,
+        "color": 790,
+        "data_legibility": 700,
+        "layout": 720,
+        "visceral_value": 730,
+        "responsive": 680,
+        "consistency": 820,
+        "trust": 780
+      },
+      "total": 747,
+      "top_issues": [
+        "Header 'Today · in $140 · out $68.58 · 5 movements' wraps into an unreadable stack.",
+        "Filters clip Accou; 7 movements sits over Export CSV.",
+        "Swap closed has no amount; Swap placed 18.58 USDC vs payment bars mix units."
+      ],
+      "fixes": [
+        "Single-line summary + Export.",
+        "Scroll chips with Accou→Accounts fully visible.",
+        "Every row: amount, asset, status, time."
+      ]
+    },
+    {
+      "file": "08-activity-detail.png",
+      "scores": {
+        "hierarchy": 840,
+        "premium": 800,
+        "typography": 820,
+        "color": 800,
+        "data_legibility": 830,
+        "layout": 820,
+        "visceral_value": 800,
+        "responsive": 800,
+        "consistency": 840,
+        "trust": 860
+      },
+      "total": 821,
+      "top_issues": [
+        "Proof still truncated; Download proof is good but Ravi needs a human PDF.",
+        "No fee line on the receipt sheet.",
+        "Copy vs Download proof is weaker than Home receipt's Print/PDF."
+      ],
+      "fixes": [
+        "Align actions with 03-receipt: Copy, PDF, Proof file.",
+        "Show fee and route on this sheet too."
+      ]
+    },
+    {
+      "file": "09-settings.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 800,
+        "typography": 820,
+        "color": 810,
+        "data_legibility": 840,
+        "layout": 830,
+        "visceral_value": 760,
+        "responsive": 800,
+        "consistency": 850,
+        "trust": 800
+      },
+      "total": 814,
+      "top_issues": [
+        "Dollars-per-pixel is conceptually unique but is the first Settings block — Maya will not touch it.",
+        "Toggles On-chain/Reserve/Accounts can hide money without a warning.",
+        "Comfort/Desk on a phone settings page is dead weight."
+      ],
+      "fixes": [
+        "Move Scale under Advanced.",
+        "Confirm before hiding a balance class.",
+        "Hide Layout on wide screens on mobile."
+      ]
+    },
+    {
+      "file": "09-settings-bottom.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 770,
+        "typography": 800,
+        "color": 760,
+        "data_legibility": 790,
+        "layout": 770,
+        "visceral_value": 640,
+        "responsive": 760,
+        "consistency": 800,
+        "trust": 820
+      },
+      "total": 769,
+      "top_issues": [
+        "Reveal recovery phrase + Forget vault on the same view as a scale legend.",
+        "Runtime id hex dump is developer chrome.",
+        "AT THIS SCALE px chart is meta-UI, not money."
+      ],
+      "fixes": [
+        "Vault actions on Sovereignty only, with confirm.",
+        "Hide runtime id behind Copy diagnostics.",
+        "Keep the scale chart next to the slider, not under Forget vault."
+      ]
+    },
+    {
+      "file": "10-move.png",
+      "scores": {
+        "hierarchy": 810,
+        "premium": 790,
+        "typography": 790,
+        "color": 800,
+        "data_legibility": 800,
+        "layout": 780,
+        "visceral_value": 770,
+        "responsive": 760,
+        "consistency": 830,
+        "trust": 810
+      },
+      "total": 794,
+      "top_issues": [
+        "FROM/TO 2×3 tiles plus entity id is a lot to fund H1.",
+        "Account 175.00 vs Reserve 40.00 uses spendable vs balance without saying so.",
+        "Sign & send vs Add to batch splits a simple move."
+      ],
+      "fixes": [
+        "Wizard: From → To → Amount → Sign.",
+        "Label Account tile 'spendable including credit'.",
+        "Hide batch on mobile."
+      ]
+    },
+    {
+      "file": "10-move-bottom.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 780,
+        "typography": 790,
+        "color": 790,
+        "data_legibility": 790,
+        "layout": 770,
+        "visceral_value": 750,
+        "responsive": 750,
+        "consistency": 830,
+        "trust": 800
+      },
+      "total": 785,
+      "top_issues": [
+        "WHAT HAPPENS is correct and late; users set amount first.",
+        "Recipient entity empty-for-yourself is easy to mis-pay."
+      ],
+      "fixes": [
+        "Show consequence as the amount changes.",
+        "Default recipient = Me; require paste confirm for others."
+      ]
+    },
+    {
+      "file": "11-manage.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 780,
+        "typography": 800,
+        "color": 800,
+        "data_legibility": 810,
+        "layout": 820,
+        "visceral_value": 760,
+        "responsive": 800,
+        "consistency": 840,
+        "trust": 830
+      },
+      "total": 804,
+      "top_issues": [
+        "Grid of five destinations is clear but Add money/on-ramp is missing for Maya.",
+        "WHERE YOUR MONEY STANDS repeats Home.",
+        "Accounts list clipped by tabs."
+      ],
+      "fixes": [
+        "Add Get money as the first tile.",
+        "Keep this page as directory only; don't duplicate the hero.",
+        "Pad list above tabs."
+      ]
+    },
+    {
+      "file": "12-assets.png",
+      "scores": {
+        "hierarchy": 780,
+        "premium": 760,
+        "typography": 780,
+        "color": 790,
+        "data_legibility": 800,
+        "layout": 770,
+        "visceral_value": 640,
+        "responsive": 760,
+        "consistency": 820,
+        "trust": 790
+      },
+      "total": 769,
+      "top_issues": [
+        "All zeros plus Depository may pull 0.00 is lifeless.",
+        "Move into reserve is a tiny nested button.",
+        "Faucets clipped — the actual on-ramp for testnet users."
+      ],
+      "fixes": [
+        "Lead with Reserve + Accounts that hold money; on-chain zeros collapsed.",
+        "Full-width Move.",
+        "Pin Faucets / Add money above the fold in empty states."
+      ]
+    },
+    {
+      "file": "12-assets-bottom.png",
+      "scores": {
+        "hierarchy": 720,
+        "premium": 750,
+        "typography": 760,
+        "color": 780,
+        "data_legibility": 740,
+        "layout": 700,
+        "visceral_value": 680,
+        "responsive": 720,
+        "consistency": 800,
+        "trust": 760
+      },
+      "total": 741,
+      "top_issues": [
+        "Prepare to receive 99.5 USDC credit grant is buried under Assets, not Receive.",
+        "Receive USDC from H1 is disabled with no reason.",
+        "6–8 decimal dust in limits looks like a bug."
+      ],
+      "fixes": [
+        "Round display to cents for stables.",
+        "Explain why Receive is disabled.",
+        "Don't put credit extension on Assets."
+      ]
+    },
+    {
+      "file": "13-lend.png",
+      "scores": {
+        "hierarchy": 770,
+        "premium": 760,
+        "typography": 780,
+        "color": 770,
+        "data_legibility": 760,
+        "layout": 750,
+        "visceral_value": 620,
+        "responsive": 740,
+        "consistency": 800,
+        "trust": 730
+      },
+      "total": 748,
+      "top_issues": [
+        "Empty pool 0.00 everywhere; Offer disabled; no APY comparison.",
+        "100 bps = 1.00% per term is easy to misread as APR.",
+        "Lanes jargon in hub picker."
+      ],
+      "fixes": [
+        "Show sample rate or hide Lending until pool exists.",
+        "Label interest as % for 1 day / 1 month.",
+        "Hub: H1, drop lanes."
+      ]
+    },
+    {
+      "file": "13-lend-bottom.png",
+      "scores": {
+        "hierarchy": 760,
+        "premium": 750,
+        "typography": 780,
+        "color": 760,
+        "data_legibility": 770,
+        "layout": 760,
+        "visceral_value": 600,
+        "responsive": 750,
+        "consistency": 800,
+        "trust": 730
+      },
+      "total": 746,
+      "top_issues": [
+        "Same empty ticket; CTA still inert.",
+        "No borrow path shown despite Borrow tab."
+      ],
+      "fixes": [
+        "Borrow tab needs a real empty state.",
+        "Enable Offer only when amount > 0."
+      ]
+    },
+    {
+      "file": "14-ownership.png",
+      "scores": {
+        "hierarchy": 800,
+        "premium": 780,
+        "typography": 810,
+        "color": 760,
+        "data_legibility": 790,
+        "layout": 800,
+        "visceral_value": 650,
+        "responsive": 790,
+        "consistency": 820,
+        "trust": 840
+      },
+      "total": 784,
+      "top_issues": [
+        "Self-issued / EntityProvider is protocol essay, not a user task.",
+        "No export of board hash for Ravi.",
+        "Take control empty state is fine but the page feels unfinished."
+      ],
+      "fixes": [
+        "Lead with You control this wallet · 1 of 1.",
+        "Copy board id / download governance proof."
+      ]
+    },
+    {
+      "file": "15-sovereignty.png",
+      "scores": {
+        "hierarchy": 860,
+        "premium": 820,
+        "typography": 830,
+        "color": 840,
+        "data_legibility": 850,
+        "layout": 820,
+        "visceral_value": 880,
+        "responsive": 800,
+        "consistency": 850,
+        "trust": 920
+      },
+      "total": 847,
+      "top_issues": [
+        "Best screen in the set; still leads with $40 enforceable while Home says $155 — Dmitri will distrust the delta unless Home matches.",
+        "Signer hex duplicated vs Assets.",
+        "Save evidence is below the fold on the paired bottom shot."
+      ],
+      "fixes": [
+        "Use the same $40 vs $115 split on Home hero.",
+        "One truncated signer with copy.",
+        "Pin Save evidence bundle under the $40."
+      ]
+    },
+    {
+      "file": "15-sovereignty-bottom.png",
+      "scores": {
+        "hierarchy": 830,
+        "premium": 800,
+        "typography": 810,
+        "color": 810,
+        "data_legibility": 840,
+        "layout": 810,
+        "visceral_value": 780,
+        "responsive": 790,
+        "consistency": 850,
+        "trust": 910
+      },
+      "total": 823,
+      "top_issues": [
+        "nothing at risk on H1 while Account shows $115 uncovered — copy fight.",
+        "Evidence bundle explanation is strong; no preview of contents."
+      ],
+      "fixes": [
+        "Say 'on-chain loss $0 · hub promise $115'.",
+        "List bundle: frames, signatures, hashes."
+      ]
+    }
+  ],
+  "overall": {
+    "total": 782,
+    "verdict": "A dense, coherent dark system with a real trust story (green vs violet, receipts, dispute, sovereignty) that already feels like a specialist wallet, not a concept deck. It is not yet a shipping consumer product: jargon, clipped chrome, credit grants inside Swap, and a $155 vs $40 hero split will stall first-timers and treasurers.",
+    "priority_fixes": [
+      "Unify Home with Sovereignty: show spendable vs enforceable in one sentence and one bar; never let $155 look as safe as $40.",
+      "Make Pay a 10-second path: labeled scan, compact address, exact fee, one route, sticky Pay button.",
+      "Receive as invoices: amount-first, copy link under QR, hide Testnet/inbound-room until Advanced.",
+      "Pull credit/collateral extension out of Swap/Assets into an explicit sheet; market swap is quote + Swap.",
+      "Give Ravi/Kenji exportable proof (PDF + evidence bundle) and a live dispute window, and stop clipping lists under the tab bar."
+    ],
+    "personas": [
+      {
+        "name": "Maya",
+        "satisfied": 42,
+        "verdict": "I see a big $155 and a lecture about violet promises and I still don't know how to put in $20.",
+        "blockers": [
+          "No on-ramp on Home/Manage (11-manage, 12-assets).",
+          "Receive/Pay jargon: hub, inbound room, entity id (04-receive, 02-pay).",
+          "Colour explainer is homework, not a first pay (01-home)."
+        ]
+      },
+      {
+        "name": "Tomasz",
+        "satisfied": 78,
+        "verdict": "Credit vs collateral is actually drawn, but inbound 0.50 and uncovered $115 should be the first line, not a footnote.",
+        "blockers": [
+          "Home spendable $175 vs receive $0.50 is easy to miss (01-home).",
+          "Account risk table is below tiles (06-account)."
+        ]
+      },
+      {
+        "name": "Anya",
+        "satisfied": 70,
+        "verdict": "The book is real Uniswap-brain food; the ticket is a credit workshop.",
+        "blockers": [
+          "CTA off-screen; 0.0000 fee (05-swap).",
+          "Book is a separate bottom shot, not on the ticket (05-swap-bottom).",
+          "No fill tape on 07-activity beyond Swap placed/closed."
+        ]
+      },
+      {
+        "name": "Ravi",
+        "satisfied": 68,
+        "verdict": "Sovereignty is the board slide I wanted; Home still markets $155 as if it were cash.",
+        "blockers": [
+          "Home vs $40 enforceable (01-home vs 15-sovereignty).",
+          "Proof hashes truncated; CSV is not a signed packet (08-activity-detail, 07-activity).",
+          "No six-figure empty/scale stress besides Settings px chart."
+        ]
+      },
+      {
+        "name": "Sofia",
+        "satisfied": 58,
+        "verdict": "I can throw a QR at someone but I cannot make a $20 invoice with a receipt I'd email.",
+        "blockers": [
+          "Amount 0.00 / 0.50 capacity (04-receive).",
+          "No invoice id or branded PDF from Receive.",
+          "Receipt Print/PDF exists after Pay (03-receipt) but not as an invoice template."
+        ]
+      },
+      {
+        "name": "Kenji",
+        "satisfied": 80,
+        "verdict": "Dispute copy is the most honest I've seen; I still won't tap it without a timer and a bundle preview.",
+        "blockers": [
+          "No challenge countdown UI (06b-dispute).",
+          "Evidence save is on Sovereignty not in the dispute sheet (15-sovereignty-bottom).",
+          "nothing at risk vs $115 uncovered contradiction."
+        ]
+      },
+      {
+        "name": "Lena",
+        "satisfied": 62,
+        "verdict": "Pay is close, but I need scan, amount, thumb button without hunting routes.",
+        "blockers": [
+          "Scan unlabeled (02-pay).",
+          "Route list / address wrap (02-pay-bottom).",
+          "Tab bar collision and sheets covering CTAs (01-home, 05b-swap-cross)."
+        ]
+      },
+      {
+        "name": "Marcus",
+        "satisfied": 74,
+        "verdict": "H1 desk on a phone is readable; I want Desk density, not five tiles.",
+        "blockers": [
+          "Comfort/Desk setting is not a desk (09-settings).",
+          "No multi-counterparty matrix; only H1 (06-account).",
+          "Lending pool empty so LP work is fake (13-lend)."
+        ]
+      },
+      {
+        "name": "Fatima",
+        "satisfied": 55,
+        "verdict": "Across networks exists, then it makes me extend credit to H3 before I see a bridge fee.",
+        "blockers": [
+          "Account-open toast covers the control (05b-swap-cross).",
+          "No USDT→USDT chain fee line; WETH quote instead.",
+          "Move is same-network reserve↔account (10-move), not cross-chain."
+        ]
+      },
+      {
+        "name": "Dmitri",
+        "satisfied": 72,
+        "verdict": "In three minutes I get that green is hard and violet is a promise — then Home's $155 undoes the pitch.",
+        "blockers": [
+          "Inconsistent totals across Home/receipt/sovereignty.",
+          "Jargon density if he opens Swap or Ownership first.",
+          "Empty lending/assets look unfinished for a product eval."
+        ]
+      }
+    ]
+  }
+}

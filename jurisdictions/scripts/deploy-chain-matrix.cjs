@@ -5,6 +5,7 @@ const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs'
 const path = require('node:path');
 
 const { buildFoundationTokenListing, foundationEntityId } = require('./foundation-hanko.cjs');
+const { broadcastTronTransaction } = require('../../core/jurisdiction/adapter/operations/tron-broadcast.ts');
 
 const repoRoot = path.resolve(__dirname, '..');
 const deploymentsDir = path.join(repoRoot, 'deployments');
@@ -118,7 +119,7 @@ const rpcUrlFor = (chain) => {
 const tronFullHostFor = (chain) => {
   const explicit = String(process.env[chain.fullHostEnv] || '').trim();
   if (explicit) return explicit.replace(/\/jsonrpc\/?$/i, '').replace(/\/$/, '');
-  return rpcUrlFor(chain).replace(/\/jsonrpc\/?$/i, '').replace(/\/$/, '');
+  return String(chain.defaultFullHost || rpcUrlFor(chain)).replace(/\/jsonrpc\/?$/i, '').replace(/\/$/, '');
 };
 
 const jsonRpcUrlFor = (chain) => {
@@ -129,6 +130,12 @@ const jsonRpcUrlFor = (chain) => {
 const tronGridHeaders = () => process.env.TRONGRID_API_KEY
   ? { 'TRON-PRO-API-KEY': process.env.TRONGRID_API_KEY }
   : {};
+
+const tronWebConnection = (chain) => ({
+  fullHost: tronFullHostFor(chain),
+  ...(chain.defaultSolidityHost ? { solidityNode: chain.defaultSolidityHost } : {}),
+  headers: tronGridHeaders(),
+});
 
 const rpc = async (url, method, params = [], extraHeaders = {}) => {
   const response = await fetch(url, {
@@ -329,7 +336,7 @@ const linkBytecode = (artifact, libraries) => {
   return linked;
 };
 
-const deployTronContract = async (tronWeb, contractName, parameters = [], libraries = {}) => {
+const deployTronContract = async (tronWeb, contractName, parameters = [], libraries = {}, preparedTransaction) => {
   const artifact = loadTronArtifact(contractName);
   const bytecode = linkBytecode(artifact, libraries);
   const options = {
@@ -341,14 +348,22 @@ const deployTronContract = async (tronWeb, contractName, parameters = [], librar
     originEnergyLimit: Number(process.env.TRON_ORIGIN_ENERGY_LIMIT || '10000000'),
     parameters,
   };
+  const previous = preparedTransaction ? await tronWeb.trx.getTransaction(preparedTransaction) : undefined;
   const transaction = await tronWeb.transactionBuilder.createSmartContract(
-    options,
+    { ...options, ...(previous ? { blockHeader: previous.raw_data } : {}) },
     tronWeb.defaultAddress.base58,
   );
+  if (preparedTransaction && (transaction.txID !== preparedTransaction || transaction.raw_data_hex !== previous.raw_data_hex)) {
+    throw new Error(`TRON_PREPARED_DEPLOYMENT_MISMATCH:${contractName}:${preparedTransaction}`);
+  }
   const signed = await tronWeb.trx.sign(transaction, tronWeb.defaultPrivateKey);
-  const broadcast = await tronWeb.trx.sendRawTransaction(signed);
-  if (!broadcast?.result) throw new Error(`TRON_DEPLOY_BROADCAST_FAILED:${contractName}:${JSON.stringify(broadcast)}`);
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  if (!preparedTransaction) {
+    const broadcast = await broadcastTronTransaction(tronWeb, signed);
+    if (!broadcast?.result) throw new Error(`TRON_DEPLOY_BROADCAST_FAILED:${contractName}:${JSON.stringify(broadcast)}`);
+    console.log(`[tron-deploy] broadcast contract=${contractName} tx=${signed.txID}`);
+  }
+  const receiptDeadline = Date.now() + 300_000;
+  while (Date.now() < receiptDeadline) {
     const receipt = await tronWeb.trx.getTransactionInfo(signed.txID);
     if (Object.keys(receipt || {}).length > 0) {
       if (receipt.receipt?.result !== 'SUCCESS') {
@@ -360,13 +375,17 @@ const deployTronContract = async (tronWeb, contractName, parameters = [], librar
       if (!Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 1) {
         throw new Error(`TRON_DEPLOY_BLOCK_MISSING:${contractName}:${signed.txID}`);
       }
+      console.log(`[tron-deploy] solid contract=${contractName} block=${receipt.blockNumber} energy=${receipt.receipt.energy_usage_total}`);
+      const deployedCode = await tronWeb.trx.getContract(signed.contract_address);
+      if (!deployedCode.bytecode) throw new Error(`TRON_DEPLOY_CODE_MISSING:${contractName}`);
       return {
         ...tronAddressInfo(tronWeb, signed.contract_address),
         deploymentBlock: receipt.blockNumber,
         transactionHash: signed.txID,
+        runtimeCodeHash: require('ethers').keccak256(`0x${stripHexPrefix(deployedCode.bytecode)}`),
       };
     }
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`TRON_DEPLOY_RECEIPT_TIMEOUT:${contractName}:${signed.txID}`);
 };
@@ -375,8 +394,7 @@ const deployTron = async (chain, options) => {
   const preflight = await preflightChain(chain);
   const { TronWeb } = require('tronweb');
   const readOnlyTronWeb = new TronWeb({
-    fullHost: tronFullHostFor(chain),
-    headers: tronGridHeaders(),
+    ...tronWebConnection(chain),
   });
 
   const rawUsdtAddress = chain.usdtAddress || (chain.usdtEnv ? process.env[chain.usdtEnv] : undefined);
@@ -400,26 +418,25 @@ const deployTron = async (chain, options) => {
   const privateKey = requireHexPrivateKey();
   if (!options.skipCompile) run('bun', ['scripts/compile-tron.cjs', '--all', '--quiet']);
   const tronWeb = new TronWeb({
-    fullHost: tronFullHostFor(chain),
-    headers: tronGridHeaders(),
+    ...tronWebConnection(chain),
     privateKey,
   });
+  const deploy = (name, parameters = [], libraries = {}) => deployTronContract(
+    tronWeb, name, parameters, libraries, options.preparedTransactions?.[name],
+  );
 
-  const account = await deployTronContract(tronWeb, 'Account');
-  const depositoryBounds = await deployTronContract(tronWeb, 'DepositoryBounds');
-  const hashLadderRegistry = await deployTronContract(tronWeb, 'HashLadderRegistry');
-  const nftCustody = await deployTronContract(tronWeb, 'NftCustody');
-  const deltaTransformer = await deployTronContract(tronWeb, 'DeltaTransformer');
+  // Native TRON has no sender nonce. These distinct bytecodes have no graph
+  // dependencies; wait for every solidified receipt before linking consumers.
+  const [account, depositoryBounds, hashLadderRegistry, nftCustody, deltaTransformer, hankoVerifier] =
+    await Promise.all(['Account', 'DepositoryBounds', 'HashLadderRegistry', 'NftCustody', 'DeltaTransformer', 'HankoVerifier']
+      .map((name) => deploy(name)));
   const foundationRecipient = tronWeb.defaultAddress.base58;
-  const hankoVerifier = await deployTronContract(tronWeb, 'HankoVerifier');
-  const entityProvider = await deployTronContract(
-    tronWeb,
+  const entityProvider = await deploy(
     'EntityProvider',
     [foundationRecipient],
     { HankoVerifier: hankoVerifier },
   );
-  const depository = await deployTronContract(
-    tronWeb,
+  const depository = await deploy(
     'Depository',
     [entityProvider.base58, deltaTransformer.base58],
     {
@@ -431,13 +448,17 @@ const deployTron = async (chain, options) => {
   );
   const entityProviderArtifact = loadTronArtifact('EntityProvider');
   const entityProviderContract = await tronWeb.contract(entityProviderArtifact.abi, entityProvider.base58);
-  await entityProviderContract.bindShareDepository(depository.base58).send({
-    feeLimit: Number(process.env.TRON_FEE_LIMIT || '15000000000'),
-    shouldPollResponse: true,
-  });
+  const boundDepository = tronAddressInfo(tronWeb, await entityProviderContract.shareDepository().call());
+  if (/^0x0{40}$/i.test(boundDepository.evm)) {
+    await entityProviderContract.bindShareDepository(depository.base58).send({
+      feeLimit: Number(process.env.TRON_FEE_LIMIT || '15000000000'), shouldPollResponse: true,
+    });
+  } else if (boundDepository.evm.toLowerCase() !== depository.evm.toLowerCase()) {
+    throw new Error(`TRON_PREPARED_DEPOSITORY_BINDING_MISMATCH:${boundDepository.evm}`);
+  }
   const depositoryArtifact = loadTronArtifact('Depository');
   const depositoryContract = await tronWeb.contract(depositoryArtifact.abi, depository.base58);
-  // UNTESTED on TRON: Depository.registerExternalToken is callable only by the
+  // Depository.registerExternalToken is callable only by the
   // EntityProvider, so USDT is listed through
   // EntityProvider.foundationRegisterExternalToken under a Foundation Hanko
   // signed by the deployer key (the genesis 1-of-1 Foundation board). The
@@ -487,6 +508,7 @@ const deployTron = async (chain, options) => {
       account: account.evm,
       depositoryBounds: depositoryBounds.evm,
       hashLadderRegistry: hashLadderRegistry.evm,
+      nftCustody: nftCustody.evm,
       hankoVerifier: hankoVerifier.evm,
       entityProvider: entityProvider.evm,
       depository: depository.evm,
@@ -496,6 +518,7 @@ const deployTron = async (chain, options) => {
       account,
       depositoryBounds,
       hashLadderRegistry,
+      nftCustody,
       hankoVerifier,
       entityProvider,
       depository,
@@ -660,6 +683,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  deployTron,
+  deployTronContract,
   evmStablecoinFor,
   preflightEvmStablecoin,
   preflightTronStablecoin,

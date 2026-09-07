@@ -111,6 +111,7 @@ run_anvil() {
   local args=(
     anvil --silent --host 0.0.0.0 --port "$port" --chain-id "$chain_id"
     --mixed-mining --block-time "$ANVIL_BLOCK_TIME" --block-gas-limit 60000000 --code-size-limit 65536
+    --cache-path "$chain_tmp_dir"
     --state "$state_path" --state-interval "$ANVIL_STATE_INTERVAL_SECONDS"
   )
   if [[ "$DEV_VERBOSE" == "1" ]]; then

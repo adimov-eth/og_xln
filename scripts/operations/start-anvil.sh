@@ -85,6 +85,7 @@ exec anvil --host 0.0.0.0 --port "$ANVIL_PORT" \
       --block-gas-limit 60000000 \
       --code-size-limit 65536 \
       --prune-history "$ANVIL_PRUNE_HISTORY" \
+      --cache-path "$ANVIL_TMPDIR" \
       --state "$ANVIL_STATE" \
       --state-interval "$ANVIL_STATE_INTERVAL" \
       >> "$ANVIL_LOG" 2>&1

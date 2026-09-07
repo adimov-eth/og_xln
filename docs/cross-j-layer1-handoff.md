@@ -44,7 +44,7 @@ owner/hub, the user only requests; ask the owner which LLM models to use for quo
 bun run check:runtime-types && bun test core/__tests__/cross-j && bun test core/__tests__/rscore
 bun core/scripts/checks/consensus/check-canonical-fill-scan.ts && bun run check:nested-hash-coverage && bun run check:unused-surface
 cd rscore && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo fmt --all -- --check
-CARGO_TARGET_DIR=/Users/zigota/xln/rscore/target bun tools/run-rscore-tests.ts
+CARGO_TARGET_DIR=/Users/zigota/xln/rscore/target bun tools/checks/run-rscore-tests.ts
 XLN_RSCORE_REQUIRE_BINARY=1 bun core/scripts/checks/rscore/check-rscore-parity.ts
 XLN_RUNTIME_SEED=$(openssl rand -hex 32) bun core/scripts/e2e/runners/run-with-test-cleanup.ts --reason=mm-mesh -- bun core/scenarios/run.ts mm-mesh
 ```

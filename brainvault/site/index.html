@@ -19,7 +19,7 @@
   <title>BrainVault — Your wallet, mined from memory</title>
   <link rel="stylesheet" href="./assets/styles.css" />
   <script type="application/ld+json">
-    {"@context":"https://schema.org","@type":"SoftwareApplication","name":"BrainVault","applicationCategory":"SecurityApplication","operatingSystem":"macOS, Linux, Windows","softwareVersion":"2.2.0","url":"https://brainvault.sh/","codeRepository":"https://github.com/xlnfinance/xln/tree/main/brainvault","license":"https://github.com/xlnfinance/xln/blob/main/brainvault/LICENSE","description":"Open-source memory-hard deterministic wallet derivation using Argon2id and BLAKE3."}
+    {"@context":"https://schema.org","@type":"SoftwareApplication","name":"BrainVault","applicationCategory":"SecurityApplication","operatingSystem":"macOS, Linux, Windows","url":"https://brainvault.sh/","codeRepository":"https://github.com/xlnfinance/xln/tree/main/brainvault","license":"https://github.com/xlnfinance/xln/blob/main/brainvault/LICENSE","description":"Open-source memory-hard deterministic wallet derivation using Argon2id and BLAKE3."}
   </script>
   <script src="./assets/script.js" defer></script>
 </head>
@@ -30,9 +30,14 @@
       <svg viewBox="0 0 36 36" aria-hidden="true"><path d="M5 10.5 18 3l13 7.5v15L18 33 5 25.5z"/><path d="m11 14 7-4 7 4v8l-7 4-7-4z"/><circle cx="18" cy="18" r="2.5"/></svg>
       <span>BrainVault</span>
     </a>
+    <div class="variant-switch" role="group" aria-label="Landing variation">
+      <button type="button" data-variant-button="a" aria-pressed="true">A</button>
+      <button type="button" data-variant-button="b" aria-pressed="false">B</button>
+      <button type="button" data-variant-button="c" aria-pressed="false">C</button>
+    </div>
     <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="nav">Menu</button>
     <nav id="nav" aria-label="Primary navigation">
-      <a href="#why">Why</a><a href="#how">How</a><a href="#run">Run</a><a href="#audit">Audit</a>
+      <a href="#how">How it works</a><a href="#run">Before funding</a>
       <a class="source-link" href="https://github.com/xlnfinance/xln/tree/main/brainvault">Source ↗</a>
     </nav>
   </header>
@@ -40,102 +45,65 @@
   <main id="main">
     <section class="hero wrap" id="top">
       <div class="hero-copy">
-        <p class="kicker">Open source · runs locally · no account</p>
-        <h1>Your wallet,<br />mined from memory.</h1>
-        <p class="thesis">You wait once per recovery. An attacker pays for every guess.</p>
-        <p class="lede">No required seed copy. No server to trust.</p>
-        <div class="actions"><a class="button primary" href="#run">Run BrainVault</a><a class="button" href="#why">Understand it first</a></div>
-        <p class="fineprint">“Mined” means recomputed through memory-hard Argon2id work—not cryptocurrency mining. A weak or reused password remains weak.</p>
+        <h1 data-copy-key="hero">Your wallet.<br />From memory.</h1>
+        <p class="thesis" data-copy-key="thesis">Nothing to carry.</p>
+        <a class="text-link" href="#run">Before funding ↓</a>
+        <p class="fineprint">Strong secret. Exact settings.</p>
       </div>
       <div class="installer" aria-label="Ways to run BrainVault">
         <div class="install-tabs" role="tablist" aria-label="Launch method">
           <button type="button" role="tab" aria-selected="true" aria-controls="install-bunx" data-install-tab="bunx">bunx</button>
           <button type="button" role="tab" aria-selected="false" aria-controls="install-npm" data-install-tab="npm">npm</button>
-          <button type="button" role="tab" aria-selected="false" aria-controls="install-tarball" data-install-tab="tarball">tarball</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="install-tarball" data-install-tab="tarball">Download</button>
         </div>
         <div class="install-panel" id="install-bunx" role="tabpanel" data-install-panel="bunx">
-          <p>Latest release</p>
           <div class="install-command"><pre id="command-bunx">bunx brainvault</pre><button type="button" data-copy-target="#command-bunx">Copy</button></div>
-          <small>One command. The wallet is derived locally.</small>
+          <small>Requires <a href="https://bun.sh">Bun ↗</a></small>
         </div>
         <div class="install-panel" id="install-npm" role="tabpanel" data-install-panel="npm" hidden>
-          <p>Fixed release</p>
-          <div class="install-command"><pre id="command-npm">npm install -g --ignore-scripts brainvault@2.2.0
+          <div class="install-command"><pre id="command-npm">npm install -g brainvault &amp;&amp;
 brainvault</pre><button type="button" data-copy-target="#command-npm">Copy</button></div>
-          <small>Version 2.2.0 stays fixed. Install scripts stay off.</small>
+          <small>Requires Bun.</small>
         </div>
         <div class="install-panel" id="install-tarball" role="tabpanel" data-install-panel="tarball" hidden>
-          <p>Download, verify, then run</p>
-          <div class="install-command"><pre id="command-tarball">curl -O https://registry.npmjs.org/brainvault/-/brainvault-2.2.0.tgz
-echo "f4e8a9063c1ae0ae0ac2cf3cd1e34d7339168c1a3c55bd5520572bca17492cac  brainvault-2.2.0.tgz" | shasum -a 256 -c -
-tar -xzf brainvault-2.2.0.tgz
-bun package/brainvault</pre><button type="button" data-copy-target="#command-tarball">Copy</button></div>
-          <small>Run it only after the checksum says OK. No <code>curl | sh</code>.</small>
+          <div class="install-command"><pre id="command-tarball">npm pack brainvault</pre><button type="button" data-copy-target="#command-tarball">Copy</button></div>
+          <small><a href="#audit">Audit first ↓</a></small>
         </div>
       </div>
-      <div class="metrics" aria-label="BrainVault essentials">
-        <div><strong>10,000</strong><span>Argon2id jobs<br />at Standard</span></div>
-        <div><strong>256 MiB</strong><span>memory per<br />numbered job</span></div>
-        <div><strong>0</strong><span>accounts, uploads,<br />required backups</span></div>
-      </div>
-    </section>
-
-    <section class="section wrap" id="why">
-      <p class="kicker">01 · Why it exists</p>
-      <h2>Hide a seed forever.<br />Still find it when it matters.</h2>
-      <div class="two-lines"><p><strong>Found.</strong><span>The finder has the key.</span></p><p><strong>Lost.</strong><span>You no longer have the key.</span></p></div>
-      <p class="section-copy">A random seed is cryptographically strong. The copy is the problem: whoever finds it owns the wallet; lose it and the wallet is gone. Classic brainwallets removed the copy, but let attackers guess at full speed. BrainVault makes each guess expensive.</p>
-      <div class="choice-list" aria-label="Wallet recovery approaches">
-        <article><span>01</span><h3>Random mnemonic</h3><strong>Best raw entropy.</strong><p>Store 12 or 24 words for life.</p></article>
-        <article class="featured"><span>02</span><h3>BrainVault</h3><strong>No seed to store.</strong><p>Remember exact inputs. Every guess pays for 10,000 jobs.</p></article>
-        <article><span>03</span><h3>Classic brainwallet</h3><strong>Cheap to attack.</strong><p>A phrase plus one fast hash. Do not use it.</p></article>
-      </div>
-      <p class="plain-note">Argon2id cannot rescue a weak or reused password.</p>
     </section>
 
     <section class="section wrap" id="how">
-      <p class="kicker">02 · One public recipe</p>
-      <h2>Remember. Work. Recover.</h2>
+
+      <h2 data-copy-key="how">Hard to guess.<br />Yours to recover.</h2>
+      <p class="section-copy" data-copy-key="explain">Argon2id makes guessing expensive. Not weak passwords strong.</p>
       <ol class="steps">
-        <li><span>01</span><h3>Exact inputs</h3><p>Username, password, shard count, multiplier. Case and spaces matter.</p></li>
-        <li><span>02</span><h3>Memory-hard work</h3><p>Each Argon2id job uses 256 MiB. Standard runs 10,000.</p></li>
-        <li><span>03</span><h3>Same wallet</h3><p>BLAKE3 creates one root, then two separate BIP-39 wallets.</p></li>
+        <li><span>01</span><h3>Remember</h3><p>Username. Password. Shard count. Multiplier.</p></li>
+        <li><span>02</span><h3>Derive</h3><p>Wait on each recovery.</p></li>
+        <li><span>03</span><h3>Recover</h3><p>Same inputs. Same wallets.</p></li>
       </ol>
-      <p class="protocol-note">CPU, GPU, and worker count change only the wait—never the wallet. Import either wallet with an empty BIP-39 passphrase.</p>
-      <div class="demo-frame"><video autoplay muted loop playsinline preload="metadata" poster="./assets/brainvault-terminal-demo-poster.png"><source src="./assets/brainvault-terminal-demo.mp4" type="video/mp4" /></video></div>
-      <div class="speed-block"><strong>14.379 s</strong><p><b>10,000 shards, measured.</b><span>Apple M3 Ultra: 32 CPU cores, 80 GPU cores, 512 GiB memory. 8,000 Metal + 2,000 C/NEON shards. Laptop time varies.</span></p></div>
-      <details class="quiet-details"><summary>Exact cryptographic recipe</summary><dl>
+      <details class="quiet-details"><summary>Watch</summary><div class="demo-frame"><video controls muted playsinline preload="none" poster="./assets/brainvault-terminal-demo-poster.png"><source src="./assets/brainvault-terminal-demo.mp4" type="video/mp4" /></video></div></details>
+      <details class="quiet-details"><summary>Under the hood</summary><dl>
         <div><dt>Input</dt><dd>Unicode NFKD, then exact UTF-8</dd></div>
         <div><dt>Each shard</dt><dd>Argon2id v0x13 · 256 MiB · t=1 · p=1 · 32 bytes</dd></div>
         <div><dt>Combination</dt><dd>Strict numeric shard order · domain-separated BLAKE3</dd></div>
-        <div><dt>Output</dt><dd>One frozen 32-byte root; PRIMARY and SECONDARY are separate wallets</dd></div>
+        <div><dt>Output</dt><dd>Separate PRIMARY/SECONDARY wallets. Import with an empty BIP-39 passphrase.</dd></div>
       </dl></details>
     </section>
 
     <section class="section wrap run" id="run">
-      <p class="kicker">03 · Run locally</p><h2>Recover it twice.<br />Then fund it.</h2>
-      <div class="run-command"><code>bunx brainvault</code><button type="button" data-copy="bunx brainvault">Copy</button></div>
-      <div class="run-notes"><p><strong>Quick try</strong><span>Run the latest release. No install script.</span></p><p><strong>Serious money</strong><span>Pin 2.2.0. Read the source. Rebuild. Run the tests. Recover twice.</span></p></div>
-      <ol class="safety"><li><span>01</span><p><strong>Use one secret nowhere else.</strong> Guessing cost is not entropy.</p></li><li><span>02</span><p><strong>Check the whole first address.</strong> A typo creates another wallet.</p></li><li><span>03</span><p><strong>Forget one input, lose the wallet.</strong> There is no reset.</p></li></ol>
-      <p class="plain-note">Use a clean computer. Cameras, recordings, swap, and crash dumps can retain secrets. SIGKILL cannot be cleaned up.</p>
-      <details class="audit-box" id="audit"><summary>Maximum paranoia: verify the package yourself</summary><div class="audit-body">
-        <p>Prebuilt binaries are hash-checked before execution. <code>verify:source</code> rebuilds every Apple binary twice from vendored source and requires identical bytes.</p>
-        <pre><code>mkdir brainvault-audit &amp;&amp; cd brainvault-audit
-bun init -y
-bun add --exact --ignore-scripts brainvault@2.2.0
-cd node_modules/brainvault
-bun run verify:source
-bun run check
-bun run test:matrix
-bun ./brainvault --smoke --workers 32</code></pre>
-        <div class="audit-prompt"><div><h3>Audit with your own model.</h3><button type="button" data-copy-target="#audit-prompt">Copy prompt</button></div><p>Ask for reproducible findings, not praise.</p>
-          <pre id="audit-prompt">Audit this BrainVault package adversarially. Do not trust its README, comments, binaries, tests, or prior reviews. Read AGENTS.md, docs/spec-v1.md, src/core/, then follow each execution boundary. Assess realistic input entropy; whether Argon2id changes only guess cost; trade-offs versus a random BIP-39 mnemonic and a classic brainwallet; byte-exact V1 determinism; terminal, worker, fallback, memory-wipe, dependency, manifest, and prebuilt-binary attack paths. Run tests without real secrets. Report only reproducible P0/P1/P2 findings with file:line evidence and the smallest failing test. List unknowns separately. End with a conditional verdict, never a safety score.</pre>
+      <h2 data-copy-key="safety">Recover first.<br />Fund second.</h2>
+      <ol class="safety"><li><span>01</span><p><strong>Strong, unique password.</strong> Never reused.</p></li><li><span>02</span><p><strong>Recover independently.</strong> Match the full first address.</p></li><li><span>03</span><p><strong>Forgotten means lost.</strong> Back up if needed.</p></li></ol>
+      <p class="plain-note">Trusted computer. No screen recording.</p>
+      <details class="audit-box" id="audit"><summary id="audit-summary">Audit</summary><div class="audit-body">
+        <p>Inspect code and dependencies. Build. Test. For script-free installation, use <code>--ignore-scripts</code>.</p>
+        <a class="text-link" href="https://github.com/xlnfinance/xln/blob/main/brainvault/docs/audit.md">Source-build guide ↗</a>
+        <div class="audit-prompt"><div><h3>Ask your model.</h3><button type="button" data-copy-target="#audit-prompt">Copy prompt</button></div>
+          <pre id="audit-prompt">Read AGENTS.md and docs/spec-v1.md. Audit entropy, determinism, native boundaries, disclosure, wiping, dependencies and binaries. Compare random seeds. No real secrets. Require P0/P1/P2 findings with file:line and failing tests. State unknowns; never a safety score.</pre>
         </div>
       </div></details>
-      <a class="text-link" href="https://github.com/xlnfinance/xln/tree/main/brainvault">Source, specification, and full instructions ↗</a>
     </section>
   </main>
 
-  <footer class="wrap"><a class="brand" href="#top">BrainVault</a><p>No wallet connection. No secret input. No page analytics script.</p><div><a href="https://github.com/xlnfinance/xln/tree/main/brainvault">GitHub</a><a href="https://github.com/xlnfinance/xln/blob/main/brainvault/docs/spec-v1.md">Specification</a><span>© <span id="year">2026</span></span></div></footer>
+  <footer class="wrap"><a class="brand" href="#top">BrainVault</a><p></p><div><a href="https://github.com/xlnfinance/xln/tree/main/brainvault">GitHub</a><a href="https://github.com/xlnfinance/xln/blob/main/brainvault/docs/spec-v1.md">Specification</a><span>© <span id="year">2026</span></span></div></footer>
 </body>
 </html>

@@ -1,40 +1,11 @@
----
-agent: {agent-name-version}
-session_id: {YYYY-MM-DD-randomid}
-feature: {kebab-case-name}
-status: planned
-created: {ISO-timestamp}
-branch: {agent}/{feature}
-worktree: ~/.{agent}-worktrees/xln/{feature}
-reviewers: [codex, gemini]
----
+# {task}
 
-# Feature: {Human Readable Title}
+Follow [project rules](../../AGENTS.md) and [workflow](../../docs/agent-workflow.md).
+Save a filled plan under `/docs` only when requested or useful for a concrete protocol choice.
 
-## Goal
-{Problem and expected outcome}
-
-## Scope
-- Modify:
-  - `path/to/file`
-- Create:
-  - `path/to/file`
-- Delete:
-  - `path/to/file`
-
-## Risks
-- {Risk}
-
-## Tests
-```bash
-{test commands}
-```
-
-## Reviewer Focus
-- Codex: {security/correctness focus}
-- Gemini: {architecture focus}
-
-## Done When
-- [ ] Implementation complete
-- [ ] Required tests green
-- [ ] Required reviews approved
+- Outcome and first production boundary: {observable result}
+- Candidate: {SHA and dirty-content evidence if relevant}
+- Implementer and exclusive files: {owner, paths}
+- Smallest failing command: {command/error}
+- Chosen change and reason: {existing invariant or owner decision}
+- Verification: {L1, L2, remaining release gates}
