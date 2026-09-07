@@ -18,6 +18,7 @@ export type FaucetApiResult = {
     blockNumber: number;
     blockHash: string;
     transactionHash: string;
+    observedAt: number;
   }>;
 };
 
@@ -46,9 +47,10 @@ export const isFaucetApiResult = (value: unknown): value is FaucetApiResult => {
   if (value['accountReady'] !== undefined && typeof value['accountReady'] !== 'boolean') return false;
   if (value['serverDurationMs'] !== undefined && (typeof value['serverDurationMs'] !== 'number' || !Number.isFinite(value['serverDurationMs']))) return false;
   if (!Array.isArray(value['events']) && value['events'] !== undefined) return false;
-  return value['events'] === undefined || value['events'].every((event) => isRecord(event) && hasOnlyKeys(event, ['name', 'args', 'blockNumber', 'blockHash', 'transactionHash']) &&
+  return value['events'] === undefined || value['events'].every((event) => isRecord(event) && hasOnlyKeys(event, ['name', 'args', 'blockNumber', 'blockHash', 'transactionHash', 'observedAt']) &&
     typeof event['name'] === 'string' && isRecord(event['args']) && typeof event['blockNumber'] === 'number' && Number.isFinite(event['blockNumber']) &&
-    typeof event['blockHash'] === 'string' && typeof event['transactionHash'] === 'string');
+    typeof event['blockHash'] === 'string' && typeof event['transactionHash'] === 'string' &&
+    typeof event['observedAt'] === 'number' && Number.isSafeInteger(event['observedAt']) && event['observedAt'] >= 0);
 };
 
 export const decodeFaucetApiResult = (value: unknown): FaucetApiResult => {

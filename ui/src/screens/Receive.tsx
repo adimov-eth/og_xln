@@ -6,8 +6,9 @@ import { Bar } from '../components/Bars';
 import { CopyId } from '../components/CopyId';
 import { Icon } from '../components/Icons';
 import { TokenPicker } from '../components/TokenPicker';
+import { ReceiveCapacity } from '../components/ReceiveCapacity';
 import { useApp } from '../runtime/store';
-import { formatMoney, getTokenMeta } from '../runtime/format';
+import { formatMoney, getTokenMeta, parseAmount } from '../runtime/format';
 import { usdOf } from '../runtime/financial/prices';
 import { useWallet } from '../runtime/views';
 
@@ -26,6 +27,7 @@ export function Receive() {
 	const [amount, setAmount] = useState('');
 	const [description, setDescription] = useState('');
 	const [qr, setQr] = useState<string | null>(null);
+	const [accountId, setAccountId] = useState('');
 	const meta = getTokenMeta(selectedTokenId);
 
 	const intent = useMemo(
@@ -50,11 +52,12 @@ export function Receive() {
 		};
 	}, [walletHref]);
 
-	const receivable = wallet.accounts
-		.flatMap(account => account.tokens)
-		.filter(token => token.tokenId === selectedTokenId)
-		.reduce((sum, token) => sum + token.derived.inCapacity, 0n);
-	const hub = wallet.accounts.find(account => account.isHub);
+	const accounts = wallet.accounts.filter(account => !account.disputed);
+	const hub = accounts.find(account => account.counterpartyId === accountId) ?? accounts[0];
+	const receivable = hub?.tokens.find(token => token.tokenId === selectedTokenId)?.derived.inCapacity ?? 0n;
+	const requiredAmount = useMemo(() => {
+		try { return parseAmount(amount, meta.decimals); } catch { return 0n; }
+	}, [amount, meta.decimals]);
 
 	const copy = async (text: string, label: string): Promise<void> => {
 		await navigator.clipboard.writeText(text);
@@ -84,7 +87,7 @@ export function Receive() {
 					<div className="field">
 						<div className="field-head">
 							<span>Amount · optional</span>
-							<span className="num">receive up to {formatMoney(receivable, meta.decimals)} instantly</span>
+							<span className="num">{formatMoney(receivable, meta.decimals)} capacity via {hub?.label ?? 'no account'}</span>
 						</div>
 						<div className="field-row">
 							<input className="input big" placeholder="0.00" inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} data-testid="receive-amount" />
@@ -97,13 +100,23 @@ export function Receive() {
 						</div>
 						<Bar segments={[{ usd: usdOf(selectedTokenId, receivable), kind: 'coll' }]} height={4} />
 					</div>
+					{accounts.length > 0 ? <label className="field">Prepare incoming account
+						<select className="input" value={hub?.counterpartyId ?? ''} onChange={event => setAccountId(event.target.value)} data-testid="receive-account">
+							{accounts.map(account => <option key={account.counterpartyId} value={account.counterpartyId}>{account.label} · {wallet.jurisdiction}</option>)}
+						</select>
+						<span className="note">Capacity is checked for this account. The sender chooses the final route.</span>
+					</label> : null}
+					{hub && requiredAmount > 0n ? <ReceiveCapacity account={hub.doc.state}
+						ownerEntityId={wallet.entityId} signerId={wallet.signerId} counterpartyEntityId={hub.counterpartyId}
+						accountLabel={hub.label} jurisdiction={wallet.jurisdiction} tokenId={selectedTokenId} requiredAmount={requiredAmount}
+						disabled={hub.disputed} /> : null}
 					<div className="field">
 						<span className="field-label">Note · optional</span>
 						<input className="input" value={description} onChange={event => setDescription(event.target.value)} placeholder="What is this for?" />
 					</div>
 				</div>
 
-				{receivable === 0n && (
+				{receivable === 0n && requiredAmount <= 0n && (
 					<div className="card" style={{ width: '100%', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
 						<span style={{ color: 'var(--accent-2)' }}>
 							<Icon name="bolt" size={18} />
@@ -137,6 +150,17 @@ export function Receive() {
 					<button type="button" className="btn quiet" style={{ marginTop: 8, width: '100%' }} onClick={() => window.print()} data-testid="receive-print" title="The code and the amount on paper, or as a PDF to attach to an invoice">
 						Print / PDF
 					</button>
+					<details style={{ marginTop: 8 }}>
+						<summary className="note" style={{ cursor: 'pointer' }}>Other ways to share</summary>
+						<div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+							<button type="button" className="btn quiet" style={{ flex: 1 }} onClick={() => void copy(invoice, 'Invoice')} title="The same request as plain text, for a wallet that has no browser">
+								Copy as text
+							</button>
+							<button type="button" className="btn quiet" style={{ flex: 1 }} onClick={() => void copy(deepLink, 'App link')} title="Opens the installed xln app directly">
+								Copy app link
+							</button>
+						</div>
+					</details>
 				</div>
 				<div className="card">
 					<h3 className="caps">Your entity id</h3>
@@ -150,16 +174,5 @@ export function Receive() {
 			</div>
 			</div>
 		</div>
-					<details style={{ marginTop: 8 }}>
-						<summary className="note" style={{ cursor: 'pointer' }}>Other ways to share</summary>
-						<div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-							<button type="button" className="btn quiet" style={{ flex: 1 }} onClick={() => void copy(invoice, 'Invoice')} title="The same request as plain text, for a wallet that has no browser">
-								Copy as text
-							</button>
-							<button type="button" className="btn quiet" style={{ flex: 1 }} onClick={() => void copy(deepLink, 'App link')} title="Opens the installed xln app directly">
-								Copy app link
-							</button>
-						</div>
-					</details>
 	);
 }

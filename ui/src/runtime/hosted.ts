@@ -2,9 +2,9 @@ import { getXLN } from './xln-loader';
 import { connectEmbedded, getEmbeddedEnv, requireAdapter } from './adapter';
 import { deriveAddress, derivePrivateKeyBytes } from './keys';
 import { readJson } from './http';
-import { getTokenMeta } from './format';
 import { DEFAULT_ACCOUNT_DISPUTE_CONFIG, waitFor } from './tx';
 import type { EntityTx, RuntimeReplica } from '@xln/core/api/public/runtime-module';
+import { deriveJurisdictionSignerIndex } from '@xln/core/jurisdiction/machine/config/signer-derivation';
 import { HDNodeWallet } from 'ethers';
 import { useApp, type VaultKind } from './store';
 
@@ -26,47 +26,36 @@ export type StackJurisdiction = {
 };
 export type StackHub = { entityId: string; name: string; online: boolean };
 /** `jurisdiction` is the primary (the entity's home chain); `jurisdictions` lists every active chain, primary first. */
-export type Stack = { apiBase: string; relayUrl: string; jurisdiction: StackJurisdiction; jurisdictions: StackJurisdiction[]; hubs: StackHub[] };
+export type Stack = {
+	apiBase: string;
+	relayUrl: string;
+	jurisdiction: StackJurisdiction;
+	jurisdictions: StackJurisdiction[];
+	hubs: StackHub[];
+};
 
 const USDC = 1;
-const HUB_CREDIT_LINE_USD = 10_000n;
-
-/** Blocks the watcher's scan may trail the chain head and still count as caught up. */
-const CHAIN_SCAN_TOLERANCE_BLOCKS = 5;
 
 /**
- * Wait until the J watcher has scanned history up to the chain head. A fresh wallet replays every
- * block since the deployment in 256-block ranges; the entity's certified height only advances inside
- * an entity frame, so the frames the boot sends next (profile, account) carry the whole gap at once.
- * Payments derive their deadlines from that certified height: sent before the catch-up they are
- * rejected as "revealBeforeHeight already passed" (core finding #20).
+ * Capture one finalized target and use the Runtime's canonical drain criterion.
+ * Authenticated empty headers need not create financial frames, but pending
+ * financial events and certified prefixes must finish before admission opens.
  */
 async function waitForChainScan(xln: Awaited<ReturnType<typeof getXLN>>, env: RuntimeReplica, entityId: string, signerId: string, timeoutMs: number): Promise<void> {
 	const jadapter = xln.getEntityJAdapter(env, entityId, signerId);
-	if (!jadapter) return;
-	const readHead = async (): Promise<number> => Number(await (jadapter.getCurrentBlockNumber?.() ?? jadapter.provider.getBlockNumber()));
-	const scanned = (): number => {
-		const replica = findReplicaState(env, entityId) as { jHistory?: { scannedThroughHeight?: number }; state?: { lastFinalizedJHeight?: number } } | undefined;
-		return Math.max(Number(replica?.jHistory?.scannedThroughHeight ?? 0), Number(replica?.state?.lastFinalizedJHeight ?? 0));
-	};
-	let head = await readHead();
-	let headReadAt = Date.now();
+	if (!jadapter?.getCurrentBlockNumber || !jadapter.getFinalityDepth) throw new Error(`J_WATCHER_DRAIN_API_MISSING:${entityId}`);
+	const head = Number(await jadapter.getCurrentBlockNumber());
+	const depth = Number(jadapter.getFinalityDepth());
+	if (!Number.isSafeInteger(head) || head < 0 || !Number.isSafeInteger(depth) || depth < 0) throw new Error(`J_WATCHER_TARGET_INVALID:${head}:${depth}`);
+	const target = { adapter: jadapter, targetBlock: Math.max(0, head - depth) };
 	const startedAt = Date.now();
 	try {
-		await waitFor(
-			async () => {
-				if (Date.now() - headReadAt > 2_000) {
-					head = await readHead();
-					headReadAt = Date.now();
-				}
-				return scanned() + CHAIN_SCAN_TOLERANCE_BLOCKS >= head;
-			},
-			'chain scan',
-			timeoutMs,
-			250,
-		);
+		await waitFor(() => xln.isJWatcherDrainComplete(xln.getJWatcherDrainStatus(env, target)), 'chain scan', timeoutMs, 250);
 	} finally {
-		console.info('[hosted] chain scan', { scanned: scanned(), head, elapsedMs: Date.now() - startedAt });
+		console.info('[hosted] chain scan', {
+			...xln.getJWatcherDrainStatus(env, target),
+			elapsedMs: Date.now() - startedAt,
+		});
 	}
 }
 
@@ -90,12 +79,18 @@ export async function sendEntity(entityId: string, signerId: string, entityTxs: 
 export async function bootLearnVault(stack: Stack, onStep?: (step: string) => void): Promise<void> {
 	const phrase = HDNodeWallet.createRandom().mnemonic?.phrase;
 	if (!phrase) throw new Error('MNEMONIC_GENERATION_FAILED');
-	await bootHostedVault(phrase, { vaultId: `tour-${Date.now().toString(36)}`, vaultName: 'Tour wallet', kind: 'mnemonic', selfLabel: 'Alice', stack, ...(onStep ? { onStep } : {}) });
+	await bootHostedVault(phrase, {
+		vaultId: `tour-${Date.now().toString(36)}`,
+		vaultName: 'Tour wallet',
+		kind: 'mnemonic',
+		selfLabel: 'Alice',
+		stack,
+		...(onStep ? { onStep } : {}),
+	});
 }
 declare const __XLN_STACK_ORIGIN__: string;
 /** Same origin as the API (proxied in dev), except a TLS stack the dev server cannot WebSocket-proxy. */
-const socketOrigin = (apiBase: string): string =>
-	typeof __XLN_STACK_ORIGIN__ === 'string' && __XLN_STACK_ORIGIN__.startsWith('https:') ? __XLN_STACK_ORIGIN__ : apiBase;
+const socketOrigin = (apiBase: string): string => (typeof __XLN_STACK_ORIGIN__ === 'string' && __XLN_STACK_ORIGIN__.startsWith('https:') ? __XLN_STACK_ORIGIN__ : apiBase);
 
 const asRecord = (value: unknown): Record<string, unknown> => (value && typeof value === 'object' ? (value as Record<string, unknown>) : {});
 
@@ -149,7 +144,10 @@ async function fetchApi(apiBase: string, path: string): Promise<Record<string, u
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), 8_000);
 	try {
-		const response = await fetch(new URL(`${path}?ts=${Date.now()}`, apiBase), { cache: 'no-store', signal: controller.signal });
+		const response = await fetch(new URL(`${path}?ts=${Date.now()}`, apiBase), {
+			cache: 'no-store',
+			signal: controller.signal,
+		});
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 		return await readJson(response);
 	} finally {
@@ -173,7 +171,11 @@ export async function detectStack(apiBase: string = window.location.origin): Pro
 		hubs = (Array.isArray(payload['hubs']) ? payload['hubs'] : [])
 			.map(raw => asRecord(raw))
 			.filter(hub => typeof hub['entityId'] === 'string')
-			.map(hub => ({ entityId: String(hub['entityId']).toLowerCase(), name: String(hub['name'] || 'Hub'), online: hub['online'] !== false }))
+			.map(hub => ({
+				entityId: String(hub['entityId']).toLowerCase(),
+				name: String(hub['name'] || 'Hub'),
+				online: hub['online'] !== false,
+			}))
 			.sort((left, right) => Number(right.online) - Number(left.online));
 	} catch {
 		hubs = [];
@@ -203,12 +205,18 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 	try {
 		step('Starting your runtime');
 		const xln = await getXLN();
+		// Replay can sign for any local jurisdiction before main() returns. Register
+		// the same seed-derived EOAs used at creation before opening the WAL; a
+		// secondary HD path is outside the Runtime's numeric prewarm range.
+		for (const chain of stack.jurisdictions) {
+			const index = chain.key === stack.jurisdiction.key ? 0 : deriveJurisdictionSignerIndex(chain.name);
+			xln.registerSignerKey(seed, deriveAddress(seed, index), derivePrivateKeyBytes(seed, index));
+		}
 		await connectEmbedded(seed);
 		const env = getEmbeddedEnv();
 		if (!env) throw new Error('EMBEDDED_ENV_MISSING');
 		const adapter = requireAdapter();
 		const signerId = deriveAddress(seed, 0);
-		xln.registerSignerKey(env, signerId, derivePrivateKeyBytes(seed, 0));
 		const entityId = String(xln.generateLazyEntityId([signerId], 1n)).toLowerCase();
 		const j = stack.jurisdiction;
 
@@ -237,29 +245,35 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 			await waitFor(ready, `importJ ${chain.name}`, 45_000);
 		}
 
-		step('Creating your entity');
-		if (!findReplicaState(env, entityId)) {
+		// Match the canonical vault's stable secondary HD paths. The primary remains index 0
+		// and stays selected; adding/reordering another jurisdiction cannot change its identity.
+		for (const chain of stack.jurisdictions) {
+			const primary = chain.key === j.key;
+			const chainSignerId = primary ? signerId : deriveAddress(seed, deriveJurisdictionSignerIndex(chain.name));
+			const chainEntityId = primary ? entityId : String(xln.generateLazyEntityId([chainSignerId], 1n)).toLowerCase();
+			if (findReplicaState(env, chainEntityId)) continue;
+			step(`Creating your ${chain.name} entity`);
 			await adapter.send({
 				runtimeTxs: [
 					xln.importEntity({
-						entityId,
-						signerId,
+						entityId: chainEntityId,
+						signerId: chainSignerId,
 						entitySeed: seed,
 						data: {
 							isProposer: true,
-							profileName: options.selfLabel,
+							profileName: primary ? options.selfLabel : `${options.selfLabel} ${chain.name}`,
 							config: {
 								mode: 'proposer-based',
 								threshold: 1n,
-								validators: [signerId],
-								shares: { [signerId]: 1n },
+								validators: [chainSignerId],
+								shares: { [chainSignerId]: 1n },
 								jurisdiction: {
-									address: `jreplica://${j.name}`,
-									name: j.name,
-									chainId: j.chainId,
-									blockTimeMs: j.blockTimeMs,
-									entityProviderAddress: j.contracts.entityProvider,
-									depositoryAddress: j.contracts.depository,
+									address: `jreplica://${chain.name}`,
+									name: chain.name,
+									chainId: chain.chainId,
+									blockTimeMs: chain.blockTimeMs,
+									entityProviderAddress: chain.contracts.entityProvider,
+									depositoryAddress: chain.contracts.depository,
 								},
 							},
 						},
@@ -267,35 +281,30 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 				],
 				entityInputs: [],
 			});
-			await waitFor(() => Boolean(findReplicaState(env, entityId)), 'importReplica self', 45_000);
+			await waitFor(() => Boolean(findReplicaState(env, chainEntityId)), `importReplica ${chain.name}`, 45_000);
 		}
-		step('Syncing with the chain');
-		try {
-			await waitForChainScan(xln, env, entityId, signerId, 60_000);
-		} catch {
-			useApp.getState().toast('Still syncing with the chain; payments may be refused until it catches up.');
-		}
-
 
 		step('Connecting to the network');
 		if (!xln.getP2P(env)) {
 			xln.startP2P(env, { signerId: String(env.runtimeId), relayUrls: [stack.relayUrl], gossipPollMs: 2_000 });
 		}
-		// An output to a peer whose key is unknown halts the runtime (findings #16); never send one blind.
+		// Transport authentication may advance during catch-up; new financial
+		// operations stay behind the gate and replayed outputs retain their outbox.
+		step('Syncing with the chain');
+		await waitForChainScan(xln, env, entityId, signerId, 60_000);
+
 		const connected = (): boolean => Boolean(xln.getP2P(env)?.isConnected?.());
 		let online = true;
 		try {
 			await waitFor(connected, 'relay connection', 20_000);
 		} catch {
 			online = false;
-			useApp.getState().toast('The network relay is not reachable; your account with the hub opens when it is.', 'danger');
+			useApp.getState().toast('The network relay is not reachable. Reconnect before opening your hub account from Home.', 'danger');
 		}
 
 		step('Publishing your profile');
 		if (String(findReplicaState(env, entityId)?.state?.profile?.name || '') !== options.selfLabel) {
-			await sendEntity(entityId, signerId, [
-				{ type: 'profile-update', data: { profile: { entityId, name: options.selfLabel, bio: '', website: '' } } },
-			]);
+			await sendEntity(entityId, signerId, [{ type: 'profile-update', data: { profile: { entityId, name: options.selfLabel, bio: '', website: '' } } }]);
 		}
 
 		const hub = stack.hubs.find(entry => entry.online) ?? stack.hubs[0];
@@ -305,9 +314,13 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 			await sendEntity(entityId, signerId, [
 				{
 					type: 'openAccount',
-					// Our credit line to the hub: what it may owe us, so it can pay us (faucet, incoming payments) without
-					// touching the chain. Same default as the SvelteKit onboarding's soft limit.
-					data: { targetEntityId: hub.entityId, creditAmount: HUB_CREDIT_LINE_USD * 10n ** BigInt(getTokenMeta(USDC).decimals), tokenId: USDC, disputeConfig: DEFAULT_ACCOUNT_DISPUTE_CONFIG },
+					// Opening an account grants no unsecured exposure; Receive asks for explicit credit consent.
+					data: {
+						targetEntityId: hub.entityId,
+						creditAmount: 0n,
+						tokenId: USDC,
+						disputeConfig: DEFAULT_ACCOUNT_DISPUTE_CONFIG,
+					},
 				},
 			]);
 			try {

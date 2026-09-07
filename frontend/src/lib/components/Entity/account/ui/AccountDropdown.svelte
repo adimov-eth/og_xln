@@ -1,16 +1,18 @@
 <script lang="ts">
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   /**
    * AccountDropdown - Account selector for bilateral relationships
    * Uses unified Dropdown base component
    */
   import { createEventDispatcher } from 'svelte';
   import { xlnFunctions, xlnInstance } from '../../../../stores/xlnStore';
-  import type { EntityReplica, AccountReplica } from '$lib/types/ui';
+
   import Dropdown from '$lib/components/UI/Dropdown.svelte';
   import { entityAvatar } from '$lib/utils/identity/avatar';
   import { getAccountUiStatus, getAccountUiStatusLabel, type AccountUiStatus } from '$lib/utils/accountStatus';
 
-  export let replica: EntityReplica | null = null;
+  export let replica: EntityReadView | null = null;
   export let selectedAccountId: string | null = null;
   export let allowAdd: boolean = false;
   export let entityNames: Map<string, string> = new Map();
@@ -34,7 +36,7 @@
   $: accounts = buildAccountList(replica, xlnReady ? $xlnFunctions : null, entityNames);
 
   function buildAccountList(
-    currentReplica: EntityReplica | null,
+    currentReplica: EntityReadView | null,
     xlnFuncs: typeof $xlnFunctions | null,
     names: Map<string, string>,
   ): AccountItem[] {
@@ -44,7 +46,7 @@
     const accountsMap = currentReplica.state.accounts;
 
     for (const [counterpartyId, account] of accountsMap.entries()) {
-      const acc = account as AccountReplica;
+      const acc = account;
       const normalizedCounterpartyId = String(counterpartyId || '').trim().toLowerCase();
       const profileName = names.get(normalizedCounterpartyId) || '';
       const status = getAccountUiStatus(acc);

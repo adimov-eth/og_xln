@@ -1,6 +1,8 @@
 <script lang="ts">
+import type { AccountReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   import type { Profile as GossipProfile } from '@xln/core/api/public/runtime-module';
-  import type { AccountReplica, DerivedDelta } from '$lib/types/ui';
+  import type { DerivedDelta } from '$lib/types/ui';
   import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   import { xlnFunctions } from '../../../../stores/xlnStore';
   import { settings } from '$lib/stores/settingsStore';
@@ -16,7 +18,7 @@
   import { faucetPendingKey } from '../account-faucet';
   import { formatEntityNetworkLabel, normalizeJurisdictionDisplayName } from '../../swap/swap-panel-helpers';
 
-  export let account: AccountReplica;
+  export let account: AccountReadView;
   export let counterpartyId: string;
   export let entityId: string;
   export let counterpartyName: string = '';

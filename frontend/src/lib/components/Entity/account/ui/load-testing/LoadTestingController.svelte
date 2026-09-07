@@ -1,6 +1,8 @@
 <script lang="ts">
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   import { onDestroy } from 'svelte';
-  import type { EntityReplica, RuntimeInput, RuntimeReplica } from '@xln/core/api/public/runtime-module';
+  import type { RuntimeInput, RuntimeReplica } from '@xln/core/api/public/runtime-module';
   import { get } from 'svelte/store';
   import { xlnFunctions } from '$lib/stores/xlnStore';
   import type { PaymentPanelView } from '../../../payments/payment-panel-view';
@@ -17,7 +19,7 @@
 
   export let entityId = '';
   export let workspaceAccountId = '';
-  export let replica: EntityReplica | null = null;
+  export let replica: EntityReadView | null = null;
   export let liveRuntimeEnv: RuntimeReplica | null = null;
   export let activeIsLive = false;
   export let paymentView: PaymentPanelView;
@@ -37,7 +39,7 @@
     lastResult: { pay: '', swap: '' },
   };
 
-  const sourceReplica = (): EntityReplica | null => {
+  const sourceReplica = (): EntityReadView | null => {
     const normalized = String(entityId || '').trim().toLowerCase();
     return swapRuntimeView?.localReplicaEntries.find(entry => entry.entityId === normalized)?.replica
       ?? replica;

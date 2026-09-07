@@ -1,10 +1,11 @@
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
 import type { EntityTx, JBatch } from '@xln/core/api/public/runtime-module';
 import {
   simulateDraftBatchReserveAvailability,
   type DraftBatchReserveIssue,
 } from '@xln/core/jurisdiction/machine/batch';
 import type { FrontendXlnFunctions } from '$lib/stores/xlnStore';
-import type { EntityReplica } from '$lib/types/ui';
+
 import { amountToUsd } from '$lib/utils/assetPricing';
 import { getEntityDisplayName } from '$lib/utils/identity/entityNaming';
 import { requireTokenDecimals } from './../token-metadata';
@@ -46,7 +47,7 @@ type PendingBatchSettlementLike = {
 };
 
 type OpenDebtTotalsOptions = {
-  replica: EntityReplica | null;
+  replica: EntityReadView | null;
   activeXlnFunctions: FrontendXlnFunctions | null;
 };
 

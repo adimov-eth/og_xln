@@ -8,10 +8,12 @@ import type {
 } from '@xln/core/api/public/runtime-module';
 import { getJurisdictionStackId } from '@xln/core/api/public/runtime-module';
 import type { AccountRoleEvidence } from '@xln/core/account/config/dispute-config';
+import { defaultAccountDisputeConfigForRoleEvidence } from '@xln/core/account/config/dispute-config';
 import type { SwapCommandPlan, SwapCommandPlanInput } from '@xln/core/runtime/swap-cmd/swap-command-plan';
 
 import { getEmbeddedEnv, requireAdapter } from '../adapter';
 import { getXLN } from '../xln-loader';
+import { sendEntityTxs } from '../tx';
 
 const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
 
@@ -98,6 +100,14 @@ export async function readAccountState(entityId: string, counterpartyId: string)
 	}
 }
 
+/** Opening an incoming account is explicit and grants no credit. */
+export async function openSwapReceiveAccount(party: { entityId: string; signerId: string; hubEntityId: string }, tokenId: number, summaries: readonly RuntimeAdapterEntitySummary[]): Promise<void> {
+	const roles = committedRoles(summaries);
+	const evidence = partyRoles({ ...party, roles, summaries, label: 'TARGET' });
+	const disputeConfig = defaultAccountDisputeConfigForRoleEvidence(evidence.entityRoleEvidence, evidence.hubRoleEvidence, roles);
+	await sendEntityTxs(party.entityId, party.signerId, [{ type: 'openAccount', data: { targetEntityId: party.hubEntityId, tokenId, creditAmount: 0n, disputeConfig } }]);
+}
+
 export type SwapPlanRequest = {
 	mode: 'same' | 'cross';
 	frame: RuntimeAdapterViewFrame;
@@ -118,16 +128,6 @@ export type SwapPlanRequest = {
  * carries the exact RuntimeInput (same network) or the cross-network intent plus
  * an optional target setup input. Mirrors the SvelteKit SwapPanel submission.
  */
-export async function planSwap(request: SwapPlanRequest): Promise<SwapCommandPlan> {
-	const xln = await getXLN();
-	const summaries = request.frame.entities;
-	const roles = committedRoles(summaries);
-	const logicalTimestamp = Number(request.frame.activeEntity?.core?.timestamp ?? 0);
-	const logicalHeight = Number(request.frame.activeEntity?.core?.height ?? 0);
-	if (logicalTimestamp <= 0 || logicalHeight <= 0) throw new Error('Swap runtime clock is unavailable');
-
-	const sourceRoles = partyRoles({
-		entityId: request.source.entityId,
 /**
  * The hub's signer for a swap command. A hub hosted in this runtime shows its signer in the entity summary;
  * a remote hub does not (gossip carries no signer), so fall back to the runtime's proposer resolution, which
@@ -145,6 +145,16 @@ function hubSignerIdFor(xln: Awaited<ReturnType<typeof getXLN>>, hubEntityId: st
 	}
 }
 
+export async function planSwap(request: SwapPlanRequest): Promise<SwapCommandPlan> {
+	const xln = await getXLN();
+	const summaries = request.frame.entities;
+	const roles = committedRoles(summaries);
+	const logicalTimestamp = Number(request.frame.activeEntity?.core?.timestamp ?? 0);
+	const logicalHeight = Number(request.frame.activeEntity?.core?.height ?? 0);
+	if (logicalTimestamp <= 0 || logicalHeight <= 0) throw new Error('Swap runtime clock is unavailable');
+
+	const sourceRoles = partyRoles({
+		entityId: request.source.entityId,
 		hubEntityId: request.source.hubEntityId,
 		roles,
 		summaries,
@@ -236,9 +246,10 @@ async function submitCrossIntent(route: CrossJurisdictionSwapRoute, waitForTarge
 export async function submitSwapPlan(plan: SwapCommandPlan): Promise<void> {
 	const adapter = requireAdapter();
 	if (plan.mode === 'same') {
+		if (plan.runtimeInput.entityInputs.some(input => (input.entityTxs ?? []).some(tx => tx.type !== 'placeSwapOffer'))) throw new Error('Prepare incoming capacity before placing the order.');
 		await adapter.send(plan.runtimeInput);
 		return;
 	}
-	if (plan.targetSetupInput) await adapter.send(plan.targetSetupInput);
-	await submitCrossIntent(plan.crossJurisdictionIntent, plan.targetSetupInput !== null);
+	if (plan.targetSetupInput) throw new Error('Prepare the target account capacity before swapping.');
+	await submitCrossIntent(plan.crossJurisdictionIntent, false);
 }

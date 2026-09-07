@@ -9,6 +9,7 @@ import { Tour } from './Tour';
 import { useExternalWalletSync } from '../runtime/financial/external';
 import { useWallet } from '../runtime/views';
 import { Logo } from './Logo';
+import { observeFundingBatches } from '../runtime/financial/funding-submission';
 
 /**
  * Destinations only. Pay, Receive and Swap are flows pushed over Home with a
@@ -39,6 +40,8 @@ export function Shell({ children }: { children: ReactNode }) {
 	const entityId = useApp(s => s.activeEntityId);
 	const wallet = useWallet(entityId);
 	useExternalWalletSync(wallet.entityId, wallet.signerId);
+	const batches = wallet.frame?.activeEntity?.core?.jBatchState;
+	useEffect(() => { observeFundingBatches(wallet.entityId, [batches?.batch, batches?.sentBatch?.batch, ...(batches?.recoveryBatches ?? [])]); }, [wallet.entityId, batches]);
 	const clearToasts = useApp(s => s.clearToasts);
 	// A toast belongs to the screen that raised it.
 	useEffect(() => clearToasts(), [pathname, clearToasts]);

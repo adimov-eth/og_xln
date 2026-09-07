@@ -210,6 +210,9 @@ export function Home() {
 					</div>
 
 					<PendingBatch wallet={wallet} compact />
+					<button type="button" className="btn ghost sm" onClick={() => navigate('/assets#faucets')} data-testid="home-faucet">
+						<Icon name="plus" size={15} /> Test money · Faucet
+					</button>
 
 					<div className="sect">
 						<h3 className="caps">Balances</h3>
@@ -450,6 +453,7 @@ function AccountRow({ account, first, onClick }: { account: AccountView; first: 
 					<span className="t">
 						{account.label}
 						{account.isHub ? <span className="chip hub">hub</span> : null}
+						{account.dispute === 'closed' ? <span className="state">closed</span> : null}
 						{account.dispute === 'active' || account.dispute === 'queued' || account.dispute === 'sent' ? <span className="state st-dispute">dispute</span> : account.dispute === 'preparing' ? <span className="state st-dispute">dispute preparing</span> : null}
 						{account.settlement === 'awaiting_you' ? <span className="state st-pending">sign settlement</span> : account.settlement !== 'none' ? <span className="state st-inflight">settling</span> : null}
 					</span>

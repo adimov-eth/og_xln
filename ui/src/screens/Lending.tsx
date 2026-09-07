@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { isAccountTxKindAvailable } from '@xln/core/account/tx/admission-policy';
 import { Icon } from '../components/Icons';
 import { TokenIcon } from '../components/TokenPicker';
+import { LendingClose } from '../components/LendingClose';
 import { useApp } from '../runtime/store';
 import { sendEntityTxs } from '../runtime/tx';
 import { formatMoney, getTokenMeta, parseAmount, timeAgo } from '../runtime/format';
@@ -17,6 +19,7 @@ import {
 } from '../runtime/financial/lending';
 
 const rate = (bps: number): string => `${(bps / 100).toFixed(2)}%`;
+const UNAVAILABLE = 'Lending is unavailable in this release';
 
 /**
  * Lend to a hub's pool or borrow from it. The pool state is the hub runtime's
@@ -43,6 +46,10 @@ export function Lending() {
 	const [busy, setBusy] = useState(false);
 	const meta = getTokenMeta(tokenId);
 	const hub = hubs.find(account => account.counterpartyId === hubId) ?? null;
+	const offerAvailable = isAccountTxKindAvailable('lending_fund');
+	const borrowAvailable = isAccountTxKindAvailable('lending_borrow_request');
+	const repayAvailable = isAccountTxKindAvailable('lending_repay');
+	const submitAvailable = side === 'lend' ? offerAvailable : borrowAvailable;
 
 	useEffect(() => {
 		if (!hubId && hubs.length > 0) setHubId(hubs[0]!.counterpartyId);
@@ -67,6 +74,7 @@ export function Lending() {
 	}, [refresh, height]);
 
 	const submit = async (): Promise<void> => {
+		if (!submitAvailable) { toast(UNAVAILABLE, 'danger'); return; }
 		if (!wallet.signerId || !hubId) return;
 		setBusy(true);
 		try {
@@ -89,6 +97,7 @@ export function Lending() {
 	};
 
 	const repay = async (loanId: string): Promise<void> => {
+		if (!repayAvailable) { toast(UNAVAILABLE, 'danger'); return; }
 		const loan = state?.loans.find(entry => entry.loanId === loanId);
 		if (!loan || !wallet.signerId) return;
 		setBusy(true);
@@ -116,6 +125,9 @@ export function Lending() {
 					Lending
 				</span>
 			</div>
+			{!offerAvailable || !borrowAvailable || !repayAvailable ? (
+				<p className="note" role="status" data-testid="lending-unavailable">{UNAVAILABLE}. Existing positions remain visible below.</p>
+			) : null}
 			<div className="two-col">
 				<div>
 					{hubs.length === 0 ? (
@@ -176,13 +188,13 @@ export function Lending() {
 									<span className="muted">= {rate(Math.max(0, Math.floor(Number(rateText) || 0)))} per term</span>
 								</div>
 							</div>
-							<button type="button" className="btn primary" disabled={busy || !amountText.trim() || !hubId} onClick={() => void submit()} data-testid="lend-submit">
+							<button type="button" className="btn primary" disabled={!submitAvailable || busy || !amountText.trim() || !hubId} onClick={() => void submit()} data-testid="lend-submit">
 								{busy ? 'Sending…' : side === 'lend' ? 'Offer to the pool' : 'Request the loan'}
 							</button>
 							<p className="note" style={{ marginTop: 10 }}>
 								{side === 'lend'
 									? 'Your offer sits in the hub pool until borrowed; principal and interest come back on your account with the hub at term end.'
-									: 'The hub matches you against open offers at or under your rate. The loan lands on your account; repay before it is due.'}
+									: 'The hub matches your request against open offers. Approval grants account credit for spending; it does not deposit principal. Repay before it is due.'}
 							</p>
 						</>
 					)}
@@ -221,7 +233,8 @@ export function Lending() {
 						<div className="card">
 							<h3 className="caps">Your offers</h3>
 							{myPools.map((pool, index) => (
-								<div key={pool.positionId} className={`row${index === 0 ? ' first' : ''}`}>
+								<div key={pool.positionId}>
+								<div className={`row${index === 0 ? ' first' : ''}`}>
 									<span className="rt">
 										<TokenIcon tokenId={pool.tokenId} />
 										<span className="tx">
@@ -231,6 +244,8 @@ export function Lending() {
 											</span>
 										</span>
 									</span>
+								</div>
+								<LendingClose pool={pool} wallet={wallet} onSubmitted={() => void refresh()} />
 								</div>
 							))}
 						</div>
@@ -250,7 +265,7 @@ export function Lending() {
 											</span>
 										</span>
 										{loan.status === 'active' ? (
-											<button type="button" className="btn ghost sm" disabled={busy} onClick={() => void repay(loan.loanId)}>
+											<button type="button" className="btn ghost sm" disabled={!repayAvailable || busy} onClick={() => void repay(loan.loanId)} data-testid="lending-repay">
 												Repay
 											</button>
 										) : null}

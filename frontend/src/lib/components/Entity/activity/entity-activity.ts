@@ -1,6 +1,7 @@
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
 import type { AccountFrame, AccountState, AccountTx } from '@xln/core/api/public/runtime-module';
 import type { FrontendXlnFunctions } from '$lib/stores/xlnStore';
-import type { EntityReplica } from '$lib/types/ui';
+
 import { entityAvatar as resolveEntityAvatar } from '$lib/utils/identity/avatar';
 import { formatEntityId } from '$lib/utils/format';
 import { getEntityDisplayName, resolveEntityName } from '$lib/utils/identity/entityNaming';
@@ -47,7 +48,7 @@ export type EntityActivityAccountOption = {
 };
 
 type BuildEntityActivityRowsOptions = {
-  replica: EntityReplica | null;
+  replica: EntityReadView | null;
   tabEntityId: string;
   activeEnv: GossipSource;
   activeXlnFunctions: FrontendXlnFunctions | null;
@@ -128,7 +129,7 @@ function activityEntityName(
 }
 
 function frameActorMeta(
-  account: AccountState,
+  account: Pick<AccountState, 'leftEntity' | 'rightEntity'>,
   byLeft: boolean | undefined,
   options: BuildEntityActivityRowsOptions,
 ): Pick<EntityActivityRow, 'actor' | 'actorSide' | 'actorLabel' | 'actorEntityId' | 'actorName' | 'actorAvatar' | 'actorInitials'> {

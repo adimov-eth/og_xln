@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type { AccountState, RuntimeAdapterEntitySummary } from '@xln/core/api/public/runtime-module';
 import { getJurisdictionStackId } from '@xln/core/api/public/runtime-module';
-import { buildCrossSwapSetupSteps } from '$lib/components/Entity/swap/swap-panel-helpers';
+import { ReceiveCapacity } from '../components/ReceiveCapacity';
 import { DeltaBar, DeltaCaption } from '../components/Bars';
 import { Orderbook, type BookSide } from '../components/Orderbook';
 import { quoteForBase, useOrderbook, type BookLevel } from '../runtime/financial/orderbook';
@@ -11,9 +11,10 @@ import { TokenPicker } from '../components/TokenPicker';
 import { useApp } from '../runtime/store';
 import { peekXLN } from '../runtime/xln-loader';
 import { sendEntityTxs } from '../runtime/tx';
-import { hubTakerFeeBps, jurisdictionRef, planSwap, readAccountState, submitSwapPlan } from '../runtime/financial/swap';
+import { hubTakerFeeBps, jurisdictionRef, openSwapReceiveAccount, planSwap, readAccountState, submitSwapPlan } from '../runtime/financial/swap';
 import { amountInputText, formatMoney, getTokenMeta, parseAmount } from '../runtime/format';
 import { openSwapOffers, useWallet } from '../runtime/views';
+import { counterpartyFeePolicy } from '../runtime/financial/manage';
 
 type Mode = 'same' | 'cross';
 
@@ -61,6 +62,9 @@ export function Swap() {
 	const [targetHubId, setTargetHubId] = useState('');
 	const targetHub = targetHubs.find(summary => normalizeId(summary.entityId) === targetHubId) ?? targetHubs[0] ?? null;
 	const [targetAccount, setTargetAccount] = useState<AccountState | null | undefined>(undefined);
+	const [targetAccountError, setTargetAccountError] = useState('');
+	const [openingTarget, setOpeningTarget] = useState(false);
+	useEffect(() => { setTargetAccount(undefined); setTargetAccountError(''); }, [mode, targetEntity?.entityId, targetHub?.entityId]);
 
 	useEffect(() => {
 		if (mode !== 'cross' || !targetEntity || !targetHub) {
@@ -68,17 +72,18 @@ export function Swap() {
 			return;
 		}
 		let cancelled = false;
+		setTargetAccountError('');
 		readAccountState(targetEntity.entityId, targetHub.entityId)
 			.then(state => {
 				if (!cancelled) setTargetAccount(state);
 			})
-			.catch(() => {
-				if (!cancelled) setTargetAccount(null);
+			.catch((error: unknown) => {
+				if (!cancelled) setTargetAccountError(error instanceof Error ? error.message : String(error));
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [mode, targetEntity, targetHub, wallet.frameHeight]);
+	}, [mode, targetEntity, targetHub, wallet.frameHeight, openingTarget]);
 
 	const giveMeta = getTokenMeta(giveTokenId);
 	const wantMeta = getTokenMeta(wantTokenId);
@@ -93,25 +98,25 @@ export function Swap() {
 		const base = getTokenMeta(book.baseTokenId);
 		const quote = getTokenMeta(book.quoteTokenId);
 		const quoteAmount = quoteForBase(level.size, level.priceTicks, base.decimals, quote.decimals);
-		if (side === 'ask') {
-			// Someone sells base at this price: we pay quote, we get base.
-			setGiveTokenId(book.quoteTokenId);
-			setWantTokenId(book.baseTokenId);
 		// A resting level is often larger than what we can send; take the price, but only as much of the size as we can pay for.
 		const spendable = (tokenId: number): bigint => hub?.tokens.find(token => token.tokenId === tokenId)?.derived.outCapacity ?? 0n;
-			setGiveText(plainAmount(quoteAmount, quote.decimals));
-			setWantText(plainAmount(level.size, base.decimals));
+		if (side === 'ask') {
+			// Someone sells base at this price: we pay quote, we get base.
 			const cap = spendable(book.quoteTokenId);
 			const give = cap > 0n && quoteAmount > cap ? cap : quoteAmount;
 			const want = give === quoteAmount || quoteAmount === 0n ? level.size : (level.size * give) / quoteAmount;
+			setGiveTokenId(book.quoteTokenId);
+			setWantTokenId(book.baseTokenId);
+			setGiveText(plainAmount(give, quote.decimals));
+			setWantText(plainAmount(want, base.decimals));
 		} else {
-			setGiveTokenId(book.baseTokenId);
-			setWantTokenId(book.quoteTokenId);
-			setGiveText(plainAmount(level.size, base.decimals));
-			setWantText(plainAmount(quoteAmount, quote.decimals));
 			const cap = spendable(book.baseTokenId);
 			const give = cap > 0n && level.size > cap ? cap : level.size;
 			const want = give === level.size || level.size === 0n ? quoteAmount : (quoteAmount * give) / level.size;
+			setGiveTokenId(book.baseTokenId);
+			setWantTokenId(book.quoteTokenId);
+			setGiveText(plainAmount(give, base.decimals));
+			setWantText(plainAmount(want, quote.decimals));
 		}
 	};
 	const giveToken = hub?.tokens.find(token => token.tokenId === giveTokenId) ?? null;
@@ -149,15 +154,15 @@ export function Swap() {
 		}
 		return '';
 	}, [book, wantText, giveText, giveTokenId, wantTokenId, giveMeta.decimals]);
+	const parsedWant = useMemo(() => {
+		try {
+			const value = parseAmount(wantText || impliedWantText || '0', wantMeta.decimals);
+			return value > 0n ? value : null;
 		} catch {
 			return null;
 		}
 	}, [wantText, impliedWantText, wantMeta.decimals]);
 
-	const parsedWant = useMemo(() => {
-		try {
-			const value = parseAmount(wantText || impliedWantText || '0', wantMeta.decimals);
-			return value > 0n ? value : null;
 	const prepared = useMemo(() => {
 		if (!xln || !parsedGive || !parsedWant || giveTokenId === wantTokenId) return null;
 		try {
@@ -188,21 +193,25 @@ export function Swap() {
 		return xln.deriveDelta(delta, isLeft).inCapacity;
 	}, [xln, targetAccount, targetEntity, targetHub, wantTokenId]);
 
-	const setupSteps = useMemo(() => {
-		if (mode !== 'cross' || !targetHub || !targetEntity) return [];
-		const want = prepared?.effectiveWant ?? parsedWant ?? 0n;
-		return buildCrossSwapSetupSteps({
-			routeMode: 'cross',
-			targetAccountReady: targetAccount !== null && targetAccount !== undefined,
-			canOpenTargetAccount: true,
-			needsCreditLimit: want > 0n && targetInbound < want,
-			targetHubLabel: targetHub.label,
-			targetJurisdictionLabel: targetEntity.jurisdiction?.name || 'target network',
-			creditLimitLabel: want > 0n ? formatMoney(want, wantMeta.decimals) : '',
-			creditIncreaseLabel: want > targetInbound ? `+${formatMoney(want - targetInbound, wantMeta.decimals)}` : '',
-			tokenSymbol: wantMeta.symbol,
-		});
-	}, [mode, targetHub, targetEntity, targetAccount, targetInbound, prepared, parsedWant, wantMeta.decimals, wantMeta.symbol]);
+	const receiveRequired = prepared?.effectiveWant ?? parsedWant ?? 0n;
+	const receiveCapacity = mode === 'cross' ? targetInbound : hub?.tokens.find(token => token.tokenId === wantTokenId)?.derived.inCapacity ?? 0n;
+	const inboundReady = receiveRequired > 0n && receiveCapacity >= receiveRequired;
+	const receivingAccount = mode === 'cross' ? targetAccount : hub?.doc.state;
+	const receivingOwnerId = mode === 'cross' ? targetEntity?.entityId : wallet.entityId;
+	const receivingHubId = mode === 'cross' ? targetHub?.entityId : hub?.counterpartyId;
+	const receivingHubLabel = mode === 'cross' ? targetHub?.label : hub?.label;
+	const receivingFeePolicy = receivingAccount && receivingOwnerId && receivingHubId && xln
+		? counterpartyFeePolicy({ state: receivingAccount }, xln.isLeftEntity(receivingOwnerId, receivingHubId), wantTokenId)
+		: null;
+	const openTarget = async () => {
+		if (!targetEntity?.signerId || !targetHub || openingTarget) return;
+		setOpeningTarget(true);
+		try {
+			await openSwapReceiveAccount({ entityId: targetEntity.entityId, signerId: targetEntity.signerId, hubEntityId: targetHub.entityId }, wantTokenId, wallet.summaries);
+			toast('Account opening requested with zero credit. Prepare incoming capacity after confirmation.');
+		} catch (error) { toast(error instanceof Error ? error.message : String(error), 'danger'); }
+		finally { setOpeningTarget(false); }
+	};
 
 	const flip = (): void => {
 		setGiveTokenId(wantTokenId);
@@ -212,7 +221,7 @@ export function Swap() {
 	};
 
 	const place = async (): Promise<void> => {
-		if (!wallet.frame || !hub || !prepared || !wallet.signerId) return;
+		if (!wallet.frame || !hub || !prepared || !wallet.signerId || !inboundReady) return;
 		setSubmitting(true);
 		try {
 			const source = {
@@ -281,7 +290,7 @@ export function Swap() {
 	};
 
 	const mine = openSwapOffers(wallet.frame, wallet.entityId).filter(offer => offer.mine);
-	const disabledReason = !hub ? 'No hub account to swap through' : sameToken ? 'Choose two different tokens' : overCapacity ? 'Exceeds what you can send' : null;
+	const disabledReason = !hub ? 'No hub account to swap through' : sameToken ? 'Choose two different tokens' : overCapacity ? 'Exceeds what you can send' : !inboundReady ? `One step first: allow ${(mode === 'cross' ? targetHub?.label : hub.label) ?? 'the hub'} to owe you ${wantMeta.symbol} (the panel above, one tap)` : null;
 
 	return (
 		<div className="screen fade-in">
@@ -440,22 +449,15 @@ export function Swap() {
 						</div>
 					)}
 
-					{mode === 'cross' && setupSteps.length > 0 && (
-						<div>
-							{setupSteps.map(step => (
-								<div key={step.id} className="check">
-									<span className="ck todo">
-										<Icon name="plus" size={11} />
-									</span>
-									<span>
-										<b style={{ fontWeight: 600 }}>{step.label}.</b> <span className="muted">{step.detail}</span>
-									</span>
-								</div>
-							))}
-							<p className="note">These happen automatically as part of the swap.</p>
-						</div>
-					)}
-					{mode === 'cross' && targetAccount && setupSteps.length === 0 && targetEntity && targetHub && (
+					{targetAccountError && mode === 'cross' ? <p className="note" role="alert">{targetAccountError}</p> : null}
+					{mode === 'cross' && targetAccount === null && targetEntity && targetHub ? <button type="button" className="btn" disabled={openingTarget} onClick={() => void openTarget()}>{openingTarget ? 'Opening…' : `Open incoming account with ${targetHub.label}`}</button> : null}
+					{mode === 'same' && hub && receiveRequired > 0n ? <ReceiveCapacity account={hub.doc.state}
+						ownerEntityId={wallet.entityId} signerId={wallet.signerId} counterpartyEntityId={hub.counterpartyId} accountLabel={hub.label}
+						jurisdiction={wallet.jurisdiction} tokenId={wantTokenId} requiredAmount={receiveRequired} disabled={submitting || hub.disputed} /> : null}
+					{mode === 'cross' && targetAccount && targetEntity && targetHub && receiveRequired > 0n ? <ReceiveCapacity account={targetAccount}
+						ownerEntityId={targetEntity.entityId} signerId={targetEntity.signerId ?? ''} counterpartyEntityId={targetHub.entityId} accountLabel={targetHub.label}
+						jurisdiction={targetEntity.jurisdiction?.name ?? ''} tokenId={wantTokenId} requiredAmount={receiveRequired} disabled={submitting} /> : null}
+					{mode === 'cross' && targetAccount && inboundReady && targetEntity && targetHub && (
 						<div className="check">
 							<span className="ck">
 								<Icon name="check" size={11} />
@@ -466,7 +468,25 @@ export function Swap() {
 						</div>
 					)}
 
-					{disabledReason && (giveText || wantText) ? <p style={{ color: 'var(--dispute)', fontSize: 12.5 }}>{disabledReason}</p> : null}
+					{prepared && receivingHubId && receivingOwnerId ? (
+						<section className="card tight" aria-label="Receiving fees" data-testid="swap-receive-fees" style={{ overflowWrap: 'anywhere' }}>
+							<p className="note"><b>Gross receive: {amountInputText(prepared.effectiveWant, wantMeta.decimals)} {wantMeta.symbol}</b> before fees.</p>
+							{receivingFeePolicy ? (
+								<p className="note" data-testid="swap-rebalance-tariff" data-policy-version={receivingFeePolicy.policyVersion}>
+									{receivingHubLabel} collateral tariff:{' '}
+									{amountInputText(receivingFeePolicy.baseFee, wantMeta.decimals)} {wantMeta.symbol} base +{' '}
+									{amountInputText(receivingFeePolicy.gasFee, wantMeta.decimals)} {wantMeta.symbol} gas +{' '}
+									{receivingFeePolicy.liquidityFeeBps.toString()} bps of the collateral requested.
+								</p>
+							) : <p className="note">The receiving account has no committed collateral fee policy available. This does not mean zero fees.</p>}
+							<p className="note">If your account automatically requests collateral after receiving, its fee is deducted from your balance. The final fee and net amount depend on your account policy and balance at that time.</p>
+							{receivingAccount ? <Link className="btn quiet" to={`/accounts/${receivingHubId}`} onClick={() => {
+								useApp.getState().setActiveEntityId(receivingOwnerId);
+								useApp.getState().setSelectedTokenId(wantTokenId);
+							}}>Receiving account · collateral settings</Link> : null}
+						</section>
+					) : null}
+					{disabledReason && (giveText || wantText) ? <p style={{ color: !inboundReady && !overCapacity && !sameToken && hub ? 'var(--ink-2)' : 'var(--dispute)', fontSize: 12.5 }}>{disabledReason}</p> : null}
 
 					<button type="button" className="btn primary" data-testid="swap-submit" disabled={!prepared || Boolean(disabledReason) || submitting || !wallet.signerId} onClick={() => void place()}>
 						<Icon name="swap" size={15} />

@@ -1,5 +1,7 @@
 <script lang="ts">
-  import type { AccountReplica, AccountTx, EntityReplica } from '$lib/types/ui';
+import type { AccountReadView, EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
+  import type { AccountTx } from '$lib/types/ui';
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { p2pState, xlnFunctions } from '../../../../stores/xlnStore';
   import { settings } from '../../../../stores/settingsStore';
@@ -10,10 +12,10 @@
   import { compareStableText } from '$lib/utils/stableSort';
   import { faucetPendingKey } from '../account-faucet';
 
-  export let account: AccountReplica;
+  export let account: AccountReadView;
   export let counterpartyId: string;
   export let entityId: string;
-  export let replica: EntityReplica | null = null;
+  export let replica: EntityReadView | null = null;
   export let entityNames: Map<string, string> = new Map();
   export let pendingFaucetKeys: Set<string> = new Set();
   export let commandsReady = false;

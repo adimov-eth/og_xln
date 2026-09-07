@@ -1,4 +1,5 @@
-import type { AccountReplica } from '@xln/core/api/public/runtime-module';
+import type { AccountReadView } from '$lib/components/Entity/core/entity-panel-types';
+
 import { compareEntityAssetText } from './../assets/entity-asset-catalog';
 import { isMapLike } from '$lib/utils/runtime/liveRuntimeEnv';
 
@@ -7,7 +8,7 @@ export type DisputedAccountView = {
   status: 'active' | 'finalized';
 };
 
-export function buildDisputedAccountViews(accounts: ReadonlyMap<string, AccountReplica> | undefined): DisputedAccountView[] {
+export function buildDisputedAccountViews(accounts: ReadonlyMap<string, AccountReadView> | undefined): DisputedAccountView[] {
   if (!isMapLike(accounts)) return [];
   const out: DisputedAccountView[] = [];
   for (const [counterpartyId, account] of accounts.entries()) {

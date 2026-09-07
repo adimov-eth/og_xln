@@ -6,6 +6,7 @@ import { sendEntityTxs } from '../runtime/tx';
 import { formatMoney, getTokenMeta } from '../runtime/format';
 import { countBatchOps } from '../runtime/financial/move';
 import { displayEntityName, type WalletView } from '../runtime/views';
+import { releaseFundingDrafts } from '../runtime/financial/funding-submission';
 
 type Item = { key: string; title: string; detail: string };
 
@@ -75,6 +76,7 @@ export function PendingBatch({ wallet, compact = false }: { wallet: WalletView; 
 						? { type: 'j_broadcast', data: {} }
 						: { type: 'j_rebroadcast', data: { gasBumpBps: 1000 } },
 			]);
+			if (action === 'clear') releaseFundingDrafts(wallet.entityId);
 			toast(action === 'clear' ? 'Batch cleared' : action === 'broadcast' ? 'Batch signed and sent to the chain' : 'Batch re-sent with a higher fee');
 		} catch (error) {
 			toast(error instanceof Error ? error.message : String(error), 'danger');

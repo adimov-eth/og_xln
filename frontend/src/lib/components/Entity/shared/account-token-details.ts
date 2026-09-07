@@ -1,4 +1,5 @@
 import type { AccountState, Delta, DerivedDelta } from '$lib/types/ui';
+import type { AccountCapacitySource } from '@xln/core/account/capacity-plan';
 import { requireTokenDecimals } from '../token-metadata';
 
 type TokenInfoLike = {
@@ -25,7 +26,7 @@ export type AccountTokenDetailRow = {
   derived: DerivedDelta;
 };
 
-export function isAccountLeftPerspective(ownerEntityId: string, account: AccountState): boolean {
+export function isAccountLeftPerspective(ownerEntityId: string, account: Pick<AccountState, 'leftEntity' | 'rightEntity'>): boolean {
   const owner = String(ownerEntityId || '').trim().toLowerCase();
   const left = String(account.leftEntity || '').trim().toLowerCase();
   const right = String(account.rightEntity || '').trim().toLowerCase();
@@ -35,7 +36,7 @@ export function isAccountLeftPerspective(ownerEntityId: string, account: Account
 }
 
 export function buildAccountTokenDetails(
-  account: AccountState,
+  account: AccountCapacitySource,
   ownerEntityId: string,
   xlnFunctions: XlnFunctionsLike | null | undefined,
 ): AccountTokenDetailRow[] {

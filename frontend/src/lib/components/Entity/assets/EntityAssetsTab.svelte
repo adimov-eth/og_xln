@@ -1,6 +1,8 @@
 <script lang="ts">
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   import type { Profile as GossipProfile } from '@xln/core/api/public/runtime-module';
-  import type { EntityReplica, Tab } from '$lib/types/ui';
+  import type { Tab } from '$lib/types/ui';
   import AssetFaucetCard from './AssetFaucetCard.svelte';
   import AssetLedgerTable from './AssetLedgerTable.svelte';
   import AssetWalletMeta from './AssetWalletMeta.svelte';
@@ -11,7 +13,7 @@
   import type { AssetLedgerRow, AssetLedgerTotals, ExternalWalletSnapshotSource } from '../asset-ledger';
   import type { MoveEndpoint } from '../move-routes';
 
-  export let replica: EntityReplica;
+  export let replica: EntityReadView;
   export let tab: Tab;
   export let activeIsLive = false;
   export let profileByEntityId: Map<string, GossipProfile> = new Map();

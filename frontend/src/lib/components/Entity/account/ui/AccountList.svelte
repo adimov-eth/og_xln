@@ -1,12 +1,14 @@
 <script lang="ts">
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   import type { Profile as GossipProfile } from '@xln/core/api/public/runtime-module';
-  import type { EntityReplica } from '$lib/types/ui';
+
   import { createEventDispatcher } from 'svelte';
   import AccountPreview from './AccountPreview.svelte';
   import { compareStableText } from '$lib/utils/stableSort';
   import { buildAccountPageView, isAccountsMapLike, resolveAccountListEntityName } from '../../core/account-list-view';
 
-  export let replica: EntityReplica | null;
+  export let replica: EntityReadView | null;
   export let selectedAccountId: string | null = null;
   export let pendingFaucetKeys: Set<string> = new Set();
   export let runtimeHeight: number = 0;
@@ -45,13 +47,13 @@
     subtitle: string;
   };
 
-  function buildPaymentFlowsByCounterparty(current: EntityReplica | null): Map<string, PaymentFlowView[]> {
+  function buildPaymentFlowsByCounterparty(current: EntityReadView | null): Map<string, PaymentFlowView[]> {
     const flows = new Map<string, PaymentFlowView[]>();
     if (!current) return flows;
     const append = (
       counterpartyId: string | undefined,
       direction: LockDirection,
-      payment: EntityReplica['state']['paybook']['entries'] extends Map<string, infer Entry> ? Entry : never,
+      payment: EntityReadView['state']['paybook']['entries'] extends Map<string, infer Entry> ? Entry : never,
     ): void => {
       const counterparty = normalizeId(counterpartyId || '');
       if (!counterparty || payment.tokenId === undefined || payment.amount === undefined) return;

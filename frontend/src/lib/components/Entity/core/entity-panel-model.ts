@@ -1,31 +1,25 @@
 import type {
-  AccountReplica,
-  EntityState,
   RuntimeReplica,
   EnvSnapshot,
   Profile as GossipProfile,
   RuntimeAdapterEntitySummary,
   RuntimeAdapterViewFrame,
+  EntityReplica,
 } from '@xln/core/api/public/runtime-module';
-import { PersistentAccountStateMap } from '@xln/core/account/state/persistent-state-map';
-import {
-  EntityAccountCandidateMap,
-  PersistentEntityAccountMap,
-} from '@xln/core/entity/state/persistent-account-map';
-import type { EntityReplica } from '$lib/types/ui';
+import type { AccountReadView, EntityReadState, EntityReadView } from './entity-panel-types';
 import { unwrapLiveRuntimeEnv } from '$lib/utils/runtime/liveRuntimeEnv';
 
-export function materializeReplicaView(candidate: EntityReplica | null | undefined): EntityReplica | null {
+export function materializeReplicaView<T extends EntityReadView>(candidate: T | null | undefined): T | null {
   if (!candidate) return null;
-  const materialized: EntityReplica = { ...candidate };
+  const materialized = { ...candidate };
   if (candidate.state) materialized.state = { ...candidate.state };
   if (candidate.position) materialized.position = { ...candidate.position };
   return materialized;
 }
 
-export function materializeAccountView(candidate: AccountReplica | null | undefined): AccountReplica | null {
+export function materializeAccountView(candidate: AccountReadView | null | undefined): AccountReadView | null {
   if (!candidate) return null;
-  const materialized: AccountReplica = {
+  const materialized: AccountReadView = {
     ...candidate,
     state: { ...candidate.state },
   };
@@ -36,9 +30,9 @@ export function materializeAccountView(candidate: AccountReplica | null | undefi
   return materialized;
 }
 
-export function materializeReplicaMap(
-  source: Map<string, EntityReplica> | null | undefined,
-): Map<string, EntityReplica> | null {
+export function materializeReplicaMap<T extends EntityReadView>(
+  source: Map<string, T> | null | undefined,
+): Map<string, T> | null {
   if (!(source instanceof Map)) return null;
   return new Map(source);
 }
@@ -48,14 +42,14 @@ export function getEnvReplicaMap(
   _revision = '',
 ): Map<string, EntityReplica> | null {
   if (!sourceEnv) return null;
-  return materializeReplicaMap(sourceEnv.state.eReplicas as Map<string, EntityReplica>);
+  return materializeReplicaMap(sourceEnv.state.eReplicas);
 }
 
-export function findReplicaForEntityTab(
-  replicas: Map<string, EntityReplica> | null | undefined,
+export function findReplicaForEntityTab<T extends EntityReadView>(
+  replicas: Map<string, T> | null | undefined,
   entityId: string,
   signerId: string,
-): EntityReplica | null {
+): T | null {
   if (!replicas || !entityId) return null;
   const exactKey = signerId ? `${entityId}:${signerId}` : '';
   const exact = exactKey ? materializeReplicaView(replicas.get(exactKey) ?? null) : null;
@@ -79,8 +73,8 @@ export type EntityPanelView = {
   height: number;
   timestamp: number;
   activeJurisdictionName: string | null;
-  replicas: Map<string, EntityReplica> | null;
-  replica: EntityReplica | null;
+  replicas: Map<string, EntityReadView> | null;
+  replica: EntityReadView | null;
   profiles: GossipProfile[];
   profileByEntityId: Map<string, GossipProfile>;
   entityNames: Map<string, string>;
@@ -138,92 +132,17 @@ function runtimeProjectionAccountKey(entityId: string, account: RuntimeProjectio
   return right || left;
 }
 
-const projectedAccountRootForbidden = (): never => {
-  throw new Error('UI_PROJECTED_ACCOUNT_ROOT_FORBIDDEN');
-};
-
-const projectionAccount = (doc: RuntimeProjectionAccountDoc): AccountReplica => {
-  const {
-    deltas,
-    locks,
-    swapOffers,
-    pulls,
-    subcontracts,
-    lendingIntents,
-    requestedRebalance,
-    requestedRebalanceFeeState,
-    rebalanceFeePolicies,
-    ...boundedState
-  } = doc.state;
-  return {
-    ...doc,
-    state: {
-      ...boundedState,
-      deltas: PersistentAccountStateMap.fromEntries('deltas', deltas),
-      locks: PersistentAccountStateMap.fromEntries('locks', locks),
-      swapOffers: PersistentAccountStateMap.fromEntries('swapOffers', swapOffers),
-      ...(pulls
-      ? { pulls: PersistentAccountStateMap.fromEntries('pulls', pulls) }
-      : {}),
-      ...(subcontracts
-      ? { subcontracts: PersistentAccountStateMap.fromEntries('subcontracts', subcontracts) }
-      : {}),
-      ...(lendingIntents
-      ? { lendingIntents: PersistentAccountStateMap.fromEntries('lendingIntents', lendingIntents) }
-      : {}),
-      requestedRebalance: PersistentAccountStateMap.fromEntries(
-      'requestedRebalance',
-        requestedRebalance,
-      ),
-      requestedRebalanceFeeState: PersistentAccountStateMap.fromEntries(
-      'requestedRebalanceFeeState',
-        requestedRebalanceFeeState,
-      ),
-      ...(rebalanceFeePolicies
-      ? {
-          rebalanceFeePolicies: PersistentAccountStateMap.fromEntries(
-            'rebalanceFeePolicies',
-            rebalanceFeePolicies,
-          ),
-        }
-      : {}),
-    },
-    pendingWithdrawals: PersistentAccountStateMap.fromEntries(
-    'pendingWithdrawals',
-    doc.pendingWithdrawals,
-    ),
-    shadow: {
-      ...doc.shadow,
-      rebalance: {
-        ...doc.shadow.rebalance,
-        policy: PersistentAccountStateMap.fromEntries(
-        'rebalanceShadowPolicy',
-        doc.shadow.rebalance.policy,
-        ),
-        submittedAtByToken: PersistentAccountStateMap.fromEntries(
-        'rebalanceShadowSubmitted',
-        doc.shadow.rebalance.submittedAtByToken,
-        ),
-      },
-    },
-  };
-};
-
-function activeEntityProjectionReplica(activeEntity: RuntimeProjectionActiveEntity): EntityReplica {
+function activeEntityProjectionReplica(activeEntity: RuntimeProjectionActiveEntity): EntityReadView {
   const entityId = normalizeEntityId(activeEntity.core.entityId || activeEntity.summary.entityId);
-  // A compact adapter page is deliberately not a committed Entity Account
-  // root. The ephemeral candidate supplies the exact read API while its empty
-  // base hash callback makes any accidental consensus-root use fail loudly.
-  const accounts = new EntityAccountCandidateMap(
-    PersistentEntityAccountMap.empty(entityId, projectedAccountRootForbidden),
-  );
+  // The page remains a read view: no Patricia reconstruction or consensus-root API.
+  const accounts = new Map<string, AccountReadView>();
   for (const item of activeEntity.accounts.items ?? []) {
     const key = runtimeProjectionAccountKey(entityId, item);
     if (!key) continue;
-    accounts.set(key, projectionAccount(item));
+    accounts.set(key, item);
   }
   const core = activeEntity.core;
-  const state: EntityState = {
+  const state: EntityReadState = {
     entityId,
     height: Math.max(0, Math.floor(Number(core.height ?? activeEntity.summary.height ?? 0))),
     timestamp: core.timestamp,
@@ -258,14 +177,13 @@ function activeEntityProjectionReplica(activeEntity: RuntimeProjectionActiveEnti
     entityId,
     signerId: String(activeEntity.core.signerId || activeEntity.summary.signerId || ''),
     isProposer: activeEntity.core.isProposer === true,
-    mempool: [],
     state,
   };
 }
 
 function collectRuntimeProjectionJurisdictions(
   frame: RuntimeAdapterViewFrame,
-  activeReplica: EntityReplica | null,
+  activeReplica: EntityReadView | null,
 ): EntityPanelJurisdictionView[] {
   const seen = new Set<string>();
   const jurisdictions: EntityPanelJurisdictionView[] = [];
@@ -292,7 +210,7 @@ function buildEntityPanelViewFromRuntimeProjection(
   const activeEntityId = normalizeEntityId(frame.activeEntity.summary.entityId || frame.activeEntity.core.entityId);
   if (requestedEntityId && activeEntityId && requestedEntityId !== activeEntityId) return null;
 
-  const replicas = new Map<string, EntityReplica>();
+  const replicas = new Map<string, EntityReadView>();
   const activeReplica = activeEntityProjectionReplica(frame.activeEntity);
   const activeKey = `${activeReplica.entityId}:${normalizeEntityId(activeReplica.signerId || signerId)}`;
   replicas.set(activeKey, activeReplica);
@@ -418,7 +336,7 @@ export function jurisdictionKey(value: unknown): string {
 
 export function getCurrentEntityJurisdictionName(
   env: RuntimeReplica | EnvSnapshot | null | undefined,
-  replica: EntityReplica | null | undefined,
+  replica: EntityReadView | null | undefined,
 ): string | null {
   const configured = String(replica?.state?.config?.jurisdiction?.name || '').trim();
   return configured || getActiveJurisdictionName(env);
@@ -426,7 +344,7 @@ export function getCurrentEntityJurisdictionName(
 
 export function getCurrentEntityJurisdictionKey(
   env: RuntimeReplica | EnvSnapshot | null | undefined,
-  replica: EntityReplica | null | undefined,
+  replica: EntityReadView | null | undefined,
 ): string {
   return jurisdictionKey(replica?.state?.config?.jurisdiction)
     || jurisdictionKey(replica?.position?.jurisdiction)
@@ -441,7 +359,7 @@ export function getEntityJurisdictionKey(
   if (!normalized) return '';
 
   const fromReplicas = getEntityJurisdictionKeyFromReplicas(
-    env?.state.eReplicas as Map<string, EntityReplica> | null | undefined,
+    env?.state.eReplicas as Map<string, EntityReadView> | null | undefined,
     normalized,
   );
   if (fromReplicas) return fromReplicas;
@@ -453,7 +371,7 @@ export function getEntityJurisdictionKey(
 }
 
 export function getEntityJurisdictionKeyFromReplicas(
-  replicas: Map<string, EntityReplica> | null | undefined,
+  replicas: Map<string, EntityReadView> | null | undefined,
   entityId: string,
 ): string {
   const normalized = String(entityId || '').trim().toLowerCase();
@@ -470,7 +388,7 @@ export function getEntityJurisdictionKeyFromReplicas(
 
 export function isSameJurisdictionEntity(
   env: RuntimeReplica | EnvSnapshot | null | undefined,
-  replica: EntityReplica | null | undefined,
+  replica: EntityReadView | null | undefined,
   expectedEntityId: string,
   leftEntityId: string,
   rightEntityId: string,
@@ -489,8 +407,8 @@ export function isSameJurisdictionEntity(
 }
 
 export function isSameJurisdictionEntityInReplicas(
-  replicas: Map<string, EntityReplica> | null | undefined,
-  replica: EntityReplica | null | undefined,
+  replicas: Map<string, EntityReadView> | null | undefined,
+  replica: EntityReadView | null | undefined,
   expectedEntityId: string,
   leftEntityId: string,
   rightEntityId: string,
@@ -520,7 +438,7 @@ export function isHubProfile(profile: GossipProfile | undefined): boolean {
   return profile ? profile.metadata.isHub === true : false;
 }
 
-export function resolveAccountCounterparty(entityId: string, account: AccountReplica): string {
+export function resolveAccountCounterparty(entityId: string, account: AccountReadView): string {
   return account.state.leftEntity.toLowerCase() === entityId.toLowerCase()
     ? account.state.rightEntity
     : account.state.leftEntity;
@@ -528,9 +446,9 @@ export function resolveAccountCounterparty(entityId: string, account: AccountRep
 
 export function findLocalAccountByCounterparty(
   entityId: string,
-  accounts: ReadonlyMap<string, AccountReplica> | undefined,
+  accounts: ReadonlyMap<string, AccountReadView> | undefined,
   counterpartyId: string | undefined,
-): AccountReplica | null {
+): AccountReadView | null {
   if (!counterpartyId || !accounts) return null;
   const needle = counterpartyId.toLowerCase();
   for (const [accountKey, account] of accounts.entries()) {
@@ -540,7 +458,7 @@ export function findLocalAccountByCounterparty(
   return null;
 }
 
-export function isAccountLeftPerspective(entityId: string, account: AccountReplica): boolean {
+export function isAccountLeftPerspective(entityId: string, account: AccountReadView): boolean {
   const owner = String(entityId || '').trim().toLowerCase();
   const left = String(account.state.leftEntity || '').trim().toLowerCase();
   const right = String(account.state.rightEntity || '').trim().toLowerCase();

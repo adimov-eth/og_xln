@@ -26,6 +26,8 @@ import {
 	type MoveMode,
 } from '../runtime/financial/move';
 import { displayEntityName, useWallet } from '../runtime/views';
+import { paymentReviewHref, readPaymentFunding } from '../runtime/financial/payment-funding';
+import { batchFundsAccount, claimFundingSubmission, fundingSubmissionKey, releaseFundingSubmission, useFundingSubmission } from '../runtime/financial/funding-submission';
 
 const PLACE_LABEL: Record<MoveEndpoint, { title: string; hint: string; kind: 'onchain' | 'reserve' | 'coll' }> = {
 	external: { title: 'Wallet', hint: 'On-chain, in your signer', kind: 'onchain' },
@@ -49,7 +51,7 @@ export function Move() {
 	const [from, setFrom] = useState<MoveEndpoint>(isPlace(params.get('from')) ? params.get('from') as MoveEndpoint : 'reserve');
 	const [to, setTo] = useState<MoveEndpoint>(isPlace(params.get('to')) ? params.get('to') as MoveEndpoint : 'account');
 	const [tokenId, setTokenId] = useState(Number(params.get('token') || 1) || 1);
-	const [amountText, setAmountText] = useState('');
+	const [amountText, setAmountText] = useState(params.get('amount') ?? '');
 	const [sourceAccountId, setSourceAccountId] = useState(params.get('account')?.toLowerCase() ?? '');
 	const [targetHubId, setTargetHubId] = useState(params.get('account')?.toLowerCase() ?? '');
 	const [targetEntityId, setTargetEntityId] = useState('');
@@ -57,6 +59,27 @@ export function Move() {
 	const [externalRecipient, setExternalRecipient] = useState('');
 	const [depository, setDepository] = useState('');
 	const [busy, setBusy] = useState<MoveMode | 'approve' | 'direct' | null>(null);
+	const fundingRequest = useMemo(() => {
+		try { return { funding: readPaymentFunding(params), error: '' }; }
+		catch (error) { return { funding: null, error: error instanceof Error ? error.message : String(error) }; }
+	}, [params]);
+	const funding = fundingRequest.funding;
+	const fundingKey = funding ? fundingSubmissionKey(funding.draft.entityId, funding.accountId, funding.draft.tokenId) : '';
+	const admissionPending = useFundingSubmission(fundingKey);
+	const batches = wallet.frame?.activeEntity?.core?.jBatchState;
+	const fundingSubmitted = admissionPending || Boolean(funding && [batches?.batch, batches?.sentBatch?.batch, ...(batches?.recoveryBatches ?? [])].some(batch => batchFundsAccount(batch, funding.draft.entityId, funding.accountId, funding.draft.tokenId)));
+	const [fundingStarted, setFundingStarted] = useState(fundingSubmitted);
+	useEffect(() => { if (fundingSubmitted) setFundingStarted(true); }, [fundingSubmitted]);
+	const fundingOwnerMatches = !funding || funding.draft.entityId === wallet.entityId;
+	const fundedAccount = funding ? wallet.accounts.find(account => account.counterpartyId === funding.accountId) : null;
+	const fundedCapacity = fundedAccount?.tokens.find(token => token.tokenId === funding?.draft.tokenId)?.derived.outCapacity ?? 0n;
+	const fundingReady = Boolean(funding && fundingOwnerMatches && fundedAccount && !fundedAccount.disputed && fundedCapacity >= funding.requiredCapacity);
+	useEffect(() => {
+		if (funding && fundingStarted && fundingReady) {
+			releaseFundingSubmission(fundingKey);
+			navigate(paymentReviewHref(funding.draft), { replace: true });
+		}
+	}, [funding, fundingStarted, fundingReady, fundingKey, navigate]);
 
 	const meta = getTokenMeta(tokenId);
 	const external = useMemo(() => externalTokens(wallet.frame, wallet.signerId, depository), [wallet.frame, wallet.signerId, depository]);
@@ -106,7 +129,8 @@ export function Move() {
 			allowance: externalRow?.allowance ?? null,
 		});
 	const draftIssue = check('draft');
-	const nowIssue = check('now');
+	const nowIssue = fundingRequest.error || (!fundingOwnerMatches ? 'Switch back to the entity that owns this payment.' : null)
+		|| (funding && hasSentBatch(wallet.frame) ? 'Wait for your on-chain batch to be confirmed.' : null) || check('now');
 	const needsAllowance = from === 'external' && !direct && amount > 0n && (externalRow?.allowance ?? 0n) < amount;
 	const steps = buildMoveRouteSteps(from, to, {
 		targetEntityLabel: intent.targetEntityId === wallet.entityId ? 'you' : displayEntityName(wallet.names, intent.targetEntityId),
@@ -116,14 +140,19 @@ export function Move() {
 	});
 
 	const go = async (mode: MoveMode): Promise<void> => {
-		if (!wallet.signerId) return;
+		if (!wallet.signerId || busy || fundingSubmitted || !fundingOwnerMatches || fundingRequest.error) return;
 		setBusy(mode);
+		let claimed = false;
 		try {
+			if (funding) { claimFundingSubmission(fundingKey); claimed = true; }
 			await submitMove(wallet.entityId, wallet.signerId, intent, mode);
 			toast(mode === 'draft' ? 'Added to the on-chain batch' : from === 'account' ? 'Settlement proposed to the counterparty' : 'Signed and sent to the chain');
-			setAmountText('');
-			if (mode === 'now') navigate('/');
+			if (!funding) {
+				setAmountText('');
+				if (mode === 'now') navigate('/');
+			}
 		} catch (error) {
+			if (claimed) releaseFundingSubmission(fundingKey);
 			toast(error instanceof Error ? error.message : String(error), 'danger');
 		} finally {
 			setBusy(null);
@@ -161,7 +190,7 @@ export function Move() {
 		const active = side === 'from' ? from === place : to === place;
 		const value = placeAmount(place);
 		return (
-			<button type="button" className={`mode-card${active ? ' active' : ''}`} onClick={() => (side === 'from' ? setFrom(place) : setTo(place))} data-testid={`move-${side}-${place}`}>
+			<button type="button" className={`mode-card${active ? ' active' : ''}`} disabled={Boolean(funding && (side === 'to' ? place !== 'account' : place === 'account')) || fundingSubmitted} onClick={() => (side === 'from' ? setFrom(place) : setTo(place))} data-testid={`move-${side}-${place}`}>
 				<span className="t">{PLACE_LABEL[place].title}</span>
 				<span className="s">{PLACE_LABEL[place].hint}</span>
 				<span className="v num">
@@ -181,11 +210,20 @@ export function Move() {
 					</button>
 					Move
 				</span>
-				<TokenPicker tokenId={tokenId} onChange={setTokenId} />
+				{funding ? <span>{meta.symbol}</span> : <TokenPicker tokenId={tokenId} onChange={setTokenId} />}
 			</div>
 
 			<div className="two-col pay">
 				<div className="stack">
+					{funding ? (
+						<div className="card tight" data-testid="move-payment-context">
+							<b>Top up for your payment</b>
+							<p className="note">{funding.draft.amount} {getTokenMeta(funding.draft.tokenId).symbol} to {displayEntityName(wallet.names, funding.draft.to)}. Your payment stays saved.</p>
+							<p className="note" role="status">{fundingSubmitted ? 'Waiting for confirmed account capacity. You will review the payment and its fees next.' : 'Move your funds into the account first. The payment is sent only after your separate confirmation.'}</p>
+							<button type="button" className="btn quiet" onClick={() => navigate(paymentReviewHref(funding.draft))} data-testid="move-return-payment">Back to payment review</button>
+						</div>
+					) : null}
+					{fundingRequest.error ? <p className="note" role="alert">{fundingRequest.error}</p> : null}
 					<div>
 						<div className="caps" style={{ marginBottom: 8 }}>
 							From
@@ -210,11 +248,11 @@ export function Move() {
 					<div className="field">
 						<div className="field-head">
 							<span>Amount</span>
-							<button type="button" className="more" onClick={() => setAmountText(formatMoney(available, meta.decimals, meta.decimals).replace(/,/g, '').replace(/\.?0+$/, ''))}>
+							<button type="button" className="more" disabled={Boolean(funding)} onClick={() => setAmountText(formatMoney(available, meta.decimals, meta.decimals).replace(/,/g, '').replace(/\.?0+$/, ''))}>
 								up to {formatMoney(available, meta.decimals)} {meta.symbol}
 							</button>
 						</div>
-						<input className="input big" placeholder="0.00" inputMode="decimal" value={amountText} onChange={event => setAmountText(event.target.value)} data-testid="move-amount" />
+						<input className="input big" placeholder="0.00" inputMode="decimal" readOnly={Boolean(funding)} value={amountText} onChange={event => setAmountText(event.target.value)} data-testid="move-amount" />
 					</div>
 
 					{from === 'account' ? (
@@ -233,7 +271,7 @@ export function Move() {
 						<>
 							<div className="field">
 								<span className="field-label">Into an account with</span>
-								<select className="input" value={targetHubId} onChange={event => setTargetHubId(event.target.value)} data-testid="move-target-hub">
+								<select className="input" disabled={Boolean(funding)} value={targetHubId} onChange={event => setTargetHubId(event.target.value)} data-testid="move-target-hub">
 									{accounts.map(account => (
 										<option key={account.counterpartyId} value={account.counterpartyId}>
 											{account.label}
@@ -241,10 +279,10 @@ export function Move() {
 									))}
 								</select>
 							</div>
-							<div className="field">
+							{!funding ? <div className="field">
 								<span className="field-label">Recipient entity · leave empty for yourself</span>
 								<input className="input" placeholder="0x… entity id" value={targetEntityId} onChange={event => setTargetEntityId(event.target.value)} />
-							</div>
+							</div> : null}
 						</>
 					) : null}
 					{to === 'reserve' ? (
@@ -274,11 +312,11 @@ export function Move() {
 									{busy === 'approve' ? 'Allowing…' : `Allow ${meta.symbol}`}
 								</button>
 							) : null}
-							<button type="button" className="btn primary" disabled={busy !== null || Boolean(nowIssue) || needsAllowance} onClick={() => void go('now')} data-testid="move-now">
+							<button type="button" className="btn primary" disabled={busy !== null || fundingSubmitted || Boolean(nowIssue) || needsAllowance} onClick={() => void go('now')} data-testid="move-now">
 								<Icon name="check" size={15} />
 								{busy === 'now' ? 'Sending…' : from === 'account' ? 'Propose settlement' : 'Sign & send'}
 							</button>
-							<button type="button" className="btn ghost" disabled={busy !== null || Boolean(draftIssue)} onClick={() => void go('draft')} data-testid="move-draft">
+							<button type="button" className="btn ghost" disabled={busy !== null || fundingSubmitted || Boolean(draftIssue) || Boolean(fundingRequest.error) || !fundingOwnerMatches} onClick={() => void go('draft')} data-testid="move-draft">
 								{busy === 'draft' ? 'Adding…' : 'Add to batch'}
 							</button>
 						</div>

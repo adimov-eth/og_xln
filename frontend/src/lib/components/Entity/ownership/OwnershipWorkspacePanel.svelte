@@ -1,4 +1,6 @@
 <script lang="ts">
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
 import type {
   EnvSnapshot,
   JAdapter,
@@ -6,7 +8,7 @@ import type {
   XLNModule,
 } from "@xln/core/api/public/runtime-module";
 import { isNumberedEntity, toEntityId } from "@xln/core/api/public/runtime-module";
-import type { EntityReplica } from "$lib/types/ui";
+
 import { getXLN, submitEntityInputs } from "$lib/stores/xlnStore";
 import { toasts } from "$lib/stores/ui/toastStore";
 import { requireRuntimeEnv } from "../core/entity-panel-model";
@@ -23,8 +25,8 @@ import {
 export let entityName: string;
 export let entityId: string;
 export let signerId: string;
-export let replica: EntityReplica;
-export let activeReplicas: Map<string, EntityReplica> | null;
+export let replica: EntityReadView;
+export let activeReplicas: Map<string, EntityReadView> | null;
 export let entityNames: Map<string, string>;
 export let externalTokens: ExternalToken[];
 export let onchainReserves: Map<number, bigint>;
@@ -94,7 +96,7 @@ $: if (takeoverTargetId && !takeoverTargets.some(target => target.entityId === t
   takeoverStatus = null;
 }
 
-const requireTakeoverTarget = (targetEntityId: string): EntityReplica => {
+const requireTakeoverTarget = (targetEntityId: string): EntityReadView => {
   const normalizedTarget = toEntityId(targetEntityId);
   const currentSignerId = signerId.toLowerCase();
   const target = activeReplicas?.get(`${normalizedTarget}:${currentSignerId}`)
@@ -109,7 +111,7 @@ const requireTakeoverTarget = (targetEntityId: string): EntityReplica => {
   return target;
 };
 
-const buildTakeoverBoard = (target: EntityReplica): ControlTakeoverBoard => ({
+const buildTakeoverBoard = (target: EntityReadView): ControlTakeoverBoard => ({
   mode: target.state.config.mode,
   threshold: 1n,
   validators: [signerId.toLowerCase()],

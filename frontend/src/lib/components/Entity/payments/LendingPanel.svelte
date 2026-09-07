@@ -1,8 +1,10 @@
 <script lang="ts">
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   import { Banknote, RefreshCw } from 'lucide-svelte';
   import type { RuntimeInput } from '@xln/core/runtime/types';
   import type { EntityTx } from '@xln/core/types/entity-tx';
-  import type { EntityReplica } from '$lib/types/ui';
+
   import { resolveConfiguredApiBase, xlnFunctions } from '../../../stores/xlnStore';
   import {
     getRuntimeControllerConfig,
@@ -16,7 +18,7 @@
   import { parseJsonUnknown, requireUnknownRecord } from '$lib/utils/boundary';
 
   export let entityId: string;
-  export let replica: EntityReplica | null = null;
+  export let replica: EntityReadView | null = null;
   export let accountIds: string[] = [];
   export let entityNames: Map<string, string> = new Map();
   export let isLive: boolean = false;

@@ -1,7 +1,7 @@
-import type { AccountReplica } from '$lib/types/ui';
+import type { AccountReadView } from '$lib/components/Entity/core/entity-panel-types';
 
-type AccountStatusSource = Pick<AccountReplica, 'status' | 'mempool'> &
-  Partial<Pick<AccountReplica, 'pendingFrame' | 'activeDispute'>>;
+type AccountStatusSource = Pick<AccountReadView, 'status' | 'mempool'> &
+  Partial<Pick<AccountReadView, 'pendingFrame' | 'activeDispute'>>;
 
 export type AccountUiStatus = 'ready' | 'sent' | 'dispute_preparing' | 'disputed' | 'finalized_disputed';
 

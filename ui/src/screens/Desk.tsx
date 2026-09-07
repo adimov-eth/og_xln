@@ -74,6 +74,9 @@ export function Desk() {
 					<button type="button" className="btn sm" onClick={() => navigate('/move')}>
 						<Icon name="arrow" size={14} /> Move
 					</button>
+					<button type="button" className="btn sm" onClick={() => navigate('/assets#faucets')} data-testid="home-faucet">
+						Test money · Faucet
+					</button>
 					<button type="button" className="icon-btn" onClick={() => navigate('/sovereignty')} aria-label="Sovereignty" title="Keys, proofs, what is at risk">
 						<Icon name="shield" size={18} />
 					</button>
@@ -134,7 +137,7 @@ export function Desk() {
 											<td>
 												<span style={{ fontWeight: 500 }}>{account.label}</span>
 												{account.isHub ? <span className="chip hub" style={{ marginLeft: 6 }}>hub</span> : null}
-												{account.dispute !== 'none' ? <span className="state st-dispute" style={{ marginLeft: 6 }}>dispute</span> : null}
+												{account.dispute !== 'none' ? <span className="state st-dispute" style={{ marginLeft: 6 }}>{account.dispute === 'closed' ? 'closed' : 'dispute'}</span> : null}
 												{account.settlement === 'awaiting_you' ? <span className="state st-pending" style={{ marginLeft: 6 }}>sign</span> : null}
 												<span className="faint"> · {getTokenMeta(token.tokenId).symbol}</span>
 											</td>

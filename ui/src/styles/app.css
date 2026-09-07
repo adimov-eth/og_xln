@@ -1475,6 +1475,8 @@ textarea.input.boxed {
 	color: var(--dispute);
 	font-size: 13px;
 	max-width: 52ch;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
 }
 
 .gate-cards {

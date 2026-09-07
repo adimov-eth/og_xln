@@ -1,4 +1,5 @@
-import type { AccountReplica, EntityReplica, RuntimeReplica, Profile as GossipProfile, RuntimeInput } from '@xln/core/api/public/runtime-module';
+import type { AccountReadView, EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+import type { RuntimeReplica, Profile as GossipProfile, RuntimeInput } from '@xln/core/api/public/runtime-module';
 import { getJurisdictionStackId } from '@xln/core/jurisdiction/machine/jurisdiction-stack';
 import {
   defaultAccountDisputeConfigForRoleEvidence,
@@ -259,9 +260,9 @@ export const hubDiscoveryJurisdictionKey = (value: unknown): string => {
 };
 
 function findReplicaForEntity(
-  replicas: Map<string, EntityReplica> | null | undefined,
+  replicas: Map<string, EntityReadView> | null | undefined,
   entityId: string,
-): EntityReplica | null {
+): EntityReadView | null {
   const target = normalizeHubEntityId(entityId);
   if (!target || !(replicas instanceof Map)) return null;
   for (const [key, replica] of replicas.entries()) {
@@ -273,9 +274,9 @@ function findReplicaForEntity(
 }
 
 function findReplicaSignerId(
-  replicas: Map<string, EntityReplica> | null | undefined,
+  replicas: Map<string, EntityReadView> | null | undefined,
   entityId: string,
-  replica: EntityReplica | null,
+  replica: EntityReadView | null,
 ): string {
   const directSigner = String(replica?.signerId || '').trim();
   if (directSigner) return directSigner;
@@ -292,7 +293,7 @@ function findReplicaSignerId(
 }
 
 export function resolveHubDiscoveryEntityJurisdictionKey(
-  replicas: Map<string, EntityReplica> | null | undefined,
+  replicas: Map<string, EntityReadView> | null | undefined,
   entityId: string,
 ): string {
   const replica = findReplicaForEntity(replicas, entityId);
@@ -300,7 +301,7 @@ export function resolveHubDiscoveryEntityJurisdictionKey(
     || hubDiscoveryJurisdictionKey(replica?.position?.jurisdiction);
 }
 
-function getAccountCounterpartyId(account: AccountReplica, ownerEntityId: string): string {
+function getAccountCounterpartyId(account: AccountReadView, ownerEntityId: string): string {
   const owner = normalizeHubEntityId(ownerEntityId);
   const left = normalizeHubEntityId(account.state.leftEntity);
   const right = normalizeHubEntityId(account.state.rightEntity);
@@ -310,10 +311,10 @@ function getAccountCounterpartyId(account: AccountReplica, ownerEntityId: string
 }
 
 function findAccountForCounterparty(
-  ownerReplica: EntityReplica | null,
+  ownerReplica: EntityReadView | null,
   ownerEntityId: string,
   counterpartyEntityId: string,
-): AccountReplica | null {
+): AccountReadView | null {
   const accounts = ownerReplica?.state?.accounts;
   const target = normalizeHubEntityId(counterpartyEntityId);
   if (!target || !(accounts instanceof Map)) return null;
@@ -329,7 +330,7 @@ function findAccountForCounterparty(
 }
 
 function getHubConnectionState(
-  ownerReplica: EntityReplica | null,
+  ownerReplica: EntityReadView | null,
   ownerEntityId: string,
   hubEntityId: string,
 ): HubDiscoveryConnectionState {
@@ -341,7 +342,7 @@ function getHubConnectionState(
 }
 
 function buildAccountConnectionStates(
-  ownerReplica: EntityReplica | null,
+  ownerReplica: EntityReadView | null,
   ownerEntityId: string,
 ): Map<string, HubDiscoveryConnectionState> {
   const accounts = ownerReplica?.state?.accounts;
@@ -364,7 +365,7 @@ function buildAccountConnectionStates(
 type BuildHubDiscoveryProjectionInput = {
   entityId: string;
   runtimeId?: string | null;
-  replicas: Map<string, EntityReplica> | null | undefined;
+  replicas: Map<string, EntityReadView> | null | undefined;
   profiles?: readonly GossipProfile[] | null | undefined;
   remoteHubs?: readonly HubDiscoveryRemoteHub[] | null | undefined;
   formatRawProfile?: (profile: unknown) => string;

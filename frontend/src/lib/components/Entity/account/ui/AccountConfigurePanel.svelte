@@ -1,7 +1,9 @@
 <script lang="ts">
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   import type { RuntimeReplica, Profile as GossipProfile, RuntimeInput } from '@xln/core/api/public/runtime-module';
   import { runtimeControllerHandle } from '$lib/stores/runtimeControllerStore';
-  import type { EntityReplica, Tab } from '$lib/types/ui';
+  import type { Tab } from '$lib/types/ui';
   import CollateralForm from './CollateralForm.svelte';
   import ConfigureAccountSelector from './ConfigureAccountSelector.svelte';
   import ConfigureWorkspaceTabs from '../../workspace/shell/ConfigureWorkspaceTabs.svelte';
@@ -17,7 +19,7 @@
     symbol: string;
   };
 
-  export let replica: EntityReplica | null = null;
+  export let replica: EntityReadView | null = null;
   export let tab: Tab;
   export let activeIsLive = false;
   export let liveRuntimeEnv: RuntimeReplica | null = null;

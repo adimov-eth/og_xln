@@ -1,7 +1,9 @@
 <script lang="ts">
+import type { AccountReadView, EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   import { getXLN, submitEntityInputs, xlnFunctions } from '../../../stores/xlnStore';
   import { requireSignerIdForEntity } from '$lib/utils/identity/entityReplica';
-  import type { EntityReplica, EntityTx, AccountReplica, EntityState } from '$lib/types/ui';
+  import type { EntityTx, EntityState } from '$lib/types/ui';
   import type { RuntimeReplica, EnvSnapshot, Profile as GossipProfile } from '@xln/core/api/public/runtime-module';
   import { errorLog } from '../../../stores/errorLogStore';
   import { toasts } from '../../../stores/ui/toastStore';
@@ -12,7 +14,7 @@
   import { requireTokenDecimals } from '../token-metadata';
 
   export let entityId: string;
-  export let replica: EntityReplica | null = null;
+  export let replica: EntityReadView | null = null;
   export let historyOnly = false;
   export let env: RuntimeReplica | EnvSnapshot | null = null;
   export let isLive: boolean;
@@ -575,7 +577,7 @@
     ...(selectedAccount?.pendingFrame?.accountTxs ?? []),
   ].find((tx) => tx.type === 'settle_transition');
 
-  function requireCurrentReplica(): EntityReplica {
+  function requireCurrentReplica(): EntityReadView {
     if (!currentReplica) throw new Error('Current entity replica is not available');
     return currentReplica;
   }
@@ -601,7 +603,7 @@
     return derived.outCollateral > hold ? derived.outCollateral - hold : 0n;
   }
 
-  function isLocalExecutorForWorkspace(counterparty: string, account: AccountReplica | null): boolean {
+  function isLocalExecutorForWorkspace(counterparty: string, account: AccountReadView | null): boolean {
     const workspace = account?.state.settlementWorkspace;
     const owner = String(entityId || '').trim().toLowerCase();
     const peer = String(counterparty || '').trim().toLowerCase();
@@ -609,7 +611,7 @@
     return workspace.executorIsLeft === (owner < peer);
   }
 
-  function getWorkspaceAutoExecuteKey(counterparty: string, account: AccountReplica | null): string {
+  function getWorkspaceAutoExecuteKey(counterparty: string, account: AccountReadView | null): string {
     const workspace = account?.state.settlementWorkspace;
     if (!workspace) return '';
     const nonceAtSign = workspace.nonceAtSign ?? 0;

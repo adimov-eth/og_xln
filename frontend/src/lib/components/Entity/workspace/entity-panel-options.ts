@@ -1,5 +1,6 @@
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
 import type { Profile as GossipProfile } from '@xln/core/api/public/runtime-module';
-import type { EntityReplica } from '$lib/types/ui';
+
 
 export function isFullEntityId(value: string): boolean {
   return /^0x[0-9a-fA-F]{64}$/.test(String(value || '').trim());
@@ -13,10 +14,10 @@ function addFullEntityId(ids: Map<string, string>, candidate: unknown): void {
 }
 
 export function buildOpenAccountEntityOptions(input: {
-  replica: EntityReplica | null | undefined;
+  replica: EntityReadView | null | undefined;
   tabEntityId: string;
   accountIds: readonly string[];
-  activeReplicas: Map<string, EntityReplica> | null | undefined;
+  activeReplicas: Map<string, EntityReadView> | null | undefined;
   profiles: readonly Pick<GossipProfile, 'entityId'>[];
 }): string[] {
   const ids = new Map<string, string>();
@@ -36,11 +37,11 @@ export function buildOpenAccountEntityOptions(input: {
 }
 
 export function buildMoveEntityOptions(input: {
-  replica: EntityReplica | null | undefined;
+  replica: EntityReadView | null | undefined;
   tabEntityId: string;
   accountIds: readonly string[];
   openAccountEntityOptions: readonly string[];
-  activeReplicas: Map<string, EntityReplica> | null | undefined;
+  activeReplicas: Map<string, EntityReadView> | null | undefined;
   profiles: readonly Pick<GossipProfile, 'entityId'>[];
 }): string[] {
   const ids = new Map<string, string>();

@@ -181,7 +181,8 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 	const navigate = useNavigate();
 	const toast = useApp(s => s.toast);
 	const selectedTokenId = useApp(s => s.selectedTokenId);
-	const [tab, setTab] = useState<ManageTab>(initialTab ?? (account.dispute !== 'none' ? 'dispute' : 'collateral'));
+	const [selectedTab, setTab] = useState<ManageTab>(initialTab ?? (account.dispute !== 'none' ? 'dispute' : 'collateral'));
+	const tab = account.dispute === 'closed' ? 'dispute' : selectedTab;
 	const [tokenId, setTokenId] = useState(selectedTokenId);
 	const [amountText, setAmountText] = useState('');
 	const [creditText, setCreditText] = useState('');
@@ -232,7 +233,7 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 		<Sheet title={`Manage · ${account.label}`} onClose={onClose}>
 			<div className="segc" style={{ marginBottom: 14 }} role="tablist">
 				{tabs.map(entry => (
-					<button key={entry.id} type="button" role="tab" aria-selected={tab === entry.id} className={tab === entry.id ? 'active' : ''} onClick={() => setTab(entry.id)} data-testid={`manage-tab-${entry.id}`}>
+					<button key={entry.id} type="button" role="tab" aria-selected={tab === entry.id} disabled={account.disputed && entry.id !== 'dispute'} className={tab === entry.id ? 'active' : ''} onClick={() => setTab(entry.id)} data-testid={`manage-tab-${entry.id}`}>
 						{entry.label}
 					</button>
 				))}
@@ -288,7 +289,7 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 							{account.label} has not published a fee policy for {meta.symbol} on this account yet. The request needs their committed policy frame.
 						</p>
 					)}
-					<button type="button" className="btn primary" disabled={busy || !policy || amount <= 0n || net <= 0n} onClick={() => void run(`Collateral request sent to ${account.label}`, async () => { await send([buildRequestCollateralTx(counterpartyId, tokenId, amount, policy!)]); })} data-testid="collateral-request">
+					<button type="button" className="btn primary" disabled={account.disputed || busy || !policy || amount <= 0n || net <= 0n} onClick={() => void run(`Collateral request sent to ${account.label}`, async () => { await send([buildRequestCollateralTx(counterpartyId, tokenId, amount, policy!)]); })} data-testid="collateral-request">
 						{busy ? 'Sending…' : 'Request collateral'}
 					</button>
 				</div>
@@ -320,7 +321,7 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 					<button
 						type="button"
 						className="btn primary"
-						disabled={busy || !creditText.trim()}
+						disabled={account.disputed || busy || !creditText.trim()}
 						onClick={() =>
 							void run('Credit requested from the hub', async () => {
 								const value = parseAmount(creditText, meta.decimals);
@@ -356,7 +357,7 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 							</div>
 						</div>
 					)}
-					<button type="button" className="btn primary" disabled={busy || addTokenId === null} onClick={() => void run(`${getTokenMeta(addTokenId ?? 0).symbol} lane proposed`, async () => { await send([buildAddTokenTx(counterpartyId, addTokenId!)]); })} data-testid="add-token-submit">
+					<button type="button" className="btn primary" disabled={account.disputed || busy || addTokenId === null} onClick={() => void run(`${getTokenMeta(addTokenId ?? 0).symbol} lane proposed`, async () => { await send([buildAddTokenTx(counterpartyId, addTokenId!)]); })} data-testid="add-token-submit">
 						{busy ? 'Proposing…' : 'Add token'}
 					</button>
 				</div>
@@ -364,7 +365,9 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 
 			{tab === 'dispute' ? (
 				<div className="fade-in">
-					{dispute.phase === 'active' ? (
+					{dispute.phase === 'closed' ? (
+						<p className="note" data-testid="dispute-closed">Dispute finalized. This account is permanently closed.</p>
+					) : dispute.phase === 'active' ? (
 						<>
 							<p className="state st-dispute" style={{ marginBottom: 10 }}>
 								Dispute {dispute.observedOnChain ? 'on-chain' : 'queued'} · started by {dispute.startedByUs ? 'you' : account.label}
@@ -496,6 +499,8 @@ export function AccountDetail() {
 
 	const statusLabel = !account
 		? '—'
+		: dispute?.phase === 'closed'
+			? 'Closed after dispute'
 		: dispute?.phase === 'active'
 			? 'Disputed'
 			: dispute?.phase === 'queued'
@@ -532,26 +537,26 @@ export function AccountDetail() {
 			<div className="two-col">
 			<div>
 			<div className="actions" style={{ margin: '0 0 18px' }}>
-				<button type="button" className="btn primary" onClick={() => navigate(`/pay?to=${counterpartyId.toLowerCase()}`)}>
+				<button type="button" className="btn primary" disabled={account?.disputed} onClick={() => navigate(`/pay?to=${counterpartyId.toLowerCase()}`)}>
 					<Icon name="pay" size={18} />
 					Pay
 				</button>
-				<button type="button" className="btn" onClick={() => setExtending(true)}>
+				<button type="button" className="btn" disabled={account?.disputed} onClick={() => setExtending(true)}>
 					<Icon name="plus" size={18} />
 					Extend credit
 				</button>
 				{account?.isHub ? (
-					<button type="button" className="btn" onClick={() => navigate(`/swap?hub=${counterpartyId.toLowerCase()}`)}>
+					<button type="button" className="btn" disabled={account.disputed} onClick={() => navigate(`/swap?hub=${counterpartyId.toLowerCase()}`)}>
 						<Icon name="swap" size={18} />
 						Swap
 					</button>
 				) : (
-					<button type="button" className="btn" onClick={() => navigate(`/receive`)}>
+					<button type="button" className="btn" disabled={account?.disputed} onClick={() => navigate(`/receive`)}>
 						<Icon name="receive" size={18} />
 						Receive
 					</button>
 				)}
-				<button type="button" className="btn" disabled={!account} onClick={() => setManaging('collateral')} data-testid="account-manage">
+				<button type="button" className="btn" disabled={!account} onClick={() => setManaging(account?.disputed ? 'dispute' : 'collateral')} data-testid="account-manage">
 					<Icon name="settings" size={18} />
 					Manage
 				</button>
@@ -564,7 +569,11 @@ export function AccountDetail() {
 			</div>
 
 			{!account && !wallet.loading && <p className="note">No account with this counterparty yet.</p>}
-			{dispute?.phase === 'active' ? (
+			{dispute?.phase === 'closed' ? (
+				<p className="state" style={{ marginBottom: 14 }} data-testid="account-dispute-state">
+					Dispute finalized. This account is permanently closed.
+				</p>
+			) : dispute?.phase === 'active' ? (
 				<p className="state st-dispute" style={{ marginBottom: 14 }} data-testid="account-dispute-state">
 					Dispute in progress{dispute.observedOnChain ? ' on-chain' : ''}. Payments through this account are paused.
 				</p>
@@ -675,7 +684,7 @@ export function AccountDetail() {
 							<span className="muted">{meta.symbol}</span>
 						</div>
 					</div>
-					<button type="button" className="btn" disabled={submitting || !creditText.trim()} onClick={() => void extendCredit()}>
+					<button type="button" className="btn" disabled={account?.disputed || submitting || !creditText.trim()} onClick={() => void extendCredit()}>
 						{submitting ? 'Extending…' : 'Extend credit'}
 					</button>
 				</Sheet>

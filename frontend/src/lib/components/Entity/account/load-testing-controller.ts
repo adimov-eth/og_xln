@@ -1,10 +1,5 @@
-import type {
-  BookState,
-  EntityReplica,
-  Profile,
-  RuntimeInput,
-  XLNModule,
-} from '@xln/core/api/public/runtime-module';
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+import type { BookState, Profile, RuntimeInput, XLNModule } from '@xln/core/api/public/runtime-module';
 import {
   getBookSideLevels,
   getJurisdictionStackId,
@@ -32,7 +27,7 @@ export type LoadTestingControllerDeps = Readonly<{
   selectedHubEntityId: () => string;
   paymentView: () => PaymentPanelView;
   swapView: () => SwapPanelRuntimeView | null;
-  sourceReplica: () => EntityReplica | null;
+  sourceReplica: () => EntityReadView | null;
   runtimeFunctions: () => LoadTestRuntimeFunctions | null;
   resolveSignerId: (entityId: string) => string;
   submitRuntimeInput: (input: RuntimeInput) => Promise<unknown> | unknown;
@@ -104,7 +99,7 @@ export const selectExternalSwapLevel = (
     : null;
 };
 
-const sourceJurisdiction = (replica: EntityReplica): string => {
+const sourceJurisdiction = (replica: EntityReadView): string => {
   const state = replica.state as { config?: { jurisdiction?: Parameters<typeof getJurisdictionStackId>[0] } };
   return getJurisdictionStackId(state.config?.jurisdiction) || '';
 };

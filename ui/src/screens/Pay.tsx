@@ -6,17 +6,12 @@ import { Bar, DeltaBar, DeltaCaption } from '../components/Bars';
 import { Icon } from '../components/Icons';
 import { ScanSheet } from '../components/ScanSheet';
 import { TokenPicker } from '../components/TokenPicker';
+import { PaymentTopUp } from '../components/PaymentTopUp';
+import { paymentMode } from '../runtime/financial/payment-funding';
+import { accountNetBalance } from '../runtime/financial/balance';
 import { useApp } from '../runtime/store';
 import { peekXLN } from '../runtime/xln-loader';
-import {
-	DELIVERY_OPTIONS,
-	eligibleRoutes,
-	isEntityId,
-	quotePaymentRoutes,
-	routeModeError,
-	submitPayment,
-	type PaymentRouteQuote,
-} from '../runtime/financial/payments';
+import { DELIVERY_OPTIONS, eligibleRoutes, isEntityId, quotePaymentRoutes, routeModeError, submitPayment, type PaymentRouteQuote } from '../runtime/financial/payments';
 import { amountInputText, formatMoney, getTokenMeta, parseAmount, shortId } from '../runtime/format';
 import { usdOf } from '../runtime/financial/prices';
 import { displayEntityName, useWallet, type AccountView } from '../runtime/views';
@@ -42,7 +37,7 @@ export function Pay() {
 	const [invoiceError, setInvoiceError] = useState<string | null>(null);
 	const [amountText, setAmountText] = useState(params.get('amount') ?? '');
 	const [tokenId, setTokenId] = useState(Number(params.get('token') ?? selectedTokenId) || selectedTokenId);
-	const [deliveryMode, setDeliveryMode] = useState<PaymentDeliveryMode>('instant');
+	const [deliveryMode, setDeliveryMode] = useState<PaymentDeliveryMode>(paymentMode(params.get('mode')));
 	const [description, setDescription] = useState(params.get('desc') ?? '');
 	const [noteOpen, setNoteOpen] = useState(Boolean(params.get('desc')));
 	const [modeOpen, setModeOpen] = useState(false);
@@ -53,6 +48,7 @@ export function Pay() {
 	const [sending, setSending] = useState(false);
 	const [scanning, setScanning] = useState(false);
 	const quoteSeq = useRef(0);
+	const submissionStarted = useRef(false);
 
 	const meta = getTokenMeta(tokenId);
 	const self = wallet.entityId;
@@ -86,10 +82,14 @@ export function Pay() {
 	const known = useMemo(
 		() =>
 			wallet.summaries
-				.map(summary => ({ entityId: summary.entityId.toLowerCase(), label: summary.label || '', isHub: summary.isHub === true }))
-				.filter(entry => entry.entityId && entry.entityId !== self),
 				// Hubs on another chain carry the same labels; a direct payment stays inside our own jurisdiction.
 				.filter(summary => !summary.jurisdiction?.name || !wallet.jurisdiction || summary.jurisdiction.name === wallet.jurisdiction)
+				.map(summary => ({
+					entityId: summary.entityId.toLowerCase(),
+					label: summary.label || '',
+					isHub: summary.isHub === true,
+				}))
+				.filter(entry => entry.entityId && entry.entityId !== self),
 		[wallet.summaries, wallet.jurisdiction, self],
 	);
 	const recents = useMemo(() => wallet.accounts.filter(account => !account.disputed).slice(0, 4), [wallet.accounts]);
@@ -118,16 +118,22 @@ export function Pay() {
 
 	// PaymentPanel semantics: the largest single-account capacity, since one route uses one first hop.
 	const payMax = wallet.accounts
+		.filter(account => !account.disputed)
 		.flatMap(account => account.tokens)
 		.filter(token => token.tokenId === tokenId)
 		.reduce((max, token) => (token.derived.outCapacity > max ? token.derived.outCapacity : max), 0n);
+	const capacityVersion = wallet.accounts
+		.map(account => `${account.counterpartyId}:${account.disputed}:${account.tokens.find(token => token.tokenId === tokenId)?.derived.outCapacity ?? 0n}`)
+		.join('|');
 
 	useEffect(() => {
+		// Invalidate an in-flight quote even when the new draft cannot be quoted.
+		const seq = ++quoteSeq.current;
 		setRoutes(null);
 		setRouteError(null);
 		setRouteIndex(0);
+		setQuoting(false);
 		if (!self || !validTarget || !parsedAmount) return;
-		const seq = ++quoteSeq.current;
 		setQuoting(true);
 		const timer = setTimeout(() => {
 			quotePaymentRoutes({ sourceEntityId: self, targetEntityId: target, tokenId, amount: parsedAmount })
@@ -142,18 +148,25 @@ export function Pay() {
 					setQuoting(false);
 				});
 		}, 250);
-		return () => clearTimeout(timer);
-	}, [self, target, validTarget, parsedAmount, tokenId]);
+		return () => {
+			clearTimeout(timer);
+			quoteSeq.current += 1;
+		};
+	}, [self, target, validTarget, parsedAmount, tokenId, capacityVersion]);
 
 	const usable = useMemo(() => (routes ? eligibleRoutes(routes, deliveryMode) : []), [routes, deliveryMode]);
 	const chosen = usable[Math.min(routeIndex, Math.max(0, usable.length - 1))] ?? null;
 	const modeError = routeModeError(chosen, deliveryMode);
 	const firstHop = chosen?.path[1] ?? null;
-	const hopAccount = firstHop ? wallet.accounts.find(account => account.counterpartyId === firstHop) ?? null : null;
+	const hopAccount = firstHop ? (wallet.accounts.find(account => account.counterpartyId === firstHop) ?? null) : null;
 	const hopToken = hopAccount?.tokens.find(token => token.tokenId === tokenId) ?? null;
+	const enoughCapacity = Boolean(chosen && hopAccount && !hopAccount.disputed && hopToken && hopToken.derived.outCapacity >= chosen.senderAmount);
 
 	const send = async (): Promise<void> => {
-		if (!self || !wallet.signerId || !chosen || !parsedAmount || modeError) return;
+		if (submissionStarted.current || !self || !wallet.signerId || !validTarget || quoting || !chosen || !parsedAmount || modeError || !enoughCapacity) return;
+		// React's disabled state is not a synchronous admission guard. Hold this
+		// form's intent through successful navigation so a double click pays once.
+		submissionStarted.current = true;
 		setSending(true);
 		try {
 			await submitPayment({
@@ -169,7 +182,7 @@ export function Pay() {
 			navigate('/');
 		} catch (error) {
 			toast(error instanceof Error ? error.message : String(error), 'danger');
-		} finally {
+			submissionStarted.current = false;
 			setSending(false);
 		}
 	};
@@ -206,7 +219,10 @@ export function Pay() {
 						<div className="picker">
 							<input
 								className="input"
-								style={{ fontFamily: query.startsWith('0x') || looksLikeInvoice(query) ? 'var(--font-mono)' : 'var(--font-ui)', fontSize: 15 }}
+								style={{
+									fontFamily: query.startsWith('0x') || looksLikeInvoice(query) ? 'var(--font-mono)' : 'var(--font-ui)',
+									fontSize: 15,
+								}}
 								placeholder="Name, entity id or invoice"
 								value={toText}
 								spellCheck={false}
@@ -271,14 +287,7 @@ export function Pay() {
 							</button>
 						</div>
 						<div className="field-row">
-							<input
-								className="input big"
-								placeholder="0.00"
-								inputMode="decimal"
-								value={amountText}
-								onChange={event => setAmountText(event.target.value)}
-								data-testid="pay-amount"
-							/>
+							<input className="input big" placeholder="0.00" inputMode="decimal" value={amountText} onChange={event => setAmountText(event.target.value)} data-testid="pay-amount" />
 							<TokenPicker
 								tokenId={tokenId}
 								onChange={id => {
@@ -308,14 +317,16 @@ export function Pay() {
 						) : null}
 					</div>
 
-					{quoting && <p className="faint" style={{ fontSize: 12 }}>Quoting routes…</p>}
-					{routeError && validTarget && parsedAmount && <p style={{ color: 'var(--dispute)', fontSize: 13 }}>{routeError}</p>}
-					{routes && routes.length > 0 && usable.length === 0 && (
-						<p style={{ color: 'var(--dispute)', fontSize: 13 }}>No route matches this delivery mode.</p>
+					{quoting && (
+						<p className="faint" style={{ fontSize: 12 }}>
+							Quoting routes…
+						</p>
 					)}
+					{routeError && validTarget && parsedAmount && <p style={{ color: 'var(--dispute)', fontSize: 13 }}>{routeError}</p>}
+					{routes && routes.length > 0 && usable.length === 0 && <p style={{ color: 'var(--dispute)', fontSize: 13 }}>No route matches this delivery mode.</p>}
 
 					{chosen && (
-						<div className="card tight">
+						<div className="card tight" data-testid="pay-quote" data-sender-amount={chosen.senderAmount.toString()} data-recipient-amount={chosen.recipientAmount.toString()} data-fee-amount={chosen.totalFee.toString()}>
 							<div className="kv mobile-only">
 								<span className="k">Route</span>
 								<span className="hops">
@@ -329,7 +340,7 @@ export function Pay() {
 							</div>
 							<div className="kv">
 								<span className="k">Fee</span>
-								<span className={`v ${chosen.totalFee === 0n ? 'st-settled' : 'num'}`}>
+								<span className={`v ${chosen.totalFee === 0n ? 'st-settled' : 'num'}`} title={`${amountInputText(chosen.totalFee, meta.decimals)} ${meta.symbol}`}>
 									{chosen.totalFee === 0n
 										? 'Free'
 										: chosen.totalFee * 100n < 10n ** BigInt(meta.decimals)
@@ -366,7 +377,11 @@ export function Pay() {
 										>
 											<span>
 												{option.label}
-												{option.recommended ? <span className="chip" style={{ marginLeft: 6 }}>Default</span> : null}
+												{option.recommended ? (
+													<span className="chip" style={{ marginLeft: 6 }}>
+														Default
+													</span>
+												) : null}
 											</span>
 											<span className="d">{option.description}</span>
 										</button>
@@ -399,6 +414,22 @@ export function Pay() {
 						</div>
 					)}
 					{modeError && <p style={{ color: 'var(--dispute)', fontSize: 12.5 }}>{modeError}</p>}
+					{validTarget && parsedAmount && !quoting && !enoughCapacity ? (
+						<PaymentTopUp
+							key={`${self}:${target}:${tokenId}`}
+							wallet={wallet}
+							draft={{
+								entityId: self,
+								to: target,
+								amount: amountInputText(parsedAmount, meta.decimals),
+								tokenId,
+								description,
+								deliveryMode,
+							}}
+							requiredAmount={chosen?.senderAmount ?? parsedAmount}
+							routeAccount={hopAccount}
+						/>
+					) : null}
 
 					<button type="button" className="btn quiet" style={{ alignSelf: 'flex-start' }} onClick={() => setNoteOpen(value => !value)}>
 						{noteOpen ? 'Note' : 'Add a note'} <Icon name={noteOpen ? 'chevronDown' : 'chevronRight'} size={13} />
@@ -413,7 +444,7 @@ export function Pay() {
 						type="button"
 						className="btn primary"
 						data-testid="pay-submit"
-						disabled={!chosen || !parsedAmount || sending || Boolean(modeError) || !wallet.signerId}
+						disabled={!validTarget || !chosen || !parsedAmount || sending || quoting || !enoughCapacity || Boolean(modeError) || !wallet.signerId}
 						onClick={() => void send()}
 					>
 						<Icon name="pay" size={15} />
@@ -447,16 +478,14 @@ export function Pay() {
 							</div>
 						</div>
 					) : null}
-					{hopAccount && hopToken && chosen ? (
-						<BeforeAfter account={hopAccount} tokenId={tokenId} senderAmount={chosen.senderAmount} />
-					) : null}
+					{hopAccount && hopToken && chosen ? <BeforeAfter account={hopAccount} tokenId={tokenId} senderAmount={chosen.senderAmount} /> : null}
 					<div className="card" style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
 						<span style={{ color: 'var(--coll)' }}>
 							<Icon name="shield" size={20} />
 						</span>
 						<div className="note">
-							<b style={{ color: 'var(--ink)', fontWeight: 600 }}>Provable.</b> A payment is a frame signed by both sides of each account it crosses.
-							Collateral is enforceable on-chain if a counterparty ever defaults.
+							<b style={{ color: 'var(--ink)', fontWeight: 600 }}>Provable.</b> A payment is a frame signed by both sides of each account it crosses. Collateral is enforceable on-chain if a
+							counterparty ever defaults.
 						</div>
 					</div>
 				</div>
@@ -493,7 +522,7 @@ function BeforeAfter({ account, tokenId, senderAmount }: { account: AccountView;
 	} catch {
 		return null;
 	}
-	const signedAfter = account.isLeft ? shifted.ondelta + shifted.offdelta : -(shifted.ondelta + shifted.offdelta);
+	const signedAfter = accountNetBalance(after);
 	const collateralUsed = token.derived.outCollateral - after.outCollateral;
 	const creditUsed = token.derived.outOwnCredit - after.outOwnCredit;
 	const debtNetted = token.derived.outPeerCredit - after.outPeerCredit;
@@ -508,7 +537,10 @@ function BeforeAfter({ account, tokenId, senderAmount }: { account: AccountView;
 			<div className="kv" style={{ paddingTop: 0 }}>
 				<span className="k">Before</span>
 				<span className="v num">
-					{money(token.signed)} <span className="muted" style={{ fontWeight: 400 }}>{token.signed >= 0n ? 'owes you' : 'you owe'}</span>
+					{money(token.signed)}{' '}
+					<span className="muted" style={{ fontWeight: 400 }}>
+						{token.signed >= 0n ? 'owes you' : 'you owe'}
+					</span>
 				</span>
 			</div>
 			<DeltaBar derived={token.derived} tokenId={tokenId} />
@@ -516,12 +548,19 @@ function BeforeAfter({ account, tokenId, senderAmount }: { account: AccountView;
 			<div className="kv" style={{ marginTop: 14 }}>
 				<span className="k">After</span>
 				<span className="v num">
-					{money(signedAfter)} <span className="muted" style={{ fontWeight: 400 }}>{signedAfter >= 0n ? 'owes you' : 'you owe'}</span>
+					{money(signedAfter)}{' '}
+					<span className="muted" style={{ fontWeight: 400 }}>
+						{signedAfter >= 0n ? 'owes you' : 'you owe'}
+					</span>
 				</span>
 			</div>
 			<DeltaBar derived={after} tokenId={tokenId} />
 			<DeltaCaption derived={after} format={money} />
-			{parts.length > 0 ? <p className="note" style={{ marginTop: 14 }}>{parts.join('. ')}. Nothing moves on-chain.</p> : null}
+			{parts.length > 0 ? (
+				<p className="note" style={{ marginTop: 14 }}>
+					{parts.join('. ')}. Nothing moves on-chain.
+				</p>
+			) : null}
 		</div>
 	);
 }

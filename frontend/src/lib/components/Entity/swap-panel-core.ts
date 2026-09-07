@@ -1,7 +1,8 @@
-import type { EntityReplica } from '$lib/types/ui';
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
 import type { FrontendXlnFunctions } from '$lib/stores/xlnStore';
 import { amountToUsd } from '$lib/utils/assetPricing';
-import type { SwapAccountCapacityView, SwapInboundCapacityPlan } from '@xln/core/api/public/runtime-module';
+import type { AccountCapacityView, ReceiveCapacityPlan } from '@xln/core/api/public/runtime-module';
 import {
   defaultAccountDisputeConfigForRoleEvidence,
   type AccountRoleEvidence,
@@ -43,7 +44,7 @@ export type SourceEntityOption = {
   entityId: string;
   signerId: string;
   jurisdiction: string;
-  replica: EntityReplica;
+  replica: EntityReadView;
 };
 
 export type SwapRouteOption = {
@@ -74,7 +75,7 @@ export type PairOption = {
 
 type SwapPanelCoreDeps = {
   getRuntime(): FrontendXlnFunctions | null | undefined;
-  getCurrentReplica(): EntityReplica | null | undefined;
+  getCurrentReplica(): EntityReadView | null | undefined;
   tokenSymbol(tokenId: number): string;
   getTokenDecimals(tokenId: number): number;
 };
@@ -84,13 +85,13 @@ export const createSwapPanelCore = (deps: SwapPanelCoreDeps) => {
   const { tokenSymbol, getTokenDecimals } = deps;
 
   function readAccountCapacityForReplica(
-    candidate: EntityReplica | null | undefined,
+    candidate: EntityReadView | null | undefined,
     ownerEntityId: string,
     counterpartyEntityId: string,
     tokenIdValue: number,
-  ): SwapAccountCapacityView | null {
+  ): AccountCapacityView | null {
     const runtime = deps.getRuntime();
-    if (!runtime?.readSwapAccountCapacity) return null;
+    if (!runtime?.readAccountCapacity) return null;
     const owner = String(ownerEntityId || '')
       .trim()
       .toLowerCase();
@@ -99,7 +100,7 @@ export const createSwapPanelCore = (deps: SwapPanelCoreDeps) => {
       .toLowerCase();
     if (!candidate || !owner || !counterparty || !Number.isSafeInteger(tokenIdValue) || tokenIdValue <= 0) return null;
     const account = candidate.state?.accounts?.get?.(counterparty);
-    return runtime.readSwapAccountCapacity({
+    return runtime.readAccountCapacity({
       account: account?.state ?? null,
       ownerEntityId: owner,
       counterpartyEntityId: counterparty,
@@ -108,7 +109,7 @@ export const createSwapPanelCore = (deps: SwapPanelCoreDeps) => {
   }
 
   function hasTokenInReplicaAccount(
-    candidate: EntityReplica | null | undefined,
+    candidate: EntityReadView | null | undefined,
     ownerEntityId: string,
     counterpartyEntityId: string,
     tokenIdValue: number,
@@ -119,7 +120,7 @@ export const createSwapPanelCore = (deps: SwapPanelCoreDeps) => {
   }
 
   function readInCapacityForReplica(
-    candidate: EntityReplica | null | undefined,
+    candidate: EntityReadView | null | undefined,
     ownerEntityId: string,
     counterpartyEntityId: string,
     tokenIdValue: number,
@@ -282,7 +283,7 @@ export const createSwapPanelCore = (deps: SwapPanelCoreDeps) => {
   }
 
   function planInboundCapacityForReplica(
-    candidate: EntityReplica | null | undefined,
+    candidate: EntityReadView | null | undefined,
     ownerEntityId: string,
     counterpartyEntityId: string,
     tokenIdValue: number,
@@ -291,9 +292,9 @@ export const createSwapPanelCore = (deps: SwapPanelCoreDeps) => {
     ownerRoleEvidence?: AccountRoleEvidence,
     counterpartyRoleEvidence?: AccountRoleEvidence,
     committedRoles?: ReadonlyMap<string, boolean>,
-  ): SwapInboundCapacityPlan | null {
+  ): ReceiveCapacityPlan | null {
     const runtime = deps.getRuntime();
-    if (!runtime?.planSwapInboundCapacity) return null;
+    if (!runtime?.planReceiveCapacity) return null;
     const owner = String(ownerEntityId || '')
       .trim()
       .toLowerCase();
@@ -316,19 +317,17 @@ export const createSwapPanelCore = (deps: SwapPanelCoreDeps) => {
     // The submit path fetches a fresh detailed projection before it may plan
     // an openAccount command.
     if (!account && !allowOpenAccount) return null;
-    if (
-      !account &&
-      allowOpenAccount &&
-      (!ownerRoleEvidence || !counterpartyRoleEvidence)
-    ) {
+    if (!account && allowOpenAccount && (!ownerRoleEvidence || !counterpartyRoleEvidence)) {
       throw new Error(`SWAP_INBOUND_DISPUTE_PARTY_ROLE_UNAVAILABLE:${owner}:${counterparty}`);
     }
-    return runtime.planSwapInboundCapacity({
+    return runtime.planReceiveCapacity({
       account: account?.state ?? null,
       ownerEntityId: owner,
       counterpartyEntityId: counterparty,
       tokenId: tokenIdValue,
       requiredInboundAmount: desiredInboundAmount,
+      collateralPercent: 0,
+      creditBufferBps: 0,
       allowOpenAccount,
       ...(!account
         ? {

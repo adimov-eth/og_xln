@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Bar } from '../components/Bars';
 import { CopyId } from '../components/CopyId';
+import { ReceiveCapacity } from '../components/ReceiveCapacity';
 import { Icon } from '../components/Icons';
 import { TokenIcon } from '../components/TokenPicker';
 import { useApp } from '../runtime/store';
-import { formatMoney, getTokenMeta, knownTokenIds, shortId } from '../runtime/format';
+import { formatMoney, getTokenMeta, knownTokenIds, parseAmount, shortId } from '../runtime/format';
 import { usdOf } from '../runtime/financial/prices';
 import { useWallet } from '../runtime/views';
 import { requestFaucet, readExternalWallet, type ExternalWallet, type FaucetKind } from '../runtime/financial/external';
 import { debtGroups, enforceDebts, type DebtGroup } from '../runtime/financial/debts';
 import { getAdapter } from '../runtime/adapter';
+import { accountNetBalance } from '../runtime/financial/balance';
 
 /**
  * Money outside the bilateral accounts: the signer's on-chain wallet with
@@ -19,6 +21,7 @@ import { getAdapter } from '../runtime/adapter';
  */
 export function Assets() {
 	const navigate = useNavigate();
+	const { hash } = useLocation();
 	const entityId = useApp(s => s.activeEntityId);
 	const toast = useApp(s => s.toast);
 	const height = useApp(s => s.height);
@@ -29,9 +32,22 @@ export function Assets() {
 	const [busy, setBusy] = useState<string | null>(null);
 	const [faucetAmount, setFaucetAmount] = useState('100');
 	const [faucetTokenId, setFaucetTokenId] = useState(1);
+	const [faucetNotice, setFaucetNotice] = useState<{ kind: 'pending' | 'accepted' | 'error'; text: string } | null>(null);
 	const debts = debtGroups(wallet.frame);
-	const hubs = wallet.accounts.filter(account => account.isHub);
+	const hubs = wallet.accounts.filter(account => account.isHub && !account.disputed);
+	const [faucetHubId, setFaucetHubId] = useState('');
+	const faucetHub = hubs.find(account => account.counterpartyId === faucetHubId) ?? hubs[0];
 	const faucetMeta = getTokenMeta(faucetTokenId);
+	let faucetRequired = 0n;
+	try { faucetRequired = parseAmount(faucetAmount, faucetMeta.decimals); } catch { /* The amount field may be incomplete while typing. */ }
+	const faucetDerived = faucetHub?.tokens.find(token => token.tokenId === faucetTokenId)?.derived;
+	const faucetCapacity = faucetDerived?.inCapacity ?? 0n;
+	const faucetAccountBalance = faucetDerived ? accountNetBalance(faucetDerived) : 0n;
+	const faucetReserveBalance = wallet.reserves.filter(row => row.tokenId === faucetTokenId).reduce((sum, row) => sum + row.amount, 0n);
+	const canReceiveFaucet = Boolean(faucetHub && faucetRequired > 0n && faucetCapacity >= faucetRequired);
+	useEffect(() => {
+		if (hash === '#faucets') document.getElementById('faucets')?.scrollIntoView({ block: 'start' });
+	}, [hash]);
 
 	const refresh = useCallback(async () => {
 		if (!wallet.entityId || !wallet.signerId) return;
@@ -53,25 +69,32 @@ export function Assets() {
 
 	const run = async (key: string, label: string, work: () => Promise<void>): Promise<void> => {
 		setBusy(key);
+		if (key.startsWith('faucet-')) setFaucetNotice({ kind: 'pending', text: 'Requesting test money…' });
 		try {
 			await work();
-			toast(label);
+			if (key.startsWith('faucet-')) setFaucetNotice({ kind: 'accepted', text: label });
+			else toast(label);
 			void refresh();
 		} catch (error) {
-			toast(error instanceof Error ? error.message : String(error), 'danger');
+			const text = error instanceof Error ? error.message : String(error);
+			if (key.startsWith('faucet-')) setFaucetNotice({ kind: 'error', text });
+			else toast(text, 'danger');
 		} finally {
 			setBusy(null);
 		}
 	};
 
 	const faucet = (kind: FaucetKind): Promise<void> =>
-		run(`faucet-${kind}`, `Faucet request sent (${kind})`, async () => {
+		run(`faucet-${kind}`, kind === 'offchain'
+			? 'Payment requested. Your Account balance updates when the hub payment is confirmed.'
+			: `Request accepted. Check ${kind === 'reserve' ? 'your Reserve on Home' : 'your on-chain wallet balance'}.`, async () => {
+			if (kind === 'offchain' && !canReceiveFaucet) throw new Error('Prepare capacity in the selected account before requesting this payment.');
 			const amount = faucetAmount.trim() || '0';
 			await requestFaucet(kind, {
 				entityId: wallet.entityId,
 				signerId: wallet.signerId,
 				runtimeId: getAdapter()?.runtimeId ?? '',
-				...(hubs[0] ? { hubEntityId: hubs[0].counterpartyId } : {}),
+				...(faucetHub ? { hubEntityId: faucetHub.counterpartyId } : {}),
 				tokenId: faucetTokenId,
 				tokenSymbol: kind === 'gas' ? 'ETH' : faucetMeta.symbol,
 				amount,
@@ -174,11 +197,19 @@ export function Assets() {
 					</div>
 				</div>
 				<div className="aside">
-					<div className="card" data-testid="faucets">
+					<div className="card" id="faucets" data-testid="faucets" style={{ scrollMarginTop: 20 }}>
 						<h3 className="caps">Faucets</h3>
 						<p className="note" style={{ marginTop: 8 }}>
-							Test money from the network you are connected to. Only test networks answer.
+							Test money only. Receive into Account for instant payments. Money in your wallet or Reserve needs a Move into Account first.
 						</p>
+						<div className="kv">
+							<span className="k">Account · {faucetHub?.label ?? 'no hub'}</span>
+							<b className="v num" data-testid="faucet-account-balance">{formatMoney(faucetAccountBalance, faucetMeta.decimals)} {faucetMeta.symbol}</b>
+						</div>
+						<div className="kv">
+							<span className="k">Reserve</span>
+							<b className="v num" data-testid="faucet-reserve-balance">{formatMoney(faucetReserveBalance, faucetMeta.decimals)} {faucetMeta.symbol}</b>
+						</div>
 						<div className="field">
 							<span className="field-label">Token</span>
 							<div className="mode-grid">
@@ -196,20 +227,30 @@ export function Assets() {
 								<span className="muted">{faucetMeta.symbol}</span>
 							</div>
 						</div>
+						{hubs.length > 1 ? <label className="field">Receive through
+							<select className="input" value={faucetHub?.counterpartyId ?? ''} onChange={event => setFaucetHubId(event.target.value)} data-testid="faucet-hub">
+								{hubs.map(account => <option key={account.counterpartyId} value={account.counterpartyId}>{account.label}</option>)}
+							</select>
+						</label> : null}
+						{!faucetHub ? <p className="note" role="status">No open hub account. Open one from Home to receive off-chain; wallet and Reserve faucets are still available.</p> : null}
+						{faucetHub && faucetRequired > 0n ? <ReceiveCapacity account={faucetHub.doc.state} ownerEntityId={wallet.entityId} signerId={wallet.signerId}
+							counterpartyEntityId={faucetHub.counterpartyId} accountLabel={faucetHub.label} jurisdiction={wallet.jurisdiction}
+							tokenId={faucetTokenId} requiredAmount={faucetRequired} disabled={busy !== null} /> : null}
 						<div style={{ display: 'grid', gap: 8 }}>
-							<button type="button" className="btn primary" disabled={busy !== null || hubs.length === 0} onClick={() => void faucet('offchain')} data-testid="faucet-offchain">
-								{busy === 'faucet-offchain' ? 'Asking…' : `Hub pays me ${faucetMeta.symbol} over credit`}
+							<button type="button" className="btn primary" disabled={busy !== null || !canReceiveFaucet} onClick={() => void faucet('offchain')} data-testid="faucet-offchain">
+								{busy === 'faucet-offchain' ? 'Asking…' : `Receive ${faucetMeta.symbol} from ${faucetHub?.label ?? 'hub'}`}
 							</button>
 							<button type="button" className="btn" disabled={busy !== null} onClick={() => void faucet('erc20')} data-testid="faucet-erc20">
 								{busy === 'faucet-erc20' ? 'Minting…' : `${faucetMeta.symbol} to my on-chain wallet`}
 							</button>
-																<button type="button" className="btn" disabled={busy !== null} onClick={() => void faucet('gas')} data-testid="faucet-gas">
-										{busy === 'faucet-gas' ? 'Sending…' : 'Gas (ETH) to my on-chain wallet'}
-									</button>
-									<button type="button" className="btn" disabled={busy !== null} onClick={() => void faucet('reserve')} data-testid="faucet-reserve">
-										{busy === 'faucet-reserve' ? 'Asking…' : `${faucetMeta.symbol} straight into my reserve`}
-									</button>
+							<button type="button" className="btn" disabled={busy !== null} onClick={() => void faucet('gas')} data-testid="faucet-gas">
+								{busy === 'faucet-gas' ? 'Sending…' : '0.1 ETH for gas to my on-chain wallet'}
+							</button>
+							<button type="button" className="btn" disabled={busy !== null} onClick={() => void faucet('reserve')} data-testid="faucet-reserve">
+								{busy === 'faucet-reserve' ? 'Asking…' : `${faucetMeta.symbol} straight into my reserve`}
+							</button>
 						</div>
+						{faucetNotice ? <p className="note" style={{ overflowWrap: 'anywhere', color: faucetNotice.kind === 'error' ? 'var(--debt)' : undefined }} role={faucetNotice.kind === 'error' ? 'alert' : 'status'} data-testid="faucet-status">{faucetNotice.text}</p> : null}
 					</div>
 				</div>
 			</div>

@@ -1,12 +1,5 @@
-import type {
-  AccountReplica,
-  Delta,
-  EntityReplica,
-  PaymentRoute,
-  Profile as GossipProfile,
-  RuntimeAdapterEntitySummary,
-  RuntimeAdapterViewFrame,
-} from '@xln/core/api/public/runtime-module';
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+import type { Delta, PaymentRoute, Profile as GossipProfile, RuntimeAdapterEntitySummary, RuntimeAdapterViewFrame } from '@xln/core/api/public/runtime-module';
 
 import type { LocalAccountLike, LocalReplicaLike } from './../payment-routing';
 import { normalizeEntityId } from './../payment-routing';
@@ -38,14 +31,15 @@ export const emptyPaymentPanelView = (): PaymentPanelView => ({
   networkGraph: null,
 });
 
-type PaymentAccountSource = {
+type PaymentAccountSource = Pick<
+  NonNullable<RuntimeAdapterViewFrame['activeEntity']>['accounts']['items'][number],
+  'activeDispute' | 'status'
+> & {
   state: {
     leftEntity: string;
     rightEntity: string;
     deltas: ReadonlyMap<number, Delta>;
   };
-  activeDispute?: AccountReplica['activeDispute'];
-  status?: AccountReplica['status'];
 };
 
 function clonePaymentAccount(account: PaymentAccountSource): LocalAccountLike {
@@ -154,7 +148,7 @@ export function buildPaymentPanelViewFromRuntimeView(input: {
   };
 }
 
-function projectReplica(replica: EntityReplica): PaymentReplicaView {
+function projectReplica(replica: EntityReadView): PaymentReplicaView {
   const accounts = new Map<string, LocalAccountLike>();
   for (const [counterpartyId, account] of replica.state.accounts.entries()) {
     accounts.set(String(counterpartyId), clonePaymentAccount(account));
@@ -166,7 +160,7 @@ function projectReplica(replica: EntityReplica): PaymentReplicaView {
 
 function buildBlockedCounterparties(
   entityId: string,
-  replicas: Map<string, EntityReplica> | null | undefined,
+  replicas: Map<string, EntityReadView> | null | undefined,
 ): Set<string> {
   const blocked = new Set<string>();
   const self = normalizeEntityId(entityId);
@@ -185,7 +179,7 @@ function buildBlockedCounterparties(
 
 export function buildPaymentPanelView(input: {
   entityId: string;
-  replicas: Map<string, EntityReplica> | null | undefined;
+  replicas: Map<string, EntityReadView> | null | undefined;
   profiles: GossipProfile[];
   networkGraph?: PaymentRuntimeGraph | null;
 }): PaymentPanelView {

@@ -1,4 +1,6 @@
 <script lang="ts">
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   /**
    * EntityDropdown - Unified entity/signer selector
    * Declarative Svelte (no innerHTML), uses base Dropdown component
@@ -6,7 +8,7 @@
   import { createEventDispatcher } from 'svelte';
   import { xlnFunctions, xlnInstance } from '../../../../stores/xlnStore';
   import Dropdown from '$lib/components/UI/Dropdown.svelte';
-  import type { EntityReplica, Tab } from '$lib/types/ui';
+  import type { Tab } from '$lib/types/ui';
   import type { FrontendXlnFunctions } from '$lib/stores/xlnStore';
   import { entityAvatar, preferredAvatar } from '$lib/utils/identity/avatar';
   import { getJurisdictionBadgeInfo, type JurisdictionBadgeInfo } from '$lib/utils/identity/jurisdictionBadge';
@@ -16,7 +18,7 @@
   export let selectedJurisdiction: string | null = null;
   export let allowAdd: boolean = false;
   export let allowAddJurisdiction: boolean = false;
-  export let replicasOverride: Map<string, EntityReplica> | null = null;
+  export let replicasOverride: Map<string, EntityReadView> | null = null;
   export let entityNames: Map<string, string> = new Map();
   export let jurisdictions: Array<{ name?: string }> = [];
 
@@ -65,13 +67,13 @@
   }
 
   function buildSignerTree(
-    replicas: Map<string, EntityReplica> | null | undefined,
+    replicas: Map<string, EntityReadView> | null | undefined,
     xlnFuncs: FrontendXlnFunctions | null,
     search: string,
   ): SignerNode[] {
     if (!replicas) return [];
 
-    const signerGroups = new Map<string, EntityReplica[]>();
+    const signerGroups = new Map<string, EntityReadView[]>();
 
     // Group by signerId
     for (const replica of replicas.values()) {
@@ -130,7 +132,7 @@
     return nodes;
   }
 
-  function getEntityName(replica: EntityReplica): string {
+  function getEntityName(replica: EntityReadView): string {
     const normalizedEntityId = String(replica?.entityId || '').trim().toLowerCase();
     return normalizedEntityId ? entityNames.get(normalizedEntityId) || '' : '';
   }
@@ -146,7 +148,7 @@
 
   function getDisplayText(
     tab: Tab,
-    replicas: Map<string, EntityReplica> | null | undefined,
+    replicas: Map<string, EntityReadView> | null | undefined,
   ): string {
     if (!tab.entityId || !replicas) return 'Select Entity';
 

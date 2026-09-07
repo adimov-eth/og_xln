@@ -1,5 +1,6 @@
-import type { AccountReplica } from '@xln/core/api/public/runtime-module';
-import type { EntityReplica } from '$lib/types/ui';
+import type { AccountReadView, EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
+
 import { isMapLike } from '$lib/utils/runtime/liveRuntimeEnv';
 
 const COLLAPSED_ACCOUNT_LIMIT = 5;
@@ -12,7 +13,7 @@ type AccountView = {
 
 export type AccountListEntry = {
   counterpartyId: string;
-  account: AccountReplica;
+  account: AccountReadView;
 };
 
 export type AccountPageView = {
@@ -43,23 +44,23 @@ function isFinalizedDisputed(account: AccountView): boolean {
   return status === 'disputed' && !activeDispute;
 }
 
-export function isAccountsMapLike(value: unknown): value is ReadonlyMap<string, AccountReplica> {
+export function isAccountsMapLike(value: unknown): value is ReadonlyMap<string, AccountReadView> {
   return isMapLike(value);
 }
 
-function getAccountsMap(sourceReplica: EntityReplica | null): ReadonlyMap<string, AccountReplica> | null {
+function getAccountsMap(sourceReplica: EntityReadView | null): ReadonlyMap<string, AccountReadView> | null {
   const accounts = sourceReplica?.state?.accounts;
   return isAccountsMapLike(accounts) ? accounts : null;
 }
 
-function accountMatchesSearch(counterpartyId: string, account: AccountReplica, query: string): boolean {
+function accountMatchesSearch(counterpartyId: string, account: AccountReadView, query: string): boolean {
   if (!query) return true;
   const fields = [counterpartyId, account.state.leftEntity, account.state.rightEntity, account.status];
   return fields.some((field) => String(field || '').toLowerCase().includes(query));
 }
 
 export function buildAccountPageView(
-  sourceReplica: EntityReplica | null,
+  sourceReplica: EntityReadView | null,
   browserOpen: boolean,
   pageIndex: number,
   searchRaw: string,

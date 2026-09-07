@@ -9,7 +9,8 @@
   import { requireTokenDecimals } from '../token-metadata';
   import type { DebtEnforceRequest } from './debt-enforce-request';
 
-  export let entityStateOverride: EntityState | null = null;
+  type DebtState = Pick<EntityState, 'entityId' | 'outDebtsByToken' | 'inDebtsByToken' | 'reserves'>;
+  export let entityStateOverride: DebtState | null = null;
   export let entityNames: Map<string, string> = new Map();
   export let canEnforce: boolean = false;
   export let enforcingTokenId: number | null = null;
@@ -45,7 +46,7 @@
 
   $: activeXlnFunctions = $xlnFunctions;
 
-  function countDebtEntries(state: EntityState | null): number {
+  function countDebtEntries(state: DebtState | null): number {
     if (!state) return 0;
     let count = 0;
     for (const ledger of [state.outDebtsByToken, state.inDebtsByToken]) {
@@ -57,9 +58,9 @@
   }
 
   function pickDebtEntityState(
-    candidates: Array<EntityState | null>,
-  ): EntityState | null {
-    let best: EntityState | null = null;
+    candidates: Array<DebtState | null>,
+  ): DebtState | null {
+    let best: DebtState | null = null;
     let bestDebtEntries = 0;
     for (const candidate of candidates) {
       const debtEntries = countDebtEntries(candidate);
@@ -68,7 +69,7 @@
         bestDebtEntries = debtEntries;
       }
     }
-    return best ?? candidates.find((candidate): candidate is EntityState => Boolean(candidate)) ?? null;
+    return best ?? candidates.find((candidate): candidate is DebtState => Boolean(candidate)) ?? null;
   }
 
   $: entityState = pickDebtEntityState([entityStateOverride]);
@@ -141,7 +142,7 @@
     return compareStableText(String(left.debtId), String(right.debtId));
   }
 
-  function buildTokenGroups(currentState: EntityState | null): TokenGroup[] {
+  function buildTokenGroups(currentState: DebtState | null): TokenGroup[] {
     const allDebts = [
       ...flattenLedger(currentState?.outDebtsByToken),
       ...flattenLedger(currentState?.inDebtsByToken),

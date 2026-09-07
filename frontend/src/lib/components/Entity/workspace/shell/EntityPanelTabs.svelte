@@ -4,7 +4,8 @@ import { createEventDispatcher } from "svelte";
 import { onDestroy, onMount } from "svelte";
 import type { ComponentType } from "svelte";
 import { MaxUint256, Wallet, hexlify, isAddress, parseEther, ZeroAddress } from "ethers";
-import type { AccountReplica, EntityTx, RuntimeReplica, EnvSnapshot, JAdapter, Profile, RoutedEntityInput, RuntimeAdapterViewFrame, RuntimeInput, XLNModule } from "@xln/core/api/public/runtime-module";
+import type { EntityTx, RuntimeReplica, EnvSnapshot, JAdapter, Profile, RoutedEntityInput, RuntimeAdapterViewFrame, RuntimeInput, XLNModule } from "@xln/core/api/public/runtime-module";
+import type { EntityReadView } from '../../core/entity-panel-types';
 import { buildDebtEnforcementRuntimeInputFromProjection } from "@xln/core/runtime/tx/debt-enforcement-input";
 import { getDraftBatchReserveDelta } from "@xln/core/jurisdiction/machine/batch";
 import type { Tab, EntityReplica } from "$lib/types/ui";
@@ -142,7 +143,7 @@ let pendingBatchMode: "draft" | "sent" | null = null;
 let pendingBatchState = buildPendingBatchState(null);
 let hubDiscoveryProjection: HubDiscoveryProjection = emptyHubDiscoveryProjection();
 let paymentView: PaymentPanelView = emptyPaymentPanelView();
-let replica: EntityReplica | null = null;
+let replica: EntityReadView | null = null;
 let selectedAccountId: string | null = null;
 let selectedJurisdictionName: string | null = null;
 let copiedMetaField = "";
@@ -754,18 +755,13 @@ async function importSettingsJMachine(detail: JMachineCreateDetail): Promise<voi
 }
 function findLiveReplicaForEntity(entityId: string, signerId: string): EntityReplica | null {
   const env = getRuntimeEnv(actionRuntimeEnv);
-  return env ? buildEntityPanelView(env, entityId, signerId).replica : null;
-}
-function getCurrentLiveEntityReplica(): EntityReplica | null {
-  const entityId = String(replica?.state?.entityId || tab.entityId || "").trim();
-  const signerId = String(currentSignerId || tab.signerId || "").trim();
-  return (entityId ? findLiveReplicaForEntity(entityId, signerId) : null) ?? replica;
+  return env ? findReplicaForEntityTab(env.state.eReplicas, entityId, signerId) : null;
 }
 $: isAccountFocused = selectedAccountId !== null;
 $: selectedAccount = isAccountFocused && replica?.state?.accounts && selectedAccountId ? materializeAccountView(replica.state.accounts.get(selectedAccountId)) : null;
 $: accountIds = replica?.state?.accounts ? Array.from(replica.state.accounts.keys()).map((id) => String(id)) : [];
 $: workspaceAccountIds = accountIds.filter((id) => {
-  const account = replica?.state?.accounts?.get?.(id) as AccountReplica | undefined;
+  const account = replica?.state?.accounts?.get?.(id);
   if (!account) return false;
   return String(account.status || "") !== "disputed";
 });
@@ -1414,7 +1410,7 @@ $: {
   currentSignerId;
   tab.entityId;
   tab.signerId;
-  onchainReserves = buildOnchainReserves(getCurrentLiveEntityReplica()?.state?.reserves, externalTokens);
+  onchainReserves = buildOnchainReserves(replica?.state.reserves, externalTokens);
 }
 $: {
   if (pendingAssetBridgeSync && !resolvingAssetBridgeSync) {
@@ -1456,10 +1452,9 @@ $: selectedMoveTransferToken = findReserveTransferTokenBySymbol(moveAssetSymbol)
 $: accountSpendableByToken = (() => {
   activeEnv;
   envRevision;
-  const currentReplica = getCurrentLiveEntityReplica();
   return buildAccountSpendableByToken({
-    accounts: currentReplica?.state?.accounts,
-    localEntityId: String(currentReplica?.state?.entityId || tab.entityId || ""),
+    accounts: replica?.state.accounts,
+    localEntityId: String(replica?.state.entityId || tab.entityId || ""),
     deriveDelta: activeXlnFunctions?.deriveDelta,
   });
 })();
@@ -1593,7 +1588,7 @@ async function fetchExternalTokens(forceSnapshot = false) {
       let allowanceValues: bigint[] = [];
       let snapshotSource: ExternalWalletSnapshotSource | null = null;
       let tokenErrors: ExternalWalletReadResult["tokenErrors"] = [];
-      const observed = !forceSnapshot ? readExternalWalletState(getCurrentLiveEntityReplica()?.state?.externalWallet, tokenList, owner, allowanceReads) : null;
+      const observed = !forceSnapshot ? readExternalWalletState(replica?.state.externalWallet, tokenList, owner, allowanceReads) : null;
       if (observed) {
         nativeBalance = observed.nativeBalance;
         balances = observed.balances;
@@ -2494,7 +2489,7 @@ $: {
   currentSignerId;
   tab.entityId;
   tab.signerId;
-  const nextExternalWalletStateSyncKey = buildExternalWalletStateSyncSignature(getCurrentLiveEntityReplica()?.state?.externalWallet, resolveSelfEoaAddress());
+  const nextExternalWalletStateSyncKey = buildExternalWalletStateSyncSignature(replica?.state.externalWallet, resolveSelfEoaAddress());
   if (nextExternalWalletStateSyncKey !== externalWalletStateSyncKey) {
     externalWalletStateSyncKey = nextExternalWalletStateSyncKey;
     if (nextExternalWalletStateSyncKey && externalTokens.length > 0 && !externalFetchInFlight) {

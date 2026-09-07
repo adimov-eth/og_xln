@@ -397,18 +397,18 @@ export const TOUR_STEPS: TourStep[] = [
 			return 'Open Manage.';
 		},
 		mode: 'do',
-		done: ctx => (hub(ctx)?.dispute ?? 'none') !== 'none',
+		done: ctx => ['queued', 'sent', 'active'].includes(hub(ctx)?.dispute ?? 'none'),
 	},
 	{
 		id: 'dispute-batch',
 		chapter: 'Dispute',
 		title: 'Send it to the blockchain',
 		body: 'Your dispute is packed and waiting for your signature on Home. Sign and send. From here the blockchain runs the clock: the hub gets a window to show a newer signed page, and whoever holds the newest one wins.',
-		more: 'j_broadcast signs the batch and submits it to the Depository, which emits DisputeStarted. Response windows come from the signed account config: one hour for a hub, a day for a person.',
+		more: 'j_broadcast signs the batch and submits it to the Depository, which emits DisputeStarted. The runtime must observe that event before this step finishes. Response windows come from the signed account config.',
 		target: ctx => viaHome(ctx, 'batch-broadcast'),
 		hint: ctx => homeHint(ctx, 'Sign & send the batch.'),
 		mode: 'do',
-		done: ctx => ['sent', 'active'].includes(hub(ctx)?.dispute ?? 'none'),
+		done: ctx => hub(ctx)?.doc.activeDispute?.observedOnChain === true,
 	},
 	{
 		id: 'watchtower',

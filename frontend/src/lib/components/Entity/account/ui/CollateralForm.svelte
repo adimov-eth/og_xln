@@ -1,6 +1,8 @@
 <script lang="ts">
+import type { AccountReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   import { get } from 'svelte/store';
-  import type { AccountReplica, RuntimeReplica, RuntimeInput } from '@xln/core/api/public/runtime-module';
+  import type { RuntimeReplica, RuntimeInput } from '@xln/core/api/public/runtime-module';
   import { xlnFunctions, error } from '../../../../stores/xlnStore';
   import { errorLog } from '../../../../stores/errorLogStore';
   import { runtimeControllerHandle } from '../../../../stores/runtimeControllerStore';
@@ -21,7 +23,7 @@
   export let counterpartyId: string | null;
   export let accountIds: string[] = [];
   export let entityNames: Map<string, string> = new Map();
-  export let accountOverride: AccountReplica | null = null;
+  export let accountOverride: AccountReadView | null = null;
   export let submitRuntimeInput: ((input: RuntimeInput) => Promise<unknown> | unknown) | null = null;
 
   $: activeXlnFunctions = $xlnFunctions;
@@ -133,7 +135,7 @@
   }
 
   function resolveProjectedCounterpartyPolicy(
-    account: AccountReplica | null | undefined,
+    account: AccountReadView | null | undefined,
     ownerEntityId: string,
     tokenId: number,
   ): CounterpartyFeePolicy | null {

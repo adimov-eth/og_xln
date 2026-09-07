@@ -1,4 +1,5 @@
-import type { AccountReplica } from '@xln/core/api/public/runtime-module';
+import type { AccountReadView } from '$lib/components/Entity/core/entity-panel-types';
+
 import { ZeroAddress } from 'ethers';
 import type { FrontendXlnFunctions } from '$lib/stores/xlnStore';
 import { amountToUsd, getAssetUsdPrice } from '$lib/utils/assetPricing';
@@ -159,7 +160,7 @@ function emptyAccountPortfolioData(): AccountPortfolioData {
 }
 
 export function buildAccountPortfolioData(options: {
-  accounts: ReadonlyMap<string, AccountReplica> | undefined;
+  accounts: ReadonlyMap<string, AccountReadView> | undefined;
   localEntityId: string;
   deriveDelta: FrontendXlnFunctions['deriveDelta'] | undefined;
   getTokenInfo: (tokenId: number) => AssetTokenInfo;
@@ -191,7 +192,7 @@ export function buildAccountPortfolioData(options: {
 }
 
 export function buildAccountSpendableByToken(options: {
-  accounts: ReadonlyMap<string, AccountReplica> | undefined;
+  accounts: ReadonlyMap<string, AccountReadView> | undefined;
   localEntityId: string;
   deriveDelta: FrontendXlnFunctions['deriveDelta'] | undefined;
 }): Map<number, bigint> {

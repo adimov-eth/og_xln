@@ -1,8 +1,5 @@
-import type {
-  EntityReplica,
-  Profile,
-  XLNModule,
-} from '@xln/core/api/public/runtime-module';
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+import type { Profile, XLNModule } from '@xln/core/api/public/runtime-module';
 import type { AccountRoleEvidence } from '@xln/core/account/config/dispute-config';
 import type { SameJurisdictionSwapCommandPlan } from '@xln/core/runtime/swap-cmd/swap-command-plan';
 import type { SwapPanelRuntimeView } from '../swap-panel-helpers';
@@ -42,7 +39,7 @@ export const resolveSameJSwapPartyRoles = (input: Readonly<{
 };
 
 export type SameJSwapCommandInput = Readonly<{
-  committedSourceReplica: EntityReplica;
+  committedSourceReplica: EntityReadView;
   runtimeView: Pick<SwapPanelRuntimeView, 'committedRoles'>;
   source: Readonly<{
     entityId: string;

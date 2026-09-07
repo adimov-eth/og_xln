@@ -1,5 +1,6 @@
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
 import { formatEntityId } from '$lib/utils/format';
-import type { EntityReplica } from '$lib/types/ui';
+
 import type {
   BookState,
   EntityState,
@@ -15,14 +16,14 @@ export type SwapPanelReplicaView = {
   key: string;
   entityId: string;
   signerId: string;
-  replica: EntityReplica;
+  replica: EntityReadView;
 };
 
 export type SwapPanelProjectionSource = {
   profiles?: readonly GossipProfile[] | Map<string, GossipProfile> | null;
   networkProfiles?: readonly GossipProfile[] | Map<string, GossipProfile> | null;
   entityNames?: Map<string, string> | null;
-  replicas?: Map<string, EntityReplica> | readonly EntityReplica[] | null;
+  replicas?: Map<string, EntityReadView> | readonly EntityReadView[] | null;
 };
 export type SwapPanelFrame = RuntimeReplica | EnvSnapshot | EntityState | SwapPanelProjectionSource | null | undefined;
 
@@ -36,7 +37,7 @@ type SwapGossipSource = {
 export type SwapPanelRuntimeView = {
   profiles: GossipProfile[];
   entityNames: Map<string, string>;
-  localReplicas: EntityReplica[];
+  localReplicas: EntityReadView[];
   localReplicaEntries: SwapPanelReplicaView[];
   getHubProfile: (entityIdValue: string) => GossipProfile | null;
   committedRoles: ReadonlyMap<string, boolean>;
@@ -95,8 +96,8 @@ function readSwapGossipProfiles(frame: SwapPanelFrame): GossipProfile[] {
   return Array.isArray(source.gossip.profiles) ? source.gossip.profiles : [];
 }
 
-function replicaMapFromArray(replicas: readonly EntityReplica[]): Map<string, EntityReplica> {
-  const mapped = new Map<string, EntityReplica>();
+function replicaMapFromArray(replicas: readonly EntityReadView[]): Map<string, EntityReadView> {
+  const mapped = new Map<string, EntityReadView>();
   for (const replica of replicas) {
     const entityId = normalizeEntityId(replica?.entityId || replica?.state?.entityId || '');
     if (!entityId) continue;
@@ -106,16 +107,18 @@ function replicaMapFromArray(replicas: readonly EntityReplica[]): Map<string, En
   return mapped;
 }
 
-function readSwapReplicaMap(frame: SwapPanelFrame): Map<string, EntityReplica> | null {
-  const projectionReplicas = (frame as SwapPanelProjectionSource | null | undefined)?.replicas;
-  if (projectionReplicas instanceof Map) return projectionReplicas as Map<string, EntityReplica>;
-  if (Array.isArray(projectionReplicas)) return replicaMapFromArray(projectionReplicas);
-  const source = frame as { state?: { eReplicas?: unknown } } | null | undefined;
-  return source?.state?.eReplicas instanceof Map ? source.state.eReplicas as Map<string, EntityReplica> : null;
+function readSwapReplicaMap(frame: SwapPanelFrame): Map<string, EntityReadView> | null {
+  if (!frame) return null;
+  if ('replicas' in frame) {
+    const projectionReplicas = frame.replicas;
+    if (projectionReplicas instanceof Map) return projectionReplicas;
+    if (projectionReplicas) return replicaMapFromArray(projectionReplicas);
+  }
+  return 'state' in frame ? frame.state.eReplicas : null;
 }
 
-function materializeSwapReplica(candidate: EntityReplica): EntityReplica {
-  const replica: EntityReplica = { ...candidate };
+function materializeSwapReplica(candidate: EntityReadView): EntityReadView {
+  const replica: EntityReadView = { ...candidate };
   if (candidate.state) {
     replica.state = { ...candidate.state };
     const orderbookExt = candidate.state.orderbookExt;

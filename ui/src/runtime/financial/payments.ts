@@ -37,12 +37,14 @@ export async function quotePaymentRoutes(input: {
 	targetEntityId: string;
 	tokenId: number;
 	amount: bigint;
+	fundingAccountId?: string;
 }): Promise<PaymentRouteQuote[]> {
 	const response = await requireAdapter().read<RuntimeAdapterPaymentRoutesResponse>('payment-routes', {
 		sourceEntityId: input.sourceEntityId,
 		targetEntityId: input.targetEntityId,
 		tokenId: input.tokenId,
 		amount: input.amount.toString(),
+		...(input.fundingAccountId ? { fundingAccountId: input.fundingAccountId } : {}),
 	});
 	const quotes: PaymentRouteQuote[] = response.routes.map(route => ({
 		path: route.path.map(id => id.toLowerCase()),

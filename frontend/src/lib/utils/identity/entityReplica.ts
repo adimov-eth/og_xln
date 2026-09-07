@@ -80,12 +80,12 @@ export function getCounterpartyAccount(
   return null;
 }
 
-export function isCommittedAccount(account: AccountReplica | null | undefined): boolean {
+export function isCommittedAccount(account: Pick<AccountReplica, 'currentFrame' | 'currentHeight'> | null | undefined): boolean {
   if (!account) return false;
   return Number(account.currentFrame?.height ?? account.currentHeight ?? 0) > 0;
 }
 
-export function isOpeningAccount(account: AccountReplica | null | undefined): boolean {
+export function isOpeningAccount(account: Pick<AccountReplica, 'currentFrame' | 'currentHeight'> | null | undefined): boolean {
   if (!account) return false;
   return !isCommittedAccount(account);
 }

@@ -32,6 +32,7 @@ import {
   signRuntimeAdapterOwnerBinding,
 } from './commands/runtimeCommandJournalKeyring';
 import { findPersistedEmbeddedRuntimeInputHeight } from './commands/embeddedRuntimeCommandCompletion';
+import { waitForObservedRemoteCommand } from './commands/remote-command-observation';
 import {
   REMOTE_HISTORY_SCAN_CACHE_LIMIT,
   ensureRuntimeHistoryContext,
@@ -136,8 +137,8 @@ const runtimeIdFromRuntimeAdapterConfig = (config: RuntimeAdapterConfig): string
 
 export interface FrontendXlnFunctions {
   deriveDelta: XLNModule['deriveDelta'];
-  planSwapInboundCapacity: XLNModule['planSwapInboundCapacity'];
-  readSwapAccountCapacity: XLNModule['readSwapAccountCapacity'];
+  planReceiveCapacity: XLNModule['planReceiveCapacity'];
+  readAccountCapacity: XLNModule['readAccountCapacity'];
   planSwapCommand: XLNModule['planSwapCommand'];
   deriveSwapNetAuthorization: XLNModule['deriveSwapNetAuthorization'];
   formatTokenAmount: (tokenId: number, amount: bigint | null | undefined) => string;
@@ -1404,20 +1405,17 @@ const embeddedAdapterTargetsRuntimeEnv = (targetEnv: RuntimeReplica): boolean =>
 
 const waitForRemoteRuntimeProjectionAtHeight = async (
   targetHeight: number | null | undefined,
+  isCurrent: () => boolean,
 ): Promise<number> => {
   const target = Math.max(0, Math.floor(Number(targetHeight || 0)));
   const startedAt = Date.now();
-  let latestHeight = Math.max(
-    0,
-    Math.floor(Number(get(runtimeView).height || get(runtimeControllerHandle).height || get(currentHeight) || 0)),
-  );
+  let latestHeight = 0;
   while (Date.now() - startedAt <= REMOTE_RUNTIME_PROJECTION_WAIT_TIMEOUT_MS) {
+    if (!isCurrent()) throw new Error('REMOTE_RUNTIME_COMMAND_OBSERVATION_SUPERSEDED');
     await refreshCurrentRuntimeProjection();
-    latestHeight = Math.max(
-      Math.max(0, Math.floor(Number(get(runtimeView).height || 0))),
-      Math.max(0, Math.floor(Number(get(runtimeControllerHandle).height || 0))),
-      Math.max(0, Math.floor(Number(get(currentHeight) || 0))),
-    );
+    if (!isCurrent()) throw new Error('REMOTE_RUNTIME_COMMAND_OBSERVATION_SUPERSEDED');
+    const view = get(runtimeView);
+    latestHeight = view.runtimeId === get(runtimeControllerHandle).id ? Number(view.frame?.height ?? 0) : 0;
     if (target <= 0 || latestHeight >= target) return latestHeight;
     await sleep(REMOTE_RUNTIME_PROJECTION_WAIT_POLL_MS);
   }
@@ -1425,14 +1423,15 @@ const waitForRemoteRuntimeProjectionAtHeight = async (
 };
 
 const observeRemoteRuntimeCommand = async (
-  accepted: Awaited<ReturnType<typeof runtimeAdapterSend>>,
+  adapter: RuntimeAdapter,
+  input: RuntimeInput,
+  command: { commandId: string; commandSequence: number },
   progress: RuntimeCommandProgress,
 ): Promise<void> => {
-  await progress.accepted(accepted.height);
-  // The server returns the committed head before queueing. The command can
-  // first affect H+1; observe that real Runtime projection, never a transport
-  // receipt that merely says bytes reached an ingress queue.
-  const projectedHeight = await waitForRemoteRuntimeProjectionAtHeight(accepted.height + 1);
+  const isCurrent = (): boolean => getRuntimeControllerAdapter() === adapter && get(runtimeView).atHeight === null;
+  const observed = await waitForObservedRemoteCommand({ adapter, input, command, isCurrent, accepted: progress.accepted });
+  const projectedHeight = await waitForRemoteRuntimeProjectionAtHeight(observed.height, isCurrent);
+  if (!isCurrent()) throw new Error('REMOTE_RUNTIME_COMMAND_OBSERVATION_SUPERSEDED');
   await progress.observed(projectedHeight);
 };
 
@@ -1466,11 +1465,10 @@ const routeRemoteRuntimeInput = async (
     ...commandOptions,
   }, async (progress, receipt) => {
     if (receipt.commandSequence === null) throw new Error('RUNTIME_COMMAND_RECEIPT_SEQUENCE_MISSING');
-    const accepted = await runtimeAdapterSend(input, {
+    await observeRemoteRuntimeCommand(adapter, input, {
       commandId: receipt.commandId,
       commandSequence: receipt.commandSequence,
-    });
-    await observeRemoteRuntimeCommand(accepted, progress);
+    }, progress);
     return null;
   });
   return submitted.result;
@@ -1543,11 +1541,10 @@ const routeRuntimeInput = async (
     if (usesRemoteAdapter) {
       if (!remoteAdapter) throw new Error('RuntimeController remote adapter is not connected');
       if (receipt.commandSequence === null) throw new Error('RUNTIME_COMMAND_RECEIPT_SEQUENCE_MISSING');
-      const accepted = await runtimeAdapterSend(input, {
+      await observeRemoteRuntimeCommand(remoteAdapter, input, {
         commandId: receipt.commandId,
         commandSequence: receipt.commandSequence,
-      });
-      await observeRemoteRuntimeCommand(accepted, progress);
+      }, progress);
       return null;
     }
     assertLocalRuntimeInputIngressOpen(runtimeEnv);
@@ -1796,8 +1793,8 @@ export const xlnFunctions = derived([xlnInstance, settings], ([$xlnInstance, $se
 
     return {
       deriveDelta: failFn('deriveDelta'),
-      planSwapInboundCapacity: failFn('planSwapInboundCapacity'),
-      readSwapAccountCapacity: failFn('readSwapAccountCapacity'),
+      planReceiveCapacity: failFn('planReceiveCapacity'),
+      readAccountCapacity: failFn('readAccountCapacity'),
       planSwapCommand: failFn('planSwapCommand'),
       deriveSwapNetAuthorization: failFn('deriveSwapNetAuthorization'),
       formatTokenAmount: failFn('formatTokenAmount'),
@@ -1851,8 +1848,8 @@ export const xlnFunctions = derived([xlnInstance, settings], ([$xlnInstance, $se
   const readyFunctions: FrontendXlnFunctions = {
     // Account utilities
     deriveDelta: $xlnInstance.deriveDelta,
-    planSwapInboundCapacity: $xlnInstance.planSwapInboundCapacity,
-    readSwapAccountCapacity: $xlnInstance.readSwapAccountCapacity,
+    planReceiveCapacity: $xlnInstance.planReceiveCapacity,
+    readAccountCapacity: $xlnInstance.readAccountCapacity,
     planSwapCommand: $xlnInstance.planSwapCommand,
     deriveSwapNetAuthorization: $xlnInstance.deriveSwapNetAuthorization,
     // Frontend display formatter with configurable precision from Settings.

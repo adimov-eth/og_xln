@@ -1,5 +1,7 @@
 <script lang="ts">
-  import type { EntityReplica, Tab } from '$lib/types/ui';
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
+  import type { Tab } from '$lib/types/ui';
   import type { EntityPanelJurisdictionView } from '../core/entity-panel-model';
   import JurisdictionDropdown from '$lib/components/Jurisdiction/JurisdictionDropdown.svelte';
   import EntityDropdown from './shell/EntityDropdown.svelte';
@@ -9,7 +11,7 @@
   export let showJurisdiction = true;
   export let userModeHeader = false;
   export let selectedJurisdictionName: string | null = null;
-  export let activeReplicas: Map<string, EntityReplica> | null = null;
+  export let activeReplicas: Map<string, EntityReadView> | null = null;
   export let entityNames: Map<string, string> = new Map();
   export let jurisdictions: EntityPanelJurisdictionView[] = [];
   export let handleJurisdictionSelect: (event: CustomEvent<{ selected: string | null }>) => void = () => {};

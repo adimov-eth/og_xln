@@ -1,11 +1,13 @@
 <script lang="ts">
-  import type { AccountReplica, EntityReplica, Tab } from '$lib/types/ui';
+import type { AccountReadView, EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
+  import type { Tab } from '$lib/types/ui';
   import AccountPanel from '../../account/ui/AccountPanel.svelte';
 
-  export let selectedAccount: AccountReplica;
+  export let selectedAccount: AccountReadView;
   export let selectedAccountId: string;
   export let tab: Tab;
-  export let replica: EntityReplica | null = null;
+  export let replica: EntityReadView | null = null;
   export let entityNames: Map<string, string> = new Map();
   export let pendingOffchainFaucetKeys: Set<string> = new Set();
   export let commandsReady = false;

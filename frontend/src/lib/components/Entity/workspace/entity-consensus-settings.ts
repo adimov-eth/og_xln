@@ -1,4 +1,5 @@
-import type { EntityReplica, Proposal } from '@xln/core/entity/types';
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+import type { Proposal } from '@xln/core/entity/types';
 import {
   projectConsensusPayments,
   type ConsensusPaymentProposalView,
@@ -112,13 +113,13 @@ const proposalView = (
   };
 };
 
-const certificateVoteCount = (replica: EntityReplica): number => {
+const certificateVoteCount = (replica: EntityReadView): number => {
   const certificate = replica.pendingLeaderCertificate;
   if (!certificate) return 0;
   return certificate.preparedVotes?.size ?? certificate.votes.size;
 };
 
-const boardShares = (replica: EntityReplica, signerId: string): bigint => {
+const boardShares = (replica: EntityReadView, signerId: string): bigint => {
   const shares = replica.state.config.shares[signerId];
   if (typeof shares !== 'bigint') {
     throw new Error(`CONSENSUS_SETTINGS_BOARD_SHARE_MISSING: signer=${signerId}`);
@@ -127,7 +128,7 @@ const boardShares = (replica: EntityReplica, signerId: string): bigint => {
 };
 
 export const buildEntityConsensusSettingsView = (
-  replica: EntityReplica,
+  replica: EntityReadView,
   runtimeHeight: number,
   localDiagnosticsAvailable: boolean,
   options: EntityConsensusSettingsOptions = {},

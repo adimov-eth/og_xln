@@ -6,10 +6,14 @@
  */
 import type { EntityTx, JBatch, RuntimeAdapterViewFrame } from '@xln/core/api/public/runtime-module';
 import type { SettlementOp } from '@xln/core/types/account';
-import { postJson } from '../http';
+import type { BilateralRebalanceFeePolicy } from '@xln/core/types/finance/rebalance';
 
 /** One account as the view-frame carries it (native maps instead of persistent collections). */
 export type AccountDoc = NonNullable<RuntimeAdapterViewFrame['activeEntity']>['accounts']['items'][number];
+type DisputeAccountDoc = Pick<AccountDoc, 'status' | 'activeDispute' | 'disputePrepare'> & {
+	state: Pick<AccountDoc['state'], 'leftEntity' | 'rightEntity'>;
+};
+type DisputeBatch = { disputeStarts: ReadonlyArray<Pick<JBatch['disputeStarts'][number], 'counterentity'>> };
 
 export type FeePolicy = { policyVersion: number; baseFee: bigint; gasFee: bigint; liquidityFeeBps: bigint };
 
@@ -17,7 +21,11 @@ export type FeePolicy = { policyVersion: number; baseFee: bigint; gasFee: bigint
  * The counterparty's committed rebalance fee policy for a token. We are on one
  * side; the fee we pay is set by the other side's snapshot.
  */
-export function counterpartyFeePolicy(doc: AccountDoc | null | undefined, isLeft: boolean, tokenId: number): FeePolicy | null {
+export function counterpartyFeePolicy(
+	doc: { state: { rebalanceFeePolicies?: ReadonlyMap<number, BilateralRebalanceFeePolicy> } } | null | undefined,
+	isLeft: boolean,
+	tokenId: number,
+): FeePolicy | null {
 	const policy = doc?.state?.rebalanceFeePolicies?.get(tokenId)?.[isLeft ? 'right' : 'left'];
 	if (!policy) return null;
 	return { policyVersion: policy.policyVersion, baseFee: policy.baseFee, gasFee: policy.gasFee, liquidityFeeBps: policy.liquidityFeeBps };
@@ -54,8 +62,8 @@ export function buildSettleApproveTx(counterpartyEntityId: string, workspaceHash
 	return { type: 'settle_approve', data: { counterpartyEntityId, workspaceHash } };
 }
 
-/** queued = the dispute start sits in our draft batch; sent = the batch went to the chain and DisputeStarted is not observed yet; active = activeDispute set. */
-export type DisputePhase = 'none' | 'preparing' | 'queued' | 'sent' | 'active';
+/** Only an observed DisputeStarted opens the response window; a local placeholder still needs submission. */
+export type DisputePhase = 'none' | 'preparing' | 'queued' | 'sent' | 'active' | 'closed';
 
 export type DisputeView = {
 	phase: DisputePhase;
@@ -68,9 +76,9 @@ export type DisputeView = {
 	reason: string;
 };
 
-export function disputeView(doc: AccountDoc | null | undefined, isLeft: boolean, draftBatch?: JBatch | null): DisputeView {
+export function disputeView(doc: DisputeAccountDoc | null | undefined, isLeft: boolean, draftBatch?: DisputeBatch | null): DisputeView {
 	const active = doc?.activeDispute;
-	if (active) {
+	if (active?.observedOnChain === true) {
 		return {
 			phase: 'active',
 			startedByUs: active.startedByLeft === isLeft,
@@ -80,12 +88,17 @@ export function disputeView(doc: AccountDoc | null | undefined, isLeft: boolean,
 			reason: String(doc?.disputePrepare?.reason || ''),
 		};
 	}
-	if (String(doc?.status || '') === 'disputed') {
-		const queued = (draftBatch?.disputeStarts?.length ?? 0) > 0;
+	if (active) {
+		const counterpartyId = isLeft ? doc?.state.rightEntity : doc?.state.leftEntity;
+		const queued = draftBatch?.disputeStarts.some(start => start.counterentity === counterpartyId) ?? false;
 		return { phase: queued ? 'queued' : 'sent', startedByUs: true, timeout: 0, observedOnChain: false, finalizeQueued: false, reason: String(doc?.disputePrepare?.reason || '') };
 	}
 	if (String(doc?.status || '') === 'dispute_preparing' || doc?.disputePrepare) {
 		return { phase: 'preparing', startedByUs: true, timeout: 0, observedOnChain: false, finalizeQueued: false, reason: String(doc?.disputePrepare?.reason || '') };
+	}
+	// Account J-finality clears activeDispute but retains disputed status: the account is permanently closed.
+	if (doc?.status === 'disputed') {
+		return { phase: 'closed', startedByUs: false, timeout: 0, observedOnChain: false, finalizeQueued: false, reason: '' };
 	}
 	return { phase: 'none', startedByUs: false, timeout: 0, observedOnChain: false, finalizeQueued: false, reason: '' };
 }
@@ -172,6 +185,7 @@ export function describeSettlementOp(op: SettlementOp, money: (tokenId: number, 
  * user cannot set the hub's own credit limit; the hub decides and commits.
  */
 export async function requestCreditFromHub(input: { userEntityId: string; hubEntityId: string; tokenId: number; amount: bigint }): Promise<void> {
+	const { postJson } = await import('../http');
 	await postJson('/api/credit/request', {
 		userEntityId: input.userEntityId,
 		hubEntityId: input.hubEntityId,

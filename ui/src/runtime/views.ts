@@ -1,15 +1,10 @@
 import { useMemo } from 'react';
-import type {
-	Delta,
-	DerivedDelta,
-	JBatchState,
-	RuntimeAdapterEntitySummary,
-	RuntimeAdapterViewFrame,
-} from '@xln/core/api/public/runtime-module';
+import type { Delta, DerivedDelta, JBatchState, RuntimeAdapterEntitySummary, RuntimeAdapterViewFrame } from '@xln/core/api/public/runtime-module';
 import { useAdapterRead, type ReadState } from './hooks';
 import { useApp } from './store';
 import { peekXLN } from './xln-loader';
 import { usdOf } from './financial/prices';
+import { accountNetBalance } from './financial/balance';
 import { disputeView, settlementView, type AccountDoc, type DisputePhase, type SettlementPhase } from './financial/manage';
 
 /**
@@ -92,13 +87,27 @@ export type WalletView = {
 	onchain: PlaceRow[];
 	reserves: PlaceRow[];
 	totals: TokenTotals[];
-	usd: { onchain: number; reserve: number; pending: number; receivable: number; secured: number; risk: number; owed: number; net: number; sendCapacity: number; receiveCapacity: number };
+	usd: {
+		onchain: number;
+		reserve: number;
+		pending: number;
+		receivable: number;
+		secured: number;
+		risk: number;
+		owed: number;
+		net: number;
+		sendCapacity: number;
+		receiveCapacity: number;
+	};
 	loading: boolean;
 	error: string | null;
 	refresh: () => void;
 };
 
-const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
+const normalizeId = (value: unknown): string =>
+	String(value || '')
+		.trim()
+		.toLowerCase();
 
 export function displayEntityName(names: Map<string, string>, entityId: string): string {
 	const name = names.get(normalizeId(entityId));
@@ -155,9 +164,7 @@ export function useWallet(entityId: string | null): WalletView {
 			const tokens: AccountTokenView[] = [];
 			for (const [tokenId, delta] of doc.state.deltas.entries()) {
 				const derived = xln.deriveDelta(delta, isLeft);
-				const total = delta.ondelta + delta.offdelta;
-				// Negative total means LEFT pays: LEFT's own position is +total, RIGHT's is -total.
-				tokens.push({ tokenId: Number(tokenId), delta, derived, signed: isLeft ? total : -total });
+				tokens.push({ tokenId: Number(tokenId), delta, derived, signed: accountNetBalance(derived) });
 			}
 			tokens.sort((a, b) => a.tokenId - b.tokenId);
 			const dispute = disputeView(doc, isLeft, core?.jBatchState?.batch ?? null);
@@ -205,11 +212,7 @@ export function useWallet(entityId: string | null): WalletView {
 			.filter(row => row.amount > 0n || row.pending > 0n)
 			.sort((a, b) => a.tokenId - b.tokenId);
 
-		const tokenIds = new Set<number>([
-			...onchain.map(row => row.tokenId),
-			...reserves.map(row => row.tokenId),
-			...accounts.flatMap(account => account.tokens.map(token => token.tokenId)),
-		]);
+		const tokenIds = new Set<number>([...onchain.map(row => row.tokenId), ...reserves.map(row => row.tokenId), ...accounts.flatMap(account => account.tokens.map(token => token.tokenId))]);
 		const totals: TokenTotals[] = Array.from(tokenIds)
 			.sort((a, b) => a - b)
 			.map(tokenId => {
@@ -236,8 +239,7 @@ export function useWallet(entityId: string | null): WalletView {
 						receiveCapacity += token.derived.inCapacity;
 					}
 				}
-				const active =
-					onchainAmount > 0n || reserveAmount > 0n || pending > 0n || receivable > 0n || owed < 0n || sendCapacity > 0n || receiveCapacity > 0n;
+				const active = onchainAmount > 0n || reserveAmount > 0n || pending > 0n || receivable > 0n || owed < 0n || sendCapacity > 0n || receiveCapacity > 0n;
 				return {
 					tokenId,
 					onchain: onchainAmount,
@@ -255,7 +257,18 @@ export function useWallet(entityId: string | null): WalletView {
 				};
 			});
 
-		const usd = { onchain: 0, reserve: 0, pending: 0, receivable: 0, secured: 0, risk: 0, owed: 0, net: 0, sendCapacity: 0, receiveCapacity: 0 };
+		const usd = {
+			onchain: 0,
+			reserve: 0,
+			pending: 0,
+			receivable: 0,
+			secured: 0,
+			risk: 0,
+			owed: 0,
+			net: 0,
+			sendCapacity: 0,
+			receiveCapacity: 0,
+		};
 		for (const total of totals) {
 			usd.onchain += usdOf(total.tokenId, total.onchain);
 			usd.reserve += usdOf(total.tokenId, total.reserve);

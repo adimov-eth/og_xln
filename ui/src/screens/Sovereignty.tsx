@@ -194,7 +194,7 @@ export function Sovereignty() {
 										<span className="t">
 											{entry.label}
 											{entry.isHub ? <span className="chip hub">hub</span> : null}
-											{entry.disputePhase !== 'none' ? <span className="state st-dispute">dispute</span> : null}
+											{entry.disputePhase !== 'none' ? <span className="state st-dispute">{entry.disputePhase === 'closed' ? 'closed' : 'dispute'}</span> : null}
 										</span>
 										<span className="s">
 											{entry.frameCosigned ? 'co-signed' : 'awaiting their signature'} · {entry.canDisputeAlone ? 'proof on file: you can dispute alone' : 'no proof yet'} · they answer in{' '}

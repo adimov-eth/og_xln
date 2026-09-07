@@ -1,6 +1,8 @@
 <script lang="ts">
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
 import { tick } from 'svelte';
-import type { EntityReplica, Tab } from '$lib/types/ui';
+import type { Tab } from '$lib/types/ui';
 import { writable } from 'svelte/store';
 import type { BookState, Profile, RuntimeReplica, SwapBookEntry } from '@xln/core/api/public/runtime-module';
 import {
@@ -102,7 +104,7 @@ import {
   type PairOption,
 } from '../swap-panel-core';
 import { planSameJSwapCommand, resolveSameJSwapPartyRoles } from './commands/same-j-swap-command';
-export let replica: EntityReplica | null;
+export let replica: EntityReadView | null;
 export let tab: Tab;
 export let env: RuntimeReplica | null = null;
 export let isLive: boolean;
@@ -232,7 +234,7 @@ let ignoreOutsideMenuClickUntil = 0;
 let ignoreNextWindowMenuClick = false;
 let ignoreWindowMenuClickCount = 0;
 let crossTargetInCapacity = 0n;
-let selectedCrossTargetReplica: EntityReplica | null = null;
+let selectedCrossTargetReplica: EntityReadView | null = null;
 let crossTargetHasAccount = false;
 let needsCrossTargetAccountSetup = false;
 let canAutoOpenCrossTargetAccount = false;
@@ -246,15 +248,15 @@ let crossSetupCreditIncreaseLabel = '';
 let crossSwapSetupSteps: CrossSwapSetupStep[] = [];
 let placingSwapOffer = false;
 let swapRuntimeView: SwapPanelRuntimeView = buildSwapPanelRuntimeView(null);
-let detailedSourceReplica: EntityReplica | null = null;
-let detailedTargetReplica: EntityReplica | null = null;
+let detailedSourceReplica: EntityReadView | null = null;
+let detailedTargetReplica: EntityReadView | null = null;
 let swapHistoryItems: OfferLifecycle[] = [];
 let swapHistoryNextCursor: string | null = null;
 let swapHistoryLoading = false;
-let cachedSourceReplica: EntityReplica | null = null;
+let cachedSourceReplica: EntityReadView | null = null;
 const detailedReplicaByEntityId = new Map<
   string,
-  { runtimeHeight: number; replica: EntityReplica }
+  { runtimeHeight: number; replica: EntityReadView }
 >();
 let sourceProjectionKey = '';
 let sourceProjectionRequestId = 0;
@@ -314,7 +316,7 @@ async function refreshDetailedSourceReplica(key: string, entityId: string): Prom
   }
 }
 
-async function readCommittedEntityReplica(entityId: string): Promise<EntityReplica> {
+async function readCommittedEntityReplica(entityId: string): Promise<EntityReadView> {
   const frame = await readRuntimeEntityProjectionFrame(entityId);
   const projected = buildEntityPanelView(null, entityId, '', '', frame).replica;
   if (!projected) throw new Error(`SWAP_SOURCE_PROJECTION_MISSING:${entityId}`);
@@ -646,7 +648,7 @@ type CrossMarketView = {
   baseKey: string;
   quoteKey: string;
 };
-function getReplicaJurisdictionName(candidate: EntityReplica | null | undefined): string {
+function getReplicaJurisdictionName(candidate: EntityReadView | null | undefined): string {
   const state = candidate?.state as { config?: { jurisdiction?: { name?: unknown } } } | undefined;
   const byConfig = String(state?.config?.jurisdiction?.name || '').trim();
   if (byConfig) return normalizeJurisdictionDisplayName(byConfig);
@@ -654,7 +656,7 @@ function getReplicaJurisdictionName(candidate: EntityReplica | null | undefined)
   if (byPosition) return normalizeJurisdictionDisplayName(byPosition);
   return '';
 }
-function getReplicaJurisdictionRef(candidate: EntityReplica | null | undefined): string {
+function getReplicaJurisdictionRef(candidate: EntityReadView | null | undefined): string {
   const state = candidate?.state as
     | {
         config?: { jurisdiction?: { chainId?: unknown; depositoryAddress?: unknown; name?: unknown } };
@@ -708,7 +710,7 @@ function getHubProfile(entityIdValue: string): Profile | null {
   return swapRuntimeView.getHubProfile(entityIdValue);
 }
 function requireSwapPartyRoles(
-  candidate: EntityReplica | null | undefined,
+  candidate: EntityReadView | null | undefined,
   hubEntityId: string,
   label: 'SOURCE' | 'TARGET',
 ): {
@@ -795,7 +797,7 @@ function findHubProfilesForJurisdiction(jurisdictionName: string): Profile[] {
 function buildCrossTargetOptions(
   view: SwapPanelRuntimeView = swapRuntimeView,
   sourceEntityId = sourceEntityIdValue,
-  sourceReplica: EntityReplica | null | undefined = currentReplica,
+  sourceReplica: EntityReadView | null | undefined = currentReplica,
 ): CrossTargetOption[] {
   const sourceJurisdiction = getReplicaJurisdictionName(sourceReplica);
   const sourceJurisdictionRef = getReplicaJurisdictionRef(sourceReplica);
@@ -855,7 +857,7 @@ function buildCrossTargetOptions(
 }
 function buildRouteOptions(
   sourceEntityId = sourceEntityIdValue,
-  sourceReplica: EntityReplica | null | undefined = currentReplica,
+  sourceReplica: EntityReadView | null | undefined = currentReplica,
   selectedHubEntityId = activeOrderAccountId,
   targets: CrossTargetOption[] = crossTargetOptions,
 ): SwapRouteOption[] {
@@ -1099,7 +1101,7 @@ function buildPanelRoutedRouteCandidates(
   mode = swapRouteMode,
   target = selectedCrossTarget,
   sourceHubInput = activeOrderAccountId,
-  sourceReplica: EntityReplica | null | undefined = currentReplica,
+  sourceReplica: EntityReadView | null | undefined = currentReplica,
   sourceJurisdiction = sourceJurisdictionLabel,
   sourceToken = giveToken,
   targetToken = wantToken,
@@ -1619,7 +1621,7 @@ function hasTokenInAccount(counterpartyEntityId: string, tokenIdValue: number): 
 function readInCapacity(counterpartyEntityId: string, tokenIdValue: number): bigint {
   return readAccountCapacityForReplica(currentReplica, sourceEntityIdValue, resolveCounterpartyId(counterpartyEntityId), tokenIdValue)?.inCapacity ?? 0n;
 }
-function findReplicaByEntityId(entityId: string, view: SwapPanelRuntimeView = swapRuntimeView): EntityReplica | null {
+function findReplicaByEntityId(entityId: string, view: SwapPanelRuntimeView = swapRuntimeView): EntityReadView | null {
   const normalized = String(entityId || '')
     .trim()
     .toLowerCase();
@@ -1635,7 +1637,7 @@ function findReplicaByEntityId(entityId: string, view: SwapPanelRuntimeView = sw
     ) || null
   );
 }
-function hasReplicaAccount(candidate: EntityReplica | null | undefined, counterpartyEntityId: string): boolean {
+function hasReplicaAccount(candidate: EntityReadView | null | undefined, counterpartyEntityId: string): boolean {
   const counterparty = String(counterpartyEntityId || '').trim();
   if (!candidate || !counterparty) return false;
   return isMapLike(candidate.state?.accounts) && candidate.state.accounts.has(counterparty);
@@ -1967,7 +1969,7 @@ function resolveProjectedSignerId(entityId: string): string {
   }
   return '';
 }
-function resolveSwapLogicalClock(sourceReplica: EntityReplica | null | undefined = currentReplica): {
+function resolveSwapLogicalClock(sourceReplica: EntityReadView | null | undefined = currentReplica): {
   logicalTimestamp: number;
   logicalHeight: number;
 } {

@@ -65,6 +65,7 @@ import { isVaultAuthorityLeaseExpired } from '../../security/vault-authority-lea
 import { lockRuntimeCommandJournal } from '../commands/runtimeCommandJournalKeyring';
 
 import { deriveJurisdictionSignerIndex } from '../../../../../core/jurisdiction/machine/config/signer-derivation';
+import { withRuntimeCommittedRead } from '../../../../../core/runtime/frame/lifecycle/writer-lock';
 
 import {
   findRuntimeByIdCaseInsensitive,
@@ -469,7 +470,12 @@ export async function tryRestoreRuntimeEnvFromTower(
   return restoreRuntimeEnvFromRecoveryCandidate(runtime, xln, best);
 }
 
-async function uploadRuntimeRecoverySnapshot(runtimeId: string, env: RuntimeReplica, xln: XLNModule): Promise<void> {
+async function uploadRuntimeRecoverySnapshot(
+  runtimeId: string,
+  env: RuntimeReplica,
+  xln: XLNModule,
+  ownership: 'scheduled-reader' | 'frame-writer',
+): Promise<void> {
   if (
     typeof xln.buildRuntimeRecoveryBundle !== 'function' ||
     typeof xln.encryptRuntimeRecoveryBundle !== 'function' ||
@@ -481,59 +487,72 @@ async function uploadRuntimeRecoverySnapshot(runtimeId: string, env: RuntimeRepl
   const normalizedRuntimeId = normalizeRuntimeId(runtimeId);
   const runtime = get(runtimesState).runtimes[normalizedRuntimeId];
   if (!runtime?.seed) return;
-  if (Number(env.state.height || 0) <= 0) return;
-  if (!(env.state.eReplicas instanceof Map) || env.state.eReplicas.size === 0) return;
   const towers = getConfiguredRecoveryTowers(runtime);
   if (towers.length === 0) return;
 
-  const previous = runtimeRecoveryUploadMeta.get(normalizedRuntimeId);
-  if (previous && Number(env.state.height || 0) < previous.lastUploadedHeight) return;
+  const prepare = async () => {
+    const height = Math.max(0, Math.floor(Number(env.state.height || 0)));
+    if (height <= 0 || env.state.eReplicas.size === 0) return null;
+    const previous = runtimeRecoveryUploadMeta.get(normalizedRuntimeId);
+    if (previous && height < previous.lastUploadedHeight) return null;
+    if (shouldSkipRuntimeRecoveryUploadAtHeight(previous, height)) return null;
+    const signers = buildRuntimeRecoverySigners(runtime);
+    const meta = buildRuntimeRecoveryMeta(runtime);
+    const shouldUploadSnapshot =
+      !previous ||
+      !previous.lastSnapshotHash ||
+      previous.lastSnapshotHeight <= 0 ||
+      height - previous.lastSnapshotHeight >= RECOVERY_SNAPSHOT_INTERVAL_FRAMES ||
+      typeof xln.readPersistedFrameJournals !== 'function';
 
-  const height = Math.max(0, Math.floor(Number(env.state.height || 0)));
-  if (shouldSkipRuntimeRecoveryUploadAtHeight(previous, height)) return;
-  const signers = buildRuntimeRecoverySigners(runtime);
-  const meta = buildRuntimeRecoveryMeta(runtime);
-  const shouldUploadSnapshot =
-    !previous ||
-    !previous.lastSnapshotHash ||
-    previous.lastSnapshotHeight <= 0 ||
-    height - previous.lastSnapshotHeight >= RECOVERY_SNAPSHOT_INTERVAL_FRAMES ||
-    typeof xln.readPersistedFrameJournals !== 'function';
-
-  let backupSlot = 0;
-  let bundle: RuntimeRecoveryBundleV1;
-  if (shouldUploadSnapshot) {
-    bundle = xln.buildRuntimeRecoveryBundle(env, { signers, meta, kind: 'snapshot' });
-  } else {
-    const baseSnapshotHeight = previous.lastSnapshotHeight;
-    const baseSnapshotHash = previous.lastSnapshotHash;
-    if (!baseSnapshotHash) throw new Error('RECOVERY_UPLOAD_SNAPSHOT_HASH_MISSING');
-    const fromHeight = baseSnapshotHeight + 1;
-    const frames = await xln.readPersistedFrameJournals(env, {
-      fromHeight,
-      toHeight: height,
-      limit: RECOVERY_SNAPSHOT_INTERVAL_FRAMES,
-    });
-    const expectedFrames = height - baseSnapshotHeight;
-    const contiguous =
-      frames.length === expectedFrames &&
-      frames.every((frame, index) => Math.max(0, Math.floor(Number(frame.height || 0))) === fromHeight + index);
-    if (contiguous) {
-      backupSlot = 1;
-      bundle = xln.buildRuntimeRecoveryBundle(env, {
-        signers,
-        meta,
-        kind: 'journal_tail',
-        baseCheckpoint: {
-          height: baseSnapshotHeight,
-          hash: baseSnapshotHash,
-        },
-        frames,
-      });
+    let backupSlot = 0;
+    let bundle: RuntimeRecoveryBundleV1;
+    const buildSnapshot = async (): Promise<RuntimeRecoveryBundleV1> => {
+      const frame = await xln.readPersistedFrameJournal(env, height);
+      if (!frame) throw new Error(`RECOVERY_UPLOAD_TIP_JOURNAL_MISSING:${height}`);
+      return xln.buildRuntimeRecoveryBundle(env, { signers, meta, kind: 'snapshot', frames: [frame] });
+    };
+    if (shouldUploadSnapshot) {
+      bundle = await buildSnapshot();
     } else {
-      bundle = xln.buildRuntimeRecoveryBundle(env, { signers, meta, kind: 'snapshot' });
+      const baseSnapshotHeight = previous.lastSnapshotHeight;
+      const baseSnapshotHash = previous.lastSnapshotHash;
+      if (!baseSnapshotHash) throw new Error('RECOVERY_UPLOAD_SNAPSHOT_HASH_MISSING');
+      const fromHeight = baseSnapshotHeight + 1;
+      const frames = await xln.readPersistedFrameJournals(env, {
+        fromHeight,
+        toHeight: height,
+        limit: RECOVERY_SNAPSHOT_INTERVAL_FRAMES,
+      });
+      const expectedFrames = height - baseSnapshotHeight;
+      const contiguous =
+        frames.length === expectedFrames &&
+        frames.every((frame, index) => Math.max(0, Math.floor(Number(frame.height || 0))) === fromHeight + index);
+      if (contiguous) {
+        backupSlot = 1;
+        bundle = xln.buildRuntimeRecoveryBundle(env, {
+          signers,
+          meta,
+          kind: 'journal_tail',
+          baseCheckpoint: {
+            height: baseSnapshotHeight,
+            hash: baseSnapshotHash,
+          },
+          frames,
+        });
+      } else {
+        bundle = await buildSnapshot();
+      }
     }
-  }
+    return { bundle, backupSlot, previous };
+  };
+  // The committed barrier already owns the writer. Scheduled uploads acquire
+  // a read lease only while capturing one exact snapshot and its WAL evidence.
+  const prepared = ownership === 'frame-writer'
+    ? await prepare()
+    : await withRuntimeCommittedRead(env, prepare);
+  if (!prepared) return;
+  const { bundle, backupSlot, previous } = prepared;
   const encrypted = await xln.encryptRuntimeRecoveryBundle(bundle, runtime.seed);
   if (
     previous &&
@@ -733,7 +752,7 @@ function scheduleRuntimeRecoveryUpload(runtimeId: string, env: RuntimeReplica, x
       runtimeRecoveryUploadTimers.delete(normalizedRuntimeId);
       void trackRuntimeRecoveryUpload(
         normalizedRuntimeId,
-        uploadRuntimeRecoverySnapshot(normalizedRuntimeId, unwrapLiveRuntimeEnv(env) ?? env, xln),
+        uploadRuntimeRecoverySnapshot(normalizedRuntimeId, unwrapLiveRuntimeEnv(env) ?? env, xln, 'scheduled-reader'),
       ).catch(error => {
         errorLog.log(`Tower recovery upload failed for ${normalizedRuntimeId.slice(0, 12)}`, 'Runtime Recovery', {
           runtimeId: normalizedRuntimeId,
@@ -967,7 +986,7 @@ function registerRuntimeEnvChange(runtimeId: string, env: RuntimeReplica, xln: X
     runtimeRecoveryBarrierUnsubscribers.set(
       normalizedRuntimeId,
       xln.registerRecoveryBackupBarrier(runtimeEnv, async backupEnv => {
-        await uploadRuntimeRecoverySnapshot(normalizedRuntimeId, unwrapLiveRuntimeEnv(backupEnv) ?? backupEnv, xln);
+        await uploadRuntimeRecoverySnapshot(normalizedRuntimeId, unwrapLiveRuntimeEnv(backupEnv) ?? backupEnv, xln, 'frame-writer');
       }),
     );
   }

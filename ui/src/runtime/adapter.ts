@@ -114,6 +114,8 @@ export async function connectEmbedded(seed: string): Promise<RuntimeAdapter> {
 		if (!/^0x[0-9a-f]{64}$/.test(sourceEntityId) || !/^0x[0-9a-f]{64}$/.test(targetEntityId)) {
 			throw new Error('payment route endpoints must be 32-byte entity ids');
 		}
+		const fundingAccountId = query.fundingAccountId?.trim().toLowerCase();
+		if (fundingAccountId !== undefined && !/^0x[0-9a-f]{64}$/.test(fundingAccountId)) throw new Error('funding account must be a 32-byte entity id');
 		const tokenId = Number(query.tokenId);
 		const amount = BigInt(String(query.amount || '0'));
 		if (!Number.isSafeInteger(tokenId) || tokenId <= 0 || amount <= 0n) {
@@ -121,7 +123,7 @@ export async function connectEmbedded(seed: string): Promise<RuntimeAdapter> {
 		}
 		await xln.ensureGossipProfiles(target, [sourceEntityId, targetEntityId]);
 		const graph = target.gossip?.getNetworkGraph?.();
-		const routes = (await graph?.findPaths?.(sourceEntityId, targetEntityId, amount, tokenId)) ?? [];
+		const routes = (await graph?.findPaths?.(sourceEntityId, targetEntityId, amount, tokenId, fundingAccountId)) ?? [];
 		if (routes.length === 0) {
 			throw new Error(`no payment route from ${sourceEntityId} to ${targetEntityId}`);
 		}

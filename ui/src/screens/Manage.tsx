@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { isAccountTxKindAvailable } from '@xln/core/account/tx/admission-policy';
 import { Icon, type IconName } from '../components/Icons';
 import { PendingBatch } from '../components/PendingBatch';
 import { useApp } from '../runtime/store';
@@ -18,14 +19,14 @@ export function Manage() {
 	const debts = debtGroups(wallet.frame);
 	const needsSignature = wallet.accounts.filter(account => account.settlement === 'awaiting_you');
 	const settling = wallet.accounts.filter(account => account.settlement !== 'none' && account.settlement !== 'awaiting_you');
-	const disputed = wallet.accounts.filter(account => account.dispute !== 'none');
+	const disputed = wallet.accounts.filter(account => account.dispute !== 'none' && account.dispute !== 'closed');
 	const owed = debts.owed.reduce((sum, group) => sum + group.outstanding, 0n);
 
 	const doors: Array<{ to: string; icon: IconName; title: string; hint: string; testId: string }> = [
 		{ to: '/sovereignty', icon: 'shield', title: 'Sovereignty', hint: 'Keys, proofs, what is at risk', testId: 'manage-sovereignty' },
 		{ to: '/move', icon: 'arrow', title: 'Move', hint: 'Wallet ↔ reserve ↔ accounts', testId: 'manage-move' },
 		{ to: '/assets', icon: 'wallet', title: 'Assets', hint: 'On-chain wallet, faucets, debts', testId: 'manage-assets' },
-		{ to: '/lend', icon: 'bank', title: 'Lending', hint: 'Lend to a hub pool or borrow', testId: 'manage-lend' },
+		{ to: '/lend', icon: 'bank', title: 'Lending', hint: isAccountTxKindAvailable('lending_fund') && isAccountTxKindAvailable('lending_borrow_request') ? 'Lend to a hub pool or borrow' : 'Unavailable in this release · view existing positions', testId: 'manage-lend' },
 		{ to: '/ownership', icon: 'shield', title: 'Ownership', hint: 'Board, shares, takeovers', testId: 'manage-ownership' },
 	];
 
@@ -144,7 +145,7 @@ export function Manage() {
 										</span>
 										<span className="s">
 											{account.tokens.length} {account.tokens.length === 1 ? 'lane' : 'lanes'} · {account.frameHeight.toLocaleString('en-US')} frames ·{' '}
-											{account.dispute !== 'none' ? 'disputed' : account.settlement === 'none' ? 'open' : 'settling'}
+											{account.dispute === 'closed' ? 'closed' : account.dispute !== 'none' ? 'disputed' : account.settlement === 'none' ? 'open' : 'settling'}
 										</span>
 									</span>
 									<span className="chev">

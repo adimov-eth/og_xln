@@ -1,6 +1,8 @@
 <script lang="ts">
+import type { EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
+
   import type { RuntimeReplica, Profile as GossipProfile, RuntimeInput } from '@xln/core/api/public/runtime-module';
-  import type { EntityReplica, Tab } from '$lib/types/ui';
+  import type { Tab } from '$lib/types/ui';
   import type { DisputedAccountView } from '../account-dispute-view';
   import EntityInput from '../../../shared/EntityInput.svelte';
   import HubDiscoveryPanel from '../../onboarding/HubDiscoveryPanel.svelte';
@@ -9,7 +11,7 @@
     type HubDiscoveryProjection,
   } from '../../onboarding/hub-discovery-profile';
 
-  export let replica: EntityReplica | null = null;
+  export let replica: EntityReadView | null = null;
   export let tab: Tab;
   export let activeIsLive = false;
   export let actionRuntimeEnv: RuntimeReplica | null = null;
