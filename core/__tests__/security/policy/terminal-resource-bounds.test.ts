@@ -175,13 +175,13 @@ test('timeout stages the description in its event before deleting the Paybook en
 
 test('UTF-8 payment description admission rejects atomically above 256 bytes', () => {
   const state = makeEntity();
-  const description = 'я'.repeat(LIMITS.MAX_ENTITY_HTLC_NOTE_LENGTH / 2 + 1);
+  const description = 'é'.repeat(LIMITS.MAX_ENTITY_HTLC_NOTE_LENGTH / 2 + 1);
   expect(description.length).toBeLessThan(LIMITS.MAX_ENTITY_HTLC_NOTE_LENGTH);
   expect(() => validatePreparedHtlcPayment(state, payment(description), undefined))
     .toThrow('HTLC_PAYMENT_DESCRIPTION_INVALID');
   expect(state.paybook.entries.size).toBe(0);
   expect(state.paybook.feesEarned).toBe(0n);
-  expect(() => validatePreparedHtlcPayment(state, payment('я'.repeat(128)), undefined))
+  expect(() => validatePreparedHtlcPayment(state, payment('é'.repeat(128)), undefined))
     .toThrow('HTLC_PAYMENT_INFRA_CONTEXT_REQUIRED');
 });
 
@@ -226,11 +226,11 @@ test('proposal and threshold vote expose the same nested payment description wit
 });
 
 test('prepared context decode rejects oversized UTF-8 descriptions without mutating source', () => {
-  const source = finalContext('я'.repeat(129));
+  const source = finalContext('é'.repeat(129));
   const before = structuredClone(source);
   expect(() => validateHtlcPreparedInfraContext(source)).toThrow('HTLC_PREPARED_DESCRIPTION_INVALID');
   expect(source).toEqual(before);
-  const exact = finalContext('я'.repeat(128));
+  const exact = finalContext('é'.repeat(128));
   expect(validateHtlcPreparedInfraContext(exact)).toEqual(exact);
 });
 

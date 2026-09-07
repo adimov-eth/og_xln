@@ -148,9 +148,16 @@ test('bun run dev does not print token-bearing runtime import URLs by default', 
   expect(runDev).toContain('MESH_LOG_LEVEL="${XLN_LOG_LEVEL:-warn}"');
   expect(devChild).toContain('XLN_LOG_LEVEL="$MESH_LOG_LEVEL"');
   expect(runtimeWatcher).toContain('set -euo pipefail');
-  expect(runtimeWatcher).toContain('bun --no-orphans build core/api/public/browser.ts');
+  // The watcher bundles through one parameterised helper now; pin the command
+  // form and the exact entry/output pair rather than a concatenation that the
+  // script no longer contains literally.
+  expect(runtimeWatcher).toContain('bun --no-orphans build "$entry"');
+  expect(runtimeWatcher).toContain('watch_bundle core/api/public/browser.ts frontend/static/runtime.js');
+  expect(runtimeWatcher).toContain('watch_bundle core/rscore/ts-worker/worker.ts frontend/static/account-worker.js');
   expect(runtimeWatcher).toContain('--external buffer');
-  expect(runtimeWatcher).toContain('if [[ -z "${line//[[:space:]]/}" ]]');
+  // Blank bundler lines stay out of the dev log; the guard prints only
+  // non-whitespace output (it was previously written as the inverted skip).
+  expect(runtimeWatcher).toContain('if [[ -n "${line//[[:space:]]/}" ]]');
 });
 
 test('dev hub does not disable durable storage during bootstrap', () => {

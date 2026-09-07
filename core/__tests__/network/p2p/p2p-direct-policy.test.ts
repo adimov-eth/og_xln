@@ -79,7 +79,7 @@ describe('RuntimeP2P direct transport policy', () => {
     p2p.closed = false;
     p2p.backgroundIoPaused = false;
     p2p.directClients = new Map([[targetRuntimeId, directClient]]);
-    p2p.directPublishedProfiles = new WeakMap();
+    p2p.directPublishedProfiles = new Map();
     p2p.getLocalProfilesForEntities = async () => [profile];
     p2p.rememberAnnouncedProfile = () => undefined;
     p2p.env = { gossip: { announce: () => undefined } };
@@ -90,6 +90,57 @@ describe('RuntimeP2P direct transport policy', () => {
       to: targetRuntimeId,
       payload: { profiles: [profile], jurisdictions: [] },
     }]);
+  });
+
+  test('relay_inbound_entity_inputs_rejected', async () => {
+    const errors: string[] = [];
+    const env = {
+      runtimeId: runtimeIdFor('relay-victim'),
+      state: { height: 3, timestamp: 3 },
+      infrastructure: {},
+      error: (_category: string, message: string) => { errors.push(message); },
+      warn: () => {},
+    } as unknown as RuntimeReplica;
+    const p2p = Object.create(RuntimeP2P.prototype) as RuntimeP2P & Record<string, unknown>;
+    let admitted = 0;
+    let sourceChecks = 0;
+    p2p.env = env;
+    p2p.runtimeId = runtimeIdFor('relay-victim');
+    p2p.closing = false;
+    p2p.closed = false;
+    p2p.scheduleProfilePrefetch = () => { sourceChecks += 1; };
+    p2p.onEntityInputs = () => { admitted += 1; };
+    const envelope = {
+      sourceRuntimeId: runtimeIdFor('relay-attacker'),
+      sourceSignature: `0x${'11'.repeat(65)}`,
+      sourceRuntimeHeight: 1,
+      sourceRuntimeTimestamp: 1,
+      entityInputs: [{
+        entityId: `0x${'21'.repeat(32)}`,
+        runtimeId: runtimeIdFor('relay-victim'),
+        signerId: runtimeIdFor('relay-victim'),
+        entityTxs: [],
+      }],
+    };
+    const accept = (p2p as unknown as {
+      acceptInboundEntityInputs(
+        transport: 'relay' | 'direct',
+        from: string,
+        envelope: unknown,
+        timestamp: number | undefined,
+        sessionAuthenticated?: boolean,
+      ): Promise<void>;
+    }).acceptInboundEntityInputs.bind(p2p);
+
+    // Financial bytes never travel over a relay; even a "session authenticated"
+    // claim cannot admit them. The reject happens before source verification,
+    // profile prefetch or Runtime intake, and never touches the Runtime state.
+    await expect(accept('relay', runtimeIdFor('relay-attacker'), envelope, 1, true))
+      .rejects.toThrow('P2P_RELAY_ENTITY_INPUTS_FORBIDDEN');
+    expect(admitted).toBe(0);
+    expect(sourceChecks).toBe(0);
+    expect(env.infrastructure?.operatorStatus).toBeUndefined();
+    expect(errors).toEqual([]);
   });
 
   test('halts on a correlated post-WAL delivery rejection', () => {

@@ -6,7 +6,9 @@ import {
   convergeWithOffline,
   processWithOffline,
 } from '../../../scenarios/harness/helpers';
-import type { DeliverableEntityInput } from '../../../runtime/types';
+import { deliveryDeferred } from '../../../protocol/payments/delivery-result';
+import { ensureRuntimeInfrastructure } from '../../../runtime/envelope/replica-envelope';
+import type { DeliverableEntityInput, RuntimeReplica } from '../../../runtime/types';
 import type { JPrefixAttestation } from '../../../types/jurisdiction-events';
 import { htlcRouteConvergenceCycleBudget } from '../../../scenarios/payments/test-economy';
 
@@ -29,6 +31,23 @@ const networkOutput = (signerId: string): DeliverableEntityInput => ({
   runtimeId,
   sourceRuntimeFrame: { height: 1, timestamp: 100 },
 });
+
+/**
+ * `env.pendingNetworkOutputs` is the committed Runtime outbox: every frame
+ * retries it (runtime/frame/process.ts -> flushCommittedNetworkOutputs). A
+ * Runtime holding remote outputs with no transport at all is a wiring fault and
+ * fail-stops with ROUTE_P2P_UNAVAILABLE (runtime/delivery/dispatch.ts:350,
+ * characterized by storage-frame-journal-retention.test.ts). An unreachable
+ * peer is the other case: an authenticated route whose recipient is not ready
+ * defers, so the unit stays in the outbox instead of being retired
+ * (dispatch.ts dispatchDirectOutputEnvelope -> isDeliveryRecipientNotReady).
+ * These diagnostics tests need that second case, so they attach the readiness
+ * result the real direct route returns for a peer that is not ready.
+ */
+const attachUnreachablePeerRoute = (env: RuntimeReplica): void => {
+  ensureRuntimeInfrastructure(env).directEntityInputsDispatch = () =>
+    deliveryDeferred({ outcome: 'deferred', code: 'ROUTE_DIRECT_SESSION_NOT_READY' });
+};
 
 describe('scenario convergence timeout diagnostics', () => {
   test('budgets every durable stage of a four-hop HTLC without weakening exhaustion checks', () => {
@@ -66,6 +85,7 @@ describe('scenario convergence timeout diagnostics', () => {
     const env = createEmptyEnv('scenario-convergence-timeout:offline-network');
     env.scenarioMode = true;
     env.pendingNetworkOutputs = [networkOutput('4')];
+    attachUnreachablePeerRoute(env);
 
     await convergeWithOffline(env, new Set(['4']), 1, 'validator-offline');
     expect(env.pendingNetworkOutputs).toHaveLength(1);
@@ -89,6 +109,7 @@ describe('scenario convergence timeout diagnostics', () => {
     const env = createEmptyEnv('scenario-convergence-timeout:mixed-network');
     env.scenarioMode = true;
     env.pendingNetworkOutputs = [networkOutput('4'), networkOutput('3')];
+    attachUnreachablePeerRoute(env);
 
     const rejection = convergeWithOffline(env, new Set(['4']), 1, 'mixed-network').catch((error: unknown) => error);
     const error = await rejection;

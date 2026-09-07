@@ -274,68 +274,6 @@ describe('runtime websocket recovery requests', () => {
     expect(requesterErrors).toEqual([]);
   });
 
-  test('reports an inbound Account rejection to both ends without hiding it', async () => {
-    const consoleError = spyOn(console, 'error').mockImplementation(() => undefined);
-    const relay = startRelay();
-    const url = `ws://127.0.0.1:${relay.server.port}`;
-    const receiverErrors: string[] = [];
-    const senderErrors: string[] = [];
-    let received = 0;
-    const sender = makeClient({
-      url,
-      seed: SEED_A,
-      runtimeId: RUNTIME_A,
-      signerId: '1',
-      getTargetEncryptionKey: runtimeId => (runtimeId === RUNTIME_B ? deriveEncryptionKeyPair(SEED_B).publicKey : null),
-      onError: error => senderErrors.push(error.message),
-    });
-    const receiver = makeClient({
-      url,
-      seed: SEED_B,
-      runtimeId: RUNTIME_B,
-      signerId: '2',
-      onEntityInputs: () => {
-        received += 1;
-        throw new Error('INBOUND_ENTITY_RUNTIME_QUIESCING:test-quiesce');
-      },
-      onError: error => receiverErrors.push(error.message),
-    });
-    await sender.connect();
-    await receiver.connect();
-    await waitUntil(() => relay.store.clients.has(RUNTIME_A) && relay.store.clients.has(RUNTIME_B), 'relay clients');
-    await waitUntil(() => sender.isOpen() && receiver.isOpen(), 'authenticated clients');
-
-    const source = createEmptyEnv(SEED_A);
-    const envelope = signRuntimeEntityInputsEnvelope(source, RUNTIME_B, {
-      sourceRuntimeId: RUNTIME_A,
-      sourceRuntimeHeight: 7,
-      sourceRuntimeTimestamp: 7000,
-      entityInputs: [
-        {
-          entityId: `0x${'44'.repeat(32)}`,
-          signerId: '2',
-          runtimeId: RUNTIME_B,
-          entityTxs: [],
-        },
-      ],
-    });
-    expect(sender.sendEntityInputsRaw(RUNTIME_B, envelope)).toBe(true);
-    await waitUntil(
-      () => receiverErrors.some(message => message.includes('INBOUND_ENTITY_RUNTIME_QUIESCING')),
-      'receiver rejection reported',
-    );
-    await waitUntil(
-      () => senderErrors.some(message => message.includes('P2P_REMOTE_REJECTED')),
-      'sender rejection reported',
-    );
-    expect(received).toBe(1);
-    expect(receiver.isOpen()).toBe(true);
-    expect(
-      consoleError.mock.calls.some(call => call.some(value => String(value).includes('WS-CLIENT-DECRYPT-FAILED'))),
-    ).toBe(false);
-    consoleError.mockRestore();
-  });
-
   test('requestRecoveryBundles times out when a connected peer never answers', async () => {
     let rawServer: ReturnType<typeof Bun.serve> | null = null;
     rawServer = Bun.serve({

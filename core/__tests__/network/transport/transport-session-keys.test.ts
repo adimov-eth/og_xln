@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { deriveSignerAddressSync } from '../../../account/crypto';
-import { deriveEncryptionKeyPair, hexToPubKey, pubKeyToHex } from '../../../protocol/crypto/p2p-crypto';
+import { deriveEncryptionKeyPair, encryptSessionPayload, hexToPubKey, pubKeyToHex } from '../../../protocol/crypto/p2p-crypto';
 import { createDirectRuntimeWsRoute } from '../../../network/p2p/direct-runtime-bun';
 import { RuntimeWsClient } from '../../../network/p2p/ws-client';
 import {
@@ -138,5 +138,127 @@ describe('direct runtime session keys', () => {
     // (Only the c2s MAC authenticates the client now; the server drops the socket.)
     expect(hexToPubKey(String(ack?.sessionPubKey)).length).toBe(32);
     expect(pubKeyToHex(serverEncryptionKey)).not.toBe(ack?.sessionPubKey);
+  });
+
+  test('enc_seq_must_increase_by_one', async () => {
+    const serverReceived: RuntimeEntityInputsEnvelope[] = [];
+    const clientReceived: RuntimeEntityInputsEnvelope[] = [];
+    const clientFrames: RuntimeWsMessage[] = [];
+    const errors: string[] = [];
+    const rejectedSessions: string[] = [];
+    const route = createDirectRuntimeWsRoute({
+      runtimeId: SERVER_RUNTIME_ID,
+      runtimeSeed: SERVER_SEED,
+      onEntityInputs: (_from, envelope) => { serverReceived.push(envelope); },
+    });
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(request, bunServer) {
+        const decision = route.maybeUpgrade(request, bunServer);
+        if (decision.handled) return decision.response;
+        return new Response('websocket only', { status: 400 });
+      },
+      websocket: {
+        ...route.websocket,
+        message(ws, raw) {
+          clientFrames.push(deserializeWsMessage(raw));
+          return route.websocket.message(ws, raw);
+        },
+      },
+    });
+    servers.push(server);
+    const client = new RuntimeWsClient({
+      url: `ws://127.0.0.1:${server.port}${route.path}`,
+      runtimeId: CLIENT_RUNTIME_ID,
+      helloAudience: directRuntimeWsAudience(SERVER_RUNTIME_ID),
+      signerId: '1',
+      seed: CLIENT_SEED,
+      encryptionKeyPair: deriveEncryptionKeyPair(CLIENT_SEED),
+      getTargetEncryptionKey: () => deriveEncryptionKeyPair(SERVER_SEED).publicKey,
+      onError: error => errors.push(error.message),
+      onPeerSessionRejected: error => rejectedSessions.push(error.message),
+      onEntityInputs: (_from, envelope) => { clientReceived.push(envelope); },
+    });
+    clients.push(client);
+    route.setReady(true);
+    client.setReady(true);
+    await client.connect();
+    await waitFor(() => client.canDeliver() && route.canDeliver(CLIENT_RUNTIME_ID));
+    const internal = client as unknown as {
+      ws: { send(data: string | Uint8Array, cb?: (error?: Error) => void): void };
+      sessionKeys: { c2s: Uint8Array; s2c: Uint8Array };
+      inboundEncSeq: number;
+      outboundEncSeq: number;
+      sendRaw(msg: RuntimeWsMessage): boolean;
+      handleEntityInputsMessage(msg: RuntimeWsMessage): Promise<boolean>;
+    };
+    const envelope = envelopeFrom(CLIENT_RUNTIME_ID, SERVER_RUNTIME_ID);
+
+    // Sender: a failed socket write must not consume a counter value, so the
+    // next accepted frame still carries encSeq 1 and the strict server admits it.
+    const rawSend = internal.ws.send.bind(internal.ws);
+    internal.ws.send = () => { throw new Error('TEST_SOCKET_WRITE_FAILED'); };
+    expect(client.sendEntityInputsRaw(SERVER_RUNTIME_ID, envelope, 5)).toBe(false);
+    expect(internal.outboundEncSeq).toBe(0);
+    internal.ws.send = rawSend;
+    expect(errors).toEqual(['TEST_SOCKET_WRITE_FAILED']);
+    errors.length = 0;
+    expect(client.sendEntityInputsRaw(SERVER_RUNTIME_ID, envelope, 6)).toBe(true);
+    await waitFor(() => serverReceived.length === 1);
+    expect(clientFrames.filter(frame => frame.type === 'entity_inputs').map(frame => frame.encSeq)).toEqual([1]);
+    expect(internal.outboundEncSeq).toBe(1);
+
+    // Receiver (client side): the server must send exactly last+1; a skipped
+    // or replayed counter closes the session, never the Runtime.
+    const forgedFrame = (encSeq: number): RuntimeWsMessage => ({
+      type: 'entity_inputs',
+      id: `forged-${encSeq}`,
+      from: SERVER_RUNTIME_ID,
+      to: CLIENT_RUNTIME_ID,
+      encrypted: true,
+      encSeq,
+      payload: encryptSessionPayload(envelopeFrom(SERVER_RUNTIME_ID, CLIENT_RUNTIME_ID), internal.sessionKeys.s2c, encSeq),
+    });
+    expect(internal.inboundEncSeq).toBe(0);
+    expect(await internal.handleEntityInputsMessage(forgedFrame(2))).toBe(true);
+    expect(clientReceived).toEqual([]);
+    expect(rejectedSessions).toEqual([expect.stringContaining('P2P_SESSION_ENC_SEQ_ORDER:')]);
+    expect(rejectedSessions[0]).toContain('"expected":1');
+    expect(errors).toEqual([]);
+    await waitFor(() => !client.isOpen());
+
+    // Receiver (server side): the same rule on the route. A fresh session
+    // starts at 1 again; a gap (3 after 1) ends that session without a reply.
+    const second = new RuntimeWsClient({
+      url: `ws://127.0.0.1:${server.port}${route.path}`,
+      runtimeId: CLIENT_RUNTIME_ID,
+      helloAudience: directRuntimeWsAudience(SERVER_RUNTIME_ID),
+      signerId: '1',
+      seed: CLIENT_SEED,
+      encryptionKeyPair: deriveEncryptionKeyPair(CLIENT_SEED),
+      getTargetEncryptionKey: () => deriveEncryptionKeyPair(SERVER_SEED).publicKey,
+      onError: error => errors.push(error.message),
+    });
+    clients.push(second);
+    second.setReady(true);
+    await second.connect();
+    await waitFor(() => second.canDeliver() && route.canDeliver(CLIENT_RUNTIME_ID));
+    const secondInternal = second as unknown as typeof internal;
+    expect(second.sendEntityInputsRaw(SERVER_RUNTIME_ID, envelope, 7)).toBe(true);
+    await waitFor(() => serverReceived.length === 2);
+    expect(secondInternal.sendRaw({
+      type: 'entity_inputs',
+      id: 'server-gap',
+      from: CLIENT_RUNTIME_ID,
+      to: SERVER_RUNTIME_ID,
+      encrypted: true,
+      encSeq: 3,
+      payload: encryptSessionPayload(envelope, secondInternal.sessionKeys.c2s, 3),
+    })).toBe(true);
+    await waitFor(() => !route.hasOpenSession(CLIENT_RUNTIME_ID));
+    expect(serverReceived).toHaveLength(2);
+    expect(clientFrames.filter(frame => frame.type === 'entity_inputs').map(frame => frame.encSeq)).toEqual([1, 1, 3]);
+    await waitFor(() => errors.some(error => error.includes('WS_UNEXPECTED_CLOSE:') && error.includes('code=4006')));
   });
 });

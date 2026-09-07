@@ -262,6 +262,50 @@ afterEach(() => {
   delete process.env['XLN_REJECT_FAIL_FAST'];
 });
 
+/**
+ * Typed reject evidence one Runtime frame attempt recorded (owner canon
+ * 2026-09-05, docs/reject-policy.md). A rejected ingress never reaches the
+ * WAL, so this ERROR line is its only audit trail: the transition emits it
+ * before the loop reads the policy, so it is identical in fail-fast and in
+ * production. Asserting it keeps "reject" distinguishable from "silently
+ * swallowed" in both modes.
+ */
+const captureRejectedIngressEvidence = async (
+  run: () => Promise<unknown>,
+): Promise<Array<{ scope: string; cause: string }>> => {
+  const evidence: Array<{ scope: string; cause: string }> = [];
+  const unregisterSink = registerStructuredLogSink(event => {
+    if (event.level !== 'error' || event.message !== 'entity_input.discarded') return;
+    evidence.push({ scope: String(event.scope), cause: String(event['cause'] ?? '') });
+  });
+  try {
+    await run();
+  } finally {
+    unregisterSink();
+  }
+  return evidence;
+};
+
+const canonicalReplicaBytes = (
+  env: RuntimeReplica,
+  replicaKey: string,
+): string => {
+  const replica = env.state.eReplicas.get(replicaKey);
+  if (!replica) throw new Error(`TEST_REPLICA_MISSING:${replicaKey}`);
+  return safeStringify({
+    entityId: replica.entityId,
+    signerId: replica.signerId,
+    mempool: replica.mempool,
+    proposal: replica.proposal ?? null,
+    lockedFrame: replica.lockedFrame ?? null,
+    height: replica.state.height,
+    accounts: [...replica.state.accounts.keys()],
+    messages: replica.state.messages,
+    nonces: [...replica.state.nonces.entries()],
+    reserves: [...replica.state.reserves.entries()],
+  });
+};
+
 const makeSingleSignerConfig = (): EntityState['config'] => ({
   mode: 'proposer-based',
   threshold: 1n,
@@ -891,7 +935,7 @@ describe('audit fail-fast regressions', () => {
     expect(env.state.eReplicas.has(`${entityId}:${actualSignerId}`)).toBe(true);
   });
 
-  test('runtime ingress rejects stale signer hints for tx-bearing inputs even with one local replica', async () => {
+  test('a stale signer hint on a tx-bearing input is one typed reject: recorded in both policy modes, surfaced under fail-fast, dropped without halting in production, never mutating the live replica', async () => {
     const env = createEmptyEnv('stale-signer-tx-bearing');
     env.scenarioMode = true;
     env.quietRuntimeLogs = true;
@@ -900,7 +944,8 @@ describe('audit fail-fast regressions', () => {
     const staleSignerId = `0x${'86'.repeat(20)}`;
     const state = makeEntityState(entityId);
     state.config = makeSingleSignerConfigFor(actualSignerId);
-    env.state.eReplicas.set(`${entityId}:${actualSignerId}`, {
+    const replicaKey = `${entityId}:${actualSignerId}`;
+    env.state.eReplicas.set(replicaKey, {
       entityId,
       signerId: actualSignerId,
       entityEncPubKey: '',
@@ -908,25 +953,49 @@ describe('audit fail-fast regressions', () => {
       isProposer: true,
       state,
     });
-
-    await expect(
-      processRuntime(env, [
+    const replicaBefore = canonicalReplicaBytes(env, replicaKey);
+    const staleInput: EntityInput = {
+      entityId,
+      signerId: staleSignerId,
+      entityTxs: [
         {
-          entityId,
-          signerId: staleSignerId,
-          entityTxs: [
-            {
-              type: 'openAccount',
-              data: {
-                targetEntityId: `0x${'87'.repeat(32)}`,
-                tokenId: 1,
-                creditAmount: 1n,
-              },
-            },
-          ],
+          type: 'openAccount',
+          data: {
+            targetEntityId: `0x${'87'.repeat(32)}`,
+            tokenId: 1,
+            creditAmount: 1n,
+          },
         },
-      ]),
-    ).rejects.toThrow('RUNTIME_REPLICA_NOT_FOUND');
+      ],
+    };
+
+    // Default policy is fail-fast (tests/dev): the typed reject reaches the
+    // caller of the Runtime loop instead of hiding in a log line. Scenarios
+    // and direct processRuntime callers share this one path.
+    const failFastEvidence = await captureRejectedIngressEvidence(() =>
+      expect(processRuntime(env, [structuredClone(staleInput)]))
+        .rejects.toThrow('RUNTIME_REPLICA_NOT_FOUND'));
+    expect(failFastEvidence.map(entry => entry.scope)).toContain('runtime.input_discard');
+    expect(failFastEvidence.some(entry => entry.cause.includes('RUNTIME_REPLICA_NOT_FOUND')))
+      .toBe(true);
+    // Admission precedes mutation: nothing of the live replica moved and the
+    // exact attempted input is still queued for the operator.
+    expect(canonicalReplicaBytes(env, replicaKey)).toBe(replicaBefore);
+    expect(env.state.height).toBe(0);
+    expect(env.runtimeMempool?.entityInputs).toEqual([staleInput]);
+
+    // Production policy: identical typed reject and identical evidence, but a
+    // sender-caused failure never takes the Hub down — the lane is dropped and
+    // the Runtime keeps serving.
+    process.env['XLN_REJECT_FAIL_FAST'] = '0';
+    const dropEvidence = await captureRejectedIngressEvidence(() =>
+      expect(processRuntime(env)).resolves.toBe(env));
+    expect(dropEvidence.map(entry => entry.scope)).toContain('runtime.input_discard');
+    expect(dropEvidence.some(entry => entry.cause.includes('RUNTIME_REPLICA_NOT_FOUND')))
+      .toBe(true);
+    expect(canonicalReplicaBytes(env, replicaKey)).toBe(replicaBefore);
+    expect(env.state.height).toBe(0);
+    expect(env.runtimeMempool?.entityInputs).toHaveLength(0);
   });
 
   test('live runtime drops a remote stale-signer input without halting', async () => {
@@ -1598,7 +1667,7 @@ describe('audit fail-fast regressions', () => {
     expect(observerWarnings).toEqual([]);
   });
 
-  test('runtime ingress still rejects stale signer hints when local target signer is ambiguous', async () => {
+  test('an ambiguous local target signer is one typed reject: recorded in both policy modes, surfaced under fail-fast, dropped without halting in production, never mutating either replica', async () => {
     const env = createEmptyEnv('stale-signer-ambiguous');
     env.scenarioMode = true;
     env.quietRuntimeLogs = true;
@@ -1624,16 +1693,31 @@ describe('audit fail-fast regressions', () => {
         state,
       });
     }
+    const replicaKeys = [signerA, signerB].map(signerId => `${entityId}:${signerId}`);
+    const replicasBefore = replicaKeys.map(key => canonicalReplicaBytes(env, key));
+    const staleInput: EntityInput = { entityId, signerId: staleSignerId, entityTxs: [] };
 
-    await expect(
-      processRuntime(env, [
-        {
-          entityId,
-          signerId: staleSignerId,
-          entityTxs: [],
-        },
-      ]),
-    ).rejects.toThrow('RUNTIME_REPLICA_NOT_FOUND');
+    // Two sibling replicas: retargeting an empty protocol input is only sound
+    // when exactly one local signer can own it, so this stays a typed reject.
+    const failFastEvidence = await captureRejectedIngressEvidence(() =>
+      expect(processRuntime(env, [structuredClone(staleInput)]))
+        .rejects.toThrow('RUNTIME_REPLICA_NOT_FOUND'));
+    expect(failFastEvidence.map(entry => entry.scope)).toContain('runtime.input_discard');
+    expect(failFastEvidence.some(entry => entry.cause.includes('RUNTIME_REPLICA_NOT_FOUND')))
+      .toBe(true);
+    expect(replicaKeys.map(key => canonicalReplicaBytes(env, key))).toEqual(replicasBefore);
+    expect(env.state.height).toBe(0);
+    expect(env.runtimeMempool?.entityInputs).toEqual([staleInput]);
+
+    process.env['XLN_REJECT_FAIL_FAST'] = '0';
+    const dropEvidence = await captureRejectedIngressEvidence(() =>
+      expect(processRuntime(env)).resolves.toBe(env));
+    expect(dropEvidence.map(entry => entry.scope)).toContain('runtime.input_discard');
+    expect(dropEvidence.some(entry => entry.cause.includes('RUNTIME_REPLICA_NOT_FOUND')))
+      .toBe(true);
+    expect(replicaKeys.map(key => canonicalReplicaBytes(env, key))).toEqual(replicasBefore);
+    expect(env.state.height).toBe(0);
+    expect(env.runtimeMempool?.entityInputs).toHaveLength(0);
   });
 
   test('rejects an oversized ingress atomically before it enters the Runtime mempool', async () => {

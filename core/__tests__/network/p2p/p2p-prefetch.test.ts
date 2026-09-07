@@ -94,7 +94,7 @@ test('inbound forged envelope is rejected before profile prefetch', async () => 
   });
 
   await expect((p2p as any).acceptInboundEntityInputs(
-    'relay',
+    'direct',
     source.runtimeId,
     { ...envelope, sourceRuntimeTimestamp: 2 },
     2,
@@ -135,7 +135,7 @@ test('inbound entity batch coalesces missing profiles into one relay fetch', asy
     entityInputs: Array.from({ length: 256 }, () => ({ ...entityInput })),
   });
 
-  await (p2p as any).acceptInboundEntityInputs('relay', source.runtimeId, envelope, 1);
+  await (p2p as any).acceptInboundEntityInputs('direct', source.runtimeId, envelope, 1);
   await Bun.sleep(25);
 
   expect(requiredBatches).toEqual([[SOURCE_ENTITY_ID]]);

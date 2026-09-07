@@ -81,6 +81,17 @@ Do not duplicate or weaken it.
   [`docs/hashladder-registry-spec.md`](docs/hashladder-registry-spec.md). Load them when that path
   is in scope; do not keep their full text in every task context.
 
+## REJECT POLICY (owner canon 2026-09-05, quorum-confirmed 2026-09-07)
+
+- A user or peer can never take a Runtime down. A sender-caused failure is a typed reject
+  disposition decided inside the RJEA transition without reading process env; the Runtime
+  loop applies fail-fast (tests/dev) or log-and-drop (production) exactly once, outside the
+  state machine, so replay never depends on `NODE_ENV`/`XLN_REJECT_FAIL_FAST`.
+- Granularity is per transaction on both engines: evict exactly the rejected tx and certify
+  the rest of the same signer's queue. Never drop a signer lane or a whole peer envelope for
+  one bad tx. Transport-level peer misbehaviour closes that session; it never halts the Hub.
+- Details and the log lines to watch: [`docs/reject-policy.md`](docs/reject-policy.md).
+
 ## ONE CANONICAL PRODUCTION PATH
 
 - No legacy behavior, compatibility aliases, fallback readers/writers, duplicate financial

@@ -89,6 +89,7 @@ const CASES = [
   { type: 'processHtlcTimeouts', data: { expiredLocks: [{ accountId: B, lockId: 'lock-1' }] } },
   { type: 'profile-update', data: { profile: { entityId: A, name: 'alice', entityKind: 'person', sectors: ['finance'], avatar: '', bio: '', website: '' } } },
   { type: 'propose', data: { action: { type: 'collective_message', data: { message: 'proposal' } }, proposer: 'owner' } },
+  { type: 'proposeAccountsNow', data: { version: 1, proposerSignerId: SIGNER, counterparties: [A, B] } },
   { type: 'proposeCancelSwap', data: { counterpartyEntityId: B, offerId: 'offer-1' } },
   { type: 'r2c', data: { counterpartyId: B, receivingEntityId: A, tokenId: 1, amount: 5n, rebalanceQuoteId: 1, rebalanceFeeTokenId: 1, rebalanceFeeAmount: 1n } },
   { type: 'r2e', data: { receivingEntity: A, tokenId: 1, amount: 5n } },
@@ -125,10 +126,10 @@ if (Bun.env['RSCORE_GENERATE_ENTITY_TX_WIRE'] === '1') {
     await Bun.write(VECTORS, `${safeStringify(rows, 2)}\n`);
   });
 } else describe('EntityTx wire', () => {
-  test('production TypeScript admission covers exactly the canonical 62-kind catalog', () => {
+  test('production TypeScript admission covers exactly the canonical 63-kind catalog', () => {
     expect(validatedCases().map(tx => tx.type)).toEqual([...ENTITY_TX_TYPES]);
     expect(vectors().map(row => row.name)).toEqual([...ENTITY_TX_TYPES]);
-    expect(new Set(ENTITY_TX_TYPES).size).toBe(62);
+    expect(new Set(ENTITY_TX_TYPES).size).toBe(63);
   });
   test('TypeScript writes the reviewed shared bytes', () => {
     const recorded = new Map(vectors().map(row => [row.name, row.bytes]));

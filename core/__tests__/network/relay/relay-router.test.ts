@@ -12,18 +12,13 @@ import {
 } from '../../../network/relay/store';
 import { deserializeWsMessage, hashHelloMessage, hashRuntimeWsFrame, type RuntimeWsMessage } from '../../../network/p2p/ws-protocol';
 import { deriveSignerAddressSync, signDigest } from '../../../account/crypto';
-import { encryptPayload, deriveEncryptionKeyPair } from '../../../protocol/crypto/p2p-crypto';
 import { DEFAULT_GOSSIP_BATCH_LIMIT } from '../../../network/p2p/gossip/profile-batch';
-import { createLocalDeliveryHandler } from '../../../network/relay/local-delivery';
-import { createEmptyEnv } from '../../../runtime';
-import { signRuntimeEntityInputsEnvelope } from '../../../runtime/admit/entity-input-envelope-auth.ts';
 import {
   buildCryptographicProfileFixture,
   certifySingleSignerProfileFixture,
   deriveSingleSignerFixtureEntityId,
 } from '../../helpers/cryptographic-profile';
 import { createJurisdictionGossipAnnouncement } from '../../../jurisdiction/gossip/announcement';
-import { rejectFailure } from '../../../protocol/errors/failure-taxonomy';
 
 const SERVER_RUNTIME_ID = '0x9999999999999999999999999999999999999999';
 const SEED_A = 'relay-router-test-seed-a';
@@ -210,7 +205,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       verifyProfile: async () => {
         verifies += 1;
         return { valid: false };
@@ -234,9 +228,8 @@ describe('relay-router gossip fanout', () => {
     expect(store.clients.has(RUNTIME_A)).toBeFalse();
   });
 
-  test('relay router and local delivery verbose diagnostics use structured logging', () => {
+  test('relay router verbose diagnostics use structured logging and the relay carries no financial path', () => {
     const routerSource = readFileSync(join(process.cwd(), 'core/network/relay/router.ts'), 'utf8');
-    const localDeliverySource = readFileSync(join(process.cwd(), 'core/network/relay/local-delivery.ts'), 'utf8');
 
     expect(routerSource).toContain("const relayRouterLog = createStructuredLogger('relay.router');");
     expect(routerSource).toContain("relayRouterLog.debug('verbose'");
@@ -244,9 +237,11 @@ describe('relay-router gossip fanout', () => {
     expect(routerSource).not.toContain('catch { size = 0; }');
     expect(routerSource).toContain('relayMessageByteLength');
     expect(routerSource).not.toContain('safeStringify(msg)');
-    expect(localDeliverySource).toContain("const relayLocalDeliveryLog = createStructuredLogger('relay.local_delivery');");
-    expect(localDeliverySource).toContain("relayLocalDeliveryLog.debug('verbose'");
-    expect(localDeliverySource).not.toContain('console.');
+    // entity_inputs and peer error frames are not relay-routable; there is no
+    // local delivery hook a relay could decrypt financial bytes into.
+    expect(routerSource).not.toContain('localDeliver');
+    expect(routerSource).not.toContain("type === 'entity_inputs' ||");
+    expect(routerSource).not.toContain("type === 'error' ||");
   });
 
   test('records a nonzero message size for tagged BigInt payloads', async () => {
@@ -255,7 +250,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: () => {},
     };
     await relayRoute(config, ws, signedHello(RUNTIME_A, SEED_A, KEY_A));
@@ -278,7 +272,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (_ws: FakeWs, raw: Uint8Array) => sent.push(deserializeWsMessage(raw)),
     };
 
@@ -308,7 +301,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -365,7 +357,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -429,7 +420,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -460,7 +450,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -520,7 +509,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -562,7 +550,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -582,13 +569,12 @@ describe('relay-router gossip fanout', () => {
     expect((sentBySocket.get(fresh)?.at(-1) as { type?: string; error?: string } | undefined)?.type).not.toBe('error');
   });
 
-  test('rejects entity_inputs when the registered target socket is stale', async () => {
+  test('rejects a routable message when the registered target socket is stale', async () => {
     const store = createRelayStore(SERVER_RUNTIME_ID);
     const sentBySocket = new Map<FakeWs, unknown[]>();
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -603,15 +589,12 @@ describe('relay-router gossip fanout', () => {
     staleB.readyState = 3;
 
     await relayRoute(config, wsA, {
-      type: 'entity_inputs',
+      type: 'recovery_bundle_request',
       id: 'deliver-to-stale',
       from: RUNTIME_A,
       fromEncryptionPubKey: KEY_A,
       to: RUNTIME_B,
-      payload: new TextEncoder().encode('encrypted-payload'),
-      encrypted: true,
-      entityId: ENTITY_B,
-      txs: 1,
+      payload: { lookupKey: 'stale/key' },
     });
 
     expect(sentBySocket.get(staleB) ?? []).toEqual([
@@ -620,55 +603,14 @@ describe('relay-router gossip fanout', () => {
     expect(store.clients.has(RUNTIME_B)).toBe(false);
     expect((sentBySocket.get(wsA)?.at(-1) as { type?: string; error?: string } | undefined)).toMatchObject({
       type: 'error',
-      error: 'ENTITY_INPUT_TARGET_NOT_CONNECTED',
+      error: 'RECOVERY_TARGET_NOT_CONNECTED',
+      inReplyTo: 'deliver-to-stale',
     });
     expect(store.debugEvents.some(event => event.status === 'stale-target')).toBe(true);
     expect(store.debugEvents.some(event =>
       event.status === 'rejected' &&
-      event.reason === 'ENTITY_INPUT_TARGET_NOT_CONNECTED',
+      event.reason === 'RECOVERY_TARGET_NOT_CONNECTED',
     )).toBe(true);
-  });
-
-  test('defers over-budget entity inputs without closing either authenticated peer', async () => {
-    const store = createRelayStore(SERVER_RUNTIME_ID);
-    const sentBySocket = new Map<FakeWs, RuntimeWsMessage[]>();
-    const closes: string[] = [];
-    const config = {
-      store,
-      localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
-      applicationBudget: { maxMessages: 1, maxBytes: 1024 * 1024 },
-      send: (ws: FakeWs, raw: Uint8Array) => {
-        const bucket = sentBySocket.get(ws) ?? [];
-        bucket.push(deserializeWsMessage(raw));
-        sentBySocket.set(ws, bucket);
-      },
-    };
-    const wsA: FakeWs = { label: 'A', readyState: 1, close: () => closes.push('A') };
-    const wsB: FakeWs = { label: 'B', readyState: 1, close: () => closes.push('B') };
-    await relayRoute(config, wsA, signedHello(RUNTIME_A, SEED_A, KEY_A));
-    await relayRoute(config, wsB, signedHello(RUNTIME_B, SEED_B, KEY_B, '2'));
-    const sendInput = (id: string) => relayRoute(config, wsA, {
-      type: 'entity_inputs',
-      id,
-      from: RUNTIME_A,
-      fromEncryptionPubKey: KEY_A,
-      to: RUNTIME_B,
-      payload: new TextEncoder().encode('encrypted-payload'),
-      encrypted: true,
-    });
-    await sendInput('within-budget');
-    await sendInput('over-budget');
-    expect(sentBySocket.get(wsB)?.some(message => message.id === 'within-budget')).toBe(true);
-    expect(sentBySocket.get(wsB)?.some(message => message.id === 'over-budget')).toBe(false);
-    expect(sentBySocket.get(wsA)?.at(-1)).toMatchObject({
-      type: 'error',
-      error: 'ENTITY_INPUT_RATE_LIMITED',
-      inReplyTo: 'over-budget',
-    });
-    expect(closes).toEqual([]);
-    expect(store.clients.has(RUNTIME_A)).toBe(true);
-    expect(store.clients.has(RUNTIME_B)).toBe(true);
   });
 
   test('accepts Bun backpressure and rejects a zero-byte forward to an active target', async () => {
@@ -677,7 +619,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const message = deserializeWsMessage(raw);
         const bucket = sentBySocket.get(ws) ?? [];
@@ -700,15 +641,12 @@ describe('relay-router gossip fanout', () => {
     await relayRoute(config, wsA, signedHello(RUNTIME_A, SEED_A, KEY_A));
     await relayRoute(config, wsB, signedHello(RUNTIME_B, SEED_B, KEY_B, '2'));
     await relayRoute(config, wsA, {
-      type: 'entity_inputs',
+      type: 'recovery_bundle_response',
       id: 'deliver-backpressured',
       from: RUNTIME_A,
       fromEncryptionPubKey: KEY_A,
       to: RUNTIME_B,
-      payload: new TextEncoder().encode('encrypted-account-input'),
-      encrypted: true,
-      entityId: ENTITY_B,
-      txs: 1,
+      payload: { bundles: [] },
     });
 
     expect(store.clients.get(RUNTIME_B)?.ws).toBe(wsB);
@@ -720,34 +658,28 @@ describe('relay-router gossip fanout', () => {
     )).toBeDefined();
 
     await expect(relayRoute(config, wsA, {
-      type: 'entity_inputs',
+      type: 'recovery_bundle_response',
       id: 'deliver-invalid',
       from: RUNTIME_A,
       fromEncryptionPubKey: KEY_A,
       to: RUNTIME_B,
-      payload: new TextEncoder().encode('encrypted-account-input'),
-      encrypted: true,
-      entityId: ENTITY_B,
-      txs: 1,
+      payload: { bundles: [] },
     })).rejects.toThrow('WEBSOCKET_SEND_RESULT_INVALID');
     expect(store.clients.get(RUNTIME_B)?.ws).toBe(wsB);
 
     await relayRoute(config, wsA, {
-      type: 'entity_inputs',
+      type: 'recovery_bundle_request',
       id: 'deliver-dropped',
       from: RUNTIME_A,
       fromEncryptionPubKey: KEY_A,
       to: RUNTIME_B,
-      payload: new TextEncoder().encode('encrypted-account-input'),
-      encrypted: true,
-      entityId: ENTITY_B,
-      txs: 1,
+      payload: { lookupKey: 'dropped/key' },
     });
 
     expect(store.clients.has(RUNTIME_B)).toBe(false);
     expect(sentBySocket.get(wsA)?.at(-1)).toMatchObject({
       type: 'error',
-      error: 'ENTITY_INPUT_TARGET_NOT_CONNECTED',
+      error: 'RECOVERY_TARGET_NOT_CONNECTED',
       inReplyTo: 'deliver-dropped',
       to: RUNTIME_B,
     });
@@ -770,8 +702,6 @@ describe('relay-router gossip fanout', () => {
       },
       details: {
         traceId: 'deliver-dropped',
-        entityId: ENTITY_B,
-        txs: 1,
       },
     });
   });
@@ -782,7 +712,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: () => -1,
     };
     const wsA: FakeWs = { label: 'A', readyState: 1 };
@@ -792,15 +721,12 @@ describe('relay-router gossip fanout', () => {
     await relayRoute(config, wsB, signedHello(RUNTIME_B, SEED_B, KEY_B, '2'));
 
     const sendOne = (id: string) => relayRoute(config, wsA, {
-      type: 'entity_inputs',
+      type: 'recovery_bundle_response',
       id,
       from: RUNTIME_A,
       fromEncryptionPubKey: KEY_A,
       to: RUNTIME_B,
-      payload: new TextEncoder().encode('encrypted-account-input'),
-      encrypted: true,
-      entityId: ENTITY_B,
-      txs: 1,
+      payload: { bundles: [] },
     });
 
     await sendOne('deliver-1');
@@ -834,7 +760,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: () => (mode === 'backpressured' ? -1 : undefined),
     };
     const wsA: FakeWs = { label: 'A', readyState: 1 };
@@ -844,15 +769,12 @@ describe('relay-router gossip fanout', () => {
     await relayRoute(config, wsB, signedHello(RUNTIME_B, SEED_B, KEY_B, '2'));
 
     const sendOne = (id: string) => relayRoute(config, wsA, {
-      type: 'entity_inputs',
+      type: 'recovery_bundle_response',
       id,
       from: RUNTIME_A,
       fromEncryptionPubKey: KEY_A,
       to: RUNTIME_B,
-      payload: new TextEncoder().encode('encrypted-account-input'),
-      encrypted: true,
-      entityId: ENTITY_B,
-      txs: 1,
+      payload: { bundles: [] },
     });
 
     await sendOne('deliver-1');
@@ -869,63 +791,12 @@ describe('relay-router gossip fanout', () => {
     expect(store.clients.get(RUNTIME_B)?.ws).toBe(wsB);
   });
 
-  test('forwards encrypted accountInput to the active target runtime socket', async () => {
-    const store = createRelayStore(SERVER_RUNTIME_ID);
-    const sentBySocket = new Map<FakeWs, unknown[]>();
-    const config = {
-      store,
-      localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
-      send: (ws: FakeWs, raw: Uint8Array) => {
-        const bucket = sentBySocket.get(ws) ?? [];
-        bucket.push(deserializeWsMessage(raw));
-        sentBySocket.set(ws, bucket);
-      },
-    };
-    const wsA: FakeWs = { label: 'A', readyState: 1 };
-    const wsB: FakeWs = { label: 'B', readyState: 1 };
-
-    await relayRoute(config, wsA, signedHello(RUNTIME_A, SEED_A, KEY_A));
-    await relayRoute(config, wsB, signedHello(RUNTIME_B, SEED_B, KEY_B, '2'));
-    await relayRoute(config, wsA, {
-      type: 'entity_inputs',
-      id: 'deliver-account-input',
-      from: RUNTIME_A,
-      fromEncryptionPubKey: KEY_A,
-      to: RUNTIME_B,
-      payload: new TextEncoder().encode('encrypted-account-input'),
-      encrypted: true,
-      entityId: ENTITY_B,
-      txs: 1,
-    });
-
-    expect(sentBySocket.get(wsB)?.at(-1)).toMatchObject({
-      type: 'entity_inputs',
-      id: 'deliver-account-input',
-      from: RUNTIME_A,
-      to: RUNTIME_B,
-      encrypted: true,
-      entityId: ENTITY_B,
-      txs: 1,
-    });
-    expect(store.debugEvents.some(event =>
-      event.event === 'delivery' &&
-      event.status === 'delivered' &&
-      event.delivery?.outcome === 'delivered' &&
-      event.delivery?.code === 'DELIVERY_ACCEPTED' &&
-      event.to === RUNTIME_B &&
-      (event.details as { entityId?: string; txs?: number } | undefined)?.entityId === ENTITY_B &&
-      (event.details as { entityId?: string; txs?: number } | undefined)?.txs === 1,
-    )).toBe(true);
-  });
-
   test('routes live recovery bundle request and response without queueing', async () => {
     const store = createRelayStore(SERVER_RUNTIME_ID);
     const sentBySocket = new Map<FakeWs, unknown[]>();
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -978,7 +849,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -1028,7 +898,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -1067,7 +936,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -1109,6 +977,98 @@ describe('relay-router gossip fanout', () => {
     );
   });
 
+  test('relay_never_forwards_error_frames', async () => {
+    const store = createRelayStore(SERVER_RUNTIME_ID);
+    const sentBySocket = new Map<FakeWs, unknown[]>();
+    const closes: string[] = [];
+    const config = {
+      store,
+      localRuntimeId: SERVER_RUNTIME_ID,
+      send: (ws: FakeWs, raw: Uint8Array) => {
+        const bucket = sentBySocket.get(ws) ?? [];
+        bucket.push(deserializeWsMessage(raw));
+        sentBySocket.set(ws, bucket);
+      },
+    };
+    const attacker: FakeWs = { label: 'A', readyState: 1, close: () => closes.push('A') };
+    const victim: FakeWs = { label: 'B', readyState: 1, close: () => closes.push('B') };
+    await relayRoute(config, attacker, signedHello(RUNTIME_A, SEED_A, KEY_A));
+    await relayRoute(config, victim, signedHello(RUNTIME_B, SEED_B, KEY_B, '2'));
+    const attackerFramesBefore = (sentBySocket.get(attacker) ?? []).length;
+
+    // A fresh relay registration is all the attacker needs; the "rejection"
+    // names an output id of the victim. It must never reach the victim socket.
+    for (const [index, inReplyTo] of ['victim-output-7', undefined].entries()) {
+      await relayRoute(config, attacker, {
+        type: 'error',
+        id: `forged-rejection-${index}`,
+        from: RUNTIME_A,
+        fromEncryptionPubKey: KEY_A,
+        to: RUNTIME_B,
+        ...(inReplyTo ? { inReplyTo } : {}),
+        error: 'P2P_INBOUND_ENTITY_INPUT_REJECTED:forged',
+      });
+    }
+
+    expect(sentBySocket.get(victim)).toEqual([{ type: 'hello_ack', to: RUNTIME_B.toLowerCase() }]);
+    // Dropped for audit, not answered: an error reply to an error would loop.
+    expect((sentBySocket.get(attacker) ?? []).length).toBe(attackerFramesBefore);
+    expect(closes).toEqual([]);
+    expect(store.clients.has(RUNTIME_A)).toBe(true);
+    expect(store.clients.has(RUNTIME_B)).toBe(true);
+    const dropped = store.debugEvents.filter(event => event.reason === 'RELAY_ERROR_FRAME_NOT_ROUTABLE');
+    expect(dropped).toHaveLength(2);
+    expect(dropped[0]).toMatchObject({ event: 'error', status: 'rejected', msgType: 'error', from: RUNTIME_A, to: RUNTIME_B });
+    expect(dropped[0]?.details).toMatchObject({ inReplyTo: 'victim-output-7' });
+    expect(dropped[1]?.details).toMatchObject({ inReplyTo: null });
+  });
+
+  test('relay_inbound_entity_inputs_rejected', async () => {
+    const store = createRelayStore(SERVER_RUNTIME_ID);
+    const sentBySocket = new Map<FakeWs, unknown[]>();
+    const config = {
+      store,
+      localRuntimeId: SERVER_RUNTIME_ID,
+      send: (ws: FakeWs, raw: Uint8Array) => {
+        const bucket = sentBySocket.get(ws) ?? [];
+        bucket.push(deserializeWsMessage(raw));
+        sentBySocket.set(ws, bucket);
+      },
+    };
+    const wsA: FakeWs = { label: 'A', readyState: 1 };
+    const wsB: FakeWs = { label: 'B', readyState: 1 };
+    await relayRoute(config, wsA, signedHello(RUNTIME_A, SEED_A, KEY_A));
+    await relayRoute(config, wsB, signedHello(RUNTIME_B, SEED_B, KEY_B, '2'));
+
+    // Both a remote target and the relay's own runtime id: neither is forwarded
+    // nor decrypted locally. Financial bytes only travel over direct sessions.
+    for (const [index, to] of [RUNTIME_B, SERVER_RUNTIME_ID].entries()) {
+      await relayRoute(config, wsA, {
+        type: 'entity_inputs',
+        id: `relayed-account-input-${index}`,
+        from: RUNTIME_A,
+        fromEncryptionPubKey: KEY_A,
+        to,
+        payload: new TextEncoder().encode('encrypted-account-input'),
+        encrypted: true,
+        entityId: ENTITY_B,
+        txs: 1,
+      });
+      expect(sentBySocket.get(wsA)?.at(-1)).toMatchObject({
+        type: 'error',
+        error: 'RELAY_ENTITY_INPUTS_FORBIDDEN',
+        inReplyTo: `relayed-account-input-${index}`,
+        to,
+      });
+    }
+
+    expect(sentBySocket.get(wsB)).toEqual([{ type: 'hello_ack', to: RUNTIME_B.toLowerCase() }]);
+    expect(store.debugEvents.filter(event => event.reason === 'RELAY_ENTITY_INPUTS_FORBIDDEN')).toHaveLength(2);
+    expect(store.debugEvents.some(event => event.event === 'delivery' && event.msgType === 'entity_inputs')).toBe(false);
+    expect(store.clients.has(RUNTIME_A)).toBe(true);
+    expect(store.clients.has(RUNTIME_B)).toBe(true);
+  });
+
   test('closes and forgets an authenticated relay socket after one invalid frame signature', async () => {
     const store = createRelayStore(SERVER_RUNTIME_ID);
     const closes: Array<{ code?: number; reason?: string }> = [];
@@ -1120,7 +1080,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: () => true,
     };
     await relayRoute(config, sender, signedHello(RUNTIME_A, SEED_A, KEY_A));
@@ -1138,108 +1097,12 @@ describe('relay-router gossip fanout', () => {
     expect(store.runtimeEncryptionKeys.has(RUNTIME_A.toLowerCase())).toBe(false);
   });
 
-  test('rejects unencrypted entity_inputs at relay ingress', async () => {
-    const store = createRelayStore(SERVER_RUNTIME_ID);
-    const sentBySocket = new Map<FakeWs, unknown[]>();
-    const config = {
-      store,
-      localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
-      send: (ws: FakeWs, raw: Uint8Array) => {
-        const bucket = sentBySocket.get(ws) ?? [];
-        bucket.push(deserializeWsMessage(raw));
-        sentBySocket.set(ws, bucket);
-      },
-    };
-    const wsA: FakeWs = { label: 'A', readyState: 1 };
-
-    await relayRoute(config, wsA, signedHello(RUNTIME_A, SEED_A, KEY_A));
-    await relayRoute(config, wsA, {
-      type: 'entity_inputs',
-      id: 'plaintext-entity-input',
-      from: RUNTIME_A,
-      fromEncryptionPubKey: KEY_A,
-      to: RUNTIME_B,
-      payload: { entityId: ENTITY_B, entityTxs: [] },
-      encrypted: false,
-      entityId: ENTITY_B,
-      txs: 0,
-    });
-
-    expect(sentBySocket.get(wsA)?.at(-1)).toMatchObject({
-      type: 'error',
-      error: 'ENTITY_INPUT_MUST_BE_ENCRYPTED',
-      inReplyTo: 'plaintext-entity-input',
-      to: RUNTIME_B,
-    });
-    expect(store.debugEvents.some(event => event.reason === 'ENTITY_INPUT_MUST_BE_ENCRYPTED')).toBe(true);
-    expect(store.debugEvents.find(event => event.reason === 'ENTITY_INPUT_MUST_BE_ENCRYPTED')?.delivery).toMatchObject({
-      outcome: 'failed',
-      code: 'ENTITY_INPUT_MUST_BE_ENCRYPTED',
-      retryable: false,
-      fatal: true,
-      terminal: true,
-      failure: {
-        category: 'Contradiction',
-        code: 'ENTITY_INPUT_MUST_BE_ENCRYPTED',
-      },
-    });
-  });
-
-  test('local entity_inputs delivery failures expose typed delivery metadata', async () => {
-    const store = createRelayStore(SERVER_RUNTIME_ID);
-    const sentBySocket = new Map<FakeWs, unknown[]>();
-    const config = {
-      store,
-      localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {
-        throw rejectFailure('NO_LOCAL_REPLICA', 'NO_LOCAL_REPLICA: entityId=0xabc');
-      },
-      send: (ws: FakeWs, raw: Uint8Array) => {
-        const bucket = sentBySocket.get(ws) ?? [];
-        bucket.push(deserializeWsMessage(raw));
-        sentBySocket.set(ws, bucket);
-      },
-    };
-    const wsA: FakeWs = { label: 'A', readyState: 1 };
-
-    await relayRoute(config, wsA, signedHello(RUNTIME_A, SEED_A, KEY_A));
-    await relayRoute(config, wsA, {
-      type: 'entity_inputs',
-      id: 'local-delivery-fail',
-      from: RUNTIME_A,
-      fromEncryptionPubKey: KEY_A,
-      to: SERVER_RUNTIME_ID,
-      payload: new TextEncoder().encode('encrypted-payload'),
-      encrypted: true,
-      entityId: ENTITY_C,
-      txs: 1,
-    });
-
-    expect(sentBySocket.get(wsA)?.at(-1)).toMatchObject({
-      type: 'error',
-      error: 'NO_LOCAL_REPLICA: entityId=0xabc',
-    });
-    expect(store.debugEvents.find(event => event.status === 'local-delivery-failed')?.delivery).toMatchObject({
-      outcome: 'failed',
-      code: 'NO_LOCAL_REPLICA',
-      retryable: false,
-      fatal: true,
-      terminal: true,
-      failure: {
-        category: 'Contradiction',
-        code: 'NO_LOCAL_REPLICA',
-      },
-    });
-  });
-
   test('runtime_input is not a relay protocol message', async () => {
     const store = createRelayStore(SERVER_RUNTIME_ID);
     const sentBySocket = new Map<FakeWs, unknown[]>();
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -1265,76 +1128,12 @@ describe('relay-router gossip fanout', () => {
     expect(store.debugEvents.some(event => event.reason === 'Unknown message type: runtime_input')).toBe(true);
   });
 
-  test('local delivery rejects unknown local entity instead of queueing forever', async () => {
-    const env = createEmptyEnv('relay-local-unknown-entity');
-    const store = createRelayStore(env.runtimeId);
-    const handler = createLocalDeliveryHandler(env, store, () => null);
-    const unknownEntityInput = {
-      entityId: ENTITY_C,
-      runtimeId: env.runtimeId,
-      signerId: env.runtimeId,
-      entityTxs: [],
-    };
-    const envelope = signRuntimeEntityInputsEnvelope(createEmptyEnv(SEED_A), env.runtimeId!, {
-      sourceRuntimeId: RUNTIME_A,
-      sourceRuntimeHeight: 1,
-      sourceRuntimeTimestamp: 1,
-      entityInputs: [unknownEntityInput],
-    });
-
-    await expect(handler(RUNTIME_A, {
-      type: 'entity_inputs',
-      to: env.runtimeId,
-      encrypted: true,
-      payload: encryptPayload(envelope, deriveEncryptionKeyPair(env.runtimeSeed).publicKey),
-    })).rejects.toThrow('NO_LOCAL_REPLICA');
-
-    expect(store.debugEvents.some(event => {
-      return event.status === 'rejected-no-local-replica' && event.reason === 'NO_LOCAL_REPLICA';
-    })).toBe(true);
-  });
-
-  test('local delivery rejects forged source before local entity lookup', async () => {
-    const env = createEmptyEnv('relay-local-forged-source');
-    const store = createRelayStore(env.runtimeId);
-    let entityLookups = 0;
-    const handler = createLocalDeliveryHandler(env, store, () => {
-      entityLookups += 1;
-      return null;
-    });
-    const source = createEmptyEnv(SEED_A);
-    const envelope = signRuntimeEntityInputsEnvelope(source, env.runtimeId!, {
-      sourceRuntimeId: source.runtimeId!,
-      sourceRuntimeHeight: 1,
-      sourceRuntimeTimestamp: 1,
-      entityInputs: [{
-        entityId: ENTITY_C,
-        runtimeId: env.runtimeId!,
-        signerId: env.runtimeId!,
-        entityTxs: [],
-      }],
-    });
-
-    await expect(handler(source.runtimeId, {
-      type: 'entity_inputs',
-      to: env.runtimeId,
-      encrypted: true,
-      payload: encryptPayload({
-        ...envelope,
-        sourceRuntimeHeight: 2,
-      }, deriveEncryptionKeyPair(env.runtimeSeed).publicKey),
-    })).rejects.toThrow('INBOUND_ENTITY_INPUTS_SOURCE_SIGNATURE_INVALID');
-    expect(entityLookups).toBe(0);
-    expect(store.debugEvents).toEqual([]);
-  });
-
   test('rejects unsigned hello by default', async () => {
     const store = createRelayStore(SERVER_RUNTIME_ID);
     const sentBySocket = new Map<FakeWs, unknown[]>();
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));
@@ -1362,7 +1161,6 @@ describe('relay-router gossip fanout', () => {
     const config = {
       store,
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => {},
       send: (ws: FakeWs, raw: Uint8Array) => {
         const bucket = sentBySocket.get(ws) ?? [];
         bucket.push(deserializeWsMessage(raw));

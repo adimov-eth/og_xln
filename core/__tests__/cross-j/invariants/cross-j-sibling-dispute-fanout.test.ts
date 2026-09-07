@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
+import { cloneCrossJurisdictionRoute } from '../../../extensions/cross-j';
 import { committedCrossJSourceResponseWindowMs } from '../../../extensions/cross-j/prepared-route';
+import {
+  EntityCollectionCandidateMap,
+  PersistentEntityCollectionMap,
+} from '../../../entity/state/persistent-collection-map';
 import { queueCrossJurisdictionSiblingDisputeFanout } from '../../../entity/tx/j-events-htlc';
 import { handleCrossJurisdictionForceSiblingDisputeEntityTx } from '../../../entity/tx/handlers/cross-j/force-sibling-dispute';
 import { createEmptyEnv } from '../../../runtime';
@@ -105,6 +110,46 @@ describe('cross-j sibling dispute fanout', () => {
       9,
     )).toBe(0);
     expect(route.status).toBe('cancelled');
+    expect(outputs).toEqual([]);
+  });
+
+  test('dispute-started-with-committed-intent-route-does-not-throw', () => {
+    const parties = {
+      sourceUser: entity('45'),
+      sourceHub: entity('46'),
+      targetHub: entity('47'),
+      targetUser: entity('48'),
+      sourceSigner: addr('75'),
+      targetSigner: addr('76'),
+      sourceHubSigner: addr('77'),
+      targetHubSigner: addr('78'),
+    };
+    const state = makeState(
+      parties.sourceHub,
+      parties.sourceHubSigner,
+      makeJurisdiction('Ethereum', 1, '11', '12'),
+      parties.sourceUser,
+    );
+    const route = baseRoute('committed-intent-dispute-start', parties);
+    delete route.sourcePull;
+    delete route.targetPull;
+    route.status = 'intent';
+    // The raw intent exactly as a committed Entity frame leaves it: a sealed
+    // radix leaf under the next frame's candidate overlay.
+    const committed = PersistentEntityCollectionMap.from(new Map([[route.orderId, route]]));
+    const routes = new EntityCollectionCandidateMap(committed, cloneCrossJurisdictionRoute);
+    state.crossJurisdictionSwaps = routes;
+    expect(Object.isFrozen(routes.get(route.orderId))).toBe(true);
+    const outputs: EntityInput[] = [];
+
+    expect(queueCrossJurisdictionSiblingDisputeFanout(
+      state,
+      outputs,
+      parties.sourceUser,
+      9,
+    )).toBe(0);
+    expect(routes.get(route.orderId)).toMatchObject({ status: 'cancelled', updatedAt: 1_000 });
+    expect(committed.get(route.orderId)?.status).toBe('intent');
     expect(outputs).toEqual([]);
   });
 

@@ -183,6 +183,7 @@ export const ENTITY_TX_SEMANTIC_CATALOG = [
   coveredEntity('processHtlcTimeouts', 'core/entity/tx/handlers/htlc/direct.ts', ENTITY_ROUTING_SEMANTIC_EVIDENCE),
   coveredEntity('profile-update', 'core/entity/tx/handlers/system/basic.ts', ENTITY_CONTROL_SEMANTIC_EVIDENCE),
   coveredEntity('propose', 'core/entity/tx/handlers/system/basic.ts', ENTITY_CONTROL_SEMANTIC_EVIDENCE),
+  coveredEntity('proposeAccountsNow', 'core/entity/tx/handlers/account/propose-accounts-now.ts', ['rscore/crates/entity-kernel/tests/resident_entity.rs', 'rscore/crates/runtime/tests/propose_accounts_now_admission.rs']),
   coveredEntity('proposeCancelSwap', 'core/entity/tx/handlers/payments/swap-requests.ts', ENTITY_SAME_J_FINANCIAL_EVIDENCE),
   coveredEntity('r2c', 'core/entity/tx/handlers/j-batch/r2c.ts', ENTITY_ROUTING_SEMANTIC_EVIDENCE),
   coveredEntity('r2e', 'core/entity/tx/handlers/j-batch/r2e.ts', ENTITY_ROUTING_SEMANTIC_EVIDENCE),

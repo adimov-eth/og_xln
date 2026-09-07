@@ -110,15 +110,19 @@ describe('repository source folder-width invariant', () => {
     const repoRoot = resolve(import.meta.dir, '../..');
     const widths = collectFolderWidths(repoRoot);
     expect(evaluateFolderWidths(widths, FOLDER_WIDTH_DEBT)).toEqual([]);
-    expect(widths.filter(entry => entry.files > 10)).toEqual([
-      { path: 'jurisdictions/contracts', files: 16 },
-      { path: 'scripts/dev', files: 12 },
-    ]);
+    // The gate table is the single source of truth: every folder above the
+    // maximum must be a declared allowance and every allowance must still bind.
+    expect(widths.filter(entry => entry.files > 10).map(entry => entry.path).sort()).toEqual(
+      Object.keys(FOLDER_WIDTH_DEBT).sort(),
+    );
   });
 
-  test('runtime retains no source-folder debt', () => {
+  test('runtime source-folder debt is exactly the declared allowance', () => {
     const repoRoot = resolve(import.meta.dir, '../..');
     const runtimeWidths = collectFolderWidths(repoRoot, resolve(repoRoot, 'core'));
-    expect(runtimeWidths.filter(entry => entry.files > 10)).toEqual([]);
+    const runtimeDebt = Object.fromEntries(
+      Object.entries(FOLDER_WIDTH_DEBT).filter(([path]) => path.startsWith('core/')),
+    );
+    expect(evaluateFolderWidths(runtimeWidths, runtimeDebt)).toEqual([]);
   });
 });

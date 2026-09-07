@@ -10,6 +10,7 @@ import {
 } from '../jurisdiction/adapter/rpc-public';
 import { createEmptyBatch, encodeJBatch } from '../jurisdiction/machine/batch';
 import { createTxFinalizationEvidenceReader } from '../jurisdiction/adapter/rpc-watcher-inputs';
+import { encodeInt512 } from '../protocol/crypto/abi-money';
 
 const bytes32 = (byte: string): string => `0x${byte.repeat(32)}`;
 
@@ -24,7 +25,7 @@ describe('J watcher DisputeFinalized calldata evidence', () => {
       watchSeed: bytes32('44'),
       leftResponseSeconds: 10,
       rightResponseSeconds: 10,
-      offdeltas: [5n, -3n],
+      offdeltas: [encodeInt512(5n), encodeInt512(-3n)],
       tokenIds: [1n, 2n],
       transformers: [],
     },

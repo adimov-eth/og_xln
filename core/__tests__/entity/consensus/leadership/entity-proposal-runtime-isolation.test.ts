@@ -28,6 +28,9 @@ import {
 } from '../../../helpers/entity-proposal-runtime-fixture';
 
 afterEach(async () => {
+  // The reject policy is read once per frame by the Runtime loop; a test that
+  // pins the production branch must not leak it into the fail-fast default.
+  delete process.env['XLN_REJECT_FAIL_FAST'];
   await cleanupPersistedProposalFixtures();
 });
 
@@ -121,36 +124,57 @@ describe('Entity proposal Runtime isolation', () => {
     expect(getAccountJClaimNodeStore(restored).size).toBe(claimsBefore);
   }, 30_000);
 
-  test('remote duplicate board handover is discarded without halting Runtime', async () => {
+  test('remote duplicate board handover is a typed reject: dropped without halting Runtime under the production policy, surfaced to the caller under fail-fast, never mutating the validator', async () => {
     const { env, signerId } = await installPersistedProposalValidator();
     const frame = await buildMalformedBoardHandoverProposal(env, signerId);
     const remoteEnv = createEmptyEnv('duplicate-board-handover-remote');
     const remoteRuntimeId = remoteEnv.runtimeId!;
-    const inbound = handleInboundP2PEntityInputs(
-      env,
-      remoteRuntimeId,
-      signRuntimeEntityInputsEnvelope(remoteEnv, env.runtimeId!, {
-        sourceRuntimeId: remoteRuntimeId,
-        sourceRuntimeHeight: 1,
-        sourceRuntimeTimestamp: 1_000,
-        entityInputs: [{
-          entityId: durableProposalFixture.entityId,
-          signerId,
-          runtimeId: env.runtimeId!,
-          proposedFrame: frame,
-        }],
-      }),
-    );
-    expect(inbound.kind).toBe('queued');
+    const queueHostileFrame = (): void => {
+      const inbound = handleInboundP2PEntityInputs(
+        env,
+        remoteRuntimeId,
+        signRuntimeEntityInputsEnvelope(remoteEnv, env.runtimeId!, {
+          sourceRuntimeId: remoteRuntimeId,
+          sourceRuntimeHeight: 1,
+          sourceRuntimeTimestamp: 1_000,
+          entityInputs: [{
+            entityId: durableProposalFixture.entityId,
+            signerId,
+            runtimeId: env.runtimeId!,
+            proposedFrame: frame,
+          }],
+        }),
+      );
+      expect(inbound.kind).toBe('queued');
+    };
+    const expectValidatorUntouched = async (): Promise<void> => {
+      const replica = env.state.eReplicas.get(`${durableProposalFixture.entityId}:${signerId}`)!;
+      // Owner canon: a peer can never take a Runtime down. Whatever the policy
+      // decides about the caller, the Hub is never marked halted and no
+      // hostile byte reaches the validator's committed lineage.
+      expect(env.infrastructure?.halted).toBe(false);
+      expect(env.state.height).toBe(1);
+      expect(replica.state.height).toBe(0);
+      expect(replica.proposal).toBeUndefined();
+      expect(replica.candidate).toBeUndefined();
+      expect(await readPersistedFrameJournal(env, 2)).toBeNull();
+    };
 
+    // Production policy: the rejection is logged and dropped, the Runtime keeps
+    // serving and the frame settles normally.
+    process.env['XLN_REJECT_FAIL_FAST'] = '0';
+    queueHostileFrame();
     await processRuntime(env, []);
-    const replica = env.state.eReplicas.get(`${durableProposalFixture.entityId}:${signerId}`)!;
-    expect(env.infrastructure?.halted).toBe(false);
-    expect(env.state.height).toBe(1);
-    expect(replica.state.height).toBe(0);
-    expect(replica.proposal).toBeUndefined();
-    expect(replica.candidate).toBeUndefined();
-    expect(await readPersistedFrameJournal(env, 2)).toBeNull();
+    await expectValidatorUntouched();
+
+    // Fail-fast (tests/dev/CI default): the same typed rejection is handed to
+    // the caller of the Runtime loop, after the frame settled — so a hostile
+    // peer surfaces here instead of in a production log line, and it still
+    // costs the Runtime nothing.
+    delete process.env['XLN_REJECT_FAIL_FAST'];
+    queueHostileFrame();
+    await expect(processRuntime(env, [])).rejects.toThrow('REMOTE_INPUT_REJECTED');
+    await expectValidatorUntouched();
   }, 30_000);
 
   test('remote raw board handover cannot enter mempool or stall honest frames', async () => {

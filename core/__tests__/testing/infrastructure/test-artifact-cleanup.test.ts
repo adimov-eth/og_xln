@@ -663,9 +663,9 @@ describe('test artifact cleanup', () => {
     expect(rootPackage).toContain('run-with-test-cleanup.ts --reason=p2p-relay -- bun core/scenarios/network/p2p-relay.ts');
     expect(rootPackage).toContain('run-with-test-cleanup.ts --reason=bootstrap-soundcheck -- bun core/scripts/operations/bootstrap/bootstrap-soundcheck.ts --mode=all');
     expect(rootScripts['check:contract-invariants']).toContain('--keep-test-artifacts');
-    expect(rootScripts['check']).toBe('bun tools/run-parallel-checks.ts check:short check:long');
+    expect(rootScripts['check']).toBe('bun run check:short && bun run check:long');
     expect(rootScripts['check:short']).toBe(
-      'bun tools/run-parallel-checks.ts check:brainvault check:contract-artifact-drift check:frontend-file-size',
+      'bun tools/run-parallel-checks.ts check:contract-artifact-drift check:frontend-file-size',
     );
     expect(rootScripts['check:long']).toBe(
       'bun tools/run-parallel-checks.ts check:src check:frontend',

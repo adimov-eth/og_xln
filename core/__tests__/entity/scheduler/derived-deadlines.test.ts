@@ -91,6 +91,31 @@ describe('derived per-payment deadlines', () => {
     });
   });
 
+  test('frozen-account-htlc-deadline-does-not-rewake', () => {
+    // A frozen Account has no htlc_resolve consumer (tx-effects suppresses the
+    // returned AccountTx), so a past timelock there must not keep re-arming
+    // the derived wake. Only the paybook secret-ack waits remain.
+    const base = state();
+    base.accounts.get(id('a')).status = 'dispute_preparing';
+    base.accounts.get(id('b')).status = 'disputed';
+    expect(collectDerivedDeadlines(base, 1_000).map((deadline) => deadline.id)).toEqual([
+      `htlc-secret-ack:${id('7')}`,
+      `htlc-secret-ack:${id('9')}`,
+    ]);
+    expect(earliestDerivedDeadline(base)).toBe(200);
+    base.paybook.entries.clear();
+    expect(earliestDerivedDeadline(base)).toBeNull();
+    // Returning to active (or an unset status) re-exposes the lock deadlines.
+    base.accounts.get(id('a')).status = 'active';
+    delete base.accounts.get(id('b')).status;
+    expect(collectDerivedDeadlines(base, 1_000).map((deadline) => deadline.id)).toEqual([
+      'htlc-timeout:lock-z',
+      'htlc-timeout:lock-a',
+      'htlc-timeout:lock-b',
+    ]);
+    expect(earliestDerivedDeadline(base)).toBe(100);
+  });
+
   test('earliest deadline drives the idle wake and ignores unusable timelocks', () => {
     const base = state();
     expect(earliestDerivedDeadline(base)).toBe(100);

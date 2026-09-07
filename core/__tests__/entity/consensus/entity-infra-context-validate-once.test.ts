@@ -47,7 +47,7 @@ describe('Entity infra context in-process validate-once', () => {
     );
     expect(application).toContain('if (!inProcessInfraValidated)');
     expect(application).toContain('entityContext = validateEntityInfraContext(entityContext)');
-    expect(start).toContain('env.state.timestamp,\n    !fitted.replayed');
+    expect(start).toContain('resolveEntityProposalTimestamp(env, workingReplica.state),\n    !fitted.replayed');
     expect(walWrite).toContain('inProcessInfraValidated\n      ? context\n      : validateEntityInfraContext(context)');
     expect(walWrite).toContain('const context = validateEntityInfraContext({');
     expect(walCommit).toContain('inProcessInfraValidated: true');

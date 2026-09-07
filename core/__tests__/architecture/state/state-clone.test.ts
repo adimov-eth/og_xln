@@ -493,7 +493,7 @@ describe('state cloning', () => {
       .toBe(computeCanonicalEntityConsensusStateHash(isolated.newState));
   });
 
-  test('trusted same-Runtime cascades do not reuse the external replay context', async () => {
+  test('every ingress origin binds the persisted replay context; explicit non-replay materialization ignores the map', async () => {
     const env = createEmptyEnv('same-Runtime replay context isolation');
     const replica = makeProjectionReplica();
     const input = {
@@ -508,9 +508,12 @@ describe('state cloning', () => {
       throw new Error('TEST_ENTITY_INPUT_INGRESS_REJECTED');
     }
 
+    // Every ingress origin binds the height-keyed persisted context: the WAL
+    // journals one context per committed proposer frame for external inputs
+    // and Runtime-derived account-work / cross-J frames alike.
     expect(externalIngress.context.usePersistedReplayContext).toBe(true);
-    expect(crossJurisdictionIngress.context.usePersistedReplayContext).toBe(false);
-    expect(accountWorkIngress.context.usePersistedReplayContext).toBe(false);
+    expect(crossJurisdictionIngress.context.usePersistedReplayContext).toBe(true);
+    expect(accountWorkIngress.context.usePersistedReplayContext).toBe(true);
 
     const persisted = await materializeEntityInfraContext(env, replica, [], {
       usePersistedReplayContext: false,

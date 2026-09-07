@@ -913,7 +913,7 @@ describe('production startup wiring', () => {
     expect(framePreparationSource).not.toContain('prepareHtlcPaymentEntityInputs');
     expect(frameDispatchSource).toContain('if (plan.remoteOutputs.length > 0 && env.quietRuntimeLogs !== true)');
     expect(runtimeSource).not.toContain('void config;');
-    expect(runtimeLoopLifecycleSource).toContain('else if (tickDelayMs > 0)');
+    expect(runtimeLoopLifecycleSource).toContain('else if (getRuntimeFramePeriodMs(env) === 0 && tickDelayMs > 0)');
     expect(mmNode).toContain("MARKET_MAKER_RUNTIME_TICK_DELAY_MS'] || '0'");
     expect(mmNode).toContain("MARKET_MAKER_MAX_ENTITY_INPUTS_PER_RUNTIME_FRAME'] || '0'");
     expect(mmNode).toContain("MARKET_MAKER_MAX_ENTITY_TXS_PER_RUNTIME_FRAME'] || '0'");
@@ -936,7 +936,7 @@ describe('production startup wiring', () => {
     expect(mmNode).toContain("MARKET_MAKER_BOOTSTRAP_LOOP_MS'] || '1'");
     expect(mmNode).toContain("MARKET_MAKER_BOOTSTRAP_START_DELAY_MS'] || '0'");
     expect(mmNode).toContain("MARKET_MAKER_OFFERS_PER_ACCOUNT_PER_TICK'] || '5'");
-    expect(mmNode).toContain("MARKET_MAKER_MAX_NEW_OFFERS_PER_TICK'] || '1000'");
+    expect(mmNode).toContain("MARKET_MAKER_MAX_NEW_OFFERS_PER_TICK'] ||\n    LIMITS.MAX_MARKET_MAKER_NEW_OFFERS_PER_TICK");
     expect(mmNode).not.toContain('MARKET_MAKER_BOOTSTRAP_DEFAULT_OFFERS_PER_ACCOUNT_PER_TICK');
     expect(mmNode).not.toContain('MARKET_MAKER_BOOTSTRAP_DEFAULT_MAX_NEW_OFFERS_PER_TICK');
     expect(mmNode).not.toContain('MARKET_MAKER_BOOTSTRAP_DEFAULT_CROSS_OFFERS_PER_ACCOUNT_PER_TICK');
@@ -996,13 +996,19 @@ describe('production startup wiring', () => {
     );
     expect(mmNode).not.toContain('setImmediate(resolve)');
     expect(mmNode).not.toContain('await sleep(0);');
-    expect(mmNode).toContain("MARKET_MAKER_STEADY_CROSS_ROUTE_JOBS_PER_TICK'] || '1000'");
+    expect(mmNode).toContain(
+      "MARKET_MAKER_STEADY_CROSS_ROUTE_JOBS_PER_TICK'] ||\n    LIMITS.MAX_MARKET_MAKER_CROSS_ROUTE_JOBS_PER_TICK",
+    );
     expect(mmNode).not.toContain('MARKET_MAKER_MAX_NEW_OFFERS_PER_ENTITY_INPUT');
     expect(mmNode).not.toContain('MARKET_MAKER_MAX_NEW_CROSS_REQUESTS_PER_ENTITY_INPUT');
     expect(mmNode).not.toContain('MARKET_MAKER_MAX_NEW_CROSS_DEPTH_REQUESTS_PER_ENTITY_INPUT');
     expect(mmNode).not.toContain('MARKET_MAKER_BOOTSTRAP_CROSS_ROUTE_JOBS_PER_TICK');
-    expect(mmNode).toContain("MARKET_MAKER_CONNECTIVITY_MAX_TXS_PER_TICK'] || '1000'");
-    expect(mmNode).toContain("MARKET_MAKER_BOOTSTRAP_CONNECTIVITY_MAX_TXS_PER_TICK'] || '1000'");
+    expect(mmNode).toContain(
+      "MARKET_MAKER_CONNECTIVITY_MAX_TXS_PER_TICK'] ||\n    LIMITS.MAX_MARKET_MAKER_CONNECTIVITY_TXS_PER_TICK",
+    );
+    expect(mmNode).toContain(
+      "MARKET_MAKER_BOOTSTRAP_CONNECTIVITY_MAX_TXS_PER_TICK'] ||\n    LIMITS.MAX_MARKET_MAKER_CONNECTIVITY_TXS_PER_TICK",
+    );
     expect(mmNode).not.toContain('MARKET_MAKER_BOOTSTRAP_SAME_QUOTE_HUB_GROUPS_PER_WAVE');
     expect(mmNode).not.toContain('MARKET_MAKER_MAX_CONNECTIVITY_TXS_PER_ENTITY_INPUT');
     expect(mmNode).not.toContain('type MarketMakerCrossOfferBudget = {');
@@ -1162,10 +1168,15 @@ describe('production startup wiring', () => {
     );
     expect(healthControllerBlock).toContain('crossOverride: currentHealth.cross');
     expect(mmNode).toContain("if (deps.phase() === 'offers-ready') {");
-    expect(mmNode).toContain('const before = deps.health.publishReady();');
-    expect(mmNode).toContain('if (isMarketMakerFullDepthComplete(before)) return;');
-    expect(mmNode).toContain("await deps.driveQuotes('steady');");
-    expect(mmNode).toContain('const after = deps.health.publishReady();');
+    // Steady replenishment must read the LIVE book (publishReady freezes the
+    // cross section once it ever read complete), skip when full depth already
+    // holds, and republish after driving quotes.
+    expect(mmNode).toContain('const before = deps.health.publish({ includeCross: true });');
+    expect(mmNode).toContain('const fullDepth = isMarketMakerFullDepthComplete(before);');
+    expect(mmNode).toContain('if (fullDepth) return;');
+    expect(mmNode).toContain(
+      "await deps.driveQuotes('steady');\n      deps.health.publish({ includeCross: true });",
+    );
     const refreshCachedHealthBlock = extractSourceBlock(
       mmNode,
       'const refreshHealth = (): void => {',

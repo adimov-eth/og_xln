@@ -19,7 +19,10 @@ import {
   commitEntityFrameCandidateState,
   createEntityFrameCandidateState,
 } from '../../../entity/state-clone';
-import { getEntityAccountForWrite } from '../../../entity/state/persistent-account-map';
+import {
+  getEntityAccountForWrite,
+  putEntityAccountCandidate,
+} from '../../../entity/state/persistent-account-map';
 import { applyEntityTx } from '../../../entity/tx/apply';
 import { computeCanonicalStateHashFromEnv } from '../../../storage/canonical-hash';
 import { decodeBuffer, encodeBuffer } from '../../../storage/codec/codec';
@@ -58,7 +61,6 @@ const jurisdictionReplica = (): JReplica => ({
   position: { x: 0, y: 0, z: 0 },
   rpcs: [jurisdiction.address!],
   chainId: jurisdiction.chainId,
-  contracts: { depository: jurisdiction.depositoryAddress, entityProvider: jurisdiction.entityProviderAddress },
   contracts: {
     depository: jurisdiction.depositoryAddress,
     entityProvider: jurisdiction.entityProviderAddress,
@@ -169,7 +171,7 @@ describe('State and Replica boundary characterization', () => {
     expect(computeAccountStateRoot(localWitnessChange.state)).toBe(accountRoot);
   });
 
-  test('Entity root commits Account lifecycle but excludes local witnesses and history views', async () => {
+  test('Entity root commits Account money and lifecycle but excludes coordination, witnesses and history views', async () => {
     const { replica } = await createCommittedAccountFixture();
     // Reducer-unit calls return dirty Account metadata to the enclosing Entity
     // frame. A snapshot clone resets the cache here; the real frame pipeline
@@ -180,12 +182,38 @@ describe('State and Replica boundary characterization', () => {
     const entityRoot = computeCanonicalEntityConsensusStateHash(baselineState);
     expect(entityRoot).toBe(computeCanonicalEntityConsensusStateHashCold(baselineState));
 
+    // Committed bilateral money still moves the signed Entity root: the Account
+    // leaf binds `accountStateRoot`
+    // (entity/consensus/state-root.ts ENTITY_ACCOUNT_LEAF_DERIVED_FIELDS).
+    const bilateralMoney = createEntityFrameCandidateState(baselineState);
+    const moneyTransition = beginAccountTransition(bilateralMoney.accounts.get(counterpartyId)!);
+    accountTransitionView(moneyTransition).state.deltas.put(1, createDefaultDelta(1));
+    putEntityAccountCandidate(
+      bilateralMoney.accounts,
+      counterpartyId,
+      commitAccountTransition(moneyTransition).account,
+    );
+    expect(computeCanonicalEntityConsensusStateHash(bilateralMoney)).not.toBe(entityRoot);
+
+    // Account frame lifecycle metadata is committed
+    // (ACCOUNT_ENTITY_COMMITTED_FIELDS contains `currentHeight`).
     const accountLifecycle = createEntityFrameCandidateState(baselineState);
-    getEntityAccountForWrite(accountLifecycle.accounts, counterpartyId)!.mempool.push({
+    getEntityAccountForWrite(accountLifecycle.accounts, counterpartyId)!.currentHeight += 1;
+    expect(computeCanonicalEntityConsensusStateHash(accountLifecycle)).not.toBe(entityRoot);
+
+    // Frame coordination state is deliberately outside the signed root:
+    // entity/consensus/state-root.ts ACCOUNT_ENTITY_EXCLUDED_FIELDS documents
+    // that committing it made Entity roots depend on scheduling, retries and
+    // worker timing. It is recovered from the WAL instead.
+    const coordination = createEntityFrameCandidateState(baselineState);
+    const coordinationAccount = getEntityAccountForWrite(coordination.accounts, counterpartyId)!;
+    coordinationAccount.mempool.push({
       type: 'direct_payment',
       data: { tokenId: 1, amount: 5n },
     });
-    expect(computeCanonicalEntityConsensusStateHash(accountLifecycle)).not.toBe(entityRoot);
+    coordinationAccount.rollbackCount += 1;
+    coordinationAccount.lastRollbackFrameHash = hex('95', 32);
+    expect(computeCanonicalEntityConsensusStateHash(coordination)).toBe(entityRoot);
 
     const localWitness = createEntityFrameCandidateState(baselineState);
     getEntityAccountForWrite(localWitness.accounts, counterpartyId)!.currentFrameHanko = hex('92', 65);
@@ -212,10 +240,21 @@ describe('State and Replica boundary characterization', () => {
     const baselineSnapshot = buildDurableRuntimeMachineSnapshot(env);
     const baselineHash = computeCanonicalStateHashFromEnv(env);
 
+    // A node-local admission cap is durable (storage/wal/snapshot.ts
+    // DURABLE_RUNTIME_STATE_KEYS) and is restored byte-for-byte, but it is not
+    // consensus state: the canonical hash is height + timestamp + Entity
+    // consensus roots (storage/canonical-hash.ts computeCanonicalRuntimeStateHash).
+    // Two Runtimes that admit different numbers of inputs per frame must still
+    // compare equal on the identical committed frame.
     env.infrastructure!.maxEntityInputsPerFrame = 17;
     const durableSnapshot = buildDurableRuntimeMachineSnapshot(env);
     expect(bytesOf(durableSnapshot)).not.toBe(bytesOf(baselineSnapshot));
+    expect(computeCanonicalStateHashFromEnv(env)).toBe(baselineHash);
+
+    // The canonical hash still moves for committed Runtime frame identity.
+    env.state.height += 1;
     expect(computeCanonicalStateHashFromEnv(env)).not.toBe(baselineHash);
+    env.state.height -= 1;
 
     const decoded = decodeBuffer<Record<string, unknown>>(encodeBuffer(durableSnapshot));
     const restored = createEmptyEnv('runtime-state-boundary-restore');

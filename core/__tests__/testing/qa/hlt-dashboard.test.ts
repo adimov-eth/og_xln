@@ -29,36 +29,36 @@ const SAMPLE_PAYMENT = {
   mode: 'payments',
   runId: 'hlt-dashboard-test',
   completionAuthority: 'committed_entity_metrics_and_bilateral_runtime_quiescence',
-  configuredUsers: 200,
-  configuredRounds: 10,
+  configuredUsers: 1000,
+  configuredRounds: 20,
   cadenceMs: 1000,
-  senders: 100,
-  receivers: 100,
+  senders: 1000,
+  receivers: 1000,
   tokenId: 1,
   amount: '1000',
-  offeredPaymentRate: 100,
-  submittedPayments: 1000,
-  deliveredPayments: 1000,
+  offeredPaymentRate: 1000,
+  submittedPayments: 20000,
+  deliveredPayments: 20000,
   enqueueAckElapsedMs: 70,
   sourceDispatchFinishedElapsedMs: 60,
   sourceAllAckedElapsedMs: 70,
   commandObservedElapsedMs: 70,
   deliveredElapsedMs: 6699,
   drainCompleteElapsedMs: 7000,
-  deliveredTps: 149.27601134497687,
+  deliveredTps: 20000 * 1000 / 6699,
   hubCompletedPaymentsBefore: 50,
-  hubCompletedPaymentsAfter: 1050,
+  hubCompletedPaymentsAfter: 20050,
   hubAcceptedPaymentsBefore: 40,
-  hubAcceptedPaymentsAfter: 1040,
+  hubAcceptedPaymentsAfter: 20040,
   hubIngressElapsedMs: 5000,
   settlementSamples: [
-    { elapsedMs: 5000, runtimeHeight: 310, acceptedPayments: 1000, completedPayments: 900, paybookOpen: 100 },
-    { elapsedMs: 6699, runtimeHeight: 313, acceptedPayments: 1000, completedPayments: 1000, paybookOpen: 0 },
+    { elapsedMs: 5000, runtimeHeight: 310, acceptedPayments: 20000, completedPayments: 18000, paybookOpen: 2000 },
+    { elapsedMs: 6699, runtimeHeight: 313, acceptedPayments: 20000, completedPayments: 20000, paybookOpen: 0 },
   ],
-  roundSubmissionLagMs: Array.from({ length: 1000 }, () => 1),
+  roundSubmissionLagMs: Array.from({ length: 20000 }, () => 1),
   laneQuiescence: {
-    runtimes: 200,
-    openHubPeers: 200,
+    runtimes: 1000,
+    openHubPeers: 1000,
     pendingRuntimeWork: 0,
     pendingAccountFrames: 0,
     accountMempoolTxs: 0,
@@ -135,8 +135,8 @@ describe('hlt dashboard snapshot', () => {
   test('payment card derives hub frames and pays/frame', () => {
     const card = paymentCardFromReport(SAMPLE_PAYMENT);
     expect(card.hubFrames).toBe(14);
-    expect(card.paymentsPerFrame).toBeCloseTo(1000 / 14);
-    expect(card.deliveredTps).toBeCloseTo(149.276, 3);
+    expect(card.paymentsPerFrame).toBeCloseTo(20000 / 14);
+    expect(card.deliveredTps).toBeCloseTo(2985.52, 2);
   });
 
   test('publishes payment + perf tail for the dashboard', () => {
@@ -157,10 +157,13 @@ describe('hlt dashboard snapshot', () => {
     expect(paymentArtifact.runId).toBe(basename(workDir));
     expect(perfArtifact.runId).toBe(paymentArtifact.runId);
     const snapshot = readHltDashboardSnapshot(root);
-    expect(snapshot.payment?.deliveredTps).toBeCloseTo(149.276, 3);
+    expect(snapshot.payment?.deliveredTps).toBeCloseTo(2985.52, 2);
     expect(snapshot.perf.parsedProfiles).toBe(1);
     expect(snapshot.hubPerf[0]?.hubLabel).toBe('H1');
-    expect(snapshot.hubPerf[0]?.cpuTps).toBeCloseTo(1000 * 1000 / 12);
+    // cpuTps = delivered payments per second of hub process CPU
+    // (qa/hlt/hlt-dashboard.ts hubPerfFromRows); the profile line above reports
+    // 12 ms of runtime.process.total for H1.
+    expect(snapshot.hubPerf[0]?.cpuTps).toBeCloseTo(SAMPLE_PAYMENT.deliveredPayments * 1_000 / 12);
   });
 
   test('replay card carries the parity gate engine ladder', () => {

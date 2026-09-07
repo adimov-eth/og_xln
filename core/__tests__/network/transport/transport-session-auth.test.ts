@@ -168,21 +168,27 @@ describe('bound websocket session authority', () => {
     expect(socket.sent).toHaveLength(0);
   });
 
+  type ClientInternals = {
+    helloAcknowledged: boolean;
+    outstandingEntityInputIds: Set<string>;
+    handleHandshakeMessage(message: RuntimeWsMessage): boolean;
+    handleApplicationMessage(message: RuntimeWsMessage): Promise<boolean>;
+  };
+
   test('post-handshake correlated errors retain delivery identity', async () => {
     const errors: string[] = [];
+    const rejectedSessions: string[] = [];
     const client = new RuntimeWsClient({
       url: 'ws://unused.invalid',
       runtimeId: CLIENT_RUNTIME_ID,
-      helloAudience: 'relay:test',
+      helloAudience: directRuntimeWsAudience(SERVER_RUNTIME_ID),
       encryptionKeyPair: deriveEncryptionKeyPair(CLIENT_SEED),
       onError: error => errors.push(error.message),
+      onPeerSessionRejected: error => rejectedSessions.push(error.message),
     });
-    const internal = client as unknown as {
-      helloAcknowledged: boolean;
-      handleHandshakeMessage(message: RuntimeWsMessage): boolean;
-      handleApplicationMessage(message: RuntimeWsMessage): Promise<boolean>;
-    };
+    const internal = client as unknown as ClientInternals;
     internal.helloAcknowledged = true;
+    internal.outstandingEntityInputIds.add('account-output-7');
     const rejection: RuntimeWsMessage = {
       type: 'error',
       inReplyTo: 'account-output-7',
@@ -194,6 +200,63 @@ describe('bound websocket session authority', () => {
     expect(errors).toEqual([
       'P2P_REMOTE_REJECTED:id=account-output-7:to=:reason=Direct delivery failed: Runtime rejected ACK H7',
     ]);
+    expect(rejectedSessions).toEqual([]);
+    // One rejection per sent output: the id is consumed.
+    expect(internal.outstandingEntityInputIds.has('account-output-7')).toBe(false);
+  });
+
+  test('peer_error_frame_uncorrelated_is_rejected_not_halt (client side)', async () => {
+    const errors: string[] = [];
+    const rejectedSessions: string[] = [];
+    const client = new RuntimeWsClient({
+      url: 'ws://unused.invalid',
+      runtimeId: CLIENT_RUNTIME_ID,
+      helloAudience: directRuntimeWsAudience(SERVER_RUNTIME_ID),
+      encryptionKeyPair: deriveEncryptionKeyPair(CLIENT_SEED),
+      onError: error => errors.push(error.message),
+      onPeerSessionRejected: error => rejectedSessions.push(error.message),
+    });
+    const internal = client as unknown as ClientInternals;
+    internal.helloAcknowledged = true;
+    const forged: RuntimeWsMessage = {
+      type: 'error',
+      inReplyTo: 'never-sent-output',
+      error: 'P2P_INBOUND_ENTITY_INPUT_REJECTED:forged',
+    };
+
+    expect(internal.handleHandshakeMessage(forged)).toBe(false);
+    expect(await internal.handleApplicationMessage(forged)).toBe(true);
+    // Never a Runtime fault (`onError`): the session is rejected and closed.
+    expect(errors).toEqual([]);
+    expect(rejectedSessions).toEqual([expect.stringContaining('P2P_PEER_ERROR_UNCORRELATED:')]);
+    expect(rejectedSessions[0]).toContain('never-sent-output');
+    expect(internal.helloAcknowledged).toBe(false);
+  });
+
+  test('relay error frames are diagnostics, never a delivery rejection', async () => {
+    const errors: string[] = [];
+    const rejectedSessions: string[] = [];
+    const client = new RuntimeWsClient({
+      url: 'ws://unused.invalid/relay',
+      runtimeId: CLIENT_RUNTIME_ID,
+      helloAudience: 'relay:test',
+      encryptionKeyPair: deriveEncryptionKeyPair(CLIENT_SEED),
+      onError: error => errors.push(error.message),
+      onPeerSessionRejected: error => rejectedSessions.push(error.message),
+    });
+    const internal = client as unknown as ClientInternals;
+    internal.helloAcknowledged = true;
+    const relayError: RuntimeWsMessage = {
+      type: 'error',
+      inReplyTo: 'gossip-request-1',
+      error: 'GOSSIP_TARGET_NOT_CONNECTED',
+    };
+
+    expect(internal.handleHandshakeMessage(relayError)).toBe(false);
+    expect(await internal.handleApplicationMessage(relayError)).toBe(true);
+    expect(errors).toEqual([]);
+    expect(rejectedSessions).toEqual([]);
+    expect(internal.helloAcknowledged).toBe(true);
   });
 
   test('client refuses a challenge forwarded from another endpoint', async () => {
@@ -249,7 +312,6 @@ describe('bound websocket session authority', () => {
     await relayRoute({
       store: createRelayStore(SERVER_RUNTIME_ID),
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => undefined,
       send: (ws, raw) => ws.send(raw),
       consumeHelloChallenge: (ws, challenge) => registry.consume(ws, challenge),
     }, socket.ws, signHello(binding.challenge, attackerAudience));
@@ -332,27 +394,26 @@ describe('bound websocket session authority', () => {
     const relaySocket = makeSocket();
     const binding = registry.issue(relaySocket.ws, 'wss://relay.test/relay');
     relaySocket.sent.length = 0;
-    let relayAccepted = 0;
     const config = {
       store: createRelayStore(SERVER_RUNTIME_ID),
       localRuntimeId: SERVER_RUNTIME_ID,
-      localDeliver: async () => { relayAccepted += 1; },
       send: (ws: FakeSocket['ws'], raw: Uint8Array) => ws.send(raw),
       consumeHelloChallenge: (ws: object, claim: unknown) => registry.consume(ws, claim),
     };
     await relayRoute(config, relaySocket.ws, signHello(binding.challenge, binding.audience));
     const relayFrame = signFrame({
-      type: 'entity_inputs',
+      type: 'gossip_request',
       id: 'captured-relay',
       from: CLIENT_RUNTIME_ID,
       fromEncryptionPubKey: CLIENT_KEY,
       to: SERVER_RUNTIME_ID,
-      payload: new TextEncoder().encode('captured'),
-      encrypted: true,
+      payload: { set: 'hubs', limit: 1, sinceSeq: 0 },
     }, binding.challenge, binding.audience);
     await relayRoute(config, relaySocket.ws, relayFrame);
     await relayRoute(config, relaySocket.ws, relayFrame);
-    expect(relayAccepted).toBe(1);
+    // The relay answered the captured frame once (a gossip page) and refused
+    // its byte-exact replay on the same bound session.
+    expect(relaySocket.sent.filter(frame => frame.type === 'gossip_response' && frame.inReplyTo === 'captured-relay')).toHaveLength(1);
     expect(relaySocket.sent.at(-1)?.error).toBe('Session frame replay or reordering');
   });
 

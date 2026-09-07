@@ -59,6 +59,7 @@ describe('frontend check output', () => {
         'EntityProvider',
         'HankoVerifier',
         'HashLadderRegistry',
+        'NftCustody',
         'DeltaTransformer',
         'ERC20Mock',
       ]) {

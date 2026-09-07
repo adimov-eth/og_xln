@@ -16,7 +16,7 @@ test('createHash uses the exact SHA-256 bytes for incremental input', () => {
 
 test('browser bundle produces a full cryptographic SHA-256 digest', async () => {
   const build = await Bun.build({
-    entrypoints: [new URL('../../../infra/platform-crypto.ts', import.meta.url).pathname],
+    entrypoints: [new URL('../../../support/platform-crypto.ts', import.meta.url).pathname],
     target: 'browser',
     format: 'esm',
     minify: true,

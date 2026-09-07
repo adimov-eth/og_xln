@@ -574,15 +574,24 @@ describe('direct runtime websocket route', () => {
       onEntityInputs: () => undefined,
       onDeliveryFailure: failure => failures.push(failure),
     });
-    const { ws, sent } = makeFakeWs();
+    const { ws, sent, closed } = makeFakeWs();
     route.websocket.open(ws);
     await route.websocket.message(ws, serializeWsMessage(makeAuthedHello(clientSeed, clientRuntimeId)));
+    expect(route.sendEntityInputsDelivery(clientRuntimeId, {
+      sourceRuntimeId: serverRuntimeId,
+      sourceSignature: `0x${'11'.repeat(65)}`,
+      sourceRuntimeHeight: 7,
+      sourceRuntimeTimestamp: 7,
+      entityInputs: [],
+    })).toMatchObject({ outcome: 'delivered' });
+    const output = sent.find(message => message.type === 'entity_inputs');
+    expect(typeof output?.id).toBe('string');
     const sentBeforeRejection = sent.length;
 
     await route.websocket.message(ws, serializeWsMessage({
       type: 'error',
       id: 'peer-error-1',
-      inReplyTo: 'server-output-7',
+      inReplyTo: String(output?.id),
       from: clientRuntimeId,
       fromEncryptionPubKey: pubKeyToHex(deriveEncryptionKeyPair(clientSeed).publicKey),
       to: serverRuntimeId,
@@ -592,10 +601,90 @@ describe('direct runtime websocket route', () => {
     expect(failures).toEqual([{
       direction: 'outbound',
       peerRuntimeId: clientRuntimeId,
-      messageId: 'server-output-7',
+      messageId: String(output?.id),
       error: 'P2P_INBOUND_ENTITY_INPUT_REJECTED:account H7',
     }]);
     expect(sent).toHaveLength(sentBeforeRejection);
+    expect(closed).toEqual([]);
+    expect(route.hasOpenSession(clientRuntimeId)).toBe(true);
+  });
+
+  test('peer_error_frame_uncorrelated_is_rejected_not_halt', async () => {
+    const serverSeed = 'direct-route-server-forged-rejection';
+    const clientSeed = 'direct-route-client-forged-rejection';
+    const serverRuntimeId = deriveSignerAddressSync(serverSeed, '1').toLowerCase();
+    const clientRuntimeId = deriveSignerAddressSync(clientSeed, '1').toLowerCase();
+    const failures: unknown[] = [];
+    const route = createDirectRuntimeWsRoute({
+      runtimeId: serverRuntimeId,
+      runtimeSeed: serverSeed,
+      onEntityInputs: () => undefined,
+      onDeliveryFailure: failure => failures.push(failure),
+    });
+    const { ws, sent, closed } = makeFakeWs();
+    route.websocket.open(ws);
+    await route.websocket.message(ws, serializeWsMessage(makeAuthedHello(clientSeed, clientRuntimeId)));
+    const sentBeforeRejection = sent.length;
+
+    // Authenticated peer, valid frame auth, but a correlation id this route
+    // never sent: no delivery failure reaches the owner (so nothing can halt);
+    // the misbehaving session is closed without an error reply (no ping-pong).
+    await route.websocket.message(ws, serializeWsMessage({
+      type: 'error',
+      id: 'peer-error-forged',
+      inReplyTo: 'server-output-that-never-existed',
+      from: clientRuntimeId,
+      fromEncryptionPubKey: pubKeyToHex(deriveEncryptionKeyPair(clientSeed).publicKey),
+      to: serverRuntimeId,
+      error: 'P2P_INBOUND_ENTITY_INPUT_REJECTED:forged',
+    }));
+
+    expect(failures).toEqual([]);
+    expect(sent).toHaveLength(sentBeforeRejection);
+    expect(closed).toEqual([{ code: 4004, reason: 'uncorrelated-peer-error' }]);
+    expect(route.hasOpenSession(clientRuntimeId)).toBe(false);
+    expect(route.getSessionState()).toEqual([]);
+  });
+
+  test('a peer may reject one sent output once; a replayed rejection closes the session', async () => {
+    const serverSeed = 'direct-route-server-replayed-rejection';
+    const clientSeed = 'direct-route-client-replayed-rejection';
+    const serverRuntimeId = deriveSignerAddressSync(serverSeed, '1').toLowerCase();
+    const clientRuntimeId = deriveSignerAddressSync(clientSeed, '1').toLowerCase();
+    const failures: unknown[] = [];
+    const route = createDirectRuntimeWsRoute({
+      runtimeId: serverRuntimeId,
+      runtimeSeed: serverSeed,
+      onEntityInputs: () => undefined,
+      onDeliveryFailure: failure => failures.push(failure),
+    });
+    const { ws, sent, closed } = makeFakeWs();
+    route.websocket.open(ws);
+    await route.websocket.message(ws, serializeWsMessage(makeAuthedHello(clientSeed, clientRuntimeId)));
+    expect(route.sendEntityInputsDelivery(clientRuntimeId, {
+      sourceRuntimeId: serverRuntimeId,
+      sourceSignature: `0x${'11'.repeat(65)}`,
+      sourceRuntimeHeight: 1,
+      sourceRuntimeTimestamp: 1,
+      entityInputs: [],
+    })).toMatchObject({ outcome: 'delivered' });
+    const output = sent.find(message => message.type === 'entity_inputs');
+    const rejection = (id: string) => serializeWsMessage({
+      type: 'error',
+      id,
+      inReplyTo: String(output?.id),
+      from: clientRuntimeId,
+      fromEncryptionPubKey: pubKeyToHex(deriveEncryptionKeyPair(clientSeed).publicKey),
+      to: serverRuntimeId,
+      error: 'P2P_INBOUND_ENTITY_INPUT_REJECTED:account H1',
+    });
+
+    await route.websocket.message(ws, rejection('peer-error-first'));
+    expect(failures).toHaveLength(1);
+    expect(closed).toEqual([]);
+    await route.websocket.message(ws, rejection('peer-error-replayed'));
+    expect(failures).toHaveLength(1);
+    expect(closed).toEqual([{ code: 4004, reason: 'uncorrelated-peer-error' }]);
   });
 
   test('answers read-only recovery bundle requests over the authenticated direct socket', async () => {

@@ -9,6 +9,7 @@ import { PersistentEntityAccountMap } from '../../../entity/state/persistent-acc
 import { isPersistentEntityCollectionMap } from '../../../entity/state/persistent-collection-map';
 import { dbRootPath } from '../../../runtime/replica/platform';
 import { safeStringify } from '../../../protocol/serialization';
+import { registerStructuredLogSink } from '../../../support/logger';
 import {
   closeInfraDb,
   closeRuntimeDb,
@@ -51,6 +52,9 @@ const cleanupRuntimeStorage = (namespace: string): void => {
 };
 
 afterEach(() => {
+  // Reject policy is read once per frame by the Runtime loop; tests that pin
+  // the production branch must not leak it into the fail-fast default.
+  delete process.env['XLN_REJECT_FAIL_FAST'];
   while (cleanupNamespaces.length > 0) cleanupRuntimeStorage(cleanupNamespaces.pop()!);
 });
 
@@ -514,7 +518,7 @@ describe('runtime frame atomicity', () => {
     }
   });
 
-  test('ingress validation rejects an unknown second Entity before the first mutation', async () => {
+  test('an unknown second Entity is rejected before the first mutation: fail-fast surfaces it with the exact input retained, the production policy drops only that lane and keeps serving', async () => {
     const env = createEmptyEnv(`runtime apply atomicity ${TEST_RUN_ID}`);
     env.scenarioMode = true;
     env.quietRuntimeLogs = true;
@@ -600,7 +604,23 @@ describe('runtime frame atomicity', () => {
     const hintsBefore = safeStringify(env.infrastructure!.entityRuntimeHints);
     enqueueRuntimeInput(env, ingress);
 
-    await expect(processRuntime(env)).rejects.toThrow('RUNTIME_ENTITY_INPUT_UNKNOWN_TARGET');
+    // Default reject policy is fail-fast (tests/dev/CI): the typed rejection
+    // recorded by the transition reaches the caller of the Runtime loop, and
+    // the exact attempted input stays queued for the operator. The audit line
+    // is emitted before the policy is read, so it exists in both modes.
+    const failFastEvidence: string[] = [];
+    const unregisterFailFastSink = registerStructuredLogSink(event => {
+      if (event.level === 'error' && event.message === 'entity_input.discarded') {
+        failFastEvidence.push(String(event['cause'] ?? ''));
+      }
+    });
+    try {
+      await expect(processRuntime(env)).rejects.toThrow('RUNTIME_ENTITY_INPUT_UNKNOWN_TARGET');
+    } finally {
+      unregisterFailFastSink();
+    }
+    expect(failFastEvidence.some(cause => cause.includes('RUNTIME_ENTITY_INPUT_UNKNOWN_TARGET')))
+      .toBe(true);
 
     const restored = env.state.eReplicas.get(`${replica.entityId}:${validator}`);
     expect(restored).toBeDefined();
@@ -618,6 +638,35 @@ describe('runtime frame atomicity', () => {
     expect(env.runtimeMempool?.queuedAt).toBe(1_000);
     expect(env.state.height).toBe(0);
     expect(env.state.timestamp).toBe(1_000);
+
+    // Production policy (owner canon: a sender can never take a Runtime down):
+    // the same typed rejection is recorded, the frame drops only the rejected
+    // lane, and the Runtime keeps serving. Validation still precedes every
+    // mutation, so the replica is byte-identical here too.
+    process.env['XLN_REJECT_FAIL_FAST'] = '0';
+    const dropEvidence: string[] = [];
+    const unregisterDropSink = registerStructuredLogSink(event => {
+      if (event.level === 'error' && event.message === 'entity_input.discarded') {
+        dropEvidence.push(String(event['cause'] ?? ''));
+      }
+    });
+    try {
+      await expect(processRuntime(env)).resolves.toBe(env);
+    } finally {
+      unregisterDropSink();
+    }
+    expect(dropEvidence.some(cause => cause.includes('RUNTIME_ENTITY_INPUT_UNKNOWN_TARGET')))
+      .toBe(true);
+    expect(safeStringify(buildCanonicalEntityReplicaSnapshot(
+      env.state.eReplicas.get(`${replica.entityId}:${validator}`)!,
+    ))).toBe(replicaBefore);
+    expect(env.state.eReplicas.has(`${imported.entityId}:${imported.signerId}`)).toBe(false);
+    expect(safeStringify(env.infrastructure!.entityRuntimeHints)).toBe(hintsBefore);
+    expect(env.state.height).toBe(0);
+    expect(safeStringify(exactQueuedInput(env))).toBe(safeStringify({
+      runtimeTxs: ingress.runtimeTxs,
+      entityInputs: [first],
+    }));
   });
 
   test('post-mutation LevelDB failure halts unreadable RAM and retains exact input', async () => {
