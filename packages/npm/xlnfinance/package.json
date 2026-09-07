@@ -1,6 +1,6 @@
 {
   "name": "xlnfinance",
-  "version": "0.1.32",
+  "version": "0.1.31",
   "description": "Self-contained xln TypeScript runtime, production-testnet client, and secure browser launcher.",
   "license": "AGPL-3.0",
   "type": "module",
