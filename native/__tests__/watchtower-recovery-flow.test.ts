@@ -28,7 +28,6 @@ import type { AccountReplica } from '../../core/types/account';
 import { runWatchtowerSweep } from '../../core/watchtower/action';
 import {
   resolveDbPath,
-  resolveHistoryViewDbPath,
   resolveRuntimeWalDbPath,
   resolveStorageDbPath,
   resolveStorageWriterLockPath,
@@ -44,7 +43,6 @@ const resetRuntimeStorage = async (env: ReturnType<typeof xln.createEmptyEnv>): 
     resolveStorageDbPath(env, 'current'),
     resolveStorageDbPath(env, 'previous'),
     resolveRuntimeWalDbPath(env),
-    resolveHistoryViewDbPath(env),
     resolveStorageWriterLockPath(env),
   ];
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
