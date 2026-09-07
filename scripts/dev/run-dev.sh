@@ -93,8 +93,21 @@ cleanup_dev_stack() {
   return "$cleanup_status"
 }
 
-trap 'exit 130' INT
-trap 'exit 143' TERM
+# The supervisor runs in the background and is waited on, not run in the
+# foreground. Bash defers traps until a foreground child exits, so a TERM sent
+# to this shell used to sit queued while the supervisor ran forever: a harness
+# that boots the stack (Playwright's webServer) would report its tests green
+# and then hang in teardown. Waiting on a background child lets the trap run at
+# once, and the trap forwards the signal the supervisor is actually waiting for.
+dev_supervisor_pid=""
+
+signal_dev_supervisor() {
+  [[ -n "$dev_supervisor_pid" ]] || return 0
+  kill -"$1" "$dev_supervisor_pid" 2>/dev/null || true
+}
+
+trap 'signal_dev_supervisor INT; exit 130' INT
+trap 'signal_dev_supervisor TERM; exit 143' TERM
 trap cleanup_dev_stack EXIT
 
 cd "$REPO_ROOT"
@@ -140,4 +153,6 @@ if [[ "$DEV_VERBOSE" != "1" ]]; then
   echo "anvil2 logs            ${DEV_LOG_DIR}/anvil-${RPC2_PORT}.log"
 fi
 
-bun scripts/dev/supervise-dev.ts
+bun scripts/dev/supervise-dev.ts &
+dev_supervisor_pid=$!
+wait "$dev_supervisor_pid"
