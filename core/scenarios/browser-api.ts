@@ -64,7 +64,9 @@ export const recordScenario = async (
 
   if (!String(env.runtimeSeed ?? '').trim()) env.runtimeSeed = `xln-demo:${String(key)}`;
   env.scenarioMode = true;
-  env.scenarioJAdapterMode = 'browservm';
+  // Browser scenario previews run on the app's /rpc proxy like every other
+  // path; the in-page EVM is never selected. getJAdapterMode() already
+  // returns 'rpc' in a browser runtime, so this simply stops overriding it.
   env.quietRuntimeLogs = true;
   env.runtimeConfig = {
     ...env.runtimeConfig,

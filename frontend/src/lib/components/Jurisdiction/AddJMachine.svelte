@@ -47,6 +47,9 @@
   export let busy = false;
 
   // Form state
+  // A jurisdiction is a real chain reached over RPC. The in-page EVM stays in
+  // the codebase but nothing here selects it: there is no mode control, and
+  // an advanced JSON that asks for it is refused below.
   let mode: 'browservm' | 'rpc' = 'rpc';
   let selectedNetworkId: number | 'custom' = 31338;
   let customChainId = 31337;
@@ -186,6 +189,7 @@
   function applyAdvancedJson() {
     try {
       const parsed = parseJMachineConfigJson(advancedJson);
+      if (parsed.mode !== 'rpc') throw new Error('A jurisdiction must name a real chain over RPC.');
       mode = parsed.mode;
       selectedNetworkId = 'custom';
       customChainId = parsed.chainId;
@@ -264,33 +268,6 @@
 <div class="add-jmachine">
   <h3>Add Jurisdiction</h3>
 
-  <div class="field">
-    <div class="field-label">Mode</div>
-    <div class="mode-toggle">
-      <button
-        class="mode-btn"
-        class:active={mode === 'browservm'}
-        on:click={() => mode = 'browservm'}
-        data-testid="add-jmachine-mode-browservm"
-      >
-        <span class="mode-icon">🖥️</span>
-        <span class="mode-label">Browser VM</span>
-        <span class="mode-desc">Local simulation</span>
-      </button>
-      <button
-        class="mode-btn"
-        class:active={mode === 'rpc'}
-        on:click={() => mode = 'rpc'}
-        data-testid="add-jmachine-mode-rpc"
-      >
-        <span class="mode-icon">🌐</span>
-        <span class="mode-label">RPC</span>
-        <span class="mode-desc">Real chain</span>
-      </button>
-    </div>
-  </div>
-
-  {#if mode === 'rpc'}
     <div class="field">
       <div class="field-label">Network</div>
       <div class="network-grid">
@@ -378,17 +355,6 @@
         <span class="rpc-count">Valid RPC URL</span>
       {/if}
     </div>
-  {:else}
-    <div class="browservm-info">
-      <p>Local EVM simulation in your browser.</p>
-      <ul>
-        <li>Chain ID: {BROWSERVM_CHAIN_START}</li>
-        <li>Instant blocks (no mining delay)</li>
-        <li>Contracts auto-deployed</li>
-        <li>State persists in browser storage</li>
-      </ul>
-    </div>
-  {/if}
 
   <div class="field">
     <div class="field-label">Name</div>
@@ -468,48 +434,12 @@
     margin-bottom: 0.4rem;
   }
 
-  .mode-toggle {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
-  }
 
-  .mode-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 0.75rem;
-    background: var(--bg-secondary, #1a1a2e);
-    border: 2px solid var(--border-color, #333);
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
 
-  .mode-btn:hover {
-    border-color: var(--accent-dim, #4a4a6a);
-  }
 
-  .mode-btn.active {
-    border-color: var(--accent, #6366f1);
-    background: var(--accent-bg, rgba(99, 102, 241, 0.1));
-  }
 
-  .mode-icon {
-    font-size: 1.5rem;
-    margin-bottom: 0.25rem;
-  }
 
-  .mode-label {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--text-primary, #fff);
-  }
 
-  .mode-desc {
-    font-size: 0.7rem;
-    color: var(--text-secondary, #888);
-  }
 
   .network-grid {
     display: grid;
@@ -634,28 +564,9 @@
     display: block;
   }
 
-  .browservm-info {
-    background: var(--bg-secondary, #1a1a2e);
-    border-radius: 8px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-  }
 
-  .browservm-info p {
-    margin: 0 0 0.5rem;
-    color: var(--text-primary, #fff);
-  }
 
-  .browservm-info ul {
-    margin: 0;
-    padding-left: 1.2rem;
-    color: var(--text-secondary, #888);
-    font-size: 0.8rem;
-  }
 
-  .browservm-info li {
-    margin: 0.2rem 0;
-  }
 
   .error {
     background: rgba(239, 68, 68, 0.1);

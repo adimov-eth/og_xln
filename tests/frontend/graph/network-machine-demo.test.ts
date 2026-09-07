@@ -29,13 +29,16 @@ describe('network machine demo playback', () => {
     expect(timeline).toContain('void selectStep(0).then(() => togglePlayback());');
   });
 
-  test('a recorded scenario is deterministic, self-contained and ephemeral', () => {
+  test('a recorded scenario is deterministic, ephemeral and picks no backend of its own', () => {
     const source = readFileSync('core/scenarios/browser-api.ts', 'utf8');
 
     // Seed: a demo must replay identically and must not require an unlocked vault.
     expect(source).toContain('xln-demo:');
-    // In-process EVM: never depend on, or flood, an external RPC endpoint.
-    expect(source).toContain("env.scenarioJAdapterMode = 'browservm'");
+    // The preview pins no jurisdiction backend of its own, so it inherits the
+    // browser default in getJAdapterMode: the app's own /rpc proxy. Pinning the
+    // in-page EVM here contradicted that resolver, which states browser previews
+    // must use the proxy.
+    expect(source).not.toContain('env.scenarioJAdapterMode =');
     expect(source).toContain('env.scenarioMode = true');
     // No persistence: frames live in the trace; writing them collides with the runtime
     // that already owns that storage namespace.
