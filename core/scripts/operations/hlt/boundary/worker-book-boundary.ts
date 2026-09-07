@@ -88,6 +88,17 @@ export const deriveExecutableBidForAsk = (
   return { baseAmount, quoteAmount };
 };
 
+/** One side of the bounded depth ladder: ascending price levels with a quantity. */
+const decodeBookSideLevels = (value: unknown, code: string): void => {
+  if (!Array.isArray(value)) throw new Error(`${code}_INVALID`);
+  for (const [index, entry] of value.entries()) {
+    const level = requireBoundaryRecord(entry, `${code}_ENTRY_INVALID:${index}`);
+    requireExactBoundaryKeys(level, ['priceTicks', 'qtyLots'], [], `${code}_ENTRY_FIELDS_INVALID:${index}`);
+    requireBigInt(level['priceTicks'], `${code}_PRICE_INVALID:${index}`);
+    requireBigInt(level['qtyLots'], `${code}_QTY_INVALID:${index}`);
+  }
+};
+
 const requireBigInt = (value: unknown, code: string): bigint => {
   if (typeof value !== 'bigint') throw new Error(code);
   return value;
@@ -139,9 +150,14 @@ export const decodeLoadBookPage = (value: unknown, pairId: string): LoadBookSnap
   requireExactBoundaryKeys(item, ['pairId', 'book'], [], 'PRODUCTION_SWAP_LOAD_BOOK_ITEM_FIELDS_INVALID');
   const book = requireBoundaryRecord(item['book'], 'PRODUCTION_SWAP_LOAD_BOOK_INVALID');
   requireExactBoundaryKeys(book, [
-    'params', 'bidPages', 'askPages', 'nextSeq', 'tradeCount', 'tradeQtySum',
-    'lastTradePriceTicks', 'lastAcceptedUsdAskPriceTicks', 'eventHash',
+    'params', 'bidLevels', 'askLevels', 'bidPages', 'askPages', 'nextSeq', 'tradeCount',
+    'tradeQtySum', 'lastTradePriceTicks', 'lastAcceptedUsdAskPriceTicks', 'eventHash',
   ], ['commitmentHash'], 'PRODUCTION_SWAP_LOAD_BOOK_FIELDS_INVALID');
+  // The remote view carries a bounded ladder beside the page tree. It is a
+  // view, not a commitment, but the boundary still owns its shape: an
+  // unvalidated field here is an unvalidated field in every consumer.
+  decodeBookSideLevels(book['bidLevels'], 'PRODUCTION_SWAP_LOAD_BOOK_BID_LEVELS');
+  decodeBookSideLevels(book['askLevels'], 'PRODUCTION_SWAP_LOAD_BOOK_ASK_LEVELS');
   const params = requireBoundaryRecord(book['params'], 'PRODUCTION_SWAP_LOAD_BOOK_PARAMS_INVALID');
   requireExactBoundaryKeys(params, ['bucketWidthTicks', 'maxOrders', 'stpPolicy'], [], 'PRODUCTION_SWAP_LOAD_BOOK_PARAMS_FIELDS_INVALID');
   requireBigInt(params['bucketWidthTicks'], 'PRODUCTION_SWAP_LOAD_BOOK_BUCKET_WIDTH_INVALID');

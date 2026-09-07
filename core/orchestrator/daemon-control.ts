@@ -60,6 +60,8 @@ export type ControlRuntimeSnapshot = Readonly<{
 export type ControlDirectRuntimeSession = Readonly<{
   runtimeId: string;
   open: boolean;
+  /** The peer announced it can accept delivery on this session, not merely that the socket is up. */
+  ready: boolean;
   lastSeen: number;
   consecutiveBackpressuredSends: number;
   backpressureAgeMs: number;
@@ -69,12 +71,13 @@ export type ControlDirectRuntimeSession = Readonly<{
 const decodeDirectRuntimeSession = (value: unknown): ControlDirectRuntimeSession => {
   const session = requireBoundaryRecord(value, 'CONTROL_DIRECT_SESSION_INVALID');
   requireExactBoundaryKeys(session, [
-    'runtimeId', 'open', 'lastSeen', 'consecutiveBackpressuredSends',
+    'runtimeId', 'open', 'ready', 'lastSeen', 'consecutiveBackpressuredSends',
     'backpressureAgeMs', 'bufferedAmount',
   ], [], 'CONTROL_DIRECT_SESSION_FIELDS_INVALID');
   const runtimeId = String(session['runtimeId'] || '').trim().toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(runtimeId)) throw new Error('CONTROL_DIRECT_SESSION_RUNTIME_ID_INVALID');
   if (typeof session['open'] !== 'boolean') throw new Error('CONTROL_DIRECT_SESSION_OPEN_INVALID');
+  if (typeof session['ready'] !== 'boolean') throw new Error('CONTROL_DIRECT_SESSION_READY_INVALID');
   const bufferedAmount = session['bufferedAmount'];
   if (bufferedAmount !== null) {
     requireBoundaryInteger(bufferedAmount, 'CONTROL_DIRECT_SESSION_BUFFERED_AMOUNT_INVALID');
@@ -82,6 +85,7 @@ const decodeDirectRuntimeSession = (value: unknown): ControlDirectRuntimeSession
   return {
     runtimeId,
     open: session['open'],
+    ready: session['ready'],
     lastSeen: requireBoundaryInteger(session['lastSeen'], 'CONTROL_DIRECT_SESSION_LAST_SEEN_INVALID'),
     consecutiveBackpressuredSends: requireBoundaryInteger(
       session['consecutiveBackpressuredSends'],
