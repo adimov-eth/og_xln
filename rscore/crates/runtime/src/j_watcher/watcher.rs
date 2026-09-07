@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use super::abi::{
     ContractEventKind, address_word, bigint, bool_word, decode_account_settled,
     decode_dispute_started, decode_static_words, entity_word_value, event_kind, hex, into_event,
-    safe_uint,
+    require_current_depository_money_abi, safe_uint, uint512,
 };
 use super::receipt::{block_height, fixed_hex, safe_u64, validate_block, validate_receipts};
 use super::types::{
@@ -49,7 +49,13 @@ pub fn poll_finalized_j_events(
         from.checked_add(config.max_blocks_per_poll - 1)
             .ok_or(JWatcherError::Cursor)?,
     );
-    read_and_authenticate_range(rpc, config, cursor, from, to)
+    // Resolve the current registry after fixing the range, as the TS watcher
+    // does. A token registered within this range must already be in its filter;
+    // a failed read returns before any receipt or cursor can be committed.
+    let mut config = config.clone();
+    config.erc20_tokens = super::read_erc20_token_registry(rpc, &config.depository_address)?;
+    config.validate()?;
+    read_and_authenticate_range(rpc, &config, cursor, from, to)
 }
 
 fn assert_chain_id(rpc: &impl JsonRpc, expected: u64) -> Result<(), JWatcherError> {
@@ -70,6 +76,17 @@ fn unchanged(cursor: &FinalizedWatcherCursor) -> JWatcherPoll {
 
 fn read_head(rpc: &impl JsonRpc) -> Result<u64, JWatcherError> {
     safe_u64(&rpc.call("eth_blockNumber", json!([]))?, "head")
+}
+
+/// Capture the startup boundary once. Later polls authenticate its headers;
+/// a moving chain head must not extend the startup obligation indefinitely.
+pub(crate) fn capture_startup_target(
+    rpc: &impl JsonRpc,
+    config: &JWatcherConfig,
+) -> Result<u64, JWatcherError> {
+    config.validate()?;
+    assert_chain_id(rpc, config.chain_id)?;
+    Ok(read_head(rpc)?.saturating_sub(config.confirmation_depth))
 }
 
 fn block_parameter(height: u64) -> String {
@@ -294,6 +311,7 @@ fn collect_log(
     dispute_batch: Option<&ReceiptDisputeBatch>,
 ) -> Result<(), JWatcherError> {
     let address = fixed_hex::<20>(&log.address, "logAddress")?;
+    require_current_depository_money_abi(log, &address, &config.depository_address)?;
     let Some(kind) = event_kind(log)? else {
         return Ok(());
     };
@@ -451,7 +469,7 @@ fn collect_single_event(
             })
         }
         ContractEventKind::DebtCreated => {
-            let words = decode_static_words(log, 3, 2)?;
+            let words = decode_static_words(log, 3, 3)?;
             let debtor = entity_word_value(&words.topics[0], "debtor")?;
             let creditor = entity_word_value(&words.topics[1], "creditor")?;
             if !local_entity(config, &debtor) && !local_entity(config, &creditor) {
@@ -462,12 +480,12 @@ fn collect_single_event(
                 debtor: debtor.as_hex(),
                 creditor: creditor.as_hex(),
                 token_id: i64_word(&words.topics[2], "debtTokenId")?,
-                amount: bigint(&words.data[0]),
-                debt_index: i64_word(&words.data[1], "debtIndex")?,
+                amount: uint512(&words.data[0], &words.data[1]),
+                debt_index: i64_word(&words.data[2], "debtIndex")?,
             })
         }
         ContractEventKind::DebtEnforced => {
-            let words = decode_static_words(log, 3, 3)?;
+            let words = decode_static_words(log, 3, 4)?;
             let debtor = entity_word_value(&words.topics[0], "debtor")?;
             let creditor = entity_word_value(&words.topics[1], "creditor")?;
             if !local_entity(config, &debtor) && !local_entity(config, &creditor) {
@@ -479,12 +497,12 @@ fn collect_single_event(
                 creditor: creditor.as_hex(),
                 token_id: i64_word(&words.topics[2], "debtTokenId")?,
                 amount_paid: bigint(&words.data[0]),
-                remaining_amount: bigint(&words.data[1]),
-                new_debt_index: i64_word(&words.data[2], "newDebtIndex")?,
+                remaining_amount: uint512(&words.data[1], &words.data[2]),
+                new_debt_index: i64_word(&words.data[3], "newDebtIndex")?,
             })
         }
         ContractEventKind::DebtForgiven => {
-            let words = decode_static_words(log, 3, 2)?;
+            let words = decode_static_words(log, 3, 3)?;
             let debtor = entity_word_value(&words.topics[0], "debtor")?;
             let creditor = entity_word_value(&words.topics[1], "creditor")?;
             if !local_entity(config, &debtor) && !local_entity(config, &creditor) {
@@ -495,8 +513,8 @@ fn collect_single_event(
                 debtor: debtor.as_hex(),
                 creditor: creditor.as_hex(),
                 token_id: i64_word(&words.topics[2], "debtTokenId")?,
-                amount_forgiven: bigint(&words.data[0]),
-                debt_index: i64_word(&words.data[1], "debtIndex")?,
+                amount_forgiven: uint512(&words.data[0], &words.data[1]),
+                debt_index: i64_word(&words.data[2], "debtIndex")?,
             })
         }
         ContractEventKind::HankoBatchProcessed => {

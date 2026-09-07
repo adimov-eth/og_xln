@@ -2,7 +2,7 @@ use std::fmt;
 
 use num_bigint::BigInt;
 
-use crate::{Side, StateError};
+use crate::{Side, StateError, ValidationRejection};
 
 pub const MAX_TOKEN_ID: u32 = 65_535;
 pub const MAX_ACCOUNT_TOKEN_ROWS: usize = 128;
@@ -157,22 +157,39 @@ impl Delta {
         sender: Side,
         amount: &BigInt,
     ) -> Result<(), StateError> {
-        let next = match sender {
-            Side::Left => &self.offdelta - amount,
-            Side::Right => &self.offdelta + amount,
-        };
-        signed("offdelta", &next, 256)?;
+        let next = self.transfer_offdelta(sender, amount);
+        signed("offdelta", &next, 512)?;
         self.offdelta = next;
         Ok(())
     }
 
-    pub(crate) fn add_hold(&mut self, side: Side, amount: &BigInt) -> Result<(), StateError> {
+    pub(crate) fn transfer_offdelta(&self, sender: Side, amount: &BigInt) -> BigInt {
+        match sender {
+            Side::Left => &self.offdelta - amount,
+            Side::Right => &self.offdelta + amount,
+        }
+    }
+
+    pub(crate) fn add_hold(
+        &mut self,
+        side: Side,
+        amount: &BigInt,
+    ) -> Result<(), ValidationRejection> {
+        let label = if side == Side::Left { "left" } else { "right" };
+        if amount < &BigInt::from(0) {
+            return Err(ValidationRejection::AccountTx {
+                message: format!("HOLD_ADD_NEGATIVE:{label} amount={amount}"),
+            });
+        }
         let next = self.hold(side) + amount;
-        let field = match side {
-            Side::Left => "leftHold",
-            Side::Right => "rightHold",
-        };
-        unsigned(field, &next, &uint_max(256))?;
+        if next > uint_max(256) {
+            return Err(ValidationRejection::AccountTx {
+                message: format!(
+                    "HOLD_ADD_OVERFLOW:{label} hold={} amount={amount}",
+                    self.hold(side)
+                ),
+            });
+        }
         match side {
             Side::Left => self.left_hold = next,
             Side::Right => self.right_hold = next,
@@ -200,7 +217,7 @@ impl Delta {
         ondelta: &BigInt,
     ) -> Result<(), StateError> {
         unsigned("collateral", collateral, &uint_max(256))?;
-        signed("ondelta", ondelta, 256)?;
+        signed("ondelta", ondelta, 512)?;
         self.collateral = collateral.clone();
         self.ondelta = ondelta.clone();
         Ok(())
@@ -285,18 +302,10 @@ impl Delta {
 
     fn validate(&self) -> Result<(), StateError> {
         unsigned("collateral", &self.collateral, &uint_max(256))?;
-        signed("ondelta", &self.ondelta, 256)?;
-        signed("offdelta", &self.offdelta, 256)?;
-        unsigned(
-            "leftCreditLimit",
-            &self.left_credit_limit,
-            &max_credit_limit(),
-        )?;
-        unsigned(
-            "rightCreditLimit",
-            &self.right_credit_limit,
-            &max_credit_limit(),
-        )?;
+        signed("ondelta", &self.ondelta, 512)?;
+        signed("offdelta", &self.offdelta, 512)?;
+        unsigned("leftCreditLimit", &self.left_credit_limit, &uint_max(256))?;
+        unsigned("rightCreditLimit", &self.right_credit_limit, &uint_max(256))?;
         unsigned("leftAllowance", &self.left_allowance, &uint_max(256))?;
         unsigned("rightAllowance", &self.right_allowance, &uint_max(256))?;
         unsigned("leftHold", &self.left_hold, &uint_max(256))?;
@@ -304,15 +313,7 @@ impl Delta {
     }
 }
 
-pub(crate) fn max_payment_amount() -> BigInt {
-    uint_max(128)
-}
-
-pub(crate) fn max_credit_limit() -> BigInt {
-    max_payment_amount() * 1_000_u16
-}
-
-fn uint_max(bits: usize) -> BigInt {
+pub(crate) fn uint_max(bits: usize) -> BigInt {
     (BigInt::from(1_u8) << bits) - 1_u8
 }
 

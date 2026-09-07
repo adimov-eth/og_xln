@@ -10,13 +10,12 @@ use super::types::{ExecutionFill, SwapResolveTx, ValidatedSwapResolve};
 use crate::Side;
 use crate::error::ValidationRejection;
 use crate::state::AccountState;
+use crate::state::delta::uint_max;
 use crate::swap::fill_ratio::{
     MAX_SWAP_FILL_RATIO, derive_exact_fill_ratio, exact_fill_ratio_to_uint16,
 };
 use crate::swap::net_authorization::{SwapNetAuthorization, assert_fill_authorization};
 use crate::swap::offer::SwapOffer;
-
-const MAX_PAYMENT_AMOUNT_BITS: u32 = 128;
 
 fn rejected(code: &'static str) -> ValidationRejection {
     ValidationRejection::SwapResolve { code }
@@ -204,7 +203,7 @@ fn validate_filled_amount_bounds(fill: &ExecutionFill) -> Result<(), ValidationR
         return Ok(());
     }
     let minimum = BigInt::from(1);
-    let maximum = (BigInt::from(1) << MAX_PAYMENT_AMOUNT_BITS) - 1;
+    let maximum = uint_max(256);
     if fill.filled_give < minimum || fill.filled_give > maximum {
         return Err(rejected("SWAP_RESOLVE_FILLED_GIVE_OUT_OF_BOUNDS"));
     }

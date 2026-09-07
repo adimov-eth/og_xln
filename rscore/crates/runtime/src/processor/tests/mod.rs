@@ -66,6 +66,74 @@ fn merge_synced(
     report.durable_bytes_published += synced.durable_bytes_published;
 }
 
+fn attached_test_ingress(
+    processor: &mut DurableRuntimeProcessor,
+    seed: &str,
+    signer: &str,
+) -> DirectRuntimeIngress {
+    let ingress = DirectRuntimeIngress::bind(DirectRuntimeIngressConfig::production(
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        seed,
+        signer,
+    ))
+    .expect("real attached socket reactor");
+    processor.attach_inbound_sessions(ingress.sessions());
+    ingress
+        .set_delivery_ready(true)
+        .expect("fixture ingress ready");
+    processor
+        .set_delivery_ready(true)
+        .expect("fixture publisher ready");
+    ingress
+}
+
+fn wait_for_processor_publication(
+    processor: &mut DurableRuntimeProcessor,
+    report: &mut super::RuntimeProcessReport,
+    rows: usize,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while report.outputs_published < rows && std::time::Instant::now() < deadline {
+        merge_synced(
+            report,
+            processor
+                .retry_publication()
+                .expect("async socket completion"),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(
+        report.outputs_published, rows,
+        "fsynced output reaches the real socket"
+    );
+}
+
+fn payment_routes(server: &CanonicalWsServer) -> EntityRouteTable {
+    EntityRouteTable::new([EntityRoute {
+        target_entity_id: format!("0x{}", "ff".repeat(32)),
+        target_runtime_id: server.runtime_id.clone(),
+        target_signer_id: format!("0x{}", "66".repeat(20)),
+        websocket_url: Some(format!("ws://127.0.0.1:{}/ws", server.port)),
+    }])
+    .expect("real payment peer route")
+}
+
+fn assert_payment_proposal(outputs: &[Vec<u8>]) {
+    assert_eq!(outputs.len(), 1, "one durable financial proposal");
+    let output = crate::decode_storage_payload(&outputs[0]).expect("durable payment decode");
+    assert_eq!(output["entityId"], format!("0x{}", "ff".repeat(32)));
+    let transactions = output["entityTxs"][0]["data"]["proposal"]["frame"]["accountTxs"]
+        .as_array()
+        .expect("bilateral proposal transactions");
+    assert_eq!(transactions.len(), 1);
+    assert_eq!(transactions[0]["type"], "direct_payment");
+    assert_eq!(transactions[0]["data"]["tokenId"], 1);
+    assert_eq!(
+        transactions[0]["data"]["amount"],
+        json!({"__xlnType":"BigInt","value":"7"})
+    );
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().fold(String::from("0x"), |mut value, byte| {
         use std::fmt::Write as _;
@@ -75,16 +143,33 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn processor_replica() -> RuntimeReplica {
-    let private_key = derive_signer_key(ENTITY_SEED, ENTITY_KEY_LABEL).expect("entity key");
+    processor_replica_with_peer(
+        ENTITY_SEED,
+        SOURCE_SEED,
+        EntityId::parse(&format!("0x{}", "ff".repeat(32))).expect("peer"),
+    )
+}
+
+fn processor_replica_with_peer(
+    entity_seed: &str,
+    runtime_seed: &str,
+    peer_id: EntityId,
+) -> RuntimeReplica {
+    let private_key = derive_signer_key(entity_seed, ENTITY_KEY_LABEL).expect("entity key");
     let signer_id =
-        hex(&derive_signer_address(ENTITY_SEED, ENTITY_KEY_LABEL).expect("entity signer address"));
+        hex(&derive_signer_address(entity_seed, ENTITY_KEY_LABEL).expect("entity signer address"));
     let identity =
         SigningIdentity::lazy_from_key(private_key, &signer_id, 1, 1, BoardDelays::default())
             .expect("lazy entity");
     let owner = *identity.entity_id();
     let owner_id = EntityId::parse(&hex(&owner)).expect("owner");
-    let peer_id = EntityId::parse(&format!("0x{}", "ff".repeat(32))).expect("peer");
+    let peer_text = peer_id.as_hex();
     let account_id = AccountId::from_bytes(*peer_id.as_bytes());
+    let (left, right) = if owner_id.as_bytes() < peer_id.as_bytes() {
+        (owner_id.clone(), peer_id)
+    } else {
+        (peer_id, owner_id.clone())
+    };
     let account_state = AccountState::new(
         AccountIdentity::new(
             AccountDomain::new(
@@ -92,8 +177,8 @@ fn processor_replica() -> RuntimeReplica {
                 DepositoryAddress::parse(&format!("0x{}", "88".repeat(20))).expect("depository"),
             )
             .expect("domain"),
-            owner_id.clone(),
-            peer_id,
+            left,
+            right,
             WatchSeed::parse(&format!("0x{}", "99".repeat(32))).expect("watch seed"),
         )
         .expect("account identity"),
@@ -131,9 +216,7 @@ fn processor_replica() -> RuntimeReplica {
     let accounts_root = accounts.accounts_root();
     let owner_text = hex(&owner);
     let mut entity = EntityStateSlice::empty(owner_text.clone(), 100);
-    entity
-        .known_accounts
-        .insert(format!("0x{}", "ff".repeat(32)));
+    entity.known_accounts.insert(peer_text);
     let authority = EntityFrameAuthority {
         config: EntityConsensusConfig {
             mode: ConsensusMode::ProposerBased,
@@ -164,7 +247,7 @@ fn processor_replica() -> RuntimeReplica {
         BoardDelays::default(),
     )
     .expect("entity signer");
-    let runtime_id = derive_local_runtime_id(SOURCE_SEED, SOURCE_SIGNER).expect("runtime id");
+    let runtime_id = derive_local_runtime_id(runtime_seed, SOURCE_SIGNER).expect("runtime id");
     RuntimeReplica::new(
         RuntimeState {
             height: 0,
@@ -185,7 +268,7 @@ fn processor_replica() -> RuntimeReplica {
         entity_consensus,
         entity_signer,
         [0x44; 32],
-        SOURCE_SEED.to_string(),
+        runtime_seed.to_string(),
         RuntimeLimits {
             checkpoint_period_frames: 100,
             ..RuntimeLimits::hlt()
@@ -217,11 +300,7 @@ fn entity_state(replica: &RuntimeReplica) -> &RuntimeEntityState {
         .expect("processor fixture Entity state")
 }
 
-fn empty_entity_input(replica: &RuntimeReplica) -> RuntimeInput {
-    empty_entity_input_at(replica, 1, 200)
-}
-
-fn empty_entity_input_at(replica: &RuntimeReplica, height: u64, timestamp: u64) -> RuntimeInput {
+fn empty_entity_input_at(replica: &RuntimeReplica, timestamp: u64) -> RuntimeInput {
     let key = entity_key(replica);
     let entity_id = entity_state(replica).entity.entity_id.clone();
     let signer_id = key.signer_id.clone();
@@ -234,7 +313,7 @@ fn empty_entity_input_at(replica: &RuntimeReplica, height: u64, timestamp: u64) 
     RuntimeInput {
         runtime_txs: Vec::new(),
         entity_inputs: vec![entity_input],
-        frame: frame_context(replica, height, timestamp),
+        frame: idle_frame_context(timestamp),
     }
 }
 
@@ -269,7 +348,13 @@ fn frame_context(replica: &RuntimeReplica, height: u64, timestamp: u64) -> Runti
 fn direct_payment_input(replica: &RuntimeReplica) -> RuntimeInput {
     let key = entity_key(replica);
     let owner = entity_state(replica).entity.entity_id.clone();
-    let peer = format!("0x{}", "ff".repeat(32));
+    let peer = entity_state(replica)
+        .entity
+        .known_accounts
+        .iter()
+        .next()
+        .expect("payment counterparty")
+        .clone();
     let entity_input = RuntimeEntityInput::decode(json!({
         "entityId": owner,
         "signerId": key.signer_id,
@@ -293,11 +378,21 @@ fn direct_payment_input(replica: &RuntimeReplica) -> RuntimeInput {
     }
 }
 
-fn no_external_input(replica: &RuntimeReplica, height: u64, timestamp: u64) -> RuntimeInput {
+fn idle_frame_context(timestamp: u64) -> RuntimeFrameContext {
+    // Idle Runtime inputs are accepted and stored without fabricating an
+    // Entity proposal context or consuming another certified Entity height.
+    RuntimeFrameContext {
+        timestamp,
+        finalized_j_height: 0,
+        entity_contexts: BTreeMap::new(),
+    }
+}
+
+fn no_external_input(timestamp: u64) -> RuntimeInput {
     RuntimeInput {
         runtime_txs: Vec::new(),
         entity_inputs: Vec::new(),
-        frame: frame_context(replica, height, timestamp),
+        frame: idle_frame_context(timestamp),
     }
 }
 
@@ -359,12 +454,334 @@ fn live_socket_output_at(
     .expect("canonical transport output")
 }
 
+fn signing_entity_id(seed: &str) -> EntityId {
+    let key = derive_signer_key(seed, ENTITY_KEY_LABEL).expect("real Entity key");
+    let signer = hex(&derive_signer_address(seed, ENTITY_KEY_LABEL).expect("real Entity signer"));
+    let identity = SigningIdentity::lazy_from_key(key, &signer, 1, 1, BoardDelays::default())
+        .expect("real lazy Entity identity");
+    EntityId::parse(&hex(identity.entity_id())).expect("Entity id")
+}
+
+fn payment_service(
+    replica: RuntimeReplica,
+    ingress: DirectRuntimeIngress,
+    directory: &std::path::Path,
+    seed: &str,
+    route: EntityRoute,
+) -> ResidentRuntimeService {
+    let store = NativeRuntimeStore::open(directory, NativeStorageConfig::default())
+        .expect("real payment WAL");
+    let processor = DurableRuntimeProcessor::new(
+        replica,
+        store,
+        EntityRouteTable::new([route]).expect("exact peer route"),
+        seed,
+        RuntimeSignerLabel::new(SOURCE_SIGNER).expect("Runtime signer"),
+    )
+    .expect("real durable payment processor");
+    ResidentRuntimeService::new(
+        processor,
+        ingress,
+        Box::new(CanonicalEntityInfraMaterializer::new()),
+    )
+    .expect("real no-J Runtime service")
+}
+
+#[test]
+fn two_native_runtimes_commit_direct_payment_and_ack_on_one_dialed_socket() {
+    let directory = path();
+    let peer_seed = hex(&[0x7b; 32]);
+    let a_seed = "rrs-payment-ack-a";
+    let b_seed = "rrs-payment-ack-b";
+    let a_entity = signing_entity_id(ENTITY_SEED);
+    let b_entity = signing_entity_id(&peer_seed);
+    let a_replica = processor_replica_with_peer(ENTITY_SEED, a_seed, b_entity.clone());
+    let b_replica = processor_replica_with_peer(&peer_seed, b_seed, a_entity.clone());
+    let a_key = entity_key(&a_replica);
+    let b_key = entity_key(&b_replica);
+    let payment = direct_payment_input(&a_replica).entity_inputs;
+    let bind = |seed| {
+        let mut config = DirectRuntimeIngressConfig::production(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            seed,
+            SOURCE_SIGNER,
+        );
+        config.queue_capacity = 1;
+        DirectRuntimeIngress::bind(config).expect("one-slot real ingress")
+    };
+    let a_ingress = bind(a_seed);
+    let b_ingress = bind(b_seed);
+    let a_runtime = a_ingress.runtime_id().to_owned();
+    let b_runtime = b_ingress.runtime_id().to_owned();
+    let b_url = format!("ws://{}/ws", b_ingress.local_address());
+    let mut a = payment_service(
+        a_replica,
+        a_ingress,
+        &directory.join("a"),
+        a_seed,
+        EntityRoute {
+            target_entity_id: b_entity.as_hex(),
+            target_runtime_id: b_runtime.clone(),
+            target_signer_id: b_key.signer_id.clone(),
+            websocket_url: Some(b_url),
+        },
+    );
+    let mut b = payment_service(
+        b_replica,
+        b_ingress,
+        &directory.join("b"),
+        b_seed,
+        EntityRoute {
+            target_entity_id: a_entity.as_hex(),
+            target_runtime_id: a_runtime.clone(),
+            target_signer_id: a_key.signer_id.clone(),
+            websocket_url: None,
+        },
+    );
+    let a_account = AccountId::from_bytes(*b_entity.as_bytes());
+    let b_account = AccountId::from_bytes(*a_entity.as_bytes());
+    let token = TokenId::new(1).expect("payment token");
+    let status = |service: &mut ResidentRuntimeService, owner: &RuntimeEntityKey, peer| {
+        service
+            .account_status(owner, peer, vec![token])
+            .expect("real Account point read")
+            .expect("bilateral Account exists")
+    };
+    assert!(a.delivery_ready() && b.delivery_ready());
+    assert_eq!(status(&mut a, &a_key, a_account).current_height, 0);
+    assert_eq!(status(&mut b, &b_key, b_account).current_height, 0);
+    let proposed = a
+        .process_local_entity_inputs(payment)
+        .expect("normal payment admission")
+        .expect("payment produces a Runtime frame");
+    let proposal_height = proposed.commitments.expect("proposal commitment").height;
+    a.sync_committed()
+        .expect("proposal WAL fsync before delivery");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while status(&mut b, &b_key, b_account).current_height == 0
+        && std::time::Instant::now() < deadline
+    {
+        a.process_next(std::time::Duration::from_millis(2))
+            .expect("sender production retry");
+        b.process_next(std::time::Duration::from_millis(2))
+            .expect("receiver production proposal admission");
+        b.sync_committed()
+            .expect("real signed ACK is fsynced before send");
+    }
+    assert_eq!(
+        status(&mut b, &b_key, b_account).current_height,
+        1,
+        "receiver commits the real proposal"
+    );
+    assert_eq!(b.ingress_metrics().accepted_connections, 1);
+    assert_eq!(b.ingress_metrics().authenticated_sessions, 1);
+    // A must consume the signed reply through process_next. Reading the
+    // DirectSession test helper would hide the missing production ingress.
+    while status(&mut a, &a_key, a_account)
+        .pending_frame_height
+        .is_some()
+        && std::time::Instant::now() < deadline
+    {
+        b.process_next(std::time::Duration::from_millis(2))
+            .expect("receiver ACK publication completion");
+        a.process_next(std::time::Duration::from_millis(2))
+            .expect("sender production ACK admission");
+        a.sync_committed().expect("ACK Runtime WAL fsync");
+    }
+    let a_final = status(&mut a, &a_key, a_account);
+    let b_final = status(&mut b, &b_key, b_account);
+    assert_eq!(
+        a_final.pending_frame_height, None,
+        "dialed socket ACK must drain sender Account pending frame"
+    );
+    assert_eq!((a_final.current_height, b_final.current_height), (1, 1));
+    assert_eq!((a_final.mempool_len, b_final.mempool_len), (0, 0));
+    assert_eq!(b_final.pending_frame_height, None);
+    assert_eq!(
+        a_final.tokens, b_final.tokens,
+        "both peers commit identical economic Delta"
+    );
+    let expected_delta = BigInt::from(if a_entity.as_bytes() < b_entity.as_bytes() {
+        -7
+    } else {
+        7
+    });
+    assert_eq!(
+        a_final.tokens[&token]
+            .as_ref()
+            .expect("committed payment Delta")
+            .offdelta(),
+        &expected_delta
+    );
+    assert_eq!(
+        a.ingress_metrics().accepted_connections,
+        0,
+        "B has no outbound URL and cannot open a second dial"
+    );
+    assert_eq!(b.ingress_metrics().accepted_connections, 1);
+    assert!(a.ingress_metrics().pending_batches_high_water <= 1);
+    assert!(b.ingress_metrics().pending_batches_high_water <= 1);
+    let ack_height = a.processor().replica().expect("ACK state").state.height;
+    assert!(ack_height > proposal_height);
+    a.shutdown().expect("sender ingress shutdown");
+    b.shutdown().expect("receiver ingress shutdown");
+    drop(a);
+    drop(b);
+
+    let mut wal = NativeRuntimeStore::open(directory.join("a"), NativeStorageConfig::default())
+        .expect("reopen sender WAL independently");
+    let frame = wal
+        .read_durable_frame(ack_height)
+        .expect("durable ACK frame");
+    let decoded = crate::decode_storage_payload(&frame.frame_bytes).expect("ACK WAL decode");
+    let inputs = decoded["runtimeInput"]["entityInputs"]
+        .as_array()
+        .expect("accepted ACK Runtime input");
+    assert!(
+        inputs
+            .iter()
+            .any(|input| input["entityTxs"].as_array().is_some_and(|txs| txs
+                .iter()
+                .any(|tx| { tx["type"] == "accountInput" && tx["data"]["ack"].is_object() }))),
+        "signed ACK is durable input, not a socket-only receipt"
+    );
+    drop(wal);
+    std::fs::remove_dir_all(directory).expect("remove two-Runtime WAL fixture");
+}
+
+#[test]
+fn saturated_real_ingress_cannot_block_a_new_financial_wal_fsync_before_drain() {
+    let directory = path();
+    let replica = processor_replica();
+    let owner = entity_state(&replica).entity.entity_id.clone();
+    let signer = entity_key(&replica).signer_id;
+    let payment = direct_payment_input(&replica).entity_inputs;
+    let server = CanonicalWsServer::start_saturating("dialed-saturation", &owner, &signer);
+    let peer_runtime = server.runtime_id.clone();
+    let mut config = DirectRuntimeIngressConfig::production(
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        SOURCE_SEED,
+        SOURCE_SIGNER,
+    );
+    config.queue_capacity = 1;
+    let ingress = DirectRuntimeIngress::bind(config).expect("real capacity-one ingress");
+    let mut service = payment_service(
+        replica,
+        ingress,
+        &directory,
+        SOURCE_SEED,
+        EntityRoute {
+            target_entity_id: format!("0x{}", "ff".repeat(32)),
+            target_runtime_id: peer_runtime.clone(),
+            target_signer_id: format!("0x{}", "66".repeat(20)),
+            websocket_url: Some(format!("ws://127.0.0.1:{}/ws", server.port)),
+        },
+    );
+    service
+        .process_local_entity_inputs(payment.clone())
+        .expect("real payment proposal")
+        .expect("proposal Runtime frame");
+    service.sync_committed().expect("payment proposal fsync");
+    // Do not call process_next: one accepted frame fills the queue, the
+    // second real authenticated server reply must block the dialed reader.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while service.ingress_metrics().backpressure_events == 0 && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let blocked = service.ingress_metrics();
+    assert!(
+        blocked.backpressure_events > 0,
+        "actual reader saturation, not capacity configuration"
+    );
+    assert_eq!(blocked.accepted_batches, 1);
+    assert_eq!(
+        service.open_runtime_ids().expect("actual dialed session"),
+        vec![peer_runtime]
+    );
+    server.wait_for_rows(1);
+    assert_eq!(
+        blocked.pending_batches, 2,
+        "one queued and one reader-held real input"
+    );
+    let second = service
+        .process_local_entity_inputs(payment)
+        .expect("next local payment while reader blocked")
+        .expect("next financial Runtime frame");
+    let height = second
+        .commitments
+        .expect("next financial commitment")
+        .height;
+    let durable = service
+        .sync_committed()
+        .expect("full ingress must not deadlock the WAL committer")
+        .expect("second frame fsync report");
+    assert_eq!(durable.durable_height, Some(height));
+    assert_eq!(height, 2);
+    assert_eq!(
+        service.ingress_metrics().pending_batches,
+        2,
+        "fsync completed before the first drain"
+    );
+    assert_eq!(service.ingress_metrics().accepted_batches, 1);
+    let drain_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while service.ingress_metrics().pending_batches > 0
+        && std::time::Instant::now() < drain_deadline
+    {
+        service
+            .process_next(std::time::Duration::from_millis(2))
+            .expect("drain real authenticated inputs");
+    }
+    assert_eq!(service.ingress_metrics().accepted_batches, 2);
+    assert_eq!(service.ingress_metrics().pending_batches, 0);
+    assert_eq!(
+        service.ingress_metrics().accepted_connections,
+        0,
+        "both replies use Rust's outgoing socket, with no inbound connection"
+    );
+    assert_eq!(service.ingress_metrics().queue_rejections, 0);
+    service.sync_committed().expect("drained frame fsync");
+    service.shutdown().expect("saturation service shutdown");
+    drop(service);
+    drop(server);
+    let mut wal = NativeRuntimeStore::open(&directory, NativeStorageConfig::default())
+        .expect("reopen real WAL");
+    let frame = wal
+        .read_durable_frame(height)
+        .expect("financial frame durable despite saturated reader");
+    let frame = crate::decode_storage_payload(&frame.frame_bytes).expect("financial frame decode");
+    // An existing local continuation precedes the new financial input in
+    // this frame. Assert the exact payment without inventing input position.
+    let financial_txs: Vec<_> = frame["runtimeInput"]["entityInputs"]
+        .as_array()
+        .expect("durable financial inputs")
+        .iter()
+        .filter(|input| input["entityId"] == owner && input["signerId"] == signer)
+        .flat_map(|input| input["entityTxs"].as_array().expect("Entity transactions"))
+        .filter(|tx| tx["type"] == "directPayment")
+        .collect();
+    assert_eq!(financial_txs.len(), 1, "exactly one new durable payment");
+    assert_eq!(financial_txs[0]["data"]["tokenId"], 1);
+    assert_eq!(
+        financial_txs[0]["data"]["amount"],
+        json!({"__xlnType": "BigInt", "value": "7"})
+    );
+    assert_eq!(
+        financial_txs[0]["data"]["targetEntityId"],
+        format!("0x{}", "ff".repeat(32))
+    );
+    drop(wal);
+    std::fs::remove_dir_all(directory).expect("remove saturation fixture");
+}
+
 #[test]
 fn one_runtime_input_is_applied_fsynced_and_recovered_once() {
     let path = path();
     let _ = std::fs::remove_dir_all(&path);
     let replica = processor_replica();
-    let input = empty_entity_input(&replica);
+    let input = direct_payment_input(&replica);
+    let server = CanonicalWsServer::start("recover-payment");
     let store = NativeRuntimeStore::open(
         &path,
         NativeStorageConfig {
@@ -373,7 +790,7 @@ fn one_runtime_input_is_applied_fsynced_and_recovered_once() {
         },
     )
     .expect("native store");
-    let routes = EntityRouteTable::new([]).expect("empty route table");
+    let routes = payment_routes(&server);
     let mut processor = DurableRuntimeProcessor::new(
         replica,
         store,
@@ -382,17 +799,20 @@ fn one_runtime_input_is_applied_fsynced_and_recovered_once() {
         RuntimeSignerLabel::new(SOURCE_SIGNER).expect("signer label"),
     )
     .expect("durable processor");
+    let mut ingress = attached_test_ingress(&mut processor, SOURCE_SEED, SOURCE_SIGNER);
     let mut report = processor.process(input).expect("durable frame");
     merge_synced(
         &mut report,
         processor.sync_committed().expect("commit sync"),
     );
     assert_eq!(report.durable_height, Some(1));
-    assert_eq!(report.outputs_published, 0);
+    wait_for_processor_publication(&mut processor, &mut report, 1);
+    server.wait_for_rows(1);
+    assert_eq!(server.rows().expect("received payment").len(), 1);
     let commitments = report.commitments.expect("post-fsync commitments");
     assert_eq!(commitments.height, 1);
-    assert_eq!(commitments.runtime_output_count, 0);
-    assert_eq!(commitments.entity_event_count, 0);
+    assert_eq!(commitments.runtime_output_count, 1);
+    assert!(commitments.entity_event_count > 0);
     assert_eq!(commitments.entity_effect_count, 0);
     assert_ne!(commitments.runtime_frame_hash, [0; 32]);
     assert_ne!(commitments.post_state_hash, [0; 32]);
@@ -405,6 +825,7 @@ fn one_runtime_input_is_applied_fsynced_and_recovered_once() {
         entity_state(processor.replica().expect("live replica")).accounts_root
     );
     assert_eq!(processor.replica().expect("live replica").state.height, 1);
+    ingress.shutdown().expect("payment reactor shutdown");
     drop(processor);
 
     let mut reopened = NativeRuntimeStore::open(
@@ -419,7 +840,7 @@ fn one_runtime_input_is_applied_fsynced_and_recovered_once() {
     assert_eq!(recovery.checkpoint.as_ref().map(|row| row.height), Some(1));
     assert!(recovery.wal_frames.is_empty());
     assert_eq!(recovery.pending_outbox.len(), 1);
-    assert!(recovery.pending_outbox[0].outputs.is_empty());
+    assert_payment_proposal(&recovery.pending_outbox[0].outputs);
     drop(reopened);
     std::fs::remove_dir_all(path).expect("remove processor fixture");
 }
@@ -730,6 +1151,19 @@ fn two_authenticated_socket_messages_coalesce_into_one_durable_runtime_frame() {
         routes,
     ))
     .expect("source publisher");
+    let mut source_ingress = DirectRuntimeIngress::bind(DirectRuntimeIngressConfig::production(
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        source_seed,
+        source_signer,
+    ))
+    .expect("source publication reactor");
+    publisher.attach_inbound_sessions(source_ingress.sessions());
+    source_ingress
+        .set_delivery_ready(true)
+        .expect("source receive ready");
+    publisher
+        .set_delivery_ready(true)
+        .expect("source publisher ready");
     publisher
         .publish_durable(&mut source_store, &first)
         .expect("first authenticated socket publish");
@@ -738,7 +1172,10 @@ fn two_authenticated_socket_messages_coalesce_into_one_durable_runtime_frame() {
         .expect("second authenticated socket publish");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     while service.ingress_metrics().accepted_batches < 2 && std::time::Instant::now() < deadline {
-        std::thread::yield_now();
+        publisher
+            .retry_pending()
+            .expect("source async completion and FIFO retry");
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     assert_eq!(service.ingress_metrics().accepted_batches, 2);
 
@@ -764,7 +1201,8 @@ fn two_authenticated_socket_messages_coalesce_into_one_durable_runtime_frame() {
             .is_none(),
         "the second socket message must not create a second Runtime frame",
     );
-    publisher.close();
+    drop(publisher);
+    source_ingress.shutdown().expect("source reactor shutdown");
     service.shutdown().expect("target shutdown");
     drop(service);
     drop(source_store);
@@ -772,7 +1210,37 @@ fn two_authenticated_socket_messages_coalesce_into_one_durable_runtime_frame() {
     let mut reopened = NativeRuntimeStore::open(&target_path, NativeStorageConfig::default())
         .expect("restart target store");
     let recovery = reopened.recover().expect("recover target frame");
-    assert_eq!(recovery.checkpoint.as_ref().map(|row| row.height), Some(1));
+    assert!(
+        recovery.checkpoint.is_none(),
+        "empty Entity inputs do not invent a checkpoint"
+    );
+    assert_eq!(recovery.wal_frames.len(), 1);
+    assert_eq!(recovery.wal_frames[0].height, 1);
+    let frame = crate::decode_storage_payload(&recovery.wal_frames[0].frame_bytes)
+        .expect("recovered coalesced Runtime frame");
+    let source_runtime_id =
+        derive_local_runtime_id(source_seed, source_signer).expect("authenticated sender");
+    let expected_inputs = [(1, 150), (2, 151)].map(|(height, timestamp)| {
+        json!({
+            "runtimeId": target_runtime_id,
+            "entityId": target_entity_id,
+            "signerId": target_signer_id,
+            "entityTxs": [],
+            "from": source_runtime_id,
+            "sourceRuntimeFrame": {"height": height, "timestamp": timestamp},
+        })
+    });
+    assert_eq!(
+        frame["runtimeInput"],
+        json!({"runtimeTxs": [], "entityInputs": expected_inputs})
+    );
+    assert_eq!(frame["runtimeOutputCount"], 0);
+    assert!(
+        frame.get("entityContextRefs").is_none(),
+        "idle Entity contexts are omitted"
+    );
+    assert_eq!(recovery.pending_outbox.len(), 1);
+    assert!(recovery.pending_outbox[0].outputs.is_empty());
     drop(reopened);
     std::fs::remove_dir_all(target_path).expect("remove target fixture");
     std::fs::remove_dir_all(source_path).expect("remove source fixture");
@@ -951,6 +1419,8 @@ fn restart_stages_inbound_only_outbox_without_blocking_new_input() {
         max_message_bytes: 32 * 1024 * 1024,
     })
     .expect("user reconnects");
+    user.set_delivery_ready(true)
+        .expect("user startup complete");
     user.send_envelope(&OutboundEnvelope {
         target_runtime_id: hub_runtime_id.clone(),
         source_height: 1,
@@ -994,7 +1464,8 @@ fn canonical_hash_cadence_does_not_materialize_path_nodes() {
     let _ = std::fs::remove_dir_all(&path);
     let mut replica = processor_replica();
     replica.limits.canonical_hash_period_frames = 1;
-    let input = empty_entity_input(&replica);
+    let input = direct_payment_input(&replica);
+    let server = CanonicalWsServer::start("canonical-cadence");
     let store = NativeRuntimeStore::open(
         &path,
         NativeStorageConfig {
@@ -1003,7 +1474,7 @@ fn canonical_hash_cadence_does_not_materialize_path_nodes() {
         },
     )
     .expect("native store");
-    let routes = EntityRouteTable::new([]).expect("empty route table");
+    let routes = payment_routes(&server);
     let mut processor = DurableRuntimeProcessor::new(
         replica,
         store,
@@ -1012,10 +1483,12 @@ fn canonical_hash_cadence_does_not_materialize_path_nodes() {
         RuntimeSignerLabel::new(SOURCE_SIGNER).expect("signer label"),
     )
     .expect("processor");
+    let mut ingress = attached_test_ingress(&mut processor, SOURCE_SEED, SOURCE_SIGNER);
     processor
         .process(input)
         .expect("materialized genesis frame");
-    let second_input = empty_entity_input_at(processor.replica().expect("live replica"), 2, 300);
+    let first_root = entity_state(processor.replica().expect("payment replica")).accounts_root;
+    let second_input = empty_entity_input_at(processor.replica().expect("live replica"), 300);
     processor
         .process(second_input)
         .expect("durable canonical-only frame");
@@ -1025,6 +1498,17 @@ fn canonical_hash_cadence_does_not_materialize_path_nodes() {
     assert!(frame.get("canonicalStateHash").is_some());
     assert!(frame.get("canonicalEntityHashes").is_some());
     assert!(frame.get("runtimeMachineRoot").is_none());
+    assert!(
+        frame.get("entityContextRefs").is_none(),
+        "idle Entity contexts are omitted"
+    );
+    assert_eq!(
+        entity_state(processor.replica().expect("idle replica")).accounts_root,
+        first_root
+    );
+    ingress
+        .shutdown()
+        .expect("canonical cadence reactor shutdown");
     drop(processor);
 
     let mut reopened = NativeRuntimeStore::open(
@@ -1039,6 +1523,7 @@ fn canonical_hash_cadence_does_not_materialize_path_nodes() {
     assert_eq!(recovery.checkpoint.as_ref().map(|row| row.height), Some(1));
     assert_eq!(recovery.wal_frames.len(), 1);
     assert_eq!(recovery.wal_frames[0].height, 2);
+    assert_payment_proposal(&recovery.pending_outbox[0].outputs);
     drop(reopened);
     std::fs::remove_dir_all(path).expect("remove processor fixture");
 }
@@ -1048,6 +1533,7 @@ fn checkpoint_barrier_materializes_an_isolated_runtime_frame_off_cadence() {
     let path = path();
     let _ = std::fs::remove_dir_all(&path);
     let replica = processor_replica();
+    let server = CanonicalWsServer::start("checkpoint-barrier");
     let store = NativeRuntimeStore::open(
         &path,
         NativeStorageConfig {
@@ -1059,30 +1545,36 @@ fn checkpoint_barrier_materializes_an_isolated_runtime_frame_off_cadence() {
     let mut processor = DurableRuntimeProcessor::new(
         replica,
         store,
-        EntityRouteTable::new([]).expect("empty route table"),
+        payment_routes(&server),
         SOURCE_SEED,
         RuntimeSignerLabel::new(SOURCE_SIGNER).expect("signer label"),
     )
     .expect("processor");
+    let mut ingress = attached_test_ingress(&mut processor, SOURCE_SEED, SOURCE_SIGNER);
     processor
-        .process(empty_entity_input(
+        .process(direct_payment_input(
             processor.replica().expect("genesis replica"),
         ))
         .expect("materialized genesis");
-    let replica = processor.replica().expect("barrier replica");
+    let first_root = entity_state(processor.replica().expect("barrier replica")).accounts_root;
     let barrier = RuntimeInput {
         runtime_txs: vec![RuntimeTx::CheckpointBarrier],
         entity_inputs: Vec::new(),
-        frame: frame_context(replica, 2, 300),
+        frame: idle_frame_context(300),
     };
     processor.process(barrier).expect("materialized barrier");
     let durable = processor.read_durable_frame(2).expect("barrier frame");
     let frame = crate::decode_storage_payload(&durable.frame_bytes).expect("decode barrier frame");
     assert_eq!(frame.get("materializedState"), Some(&Value::Bool(true)));
     assert_eq!(
+        entity_state(processor.replica().expect("barrier replica")).accounts_root,
+        first_root
+    );
+    assert_eq!(
         frame.pointer("/runtimeInput/runtimeTxs/0/type"),
         Some(&Value::String("checkpointBarrier".into()))
     );
+    ingress.shutdown().expect("barrier reactor shutdown");
     drop(processor);
 
     let mut reopened =
@@ -1105,6 +1597,7 @@ fn cadence_100_is_measured_from_the_first_materialized_runtime_frame() {
     let path = path();
     let _ = std::fs::remove_dir_all(&path);
     let replica = processor_replica();
+    let server = CanonicalWsServer::start("materialized-cadence");
     let store = NativeRuntimeStore::open(
         &path,
         NativeStorageConfig {
@@ -1113,7 +1606,7 @@ fn cadence_100_is_measured_from_the_first_materialized_runtime_frame() {
         },
     )
     .expect("native store");
-    let routes = EntityRouteTable::new([]).expect("empty route table");
+    let routes = payment_routes(&server);
     let mut processor = DurableRuntimeProcessor::new(
         replica,
         store,
@@ -1122,22 +1615,49 @@ fn cadence_100_is_measured_from_the_first_materialized_runtime_frame() {
         RuntimeSignerLabel::new(SOURCE_SIGNER).expect("signer label"),
     )
     .expect("processor");
+    let mut ingress = attached_test_ingress(&mut processor, SOURCE_SEED, SOURCE_SIGNER);
+    let mut materializer = CanonicalEntityInfraMaterializer::new();
     for height in 1..=101 {
-        let input = empty_entity_input_at(
-            processor.replica().expect("live replica"),
-            height,
-            100_u64.checked_add(height).expect("timestamp"),
-        );
-        let mut report = processor.process(input).expect("durable frame");
+        let timestamp = 100_u64.checked_add(height).expect("timestamp");
+        let entity_inputs = if height == 1 || height == 101 {
+            direct_payment_input(processor.replica().expect("live replica")).entity_inputs
+        } else {
+            empty_entity_input_at(processor.replica().expect("live replica"), timestamp)
+                .entity_inputs
+        };
+        let mut report = processor
+            .process_live(
+                RuntimeLiveInput {
+                    runtime_txs: Vec::new(),
+                    entity_inputs,
+                    timestamp,
+                    finalized_j_height: 0,
+                },
+                &mut materializer,
+            )
+            .expect("canonical live frame");
         merge_synced(
             &mut report,
             processor.sync_committed().expect("commit sync"),
         );
         assert_eq!(report.durable_height, Some(height));
+        let durable = processor.read_durable_frame(height).expect("cadence frame");
+        let encoded = crate::decode_storage_payload(&durable.frame_bytes).expect("cadence decode");
+        assert_eq!(encoded["materializedState"], height == 1 || height == 101);
+        if height > 1 && height < 101 {
+            assert!(
+                report
+                    .commitments
+                    .expect("idle Runtime commitment")
+                    .entities
+                    .is_empty()
+            );
+        }
     }
     assert_eq!(processor.replica().expect("live replica").state.height, 101);
     let expected_accounts_root =
         entity_state(processor.replica().expect("live replica")).accounts_root;
+    ingress.shutdown().expect("cadence reactor shutdown");
     drop(processor);
 
     let mut reopened = NativeRuntimeStore::open(
@@ -1204,10 +1724,11 @@ fn an_uncertain_fsync_poison_stops_the_processor_before_publication() {
     let _ = std::fs::remove_dir_all(&path);
     let _ = std::fs::remove_dir_all(&displaced);
     let replica = processor_replica();
-    let input = empty_entity_input(&replica);
+    let input = direct_payment_input(&replica);
+    let server = CanonicalWsServer::start("uncertain-fsync");
     let store =
         NativeRuntimeStore::open(&path, NativeStorageConfig::default()).expect("native store");
-    let routes = EntityRouteTable::new([]).expect("empty route table");
+    let routes = payment_routes(&server);
     let mut processor = DurableRuntimeProcessor::new(
         replica,
         store,
@@ -1216,6 +1737,7 @@ fn an_uncertain_fsync_poison_stops_the_processor_before_publication() {
         RuntimeSignerLabel::new(SOURCE_SIGNER).expect("signer label"),
     )
     .expect("processor");
+    let mut ingress = attached_test_ingress(&mut processor, SOURCE_SEED, SOURCE_SIGNER);
 
     // Keep LevelDB's open file handles alive but remove the directory at the
     // exact boundary that must be fsynced after its synchronous write. The
@@ -1233,6 +1755,19 @@ fn an_uncertain_fsync_poison_stops_the_processor_before_publication() {
         processor.replica(),
         Err(DurableRuntimeProcessorError::Poisoned)
     ));
+    assert_eq!(
+        server.rows(),
+        None,
+        "uncertain payment must never reach the real peer"
+    );
+    assert_eq!(
+        ingress.metrics().authenticated_sessions,
+        0,
+        "no pre-fsync publication connection"
+    );
+    ingress
+        .shutdown()
+        .expect("uncertain-fsync reactor shutdown");
     drop(processor);
     std::fs::remove_dir_all(displaced).expect("remove displaced store");
 }
@@ -1260,6 +1795,7 @@ fn failed_socket_after_fsync_does_not_block_the_next_runtime_input() {
         RuntimeSignerLabel::new(SOURCE_SIGNER).expect("signer label"),
     )
     .expect("processor");
+    let mut ingress = attached_test_ingress(&mut processor, SOURCE_SEED, SOURCE_SIGNER);
     let first = processor
         .process(input)
         .expect("durable frame stages despite unavailable peer");
@@ -1268,7 +1804,7 @@ fn failed_socket_after_fsync_does_not_block_the_next_runtime_input() {
         processor.replica().expect("durable replica").state.height,
         1
     );
-    let next = no_external_input(processor.replica().expect("replica"), 2, 300);
+    let next = no_external_input(300);
     processor
         .process(next)
         .expect("unavailable peer does not block the next Runtime input");
@@ -1276,6 +1812,9 @@ fn failed_socket_after_fsync_does_not_block_the_next_runtime_input() {
         processor.replica().expect("advanced replica").state.height,
         2
     );
+    ingress
+        .shutdown()
+        .expect("unavailable peer fixture shutdown");
     drop(processor);
 
     let mut reopened = NativeRuntimeStore::open(&path, NativeStorageConfig::default())
@@ -1356,6 +1895,100 @@ fn replay_validate_only_uses_the_same_durable_route_and_outbox_path() {
 }
 
 #[test]
+fn cross_j_r6_h72_recorded_omission_cannot_hide_new_native_output_or_change_sender_pruning() {
+    let path = path();
+    let replica = processor_replica();
+    let input = direct_payment_input(&replica);
+    let reference = processor_replica();
+    let reference_input = direct_payment_input(&reference);
+    let mut applied = crate::apply_runtime(reference, reference_input)
+        .expect("canonical direct-payment transition");
+    let routes = EntityRouteTable::new([EntityRoute {
+        target_entity_id: format!("0x{}", "ff".repeat(32)),
+        target_runtime_id: format!("0x{}", "55".repeat(20)),
+        target_signer_id: format!("0x{}", "66".repeat(20)),
+        websocket_url: Some("ws://127.0.0.1:1/ws".into()),
+    }])
+    .expect("canonical remote route");
+    let store =
+        NativeRuntimeStore::open(&path, NativeStorageConfig::default()).expect("native store");
+    let mut processor = DurableRuntimeProcessor::new_replay_validate_only(
+        replica,
+        store,
+        routes,
+        SOURCE_SEED,
+        RuntimeSignerLabel::new(SOURCE_SIGNER).expect("signer label"),
+    )
+    .expect("exact replay processor");
+    // Recorded current outputs are comparison evidence only. Omitting the
+    // genuine proposal must leave it generated and durably committed, so the
+    // replay caller's ordered count/digest comparison exposes the omission.
+    let mut report = processor
+        .process_exact_replay(input, &[])
+        .expect("generate proposal despite the recorded omission");
+    merge_synced(&mut report, processor.sync_committed().expect("WAL fsync"));
+    assert_eq!(report.durable_height, Some(1));
+    assert_eq!(report.outputs_published, 1);
+    assert_eq!(
+        report
+            .commitments
+            .as_ref()
+            .expect("actual commitments")
+            .runtime_output_count,
+        1
+    );
+    let frame = processor
+        .read_durable_frame(1)
+        .expect("actual native WAL evidence");
+    assert_eq!(frame.outputs.len(), 1);
+    let output = crate::decode_storage_payload(&frame.outputs[0]).expect("actual proposal");
+    assert_eq!(output["sourceRuntimeFrame"]["height"], 1);
+    assert_eq!(output["entityTxs"][0]["type"], "accountInput");
+    assert_eq!(output["entityTxs"][0]["data"]["kind"], "ack_frame");
+    assert!(output["entityTxs"][0]["data"]["ack"].is_null());
+    let proposal = &output["entityTxs"][0]["data"]["proposal"]["frame"];
+    assert_eq!(
+        proposal["accountTxs"]
+            .as_array()
+            .expect("economic txs")
+            .len(),
+        1
+    );
+    assert_eq!(proposal["accountTxs"][0]["type"], "direct_payment");
+    assert_eq!(
+        proposal["accountTxs"][0]["data"]["amount"],
+        json!({"__xlnType":"BigInt","value":"7"})
+    );
+    let settled = super::projection::replay_proposal_settled;
+    assert!(!settled(&mut applied.replica, &output).expect("matching pending proposal"));
+    let mut changed_height = output.clone();
+    changed_height["entityTxs"][0]["data"]["proposal"]["frame"]["height"] =
+        json!(proposal["height"].as_u64().expect("proposal height") + 1);
+    assert!(settled(&mut applied.replica, &changed_height).expect("different proposal height"));
+    let mut changed_hash = output.clone();
+    changed_hash["entityTxs"][0]["data"]["proposal"]["frame"]["stateHash"] =
+        json!(format!("0x{}", "00".repeat(32)));
+    assert!(settled(&mut applied.replica, &changed_hash).expect("different proposal hash"));
+    // This classifier runs after signature validation. Its ACK-presence rule
+    // must preserve the envelope independently of successor proposal liveness.
+    changed_hash["entityTxs"][0]["data"]["ack"] = json!({
+        "height": proposal["height"], "frameHash": proposal["stateHash"],
+        "frameHanko": output["entityTxs"][0]["data"]["proposal"]["frameHanko"],
+    });
+    assert!(!settled(&mut applied.replica, &changed_hash).expect("ACK remains owed"));
+    let mut missing_owner = output;
+    missing_owner["entityTxs"][0]["data"]["fromEntityId"] = json!(format!("0x{}", "77".repeat(32)));
+    assert!(
+        settled(&mut applied.replica, &missing_owner)
+            .unwrap_err()
+            .to_string()
+            .contains("ACCOUNT_PROPOSAL_SOURCE_MISSING")
+    );
+    drop(processor);
+    std::fs::remove_dir_all(path).expect("remove replay fixture");
+}
+
+#[test]
 fn fsync_precedes_real_websocket_and_local_continuation_uses_the_next_context() {
     let path = path();
     let _ = std::fs::remove_dir_all(&path);
@@ -1379,9 +2012,11 @@ fn fsync_precedes_real_websocket_and_local_continuation_uses_the_next_context() 
         RuntimeSignerLabel::new(SOURCE_SIGNER).expect("signer label"),
     )
     .expect("processor");
+    let mut ingress = attached_test_ingress(&mut processor, SOURCE_SEED, SOURCE_SIGNER);
     let mut first = processor.process(input).expect("fsync then websocket");
     merge_synced(&mut first, processor.sync_committed().expect("commit sync"));
     assert_eq!(first.durable_height, Some(1));
+    wait_for_processor_publication(&mut processor, &mut first, 1);
     assert_eq!(first.outputs_published, 1);
     assert_eq!(
         first
@@ -1394,7 +2029,7 @@ fn fsync_precedes_real_websocket_and_local_continuation_uses_the_next_context() 
     server.wait_for_rows(1);
     assert_eq!(server.rows().expect("received rows")[0]["height"], 1);
 
-    let next_input = no_external_input(processor.replica().expect("replica"), 2, 300);
+    let next_input = no_external_input(300);
     let mut second = processor
         .process(next_input)
         .expect("local continuation under fresh context");
@@ -1406,6 +2041,9 @@ fn fsync_precedes_real_websocket_and_local_continuation_uses_the_next_context() 
     assert_eq!(second.outputs_published, 0);
     assert_eq!(processor.replica().expect("replica").state.height, 2);
     assert_eq!(processor.replica().expect("replica").state.timestamp, 300);
+    ingress
+        .shutdown()
+        .expect("publication fixture reactor shutdown");
     drop(processor);
 
     let mut reopened = NativeRuntimeStore::open(&path, NativeStorageConfig::default())

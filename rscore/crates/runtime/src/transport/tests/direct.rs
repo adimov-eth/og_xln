@@ -124,10 +124,14 @@ fn durable_sender_reconnects_without_loss_or_duplicate_and_bounds_backpressure()
         DirectOutboxPublisherConfig::production("rrs-transport-client", "client", routes.clone());
     config.io_timeout = Duration::from_secs(3);
     let mut publisher = DirectOutboxPublisher::new(config).expect("publisher");
+    let local = super::publisher_ingress("rrs-transport-client", "client");
+    publisher.attach_inbound_sessions(local.sessions());
     let report = publisher
         .publish_durable(&mut store, &first)
         .expect("publish after forced handshake reconnect");
-    assert_eq!((report.rows_published, report.reconnects), (1, 1));
+    assert_eq!((report.rows_published, report.rows_pending), (0, 1));
+    let completed = super::inbound::wait_for_socket_write(&mut publisher);
+    assert_eq!((completed.rows_published, completed.reconnects), (1, 1));
     wait_for_lines(&received, 1);
     assert_eq!(line_count(&received), 1);
 
@@ -157,7 +161,7 @@ fn durable_sender_reconnects_without_loss_or_duplicate_and_bounds_backpressure()
     ));
     assert_eq!(line_count(&received), 1);
 
-    publisher.close();
+    drop(publisher);
     drop(store);
     let _ = fs::remove_dir_all(base);
 }
@@ -250,6 +254,7 @@ const seed='rrs-transport-server';
 const runtimeId=deriveSignerAddressSync(seed,'1').toLowerCase();
 let sequence=0;
 const route=createDirectRuntimeWsRoute({runtimeId,runtimeSeed:seed,path:'/ws',onEntityInputs(_from,envelope){appendFileSync(process.env.RRS_RECEIVED_PATH,JSON.stringify({height:envelope.sourceRuntimeHeight,count:envelope.entityInputs.length})+'\n');}});
+route.setReady(true);
 let server;
 server=Bun.serve({hostname:'127.0.0.1',port:0,fetch(request,ref){if(ref.upgrade(request,{data:{sequence:++sequence}}))return;return new Response('websocket only',{status:400});},websocket:{maxPayloadLength:route.websocket.maxPayloadLength,open(ws){if(ws.data.sequence===1){ws.send(serializeWsMessage({type:'hello_challenge',challenge:'0xfirstdisconnect',audience:directRuntimeWsAudience(runtimeId)}));ws.close(1012,'retry');return;}route.websocket.open(ws);},message(ws,raw){route.websocket.message(ws,raw);},drain(ws){route.websocket.drain(ws);},close(ws,code,reason){route.websocket.close(ws,code,reason);}}});
 console.log(JSON.stringify({port:server.port,runtimeId}));

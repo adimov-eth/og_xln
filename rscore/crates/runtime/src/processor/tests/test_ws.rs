@@ -15,6 +15,14 @@ pub(super) struct CanonicalWsServer {
 
 impl CanonicalWsServer {
     pub fn start(label: &str) -> Self {
+        Self::start_with_saturation(label, "", "")
+    }
+
+    pub fn start_saturating(label: &str, entity: &str, signer: &str) -> Self {
+        Self::start_with_saturation(label, entity, signer)
+    }
+
+    fn start_with_saturation(label: &str, entity: &str, signer: &str) -> Self {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../..")
             .canonicalize()
@@ -30,9 +38,27 @@ impl CanonicalWsServer {
 import { appendFileSync } from 'node:fs';
 import { deriveSignerAddressSync } from './core/account/crypto.ts';
 import { createDirectRuntimeWsRoute } from './core/network/p2p/direct-runtime-bun.ts';
+import { requireDeliveryDelivered } from './core/protocol/payments/delivery-result.ts';
 const seed='rrs-processor-server';
 const runtimeId=deriveSignerAddressSync(seed,'1').toLowerCase();
-const route=createDirectRuntimeWsRoute({runtimeId,runtimeSeed:seed,path:'/ws',onEntityInputs(_from,envelope){appendFileSync(process.env.RRS_RECEIVED_PATH,JSON.stringify({height:envelope.sourceRuntimeHeight,count:envelope.entityInputs.length})+'\n');}});
+let saturated = false;
+const route=createDirectRuntimeWsRoute({runtimeId,runtimeSeed:seed,path:'/ws',onEntityInputs(from,envelope){
+  appendFileSync(process.env.RRS_RECEIVED_PATH,JSON.stringify({height:envelope.sourceRuntimeHeight,count:envelope.entityInputs.length})+'\n');
+  if (!process.env.RRS_TARGET_ENTITY || saturated) return;
+  const isPayment = envelope.entityInputs.some(input => input.entityTxs.some(tx =>
+    tx.type === 'accountInput' && tx.data.proposal?.frame.accountTxs.some(tx => tx.type === 'direct_payment')));
+  if (!isPayment) throw new Error('SATURATION_EXPECTED_REAL_PAYMENT');
+  saturated = true;
+  for (let height = 1; height <= 2; height++) {
+    requireDeliveryDelivered(route.sendEntityInputsDelivery(from, {
+      sourceRuntimeId: runtimeId, sourceRuntimeHeight: height,
+      sourceRuntimeTimestamp: envelope.sourceRuntimeTimestamp,
+      entityInputs: [{ runtimeId: from, entityId: process.env.RRS_TARGET_ENTITY,
+        signerId: process.env.RRS_TARGET_SIGNER, entityTxs: [] }],
+    }, envelope.sourceRuntimeTimestamp), 'SATURATION_SEND_FAILED');
+  }
+}});
+route.setReady(true);
 const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch(request,ref){if(ref.upgrade(request))return;return new Response('websocket only',{status:400});},websocket:route.websocket});
 console.log(JSON.stringify({port:server.port,runtimeId}));
 process.on('SIGTERM',()=>{server.stop(true);process.exit(0)});
@@ -41,6 +67,8 @@ process.on('SIGTERM',()=>{server.stop(true);process.exit(0)});
             .args(["-e", script])
             .current_dir(root)
             .env("RRS_RECEIVED_PATH", &received)
+            .env("RRS_TARGET_ENTITY", entity)
+            .env("RRS_TARGET_SIGNER", signer)
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()

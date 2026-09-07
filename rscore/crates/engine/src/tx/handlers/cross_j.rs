@@ -313,8 +313,8 @@ pub(crate) fn apply_pull_lock(
             return Err("Pull amount must be non-zero".into());
         }
         let absolute = abs(&amount);
-        let signed_boundary = BigInt::from(1) << 255_usize;
-        if amount < -&signed_boundary || amount >= signed_boundary {
+        let maximum = (BigInt::from(1) << 256_usize) - 1_u8;
+        if absolute > maximum {
             return Err(format!("Pull amount out of bounds: {absolute}"));
         }
         let full_hash =
@@ -785,6 +785,10 @@ mod tests {
     }
 
     fn lock_route() -> CanonicalValue {
+        lock_route_with_amount(10.into())
+    }
+
+    fn lock_route_with_amount(amount: BigInt) -> CanonicalValue {
         let full_hash = format!("0x{}", "bb".repeat(32));
         let partial_root = format!("0x{}", "cc".repeat(32));
         let source = object(vec![
@@ -795,7 +799,7 @@ mod tests {
             ("entityId", text(entity(0x11).as_hex())),
             ("counterpartyEntityId", text(entity(0x22).as_hex())),
             ("tokenId", number(1).expect("number")),
-            ("amount", CanonicalValue::BigInt(10.into())),
+            ("amount", CanonicalValue::BigInt(abs(&amount))),
         ]);
         let target = object(vec![
             (
@@ -810,8 +814,8 @@ mod tests {
         let source_pull = object(vec![
             ("pullId", text("pull-1")),
             ("tokenId", number(1).expect("number")),
-            ("amount", CanonicalValue::BigInt(10.into())),
-            ("signedAmount", CanonicalValue::BigInt(10.into())),
+            ("amount", CanonicalValue::BigInt(abs(&amount))),
+            ("signedAmount", CanonicalValue::BigInt(amount)),
             ("fullHash", text(full_hash.clone())),
             ("partialRoot", text(partial_root.clone())),
         ]);
@@ -848,9 +852,13 @@ mod tests {
     }
 
     fn lock_tx() -> AccountTx {
+        lock_tx_with_amount(10.into())
+    }
+
+    fn lock_tx_with_amount(amount: BigInt) -> AccountTx {
         let full_hash = format!("0x{}", "bb".repeat(32));
         let partial_root = format!("0x{}", "cc".repeat(32));
-        let route = lock_route();
+        let route = lock_route_with_amount(amount.clone());
         let route_hash = string(fields(&route).expect("route"), "routeHash").expect("route hash");
         let binding = object(vec![
             ("orderId", text("order-1")),
@@ -862,7 +870,7 @@ mod tests {
             data: object(vec![
                 ("pullId", text("pull-1")),
                 ("tokenId", number(1).expect("number")),
-                ("amount", CanonicalValue::BigInt(10.into())),
+                ("amount", CanonicalValue::BigInt(amount)),
                 ("fullHash", text(full_hash)),
                 ("partialRoot", text(partial_root)),
                 ("crossJurisdiction", binding),
@@ -983,6 +991,102 @@ mod tests {
         })
         .expect("bound offer state");
         AccountReplica::new(entity(0x11), state).expect("bound offer replica")
+    }
+
+    #[test]
+    fn cross_pull_lock_full_uint256_for_both_payers_builds_dispute_proof() {
+        let maximum = (BigInt::from(1) << 256_usize) - 1_u8;
+        let context = AccountExecutionContext::new(1_000, 1_000, 10, 7, 10);
+        for amount in [-&maximum, maximum.clone()] {
+            let original = replica();
+            let delta = Delta::new(
+                TokenId::new(1).expect("token"),
+                0.into(),
+                0.into(),
+                0.into(),
+                maximum.clone(),
+                maximum.clone(),
+                0.into(),
+                0.into(),
+                0.into(),
+                0.into(),
+            )
+            .expect("full asset credit");
+            let state = AccountState::new(
+                original.state().identity().clone(),
+                AccountDisputeConfig::new(10, 10).expect("config"),
+                vec![delta],
+            )
+            .expect("state");
+            let base = AccountReplica::new(entity(0x11), state).expect("replica");
+            let locked = SequentialAccountEngine::apply_with_context(
+                &base,
+                Side::Left,
+                &lock_tx_with_amount(amount.clone()),
+                &context,
+            )
+            .expect("transition")
+            .committed()
+            .expect("full magnitude pull");
+            let payer = if amount < BigInt::from(0) {
+                Side::Left
+            } else {
+                Side::Right
+            };
+            assert_eq!(
+                locked
+                    .state()
+                    .delta(TokenId::new(1).expect("token"))
+                    .expect("delta")
+                    .hold(payer),
+                &maximum
+            );
+            assert_eq!(locked.state().pull_count(), 1);
+            crate::build_dispute_proof(&locked, &[0x77; 20], 1)
+                .expect("full magnitude recovery proof");
+        }
+    }
+
+    #[test]
+    fn cross_pull_lock_zero_and_unrepresentable_magnitude_reject_atomically() {
+        let boundary = BigInt::from(1) << 256_usize;
+        for amount in [BigInt::from(0), -&boundary, boundary] {
+            let base = replica();
+            let before = base.state().deltas_root();
+            let mut transaction = lock_tx();
+            let AccountTx::CrossPullLock {
+                data: CanonicalValue::Object(data),
+            } = &mut transaction
+            else {
+                panic!("pull fixture")
+            };
+            *data
+                .iter_mut()
+                .find_map(|(name, value)| (name == "amount").then_some(value))
+                .expect("amount") = CanonicalValue::BigInt(amount.clone());
+            let result = SequentialAccountEngine::apply_with_context(
+                &base,
+                Side::Left,
+                &transaction,
+                &AccountExecutionContext::new(1_000, 1_000, 10, 7, 10),
+            )
+            .expect("typed rejection");
+            let AccountVerdict::Rejected(reason) = result.verdict() else {
+                panic!("invalid amount accepted")
+            };
+            assert_eq!(
+                reason.message(),
+                if amount == BigInt::from(0) {
+                    "Pull amount must be non-zero".to_string()
+                } else {
+                    format!("Pull amount out of bounds: {}", abs(&amount))
+                }
+            );
+            assert!(result.candidate().is_none());
+            assert!(result.outputs().is_empty());
+            assert!(result.events().is_empty());
+            assert_eq!(base.state().deltas_root(), before);
+        }
     }
 
     #[test]

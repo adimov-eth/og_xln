@@ -1,4 +1,4 @@
-//! Concrete single-Entity Runtime checkpoint and decoded-WAL restoration.
+//! Concrete owner-scoped Runtime checkpoint and decoded-WAL restoration.
 
 use std::sync::Arc;
 
@@ -29,6 +29,15 @@ pub struct DecodedRuntimeCheckpoint {
     pub runtime_timestamp: u64,
     pub durable_envelope: RuntimeDurableEnvelope,
     pub expected_protocol_fingerprint: [u8; 32],
+    pub entities: Vec<DecodedRuntimeEntityCheckpoint>,
+    pub worker_count: usize,
+    pub limits: RuntimeLimits,
+    pub swap_market: Arc<SwapMarketPolicy>,
+}
+
+/// One inert owner slot decoded from the existing authenticated checkpoint.
+/// This grouping is never persisted and cannot replace a committed graph.
+pub struct DecodedRuntimeEntityCheckpoint {
     pub stored_accounts: StoredRscoreCheckpoint,
     pub entity_snapshot: EntityStateSnapshot,
     /// Complete live Entity consensus envelope restored from the canonical
@@ -53,9 +62,6 @@ pub struct DecodedRuntimeCheckpoint {
     /// to the canonical 0x26 signer address by checkpoint decoding.
     pub signer_private_key: [u8; 32],
     pub signer_id: String,
-    pub worker_count: usize,
-    pub limits: RuntimeLimits,
-    pub swap_market: Arc<SwapMarketPolicy>,
 }
 
 pub struct DecodedRuntimeWalFrame {
@@ -71,7 +77,7 @@ pub struct DecodedRuntimeWalFrame {
     /// Canonical Runtime hashes may re-commit an unchanged Entity on a
     /// Runtime-only frame. Retain the Entity id with the root instead of
     /// inferring its owner from a newly emitted Entity output.
-    pub expected_entity_root: Option<ExpectedEntityRoot>,
+    pub expected_entity_roots: Option<Vec<ExpectedEntityRoot>>,
     pub expected_previous_frame_hash: [u8; 32],
     pub expected_frame_hash: [u8; 32],
     /// The frame's committed canonical Runtime state hash, when the frame
@@ -80,6 +86,7 @@ pub struct DecodedRuntimeWalFrame {
     pub canonical_state_hash: Option<[u8; 32]>,
 }
 
+#[derive(Debug)]
 pub struct ExpectedEntityRoot {
     pub entity_id: [u8; 32],
     pub root: [u8; 32],
@@ -155,12 +162,12 @@ fn parse_hex(value: &str) -> Result<[u8; 32], ConcreteRestoreError> {
     Ok(output)
 }
 
-fn generation(checkpoint: &DecodedRuntimeCheckpoint) -> EngineGeneration {
+fn generation(stored: &StoredRscoreCheckpoint, height: u64) -> EngineGeneration {
     let mut digest = Sha256::new();
     digest.update(b"xln.rscore.runtime.restore.generation.v1");
-    digest.update(checkpoint.stored_accounts.owner_entity_id);
-    digest.update(checkpoint.runtime_height.to_be_bytes());
-    digest.update(checkpoint.stored_accounts.revision.to_be_bytes());
+    digest.update(stored.owner_entity_id);
+    digest.update(height.to_be_bytes());
+    digest.update(stored.revision.to_be_bytes());
     let digest: [u8; 32] = digest.finalize().into();
     let mut generation = [0_u8; 8];
     generation.copy_from_slice(&digest[..8]);
@@ -217,11 +224,69 @@ pub fn restore_decoded_runtime_checkpoint(
             return Err(ConcreteRestoreError::UnsafeNumber { field, value });
         }
     }
+    if checkpoint.runtime_seed.trim().is_empty() {
+        return Err(RuntimeMachineError::RuntimeSeedEmpty.into());
+    }
+    if checkpoint.entities.is_empty() {
+        return Err(ConcreteRestoreError::OwnerMismatch);
+    }
+    let mut states = std::collections::BTreeMap::new();
+    let mut replicas = std::collections::BTreeMap::new();
+    let mut owners = std::collections::BTreeSet::new();
+    let mut finalized_j_height = 0;
+    for entity in checkpoint.entities {
+        let (key, state, live) = restore_entity_checkpoint(
+            entity,
+            checkpoint.runtime_height,
+            checkpoint.expected_protocol_fingerprint,
+            checkpoint.worker_count,
+            Arc::clone(&checkpoint.swap_market),
+        )?;
+        if !owners.insert(key.entity_id) {
+            return Err(ConcreteRestoreError::OwnerMismatch);
+        }
+        // Same cumulative frontier as the Runtime's selected-J-input fold;
+        // each Entity retains its own authenticated jurisdiction clock.
+        finalized_j_height = finalized_j_height.max(state.entity.last_finalized_j_height);
+        states.insert(key.clone(), state);
+        replicas.insert(key, live);
+    }
+    Ok(RestoredRuntime {
+        replica: RuntimeReplica {
+            state: RuntimeState {
+                height: checkpoint.runtime_height,
+                timestamp: checkpoint.runtime_timestamp,
+                finalized_j_height,
+                e_replicas: states,
+            },
+            durable: checkpoint.durable_envelope,
+            e_replicas: replicas,
+            mempool: crate::RuntimeMempool::empty(),
+            limits: checkpoint.limits,
+            proposer_runtime_seed: checkpoint.runtime_seed,
+        },
+    })
+}
+
+fn restore_entity_checkpoint(
+    checkpoint: DecodedRuntimeEntityCheckpoint,
+    runtime_height: u64,
+    expected_protocol_fingerprint: [u8; 32],
+    worker_count: usize,
+    swap_market: Arc<SwapMarketPolicy>,
+) -> Result<
+    (
+        RuntimeEntityKey,
+        crate::RuntimeEntityState,
+        crate::RuntimeEntityReplica,
+    ),
+    ConcreteRestoreError,
+> {
     if checkpoint.signer_id.is_empty() {
         return Err(ConcreteRestoreError::SignerRequired);
     }
     let stored = &checkpoint.stored_accounts;
-    if stored.protocol_fingerprint != checkpoint.expected_protocol_fingerprint {
+    if stored.protocol_fingerprint != expected_protocol_fingerprint {
         return Err(ConcreteRestoreError::ProtocolFingerprint);
     }
     if checkpoint.entity_snapshot.entity_id != hex(&stored.owner_entity_id) {
@@ -237,11 +302,11 @@ pub fn restore_decoded_runtime_checkpoint(
         account_count: stored.account_count,
     };
     let accounts = ResidentConsensusEngine::restore_exact(
-        generation(&checkpoint),
-        checkpoint.worker_count,
+        generation(stored, runtime_height),
+        worker_count,
         private_key,
         checkpoint.signer_id.clone(),
-        checkpoint.swap_market,
+        swap_market,
         token,
         account_rows,
     )?;
@@ -262,40 +327,25 @@ pub fn restore_decoded_runtime_checkpoint(
         &entity_consensus.state.sections,
         checkpoint.expected_entity_root,
     )?;
-    let finalized_j_height = entity.last_finalized_j_height;
-    let owner_entity_id = stored.owner_entity_id;
-    let key = crate::RuntimeEntityKey::new(owner_entity_id, &checkpoint.signer_id)?;
-    let e_replicas = std::collections::BTreeMap::from([(
-        key.clone(),
-        crate::RuntimeEntityState {
-            accounts_root: stored.accounts_root,
-            entity,
-        },
-    )]);
-    let mut replica = RuntimeReplica::new(
-        RuntimeState {
-            height: checkpoint.runtime_height,
-            timestamp: checkpoint.runtime_timestamp,
-            finalized_j_height,
-            e_replicas,
-        },
-        checkpoint.durable_envelope,
-        stored.owner_entity_id,
+    let owner = stored.owner_entity_id;
+    let key = RuntimeEntityKey::new(owner, &checkpoint.signer_id)?;
+    let state = crate::RuntimeEntityState {
+        accounts_root: stored.accounts_root,
+        entity,
+    };
+    let mut live = crate::RuntimeEntityReplica::new(
+        &state,
+        owner,
         checkpoint.signer_id,
         accounts,
         entity_consensus,
         checkpoint.entity_signer,
         stored.protocol_fingerprint,
-        checkpoint.runtime_seed,
-        checkpoint.limits,
+        runtime_height,
     )?;
-    let live = replica
-        .e_replicas
-        .get_mut(&key)
-        .ok_or(ConcreteRestoreError::OwnerMismatch)?;
     live.install_certified_board_registry(checkpoint.certified_board_registry);
     live.install_replica_metadata(checkpoint.replica_metadata)?;
-    Ok(RestoredRuntime { replica })
+    Ok((key, state, live))
 }
 
 /// Apply already-decoded canonical Runtime inputs in strict WAL order. Each
@@ -342,7 +392,7 @@ pub fn replay_decoded_runtime_wal(
             .map(|state| state.accounts_root)
             .unwrap_or([0; 32]);
         assert_accounts_root(frame.height, accounts_root, frame.expected_accounts_root)?;
-        if let Some(expected) = frame.expected_entity_root {
+        for expected in frame.expected_entity_roots.into_iter().flatten() {
             let matching = applied
                 .replica
                 .e_replicas

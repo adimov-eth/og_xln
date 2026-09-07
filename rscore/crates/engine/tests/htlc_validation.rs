@@ -143,12 +143,12 @@ fn lock_validation_order_and_inclusive_deadlines_match_typescript() {
     );
     assert_eq!(
         rejected_message(&base, Side::Left, &lock_tx(HASHLOCK, 0.into()), 1_000, 10).1,
-        "Invalid amount: 0 (min 1, max 340282366920938463463374607431768211455)"
+        "Invalid amount: 0 (min 1, max 115792089237316195423570985008687907853269984665640564039457584007913129639935)"
     );
-    let too_large = BigInt::from(1_u8) << 128;
+    let too_large = BigInt::from(1_u8) << 256;
     assert_eq!(
         rejected_message(&base, Side::Left, &lock_tx(HASHLOCK, too_large), 1_000, 10).1,
-        "Invalid amount: 340282366920938463463374607431768211456 (min 1, max 340282366920938463463374607431768211455)"
+        "Invalid amount: 115792089237316195423570985008687907853269984665640564039457584007913129639936 (min 1, max 115792089237316195423570985008687907853269984665640564039457584007913129639935)"
     );
 
     let accepted = SequentialAccountEngine::apply_with_context(
@@ -168,6 +168,32 @@ fn lock_validation_order_and_inclusive_deadlines_match_typescript() {
     let duplicate = rejected_message(&locked, Side::Left, &lock_tx(HASHLOCK, 0.into()), 2_000, 20);
     assert_eq!(duplicate.0, "ACCOUNT_TX_VALIDATION");
     assert_eq!(duplicate.1, format!("Lock {HASHLOCK} already exists"));
+}
+
+#[test]
+fn lock_amount_rejects_overflow_of_uint256_for_either_direction() {
+    let base = left_base(0);
+    let before_delta_root = base.state().deltas_root();
+    for (sender, amount) in [
+        (Side::Left, BigInt::from(1) << 256_usize),
+        (Side::Right, BigInt::from(1) << 256_usize),
+    ] {
+        let transition = SequentialAccountEngine::apply_with_context(
+            &base,
+            sender,
+            &lock_tx(HASHLOCK, amount),
+            &execution_context(1_000, 10),
+        )
+        .expect("unsigned magnitude rejection");
+        assert!(matches!(
+            transition.verdict(),
+            AccountVerdict::Rejected(AccountRejection::Validation(ValidationRejection::Htlc(
+                HtlcRejection::Amount { .. }
+            )))
+        ));
+        assert!(transition.candidate().is_none());
+        assert_eq!(base.state().deltas_root(), before_delta_root);
+    }
 }
 
 #[test]
@@ -335,4 +361,34 @@ fn context_required_transitions_never_run_against_a_fake_zero_clock() {
         error,
         TransitionError::ExecutionContextRequired("htlc_lock")
     );
+}
+
+#[test]
+fn restored_htlc_full_uint256_matches_admission_for_both_directions() {
+    let maximum = (BigInt::from(1) << 256_usize) - 1_u8;
+    for side in [Side::Left, Side::Right] {
+        let restore = |amount| {
+            xln_rscore_engine::HtlcLock::restore(
+                HASHLOCK.into(),
+                HtlcHashlock::parse(HASHLOCK).expect("hash"),
+                2000.into(),
+                20,
+                amount,
+                common::token(1),
+                side,
+                1,
+                1000,
+                None,
+            )
+        };
+        assert_eq!(
+            restore(maximum.clone())
+                .expect("restore full asset lock")
+                .amount(),
+            &maximum
+        );
+        for invalid in [BigInt::from(0), BigInt::from(-1), &maximum + 1_u8] {
+            assert!(restore(invalid).is_err());
+        }
+    }
 }

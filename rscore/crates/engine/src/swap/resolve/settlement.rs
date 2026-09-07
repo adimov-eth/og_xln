@@ -8,6 +8,7 @@ use num_bigint::BigInt;
 
 use super::types::{AppliedSwapResolve, ValidatedSwapResolve};
 use crate::error::ValidationRejection;
+use crate::tx::offdelta::validate_transfer;
 use crate::{AccountReplica, Delta, Side, TokenId, TransitionError};
 
 fn rejected(code: &'static str) -> ValidationRejection {
@@ -61,10 +62,15 @@ pub(crate) fn apply_swap_resolve_financials(
     }
     let mut events = Vec::new();
     let zero = BigInt::from(0);
+    let gross_give = resolve.filled_give.clone().max(zero.clone());
+    if let Err(rejection) =
+        validate_transfer(replica, &give_delta, maker_hold_side, &gross_give, None)
+    {
+        return Ok(Err(rejection));
+    }
     if resolve.filled_give > zero {
         // The maker sends give, the taker sends want.
         give_delta.apply_transfer(maker_hold_side, &resolve.filled_give)?;
-        want_delta.apply_transfer(maker_hold_side.opposite(), &resolve.filled_want)?;
         events.push(format!(
             "💱 Swap filled: {} token{} for {} token{}",
             resolve.filled_give,
@@ -75,12 +81,29 @@ pub(crate) fn apply_swap_resolve_financials(
     }
     if resolve.fee_amount > zero {
         // The fee moves on the want leg from the maker to the taker.
-        want_delta.apply_transfer(maker_hold_side, &resolve.fee_amount)?;
         events.push(format!(
             "💸 Swap taker fee: {} token{}",
             resolve.fee_amount, resolve.effective_fee_token_id,
         ));
     }
+    // Fill and fee settle as one net want-token movement. Checking the gross
+    // transfer first would reject a representable result when the fee offsets it.
+    let gross_want = if resolve.filled_give > zero {
+        resolve.filled_want.clone()
+    } else {
+        BigInt::from(0)
+    };
+    let net_want = gross_want - &resolve.fee_amount;
+    if let Err(rejection) = validate_transfer(
+        replica,
+        &want_delta,
+        maker_hold_side.opposite(),
+        &net_want,
+        None,
+    ) {
+        return Ok(Err(rejection));
+    }
+    want_delta.apply_transfer(maker_hold_side.opposite(), &net_want)?;
     if give_delta.hold(maker_hold_side) < &resolve.filled_give {
         return Ok(Err(rejected("SWAP_RESOLVE_HOLD_UNDERFLOW")));
     }

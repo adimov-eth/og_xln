@@ -3637,22 +3637,27 @@ struct SignedProofPull {
     target_role: bool,
 }
 
-fn signed_int(value: U256) -> BigInt {
-    let mut bytes = [0_u8; 32];
-    value.to_big_endian(&mut bytes);
-    let unsigned = BigInt::from(BigUint::from_bytes_be(&bytes));
-    if bytes[0] & 0x80 == 0 {
-        unsigned
-    } else {
-        unsigned - (BigInt::from(1_u8) << 256_u32)
+fn signed_amount(token: Token, kind: EntityTxKind) -> Result<BigInt, EntityKernelError> {
+    let Token::Tuple(fields) = token else {
+        return Err(invalid(kind, "CANONICAL_DELTA_PULL_AMOUNT"));
+    };
+    let [Token::Bool(negative), Token::Uint(magnitude)] = fields.as_slice() else {
+        return Err(invalid(kind, "CANONICAL_DELTA_PULL_AMOUNT"));
+    };
+    if *negative && magnitude.is_zero() {
+        return Err(invalid(kind, "CANONICAL_DELTA_PULL_NEGATIVE_ZERO"));
     }
+    let mut bytes = [0_u8; 32];
+    magnitude.to_big_endian(&mut bytes);
+    let amount = BigInt::from(BigUint::from_bytes_be(&bytes));
+    Ok(if *negative { -amount } else { amount })
 }
 
 fn delta_batch_param() -> ParamType {
     ParamType::Tuple(vec![
         ParamType::Array(Box::new(ParamType::Tuple(vec![
             ParamType::Uint(256),
-            ParamType::Int(256),
+            ParamType::Tuple(vec![ParamType::Bool, ParamType::Uint(256)]),
             ParamType::Uint(256),
             ParamType::FixedBytes(32),
         ]))),
@@ -3665,7 +3670,7 @@ fn delta_batch_param() -> ParamType {
         ]))),
         ParamType::Array(Box::new(ParamType::Tuple(vec![
             ParamType::Uint(256),
-            ParamType::Int(256),
+            ParamType::Tuple(vec![ParamType::Bool, ParamType::Uint(256)]),
             ParamType::Uint(16),
             ParamType::FixedBytes(32),
             ParamType::FixedBytes(32),
@@ -3722,9 +3727,7 @@ fn decode_signed_proof_pulls(
             let Token::Uint(claimed_ratio) = fields.pop().expect("six fields") else {
                 return Err(invalid(kind, "CANONICAL_DELTA_PULL_RATIO"));
             };
-            let Token::Int(amount) = fields.pop().expect("six fields") else {
-                return Err(invalid(kind, "CANONICAL_DELTA_PULL_AMOUNT"));
-            };
+            let amount = signed_amount(fields.pop().expect("six fields"), kind)?;
             let Token::Uint(_) = fields.pop().expect("six fields") else {
                 return Err(invalid(kind, "CANONICAL_DELTA_PULL_INDEX"));
             };
@@ -3735,7 +3738,7 @@ fn decode_signed_proof_pulls(
                 ));
             }
             pulls.push(SignedProofPull {
-                amount: signed_int(amount),
+                amount,
                 claimed_ratio: claimed_ratio.as_u32() as u16,
                 full_hash: full_hash
                     .try_into()
@@ -5219,6 +5222,7 @@ pub fn apply_cross_jurisdiction_entity_txs(
 
 #[cfg(test)]
 mod tests {
+    mod sub_step;
     use super::*;
 
     #[test]
@@ -6205,15 +6209,16 @@ mod tests {
         )
         .expect("partial root word");
         let transformer = [0x55_u8; 20];
+        let (amount_sign, amount_bytes) = signed_amount.to_bytes_be();
         let encoded_batch = ethabi::encode(&[Token::Tuple(vec![
             Token::Array(Vec::new()),
             Token::Array(Vec::new()),
             Token::Array(vec![Token::Tuple(vec![
                 Token::Uint(U256::from(0)),
-                Token::Int(
-                    xln_rscore_engine::cross_j_route::signed_u256(&signed_amount, "AMOUNT")
-                        .expect("signed amount"),
-                ),
+                Token::Tuple(vec![
+                    Token::Bool(amount_sign == num_bigint::Sign::Minus),
+                    Token::Uint(U256::from_big_endian(&amount_bytes)),
+                ]),
                 Token::Uint(U256::from(0)),
                 Token::FixedBytes(full_hash.to_vec()),
                 Token::FixedBytes(partial_root.to_vec()),
@@ -6487,5 +6492,30 @@ mod tests {
         .expect_err("payload proposer mismatch");
         assert!(error.to_string().contains("MATERIALIZE_PROPOSER_INVALID"));
         assert_eq!(state, before);
+    }
+}
+
+#[cfg(test)]
+mod money_pull_abi_tests {
+    use super::*;
+    #[test]
+    fn signed_pull_amount_preserves_uint256_max_and_rejects_noncanonical_zero() {
+        for negative in [false, true] {
+            let amount = signed_amount(
+                Token::Tuple(vec![Token::Bool(negative), Token::Uint(U256::MAX)]),
+                EntityTxKind::DisputeStart,
+            )
+            .expect("full magnitude");
+            let max = (BigInt::from(1) << 256_u32) - 1_u8;
+            assert_eq!(amount, if negative { -max } else { max });
+        }
+        assert!(
+            signed_amount(
+                Token::Tuple(vec![Token::Bool(true), Token::Uint(U256::zero())]),
+                EntityTxKind::DisputeStart
+            )
+            .is_err()
+        );
+        assert!(signed_amount(Token::Int(U256::one()), EntityTxKind::DisputeStart).is_err());
     }
 }

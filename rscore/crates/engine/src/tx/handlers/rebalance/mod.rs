@@ -4,6 +4,7 @@ use num_bigint::BigInt;
 
 use crate::state::{RebalanceRefundState, RebalanceRequestFeeState};
 use crate::tx::apply_types::MutationDecision;
+use crate::tx::offdelta::validate_transfer;
 use crate::{
     AccountOutput, AccountRejection, AccountReplica, RebalanceRefundReason, Side, TokenId,
     TransitionError, ValidationRejection,
@@ -82,6 +83,11 @@ pub(crate) fn apply_request_collateral(
         )));
     }
     let mut next_delta = fee_delta.clone();
+    if let Err(rejection) = validate_transfer(replica, &next_delta, proposer, fee_amount, None) {
+        return Ok(MutationDecision::rejected(AccountRejection::Validation(
+            rejection,
+        )));
+    }
     next_delta.apply_transfer(proposer, fee_amount)?;
     replica.state_mut().put_delta(next_delta)?;
     replica
@@ -196,6 +202,11 @@ pub(crate) fn apply_rebalance_refund(
         )));
     }
     let mut next_delta = delta.clone();
+    if let Err(rejection) = validate_transfer(replica, &next_delta, proposer, amount, None) {
+        return Ok(MutationDecision::rejected(AccountRejection::Validation(
+            rejection,
+        )));
+    }
     next_delta.apply_transfer(proposer, amount)?;
     replica.state_mut().put_delta(next_delta)?;
     let next_refunded = refunded + amount;

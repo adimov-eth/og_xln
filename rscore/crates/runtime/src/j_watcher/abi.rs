@@ -11,11 +11,11 @@ pub(crate) const SECRET_REVEALED_TOPIC: &str =
 pub(crate) const COUNTER_DISPUTE_REGISTERED_TOPIC: &str =
     "0xdf1d21d89097ae482123e351724eb4c07eb3b9319a0e116643d815958aea1609";
 pub(crate) const DEBT_CREATED_TOPIC: &str =
-    "0xae767eeb0c57abd46e2e0b422895ba3b89372fbd0510a58f00d996faf66f027d";
+    "0xf77919d8ab0bbcbc7feb0269986072624ad50811e07c7a87aa97e234ad7717db";
 pub(crate) const DEBT_ENFORCED_TOPIC: &str =
-    "0x1ffe8e6348fe244a8988797c02b57999821149e7b25c9f93a85c77819efdde67";
+    "0xe01b32b8e28f8e86247102729966a946377fa0bdf0e5f26515c2784e3309ab05";
 pub(crate) const DEBT_FORGIVEN_TOPIC: &str =
-    "0x0971ac81b80f99fe0089c3fbe4af4fa1148f2ce78bc6345e76b05be73500de1f";
+    "0x06d1c6c555988787b444c60a7950da22c166ee53650221b9fa4d81602e94e226";
 pub(crate) const DISPUTE_FINALIZED_TOPIC: &str =
     "0x6d46d52b5fda2a9055705ba74bf5e95807cfa39decf819cdfeaa14f9b2ba346a";
 pub(crate) const DISPUTE_STARTED_TOPIC: &str =
@@ -300,15 +300,15 @@ mod catalog_tests {
                 COUNTER_DISPUTE_REGISTERED_TOPIC,
             ),
             (
-                "DebtCreated(bytes32,bytes32,uint256,uint256,uint256)",
+                "DebtCreated(bytes32,bytes32,uint256,(uint256,uint256),uint256)",
                 DEBT_CREATED_TOPIC,
             ),
             (
-                "DebtEnforced(bytes32,bytes32,uint256,uint256,uint256,uint256)",
+                "DebtEnforced(bytes32,bytes32,uint256,uint256,(uint256,uint256),uint256)",
                 DEBT_ENFORCED_TOPIC,
             ),
             (
-                "DebtForgiven(bytes32,bytes32,uint256,uint256,uint256)",
+                "DebtForgiven(bytes32,bytes32,uint256,(uint256,uint256),uint256)",
                 DEBT_FORGIVEN_TOPIC,
             ),
             (
@@ -413,7 +413,7 @@ fn decode_settlement(bytes: &[u8], base: usize) -> Result<Vec<DecodedSettlement>
         .map(|index| {
             decode_token(
                 bytes,
-                add(rows, mul(index, 160)?, "tokenRow")?,
+                add(rows, mul(index, 192)?, "tokenRow")?,
                 &left,
                 &right,
                 nonce,
@@ -446,7 +446,8 @@ fn decode_token(
         left_reserve: unsigned_bigint(bytes, add(base, 32, "leftReserve")?, "leftReserve")?,
         right_reserve: unsigned_bigint(bytes, add(base, 64, "rightReserve")?, "rightReserve")?,
         collateral: unsigned_bigint(bytes, add(base, 96, "collateral")?, "collateral")?,
-        ondelta: signed_bigint(bytes, add(base, 128, "ondelta")?, "ondelta")?,
+        ondelta: (signed_bigint(bytes, add(base, 128, "ondeltaHigh")?, "ondeltaHigh")? << 256_u32)
+            + unsigned_bigint(bytes, add(base, 160, "ondeltaLow")?, "ondeltaLow")?,
         nonce,
     })
 }
@@ -568,4 +569,128 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
         value.push(DIGITS[usize::from(byte & 15)] as char);
     }
     value
+}
+
+/// Contract Uint512 uses a high word followed by a low word; event state remains BigInt.
+pub(crate) fn uint512(high: &[u8; 32], low: &[u8; 32]) -> BigInt {
+    (bigint(high) << 256_u32) + bigint(low)
+}
+
+#[cfg(test)]
+mod money_event_tests {
+    use super::*;
+    use serde_json::json;
+    fn log(topics: &[&str], data: &str) -> RpcLog {
+        RpcLog {
+            address: format!("0x{}", "11".repeat(20)),
+            topics: topics.iter().map(|s| (*s).into()).collect(),
+            data: data.into(),
+            block_number: json!("0x2a"),
+            block_hash: format!("0x{}", "22".repeat(32)),
+            transaction_hash: format!("0x{}", "33".repeat(32)),
+            transaction_index: json!("0x0"),
+            log_index: Some(json!("0x0")),
+            index: None,
+            removed: Some(false),
+        }
+    }
+    #[test]
+    fn account_settled_int512_rows_match_compiled_solidity_ethers_event() {
+        // Independently encoded with the compiled Account.sol ABI; two rows detect stride mistakes.
+        let event = log(
+            &["0x0f6fd032d913fef8dbe7c7c56a32bdf3a1f7dfe48663d4af3f0974dcfcadfbdd"],
+            "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000090000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000380000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        );
+        let rows = decode_account_settled(&event).expect("canonical event");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].token_id.get(), 1);
+        assert_eq!(rows[0].ondelta, (BigInt::from(1) << 256_u32) - 1);
+        assert_eq!(rows[0].left_reserve, (BigInt::from(1) << 256_u32) - 1);
+        assert_eq!(rows[1].token_id.get(), 2);
+        assert_eq!(rows[1].ondelta, -(BigInt::from(1) << 511_u32));
+        assert_eq!(rows[1].collateral, BigInt::from(3));
+        assert_eq!(rows[1].nonce, 7);
+        let mut old = event;
+        old.topics[0] = "0x784575545124eef27f8fcc1472fb5f2483beb9cc23e6fe3dbf588eb7bd501f7c".into();
+        assert!(
+            decode_account_settled(&old).is_err(),
+            "old deployment event is not new ABI"
+        );
+    }
+    #[test]
+    fn retired_money_topics_halt_only_the_configured_depository() {
+        let depository = [0x11; 20];
+        let unrelated = [0x22; 20];
+        for topic in [
+            "0x784575545124eef27f8fcc1472fb5f2483beb9cc23e6fe3dbf588eb7bd501f7c",
+            "0xae767eeb0c57abd46e2e0b422895ba3b89372fbd0510a58f00d996faf66f027d",
+            "0x1ffe8e6348fe244a8988797c02b57999821149e7b25c9f93a85c77819efdde67",
+            "0x0971ac81b80f99fe0089c3fbe4af4fa1148f2ce78bc6345e76b05be73500de1f",
+        ] {
+            let event = log(&[topic], "0x");
+            assert!(
+                matches!(require_current_depository_money_abi(&event, &depository, &depository),
+                Err(JWatcherError::RetiredMoneyAbi { address, topic: rejected })
+                    if address == hex(&depository) && rejected == topic)
+            );
+            require_current_depository_money_abi(&event, &unrelated, &depository)
+                .expect("an unrelated emitter cannot force migration halt");
+            assert_eq!(event_kind(&event).expect("unknown topic"), None);
+        }
+    }
+    #[test]
+    fn debt_created_preserves_uint512_magnitude_and_index() {
+        let event = log(
+            &[
+                "0xf77919d8ab0bbcbc7feb0269986072624ad50811e07c7a87aa97e234ad7717db",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            ],
+            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000000000002",
+        );
+        assert_eq!(
+            event_kind(&event).expect("kind"),
+            Some(ContractEventKind::DebtCreated)
+        );
+        let words = decode_static_words(&event, 3, 3).expect("wide static event");
+        assert_eq!(
+            uint512(&words.data[0], &words.data[1]),
+            (BigInt::from(1) << 512_u32) - 1
+        );
+        assert_eq!(safe_uint(&words.data[2], "debtIndex").expect("index"), 2);
+        assert!(
+            decode_static_words(&event, 3, 2).is_err(),
+            "old scalar event width rejected"
+        );
+    }
+}
+
+/// Old deployment events must stop migration before the cursor advances. Restrict
+/// this fence to the configured Depository: an unrelated token may emit any topic.
+pub(crate) fn require_current_depository_money_abi(
+    log: &RpcLog,
+    address: &[u8; 20],
+    depository: &[u8; 20],
+) -> Result<(), JWatcherError> {
+    if address != depository {
+        return Ok(());
+    }
+    let Some(topic) = log.topics.first() else {
+        return Ok(());
+    };
+    let topic = topic.to_ascii_lowercase();
+    if matches!(
+        topic.as_str(),
+        "0x784575545124eef27f8fcc1472fb5f2483beb9cc23e6fe3dbf588eb7bd501f7c"
+            | "0xae767eeb0c57abd46e2e0b422895ba3b89372fbd0510a58f00d996faf66f027d"
+            | "0x1ffe8e6348fe244a8988797c02b57999821149e7b25c9f93a85c77819efdde67"
+            | "0x0971ac81b80f99fe0089c3fbe4af4fa1148f2ce78bc6345e76b05be73500de1f"
+    ) {
+        return Err(JWatcherError::RetiredMoneyAbi {
+            address: hex(address),
+            topic,
+        });
+    }
+    Ok(())
 }

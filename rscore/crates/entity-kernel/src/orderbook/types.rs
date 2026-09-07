@@ -353,6 +353,7 @@ impl OrderbookState {
         }
         for (pair_id, dimensions) in &snapshot.pair_dimensions {
             if pair_id.is_empty()
+                || pair_id.starts_with("cross:")
                 || dimensions.base_token_decimals > 255
                 || dimensions.quote_token_decimals > 255
             {
@@ -361,10 +362,9 @@ impl OrderbookState {
                 ));
             }
         }
-        if books
-            .keys()
-            .any(|pair_id| !snapshot.pair_dimensions.contains_key(pair_id))
-        {
+        if books.keys().any(|pair_id| {
+            !pair_id.starts_with("cross:") && !snapshot.pair_dimensions.contains_key(pair_id)
+        }) {
             return Err(EntityKernelError::orderbook(
                 "ORDERBOOK_PAIR_DIMENSIONS_MISSING",
             ));

@@ -5,6 +5,7 @@ pub(crate) mod apply;
 pub(crate) mod apply_result;
 pub(crate) mod apply_types;
 pub(crate) mod handlers;
+pub(crate) mod offdelta;
 
 use num_bigint::BigInt;
 

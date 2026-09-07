@@ -49,7 +49,7 @@ pub fn decode_watchtower_counter_dispute_calldata(
     calldata: &[u8],
 ) -> Result<WatchtowerCounterDisputeCall, JSubmitError> {
     let selector = &Keccak256::digest(
-        b"watchtowerCounterDispute(bytes32,(bytes32,uint256,uint256,bool,bytes32,(bytes32,uint32,uint32,int256[],uint256[],(address,bytes,(uint256,uint256,uint256)[])[]),bytes,bytes,bytes,bool,bool),uint256,uint256,bytes)",
+        b"watchtowerCounterDispute(bytes32,(bytes32,uint256,uint256,bool,bytes32,(bytes32,uint32,uint32,(int256,uint256)[],uint256[],(address,bytes,(uint256,uint256,uint256)[])[]),bytes,bytes,bytes,bool,bool),uint256,uint256,bytes)",
     )[..4];
     if calldata.len() < 4 || &calldata[..4] != selector {
         return Err(JSubmitError::Transaction("watchtower-selector"));

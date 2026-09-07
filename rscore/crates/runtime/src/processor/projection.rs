@@ -58,6 +58,100 @@ pub(crate) fn checkpoint_graph_due(result: &RuntimeApplyResult) -> bool {
             .any(|output| output.checkpoint.is_some())
 }
 
+/// Mirror delivery/identity.ts: a pure proposal is live only while it is the
+/// sender's exact pending height/hash. An attached ACK remains owed even after
+/// that proposal commits or rolls back, so the whole envelope must survive.
+pub(super) fn replay_proposal_settled(
+    replica: &mut crate::RuntimeReplica,
+    output: &Value,
+) -> Result<bool, RuntimeFrameProjectionError> {
+    let proposals = output["entityTxs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|tx| tx["type"] == "accountInput" && tx["data"]["kind"] == "ack_frame")
+        .map(|tx| &tx["data"])
+        .collect::<Vec<_>>();
+    if proposals.is_empty() || proposals.iter().any(|data| !data["ack"].is_null()) {
+        return Ok(false);
+    }
+    for data in proposals {
+        let field = |value: &Value, field: &str| {
+            value[field].as_str().map(str::to_owned).ok_or_else(|| {
+                RuntimeFrameProjectionError::ReplayOutbox(format!("FIELD_INVALID:{field}"))
+            })
+        };
+        let owner_text = field(data, "fromEntityId")?;
+        let counterparty_text = field(data, "toEntityId")?;
+        let owner = parse_digest(&owner_text)?;
+        let counterparty = parse_digest(&counterparty_text)?;
+        let frame = &data["proposal"]["frame"];
+        let height = frame["height"].as_u64().ok_or_else(|| {
+            RuntimeFrameProjectionError::ReplayOutbox("PROPOSAL_HEIGHT_INVALID".into())
+        })?;
+        let hash = parse_digest(&field(frame, "stateHash")?)?;
+        let mut source = None;
+        for (key, live) in &mut replica.e_replicas {
+            if key.entity_id == owner {
+                source = live.accounts.account_status(
+                    xln_rscore_batch::AccountId::from_bytes(counterparty),
+                    Vec::new(),
+                )?;
+                if source.is_some() {
+                    break;
+                }
+            }
+        }
+        let source = source.ok_or_else(|| {
+            RuntimeFrameProjectionError::ReplayOutbox(format!(
+                "ACCOUNT_PROPOSAL_SOURCE_MISSING:{owner_text}:{counterparty_text}:{height}",
+            ))
+        })?;
+        if source.pending_frame_height == Some(height)
+            && source.pending_frame_state_hash == Some(hash)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn plan_replay_outbox(
+    replica: &mut crate::RuntimeReplica,
+    routes: &EntityRouteTable,
+    retained: super::replay_outbox::RetainedReplayOutbox,
+    current: Vec<super::routing::BoundEntityOutput>,
+) -> Result<Vec<super::routing::BoundEntityOutput>, RuntimeFrameProjectionError> {
+    use super::routing::BoundEntityOutput;
+    let mut remote = retained.into_values();
+    for (index, output) in remote.iter().enumerate() {
+        routes.validate_retained_output(output, index)?;
+    }
+    let mut local = Vec::new();
+    for output in current {
+        match output {
+            BoundEntityOutput::Remote { value, .. } => remote.push(value),
+            BoundEntityOutput::Local(input) => local.push(BoundEntityOutput::Local(input)),
+        }
+    }
+    let mut pending = Vec::new();
+    for output in remote {
+        if !replay_proposal_settled(replica, &output)? {
+            pending.push(output);
+        }
+    }
+    let mut bound = super::replay_outbox::merge_replay_outbox(pending)
+        .map_err(RuntimeFrameProjectionError::ReplayOutbox)?
+        .into_iter()
+        .map(|value| {
+            let row = crate::transport::msgpack::encode_framed(&value)?;
+            Ok(BoundEntityOutput::Remote { row, value })
+        })
+        .collect::<Result<Vec<_>, crate::transport::RuntimeTransportError>>()?;
+    bound.extend(local);
+    Ok(bound)
+}
+
 fn export_checkpoint_barrier(
     result: &mut RuntimeApplyResult,
     enabled: bool,
@@ -286,14 +380,16 @@ fn measure_local_outputs(outputs: &[LocalEntityOutput]) -> LocalOutputMeasure {
     measure
 }
 
-/// Project one already-certified reducer result. No caller-supplied hash,
-/// touched row, output body or replica-meta digest crosses this boundary.
+/// Project one already-certified reducer result. Current financial outputs
+/// come only from that result. Replay may additionally retain exact prior
+/// native WAL output as proven transport evidence, never synthesize a new body.
 pub(crate) fn project_durable_frame(
     mut result: RuntimeApplyResult,
     routes: &EntityRouteTable,
     prior_checkpoint_rows: Option<&BTreeMap<Vec<u8>, Vec<u8>>>,
     capture_replay_diagnostics: bool,
     exact_replay: bool,
+    retained_replay_outbox: super::replay_outbox::RetainedReplayOutbox,
 ) -> Result<DurableProjection, RuntimeFrameProjectionError> {
     let checkpoint_due = checkpoint_graph_due(&result);
     let Some(applied) = result.applied_frame.take() else {
@@ -389,9 +485,14 @@ pub(crate) fn project_durable_frame(
             .entities
             .iter()
             .try_fold(0_usize, |count, output| {
-                count.checked_add(output.entity_events.len()).ok_or(
-                    RuntimeFrameProjectionError::EntityEffectCount(output.entity_events.len()),
-                )
+                let observed = output
+                    .entity_events
+                    .iter()
+                    .filter(|event| event.is_runtime_event())
+                    .count();
+                count
+                    .checked_add(observed)
+                    .ok_or(RuntimeFrameProjectionError::EntityEffectCount(observed))
             })?;
     let entity_effect_count = u64::try_from(entity_effect_count_usize)
         .map_err(|_| RuntimeFrameProjectionError::EntityEffectCount(entity_effect_count_usize))?;
@@ -579,6 +680,11 @@ pub(crate) fn project_durable_frame(
     } else {
         Vec::new()
     };
+    let bound = if exact_replay {
+        plan_replay_outbox(&mut result.replica, routes, retained_replay_outbox, bound)?
+    } else {
+        bound
+    };
     let bound_outputs = EntityRouteTable::collect_bound(bound);
     let bind_done = prelude_started.elapsed();
     let local_continuations =
@@ -592,7 +698,11 @@ pub(crate) fn project_durable_frame(
     )?;
     let continuation_done = prelude_started.elapsed();
 
-    let barrier_checkpoints = export_checkpoint_barrier(&mut result, checkpoint_barrier)?;
+    // The first native checkpoint owns the entire initial Entity inventory,
+    // including height-zero siblings not selected by this Runtime input.
+    let full_checkpoint = checkpoint_barrier
+        || (checkpoint_due && prior_checkpoint_rows.is_some_and(BTreeMap::is_empty));
+    let barrier_checkpoints = export_checkpoint_barrier(&mut result, full_checkpoint)?;
     let phase_started = std::time::Instant::now();
     let runtime_input = runtime_input(applied.runtime_txs, applied.entity_inputs)?;
     let projection_input = phase_started.elapsed();
@@ -633,6 +743,18 @@ pub(crate) fn project_durable_frame(
             &output.entity_context,
         )?);
     }
+    // An evicted-only proposal has no certified Entity output, but replay
+    // must receive the exact context consumed by its rejected attempt. These
+    // use the existing height-keyed WAL context rows, never a second journal.
+    for (key, contexts) in &applied.frame.entity_contexts {
+        let entity_id = format!("0x{}", hex::encode(key.entity_id));
+        for context in contexts {
+            context_parts.push(prepare_entity_context_rows(
+                &format!("{}:{}", entity_id, key.signer_id),
+                &context.canonical,
+            )?);
+        }
+    }
     let entity_contexts = crate::storage::native::EntityContextPayloadRows::merge(context_parts)?;
     let context_done = phase_started.elapsed();
     let projection_context = context_done.saturating_sub(meta_done);
@@ -643,7 +765,7 @@ pub(crate) fn project_durable_frame(
             &result,
             &replica_metas,
             prior,
-            checkpoint_barrier,
+            full_checkpoint,
             &barrier_checkpoints,
         )?),
         (false, None) => None,
@@ -1160,22 +1282,48 @@ fn canonical_state(
     let mut entity_hashes = Vec::with_capacity(result.replica.state.e_replicas.len());
     let mut stored_entity_hashes = Vec::with_capacity(result.replica.state.e_replicas.len());
     for (entity_id, state) in &result.replica.state.e_replicas {
-        let frame = result
+        let live = result
             .replica
             .e_replicas
             .get(entity_id)
-            .and_then(|live| live.entity_consensus.certified_frame_head.as_ref())
-            .map(|head| &head.frame)
             .ok_or(RuntimeFrameProjectionError::CertifiedFrameMissing)?;
+        // Genesis owners have committed state but no fabricated Entity frame.
+        // Use the same section projection as restore; later heights require
+        // the exact certified head and may never enter this genesis case.
+        let state_root = match (
+            state.entity.height,
+            live.entity_consensus.certified_frame_head.as_ref(),
+        ) {
+            (0, None) => {
+                let owned = xln_rscore_entity_kernel::compute_entity_owned_sections(
+                    &state.entity,
+                    state.accounts_root,
+                    live.accounts.account_count(),
+                )?;
+                let sections = xln_rscore_entity_kernel::project_entity_consensus_sections(
+                    &live.entity_consensus.state.sections,
+                    owned,
+                    &live.entity_consensus.state.authority,
+                )?;
+                xln_rscore_entity_kernel::compute_entity_consensus_root(&sections)?
+            }
+            (1.., Some(head)) => head.frame.state_root.clone(),
+            (0, Some(_)) => {
+                return Err(RuntimeFrameProjectionError::CertifiedFrameMismatch(
+                    "GENESIS_CERTIFICATE_FORBIDDEN".into(),
+                ));
+            }
+            (1.., None) => return Err(RuntimeFrameProjectionError::CertifiedFrameMissing),
+        };
         let entity_id = state.entity.entity_id.to_ascii_lowercase();
         entity_hashes.push(CanonicalRuntimeEntityHash {
             entity_id: entity_id.clone(),
-            hash: frame.state_root.clone(),
+            hash: state_root.clone(),
             cell_count: 1,
         });
         stored_entity_hashes.push(RuntimeFrameEntityHash {
             entity_id,
-            hash: parse_digest(&frame.state_root)?,
+            hash: parse_digest(&state_root)?,
             cell_count: 1,
         });
     }
@@ -1247,6 +1395,8 @@ fn object<const N: usize>(entries: [(&str, Value); N]) -> Value {
 
 #[derive(Debug, Error)]
 pub(crate) enum RuntimeFrameProjectionError {
+    #[error("RRS_PROCESSOR_REPLAY_OUTBOX:{0}")]
+    ReplayOutbox(String),
     #[error("RRS_PROCESSOR_IDLE_RESULT_INVALID")]
     IdleShape,
     #[error("RRS_PROCESSOR_RUNTIME_TX_UNSUPPORTED:{0}")]
@@ -1283,6 +1433,10 @@ pub(crate) enum RuntimeFrameProjectionError {
     Commitment(#[from] RuntimeCommitmentError),
     #[error(transparent)]
     Output(#[from] EntityOutputEncodingError),
+    #[error(transparent)]
+    EntityConsensus(#[from] xln_rscore_entity_kernel::EntityConsensusError),
+    #[error(transparent)]
+    EntityTransition(#[from] xln_rscore_entity_kernel::EntityTransitionError),
     #[error(transparent)]
     EntityKernel(#[from] xln_rscore_entity_kernel::EntityKernelError),
     #[error(transparent)]
@@ -1332,4 +1486,165 @@ impl From<EntityCheckpointProjectionError> for RuntimeFrameProjectionError {
 fn dedup_first_touch(values: impl Iterator<Item = String>) -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
     values.filter(|value| seen.insert(value.clone())).collect()
+}
+
+#[cfg(test)]
+mod settlement_rejection_tests {
+    use super::*;
+    use crate::machine::tests::settlement_rejection::{input, pending_replica};
+
+    fn separated_round(reject_last: bool) {
+        use crate::machine::tests::settlement_rejection::separated_attempts;
+        let (runtime, inputs) = separated_attempts(reject_last);
+        let result = crate::apply_runtime_live(
+            runtime,
+            crate::RuntimeLiveInput {
+                runtime_txs: Vec::new(),
+                entity_inputs: inputs.clone(),
+                timestamp: 200,
+                finalized_j_height: 0,
+            },
+            &mut crate::CanonicalEntityInfraMaterializer::new(),
+        )
+        .expect("separated live segments");
+        let routes = EntityRouteTable::new(Vec::new()).expect("routes");
+        let DurableProjection::Frame(live) = project_durable_frame(
+            result,
+            &routes,
+            None,
+            true,
+            false,
+            super::super::replay_outbox::RetainedReplayOutbox::default(),
+        )
+        .expect("live WAL projection") else {
+            panic!("live frame")
+        };
+        let contexts = live
+            .encoded
+            .commit
+            .entity_contexts
+            .rebuild_contexts()
+            .expect("unique height contexts");
+        assert_eq!(contexts.len(), 2);
+        let mut frame = crate::RuntimeFrameContext {
+            timestamp: 200,
+            finalized_j_height: 0,
+            entity_contexts: BTreeMap::new(),
+        };
+        for (id, value) in &contexts {
+            let parts = id.split(':').collect::<Vec<_>>();
+            let entity_id = hex::decode(parts[0].trim_start_matches("0x"))
+                .expect("entity id")
+                .try_into()
+                .expect("32 bytes");
+            let key = crate::RuntimeEntityKey::new(entity_id, parts[1]).expect("key");
+            frame.entity_contexts.entry(key).or_default().push_back(
+                crate::RuntimeEntityFrameContext {
+                    execution: crate::entity_context_json::decode_entity_frame_context(value)
+                        .expect("WAL execution context"),
+                    canonical: crate::canonical_value_from_tagged_json(value)
+                        .expect("WAL canonical context"),
+                },
+            );
+        }
+        let replay = crate::apply_runtime(
+            separated_attempts(reject_last).0,
+            crate::RuntimeInput {
+                runtime_txs: Vec::new(),
+                entity_inputs: inputs,
+                frame,
+            },
+        )
+        .expect("same segmented WAL replay");
+        let DurableProjection::Frame(replay) = project_durable_frame(
+            replay,
+            &routes,
+            None,
+            true,
+            true,
+            super::super::replay_outbox::RetainedReplayOutbox::default(),
+        )
+        .expect("replay WAL projection") else {
+            panic!("replay frame")
+        };
+        assert_eq!(live.encoded.frame_hash, replay.encoded.frame_hash);
+        assert_eq!(live.encoded.post_state_hash, replay.encoded.post_state_hash);
+        assert_eq!(live.encoded.output_digest, replay.encoded.output_digest);
+        assert_eq!(
+            contexts,
+            replay
+                .encoded
+                .commit
+                .entity_contexts
+                .rebuild_contexts()
+                .expect("replay contexts")
+        );
+    }
+
+    #[test]
+    fn rejected_settlement_segment_before_success_replays_one_height_context() {
+        separated_round(false);
+    }
+
+    #[test]
+    fn rejected_settlement_segments_share_one_wal_height_context() {
+        separated_round(true);
+    }
+
+    #[test]
+    fn rejected_settlement_wal_preserves_context_without_entity_certificate() {
+        let bad = input(serde_json::json!([
+            {"type":"settle_execute","data":{"counterpartyEntityId":format!("0x{}", "ff".repeat(32))}}
+        ]));
+        let result = crate::apply_runtime_live(
+            pending_replica(),
+            crate::RuntimeLiveInput {
+                runtime_txs: Vec::new(),
+                entity_inputs: vec![bad.clone(), bad],
+                timestamp: 200,
+                finalized_j_height: 0,
+            },
+            &mut crate::CanonicalEntityInfraMaterializer::new(),
+        )
+        .expect("reject both outer commands");
+        assert!(result.outputs.entities.is_empty());
+        let expected = result
+            .applied_frame
+            .as_ref()
+            .expect("Runtime frame")
+            .frame
+            .entity_contexts
+            .values()
+            .next()
+            .expect("context")
+            .front()
+            .expect("context row")
+            .canonical
+            .clone();
+        let DurableProjection::Frame(projected) = project_durable_frame(
+            result,
+            &EntityRouteTable::new(Vec::new()).expect("routes"),
+            None,
+            true,
+            false,
+            super::super::replay_outbox::RetainedReplayOutbox::default(),
+        )
+        .expect("WAL projection") else {
+            panic!("Runtime WAL must remain")
+        };
+        let contexts = projected
+            .encoded
+            .commit
+            .entity_contexts
+            .rebuild_contexts()
+            .expect("canonical context rows");
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(
+            crate::canonical_value_from_tagged_json(contexts.values().next().expect("context"))
+                .expect("canonical"),
+            expected
+        );
+        assert_eq!(projected.runtime_entity_inputs, 2);
+        assert!(projected.account_commits.is_empty());
+    }
 }

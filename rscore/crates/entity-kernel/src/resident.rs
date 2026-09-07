@@ -317,6 +317,12 @@ fn commit_book_stage(
 
 #[derive(Debug, Error)]
 pub enum ResidentEntityError {
+    #[error("ENTITY_OUTER_COMMAND_REJECTED:operation={operation_index}:{kind}:{detail}")]
+    LocalCommandRejected {
+        operation_index: usize,
+        kind: &'static str,
+        detail: String,
+    },
     #[error(transparent)]
     Account(#[from] BatchError),
     #[error(transparent)]
@@ -2261,7 +2267,7 @@ fn apply_resident_entity_round_core_attempt(
     // Already-proposable Accounts retain their separately captured prefix.
     let mut input_touch_positions = Vec::<(AccountId, Option<usize>)>::new();
 
-    for operation in operations {
+    for (operation_index, operation) in operations.into_iter().enumerate() {
         match operation {
             ResidentEntityOperation::AccountRange { start, len } => {
                 input_touch_positions.extend(
@@ -2449,7 +2455,17 @@ fn apply_resident_entity_round_core_attempt(
                     request.entity_authority.as_ref(),
                     request.runtime_seed.as_deref(),
                     context,
-                )?;
+                )
+                .map_err(|error| match error {
+                    EntityKernelError::RejectedEntityTx { kind, detail } => {
+                        ResidentEntityError::LocalCommandRejected {
+                            operation_index,
+                            kind,
+                            detail,
+                        }
+                    }
+                    error => ResidentEntityError::Entity(error),
+                })?;
                 for work in &next.proposal_work {
                     input_touch_positions.push((account_id(&work.account_id)?, None));
                 }
@@ -2483,7 +2499,37 @@ fn apply_resident_entity_round_core_attempt(
     accumulated
         .account_envelope_mutations
         .extend(scheduled_account_envelope_mutations);
-    let mut scheduled_local_txs = Vec::new();
+    // A certified wake admits due cross-j hooks before periodic self-actions,
+    // using the current board and proposer. Like TS handleScheduledWakeEntityTx,
+    // these actions share this signed frame and need no new command nonce.
+    // Routing them back through Runtime would consume the hook before its
+    // expiry transition and let unrelated frames overtake the clear request.
+    let mut scheduled_outputs = Vec::new();
+    for command in &scheduled_commands {
+        if let SchedulerCommand::CrossJOrderbookSweep { reason } = command {
+            scheduled_outputs.push(crate::LocalEntityOutput {
+                entity_id: state.entity_id.clone(),
+                target_signer_id: Some(request.expected_proposer_signer_id.clone()),
+                entity_txs: vec![crate::LocalEntityOutputTx::Projected(
+                    crate::CanonicalEntityTx::from_frame_projection(
+                        crate::EntityTxKind::OrderbookSweepCrossJurisdiction,
+                        CanonicalValue::Object(vec![(
+                            "reason".into(),
+                            CanonicalValue::String(reason.clone()),
+                        )]),
+                    )
+                    .map_err(|error| {
+                        EntityKernelError::local("scheduledWake", error.to_string())
+                    })?,
+                )],
+            });
+        }
+    }
+    let mut scheduled_local_txs =
+        scheduled_collective_txs(&state, &request, &mut scheduled_outputs)?;
+    accumulated
+        .routed_entity_outputs
+        .append(&mut scheduled_outputs);
     if scheduled_commands
         .iter()
         .any(|command| matches!(command, SchedulerCommand::HubRebalance))
@@ -2557,7 +2603,11 @@ fn apply_resident_entity_round_core_attempt(
             .map(|(account, _)| account_id(account))
             .collect::<Result<Vec<_>, _>>()?;
         touch_candidates.extend(canonical_entity_tx_account_changes(submitted_accounts));
-        scheduled_local_txs = scheduled_collective_txs(&state, &request, &mut rebalance.outputs)?;
+        scheduled_local_txs.extend(scheduled_collective_txs(
+            &state,
+            &request,
+            &mut rebalance.outputs,
+        )?);
         accumulated
             .routed_entity_outputs
             .append(&mut rebalance.outputs);

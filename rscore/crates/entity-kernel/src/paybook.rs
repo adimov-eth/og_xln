@@ -901,6 +901,77 @@ mod key_tests {
         }
     }
 
+    fn self_cycle_commits_in_order(first: &str, second: &str) {
+        let (hashlock, secret) = evidence();
+        let mut state = EntityStateSlice::empty("local", 1_700_000_000_000);
+        let mut entry = route(&hashlock, Some("inbound"));
+        entry.originated = true;
+        entry.outbound_entity = Some("outbound".into());
+        state.paybook = PaybookState::from_entries([entry], BigInt::from(13)).unwrap();
+        let output = xln_rscore_engine::AccountOutput::HtlcSecret {
+            lock_id: hashlock.clone(),
+            hashlock: hashlock.clone(),
+            secret,
+            token_id: TokenId::new(1).unwrap(),
+            amount: BigInt::from(50),
+        };
+        let mut outputs = Vec::new();
+        let mut account_txs = Vec::new();
+        for (index, account) in [first, second].into_iter().enumerate() {
+            let mut changes = PaybookChanges::default();
+            super::committed_htlc_resolve(
+                &mut state,
+                &mut changes,
+                account,
+                &output,
+                None,
+                &mut PaybookEffects {
+                    account_txs: &mut account_txs,
+                    outputs: &mut outputs,
+                },
+            )
+            .unwrap();
+            // Publish the real Paybook mutation between Account commits: the
+            // second leg must read the first leg's committed settlement bit.
+            changes.commit_sequential(&mut state).unwrap();
+            assert_eq!(state.paybook.fees_earned, BigInt::from(13));
+            let retained = state.paybook.entries.get(&paybook_key(&hashlock).unwrap());
+            if index == 0 {
+                let retained = retained.expect("first leg preserves self-cycle route");
+                assert_eq!(retained.inbound_settled, first == "inbound");
+                assert_eq!(retained.outbound_settled, first == "outbound");
+            } else {
+                assert!(
+                    retained.is_none(),
+                    "both legs terminate the self-cycle route"
+                );
+            }
+            let received = outputs
+                .iter()
+                .filter(|event| matches!(event, EntityKernelOutput::HtlcReceived { .. }))
+                .count();
+            let finalized = outputs
+                .iter()
+                .filter(|event| matches!(event, EntityKernelOutput::HtlcFinalized { .. }))
+                .count();
+            assert_eq!(received, usize::from(index == 1 || first == "inbound"));
+            // Only a committed outbound leg authorizes origin finalization.
+            // The shared hashlock must not turn inbound receive into payment completion.
+            assert_eq!(finalized, usize::from(index == 1 || first == "outbound"));
+            assert!(account_txs.is_empty());
+        }
+    }
+
+    #[test]
+    fn self_cycle_inbound_first_emits_receive_before_one_origin_finalization() {
+        self_cycle_commits_in_order("inbound", "outbound");
+    }
+
+    #[test]
+    fn self_cycle_outbound_first_retains_route_until_receive_without_refinalizing() {
+        self_cycle_commits_in_order("outbound", "inbound");
+    }
+
     #[test]
     fn canonical_hashlocks_select_independent_physical_slots() {
         let zero = paybook_key(&format!("0x{}", "00".repeat(32))).expect("zero hashlock");

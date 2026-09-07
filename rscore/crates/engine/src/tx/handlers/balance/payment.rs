@@ -1,7 +1,8 @@
 use num_bigint::BigInt;
 
-use crate::state::delta::max_payment_amount;
+use crate::state::delta::uint_max;
 use crate::tx::apply_types::MutationDecision;
+use crate::tx::offdelta::validate_transfer;
 use crate::{
     AccountOutput, AccountRejection, AccountReplica, DeliveryMode, Side, TokenId, TransitionError,
     ValidationRejection,
@@ -46,6 +47,9 @@ pub(crate) fn direct_payment(
             available,
         }));
     }
+    if let Err(rejection) = validate_transfer(replica, &delta, proposer, payment.amount, None) {
+        return Ok(rejected(rejection));
+    }
     delta.apply_transfer(proposer, payment.amount)?;
     replica.state_mut().put_delta(delta)?;
     let events = payment_events(replica, payment, &parties, proposer, forward.as_ref());
@@ -70,7 +74,7 @@ fn payment_parties(replica: &AccountReplica, proposer: Side) -> PaymentParties {
 
 fn validate_envelope(payment: DirectPayment<'_>) -> Option<ValidationRejection> {
     let minimum = BigInt::from(1);
-    let maximum = max_payment_amount();
+    let maximum = uint_max(256);
     if payment.amount < &minimum || payment.amount > &maximum {
         return Some(ValidationRejection::PaymentAmount {
             amount: payment.amount.clone(),

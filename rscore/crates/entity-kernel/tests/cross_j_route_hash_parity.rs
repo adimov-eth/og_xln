@@ -177,6 +177,61 @@ fn typescript_route_hash_vector_is_materialized_before_state_commit() {
 }
 
 #[test]
+fn cross_j_domain_override_preserves_typescript_authorization_and_rejects_substitution() {
+    let signed_hash = "0x12695b780b36925998983227c333dd8759116e980a88ce3df85a6f598dc70d90";
+    let mut supplied = route(Some(signed_hash));
+    let CanonicalValue::Object(fields) = &mut supplied else {
+        panic!("route object")
+    };
+    fields.push((
+        "domain".into(),
+        object(vec![
+            (
+                "sourceStackId",
+                string("stack:999:0x9999999999999999999999999999999999999999"),
+            ),
+            (
+                "targetStackId",
+                string("stack:888:0x8888888888888888888888888888888888888888"),
+            ),
+        ]),
+    ));
+    let mut state = EntityStateSlice::empty("source-user", 1_000);
+    // The source user's existing board authorizes this exact domain and both
+    // leg jurisdictions. A hub cannot substitute the default domain under
+    // the same hash, nor may canonicalization rewrite the signed domain.
+    apply_cross_jurisdiction_entity_txs(
+        &mut state,
+        &BTreeMap::new(),
+        &[prepare(supplied.clone())],
+        Some("source-user-signer"),
+        &authority("source-user-signer"),
+    )
+    .expect("TS signed domain before state commit");
+    let committed = state.cross_jurisdiction_authorizations.as_ref().unwrap();
+    let before = committed.root_hash();
+    let canonical = xln_rscore_engine::cross_j_route::canonical_route(&supplied).unwrap();
+    assert_eq!(committed.get("order-1"), Some(&canonical));
+    let error = apply_cross_jurisdiction_entity_txs(
+        &mut state,
+        &BTreeMap::new(),
+        &[prepare(route(Some(signed_hash)))],
+        Some("source-user-signer"),
+        &authority("source-user-signer"),
+    )
+    .expect_err("domain substitution under existing hash");
+    assert!(error.to_string().contains("ROUTE_HASH_MISMATCH"));
+    assert_eq!(
+        state
+            .cross_jurisdiction_authorizations
+            .as_ref()
+            .unwrap()
+            .root_hash(),
+        before
+    );
+}
+
+#[test]
 fn supplied_route_hash_mismatch_is_rejected_before_state_mutation() {
     let mut state = EntityStateSlice::empty("source-user", 1_000);
     let error = apply_cross_jurisdiction_entity_txs(

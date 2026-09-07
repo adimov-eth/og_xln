@@ -49,6 +49,9 @@ pub(crate) struct OrderbookEffects {
     pub routed_entity_outputs: Vec<LocalEntityOutput>,
     pub cross_jurisdiction_fills: Vec<crate::cross_j::CrossJurisdictionBookFill>,
     pub matched_swaps: u64,
+    // Pair-job scratch only: a preview without committed progress cannot
+    // leave a resolving lock in the live book after this matching pass.
+    absorbed_cross_offers: Vec<(String, String)>,
 }
 
 pub(crate) struct OrderbookPairJob {
@@ -155,6 +158,11 @@ impl OrderbookPairJob {
                 }
             }
             effects.push((*ordinal, command_effects));
+        }
+        for (_, command_effects) in &mut effects {
+            for key in command_effects.absorbed_cross_offers.drain(..) {
+                self.state.resolving_offers.remove(&key);
+            }
         }
         if let Some((books, pair_by_order)) = published_cross_book {
             self.state.books = books;
@@ -761,7 +769,10 @@ fn process_cross_jurisdiction_events(
             None if cancel_remainder => effects.cross_jurisdiction_fills.push(
                 crate::cross_j::build_cross_jurisdiction_cancel_fill(&offer_id, route.clone())?,
             ),
-            None => {}
+            // Keep TS's within-pass suspension against stale route amounts,
+            // then release at the pair-job boundary. No fill/cancel exists
+            // that could otherwise release this order on a later frame.
+            None => effects.absorbed_cross_offers.push(key.clone()),
         }
         state.resolving_offers.insert(key);
     }

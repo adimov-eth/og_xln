@@ -719,6 +719,25 @@ pub enum EntityKernelOutput {
     },
 }
 
+impl EntityKernelOutput {
+    /// The exact event membership observed by TS Entity-effect replay evidence.
+    /// Candidate diagnostics remain available separately; they are not economic
+    /// events and must not inflate the ordered effect count or digest.
+    pub fn is_runtime_event(&self) -> bool {
+        match self {
+            Self::Debug { .. } => false,
+            Self::AccountSettledFinalizedBilateral { .. }
+            | Self::RequestCollateralCommitted { .. }
+            | Self::HtlcInitiated { .. }
+            | Self::HtlcForwardAccepted { .. }
+            | Self::HtlcFailed { .. }
+            | Self::HtlcReceived { .. }
+            | Self::HtlcFinalized { .. }
+            | Self::SwapMatched { .. } => true,
+        }
+    }
+}
+
 /// Ordered Entity child output for the Jurisdiction machine. Runtime releases
 /// it only after the owning Runtime frame is durable; it is not a transport
 /// outbox row and does not duplicate the committed JBatch state.

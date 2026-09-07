@@ -30,6 +30,9 @@ use crate::{
 };
 
 use super::projection::{DurableProjection, checkpoint_graph_due, project_durable_frame};
+use super::replay_outbox::{
+    RetainedReplayOutbox, recorded_outbox_needs_prior, select_retained_replay_outbox,
+};
 use super::{EntityRouteTable, RuntimeDurableEnvelopeError};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -208,6 +211,7 @@ enum CommitterCommand {
     HasPendingPublication(Sender<bool>),
     Backlog(Sender<(PublicationBacklog, u64)>),
     AttachInboundSessions(InboundSessionTable),
+    SetDeliveryReady(bool, Sender<Result<(), RuntimeTransportError>>),
     CheckpointRows(Sender<CheckpointRowsResult>),
     ReadDurableFrame(
         u64,
@@ -306,6 +310,14 @@ impl Committer {
                 }
                 CommitterCommand::AttachInboundSessions(sessions) => {
                     self.publisher.attach_inbound_sessions(sessions);
+                }
+                CommitterCommand::SetDeliveryReady(ready, reply) => {
+                    let result = if self.failed {
+                        Err(RuntimeTransportError::Config("committer-poisoned"))
+                    } else {
+                        self.publisher.set_delivery_ready(ready)
+                    };
+                    let _ = reply.send(result);
                 }
                 CommitterCommand::CheckpointRows(reply) => {
                     let result = if self.failed {
@@ -657,6 +669,17 @@ impl DurableRuntimeProcessor {
             .send(CommitterCommand::AttachInboundSessions(sessions));
     }
 
+    pub fn set_delivery_ready(&mut self, ready: bool) -> Result<(), RuntimeTransportError> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.committer
+            .commands
+            .send(CommitterCommand::SetDeliveryReady(ready, sender))
+            .map_err(|_| RuntimeTransportError::Config("committer-closed"))?;
+        receiver
+            .recv()
+            .map_err(|_| RuntimeTransportError::Config("committer-closed"))?
+    }
+
     /// Admit one route only from an authenticated Runtime session and the
     /// existing signed Entity Profile. This is RAM transport state: replay
     /// derives no route from it and no checkpoint/WAL field is created.
@@ -739,7 +762,9 @@ impl DurableRuntimeProcessor {
         &mut self,
         input: RuntimeInput,
     ) -> Result<RuntimeProcessReport, DurableRuntimeProcessorError> {
-        self.process_with(true, false, |replica| apply_runtime(replica, input))
+        self.process_with(true, false, RetainedReplayOutbox::default(), |replica| {
+            apply_runtime(replica, input)
+        })
     }
 
     /// Execute one exact recorded WAL input. Locally produced continuations
@@ -748,8 +773,32 @@ impl DurableRuntimeProcessor {
     pub fn process_exact_replay(
         &mut self,
         input: RuntimeInput,
+        recorded_outbox: &[Vec<u8>],
     ) -> Result<RuntimeProcessReport, DurableRuntimeProcessorError> {
-        self.process_with(true, true, |replica| apply_runtime(replica, input))
+        // Transport retirement is external to RJEA. A recorded old source
+        // frame may retain only exact previously generated native WAL output;
+        // recorded current-frame bodies never enter the financial projector.
+        let previous_height = self.replica()?.state.height;
+        let height = previous_height.checked_add(1).ok_or_else(|| {
+            DurableRuntimeProcessorError::Projection("REPLAY_OUTBOX_HEIGHT_OVERFLOW".into())
+        })?;
+        let retained = if recorded_outbox_needs_prior(height, recorded_outbox)
+            .map_err(DurableRuntimeProcessorError::Projection)?
+        {
+            // This FIFO read waits behind the prior commit without consuming
+            // its completion report; process_with must still account for that
+            // height exactly once when it drains the existing pipeline handle.
+            let previous = self.committer_call(|reply| {
+                CommitterCommand::ReadDurableFrame(previous_height, reply)
+            })??;
+            select_retained_replay_outbox(height, &previous, recorded_outbox)
+                .map_err(DurableRuntimeProcessorError::Projection)?
+        } else {
+            RetainedReplayOutbox::default()
+        };
+        self.process_with(true, true, retained, |replica| {
+            apply_runtime(replica, input)
+        })
     }
 
     /// Canonical production entry point: select the exact FIFO prefix, build
@@ -760,7 +809,7 @@ impl DurableRuntimeProcessor {
         input: RuntimeLiveInput,
         materializer: &mut dyn EntityInfraMaterializer,
     ) -> Result<RuntimeProcessReport, DurableRuntimeProcessorError> {
-        self.process_with(false, false, |replica| {
+        self.process_with(false, false, RetainedReplayOutbox::default(), |replica| {
             apply_runtime_live(replica, input, materializer)
         })
     }
@@ -769,6 +818,7 @@ impl DurableRuntimeProcessor {
         &mut self,
         capture_replay_diagnostics: bool,
         exact_replay: bool,
+        retained_replay_outbox: RetainedReplayOutbox,
         apply: impl FnOnce(RuntimeReplica) -> Result<RuntimeApplyResult, RuntimeMachineError>,
     ) -> Result<RuntimeProcessReport, DurableRuntimeProcessorError> {
         self.ensure_healthy()?;
@@ -828,6 +878,7 @@ impl DurableRuntimeProcessor {
             prior_checkpoint_rows.as_ref(),
             capture_replay_diagnostics,
             exact_replay,
+            retained_replay_outbox,
         ) {
             Ok(projected) => projected,
             Err(error) => {

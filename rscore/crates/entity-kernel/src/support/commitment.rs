@@ -1025,14 +1025,16 @@ fn kernel_output(value: &EntityKernelOutput) -> Result<CanonicalValue, EntityKer
 /// Replay-only diagnostic over the exact ordered Entity effect projection.
 ///
 /// This reuses `kernel_output`, which also feeds the canonical Entity outbox
-/// commitment. A second projection could make parity green for bytes that
-/// production publishes differently. This digest never authorizes state.
+/// commitment, for the runtime-event subset observed by TS replay. Debug
+/// diagnostics remain in production outputs and their commitment; they never
+/// enter the economic event stream. This digest never authorizes state.
 pub fn compute_entity_effects_parity_digest(
     outputs: &[EntityKernelOutput],
 ) -> Result<[u8; 32], EntityKernelError> {
     let value = CanonicalValue::Array(
         outputs
             .iter()
+            .filter(|output| output.is_runtime_event())
             .map(kernel_output)
             .collect::<Result<Vec<_>, _>>()?,
     );
@@ -1200,6 +1202,49 @@ mod tests {
             },
         ];
         assert!(canonical_swap_trading_pairs(&pairs).is_err());
+    }
+
+    #[test]
+    fn cross_j_r6_h69_debug_preserves_ordered_financial_effect_evidence() {
+        let receipt = |amount| EntityKernelOutput::RequestCollateralCommitted {
+            entity_id: "0x11".into(),
+            account_id: "0x22".into(),
+            token_id: 1,
+            requested_amount: BigInt::from(amount),
+            prepaid_fee: BigInt::from(1),
+            requested_at: 1_000,
+        };
+        let diagnostic = EntityKernelOutput::Debug {
+            payload: object(vec![("level", text("info")), ("code", text("REB_STEP"))]),
+        };
+        let first = receipt(100);
+        let second = receipt(200);
+        let observed = vec![diagnostic.clone(), first.clone(), diagnostic.clone()];
+        assert_eq!(
+            observed
+                .iter()
+                .filter(|event| event.is_runtime_event())
+                .count(),
+            1
+        );
+        let digest =
+            |events: &[EntityKernelOutput]| compute_entity_effects_parity_digest(events).unwrap();
+        assert_eq!(digest(&observed), digest(std::slice::from_ref(&first)));
+        assert_ne!(
+            digest(&observed),
+            digest(&[]),
+            "receipt removal remains visible"
+        );
+        assert_ne!(
+            digest(&observed),
+            digest(std::slice::from_ref(&second)),
+            "amount mutation remains visible"
+        );
+        assert_ne!(
+            digest(&[first.clone(), diagnostic.clone(), second.clone()]),
+            digest(&[second, diagnostic, first]),
+            "financial receipt order remains committed"
+        );
     }
 
     #[test]

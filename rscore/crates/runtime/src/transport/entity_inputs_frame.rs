@@ -6,7 +6,8 @@ use serde_json::Value;
 use tungstenite::WebSocket;
 
 use super::RuntimeTransportError;
-use super::crypto::{encrypt_session, frame_mac};
+use super::crypto::{encrypt_session, frame_mac, verify_frame_mac};
+use super::inbound::envelope::{exact_fields, safe_u64, text};
 use super::msgpack::encode_transport;
 use super::routing::OutboundEnvelope;
 use super::wire::{object, send_value, typed_array};
@@ -20,7 +21,7 @@ pub(super) struct SessionCounters {
 
 impl SessionCounters {
     /// hello_ack is ECDSA-bound and consumes the first outbound auth tick
-    /// without an encSeq. Later MAC frames bump both counters together.
+    /// without an encSeq. Only encrypted financial frames consume encSeq.
     pub(super) fn consume_hello_ack_auth(&mut self) -> Result<u64, RuntimeTransportError> {
         if self.encryption_sequence != 0 || self.message_counter != 0 || self.auth_timestamp != 0 {
             return Err(RuntimeTransportError::Crypto("hello-ack-auth-dirty"));
@@ -128,4 +129,107 @@ fn sign_frame(
         ]),
     );
     Ok(Value::Object(signed))
+}
+
+/// Readiness belongs to the authenticated session, not financial state. Its
+/// monotone MAC tick shares the gossip/financial replay guard; it never spends
+/// an encryption nonce. A MAC from an older hello cannot open a new session.
+pub(super) fn send_delivery_ready<S: Read + Write>(
+    socket: &mut WebSocket<S>,
+    ready: bool,
+    frame: &mut SessionFrameContext<'_>,
+    max_message_bytes: usize,
+) -> Result<(), RuntimeTransportError> {
+    frame.counters.auth_timestamp = frame
+        .counters
+        .auth_timestamp
+        .checked_add(1)
+        .ok_or(RuntimeTransportError::Crypto("auth-timestamp"))?;
+    let unsigned = object([
+        ("type", Value::String("delivery_ready".into())),
+        (
+            "id",
+            Value::String(format!("rrs_ready_{}", frame.counters.auth_timestamp)),
+        ),
+        ("from", Value::String(frame.from.into())),
+        (
+            "fromEncryptionPubKey",
+            Value::String(frame.encryption_public_hex.into()),
+        ),
+        ("to", Value::String(frame.to.into())),
+        ("payload", Value::Bool(ready)),
+    ]);
+    send_value(socket, &sign_frame(&unsigned, frame)?, max_message_bytes)
+}
+
+pub(super) struct ReadinessFrameContext<'a> {
+    pub key: &'a [u8; 32],
+    pub from: &'a str,
+    pub to: &'a str,
+    pub encryption_public_hex: &'a str,
+    pub audience: &'a str,
+    pub challenge: &'a str,
+    pub auth_timestamp: &'a mut u64,
+}
+
+pub(super) fn decode_delivery_ready(
+    value: Value,
+    frame: &mut ReadinessFrameContext<'_>,
+) -> Result<bool, RuntimeTransportError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| RuntimeTransportError::Inbound("readiness-object".into()))?;
+    exact_fields(
+        object,
+        &[
+            "v",
+            "type",
+            "id",
+            "from",
+            "fromEncryptionPubKey",
+            "to",
+            "payload",
+            "auth",
+        ],
+        &[],
+        "readiness",
+    )?;
+    if object.get("v").and_then(Value::as_u64) != Some(1)
+        || text(object, "type")? != "delivery_ready"
+        || super::routing::normalize_runtime_id(text(object, "from")?)? != frame.from
+        || super::routing::normalize_runtime_id(text(object, "to")?)? != frame.to
+        || text(object, "fromEncryptionPubKey")?.to_ascii_lowercase() != frame.encryption_public_hex
+        || text(object, "id")?.is_empty()
+        || text(object, "id")?.len() > 512
+    {
+        return Err(RuntimeTransportError::Inbound("readiness-route".into()));
+    }
+    let ready = object
+        .get("payload")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| RuntimeTransportError::Inbound("readiness-boolean".into()))?;
+    let auth = object
+        .get("auth")
+        .and_then(Value::as_object)
+        .ok_or_else(|| RuntimeTransportError::Inbound("readiness-auth".into()))?;
+    exact_fields(auth, &["nonce", "timestamp", "mac"], &[], "readiness-auth")?;
+    let timestamp = safe_u64(auth, "timestamp")?;
+    if text(auth, "nonce")? != frame.challenge || timestamp <= *frame.auth_timestamp {
+        return Err(RuntimeTransportError::Inbound(
+            "readiness-auth-replay".into(),
+        ));
+    }
+    let mut unsigned = object.clone();
+    unsigned.remove("v");
+    unsigned.remove("auth");
+    verify_frame_mac(
+        frame.key,
+        &Value::Object(unsigned),
+        frame.audience,
+        frame.challenge,
+        timestamp,
+        text(auth, "mac")?,
+    )?;
+    *frame.auth_timestamp = timestamp;
+    Ok(ready)
 }

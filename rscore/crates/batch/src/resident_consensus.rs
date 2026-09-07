@@ -330,6 +330,7 @@ pub struct ResidentAccountStatusView {
     pub j_nonce: u64,
     pub current_height: u64,
     pub pending_frame_height: Option<u64>,
+    pub pending_frame_state_hash: Option<[u8; 32]>,
     pub mempool_len: usize,
     pub tokens: BTreeMap<TokenId, Option<xln_rscore_engine::Delta>>,
     pub owner_out_capacity: BTreeMap<TokenId, BigInt>,
@@ -1455,6 +1456,9 @@ impl ResidentConsensusEngine {
                         j_nonce: account.replica().state().j_nonce(),
                         current_height: account.current_height(),
                         pending_frame_height: account.pending().map(|pending| pending.frame.height),
+                        pending_frame_state_hash: account
+                            .pending()
+                            .map(|pending| pending.state_hash),
                         mempool_len: account.mempool().len(),
                         tokens,
                         owner_out_capacity,
@@ -1669,6 +1673,7 @@ impl ResidentConsensusEngine {
                 applied.push(AccountInputResult {
                     operation_index: row.operation_index,
                     account_id,
+                    rebalance_work_after_input: has_rebalance_work(account.as_ref())?,
                     force_ack: force_ack_directive(pure_ack, &verdict),
                     verdict,
                 });

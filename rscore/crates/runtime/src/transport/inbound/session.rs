@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use serde_json::Value;
-use tungstenite::WebSocket;
 use tungstenite::handshake::server::{Callback, ErrorResponse, Request, Response};
 use tungstenite::protocol::WebSocketConfig;
+use tungstenite::stream::MaybeTlsStream;
 
 use super::super::RuntimeTransportError;
 use super::super::crypto::{
@@ -14,8 +14,11 @@ use super::super::crypto::{
     verify_peer_signature,
 };
 use super::super::entity_inputs_frame::SessionCounters;
-use super::super::wire::{object, read_value, send_value, unix_ms};
+use super::super::wire::{
+    Socket, object, read_value, send_value, set_nonblocking, tcp_stream, unix_ms,
+};
 use super::SharedIngress;
+use super::frame::FrameState;
 
 pub(super) struct PeerGuard {
     peer: String,
@@ -46,13 +49,38 @@ impl Drop for PeerGuard {
 
 pub(super) struct AcceptedSession {
     pub serial: u64,
-    pub socket: WebSocket<TcpStream>,
+    pub socket: Socket,
     pub accepted: AcceptedHello,
     pub keys: SessionKeys,
     pub audience: String,
     pub challenge: String,
     pub outbound: SessionCounters,
+    pub inbound: FrameState,
+    pub side: SessionSide,
+    pub peer_ready: bool,
+    pub announced_ready: Option<bool>,
     pub peer_guard: PeerGuard,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum SessionSide {
+    Client,
+    Server,
+}
+
+impl SessionSide {
+    pub fn incoming_key(self, keys: &SessionKeys) -> &[u8; 32] {
+        match self {
+            Self::Client => &keys.s2c,
+            Self::Server => &keys.c2s,
+        }
+    }
+    pub fn outgoing_key(self, keys: &SessionKeys) -> &[u8; 32] {
+        match self {
+            Self::Client => &keys.c2s,
+            Self::Server => &keys.s2c,
+        }
+    }
 }
 
 /// Bound for the unauthenticated handshake (hello_challenge / hello / hello_ack).
@@ -77,7 +105,7 @@ pub(super) fn accept(
         .max_message_size(Some(PREAUTH_MAX_MESSAGE_BYTES))
         .max_frame_size(Some(PREAUTH_MAX_MESSAGE_BYTES));
     let mut socket = tungstenite::accept_hdr_with_config(
-        stream,
+        MaybeTlsStream::Plain(stream),
         PathCallback(shared.config.path.clone()),
         Some(websocket_config),
     )
@@ -122,9 +150,9 @@ pub(super) fn accept(
         ("sessionPubKey", Value::String(session_public)),
     ]);
     // Canonical TS: outboundAuthTimestamp starts at 0; hello_ack does ++ so
-    // auth.timestamp=1 with no encSeq. The first returned entity_inputs must then
-    // be auth.timestamp=2 and encSeq=1 on this same counter, or RuntimeWsClient
-    // rejects it as session replay (lastInboundAuthTimestamp already 1).
+    // auth.timestamp=1 with no encSeq. Readiness controls consume later auth
+    // ticks on this same counter; only entity_inputs consumes encSeq. The
+    // recipient rejects reused auth ticks even across different message types.
     let mut outbound = SessionCounters::default();
     let auth_timestamp = outbound.consume_hello_ack_auth()?;
     let signature = sign_with_key(
@@ -151,14 +179,10 @@ pub(super) fn accept(
     // The timeout bounds the unauthenticated handshake only. An authenticated
     // peer may legitimately stay idle; shutdown closes the registered stream
     // and unblocks this read without inventing ping/receipt state.
-    socket
-        .get_mut()
+    tcp_stream(&socket)?
         .set_read_timeout(None)
         .map_err(|error| RuntimeTransportError::WebSocket(error.to_string()))?;
-    socket
-        .get_mut()
-        .set_nonblocking(true)
-        .map_err(|error| RuntimeTransportError::WebSocket(error.to_string()))?;
+    set_nonblocking(&mut socket, true)?;
     shared
         .counters
         .authenticated_sessions
@@ -171,11 +195,15 @@ pub(super) fn accept(
         audience,
         challenge,
         outbound,
+        inbound: FrameState::default(),
+        side: SessionSide::Server,
+        peer_ready: false,
+        announced_ready: None,
         peer_guard,
     })
 }
 
-pub(super) struct AcceptedHello {
+pub(in crate::transport) struct AcceptedHello {
     pub peer_runtime_id: String,
     pub peer_static_public_hex: String,
     pub peer_session_public: [u8; 32],
@@ -265,7 +293,7 @@ fn accept_hello(
     })
 }
 
-fn register_peer(
+pub(super) fn register_peer(
     shared: &Arc<SharedIngress>,
     peer: &str,
 ) -> Result<PeerGuard, RuntimeTransportError> {
@@ -281,6 +309,50 @@ fn register_peer(
     Ok(PeerGuard {
         peer: peer.into(),
         shared: Arc::clone(shared),
+    })
+}
+
+pub(super) fn accept_outgoing(
+    mut session: super::super::session::DirectSession,
+    shared: &Arc<SharedIngress>,
+) -> Result<AcceptedSession, RuntimeTransportError> {
+    if session.source_runtime_id != shared.config.runtime_id
+        || session.encryption_public_hex != static_public_hex(&shared.config.encryption_identity)
+    {
+        return Err(RuntimeTransportError::Handshake(
+            "outgoing-ingress-owner".into(),
+        ));
+    }
+    let peer_guard = register_peer(shared, &session.target_runtime_id)?;
+    tcp_stream(&session.socket)?
+        .set_read_timeout(None)
+        .map_err(|error| RuntimeTransportError::WebSocket(error.to_string()))?;
+    set_nonblocking(&mut session.socket, true)?;
+    let serial = super::listener::register_socket(shared, tcp_stream(&session.socket)?)?;
+    shared
+        .counters
+        .authenticated_sessions
+        .fetch_add(1, Ordering::Relaxed);
+    Ok(AcceptedSession {
+        serial,
+        socket: session.socket,
+        accepted: AcceptedHello {
+            peer_runtime_id: session.target_runtime_id,
+            peer_static_public_hex: session.peer_encryption_public_hex,
+            peer_session_public: session.peer_session_public,
+        },
+        keys: session.keys,
+        audience: session.audience,
+        challenge: session.challenge,
+        outbound: session.outbound,
+        inbound: FrameState {
+            auth_timestamp: session.inbound.auth_timestamp,
+            encryption_sequence: session.inbound.encryption_sequence,
+        },
+        side: SessionSide::Client,
+        peer_ready: session.peer_ready,
+        announced_ready: Some(session.local_ready),
+        peer_guard,
     })
 }
 

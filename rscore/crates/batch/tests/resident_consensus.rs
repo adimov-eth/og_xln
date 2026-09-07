@@ -402,8 +402,13 @@ fn rebalance_work_index_follows_restore_candidate_abort_and_promotion() {
     assert!(!engine.has_rebalance_work().expect("promoted inbound index"));
 }
 
-#[test]
-fn inbound_request_updates_rebalance_index_before_same_frame_scheduler() {
+fn rebalance_pair(
+    workers: usize,
+) -> (
+    ResidentConsensusEngine,
+    ResidentConsensusEngine,
+    fixture::Pair,
+) {
     let pair = fixture::pair();
     let (left, right) = if pair.payer < pair.payee {
         (pair.payer.clone(), pair.payee.clone())
@@ -452,8 +457,14 @@ fn inbound_request_updates_rebalance_index_before_same_frame_scheduler() {
         replica: state(pair.payee.clone()),
         consensus: None,
     };
-    let mut payer = resident(1, "payer-0", 0, fixture::market(), vec![payer_seed]);
-    let mut payee = resident(1, "payee-0", 0, fixture::market(), vec![payee_seed]);
+    let payer = resident(workers, "payer-0", 0, fixture::market(), vec![payer_seed]);
+    let payee = resident(workers, "payee-0", 0, fixture::market(), vec![payee_seed]);
+    (payer, payee, pair)
+}
+
+#[test]
+fn inbound_request_updates_rebalance_index_before_same_frame_scheduler() {
+    let (mut payer, mut payee, pair) = rebalance_pair(1);
     assert!(!payer.has_rebalance_work().expect("payer base"));
     assert!(!payee.has_rebalance_work().expect("payee base"));
 
@@ -524,6 +535,131 @@ fn inbound_request_updates_rebalance_index_before_same_frame_scheduler() {
         row.header.carried.requested_rebalance_fee_state_root,
         row.sections.requested_rebalance_fee_state.root,
     );
+}
+
+#[test]
+fn cross_j_r6_h68_rebalance_readiness_preserves_each_inbound_position() {
+    use xln_rscore_batch::{AccountInput, AccountInputKind};
+
+    for workers in [1, 4] {
+        let (mut payer, mut payee, pair) = rebalance_pair(workers);
+        let token = TokenId::new(1).expect("token");
+        let receive = |engine: &mut ResidentConsensusEngine,
+                       owner_entity_id,
+                       account_id,
+                       inputs: Vec<AccountInput>| {
+            engine
+                .entity_inbound(EntityInboundRequest {
+                    owner_entity_id,
+                    owning_entity_is_hub: false,
+                    expected_accounts_root: engine.accounts_root(),
+                    clock: fixture::clock(TIMESTAMP),
+                    rows: inputs
+                        .into_iter()
+                        .enumerate()
+                        .map(|(position, input)| AccountInputRow {
+                            operation_index: position as u64,
+                            account_id,
+                            genesis_policy: None,
+                            certified_board_authority: AccountInputBoardAuthority::Lazy,
+                            local_certified_board_authority: AccountInputBoardAuthority::Lazy,
+                            input,
+                        })
+                        .collect(),
+                    post_accounts: false,
+                })
+                .expect("signed inbound inputs")
+        };
+        enter_resident(&mut payer, pair.payer_entity);
+        let request = payer
+            .entity_outbound(outbound_request(
+                pair.payer_entity,
+                pair.payer_account,
+                vec![AccountTx::RequestCollateral {
+                    token_id: token,
+                    amount: 100.into(),
+                    fee_token_id: Some(token),
+                    fee_amount: 1.into(),
+                    policy_version: 1,
+                }],
+            ))
+            .expect("request proposal")
+            .proposals
+            .remove(0)
+            .outbound_input
+            .expect("request input");
+        receive(
+            &mut payee,
+            pair.payee_entity,
+            pair.payee_account,
+            vec![request],
+        );
+        let refund = payee
+            .hub_rebalance_views(vec![pair.payee_account])
+            .expect("committed request view")
+            .remove(0)
+            .1
+            .requested_fee_state
+            .remove(0)
+            .1
+            .request_id;
+        let response = payee
+            .entity_outbound(force_ack_request(
+                pair.payee_entity,
+                pair.payee_account,
+                vec![AccountTx::RebalanceRefund {
+                    request_id: refund,
+                    request_token_id: token,
+                    amount: 1.into(),
+                    reason: xln_rscore_engine::RebalanceRefundReason::Manual,
+                }],
+            ))
+            .expect("refund proposal")
+            .proposals
+            .remove(0)
+            .outbound_input
+            .expect("ACK plus refund");
+        let AccountInputKind::AckFrame {
+            ack: Some(ack),
+            frame,
+        } = response.kind
+        else {
+            panic!("refund must carry request ACK");
+        };
+        let applied = receive(
+            &mut payer,
+            pair.payer_entity,
+            pair.payer_account,
+            vec![
+                AccountInput {
+                    envelope: response.envelope.clone(),
+                    kind: AccountInputKind::Ack(ack),
+                },
+                AccountInput {
+                    envelope: response.envelope,
+                    kind: AccountInputKind::AckFrame { ack: None, frame },
+                },
+            ],
+        );
+        assert!(matches!(
+            applied.applied[0].verdict,
+            AccountInputVerdict::AckCommitted { height: 1, .. }
+        ));
+        assert!(matches!(
+            applied.applied[1].verdict,
+            AccountInputVerdict::FrameCommitted { height: 2, .. }
+        ));
+        assert_eq!(
+            applied
+                .applied
+                .iter()
+                .map(|row| (row.operation_index, row.rebalance_work_after_input))
+                .collect::<Vec<_>>(),
+            [(0, true), (1, false)],
+            "request ACK readiness must survive the later refund workers={workers}"
+        );
+        assert!(!payer.has_rebalance_work().expect("final work index"));
+    }
 }
 
 /// A funded seed whose rebalance shadow trees are both empty, so a test can

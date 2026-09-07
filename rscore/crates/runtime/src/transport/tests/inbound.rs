@@ -19,6 +19,102 @@ use crate::storage::native::{
 static TEST_SERIAL: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn durable_outbound_dial_authenticates_before_readiness_and_retains_original_rows() {
+    let mut ingress = DirectRuntimeIngress::bind(DirectRuntimeIngressConfig::production(
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        "readiness-dial-server",
+        "server",
+    ))
+    .expect("default closed financial ingress");
+    let target = ingress.runtime_id().to_owned();
+    let serial = TEST_SERIAL.fetch_add(1, Ordering::Relaxed);
+    let base = std::env::temp_dir().join(format!(
+        "xln-rscore-ready-dial-{}-{serial}",
+        std::process::id()
+    ));
+    let mut store = NativeRuntimeStore::open(base.join("db"), NativeStorageConfig::default())
+        .expect("real WAL");
+    let durable = store
+        .append_frame(frame(1, vec![output_row(&target, 1)]))
+        .expect("fsynced outbox");
+    let routes = DirectRouteTable::new([DirectRoute {
+        target_runtime_id: target,
+        url: format!("ws://{}/ws", ingress.local_address()),
+    }])
+    .expect("canonical route");
+    let mut publisher = DirectOutboxPublisher::new(DirectOutboxPublisherConfig::production(
+        "readiness-dial-client",
+        "client",
+        routes,
+    ))
+    .expect("publisher");
+    let local = super::publisher_ingress("readiness-dial-client", "client");
+    publisher.attach_inbound_sessions(local.sessions());
+    let pending = publisher
+        .publish_durable(&mut store, &durable)
+        .expect("early authenticated connection");
+    assert_eq!(
+        (
+            pending.rows_published,
+            pending.rows_pending,
+            pending.reconnects
+        ),
+        (0, 1, 0)
+    );
+    assert!(pending.failed_targets.is_empty());
+    assert_eq!(ingress.metrics().authenticated_sessions, 1);
+    assert!(
+        ingress
+            .recv_timeout(Duration::from_millis(10))
+            .expect("healthy before catchup")
+            .is_none()
+    );
+    for _ in 0..3 {
+        let report = publisher
+            .retry_pending()
+            .expect("false is deferred, not failure");
+        assert_eq!(
+            (
+                report.rows_published,
+                report.rows_pending,
+                report.reconnects
+            ),
+            (0, 1, 0)
+        );
+        assert!(report.failed_targets.is_empty());
+    }
+    ingress
+        .set_delivery_ready(true)
+        .expect("certified startup boundary");
+    let published = wait_for_socket_write(&mut publisher);
+    assert_eq!(
+        (
+            published.rows_published,
+            published.rows_pending,
+            published.reconnects
+        ),
+        (1, 0, 0)
+    );
+    let batch = ingress
+        .recv_timeout(Duration::from_secs(1))
+        .expect("ready ingress")
+        .expect("original output");
+    assert_eq!(batch.source_runtime_height, 1);
+    assert_eq!(ingress.metrics().authenticated_sessions, 1);
+    assert_eq!(
+        publisher
+            .publish_durable(&mut store, &durable)
+            .expect("same durable token")
+            .rows_published,
+        0
+    );
+    drop(publisher);
+    ingress.shutdown().expect("shutdown");
+    drop(store);
+    fs::remove_dir_all(base).expect("fixture cleanup");
+}
+
+#[test]
 fn rust_publisher_reaches_authenticated_rust_ingress_without_a_delivery_receipt() {
     let mut ingress = DirectRuntimeIngress::bind(DirectRuntimeIngressConfig::production(
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
@@ -26,6 +122,9 @@ fn rust_publisher_reaches_authenticated_rust_ingress_without_a_delivery_receipt(
         "server",
     ))
     .expect("bind ingress");
+    ingress
+        .set_delivery_ready(true)
+        .expect("fixture J startup complete");
     let target = ingress.runtime_id().to_owned();
     let source_seed = "rrs-ingress-client";
     let source_signer = "client";
@@ -53,6 +152,8 @@ fn rust_publisher_reaches_authenticated_rust_ingress_without_a_delivery_receipt(
         routes,
     ))
     .expect("publisher");
+    let local = super::publisher_ingress(source_seed, source_signer);
+    publisher.attach_inbound_sessions(local.sessions());
     let report = publisher
         .publish_durable(&mut store, &durable)
         .unwrap_or_else(|error| {
@@ -61,7 +162,12 @@ fn rust_publisher_reaches_authenticated_rust_ingress_without_a_delivery_receipt(
                 ingress.last_session_error()
             )
         });
-    assert_eq!((report.rows_published, report.envelopes_published), (1, 1));
+    assert_eq!((report.rows_published, report.rows_pending), (0, 1));
+    let completed = wait_for_socket_write(&mut publisher);
+    assert_eq!(
+        (completed.rows_published, completed.envelopes_published),
+        (1, 1)
+    );
     let received = ingress
         .recv_timeout(Duration::from_secs(3))
         .expect("ingress healthy")
@@ -83,7 +189,7 @@ fn rust_publisher_reaches_authenticated_rust_ingress_without_a_delivery_receipt(
         std::thread::yield_now();
     }
     assert_eq!(ingress.metrics().accepted_batches, 1);
-    publisher.close();
+    drop(publisher);
     ingress.shutdown().expect("clean shutdown");
     drop(store);
     fs::remove_dir_all(base).expect("remove fixture");
@@ -97,6 +203,9 @@ fn inbound_session_replies_after_wal_without_a_second_dial() {
         "server",
     ))
     .expect("bind ingress");
+    ingress
+        .set_delivery_ready(true)
+        .expect("fixture J startup complete");
     let hub_runtime_id = ingress.runtime_id().to_owned();
     let user_seed = "rrs-ingress-reply-user";
     let user_signer = "user";
@@ -150,6 +259,19 @@ fn inbound_session_replies_after_wal_without_a_second_dial() {
         (first_report.rows_published, first_report.rows_pending),
         (0, 1)
     );
+    assert!(first_report.failed_targets.is_empty());
+    let waiting = publisher
+        .retry_pending()
+        .expect("authenticated but not ready");
+    assert_eq!((waiting.rows_published, waiting.rows_pending), (0, 1));
+    assert!(waiting.failed_targets.is_empty());
+    assert_eq!(ingress.metrics().open_sessions, 1);
+    user.set_delivery_ready(true)
+        .expect("user finishes catchup");
+    wait_for_peer_ready(&ingress, &user_runtime_id, true);
+    publisher
+        .retry_pending()
+        .expect("ready retries original outbox");
     let first_reply = user.recv_envelope().expect("first hub reply");
     assert_eq!(first_reply["sourceRuntimeHeight"], 1);
     assert_eq!(first_reply["sourceRuntimeId"], hub_runtime_id);
@@ -161,6 +283,8 @@ fn inbound_session_replies_after_wal_without_a_second_dial() {
         ),
         (1, 0)
     );
+    user.set_delivery_ready(false).expect("readiness revoked");
+    wait_for_peer_ready(&ingress, &user_runtime_id, false);
     let second_report = publisher
         .publish_durable(&mut store, &second)
         .expect("fifo second reply");
@@ -168,6 +292,13 @@ fn inbound_session_replies_after_wal_without_a_second_dial() {
         (second_report.rows_published, second_report.rows_pending),
         (0, 1)
     );
+    assert!(second_report.failed_targets.is_empty());
+    let paused = publisher.retry_pending().expect("revoked peer defers");
+    assert_eq!((paused.rows_published, paused.rows_pending), (0, 1));
+    assert!(paused.failed_targets.is_empty());
+    user.set_delivery_ready(true).expect("readiness restored");
+    wait_for_peer_ready(&ingress, &user_runtime_id, true);
+    publisher.retry_pending().expect("same socket resumes FIFO");
     let second_reply = user.recv_envelope().expect("second hub reply");
     assert_eq!(second_reply["sourceRuntimeHeight"], 2);
     let second_completion = wait_for_socket_write(&mut publisher);
@@ -178,11 +309,25 @@ fn inbound_session_replies_after_wal_without_a_second_dial() {
         ),
         (1, 0)
     );
-    publisher.close();
+    assert_eq!(ingress.metrics().authenticated_sessions, 1);
+    drop(publisher);
     user.close();
     ingress.shutdown().expect("clean shutdown");
     drop(store);
     fs::remove_dir_all(base).expect("remove reply fixture");
+}
+
+fn wait_for_peer_ready(ingress: &DirectRuntimeIngress, peer: &str, ready: bool) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while ingress
+        .sessions()
+        .can_deliver(peer)
+        .expect("peer readiness")
+        != ready
+    {
+        assert!(Instant::now() < deadline, "peer readiness timeout");
+        std::thread::yield_now();
+    }
 }
 
 #[test]
@@ -194,6 +339,9 @@ fn full_writer_queue_applies_backpressure_without_dropping_the_batch() {
     );
     config.queue_capacity = 1;
     let mut ingress = DirectRuntimeIngress::bind(config).expect("bind ingress");
+    ingress
+        .set_delivery_ready(true)
+        .expect("fixture J startup complete");
     let hub_runtime_id = ingress.runtime_id().to_owned();
     let mut users = ["backpressure-a", "backpressure-b"].map(|seed| {
         let runtime_id = derive_local_runtime_id(seed, "user").expect("user runtime id");
@@ -254,14 +402,20 @@ fn full_writer_queue_applies_backpressure_without_dropping_the_batch() {
 
 #[test]
 fn stalled_inbound_target_does_not_block_a_healthy_target() {
-    let table = InboundSessionTable::default();
+    let local = super::publisher_ingress("rrs-ingress-timeout-server", "server");
+    let table = local.sessions();
     let poll = mio::Poll::new().expect("poll");
     let waker =
         std::sync::Arc::new(mio::Waker::new(poll.registry(), mio::Token(0)).expect("waker"));
     let (work_tx, _work_rx) = std::sync::mpsc::sync_channel(1);
     let user = format!("0x{}", "aa".repeat(20));
     let _guard = table
-        .register(&user, work_tx, waker)
+        .register(
+            &user,
+            work_tx,
+            waker,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        )
         .expect("stalled inbound session");
     let serial = TEST_SERIAL.fetch_add(1, Ordering::Relaxed);
     let base = std::env::temp_dir().join(format!(
@@ -277,6 +431,9 @@ fn stalled_inbound_target_does_not_block_a_healthy_target() {
         "healthy",
     ))
     .expect("bind healthy target");
+    healthy
+        .set_delivery_ready(true)
+        .expect("fixture J startup complete");
     let healthy_runtime_id = healthy.runtime_id().to_owned();
     let first = store
         .append_frame(frame(
@@ -304,9 +461,11 @@ fn stalled_inbound_target_does_not_block_a_healthy_target() {
         .expect("target failure is reported without blocking healthy target");
     assert_eq!(
         (first_report.rows_published, first_report.rows_pending),
-        (1, 1)
+        (0, 2)
     );
     assert!(first_report.failed_targets.is_empty());
+    let completed = wait_for_socket_write(&mut publisher);
+    assert_eq!((completed.rows_published, completed.rows_pending), (1, 1));
     let first_received = healthy
         .recv_timeout(Duration::from_secs(1))
         .expect("healthy ingress")
@@ -318,15 +477,17 @@ fn stalled_inbound_target_does_not_block_a_healthy_target() {
         .expect("next durable frame stages while dead target remains pending");
     assert_eq!(
         (second_report.rows_published, second_report.rows_pending),
-        (1, 1)
+        (0, 2)
     );
     assert!(second_report.failed_targets.is_empty());
+    let completed = wait_for_socket_write(&mut publisher);
+    assert_eq!((completed.rows_published, completed.rows_pending), (1, 1));
     let second_received = healthy
         .recv_timeout(Duration::from_secs(1))
         .expect("healthy ingress")
         .expect("healthy target receives second frame");
     assert_eq!(second_received.source_runtime_height, 2);
-    publisher.close();
+    drop(publisher);
     healthy.shutdown().expect("healthy shutdown");
     drop(store);
     fs::remove_dir_all(base).expect("remove timeout fixture");
@@ -335,7 +496,7 @@ fn stalled_inbound_target_does_not_block_a_healthy_target() {
 /// The reactor reports a socket write on its own thread after the bytes are
 /// on the wire, so the peer can hold the reply before the publisher has seen
 /// the completion. Poll until the write is accounted for.
-fn wait_for_socket_write(publisher: &mut DirectOutboxPublisher) -> PublicationReport {
+pub(super) fn wait_for_socket_write(publisher: &mut DirectOutboxPublisher) -> PublicationReport {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         let report = publisher.retry_pending().expect("collect socket write");
@@ -388,6 +549,9 @@ fn unauthenticated_socket_cannot_send_a_frame_sized_message() {
         "server",
     ))
     .expect("bind ingress");
+    ingress
+        .set_delivery_ready(true)
+        .expect("fixture J startup complete");
     let url = format!("ws://{}/ws", ingress.local_address());
     let (mut socket, _) = tungstenite::connect(url).expect("raw client");
     // The server opens with hello_challenge (binary MessagePack).
@@ -425,6 +589,9 @@ fn canonical_typescript_client_reaches_rust_ingress() {
         server_signer,
     ))
     .expect("bind ingress");
+    ingress
+        .set_delivery_ready(true)
+        .expect("fixture J startup complete");
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .canonicalize()
@@ -476,6 +643,9 @@ fn canonical_typescript_client_receives_rust_outbox_on_the_same_authenticated_so
         server_signer,
     ))
     .expect("bind ingress");
+    ingress
+        .set_delivery_ready(true)
+        .expect("fixture J startup complete");
     let hub_runtime_id = ingress.runtime_id().to_owned();
     let client_runtime_id = derive_local_runtime_id(client_seed, client_signer).expect("client id");
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -557,7 +727,7 @@ fn canonical_typescript_client_receives_rust_outbox_on_the_same_authenticated_so
         .expect("collect TypeScript socket write");
     assert_eq!((completion.rows_published, completion.rows_pending), (1, 0));
 
-    publisher.close();
+    drop(publisher);
     ingress.shutdown().expect("clean shutdown");
     drop(store);
     fs::remove_dir_all(base).expect("remove fixture");
@@ -588,8 +758,9 @@ const client = new RuntimeWsClient({
 });
 await client.connect();
 const deadline = Date.now() + 3_000;
-while (!client.isOpen() && Date.now() < deadline) await Bun.sleep(5);
-if (!client.isOpen()) throw new Error('RRS_TEST_HANDSHAKE_TIMEOUT');
+while (!client.canDeliver() && Date.now() < deadline) await Bun.sleep(5);
+if (!client.canDeliver()) throw new Error('RRS_TEST_HANDSHAKE_TIMEOUT');
+client.setReady(true);
 const sent = client.sendEntityInputsRaw(target, {
   sourceRuntimeId: runtimeId,
   sourceRuntimeHeight: 7,
@@ -641,8 +812,9 @@ const client = new RuntimeWsClient({
 });
 await client.connect();
 const deadline = Date.now() + 3_000;
-while (!client.isOpen() && Date.now() < deadline) await Bun.sleep(5);
-if (!client.isOpen()) throw new Error('RRS_TEST_HANDSHAKE_TIMEOUT');
+while (!client.canDeliver() && Date.now() < deadline) await Bun.sleep(5);
+if (!client.canDeliver()) throw new Error('RRS_TEST_HANDSHAKE_TIMEOUT');
+client.setReady(true);
 const sent = client.sendEntityInputsRaw(target, {
   sourceRuntimeId: runtimeId,
   sourceRuntimeHeight: 7,

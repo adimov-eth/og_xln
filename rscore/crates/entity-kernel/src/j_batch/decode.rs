@@ -122,6 +122,30 @@ fn signed(token: Token) -> Result<BigInt, JSubmitError> {
     })
 }
 
+fn int512(token: Token) -> Result<BigInt, JSubmitError> {
+    let mut fields = Fields::new(token)?;
+    let high = signed(fields.next()?)?;
+    let low = fields.uint()?;
+    fields.done()?;
+    let mut bytes = [0; 32];
+    low.to_big_endian(&mut bytes);
+    Ok((high << 256_u32) + BigInt::from(BigUint::from_bytes_be(&bytes)))
+}
+
+fn signed_amount(token: Token) -> Result<BigInt, JSubmitError> {
+    let mut fields = Fields::new(token)?;
+    let negative = fields.bool()?;
+    let magnitude = fields.uint()?;
+    fields.done()?;
+    if negative && magnitude.is_zero() {
+        return Err(abi("signed-amount-negative-zero"));
+    }
+    let mut bytes = [0; 32];
+    magnitude.to_big_endian(&mut bytes);
+    let amount = BigInt::from(BigUint::from_bytes_be(&bytes));
+    Ok(if negative { -amount } else { amount })
+}
+
 fn map_tuples<T>(
     tokens: Vec<Token>,
     decode: fn(Fields) -> Result<T, JSubmitError>,
@@ -172,10 +196,10 @@ fn decode_c2r(mut f: Fields) -> Result<CollateralToReserve, JSubmitError> {
 fn decode_diff(mut f: Fields) -> Result<SettlementDiff, JSubmitError> {
     let v = SettlementDiff {
         token_id: f.uint()?,
-        left_diff: signed(f.next()?)?,
-        right_diff: signed(f.next()?)?,
-        collateral_diff: signed(f.next()?)?,
-        ondelta_diff: signed(f.next()?)?,
+        left_diff: signed_amount(f.next()?)?,
+        right_diff: signed_amount(f.next()?)?,
+        collateral_diff: signed_amount(f.next()?)?,
+        ondelta_diff: signed_amount(f.next()?)?,
     };
     f.done()?;
     Ok(v)
@@ -222,7 +246,7 @@ fn decode_proof(token: Token) -> Result<ProofBody, JSubmitError> {
     let offdeltas = f
         .array()?
         .into_iter()
-        .map(signed)
+        .map(int512)
         .collect::<Result<_, _>>()?;
     let token_ids = f
         .array()?

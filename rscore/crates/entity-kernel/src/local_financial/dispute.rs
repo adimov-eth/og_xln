@@ -192,20 +192,6 @@ fn argument_tuple(fill_ratios: Vec<u32>, secrets: Vec<[u8; 32]>) -> Vec<u8> {
     ])])
 }
 
-fn wrap_arguments(arguments: Vec<u8>, clause_count: usize) -> Result<Vec<u8>, EntityKernelError> {
-    if !(1..=2).contains(&clause_count) {
-        return Err(invalid(
-            "dispute",
-            format!("DISPUTE_ARGUMENT_CANONICAL_CLAUSE_COUNT_INVALID:{clause_count}"),
-        ));
-    }
-    Ok(ethabi::encode(&[Token::Array(
-        (0..clause_count)
-            .map(|_| Token::Bytes(arguments.clone()))
-            .collect(),
-    )]))
-}
-
 fn known_secrets(
     state: &EntityStateSlice,
     paybook: &PaybookChanges,
@@ -244,11 +230,12 @@ fn build_arguments(
     counterparty: &str,
     secrets_side_is_left: Option<bool>,
 ) -> Result<(Vec<u8>, Vec<u8>), EntityKernelError> {
-    let same_j = dispute
+    let mut same_j = dispute
         .swap_offers
         .iter()
         .filter(|offer| offer.cross_jurisdiction.is_none())
         .collect::<Vec<_>>();
+    same_j.sort_by(|left, right| left.offer_id.cmp(&right.offer_id));
     let mut left_ratios = Vec::new();
     let mut right_ratios = Vec::new();
     for offer in &same_j {
@@ -272,17 +259,54 @@ fn build_arguments(
         .filter(|side| !*side)
         .map(|_| secrets)
         .unwrap_or_default();
-    let clause_count =
-        usize::from(!dispute.payment_hashlocks.is_empty()) + usize::from(!same_j.is_empty());
-    let encode = |ratios: Vec<u32>, secrets: Vec<[u8; 32]>| {
-        if ratios.iter().all(|ratio| *ratio == 0) && secrets.is_empty() {
-            return Ok(Vec::new());
+    let proof = dispute
+        .proof_body
+        .as_ref()
+        .map_err(|error| invalid("dispute", error.to_string()))?;
+    let mut left_index = 0;
+    let mut right_index = 0;
+    let mut left_clauses = Vec::new();
+    let mut right_clauses = Vec::new();
+    for clause in &proof.transformers {
+        let (payments, left_count, right_count) = clause
+            .argument_counts()
+            .map_err(|error| invalid("dispute", error.to_string()))?;
+        if payments == 0 && left_count == 0 && right_count == 0 {
+            continue;
         }
-        wrap_arguments(argument_tuple(ratios, secrets), clause_count)
+        let ratios = |all: &[u32], index: usize, count: usize| {
+            if payments > 0 {
+                return Ok(all.to_vec());
+            }
+            all.get(index..index + count)
+                .map(<[u32]>::to_vec)
+                .ok_or_else(|| invalid("dispute", "DISPUTE_ARGUMENT_SWAP_COUNT_MISMATCH"))
+        };
+        left_clauses.push(argument_tuple(
+            ratios(&left_ratios, left_index, left_count)?,
+            left_secrets.clone(),
+        ));
+        right_clauses.push(argument_tuple(
+            ratios(&right_ratios, right_index, right_count)?,
+            right_secrets.clone(),
+        ));
+        left_index += left_count;
+        right_index += right_count;
+    }
+    if left_index != left_ratios.len() || right_index != right_ratios.len() {
+        return Err(invalid("dispute", "DISPUTE_ARGUMENT_SWAP_COUNT_MISMATCH"));
+    }
+    let encode = |clauses: Vec<Vec<u8>>, ratios: &[u32], secrets: &[[u8; 32]]| {
+        if ratios.iter().all(|ratio| *ratio == 0) && secrets.is_empty() {
+            return Vec::new();
+        }
+        ethabi::encode(&[Token::Array(
+            clauses.into_iter().map(Token::Bytes).collect(),
+        )])
     };
     Ok((
-        encode(left_ratios, left_secrets)?,
-        encode(right_ratios, right_secrets)?,
+        encode(left_clauses, &left_ratios, &left_secrets),
+        encode(right_clauses, &right_ratios, &right_secrets),
     ))
 }
 
@@ -1768,6 +1792,130 @@ mod tests {
             [EntityFrameEvent::Status {
                 message: "⚖️ Dispute finalized vs 0202 (hlt-authority-reverse-mutual-consent) - use jBroadcast to commit".into(),
             }],
+        );
+    }
+    #[test]
+    fn dispute_arguments_slice_each_signed_swap_clause_in_counterparty_order() {
+        use xln_rscore_engine::{DisputeTransformerClause, SwapOfferSnapshot};
+        let mut view = account_view("active", None, None, None)
+            .remove(PEER)
+            .unwrap()
+            .dispute
+            .unwrap();
+        view.swap_offers = (0..34)
+            .rev()
+            .map(|index| SwapOfferSnapshot {
+                offer_id: format!("offer-{index:02}"),
+                left_entity: OWNER.into(),
+                right_entity: PEER.into(),
+                give_token_id: 1,
+                give_token_decimals: 6,
+                give_amount: 100.into(),
+                want_token_id: 2,
+                want_token_decimals: 6,
+                want_amount: 200.into(),
+                max_fee: 0.into(),
+                min_net_receive: 0.into(),
+                price_ticks: 0.into(),
+                time_in_force: None,
+                maker_is_left: index % 2 == 0,
+                created_height: 1,
+                quantized_give: 100.into(),
+                quantized_want: 200.into(),
+                cross_jurisdiction: None,
+            })
+            .collect();
+        view.pending_swap_fill_ratios = (0..34)
+            .map(|index| (format!("offer-{index:02}"), 1000 + index))
+            .collect();
+        let clause = |start: u32, end: u32| DisputeTransformerClause {
+            transformer_address: [0x22; 20],
+            allowances: Vec::new(),
+            encoded_batch: ethabi::encode(&[Token::Tuple(vec![
+                Token::Array(Vec::new()),
+                Token::Array(
+                    (start..end)
+                        .map(|index| {
+                            Token::Tuple(vec![
+                                Token::Bool(index % 2 == 0),
+                                Token::Uint(0.into()),
+                                Token::Uint(100.into()),
+                                Token::Uint(1.into()),
+                                Token::Uint(200.into()),
+                            ])
+                        })
+                        .collect(),
+                ),
+                Token::Array(Vec::new()),
+            ])]),
+        };
+        view.proof_body.as_mut().unwrap().transformers = vec![clause(0, 29), clause(29, 34)];
+        let (left, right) =
+            build_arguments(&state(1000), &PaybookChanges::default(), &view, PEER, None).unwrap();
+        let expected = |parts: Vec<Vec<u32>>| {
+            ethabi::encode(&[Token::Array(
+                parts
+                    .into_iter()
+                    .map(|part| Token::Bytes(argument_tuple(part, Vec::new())))
+                    .collect(),
+            )])
+        };
+        assert_eq!(
+            left,
+            expected(vec![
+                (0..14).map(|index| 1001 + 2 * index).collect(),
+                vec![1029, 1031, 1033]
+            ])
+        );
+        assert_eq!(
+            right,
+            expected(vec![
+                (0..15).map(|index| 1000 + 2 * index).collect(),
+                vec![1030, 1032]
+            ])
+        );
+        // Independent TS buildDisputeArgumentsFromState golden for the same
+        // 34 alternating makers and ratios 1000..1033, including ABI wrapper.
+        assert_eq!(
+            hex(&Keccak256::digest(&left)),
+            "0xc9a83474ba269d17f00da902e527f47187421f1d467e6f514095d9465a12bb27"
+        );
+        assert_eq!(
+            hex(&Keccak256::digest(&right)),
+            "0xe7abc7e70e2fc29dd6d6a7ab58b3ae08b051da33be0983a33553e5bf8fe0edb5"
+        );
+        // Three clauses are legal; the retired 1..=2 wrapper would reject this.
+        view.proof_body.as_mut().unwrap().transformers =
+            vec![clause(0, 10), clause(10, 29), clause(29, 34)];
+        let (left, right) =
+            build_arguments(&state(1000), &PaybookChanges::default(), &view, PEER, None).unwrap();
+        assert_eq!(
+            left,
+            expected(vec![
+                (0..5).map(|index| 1001 + 2 * index).collect(),
+                (5..14).map(|index| 1001 + 2 * index).collect(),
+                vec![1029, 1031, 1033]
+            ])
+        );
+        assert_eq!(
+            right,
+            expected(vec![
+                (0..5).map(|index| 1000 + 2 * index).collect(),
+                (5..15).map(|index| 1000 + 2 * index).collect(),
+                vec![1030, 1032]
+            ])
+        );
+        view.pending_swap_fill_ratios.clear();
+        assert_eq!(
+            build_arguments(&state(1000), &PaybookChanges::default(), &view, PEER, None).unwrap(),
+            (Vec::new(), Vec::new())
+        );
+        view.proof_body.as_mut().unwrap().transformers.pop();
+        assert!(
+            build_arguments(&state(1000), &PaybookChanges::default(), &view, PEER, None)
+                .unwrap_err()
+                .to_string()
+                .contains("DISPUTE_ARGUMENT_SWAP_COUNT_MISMATCH")
         );
     }
 }

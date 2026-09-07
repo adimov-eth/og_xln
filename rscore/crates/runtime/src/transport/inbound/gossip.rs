@@ -12,7 +12,7 @@ const MAX_PROFILES: usize = 1_000;
 pub(super) fn decode(
     value: Value,
     peer: &AcceptedHello,
-    keys: &super::super::crypto::SessionKeys,
+    key: &[u8; 32],
     audience: &str,
     challenge: &str,
     local_runtime_id: &str,
@@ -68,7 +68,7 @@ pub(super) fn decode(
     unsigned.remove("v");
     unsigned.remove("auth");
     verify_frame_mac(
-        &keys.c2s,
+        key,
         &Value::Object(unsigned),
         audience,
         challenge,

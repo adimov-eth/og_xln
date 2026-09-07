@@ -63,8 +63,9 @@ pub use certified_board_registry::{
     hydrate_certified_board_registry, hydrate_certified_board_state,
 };
 pub use concrete::{
-    ConcreteRestoreError, DecodedRuntimeCheckpoint, DecodedRuntimeWalFrame, RestoredRuntime,
-    replay_decoded_runtime_wal, restore_decoded_runtime_checkpoint,
+    ConcreteRestoreError, DecodedRuntimeCheckpoint, DecodedRuntimeEntityCheckpoint,
+    DecodedRuntimeWalFrame, RestoredRuntime, replay_decoded_runtime_wal,
+    restore_decoded_runtime_checkpoint,
 };
 pub(crate) use concrete_source::VerifiedWalFrame;
 pub use concrete_source::{

@@ -272,6 +272,7 @@ fn ack_frame_result_is_one_row_with_ack_before_frame_and_closed_child_domains() 
     let result = AccountInputResult {
         operation_index: 17,
         account_id,
+        rebalance_work_after_input: false,
         force_ack: None,
         verdict: AccountInputVerdict::AckFrameApplied {
             ack: Box::new(AccountInputVerdict::AckAccepted { height: 42 }),
@@ -301,6 +302,7 @@ fn ack_frame_result_is_one_row_with_ack_before_frame_and_closed_child_domains() 
     let rejected = AccountInputResult {
         operation_index: 18,
         account_id,
+        rebalance_work_after_input: false,
         force_ack: None,
         verdict: AccountInputVerdict::AckFrameRejected {
             phase: AckFramePhase::Frame,
@@ -320,6 +322,7 @@ fn ack_frame_result_is_one_row_with_ack_before_frame_and_closed_child_domains() 
     let wrong_domains = AccountInputResult {
         operation_index: 19,
         account_id,
+        rebalance_work_after_input: false,
         force_ack: None,
         verdict: AccountInputVerdict::AckFrameApplied {
             ack: Box::new(AccountInputVerdict::FrameCollisionIgnored {
@@ -337,6 +340,7 @@ fn dispute_required_verdict_carries_exact_secret_and_signed_frame() {
     let result = AccountInputResult {
         operation_index: 20,
         account_id: AccountId::from_bytes([0x11; 32]),
+        rebalance_work_after_input: false,
         force_ack: None,
         verdict: AccountInputVerdict::FrameDisputeRequired {
             reason: "HTLC_SECRET_ENFORCEMENT_WINDOW_TOO_SHORT".into(),

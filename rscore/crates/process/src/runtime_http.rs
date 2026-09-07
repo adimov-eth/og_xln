@@ -21,7 +21,17 @@ use xln_rscore_runtime::RuntimeEntityInput;
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const MAX_COMMAND_ENTITY_INPUTS: usize = 10_000;
 
+pub enum CrossJurisdictionStateResponse {
+    Missing,
+    NotCommitted,
+    State(Value),
+}
+
 pub enum RuntimeHttpCommand {
+    CrossJurisdictionState {
+        entity_id: [u8; 32],
+        response: SyncSender<Result<CrossJurisdictionStateResponse, String>>,
+    },
     ApplyEntityInputs {
         command_id: String,
         entity_inputs: Vec<RuntimeEntityInput>,
@@ -342,6 +352,51 @@ fn serve(stream: &mut TcpStream, state: &RuntimeHttpState) -> Result<(), String>
                     &json!({
                         "success":false,"code":"RRS_RUNTIME_ACCOUNT_STATUS_TIMEOUT","error":"query timeout"
                     }),
+                ),
+            }
+        }
+        ("GET", "/api/cross-j/state") => {
+            let query = target.split_once('?').map_or("", |(_, query)| query);
+            let parameters = form_urlencoded::parse(query.as_bytes()).collect::<Vec<_>>();
+            if parameters.len() != 1 || parameters[0].0 != "entityId" {
+                return response(
+                    stream,
+                    400,
+                    &json!({"error":"RRS_CROSS_STATE_QUERY_FIELDS"}),
+                );
+            }
+            let Some(entity_id) = parse_hex32(&parameters[0].1) else {
+                return response(stream, 400, &json!({"error":"RRS_CROSS_STATE_ENTITY_ID"}));
+            };
+            let (reply, result) = sync_channel(1);
+            state
+                .commands
+                .as_ref()
+                .ok_or("RRS_RUNTIME_HTTP_COMMANDS_UNAVAILABLE")?
+                .send(RuntimeHttpCommand::CrossJurisdictionState {
+                    entity_id,
+                    response: reply,
+                })
+                .map_err(|_| "RRS_CROSS_STATE_QUERY_SEND".to_string())?;
+            match result.recv_timeout(Duration::from_secs(20)) {
+                Ok(Ok(CrossJurisdictionStateResponse::State(value))) => {
+                    response(stream, 200, &value)
+                }
+                Ok(Ok(CrossJurisdictionStateResponse::Missing)) => response(
+                    stream,
+                    404,
+                    &json!({"error":"RRS_CROSS_STATE_ENTITY_MISSING"}),
+                ),
+                Ok(Ok(CrossJurisdictionStateResponse::NotCommitted)) => response(
+                    stream,
+                    503,
+                    &json!({"error":"RRS_CROSS_STATE_FRAME_NOT_COMMITTED"}),
+                ),
+                Ok(Err(error)) => response(stream, 503, &json!({"error":error})),
+                Err(_) => response(
+                    stream,
+                    503,
+                    &json!({"error":"RRS_CROSS_STATE_QUERY_TIMEOUT"}),
                 ),
             }
         }

@@ -323,8 +323,27 @@ pub fn canonical_route(route: &CanonicalValue) -> Result<CanonicalValue, String>
     let mut domain = vec![
         ("protocol".into(), string("xln-cross-j")),
         ("hashSchema".into(), string("route-domain")),
-        ("sourceStackId".into(), string(source_j.clone())),
-        ("targetStackId".into(), string(target_j.clone())),
+        // TS preserves supplied domain commitments independently of the leg
+        // jurisdictions. Replacing them here invalidates a user's exact
+        // route authorization; the hash check below rejects substitutions.
+        (
+            "sourceStackId".into(),
+            string(normalized(
+                supplied_domain
+                    .and_then(|domain| text(domain, "sourceStackId"))
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(&source_j),
+            )),
+        ),
+        (
+            "targetStackId".into(),
+            string(normalized(
+                supplied_domain
+                    .and_then(|domain| text(domain, "targetStackId"))
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(&target_j),
+            )),
+        ),
     ];
     for name in [
         "sourceEntityProviderAddress",

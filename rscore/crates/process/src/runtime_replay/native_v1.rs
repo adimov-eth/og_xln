@@ -206,7 +206,7 @@ fn replay_frame(
     metrics.reconcile += reconcile_started.elapsed();
     let process_started = Instant::now();
     let report = processor
-        .process_exact_replay(decoded.input)
+        .process_exact_replay(decoded.input, source_frame.outputs())
         .map_err(|error| format!("NATIVE_REPLAY_PROCESS:{height}:{error}"))?;
     metrics.processor_wall += process_started.elapsed();
     let verification_started = Instant::now();

@@ -314,26 +314,33 @@ fn decode_runtime_tx(value: &Value, index: usize) -> Result<RuntimeTx, ConcreteW
     })
 }
 
-fn expected_entity_root(
+fn expected_entity_roots(
     frame: &Value,
-) -> Result<Option<ExpectedEntityRoot>, ConcreteWalDecodeError> {
+) -> Result<Option<Vec<ExpectedEntityRoot>>, ConcreteWalDecodeError> {
     let Some(value) = object(frame, "frame")?.get("canonicalEntityHashes") else {
         return Ok(None);
     };
     let rows = array(value, "frame.canonicalEntityHashes")?;
-    if rows.len() != 1 {
-        return Err(invalid(format!("ENTITY_HASH_COUNT:{}", rows.len())));
+    if rows.is_empty() {
+        return Err(invalid("ENTITY_HASH_COUNT:0"));
     }
-    Ok(Some(ExpectedEntityRoot {
-        entity_id: digest(
-            field(&rows[0], "entityId", "frame.canonicalEntityHashes[0]")?,
-            "entityId",
-        )?,
-        root: digest(
-            field(&rows[0], "hash", "frame.canonicalEntityHashes[0]")?,
-            "entityRoot",
-        )?,
-    }))
+    let mut seen = std::collections::BTreeSet::new();
+    let roots = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let path = format!("frame.canonicalEntityHashes[{index}]");
+            let entity_id = digest(field(row, "entityId", &path)?, "entityId")?;
+            if !seen.insert(entity_id) {
+                return Err(invalid(format!("ENTITY_HASH_DUPLICATE:{index}")));
+            }
+            Ok(ExpectedEntityRoot {
+                entity_id,
+                root: digest(field(row, "hash", &path)?, "entityRoot")?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(roots))
 }
 
 /// Decode one authenticated frame/context pair without consulting TypeScript
@@ -469,7 +476,7 @@ pub fn decode_concrete_runtime_wal_frame(
             },
         },
         expected_accounts_root: None,
-        expected_entity_root: expected_entity_root(frame)?,
+        expected_entity_roots: expected_entity_roots(frame)?,
         expected_previous_frame_hash: validated.prev_frame_hash,
         expected_frame_hash: validated.frame_hash,
         canonical_state_hash: validated.canonical_state_hash,
@@ -526,6 +533,29 @@ mod tests {
     use xln_rscore_protocol::CanonicalValue;
 
     use super::*;
+
+    #[test]
+    fn cross_j_wal_preserves_every_entity_root_and_rejects_duplicate_owners() {
+        let mut frame = json!({"canonicalEntityHashes": [
+            {"entityId": format!("0x{}", "11".repeat(32)), "hash": format!("0x{}", "aa".repeat(32))},
+            {"entityId": format!("0x{}", "22".repeat(32)), "hash": format!("0x{}", "bb".repeat(32))}
+        ]});
+        let roots = expected_entity_roots(&frame).unwrap().unwrap();
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0].entity_id, [0x11; 32]);
+        assert_eq!(roots[0].root, [0xaa; 32]);
+        assert_eq!(roots[1].entity_id, [0x22; 32]);
+        assert_eq!(roots[1].root, [0xbb; 32]);
+        frame["canonicalEntityHashes"][1]["entityId"] =
+            frame["canonicalEntityHashes"][0]["entityId"].clone();
+        assert!(
+            expected_entity_roots(&frame)
+                .unwrap_err()
+                .to_string()
+                .contains("ENTITY_HASH_DUPLICATE:1")
+        );
+        assert!(expected_entity_roots(&json!({})).unwrap().is_none());
+    }
 
     fn entity_input(signer_id: &str) -> RuntimeEntityInput {
         RuntimeEntityInput::decode(json!({

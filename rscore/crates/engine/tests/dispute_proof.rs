@@ -1,7 +1,7 @@
 //! The recovery proof both engines must build byte for byte.
 //!
-//! The hashes here were produced by TypeScript's own builder
-//! (core/protocol/dispute/proof-builder.ts) over the same account, and they are
+//! The hashes here were independently encoded with ethers AbiCoder against
+//! Solidity's Int512/SignedAmount ABI over the same account, and they are
 //! what the account leaf commits: a body that hashes differently is a proof the
 //! counterparty never agreed to and the jurisdiction would not accept.
 
@@ -124,11 +124,11 @@ fn a_body_with_only_deltas_hashes_as_typescript_hashes_it() {
         build_dispute_proof(&replica(Vec::new(), Vec::new()), &TRANSFORMER, 7).expect("proof");
     assert_eq!(
         hex_32(&proof.proof_body_hash),
-        "0x848680ecc45b1a3cf9505d068e956f6d93d7810b8cc3a98e6758b5e8612833e6"
+        "0x4e46dfc2e9edae19d473497dd3059d858c0da39b8c2cc431f591d8705da60c35"
     );
     assert_eq!(
         hex_32(&proof.dispute_hash),
-        "0xc9c35e7f41081a0a4a9cbebfc4d3bb4133cd509e5597fad4fb6db69c8e725bdd"
+        "0xbec497f771431e90152c3f494760c280a19ed2644f5e52484a9e0f32f52fd37a"
     );
 }
 
@@ -143,11 +143,11 @@ fn locks_become_a_payment_clause_ordered_by_lock_id() {
     let proof = build_dispute_proof(&replica(locks, Vec::new()), &TRANSFORMER, 7).expect("proof");
     assert_eq!(
         hex_32(&proof.proof_body_hash),
-        "0x860e44478e36a70e099975da3d68e32f0001b4e196a420731d3dd30774b70ce0"
+        "0xd82aeea31228b68a2761e1c8413d127d3048bd96b6f36acae9639ec480265568"
     );
     assert_eq!(
         hex_32(&proof.dispute_hash),
-        "0xf6dee326d3f38ce0a7b386a6ebb8a6fc86804a55b205c23553e84bfbbd13fac4"
+        "0x3243856d57528b481b3f8b89aeff66aebe68a5024c71708589161550c6201bc2"
     );
 }
 
@@ -160,11 +160,11 @@ fn a_resting_offer_becomes_its_own_swap_clause() {
         build_dispute_proof(&replica(locks, vec![offer()]), &TRANSFORMER, 7).expect("proof");
     assert_eq!(
         hex_32(&proof.proof_body_hash),
-        "0xed4be0ef2b9c8ca7bf6bcf3080f852c7e944f39787e054af054330fea074f269"
+        "0x9833766d51331fa3ce5fceec2563b22c9542fadb0510505ebb40f4218c3e0a0f"
     );
     assert_eq!(
         hex_32(&proof.dispute_hash),
-        "0x79c03688ab8052914b50f8a32ef49ee11ffc629b93be55aafe011b5274db4083"
+        "0x195a1902152decbad0844427e0533b5cef6fb8bfed845cb9efce2b1c51bc3cac"
     );
 }
 
@@ -199,7 +199,7 @@ fn a_pull_becomes_the_third_canonical_clause_byte_for_byte_with_typescript() {
     let proof = build_dispute_proof(&replica, &TRANSFORMER, 7).expect("proof");
     assert_eq!(
         hex_32(&proof.proof_body_hash),
-        "0x828a4d04cce3c523d22d80a87231306065279a419191608b6afd12544e5f4a72"
+        "0x73e60329de9a6c9cdb9dbc43e3aad4d69b2a7a9fe7b0b6c9559f874b70f15615"
     );
     let body = build_dispute_proof_body(&replica, &TRANSFORMER).expect("body");
     assert_eq!(body.transformers.len(), 1);
@@ -212,6 +212,6 @@ fn a_pull_becomes_the_third_canonical_clause_byte_for_byte_with_typescript() {
                 let _ = write!(text, "{byte:02x}");
                 text
             }),
-        "0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe70000000000000000000000000000000000000000000000000000000000000011aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0000000000000000000000000000000000000000000000000000000000000001"
+        "0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000190000000000000000000000000000000000000000000000000000000000000011aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0000000000000000000000000000000000000000000000000000000000000001"
     );
 }

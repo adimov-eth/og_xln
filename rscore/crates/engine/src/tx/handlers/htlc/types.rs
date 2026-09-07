@@ -114,6 +114,10 @@ impl HtlcLock {
         }
         require_positive("timelock", &self.timelock)?;
         require_positive("amount", &self.amount)?;
+        let maximum = (BigInt::from(1) << 256_usize) - 1_u8;
+        if self.amount > maximum {
+            return Err(invalid_restore("amount", self.amount.to_string()));
+        }
         if self.token_id.get() == 0 {
             return Err(invalid_restore("tokenId", self.token_id.to_string()));
         }

@@ -1,3 +1,5 @@
+#[path = "resident/cross_j_expiry.rs"]
+mod cross_j_expiry;
 mod support;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,12 +23,12 @@ use xln_rscore_entity_kernel::{
     AdmittedLocalEntityTx, CanonicalEntityTx, ConsensusMode, CrontabState, DeterministicContext,
     DirectPaymentEntityTx, EntityConsensusConfig, EntityFrameAuthority, EntityFrameEvent,
     EntityKernelCommitments, EntityKernelOutput, EntityLeaderState, EntityStateSlice, EntityTxKind,
-    FinalizedJEventBatch, HtlcPaymentEntityTx, JClaimIngress, JReserveUpdate, LocalEntityControlTx,
-    LocalEntityFinancialTx, LocalEntityTx, OrderbookState, OriginatedHtlcDeliveryMode,
-    PreparedOriginatedHtlcPayment, ResidentEntityError, ResidentEntityOperation,
-    ResidentEntityRequest, ResidentJEventProjection, ScheduledHook, ScheduledWake, SchedulerError,
-    apply_resident_entity_round, apply_resident_entity_round_core, collect_due_scheduled_wake_jobs,
-    decode_local_entity_financial_tx,
+    ExtendCreditEntityTx, FinalizedJEventBatch, HtlcPaymentEntityTx, JClaimIngress, JReserveUpdate,
+    LocalEntityControlTx, LocalEntityFinancialTx, LocalEntityTx, OrderbookState,
+    OriginatedHtlcDeliveryMode, PreparedOriginatedHtlcPayment, ResidentEntityError,
+    ResidentEntityOperation, ResidentEntityRequest, ResidentJEventProjection, ScheduledHook,
+    ScheduledWake, SchedulerError, apply_resident_entity_round, apply_resident_entity_round_core,
+    collect_due_scheduled_wake_jobs, decode_local_entity_financial_tx,
 };
 use xln_rscore_protocol::{CanonicalNumber, CanonicalValue};
 
@@ -220,6 +222,118 @@ fn peer_proposal(
         },
     };
     (seed, row, peer)
+}
+
+#[test]
+fn cross_j_r4_h34_credit_before_inbound_proposal_order() {
+    let hub_label = "h34-proposal-order-hub";
+    let hub = entity(&identity(hub_label));
+    let first_label = "h34-proposal-order-first";
+    let second_label = "h34-proposal-order-second";
+    let first = entity(&identity(first_label));
+    let second = entity(&identity(second_label));
+    let (credit, inbound_label) = if first > second {
+        (first, second_label)
+    } else {
+        (second, first_label)
+    };
+    let (inbound_seed, inbound_row, peer) = peer_proposal(
+        inbound_label,
+        &hub,
+        0,
+        AccountTx::AddDelta {
+            token_id: TokenId::new(7).expect("token"),
+        },
+    );
+    let credit_id = AccountId::from_bytes(*credit.as_bytes());
+    let peer_id = inbound_seed.account_id;
+    assert!(
+        credit_id > peer_id,
+        "fixture order must oppose Account id order",
+    );
+    let seeds = vec![
+        AccountSeed {
+            account_id: credit_id,
+            replica: AccountReplica::new(hub.clone(), account_state(&hub, &credit))
+                .expect("local credit account"),
+            consensus: None,
+        },
+        inbound_seed,
+    ];
+
+    for workers in [1, 4] {
+        let mut accounts = ResidentConsensusEngine::restore(
+            EngineGeneration::from_bytes([0x34; 8]),
+            workers,
+            0,
+            derive_signer_key(SEED, hub_label).expect("hub key"),
+            hub_label.to_string(),
+            support::market(),
+            seeds.clone(),
+        )
+        .expect("resident accounts");
+        let mut state = EntityStateSlice::empty(hub.to_string(), TIMESTAMP);
+        state.known_accounts = BTreeSet::from([credit.to_string(), peer.to_string()]).into();
+        let expected_accounts_root = accounts.accounts_root();
+        let result = apply_resident_entity_round_core(
+            &mut accounts,
+            state,
+            ResidentEntityRequest {
+                inbound: EntityInboundRequest {
+                    owner_entity_id: *hub.as_bytes(),
+                    owning_entity_is_hub: false,
+                    expected_accounts_root,
+                    clock: ReceiverClock {
+                        entity_timestamp: TIMESTAMP,
+                        finalized_j_height: 100,
+                    },
+                    rows: vec![inbound_row.clone()],
+                    post_accounts: false,
+                },
+                local_certified_board_authority: xln_rscore_batch::AccountInputBoardAuthority::Lazy,
+                entity_height: 1,
+                outbound_timestamp: TIMESTAMP,
+                outbound_j_height: 100,
+                checkpoint_due: false,
+                post_accounts: false,
+                runtime_seed: None,
+                scheduled_wake: None,
+                expected_proposer_signer_id: hub_label.into(),
+                finalized_j_events: None,
+                entity_authority: None,
+                local_account_genesis_policy: None,
+                cross_j_opening_sibling_views: Vec::new(),
+                operations: vec![
+                    ResidentEntityOperation::Local(vec![AdmittedLocalEntityTx {
+                        signer_id: hub_label.into(),
+                        board_epoch: 0,
+                        tx: LocalEntityTx::Financial(LocalEntityFinancialTx::ExtendCredit(
+                            ExtendCreditEntityTx {
+                                counterparty_entity_id: credit.to_string(),
+                                token_id: TokenId::new(1).expect("token"),
+                                amount: BigInt::from(7),
+                            },
+                        )),
+                    }]),
+                    ResidentEntityOperation::AccountRange { start: 0, len: 1 },
+                ],
+            },
+            &DeterministicContext::hlt_default(),
+        )
+        .expect("local credit followed by inbound Account proposal");
+        let outgoing_accounts = result
+            .outbound
+            .proposals
+            .iter()
+            .filter(|row| row.outbound_input.is_some())
+            .map(|row| row.account_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outgoing_accounts,
+            vec![credit_id, peer_id],
+            "Local ExtendCredit precedes the later inbound Account ACK at W{workers}",
+        );
+    }
 }
 
 #[test]
@@ -1700,6 +1814,239 @@ fn failed_books_stage_rolls_back_account_candidate_and_exact_retry_matches_fresh
         )
     };
     assert_eq!(evidence(&retried), evidence(&fresh));
+}
+
+#[test]
+fn cross_j_r6_h69_scheduled_rebalance_broadcasts_in_the_same_entity_frame() {
+    use xln_rscore_entity_kernel::{CrontabTaskMethod, CrontabTaskState, EntityJOutput, HashType};
+
+    let hub = entity(&identity("hub"));
+    let peer = entity(&identity("rebalance-peer"));
+    let peer_id = AccountId::from_bytes(*peer.as_bytes());
+    let token = TokenId::new(1).expect("token");
+    let template = account_state(&hub, &peer);
+    let debt = if hub < peer { -10_000_000 } else { 10_000_000 };
+    let delta = Delta::new(
+        token,
+        0.into(),
+        debt.into(),
+        0.into(),
+        500_000_000.into(),
+        500_000_000.into(),
+        0.into(),
+        0.into(),
+        0.into(),
+        0.into(),
+    )
+    .expect("bilateral credit delta");
+    let mut base = AccountReplica::new(
+        hub.clone(),
+        AccountState::new(
+            template.identity().clone(),
+            template.dispute_config(),
+            vec![delta],
+        )
+        .expect("credit account"),
+    )
+    .expect("hub Account");
+    let empty_root = format!("0x{}", hex::encode(xln_rscore_protocol::EMPTY_RADIX_ROOT));
+    base.set_envelope(
+        xln_rscore_engine::AccountEnvelope::new(
+            vec![
+                ("status".into(), CanonicalValue::String("active".into())),
+                (
+                    "shadow".into(),
+                    CanonicalValue::Object(vec![(
+                        "rebalance".into(),
+                        CanonicalValue::Object(vec![
+                            (
+                                "policyRoot".into(),
+                                CanonicalValue::String(empty_root.clone()),
+                            ),
+                            (
+                                "submittedAtByTokenRoot".into(),
+                                CanonicalValue::String(empty_root),
+                            ),
+                        ]),
+                    )]),
+                ),
+            ],
+            Vec::new(),
+        )
+        .expect("empty rebalance shadow"),
+    );
+    let requester_side = if hub < peer {
+        xln_rscore_engine::Side::Right
+    } else {
+        xln_rscore_engine::Side::Left
+    };
+    let requested = SequentialAccountEngine::apply_with_context(
+        &base,
+        requester_side,
+        &AccountTx::RequestCollateral {
+            token_id: token,
+            amount: 2_000_000.into(),
+            fee_token_id: Some(token),
+            fee_amount: 100_000.into(),
+            policy_version: 1,
+        },
+        &AccountExecutionContext::with_market(1_000, TIMESTAMP, 100, 0, 100, support::market()),
+    )
+    .expect("collateral request transition");
+    assert_eq!(requested.verdict(), &AccountVerdict::Applied);
+    let mut accounts = ResidentConsensusEngine::restore(
+        EngineGeneration::from_bytes([0x69; 8]),
+        4,
+        0,
+        derive_signer_key(SEED, "hub").expect("hub key"),
+        "hub".into(),
+        support::market(),
+        vec![AccountSeed {
+            account_id: peer_id,
+            replica: requested.committed().expect("committed collateral request"),
+            consensus: None,
+        }],
+    )
+    .expect("resident accounts");
+    assert!(accounts.has_rebalance_work().expect("request readiness"));
+    let mut state = EntityStateSlice::empty(hub.to_string(), TIMESTAMP);
+    state.known_accounts.insert(peer.to_string());
+    state.reserves.insert(1, 10_000_000.into());
+    state.hub_rebalance_config = Some(CanonicalValue::Object(vec![
+        (
+            "policyVersion".into(),
+            CanonicalValue::Number(CanonicalNumber::from_u32(1)),
+        ),
+        (
+            "rebalanceLiquidityFeeBps".into(),
+            CanonicalValue::BigInt(0.into()),
+        ),
+    ]));
+    let crontab = CrontabState {
+        tasks: BTreeMap::from([(
+            CrontabTaskMethod::HubRebalance,
+            CrontabTaskState {
+                method: CrontabTaskMethod::HubRebalance,
+                interval_ms: 1_000,
+                last_run: TIMESTAMP - 1_000,
+                enabled: true,
+                params: BTreeMap::new(),
+            },
+        )]),
+        hooks: Default::default(),
+    };
+    let jobs = collect_due_scheduled_wake_jobs(&crontab, TIMESTAMP, true).expect("rebalance wake");
+    state.crontab = Some(crontab);
+    let command_nonces = state.entity_command_nonces.clone();
+    let mut authority = single_signer_authority("hub");
+    authority.config.jurisdiction = Some(CanonicalValue::Object(vec![
+        ("name".into(), CanonicalValue::String("test".into())),
+        (
+            "chainId".into(),
+            CanonicalValue::Number(CanonicalNumber::from_u32(31_337)),
+        ),
+        (
+            "depositoryAddress".into(),
+            CanonicalValue::String("0x8888888888888888888888888888888888888888".into()),
+        ),
+    ]));
+    let expected_accounts_root = accounts.accounts_root();
+    let result = apply_resident_entity_round_core(
+        &mut accounts,
+        state,
+        ResidentEntityRequest {
+            inbound: EntityInboundRequest {
+                owner_entity_id: *hub.as_bytes(),
+                owning_entity_is_hub: true,
+                expected_accounts_root,
+                clock: ReceiverClock {
+                    entity_timestamp: TIMESTAMP,
+                    finalized_j_height: 100,
+                },
+                rows: Vec::new(),
+                post_accounts: false,
+            },
+            local_certified_board_authority: xln_rscore_batch::AccountInputBoardAuthority::Lazy,
+            entity_height: 1,
+            outbound_timestamp: TIMESTAMP,
+            outbound_j_height: 100,
+            checkpoint_due: false,
+            post_accounts: false,
+            runtime_seed: None,
+            scheduled_wake: Some(ScheduledWake {
+                version: 1,
+                proposer_signer_id: "hub".into(),
+                due_at: TIMESTAMP,
+                jobs,
+            }),
+            expected_proposer_signer_id: "hub".into(),
+            finalized_j_events: None,
+            entity_authority: Some(authority),
+            local_account_genesis_policy: None,
+            cross_j_opening_sibling_views: Vec::new(),
+            operations: Vec::new(),
+        },
+        &DeterministicContext::hlt_default(),
+    )
+    .expect("scheduled rebalance frame");
+
+    let batch = result
+        .state
+        .j_batch_state
+        .as_ref()
+        .expect("rebalance batch");
+    assert!(
+        batch.sent_batch.is_some(),
+        "scheduled broadcast must execute before this Entity frame seals"
+    );
+    let sent = batch.sent_batch.as_ref().expect("signed batch candidate");
+    assert_eq!(sent.batch.reserve_to_collateral.len(), 1);
+    assert_eq!(sent.entity_nonce, 1);
+    assert_eq!(batch.broadcast_count, 1);
+    assert!(
+        result.routed_entity_outputs.is_empty(),
+        "approved self actions stay in this frame"
+    );
+    assert_eq!(result.state.entity_command_nonces, command_nonces);
+    assert!(
+        matches!(result.j_outputs.as_slice(), [EntityJOutput::BatchIntent { batch_hash, entity_nonce: 1, .. }] if batch_hash == &sent.batch_hash)
+    );
+    let batch_hashes = result
+        .secondary_hashes
+        .iter()
+        .filter(|hash| hash.kind == HashType::JBatch)
+        .collect::<Vec<_>>();
+    assert_eq!(batch_hashes.len(), 1);
+    assert_eq!(
+        batch_hashes[0].hash,
+        format!("0x{}", hex::encode(sent.batch_hash))
+    );
+    assert!(
+        result
+            .entity_frame_events
+            .contains(&EntityFrameEvent::Status {
+                message: "📤 Batch (1 ops) → hashesToSign [nonce=1]".into()
+            })
+    );
+    assert_eq!(
+        result.account_touch_order,
+        [peer_id],
+        "submitted request Account must be included in Runtime history touches"
+    );
+    assert!(matches!(
+        result.outputs.as_slice(),
+        [
+            EntityKernelOutput::Debug { .. },
+            EntityKernelOutput::Debug { .. }
+        ]
+    ));
+    assert_eq!(
+        xln_rscore_entity_kernel::compute_entity_effects_parity_digest(&result.outputs)
+            .expect("scheduled wake semantic effects"),
+        xln_rscore_entity_kernel::compute_entity_effects_parity_digest(&[])
+            .expect("empty semantic effects"),
+        "rebalance diagnostics stay available without becoming semantic effects"
+    );
 }
 
 #[test]

@@ -1,6 +1,4 @@
-mod common;
-
-#[path = "authority/account_tx_dispute_admission_vectors.rs"]
+#[path = "../authority/account_tx_dispute_admission_vectors.rs"]
 mod account_tx_dispute_admission_vectors;
 
 use num_bigint::BigInt;
@@ -9,7 +7,7 @@ use xln_rscore_engine::{
     ValidationRejection,
 };
 
-use common::{delta, entity, entity_text, replica, root_hex, token};
+use crate::common::{self, delta, entity, entity_text, replica, root_hex, token};
 
 fn direct_payment(amount: i64) -> AccountTx {
     AccountTx::DirectPayment {
@@ -160,8 +158,8 @@ fn credit_orientation_and_row_limit_match_typescript() {
 #[test]
 fn credit_and_payment_numeric_boundaries_reject_without_candidates() {
     let base = replica(entity(0x11), entity(0x11), entity(0x22), Vec::new());
-    let max_payment = (BigInt::from(1_u8) << 128) - 1_u8;
-    let max_credit: BigInt = &max_payment * 1_000_u16;
+    let max_payment = (BigInt::from(1_u8) << 256) - 1_u8;
+    let max_credit: BigInt = (BigInt::from(1_u8) << 256) - 1_u8;
     let accepted = SequentialAccountEngine::apply(
         &base,
         Side::Left,

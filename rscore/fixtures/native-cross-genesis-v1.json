@@ -1,0 +1,274 @@
+{
+  "entitySignerLabel": "h1-hub",
+  "expectedOwners": [
+    {
+      "entityId": "0x1f418224d01c1e2eb28f72883b06c2e73ecf84240af1aedeb9cff8bcc6c8bc4d",
+      "signerId": "0x0e8f37fcc9c4db00ea9d706c30a62bcf37ec7881",
+      "chainId": 31337,
+      "signerLabel": "h1-hub"
+    },
+    {
+      "entityId": "0x982a656de0b2f4a1fdbf8e8a2431a2f0f3f47d932dd874ffdf3493d5633af731",
+      "signerId": "0x75c6716f8693ed6084a5c45b1a2c5880a827de4a",
+      "chainId": 31338,
+      "signerLabel": "h1-hub:Tron"
+    }
+  ],
+  "genesis": {
+    "entities": [
+      {
+        "entityAuthorityJurisdiction": {
+          "address": "http://127.0.0.1:20000",
+          "blockTimeMs": 10000,
+          "chainId": 31337,
+          "depositoryAddress": "0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+          "entityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+          "name": "Testnet"
+        },
+        "entityEncryptionPublicKey": "0xd2c6bc2dbf21f0c7c73125c1a21a267955a0d9e2bb165bc9a231452bbe5e5678",
+        "entityProfile": {
+          "avatar": "",
+          "bio": "",
+          "entityKind": "protocol",
+          "isHub": true,
+          "name": "H1",
+          "sectors": [
+            "finance",
+            "infrastructure"
+          ],
+          "website": ""
+        },
+        "htlcRoutingBaseFee": "0",
+        "htlcRoutingFeePpm": 1,
+        "signerLabel": "h1-hub"
+      },
+      {
+        "entityAuthorityJurisdiction": {
+          "address": "http://127.0.0.1:20001",
+          "blockTimeMs": 10000,
+          "chainId": 31338,
+          "depositoryAddress": "0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+          "entityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+          "name": "Tron"
+        },
+        "entityEncryptionPublicKey": "0xd7aa5f4c51a90c343bb6245f5aedd314304a9cb1f64c9f5e0f3e69996736841b",
+        "entityProfile": {
+          "avatar": "",
+          "bio": "",
+          "entityKind": "protocol",
+          "isHub": true,
+          "name": "H1",
+          "sectors": [
+            "finance",
+            "infrastructure"
+          ],
+          "website": ""
+        },
+        "htlcRoutingBaseFee": "0",
+        "htlcRoutingFeePpm": 1,
+        "signerLabel": "h1-hub:Tron"
+      }
+    ],
+    "machine": {
+      "activeJurisdiction": "Testnet",
+      "infrastructure": {
+        "accountJClaimNodes": {
+          "__xlnType": "Map",
+          "value": []
+        },
+        "certifiedBoardNodes": {
+          "__xlnType": "Map",
+          "value": []
+        },
+        "certifiedRegistrationEvidence": {
+          "__xlnType": "Map",
+          "value": []
+        },
+        "entityEncryptionSeeds": {
+          "__xlnType": "Map",
+          "value": []
+        },
+        "runtimeAdapterCommandFrontiers": {
+          "__xlnType": "Map",
+          "value": []
+        }
+      },
+      "jReplicas": [
+        [
+          "Testnet",
+          {
+            "blockDelayMs": 300,
+            "blockNumber": {
+              "__xlnType": "BigInt",
+              "value": "0"
+            },
+            "blockReady": false,
+            "blockTimeMs": 10000,
+            "chainId": 31337,
+            "contracts": {
+              "account": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+              "deltaTransformer": "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9",
+              "depository": "0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+              "entityProvider": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0"
+            },
+            "entityProviderDeploymentBlock": 3,
+            "lastBlockTimestamp": 0,
+            "mempool": [],
+            "name": "Testnet",
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "rpcs": [
+              "http://127.0.0.1:20000"
+            ],
+            "stateRoot": null,
+            "tokenRegistry": [
+              {
+                "address": "0x8a791620dd6260079bf849dc5567adc3f2fdc318",
+                "decimals": 6,
+                "externalTokenId": {
+                  "__xlnType": "BigInt",
+                  "value": "0"
+                },
+                "name": "USD Coin",
+                "symbol": "USDC",
+                "tokenId": 1,
+                "tokenType": 0
+              },
+              {
+                "address": "0x0dcd1bf9a1b36ce34237eeafef220932846bcd82",
+                "decimals": 18,
+                "externalTokenId": {
+                  "__xlnType": "BigInt",
+                  "value": "0"
+                },
+                "name": "Wrapped Ether",
+                "symbol": "WETH",
+                "tokenId": 2,
+                "tokenType": 0
+              },
+              {
+                "address": "0x9a9f2ccfde556a7e9ff0848998aa4a0cfd8863ae",
+                "decimals": 6,
+                "externalTokenId": {
+                  "__xlnType": "BigInt",
+                  "value": "0"
+                },
+                "name": "Tether USD",
+                "symbol": "USDT",
+                "tokenId": 3,
+                "tokenType": 0
+              }
+            ],
+            "watcherConfirmationDepth": 0
+          }
+        ],
+        [
+          "Tron",
+          {
+            "blockDelayMs": 300,
+            "blockNumber": {
+              "__xlnType": "BigInt",
+              "value": "0"
+            },
+            "blockReady": false,
+            "blockTimeMs": 10000,
+            "chainId": 31338,
+            "contracts": {
+              "account": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+              "deltaTransformer": "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9",
+              "depository": "0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+              "entityProvider": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0"
+            },
+            "entityProviderDeploymentBlock": 3,
+            "lastBlockTimestamp": 0,
+            "mempool": [],
+            "name": "Tron",
+            "position": {
+              "x": 160,
+              "y": 600,
+              "z": 120
+            },
+            "rpcs": [
+              "http://127.0.0.1:20001"
+            ],
+            "stateRoot": null,
+            "tokenRegistry": [
+              {
+                "address": "0x8a791620dd6260079bf849dc5567adc3f2fdc318",
+                "decimals": 6,
+                "externalTokenId": {
+                  "__xlnType": "BigInt",
+                  "value": "0"
+                },
+                "name": "USD Coin",
+                "symbol": "USDC",
+                "tokenId": 1,
+                "tokenType": 0
+              },
+              {
+                "address": "0x0dcd1bf9a1b36ce34237eeafef220932846bcd82",
+                "decimals": 18,
+                "externalTokenId": {
+                  "__xlnType": "BigInt",
+                  "value": "0"
+                },
+                "name": "Wrapped Ether",
+                "symbol": "WETH",
+                "tokenId": 2,
+                "tokenType": 0
+              },
+              {
+                "address": "0x9a9f2ccfde556a7e9ff0848998aa4a0cfd8863ae",
+                "decimals": 6,
+                "externalTokenId": {
+                  "__xlnType": "BigInt",
+                  "value": "0"
+                },
+                "name": "Tether USD",
+                "symbol": "USDT",
+                "tokenId": 3,
+                "tokenType": 0
+              },
+              {
+                "address": "0x59b670e9fa9d0a427751af201d676719a970857b",
+                "decimals": 6,
+                "externalTokenId": {
+                  "__xlnType": "BigInt",
+                  "value": "0"
+                },
+                "name": "Tron Native",
+                "symbol": "TRX",
+                "tokenId": 4,
+                "tokenType": 0
+              },
+              {
+                "address": "0x4a679253410272dd5232b3ff7cf5dbb88f295319",
+                "decimals": 18,
+                "externalTokenId": {
+                  "__xlnType": "BigInt",
+                  "value": "0"
+                },
+                "name": "Sun Token",
+                "symbol": "SUN",
+                "tokenId": 5,
+                "tokenType": 0
+              }
+            ],
+            "watcherConfirmationDepth": 0
+          }
+        ]
+      ],
+      "runtimeConfig": {
+        "loopIntervalMs": 0,
+        "minFrameDelayMs": 0
+      },
+      "runtimeId": "0x883611c1ae2d860c3a9429fd8de7376734267f2d"
+    },
+    "timestamp": 0
+  },
+  "runtimeSignerLabel": "runtime",
+  "seed": "native-cross-two-owner"
+}

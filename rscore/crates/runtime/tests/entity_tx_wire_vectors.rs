@@ -68,11 +68,45 @@ fn every_typescript_entity_tx_decodes_and_reencodes_byte_identically() {
         // This is the production native EntityTx admission path, not a
         // discriminant-only parser. It projects protocol lanes and invokes
         // the typed local/Account decoders used by live Runtime execution.
-        if let Err(error) = RuntimeEntityInput::decode(serde_json::json!({
+        let input = serde_json::json!({
             "entityId": OWNER,
             "signerId": "owner",
             "entityTxs": [value.clone()],
-        })) {
+        });
+        let admission = RuntimeEntityInput::decode(input.clone());
+        if name == "runtimeOutput" {
+            let forbidden =
+                "RUNTIME_ENTITY_INPUT_TRANSPORT_INVALID:RUNTIME_CROSS_J_EXTERNAL_INGRESS_FORBIDDEN";
+            assert_eq!(
+                admission
+                    .expect_err("unsigned runtimeOutput must reject")
+                    .to_string(),
+                forbidden
+            );
+            // These exact EntityTx bytes arrive only inside the Runtime's
+            // authenticated transport envelope. Keep its target and committed
+            // source-frame metadata; do not re-sign it as an EntityCommand.
+            let mut authenticated = input;
+            authenticated["entityId"] = value["data"]["targetEntityId"].clone();
+            authenticated["from"] = serde_json::json!("0x1111111111111111111111111111111111111111");
+            authenticated["runtimeId"] =
+                serde_json::json!("0x2222222222222222222222222222222222222222");
+            authenticated["sourceRuntimeFrame"] = serde_json::json!({"height":1,"timestamp":100});
+            let decoded = RuntimeEntityInput::decode(authenticated.clone())
+                .expect("authenticated runtimeOutput typed admission");
+            assert!(decoded.runtime_output().is_some());
+            assert_eq!(decoded.canonical(), &authenticated);
+            authenticated["entityTxs"]
+                .as_array_mut()
+                .expect("transactions")
+                .push(value.clone());
+            assert_eq!(
+                RuntimeEntityInput::decode(authenticated)
+                    .expect_err("runtimeOutput envelope must contain exactly one transaction")
+                    .to_string(),
+                forbidden
+            );
+        } else if let Err(error) = admission {
             let detail = error.to_string();
             let expected_boundary_rejection = match name.as_str() {
                 // These transactions are executable, but never as unsigned

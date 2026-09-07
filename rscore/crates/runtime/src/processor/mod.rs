@@ -12,6 +12,8 @@ mod machine_snapshot;
 mod output;
 mod profile_route;
 mod projection;
+#[path = "projection/replay_outbox.rs"]
+mod replay_outbox;
 #[path = "projection/replica_meta.rs"]
 mod replica_meta;
 mod routing;

@@ -197,6 +197,10 @@ pub struct AccountInputResult {
     pub operation_index: u64,
     pub account_id: AccountId,
     pub verdict: AccountInputVerdict,
+    /// Exact transient readiness after this input, before the next input for
+    /// the same Account. Entity consumes it in accepted input order; it is
+    /// neither persisted nor replaced by the final per-Account work index.
+    pub rebalance_work_after_input: bool,
     /// Transient same-round response control. `Some(true)` forces the ACK
     /// produced by an accepted/duplicate proposal, `Some(false)` cancels an
     /// earlier force after our pending frame was ACKed, and `None` preserves

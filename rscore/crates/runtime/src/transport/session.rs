@@ -7,12 +7,21 @@ use super::crypto::{
     EncryptionIdentity, SessionKeys, derive_session_keys, ephemeral_identity, ephemeral_public_hex,
     hello_digest, parse_public_hex, sign, static_public_hex,
 };
-use super::entity_inputs_frame::{SessionCounters, SessionFrameContext, send_entity_inputs};
+use super::entity_inputs_frame::{
+    ReadinessFrameContext, SessionCounters, SessionFrameContext, decode_delivery_ready,
+    send_delivery_ready,
+};
+#[cfg(test)]
 use super::routing::OutboundEnvelope;
 use super::wire::{
     Socket, object, read_value, required_text, send_value, set_timeouts, unix_ms,
     verify_acknowledgement,
 };
+
+#[cfg(test)]
+use super::entity_inputs_frame::send_entity_inputs;
+#[cfg(test)]
+use super::wire::{set_nonblocking, try_read_value};
 
 #[cfg(test)]
 use super::crypto::{decrypt_session, verify_frame_mac};
@@ -24,19 +33,20 @@ use super::msgpack::decode_transport;
 use super::routing::{normalize_entity_id, normalize_runtime_id};
 
 pub(crate) struct DirectSession {
-    target_runtime_id: String,
-    source_runtime_id: String,
-    audience: String,
-    challenge: String,
-    encryption_public_hex: String,
-    #[cfg(test)]
-    peer_encryption_public_hex: String,
-    keys: SessionKeys,
-    socket: Socket,
-    outbound: SessionCounters,
-    #[cfg(test)]
-    inbound: SessionCounters,
-    max_message_bytes: usize,
+    pub(super) target_runtime_id: String,
+    pub(super) source_runtime_id: String,
+    pub(super) audience: String,
+    pub(super) challenge: String,
+    pub(super) encryption_public_hex: String,
+    pub(super) peer_encryption_public_hex: String,
+    pub(super) peer_session_public: [u8; 32],
+    pub(super) keys: SessionKeys,
+    pub(super) socket: Socket,
+    pub(super) outbound: SessionCounters,
+    pub(super) inbound: SessionCounters,
+    pub(super) peer_ready: bool,
+    pub(super) local_ready: bool,
+    pub(super) max_message_bytes: usize,
 }
 
 pub(crate) struct SessionConfig<'a> {
@@ -110,39 +120,49 @@ impl DirectSession {
             &audience,
             &challenge,
         )?;
-        #[cfg(not(test))]
-        let _ = hello_ack_auth_timestamp;
         let server_session_public =
             parse_public_hex(&required_text(&acknowledgement, "sessionPubKey")?)?;
         let peer_encryption_public_hex =
             required_text(&acknowledgement, "fromEncryptionPubKey")?.to_ascii_lowercase();
         parse_public_hex(&peer_encryption_public_hex)?;
         let keys = derive_session_keys(&ephemeral, &server_session_public, &challenge, &audience)?;
-        Ok(Self {
+        let mut session = Self {
             target_runtime_id: config.target_runtime_id.into(),
             source_runtime_id: config.source_runtime_id.into(),
             audience,
             challenge,
             encryption_public_hex: static_public,
-            #[cfg(test)]
             peer_encryption_public_hex,
+            peer_session_public: server_session_public,
             keys,
             socket,
             outbound: SessionCounters::default(),
-            #[cfg(test)]
             inbound: SessionCounters {
                 message_counter: 0,
                 auth_timestamp: hello_ack_auth_timestamp,
                 encryption_sequence: 0,
             },
+            peer_ready: false,
+            local_ready: false,
             max_message_bytes: config.max_message_bytes,
-        })
+        };
+        // Both sides announce immediately after hello, independently of peer
+        // readiness. Waiting for the peer to be true would deadlock startup.
+        session.publish_readiness()?;
+        let initial_ready = read_value(&mut session.socket)?;
+        session.accept_readiness(initial_ready)?;
+        Ok(session)
     }
 
+    #[cfg(test)]
     pub(crate) fn send_envelope(
         &mut self,
         envelope: &OutboundEnvelope,
-    ) -> Result<(), RuntimeTransportError> {
+    ) -> Result<bool, RuntimeTransportError> {
+        self.poll_readiness()?;
+        if !self.peer_ready {
+            return Ok(false);
+        }
         send_entity_inputs(
             &mut self.socket,
             envelope,
@@ -156,14 +176,79 @@ impl DirectSession {
                 counters: &mut self.outbound,
             },
             self.max_message_bytes,
+        )?;
+        Ok(true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_delivery_ready(&mut self, ready: bool) -> Result<(), RuntimeTransportError> {
+        if self.local_ready != ready {
+            self.local_ready = ready;
+            self.publish_readiness()?;
+        }
+        Ok(())
+    }
+
+    fn publish_readiness(&mut self) -> Result<(), RuntimeTransportError> {
+        send_delivery_ready(
+            &mut self.socket,
+            self.local_ready,
+            &mut SessionFrameContext {
+                key: &self.keys.c2s,
+                from: &self.source_runtime_id,
+                to: &self.target_runtime_id,
+                encryption_public_hex: &self.encryption_public_hex,
+                audience: &self.audience,
+                challenge: &self.challenge,
+                counters: &mut self.outbound,
+            },
+            self.max_message_bytes,
         )
+    }
+
+    fn accept_readiness(&mut self, value: Value) -> Result<(), RuntimeTransportError> {
+        self.peer_ready = decode_delivery_ready(
+            value,
+            &mut ReadinessFrameContext {
+                key: &self.keys.s2c,
+                from: &self.target_runtime_id,
+                to: &self.source_runtime_id,
+                encryption_public_hex: &self.peer_encryption_public_hex,
+                audience: &self.audience,
+                challenge: &self.challenge,
+                auth_timestamp: &mut self.inbound.auth_timestamp,
+            },
+        )?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn poll_readiness(&mut self) -> Result<(), RuntimeTransportError> {
+        set_nonblocking(&mut self.socket, true)?;
+        let result = self.read_available_readiness();
+        set_nonblocking(&mut self.socket, false)?;
+        result
+    }
+
+    #[cfg(test)]
+    fn read_available_readiness(&mut self) -> Result<(), RuntimeTransportError> {
+        while let Some(value) = try_read_value(&mut self.socket)? {
+            self.accept_readiness(value)?;
+        }
+        Ok(())
     }
 
     /// Read one canonical `entity_inputs` message on this same session.
     /// Tests use this to prove the peer reply never opens a second TCP dial.
     #[cfg(test)]
     pub(crate) fn recv_envelope(&mut self) -> Result<Value, RuntimeTransportError> {
-        let value = read_value(&mut self.socket)?;
+        let value = loop {
+            let value = read_value(&mut self.socket)?;
+            if value.get("type").and_then(Value::as_str) != Some("delivery_ready") {
+                break value;
+            }
+            self.accept_readiness(value)?;
+        };
         decode_entity_inputs(
             value,
             &mut SessionFrameContext {
@@ -178,6 +263,7 @@ impl DirectSession {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn close(mut self) {
         let _ = self.socket.close(None);
     }

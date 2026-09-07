@@ -492,7 +492,7 @@ fn settlement_hash(
     let identity = account.state().identity();
     let head_size = 7 * 32;
     let account_key_size = 32 + 64;
-    let diffs_size = 32 + compiled.diffs.len() * 5 * 32;
+    let diffs_size = 32 + compiled.diffs.len() * 9 * 32;
     let mut encoded = Vec::with_capacity(
         head_size + account_key_size + diffs_size + 32 + compiled.forgive.len() * 32,
     );
@@ -509,10 +509,10 @@ fn settlement_hash(
     encoded.extend_from_slice(&abi_u64(compiled.diffs.len() as u64));
     for diff in &compiled.diffs {
         encoded.extend_from_slice(&abi_u64(u64::from(diff.token_id.get())));
-        encoded.extend_from_slice(&abi_int(&diff.left)?);
-        encoded.extend_from_slice(&abi_int(&diff.right)?);
-        encoded.extend_from_slice(&abi_int(&diff.collateral)?);
-        encoded.extend_from_slice(&abi_int(&diff.ondelta)?);
+        encoded.extend_from_slice(&abi_movement(&diff.left)?);
+        encoded.extend_from_slice(&abi_movement(&diff.right)?);
+        encoded.extend_from_slice(&abi_movement(&diff.collateral)?);
+        encoded.extend_from_slice(&abi_movement(&diff.ondelta)?);
     }
     encoded.extend_from_slice(&abi_u64(compiled.forgive.len() as u64));
     for token in &compiled.forgive {
@@ -763,20 +763,17 @@ fn abi_address(value: &[u8; 20]) -> [u8; 32] {
     word
 }
 
-fn abi_int(value: &BigInt) -> Result<[u8; 32], String> {
-    let modulus = BigInt::from(1) << 256usize;
-    let encoded = if value.sign() == num_bigint::Sign::Minus {
-        &modulus + value
-    } else {
-        value.clone()
-    };
-    let (_, bytes) = encoded.to_bytes_be();
+fn abi_movement(value: &BigInt) -> Result<[u8; 64], String> {
+    // The signer authorizes one full uint256 movement with an explicit sign.
+    // Magnitude bytes never truncate; zero always has the false sign bit.
+    let (sign, bytes) = value.to_bytes_be();
     if bytes.len() > 32 {
-        return Err("SETTLEMENT_INT256_RANGE".into());
+        return Err("SETTLEMENT_SIGNED_AMOUNT_RANGE".into());
     }
-    let mut word = [0; 32];
-    word[32 - bytes.len()..].copy_from_slice(&bytes);
-    Ok(word)
+    let mut words = [0; 64];
+    words[..32].copy_from_slice(&abi_u64(u64::from(sign == num_bigint::Sign::Minus)));
+    words[64 - bytes.len()..].copy_from_slice(&bytes);
+    Ok(words)
 }
 
 fn apply_submit(
@@ -1546,8 +1543,8 @@ fn compile_ops(ops: &[CanonicalValue], proposer_is_left: bool) -> Result<Compile
             forgive.len()
         ));
     }
-    let min = -(BigInt::from(1) << 255usize);
-    let max = (BigInt::from(1) << 255usize) - 1;
+    let max = (BigInt::from(1) << 256usize) - 1;
+    let min = -&max;
     for diff in &diffs {
         for (name, value) in [
             ("leftDiff", &diff.left),
@@ -1557,16 +1554,10 @@ fn compile_ops(ops: &[CanonicalValue], proposer_is_left: bool) -> Result<Compile
         ] {
             if value < &min || value > &max {
                 return Err(format!(
-                    "SETTLEMENT_INT256_RANGE:{name}:token={}",
+                    "SETTLEMENT_SIGNED_AMOUNT_RANGE:{name}:token={}",
                     diff.token_id
                 ));
             }
-        }
-        if diff.left == min || diff.right == min || diff.collateral == min {
-            return Err(format!(
-                "SETTLEMENT_INT256_NEGATION:token={}",
-                diff.token_id
-            ));
         }
         let sum = &diff.left + &diff.right + &diff.collateral;
         if sum != BigInt::from(0) {
@@ -1612,25 +1603,29 @@ fn plan_hold_add(
     planned: &mut BTreeMap<TokenId, crate::Delta>,
 ) -> Result<(), String> {
     for diff in diffs {
-        for (side, amount) in hold_plan(diff) {
-            if amount == BigInt::from(0) {
-                continue;
-            }
+        let holds = hold_plan(diff);
+        if holds.iter().all(|(_, amount)| amount == &BigInt::from(0)) {
+            continue;
+        }
+        let delta = planned_delta(account, planned, diff.token_id, "add")?;
+        // TS validates both capacities before either hold representation.
+        for (side, amount) in &holds {
             let reserve_deposit = match side {
                 Side::Left => diff.left < BigInt::from(0) && diff.collateral > BigInt::from(0),
                 Side::Right => diff.right < BigInt::from(0) && diff.collateral > BigInt::from(0),
             };
-            let delta = planned_delta(account, planned, diff.token_id, "add")?;
-            if !reserve_deposit && amount > delta.perspective(side).out_capacity {
-                let label = if side == Side::Left { "left" } else { "right" };
+            if !reserve_deposit && amount > &delta.perspective(*side).out_capacity {
+                let label = if *side == Side::Left { "left" } else { "right" };
                 return Err(format!(
                     "SETTLEMENT_HOLD_CAPACITY:{label}:token={}",
                     diff.token_id
                 ));
             }
+        }
+        for (side, amount) in holds {
             delta
                 .add_hold(side, &amount)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| error.message())?;
         }
     }
     Ok(())
@@ -2105,8 +2100,36 @@ mod tests {
         let compiled = compile_ops(&ops, true).expect("compile");
         assert_eq!(
             settlement_hash(&account, &compiled, 5).expect("hash"),
-            "0xe00418cfb7593ce22f8ce8d7355f5a824454a0b4e6ed031fa260f16acf946e86",
+            "0x1255ab84e7da58de46ff5c763eda46bf036a27541d633a8b1e0a5bcedb19e14f",
         );
+    }
+
+    #[test]
+    fn cooperative_settlement_full_uint256_matches_independent_ethers() {
+        let account = replica();
+        let maximum = (BigInt::from(1) << 256_usize) - 1_u8;
+        let op = CanonicalValue::Object(vec![
+            ("type".into(), CanonicalValue::String("r2r".into())),
+            (
+                "tokenId".into(),
+                CanonicalValue::Number(CanonicalNumber::from_u16(1)),
+            ),
+            ("amount".into(), CanonicalValue::BigInt(maximum.clone())),
+        ]);
+        let compiled = compile_ops(std::slice::from_ref(&op), true).expect("full asset movement");
+        assert_eq!(
+            settlement_hash(&account, &compiled, 5).expect("hash"),
+            "0x1a57b542c6bceb74e532b38d147c927efed7619fb495519a8ae3aba697cb16ee"
+        );
+        assert_eq!(
+            abi_movement(&BigInt::from(0)).expect("canonical zero"),
+            [0; 64]
+        );
+        assert!(
+            compile_ops(&[op.clone(), op], true).is_err(),
+            "sum does not fit one asset movement"
+        );
+        assert!(abi_movement(&(maximum + 1_u8)).is_err());
     }
 
     #[test]

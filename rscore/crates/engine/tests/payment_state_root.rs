@@ -169,7 +169,7 @@ fn exact_payment_profile_root_matches_typescript_with_committed_htlc() {
 }
 
 #[test]
-fn restore_accepts_positive_amount_above_live_payment_limit() {
+fn restore_accepts_positive_amount_above_retired_u128_payment_ceiling() {
     let amount: BigInt = BigInt::from(1_u8) << 128_usize;
     let state = AccountState::restore(
         identity(),
@@ -177,7 +177,7 @@ fn restore_accepts_positive_amount_above_live_payment_limit() {
         vec![delta_with_left_hold(amount.clone())],
         vec![lock_with_amount(amount)],
     )
-    .expect("durable state accepts positive bigint above live admission limit");
+    .expect("durable state accepts representable amounts above the retired u128 ceiling");
 
     assert_eq!(hex::encode(state.deltas_root()), TS_OVERSIZED_DELTA_ROOT);
     assert_eq!(hex::encode(state.htlc_locks_root()), TS_OVERSIZED_LOCK_ROOT);

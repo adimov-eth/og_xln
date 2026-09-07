@@ -385,6 +385,23 @@ fn runtime_from_initial(
     Ok(runtime)
 }
 
+fn colocated_runtime_from_initial(fixture: &Value) -> Result<RuntimeReplica, RuntimeMachineError> {
+    let setup = &fixture["setup"];
+    let mut runtime = runtime_from_initial(fixture, "hub")?;
+    for entity in setup["initial"]["user"]["entities"].as_array().unwrap() {
+        merge_second(
+            &mut runtime,
+            single_entity_runtime(
+                text(setup, "seed"),
+                setup["timestamp"].as_u64().unwrap(),
+                setup,
+                entity,
+            )?,
+        )?;
+    }
+    Ok(runtime)
+}
+
 fn decoded_inputs(frame: &Value) -> Result<Vec<RuntimeEntityInput>, RuntimeMachineError> {
     frame["canonicalEntityInputs"]
         .as_array()
@@ -832,6 +849,641 @@ fn assert_fixture_frame(
 }
 
 #[test]
+fn cross_j_r4_h45_empty_wake_materializes_committed_intent() -> Result<(), RuntimeMachineError> {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let expected = &fixture["frames"][0];
+    let mut wake_frame = expected.clone();
+    wake_frame["canonicalEntityInputs"][0]["entityTxs"] = serde_json::json!([]);
+    let runtime = runtime_from_initial(&fixture, "hub")?;
+    let input = &expected["canonicalEntityInputs"][0];
+    let (state, live) = runtime
+        .entity_slot(&hex::<32>(text(input, "entityId")), text(input, "signerId"))
+        .unwrap();
+    let materialized = xln_rscore_entity_kernel::build_proposer_materializations(
+        &state.entity,
+        text(&fixture["setup"], "seed"),
+        10_000,
+        &live.signer_id,
+        &live.entity_consensus.state.authority,
+        &BTreeMap::new(),
+        &Default::default(),
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        crate::tagged_json_from_canonical_value(materialized[0].frame_data().unwrap()).unwrap(),
+        input["entityTxs"][0]["data"],
+        "automatic materialization must equal the canonical TypeScript command",
+    );
+    let mut result = apply_fixture_frame(runtime, &wake_frame)?;
+    assert_fixture_frame(&mut result, &route_table(&fixture), expected);
+    assert_eq!(
+        result.applied_frame.as_ref().unwrap().entity_inputs,
+        wake_frame["canonicalEntityInputs"]
+            .as_array()
+            .unwrap()
+            .clone(),
+        "derived materialization must not replace the accepted empty Runtime input",
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_j_r4_h45_fresh_chat_and_materialization_share_command_nonce()
+-> Result<(), RuntimeMachineError> {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let opening = &fixture["frames"][0];
+    let input = &opening["canonicalEntityInputs"][0];
+    let chat = serde_json::json!({
+        "type": "chat",
+        "data": {
+            "from": input["signerId"],
+            "message": "fresh individual input before automatic materialization",
+        },
+    });
+    let mut explicit_frame = opening.clone();
+    explicit_frame["canonicalEntityInputs"][0]["entityTxs"] =
+        serde_json::json!([chat, input["entityTxs"][0],]);
+    let mut automatic_frame = opening.clone();
+    automatic_frame["canonicalEntityInputs"][0]["entityTxs"] = serde_json::json!([chat]);
+
+    // The exact materialization comes from the shared TS lifecycle fixture.
+    // Its explicit admission runs through the same production signer as any
+    // fresh individual batch; automatic admission must preserve that command.
+    let reference = apply_fixture_frame(runtime_from_initial(&fixture, "hub")?, &explicit_frame)?;
+    let automatic = apply_fixture_frame(runtime_from_initial(&fixture, "hub")?, &automatic_frame)?;
+    let owner = hex::<32>(text(input, "entityId"));
+    let signer = text(input, "signerId");
+    let (reference_state, _) = reference
+        .replica
+        .entity_slot(&owner, signer)
+        .expect("reference source hub");
+    let (automatic_state, _) = automatic
+        .replica
+        .entity_slot(&owner, signer)
+        .expect("automatic source hub");
+    let reference_nonces = reference_state
+        .entity
+        .entity_command_nonces
+        .as_ref()
+        .expect("reference signed command nonce");
+    let automatic_nonces = automatic_state
+        .entity
+        .entity_command_nonces
+        .as_ref()
+        .expect("automatic signed command nonce");
+    let expected_nonce = text(
+        &opening["entityFrames"][0]["txs"][0]["data"]["nonce"],
+        "value",
+    )
+    .parse::<BigInt>()
+    .expect("fixture command nonce");
+    assert_eq!(reference_nonces.by_signer[signer].nonce, expected_nonce);
+    assert_eq!(
+        automatic_nonces.by_signer[signer].nonce, expected_nonce,
+        "fresh chat and derived materialization form one individual command run",
+    );
+    assert_eq!(
+        automatic_nonces, reference_nonces,
+        "the same ordered command body produces the same signed command hash",
+    );
+    let evidence = |result: &RuntimeApplyResult| {
+        result
+            .outputs
+            .entities
+            .iter()
+            .map(|frame| {
+                (
+                    frame.entity_id,
+                    frame.signer_id.clone(),
+                    frame.entity_frame_height,
+                    frame.entity_frame_timestamp,
+                    frame.entity_frame_hash.clone(),
+                    frame.accounts_root,
+                    frame.entity_state_root.clone(),
+                    frame.entity_authority_root.clone(),
+                    frame.entity_frame_events.clone(),
+                    frame.entity_events.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        reference.outputs.entities.len(),
+        opening["entityFrames"].as_array().unwrap().len(),
+        "the complete five-frame lifecycle remains exercised",
+    );
+    assert_eq!(
+        evidence(&automatic),
+        evidence(&reference),
+        "all ordered Entity/Account roots, frame hashes, events and effects",
+    );
+    let routes = route_table(&fixture);
+    assert_eq!(
+        encoded_outputs(&automatic, &routes),
+        encoded_outputs(&reference, &routes),
+        "exact ordered production outbox",
+    );
+    assert_eq!(
+        automatic.applied_frame.as_ref().unwrap().entity_inputs,
+        automatic_frame["canonicalEntityInputs"]
+            .as_array()
+            .unwrap()
+            .clone(),
+        "automatic materialization must retain the original accepted chat input",
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_j_r4_h45_two_inputs_materialize_in_first_individual_command()
+-> Result<(), RuntimeMachineError> {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let opening = &fixture["frames"][0];
+    let input = &opening["canonicalEntityInputs"][0];
+    let chat = |message| {
+        serde_json::json!({
+            "type": "chat",
+            "data": { "from": input["signerId"], "message": message },
+        })
+    };
+    let first_chat = chat("first admission materializes the committed intent");
+    let second_chat = chat("second admission observes the pending materialization");
+    let mut first_input = input.clone();
+    first_input["entityTxs"] = serde_json::json!([first_chat]);
+    let mut second_input = input.clone();
+    second_input["entityTxs"] = serde_json::json!([second_chat]);
+    let mut automatic_frame = opening.clone();
+    automatic_frame["canonicalEntityInputs"] = serde_json::json!([first_input, second_input]);
+    let mut explicit_frame = automatic_frame.clone();
+    explicit_frame["canonicalEntityInputs"][0]["entityTxs"] =
+        serde_json::json!([first_chat, input["entityTxs"][0]]);
+
+    // TS admits each input before the deferred owner proposal. The first
+    // admission signs [A, materialize]; the second sees its pending setup key
+    // and signs only [B]. Use the fixture's exact materialization bytes through
+    // production admission as the reference for that signed command boundary.
+    let reference = apply_fixture_frame(runtime_from_initial(&fixture, "hub")?, &explicit_frame)?;
+    let automatic = apply_fixture_frame(runtime_from_initial(&fixture, "hub")?, &automatic_frame)?;
+    let owner = hex::<32>(text(input, "entityId"));
+    let signer = text(input, "signerId");
+    let (reference_state, _) = reference.replica.entity_slot(&owner, signer).unwrap();
+    let (automatic_state, _) = automatic.replica.entity_slot(&owner, signer).unwrap();
+    let reference_nonces = reference_state
+        .entity
+        .entity_command_nonces
+        .as_ref()
+        .unwrap();
+    let automatic_nonces = automatic_state
+        .entity
+        .entity_command_nonces
+        .as_ref()
+        .unwrap();
+    assert_eq!(reference_nonces.by_signer[signer].nonce, BigInt::from(2));
+    assert_eq!(automatic_nonces.by_signer[signer].nonce, BigInt::from(2));
+    assert_eq!(
+        automatic_nonces, reference_nonces,
+        "the second signed command contains only B, not the first input's materialization",
+    );
+    let evidence = |result: &RuntimeApplyResult| {
+        result
+            .outputs
+            .entities
+            .iter()
+            .map(|frame| {
+                (
+                    frame.entity_id,
+                    frame.signer_id.clone(),
+                    frame.entity_frame_height,
+                    frame.entity_frame_timestamp,
+                    frame.entity_frame_hash.clone(),
+                    frame.accounts_root,
+                    frame.entity_state_root.clone(),
+                    frame.entity_authority_root.clone(),
+                    frame.entity_frame_events.clone(),
+                    frame.entity_events.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        reference.outputs.entities.len(),
+        opening["entityFrames"].as_array().unwrap().len(),
+        "the complete five-frame opening lifecycle remains exercised",
+    );
+    assert_eq!(
+        evidence(&automatic),
+        evidence(&reference),
+        "ordered Entity/Account roots, certified frame hashes, events and effects",
+    );
+    let routes = route_table(&fixture);
+    assert_eq!(
+        encoded_outputs(&automatic, &routes),
+        encoded_outputs(&reference, &routes),
+        "exact ordered production outbox",
+    );
+    assert_eq!(
+        automatic.applied_frame.as_ref().unwrap().entity_inputs,
+        automatic_frame["canonicalEntityInputs"]
+            .as_array()
+            .unwrap()
+            .clone(),
+        "both original inputs retain their Runtime positions",
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_j_r4_h45_source_cascade_drains_before_next_owner() -> Result<(), RuntimeMachineError> {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let opening = &fixture["frames"][0];
+    let route = &fixture["setup"]["route"];
+    let target = text(&route["target"], "entityId");
+    let target_signer = text(route, "targetHubSignerId");
+    let message = "second owner runs after the complete source cascade";
+    let mut combined_frame = opening.clone();
+    combined_frame["canonicalEntityInputs"] = serde_json::json!([
+        opening["canonicalEntityInputs"][0],
+        {
+            "entityId": target,
+            "signerId": target_signer,
+            "entityTxs": [{
+                "type": "chat",
+                "data": { "from": target_signer, "message": message },
+            }],
+        },
+    ]);
+    let mut result = apply_fixture_frame(runtime_from_initial(&fixture, "hub")?, &combined_frame)?;
+    let opening_frame_count = opening["entityFrames"].as_array().unwrap().len();
+    assert_eq!(
+        result.outputs.entities.len(),
+        opening_frame_count + 1,
+        "the five opening frames and the second owner's chat must all execute",
+    );
+    assert_eq!(
+        result.applied_frame.as_ref().unwrap().entity_inputs,
+        combined_frame["canonicalEntityInputs"]
+            .as_array()
+            .unwrap()
+            .clone(),
+        "both external inputs retain their accepted Runtime positions",
+    );
+
+    // TS drains the source owner's immediate cascade before flushing the
+    // next owner. Compare that chronological prefix to the complete immutable
+    // lifecycle oracle; sorting the output rows would hide the changed roots.
+    let tail = result.outputs.entities.split_off(opening_frame_count);
+    assert_entity_frames(&result, opening);
+    assert_event_and_effect_digests(&result, opening);
+    assert_account_outputs(&result, &route_table(&fixture), opening);
+
+    let chat_frame = &tail[0];
+    assert_eq!(prefixed(&chat_frame.entity_id), target);
+    assert_eq!(chat_frame.signer_id, target_signer);
+    let prior_target = opening["entityRoots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| text(row, "entityId") == target)
+        .expect("target's completed opening state");
+    assert_eq!(
+        chat_frame.entity_frame_height,
+        prior_target["height"].as_u64().unwrap() + 1,
+        "the sixth frame follows the target's opening frames",
+    );
+    assert_eq!(
+        chat_frame.entity_frame_events,
+        vec![EntityFrameEvent::Text {
+            validator_id: target_signer.to_string(),
+            message: message.to_string(),
+        }],
+        "the second owner's chat remains the final frame",
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_j_r4_h45_late_intent_materializes_during_prepared_owner_flush()
+-> Result<(), RuntimeMachineError> {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let setup = &fixture["setup"];
+    let route = &setup["route"];
+    let source_user = text(&route["source"], "entityId");
+    let source_hub = text(&route["source"], "counterpartyEntityId");
+    let source_hub_signer = text(route, "sourceHubSignerId");
+    let runtime = colocated_runtime_from_initial(&fixture)?;
+    let order_id = "late-intent-before-prepared-owner-flush";
+    let mut late_route = route.clone();
+    late_route["orderId"] = Value::from(order_id);
+    late_route.as_object_mut().unwrap().remove("routeHash");
+    let mut input = fixture["frames"][0].clone();
+    input["canonicalEntityInputs"] = serde_json::json!([
+        {
+            "entityId": source_user,
+            "signerId": route["sourceSignerId"],
+            "entityTxs": [{
+                "type": "prepareCrossJurisdictionSwap",
+                "data": { "route": late_route },
+            }],
+        },
+        { "entityId": source_hub, "signerId": source_hub_signer, "entityTxs": [] },
+    ]);
+
+    // All four initial Entity roots are unchanged fixture state. Admission
+    // queues the hub's existing intent; the user's real certified cascade
+    // creates another intent before that hub's deferred proposal flush.
+    let result = apply_fixture_frame(runtime, &input)?;
+    let (hub_state, _) = result
+        .replica
+        .entity_slot(&hex::<32>(source_hub), source_hub_signer)
+        .expect("source hub after deferred flush");
+    let swaps = hub_state.entity.cross_jurisdiction_swaps.as_ref().unwrap();
+    for order_id in [order_id, text(route, "orderId")] {
+        let committed = crate::tagged_json_from_canonical_value(
+            swaps.get(order_id).expect("committed source-hub intent"),
+        )
+        .expect("canonical committed route");
+        assert!(
+            committed.get("sourcePull").is_some() && committed.get("targetPull").is_some(),
+            "deferred owner flush must materialize {order_id}, including the intent created by the preceding cascade",
+        );
+    }
+    assert_eq!(
+        hub_state
+            .entity
+            .entity_command_nonces
+            .as_ref()
+            .unwrap()
+            .by_signer[source_hub_signer]
+            .nonce,
+        BigInt::from(2),
+        "initial admission and deferred flush create two signed materialization commands",
+    );
+    assert_eq!(
+        result.applied_frame.as_ref().unwrap().entity_inputs,
+        input["canonicalEntityInputs"].as_array().unwrap().clone(),
+        "the user prepare and hub empty wake remain the accepted Runtime inputs",
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_j_r4_h45_trusted_prepare_materializes_existing_intent() -> Result<(), RuntimeMachineError>
+{
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let route = &fixture["setup"]["route"];
+    let source_hub = text(&route["source"], "counterpartyEntityId");
+    let source_hub_signer = text(route, "sourceHubSignerId");
+    let new_order_id = "new-intent-triggers-trusted-materialization";
+    let mut new_route = route.clone();
+    new_route["orderId"] = Value::from(new_order_id);
+    new_route.as_object_mut().unwrap().remove("routeHash");
+    let mut input = fixture["frames"][0].clone();
+    input["canonicalEntityInputs"] = serde_json::json!([{
+        "entityId": route["source"]["entityId"],
+        "signerId": route["sourceSignerId"],
+        "entityTxs": [{
+            "type": "prepareCrossJurisdictionSwap",
+            "data": { "route": new_route },
+        }],
+    }]);
+
+    // No external hub wake exists. The authenticated user-to-hub prepare
+    // still passes through TS admission, which appends a signed materialize
+    // command for the hub's already committed intent to this trusted input.
+    let result = apply_fixture_frame(colocated_runtime_from_initial(&fixture)?, &input)?;
+    let (hub_state, _) = result
+        .replica
+        .entity_slot(&hex::<32>(source_hub), source_hub_signer)
+        .expect("source hub after trusted prepare");
+    let swaps = hub_state.entity.cross_jurisdiction_swaps.as_ref().unwrap();
+    assert!(
+        swaps.get(new_order_id).is_some(),
+        "the trusted prepare was applied"
+    );
+    let existing = crate::tagged_json_from_canonical_value(
+        swaps.get(text(route, "orderId")).expect("existing intent"),
+    )
+    .expect("canonical existing route");
+    assert!(
+        existing.get("sourcePull").is_some() && existing.get("targetPull").is_some(),
+        "trusted prepare admission must materialize the already committed intent without an external hub wake",
+    );
+    assert_eq!(
+        hub_state
+            .entity
+            .entity_command_nonces
+            .as_ref()
+            .unwrap()
+            .by_signer[source_hub_signer]
+            .nonce,
+        BigInt::from(1),
+        "the automatic materialization is a signed command within the trusted group",
+    );
+    assert_eq!(
+        result.applied_frame.as_ref().unwrap().entity_inputs,
+        input["canonicalEntityInputs"].as_array().unwrap().clone(),
+        "only the original user prepare is accepted as external Runtime input",
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_j_r6_h44_atomic_ack_pair_defers_next_opening_until_both_legs_commit()
+-> Result<(), RuntimeMachineError> {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let route = &fixture["setup"]["route"];
+    let mut second_route = route.clone();
+    second_route["orderId"] = Value::from("zzz-h44-second-opening");
+    second_route.as_object_mut().unwrap().remove("routeHash");
+    let mut prepare = fixture["frames"][0].clone();
+    prepare["canonicalEntityInputs"] = serde_json::json!([
+        {
+            "entityId": route["source"]["entityId"],
+            "signerId": route["sourceSignerId"],
+            "entityTxs": [{
+                "type": "prepareCrossJurisdictionSwap",
+                "data": { "route": second_route },
+            }],
+        },
+        {
+            "entityId": route["source"]["counterpartyEntityId"],
+            "signerId": route["sourceHubSignerId"],
+            "entityTxs": [],
+        },
+    ]);
+    let opening = apply_fixture_frame(colocated_runtime_from_initial(&fixture)?, &prepare)?;
+    let expected_openings = fixture["frames"][0]["outbox"]["outputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|output| {
+            serde_json::json!({
+                "entityId": output["entityId"],
+                "signerId": output["signerId"],
+                "accountInput": output["accountInput"],
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        account_output_projection(&encoded_outputs(&opening, &route_table(&fixture))),
+        expected_openings,
+        "the first pending cohort is the exact fixture proposal accepted by its signed ACK pair",
+    );
+
+    // The fixture's real signed ACK pair is target first, source second.
+    // Both selector calls must see the pre-pair sibling pending openings;
+    // publishing the first ACK early incorrectly proposes in the second leg.
+    let ack_frame = &fixture["frames"][2];
+    let result = apply_fixture_frame(opening.replica, ack_frame)?;
+    assert_eq!(
+        result.applied_frame.as_ref().unwrap().entity_inputs,
+        ack_frame["canonicalEntityInputs"]
+            .as_array()
+            .unwrap()
+            .clone(),
+        "the accepted Runtime frame retains exactly the two tagged ACK inputs",
+    );
+    for (index, input) in ack_frame["canonicalEntityInputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+    {
+        let output = &result.outputs.entities[index];
+        assert_eq!(prefixed(&output.entity_id), text(input, "entityId"));
+        assert!(
+            output.local_entity_outputs.is_empty(),
+            "ACK leg {index} must commit before either next opening proposal is emitted",
+        );
+    }
+    assert_eq!(
+        result.outputs.entities.len(),
+        4,
+        "two ACK Entity frames precede two empty AccountWork frames",
+    );
+    for output in &result.outputs.entities[2..] {
+        let (_, live) = result
+            .replica
+            .entity_slot(&output.entity_id, &output.signer_id)
+            .expect("AccountWork Entity");
+        assert!(
+            live.entity_consensus
+                .certified_frame_head
+                .as_ref()
+                .unwrap()
+                .frame
+                .txs
+                .is_empty(),
+            "AccountWork has no EntityTx",
+        );
+        assert_eq!(
+            output.local_entity_outputs.len(),
+            1,
+            "next opening proposal"
+        );
+    }
+    assert_eq!(
+        account_output_projection(&encoded_outputs(&result, &route_table(&fixture))).len(),
+        2,
+        "both hub Accounts propose the queued second opening after the atomic pair",
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_j_r6_h44_first_cross_book_keeps_same_j_dimensions_unchanged()
+-> Result<(), RuntimeMachineError> {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let route = &fixture["setup"]["route"];
+    let source_hub = hex::<32>(text(&route["source"], "counterpartyEntityId"));
+    let source_signer = text(route, "sourceHubSignerId");
+    let runtime = runtime_from_initial(&fixture, "hub")?;
+    let (initial, _) = runtime.entity_slot(&source_hub, source_signer).unwrap();
+    let initial_dimensions = initial
+        .entity
+        .orderbook
+        .as_ref()
+        .map(|book| book.pair_dimensions.clone())
+        .unwrap_or_default();
+    let mut opening_frame = fixture["frames"][0].clone();
+    opening_frame["canonicalEntityInputs"][0]["entityTxs"]
+        .as_array_mut()
+        .unwrap()
+        .insert(
+            0,
+            serde_json::json!({
+                "type": "initOrderbookExt",
+                "data": {
+                    "name": "cross-j fixture book",
+                    "spreadDistribution": {
+                        "makerBps": 0,
+                        "takerBps": 0,
+                        "hubBps": 10000,
+                        "makerReferrerBps": 0,
+                        "takerReferrerBps": 0,
+                    },
+                    "referenceTokenId": 1,
+                    "usdQuoteAuthorityEntityId": route["source"]["entityId"],
+                    "minTradeSize": { "__xlnType": "BigInt", "value": "0" },
+                    "supportedPairs": [],
+                },
+            }),
+        );
+    let opening = apply_fixture_frame(runtime, &opening_frame)?;
+    let committed = apply_fixture_frame(opening.replica, &fixture["frames"][2])?;
+    let (source, _) = committed
+        .replica
+        .entity_slot(&source_hub, source_signer)
+        .unwrap();
+    let book = source.entity.orderbook.as_ref().expect("source orderbook");
+    assert!(book.books.keys().any(|pair| pair.starts_with("cross:")));
+    assert_eq!(
+        book.pair_dimensions, initial_dimensions,
+        "TS commits decimal layouts only for same-j books; a new cross-j book must preserve that map",
+    );
+    let snapshot = book.snapshot().expect("canonical orderbook snapshot");
+    let restored = xln_rscore_entity_kernel::OrderbookState::restore(snapshot.clone())
+        .expect("restore cross-j book without a same-j decimal layout");
+    assert_eq!(
+        &restored, book,
+        "restore preserves every canonical book field"
+    );
+    let mut extra_dimensions = snapshot.clone();
+    let cross_pair = book
+        .books
+        .keys()
+        .find(|pair| pair.starts_with("cross:"))
+        .unwrap();
+    extra_dimensions.pair_dimensions.insert(
+        cross_pair.clone(),
+        xln_rscore_entity_kernel::PairDimensions {
+            base_token_decimals: 6,
+            quote_token_decimals: 6,
+        },
+    );
+    assert!(
+        xln_rscore_entity_kernel::OrderbookState::restore(extra_dimensions)
+            .unwrap_err()
+            .to_string()
+            .contains("ORDERBOOK_PAIR_DIMENSIONS_INVALID"),
+        "a prior invalid Rust snapshot is rejected, never silently rewritten",
+    );
+    let mut missing_route = snapshot;
+    missing_route
+        .offers
+        .values_mut()
+        .find(|offer| offer.cross_jurisdiction.is_some())
+        .expect("matching cross-j offer")
+        .cross_jurisdiction = None;
+    assert!(
+        xln_rscore_entity_kernel::OrderbookState::restore(missing_route).is_err(),
+        "a cross-j book still requires its matching canonical offer route",
+    );
+    Ok(())
+}
+
+#[test]
 fn production_runtime_executes_shared_cross_j_opening_lifecycle() -> Result<(), RuntimeMachineError>
 {
     let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
@@ -846,5 +1498,350 @@ fn production_runtime_executes_shared_cross_j_opening_lifecycle() -> Result<(), 
     assert_fixture_frame(&mut proposals, &routes, &frames[1]);
     let mut acknowledgements = apply_fixture_frame(opening.replica, &frames[2])?;
     assert_fixture_frame(&mut acknowledgements, &routes, &frames[2]);
+    Ok(())
+}
+
+#[test]
+fn cross_j_r6_h65_empty_ack_and_remote_output_share_one_entity_frame()
+-> Result<(), RuntimeMachineError> {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let frames = fixture["frames"].as_array().unwrap();
+    let route = &fixture["setup"]["route"];
+    let mut ack = frames[2]["canonicalEntityInputs"][1].clone();
+    ack.as_object_mut()
+        .unwrap()
+        .remove("atomicCrossJurisdictionPair");
+    let empty = serde_json::json!({
+        "entityId": ack["entityId"],
+        "signerId": ack["signerId"],
+        "entityTxs": [],
+    });
+    let mut prepared_route = route.clone();
+    prepared_route["orderId"] = Value::from("h65-remote-prepare");
+    prepared_route.as_object_mut().unwrap().remove("routeHash");
+    let mut remote = ack.clone();
+    remote["entityTxs"] = serde_json::json!([{
+        "type": "runtimeOutput",
+        "data": {
+            "protocol": "cross-j",
+            "sourceEntityId": route["source"]["entityId"],
+            "sourceSignerId": route["sourceSignerId"],
+            "targetEntityId": ack["entityId"],
+            "entityTxs": [{
+                "type": "prepareCrossJurisdictionSwap",
+                "data": { "route": prepared_route },
+            }],
+        },
+    }]);
+    let mut input = frames[2].clone();
+    input["canonicalEntityInputs"] = serde_json::json!([empty, ack, remote]);
+    let opening = apply_fixture_frame(runtime_from_initial(&fixture, "hub")?, &frames[0])?;
+    let result = apply_fixture_frame(opening.replica, &input)?;
+    assert_eq!(
+        result.applied_frame.as_ref().unwrap().entity_inputs,
+        input["canonicalEntityInputs"].as_array().unwrap().clone(),
+        "all three original Runtime inputs remain accepted in order",
+    );
+    assert_eq!(
+        result.outputs.entities.len(),
+        1,
+        "remote runtimeOutput admits alongside the earlier ACK before the shared owner flush",
+    );
+    let output = &result.outputs.entities[0];
+    let (state, live) = result
+        .replica
+        .entity_slot(&output.entity_id, &output.signer_id)
+        .unwrap();
+    let head = live.entity_consensus.certified_frame_head.as_ref().unwrap();
+    assert_eq!(
+        head.frame
+            .txs
+            .iter()
+            .map(|tx| tx.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["accountInput", "runtimeOutput"],
+        "the empty input contributes no EntityTx; ACK and remote output share the certified frame",
+    );
+    assert!(
+        state
+            .entity
+            .cross_jurisdiction_swaps
+            .as_ref()
+            .unwrap()
+            .get("h65-remote-prepare")
+            .is_some(),
+        "the authenticated remote prepare commits its new raw intent",
+    );
+    Ok(())
+}
+
+#[test]
+fn external_runtime_output_preserves_signed_ack_frame_boundary() -> Result<(), RuntimeMachineError>
+{
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let frames = fixture["frames"].as_array().expect("fixture frames");
+    let mut ack = frames[2]["canonicalEntityInputs"][0].clone();
+    ack.as_object_mut()
+        .expect("ACK envelope")
+        .remove("atomicCrossJurisdictionPair");
+    // This Runtime forwards an independently signed ACK alongside its own
+    // committed output; both retain that output author's recorded Runtime.
+    ack["from"] = frames[1]["canonicalEntityInputs"][0]["from"].clone();
+    let wrapper = &frames[0]["entityFrames"][2]["txs"][0];
+    let mut output = ack.clone();
+    output["entityTxs"] = serde_json::json!([wrapper]);
+    let mut next_output = output.clone();
+    next_output["sourceRuntimeFrame"]["height"] = Value::from(2);
+    let mut distinct_output = output.clone();
+    distinct_output["entityTxs"][0]["data"]["entityTxs"] = serde_json::json!([
+        wrapper["data"]["entityTxs"][0],
+        wrapper["data"]["entityTxs"][0],
+    ]);
+    for (inputs, expected_inputs) in [
+        (
+            vec![ack.clone(), output.clone()],
+            vec![ack.clone(), output.clone()],
+        ),
+        (
+            vec![output.clone(), ack.clone()],
+            vec![output.clone(), ack.clone()],
+        ),
+        (
+            vec![ack.clone(), output.clone(), output.clone()],
+            vec![ack.clone(), output.clone()],
+        ),
+        (
+            vec![output.clone(), ack.clone(), output.clone()],
+            vec![output.clone(), ack.clone()],
+        ),
+        (
+            vec![output.clone(), next_output.clone()],
+            vec![output.clone(), next_output],
+        ),
+        (
+            vec![output.clone(), distinct_output.clone()],
+            vec![output.clone(), distinct_output],
+        ),
+    ] {
+        let hub = runtime_from_initial(&fixture, "hub")?;
+        let opening = apply_fixture_frame(hub, &frames[0])?;
+        let mut frame = frames[2].clone();
+        frame["canonicalEntityInputs"] = Value::Array(inputs.clone());
+        let result = apply_fixture_frame(opening.replica, &frame)?;
+        let applied = result
+            .applied_frame
+            .as_ref()
+            .expect("committed Runtime frame");
+        assert_eq!(
+            applied.entity_inputs, expected_inputs,
+            "exact authenticated WAL envelopes"
+        );
+        let mut replay_frame = applied.frame.clone();
+        for row in &result.outputs.entities {
+            let canonical = row.entity_context.clone();
+            let context =
+                crate::tagged_json_from_canonical_value(&canonical).expect("stored context");
+            replay_frame
+                .entity_contexts
+                .entry(RuntimeEntityKey::new(row.entity_id, &row.signer_id)?)
+                .or_default()
+                .push_back(crate::RuntimeEntityFrameContext {
+                    execution: crate::entity_context_json::decode_entity_frame_context(&context)
+                        .expect("WAL context decoder"),
+                    canonical,
+                });
+        }
+        let restored = apply_fixture_frame(runtime_from_initial(&fixture, "hub")?, &frames[0])?;
+        let replay = crate::apply_runtime(
+            restored.replica,
+            crate::RuntimeInput {
+                runtime_txs: applied.runtime_txs.clone(),
+                entity_inputs: applied
+                    .entity_inputs
+                    .iter()
+                    .cloned()
+                    .map(RuntimeEntityInput::decode)
+                    .collect::<Result<Vec<_>, _>>()?,
+                frame: replay_frame,
+            },
+        )?;
+        assert_eq!(replay.replica.state.height, result.replica.state.height);
+        assert_eq!(
+            replay
+                .outputs
+                .entities
+                .iter()
+                .map(|row| &row.entity_frame_hash)
+                .collect::<Vec<_>>(),
+            result
+                .outputs
+                .entities
+                .iter()
+                .map(|row| &row.entity_frame_hash)
+                .collect::<Vec<_>>(),
+            "same accepted Runtime frame replays every certified Entity hash"
+        );
+        // External Runtime inputs preserve their authenticated boundaries in
+        // the WAL. Their same-owner Entity transactions are admitted in order
+        // before one proposal flush. REGISTER setup stays queued when the
+        // same flush contains an ACK; this preserves the commit-phase boundary.
+        assert_eq!(result.outputs.entities.len(), 1, "one same-owner flush");
+        let output = &result.outputs.entities[0];
+        let (_, live) = result
+            .replica
+            .entity_slot(&output.entity_id, &output.signer_id)
+            .expect("flushed Entity");
+        let head = live.entity_consensus.certified_frame_head.as_ref().unwrap();
+        let expected = expected_inputs
+            .iter()
+            .map(|input| RuntimeEntityInput::decode(input.clone()))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flat_map(|input| input.into_parts().1)
+            .map(|pending| match pending {
+                super::super::types::EntityPendingWork::Account { projected, .. }
+                | super::super::types::EntityPendingWork::ProposerMaterialized {
+                    projected, ..
+                } => projected,
+                _ => panic!("fixture contains only ACK and remote runtimeOutput"),
+            })
+            .collect::<Vec<_>>();
+        let contains_ack = expected.iter().any(|tx| tx.kind.as_str() == "accountInput");
+        let (selected, deferred): (Vec<_>, Vec<_>) = expected
+            .into_iter()
+            .partition(|tx| !contains_ack || tx.kind.as_str() == "accountInput");
+        assert_eq!(
+            head.frame.txs, selected,
+            "the certified frame retains the exact selected canonical transaction bodies and order",
+        );
+        assert_eq!(
+            live.entity_mempool
+                .iter()
+                .map(|pending| match pending {
+                    super::super::types::EntityPendingWork::ProposerMaterialized {
+                        projected,
+                        ..
+                    } => projected.clone(),
+                    _ => panic!("only REGISTER wrappers may remain deferred"),
+                })
+                .collect::<Vec<_>>(),
+            deferred,
+            "every deferred REGISTER wrapper retains its complete canonical body and original order",
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn external_runtime_output_rejects_unbound_or_mixed_envelopes() {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let ack = &fixture["frames"][2]["canonicalEntityInputs"][0];
+    let wrapper = &fixture["frames"][0]["entityFrames"][2]["txs"][0];
+    let mut output = ack.clone();
+    output
+        .as_object_mut()
+        .expect("envelope")
+        .remove("atomicCrossJurisdictionPair");
+    output["from"] = fixture["frames"][1]["canonicalEntityInputs"][0]["from"].clone();
+    output["entityTxs"] = serde_json::json!([wrapper]);
+    let decoded = RuntimeEntityInput::decode(output.clone()).expect("routed protocol output");
+    assert!(decoded.runtime_output().is_some());
+    assert_eq!(decoded.canonical(), &output);
+    for field in ["from", "runtimeId", "sourceRuntimeFrame"] {
+        let mut unbound = output.clone();
+        unbound.as_object_mut().expect("envelope").remove(field);
+        assert!(
+            RuntimeEntityInput::decode(unbound).is_err(),
+            "missing {field}"
+        );
+    }
+    let mut local = output.clone();
+    for field in ["from", "runtimeId", "sourceRuntimeFrame"] {
+        local.as_object_mut().expect("envelope").remove(field);
+    }
+    assert!(
+        RuntimeEntityInput::decode(local).is_err(),
+        "user cannot author protocol outputs"
+    );
+    for txs in [
+        serde_json::json!([ack["entityTxs"][0], wrapper]),
+        serde_json::json!([wrapper, ack["entityTxs"][0]]),
+        serde_json::json!([wrapper, wrapper]),
+        wrapper["data"]["entityTxs"].clone(),
+    ] {
+        let mut mixed = output.clone();
+        mixed["entityTxs"] = txs;
+        assert!(
+            RuntimeEntityInput::decode(mixed).is_err(),
+            "sole authenticated wrapper required"
+        );
+    }
+}
+
+#[test]
+fn duplicate_runtime_output_rejects_j_prefix_equivocation() -> Result<(), RuntimeMachineError> {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("cross-J lifecycle fixture");
+    let runtime = runtime_from_initial(&fixture, "hub")?;
+    let mut output = fixture["frames"][2]["canonicalEntityInputs"][0].clone();
+    output
+        .as_object_mut()
+        .expect("envelope")
+        .remove("atomicCrossJurisdictionPair");
+    output["entityTxs"] = serde_json::json!([fixture["frames"][0]["entityFrames"][2]["txs"][0]]);
+    let (state, live) = runtime
+        .entity_slot(
+            &hex::<32>(text(&output, "entityId")),
+            text(&output, "signerId"),
+        )
+        .expect("recorded recipient");
+    let mut finalized = state.entity.clone();
+    finalized.j_history_finality = Some(
+        canonical_value_from_tagged_json(&serde_json::json!({
+            "jurisdictionRef": fixture["setup"]["route"]["target"]["jurisdiction"],
+            "finalizedThroughHeight": 0,
+            "tipBlockHash": format!("0x{}", "00".repeat(32)),
+            "eventHistoryRoot": prefixed(&xln_rscore_entity_kernel::EMPTY_J_HISTORY_ROOT),
+        }))
+        .expect("complete certified J base"),
+    );
+    let attest = |target_height| {
+        let signed = xln_rscore_entity_kernel::build_required_j_prefix_certificate(
+            &live.entity_signer,
+            &live.entity_consensus.state.authority,
+            &finalized,
+            target_height,
+            "genesis",
+            None,
+        )
+        .expect("real Entity signature")
+        .expect("required prefix");
+        let mut wire = output.clone();
+        wire["jPrefixAttestations"] = crate::tagged_json_from_canonical_value(&signed)
+            .expect("certificate wire")["attestations"]
+            .clone();
+        RuntimeEntityInput::decode(wire).expect("complete signed attestation input")
+    };
+    let first = attest(1);
+    let conflicting = attest(2);
+    let absent = RuntimeEntityInput::decode(output)?;
+    for pair in [
+        vec![first.clone(), conflicting],
+        vec![absent.clone(), first.clone()],
+        vec![first.clone(), absent],
+    ] {
+        assert!(
+            matches!(super::super::apply::merge_runtime_output_inputs(pair),
+            Err(RuntimeMachineError::EntityInputTransportInvalid(detail))
+                if detail == "ENTITY_INPUT_J_PREFIX_EQUIVOCATION")
+        );
+    }
+    let merged =
+        super::super::apply::merge_runtime_output_inputs(vec![first.clone(), first.clone()])?;
+    assert_eq!(merged.len(), 1);
+    assert_eq!(
+        merged[0].canonical(),
+        first.canonical(),
+        "retain first signed evidence exactly"
+    );
     Ok(())
 }

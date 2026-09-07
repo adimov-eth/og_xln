@@ -3155,7 +3155,7 @@ mod tests {
             Token::Array(Vec::new()),
             Token::Array(vec![Token::Tuple(vec![
                 Token::Uint(U256::zero()),
-                Token::Int(U256::from(100_u64)),
+                Token::Tuple(vec![Token::Bool(false), Token::Uint(U256::from(100_u64))]),
                 Token::Uint(U256::from(17_u8)),
                 Token::FixedBytes(vec![0x55; 32]),
                 Token::FixedBytes(vec![0x66; 32]),

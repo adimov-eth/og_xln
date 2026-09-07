@@ -29,8 +29,8 @@ pub struct RuntimeReplayDiffInput<'a> {
     pub height: u64,
     pub expected: &'a ConcreteWalSource,
     pub actual: &'a RecoveredWalFrame,
-    pub actual_replica_meta: &'a Value,
-    pub actual_entity_sections: &'a Value,
+    pub actual_replica_meta: &'a Map<String, Value>,
+    pub actual_entity_sections: &'a Map<String, Value>,
     pub actual_commitments: &'a RuntimeDurableCommitments,
     pub actual_account_commits: &'a [AccountCommitEvidence],
 }
@@ -65,16 +65,26 @@ pub fn write_runtime_replay_diff(
             "actualDiagnostics".into(),
             Value::Object(Map::from_iter([
                 (
-                    "entityHead".into(),
-                    input
-                        .actual_replica_meta
-                        .get("certifiedFrameHead")
-                        .cloned()
-                        .unwrap_or(Value::Null),
+                    "entityHeads".into(),
+                    Value::Object(
+                        input
+                            .actual_replica_meta
+                            .iter()
+                            .map(|(owner, metadata)| {
+                                (
+                                    owner.clone(),
+                                    metadata
+                                        .get("certifiedFrameHead")
+                                        .cloned()
+                                        .unwrap_or(Value::Null),
+                                )
+                            })
+                            .collect(),
+                    ),
                 ),
                 (
                     "entitySections".into(),
-                    input.actual_entity_sections.clone(),
+                    Value::Object(input.actual_entity_sections.clone()),
                 ),
                 (
                     "commitments".into(),
@@ -90,7 +100,10 @@ pub fn write_runtime_replay_diff(
                             .collect(),
                     ),
                 ),
-                ("replicaMeta".into(), input.actual_replica_meta.clone()),
+                (
+                    "replicaMeta".into(),
+                    Value::Object(input.actual_replica_meta.clone()),
+                ),
             ])),
         ),
     ]));

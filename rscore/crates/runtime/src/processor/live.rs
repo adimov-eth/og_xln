@@ -33,6 +33,12 @@ const TIMESTAMP_DRIFT_MS: u64 = 30_000;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const JBLOCK_LIVENESS_INTERVAL: u64 = 100;
 const J_WATCHER_MAX_BLOCKS_PER_POLL: u64 = 256;
+const MAX_INBOUND_EVENTS_PER_POLL: usize = 64;
+
+#[path = "startup/readiness.rs"]
+mod startup;
+#[path = "startup/metadata.rs"]
+mod startup_metadata;
 
 fn remaining_frame_delay(delay: Duration, started: Option<Instant>, now: Instant) -> Duration {
     started
@@ -59,6 +65,7 @@ pub struct ResidentRuntimeService {
     /// a second recovery authority beside the WAL; only Runtime config belongs
     /// in durable state.
     last_live_frame_started_at: Option<Instant>,
+    delivery_ready: bool,
 }
 
 #[derive(Default)]
@@ -116,6 +123,8 @@ struct LiveJWatcher {
     poll_interval: Duration,
     next_poll: Instant,
     pending_scan: Option<PendingJScan>,
+    startup_target: u64,
+    authenticated_through: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,7 +162,7 @@ impl ResidentRuntimeService {
         if let Some(report) = retried {
             deferred_publication.add(report)?;
         }
-        let service = Self {
+        let mut service = Self {
             processor,
             ingress,
             materializer,
@@ -164,12 +173,14 @@ impl ResidentRuntimeService {
             j_submit_operator_key: None,
             j_watchers,
             last_live_frame_started_at: None,
+            delivery_ready: false,
         };
         if !recover_pending_j_actions(service.processor.replica()?)?.is_empty() {
             return Err(ResidentRuntimeServiceError::JSubmit(
                 "PENDING_ATTEMPT_WITHOUT_OPERATOR_KEY".into(),
             ));
         }
+        service.refresh_startup_readiness()?;
         Ok(service)
     }
 
@@ -185,6 +196,7 @@ impl ResidentRuntimeService {
         service.j_submit_operator_key = Some(operator_private_key);
         let pending = recover_pending_j_actions(service.processor.replica()?)?;
         service.execute_committed_j_attempts(pending)?;
+        service.refresh_startup_readiness()?;
         Ok(service)
     }
 
@@ -220,6 +232,7 @@ impl ResidentRuntimeService {
             j_submit_operator_key: None,
             j_watchers,
             last_live_frame_started_at: None,
+            delivery_ready: false,
         })
     }
 
@@ -233,6 +246,10 @@ impl ResidentRuntimeService {
 
     pub fn runtime_id(&self) -> &str {
         self.ingress.runtime_id()
+    }
+
+    pub fn delivery_ready(&self) -> bool {
+        self.delivery_ready
     }
 
     pub fn min_frame_delay_ms(&self) -> Result<u64, ResidentRuntimeServiceError> {
@@ -258,6 +275,16 @@ impl ResidentRuntimeService {
 
     pub fn processor(&self) -> &DurableRuntimeProcessor {
         &self.processor
+    }
+
+    /// Read one exact committed WAL frame for an operator query, never history scans.
+    pub fn read_durable_frame(
+        &mut self,
+        height: u64,
+    ) -> Result<crate::storage::native::RecoveredWalFrame, ResidentRuntimeServiceError> {
+        self.processor
+            .read_durable_frame(height)
+            .map_err(Into::into)
     }
 
     pub fn account_status(
@@ -318,11 +345,13 @@ impl ResidentRuntimeService {
         let frame_started = Instant::now();
         if let Some(report) = self.poll_and_commit_j_watcher()? {
             self.note_live_frame(frame_started, true);
+            self.refresh_startup_readiness()?;
             return Ok(Some(report));
         }
         let (entity_inputs, queued_at) = self.take_frame_inbound()?;
         let report = self.process_entity_inputs_at(entity_inputs, queued_at, wall_clock_ms()?)?;
         self.note_live_frame(frame_started, report.is_some());
+        self.refresh_startup_readiness()?;
         Ok(report)
     }
 
@@ -366,6 +395,26 @@ impl ResidentRuntimeService {
                 .0
                 .entity
                 .last_finalized_j_height;
+            let certified_height = self
+                .j_watchers
+                .iter()
+                .filter(|other| {
+                    other.config.chain_id == watcher.config.chain_id
+                        && other.config.depository_address == watcher.config.depository_address
+                })
+                .try_fold(certified_height, |minimum, other| {
+                    let state = self
+                        .processor
+                        .replica()?
+                        .entity_slot(other.config.entity_id.as_bytes(), &other.signer_id)
+                        .ok_or_else(|| {
+                            ResidentRuntimeServiceError::JWatcher("ENTITY_SLOT_MISSING".into())
+                        })?
+                        .0;
+                    Ok::<_, ResidentRuntimeServiceError>(
+                        minimum.min(state.entity.last_finalized_j_height),
+                    )
+                })?;
             let durable_height = durable_watcher_cursor_height(
                 self.processor.replica()?,
                 watcher.config.chain_id,
@@ -397,8 +446,13 @@ impl ResidentRuntimeService {
                 self.j_watchers.push_back(watcher);
                 return Ok(Some(report));
             }
+            if !self.delivery_ready && watcher.authenticated_through >= watcher.startup_target {
+                self.j_watchers.push_back(watcher);
+                continue;
+            }
             let poll = poll_finalized_j_events(&watcher.rpc, &watcher.config, &watcher.cursor)
                 .map_err(|error| ResidentRuntimeServiceError::JWatcher(error.to_string()))?;
+            watcher.authenticated_through = poll.cursor.scanned_through;
             if poll.cursor == watcher.cursor {
                 self.j_watchers.push_back(watcher);
                 continue;
@@ -543,7 +597,7 @@ impl ResidentRuntimeService {
             let Some(event) = self.ingress.recv_event_timeout(remaining)? else {
                 return Ok(None);
             };
-            if let Some(batch) = self.accept_inbound_event(event) {
+            if let Some(batch) = self.accept_inbound_event(event)? {
                 return Ok(Some(batch));
             }
         }
@@ -552,19 +606,39 @@ impl ResidentRuntimeService {
     fn try_recv_inbound_batch(
         &mut self,
     ) -> Result<Option<InboundEntityInputs>, ResidentRuntimeServiceError> {
-        loop {
+        // Invalid peers may keep the socket queue nonempty. Give the writer
+        // its frame slot after a bounded scan instead of draining forever.
+        for _ in 0..MAX_INBOUND_EVENTS_PER_POLL {
             let Some(event) = self.ingress.try_recv_event()? else {
                 return Ok(None);
             };
-            if let Some(batch) = self.accept_inbound_event(event) {
+            if let Some(batch) = self.accept_inbound_event(event)? {
                 return Ok(Some(batch));
             }
         }
+        Ok(None)
     }
 
-    fn accept_inbound_event(&mut self, event: InboundRuntimeEvent) -> Option<InboundEntityInputs> {
+    fn accept_inbound_event(
+        &mut self,
+        event: InboundRuntimeEvent,
+    ) -> Result<Option<InboundEntityInputs>, ResidentRuntimeServiceError> {
         match event {
-            InboundRuntimeEvent::EntityInputs(batch) => Some(batch),
+            InboundRuntimeEvent::EntityInputs(batch) => {
+                match self.validate_inbound_batch(&batch) {
+                    Ok(()) => Ok(Some(batch)),
+                    Err(ResidentRuntimeServiceError::InboundRoute(error)) => {
+                        // This is untrusted pre-admission traffic. Reject only
+                        // this batch; storage/consensus errors remain fail-stop.
+                        eprintln!(
+                            "RRS_DIRECT_RUNTIME_OUTPUT_REJECTED:{}",
+                            truncate_failure(error.to_string())
+                        );
+                        Ok(None)
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             InboundRuntimeEvent::GossipAnnouncement(gossip) => {
                 for profile in gossip.profiles {
                     if let Err(error) = self
@@ -574,9 +648,19 @@ impl ResidentRuntimeService {
                         self.ingress.note_profile_rejection(&error.to_string());
                     }
                 }
-                None
+                Ok(None)
             }
         }
+    }
+
+    fn validate_inbound_batch(
+        &self,
+        batch: &InboundEntityInputs,
+    ) -> Result<(), ResidentRuntimeServiceError> {
+        self.processor
+            .entity_routes()
+            .validate_inbound_runtime_outputs(&batch.peer_runtime_id, &batch.entity_inputs)?;
+        Ok(())
     }
 
     fn available_frame_inputs(&self) -> Result<usize, ResidentRuntimeServiceError> {
@@ -604,6 +688,9 @@ impl ResidentRuntimeService {
         batch: Option<InboundEntityInputs>,
         now: u64,
     ) -> Result<Option<RuntimeProcessReport>, ResidentRuntimeServiceError> {
+        if let Some(batch) = batch.as_ref() {
+            self.validate_inbound_batch(batch)?;
+        }
         let queued_at = batch.as_ref().and_then(|batch| batch.ingress_timestamp);
         let entity_inputs = batch.map(|batch| batch.entity_inputs).unwrap_or_default();
         self.process_entity_inputs_at(entity_inputs, queued_at, now)
@@ -617,6 +704,11 @@ impl ResidentRuntimeService {
         &mut self,
         entity_inputs: Vec<RuntimeEntityInput>,
     ) -> Result<Option<RuntimeProcessReport>, ResidentRuntimeServiceError> {
+        if !self.delivery_ready {
+            return Err(ResidentRuntimeServiceError::JWatcher(
+                "STARTUP_CATCHUP_PENDING".into(),
+            ));
+        }
         self.wait_for_live_frame_slot()?;
         let frame_started = Instant::now();
         let report = self.process_entity_inputs_at(entity_inputs, None, wall_clock_ms()?)?;
@@ -1469,6 +1561,9 @@ fn live_j_watchers(
                 "ENTITY_STATE_MISSING".into(),
             ));
         };
+        if !is_current_board_watcher(entity_replica)? {
+            continue;
+        }
         let Some(jurisdiction) = entity_replica
             .entity_consensus
             .state
@@ -1528,6 +1623,16 @@ fn live_j_watchers(
                 .into(),
             ));
         };
+        if !j_replica
+            .get("contracts")
+            .and_then(|value| value.get("entityProvider"))
+            .and_then(Value::as_str)
+            .is_some_and(|address| address.eq_ignore_ascii_case(&entity_provider_text))
+        {
+            return Err(ResidentRuntimeServiceError::JWatcher(
+                "ENTITY_PROVIDER_MISMATCH".into(),
+            ));
+        }
         let endpoint = j_replica
             .get("rpcs")
             .and_then(Value::as_array)
@@ -1569,15 +1674,18 @@ fn live_j_watchers(
             &entity_state.entity,
             &format!("0x{}", hex::encode(entity_key.entity_id)),
         )?;
-        let erc20_tokens = committed_erc20_tokens(j_replica)?;
+        let rpc = HttpJsonRpc::new(endpoint)
+            .map_err(|error| ResidentRuntimeServiceError::JWatcher(error.to_string()))?;
+        let erc20_tokens =
+            crate::j_watcher::read_erc20_token_registry(&rpc, &depository_address)
+                .map_err(|error| ResidentRuntimeServiceError::JWatcher(error.to_string()))?;
         let external_wallets = watched_external_wallets(
             entity_state.entity.external_wallet.as_ref(),
             &erc20_tokens,
             &format!("0x{}", hex::encode(entity_key.entity_id)),
         )?;
         candidates.push(LiveJWatcher {
-            rpc: HttpJsonRpc::new(endpoint)
-                .map_err(|error| ResidentRuntimeServiceError::JWatcher(error.to_string()))?,
+            rpc,
             config: JWatcherConfig {
                 chain_id,
                 depository_address,
@@ -1603,57 +1711,54 @@ fn live_j_watchers(
             poll_interval: Duration::from_millis(block_delay.ceil().min(u64::MAX as f64) as u64),
             next_poll: Instant::now(),
             pending_scan: None,
+            startup_target: 0,
+            authenticated_through: 0,
         });
+    }
+    let mut targets = BTreeMap::new();
+    for watcher in &mut candidates {
+        let stack = (watcher.config.chain_id, watcher.config.depository_address);
+        watcher.startup_target = match targets.get(&stack) {
+            Some(target) => *target,
+            None => {
+                let target =
+                    crate::j_watcher::capture_startup_target(&watcher.rpc, &watcher.config)
+                        .map_err(|error| {
+                            ResidentRuntimeServiceError::JWatcher(error.to_string())
+                        })?;
+                targets.insert(stack, target);
+                target
+            }
+        };
     }
     Ok(candidates.into())
 }
 
-fn committed_erc20_tokens(
-    j_replica: &serde_json::Map<String, Value>,
-) -> Result<BTreeMap<[u8; 20], u64>, ResidentRuntimeServiceError> {
-    let rows = j_replica
-        .get("tokenRegistry")
-        .and_then(Value::as_array)
-        .ok_or_else(|| ResidentRuntimeServiceError::JWatcher("TOKEN_REGISTRY_MISSING".into()))?;
-    let mut registry = BTreeMap::new();
-    let mut ids = BTreeSet::new();
-    for (index, value) in rows.iter().enumerate() {
-        let row = value.as_object().ok_or_else(|| {
-            ResidentRuntimeServiceError::JWatcher(format!("TOKEN_REGISTRY_ROW:{index}"))
-        })?;
-        let token_id = row
-            .get("tokenId")
-            .and_then(Value::as_u64)
-            .filter(|id| *id > 0)
-            .ok_or_else(|| {
-                ResidentRuntimeServiceError::JWatcher(format!("TOKEN_REGISTRY_ID:{index}"))
-            })?;
-        if !ids.insert(token_id) {
-            return Err(ResidentRuntimeServiceError::JWatcher(format!(
-                "TOKEN_REGISTRY_ID_DUPLICATE:{token_id}"
-            )));
-        }
-        let token_type = row
-            .get("tokenType")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| {
-                ResidentRuntimeServiceError::JWatcher(format!("TOKEN_REGISTRY_TYPE:{index}"))
-            })?;
-        let address = row
-            .get("address")
-            .and_then(Value::as_str)
-            .and_then(parse_address)
-            .ok_or_else(|| {
-                ResidentRuntimeServiceError::JWatcher(format!("TOKEN_REGISTRY_ADDRESS:{index}"))
-            })?;
-        if token_type == 0 && registry.insert(address, token_id).is_some() {
-            return Err(ResidentRuntimeServiceError::JWatcher(format!(
-                "TOKEN_REGISTRY_ADDRESS_DUPLICATE:{}",
-                hex::encode(address)
-            )));
-        }
+fn is_current_board_watcher(
+    replica: &crate::RuntimeEntityReplica,
+) -> Result<bool, ResidentRuntimeServiceError> {
+    let config = &replica.entity_consensus.state.authority.config;
+    let signer = replica.signer_id.trim();
+    let validators = config
+        .validators
+        .iter()
+        .filter(|value| value.trim().eq_ignore_ascii_case(signer))
+        .count();
+    if validators == 0 {
+        return Ok(false);
     }
-    Ok(registry)
+    let shares = config
+        .shares
+        .iter()
+        .filter(|(value, _)| value.trim().eq_ignore_ascii_case(signer))
+        .map(|(_, shares)| *shares)
+        .collect::<Vec<_>>();
+    if validators != 1 || !matches!(shares.as_slice(), [share] if *share > 0) {
+        return Err(ResidentRuntimeServiceError::JWatcher(format!(
+            "CURRENT_BOARD_SIGNER_INVALID:{signer}"
+        )));
+    }
+    Ok(true)
 }
 
 fn watched_external_wallets(
@@ -2000,6 +2105,8 @@ pub enum ResidentRuntimeServiceError {
     Processor(Box<DurableRuntimeProcessorError>),
     #[error(transparent)]
     Transport(#[from] RuntimeTransportError),
+    #[error(transparent)]
+    InboundRoute(#[from] super::EntityRouteError),
 }
 
 impl From<DurableRuntimeProcessorError> for ResidentRuntimeServiceError {
@@ -2012,6 +2119,131 @@ impl From<DurableRuntimeProcessorError> for ResidentRuntimeServiceError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn rejected_runtime_output_does_not_stop_live_ingress_or_admit_batch_prefix() {
+        use crate::processor::{
+            EntityRoute, EntityRouteTable, RuntimeDurableEnvelope, RuntimeSignerLabel,
+        };
+        use crate::storage::native::{NativeRuntimeStore, NativeStorageConfig};
+        use crate::transport::{DirectRuntimeIngressConfig, derive_local_runtime_id};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+        let seed = "runtime-output-ingress-rejection";
+        let label = "runtime";
+        let runtime_id = derive_local_runtime_id(seed, label).expect("local Runtime");
+        let peer = format!("0x{}", "22".repeat(20));
+        let source = format!("0x{}", "33".repeat(32));
+        let source_signer = format!("0x{}", "44".repeat(20));
+        let mut replica = crate::machine::tests::replica(crate::RuntimeLimits::hlt())
+            .expect("real resident Account and Entity");
+        replica.durable = RuntimeDurableEnvelope::fixture_for_runtime(&runtime_id, [0; 32]);
+        let target = replica
+            .state
+            .e_replicas
+            .keys()
+            .next()
+            .expect("target")
+            .clone();
+        let initial_root = replica.state.e_replicas[&target].accounts_root;
+        let initial_height = replica.state.height;
+        let directory = std::env::temp_dir().join(format!(
+            "xln-source-ingress-rejection-{}-{}",
+            std::process::id(),
+            wall_clock_ms().expect("clock")
+        ));
+        let store = NativeRuntimeStore::open(&directory, NativeStorageConfig::default())
+            .expect("real native WAL");
+        let routes = EntityRouteTable::new([EntityRoute {
+            target_entity_id: source.clone(),
+            target_runtime_id: peer.clone(),
+            target_signer_id: source_signer.clone(),
+            websocket_url: None,
+        }])
+        .expect("pinned source");
+        let processor = DurableRuntimeProcessor::new(
+            replica,
+            store,
+            routes,
+            seed,
+            RuntimeSignerLabel::new(label).expect("Runtime signer"),
+        )
+        .expect("real durable processor");
+        let ingress = DirectRuntimeIngress::bind(DirectRuntimeIngressConfig::production(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            seed,
+            label,
+        ))
+        .expect("real ingress");
+        let mut service = ResidentRuntimeService::new(
+            processor,
+            ingress,
+            Box::new(crate::CanonicalEntityInfraMaterializer::new()),
+        )
+        .expect("live service");
+        let wire = json!({
+            "entityId": format!("0x{}", hex::encode(target.entity_id)),
+            "signerId": target.signer_id, "runtimeId": runtime_id, "from": peer,
+            "sourceRuntimeFrame": {"height": 1, "timestamp": 100},
+            "entityTxs": [{"type": "runtimeOutput", "data": {
+                "protocol": "cross-j", "sourceEntityId": source, "sourceSignerId": source_signer,
+                "targetEntityId": format!("0x{}", hex::encode(target.entity_id)),
+                "entityTxs": [{"type": "crossJurisdictionFillNotice", "data": {
+                    "orderId": "ingress-rejection", "fillSeq": 1, "cumulativeFillRatio": 100
+                }}]
+            }}]
+        });
+        let valid = RuntimeEntityInput::decode(wire.clone()).expect("valid wrapper");
+        let mut forged_wire = wire;
+        forged_wire["entityTxs"][0]["data"]["sourceSignerId"] =
+            json!(format!("0x{}", "55".repeat(20)));
+        let forged = RuntimeEntityInput::decode(forged_wire).expect("well-formed forgery");
+        let batch = |inputs: Vec<RuntimeEntityInput>| InboundEntityInputs {
+            peer_runtime_id: peer.clone(),
+            message_id: "source-binding".into(),
+            source_runtime_height: 1,
+            source_runtime_timestamp: 100,
+            ingress_timestamp: Some(100),
+            entity_tx_count: inputs.len() as u64,
+            entity_inputs: inputs,
+        };
+        assert!(
+            service
+                .accept_inbound_event(InboundRuntimeEvent::EntityInputs(batch(vec![
+                    valid.clone(),
+                    forged.clone()
+                ])))
+                .expect("hostile ingress is nonfatal")
+                .is_none()
+        );
+        assert!(
+            service.held_inbound.is_empty(),
+            "no valid prefix was admitted"
+        );
+        let unchanged = service
+            .processor
+            .replica()
+            .expect("processor stays healthy");
+        assert_eq!(unchanged.state.height, initial_height);
+        assert_eq!(
+            unchanged.state.e_replicas[&target].accounts_root,
+            initial_root
+        );
+        assert_eq!(unchanged.mempool.entity_input_count(), 0);
+        assert!(matches!(
+            service.process_batch_at(Some(batch(vec![forged])), 100),
+            Err(ResidentRuntimeServiceError::InboundRoute(_)),
+        ));
+        assert!(
+            service
+                .accept_inbound_event(InboundRuntimeEvent::EntityInputs(batch(vec![valid])))
+                .expect("following valid source remains accepted")
+                .is_some()
+        );
+        service.shutdown().expect("shutdown real ingress");
+        drop(service);
+        std::fs::remove_dir_all(directory).expect("remove fixture WAL");
+    }
 
     fn entity_input() -> RuntimeEntityInput {
         RuntimeEntityInput::decode(json!({

@@ -6,12 +6,12 @@
 //! a delivery receipt.
 
 pub(in crate::transport) mod envelope;
-mod frame;
+pub(in crate::transport) mod frame;
 mod gossip;
 mod listener;
 mod reactor;
 mod reply;
-mod session;
+pub(in crate::transport) mod session;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -119,6 +119,8 @@ pub(super) struct SharedIngress {
     config: ValidatedIngressConfig,
     sender: SyncSender<InboundRuntimeEvent>,
     stop: AtomicBool,
+    socket_serial: AtomicU64,
+    local_ready: AtomicBool,
     active_peers: Mutex<BTreeSet<String>>,
     sockets: Mutex<BTreeMap<u64, TcpStream>>,
     replies: InboundSessionTable,
@@ -167,6 +169,8 @@ impl DirectRuntimeIngress {
             },
             sender,
             stop: AtomicBool::new(false),
+            socket_serial: AtomicU64::new(0),
+            local_ready: AtomicBool::new(false),
             active_peers: Mutex::new(BTreeSet::new()),
             sockets: Mutex::new(BTreeMap::new()),
             replies: InboundSessionTable::default(),
@@ -174,11 +178,23 @@ impl DirectRuntimeIngress {
             fatal_error: Mutex::new(None),
             counters: IngressCounters::default(),
         });
+        let reactors = listener::start_reactors(&shared)
+            .ok_or_else(|| RuntimeTransportError::Inbound("reactor-start-failed".into()))?;
+        shared.replies.bind_owner(
+            &shared,
+            reactors
+                .iter()
+                .map(|reactor| reactor.ingress.clone())
+                .collect(),
+        )?;
         let listener_shared = Arc::clone(&shared);
         let listener_thread = thread::Builder::new()
             .name("rrs-direct-ingress".into())
-            .spawn(move || listener::run(listener, listener_shared))
-            .map_err(|error| RuntimeTransportError::WebSocket(error.to_string()))?;
+            .spawn(move || listener::run(listener, listener_shared, reactors))
+            .map_err(|error| {
+                shared.stop.store(true, Ordering::Release);
+                RuntimeTransportError::WebSocket(error.to_string())
+            })?;
         Ok(Self {
             local_address,
             runtime_id,
@@ -202,6 +218,12 @@ impl DirectRuntimeIngress {
 
     pub fn sessions(&self) -> InboundSessionTable {
         self.shared.replies.clone()
+    }
+
+    /// Startup owns this transient gate after authenticated J catch-up.
+    /// Hello and control traffic remain available while financial ingress waits.
+    pub fn set_delivery_ready(&self, ready: bool) -> Result<(), RuntimeTransportError> {
+        self.shared.replies.set_delivery_ready(ready)
     }
 
     pub fn has_open_session(&self, runtime_id: &str) -> Result<bool, RuntimeTransportError> {

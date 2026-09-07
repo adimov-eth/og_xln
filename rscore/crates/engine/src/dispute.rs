@@ -78,62 +78,53 @@ pub struct DisputeProofBody {
     pub transformers: Vec<DisputeTransformerClause>,
 }
 
-const INT256_MIN_SHIFT: u32 = 255;
-
-fn int256_min() -> BigInt {
-    -(BigInt::from(1) << INT256_MIN_SHIFT)
-}
-
-fn int256_max() -> BigInt {
-    (BigInt::from(1) << INT256_MIN_SHIFT) - 1
-}
-
 fn word_from_u64(value: u64) -> [u8; 32] {
     let mut word = [0_u8; 32];
     word[24..].copy_from_slice(&value.to_be_bytes());
     word
 }
 
-/// Depository `MAX_MONEY = 1 << 200`: the contract reverts on any reserve,
-/// collateral, allowance or |delta| above it, so a body carrying a larger
-/// amount can never be finalized and must not be signed.
-fn max_money() -> BigInt {
-    BigInt::from(1) << 200_u32
-}
-
-/// A signed money amount as Solidity holds it: two's complement over 32
-/// bytes, |value| capped at `MAX_MONEY` (TypeScript `MONEY_CAP_EXCEEDED`).
-fn word_from_int(value: &BigInt, field: &'static str) -> Result<[u8; 32], StateError> {
-    if *value < -max_money() || *value > max_money() {
-        return Err(StateError::DisputeProof(format!(
-            "{field}:MONEY_CAP_EXCEEDED"
-        )));
+/// Proof offsets are Int512 two's-complement limbs. An offset is cumulative;
+/// an ERC20-sized transfer may legitimately cross either signed 256-bit edge.
+fn words_from_int512(value: &BigInt, field: &'static str) -> Result<[u8; 64], StateError> {
+    let boundary = BigInt::from(1) << 511_u32;
+    if value < &(-&boundary) || value >= &boundary {
+        return Err(StateError::DisputeProof(format!("{field}:int512Range")));
     }
-    let mut word = if value.sign() == Sign::Minus {
-        [0xff_u8; 32]
-    } else {
-        [0_u8; 32]
-    };
-    let magnitude = if value.sign() == Sign::Minus {
-        // Two's complement: 2^256 + value, computed on the magnitude so the
-        // bytes are exact rather than rounded through any float or i128.
-        (BigInt::from(1) << 256_u32) + value
+    let encoded = if value.sign() == Sign::Minus {
+        (BigInt::from(1) << 512_u32) + value
     } else {
         value.clone()
     };
-    let bytes = magnitude.to_bytes_be().1;
-    if bytes.len() > 32 {
-        return Err(StateError::DisputeProof(format!("{field}:width")));
-    }
-    word[32 - bytes.len()..].copy_from_slice(&bytes);
-    Ok(word)
+    let bytes = encoded.to_bytes_be().1;
+    let mut words = [0_u8; 64];
+    words[64 - bytes.len()..].copy_from_slice(&bytes);
+    Ok(words)
+}
+
+/// SignedAmount is (negative, magnitude), so both payer directions use the
+/// full uint256 asset domain. BigInt has a unique zero: negative zero cannot
+/// be emitted into the signed contract preimage.
+fn words_from_movement(value: &BigInt, field: &'static str) -> Result<[u8; 64], StateError> {
+    let magnitude = if value.sign() == Sign::Minus {
+        -value
+    } else {
+        value.clone()
+    };
+    let mut words = [0_u8; 64];
+    words[..32].copy_from_slice(&word_from_u64(u64::from(value.sign() == Sign::Minus)));
+    words[32..].copy_from_slice(&word_from_uint(&magnitude, field)?);
+    Ok(words)
 }
 
 fn word_from_uint(value: &BigInt, field: &'static str) -> Result<[u8; 32], StateError> {
-    if value.sign() == Sign::Minus {
-        return Err(StateError::DisputeProof(format!("{field}:negative")));
+    let (sign, bytes) = value.to_bytes_be();
+    if sign == Sign::Minus || bytes.len() > 32 {
+        return Err(StateError::DisputeProof(format!("{field}:uint256Range")));
     }
-    word_from_int(value, field)
+    let mut word = [0_u8; 32];
+    word[32 - bytes.len()..].copy_from_slice(&bytes);
+    Ok(word)
 }
 
 fn word_from_address(address: &[u8; 20]) -> [u8; 32] {
@@ -436,16 +427,9 @@ pub fn build_dispute_proof_body(
     let mut token_ids: Vec<u32> = Vec::new();
     let mut offdeltas: Vec<BigInt> = Vec::new();
     for delta in state.deltas() {
-        // Depository negates a negative final delta, and Solidity cannot
-        // negate int256::MIN — a body that cannot be finalized must never be
-        // signed.
-        let final_delta = delta.ondelta().clone() + delta.offdelta().clone();
-        if final_delta < int256_min() || final_delta > int256_max() || final_delta == int256_min() {
-            return Err(StateError::DisputeProof(format!(
-                "finalDelta:{}",
-                delta.token_id().get()
-            )));
-        }
+        // Both offsets are validated Int512 state. Depository adds them in
+        // Int768 and records any shortfall as unsigned debt; signed256 MIN
+        // and final sums beyond signed256 are valid settlement outcomes.
         token_ids.push(u32::from(delta.token_id().get()));
         offdeltas.push(delta.offdelta().clone());
     }
@@ -515,33 +499,29 @@ pub fn build_dispute_proof_body(
         });
     }
 
-    // One clause per non-empty collection, in the order DeltaTransformer runs
-    // them. A batch with nothing in it is not a clause.
-    let mut clauses: Vec<DisputeTransformerClause> = Vec::new();
-    if !payments.is_empty() {
-        let allowances = payment_allowances(&payments)?;
-        clauses.push(DisputeTransformerClause {
+    // Preserve TS payment → swap → pull order and greedily split only at the
+    // signed storage-atom or uint256 allowance boundary.
+    let mut clauses = chunk_clauses(&payments, |items| {
+        Ok(DisputeTransformerClause {
             transformer_address: *delta_transformer,
-            encoded_batch: encode_batch(&payments, &[], &[])?,
-            allowances,
-        });
-    }
-    if !swaps.is_empty() {
-        let allowances = swap_allowances(&swaps)?;
-        clauses.push(DisputeTransformerClause {
+            encoded_batch: encode_batch(items, &[], &[])?,
+            allowances: payment_allowances(items)?,
+        })
+    })?;
+    clauses.extend(chunk_clauses(&swaps, |items| {
+        Ok(DisputeTransformerClause {
             transformer_address: *delta_transformer,
-            encoded_batch: encode_batch(&[], &swaps, &[])?,
-            allowances,
-        });
-    }
-    if !pulls.is_empty() {
-        let allowances = pull_allowances(&pulls);
-        clauses.push(DisputeTransformerClause {
+            encoded_batch: encode_batch(&[], items, &[])?,
+            allowances: swap_allowances(items)?,
+        })
+    })?);
+    clauses.extend(chunk_clauses(&pulls, |items| {
+        Ok(DisputeTransformerClause {
             transformer_address: *delta_transformer,
-            encoded_batch: encode_batch(&[], &[], &pulls)?,
-            allowances,
-        });
-    }
+            encoded_batch: encode_batch(&[], &[], items)?,
+            allowances: pull_allowances(items),
+        })
+    })?);
     let identity = state.identity();
     let dispute = state.dispute_config();
     Ok(DisputeProofBody {
@@ -552,6 +532,81 @@ pub fn build_dispute_proof_body(
         token_ids,
         transformers: clauses,
     })
+}
+
+// Exact msgpackr atom envelope: magic byte + record definition + "atom" +
+// hex string. ABI batches are at least 224 bytes, hence always str16 below
+// this 10,000-byte boundary. The independent TS vectors pin this overhead.
+fn clause_fits(clause: &DisputeTransformerClause) -> bool {
+    let max: BigInt = (BigInt::from(1) << 256_u32) - 1;
+    clause.encoded_batch.len() * 2 + 26 < 10_000
+        && clause
+            .allowances
+            .iter()
+            .all(|row| row.left_allowance <= max && row.right_allowance <= max)
+}
+
+fn chunk_clauses<T>(
+    items: &[T],
+    build: impl Fn(&[T]) -> Result<DisputeTransformerClause, StateError>,
+) -> Result<Vec<DisputeTransformerClause>, StateError> {
+    let mut clauses = Vec::new();
+    let mut start = 0;
+    for end in 1..=items.len() {
+        let candidate = build(&items[start..end])?;
+        if clause_fits(&candidate) {
+            continue;
+        }
+        if end - 1 > start {
+            clauses.push(build(&items[start..end - 1])?);
+        }
+        start = end - 1;
+        let single = build(&items[start..end])?;
+        if !clause_fits(&single) {
+            return Err(StateError::DisputeProof(format!(
+                "ACCOUNT_DISPUTE_PROOF_ATOM_BYTES_EXCEEDED:transformer={}:{}/10000",
+                clauses.len(),
+                single.encoded_batch.len() * 2 + 26,
+            )));
+        }
+    }
+    if start < items.len() {
+        clauses.push(build(&items[start..])?);
+    }
+    Ok(clauses)
+}
+
+impl DisputeTransformerClause {
+    /// Project positional arguments from the already-built signed batch, never
+    /// rerun a second chunking formula in Entity. Solidity restarts each side's
+    /// counterparty-owned swap index for every transformer invocation.
+    pub fn argument_counts(&self) -> Result<(usize, usize, usize), StateError> {
+        let read = |offset: usize| -> Result<usize, StateError> {
+            let word = self
+                .encoded_batch
+                .get(offset..offset + 32)
+                .ok_or_else(|| StateError::DisputeProof("batch:argumentOffset".into()))?;
+            if word[..24].iter().any(|byte| *byte != 0) {
+                return Err(StateError::DisputeProof("batch:argumentCount".into()));
+            }
+            usize::try_from(u64::from_be_bytes(word[24..].try_into().expect("word")))
+                .map_err(|_| StateError::DisputeProof("batch:argumentCount".into()))
+        };
+        let base = read(0)?;
+        let payment_count = read(base + read(base)?)?;
+        let swap_base = base + read(base + 32)?;
+        let swap_count = read(swap_base)?;
+        let mut left_count = 0;
+        let mut right_count = 0;
+        for index in 0..swap_count {
+            match read(swap_base + 32 + index * 160)? {
+                0 => left_count += 1,
+                1 => right_count += 1,
+                _ => return Err(StateError::DisputeProof("batch:swapOwner".into())),
+            }
+        }
+        Ok((payment_count, left_count, right_count))
+    }
 }
 
 fn add_allowance(
@@ -640,7 +695,7 @@ fn encode_batch(
     payment_bytes.extend_from_slice(&word_from_u64(payments.len() as u64));
     for payment in payments {
         payment_bytes.extend_from_slice(&word_from_u64(payment.delta_index as u64));
-        payment_bytes.extend_from_slice(&word_from_int(&payment.amount, "paymentAmount")?);
+        payment_bytes.extend_from_slice(&words_from_movement(&payment.amount, "paymentAmount")?);
         payment_bytes.extend_from_slice(&word_from_u64(payment.revealed_until_timestamp));
         payment_bytes.extend_from_slice(&payment.hash);
     }
@@ -657,7 +712,7 @@ fn encode_batch(
     pull_bytes.extend_from_slice(&word_from_u64(pulls.len() as u64));
     for pull in pulls {
         pull_bytes.extend_from_slice(&word_from_u64(pull.delta_index as u64));
-        pull_bytes.extend_from_slice(&word_from_int(&pull.amount, "pullAmount")?);
+        pull_bytes.extend_from_slice(&words_from_movement(&pull.amount, "pullAmount")?);
         pull_bytes.extend_from_slice(&word_from_u64(u64::from(pull.claimed_ratio)));
         pull_bytes.extend_from_slice(&pull.full_hash);
         pull_bytes.extend_from_slice(&pull.partial_root);
@@ -685,7 +740,7 @@ fn encode_proof_body(body: &DisputeProofBody) -> Result<Vec<u8>, StateError> {
     let mut offdelta_bytes = Vec::new();
     offdelta_bytes.extend_from_slice(&word_from_u64(body.offdeltas.len() as u64));
     for offdelta in &body.offdeltas {
-        offdelta_bytes.extend_from_slice(&word_from_int(offdelta, "offdelta")?);
+        offdelta_bytes.extend_from_slice(&words_from_int512(offdelta, "offdelta")?);
     }
     let mut token_bytes = Vec::new();
     token_bytes.extend_from_slice(&word_from_u64(body.token_ids.len() as u64));
@@ -888,6 +943,151 @@ mod counterparty_requirement_tests {
         assert_eq!(
             counterparty_dispute_requirement_error(None, None, 0, Some(&previous)).as_deref(),
             Some("DISPUTE_HANKO_UNEXPECTED_WITHOUT_LOCAL_PROOF"),
+        );
+    }
+}
+
+#[cfg(test)]
+mod chunk_parity_tests {
+    use super::*;
+
+    #[test]
+    fn dispute_chunks_match_ts_32_payments_34_swaps_proof_hash() {
+        let payments = (0..32)
+            .map(|index| {
+                let mut hash = [0; 32];
+                hash[31] = index + 1;
+                Payment {
+                    delta_index: 0,
+                    amount: BigInt::from(-1),
+                    revealed_until_timestamp: 99,
+                    hash,
+                }
+            })
+            .collect::<Vec<_>>();
+        let swaps = (0..34)
+            .map(|index| Swap {
+                owner_is_left: index % 2 == 0,
+                add_delta_index: 0,
+                add_amount: BigInt::from(100),
+                sub_delta_index: 1,
+                sub_amount: BigInt::from(200),
+            })
+            .collect::<Vec<_>>();
+        let mut clauses = chunk_clauses(&payments, |items| {
+            Ok(DisputeTransformerClause {
+                transformer_address: [0x22; 20],
+                encoded_batch: encode_batch(items, &[], &[])?,
+                allowances: payment_allowances(items)?,
+            })
+        })
+        .unwrap();
+        clauses.extend(
+            chunk_clauses(&swaps, |items| {
+                Ok(DisputeTransformerClause {
+                    transformer_address: [0x22; 20],
+                    encoded_batch: encode_batch(&[], items, &[])?,
+                    allowances: swap_allowances(items)?,
+                })
+            })
+            .unwrap(),
+        );
+        assert_eq!(
+            clauses
+                .iter()
+                .map(|clause| clause.argument_counts().unwrap())
+                .collect::<Vec<_>>(),
+            [(29, 0, 0), (3, 0, 0), (0, 14, 15), (0, 3, 2)]
+        );
+        assert_eq!(
+            clauses
+                .iter()
+                .map(|clause| clause.encoded_batch.len() * 2 + 26)
+                .collect::<Vec<_>>(),
+            [9754, 1434, 9754, 2074]
+        );
+        let mut body = DisputeProofBody {
+            watch_seed: [0x11; 32],
+            left_response_seconds: 10,
+            right_response_seconds: 20,
+            offdeltas: vec![BigInt::from(0); 2],
+            token_ids: vec![1, 2],
+            transformers: clauses,
+        };
+        // Independent TS buildAccountProofBody oracle, fixed IDs lock/offer-00..
+        // and monotonically numbered hashes: binds ordering, ABI and allowances.
+        assert_eq!(
+            prefixed_hex(&Keccak256::digest(encode_proof_body(&body).unwrap())),
+            "0xa0b04028c75dceef2838a0600e26460f985504b50470580d2bd6465387bd8745"
+        );
+        let pulls = (0..22)
+            .map(|index| {
+                let mut full_hash = [0; 32];
+                full_hash[31] = index + 1;
+                Pull {
+                    delta_index: 0,
+                    amount: BigInt::from(if index % 2 == 0 { 1 } else { -1 }),
+                    claimed_ratio: u16::from(index),
+                    full_hash,
+                    partial_root: [0x33; 32],
+                    target_role: index % 2 == 0,
+                }
+            })
+            .collect::<Vec<_>>();
+        let clauses = chunk_clauses(&pulls, |items| {
+            Ok(DisputeTransformerClause {
+                transformer_address: [0x22; 20],
+                encoded_batch: encode_batch(&[], &[], items)?,
+                allowances: pull_allowances(items),
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            clauses
+                .iter()
+                .map(|clause| clause.encoded_batch.len() * 2 + 26)
+                .collect::<Vec<_>>(),
+            [9882, 922]
+        );
+        body.transformers.extend(clauses);
+        assert_eq!(
+            prefixed_hex(&Keccak256::digest(encode_proof_body(&body).unwrap())),
+            "0x0b9db7d6fce5dbd839e50e5610c827f1ee44089691d3e136b77a13682210b21b"
+        );
+    }
+
+    #[test]
+    fn dispute_chunks_split_uint256_allowance_before_it_overflows() {
+        let max: BigInt = (BigInt::from(1) << 256_u32) - 1;
+        let payments = [max.clone(), BigInt::from(1)].map(|amount| Payment {
+            delta_index: 0,
+            amount,
+            revealed_until_timestamp: 99,
+            hash: [1; 32],
+        });
+        let clauses = chunk_clauses(&payments, |items| {
+            Ok(DisputeTransformerClause {
+                transformer_address: [2; 20],
+                encoded_batch: encode_batch(items, &[], &[])?,
+                allowances: payment_allowances(items)?,
+            })
+        })
+        .unwrap();
+        assert_eq!(clauses.len(), 2);
+        assert_eq!(clauses[0].allowances[0].left_allowance, max);
+        assert_eq!(clauses[1].allowances[0].left_allowance, BigInt::from(1));
+        let error = chunk_clauses(&[0], |_| {
+            Ok(DisputeTransformerClause {
+                transformer_address: [2; 20],
+                encoded_batch: vec![0; 4987],
+                allowances: Vec::new(),
+            })
+        })
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("ACCOUNT_DISPUTE_PROOF_ATOM_BYTES_EXCEEDED")
         );
     }
 }

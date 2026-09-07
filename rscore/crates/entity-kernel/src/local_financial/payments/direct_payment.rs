@@ -6,7 +6,6 @@ use crate::{EntityFrameEvent, EntityKernelError, EntityStateSlice};
 use super::types::DirectPaymentEntityTx;
 
 const MAX_ROUTE_HOPS: usize = 100;
-const MAX_PAYMENT_AMOUNT_BITS: u64 = 128;
 
 pub(super) fn apply_direct_payment(
     state: &EntityStateSlice,
@@ -15,7 +14,7 @@ pub(super) fn apply_direct_payment(
     events: &mut Vec<EntityFrameEvent>,
     wake_targets: &mut Vec<String>,
 ) -> Result<(), EntityKernelError> {
-    if tx.amount < BigInt::from(1) || tx.amount.bits() > MAX_PAYMENT_AMOUNT_BITS {
+    if tx.amount < BigInt::from(1) || tx.amount.bits() > 256 {
         events.push(EntityFrameEvent::Status {
             message: "❌ Payment failed: amount out of bounds".into(),
         });
@@ -132,5 +131,50 @@ mod tests {
                 if account_id == &peer
                     && description.as_deref() == Some(format!("Payment to {peer}").as_str())
         ));
+    }
+
+    #[test]
+    fn direct_payment_accepts_old_cap_plus_one_and_rejects_uint256_overflow_before_admission() {
+        let owner = entity("11");
+        let peer = entity("22");
+        let mut state = EntityStateSlice::empty(owner.clone(), 100);
+        state.known_accounts.insert(peer.clone());
+        for (amount, accepted) in [
+            (BigInt::from(1) << 128_usize, true),
+            (BigInt::from(1) << 256_usize, false),
+        ] {
+            let mut account_txs = Vec::new();
+            let mut events = Vec::new();
+            let mut wakes = Vec::new();
+            apply_direct_payment(
+                &state,
+                DirectPaymentEntityTx {
+                    target_entity_id: peer.clone(),
+                    token_id: xln_rscore_engine::TokenId::new(1).expect("token"),
+                    amount: amount.clone(),
+                    route: vec![owner.clone(), peer.clone()],
+                    description: None,
+                    delivery_mode: DeliveryMode::Direct,
+                    trusted_gateway_entity_id: None,
+                },
+                &mut account_txs,
+                &mut events,
+                &mut wakes,
+            )
+            .expect("direct payment numeric admission");
+            assert_eq!(account_txs.len(), usize::from(accepted));
+            assert_eq!(wakes.len(), usize::from(accepted));
+            if accepted {
+                assert!(matches!(&account_txs[0].1,
+                    AccountTx::DirectPayment { amount: admitted, .. } if admitted == &amount));
+            } else {
+                assert_eq!(
+                    events,
+                    vec![EntityFrameEvent::Status {
+                        message: "❌ Payment failed: amount out of bounds".into(),
+                    }]
+                );
+            }
+        }
     }
 }

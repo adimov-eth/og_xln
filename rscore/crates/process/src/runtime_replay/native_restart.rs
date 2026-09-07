@@ -1,5 +1,6 @@
 //! Exact native checkpoint + WAL restart into the production processor.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,7 +16,8 @@ use xln_rscore_runtime::restore::{
 };
 use xln_rscore_runtime::storage::native::{NativeRuntimeStore, NativeStorageConfig};
 use xln_rscore_runtime::{
-    DurableRuntimeProcessor, RuntimeLimits, RuntimeSignerLabel, canonical_swap_market_policy,
+    DurableRuntimeProcessor, RuntimeEntityKey, RuntimeLimits, RuntimeSignerLabel,
+    canonical_swap_market_policy,
 };
 
 use crate::PAYMENT_PROFILE_BINDING;
@@ -25,8 +27,7 @@ pub struct NativeRuntimeReady {
     /// Restore-only diagnostics. They never enter Runtime state or storage.
     pub restore_elapsed: Duration,
     pub restored_wal_frames: usize,
-    pub htlc_routing_fee_ppm: u32,
-    pub htlc_routing_base_fee: BigInt,
+    pub htlc_routing_fees: BTreeMap<RuntimeEntityKey, (u32, BigInt)>,
 }
 
 #[derive(Clone, Copy)]
@@ -119,8 +120,23 @@ fn restore_native_runtime(
     }
     .map_err(|error| format!("RRS_NATIVE_RESTART_CHECKPOINT:{error}"))?;
     let checkpoint_period_frames = decoded.limits.checkpoint_period_frames;
-    let htlc_routing_fee_ppm = decoded.htlc_routing_fee_ppm;
-    let htlc_routing_base_fee = decoded.htlc_routing_base_fee.clone();
+    let htlc_routing_fees = decoded
+        .entities
+        .iter()
+        .map(|entity| {
+            RuntimeEntityKey::new(entity.stored_accounts.owner_entity_id, &entity.signer_id)
+                .map(|key| {
+                    (
+                        key,
+                        (
+                            entity.htlc_routing_fee_ppm,
+                            entity.htlc_routing_base_fee.clone(),
+                        ),
+                    )
+                })
+                .map_err(|error| format!("RRS_NATIVE_RESTART_FEE_OWNER:{error}"))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
     let mut restored = restore_decoded_runtime_checkpoint(decoded)
         .map_err(|error| format!("RRS_NATIVE_RESTART_RESTORE:{error}"))?;
     if let (Some(origin), Some(first)) = (migration_origin, sources.wal.first()) {
@@ -167,7 +183,6 @@ fn restore_native_runtime(
         processor,
         restore_elapsed: restore_started.elapsed(),
         restored_wal_frames,
-        htlc_routing_fee_ppm,
-        htlc_routing_base_fee,
+        htlc_routing_fees,
     })
 }

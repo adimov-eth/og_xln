@@ -25,17 +25,14 @@ type Side = Readonly<{
 }>;
 
 const entityState = (side: Side) => {
-  const replica = [...side.env.state.eReplicas.values()].find(row =>
-    row.entityId === side.entityId && row.signerId === side.signerId);
+  const replica = [...side.env.state.eReplicas.values()].find(
+    row => row.entityId === side.entityId && row.signerId === side.signerId,
+  );
   if (!replica) throw new Error(`GROUP_E_ENTITY_MISSING:${side.entityId}`);
   return replica.state;
 };
 
-const buildSide = (
-  suffix: string,
-  label: string,
-  jurisdiction: ReturnType<typeof makeJurisdiction>,
-) => {
+const buildSide = (suffix: string, label: string, jurisdiction: ReturnType<typeof makeJurisdiction>) => {
   const env = createEmptyEnv(`${SEED}-${suffix}`);
   env.scenarioMode = true;
   env.quietRuntimeLogs = true;
@@ -62,12 +59,22 @@ const buildSides = () => {
   const second = buildSide('second', 'second', jurisdiction);
   const firstId = generateLazyEntityId([first.signerId], 1n).toLowerCase();
   const secondId = generateLazyEntityId([second.signerId], 1n).toLowerCase();
-  const [left, right] = firstId < secondId
-    ? [{ ...first, entityId: firstId }, { ...second, entityId: secondId }]
-    : [{ ...second, entityId: secondId }, { ...first, entityId: firstId }];
+  const [left, right] =
+    firstId < secondId
+      ? [
+          { ...first, entityId: firstId },
+          { ...second, entityId: secondId },
+        ]
+      : [
+          { ...second, entityId: secondId },
+          { ...first, entityId: firstId },
+        ];
   const leftState = makeState(left.entityId, left.signerId, jurisdiction, right.entityId);
   const rightState = makeState(right.entityId, right.signerId, jurisdiction, left.entityId);
-  for (const [state, peer] of [[leftState, right.entityId], [rightState, left.entityId]] as const) {
+  for (const [state, peer] of [
+    [leftState, right.entityId],
+    [rightState, left.entityId],
+  ] as const) {
     state.height = 0;
     state.timestamp = TIMESTAMP;
     state.prevFrameHash = 'genesis';
@@ -82,17 +89,15 @@ const buildSides = () => {
   return { left, right };
 };
 
-const localInput = (side: Side, tx: EntityTx) => [{
-  entityId: side.entityId,
-  signerId: side.signerId,
-  entityTxs: [tx],
-}];
+const localInput = (side: Side, tx: EntityTx) => [
+  {
+    entityId: side.entityId,
+    signerId: side.signerId,
+    entityTxs: [tx],
+  },
+];
 
-const executeAccountRoundTrip = async (
-  proposer: Side,
-  peer: Side,
-  tx: EntityTx,
-) => {
+const executeAccountRoundTrip = async (proposer: Side, peer: Side, tx: EntityTx) => {
   const stage = async <T>(name: string, execute: () => Promise<T>): Promise<T> => {
     try {
       return await execute();
@@ -132,12 +137,10 @@ const assertSettlementReady = (left: Side, right: Side): void => {
   }
 };
 
-export const executeEntityResidentGroupEVector = async () => {
-  const { left, right } = buildSides();
-  const initial = { left: projectInitialRuntime(left.env), right: projectInitialRuntime(right.env) };
+const prepareReadySettlement = async (left: Side, right: Side) => {
   const frames = [];
-  try {
-    frames.push(...await executeAccountRoundTrip(left, right, {
+  frames.push(
+    ...(await executeAccountRoundTrip(left, right, {
       type: 'settle_propose',
       data: {
         counterpartyEntityId: right.entityId,
@@ -147,19 +150,45 @@ export const executeEntityResidentGroupEVector = async () => {
         executorIsLeft: true,
         memo: 'group-e-v1',
       },
-    }));
-    const rightHash = workspaceHash(right, left);
-    frames.push(...await executeAccountRoundTrip(right, left, {
+    })),
+  );
+  const rightHash = workspaceHash(right, left);
+  frames.push(
+    ...(await executeAccountRoundTrip(right, left, {
       type: 'settle_approve',
       data: { counterpartyEntityId: left.entityId, workspaceHash: rightHash },
-    }));
-    // Committing the non-executor's Hanko causes the executor's canonical
-    // counter-Hanko followup; the bounded drain above carries both to H1.
-    assertSettlementReady(left, right);
-    const execute = await executeFrame(left.env, localInput(left, {
-      type: 'settle_execute',
-      data: { counterpartyEntityId: right.entityId, disableC2RShortcut: true },
-    }));
+    })),
+  );
+  // Committing the non-executor's Hanko causes the executor's canonical
+  // counter-Hanko followup; the bounded drain above carries both to H1.
+  assertSettlementReady(left, right);
+  return frames;
+};
+
+export const withReadySettlement = async <T>(run: (left: Side, right: Side) => Promise<T>): Promise<T> => {
+  const { left, right } = buildSides();
+  try {
+    await prepareReadySettlement(left, right);
+    return await run(left, right);
+  } finally {
+    await left.authority.close();
+    await right.authority.close();
+  }
+};
+
+export const executeEntityResidentGroupEVector = async () => {
+  const { left, right } = buildSides();
+  const initial = { left: projectInitialRuntime(left.env), right: projectInitialRuntime(right.env) };
+  const frames = [];
+  try {
+    frames.push(...(await prepareReadySettlement(left, right)));
+    const execute = await executeFrame(
+      left.env,
+      localInput(left, {
+        type: 'settle_execute',
+        data: { counterpartyEntityId: right.entityId, disableC2RShortcut: true },
+      }),
+    );
     frames.push(execute.projection);
     return {
       version: 1,

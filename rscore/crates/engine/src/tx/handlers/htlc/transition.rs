@@ -1,8 +1,8 @@
 use num_bigint::BigInt;
 use sha3::{Digest as _, Keccak256};
 
-use crate::state::delta::max_payment_amount;
 use crate::tx::apply_types::MutationDecision;
+use crate::tx::offdelta::{HtlcChange, validate_htlc_reachable, validate_transfer};
 use crate::{
     AccountExecutionContext, AccountOutput, AccountRejection, AccountReplica, HtlcHashlock,
     HtlcLock, HtlcLockTx, HtlcRejection, HtlcResolveOutcome, HtlcResolveTx, Side, TransitionError,
@@ -41,7 +41,9 @@ pub(crate) fn apply_lock(
         }));
     }
     let minimum = BigInt::from(1);
-    let maximum = max_payment_amount();
+    // DeltaTransformer SignedAmount carries the full asset magnitude for
+    // either payer direction; only the uint256 representation bounds it.
+    let maximum = (BigInt::from(1) << 256_usize) - 1_u8;
     if tx.amount < minimum || tx.amount > maximum {
         return Ok(rejected(HtlcRejection::Amount {
             amount: tx.amount.clone(),
@@ -80,7 +82,23 @@ pub(crate) fn apply_lock(
             .as_ref()
             .map(|envelope| envelope.integrity_hash()),
     );
-    delta.add_hold(proposer, &tx.amount)?;
+    if let Err(rejection) = validate_htlc_reachable(
+        replica,
+        &delta,
+        Some(HtlcChange::Add {
+            sender: proposer,
+            amount: &tx.amount,
+        }),
+    ) {
+        return Ok(MutationDecision::rejected(AccountRejection::Validation(
+            rejection,
+        )));
+    }
+    if let Err(rejection) = delta.add_hold(proposer, &tx.amount) {
+        return Ok(MutationDecision::rejected(AccountRejection::Validation(
+            rejection,
+        )));
+    }
     replica.state_mut().put_delta(delta)?;
     replica.state_mut().put_htlc_lock(lock)?;
 
@@ -135,6 +153,19 @@ pub(crate) fn apply_resolve(
 
     let (events, output) = match &tx.outcome {
         HtlcResolveOutcome::Secret { secret } => {
+            if let Err(rejection) = validate_transfer(
+                replica,
+                &delta,
+                lock.sender(),
+                lock.amount(),
+                Some(HtlcChange::Remove {
+                    lock_id: lock.lock_id(),
+                }),
+            ) {
+                return Ok(MutationDecision::rejected(AccountRejection::Validation(
+                    rejection,
+                )));
+            }
             delta.apply_transfer(lock.sender(), lock.amount())?;
             (
                 vec![format!(
@@ -173,6 +204,17 @@ pub(crate) fn apply_resolve(
         }
     };
 
+    if let Err(rejection) = validate_htlc_reachable(
+        replica,
+        &delta,
+        Some(HtlcChange::Remove {
+            lock_id: lock.lock_id(),
+        }),
+    ) {
+        return Ok(MutationDecision::rejected(AccountRejection::Validation(
+            rejection,
+        )));
+    }
     replica.state_mut().put_delta(delta)?;
     replica.state_mut().remove_htlc_lock(lock.lock_id())?;
     Ok(MutationDecision::with_outputs(events, vec![output]))

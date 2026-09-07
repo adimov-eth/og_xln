@@ -1,21 +1,21 @@
 use serde_json::Value;
 
 use super::super::RuntimeTransportError;
-use super::super::crypto::{SessionKeys, decrypt_session, verify_frame_mac};
+use super::super::crypto::{decrypt_session, verify_frame_mac};
 use super::super::routing::{normalize_entity_id, normalize_runtime_id};
 use super::envelope::{InboundEntityInputs, exact_fields, safe_u64, text, typed_array};
 use super::session::AcceptedHello;
 
 #[derive(Default)]
-pub(super) struct FrameState {
-    pub(super) auth_timestamp: u64,
-    encryption_sequence: u64,
+pub(in crate::transport) struct FrameState {
+    pub(in crate::transport) auth_timestamp: u64,
+    pub(in crate::transport) encryption_sequence: u64,
 }
 
-pub(super) fn decode(
+pub(in crate::transport) fn decode(
     value: Value,
     peer: &AcceptedHello,
-    keys: &SessionKeys,
+    key: &[u8; 32],
     audience: &str,
     challenge: &str,
     local_runtime_id: &str,
@@ -94,7 +94,7 @@ pub(super) fn decode(
     unsigned.remove("v");
     unsigned.remove("auth");
     verify_frame_mac(
-        &keys.c2s,
+        key,
         &Value::Object(unsigned),
         audience,
         challenge,
@@ -106,7 +106,7 @@ pub(super) fn decode(
             .get("payload")
             .ok_or_else(|| RuntimeTransportError::Inbound("frame-payload".into()))?,
     )?;
-    let plaintext = decrypt_session(&ciphertext, &keys.c2s, encryption_sequence)?;
+    let plaintext = decrypt_session(&ciphertext, key, encryption_sequence)?;
     let batch = super::envelope::decode_envelope(
         &plaintext,
         &peer.peer_runtime_id,

@@ -789,7 +789,15 @@ pub(super) fn apply_execute(
         });
         return Ok(());
     };
-    pending(account, KIND)?;
+    // A signed user execute may race the hub scheduler after both observed
+    // ready_to_submit. Reject before touching the batch or signed workspace;
+    // an ordinary duplicate request has no authority to halt the Runtime.
+    if account.settlement_transition_pending {
+        return Err(EntityKernelError::rejected(
+            KIND,
+            "SETTLEMENT_TRANSITION_ALREADY_PENDING",
+        ));
+    }
     let workspace_hash = string(
         required(fields, "workspaceHash", KIND)?,
         KIND,
@@ -926,6 +934,63 @@ mod committed_tests {
                 .and_then(|entries| entries.get(&peer)),
             Some(&CanonicalValue::String(workspace_hash))
         );
+    }
+
+    #[test]
+    fn duplicate_settle_execute_rejection_precedes_all_mutations() {
+        let local = format!("0x{}", "11".repeat(32));
+        let peer = format!("0x{}", "22".repeat(32));
+        let mut state = EntityStateSlice::empty(local, 1_000);
+        state.known_accounts = [peer.clone()].into_iter().collect();
+        let mut pending_view = financial_view(CanonicalValue::Object(vec![
+            (
+                "status".into(),
+                CanonicalValue::String("ready_to_submit".into()),
+            ),
+            ("leftHanko".into(), CanonicalValue::String("0x1234".into())),
+            ("rightHanko".into(), CanonicalValue::String("0x5678".into())),
+            ("nonceAtSign".into(), n(7)),
+        ]));
+        pending_view.settlement_transition_pending = true;
+        let mut views = BTreeMap::from([(peer.clone(), pending_view)]);
+        let before = state.clone();
+        let views_before = views.clone();
+        let execute = SettleExecuteEntityTx {
+            counterparty_entity_id: peer.clone(),
+            disable_c2r_shortcut: false,
+        };
+        let mut account_txs = Vec::new();
+        let mut events = Vec::new();
+        assert_eq!(
+            apply_execute(
+                &mut state,
+                execute.clone(),
+                &views,
+                &mut account_txs,
+                &mut events
+            ),
+            Err(EntityKernelError::RejectedEntityTx {
+                kind: "settle_execute",
+                detail: "SETTLEMENT_TRANSITION_ALREADY_PENDING".into(),
+            }),
+        );
+        assert_eq!(state, before);
+        assert_eq!(views, views_before);
+        assert!(account_txs.is_empty());
+        assert!(events.is_empty());
+        // Corrupt canonical workspace evidence remains a fatal invariant.
+        views
+            .get_mut(&peer)
+            .expect("view")
+            .settlement_transition_pending = false;
+        assert!(matches!(
+            apply_execute(&mut state, execute, &views, &mut account_txs, &mut events),
+            Err(EntityKernelError::InvalidLocalEntityTx { kind: "settle_execute", detail })
+                if detail == "WORKSPACE_FIELD_MISSING:workspaceHash"
+        ));
+        assert_eq!(state, before);
+        assert!(account_txs.is_empty());
+        assert!(events.is_empty());
     }
 
     #[test]

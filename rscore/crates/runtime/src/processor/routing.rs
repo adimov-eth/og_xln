@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use serde_json::{Map, Number, Value};
@@ -88,6 +88,14 @@ pub enum EntityRouteError {
     LocalCrossJEscapedMachine(usize),
     #[error("RRS_ENTITY_OUTPUT_LOCAL_INPUT:{0}")]
     LocalInput(String),
+    #[error("INBOUND_RUNTIME_OUTPUT_ENVELOPE_INVALID:index={0}")]
+    InboundRuntimeOutputEnvelope(usize),
+    #[error("INBOUND_RUNTIME_OUTPUT_SOURCE_UNVERIFIED:{entity_id}:{signer_id}:{peer_runtime_id}")]
+    InboundRuntimeOutputSource {
+        entity_id: String,
+        signer_id: String,
+        peer_runtime_id: String,
+    },
     #[error(transparent)]
     Transport(#[from] RuntimeTransportError),
 }
@@ -146,6 +154,51 @@ impl EntityRouteTable {
     /// for HTLC liveness assertions; no gossip lookup occurs mid-frame.
     pub fn entity_ids(&self) -> impl Iterator<Item = &str> {
         self.by_entity.keys().map(String::as_str)
+    }
+
+    /// Authenticate the complete batch before any input enters the live writer.
+    /// A valid peer session cannot claim another Entity's public signer. The
+    /// existing operator-pinned or signed-profile route must bind all three
+    /// source coordinates; nested semantic authority is checked later by Entity.
+    pub(crate) fn validate_inbound_runtime_outputs(
+        &self,
+        peer_runtime_id: &str,
+        inputs: &[crate::RuntimeEntityInput],
+    ) -> Result<(), EntityRouteError> {
+        for (index, input) in inputs.iter().enumerate() {
+            let Some(output) = input.runtime_output() else {
+                continue;
+            };
+            let peer = normalized_runtime_id(peer_runtime_id)?;
+            let canonical = input.canonical();
+            if canonical.get("from").and_then(Value::as_str) != Some(peer.as_str())
+                || canonical.get("entityId").and_then(Value::as_str)
+                    != Some(output.target_entity_id.as_str())
+                || canonical
+                    .get("entityTxs")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    != Some(1)
+                || !canonical
+                    .get("sourceRuntimeFrame")
+                    .is_some_and(Value::is_object)
+            {
+                return Err(EntityRouteError::InboundRuntimeOutputEnvelope(index));
+            }
+            let entity_id = normalized_entity_id(&output.source_entity_id)?;
+            let signer_id = output.source_signer_id.trim().to_ascii_lowercase();
+            let verified = self.by_entity.get(&entity_id).is_some_and(|route| {
+                route.runtime_id == peer && route.signer_id.trim().to_ascii_lowercase() == signer_id
+            });
+            if !verified {
+                return Err(EntityRouteError::InboundRuntimeOutputSource {
+                    entity_id,
+                    signer_id,
+                    peer_runtime_id: peer,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Paybook liveness is a transient Entity-preprocessing fact. Operator
@@ -339,23 +392,63 @@ impl EntityRouteTable {
         Ok(BoundEntityOutput::Remote { row, value })
     }
 
+    /// Prior native output keeps its financial bytes and original frame, but
+    /// its recorded transport destination must still be the current bound route.
+    pub(crate) fn validate_retained_output(
+        &self,
+        output: &Value,
+        index: usize,
+    ) -> Result<(), EntityRouteError> {
+        let entity_id = output.get("entityId").and_then(Value::as_str).ok_or(
+            EntityRouteError::OutputField {
+                index,
+                field: "entityId",
+            },
+        )?;
+        let entity_id = normalized_entity_id(entity_id)?;
+        let route = self
+            .by_entity
+            .get(&entity_id)
+            .ok_or_else(|| EntityRouteError::Missing(entity_id.clone()))?;
+        if output.get("runtimeId").and_then(Value::as_str) != Some(route.runtime_id.as_str()) {
+            return Err(EntityRouteError::RuntimeConflict(entity_id));
+        }
+        let signer = output.get("signerId").and_then(Value::as_str).ok_or(
+            EntityRouteError::OutputField {
+                index,
+                field: "signerId",
+            },
+        )?;
+        let expected_signer = route.signer_id.trim().to_ascii_lowercase();
+        if signer != expected_signer {
+            return Err(EntityRouteError::TargetSignerMismatch {
+                index,
+                expected: expected_signer,
+                actual: signer.into(),
+            });
+        }
+        Ok(())
+    }
+
     pub(crate) fn collect_bound(outputs: Vec<BoundEntityOutput>) -> BoundEntityOutputs {
         let mut rows = Vec::with_capacity(outputs.len());
         let mut resident_rows = Vec::with_capacity(outputs.len());
         let mut local_continuations = Vec::new();
+        let mut local_owners = BTreeSet::new();
         for output in outputs {
             match output {
                 BoundEntityOutput::Remote { row, value } => {
                     rows.push(row);
                     resident_rows.push(value);
                 }
-                // Match the TypeScript self-wake merge: the first trigger in
-                // canonical output order wins, later identical triggers add
-                // neither durable bytes nor another Runtime FIFO item.
-                BoundEntityOutput::Local(input) if local_continuations.is_empty() => {
-                    local_continuations.push(*input);
+                // TS merges current-frame self-wakes by Entity and signer.
+                // Preserve each owner's first output position: a wake for one
+                // owner must not suppress another owner's pending work (R4 h30).
+                BoundEntityOutput::Local(input) => {
+                    if local_owners.insert((*input.entity_id(), input.signer_id().to_owned())) {
+                        local_continuations.push(*input);
+                    }
                 }
-                BoundEntityOutput::Local(_) => {}
             }
         }
         BoundEntityOutputs {
@@ -491,6 +584,108 @@ mod tests {
             websocket_url: Some("ws://127.0.0.1:9000/ws".into()),
         }])
         .expect("routes")
+    }
+
+    #[test]
+    fn cross_j_r6_h72_retention_requires_the_current_route_and_signer() {
+        let routes = routes();
+        let output = json!({
+            "entityId": entity("11"), "runtimeId": runtime("22"), "signerId": "peer",
+            "sourceRuntimeFrame": {"height": 71, "timestamp": 100},
+            "entityTxs": []
+        });
+        routes
+            .validate_retained_output(&output, 0)
+            .expect("bound route");
+        let mut redirected = output.clone();
+        redirected["runtimeId"] = json!(runtime("33"));
+        assert!(matches!(
+            routes.validate_retained_output(&redirected, 0),
+            Err(EntityRouteError::RuntimeConflict(_))
+        ));
+        let mut wrong_signer = output.clone();
+        wrong_signer["signerId"] = json!("other");
+        assert!(matches!(
+            routes.validate_retained_output(&wrong_signer, 0),
+            Err(EntityRouteError::TargetSignerMismatch { .. })
+        ));
+        let mut unknown = output;
+        unknown["entityId"] = json!(entity("44"));
+        assert!(matches!(
+            routes.validate_retained_output(&unknown, 0),
+            Err(EntityRouteError::Missing(_))
+        ));
+    }
+
+    #[test]
+    fn inbound_runtime_output_requires_exact_operator_pinned_source() {
+        let source = entity("11");
+        let peer = runtime("22");
+        let signer = runtime("33");
+        let routes = EntityRouteTable::new([EntityRoute {
+            target_entity_id: source.clone(),
+            target_runtime_id: peer.clone(),
+            target_signer_id: signer.clone(),
+            websocket_url: None,
+        }])
+        .expect("operator-pinned route");
+        let wire = json!({
+            "entityId": entity("ab"), "signerId": runtime("55"),
+            "from": peer, "runtimeId": runtime("66"),
+            "sourceRuntimeFrame": {"height": 1, "timestamp": 100},
+            "entityTxs": [{"type": "runtimeOutput", "data": {
+                "protocol": "cross-j", "sourceEntityId": source,
+                "sourceSignerId": signer, "targetEntityId": entity("ab"),
+                "entityTxs": [{"type": "crossJurisdictionFillNotice", "data": {
+                    "orderId": "pinned-source", "fillSeq": 1, "cumulativeFillRatio": 100
+                }}]
+            }}]
+        });
+        let valid = crate::RuntimeEntityInput::decode(wire.clone()).expect("Runtime output");
+        routes
+            .validate_inbound_runtime_outputs(&peer, std::slice::from_ref(&valid))
+            .expect("pinned source authority");
+
+        let mut uppercase_target = wire.clone();
+        uppercase_target["entityTxs"][0]["data"]["targetEntityId"] =
+            Value::String(format!("0x{}", "AB".repeat(32)));
+        let error = crate::RuntimeEntityInput::decode(uppercase_target)
+            .expect_err("noncanonical target is rejected at decode");
+        assert!(error.to_string().contains("targetEntityId:CANONICAL"));
+        let mut wrong_target = wire.clone();
+        wrong_target["entityTxs"][0]["data"]["targetEntityId"] = Value::String(entity("cd"));
+        let wrong_target =
+            crate::RuntimeEntityInput::decode(wrong_target).expect("well-formed wrong target");
+        assert!(matches!(
+            routes.validate_inbound_runtime_outputs(&peer, &[wrong_target]),
+            Err(EntityRouteError::InboundRuntimeOutputEnvelope(0)),
+        ));
+
+        for (field, value) in [
+            ("sourceEntityId", entity("77")),
+            ("sourceSignerId", runtime("88")),
+        ] {
+            let mut changed = wire.clone();
+            changed["entityTxs"][0]["data"][field] = Value::String(value);
+            let forged = crate::RuntimeEntityInput::decode(changed).expect("well-formed forgery");
+            assert!(matches!(
+                routes.validate_inbound_runtime_outputs(&peer, &[valid.clone(), forged]),
+                Err(EntityRouteError::InboundRuntimeOutputSource { .. }),
+            ));
+        }
+        let wrong_peer = runtime("99");
+        let mut wrong_origin = wire;
+        wrong_origin["from"] = Value::String(wrong_peer.clone());
+        let forged =
+            crate::RuntimeEntityInput::decode(wrong_origin).expect("authenticated other peer");
+        assert!(matches!(
+            routes.validate_inbound_runtime_outputs(&wrong_peer, &[forged]),
+            Err(EntityRouteError::InboundRuntimeOutputSource { .. }),
+        ));
+        assert!(matches!(
+            routes.validate_inbound_runtime_outputs(&wrong_peer, &[valid]),
+            Err(EntityRouteError::InboundRuntimeOutputEnvelope(0)),
+        ));
     }
 
     #[test]
@@ -630,6 +825,42 @@ mod tests {
             .expect("local triggers");
         assert_eq!(encoded.local_continuations.len(), 1);
         assert!(encoded.rows.is_empty());
+    }
+
+    #[test]
+    fn cross_j_r4_h30_local_continuations_keep_each_owner_in_first_output_order() {
+        let trigger = |entity_id: String, signer_id: &str| {
+            BoundEntityOutput::Local(Box::new(
+                crate::RuntimeEntityInput::decode(json!({
+                    "entityId": entity_id, "signerId": signer_id, "entityTxs": [],
+                }))
+                .expect("local wake"),
+            ))
+        };
+        let first = entity("f9");
+        let second = entity("ea");
+        let encoded = EntityRouteTable::collect_bound(vec![
+            trigger(first.clone(), "first-signer"),
+            trigger(second.clone(), "second-signer"),
+            trigger(first.clone(), "first-signer"),
+            trigger(first.clone(), "another-signer"),
+            trigger(second.clone(), "second-signer"),
+        ]);
+        let owners = encoded
+            .local_continuations
+            .iter()
+            .map(|input| (input.canonical()["entityId"].clone(), input.signer_id()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            owners,
+            vec![
+                (json!(first), "first-signer"),
+                (json!(second), "second-signer"),
+                (json!(first), "another-signer"),
+            ],
+        );
+        assert!(encoded.rows.is_empty());
+        assert!(encoded.resident_rows.is_empty());
     }
 
     #[test]

@@ -171,6 +171,16 @@ pub(super) struct CommitPhaseWorkSelection {
 }
 
 impl CommitPhaseWorkSelection {
+    /// Evict one outer command while retaining positional order of every survivor.
+    pub(super) fn evict_selected(&mut self, index: usize) -> Result<(), RuntimeMachineError> {
+        if index >= self.selected.len() || self.selected.len() != self.selected_positions.len() {
+            return Err(RuntimeMachineError::InputCountOverflow);
+        }
+        self.selected.remove(index);
+        self.selected_positions.remove(index);
+        Ok(())
+    }
+
     pub(super) fn consume_selected_prefix(
         &mut self,
         count: usize,

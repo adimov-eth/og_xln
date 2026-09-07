@@ -2,7 +2,7 @@ mod payment;
 
 use num_bigint::BigInt;
 
-use crate::state::delta::{MAX_ACCOUNT_TOKEN_ROWS, max_credit_limit};
+use crate::state::delta::{MAX_ACCOUNT_TOKEN_ROWS, uint_max};
 use crate::tx::apply_types::MutationDecision;
 use crate::{
     AccountRejection, AccountReplica, Side, TokenId, TransitionError, ValidationRejection,
@@ -48,7 +48,9 @@ pub(crate) fn set_credit_limit(
             amount: amount.clone(),
         }));
     }
-    let maximum = max_credit_limit();
+    // A grant does not transfer value. Its only ceiling is the committed
+    // uint256 representation; exposure remains checked by each payment.
+    let maximum = uint_max(256);
     if amount > &maximum {
         return Ok(rejected(ValidationRejection::CreditLimitAboveMaximum {
             amount: amount.clone(),

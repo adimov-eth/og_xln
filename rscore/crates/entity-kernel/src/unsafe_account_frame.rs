@@ -213,6 +213,7 @@ mod parity_evidence {
         AccountInputResult {
             operation_index,
             account_id,
+            rebalance_work_after_input: false,
             force_ack: None,
             verdict: AccountInputVerdict::FrameDisputeRequired {
                 reason: reason.into(),

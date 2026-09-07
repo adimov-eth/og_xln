@@ -6,8 +6,11 @@ fn array(tuple: Vec<ParamType>) -> ParamType {
 fn uint() -> ParamType {
     ParamType::Uint(256)
 }
-fn int() -> ParamType {
-    ParamType::Int(256)
+fn int512() -> ParamType {
+    ParamType::Tuple(vec![ParamType::Int(256), uint()])
+}
+fn signed_amount() -> ParamType {
+    ParamType::Tuple(vec![ParamType::Bool, uint()])
 }
 fn word() -> ParamType {
     ParamType::FixedBytes(32)
@@ -24,7 +27,7 @@ pub fn proof_body() -> ParamType {
         word(),
         ParamType::Uint(32),
         ParamType::Uint(32),
-        ParamType::Array(Box::new(int())),
+        ParamType::Array(Box::new(int512())),
         ParamType::Array(Box::new(uint())),
         array(vec![
             address(),
@@ -58,7 +61,13 @@ pub(crate) fn batch() -> ParamType {
         array(vec![
             word(),
             word(),
-            array(vec![uint(), int(), int(), int(), int()]),
+            array(vec![
+                uint(),
+                signed_amount(),
+                signed_amount(),
+                signed_amount(),
+                signed_amount(),
+            ]),
             ParamType::Array(Box::new(uint())),
             bytes(),
             uint(),

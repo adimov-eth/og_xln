@@ -12,6 +12,7 @@ mod calldata;
 mod http;
 mod observation;
 mod receipt;
+mod token_registry;
 mod types;
 mod watcher;
 
@@ -19,10 +20,12 @@ pub use http::HttpJsonRpc;
 pub use observation::{
     ObserveJRange, decode_observe_j_range, encode_observe_j_range, observation_from_poll,
 };
+pub(crate) use token_registry::read_erc20_token_registry;
 pub use types::{
     FinalizedJHeader, FinalizedWatcherCursor, JWatcherConfig, JWatcherError, JWatcherPoll, JsonRpc,
     WatchedExternalWallet, WatchedHashLadder,
 };
+pub(crate) use watcher::capture_startup_target;
 pub use watcher::poll_finalized_j_events;
 pub use xln_rscore_entity_kernel::{FinalizedJEventBatch, JClaimIngress, JReserveUpdate};
 

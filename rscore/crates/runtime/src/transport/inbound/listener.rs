@@ -21,10 +21,7 @@ struct HandshakeJob {
     serial: u64,
 }
 
-pub(super) fn run(listener: TcpListener, shared: Arc<SharedIngress>) {
-    let Some(reactors) = start_reactors(&shared) else {
-        return;
-    };
+pub(super) fn run(listener: TcpListener, shared: Arc<SharedIngress>, reactors: Vec<ReactorHandle>) {
     let reactor_ingress = reactors
         .iter()
         .map(|reactor| reactor.ingress.clone())
@@ -36,7 +33,6 @@ pub(super) fn run(listener: TcpListener, shared: Arc<SharedIngress>) {
         Arc::clone(&handshake_rx),
         reactor_ingress,
     );
-    let mut serial = 0_u64;
     while !shared.stop.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((stream, _)) => {
@@ -44,21 +40,17 @@ pub(super) fn run(listener: TcpListener, shared: Arc<SharedIngress>) {
                     set_fatal(&shared, &format!("session-blocking:{error}"));
                     break;
                 }
-                serial = match serial.checked_add(1) {
-                    Some(value) => value,
-                    None => {
-                        set_fatal(&shared, "connection-id-overflow");
-                        break;
-                    }
-                };
                 shared
                     .counters
                     .accepted_connections
                     .fetch_add(1, Ordering::Relaxed);
-                if let Err(error) = register_socket(&shared, serial, &stream) {
-                    set_fatal(&shared, &error.to_string());
-                    break;
-                }
+                let serial = match register_socket(&shared, &stream) {
+                    Ok(serial) => serial,
+                    Err(error) => {
+                        set_fatal(&shared, &error.to_string());
+                        break;
+                    }
+                };
                 if handshake_tx.send(HandshakeJob { stream, serial }).is_err() {
                     remove_socket(&shared, serial);
                     set_fatal(&shared, "handshake-workers-closed");
@@ -91,7 +83,7 @@ pub(super) fn run(listener: TcpListener, shared: Arc<SharedIngress>) {
     }
 }
 
-fn start_reactors(shared: &Arc<SharedIngress>) -> Option<Vec<ReactorHandle>> {
+pub(super) fn start_reactors(shared: &Arc<SharedIngress>) -> Option<Vec<ReactorHandle>> {
     let mut reactors = Vec::with_capacity(SOCKET_REACTORS);
     for index in 0..SOCKET_REACTORS {
         match ReactorHandle::spawn(index, Arc::clone(shared)) {
@@ -146,7 +138,9 @@ fn start_handshake_workers(
                                 let reactor_index = usize::try_from(serial)
                                     .unwrap_or(0)
                                     .wrapping_rem(worker_reactors.len());
-                                if let Err(error) = worker_reactors[reactor_index].submit(session) {
+                                if let Err(error) =
+                                    worker_reactors[reactor_index].submit(session, &worker_shared)
+                                {
                                     remove_socket(&worker_shared, serial);
                                     session_failed(&worker_shared, &error);
                                 }
@@ -170,11 +164,19 @@ fn start_handshake_workers(
         .collect()
 }
 
-fn register_socket(
+pub(super) fn register_socket(
     shared: &SharedIngress,
-    serial: u64,
     stream: &TcpStream,
-) -> Result<(), super::super::RuntimeTransportError> {
+) -> Result<u64, super::super::RuntimeTransportError> {
+    let serial = shared
+        .socket_serial
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+            value.checked_add(1)
+        })
+        .map_err(|_| {
+            super::super::RuntimeTransportError::Inbound("connection-id-overflow".into())
+        })?
+        + 1;
     let clone = stream
         .try_clone()
         .map_err(|error| super::super::RuntimeTransportError::WebSocket(error.to_string()))?;
@@ -183,7 +185,7 @@ fn register_socket(
         .lock()
         .map_err(|_| super::super::RuntimeTransportError::Inbound("socket-lock".into()))?
         .insert(serial, clone);
-    Ok(())
+    Ok(serial)
 }
 
 pub(super) fn remove_socket(shared: &SharedIngress, serial: u64) {

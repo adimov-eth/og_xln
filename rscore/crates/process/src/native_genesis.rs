@@ -39,14 +39,20 @@ enum GenesisPublication {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeGenesisConfig {
-    pub timestamp: u64,
-    pub machine: Value,
+pub struct NativeGenesisEntity {
+    pub signer_label: String,
     pub entity_authority_jurisdiction: Option<CanonicalValue>,
     pub entity_profile: EntityProfile,
     pub entity_encryption_public_key: [u8; 32],
     pub htlc_routing_fee_ppm: u32,
     pub htlc_routing_base_fee: BigInt,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeGenesisConfig {
+    pub timestamp: u64,
+    pub machine: Value,
+    pub entities: Vec<NativeGenesisEntity>,
 }
 
 impl NativeGenesisConfig {
@@ -57,24 +63,81 @@ impl NativeGenesisConfig {
             .map_err(|error| format!("RRS_NATIVE_GENESIS_JSON:{error}"))?;
         Self::decode(&value)
     }
-
+    pub fn validate_owner_labels(&self, primary_label: &str) -> Result<(), String> {
+        let durable = RuntimeDurableEnvelope::decode(&self.machine, [0; 32])
+            .map_err(|error| format!("RRS_NATIVE_GENESIS_MACHINE:{error}"))?;
+        let mut expected = std::collections::BTreeSet::from([primary_label.to_owned()]);
+        for row in durable
+            .j_replicas()
+            .as_array()
+            .expect("validated J inventory")
+        {
+            let name = row[0].as_str().expect("validated J name");
+            if name != durable.active_jurisdiction() {
+                expected.insert(format!("{primary_label}:{name}"));
+            }
+        }
+        let actual = self
+            .entities
+            .iter()
+            .map(|owner| owner.signer_label.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        if actual != expected
+            || self
+                .entities
+                .first()
+                .map(|owner| owner.signer_label.as_str())
+                != Some(primary_label)
+        {
+            return Err("RRS_NATIVE_GENESIS_J_OWNER_INVENTORY_MISMATCH".into());
+        }
+        Ok(())
+    }
     pub fn decode(value: &Value) -> Result<Self, String> {
         let root = object(value, "ROOT")?;
+        exact_fields(root, &["timestamp", "machine", "entities"], "ROOT")?;
+        let entities = required(root, "entities", "ROOT")?
+            .as_array()
+            .filter(|rows| !rows.is_empty())
+            .ok_or("RRS_NATIVE_GENESIS_ENTITIES")?
+            .iter()
+            .map(NativeGenesisEntity::decode)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut labels = std::collections::BTreeSet::new();
+        if entities
+            .iter()
+            .any(|entity| !labels.insert(entity.signer_label.clone()))
+        {
+            return Err("RRS_NATIVE_GENESIS_DUPLICATE_SIGNER_LABEL".into());
+        }
+        Ok(Self {
+            timestamp: safe_u64(required(root, "timestamp", "ROOT")?, "TIMESTAMP")?,
+            machine: required(root, "machine", "ROOT")?.clone(),
+            entities,
+        })
+    }
+}
+
+impl NativeGenesisEntity {
+    fn decode(value: &Value) -> Result<Self, String> {
+        let root = object(value, "ENTITY")?;
         exact_fields(
             root,
             &[
-                "timestamp",
-                "machine",
+                "signerLabel",
                 "entityAuthorityJurisdiction",
                 "entityProfile",
                 "entityEncryptionPublicKey",
                 "htlcRoutingFeePpm",
                 "htlcRoutingBaseFee",
             ],
-            "ROOT",
+            "ENTITY",
         )?;
-        let timestamp = safe_u64(required(root, "timestamp", "ROOT")?, "TIMESTAMP")?;
-        let machine = required(root, "machine", "ROOT")?.clone();
+        let signer_label = required(root, "signerLabel", "ENTITY")?
+            .as_str()
+            .filter(|label| !label.trim().is_empty() && label.trim() == *label)
+            .ok_or("RRS_NATIVE_GENESIS_SIGNER_LABEL")?
+            .to_owned();
         let entity_authority_jurisdiction =
             match required(root, "entityAuthorityJurisdiction", "ROOT")? {
                 Value::Null => None,
@@ -99,8 +162,7 @@ impl NativeGenesisConfig {
             .filter(|value| value.sign() != num_bigint::Sign::Minus)
             .ok_or_else(|| "RRS_NATIVE_GENESIS_HTLC_ROUTING_BASE_FEE".to_string())?;
         Ok(Self {
-            timestamp,
-            machine,
+            signer_label,
             entity_authority_jurisdiction,
             entity_profile,
             entity_encryption_public_key,
@@ -312,6 +374,7 @@ fn create_native_genesis_processor(
     if runtime_seed.is_empty() || entity_signer_label.trim().is_empty() || workers == 0 {
         return Err("RRS_NATIVE_GENESIS_ARGUMENTS".into());
     }
+    genesis.validate_owner_labels(entity_signer_label)?;
     let limits = RuntimeLimits::hlt();
     let mut store = NativeRuntimeStore::open(
         native_database,
@@ -337,9 +400,137 @@ fn create_native_genesis_processor(
             durable.runtime_id()
         ));
     }
-    let private_key = derive_signer_key(runtime_seed, entity_signer_label)
+    if genesis
+        .entities
+        .first()
+        .map(|owner| owner.signer_label.as_str())
+        != Some(entity_signer_label)
+    {
+        return Err("RRS_NATIVE_GENESIS_PRIMARY_SIGNER_LABEL".into());
+    }
+    let mut states = BTreeMap::new();
+    let mut replicas = BTreeMap::new();
+    let mut htlc_routing_fees = BTreeMap::new();
+    for owner in &genesis.entities {
+        let (key, state, replica) =
+            create_genesis_entity(owner, runtime_seed, genesis.timestamp, workers)?;
+        if states.insert(key.clone(), state).is_some() {
+            return Err("RRS_NATIVE_GENESIS_DUPLICATE_ENTITY".into());
+        }
+        replicas.insert(key.clone(), replica);
+        htlc_routing_fees.insert(
+            key,
+            (
+                owner.htlc_routing_fee_ppm,
+                owner.htlc_routing_base_fee.clone(),
+            ),
+        );
+    }
+    let replica = RuntimeReplica::from_entity_slots(
+        RuntimeState {
+            height: 0,
+            timestamp: genesis.timestamp,
+            finalized_j_height: 0,
+            e_replicas: states,
+        },
+        durable,
+        replicas,
+        runtime_seed.to_owned(),
+        limits,
+    )
+    .map_err(|error| format!("RRS_NATIVE_GENESIS_REPLICA:{error}"))?;
+    let signer = RuntimeSignerLabel::new(runtime_signer_label)
+        .map_err(|error| format!("RRS_NATIVE_GENESIS_RUNTIME_SIGNER:{error}"))?;
+    let processor = match publication {
+        GenesisPublication::WebSocket => {
+            DurableRuntimeProcessor::new(replica, store, routes, runtime_seed, signer)
+        }
+        #[cfg(feature = "bench")]
+        GenesisPublication::ValidateOnly => DurableRuntimeProcessor::new_replay_validate_only(
+            replica,
+            store,
+            routes,
+            runtime_seed,
+            signer,
+        ),
+    }
+    .map_err(|error| format!("RRS_NATIVE_GENESIS_PROCESSOR:{error}"))?;
+    Ok(NativeRuntimeReady {
+        processor,
+        restore_elapsed: started.elapsed(),
+        restored_wal_frames: 0,
+        htlc_routing_fees,
+    })
+}
+
+/// A restarted database must already contain exactly the configured sovereign
+/// owners. Never append a newly configured owner behind the accepted WAL.
+pub fn validate_native_owner_inventory(
+    genesis: &NativeGenesisConfig,
+    replica: &RuntimeReplica,
+    runtime_seed: &str,
+) -> Result<(), String> {
+    let mut expected = BTreeMap::new();
+    for owner in &genesis.entities {
+        let signer = hex(&derive_signer_address(runtime_seed, &owner.signer_label)
+            .map_err(|error| format!("RRS_NATIVE_GENESIS_ENTITY_SIGNER:{error}"))?);
+        let key = derive_signer_key(runtime_seed, &owner.signer_label)
+            .map_err(|error| format!("RRS_NATIVE_GENESIS_ENTITY_KEY:{error}"))?;
+        let identity = SigningIdentity::lazy_from_key(key, &signer, 1, 1, BoardDelays::default())
+            .map_err(|error| format!("RRS_NATIVE_GENESIS_ENTITY_ID:{error}"))?;
+        let key = RuntimeEntityKey::new(*identity.entity_id(), &signer)
+            .map_err(|error| format!("RRS_NATIVE_GENESIS_OWNER_KEY:{error}"))?;
+        if expected.insert(key, owner).is_some() {
+            return Err("RRS_NATIVE_GENESIS_DUPLICATE_ENTITY".into());
+        }
+    }
+    if expected.keys().ne(replica.state.e_replicas.keys())
+        || expected.keys().ne(replica.e_replicas.keys())
+    {
+        return Err(format!(
+            "RRS_NATIVE_GENESIS_OWNER_INVENTORY_MISMATCH:expected={}:actual={}",
+            expected.len(),
+            replica.state.e_replicas.len()
+        ));
+    }
+    for (key, owner) in expected {
+        if replica.e_replicas[&key]
+            .entity_consensus
+            .state
+            .authority
+            .config
+            .jurisdiction
+            != owner.entity_authority_jurisdiction
+            || replica.state.e_replicas[&key]
+                .entity
+                .entity_encryption_public_key
+                != owner.entity_encryption_public_key
+        {
+            return Err(format!(
+                "RRS_NATIVE_GENESIS_OWNER_AUTHORITY_MISMATCH:{}",
+                key.replica_id()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn create_genesis_entity(
+    owner: &NativeGenesisEntity,
+    runtime_seed: &str,
+    timestamp: u64,
+    workers: usize,
+) -> Result<
+    (
+        RuntimeEntityKey,
+        xln_rscore_runtime::RuntimeEntityState,
+        xln_rscore_runtime::RuntimeEntityReplica,
+    ),
+    String,
+> {
+    let private_key = derive_signer_key(runtime_seed, &owner.signer_label)
         .map_err(|error| format!("RRS_NATIVE_GENESIS_ENTITY_KEY:{error}"))?;
-    let signer_id = hex(&derive_signer_address(runtime_seed, entity_signer_label)
+    let signer_id = hex(&derive_signer_address(runtime_seed, &owner.signer_label)
         .map_err(|error| format!("RRS_NATIVE_GENESIS_ENTITY_SIGNER:{error}"))?);
     let identity =
         SigningIdentity::lazy_from_key(private_key, &signer_id, 1, 1, BoardDelays::default())
@@ -363,7 +554,7 @@ fn create_native_genesis_processor(
             threshold: 1,
             validators: vec![signer_id.clone()],
             shares: BTreeMap::from([(signer_id.clone(), 1)]),
-            jurisdiction: genesis.entity_authority_jurisdiction,
+            jurisdiction: owner.entity_authority_jurisdiction.clone(),
         },
         leader_state: EntityLeaderState {
             active_validator_id: signer_id.clone(),
@@ -389,58 +580,27 @@ fn create_native_genesis_processor(
         BoardDelays::default(),
     )
     .map_err(|error| format!("RRS_NATIVE_GENESIS_ENTITY_SIGNER:{error}"))?;
-    let mut entity = EntityStateSlice::empty(entity_id_text, genesis.timestamp);
-    entity.profile = genesis.entity_profile;
-    entity.entity_encryption_public_key = genesis.entity_encryption_public_key;
-    let e_replicas = BTreeMap::from([(
-        RuntimeEntityKey::new(entity_id, &signer_id)
-            .map_err(|error| format!("RRS_NATIVE_GENESIS_REPLICA_KEY:{error}"))?,
-        xln_rscore_runtime::RuntimeEntityState {
-            accounts_root,
-            entity,
-        },
-    )]);
-    let replica = RuntimeReplica::new(
-        RuntimeState {
-            height: 0,
-            timestamp: genesis.timestamp,
-            finalized_j_height: 0,
-            e_replicas,
-        },
-        durable,
+    let mut entity = EntityStateSlice::empty(entity_id_text, timestamp);
+    entity.profile = owner.entity_profile.clone();
+    entity.entity_encryption_public_key = owner.entity_encryption_public_key;
+    let entity_key = RuntimeEntityKey::new(entity_id, &signer_id)
+        .map_err(|error| format!("RRS_NATIVE_GENESIS_REPLICA_KEY:{error}"))?;
+    let state = xln_rscore_runtime::RuntimeEntityState {
+        accounts_root,
+        entity,
+    };
+    let replica = xln_rscore_runtime::RuntimeEntityReplica::new(
+        &state,
         entity_id,
         signer_id,
         accounts,
         entity_consensus,
         entity_signer,
         PAYMENT_PROFILE_BINDING.protocol_fingerprint,
-        runtime_seed.to_owned(),
-        limits,
+        0,
     )
-    .map_err(|error| format!("RRS_NATIVE_GENESIS_REPLICA:{error}"))?;
-    let signer = RuntimeSignerLabel::new(runtime_signer_label)
-        .map_err(|error| format!("RRS_NATIVE_GENESIS_RUNTIME_SIGNER:{error}"))?;
-    let processor = match publication {
-        GenesisPublication::WebSocket => {
-            DurableRuntimeProcessor::new(replica, store, routes, runtime_seed, signer)
-        }
-        #[cfg(feature = "bench")]
-        GenesisPublication::ValidateOnly => DurableRuntimeProcessor::new_replay_validate_only(
-            replica,
-            store,
-            routes,
-            runtime_seed,
-            signer,
-        ),
-    }
-    .map_err(|error| format!("RRS_NATIVE_GENESIS_PROCESSOR:{error}"))?;
-    Ok(NativeRuntimeReady {
-        processor,
-        restore_elapsed: started.elapsed(),
-        restored_wal_frames: 0,
-        htlc_routing_fee_ppm: genesis.htlc_routing_fee_ppm,
-        htlc_routing_base_fee: genesis.htlc_routing_base_fee,
-    })
+    .map_err(|error| format!("RRS_NATIVE_GENESIS_ENTITY_REPLICA:{error}"))?;
+    Ok((entity_key, state, replica))
 }
 
 pub fn native_store_is_pristine(path: impl AsRef<Path>) -> Result<bool, String> {
@@ -462,6 +622,7 @@ mod tests {
         let mut value = json!({
             "timestamp": 0,
             "machine": {},
+            "entities":[{ "signerLabel":"entity",
             "entityAuthorityJurisdiction": null,
             "entityProfile": {
                 "name": "H1",
@@ -474,7 +635,7 @@ mod tests {
             },
             "entityEncryptionPublicKey": format!("0x{}", "11".repeat(32)),
             "htlcRoutingFeePpm": 1,
-            "htlcRoutingBaseFee": "0"
+            "htlcRoutingBaseFee": "0" }]
         });
         assert!(NativeGenesisConfig::decode(&value).is_ok());
         value["unknown"] = json!(true);
@@ -483,10 +644,14 @@ mod tests {
             "RRS_NATIVE_GENESIS_ROOT_FIELDS"
         );
         value.as_object_mut().expect("object").remove("unknown");
-        value["htlcRoutingBaseFee"] = json!("-1");
+        value["entities"][0]["htlcRoutingBaseFee"] = json!("-1");
         assert_eq!(
             NativeGenesisConfig::decode(&value).unwrap_err(),
             "RRS_NATIVE_GENESIS_HTLC_ROUTING_BASE_FEE"
         );
     }
 }
+
+#[cfg(test)]
+#[path = "native_genesis_multi_tests.rs"]
+mod multi_tests;

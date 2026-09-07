@@ -5,13 +5,15 @@
 //! exact persisted Runtime inputs through `DurableRuntimeProcessor`. Recorded
 //! commitments are assertions only: they never select proposals or repair state.
 
+#[cfg(test)]
+mod checkpoint_tests;
 mod diff;
 mod expectations;
 mod native_v1;
 pub use crate::native_runtime::{NativeRuntimeReady, restore_native_runtime_processor};
 pub use native_v1::{NativeV1ReplayMetrics, replay_native_v1};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -39,9 +41,9 @@ use crate::PAYMENT_PROFILE_BINDING;
 use diff::{RuntimeReplayDiffInput, write_runtime_replay_diff};
 use expectations::ReplayExpectations;
 
-/// This replay fixture is single-entity by construction. Every commitment,
-/// state and diagnostic read below names that sole Entity explicitly, and a
-/// second Entity appearing is a loud failure instead of a silent pick.
+/// Native-v1 replay starts from an explicitly single-Entity genesis. These
+/// helpers enforce that mode's declared ownership; TS WAL replay uses every
+/// restored Entity slot instead.
 fn sole_entity_state(replica: &RuntimeReplica) -> Result<&RuntimeEntityState, String> {
     let mut entities = replica.state.e_replicas.values();
     let (Some(state), None) = (entities.next(), entities.next()) else {
@@ -123,7 +125,8 @@ pub struct RuntimeReplayMetrics {
     pub outbox_digests_compared: u64,
     pub post_state_hashes_compared: u64,
     pub runtime_roots_compared: u64,
-    pub accounts_root: String,
+    /// Final Account forest roots by exact local Entity/signer replica id.
+    pub accounts_roots: BTreeMap<String, String>,
     /// Resident Account sharding observability per phase kind. Timing-only:
     /// serialized once after replay and never part of committed state.
     pub account_phase_metrics: Vec<xln_rscore_batch::AccountPhaseMetric>,
@@ -343,7 +346,7 @@ fn text_field<'a>(
 /// Runtime/signer bindings. No payload or proposal decision is consumed.
 fn routes_from_wal(
     reader: &mut RuntimeWalReader,
-    owner: &str,
+    owners: &BTreeSet<String>,
     from: u64,
     to: u64,
 ) -> Result<EntityRouteTable, String> {
@@ -368,7 +371,7 @@ fn routes_from_wal(
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| format!("RUNTIME_REPLAY_ROUTE_FIELD:{height}:{index}:runtimeId"))?;
             let entity_id = text_field(value, "entityId", height, index)?.to_ascii_lowercase();
-            if entity_id == owner {
+            if owners.contains(&entity_id) {
                 return Err(format!(
                     "RUNTIME_REPLAY_LOCAL_OUTPUT_PREBOUND:{height}:{index}"
                 ));
@@ -428,26 +431,14 @@ fn add(value: &mut u64, amount: u64, field: &'static str) -> Result<(), String> 
     Ok(())
 }
 
-fn assert_checkpoint_runtime_root(source: &ConcreteCheckpointSource) -> Result<(), String> {
-    verify_checkpoint_source(source)
-        .map_err(|error| format!("RUNTIME_REPLAY_CHECKPOINT_GRAPH:{error}"))?;
-    let validated = validate_runtime_frame(&source.frame_bytes)
-        .map_err(|error| format!("RUNTIME_REPLAY_CHECKPOINT_FRAME:{error}"))?;
-    let expected = validated
-        .canonical_state_hash
-        .ok_or_else(|| "RUNTIME_REPLAY_CHECKPOINT_RUNTIME_ROOT_MISSING".to_string())?;
-    let frame = decode_storage_payload(&source.frame_bytes)
-        .map_err(|error| format!("RUNTIME_REPLAY_CHECKPOINT_FRAME_DECODE:{error}"))?;
-    let rows = field(&frame, "canonicalEntityHashes", "checkpointFrame")?
-        .as_array()
-        .ok_or_else(|| "RUNTIME_REPLAY_CHECKPOINT_ENTITY_HASHES".to_string())?;
-    if rows.len() != 1 {
-        return Err(format!(
-            "RUNTIME_REPLAY_CHECKPOINT_ENTITY_COUNT:{}",
-            rows.len()
-        ));
-    }
-    let row = object(&rows[0], "checkpointFrame.canonicalEntityHashes[0]")?;
+fn checkpoint_entity_hash(
+    value: &Value,
+    index: usize,
+) -> Result<CanonicalRuntimeEntityHash, String> {
+    let row = object(
+        value,
+        &format!("checkpointFrame.canonicalEntityHashes[{index}]"),
+    )?;
     let entity_id = row
         .get("entityId")
         .and_then(Value::as_str)
@@ -463,16 +454,50 @@ fn assert_checkpoint_runtime_root(source: &ConcreteCheckpointSource) -> Result<(
         .and_then(Value::as_u64)
         .filter(|value| *value <= 9_007_199_254_740_991)
         .ok_or_else(|| "RUNTIME_REPLAY_CHECKPOINT_ENTITY_CELL_COUNT".to_string())?;
-    let actual = compute_canonical_runtime_state_hash(
-        source.height,
-        validated.timestamp,
-        &[CanonicalRuntimeEntityHash {
-            entity_id,
-            hash,
-            cell_count,
-        }],
-    )
-    .map_err(|error| format!("RUNTIME_REPLAY_CHECKPOINT_RUNTIME_ROOT:{error}"))?;
+    Ok(CanonicalRuntimeEntityHash {
+        entity_id,
+        hash,
+        cell_count,
+    })
+}
+
+fn checkpoint_entity_hashes(frame: &Value) -> Result<Vec<CanonicalRuntimeEntityHash>, String> {
+    let rows = field(frame, "canonicalEntityHashes", "checkpointFrame")?
+        .as_array()
+        .ok_or_else(|| "RUNTIME_REPLAY_CHECKPOINT_ENTITY_HASHES".to_string())?;
+    if rows.is_empty() {
+        return Err("RUNTIME_REPLAY_CHECKPOINT_ENTITY_COUNT:0".into());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let entry = checkpoint_entity_hash(row, index)?;
+            if !seen.insert(entry.entity_id.clone()) {
+                return Err(format!(
+                    "RUNTIME_REPLAY_CHECKPOINT_DUPLICATE_ENTITY_ID:{}",
+                    entry.entity_id
+                ));
+            }
+            Ok(entry)
+        })
+        .collect()
+}
+
+fn assert_checkpoint_runtime_root(source: &ConcreteCheckpointSource) -> Result<(), String> {
+    verify_checkpoint_source(source)
+        .map_err(|error| format!("RUNTIME_REPLAY_CHECKPOINT_GRAPH:{error}"))?;
+    let validated = validate_runtime_frame(&source.frame_bytes)
+        .map_err(|error| format!("RUNTIME_REPLAY_CHECKPOINT_FRAME:{error}"))?;
+    let expected = validated
+        .canonical_state_hash
+        .ok_or_else(|| "RUNTIME_REPLAY_CHECKPOINT_RUNTIME_ROOT_MISSING".to_string())?;
+    let frame = decode_storage_payload(&source.frame_bytes)
+        .map_err(|error| format!("RUNTIME_REPLAY_CHECKPOINT_FRAME_DECODE:{error}"))?;
+    let entity_hashes = checkpoint_entity_hashes(&frame)?;
+    let actual =
+        compute_canonical_runtime_state_hash(source.height, validated.timestamp, &entity_hashes)
+            .map_err(|error| format!("RUNTIME_REPLAY_CHECKPOINT_RUNTIME_ROOT:{error}"))?;
     let expected = hex(&expected);
     if actual == expected {
         Ok(())
@@ -538,7 +563,11 @@ pub fn replay_runtime_wal(
         MigrationOrigin::OfflineTsImport,
     )
     .map_err(|error| format!("RUNTIME_REPLAY_CHECKPOINT_DECODE:{error}"))?;
-    let owner = decoded.entity_snapshot.entity_id.to_ascii_lowercase();
+    let owners = decoded
+        .entities
+        .iter()
+        .map(|entity| entity.entity_snapshot.entity_id.to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
     let mut restored = restore_decoded_runtime_checkpoint(decoded)
         .map_err(|error| format!("RUNTIME_REPLAY_RESTORE:{error}"))?;
     restored
@@ -567,7 +596,7 @@ pub fn replay_runtime_wal(
     }
     let checkpoint_period_frames = restored.replica.limits.checkpoint_period_frames;
 
-    let routes = routes_from_wal(reader, &owner, from, to)?;
+    let routes = routes_from_wal(reader, &owners, from, to)?;
     let restart_routes = routes.clone();
     let checkpoint_commit = reader
         .native_checkpoint_import_from_source(checkpoint_source)
@@ -597,12 +626,12 @@ pub fn replay_runtime_wal(
     )
     .map_err(|error| format!("RUNTIME_REPLAY_PROCESSOR:{error}"))?;
 
-    let initial_accounts_root = sole_entity_state(
-        processor
+    let initial_accounts_roots = accounts_roots(
+        &processor
             .replica()
-            .map_err(|error| format!("RUNTIME_REPLAY_REPLICA:{error}"))?,
-    )?
-    .accounts_root;
+            .map_err(|error| format!("RUNTIME_REPLAY_REPLICA:{error}"))?
+            .state,
+    );
     let mut metrics = RuntimeReplayMetrics {
         frames: 0,
         ingress: 0,
@@ -638,7 +667,7 @@ pub fn replay_runtime_wal(
         // The independently verified materialized checkpoint graph is the one
         // explicit canonical Runtime root in this below-cadence replay range.
         runtime_roots_compared: 1,
-        accounts_root: hex(&initial_accounts_root),
+        accounts_roots: initial_accounts_roots,
         account_phase_metrics: Vec::new(),
     };
 
@@ -729,7 +758,7 @@ pub fn replay_runtime_wal(
 
             let started = Instant::now();
             let report = processor
-                .process_exact_replay(decoded.input)
+                .process_exact_replay(decoded.input, source.outputs())
                 .map_err(|error| format!("RUNTIME_REPLAY_PROCESS:{height}:{error}"))?;
             metrics.engine_elapsed += started.elapsed();
             metrics.apply_elapsed += report.timings.apply;
@@ -757,51 +786,59 @@ pub fn replay_runtime_wal(
                 let replica = processor
                     .replica()
                     .map_err(|error| format!("{summary}:RUNTIME_REPLAY_DIFF_REPLICA:{error}"))?;
-                let diagnostic_entity_key = replica.e_replicas.keys().next().cloned();
+                let diagnostic_entity_keys = replica.e_replicas.keys().cloned().collect::<Vec<_>>();
                 let diagnostic_account_ids = report
                     .account_commits
                     .iter()
                     .map(|commit| commit.account_id)
                     .collect::<Vec<_>>();
-                let entity_replica =
-                    sole_entity_replica(replica).map_err(|error| format!("{summary}:{error}"))?;
-                let entity_state =
-                    sole_entity_state(replica).map_err(|error| format!("{summary}:{error}"))?;
-                let actual_sections = entity_replica
-                    .entity_consensus
-                    .state
-                    .sections
-                    .iter()
-                    .map(|section| format!("{}={}", section.field, section.digest))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                eprintln!("RUNTIME_REPLAY_ACTUAL_ENTITY_SECTIONS:{height}:{actual_sections}");
-                // XLN_RSCORE_DEBUG_EVENTS=1 dumps the certified frame's events so a
-                // TS `--diagnostic-events-height` run can be diffed line by line.
-                let debug_events = std::env::var_os("XLN_RSCORE_DEBUG_EVENTS").and(
-                    entity_replica
+                let mut actual_replica_meta = Map::new();
+                let mut actual_entity_sections = Map::new();
+                for (entity_key, entity_replica) in &replica.e_replicas {
+                    let owner = entity_key.replica_id();
+                    let entity_state =
+                        replica.state.e_replicas.get(entity_key).ok_or_else(|| {
+                            format!("{summary}:RUNTIME_REPLAY_DIAGNOSTIC_OWNER_MISSING:{owner}")
+                        })?;
+                    let actual_sections = entity_replica
                         .entity_consensus
-                        .certified_frame_head
-                        .as_ref(),
-                );
-                if let Some(head) = debug_events {
-                    for event in &head.frame.events {
-                        let message = match event {
-                            xln_rscore_entity_kernel::EntityFrameEvent::Status { message } => {
-                                message.clone()
-                            }
-                            xln_rscore_entity_kernel::EntityFrameEvent::Text {
-                                validator_id,
-                                message,
-                            } => {
-                                format!("{validator_id}:{message}")
-                            }
-                        };
-                        eprintln!("RUNTIME_REPLAY_ACTUAL_ENTITY_EVENT:{height}:{message}");
+                        .state
+                        .sections
+                        .iter()
+                        .map(|section| format!("{}={}", section.field, section.digest))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    eprintln!(
+                        "RUNTIME_REPLAY_ACTUAL_ENTITY_SECTIONS:{height}:{owner}:{actual_sections}"
+                    );
+                    // XLN_RSCORE_DEBUG_EVENTS=1 dumps the certified frame's events so a
+                    // TS `--diagnostic-events-height` run can be diffed line by line.
+                    let debug_events = std::env::var_os("XLN_RSCORE_DEBUG_EVENTS").and(
+                        entity_replica
+                            .entity_consensus
+                            .certified_frame_head
+                            .as_ref(),
+                    );
+                    if let Some(head) = debug_events {
+                        for event in &head.frame.events {
+                            let message = match event {
+                                xln_rscore_entity_kernel::EntityFrameEvent::Status { message } => {
+                                    message.clone()
+                                }
+                                xln_rscore_entity_kernel::EntityFrameEvent::Text {
+                                    validator_id,
+                                    message,
+                                } => {
+                                    format!("{validator_id}:{message}")
+                                }
+                            };
+                            eprintln!(
+                                "RUNTIME_REPLAY_ACTUAL_ENTITY_EVENT:{height}:{owner}:{message}"
+                            );
+                        }
                     }
-                }
-                if let Some(orderbook) = entity_state.entity.orderbook.as_ref() {
-                    let book_digests = orderbook
+                    if let Some(orderbook) = entity_state.entity.orderbook.as_ref() {
+                        let book_digests = orderbook
                         .books
                         .iter()
                         .map(|(pair, book)| {
@@ -826,53 +863,61 @@ pub fn replay_runtime_wal(
                         })
                         .collect::<Result<Vec<_>, _>>()?
                         .join(",");
-                    eprintln!("RUNTIME_REPLAY_ACTUAL_ORDERBOOK_BOOKS:{height}:{book_digests}");
-                }
-                eprintln!(
-                    "RUNTIME_REPLAY_ACTUAL_ENTITY_COMMAND_NONCES:{height}:{:?}",
-                    entity_state.entity.entity_command_nonces,
-                );
-                eprintln!(
-                    "RUNTIME_REPLAY_ACTUAL_ENTITY_CRONTAB:{height}:{:?}",
-                    entity_state.entity.crontab,
-                );
-                eprintln!(
-                    "RUNTIME_REPLAY_ACTUAL_ENTITY_J_BATCH:{height}:{:?}",
-                    entity_state.entity.j_batch_state,
-                );
-                if let Some(j_batch_state) = entity_state.entity.j_batch_state.as_ref() {
-                    let canonical =
-                        xln_rscore_entity_kernel::canonical_j_batch_state(j_batch_state)
-                            .map_err(|error| format!("{summary}:RUNTIME_REPLAY_J_BATCH:{error}"))?;
-                    let tagged = xln_rscore_runtime::tagged_json_from_canonical_value(&canonical)
-                        .map_err(|error| {
-                        format!("{summary}:RUNTIME_REPLAY_J_BATCH_JSON:{error}")
-                    })?;
-                    eprintln!("RUNTIME_REPLAY_ACTUAL_ENTITY_J_BATCH_JSON:{height}:{tagged}");
-                }
-                if let Ok(entity_commitment) = sole_entity_commitment(commitments) {
+                        eprintln!(
+                            "RUNTIME_REPLAY_ACTUAL_ORDERBOOK_BOOKS:{height}:{owner}:{book_digests}"
+                        );
+                    }
                     eprintln!(
-                        "RUNTIME_REPLAY_ACTUAL_ENTITY_FRAME:{height}:hash={}:root={}",
+                        "RUNTIME_REPLAY_ACTUAL_ENTITY_COMMAND_NONCES:{height}:{owner}:{:?}",
+                        entity_state.entity.entity_command_nonces,
+                    );
+                    eprintln!(
+                        "RUNTIME_REPLAY_ACTUAL_ENTITY_CRONTAB:{height}:{owner}:{:?}",
+                        entity_state.entity.crontab,
+                    );
+                    eprintln!(
+                        "RUNTIME_REPLAY_ACTUAL_ENTITY_J_BATCH:{height}:{owner}:{:?}",
+                        entity_state.entity.j_batch_state,
+                    );
+                    if let Some(j_batch_state) = entity_state.entity.j_batch_state.as_ref() {
+                        let canonical =
+                            xln_rscore_entity_kernel::canonical_j_batch_state(j_batch_state)
+                                .map_err(|error| {
+                                    format!("{summary}:RUNTIME_REPLAY_J_BATCH:{error}")
+                                })?;
+                        let tagged =
+                            xln_rscore_runtime::tagged_json_from_canonical_value(&canonical)
+                                .map_err(|error| {
+                                    format!("{summary}:RUNTIME_REPLAY_J_BATCH_JSON:{error}")
+                                })?;
+                        eprintln!(
+                            "RUNTIME_REPLAY_ACTUAL_ENTITY_J_BATCH_JSON:{height}:{owner}:{tagged}"
+                        );
+                    }
+                    actual_replica_meta
+                        .insert(owner.clone(), entity_replica.replica_metadata().clone());
+                    actual_entity_sections.insert(
+                        owner,
+                        Value::Object(Map::from_iter(
+                            entity_replica
+                                .entity_consensus
+                                .state
+                                .sections
+                                .iter()
+                                .map(|section| {
+                                    (section.field.clone(), Value::String(section.digest.clone()))
+                                }),
+                        )),
+                    );
+                }
+                for entity_commitment in &commitments.entities {
+                    eprintln!(
+                        "RUNTIME_REPLAY_ACTUAL_ENTITY_FRAME:{height}:{}:hash={}:root={}",
+                        hex(&entity_commitment.entity_id),
                         hex(&entity_commitment.certified_frame_hash),
                         hex(&entity_commitment.state_root),
                     );
-                } else {
-                    eprintln!(
-                        "RUNTIME_REPLAY_ACTUAL_ENTITY_COMMITMENTS:{height}:{}",
-                        commitments.entities.len(),
-                    );
                 }
-                let actual_replica_meta = entity_replica.replica_metadata().clone();
-                let actual_entity_sections = Value::Object(Map::from_iter(
-                    entity_replica
-                        .entity_consensus
-                        .state
-                        .sections
-                        .iter()
-                        .map(|section| {
-                            (section.field.clone(), Value::String(section.digest.clone()))
-                        }),
-                ));
                 let actual = processor
                     .read_durable_frame(height)
                     .map_err(|error| format!("{summary}:RUNTIME_REPLAY_DIFF_READ:{error}"))?;
@@ -889,10 +934,10 @@ pub fn replay_runtime_wal(
                 .map_err(|error| format!("{summary}:RUNTIME_REPLAY_DIFF_WRITE:{error}"))?;
                 // Side-by-side leaf diagnostics: TypeScript prints the same
                 // projection with `--diagnostic-account` at this height.
-                if let Some(entity_key) = diagnostic_entity_key {
-                    for account_id in diagnostic_account_ids {
+                for entity_key in diagnostic_entity_keys {
+                    for account_id in &diagnostic_account_ids {
                         let rendered =
-                            match processor.account_envelope_fields(&entity_key, account_id) {
+                            match processor.account_envelope_fields(&entity_key, *account_id) {
                                 Ok(Some(fields)) => {
                                     xln_rscore_runtime::tagged_json_from_canonical_value(
                                         &xln_rscore_protocol::CanonicalValue::Object(fields),
@@ -900,11 +945,12 @@ pub fn replay_runtime_wal(
                                     .map(|value| value.to_string())
                                     .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"))
                                 }
-                                Ok(None) => "null".to_string(),
+                                Ok(None) => continue,
                                 Err(error) => format!("{{\"error\":\"{error}\"}}"),
                             };
                         eprintln!(
-                            "RUNTIME_REPLAY_ACTUAL_ACCOUNT_LEAF:{height}:{account_id:?}:{rendered}"
+                            "RUNTIME_REPLAY_ACTUAL_ACCOUNT_LEAF:{height}:{}:{account_id:?}:{rendered}",
+                            entity_key.replica_id(),
                         );
                     }
                 }
@@ -936,9 +982,6 @@ pub fn replay_runtime_wal(
             )?;
             add(&mut metrics.outbox_digests_compared, 1, "outbox")?;
             add(&mut metrics.post_state_hashes_compared, 1, "postState")?;
-            if !commitments.entities.is_empty() {
-                metrics.accounts_root = hex(&sole_entity_commitment(commitments)?.accounts_root);
-            }
         }
         Ok(())
     });
@@ -976,13 +1019,15 @@ pub fn replay_runtime_wal(
         ));
     }
     metrics.elapsed = replay_started.elapsed();
-    metrics.account_phase_metrics = sole_entity_replica(
-        processor
-            .replica()
-            .map_err(|error| format!("RUNTIME_REPLAY_PHASE_METRICS:{error}"))?,
-    )?
-    .accounts
-    .account_phase_metrics();
+    let final_replica = processor
+        .replica()
+        .map_err(|error| format!("RUNTIME_REPLAY_PHASE_METRICS:{error}"))?;
+    metrics.accounts_roots = accounts_roots(&final_replica.state);
+    metrics.account_phase_metrics = final_replica
+        .e_replicas
+        .values()
+        .flat_map(|entity| entity.accounts.account_phase_metrics())
+        .collect();
 
     let expected_frames = to - from + 1;
     if metrics.frames != expected_frames
@@ -1010,12 +1055,12 @@ pub fn replay_runtime_wal(
         .map_err(|error| format!("RUNTIME_REPLAY_FINAL_REPLICA:{error}"))?
         .state
         .height;
-    let expected_accounts_root = sole_entity_state(
-        processor
+    let expected_accounts_roots = accounts_roots(
+        &processor
             .replica()
-            .map_err(|error| format!("RUNTIME_REPLAY_FINAL_REPLICA:{error}"))?,
-    )?
-    .accounts_root;
+            .map_err(|error| format!("RUNTIME_REPLAY_FINAL_REPLICA:{error}"))?
+            .state,
+    );
     let expected_lineage = processor
         .replica()
         .map_err(|error| format!("RUNTIME_REPLAY_FINAL_REPLICA:{error}"))?
@@ -1040,17 +1085,17 @@ pub fn replay_runtime_wal(
         .processor
         .replica()
         .map_err(|error| format!("RUNTIME_REPLAY_RESTART_REPLICA:{error}"))?;
-    let actual_accounts_root = sole_entity_state(actual)?.accounts_root;
+    let actual_accounts_roots = accounts_roots(&actual.state);
     if actual.state.height != expected_height
-        || actual_accounts_root != expected_accounts_root
+        || actual_accounts_roots != expected_accounts_roots
         || actual.durable.prev_frame_hash() != expected_lineage
     {
         return Err(format!(
-            "RUNTIME_REPLAY_RESTART_MISMATCH:height={}/{}:accounts={}/{}:lineage={}/{}",
+            "RUNTIME_REPLAY_RESTART_MISMATCH:height={}/{}:accounts={:?}/{:?}:lineage={}/{}",
             actual.state.height,
             expected_height,
-            hex(&actual_accounts_root),
-            hex(&expected_accounts_root),
+            actual_accounts_roots,
+            expected_accounts_roots,
             hex(&actual.durable.prev_frame_hash()),
             hex(&expected_lineage),
         ));
@@ -1065,4 +1110,12 @@ fn hex(bytes: &[u8]) -> String {
         output.push_str(&format!("{byte:02x}"));
     }
     output
+}
+
+fn accounts_roots(state: &xln_rscore_runtime::RuntimeState) -> BTreeMap<String, String> {
+    state
+        .e_replicas
+        .iter()
+        .map(|(key, state)| (key.replica_id(), hex(&state.accounts_root)))
+        .collect()
 }

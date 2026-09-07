@@ -281,6 +281,30 @@ impl RuntimeEntityInput {
         let mut local_individual = None;
         for (index, tx) in txs.iter().enumerate() {
             let projection = crate::entity_frame::project_entity_tx(tx)?;
+            if projection.kind == EntityTxKind::RuntimeOutput {
+                if !is_remote_output || txs.len() != 1 {
+                    return Err(RuntimeMachineError::EntityInputTransportInvalid(
+                        "RUNTIME_CROSS_J_EXTERNAL_INGRESS_FORBIDDEN".into(),
+                    ));
+                }
+                let Some(native @ LocalEntityTx::RuntimeOutput(_)) =
+                    decode_local_entity_tx(&projection)
+                        .map_err(RuntimeMachineError::EntityFinancial)?
+                else {
+                    return Err(RuntimeMachineError::EntityTxExecutionUnsupported(
+                        "runtimeOutput",
+                    ));
+                };
+                // Runtime already authenticated these committed protocol bytes.
+                // Re-signing them as a user command changes their authority and
+                // certified frame. The kernel still checks the source signer,
+                // target and every nested financial role before state mutation.
+                pending_work.push(EntityPendingWork::ProposerMaterialized {
+                    projected: projection,
+                    native: Box::new(native),
+                });
+                continue;
+            }
             if is_remote_output
                 && xln_rscore_entity_kernel::is_cross_jurisdiction_entity_tx_kind(projection.kind)
             {
@@ -402,6 +426,18 @@ impl RuntimeEntityInput {
     /// Remote transport origin, when this input arrived from a peer Runtime.
     pub fn source_runtime_id(&self) -> Option<&str> {
         self.source_runtime_id.as_deref()
+    }
+
+    pub fn runtime_output(
+        &self,
+    ) -> Option<&xln_rscore_entity_kernel::CrossJurisdictionRuntimeOutput> {
+        match self.pending_work.as_slice() {
+            [EntityPendingWork::ProposerMaterialized { native, .. }] => match native.as_ref() {
+                LocalEntityTx::RuntimeOutput(output) => Some(output),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     pub(super) fn pending_work(&self) -> &[EntityPendingWork] {
@@ -984,7 +1020,7 @@ impl RuntimeEntityReplica {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new(
+    pub fn new(
         state: &RuntimeEntityState,
         entity_id: [u8; 32],
         signer_id: String,
@@ -1107,6 +1143,34 @@ impl RuntimeReplica {
         )?;
         let mut e_replicas = BTreeMap::new();
         e_replicas.insert(key, entity);
+        Self::from_entity_slots(state, durable, e_replicas, proposer_runtime_seed, limits)
+    }
+
+    /// Genesis and recovery supply the same validated state/live owner pairs.
+    pub fn from_entity_slots(
+        state: RuntimeState,
+        durable: crate::processor::RuntimeDurableEnvelope,
+        e_replicas: BTreeMap<RuntimeEntityKey, RuntimeEntityReplica>,
+        proposer_runtime_seed: String,
+        limits: RuntimeLimits,
+    ) -> Result<Self, RuntimeMachineError> {
+        if proposer_runtime_seed.trim().is_empty() {
+            return Err(RuntimeMachineError::RuntimeSeedEmpty);
+        }
+        if state.e_replicas.len() != e_replicas.len()
+            || e_replicas.is_empty()
+            || e_replicas.iter().any(|(key, replica)| {
+                state.e_replicas.get(key).is_none_or(|state| {
+                    state.entity.entity_id != render_hex(&key.entity_id)
+                        || state.accounts_root != replica.accounts.accounts_root()
+                }) || replica.entity_id != key.entity_id
+                    || replica.signer_id != key.signer_id
+            })
+        {
+            return Err(RuntimeMachineError::EntityStateMap(
+                "GENESIS_OWNER_INVENTORY_MISMATCH".into(),
+            ));
+        }
         Ok(Self {
             state,
             durable,

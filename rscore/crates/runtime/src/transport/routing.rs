@@ -203,14 +203,18 @@ pub(super) fn prepare_envelopes_from_values(
             (None, None) => {}
         }
         let key = (target, height, timestamp, atomic_pair);
-        if groups.last().is_none_or(|(current, _)| current != &key) {
-            groups.push((key, Vec::new()));
-        }
-        groups
-            .last_mut()
-            .expect("group inserted above")
-            .1
-            .push((index, Value::Object(object)));
+        // TS dispatch groups by destination in first-appearance order before
+        // selecting exact sibling cohorts. Entity output order may interleave
+        // Custody, MM, MM, Custody; adjacency cannot decide cohort completeness.
+        // Keep the permanent row index and bytes unchanged within each group.
+        let group_index = groups
+            .iter()
+            .position(|(current, _)| current == &key)
+            .unwrap_or_else(|| {
+                groups.push((key, Vec::new()));
+                groups.len() - 1
+            });
+        groups[group_index].1.push((index, Value::Object(object)));
         remote_rows = remote_rows
             .checked_add(1)
             .ok_or_else(|| RuntimeTransportError::Outbox("row-count-overflow".into()))?;
@@ -225,8 +229,24 @@ pub(super) fn prepare_envelopes_from_values(
     }
 
     let mut envelopes = Vec::new();
-    for ((target, height, timestamp, atomic_pair), values) in groups {
+    for ((target, height, timestamp, atomic_pair), mut values) in groups {
+        let inferred = atomic_pair.is_none();
+        let atomic_pair = atomic_pair.or_else(|| infer_atomic_pair(&values));
+        // TS dispatch fails producer invariants rather than sending or parking
+        // a lone signed financial leg. Reject the entire prepared batch before
+        // stage/publication, including when both unmatched rows are source legs.
+        if atomic_pair.is_none() && values.iter().any(|(_, value)| has_cross_proposal(value)) {
+            return Err(RuntimeTransportError::Outbox(format!(
+                "cross-j-incomplete-cohort:target={target}:height={height}"
+            )));
+        }
         if let Some(pair) = atomic_pair {
+            if inferred {
+                // groupAtomicCrossJAdmissionOutputs emits targetInputIndex then
+                // sourceInputIndex for inferred proposals. Explicit ACK cohorts
+                // retain their admitted order; neither convention rewrites WAL.
+                values.reverse();
+            }
             if values.len() != 2 || max_rows < 2 {
                 return Err(RuntimeTransportError::Outbox(format!(
                     "atomic-pair-size:{}:{max_rows}",
@@ -284,6 +304,212 @@ pub(super) fn prepare_envelopes_from_values(
         row_count: remote_rows,
         bytes: remote_bytes,
     })
+}
+
+// TS selectPotentialCrossJAccountInputPairs: this is structural envelope
+// membership only. The signed Account proposals remain the authority; pairing
+// must bind both routes and pull proofs, not merely a user-chosen order id.
+struct CrossProposal<'a> {
+    key: String,
+    source_pulls: Vec<&'a Value>,
+    target_pulls: Vec<&'a Value>,
+    source_closes: Vec<&'a Value>,
+    target_closes: Vec<&'a Value>,
+}
+
+fn lower_text(value: &Value) -> String {
+    value.as_str().unwrap_or_default().to_ascii_lowercase()
+}
+
+fn open_key(data: &Value) -> String {
+    format!(
+        "{}\0{}",
+        data["crossJurisdiction"]["orderId"]
+            .as_str()
+            .unwrap_or_default()
+            .trim(),
+        lower_text(&data["crossJurisdiction"]["routeHash"]).trim()
+    )
+}
+
+fn close_key(data: &Value) -> String {
+    let proof = &data["proof"];
+    let mut key = Map::from_iter([
+        ("operation".into(), Value::String("close".into())),
+        ("binary".into(), data["binary"].clone()),
+    ]);
+    for field in [
+        "orderId",
+        "routeHash",
+        "sourcePullId",
+        "targetPullId",
+        "fillRatio",
+        "cumulativeSourceAmount",
+        "cumulativeTargetAmount",
+        "binaryHash",
+        "closeMode",
+    ] {
+        let value = if matches!(field, "routeHash" | "binaryHash") {
+            Value::String(lower_text(&proof[field]))
+        } else {
+            proof[field].clone()
+        };
+        key.insert(field.into(), value);
+    }
+    Value::Object(key).to_string()
+}
+
+fn cross_proposal(account_input: &Value) -> Option<CrossProposal<'_>> {
+    let txs = account_input["proposal"]["frame"]["accountTxs"].as_array()?;
+    let pulls = |leg: &str| {
+        txs.iter()
+            .filter(|tx| {
+                tx["type"] == "cross_pull_lock" && tx["data"]["crossJurisdiction"]["leg"] == leg
+            })
+            .map(|tx| &tx["data"])
+            .collect::<Vec<_>>()
+    };
+    let closes = |leg: &str| {
+        txs.iter()
+            .filter(|tx| {
+                tx["type"] == "cross_pull_close"
+                    && tx["data"]["pullId"] == tx["data"]["proof"][format!("{leg}PullId")]
+            })
+            .map(|tx| &tx["data"])
+            .collect::<Vec<_>>()
+    };
+    let source_pulls = pulls("source");
+    let target_pulls = pulls("target");
+    let source_closes = closes("source");
+    let target_closes = closes("target");
+    if !source_pulls.iter().all(|pull| {
+        txs.iter().any(|tx| {
+            tx["type"] == "swap_offer"
+                && tx["data"]["crossJurisdiction"]["orderId"]
+                    == pull["crossJurisdiction"]["orderId"]
+                && lower_text(&tx["data"]["crossJurisdiction"]["routeHash"])
+                    == lower_text(&pull["crossJurisdiction"]["routeHash"])
+        })
+    }) {
+        return None;
+    }
+    let mut keys = source_pulls
+        .iter()
+        .chain(&target_pulls)
+        .map(|data| format!("open\0{}", open_key(data)))
+        .chain(
+            source_closes
+                .iter()
+                .chain(&target_closes)
+                .map(|data| close_key(data)),
+        )
+        .collect::<Vec<_>>();
+    if keys.is_empty() || keys.iter().collect::<BTreeSet<_>>().len() != keys.len() {
+        return None;
+    }
+    keys.sort(); // Route-set key only; never reorders financial inputs/outputs.
+    Some(CrossProposal {
+        key: format!("proposal\0{}", keys.join("\u{1}")),
+        source_pulls,
+        target_pulls,
+        source_closes,
+        target_closes,
+    })
+}
+
+fn paired_pulls(source: &[&Value], target: &[&Value]) -> bool {
+    source.len() == target.len()
+        && source.iter().all(|left| {
+            let matches = target
+                .iter()
+                .filter(|right| open_key(left) == open_key(right))
+                .collect::<Vec<_>>();
+            let [right] = matches.as_slice() else {
+                return false;
+            };
+            let route = &left["crossJurisdictionRoute"];
+            route.is_object()
+                && route == &right["crossJurisdictionRoute"]
+                && left["pullId"] == route["sourcePull"]["pullId"]
+                && right["pullId"] == route["targetPull"]["pullId"]
+                && lower_text(&left["fullHash"]) == lower_text(&right["fullHash"])
+                && lower_text(&left["partialRoot"]) == lower_text(&right["partialRoot"])
+        })
+}
+
+fn paired_closes(source: &[&Value], target: &[&Value]) -> bool {
+    source.len() == target.len()
+        && source.iter().all(|left| {
+            let matches = target
+                .iter()
+                .filter(|right| close_key(left) == close_key(right))
+                .collect::<Vec<_>>();
+            let [right] = matches.as_slice() else {
+                return false;
+            };
+            left["pullId"] == left["proof"]["sourcePullId"]
+                && right["pullId"] == right["proof"]["targetPullId"]
+        })
+}
+
+fn has_cross_proposal(input: &Value) -> bool {
+    input["entityTxs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|tx| tx["type"] == "accountInput")
+        .flat_map(|tx| {
+            tx["data"]["proposal"]["frame"]["accountTxs"]
+                .as_array()
+                .into_iter()
+                .flatten()
+        })
+        .any(|tx| {
+            tx["type"] == "cross_pull_close"
+                || (tx["type"] == "cross_pull_lock" && !tx["data"]["crossJurisdiction"].is_null())
+        })
+}
+
+fn infer_atomic_pair(values: &[(usize, Value)]) -> Option<AtomicCrossJurisdictionPair> {
+    let [(_, left), (_, right)] = values else {
+        return None;
+    };
+    if lower_text(&left["entityId"]) == lower_text(&right["entityId"])
+        || lower_text(&left["runtimeId"]) != lower_text(&right["runtimeId"])
+        || lower_text(&left["from"]) != lower_text(&right["from"])
+    {
+        return None;
+    }
+    fn candidates(input: &Value) -> Vec<CrossProposal<'_>> {
+        input["entityTxs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|tx| tx["type"] == "accountInput")
+            .filter_map(|tx| cross_proposal(&tx["data"]))
+            .collect()
+    }
+    let left_candidates = candidates(left);
+    let right_candidates = candidates(right);
+    for left in left_candidates {
+        let matches = right_candidates
+            .iter()
+            .filter(|right| {
+                left.key == right.key
+                    && paired_pulls(&left.source_pulls, &right.target_pulls)
+                    && paired_pulls(&right.source_pulls, &left.target_pulls)
+                    && paired_closes(&left.source_closes, &right.target_closes)
+                    && paired_closes(&right.source_closes, &left.target_closes)
+            })
+            .collect::<Vec<_>>();
+        if matches.len() == 1 {
+            return Some(AtomicCrossJurisdictionPair {
+                phase: "proposal".into(),
+                pair_key: left.key,
+            });
+        }
+    }
+    None
 }
 
 fn build_envelope(

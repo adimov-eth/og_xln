@@ -1,30 +1,12 @@
 use ethabi::Token;
 use ethabi::ethereum_types::{H160, U256};
-use num_bigint::{BigInt, BigUint, Sign};
+use num_bigint::{BigInt, Sign};
 
 use super::JSubmitError;
 use super::types::*;
 
 const MAX_BATCH_BYTES: usize = 256 * 1024;
 const MAX_BATCH_OPS: usize = 50;
-/// Depository `MAX_MONEY = 1 << 200`: every reserve, collateral, allowance and
-/// |delta| the contract stores is capped there, so no amount above it can be
-/// signed or submitted. Mirrors TypeScript `MONEY_CAP_EXCEEDED`.
-pub const MAX_MONEY_BITS: u32 = 200;
-const MONEY_CAP_EXCEEDED: &str = "MONEY_CAP_EXCEEDED";
-
-fn max_money() -> U256 {
-    U256::one() << MAX_MONEY_BITS
-}
-
-/// A uint256 amount the contract bounds by `MAX_MONEY`.
-fn money(value: U256) -> Result<Token, JSubmitError> {
-    if value > max_money() {
-        return Err(JSubmitError::Batch(MONEY_CAP_EXCEEDED));
-    }
-    Ok(Token::Uint(value))
-}
-
 fn tuple(values: impl IntoIterator<Item = Token>) -> Token {
     Token::Tuple(values.into_iter().collect())
 }
@@ -41,24 +23,31 @@ fn address(value: &Address) -> Token {
     Token::Address(H160::from_slice(value))
 }
 
-/// An int256 amount whose magnitude the contract bounds by `MAX_MONEY`.
-fn signed(value: &BigInt) -> Result<Token, JSubmitError> {
-    let limit = BigInt::from(1_u8) << MAX_MONEY_BITS;
-    if value < &-limit.clone() || value > &limit {
-        return Err(JSubmitError::Batch(MONEY_CAP_EXCEEDED));
-    }
-    let bits: BigUint = if value.sign() == Sign::Minus {
-        ((BigInt::from(1_u8) << 256_u32) + value)
-            .to_biguint()
-            .ok_or(JSubmitError::Batch("int256-negative"))?
-    } else {
-        value.to_biguint().ok_or(JSubmitError::Batch("int256"))?
-    };
-    let bytes = bits.to_bytes_be();
+/// Individual asset movements retain the full uint256 magnitude; zero has one sign.
+fn signed_amount(value: &BigInt) -> Result<Token, JSubmitError> {
+    let (sign, bytes) = value.to_bytes_be();
     if bytes.len() > 32 {
-        return Err(JSubmitError::Batch("int256-width"));
+        return Err(JSubmitError::Batch("signed-amount-width"));
     }
-    Ok(Token::Int(U256::from_big_endian(&bytes)))
+    Ok(tuple([
+        Token::Bool(sign == Sign::Minus),
+        uint(U256::from_big_endian(&bytes)),
+    ]))
+}
+
+/// The signed proof commits exactly two big-endian two's-complement limbs.
+/// This changes the signed ABI: old bodies must never be reinterpreted at a new deployment.
+fn int512(value: &BigInt) -> Result<Token, JSubmitError> {
+    let bytes = value.to_signed_bytes_be();
+    if bytes.len() > 64 {
+        return Err(JSubmitError::Batch("int512-width"));
+    }
+    let mut limbs = [if value.sign() == Sign::Minus { 0xff } else { 0 }; 64];
+    limbs[64 - bytes.len()..].copy_from_slice(&bytes);
+    Ok(tuple([
+        Token::Int(U256::from_big_endian(&limbs[..32])),
+        uint(U256::from_big_endian(&limbs[32..])),
+    ]))
 }
 
 pub(crate) fn proof_body_token(body: &ProofBody) -> Result<Token, JSubmitError> {
@@ -69,7 +58,7 @@ pub(crate) fn proof_body_token(body: &ProofBody) -> Result<Token, JSubmitError> 
         array(
             body.offdeltas
                 .iter()
-                .map(signed)
+                .map(int512)
                 .collect::<Result<Vec<_>, _>>()?,
         ),
         array(body.token_ids.iter().copied().map(uint)),
@@ -87,8 +76,8 @@ pub(crate) fn proof_body_token(body: &ProofBody) -> Result<Token, JSubmitError> 
                                 .map(|allowance| -> Result<Token, JSubmitError> {
                                     Ok(tuple([
                                         uint(allowance.delta_index),
-                                        money(allowance.right_allowance)?,
-                                        money(allowance.left_allowance)?,
+                                        uint(allowance.right_allowance),
+                                        uint(allowance.left_allowance),
                                     ]))
                                 })
                                 .collect::<Result<Vec<_>, JSubmitError>>()?,
@@ -155,7 +144,7 @@ pub(crate) fn batch_token(batch: &JBatch) -> Result<Token, JSubmitError> {
                     Ok(tuple([
                         fixed(&v.receiving_entity),
                         uint(v.token_id),
-                        money(v.amount)?,
+                        uint(v.amount),
                     ]))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
@@ -172,7 +161,7 @@ pub(crate) fn batch_token(batch: &JBatch) -> Result<Token, JSubmitError> {
                             v.pairs
                                 .iter()
                                 .map(|p| -> Result<Token, JSubmitError> {
-                                    Ok(tuple([fixed(&p.entity), money(p.amount)?]))
+                                    Ok(tuple([fixed(&p.entity), uint(p.amount)]))
                                 })
                                 .collect::<Result<Vec<_>, _>>()?,
                         ),
@@ -188,7 +177,7 @@ pub(crate) fn batch_token(batch: &JBatch) -> Result<Token, JSubmitError> {
                     Ok(tuple([
                         fixed(&v.counterparty),
                         uint(v.token_id),
-                        money(v.amount)?,
+                        uint(v.amount),
                         uint(v.nonce),
                         Token::Bytes(v.sig.clone()),
                     ]))
@@ -209,10 +198,10 @@ pub(crate) fn batch_token(batch: &JBatch) -> Result<Token, JSubmitError> {
                                 .map(|d| -> Result<Token, JSubmitError> {
                                     Ok(tuple([
                                         uint(d.token_id),
-                                        signed(&d.left_diff)?,
-                                        signed(&d.right_diff)?,
-                                        signed(&d.collateral_diff)?,
-                                        signed(&d.ondelta_diff)?,
+                                        signed_amount(&d.left_diff)?,
+                                        signed_amount(&d.right_diff)?,
+                                        signed_amount(&d.collateral_diff)?,
+                                        signed_amount(&d.ondelta_diff)?,
                                     ]))
                                 })
                                 .collect::<Result<Vec<_>, _>>()?,
@@ -293,7 +282,7 @@ pub(crate) fn batch_token(batch: &JBatch) -> Result<Token, JSubmitError> {
                         uint(v.external_token_id),
                         uint(U256::from(v.token_type)),
                         uint(v.internal_token_id),
-                        money(v.amount)?,
+                        uint(v.amount),
                     ]))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
@@ -306,7 +295,7 @@ pub(crate) fn batch_token(batch: &JBatch) -> Result<Token, JSubmitError> {
                     Ok(tuple([
                         fixed(&v.receiving_entity),
                         uint(v.token_id),
-                        money(v.amount)?,
+                        uint(v.amount),
                     ]))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
@@ -343,4 +332,93 @@ pub fn encode_j_batch(batch: &JBatch) -> Result<Vec<u8>, JSubmitError> {
 
 pub fn encode_proof_body(body: &ProofBody) -> Result<Vec<u8>, JSubmitError> {
     Ok(ethabi::encode(&[proof_body_token(body)?]))
+}
+#[cfg(test)]
+mod money_abi_tests {
+    use super::*;
+    use crate::j_batch::decode::decode_j_batch;
+    use sha3::{Digest, Keccak256};
+
+    #[test]
+    fn reserve_to_reserve_accepts_full_uint256_without_policy_cap() {
+        for amount in [U256::zero(), (U256::one() << 200) + 1, U256::MAX] {
+            let mut batch = JBatch::default();
+            batch.reserve_to_reserve.push(ReserveToReserve {
+                receiving_entity: [0x11; 32],
+                token_id: 1.into(),
+                amount,
+            });
+            let encoded = encode_j_batch(&batch).expect("full uint256 asset amount");
+            assert_eq!(decode_j_batch(&encoded).expect("canonical batch"), batch);
+        }
+    }
+
+    #[test]
+    fn proof_body_int512_extremes_match_compiled_solidity_abi_ethers_oracle() {
+        let u: BigInt = (BigInt::from(1) << 256_u32) - 1;
+        let b = BigInt::from(1) << 511_u32;
+        let body = ProofBody {
+            watch_seed: [0; 32],
+            left_response_seconds: 10,
+            right_response_seconds: 20,
+            offdeltas: vec![0.into(), u.clone(), -u, &b - 1, -b],
+            token_ids: (1..=5).map(U256::from).collect(),
+            transformers: Vec::new(),
+        };
+        let encoded = encode_proof_body(&body).expect("representable proof");
+        assert_eq!(encoded.len(), 800);
+        // ethers AbiCoder using Account.validateDisputeProofs compiled ABI, 2026-09-06.
+        assert_eq!(
+            hex::encode(Keccak256::digest(encoded)),
+            "f4c441963e0504028c56ea1e53c76b729df07c7b63a4c6aa27dd0a391c538333"
+        );
+        for outside in [
+            BigInt::from(1) << 511_u32,
+            -(BigInt::from(1) << 511_u32) - 1,
+        ] {
+            assert!(int512(&outside).is_err(), "representational proof overflow");
+        }
+    }
+
+    #[test]
+    fn settlement_diff_uses_exact_unsigned_magnitude_and_rejects_negative_zero() {
+        let u: BigInt = (BigInt::from(1) << 256_u32) - 1;
+        let mut batch = JBatch::default();
+        batch.settlements.push(Settlement {
+            left_entity: [1; 32],
+            right_entity: [2; 32],
+            nonce: 1.into(),
+            sig: vec![1],
+            forgive_debts_in_token_ids: Vec::new(),
+            diffs: vec![SettlementDiff {
+                token_id: 1.into(),
+                left_diff: u.clone(),
+                right_diff: -&u,
+                collateral_diff: 0.into(),
+                ondelta_diff: -u,
+            }],
+        });
+        let encoded = encode_j_batch(&batch).expect("signed full uint256 movements");
+        assert_eq!(decode_j_batch(&encoded).expect("roundtrip"), batch);
+        assert!(signed_amount(&(BigInt::from(1) << 256_u32)).is_err());
+        assert!(signed_amount(&-(BigInt::from(1) << 256_u32)).is_err());
+        let Token::Tuple(mut sections) = batch_token(&batch).expect("batch") else {
+            panic!("tuple")
+        };
+        let Token::Array(settlements) = &mut sections[3] else {
+            panic!("array")
+        };
+        let Token::Tuple(settlement) = &mut settlements[0] else {
+            panic!("tuple")
+        };
+        let Token::Array(diffs) = &mut settlement[2] else {
+            panic!("array")
+        };
+        let Token::Tuple(diff) = &mut diffs[0] else {
+            panic!("tuple")
+        };
+        // A signer must have only one encoding for zero; a forged bool sign is rejected.
+        diff[3] = tuple([Token::Bool(true), uint(U256::zero())]);
+        assert!(decode_j_batch(&ethabi::encode(&[Token::Tuple(sections)])).is_err());
+    }
 }

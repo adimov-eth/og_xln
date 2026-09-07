@@ -11,6 +11,7 @@ use xln_rscore_engine::{Side, TokenId};
 use xln_rscore_entity_kernel::{BookSideLevel, ORDERBOOK_PRICE_SCALE, Side as OrderbookSide};
 use xln_rscore_process::native_genesis::{
     NativeGenesisConfig, create_native_genesis_runtime_processor, native_store_is_pristine,
+    validate_native_owner_inventory,
 };
 use xln_rscore_process::native_runtime::restore_native_runtime_processor;
 use xln_rscore_process::runtime_http::{
@@ -24,6 +25,9 @@ use xln_rscore_runtime::{
     CanonicalEntityInfraMaterializer, ResidentRuntimeService, RuntimeEntityInput, RuntimeEntityKey,
     RuntimeEntityReplica, RuntimeEntityState, RuntimeReplica,
 };
+
+#[path = "live_cross_state.rs"]
+mod cross_state;
 
 fn argument(args: &[String], name: &str) -> Result<String, String> {
     let index = args
@@ -153,6 +157,48 @@ fn entity_slot<'a>(
         )
     })?;
     Ok((state, live))
+}
+
+// A runtime can own different Entity signers. Profile authority comes from
+// the actual resident slot; the primary hub signer cannot authorize a sibling.
+fn profile_owner_key<'a>(
+    entity_id: [u8; 32],
+    state_keys: impl IntoIterator<Item = &'a RuntimeEntityKey>,
+    live_keys: impl IntoIterator<Item = &'a RuntimeEntityKey>,
+) -> Result<Option<RuntimeEntityKey>, String> {
+    let state = state_keys
+        .into_iter()
+        .filter(|key| key.entity_id == entity_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    let live = live_keys
+        .into_iter()
+        .filter(|key| key.entity_id == entity_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    if state != live {
+        return Err(format!(
+            "RRS_RUNTIME_PROFILE_SLOT_DIVERGED:{}:state={state:?}:replica={live:?}",
+            bytes_hex(&entity_id)
+        ));
+    }
+    if state.len() > 1 {
+        return Err(format!(
+            "RRS_RUNTIME_PROFILE_OWNER_AMBIGUOUS:{}:owners={state:?}",
+            bytes_hex(&entity_id)
+        ));
+    }
+    Ok(state.first().map(|key| (*key).clone()))
+}
+
+fn profile_owner_fees<'a>(
+    fees: &'a std::collections::BTreeMap<RuntimeEntityKey, (u32, num_bigint::BigInt)>,
+    owner: &RuntimeEntityKey,
+) -> Result<&'a (u32, num_bigint::BigInt), String> {
+    fees.get(owner).ok_or_else(|| {
+        format!(
+            "RRS_RUNTIME_PROFILE_FEE_OWNER_MISSING:{}",
+            owner.replica_id()
+        )
+    })
 }
 
 fn native_profile(
@@ -319,15 +365,12 @@ fn native_profile(
 fn native_account_status(
     service: &mut ResidentRuntimeService,
     hub_entity_id: [u8; 32],
-    local_signer_id: &str,
     hub_entity_id_text: &str,
     counterparty: xln_rscore_batch::AccountId,
     counterparty_text: &str,
     token_ids: Vec<TokenId>,
 ) -> Result<Value, String> {
-    let hub_entity_key = RuntimeEntityKey::new(hub_entity_id, local_signer_id)
-        .map_err(|error| format!("RRS_RUNTIME_ACCOUNT_STATUS_KEY:{error}"))?;
-    let (height, timestamp, owns_entity) = {
+    let (height, timestamp, hub_entity_key) = {
         let replica = service
             .processor()
             .replica()
@@ -335,10 +378,14 @@ fn native_account_status(
         (
             replica.state.height,
             replica.state.timestamp,
-            replica.e_replicas.contains_key(&hub_entity_key),
+            profile_owner_key(
+                hub_entity_id,
+                replica.state.e_replicas.keys(),
+                replica.e_replicas.keys(),
+            )?,
         )
     };
-    let status = if owns_entity {
+    let status = if let Some(hub_entity_key) = hub_entity_key {
         service
             .account_status(&hub_entity_key, counterparty, token_ids.clone())
             .map_err(|error| format!("RRS_RUNTIME_ACCOUNT_STATUS:{error}"))?
@@ -851,11 +898,27 @@ fn http_snapshot(
             let live = replica.e_replicas.get(key).ok_or_else(|| {
                 format!("RRS_RUNTIME_ENTITY_REPLICA_MISSING:{}", key.replica_id())
             })?;
+            let jurisdiction = live
+                .entity_consensus
+                .state
+                .authority
+                .config
+                .jurisdiction
+                .as_ref();
+            let jurisdiction_name = jurisdiction
+                .map(|value| canonical_string(value, "name"))
+                .transpose()?;
+            let chain_id = jurisdiction
+                .map(|value| canonical_u64(value, "chainId"))
+                .transpose()?;
             Ok(serde_json::json!({
                 "entityId": state.entity.entity_id,
                 "signerId": live.signer_id,
                 "name": state.entity.profile.name,
                 "primary": key == primary_entity_key,
+                "isHub": state.entity.profile.is_hub,
+                "jurisdictionName": jurisdiction_name,
+                "chainId": chain_id,
             }))
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -896,6 +959,7 @@ fn http_snapshot(
             "entityId": entity_id,
             "hubEntities": hub_entities,
             "runtimeId": runtime_id,
+            "deliveryReady": service.delivery_ready(),
             "apiUrl": format!("http://{api_address}"),
             "directWsUrl": format!("ws://{}/ws", service.local_address()),
             "workers": entity_replica.accounts.worker_count(),
@@ -908,7 +972,7 @@ fn http_snapshot(
             "storage": {"persistencePaused": false},
         },
         "health": {
-            "ok": true,
+            "ok": service.delivery_ready(),
             "name": name,
             "height": replica.state.height,
             "entityId": entity_id,
@@ -916,7 +980,7 @@ fn http_snapshot(
             "directWsUrl": format!("ws://{}/ws", service.local_address()),
             "runtime": {
                 "halted": false,
-                "lifecyclePhase": "ready",
+                "lifecyclePhase": if service.delivery_ready() { "ready" } else { "j_catchup" },
             },
             "quiescence": {
                 "ready": service.publication_backlog().rows == 0,
@@ -1124,11 +1188,13 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     if args.iter().any(|value| value == "--offline-ts-import") {
         return Err("RRS_RUNTIME_OFFLINE_TS_IMPORT_FORBIDDEN".into());
     }
+    let genesis_path = PathBuf::from(argument(&args, "--genesis-config")?);
+    let genesis = NativeGenesisConfig::read(genesis_path)?;
+    genesis.validate_owner_labels(&entity_signer_label)?;
     let ready = if native_store_is_pristine(&native_database)? {
-        let genesis_path = PathBuf::from(argument(&args, "--genesis-config")?);
         create_native_genesis_runtime_processor(
             native_database,
-            NativeGenesisConfig::read(genesis_path)?,
+            genesis.clone(),
             runtime_seed,
             &runtime_signer_label,
             &entity_signer_label,
@@ -1146,6 +1212,14 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
             None,
         )?
     };
+    validate_native_owner_inventory(
+        &genesis,
+        ready
+            .processor
+            .replica()
+            .map_err(|error| format!("RRS_RUNTIME_GENESIS_INVENTORY:{error}"))?,
+        runtime_seed,
+    )?;
     let ingress = DirectRuntimeIngress::bind(DirectRuntimeIngressConfig::production(
         bind_address,
         runtime_seed,
@@ -1162,14 +1236,22 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
             .entity
             .entity_encryption_public_key
     };
-    let profile_routing_fee_ppm = ready.htlc_routing_fee_ppm;
-    let profile_routing_base_fee = ready.htlc_routing_base_fee.clone();
+    let (profile_routing_fee_ppm, profile_routing_base_fee) = ready
+        .htlc_routing_fees
+        .get(&primary_entity_key)
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "RRS_RUNTIME_HTLC_FEE_OWNER_MISSING:{}",
+                primary_entity_key.replica_id()
+            )
+        })?;
     let materializer = CanonicalEntityInfraMaterializer::with_inbound_htlc(
         xln_rscore_runtime::InboundHtlcInfrastructure {
             entity_encryption_public_key,
             entity_encryption_private_key,
-            routing_fee_ppm: ready.htlc_routing_fee_ppm,
-            routing_base_fee: ready.htlc_routing_base_fee,
+            routing_fee_ppm: profile_routing_fee_ppm,
+            routing_base_fee: profile_routing_base_fee.clone(),
         },
     )
     .map_err(|error| format!("RRS_RUNTIME_HTLC_INFRA:{error}"))?;
@@ -1202,13 +1284,19 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let min_frame_delay_ms = service
         .min_frame_delay_ms()
         .map_err(|error| format!("RRS_RUNTIME_FRAME_INTERVAL:{error}"))?;
+    let mut announced_ready = service.delivery_ready();
     println!(
         concat!(
-            "{{\"status\":\"ready\",\"runtimeId\":\"{}\",\"listen\":\"{}\",",
+            "{{\"status\":\"{}\",\"runtimeId\":\"{}\",\"listen\":\"{}\",",
             "\"workers\":{},\"minFrameDelayMs\":{},\"height\":{},\"runtimeFrameHash\":\"{}\",",
             "\"accountsRoot\":\"{}\",\"restoredFrames\":{},",
             "\"restoreMicros\":{}}}"
         ),
+        if announced_ready {
+            "ready"
+        } else {
+            "j_catchup"
+        },
         service.runtime_id(),
         service.local_address(),
         workers,
@@ -1289,114 +1377,146 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
             return Ok(());
         }
         let local_command = http_commands.try_recv().ok();
-        let local_apply = match local_command {
-            Some(RuntimeHttpCommand::AccountStatus {
-                hub_entity_id,
-                hub_entity_id_text,
-                counterparty,
-                counterparty_text,
-                token_ids,
-                response,
-            }) => {
-                let status = native_account_status(
-                    &mut service,
-                    hub_entity_id,
-                    &local_entity_signer_id,
-                    &hub_entity_id_text,
-                    counterparty,
-                    &counterparty_text,
-                    token_ids,
-                );
-                let _ = response.send(status);
-                continue;
-            }
-            Some(RuntimeHttpCommand::EntityProfile {
-                entity_id,
-                entity_id_text,
-                response,
-            }) => {
-                let profile = {
-                    let entity_key = RuntimeEntityKey::new(entity_id, &local_entity_signer_id)
-                        .map_err(|error| format!("RRS_RUNTIME_PROFILE_KEY:{error}"))?;
-                    let replica = service
-                        .processor()
-                        .replica()
-                        .map_err(|error| format!("RRS_RUNTIME_PROFILE_REPLICA:{error}"))?;
-                    let state_exists = replica.state.e_replicas.contains_key(&entity_key);
-                    let live_exists = replica.e_replicas.contains_key(&entity_key);
-                    if state_exists != live_exists {
-                        Err(format!(
-                            "RRS_RUNTIME_PROFILE_SLOT_DIVERGED:{entity_id_text}:state={state_exists}:replica={live_exists}"
-                        ))
-                    } else if !state_exists {
-                        Ok(None)
-                    } else {
-                        native_profile(
-                            &service,
-                            &entity_key,
-                            profile_routing_fee_ppm,
-                            &profile_routing_base_fee,
-                        )
-                        .and_then(|profile| {
-                            (profile.get("entityId").and_then(Value::as_str)
-                                == Some(entity_id_text.as_str()))
-                            .then_some(Some(profile))
-                            .ok_or_else(|| format!("RRS_RUNTIME_PROFILE_IDENTITY:{entity_id_text}"))
-                        })
+        let local_apply = (|| -> Result<_, String> {
+            Ok(match local_command {
+                Some(RuntimeHttpCommand::CrossJurisdictionState {
+                    entity_id,
+                    response,
+                }) => {
+                    match cross_state::read(&mut service, entity_id) {
+                        Ok(value) => {
+                            let _ = response.send(Ok(value));
+                        }
+                        Err(error) => {
+                            let _ = response.send(Err(error.clone()));
+                            return Err(error);
+                        }
                     }
-                };
-                let _ = response.send(profile);
-                continue;
-            }
-            Some(RuntimeHttpCommand::MarketCatalog {
-                hub_entity_id,
-                hub_entity_id_text,
-                response,
-            }) => {
-                let catalog = native_market_catalog(
-                    &service,
-                    &local_entity_signer_id,
+                    return Ok(None);
+                }
+                Some(RuntimeHttpCommand::AccountStatus {
                     hub_entity_id,
-                    &hub_entity_id_text,
-                );
-                let _ = response.send(catalog);
-                continue;
-            }
-            Some(RuntimeHttpCommand::MarketSnapshots {
-                hub_entity_id,
-                hub_entity_id_text,
-                pair_ids,
-                depth,
-                response,
-            }) => {
-                let snapshots = native_market_snapshots(
-                    &service,
-                    &local_entity_signer_id,
+                    hub_entity_id_text,
+                    counterparty,
+                    counterparty_text,
+                    token_ids,
+                    response,
+                }) => {
+                    let status = native_account_status(
+                        &mut service,
+                        hub_entity_id,
+                        &hub_entity_id_text,
+                        counterparty,
+                        &counterparty_text,
+                        token_ids,
+                    );
+                    let _ = response.send(status);
+                    return Ok(None);
+                }
+                Some(RuntimeHttpCommand::EntityProfile {
+                    entity_id,
+                    entity_id_text,
+                    response,
+                }) => {
+                    let profile = {
+                        let replica = service
+                            .processor()
+                            .replica()
+                            .map_err(|error| format!("RRS_RUNTIME_PROFILE_REPLICA:{error}"))?;
+                        let owner = profile_owner_key(
+                            entity_id,
+                            replica.state.e_replicas.keys(),
+                            replica.e_replicas.keys(),
+                        );
+                        match owner {
+                            Err(error) => Err(error),
+                            Ok(None) => Ok(None),
+                            Ok(Some(entity_key)) => {
+                                profile_owner_fees(&ready.htlc_routing_fees, &entity_key)
+                                    .and_then(|(fee_ppm, base_fee)| {
+                                        native_profile(&service, &entity_key, *fee_ppm, base_fee)
+                                    })
+                                    .and_then(|profile| {
+                                        (profile.get("entityId").and_then(Value::as_str)
+                                            == Some(entity_id_text.as_str()))
+                                        .then_some(Some(profile))
+                                        .ok_or_else(|| {
+                                            format!("RRS_RUNTIME_PROFILE_IDENTITY:{entity_id_text}")
+                                        })
+                                    })
+                            }
+                        }
+                    };
+                    let _ = response.send(profile);
+                    return Ok(None);
+                }
+                Some(RuntimeHttpCommand::MarketCatalog {
                     hub_entity_id,
-                    &hub_entity_id_text,
-                    &pair_ids,
+                    hub_entity_id_text,
+                    response,
+                }) => {
+                    let catalog = native_market_catalog(
+                        &service,
+                        &local_entity_signer_id,
+                        hub_entity_id,
+                        &hub_entity_id_text,
+                    );
+                    let _ = response.send(catalog);
+                    return Ok(None);
+                }
+                Some(RuntimeHttpCommand::MarketSnapshots {
+                    hub_entity_id,
+                    hub_entity_id_text,
+                    pair_ids,
                     depth,
-                );
-                let _ = response.send(snapshots);
-                continue;
-            }
-            Some(RuntimeHttpCommand::Tokens { response }) => {
-                let tokens = native_market_tokens(&service);
-                let _ = response.send(tokens);
-                continue;
-            }
-            Some(RuntimeHttpCommand::FaucetOffchain { request, response }) => {
-                let result = native_offchain_faucet(&mut service, &local_entity_signer_id, request);
-                let _ = response.send(result);
-                continue;
-            }
-            Some(RuntimeHttpCommand::ApplyEntityInputs {
-                command_id,
-                entity_inputs,
-                committed,
-            }) => Some((command_id, entity_inputs, committed)),
-            None => None,
-        };
+                    response,
+                }) => {
+                    let snapshots = native_market_snapshots(
+                        &service,
+                        &local_entity_signer_id,
+                        hub_entity_id,
+                        &hub_entity_id_text,
+                        &pair_ids,
+                        depth,
+                    );
+                    let _ = response.send(snapshots);
+                    return Ok(None);
+                }
+                Some(RuntimeHttpCommand::Tokens { response }) => {
+                    let tokens = native_market_tokens(&service);
+                    let _ = response.send(tokens);
+                    return Ok(None);
+                }
+                Some(RuntimeHttpCommand::FaucetOffchain { request, response }) => {
+                    if !service.delivery_ready() {
+                        let _ = response.send(Ok((
+                            503,
+                            serde_json::json!({
+                                "code": "RUNTIME_J_CATCHUP_PENDING",
+                                "error": "Jurisdiction catch-up is still in progress",
+                            }),
+                        )));
+                        return Ok(None);
+                    }
+                    let result =
+                        native_offchain_faucet(&mut service, &local_entity_signer_id, request);
+                    let _ = response.send(result);
+                    return Ok(None);
+                }
+                Some(RuntimeHttpCommand::ApplyEntityInputs {
+                    command_id,
+                    entity_inputs,
+                    committed,
+                }) => {
+                    if !service.delivery_ready() {
+                        let _ = committed.send(Err("RRS_RUNTIME_J_CATCHUP_PENDING".into()));
+                        return Ok(None);
+                    }
+                    Some((command_id, entity_inputs, committed))
+                }
+                None => None,
+            })
+        })()?;
         let local_command_id = local_apply
             .as_ref()
             .map(|(command_id, _, _)| command_id.clone());
@@ -1589,6 +1709,32 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
                 api_address,
                 latest_metrics.clone(),
             )?)?;
+        }
+        if !announced_ready && service.delivery_ready() {
+            let replica = service
+                .processor()
+                .replica()
+                .map_err(|error| format!("RRS_RUNTIME_FATAL:{error}"))?;
+            let (entity, _) = entity_slot(replica, &primary_entity_key)?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "ready", "runtimeId": service.runtime_id(),
+                    "listen": service.local_address().to_string(), "workers": workers,
+                    "minFrameDelayMs": min_frame_delay_ms, "height": replica.state.height,
+                    "runtimeFrameHash": digest_hex(&replica.durable.prev_frame_hash()),
+                    "accountsRoot": digest_hex(&entity.accounts_root),
+                    "restoredFrames": restored_frames, "restoreMicros": restore_micros,
+                })
+            );
+            http_state.publish(http_snapshot(
+                &service,
+                &primary_entity_key,
+                &name,
+                api_address,
+                latest_metrics.clone(),
+            )?)?;
+            announced_ready = true;
         }
         if metric_started.elapsed()
             >= Duration::from_millis(
@@ -1961,5 +2107,67 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
             previous_workers_with_work = total_account_workers_with_work;
             previous_touched_shards = total_account_touched_shards;
         }
+    }
+}
+
+#[cfg(test)]
+mod profile_owner_tests {
+    use super::*;
+
+    #[test]
+    fn r7_sibling_profile_uses_its_resident_signer_and_rejects_ambiguous_authority() {
+        let primary = RuntimeEntityKey::new(
+            parse_hex32(
+                "0x3178d9719ba28262c522a1a7d06019d446e86dc4f5ab8c21201cdb0b7eb57761",
+                "test",
+            )
+            .unwrap(),
+            "0x83dd36ca656d1fffd5d4eeef5dfc2931f1fa3977",
+        )
+        .unwrap();
+        let sibling = RuntimeEntityKey::new(
+            parse_hex32(
+                "0x7093aaaa4f5fcf1b82fe3fb5254ead0af4bb453a7b4982bbefc94c75596d6ba0",
+                "test",
+            )
+            .unwrap(),
+            "0x9e12787132c20677da461cc419ecf3ca138691f6",
+        )
+        .unwrap();
+        let fees = std::collections::BTreeMap::from([
+            (primary.clone(), (1000, num_bigint::BigInt::from(1))),
+            (sibling.clone(), (2500, num_bigint::BigInt::from(7))),
+        ]);
+        assert_eq!(
+            profile_owner_fees(&fees, &sibling).unwrap(),
+            &(2500, num_bigint::BigInt::from(7))
+        );
+        assert!(
+            profile_owner_fees(&std::collections::BTreeMap::new(), &sibling)
+                .unwrap_err()
+                .contains("FEE_OWNER_MISSING")
+        );
+        let keys = [&primary, &sibling];
+        assert_eq!(
+            profile_owner_key(sibling.entity_id, keys, keys).unwrap(),
+            Some(sibling.clone())
+        );
+        assert_eq!(
+            profile_owner_key(primary.entity_id, keys, keys).unwrap(),
+            Some(primary.clone())
+        );
+        assert_eq!(profile_owner_key([0xff; 32], keys, keys).unwrap(), None);
+        assert!(
+            profile_owner_key(sibling.entity_id, keys, [&primary])
+                .unwrap_err()
+                .contains("SLOT_DIVERGED")
+        );
+        let conflicting = RuntimeEntityKey::new(sibling.entity_id, &primary.signer_id).unwrap();
+        let ambiguous = [&sibling, &conflicting];
+        assert!(
+            profile_owner_key(sibling.entity_id, ambiguous, ambiguous)
+                .unwrap_err()
+                .contains("OWNER_AMBIGUOUS")
+        );
     }
 }

@@ -66,6 +66,9 @@ pub enum SchedulerCommand {
         counterparty_entity_id: String,
     },
     BroadcastQueuedDisputeFinalization,
+    CrossJOrderbookSweep {
+        reason: String,
+    },
     HubRebalance,
 }
 
@@ -338,9 +341,8 @@ fn batch_has_dispute_finalization(batch: &JBatch, counterparty: &str) -> bool {
 
 /// Execute one signed scheduled wake atomically.
 ///
-/// A clone is mutated and returned only on success. In particular, a due
-/// dispute/cross-j hook cannot be removed from live state before its explicit
-/// unsupported error reaches the Runtime.
+/// A clone is mutated and returned only on success. An unsupported due hook
+/// cannot be removed from live state before its error reaches the Runtime.
 pub fn execute_crontab(
     state: &CrontabState,
     wake: &ScheduledWake,
@@ -499,8 +501,14 @@ pub fn execute_crontab(
                     }
                 }
             }
-            ScheduledHookKind::CrossJOrderbookSweep { .. } => {
-                return Err(unsupported_hook(hook, "cross_j_orderbook_sweep"));
+            ScheduledHookKind::CrossJOrderbookSweep { reason } => {
+                commands.push(SchedulerCommand::CrossJOrderbookSweep {
+                    reason: if reason.is_empty() {
+                        "cross-j-orderbook-sweep".into()
+                    } else {
+                        reason.clone()
+                    },
+                });
             }
             ScheduledHookKind::BoardHankoRefresh { .. } => {
                 return Err(unsupported_hook(hook, "board_hanko_refresh"));

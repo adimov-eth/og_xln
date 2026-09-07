@@ -15,6 +15,8 @@ use xln_rscore_engine::{AccountTx, EntityId, JurisdictionEvent};
 use super::types::ACCOUNT_SETTLED_TOPIC;
 use super::*;
 
+// Current Depository ABI: ondelta is Int512(high, low). Receipt root below
+// is independently encoded by the TS canonical receipt codec, not Rust.
 const EVENT_DATA: &str = concat!(
     "0x0000000000000000000000000000000000000000000000000000000000000020",
     "0000000000000000000000000000000000000000000000000000000000000001",
@@ -29,8 +31,114 @@ const EVENT_DATA: &str = concat!(
     "000000000000000000000000000000000000000000000000000001d1a93addc0",
     "00000000000000000000000000000000000000000000000000000000000f4240",
     "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
 );
-const TS_RECEIPT_ROOT: &str = "0x5ca63546d46ba630af9a061b9ae662c0e274dcd5997b0062d07e70fa166705c7";
+const TS_RECEIPT_ROOT: &str = "0x54d4b8f966cf56e854e9d65b828f5ab55a1f401ac461d2090583b9599d74c695";
+
+fn token_count_abi(count: ethabi::ethereum_types::U256) -> Value {
+    Value::String(format!(
+        "0x{}",
+        hex::encode(ethabi::encode(&[ethabi::Token::Uint(count)]))
+    ))
+}
+
+fn token_entry_abi(address: [u8; 20], token_type: u64) -> Vec<u8> {
+    use ethabi::ethereum_types::{H160, U256};
+    // Depository._tokens returns (address,uint256,uint8). An external id may
+    // use all 256 bits; only the address and uint8 words require zero padding.
+    ethabi::encode(&[
+        ethabi::Token::Address(H160::from(address)),
+        ethabi::Token::Uint(U256::MAX),
+        ethabi::Token::Uint(U256::from(token_type)),
+    ])
+}
+
+fn token_entry_value(bytes: &[u8]) -> Value {
+    Value::String(format!("0x{}", hex::encode(bytes)))
+}
+
+#[test]
+fn token_registry_count_accepts_exact_abi_word_through_js_safe_boundary() {
+    use super::token_registry::decode_token_count;
+    for count in [1_u64, 9_007_199_254_740_991] {
+        assert_eq!(
+            decode_token_count(&token_count_abi(count.into())).expect("canonical token count"),
+            count
+        );
+    }
+}
+
+#[test]
+fn token_registry_count_rejects_unsafe_and_noncanonical_abi_words() {
+    use super::token_registry::decode_token_count;
+    use ethabi::ethereum_types::U256;
+    for value in [
+        token_count_abi(U256::from(9_007_199_254_740_992_u64)),
+        token_count_abi(U256::MAX),
+        Value::String(hex_repeat(0, 31)),
+        Value::String(hex_repeat(0, 33)),
+        Value::String("0x1".into()),
+        Value::String(format!("0x{}gg", "00".repeat(31))),
+        Value::Null,
+    ] {
+        assert!(decode_token_count(&value).is_err(), "accepted {value}");
+    }
+}
+
+#[test]
+fn token_registry_erc20_abi_retains_address_with_full_width_external_id() {
+    use super::token_registry::decode_erc20_token;
+    let address = [0x7b; 20];
+    let bytes = token_entry_abi(address, 0);
+    assert_eq!(bytes.len(), 96);
+    assert_eq!(
+        decode_erc20_token(&token_entry_value(&bytes)).expect("canonical ERC20 tuple"),
+        Some(address)
+    );
+}
+
+#[test]
+fn token_registry_nft_and_zero_address_entries_are_not_erc20_filters() {
+    use super::token_registry::decode_erc20_token;
+    for (address, token_type) in [([0x7b; 20], 1), ([0x7b; 20], 2), ([0; 20], 0)] {
+        assert_eq!(
+            decode_erc20_token(&token_entry_value(&token_entry_abi(address, token_type)))
+                .expect("canonical non-ERC20 entry"),
+            None
+        );
+    }
+}
+
+#[test]
+fn token_registry_entry_rejects_dirty_address_padding_and_wide_token_type() {
+    use super::token_registry::decode_erc20_token;
+    let mut dirty_address = token_entry_abi([0x7b; 20], 0);
+    dirty_address[0] = 1;
+    for bytes in [dirty_address, token_entry_abi([0x7b; 20], 256)] {
+        assert!(
+            decode_erc20_token(&token_entry_value(&bytes)).is_err(),
+            "noncanonical address/uint8 word was accepted"
+        );
+    }
+}
+
+#[test]
+fn token_registry_entry_rejects_truncated_trailing_and_malformed_abi() {
+    use super::token_registry::decode_erc20_token;
+    let bytes = token_entry_abi([0x7b; 20], 0);
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    for value in [
+        token_entry_value(&bytes[..95]),
+        token_entry_value(&trailing),
+        Value::String(format!("0x{}gg", "00".repeat(95))),
+        Value::String("0x".into()),
+        Value::Null,
+    ] {
+        assert!(decode_erc20_token(&value).is_err(), "accepted {value}");
+    }
+}
+
 #[derive(Deserialize)]
 struct WireVector {
     name: String,
@@ -50,6 +158,7 @@ struct FakeChain {
     head: u64,
     blocks: BTreeMap<u64, Value>,
     receipts: BTreeMap<String, Value>,
+    token_registry: Vec<Value>,
 }
 
 impl FakeRpcServer {
@@ -165,6 +274,27 @@ fn rpc_result(chain: &FakeChain, request: &Value) -> Value {
     match request["method"].as_str().expect("rpc method") {
         "eth_chainId" => Value::String(format!("0x{:x}", chain.chain_id)),
         "eth_blockNumber" => Value::String(format!("0x{:x}", chain.head)),
+        "eth_call" => {
+            assert_eq!(request["params"][0]["to"], hex_repeat(0x11, 20));
+            assert_eq!(request["params"][1], "latest");
+            let data = request["params"][0]["data"].as_str().expect("call data");
+            let count_selector = hex::encode(ethabi::short_signature("getTokensLength", &[]));
+            if data == format!("0x{count_selector}") {
+                return token_count_abi(chain.token_registry.len().into());
+            }
+            let row_selector = hex::encode(ethabi::short_signature(
+                "_tokens",
+                &[ethabi::ParamType::Uint(256)],
+            ));
+            let (index, _) = chain
+                .token_registry
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find(|(index, _)| data == format!("0x{row_selector}{index:064x}"))
+                .expect("exact _tokens(uint256) selector and existing nonzero token id");
+            chain.token_registry[index].clone()
+        }
         "eth_getBlockByNumber" => {
             let height = u64::from_str_radix(
                 request["params"][0]
@@ -236,6 +366,10 @@ fn fixture_chain() -> FakeChain {
             ),
         ]),
         receipts: BTreeMap::from([(transaction, receipt)]),
+        token_registry: vec![
+            token_entry_value(&token_entry_abi([0; 20], 0)),
+            token_entry_value(&token_entry_abi([0x22; 20], 0)),
+        ],
     }
 }
 
@@ -321,6 +455,20 @@ fn hostile_receipt_root_rejects_only_the_poll_and_keeps_cursor_immutable() {
     assert!(matches!(
         poll_finalized_j_events(&client, &config(), &cursor),
         Err(JWatcherError::ReceiptRootMismatch),
+    ));
+    assert_eq!(cursor, cursor_42());
+}
+
+#[test]
+fn malformed_live_registry_row_rejects_before_receipts_and_keeps_cursor_immutable() {
+    let mut chain = fixture_chain();
+    chain.token_registry[1] = Value::String("0x".into());
+    let server = FakeRpcServer::start(chain);
+    let client = HttpJsonRpc::new(&server.endpoint).expect("http client");
+    let cursor = cursor_42();
+    assert!(matches!(
+        poll_finalized_j_events(&client, &config(), &cursor),
+        Err(JWatcherError::Hex("tokenRegistryRow")),
     ));
     assert_eq!(cursor, cursor_42());
 }

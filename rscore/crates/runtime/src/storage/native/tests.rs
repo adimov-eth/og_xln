@@ -302,6 +302,100 @@ fn native_frame_atomically_recovers_the_exact_verified_context_bundle() {
 }
 
 #[test]
+fn cross_j_r7_h29_context_refs_recover_canonical_map_order_across_height_widths() {
+    let path = temporary_path("context-ref-height-width");
+    cleanup(&path);
+    let fixture = typescript_entity_context_rows();
+    let signer = format!("0x{}", "22".repeat(20));
+    let mut rows = Vec::new();
+    let mut replicas = Vec::new();
+    for (owner_byte, height) in [("11", 15), ("77", 6)] {
+        let owner = format!("0x{}", owner_byte.repeat(32));
+        let proposer = format!("{owner}:{signer}");
+        let replica = format!("{proposer}:{height}");
+        for row in fixture.rows() {
+            let value = if row.kind() == EntityContextPayloadKind::Manifest {
+                let mut manifest = crate::decode_storage_payload(row.value()).expect("TS manifest");
+                manifest["header"]["entityId"] = json!(owner);
+                manifest["header"]["proposerReplicaId"] = json!(proposer);
+                manifest["header"]["height"] = json!(height);
+                crate::transport::msgpack::encode_framed(&manifest).expect("canonical header")
+            } else {
+                row.value().to_vec()
+            };
+            rows.push(
+                EntityContextPayloadRow::new(&replica, row.kind(), row.index(), value)
+                    .expect("complete fixture row under its owner"),
+            );
+        }
+        replicas.push(replica);
+    }
+    assert!(replicas[0] < replicas[1]);
+    assert!(replicas[0].len() > replicas[1].len());
+    let contexts = EntityContextPayloadRows::validate(rows).expect("two complete context graphs");
+    let commit = frame_with_contexts(1, contexts.clone());
+    let decoded = crate::decode_storage_payload(&commit.frame_bytes).expect("canonical frame");
+    let refs = decoded["entityContextRefs"]["value"]
+        .as_array()
+        .expect("Map refs");
+    // Canonical MessagePack compares encoded keys: the shorter E6 key comes
+    // first even though its owner follows the E15 owner in plain string order.
+    assert_eq!(refs[0][0], replicas[1]);
+    assert_eq!(refs[1][0], replicas[0]);
+    {
+        let mut store =
+            NativeRuntimeStore::open(&path, NativeStorageConfig::default()).expect("open");
+        store
+            .append_frame(commit)
+            .expect("append canonical frame and graphs");
+    }
+    let mut reopened =
+        NativeRuntimeStore::open(&path, NativeStorageConfig::default()).expect("reopen");
+    let recovered = reopened
+        .recover()
+        .expect("recover exact Map membership regardless of encoded key order");
+    assert_eq!(recovered.wal_frames.len(), 1);
+    assert_eq!(recovered.wal_frames[0].entity_contexts, contexts);
+
+    let mut duplicate = decoded;
+    let refs = duplicate["entityContextRefs"]["value"]
+        .as_array_mut()
+        .expect("refs");
+    refs.push(refs[0].clone());
+    let duplicate =
+        crate::transport::msgpack::encode_framed(&duplicate).expect("duplicate ref bytes");
+    assert!(super::entity_context::frame_entity_context_refs(&duplicate).is_err());
+
+    // A valid but altered manifest keeps its child graph intact. Recovery must
+    // still reject the changed manifest digest bound by the original frame.
+    let manifest = contexts
+        .rows()
+        .iter()
+        .find(|row| {
+            row.replica_id() == replicas[1] && row.kind() == EntityContextPayloadKind::Manifest
+        })
+        .expect("short-key manifest");
+    let mut changed = crate::decode_storage_payload(manifest.value()).expect("manifest");
+    changed["header"]["parentFrameHash"] = json!(format!("0x{}", "99".repeat(32)));
+    let changed =
+        crate::transport::msgpack::encode_framed(&changed).expect("changed canonical manifest");
+    let mut corruption = WriteBatch::default();
+    corruption.put(&manifest.key(1).expect("manifest key"), &changed);
+    reopened
+        .database
+        .write(corruption, true)
+        .expect("alter one manifest digest");
+    assert!(matches!(
+        reopened.recover(),
+        Err(NativeStorageError::EntityContext(
+            EntityContextPayloadError::FrameRefs
+        ))
+    ));
+    drop(reopened);
+    cleanup(&path);
+}
+
+#[test]
 fn stable_runtime_machine_paths_overwrite_and_prune_only_obsolete_rows() {
     let path = temporary_path("runtime-machine-current");
     cleanup(&path);

@@ -1190,6 +1190,8 @@ fn accept_entity_tx_bytes(
 fn enqueue_proposer_materializations(
     slot: &mut EntityApplySlot,
     runtime_seed: &str,
+    runtime_timestamp: u64,
+    append_to_fresh_individual_run: bool,
 ) -> Result<MaterializationAdmission, RuntimeMachineError> {
     let admission = materialization_admission(&slot.replica.entity_mempool)?;
     let mut merged =
@@ -1244,6 +1246,7 @@ fn enqueue_proposer_materializations(
     let additions = build_proposer_materializations(
         &slot.state.entity,
         runtime_seed,
+        runtime_timestamp,
         &slot.replica.signer_id,
         &slot.replica.entity_consensus.state.authority,
         &account_views,
@@ -1251,9 +1254,10 @@ fn enqueue_proposer_materializations(
         admission.commit_phase,
     )
     .map_err(RuntimeMachineError::EntityFinancial)?;
-    for projected in additions {
+    let mut native_additions = Vec::with_capacity(additions.len());
+    for projected in &additions {
         let Some(native) =
-            decode_local_entity_tx(&projected).map_err(RuntimeMachineError::EntityFinancial)?
+            decode_local_entity_tx(projected).map_err(RuntimeMachineError::EntityFinancial)?
         else {
             return Err(RuntimeMachineError::EntityTxExecutionUnsupported(
                 projected.kind.as_str(),
@@ -1264,12 +1268,30 @@ fn enqueue_proposer_materializations(
                 projected.kind.as_str(),
             ));
         }
-        slot.replica
-            .entity_mempool
-            .push_back(EntityPendingWork::ProposerMaterialized {
-                projected,
-                native: Box::new(native),
-            });
+        native_additions.push(native);
+    }
+    if !additions.is_empty() {
+        // TS prepares one locally authored individual command run. These
+        // materializations require the proposer's signature and next command
+        // nonce; only already-authenticated Runtime outputs are bare protocol.
+        if append_to_fresh_individual_run {
+            let Some(EntityPendingWork::LocalBatch { projected, native }) =
+                slot.replica.entity_mempool.back_mut()
+            else {
+                return Err(RuntimeMachineError::EntityCommandContext(
+                    "FRESH_INDIVIDUAL_COMMAND_RUN_MISSING".into(),
+                ));
+            };
+            projected.extend(additions);
+            native.extend(native_additions);
+        } else {
+            slot.replica
+                .entity_mempool
+                .push_back(EntityPendingWork::LocalBatch {
+                    projected: additions,
+                    native: native_additions,
+                });
+        }
     }
     Ok(admission)
 }
@@ -1670,6 +1692,7 @@ fn fit_live_entity_prefix(
 }
 
 struct SelectedEntityWork {
+    operation_work_indices: Vec<usize>,
     txs: Vec<CanonicalEntityTx>,
     rows: Vec<xln_rscore_batch::AccountInputRow>,
     operations: Vec<ResidentEntityOperation>,
@@ -1693,12 +1716,14 @@ fn take_entity_prefix(
         normalize_entity_command_nonce_board(&mut command_nonces, board)?;
     }
     let mut selected = SelectedEntityWork {
+        operation_work_indices: Vec::new(),
         txs: Vec::with_capacity(count),
         rows: Vec::new(),
         operations: Vec::new(),
         command_nonces,
     };
-    for _ in 0..count {
+    for work_index in 0..count {
+        let operations_before = selected.operations.len();
         let work = work
             .pop_front()
             .ok_or(RuntimeMachineError::InputCountOverflow)?;
@@ -1798,6 +1823,9 @@ fn take_entity_prefix(
             }
             EntityPendingWork::Projected(projected) => selected.txs.push(projected),
         }
+        if selected.operations.len() > operations_before {
+            selected.operation_work_indices.push(work_index);
+        }
     }
     Ok(selected)
 }
@@ -1857,6 +1885,65 @@ struct PendingEntityGroup {
 struct PendingEntitySegment {
     groups: Vec<PendingEntityGroup>,
     derived: bool,
+    admission: SegmentAdmission,
+}
+
+enum SegmentAdmission {
+    Inline,
+    AtomicPair,
+    Deferred(Vec<PendingEntityInputAdmission>),
+    Prepared,
+}
+
+struct PendingEntityInputAdmission {
+    key: RuntimeEntityKey,
+    pending: Vec<EntityPendingWork>,
+}
+
+fn flush_deferred_entity_groups(
+    segments: &mut Vec<PendingEntitySegment>,
+    groups: &mut Vec<PendingEntityGroup>,
+    admissions: &mut Vec<PendingEntityInputAdmission>,
+) {
+    // TS deferred.flush drains immediate events after each owner proposal.
+    // Combining owners here lets a later intent alter an earlier opening
+    // cohort before it is signed (production cross-J R4 h45).
+    let mut batch = Some(std::mem::take(admissions));
+    segments.extend(groups.drain(..).map(|group| {
+        PendingEntitySegment {
+            groups: vec![group],
+            derived: false,
+            admission: batch
+                .take()
+                .map_or(SegmentAdmission::Prepared, SegmentAdmission::Deferred),
+        }
+    }));
+}
+
+fn pending_ends_in_individual_run(pending: &[EntityPendingWork]) -> bool {
+    matches!(pending.last(), Some(EntityPendingWork::LocalBatch { projected, .. })
+        if projected.first().is_some_and(|tx|
+            xln_rscore_entity_kernel::is_individual_entity_command_tx_kind(tx.kind)))
+}
+
+fn admit_deferred_entity_inputs(
+    staged: &mut BTreeMap<RuntimeEntityKey, EntityApplySlot>,
+    admissions: Vec<PendingEntityInputAdmission>,
+    runtime_seed: &str,
+    runtime_timestamp: u64,
+) -> Result<(), RuntimeMachineError> {
+    // Admission is positional across all inputs before any deferred owner
+    // proposes. Materialize on the first eligible input, not the merged tail:
+    // [chat A], [chat B] must sign [A, materialize], then [B] (R4 regression).
+    for admission in admissions {
+        let slot = staged.get_mut(&admission.key).ok_or_else(|| {
+            RuntimeMachineError::EntityStateMap("ADMISSION_ENTITY_SLOT_MISSING".into())
+        })?;
+        let append_to_run = pending_ends_in_individual_run(&admission.pending);
+        append_entity_pending_work(&mut slot.replica.entity_mempool, admission.pending)?;
+        enqueue_proposer_materializations(slot, runtime_seed, runtime_timestamp, append_to_run)?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2051,12 +2138,26 @@ fn account_work_group(key: RuntimeEntityKey) -> PendingEntityGroup {
 
 fn take_entity_mempool_for_group(
     cause: PendingEntityCause,
+    retained_count: usize,
     entity_mempool: &mut std::collections::VecDeque<EntityPendingWork>,
-) -> std::collections::VecDeque<EntityPendingWork> {
-    if cause == PendingEntityCause::AccountWork {
-        std::collections::VecDeque::new()
-    } else {
-        std::mem::take(entity_mempool)
+) -> Result<std::collections::VecDeque<EntityPendingWork>, RuntimeMachineError> {
+    match cause {
+        PendingEntityCause::AccountWork => Ok(VecDeque::new()),
+        PendingEntityCause::External => Ok(std::mem::take(entity_mempool)),
+        PendingEntityCause::CrossJurisdiction => {
+            // Trusted local events select their authenticated input and its
+            // fresh proposer additions. Earlier deferred user commands stay
+            // queued for their own flush, never mixed into this signature.
+            if !matches!(entity_mempool.get(retained_count),
+                Some(EntityPendingWork::ProposerMaterialized { projected, .. })
+                    if projected.kind == EntityTxKind::RuntimeOutput)
+            {
+                return Err(RuntimeMachineError::EntityStateMap(
+                    "RUNTIME_CROSS_J_LOCAL_EVENT_INPUT_MISSING".into(),
+                ));
+            }
+            Ok(entity_mempool.split_off(retained_count))
+        }
     }
 }
 
@@ -2067,6 +2168,59 @@ fn account_work_selection_emits_frame(
         selection,
         xln_rscore_entity_kernel::CrossJOpeningProposalSelection::Wait
     )
+}
+
+fn external_entity_group_has_no_admitted_work(
+    slot: &EntityApplySlot,
+    group: &PendingEntityGroup,
+) -> Result<bool, RuntimeMachineError> {
+    if group.cause != PendingEntityCause::External
+        || !group.pending.is_empty()
+        || !slot.replica.entity_mempool.is_empty()
+        || group.wake.is_some()
+        || group.j_observation.is_some()
+        || group.j_attestation_wire.is_some()
+        || group.atomic_output_pair.is_some()
+        || slot.replica.accounts.has_proposable_accounts()?
+    {
+        return Ok(false);
+    }
+    let metadata = &slot.replica.replica_metadata;
+    if [
+        "proposal",
+        "candidate",
+        "lockedFrame",
+        "pendingLeaderCertificate",
+        "jPrefixRound",
+    ]
+    .iter()
+    .any(|field| metadata.get(*field).is_some_and(|value| !value.is_null()))
+        || metadata.get("leaderVotes").is_some_and(|value| {
+            !value
+                .get("value")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty)
+        })
+    {
+        return Ok(false);
+    }
+    if metadata.get("jHistory").is_some() {
+        let height = local_j_prefix_attestable_height(
+            metadata,
+            slot.state.entity.last_finalized_j_height,
+            slot.state.entity.j_history_finality.is_some(),
+        )
+        .map_err(|error| {
+            RuntimeMachineError::ReplicaMetadata(format!("J_PREFIX_HISTORY_DECODE:{error}"))
+        })?;
+        if height != Some(slot.state.entity.last_finalized_j_height) {
+            return Ok(false);
+        }
+    }
+    // No admitted EntityTx, Account work or leader/J-prefix transition exists.
+    // The caller must still run canonical proposer admission: a committed
+    // cross-J intent can produce work from an otherwise empty wake (R4 h45).
+    Ok(true)
 }
 
 fn account_work_has_selectable_proposal(
@@ -2134,6 +2288,7 @@ fn enqueue_derived_groups(
             PendingEntitySegment {
                 groups: vec![group],
                 derived: true,
+                admission: SegmentAdmission::Inline,
             },
         );
         insertion += 1;
@@ -2293,9 +2448,10 @@ fn recorded_scheduled_wake(
 }
 
 struct AppliedEntityGroup {
+    evicted_context: Option<(RuntimeEntityKey, u64, RuntimeEntityFrameContext)>,
     state: RuntimeEntityState,
     replica: RuntimeEntityReplica,
-    outputs: RuntimeEntityOutputs,
+    outputs: Option<RuntimeEntityOutputs>,
     account_commits: Vec<AccountCommitEvidence>,
     touched_accounts: Vec<super::RuntimeTouchedAccount>,
     book_touched: bool,
@@ -2391,6 +2547,46 @@ fn reject_invalid_remote_commands(
             .unwrap_or(true)
     });
     Ok(())
+}
+
+pub(super) fn merge_runtime_output_inputs(
+    inputs: Vec<RuntimeEntityInput>,
+) -> Result<Vec<RuntimeEntityInput>, RuntimeMachineError> {
+    // Match the TS merge boundary: an exact repeated Runtime output keeps its
+    // first position and does not divide the surrounding Account lane again.
+    // The source frame is part of this identity; a later committed output with
+    // the same financial body must still reach the canonical Entity transition.
+    let mut seen_runtime_outputs = BTreeMap::new();
+    let mut unique_inputs = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        if input.runtime_output().is_some() {
+            let wire = input.canonical();
+            let identity = serde_json::json!([
+                wire["entityId"],
+                wire["signerId"],
+                wire["from"],
+                wire["runtimeId"],
+                wire["sourceRuntimeFrame"],
+                wire["entityTxs"][0],
+            ]);
+            let identity = crate::transport::msgpack::encode_transport(&identity)
+                .map_err(|error| RuntimeMachineError::EntityInputEncoding(error.to_string()))?;
+            let attestation = wire.get("jPrefixAttestations").cloned();
+            if let Some(first_attestation) = seen_runtime_outputs.get(&identity) {
+                // An authenticated duplicate may not erase conflicting J
+                // evidence, including the first-absent/second-present case.
+                if first_attestation != &attestation {
+                    return Err(RuntimeMachineError::EntityInputTransportInvalid(
+                        "ENTITY_INPUT_J_PREFIX_EQUIVOCATION".into(),
+                    ));
+                }
+                continue;
+            }
+            seen_runtime_outputs.insert(identity, attestation);
+        }
+        unique_inputs.push(input);
+    }
+    Ok(unique_inputs)
 }
 
 fn apply_runtime_inner(
@@ -2496,6 +2692,7 @@ fn apply_runtime_inner(
         });
     };
     frame.receipt.wakes = wakes.clone();
+    frame.entity_inputs = merge_runtime_output_inputs(std::mem::take(&mut frame.entity_inputs))?;
     let mut post_commit_j_attempts =
         apply_runtime_txs(&mut replica, &frame.runtime_txs, frame.frame.timestamp)?;
     let next_height = replica
@@ -2508,6 +2705,7 @@ fn apply_runtime_inner(
     let mut canonical_slots = (0..external_count).map(|_| None).collect::<Vec<_>>();
     let mut segments = Vec::<PendingEntitySegment>::new();
     let mut deferred_groups = Vec::<PendingEntityGroup>::new();
+    let mut deferred_admissions = Vec::<PendingEntityInputAdmission>::new();
     let mut deferred_indexes = BTreeMap::<RuntimeEntityKey, usize>::new();
     let mut inputs = std::collections::VecDeque::from(frame.entity_inputs);
     let mut position = 0_usize;
@@ -2526,10 +2724,11 @@ fn apply_runtime_inner(
                 ));
             }
             if !deferred_groups.is_empty() {
-                segments.push(PendingEntitySegment {
-                    groups: std::mem::take(&mut deferred_groups),
-                    derived: false,
-                });
+                flush_deferred_entity_groups(
+                    &mut segments,
+                    &mut deferred_groups,
+                    &mut deferred_admissions,
+                );
                 deferred_indexes.clear();
             }
             let next = inputs.pop_front().ok_or_else(|| {
@@ -2576,22 +2775,27 @@ fn apply_runtime_inner(
             segments.push(PendingEntitySegment {
                 groups,
                 derived: false,
+                admission: SegmentAdmission::AtomicPair,
             });
             position += 2;
             continue;
         }
         let entity_id = *input.entity_id();
         let signer_id = input.signer_id().to_string();
-        let board_handover_only = input.is_board_handover_only();
+        // Authenticated remote runtimeOutput is still an ordinary deferred
+        // Entity input. R6 h65 commits [Account ACK, runtimeOutput] together;
+        // its transport provenance does not create another Entity frame.
+        let isolated_protocol_input = input.is_board_handover_only();
         let j_prefix_attestation = input.j_prefix_attestation().cloned();
         let (canonical, pending, _) = input.into_parts();
         canonical_slots[position] = Some(canonical);
-        if board_handover_only {
+        if isolated_protocol_input {
             if !deferred_groups.is_empty() {
-                segments.push(PendingEntitySegment {
-                    groups: std::mem::take(&mut deferred_groups),
-                    derived: false,
-                });
+                flush_deferred_entity_groups(
+                    &mut segments,
+                    &mut deferred_groups,
+                    &mut deferred_admissions,
+                );
                 deferred_indexes.clear();
             }
             let mut groups = Vec::with_capacity(1);
@@ -2608,16 +2812,21 @@ fn apply_runtime_inner(
             segments.push(PendingEntitySegment {
                 groups,
                 derived: false,
+                admission: SegmentAdmission::Inline,
             });
             position += 1;
             continue;
         }
+        deferred_admissions.push(PendingEntityInputAdmission {
+            key: RuntimeEntityKey::new(entity_id, &signer_id)?,
+            pending,
+        });
         let group_index = push_pending_entity_input(
             &mut deferred_groups,
             &mut deferred_indexes,
             entity_id,
             signer_id,
-            pending,
+            Vec::new(),
             position,
         )?;
         attach_j_prefix_attestation(
@@ -2642,17 +2851,33 @@ fn apply_runtime_inner(
         }
         position += 1;
     }
-    if !deferred_groups.is_empty() {
-        segments.push(PendingEntitySegment {
-            groups: deferred_groups,
-            derived: false,
-        });
-    }
+    flush_deferred_entity_groups(
+        &mut segments,
+        &mut deferred_groups,
+        &mut deferred_admissions,
+    );
 
     if !wakes.is_empty() {
         let mut groups = Vec::<PendingEntityGroup>::new();
         for entity_wake in wakes {
             let key = RuntimeEntityKey::new(entity_wake.entity_id, &entity_wake.signer_id)?;
+            // Exact replay coalesces the recorded scheduledWake with this
+            // owner's J-prefix input. Live must select the same Entity round:
+            // a standalone wake before the attestation would try to certify
+            // the old J anchor while accepted local history already advanced.
+            if let Some(prefix_group) = segments
+                .iter_mut()
+                .flat_map(|segment| &mut segment.groups)
+                .find(|group| {
+                    group.entity_id == key.entity_id
+                        && group.signer_id == key.signer_id
+                        && group.j_observation.is_some()
+                        && group.wake.is_none()
+                })
+            {
+                prefix_group.wake = Some(entity_wake.wake);
+                continue;
+            }
             let signer_id = replica
                 .e_replicas
                 .get(&key)
@@ -2672,13 +2897,16 @@ fn apply_runtime_inner(
                 cause: PendingEntityCause::External,
             });
         }
-        segments.insert(
-            0,
-            PendingEntitySegment {
-                groups,
-                derived: false,
-            },
-        );
+        if !groups.is_empty() {
+            segments.insert(
+                0,
+                PendingEntitySegment {
+                    groups,
+                    derived: false,
+                    admission: SegmentAdmission::Inline,
+                },
+            );
+        }
     }
 
     if segments.is_empty() {
@@ -2737,6 +2965,7 @@ fn apply_runtime_inner(
             ));
         }
     }
+    let mut evicted_contexts = BTreeMap::new();
     let mut outputs = RuntimeOutputs {
         entities: Vec::with_capacity(group_count),
         touches: RuntimeFrameTouches::default(),
@@ -2749,6 +2978,31 @@ fn apply_runtime_inner(
     let mut cascade_fingerprints = BTreeSet::<Vec<u8>>::new();
     let mut last_output_by_entity = BTreeMap::<RuntimeEntityKey, usize>::new();
     while let Some(segment) = segments.pop_front() {
+        // Both tagged legs prepare before either sibling is published. Reading
+        // the first ACK's new state while preparing the second opens its next
+        // Account cohort early (R6 h44). Derived work reads the post-pair state.
+        let atomic_sibling_views = if matches!(&segment.admission, SegmentAdmission::AtomicPair) {
+            Some(runtime_cross_j_sibling_views(
+                &mut staged,
+                &replica.state.e_replicas,
+                &mut replica.e_replicas,
+            )?)
+        } else {
+            None
+        };
+        let proposer_admitted = match segment.admission {
+            SegmentAdmission::Inline | SegmentAdmission::AtomicPair => false,
+            SegmentAdmission::Prepared => true,
+            SegmentAdmission::Deferred(admissions) => {
+                admit_deferred_entity_inputs(
+                    &mut staged,
+                    admissions,
+                    &replica.proposer_runtime_seed,
+                    frame.frame.timestamp,
+                )?;
+                true
+            }
+        };
         if segment.derived {
             cascade_round = cascade_round
                 .checked_add(1)
@@ -2808,16 +3062,39 @@ fn apply_runtime_inner(
                 }
             }
             let key = RuntimeEntityKey::new(group.entity_id, &group.signer_id)?;
-            let cross_j_opening_sibling_views = runtime_cross_j_sibling_views(
-                &mut staged,
-                &replica.state.e_replicas,
-                &mut replica.e_replicas,
-            )?;
+            let cross_j_opening_sibling_views = if let Some(views) = &atomic_sibling_views {
+                views.clone()
+            } else {
+                runtime_cross_j_sibling_views(
+                    &mut staged,
+                    &replica.state.e_replicas,
+                    &mut replica.e_replicas,
+                )?
+            };
             let mut slot = staged.remove(&key).ok_or_else(|| {
                 RuntimeMachineError::EntityStateMap("STAGED_ENTITY_SLOT_MISSING".into())
             })?;
-            if cause == PendingEntityCause::AccountWork
-                && !account_work_has_selectable_proposal(&mut slot, &cross_j_opening_sibling_views)?
+            let otherwise_idle = external_entity_group_has_no_admitted_work(&slot, &group)?;
+            // Deferred flush re-enters canonical admission with an empty
+            // input: an earlier owner's cascade may have committed a new
+            // intent after this owner's initial admission. Existing setup
+            // keys prevent duplicate materialization or command re-signing.
+            let prepared_materialization = if proposer_admitted || otherwise_idle {
+                Some(enqueue_proposer_materializations(
+                    &mut slot,
+                    &replica.proposer_runtime_seed,
+                    frame.frame.timestamp,
+                    false,
+                )?)
+            } else {
+                None
+            };
+            if (otherwise_idle && slot.replica.entity_mempool.is_empty())
+                || (cause == PendingEntityCause::AccountWork
+                    && !account_work_has_selectable_proposal(
+                        &mut slot,
+                        &cross_j_opening_sibling_views,
+                    )?)
             {
                 if staged.insert(key, slot).is_some() {
                     return Err(RuntimeMachineError::EntityStateMap(
@@ -2833,6 +3110,7 @@ fn apply_runtime_inner(
                 &mut frame.frame,
                 replica.durable.j_replicas(),
                 &replica.proposer_runtime_seed,
+                prepared_materialization,
                 replica.limits,
                 false,
                 cross_j_opening_sibling_views,
@@ -2858,8 +3136,15 @@ fn apply_runtime_inner(
             apply_profile.post_cert_j_actions = apply_profile
                 .post_cert_j_actions
                 .saturating_add(applied.apply_profile.post_cert_j_actions);
+            if let Some(context) = applied.evicted_context.take() {
+                evicted_contexts
+                    .entry((context.0, context.1))
+                    .or_insert(context.2);
+            }
             let entity_id_text = state_entity_id(&applied.state.entity);
-            outputs.touches.entity_ids.push(entity_id_text.clone());
+            if applied.outputs.is_some() {
+                outputs.touches.entity_ids.push(entity_id_text.clone());
+            }
             outputs.touches.accounts.extend(applied.touched_accounts);
             if applied.book_touched {
                 outputs.touches.book_entity_ids.push(entity_id_text.clone());
@@ -2909,20 +3194,22 @@ fn apply_runtime_inner(
                 }
             }
             post_commit_j_attempts.extend(applied.post_commit_j_actions);
-            let immediate = collect_immediate_cross_j_commands(
-                &entity_id_text,
-                &key.signer_id,
-                &local_keys,
-                &mut applied.outputs.local_entity_outputs,
-            )?;
-            derived_groups.extend(
-                immediate
-                    .into_iter()
-                    .map(immediate_cross_j_group)
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
-            last_output_by_entity.insert(key.clone(), outputs.entities.len());
-            outputs.entities.push(applied.outputs);
+            if let Some(mut entity_output) = applied.outputs {
+                let immediate = collect_immediate_cross_j_commands(
+                    &entity_id_text,
+                    &key.signer_id,
+                    &local_keys,
+                    &mut entity_output.local_entity_outputs,
+                )?;
+                derived_groups.extend(
+                    immediate
+                        .into_iter()
+                        .map(immediate_cross_j_group)
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
+                last_output_by_entity.insert(key.clone(), outputs.entities.len());
+                outputs.entities.push(entity_output);
+            }
             if staged
                 .insert(
                     key.clone(),
@@ -3004,6 +3291,27 @@ fn apply_runtime_inner(
             "ENTITY_SEGMENT_EXECUTION_INCOMPLETE".into(),
         ));
     }
+    for (key, height) in evicted_contexts.keys() {
+        if outputs.entities.iter().any(|output| {
+            output.entity_id == key.entity_id
+                && output.signer_id == key.signer_id
+                && output.entity_frame_height == *height
+        }) {
+            continue;
+        }
+        if materializer.is_none() {
+            frame
+                .frame
+                .entity_contexts
+                .get_mut(key)
+                .and_then(|contexts| contexts.pop_front())
+                .ok_or_else(|| {
+                    RuntimeMachineError::EntityContextMaterialization(
+                        "ENTITY_REPLAY_REJECTED_CONTEXT_MISSING".into(),
+                    )
+                })?;
+        }
+    }
     if let Some((key, contexts)) = frame
         .frame
         .entity_contexts
@@ -3011,11 +3319,46 @@ fn apply_runtime_inner(
         .find(|(_, contexts)| !contexts.is_empty())
     {
         return Err(RuntimeMachineError::EntityContextMaterialization(format!(
-            "ENTITY_REPLAY_CONTEXT_UNCONSUMED:{}:{}:{}",
+            "ENTITY_REPLAY_CONTEXT_UNCONSUMED:{}:{}:{}:emitted={}",
             render_word(&key.entity_id),
             key.signer_id,
             contexts.len(),
+            outputs
+                .entities
+                .iter()
+                .map(|output| format!(
+                    "{}@{}={}:events={:?}:out={}",
+                    render_word(&output.entity_id),
+                    output.entity_frame_height,
+                    output.entity_frame_hash,
+                    output.entity_frame_events,
+                    output.local_entity_outputs.len(),
+                ))
+                .collect::<Vec<_>>()
+                .join("|"),
         )));
+    }
+    for ((key, height), context) in evicted_contexts {
+        if let Some(output) = outputs.entities.iter().find(|output| {
+            output.entity_id == key.entity_id
+                && output.signer_id == key.signer_id
+                && output.entity_frame_height == height
+        }) {
+            if output.entity_context != context.canonical {
+                return Err(RuntimeMachineError::EntityContextMaterialization(format!(
+                    "RUNTIME_ENTITY_CONTEXT_COLLISION:{}:{}:{height}",
+                    render_word(&key.entity_id),
+                    key.signer_id
+                )));
+            }
+            continue;
+        }
+        frame
+            .frame
+            .entity_contexts
+            .entry(key)
+            .or_default()
+            .push_back(context);
     }
     replica.state.height = next_height;
     replica.state.timestamp = frame.frame.timestamp;
@@ -3056,6 +3399,7 @@ fn apply_entity_group(
     frame: &mut RuntimeFrameContext,
     j_replicas: &serde_json::Value,
     proposer_runtime_seed: &str,
+    prepared_materialization: Option<MaterializationAdmission>,
     limits: super::RuntimeLimits,
     allow_checkpoint: bool,
     cross_j_opening_sibling_views: Vec<xln_rscore_entity_kernel::CrossJOpeningSiblingEntityView>,
@@ -3077,6 +3421,10 @@ fn apply_entity_group(
         .height
         .checked_add(1)
         .ok_or(RuntimeMachineError::EntityHeightOverflow)?;
+    // TS appends materializations before signing consecutive fresh individual
+    // inputs. A retained or already-signed command remains a nonce boundary.
+    let append_to_fresh_individual_run = pending_ends_in_individual_run(&group.pending);
+    let retained_entity_work = slot.replica.entity_mempool.len();
     append_entity_pending_work(&mut slot.replica.entity_mempool, group.pending)?;
     let mut synthetic_input = None;
     if let Some(scheduled) = group.wake.as_ref().and_then(|wake| wake.scheduled.as_ref()) {
@@ -3153,10 +3501,17 @@ fn apply_entity_group(
     // never consumes or materializes an unrelated Entity intent. The latter
     // remains FIFO for the next real Entity input.
     let account_work_only = group.cause == PendingEntityCause::AccountWork;
-    let materialization_admission = if account_work_only {
-        MaterializationAdmission::default()
-    } else {
-        enqueue_proposer_materializations(&mut slot, proposer_runtime_seed)?
+    // The caller already performed admission for deferred flushes and
+    // potentially-idle wakes. Reuse that exact result for this group.
+    let materialization_admission = match prepared_materialization {
+        Some(admission) => admission,
+        None if account_work_only => MaterializationAdmission::default(),
+        None => enqueue_proposer_materializations(
+            &mut slot,
+            proposer_runtime_seed,
+            frame.timestamp,
+            append_to_fresh_individual_run,
+        )?,
     };
     let has_local_authored_work = materialization_admission.requires_commit_phase_selection()
         && slot
@@ -3174,51 +3529,268 @@ fn apply_entity_group(
             )
             .to_lowercase()
         });
-    let selected_entity_mempool =
-        take_entity_mempool_for_group(group.cause, &mut slot.replica.entity_mempool);
+    let selected_entity_mempool = take_entity_mempool_for_group(
+        group.cause,
+        retained_entity_work,
+        &mut slot.replica.entity_mempool,
+    )?;
     let mut commit_phase_work = select_commit_phase_work(
         selected_entity_mempool,
         &materialization_admission,
         local_author.as_deref(),
     )?;
-    let fit_started = profile_enabled.then(Instant::now);
-    let (selected_count, mut context, entity_context_bytes) = match materializer.as_deref_mut() {
-        Some(materializer) => {
-            let (count, materialized, entity_context_bytes) = fit_live_entity_prefix(
-                &mut slot,
-                &commit_phase_work.selected,
-                frame,
-                materializer,
-                fit_j_prefix_certificate.as_ref(),
-            )?;
-            (
-                count,
-                RuntimeEntityFrameContext {
-                    execution: materialized.execution,
-                    canonical: materialized.canonical,
-                },
-                entity_context_bytes,
-            )
-        }
-        None => {
-            let context = frame
+    let mut replay_attempt_context: Option<RuntimeEntityFrameContext> = None;
+    let (
+        selected_count,
+        selected,
+        context,
+        entity_context_bytes,
+        mut core,
+        profiled_account_inputs,
+        prior_orderbook_digest,
+    ) = loop {
+        let fit_started = profile_enabled.then(Instant::now);
+        let (selected_count, mut context, entity_context_bytes) = match materializer.as_deref_mut()
+        {
+            Some(materializer) => {
+                let (count, materialized, entity_context_bytes) = fit_live_entity_prefix(
+                    &mut slot,
+                    &commit_phase_work.selected,
+                    frame,
+                    materializer,
+                    fit_j_prefix_certificate.as_ref(),
+                )?;
+                (
+                    count,
+                    RuntimeEntityFrameContext {
+                        execution: materialized.execution,
+                        canonical: materialized.canonical,
+                    },
+                    entity_context_bytes,
+                )
+            }
+            None => {
+                let context = replay_attempt_context.as_ref().or_else(|| frame
                 .entity_contexts
                 .get(&group_key)
-                .and_then(|contexts| contexts.front())
+                .and_then(|contexts| contexts.front()))
                 .ok_or_else(|| {
                     RuntimeMachineError::EntityContextMaterialization(format!(
-                        "ENTITY_REPLAY_CONTEXT_MISSING:{}",
-                        render_word(&group.entity_id)
+                        "ENTITY_REPLAY_CONTEXT_MISSING:{}:runtimeHeight={runtime_height}:entityHeight={}:cause={:?}:selectedWork={}",
+                        render_word(&group.entity_id),
+                        slot.state.entity.height,
+                        group.cause,
+                        commit_phase_work.selected.len(),
                     ))
                 })?;
-            let (count, entity_context_bytes) = fit_replay_entity_prefix(
-                &slot,
-                &commit_phase_work.selected,
-                frame,
-                &context.canonical,
-                fit_j_prefix_certificate.as_ref(),
-            )?;
-            let context = frame
+                let (count, entity_context_bytes) = fit_replay_entity_prefix(
+                    &slot,
+                    &commit_phase_work.selected,
+                    frame,
+                    &context.canonical,
+                    fit_j_prefix_certificate.as_ref(),
+                )?;
+                let context = match replay_attempt_context.as_ref() {
+                    Some(context) => context.clone(),
+                    None => {
+                        let context = frame
+                            .entity_contexts
+                            .get_mut(&group_key)
+                            .and_then(|contexts| contexts.front().cloned())
+                            .ok_or_else(|| {
+                                RuntimeMachineError::EntityContextMaterialization(
+                                    "ENTITY_REPLAY_CONTEXT_CONSUME".into(),
+                                )
+                            })?;
+                        replay_attempt_context = Some(context.clone());
+                        context
+                    }
+                };
+                (count, context, entity_context_bytes)
+            }
+        };
+        apply_profile.fit = profiled_elapsed(fit_started);
+        apply_profile.entity_txs_selected = selected_count;
+        let mut attempt_work = commit_phase_work
+            .selected
+            .iter()
+            .take(selected_count)
+            .cloned()
+            .collect();
+        let mut selected = take_entity_prefix(&slot, &mut attempt_work, selected_count)?;
+        let mut rows = std::mem::take(&mut selected.rows);
+        for (expected, row) in rows.iter_mut().enumerate() {
+            row.operation_index =
+                u64::try_from(expected).map_err(|_| RuntimeMachineError::InputCountOverflow)?;
+            row.resolve_certified_boards(&slot.replica.certified_board_registry)?;
+        }
+        attach_inbound_genesis_policies(
+            &mut rows,
+            &slot.state.entity.known_accounts,
+            slot.replica
+                .entity_consensus
+                .state
+                .authority
+                .config
+                .jurisdiction
+                .as_ref(),
+            j_replicas,
+        )?;
+        apply_profile.account_inputs = rows.len();
+        let profiled_account_inputs = profile_account_input_outcomes_enabled().then(|| {
+            rows.iter()
+                .map(|row| ProfileAccountInputKind::from(&row.input.kind))
+                .collect::<Vec<_>>()
+        });
+        let needs_local_account_genesis =
+            selected.operations.iter().any(|operation| match operation {
+                ResidentEntityOperation::Local(txs) => txs.iter().any(|admitted| {
+                    matches!(
+                        admitted.tx,
+                        xln_rscore_entity_kernel::LocalEntityTx::Financial(
+                            xln_rscore_entity_kernel::LocalEntityFinancialTx::OpenAccount(_)
+                        )
+                    )
+                }),
+                ResidentEntityOperation::AccountRange { .. } => false,
+            });
+        let local_account_genesis_policy = needs_local_account_genesis
+            .then(|| {
+                derive_policy(
+                    slot.replica
+                        .entity_consensus
+                        .state
+                        .authority
+                        .config
+                        .jurisdiction
+                        .as_ref()
+                        .ok_or_else(|| {
+                            RuntimeMachineError::InboundGenesisPolicy(
+                                "JURISDICTION_REQUIRED".into(),
+                            )
+                        })?,
+                    j_replicas,
+                )
+            })
+            .transpose()?;
+        let finalized_j_events = group
+            .j_observation
+            .as_ref()
+            .zip(prepared_j_range.as_ref())
+            .map(
+                |(observation, prepared)| xln_rscore_entity_kernel::ResidentJEventProjection {
+                    scanned_through: observation.scanned_through_height,
+                    batches: observation.batches.clone(),
+                    runtime_seed: proposer_runtime_seed.to_string(),
+                    claim: prepared.claim.clone(),
+                    proposer_signer_id: observation.signer_id.clone(),
+                    proposer_signature: prepared.signature.clone(),
+                },
+            );
+        let request = ResidentEntityRequest {
+            inbound: EntityInboundRequest {
+                owner_entity_id: group.entity_id,
+                expected_accounts_root: resident_root,
+                clock: ReceiverClock {
+                    entity_timestamp: frame.timestamp,
+                    finalized_j_height: frame.finalized_j_height,
+                },
+                owning_entity_is_hub: slot.state.entity.hub_rebalance_config.is_some(),
+                rows,
+                post_accounts: false,
+            },
+            local_certified_board_authority: slot
+                .replica
+                .certified_board_registry
+                .resolve_certified_board(&group.entity_id)?,
+            entity_height: next_entity_height,
+            outbound_timestamp: frame.timestamp,
+            outbound_j_height: finalized_j_events
+                .as_ref()
+                .map_or(frame.finalized_j_height, |events| events.scanned_through),
+            checkpoint_due: false,
+            post_accounts: false,
+            runtime_seed: Some(proposer_runtime_seed.to_string()),
+            scheduled_wake: group.wake.as_ref().and_then(|wake| wake.scheduled.clone()),
+            expected_proposer_signer_id: group.signer_id.clone(),
+            finalized_j_events,
+            entity_authority: Some(slot.replica.entity_consensus.state.authority.clone()),
+            local_account_genesis_policy,
+            cross_j_opening_sibling_views: cross_j_opening_sibling_views.clone(),
+            operations: std::mem::take(&mut selected.operations),
+        };
+        let prior_orderbook_digest = slot
+            .replica
+            .entity_consensus
+            .state
+            .sections
+            .iter()
+            .find(|section| section.field == "orderbookExt")
+            .map(|section| section.digest.clone());
+        apply_entity_state_policy(
+            &mut context.execution,
+            &slot.state,
+            slot.replica
+                .entity_consensus
+                .state
+                .authority
+                .config
+                .jurisdiction
+                .as_ref(),
+        )
+        .map_err(|error| RuntimeMachineError::EntityContextMaterialization(error.to_string()))?;
+        let resident_core_started = profile_enabled.then(Instant::now);
+        // Entity collections are persistent; Account shards own their existing
+        // candidate/abort lifecycle. A rejected outer command never publishes
+        // its prefix mutations, nonces, roots or ordered outputs.
+        let core = match apply_resident_entity_round_core(
+            &mut slot.replica.accounts,
+            slot.state.entity.clone(),
+            request,
+            &context.execution,
+        ) {
+            Ok(core) => core,
+            Err(xln_rscore_entity_kernel::ResidentEntityError::LocalCommandRejected {
+                operation_index,
+                kind,
+                detail,
+            }) => {
+                let work_index = *selected
+                    .operation_work_indices
+                    .get(operation_index)
+                    .ok_or(RuntimeMachineError::InputCountOverflow)?;
+                commit_phase_work.evict_selected(work_index)?;
+                eprintln!(
+                    "RSCORE_ENTITY_OUTER_COMMAND_EVICTED:entity={}:work={work_index}:{kind}:{detail}",
+                    slot.state.entity.entity_id
+                );
+                if commit_phase_work.selected.is_empty() {
+                    slot.replica.entity_mempool = commit_phase_work.into_remaining()?;
+                    let pending_count = slot.replica.entity_mempool.len();
+                    return Ok(AppliedEntityGroup {
+                        evicted_context: Some((group_key, next_entity_height, context)),
+                        state: slot.state,
+                        replica: slot.replica,
+                        outputs: None,
+                        account_commits: Vec::new(),
+                        touched_accounts: Vec::new(),
+                        book_touched: false,
+                        synthetic_input,
+                        selected_count: 0,
+                        pending_count,
+                        post_commit_j_actions: Vec::new(),
+                        apply_profile,
+                    });
+                }
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        // WAL contexts belong to a certified Entity height, not an attempt.
+        // A rejected segment must leave this row available to a later segment
+        // at the same height; only a successful candidate consumes it.
+        if materializer.is_none() {
+            frame
                 .entity_contexts
                 .get_mut(&group_key)
                 .and_then(|contexts| contexts.pop_front())
@@ -3227,12 +3799,19 @@ fn apply_entity_group(
                         "ENTITY_REPLAY_CONTEXT_CONSUME".into(),
                     )
                 })?;
-            (count, context, entity_context_bytes)
         }
+        apply_profile.resident_core = profiled_elapsed(resident_core_started);
+        break (
+            selected_count,
+            selected,
+            context,
+            entity_context_bytes,
+            core,
+            profiled_account_inputs,
+            prior_orderbook_digest,
+        );
     };
-    apply_profile.fit = profiled_elapsed(fit_started);
-    apply_profile.entity_txs_selected = selected_count;
-    let selected = take_entity_prefix(&slot, &mut commit_phase_work.selected, selected_count)?;
+    commit_phase_work.selected.drain(..selected_count);
     commit_phase_work.consume_selected_prefix(selected_count)?;
     if account_work_only {
         if selected_count != 0 || !commit_phase_work.into_remaining()?.is_empty() {
@@ -3240,62 +3819,16 @@ fn apply_entity_group(
                 "RUNTIME_ACCOUNT_WORK_SELECTED_ENTITY_TX".into(),
             ));
         }
+    } else if group.cause == PendingEntityCause::CrossJurisdiction {
+        if selected_count == 0 || !commit_phase_work.into_remaining()?.is_empty() {
+            return Err(RuntimeMachineError::EntityStateMap(
+                "RUNTIME_CROSS_J_LOCAL_EVENT_INPUT_NOT_CONSUMED".into(),
+            ));
+        }
     } else {
         slot.replica.entity_mempool = commit_phase_work.into_remaining()?;
     }
     let pending_count = slot.replica.entity_mempool.len();
-    let mut rows = selected.rows;
-    for (expected, row) in rows.iter_mut().enumerate() {
-        row.operation_index =
-            u64::try_from(expected).map_err(|_| RuntimeMachineError::InputCountOverflow)?;
-        row.resolve_certified_boards(&slot.replica.certified_board_registry)?;
-    }
-    attach_inbound_genesis_policies(
-        &mut rows,
-        &slot.state.entity.known_accounts,
-        slot.replica
-            .entity_consensus
-            .state
-            .authority
-            .config
-            .jurisdiction
-            .as_ref(),
-        j_replicas,
-    )?;
-    apply_profile.account_inputs = rows.len();
-    let profiled_account_inputs = profile_account_input_outcomes_enabled().then(|| {
-        rows.iter()
-            .map(|row| ProfileAccountInputKind::from(&row.input.kind))
-            .collect::<Vec<_>>()
-    });
-    let needs_local_account_genesis = selected.operations.iter().any(|operation| match operation {
-        ResidentEntityOperation::Local(txs) => txs.iter().any(|admitted| {
-            matches!(
-                admitted.tx,
-                xln_rscore_entity_kernel::LocalEntityTx::Financial(
-                    xln_rscore_entity_kernel::LocalEntityFinancialTx::OpenAccount(_)
-                )
-            )
-        }),
-        ResidentEntityOperation::AccountRange { .. } => false,
-    });
-    let local_account_genesis_policy = needs_local_account_genesis
-        .then(|| {
-            derive_policy(
-                slot.replica
-                    .entity_consensus
-                    .state
-                    .authority
-                    .config
-                    .jurisdiction
-                    .as_ref()
-                    .ok_or_else(|| {
-                        RuntimeMachineError::InboundGenesisPolicy("JURISDICTION_REQUIRED".into())
-                    })?,
-                j_replicas,
-            )
-        })
-        .transpose()?;
     let checkpoint_due = allow_checkpoint
         && slot.replica.entity_mempool.is_empty()
         && super::materialization_due(
@@ -3303,80 +3836,6 @@ fn apply_entity_group(
             slot.replica.last_materialized_height,
             limits.checkpoint_period_frames,
         );
-    let finalized_j_events = group
-        .j_observation
-        .as_ref()
-        .zip(prepared_j_range.as_ref())
-        .map(
-            |(observation, prepared)| xln_rscore_entity_kernel::ResidentJEventProjection {
-                scanned_through: observation.scanned_through_height,
-                batches: observation.batches.clone(),
-                runtime_seed: proposer_runtime_seed.to_string(),
-                claim: prepared.claim.clone(),
-                proposer_signer_id: observation.signer_id.clone(),
-                proposer_signature: prepared.signature.clone(),
-            },
-        );
-    let request = ResidentEntityRequest {
-        inbound: EntityInboundRequest {
-            owner_entity_id: group.entity_id,
-            expected_accounts_root: resident_root,
-            clock: ReceiverClock {
-                entity_timestamp: frame.timestamp,
-                finalized_j_height: frame.finalized_j_height,
-            },
-            owning_entity_is_hub: slot.state.entity.hub_rebalance_config.is_some(),
-            rows,
-            post_accounts: false,
-        },
-        local_certified_board_authority: slot
-            .replica
-            .certified_board_registry
-            .resolve_certified_board(&group.entity_id)?,
-        entity_height: next_entity_height,
-        outbound_timestamp: frame.timestamp,
-        outbound_j_height: finalized_j_events
-            .as_ref()
-            .map_or(frame.finalized_j_height, |events| events.scanned_through),
-        checkpoint_due: false,
-        post_accounts: false,
-        runtime_seed: Some(proposer_runtime_seed.to_string()),
-        scheduled_wake: group.wake.as_ref().and_then(|wake| wake.scheduled.clone()),
-        expected_proposer_signer_id: group.signer_id.clone(),
-        finalized_j_events,
-        entity_authority: Some(slot.replica.entity_consensus.state.authority.clone()),
-        local_account_genesis_policy,
-        cross_j_opening_sibling_views,
-        operations: selected.operations,
-    };
-    let prior_orderbook_digest = slot
-        .replica
-        .entity_consensus
-        .state
-        .sections
-        .iter()
-        .find(|section| section.field == "orderbookExt")
-        .map(|section| section.digest.clone());
-    apply_entity_state_policy(
-        &mut context.execution,
-        &slot.state,
-        slot.replica
-            .entity_consensus
-            .state
-            .authority
-            .config
-            .jurisdiction
-            .as_ref(),
-    )
-    .map_err(|error| RuntimeMachineError::EntityContextMaterialization(error.to_string()))?;
-    let resident_core_started = profile_enabled.then(Instant::now);
-    let mut core = apply_resident_entity_round_core(
-        &mut slot.replica.accounts,
-        slot.state.entity,
-        request,
-        &context.execution,
-    )?;
-    apply_profile.resident_core = profiled_elapsed(resident_core_started);
     let post_core_prepare_started = profile_enabled.then(Instant::now);
     let accounts_root = core.outbound.accounts_root;
     if let Some(inputs) = profiled_account_inputs.as_deref() {
@@ -3606,9 +4065,10 @@ fn apply_entity_group(
         entity: core.state,
     };
     Ok(AppliedEntityGroup {
+        evicted_context: None,
         state: slot.state,
         replica: slot.replica,
-        outputs,
+        outputs: Some(outputs),
         account_commits,
         touched_accounts,
         book_touched: prior_orderbook_digest != post_orderbook_digest,
@@ -4256,7 +4716,7 @@ fn insert_j_history_row(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, VecDeque};
 
     use xln_rscore_batch::{AccountInputResult, AccountInputVerdict};
     use xln_rscore_engine::{
@@ -4338,7 +4798,8 @@ mod tests {
             EntityPendingWork::Projected(second.clone()),
         ]);
         let selected =
-            take_entity_mempool_for_group(PendingEntityCause::AccountWork, &mut entity_mempool);
+            take_entity_mempool_for_group(PendingEntityCause::AccountWork, 0, &mut entity_mempool)
+                .expect("account-work selection");
         assert!(selected.is_empty(), "AccountWork selects no Entity intent");
         assert_eq!(entity_mempool.len(), 2);
         assert!(matches!(
@@ -4352,6 +4813,68 @@ mod tests {
         assert!(!account_work_selection_emits_frame(
             &xln_rscore_entity_kernel::CrossJOpeningProposalSelection::Wait,
         ));
+    }
+
+    #[test]
+    fn cross_j_r4_h29_empty_entity_input_preserves_runtime_receipt_and_pending_work() {
+        let owner = crate::machine::tests::owner_bytes();
+        let signer = crate::machine::tests::entity_signer_id();
+        let input = RuntimeEntityInput::decode(serde_json::json!({
+            "entityId": super::render_word(&owner), "signerId": signer, "entityTxs": [],
+        }))
+        .unwrap();
+        let mut frame = crate::machine::tests::frame_for_test(101, vec![input.clone()]);
+        frame.frame.entity_contexts.clear();
+        let result = crate::apply_runtime(
+            crate::machine::tests::replica(crate::RuntimeLimits::hlt()).unwrap(),
+            frame,
+        )
+        .unwrap();
+        assert_eq!(result.replica.state.height, 1);
+        assert_eq!(result.replica.state.timestamp, 101);
+        assert!(result.outputs.entities.is_empty());
+        let applied = result.applied_frame.unwrap();
+        assert_eq!(applied.entity_inputs, vec![input.canonical().clone()]);
+        assert_eq!(applied.entity_frame_count, 0);
+
+        let mut pending = crate::machine::tests::replica(crate::RuntimeLimits::hlt()).unwrap();
+        let credit = RuntimeEntityInput::decode(serde_json::json!({
+            "entityId": super::render_word(&owner), "signerId": signer,
+            "entityTxs": [{"type": "extendCredit", "data": {
+                "counterpartyEntityId": format!("0x{}", "ff".repeat(32)), "tokenId": 1,
+                "amount": {"__xlnType": "BigInt", "value": "7"}
+            }}],
+        }))
+        .unwrap();
+        let (_, work, _) = credit.into_parts();
+        pending
+            .e_replicas
+            .get_mut(&RuntimeEntityKey::new(owner, &signer).unwrap())
+            .unwrap()
+            .entity_mempool
+            .extend(work);
+        let result = crate::apply_runtime(
+            pending,
+            crate::machine::tests::frame_for_test(101, vec![input]),
+        )
+        .unwrap();
+        assert_eq!(
+            result.outputs.entities.len(),
+            1,
+            "an empty wake must consume already-admitted work"
+        );
+        assert_eq!(
+            result
+                .replica
+                .state
+                .e_replicas
+                .values()
+                .next()
+                .unwrap()
+                .entity
+                .height,
+            1
+        );
     }
 
     #[test]
@@ -4726,6 +5249,7 @@ mod tests {
                 operation_index: 0,
                 account_id,
                 verdict,
+                rebalance_work_after_input: false,
                 force_ack: None,
             }],
         );
@@ -5075,8 +5599,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn ordered_observations_are_certified_only_by_the_recorded_prefix_attestation() {
+    fn ordered_observation_fixture() -> (crate::RuntimeReplica, RuntimeInput) {
         let mut runtime =
             crate::machine::tests::replica(crate::RuntimeLimits::hlt()).expect("runtime replica");
         let entity_id = crate::machine::tests::owner_bytes();
@@ -5186,6 +5709,122 @@ mod tests {
                 )]),
             },
         };
+        (runtime, input)
+    }
+
+    #[test]
+    fn live_due_wake_and_observed_j_prefix_share_one_entity_round_and_replay_exactly() {
+        let setup = || {
+            let (mut runtime, input) = ordered_observation_fixture();
+            let key = crate::RuntimeEntityKey::new(
+                crate::machine::tests::owner_bytes(),
+                &crate::machine::tests::entity_signer_id(),
+            )
+            .unwrap();
+            runtime
+                .state
+                .e_replicas
+                .get_mut(&key)
+                .unwrap()
+                .entity
+                .crontab = Some(xln_rscore_entity_kernel::CrontabState {
+                tasks: BTreeMap::new(),
+                hooks: xln_rscore_entity_kernel::ScheduledHookMap::restore(BTreeMap::from([(
+                    "dispute-deadline:due".into(),
+                    xln_rscore_entity_kernel::ScheduledHook {
+                        id: "dispute-deadline:due".into(),
+                        trigger_at: 1_000,
+                        kind: xln_rscore_entity_kernel::ScheduledHookKind::DisputeDeadline {
+                            account_id: "peer".into(),
+                        },
+                    },
+                )]))
+                .unwrap(),
+            });
+            (runtime, input, key)
+        };
+        let (runtime, input, key) = setup();
+        let live = super::apply_runtime_live(
+            runtime,
+            crate::RuntimeLiveInput {
+                runtime_txs: input.runtime_txs,
+                entity_inputs: input.entity_inputs,
+                timestamp: input.frame.timestamp,
+                finalized_j_height: input.frame.finalized_j_height,
+            },
+            &mut crate::CanonicalEntityInfraMaterializer::new(),
+        )
+        .expect("live wake must not run before its selected J-prefix observation");
+        let accepted = live.applied_frame.as_ref().unwrap();
+        assert_eq!(accepted.entity_frame_count, 1);
+        assert_eq!(accepted.entity_inputs.len(), 2);
+        let head = &live.replica.e_replicas[&key]
+            .entity_consensus
+            .certified_frame_head
+            .as_ref()
+            .unwrap()
+            .frame;
+        assert_eq!(
+            head.txs.iter().map(|tx| tx.kind).collect::<Vec<_>>(),
+            vec![EntityTxKind::ScheduledWake, EntityTxKind::JEvent]
+        );
+        assert_eq!(
+            live.replica.state.e_replicas[&key]
+                .entity
+                .last_finalized_j_height,
+            36
+        );
+        let (replay_runtime, _, _) = setup();
+        let mut replay_frame = accepted.frame.clone();
+        replay_frame.entity_contexts = BTreeMap::from([(
+            key.clone(),
+            VecDeque::from([RuntimeEntityFrameContext {
+                execution: xln_rscore_entity_kernel::DeterministicContext::hlt_default(),
+                canonical: live.outputs.entities[0].entity_context.clone(),
+            }]),
+        )]);
+        let replay = super::apply_runtime(
+            replay_runtime,
+            RuntimeInput {
+                runtime_txs: accepted.runtime_txs.clone(),
+                entity_inputs: accepted
+                    .entity_inputs
+                    .iter()
+                    .cloned()
+                    .map(RuntimeEntityInput::decode)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                frame: replay_frame,
+            },
+        )
+        .expect("same accepted WAL input replays");
+        assert_eq!(
+            replay.applied_frame.as_ref().unwrap().entity_inputs,
+            accepted.entity_inputs
+        );
+        assert_eq!(replay.outputs.entities.len(), 1);
+        let actual = &replay.outputs.entities[0];
+        let expected = &live.outputs.entities[0];
+        assert_eq!(actual.entity_frame_hash, expected.entity_frame_hash);
+        assert_eq!(actual.entity_state_root, expected.entity_state_root);
+        assert_eq!(actual.accounts_root, expected.accounts_root);
+        assert_eq!(actual.entity_frame_events, expected.entity_frame_events);
+        assert_eq!(
+            format!("{:?}", actual.local_entity_outputs),
+            format!("{:?}", expected.local_entity_outputs)
+        );
+        assert_eq!(
+            replay.replica.e_replicas[&key].replica_metadata,
+            live.replica.e_replicas[&key].replica_metadata
+        );
+    }
+
+    #[test]
+    fn ordered_observations_are_certified_only_by_the_recorded_prefix_attestation() {
+        let (runtime, input) = ordered_observation_fixture();
+        let entity_id = crate::machine::tests::owner_bytes();
+        let signer_id = crate::machine::tests::entity_signer_id();
+        let key = crate::RuntimeEntityKey::new(entity_id, &signer_id).unwrap();
         let result = super::apply_runtime(runtime, input).expect("J range Runtime replay");
         let applied = result
             .applied_frame

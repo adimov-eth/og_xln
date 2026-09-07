@@ -26,6 +26,12 @@ use super::{
     select_runtime_frame,
 };
 
+#[path = "tests/settlement_ready.rs"]
+mod settlement_ready;
+
+#[path = "tests/settlement_rejection.rs"]
+pub(crate) mod settlement_rejection;
+
 #[path = "tests/cross_j_lifecycle_fixture.rs"]
 mod cross_j_lifecycle_fixture;
 
@@ -95,8 +101,38 @@ pub(crate) fn replica_with_deltas(
     limits: RuntimeLimits,
     deltas: Vec<xln_rscore_engine::Delta>,
 ) -> Result<RuntimeReplica, RuntimeMachineError> {
-    let owner = owner_bytes();
-    let entity_signer_id = entity_signer_id();
+    replica_with_account_setup(limits, deltas, |account| account)
+}
+
+pub(crate) fn replica_with_account_setup(
+    limits: RuntimeLimits,
+    deltas: Vec<xln_rscore_engine::Delta>,
+    setup: impl FnOnce(AccountSeed) -> AccountSeed,
+) -> Result<RuntimeReplica, RuntimeMachineError> {
+    replica_with_named_signer(limits, deltas, SIGNER, setup)
+}
+
+pub(crate) fn replica_with_named_signer(
+    limits: RuntimeLimits,
+    deltas: Vec<xln_rscore_engine::Delta>,
+    signer_label: &str,
+    setup: impl FnOnce(AccountSeed) -> AccountSeed,
+) -> Result<RuntimeReplica, RuntimeMachineError> {
+    let owner = *fixture(SigningIdentity::lazy_from_seed(
+        SEED,
+        signer_label,
+        1,
+        1,
+        BoardDelays::default(),
+    ))
+    .entity_id();
+    let entity_signer_id = format!(
+        "0x{}",
+        hex::encode(fixture(
+            address_of_private_key(&fixture(derive_signer_key(SEED, signer_label)))
+                .ok_or("signer address")
+        ))
+    );
     let owner_id = fixture(EntityId::parse(&hex32(owner)));
     // The derived hub begins with 0x60; choose a lexicographically greater
     // counterparty so AccountIdentity receives canonical left/right parties.
@@ -115,16 +151,16 @@ pub(crate) fn replica_with_deltas(
         fixture(AccountDisputeConfig::new(10, 10)),
         deltas,
     ));
-    let seed = AccountSeed {
+    let seed = setup(AccountSeed {
         account_id,
         replica: fixture(AccountReplica::new(owner_id, account_state)),
         consensus: None,
-    };
+    });
     let accounts = ResidentConsensusEngine::restore(
         EngineGeneration::from_bytes([0x22; 8]),
         1,
         0,
-        fixture(derive_signer_key(SEED, SIGNER)),
+        fixture(derive_signer_key(SEED, signer_label)),
         entity_signer_id.clone(),
         Arc::new(SwapMarketPolicy::default()),
         vec![seed],
@@ -159,7 +195,7 @@ pub(crate) fn replica_with_deltas(
         certified_frame_head: None,
     };
     let entity_signer = fixture(EntitySingleSigner::from_key(
-        fixture(derive_signer_key(SEED, SIGNER)),
+        fixture(derive_signer_key(SEED, signer_label)),
         &entity_signer_id,
         &entity.entity_id,
         1,
@@ -935,6 +971,24 @@ fn entity_wire_tail_replays_from_full_input_and_blocks_checkpoint_until_drain()
     Ok(())
 }
 
+fn idle_frame_at(
+    timestamp: u64,
+    finalized_j_height: u64,
+    entity_inputs: Vec<RuntimeEntityInput>,
+) -> RuntimeInput {
+    let mut input = frame_at(timestamp, finalized_j_height, entity_inputs);
+    input.frame.entity_contexts.clear();
+    input
+}
+
+fn assert_idle_entity_result(result: &super::RuntimeApplyResult) {
+    assert!(result.outputs.entities.is_empty());
+    assert_eq!(
+        result.replica.state.e_replicas[&entity_key()].entity.height,
+        0
+    );
+}
+
 #[test]
 fn applied_frame_is_exact_selected_prefix_and_deferred_body_stays_queued()
 -> Result<(), RuntimeMachineError> {
@@ -945,11 +999,13 @@ fn applied_frame_is_exact_selected_prefix_and_deferred_body_stays_queued()
     };
     let first = apply_runtime(
         replica(limits)?,
-        frame(
+        idle_frame_at(
             200,
+            0,
             vec![entity_input_marked(7, 11), entity_input_marked(9, 22)],
         ),
     )?;
+    assert_idle_entity_result(&first);
     let first_body = match first.applied_frame.as_ref() {
         Some(body) => body,
         None => panic!("selected Runtime frame body missing"),
@@ -962,7 +1018,8 @@ fn applied_frame_is_exact_selected_prefix_and_deferred_body_stays_queued()
     assert_eq!(first_body.frame.timestamp, 200);
     assert_eq!(first.replica.mempool.entity_input_count(), 1);
 
-    let second = apply_runtime(first.replica, frame(900, Vec::new()))?;
+    let second = apply_runtime(first.replica, idle_frame_at(900, 0, Vec::new()))?;
+    assert_idle_entity_result(&second);
     let second_body = match second.applied_frame.as_ref() {
         Some(body) => body,
         None => panic!("deferred Runtime frame body missing"),
@@ -985,8 +1042,9 @@ fn entity_fifo_defers_only_whole_inputs() -> Result<(), RuntimeMachineError> {
     };
     let first = apply_runtime(
         replica(limits)?,
-        frame(200, vec![entity_input(7), entity_input(9)]),
+        idle_frame_at(200, 0, vec![entity_input(7), entity_input(9)]),
     )?;
+    assert_idle_entity_result(&first);
     assert_eq!(first.replica.state.height, 1);
     assert_eq!(first.replica.mempool.entity_input_count(), 1);
     assert_eq!(
@@ -997,7 +1055,8 @@ fn entity_fifo_defers_only_whole_inputs() -> Result<(), RuntimeMachineError> {
         Some(7)
     );
 
-    let second = apply_runtime(first.replica, frame(300, Vec::new()))?;
+    let second = apply_runtime(first.replica, idle_frame_at(300, 0, Vec::new()))?;
+    assert_idle_entity_result(&second);
     assert_eq!(second.replica.state.height, 2);
     // Runtime owns one flat FIFO and one current frame context, matching the
     // TypeScript machine: deferred rows execute under the latest queued time.
@@ -1022,9 +1081,11 @@ fn deferred_rows_share_the_latest_runtime_timestamp() -> Result<(), RuntimeMachi
     };
     let first = apply_runtime(
         replica(limits)?,
-        frame(200, vec![entity_input(7), entity_input(9)]),
+        idle_frame_at(200, 0, vec![entity_input(7), entity_input(9)]),
     )?;
-    let second = apply_runtime(first.replica, frame_at(900, 9, vec![entity_input(11)]))?;
+    assert_idle_entity_result(&first);
+    let second = apply_runtime(first.replica, idle_frame_at(900, 9, vec![entity_input(11)]))?;
+    assert_idle_entity_result(&second);
     assert_eq!(second.replica.state.timestamp, 900);
     // The driver-supplied frame context cannot advance finalized J height;
     // only a selected ObserveJRange RuntimeTx can do that.
@@ -1044,7 +1105,8 @@ fn deferred_rows_share_the_latest_runtime_timestamp() -> Result<(), RuntimeMachi
             .map(|input| input.canonical_wire_bytes),
         Some(9)
     );
-    let third = apply_runtime(second.replica, frame_at(1_000, 9, Vec::new()))?;
+    let third = apply_runtime(second.replica, idle_frame_at(1_000, 9, Vec::new()))?;
+    assert_idle_entity_result(&third);
     assert_eq!(third.replica.state.timestamp, 1_000);
     assert_eq!(third.replica.state.finalized_j_height, 0);
     assert_eq!(

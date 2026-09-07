@@ -105,10 +105,10 @@ fn exact_range(root: &Value) -> Result<(u64, u64), String> {
         .checked_add(1)
         .ok_or_else(|| "RUNTIME_REPLAY_HEIGHT_OVERFLOW".to_string())?;
     let to = unsigned(tail.get("runtimeHeight"), "tail.runtimeHeight")?;
-    // One evidence tail must cross the 100-frame checkpoint cadence with real
-    // economic frames. The owner-selected 110-frame floor rejects a run that
-    // only proves one side of that recovery boundary.
-    if to < from || to - from + 1 < 110 {
+    // Replay every verified frame in the supplied production artifact. The
+    // 110-frame checkpoint-cadence requirement belongs to the explicit final
+    // completeness gate, not to reproduction of the first native divergence.
+    if to < from {
         return Err(format!("RUNTIME_REPLAY_EXACT_RANGE:from={from}:to={to}"));
     }
     Ok((from, to))
@@ -200,7 +200,7 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
             "outboxDigestsCompared": metrics.outbox_digests_compared,
             "postStateHashesCompared": metrics.post_state_hashes_compared,
             "runtimeRootsCompared": metrics.runtime_roots_compared,
-            "accountsRoot": metrics.accounts_root,
+            "accountsRoots": metrics.accounts_roots,
             "setupMs": milliseconds(metrics.setup_elapsed),
             "elapsedMs": metrics.elapsed.as_secs_f64() * 1_000.0,
             "engineMs": milliseconds(metrics.engine_elapsed),
@@ -222,4 +222,36 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
         })
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cross_j_production_tail_replays_before_final_completeness_gate() {
+        let recording = serde_json::json!({
+            "checkpoint": { "height": 22 },
+            "tail": { "baseRuntimeHeight": 22, "runtimeHeight": 57 }
+        });
+        assert_eq!(exact_range(&recording).expect("35 actual frames"), (23, 57));
+    }
+
+    #[test]
+    fn exact_range_rejects_empty_tail_and_wrong_checkpoint_binding() {
+        let mut recording = serde_json::json!({
+            "checkpoint": { "height": 22 },
+            "tail": { "baseRuntimeHeight": 22, "runtimeHeight": 22 }
+        });
+        assert_eq!(
+            exact_range(&recording).unwrap_err(),
+            "RUNTIME_REPLAY_EXACT_RANGE:from=23:to=22"
+        );
+        recording["tail"]["baseRuntimeHeight"] = serde_json::json!(21);
+        recording["tail"]["runtimeHeight"] = serde_json::json!(57);
+        assert_eq!(
+            exact_range(&recording).unwrap_err(),
+            "RUNTIME_REPLAY_TAIL_BASE_MISMATCH"
+        );
+    }
 }

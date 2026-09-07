@@ -1,12 +1,11 @@
 //! One exact canonical checkpoint source -> live Runtime restore description.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use num_bigint::BigInt;
 use serde_json::{Map, Value};
 use thiserror::Error;
-use xln_rscore_crypto::{address_of_private_key, derive_signer_key};
 use xln_rscore_engine::{BoardDelays, SwapMarketPolicy};
 
 use crate::{RuntimeDurableEnvelope, RuntimeDurableEnvelopeError, RuntimeLimits};
@@ -14,11 +13,12 @@ use crate::{RuntimeDurableEnvelope, RuntimeDurableEnvelopeError, RuntimeLimits};
 use super::concrete_source::{verified_checkpoint_frame, verify_checkpoint_source};
 use super::{
     AccountWireRestoreError, CertifiedBoardRegistryRestoreError, ConcreteCheckpointSource,
-    ConcreteRestoreSourceError, DecodedRuntimeCheckpoint, EntityConsensusRestoreError,
-    EntityGraphRestoreError, EntitySnapshotRestoreError, OrderbookGraphRestoreError,
-    PathCheckpointRestoreError, decode_account_rows, entity_snapshot_from_graph,
-    hydrate_certified_board_state, hydrate_entity_consensus, hydrate_entity_graph,
-    hydrate_orderbook_graph, restore_orderbook_accounts, restore_path_checkpoint,
+    ConcreteRestoreSourceError, DecodedRuntimeCheckpoint, DecodedRuntimeEntityCheckpoint,
+    EntityConsensusRestoreError, EntityGraphRestoreError, EntitySnapshotRestoreError,
+    OrderbookGraphRestoreError, PathCheckpointRestoreError, decode_account_rows,
+    entity_snapshot_from_graph, hydrate_certified_board_state, hydrate_entity_consensus,
+    hydrate_entity_graph, hydrate_orderbook_graph, restore_orderbook_accounts,
+    restore_path_checkpoint,
 };
 
 pub struct ConcreteCheckpointConfiguration {
@@ -88,27 +88,9 @@ fn hex_bytes(bytes: &[u8]) -> String {
     })
 }
 
-fn derive_bound_signer_key(
-    runtime_seed: &str,
-    derivation_label: &str,
-    expected_signer_id: &str,
-) -> Result<[u8; 32], ConcreteCheckpointDecodeError> {
-    if derivation_label.trim().is_empty() {
-        return Err(invalid("SIGNER_DERIVATION_LABEL_EMPTY"));
-    }
-    let private_key = derive_signer_key(runtime_seed, derivation_label)
-        .map_err(|error| invalid(format!("SIGNER_KEY_DERIVATION:{error}")))?;
-    let address =
-        address_of_private_key(&private_key).ok_or_else(|| invalid("SIGNER_KEY_ADDRESS"))?;
-    let actual = format!("0x{}", hex_bytes(&address));
-    if actual != expected_signer_id.trim().to_lowercase() {
-        return Err(invalid(format!(
-            "SIGNER_DERIVATION_ADDRESS:expected={}:actual={actual}",
-            expected_signer_id.trim().to_lowercase(),
-        )));
-    }
-    Ok(private_key)
-}
+#[path = "native/checkpoint_owners.rs"]
+mod checkpoint_owners;
+use checkpoint_owners::{expected_entity_roots, partition_state_rows, signer_keyring};
 
 fn object<'a>(
     value: &'a Value,
@@ -156,35 +138,6 @@ fn exact_fields(
     } else {
         Err(invalid(format!("FIELDS:{path}:{}", actual.join(","))))
     }
-}
-
-fn expected_entity_root(
-    frame: &Map<String, Value>,
-    owner: &[u8; 32],
-) -> Result<[u8; 32], ConcreteCheckpointDecodeError> {
-    let rows = frame
-        .get("canonicalEntityHashes")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid("CANONICAL_ENTITY_HASHES"))?;
-    if rows.len() != 1 {
-        return Err(invalid(format!("CANONICAL_ENTITY_COUNT:{}", rows.len())));
-    }
-    let row = object(&rows[0], "canonicalEntityHashes[0]")?;
-    exact_fields(
-        row,
-        &["entityId", "hash", "cellCount"],
-        "canonicalEntityHashes[0]",
-    )?;
-    if row.get("entityId").and_then(Value::as_str) != Some(entity_text(owner).as_str())
-        || row.get("cellCount").and_then(Value::as_u64).is_none()
-    {
-        return Err(invalid("CANONICAL_ENTITY_OWNER"));
-    }
-    digest(
-        row.get("hash")
-            .ok_or_else(|| invalid("CANONICAL_ENTITY_HASH"))?,
-        "canonicalEntityHashes.hash",
-    )
 }
 
 fn tagged_bigint(value: &Value, path: &str) -> Result<BigInt, ConcreteCheckpointDecodeError> {
@@ -302,27 +255,30 @@ enum AccountCheckpointBinding {
 /// Decode every canonical checkpoint graph beside the live process. The
 /// returned value is still inert; `restore_decoded_runtime_checkpoint` is the
 /// single point that installs Account shards and the Entity/Runtime replica.
-fn decode_checkpoint(
-    source: ConcreteCheckpointSource,
-    configuration: ConcreteCheckpointConfiguration,
+#[allow(clippy::too_many_arguments)]
+fn decode_entity_checkpoint(
+    rows: &BTreeMap<Vec<u8>, Vec<u8>>,
+    frame: &Map<String, Value>,
+    owner: [u8; 32],
+    expected_entity_root: [u8; 32],
+    configuration: &ConcreteCheckpointConfiguration,
     binding: AccountCheckpointBinding,
-) -> Result<DecodedRuntimeCheckpoint, ConcreteCheckpointDecodeError> {
-    let machine = verify_checkpoint_source(&source)?;
-    let (frame_value, validated_frame) = verified_checkpoint_frame(&source)?;
-    let frame = object(&frame_value, "frame")?;
-    let graph = hydrate_entity_graph(&source.state_rows)?;
-    let hydrated_certified_board = hydrate_certified_board_state(&source.state_rows, &graph)?;
-    let owner = graph.entity_id;
-    let (stored_accounts, metadata) = restore_path_checkpoint(&source.state_rows, owner)?;
+    keyring: &BTreeMap<String, [u8; 32]>,
+) -> Result<DecodedRuntimeEntityCheckpoint, ConcreteCheckpointDecodeError> {
+    let graph = hydrate_entity_graph(rows)?;
+    let hydrated_certified_board = hydrate_certified_board_state(rows, &graph)?;
+    if graph.entity_id != owner {
+        return Err(invalid("CANONICAL_ENTITY_OWNER"));
+    }
+    let (stored_accounts, metadata) = restore_path_checkpoint(rows, owner)?;
     match binding {
         AccountCheckpointBinding::SignedRuntimeFrame => {
             verify_native_checkpoint_frame(frame)?;
         }
         AccountCheckpointBinding::OfflineTsImport => {
-            verify_offline_import_rows(frame, &source.state_rows, &stored_accounts)?;
+            verify_offline_import_rows(frame, rows, &stored_accounts)?;
         }
     }
-    let expected_entity_root = expected_entity_root(frame, &owner)?;
     let account_rows = decode_account_rows(&stored_accounts.accounts)?;
     let known_accounts = account_rows
         .iter()
@@ -331,12 +287,7 @@ fn decode_checkpoint(
     let restored_orderbook_accounts = restore_orderbook_accounts(&account_rows);
     let core = object(&graph.core, "entity.core")?;
     let (htlc_routing_fee_ppm, htlc_routing_base_fee) = htlc_infrastructure_state(core)?;
-    let orderbook = hydrate_orderbook_graph(
-        &source.state_rows,
-        &owner,
-        core,
-        restored_orderbook_accounts,
-    )?;
+    let orderbook = hydrate_orderbook_graph(rows, &owner, core, restored_orderbook_accounts)?;
     let mut entity_snapshot = entity_snapshot_from_graph(
         &graph,
         known_accounts,
@@ -349,18 +300,61 @@ fn decode_checkpoint(
         None => return Err(invalid("CERTIFIED_BOARD_RECORDS_WITHOUT_STATE")),
     }
     let certified_board_registry = hydrated_certified_board.registry;
-    let signer_private_key = derive_bound_signer_key(
-        &configuration.runtime_seed,
-        &configuration.signer_derivation_label,
-        &metadata.signer_id,
-    )?;
+    let signer_private_key = *keyring
+        .get(&metadata.signer_id.to_lowercase())
+        .ok_or_else(|| {
+            invalid(format!(
+                "SIGNER_DERIVATION_ADDRESS:expected={}",
+                metadata.signer_id
+            ))
+        })?;
     let (entity_consensus, entity_signer) = hydrate_entity_consensus(
         &graph,
         &metadata,
         signer_private_key,
         configuration.board_delays,
     )?;
+    Ok(DecodedRuntimeEntityCheckpoint {
+        stored_accounts,
+        entity_snapshot,
+        entity_consensus,
+        entity_signer,
+        certified_board_registry,
+        htlc_routing_fee_ppm,
+        htlc_routing_base_fee,
+        replica_metadata: metadata.value,
+        expected_entity_root,
+        signer_private_key,
+        signer_id: metadata.signer_id,
+    })
+}
+
+fn decode_checkpoint(
+    source: ConcreteCheckpointSource,
+    configuration: ConcreteCheckpointConfiguration,
+    binding: AccountCheckpointBinding,
+) -> Result<DecodedRuntimeCheckpoint, ConcreteCheckpointDecodeError> {
+    let machine = verify_checkpoint_source(&source)?;
+    let (frame_value, validated_frame) = verified_checkpoint_frame(&source)?;
+    let frame = object(&frame_value, "frame")?;
     let durable_envelope = RuntimeDurableEnvelope::decode(&machine, validated_frame.frame_hash)?;
+    let roots = expected_entity_roots(frame)?;
+    let owner_rows = partition_state_rows(source.state_rows, &roots)?;
+    let keyring = signer_keyring(&configuration, &durable_envelope)?;
+    let entities = owner_rows
+        .iter()
+        .map(|(owner, rows)| {
+            decode_entity_checkpoint(
+                rows,
+                frame,
+                *owner,
+                roots[owner],
+                &configuration,
+                binding,
+                &keyring,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     // A same-engine restart retains its operator persistence cadence. During
     // the explicit offline TS -> Rust ownership transfer, the supplied native
     // limits are the new operator configuration: inheriting the bootstrap's
@@ -387,17 +381,7 @@ fn decode_checkpoint(
         runtime_timestamp: validated_frame.timestamp,
         durable_envelope,
         expected_protocol_fingerprint: configuration.expected_protocol_fingerprint,
-        stored_accounts,
-        entity_snapshot,
-        entity_consensus,
-        entity_signer,
-        certified_board_registry,
-        htlc_routing_fee_ppm,
-        htlc_routing_base_fee,
-        replica_metadata: metadata.value,
-        expected_entity_root,
-        signer_private_key,
-        signer_id: metadata.signer_id,
+        entities,
         worker_count: configuration.worker_count,
         limits,
         swap_market: configuration.swap_market,
@@ -439,21 +423,6 @@ pub fn decode_offline_ts_import_checkpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn signer_derivation_label_must_recover_persisted_signer_id() {
-        let seed = "0x0123456789abcdef";
-        let owner_key = derive_signer_key(seed, "owner").expect("owner key");
-        let owner_address = address_of_private_key(&owner_key).expect("owner address");
-        let signer_id = format!("0x{}", hex_bytes(&owner_address));
-        assert_eq!(
-            derive_bound_signer_key(seed, "owner", &signer_id).expect("bound owner"),
-            owner_key,
-        );
-        let error = derive_bound_signer_key(seed, "wrong-label", &signer_id)
-            .expect_err("wrong label must not bind persisted signer");
-        assert!(error.to_string().contains("SIGNER_DERIVATION_ADDRESS"));
-    }
 
     fn imported(owner: [u8; 32]) -> crate::StoredRscoreCheckpoint {
         crate::StoredRscoreCheckpoint {

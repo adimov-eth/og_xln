@@ -111,6 +111,9 @@ pub(crate) fn apply_entity_state_policy(
             orderbook
                 .pair_dimensions
                 .iter()
+                // Only the same-J matcher consumes this table. Cross-J derives
+                // its policy from the authenticated route and asset dimensions.
+                .filter(|(pair, _)| !pair.starts_with("cross:"))
                 .map(|(pair, dimensions)| {
                     let (left, right) = pair_tokens(pair)?;
                     let (base, quote) = canonical_pair_orientation(left, right);
@@ -152,7 +155,9 @@ pub(crate) fn apply_entity_state_policy(
 
 #[cfg(test)]
 mod tests {
-    use xln_rscore_entity_kernel::{DeterministicContext, EntityStateSlice};
+    use xln_rscore_entity_kernel::{
+        DeterministicContext, EntityStateSlice, OrderbookState, PairDimensions,
+    };
     use xln_rscore_protocol::{CanonicalNumber, CanonicalValue};
 
     use super::{apply_entity_state_policy, canonical_swap_market_policy};
@@ -164,6 +169,53 @@ mod tests {
             hex::encode(canonical_swap_market_policy().digest()),
             "5930755c012ffea403a64757a44e8e8696231ecbb9392213c9409feabb546f94",
         );
+    }
+
+    #[test]
+    fn cross_j_r6_h44_cross_book_does_not_enter_same_j_policy_projection() {
+        let cross_pair = "cross:stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1/stack:31338:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1";
+        let mut book = OrderbookState::empty(100);
+        book.pair_dimensions.insert(
+            cross_pair.into(),
+            PairDimensions {
+                base_token_decimals: 6,
+                quote_token_decimals: 6,
+            },
+        );
+        book.pair_dimensions.insert(
+            "1/2".into(),
+            PairDimensions {
+                base_token_decimals: 18,
+                quote_token_decimals: 6,
+            },
+        );
+        let mut entity = EntityStateSlice::empty(format!("0x{}", "11".repeat(32)), 0);
+        entity.orderbook = Some(book);
+        let mut state = RuntimeEntityState {
+            accounts_root: [0; 32],
+            entity,
+        };
+        let mut context = DeterministicContext::hlt_default();
+        apply_entity_state_policy(&mut context, &state, None).expect("mixed book domains");
+        assert_eq!(context.pair_policies.len(), 1);
+        assert!(context.pair_policies.contains_key("1/2"));
+        assert!(!context.pair_policies.contains_key(cross_pair));
+        // A malformed same-J pair remains a loud error; only the separately
+        // owned Cross-J policy domain is excluded from this projection.
+        state
+            .entity
+            .orderbook
+            .as_mut()
+            .unwrap()
+            .pair_dimensions
+            .insert(
+                "not-a-pair".into(),
+                PairDimensions {
+                    base_token_decimals: 6,
+                    quote_token_decimals: 6,
+                },
+            );
+        assert!(apply_entity_state_policy(&mut context, &state, None).is_err());
     }
 
     #[test]

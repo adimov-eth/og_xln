@@ -394,5 +394,56 @@ mod tests {
         assert_eq!(verified.runtime_id, runtime_id);
         assert_eq!(verified.signer_id, render_hex(&address));
         assert_eq!(verified.last_updated, 9);
+
+        let empty_routes = super::super::routing::EntityRouteTable::new([]).expect("empty routes");
+        let routes = empty_routes
+            .with_verified_profile(verified)
+            .expect("authenticated profile route");
+        let inbound_output = |source_signer: &str, peer: &str| {
+            let target_entity = format!("0x{}", "55".repeat(32));
+            crate::RuntimeEntityInput::decode(serde_json::json!({
+                "entityId": target_entity,
+                "signerId": format!("0x{}", "66".repeat(20)),
+                "runtimeId": format!("0x{}", "77".repeat(20)),
+                "from": peer,
+                "sourceRuntimeFrame": {"height": 1, "timestamp": 1},
+                "entityTxs": [{
+                    "type": "runtimeOutput",
+                    "data": {
+                        "protocol": "cross-j",
+                        "sourceEntityId": render_hex(&entity_id),
+                        "sourceSignerId": source_signer,
+                        "targetEntityId": target_entity,
+                        "entityTxs": [{
+                            "type": "crossJurisdictionFillNotice",
+                            "data": {"orderId": "route-auth", "fillSeq": 1, "cumulativeFillRatio": 100}
+                        }]
+                    }
+                }]
+            }))
+            .expect("decoded runtime output")
+        };
+        let input = inbound_output(&render_hex(&address), &runtime_id);
+        routes
+            .validate_inbound_runtime_outputs(&runtime_id, std::slice::from_ref(&input))
+            .expect("signed profile binds the exact source signer to this peer");
+        assert!(
+            empty_routes
+                .validate_inbound_runtime_outputs(&runtime_id, std::slice::from_ref(&input))
+                .is_err()
+        );
+        let wrong_signer = inbound_output(&format!("0x{}", "88".repeat(20)), &runtime_id);
+        assert!(
+            routes
+                .validate_inbound_runtime_outputs(&runtime_id, &[wrong_signer])
+                .is_err()
+        );
+        let wrong_peer = format!("0x{}", "99".repeat(20));
+        let spoofed_source = inbound_output(&render_hex(&address), &wrong_peer);
+        assert!(
+            routes
+                .validate_inbound_runtime_outputs(&wrong_peer, &[spoofed_source])
+                .is_err()
+        );
     }
 }

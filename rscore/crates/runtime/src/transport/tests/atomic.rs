@@ -11,6 +11,88 @@ const SOURCE: &str = "0x2222222222222222222222222222222222222222";
 const TARGET: &str = "0x1111111111111111111111111111111111111111";
 
 #[test]
+fn native_cross_h85_interleaved_close_wal_matches_ts_atomic_groups() {
+    use base64::Engine as _;
+    let capsule: Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/native-cross-close-interleaved-v1.json"
+    )))
+    .unwrap();
+    let rows = capsule["rowsBase64"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            base64::engine::general_purpose::STANDARD
+                .decode(row.as_str().unwrap())
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let original = rows
+        .iter()
+        .map(|row| crate::decode_storage_payload(row).unwrap())
+        .collect::<Vec<_>>();
+    let source = capsule["sourceRuntimeId"].as_str().unwrap();
+    let prepared = prepare_envelopes(source, &rows, &BTreeMap::new(), 10, 1_024 * 1_024)
+        .expect("both signed cohorts exist in positions Custody, MM, MM, Custody");
+    assert_eq!(prepared.row_count, 4);
+    assert_eq!(prepared.envelopes.len(), 2);
+    for (envelope, expected) in prepared
+        .envelopes
+        .iter()
+        .zip(capsule["expectedGroups"].as_array().unwrap())
+    {
+        assert_eq!(
+            envelope.target_runtime_id,
+            expected["target"].as_str().unwrap()
+        );
+        assert_eq!(envelope.source_height, 85);
+        assert_eq!(
+            envelope.source_timestamp,
+            capsule["timestamp"].as_u64().unwrap()
+        );
+        assert_eq!(
+            envelope.value["atomicCrossJurisdictionPair"]["phase"],
+            "proposal"
+        );
+        let expected_inputs = expected["indices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|index| {
+                let mut input = original[index.as_u64().unwrap() as usize].clone();
+                input.as_object_mut().unwrap().remove("sourceRuntimeFrame");
+                input
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(envelope.value["entityInputs"], json!(expected_inputs));
+    }
+    for bad in [
+        vec![
+            original[0].clone(),
+            original[1].clone(),
+            original[2].clone(),
+        ],
+        {
+            let mut conflicting = original.clone();
+            conflicting[3]["entityTxs"][0]["data"]["proposal"]["frame"]["accountTxs"][0]["data"]
+                ["proof"]["binaryHash"] = json!("0x01");
+            conflicting
+        },
+    ] {
+        assert!(
+            matches!(prepare_envelopes(source, &encode_rows(&bad), &BTreeMap::new(), 10, 1_024 * 1_024),
+            Err(RuntimeTransportError::Outbox(reason)) if reason.contains("cross-j-incomplete-cohort"))
+        );
+    }
+    assert_eq!(
+        rows,
+        encode_rows(&original),
+        "permanent WAL rows remain byte-exact"
+    );
+}
+
+#[test]
 fn outbound_pair_stays_in_one_envelope() {
     let marker = atomic_pair("ack", "route-7:fill-9");
     let values = [
@@ -272,4 +354,124 @@ fn entity_input(entity_byte: u8, runtime_id: &str) -> Value {
         "signerId": "1",
         "entityTxs": [],
     })
+}
+
+#[test]
+fn r7_h44_cross_pull_lock_wal_infers_the_exact_ts_atomic_envelope() {
+    use base64::Engine as _;
+    let capsule: Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/runtime-transport/r7-h44-atomic.json"
+    )))
+    .expect("immutable production R7 h44 capsule");
+    let rows: Vec<Vec<u8>> = capsule["rowsBase64"]
+        .as_array()
+        .expect("original WAL rows")
+        .iter()
+        .map(|row| {
+            base64::engine::general_purpose::STANDARD
+                .decode(row.as_str().expect("base64"))
+                .expect("original row bytes")
+        })
+        .collect();
+    let prepared = prepare_envelopes(
+        capsule["sourceRuntimeId"].as_str().expect("source"),
+        &rows,
+        &BTreeMap::new(),
+        10,
+        1_024 * 1_024,
+    )
+    .expect("paired committed cross_pull_lock proposals");
+    let original = rows
+        .iter()
+        .map(|row| crate::decode_storage_payload(row).expect("original WAL codec"))
+        .collect::<Vec<_>>();
+    let mut mismatches = Vec::new();
+    let mut wrong_ladder = original.clone();
+    wrong_ladder[1]["entityTxs"][0]["data"]["proposal"]["frame"]["accountTxs"][0]["data"]["fullHash"] =
+        json!("0x01");
+    mismatches.push(wrong_ladder);
+    let mut wrong_route = original.clone();
+    wrong_route[1]["entityTxs"][0]["data"]["proposal"]["frame"]["accountTxs"][0]["data"]["crossJurisdictionRoute"]
+        ["target"]["amount"] = json!("1");
+    mismatches.push(wrong_route);
+    let mut missing_offer = original.clone();
+    missing_offer[0]["entityTxs"][0]["data"]["proposal"]["frame"]["accountTxs"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|tx| tx["type"] != "swap_offer");
+    mismatches.push(missing_offer);
+    let mut same_entity = original.clone();
+    same_entity[1]["entityId"] = same_entity[0]["entityId"].clone();
+    mismatches.push(same_entity);
+    for mismatch in mismatches {
+        assert!(
+            matches!(prepare_envelopes(
+            capsule["sourceRuntimeId"].as_str().unwrap(), &encode_rows(&mismatch),
+            &BTreeMap::new(), 10, 1_024 * 1_024,
+        ), Err(RuntimeTransportError::Outbox(ref reason)) if reason.contains("cross-j-incomplete-cohort")),
+            "same order id alone cannot authorize atomic delivery"
+        );
+    }
+    assert_eq!(prepared.envelopes.len(), 1);
+    let envelope = &prepared.envelopes[0];
+    assert_eq!(
+        envelope.value["atomicCrossJurisdictionPair"],
+        capsule["expectedAtomicPair"]
+    );
+    assert_eq!(
+        envelope.value["entityInputs"][0]["entityId"],
+        "0x0dc3485c83264b018428dde101e179be75eacfe63be6fa67c0cbc0f0f1808181"
+    );
+    assert_eq!(
+        envelope.value["entityInputs"][1]["entityId"],
+        "0x840a5830e1c4d436277d9a797d646476516f66cf3f83893989fe05fd64c4587e"
+    );
+    assert!(
+        prepare_envelopes(
+            capsule["sourceRuntimeId"].as_str().unwrap(),
+            &rows,
+            &BTreeMap::new(),
+            1,
+            1_024 * 1_024
+        )
+        .is_err(),
+        "an inferred atomic pair must never be split by the transport limit"
+    );
+}
+
+#[test]
+fn r7_h91_source_only_cross_pull_close_wal_fails_before_publication() {
+    use base64::Engine as _;
+    let capsule: Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/runtime-transport/r7-h91-incomplete.json"
+    )))
+    .expect("actual R15 expiry output: two disjoint sets of nine source closes");
+    assert_eq!(
+        capsule["expectedPairs"],
+        json!([]),
+        "the canonical TS selector found no counterpart"
+    );
+    let rows = capsule["rowsBase64"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            base64::engine::general_purpose::STANDARD
+                .decode(row.as_str().unwrap())
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let result = prepare_envelopes(
+        capsule["sourceRuntimeId"].as_str().unwrap(),
+        &rows,
+        &BTreeMap::new(),
+        10,
+        1_024 * 1_024,
+    );
+    assert!(
+        matches!(result, Err(RuntimeTransportError::Outbox(ref reason)) if reason.contains("cross-j-incomplete-cohort")),
+        "incomplete signed financial cohorts must fail locally, never reach the peer or be silently parked"
+    );
 }

@@ -894,7 +894,7 @@ pub(super) fn frame_entity_context_refs(
         .and_then(Value::as_array)
         .ok_or(EntityContextPayloadError::FrameRefs)?;
     let mut result = Vec::with_capacity(rows.len());
-    let mut previous = None::<String>;
+    let mut previous = None::<Vec<u8>>;
     for row in rows {
         let pair = row
             .as_array()
@@ -905,14 +905,21 @@ pub(super) fn frame_entity_context_refs(
             .ok_or(EntityContextPayloadError::FrameRefs)?
             .to_owned();
         validate_replica_id(&replica)?;
+        // Canonical Map order compares encoded keys, including the string
+        // length prefix. E6 can precede a lexically earlier owner's E15.
+        let encoded_key = crate::transport::msgpack::encode_transport(&pair[0])
+            .map_err(|error| EntityContextPayloadError::RowCodec(error.to_string()))?;
         if previous
             .as_ref()
-            .is_some_and(|previous| previous >= &replica)
+            .is_some_and(|previous| previous >= &encoded_key)
         {
             return Err(EntityContextPayloadError::FrameRefs);
         }
-        previous = Some(replica.clone());
+        previous = Some(encoded_key);
         result.push((replica, parse_digest(&pair[1], "entityContextRefs.digest")?));
     }
+    // Compare map membership with the path-keyed graph's String index only
+    // after proving canonical wire order and uniqueness; never rewrite bytes.
+    result.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(result)
 }

@@ -10,6 +10,90 @@ mod atomic;
 mod direct;
 mod inbound;
 
+fn publisher_ingress(seed: &str, signer: &str) -> super::DirectRuntimeIngress {
+    let ingress = super::DirectRuntimeIngress::bind(super::DirectRuntimeIngressConfig::production(
+        "127.0.0.1:0".parse().expect("local ephemeral bind"),
+        seed,
+        signer,
+    ))
+    .expect("publisher's actual ingress owner");
+    ingress
+        .set_delivery_ready(true)
+        .expect("fixture startup complete");
+    ingress
+}
+
+#[test]
+fn delivery_readiness_requires_current_session_mac_boolean_route_and_monotone_auth() {
+    use super::entity_inputs_frame::{ReadinessFrameContext, decode_delivery_ready};
+    let from = format!("0x{}", "11".repeat(20));
+    let to = format!("0x{}", "22".repeat(20));
+    let public_key = static_public_hex(&encryption_identity("readiness-peer"));
+    let key = [0x37; 32];
+    let audience = format!("xln-runtime:{to}");
+    let signed = |ready: bool, tick: u64, nonce: &str| {
+        let mut value = serde_json::json!({
+            "type": "delivery_ready", "id": format!("ready-{tick}"),
+            "from": from, "to": to, "fromEncryptionPubKey": public_key,
+            "payload": ready,
+        });
+        let mac = frame_mac(&key, &value, &audience, nonce, tick).expect("current session MAC");
+        value["auth"] = serde_json::json!({"nonce": nonce, "timestamp": tick, "mac": mac});
+        value["v"] = Value::from(1);
+        value
+    };
+    let decode = |value: Value, last: &mut u64| {
+        decode_delivery_ready(
+            value,
+            &mut ReadinessFrameContext {
+                key: &key,
+                from: &from,
+                to: &to,
+                encryption_public_hex: &public_key,
+                audience: &audience,
+                challenge: "current-hello",
+                auth_timestamp: last,
+            },
+        )
+    };
+    let mut last = 1;
+    assert!(
+        !decode(signed(false, 2, "current-hello"), &mut last).expect("authenticated early control")
+    );
+    assert!(decode(signed(true, 3, "current-hello"), &mut last).expect("peer ready"));
+    assert!(!decode(signed(false, 4, "current-hello"), &mut last).expect("immediate revocation"));
+    for value in [
+        signed(true, 4, "current-hello"),
+        signed(true, 5, "previous-hello"),
+    ] {
+        assert!(decode(value, &mut last).is_err());
+        assert_eq!(
+            last, 4,
+            "rejected control cannot consume the shared auth tick"
+        );
+    }
+    let mut previous_session_mac = signed(true, 5, "previous-hello");
+    previous_session_mac["auth"]["nonce"] = Value::String("current-hello".into());
+    assert!(decode(previous_session_mac, &mut last).is_err());
+    assert_eq!(last, 4, "rebinding only the nonce cannot revive an old MAC");
+    for (field, replacement) in [
+        ("payload", Value::String("true".into())),
+        ("to", Value::String(from.clone())),
+        ("from", Value::String(to.clone())),
+        ("fromEncryptionPubKey", Value::String("0x00".into())),
+        ("payload", Value::Bool(false)),
+    ] {
+        let mut value = signed(true, 5, "current-hello");
+        value[field] = replacement;
+        assert!(decode(value, &mut last).is_err(), "forged {field}");
+        assert_eq!(last, 4);
+    }
+    assert!(
+        decode(signed(true, 5, "current-hello"), &mut last)
+            .expect("only genuine new control reopens")
+    );
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

@@ -6,7 +6,8 @@ use num_bigint::BigInt;
 use crate::tx::apply_types::MutationDecision;
 use crate::tx::handlers::balance::set_credit_limit;
 use crate::{
-    AccountReplica, AccountTx, LendingAction, LendingIntentKind, Side, TokenId, TransitionError,
+    AccountRejection, AccountReplica, AccountTx, LendingAction, LendingIntentKind, Side, TokenId,
+    TransitionError, ValidationRejection,
 };
 use payment::{consume_if_applied, payment};
 use validation::{
@@ -139,6 +140,21 @@ fn fund(
     validate_interest_bps(args.interest_bps)?;
     let key = format!("fund:{}", normalize(args.position_id));
     require_unused_intent(replica, &key)?;
+    let funds = replica
+        .state()
+        .delta_or_zero(args.token_id)?
+        .perspective(proposer);
+    // This is TS deriveDelta.outOwnCredit using canonical perspective fields.
+    // Capacity already excludes holds/allowances: a lender with own=0 and
+    // unused credit=100 must not create a deposit by drawing that credit.
+    let unused_credit = (&funds.own_credit_limit - &funds.in_own_credit).max(BigInt::from(0));
+    if args.amount + unused_credit > funds.out_capacity {
+        return Ok(MutationDecision::rejected(AccountRejection::Validation(
+            ValidationRejection::AccountTx {
+                message: "LENDING_FUND_OWNED_BALANCE_INSUFFICIENT".into(),
+            },
+        )));
+    }
     let result = payment(
         replica,
         proposer,

@@ -738,6 +738,7 @@ fn append_scheduled_account_txs(
             }
             SchedulerCommand::AutoFinalizeDispute { .. }
             | SchedulerCommand::BroadcastQueuedDisputeFinalization
+            | SchedulerCommand::CrossJOrderbookSweep { .. }
             | SchedulerCommand::HubRebalance => {}
         }
     }
@@ -778,7 +779,11 @@ fn append_scheduled_entity_outputs(
                 broadcast = true;
             }
             SchedulerCommand::BroadcastQueuedDisputeFinalization => broadcast = true,
-            SchedulerCommand::ProcessHtlcTimeouts { .. } | SchedulerCommand::HubRebalance => {}
+            // Resident admission already applied the cross-j collective action
+            // in this frame, before dispatching the canonical Book jobs.
+            SchedulerCommand::ProcessHtlcTimeouts { .. }
+            | SchedulerCommand::CrossJOrderbookSweep { .. }
+            | SchedulerCommand::HubRebalance => {}
         }
     }
     if broadcast

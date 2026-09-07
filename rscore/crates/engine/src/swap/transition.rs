@@ -10,6 +10,7 @@ use super::offer::{
     MAX_ACCOUNT_SWAP_OFFERS_PER_SIDE_PER_MARKET, SwapOffer,
 };
 use super::quantization::{PreparedSwapOrder, prepare_swap_order, quote_amount_at_price};
+use crate::state::delta::uint_max;
 use crate::tx::apply_types::MutationDecision;
 use crate::{
     AccountOutput, AccountRejection, AccountReplica, Side, TokenId, TransitionError,
@@ -17,11 +18,6 @@ use crate::{
 };
 
 const MAX_TOKEN_DECIMALS: u32 = 255;
-
-/// FINANCIAL.MAX_PAYMENT_AMOUNT (core/config/constants.ts).
-fn max_payment_amount() -> BigInt {
-    (BigInt::from(1) << 128u32) - 1
-}
 
 pub(crate) struct SwapOfferTx<'a> {
     pub offer_id: &'a str,
@@ -90,7 +86,9 @@ pub(crate) fn apply_offer(
                 available,
             }));
         }
-        delta.add_hold(maker_side, &prepared.effective_give)?;
+        if let Err(rejection) = delta.add_hold(maker_side, &prepared.effective_give) {
+            return Ok(rejected(rejection));
+        }
         replica.state_mut().put_delta(delta)?;
     }
 
@@ -222,7 +220,7 @@ fn prepare_offer_amounts(
     };
     // TypeScript bounds-checks the quantized amounts, not only the raw ones.
     let minimum = BigInt::from(1);
-    let maximum = max_payment_amount();
+    let maximum = uint_max(256);
     if effective_give < minimum
         || effective_give > maximum
         || effective_want < minimum
@@ -323,9 +321,10 @@ fn admission(
     if tx.give_token_decimals > MAX_TOKEN_DECIMALS || tx.want_token_decimals > MAX_TOKEN_DECIMALS {
         return Err(ValidationRejection::SwapOfferDecimals);
     }
-    // FINANCIAL.MIN_PAYMENT_AMOUNT..=MAX_PAYMENT_AMOUNT (1..=U128 max).
+    // Positive Solidity uint256 amounts; capacity and resulting state are
+    // checked separately from the representation of the requested amount.
     let zero = BigInt::from(0);
-    let max_amount = max_payment_amount();
+    let max_amount = uint_max(256);
     if tx.give_amount <= &zero
         || tx.want_amount <= &zero
         || tx.give_amount > &max_amount

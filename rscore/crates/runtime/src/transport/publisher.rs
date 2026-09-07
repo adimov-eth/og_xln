@@ -110,7 +110,6 @@ pub struct DirectOutboxPublisher {
     config: DirectOutboxPublisherConfig,
     source_runtime_id: String,
     identity: EncryptionIdentity,
-    sessions: BTreeMap<String, DirectSession>,
     inbound: InboundSessionTable,
     pending: BTreeMap<String, VecDeque<OutboundEnvelope>>,
     /// At most one socket write per target is in flight. This preserves each
@@ -130,6 +129,7 @@ pub struct DirectOutboxPublisher {
 
 struct InFlightEnvelope {
     envelope: Arc<OutboundEnvelope>,
+    reconnects: usize,
 }
 
 impl DirectOutboxPublisher {
@@ -144,7 +144,6 @@ impl DirectOutboxPublisher {
             config,
             source_runtime_id,
             identity,
-            sessions: BTreeMap::new(),
             inbound: InboundSessionTable::default(),
             pending: BTreeMap::new(),
             in_flight: BTreeMap::new(),
@@ -389,14 +388,18 @@ impl DirectOutboxPublisher {
                 break;
             }
             for (target, envelope) in batch {
-                let (envelope, result) = match self
-                    .inbound
-                    .queue_owned_if_open(envelope, &self.inbound_completion_tx)
-                {
+                let (reconnects, queued) = self.queue_envelope(envelope);
+                let (envelope, result) = match queued {
                     QueueOwnedResult::Queued { envelope } => {
                         if self
                             .in_flight
-                            .insert(target, InFlightEnvelope { envelope })
+                            .insert(
+                                target,
+                                InFlightEnvelope {
+                                    envelope,
+                                    reconnects,
+                                },
+                            )
                             .is_some()
                         {
                             return Err(RuntimeTransportError::Config(
@@ -405,15 +408,22 @@ impl DirectOutboxPublisher {
                         }
                         continue;
                     }
-                    QueueOwnedResult::Missing(envelope) => {
-                        let result = self.publish_direct_one(&envelope);
-                        (envelope, result)
-                    }
+                    QueueOwnedResult::Missing(envelope) => (
+                        envelope,
+                        Err(RuntimeTransportError::Inbound(
+                            "session-closed-before-queue".into(),
+                        )),
+                    ),
                     QueueOwnedResult::Rejected { envelope, error } => (envelope, Err(error)),
+                    QueueOwnedResult::Deferred(envelope) => (envelope, Ok(())),
                 };
                 match result {
-                    Ok(reconnects) => {
-                        self.finish_published(report, &target, &envelope, reconnects)?
+                    Ok(()) => {
+                        self.pending
+                            .get_mut(&target)
+                            .ok_or(RuntimeTransportError::Config("target-queue-lost"))?
+                            .push_front(envelope);
+                        blocked.insert(target.clone());
                     }
                     Err(error) => {
                         self.retain_failed(&target, envelope, &error)?;
@@ -442,7 +452,12 @@ impl DirectOutboxPublisher {
                 .ok_or(RuntimeTransportError::Config("target-in-flight-missing"))?;
             drop(completion.envelope);
             match completion.result {
-                Ok(()) => self.finish_published(report, &target, &in_flight.envelope, 0)?,
+                Ok(()) => self.finish_published(
+                    report,
+                    &target,
+                    &in_flight.envelope,
+                    in_flight.reconnects,
+                )?,
                 Err(error) => self.retain_failed(
                     &target,
                     Arc::try_unwrap(in_flight.envelope)
@@ -512,10 +527,8 @@ impl DirectOutboxPublisher {
         }
     }
 
-    pub fn close(mut self) {
-        for (_, session) in std::mem::take(&mut self.sessions) {
-            session.close();
-        }
+    pub fn set_delivery_ready(&mut self, ready: bool) -> Result<(), RuntimeTransportError> {
+        self.inbound.set_delivery_ready(ready)
     }
 
     pub fn backlog(&self) -> PublicationBacklog {
@@ -527,52 +540,47 @@ impl DirectOutboxPublisher {
         }
     }
 
-    fn publish_direct_one(
-        &mut self,
-        envelope: &OutboundEnvelope,
-    ) -> Result<usize, RuntimeTransportError> {
+    fn queue_envelope(&self, envelope: OutboundEnvelope) -> (usize, QueueOwnedResult) {
+        let queued = self
+            .inbound
+            .queue_owned_if_open(envelope, &self.inbound_completion_tx);
+        let QueueOwnedResult::Missing(envelope) = queued else {
+            return (0, queued);
+        };
+        match self.connect_target(&envelope.target_runtime_id) {
+            Ok(reconnects) => (
+                reconnects,
+                self.inbound
+                    .queue_owned_if_open(envelope, &self.inbound_completion_tx),
+            ),
+            Err(error) => (0, QueueOwnedResult::Rejected { envelope, error }),
+        }
+    }
+
+    fn connect_target(&self, target: &str) -> Result<usize, RuntimeTransportError> {
         let mut reconnects = 0;
         let mut last_error = String::new();
         for attempt in 0..=self.config.reconnect_attempts {
-            if !self.sessions.contains_key(&envelope.target_runtime_id) {
-                if attempt > 0 {
-                    reconnects += 1;
-                }
-                match self.connect(&envelope.target_runtime_id) {
-                    Ok(session) => {
-                        self.sessions
-                            .insert(envelope.target_runtime_id.clone(), session);
-                    }
-                    Err(error) => {
-                        last_error = error.to_string();
-                        continue;
-                    }
-                }
+            if self.inbound.has_open(target)? {
+                return Ok(reconnects);
             }
-            let result = self
-                .sessions
-                .get_mut(&envelope.target_runtime_id)
-                .ok_or_else(|| RuntimeTransportError::Route("session-missing".into()))?
-                .send_envelope(envelope);
-            match result {
+            if attempt > 0 {
+                reconnects += 1;
+            }
+            match self.connect(target) {
                 Ok(()) => return Ok(reconnects),
-                Err(error) => {
-                    last_error = error.to_string();
-                    if let Some(session) = self.sessions.remove(&envelope.target_runtime_id) {
-                        session.close();
-                    }
-                }
+                Err(error) => last_error = error.to_string(),
             }
         }
         Err(RuntimeTransportError::ReconnectExhausted {
-            target: envelope.target_runtime_id.clone(),
+            target: target.into(),
             attempts: self.config.reconnect_attempts + 1,
             last: last_error,
         })
     }
 
-    fn connect(&self, target: &str) -> Result<DirectSession, RuntimeTransportError> {
-        DirectSession::connect(SessionConfig {
+    fn connect(&self, target: &str) -> Result<(), RuntimeTransportError> {
+        let session = DirectSession::connect(SessionConfig {
             url: self.config.routes.url(target)?,
             target_runtime_id: target,
             source_runtime_id: &self.source_runtime_id,
@@ -581,7 +589,8 @@ impl DirectOutboxPublisher {
             identity: &self.identity,
             io_timeout: self.config.io_timeout,
             max_message_bytes: self.config.max_message_bytes,
-        })
+        })?;
+        self.inbound.adopt_outgoing(session)
     }
 }
 

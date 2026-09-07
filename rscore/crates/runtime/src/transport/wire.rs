@@ -13,6 +13,14 @@ use super::msgpack::{decode_framed, encode_framed};
 
 pub(super) type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 
+pub(super) fn tcp_stream(socket: &Socket) -> Result<&TcpStream, RuntimeTransportError> {
+    match socket.get_ref() {
+        MaybeTlsStream::Plain(stream) => Ok(stream),
+        MaybeTlsStream::Rustls(stream) => Ok(stream.get_ref()),
+        _ => Err(RuntimeTransportError::Config("socket-stream-kind")),
+    }
+}
+
 pub(super) fn verify_acknowledgement(
     value: &Value,
     target: &str,
@@ -145,6 +153,18 @@ pub(super) fn set_timeouts(
         MaybeTlsStream::Rustls(stream) => set_stream_timeout(stream.get_mut(), timeout),
         _ => Ok(()),
     }
+}
+
+pub(super) fn set_nonblocking(
+    socket: &mut Socket,
+    nonblocking: bool,
+) -> Result<(), RuntimeTransportError> {
+    let result = match socket.get_mut() {
+        MaybeTlsStream::Plain(stream) => stream.set_nonblocking(nonblocking),
+        MaybeTlsStream::Rustls(stream) => stream.get_mut().set_nonblocking(nonblocking),
+        _ => return Err(RuntimeTransportError::Config("socket-stream-kind")),
+    };
+    result.map_err(|error| RuntimeTransportError::WebSocket(error.to_string()))
 }
 
 fn set_stream_timeout(stream: &TcpStream, timeout: Duration) -> Result<(), RuntimeTransportError> {

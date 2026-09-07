@@ -95,10 +95,10 @@ fn operation_sections_match_the_typescript_batch_vector() {
             },
         });
     let encoded = encode_j_batch(&batch).expect("encode");
-    assert_eq!(encoded.len(), 2_528);
+    assert_eq!(encoded.len(), 2_656);
     assert_eq!(
         hex::encode(Keccak256::digest(&encoded)),
-        "49bf13be382ff056a6e3ec3e7fcf34eb529dc970da5a4c84281696291cbbcf38"
+        "3b4c644f0b501cc44fd1681eea0bc13588c828832a69c4e3acd35bd7094fb73a"
     );
     assert_eq!(decode_j_batch(&encoded).expect("decode"), batch);
 }

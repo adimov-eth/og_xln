@@ -368,7 +368,9 @@ pub(crate) fn apply_to_candidate(
                 candidate,
                 data,
                 proposer,
-                context.current_account_height,
+                // Pull.createdHeight follows the signed frame's J clock, as
+                // does TS mutation.ts; Account height differs in R6 h43.
+                context.frame_j_height,
                 context.committed_timestamp,
             )
         }
