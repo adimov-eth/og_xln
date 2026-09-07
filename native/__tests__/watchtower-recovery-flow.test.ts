@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { AbiCoder, HDNodeWallet, Interface, Mnemonic, ParamType, Wallet, getIndexedAccountPath, hexlify, keccak256, solidityPacked, toUtf8Bytes } from 'ethers';
+import { AbiCoder, HDNodeWallet, Interface, Mnemonic, Wallet, getIndexedAccountPath, keccak256, solidityPacked, toUtf8Bytes } from 'ethers';
 
+import { createEntityFrameCandidateState, commitEntityFrameCandidateState } from '../../core/entity/state-clone';
+import { putEntityAccountCandidate } from '../../core/entity/state/persistent-account-map';
 import * as xln from '../../core/runtime.ts';
 import { getLiveJAdapter } from '../../core/runtime/j-submit/live-jadapters';
 import { startStandaloneWatchtowerServer, type StandaloneWatchtowerServer } from '../../core/watchtower/standalone-server';
@@ -23,6 +25,7 @@ import {
   type Runtime,
 } from '../../frontend/src/lib/stores/vault/vaultStore';
 import { createDefaultDelta } from '../../core/account/state/delta';
+import { PersistentAccountStateMap } from '../../core/account/state/persistent-state-map';
 import { createEmptyAccountJClaimAccumulator } from '../../core/account/j-claims/j-claim-accumulator';
 import type { AccountReplica } from '../../core/types/account';
 import { runWatchtowerSweep } from '../../core/watchtower/action';
@@ -52,19 +55,17 @@ const disputeStartedInterface = new Interface([
   'event DisputeStarted(bytes32 indexed sender, bytes32 indexed counterentity, uint256 indexed nonce, bool proposerIsLeft, bytes32 proofbodyHash, bytes32 watchSeed, bytes starterInitialArguments, bytes starterCounterArguments, bytes32 starterCounterProofCommitment, uint256 disputeTimeout, uint256 disputeStartTimestamp, uint32 leftResponseSeconds, uint32 rightResponseSeconds)',
 ]);
 const abiCoder = AbiCoder.defaultAbiCoder();
-const proofBodyParam = ParamType.from(
-  'tuple(bytes32 watchSeed,uint32 leftResponseSeconds,uint32 rightResponseSeconds,int256[] offdeltas,uint256[] tokenIds,tuple(address transformerAddress,bytes encodedBatch,tuple(uint256 deltaIndex,uint256 rightAllowance,uint256 leftAllowance)[] allowances)[] transformers)',
-);
-const makeProofBody = (watchSeed: string, offdelta: bigint): Record<string, unknown> => ({
-  watchSeed,
-  leftResponseSeconds: 4n,
-  rightResponseSeconds: 6n,
-  tokenIds: [1n],
-  offdeltas: [offdelta],
-  transformers: [],
-});
-const proofBodyHashOf = (proofBody: Record<string, unknown>): string =>
-  keccak256(abiCoder.encode([proofBodyParam], [proofBody]));
+// The frozen counterparty proof is the one the canonical builder rebuilds from
+// the disputing Account. The test must not carry a second ProofBody ABI: that
+// duplicate is exactly what drifted when offdeltas became the wide Int512
+// tuple. Ask the production encoder for the hash the tower will be shown.
+const canonicalProofBodyHashOf = (
+  env: ReturnType<typeof xln.createEmptyEnv>,
+  account: AccountReplica,
+): string =>
+  xln
+    .buildAccountProofBodyFromJurisdictions({ jReplicas: env.state.jReplicas }, account)
+    .proofBodyHash.toLowerCase();
 
 const deriveFrontendWallet = (seed: string, index: number): HDNodeWallet =>
   HDNodeWallet.fromMnemonic(Mnemonic.fromPhrase(seed), getIndexedAccountPath(index));
@@ -116,29 +117,40 @@ const installJurisdiction = (env: ReturnType<typeof xln.createEmptyEnv>, name = 
   return jurisdiction;
 };
 
-const makeAccount = (selfId: string, counterpartyId: string, watchSeed: string): AccountReplica => {
+const makeAccount = (
+  selfId: string,
+  counterpartyId: string,
+  watchSeed: string,
+  jurisdiction: JurisdictionConfig,
+): AccountReplica => {
   const [leftEntity, rightEntity] = selfId.toLowerCase() < counterpartyId.toLowerCase()
     ? [selfId, counterpartyId]
     : [counterpartyId, selfId];
   const delta = createDefaultDelta(1);
   delta.leftCreditLimit = 10n ** 30n;
   delta.rightCreditLimit = 10n ** 30n;
+  // A disputing account is frozen on a non-zero balance; the on-chain fixtures
+  // below replay this exact signed window.
+  delta.offdelta = -123n;
   return {
     state: {
       leftEntity,
       rightEntity,
       watchSeed,
-      domain: { chainId: 31337, depositoryAddress: addr('10') },
-      deltas: new Map([[1, delta]]),
-      locks: new Map(),
-      swapOffers: new Map(),
+      // The proof builder resolves the DeltaTransformer from the exact durable
+      // (chainId, Depository) record, so the fixture domain must name the
+      // jurisdiction this Runtime actually imported.
+      domain: { chainId: jurisdiction.chainId, depositoryAddress: jurisdiction.depositoryAddress },
+      deltas: PersistentAccountStateMap.fromEntries('deltas', [[1, delta]]),
+      locks: PersistentAccountStateMap.empty('locks'),
+      swapOffers: PersistentAccountStateMap.empty('swapOffers'),
       leftPendingJClaims: createEmptyAccountJClaimAccumulator(),
       rightPendingJClaims: createEmptyAccountJClaimAccumulator(),
       lastFinalizedJHeight: 0,
-      disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 10 },
+      disputeConfig: { leftResponseSeconds: 4, rightResponseSeconds: 6 },
       jNonce: 0,
-      requestedRebalance: new Map(),
-      requestedRebalanceFeeState: new Map(),
+      requestedRebalance: PersistentAccountStateMap.empty('requestedRebalance'),
+      requestedRebalanceFeeState: PersistentAccountStateMap.empty('requestedRebalanceFeeState'),
     },
     status: 'active',
     mempool: [],
@@ -157,11 +169,11 @@ const makeAccount = (selfId: string, counterpartyId: string, watchSeed: string):
     rollbackCount: 0,
     proofHeader: { fromEntity: selfId, toEntity: counterpartyId, nonce: 0 },
     proofBody: { tokenIds: [], deltas: [] },
-    pendingWithdrawals: new Map(),
+    pendingWithdrawals: PersistentAccountStateMap.empty('pendingWithdrawals'),
     shadow: {
       rebalance: {
-        policy: new Map(),
-        submittedAtByToken: new Map(),
+        policy: PersistentAccountStateMap.empty('rebalanceShadowPolicy'),
+        submittedAtByToken: PersistentAccountStateMap.empty('rebalanceShadowSubmitted'),
       },
     },
   };
@@ -242,9 +254,9 @@ describe('watchtower recovery full flow', () => {
       port: 0,
       towerId: 'tower-restore-flow',
       dbPath: join(towerRoot, 'tower.level'),
-      // This flow restores a complete BrowserVM snapshot. Keep its quota above
-      // the real encrypted snapshot size; quota rejection has a separate,
-      // deliberately tiny-limit regression in watchtower-standalone.test.ts.
+      // Keep the quota above the real encrypted snapshot size; quota rejection
+      // has a separate, deliberately tiny-limit regression in
+      // watchtower-standalone.test.ts.
       maxStoredBytesPerLookupKey: 512 * 1024,
     });
     servers.push(towerServer);
@@ -263,41 +275,16 @@ describe('watchtower recovery full flow', () => {
     await resetRuntimeStorage(env);
     env.quietRuntimeLogs = true;
     env.scenarioMode = true;
-    const jurisdictionName = 'RestoreFlow';
+    // An RPC-backed jurisdiction, not a BrowserVM one. What this test proves is
+    // the tower bundle round trip, and a BrowserVM Runtime cannot reach it:
+    // `importJ` with no RPCs stores the whole simulated EVM trie in
+    // `browserVMState.trieData`, whose contract-code nodes are ~45 KB and blow
+    // the 10 KB durable Runtime-machine row bound
+    // (core/storage/wal/runtime-machine-graph.ts:42) on the very first
+    // materialization. That bound is a separate product finding, not this
+    // flow's subject.
+    const jurisdiction = installJurisdiction(env, 'RestoreFlow');
     const entityId = xln.generateLazyEntityId([runtimeId], 1n).toLowerCase();
-
-    xln.enqueueRuntimeInput(env, {
-      runtimeTxs: [{
-        type: 'importJ',
-        data: {
-          name: jurisdictionName,
-          chainId: 31337,
-          ticker: 'SIM',
-          rpcs: [],
-          blockTimeMs: 1_000,
-        },
-      }],
-      entityInputs: [],
-    });
-    await xln.processRuntime(env);
-    await xln.processRuntime(env);
-    const restoredJReplica = env.state.jReplicas.get(jurisdictionName);
-    const depositoryAddress = restoredJReplica?.contracts?.depository || restoredJReplica?.depositoryAddress;
-    const entityProviderAddress = restoredJReplica?.contracts?.entityProvider || restoredJReplica?.entityProviderAddress;
-    if (!depositoryAddress || !entityProviderAddress) {
-      throw new Error('RESTORE_FLOW_JURISDICTION_IMPORT_FAILED');
-    }
-    const jurisdiction: JurisdictionConfig = {
-      name: jurisdictionName,
-      address: 'browservm://',
-      chainId: Number(restoredJReplica?.chainId || 31337),
-      depositoryAddress,
-      entityProviderAddress,
-    };
-
-    const browserVMState = await getLiveJAdapter(env, jurisdictionName)?.dumpState?.();
-    if (!browserVMState) throw new Error('RESTORE_FLOW_BROWSERVM_STATE_MISSING');
-    env.browserVMState = browserVMState;
 
     xln.enqueueRuntimeInput(env, {
       runtimeTxs: [xln.importEntity({
@@ -409,8 +396,6 @@ describe('watchtower recovery full flow', () => {
     const entityId = xln.generateLazyEntityId([signerAddress], 1n).toLowerCase();
     const counterpartyId = xln.generateLazyEntityId([addr('55')], 1n).toLowerCase();
     const watchSeed = `0x${'46'.repeat(32)}`;
-    const proofBody = makeProofBody(watchSeed, -123n);
-    const proofBodyHash = proofBodyHashOf(proofBody);
     const proofHanko = `0x${'77'.repeat(80)}`;
     const towerWallet = Wallet.createRandom();
     const env = xln.createEmptyEnv(runtimeSeed);
@@ -442,15 +427,20 @@ describe('watchtower recovery full flow', () => {
 
     const replica = [...env.state.eReplicas.values()][0];
     expect(replica).toBeTruthy();
-    const account = makeAccount(entityId, counterpartyId, watchSeed);
+    const account = makeAccount(entityId, counterpartyId, watchSeed, jurisdiction);
     account.counterpartyDisputeProofNonce = 9;
     account.counterpartyDisputeProofProposerIsLeft = counterpartyId.toLowerCase() < entityId.toLowerCase();
+    // The retired per-account ProofBody cache is not restored here: the frozen
+    // hash is the one the canonical builder derives from this Account state.
+    const proofBodyHash = canonicalProofBodyHashOf(env, account);
     account.counterpartyDisputeProofBodyHash = proofBodyHash;
     account.counterpartyDisputeProofHanko = proofHanko;
-    account.disputeProofBodiesByHash = {
-      [proofBodyHash]: proofBody,
-    };
-    replica!.state.accounts.set(counterpartyId, account);
+    // Entity accounts are a Patricia-backed map: a committed state seals its
+    // shells, so a fixture installs through the same candidate boundary the
+    // Entity frame uses rather than mutating the sealed map in place.
+    replica!.state = createEntityFrameCandidateState(replica!.state);
+    putEntityAccountCandidate(replica!.state.accounts, counterpartyId, account);
+    replica!.state = commitEntityFrameCandidateState(replica!.state);
 
     const runtime: Runtime = {
       id: signerAddress,
@@ -521,8 +511,6 @@ describe('watchtower recovery full flow', () => {
     const entityId = xln.generateLazyEntityId([signerAddress], 1n).toLowerCase();
     const counterpartyId = xln.generateLazyEntityId([addr('99')], 1n).toLowerCase();
     const watchSeed = `0x${'89'.repeat(32)}`;
-    const proofBody = makeProofBody(watchSeed, -123n);
-    const proofBodyHash = proofBodyHashOf(proofBody);
     const proofHanko = `0x${'bb'.repeat(80)}`;
     const towerWallet = Wallet.createRandom();
     const env = xln.createEmptyEnv(runtimeSeed);
@@ -554,15 +542,20 @@ describe('watchtower recovery full flow', () => {
 
     const replica = [...env.state.eReplicas.values()][0];
     expect(replica).toBeTruthy();
-    const account = makeAccount(entityId, counterpartyId, watchSeed);
+    const account = makeAccount(entityId, counterpartyId, watchSeed, jurisdiction);
     account.counterpartyDisputeProofNonce = 9;
     account.counterpartyDisputeProofProposerIsLeft = counterpartyId.toLowerCase() < entityId.toLowerCase();
+    // The retired per-account ProofBody cache is not restored here: the frozen
+    // hash is the one the canonical builder derives from this Account state.
+    const proofBodyHash = canonicalProofBodyHashOf(env, account);
     account.counterpartyDisputeProofBodyHash = proofBodyHash;
     account.counterpartyDisputeProofHanko = proofHanko;
-    account.disputeProofBodiesByHash = {
-      [proofBodyHash]: proofBody,
-    };
-    replica!.state.accounts.set(counterpartyId, account);
+    // Entity accounts are a Patricia-backed map: a committed state seals its
+    // shells, so a fixture installs through the same candidate boundary the
+    // Entity frame uses rather than mutating the sealed map in place.
+    replica!.state = createEntityFrameCandidateState(replica!.state);
+    putEntityAccountCandidate(replica!.state.accounts, counterpartyId, account);
+    replica!.state = commitEntityFrameCandidateState(replica!.state);
 
     const runtime: Runtime = {
       id: signerAddress,
