@@ -1,13 +1,15 @@
+import { deriveManagedEntityIdentity } from '../daemon-control';
+import { canonicalEntitySeed } from '../../runtime/registration/entity-creation';
+import { deriveEntityEncryptionPrivateKey } from '../../runtime/registration/entity-creation/crypto';
+import { deriveEntityEncryptionPublicKey } from '../../entity/auth/crypto';
 import { requireBoundaryRecord } from '../../protocol/boundary-validation';
-import {
-  parseShardJurisdictions,
-  requirePersistedTokenRegistry,
-} from '../j-select/jurisdictions';
+import { parseShardJurisdictions, requirePersistedTokenRegistry } from '../j-select/jurisdictions';
 
 type RustHubGenesisInput = Readonly<{
   name: string;
   runtimeId: string;
-  entityEncryptionPublicKey: string;
+  seed: string;
+  signerLabel: string;
   jurisdictionsJson: string;
   rpcUrls: Readonly<Record<number, string>>;
   minFrameDelayMs: number;
@@ -19,7 +21,9 @@ const requireSafePositive = (value: unknown, code: string): number => {
 };
 
 const requireAddress = (value: unknown, code: string): string => {
-  const normalized = String(value || '').trim().toLowerCase();
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(normalized)) throw new Error(code);
   return normalized;
 };
@@ -45,16 +49,16 @@ export const buildRustHubGenesisConfig = (input: RustHubGenesisInput): Record<st
   }
   const runtimeId = input.runtimeId.trim().toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(runtimeId)) throw new Error('RUST_HUB_GENESIS_RUNTIME_ID_INVALID');
-  const entityEncryptionPublicKey = input.entityEncryptionPublicKey.trim().toLowerCase();
-  if (!/^0x[0-9a-f]{64}$/.test(entityEncryptionPublicKey)) {
-    throw new Error('RUST_HUB_GENESIS_ENTITY_KEY_INVALID');
-  }
   if (!Number.isSafeInteger(input.minFrameDelayMs) || input.minFrameDelayMs < 0) {
     throw new Error('RUST_HUB_GENESIS_FRAME_DELAY_INVALID');
   }
   const payload = parseShardJurisdictions(input.jurisdictionsJson, 'RUST_HUB_GENESIS_JURISDICTIONS');
-  const configured = Object.entries(payload.jurisdictions ?? {})
-    .filter(([, value]) => String(value['status'] || 'active').trim().toLowerCase() !== 'pending');
+  const configured = Object.entries(payload.jurisdictions ?? {}).filter(
+    ([, value]) =>
+      String(value['status'] || 'active')
+        .trim()
+        .toLowerCase() !== 'pending',
+  );
   const primary = configured.find(([, value]) => value['primary'] === true) ?? configured[0];
   if (!primary) throw new Error('RUST_HUB_GENESIS_PRIMARY_JURISDICTION_MISSING');
 
@@ -71,39 +75,68 @@ export const buildRustHubGenesisConfig = (input: RustHubGenesisInput): Record<st
       ...token,
       externalTokenId: { __xlnType: 'BigInt', value: token.externalTokenId },
     }));
-    return [name, {
-      blockDelayMs: 300,
-      blockNumber: { __xlnType: 'BigInt', value: '0' },
-      blockTimeMs,
-      blockReady: false,
-      chainId,
-      contracts: {
-        account: requireAddress(contracts['account'], `RUST_HUB_GENESIS_ACCOUNT:${key}`),
-        depository: requireAddress(contracts['depository'], `RUST_HUB_GENESIS_DEPOSITORY:${key}`),
-        entityProvider: requireAddress(contracts['entityProvider'], `RUST_HUB_GENESIS_ENTITY_PROVIDER:${key}`),
-        deltaTransformer: requireAddress(contracts['deltaTransformer'], `RUST_HUB_GENESIS_TRANSFORMER:${key}`),
-      },
-      entityProviderDeploymentBlock: requireSafePositive(
-        value.entityProviderDeploymentBlock,
-        `RUST_HUB_GENESIS_DEPLOYMENT_BLOCK:${key}`,
-      ),
-      lastBlockTimestamp: 0,
-      mempool: [],
+    return [
       name,
-      position: { x: index * 160, y: index === 0 ? 0 : 600, z: index * 120 },
-      rpcs: [resolveRpcUrl(value.rpc, input.rpcUrls)],
-      stateRoot: null,
-      tokenRegistry,
-      watcherConfirmationDepth: 0,
-    }] as const;
+      {
+        blockDelayMs: 300,
+        blockNumber: { __xlnType: 'BigInt', value: '0' },
+        blockTimeMs,
+        blockReady: false,
+        chainId,
+        contracts: {
+          account: requireAddress(contracts['account'], `RUST_HUB_GENESIS_ACCOUNT:${key}`),
+          depository: requireAddress(contracts['depository'], `RUST_HUB_GENESIS_DEPOSITORY:${key}`),
+          entityProvider: requireAddress(contracts['entityProvider'], `RUST_HUB_GENESIS_ENTITY_PROVIDER:${key}`),
+          deltaTransformer: requireAddress(contracts['deltaTransformer'], `RUST_HUB_GENESIS_TRANSFORMER:${key}`),
+        },
+        entityProviderDeploymentBlock: requireSafePositive(
+          value.entityProviderDeploymentBlock,
+          `RUST_HUB_GENESIS_DEPLOYMENT_BLOCK:${key}`,
+        ),
+        lastBlockTimestamp: 0,
+        mempool: [],
+        name,
+        position: { x: index * 160, y: index === 0 ? 0 : 600, z: index * 120 },
+        rpcs: [resolveRpcUrl(value.rpc, input.rpcUrls)],
+        stateRoot: null,
+        tokenRegistry,
+        watcherConfirmationDepth: 0,
+      },
+    ] as const;
   });
   const [primaryKey, primaryValue] = primary;
   const primaryName = String(primaryValue.name || primaryKey).trim();
-  const primaryContracts = requireBoundaryRecord(
-    primaryValue.contracts,
-    `RUST_HUB_GENESIS_CONTRACTS:${primaryKey}`,
-  );
-  const primaryRpc = resolveRpcUrl(primaryValue.rpc, input.rpcUrls);
+  const custodySeed = Buffer.from(canonicalEntitySeed(input.seed).slice(2), 'hex');
+  const entities = [primary, ...configured.filter(([key]) => key !== primaryKey)].map(([key, value]) => {
+    const jurisdictionName = String(value.name || key).trim();
+    const signerLabel = key === primaryKey ? input.signerLabel : `${input.signerLabel}:${jurisdictionName}`;
+    const identity = deriveManagedEntityIdentity({ name, seed: input.seed, signerLabel });
+    const privateKey = deriveEntityEncryptionPrivateKey(custodySeed, identity.entityId);
+    const contracts = requireBoundaryRecord(value.contracts, `RUST_HUB_GENESIS_CONTRACTS:${key}`);
+    return {
+      signerLabel,
+      entityAuthorityJurisdiction: {
+        name: jurisdictionName,
+        address: resolveRpcUrl(value.rpc, input.rpcUrls),
+        chainId: requireSafePositive(value.chainId, `RUST_HUB_GENESIS_CHAIN_ID:${key}`),
+        depositoryAddress: requireAddress(contracts['depository'], `RUST_HUB_GENESIS_DEPOSITORY:${key}`),
+        entityProviderAddress: requireAddress(contracts['entityProvider'], `RUST_HUB_GENESIS_ENTITY_PROVIDER:${key}`),
+        blockTimeMs: requireSafePositive(value['blockTimeMs'], `RUST_HUB_GENESIS_BLOCK_TIME:${key}`),
+      },
+      entityProfile: {
+        name,
+        isHub: true,
+        entityKind: 'protocol',
+        sectors: ['finance', 'infrastructure'],
+        avatar: '',
+        bio: '',
+        website: '',
+      },
+      entityEncryptionPublicKey: deriveEntityEncryptionPublicKey(privateKey, identity.entityId),
+      htlcRoutingFeePpm: 1,
+      htlcRoutingBaseFee: '0',
+    };
+  });
   return {
     timestamp: 0,
     machine: {
@@ -119,34 +152,6 @@ export const buildRustHubGenesisConfig = (input: RustHubGenesisInput): Record<st
       },
       jReplicas,
     },
-    entityAuthorityJurisdiction: {
-      name: primaryName,
-      address: primaryRpc,
-      chainId: requireSafePositive(primaryValue.chainId, `RUST_HUB_GENESIS_CHAIN_ID:${primaryKey}`),
-      depositoryAddress: requireAddress(
-        primaryContracts['depository'],
-        `RUST_HUB_GENESIS_DEPOSITORY:${primaryKey}`,
-      ),
-      entityProviderAddress: requireAddress(
-        primaryContracts['entityProvider'],
-        `RUST_HUB_GENESIS_ENTITY_PROVIDER:${primaryKey}`,
-      ),
-      blockTimeMs: requireSafePositive(
-        primaryValue['blockTimeMs'],
-        `RUST_HUB_GENESIS_BLOCK_TIME:${primaryKey}`,
-      ),
-    },
-    entityProfile: {
-      name,
-      isHub: true,
-      entityKind: 'protocol',
-      sectors: ['finance', 'infrastructure'],
-      avatar: '',
-      bio: '',
-      website: '',
-    },
-    entityEncryptionPublicKey,
-    htlcRoutingFeePpm: 1,
-    htlcRoutingBaseFee: '0',
+    entities,
   };
 };

@@ -164,6 +164,13 @@ class WorkerLane {
     this.#size = size;
   }
 
+  #setReferenced(referenced: boolean): void {
+    for (const worker of this.#workers ?? []) {
+      const method = Reflect.get(worker, referenced ? 'ref' : 'unref');
+      if (typeof method === 'function') Reflect.apply(method, worker, []);
+    }
+  }
+
   /** A dead worker fails every in-flight job closed: callers fall back to the sync path. */
   #retire(): void {
     for (const worker of this.#workers ?? []) worker.terminate();
@@ -194,6 +201,7 @@ class WorkerLane {
         const resolve = this.#pending.get(id);
         if (!resolve) return;
         this.#pending.delete(id);
+        if (this.#pending.size === 0) this.#setReferenced(false);
         resolve(result);
       };
       worker.onerror = () => this.#retire();
@@ -208,12 +216,21 @@ class WorkerLane {
   submit(job: Job, transfer?: Transferable[]): Promise<JobResult['result']> {
     const workers = this.workers();
     if (!workers) return Promise.resolve(new Uint8Array(0));
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
       const worker = workers[this.#nextSlot % workers.length];
       this.#nextSlot += 1;
       if (!worker) throw new Error('CRYPTO_POOL_WORKER_SLOT_MISSING');
+      // Replay can await crypto before the daemon opens HTTP. Pending Promises
+      // do not keep Bun alive: retain the lane until its last job settles.
+      if (this.#pending.size === 0) this.#setReferenced(true);
       this.#pending.set(job.id, resolve);
-      worker.postMessage(job, transfer ?? []);
+      try {
+        worker.postMessage(job, transfer ?? []);
+      } catch (error) {
+        this.#pending.delete(job.id);
+        if (this.#pending.size === 0) this.#setReferenced(false);
+        reject(error);
+      }
     });
   }
 }

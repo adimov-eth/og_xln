@@ -10,6 +10,7 @@ const SENSITIVE_KEYS = new Set([
   'hanko',
   'hankodata',
   'initialarguments',
+  'input',
   'mnemonic',
   'privatekey',
   'privkey',

@@ -6,10 +6,11 @@ import type { CrossJurisdictionSwapRoute } from '../../types/cross-jurisdiction'
 import type { EntityTx } from '../../types/entity-tx';
 import type { RuntimeInput } from '../types';
 import {
-  planSwapInboundCapacity,
-  readSwapAccountCapacity,
-  type SwapInboundCapacityPlan,
-} from '../../account/swap/swap-inbound-plan';
+  planReceiveCapacity,
+  readAccountCapacity,
+  type AccountCapacitySource,
+  type ReceiveCapacityPlan,
+} from '../../account/capacity-plan';
 import {
   buildCrossJurisdictionSwapIntent,
   buildDeterministicSwapOfferId,
@@ -29,7 +30,7 @@ type SwapCommandParty = Readonly<{
   entityRoleEvidence: AccountRoleEvidence;
   hubRoleEvidence: AccountRoleEvidence;
   committedRoles: ReadonlyMap<string, boolean>;
-  account: AccountState | null;
+  account: (AccountCapacitySource & Pick<AccountState, 'disputeConfig'>) | null;
 }>;
 
 export type SwapCommandPlanInput = Readonly<{
@@ -144,7 +145,7 @@ const requireSourceCapacity = (
   amount: bigint,
 ): bigint => {
   if (!source.account) throw new Error('SWAP_COMMAND_SOURCE_ACCOUNT_MISSING');
-  const capacity = readSwapAccountCapacity({
+  const capacity = readAccountCapacity({
     account: source.account,
     ownerEntityId: source.entityId,
     counterpartyEntityId: source.hubEntityId,
@@ -163,23 +164,33 @@ const inboundPlan = (
   tokenId: number,
   amount: bigint,
   allowOpenAccount: boolean,
-): SwapInboundCapacityPlan => planSwapInboundCapacity({
-  account: party.account,
-  ownerEntityId: party.entityId,
-  counterpartyEntityId: party.hubEntityId,
-  tokenId,
-  requiredInboundAmount: amount,
-  allowOpenAccount,
-  ...(party.account
-    ? {}
-    : {
-        newAccountDisputeConfig: defaultAccountDisputeConfigForRoleEvidence(
-          party.entityRoleEvidence,
-          party.hubRoleEvidence,
-          party.committedRoles,
-        ),
-      }),
-});
+): ReceiveCapacityPlan => {
+  const plan = planReceiveCapacity({
+    account: party.account,
+    ownerEntityId: party.entityId,
+    counterpartyEntityId: party.hubEntityId,
+    tokenId,
+    requiredInboundAmount: amount,
+    collateralPercent: 0,
+    creditBufferBps: 0,
+    allowOpenAccount,
+    ...(party.account
+      ? {}
+      : {
+          newAccountDisputeConfig: defaultAccountDisputeConfigForRoleEvidence(
+            party.entityRoleEvidence,
+            party.hubRoleEvidence,
+            party.committedRoles,
+          ),
+        }),
+  });
+  if (plan.status === 'credit-unavailable') {
+    throw new Error(
+      `SWAP_COMMAND_INBOUND_CREDIT_LIMIT_EXCEEDED:required=${plan.requiredPeerCreditLimit}:maximum=${plan.maximumPeerCreditLimit}`,
+    );
+  }
+  return plan;
+};
 
 const runtimeInputFor = (
   party: SwapCommandParty,
@@ -333,15 +344,17 @@ export const assertCrossJurisdictionSwapTargetReady = (
   route: CrossJurisdictionSwapRoute,
   targetAccount: AccountState | null,
 ): void => {
-  const plan = planSwapInboundCapacity({
+  const plan = planReceiveCapacity({
     account: targetAccount,
     ownerEntityId: route.target.counterpartyEntityId,
     counterpartyEntityId: route.target.entityId,
     tokenId: route.target.tokenId,
     requiredInboundAmount: route.target.amount,
+    collateralPercent: 0,
+    creditBufferBps: 0,
     allowOpenAccount: false,
   });
-  if (plan.setupTxs.length > 0) {
+  if (plan.status !== 'ready') {
     throw new Error(
       `CROSS_J_TARGET_INBOUND_NOT_READY:${route.orderId}:required=${route.target.amount}:` +
         `current=${plan.currentInboundCapacity}`,

@@ -7,7 +7,7 @@
  * collateral allocation, reserve payment, and new-debt creation exactly.
  */
 
-import { INT256_MAX, INT256_MIN, UINT256_MAX } from '../boundary/integer-ranges';
+import { INT512_MAX, INT512_MIN, UINT256_MAX, UINT512_MAX, UINT768_MAX } from '../boundary/integer-ranges';
 
 type DisputeDirectionAmounts = Readonly<{
   leftToRight: bigint;
@@ -77,9 +77,20 @@ function requireUint256(value: unknown, path: string): asserts value is bigint {
   if (value < 0n || value > UINT256_MAX) fail(path, 'must fit uint256');
 }
 
-function requireInt256(value: unknown, path: string): asserts value is bigint {
+function requireInt512(value: unknown, path: string): asserts value is bigint {
   if (typeof value !== 'bigint') fail(path, 'must be a bigint');
-  if (value < INT256_MIN || value > INT256_MAX) fail(path, 'must fit int256');
+  if (value < INT512_MIN || value > INT512_MAX) fail(path, 'must fit int512');
+}
+
+function requireDebtAggregate(value: unknown, path: string): asserts value is bigint {
+  if (typeof value !== 'bigint') fail(path, 'must be a bigint');
+  if (value < 0n || value > UINT768_MAX) fail(path, 'must fit uint768');
+}
+
+function checkedDebtAdd(left: bigint, right: bigint, path: string): bigint {
+  const result = left + right;
+  requireDebtAggregate(result, path);
+  return result;
 }
 
 function checkedAdd(left: bigint, right: bigint, path: string): bigint {
@@ -94,8 +105,8 @@ function custodyTotal(leftReserve: bigint, rightReserve: bigint, collateral: big
 
 function resolveDebt(input: DisputeTokenFinalizationInput): DisputeSideAmounts {
   const debt = input.existingDebtOutstanding ?? { left: 0n, right: 0n };
-  requireUint256(debt.left, 'existingDebtOutstanding.left');
-  requireUint256(debt.right, 'existingDebtOutstanding.right');
+  requireDebtAggregate(debt.left, 'existingDebtOutstanding.left');
+  requireDebtAggregate(debt.right, 'existingDebtOutstanding.right');
   return { left: debt.left, right: debt.right };
 }
 
@@ -146,14 +157,13 @@ function validateInput(input: DisputeTokenFinalizationInput): void {
   requireUint256(input.leftReserve, 'leftReserve');
   requireUint256(input.rightReserve, 'rightReserve');
   requireUint256(input.collateral, 'collateral');
-  requireInt256(input.ondelta, 'ondelta');
-  requireInt256(input.offdelta, 'offdelta');
-  // Solidity represents the exact sum as sign + uint256 magnitude. The only
-  // mathematical result outside that domain is -2^256. Runtime never signs it
-  // and a later unilateral R2C can only increase ondelta, so rejecting it does
-  // not strand a proof that was valid when signed.
-  if (input.ondelta + input.offdelta < -UINT256_MAX) {
-    fail('finalDelta', 'magnitude exceeds uint256');
+  requireInt512(input.ondelta, 'ondelta');
+  requireInt512(input.offdelta, 'offdelta');
+  // Allocation arithmetic is wider than either proof operand. Only the final
+  // magnitude enters the two-word debt representation; custody stays uint256.
+  const finalDelta = input.ondelta + input.offdelta;
+  if (finalDelta < -UINT512_MAX || finalDelta > UINT512_MAX) {
+    fail('finalDelta', 'magnitude exceeds uint512');
   }
 }
 
@@ -193,8 +203,8 @@ function buildResult(
       collateral: 0n,
       ondelta: 0n,
       debtOutstanding: {
-        left: checkedAdd(debt.left, newDebt.leftToRight, 'after.debtOutstanding.left'),
-        right: checkedAdd(debt.right, newDebt.rightToLeft, 'after.debtOutstanding.right'),
+        left: checkedDebtAdd(debt.left, newDebt.leftToRight, 'after.debtOutstanding.left'),
+        right: checkedDebtAdd(debt.right, newDebt.rightToLeft, 'after.debtOutstanding.right'),
       },
       custodyTotal: afterTotal,
     },

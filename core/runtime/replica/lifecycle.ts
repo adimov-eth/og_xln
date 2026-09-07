@@ -66,6 +66,7 @@ export const getRuntimeCommandReadiness = (env: RuntimeReplica): RuntimeCommandR
   if (state.persistencePaused === true || state.persistenceQuiescing === true) {
     return { ready: false, reason: 'persistence-fenced' };
   }
+  if (state.entityInputsReady === false) return { ready: false, reason: 'j-catchup' };
   return { ready: true, reason: null };
 };
 

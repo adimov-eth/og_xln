@@ -39,11 +39,25 @@ const waitForProcessGroupExit = async (pid: number, timeoutMs: number): Promise<
   return !processGroupIsAlive(pid);
 };
 
+const signalAndWaitForProcessGroupExit = async (
+  pid: number, signal: NodeJS.Signals, timeoutMs: number,
+): Promise<boolean> => {
+  try {
+    if (!signalProcessGroup(pid, signal)) return true;
+  } catch (error) {
+    if (!(error instanceof Error && error.cause instanceof Error
+      && 'code' in error.cause && error.cause.code === 'EPERM')) throw error;
+    // Darwin can deny signals while exited group members await reaping. Only
+    // ESRCH proves the whole owned group is gone; EPERM still counts as alive.
+    if (await waitForProcessGroupExit(pid, timeoutMs)) return true;
+    throw error;
+  }
+  return waitForProcessGroupExit(pid, timeoutMs);
+};
+
 export const stopProcessGroup = async (options: StopProcessGroupOptions): Promise<void> => {
-  if (!signalProcessGroup(options.pid, options.signal ?? 'SIGTERM')) return;
-  if (await waitForProcessGroupExit(options.pid, options.termTimeoutMs)) return;
+  if (await signalAndWaitForProcessGroupExit(options.pid, options.signal ?? 'SIGTERM', options.termTimeoutMs)) return;
   options.onEscalate?.();
-  signalProcessGroup(options.pid, 'SIGKILL');
-  if (await waitForProcessGroupExit(options.pid, options.killTimeoutMs)) return;
+  if (await signalAndWaitForProcessGroupExit(options.pid, 'SIGKILL', options.killTimeoutMs)) return;
   throw new Error(options.timeoutError);
 };

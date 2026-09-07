@@ -33,6 +33,7 @@ export type RpcBatchSend = (calls: readonly RpcBatchCall[]) => Promise<unknown[]
 
 export type ReceiptReadProfile = {
   commitment?: 'ethereum-trie' | 'tron-complete-receipts';
+  nativeRpc?: { chainId: number; rpcUrl: string; solidifiedThroughHeight: number };
   expectedParent?: {
     height: number;
     hash: string;
@@ -350,6 +351,7 @@ const collectWatchedLogs = (
   receipts: readonly CanonicalRpcReceipt[],
   addresses: ReadonlySet<string>,
   proofs?: ReadonlyMap<number, Omit<CanonicalReceiptMptProof, 'receiptLogIndex'>>,
+  nativeRpc?: ReceiptReadProfile['nativeRpc'],
 ): AuthenticatedRpcLog[] => {
   const blockNumber = Number(parseReceiptQuantity(block.number, 'BLOCK_NUMBER'));
   const blockHash = normalizeReceiptHash(block.hash, 'BLOCK_HASH');
@@ -383,6 +385,15 @@ const collectWatchedLogs = (
             receiptLogIndex,
           },
         } : {}),
+        ...(nativeRpc ? {
+          nativeRpcAttestation: {
+            chainId: nativeRpc.chainId,
+            rpcEndpointHash: ethers.keccak256(ethers.toUtf8Bytes(new URL(nativeRpc.rpcUrl).toString())),
+            finality: 'tron-solidified' as const,
+            transactionIndex,
+            receiptLogIndex,
+          },
+        } : {}),
       });
     }
   }
@@ -392,8 +403,9 @@ const collectWatchedLogs = (
 /**
  * Ethereum receipts are authenticated by the block header. TRON's JSON-RPC
  * currently exposes zero receipt roots/blooms, so its explicit profile instead
- * requires a complete ordered receipt set and an exact independent getLogs
- * response. Neither profile may silently fall back or advance on disagreement.
+ * requires a complete ordered receipt set and an exact getLogs response from
+ * the configured RPC. Agreement is an RPC attestation, not an execution proof.
+ * Neither profile may silently fall back or advance on disagreement.
  */
 export const readAuthenticatedReceiptRange = async (
   send: RpcSend,
@@ -410,6 +422,11 @@ export const readAuthenticatedReceiptRange = async (
   if (addresses.size === 0) throw new Error('J_RECEIPT_WATCH_ADDRESS_EMPTY');
   if (addresses.size !== watchedAddresses.length) throw new Error('J_RECEIPT_WATCH_ADDRESS_DUPLICATE');
   const commitment = profile.commitment ?? 'ethereum-trie';
+  if (profile.nativeRpc && (commitment !== 'tron-complete-receipts' ||
+    !Number.isSafeInteger(profile.nativeRpc.chainId) || profile.nativeRpc.chainId < 1 ||
+    !Number.isSafeInteger(profile.nativeRpc.solidifiedThroughHeight) || toBlock > profile.nativeRpc.solidifiedThroughHeight)) {
+    throw new Error('J_RECEIPT_NATIVE_SOLIDIFIED_RANGE_INVALID');
+  }
   const anchorHeight = fromBlock > 1 ? fromBlock - 1 : fromBlock;
   const rangeHeights = Array.from({ length: toBlock - anchorHeight + 1 }, (_, index) => anchorHeight + index);
   const rangeBlocks = await readCanonicalBlocks(send, rangeHeights, sendBatch);
@@ -419,7 +436,7 @@ export const readAuthenticatedReceiptRange = async (
     if (commitment === 'ethereum-trie' &&
       ![...addresses].some((address) => bloomMayContain(block.logsBloom, address))) return [];
     if (commitment === 'tron-complete-receipts') {
-      return collectWatchedLogs(block, await readTronReceipts(send, block), addresses);
+      return collectWatchedLogs(block, await readTronReceipts(send, block), addresses, undefined, profile.nativeRpc);
     }
     const authenticated = await readEthereumReceipts(send, block, sendBatch);
     return collectWatchedLogs(block, authenticated.receipts, addresses, authenticated.proofs);

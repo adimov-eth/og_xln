@@ -213,6 +213,7 @@ export type JurisdictionImportResult = {
   blockNumber: string;
   stateRoot: string | null;
   watcherConfirmationDepth: number;
+  watcherReceiptCommitment?: 'tron-rpc-attested';
   tokenRegistry: import('../jurisdiction/adapter/types').JTokenInfo[];
   entityProviderDeploymentBlock: number;
   contracts: {
@@ -489,6 +490,8 @@ interface RuntimeInfrastructure {
   stopLoop?: (() => void) | null;
   wakeLoop?: (() => void) | null;
   wakeRequested?: boolean;
+  /** Process-local ingress fence owned by startup/catchup, never WAL State. */
+  entityInputsReady?: boolean;
   /** Ephemeral keys owned by the active storage writer; never persisted. */
   storageReplicaMetaKeys?: Set<string>;
   scheduledWakeIndex?: {
@@ -655,6 +658,8 @@ interface RuntimeInfrastructure {
     envelope: RuntimeEntityInputsEnvelope,
     ingressTimestamp?: number,
   ) => import('../protocol/payments/delivery-result').DeliveryResult) | null;
+  /** Current authenticated recipient readiness; observation only, no dialing. */
+  canDeliverEntityInputs?: (runtimeId: string) => boolean;
   /**
    * True only when the target runtime is already attached to this same
    * server/relay process with a cached encryption key. This is local socket

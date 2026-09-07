@@ -2,7 +2,6 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deriveSignerAddressSync } from '../../../account/crypto';
-import { deriveEntityEncryptionPublicKey } from '../../../entity/auth/crypto';
 import { safeStringify } from '../../../protocol/serialization';
 import { canonicalEntitySeed } from '../../../runtime/registration/entity-creation';
 import { deriveEntityEncryptionPrivateKey } from '../../../runtime/registration/entity-creation/crypto';
@@ -23,11 +22,7 @@ import {
   type ChildFailureObservation,
 } from '../child-recovery-policy';
 import { attachManagedChildFatalIpc, type ManagedChildFatalReport } from '../managed-child-fatal-ipc';
-import {
-  buildHubChildProcessEnv,
-  buildHubEngineArgs,
-  resolveHubRuntimeFrameDelayMs,
-} from '../hub-runtime-env';
+import { buildHubChildProcessEnv, buildHubEngineArgs, resolveHubRuntimeFrameDelayMs } from '../hub-runtime-env';
 import { buildRustHubProcessPlan, parseRustHubStatus } from '../hub-engine-plan';
 import { buildRustHubGenesisConfig } from '../rust-hub-genesis';
 import { createManagedRuntimeLeaseManager } from '../managed-runtime-leases';
@@ -70,20 +65,13 @@ type HubInvocation = {
   rustIdentity: RustIdentity | null;
 };
 
-const buildRustHubInvocation = (
-  child: HubChild,
-  deps: HubSpawnerDeps,
-  rustIdentity: RustIdentity,
-): HubInvocation => {
+const buildRustHubInvocation = (child: HubChild, deps: HubSpawnerDeps, rustIdentity: RustIdentity): HubInvocation => {
   const runtimeSeedFile = join(child.dbPath, 'runtime.seed');
   const entityKeyFile = join(child.dbPath, 'entity-encryption.key');
   const routesFile = join(child.dbPath, 'entity-routes.json');
   const genesisFile = join(child.dbPath, 'rscore-genesis.json');
   const custodySeed = Buffer.from(canonicalEntitySeed(child.seed).slice(2), 'hex');
-  const entityEncryptionPrivateKey = deriveEntityEncryptionPrivateKey(
-    custodySeed,
-    rustIdentity.entityId,
-  );
+  const entityEncryptionPrivateKey = deriveEntityEncryptionPrivateKey(custodySeed, rustIdentity.entityId);
   writeFileSync(runtimeSeedFile, `${child.seed}\n`, { mode: 0o600 });
   writeFileSync(entityKeyFile, `${entityEncryptionPrivateKey}\n`, { mode: 0o600 });
   const hubRoutes = deps.hubChildren
@@ -114,20 +102,22 @@ const buildRustHubInvocation = (
     seed: custodyRuntimeSeed,
     signerLabel: 'custody-mesh-1',
   });
-  const routes = [...hubRoutes, ...supportRoutes, {
-    targetEntityId: custodyIdentity.entityId,
-    targetRuntimeId: deriveSignerAddressSync(`${custodyRuntimeSeed}:runtime`, '1').toLowerCase(),
-    targetSignerId: custodyIdentity.signerId,
-    websocketUrl: null,
-  }];
+  const routes = [
+    ...hubRoutes,
+    ...supportRoutes,
+    {
+      targetEntityId: custodyIdentity.entityId,
+      targetRuntimeId: deriveSignerAddressSync(`${custodyRuntimeSeed}:runtime`, '1').toLowerCase(),
+      targetSignerId: custodyIdentity.signerId,
+      websocketUrl: null,
+    },
+  ];
   writeFileSync(routesFile, `${safeStringify(routes)}\n`, { mode: 0o600 });
   const genesis = buildRustHubGenesisConfig({
     name: child.name,
     runtimeId: deriveSignerAddressSync(child.seed, '1').toLowerCase(),
-    entityEncryptionPublicKey: deriveEntityEncryptionPublicKey(
-      entityEncryptionPrivateKey,
-      rustIdentity.entityId,
-    ),
+    seed: child.seed,
+    signerLabel: child.signerLabel,
     jurisdictionsJson: readFileSync(deps.shardJurisdictionsPath, 'utf8'),
     rpcUrls: deps.args.rpcUrls,
     minFrameDelayMs: resolveHubRuntimeFrameDelayMs(process.env),
@@ -149,9 +139,7 @@ const buildRustHubInvocation = (
     entitySignerLabel: child.signerLabel,
     primaryEntityId: rustIdentity.entityId,
     workers: Number(process.env['XLN_RSCORE_AUTHORITY_WORKERS'] || '8'),
-    ...(process.env['XLN_RSCORE_BINARY']
-      ? { binary: process.env['XLN_RSCORE_BINARY'] }
-      : {}),
+    ...(process.env['XLN_RSCORE_BINARY'] ? { binary: process.env['XLN_RSCORE_BINARY'] } : {}),
   });
   return { executable: plan.executable, processArgs: plan.args, rustIdentity };
 };
@@ -161,23 +149,35 @@ const buildHubInvocation = (child: HubChild, deps: HubSpawnerDeps): HubInvocatio
   const processArgs = [
     ...engineArgs,
     'core/orchestrator/hub-node.ts',
-    '--name', child.name,
-    '--region', child.region,
-    '--signer-label', child.signerLabel,
-    '--relay-url', deps.relayUrl,
-    '--api-host', deps.args.host,
-    '--api-port', String(child.apiPort),
-    '--direct-ws-url', buildPublicDirectWsUrl(deps.args.publicWsBaseUrl, child.publicPort),
-    '--rpc-url', deps.args.rpcUrl,
+    '--name',
+    child.name,
+    '--region',
+    child.region,
+    '--signer-label',
+    child.signerLabel,
+    '--relay-url',
+    deps.relayUrl,
+    '--api-host',
+    deps.args.host,
+    '--api-port',
+    String(child.apiPort),
+    '--direct-ws-url',
+    buildPublicDirectWsUrl(deps.args.publicWsBaseUrl, child.publicPort),
+    '--rpc-url',
+    deps.args.rpcUrl,
     ...deps.buildSecondaryRpcArgs(),
-    '--mesh-hub-names', deps.getHubSpecsArg(),
-    '--support-peer-identities-json', safeStringify(deps.getMarketMakerIdentities()),
-    '--db-path', child.dbPath,
+    '--mesh-hub-names',
+    deps.getHubSpecsArg(),
+    '--support-peer-identities-json',
+    safeStringify(deps.getMarketMakerIdentities()),
+    '--db-path',
+    child.dbPath,
     ...(child.deployTokens ? ['--deploy-tokens'] : []),
   ];
-  const rustIdentity = child.engine === 'rust'
-    ? deriveManagedEntityIdentity({ name: child.name, seed: child.seed, signerLabel: child.signerLabel })
-    : null;
+  const rustIdentity =
+    child.engine === 'rust'
+      ? deriveManagedEntityIdentity({ name: child.name, seed: child.seed, signerLabel: child.signerLabel })
+      : null;
   return rustIdentity
     ? buildRustHubInvocation(child, deps, rustIdentity)
     : { executable: 'bun', processArgs, rustIdentity: null };
@@ -195,12 +195,14 @@ const projectRustHubStatus = (
     child.lastInfo = {
       name: child.name,
       entityId: rustIdentity.entityId,
-      hubEntities: [{
-        entityId: rustIdentity.entityId,
-        signerId: rustIdentity.signerId,
-        name: child.name,
-        primary: true,
-      }],
+      hubEntities: [
+        {
+          entityId: rustIdentity.entityId,
+          signerId: rustIdentity.signerId,
+          name: child.name,
+          primary: true,
+        },
+      ],
       ...(status.runtimeId ? { runtimeId: status.runtimeId } : {}),
       apiUrl: `http://${deps.args.host}:${String(child.apiPort)}`,
       relayUrl: deps.relayUrl,
@@ -242,21 +244,14 @@ const attachHubProcess = (
   });
   proc.stderr?.on('data', chunk => {
     pushChildLogLines(child.recentStderr, chunk);
-    writePrefixedLogChunk(
-      process.stderr,
-      `[${child.name}:err]`,
-      stderrPrefixState,
-      chunk,
-      line => deps.captureManagedChildErrorLine(child, line),
+    writePrefixedLogChunk(process.stderr, `[${child.name}:err]`, stderrPrefixState, chunk, line =>
+      deps.captureManagedChildErrorLine(child, line),
     );
   });
   proc.once('exit', (code, signal) => {
     flushPrefixedLogChunk(process.stdout, `[${child.name}]`, stdoutPrefixState);
-    flushPrefixedLogChunk(
-      process.stderr,
-      `[${child.name}:err]`,
-      stderrPrefixState,
-      line => deps.captureManagedChildErrorLine(child, line),
+    flushPrefixedLogChunk(process.stderr, `[${child.name}:err]`, stderrPrefixState, line =>
+      deps.captureManagedChildErrorLine(child, line),
     );
     const pid = proc.pid ?? null;
     const controlledStop = deps.consumeControlledStop(pid);
@@ -267,11 +262,7 @@ const attachHubProcess = (
       child.exitCode = code ?? null;
       child.exitSignal = signal ?? null;
     }
-    if (shouldCaptureUnexpectedChildExit(
-      controlledStop,
-      deps.isOrchestratorShutdownStarted(),
-      isCurrentProc,
-    )) {
+    if (shouldCaptureUnexpectedChildExit(controlledStop, deps.isOrchestratorShutdownStarted(), isCurrentProc)) {
       deps.handleUnexpectedHubFailure(child, {
         role: 'hub',
         name: child.name,
@@ -287,37 +278,41 @@ const attachHubProcess = (
   });
 };
 
-export const createHubSpawner = (deps: HubSpawnerDeps) => async (child: HubChild): Promise<void> => {
-  await deps.reapStaleHubProcess(child);
-  mkdirSync(child.dbPath, { recursive: true });
-  if (child.restartTimer) clearTimeout(child.restartTimer);
-  child.restartTimer = null;
-  const spec = deps.managedSpecForHub(child);
-  const invocation = buildHubInvocation(child, deps);
-  deps.resetSupervisedChildForSpawn(child);
-  const proc = spawn(invocation.executable, invocation.processArgs, {
-    cwd: process.cwd(),
-    stdio: invocation.rustIdentity ? ['pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe', 'ipc'],
-    env: sanitizeChildProcessEnv(buildHubChildProcessEnv({
-      hubName: child.name,
-      dbPath: child.dbPath,
-      brainvaultOwnerPath: join(child.dbPath, 'brainvault-owner.json'),
-      jurisdictionsPath: deps.shardJurisdictionsPath,
-      rpcEnv: deps.buildRpcChildEnv(),
-      orchestratorPid: process.pid,
-      orchestratorOwnerId: deps.orchestratorOwnerId,
-      startupTimeoutMs: deps.startupTimeoutMs,
-    })),
-  });
-  child.proc = proc;
-  if (!proc.pid) throw new Error(`${child.name}_SPAWN_FAILED_NO_PID`);
-  if (!invocation.rustIdentity) {
-    attachManagedChildFatalIpc(proc, report => deps.persistManagedChildFatalReport(child, report));
-  }
-  await deps.managedRuntimeLeases.writeLease(spec, proc.pid, child.startedAt ?? Date.now());
-  attachHubProcess(child, proc, invocation.rustIdentity, spec, deps);
-  await writeInheritedChildSecrets(proc, {
-    runtimeSeed: child.seed,
-    radapterAuthSeed: child.authSeed,
-  });
-};
+export const createHubSpawner =
+  (deps: HubSpawnerDeps) =>
+  async (child: HubChild): Promise<void> => {
+    await deps.reapStaleHubProcess(child);
+    mkdirSync(child.dbPath, { recursive: true });
+    if (child.restartTimer) clearTimeout(child.restartTimer);
+    child.restartTimer = null;
+    const spec = deps.managedSpecForHub(child);
+    const invocation = buildHubInvocation(child, deps);
+    deps.resetSupervisedChildForSpawn(child);
+    const proc = spawn(invocation.executable, invocation.processArgs, {
+      cwd: process.cwd(),
+      stdio: invocation.rustIdentity ? ['pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe', 'ipc'],
+      env: sanitizeChildProcessEnv(
+        buildHubChildProcessEnv({
+          hubName: child.name,
+          dbPath: child.dbPath,
+          brainvaultOwnerPath: join(child.dbPath, 'brainvault-owner.json'),
+          jurisdictionsPath: deps.shardJurisdictionsPath,
+          rpcEnv: deps.buildRpcChildEnv(),
+          orchestratorPid: process.pid,
+          orchestratorOwnerId: deps.orchestratorOwnerId,
+          startupTimeoutMs: deps.startupTimeoutMs,
+        }),
+      ),
+    });
+    child.proc = proc;
+    if (!proc.pid) throw new Error(`${child.name}_SPAWN_FAILED_NO_PID`);
+    if (!invocation.rustIdentity) {
+      attachManagedChildFatalIpc(proc, report => deps.persistManagedChildFatalReport(child, report));
+    }
+    await deps.managedRuntimeLeases.writeLease(spec, proc.pid, child.startedAt ?? Date.now());
+    attachHubProcess(child, proc, invocation.rustIdentity, spec, deps);
+    await writeInheritedChildSecrets(proc, {
+      runtimeSeed: child.seed,
+      radapterAuthSeed: child.authSeed,
+    });
+  };

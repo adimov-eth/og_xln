@@ -144,6 +144,14 @@ export const prioritizeEntityConsensusInputs = <T extends EntityConsensusInput>(
 
 export const entityInputMergeKey = (input: EntityConsensusInput): string => {
   const base = `${input.entityId.toLowerCase()}:${String(input.signerId || '').toLowerCase()}`;
+  const runtimeOutput = input.entityTxs?.find(tx => tx.type === 'runtimeOutput');
+  if (runtimeOutput) {
+    // One authenticated Runtime output stays one envelope. An Account ACK or
+    // another effect from the same sender must not inherit its authority.
+    return `${base}:runtime-output:${String(input.from || '').toLowerCase()}:` +
+      `${String(input.runtimeId || '').toLowerCase()}:${safeStringify(input.sourceRuntimeFrame)}:` +
+      txFingerprint(runtimeOutput);
+  }
   const atomicCrossJ = input.atomicCrossJurisdictionPair;
   if (atomicCrossJ) {
     const sourceFrame = input.sourceRuntimeFrame;
@@ -259,8 +267,14 @@ export const mergeEntityInputs = (
 ): EntityConsensusInput[] => {
   const merged = new Map<string, EntityConsensusInput>();
   const conflicts: EntityConsensusInput[] = [];
+  let outputBoundary = 0;
   for (const input of inputs) {
-    const key = entityInputMergeKey(input);
+    const isRuntimeOutput = input.entityTxs?.some(tx => tx.type === 'runtimeOutput') === true;
+    const laneKey = entityInputMergeKey(input);
+    const key = isRuntimeOutput ? laneKey : `${outputBoundary}:${laneKey}`;
+    // Preserve ACK → output → ACK positions while retaining exact output replay
+    // idempotency across the batch. Ordinary lanes cannot merge across effects.
+    if (isRuntimeOutput && !merged.has(key)) outputBoundary += 1;
 
     if (merged.has(key)) {
       const existing = merged.get(key)!;

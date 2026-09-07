@@ -17,8 +17,8 @@ export type RustH1AccountSettlementSmokeResult = Readonly<{
   hubEntityId: string;
   counterpartyEntityId: string;
   accountHeightBefore: number;
-  accountHeightReady: number;
-  accountHeightSubmitted: number;
+  accountHeightReady: number | null;
+  accountHeightSubmitted: number | null;
   accountHeightFinalized: number;
   runtimeHeightBefore: number;
   runtimeHeightFinalized: number;
@@ -82,6 +82,8 @@ export const runRustH1AccountSettlementSmoke = async (options: Readonly<{
   rust: RustH1Handle;
   counterpartyLane: LaneRuntime;
   tokenId: number;
+  operation: 'r2r' | 'r2c' | 'c2r';
+  amount: bigint;
 }>): Promise<RustH1AccountSettlementSmokeResult> => {
   const startedAt = performance.now();
   const stage = (name: string, status?: RustH1AccountStatus): void => {
@@ -120,13 +122,38 @@ export const runRustH1AccountSettlementSmoke = async (options: Readonly<{
         type: 'settle_propose',
         data: {
           counterpartyEntityId,
-          ops: [{ type: 'r2r', tokenId: options.tokenId, amount: 1n }],
+          ops: [{ type: options.operation, tokenId: options.tokenId, amount: options.amount }],
           memo: 'hlt-production-account-settlement',
         },
       }],
     }],
   );
   stage('propose-submitted');
+  if (options.operation === 'c2r') {
+    // The production hub scheduler executes and broadcasts C2R. A second
+    // manual execute races that owner; observe finalized money instead.
+    const finalized = await waitForAccount({
+      ...options,
+      counterpartyEntityId,
+      code: 'HLT_RUST_ACCOUNT_SETTLEMENT_AUTO_C2R_FINALITY_TIMEOUT',
+      predicate: status => status.settlementWorkspaceHash === null && status.jNonce > before.jNonce,
+    });
+    if (finalized.currentHeight <= before.currentHeight) {
+      throw new Error('HLT_RUST_ACCOUNT_SETTLEMENT_ACCOUNT_HEIGHT_NOT_MONOTONIC');
+    }
+    stage('auto-c2r-account-settled-finalized', finalized);
+    return {
+      evidence: 'functional-smoke', hubEntityId, counterpartyEntityId,
+      accountHeightBefore: before.currentHeight,
+      accountHeightReady: null,
+      accountHeightSubmitted: null,
+      accountHeightFinalized: finalized.currentHeight,
+      runtimeHeightBefore: before.runtimeHeight,
+      runtimeHeightFinalized: finalized.runtimeHeight,
+      jNonceBefore: before.jNonce,
+      jNonceFinalized: finalized.jNonce,
+    };
+  }
   const awaiting = await waitForAccount({
     ...options,
     counterpartyEntityId,

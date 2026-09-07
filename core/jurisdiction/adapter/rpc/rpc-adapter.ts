@@ -68,6 +68,7 @@ export async function createRpcAdapter(
   const readTxDisputeProofBody = createTxDisputeProofBodyReader(provider);
   const watcher = createRpcWatcherController({
     provider,
+    mode: config.mode,
     chainId: config.chainId,
     ...(config.rpcUrl ? { rpcUrl: config.rpcUrl } : {}),
     ...(config.watchPollMs === undefined ? {} : { watchPollMs: config.watchPollMs }),

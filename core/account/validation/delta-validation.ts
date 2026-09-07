@@ -1,11 +1,8 @@
 import type { Delta } from '../../types/account';
 import { assertAccountDeltaCapacity } from '../state/delta';
-import {
-  TypeSafetyViolationError,
-  validateObject,
-} from '../../protocol/boundary/validation-primitives';
-import { INT256_MAX, INT256_MIN, UINT256_MAX } from '../../protocol/boundary/integer-ranges';
-import { FINANCIAL, TOKENS } from '../../config/constants';
+import { TypeSafetyViolationError, validateObject } from '../../protocol/boundary/validation-primitives';
+import { INT512_MAX, INT512_MIN, UINT256_MAX } from '../../protocol/boundary/integer-ranges';
+import { TOKENS } from '../../config/constants';
 
 const BIGINT_FIELDS = [
   'collateral',
@@ -30,19 +27,11 @@ const UNSIGNED_FIELDS = [
 ] as const;
 
 /** Decode one complete financial Delta. Missing capacity fields are corruption. */
-export const validateDelta = (
-  delta: unknown,
-  source = 'unknown',
-): Delta => {
+export const validateDelta = (delta: unknown, source = 'unknown'): Delta => {
   const value = validateObject(delta, `Delta from ${source}`);
   const errors: string[] = [];
   const tokenId = value['tokenId'];
-  if (
-    typeof tokenId !== 'number' ||
-    !Number.isInteger(tokenId) ||
-    tokenId < 0 ||
-    tokenId > TOKENS.MAX_TOKEN_ID
-  ) {
+  if (typeof tokenId !== 'number' || !Number.isInteger(tokenId) || tokenId < 0 || tokenId > TOKENS.MAX_TOKEN_ID) {
     errors.push(`tokenId must be integer in [0, ${TOKENS.MAX_TOKEN_ID}], got: ${String(tokenId)}`);
   }
   for (const field of BIGINT_FIELDS) {
@@ -61,29 +50,24 @@ export const validateDelta = (
         continue;
       }
     }
-    errors.push(
-      `${field} must be BigInt, got: ${typeof fieldValue} (${fieldValue})`,
-    );
+    errors.push(`${field} must be BigInt, got: ${typeof fieldValue} (${fieldValue})`);
   }
   for (const field of UNSIGNED_FIELDS) {
     const fieldValue = value[field];
     if (typeof fieldValue === 'bigint' && fieldValue < 0n) {
       errors.push(`${field} must be non-negative, got: ${fieldValue}`);
     } else if (typeof fieldValue === 'bigint') {
-      const maximum = field.endsWith('CreditLimit') ? FINANCIAL.MAX_CREDIT_LIMIT : UINT256_MAX;
-      if (fieldValue > maximum) errors.push(`${field} exceeds maximum ${maximum}, got: ${fieldValue}`);
+      if (fieldValue > UINT256_MAX) errors.push(`${field} exceeds maximum ${UINT256_MAX}, got: ${fieldValue}`);
     }
   }
   for (const field of ['ondelta', 'offdelta'] as const) {
     const fieldValue = value[field];
-    if (typeof fieldValue === 'bigint' && (fieldValue < INT256_MIN || fieldValue > INT256_MAX)) {
-      errors.push(`${field} must fit int256, got: ${fieldValue}`);
+    if (typeof fieldValue === 'bigint' && (fieldValue < INT512_MIN || fieldValue > INT512_MAX)) {
+      errors.push(`${field} must fit int512, got: ${fieldValue}`);
     }
   }
   if (errors.length > 0) {
-    throw new Error(
-      `Delta validation failed from ${source}:\n${errors.join('\n')}`,
-    );
+    throw new Error(`Delta validation failed from ${source}:\n${errors.join('\n')}`);
   }
   return {
     tokenId: value['tokenId'] as number,
@@ -100,15 +84,9 @@ export const validateDelta = (
 };
 
 /** Decode the complete token-indexed Delta map; partial success is forbidden. */
-export const validateAccountDeltas = (
-  deltas: unknown,
-  source = 'unknown',
-): Map<number, Delta> => {
+export const validateAccountDeltas = (deltas: unknown, source = 'unknown'): Map<number, Delta> => {
   if (deltas === null || deltas === undefined) {
-    throw new TypeSafetyViolationError(
-      `ACCOUNT_DELTAS_MISSING: ${source} must provide account deltas`,
-      deltas,
-    );
+    throw new TypeSafetyViolationError(`ACCOUNT_DELTAS_MISSING: ${source} must provide account deltas`, deltas);
   }
   const result = new Map<number, Delta>();
   if (deltas instanceof Map) {

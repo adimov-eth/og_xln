@@ -1,3 +1,4 @@
+import { UINT256_MAX } from '../../../../protocol/boundary/integer-ranges';
 import { FINANCIAL } from '../../../../config/constants';
 import type { AccountTx } from '../../../../types/account';
 import type { EntityCandidateEffect, EntityInput, EntityState } from '../../../types';
@@ -27,7 +28,8 @@ const directPaymentLog = createStructuredLogger('entity.payment');
 
 type PaymentTrace = (message: string, fields?: Record<string, unknown>) => void;
 
-const createPaymentTrace = (env: EntityRuntimeContext): PaymentTrace =>
+const createPaymentTrace =
+  (env: EntityRuntimeContext): PaymentTrace =>
   (message, fields = {}) => {
     if (env.quietRuntimeLogs !== true) directPaymentLog.debug(message, fields);
   };
@@ -42,10 +44,10 @@ const validateEntityPayment = (
   if (deliveryMode !== 'direct' && deliveryMode !== 'trusted') {
     throw directPaymentInvariant('DELIVERY_MODE_INVALID', String(deliveryMode));
   }
-  if (amount < FINANCIAL.MIN_PAYMENT_AMOUNT || amount > FINANCIAL.MAX_PAYMENT_AMOUNT) {
+  if (amount < FINANCIAL.MIN_PAYMENT_AMOUNT || amount > UINT256_MAX) {
     logError(
       'ENTITY_TX',
-      `❌ Payment amount out of bounds: ${amount.toString()} (min ${FINANCIAL.MIN_PAYMENT_AMOUNT.toString()}, max ${FINANCIAL.MAX_PAYMENT_AMOUNT.toString()})`,
+      `❌ Payment amount out of bounds: ${amount.toString()} (min ${FINANCIAL.MIN_PAYMENT_AMOUNT.toString()}, max ${UINT256_MAX.toString()})`,
     );
     addMessage(state, '❌ Payment failed: amount out of bounds');
     return { newState: state, outputs };
@@ -131,7 +133,7 @@ export const handleDirectPaymentEntityTx = async (
     target: shortId(entityTx.data.targetEntityId),
     tokenId: entityTx.data.tokenId,
     amount: entityTx.data.amount.toString(),
-    route: route.map((entityId) => shortId(entityId)),
+    route: route.map(entityId => shortId(entityId)),
     hasDescription: Boolean(entityTx.data.description),
   });
 

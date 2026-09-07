@@ -31,6 +31,7 @@ import {
   type OpCounterSnapshot,
 } from '../../support/performance/op-counters';
 import { failedProposalHtlcFollowup } from '../../entity/consensus/account/failed-proposal-followups';
+import { selectCrossJOpeningAccountProposalTxs } from '../../entity/transition/cross-j-proposer-materialization';
 import { accountHankoWitnessRequirements } from '../../entity/consensus/input/hanko-witness';
 import { TsAccountWorkerCoordinator } from './coordinator';
 import { assertAccountRootMatch } from './root-divergence';
@@ -229,6 +230,39 @@ const replacePostAccount = (
   countOp('tsWorker.post.rows', 1);
 };
 
+const materializeOutboundAccounts = (
+  batch: AccountAuthorityEntityBatchOutbound,
+  rows: readonly TsAccountWorkerPostAccount[],
+): void => {
+  for (const row of rows) {
+    const account = batch.accountForWrite(row.accountId);
+    if (account === undefined) throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_POST_ACCOUNT_MISSING:${row.accountId}`);
+    replacePostAccount(batch.ownerEntityId, account, row);
+  }
+};
+
+const selectWorkerProposals = (
+  env: RuntimeReplica,
+  batch: AccountAuthorityEntityBatchOutbound,
+  accountIds: readonly string[],
+) => accountIds.flatMap(accountId => {
+  const account = batch.accountForWrite(accountId);
+  if (account === undefined) throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_POST_ACCOUNT_MISSING:${accountId}`);
+  const selectedMempoolTxs = selectCrossJOpeningAccountProposalTxs(env, batch.entityState, account);
+  if (selectedMempoolTxs === null) return [];
+  const selectedMempoolPositions = selectedMempoolTxs?.map(tx => {
+    const position = account.mempool.indexOf(tx);
+    if (position < 0) throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_SELECTION_NOT_IN_MEMPOOL:${accountId}`);
+    return position;
+  });
+  const counterpartyBoardAuthority = certifiedBoardFor(env, batch.entityState, accountId);
+  return [{ accountId,
+    ...(selectedMempoolTxs === undefined ? {} : { selectedMempoolTxs }),
+    ...(selectedMempoolPositions === undefined ? {} : { selectedMempoolPositions }),
+    ...(counterpartyBoardAuthority ? { counterpartyBoardAuthority } : {}),
+  }];
+});
+
 /**
  * Compensation the Entity owes upstream when a proposed Account frame could not
  * carry an HTLC lock forward. Each row becomes one continuation admission.
@@ -256,6 +290,31 @@ const outboundFrameClock = (batch: AccountAuthorityEntityBatchOutbound) => ({
   jHeight: batch.proposals[0]?.jHeight
     ?? batch.admissions[0]?.finalizedJHeight
     ?? batch.entityState.lastFinalizedJHeight,
+});
+
+const outboundAdmissions = (
+  env: RuntimeReplica,
+  batch: AccountAuthorityEntityBatchOutbound,
+) => batch.admissions.map(request => {
+  if (request.input.kind !== 'enqueue') {
+    throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_ADMISSION_KIND:${request.input.kind}`);
+  }
+  const accountId = normalize(request.account.proofHeader.toEntity);
+  // H=0 is an unsealed local genesis shell. Fitting/retry may revisit it
+  // after the Entity map already contains it but before this worker has
+  // published it. Carry that exact canonical shell until the first signed
+  // AccountFrame; an existing resident value always wins in the worker.
+  const initialAccount = request.account.currentHeight === 0
+    && request.account.currentFrame.height === 0
+    ? projectPortableAccountDoc(request.account)
+    : undefined;
+  const counterpartyBoardAuthority = certifiedBoardFor(env, batch.entityState, accountId);
+  return {
+    accountId,
+    txs: request.input.txs,
+    ...(initialAccount === undefined ? {} : { initialAccount }),
+    ...(counterpartyBoardAuthority ? { counterpartyBoardAuthority } : {}),
+  };
 });
 
 export class TsAccountWorkerAuthority {
@@ -489,65 +548,60 @@ export class TsAccountWorkerAuthority {
     }
     const frameId = occurrenceFrameId(ownerEntityId, batch.ownerSignerId, batch.occurrence);
     const localBoardAuthority = certifiedBoardFor(this.#env, batch.entityState, ownerEntityId);
-    const txs = batch.admissions.map(request => {
-      if (request.input.kind !== 'enqueue') {
-        throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_ADMISSION_KIND:${request.input.kind}`);
-      }
-      const accountId = normalize(request.account.proofHeader.toEntity);
-      // H=0 is an unsealed local genesis shell. Fitting/retry may revisit it
-      // after the Entity map already contains it but before this worker has
-      // published it. Carry that exact canonical shell until the first signed
-      // AccountFrame; an existing resident value always wins in the worker.
-      const initialAccount = request.account.currentHeight === 0
-        && request.account.currentFrame.height === 0
-        ? projectPortableAccountDoc(request.account)
-        : undefined;
-      const counterpartyBoardAuthority = certifiedBoardFor(this.#env, batch.entityState, accountId);
-      return {
-        accountId,
-        txs: request.input.txs,
-        ...(initialAccount === undefined ? {} : { initialAccount }),
-        ...(counterpartyBoardAuthority ? { counterpartyBoardAuthority } : {}),
-      };
-    });
+    const txs = outboundAdmissions(this.#env, batch);
     const baseRoot = coordinator.accountsRoot;
-    const result = await coordinator.prepareAccountFrames({
-      frameId,
-      ...outboundFrameClock(batch),
-      ...(localBoardAuthority ? { localBoardAuthority } : {}),
-      envelopeUpdates: batch.envelopeUpdates,
-      txs,
-      proposals: batch.proposals.map(request => {
-        const accountId = normalize(request.account.proofHeader.toEntity);
-        const counterpartyBoardAuthority = certifiedBoardFor(this.#env, batch.entityState, accountId);
-        return { accountId, ...(counterpartyBoardAuthority ? { counterpartyBoardAuthority } : {}) };
-      }),
-    });
-    this.#recordPhase('proposal', result);
-    const admissions = result.effects.slice(0, batch.admissions.length);
-    const proposals = result.effects.slice(batch.admissions.length);
-    const preparedAdmissions = admissions.map((effect, order) => {
+    // Admission owns lifecycle deduplication and J-claim classification. Run it
+    // once in the resident Account before Entity selects a reciprocal cohort;
+    // concatenating queued rows here would invent a second admission policy.
+    const admitted = txs.length > 0 || batch.envelopeUpdates.length > 0
+      ? await coordinator.prepareAccountFrames({
+          frameId,
+          ...outboundFrameClock(batch),
+          ...(localBoardAuthority ? { localBoardAuthority } : {}),
+          envelopeUpdates: batch.envelopeUpdates,
+          txs,
+          proposals: [],
+        })
+      : undefined;
+    if (admitted) this.#recordPhase('proposal', admitted);
+    const preparedAdmissions = (admitted?.effects ?? []).map((effect, order) => {
       const request = batch.admissions[order];
-      if (request === undefined || effect?.phase !== 'outbound-enqueue') {
+      if (request === undefined || effect.phase !== 'outbound-enqueue'
+        || effect.order !== order || effect.accountId !== normalize(request.account.proofHeader.toEntity)) {
         throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_ADMISSION_ORDER:${order}`);
       }
       return effect.result;
     });
-    const preparedProposals = proposals.map(effect => {
-      const order = effect.order - batch.admissions.length;
-      const request = batch.proposals[order];
-      const accountId = request && normalize(request.account.proofHeader.toEntity);
-      if (accountId === undefined || effect?.phase !== 'outbound-proposal' || effect.accountId !== accountId) {
-        throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_PROPOSAL_ORDER:${order}:${accountId ?? 'missing'}`);
-      }
-      return { accountId, result: effect.result };
-    });
-    if (preparedAdmissions.some(result => !result.ok)) {
+    if (preparedAdmissions.length !== batch.admissions.length
+      || preparedAdmissions.some(result => !result.ok)) {
       throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_ADMISSION_REJECTED:${safeStringify(preparedAdmissions)}`);
     }
+    materializeOutboundAccounts(batch, admitted?.postAccounts ?? []);
+    const proposalRequests = selectWorkerProposals(this.#env, batch,
+      batch.proposals.map(request => normalize(request.account.proofHeader.toEntity)));
+    const result = await coordinator.prepareAccountFrames({
+      frameId,
+      ...outboundFrameClock(batch),
+      ...(localBoardAuthority ? { localBoardAuthority } : {}),
+      envelopeUpdates: [],
+      txs: [],
+      proposals: proposalRequests,
+    });
+    this.#recordPhase('proposal', result);
+    materializeOutboundAccounts(batch, result.postAccounts ?? []);
+    const preparedProposals = result.effects.map(effect => {
+      const request = proposalRequests[effect.order];
+      const accountId = request?.accountId;
+      if (request === undefined || accountId === undefined
+        || effect.phase !== 'outbound-proposal' || effect.accountId !== accountId) {
+        throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_PROPOSAL_ORDER:${effect.order}:${accountId ?? 'missing'}`);
+      }
+      return { accountId, result: effect.result,
+        ...(request.selectedMempoolTxs === undefined ? {} : { selectedMempoolTxs: request.selectedMempoolTxs }) };
+    });
     const generated = failedProposalContinuationRows(batch.entityState, preparedProposals);
     const continuationProposalIds = [...new Set(generated.map(row => row.accountId))];
-    const continuation = await coordinator.finishAccountFrames({
+    const continuationAdmitted = generated.length === 0 ? undefined : await coordinator.prepareAccountFrames({
       frameId,
       ...outboundFrameClock(batch),
       ...(localBoardAuthority ? { localBoardAuthority } : {}),
@@ -560,13 +614,11 @@ export class TsAccountWorkerAuthority {
           ...(counterpartyBoardAuthority ? { counterpartyBoardAuthority } : {}),
         };
       }),
-      proposals: continuationProposalIds.map(accountId => {
-        const counterpartyBoardAuthority = certifiedBoardFor(this.#env, batch.entityState, accountId);
-        return { accountId, ...(counterpartyBoardAuthority ? { counterpartyBoardAuthority } : {}) };
-      }),
+      proposals: [],
     });
-    if (continuation) this.#recordPhase('proposal', continuation);
-    const continuationAdmissions = continuation?.effects.slice(0, generated.length) ?? [];
+    if (continuationAdmitted) this.#recordPhase('proposal', continuationAdmitted);
+    materializeOutboundAccounts(batch, continuationAdmitted?.postAccounts ?? []);
+    const continuationAdmissions = continuationAdmitted?.effects ?? [];
     const generatedAdmissions = generated.map((row, order) => {
       const effect = continuationAdmissions[order];
       if (
@@ -579,10 +631,19 @@ export class TsAccountWorkerAuthority {
       }
       return { ...row, result: effect.result };
     });
-    const continuationProposals = continuation?.effects.slice(generated.length).map(effect => {
-      const order = effect.order - generated.length;
-      const accountId = continuationProposalIds[order];
-      if (effect?.phase !== 'outbound-proposal' || effect.accountId !== accountId) {
+    const continuationRequests = selectWorkerProposals(this.#env, batch, continuationProposalIds);
+    const continuation = await coordinator.finishAccountFrames({
+      frameId, ...outboundFrameClock(batch),
+      ...(localBoardAuthority ? { localBoardAuthority } : {}),
+      envelopeUpdates: [], txs: [], proposals: continuationRequests,
+    });
+    if (continuation) this.#recordPhase('proposal', continuation);
+    materializeOutboundAccounts(batch, continuation?.postAccounts ?? []);
+    const continuationProposals = continuation?.effects.map(effect => {
+      const order = effect.order;
+      const request = continuationRequests[order];
+      const accountId = request?.accountId;
+      if (!request || effect.phase !== 'outbound-proposal' || effect.accountId !== accountId) {
         throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_CONTINUATION_PROPOSAL:${order}:${accountId ?? 'missing'}`);
       }
       const failures = 'failedHtlcLocks' in effect.result ? effect.result.failedHtlcLocks ?? [] : [];
@@ -591,19 +652,15 @@ export class TsAccountWorkerAuthority {
         if (!firstFailure) throw new Error('TS_ACCOUNT_WORKER_PROVIDER_HTLC_FOLLOWUP_FAILURE_MISSING');
         throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_HTLC_FOLLOWUP_CASCADE:${accountId}:${firstFailure.hashlock}`);
       }
-      return { accountId, result: effect.result };
+      return { accountId: request.accountId, result: effect.result,
+        ...(request.selectedMempoolTxs === undefined ? {} : { selectedMempoolTxs: request.selectedMempoolTxs }) };
     }) ?? [];
     const postAccounts = new Map<string, TsAccountWorkerPostAccount>();
+    for (const row of admitted?.postAccounts ?? []) postAccounts.set(row.accountId, row);
     for (const row of result.postAccounts ?? []) postAccounts.set(row.accountId, row);
+    for (const row of continuationAdmitted?.postAccounts ?? []) postAccounts.set(row.accountId, row);
     for (const row of continuation?.postAccounts ?? []) postAccounts.set(row.accountId, row);
-    for (const row of postAccounts.values()) {
-      const account = batch.accountForWrite(row.accountId);
-      if (account === undefined) {
-        throw new Error(`TS_ACCOUNT_WORKER_PROVIDER_POST_ACCOUNT_MISSING:${row.accountId}`);
-      }
-      replacePostAccount(ownerEntityId, account, row);
-    }
-    const finalRoot = continuation?.accountsRoot ?? result.accountsRoot;
+    const finalRoot = continuation?.accountsRoot ?? continuationAdmitted?.accountsRoot ?? result.accountsRoot;
     if (finalRoot === undefined) {
       throw new Error('TS_ACCOUNT_WORKER_PROVIDER_FINAL_ROOT_MISSING');
     }

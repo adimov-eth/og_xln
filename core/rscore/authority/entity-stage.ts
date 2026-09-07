@@ -6,7 +6,7 @@ import type {
   HandleAccountInputResult,
   ProposeAccountFrameResult,
 } from '../../account/consensus/types';
-import type { AccountTxBatch, AccountInput } from '../../types/account';
+import type { AccountTxBatch, AccountInput, AccountTx } from '../../types/account';
 import type { EntityTx } from '../../types/entity-tx';
 import type {
   AccountAuthorityFrameBeginRequest,
@@ -65,6 +65,7 @@ type AccountAuthorityPreparedOutbound = Readonly<{
   proposals: readonly Readonly<{
     accountId: string;
     result: ProposeAccountFrameResult;
+    selectedMempoolTxs?: readonly AccountTx[];
   }>[];
   generatedAdmissions: readonly Readonly<{
     accountId: string;
@@ -246,6 +247,7 @@ class AccountAuthorityEntityStageImpl implements AccountAuthorityEntityStage {
   }>> = [];
   private preparedProposalIds: string[] = [];
   private proposalResults: ProposeAccountFrameResult[] = [];
+  private proposalSelections: Array<readonly AccountTx[] | undefined> = [];
   private proposalCursor = 0;
   private generatedAdmissions: AccountAuthorityPreparedOutbound['generatedAdmissions'] = [];
   private generatedAdmissionCursor = 0;
@@ -312,6 +314,7 @@ class AccountAuthorityEntityStageImpl implements AccountAuthorityEntityStage {
     this.envelopeUpdates = [];
     this.preparedProposalIds = [];
     this.proposalResults = [];
+    this.proposalSelections = [];
     this.proposalCursor = 0;
     this.generatedAdmissions = [];
     this.generatedAdmissionCursor = 0;
@@ -454,6 +457,7 @@ class AccountAuthorityEntityStageImpl implements AccountAuthorityEntityStage {
     const materializeStartedAt = OP_COUNTERS_ENABLED ? getPerfMs() : 0;
     this.preparedProposalIds = prepared.proposals.map(row => normalizeEntityId(row.accountId));
     this.proposalResults = prepared.proposals.map(row => row.result);
+    this.proposalSelections = prepared.proposals.map(row => row.selectedMempoolTxs);
     this.generatedAdmissions = [...prepared.generatedAdmissions];
     if (this.preparedProposalIds.length !== new Set(this.preparedProposalIds).size) {
       throw new Error('ACCOUNT_AUTHORITY_PROPOSAL_RESULT_DUPLICATE');
@@ -478,6 +482,12 @@ class AccountAuthorityEntityStageImpl implements AccountAuthorityEntityStage {
 
   hasPreparedAccountProposal(accountId: string): boolean {
     return this.preparedProposalIds.includes(normalizeEntityId(accountId));
+  }
+
+  preparedAccountProposalTxs(accountId: string): readonly AccountTx[] | undefined {
+    const index = this.preparedProposalIds.indexOf(normalizeEntityId(accountId));
+    if (index < 0) throw new Error(`ACCOUNT_AUTHORITY_PROPOSAL_NOT_PREPARED:${accountId}`);
+    return this.proposalSelections[index];
   }
 
   hasPreparedAccountInput(accountId: string, input: AccountInput): boolean {
@@ -650,12 +660,11 @@ class AccountAuthorityEntityStageImpl implements AccountAuthorityEntityStage {
   ): Promise<ProposeAccountFrameResult | null> {
     if (!this.frameOpened) throw new Error(`ACCOUNT_AUTHORITY_FRAME_NOT_OPEN:${this.ownerEntityId}`);
     if (!this.frameOutboundPrepared) throw new Error('ACCOUNT_AUTHORITY_PROPOSAL_BEFORE_OUTBOUND');
-    // Rust consumes the whole resident mempool and returns its rejected rows.
-    // A caller-selected subset would make Rust sign different bytes from the
-    // canonical TypeScript proposal window, so this is a protocol violation,
-    // not an eligibility miss that may fall back to TypeScript.
-    if (!request.selectionIsWholeMempool) {
-      throw new Error('ACCOUNT_AUTHORITY_PROPOSAL_SUBSET_UNSUPPORTED');
+    // The Entity consumes the exact preproposal selection. Re-selecting from
+    // the already-published worker mempool would choose the next cross-j cohort.
+    if (safeStringify(request.selectedMempoolTxs)
+      !== safeStringify(this.proposalSelections[this.proposalCursor])) {
+      throw new Error('ACCOUNT_AUTHORITY_PROPOSAL_SELECTION_MISMATCH');
     }
     const expectedId = this.preparedProposalIds[this.proposalCursor];
     const actualId = normalizeEntityId(request.account.proofHeader.toEntity);
@@ -729,9 +738,15 @@ export const runAccountAuthorityEntityStage = async <T>(
     delete env.accountAuthorityEntityStage;
   }
   if (!outcome.ok && !cleanup.ok) {
+    // Runtime and browser logs retain Error.message, not AggregateError.errors.
+    // Keep the failing transition and failed cleanup visible in that evidence;
+    // a generic aggregate label hid the actual lending admission rejection.
     throw new AggregateError(
       [outcome.error, cleanup.error],
-      'ACCOUNT_AUTHORITY_ENTITY_STAGE_APPLY_DISCARD_FAILED',
+      `ACCOUNT_AUTHORITY_ENTITY_STAGE_APPLY_DISCARD_FAILED:${safeStringify({
+        apply: outcome.error instanceof Error ? outcome.error.message : String(outcome.error),
+        discard: cleanup.error instanceof Error ? cleanup.error.message : String(cleanup.error),
+      })}`,
     );
   }
   if (!outcome.ok) throw outcome.error;

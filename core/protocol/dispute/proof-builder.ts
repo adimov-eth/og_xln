@@ -1,4 +1,3 @@
-import { haltRuntimeFailure } from "../errors/failure-taxonomy";
 import { exclusiveUnixMsBigIntToUnixS } from '../units';
 import { Packr } from 'msgpackr';
 import { ethers } from 'ethers';
@@ -31,7 +30,8 @@ import {
   type DepositoryHankoDomain,
 } from '../../hanko/onchain-domain.ts';
 import { keccakHexHash } from '../crypto/keccak-text';
-import { assertMoneyAmount, assertMoneyMagnitude } from '../money-cap';
+import { assertSignedAmount, assertInt512, encodeInt512, encodeSignedAmount } from '../crypto/abi-money';
+import { UINT256_MAX } from '../boundary/integer-ranges';
 import type {
   ProofBodyStruct,
   TransformerClauseStruct,
@@ -68,8 +68,8 @@ export class AccountDisputeProofBudgetError extends Error {
   ) {
     super(
       `ACCOUNT_DISPUTE_PROOF_ATOM_BYTES_EXCEEDED:` +
-      `transformer=${transformerIndex}:` +
-      `${encodedBytes}/${MAX_ACCOUNT_DISPUTE_PROOF_ATOM_BYTES}`,
+        `transformer=${transformerIndex}:` +
+        `${encodedBytes}/${MAX_ACCOUNT_DISPUTE_PROOF_ATOM_BYTES}`,
     );
     this.name = 'AccountDisputeProofBudgetError';
   }
@@ -83,11 +83,8 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // Direct encoder (byte-identical to AbiCoder for these fragments; see abi-encode.ts).
 const PROOF_BODY_SCHEMA = abiSchemaFromFragment(PROOF_BODY_ABI);
 const DELTA_BATCH_SCHEMA = abiSchemaFromFragment(BATCH_ABI);
-const INT256_MIN = -(1n << 255n);
-const INT256_MAX = (1n << 255n) - 1n;
 
-const encodeProofBodyStruct = (proofBody: ProofBodyStruct): string =>
-  encodeAbi(PROOF_BODY_SCHEMA, proofBody);
+const encodeProofBodyStruct = (proofBody: ProofBodyStruct): string => encodeAbi(PROOF_BODY_SCHEMA, proofBody);
 
 export const hashProofBodyStruct = (proofBody: ProofBodyStruct): string =>
   keccakHexHash(encodeProofBodyStruct(proofBody));
@@ -102,30 +99,12 @@ const requireContractAddress = (label: string, address: string | null | undefine
   return address;
 };
 
-const assertFinalDeltaCanFinalize = (
-  tokenId: number,
-  ondelta: bigint,
-  offdelta: bigint,
-): void => {
-  if (
-    ondelta < INT256_MIN || ondelta > INT256_MAX ||
-    offdelta < INT256_MIN || offdelta > INT256_MAX
-  ) {
-    throw haltRuntimeFailure("DISPUTE_PROOFBODY_FINAL_DELTA_OVERFLOW", `DISPUTE_PROOFBODY_FINAL_DELTA_OVERFLOW:token=${tokenId}`);
-  }
-  // Account._validateProofBody reverts E8 above Types.MAX_MONEY (2^200); a
-  // validator must never sign an offdelta the jurisdiction cannot store.
-  assertMoneyMagnitude(offdelta, `PROOFBODY_OFFDELTA:token=${tokenId}`);
-  const finalDelta = ondelta + offdelta;
-  if (finalDelta < INT256_MIN || finalDelta > INT256_MAX) {
-    throw haltRuntimeFailure("DISPUTE_PROOFBODY_FINAL_DELTA_OVERFLOW", `DISPUTE_PROOFBODY_FINAL_DELTA_OVERFLOW:token=${tokenId}`);
-  }
-  // Depository._applyAccountDelta negates negative final deltas. Solidity
-  // cannot negate int256.min, so a validator must never sign a ProofBody that
-  // is structurally valid yet impossible to finalize on-chain.
-  if (finalDelta === INT256_MIN) {
-    throw haltRuntimeFailure("DISPUTE_PROOFBODY_FINAL_DELTA_INT256_MIN", `DISPUTE_PROOFBODY_FINAL_DELTA_INT256_MIN:token=${tokenId}`);
-  }
+const assertProofDeltaDomains = (tokenId: number, ondelta: bigint, offdelta: bigint): void => {
+  // Stored allocation and signed offdelta are Int512; Solidity combines them
+  // in Int768 before enforcing uint256 custody and Uint512 debt. A negative
+  // int256 endpoint is valid and must never block a newly signed proof.
+  assertInt512(ondelta, `PROOFBODY_ONDELTA:token=${tokenId}`);
+  assertInt512(offdelta, `PROOFBODY_OFFDELTA:token=${tokenId}`);
 };
 
 const addDeltaAllowance = (
@@ -159,9 +138,8 @@ function buildTransformerAllowances(batch: RuntimeBatch): RuntimeAllowance[] {
     .sort(([a], [b]) => a - b)
     .map(([deltaIndex, allowance]) => ({
       deltaIndex,
-      // Account.validateAllowances rejects allowances above MAX_MONEY.
-      rightAllowance: assertMoneyAmount(allowance.rightAllowance, `PROOFBODY_RIGHT_ALLOWANCE:delta=${deltaIndex}`),
-      leftAllowance: assertMoneyAmount(allowance.leftAllowance, `PROOFBODY_LEFT_ALLOWANCE:delta=${deltaIndex}`),
+      rightAllowance: allowance.rightAllowance,
+      leftAllowance: allowance.leftAllowance,
     }));
 }
 
@@ -180,10 +158,9 @@ const buildProofDeltaIndex = (
   const byTokenId = new Map<number, number>();
   const projected = new Map(account.state.deltas.entries());
   for (const [tokenId, delta] of deltaOverrides ?? []) projected.set(tokenId, delta);
-  const sorted = Array.from(projected)
-    .sort(([left], [right]) => left - right);
+  const sorted = Array.from(projected).sort(([left], [right]) => left - right);
   for (const [tokenId, delta] of sorted) {
-    assertFinalDeltaCanFinalize(tokenId, delta.ondelta ?? 0n, delta.offdelta);
+    assertProofDeltaDomains(tokenId, delta.ondelta ?? 0n, delta.offdelta);
     byTokenId.set(tokenId, tokenIds.length);
     tokenIds.push(tokenId);
     // The contract combines this off-chain component with stored ondelta.
@@ -192,25 +169,15 @@ const buildProofDeltaIndex = (
   return { tokenIds, offdeltas, byTokenId };
 };
 
-const requireProofDeltaIndex = (
-  index: ReadonlyMap<number, number>,
-  tokenId: number,
-  error: string,
-): number => {
+const requireProofDeltaIndex = (index: ReadonlyMap<number, number>, tokenId: number, error: string): number => {
   const deltaIndex = index.get(tokenId);
   if (deltaIndex === undefined) throw new Error(error);
   return deltaIndex;
 };
 
-const buildProofPayments = (
-  account: AccountReplica,
-  deltaIndex: ReadonlyMap<number, number>,
-): RuntimePayment[] =>
+const buildProofPayments = (account: AccountReplica, deltaIndex: ReadonlyMap<number, number>): RuntimePayment[] =>
   sortTransformerEntries(account.state.locks.entries()).map(([lockId, lock]) => {
-    const revealedUntilTimestamp = exclusiveUnixMsBigIntToUnixS(
-      lock.timelock,
-      `HTLC_LOCK_INVALID_TIMELOCK:${lockId}`,
-    );
+    const revealedUntilTimestamp = exclusiveUnixMsBigIntToUnixS(lock.timelock, `HTLC_LOCK_INVALID_TIMELOCK:${lockId}`);
     return {
       deltaIndex: requireProofDeltaIndex(
         deltaIndex,
@@ -223,14 +190,11 @@ const buildProofPayments = (
     };
   });
 
-const buildProofSwaps = (
-  account: AccountReplica,
-  deltaIndex: ReadonlyMap<number, number>,
-): RuntimeSwap[] =>
-  sortTransformerEntries(account.state.swapOffers.entries()).flatMap(
-    ([offerId, offer]) => {
-      if (offer.crossJurisdiction) return [];
-      return [{
+const buildProofSwaps = (account: AccountReplica, deltaIndex: ReadonlyMap<number, number>): RuntimeSwap[] =>
+  sortTransformerEntries(account.state.swapOffers.entries()).flatMap(([offerId, offer]) => {
+    if (offer.crossJurisdiction) return [];
+    return [
+      {
         ownerIsLeft: offer.makerIsLeft,
         addDeltaIndex: requireProofDeltaIndex(
           deltaIndex,
@@ -244,44 +208,29 @@ const buildProofSwaps = (
           `PROOF_BODY_SWAP_TOKEN_MISSING:${offerId}:give=${offer.giveTokenId}:want=${offer.wantTokenId}`,
         ),
         subAmount: offer.wantAmount,
-      }];
-    },
-  );
+      },
+    ];
+  });
 
-const buildProofPulls = (
-  account: AccountReplica,
-  deltaIndex: ReadonlyMap<number, number>,
-): RuntimePull[] =>
-  sortTransformerEntries((account.state.pulls ?? new Map()).entries())
-    .map(([pullId, pull]) => ({
-      deltaIndex: requireProofDeltaIndex(
-        deltaIndex,
-        pull.tokenId,
-        `PROOF_BODY_PULL_TOKEN_MISSING:${pullId}:${pull.tokenId}`,
-      ),
-      amount: pull.amount,
-      claimedRatio: Math.max(
-        0,
-        Math.min(
-          HASHLADDER_MAX_FILL_RATIO,
-          Math.floor(Number(pull.claimedRatio ?? 0)),
-        ),
-      ),
-      fullHash: pull.fullHash,
-      partialRoot: pull.partialRoot,
-      targetRole: pull.crossJurisdiction?.leg === 'target',
-    }));
+const buildProofPulls = (account: AccountReplica, deltaIndex: ReadonlyMap<number, number>): RuntimePull[] =>
+  sortTransformerEntries((account.state.pulls ?? new Map()).entries()).map(([pullId, pull]) => ({
+    deltaIndex: requireProofDeltaIndex(
+      deltaIndex,
+      pull.tokenId,
+      `PROOF_BODY_PULL_TOKEN_MISSING:${pullId}:${pull.tokenId}`,
+    ),
+    amount: pull.amount,
+    claimedRatio: Math.max(0, Math.min(HASHLADDER_MAX_FILL_RATIO, Math.floor(Number(pull.claimedRatio ?? 0)))),
+    fullHash: pull.fullHash,
+    partialRoot: pull.partialRoot,
+    targetRole: pull.crossJurisdiction?.leg === 'target',
+  }));
 
-const buildSubcontractTransformers = (
-  account: AccountReplica,
-): RuntimeTransformerClause[] =>
+const buildSubcontractTransformers = (account: AccountReplica): RuntimeTransformerClause[] =>
   Array.from(account.state.subcontracts ?? [])
     .sort(([left], [right]) => compareStableText(left, right))
     .map(([subcontractId, subcontract]) => {
-      const transformerAddress = requireContractAddress(
-        `subcontract_${subcontractId}`,
-        subcontract.transformerAddress,
-      );
+      const transformerAddress = requireContractAddress(`subcontract_${subcontractId}`, subcontract.transformerAddress);
       if (!ethers.isHexString(subcontract.encodedBatch)) {
         throw new Error(`SUBCONTRACT_ENCODED_BATCH_INVALID:${subcontractId}`);
       }
@@ -295,38 +244,62 @@ const buildSubcontractTransformers = (
       };
     });
 
+const proofBatchFits = (batch: RuntimeBatch): boolean => {
+  const atomBytes = storageAtomBytes(encodeAbi(DELTA_BATCH_SCHEMA, runtimeToBatchStruct(batch)));
+  const allowances = buildTransformerAllowances(batch);
+  return (
+    allowances.every(value => value.leftAllowance <= UINT256_MAX && value.rightAllowance <= UINT256_MAX) &&
+    atomBytes < MAX_ACCOUNT_DISPUTE_PROOF_ATOM_BYTES
+  );
+};
+
+const chunkProofItems = <T>(items: T[], makeBatch: (chunk: T[]) => RuntimeBatch): RuntimeBatch[] => {
+  const batches: RuntimeBatch[] = [];
+  let chunk: T[] = [];
+  for (const item of items) {
+    const candidate = [...chunk, item];
+    if (proofBatchFits(makeBatch(candidate))) {
+      chunk = candidate;
+      continue;
+    }
+    if (chunk.length > 0) batches.push(makeBatch(chunk));
+    chunk = [item];
+    const single = makeBatch(chunk);
+    if (!proofBatchFits(single)) {
+      throw new AccountDisputeProofBudgetError(
+        storageAtomBytes(encodeAbi(DELTA_BATCH_SCHEMA, runtimeToBatchStruct(single))),
+        batches.length,
+      );
+    }
+  }
+  if (chunk.length > 0) batches.push(makeBatch(chunk));
+  return batches;
+};
+
+/** One ephemeral ordered plan owns both signed clauses and positional arguments. */
+export const buildCanonicalProofBatches = (
+  account: AccountReplica,
+  deltaIndex: ReadonlyMap<number, number> = buildProofDeltaIndex(account).byTokenId,
+): RuntimeBatch[] => [
+  ...chunkProofItems(buildProofPayments(account, deltaIndex), payments => ({ payments, swaps: [], pulls: [] })),
+  ...chunkProofItems(buildProofSwaps(account, deltaIndex), swaps => ({ payments: [], swaps, pulls: [] })),
+  ...chunkProofItems(buildProofPulls(account, deltaIndex), pulls => ({ payments: [], swaps: [], pulls })),
+];
+
 const buildProofTransformers = (
   account: AccountReplica,
   deltaIndex: ReadonlyMap<number, number>,
   deltaTransformerAddress: string,
 ): RuntimeTransformerClause[] => {
-  const payments: RuntimeBatch = {
-    payments: buildProofPayments(account, deltaIndex),
-    swaps: [],
-    pulls: [],
-  };
-  const swaps: RuntimeBatch = {
-    payments: [],
-    swaps: buildProofSwaps(account, deltaIndex),
-    pulls: [],
-  };
-  const pulls: RuntimeBatch = {
-    payments: [],
-    swaps: [],
-    pulls: buildProofPulls(account, deltaIndex),
-  };
-  const batches = [payments, swaps, pulls].filter(batch =>
-    batch.payments.length > 0 || batch.swaps.length > 0 || batch.pulls.length > 0);
+  const batches = buildCanonicalProofBatches(account, deltaIndex);
   if (batches.length === 0) return buildSubcontractTransformers(account);
   const transformerAddress = requireContractAddress('delta_transformer', deltaTransformerAddress);
   // DeltaTransformer executes clauses sequentially. The canonical order
-  // payment→swap→pull is therefore byte-stable and economically identical to
-  // the former combined batch. Separating the three bounded collections keeps
-  // every independently persisted encodedBatch below the 10 KB record limit
-  // even when all configured collection maxima coexist. Dispute arguments
-  // duplicate the same compact tuple across the present payment/swap prefix;
-  // pulls consume no caller-supplied arguments and read Depository registry
-  // proof only. Never interleave user subcontracts with this canonical prefix.
+  // payment→swap→pull preserves every original obligation and its order. Each
+  // stock clause fits the exact storage atom and uint256 allowance domains;
+  // chunking cannot alter its linear authorized movements. Argument generation
+  // uses this same plan, including each swap chunk's counterparty-owned ratio
+  // positions. Never interleave user subcontracts with this canonical prefix.
   const batchTransformers: RuntimeTransformerClause[] = batches.map(batch => ({
     transformerAddress,
     batch,
@@ -360,11 +333,7 @@ export function buildAccountProofBody(
     rightResponseSeconds: account.state.disputeConfig.rightResponseSeconds,
     offdeltas: deltaIndex.offdeltas,
     tokenIds: deltaIndex.tokenIds,
-    transformers: buildProofTransformers(
-      account,
-      deltaIndex.byTokenId,
-      deltaTransformerAddress,
-    ),
+    transformers: buildProofTransformers(account, deltaIndex.byTokenId, deltaTransformerAddress),
   };
   const proofBodyStruct = runtimeToProofBodyStruct(runtimeProofBody);
   // This is the final boundary before the hash enters a validator's Hanko.
@@ -395,35 +364,36 @@ export function buildAccountProofBody(
 /**
  * Convert RuntimeProofBody to ABI-compatible ProofBodyStruct
  */
+function runtimeToBatchStruct(batch: RuntimeBatch): DeltaTransformer.BatchStruct {
+  return {
+    payment: batch.payments.map(p => ({
+      deltaIndex: BigInt(p.deltaIndex),
+      amount: encodeSignedAmount(p.amount),
+      revealedUntilTimestamp: BigInt(p.revealedUntilTimestamp),
+      hash: p.hash,
+    })),
+    swap: batch.swaps.map(s => ({
+      ownerIsLeft: s.ownerIsLeft,
+      addDeltaIndex: BigInt(s.addDeltaIndex),
+      addAmount: s.addAmount,
+      subDeltaIndex: BigInt(s.subDeltaIndex),
+      subAmount: s.subAmount,
+    })),
+    pull: batch.pulls.map(p => ({
+      deltaIndex: BigInt(p.deltaIndex),
+      amount: encodeSignedAmount(p.amount),
+      claimedRatio: p.claimedRatio,
+      fullHash: p.fullHash,
+      partialRoot: p.partialRoot,
+      targetRole: p.targetRole === true,
+    })),
+  };
+}
+
 function runtimeToProofBodyStruct(runtime: RuntimeProofBody): ProofBodyStruct {
   const transformers: TransformerClauseStruct[] = runtime.transformers.map(t => {
-    const batchStruct: DeltaTransformer.BatchStruct | null = 'batch' in t ? {
-      payment: t.batch.payments.map(p => ({
-        deltaIndex: BigInt(p.deltaIndex),
-        amount: p.amount,
-        revealedUntilTimestamp: BigInt(p.revealedUntilTimestamp),
-        hash: p.hash,
-      })),
-      swap: t.batch.swaps.map(s => ({
-        ownerIsLeft: s.ownerIsLeft,
-        addDeltaIndex: BigInt(s.addDeltaIndex),
-        addAmount: s.addAmount,
-        subDeltaIndex: BigInt(s.subDeltaIndex),
-        subAmount: s.subAmount,
-      })),
-      pull: t.batch.pulls.map(p => ({
-        deltaIndex: BigInt(p.deltaIndex),
-        amount: p.amount,
-        claimedRatio: p.claimedRatio,
-        fullHash: p.fullHash,
-        partialRoot: p.partialRoot,
-        targetRole: p.targetRole === true,
-      })),
-    } : null;
-
-    const encodedBatch = 'encodedBatch' in t
-      ? t.encodedBatch
-      : encodeAbi(DELTA_BATCH_SCHEMA, batchStruct!);
+    const encodedBatch =
+      'encodedBatch' in t ? t.encodedBatch : encodeAbi(DELTA_BATCH_SCHEMA, runtimeToBatchStruct(t.batch));
 
     return {
       transformerAddress: t.transformerAddress,
@@ -440,7 +410,7 @@ function runtimeToProofBodyStruct(runtime: RuntimeProofBody): ProofBodyStruct {
     watchSeed: runtime.watchSeed,
     leftResponseSeconds: runtime.leftResponseSeconds,
     rightResponseSeconds: runtime.rightResponseSeconds,
-    offdeltas: runtime.offdeltas,
+    offdeltas: runtime.offdeltas.map(encodeInt512),
     tokenIds: runtime.tokenIds.map(id => BigInt(id)),
     transformers,
   };
@@ -450,9 +420,7 @@ function getCanonicalAccountKey(account: DisputeHashState): string {
   const leftEntity = String(account.leftEntity).toLowerCase();
   const rightEntity = String(account.rightEntity).toLowerCase();
   const [first, second] =
-    leftEntity < rightEntity
-      ? [account.leftEntity, account.rightEntity]
-      : [account.rightEntity, account.leftEntity];
+    leftEntity < rightEntity ? [account.leftEntity, account.rightEntity] : [account.rightEntity, account.leftEntity];
   return ethers.solidityPacked(['bytes32', 'bytes32'], [first, second]);
 }
 
@@ -496,14 +464,7 @@ export function createDisputeProofHashWithNonce(
 ): string {
   const chKey = getCanonicalAccountKey(account);
   const watchSeed = normalizeAccountWatchSeed(account.watchSeed, 'DISPUTE_MESSAGE');
-  return hashDisputeProofHankoPayload(
-    domain,
-    chKey,
-    nonce,
-    proposerIsLeft,
-    proofBodyHash,
-    watchSeed,
-  );
+  return hashDisputeProofHankoPayload(domain, chKey, nonce, proposerIsLeft, proofBodyHash, watchSeed);
 }
 
 /** Matches Account.sol MessageType.CooperativeDisputeProof exactly. */
@@ -542,31 +503,21 @@ export function createSettlementHashWithNonce(
   }>,
   forgiveDebtsInTokenIds: readonly number[],
   domain: DepositoryHankoDomain,
-  nonce: number
+  nonce: number,
 ): string {
-  // Depository/Account cap every reserve, collateral and |ondelta| at
-  // MAX_MONEY (E8); a diff beyond it can never settle, so refuse to sign or
-  // verify it.
+  // Every movement is sign + uint256 magnitude. The accumulated allocation
+  // is wider and is validated independently when the proof is built.
   for (const diff of diffs) {
-    assertMoneyMagnitude(diff.leftDiff, `SETTLEMENT_LEFT_DIFF:token=${diff.tokenId}`);
-    assertMoneyMagnitude(diff.rightDiff, `SETTLEMENT_RIGHT_DIFF:token=${diff.tokenId}`);
-    assertMoneyMagnitude(diff.collateralDiff, `SETTLEMENT_COLLATERAL_DIFF:token=${diff.tokenId}`);
-    assertMoneyMagnitude(diff.ondeltaDiff, `SETTLEMENT_ONDELTA_DIFF:token=${diff.tokenId}`);
+    assertSignedAmount(diff.leftDiff, `SETTLEMENT_LEFT_DIFF:token=${diff.tokenId}`);
+    assertSignedAmount(diff.rightDiff, `SETTLEMENT_RIGHT_DIFF:token=${diff.tokenId}`);
+    assertSignedAmount(diff.collateralDiff, `SETTLEMENT_COLLATERAL_DIFF:token=${diff.tokenId}`);
+    assertSignedAmount(diff.ondeltaDiff, `SETTLEMENT_ONDELTA_DIFF:token=${diff.tokenId}`);
   }
   // Account key is canonical (left:right)
-  const accountKey = ethers.solidityPacked(
-    ['bytes32', 'bytes32'],
-    [account.leftEntity, account.rightEntity]
-  );
+  const accountKey = ethers.solidityPacked(['bytes32', 'bytes32'], [account.leftEntity, account.rightEntity]);
 
   // Match Account.sol CooperativeUpdate encoding exactly:
   // abi.encode(MessageType.CooperativeUpdate, block.chainid, address(this),
   //   acct_key, s.nonce, s.diffs, s.forgiveDebtsInTokenIds)
-  return hashCooperativeUpdateHankoPayload(
-    domain,
-    accountKey,
-    nonce,
-    diffs,
-    forgiveDebtsInTokenIds,
-  );
+  return hashCooperativeUpdateHankoPayload(domain, accountKey, nonce, diffs, forgiveDebtsInTokenIds);
 }

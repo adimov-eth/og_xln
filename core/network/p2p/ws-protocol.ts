@@ -68,6 +68,7 @@ type RuntimeWsMessageType =
   | 'hello'
   | 'hello_challenge'
   | 'hello_ack'
+  | 'delivery_ready'
   | 'entity_inputs'
   | 'debug_event'
   | 'gossip_request'
@@ -178,6 +179,10 @@ const validateRuntimeWsEnvelope = (value: unknown): RuntimeWsEnvelope => {
     case 'hello_ack':
       requiredFields(message, ['to'], ['from', 'fromEncryptionPubKey', 'sessionPubKey']);
       break;
+    case 'delivery_ready':
+      requiredFields(message, ['id', 'from', 'to', 'payload'], ['fromEncryptionPubKey']);
+      if (typeof message['payload'] !== 'boolean') throw new Error('WS_MESSAGE_DELIVERY_READY_INVALID');
+      break;
     case 'entity_inputs':
       requiredFields(
         message,
@@ -255,6 +260,7 @@ const RUNTIME_WS_MESSAGE_TYPES = new Set<RuntimeWsMessageType>([
   'hello',
   'hello_challenge',
   'hello_ack',
+  'delivery_ready',
   'entity_inputs',
   'debug_event',
   'gossip_request',

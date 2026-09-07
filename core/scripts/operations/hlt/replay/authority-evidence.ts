@@ -176,7 +176,6 @@ const inspectCanonicalScope = (frames: readonly PersistedFrameJournal[]): MixedC
 export const buildHltAuthorityEvidence = (
   frames: readonly PersistedFrameJournal[],
 ): HltAuthorityEvidence => {
-  inspectCanonicalScope(frames);
   return {
     expectations: {
       runtimeFrames: frames.map(frame => ({

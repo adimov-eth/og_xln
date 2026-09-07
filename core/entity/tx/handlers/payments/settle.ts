@@ -14,6 +14,7 @@
 import type { AccountFrame, AccountTx, SettlementDiff, SettlementWorkspace , AccountReplica } from '../../../../types/account';
 import type { EntityInput, EntityState , HashToSign } from '../../../types';
 import type { EntityTx } from '../../../../types/entity-tx';
+import { rejectFailure } from '../../../../protocol/errors/failure-taxonomy';
 import { prepareEntityTxState } from '../../../state-clone';
 import { ensureEntityCollectionCandidate } from '../../../state/persistent-collection-map';
 import { getAccountPerspective } from '../../../../account/state/perspective';
@@ -648,7 +649,11 @@ export async function handleSettleExecute(
   }
 
   const workspace = account.state.settlementWorkspace;
-  assertNoPendingSettlementTransition(account);
+  // User execution can race the hub scheduler after observing ready_to_submit.
+  // Reject before batch or workspace mutation; the existing signed work wins.
+  if (hasPendingSettlementTransition(account)) {
+    throw rejectFailure('SETTLEMENT_TRANSITION_ALREADY_PENDING');
+  }
   const workspaceHash = assertCanonicalSettlementWorkspace(account.state, workspace);
   if (workspace.status === 'submitted') {
     addMessage(newState, `⏭️ settle_execute skipped: settlement already submitted`);

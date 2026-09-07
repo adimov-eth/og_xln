@@ -1,4 +1,5 @@
 import type { Delta } from '../../types/account';
+import { UINT256_MAX } from '../../protocol/boundary/integer-ranges';
 
 export type HoldSide = 'left' | 'right';
 
@@ -14,8 +15,15 @@ function ensureHoldAdd(side: HoldSide, amount: bigint): string | undefined {
 export function addHold(delta: Delta, side: HoldSide, amount: bigint): string | undefined {
   const error = ensureHoldAdd(side, amount);
   if (error) return error;
-  if (side === 'left') delta.leftHold += amount;
-  else delta.rightHold += amount;
+  const currentHold = getHold(delta, side);
+  const nextHold = currentHold + amount;
+  // Distinct signed obligations share one uint256 hold. Available credit plus
+  // collateral may exceed that representation even when this amount fits.
+  if (nextHold > UINT256_MAX) {
+    return `HOLD_ADD_OVERFLOW:${side} hold=${currentHold} amount=${amount}`;
+  }
+  if (side === 'left') delta.leftHold = nextHold;
+  else delta.rightHold = nextHold;
   return undefined;
 }
 

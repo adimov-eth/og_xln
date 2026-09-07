@@ -2,6 +2,7 @@ import type { JurisdictionEvent } from '../../../types/jurisdiction-events';
 import { normalizeJurisdictionEvent } from '../../machine/events/event-normalization';
 import { CANONICAL_J_EVENTS } from '../../machine/event-catalog';
 import type { JEventIngress } from '../types';
+import { decodeInt512, decodeUint512 } from '../../../protocol/crypto/abi-money';
 
 const CANONICAL_EVENT_NAMES = new Set<string>(CANONICAL_J_EVENTS);
 
@@ -49,7 +50,7 @@ const expandAccountSettled = (
           leftReserve: token[1] ?? token['leftReserve'],
           rightReserve: token[2] ?? token['rightReserve'],
           collateral: token[3] ?? token['collateral'],
-          ondelta: token[4] ?? token['ondelta'],
+          ondelta: decodeInt512(token[4] ?? token['ondelta']),
           nonce,
         },
       });
@@ -125,6 +126,17 @@ const withTransportMetadata = (
   ...(eventIndex !== undefined ? { eventIndex } : {}),
 });
 
+/** Contract tuples are decoded once; committed J events keep decimal money. */
+const decodeDebtPayload = (event: JEventIngress): Record<string, unknown> => {
+  const field = event.name === 'DebtCreated' ? 'amount'
+    : event.name === 'DebtEnforced' ? 'remainingAmount'
+      : event.name === 'DebtForgiven' ? 'amountForgiven' : null;
+  return field === null ? event.args : {
+    ...event.args,
+    [field]: decodeUint512(event.args[field]),
+  };
+};
+
 export const rawEventToJEvents = (
   event: JEventIngress,
   entityId: string,
@@ -135,7 +147,7 @@ export const rawEventToJEvents = (
   assertRawEventSpecificFields(event);
   const payloads = event.name === 'AccountSettled'
     ? expandAccountSettled(event, entityId)
-    : [{ type: event.name, data: event.args }];
+    : [{ type: event.name, data: decodeDebtPayload(event) }];
   if (payloads.length === 0) {
     throw new Error(`J_EVENT_CANONICAL_PAYLOAD_EMPTY:${event.name}`);
   }

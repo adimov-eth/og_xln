@@ -1,4 +1,4 @@
-import { Interface, JsonRpcProvider, Wallet, ethers } from 'ethers';
+import { JsonRpcProvider, Wallet, ethers } from 'ethers';
 import { Depository__factory } from '../../jurisdictions/typechain-types/index.ts';
 import {
   requireBoundaryRecord,
@@ -7,6 +7,8 @@ import {
 import { deserializeTaggedJson, serializeTaggedJson } from '../protocol/serialization';
 import { createXlnJsonRpcProvider } from '../jurisdiction/adapter';
 import { computeAccountKey } from '../jurisdiction/adapter/events/contract-codec';
+import { PROOF_BODY_ABI } from '../protocol/dispute/proof-body';
+import { assertInt512, encodeInt512 } from '../protocol/crypto/abi-money';
 import type {
   TowerCounterDisputeRemedy,
   TowerFinalDisputeProof,
@@ -15,17 +17,9 @@ import type {
 import { decryptTowerPayloadWithWatchSeed } from '../storage/recovery/bundle/crypto';
 import type { LastResortTowerAppointment, WatchtowerStore, StoredTowerActionReceipt } from './store';
 
-const DEPOSITORY_MINIMAL_ABI = [
-  'function _accounts(bytes acctKey) view returns (uint256 nonce, bytes32 disputeHash, uint256 disputeTimeout, uint256 disputeStartTimestamp, uint32 leftResponseSeconds, uint32 rightResponseSeconds, bytes32 disputeInitialProofbodyHash, bool disputeInitialProposerIsLeft, uint256 disputeCounterNonce, bytes32 disputeCounterProofbodyHash, bool disputeCounterProposerIsLeft, bytes32 starterInitialArgumentsCommitment, bytes32 starterCounterArgumentsCommitment, bytes32 starterCounterProofCommitment, bool disputeStartedByLeft)',
-  'function watchtowerCounterDispute(bytes32 entityId, (bytes32 counterentity,uint256 initialNonce,uint256 finalNonce,bool proposerIsLeft,bytes32 initialProofbodyHash,(bytes32 watchSeed,uint32 leftResponseSeconds,uint32 rightResponseSeconds,int256[] offdeltas,uint256[] tokenIds,(address transformerAddress,bytes encodedBatch,(uint256 deltaIndex,uint256 rightAllowance,uint256 leftAllowance)[] allowances)[] transformers) finalProofbody,bytes starterArguments,bytes otherArguments,bytes sig,bool startedByLeft,bool cooperative) params, uint256 lastResortWindowSeconds, uint256 appointmentSequence, bytes ownerAuthorizationHanko) returns (bool)',
-  'event DisputeStarted(bytes32 indexed sender, bytes32 indexed counterentity, uint256 indexed nonce, bool proposerIsLeft, bytes32 proofbodyHash, bytes32 watchSeed, bytes starterInitialArguments, bytes starterCounterArguments, bytes32 starterCounterProofCommitment, uint256 disputeTimeout, uint256 disputeStartTimestamp, uint32 leftResponseSeconds, uint32 rightResponseSeconds)',
-] as const;
-
-const DEPOSITORY_INTERFACE = new Interface(DEPOSITORY_MINIMAL_ABI);
+const DEPOSITORY_INTERFACE = Depository__factory.createInterface();
 const ABI_CODER = ethers.AbiCoder.defaultAbiCoder();
-const PROOF_BODY_PARAM = ethers.ParamType.from(
-  'tuple(bytes32 watchSeed,uint32 leftResponseSeconds,uint32 rightResponseSeconds,int256[] offdeltas,uint256[] tokenIds,tuple(address transformerAddress,bytes encodedBatch,tuple(uint256 deltaIndex,uint256 rightAllowance,uint256 leftAllowance)[] allowances)[] transformers)',
-);
+const PROOF_BODY_PARAM = ethers.ParamType.from(PROOF_BODY_ABI);
 const ZERO_HASH = ethers.ZeroHash.toLowerCase();
 
 type WatchtowerLog = { topics: readonly string[]; data: string };
@@ -153,6 +147,7 @@ const normalizeFinalProofbody = (
   if (!Array.isArray(offdeltas) || offdeltas.some(delta => typeof delta !== 'bigint')) {
     throw new Error('WATCHTOWER_REMEDY_FINAL_PROOFBODY_OFFDELTAS_INVALID');
   }
+  for (const delta of offdeltas) assertInt512(delta, 'WATCHTOWER_REMEDY_OFFDELTA');
   if (
     !Array.isArray(tokenIds)
     || tokenIds.some(tokenId => typeof tokenId !== 'bigint' || tokenId < 0n)
@@ -232,10 +227,15 @@ const normalizeFinalDisputeProof = (value: unknown): TowerFinalDisputeProof => {
   };
 };
 
+const towerProofBodyForAbi = (proofBody: TowerFinalDisputeProof['finalProofbody']) => ({
+  ...proofBody,
+  offdeltas: proofBody.offdeltas.map(encodeInt512),
+});
+
 const computeProofBodyHash = (
   proofBody: TowerFinalDisputeProof['finalProofbody'],
 ): string =>
-  ethers.keccak256(ABI_CODER.encode([PROOF_BODY_PARAM], [proofBody])).toLowerCase();
+  ethers.keccak256(ABI_CODER.encode([PROOF_BODY_PARAM], [towerProofBodyForAbi(proofBody)])).toLowerCase();
 
 export const encodeTowerCounterDisputeRemedy = (remedy: TowerCounterDisputeRemedy): string =>
   serializeTaggedJson(remedy);
@@ -360,7 +360,7 @@ type WatchtowerSweepOptions = {
         finalNonce: number;
         proposerIsLeft: boolean;
         initialProofbodyHash: string;
-        finalProofbody: TowerFinalDisputeProof['finalProofbody'];
+        finalProofbody: ReturnType<typeof towerProofBodyForAbi>;
         starterArguments: string;
         otherArguments: string;
         sig: string;
@@ -907,7 +907,7 @@ const processLastResortAppointment = async (
       finalNonce: remedy.latestProof.finalNonce,
       proposerIsLeft: remedy.latestProof.proposerIsLeft,
       initialProofbodyHash: disputeContext.initialProofbodyHash,
-      finalProofbody: remedy.latestProof.finalProofbody,
+      finalProofbody: towerProofBodyForAbi(remedy.latestProof.finalProofbody),
       starterArguments,
       otherArguments,
       sig: remedy.latestProof.sig,

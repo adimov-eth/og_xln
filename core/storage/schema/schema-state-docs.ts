@@ -26,39 +26,66 @@ import {
 } from './schema-primitives';
 
 const ENTITY_REQUIRED = [
-  'entityId', 'height', 'timestamp', 'nonces', 'proposals', 'config',
-  'reserves', 'lastFinalizedJHeight', 'profile', 'paybook',
+  'entityId',
+  'height',
+  'timestamp',
+  'nonces',
+  'proposals',
+  'config',
+  'reserves',
+  'lastFinalizedJHeight',
+  'profile',
+  'paybook',
   'entityEncryptionPublicKey',
 ] as const;
 
 const ENTITY_OPTIONAL = [
-  'entityCommandNonces', 'prevFrameHash', 'leaderState', 'externalWallet',
-  'deferredAccountProposals', 'settlementContinuations', 'jHistoryFinality', 'certifiedBoardState',
-  'crontabState', 'jBatchState', 'entityProviderActionState',
-  'outDebtsByToken', 'inDebtsByToken', 'swapTradingPairs',
+  'entityCommandNonces',
+  'prevFrameHash',
+  'leaderState',
+  'externalWallet',
+  'deferredAccountProposals',
+  'settlementContinuations',
+  'jHistoryFinality',
+  'certifiedBoardState',
+  'crontabState',
+  'jBatchState',
+  'entityProviderActionState',
+  'outDebtsByToken',
+  'inDebtsByToken',
+  'swapTradingPairs',
   'crossJurisdictionSwaps',
   'crossJurisdictionAuthorizations',
-  'crossJurisdictionBookAdmissions', 'hubRebalanceConfig', 'orderbookHubProfile',
-  'orderbookReferrals', 'orderbookPairDimensions', 'lending',
+  'crossJurisdictionBookAdmissions',
+  'hubRebalanceConfig',
+  'orderbookHubProfile',
+  'orderbookReferrals',
+  'orderbookPairDimensions',
+  'lending',
 ] as const;
 
 const HUB_REBALANCE_CONFIG_REQUIRED = [
-  'matchingStrategy', 'policyVersion', 'routingFeePPM', 'baseFee', 'rebalanceLiquidityFeeBps',
+  'matchingStrategy',
+  'policyVersion',
+  'routingFeePPM',
+  'baseFee',
+  'rebalanceLiquidityFeeBps',
 ] as const;
 const HUB_REBALANCE_CONFIG_OPTIONAL = [
-  'hubName', 'swapTakerFeeBps', 'disputeAutoFinalizeMode', 'minCollateralThreshold',
-  'c2rWithdrawSoftLimit', 'rebalanceBaseFee', 'rebalanceGasFee', 'rebalanceTimeoutMs',
+  'hubName',
+  'swapTakerFeeBps',
+  'disputeAutoFinalizeMode',
+  'minCollateralThreshold',
+  'c2rWithdrawSoftLimit',
+  'rebalanceBaseFee',
+  'rebalanceGasFee',
+  'rebalanceTimeoutMs',
 ] as const;
 
 const validateStorageHubRebalanceConfig = (value: unknown, code: string): void => {
   if (value === undefined) return;
   const config = requireBoundaryRecord(value, code);
-  requireExactBoundaryKeys(
-    config,
-    HUB_REBALANCE_CONFIG_REQUIRED,
-    HUB_REBALANCE_CONFIG_OPTIONAL,
-    `${code}_FIELDS`,
-  );
+  requireExactBoundaryKeys(config, HUB_REBALANCE_CONFIG_REQUIRED, HUB_REBALANCE_CONFIG_OPTIONAL, `${code}_FIELDS`);
   if (!['amount', 'time', 'fee'].includes(String(config['matchingStrategy']))) {
     throw new Error(`${code}_MATCHING_STRATEGY`);
   }
@@ -67,27 +94,39 @@ const validateStorageHubRebalanceConfig = (value: unknown, code: string): void =
   requireStorageBigInt(config['baseFee'], `${code}_BASE_FEE`);
   requireStorageBigInt(config['rebalanceLiquidityFeeBps'], `${code}_LIQUIDITY_FEE_BPS`, 0n, 10_000n);
   if (config['hubName'] !== undefined) requireStorageString(config['hubName'], `${code}_HUB_NAME`);
-  if (config['swapTakerFeeBps'] !== undefined) requireBoundaryInteger(config['swapTakerFeeBps'], `${code}_SWAP_TAKER_FEE_BPS`);
-  if (config['disputeAutoFinalizeMode'] !== undefined && config['disputeAutoFinalizeMode'] !== 'auto' && config['disputeAutoFinalizeMode'] !== 'ignore') {
+  if (config['swapTakerFeeBps'] !== undefined)
+    requireBoundaryInteger(config['swapTakerFeeBps'], `${code}_SWAP_TAKER_FEE_BPS`);
+  if (
+    config['disputeAutoFinalizeMode'] !== undefined &&
+    config['disputeAutoFinalizeMode'] !== 'auto' &&
+    config['disputeAutoFinalizeMode'] !== 'ignore'
+  ) {
     throw new Error(`${code}_DISPUTE_AUTO_FINALIZE_MODE`);
   }
   for (const field of ['minCollateralThreshold', 'c2rWithdrawSoftLimit', 'rebalanceBaseFee', 'rebalanceGasFee']) {
     if (config[field] !== undefined) requireStorageBigInt(config[field], `${code}_${field}`);
   }
-  if (config['rebalanceTimeoutMs'] !== undefined) requireBoundaryInteger(config['rebalanceTimeoutMs'], `${code}_REBALANCE_TIMEOUT_MS`);
+  if (config['rebalanceTimeoutMs'] !== undefined)
+    requireBoundaryInteger(config['rebalanceTimeoutMs'], `${code}_REBALANCE_TIMEOUT_MS`);
 };
 
-const validateStorageOrderbookHubProfile = (
-  value: unknown,
-  entityId: string,
-  code: string,
-): void => {
+const validateStorageOrderbookHubProfile = (value: unknown, entityId: string, code: string): void => {
   if (value === undefined) return;
   const profile = requireBoundaryRecord(value, code);
-  requireExactBoundaryKeys(profile, [
-    'entityId', 'name', 'spreadDistribution', 'referenceTokenId',
-    'usdQuoteAuthorityEntityId', 'minTradeSize', 'supportedPairs',
-  ], [], `${code}_FIELDS`);
+  requireExactBoundaryKeys(
+    profile,
+    [
+      'entityId',
+      'name',
+      'spreadDistribution',
+      'referenceTokenId',
+      'usdQuoteAuthorityEntityId',
+      'minTradeSize',
+      'supportedPairs',
+    ],
+    [],
+    `${code}_FIELDS`,
+  );
   if (requireStorageString(profile['entityId'], `${code}_ENTITY`) !== entityId) {
     throw new Error(`${code}_ENTITY_MISMATCH`);
   }
@@ -96,8 +135,9 @@ const validateStorageOrderbookHubProfile = (
   if (!/^0x[0-9a-f]{64}$/.test(authority)) throw new Error(`${code}_USD_AUTHORITY`);
   requireBoundaryInteger(profile['referenceTokenId'], `${code}_REFERENCE_TOKEN`, 1);
   requireStorageBigInt(profile['minTradeSize'], `${code}_MIN_TRADE`, 0n);
-  requireStorageArray(profile['supportedPairs'], `${code}_SUPPORTED_PAIRS`)
-    .forEach((pair, index) => requireStorageString(pair, `${code}_PAIR_${index}`));
+  requireStorageArray(profile['supportedPairs'], `${code}_SUPPORTED_PAIRS`).forEach((pair, index) =>
+    requireStorageString(pair, `${code}_PAIR_${index}`),
+  );
   const spread = requireBoundaryRecord(profile['spreadDistribution'], `${code}_SPREAD`);
   requireExactBoundaryKeys(
     spread,
@@ -123,18 +163,10 @@ const validateStorageOrderbookPairDimensions = (value: unknown, code: string): v
     if (!match) throw new Error(`${code}_PAIR_ID`);
     const leftTokenId = requireBoundaryInteger(Number(match[1]), `${code}_LEFT_TOKEN`);
     const rightTokenId = requireBoundaryInteger(Number(match[2]), `${code}_RIGHT_TOKEN`);
-    if (
-      leftTokenId <= 0 ||
-      leftTokenId >= rightTokenId ||
-      rightTokenId > TOKENS.MAX_TOKEN_ID
-    ) throw new Error(`${code}_PAIR_ID`);
+    if (leftTokenId <= 0 || leftTokenId >= rightTokenId || rightTokenId > TOKENS.MAX_TOKEN_ID)
+      throw new Error(`${code}_PAIR_ID`);
     const dimension = requireBoundaryRecord(dimensionValue, `${code}_DIMENSION`);
-    requireExactBoundaryKeys(
-      dimension,
-      ['baseTokenDecimals', 'quoteTokenDecimals'],
-      [],
-      `${code}_DIMENSION_FIELDS`,
-    );
+    requireExactBoundaryKeys(dimension, ['baseTokenDecimals', 'quoteTokenDecimals'], [], `${code}_DIMENSION_FIELDS`);
     for (const field of ['baseTokenDecimals', 'quoteTokenDecimals']) {
       if (requireBoundaryInteger(dimension[field], `${code}_${field}`) > 255) {
         throw new Error(`${code}_${field}`);
@@ -144,31 +176,63 @@ const validateStorageOrderbookPairDimensions = (value: unknown, code: string): v
 };
 
 const ACCOUNT_REPLICA_REQUIRED = [
-  'state', 'status', 'mempool', 'currentFrame', 'currentHeight',
-  'rollbackCount', 'proofHeader',
-  'pendingWithdrawals', 'shadow',
+  'state',
+  'status',
+  'mempool',
+  'currentFrame',
+  'currentHeight',
+  'rollbackCount',
+  'proofHeader',
+  'pendingWithdrawals',
+  'shadow',
 ] as const;
 
 const ACCOUNT_REPLICA_OPTIONAL = [
-  'pendingFrame', 'pendingAccountInput',
-  'lastOutboundAckFrame', 'lastRollbackFrameHash',
-  'currentFrameHanko', 'counterpartyFrameHanko', 'boardHankoRefreshMigration',
-  'counterpartyBoardHankoRefresh', 'currentDisputeProofHanko', 'currentDisputeProofNonce',
-  'currentDisputeProofBodyHash', 'currentDisputeHash', 'counterpartyDisputeProofHanko',
-  'counterpartyDisputeProofNonce', 'counterpartyDisputeProofBodyHash',
-  'currentDisputeProofProposerIsLeft', 'counterpartyDisputeProofProposerIsLeft',
-  'counterpartyDisputeHash', 'counterpartySettlementHanko', 'disputePrepare',
-  'activeDispute', 'publicPinned',
+  'pendingFrame',
+  'pendingAccountInput',
+  'lastOutboundAckFrame',
+  'lastRollbackFrameHash',
+  'currentFrameHanko',
+  'counterpartyFrameHanko',
+  'boardHankoRefreshMigration',
+  'counterpartyBoardHankoRefresh',
+  'currentDisputeProofHanko',
+  'currentDisputeProofNonce',
+  'currentDisputeProofBodyHash',
+  'currentDisputeHash',
+  'counterpartyDisputeProofHanko',
+  'counterpartyDisputeProofNonce',
+  'counterpartyDisputeProofBodyHash',
+  'currentDisputeProofProposerIsLeft',
+  'counterpartyDisputeProofProposerIsLeft',
+  'counterpartyDisputeHash',
+  'counterpartySettlementHanko',
+  'disputePrepare',
+  'activeDispute',
+  'publicPinned',
 ] as const;
 const ACCOUNT_STATE_REQUIRED = [
-  'leftEntity', 'rightEntity', 'domain', 'watchSeed', 'deltas', 'locks',
-  'swapOffers', 'leftPendingJClaims', 'rightPendingJClaims',
-  'lastFinalizedJHeight', 'disputeConfig', 'jNonce', 'requestedRebalance',
+  'leftEntity',
+  'rightEntity',
+  'domain',
+  'watchSeed',
+  'deltas',
+  'locks',
+  'swapOffers',
+  'leftPendingJClaims',
+  'rightPendingJClaims',
+  'lastFinalizedJHeight',
+  'disputeConfig',
+  'jNonce',
+  'requestedRebalance',
   'requestedRebalanceFeeState',
 ] as const;
 
 const ACCOUNT_STATE_OPTIONAL = [
-  'pulls', 'subcontracts', 'lendingIntents', 'settlementWorkspace',
+  'pulls',
+  'subcontracts',
+  'lendingIntents',
+  'settlementWorkspace',
   'rebalanceFeePolicies',
 ] as const;
 const validateStorageDelta = (value: unknown, code: string): number => {
@@ -176,10 +240,19 @@ const validateStorageDelta = (value: unknown, code: string): number => {
   requireExactBoundaryKeys(delta, HASHABLE_DELTA_FIELDS, [], `${code}_FIELDS`);
   const tokenId = requireBoundaryInteger(delta['tokenId'], `${code}_TOKEN`);
   if (tokenId > TOKENS.MAX_TOKEN_ID) throw new Error(`${code}_TOKEN`);
-  for (const field of ['collateral', 'leftCreditLimit', 'rightCreditLimit', 'leftAllowance', 'rightAllowance', 'leftHold', 'rightHold']) {
-    requireStorageBigInt(delta[field], `${code}_${field}`, 0n, field.endsWith('CreditLimit') ? FINANCIAL.MAX_CREDIT_LIMIT : UINT256_MAX);
+  for (const field of [
+    'collateral',
+    'leftCreditLimit',
+    'rightCreditLimit',
+    'leftAllowance',
+    'rightAllowance',
+    'leftHold',
+    'rightHold',
+  ]) {
+    requireStorageBigInt(delta[field], `${code}_${field}`, 0n, UINT256_MAX);
   }
-  for (const field of ['ondelta', 'offdelta']) requireStorageBigInt(delta[field], `${code}_${field}`, INT256_MIN, INT256_MAX);
+  for (const field of ['ondelta', 'offdelta'])
+    requireStorageBigInt(delta[field], `${code}_${field}`, INT256_MIN, INT256_MAX);
   return tokenId;
 };
 
@@ -191,24 +264,13 @@ const validateStorageAccountStateCore = (state: Record<string, unknown>, code: s
   }
   requireBoundaryInteger(state['jNonce'], `${code}_J_NONCE`);
   const dispute = requireBoundaryRecord(state['disputeConfig'], `${code}_DISPUTE`);
-  requireExactBoundaryKeys(
-    dispute,
-    ['leftResponseSeconds', 'rightResponseSeconds'],
-    [],
-    `${code}_DISPUTE_FIELDS`,
-  );
+  requireExactBoundaryKeys(dispute, ['leftResponseSeconds', 'rightResponseSeconds'], [], `${code}_DISPUTE_FIELDS`);
   // Account clocks are signed uint32 seconds, not uint16 reveal ratios. A user
   // default is 86,400 seconds, so truncating this storage boundary to uint16
   // makes a healthy hub fail-stop on its first authoritative restart.
   canonicalAccountDisputeConfig({
-    leftResponseSeconds: requireBoundaryInteger(
-      dispute['leftResponseSeconds'],
-      `${code}_leftResponseSeconds`,
-    ),
-    rightResponseSeconds: requireBoundaryInteger(
-      dispute['rightResponseSeconds'],
-      `${code}_rightResponseSeconds`,
-    ),
+    leftResponseSeconds: requireBoundaryInteger(dispute['leftResponseSeconds'], `${code}_leftResponseSeconds`),
+    rightResponseSeconds: requireBoundaryInteger(dispute['rightResponseSeconds'], `${code}_rightResponseSeconds`),
   });
 };
 
@@ -217,15 +279,22 @@ const validateStorageAccountStateMaps = (state: AccountState, code: string): voi
   if (locks.size > LIMITS.MAX_ACCOUNT_HTLC_LOCKS) throw new Error(`${code}_LOCKS_LIMIT`);
   for (const [lockId, lock] of locks) {
     const row = requireBoundaryRecord(lock, `${code}_LOCK`);
-    if (requireStorageString(lockId, `${code}_LOCK_KEY`) !== requireStorageString(row['lockId'], `${code}_LOCK_ID`)) throw new Error(`${code}_LOCK_KEY_MISMATCH`);
+    if (requireStorageString(lockId, `${code}_LOCK_KEY`) !== requireStorageString(row['lockId'], `${code}_LOCK_ID`))
+      throw new Error(`${code}_LOCK_KEY_MISMATCH`);
     requireStorageString(row['hashlock'], `${code}_LOCK_HASHLOCK`);
-    requireStorageBigInt(row['amount'], `${code}_LOCK_AMOUNT`, FINANCIAL.MIN_PAYMENT_AMOUNT, FINANCIAL.MAX_PAYMENT_AMOUNT);
+    requireStorageBigInt(
+      row['amount'],
+      `${code}_LOCK_AMOUNT`,
+      FINANCIAL.MIN_PAYMENT_AMOUNT,
+      row['senderIsLeft'] === true ? -INT256_MIN : INT256_MAX,
+    );
   }
   if (state.pulls !== undefined) {
     for (const pull of requireStorageMap(state.pulls, `${code}_PULLS`).values()) {
       const row = requireBoundaryRecord(pull, `${code}_PULL`);
       const amount = row['amount'];
-      if (typeof amount !== 'bigint' || amount === 0n || (amount < 0n ? -amount : amount) > FINANCIAL.MAX_PAYMENT_AMOUNT) throw new Error(`${code}_PULL_AMOUNT`);
+      if (typeof amount !== 'bigint' || amount === 0n || amount < INT256_MIN || amount > INT256_MAX)
+        throw new Error(`${code}_PULL_AMOUNT`);
       requireStorageHash(row['fullHash'], `${code}_PULL_FULL_HASH`);
       requireStorageHash(row['partialRoot'], `${code}_PULL_PARTIAL_ROOT`);
       const binding = requireBoundaryRecord(row['crossJurisdiction'], `${code}_PULL_CROSS_J`);
@@ -238,15 +307,27 @@ const validateStorageAccountStateMaps = (state: AccountState, code: string): voi
   }
   for (const offer of requireStorageMap(state.swapOffers, `${code}_OFFERS`).values()) {
     const row = requireBoundaryRecord(offer, `${code}_OFFER`);
-    for (const field of ['giveTokenId', 'wantTokenId']) if (requireBoundaryInteger(row[field], `${code}_OFFER_TOKEN`) > TOKENS.MAX_TOKEN_ID) throw new Error(`${code}_OFFER_TOKEN`);
+    for (const field of ['giveTokenId', 'wantTokenId'])
+      if (requireBoundaryInteger(row[field], `${code}_OFFER_TOKEN`) > TOKENS.MAX_TOKEN_ID)
+        throw new Error(`${code}_OFFER_TOKEN`);
     for (const field of ['giveTokenDecimals', 'wantTokenDecimals']) {
       if (requireBoundaryInteger(row[field], `${code}_OFFER_DECIMALS`) > 255) {
         throw new Error(`${code}_OFFER_DECIMALS`);
       }
     }
     // Zero persisted offers are inert financial state and must not survive hydration.
-    const giveAmount = requireStorageBigInt(row['giveAmount'], `${code}_OFFER_GIVE`, FINANCIAL.MIN_PAYMENT_AMOUNT, FINANCIAL.MAX_PAYMENT_AMOUNT);
-    const wantAmount = requireStorageBigInt(row['wantAmount'], `${code}_OFFER_WANT`, FINANCIAL.MIN_PAYMENT_AMOUNT, FINANCIAL.MAX_PAYMENT_AMOUNT);
+    const giveAmount = requireStorageBigInt(
+      row['giveAmount'],
+      `${code}_OFFER_GIVE`,
+      FINANCIAL.MIN_PAYMENT_AMOUNT,
+      UINT256_MAX,
+    );
+    const wantAmount = requireStorageBigInt(
+      row['wantAmount'],
+      `${code}_OFFER_WANT`,
+      FINANCIAL.MIN_PAYMENT_AMOUNT,
+      UINT256_MAX,
+    );
     requireStorageBigInt(row['maxFee'], `${code}_OFFER_MAX_FEE`, 0n, wantAmount);
     requireStorageBigInt(row['minNetReceive'], `${code}_OFFER_MIN_NET`, 0n, wantAmount);
     requireStorageBigInt(row['priceTicks'], `${code}_OFFER_PRICE_TICKS`, 1n);
@@ -264,7 +345,14 @@ const validateStorageAccountStateMaps = (state: AccountState, code: string): voi
       const row = requireBoundaryRecord(subcontract, `${code}_SUBCONTRACT`);
       const address = requireStorageString(row['transformerAddress'], `${code}_TRANSFORMER`);
       if (!/^0x[0-9a-f]{40}$/.test(address)) throw new Error(`${code}_TRANSFORMER`);
-      for (const allowance of requireStorageArray(row['allowances'], `${code}_ALLOWANCES`)) for (const side of ['leftAllowance', 'rightAllowance']) requireStorageBigInt(requireBoundaryRecord(allowance, `${code}_ALLOWANCE`)[side], `${code}_ALLOWANCE_${side}`, 0n, UINT256_MAX);
+      for (const allowance of requireStorageArray(row['allowances'], `${code}_ALLOWANCES`))
+        for (const side of ['leftAllowance', 'rightAllowance'])
+          requireStorageBigInt(
+            requireBoundaryRecord(allowance, `${code}_ALLOWANCE`)[side],
+            `${code}_ALLOWANCE_${side}`,
+            0n,
+            UINT256_MAX,
+          );
     }
   }
   if (state.settlementWorkspace !== undefined) {
@@ -276,7 +364,9 @@ const validateStorageAccountStateMaps = (state: AccountState, code: string): voi
 };
 const validateStorageAccountReplicaCore = (doc: Record<string, unknown>, code: string): void => {
   const currentHeight = requireBoundaryInteger(doc['currentHeight'], `${code}_CURRENT_HEIGHT`);
-  const frames = [doc['currentFrame'], doc['pendingFrame']].filter((frame): frame is AccountFrame => frame !== undefined);
+  const frames = [doc['currentFrame'], doc['pendingFrame']].filter(
+    (frame): frame is AccountFrame => frame !== undefined,
+  );
   for (const frame of frames) {
     if (frame.height > 0) assertAccountFrameHash(frame, `${code}_FRAME_HASH`);
   }
@@ -290,7 +380,12 @@ const validateStorageAccountReplicaCore = (doc: Record<string, unknown>, code: s
   requireExactBoundaryKeys(header, ['fromEntity', 'toEntity', 'nextProofNonce'], [], `${code}_PROOF_HEADER_FIELDS`);
   requireBoundaryInteger(header['nextProofNonce'], `${code}_PROOF_NONCE`);
   for (const withdrawal of requireStorageMap(doc['pendingWithdrawals'], `${code}_WITHDRAWALS`).values()) {
-    requireStorageBigInt(requireBoundaryRecord(withdrawal, `${code}_WITHDRAWAL`)['amount'], `${code}_WITHDRAWAL_AMOUNT`, FINANCIAL.MIN_PAYMENT_AMOUNT, FINANCIAL.MAX_PAYMENT_AMOUNT);
+    requireStorageBigInt(
+      requireBoundaryRecord(withdrawal, `${code}_WITHDRAWAL`)['amount'],
+      `${code}_WITHDRAWAL_AMOUNT`,
+      FINANCIAL.MIN_PAYMENT_AMOUNT,
+      UINT256_MAX,
+    );
   }
   if (doc['publicPinned'] !== undefined) {
     requireStorageBoolean(doc['publicPinned'], `${code}_PUBLIC_PINNED`);
@@ -302,10 +397,12 @@ export const validateStorageEntityCoreDocValue = (value: unknown): StorageEntity
   const doc = requireBoundaryRecord(value, code);
   requireExactBoundaryKeys(doc, ENTITY_REQUIRED, ENTITY_OPTIONAL, `${code}_FIELDS`);
   requireStorageString(doc['entityId'], `${code}_ENTITY_ID`);
-  if (!/^0x[0-9a-f]{64}$/.test(requireStorageString(
-    doc['entityEncryptionPublicKey'],
-    `${code}_ENTITY_ENCRYPTION_PUBLIC_KEY`,
-  ))) throw new Error(`${code}_ENTITY_ENCRYPTION_PUBLIC_KEY`);
+  if (
+    !/^0x[0-9a-f]{64}$/.test(
+      requireStorageString(doc['entityEncryptionPublicKey'], `${code}_ENTITY_ENCRYPTION_PUBLIC_KEY`),
+    )
+  )
+    throw new Error(`${code}_ENTITY_ENCRYPTION_PUBLIC_KEY`);
   requireBoundaryInteger(doc['height'], `${code}_HEIGHT`);
   requireBoundaryInteger(doc['timestamp'], `${code}_TIMESTAMP`);
   requireStorageMap(doc['nonces'], `${code}_NONCES`);
@@ -329,10 +426,7 @@ export const validateStorageEntityCoreDocValue = (value: unknown): StorageEntity
     `${code}_ORDERBOOK_HUB_PROFILE`,
   );
   if (doc['orderbookHubProfile'] !== undefined) {
-    validateStorageOrderbookPairDimensions(
-      doc['orderbookPairDimensions'],
-      `${code}_ORDERBOOK_PAIR_DIMENSIONS`,
-    );
+    validateStorageOrderbookPairDimensions(doc['orderbookPairDimensions'], `${code}_ORDERBOOK_PAIR_DIMENSIONS`);
   } else if (doc['orderbookPairDimensions'] !== undefined) {
     throw new Error(`${code}_ORDERBOOK_PAIR_DIMENSIONS_WITHOUT_PROFILE`);
   }
@@ -354,10 +448,7 @@ const validateSettlementContinuations = (value: unknown, code: string): void => 
     if (!/^0x[0-9a-f]{64}$/.test(String(accountId))) {
       throw new Error(`${code}_SETTLEMENT_CONTINUATION_ACCOUNT_ID`);
     }
-    validateSettlementContinuationValue(
-      continuation,
-      `${code}_SETTLEMENT_CONTINUATION`,
-    );
+    validateSettlementContinuationValue(continuation, `${code}_SETTLEMENT_CONTINUATION`);
   }
 };
 const validateDeferredAccountProposals = (value: unknown, code: string): void => {
@@ -400,10 +491,7 @@ export const assertStorageAccountDocBinding = (
 ): StorageAccountDoc => {
   const owner = normalizeEntityId(entityId);
   const counterparty = normalizeEntityId(counterpartyId);
-  const endpoints = new Set([
-    normalizeEntityId(doc.state.leftEntity),
-    normalizeEntityId(doc.state.rightEntity),
-  ]);
+  const endpoints = new Set([normalizeEntityId(doc.state.leftEntity), normalizeEntityId(doc.state.rightEntity)]);
   if (owner === counterparty || endpoints.size !== 2 || !endpoints.has(owner) || !endpoints.has(counterparty)) {
     throw new Error(`STORAGE_ACCOUNT_DOC_KEY_MISMATCH:scope=${scope}`);
   }
@@ -411,6 +499,7 @@ export const assertStorageAccountDocBinding = (
   if (
     normalizeEntityId(doc.proofHeader.fromEntity) !== owner ||
     normalizeEntityId(doc.proofHeader.toEntity) !== counterparty
-  ) throw new Error(`STORAGE_ACCOUNT_DOC_OWNER_MISMATCH:scope=${scope}`);
+  )
+    throw new Error(`STORAGE_ACCOUNT_DOC_OWNER_MISMATCH:scope=${scope}`);
   return doc;
 };

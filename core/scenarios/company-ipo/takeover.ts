@@ -5,6 +5,7 @@
 
 import type { ConsensusConfig } from '../../entity/types';
 import { deriveDelta } from '../../account/utils';
+import { decodeUint768 } from '../../protocol/crypto/abi-money';
 import { encodeBoard, hashBoard } from '../../entity/factory';
 import { zeroPadValue } from 'ethers';
 import type { RuntimeReplica } from '../../runtime/types';
@@ -228,10 +229,10 @@ export const proveSuccessorReserveControl = async (
   ) {
     throw new Error('COMPANY_SUCCESSOR_RESERVE_PROOF_REQUIRES_EMPTY_BATCH');
   }
-  const outstandingDebt = await actors.jadapter.depository.debtOutstanding(
+  const outstandingDebt = decodeUint768(await actors.jadapter.depository.debtOutstanding(
     actors.boardCompany.id,
     shares.controlTokenId,
-  );
+  ));
   if (outstandingDebt !== 0n) {
     throw new Error(`COMPANY_SUCCESSOR_CONTROL_DEBT_NOT_ZERO:${outstandingDebt}`);
   }

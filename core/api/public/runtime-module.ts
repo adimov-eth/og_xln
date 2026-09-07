@@ -50,9 +50,13 @@ export type { JBatch, JBatchState } from '../../jurisdiction/machine/batch';
 export type { JAdapter } from '../../jurisdiction/adapter/types';
 export type { BookState } from '../../orderbook';
 export type {
-  SwapAccountCapacityView,
-  SwapInboundCapacityPlan,
-} from '../../account/swap/swap-inbound-plan';
+  AccountCapacityView,
+  AccountCapacitySource,
+  ReceiveCapacityPlan,
+  ReceiveCapacityPlanInput,
+  AccountFundingPlan,
+  AccountFundingPlanInput,
+} from '../../account/capacity-plan';
 export type { RuntimeActivityEvent, RuntimeActivityFilters } from '../../storage/views/activity-types';
 export type { DeliveryResult } from '../../protocol/payments/delivery-result';
 export type {

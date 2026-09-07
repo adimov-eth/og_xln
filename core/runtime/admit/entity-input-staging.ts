@@ -318,12 +318,17 @@ export const rejectMalformedEntityInput = (
     entityFrameCommitted: false,
     committedAccountFrames: [],
   });
-  entityInputLog.info(
+  // Rejected financial ingress has no committed WAL row; WARN log thresholds
+  // must still retain the exact input position and classification evidence.
+  entityInputLog.error(
     error.isRemoteIngress ? 'entity_input.discarded' : 'entity_input.rejected',
     {
       entityId: error.entityId,
       signerId: error.signerId,
       sourceRuntimeId: error.sourceRuntimeId,
+      sourceRuntimeHeight: error.sourceRuntimeHeight,
+      inputIndex,
+      rejectionCode: error.rejectionCode,
       cause:
         error.cause instanceof Error
           ? error.cause.message

@@ -18,7 +18,6 @@ import { readPositiveIntegerEnv } from './environment';
 export const UINT16_MAX = 0xffff;
 
 export const LIMITS = {
-
   /**
    * Maximum queued Entity transactions. Throughput pressure is drained by the
    * Runtime FIFO; 10k is headroom for one 1000-user HLT cadence plus backlog,
@@ -137,24 +136,12 @@ export const LIMITS = {
 } as const;
 
 // ═══════════════════════════════════════════════════════════════
-// FINANCIAL LIMITS (Safety against bugs and attacks)
+// FINANCIAL ADMISSION
 // ═══════════════════════════════════════════════════════════════
 
 export const FINANCIAL = {
-  /** Maximum payment amount in smallest unit (prevents overflow) */
-  MAX_PAYMENT_AMOUNT: 2n ** 128n - 1n, // U128 max
-
   /** Minimum payment amount (prevents dust spam) */
   MIN_PAYMENT_AMOUNT: 1n, // Smallest unit - actual dust prevention is per-token
-
-  /** Maximum bilateral credit limit in token base units. */
-  // Credit limits are token-base-unit values, so a USDC-denominated ceiling
-  // would silently reject ordinary 18-decimal assets. Keep one unit-agnostic
-  // bound large enough for bilateral credit while every payment remains U128.
-  MAX_CREDIT_LIMIT: (2n ** 128n - 1n) * 1000n,
-
-  /** Maximum collateral per account (sanity check) */
-  MAX_COLLATERAL: 2n ** 64n - 1n, // U64 max
 
   /** Maximum route length for multi-hop payments */
   MAX_ROUTE_HOPS: 100,
@@ -427,5 +414,4 @@ export const QA = {
  * too, and that module parses the orchestrator's own argv when it loads.
  */
 export const HUB_COUNT = readPositiveIntegerEnv('XLN_HUB_COUNT', 3);
-export const HUB_NAMES: readonly string[] =
-  Array.from({ length: HUB_COUNT }, (_unused, index) => `H${index + 1}`);
+export const HUB_NAMES: readonly string[] = Array.from({ length: HUB_COUNT }, (_unused, index) => `H${index + 1}`);

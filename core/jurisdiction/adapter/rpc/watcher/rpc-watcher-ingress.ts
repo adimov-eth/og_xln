@@ -8,7 +8,6 @@ import {
   rememberPendingWatcherJBlock,
 } from '../../watcher';
 import { prepareAuthenticatedWatcherIngress } from '../../rpc-public';
-import { isTronChainId } from '../../chain-ids';
 import { readAuthenticatedReceiptRange } from '../../receipt-root';
 import { buildTrackedExternalOwners } from '../../rpc-watcher-inputs';
 import { decodeAuthenticatedWatcherEvents } from '../../rpc-watcher-events';
@@ -20,10 +19,22 @@ import type { JEvent } from '../../types';
 
 type WatcherReplica = NonNullable<ReturnType<typeof findWatcherJurisdictionReplica>>;
 
+const requireNativeRpcUrl = (services: RpcWatcherServices): string => {
+  if (!services.rpcUrl) throw new Error('J_AUTHORITY_NATIVE_RPC_SOURCE_MISSING');
+  return services.rpcUrl;
+};
+
+const requireNativeSolidifiedHeight = (request: AuthenticatedWatcherRangeRequest): number => {
+  const height = request.nativeSolidifiedThroughHeight;
+  if (height === undefined || height < request.toBlock) throw new Error('J_AUTHORITY_NATIVE_UNSOLIDIFIED_RANGE');
+  return height;
+};
+
 export type AuthenticatedWatcherRangeRequest = {
   activeEnv: RuntimeReplica;
   watcherReplica: WatcherReplica;
   currentBlock: number;
+  nativeSolidifiedThroughHeight?: number;
   fromBlock: number;
   toBlock: number;
   expectedParentHash?: string;
@@ -170,9 +181,13 @@ export const applyAuthenticatedWatcherRange = async (
       ...watchedTokens.map(token => token.address),
     ],
     {
-      commitment: isTronChainId(request.services.chainId)
+      commitment: request.services.mode === 'tron'
         ? 'tron-complete-receipts'
         : 'ethereum-trie',
+      ...(request.services.mode === 'tron' ? {
+        nativeRpc: { chainId: request.services.chainId, rpcUrl: requireNativeRpcUrl(request.services),
+          solidifiedThroughHeight: requireNativeSolidifiedHeight(request) },
+      } : {}),
     },
     request.services.sendAuthenticatedBatch,
   );

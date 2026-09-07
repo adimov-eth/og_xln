@@ -96,7 +96,11 @@ const applyCommittedHtlcResolveFollowup = (
   // Propagation still needs the inbound lock reference; the secret followup
   // terminates this route after it queues the upstream resolve.
   if (resolvesForwardedOutbound) return;
-  emitOriginatedHtlcFinalized(env, newState, route, accountTx, candidateEffects);
+  // Both self-cycle legs share the canonical hashlock. Only the committed
+  // outbound leg authorizes origin finalization; inbound commits emit receive.
+  if (resolvesOriginatedOutbound) {
+    emitOriginatedHtlcFinalized(env, newState, route, accountTx, candidateEffects);
+  }
   if (route.originated && route.inboundEntity) {
     const writableRoute = bookIntentSlot.getPaybookEntryForWrite(newState, hashlock);
     if (!writableRoute) throw new Error(`PAYBOOK_ENTRY_WRITE_MISSING:${hashlock}`);

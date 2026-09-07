@@ -411,7 +411,7 @@ export const keyRscoreAccountJClaimPathNode = (
   return keyRscoreAccountNode(
     ownerEntityId,
     accountId,
-    6,
+    7,
     kind,
     Buffer.concat([Buffer.from([side]), encodedPath.subarray(1)]),
   );
@@ -810,7 +810,7 @@ export const parseRscoreAccountJClaimPathNodeKey = (key: Buffer) => {
   if (
     key.byteLength <= 68 ||
     key[0] !== KEY_RSCORE_ACCOUNT_NODE ||
-    key[65] !== 6
+    key[65] !== 7
   ) {
     throw new Error('STORAGE_RSCORE_J_CLAIM_PATH_KEY_INVALID');
   }

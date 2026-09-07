@@ -75,7 +75,7 @@ const resolveHubPolicyVersion = (
   return feePolicyChanged ? previousVersion + 1 : previousVersion;
 };
 
-const buildHubConfig = (
+export const buildHubConfig = (
   previous: HubRebalanceConfig | undefined,
   data: SetHubConfigTx['data'],
 ): { config: HubRebalanceConfig; feePolicyChanged: boolean } => {

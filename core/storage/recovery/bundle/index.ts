@@ -14,6 +14,7 @@ import type {
   RuntimeRecoverySignerV1,
 } from './types';
 import type { PersistedFrameJournal } from '../../types';
+import { requireRecoveryCheckpointFrame } from './checkpoint-frame';
 
 const RECOVERY_BUNDLE_VERSION = 1;
 const MAX_RECOVERY_JOURNAL_FRAMES = 10_000;
@@ -120,6 +121,7 @@ const normalizeAndValidateBundleFields = (
         `RECOVERY_BUNDLE_RUNTIME_ID_MISMATCH: bundle=${runtimeId} checkpoint=${checkpointRuntimeId}`,
       );
     }
+    requireRecoveryCheckpointFrame(bundle);
   } else {
     const baseRuntimeHeight = Math.max(0, Math.floor(Number(bundle.baseRuntimeHeight || 0)));
     const baseCheckpointHash = String(bundle.baseCheckpointHash || '').trim().toLowerCase();
@@ -278,6 +280,7 @@ export const buildRuntimeRecoveryBundle = (
     kind: 'snapshot',
     checkpoint,
     checkpointHash: computeRuntimeRecoveryCheckpointHash(checkpoint),
+    frames: structuredClone(options.frames ?? []),
   });
 };
 
@@ -285,6 +288,7 @@ export const buildRuntimeRecoveryCheckpointBundle = (
   env: RuntimeReplica,
   options: {
     checkpoint: Record<string, unknown>;
+    frames: PersistedFrameJournal[];
     signers: RuntimeRecoverySignerV1[];
     meta?: RuntimeRecoveryMetaV1;
     createdAt?: number;
@@ -322,5 +326,6 @@ export const buildRuntimeRecoveryCheckpointBundle = (
     ...(options.meta ? { meta: structuredClone(options.meta) } : {}),
     checkpoint,
     checkpointHash: computeRuntimeRecoveryCheckpointHash(checkpoint),
+    frames: structuredClone(options.frames),
   });
 };

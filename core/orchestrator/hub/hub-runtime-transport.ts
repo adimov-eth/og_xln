@@ -28,6 +28,7 @@ import {
 } from '../../runtime';
 import type { RuntimeReplica } from '../../runtime/types';
 import { haltRuntimeRequiresOperator } from '../../runtime/replica/lifecycle';
+import { requestRuntimeLoopWake } from '../../runtime/mempool/input-queue';
 import { getEffectiveEntityInputTxs } from '../../entity/consensus/output/envelope';
 import {
   crossJurisdictionRouteProfileEntityIds,
@@ -45,6 +46,9 @@ export type DirectEntityInputDebug = {
   entityIds: string[];
   signerIds: string[];
   txTypes: string[];
+  stage?: 'received' | 'profiles' | 'validation' | 'queued' | 'ignored' | 'rejected';
+  queuedInputs?: number;
+  completedAt?: number;
   error?: string;
 };
 
@@ -118,6 +122,8 @@ export const createHubDirectRuntimeRoute = (
       const error = new Error(`DIRECT_ACCOUNT_DELIVERY_FATAL:${safeStringify(failure)}`);
       debug.lastError = {
         at: Date.now(),
+        stage: 'rejected',
+        completedAt: Date.now(),
         fromRuntimeId: failure.peerRuntimeId,
         entityIds: failure.envelope?.entityInputs.map(input => String(input.entityId || '')) ?? [],
         signerIds: failure.envelope?.entityInputs.map(input => String(input.signerId || '')) ?? [],
@@ -152,6 +158,7 @@ export const createHubDirectRuntimeRoute = (
       }
       const entry: DirectEntityInputDebug = {
         at: Date.now(),
+        stage: 'received',
         fromRuntimeId: String(from || ''),
         entityIds: envelope.entityInputs.map(input =>
           String(input.entityId || ''),
@@ -166,12 +173,19 @@ export const createHubDirectRuntimeRoute = (
       debug.lastSeen = entry;
       try {
         assertRuntimeEntityInputsEnvelopeSource(env, from, envelope, sessionAuthenticated === true);
+        entry.stage = 'profiles';
         await warmCrossJProfileRoutes(env, envelope);
-        handleInboundP2PEntityInputs(env, from, envelope, ingressTimestamp, {
+        entry.stage = 'validation';
+        const admission = handleInboundP2PEntityInputs(env, from, envelope, ingressTimestamp, {
           envelopeSourceVerified: true,
           entityInputsValidated: true,
         });
+        entry.stage = admission.kind;
+        entry.queuedInputs = admission.queuedInputs.length;
+        entry.completedAt = Date.now();
       } catch (error) {
+        entry.stage = 'rejected';
+        entry.completedAt = Date.now();
         debug.lastError = {
           ...entry,
           error: error instanceof Error ? error.message : String(error),
@@ -180,7 +194,12 @@ export const createHubDirectRuntimeRoute = (
       }
     },
   });
+  route.setReady(isIngressReady());
+  route.onDeliveryReadyChange(() => requestRuntimeLoopWake(env));
   env.infrastructure = env.infrastructure ?? {};
+  env.infrastructure.canDeliverEntityInputs = targetRuntimeId => route.hasOpenSession(targetRuntimeId)
+    ? route.canDeliver(targetRuntimeId)
+    : (env.infrastructure?.p2p?.canDeliver(targetRuntimeId) ?? false);
   env.infrastructure.observeDirectOnlineEntityIds = entityIds => {
     const online = new Set<string>();
     for (const rawEntityId of entityIds) {

@@ -1,4 +1,4 @@
-import { projectBookDepth, type BookState } from '../../orderbook';
+import { getBookSideLevels, projectBookDepth, type BookState } from '../../orderbook';
 import { projectBookPricePageTree, type BookPricePage } from '../../orderbook/pages/page';
 import type { AccountTx } from '../../types/account';
 import type { EntityReplica, EntityState, ExternalWalletState } from '../../entity/types';
@@ -136,8 +136,18 @@ type RuntimeAdapterAccountStateDoc = Omit<
   rebalanceFeePolicies?: NativeMapView<NonNullable<AccountStateDoc['rebalanceFeePolicies']>>;
 };
 type AccountRebalanceShadow = StorageAccountDoc['shadow']['rebalance'];
-type RuntimeAdapterAccountDoc = Omit<StorageAccountDoc, 'state' | 'pendingWithdrawals' | 'shadow'> & {
+type RuntimeAdapterActiveDispute = Pick<NonNullable<StorageAccountDoc['activeDispute']>,
+  | 'startedByLeft' | 'initialProofbodyHash' | 'initialNonce' | 'initialProposerIsLeft'
+  | 'disputeTimeout' | 'disputeStartTimestamp' | 'jNonce' | 'starterCounterProofCommitment'
+  | 'observedOnChain' | 'observedBlockNumber' | 'batchNonce' | 'selectedCounterNonce'
+  | 'selectedCounterProofbodyHash' | 'selectedCounterProposerIsLeft' | 'finalizeQueued'
+>;
+type RuntimeAdapterAccountDoc = Omit<StorageAccountDoc, 'state' | 'pendingWithdrawals' | 'shadow' | 'activeDispute' | 'disputePrepare'> & {
   state: RuntimeAdapterAccountStateDoc;
+  /** Bodies stay redacted; zero here means the live Account queue is actually empty. */
+  mempoolCount: number;
+  activeDispute?: RuntimeAdapterActiveDispute;
+  disputePrepare?: Pick<NonNullable<StorageAccountDoc['disputePrepare']>, 'startedAt' | 'readyAfter' | 'reason'>;
   pendingWithdrawals: NativeMapView<StorageAccountDoc['pendingWithdrawals']>;
   shadow: {
     rebalance: Omit<AccountRebalanceShadow, 'policy' | 'submittedAtByToken'> & {
@@ -169,6 +179,9 @@ type RuntimeAdapterPortableBookPage = Omit<RuntimeAdapterBookPage, 'items'> & {
 type PortableBookState = Omit<BookState, 'orders' | 'bidPages' | 'askPages'> & Readonly<{
   bidPages: ReadonlyMap<string, BookPricePage>;
   askPages: ReadonlyMap<string, BookPricePage>;
+  /** Full committed depth; page slots are only the bounded visible order sample. */
+  bidLevels: ReadonlyArray<{ priceTicks: bigint; qtyLots: bigint }>;
+  askLevels: ReadonlyArray<{ priceTicks: bigint; qtyLots: bigint }>;
 }>;
 
 type RuntimeAdapterVisibleDeltaSummary = {
@@ -431,7 +444,13 @@ const buildPeerRecoveryBundleRead = async (
   if (!requestedLookupKey || requestedLookupKey !== expectedLookupKey) {
     throw new RuntimeAdapterError('E_NOT_FOUND', 'recovery bundle not found');
   }
+  const { readPersistedFrameJournal } = await import('../../runtime/composition');
+  const tip = ctx.env.state.height > 0
+    ? await readPersistedFrameJournal(ctx.env, ctx.env.state.height)
+    : null;
+  if (ctx.env.state.height > 0 && !tip) throw new Error('RECOVERY_BUNDLE_CHECKPOINT_FRAME_MISSING');
   const bundle = buildRuntimeRecoveryBundle(ctx.env, {
+    frames: tip ? [tip] : [],
     signers: inferRecoverySignersForAdapter(ctx.env),
     createdAt: Math.max(0, Math.floor(Number(ctx.env.state.timestamp || ctx.env.state.height || 0))),
     meta: { activeSignerIndex: 0 },
@@ -937,6 +956,27 @@ const compactAccountFrameForView = (
   stateHash: frame.stateHash,
 });
 
+/** Lifecycle metadata is observable; proof arguments and recovery work stay with the owning Account. */
+const compactActiveDisputeForView = (
+  dispute: NonNullable<StorageAccountDoc['activeDispute']>,
+): RuntimeAdapterActiveDispute => ({
+  startedByLeft: dispute.startedByLeft,
+  initialProofbodyHash: dispute.initialProofbodyHash,
+  initialNonce: dispute.initialNonce,
+  initialProposerIsLeft: dispute.initialProposerIsLeft,
+  disputeTimeout: dispute.disputeTimeout,
+  jNonce: dispute.jNonce,
+  starterCounterProofCommitment: dispute.starterCounterProofCommitment,
+  ...withDefinedProp('disputeStartTimestamp', dispute.disputeStartTimestamp),
+  ...withDefinedProp('observedOnChain', dispute.observedOnChain),
+  ...withDefinedProp('observedBlockNumber', dispute.observedBlockNumber),
+  ...withDefinedProp('batchNonce', dispute.batchNonce),
+  ...withDefinedProp('selectedCounterNonce', dispute.selectedCounterNonce),
+  ...withDefinedProp('selectedCounterProofbodyHash', dispute.selectedCounterProofbodyHash),
+  ...withDefinedProp('selectedCounterProposerIsLeft', dispute.selectedCounterProposerIsLeft),
+  ...withDefinedProp('finalizeQueued', dispute.finalizeQueued),
+});
+
 const compactAccountDocForView = (
   doc: StorageAccountDoc,
 ): RuntimeAdapterAccountDoc => {
@@ -971,6 +1011,7 @@ const compactAccountDocForView = (
     },
     status: doc.status,
     mempool: [],
+    mempoolCount: doc.mempool.length,
     currentFrame: compactAccountFrameForView(doc.currentFrame),
     currentHeight: doc.currentHeight,
     rollbackCount: doc.rollbackCount,
@@ -986,6 +1027,11 @@ const compactAccountDocForView = (
     },
   };
 
+  if (doc.activeDispute) compact.activeDispute = compactActiveDisputeForView(doc.activeDispute);
+  if (doc.disputePrepare) {
+    const { startedAt, readyAfter, reason } = doc.disputePrepare;
+    compact.disputePrepare = { startedAt, readyAfter, reason };
+  }
   const pulls = compactMapTail(doc.state.pulls, 20);
   if (pulls) compact.state.pulls = pulls;
   const subcontracts = compactMapTail(doc.state.subcontracts, 20);
@@ -1270,6 +1316,8 @@ const compactBookStateForView = (
   const compact = projectBookDepth(book, maxLevelsPerSide, maxOrdersPerLevel);
   return {
     params: compact.params,
+    bidLevels: getBookSideLevels(book, 0, maxLevelsPerSide).map(({ priceTicks, qtyLots }) => ({ priceTicks, qtyLots })),
+    askLevels: getBookSideLevels(book, 1, maxLevelsPerSide).map(({ priceTicks, qtyLots }) => ({ priceTicks, qtyLots })),
     bidPages: projectBookPricePageTree(compact.bidPages),
     askPages: projectBookPricePageTree(compact.askPages),
     nextSeq: compact.nextSeq,

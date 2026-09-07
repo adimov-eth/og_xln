@@ -126,7 +126,7 @@ import {
   resolveAssistantRateClientId,
 } from './assistant/proxy';
 import { selectPredeployedJurisdiction } from './catalog/predeployed-jurisdiction';
-import { getJurisdictionIdentityRef } from '../../jurisdiction/machine/jurisdiction-runtime';
+import { buildPredeployedRestoreRpcBindings } from './catalog/restore-rpc-bindings';
 import { readInheritedChildSecrets } from '../../support/process/child-secrets';
 import { decodeStartupSigners } from './startup-signers';
 import { createLocalPairingController } from './ownership/local-pairing';
@@ -237,11 +237,11 @@ const resolveTrustedServerRestoreRpcBindings = (): Array<{
   const rpcUrl = resolveRequiredAnvilRpc();
   const preferredKey = String(process.env['XLN_PREDEPLOYED_JURISDICTION_KEY'] || '').trim();
   const jurisdictions = JSON.parse(readFileSync(resolveJurisdictionsJsonPath(), 'utf8')) as unknown;
-  const selected = selectPredeployedJurisdiction(jurisdictions, rpcUrl, preferredKey);
-  if (!selected) throw new Error('PREDEPLOYED_JURISDICTION_CONFIG_MISSING');
-  const jurisdictionRef = getJurisdictionIdentityRef(selected);
-  if (!jurisdictionRef) throw new Error('PREDEPLOYED_JURISDICTION_IDENTITY_MISSING');
-  return [{ jurisdictionRef, rpcUrl }];
+  const configuredRpcs = Object.fromEntries(Array.from({ length: 7 }, (_, offset) => {
+    const slot = offset + 2;
+    return [slot, process.env[`ANVIL_RPC${slot}`]];
+  }));
+  return buildPredeployedRestoreRpcBindings(jurisdictions, rpcUrl, preferredKey, configuredRpcs);
 };
 const RELAY_MARKET_MAX_SUBSCRIPTIONS = readPositiveIntegerEnv('XLN_RELAY_MARKET_MAX_SUBSCRIPTIONS', 1000);
 const RELAY_MARKET_MAX_SUBSCRIPTION_CELLS = readPositiveIntegerEnv('XLN_RELAY_MARKET_MAX_SUBSCRIPTION_CELLS', 64);

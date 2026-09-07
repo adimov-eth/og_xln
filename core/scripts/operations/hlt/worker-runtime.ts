@@ -2,6 +2,7 @@
 
 import {
   closeSync,
+  existsSync,
   fsyncSync,
   openSync,
   readFileSync,
@@ -40,6 +41,7 @@ import {
   type LoadRuntimeEntry,
 } from './boundary/worker-boundary';
 import { decodeLoadBookPage, type LoadBookSnapshot } from './boundary/worker-book-boundary';
+import { hltAuthorityEvidenceRecording } from './authority-evidence-policy';
 
 export type WorkerArgs = Readonly<{
   workDir: string;
@@ -553,7 +555,16 @@ export const reconnectRuntimeControl = async (runtime: ConnectedRuntime): Promis
 export const exportReplayBaseSnapshotIfConfigured = async (
   runtime: ConnectedRuntime,
 ): Promise<void> => {
-  if (!String(process.env['XLN_RUNTIME_SNAPSHOT_EXPORT_PATH'] || '').trim()) return;
+  const outputPath = String(process.env['XLN_RUNTIME_SNAPSHOT_EXPORT_PATH'] || '').trim();
+  if (!outputPath) return;
+  // Authority mode captures before support Accounts open. A later workload
+  // setup must not replace that base and silently discard its WAL prefix.
+  if (hltAuthorityEvidenceRecording(process.env)) {
+    if (!existsSync(outputPath) || !existsSync(`${outputPath}.concrete-checkpoint.json`)) {
+      throw new Error(`HLT_AUTHORITY_BASE_MISSING:${outputPath}`);
+    }
+    return;
+  }
   const snapshot = await runtime.control.exportRuntimeSnapshot();
   if (snapshot.runtimeId !== runtime.adapter.runtimeId.toLowerCase()) {
     throw new Error(

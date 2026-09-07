@@ -162,7 +162,7 @@ const finishRejectedAccountInput = (
     });
     addMessage(state, `❌ ${failureMessage}`);
     // Owner canon: a peer can never take the Runtime down. Fail-fast by
-    // default (tests/dev); in production the authenticated peer input is
+    // default (tests/dev); in production the authenticated AccountInput is
     // rejected and dropped like any malformed ingress.
     if (rejectFailFast()) {
       throw haltRuntimeFailure(

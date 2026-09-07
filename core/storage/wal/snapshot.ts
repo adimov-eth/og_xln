@@ -170,6 +170,9 @@ export const buildCanonicalJReplicaSnapshot = (jr: JReplica): JReplica => ({
   ...(jr.watcherConfirmationDepth !== undefined
     ? { watcherConfirmationDepth: jr.watcherConfirmationDepth }
     : {}),
+  ...(jr.watcherReceiptCommitment !== undefined
+    ? { watcherReceiptCommitment: jr.watcherReceiptCommitment }
+    : {}),
   ...(jr.rpcs ? { rpcs: [...jr.rpcs] } : {}),
   ...(jr.chainId !== undefined ? { chainId: jr.chainId } : {}),
   position: requireFinitePosition(jr.position),

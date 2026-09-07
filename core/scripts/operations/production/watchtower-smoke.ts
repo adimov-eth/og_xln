@@ -14,6 +14,7 @@ import {
   createEmptyEnv,
   enqueueRuntimeInput,
   processRuntime,
+  readPersistedFrameJournal,
 } from '../../../runtime';
 import { buildRuntimeRecoveryBundle } from '../../../storage/recovery/bundle';
 import {
@@ -82,7 +83,10 @@ const createBackupAppointment = async () => {
     entityInputs: [],
   });
   await processRuntime(env);
+  const frame = env.state.height > 0 ? await readPersistedFrameJournal(env, env.state.height) : null;
+  if (env.state.height > 0 && !frame) throw new Error('WATCHTOWER_SMOKE_TIP_JOURNAL_MISSING');
   const bundle = buildRuntimeRecoveryBundle(env, {
+    frames: frame ? [frame] : [],
     signers: [{
       index: 0,
       derivationIndex: 0,

@@ -211,6 +211,7 @@ for (const [path, markers] of [
     'export type DeliveryResult = {',
     'export const requireDeliveryResult',
     'export const isDeliveryDelivered',
+    'export const isDeliveryRecipientNotReady',
     'export const shouldRetryDelivery',
     'export const requireDeliveryDelivered',
     'export const classifyUndeliveredDelivery',
@@ -227,7 +228,7 @@ for (const [path, markers] of [
     'requireDeliveryResult(',
     'requireDeliveryDelivered(',
     'const dispatchDirectOutputEnvelope = (',
-    'if (!isDeliveryDelivered(delivery)) return false;',
+    'if (isDeliveryRecipientNotReady(delivery)) return false;',
     'const dispatchP2POutputEnvelope = (',
   ]],
   ['core/network/p2p/p2p.ts', [
@@ -235,14 +236,15 @@ for (const [path, markers] of [
     'sendEntityInputsRaw',
     "delivery.code === 'P2P_NO_PUBKEY'",
     'P2P_ENTITY_INPUT_HANDED_TO_TRANSPORT',
-    'Durable retry ownership belongs to the runtime outbox',
+    'P2P_DIRECT_RECIPIENT_NOT_READY',
   ]],
   ['core/network/p2p/ws-client.ts', [
-    'sendEntityInputsRaw(to: string, envelope: RuntimeEntityInputsEnvelope, ingressTimestamp?: number): boolean',
+    'sendEntityInputsRaw(\n    to: string,\n    envelope: RuntimeEntityInputsEnvelope,\n    ingressTimestamp?: number,\n  ): boolean',
   ]],
   ['core/network/p2p/direct-runtime-bun.ts', [
     'sendEntityInputsDelivery: (\n      targetRuntimeId: string,\n      envelope: RuntimeEntityInputsEnvelope,\n      ingressTimestamp?: number,\n    ): DeliveryResult',
-    'ROUTE_DIRECT_MISS_FAILOVER',
+    'ROUTE_DIRECT_SESSION_NOT_READY',
+    'ROUTE_DIRECT_RECIPIENT_NOT_READY',
     'ROUTE_DIRECT_SEND_FAILED',
   ]],
   ['core/network/websocket-send-result.ts', [
@@ -256,16 +258,18 @@ for (const [path, markers] of [
   ]],
   ['core/network/relay/router.ts', [
     'const sendRelayDelivery = (',
-    "classifyWebSocketSendResult(result) === 'dropped'",
+    'const disposition = classifyWebSocketSendResult(result);',
+    "disposition === 'dropped'",
     'delivery: relayDelivery',
     'local-delivery-failed',
   ]],
   ['core/orchestrator/hub/hub-runtime-transport.ts', [
     'route.sendEntityInputsDelivery(',
-    'targetRuntimeId,\n    envelope,\n    ingressTimestamp,',
+    'canDeliverEntityInputs',
   ]],
   ['core/orchestrator/mm-node.ts', [
-    'directRuntimeWs.sendEntityInputsDelivery(targetRuntimeId, envelope, ingressTimestamp)',
+    'createDirectRuntimeWsRoute({',
+    'directRuntimeWs.setReady(true)',
   ]],
 ] as const) {
   const text = readText(path);
@@ -285,12 +289,11 @@ const sendEntityInputSource = runtimeRouting.slice(sendEntityInputStart, sendEnt
 assertNotIncludes(sendEntityInputSource, 'return true', runtimeRoutingPath);
 assertNotIncludes(sendEntityInputSource, 'return false', runtimeRoutingPath);
 
-const relayDirectTs = readText('core/api/server/network/relay-direct.ts');
-assertNotIncludes(relayDirectTs, '[RELAY] Direct dispatch', 'core/api/server/network/relay-direct.ts');
-assertNotIncludes(relayDirectTs, 'console.', 'core/api/server/network/relay-direct.ts');
-assertIncludes(relayDirectTs, 'relay.direct.target_key_missing', 'core/api/server/network/relay-direct.ts');
-assertIncludes(relayDirectTs, 'relay.direct.source_key_missing', 'core/api/server/network/relay-direct.ts');
-assertIncludes(relayDirectTs, 'relay.direct.send_failed', 'core/api/server/network/relay-direct.ts');
+const directRuntimePath = 'core/network/p2p/direct-runtime-bun.ts';
+const directRuntime = readText(directRuntimePath);
+assertIncludes(directRuntime, 'publishReadiness', directRuntimePath);
+assertIncludes(directRuntime, 'session.peerReady', directRuntimePath);
+assertIncludes(directRuntime, 'ROUTE_DIRECT_SEND_FAILED', directRuntimePath);
 
 for (const [path, markers] of [
   ['core/__tests__/payments/invariants/delivery-result.test.ts', [
@@ -314,11 +317,10 @@ for (const [path, markers] of [
     'websocket send result classifier covers the complete server/client matrix',
     'relay delivery events expose typed retry and fatal semantics',
   ]],
-  ['core/__tests__/network/relay/relay-direct.test.ts', [
-    'direct relay diagnostics stay machine-readable',
-    'relay.direct.target_key_missing',
-    'relay.direct.source_key_missing',
-    'relay.direct.send_failed',
+  ['core/__tests__/runtime/transport/runtime-outbox-readiness.test.ts', [
+    'retires only the ready peer',
+    'flushCommittedNetworkOutputs',
+    'transport.failures',
   ]],
   ['core/__tests__/network/relay/relay-router.test.ts', [
     'delivery:',
@@ -339,10 +341,10 @@ const auditDocPath = 'docs/security/delivery-boundary-scan.md';
 const auditDoc = readText(auditDocPath);
 for (const marker of [
   '# Runtime Delivery Boundary Scan',
-  'Last refreshed: 2026-07-09',
+  'Last refreshed: 2026-09-05',
   'bun run security:delivery-boundary',
-  'Relay is the official baseline',
-  'Direct delivery is an opportunistic fast path',
+  'Authenticated direct sessions carry financial entity inputs',
+  'Recipient readiness is separate from transport authentication',
   'Raw `sendEntityInputsRaw()` is limited to the P2P adapter',
   'Retry/drop/fatal decisions live behind shared delivery helpers',
 ]) {

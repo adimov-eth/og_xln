@@ -38,7 +38,7 @@ const CONTRACT_ARTIFACT_NAMES = {
 } as const;
 type CanonicalArtifactKey = keyof typeof CONTRACT_ARTIFACT_NAMES;
 
-let canonicalArtifacts: Record<CanonicalArtifactKey, ContractArtifact> | null = null;
+const canonicalArtifacts = new Map<'rpc' | 'tron', Record<CanonicalArtifactKey, ContractArtifact>>();
 
 const validateCanonicalArtifact = (
   key: CanonicalArtifactKey,
@@ -138,15 +138,18 @@ const readRpcContractCodes = async (
   }));
 };
 
-const loadCanonicalArtifacts = (): Record<CanonicalArtifactKey, ContractArtifact> => {
-  if (canonicalArtifacts) return canonicalArtifacts;
-  canonicalArtifacts = Object.fromEntries((Object.keys(CONTRACT_ARTIFACT_NAMES) as CanonicalArtifactKey[]).map((key) => {
+const loadCanonicalArtifacts = (mode: 'rpc' | 'tron'): Record<CanonicalArtifactKey, ContractArtifact> => {
+  const cached = canonicalArtifacts.get(mode);
+  if (cached) return cached;
+  const artifacts = Object.fromEntries((Object.keys(CONTRACT_ARTIFACT_NAMES) as CanonicalArtifactKey[]).map((key) => {
     const name = CONTRACT_ARTIFACT_NAMES[key];
-    const path = fileURLToPath(new URL(`../../../frontend/static/contracts/${name}.json`, import.meta.url));
+    const root = mode === 'tron' ? 'jurisdictions/build-tron/contracts' : 'frontend/static/contracts';
+    const path = fileURLToPath(new URL(`../../../${root}/${name}.json`, import.meta.url));
     const artifact = validateCanonicalArtifact(key, JSON.parse(readFileSync(path, 'utf8')));
     return [key, artifact];
   })) as Record<CanonicalArtifactKey, ContractArtifact>;
-  return canonicalArtifacts;
+  canonicalArtifacts.set(mode, artifacts);
+  return artifacts;
 };
 
 const linkDeployedBytecode = (
@@ -289,11 +292,12 @@ export const assertCanonicalRpcContractStack = async (
   contracts: RpcContractAddresses,
   context: string,
   timeoutMs = 2_000,
+  mode: 'rpc' | 'tron' = 'rpc',
 ): Promise<void> => {
   const invalid = REQUIRED_RPC_CONTRACT_KEYS.filter((key) =>
     !/^0x[0-9a-fA-F]{40}$/.test(String(contracts[key] || '')));
   if (invalid.length > 0) throw new Error(`${context}_CONTRACTS_INVALID:${invalid.join(',')}`);
-  const artifacts = loadCanonicalArtifacts();
+  const artifacts = loadCanonicalArtifacts(mode);
   const codes = await readRpcContractCodes(rpcUrl, contracts, timeoutMs);
   const entityProviderCode = String(codes.get('entityProvider'));
   const hankoVerifierAddress = readLinkedLibraryAddress(

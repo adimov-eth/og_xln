@@ -2,6 +2,7 @@ import type { RuntimeEntityInputsEnvelope } from '../../runtime/types';
 import { accountInputProposal } from '../../account/consensus/flush';
 import {
   deliveryAccepted,
+  deliveryDeferred,
   deliveryFailure,
   type DeliveryResult,
 } from '../../protocol/payments/delivery-result';
@@ -119,6 +120,7 @@ type DirectWsSession = {
   runtimeId: string | null;
   ws: DirectWebSocket;
   handshakeDone: boolean;
+  peerReady: boolean;
   peerEncryptionPubKey: string | null;
   authAudience: string | null;
   authNonce: string | null;
@@ -138,6 +140,7 @@ type DirectWsSession = {
 export type DirectRuntimeSessionState = Readonly<{
   runtimeId: string;
   open: boolean;
+  ready: boolean;
   lastSeen: number;
   consecutiveBackpressuredSends: number;
   backpressureAgeMs: number;
@@ -152,6 +155,8 @@ type DirectRuntimeWsContext = {
   sessions: Map<DirectWebSocket, DirectWsSession>;
   sessionsByRuntime: Map<string, DirectWsSession>;
   helloChallenges: ReturnType<typeof createHelloChallengeRegistry>;
+  localReady: boolean;
+  readinessListeners: Set<(runtimeId: string, ready: boolean) => void>;
 };
 
 const DEFAULT_HELLO_SKEW_MS = 5 * 60 * 1000;
@@ -317,6 +322,7 @@ const ensureSession = (context: DirectRuntimeWsContext, ws: DirectWebSocket): Di
     runtimeId: null,
     ws,
     handshakeDone: false,
+    peerReady: false,
     peerEncryptionPubKey: null,
     authAudience: null,
     authNonce: null,
@@ -339,7 +345,24 @@ const forgetSession = (context: DirectRuntimeWsContext, ws: DirectWebSocket): vo
   context.sessions.delete(ws);
   if (session.runtimeId && context.sessionsByRuntime.get(session.runtimeId)?.ws === ws) {
     context.sessionsByRuntime.delete(session.runtimeId);
+    updatePeerReady(context, session, false);
   }
+};
+
+const updatePeerReady = (context: DirectRuntimeWsContext, session: DirectWsSession, ready: boolean): void => {
+  if (session.peerReady === ready) return;
+  session.peerReady = ready;
+  for (const listener of context.readinessListeners) listener(sessionRuntimeId(session), ready);
+};
+
+const publishReadiness = (context: DirectRuntimeWsContext, session: DirectWsSession): void => {
+  const attempt = trySend(session.ws, signSessionFrame(context, session, {
+    type: 'delivery_ready',
+    id: makeMessageId(),
+    to: sessionRuntimeId(session),
+    payload: context.localReady,
+  }));
+  if (!attempt.sent) throw new Error(`DIRECT_READINESS_SEND_FAILED:${sessionRuntimeId(session)}:${attempt.error ?? 'dropped'}`);
 };
 
 const rememberRuntimeSession = (
@@ -412,13 +435,9 @@ const getDeliverableSession = (
   const session = context.sessionsByRuntime.get(targetKey);
   if (!session || !session.handshakeDone || !isSocketOpen(session.ws)) {
     if (session && !isSocketOpen(session.ws)) forgetSession(context, session.ws);
-    return deliveryFailure({
-      category: 'Contradiction',
-      code: 'ROUTE_DIRECT_SESSION_MISSING',
-      message: `No open authenticated direct session for Runtime ${targetKey}`,
-      terminal: true,
-    });
+    return deliveryDeferred({ outcome: 'deferred', code: 'ROUTE_DIRECT_SESSION_NOT_READY' });
   }
+  if (!session.peerReady) return deliveryDeferred({ outcome: 'deferred', code: 'ROUTE_DIRECT_RECIPIENT_NOT_READY' });
   return { targetKey, session };
 };
 
@@ -624,6 +643,7 @@ const handleHandshake = (
     to: normalizedFrom,
     ...(ackSessionPubKey ? { sessionPubKey: ackSessionPubKey } : {}),
   });
+  publishReadiness(context, session);
   return true;
 };
 
@@ -751,6 +771,10 @@ const handleEntityInputs = async (
   }
   const fromRuntimeId = validateMessageRoute(context, session, msg, 'Direct');
   if (!fromRuntimeId) return;
+  if (!context.localReady) {
+    rejectDirectMessage(context, session, msg, 'DIRECT_RECIPIENT_NOT_READY');
+    return;
+  }
   let envelope: RuntimeEntityInputsEnvelope | undefined;
   const sessionKeys = session.sessionKeys;
   try {
@@ -887,6 +911,13 @@ const handleDirectMessage = async (
     return;
   }
   session.lastAuthTimestamp = msg.auth!.timestamp;
+  if (msg.type === 'delivery_ready') {
+    if (!validateMessageRoute(context, session, msg, 'Direct readiness')) return;
+    // Readiness belongs to this hello challenge and its authenticated sequence.
+    // A prior socket's announcement cannot authorize delivery on this session.
+    updatePeerReady(context, session, msg.payload === true);
+    return;
+  }
   if (msg.type === 'ping') {
     session.lastSeen = Date.now();
     sendSession(context, session, { type: 'pong', inReplyTo: msg.id || makeMessageId() });
@@ -918,9 +949,25 @@ export const createDirectRuntimeWsRoute = (options: DirectRuntimeWsOptions) => {
     sessions: new Map(),
     sessionsByRuntime: new Map(),
     helloChallenges: createHelloChallengeRegistry(),
+    localReady: false,
+    readinessListeners: new Set(),
   };
   return {
     path: context.routePath,
+    setReady: (ready: boolean): void => {
+      if (typeof ready !== 'boolean') throw new Error('DIRECT_READINESS_INVALID');
+      if (context.localReady === ready) return;
+      context.localReady = ready;
+      for (const session of context.sessionsByRuntime.values()) publishReadiness(context, session);
+    },
+    canDeliver: (runtimeId: string): boolean => {
+      const session = context.sessionsByRuntime.get(normalizeRuntimeId(runtimeId));
+      return Boolean(session?.handshakeDone && session.peerReady && isSocketOpen(session.ws));
+    },
+    onDeliveryReadyChange: (listener: (runtimeId: string, ready: boolean) => void): (() => void) => {
+      context.readinessListeners.add(listener);
+      return () => { context.readinessListeners.delete(listener); };
+    },
     hasOpenSession: (runtimeId: string): boolean => {
       const targetRuntimeId = normalizeRuntimeId(runtimeId);
       if (!targetRuntimeId) return false;
@@ -932,6 +979,7 @@ export const createDirectRuntimeWsRoute = (options: DirectRuntimeWsOptions) => {
         .map(session => ({
           runtimeId: session.runtimeId || '',
           open: isSocketOpen(session.ws),
+          ready: session.peerReady && isSocketOpen(session.ws),
           lastSeen: session.lastSeen,
           consecutiveBackpressuredSends: session.consecutiveBackpressuredSends,
           backpressureAgeMs: session.backpressureStartedAt === 0
@@ -962,8 +1010,8 @@ export const createDirectRuntimeWsRoute = (options: DirectRuntimeWsOptions) => {
         ensureSession(context, ws);
         context.helloChallenges.issue(ws, directRuntimeWsAudience(context.serverRuntimeId));
       },
-      message(ws: DirectWebSocket, raw: string | Buffer | ArrayBuffer): void {
-        void handleDirectMessage(context, ws, raw).catch(error => {
+      message(ws: DirectWebSocket, raw: string | Buffer | ArrayBuffer): Promise<void> {
+        return handleDirectMessage(context, ws, raw).catch(error => {
           const session = context.sessions.get(ws);
           const message = error instanceof Error ? error.message : String(error);
           directWsLog.error('wire_message.unhandled_failure', {

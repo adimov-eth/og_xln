@@ -2,8 +2,10 @@ import { ethers } from 'ethers';
 import type { AccountReplica } from '../../types/account';
 import { asOfferId, type OfferId } from '../../orderbook/swap-keys';
 import { sortTransformerEntries } from '../transform/transformer-ordering';
+import { buildCanonicalProofBatches } from './proof-builder';
 import {
   sanitizeOptionalDisputeArgument,
+  J_BATCH_CONTRACT_LIMITS,
   type OptionalDisputeArgumentWarning,
 } from '../../jurisdiction/machine/batch';
 export type DisputeArgumentSide = 'left' | 'right';
@@ -29,39 +31,30 @@ const clampFillRatio = (value: number): number => {
 // the Depository hash-ladder reveal registry, so no dispute calldata may assert
 // a cross-j fill ratio. Keep this tuple in byte parity with
 // DeltaTransformer.Arguments — the dispute ABI gate rejects drift.
-const encodeDeltaTransformerArgs = (
-  fillRatios: number[],
-  secrets: string[],
-): string => {
+const encodeDeltaTransformerArgs = (fillRatios: number[], secrets: string[]): string => {
   const abiCoder = ethers.AbiCoder.defaultAbiCoder();
   return abiCoder.encode(
     ['tuple(uint16[] fillRatios, bytes32[] secrets)'],
-    [{
-      fillRatios: fillRatios.map((ratio) => BigInt(clampFillRatio(ratio))),
-      secrets,
-    }],
+    [
+      {
+        fillRatios: fillRatios.map(ratio => BigInt(clampFillRatio(ratio))),
+        secrets,
+      },
+    ],
   );
 };
 
-const wrapTransformerArgs = (args: string, canonicalArgumentClauseCount: number): string => {
-  if (canonicalArgumentClauseCount < 1 || canonicalArgumentClauseCount > 2) {
-    throw new Error(`DISPUTE_ARGUMENT_CANONICAL_CLAUSE_COUNT_INVALID:${canonicalArgumentClauseCount}`);
+const wrapTransformerArgs = (args: string[]): string => {
+  if (args.length < 1 || args.length > J_BATCH_CONTRACT_LIMITS.maxDisputeTransformers) {
+    throw new Error(`DISPUTE_ARGUMENT_CANONICAL_CLAUSE_COUNT_INVALID:${args.length}`);
   }
   const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-  return abiCoder.encode(
-    ['bytes[]'],
-    [Array.from({ length: canonicalArgumentClauseCount }, () => args)],
-  );
+  return abiCoder.encode(['bytes[]'], [args]);
 };
 
-const buildPendingSwapFillRatios = (
-  account: AccountReplica,
-  plan: DisputeArgumentPlan,
-): Map<OfferId, number> => {
+const buildPendingSwapFillRatios = (account: AccountReplica, plan: DisputeArgumentPlan): Map<OfferId, number> => {
   const ratios = new Map<OfferId, number>();
-  const planned = new Set(
-    [...plan.leftSwapOfferIds, ...plan.rightSwapOfferIds].map(asOfferId),
-  );
+  const planned = new Set([...plan.leftSwapOfferIds, ...plan.rightSwapOfferIds].map(asOfferId));
   // A resolve can arrive after this side has already built an optimistic frame.
   // Therefore the Account machine itself is the durable evidence source: first
   // the in-flight candidate, then later arrivals retained in its mempool. The
@@ -79,12 +72,10 @@ const buildPendingSwapFillRatios = (
 };
 
 const hasArgumentData = (fillRatios: number[], secrets: string[]): boolean => {
-  return fillRatios.some((ratio) => ratio > 0) || secrets.length > 0;
+  return fillRatios.some(ratio => ratio > 0) || secrets.length > 0;
 };
 
-export function buildCurrentDisputeArgumentPlan(
-  account: AccountReplica,
-): DisputeArgumentPlan {
+export function buildCurrentDisputeArgumentPlan(account: AccountReplica): DisputeArgumentPlan {
   // Dispute preparation freezes the Account before submission. Therefore the
   // one live AccountState is the positional authority until finality. Retaining
   // a historical plan here would create a second, potentially divergent state.
@@ -95,8 +86,9 @@ export function buildCurrentDisputeArgumentPlan(
   //
   // Cross-j offers are intentionally excluded here: their safety is represented
   // by pull hash-ladders, not same-j swap fill ratios.
-  const paymentHashlocks = sortTransformerEntries((account.state.locks ?? new Map()).entries())
-    .map(([, lock]) => String(lock.hashlock));
+  const paymentHashlocks = sortTransformerEntries((account.state.locks ?? new Map()).entries()).map(([, lock]) =>
+    String(lock.hashlock),
+  );
   const leftSwapOfferIds: string[] = [];
   const rightSwapOfferIds: string[] = [];
   for (const [offerId, offer] of sortTransformerEntries((account.state.swapOffers ?? new Map()).entries())) {
@@ -124,29 +116,40 @@ export function buildDisputeArgumentsFromState(
 } {
   const plan = buildCurrentDisputeArgumentPlan(account);
   const fillRatios = buildPendingSwapFillRatios(account, plan);
-  const leftFillRatios = plan.leftSwapOfferIds.map((offerId) => fillRatios.get(asOfferId(offerId)) ?? 0);
-  const rightFillRatios = plan.rightSwapOfferIds.map((offerId) => fillRatios.get(asOfferId(offerId)) ?? 0);
+  const leftFillRatios = plan.leftSwapOfferIds.map(offerId => fillRatios.get(asOfferId(offerId)) ?? 0);
+  const rightFillRatios = plan.rightSwapOfferIds.map(offerId => fillRatios.get(asOfferId(offerId)) ?? 0);
   const leftSecrets = options.secretsSide === 'left' ? [...secrets] : [];
   const rightSecrets = options.secretsSide === 'right' ? [...secrets] : [];
-  const leftArgs = encodeDeltaTransformerArgs(leftFillRatios, leftSecrets);
-  const rightArgs = encodeDeltaTransformerArgs(rightFillRatios, rightSecrets);
-  // The signed builder emits a dense payment→swap prefix and then the pull
-  // clause. Both non-pull clauses consume the same compact Arguments tuple but
-  // ignore the irrelevant half (payments ignore ratios; swaps ignore secrets).
-  // Derive arity from the frozen AccountState plan. Pulls and user
-  // subcontracts receive no trailing argument slots.
-  const canonicalArgumentClauseCount =
-    Number(plan.paymentHashlocks.length > 0)
-    + Number(plan.leftSwapOfferIds.length + plan.rightSwapOfferIds.length > 0);
+  let leftSwapIndex = 0;
+  let rightSwapIndex = 0;
+  // Solidity restarts its counterparty-owned swap indexes in every clause.
+  // Slice those ratios by the exact signed chunk plan; repeating the complete
+  // ratio array would let a later swap consume another order's authorization.
+  const argumentsByClause = buildCanonicalProofBatches(account)
+    .filter(batch => batch.payments.length > 0 || batch.swaps.length > 0)
+    .map(batch => {
+      const leftCount = batch.swaps.filter(swap => !swap.ownerIsLeft).length;
+      const rightCount = batch.swaps.length - leftCount;
+      const leftRatios =
+        batch.payments.length > 0 ? leftFillRatios : leftFillRatios.slice(leftSwapIndex, leftSwapIndex + leftCount);
+      const rightRatios =
+        batch.payments.length > 0
+          ? rightFillRatios
+          : rightFillRatios.slice(rightSwapIndex, rightSwapIndex + rightCount);
+      leftSwapIndex += leftCount;
+      rightSwapIndex += rightCount;
+      return {
+        left: encodeDeltaTransformerArgs(leftRatios, leftSecrets),
+        right: encodeDeltaTransformerArgs(rightRatios, rightSecrets),
+      };
+    });
   const left = sanitizeOptionalDisputeArgument(
-    hasArgumentData(leftFillRatios, leftSecrets)
-      ? wrapTransformerArgs(leftArgs, canonicalArgumentClauseCount)
-      : '0x',
+    hasArgumentData(leftFillRatios, leftSecrets) ? wrapTransformerArgs(argumentsByClause.map(args => args.left)) : '0x',
     'dispute.state.left',
   );
   const right = sanitizeOptionalDisputeArgument(
     hasArgumentData(rightFillRatios, rightSecrets)
-      ? wrapTransformerArgs(rightArgs, canonicalArgumentClauseCount)
+      ? wrapTransformerArgs(argumentsByClause.map(args => args.right))
       : '0x',
     'dispute.state.right',
   );

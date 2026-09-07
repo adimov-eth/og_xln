@@ -19,7 +19,7 @@
 
 import type { AccountReplica, AccountTx } from '../../../../types/account';
 import type { AccountDraftReplica } from '../../../state/account-state-draft';
-import { commitDeltaDraft, createDeltaDraft } from '../../delta-utils';
+import { commitDeltaDraft, createDeltaDraft, getOffdeltaRepresentationError } from '../../delta-utils';
 import { isLeftEntity } from '../../../../protocol/identity/entity-id';
 import { deriveDelta } from '../../../utils';
 import { deriveTransferOffdeltaChange } from '../../../../protocol/transform/delta-movement';
@@ -88,19 +88,13 @@ export function handleRequestCollateral(
   // signed payload. Therefore the exact prepaid fee is already feeAmount.
   const effectiveFeeTarget = feeAmount;
   if (effectiveFeeTarget <= 0n) {
-    return accountTxValidationRejected(
-      'request_collateral: feeAmount must produce effectiveFee > 0',
-      [],
-    );
+    return accountTxValidationRejected('request_collateral: feeAmount must produce effectiveFee > 0', []);
   }
 
   const feeToken = feeTokenId ?? tokenId;
   const feeDelta = account.state.deltas.get(feeToken);
   if (!feeDelta) {
-    return accountTxValidationRejected(
-      `request_collateral: no delta for fee token ${feeToken}`,
-      [],
-    );
+    return accountTxValidationRejected(`request_collateral: no delta for fee token ${feeToken}`, []);
   }
 
   // Request size is deterministic from payload; when fee is paid in the SAME token,
@@ -128,6 +122,8 @@ export function handleRequestCollateral(
   if (effectiveFeeTarget > 0n) {
     const nextFeeDelta = createDeltaDraft(account.state, feeToken);
     nextFeeDelta.offdelta += deriveTransferOffdeltaChange(requesterIsLeft, effectiveFeeTarget);
+    const representationError = getOffdeltaRepresentationError(account.state, nextFeeDelta);
+    if (representationError) return accountTxValidationRejected(representationError, []);
     commitDeltaDraft(account.state, nextFeeDelta);
   }
 

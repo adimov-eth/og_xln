@@ -249,7 +249,7 @@ export const decodePageItems = (value: unknown, code: string): unknown[] => {
 };
 
 const ACCOUNT_VIEW_REQUIRED = [
-  'state', 'status', 'mempool', 'currentFrame', 'currentHeight',
+  'state', 'status', 'mempool', 'mempoolCount', 'currentFrame', 'currentHeight',
   'rollbackCount', 'proofHeader',
   'pendingWithdrawals', 'shadow',
 ] as const;
@@ -286,6 +286,7 @@ const decodeAccountView = (value: unknown): LoadAccountProjection => {
     ACCOUNT_VIEW_OPTIONAL,
     'PRODUCTION_SWAP_LOAD_ACCOUNT_FIELDS_INVALID',
   );
+  requireBoundaryInteger(account['mempoolCount'], 'PRODUCTION_SWAP_LOAD_ACCOUNT_MEMPOOL_COUNT_INVALID');
   const state = requireBoundaryRecord(account['state'], 'PRODUCTION_SWAP_LOAD_ACCOUNT_STATE_INVALID');
   requireExactBoundaryKeys(
     state,

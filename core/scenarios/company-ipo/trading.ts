@@ -7,7 +7,9 @@
 
 import type { RuntimeReplica } from '../../runtime/types';
 import type { EntityTx } from '../../types/entity-tx';
-import { deriveSwapNetAuthorization } from '../../account/swap/swap-net-authorization';
+import { deriveSwapFillPolicyFee, deriveSwapNetAuthorization } from '../../account/swap/swap-net-authorization';
+import { deriveDelta } from '../../account/utils';
+import { deriveTransferOffdeltaChange } from '../../protocol/transform/delta-movement';
 import { DEFAULT_SPREAD_DISTRIBUTION, quoteAmountAtPriceForDecimals } from '../../orderbook';
 import { converge, findReplica, processUntil } from '../harness/helpers';
 import { executeCompanyAction } from './governance';
@@ -173,6 +175,7 @@ const completeBuyback = async (
   shares: CompanyShareTokens,
   quote: bigint,
 ): Promise<void> => {
+  const assertFinancials = prepareBuybackFinancialCheck(env, actors, shares, quote);
   await executeCompanyAction(env, actors.boardCompany, [offer({
     counterpartyEntityId: actors.hub.id,
     offerId: 'company-control-buyback',
@@ -199,6 +202,52 @@ const completeBuyback = async (
     [actors.boardCompany.id, 'company-control-buyback'],
     [actors.investor.id, 'investor-control-resale'],
     'company buyback');
+  assertFinancials();
+};
+
+const readBuybackDelta = (env: RuntimeReplica, entityId: string, peerId: string, tokenId: number) => {
+  const account = findReplica(env, entityId)[1].state.accounts.get(peerId);
+  const delta = account?.state.deltas.get(tokenId);
+  if (!account || !delta) throw new Error(`COMPANY_BUYBACK_DELTA_MISSING:${entityId}:${peerId}:${tokenId}`);
+  const derived = deriveDelta(delta, account.state.leftEntity === entityId);
+  return { delta: derived.delta, collateral: derived.collateral, leftEntity: account.state.leftEntity };
+};
+
+const prepareBuybackFinancialCheck = (
+  env: RuntimeReplica,
+  actors: CompanyScenarioActors,
+  shares: CompanyShareTokens,
+  quote: bigint,
+): (() => void) => {
+  // The company rests first; the investor is the taker. Read the same fee policy
+  // as the hub, then prove economic movement in both committed Account copies.
+  // Cancelled/rejected offers also disappear, so offer absence alone proves no buyback.
+  const bps = findReplica(env, actors.hub.id)[1].state.hubRebalanceConfig?.swapTakerFeeBps ?? 0;
+  const fee = deriveSwapFillPolicyFee(
+    { giveAmount: CONTROL_BUYBACK_AMOUNT, wantAmount: quote }, CONTROL_BUYBACK_AMOUNT, quote, bps, true,
+  );
+  const transfers = [
+    [actors.investor.id, actors.hub.id, shares.controlTokenId, CONTROL_BUYBACK_AMOUNT],
+    [actors.hub.id, actors.boardCompany.id, shares.controlTokenId, CONTROL_BUYBACK_AMOUNT],
+    [actors.boardCompany.id, actors.hub.id, USDT, quote],
+    [actors.hub.id, actors.investor.id, USDT, quote - fee],
+  ] as const;
+  const checks = transfers.flatMap(([sender, receiver, tokenId, amount]) =>
+    ([[sender, receiver], [receiver, sender]] as const).map(([entityId, peerId]) => {
+      const before = readBuybackDelta(env, entityId, peerId, tokenId);
+      const expected = deriveTransferOffdeltaChange(before.leftEntity === sender, amount);
+      return () => {
+        const after = readBuybackDelta(env, entityId, peerId, tokenId);
+        if (after.collateral !== before.collateral || after.delta - before.delta !== expected) {
+          throw new Error(`COMPANY_BUYBACK_FINANCIAL_MISMATCH:${entityId}:${tokenId}:` +
+            `before=${before.delta}:after=${after.delta}:expectedMovement=${expected}`);
+        }
+      };
+    }));
+  return () => {
+    checks.forEach(check => check());
+    console.log(`COMPANY_BUYBACK_FINANCIALS_PASS:control=${CONTROL_BUYBACK_AMOUNT}:usdt=${quote}:fee=${fee}:copies=8`);
+  };
 };
 
 const assertDividendOfferResting = (

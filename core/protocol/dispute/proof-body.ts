@@ -1,3 +1,5 @@
+import { INT512_ABI_COMPONENTS, SIGNED_AMOUNT_ABI_COMPONENTS } from '../crypto/abi-money';
+
 /**
  * ProofBody Types - ABI-compatible types for dispute proofs
  *
@@ -8,9 +10,7 @@
  */
 
 // Re-export typechain types for external use
-export type {
-  ProofBodyStruct,
-} from '../../../jurisdictions/typechain-types/Depository.sol/Depository.ts';
+export type { ProofBodyStruct } from '../../../jurisdictions/typechain-types/Depository.sol/Depository.ts';
 
 // Import for internal use
 import type { ProofBodyStruct } from '../../../jurisdictions/typechain-types/Depository.sol/Depository.ts';
@@ -20,11 +20,11 @@ import type { ProofBodyStruct } from '../../../jurisdictions/typechain-types/Dep
  * Converted to ProofBodyStruct for ABI encoding
  */
 export interface RuntimeProofBody {
-  watchSeed: string;             // bytes32 - bilateral account seed revealed by dispute start
-  leftResponseSeconds: number;   // uint32 - frozen left-side response window, seconds
-  rightResponseSeconds: number;  // uint32 - frozen right-side response window, seconds
-  offdeltas: bigint[];           // int256[] - bilateral offdelta per token
-  tokenIds: number[];            // uint256[] - sorted ascending
+  watchSeed: string; // bytes32 - bilateral account seed revealed by dispute start
+  leftResponseSeconds: number; // uint32 - frozen left-side response window, seconds
+  rightResponseSeconds: number; // uint32 - frozen right-side response window, seconds
+  offdeltas: bigint[]; // signed Int512 domain - bilateral offdelta per token
+  tokenIds: number[]; // uint256[] - sorted ascending
   transformers: RuntimeTransformerClause[];
 }
 
@@ -34,14 +34,14 @@ export interface RuntimeProofBody {
 export type RuntimeTransformerClause = RuntimeTypedTransformerClause | RuntimeEncodedTransformerClause;
 
 interface RuntimeTypedTransformerClause {
-  transformerAddress: string;    // DeltaTransformer contract address
-  batch: RuntimeBatch;           // Decoded batch (not encoded bytes)
+  transformerAddress: string; // DeltaTransformer contract address
+  batch: RuntimeBatch; // Decoded batch (not encoded bytes)
   allowances: RuntimeAllowance[];
 }
 
 interface RuntimeEncodedTransformerClause {
   transformerAddress: string;
-  encodedBatch: string;          // Opaque bytes for custom transformer deployments
+  encodedBatch: string; // Opaque bytes for custom transformer deployments
   allowances: RuntimeAllowance[];
 }
 
@@ -59,10 +59,10 @@ export interface RuntimeBatch {
  * Maps to DeltaTransformer.PaymentStruct
  */
 export interface RuntimePayment {
-  deltaIndex: number;            // Index in tokenIds array
-  amount: bigint;                // int256 - positive = right owes left after reveal
+  deltaIndex: number; // Index in tokenIds array
+  amount: bigint; // signed uint256 magnitude - positive = right owes left after reveal
   revealedUntilTimestamp: number; // Unix-second deadline for on-chain/argument secret reveal
-  hash: string;                  // bytes32 hashlock
+  hash: string; // bytes32 hashlock
 }
 
 /**
@@ -70,11 +70,11 @@ export interface RuntimePayment {
  * Maps to DeltaTransformer.SwapStruct
  */
 export interface RuntimeSwap {
-  ownerIsLeft: boolean;          // Who placed this order
-  addDeltaIndex: number;         // Token to add (give token)
-  addAmount: bigint;             // Amount to add
-  subDeltaIndex: number;         // Token to subtract (want token)
-  subAmount: bigint;             // Amount to subtract
+  ownerIsLeft: boolean; // Who placed this order
+  addDeltaIndex: number; // Token to add (give token)
+  addAmount: bigint; // Amount to add
+  subDeltaIndex: number; // Token to subtract (want token)
+  subAmount: bigint; // Amount to subtract
 }
 
 /**
@@ -109,10 +109,10 @@ export interface ProofBodyResult {
 
   // ABI-encoded representation (for on-chain submission)
   proofBodyStruct: ProofBodyStruct;
-  encodedProofBody: string;      // ABI-encoded bytes
+  encodedProofBody: string; // ABI-encoded bytes
 
   // Hash for signing
-  proofBodyHash: string;         // keccak256(encodedProofBody)
+  proofBodyHash: string; // keccak256(encodedProofBody)
 }
 
 /**
@@ -124,7 +124,7 @@ export const PROOF_BODY_ABI = {
     { name: 'watchSeed', type: 'bytes32' },
     { name: 'leftResponseSeconds', type: 'uint32' },
     { name: 'rightResponseSeconds', type: 'uint32' },
-    { name: 'offdeltas', type: 'int256[]' },
+    { name: 'offdeltas', type: 'tuple[]', components: INT512_ABI_COMPONENTS },
     { name: 'tokenIds', type: 'uint256[]' },
     {
       name: 'transformers',
@@ -159,7 +159,7 @@ export const BATCH_ABI = {
       type: 'tuple[]',
       components: [
         { name: 'deltaIndex', type: 'uint256' },
-        { name: 'amount', type: 'int256' },
+        { name: 'amount', type: 'tuple', components: SIGNED_AMOUNT_ABI_COMPONENTS },
         { name: 'revealedUntilTimestamp', type: 'uint256' },
         { name: 'hash', type: 'bytes32' },
       ],
@@ -180,7 +180,7 @@ export const BATCH_ABI = {
       type: 'tuple[]',
       components: [
         { name: 'deltaIndex', type: 'uint256' },
-        { name: 'amount', type: 'int256' },
+        { name: 'amount', type: 'tuple', components: SIGNED_AMOUNT_ABI_COMPONENTS },
         { name: 'claimedRatio', type: 'uint16' },
         { name: 'fullHash', type: 'bytes32' },
         { name: 'partialRoot', type: 'bytes32' },

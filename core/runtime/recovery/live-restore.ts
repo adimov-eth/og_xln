@@ -41,10 +41,8 @@ export const loadLiveRuntimeFromDB = async (
 
     await deps.rehydrate(env, options?.trustedJurisdictionRpcBindings);
     deps.registerCommittedSingleSignerWallets(env);
-    // Network outputs are one-shot post-commit effects, not a durable delivery
-    // queue. Replay reconstructs them only to verify deterministic equivalence.
-    // A live restore must neither resend nor block on the last replayed frame.
-    env.pendingNetworkOutputs = [];
+    // Keep the WAL-proven flat outbox. Runtime republishes it through the same
+    // writer when recipients become ready; no separate recovery queue exists.
     return env;
   } catch (error) {
     if (env) await deps.discardAccountAuthority(env);

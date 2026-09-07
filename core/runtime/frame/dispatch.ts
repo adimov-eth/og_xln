@@ -7,11 +7,13 @@ import type { EntityReplica } from '../../entity/types';
 import type { RuntimeReplica, RoutedEntityInput } from '../types';
 import {
   dispatchEntityOutputs,
+  planEntityOutputs,
+  pruneSettledOutputs,
   type PlannedRemoteOutput,
   type RuntimeOutputRoutingDeps,
 } from '../delivery/topology/output-routing';
 import { ensureRuntimeInfrastructure } from '../envelope/replica-envelope';
-import type { PreparedOutputGraph } from '../delivery/prepared-output';
+import { createPreparedOutputGraph, type PreparedOutputGraph } from '../delivery/prepared-output';
 
 const runtimeLog = createStructuredLogger('runtime');
 
@@ -93,20 +95,15 @@ export const dispatchCommittedEntityOutputs = async (
       throw error;
     }
     if (!transportReady) {
-      const error = new Error(
-        `DIRECT_OUTPUT_ROUTE_NOT_READY:targets=${targetEntityIds.join(',')}:outputs=${plan.remoteOutputs.length}`,
-      );
-      env.error('network', 'DIRECT_OUTPUT_CONNECT_FAILED', {
+      runtimeLog.debug('side_effect.remote_outputs.waiting_for_session', {
         targetEntityIds,
         remoteOutputs: plan.remoteOutputs.length,
       });
-      throw error;
     }
   }
   dispatchEntityOutputs(env, plan.remoteOutputs, routing, plan.preparedOutputGraph);
-  // The outbox is retained across every failure path. Clear it only after the
-  // transport synchronously accepts every envelope; there is no timer retry.
-  env.pendingNetworkOutputs = [];
+  // dispatchEntityOutputs retires only accepted units; readiness changes wake
+  // the same Runtime writer to republish the existing remaining outbox.
   if (p2p && refreshIds.length > 0) {
     await p2p.announceProfilesForEntitiesNow(refreshIds, 'routing-profile-refresh', false);
   }
@@ -118,6 +115,21 @@ export const dispatchCommittedEntityOutputs = async (
     await p2p.announceProfilesForEntitiesNow(newIds, 'routing-profile-new', false);
   }
 
+};
+
+/** Called only under the Runtime writer: delivery never manufactures a frame. */
+export const flushCommittedNetworkOutputs = async (
+  env: RuntimeReplica,
+  routing: RuntimeOutputRoutingDeps,
+): Promise<void> => {
+  if (!env.pendingNetworkOutputs?.length) return;
+  const graph = createPreparedOutputGraph();
+  const plan = planEntityOutputs(env, pruneSettledOutputs(env, env.pendingNetworkOutputs), routing, graph);
+  if (plan.localOutputs.length > 0) {
+    routing.enqueueRuntimeInputs(env, plan.localOutputs, undefined, undefined, env.state.timestamp);
+  }
+  await runCommittedRecoveryBarrier(env, plan.remoteOutputs.length, 0, 0);
+  await dispatchCommittedEntityOutputs(env, new Set(), plan, routing);
 };
 
 export const runCommittedRecoveryBarrier = async (

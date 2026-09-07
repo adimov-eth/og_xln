@@ -165,8 +165,7 @@ import {
 } from './process/child-recovery-policy';
 import { buildRuntimeHealthFailures, normalizeRuntimeFailureCode } from '../protocol/errors/failure-taxonomy';
 import { STORAGE_WRITER_LOCK_TTL_MS } from '../storage/runtime-dbs';
-import { deriveManagedSignerInventory, deriveMeshChildSeed, readMeshSeedOverrides, requireMeshRootSeed, resolveMeshRuntimeSeed } from './mesh/mesh-seeds';
-import { deriveManagedEntityIdentity } from './daemon-control';
+import { buildCrossLoadStartupSignerLabels, deriveManagedSignerInventory, deriveMeshChildSeed, readMeshSeedOverrides, requireMeshRootSeed, resolveMeshRuntimeSeed } from './mesh/mesh-seeds';
 import { createJAdapter } from '../jurisdiction/adapter';
 import type { JAdapter, JTokenInfo } from '../jurisdiction/adapter/types';
 import { getBootstrapTokenAmount } from '../jurisdiction/machine/config/bootstrap-economy';
@@ -176,7 +175,7 @@ import {
   type OrchestratorResetOptions,
 } from './process/reset-coordinator';
 import { buildDiskSummary } from './health/disk-health';
-import { completeResetStartup } from './process/reset-startup';
+import { completeResetStartup, planNativeHubBootstrapPeers, waitForNativeH1DeliveryReady } from './process/reset-startup';
 import {
   createBaselineWaitReporter,
   createHealthRecomputer,
@@ -737,10 +736,26 @@ const pollAllHubHealth = async (): Promise<void> => {
   return hubHealthPollInFlight;
 };
 
+const requireHubBootstrapOwners = (child: HubChild) => {
+  const owners = child.lastInfo?.hubEntities;
+  if (!owners?.length) throw new Error(`RUST_HUB_BOOTSTRAP_INVENTORY_MISSING:${child.name}`);
+  return owners.map(owner => {
+    const entityId = String(owner.entityId || '').trim().toLowerCase();
+    const signerId = String(owner.signerId || '').trim().toLowerCase();
+    const jurisdictionName = String(owner.jurisdictionName || '').trim();
+    if (!/^0x[0-9a-f]{64}$/.test(entityId) || !/^0x[0-9a-f]{40}$/.test(signerId) || !jurisdictionName) {
+      throw new Error(`RUST_HUB_BOOTSTRAP_OWNER_AUTHORITY:${child.name}`);
+    }
+    return { entityId, signerId, jurisdictionName };
+  });
+};
+
 const publishNativeHubProfile = async (child: HubChild): Promise<void> => {
   if (child.engine !== 'rust') return;
   await pollHubHealth(child);
-  const entityId = String(child.lastInfo?.entityId || '').trim().toLowerCase();
+  const owners = requireHubBootstrapOwners(child);
+  for (const owner of owners) {
+  const entityId = String(owner.entityId).trim().toLowerCase();
   if (!/^0x[0-9a-f]{64}$/.test(entityId)) {
     throw new Error(`RUST_HUB_PROFILE_ENTITY_ID_MISSING:${child.name}`);
   }
@@ -760,6 +775,7 @@ const publishNativeHubProfile = async (child: HubChild): Promise<void> => {
   }
   if (!storeVerifiedGossipProfile(relayStore, profile) && !relayStore.gossipProfiles.has(entityId)) {
     throw new Error(`RUST_HUB_PROFILE_RELAY_REJECTED:${child.name}`);
+  }
   }
 };
 
@@ -884,8 +900,9 @@ const configureNativeH1Entity = async (
   child: HubChild,
   entityId: string,
   signerId: string,
+  jurisdictionName: string,
 ): Promise<void> => {
-  const quoteAuthority = getMarketMakerIdentities()[0];
+  const quoteAuthority = getMarketMakerIdentities().find(peer => peer.jurisdictionName === jurisdictionName);
   if (!quoteAuthority) throw new Error('RUST_HUB_QUOTE_AUTHORITY_MISSING:H1');
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20_000);
@@ -897,7 +914,7 @@ const configureNativeH1Entity = async (
         signal: controller.signal,
         headers: { 'content-type': 'application/json' },
         body: safeStringify({
-          commandId: 'bootstrap-hub-policy:H1',
+          commandId: `bootstrap-hub-policy:${entityId}`,
           entityInputs: [{
             entityId,
             signerId,
@@ -1103,13 +1120,17 @@ const driveH1Bootstrap = async (
   includeMarketMaker: boolean,
 ): Promise<void> => {
   const entityId = String(h1.lastInfo?.entityId || h1.lastInfo?.hubEntities?.[0]?.entityId || '').trim().toLowerCase();
-  const signerId = String(h1.lastInfo?.hubEntities?.[0]?.signerId || '').trim().toLowerCase();
+  const signerId = String(h1.lastInfo?.hubEntities?.find(owner => owner.entityId === entityId)?.signerId || '').trim().toLowerCase();
   if (!/^0x[0-9a-f]{64}$/.test(entityId) || !/^0x[0-9a-f]{40}$/.test(signerId)) {
     throw new Error('H1_BOOTSTRAP_IDENTITY_MISSING');
   }
   const bootstrapStartedAt = Date.now();
   if (h1.engine === 'rust') {
-    await configureNativeH1Entity(h1, entityId, signerId);
+    await waitForNativeH1DeliveryReady(h1, resetState, pollHubHealth);
+    const owners = requireHubBootstrapOwners(h1);
+    for (const owner of owners) {
+      await configureNativeH1Entity(h1, owner.entityId, owner.signerId, owner.jurisdictionName);
+    }
     await publishNativeHubProfile(h1);
     logNativeH1Bootstrap('bootstrap_policy_committed', { elapsedMs: Date.now() - bootstrapStartedAt, entityId });
   } else {
@@ -1118,34 +1139,13 @@ const driveH1Bootstrap = async (
   await fundH1OwnedBootstrapReserves(entityId, signerId);
   logNativeH1Bootstrap('bootstrap_reserves_funded', { elapsedMs: Date.now() - bootstrapStartedAt, entityId });
   if (h1.engine !== 'rust') return;
-  const hubPeers = hubChildren.slice(1).map(peer => ({
-    name: peer.name,
-    isHub: true,
-    entityId: deriveManagedEntityIdentity({
-      name: peer.name,
-      seed: peer.seed,
-      signerLabel: peer.signerLabel,
-    }).entityId,
-    tokenIds: [...DEFAULT_ACCOUNT_TOKEN_IDS] as number[],
-  }));
-  const primaryJurisdiction = resolveMeshJurisdictionConfig(args.rpcUrl).name;
-  const supportPeers = includeMarketMaker ? getMarketMakerIdentities()
-    .filter(peer => peer.jurisdictionName === primaryJurisdiction)
-    .map(peer => {
-    const configured = getTokenIdsForJurisdiction({
-      name: peer.jurisdictionName,
-      chainId: peer.chainId,
-    });
-    return {
-      name: peer.name,
-      isHub: false,
-      entityId: peer.entityId,
-      tokenIds: configured.length >= HUB_REQUIRED_TOKEN_COUNT
-        ? configured
-        : [...DEFAULT_ACCOUNT_TOKEN_IDS],
-    };
-    }) : [];
-  const peers = [...hubPeers, ...supportPeers];
+  const owners = requireHubBootstrapOwners(h1);
+  const peers = planNativeHubBootstrapPeers(
+    entityId,
+    owners,
+    hubChildren.slice(1).map(peer => ({ name: peer.name, owners: requireHubBootstrapOwners(peer) })),
+    includeMarketMaker ? getMarketMakerIdentities() : [],
+  );
   let lastProgress = {
     complete: 0,
     observed: 0,
@@ -1159,7 +1159,7 @@ const driveH1Bootstrap = async (
     let ready = 0;
     let awaitingHubCredit = 0;
     for (const peer of peers) {
-      const status = await readNativeAccountStatus(h1, entityId, peer.entityId, peer.tokenIds);
+      const status = await readNativeAccountStatus(h1, peer.ownerEntityId, peer.entityId, peer.tokenIds);
       if (!status) continue;
       observed += 1;
       const referenceToken = peer.tokenIds[0];
@@ -1196,7 +1196,7 @@ const driveH1Bootstrap = async (
           peer: peer.name,
           tokenIds: missing,
         });
-        await submitNativeBootstrapCredit(h1, entityId, signerId, peer.entityId, missing);
+        await submitNativeBootstrapCredit(h1, peer.ownerEntityId, peer.ownerSignerId, peer.entityId, missing);
         logNativeH1Bootstrap('bootstrap_credit_committed', {
           counterpartyEntityId: peer.entityId,
           peer: peer.name,
@@ -2514,7 +2514,7 @@ const runReset = async (options: OrchestratorResetOptions = configuredResetOptio
           additionalStartupSigners: deriveManagedSignerInventory(runtimeSeedFor('CUSTODY'),
             process.env['XLN_LOCAL_PROD_SMOKE_SWAP_LOAD_SMOKE'] === '1' &&
             process.env['XLN_LOCAL_PROD_SMOKE_SWAP_LOAD_MODE'] === 'cross'
-              ? ['production-load-source', 'production-load-target'] : []),
+              ? buildCrossLoadStartupSignerLabels(Number(process.env['XLN_LOCAL_PROD_SMOKE_SWAP_LOAD_SWAPS'] || '1')) : []),
           profileName: 'Custody',
           jurisdictionId: primaryJurisdiction.key,
         });
@@ -2526,7 +2526,7 @@ const runReset = async (options: OrchestratorResetOptions = configuredResetOptio
       }
     };
 
-    await completeResetStartup({ h1, host: args.host, shouldStartMarketMaker, waitForMesh,
+    await completeResetStartup({ h1, host: args.host, shouldStartMarketMaker, preserveState, waitForMesh,
       driveH1Bootstrap: () => driveH1Bootstrap(h1, shouldStartMarketMaker),
       startMarketMaker: startConfiguredMarketMaker, startCustody: startConfiguredCustody });
 

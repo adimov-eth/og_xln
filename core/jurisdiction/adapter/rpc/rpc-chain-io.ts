@@ -10,7 +10,6 @@ import {
   type FeeOverrides,
   type RpcReceipt,
 } from './rpc-boundary';
-import { isTronChainId } from '../chain-ids';
 import {
   sendRpcBatch,
   type RpcBatchRequest,
@@ -95,6 +94,7 @@ const createSignerFactory = (
     privateKey,
     rpcUrl: String(config.rpcUrl || ''),
     fullHost: config.tronFullHost,
+    solidityHost: config.tronSolidityHost,
     apiKey: config.tronApiKey || process.env['TRONGRID_API_KEY'],
   });
 };
@@ -125,8 +125,8 @@ export const parseBlockTimestamp = (raw: unknown): number => {
   return timestamp;
 };
 
-const readTronSolidifiedBlockNumber = async (config: JAdapterConfig): Promise<number> => {
-  const fullHost = String(config.tronFullHost || config.rpcUrl || '')
+const readTronSolidifiedBlockNumber = async (config: JAdapterConfig, provider: ethers.JsonRpcProvider): Promise<number> => {
+  const fullHost = String(config.tronSolidityHost || config.tronFullHost || config.rpcUrl || '')
     .replace(/\/jsonrpc\/?$/i, '')
     .replace(/\/$/, '');
   if (!fullHost) throw new Error('TRON_FULL_HOST_MISSING');
@@ -151,7 +151,17 @@ const readTronSolidifiedBlockNumber = async (config: JAdapterConfig): Promise<nu
   if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)) {
     throw new Error('TRON_SOLIDIFIED_HEAD_PAYLOAD_INVALID');
   }
-  return parseBlockNumber((rawData as Record<string, unknown>)['number']);
+  const height = parseBlockNumber((rawData as Record<string, unknown>)['number']);
+  const nativeBlockId = (rawPayload as Record<string, unknown>)['blockID'];
+  if (typeof nativeBlockId !== 'string' || !/^[0-9a-fA-F]{64}$/.test(nativeBlockId)) {
+    throw new Error('TRON_SOLIDIFIED_HEAD_BLOCK_ID_INVALID');
+  }
+  const rpcBlock: unknown = await provider.send('eth_getBlockByNumber', [ethers.toQuantity(height), false]);
+  if (!rpcBlock || typeof rpcBlock !== 'object' || !('hash' in rpcBlock) ||
+    rpcBlock.hash !== `0x${nativeBlockId.toLowerCase()}`) {
+    throw new Error(`TRON_SOLIDIFIED_HEAD_BLOCK_HASH_MISMATCH:${height}`);
+  }
+  return height;
 };
 
 const sendTronRpcCall = async (
@@ -230,7 +240,7 @@ const sendCalls = async (
   config: JAdapterConfig,
   requests: readonly RpcBatchRequest[],
 ): Promise<Map<number, RpcBatchResponse>> => {
-  if (isTronChainId(config.chainId)) return sendTronRpcCalls(config, requests);
+  if (config.mode === 'tron') return sendTronRpcCalls(config, requests);
   const rpcUrl = String(config.rpcUrl || '').trim();
   if (!rpcUrl) throw new Error('J_RECEIPT_BATCH_RPC_URL_MISSING');
   return sendRpcBatch(rpcUrl, [...requests]);
@@ -326,7 +336,7 @@ export const createRpcChainIo = (
     readCurrentBlockNumber,
     readLatestBlockTimestamp,
     readSafeBlockNumber: () =>
-      isTronChainId(config.chainId) ? readTronSolidifiedBlockNumber(config) : readCurrentBlockNumber(),
+      config.mode === 'tron' ? readTronSolidifiedBlockNumber(config, provider) : readCurrentBlockNumber(),
     readBlockHeaders: createHeaderReader(config),
     sendAuthenticatedBatch: createAuthenticatedBatchSender(config),
     resolveFinalityDepth: scenarioMode => resolveRpcFinalityDepth(config, scenarioMode),

@@ -29,6 +29,7 @@ import {
   NftCustody__factory,
 } from '../../../../jurisdictions/typechain-types/index';
 import { safeStringify } from '../../../protocol/serialization/index.js';
+import { decodeInt512, decodeUint512, decodeUint768 } from '../../../protocol/crypto/abi-money';
 import { toUnixMs, unixMsToUnixSFloor } from '../../../protocol/units';
 import { createStructuredLogger } from '../../../support/logger';
 import { isLeftEntity, normalizeEntityId } from '../../../entity/id';
@@ -1199,9 +1200,9 @@ export class BrowserVMProvider {
       throw new Error('BROWSERVM_COLLATERAL_READ_EMPTY');
     }
 
-    // _collaterals returns AccountCollateral struct: { collateral: uint256, ondelta: int256 }
+    // Custody remains uint256; cumulative allocation is the signed two-word tuple.
     const decoded = this.depositoryInterface.decodeFunctionResult('_collaterals', returnData);
-    return { collateral: BigInt(decoded[0]), ondelta: BigInt(decoded[1]) };
+    return { collateral: BigInt(decoded[0]), ondelta: decodeInt512(decoded[1]) };
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1412,11 +1413,11 @@ export class BrowserVMProvider {
           `${safeStringify(result.execResult.exceptionError)}`,
         );
       }
-      const [value] = this.depositoryInterface!.decodeFunctionResult(
+      const decoded = this.depositoryInterface!.decodeFunctionResult(
         functionName,
         result.execResult.returnValue,
       );
-      return BigInt(value);
+      return functionName === 'debtOutstanding' ? decodeUint768(decoded) : BigInt(decoded[0]);
     };
     const [cursor, activeCount, outstanding] = await Promise.all([
       readUint('_debtIndex'),
@@ -1451,7 +1452,7 @@ export class BrowserVMProvider {
         '_debts',
         debtResult.execResult.returnValue,
       );
-      const amount = BigInt(amountRaw);
+      const amount = decodeUint512(amountRaw);
       if (amount <= 0n) throw new Error(`BROWSERVM_DEBT_ENTRY_ZERO:index=${index}`);
       observedOutstanding += amount;
       debts.push({ creditor: String(creditor), amount });

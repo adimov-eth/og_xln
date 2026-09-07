@@ -365,6 +365,23 @@ const decodeStorageValueGraphBranch = (
 const exactBytes = (left: Uint8Array, right: Uint8Array): boolean =>
   left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
 
+const decodeStorageValueGraphLeaf = (
+  pathBytes: Uint8Array,
+  valueBytes: Uint8Array,
+): readonly [StorageValueGraphPath, StorageValueGraphValue] => {
+  const path = decodeStorageValueGraphPath(
+    decodeBuffer(Buffer.from(pathBytes)),
+    'STORAGE_RUNTIME_MACHINE_LEAF_PATH',
+  );
+  if (!exactBytes(storageValueGraphPathBytes(path), pathBytes)) {
+    throw new Error('STORAGE_RUNTIME_MACHINE_LEAF_PATH_NON_CANONICAL');
+  }
+  return [path, decodeStorageValueGraphValue(
+    decodeBuffer(Buffer.from(valueBytes)),
+    'STORAGE_RUNTIME_MACHINE_LEAF_VALUE',
+  )];
+};
+
 const readGraphRecords = async (
   db: RuntimeDbLike,
 ): Promise<PersistentRadixNodeRecord<StorageValueGraphPath, StorageValueGraphValue>[]> => {
@@ -377,14 +394,7 @@ const readGraphRecords = async (
   const leafPrefix = keyRuntimeMachineTreePrefix(KEY_RUNTIME_MACHINE_LEAF);
   for await (const key of iterateKeys(db, { prefix: leafPrefix })) {
     const parsed = parseRuntimeMachineLeafKey(key);
-    const path = decodeStorageValueGraphPath(decodeBuffer(parsed.payload), 'STORAGE_RUNTIME_MACHINE_LEAF_PATH');
-    if (!exactBytes(storageValueGraphPathBytes(path), parsed.payload)) {
-      throw new Error('STORAGE_RUNTIME_MACHINE_LEAF_PATH_NON_CANONICAL');
-    }
-    const value = decodeStorageValueGraphValue(
-      decodeBuffer(await db.get(key)),
-      'STORAGE_RUNTIME_MACHINE_LEAF_VALUE',
-    );
+    const [path, value] = decodeStorageValueGraphLeaf(parsed.payload, await db.get(key));
     records.push({
       kind: 'leaf',
       path: radixMerklePathSlots(parsed.payload, 16),
@@ -476,12 +486,10 @@ const rebuildStorageValueGraph = (graph: StorageValueGraph): unknown => {
   return build([]);
 };
 
-export const readRuntimeMachineGraph = async (
-  db: RuntimeDbLike,
+const validateRuntimeMachineGraph = (
+  graph: StorageValueGraph,
   expected: RuntimeMachineGraphRoot,
-): Promise<Record<string, unknown>> => {
-  const records = await readGraphRecords(db);
-  const graph = PersistentRadixValueMap.fromNodeRecords(records, STORAGE_VALUE_GRAPH_OPTIONS);
+): Record<string, unknown> => {
   if (graph.rootHash() !== expected.rootHash || graph.size !== expected.leafCount) {
     throw new Error(
       `STORAGE_RUNTIME_MACHINE_GRAPH_ROOT_MISMATCH:` +
@@ -495,4 +503,23 @@ export const readRuntimeMachineGraph = async (
   );
   assertStorageRuntimeMachineProjection(machine);
   return machine;
+};
+
+/** Authenticate exported checkpoint leaves through the same graph and snapshot boundary as DB reads. */
+export const decodeRuntimeMachineGraphLeaves = (
+  rows: readonly Readonly<{ pathBytes: Uint8Array; valueBytes: Uint8Array }>[],
+  expected: RuntimeMachineGraphRoot,
+): Record<string, unknown> => {
+  const entries = rows.map(row => decodeStorageValueGraphLeaf(row.pathBytes, row.valueBytes));
+  const graph = PersistentRadixValueMap.fromMap(entries, STORAGE_VALUE_GRAPH_OPTIONS);
+  return validateRuntimeMachineGraph(graph, expected);
+};
+
+export const readRuntimeMachineGraph = async (
+  db: RuntimeDbLike,
+  expected: RuntimeMachineGraphRoot,
+): Promise<Record<string, unknown>> => {
+  const records = await readGraphRecords(db);
+  const graph = PersistentRadixValueMap.fromNodeRecords(records, STORAGE_VALUE_GRAPH_OPTIONS);
+  return validateRuntimeMachineGraph(graph, expected);
 };

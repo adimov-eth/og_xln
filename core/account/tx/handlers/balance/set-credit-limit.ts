@@ -9,7 +9,7 @@
 import type { AccountTx } from '../../../../types/account';
 import type { AccountDraftState } from '../../../state/account-state-draft';
 import { AccountDeltaError } from '../../../state/delta';
-import { FINANCIAL } from '../../../../config/constants';
+import { UINT256_MAX } from '../../../../protocol/boundary/integer-ranges';
 import { commitDeltaDraft, createDeltaDraft } from '../../delta-utils';
 import type { ApplyAccountTxResult } from '../../apply-types';
 import {
@@ -22,7 +22,7 @@ import {
 export function handleSetCreditLimit(
   account: AccountDraftState,
   accountTx: Extract<AccountTx, { type: 'set_credit_limit' }>,
-  byLeft: boolean
+  byLeft: boolean,
 ): ApplyAccountTxResult {
   const { tokenId, amount } = accountTx.data;
   const events: string[] = [];
@@ -30,11 +30,8 @@ export function handleSetCreditLimit(
   if (amount < 0n) {
     return accountTxValidationRejected(`Credit limit cannot be negative: ${amount}`, events);
   }
-  if (amount > FINANCIAL.MAX_CREDIT_LIMIT) {
-    return accountTxValidationRejected(
-      `Credit limit exceeds maximum: ${amount} > ${FINANCIAL.MAX_CREDIT_LIMIT}`,
-      events,
-    );
+  if (amount > UINT256_MAX) {
+    return accountTxValidationRejected(`Credit limit exceeds maximum: ${amount} > ${UINT256_MAX}`, events);
   }
 
   // Channel.ts pattern (Transition.ts:358-362):

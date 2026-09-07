@@ -594,6 +594,7 @@ export class TsAccountWorkerCoordinator {
     const proposals = input.proposals.map((item, index) => ({
       order: input.txs.length + index,
       accountId: normalizeTsWorkerAccountId(item.accountId),
+      ...(item.selectedMempoolPositions === undefined ? {} : { selectedMempoolPositions: item.selectedMempoolPositions }),
       ...(item.counterpartyBoardAuthority ? { counterpartyBoardAuthority: item.counterpartyBoardAuthority } : {}),
     }));
     if (new Set(proposals.map(proposal => proposal.accountId)).size !== proposals.length) {
@@ -603,6 +604,7 @@ export class TsAccountWorkerCoordinator {
       [] as Array<{
         order: number;
         accountId: string;
+        selectedMempoolPositions?: readonly number[];
         counterpartyBoardAuthority?: NonNullable<
           typeof input.proposals[number]['counterpartyBoardAuthority']
         >;
@@ -704,6 +706,7 @@ export class TsAccountWorkerCoordinator {
     const proposals = input.proposals.map((item, index) => ({
       order: input.txs.length + index,
       accountId: normalizeTsWorkerAccountId(item.accountId),
+      ...(item.selectedMempoolPositions === undefined ? {} : { selectedMempoolPositions: item.selectedMempoolPositions }),
       ...(item.counterpartyBoardAuthority ? { counterpartyBoardAuthority: item.counterpartyBoardAuthority } : {}),
     }));
     if (new Set(proposals.map(row => row.accountId)).size !== proposals.length) {

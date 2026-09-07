@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import type { TronWeb } from 'tronweb';
 import { safeStringify } from '../../../protocol/serialization';
+import { broadcastTronTransaction } from './tron-broadcast';
 
 type TronWebConstructor = typeof import('tronweb')['TronWeb'];
 type TronTransferTransaction = Awaited<
@@ -32,6 +33,7 @@ export class TronSigner extends ethers.AbstractSigner<ethers.JsonRpcProvider> {
   readonly #owner: string;
   readonly #rpcUrl: string;
   readonly #fullHost: string | undefined;
+  readonly #solidityHost: string | undefined;
   readonly #apiKey: string | undefined;
   #energyFee: Promise<number> | undefined;
 
@@ -40,6 +42,7 @@ export class TronSigner extends ethers.AbstractSigner<ethers.JsonRpcProvider> {
     privateKey: string;
     rpcUrl: string;
     fullHost?: string | undefined;
+    solidityHost?: string | undefined;
     apiKey?: string | undefined;
   }, TronWeb: TronWebConstructor) {
     super(params.provider);
@@ -47,6 +50,7 @@ export class TronSigner extends ethers.AbstractSigner<ethers.JsonRpcProvider> {
     this.#privateKey = params.privateKey.replace(/^0x/, '');
     this.#rpcUrl = params.rpcUrl;
     this.#fullHost = params.fullHost;
+    this.#solidityHost = params.solidityHost;
     this.#apiKey = params.apiKey;
     this.#wallet = new ethers.Wallet(`0x${this.#privateKey}`);
     this.#maxFeeLimit = Number(process.env['TRON_FEE_LIMIT'] || DEFAULT_TRON_FEE_LIMIT);
@@ -55,6 +59,7 @@ export class TronSigner extends ethers.AbstractSigner<ethers.JsonRpcProvider> {
     }
     this.#tronWeb = new this.#TronWeb({
       fullHost: resolveFullHost(params.rpcUrl, params.fullHost),
+      ...(params.solidityHost ? { solidityNode: params.solidityHost } : {}),
       privateKey: this.#privateKey,
       ...(params.apiKey ? { headers: { 'TRON-PRO-API-KEY': params.apiKey } } : {}),
     });
@@ -78,6 +83,7 @@ export class TronSigner extends ethers.AbstractSigner<ethers.JsonRpcProvider> {
       privateKey: this.#privateKey,
       rpcUrl: this.#rpcUrl,
       fullHost: this.#fullHost,
+      solidityHost: this.#solidityHost,
       apiKey: this.#apiKey,
     }, this.#TronWeb);
   }
@@ -88,6 +94,7 @@ export class TronSigner extends ethers.AbstractSigner<ethers.JsonRpcProvider> {
       privateKey,
       rpcUrl: this.#rpcUrl,
       fullHost: this.#fullHost,
+      solidityHost: this.#solidityHost,
       apiKey: this.#apiKey,
     }, this.#TronWeb);
   }
@@ -170,8 +177,17 @@ export class TronSigner extends ethers.AbstractSigner<ethers.JsonRpcProvider> {
   async #readBroadcastTransaction(hash: string): Promise<ethers.TransactionResponse> {
     const deadline = Date.now() + DEFAULT_TRON_BROADCAST_VISIBILITY_MS;
     while (Date.now() < deadline) {
-      const response = await this.provider.getTransaction(hash);
-      if (response) return response;
+      // Stock java-tron exposes pending numeric fields as "0x", which ethers
+      // correctly rejects. Observe native inclusion before decoding its genuine
+      // mined response; do not fabricate block/fee fields or forgive BAD_DATA.
+      const receipt = await this.#tronWeb.trx.getUnconfirmedTransactionInfo(hash.slice(2));
+      if (Object.keys(receipt).length > 0) {
+        if (receipt.id !== hash.slice(2) || !Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 1) {
+          throw transactionError('TRON_INCLUDED_TRANSACTION_INVALID', receipt);
+        }
+        const response = await this.provider.getTransaction(hash);
+        if (response && response.isMined() && response.blockNumber === receipt.blockNumber) return response;
+      }
       await wait(DEFAULT_TRON_BROADCAST_POLL_MS);
     }
     throw new Error(`TRON_TRANSACTION_RESPONSE_TIMEOUT:${hash}:${DEFAULT_TRON_BROADCAST_VISIBILITY_MS}`);
@@ -213,7 +229,7 @@ export class TronSigner extends ethers.AbstractSigner<ethers.JsonRpcProvider> {
     }
     const signed = await this.#tronWeb.trx.sign(unsigned, this.#privateKey);
     if (!signed?.signature?.length) throw new Error('TRON_TRANSACTION_SIGNATURE_MISSING');
-    const broadcast = await this.#tronWeb.trx.sendRawTransaction(signed);
+    const broadcast = await broadcastTronTransaction(this.#tronWeb, signed);
     if (!broadcast?.result) throw transactionError('TRON_BROADCAST_FAILED', broadcast);
     const hash = `0x${String(signed.txID).replace(/^0x/, '')}`;
     // Return the provider's genuine response. Fabricating an Ethereum-shaped

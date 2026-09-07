@@ -46,7 +46,9 @@ const ensureBrowserProcessShim = (): void => {
     cwd: () => string;
   };
   const processShim: BrowserProcessShim = {
-    env: {},
+    // The standalone page and worker bundles explicitly define this value.
+    // An empty shim makes hostile input halt production browsers as if in dev.
+    env: { NODE_ENV: process.env['NODE_ENV'] },
     browser: true,
     version: '0',
     versions: { node: '0' },

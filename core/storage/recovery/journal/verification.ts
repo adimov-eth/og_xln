@@ -21,18 +21,52 @@ import type { PersistedFrameJournal } from '../../types';
 import {
   buildStorageRuntimeMachineSnapshot,
   buildReplayVerifiableRuntimePostStateView,
+  projectReplayVerifiableRuntimePostStateView,
 } from '../../wal/snapshot';
 import {
   assertRecoveryRuntimeMachineMatches,
   listRecoveryRuntimeMachineMismatchFields,
 } from '../machine';
-import { encodeCanonicalConsensusBytes } from '../../../protocol/serialization/binary-codec';
+import { canonicalConsensusValuesEqual, encodeCanonicalConsensusBytes } from '../../../protocol/serialization/binary-codec';
+import { buildRouteOutputKey } from '../../../runtime/delivery/identity';
 import { keccakBytesHash } from '../../../protocol/crypto/keccak-text';
 import {
   prepareRuntimeOutputRows,
   type RuntimeOutputCommitment,
 } from '../../wal/outbox-payload';
 import { timePerfPhase } from '../../../support/performance/profile';
+
+/** Transport retirement is external; retained rows must be exact prior verified outputs. */
+export const selectRetainedRecoveryOutbox = (
+  previous: readonly RoutedEntityInput[],
+  recorded: readonly RoutedEntityInput[],
+  height: number,
+): RoutedEntityInput[] => {
+  const financialEvidence = (output: RoutedEntityInput): RoutedEntityInput => ({ ...output, runtimeId: '' });
+  const prior = new Map(previous.map((output, index) => [buildRouteOutputKey(financialEvidence(output)), { output, index }]));
+  const retained: RoutedEntityInput[] = [];
+  let priorIndex = -1;
+  for (const output of recorded) {
+    const source = output.sourceRuntimeFrame;
+    if (!source || source.height > height || !output.runtimeId) {
+      throw new Error(`RECOVERY_OUTBOX_SOURCE_FRAME_INVALID:height=${height}`);
+    }
+    if (source.height === height) continue;
+    const verified = prior.get(buildRouteOutputKey(financialEvidence(output)));
+    if (!verified || !canonicalConsensusValuesEqual(financialEvidence(verified.output), financialEvidence(output))) {
+      throw new Error(`RECOVERY_OUTBOX_RETAINED_OUTPUT_UNPROVEN:height=${height}`);
+    }
+    if (verified.index <= priorIndex) throw new Error(`RECOVERY_OUTBOX_RETAINED_ORDER_INVALID:height=${height}`);
+    priorIndex = verified.index;
+    // Reuse prior verified evidence; recorded bytes cannot manufacture a new
+    // financial output by declaring an older source frame or changing a signature.
+    // Verified route rebinding changes only the transport destination; the
+    // frame's committed route map and complete digest are checked during replay.
+    retained.push(verified.output.runtimeId === output.runtimeId
+      ? verified.output : { ...verified.output, runtimeId: output.runtimeId });
+  }
+  return retained;
+};
 
 export const assertRecoveryOutboxMatches = (
   expectedOutputs: readonly RoutedEntityInput[],
@@ -132,21 +166,53 @@ export const verifyRecoveryJournalFrame = (
       `actualMeta=${safeStringify(inspectStorageReplicaMetaEntries(commitment.entries)).slice(0, 8_000)}`,
     );
   }
-  const postStateHash = timePerfPhase('recovery.verify.postState', () =>
-    computeStoragePostStateHash({
-      height,
-      timestamp: env.state.timestamp,
-      replicaMetaDigest: commitment.digest,
-      runtimeComponentDigests: computeRuntimePostStateComponentDigests(
-        buildReplayVerifiableRuntimePostStateView(env),
-      ),
-      runtimeOutputCount: frame.runtimeOutputCount,
-      runtimeOutputsDigest: frame.runtimeOutputsDigest,
-    }));
+  const postState = timePerfPhase('recovery.verify.postState', () => {
+    const runtimeComponentDigests = computeRuntimePostStateComponentDigests(
+      buildReplayVerifiableRuntimePostStateView(env),
+    );
+    return {
+      runtimeComponentDigests,
+      hash: computeStoragePostStateHash({
+        height,
+        timestamp: env.state.timestamp,
+        replicaMetaDigest: commitment.digest,
+        runtimeComponentDigests,
+        runtimeOutputCount: frame.runtimeOutputCount,
+        runtimeOutputsDigest: frame.runtimeOutputsDigest,
+      }),
+    };
+  });
+  const postStateHash = postState.hash;
   if (postStateHash !== frame.postStateHash) {
+    // Report only fixed field names and digests. Runtime-machine components
+    // include encryption seeds; neither their values nor WAL inputs may enter
+    // this diagnostic. Snapshot projection is evidence, never a second oracle.
+    const recordedSnapshotComponents = expectedRuntimeMachine
+      ? computeRuntimePostStateComponentDigests(
+          projectReplayVerifiableRuntimePostStateView(expectedRuntimeMachine),
+        )
+      : null;
+    const recordedByKey = new Map(recordedSnapshotComponents?.map(({ key, valueHash }) => [key, valueHash]));
+    const actualByKey = new Map(postState.runtimeComponentDigests.map(({ key, valueHash }) => [key, valueHash]));
     throw new Error(
       `RECOVERY_JOURNAL_POST_STATE_HASH_MISMATCH:height=${height}:` +
-      `expected=${frame.postStateHash}:actual=${postStateHash}`,
+      `expected=${frame.postStateHash}:actual=${postStateHash}:` +
+      `diagnostics=${safeStringify({
+        height,
+        frameTimestamp: frame.timestamp,
+        replayTimestamp: env.state.timestamp,
+        runtimeTxTypes: frame.runtimeInput.runtimeTxs.map(tx => tx.type),
+        replicaMetaDigest: commitment.digest,
+        runtimeOutputCount: frame.runtimeOutputCount,
+        runtimeOutputsDigest: frame.runtimeOutputsDigest,
+        hasRecordedMachine: Boolean(expectedRuntimeMachine),
+        actualComponents: postState.runtimeComponentDigests,
+        recordedSnapshotComponents,
+        componentMismatches: recordedSnapshotComponents
+          ? [...new Set([...recordedByKey.keys(), ...actualByKey.keys()])]
+              .sort().filter(key => recordedByKey.get(key) !== actualByKey.get(key))
+          : null,
+      })}`,
     );
   }
   if (frame.canonicalStateHash) {

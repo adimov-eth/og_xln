@@ -246,7 +246,7 @@ function assertJReplica(
     'name', 'blockNumber', 'stateRoot', 'mempool', 'blockDelayMs',
     'lastBlockTimestamp', 'position',
   ], [
-    'blockTimeMs', 'blockReady', 'watcherConfirmationDepth',
+    'blockTimeMs', 'blockReady', 'watcherConfirmationDepth', 'watcherReceiptCommitment',
     'rpcs', 'chainId', 'entityProviderDeploymentBlock', 'contracts',
   ], `${code}_FIELDS`);
   const name = requireString(replica['name'], `${code}_NAME`);
@@ -268,6 +268,9 @@ function assertJReplica(
   }
   if (replica['blockReady'] !== undefined) {
     requireBoolean(replica['blockReady'], `${code}_READY`);
+  }
+  if (replica['watcherReceiptCommitment'] !== undefined && replica['watcherReceiptCommitment'] !== 'tron-rpc-attested') {
+    throw new Error(`${code}_RECEIPT_COMMITMENT`);
   }
   for (const field of [
     'watcherConfirmationDepth',

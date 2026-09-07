@@ -1,12 +1,10 @@
-import { haltRuntimeFailure } from "../protocol/errors/failure-taxonomy";
+import { decodeSignedAmount } from '../protocol/crypto/abi-money';
+import { haltRuntimeFailure } from '../protocol/errors/failure-taxonomy';
 
 import { ethers } from 'ethers';
 
 import type { AccountReplica } from '../types/account';
-import type {
-  CrossJurisdictionPullLeg,
-  CrossJurisdictionSwapLeg,
-} from '../types/cross-jurisdiction';
+import type { CrossJurisdictionPullLeg, CrossJurisdictionSwapLeg } from '../types/cross-jurisdiction';
 import { BATCH_ABI, type ProofBodyStruct } from '../protocol/dispute/proof-body';
 
 const DELTA_BATCH_PARAM = ethers.ParamType.from(BATCH_ABI);
@@ -44,7 +42,10 @@ const decodeSignedProofBodyPulls = (
   canonicalDeltaTransformerAddress: string,
 ): SignedProofBodyPull[] => {
   if (!ethers.isAddress(canonicalDeltaTransformerAddress)) {
-    throw haltRuntimeFailure("CROSS_J_FINAL_DELTA_TRANSFORMER_ADDRESS_INVALID", `CROSS_J_FINAL_DELTA_TRANSFORMER_ADDRESS_INVALID:${canonicalDeltaTransformerAddress}`);
+    throw haltRuntimeFailure(
+      'CROSS_J_FINAL_DELTA_TRANSFORMER_ADDRESS_INVALID',
+      `CROSS_J_FINAL_DELTA_TRANSFORMER_ADDRESS_INVALID:${canonicalDeltaTransformerAddress}`,
+    );
   }
   const canonical = canonicalDeltaTransformerAddress.toLowerCase();
   const pulls: SignedProofBodyPull[] = [];
@@ -54,17 +55,18 @@ const decodeSignedProofBodyPulls = (
     canonicalClauses += 1;
     let decoded: ethers.Result;
     try {
-      decoded = ethers.AbiCoder.defaultAbiCoder().decode(
-        [DELTA_BATCH_PARAM],
-        transformer.encodedBatch,
-      )[0];
+      decoded = ethers.AbiCoder.defaultAbiCoder().decode([DELTA_BATCH_PARAM], transformer.encodedBatch)[0];
     } catch (cause) {
-      throw haltRuntimeFailure("CROSS_J_FINAL_DELTA_BATCH_INVALID", `CROSS_J_FINAL_DELTA_BATCH_INVALID:${transformerIndex}`, cause);
+      throw haltRuntimeFailure(
+        'CROSS_J_FINAL_DELTA_BATCH_INVALID',
+        `CROSS_J_FINAL_DELTA_BATCH_INVALID:${transformerIndex}`,
+        cause,
+      );
     }
     const decodedPulls = Array.from(decoded['pull'] ?? []) as ethers.Result[];
     for (const [pullIndex, raw] of decodedPulls.entries()) {
       pulls.push({
-        amount: BigInt(raw['amount']),
+        amount: decodeSignedAmount(raw['amount']),
         claimedRatio: safeUint(
           raw['claimedRatio'],
           MAX_FILL_RATIO,
@@ -76,7 +78,8 @@ const decodeSignedProofBodyPulls = (
       });
     }
   }
-  if (canonicalClauses === 0) throw haltRuntimeFailure("CROSS_J_FINAL_DELTA_TRANSFORMER_MISSING", 'CROSS_J_FINAL_DELTA_TRANSFORMER_MISSING');
+  if (canonicalClauses === 0)
+    throw haltRuntimeFailure('CROSS_J_FINAL_DELTA_TRANSFORMER_MISSING', 'CROSS_J_FINAL_DELTA_TRANSFORMER_MISSING');
   return pulls;
 };
 
@@ -86,18 +89,18 @@ export const findExactSignedProofBodyPull = (
   targetRole: boolean,
   canonicalDeltaTransformerAddress: string,
 ): SignedProofBodyPull | undefined => {
-  const matches = decodeSignedProofBodyPulls(
-    proofbody,
-    canonicalDeltaTransformerAddress,
-  ).filter(pull =>
-    pull.targetRole === targetRole
-    && pull.fullHash === expected.fullHash.toLowerCase()
-    && pull.partialRoot === expected.partialRoot.toLowerCase()
-    && pull.amount === expected.signedAmount
+  const matches = decodeSignedProofBodyPulls(proofbody, canonicalDeltaTransformerAddress).filter(
+    pull =>
+      pull.targetRole === targetRole &&
+      pull.fullHash === expected.fullHash.toLowerCase() &&
+      pull.partialRoot === expected.partialRoot.toLowerCase() &&
+      pull.amount === expected.signedAmount,
   );
   if (matches.length > 1) {
-    throw haltRuntimeFailure("CROSS_J_FINAL_PULL_AMBIGUOUS", 'CROSS_J_FINAL_PULL_AMBIGUOUS:' +
-      `${expected.pullId}:${targetRole ? 'target' : 'source'}`);
+    throw haltRuntimeFailure(
+      'CROSS_J_FINAL_PULL_AMBIGUOUS',
+      'CROSS_J_FINAL_PULL_AMBIGUOUS:' + `${expected.pullId}:${targetRole ? 'target' : 'source'}`,
+    );
   }
   return matches[0];
 };
@@ -108,39 +111,32 @@ const requireExactSignedPull = (
   targetRole: boolean,
   canonicalDeltaTransformerAddress: string,
 ): SignedProofBodyPull => {
-  const pull = findExactSignedProofBodyPull(
-    proofbody,
-    expected,
-    targetRole,
-    canonicalDeltaTransformerAddress,
-  );
+  const pull = findExactSignedProofBodyPull(proofbody, expected, targetRole, canonicalDeltaTransformerAddress);
   if (!pull) {
-    throw haltRuntimeFailure("CROSS_J_FINAL_PULL_MISSING", `CROSS_J_FINAL_PULL_MISSING:${expected.pullId}:${targetRole ? 'target' : 'source'}`);
+    throw haltRuntimeFailure(
+      'CROSS_J_FINAL_PULL_MISSING',
+      `CROSS_J_FINAL_PULL_MISSING:${expected.pullId}:${targetRole ? 'target' : 'source'}`,
+    );
   }
   return pull;
 };
 
-const beneficiaryWindowSeconds = (
-  account: AccountReplica,
-  proofbody: ProofBodyStruct,
-  amount: bigint,
-): number => {
+const beneficiaryWindowSeconds = (account: AccountReplica, proofbody: ProofBodyStruct, amount: bigint): number => {
   const leftWindow = safeUint(proofbody.leftResponseSeconds, 0xffff_ffff, 'CROSS_J_FINAL_LEFT_WINDOW');
   const rightWindow = safeUint(proofbody.rightResponseSeconds, 0xffff_ffff, 'CROSS_J_FINAL_RIGHT_WINDOW');
   const active = account.activeDispute;
   const start = safeUint(active?.disputeStartTimestamp, Number.MAX_SAFE_INTEGER, 'CROSS_J_FINAL_START');
   const timeout = safeUint(active?.disputeTimeout, Number.MAX_SAFE_INTEGER, 'CROSS_J_FINAL_TIMEOUT');
   if (timeout !== start + leftWindow + rightWindow) {
-    throw haltRuntimeFailure("CROSS_J_FINAL_CLOCK_MISMATCH", `CROSS_J_FINAL_CLOCK_MISMATCH:${start}:${timeout}:${leftWindow}:${rightWindow}`);
+    throw haltRuntimeFailure(
+      'CROSS_J_FINAL_CLOCK_MISMATCH',
+      `CROSS_J_FINAL_CLOCK_MISMATCH:${start}:${timeout}:${leftWindow}:${rightWindow}`,
+    );
   }
   return amount > 0n ? leftWindow : rightWindow;
 };
 
-const bilateralPairMatches = (
-  self: string,
-  counterparty: string,
-  leg: CrossJurisdictionSwapLeg,
-): boolean => {
+const bilateralPairMatches = (self: string, counterparty: string, leg: CrossJurisdictionSwapLeg): boolean => {
   const entity = leg.entityId.toLowerCase();
   const peer = leg.counterpartyEntityId.toLowerCase();
   return (entity === self && peer === counterparty) || (entity === counterparty && peer === self);
@@ -160,19 +156,23 @@ export const resolveFinalizedCrossJurisdictionRouteLeg = (input: {
 }): 'source' | 'target' | undefined => {
   const self = input.self.toLowerCase();
   const counterparty = input.counterparty.toLowerCase();
-  const candidates = (['source', 'target'] as const)
-    .filter(role => bilateralPairMatches(self, counterparty, input.route[role]));
+  const candidates = (['source', 'target'] as const).filter(role =>
+    bilateralPairMatches(self, counterparty, input.route[role]),
+  );
   if (candidates.length === 0) return undefined;
   if (!input.localStack) {
-    throw haltRuntimeFailure("CROSS_J_FINALITY_JURISDICTION_MISSING", `CROSS_J_FINALITY_JURISDICTION_MISSING:${input.route.orderId}`);
+    throw haltRuntimeFailure(
+      'CROSS_J_FINALITY_JURISDICTION_MISSING',
+      `CROSS_J_FINALITY_JURISDICTION_MISSING:${input.route.orderId}`,
+    );
   }
   const localStack = input.localStack.toLowerCase();
-  const exact = candidates.filter(
-    role => input.route[role].jurisdiction.toLowerCase() === localStack,
-  );
+  const exact = candidates.filter(role => input.route[role].jurisdiction.toLowerCase() === localStack);
   if (exact.length !== 1) {
-    throw haltRuntimeFailure("CROSS_J_FINALITY_LEG", `CROSS_J_FINALITY_LEG_${exact.length === 0 ? 'MISSING' : 'AMBIGUOUS'}:` +
-      input.route.orderId);
+    throw haltRuntimeFailure(
+      'CROSS_J_FINALITY_LEG',
+      `CROSS_J_FINALITY_LEG_${exact.length === 0 ? 'MISSING' : 'AMBIGUOUS'}:` + input.route.orderId,
+    );
   }
   return exact[0]!;
 };

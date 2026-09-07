@@ -33,6 +33,21 @@ export const deriveManagedSignerInventory = (
   seed: deriveManagedSignerSeed(runtimeSeed, label),
 }));
 
+export const crossLoadSignerLabels = (cohortIndex: number): readonly [string, string] => {
+  if (!Number.isSafeInteger(cohortIndex) || cohortIndex < 0) {
+    throw new Error('PRODUCTION_SWAP_LOAD_COHORT_INDEX_INVALID');
+  }
+  return [`production-load-source-${cohortIndex}`, `production-load-target-${cohortIndex}`];
+};
+
+export const buildCrossLoadStartupSignerLabels = (swaps: number): readonly string[] => {
+  // The managed-child inventory admits 256 signers, including Custody's primary owner.
+  if (!Number.isSafeInteger(swaps) || swaps < 1 || swaps > 127) {
+    throw new Error('PRODUCTION_SWAP_LOAD_COHORT_COUNT_INVALID');
+  }
+  return Array.from({ length: swaps }, (_, index) => crossLoadSignerLabels(index)).flat();
+};
+
 export const readMeshSeedOverrides = (
   raw: string | undefined,
   variableName: string,

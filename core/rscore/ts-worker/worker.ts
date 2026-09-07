@@ -224,6 +224,11 @@ const applyOutboundProposals = async (
       workspace.forWrite(item.accountId),
       input.timestamp,
       input.jHeight,
+      item.selectedMempoolPositions?.map(position => {
+        const tx = workspace.forRead(item.accountId).mempool[position];
+        if (tx === undefined) throw new Error(`TS_ACCOUNT_WORKER_PROPOSAL_SELECTION_POSITION:${item.accountId}:${position}`);
+        return tx;
+      }),
     );
     effects.push({ phase: 'outbound-proposal', order: item.order, accountId: item.accountId, result });
   }

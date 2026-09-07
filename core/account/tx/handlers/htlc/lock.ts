@@ -1,3 +1,4 @@
+import { UINT256_MAX } from '../../../../protocol/boundary/integer-ranges';
 /**
  * HTLC Lock Handler
  * Creates conditional payment, holds capacity until reveal/timeout
@@ -15,7 +16,7 @@ import type { AccountReplica, AccountTx, HtlcLock } from '../../../../types/acco
 import type { AccountDraftReplica } from '../../../state/account-state-draft';
 import { deriveDelta } from '../../../utils';
 import { FINANCIAL, LIMITS } from '../../../../config/constants';
-import { commitDeltaDraft, createDeltaDraft } from '../../delta-utils';
+import { commitDeltaDraft, createDeltaDraft, getOffdeltaRepresentationError } from '../../delta-utils';
 import { addHold } from '../../hold-utils';
 import { isHtlcTimelockExpired } from '../../../htlc-deadline';
 import { encryptedHtlcLayer, hashEncryptedHtlcLayer } from '../../../../protocol/htlc/codec/onion-layer';
@@ -44,8 +45,10 @@ const validateHtlcLock = (
   if (revealBeforeHeight <= currentJHeight) {
     return `revealBeforeHeight ${revealBeforeHeight} already passed (current J height: ${currentJHeight})`;
   }
-  if (amount < FINANCIAL.MIN_PAYMENT_AMOUNT || amount > FINANCIAL.MAX_PAYMENT_AMOUNT) {
-    return `Invalid amount: ${amount} (min ${FINANCIAL.MIN_PAYMENT_AMOUNT}, max ${FINANCIAL.MAX_PAYMENT_AMOUNT})`;
+  // Either sender uses the complete uint256 magnitude of SignedAmount.
+  const maximum = UINT256_MAX;
+  if (amount < FINANCIAL.MIN_PAYMENT_AMOUNT || amount > maximum) {
+    return `Invalid amount: ${amount} (min ${FINANCIAL.MIN_PAYMENT_AMOUNT}, max ${maximum})`;
   }
   return undefined;
 };
@@ -55,7 +58,7 @@ export async function handleHtlcLock(
   accountTx: HtlcLockTx,
   byLeft: boolean,
   clock: HtlcLockClock,
-  _isValidation: boolean = false
+  _isValidation: boolean = false,
 ): Promise<ApplyAccountTxResult> {
   const { lockId, hashlock, timelock, revealBeforeHeight, amount, tokenId } = accountTx.data;
   const events: string[] = [];
@@ -84,9 +87,7 @@ export async function handleHtlcLock(
 
   // Account state retains only a compact commitment. The signed AccountTx is
   // the authority for the full encrypted onion during post-commit processing.
-  const encryptedLayer = accountTx.data.envelope === undefined
-    ? null
-    : encryptedHtlcLayer(accountTx.data.envelope);
+  const encryptedLayer = accountTx.data.envelope === undefined ? null : encryptedHtlcLayer(accountTx.data.envelope);
   if (accountTx.data.envelope !== undefined && !encryptedLayer) {
     return accountTxValidationRejected('HTLC lock envelope must be encrypted', events);
   }
@@ -100,6 +101,10 @@ export async function handleHtlcLock(
       events,
     );
   }
+  const representationError = getOffdeltaRepresentationError(account.state, delta, {
+    addedLock: { senderIsLeft, amount },
+  });
+  if (representationError) return accountTxValidationRejected(representationError, events);
 
   // 7. Create lock
   const lock: HtlcLock = {
@@ -129,7 +134,9 @@ export async function handleHtlcLock(
   commitDeltaDraft(account.state, delta);
   account.state.locks.put(lockId, lock);
 
-  events.push(`🔒 HTLC locked: ${amount} token ${tokenId}, expires block ${revealBeforeHeight}, hash ${hashlock.slice(0,16)}...`);
+  events.push(
+    `🔒 HTLC locked: ${amount} token ${tokenId}, expires block ${revealBeforeHeight}, hash ${hashlock.slice(0, 16)}...`,
+  );
 
   return accountTxApplied(events);
 }

@@ -3,6 +3,7 @@ import type {
   AccountFinality,
   AccountInput,
   AccountReplica,
+  AccountTx,
 } from '../../types/account';
 import type { HandleAccountInputResult, ProposeAccountFrameResult } from './types';
 import type { HankoString } from '../../types/hanko';
@@ -21,6 +22,7 @@ import type { AccountJClaimNodeStore } from '../../types/finance/account-j-claim
  */
 export type AccountAuthorityExecutionScope = Readonly<{
   hasPreparedAccountProposal?(accountId: string): boolean;
+  preparedAccountProposalTxs?(accountId: string): readonly AccountTx[] | undefined;
   hasPreparedAccountInput?(accountId: string, input: AccountInput): boolean;
   /**
    * Return the authenticated H=1 Account materialized by the authority for an
@@ -60,6 +62,7 @@ export type AccountAuthorityProposalRequest = Readonly<{
   entityTimestamp: number;
   finalizedJHeight: number;
   selectionIsWholeMempool: boolean;
+  selectedMempoolTxs?: readonly AccountTx[];
 }>;
 
 /**

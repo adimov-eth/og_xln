@@ -3,13 +3,13 @@
  *
  * Pure bilateral off-chain HTLC payment flow without on-chain entity
  * registration, J reserves, or R2R/R2C transfers. Entities are created
- * via generateLazyEntityId so the Rust authority (rscore) accepts them.
+ * via generateLazyEntityId on the canonical TypeScript runtime.
  *
  * Demonstrates:
  * - Lazy 1-of-1 entity creation (minimal JAdapter but no on-chain registration)
  * - Bilateral account open + credit extension on lazy entities
  * - HTLC multi-hop routing (A->H->B) with deterministic secret
- * - Runs identically on TS engine and Rust authority (rscore)
+ * - Native Rust hub coverage runs through the separate live production stand
  */
 
 import type { RuntimeReplica } from '../../runtime/types';
@@ -28,10 +28,7 @@ const USDC_TOKEN_ID = 1;
 const HTLC_TEST_SECRET = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
 export async function htlcLazy(env: RuntimeReplica): Promise<void> {
-  // Rust authority logs authority.armed via console.error (diagnostic, not failure).
-  // Skip strict mode when Rust authority is active to avoid throw on expected log.
-  const isRscore = typeof process !== 'undefined' ? process.env['XLN_RSCORE_AUTHORITY'] === '1' : false;
-  const restoreStrict = isRscore ? () => {} : enableStrictScenario(env, 'HTLC LAZY');
+  const restoreStrict = enableStrictScenario(env, 'HTLC LAZY');
   requireRuntimeSeed(env, 'HTLC LAZY');
   ensureSignerKeysFromSeed(env, ['2', '3', '4'], 'HTLC LAZY');
   const proc = await getProcess();
@@ -381,4 +378,3 @@ export async function htlcLazy(env: RuntimeReplica): Promise<void> {
     env.scenarioMode = false;
   }
 }
-

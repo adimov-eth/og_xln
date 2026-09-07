@@ -4,7 +4,8 @@ import { normalizeInterestBps, normalizeLendingTerm } from '../../../../extensio
 import { handleDirectPayment } from './direct-payment';
 import { handleSetCreditLimit } from './set-credit-limit';
 import type { ApplyAccountTxResult } from '../../apply-types';
-import { accountTxApplied } from '../../apply-result';
+import { accountTxApplied, accountTxValidationRejected } from '../../apply-result';
+import { deriveDelta } from '../../../utils';
 
 type LendingAccountTx = Extract<AccountTx, {
   type:
@@ -120,6 +121,14 @@ export const handleLendingAccountTx = (
     normalizeInterestBps(tx.data.interestBps);
     const intentKey = `fund:${normalized(tx.data.positionId)}`;
     requireUnusedIntent(account, intentKey);
+    const delta = account.state.deltas.get(tx.data.tokenId);
+    // Only the certified lender's existing assets may fund the pool. Subtract
+    // unused borrowing permission; outCapacity already excludes allowances/holds.
+    // Otherwise own=0, credit=100 would create a 100 deposit backed by new debt.
+    const funds = delta ? deriveDelta(delta, byLeft) : undefined;
+    if (!funds || tx.data.amount + funds.outOwnCredit > funds.outCapacity) {
+      return accountTxValidationRejected('LENDING_FUND_OWNED_BALANCE_INSUFFICIENT', []);
+    }
     const result = applyPayment(account, tx, byLeft);
     if (result.ok) consumeIntent(account, intentKey, 'fund');
     return result;

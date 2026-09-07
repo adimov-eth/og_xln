@@ -2,6 +2,7 @@
 
 import { canonicalJurisdictionEventsHash } from '../../jurisdiction/machine/event-observation';
 import { requireCanonicalJurisdictionEvents } from '../../jurisdiction/machine/events/event-normalization';
+import { decodeInt512, encodeInt512 } from '../../protocol/crypto/abi-money';
 import type { AccountTx } from '../../types/account';
 import type {
   AccountJClaimNode,
@@ -99,7 +100,7 @@ const proofBodyWire = (proof: ProofBody): RscoreWireValue[] => [
   String(proof.watchSeed),
   integer(proof.leftResponseSeconds, 'PROOF_LEFT_RESPONSE_SECONDS'),
   integer(proof.rightResponseSeconds, 'PROOF_RIGHT_RESPONSE_SECONDS'),
-  proof.offdeltas.map(value => String(value)),
+  proof.offdeltas.map(value => decodeInt512(value).toString()),
   proof.tokenIds.map(value => String(value)),
   proof.transformers.map(transformer => [
     String(transformer.transformerAddress),
@@ -237,7 +238,7 @@ const proofBodyFromWire = (value: unknown): ProofBody => {
     watchSeed: text(fields[0], 'PROOF_WATCH_SEED'),
     leftResponseSeconds: integer(fields[1], 'PROOF_LEFT_RESPONSE_SECONDS'),
     rightResponseSeconds: integer(fields[2], 'PROOF_RIGHT_RESPONSE_SECONDS'),
-    offdeltas: list(fields[3], 'PROOF_OFFDELTAS').map((entry, index) => big(entry, `PROOF_OFFDELTA_${index}`)),
+    offdeltas: list(fields[3], 'PROOF_OFFDELTAS').map((entry, index) => encodeInt512(big(entry, `PROOF_OFFDELTA_${index}`))),
     tokenIds: list(fields[4], 'PROOF_TOKEN_IDS').map((entry, index) => big(entry, `PROOF_TOKEN_ID_${index}`)),
     transformers: list(fields[5], 'PROOF_TRANSFORMERS').map((entry, transformerIndex) => {
       const transformer = tuple(entry, 3, `PROOF_TRANSFORMER_${transformerIndex}`);

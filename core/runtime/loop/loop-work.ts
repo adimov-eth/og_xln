@@ -11,7 +11,6 @@ import { getWallClockMs } from '../../support/time.ts';
 import type { RuntimeOutputRoutingDeps } from '../delivery/topology/output-routing.ts';
 import {
   generateHookPingsWithDeps,
-  getEarliestWallClockDueTimestampWithDeps,
   getNextWallClockWakeTimestampWithDeps,
   hasDueEntityHooksWithDeps,
 } from '../mempool/wake.ts';
@@ -135,9 +134,6 @@ const runtimeWakeDeps = {
 const hasDueEntityHooks = (env: RuntimeReplica): boolean =>
   hasDueEntityHooksWithDeps(env, runtimeWakeDeps);
 
-export const getEarliestWallClockDueTimestamp = (env: RuntimeReplica): number | null =>
-  getEarliestWallClockDueTimestampWithDeps(env, runtimeWakeDeps);
-
 export const resolveRuntimeWorkReason = (
   env: RuntimeReplica,
   deps: RuntimeWorkDeps,
@@ -154,6 +150,14 @@ export const resolveRuntimeWorkReason = (
     return 'future-queued-input';
   }
   if (env.pendingOutputs?.length) return 'pending-output';
+  if (env.pendingNetworkOutputs?.some(output => {
+    const runtimeId = output.runtimeId;
+    if (!runtimeId) throw new Error('RUNTIME_NETWORK_OUTBOX_TARGET_MISSING');
+    const state = ensureRuntimeInfrastructure(env);
+    return state.canDeliverEntityInputs
+      ? state.canDeliverEntityInputs(runtimeId)
+      : state.p2p?.canDeliver(runtimeId) === true;
+  })) return 'committed-network-outbox';
   if (env.networkInbox?.length) return 'network-inbox';
   const replicaWakes = collectReplicaMempoolWakeInputs(env);
   if (replicaWakes.entityInputs.length > 0) return 'entity-mempool';

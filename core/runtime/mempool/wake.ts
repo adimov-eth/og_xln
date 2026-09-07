@@ -1,6 +1,5 @@
 import type { RuntimeReplica, RoutedEntityInput, RuntimeInput, RuntimeTx } from '../types';
 import type { JInput } from '../../jurisdiction/machine/input';
-import { getWallClockMs } from '../../support/time';
 import {
   createDueScheduledWakeInputs,
   entityNeedsPeriodicWake,
@@ -48,18 +47,6 @@ export const hasDueEntityHooksWithDeps = (env: RuntimeReplica, deps: RuntimeWake
     (jDueAt !== null && jDueAt <= now) ||
     (actionDueAt !== null && actionDueAt <= now) ||
     (governanceDueAt !== null && governanceDueAt <= now);
-};
-
-export const getEarliestWallClockDueTimestampWithDeps = (env: RuntimeReplica, _deps: RuntimeWakeDeps): number | null => {
-  const wallClockNow = getWallClockMs();
-  const due = [
-    getNextScheduledWakeTimestamp(env),
-    getNextJSubmitRetryTimestamp(env),
-    getNextEntityProviderActionRetryTimestamp(env),
-    getNextGovernanceSubmitTimestamp(env),
-  ]
-    .filter((value): value is number => value !== null && value <= wallClockNow);
-  return due.length > 0 ? Math.min(...due) : null;
 };
 
 export const getNextWallClockWakeTimestampWithDeps = (env: RuntimeReplica, _deps: RuntimeWakeDeps): number | null => {

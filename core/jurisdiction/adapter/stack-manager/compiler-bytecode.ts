@@ -105,11 +105,30 @@ export const readCompilerBytecodeEvidence = async (
   sourceName: string,
   contractName: string,
 ): Promise<CompilerBytecodeEvidence> => {
-  const files = (await readdir(buildInfoDirectory)).filter(file => file.endsWith('.json')).sort();
+  const files = (await readdir(buildInfoDirectory))
+    .filter(file => file.endsWith('.json') && !file.endsWith('.output.json')).sort();
   let match: CompilerBytecodeEvidence | null = null;
   for (const file of files) {
-    const raw: unknown = JSON.parse(await readFile(new URL(file, buildInfoDirectory), 'utf8'));
-    const candidate = decodeEvidence(raw, sourceName, contractName);
+    const raw = requireRecord(
+      JSON.parse(await readFile(new URL(file, buildInfoDirectory), 'utf8')),
+      'STACK_MANAGER_BUILD_INFO_INVALID',
+    );
+    if (raw['_format'] !== 'hh3-sol-build-info-1' || raw['id'] !== file.slice(0, -5)) {
+      throw new Error(`STACK_MANAGER_BUILD_INFO_FORMAT_INVALID:${file}`);
+    }
+    const sources = readFieldRecord(raw, 'userSourceNameMap', 'STACK_MANAGER_BUILD_SOURCE_MAP_INVALID');
+    const mappedSource = sources[sourceName];
+    if (mappedSource === undefined) continue;
+    if (typeof mappedSource !== 'string' || !mappedSource) throw new Error('STACK_MANAGER_BUILD_SOURCE_NAME_INVALID');
+    const outputFile = file.replace(/\.json$/, '.output.json');
+    const output = requireRecord(
+      JSON.parse(await readFile(new URL(outputFile, buildInfoDirectory), 'utf8')),
+      'STACK_MANAGER_BUILD_OUTPUT_INVALID',
+    );
+    if (output['_format'] !== 'hh3-sol-build-info-output-1' || output['id'] !== raw['id']) {
+      throw new Error(`STACK_MANAGER_BUILD_OUTPUT_BINDING_INVALID:${file}`);
+    }
+    const candidate = decodeEvidence(output, mappedSource, contractName);
     if (!candidate) continue;
     if (match) throw new Error(`STACK_MANAGER_BUILD_INFO_AMBIGUOUS:${sourceName}:${contractName}`);
     match = candidate;

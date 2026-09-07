@@ -11,18 +11,14 @@
 
 import type { AccountTx, Delta, HtlcLock } from '../../../../types/account';
 import type { AccountDraftState } from '../../../state/account-state-draft';
-import { commitDeltaDraft, createDeltaDraft } from '../../delta-utils';
+import { commitDeltaDraft, createDeltaDraft, getOffdeltaRepresentationError } from '../../delta-utils';
 import { hashHtlcSecret } from '../../../../protocol/htlc/utils';
 import { createStructuredLogger, shortHash } from '../../../../support/logger';
 import { releaseHold } from '../../hold-utils';
 import { isHtlcDeadlineExpired } from '../../../htlc-deadline';
 import { deriveTransferOffdeltaChange } from '../../../../protocol/transform/delta-movement';
 import type { ApplyAccountTxResult } from '../../apply-types';
-import {
-  accountTxHtlcError,
-  accountTxHtlcSecret,
-  accountTxValidationRejected,
-} from '../../apply-result';
+import { accountTxHtlcError, accountTxHtlcSecret, accountTxValidationRejected } from '../../apply-result';
 
 const htlcResolveLog = createStructuredLogger('account.htlc');
 
@@ -35,8 +31,10 @@ function getHtlcSecretResolveError(
   currentTimestamp: number,
 ): string | undefined {
   if (isHtlcDeadlineExpired(lock, { timestamp: currentTimestamp, jHeight: currentJHeight })) {
-    return `Lock expired: timestamp=${currentTimestamp}/${lock.timelock} `
-      + `jHeight=${currentJHeight}/${lock.revealBeforeHeight}`;
+    return (
+      `Lock expired: timestamp=${currentTimestamp}/${lock.timelock} ` +
+      `jHeight=${currentJHeight}/${lock.revealBeforeHeight}`
+    );
   }
   let computedHash: string;
   try {
@@ -46,8 +44,7 @@ function getHtlcSecretResolveError(
   }
   return computedHash === lock.hashlock
     ? undefined
-    : `Hash mismatch: expected ${lock.hashlock.slice(0, 8)}..., ` +
-      `got ${computedHash.slice(0, 8)}...`;
+    : `Hash mismatch: expected ${lock.hashlock.slice(0, 8)}..., ` + `got ${computedHash.slice(0, 8)}...`;
 }
 
 function getHtlcErrorResolveError(
@@ -85,13 +82,14 @@ function applyHtlcResolution(
     releaseSide,
     lock.amount,
     (hold, amount) =>
-      `HTLC_RESOLVE_HOLD_UNDERFLOW:${releaseSide} ` +
-      `hold=${hold.toString()} amount=${amount.toString()}`,
+      `HTLC_RESOLVE_HOLD_UNDERFLOW:${releaseSide} ` + `hold=${hold.toString()} amount=${amount.toString()}`,
   );
   if (releaseError) return accountTxValidationRejected(releaseError, events);
 
   if (data.outcome === 'secret') {
     delta.offdelta += deriveTransferOffdeltaChange(lock.senderIsLeft, lock.amount);
+    const representationError = getOffdeltaRepresentationError(account, delta, { removedLockId: lock.lockId });
+    if (representationError) return accountTxValidationRejected(representationError, events);
     events.push(`🔓 HTLC resolved (secret): ${lock.amount} token ${lock.tokenId}`);
   } else {
     const reason = data.reason || 'unknown';
@@ -99,22 +97,12 @@ function applyHtlcResolution(
       lock: shortHash(lock.lockId),
       reason,
     });
-    events.push(
-      `❌ HTLC resolved (error): ${lock.amount} token ${lock.tokenId} ` +
-      `returned — ${reason}`,
-    );
+    events.push(`❌ HTLC resolved (error): ${lock.amount} token ${lock.tokenId} ` + `returned — ${reason}`);
   }
   commitDeltaDraft(account, delta);
   account.locks.del(lock.lockId);
   if (data.outcome === 'secret' && 'secret' in data) {
-    return accountTxHtlcSecret(
-      events,
-      lock.lockId,
-      lock.hashlock,
-      data.secret,
-      lock.tokenId,
-      lock.amount,
-    );
+    return accountTxHtlcSecret(events, lock.lockId, lock.hashlock, data.secret, lock.tokenId, lock.amount);
   }
   return accountTxHtlcError(
     events,
@@ -141,20 +129,10 @@ export async function handleHtlcResolve(
     return accountTxValidationRejected(`Delta ${lock.tokenId} not found`, events);
   }
   const delta = createDeltaDraft(account, lock.tokenId);
-  const validationError = outcome === 'secret'
-    ? getHtlcSecretResolveError(
-        lock,
-        accountTx.data,
-        currentJHeight,
-        currentTimestamp,
-      )
-    : getHtlcErrorResolveError(
-        lock,
-        accountTx.data,
-        byLeft,
-        currentJHeight,
-        currentTimestamp,
-      );
+  const validationError =
+    outcome === 'secret'
+      ? getHtlcSecretResolveError(lock, accountTx.data, currentJHeight, currentTimestamp)
+      : getHtlcErrorResolveError(lock, accountTx.data, byLeft, currentJHeight, currentTimestamp);
   if (validationError) return accountTxValidationRejected(validationError, events);
   return applyHtlcResolution(account, lock, delta, accountTx.data, events);
 }

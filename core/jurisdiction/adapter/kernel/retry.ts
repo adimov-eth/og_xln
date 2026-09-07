@@ -1,6 +1,7 @@
 import type { JAdapter, JAdapterConfig } from '../types';
 import { createJAdapter } from './factory';
 import { classifyJAdapterFailure } from './failure';
+import { resolveJurisdictionTransport } from './jurisdiction-loader';
 
 type RetryOptions = {
   attempts?: number;
@@ -26,6 +27,25 @@ const errorText = (error: unknown): string => {
 export const isTransientJAdapterStartupError = (error: unknown): boolean =>
   classifyJAdapterFailure(error).category === 'transient';
 
+/** Resolve operator I/O once, before retries; no transport metadata enters committed state. */
+const resolveAdapterTransport = async (config: JAdapterConfig): Promise<JAdapterConfig> => {
+  if (config.mode === 'browservm') return config;
+  const depository = config.fromReplica?.contracts?.depository;
+  if (!depository) return config;
+  const transport = await resolveJurisdictionTransport(config.chainId, depository);
+  if (!transport?.mode) return config;
+  if (config.mode === 'tron' && transport.mode !== 'tron') throw new Error('JADAPTER_CONFIGURED_MODE_CONFLICT');
+  if (transport.mode === 'tron') {
+    for (const field of ['tronFullHost', 'tronSolidityHost'] as const) {
+      const configured = transport[field] ?? transport.tronFullHost;
+      if (config[field] !== undefined && config[field] !== configured) {
+        throw new Error(`JADAPTER_CONFIGURED_ENDPOINT_CONFLICT:${field}`);
+      }
+    }
+  }
+  return { ...config, ...transport };
+};
+
 export async function createJAdapterWithRetry(
   config: JAdapterConfig,
   options: RetryOptions = {},
@@ -33,11 +53,12 @@ export async function createJAdapterWithRetry(
   const attempts = Math.max(1, Math.floor(options.attempts ?? 5));
   const baseDelayMs = Math.max(0, Math.floor(options.baseDelayMs ?? 150));
   const factory = options.factory ?? createJAdapter;
+  const effectiveConfig = await resolveAdapterTransport(config);
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await factory(config);
+      return await factory(effectiveConfig);
     } catch (error) {
       lastError = error;
       if (attempt >= attempts || !isTransientJAdapterStartupError(error)) {

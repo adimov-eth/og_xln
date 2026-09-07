@@ -9,11 +9,7 @@
 import { logDebug } from '../../../support/logger';
 import { buildNetworkGraph } from '../../../pathfinding/graph';
 import { PathFinder, type PaymentRoute } from '../../../pathfinding/pathfinding';
-import {
-  canonicalizeProfile,
-  isHubProfile,
-  type Profile,
-} from '../../../entity/profile';
+import { canonicalizeProfile, isHubProfile, type Profile } from '../../../entity/profile';
 import {
   computeJurisdictionGossipHash,
   decodeJurisdictionGossipAnnouncement,
@@ -27,10 +23,7 @@ export interface GossipLayer {
   announce: (profile: Profile) => void;
   /** Canonical X25519 binding for a peer: read from its admitted profile. */
   encryptionKeyForRuntime: (runtimeId: string) => string | null;
-  announceJurisdiction: (
-    announcement: JurisdictionGossipAnnouncement,
-    officialFoundationSignerId?: string,
-  ) => boolean;
+  announceJurisdiction: (announcement: JurisdictionGossipAnnouncement, officialFoundationSignerId?: string) => boolean;
   /** O(1) canonical profile lookup; hot routing must never copy+scan the cache. */
   getProfile: (entityId: string) => Profile | undefined;
   /** O(1) direct transport lookup by authenticated Runtime id. */
@@ -41,7 +34,13 @@ export interface GossipLayer {
   setProfiles?: (incoming: Iterable<Profile>) => void;
   getProfileBundle?: (entityId: string) => { profile?: Profile; peers: Profile[] };
   getNetworkGraph: () => {
-    findPaths: (source: string, target: string, amount?: bigint, tokenId?: number) => Promise<PaymentRoute[]>;
+    findPaths: (
+      source: string,
+      target: string,
+      amount?: bigint,
+      tokenId?: number,
+      fundingAccountId?: string,
+    ) => Promise<PaymentRoute[]>;
   };
 }
 
@@ -58,7 +57,10 @@ export function createGossipLayer(options: GossipLayerOptions = {}): GossipLayer
   // sends resolve peer keys from profiles, never from a transport socket map.
   const runtimeKeys = new Map<string, string>();
   const runtimeProfiles = new Map<string, Map<string, Profile>>();
-  const normalizeRuntimeIdKey = (value: string): string => String(value || '').trim().toLowerCase();
+  const normalizeRuntimeIdKey = (value: string): string =>
+    String(value || '')
+      .trim()
+      .toLowerCase();
   const validX25519Hex = (value: string): boolean => /^0x[0-9a-f]{64}$/.test(value);
   const indexRuntimeKey = (profile: Profile): void => {
     const runtimeId = normalizeRuntimeIdKey(profile.runtimeId || '');
@@ -74,13 +76,13 @@ export function createGossipLayer(options: GossipLayerOptions = {}): GossipLayer
     const existing = profiles.get(normalized.entityId);
     const newTimestamp = normalized.lastUpdated;
     const existingTimestamp = existing?.lastUpdated || 0;
-    const shouldUpdate = !existing
-      || newTimestamp > existingTimestamp
-      || (newTimestamp === existingTimestamp && (
-        existing.runtimeId !== normalized.runtimeId
-        || existing.entityEncryptionPublicKey !== normalized.entityEncryptionPublicKey
-        || existing.accounts.length !== normalized.accounts.length
-      ));
+    const shouldUpdate =
+      !existing ||
+      newTimestamp > existingTimestamp ||
+      (newTimestamp === existingTimestamp &&
+        (existing.runtimeId !== normalized.runtimeId ||
+          existing.entityEncryptionPublicKey !== normalized.entityEncryptionPublicKey ||
+          existing.accounts.length !== normalized.accounts.length));
 
     if (!shouldUpdate) {
       logDebug('GOSSIP', `📡 Gossip REJECTED: ${profile.entityId.slice(-4)} ts=${newTimestamp}<=${existingTimestamp}`);
@@ -100,7 +102,10 @@ export function createGossipLayer(options: GossipLayerOptions = {}): GossipLayer
       runtimeProfiles.set(runtimeId, byEntity);
     }
     indexRuntimeKey(normalized);
-    logDebug('GOSSIP', `📡 Gossip SAVED: ${profile.entityId.slice(-4)} ts=${newTimestamp} accounts=${normalized.accounts.length}`);
+    logDebug(
+      'GOSSIP',
+      `📡 Gossip SAVED: ${profile.entityId.slice(-4)} ts=${newTimestamp} accounts=${normalized.accounts.length}`,
+    );
     if (!publish) return;
     try {
       options.onAnnounce?.(normalized);
@@ -115,7 +120,11 @@ export function createGossipLayer(options: GossipLayerOptions = {}): GossipLayer
 
   const getProfiles = (): Profile[] => Array.from(profiles.values());
   const getProfile = (entityId: string): Profile | undefined =>
-    profiles.get(String(entityId || '').trim().toLowerCase());
+    profiles.get(
+      String(entityId || '')
+        .trim()
+        .toLowerCase(),
+    );
   const getProfileByRuntimeId = (runtimeId: string): Profile | undefined => {
     const candidates = runtimeProfiles.get(normalizeRuntimeIdKey(runtimeId));
     if (!candidates) return undefined;
@@ -158,13 +167,19 @@ export function createGossipLayer(options: GossipLayerOptions = {}): GossipLayer
     for (const profile of incoming) installProfile(profile, false);
   };
   const getNetworkGraph = () => ({
-    findPaths: async (source: string, target: string, amount?: bigint, tokenId = 1) => {
+    findPaths: async (source: string, target: string, amount?: bigint, tokenId = 1, fundingAccountId?: string) => {
       const graphProfiles = new Map(profiles);
       for (const liveProfile of options.getLiveProfiles?.() || []) {
         graphProfiles.set(liveProfile.entityId, canonicalizeProfile(liveProfile));
       }
-      const finder = new PathFinder(buildNetworkGraph(graphProfiles, tokenId));
-      return finder.findRoutes(source, target, amount ?? 1n, tokenId, 100);
+      const finder = new PathFinder(
+        buildNetworkGraph(
+          graphProfiles,
+          tokenId,
+          fundingAccountId ? { sourceEntityId: source, accountId: fundingAccountId } : undefined,
+        ),
+      );
+      return finder.findRoutes(source, target, amount ?? 1n, tokenId, 100, fundingAccountId);
     },
   });
 

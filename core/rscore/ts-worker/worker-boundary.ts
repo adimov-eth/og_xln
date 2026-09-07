@@ -272,9 +272,19 @@ const decodeOutboundPayload = (
       if (counterpartyBoardAuthority && counterpartyBoardAuthority.entityId !== accountId) {
         throw new Error(`TS_ACCOUNT_WORKER_OUTBOUND_PROPOSAL_${index}_COUNTERPARTY_BOARD_ENTITY`);
       }
+      const selection = row['selectedMempoolPositions'];
+      const selectedMempoolPositions = selection === undefined ? undefined : requireArray(
+        selection, `TS_ACCOUNT_WORKER_OUTBOUND_PROPOSAL_${index}_SELECTION`,
+      ).map(position => requireInteger(position, `TS_ACCOUNT_WORKER_OUTBOUND_PROPOSAL_${index}_POSITION`));
+      if (selectedMempoolPositions !== undefined && (selectedMempoolPositions.length === 0
+        || selectedMempoolPositions.some((position, index) => index > 0
+          && position <= (selectedMempoolPositions[index - 1] ?? -1)))) {
+        throw new Error(`TS_ACCOUNT_WORKER_OUTBOUND_PROPOSAL_${index}_SELECTION_ORDER`);
+      }
       return {
         order: requireInteger(row['order'], `TS_ACCOUNT_WORKER_OUTBOUND_PROPOSAL_${index}_ORDER`),
         accountId,
+        ...(selectedMempoolPositions === undefined ? {} : { selectedMempoolPositions }),
         ...(counterpartyBoardAuthority ? { counterpartyBoardAuthority } : {}),
       };
     });

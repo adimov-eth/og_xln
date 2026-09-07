@@ -2,12 +2,10 @@
 
 import type { JurisdictionConfig } from '../../../../protocol/config/jurisdiction-config';
 import { DaemonControlClient, setupCustody } from '../../../../orchestrator/daemon-control';
-import { deriveManagedSignerSeed } from '../../../../orchestrator/mesh/mesh-seeds';
-import { decodeCommittedCrossRoutes } from './cross-boundary';
-import { readWithRateLimitRetry, type ConnectedRuntime } from '../worker-runtime';
+import { crossLoadSignerLabels, deriveManagedSignerSeed } from '../../../../orchestrator/mesh/mesh-seeds';
+import type { CrossHub } from './cross-hub';
+import { type ConnectedRuntime } from '../worker-runtime';
 
-const SOURCE_SIGNER_LABEL = 'production-load-source';
-const TARGET_SIGNER_LABEL = 'production-load-target';
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 const httpBaseForRuntimeWsUrl = (wsUrl: string): string => {
@@ -22,8 +20,8 @@ const httpBaseForRuntimeWsUrl = (wsUrl: string): string => {
 export const setupCrossLoadCohort = async (options: {
   runtime: ConnectedRuntime;
   relayUrl: string;
-  /** Distinct suffix per parallel cohort; one custody signer per entity. */
-  labelSuffix?: string;
+  /** Exact planned cohort, shared with startup signer inventory. */
+  cohortIndex: number;
   sourceHubEntityId: string;
   targetHubEntityId: string;
   sourceJurisdiction: JurisdictionConfig;
@@ -39,10 +37,9 @@ export const setupCrossLoadCohort = async (options: {
     authKey: options.runtime.entry.token,
     timeoutMs: 30_000,
   });
-  const sourceLabel = `${SOURCE_SIGNER_LABEL}${options.labelSuffix ?? ''}`;
-  const targetLabel = `${TARGET_SIGNER_LABEL}${options.labelSuffix ?? ''}`;
+  const [sourceLabel, targetLabel] = crossLoadSignerLabels(options.cohortIndex);
   const source = await setupCustody(client, {
-    name: `Production Load Source${options.labelSuffix ?? ''}`,
+    name: `Production Load Source-${options.cohortIndex}`,
     seed: deriveManagedSignerSeed(options.custodyRuntimeSeed, sourceLabel),
     signerLabel: sourceLabel,
     jurisdiction: options.sourceJurisdiction,
@@ -53,7 +50,7 @@ export const setupCrossLoadCohort = async (options: {
     creditAmount: options.sourceCredit,
   });
   const target = await setupCustody(client, {
-    name: `Production Load Target${options.labelSuffix ?? ''}`,
+    name: `Production Load Target-${options.cohortIndex}`,
     seed: deriveManagedSignerSeed(options.custodyRuntimeSeed, targetLabel),
     signerLabel: targetLabel,
     jurisdiction: options.targetJurisdiction,
@@ -72,7 +69,7 @@ export const setupCrossLoadCohort = async (options: {
 };
 
 export const waitForSettledCrossRoute = async (
-  hub: ConnectedRuntime,
+  hub: CrossHub,
   sourceHubEntityId: string,
   targetHubEntityId: string,
   orderId: string,
@@ -81,19 +78,19 @@ export const waitForSettledCrossRoute = async (
 ) => {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    const sourceRoutes = decodeCommittedCrossRoutes(
-      await readWithRateLimitRetry<unknown>(hub, `entity/${sourceHubEntityId}`),
-    );
-    const targetRoutes = decodeCommittedCrossRoutes(
-      await readWithRateLimitRetry<unknown>(hub, `entity/${targetHubEntityId}`),
-    );
+    const sourceRoutes = await hub.routes(sourceHubEntityId);
+    const targetRoutes = await hub.routes(targetHubEntityId);
     const source = sourceRoutes.find(route => route.orderId === orderId);
     const target = targetRoutes.find(route => route.orderId === orderId);
     if (
-      source?.status === 'settled' && target?.status === 'settled' &&
-      source.filledSourceAmount === sourceAmount && source.filledTargetAmount === targetAmount &&
-      target.filledSourceAmount === sourceAmount && target.filledTargetAmount === targetAmount
-    ) return source;
+      source?.status === 'settled' &&
+      target?.status === 'settled' &&
+      source.filledSourceAmount === sourceAmount &&
+      source.filledTargetAmount === targetAmount &&
+      target.filledSourceAmount === sourceAmount &&
+      target.filledTargetAmount === targetAmount
+    )
+      return source;
     await sleep(250);
   }
   throw new Error(`PRODUCTION_SWAP_LOAD_CROSS_FILL_NOT_COMMITTED:${orderId}`);

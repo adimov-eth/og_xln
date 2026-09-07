@@ -1499,7 +1499,7 @@ const buildStorageFrameRecordPlan = (
 
 type RuntimeFramePlan = ReturnType<typeof buildStorageFrameRecordPlan>;
 
-const buildStorageCommitBatches = (
+const buildStorageCommitBatches = async (
   options: StorageFrameSaveOptions,
   prepared: PreparedStorageFrameSave,
   commitments: PreparedStorageCommitments,
@@ -1559,6 +1559,21 @@ const buildStorageCommitBatches = (
   for (const row of commitments.bookGraphWrites.puts) currentBatch.put(row.key, row.value);
 
   const committedFrameBytes = frame.authoritativeBaseBytes;
+  // Permanent checkpoint paths overwrite earlier values. Retention measures bytes
+  // present after this batch; epochReplayBytes measures the bytes written by it.
+  let retainedFrameBytes = committedFrameBytes;
+  const replacedKeys = new Map<string, Buffer>();
+  for (const row of [...frame.runtimeMachineGraphRows, ...accountAuthorityCheckpoint.puts]) {
+    replacedKeys.set(row.key.toString('hex'), row.key);
+  }
+  for (const key of [...frame.runtimeMachineGraphDels, ...accountAuthorityCheckpoint.dels]) {
+    retainedFrameBytes -= key.byteLength;
+    replacedKeys.set(key.toString('hex'), key);
+  }
+  for (const key of replacedKeys.values()) {
+    const previous = await readRawOrNull(prepared.walDb, key);
+    if (previous) retainedFrameBytes -= key.byteLength + previous.byteLength;
+  }
   const nextHead: StorageHead = {
     schemaVersion: STORAGE_SCHEMA_VERSION,
     latestHeight: options.env.state.height,
@@ -1574,7 +1589,7 @@ const buildStorageCommitBatches = (
     epochMaxBytes: prepared.config.epochMaxBytes,
     accountMerkleRadix: prepared.config.accountMerkleRadix,
     epochReplayBytes: prepared.head.epochReplayBytes + committedFrameBytes,
-    retainedWalBytes: prepared.head.retainedWalBytes + committedFrameBytes,
+    retainedWalBytes: prepared.head.retainedWalBytes + retainedFrameBytes,
   };
   const encodedHead = encodeBuffer(nextHead);
   walBatch.put(KEY_HEAD, encodedHead);
@@ -1588,7 +1603,7 @@ const buildStorageCommitBatches = (
   };
 };
 
-type StorageCommitBatches = ReturnType<typeof buildStorageCommitBatches>;
+type StorageCommitBatches = Awaited<ReturnType<typeof buildStorageCommitBatches>>;
 
 const scheduleDisposableActivityView = (
   options: StorageFrameSaveOptions,
@@ -1899,7 +1914,7 @@ export const saveRuntimeFrameToStorage = async (
   options.onAuthoritativeFramePrepared?.(framePlan.authoritativeIdentity);
   options.onPersistenceProgress?.('frame-encoded');
   checkpointPrepare('frameEncode');
-  const batches = buildStorageCommitBatches(
+  const batches = await buildStorageCommitBatches(
     options,
     prepared,
     commitments,

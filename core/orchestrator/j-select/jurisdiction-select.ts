@@ -1,6 +1,7 @@
 import { normalizeLoopbackUrl } from '../../network/p2p/loopback-url';
+import type { JurisdictionTransport } from '../../jurisdiction/adapter/kernel/jurisdiction-loader';
 
-export type HubJurisdictionEntry = Record<string, unknown> & {
+export type HubJurisdictionEntry = Record<string, unknown> & JurisdictionTransport & {
   name?: string;
   chainId?: number;
   entityProviderDeploymentBlock?: number;

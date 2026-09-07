@@ -145,6 +145,7 @@ export const validateHubHealthPayload = (value: unknown): HubHealthPayload => {
 
 export const validateHubInfoPayload = (value: unknown): HubInfoPayload => {
   const info = recordAt(value, 'info');
+  optionalField(info, 'deliveryReady', 'boolean', 'info');
   for (const [index, valueAtIndex] of optionalArray(info['hubEntities'], 'info.hubEntities').entries()) {
     const path = `info.hubEntities[${index}]`;
     const entity = recordAt(valueAtIndex, path);

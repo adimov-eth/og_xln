@@ -21,7 +21,8 @@ import type {
   RuntimeAdapterFrameReceiptResponse,
   RuntimeAdapterPaymentRoutesResponse,
   RuntimeAdapterReadQuery,
- RuntimeAdapterRequest } from '../../runtime-adapter/types';
+  RuntimeAdapterRequest,
+} from '../../runtime-adapter/types';
 import type { RuntimeReplica } from '../../../runtime/types';
 import type { RelaySocket } from './relay-direct';
 
@@ -46,7 +47,9 @@ const readFrameReceipts = async (
   const toHeight = latestHeight > 0 ? Math.min(latestHeight, requestedToHeight) : 0;
   const limit = Math.max(1, Math.min(500, Math.floor(Number(query.limit ?? 200))));
   const pageToHeight = toHeight >= fromHeight ? Math.min(toHeight, fromHeight + limit - 1) : 0;
-  const entityId = String(query.entityId || '').trim().toLowerCase();
+  const entityId = String(query.entityId || '')
+    .trim()
+    .toLowerCase();
   if (entityId && !/^0x[0-9a-f]{64}$/.test(entityId)) {
     throw new RuntimeAdapterError('E_BAD_QUERY', 'frame receipt entityId must be a 32-byte entity id');
   }
@@ -68,7 +71,9 @@ const readFrameReceipts = async (
     const logs = receipt.logs.filter(log => {
       if (eventNames.size > 0 && !eventNames.has(log.message)) return false;
       if (!entityId) return true;
-      const hintedEntityId = String(log.entityId ?? log.data?.['entityId'] ?? '').trim().toLowerCase();
+      const hintedEntityId = String(log.entityId ?? log.data?.['entityId'] ?? '')
+        .trim()
+        .toLowerCase();
       return hintedEntityId === entityId;
     });
     if ((entityId || eventNames.size > 0) && logs.length === 0) return [];
@@ -85,10 +90,18 @@ const findPaymentRoutes = async (
   env: RuntimeReplica,
   query: RuntimeAdapterReadQuery = {},
 ): Promise<RuntimeAdapterPaymentRoutesResponse> => {
-  const sourceEntityId = String(query.sourceEntityId || '').trim().toLowerCase();
-  const targetEntityId = String(query.targetEntityId || '').trim().toLowerCase();
+  const sourceEntityId = String(query.sourceEntityId || '')
+    .trim()
+    .toLowerCase();
+  const targetEntityId = String(query.targetEntityId || '')
+    .trim()
+    .toLowerCase();
   if (!/^0x[0-9a-f]{64}$/.test(sourceEntityId) || !/^0x[0-9a-f]{64}$/.test(targetEntityId)) {
     throw new RuntimeAdapterError('E_BAD_QUERY', 'payment route endpoints must be 32-byte entity ids');
+  }
+  const fundingAccountId = query.fundingAccountId?.trim().toLowerCase();
+  if (fundingAccountId !== undefined && !/^0x[0-9a-f]{64}$/.test(fundingAccountId)) {
+    throw new RuntimeAdapterError('E_BAD_QUERY', 'funding account must be a 32-byte entity id');
   }
   const tokenId = Number(query.tokenId);
   if (!Number.isSafeInteger(tokenId) || tokenId <= 0) {
@@ -107,11 +120,15 @@ const findPaymentRoutes = async (
   if (!profilesReady) {
     throw new RuntimeAdapterError('E_INTERNAL', 'payment route profiles are unavailable', true);
   }
-  let routes = await env.gossip.getNetworkGraph().findPaths(sourceEntityId, targetEntityId, amount, tokenId);
+  let routes = await env.gossip
+    .getNetworkGraph()
+    .findPaths(sourceEntityId, targetEntityId, amount, tokenId, fundingAccountId);
   if (routes.length === 0 && env.infrastructure?.p2p?.ensureRoutes) {
     // Pull-only gossip: ask the relay for the profile chains that route here.
     await env.infrastructure.p2p.ensureRoutes(sourceEntityId, targetEntityId, amount, tokenId);
-    routes = await env.gossip.getNetworkGraph().findPaths(sourceEntityId, targetEntityId, amount, tokenId);
+    routes = await env.gossip
+      .getNetworkGraph()
+      .findPaths(sourceEntityId, targetEntityId, amount, tokenId, fundingAccountId);
   }
   if (routes.length === 0) {
     throw new RuntimeAdapterError('E_NOT_FOUND', `no payment route from ${sourceEntityId} to ${targetEntityId}`);
@@ -133,11 +150,8 @@ const findPaymentRoutes = async (
   };
 };
 
-export const createServerRpcMessageHandler = ({
-  validateRuntimeInputAdmission,
-  deriveBrainVault,
-  revealBrainVaultMnemonic,
-}: ServerRpcHandlerDeps) =>
+export const createServerRpcMessageHandler =
+  ({ validateRuntimeInputAdmission, deriveBrainVault, revealBrainVaultMnemonic }: ServerRpcHandlerDeps) =>
   async (ws: RelaySocket, request: RuntimeAdapterRequest, env: RuntimeReplica | null): Promise<void> => {
     await handleRuntimeAdapterMessage(ws, request, env, {
       enqueueRuntimeInput,

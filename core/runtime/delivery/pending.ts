@@ -18,6 +18,7 @@ import { getEffectiveEntityInputTxs } from '../../entity/consensus/output/envelo
 import { accountInputAck, accountInputProposal } from '../../account/consensus/flush';
 import {
   deliveryAccepted,
+  deliveryDeferred,
   deliveryQueued,
   requireDeliveryResult,
   type DeliveryResult,
@@ -268,6 +269,7 @@ export type PlannedRemoteOutput = {
 };
 
 type RuntimeP2PDispatch = {
+  canDeliver?(runtimeId: string): boolean;
   enqueueEntityInputsDelivery(
     targetRuntimeId: string,
     envelope: RuntimeEntityInputsEnvelope,
@@ -328,7 +330,7 @@ export const buildRoutingDeliveryResult = (input: {
   localCount: number;
   pendingCount: number;
 }): DeliveryResult => {
-  if (input.pendingCount > 0) throw new Error(`ROUTE_DEFERRED_OUTPUTS_FORBIDDEN:${input.pendingCount}`);
+  if (input.pendingCount > 0) return deliveryDeferred({ outcome: 'deferred', code: 'ROUTE_RECIPIENT_NOT_READY' });
   if (input.remoteCount > 0 && input.localCount > 0) {
     return deliveryAccepted('ROUTE_REMOTE_AND_LOCAL_ACCEPTED');
   }

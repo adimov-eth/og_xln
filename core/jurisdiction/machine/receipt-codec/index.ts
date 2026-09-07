@@ -20,6 +20,14 @@ export type AuthenticatedRpcLog = CanonicalRpcLog & {
   index: number;
   /** Ethereum receipt-trie membership. Absent for explicitly non-MPT chains. */
   receiptProof?: CanonicalReceiptMptProof;
+  /** Produced only by the explicit complete-receipts native RPC profile. */
+  nativeRpcAttestation?: {
+    chainId: number;
+    rpcEndpointHash: string;
+    finality: 'tron-solidified';
+    transactionIndex: number;
+    receiptLogIndex: number;
+  };
 };
 
 export type CanonicalReceiptMptProof = {

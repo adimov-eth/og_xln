@@ -1,8 +1,9 @@
+import { UINT256_MAX } from '../../../../protocol/boundary/integer-ranges';
 import type { AccountState, AccountTx, PullCommitment } from '../../../../types/account';
 import type { AccountDraftState } from '../../../state/account-state-draft';
 import type { CrossJurisdictionPullBinding, CrossJurisdictionSwapRoute } from '../../../../types/cross-jurisdiction';
 import { deriveDelta } from '../../../utils';
-import { FINANCIAL, LIMITS, TOKENS } from '../../../../config/constants';
+import { LIMITS, TOKENS } from '../../../../config/constants';
 import {
   buildCrossJurisdictionPullBinding,
   cloneCrossJurisdictionPullBinding,
@@ -11,12 +12,9 @@ import {
 } from '../../../../extensions/cross-j/index';
 import { getJurisdictionStackId } from '../../../../jurisdiction/machine/jurisdiction-stack';
 import { safeStringify } from '../../../../protocol/serialization';
-import {
-  HASHLADDER_MAX_FILL_RATIO,
-  verifyHashLadderBinary,
-} from '../../../../protocol/htlc/hash-ladder';
+import { HASHLADDER_MAX_FILL_RATIO, verifyHashLadderBinary } from '../../../../protocol/htlc/hash-ladder';
 import { addHold, releaseHold } from '../../hold-utils';
-import { commitDeltaDraft, createDeltaDraft } from '../../delta-utils';
+import { commitDeltaDraft, createDeltaDraft, getOffdeltaRepresentationError } from '../../delta-utils';
 import { deriveTransferOffdeltaChange } from '../../../../protocol/transform/delta-movement';
 import { createDefaultDelta } from '../../../state/delta';
 import type { ApplyAccountTxResult } from '../../apply-types';
@@ -27,7 +25,7 @@ type CrossPullCloseTx = Extract<AccountTx, { type: 'cross_pull_close' }>;
 
 const HEX_32_RE = /^0x[0-9a-fA-F]{64}$/;
 
-const absBigInt = (value: bigint): bigint => value >= 0n ? value : -value;
+const absBigInt = (value: bigint): bigint => (value >= 0n ? value : -value);
 const crossProofMatchesBinding = (
   binding: CrossJurisdictionPullBinding,
   proof: CrossPullCloseTx['data']['proof'],
@@ -53,9 +51,7 @@ const crossProofMatchesBinding = (
       ? total
       : (total * BigInt(proof.fillRatio)) / BigInt(HASHLADDER_MAX_FILL_RATIO);
   const expectedLegAmount = chainProportional(absBigInt(pull.amount));
-  const proofLegAmount = binding.leg === 'source'
-    ? proof.cumulativeSourceAmount
-    : proof.cumulativeTargetAmount;
+  const proofLegAmount = binding.leg === 'source' ? proof.cumulativeSourceAmount : proof.cumulativeTargetAmount;
   if (proofLegAmount !== expectedLegAmount) {
     return `${binding.leg} amount ${proofLegAmount} != chain-proportional ${expectedLegAmount}`;
   }
@@ -71,7 +67,11 @@ const validateCrossPullCloseEvidence = (
   if (!Number.isSafeInteger(proof.fillRatio) || proof.fillRatio < 0 || proof.fillRatio > HASHLADDER_MAX_FILL_RATIO) {
     return { ok: false, error: `Cross-j close proof ratio out of uint16 range: ${proof.fillRatio}` };
   }
-  if (proof.closeMode !== 'full' && proof.closeMode !== 'partial_cancel_remainder' && proof.closeMode !== 'pure_cancel') {
+  if (
+    proof.closeMode !== 'full' &&
+    proof.closeMode !== 'partial_cancel_remainder' &&
+    proof.closeMode !== 'pure_cancel'
+  ) {
     return { ok: false, error: `Cross-j close mode invalid: ${String(proof.closeMode)}` };
   }
   const proofError = crossProofMatchesBinding(binding, proof, pull);
@@ -82,10 +82,13 @@ const validateCrossPullCloseEvidence = (
   }
   let decodedRatio: number;
   try {
-    decodedRatio = verifyHashLadderBinary({
-      fullHash: pull.fullHash,
-      partialRoot: pull.partialRoot,
-    }, binary).fillRatio;
+    decodedRatio = verifyHashLadderBinary(
+      {
+        fullHash: pull.fullHash,
+        partialRoot: pull.partialRoot,
+      },
+      binary,
+    ).fillRatio;
   } catch (error) {
     return {
       ok: false,
@@ -138,9 +141,15 @@ const validateCrossJurisdictionPullRoute = (account: AccountState, tx: PullLockT
   }
   const leg = binding.leg === 'source' ? route.source : route.target;
   const pull = binding.leg === 'source' ? route.sourcePull : route.targetPull;
-  if (!pull || tx.data.pullId !== pull.pullId || tx.data.tokenId !== pull.tokenId || tx.data.amount !== pull.signedAmount ||
-      tx.data.fullHash.toLowerCase() !== pull.fullHash.toLowerCase() ||
-      tx.data.partialRoot.toLowerCase() !== pull.partialRoot.toLowerCase()) return 'Cross-j pull terms do not match route';
+  if (
+    !pull ||
+    tx.data.pullId !== pull.pullId ||
+    tx.data.tokenId !== pull.tokenId ||
+    tx.data.amount !== pull.signedAmount ||
+    tx.data.fullHash.toLowerCase() !== pull.fullHash.toLowerCase() ||
+    tx.data.partialRoot.toLowerCase() !== pull.partialRoot.toLowerCase()
+  )
+    return 'Cross-j pull terms do not match route';
   const endpoints = new Set([account.leftEntity.toLowerCase(), account.rightEntity.toLowerCase()]);
   if (!endpoints.has(leg.entityId.toLowerCase()) || !endpoints.has(leg.counterpartyEntityId.toLowerCase())) {
     return 'Cross-j pull Account endpoints do not match route leg';
@@ -183,18 +192,16 @@ const validatePullHashMaterial = (
     const existingOrderId = String(existing.crossJurisdiction?.orderId || '').trim();
     if (existingOrderId && orderId && existingOrderId === orderId) continue;
     if (
-      existing.fullHash.toLowerCase() === normalizedFullHash
-      || existing.partialRoot.toLowerCase() === normalizedPartialRoot
-    ) return `Pull hash material collides with live pull ${existing.pullId}`;
+      existing.fullHash.toLowerCase() === normalizedFullHash ||
+      existing.partialRoot.toLowerCase() === normalizedPartialRoot
+    )
+      return `Pull hash material collides with live pull ${existing.pullId}`;
   }
   return null;
 };
 
 /** Exact non-mutating admission shared by Entity preflight and Account apply. */
-export const getPullLockAdmissionError = (
-  account: AccountState,
-  accountTx: PullLockTx,
-): string | null => {
+export const getPullLockAdmissionError = (account: AccountState, accountTx: PullLockTx): string | null => {
   const { pullId, tokenId, amount, fullHash, partialRoot, crossJurisdiction } = accountTx.data;
   const routeError = validateCrossJurisdictionPullRoute(account, accountTx);
   if (routeError) return routeError;
@@ -208,14 +215,12 @@ export const getPullLockAdmissionError = (
   }
   if (amount === 0n) return 'Pull amount must be non-zero';
   const absAmount = absBigInt(amount);
-  if (absAmount < FINANCIAL.MIN_PAYMENT_AMOUNT || absAmount > FINANCIAL.MAX_PAYMENT_AMOUNT) {
+  if (absAmount > UINT256_MAX) {
     return `Pull amount out of bounds: ${absAmount}`;
   }
   const delta = account.deltas.get(tokenId) ?? createDefaultDelta(tokenId);
   const loserCapacity = deriveDelta(delta, amount < 0n).outCapacity;
-  return absAmount > loserCapacity
-    ? `Insufficient pull capacity: need ${absAmount}, available ${loserCapacity}`
-    : null;
+  return absAmount > loserCapacity ? `Insufficient pull capacity: need ${absAmount}, available ${loserCapacity}` : null;
 };
 
 export async function handlePullLock(
@@ -289,14 +294,9 @@ export async function handleCrossPullClose(
   // target Hub is the target-pull payer. Letting the target User (beneficiary)
   // propose its own close would let it choose cumulative settlement amounts
   // that the target pull commitment alone does not bind.
-  const authorizedHubIsLeft = binding.leg === 'source'
-    ? beneficiaryIsLeft
-    : !beneficiaryIsLeft;
+  const authorizedHubIsLeft = binding.leg === 'source' ? beneficiaryIsLeft : !beneficiaryIsLeft;
   if (byLeft !== authorizedHubIsLeft) {
-    return accountTxValidationRejected(
-      `Only the ${binding.leg} Hub can close cross-j pull`,
-      events,
-    );
+    return accountTxValidationRejected(`Only the ${binding.leg} Hub can close cross-j pull`, events);
   }
 
   const delta = createDeltaDraft(account, pull.tokenId);
@@ -316,10 +316,13 @@ export async function handleCrossPullClose(
   if (applied > 0n) {
     delta.offdelta += deriveTransferOffdeltaChange(payerIsLeft, applied);
   }
-
+  const representationError = getOffdeltaRepresentationError(account, delta);
+  if (representationError) return accountTxValidationRejected(representationError, events);
   commitDeltaDraft(account, delta);
   account.pulls.del(pullId);
-  events.push(`🪝 Cross-j pull closed: ${pullId.slice(0, 8)}... ratio ${ratio}/${HASHLADDER_MAX_FILL_RATIO} claimed ${applied} released ${absAmount - applied}`);
+  events.push(
+    `🪝 Cross-j pull closed: ${pullId.slice(0, 8)}... ratio ${ratio}/${HASHLADDER_MAX_FILL_RATIO} claimed ${applied} released ${absAmount - applied}`,
+  );
   // The source offer is bound to this pull; the close is the only Account tx
   // that retires it (fill progress never touches the Account offer).
   const offer = binding.leg === 'source' ? account.swapOffers?.get(binding.orderId) : undefined;

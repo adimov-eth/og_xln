@@ -67,6 +67,8 @@ export type RuntimeAdapterReadQuery = {
   targetEntityId?: string;
   tokenId?: number;
   amount?: string;
+  /** Read-only funding quote: relax only this first Account capacity. */
+  fundingAccountId?: string;
 };
 
 export type RuntimeAdapterFrameLog = {
@@ -242,9 +244,7 @@ export interface RuntimeAdapter {
   submitCrossJurisdictionIntent(
     route: CrossJurisdictionSwapRoute,
   ): Promise<RuntimeAdapterCrossJurisdictionIntentResult>;
-  registerNumberedEntities(
-    input: NumberedRegistrationCommand,
-  ): Promise<NumberedRegistrationCommandResult>;
+  registerNumberedEntities(input: NumberedRegistrationCommand): Promise<NumberedRegistrationCommandResult>;
   deriveBrainVault(
     input: RuntimeAdapterBrainVaultInput,
     options?: RuntimeAdapterBrainVaultOptions,

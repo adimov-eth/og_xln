@@ -3,6 +3,7 @@ import type { CheckpointRestoreOptions } from '../checkpoint';
 import type { PersistedFrameJournal } from '../../types';
 import { assertRuntimeRecoveryBundleAuthenticity } from './index';
 import type { RuntimeRecoveryBundleV1 } from './types';
+import { restoreRecoveryCheckpointOutbox } from './checkpoint-frame';
 
 export interface RuntimeBundleRestoreOptions extends CheckpointRestoreOptions {
   targetHeight?: number;
@@ -94,6 +95,7 @@ export const restoreRuntimeFromBundles = async (
   );
   const candidate = selectRecoveryCandidate(validated, options.targetHeight);
   const env = await deps.restoreCheckpoint(candidate.snapshot.checkpoint!, options);
+  restoreRecoveryCheckpointOutbox(env, candidate.snapshot);
   await replayCandidateTail(deps, env, candidate, Boolean(options.readOnly));
   if (env.state.height !== candidate.height) {
     const mismatch = new Error(
@@ -102,9 +104,7 @@ export const restoreRuntimeFromBundles = async (
     if (options.readOnly) throw mismatch;
     await deps.failAfterCleanup(env, mismatch);
   }
-  // Read-only recovery retains the reconstructed outputs for equivalence
-  // inspection. A live restore discards them: network delivery is best-effort
-  // and is never resumed from historical Runtime frames.
-  if (!options.readOnly) env.pendingNetworkOutputs = [];
+  // Both restore modes retain the verified tip outbox. A live Runtime retires
+  // those exact units only after its normal transport accepts them.
   return env;
 };

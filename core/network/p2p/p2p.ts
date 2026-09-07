@@ -59,6 +59,7 @@ import {
 } from './p2p-endpoints';
 import {
   deliveryAccepted,
+  deliveryDeferred,
   deliveryFailure,
   isDeliveryDelivered,
   type DeliveryResult,
@@ -393,6 +394,8 @@ export class RuntimeP2P {
   private officialFoundationSignerId: string | undefined;
   private clients: RuntimeWsClient[] = [];
   private directClients = new Map<string, RuntimeWsClient>();
+  private localReady = false;
+  private readinessListeners = new Set<(runtimeId: string, ready: boolean) => void>();
   /**
    * Last signed route per local entity, keyed by everything the route
    * signature commits except `lastUpdated`. Answering every gossip poll with a
@@ -401,6 +404,7 @@ export class RuntimeP2P {
    * the same signed profile and peers skip it on the timestamp compare.
    */
   private signedLocalProfiles = new Map<string, { key: string; profile: Profile }>();
+  private directPublishedProfiles = new WeakMap<RuntimeWsClient, Map<string, Profile>>();
   private directClientUrls = new Map<string, string>();
   private directClientErrors = new Map<string, { at: number; error: string }>();
   private retiringClients = new Map<RuntimeWsClient, { kind: 'relay' | 'direct'; key: string }>();
@@ -815,17 +819,25 @@ export class RuntimeP2P {
       clientOpen: primary.client?.isOpen() ?? false,
       directEndpoint: this.getDirectPeerEndpoint(normalizedTargetRuntimeId),
     });
-    if (hltDirectFinancialTransportRequired() && primary.transport !== 'direct') {
-      throw new Error(
-        `HLT_RELAY_ENTITY_INPUT_FORBIDDEN:source=${this.runtimeId}:target=${normalizedTargetRuntimeId}:` +
-        `envelope=${safeStringify(envelope)}`,
-      );
+    const transport = primary.transport;
+    // A relay authenticates our directory/control socket, not the recipient.
+    // Financial output waits for the exact direct peer (or the Hub's inbound
+    // sovereign session); a missing profile must not select a relay send.
+    if (transport !== 'direct' || !primary.client?.canDeliver()) {
+      return p2pDeliveryResult(deliveryDeferred({
+        outcome: 'deferred',
+        code: 'P2P_DIRECT_RECIPIENT_NOT_READY',
+      }), transport);
     }
-    let transport = primary.transport;
     let delivery: EntityInputDeliveryResult | null = null;
     const client = primary.client?.isOpen() ? primary.client : null;
     if (client) {
       try {
+        if (!this.prepareDirectSourceProfiles(normalizedTargetRuntimeId, client, envelope)) {
+          return p2pDeliveryResult(deliveryDeferred({
+            outcome: 'deferred', code: 'P2P_DIRECT_SOURCE_PROFILE_NOT_READY',
+          }), transport);
+        }
         delivery = this.deliverEntityInputs(
           client,
           normalizedTargetRuntimeId,
@@ -956,6 +968,23 @@ export class RuntimeP2P {
     for (const runtimeId of uniqueTransportValues(runtimeIds.map(normalizeRuntimeId)).sort(compareStableText)) {
       this.ensureDirectClientForRuntime(runtimeId);
     }
+  }
+
+  setReady(ready: boolean): void {
+    if (typeof ready !== 'boolean') throw new Error('P2P_READINESS_INVALID');
+    this.localReady = ready;
+    for (const client of this.directClients.values()) client.setReady(ready);
+  }
+
+  canDeliver(runtimeId: string): boolean {
+    const target = normalizeRuntimeId(runtimeId);
+    if (!target || this.closing || this.closed) return false;
+    return this.hasDirectPeerEndpoint(target) && (this.directClients.get(target)?.canDeliver() ?? false);
+  }
+
+  onDeliveryReadyChange(listener: (runtimeId: string, ready: boolean) => void): () => void {
+    this.readinessListeners.add(listener);
+    return () => { this.readinessListeners.delete(listener); };
   }
 
   prepareDirectEntityRoutes(entityIds: readonly string[]): boolean {
@@ -1428,6 +1457,7 @@ export class RuntimeP2P {
       this.env.gossip?.announce?.(profile);
       this.rememberAnnouncedProfile(profile);
     }
+    this.publishProfilesToOpenDirectClients(profiles);
 
     // ALWAYS announce to relay for storage (relay stores regardless of 'to' field)
     const client = this.getActiveClient();
@@ -1467,12 +1497,42 @@ export class RuntimeP2P {
       this.env.gossip?.announce?.(profile);
       this.rememberAnnouncedProfile(profile);
     }
-    if (!client.sendGossipAnnounce(targetRuntimeId, {
-      profiles,
-      jurisdictions: [],
-    } satisfies GossipResponsePayload)) {
+    this.publishDirectProfiles(targetRuntimeId, client, profiles);
+  }
+
+  private publishDirectProfiles(targetRuntimeId: string, client: RuntimeWsClient, profiles: Profile[]): void {
+    if (profiles.length === 0) return;
+    const published = this.directPublishedProfiles.get(client) ?? new Map<string, Profile>();
+    const changed = profiles.filter(profile => published.get(normalizeId(profile.entityId)) !== profile);
+    if (changed.length === 0) return;
+    if (!client.sendGossipAnnounce(targetRuntimeId, { profiles: changed, jurisdictions: [] } satisfies GossipResponsePayload)) {
       throw new Error(`P2P_DIRECT_PROFILE_ANNOUNCE_NOT_SENT:${targetRuntimeId}`);
     }
+    for (const profile of changed) published.set(normalizeId(profile.entityId), profile);
+    this.directPublishedProfiles.set(client, published);
+  }
+
+  private publishProfilesToOpenDirectClients(profiles: Profile[]): void {
+    for (const [runtimeId, client] of this.directClients) {
+      if (client.isOpen()) this.publishDirectProfiles(runtimeId, client, profiles);
+    }
+  }
+
+  private prepareDirectSourceProfiles(targetRuntimeId: string, client: RuntimeWsClient, envelope: RuntimeEntityInputsEnvelope): boolean {
+    const sourceIds = uniqueTransportValues(envelope.entityInputs.flatMap(input => (input.entityTxs ?? []).flatMap(tx =>
+      tx.type === 'accountInput' ? [normalizeId(tx.data.fromEntityId)] :
+      tx.type === 'runtimeOutput' ? [normalizeId(tx.data.sourceEntityId)] : [])));
+    const missing = sourceIds.filter(entityId => !this.signedLocalProfiles.has(entityId));
+    if (missing.length > 0) {
+      this.announceProfilesForEntities(missing, 'direct-source-profile');
+      return false;
+    }
+    // The cached route has the current local board's certificate and Runtime
+    // signature. Write it on this authenticated socket before the financial
+    // envelope; a peer must not commit an Account whose ACK has no return route.
+    // A fresh socket has no publication cache, including after process restart.
+    this.publishDirectProfiles(targetRuntimeId, client, sourceIds.map(entityId => this.signedLocalProfiles.get(entityId)!.profile));
+    return true;
   }
 
   announceProfilesForEntities(entityIds: string[], reason: string = 'runtime-change') {
@@ -1587,6 +1647,7 @@ export class RuntimeP2P {
     const profiles = builtProfiles.filter(profile => this.shouldAnnounceProfile(profile));
     if (profiles.length === 0) return;
     for (const profile of profiles) this.rememberAnnouncedProfile(profile);
+    this.publishProfilesToOpenDirectClients(profiles);
     const client = this.getActiveClient();
     if (client) {
       client.sendGossipAnnounce(this.runtimeId, {
@@ -1860,10 +1921,10 @@ export class RuntimeP2P {
   }
 
   private retireDirectClient(runtimeId: string, client: RuntimeWsClient): void {
+    this.retireClient(client, 'direct', runtimeId);
     if (this.directClients.get(runtimeId) === client) this.directClients.delete(runtimeId);
     this.directClientUrls.delete(runtimeId);
     this.directClientErrors.delete(runtimeId);
-    this.retireClient(client, 'direct', runtimeId);
   }
 
   private async drainAllClients(timeoutMs: number): Promise<void> {
@@ -1997,6 +2058,10 @@ export class RuntimeP2P {
           });
         });
       },
+      onDeliveryReadyChange: ready => {
+        if (this.directClients.get(normalizedTargetRuntimeId) !== client) return;
+        for (const listener of this.readinessListeners) listener(normalizedTargetRuntimeId, ready);
+      },
       signEnvelope: (to, envelope) => signRuntimeEntityInputsEnvelope(this.env, to, envelope),
       onEntityInputs: async (from, envelope, timestamp, sessionAuthenticated) => {
         if (this.directClients.get(normalizedTargetRuntimeId) !== client) {
@@ -2017,6 +2082,7 @@ export class RuntimeP2P {
       },
     });
     this.directClients.set(normalizedTargetRuntimeId, client);
+    client.setReady(this.localReady);
     this.directClientUrls.set(normalizedTargetRuntimeId, endpoint);
     client.connect().catch(error => {
       if (this.closing || this.closed) return;

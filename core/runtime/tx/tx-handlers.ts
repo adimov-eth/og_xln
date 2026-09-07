@@ -112,11 +112,9 @@ export const applyRuntimeTx = async (
     }
     env.infrastructure.certifiedRegistrationEvidence.set(
       key,
-      freezeCertifiedRegistrationEvidence({
-        ...runtimeTx.data,
-        topics: [...runtimeTx.data.topics],
-        receiptProofNodes: [...runtimeTx.data.receiptProofNodes],
-      }),
+      freezeCertifiedRegistrationEvidence(runtimeTx.data.receiptKind === 'tron-rpc-attested'
+        ? { ...runtimeTx.data, topics: [...runtimeTx.data.topics] }
+        : { ...runtimeTx.data, topics: [...runtimeTx.data.topics], receiptProofNodes: [...runtimeTx.data.receiptProofNodes] }),
     );
     return [];
   }

@@ -1,4 +1,5 @@
 import type { TowerProofBody } from './bundle/types';
+import { decodeInt512 } from '../../protocol/crypto/abi-money';
 
 const requireRecord = (
   value: unknown,
@@ -47,6 +48,8 @@ const requireArray = (value: unknown, path: string): unknown[] => {
  * Normalize a freshly rebuilt frozen-state ProofBody before giving it to a
  * watchtower. Solidity `uint32` fields are numbers in the generated struct;
  * the encrypted tower payload stores them as bigint with the other ABI ints.
+ * Offdeltas cross this boundary as exact Int512 ABI limbs; the encrypted
+ * remedy retains its canonical scalar bigint wire format for the tower.
  *
  * A watchtower must never sign or publish an object merely because it resembles
  * a Solidity ProofBody: every field is checked after the frozen hash matched.
@@ -68,9 +71,7 @@ export const decodeTowerProofBody = (value: unknown): TowerProofBody => {
     watchSeed: requireString(body['watchSeed'], 'watchSeed'),
     leftResponseSeconds,
     rightResponseSeconds,
-    offdeltas: requireArray(body['offdeltas'], 'offdeltas').map((item, index) =>
-      requireBigInt(item, `offdeltas.${index}`),
-    ),
+    offdeltas: requireArray(body['offdeltas'], 'offdeltas').map(decodeInt512),
     tokenIds: requireArray(body['tokenIds'], 'tokenIds').map((item, index) =>
       requireBigInt(item, `tokenIds.${index}`),
     ),

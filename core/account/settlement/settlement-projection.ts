@@ -8,7 +8,7 @@
  */
 import type { AccountReplica, Delta, SettlementDiff } from '../../types/account';
 import { getDefaultCreditLimit } from '../utils';
-import { INT256_MAX, INT256_MIN, UINT256_MAX } from '../../protocol/boundary/integer-ranges';
+import { INT512_MAX, INT512_MIN, UINT256_MAX } from '../../protocol/boundary/integer-ranges';
 import { assertSettlementTokenId } from '../../protocol/settlement/operations';
 import { assertAccountDeltaCapacity, createDefaultDelta } from '../state/delta';
 
@@ -48,7 +48,7 @@ export const projectSettlementDeltaOverrides = (
     if (collateral < 0n || collateral > UINT256_MAX) {
       throw new Error(`SETTLEMENT_PROJECTED_COLLATERAL_RANGE:token=${diff.tokenId}`);
     }
-    if (ondelta < INT256_MIN || ondelta > INT256_MAX) {
+    if (ondelta < INT512_MIN || ondelta > INT512_MAX) {
       throw new Error(`SETTLEMENT_PROJECTED_ONDELTA_RANGE:token=${diff.tokenId}`);
     }
     delta.collateral = collateral;

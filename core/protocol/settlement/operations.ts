@@ -12,9 +12,7 @@
 
 import type { AccountReplica, SettlementOp, SettlementDiff } from '../../types/account';
 import { TOKENS } from '../../config/constants';
-
-const INT256_MIN = -(1n << 255n);
-const INT256_MAX = (1n << 255n) - 1n;
+import { UINT256_MAX } from '../boundary/integer-ranges';
 const MAX_SETTLEMENT_DIFFS = 32;
 const MAX_SETTLEMENT_FORGIVENESS_IDS = 32;
 
@@ -58,34 +56,17 @@ export const getNextSettlementNonce = (account: AccountReplica): number => {
   return getMinimumSafeSettlementNonce(account);
 };
 
-const assertInt256 = (value: bigint, field: keyof Omit<SettlementDiff, 'tokenId'>, tokenId: number): void => {
-  if (value < INT256_MIN || value > INT256_MAX) {
-    throw new Error(`SETTLEMENT_INT256_RANGE:${field}:token=${tokenId}`);
+const assertSignedMovement = (value: bigint, field: keyof Omit<SettlementDiff, 'tokenId'>, tokenId: number): void => {
+  if (value < -UINT256_MAX || value > UINT256_MAX) {
+    throw new Error(`SETTLEMENT_SIGNED_AMOUNT_RANGE:${field}:token=${tokenId}`);
   }
-};
-
-const checkedInt256Add = (left: bigint, right: bigint, tokenId: number): bigint => {
-  const result = left + right;
-  if (result < INT256_MIN || result > INT256_MAX) {
-    throw new Error(`SETTLEMENT_INT256_ADD_OVERFLOW:token=${tokenId}`);
-  }
-  return result;
 };
 
 const assertContractExecutableDiff = (diff: SettlementDiff): void => {
-  assertInt256(diff.leftDiff, 'leftDiff', diff.tokenId);
-  assertInt256(diff.rightDiff, 'rightDiff', diff.tokenId);
-  assertInt256(diff.collateralDiff, 'collateralDiff', diff.tokenId);
-  assertInt256(diff.ondeltaDiff, 'ondeltaDiff', diff.tokenId);
-  const partial = checkedInt256Add(diff.leftDiff, diff.rightDiff, diff.tokenId);
-  checkedInt256Add(partial, diff.collateralDiff, diff.tokenId);
-  for (const [field, value] of [
-    ['leftDiff', diff.leftDiff],
-    ['rightDiff', diff.rightDiff],
-    ['collateralDiff', diff.collateralDiff],
-  ] as const) {
-    if (value === INT256_MIN) throw new Error(`SETTLEMENT_INT256_NEGATION:${field}:token=${diff.tokenId}`);
-  }
+  assertSignedMovement(diff.leftDiff, 'leftDiff', diff.tokenId);
+  assertSignedMovement(diff.rightDiff, 'rightDiff', diff.tokenId);
+  assertSignedMovement(diff.collateralDiff, 'collateralDiff', diff.tokenId);
+  assertSignedMovement(diff.ondeltaDiff, 'ondeltaDiff', diff.tokenId);
 };
 
 /**

@@ -39,6 +39,7 @@ import {
 import { createStructuredLogger } from '../../../support/logger';
 import {
   assertRecoveryOutboxMatches,
+  selectRetainedRecoveryOutbox,
   verifyRecoveryJournalFrame,
 } from './verification';
 import { assertCrossJLocalCohorts } from '../../../runtime/delivery/topology/cross-j-topology';
@@ -143,11 +144,12 @@ const replayOneFrame = async (
   height: number,
   options: RecoveryReplayOptions,
 ): Promise<void> => {
-  // Reaching a later committed frame proves that the preceding frame crossed
-  // its synchronous post-WAL dispatch boundary. Keep only this frame's outbox
-  // after verification so a crash at the replay tip can redeliver it; carrying
-  // older outputs forward would duplicate already accepted AccountInputs.
-  env.pendingNetworkOutputs = [];
+  // A later commit does not imply delivery: peers may still be catching up.
+  // Existing WAL outbox rows select only exact prior verified evidence; current
+  // frame outputs are independently regenerated and checked below as before.
+  env.pendingNetworkOutputs = selectRetainedRecoveryOutbox(
+    env.pendingNetworkOutputs ?? [], frame.runtimeOutputs ?? [], height,
+  );
   env.state.timestamp = requireBoundaryInteger(
     frame.timestamp,
     `RECOVERY_JOURNAL_TIMESTAMP_INVALID:height=${height}`,
@@ -224,6 +226,10 @@ const replayOneFrame = async (
     // durable, so only TS-side frame bookkeeping is released here.
     await assertAuthorityFrameSettled(env);
     await finalizeAuthorityFrameAfterWal(env, frame.materializedState === true);
+    // Replay has no live storage commit to release these per-frame marks.
+    // Keep the cumulative overlay for checkpoint materialization, but never
+    // let verified history become the next live frame's change list.
+    env.infrastructure.currentStorageOverlayMarks = new Map();
   } catch (error) {
     runtimeLog.error('recovery.frame.failed', {
       height,

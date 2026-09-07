@@ -1,4 +1,4 @@
-import { DEV_CHAIN_IDS , isTronChainId } from '../chain-ids';
+import { DEV_CHAIN_IDS } from '../chain-ids';
 import type { JAdapterConfig } from '../types';
 
 export const resolveRpcFinalityDepth = (
@@ -8,11 +8,11 @@ export const resolveRpcFinalityDepth = (
   if (scenarioMode || DEV_CHAIN_IDS.has(config.chainId)) return 0;
   if (config.confirmationDepth !== undefined && Number.isFinite(config.confirmationDepth)) {
     const depth = Math.max(0, Math.floor(config.confirmationDepth));
-    if (isTronChainId(config.chainId) && depth !== 0) {
+    if (config.mode === 'tron' && depth !== 0) {
       throw new Error('TRON_CONFIRMATION_DEPTH_FORBIDDEN: use the SolidityNode solidified head');
     }
     return depth;
   }
-  if (config.chainId === 1) return 12;
-  return isTronChainId(config.chainId) ? 0 : 2;
+  if (config.mode === 'tron') return 0;
+  return config.chainId === 1 ? 12 : 2;
 };

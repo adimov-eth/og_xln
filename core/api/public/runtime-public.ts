@@ -6,13 +6,16 @@
  */
 export { entityNeedsPeriodicWake } from '../../runtime/mempool/wake';
 export * from './public-utilities';
-export { planSwapInboundCapacity, readSwapAccountCapacity } from '../../account/swap/swap-inbound-plan';
+export { planReceiveCapacity, readAccountCapacity, planAccountFunding } from '../../account/capacity-plan';
 export type {
-  SwapAccountCapacityView,
-  SwapAccountCapacityViewInput,
-  SwapInboundCapacityPlan,
-  SwapInboundCapacityPlanInput,
-} from '../../account/swap/swap-inbound-plan';
+  AccountCapacitySource,
+  AccountCapacityView,
+  AccountCapacityViewInput,
+  ReceiveCapacityPlan,
+  ReceiveCapacityPlanInput,
+  AccountFundingPlan,
+  AccountFundingPlanInput,
+} from '../../account/capacity-plan';
 export {
   assertCrossJurisdictionSwapTargetReady,
   buildDeterministicSwapOfferId,
@@ -119,6 +122,7 @@ export type {
 export { createJAdapter } from '../../jurisdiction/adapter';
 export type { JAdapter, JAdapterConfig, JAdapterMode, JEvent } from '../../jurisdiction/adapter';
 export { applyJEventsToEnv, buildJEventsRuntimeInput } from '../../jurisdiction/adapter/watcher';
+export { getJWatcherDrainStatus, isJWatcherDrainComplete } from '../../jurisdiction/adapter/operations/backlog-drain-status';
 export {
   getActiveJAdapter,
   getEntityJAdapter,

@@ -230,6 +230,7 @@ export type HubHealthPayload = {
 
 export type HubInfoPayload = {
   name?: string;
+  deliveryReady?: boolean;
   entityId?: string;
   hubEntities?: Array<{
     entityId?: string;

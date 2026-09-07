@@ -58,6 +58,13 @@ export const requireDeliveryResult = (value: unknown, code: string): DeliveryRes
 export const isDeliveryDelivered = (delivery: DeliveryResult): boolean =>
   delivery.outcome === 'delivered';
 
+/** Readiness deferral proves that no transport bytes were handed off. */
+export const isDeliveryRecipientNotReady = (delivery: DeliveryResult): boolean =>
+  delivery.outcome === 'deferred' && delivery.retryable && !delivery.fatal && !delivery.terminal &&
+  (delivery.code === 'ROUTE_DIRECT_SESSION_NOT_READY' ||
+    delivery.code === 'ROUTE_DIRECT_RECIPIENT_NOT_READY' ||
+    delivery.code === 'P2P_DIRECT_RECIPIENT_NOT_READY');
+
 export const shouldRetryDelivery = (delivery: DeliveryResult): boolean =>
   !isDeliveryDelivered(delivery) && !delivery.terminal;
 

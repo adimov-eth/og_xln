@@ -8,6 +8,7 @@ import { TIMING } from '../../config/constants';
 import { requireBoundaryInteger } from '../../protocol/boundary-validation';
 import { recordRuntimeTraceForTesting } from '../observability/runtime-trace';
 import { createStructuredLogger } from '../../support/logger';
+import { flushCommittedNetworkOutputs } from './dispatch';
 import type { createRuntimeLoopApi } from '../loop/loop.ts';
 import { materializePendingJurisdictionImportResults } from '../j-submit/jurisdiction-import';
 import { requireRuntimeMempool } from '../mempool/input-queue';
@@ -589,9 +590,8 @@ const applyAndCommitRuntimeFrame = async (
       runtimeInput: candidate.runtimeInput,
       mempoolQueuedAt: candidate.mempoolQueuedAt,
       frameTimestampBeforeTick: started.frameTimestampBeforeTick,
-      quietRuntimeLogs: candidate.quietRuntimeLogs,
-      discardMalformedRemoteInput: (input, cause, quiet) =>
-        deps.loop.discardRejectedEntityInput(liveEnv, input, cause, quiet),
+      discardMalformedRemoteInput: (input, cause) =>
+        deps.loop.discardRejectedEntityInput(liveEnv, input, cause),
       discardedError: cause => new deps.loop.RuntimeInputDiscardedError(cause),
     }, error, options);
     env = rollback.env;
@@ -684,6 +684,7 @@ const processRuntimeFrameOnce = async (
   const profile = createRuntimeProcessProfile(liveEnv, deps.loop.getRuntimeWorkReason(env));
   const frame = createFrameExecutionState();
   try {
+    await flushCommittedNetworkOutputs(env, deps.getRuntimeOutputRoutingDeps());
     const started = await startRuntimeFrame(
       env,
       undefined,

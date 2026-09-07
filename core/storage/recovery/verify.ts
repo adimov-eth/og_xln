@@ -1,4 +1,4 @@
-import { buildRecoveryJournalFromStorageFrame } from '../queries';
+import { buildRecoveryJournalFromStorageFrame } from '../queries/history';
 import {
   buildStorageLiveReplicaMetaCommitment,
   buildStorageReplicaMetaCommitmentFromCheckpointPlan,
@@ -33,7 +33,9 @@ export type RuntimeChainVerification = PersistedFrameVerification & {
 
 export const verifyPersistedFrameState = (
   env: RuntimeReplica,
-  frame: RuntimeFrame,
+  frame: Pick<RuntimeFrame,
+    'height' | 'timestamp' | 'postStateHash' | 'materializedState' | 'runtimeOutputCount' |
+    'runtimeOutputsDigest' | 'canonicalStateHash'>,
 ): PersistedFrameVerification => {
   const expectedStateHash = frame.postStateHash;
   const lineage = frame.materializedState === true

@@ -1,7 +1,10 @@
-import type { EntityState, SwapBookEntry } from '../entity/types';
+import type { SwapBookEntry } from '../entity/types';
+import type { SwapOffer } from '../types/account';
 import { compareCanonicalText } from './swap-execution';
 
-export function listOpenSwapOffers(state: Pick<EntityState, 'accounts'>): SwapBookEntry[] {
+export function listOpenSwapOffers(state: {
+  accounts: ReadonlyMap<string, { state: { swapOffers: ReadonlyMap<string, SwapOffer> } }>;
+}): SwapBookEntry[] {
   const offers: SwapBookEntry[] = [];
   for (const [accountId, account] of state.accounts.entries()) {
     for (const [offerId, offer] of account.state.swapOffers.entries()) {

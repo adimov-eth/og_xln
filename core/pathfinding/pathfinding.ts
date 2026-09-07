@@ -41,7 +41,8 @@ export class PathFinder {
     target: string,
     amount: bigint,
     tokenId: number,
-    maxRoutes: number = 100
+    maxRoutes: number = 100,
+    fundingAccountId?: string,
   ): PaymentRoute[] {
     if (source === target) return [];
     if (!this.graph.nodes.has(source) || !this.graph.nodes.has(target)) return [];
@@ -52,12 +53,14 @@ export class PathFinder {
     let pops = 0;
 
     // Priority queue: [cost, node, path, totalFee]
-    const queue: QueueEntry[] = [{
-      cost: 0n,
-      node: source,
-      path: [source],
-      totalFee: 0n,
-    }];
+    const queue: QueueEntry[] = [
+      {
+        cost: 0n,
+        node: source,
+        path: [source],
+        totalFee: 0n,
+      },
+    ];
 
     while (queue.length > 0 && routes.length < maxRoutes) {
       pops += 1;
@@ -81,7 +84,7 @@ export class PathFinder {
       // Found target - build route
       if (current.node === target) {
         const route = this.buildRoute(current.path, amount, tokenId);
-        if (route) {
+        if (route && (!fundingAccountId || this.downstreamCapacityFits(route, tokenId))) {
           routes.push(route);
         }
         continue;
@@ -90,6 +93,9 @@ export class PathFinder {
       // Explore neighbors
       const edges = this.graph.edges.get(current.node) ?? []; // Explicit undefined handling
       for (const edge of edges) {
+        // Funding is a read-only quote for one existing first Account. It never
+        // grants credit or permits an alternative first hop to escape admission.
+        if (current.node === source && fundingAccountId && edge.to !== fundingAccountId) continue;
         // Skip if wrong token or disabled
         if (edge.tokenId !== tokenId || edge.disabled) continue;
 
@@ -97,15 +103,11 @@ export class PathFinder {
         if (current.path.includes(edge.to)) continue;
 
         // Calculate required amount at this hop (working backwards)
-        const requiredAmount = this.calculateRequiredAmount(
-          amount,
-          [...current.path, edge.to],
-          target,
-          tokenId
-        );
+        const requiredAmount = this.calculateRequiredAmount(amount, [...current.path, edge.to], target, tokenId);
 
-        // Skip if insufficient capacity
-        if (requiredAmount === null || requiredAmount > edge.capacity) continue;
+        // Prefix fees do not describe a downstream edge's local debit. Funding
+        // quotes check every downstream edge against the completed exact route.
+        if (requiredAmount === null || (!fundingAccountId && requiredAmount > edge.capacity)) continue;
 
         // Calculate fee for this edge
         const edgeFee = this.calculateFee(edge, requiredAmount);
@@ -127,6 +129,16 @@ export class PathFinder {
       if (a.totalFee > b.totalFee) return 1;
       return 0;
     });
+  }
+
+  private downstreamCapacityFits(route: PaymentRoute, tokenId: number): boolean {
+    let required = route.totalAmount;
+    for (const [index, hop] of route.hops.entries()) {
+      const edge = getEdge(this.graph, hop.from, hop.to, tokenId);
+      if (!edge || (index > 0 && required > edge.capacity)) return false;
+      required -= hop.fee;
+    }
+    return true;
   }
 
   /**
@@ -160,12 +172,7 @@ export class PathFinder {
   /**
    * Calculate required amount at each hop (working backwards from target)
    */
-  private calculateRequiredAmount(
-    finalAmount: bigint,
-    path: string[],
-    target: string,
-    tokenId: number
-  ): bigint | null {
+  private calculateRequiredAmount(finalAmount: bigint, path: string[], target: string, tokenId: number): bigint | null {
     let amount = finalAmount;
 
     // Work backwards from target to source
@@ -189,11 +196,7 @@ export class PathFinder {
   /**
    * Build complete route details from path
    */
-  private buildRoute(
-    path: string[],
-    amount: bigint,
-    tokenId: number
-  ): PaymentRoute | null {
+  private buildRoute(path: string[], amount: bigint, tokenId: number): PaymentRoute | null {
     if (path.length < 2) return null;
 
     const hops: PaymentRoute['hops'] = [];
@@ -238,11 +241,7 @@ export class PathFinder {
   /**
    * Calculate success probability based on account utilization
    */
-  private calculateProbability(
-    path: string[],
-    amount: bigint,
-    tokenId: number
-  ): number {
+  private calculateProbability(path: string[], amount: bigint, tokenId: number): number {
     let probability = 1.0;
     const inboundAmounts: bigint[] = new Array(path.length).fill(0n);
     inboundAmounts[path.length - 1] = amount;

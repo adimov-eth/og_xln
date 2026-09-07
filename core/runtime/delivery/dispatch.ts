@@ -10,6 +10,7 @@ import { getWallClockMs } from '../../support/time';
 import { validateDeliverableEntityInput } from '../delivery/topology/routing-validation';
 import {
   isDeliveryDelivered,
+  isDeliveryRecipientNotReady,
   requireDeliveryDelivered,
   requireDeliveryResult,
   type DeliveryResult,
@@ -36,6 +37,9 @@ import { MAX_P2P_ENTITY_INPUTS } from '../../network/p2p/auth/entity-input-envel
 import { traceAccountDeliveryHop } from '../../support/performance/account-delivery-trace';
 
 const routeLog = createStructuredLogger('network.route');
+
+type BatchedOutput = { output: DeliverableEntityInput; sources: RoutedEntityInput[] };
+type OutputBatch = { outputs: DeliverableEntityInput[]; sources: RoutedEntityInput[] };
 
 const mergeRuntimeOutputEnvelopes = (
   existing: DeliverableEntityInput,
@@ -72,13 +76,14 @@ const mergeRuntimeOutputEnvelopes = (
 const batchOutputsByTarget = (
   outputs: DeliverableEntityInput[],
   graph: PreparedOutputGraph,
-): DeliverableEntityInput[] => {
-  const batched = new Map<string, DeliverableEntityInput>();
+): BatchedOutput[] => {
+  const batched = new Map<string, BatchedOutput>();
 
   for (const output of outputs.flatMap(candidate => graph.split(candidate))) {
     const runtimeId = output.runtimeId;
     if (!runtimeId) throw new Error('ROUTE_RUNTIME_OUTPUT_RUNTIME_ID_MISSING');
-    const laneKey = `${runtimeId}:${output.entityId}:${output.signerId || ''}`;
+    const frame = requireOutputRuntimeFrame(output);
+    const laneKey = `${runtimeId}:${output.entityId}:${output.signerId || ''}:${frame.height}:${frame.timestamp}`;
     // Only tx-only outputs of one lane merge into a single input; every
     // consensus payload keeps its own input.
     const key = output.entityTxs?.length && !output.proposedFrame && !output.hashPrecommits
@@ -88,11 +93,12 @@ const batchOutputsByTarget = (
     const existing = batched.get(key);
 
     if (existing) {
-      if (!mergeRuntimeOutputEnvelopes(existing, { ...output, runtimeId })) {
-        mergeRoutedEntityOutput(existing, output);
+      if (!mergeRuntimeOutputEnvelopes(existing.output, { ...output, runtimeId })) {
+        mergeRoutedEntityOutput(existing.output, output);
       }
-      graph.invalidate(existing);
-      routeLog.debug('batch.merge', { key, txs: existing.entityTxs?.length || 0 });
+      existing.sources.push(output);
+      graph.invalidate(existing.output);
+      routeLog.debug('batch.merge', { key, txs: existing.output.entityTxs?.length || 0 });
     } else {
       const target = validateDeliverableEntityInput({
         ...output,
@@ -100,7 +106,7 @@ const batchOutputsByTarget = (
         ...(output.entityTxs ? { entityTxs: [...output.entityTxs] } : {}),
       });
       graph.adopt(output, target);
-      batched.set(key, target);
+      batched.set(key, { output: target, sources: [output] });
     }
   }
 
@@ -132,22 +138,23 @@ const outputEnvelopeGroupKey = (output: DeliverableEntityInput): string =>
 const batchOrdinaryOutputsBySourceFrame = (
   outputs: DeliverableEntityInput[],
   graph: PreparedOutputGraph,
-): DeliverableEntityInput[][] => {
+): OutputBatch[] => {
   // One transport signature may authenticate many independent Entity lanes;
   // packetize exact same-frame inputs together. Cross-j cohorts were removed before this function and
   // retain their exact two-leg atomic envelopes.
-  const byFrame = new Map<string, DeliverableEntityInput[]>();
-  for (const output of batchOutputsByTarget(outputs, graph)) {
-    const frame = requireOutputRuntimeFrame(output);
+  const byFrame = new Map<string, BatchedOutput[]>();
+  for (const batch of batchOutputsByTarget(outputs, graph)) {
+    const frame = requireOutputRuntimeFrame(batch.output);
     const key = `${frame.height}:${frame.timestamp}`;
     const group = byFrame.get(key) ?? [];
-    group.push(output);
+    group.push(batch);
     byFrame.set(key, group);
   }
   return [...byFrame.values()].flatMap(group => {
-    const chunks: DeliverableEntityInput[][] = [];
+    const chunks: OutputBatch[] = [];
     for (let offset = 0; offset < group.length; offset += MAX_P2P_ENTITY_INPUTS) {
-      chunks.push(group.slice(offset, offset + MAX_P2P_ENTITY_INPUTS));
+      const chunk = group.slice(offset, offset + MAX_P2P_ENTITY_INPUTS);
+      chunks.push({ outputs: chunk.map(batch => batch.output), sources: chunk.flatMap(batch => batch.sources) });
     }
     return chunks;
   });
@@ -208,6 +215,7 @@ const buildRuntimeEntityInputsEnvelope = (
 type OutputEnvelopeGroup = {
   targetRuntimeId: string;
   outputs: DeliverableEntityInput[];
+  sources: RoutedEntityInput[];
   atomic: boolean;
   complete: boolean;
 };
@@ -246,10 +254,10 @@ const buildOutputEnvelopeGroups = (
   return [...byTarget.values()]
     .flatMap(group => {
       const units = groupAtomicCrossJAdmissionOutputs(group.outputs);
-      const atomicUnits = units.filter(unit => unit.atomic);
+      const atomicUnits = units.filter(unit => unit.atomic).map(unit => ({ ...unit, sources: unit.outputs }));
       const ordinary = units.filter(unit => !unit.atomic).flatMap(unit => unit.outputs);
       const ordinaryUnits = batchOrdinaryOutputsBySourceFrame(ordinary, graph)
-        .map(outputs => ({ outputs, atomic: false, complete: true }));
+        .map(batch => ({ ...batch, atomic: false, complete: true }));
       return [...atomicUnits, ...ordinaryUnits]
         .map(unit => ({ targetRuntimeId: group.targetRuntimeId, ...unit }));
     });
@@ -292,7 +300,7 @@ const dispatchDirectOutputEnvelope = (
   sendable: DeliverableEntityInput[],
   envelope: RuntimeEntityInputsEnvelope,
   directDispatch: NonNullable<ReturnType<RuntimeOutputRoutingDeps['ensureRuntimeInfrastructure']>['directEntityInputsDispatch']>,
-): void => {
+): boolean => {
   const delivery = requireDeliveryResult(
     directDispatch(
       group.targetRuntimeId,
@@ -301,6 +309,7 @@ const dispatchDirectOutputEnvelope = (
     ),
     'ROUTE_DIRECT_INVALID_DELIVERY_RESULT',
   );
+  if (isDeliveryRecipientNotReady(delivery)) return false;
   if (!isDeliveryDelivered(delivery)) {
     const detail = {
       targetRuntimeId: group.targetRuntimeId,
@@ -321,6 +330,7 @@ const dispatchDirectOutputEnvelope = (
     sourceRuntimeHeight: envelope.sourceRuntimeHeight,
     outputs: summarizeAccountEnvelopeOutputs(sendable),
   });
+  return true;
 };
 
 const dispatchP2POutputEnvelope = (
@@ -329,7 +339,7 @@ const dispatchP2POutputEnvelope = (
   sendable: DeliverableEntityInput[],
   envelope: RuntimeEntityInputsEnvelope,
   deps: RuntimeOutputRoutingDeps,
-): void => {
+): boolean => {
   const p2p = deps.getP2P(env);
   if (!p2p) {
     const detail = {
@@ -353,6 +363,7 @@ const dispatchP2POutputEnvelope = (
       envelope,
       envelope.sourceRuntimeTimestamp,
     );
+    if (isDeliveryRecipientNotReady(delivery)) return false;
     if (isDeliveryDelivered(delivery)) {
       routeLog.debug('output.accepted', {
         atMs: getWallClockMs(),
@@ -362,7 +373,7 @@ const dispatchP2POutputEnvelope = (
         sourceRuntimeHeight: envelope.sourceRuntimeHeight,
         outputs: summarizeAccountEnvelopeOutputs(sendable),
       });
-      return;
+      return true;
     }
     requireDeliveryDelivered(delivery, result =>
       'ROUTE_SEND_NOT_DELIVERED: runtime=' + group.targetRuntimeId +
@@ -377,6 +388,7 @@ const dispatchP2POutputEnvelope = (
     });
     throw error;
   }
+  return false;
 };
 
 const dispatchOutputEnvelope = (
@@ -385,16 +397,15 @@ const dispatchOutputEnvelope = (
   sendable: DeliverableEntityInput[],
   envelope: RuntimeEntityInputsEnvelope,
   deps: RuntimeOutputRoutingDeps,
-): void => {
+): boolean => {
   const state = deps.ensureRuntimeInfrastructure(env);
   if (state.directEntityInputsDispatch) {
     // A Runtime that owns a duplex direct server has one authoritative peer
     // socket map. Falling through to relay after a direct miss forks transport
     // ordering and can erase Account ACKs after synchronous outbox retirement.
-    dispatchDirectOutputEnvelope(env, group, sendable, envelope, state.directEntityInputsDispatch);
-    return;
+    return dispatchDirectOutputEnvelope(env, group, sendable, envelope, state.directEntityInputsDispatch);
   }
-  dispatchP2POutputEnvelope(env, group, sendable, envelope, deps);
+  return dispatchP2POutputEnvelope(env, group, sendable, envelope, deps);
 };
 
 export const dispatchEntityOutputs = (
@@ -403,27 +414,39 @@ export const dispatchEntityOutputs = (
   deps: RuntimeOutputRoutingDeps,
   graph: PreparedOutputGraph = createPreparedOutputGraph(),
 ): void => {
-  for (const group of buildOutputEnvelopeGroups(outputs, graph)) {
-    if (!group.complete) {
-      failIncompleteCrossJCohort(env, group, outputs);
-    }
-    const sendable = group.outputs;
-    const envelope = buildRuntimeEntityInputsEnvelope(env, group.targetRuntimeId, sendable);
-    traceAccountDeliveryHop('committed-output', envelope, {
-      runtimeId: env.runtimeId,
-      targetRuntimeId: group.targetRuntimeId,
-      transport: deps.ensureRuntimeInfrastructure(env).directEntityInputsDispatch ? 'direct-server' : 'p2p-client',
-    });
-    if (group.atomic || sendable.some(isCrossJAdmissionSourceProposal)) {
-      routeLog.info('crossj.admission_envelope_dispatch', {
-        atomic: group.atomic,
+  const groups = buildOutputEnvelopeGroups(outputs, graph);
+  env.pendingNetworkOutputs = outputs.flatMap(({ output }) => graph.split(output));
+  const accepted = new Set<string>();
+  try {
+    for (const group of groups) {
+      if (!group.complete) {
+        failIncompleteCrossJCohort(env, group, outputs);
+      }
+      const sendable = group.outputs;
+      const envelope = buildRuntimeEntityInputsEnvelope(env, group.targetRuntimeId, sendable);
+      traceAccountDeliveryHop('committed-output', envelope, {
+        runtimeId: env.runtimeId,
         targetRuntimeId: group.targetRuntimeId,
-        sourceRuntimeHeight: envelope.sourceRuntimeHeight,
-        inputCount: sendable.length,
-        outputs: summarizeAccountEnvelopeOutputs(sendable),
+        transport: deps.ensureRuntimeInfrastructure(env).directEntityInputsDispatch ? 'direct-server' : 'p2p-client',
       });
+      if (group.atomic || sendable.some(isCrossJAdmissionSourceProposal)) {
+        routeLog.info('crossj.admission_envelope_dispatch', {
+          atomic: group.atomic,
+          targetRuntimeId: group.targetRuntimeId,
+          sourceRuntimeHeight: envelope.sourceRuntimeHeight,
+          inputCount: sendable.length,
+          outputs: summarizeAccountEnvelopeOutputs(sendable),
+        });
+      }
+      if (!dispatchOutputEnvelope(env, group, sendable, envelope, deps)) continue;
+      // Retirement follows exact accepted transport units. A later peer may still
+      // be catching up or a send may fail: retain every untouched original slot.
+      for (const output of group.sources) accepted.add(graph.prepare(output).routeKey);
     }
-    dispatchOutputEnvelope(env, group, sendable, envelope, deps);
+  } finally {
+    env.pendingNetworkOutputs = env.pendingNetworkOutputs.filter(
+      output => !accepted.has(graph.prepare(output).routeKey),
+    );
   }
 };
 
@@ -461,13 +484,12 @@ export const sendEntityInputWithRouting = (
   if (localOutputs.length > 0) {
     deps.enqueueRuntimeInputs(env, localOutputs, undefined, undefined, env.state.timestamp);
   }
-  env.pendingNetworkOutputs = [];
 
   return {
     delivery: buildRoutingDeliveryResult({
       remoteCount: remoteOutputs.length,
       localCount: localOutputs.length,
-      pendingCount: 0,
+      pendingCount: env.pendingNetworkOutputs?.length ?? 0,
     }),
   };
 };

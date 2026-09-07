@@ -12,6 +12,7 @@ import type { EntityTx } from '../../types/entity-tx';
 import type { RoutedEntityInput, RuntimeReplica } from '../../runtime/types';
 import type { JAdapter } from '../../jurisdiction/adapter/types';
 import { deriveDisputeTokenFinalization } from '../../protocol/dispute/finalization';
+import { decodeInt512, decodeInt768, decodeUint768, encodeInt768 } from '../../protocol/crypto/abi-money';
 import { deriveSwapNetAuthorization } from '../../account/swap/swap-net-authorization';
 import { getStaticSwapTokenDimensions } from '../../orderbook';
 import { safeStringify } from '../../protocol/serialization';
@@ -286,7 +287,7 @@ const currentDelta = (account: AccountReplica, tokenId: number) => {
 };
 
 const readDebtOutstanding = async (jadapter: JAdapter, entityId: string, tokenId: number): Promise<bigint> =>
-  BigInt(await jadapter.depository.debtOutstanding(entityId, tokenId));
+  decodeUint768(await jadapter.depository.debtOutstanding(entityId, tokenId));
 
 export async function runDisputeTransformer(runtimeReplica: RuntimeReplica): Promise<RuntimeReplica> {
   const process = await getProcess();
@@ -607,7 +608,7 @@ export async function runDisputeTransformer(runtimeReplica: RuntimeReplica): Pro
     const baseAccount = base!;
 
     const before = new Map<number, { leftReserve: bigint; rightReserve: bigint; collateral: bigint; ondelta: bigint; offdelta: bigint }>();
-    for (const tokenId of [USDC, WETH]) {
+    for (const tokenId of baseAccount.state.deltas.keys()) {
       before.set(tokenId, {
         leftReserve: await jadapter.getReserves(alice.id, tokenId),
         rightReserve: await jadapter.getReserves(hub.id, tokenId),
@@ -808,7 +809,16 @@ export async function runDisputeTransformer(runtimeReplica: RuntimeReplica): Pro
     const finalizedBlock = await jadapter.provider.getBlock('latest');
     if (!finalizedBlock) throw new Error('DISPUTE_TRANSFORMER_FINALIZED_BLOCK_MISSING');
     const startedByLeft = finalization.startedByLeft;
-    let transformed = finalProofbody.offdeltas;
+    // Account.prepareSettlementDeltas feeds absolute ondelta + signed offdelta
+    // into the first transformer; feeding offdelta alone changes its execution.
+    let transformed = finalProofbody.tokenIds.map((tokenId, index) => {
+      const baseInput = before.get(Number(tokenId));
+      const offdelta = finalProofbody.offdeltas[index];
+      if (!baseInput || offdelta === undefined) {
+        throw new Error(`DISPUTE_TRANSFORMER_BASE_DELTA_MISSING:${tokenId}`);
+      }
+      return encodeInt768(baseInput.ondelta + decodeInt512(offdelta));
+    });
     for (const [clauseIndex, transformer] of finalProofbody.transformers.entries()) {
       transformed = await jadapter.deltaTransformer.applyBatch.staticCall(
         transformed,
@@ -835,16 +845,23 @@ export async function runDisputeTransformer(runtimeReplica: RuntimeReplica): Pro
       );
     }
     const transformedByToken = new Map(
-      finalProofbody.tokenIds.map((tokenId, index) => [Number(tokenId), transformed[index]!] as const),
+      finalProofbody.tokenIds.map((tokenId, index) => {
+        const value = transformed[index];
+        if (value === undefined) throw new Error(`DISPUTE_TRANSFORMER_FINAL_DELTA_MISSING:${tokenId}`);
+        return [Number(tokenId), decodeInt768(value)] as const;
+      }),
     );
 
-    for (const tokenId of [USDC, WETH]) {
-      const baseInput = before.get(tokenId)!;
-      const transformedOffdelta = transformedByToken.get(tokenId);
-      if (transformedOffdelta === undefined) {
+    for (const tokenId of before.keys()) {
+      const baseInput = before.get(tokenId);
+      if (!baseInput) throw new Error(`DISPUTE_TRANSFORMER_BASE_DELTA_MISSING:${tokenId}`);
+      const transformedAbsolute = transformedByToken.get(tokenId);
+      if (transformedAbsolute === undefined) {
         throw new Error(`DISPUTE_TRANSFORMER_FINAL_DELTA_MISSING:${tokenId}`);
       }
-      const input = { ...baseInput, offdelta: BigInt(transformedOffdelta) };
+      // The finalization mirror adds ondelta once; remove the already-included
+      // baseline from the absolute transformer result before giving it offdelta.
+      const input = { ...baseInput, offdelta: transformedAbsolute - baseInput.ondelta };
       const expected = deriveDisputeTokenFinalization({ tokenId, ...input });
       const actual = {
         leftReserve: await jadapter.getReserves(alice.id, tokenId),

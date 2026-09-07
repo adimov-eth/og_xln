@@ -339,8 +339,8 @@ if (tsAccountWorkers !== null && (
 if (tsAccountWorkers !== null && rustAccountAuthorityRequired) {
   throw new Error('HLT_REPLAY_ACCOUNT_AUTHORITY_EXCLUSIVE');
 }
-if (parityEvidence && (mode !== 'max' || !completeAuthorityEvidenceRequired)) {
-  throw new Error('HLT_REPLAY_PARITY_EVIDENCE_REQUIRES_MAX_COMPLETE');
+if (parityEvidence && (mode !== 'max' || !recoveryVerifyEnabled)) {
+  throw new Error('HLT_REPLAY_PARITY_EVIDENCE_REQUIRES_MAX_VERIFIED');
 }
 await installGlobalOpCounters('hlt-replay');
 const artifact = await loadHltHubRecording(recordingPath, walPath);
@@ -516,6 +516,19 @@ const runTrial = async (offeredEntityInputsPerSecond: number): Promise<ReplayTri
           await replayRecoveryFrameJournals(env, [frame], { verify: recoveryVerifyEnabled });
           if (parityEvidence) {
             const capture = finishRuntimeParityEvidence(env);
+            if (frame.height === diagnosticEventsHeight) {
+              // Preserve the captured commit order before reducing it to digests.
+              // A final Entity snapshot cannot locate a missing intra-frame cascade.
+              console.error(`HLT_REPLAY_ENTITY_FRAMES:${frame.height}:${safeStringify(
+                capture.entityFrames.map(({ entityId, signerId, accountsRoot, sectionDigests, link }) => ({
+                  entityId, signerId, accountsRoot, sectionDigests,
+                  height: link.frame.height,
+                  hash: link.frame.hash,
+                  txKinds: link.frame.txs.map(tx => tx.type),
+                  events: link.frame.events,
+                })),
+              )}`);
+            }
             entityFrameEvents.push(buildHltEntityFrameEventEvidenceFromEvents(
               frame.height,
               capture.entityFrameEvents,

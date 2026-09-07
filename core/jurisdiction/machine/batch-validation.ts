@@ -8,7 +8,7 @@ import {
   requireString,
 } from '../../protocol/boundary/boundary-primitives';
 import type { JBatch } from './batch';
-import { assertMoneyAmount, assertMoneyMagnitude } from '../../protocol/money-cap';
+import { assertUint256, assertSignedAmount, decodeInt512, encodeInt512 } from '../../protocol/crypto/abi-money';
 
 type FieldValidator = (value: unknown, code: string) => unknown;
 
@@ -47,9 +47,9 @@ const integer: FieldValidator = (value, code) => {
   return requireBoundaryInteger(value, code);
 };
 const bigint: FieldValidator = (value, code) => requireBigInt(value, code);
-// Contract MAX_MONEY (Types.sol): amounts, allowances and |diffs| above 2^200 revert E8.
-const money: FieldValidator = (value, code) => assertMoneyAmount(requireBigInt(value, code), code);
-const signedMoney: FieldValidator = (value, code) => assertMoneyMagnitude(requireBigInt(value, code), code);
+// Runtime amounts are scalar bigints; ABI custody and movement magnitudes are uint256.
+const money: FieldValidator = (value, code) => assertUint256(requireBigInt(value, code), code);
+const signedMoney: FieldValidator = (value, code) => assertSignedAmount(requireBigInt(value, code), code);
 const string: FieldValidator = (value, code) => requireString(value, code);
 const bool: FieldValidator = (value, code) => requireBoolean(value, code);
 
@@ -58,62 +58,71 @@ export const validateProofBody = (value: unknown, code: string): unknown => {
   // These response windows are signed executable dispute policy. Omitting
   // them here would make the RPC watcher reject valid calldata after Solidity
   // accepted it, while accepting the retired unsigned-clock shape on restore.
-  requireExactBoundaryKeys(proof, [
-    'watchSeed', 'leftResponseSeconds', 'rightResponseSeconds',
-    'offdeltas', 'tokenIds', 'transformers',
-  ], [], `${code}_FIELDS`);
+  requireExactBoundaryKeys(
+    proof,
+    ['watchSeed', 'leftResponseSeconds', 'rightResponseSeconds', 'offdeltas', 'tokenIds', 'transformers'],
+    [],
+    `${code}_FIELDS`,
+  );
   requireString(proof['watchSeed'], `${code}_WATCH_SEED`);
-  proof['leftResponseSeconds'] = integer(
-    proof['leftResponseSeconds'],
-    `${code}_LEFT_RESPONSE_SECONDS`,
+  proof['leftResponseSeconds'] = integer(proof['leftResponseSeconds'], `${code}_LEFT_RESPONSE_SECONDS`);
+  proof['rightResponseSeconds'] = integer(proof['rightResponseSeconds'], `${code}_RIGHT_RESPONSE_SECONDS`);
+  proof['offdeltas'] = requireArray(proof['offdeltas'], `${code}_OFFDELTAS`).map(entry =>
+    encodeInt512(decodeInt512(entry)),
   );
-  proof['rightResponseSeconds'] = integer(
-    proof['rightResponseSeconds'],
-    `${code}_RIGHT_RESPONSE_SECONDS`,
+  proof['tokenIds'] = requireArray(proof['tokenIds'], `${code}_TOKEN_IDS`).map((entry, index) =>
+    requireBigInt(entry, `${code}_TOKEN_IDS_${index}`, 0n),
   );
-  proof['offdeltas'] = requireArray(proof['offdeltas'], `${code}_OFFDELTAS`)
-    .map((entry, index) => assertMoneyMagnitude(
-      requireBigInt(entry, `${code}_OFFDELTAS_${index}`),
-      `${code}_OFFDELTAS_${index}`,
-    ));
-  proof['tokenIds'] = requireArray(proof['tokenIds'], `${code}_TOKEN_IDS`)
-    .map((entry, index) =>
-      requireBigInt(entry, `${code}_TOKEN_IDS_${index}`, 0n));
-  proof['transformers'] = validateRecordArray(
-    proof['transformers'],
-    `${code}_TRANSFORMERS`,
-    {
+  proof['transformers'] = validateRecordArray(proof['transformers'], `${code}_TRANSFORMERS`, {
     transformerAddress: string,
     encodedBatch: string,
-    allowances: (allowances, allowanceCode) => validateRecordArray(allowances, allowanceCode, {
-      deltaIndex: bigint,
-      rightAllowance: money,
-      leftAllowance: money,
-    }),
-    },
-  );
+    allowances: (allowances, allowanceCode) =>
+      validateRecordArray(allowances, allowanceCode, {
+        deltaIndex: bigint,
+        rightAllowance: money,
+        leftAllowance: money,
+      }),
+  });
   return proof;
 };
 
-export function validateJBatch(
-  value: unknown,
-  code: string,
-): asserts value is JBatch {
+export function validateJBatch(value: unknown, code: string): asserts value is JBatch {
   const batch = requireBoundaryRecord(value, code);
-  requireExactBoundaryKeys(batch, [
-    'reserveToExternalToken', 'externalTokenToReserve', 'reserveToReserve',
-    'reserveToCollateral', 'collateralToReserve', 'settlements', 'disputeStarts', 'counterDisputes',
-    'disputeFinalizations', 'revealSecrets', 'hashLadderRegistrations',
-  ], [], `${code}_FIELDS`);
+  requireExactBoundaryKeys(
+    batch,
+    [
+      'reserveToExternalToken',
+      'externalTokenToReserve',
+      'reserveToReserve',
+      'reserveToCollateral',
+      'collateralToReserve',
+      'settlements',
+      'disputeStarts',
+      'counterDisputes',
+      'disputeFinalizations',
+      'revealSecrets',
+      'hashLadderRegistrations',
+    ],
+    [],
+    `${code}_FIELDS`,
+  );
   validateRecordArray(batch['reserveToExternalToken'], `${code}_R2E`, {
-    receivingEntity: string, tokenId: integer, amount: money,
+    receivingEntity: string,
+    tokenId: integer,
+    amount: money,
   });
   validateRecordArray(batch['externalTokenToReserve'], `${code}_E2R`, {
-    entity: string, contractAddress: string, externalTokenId: bigint, tokenType: integer,
-    internalTokenId: integer, amount: money,
+    entity: string,
+    contractAddress: string,
+    externalTokenId: bigint,
+    tokenType: integer,
+    internalTokenId: integer,
+    amount: money,
   });
   validateRecordArray(batch['reserveToReserve'], `${code}_R2R`, {
-    receivingEntity: string, tokenId: integer, amount: money,
+    receivingEntity: string,
+    tokenId: integer,
+    amount: money,
   });
   validateRecordArray(batch['reserveToCollateral'], `${code}_R2C`, {
     tokenId: integer,
@@ -121,27 +130,38 @@ export function validateJBatch(
     pairs: (pairs, pairsCode) => validateRecordArray(pairs, pairsCode, { entity: string, amount: money }),
   });
   validateRecordArray(batch['collateralToReserve'], `${code}_C2R`, {
-    counterparty: string, tokenId: integer, amount: money, nonce: integer, sig: string,
+    counterparty: string,
+    tokenId: integer,
+    amount: money,
+    nonce: integer,
+    sig: string,
   });
   validateRecordArray(batch['settlements'], `${code}_SETTLEMENTS`, {
     leftEntity: string,
     rightEntity: string,
-    diffs: (diffs, diffsCode) => validateRecordArray(diffs, diffsCode, {
-      tokenId: integer,
-      leftDiff: signedMoney,
-      rightDiff: signedMoney,
-      collateralDiff: signedMoney,
-      ondeltaDiff: signedMoney,
-    }),
+    diffs: (diffs, diffsCode) =>
+      validateRecordArray(diffs, diffsCode, {
+        tokenId: integer,
+        leftDiff: signedMoney,
+        rightDiff: signedMoney,
+        collateralDiff: signedMoney,
+        ondeltaDiff: signedMoney,
+      }),
     forgiveDebtsInTokenIds: (ids, idsCode) =>
-      requireArray(ids, idsCode).map((id, index) =>
-        integer(id, `${idsCode}_${index}`)),
+      requireArray(ids, idsCode).map((id, index) => integer(id, `${idsCode}_${index}`)),
     sig: string,
     nonce: integer,
   });
   validateRecordArray(batch['disputeStarts'], `${code}_DISPUTE_STARTS`, {
-    counterentity: string, nonce: integer, proposerIsLeft: bool, proofbodyHash: string, initialProofbody: validateProofBody,
-    watchSeed: string, sig: string, starterInitialArguments: string, starterCounterArguments: string,
+    counterentity: string,
+    nonce: integer,
+    proposerIsLeft: bool,
+    proofbodyHash: string,
+    initialProofbody: validateProofBody,
+    watchSeed: string,
+    sig: string,
+    starterInitialArguments: string,
+    starterCounterArguments: string,
     starterCounterProofCommitment: string,
   });
   validateRecordArray(batch['counterDisputes'], `${code}_COUNTER_DISPUTES`, {
@@ -153,13 +173,26 @@ export function validateJBatch(
     counterProofbody: validateProofBody,
     sig: string,
   });
-  validateRecordArray(batch['disputeFinalizations'], `${code}_DISPUTE_FINALIZATIONS`, {
-    counterentity: string, initialNonce: integer, finalNonce: integer, proposerIsLeft: bool, initialProofbodyHash: string,
-    finalProofbody: validateProofBody, starterArguments: string, otherArguments: string, sig: string,
-    startedByLeft: bool, cooperative: bool,
-  }, {
-    submitNotBeforeTimestamp: integer,
-  });
+  validateRecordArray(
+    batch['disputeFinalizations'],
+    `${code}_DISPUTE_FINALIZATIONS`,
+    {
+      counterentity: string,
+      initialNonce: integer,
+      finalNonce: integer,
+      proposerIsLeft: bool,
+      initialProofbodyHash: string,
+      finalProofbody: validateProofBody,
+      starterArguments: string,
+      otherArguments: string,
+      sig: string,
+      startedByLeft: bool,
+      cooperative: bool,
+    },
+    {
+      submitNotBeforeTimestamp: integer,
+    },
+  );
   validateRecordArray(batch['revealSecrets'], `${code}_REVEAL_SECRETS`, { transformer: string, secret: string });
   validateRecordArray(batch['hashLadderRegistrations'], `${code}_HASH_LADDER_REVEALS`, {
     counterpartyEntity: string,
@@ -168,18 +201,12 @@ export function validateJBatch(
     partialRoot: string,
     witness: (witness, witnessCode) => {
       const record = requireBoundaryRecord(witness, witnessCode);
-      requireExactBoundaryKeys(
-        record,
-        ['fillRatio', 'fullSecret', 'reveals'],
-        [],
-        `${witnessCode}_FIELDS`,
-      );
+      requireExactBoundaryKeys(record, ['fillRatio', 'fullSecret', 'reveals'], [], `${witnessCode}_FIELDS`);
       record['fillRatio'] = integer(record['fillRatio'], `${witnessCode}_FILL_RATIO`);
       requireString(record['fullSecret'], `${witnessCode}_FULL_SECRET`);
       const reveals = requireArray(record['reveals'], `${witnessCode}_REVEALS`);
       if (reveals.length !== 4) throw new Error(`${witnessCode}_REVEALS_LENGTH:${reveals.length}`);
-      record['reveals'] = reveals.map((reveal, index) =>
-        requireString(reveal, `${witnessCode}_REVEALS_${index}`));
+      record['reveals'] = reveals.map((reveal, index) => requireString(reveal, `${witnessCode}_REVEALS_${index}`));
       return record;
     },
   });

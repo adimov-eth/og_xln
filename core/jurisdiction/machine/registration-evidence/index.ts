@@ -132,9 +132,15 @@ export const computeRegistrationEvidenceClaimHash = (evidence: CertifiedRegistra
         topics: evidence.topics,
         data: evidence.data,
         rawLogDigest: evidence.rawLogDigest,
-        receiptsRoot: evidence.receiptsRoot,
-        encodedReceipt: evidence.encodedReceipt,
-        receiptProofNodes: evidence.receiptProofNodes,
+        ...(evidence.receiptKind === 'tron-rpc-attested' ? {
+          receiptKind: evidence.receiptKind,
+          chainId: evidence.chainId,
+          finality: evidence.finality,
+        } : {
+          receiptsRoot: evidence.receiptsRoot,
+          encodedReceipt: evidence.encodedReceipt,
+          receiptProofNodes: evidence.receiptProofNodes,
+        }),
         receiptLogIndex: evidence.receiptLogIndex,
       }),
   );
@@ -145,6 +151,24 @@ const jReplicaStackKey = (replica: JReplica): string | null => {
   const entityProviderAddress = replica.contracts?.entityProvider;
   if (!chainId || !depositoryAddress || !entityProviderAddress) return null;
   return getCertifiedBoardStackKey({ chainId, depositoryAddress, entityProviderAddress });
+};
+
+const registrationReceiptFields = (replica: JReplica, source: string, log: AuthenticatedRpcLog) => {
+  const native = log.nativeRpcAttestation;
+  if (replica.watcherReceiptCommitment === 'tron-rpc-attested') {
+    if (!native || log.receiptProof) {
+      throw new Error(`J_AUTHORITY_NATIVE_RPC_ATTESTATION_MISSING:${source}:${log.blockNumber}:${log.index}`);
+    }
+    return { receiptKind: 'tron-rpc-attested' as const, chainId: native.chainId,
+      rpcEndpointHash: native.rpcEndpointHash, finality: native.finality,
+      transactionIndex: native.transactionIndex, receiptLogIndex: native.receiptLogIndex };
+  }
+  if (native) throw new Error('J_AUTHORITY_RECEIPT_COMMITMENT_MISMATCH');
+  const proof = log.receiptProof;
+  if (!proof) throw new Error(`J_AUTHORITY_RECEIPT_MPT_PROOF_MISSING:${source}:${log.blockNumber}:${log.index}`);
+  return { transactionIndex: proof.transactionIndex, receiptsRoot: proof.receiptsRoot.toLowerCase(),
+    encodedReceipt: proof.encodedReceipt.toLowerCase(),
+    receiptProofNodes: proof.proofNodes.map(node => node.toLowerCase()), receiptLogIndex: proof.receiptLogIndex };
 };
 
 export const buildCertifiedRegistrationEvidence = (
@@ -161,9 +185,7 @@ export const buildCertifiedRegistrationEvidence = (
 ): CertifiedRegistrationEvidence => {
   const stackKey = jReplicaStackKey(replica);
   if (!stackKey) throw new Error('J_AUTHORITY_LOCAL_STACK_INCOMPLETE');
-  if (!log.receiptProof) {
-    throw new Error(`J_AUTHORITY_RECEIPT_MPT_PROOF_MISSING:${source}:${log.blockNumber}:${log.index}`);
-  }
+  const receipt = registrationReceiptFields(replica, source, log);
   if (!env.runtimeId) throw new Error('J_AUTHORITY_WITNESS_RUNTIME_MISSING');
   const parsed = entityProviderInterface.parseLog({ topics: log.topics, data: log.data });
   if (!parsed || parsed.name !== source) {
@@ -183,16 +205,12 @@ export const buildCertifiedRegistrationEvidence = (
     activationHeight: log.blockNumber,
     blockHash: log.blockHash.toLowerCase(),
     transactionHash: log.transactionHash.toLowerCase(),
-    transactionIndex: log.receiptProof.transactionIndex,
     logIndex: log.index,
     emitter: log.address.toLowerCase(),
     topics: log.topics.map(topic => topic.toLowerCase()),
     data: log.data.toLowerCase(),
     rawLogDigest: ZERO_BYTES32,
-    receiptsRoot: log.receiptProof.receiptsRoot.toLowerCase(),
-    encodedReceipt: log.receiptProof.encodedReceipt.toLowerCase(),
-    receiptProofNodes: log.receiptProof.proofNodes.map(node => node.toLowerCase()),
-    receiptLogIndex: log.receiptProof.receiptLogIndex,
+    ...receipt,
     observedThroughHeight: finality.observedThroughHeight,
     observedTipBlockHash: finality.observedTipBlockHash.toLowerCase(),
     observedHeadHeight: finality.observedHeadHeight,
@@ -256,24 +274,14 @@ const assertRegistrationEvidenceEnvelope = (
   if (evidence.source !== 'EntityRegistered' && evidence.source !== 'FoundationBootstrapped') {
     throw new Error(`J_AUTHORITY_SOURCE_INVALID:${String(evidence.source)}`);
   }
-  if (!Array.isArray(evidence.topics) || !Array.isArray(evidence.receiptProofNodes)) {
+  if (!Array.isArray(evidence.topics)) {
     throw new Error('J_AUTHORITY_RECEIPT_PROOF_SHAPE_INVALID');
   }
   if (evidence.topics.length === 0 || evidence.topics.length > 4) {
     throw new Error(`J_AUTHORITY_TOPIC_COUNT_INVALID:${evidence.topics.length}`);
   }
-  if (evidence.receiptProofNodes.length === 0 || evidence.receiptProofNodes.length > MAX_PROOF_NODES) {
-    throw new Error(`J_AUTHORITY_PROOF_NODE_COUNT_INVALID:${evidence.receiptProofNodes.length}`);
-  }
-  const encodedReceipt = canonicalHex(evidence.encodedReceipt, 'ENCODED_RECEIPT', MAX_RECEIPT_BYTES);
   const data = canonicalHex(evidence.data, 'EVENT_DATA', MAX_RECEIPT_DATA_BYTES);
-  const receiptProofNodes = evidence.receiptProofNodes.map((node, index) =>
-    canonicalHex(node, `PROOF_NODE_${index}`, MAX_PROOF_NODE_BYTES),
-  );
-  const totalProofBytes = receiptProofNodes.reduce((total, node) => total + (node.length - 2) / 2, 0);
-  if (totalProofBytes > MAX_TOTAL_PROOF_BYTES) {
-    throw new Error(`J_AUTHORITY_PROOF_OVERSIZED:${totalProofBytes}:${MAX_TOTAL_PROOF_BYTES}`);
-  }
+  const receipt = canonicalRegistrationReceipt(evidence);
   const witnessSignature = canonicalHex(evidence.witnessSignature, 'WITNESS_SIGNATURE', 65);
   const canonical = {
     stackKey: bytes32(evidence.stackKey, 'STACK_KEY'),
@@ -281,7 +289,6 @@ const assertRegistrationEvidenceEnvelope = (
     boardHash: bytes32(evidence.boardHash, 'BOARD_HASH'),
     blockHash: bytes32(evidence.blockHash, 'BLOCK_HASH'),
     transactionHash: bytes32(evidence.transactionHash, 'TRANSACTION_HASH'),
-    receiptsRoot: bytes32(evidence.receiptsRoot, 'RECEIPTS_ROOT'),
     observedTipBlockHash: bytes32(evidence.observedTipBlockHash, 'OBSERVED_TIP_HASH'),
     rawLogDigest: bytes32(evidence.rawLogDigest, 'RAW_LOG_DIGEST'),
     emitter: address(evidence.emitter, 'EMITTER'),
@@ -295,8 +302,7 @@ const assertRegistrationEvidenceEnvelope = (
     confirmationDepth: safeInt(evidence.confirmationDepth, 'CONFIRMATION_DEPTH'),
     topics: evidence.topics.map((topic, index) => bytes32(topic, `TOPIC_${index}`)),
     data,
-    encodedReceipt,
-    receiptProofNodes,
+    ...receipt,
     witnessSignature,
   };
   for (const [field, value] of Object.entries(canonical)) {
@@ -308,8 +314,8 @@ const assertRegistrationEvidenceEnvelope = (
   if (canonical.witnessSignature.length !== 132) {
     throw new Error(`J_AUTHORITY_WITNESS_SIGNATURE_LENGTH_INVALID:${canonical.witnessSignature.length}`);
   }
-  if (canonical.activationHeight < 1 || canonical.receiptsRoot === ZERO_BYTES32) {
-    throw new Error(`J_AUTHORITY_UNCOMMITTED_RECEIPT:${canonical.activationHeight}:${canonical.receiptsRoot}`);
+  if (canonical.activationHeight < 1 || evidence.receiptsRoot === ZERO_BYTES32) {
+    throw new Error(`J_AUTHORITY_UNCOMMITTED_RECEIPT:${canonical.activationHeight}:${evidence.receiptsRoot}`);
   }
   if (
     canonical.observedThroughHeight < canonical.activationHeight ||
@@ -325,6 +331,7 @@ const assertRegistrationEvidenceEnvelope = (
     throw new Error(`J_AUTHORITY_WITNESS_RUNTIME_MISMATCH:${canonical.witnessRuntimeId}:${env.runtimeId ?? 'missing'}`);
   }
   const localReplica = assertExactLocalStack(env, evidence);
+  assertReceiptPolicy(localReplica, evidence);
   const trustedConfirmationDepth = safeInt(localReplica.watcherConfirmationDepth, 'LOCAL_CONFIRMATION_DEPTH');
   if (canonical.confirmationDepth !== trustedConfirmationDepth) {
     throw new Error(`J_AUTHORITY_FINALITY_POLICY_MISMATCH:${canonical.confirmationDepth}:${trustedConfirmationDepth}`);
@@ -345,7 +352,47 @@ const assertRegistrationEvidenceEnvelope = (
   }
 };
 
-const assertReceiptContainsRawLog = async (evidence: CertifiedRegistrationEvidence): Promise<void> => {
+const canonicalRegistrationReceipt = (evidence: CertifiedRegistrationEvidence) => {
+  if (evidence.receiptKind === 'tron-rpc-attested') {
+    if (evidence.finality !== 'tron-solidified') throw new Error('J_AUTHORITY_NATIVE_FINALITY_INVALID');
+    if (['receiptsRoot', 'encodedReceipt', 'receiptProofNodes'].some(field => Object.hasOwn(evidence, field))) {
+      throw new Error('J_AUTHORITY_NATIVE_MPT_FIELDS_FORBIDDEN');
+    }
+    return { receiptKind: evidence.receiptKind, finality: evidence.finality,
+      chainId: safeInt(evidence.chainId, 'CHAIN_ID'), rpcEndpointHash: bytes32(evidence.rpcEndpointHash, 'RPC_ENDPOINT_HASH') };
+  }
+  if (evidence.receiptKind !== undefined || !Array.isArray(evidence.receiptProofNodes)) {
+    throw new Error('J_AUTHORITY_RECEIPT_PROOF_SHAPE_INVALID');
+  }
+  if (evidence.receiptProofNodes.length === 0 || evidence.receiptProofNodes.length > MAX_PROOF_NODES) {
+    throw new Error(`J_AUTHORITY_PROOF_NODE_COUNT_INVALID:${evidence.receiptProofNodes.length}`);
+  }
+  const receiptProofNodes = evidence.receiptProofNodes.map((node, index) =>
+    canonicalHex(node, `PROOF_NODE_${index}`, MAX_PROOF_NODE_BYTES));
+  const total = receiptProofNodes.reduce((sum, node) => sum + (node.length - 2) / 2, 0);
+  if (total > MAX_TOTAL_PROOF_BYTES) throw new Error(`J_AUTHORITY_PROOF_OVERSIZED:${total}:${MAX_TOTAL_PROOF_BYTES}`);
+  return { receiptsRoot: bytes32(evidence.receiptsRoot, 'RECEIPTS_ROOT'),
+    encodedReceipt: canonicalHex(evidence.encodedReceipt, 'ENCODED_RECEIPT', MAX_RECEIPT_BYTES), receiptProofNodes };
+};
+
+const assertReceiptPolicy = (replica: JReplica, evidence: CertifiedRegistrationEvidence): void => {
+  // This policy is JReplica-owned and committed. A witness signature cannot
+  // downgrade an EVM stack to RPC trust, including after WAL restoration.
+  if ((replica.watcherReceiptCommitment === 'tron-rpc-attested') !== (evidence.receiptKind === 'tron-rpc-attested')) {
+    throw new Error('J_AUTHORITY_RECEIPT_COMMITMENT_MISMATCH');
+  }
+  if (evidence.receiptKind !== 'tron-rpc-attested') return;
+  if (evidence.chainId !== replica.chainId) throw new Error('J_AUTHORITY_NATIVE_CHAIN_MISMATCH');
+  if (evidence.confirmationDepth !== 0) throw new Error('J_AUTHORITY_NATIVE_FINALITY_DEPTH_INVALID');
+  const configured = replica.rpcs ?? [];
+  if (!configured.some(rpc => ethers.keccak256(ethers.toUtf8Bytes(new URL(rpc).toString())) === evidence.rpcEndpointHash)) {
+    throw new Error('J_AUTHORITY_NATIVE_RPC_NOT_CONFIGURED');
+  }
+};
+
+const assertReceiptContainsRawLog = async (
+  evidence: Extract<CertifiedRegistrationEvidence, { receiptsRoot: string }>,
+): Promise<void> => {
   const { RLP } = await import('@ethereumjs/rlp');
   const encoded = ethers.getBytes(evidence.encodedReceipt);
   const payload = encoded[0] !== undefined && encoded[0] <= 0x7f ? encoded.slice(1) : encoded;
@@ -376,6 +423,7 @@ export const assertCertifiedRegistrationEvidence = async (
   evidence: CertifiedRegistrationEvidence,
 ): Promise<void> => {
   assertRegistrationEvidenceEnvelope(env, evidence);
+  if (evidence.receiptKind === 'tron-rpc-attested') return;
   await verifyCanonicalReceiptProof({
     receiptsRoot: evidence.receiptsRoot,
     transactionIndex: evidence.transactionIndex,
@@ -389,7 +437,7 @@ export const freezeCertifiedRegistrationEvidence = (
   evidence: CertifiedRegistrationEvidence,
 ): CertifiedRegistrationEvidence => {
   Object.freeze(evidence.topics);
-  Object.freeze(evidence.receiptProofNodes);
+  if (evidence.receiptKind !== 'tron-rpc-attested') Object.freeze(evidence.receiptProofNodes);
   return Object.freeze(evidence);
 };
 

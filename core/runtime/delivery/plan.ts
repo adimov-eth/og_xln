@@ -228,12 +228,16 @@ const planRemoteEntityOutput = (
     ? output.entityTxs[0]
     : null;
   if (runtimeOutput) {
+    // Replay already bound this exact Entity/signer through the hash-verified
+    // WAL frame's outbox. Live profile routes are volatile and cannot replace
+    // that committed evidence; outside replay the signer-bound profile is required.
+    const replayRuntimeId = resolveReplayOutputRuntimeRoute(env, output.entityId, output.signerId);
     const signerBoundRuntimeId = normalizeRuntimeId(
-      deps.resolveRuntimeIdForCrossJurisdictionEntity(
+      replayRuntimeId ?? deps.resolveRuntimeIdForCrossJurisdictionEntity(
         env,
         output.entityId,
         output.signerId,
-      ) || '',
+      ) ?? '',
     );
     if (!signerBoundRuntimeId || signerBoundRuntimeId !== targetRuntimeId) {
       throw new Error(

@@ -147,6 +147,7 @@ const executeAuthoritativeProposal = async (
     finalizedJHeight: entityJHeight ?? account.state.lastFinalizedJHeight ?? 0,
     selectionIsWholeMempool: selectedMempoolTxs === undefined
       || selectedMempoolTxs.length === account.mempool.length,
+    ...(selectedMempoolTxs === undefined ? {} : { selectedMempoolTxs }),
   });
   if (delegated !== null) return delegated;
   await authorityScope.beforeTypeScriptAccountExecution(

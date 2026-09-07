@@ -153,6 +153,7 @@ export type RuntimeWsClientOptions = {
   onRecoveryBundleRequest?: (from: string, lookupKey: string) => Promise<unknown> | unknown;
   onRecoveryBundleResponse?: (from: string, payload: unknown, message: RuntimeWsMessage) => Promise<void> | void;
   onOpen?: () => void;
+  onDeliveryReadyChange?: (ready: boolean) => void;
   onError?: (error: Error) => void;
 };
 
@@ -208,6 +209,8 @@ export class RuntimeWsClient {
   private suppressNextClose = false;
   private helloSent = false;
   private helloAcknowledged = false;
+  private localReady = false;
+  private peerReady = false;
   private everAuthenticated = false;
   private helloAudience: string | null = null;
   private helloNonce: string | null = null;
@@ -251,6 +254,7 @@ export class RuntimeWsClient {
     this.connecting = true;
     this.helloSent = false;
     this.helloAcknowledged = false;
+    this.updatePeerReady(false);
     this.helloAudience = null;
     this.helloNonce = null;
     this.directPeerEncryptionPubKey = null;
@@ -325,6 +329,7 @@ export class RuntimeWsClient {
     if (generation !== this.lifecycleGeneration) return;
     const authenticated = this.helloAcknowledged || this.everAuthenticated;
     this.connecting = false;
+    this.updatePeerReady(false);
     this.rejectPendingRecoveryBundleRequests(new Error('RECOVERY_REQUEST_SOCKET_CLOSED'));
     if (this.suppressNextClose) {
       this.suppressNextClose = false;
@@ -355,6 +360,7 @@ export class RuntimeWsClient {
     if (this.closed || generation !== this.lifecycleGeneration) return;
     const authenticated = this.helloAcknowledged || this.everAuthenticated;
     this.connecting = false;
+    this.updatePeerReady(false);
     const fatal = new Error(
       `WS_UNEXPECTED_ERROR:runtime=${this.options.runtimeId}:url=${this.options.url}:` +
       `generation=${generation}:helloAcknowledged=${this.helloAcknowledged ? 1 : 0}:` +
@@ -593,6 +599,7 @@ export class RuntimeWsClient {
       this.helloAcknowledged = true;
       this.everAuthenticated = true;
       this.connecting = false;
+      if (directPeerRuntimeId) this.publishReadiness();
       if (typeof msg.from === 'string' && typeof msg.fromEncryptionPubKey === 'string') {
         this.options.onPeerEncryptionKey?.(msg.from, msg.fromEncryptionPubKey);
       }
@@ -646,6 +653,10 @@ export class RuntimeWsClient {
 
   private async handleEntityInputsMessage(msg: RuntimeWsMessage): Promise<boolean> {
     if (msg.type !== 'entity_inputs' || !msg.payload || !msg.from) return false;
+    if (this.options.helloAudience.startsWith('xln-runtime:') && !this.localReady) {
+      this.reportInboundEntityInputsRejection(msg, new Error('DIRECT_RECIPIENT_NOT_READY'));
+      return true;
+    }
     // One encrypted envelope carries every output from one source R-frame.
     if (!msg.encrypted) {
       console.error(`❌ WS-CLIENT: Rejected unencrypted entity_inputs from ${msg.from}`);
@@ -756,6 +767,16 @@ export class RuntimeWsClient {
   }
 
   private async handleApplicationMessage(msg: RuntimeWsMessage): Promise<boolean> {
+    if (msg.type === 'delivery_ready') {
+      if (!this.options.helloAudience.startsWith('xln-runtime:') || !this.helloAcknowledged
+        || normalizeRuntimeId(msg.to || '') !== this.options.runtimeId) {
+        throw new Error('WS_DELIVERY_READY_SESSION_INVALID');
+      }
+      // Only the verified frame in this session may open delivery; reconnect
+      // clears the peer bit even when the local application remains ready.
+      this.updatePeerReady(msg.payload === true);
+      return true;
+    }
     // This is a negative result only, never a positive receipt. Account
     // consensus still owns completion, but a rejected committed output must
     // halt loudly because no transport retry or route substitution is allowed.
@@ -846,6 +867,7 @@ export class RuntimeWsClient {
     envelope: RuntimeEntityInputsEnvelope,
     ingressTimestamp?: number,
   ): boolean {
+    if (this.options.helloAudience.startsWith('xln-runtime:') && !this.canDeliver()) return false;
     // Encryption is mandatory for the complete per-R-frame envelope.
     if (!this.options.getTargetEncryptionKey || !this.options.encryptionKeyPair) {
       throw new Error('P2P_NO_ENCRYPTION: Encryption not configured');
@@ -1141,6 +1163,33 @@ export class RuntimeWsClient {
     }
   }
 
+  private updatePeerReady(ready: boolean): void {
+    if (this.peerReady === ready) return;
+    this.peerReady = ready;
+    this.options.onDeliveryReadyChange?.(ready);
+  }
+
+  private publishReadiness(): void {
+    if (!this.sendRaw({
+      type: 'delivery_ready',
+      id: makeMessageId(),
+      from: this.options.runtimeId,
+      to: this.options.helloAudience.slice('xln-runtime:'.length),
+      payload: this.localReady,
+    })) throw new Error('WS_READINESS_SEND_FAILED');
+  }
+
+  setReady(ready: boolean): void {
+    if (typeof ready !== 'boolean') throw new Error('WS_READINESS_INVALID');
+    if (this.localReady === ready) return;
+    this.localReady = ready;
+    if (this.isOpen() && this.options.helloAudience.startsWith('xln-runtime:')) this.publishReadiness();
+  }
+
+  canDeliver(): boolean {
+    return this.isOpen() && this.options.helloAudience.startsWith('xln-runtime:') && this.peerReady;
+  }
+
   isOpen(): boolean {
     const transportOpen = !!this.ws && 'readyState' in this.ws && this.ws.readyState === 1;
     return transportOpen && this.helloAcknowledged;
@@ -1190,6 +1239,7 @@ export class RuntimeWsClient {
 
   private prepareSocketStop(reason: string, terminal: boolean): WebSocketLike | null {
     if (terminal) this.closed = true;
+    this.updatePeerReady(false);
     this.lifecycleGeneration += 1;
     this.connecting = false;
     this.rejectPendingRecoveryBundleRequests(new Error(reason));

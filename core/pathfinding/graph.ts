@@ -23,10 +23,13 @@ export interface NetworkGraph {
   edges: Map<string, AccountEdge[]>; // from -> edges[]
 
   // Quick lookup for account capacities
-  accountCapacities: Map<string, {
-    outbound: bigint;
-    inbound: bigint;
-  }>;
+  accountCapacities: Map<
+    string,
+    {
+      outbound: bigint;
+      inbound: bigint;
+    }
+  >;
 }
 
 const isHubLikeProfile = (profile: Profile): boolean => {
@@ -47,14 +50,18 @@ const hasRequiredRoutingMetadata = (profile: Profile): boolean => {
  */
 export function buildNetworkGraph(
   profiles: Map<string, Profile>,
-  tokenId: number
+  tokenId: number,
+  funding?: { sourceEntityId: string; accountId: string },
 ): NetworkGraph {
   const nodes = new Set<string>();
   const edges = new Map<string, AccountEdge[]>();
-  const accountCapacities = new Map<string, {
-    outbound: bigint;
-    inbound: bigint;
-  }>();
+  const accountCapacities = new Map<
+    string,
+    {
+      outbound: bigint;
+      inbound: bigint;
+    }
+  >();
 
   // Add all entities as nodes
   for (const profile of profiles.values()) {
@@ -104,16 +111,15 @@ export function buildNetworkGraph(
 
       const baseFee = sanitizeBaseFee(profile.metadata.baseFee);
       const basePpm = sanitizeFeePPM(profile.metadata.routingFeePPM, 1);
-      const feePPM = calculateDirectionalFeePPM(
-        basePpm,
-        tokenCapacity.outCapacity,
-        tokenCapacity.inCapacity
-      );
+      const feePPM = calculateDirectionalFeePPM(basePpm, tokenCapacity.outCapacity, tokenCapacity.inCapacity);
 
       // The one advertised row describes both directions of the bilateral
       // Account. Each direction is independently usable: a zero outbound side
       // must not discard a positive mirrored inbound side.
-      if (tokenCapacity.outCapacity > 0n) {
+      if (
+        tokenCapacity.outCapacity > 0n ||
+        (funding?.sourceEntityId === fromEntity && funding.accountId === toEntity)
+      ) {
         fromEdges.push({
           from: fromEntity,
           to: toEntity,
@@ -137,7 +143,10 @@ export function buildNetworkGraph(
           outbound: tokenCapacity.inCapacity,
           inbound: tokenCapacity.outCapacity,
         });
-        if (tokenCapacity.inCapacity > 0n) {
+        if (
+          tokenCapacity.inCapacity > 0n ||
+          (funding?.sourceEntityId === toEntity && funding.accountId === fromEntity)
+        ) {
           const mirrorProfile = profiles.get(toEntity);
           pushEdge({
             from: toEntity,
@@ -173,12 +182,7 @@ export function buildNetworkGraph(
 /**
  * Get edge between two nodes
  */
-export function getEdge(
-  graph: NetworkGraph,
-  from: string,
-  to: string,
-  tokenId: number
-): AccountEdge | undefined {
-  const edges = graph.edges.get(from) ?? [];  // Explicit undefined handling
+export function getEdge(graph: NetworkGraph, from: string, to: string, tokenId: number): AccountEdge | undefined {
+  const edges = graph.edges.get(from) ?? []; // Explicit undefined handling
   return edges.find(e => e.to === to && e.tokenId === tokenId);
 }

@@ -81,6 +81,7 @@ import {
   hasQueuedOpenAccount,
   HUB_REQUIRED_TOKEN_COUNT,
   isAccountWriteLaneIdle,
+  planMarketMakerIdentityLabels,
   settleRuntimeFor,
   sleep,
   waitUntil,
@@ -527,12 +528,20 @@ export const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;
 
 export const buildLocalMarketMakerSignerLabels = (): string[] => {
   const primary = resolveJurisdictionConfig(resolvedArgs.rpcUrl);
-  const labels = [resolvedArgs.signerLabel];
-  for (const [index, secondary] of resolveSecondaryJurisdictions(primary.rpc).entries()) {
-    const secondaryName = String(secondary.name || `Secondary ${index + 1}`).trim();
-    if (secondaryName) labels.push(`${resolvedArgs.signerLabel}:${secondaryName}`);
-  }
-  return labels;
+  const jurisdictions = [primary, ...resolveSecondaryJurisdictions(primary.rpc)];
+  // Pair shards own independent signer EOAs. Register the same identity plan
+  // before WAL replay as live bootstrap, including every secondary jurisdiction.
+  return jurisdictions.flatMap((jurisdiction, index) => {
+    const label = index === 0
+      ? resolvedArgs.signerLabel
+      : `${resolvedArgs.signerLabel}:${jurisdiction.name.trim()}`;
+    const tokenIds = selectMarketMakerBootstrapTokenIds(getTokenIdsForJurisdiction({
+      name: jurisdiction.name,
+      chainId: jurisdiction.chainId,
+    }));
+    return planMarketMakerIdentityLabels(label, resolvedArgs.name, tokenIds)
+      .map(plan => plan.signerLabel);
+  });
 };
 
 export const configureMarketMakerRuntimeLogging = (env: RuntimeReplica): void => {

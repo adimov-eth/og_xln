@@ -1,3 +1,4 @@
+import { encodeSignedAmount, SIGNED_AMOUNT_ABI_COMPONENTS } from '../protocol/crypto/abi-money';
 import { ethers } from 'ethers';
 import { keccakHexHash } from '../protocol/crypto/keccak-text';
 import { abiSchemaFromType, encodeAbiParams, type AbiSchema } from '../protocol/crypto/abi-encode';
@@ -76,9 +77,7 @@ export type BoardProposalCancelAuthorization = Readonly<{
   actionNonce: number | bigint;
 }>;
 
-const DEPOSITORY_BATCH_HANKO_DOMAIN = ethers.keccak256(
-  ethers.toUtf8Bytes('XLN_DEPOSITORY_HANKO_V1'),
-);
+const DEPOSITORY_BATCH_HANKO_DOMAIN = ethers.keccak256(ethers.toUtf8Bytes('XLN_DEPOSITORY_HANKO_V1'));
 const WATCHTOWER_COUNTER_DISPUTE_HANKO_DOMAIN = ethers.keccak256(
   ethers.toUtf8Bytes('XLN_WATCHTOWER_COUNTER_DISPUTE_V1'),
 );
@@ -86,14 +85,11 @@ const ENTITY_TRANSFER_HANKO_LABEL = 'ENTITY_TRANSFER';
 const RELEASE_CONTROL_SHARES_HANKO_LABEL = 'RELEASE_CONTROL_SHARES';
 const CANCEL_ENTITY_PROVIDER_ACTION_HANKO_LABEL = 'CANCEL_ENTITY_PROVIDER_ACTION';
 const WATCHTOWER_MIN_SEQUENCE_HANKO_LABEL = 'WATCHTOWER_MIN_SEQUENCE';
-const BOARD_PROPOSAL_HANKO_DOMAIN = ethers.keccak256(
-  ethers.toUtf8Bytes('XLN_ENTITY_PROVIDER_BOARD_PROPOSAL_V1'),
-);
+const BOARD_PROPOSAL_HANKO_DOMAIN = ethers.keccak256(ethers.toUtf8Bytes('XLN_ENTITY_PROVIDER_BOARD_PROPOSAL_V1'));
 const BOARD_PROPOSAL_CANCEL_HANKO_DOMAIN = ethers.keccak256(
   ethers.toUtf8Bytes('XLN_ENTITY_PROVIDER_BOARD_PROPOSAL_CANCEL_V1'),
 );
-export const ENTITY_PROVIDER_ACTION_EXECUTED_EVENT =
-  'EntityProviderActionExecuted(bytes32,uint256,bytes32,uint8)';
+export const ENTITY_PROVIDER_ACTION_EXECUTED_EVENT = 'EntityProviderActionExecuted(bytes32,uint256,bytes32,uint8)';
 export const ENTITY_PROVIDER_ACTION_EXECUTED_TOPIC = ethers.id(ENTITY_PROVIDER_ACTION_EXECUTED_EVENT);
 export const ENTITY_PROVIDER_ACTION_CANCELLED_EVENT =
   'EntityProviderActionCancelled(bytes32,uint256,bytes32,uint8,bytes32)';
@@ -122,11 +118,7 @@ const encodeParams = (types: readonly string[], values: readonly unknown[]): str
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 const requireUint = (value: number | bigint, label: string): bigint => {
-  const normalized = typeof value === 'bigint'
-    ? value
-    : Number.isSafeInteger(value)
-      ? BigInt(value)
-      : -1n;
+  const normalized = typeof value === 'bigint' ? value : Number.isSafeInteger(value) ? BigInt(value) : -1n;
   if (normalized < 0n) throw new Error(`INVALID_HANKO_${label}:${String(value)}`);
   return normalized;
 };
@@ -164,6 +156,26 @@ const requireEntityProviderDomain = (
   ] as const;
 };
 
+const COOPERATIVE_UPDATE_DIFF_PARAM = ethers.ParamType.from({
+  type: 'tuple[]',
+  components: [
+    { name: 'tokenId', type: 'uint256' },
+    ...['leftDiff', 'rightDiff', 'collateralDiff', 'ondeltaDiff'].map(name => ({
+      name,
+      type: 'tuple',
+      components: SIGNED_AMOUNT_ABI_COMPONENTS,
+    })),
+  ],
+});
+
+export const encodeCooperativeUpdateDiff = (diff: CooperativeUpdateDiff) => ({
+  tokenId: diff.tokenId,
+  leftDiff: encodeSignedAmount(diff.leftDiff),
+  rightDiff: encodeSignedAmount(diff.rightDiff),
+  collateralDiff: encodeSignedAmount(diff.collateralDiff),
+  ondeltaDiff: encodeSignedAmount(diff.ondeltaDiff),
+});
+
 export const encodeCooperativeUpdateHankoPayload = (
   domain: DepositoryHankoDomain,
   accountKey: string,
@@ -173,14 +185,14 @@ export const encodeCooperativeUpdateHankoPayload = (
 ): string => {
   const [chainId, depositoryAddress] = requireDepositoryDomain(domain);
   return ABI_CODER.encode(
-    ['uint256', 'uint256', 'address', 'bytes', 'uint256', 'tuple(uint256,int256,int256,int256,int256)[]', 'uint256[]'],
+    ['uint256', 'uint256', 'address', 'bytes', 'uint256', COOPERATIVE_UPDATE_DIFF_PARAM, 'uint256[]'],
     [
       0,
       chainId,
       depositoryAddress,
       accountKey,
       requireUint(nonce, 'NONCE'),
-      diffs.map((diff) => [diff.tokenId, diff.leftDiff, diff.rightDiff, diff.collateralDiff, diff.ondeltaDiff]),
+      diffs.map(encodeCooperativeUpdateDiff),
       forgiveDebtsInTokenIds,
     ],
   );
@@ -317,10 +329,7 @@ export const encodeCancelEntityProviderActionHankoPayload = (
   authorization: CancelEntityProviderActionAuthorization,
 ): string => {
   const [chainId, entityProviderAddress, boardEpoch] = requireEntityProviderDomain(domain);
-  const cancelledActionKind = requireUint(
-    authorization.cancelledActionKind,
-    'CANCELLED_ACTION_KIND',
-  );
+  const cancelledActionKind = requireUint(authorization.cancelledActionKind, 'CANCELLED_ACTION_KIND');
   if (cancelledActionKind > MAX_ENTITY_PROVIDER_ACTION_KIND) {
     throw new Error(`INVALID_HANKO_CANCELLED_ACTION_KIND:${cancelledActionKind.toString()}`);
   }
@@ -417,9 +426,8 @@ export const hashCooperativeUpdateHankoPayload = (
   ...args: Parameters<typeof encodeCooperativeUpdateHankoPayload>
 ): string => keccakHexHash(encodeCooperativeUpdateHankoPayload(...args));
 
-export const hashDisputeProofHankoPayload = (
-  ...args: Parameters<typeof encodeDisputeProofHankoPayload>
-): string => keccakHexHash(encodeDisputeProofHankoPayload(...args));
+export const hashDisputeProofHankoPayload = (...args: Parameters<typeof encodeDisputeProofHankoPayload>): string =>
+  keccakHexHash(encodeDisputeProofHankoPayload(...args));
 
 export const hashFinalDisputeProofHankoPayload = (
   ...args: Parameters<typeof encodeFinalDisputeProofHankoPayload>
@@ -437,9 +445,8 @@ export const hashWatchtowerCounterDisputeHankoPayload = (
   ...args: Parameters<typeof encodeWatchtowerCounterDisputeHankoPayload>
 ): string => keccakHexHash(encodeWatchtowerCounterDisputeHankoPayload(...args));
 
-export const hashEntityTransferHankoPayload = (
-  ...args: Parameters<typeof encodeEntityTransferHankoPayload>
-): string => keccakHexHash(encodeEntityTransferHankoPayload(...args));
+export const hashEntityTransferHankoPayload = (...args: Parameters<typeof encodeEntityTransferHankoPayload>): string =>
+  keccakHexHash(encodeEntityTransferHankoPayload(...args));
 
 export const hashReleaseControlSharesHankoPayload = (
   ...args: Parameters<typeof encodeReleaseControlSharesHankoPayload>
@@ -453,9 +460,8 @@ export const hashWatchtowerMinSequenceHankoPayload = (
   ...args: Parameters<typeof encodeWatchtowerMinSequenceHankoPayload>
 ): string => keccakHexHash(encodeWatchtowerMinSequenceHankoPayload(...args));
 
-export const hashBoardProposalHankoPayload = (
-  ...args: Parameters<typeof encodeBoardProposalHankoPayload>
-): string => keccakHexHash(encodeBoardProposalHankoPayload(...args));
+export const hashBoardProposalHankoPayload = (...args: Parameters<typeof encodeBoardProposalHankoPayload>): string =>
+  keccakHexHash(encodeBoardProposalHankoPayload(...args));
 
 export const hashBoardProposalCancelHankoPayload = (
   ...args: Parameters<typeof encodeBoardProposalCancelHankoPayload>

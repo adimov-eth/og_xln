@@ -85,7 +85,7 @@ type HltSwapProposalLedgerSnapshot = Readonly<{
 const paymentLedgerStages = new Map<AccountDeliveryHop, MutablePaymentLedgerStage>();
 const paymentOperationsByFrameHash = new Map<string, readonly PaymentOperation[]>();
 const swapProposalOutcomes = new Map<string, Readonly<{
-  outcome: 'accepted' | 'rejected' | 'deferred';
+  admission: 'accepted' | 'rejected' | 'deferred';
   code: string | null;
 }>>();
 let repeatedSwapProposalObservations = 0;
@@ -257,14 +257,14 @@ export const snapshotHltPaymentOperationLedger = (): HltPaymentOperationLedgerSn
   }])) as Partial<Record<AccountDeliveryHop, HltPaymentOperationLedgerStage>>,
   swapProposals: {
     acceptedOfferIds: [...swapProposalOutcomes]
-      .filter(([, value]) => value.outcome === 'accepted').map(([offerId]) => offerId).sort(),
+      .filter(([, value]) => value.admission === 'accepted').map(([offerId]) => offerId).sort(),
     rejectedOfferIds: [...swapProposalOutcomes]
-      .filter(([, value]) => value.outcome === 'rejected').map(([offerId]) => offerId).sort(),
+      .filter(([, value]) => value.admission === 'rejected').map(([offerId]) => offerId).sort(),
     deferredOfferIds: [...swapProposalOutcomes]
-      .filter(([, value]) => value.outcome === 'deferred').map(([offerId]) => offerId).sort(),
+      .filter(([, value]) => value.admission === 'deferred').map(([offerId]) => offerId).sort(),
     rejectionCodes: Object.fromEntries([...swapProposalOutcomes.values()]
       .reduce((counts, value) => {
-        if (value.outcome !== 'rejected' || value.code === null) return counts;
+        if (value.admission !== 'rejected' || value.code === null) return counts;
         counts.set(value.code, (counts.get(value.code) ?? 0) + 1);
         return counts;
       }, new Map<string, number>())),
@@ -289,16 +289,16 @@ export const traceHltSwapProposalOutcomes = (
     if (tx.type !== 'swap_offer') return;
     const failure = droppedByIndex.get(index);
     const value = failure === undefined
-      ? { outcome: 'accepted' as const, code: null }
+      ? { admission: 'accepted' as const, code: null }
       : failure.disposition === 'deferred'
-        ? { outcome: 'deferred' as const, code: failure.code }
-        : { outcome: 'rejected' as const, code: failure.code };
+        ? { admission: 'deferred' as const, code: failure.code }
+        : { admission: 'rejected' as const, code: failure.code };
     const existing = swapProposalOutcomes.get(tx.data.offerId);
     if (existing !== undefined) {
-      if (existing.outcome !== value.outcome || existing.code !== value.code) {
+      if (existing.admission !== value.admission || existing.code !== value.code) {
         throw new Error(
           `HLT_SWAP_PROPOSAL_OUTCOME_CONFLICT:${tx.data.offerId}:` +
-          `${existing.outcome}/${String(existing.code)}:${value.outcome}/${String(value.code)}`,
+          `${existing.admission}/${String(existing.code)}:${value.admission}/${String(value.code)}`,
         );
       }
       repeatedSwapProposalObservations += 1;

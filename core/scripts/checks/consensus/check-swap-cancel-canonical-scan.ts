@@ -73,8 +73,8 @@ assertNotIncludes(frontend, 'satisfies CrossJurisdictionSwapRoute', frontendPath
 
 const commandPlanPath = 'core/runtime/swap-cmd/swap-command-plan.ts';
 const commandPlan = readText(commandPlanPath);
-assertIncludes(commandPlan, 'readSwapAccountCapacity({', commandPlanPath);
-assertIncludes(commandPlan, 'planSwapInboundCapacity({', commandPlanPath);
+assertIncludes(commandPlan, 'readAccountCapacity({', commandPlanPath);
+assertIncludes(commandPlan, 'planReceiveCapacity({', commandPlanPath);
 const targetReadinessPath = 'core/runtime/swap-cmd/swap-target-readiness.ts';
 assertIncludes(
   readText(targetReadinessPath),

@@ -1,3 +1,4 @@
+import { UINT256_MAX } from '../../../../../protocol/boundary/integer-ranges';
 import type { AccountState, AccountTx } from '../../../../../types/account';
 import { FINANCIAL, LIMITS } from '../../../../../config/constants';
 import { getAccountSwapMarketLimitError } from '../../../../swap/swap-limits';
@@ -11,10 +12,7 @@ export type SwapOfferAdmission = {
   makerIsLeft: boolean;
 };
 
-const validateOfferCapacityLimits = (
-  account: AccountState,
-  tx: SwapOfferTx,
-): string | null => {
+const validateOfferCapacityLimits = (account: AccountState, tx: SwapOfferTx): string | null => {
   const { offerId, crossJurisdiction } = tx.data;
   if (offerId.includes(':')) {
     return `Invalid offerId: colons not allowed (got ${offerId})`;
@@ -25,17 +23,11 @@ const validateOfferCapacityLimits = (
   }
   const offers = Array.from(account.swapOffers!.values());
   const sameJurisdictionCount = offers.filter(offer => !offer.crossJurisdiction).length;
-  if (
-    !crossJurisdiction &&
-    sameJurisdictionCount >= LIMITS.MAX_ACCOUNT_SAME_J_SWAP_OFFERS
-  ) {
+  if (!crossJurisdiction && sameJurisdictionCount >= LIMITS.MAX_ACCOUNT_SAME_J_SWAP_OFFERS) {
     return `Too many open same-j swap offers: max ${LIMITS.MAX_ACCOUNT_SAME_J_SWAP_OFFERS}`;
   }
   const crossJurisdictionCount = offers.length - sameJurisdictionCount;
-  if (
-    crossJurisdiction &&
-    crossJurisdictionCount >= LIMITS.MAX_ACCOUNT_CROSS_J_SWAP_OFFERS
-  ) {
+  if (crossJurisdiction && crossJurisdictionCount >= LIMITS.MAX_ACCOUNT_CROSS_J_SWAP_OFFERS) {
     return `Too many open cross-j swap offers: max ${LIMITS.MAX_ACCOUNT_CROSS_J_SWAP_OFFERS}`;
   }
   return null;
@@ -53,16 +45,20 @@ const validateOfferShape = (tx: SwapOfferTx): string | null => {
     crossJurisdiction,
   } = tx.data;
   if (
-    !Number.isSafeInteger(giveTokenDecimals) || giveTokenDecimals < 0 || giveTokenDecimals > 255 ||
-    !Number.isSafeInteger(wantTokenDecimals) || wantTokenDecimals < 0 || wantTokenDecimals > 255
+    !Number.isSafeInteger(giveTokenDecimals) ||
+    giveTokenDecimals < 0 ||
+    giveTokenDecimals > 255 ||
+    !Number.isSafeInteger(wantTokenDecimals) ||
+    wantTokenDecimals < 0 ||
+    wantTokenDecimals > 255
   ) {
     return `Invalid token decimals: give=${String(giveTokenDecimals)} want=${String(wantTokenDecimals)}`;
   }
-  if (giveAmount < FINANCIAL.MIN_PAYMENT_AMOUNT || giveAmount > FINANCIAL.MAX_PAYMENT_AMOUNT) {
-    return `Invalid giveAmount: ${giveAmount} (min ${FINANCIAL.MIN_PAYMENT_AMOUNT}, max ${FINANCIAL.MAX_PAYMENT_AMOUNT})`;
+  if (giveAmount < FINANCIAL.MIN_PAYMENT_AMOUNT || giveAmount > UINT256_MAX) {
+    return `Invalid giveAmount: ${giveAmount} (min ${FINANCIAL.MIN_PAYMENT_AMOUNT}, max ${UINT256_MAX})`;
   }
-  if (wantAmount < FINANCIAL.MIN_PAYMENT_AMOUNT || wantAmount > FINANCIAL.MAX_PAYMENT_AMOUNT) {
-    return `Invalid wantAmount: ${wantAmount} (min ${FINANCIAL.MIN_PAYMENT_AMOUNT}, max ${FINANCIAL.MAX_PAYMENT_AMOUNT})`;
+  if (wantAmount < FINANCIAL.MIN_PAYMENT_AMOUNT || wantAmount > UINT256_MAX) {
+    return `Invalid wantAmount: ${wantAmount} (min ${FINANCIAL.MIN_PAYMENT_AMOUNT}, max ${UINT256_MAX})`;
   }
   if (tx.data.maxFee >= wantAmount || tx.data.minNetReceive <= 0n) {
     return 'SWAP_NET_AUTH_INITIAL_TERMS_INVALID';
@@ -76,10 +72,7 @@ const validateOfferShape = (tx: SwapOfferTx): string | null => {
   // the exact gross source and target amounts. Enforce that invariant again at
   // Account admission because a current board may submit AccountTx directly,
   // bypassing the Entity command planner that normally constructs these terms.
-  if (
-    crossJurisdiction &&
-    (tx.data.maxFee !== 0n || tx.data.minNetReceive !== wantAmount)
-  ) {
+  if (crossJurisdiction && (tx.data.maxFee !== 0n || tx.data.minNetReceive !== wantAmount)) {
     return 'CROSS_J_SWAP_NET_AUTH_INVALID';
   }
   if (giveTokenId === wantTokenId && !crossJurisdiction) {
@@ -87,11 +80,7 @@ const validateOfferShape = (tx: SwapOfferTx): string | null => {
   }
   if (
     crossJurisdiction &&
-    (
-      crossJurisdiction.status !== 'resting' ||
-      !crossJurisdiction.sourcePull ||
-      !crossJurisdiction.targetPull
-    )
+    (crossJurisdiction.status !== 'resting' || !crossJurisdiction.sourcePull || !crossJurisdiction.targetPull)
   ) {
     return 'Cross-j swap must be prepared before entering the book';
   }
@@ -101,9 +90,7 @@ const validateOfferShape = (tx: SwapOfferTx): string | null => {
   return null;
 };
 
-export type SwapOfferAdmissionResult =
-  | { ok: true; admission: SwapOfferAdmission }
-  | { ok: false; message: string };
+export type SwapOfferAdmissionResult = { ok: true; admission: SwapOfferAdmission } | { ok: false; message: string };
 
 export const validateSwapOfferAdmission = (
   account: AccountState,
@@ -117,17 +104,14 @@ export const validateSwapOfferAdmission = (
   const { leftEntity, rightEntity } = account;
   const proposerEntityId = byLeft ? leftEntity : rightEntity;
   const route = tx.data.crossJurisdiction;
-  const makerIsLeft = route
-    ? route.makerEntityId.toLowerCase() === leftEntity.toLowerCase()
-    : byLeft;
+  const makerIsLeft = route ? route.makerEntityId.toLowerCase() === leftEntity.toLowerCase() : byLeft;
   const makerEntityId = makerIsLeft ? leftEntity : rightEntity;
   if (
     route &&
-    (
-      route.makerEntityId.toLowerCase() !== makerEntityId.toLowerCase() ||
-      ![route.makerEntityId, route.source.counterpartyEntityId]
-        .some(entityId => entityId.toLowerCase() === proposerEntityId.toLowerCase())
-    )
+    (route.makerEntityId.toLowerCase() !== makerEntityId.toLowerCase() ||
+      ![route.makerEntityId, route.source.counterpartyEntityId].some(
+        entityId => entityId.toLowerCase() === proposerEntityId.toLowerCase(),
+      ))
   ) {
     return { ok: false, message: 'Cross-j swap proposer must be the maker or source hub' };
   }

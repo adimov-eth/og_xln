@@ -28,8 +28,8 @@ export const SCENARIOS: ScenarioMetadata[] = [
   },
   {
     id: 'htlc-lazy', name: 'Lazy-Entity HTLC',
-    description: 'HTLC over lazy 1-of-1 entities on TS and Rust authority', tags: ['htlc', 'routing', 'rscore'],
-    browserSafe: false, browserUnsafeReason: 'Requires the native Rust authority process.',
+    description: 'HTLC over lazy 1-of-1 entities on the TypeScript runtime', tags: ['htlc', 'routing'],
+    browserSafe: false, browserUnsafeReason: 'Browser execution coverage is not established for this runner.',
     run: async (env) => (await import('../payments/htlc-lazy')).htlcLazy(env),
   },
   {

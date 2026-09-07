@@ -17,6 +17,8 @@ import {
   requireEntityEncryptionPrivateKey,
 } from '../../entity/auth/crypto';
 import type { RuntimeInboundEntityInputsResult, RuntimeInboundEntityInputOptions } from '../delivery/topology/entity-routing';
+import { ensureRuntimeInfrastructure } from './replica-envelope';
+import { requestRuntimeLoopWake } from '../mempool/input-queue';
 
 export type { P2PConfig } from '../../network/p2p/p2p';
 
@@ -57,6 +59,26 @@ type RuntimeStateWithP2PSingleton = RuntimeReplica & {
 };
 
 const p2pState = (env: RuntimeReplica): RuntimeStateWithP2PSingleton => env;
+
+const prepareCommittedOutboxRoutes = (env: RuntimeReplica): void => {
+  const state = ensureRuntimeInfrastructure(env);
+  const p2p = state.p2p;
+  if (!p2p || state.directEntityInputsDispatch) return;
+  // Recovery restores outputs before any direct session exists. Waiting for
+  // canDeliver before dialing would strand an idle Runtime forever. Only open
+  // authenticated routes here; the Runtime writer still owns every send.
+  const targets = new Set((env.pendingNetworkOutputs ?? []).map(output => output.entityId));
+  for (const entityId of targets) p2p.prepareDirectEntityRoutes([entityId]);
+};
+
+/** The startup owner opens this fence after its local J-catchup barrier. */
+export const setRuntimeDeliveryReady = (env: RuntimeReplica, ready: boolean): void => {
+  const state = ensureRuntimeInfrastructure(env);
+  state.entityInputsReady = ready;
+  state.p2p?.setReady(ready);
+  prepareCommittedOutboxRoutes(env);
+  requestRuntimeLoopWake(env);
+};
 
 const reconnectP2P = (p2p: P2Pish): void => {
   const connecting = p2p.isConnecting?.() === true;
@@ -119,6 +141,7 @@ const buildRuntimeP2POptions = (
     },
     onGossipProfiles: (_from, profiles) => {
       if (profiles.length === 0) return;
+      prepareCommittedOutboxRoutes(env);
       deps.notifyEnvChange(env);
       env.info('network', 'GOSSIP_PROFILE_UPDATE', {
         count: profiles.length,
@@ -191,9 +214,14 @@ export const startRuntimeP2P = (
 
   const reusable = reuseProcessP2P(env, state, config, resolvedRuntimeId) ??
     reuseAttachedP2P(state, config, resolvedRuntimeId);
-  if (reusable) return reusable;
+  if (reusable) {
+    prepareCommittedOutboxRoutes(env);
+    return reusable;
+  }
 
   state.p2p = new RuntimeP2P(buildRuntimeP2POptions(env, config, resolvedRuntimeId, deps));
+  state.p2p.setReady(state.entityInputsReady !== false);
+  state.p2p.onDeliveryReadyChange(() => requestRuntimeLoopWake(env));
   state.observeOnlineEntityIds = entityIds => {
     const online = new Set(state.p2p?.observeOnlineEntityIds(entityIds) ?? []);
     for (const entityId of state.observeDirectOnlineEntityIds?.(entityIds) ?? []) {
@@ -203,6 +231,7 @@ export const startRuntimeP2P = (
   };
   p2pState(env)[ENV_P2P_SINGLETON_KEY] = state.p2p;
   state.p2p.connect();
+  prepareCommittedOutboxRoutes(env);
   return state.p2p;
 };
 

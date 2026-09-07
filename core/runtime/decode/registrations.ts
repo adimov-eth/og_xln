@@ -154,19 +154,30 @@ export const validateRegistrationEvidence = (value: unknown, code: string): void
   requireExactBoundaryKeys(evidence, [
     'version', 'source', 'stackKey', 'entityId', 'boardHash', 'activationHeight', 'blockHash',
     'transactionHash', 'transactionIndex', 'logIndex', 'emitter', 'topics', 'data', 'rawLogDigest',
-    'receiptsRoot', 'encodedReceipt', 'receiptProofNodes', 'receiptLogIndex', 'observedThroughHeight',
+    'receiptLogIndex', 'observedThroughHeight',
     'observedTipBlockHash', 'observedHeadHeight', 'confirmationDepth', 'witnessRuntimeId', 'witnessSignature',
+    ...(evidence['receiptKind'] === 'tron-rpc-attested'
+      ? ['receiptKind', 'chainId', 'rpcEndpointHash', 'finality']
+      : ['receiptsRoot', 'encodedReceipt', 'receiptProofNodes']),
   ], [], `${code}_FIELDS`);
   if (evidence['version'] !== 1) throw new Error(`${code}_VERSION`);
   if (evidence['source'] !== 'FoundationBootstrapped' && evidence['source'] !== 'EntityRegistered') throw new Error(`${code}_SOURCE`);
   for (const field of [
     'stackKey', 'entityId', 'boardHash', 'blockHash', 'transactionHash', 'emitter', 'data',
-    'rawLogDigest', 'receiptsRoot', 'encodedReceipt', 'observedTipBlockHash', 'witnessRuntimeId', 'witnessSignature',
+    'rawLogDigest', 'observedTipBlockHash', 'witnessRuntimeId', 'witnessSignature',
   ]) requireString(evidence[field], `${code}_${field.toUpperCase()}`);
   for (const field of [
     'activationHeight', 'transactionIndex', 'logIndex', 'receiptLogIndex', 'observedThroughHeight',
     'observedHeadHeight', 'confirmationDepth',
   ]) requireBoundaryInteger(evidence[field], `${code}_${field.toUpperCase()}`);
   requireStringArray(evidence['topics'], `${code}_TOPICS`);
-  requireStringArray(evidence['receiptProofNodes'], `${code}_PROOF_NODES`);
+  if (evidence['receiptKind'] === 'tron-rpc-attested') {
+    requireBoundaryInteger(evidence['chainId'], `${code}_CHAIN_ID`, 1);
+    requireString(evidence['rpcEndpointHash'], `${code}_RPC_ENDPOINT_HASH`);
+    if (evidence['finality'] !== 'tron-solidified') throw new Error(`${code}_NATIVE_FINALITY`);
+  } else {
+    requireString(evidence['receiptsRoot'], `${code}_RECEIPTSROOT`);
+    requireString(evidence['encodedReceipt'], `${code}_ENCODEDRECEIPT`);
+    requireStringArray(evidence['receiptProofNodes'], `${code}_PROOF_NODES`);
+  }
 };

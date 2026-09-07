@@ -26,7 +26,12 @@ import {
 
 const jurisdictionLoaderLog = createStructuredLogger('runtime.jurisdiction_loader');
 
-interface JurisdictionConfig {
+export type JurisdictionTransport =
+  | { mode?: never; tronFullHost?: never; tronSolidityHost?: never }
+  | { mode: 'rpc'; tronFullHost?: never; tronSolidityHost?: never }
+  | { mode: 'tron'; tronFullHost: string; tronSolidityHost?: string };
+
+type JurisdictionConfig = {
   name: string;
   chainId: number;
   blockTimeMs: number;
@@ -48,11 +53,12 @@ interface JurisdictionConfig {
   explorer: string;
   currency: string;
   status: string;
-}
+} & JurisdictionTransport;
 
 export interface JurisdictionsData {
   version: string;
   lastUpdated: string;
+  ephemeralTestnet?: boolean;
   jurisdictions: Record<string, JurisdictionConfig>;
   defaults: {
     timeout: number;
@@ -97,6 +103,37 @@ const requireText = (value: unknown, code: string): string => {
   return value;
 };
 
+const requireNativeHost = (value: unknown, code: string): string => {
+  const host = requireString(value, code);
+  if (host !== host.trim() || !URL.canParse(host)) throw new Error(code);
+  const url = new URL(host);
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password || host.includes('#')) {
+    throw new Error(code);
+  }
+  return host;
+};
+
+/** Local transport selects real chain I/O; it never adds financial or WAL state. */
+export const decodeJurisdictionTransport = (value: Record<string, unknown>, code: string): JurisdictionTransport => {
+  const mode = value['mode'];
+  if (mode !== undefined && mode !== 'rpc' && mode !== 'tron') throw new Error(`${code}_MODE_INVALID`);
+  if (mode !== 'tron') {
+    if (value['tronFullHost'] !== undefined || value['tronSolidityHost'] !== undefined) {
+      throw new Error(`${code}_TRON_HOST_WITHOUT_TRON_MODE`);
+    }
+    return mode === 'rpc' ? { mode } : {};
+  }
+  return {
+    mode,
+    tronFullHost: requireNativeHost(value['tronFullHost'], `${code}_TRON_FULL_HOST_INVALID`),
+    ...(value['tronSolidityHost'] === undefined
+      ? {}
+      : {
+          tronSolidityHost: requireNativeHost(value['tronSolidityHost'], `${code}_TRON_SOLIDITY_HOST_INVALID`),
+        }),
+  };
+};
+
 const decodeJurisdiction = (
   value: unknown,
   code: string,
@@ -109,6 +146,7 @@ const decodeJurisdiction = (
     'description', 'rebalancePolicyUsd',
     'entityProviderDeploymentBlock', 'tokens', 'tokenRegistry', 'tronContracts', 'evmContracts',
     'primary', 'stackVersion', 'deployer', 'foundationRecipient',
+    'mode', 'tronFullHost', 'tronSolidityHost',
   ], `${code}_FIELDS`);
   const contracts = requireBoundaryRecord(entry['contracts'], `${code}_CONTRACTS`);
   requireExactBoundaryKeys(
@@ -157,6 +195,7 @@ const decodeJurisdiction = (
     }
   }
   return {
+    ...decodeJurisdictionTransport(entry, code),
     name: requireString(entry['name'], `${code}_NAME`),
     chainId: requireBoundaryInteger(entry['chainId'], `${code}_CHAIN_ID`, 1),
     blockTimeMs: requireFiniteNumber(
@@ -197,7 +236,7 @@ const decodeJurisdictionsData = (value: unknown): JurisdictionsData => {
   requireExactBoundaryKeys(
     root,
     ['version', 'lastUpdated', 'jurisdictions', 'defaults'],
-    ['deployVersion', 'networkVersion', 'officialFoundationSignerId', 'jurisdictionAnnouncements'],
+    ['deployVersion', 'networkVersion', 'officialFoundationSignerId', 'jurisdictionAnnouncements', 'ephemeralTestnet'],
     'JURISDICTIONS_ROOT_FIELDS',
   );
   for (const field of ['deployVersion', 'networkVersion'] as const) {
@@ -236,6 +275,9 @@ const decodeJurisdictionsData = (value: unknown): JurisdictionsData => {
   );
   return {
     version: requireString(root['version'], 'JURISDICTIONS_VERSION_INVALID'),
+    ...(root['ephemeralTestnet'] === undefined ? {} : {
+      ephemeralTestnet: requireBoolean(root['ephemeralTestnet'], 'JURISDICTIONS_EPHEMERAL_TESTNET_INVALID'),
+    }),
     lastUpdated: requireString(
       root['lastUpdated'],
       'JURISDICTIONS_LAST_UPDATED_INVALID',
@@ -299,7 +341,7 @@ const logJurisdictionLoaderDebug = (message: string, fields: Record<string, unkn
 export function loadJurisdictions(): JurisdictionsData {
   // Browser compatibility check
   if (isBrowser) {
-    throw new Error('loadJurisdictions() not available in browser - use core/jurisdiction/adapter/kernel/config.ts instead');
+    throw new Error('loadJurisdictions() not available in browser - use loadJurisdictionsAsync() instead');
   }
 
   // Return cached result if available (Node.js only)
@@ -337,6 +379,57 @@ export function loadJurisdictions(): JurisdictionsData {
     throw new Error(`JURISDICTIONS_LOAD_FAILED:path=${filePath || 'unknown'}:${message}`);
   }
 }
+
+const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
+
+const fetchBrowserJurisdictions = async (signal: AbortSignal): Promise<Response> => {
+  let response: Response;
+  try {
+    response = await fetch(`/api/jurisdictions?ts=${Date.now()}`, {
+      signal,
+      cache: 'no-store',
+      headers: { 'cache-control': 'no-cache' },
+    });
+  } catch (error: unknown) {
+    throw new Error(`JURISDICTIONS_BROWSER_FETCH_FAILED:${signal.aborted ? 'timeout' : errorMessage(error)}`);
+  }
+  if (!response.ok) throw new Error(`JURISDICTIONS_BROWSER_HTTP_STATUS:${response.status}`);
+  return response;
+};
+
+/** Both environments decode the same canonical source; browser I/O never reads Node files. */
+export const loadJurisdictionsAsync = async (): Promise<JurisdictionsData> => {
+  if (!isBrowser) return loadJurisdictions();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000);
+  try {
+    const response = await fetchBrowserJurisdictions(controller.signal);
+    try {
+      return decodeJurisdictionsData(await response.json());
+    } catch (error: unknown) {
+      jurisdictionLoaderLog.error('browser_config_invalid', { error: errorMessage(error) });
+      throw new Error(`JURISDICTIONS_BROWSER_CONFIG_INVALID:${errorMessage(error)}`);
+    }
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+/** Resolve only the configured chain/contract identity, never a display name or RPC alias. */
+export const resolveJurisdictionTransport = async (
+  chainId: number,
+  depository: string,
+): Promise<JurisdictionTransport | undefined> => {
+  const data = await loadJurisdictionsAsync();
+  const normalizedDepository = depository.toLowerCase();
+  const matches = Object.values(data.jurisdictions).filter(jurisdiction =>
+    jurisdiction.chainId === chainId && jurisdiction.contracts.depository.toLowerCase() === normalizedDepository);
+  if (matches.length > 1) {
+    throw new Error(`JURISDICTION_TRANSPORT_BINDING_AMBIGUOUS:${chainId}:${normalizedDepository}`);
+  }
+  const jurisdiction = matches[0];
+  return jurisdiction === undefined ? undefined : decodeJurisdictionTransport(jurisdiction, 'JURISDICTION_TRANSPORT');
+};
 
 export const getConfiguredOfficialFoundationSignerId = (): string | undefined => {
   const configured = typeof process === 'undefined'

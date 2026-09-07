@@ -9,23 +9,20 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { safeParse, safeStringify } from '../../../../../protocol/serialization';
-import {
-  requireBoundaryInteger,
-  requireBoundaryRecord,
-  requireExactBoundaryKeys,
-} from '../../../../../protocol/boundary-validation';
+import { requireBoundaryRecord, requireExactBoundaryKeys } from '../../../../../protocol/boundary-validation';
 import { deriveMeshChildSeed } from '../../../../../orchestrator/mesh/mesh-seeds';
-import {
-  AUTHORITY_EVIDENCE_GATE_BUDGET_MS,
-  authorityEvidenceBinary,
-} from '../evidence/gate-support';
-import {
-  readHltHubRecordingManifest,
-  resolveHltHubRecordingPath,
-} from '../recording';
+import { AUTHORITY_EVIDENCE_GATE_BUDGET_MS, authorityEvidenceBinary } from '../evidence/gate-support';
+import { readHltHubRecordingManifest, resolveHltHubRecordingPath, writeHltHubRecording } from '../recording';
+import { importOfflineCheckpointAccounts } from '../import/offline-account-import';
 import { publishEvidenceBundleReplay } from '../evidence/bundle';
 import {
+  assertRustParityAccountsRootsEqual,
+  decodeRustParityReport,
+  type RustParityReport,
+} from '../evidence/rust-parity-report';
+import {
   assertHltAuthoritySourceBinding,
+  buildHltAuthoritySourceBinding,
   copyBoundAuthorityWal,
 } from '../source-binding';
 
@@ -61,12 +58,8 @@ const runCaptured = (
   return { stdout: result.stdout, stderr: result.stderr };
 };
 
-const run = (
-  command: string,
-  args: readonly string[],
-  timeoutMs: number,
-  env = process.env,
-): string => runCaptured(command, args, timeoutMs, env).stdout;
+const run = (command: string, args: readonly string[], timeoutMs: number, env = process.env): string =>
+  runCaptured(command, args, timeoutMs, env).stdout;
 
 /** Sum of the Runtime `apply.profile` frame timings the TS replay logs. */
 const sumTsApplyMs = (stdout: string): number => {
@@ -129,21 +122,24 @@ const replayEnvironment = (dbRoot: string): NodeJS.ProcessEnv => {
     XLN_RUNTIME_OP_COUNTERS_DIR: join(dbRoot, 'op-counters'),
   };
   for (const key of [
-    'XLN_RSCORE_AUTHORITY', 'XLN_RSCORE_AUTHORITY_REPLAY',
-    'XLN_RSCORE_AUTHORITY_IMPORT', 'XLN_RSCORE_AUTHORITY_RECORD',
-  ]) delete env[key];
+    'XLN_RSCORE_AUTHORITY',
+    'XLN_RSCORE_AUTHORITY_REPLAY',
+    'XLN_RSCORE_AUTHORITY_IMPORT',
+    'XLN_RSCORE_AUTHORITY_RECORD',
+  ])
+    delete env[key];
   return env;
 };
 
-const typescriptReportPath = (workers: number): string => join(
-  tsReportDir ? resolve(tsReportDir) : replayRoot,
-  `ts-w${workers}.json`,
-);
+const typescriptReportPath = (workers: number): string =>
+  join(tsReportDir ? resolve(tsReportDir) : replayRoot, `ts-w${workers}.json`);
 
 type EngineTiming = Readonly<{ engine: 'ts' | 'rust'; workers: number; wallMs: number; applyMs: number }>;
 const engineTimings: EngineTiming[] = [];
 const engineTiming = (engine: 'ts' | 'rust', workers: number, fields: Record<string, number | string>): void => {
-  const rendered = Object.entries(fields).map(([key, value]) => `${key}=${typeof value === 'number' ? value.toFixed(1) : value}`).join(' ');
+  const rendered = Object.entries(fields)
+    .map(([key, value]) => `${key}=${typeof value === 'number' ? value.toFixed(1) : value}`)
+    .join(' ');
   console.error(`HLT_MIXED_PARITY_ENGINE engine=${engine} workers=${workers} ${rendered}`);
   const wallMs = Number(fields['wallMs']);
   const applyMs = Number(fields['applyMs']);
@@ -171,9 +167,9 @@ const publishQaReplayReport = (tsTrial: Record<string, unknown>): void => {
     outboxEnvelopes: number('outboxEnvelopes'),
     elapsedMs: timing.wallMs,
     cpuMs: timing.applyMs,
-    accountInputTps: timing.wallMs > 0 ? accountInputs * 1_000 / timing.wallMs : 0,
-    accountTxTps: timing.applyMs > 0 ? accountInputs * 1_000 / timing.applyMs : 0,
-    cpuAccountTxTps: timing.applyMs > 0 ? accountInputs * 1_000 / timing.applyMs : 0,
+    accountInputTps: timing.wallMs > 0 ? (accountInputs * 1_000) / timing.wallMs : 0,
+    accountTxTps: timing.applyMs > 0 ? (accountInputs * 1_000) / timing.applyMs : 0,
+    cpuAccountTxTps: timing.applyMs > 0 ? (accountInputs * 1_000) / timing.applyMs : 0,
     finalHeight: number('finalHeight'),
     finalPendingOutbox: number('finalPendingOutbox'),
     equivalent: true,
@@ -182,21 +178,29 @@ const publishQaReplayReport = (tsTrial: Record<string, unknown>): void => {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const createdAt = Date.now();
   const path = join(directory, `${createdAt}-parity.json`);
-  writeFileSync(path, `${safeStringify({
-    schema: 'xln-hlt-hub-replay-report-v1',
-    createdAt,
-    recordingPath,
-    recordingManifestHash: artifact.runtimeRecordingManifestHash,
-    mode: 'max',
-    accountAuthority: 'parity-gate',
-    trials,
-  }, 2)}\n`, { mode: 0o600 });
+  writeFileSync(
+    path,
+    `${safeStringify(
+      {
+        schema: 'xln-hlt-hub-replay-report-v1',
+        createdAt,
+        recordingPath,
+        recordingManifestHash: artifact.runtimeRecordingManifestHash,
+        mode: 'max',
+        accountAuthority: 'parity-gate',
+        accountsRoots: w1.accountsRoots,
+        trials,
+      },
+      2,
+    )}\n`,
+    { mode: 0o600 },
+  );
   console.error(`HLT_MIXED_PARITY_QA_REPLAY_REPORT path=${path} trials=${trials.length}`);
   const bundled = publishEvidenceBundleReplay(recordingPath, `${createdAt}-parity.json`, {
     schema: 'xln-hlt-evidence-replay-v1',
     createdAt,
     gate: collectHltRunProvenance('rust'),
-    accountsRoot: w1['accountsRoot'],
+    accountsRoots: w1.accountsRoots,
     trials,
   });
   if (bundled) console.error(`HLT_MIXED_PARITY_BUNDLE_REPLAY path=${bundled}`);
@@ -212,18 +216,30 @@ const replayTypescript = async (workers: number): Promise<void> => {
   // Every frame logs apply.profile so the engine time is a full sum, not the
   // slow-frame sample the default threshold keeps.
   const environment = { ...replayEnvironment(dbRoot), XLN_RUNTIME_APPLY_PROFILE: '1' };
-  const { stdout } = runCaptured(process.execPath, [
-    'core/scripts/operations/hlt/replay/replay-hub-recording.ts',
-    '--recording', recordingPath,
-    '--wal', wal,
-    '--output', typescriptReportPath(workers),
-    '--runtime-seed-file', runtimeSeedPath,
-    '--entity-signer-label', 'h1-hub',
-    '--mode', 'max',
-    '--ts-account-workers', String(workers),
-    '--require-complete-authority-evidence',
-    '--parity-evidence',
-  ], remainingParityBudget(`ts-w${workers}`), environment);
+  const { stdout } = runCaptured(
+    process.execPath,
+    [
+      'core/scripts/operations/hlt/replay/replay-hub-recording.ts',
+      '--recording',
+      recordingPath,
+      '--wal',
+      wal,
+      '--output',
+      typescriptReportPath(workers),
+      '--runtime-seed-file',
+      runtimeSeedPath,
+      '--entity-signer-label',
+      'h1-hub',
+      '--mode',
+      'max',
+      '--ts-account-workers',
+      String(workers),
+      '--require-complete-authority-evidence',
+      '--parity-evidence',
+    ],
+    remainingParityBudget(`ts-w${workers}`),
+    environment,
+  );
   parityStage(`ts-w${workers}:done`);
   engineTiming('ts', workers, { wallMs: performance.now() - startedAt, applyMs: sumTsApplyMs(stdout) });
 };
@@ -243,9 +259,12 @@ type TsParityReport = Readonly<{
 
 const decodeTsGate = (workers: number, value: unknown): TsParityReport['gate'] => {
   const gate = requireBoundaryRecord(value, `HLT_MIXED_PARITY_TS_W${workers}_GATE_INVALID`);
-  requireExactBoundaryKeys(gate, [
-    'gitSha', 'gitDirtyFiles', 'rustBinarySha256', 'parityRecordingSha256', 'standLockToken',
-  ], [], `HLT_MIXED_PARITY_TS_W${workers}_GATE_FIELDS`);
+  requireExactBoundaryKeys(
+    gate,
+    ['gitSha', 'gitDirtyFiles', 'rustBinarySha256', 'parityRecordingSha256', 'standLockToken'],
+    [],
+    `HLT_MIXED_PARITY_TS_W${workers}_GATE_FIELDS`,
+  );
   const gitSha = gate['gitSha'];
   const gitDirtyFiles = gate['gitDirtyFiles'];
   const standLockToken = gate['standLockToken'];
@@ -261,14 +280,8 @@ const decodeTsGate = (workers: number, value: unknown): TsParityReport['gate'] =
   return { gitSha, gitDirtyFiles, standLockToken };
 };
 
-const decodeAuthorityExpectations = (
-  workers: number,
-  value: unknown,
-): TsParityReport['authorityExpectations'] => {
-  const expectations = requireBoundaryRecord(
-    value,
-    `HLT_MIXED_PARITY_TS_W${workers}_EXPECTATIONS_INVALID`,
-  );
+const decodeAuthorityExpectations = (workers: number, value: unknown): TsParityReport['authorityExpectations'] => {
+  const expectations = requireBoundaryRecord(value, `HLT_MIXED_PARITY_TS_W${workers}_EXPECTATIONS_INVALID`);
   requireExactBoundaryKeys(
     expectations,
     AUTHORITY_EXPECTATION_FIELDS,
@@ -283,7 +296,7 @@ const decodeAuthorityExpectations = (
     if (entries.length !== artifact.totals.runtimeFrames) {
       throw new Error(
         `HLT_MIXED_PARITY_TS_W${workers}_EXPECTATIONS_${name}_COUNT:` +
-        `${entries.length}:${artifact.totals.runtimeFrames}`,
+          `${entries.length}:${artifact.totals.runtimeFrames}`,
       );
     }
     return entries;
@@ -332,8 +345,7 @@ const assertTsParityReportsEqual = (w1: TsParityReport, w4: TsParityReport): voi
   }
   for (const field of ['runtimeFrames', 'effects'] as const) {
     if (
-      safeStringify(w1.authorityExpectations[field]) !==
-      safeStringify(artifact.authorityEvidence.expectations[field])
+      safeStringify(w1.authorityExpectations[field]) !== safeStringify(artifact.authorityEvidence.expectations[field])
     ) {
       throw new Error(`HLT_MIXED_PARITY_TS_SOURCE_AUTHORITY_EXPECTATIONS:${field}`);
     }
@@ -350,7 +362,7 @@ const assertResumedTsReportsMatchCurrentCode = (reports: readonly TsParityReport
     if (report.gate.gitSha !== current.gitSha || report.gate.gitDirtyFiles !== 0) {
       throw new Error(
         `HLT_MIXED_PARITY_RESUME_CODE_MISMATCH:w${[1, 4, 8][index]}:` +
-        `${report.gate.gitSha}:${report.gate.gitDirtyFiles}:${current.gitSha}`,
+          `${report.gate.gitSha}:${report.gate.gitDirtyFiles}:${current.gitSha}`,
       );
     }
     if (report.gate.standLockToken === null) {
@@ -359,62 +371,37 @@ const assertResumedTsReportsMatchCurrentCode = (reports: readonly TsParityReport
   }
 };
 
-type RustParityReport = Readonly<{
-  frames: number;
-  ingress: number;
-  egress: number;
-  directPayments: number;
-  effectDigestsCompared: number;
-  eventDigestsCompared: number;
-  localContinuationsCompared: number;
-  outboxDigestsCompared: number;
-  postStateHashesCompared: number;
-  runtimeRootsCompared: number;
-  accountsRoot: string;
-}>;
-
-const decodeRustParityReport = (value: unknown): RustParityReport => {
-  const report = requireBoundaryRecord(value, 'HLT_MIXED_PARITY_RUST_REPORT_INVALID');
-  const count = (field: keyof Omit<RustParityReport, 'accountsRoot'>): number => (
-    requireBoundaryInteger(report[field], `HLT_MIXED_PARITY_RUST_REPORT_${field}`)
-  );
-  const accountsRoot = report['accountsRoot'];
-  if (typeof accountsRoot !== 'string' || !/^0x[0-9a-f]{64}$/.test(accountsRoot)) {
-    throw new Error(`HLT_MIXED_PARITY_RUST_REPORT_ACCOUNTS_ROOT:${String(accountsRoot)}`);
-  }
-  return {
-    frames: count('frames'),
-    ingress: count('ingress'),
-    egress: count('egress'),
-    directPayments: count('directPayments'),
-    effectDigestsCompared: count('effectDigestsCompared'),
-    eventDigestsCompared: count('eventDigestsCompared'),
-    localContinuationsCompared: count('localContinuationsCompared'),
-    outboxDigestsCompared: count('outboxDigestsCompared'),
-    postStateHashesCompared: count('postStateHashesCompared'),
-    runtimeRootsCompared: count('runtimeRootsCompared'),
-    accountsRoot,
-  };
-};
-
 const replayRust = async (workers: number, tsParityReport: string): Promise<RustParityReport> => {
   const wal = join(replayRoot, `rust-w${workers}-wal`);
   parityStage(`rust-w${workers}:copy-start`);
-  await copyBoundAuthorityWal(boundWal, wal, artifact.source.binding, runtimeSeed);
+  await copyBoundAuthorityWal(nativeSourceWal, wal, artifact.source.binding, runtimeSeed);
   parityStage(`rust-w${workers}:run-start`);
   const runStartedAt = performance.now();
-  const output = run(binary, [
-    'runtime-replay',
-    '--wal', wal,
-    '--recording', recordingPath,
-    '--ts-parity-report', tsParityReport,
-    '--recording-manifest-hash', artifact.runtimeRecordingManifestHash,
-    '--runtime-seed-file', runtimeSeedPath,
-    '--runtime-signer-label', '1',
-    '--entity-signer-label', 'h1-hub',
-    '--native-db', join(replayRoot, `w${workers}`),
-    '--workers', String(workers),
-  ], remainingParityBudget(`rust-w${workers}`));
+  const output = run(
+    binary,
+    [
+      'runtime-replay',
+      '--wal',
+      wal,
+      '--recording',
+      nativeRecording,
+      '--ts-parity-report',
+      tsParityReport,
+      '--recording-manifest-hash',
+      artifact.runtimeRecordingManifestHash,
+      '--runtime-seed-file',
+      runtimeSeedPath,
+      '--runtime-signer-label',
+      '1',
+      '--entity-signer-label',
+      'h1-hub',
+      '--native-db',
+      join(replayRoot, `w${workers}`),
+      '--workers',
+      String(workers),
+    ],
+    remainingParityBudget(`rust-w${workers}`),
+  );
   parityStage(`rust-w${workers}:done`);
   const line = output.trim().split('\n').at(-1);
   const raw = safeParse(line ?? '');
@@ -452,42 +439,83 @@ if (tsOnly) {
   if (configuredTsReportDir === null) throw new Error('HLT_MIXED_PARITY_TS_ONLY_REPORT_DIR_REQUIRED');
   console.log(
     `HLT_MIXED_TS_PARITY_STAGE_OK recording=${recordingPath} frames=${artifact.totals.runtimeFrames} ` +
-    `engines=ts-w1,ts-w4,ts-w8 reportDir=${resolve(configuredTsReportDir)}`,
+      `engines=ts-w1,ts-w4,ts-w8 reportDir=${resolve(configuredTsReportDir)}`,
   );
   process.exit(0);
 }
 const tsW1ReportPath = typescriptReportPath(1);
+parityStage('rust:offline-account-import');
+const nativeCheckpoint = await importOfflineCheckpointAccounts(artifact.checkpoint, {
+  binaryPath: binary,
+  runtimeSeed,
+  entitySignerLabel: 'h1-hub',
+});
+writeFileSync(join(replayRoot, 'mesh.seed'), `${meshRoot}\n`, { mode: 0o600 });
+// LevelDB readers rewrite physical metadata. The portable imported manifest
+// therefore owns a frozen source, never a worker's subsequently opened copy.
+const nativeSourceWal = join(replayRoot, 'source-wal');
+await copyBoundAuthorityWal(boundWal, nativeSourceWal, artifact.source.binding, runtimeSeed);
+const nativeBinding = await buildHltAuthoritySourceBinding(nativeSourceWal, runtimeSeed);
+if (safeStringify(nativeBinding) !== safeStringify(artifact.source.binding)) {
+  throw new Error('HLT_MIXED_PARITY_IMPORTED_SOURCE_BINDING');
+}
+const nativeRecording = join(replayRoot, 'recording-native-import.json');
+writeHltHubRecording(nativeRecording, {
+  ...artifact,
+  checkpoint: nativeCheckpoint,
+  source: { ...artifact.source, hubWalDir: 'source-wal', meshSeedFile: 'mesh.seed' },
+});
 const w1 = await replayRust(1, tsW1ReportPath);
 const w4 = await replayRust(4, tsW1ReportPath);
 const w8 = await replayRust(8, tsW1ReportPath);
 const frames = artifact.totals.runtimeFrames;
 const frameCountFields = [
-  'frames', 'effectDigestsCompared', 'eventDigestsCompared',
+  'frames',
+  'effectDigestsCompared',
+  'eventDigestsCompared',
   'localContinuationsCompared',
-  'outboxDigestsCompared', 'postStateHashesCompared',
+  'outboxDigestsCompared',
+  'postStateHashesCompared',
 ] as const;
-for (const [label, report] of [['w1', w1], ['w4', w4], ['w8', w8]] as const) {
+for (const [label, report] of [
+  ['w1', w1],
+  ['w4', w4],
+  ['w8', w8],
+] as const) {
   for (const field of frameCountFields) {
-    if (report[field] !== frames) throw new Error(`HLT_MIXED_PARITY_COUNTER:${label}:${field}:${String(report[field])}:${frames}`);
+    if (report[field] !== frames)
+      throw new Error(`HLT_MIXED_PARITY_COUNTER:${label}:${field}:${String(report[field])}:${frames}`);
   }
   if (report['runtimeRootsCompared'] !== frames + 1) {
     throw new Error(`HLT_MIXED_PARITY_RUNTIME_ROOTS:${label}:${String(report['runtimeRootsCompared'])}:${frames + 1}`);
   }
 }
-for (const field of ['frames', 'ingress', 'egress', 'directPayments', 'accountsRoot'] as const) {
+for (const field of ['frames', 'ingress', 'egress', 'directPayments'] as const) {
   if (w1[field] !== w4[field] || w1[field] !== w8[field]) {
     throw new Error(
-      `HLT_MIXED_PARITY_RUST_WORKERS:${field}:` +
-      `${String(w1[field])}:${String(w4[field])}:${String(w8[field])}`,
+      `HLT_MIXED_PARITY_RUST_WORKERS:${field}:` + `${String(w1[field])}:${String(w4[field])}:${String(w8[field])}`,
     );
   }
 }
+for (const [workers, report] of [
+  [4, w4],
+  [8, w8],
+] as const) {
+  assertRustParityAccountsRootsEqual(
+    w1.accountsRoots,
+    report.accountsRoots,
+    `HLT_MIXED_PARITY_RUST_WORKERS:accountsRoots:w${workers}`,
+  );
+}
 // Optional throughput ladder on the same recording: XLN_HLT_REPLAY_BENCH_WORKERS="16"
 // replays both engines after the mandatory exact W1/W4/W8 verdict.
-// Every extra replay must still produce the same accountsRoot; its wall time
+// Every extra replay must still produce the same accountsRoots; its wall time
 // (HLT_MIXED_PARITY_STAGE lines) is the hub-only throughput evidence.
 const benchWorkers = String(process.env['XLN_HLT_REPLAY_BENCH_WORKERS'] ?? '')
-  .split(',').map(value => value.trim()).filter(value => value.length > 0).map(Number);
+  .split(',')
+  .map(value => value.trim())
+  .filter(value => value.length > 0)
+  .map(Number);
 for (const workers of benchWorkers) {
   if (!Number.isSafeInteger(workers) || workers < 1 || workers > 64) {
     throw new Error(`HLT_MIXED_PARITY_BENCH_WORKERS_INVALID:${workers}`);
@@ -496,9 +524,7 @@ for (const workers of benchWorkers) {
   await replayTypescript(workers);
   assertTsParityReportsEqual(tsW1, decodeTsParityReport(workers));
   const bench = await replayRust(workers, tsW1ReportPath);
-  if (bench['accountsRoot'] !== w1['accountsRoot']) {
-    throw new Error(`HLT_MIXED_PARITY_BENCH_ROOT:w${workers}:${String(bench['accountsRoot'])}:${String(w1['accountsRoot'])}`);
-  }
+  assertRustParityAccountsRootsEqual(w1.accountsRoots, bench.accountsRoots, `HLT_MIXED_PARITY_BENCH_ROOTS:w${workers}`);
 }
 {
   const raw = safeParse(readFileSync(tsW1ReportPath, 'utf8'));
@@ -509,7 +535,7 @@ for (const workers of benchWorkers) {
 const provenance = collectHltRunProvenance('rust');
 console.log(
   `HLT_MIXED_TS_RUST_PARITY_OK recording=${recordingPath} frames=${frames} ` +
-  `engines=ts-w1,ts-w4,ts-w8,rust-w1,rust-w4,rust-w8 accountsRoot=${String(w1['accountsRoot'])} ` +
-  `gitSha=${provenance.gitSha} gitDirtyFiles=${provenance.gitDirtyFiles} ` +
-  `rustBinarySha256=${String(provenance.rustBinarySha256)} standLockToken=${String(provenance.standLockToken)}`,
+    `engines=ts-w1,ts-w4,ts-w8,rust-w1,rust-w4,rust-w8 accountsRoots=${safeStringify(w1.accountsRoots)} ` +
+    `gitSha=${provenance.gitSha} gitDirtyFiles=${provenance.gitDirtyFiles} ` +
+    `rustBinarySha256=${String(provenance.rustBinarySha256)} standLockToken=${String(provenance.standLockToken)}`,
 );

@@ -41,6 +41,7 @@ import {
 } from '../../../runtime';
 import { registerEnvChangeCallback } from '../../../runtime/loop/loop-environment';
 import { ensurePendingNumberedRegistrationsResumed } from '../../../runtime/registration/numbered-registration-driver';
+import { setRuntimeDeliveryReady } from '../../../runtime/envelope/p2p-lifecycle';
 import { isLocalOperatorRequest, resolveSocketPeerAddress } from '../../../api/server/health/redaction';
 import { readRuntimeSecurityIncidentTelemetry } from '../../../runtime/observability/security-incidents';
 import { requiresLocalNodeOperator } from '../../../api/server/control/node-http-access';
@@ -2107,6 +2108,14 @@ type StartedMarketMakerServices = {
 
 const startMarketMakerServices = async (context: MarketMakerNodeContext): Promise<StartedMarketMakerServices> => {
   const { env, state, health } = context;
+  const p2p = startP2P(env, {
+    relayUrls: [resolvedArgs.relayUrl],
+    wsUrl: directWsUrl,
+    advertiseEntityIds: [...new Set([...env.state.eReplicas.values()].map(replica => replica.entityId))],
+    gossipPollMs: BOOTSTRAP_POLL_MS * 5,
+    gossipSet: 'default',
+  });
+  if (!p2p) throw new Error('P2P_START_FAILED');
   const directRuntimeWs = createDirectRuntimeWsRoute({
     runtimeId: String(env.runtimeId || ''),
     runtimeSeed: resolvedArgs.seed,
@@ -2212,24 +2221,18 @@ const startMarketMakerServices = async (context: MarketMakerNodeContext): Promis
   });
   const primaryContext = state.contexts[0];
   if (!primaryContext) throw new Error('MARKET_MAKER_PRIMARY_CONTEXT_MISSING');
+  p2p.updateConfig({ advertiseEntityIds: state.contexts.map(item => item.entityId) });
   state.phase = 'j-catchup';
   startJurisdictionWatchers(env);
   const watcherDrain = await drainJWatcherBacklog(env, async currentEnv => processRuntime(currentEnv));
   await ensurePendingNumberedRegistrationsResumed(env);
   state.externalIngressReady = true;
+  setRuntimeDeliveryReady(env, true);
+  directRuntimeWs.setReady(true);
   nodeLog.info('startup.j_catchup_ready', {
     jurisdictions: watcherDrain.length,
     cursors: watcherDrain.map(status => `${status.chainId}:${status.committedCursor}/${status.targetBlock}`),
   });
-  state.phase = 'start-p2p';
-  const p2p = startP2P(env, {
-    relayUrls: [resolvedArgs.relayUrl],
-    wsUrl: directWsUrl,
-    advertiseEntityIds: state.contexts.map(item => item.entityId),
-    gossipPollMs: BOOTSTRAP_POLL_MS * 5 || 250,
-    gossipSet: 'default',
-  });
-  if (!p2p) throw new Error('P2P_START_FAILED');
   return { server, httpDrain, primaryContext };
 };
 
@@ -2419,6 +2422,7 @@ export const runMarketMakerNode = async (): Promise<void> => {
     localSigners: localSignerLabels.map(label => ({ label })),
     trustedJurisdictionRpcBindings: resolveMeshJurisdictionRpcBindings(resolvedArgs.rpcUrl, resolveLocalApiUrl),
   });
+  setRuntimeDeliveryReady(env, false);
   nodeLog.info('signer_keys.ready', { name: resolvedArgs.name, count: localSignerLabels.length });
   // Capture the persistence oracle before the runtime loop or jurisdiction
   // watchers can apply new, legitimate inputs. A post-startup raw Entity hash
@@ -2428,9 +2432,8 @@ export const runMarketMakerNode = async (): Promise<void> => {
   const context = createMarketMakerNodeContext(env, restoredEntityStateHash);
   const { state, health: healthController, emit: emitBootstrapDebugEvent } = context;
   configureMarketMakerRuntimeLogging(env);
-  // Bootstrap the local state machine before exposing this runtime to remote
-  // entity_input delivery. Persisted hub routes can send immediately when P2P
-  // connects, so every advertised MM entity must already exist at that point.
+  // Authentication and discovery may start during bootstrap. Financial ingress
+  // stays closed until local entities exist and their J catch-up has committed.
   startRuntimeLoop(env, {
     tickDelayMs: MARKET_MAKER_RUNTIME_TICK_DELAY_MS,
     maxEntityInputsPerFrame: MARKET_MAKER_MAX_ENTITY_INPUTS_PER_RUNTIME_FRAME,

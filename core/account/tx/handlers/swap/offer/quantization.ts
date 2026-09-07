@@ -1,3 +1,4 @@
+import { UINT256_MAX } from '../../../../../protocol/boundary/integer-ranges';
 import { FINANCIAL } from '../../../../../config/constants';
 import {
   computePriceTicksForBaseQuoteDecimals,
@@ -37,13 +38,12 @@ const resolveSameJurisdictionPrice = (
       message: `Explicit priceTicks must align to step ${stepTicks.toString()} (got ${input.toString()})`,
     };
   }
-  const tickDrift = input > prepared.priceTicks
-    ? input - prepared.priceTicks
-    : prepared.priceTicks - input;
+  const tickDrift = input > prepared.priceTicks ? input - prepared.priceTicks : prepared.priceTicks - input;
   if (tickDrift > stepTicks) {
     return {
       ok: false,
-      message: `Price mismatch after deterministic quantization: expected ` +
+      message:
+        `Price mismatch after deterministic quantization: expected ` +
         `${prepared.priceTicks.toString()}, got ${input.toString()} ` +
         `(drift ${tickDrift} > step ${stepTicks})`,
     };
@@ -58,46 +58,38 @@ const validatePreparedAmounts = (
   effectiveGiveAmount: bigint,
   effectiveWantAmount: bigint,
 ): string | null => {
-  if (
-    effectiveGiveAmount < FINANCIAL.MIN_PAYMENT_AMOUNT ||
-    effectiveGiveAmount > FINANCIAL.MAX_PAYMENT_AMOUNT
-  ) {
-    return `Quantized giveAmount out of bounds: ${effectiveGiveAmount} ` +
-      `(min ${FINANCIAL.MIN_PAYMENT_AMOUNT}, max ${FINANCIAL.MAX_PAYMENT_AMOUNT})`;
+  if (effectiveGiveAmount < FINANCIAL.MIN_PAYMENT_AMOUNT || effectiveGiveAmount > UINT256_MAX) {
+    return (
+      `Quantized giveAmount out of bounds: ${effectiveGiveAmount} ` +
+      `(min ${FINANCIAL.MIN_PAYMENT_AMOUNT}, max ${UINT256_MAX})`
+    );
   }
-  if (
-    effectiveWantAmount < FINANCIAL.MIN_PAYMENT_AMOUNT ||
-    effectiveWantAmount > FINANCIAL.MAX_PAYMENT_AMOUNT
-  ) {
-    return `Quantized wantAmount out of bounds: ${effectiveWantAmount} ` +
-      `(min ${FINANCIAL.MIN_PAYMENT_AMOUNT}, max ${FINANCIAL.MAX_PAYMENT_AMOUNT})`;
+  if (effectiveWantAmount < FINANCIAL.MIN_PAYMENT_AMOUNT || effectiveWantAmount > UINT256_MAX) {
+    return (
+      `Quantized wantAmount out of bounds: ${effectiveWantAmount} ` +
+      `(min ${FINANCIAL.MIN_PAYMENT_AMOUNT}, max ${UINT256_MAX})`
+    );
   }
   const route = tx.data.crossJurisdiction;
   if (route && effectiveGiveAmount !== BigInt(route.source.amount)) {
-    return `Cross-j source amount changed by quantization: ` +
-      `route=${route.source.amount} offer=${effectiveGiveAmount}`;
+    return (
+      `Cross-j source amount changed by quantization: ` + `route=${route.source.amount} offer=${effectiveGiveAmount}`
+    );
   }
   if (route && effectiveWantAmount !== BigInt(route.target.amount)) {
-    return `Cross-j target amount changed by quantization: ` +
-      `route=${route.target.amount} offer=${effectiveWantAmount}`;
+    return (
+      `Cross-j target amount changed by quantization: ` + `route=${route.target.amount} offer=${effectiveWantAmount}`
+    );
   }
   return null;
 };
 
-export type SwapOfferAmountResult =
-  | { ok: true; prepared: PreparedSwapOfferAmounts }
-  | { ok: false; message: string };
+export type SwapOfferAmountResult = { ok: true; prepared: PreparedSwapOfferAmounts } | { ok: false; message: string };
 
-export const prepareSwapOfferAmounts = (
-  tx: SwapOfferTx,
-): SwapOfferAmountResult => {
+export const prepareSwapOfferAmounts = (tx: SwapOfferTx): SwapOfferAmountResult => {
   const { giveTokenId, wantTokenId, giveAmount, wantAmount, crossJurisdiction } = tx.data;
-  const crossMarket = crossJurisdiction
-    ? deriveCanonicalCrossJurisdictionMarket(crossJurisdiction)
-    : null;
-  const side = crossMarket
-    ? crossMarket.sourceIsBase ? 1 : 0
-    : deriveSide(giveTokenId, wantTokenId);
+  const crossMarket = crossJurisdiction ? deriveCanonicalCrossJurisdictionMarket(crossJurisdiction) : null;
+  const side = crossMarket ? (crossMarket.sourceIsBase ? 1 : 0) : deriveSide(giveTokenId, wantTokenId);
   const rawBaseAmount = side === 1 ? giveAmount : wantAmount;
   const rawQuoteAmount = side === 1 ? wantAmount : giveAmount;
   const baseTokenId = side === 1 ? giveTokenId : wantTokenId;
@@ -116,53 +108,36 @@ export const prepareSwapOfferAmounts = (
   }
   const pairPolicy = crossMarket
     ? null
-    : getSwapPairPolicyForDimensions(
-        baseTokenId,
-        quoteTokenId,
-        baseTokenDecimals,
-        quoteTokenDecimals,
-      );
+    : getSwapPairPolicyForDimensions(baseTokenId, quoteTokenId, baseTokenDecimals, quoteTokenDecimals);
   const stepTicks = BigInt(Math.max(1, pairPolicy?.priceStepTicks ?? 1));
-  const sameJurisdictionPrice = crossMarket
-    ? null
-    : resolveSameJurisdictionPrice(tx, stepTicks);
+  const sameJurisdictionPrice = crossMarket ? null : resolveSameJurisdictionPrice(tx, stepTicks);
   if (sameJurisdictionPrice && !sameJurisdictionPrice.ok) {
     return { ok: false, message: sameJurisdictionPrice.message };
   }
-  const priceTicks = sameJurisdictionPrice === null
-    ? computePriceTicksForBaseQuoteDecimals(
-        side,
-        baseTokenId,
-        quoteTokenId,
-        rawBaseAmount,
-        rawQuoteAmount,
-        baseTokenDecimals,
-        quoteTokenDecimals,
-      )
-    : sameJurisdictionPrice.priceTicks;
+  const priceTicks =
+    sameJurisdictionPrice === null
+      ? computePriceTicksForBaseQuoteDecimals(
+          side,
+          baseTokenId,
+          quoteTokenId,
+          rawBaseAmount,
+          rawQuoteAmount,
+          baseTokenDecimals,
+          quoteTokenDecimals,
+        )
+      : sameJurisdictionPrice.priceTicks;
   if (crossMarket && priceTicks <= 0n) {
     return { ok: false, message: 'Invalid cross-j price ratio or order too small after canonical quantization' };
   }
   // Cross-j pull receipts already commit the exact amounts. Only same-j intent
   // is quantized; the cross-j price is an index, never authority to resize it.
-  const quantizedBaseAmount = crossMarket
-    ? rawBaseAmount
-    : (rawBaseAmount / lotScale) * lotScale;
+  const quantizedBaseAmount = crossMarket ? rawBaseAmount : (rawBaseAmount / lotScale) * lotScale;
   const recomputedQuote = crossMarket
     ? rawQuoteAmount
-    : quoteAmountAtPriceForDecimals(
-        baseTokenDecimals,
-        quoteTokenDecimals,
-        quantizedBaseAmount,
-        priceTicks,
-      );
+    : quoteAmountAtPriceForDecimals(baseTokenDecimals, quoteTokenDecimals, quantizedBaseAmount, priceTicks);
   const effectiveGiveAmount = side === 1 ? quantizedBaseAmount : recomputedQuote;
   const effectiveWantAmount = side === 1 ? recomputedQuote : quantizedBaseAmount;
-  const amountError = validatePreparedAmounts(
-    tx,
-    effectiveGiveAmount,
-    effectiveWantAmount,
-  );
+  const amountError = validatePreparedAmounts(tx, effectiveGiveAmount, effectiveWantAmount);
   if (amountError) return { ok: false, message: amountError };
   return {
     ok: true,

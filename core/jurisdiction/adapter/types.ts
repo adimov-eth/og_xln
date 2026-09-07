@@ -19,6 +19,7 @@ export interface JAdapterConfig {
   chainId: number;
   rpcUrl?: string;                    // Required for anvil/rpc
   tronFullHost?: string;              // Required for TRON writes; defaults from rpcUrl
+  tronSolidityHost?: string;          // Native nodes expose finalized HTTP on a separate port
   tronApiKey?: string;                // Server-side TronGrid API key
   stateFile?: string;                 // Anvil: --load-state, BrowserVM: import path
   privateKey?: string;                // Signer key (required for non-dev RPC chains)

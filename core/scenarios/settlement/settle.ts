@@ -301,6 +301,12 @@ export async function runSettleScenario(existingEnv?: RuntimeReplica): Promise<R
 
   // Alice proposes settlement: deposit 100 USDC into collateral
   const depositOps: SettlementOp[] = [{ type: 'r2c', tokenId: USDC_TOKEN_ID, amount: usd(100) }];
+  const readMoveMoney = () => Promise.all([
+    jadapter.getReserves(ALICE_ID, USDC_TOKEN_ID),
+    jadapter.getReserves(HUB_ID, USDC_TOKEN_ID),
+    jadapter.getCollateral(ALICE_ID, HUB_ID, USDC_TOKEN_ID),
+  ] as const);
+  const moveBefore = await readMoveMoney();
 
   await process(env, [{
     entityId: ALICE_ID,
@@ -378,6 +384,35 @@ export async function runSettleScenario(existingEnv?: RuntimeReplica): Promise<R
   await syncChain(env, 5);
   const clearedAccount = findReplica(env, ALICE_ID)[1].state.accounts.get(HUB_ID);
   assert(!clearedAccount?.state.settlementWorkspace, 'Executed auto-approved workspace should finalize and clear', env);
+  const moveFunded = await readMoveMoney();
+  assert(moveFunded[0] === moveBefore[0] - usd(100), 'R2C must debit exactly 100 USDC reserve', env);
+  assert(moveFunded[1] === moveBefore[1], 'R2C must preserve peer reserve', env);
+  assert(moveFunded[2] === moveBefore[2] + usd(100), 'R2C must credit exactly 100 USDC collateral', env);
+
+  // Exercise the inverse through the same signed settlement and J watcher path.
+  await process(env, [{
+    entityId: ALICE_ID, signerId: ALICE_SIGNER,
+    entityTxs: [{ type: 'settle_propose', data: {
+      counterpartyEntityId: HUB_ID,
+      ops: [{ type: 'c2r', tokenId: USDC_TOKEN_ID, amount: usd(100) }],
+      memo: 'Move collateral back to reserve',
+    } }],
+  }]);
+  await converge(env, 20);
+  await process(env, [{
+    entityId: ALICE_ID, signerId: ALICE_SIGNER,
+    entityTxs: [{ type: 'settle_execute', data: { counterpartyEntityId: HUB_ID } }],
+  }]);
+  await converge(env, 20);
+  await process(env, [{ entityId: ALICE_ID, signerId: ALICE_SIGNER,
+    entityTxs: [{ type: 'j_broadcast', data: {} }],
+  }]);
+  await syncChain(env, 5);
+  const moveReturned = await readMoveMoney();
+  assert(moveReturned.every((value, index) => value === moveBefore[index]), 'R2C/C2R round trip must conserve exact chain balances', env);
+  assert(!findReplica(env, ALICE_ID)[1].state.accounts.get(HUB_ID)?.state.settlementWorkspace,
+    'C2R workspace must clear after chain finality', env);
+  console.log('MOVE_ROUND_TRIP_OK amount=100000000 reserve=exact collateral=exact peerReserve=unchanged');
 
   // ══════════════════════════════════════════════════════════════════════════════
   // TEST 4: SETTLEMENT WORKSPACE UPDATE

@@ -1,7 +1,7 @@
 import type { JBatch } from '../jurisdiction/machine/batch';
 import type { EntityProviderActionJTxData } from './entity-provider-actions';
 
-export type CertifiedRegistrationEvidence = {
+type RegistrationEvidenceBody = {
   version: 1;
   source: 'FoundationBootstrapped' | 'EntityRegistered';
   stackKey: string;
@@ -16,9 +16,6 @@ export type CertifiedRegistrationEvidence = {
   topics: string[];
   data: string;
   rawLogDigest: string;
-  receiptsRoot: string;
-  encodedReceipt: string;
-  receiptProofNodes: string[];
   receiptLogIndex: number;
   observedThroughHeight: number;
   observedTipBlockHash: string;
@@ -27,6 +24,25 @@ export type CertifiedRegistrationEvidence = {
   witnessRuntimeId: string;
   witnessSignature: string;
 };
+
+export type CertifiedRegistrationEvidence = RegistrationEvidenceBody & (
+  | {
+      receiptKind?: never;
+      receiptsRoot: string;
+      encodedReceipt: string;
+      receiptProofNodes: string[];
+    }
+  | {
+      /** Configured RPC observation; neither a receipt trie nor an execution proof. */
+      receiptKind: 'tron-rpc-attested';
+      chainId: number;
+      rpcEndpointHash: string;
+      finality: 'tron-solidified';
+      receiptsRoot?: never;
+      encodedReceipt?: never;
+      receiptProofNodes?: never;
+    }
+);
 
 export type JAdapterFailureCategory = 'transient' | 'terminal';
 
@@ -61,6 +77,8 @@ export interface JReplica {
   chainId?: number;
   /** Trusted watcher finality policy persisted with validator-local receipt evidence. */
   watcherConfirmationDepth?: number;
+  /** Native-only authority policy; absent means receipt MPT is required. */
+  watcherReceiptCommitment?: 'tron-rpc-attested';
   /** Committed token registry used by authenticated receipt filtering. */
   tokenRegistry?: Array<{
     symbol: string;

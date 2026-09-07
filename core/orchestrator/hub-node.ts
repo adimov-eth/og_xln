@@ -118,6 +118,7 @@ import {
 import { withRuntimeCommittedRead } from '../runtime/frame/lifecycle/writer-lock';
 import { registerEnvChangeCallback } from '../runtime/loop/loop-environment.ts';
 import { ensurePendingNumberedRegistrationsResumed } from '../runtime/registration/numbered-registration-driver';
+import { setRuntimeDeliveryReady } from '../runtime/envelope/p2p-lifecycle';
 import type { EntityInput } from '../entity/types';
 import type { RuntimeReplica } from '../runtime/types';
 import type { JReplica } from '../types/jurisdiction-runtime';
@@ -1692,6 +1693,12 @@ const handleAccountStatusRequest = (
         operatorStatus: env.infrastructure?.operatorStatus ?? null,
         fatalDebugPayload: env.infrastructure?.fatalDebugPayload ?? null,
         loopActive: Boolean(env.infrastructure?.loopActive),
+        framePhase: env.infrastructure?.runtimeFramePhase ?? null,
+        inFlightEntityInputs: env.infrastructure?.inFlightEntityInputs ?? 0,
+        activeStep: env.activeProcessProgressStep ?? null,
+        pendingNetworkOutputs: env.pendingNetworkOutputs?.length ?? 0,
+        pendingOutputs: env.pendingOutputs?.length ?? 0,
+        networkInbox: env.networkInbox?.length ?? 0,
         runtimeMempool: summarizeRecentRuntimeInputs(
           env.runtimeMempool?.entityInputs,
         ),
@@ -1911,15 +1918,22 @@ const createHubControlRequestHandler = (dependencies: {
                   ),
                 })
               : null;
-            const bundle = await withRuntimeCommittedRead(dependencies.state, () =>
-              buildRuntimeRecoveryBundle(dependencies.state, {
+            const bundle = await withRuntimeCommittedRead(dependencies.state, async () => {
+              const { readPersistedFrameJournal } = await import('../runtime');
+              const tip = dependencies.state.state.height > 0
+                ? await readPersistedFrameJournal(dependencies.state, dependencies.state.state.height)
+                : null;
+              if (dependencies.state.state.height > 0 && !tip) throw new Error('RECOVERY_BUNDLE_CHECKPOINT_FRAME_MISSING');
+              return buildRuntimeRecoveryBundle(dependencies.state, {
                 kind: 'snapshot',
+                frames: tip ? [tip] : [],
                 signers: [{
                   index: 1,
                   address: String(dependencies.state.runtimeId || '').toLowerCase(),
                   name: `${dependencies.nodeName} Runtime`,
                 }],
-              }));
+              });
+            });
             await writeDurableFile(outputPath, `${serializeTaggedJson(bundle)}\n`);
             if (concreteCheckpoint) {
               await writeDurableFile(
@@ -2414,6 +2428,7 @@ type HubHttpSurface = {
   httpDrain: ReturnType<typeof createHttpDrainTracker>;
   externalWalletApi: ReturnType<typeof createExternalWalletApi>;
   directInputDebug: DirectInputDebugState;
+  directRuntimeWs: ReturnType<typeof createHubDirectRuntimeRoute>;
 };
 
 const startHubHttpSurface = (
@@ -2464,7 +2479,7 @@ const startHubHttpSurface = (
     handleControl,
     stackManagerController,
   };
-  const server = Bun.serve({
+  const server = Bun.serve<NonNullable<HubServerSocket['data']>>({
     hostname: resolvedArgs.apiHost,
     port: resolvedArgs.apiPort,
     idleTimeout: 120,
@@ -2517,7 +2532,7 @@ const startHubHttpSurface = (
       },
     },
   });
-  return { server, httpDrain, externalWalletApi, directInputDebug };
+  return { server, httpDrain, externalWalletApi, directInputDebug, directRuntimeWs };
 };
 
 type HubMeshBootstrapController = {
@@ -2720,6 +2735,7 @@ const run = async (): Promise<void> => {
       resolveLocalApiUrl,
     ),
   });
+  setRuntimeDeliveryReady(env, false);
   nodeLog.info('signer_keys.ready', { name: resolvedArgs.name, count: localSignerLabels.length });
   if (restoredRuntimeRouteRelocated(env.gossip.getProfiles(), {
     runtimeId: String(env.runtimeId || ''),
@@ -2751,6 +2767,16 @@ const run = async (): Promise<void> => {
   const bootstrapClockMs = (): number => getPerfMs();
   live.meshLoopProgress = beginBootstrapProgress(bootstrapClockMs());
   const meshController = createHubMeshBootstrapController(live, bootstrapClockMs);
+  const p2pConnectStartedAt = startTiming('p2p_connect');
+  live.p2p = startP2P(env, {
+    relayUrls: [resolvedArgs.relayUrl],
+    wsUrl: directWsUrl,
+    advertiseEntityIds: [...new Set([...env.state.eReplicas.values()].map(replica => replica.entityId))],
+    gossipPollMs: BOOTSTRAP_POLL_MS * 5,
+    gossipSet: 'default',
+  });
+  if (!live.p2p) throw new Error('P2P_START_FAILED');
+  finishTiming('p2p_connect', p2pConnectStartedAt);
   const httpSurface = startHubHttpSurface(
     live,
     faucetRelayStore,
@@ -2768,6 +2794,7 @@ const run = async (): Promise<void> => {
   const bootstrapped = await bootstrapHubJurisdictions(env, jurisdiction);
   live.bootstrap = bootstrapped.primaryBootstrap;
   live.hubBootstraps.push(...bootstrapped.entries);
+  live.p2p.updateConfig({ advertiseEntityIds: live.hubBootstraps.map(entry => entry.entityId) });
   finishTiming('hub_bootstrap', hubBootstrapStartedAt);
 
   const primaryJurisdictionName = jurisdiction.name;
@@ -2802,22 +2829,12 @@ const run = async (): Promise<void> => {
   await restoreHubBrainVaultOwner(live, brainVaultOwner);
   await ensurePendingNumberedRegistrationsResumed(env);
   live.externalIngressReady = true;
+  setRuntimeDeliveryReady(env, true);
+  httpSurface.directRuntimeWs.setReady(true);
   nodeLog.info('startup.j_catchup_ready', {
     jurisdictions: watcherDrain.length,
     cursors: watcherDrain.map(status => `${status.chainId}:${status.committedCursor}/${status.targetBlock}`),
   });
-
-  const p2pConnectStartedAt = startTiming('p2p_connect');
-  live.p2p = startP2P(env, {
-    relayUrls: [resolvedArgs.relayUrl],
-    wsUrl: directWsUrl,
-    advertiseEntityIds: live.hubBootstraps.map((entry) => entry.entityId),
-    gossipPollMs: BOOTSTRAP_POLL_MS * 5,
-    // A hub forwards for everyone, so it keeps the whole relay view.
-    gossipSet: 'default',
-  });
-  if (!live.p2p) throw new Error('P2P_START_FAILED');
-  finishTiming('p2p_connect', p2pConnectStartedAt);
 
   meshController.start(jurisdiction, tokenCatalog, httpSurface.externalWalletApi);
 

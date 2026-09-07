@@ -1,5 +1,5 @@
 import { validateRuntimeAdapterCommandMarker } from '../command/frontier';
-import { normalizeJurisdictionImportRequest } from '../j-submit/jurisdiction-import';
+import { normalizeJurisdictionImportRequest } from '../j-submit/jurisdiction-import-request';
 import type { JurisdictionImportRequest, RuntimeTx } from '../types';
 import { validateBrowserVmState } from './browser';
 import { validateJObservationData } from './j-observation';
@@ -211,7 +211,7 @@ const validateCompleteImport = (value: unknown, code: string): void => {
     'importId', 'requestHash', 'name', 'chainId', 'ticker', 'rpcs', 'blockNumber', 'stateRoot',
     'watcherConfirmationDepth', 'entityProviderDeploymentBlock', 'contracts',
     'tokenRegistry',
-  ], ['blockTimeMs', 'browserVMState'], `${code}_FIELDS`);
+  ], ['blockTimeMs', 'browserVMState', 'watcherReceiptCommitment'], `${code}_FIELDS`);
   for (const field of ['importId', 'requestHash', 'name', 'ticker', 'blockNumber']) {
     requireString(data[field], `${code}_${field.toUpperCase()}`);
   }
@@ -220,6 +220,9 @@ const validateCompleteImport = (value: unknown, code: string): void => {
   if (!/^(0|[1-9][0-9]*)$/.test(String(data['blockNumber']))) throw new Error(`${code}_BLOCK_NUMBER`);
   if (data['stateRoot'] !== null) requireBytes32(data['stateRoot'], `${code}_STATE_ROOT`);
   requireBoundaryInteger(data['watcherConfirmationDepth'], `${code}_CONFIRMATION_DEPTH`);
+  if (data['watcherReceiptCommitment'] !== undefined && data['watcherReceiptCommitment'] !== 'tron-rpc-attested') {
+    throw new Error(`${code}_RECEIPT_COMMITMENT`);
+  }
   requireBoundaryInteger(data['entityProviderDeploymentBlock'], `${code}_DEPLOYMENT_BLOCK`, 1);
   const tokenRegistry = requireArray(data['tokenRegistry'], `${code}_TOKEN_REGISTRY`);
   for (const [index, raw] of tokenRegistry.entries()) {

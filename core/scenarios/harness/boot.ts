@@ -314,7 +314,9 @@ export async function ensureJAdapter(
   // config could name an endpoint the adapter was not talking to — and a second
   // jurisdiction in one process (the whole point of a cross-j scenario) was
   // impossible to express.
-  const rpcUrl = options?.rpcUrl || process.env['ANVIL_RPC'] || getDefaultAnvilRpcUrl();
+  const rpcUrl = actualMode === 'browservm'
+    ? resolveScenarioJurisdictionAddress(actualMode)
+    : options?.rpcUrl || process.env['ANVIL_RPC'] || getDefaultAnvilRpcUrl();
   // A jurisdiction is identified by (chainId, depository address). Two fresh
   // anvils deploy the identical deterministic addresses, so a second stack that
   // reuses 31337 is indistinguishable from the first and the event watcher

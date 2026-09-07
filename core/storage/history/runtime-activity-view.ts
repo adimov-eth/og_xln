@@ -43,8 +43,7 @@ const repairFlights = new Map<string, Promise<void>>();
 const closingPaths = new Set<string>();
 const storageLog = createStructuredLogger('runtime.storage');
 
-const resolveRuntimeActivityViewPath = (env: RuntimeReplica): string =>
-  `${resolveDbPath(env, 'core')}-history-views`;
+const resolveRuntimeActivityViewPath = (env: RuntimeReplica): string => `${resolveDbPath(env, 'core')}-history-views`;
 
 const heightKey = (tag: number, height: number): Buffer => {
   const key = Buffer.allocUnsafe(9);
@@ -88,7 +87,9 @@ const withRuntimeActivityViewLock = async <T>(
   if (closingPaths.has(path)) throw new Error(`RUNTIME_ACTIVITY_VIEW_CLOSING:${path}`);
   const previous = operationTails.get(path) ?? Promise.resolve();
   let release!: () => void;
-  const hold = new Promise<void>(resolve => { release = resolve; });
+  const hold = new Promise<void>(resolve => {
+    release = resolve;
+  });
   const tail = previous.catch(() => {}).then(() => hold);
   operationTails.set(path, tail);
   await previous.catch(() => {});
@@ -111,12 +112,12 @@ const readOptional = async (db: Level<Buffer, Buffer>, key: Buffer): Promise<unk
 
 const validateHead = (value: unknown): RuntimeActivityViewHead => {
   const record = requireBoundaryRecord(value, 'RUNTIME_ACTIVITY_VIEW_HEAD_INVALID');
-  requireExactBoundaryKeys(record, [
-    'schemaVersion',
-    'latestHeight',
-    'availableFromHeight',
-    'unavailableThroughHeight',
-  ], [], 'RUNTIME_ACTIVITY_VIEW_HEAD_FIELDS_INVALID');
+  requireExactBoundaryKeys(
+    record,
+    ['schemaVersion', 'latestHeight', 'availableFromHeight', 'unavailableThroughHeight'],
+    [],
+    'RUNTIME_ACTIVITY_VIEW_HEAD_FIELDS_INVALID',
+  );
   if (record['schemaVersion'] !== VIEW_SCHEMA_VERSION) {
     throw new Error(`RUNTIME_ACTIVITY_VIEW_SCHEMA_MISMATCH:${String(record['schemaVersion'])}`);
   }
@@ -124,13 +125,21 @@ const validateHead = (value: unknown): RuntimeActivityViewHead => {
     schemaVersion: VIEW_SCHEMA_VERSION,
     latestHeight: requireBoundaryInteger(record['latestHeight'], 'RUNTIME_ACTIVITY_VIEW_HEAD_HEIGHT_INVALID'),
     availableFromHeight: requireBoundaryInteger(record['availableFromHeight'], 'RUNTIME_ACTIVITY_VIEW_FLOOR_INVALID'),
-    unavailableThroughHeight: requireBoundaryInteger(record['unavailableThroughHeight'], 'RUNTIME_ACTIVITY_VIEW_UNAVAILABLE_INVALID'),
+    unavailableThroughHeight: requireBoundaryInteger(
+      record['unavailableThroughHeight'],
+      'RUNTIME_ACTIVITY_VIEW_UNAVAILABLE_INVALID',
+    ),
   };
 };
 
 const validateMarker = (value: unknown): RuntimeActivityFrameMarker => {
   const record = requireBoundaryRecord(value, 'RUNTIME_ACTIVITY_VIEW_MARKER_INVALID');
-  requireExactBoundaryKeys(record, ['height', 'timestamp', 'frameHash', 'eventCount'], [], 'RUNTIME_ACTIVITY_VIEW_MARKER_FIELDS_INVALID');
+  requireExactBoundaryKeys(
+    record,
+    ['height', 'timestamp', 'frameHash', 'eventCount'],
+    [],
+    'RUNTIME_ACTIVITY_VIEW_MARKER_FIELDS_INVALID',
+  );
   const frameHash = String(record['frameHash'] ?? '');
   if (!/^0x[0-9a-f]{64}$/i.test(frameHash)) throw new Error(`RUNTIME_ACTIVITY_VIEW_FRAME_HASH_INVALID:${frameHash}`);
   return {
@@ -143,7 +152,12 @@ const validateMarker = (value: unknown): RuntimeActivityFrameMarker => {
 
 const validateEvent = (value: unknown, height: number, ordinal: number): FrameLogEntry => {
   const record = requireBoundaryRecord(value, `RUNTIME_ACTIVITY_VIEW_EVENT_INVALID:${height}:${ordinal}`);
-  requireExactBoundaryKeys(record, ['id', 'timestamp', 'level', 'category', 'message'], ['entityId', 'data'], `RUNTIME_ACTIVITY_VIEW_EVENT_FIELDS_INVALID:${height}:${ordinal}`);
+  requireExactBoundaryKeys(
+    record,
+    ['id', 'timestamp', 'level', 'category', 'message'],
+    ['entityId', 'data'],
+    `RUNTIME_ACTIVITY_VIEW_EVENT_FIELDS_INVALID:${height}:${ordinal}`,
+  );
   if (record['level'] !== 'info' || record['category'] !== 'system') {
     throw new Error(`RUNTIME_ACTIVITY_VIEW_EVENT_KIND_INVALID:${height}:${ordinal}`);
   }
@@ -158,12 +172,10 @@ const validateEvent = (value: unknown, height: number, ordinal: number): FrameLo
   if (entityId !== undefined && typeof entityId !== 'string') {
     throw new Error(`RUNTIME_ACTIVITY_VIEW_EVENT_ENTITY_INVALID:${height}:${ordinal}`);
   }
-  const data = record['data'] === undefined
-    ? undefined
-    : requireBoundaryRecord(
-      record['data'],
-      `RUNTIME_ACTIVITY_VIEW_EVENT_DATA_INVALID:${height}:${ordinal}`,
-    );
+  const data =
+    record['data'] === undefined
+      ? undefined
+      : requireBoundaryRecord(record['data'], `RUNTIME_ACTIVITY_VIEW_EVENT_DATA_INVALID:${height}:${ordinal}`);
   if (typeof record['message'] !== 'string' || !record['message']) {
     throw new Error(`RUNTIME_ACTIVITY_VIEW_EVENT_MESSAGE_INVALID:${height}:${ordinal}`);
   }
@@ -178,23 +190,19 @@ const validateEvent = (value: unknown, height: number, ordinal: number): FrameLo
   };
 };
 
-const readRuntimeActivityViewHead = async (
-  db: Level<Buffer, Buffer>,
-): Promise<RuntimeActivityViewHead | null> => {
+const readRuntimeActivityViewHead = async (db: Level<Buffer, Buffer>): Promise<RuntimeActivityViewHead | null> => {
   const value = await readOptional(db, KEY_VIEW_HEAD);
   return value === null ? null : validateHead(value);
 };
 
-const deterministicEvents = (
-  frame: RuntimeFrame,
-  events: readonly FrameLogEntry[],
-): FrameLogEntry[] => events
-  .filter(event => event.level === 'info' && event.category === 'system')
-  .map((event, ordinal) => ({
-    ...structuredClone(event),
-    id: ordinal,
-    timestamp: frame.timestamp,
-  }));
+const deterministicEvents = (frame: RuntimeFrame, events: readonly FrameLogEntry[]): FrameLogEntry[] =>
+  events
+    .filter(event => event.level === 'info' && event.category === 'system')
+    .map((event, ordinal) => ({
+      ...structuredClone(event),
+      id: ordinal,
+      timestamp: frame.timestamp,
+    }));
 
 const assertBounded = (value: Buffer, code: string): void => {
   if (value.byteLength >= MAX_STORAGE_RECORD_BYTES) {
@@ -233,12 +241,15 @@ const appendFrame = async (
     assertBounded(value, `RUNTIME_ACTIVITY_VIEW_EVENT_TOO_LARGE:${frame.height}:${ordinal}`);
     batch.put(eventKey(frame.height, ordinal), value);
   }
-  batch.put(KEY_VIEW_HEAD, encodeBuffer({
-    schemaVersion: VIEW_SCHEMA_VERSION,
-    latestHeight: frame.height,
-    availableFromHeight: head?.availableFromHeight || frame.height,
-    unavailableThroughHeight: head?.unavailableThroughHeight ?? 0,
-  } satisfies RuntimeActivityViewHead));
+  batch.put(
+    KEY_VIEW_HEAD,
+    encodeBuffer({
+      schemaVersion: VIEW_SCHEMA_VERSION,
+      latestHeight: frame.height,
+      availableFromHeight: head?.availableFromHeight || frame.height,
+      unavailableThroughHeight: head?.unavailableThroughHeight ?? 0,
+    } satisfies RuntimeActivityViewHead),
+  );
   await batch.write();
   return 'written';
 };
@@ -247,59 +258,79 @@ export const appendRuntimeActivityViewFrame = (
   env: RuntimeReplica,
   frame: RuntimeFrame,
   events: readonly FrameLogEntry[],
-): Promise<'written' | 'idempotent' | 'gap'> =>
-  withRuntimeActivityViewLock(env, db => appendFrame(db, frame, events));
+): Promise<'written' | 'idempotent' | 'gap'> => withRuntimeActivityViewLock(env, db => appendFrame(db, frame, events));
 
-export const resetRuntimeActivityViewAtFloor = (
-  env: RuntimeReplica,
-  unavailableThroughHeight: number,
-): Promise<void> => withRuntimeActivityViewLock(env, async db => {
+const resetAtFloor = async (db: Level<Buffer, Buffer>, unavailableThroughHeight: number): Promise<void> => {
   const floor = requireBoundaryInteger(unavailableThroughHeight, 'RUNTIME_ACTIVITY_VIEW_RESET_FLOOR_INVALID');
   await db.clear();
-  await db.put(KEY_VIEW_HEAD, encodeBuffer({
-    schemaVersion: VIEW_SCHEMA_VERSION,
-    latestHeight: floor,
-    availableFromHeight: 0,
-    unavailableThroughHeight: floor,
-  } satisfies RuntimeActivityViewHead));
-});
+  await db.put(
+    KEY_VIEW_HEAD,
+    encodeBuffer({
+      schemaVersion: VIEW_SCHEMA_VERSION,
+      latestHeight: floor,
+      availableFromHeight: 0,
+      unavailableThroughHeight: floor,
+    } satisfies RuntimeActivityViewHead),
+  );
+};
 
-export const readRuntimeActivityViewFrame = (
-  env: RuntimeReplica,
+const readFrame = async (
+  db: Level<Buffer, Buffer>,
   height: number,
-): Promise<Readonly<{ marker: RuntimeActivityFrameMarker; logs: FrameLogEntry[] }> | null> =>
-  withRuntimeActivityViewLock(env, async db => {
-    const head = await readRuntimeActivityViewHead(db);
-    if (!head || height > head.latestHeight) return null;
-    if (height <= head.unavailableThroughHeight) {
-      throw new Error(`RUNTIME_ACTIVITY_VIEW_UNAVAILABLE:height=${height}:through=${head.unavailableThroughHeight}`);
-    }
-    const raw = await readOptional(db, heightKey(KEY_FRAME_MARKER, height));
-    if (raw === null) throw new Error(`RUNTIME_ACTIVITY_VIEW_MARKER_MISSING:${height}`);
-    const marker = validateMarker(raw);
-    if (marker.height !== height) throw new Error(`RUNTIME_ACTIVITY_VIEW_MARKER_HEIGHT_MISMATCH:${height}:${marker.height}`);
-    const logs: FrameLogEntry[] = [];
-    for (let ordinal = 0; ordinal < marker.eventCount; ordinal += 1) {
-      const event = await readOptional(db, eventKey(height, ordinal));
-      if (event === null) throw new Error(`RUNTIME_ACTIVITY_VIEW_EVENT_MISSING:${height}:${ordinal}`);
-      logs.push(validateEvent(event, height, ordinal));
-    }
-    return { marker, logs };
-  });
+): Promise<Readonly<{ marker: RuntimeActivityFrameMarker; logs: FrameLogEntry[] }> | null> => {
+  const head = await readRuntimeActivityViewHead(db);
+  if (!head || height > head.latestHeight) return null;
+  if (height <= head.unavailableThroughHeight) {
+    throw new Error(`RUNTIME_ACTIVITY_VIEW_UNAVAILABLE:height=${height}:through=${head.unavailableThroughHeight}`);
+  }
+  const raw = await readOptional(db, heightKey(KEY_FRAME_MARKER, height));
+  if (raw === null) throw new Error(`RUNTIME_ACTIVITY_VIEW_MARKER_MISSING:${height}`);
+  const marker = validateMarker(raw);
+  if (marker.height !== height)
+    throw new Error(`RUNTIME_ACTIVITY_VIEW_MARKER_HEIGHT_MISMATCH:${height}:${marker.height}`);
+  const logs: FrameLogEntry[] = [];
+  for (let ordinal = 0; ordinal < marker.eventCount; ordinal += 1) {
+    const event = await readOptional(db, eventKey(height, ordinal));
+    if (event === null) throw new Error(`RUNTIME_ACTIVITY_VIEW_EVENT_MISSING:${height}:${ordinal}`);
+    logs.push(validateEvent(event, height, ordinal));
+  }
+  return { marker, logs };
+};
 
-export const readRuntimeActivityViewStatus = (
-  env: RuntimeReplica,
-): Promise<RuntimeActivityViewHead | null> =>
+export const resetRuntimeActivityViewAtFloor = (env: RuntimeReplica, unavailableThroughHeight: number): Promise<void> =>
+  withRuntimeActivityViewLock(env, db => resetAtFloor(db, unavailableThroughHeight));
+
+export const readRuntimeActivityViewFrame = (env: RuntimeReplica, height: number): ReturnType<typeof readFrame> =>
+  withRuntimeActivityViewLock(env, db => readFrame(db, height));
+
+export type RuntimeActivityViewAccess = Readonly<{
+  readStatus: () => Promise<RuntimeActivityViewHead | null>;
+  readFrame: (height: number) => ReturnType<typeof readFrame>;
+  resetAtFloor: (height: number) => Promise<void>;
+  appendFrame: (frame: RuntimeFrame, events: readonly FrameLogEntry[]) => ReturnType<typeof appendFrame>;
+}>;
+
+export const readRuntimeActivityViewStatus = (env: RuntimeReplica): Promise<RuntimeActivityViewHead | null> =>
   withRuntimeActivityViewLock(env, readRuntimeActivityViewHead);
 
 export const withRuntimeActivityRepairFlight = async (
   env: RuntimeReplica,
-  repair: () => Promise<void>,
+  repair: (view: RuntimeActivityViewAccess) => Promise<void>,
 ): Promise<void> => {
   const path = resolveRuntimeActivityViewPath(env);
   const existing = repairFlights.get(path);
   if (existing) return existing;
-  const flight = repair().finally(() => {
+  // A repair may replace the entire disposable view. Its HEAD decision and
+  // replacement share the append queue: a newer committed append cannot be
+  // mistaken for corruption and erased while this reader awaits WAL I/O.
+  const flight = withRuntimeActivityViewLock(env, db =>
+    repair({
+      readStatus: () => readRuntimeActivityViewHead(db),
+      readFrame: height => readFrame(db, height),
+      resetAtFloor: height => resetAtFloor(db, height),
+      appendFrame: (frame, events) => appendFrame(db, frame, events),
+    }),
+  ).finally(() => {
     if (repairFlights.get(path) === flight) repairFlights.delete(path);
   });
   repairFlights.set(path, flight);

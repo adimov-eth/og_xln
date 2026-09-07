@@ -101,6 +101,7 @@ const TRANSPORT_FAILURE_CATEGORIES: Record<string, RuntimeFailureCategory> = {
 const FAUCET_FAILURE_CATEGORIES: Record<string, RuntimeFailureCategory> = {
   FAUCET_ACCOUNT_NOT_OPEN: 'ExpectedEmpty',
   FAUCET_HUB_REQUIRED: 'Contradiction',
+  FAUCET_HUBS_EMPTY: 'TransientRace',
   FAUCET_INSUFFICIENT_OUT_CAPACITY: 'ExpectedEmpty',
   FAUCET_INVALID_HUB_ENTITY_ID: 'Contradiction',
   FAUCET_INVALID_TOKEN_ID: 'Contradiction',

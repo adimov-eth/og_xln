@@ -8,6 +8,9 @@ const CHECKED_EXTENSION = /\.(?:cjs|js|json|md|mjs|py|sol|svelte|ts|tsx)$/u;
 // implementation or its canonical documentation. Keep this list exact: a
 // directory-wide exemption would let Russian comments leak into source code.
 const MULTILINGUAL_FILES = new Set([
+  // Preserve the original external-review quotations, including their language.
+  'design/review/2026-09-06-b02/openrouter_deepseek_deepseek-v4-flash-vision-exp.desktop-dark.json',
+  'design/review/2026-09-06-b02/summary.md',
   'debates/server.ts',
   'debates/tests/viral-surface.spec.ts',
   'frontend/src/lib/ai/xln-guide-context.ts',

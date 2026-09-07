@@ -99,6 +99,9 @@ const assertJAdapterMatchesReplica = async (
       ),
     );
   }
+  if ((jReplica.watcherReceiptCommitment === 'tron-rpc-attested') !== (jadapter.mode === 'tron')) {
+    await rejectMismatchedJAdapter(jadapter, new Error(`RESTORE_JADAPTER_RECEIPT_COMMITMENT_MISMATCH:${name}`));
+  }
   if (jadapter.mode !== 'browservm') return;
   const captureStateRoot = jadapter.captureStateRoot;
   if (!captureStateRoot) {
@@ -157,7 +160,7 @@ export const ensureLiveJAdapterForReplica = async (
   if (!hasRpcs && !options.allowBrowserVm) return null;
 
   const adapterConfig: JAdapterConfig = {
-    mode: hasRpcs ? 'rpc' : 'browservm',
+    mode: hasRpcs ? (jReplica.watcherReceiptCommitment === 'tron-rpc-attested' ? 'tron' : 'rpc') : 'browservm',
     chainId,
     ...(hasRpcs ? { watchOnly: true } : {}),
   };

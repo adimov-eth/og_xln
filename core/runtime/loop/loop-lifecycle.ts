@@ -8,7 +8,6 @@ import {
 } from './loop-envelope.ts';
 import {
   generateHookPings,
-  getEarliestWallClockDueTimestamp,
   getRemainingRuntimeFrameDelayMs,
   getRuntimeFramePeriodMs,
 } from './loop-work.ts';
@@ -93,11 +92,14 @@ const waitForNextRuntimeWork = async (
     Math.max(0, nextDueAt - getWallClockMs()),
   );
   if (waitResult !== 'timeout') return;
-  const dueTimestamp = getEarliestWallClockDueTimestamp(env) ?? nextDueAt;
+  // A timer observes overdue work now; its historical deadline remains wake
+  // metadata. Reusing the deadline as ingress time replays every missed retry
+  // after downtime and can starve a dispute whose real timeout has passed.
+  const observedAt = getWallClockMs();
   const mempool = requireRuntimeMempool(env);
   mempool.queuedAt =
-    mempool.queuedAt === undefined ? dueTimestamp : Math.max(mempool.queuedAt, dueTimestamp);
-  generateHookPings(env, dueTimestamp, dueTimestamp);
+    mempool.queuedAt === undefined ? observedAt : Math.max(mempool.queuedAt, observedAt);
+  generateHookPings(env, observedAt, observedAt);
 };
 
 const processAvailableRuntimeWork = async (

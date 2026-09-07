@@ -1,6 +1,6 @@
 import type { AccountTx } from '../../../../types/account';
 import type { AccountDraftReplica } from '../../../state/account-state-draft';
-import { commitDeltaDraft, createDeltaDraft } from '../../delta-utils';
+import { commitDeltaDraft, createDeltaDraft, getOffdeltaRepresentationError } from '../../delta-utils';
 import { deriveDelta } from '../../../utils';
 import { deriveTransferOffdeltaChange } from '../../../../protocol/transform/delta-movement';
 import type { ApplyAccountTxResult } from '../../apply-types';
@@ -32,10 +32,7 @@ export function handleRebalanceRefund(
   const outstanding = feeState.feePaidUpfront - refundedAmount;
   if (outstanding <= 0n) throw new Error(`REBALANCE_REFUND_STATE_CORRUPT:${requestId}`);
   if (amount > outstanding) {
-    return accountTxValidationRejected(
-      `rebalance_refund: amount ${amount} exceeds outstanding ${outstanding}`,
-      [],
-    );
+    return accountTxValidationRejected(`rebalance_refund: amount ${amount} exceeds outstanding ${outstanding}`, []);
   }
   const feeDelta = account.state.deltas.get(feeState.feeTokenId);
   if (!feeDelta) {
@@ -43,14 +40,13 @@ export function handleRebalanceRefund(
   }
   const capacity = deriveDelta(feeDelta, byLeft).outCapacity;
   if (amount > capacity) {
-    return accountTxValidationRejected(
-      `rebalance_refund: insufficient capacity (${capacity} < ${amount})`,
-      [],
-    );
+    return accountTxValidationRejected(`rebalance_refund: insufficient capacity (${capacity} < ${amount})`, []);
   }
 
   const nextFeeDelta = createDeltaDraft(account.state, feeState.feeTokenId);
   nextFeeDelta.offdelta += deriveTransferOffdeltaChange(byLeft, amount);
+  const representationError = getOffdeltaRepresentationError(account.state, nextFeeDelta);
+  if (representationError) return accountTxValidationRejected(representationError, []);
   commitDeltaDraft(account.state, nextFeeDelta);
   const nextRefunded = refundedAmount + amount;
   if (nextRefunded === feeState.feePaidUpfront) {
@@ -67,7 +63,5 @@ export function handleRebalanceRefund(
       refund: { reason, refundedAmount: nextRefunded },
     });
   }
-  return accountTxApplied([
-    `Rebalance refund ${requestId}: ${nextRefunded}/${feeState.feePaidUpfront}`,
-  ]);
+  return accountTxApplied([`Rebalance refund ${requestId}: ${nextRefunded}/${feeState.feePaidUpfront}`]);
 }

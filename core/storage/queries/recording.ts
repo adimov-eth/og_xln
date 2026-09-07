@@ -68,6 +68,13 @@ export const createPersistenceRecordingQueries = (
   entityQueries: EntityQueries,
   historyQueries: HistoryQueries,
 ) => {
+  const readCheckpointFrames = async (env: RuntimeReplica, height: number) => {
+    if (height === 0) return [];
+    const frame = await historyQueries.readPersistedFrameJournal(env, height);
+    if (!frame) throw new Error(`RECOVERY_BUNDLE_CHECKPOINT_FRAME_MISSING:${height}`);
+    return [frame];
+  };
+
   const readPersistedCheckpointSnapshot = async (
     env: RuntimeReplica,
     height: number,
@@ -90,7 +97,7 @@ export const createPersistenceRecordingQueries = (
     }
     if (latestHeight <= 0) {
       return buildRuntimeRecording([
-        buildRuntimeRecoveryBundle(env, { ...options, createdAt, kind: 'snapshot' }),
+        buildRuntimeRecoveryBundle(env, { ...options, createdAt, kind: 'snapshot', frames: [] }),
       ], createdAt);
     }
 
@@ -109,12 +116,15 @@ export const createPersistenceRecordingQueries = (
     }
     if (!checkpoint) {
       return buildRuntimeRecording([
-        buildRuntimeRecoveryBundle(env, { ...options, createdAt, kind: 'snapshot' }),
+        buildRuntimeRecoveryBundle(env, {
+          ...options, createdAt, kind: 'snapshot', frames: await readCheckpointFrames(env, latestHeight),
+        }),
       ], createdAt);
     }
     const snapshotBundle = buildRuntimeRecoveryCheckpointBundle(env, {
       ...options,
       checkpoint,
+      frames: await readCheckpointFrames(env, baseHeight),
       createdAt,
     });
     if (baseHeight === latestHeight) return buildRuntimeRecording([snapshotBundle], createdAt);

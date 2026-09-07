@@ -4,6 +4,8 @@ import { createJAdapter } from '../../jurisdiction/adapter';
 import type { JAdapter, JTokenInfo } from '../../jurisdiction/adapter/types';
 import { resolveJurisdictionsJsonPath } from '../../jurisdiction/adapter/jurisdictions-path';
 import { computeJurisdictionsNetworkVersion } from '../../jurisdiction/adapter/kernel/jurisdictions-version';
+import { decodeJurisdictionTransport } from '../../jurisdiction/adapter/kernel/jurisdiction-loader';
+import { DEV_CHAIN_IDS } from '../../jurisdiction/adapter/chain-ids';
 import { normalizeLoopbackUrl, toPublicRpcUrl } from '../../network/p2p/loopback-url';
 import { requireBoundaryRecord } from '../../protocol/boundary-validation';
 import {
@@ -56,6 +58,7 @@ const decodeHubJurisdictionEntry = (value: unknown, code: string): HubJurisdicti
   }
   return {
     ...entry,
+    ...decodeJurisdictionTransport(entry, code),
     ...(name === undefined ? {} : { name }),
     ...(chainId === undefined ? {} : { chainId: Number(chainId) }),
     ...(deploymentBlock === undefined ? {} : { entityProviderDeploymentBlock: Number(deploymentBlock) }),
@@ -180,6 +183,8 @@ const requireLocalAnvilRpcUrl = (rawUrl: string): string => {
 
 const resetLocalAnvilRpc = async (rawUrl: string): Promise<void> => {
   const rpcUrl = requireLocalAnvilRpcUrl(rawUrl);
+  const chainId = await readRpcChainId(rpcUrl);
+  if (!DEV_CHAIN_IDS.has(chainId)) throw new Error(`LOCAL_ANVIL_RESET_CHAIN_FORBIDDEN:${chainId}`);
   const response = await fetch(rpcUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -201,7 +206,27 @@ export const resetLocalAnvilChains = async (
       .filter(Boolean),
   );
   if (rpcUrls.size === 0) throw new Error('LOCAL_ANVIL_RESET_RPC_MISSING');
-  await Promise.all([...rpcUrls].map(resetLocalAnvilRpc));
+  const configPath = existsSync(config.shardJurisdictionsPath)
+    ? config.shardJurisdictionsPath
+    : resolveJurisdictionsJsonPath();
+  const payload = existsSync(configPath)
+    ? parseShardJurisdictions(readFileSync(configPath, 'utf8'), 'LOCAL_ANVIL_RESET_CONFIG_INVALID')
+    : {};
+  const nativeUrls = new Set<string>();
+  for (const jurisdiction of Object.values(payload.jurisdictions ?? {})) {
+    if (jurisdiction.mode !== 'tron') continue;
+    const configured = { ...config.rpcUrls, ...(config.rpc2Url ? { 2: config.rpc2Url } : {}) };
+    const jurisdictionRpc = String(jurisdiction.rpc || '').trim();
+    for (const [index, rpcUrl] of Object.entries(configured)) {
+      if (jurisdictionRpc === rpcPublicPath(Number(index)) ||
+          normalizeLoopbackUrl(jurisdictionRpc) === normalizeLoopbackUrl(rpcUrl)) {
+        nativeUrls.add(normalizeLoopbackUrl(rpcUrl));
+      }
+    }
+  }
+  await Promise.all([...rpcUrls]
+    .filter(rpcUrl => !nativeUrls.has(normalizeLoopbackUrl(rpcUrl)))
+    .map(resetLocalAnvilRpc));
 };
 
 const resolveRepoJurisdictionsJsonPath = (): string => {
@@ -496,7 +521,6 @@ export const provisionPrimaryRpcJurisdictionStack = async (
 export const deployRpc2JurisdictionStack = async (config: OrchestratorJurisdictionsConfig): Promise<void> => {
   if (!config.rpc2Url) return;
   const startedAt = Date.now();
-  const chainId = await readRpcChainId(config.rpc2Url);
   const current: ShardJurisdictionsFile = existsSync(config.shardJurisdictionsPath)
     ? parseShardJurisdictions(
         readFileSync(config.shardJurisdictionsPath, 'utf8'),
@@ -504,6 +528,15 @@ export const deployRpc2JurisdictionStack = async (config: OrchestratorJurisdicti
       )
     : {};
   const jurisdictions = current.jurisdictions ?? {};
+  const existing = jurisdictions['tron'];
+  const nativeTron = existing?.mode === 'tron';
+  if (nativeTron) {
+    if (existing.chainId === undefined) throw new Error('RPC2_NATIVE_CHAIN_ID_MISSING');
+    requireCompleteRpcContracts(existing.contracts, 'RPC2_NATIVE_CONFIGURED');
+    requireEntityProviderDeploymentBlock(existing.entityProviderDeploymentBlock, 'RPC2_NATIVE_CONFIGURED');
+    requirePersistedTokenRegistry(existing['tokenRegistry'], 'RPC2_NATIVE_CONFIGURED_TOKEN_REGISTRY');
+  }
+  const chainId = await readRpcChainId(config.rpc2Url);
   const primary = selectPrimaryHubJurisdiction(current, config);
   if (!primary) throw new Error('RPC2_PRIMARY_JURISDICTION_UNRESOLVED');
   const primaryJurisdiction = jurisdictions[primary.key];
@@ -514,13 +547,15 @@ export const deployRpc2JurisdictionStack = async (config: OrchestratorJurisdicti
   if (primaryChainId === chainId) {
     throw new Error(`RPC2_STACK_DOMAIN_COLLISION:chainId=${chainId}`);
   }
-  const existing = jurisdictions['tron'];
   if (existing?.chainId !== undefined && Number(existing.chainId) !== chainId) {
     throw new Error(`RPC2_CHAIN_ID_MISMATCH:configured=${String(existing.chainId)}:actual=${chainId}`);
   }
   const missingCode = await findMissingRpcContractCode(config.rpc2Url, existing?.contracts);
   if (missingCode.length !== 0 && missingCode.length !== REQUIRED_RPC_CONTRACT_KEYS.length) {
     throw new Error(`RPC2_PARTIAL_STACK_CORRUPTION:${missingCode.join(',')}`);
+  }
+  if (nativeTron && missingCode.length > 0) {
+    throw new Error(`RPC2_NATIVE_STACK_CODE_MISSING:${missingCode.join(',')}`);
   }
   const provisioned = missingCode.length === 0
     ? {
@@ -542,25 +577,27 @@ export const deployRpc2JurisdictionStack = async (config: OrchestratorJurisdicti
       }
     : await deployRpcStack(config.rpc2Url, chainId);
   const { contracts, entityProviderDeploymentBlock, tokenRegistry } = provisioned;
-  await assertCanonicalRpcContractStack(config.rpc2Url, contracts, 'RPC2');
+  await assertCanonicalRpcContractStack(config.rpc2Url, contracts, 'RPC2', 2_000, nativeTron ? 'tron' : 'rpc');
   const primaryContracts = requireCompleteRpcContracts(
     jurisdictions[primary.key]?.contracts as RpcContractAddresses | undefined,
     'RPC2_PRIMARY_CONFIGURED',
   );
-  assertDeterministicRpcStackAddresses(primaryContracts, contracts);
+  if (!nativeTron) assertDeterministicRpcStackAddresses(primaryContracts, contracts);
   const updatedAt = new Date().toISOString();
   jurisdictions['tron'] = {
     ...(jurisdictions['tron'] ?? {}),
-    name: 'Tron',
+    name: nativeTron ? String(existing.name || 'Tron') : 'Tron',
     chainId,
     entityProviderDeploymentBlock,
     tokenRegistry,
     rpc: toPublicRpcUrl(config.rpc2Url, '/rpc2'),
-    blockTimeMs: LOCAL_TESTNET_BLOCK_TIME_MS,
+    blockTimeMs: nativeTron ? 3_000 : LOCAL_TESTNET_BLOCK_TIME_MS,
     explorer: '',
     currency: 'TRX',
     status: 'active',
-    description: 'Second local EVM chain used to simulate Tron cross-jurisdiction swaps',
+    description: nativeTron
+      ? 'Native TVM jurisdiction with verified configured contracts'
+      : 'Second local EVM chain used to simulate Tron cross-jurisdiction swaps',
     contracts: {
       ...(jurisdictions['tron']?.contracts ?? {}),
       ...contracts,

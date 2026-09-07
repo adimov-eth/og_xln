@@ -88,7 +88,9 @@ const createBrowserAdapter = async (config: JAdapterConfig, privateKey: string |
 const createNetworkAdapter = async (config: JAdapterConfig, privateKey: string | undefined): Promise<JAdapter> => {
   if (!config.rpcUrl) throw new Error('rpcUrl required for anvil/rpc/tron mode');
 
-  const rpcUrl = normalizeLoopbackUrl(config.rpcUrl);
+  // Native authority attests the configured endpoint identity. Rewriting its
+  // host here disconnects the observed receipt source from the committed J RPC.
+  const rpcUrl = config.mode === 'tron' ? config.rpcUrl : normalizeLoopbackUrl(config.rpcUrl);
   const provider = createXlnJsonRpcProvider(rpcUrl, config.chainId);
   configureRpcPolling(provider);
   const tronApiKey = config.mode === 'tron' ? config.tronApiKey || process.env['TRONGRID_API_KEY'] : undefined;
@@ -101,6 +103,7 @@ const createNetworkAdapter = async (config: JAdapterConfig, privateKey: string |
           privateKey,
           rpcUrl,
           fullHost: config.tronFullHost,
+          solidityHost: config.tronSolidityHost,
           apiKey: tronApiKey,
         })
       : privateKey

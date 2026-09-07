@@ -13,11 +13,9 @@ export type UndurableRuntimeInputContext = {
   runtimeInput: RuntimeInput;
   mempoolQueuedAt: number | undefined;
   frameTimestampBeforeTick: number;
-  quietRuntimeLogs: boolean;
   discardMalformedRemoteInput(
     input: RuntimeInput,
     error: Error,
-    quiet: boolean,
   ): RuntimeInput | null;
   discardedError(error: Error): Error;
 };
@@ -66,11 +64,10 @@ export const restoreUndurableRuntimeInput = async (
       : context.discardMalformedRemoteInput(
           attemptedInput,
           originalError,
-          context.quietRuntimeLogs,
         );
   const discarded = retainedInput !== null;
   const retainedWorkingMempool = discarded
-    ? context.discardMalformedRemoteInput(workingMempool, originalError, true) ?? workingMempool
+    ? context.discardMalformedRemoteInput(workingMempool, originalError) ?? workingMempool
     : workingMempool;
   if (options.requeue !== false) {
     restoreFailedInput(context, retainedWorkingMempool, retainedInput ?? undefined);

@@ -31,6 +31,10 @@ const OUT_OF_PROFILE_TX_KINDS: ReadonlySet<AccountTx['type']> = new Set<AccountT
   'lending_close_payout',
 ]);
 
+/** The live admission profile also owns which actions a client may offer. */
+export const isAccountTxKindAvailable = (kind: AccountTx['type']): boolean =>
+  !OUT_OF_PROFILE_TX_KINDS.has(kind);
+
 const ACCOUNT_TX_POLICY_VERSION_OUT_OF_RANGE =
   'ACCOUNT_TX_POLICY_VERSION_OUT_OF_RANGE' as const;
 const ACCOUNT_TX_KIND_OUT_OF_PROFILE = 'ACCOUNT_TX_KIND_OUT_OF_PROFILE' as const;
@@ -107,7 +111,7 @@ const tokenIdOutOfRangeError = (tx: AccountTx): AccountTxAdmissionError | undefi
 
 /** First admission violation in the batch, or `undefined` if all are admissible. */
 export const accountTxAdmissionError = (tx: AccountTx): AccountTxAdmissionError | undefined =>
-  OUT_OF_PROFILE_TX_KINDS.has(tx.type)
+  !isAccountTxKindAvailable(tx.type)
     ? new AccountTxAdmissionError(ACCOUNT_TX_KIND_OUT_OF_PROFILE, tx.type)
     : policyVersionOutOfRangeError(tx) ?? tokenIdOutOfRangeError(tx);
 

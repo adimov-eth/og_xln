@@ -18,7 +18,6 @@ import {
   resolveWatcherPollToBlock,
   rpcLog,
 } from '../../rpc-public';
-import { isTronChainId } from '../../chain-ids';
 import { shouldAuditCanonicalWatcherState } from '../../watcher/observe/watcher-poll-policy';
 import {
   assertAuthorityEvidenceCanonical,
@@ -221,7 +220,7 @@ export const runWatcherPoll = async (request: PollRequest): Promise<void> => {
   request.trace.step = 'eth_blockNumber';
   const currentBlock = await services.readCurrentBlockNumber();
   if (request.isCancelled()) return;
-  const safeHead = isTronChainId(services.chainId)
+  const safeHead = services.mode === 'tron'
     ? await services.readSafeBlockNumber()
     : currentBlock;
   const safeToBlock = safeHead - session.confirmationDepth;
@@ -255,6 +254,7 @@ export const runWatcherPoll = async (request: PollRequest): Promise<void> => {
     activeEnv: session.env,
     watcherReplica,
     currentBlock,
+    ...(services.mode === 'tron' ? { nativeSolidifiedThroughHeight: safeHead } : {}),
     fromBlock,
     toBlock,
     ...(parent.hash ? { expectedParentHash: parent.hash } : {}),

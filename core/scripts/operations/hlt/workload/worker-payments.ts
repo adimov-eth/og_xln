@@ -85,9 +85,9 @@ import {
 } from '../rust/rust-h1-settlement';
 import { runRustH1DisputeSmoke } from '../rust/rust-h1-dispute-smoke';
 import {
-  runRustH1AccountSettlementSmoke,
   shouldRunRustH1AccountSettlementSmoke,
 } from '../rust/rust-h1-account-settlement-smoke';
+import { runRustH1MoveSmoke } from '../rust/rust-h1-move-smoke';
 import type {
   AccountDeliveryHop,
   HltPaymentOperationLedgerSnapshot,
@@ -1150,8 +1150,10 @@ export const runPaymentProductionLoad = async (args: WorkerArgs): Promise<void> 
       // so both production lifecycle gates can run in one H1 process.
       const counterparty = users[1];
       if (!counterparty) throw new Error('HLT_RUST_ACCOUNT_SETTLEMENT_SMOKE_LANE_MISSING');
-      const result = await runRustH1AccountSettlementSmoke({
+      const result = await runRustH1MoveSmoke({
+        workDir: args.workDir,
         apiBaseUrl: `http://127.0.0.1:${String(args.portBase + 10)}`,
+        rpcUrl: `http://127.0.0.1:${args.portBase}`,
         rust: rustH1,
         counterpartyLane: counterparty,
         tokenId: PAYMENT_TOKEN_ID,

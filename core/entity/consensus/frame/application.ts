@@ -385,9 +385,10 @@ async function applyEntityTxsInOrder(context: ApplyEntityTxsInOrderContext): Pro
         manualBroadcastInInput,
       );
     } catch (error) {
-      // Bind the rejection to the outermost frame tx (a certified wrapper's
-      // inner failure names the wrapper) so a mempool proposer can evict it.
-      if (error instanceof MalformedEntityFrameInputError && error.frameTx === undefined) {
+      // Rebind on each recursive unwind: only the outer signed command is
+      // admitted to the mempool. Retaining its failing child would prevent
+      // atomic eviction and turn an expected rejection into a Runtime halt.
+      if (error instanceof MalformedEntityFrameInputError) {
         error.frameTx = entityTx;
       }
       throw error;
@@ -560,7 +561,7 @@ const proposeAccountFrameCandidate = async (
   context: ProposePendingAccountFramesContext,
   accountKey: string,
   account: AccountReplica,
-  crossJOpeningProposalTxs: AccountTx[] | undefined,
+  crossJOpeningProposalTxs: readonly AccountTx[] | undefined,
   scheduleAccount: (accountId: string) => void,
 ): Promise<AccountFrameProposal | undefined> => {
   const { currentEntityState: state, collectedHashes, proposableAccounts, storageChanges } = context;
@@ -699,29 +700,27 @@ const routeFinalAccountInput = (
 };
 
 /**
- * A cross-jurisdiction opening either waits for its cohort or proposes a subset
- * of the mempool. Neither is something the authoritative engine can express: it
- * was asked for a whole-mempool frame and has already built one. Refuse rather
- * than let the opening silently skip the cohort it is bound to.
+ * The authoritative engine selected against the exact candidate before
+ * proposal. Its published mempool now contains later cohorts, so consume the
+ * captured selection instead of selecting those later arrivals a second time.
  */
 function resolveCrossJOpeningProposalTxs(
   context: ProposePendingAccountFramesContext,
   accountKey: string,
   account: AccountReplica,
-): AccountTx[] | null | undefined {
+): readonly AccountTx[] | null | undefined {
+  const authority = context.accountConsensusContext.accountAuthorityExecutionScope;
+  if (authority?.hasPreparedAccountProposal?.(accountKey) === true) {
+    if (!authority.preparedAccountProposalTxs) {
+      throw new Error('ACCOUNT_AUTHORITY_PROPOSAL_SELECTION_REQUIRED');
+    }
+    return authority.preparedAccountProposalTxs(accountKey);
+  }
   const crossJOpeningProposalTxs = selectCrossJOpeningAccountProposalTxs(
     context.env,
     context.currentEntityState,
     account,
   );
-  const authorityPrepared = context.accountConsensusContext.accountAuthorityExecutionScope
-    ?.hasPreparedAccountProposal?.(accountKey) === true;
-  if (authorityPrepared && crossJOpeningProposalTxs !== undefined) {
-    throw haltRuntimeFailure(
-      'ACCOUNT_AUTHORITY_CROSS_J_OPENING_UNSUPPORTED',
-      `ACCOUNT_AUTHORITY_CROSS_J_OPENING_UNSUPPORTED:${context.currentEntityState.entityId}:${accountKey}`,
-    );
-  }
   return crossJOpeningProposalTxs;
 }
 

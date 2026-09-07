@@ -68,6 +68,7 @@ export type TsProposeAccountFramesRequest = Readonly<{
   }>[];
   proposals: readonly Readonly<{
     accountId: string;
+    selectedMempoolPositions?: readonly number[];
     counterpartyBoardAuthority?: TsAccountWorkerCertifiedBoard;
   }>[];
 }>;
@@ -221,6 +222,7 @@ export type TsAccountWorkerOutboundPayload = Readonly<{
   proposals: readonly Readonly<{
     order: number;
     accountId: string;
+    selectedMempoolPositions?: readonly number[];
     counterpartyBoardAuthority?: TsAccountWorkerCertifiedBoard;
   }>[];
 }>;

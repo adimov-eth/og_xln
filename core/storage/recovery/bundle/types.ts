@@ -29,6 +29,7 @@ export type RuntimeRecoveryBundleV1 = {
   checkpointHash?: string;
   baseRuntimeHeight?: number;
   baseCheckpointHash?: string;
+  /** Snapshot: one already-applied checkpoint-tip journal; tail: subsequent replay journals. */
   frames?: PersistedFrameJournal[];
   meta?: RuntimeRecoveryMetaV1;
   /** Index-1 runtime EOA signature over the canonical bundle with this field omitted. */

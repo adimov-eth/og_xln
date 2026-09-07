@@ -12,6 +12,7 @@ import type {
   PendingWatcherJHistoryRange,
 } from '../../watcher';
 import type { WatchedErc20Token , AuthenticatedTxLocation } from '../../rpc-watcher-inputs';
+import type { JAdapterMode } from '../../types';
 
 type RpcWatcherScanProgress = {
   scannedThroughHeight: number;
@@ -26,6 +27,9 @@ export type RpcWatcherTrace = {
 
 export type RpcWatcherServices = {
   provider: ethers.JsonRpcProvider;
+  // Explicit protocol mode also covers private TVM chains; chainId remains
+  // the verified jurisdiction/signature identity, never a finality allowlist.
+  mode: JAdapterMode;
   chainId: number;
   rpcUrl?: string;
   watchPollMs?: number;

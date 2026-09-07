@@ -10,24 +10,15 @@
 
 import type { JurisdictionConfig } from '../../../entity/types';
 import { isUsableContractAddress } from '../../machine/contract-address';
-import { loadJurisdictions } from './jurisdiction-loader';
+import { loadJurisdictionsAsync } from './jurisdiction-loader';
 import { createStructuredLogger } from '../../../support/logger';
 import { parseRebalancePolicyUsd } from '../../../extensions/rebalance/usd';
 import { isBrowser } from '../../../support/platform-crypto';
-import { requireBoundaryRecord } from '../../../protocol/boundary-validation';
 
 const jurisdictionConfigLog = createStructuredLogger('runtime.jurisdiction_config');
 
 export const isActiveJurisdictionStatus = (value: unknown): boolean =>
   String(value ?? 'active').trim().toLowerCase() === 'active';
-
-function getBrowserJurisdictionsUrl(): string {
-  const suffix = `ts=${Date.now()}`;
-  return `./api/jurisdictions?${suffix}`;
-}
-
-const errorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
 
 /**
  * Load available jurisdictions from config
@@ -46,44 +37,7 @@ export async function getAvailableJurisdictions(): Promise<JurisdictionConfig[]>
 async function loadJurisdictionConfigs(): Promise<Map<string, JurisdictionConfig>> {
   const jurisdictions = new Map<string, JurisdictionConfig>();
 
-  let config: Record<string, unknown>;
-
-  if (!isBrowser && typeof process !== 'undefined') {
-    // Node.js: use centralized loader
-    config = { ...loadJurisdictions() };
-  } else {
-    // Browser: fetch with timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
-    let response: Response;
-
-    try {
-      response = await fetch(getBrowserJurisdictionsUrl(), {
-        signal: controller.signal,
-        cache: 'no-store',
-        headers: { 'cache-control': 'no-cache' },
-      });
-    } catch (fetchError: unknown) {
-      const err = fetchError as { name?: string };
-      throw new Error(
-        `JURISDICTIONS_BROWSER_FETCH_FAILED:` +
-        `${err.name === 'AbortError' ? 'timeout' : errorMessage(fetchError)}`,
-      );
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!response.ok) {
-      throw new Error(`JURISDICTIONS_BROWSER_HTTP_STATUS:${response.status}`);
-    }
-
-    try {
-      config = requireBoundaryRecord(await response.json(), 'JURISDICTIONS_BROWSER_CONFIG_INVALID');
-    } catch (parseError: unknown) {
-      jurisdictionConfigLog.error('browser_config_invalid', { error: errorMessage(parseError) });
-      throw new Error(`JURISDICTIONS_BROWSER_CONFIG_INVALID:${errorMessage(parseError)}`);
-    }
-  }
+  const config = await loadJurisdictionsAsync();
 
   const jurisdictionData = (config as { jurisdictions?: unknown }).jurisdictions;
   const globalRebalancePolicyUsd = parseRebalancePolicyUsd(
