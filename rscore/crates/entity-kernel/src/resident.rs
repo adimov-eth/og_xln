@@ -2349,7 +2349,7 @@ fn apply_resident_entity_round_core_attempt(
         },
         false,
     )?;
-    // Owner canon (AGENTS.md REJECT POLICY): an authenticated peer input the
+    // Owner canon (AGENTS.md REJECT POLICY): an authenticated inbound AccountInput the
     // Account engine rejected is a typed reject disposition decided here
     // without reading process env. It is logged and carried on the result by
     // row position; the Runtime evicts that exact parent `accountInput`

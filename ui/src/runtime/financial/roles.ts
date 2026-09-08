@@ -73,7 +73,7 @@ function advertisedRole(entityId: string, summaries: readonly RuntimeAdapterEnti
  * Role evidence for an arbitrary account pair, hub or not. Our own side is a
  * replica we host, so its role is committed; the counterparty's comes from a
  * committed replica when we host it too, otherwise from its verified gossip
- * profile. There is deliberately no fallback: the response clocks this derives
+ * profile. There is deliberately no second path: the response clocks this derives
  * are signed into the Account at creation and can never be renegotiated, so a
  * role we cannot establish must refuse the command rather than guess a window.
  */

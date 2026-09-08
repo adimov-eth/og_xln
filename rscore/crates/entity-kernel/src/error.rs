@@ -52,7 +52,7 @@ pub enum EntityKernelError {
 }
 
 /// Owner canon 2026-09-05, mirrored in TS `rejectFailFast`: a rejected
-/// peer input halts by default (tests/dev) and is only logged+dropped in
+/// inbound AccountInput halts by default (tests/dev) and is only logged+dropped in
 /// production. `XLN_REJECT_FAIL_FAST=0|false|off` forces log-and-drop, `=1`
 /// forces fail-fast; otherwise `NODE_ENV=production` means log-and-drop.
 ///

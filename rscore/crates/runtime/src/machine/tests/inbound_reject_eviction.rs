@@ -117,7 +117,7 @@ fn rejected_inbound_account_input_is_evicted_from_the_certified_frame() {
     assert_eq!(
         result.replica.state.e_replicas[&key].accounts_root,
         baseline.replica.state.e_replicas[&key].accounts_root,
-        "a rejected peer input leaves the Account overlays unpublished",
+        "a rejected inbound AccountInput leaves the Account overlays unpublished",
     );
     assert!(
         result.replica.e_replicas[&key].entity_mempool.is_empty(),
@@ -144,7 +144,7 @@ fn a_lone_rejected_inbound_account_input_certifies_no_entity_frame() {
         },
         &mut CanonicalEntityInfraMaterializer::new(),
     )
-    .expect("a lone rejected peer input is evicted, never a halt");
+    .expect("a lone rejected inbound AccountInput is evicted, never a halt");
     assert!(result.outputs.entities.is_empty());
     assert!(result.account_commits.is_empty());
     assert_eq!(result.replica.state.e_replicas[&key].entity, before_entity);

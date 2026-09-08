@@ -1928,7 +1928,7 @@ describe('audit fail-fast regressions', () => {
         executionWantAmount: wantAmount,
       },
     };
-    // The fallback trigger must be an optimistic-batch tx type whose rejection
+    // What forces the per-tx revalidation must be an optimistic-batch tx type whose rejection
     // is an ordinary `remove`. A rejected `swap_resolve` is deliberately NOT
     // that: it is matcher-emitted, so `throwCriticalProposalFailure` halts the
     // Entity candidate instead of silently dropping an already-matched fill.
