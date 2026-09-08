@@ -158,7 +158,7 @@ const handlePollFailure = (
   const fatalPayload = buildFailurePayload(services, session, trace, message, error);
   emitWatcherDebug(session, fatalPayload);
   state.fatalError = message;
-  if (session.interval) clearInterval(session.interval);
+  if (session.interval) clearTimeout(session.interval);
   session.interval = null;
   state.lastScanProgress = session.scanProgress;
   state.session = null;
@@ -194,6 +194,38 @@ const pollOnce = (
     });
   state.inFlight = poll;
   return poll;
+};
+
+/**
+ * Drive the poll loop, fast while catching up and idle at the tip.
+ *
+ * One poll reads at most `J_WATCHER_MAX_BLOCKS_PER_POLL` blocks. Waiting the
+ * full interval between those windows makes the initial scan take
+ * `blocksBehind / windowSize * pollMs`, which on a chain of any age is longer
+ * than a wallet is willing to wait to open: at 256 blocks a window and five
+ * seconds between them, a chain 70,000 blocks along needs twenty-odd minutes
+ * before the first screen can be drawn.
+ *
+ * So the next poll is scheduled immediately whenever the previous one actually
+ * advanced the synced height, and at the normal interval as soon as it did not.
+ * A watcher that stops making progress therefore falls straight back to idle
+ * pacing instead of spinning against the node.
+ */
+const scheduleNextPoll = (
+  state: RpcWatcherControllerState,
+  services: RpcWatcherServices,
+  session: RpcWatcherSession,
+  delayMs: number,
+): void => {
+  session.interval = setTimeout(() => {
+    if (state.session !== session || state.generation !== session.generation) return;
+    const before = session.lastSyncedBlock;
+    void pollOnce(state, services).finally(() => {
+      if (state.session !== session || state.generation !== session.generation) return;
+      const advanced = session.lastSyncedBlock > before;
+      scheduleNextPoll(state, services, session, advanced ? 0 : session.pollMs);
+    });
+  }, delayMs);
 };
 
 /**
@@ -240,10 +272,7 @@ export const createRpcWatcherController = (
         fromBlock: session.lastSyncedBlock + 1,
       });
       if (!session.manualPolling) {
-        session.interval = setInterval(() => {
-          void pollOnce(state, services);
-        }, session.pollMs);
-        void pollOnce(state, services);
+        scheduleNextPoll(state, services, session, 0);
       }
       rpcLog.info('watcher.ready', {
         chainId: services.chainId,
@@ -264,7 +293,7 @@ export const createRpcWatcherController = (
       const session = state.session;
       state.generation += 1;
       state.session = null;
-      if (session?.interval) clearInterval(session.interval);
+      if (session?.interval) clearTimeout(session.interval);
       if (session) {
         session.interval = null;
         state.lastScanProgress = session.scanProgress;

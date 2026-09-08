@@ -64,7 +64,7 @@ export type RpcWatcherServices = {
 export type RpcWatcherSession = {
   env: RuntimeReplica;
   generation: number;
-  interval: ReturnType<typeof setInterval> | null;
+  interval: ReturnType<typeof setTimeout> | null;
   manualPolling: boolean;
   confirmationDepth: number;
   pollMs: number;
