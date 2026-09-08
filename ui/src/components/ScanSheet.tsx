@@ -8,10 +8,37 @@ type BarcodeDetectorCtor = new (options?: { formats?: string[] }) => BarcodeDete
 const getBarcodeDetector = (): BarcodeDetectorCtor | null =>
 	(window as typeof window & { BarcodeDetector?: BarcodeDetectorCtor }).BarcodeDetector ?? null;
 
+/** Read a QR out of an image file, the same two-step detection the camera uses. */
+async function decodeImageFile(file: File): Promise<string | null> {
+	const bitmap = await createImageBitmap(file);
+	try {
+		const Detector = getBarcodeDetector();
+		if (Detector) {
+			const results = await new Detector({ formats: ['qr_code'] }).detect(bitmap);
+			const raw = String(results[0]?.rawValue || '').trim();
+			if (raw) return raw;
+		}
+		const canvas = document.createElement('canvas');
+		canvas.width = bitmap.width;
+		canvas.height = bitmap.height;
+		const context = canvas.getContext('2d', { willReadFrequently: true });
+		if (!context) return null;
+		context.drawImage(bitmap, 0, 0);
+		const image = context.getImageData(0, 0, canvas.width, canvas.height);
+		return jsQR(image.data, image.width, image.height, { inversionAttempts: 'attemptBoth' })?.data?.trim() || null;
+	} finally {
+		bitmap.close();
+	}
+}
+
 /**
  * Camera QR scanner for invoices. Native BarcodeDetector where the platform has
  * one, jsQR over canvas frames otherwise. Same two-step detection the SvelteKit
  * PaymentPanel uses.
+ *
+ * A desktop without a camera, or a person who declined it, still has to be able
+ * to pay: the picture of the invoice is the second way in, as it is in the
+ * SvelteKit panel.
  */
 export function ScanSheet({ onDecode, onClose }: { onDecode: (value: string) => void; onClose: () => void }) {
 	const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -98,7 +125,37 @@ export function ScanSheet({ onDecode, onClose }: { onDecode: (value: string) => 
 				<video ref={videoRef} muted playsInline />
 			</div>
 			{status ? <p className="note">{status}</p> : null}
-			{error ? <p style={{ color: 'var(--dispute)', fontSize: 13 }}>{error}</p> : null}
+			{error ? (
+				<p style={{ color: 'var(--dispute)', fontSize: 13 }}>The camera is unavailable: {error}</p>
+			) : null}
+			<label className="btn quiet sm" style={{ marginTop: 8, display: 'inline-block', cursor: 'pointer' }} data-testid="scan-upload">
+				Use a picture of the invoice
+				<input
+					type="file"
+					accept="image/*"
+					style={{ display: 'none' }}
+					onChange={event => {
+						const file = event.target.files?.[0];
+						event.target.value = '';
+						if (!file) return;
+						setError(null);
+						setStatus('Reading the picture…');
+						void decodeImageFile(file)
+							.then(value => {
+								if (value) {
+									onDecode(value);
+									return;
+								}
+								setStatus('');
+								setError('No xln invoice found in that picture.');
+							})
+							.catch(readError => {
+								setStatus('');
+								setError(readError instanceof Error ? readError.message : String(readError));
+							});
+					}}
+				/>
+			</label>
 		</Sheet>
 	);
 }

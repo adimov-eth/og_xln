@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type { AccountState, RuntimeAdapterEntitySummary } from '@xln/core/api/public/runtime-module';
 import { getJurisdictionStackId } from '@xln/core/api/public/runtime-module';
@@ -120,6 +120,22 @@ export function Swap() {
 			setWantText(plainAmount(want, quote.decimals));
 		}
 	};
+
+	// A level picked on the Desk arrives as query parameters, because the Desk
+	// renders the book of a hub the Swap screen has not chosen yet. It is applied
+	// once, so it can never fight what the person types afterwards.
+	const deskPick = useRef(false);
+	useEffect(() => {
+		if (deskPick.current || !hub) return;
+		const side = params.get('side');
+		const price = params.get('price');
+		const size = params.get('size');
+		if ((side !== 'ask' && side !== 'bid') || !price || !size) return;
+		deskPick.current = true;
+		pickLevel(side, { priceTicks: BigInt(price), size: BigInt(size) } as BookLevel);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [hub, params]);
+
 	const giveToken = hub?.tokens.find(token => token.tokenId === giveTokenId) ?? null;
 	const giveSpendable = giveToken?.derived.outCapacity ?? 0n;
 

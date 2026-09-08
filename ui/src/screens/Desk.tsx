@@ -202,7 +202,15 @@ export function Desk() {
 				<div>
 					{hub ? (
 						<div className="card" style={{ padding: 0 }}>
-							<Orderbook book={book} hubLabel={hub.label} onPick={() => navigate(`/swap?hub=${hub.counterpartyId}`)} />
+							<Orderbook
+								book={book}
+								hubLabel={hub.label}
+								onPick={(side, level) =>
+									navigate(
+										`/swap?hub=${hub.counterpartyId}&side=${side}&price=${level.priceTicks.toString()}&size=${level.size.toString()}`,
+									)
+								}
+							/>
 						</div>
 					) : null}
 					<div className="card">
