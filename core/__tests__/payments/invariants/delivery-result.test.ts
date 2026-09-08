@@ -18,6 +18,10 @@ test('only an exact recipient-readiness deferral can retain an unsent outbox uni
     'ROUTE_DIRECT_SESSION_NOT_READY',
     'ROUTE_DIRECT_RECIPIENT_NOT_READY',
     'P2P_DIRECT_RECIPIENT_NOT_READY',
+    // The sender's own signed return route is not published on this socket yet.
+    // The transport announced it and handed off no bytes, so the committed
+    // output waits for the next frame instead of raising ROUTE_SEND_NOT_DELIVERED.
+    'P2P_DIRECT_SOURCE_PROFILE_NOT_READY',
   ]) {
     const waiting = deliveryDeferred({ outcome: 'deferred', code });
     expect(isDeliveryRecipientNotReady(waiting)).toBe(true);

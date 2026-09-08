@@ -22,6 +22,7 @@ import { hasReadyCommittedJOutbox } from '../registration/governance-submit-stat
 import type { EntityInput, EntityReplica } from '../../entity/types.ts';
 import type { RoutedEntityInput, RuntimeReplica, RuntimeInput } from '../types.ts';
 import { atomicCrossJInputCohortKey } from '../delivery/topology/entity-routing.ts';
+import { canDeliverCommittedOutput } from '../delivery/readiness.ts';
 
 import { createStructuredLogger } from '../../support/logger.ts';
 
@@ -153,10 +154,7 @@ export const resolveRuntimeWorkReason = (
   if (env.pendingNetworkOutputs?.some(output => {
     const runtimeId = output.runtimeId;
     if (!runtimeId) throw new Error('RUNTIME_NETWORK_OUTBOX_TARGET_MISSING');
-    const state = ensureRuntimeInfrastructure(env);
-    return state.canDeliverEntityInputs
-      ? state.canDeliverEntityInputs(runtimeId)
-      : state.p2p?.canDeliver(runtimeId) === true;
+    return canDeliverCommittedOutput(ensureRuntimeInfrastructure(env), runtimeId);
   })) return 'committed-network-outbox';
   if (env.networkInbox?.length) return 'network-inbox';
   const replicaWakes = collectReplicaMempoolWakeInputs(env);

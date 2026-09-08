@@ -31,6 +31,7 @@ import {
   type RuntimeOutputRoutingDeps,
 } from './pending';
 import { planEntityOutputs } from './plan';
+import { canDeliverCommittedOutput } from './readiness';
 import { recordRuntimeSecurityIncident } from '../observability/security-incidents';
 import { createPreparedOutputGraph, type PreparedOutputGraph } from './prepared-output';
 import { MAX_P2P_ENTITY_INPUTS } from '../../network/p2p/auth/entity-input-envelope';
@@ -408,6 +409,36 @@ const dispatchOutputEnvelope = (
   return dispatchP2POutputEnvelope(env, group, sendable, envelope, deps);
 };
 
+/**
+ * A retained output is not a drop, but it is only safe while a readiness edge
+ * can still wake the Runtime writer. Report the exact retained targets and
+ * whether each is currently deliverable so a stalled outbox is visible in the
+ * log instead of only in a downstream bootstrap timeout.
+ */
+const reportRetainedNetworkOutbox = (
+  env: RuntimeReplica,
+  deps: RuntimeOutputRoutingDeps,
+): void => {
+  const retained = env.pendingNetworkOutputs ?? [];
+  if (retained.length === 0) return;
+  const state = deps.ensureRuntimeInfrastructure(env);
+  const perTarget = new Map<string, number>();
+  for (const output of retained) {
+    const runtimeId = output.runtimeId;
+    if (!runtimeId) throw new Error('RUNTIME_NETWORK_OUTBOX_TARGET_MISSING');
+    perTarget.set(runtimeId, (perTarget.get(runtimeId) ?? 0) + 1);
+  }
+  routeLog.warn('output.retained', {
+    runtimeId: env.runtimeId,
+    retained: retained.length,
+    targets: [...perTarget].map(([runtimeId, count]) => ({
+      runtimeId,
+      count,
+      deliverable: canDeliverCommittedOutput(state, runtimeId),
+    })),
+  });
+};
+
 export const dispatchEntityOutputs = (
   env: RuntimeReplica,
   outputs: PlannedRemoteOutput[],
@@ -447,6 +478,7 @@ export const dispatchEntityOutputs = (
     env.pendingNetworkOutputs = env.pendingNetworkOutputs.filter(
       output => !accepted.has(graph.prepare(output).routeKey),
     );
+    reportRetainedNetworkOutbox(env, deps);
   }
 };
 

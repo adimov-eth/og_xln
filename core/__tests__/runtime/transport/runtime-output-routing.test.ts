@@ -812,6 +812,51 @@ describe('runtime output routing', () => {
     expect(p2pCalls).toHaveLength(0);
   });
 
+  // The direct socket is authenticated and the peer is ready, but this
+  // Runtime's own signed return route is not published on it yet. The
+  // transport announced the profile and handed off no bytes, so the committed
+  // output must be retained for the next frame. Escalating this deferral to
+  // ROUTE_SEND_NOT_DELIVERED fails the committed frame and leaves the outbox
+  // undrainable behind a halted loop (MARKET_MAKER_BOOTSTRAP_STALLED).
+  test('retains an unpublished source profile in the outbox instead of failing the send', () => {
+    const targetRuntimeId = runtimeId('26');
+    const env = {
+      runtimeId: runtimeId('11'),
+      state: { timestamp: 1357 },
+      infrastructure: {},
+      warn: () => {},
+      error: () => {},
+    } as unknown as RuntimeReplica;
+    const output: DeliverableEntityInput = {
+      runtimeId: targetRuntimeId,
+      entityId: entityId('3e'),
+      signerId: runtimeId('3f'),
+      sourceRuntimeFrame: { height: 15, timestamp: 1357 },
+      entityTxs: [],
+    };
+
+    expect(() => dispatchEntityOutputs(env, [{ output, targetRuntimeId }], {
+      ensureRuntimeInfrastructure: (targetEnv) => targetEnv.infrastructure!,
+      getP2P: () => ({
+        enqueueEntityInputsDelivery: () => ({
+          outcome: 'deferred',
+          code: 'P2P_DIRECT_SOURCE_PROFILE_NOT_READY',
+          retryable: true,
+          fatal: false,
+          terminal: false,
+        }),
+      }),
+      enqueueRuntimeInputs: () => {},
+      extractEntityId: (replicaKey) => String(replicaKey).split(':')[0] || '',
+      hasLocalSignerForEntity: () => false,
+      hasLocalSignerForEntitySigner: () => false,
+      resolveSoleLocalSignerForEntity: () => null,
+      resolveRuntimeIdForEntity: () => targetRuntimeId,
+      resolveRuntimeIdForCrossJurisdictionEntity: () => targetRuntimeId,
+    })).not.toThrow();
+    expect(env.pendingNetworkOutputs).toEqual([output]);
+  });
+
   test('sendEntityInputWithRouting exposes typed remote delivery result', () => {
     const targetRuntimeId = runtimeId('23');
     const p2pCalls: Array<{ targetRuntimeId: string; envelope: RuntimeEntityInputsEnvelope; ingressTimestamp?: number }> = [];
