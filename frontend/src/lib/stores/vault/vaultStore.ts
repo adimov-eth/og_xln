@@ -649,7 +649,6 @@ async function uploadRuntimeRecoverySnapshot(
       const lastResortAppointments = await buildDelayedLastResortAppointmentsForTower(
         runtime,
         env,
-        xln,
         tower,
         towerSignerAddress,
         encrypted,

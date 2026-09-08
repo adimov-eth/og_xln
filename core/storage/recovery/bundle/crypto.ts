@@ -1,5 +1,4 @@
 import { ethers } from 'ethers';
-import { TextDecoder, TextEncoder } from 'util';
 import { deriveSignerAddressSync } from '../../../account/crypto';
 import { keccakTextHash } from '../../../protocol/crypto/keccak-text';
 import { deserializeTaggedJson, serializeTaggedJson } from '../../../protocol/serialization';
@@ -24,6 +23,8 @@ const RECOVERY_AES_KEY_DOMAIN = 'xln:recovery:key:v1';
 const TOWER_WATCH_SEED_PAYLOAD_AES_KEY_DOMAIN = 'xln:tower:watch-seed-payload-key:v1';
 const TOWER_APPOINTMENT_DOMAIN = 'xln:tower:appointment:v1';
 
+// Global TextEncoder/TextDecoder: this module is shared with browser wallets,
+// where a node:util import resolves to an empty external module.
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 

@@ -332,7 +332,6 @@ test('delayed last-resort appointments require encrypted tower action payloads',
   const uploads = await buildDelayedLastResortAppointmentsForTower(
     runtime,
     env,
-    xln as unknown as XLNModule,
     { url: 'http://127.0.0.1:9100', towerMode: 'delayed_last_resort' },
     towerWallet.address.toLowerCase(),
     encryptedBundle,

@@ -84,6 +84,20 @@ export {
 } from '../../storage/recovery/bundle';
 export { decodeTowerProofBody } from '../../storage/recovery/tower-proof-body';
 export { encodeTowerCounterDisputeRemedy } from '../../watchtower/action';
+// Restoring a lost device from a watchtower, and appointing one to answer a
+// dispute, are wallet-independent. Both wallets consume them from here.
+export * from '../../storage/recovery/discovery';
+export {
+  deriveRuntimeSignerAddress,
+  deriveRuntimeSignerPrivateKey,
+  normalizeRuntimeId,
+} from '../../storage/recovery/bundle/seed-identity';
+export { buildDelayedLastResortAppointments } from '../../watchtower/last-resort-appointment';
+export type {
+  LastResortAppointmentContext,
+  LastResortEntityContext,
+  LastResortTowerAppointmentUpload,
+} from '../../watchtower/last-resort-appointment';
 export { buildRuntimeRecording, validateRuntimeRecording } from '../../storage/recovery/bundle/recording';
 export {
   buildTowerAppointmentOwnerMessage,

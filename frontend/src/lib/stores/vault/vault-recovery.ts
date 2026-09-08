@@ -1,6 +1,5 @@
 import type {
   ConsensusConfig,
-  EncryptedRuntimeRecoveryBundleV1,
   RuntimeReplica,
   JurisdictionConfig,
   RuntimeRecoveryBundleV1,
@@ -10,9 +9,23 @@ import type {
   TowerReceiptV1,
   XLNModule,
 } from '@xln/core/api/public/runtime-module';
+import {
+  buildTowerRequestUrl as buildCoreTowerRequestUrl,
+  discoverRuntimeRecoveryCandidates as discoverCoreRuntimeRecoveryCandidates,
+  fetchTowerServerInfo as fetchCoreTowerServerInfo,
+  normalizeRecoveryTowerConfigs,
+  normalizeRecoveryTowerMode,
+  normalizeTowerBaseUrl,
+  parseRuntimeRecoveryCandidateFile as parseCoreRuntimeRecoveryCandidateFile,
+} from '@xln/core/storage/recovery/discovery';
+import {
+  deriveRuntimeSignerAddress,
+  deriveRuntimeSignerPrivateKey,
+  normalizeRuntimeId,
+} from '@xln/core/storage/recovery/bundle/seed-identity';
 import { isUnknownRecord as isRecord, parseJsonUnknown } from '$lib/utils/boundary';
 export { isRecord };
-import { HDNodeWallet, Mnemonic, getAddress, getIndexedAccountPath } from 'ethers';
+import { getAddress } from 'ethers';
 import {
   redactVaultRuntimeForPersistence,
   type ProtectedVaultSecrets,
@@ -20,9 +33,47 @@ import {
 } from '../../security/vaultProtection';
 import { unwrapLiveRuntimeEnv } from '../../utils/runtime/liveRuntimeEnv';
 import { installRuntimeCommandJournalKeys } from '../commands/runtimeCommandJournalKeyring';
-import { getXLN } from '../xlnStore';
 
-const recoveryTowerInfoCache = new Map<string, { fetchedAt: number; info: TowerServerInfo }>();
+/**
+ * Vault-shaped wrappers over the canonical recovery implementation in
+ * `core/storage/recovery/discovery`. Everything that is engine-independent —
+ * asking towers and peers, opening bundles, proving the Runtime id, ranking
+ * candidates — lives in core so both wallets run the same code. What stays here
+ * is the vault's own shape: which towers this browser defaults to, the persisted
+ * Runtime/Signer records, and the page context the local-tower proxy needs.
+ */
+
+export {
+  normalizeRecoveryTowerConfigs,
+  normalizeRecoveryTowerMode,
+  normalizeRuntimeId,
+  normalizeTowerBaseUrl,
+};
+
+export type {
+  RecoveryTowerConfig,
+  RuntimeRecoveryCandidate,
+  RuntimeRecoveryCandidateSource,
+  RuntimeRecoveryDiscoveryFailure,
+  RuntimeRecoveryDiscoveryResult,
+  RuntimeRecoveryFailureCategory,
+  RuntimeRecoveryPeerRequest,
+  RuntimeRecoveryPeerSource,
+  TowerServerInfo,
+} from '@xln/core/storage/recovery/discovery';
+export { classifyRuntimeRecoveryDiscoveryFailure } from '@xln/core/storage/recovery/discovery';
+
+import type {
+  RecoveryTowerConfig,
+  RuntimeRecoveryCandidate,
+  RuntimeRecoveryDiscoveryResult,
+  RuntimeRecoveryPeerSource,
+  TowerServerInfo,
+} from '@xln/core/storage/recovery/discovery';
+
+/** The page asking, when there is one; enables the local-tower proxy path. */
+const currentPageUrl = (): string | undefined =>
+  typeof window === 'undefined' ? undefined : window.location.href;
 
 // Persisted signer metadata intentionally excludes private key material.
 export interface Signer {
@@ -32,13 +83,6 @@ export interface Signer {
   name: string;
   entityId?: string; // Auto-created entity for this signer
   jurisdiction?: string; // Preferred jurisdiction for this signer/runtime lane
-}
-
-export interface RecoveryTowerConfig {
-  id?: string;
-  url: string;
-  towerMode?: TowerModeV1;
-  enabled?: boolean;
 }
 
 export interface RuntimeRecoveryTowerReceiptSummary {
@@ -172,16 +216,6 @@ export interface RuntimesState {
   activeRuntimeId: string | null;
 }
 
-export const normalizeRuntimeId = (value: string | null | undefined): string => {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  try {
-    return getAddress(raw).toLowerCase();
-  } catch {
-    return '';
-  }
-};
-
 export const normalizeEntityId = (value: string | null | undefined): string =>
   String(value || '')
     .trim()
@@ -203,8 +237,6 @@ export const RECOVERY_UPLOAD_DEBOUNCE_MS = 1_500;
 export const RECOVERY_SNAPSHOT_INTERVAL_FRAMES = 10_000;
 
 export const RUNTIME_P2P_SHUTDOWN_TIMEOUT_MS = 10_000;
-
-export const RECOVERY_TOWER_INFO_TTL_MS = 60_000;
 
 export const RECOVERY_TOWER_STATUS_LIMIT = 16;
 
@@ -236,83 +268,6 @@ export type RuntimeP2PHandle = {
   getReconnectState?: () => { attempt: number; nextAt: number } | null;
 };
 
-export type TowerRestorePayload = {
-  ok: boolean;
-  receipt?: TowerReceiptV1;
-  bundle?: EncryptedRuntimeRecoveryBundleV1;
-  bundles?: EncryptedRuntimeRecoveryBundleV1[];
-  error?: string;
-};
-
-export type TowerDiscoverPayload = {
-  ok: boolean;
-  lookupKey?: string;
-  available?: boolean;
-  latestReceipt?: TowerReceiptV1 | null;
-  error?: string;
-};
-
-export type RuntimeRecoveryCandidateSource = 'tower' | 'file' | 'peer';
-
-export type RuntimeRecoveryFailureCategory = 'ExpectedEmpty' | 'TransientRace' | 'Contradiction';
-
-export type RuntimeRecoveryDiscoveryFailure = {
-  source: Exclude<RuntimeRecoveryCandidateSource, 'file'>;
-  sourceLabel: string;
-  category: RuntimeRecoveryFailureCategory;
-  code: string;
-  message: string;
-};
-
-export type RuntimeRecoveryPeerRequest = {
-  runtimeId: string;
-  lookupKey: string;
-};
-
-export type RuntimeRecoveryPeerSource = {
-  id?: string;
-  label: string;
-  fetchBundles: (request: RuntimeRecoveryPeerRequest) => Promise<unknown>;
-};
-
-export type RuntimeRecoveryCandidate = {
-  id: string;
-  source: RuntimeRecoveryCandidateSource;
-  sourceLabel: string;
-  towerUrl?: string;
-  peerId?: string;
-  receipt?: TowerReceiptV1;
-  encryptedBundles: EncryptedRuntimeRecoveryBundleV1[];
-  bundles: RuntimeRecoveryBundleV1[];
-  tipBundle: RuntimeRecoveryBundleV1;
-  metadataBundle: RuntimeRecoveryBundleV1;
-  runtimeId: string;
-  runtimeHeight: number;
-  createdAt: number;
-  signerCount: number;
-  checkpointHash: string;
-  bundleCount: number;
-};
-
-export type RuntimeRecoveryDiscoveryResult = {
-  runtimeId: string;
-  lookupKey: string;
-  candidates: RuntimeRecoveryCandidate[];
-  errors: string[];
-  failures: RuntimeRecoveryDiscoveryFailure[];
-  checkedTowers: number;
-  checkedPeers: number;
-};
-
-export type TowerServerInfo = {
-  ok: boolean;
-  service?: string;
-  towerId?: string;
-  signerAddress?: string;
-  maxStoredBytesPerLookupKey?: number;
-  maxBundlesPerLookupKey?: number;
-};
-
 export const getRuntimeP2PHandle = (xln: XLNModule, env: RuntimeReplica): RuntimeP2PHandle | null => {
   const candidate = xln.getP2P(unwrapLiveRuntimeEnv(env) ?? env);
   return isRecord(candidate) ? (candidate as RuntimeP2PHandle) : null;
@@ -323,18 +278,9 @@ export const getReplayMeta = (env: RuntimeReplica): unknown | null => {
   return value === undefined ? null : value;
 };
 
-export // HD derivation helper
-function deriveAddress(seed: string, index: number): string {
-  const mnemonic = Mnemonic.fromPhrase(seed);
-  const hdNode = HDNodeWallet.fromMnemonic(mnemonic, getIndexedAccountPath(index));
-  return hdNode.address.toLowerCase();
-}
+export const deriveAddress = deriveRuntimeSignerAddress;
 
-export function derivePrivateKey(seed: string, index: number): string {
-  const mnemonic = Mnemonic.fromPhrase(seed);
-  const hdNode = HDNodeWallet.fromMnemonic(mnemonic, getIndexedAccountPath(index));
-  return hdNode.privateKey;
-}
+export const derivePrivateKey = deriveRuntimeSignerPrivateKey;
 
 export const installVaultRuntimeCommandJournalKeys = async (runtimeIdValue: string, seed: string): Promise<void> => {
   const runtimeId = normalizeRuntimeId(runtimeIdValue);
@@ -523,30 +469,6 @@ export const defaultRecoveryTowerUrls = (): string[] => {
   });
 };
 
-export const normalizeTowerBaseUrl = (url: string): string =>
-  String(url || '')
-    .trim()
-    .replace(/\/+$/, '');
-
-export const normalizeRecoveryTowerMode = (mode: unknown): TowerModeV1 =>
-  mode === 'delayed_last_resort' ? mode : 'blind_backup';
-
-export const normalizeRecoveryTowerConfigs = (towers: RecoveryTowerConfig[] | undefined): RecoveryTowerConfig[] => {
-  const deduped = new Map<string, RecoveryTowerConfig>();
-  for (const tower of towers || []) {
-    const url = normalizeTowerBaseUrl(tower.url);
-    if (!url || tower.enabled === false) continue;
-    deduped.set(url, {
-      ...tower,
-      id: tower.id || `tower-${deduped.size + 1}`,
-      url,
-      towerMode: normalizeRecoveryTowerMode(tower.towerMode),
-      enabled: true,
-    });
-  }
-  return [...deduped.values()];
-};
-
 export const nonNegativeInteger = (value: unknown): number => {
   const parsed = Math.floor(Number(value ?? 0));
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
@@ -670,24 +592,8 @@ export const buildRuntimeRecoveryConfigForMode = (
   };
 };
 
-export const buildTowerRequestUrl = (towerUrl: string, towerPath: string): string => {
-  const normalizedBaseUrl = normalizeTowerBaseUrl(towerUrl);
-  const normalizedPath = towerPath.startsWith('/') ? towerPath : `/${towerPath}`;
-  if (typeof window !== 'undefined') {
-    const pageUrl = new URL(window.location.href);
-    const targetUrl = new URL(`${normalizedBaseUrl}/`);
-    const isSecurePage = pageUrl.protocol === 'https:';
-    const isLocalInsecureTower =
-      targetUrl.protocol === 'http:' && (targetUrl.hostname === '127.0.0.1' || targetUrl.hostname === 'localhost');
-    if (isSecurePage && isLocalInsecureTower) {
-      const proxyUrl = new URL('/api/watchtower-proxy', pageUrl.origin);
-      proxyUrl.searchParams.set('target', normalizedBaseUrl);
-      proxyUrl.searchParams.set('path', normalizedPath);
-      return proxyUrl.toString();
-    }
-  }
-  return new URL(normalizedPath, `${normalizedBaseUrl}/`).toString();
-};
+export const buildTowerRequestUrl = (towerUrl: string, towerPath: string): string =>
+  buildCoreTowerRequestUrl(towerUrl, towerPath, currentPageUrl());
 
 export const getConfiguredRecoveryTowers = (runtime: Runtime | null | undefined): RecoveryTowerConfig[] => {
   const explicit = (runtime?.recovery?.towers || [])
@@ -711,225 +617,25 @@ export const getConfiguredRecoveryTowers = (runtime: Runtime | null | undefined)
   return [...deduped.values()];
 };
 
-export async function fetchTowerServerInfo(towerUrl: string): Promise<TowerServerInfo> {
-  const normalizedUrl = normalizeTowerBaseUrl(towerUrl);
-  const cached = recoveryTowerInfoCache.get(normalizedUrl);
-  const now = Date.now();
-  if (cached && now - cached.fetchedAt < RECOVERY_TOWER_INFO_TTL_MS) {
-    return cached.info;
-  }
-  const response = await fetch(buildTowerRequestUrl(normalizedUrl, '/api/tower/healthz'), {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-  });
-  if (!response.ok) {
-    throw new Error(`TOWER_INFO_HTTP_${response.status}`);
-  }
-  const payload = (await response.json()) as TowerServerInfo;
-  if (!payload.ok) {
-    throw new Error(`TOWER_INFO_INVALID:${normalizedUrl}`);
-  }
-  recoveryTowerInfoCache.set(normalizedUrl, { fetchedAt: now, info: payload });
-  return payload;
-}
-
-export async function towerHasRecoveryBundle(tower: RecoveryTowerConfig, lookupKey: string): Promise<boolean> {
-  const discoverUrl = buildTowerRequestUrl(tower.url, '/api/recovery/discover');
-  const response = await fetch(discoverUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ lookupKey }),
-  });
-  if (!response.ok) {
-    throw new Error(`HTTP_${response.status}`);
-  }
-  const payload = (await response.json()) as TowerDiscoverPayload;
-  if (!payload.ok) {
-    if (payload.error === 'TOWER_BUNDLE_NOT_FOUND') return false;
-    throw new Error(String(payload.error || 'unknown'));
-  }
-  return payload.available === true;
-}
-
-export const isEncryptedRuntimeRecoveryBundle = (value: unknown): value is EncryptedRuntimeRecoveryBundleV1 => {
-  if (!isRecord(value)) return false;
-  return (
-    value['version'] === 1 &&
-    typeof value['runtimeId'] === 'string' &&
-    typeof value['lookupKey'] === 'string' &&
-    typeof value['bundleHash'] === 'string' &&
-    typeof value['iv'] === 'string' &&
-    typeof value['ciphertext'] === 'string'
-  );
-};
-
-export const extractEncryptedRecoveryBundles = (payload: unknown): EncryptedRuntimeRecoveryBundleV1[] => {
-  if (isEncryptedRuntimeRecoveryBundle(payload)) return [payload];
-  if (!isRecord(payload)) return [];
-  const rawBundles = Array.isArray(payload['bundles'])
-    ? payload['bundles']
-    : payload['bundle']
-      ? [payload['bundle']]
-      : [];
-  return rawBundles.filter(isEncryptedRuntimeRecoveryBundle);
-};
-
-export const getBundleReferenceHash = (bundle: RuntimeRecoveryBundleV1): string =>
-  String(bundle.checkpointHash || bundle.baseCheckpointHash || '')
-    .trim()
-    .toLowerCase();
-
-export const sortRecoveryBundlesByTip = (left: RuntimeRecoveryBundleV1, right: RuntimeRecoveryBundleV1): number => {
-  if (right.runtimeHeight !== left.runtimeHeight) return right.runtimeHeight - left.runtimeHeight;
-  return right.createdAt - left.createdAt;
-};
-
-export const sortRecoveryCandidatesByTip = (
-  left: RuntimeRecoveryCandidate,
-  right: RuntimeRecoveryCandidate,
-): number => {
-  if (right.runtimeHeight !== left.runtimeHeight) return right.runtimeHeight - left.runtimeHeight;
-  if (right.createdAt !== left.createdAt) return right.createdAt - left.createdAt;
-  return (right.receipt?.sequence || 0) - (left.receipt?.sequence || 0);
-};
-
-export const normalizeRecoveryFailureCode = (message: string): string => {
-  const code = message.trim().split(/[\s:]/)[0] || 'UNKNOWN';
-  return code.replace(/[^A-Z0-9_]/gi, '_').toUpperCase();
-};
-
-export const classifyRuntimeRecoveryDiscoveryFailure = (input: {
-  source: Exclude<RuntimeRecoveryCandidateSource, 'file'>;
-  sourceLabel: string;
-  message: string;
-}): RuntimeRecoveryDiscoveryFailure => {
-  const message = String(input.message || 'unknown').trim() || 'unknown';
-  const code = normalizeRecoveryFailureCode(message);
-  const lower = message.toLowerCase();
-  const category: RuntimeRecoveryFailureCategory =
-    code === 'TOWER_BUNDLE_NOT_FOUND' ||
-    code === 'PEER_RECOVERY_BUNDLE_EMPTY' ||
-    code === 'RECOVERY_CANDIDATE_EMPTY' ||
-    code === 'HTTP_404'
-      ? 'ExpectedEmpty'
-      : code.startsWith('HTTP_5') ||
-          code === 'HTTP_408' ||
-          code === 'HTTP_409' ||
-          code === 'HTTP_425' ||
-          code === 'HTTP_429' ||
-          lower.includes('timeout') ||
-          lower.includes('offline') ||
-          lower.includes('connect') ||
-          lower.includes('network') ||
-          lower.includes('fetch') ||
-          code === 'RECOVERY_REQUEST_SEND_FAILED' ||
-          code === 'RECOVERY_REQUEST_SOCKET_CLOSED' ||
-          code === 'RECOVERY_REQUEST_SOCKET_PAUSED'
-        ? 'TransientRace'
-        : 'Contradiction';
-  return {
-    source: input.source,
-    sourceLabel: String(input.sourceLabel || input.source).trim() || input.source,
-    category,
-    code,
-    message,
-  };
-};
-
-export const recoveryFailureErrorText = (failure: RuntimeRecoveryDiscoveryFailure): string =>
-  `${failure.sourceLabel}:${failure.message}`;
-
-export const buildRuntimeRecoveryCandidate = async (input: {
-  source: RuntimeRecoveryCandidateSource;
-  sourceLabel: string;
-  seed: string;
-  expectedRuntimeId: string;
-  encryptedBundles: EncryptedRuntimeRecoveryBundleV1[];
-  xln: XLNModule;
-  towerUrl?: string;
-  peerId?: string;
-  receipt?: TowerReceiptV1;
-}): Promise<RuntimeRecoveryCandidate> => {
-  if (input.encryptedBundles.length === 0) {
-    throw new Error('RECOVERY_CANDIDATE_EMPTY');
-  }
-  const bundles: RuntimeRecoveryBundleV1[] = [];
-  for (const encryptedBundle of input.encryptedBundles) {
-    bundles.push(await input.xln.decryptRuntimeRecoveryBundle(encryptedBundle, input.seed));
-  }
-  if (bundles.length === 0) throw new Error('RECOVERY_CANDIDATE_EMPTY');
-  for (const bundle of bundles) {
-    const runtimeId = normalizeRuntimeId(bundle.runtimeId);
-    if (!runtimeId || runtimeId !== input.expectedRuntimeId) {
-      throw new Error(
-        `RECOVERY_CANDIDATE_RUNTIME_ID_MISMATCH: expected=${input.expectedRuntimeId} actual=${String(bundle.runtimeId || 'none')}`,
-      );
-    }
-  }
-
-  const tipBundle = [...bundles].sort(sortRecoveryBundlesByTip)[0]!;
-  const metadataBundle = bundles.find(bundle => (bundle.kind ?? 'snapshot') === 'snapshot') ?? tipBundle;
-  const checkpointHash = getBundleReferenceHash(metadataBundle) || getBundleReferenceHash(tipBundle);
-  const sourceKey = input.towerUrl || input.sourceLabel;
-  const id = [
-    input.source,
-    sourceKey,
-    tipBundle.runtimeHeight,
-    tipBundle.createdAt,
-    checkpointHash || input.encryptedBundles[0]?.bundleHash || 'no-hash',
-  ].join(':');
-
-  return {
-    id,
-    source: input.source,
-    sourceLabel: input.sourceLabel,
-    ...(input.towerUrl ? { towerUrl: input.towerUrl } : {}),
-    ...(input.peerId ? { peerId: input.peerId } : {}),
-    ...(input.receipt ? { receipt: input.receipt } : {}),
-    encryptedBundles: input.encryptedBundles,
-    bundles,
-    tipBundle,
-    metadataBundle,
-    runtimeId: input.expectedRuntimeId,
-    runtimeHeight: tipBundle.runtimeHeight,
-    createdAt: Math.max(tipBundle.createdAt, metadataBundle.createdAt),
-    signerCount: metadataBundle.signers.length,
-    checkpointHash,
-    bundleCount: bundles.length,
-  };
-};
+export const fetchTowerServerInfo = async (towerUrl: string): Promise<TowerServerInfo> =>
+  await fetchCoreTowerServerInfo(towerUrl, currentPageUrl());
 
 export async function parseRuntimeRecoveryCandidateFile(
   seed: string,
   fileContents: string,
   options: { sourceLabel?: string; xln?: XLNModule } = {},
 ): Promise<RuntimeRecoveryCandidate> {
-  const xln = options.xln || (await getXLN());
-  if (typeof xln.decryptRuntimeRecoveryBundle !== 'function') {
-    throw new Error('RECOVERY_DECRYPT_UNAVAILABLE');
-  }
-  const runtimeId = normalizeRuntimeId(deriveAddress(seed, 0));
-  if (!runtimeId) throw new Error('RECOVERY_RUNTIME_ID_INVALID');
-  let parsed: unknown;
-  try {
-    parsed = parseJsonUnknown(fileContents, 'RECOVERY_BACKUP_FILE_JSON_INVALID');
-  } catch {
-    throw new Error('RECOVERY_BACKUP_FILE_JSON_INVALID');
-  }
-  const encryptedBundles = extractEncryptedRecoveryBundles(parsed);
-  if (encryptedBundles.length === 0) {
-    throw new Error('RECOVERY_BACKUP_FILE_EMPTY');
-  }
-  return buildRuntimeRecoveryCandidate({
-    source: 'file',
-    sourceLabel: options.sourceLabel || 'Local backup file',
-    seed,
-    expectedRuntimeId: runtimeId,
-    encryptedBundles,
-    xln,
+  return await parseCoreRuntimeRecoveryCandidateFile(seed, fileContents, {
+    ...(options.sourceLabel ? { sourceLabel: options.sourceLabel } : {}),
+    ...(options.xln ? { crypto: options.xln } : {}),
   });
 }
 
+/**
+ * Resolve the towers this vault actually trusts, then ask core. Default-tower
+ * policy is a browser-origin decision, so it stays here; discovery itself does
+ * not differ between wallets.
+ */
 export async function discoverRuntimeRecoveryCandidates(
   seed: string,
   options: {
@@ -939,126 +645,24 @@ export async function discoverRuntimeRecoveryCandidates(
     xln?: XLNModule;
   } = {},
 ): Promise<RuntimeRecoveryDiscoveryResult> {
-  const xln = options.xln || (await getXLN());
-  if (
-    typeof xln.decryptRuntimeRecoveryBundle !== 'function' ||
-    typeof xln.deriveRuntimeRecoveryLookupKey !== 'function'
-  ) {
-    throw new Error('RECOVERY_DISCOVERY_UNAVAILABLE');
-  }
-  const runtimeId = normalizeRuntimeId(deriveAddress(seed, 0));
-  if (!runtimeId) throw new Error('RECOVERY_RUNTIME_ID_INVALID');
-  const lookupKey = xln.deriveRuntimeRecoveryLookupKey(runtimeId, seed);
+  const recovery =
+    options.recovery ||
+    (options.towers ? { useDefaultTowers: false, towers: options.towers } : buildDefaultRuntimeRecoveryConfig());
   const runtimeProbe: Runtime = {
-    id: runtimeId,
+    id: normalizeRuntimeId(deriveAddress(seed, 0)),
     label: 'Recovery probe',
     seed,
     signers: [],
     activeSignerIndex: 0,
-    recovery:
-      options.recovery ||
-      (options.towers ? { useDefaultTowers: false, towers: options.towers } : buildDefaultRuntimeRecoveryConfig()),
+    recovery,
     createdAt: Date.now(),
   };
-  const towers = getConfiguredRecoveryTowers(runtimeProbe);
-  const candidates: RuntimeRecoveryCandidate[] = [];
-  const errors: string[] = [];
-  const failures: RuntimeRecoveryDiscoveryFailure[] = [];
-  const peers = options.peers || [];
-  const recordFailure = (
-    source: Exclude<RuntimeRecoveryCandidateSource, 'file'>,
-    sourceLabel: string,
-    message: string,
-  ): void => {
-    const failure = classifyRuntimeRecoveryDiscoveryFailure({ source, sourceLabel, message });
-    failures.push(failure);
-    if (failure.category !== 'ExpectedEmpty') {
-      errors.push(recoveryFailureErrorText(failure));
-    }
-  };
-
-  for (const tower of towers) {
-    try {
-      if (!(await towerHasRecoveryBundle(tower, lookupKey))) {
-        recordFailure('tower', tower.url, 'TOWER_BUNDLE_NOT_FOUND');
-        continue;
-      }
-      const restoreUrl = buildTowerRequestUrl(tower.url, '/api/tower/restore');
-      const response = await fetch(restoreUrl, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ lookupKey }),
-      });
-      if (response.status === 404) {
-        recordFailure('tower', tower.url, 'HTTP_404');
-        continue;
-      }
-      if (!response.ok) {
-        recordFailure('tower', tower.url, `HTTP_${response.status}`);
-        continue;
-      }
-      const payload = (await response.json()) as TowerRestorePayload;
-      const encryptedBundles = extractEncryptedRecoveryBundles(payload);
-      if (!payload.ok || encryptedBundles.length === 0) {
-        if (payload.error === 'TOWER_BUNDLE_NOT_FOUND') {
-          recordFailure('tower', tower.url, 'TOWER_BUNDLE_NOT_FOUND');
-          continue;
-        }
-        recordFailure('tower', tower.url, String(payload.error || 'unknown'));
-        continue;
-      }
-      candidates.push(
-        await buildRuntimeRecoveryCandidate({
-          source: 'tower',
-          sourceLabel: tower.url,
-          towerUrl: tower.url,
-          ...(payload.receipt ? { receipt: payload.receipt } : {}),
-          seed,
-          expectedRuntimeId: runtimeId,
-          encryptedBundles,
-          xln,
-        }),
-      );
-    } catch (error) {
-      recordFailure('tower', tower.url, error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  for (const peer of peers) {
-    const sourceLabel = String(peer.label || peer.id || 'Peer').trim() || 'Peer';
-    try {
-      const payload = await peer.fetchBundles({ runtimeId, lookupKey });
-      const encryptedBundles = extractEncryptedRecoveryBundles(payload);
-      if (encryptedBundles.length === 0) {
-        recordFailure('peer', sourceLabel, 'PEER_RECOVERY_BUNDLE_EMPTY');
-        continue;
-      }
-      candidates.push(
-        await buildRuntimeRecoveryCandidate({
-          source: 'peer',
-          sourceLabel,
-          ...(peer.id ? { peerId: peer.id } : {}),
-          seed,
-          expectedRuntimeId: runtimeId,
-          encryptedBundles,
-          xln,
-        }),
-      );
-    } catch (error) {
-      recordFailure('peer', sourceLabel, error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  candidates.sort(sortRecoveryCandidatesByTip);
-  return {
-    runtimeId,
-    lookupKey,
-    candidates,
-    errors,
-    failures,
-    checkedTowers: towers.length,
-    checkedPeers: peers.length,
-  };
+  return await discoverCoreRuntimeRecoveryCandidates(seed, {
+    towers: getConfiguredRecoveryTowers(runtimeProbe),
+    ...(options.peers ? { peers: options.peers } : {}),
+    ...(options.xln ? { crypto: options.xln } : {}),
+    ...(currentPageUrl() ? { pageUrl: currentPageUrl() } : {}),
+  });
 }
 
 export const buildRuntimeRecoverySigners = (runtime: Runtime): RuntimeRecoverySignerV1[] =>
