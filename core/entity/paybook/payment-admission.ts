@@ -35,6 +35,18 @@ import type { AccountStateDomain } from '../../types/account';
 
 type HtlcPaymentTx = Extract<EntityTx, { type: 'htlcPayment' }>;
 
+/** The certified J input is applied before the payment in the same frame.
+ * Using the parent height expires a new lock when catch-up exceeds its window.
+ * Consensus authenticates the J range; later inputs cannot influence earlier payments.
+ */
+function* originatedPaymentInputs(state: EntityState, txs: readonly EntityTx[]) {
+  let jHeight = state.lastFinalizedJHeight;
+  for (const tx of txs) {
+    if (tx.type === 'j_event') jHeight = tx.data.scannedThroughHeight;
+    if (tx.type === 'htlcPayment') yield { tx, jHeight };
+  }
+}
+
 function rejectHtlcPayment(message: string): never {
   throw rejectFailure('HTLC_PAYMENT_INVALID', message);
 }
@@ -163,8 +175,7 @@ export const materializeOriginatedHtlcPayments = async (
   const originated: PreparedOriginatedHtlcPayment[] = [];
   const proposalHashlocks = new Set<string>();
   const profileIndex = buildRoutingProfileIndex(input.profiles);
-  for (const candidate of input.proposalTxs) {
-    if (candidate.type !== 'htlcPayment') continue;
+  for (const { tx: candidate, jHeight } of originatedPaymentInputs(input.state, input.proposalTxs)) {
     assertRawHtlcPayment(candidate);
     const source = entityId(input.state.entityId, 'HTLC_PAYMENT_SOURCE_INVALID');
     const target = entityId(candidate.data.targetEntityId, 'HTLC_PAYMENT_TARGET_INVALID');
@@ -188,7 +199,7 @@ export const materializeOriginatedHtlcPayments = async (
     if (quote.senderLockAmount > candidate.data.maxSenderDebit) rejectHtlcPayment('HTLC_PAYMENT_MAX_SENDER_DEBIT_EXCEEDED');
     const window = resolvePaymentDeadlineWindow({
       mode: candidate.data.deliveryMode,
-      runtimeJHeight: toJHeight(input.state.lastFinalizedJHeight),
+      runtimeJHeight: toJHeight(jHeight),
       timestamp: toUnixMs(startedAtMs),
       totalHops: route.length - 1,
     });
@@ -274,6 +285,7 @@ const assertOriginRouteEvidence = (
 
 const assertOriginEconomics = (
   input: AssertOriginatedInput,
+  jHeight: number,
   profileIndex: RoutingProfileIndex,
   tx: HtlcPaymentTx,
   origin: PreparedOriginatedHtlcPayment,
@@ -284,7 +296,7 @@ const assertOriginEconomics = (
   if (quote.senderLockAmount > tx.data.maxSenderDebit) rejectHtlcPayment('HTLC_PAYMENT_MAX_SENDER_DEBIT_EXCEEDED');
   const window = resolvePaymentDeadlineWindow({
     mode: tx.data.deliveryMode,
-    runtimeJHeight: toJHeight(input.state.lastFinalizedJHeight),
+    runtimeJHeight: toJHeight(jHeight),
     timestamp: toUnixMs(startedAtMs),
     totalHops: origin.route.length - 1,
   });
@@ -307,13 +319,12 @@ const assertOriginEconomics = (
 
 /** Validators authenticate public payment facts but never recreate proposer entropy. */
 export const assertOriginatedHtlcPayments = (input: AssertOriginatedInput): void => {
-  const expectedTxs = input.proposalTxs
-    .filter((tx): tx is HtlcPaymentTx => tx.type === 'htlcPayment');
+  const expectedTxs = [...originatedPaymentInputs(input.state, input.proposalTxs)];
   if (expectedTxs.length !== input.originated.length) rejectHtlcPayment('HTLC_PAYMENT_PREPARED_ORIGIN_COUNT_MISMATCH');
   const origins = new Map(input.originated.map(origin => [origin.txHash, origin]));
   const proposalHashlocks = new Set<string>();
   const profileIndex = buildRoutingProfileIndex(input.profiles);
-  for (const tx of expectedTxs) {
+  for (const { tx, jHeight } of expectedTxs) {
     assertRawHtlcPayment(tx);
     const txHash = hashRawHtlcPaymentTx(tx);
     const origin = origins.get(txHash);
@@ -323,7 +334,7 @@ export const assertOriginatedHtlcPayments = (input: AssertOriginatedInput): void
     }
     proposalHashlocks.add(origin.hashlock);
     assertOriginRouteEvidence(input, profileIndex, tx, origin);
-    assertOriginEconomics(input, profileIndex, tx, origin);
+    assertOriginEconomics(input, jHeight, profileIndex, tx, origin);
   }
 };
 

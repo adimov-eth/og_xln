@@ -4,7 +4,6 @@ import type { RuntimeReplica, RuntimeInput, RuntimeTx } from '../../../runtime/t
 import { enqueueRuntimeInput } from '../../../runtime/mempool/input-queue';
 import { createStructuredLogger, shortId } from '../../../support/logger';
 import { getJEventJurisdictionRef } from '../../machine/event-observation';
-import { JBLOCK_LIVENESS_INTERVAL } from '../../../entity/types';
 import { recordValidatorJHistory } from '../../machine/local-history';
 import {
   buildLocalJPrefixAttestation,
@@ -150,11 +149,6 @@ export function buildJHistoryRangeRuntimeInput(
     const baseHeight = Number(replica.state.lastFinalizedJHeight || 0);
     const observations = observationsByReplica.get(key) || [];
     if (scannedThroughHeight <= baseHeight) continue;
-    // Empty scan evidence is checkpointed at the existing block interval. Measure
-    // from the last recorded scan, not Entity finality: an idle Entity does not
-    // advance finality, so the latter would enqueue every poll forever after 100.
-    const lastRecordedScan = Math.max(baseHeight, replica.jHistory?.contiguousThroughHeight ?? baseHeight);
-    const scanDistanceMayReachLiveness = scannedThroughHeight - lastRecordedScan >= JBLOCK_LIVENESS_INTERVAL;
     const jurisdictionRef = getJEventJurisdictionRef(replica.state.config.jurisdiction);
     if (watcherReplica && jurisdictionRef !== watcherJurisdictionRef) {
       throw new Error(
@@ -190,10 +184,10 @@ export function buildJHistoryRangeRuntimeInput(
       tentativeHistory = recordValidatorJHistory(tentativeHistory, scanTipObservation.data, replica.state);
     }
     const hasDuePrefixAdvance = hasDueLocalJPrefixAdvance(replica.state, tentativeHistory);
-    // Empty authenticated pages below liveness stay outside Runtime state. The
-    // one exception is a page that closes the exact prefix for a previously
-    // persisted sparse semantic event: that event must become attestable now.
-    if (observations.length === 0 && !scanDistanceMayReachLiveness && !hasDuePrefixAdvance) continue;
+    // Authenticated progress must reach the WAL before the next financial input.
+    // Throttling it by 100 blocks can age a new 50-block HTLC past a peer's head.
+    // Header observations update local evidence, never manufacture Entity frames.
+    if (observations.length === 0 && !scanTipObservation && !hasDuePrefixAdvance) continue;
     if (scanTipObservation) runtimeTxs.push(markLocalJAuthorityRuntimeTx(scanTipObservation));
     scannedReplicaKeys.push(replicaKey);
     // A semantic J event must hold the watcher cursor until the Entity has

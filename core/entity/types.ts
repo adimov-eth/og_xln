@@ -231,13 +231,6 @@ export type ExternalWalletState = {
 };
 
 
-/**
- * Liveness sync - empty block observation to prove chain is alive.
- * Required every JBLOCK_LIVENESS_INTERVAL blocks even if no events.
- */
-export const JBLOCK_LIVENESS_INTERVAL = 100;
-
-
 export interface EntityState {
   entityId: string; // The entity ID this state belongs to
   height: number;

@@ -87,7 +87,7 @@ const replayPreparedFrameForRelay = async (
   assertFrameJPrefix(env, replica, frame);
   await assertEntityInfraContextAuthority(env, frame.entityContext, replica.state);
   await assertHtlcPreparedInfraContext({
-    state: replica.state,
+    state: { ...replica.state, timestamp: frame.timestamp },
     proposalTxs: frame.txs,
     context: frame.entityContext,
     entityEncryptionPrivateKey: requireEntityEncryptionPrivateKey(env, replica.entityId),

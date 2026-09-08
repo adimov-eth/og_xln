@@ -1,3 +1,4 @@
+import { resolveEntityProposalTimestamp } from './clock';
 import type { EntityInfraContext } from '../../../types/entity/infra-context';
 import type { EntityRuntimeContext } from '../../runtime-context';
 import type { EntityReplica } from '../../types';
@@ -163,7 +164,7 @@ const materializeFreshEntityInfraContext = async (
   };
   const htlc = needsHtlcInfra
     ? await timePerfPhase('entity.infraMaterialize.htlc', () => materializeHtlcPreparedInfraContext({
-        state: replica.state,
+        state: { ...replica.state, timestamp: resolveEntityProposalTimestamp(env, replica.state) },
         proposalTxs,
         entityEncryptionPublicKey: replica.state.entityEncryptionPublicKey,
         entityEncryptionPrivateKey: requireEntityEncryptionPrivateKey(env, entityId),

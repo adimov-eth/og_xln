@@ -131,7 +131,7 @@ export const replayProposedEntityFrame = async (
       context.workingReplica.state,
     );
     await assertHtlcPreparedInfraContext({
-      state: context.workingReplica.state,
+      state: { ...context.workingReplica.state, timestamp: frame.timestamp },
       proposalTxs: frame.txs,
       context: frame.entityContext,
       entityEncryptionPrivateKey: requireEntityEncryptionPrivateKey(

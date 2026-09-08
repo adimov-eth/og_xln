@@ -916,7 +916,7 @@ describe('JAdapter watcher ingress', () => {
     expect(resolveCommittedWatcherCursor(env, pending, 100, 0)).toBe(100);
   });
 
-  test('idle Entity checkpoints empty scan progress once per interval, not every poll after block 100', () => {
+  test('idle Entity records authenticated progress without creating financial frames', () => {
     const env = createEmptyEnv('idle-scan-checkpoint-interval');
     const entityId = `0x${'7b'.repeat(32)}`;
     const signerId = deriveSignerAddressSync('idle-scan-checkpoint-interval', '1').toLowerCase();
@@ -941,8 +941,8 @@ describe('JAdapter watcher ingress', () => {
         undefined,
         Array.from({ length: height - 100 }, (_, i) => ({ jHeight: i + 101, jBlockHash: blockHash(i + 101) })),
       );
-      expect(result.scannedReplicaKeys).toEqual([]);
-      expect(env.runtimeMempool?.runtimeTxs ?? []).toEqual([]);
+      expect(result.scannedReplicaKeys).toEqual([`${entityId}:${signerId}`]);
+      expect(env.runtimeMempool?.runtimeTxs.at(-1)?.type).toBe('observeJRange');
       expect(env.runtimeMempool?.entityInputs ?? []).toEqual([]);
     }
     const due = enqueueJHistoryRange(
@@ -957,7 +957,7 @@ describe('JAdapter watcher ingress', () => {
     expect(due.finalityReplicaKeys).toEqual([]);
 
     // A sparse receipt ahead of the authenticated prefix must not suppress
-    // catch-up pages. Only contiguous recorded progress resets the interval.
+    // catch-up pages. Every authenticated page must remain recordable.
     replica.jHistory = {
       ...replica.jHistory,
       scannedThroughHeight: 1_000,
@@ -970,7 +970,7 @@ describe('JAdapter watcher ingress', () => {
     expect(catchup.scannedReplicaKeys).toEqual([`${entityId}:${signerId}`]);
   });
 
-  test('authenticated empty watcher progress below liveness does not create Runtime work', () => {
+  test('authenticated empty watcher progress below liveness records evidence without Entity work', () => {
     const seed = 'jadapter-empty-page-no-runtime-frame';
     const env = createEmptyEnv(seed);
     const signerId = deriveSignerAddressSync(seed, '1').toLowerCase();
@@ -993,10 +993,11 @@ describe('JAdapter watcher ingress', () => {
       })),
     );
 
-    expect(range).toEqual({ scannedReplicaKeys: [], finalityReplicaKeys: [] });
-    expect(env.runtimeMempool?.runtimeTxs ?? []).toEqual([]);
+    expect(range).toEqual({ scannedReplicaKeys: [`${entityId}:${signerId}`], finalityReplicaKeys: [] });
+    expect(env.runtimeMempool?.runtimeTxs).toHaveLength(1);
+    expect(env.runtimeMempool?.runtimeTxs[0]?.type).toBe('observeJRange');
     expect(env.runtimeMempool?.entityInputs ?? []).toEqual([]);
-    expect(env.infrastructure?.wakeRequested).not.toBe(true);
+    expect(env.infrastructure?.wakeRequested).toBe(true);
   });
 
   test('watcher does not enqueue the next authenticated page before the prior local scan is durable', () => {
