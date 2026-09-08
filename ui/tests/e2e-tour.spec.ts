@@ -11,7 +11,7 @@ test(
       if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/faucet/offchain') grants++;
     });
     await enterStack(page);
-    await page.getByRole('button', { name: 'Show me how' }).click();
+    await page.getByRole('button', { name: 'Tour', exact: true }).click();
     const guide = page.getByTestId('tour');
     await expect(guide).toHaveAttribute('data-target', 'home-faucet');
     await expect(page.getByTestId('tour-next')).toHaveCount(0);
@@ -82,7 +82,7 @@ test(
     await enterStack(page);
     await page.getByTestId('home-faucet').click();
     await expect(page.getByTestId('test-money-status')).toContainText('100 USDC received', { timeout: 20_000 });
-    await page.getByRole('button', { name: 'Show me how' }).click();
+    await page.getByRole('button', { name: 'Tour', exact: true }).click();
     await expect(page.getByTestId('tour')).toHaveAttribute('data-target', 'home-pay');
     await expect(page.getByTestId('tour-next')).toHaveCount(0);
     expect(grants).toBe(1);

@@ -49,14 +49,14 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
       const plan = xln.planReceiveCapacity({ ...input, account });
       if (plan.status !== 'ready') {
         if (plan.status !== 'credit') throw new Error('This account cannot receive test money yet');
-        setStage('Preparing your account…');
+        setStage('Preparing…');
         await sendEntityTxs(entityId, wallet.signerId, [...plan.setupTxs]);
         await waitFor(
           async () => xln.planReceiveCapacity({ ...input, account: await read() }).status === 'ready',
           'hub confirmation',
         );
       }
-      setStage('Receiving 100 USDC…');
+      setStage('Receiving…');
       await requestFaucet('offchain', {
         entityId,
         signerId: wallet.signerId,
@@ -68,7 +68,7 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
       });
       await waitFor(async () => balance(await read()) >= before + 100_000_000n, 'confirmed test payment');
       setDone(true);
-      setStage('100 USDC received. Try a payment or swap.');
+      setStage('');
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
       setStage('');
@@ -77,23 +77,25 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
     }
   };
   return (
-    <section className={`test-money${wallet.usd.net > 0 ? ' funded' : ''}`} aria-label="Try xln">
+    <section className="test-money" aria-label="Test money faucet">
+      <span className="test-money-label">Faucet</span>
+      <span className="test-money-token">USDC</span>
       <button
         type="button"
-        className={wallet.usd.net > 0 ? 'btn quiet sm' : 'btn primary'}
+        className="btn sm"
         disabled={busy || !hub || done}
         onClick={() => void receive()}
         data-testid="home-faucet"
+        aria-label={done ? '100 USDC received' : 'Get 100 test USDC'}
       >
-        {done ? '100 USDC received' : busy ? stage : 'Get 100 test USDC'}
+        {done ? <span role="status" data-testid="test-money-status">100 USDC received</span> : busy ? stage || 'Receiving…' : '+100'}
       </button>
       <button type="button" className="more" onClick={() => setTour({ active: true, index: 0 })}>
-        Show me how
+        Tour
       </button>
-      {!done && wallet.usd.net <= 0 && <p className="note">One click to try payments and swaps. No real money.</p>}
       {!done && hub && (
         <details className="disclosure">
-          <summary>Test funding details</summary>
+          <summary>Details</summary>
           <p className="note">
             This action lets {hub.label} owe you 100 USDC of test money without collateral. Existing credit is used
             first.
@@ -101,11 +103,6 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
         </details>
       )}
       {!hub && <p role="status">Connecting your hub account…</p>}
-      {stage && (
-        <p role="status" data-testid="test-money-status">
-          {stage}
-        </p>
-      )}
       {error && <p role="alert">{error} Check your balance before trying again.</p>}
     </section>
   );

@@ -2278,11 +2278,15 @@ textarea.input.boxed {
 .wallet-details { border-top: 1px solid var(--line); margin-top: 36px; padding-top: 12px; }
 .wallet-connections { margin: 20px 0; max-width: 500px; }
 .wallet-connections .avatar { width: 32px; height: 32px; font-size: 13px; }
-.test-money { margin: 18px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
-.test-money > .note, .test-money > [role], .test-money > details { flex-basis: 100%; }
-.test-money.funded { padding-top: 4px; }
-.test-money.funded .disclosure { border: 0; padding: 0; font-size: 11px; }
-.test-money.funded .disclosure summary { color: var(--ink-3); }
+.test-money { margin: 18px 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.test-money-label { color: var(--ink-3); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.test-money-token { font-size: 13px; font-weight: 500; }
+.test-money > .btn { min-height: 32px; padding: 6px 12px; }
+.test-money > .more { margin-left: auto; font-size: 12px; }
+.test-money > [role] { flex-basis: 100%; font-size: 12px; }
+.test-money > .disclosure { border: 0; padding: 0; font-size: 11px; }
+.test-money .disclosure[open] { flex-basis: 100%; }
+.test-money .disclosure summary { color: var(--ink-3); }
 @media (max-width: 760px) {
   .wallet-sections { grid-template-columns: 1fr; gap: 28px; }
   .wallet-overview { padding: 12px 0 22px; }

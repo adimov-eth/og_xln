@@ -4,17 +4,37 @@
 
 Owner authorized several hours of prioritized production work and ten-minute status updates.
 Work window: through 2026-09-09 01:10 UTC; review the method every 30 minutes.
-No subagents, external model calls or usage resets. Preserve both frontend and ui.
+No subagents or usage resets. Owner now explicitly authorizes a bounded Quorum review
+after scenarios/parity, under the existing shared reservation ledger and budget.
+Preserve both frontend and ui.
 Report completed/total checks per stage, never an invented production-readiness percentage.
 
-1. Wallet money and recovery (4 checks): payment/duplicate-click/reload; canonical recovery;
-   assets/funding; entity isolation. All four are green (4/4).
-2. Cross-J execution and recovery: existing real cross-swap E2E, partial fill/cancel,
-   both legs and no remaining holds. Reach the first production failure before broad audits.
-3. Protection: joint settlement/batch, dispute/finalization, tower recovery and automatic response.
-   Time-changing tests run only on an isolated owned chain.
-4. Run the remaining relevant browser and core scenarios on TS and native Rust, exact replay,
-   production and test builds, then final checks. Lending remains disabled and excluded.
+Owner explicitly interrupted the sequence for a narrow Home faucet UX fix and Quorum review
+(2026-09-08 23:44 UTC). Restore the scenario/parity-first sequence after that fix.
+Quorum job `faucet-ux-20260909-01`: one completed GLM-5.3 low subscription review of the
+textual UX proposal, not a code audit or screenshot review. No retry; USD0.25 reservation
+retained because actual cash cost is unknown. Result `/tmp/xln-faucet-ux-quorum-result.json`.
+Compact faucet follows the old Svelte inline layout; one committed success message and
+one-click funding retained. Tour E2E 2/2 in 15.2s:
+`/tmp/xln-faucet-ux-r2-20260909/wallet-results.json`. UI types green.
+
+## Owner priority override — 2026-09-08 23:43 UTC
+
+Active Codex goal: all applicable production scenarios and full semantic parity, then
+bounded Quorum review, then all E2E on both frontends. Do not switch to cosmetic work.
+
+1. Run every applicable canonical scenario; fix the first real failure and rerun it.
+   Include Pay, Swap, partial fill/cancel, Move, settlement, dispute, Cross-J and recovery.
+2. Complete immutable mixed-WAL TS/Rust parity across worker configurations: every R/E/A
+   root and ordered event/effect/outbox digest; live J and production/cfg(test) builds.
+   The earlier 111-frame bundle does not establish complete transaction-kind coverage.
+3. Quorum: one bounded read-only review of an immutable SHA and actual evidence. Use the
+   existing reservation owner; independently reproduce findings before changing code.
+   No new money allowance is inferred from this request; preserve the shared budget/expiry.
+4. Run all applicable React ui and Svelte frontend E2E, including public production-build
+   coverage and desktop/mobile tutorial interactions. Skips do not count as green.
+5. Final applicable gates and checked milestone on main. Report exact remaining blockers;
+   cosmetic changes and TPS tuning stay behind correctness. Lending remains disabled.
 
 Every financial scenario must prove actual committed outcomes and recovery, not only rendered UI.
 Use one heavy stand. Freeze source and builds throughout browser runs; previous live tests were
