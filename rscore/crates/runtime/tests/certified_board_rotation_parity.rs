@@ -9,18 +9,27 @@
 //! resolves the rotated board in the same process, without any restore.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use num_bigint::BigInt;
 use serde_json::Value;
-use xln_rscore_batch::{AccountInputBoardAuthority, CertifiedBoardAuthorityResolver};
+use xln_rscore_batch::{
+    AccountId, AccountInput, AccountInputBoardAuthority, AccountInputKind, AccountInputRow,
+    AccountInputVerdict, AccountSeed, CertifiedBoardAuthorityResolver, EngineGeneration,
+    EntityInboundRequest, ResidentConsensusEngine,
+};
 use xln_rscore_engine::{
-    BoardActivatedEvent, EntityId, EntityRegisteredEvent, FoundationBootstrappedEvent,
-    JEventMetadata, JurisdictionEvent,
+    AccountDisputeConfig, AccountDomain, AccountIdentity, AccountInputEnvelope, AccountReplica,
+    AccountState, BoardActivatedEvent, BoardDelays, BoardHankoRefreshInput,
+    CertifiedBoardAuthority, Delta, DepositoryAddress, EntityId, EntityRegisteredEvent,
+    FoundationBootstrappedEvent, JEventMetadata, JurisdictionEvent, ReceiverClock, SigningIdentity,
+    SwapMarketPolicy, SwapToken, TokenId, WatchSeed, derive_signer_key,
 };
 use xln_rscore_entity_kernel::{
-    ConsensusMode, EntityConsensusConfig, EntityFrameAuthority, EntityLeaderState,
-    EntityStateSlice, FinalizedJEventBatch, apply_finalized_j_event_batches,
-    certified_board_stack_key,
+    ConsensusMode, DeterministicContext, EntityConsensusConfig, EntityFrameAuthority,
+    EntityLeaderState, EntityStateSlice, FinalizedJEventBatch, ResidentEntityOperation,
+    ResidentEntityRequest, ResidentEntityResult, apply_finalized_j_event_batches,
+    apply_resident_entity_round, certified_board_stack_key,
 };
 use xln_rscore_protocol::{CanonicalNumber, CanonicalValue};
 use xln_rscore_runtime::RuntimeEntityState;
@@ -279,5 +288,374 @@ fn board_rotation_committed_by_an_earlier_frame_is_resolved_without_restore() {
     assert_eq!(
         stale_board,
         text(&steps[1]["resolvedPeerBoard"]["boardHash"]),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Intra-frame ordering.
+//
+// TypeScript applies the transactions of one Entity frame strictly in order
+// (`core/entity/consensus/frame/application.ts`, `applyEntityTxsInOrder`), and
+// the certified J range is prepended to the proposal
+// (`core/entity/consensus/proposal/selection.ts:65`), so a `j_event` carrying
+// `BoardActivated` for a counterparty mutates `state.certifiedBoardState`
+// (`core/entity/tx/j-events-board.ts:49`) before a later `accountInput` from
+// that same counterparty resolves its board
+// (`core/entity/tx/handlers/account/input-phases.ts:218`).
+//
+// Rust resolves every inbound row from the state as it stood at the START of
+// the frame (`rscore/crates/runtime/src/machine/apply.rs:3638`) and only then
+// enters the kernel, which applies that frame's J events after the inbound
+// Account stage (`rscore/crates/entity-kernel/src/resident.rs:2790`).
+//
+// The two tests below run the SAME Entity frame — one `BoardActivated` plus one
+// `board_hanko_refresh` row from the rotated counterparty — through the exact
+// production reducers in each engine's order. Only the resolution point
+// differs.
+// ---------------------------------------------------------------------------
+
+const ORDERING_SEED: &str = "0x7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a";
+const ORDERING_SIGNER: &str = "certified-board-ordering";
+const ORDERING_TIMESTAMP: u64 = 1_700_000_000_000;
+
+fn ordering_domain() -> AccountDomain {
+    AccountDomain::new(
+        31_337,
+        DepositoryAddress::parse("0x8888888888888888888888888888888888888888")
+            .expect("ordering depository"),
+    )
+    .expect("ordering domain")
+}
+
+fn ordering_watch_seed() -> WatchSeed {
+    WatchSeed::parse(&format!("0x{}", "99".repeat(32))).expect("ordering watch seed")
+}
+
+fn ordering_dispute_config() -> AccountDisputeConfig {
+    AccountDisputeConfig::new(10, 10).expect("ordering dispute config")
+}
+
+fn ordering_market() -> Arc<SwapMarketPolicy> {
+    Arc::new(SwapMarketPolicy::new(
+        vec![SwapToken {
+            token_id: 1,
+            decimals: 6,
+            liquid: true,
+        }],
+        Vec::new(),
+    ))
+}
+
+/// One funded bilateral Account between the fixture owner and the fixture peer.
+fn ordering_engine(owner: &EntityId, peer: &EntityId) -> ResidentConsensusEngine {
+    let (left, right) = if owner < peer {
+        (owner.clone(), peer.clone())
+    } else {
+        (peer.clone(), owner.clone())
+    };
+    let capacity = num_bigint::BigInt::from(10_u8).pow(30);
+    let delta = Delta::new(
+        TokenId::new(1).expect("ordering token"),
+        capacity.clone(),
+        num_bigint::BigInt::from(0),
+        num_bigint::BigInt::from(0),
+        capacity.clone(),
+        capacity,
+        num_bigint::BigInt::from(0),
+        num_bigint::BigInt::from(0),
+        num_bigint::BigInt::from(0),
+        num_bigint::BigInt::from(0),
+    )
+    .expect("ordering delta");
+    let state = AccountState::new(
+        AccountIdentity::new(ordering_domain(), left, right, ordering_watch_seed())
+            .expect("ordering account identity"),
+        ordering_dispute_config(),
+        vec![delta],
+    )
+    .expect("ordering account state");
+    ResidentConsensusEngine::restore(
+        EngineGeneration::from_bytes([0x71; 8]),
+        1,
+        0,
+        derive_signer_key(ORDERING_SEED, ORDERING_SIGNER).expect("ordering signer key"),
+        ORDERING_SIGNER.to_string(),
+        ordering_market(),
+        vec![AccountSeed {
+            account_id: AccountId::from_bytes(*peer.as_bytes()),
+            replica: AccountReplica::new(owner.clone(), state).expect("ordering replica"),
+            consensus: None,
+        }],
+    )
+    .expect("ordering resident accounts")
+}
+
+/// The counterparty's refresh of its Account Hanko under the board activated at
+/// J height 3, log index 0 — the exact rotation this fixture commits.
+fn board_hanko_refresh_row(owner: &EntityId, peer: &EntityId) -> AccountInputRow {
+    AccountInputRow {
+        operation_index: 0,
+        account_id: AccountId::from_bytes(*peer.as_bytes()),
+        genesis_policy: None,
+        // Deliberately `Unresolved`: only the parent Entity may resolve it, and
+        // WHEN it does is the whole question.
+        certified_board_authority: AccountInputBoardAuthority::Unresolved,
+        local_certified_board_authority: AccountInputBoardAuthority::Unresolved,
+        input: AccountInput {
+            envelope: AccountInputEnvelope {
+                from_entity_id: *peer.as_bytes(),
+                to_entity_id: *owner.as_bytes(),
+                domain: ordering_domain(),
+                dispute_config: ordering_dispute_config(),
+                watch_seed: Some(ordering_watch_seed()),
+            },
+            kind: AccountInputKind::BoardHankoRefresh(BoardHankoRefreshInput {
+                height: 1,
+                frame_hash: [0x5a; 32],
+                frame_hanko: Some(vec![0x01]),
+                dispute: None,
+                board_activation_j_height: 3,
+                board_activation_log_index: 0,
+            }),
+        },
+    }
+}
+
+/// Exactly one resident Entity round over the rows the parent already resolved,
+/// mirroring `apply_resident_entity_round` as `apply.rs` drives it.
+fn ordering_round(
+    accounts: &mut ResidentConsensusEngine,
+    owner: &EntityId,
+    state: EntityStateSlice,
+    rows: Vec<AccountInputRow>,
+    authority: &EntityFrameAuthority,
+) -> ResidentEntityResult {
+    let expected_accounts_root = accounts.accounts_root();
+    let len = rows.len();
+    apply_resident_entity_round(
+        accounts,
+        state,
+        ResidentEntityRequest {
+            inbound: EntityInboundRequest {
+                owner_entity_id: *owner.as_bytes(),
+                owning_entity_is_hub: false,
+                expected_accounts_root,
+                clock: ReceiverClock {
+                    entity_timestamp: ORDERING_TIMESTAMP,
+                    finalized_j_height: 3,
+                },
+                rows,
+                post_accounts: false,
+            },
+            local_certified_board_authority: AccountInputBoardAuthority::Lazy,
+            entity_height: 1,
+            outbound_timestamp: ORDERING_TIMESTAMP,
+            outbound_j_height: 3,
+            checkpoint_due: false,
+            post_accounts: false,
+            runtime_seed: None,
+            scheduled_wake: None,
+            propose_accounts_now: Vec::new(),
+            expected_proposer_signer_id: ORDERING_SIGNER.to_string(),
+            finalized_j_events: None,
+            entity_authority: Some(authority.clone()),
+            local_account_genesis_policy: None,
+            cross_j_opening_sibling_views: Vec::new(),
+            operations: vec![ResidentEntityOperation::AccountRange { start: 0, len }],
+        },
+        &DeterministicContext::hlt_default(),
+    )
+    .expect("a rejected board Hanko refresh is a typed reject, never a round fault")
+}
+
+/// Everything the two orderings share: the fixture, the pre-rotation Entity
+/// state (FoundationBootstrapped + EntityRegistered committed), and the
+/// `BoardActivated` batch this one frame carries.
+struct IntraFrameCase {
+    owner: EntityId,
+    peer: EntityId,
+    authority: EntityFrameAuthority,
+    state: RuntimeEntityState,
+    rotation: FinalizedJEventBatch,
+}
+
+fn intra_frame_case() -> IntraFrameCase {
+    let fixture: Value = serde_json::from_str(FIXTURE).expect("shared rotation fixture");
+    // The owner is the local signer's own lazy Entity: the resident Account
+    // engine refuses to hold an Account it cannot sign for. The rotation the
+    // fixture commits belongs to the PEER, so the owner id is free.
+    let identity = SigningIdentity::lazy_from_seed(
+        ORDERING_SEED,
+        ORDERING_SIGNER,
+        1,
+        1,
+        BoardDelays::default(),
+    )
+    .expect("ordering signing identity");
+    let owner_text = format!("0x{}", hex::encode(identity.entity_id()));
+    let owner = EntityId::parse(&owner_text).expect("owner entity id");
+    let peer = EntityId::parse(text(&fixture["peerEntityId"])).expect("peer entity id");
+    let mut authority = authority(&fixture, &owner_text);
+    // The proposer of this frame is the local signer that also drives the
+    // resident Account engine.
+    authority.config.validators = vec![ORDERING_SIGNER.to_string()];
+    authority.config.shares = BTreeMap::from([(ORDERING_SIGNER.to_string(), 1)]);
+    authority.leader_state.active_validator_id = ORDERING_SIGNER.to_string();
+
+    let mut state = RuntimeEntityState {
+        accounts_root: [0; 32],
+        entity: EntityStateSlice::empty(owner_text, ORDERING_TIMESTAMP),
+    };
+    state.entity.known_accounts.insert(peer.to_string());
+
+    let events = fixture["events"].as_array().expect("fixture events");
+    let mut rotation = None;
+    for (index, event) in events.iter().enumerate() {
+        let raw = &event["event"];
+        let j_height = raw["blockNumber"].as_u64().expect("blockNumber");
+        let batch = FinalizedJEventBatch {
+            j_height,
+            j_block_hash: word(text(&raw["blockHash"])),
+            events: vec![j_event(raw)],
+            dispute_finalization_evidence: Vec::new(),
+            reserve_updates: Vec::new(),
+            account_claims: Vec::new(),
+        };
+        if index + 1 == events.len() {
+            // The last event is the rotation this frame carries; every earlier
+            // one is already committed history.
+            rotation = Some(batch);
+            break;
+        }
+        apply_finalized_j_event_batches(
+            &mut state.entity,
+            j_height,
+            &[batch],
+            "certified-board-rotation-fixture",
+            Some(&authority),
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+        )
+        .expect("prior committed J events");
+    }
+    IntraFrameCase {
+        owner,
+        peer,
+        authority,
+        state,
+        rotation: rotation.expect("rotation batch"),
+    }
+}
+
+fn commit_rotation(case: &mut IntraFrameCase) {
+    apply_finalized_j_event_batches(
+        &mut case.state.entity,
+        case.rotation.j_height,
+        std::slice::from_ref(&case.rotation),
+        "certified-board-rotation-fixture",
+        Some(&case.authority),
+        &BTreeSet::new(),
+        &BTreeMap::new(),
+    )
+    .expect("the rotation this frame carries");
+}
+
+fn refresh_reject_reason(verdict: &AccountInputVerdict) -> &str {
+    match verdict {
+        AccountInputVerdict::BoardHankoRefreshRejected { reason } => reason.as_str(),
+        other => panic!("expected a board Hanko refresh verdict, got {other:?}"),
+    }
+}
+
+/// Rust production order: `apply.rs:3638` resolves the row from the pre-frame
+/// state, then `resident.rs:2790` applies this frame's `BoardActivated`.
+#[test]
+fn rust_resolves_account_rows_before_the_same_frame_s_board_activation() {
+    let mut case = intra_frame_case();
+    let mut accounts = ordering_engine(&case.owner, &case.peer);
+    let mut row = board_hanko_refresh_row(&case.owner, &case.peer);
+
+    // apply.rs:3638 — every row is resolved from the state as it stood at the
+    // start of the frame.
+    row.resolve_certified_boards(&case.state.certified_board_authority())
+        .expect("row board resolution");
+    let AccountInputBoardAuthority::Certified(resolved) = row.certified_board_authority else {
+        panic!("the peer is registered, so the row must carry a certified board");
+    };
+    assert_eq!(
+        resolved.activated_at_j_height, 2,
+        "the retired registration board, not the rotation this frame commits",
+    );
+
+    // resident.rs:2790 — the kernel applies this frame's J events only after the
+    // inbound Account stage has already consumed the rows above.
+    commit_rotation(&mut case);
+    assert_eq!(
+        case.state
+            .certified_board_authority()
+            .resolve_certified_board(case.peer.as_bytes())
+            .expect("post-frame board"),
+        AccountInputBoardAuthority::Certified(CertifiedBoardAuthority {
+            entity_id: *case.peer.as_bytes(),
+            registered_board_hash: word(&format!("0x{}", "c3".repeat(32))),
+            previous_board_hash: word(&format!("0x{}", "b2".repeat(32))),
+            previous_board_valid_until: 1_700_604_800,
+            activated_at_j_height: 3,
+            activation_log_index: 0,
+        }),
+        "the same frame does commit the rotation — the row simply never saw it",
+    );
+
+    let state = case.state.entity.clone();
+    let result = ordering_round(
+        &mut accounts,
+        &case.owner,
+        state,
+        vec![row],
+        &case.authority,
+    );
+    assert_eq!(result.rejected_inbound_inputs.len(), 1);
+    assert_eq!(
+        refresh_reject_reason(&result.inbound.applied[0].verdict),
+        "ACCOUNT_BOARD_HANKO_REFRESH_ACTIVATION_MISMATCH:3:0:2:0",
+        "Rust rejects the counterparty's refresh against the retired board",
+    );
+}
+
+/// TypeScript production order: `applyEntityTxsInOrder` runs the `j_event` tx
+/// first, so `input-phases.ts:218` resolves the row from the rotated board.
+#[test]
+fn typescript_order_resolves_account_rows_after_the_same_frame_s_board_activation() {
+    let mut case = intra_frame_case();
+    let mut accounts = ordering_engine(&case.owner, &case.peer);
+    let mut row = board_hanko_refresh_row(&case.owner, &case.peer);
+
+    // The frame's `j_event` transaction commits first.
+    commit_rotation(&mut case);
+    // Only then does the frame's `accountInput` transaction resolve its board.
+    row.resolve_certified_boards(&case.state.certified_board_authority())
+        .expect("row board resolution");
+    let AccountInputBoardAuthority::Certified(resolved) = row.certified_board_authority else {
+        panic!("the peer is registered, so the row must carry a certified board");
+    };
+    assert_eq!(
+        resolved.activated_at_j_height, 3,
+        "the board this frame activated",
+    );
+
+    let state = case.state.entity.clone();
+    let result = ordering_round(
+        &mut accounts,
+        &case.owner,
+        state,
+        vec![row],
+        &case.authority,
+    );
+    // The activation check passes under this order: the input reaches the next
+    // check in `apply_board_hanko_refresh`, the Account frame height. Same
+    // frame, same row, same reducer, a different branch.
+    assert_eq!(
+        refresh_reject_reason(&result.inbound.applied[0].verdict),
+        "ACCOUNT_BOARD_HANKO_REFRESH_HEIGHT_MISMATCH:1:0",
     );
 }

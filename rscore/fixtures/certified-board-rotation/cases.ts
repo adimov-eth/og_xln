@@ -152,3 +152,58 @@ export const executeCertifiedBoardRotationVector = () => {
     steps,
   };
 };
+
+/**
+ * Intra-frame ordering oracle.
+ *
+ * One Entity frame carries a `j_event` whose certified J range activates the
+ * peer's new board, followed by an `accountInput` from that same peer.
+ * `applyEntityTxsInOrder` (`core/entity/consensus/frame/application.ts`) walks
+ * the frame's transactions strictly in order and the certified J range is
+ * prepended to the proposal (`core/entity/consensus/proposal/selection.ts`), so
+ * the board handler (`core/entity/tx/j-events-board.ts`) commits before
+ * `prepareAccountConsensusRun` (`core/entity/tx/handlers/account/input-phases.ts`)
+ * resolves the counterparty board for the row.
+ *
+ * Rust freezes that same resolution from the state at the START of the frame
+ * (`rscore/crates/runtime/src/machine/apply.rs`), before the kernel applies the
+ * frame's J events (`rscore/crates/entity-kernel/src/resident.rs`). The Rust
+ * twin of this vector is
+ * `rscore/crates/runtime/tests/certified_board_rotation_parity.rs`.
+ */
+export const executeIntraFrameBoardOrderingVector = () => {
+  const env = context();
+  const state = observerState();
+  const commit = (index: number): void => {
+    const event = EVENTS[index]?.event;
+    if (!event) throw new Error(`CERTIFIED_BOARD_ORDERING_EVENT_MISSING:${index}`);
+    // Exactly what the `j_event` board handler does per event.
+    const applied = applyCertifiedBoardRegistryEvent(
+      state.certifiedBoardState,
+      getCertifiedBoardNodeStore(env),
+      JURISDICTION,
+      event,
+    );
+    cacheCertifiedBoardNodes(env, applied.newNodes);
+    state.certifiedBoardState = applied.state;
+  };
+  // Committed history before this frame: the foundation and the peer's registration.
+  commit(0);
+  commit(1);
+  // Exactly what `prepareAccountConsensusRun` resolves for a row from this peer.
+  const resolve = () => resolveObserverCertifiedBoardRecord(state, getCertifiedBoardNodeStore(env), PEER);
+  const beforeFrame = resolve();
+  // This frame's first transaction: the certified J range carrying BoardActivated.
+  commit(2);
+  // This frame's second transaction: the peer's accountInput.
+  const accountInputResolved = resolve();
+  return {
+    version: 1,
+    canonicalSource: 'TypeScript production Entity frame transaction order',
+    peerEntityId: PEER,
+    registeredBoardHash: REGISTERED_BOARD,
+    rotatedBoardHash: ROTATED_BOARD,
+    beforeFrame,
+    accountInputResolved,
+  };
+};

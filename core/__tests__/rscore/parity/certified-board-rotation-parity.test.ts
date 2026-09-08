@@ -2,7 +2,10 @@ import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { executeCertifiedBoardRotationVector } from '../../../../rscore/fixtures/certified-board-rotation/cases';
+import {
+  executeCertifiedBoardRotationVector,
+  executeIntraFrameBoardOrderingVector,
+} from '../../../../rscore/fixtures/certified-board-rotation/cases';
 import { safeStringify } from '../../../protocol/serialization';
 
 const fixturePath = join(
@@ -38,4 +41,40 @@ test('resolveObserverCertifiedBoardRecord answers the new board right after Boar
   expect(rotated?.resolvedPeerBoard?.previousBoardHash).toBe(registered?.resolvedPeerBoard?.boardHash);
   expect(rotated?.resolvedPeerBoard?.boardHash).not.toBe(registered?.resolvedPeerBoard?.boardHash);
   expect(rotated?.boardRegistryRoot).not.toBe(registered?.boardRegistryRoot);
+});
+
+// ---------------------------------------------------------------------------
+// Intra-frame ordering. TypeScript applies one Entity frame's transactions
+// strictly in order (`core/entity/consensus/frame/application.ts`,
+// `applyEntityTxsInOrder`), and the certified J range is prepended to the
+// proposal (`core/entity/consensus/proposal/selection.ts`). So when a frame
+// carries a `j_event` activating a counterparty's board followed by an
+// `accountInput` from that counterparty, the row is verified against the NEW
+// board.
+//
+// Rust freezes the same resolution from the state at the START of the frame
+// (`rscore/crates/runtime/src/machine/apply.rs`, `resolve_certified_boards`),
+// before the kernel applies that frame's J events
+// (`rscore/crates/entity-kernel/src/resident.rs`), so the row is verified
+// against the RETIRED board. The two Rust tests named below run the same frame
+// through the production reducers in each engine's order and record the two
+// different rejects.
+//
+// This test is the TypeScript half of that divergence record. It documents
+// current behaviour, not agreed behaviour: when the engines are reconciled,
+// one of the two halves must change with the fix.
+// ---------------------------------------------------------------------------
+test('a same-frame BoardActivated is visible to that frame\'s accountInput (TypeScript order)', () => {
+  const ordering = executeIntraFrameBoardOrderingVector();
+
+  // Before the frame, and therefore what Rust resolves for the whole frame:
+  // see `rust_resolves_account_rows_before_the_same_frame_s_board_activation`.
+  expect(ordering.beforeFrame?.boardHash).toBe(ordering.registeredBoardHash);
+  expect(ordering.beforeFrame?.activatedAtJHeight).toBe(2);
+
+  // What TypeScript resolves for the accountInput in the same frame: see
+  // `typescript_order_resolves_account_rows_after_the_same_frame_s_board_activation`.
+  expect(ordering.accountInputResolved?.boardHash).toBe(ordering.rotatedBoardHash);
+  expect(ordering.accountInputResolved?.activatedAtJHeight).toBe(3);
+  expect(ordering.accountInputResolved?.logIndex).toBe(0);
 });
