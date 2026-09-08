@@ -150,7 +150,11 @@ export function buildJHistoryRangeRuntimeInput(
     const baseHeight = Number(replica.state.lastFinalizedJHeight || 0);
     const observations = observationsByReplica.get(key) || [];
     if (scannedThroughHeight <= baseHeight) continue;
-    const scanDistanceMayReachLiveness = scannedThroughHeight - baseHeight >= JBLOCK_LIVENESS_INTERVAL;
+    // Empty scan evidence is checkpointed at the existing block interval. Measure
+    // from the last recorded scan, not Entity finality: an idle Entity does not
+    // advance finality, so the latter would enqueue every poll forever after 100.
+    const lastRecordedScan = Math.max(baseHeight, replica.jHistory?.contiguousThroughHeight ?? baseHeight);
+    const scanDistanceMayReachLiveness = scannedThroughHeight - lastRecordedScan >= JBLOCK_LIVENESS_INTERVAL;
     const jurisdictionRef = getJEventJurisdictionRef(replica.state.config.jurisdiction);
     if (watcherReplica && jurisdictionRef !== watcherJurisdictionRef) {
       throw new Error(

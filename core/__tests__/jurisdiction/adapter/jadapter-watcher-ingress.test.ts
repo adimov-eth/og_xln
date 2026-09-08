@@ -36,7 +36,7 @@ import {
 import { findReserveUpdatedEvidence } from '../../../jurisdiction/machine/events/event-evidence';
 import { decodeAuthenticatedWatcherEvents } from '../../../jurisdiction/adapter/rpc-watcher-events';
 import { createWatchedErc20TokenReader } from '../../../jurisdiction/adapter/rpc-watcher-inputs';
-import { canonicalJurisdictionEventsHash } from '../../../jurisdiction/machine/event-observation';
+import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from '../../../jurisdiction/machine/event-observation';
 import {
   buildLocalJPrefixAttestation,
   mergeJPrefixAttestations,
@@ -914,6 +914,60 @@ describe('JAdapter watcher ingress', () => {
     const pending = new Map<number, Set<string>>();
     rememberPendingWatcherJBlock(pending, 100, range.finalityReplicaKeys);
     expect(resolveCommittedWatcherCursor(env, pending, 100, 0)).toBe(100);
+  });
+
+  test('idle Entity checkpoints empty scan progress once per interval, not every poll after block 100', () => {
+    const env = createEmptyEnv('idle-scan-checkpoint-interval');
+    const entityId = `0x${'7b'.repeat(32)}`;
+    const signerId = deriveSignerAddressSync('idle-scan-checkpoint-interval', '1').toLowerCase();
+    const replica = makeReplica(entityId, signerId, true);
+    replica.state.config.jurisdiction = makeJurisdiction('Idle interval', 31337, `0x${'7c'.repeat(20)}`);
+    env.state.eReplicas.set(`${entityId}:${signerId}`, replica);
+    const blockHash = (height: number): string => `0x${height.toString(16).padStart(64, '0')}`;
+    replica.jHistory = {
+      jurisdictionRef: getJEventJurisdictionRef(replica.state.config.jurisdiction),
+      scannedThroughHeight: 100,
+      contiguousThroughHeight: 100,
+      tipBlockHash: blockHash(100),
+      eventBlocks: new Map(),
+      blockHashes: new Map(Array.from({ length: 100 }, (_, i) => [i + 1, blockHash(i + 1)])),
+    };
+    for (const height of [101, 150, 199]) {
+      const result = enqueueJHistoryRange(
+        env,
+        [],
+        height,
+        blockHash(height),
+        undefined,
+        Array.from({ length: height - 100 }, (_, i) => ({ jHeight: i + 101, jBlockHash: blockHash(i + 101) })),
+      );
+      expect(result.scannedReplicaKeys).toEqual([]);
+      expect(env.runtimeMempool?.runtimeTxs ?? []).toEqual([]);
+      expect(env.runtimeMempool?.entityInputs ?? []).toEqual([]);
+    }
+    const due = enqueueJHistoryRange(
+      env,
+      [],
+      200,
+      blockHash(200),
+      undefined,
+      Array.from({ length: 100 }, (_, i) => ({ jHeight: i + 101, jBlockHash: blockHash(i + 101) })),
+    );
+    expect(due.scannedReplicaKeys).toEqual([`${entityId}:${signerId}`]);
+    expect(due.finalityReplicaKeys).toEqual([]);
+
+    // A sparse receipt ahead of the authenticated prefix must not suppress
+    // catch-up pages. Only contiguous recorded progress resets the interval.
+    replica.jHistory = {
+      ...replica.jHistory,
+      scannedThroughHeight: 1_000,
+      contiguousThroughHeight: 0,
+      tipBlockHash: blockHash(1_000),
+      blockHashes: new Map([[1_000, blockHash(1_000)]]),
+    };
+    const catchup = enqueueJHistoryRange(env, [], 256, blockHash(256), undefined,
+      Array.from({ length: 256 }, (_, i) => ({ jHeight: i + 1, jBlockHash: blockHash(i + 1) })));
+    expect(catchup.scannedReplicaKeys).toEqual([`${entityId}:${signerId}`]);
   });
 
   test('authenticated empty watcher progress below liveness does not create Runtime work', () => {
