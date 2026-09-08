@@ -102,12 +102,33 @@ run_owned() {
   return "$status"
 }
 
+# Anvil's block cache under --cache-path is written for every state dump and
+# never pruned, so a stand left running for a day grows tens of gigabytes and
+# trips the release gate's workspace budget. Nothing reads an entry once a newer
+# dump exists, so prune anything older than the window and keep pruning for as
+# long as this anvil lives.
+ANVIL_CACHE_PRUNE_MINUTES="${ANVIL_CACHE_PRUNE_MINUTES:-10}"
+ANVIL_CACHE_PRUNE_INTERVAL_SECONDS="${ANVIL_CACHE_PRUNE_INTERVAL_SECONDS:-60}"
+
+prune_anvil_cache() {
+  local dir="$1"
+  find "$dir" -type f -name '0x*.json' -mmin "+${ANVIL_CACHE_PRUNE_MINUTES}" -delete 2>/dev/null || true
+}
+
 run_anvil() {
   local port="$1"
   local chain_id="$2"
   local state_path="$XLN_JDB_ROOT/anvil-${chain_id}-state.json"
   local chain_tmp_dir="$ANVIL_TMPDIR/chain-${chain_id}"
   mkdir -p "$XLN_JDB_ROOT" "$chain_tmp_dir"
+  prune_anvil_cache "$chain_tmp_dir"
+  (
+    while sleep "$ANVIL_CACHE_PRUNE_INTERVAL_SECONDS"; do
+      prune_anvil_cache "$chain_tmp_dir"
+    done
+  ) &
+  anvil_cache_pruner_pid=$!
+  trap 'kill "$anvil_cache_pruner_pid" 2>/dev/null || true' EXIT
   local args=(
     anvil --silent --host 0.0.0.0 --port "$port" --chain-id "$chain_id"
     --mixed-mining --block-time "$ANVIL_BLOCK_TIME" --block-gas-limit 60000000 --code-size-limit 65536

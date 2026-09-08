@@ -34,8 +34,13 @@ measure_path_kib() {
   return 124
 }
 
+# The dev stand names its state files after the chain id; the older two names
+# belong to the production layout. Measuring only the latter reported an empty
+# budget on every dev machine.
 state_kib=0
-for state_file in "$JDB_ROOT/anvil-state.json" "$JDB_ROOT/anvil2-state.json"; do
+for state_file in "$JDB_ROOT/anvil-state.json" "$JDB_ROOT/anvil2-state.json" \
+  "$JDB_ROOT"/anvil-*-state.json; do
+  [ -e "$state_file" ] || continue
   path_kib="$(measure_path_kib "$state_file")" || {
     echo "ANVIL_STORAGE_STATE_PROBE_TIMEOUT: path=$state_file timeout=${PROBE_TIMEOUT_SECONDS}s" >&2
     exit 1
