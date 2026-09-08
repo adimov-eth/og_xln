@@ -27,9 +27,11 @@ test.describe('wallet UI account management', () => {
 		if ((await addable.count()) > 0) {
 			await addable.first().click();
 			await page.getByTestId('add-token-submit').click();
-			// The new lane is empty, so it shows up behind the "empty lanes" toggle.
-			await expect(page.getByRole('button', { name: /empty lane/ })).toBeVisible({ timeout: CHAIN_TIMEOUT });
-			await page.getByRole('button', { name: /empty lane/ }).click();
+			// A new lane carries nothing, so it sits behind the unused-token toggle.
+			const unused = page.getByTestId('account-unused-lanes');
+			await expect(unused).toBeVisible({ timeout: CHAIN_TIMEOUT });
+			await unused.click();
+			await expect(unused).toHaveAttribute('data-open', 'yes');
 			await expect.poll(() => page.locator('section.card').count(), { timeout: CHAIN_TIMEOUT }).toBeGreaterThan(before);
 		}
 

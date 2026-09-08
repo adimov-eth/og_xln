@@ -600,7 +600,7 @@ export function AccountDetail() {
 				<TokenSection key={token.tokenId} token={token} />
 			))}
 			{lanes.empty.length > 0 ? (
-				<button type="button" className="btn quiet" style={{ marginBottom: 14 }} onClick={() => setShowEmpty(value => !value)}>
+				<button type="button" className="btn quiet" style={{ marginBottom: 14 }} onClick={() => setShowEmpty(value => !value)} data-testid="account-unused-lanes" data-open={showEmpty ? 'yes' : 'no'}>
 					{showEmpty ? 'Hide' : 'Show'} {lanes.empty.length} unused {lanes.empty.length === 1 ? 'token' : 'tokens'} ·{' '}
 					{lanes.empty.map(token => getTokenMeta(token.tokenId).symbol).join(', ')}
 				</button>
