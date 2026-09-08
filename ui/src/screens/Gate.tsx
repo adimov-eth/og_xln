@@ -11,7 +11,8 @@ import {
 	type BrainvaultWork,
 } from '../runtime/brainvault';
 import { isValidMnemonic, runtimeIdForSeed } from '../runtime/keys';
-import { connectRemote } from '../runtime/adapter';
+import { connectRemote, requireAdapter } from '../runtime/adapter';
+import type { RuntimeAdapterEntitySummary } from '@xln/core/api/public/runtime-module';
 
 type GateMode = 'landing' | 'create' | 'import' | 'remote';
 
@@ -42,6 +43,7 @@ export function Gate() {
 	const [phrase, setPhrase] = useState('');
 	const [wsUrl, setWsUrl] = useState('wss://xln.finance/rpc');
 	const [authKey, setAuthKey] = useState('');
+	const [remoteEntities, setRemoteEntities] = useState<RuntimeAdapterEntitySummary[] | null>(null);
 	const deriveAbort = useRef<AbortController | null>(null);
 
 	const work: BrainvaultWork | null = useMemo(() => {
@@ -117,16 +119,50 @@ export function Gate() {
 		});
 	};
 
-	const connectRemoteRuntime = (): void => {
+	const connectRemoteRuntime = (entityId?: string): void => {
 		void run(async () => {
 			setBusyStep('Connecting to runtime');
 			await connectRemote(wsUrl.trim(), authKey.trim() || undefined);
+			// Connecting is not opening a wallet: the app stays on this screen until
+			// an entity is chosen, so a runtime that offers none has to say so.
+			setBusyStep('Reading the entities it serves');
+			const summaries = await requireAdapter().read<RuntimeAdapterEntitySummary[]>('entities');
+			if (!summaries.length) throw new Error('That runtime serves no entity this key can open.');
+			const chosen = entityId ? summaries.find(entry => entry.entityId === entityId) : summaries[0];
+			if (summaries.length > 1 && !entityId) {
+				setRemoteEntities(summaries);
+				setBusyStep(null);
+				return;
+			}
+			if (!chosen) throw new Error('That entity is no longer served by this runtime.');
+			const app = useApp.getState();
+			app.setActiveEntityId(chosen.entityId);
+			const vaultId = `remote:${wsUrl.trim()}:${chosen.entityId}`;
+			if (!app.vaults.some(entry => entry.id === vaultId)) {
+				app.addVault({
+					id: vaultId,
+					name: chosen.label || 'Remote runtime',
+					kind: 'remote',
+					createdAt: Date.now(),
+					remote: { wsUrl: wsUrl.trim() },
+				});
+			}
+			app.setActiveVault(vaultId);
+			setRemoteEntities(null);
 			setBusyStep(null);
 		});
 	};
 
-	const unlockVault = (kind: string): void => {
-		if (kind === 'brainvault') {
+	const unlockVault = (vault: { kind: string; name: string; remote?: { wsUrl: string } }): void => {
+		if (vault.kind === 'remote') {
+			// A remote runtime holds the keys; asking this person for a seed phrase
+			// they never had is the wrong question. Reopen the endpoint instead.
+			if (vault.remote?.wsUrl) setWsUrl(vault.remote.wsUrl);
+			setMode('remote');
+			return;
+		}
+		if (vault.kind === 'brainvault') {
+			setName(vault.name);
 			setMode('create');
 			return;
 		}
@@ -195,7 +231,7 @@ export function Gate() {
 			{mode === 'landing' && (
 				<div className="gate-cards fade-in">
 					{vaults.filter(vault => vault.kind !== 'sandbox').map(vault => (
-						<button key={vault.id} type="button" className="gate-card" onClick={() => unlockVault(vault.kind)}>
+						<button key={vault.id} type="button" className="gate-card" onClick={() => unlockVault(vault)}>
 							<span className="gate-card-icon">
 								<Icon name={vault.kind === 'remote' ? 'bank' : 'lock'} size={18} />
 							</span>
@@ -345,7 +381,33 @@ export function Gate() {
 				</form>
 			)}
 
-			{mode === 'remote' && (
+			{mode === 'remote' && remoteEntities && (
+				<div className="gate-cards fade-in">
+					<p className="muted">That runtime serves more than one entity. Pick the one to open.</p>
+					{remoteEntities.map(entry => (
+						<button
+							key={entry.entityId}
+							type="button"
+							className="gate-card"
+							onClick={() => connectRemoteRuntime(entry.entityId)}
+						>
+							<span className="gate-card-icon">
+								<Icon name="bank" size={18} />
+							</span>
+							<span>
+								<span className="gate-card-title">{entry.label || entry.entityId.slice(0, 10)}</span>
+								<span className="gate-card-sub muted mono">{entry.entityId.slice(0, 18)}…</span>
+							</span>
+							<Icon name="chevronRight" size={16} />
+						</button>
+					))}
+					<button type="button" className="btn quiet" onClick={() => setRemoteEntities(null)}>
+						Back
+					</button>
+				</div>
+			)}
+
+			{mode === 'remote' && !remoteEntities && (
 				<form
 					className="gate-form fade-in"
 					onSubmit={event => {

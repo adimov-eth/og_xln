@@ -98,118 +98,108 @@ const warmCrossJProfileRoutes = async (
   }
 };
 
-export const createHubDirectRuntimeRoute = (
+type DirectRuntimeRoute = ReturnType<typeof createDirectRuntimeWsRoute>;
+
+/**
+ * The peer refused a committed output this route actually sent it (the route
+ * correlates every peer error against its outstanding ids). The reject policy is
+ * applied exactly once here: tests and dev halt so the contradiction surfaces;
+ * production logs, closes that peer session and leaves the outbox rows for the
+ * outbox owner. Never a retry.
+ */
+const handleDirectDeliveryFailure = (
   env: RuntimeReplica,
-  runtimeSeed: string,
+  debug: DirectInputDebugState,
+  getRoute: () => DirectRuntimeRoute,
+  failure: Parameters<NonNullable<Parameters<typeof createDirectRuntimeWsRoute>[0]['onDeliveryFailure']>>[0],
+): void => {
+  const code = failure.direction === 'inbound' ? 'DIRECT_INBOUND_REJECTED' : 'DIRECT_OUTPUT_REJECTED_BY_PEER';
+  const now = Date.now();
+  debug.lastError = {
+    at: now,
+    stage: 'rejected',
+    completedAt: now,
+    fromRuntimeId: failure.peerRuntimeId,
+    entityIds: failure.envelope?.entityInputs.map(input => String(input.entityId || '')) ?? [],
+    signerIds: failure.envelope?.entityInputs.map(input => String(input.signerId || '')) ?? [],
+    txTypes: failure.envelope?.entityInputs.flatMap(input =>
+      (input.entityTxs || []).map(tx => String(tx?.type || ''))
+    ) ?? [],
+    error: `${code}:${safeStringify(failure)}`,
+  };
+  // An inbound failure is a rejected Account input: the session already got the
+  // typed rejection, and genuine internal contradictions halt through their own
+  // halt paths during apply.
+  if (failure.direction === 'inbound') {
+    env.error?.('network', code, failure);
+    return;
+  }
+  applyTransportPeerFailurePolicy(env, code, failure, () => {
+    getRoute().closeSession(failure.peerRuntimeId, 4005, 'peer-rejected-output');
+  });
+};
+
+const handleDirectSessionClose = (
+  env: RuntimeReplica,
+  failure: Parameters<NonNullable<Parameters<typeof createDirectRuntimeWsRoute>[0]['onSessionClose']>>[0],
+): void => {
+  if (!hasUndeliveredDirectRuntimeSessionBytes(failure)) {
+    env.warn?.('network', 'DIRECT_RUNTIME_PEER_OFFLINE', failure);
+    return;
+  }
+  // Bytes Bun accepted but never flushed before the peer closed are an audit
+  // line, not a Hub fault: the session is already gone and the outbox owner
+  // decides what to do with the rows behind those bytes.
+  env.error?.('network', 'DIRECT_RUNTIME_SESSION_CLOSED_UNDELIVERED', failure);
+};
+
+const admitDirectEntityInputs = async (
+  env: RuntimeReplica,
   isIngressReady: () => boolean,
   debug: DirectInputDebugState,
-): ReturnType<typeof createDirectRuntimeWsRoute> => {
-  let route: ReturnType<typeof createDirectRuntimeWsRoute>;
-  route = createDirectRuntimeWsRoute({
-    runtimeId: String(env.runtimeId || ''),
-    runtimeSeed,
-    signEnvelope: (to, envelope) => signRuntimeEntityInputsEnvelope(env, to, envelope),
-    onGossipAnnounce: async (from, payload) => {
-      const p2p = env.infrastructure?.p2p;
-      if (!p2p) throw new Error('DIRECT_GOSSIP_P2P_UNAVAILABLE');
-      await p2p.admitGossipAnnouncement(from, payload);
-    },
-    onRecoveryBundleRequest: async (_from, lookupKey) =>
-      resolveRuntimeAdapterRead(
-        { env },
-        `recovery/bundles/${encodeURIComponent(lookupKey)}`,
-      ),
-    onDeliveryFailure: failure => {
-      const code = failure.direction === 'inbound' ? 'DIRECT_INBOUND_REJECTED' : 'DIRECT_OUTPUT_REJECTED_BY_PEER';
-      debug.lastError = {
-        at: Date.now(),
-        stage: 'rejected',
-        completedAt: Date.now(),
-        fromRuntimeId: failure.peerRuntimeId,
-        entityIds: failure.envelope?.entityInputs.map(input => String(input.entityId || '')) ?? [],
-        signerIds: failure.envelope?.entityInputs.map(input => String(input.signerId || '')) ?? [],
-        txTypes: failure.envelope?.entityInputs.flatMap(input =>
-          (input.entityTxs || []).map(tx => String(tx?.type || ''))
-        ) ?? [],
-        error: `${code}:${safeStringify(failure)}`,
-      };
-      // An inbound failure is a rejected Account input: the session already got
-      // the typed rejection, and genuine internal contradictions halt through
-      // their own halt paths during apply.
-      if (failure.direction === 'inbound') {
-        env.error?.('network', code, failure);
-        return;
-      }
-      // The peer refused a committed output this route actually sent it (the
-      // route correlates every peer error against its outstanding ids). The
-      // reject policy is applied exactly once here: tests/dev halt so the
-      // contradiction surfaces; production logs, closes that peer session and
-      // leaves the outbox rows for the outbox owner. Never a retry.
-      applyTransportPeerFailurePolicy(
-        env,
-        code,
-        failure,
-        () => { route.closeSession(failure.peerRuntimeId, 4005, 'peer-rejected-output'); },
-      );
-    },
-    onSessionClose: failure => {
-      if (!hasUndeliveredDirectRuntimeSessionBytes(failure)) {
-        env.warn?.('network', 'DIRECT_RUNTIME_PEER_OFFLINE', failure);
-        return;
-      }
-      // Bytes Bun accepted but never flushed before the peer closed are an
-      // audit line, not a Hub fault: the session is already gone and the
-      // outbox owner decides what to do with the rows behind those bytes.
-      env.error?.('network', 'DIRECT_RUNTIME_SESSION_CLOSED_UNDELIVERED', failure);
-    },
-    onEntityInputs: async (from, envelope, ingressTimestamp, sessionAuthenticated) => {
-      if (!isIngressReady()) {
-        throw new Error('RUNTIME_STARTUP_J_CATCHUP_PENDING');
-      }
-      const entry: DirectEntityInputDebug = {
-        at: Date.now(),
-        stage: 'received',
-        fromRuntimeId: String(from || ''),
-        entityIds: envelope.entityInputs.map(input =>
-          String(input.entityId || ''),
-        ),
-        signerIds: envelope.entityInputs.map(input =>
-          String(input.signerId || ''),
-        ),
-        txTypes: envelope.entityInputs.flatMap(input =>
-          (input.entityTxs || []).map(tx => String(tx?.type || '')),
-        ),
-      };
-      debug.lastSeen = entry;
-      try {
-        assertRuntimeEntityInputsEnvelopeSource(env, from, envelope, sessionAuthenticated === true);
-        entry.stage = 'profiles';
-        await warmCrossJProfileRoutes(env, envelope);
-        entry.stage = 'validation';
-        const admission = handleInboundP2PEntityInputs(env, from, envelope, ingressTimestamp, {
-          envelopeSourceVerified: true,
-          entityInputsValidated: true,
-        });
-        entry.stage = admission.kind;
-        entry.queuedInputs = admission.queuedInputs.length;
-        entry.completedAt = Date.now();
-      } catch (error) {
-        entry.stage = 'rejected';
-        entry.completedAt = Date.now();
-        debug.lastError = {
-          ...entry,
-          error: error instanceof Error ? error.message : String(error),
-        };
-        throw error;
-      }
-    },
-  });
-  route.setReady(isIngressReady());
-  // Offline -> online edge only (see core/runtime/mempool/propose-accounts-now.ts).
-  route.onDeliveryReadyChange((peerRuntimeId, ready) => {
-    enqueuePeerReadyProposeAccountsNow(env, peerRuntimeId, ready);
-    requestRuntimeLoopWake(env);
-  });
+  from: string,
+  envelope: import('../../runtime/types').RuntimeEntityInputsEnvelope,
+  ingressTimestamp: number | undefined,
+  sessionAuthenticated: boolean,
+): Promise<void> => {
+  if (!isIngressReady()) throw new Error('RUNTIME_STARTUP_J_CATCHUP_PENDING');
+  const entry: DirectEntityInputDebug = {
+    at: Date.now(),
+    stage: 'received',
+    fromRuntimeId: String(from || ''),
+    entityIds: envelope.entityInputs.map(input => String(input.entityId || '')),
+    signerIds: envelope.entityInputs.map(input => String(input.signerId || '')),
+    txTypes: envelope.entityInputs.flatMap(input => (input.entityTxs || []).map(tx => String(tx?.type || ''))),
+  };
+  debug.lastSeen = entry;
+  try {
+    assertRuntimeEntityInputsEnvelopeSource(env, from, envelope, sessionAuthenticated);
+    entry.stage = 'profiles';
+    await warmCrossJProfileRoutes(env, envelope);
+    entry.stage = 'validation';
+    const admission = handleInboundP2PEntityInputs(env, from, envelope, ingressTimestamp, {
+      envelopeSourceVerified: true,
+      entityInputsValidated: true,
+    });
+    entry.stage = admission.kind;
+    entry.queuedInputs = admission.queuedInputs.length;
+    entry.completedAt = Date.now();
+  } catch (error) {
+    entry.stage = 'rejected';
+    entry.completedAt = Date.now();
+    debug.lastError = { ...entry, error: error instanceof Error ? error.message : String(error) };
+    throw error;
+  }
+};
+
+/**
+ * A sovereign user dials the Hub, so its authenticated inbound uWS session is the
+ * canonical user route. Hubs dial each other from signed Profiles, so Hub-to-Hub
+ * output uses that already-open outbound direct P2P socket. Route selection
+ * happens before the only send attempt: this is not a retry and must never fall
+ * through after either transport accepted bytes.
+ */
+const wireDirectRuntimeInfrastructure = (env: RuntimeReplica, route: DirectRuntimeRoute): void => {
   env.infrastructure = env.infrastructure ?? {};
   env.infrastructure.canDeliverEntityInputs = targetRuntimeId => route.hasOpenSession(targetRuntimeId)
     ? route.canDeliver(targetRuntimeId)
@@ -223,37 +213,46 @@ export const createHubDirectRuntimeRoute = (
     }
     return online;
   };
-  // A sovereign user dials the Hub, so its authenticated inbound uWS session
-  // is the canonical user route. Hubs dial each other from signed Profiles,
-  // so Hub-to-Hub output uses that already-open outbound direct P2P socket.
-  // Route selection happens before the only send attempt: this is not a retry
-  // and must never fall through after either transport accepted bytes.
-  env.infrastructure.directEntityInputsDispatch = (
-    targetRuntimeId,
-    envelope,
-    ingressTimestamp,
-  ) => {
+  env.infrastructure.directEntityInputsDispatch = (targetRuntimeId, envelope, ingressTimestamp) => {
     if (route.hasOpenSession(targetRuntimeId)) {
-      return route.sendEntityInputsDelivery(
-        targetRuntimeId,
-        envelope,
-        ingressTimestamp,
-      );
+      return route.sendEntityInputsDelivery(targetRuntimeId, envelope, ingressTimestamp);
     }
     const p2p = env.infrastructure?.p2p;
-    if (p2p) {
-      return p2p.enqueueEntityInputsDelivery(
-        targetRuntimeId,
-        envelope,
-        ingressTimestamp,
-      );
-    }
-    return route.sendEntityInputsDelivery(
-      targetRuntimeId,
-      envelope,
-      ingressTimestamp,
-    );
+    if (p2p) return p2p.enqueueEntityInputsDelivery(targetRuntimeId, envelope, ingressTimestamp);
+    return route.sendEntityInputsDelivery(targetRuntimeId, envelope, ingressTimestamp);
   };
+};
+
+export const createHubDirectRuntimeRoute = (
+  env: RuntimeReplica,
+  runtimeSeed: string,
+  isIngressReady: () => boolean,
+  debug: DirectInputDebugState,
+): DirectRuntimeRoute => {
+  let route: DirectRuntimeRoute;
+  route = createDirectRuntimeWsRoute({
+    runtimeId: String(env.runtimeId || ''),
+    runtimeSeed,
+    signEnvelope: (to, envelope) => signRuntimeEntityInputsEnvelope(env, to, envelope),
+    onGossipAnnounce: async (from, payload) => {
+      const p2p = env.infrastructure?.p2p;
+      if (!p2p) throw new Error('DIRECT_GOSSIP_P2P_UNAVAILABLE');
+      await p2p.admitGossipAnnouncement(from, payload);
+    },
+    onRecoveryBundleRequest: async (_from, lookupKey) =>
+      resolveRuntimeAdapterRead({ env }, `recovery/bundles/${encodeURIComponent(lookupKey)}`),
+    onDeliveryFailure: failure => handleDirectDeliveryFailure(env, debug, () => route, failure),
+    onSessionClose: failure => handleDirectSessionClose(env, failure),
+    onEntityInputs: async (from, envelope, ingressTimestamp, sessionAuthenticated) =>
+      admitDirectEntityInputs(env, isIngressReady, debug, from, envelope, ingressTimestamp, sessionAuthenticated === true),
+  });
+  route.setReady(isIngressReady());
+  // Offline -> online edge only (see core/runtime/mempool/propose-accounts-now.ts).
+  route.onDeliveryReadyChange((peerRuntimeId, ready) => {
+    enqueuePeerReadyProposeAccountsNow(env, peerRuntimeId, ready);
+    requestRuntimeLoopWake(env);
+  });
+  wireDirectRuntimeInfrastructure(env, route);
   return route;
 };
 
