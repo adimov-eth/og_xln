@@ -9,6 +9,7 @@ import {
   loadEntityViewPageFromStorageDb,
   readPersistedRuntimeActivityPage,
   readPersistedRuntimeActivityJournal,
+  readPersistedAccountFrameHistory,
   readPersistedAccountSwapHistoryPage,
   readPersistedStorageFrameRecord,
   readPersistedStorageHead,
@@ -174,6 +175,8 @@ export const createServerRpcMessageHandler =
       readActivityPage: (targetEnv, options) => readPersistedRuntimeActivityPage(targetEnv, options),
       readAccountSwapHistoryPage: (targetEnv, entityId, counterpartyId, options) =>
         readPersistedAccountSwapHistoryPage(targetEnv, entityId, counterpartyId, options),
+      readAccountFrameHistory: (targetEnv, entityId, counterpartyId, limit) =>
+        readPersistedAccountFrameHistory(targetEnv, entityId, counterpartyId, limit),
       readFrameReceipts,
       findPaymentRoutes,
     });

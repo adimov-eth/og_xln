@@ -1,4 +1,5 @@
 import type { RuntimeActivityFilters } from '../../storage/views/activity-types';
+import type { AccountFrame } from '../../types/account';
 import type { CrossJurisdictionSwapRoute } from '../../types/cross-jurisdiction';
 import type { EntityState } from '../../entity/types';
 import type { RuntimeReplica, RuntimeInput } from '../../runtime/types';
@@ -116,6 +117,12 @@ export type RuntimeAdapterServerDeps = {
     counterpartyId: string,
     options: Readonly<{ limit?: number; cursor?: Readonly<{ height: number; offerId: string }> }>,
   ) => Promise<RuntimeAdapterSwapHistoryPage>;
+	  readAccountFrameHistory?: (
+    env: RuntimeReplica,
+    entityId: string,
+    counterpartyId: string,
+    limit: number,
+  ) => Promise<AccountFrame[]>;
 	  enqueueRuntimeInput: (env: RuntimeReplica, input: RuntimeInput) => void;
 	  submitCrossJurisdictionIntent?: (env: RuntimeReplica, route: CrossJurisdictionSwapRoute) => Promise<unknown>;
 	  controlRuntime?: (env: RuntimeReplica, action: RuntimeAdapterControlAction) => Promise<unknown>;
@@ -741,6 +748,13 @@ const buildRuntimeAdapterReadContext = (
           options: Readonly<{ limit?: number; cursor?: Readonly<{ height: number; offerId: string }> }>,
         ) => deps.readAccountSwapHistoryPage?.(env, entityId, counterpartyId, options)
           ?? Promise.reject(new RuntimeAdapterError('E_INTERNAL', 'account swap-history reader did not return')),
+      }
+    : {}),
+  ...(deps.readAccountFrameHistory
+    ? {
+        readAccountFrameHistory: (entityId: string, counterpartyId: string, limit: number) =>
+          deps.readAccountFrameHistory?.(env, entityId, counterpartyId, limit)
+          ?? Promise.reject(new RuntimeAdapterError('E_INTERNAL', 'account frame reader did not return')),
       }
     : {}),
   ...(deps.readFrameReceipts

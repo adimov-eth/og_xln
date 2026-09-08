@@ -1,6 +1,6 @@
 import { getBookSideLevels, projectBookDepth, type BookState } from '../../orderbook';
 import { projectBookPricePageTree, type BookPricePage } from '../../orderbook/pages/page';
-import type { AccountTx } from '../../types/account';
+import type { AccountFrame, AccountTx } from '../../types/account';
 import type { EntityReplica, EntityState, ExternalWalletState } from '../../entity/types';
 import type { RuntimeEntityMetricStats, RuntimeReplica } from '../../runtime/types';
 import { readRuntimeEntityMetricStats } from '../../runtime/observability/entity-metrics';
@@ -94,6 +94,12 @@ export type RuntimeAdapterResolveContext = {
       cursor?: Readonly<{ height: number; offerId: string }>;
     }>,
   ) => Promise<RuntimeAdapterSwapHistoryPage>;
+  /** Certified Account frames, newest last. Point read: aggregate views omit them. */
+  readAccountFrameHistory?: (
+    entityId: string,
+    counterpartyId: string,
+    limit: number,
+  ) => Promise<AccountFrame[]>;
   readFrameReceipts?: (query?: RuntimeAdapterReadQuery) => Promise<RuntimeAdapterFrameReceiptResponse>;
   findPaymentRoutes?: (query?: RuntimeAdapterReadQuery) => Promise<RuntimeAdapterPaymentRoutesResponse>;
 };
@@ -2014,6 +2020,24 @@ const resolveScopedRuntimeAdapterRead = async <T>(
       const stored = await loadViewPageForHeight(ctx, entityId, targetHeight, isCurrentHeight, query);
       const compactStored = compactViewPageForRemote(entityId, stored);
       return (parts[2] === 'accounts' ? compactStored.accounts : compactStored.books) as T;
+    }
+
+    if (parts.length === 5 && parts[2] === 'account' && parts[4] === 'frames') {
+      // A dispute is argued from the frames both parties signed. The aggregate
+      // Entity view carries only the current one, so this is a point read.
+      const counterpartyId = normalizeEntityId(parts[3] ?? '');
+      if (!counterpartyId) throw new RuntimeAdapterError('E_BAD_PATH', 'account id is required');
+      if (readAtHeight(query) !== null) {
+        throw new RuntimeAdapterError('E_BAD_QUERY', 'historical frame reads are not available through a live adapter');
+      }
+      if (!ctx.readAccountFrameHistory) {
+        throw new RuntimeAdapterError('E_BAD_QUERY', 'account frame reads are unavailable for this adapter');
+      }
+      return (await ctx.readAccountFrameHistory(
+        entityId,
+        counterpartyId,
+        readBoundedLimit(query?.limit, 25),
+      )) as T;
     }
 
     if (parts.length === 5 && parts[2] === 'account' && parts[4] === 'swap-history') {

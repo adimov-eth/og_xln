@@ -99,6 +99,8 @@ export async function connectEmbedded(seed: string): Promise<RuntimeAdapter> {
 				xln.loadEntityViewPageFromStorageDb(target, entityId, height, query as never),
 			listEntityIdsAtHeight: (height: number) => xln.listPersistedEntityIdsAtHeight(target, height),
 			readActivityPage: (opts: unknown) => xln.readPersistedRuntimeActivityPage(target, opts as never),
+			readAccountFrameHistory: (entityId: string, counterpartyId: string, limit: number) =>
+				xln.readPersistedAccountFrameHistory(target, entityId, counterpartyId, limit),
 			findPaymentRoutes: (query?: RuntimeAdapterReadQuery) => findEmbeddedPaymentRoutes(target, query),
 		}),
 	});

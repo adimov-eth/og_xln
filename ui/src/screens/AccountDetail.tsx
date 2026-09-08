@@ -6,11 +6,13 @@ import { Icon } from '../components/Icons';
 import { Sheet } from '../components/Sheet';
 import { TokenIcon } from '../components/TokenPicker';
 import { useApp } from '../runtime/store';
+import { useAdapterRead } from '../runtime/hooks';
 import { accountSafety, formatDuration } from '../runtime/financial/sovereignty';
 import { usdOf } from '../runtime/financial/prices';
 import { sendEntityTxs } from '../runtime/tx';
 import { formatMoney, formatSigned, formatUsd, getTokenMeta, knownTokenIds, parseAmount, plainAmount } from '../runtime/format';
 import { useWallet, type AccountTokenView, type AccountView, type WalletView } from '../runtime/views';
+import type { AccountFrame } from '@xln/core/types/account';
 import {
 	buildAddTokenTx,
 	buildDisputeFinalizeTx,
@@ -480,6 +482,47 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 	);
 }
 
+/**
+ * The signed pages of this account, newest first.
+ *
+ * A dispute is argued from frames both parties signed, so the wallet has to be
+ * able to show them: their height, when they were agreed, what each carried,
+ * and the state root the counterparty put their name to.
+ */
+function FrameHistory({ entityId, counterpartyId }: { entityId: string; counterpartyId: string }) {
+	const path = entityId && counterpartyId ? `entity/${entityId}/account/${counterpartyId}/frames` : null;
+	const read = useAdapterRead<AccountFrame[]>(path, { limit: 25 });
+	const frames = [...(read.data ?? [])].reverse();
+
+	if (read.error) return <p className="note" style={{ color: 'var(--dispute)' }}>{read.error}</p>;
+	if (read.loading && frames.length === 0) return <p className="note">Reading the signed pages…</p>;
+	if (frames.length === 0) return <p className="note">No page has been co-signed on this account yet.</p>;
+
+	return (
+		<div data-testid="account-frames">
+			{frames.map((frame, index) => (
+				<div key={`${frame.height}-${frame.accountStateRoot}`} className={`row${index === 0 ? ' first' : ''}`} data-testid="account-frame-row">
+					<div className="rt">
+						<span className="tx">
+							<span className="t num">
+								Page {frame.height} · {frame.accountTxs.length} {frame.accountTxs.length === 1 ? 'action' : 'actions'}
+							</span>
+							<span className="s">
+								{frame.accountTxs.length > 0
+									? [...new Set(frame.accountTxs.map(tx => String(tx.type).replace(/_/g, ' ')))].join(', ')
+									: 'no action, a clock or a countersignature'}
+							</span>
+						</span>
+						<span className="r">
+							<span className="faint mono" style={{ fontSize: 11 }}>{frame.accountStateRoot.slice(0, 10)}…</span>
+						</span>
+					</div>
+				</div>
+			))}
+		</div>
+	);
+}
+
 export function AccountDetail() {
 	const navigate = useNavigate();
 	const { counterpartyId = '' } = useParams();
@@ -488,6 +531,7 @@ export function AccountDetail() {
 	const toast = useApp(s => s.toast);
 	const wallet = useWallet(entityId);
 	const [showEmpty, setShowEmpty] = useState(false);
+	const [showFrames, setShowFrames] = useState(false);
 	const [managing, setManaging] = useState<false | ManageTab>(false);
 	const account = wallet.accounts.find(entry => entry.counterpartyId === counterpartyId.toLowerCase()) ?? null;
 	// A lane with no position, no credit either way and no collateral is plumbing until money touches it.
@@ -638,6 +682,17 @@ export function AccountDetail() {
 				</button>
 			) : null}
 			{showEmpty ? lanes.empty.map(token => <TokenSection key={token.tokenId} token={token} />) : null}
+			<button
+				type="button"
+				className="btn quiet"
+				style={{ marginBottom: 14 }}
+				onClick={() => setShowFrames(value => !value)}
+				data-testid="account-frames-toggle"
+				data-open={showFrames ? 'yes' : 'no'}
+			>
+				{showFrames ? 'Hide' : 'Show'} the signed pages of this account
+			</button>
+			{showFrames ? <FrameHistory entityId={wallet.entityId} counterpartyId={counterpartyId.toLowerCase()} /> : null}
 			</div>
 			<div className="aside">
 				<div className="card">
