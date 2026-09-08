@@ -67,6 +67,14 @@ export const decodeNativeCrossState = (value: unknown, entityId: string) => {
   };
 };
 
+export const readNativeCrossState = async (api: string, entity: string) => {
+  const response = await fetch(`${api}/api/cross-j/state?entityId=${encodeURIComponent(entity)}`, {
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error(`HLT_NATIVE_CROSS_READ:${response.status}:${await response.text()}`);
+  return decodeNativeCrossState(safeParse(await response.text()), entity);
+};
+
 /** Keep live capability authority while binding transport to this leased stack. */
 export const bindCrossRuntimeEntry = (
   entries: readonly LoadRuntimeEntry[],
@@ -114,13 +122,7 @@ export const connectCrossRuntimes = async (args: WorkerArgs): Promise<{ hub: Cro
     closeHub = () => native.stop();
     const info = requireBoundaryRecord(await fetchNativeJson(`${api}/api/info`), 'HLT_NATIVE_CROSS_INFO');
     if (!Array.isArray(info['hubEntities'])) throw new Error('HLT_NATIVE_CROSS_ENTITIES');
-    const read = async (entity: string) => {
-      const response = await fetch(`${api}/api/cross-j/state?entityId=${encodeURIComponent(entity)}`, {
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (!response.ok) throw new Error(`HLT_NATIVE_CROSS_READ:${response.status}:${await response.text()}`);
-      return decodeNativeCrossState(safeParse(await response.text()), entity);
-    };
+    const read = (entity: string) => readNativeCrossState(api, entity);
     const states = await Promise.all(
       info['hubEntities'].map(row => {
         const entity = requireBoundaryRecord(row, 'HLT_NATIVE_CROSS_ENTITY')['entityId'];

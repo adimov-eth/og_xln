@@ -13,6 +13,7 @@ import {
   decodeCommittedCrossRoutes,
   selectMarketMakerCrossRoutes,
 } from '../../core/scripts/operations/hlt/cross/cross-boundary';
+import { readNativeCrossState } from '../../core/scripts/operations/hlt/cross/cross-hub';
 import { enterStack, fundFromHub, reopenStack } from './stack';
 
 type DebugWindow = Window & {
@@ -26,35 +27,35 @@ type CrossParties = {
   receiveTokenId: number;
 };
 
-/** Observe actual resting market liquidity through the operator API; never submit a trade through it. */
-async function readOppositeMarket(parties: Pick<CrossParties, 'sourceHubId' | 'targetHubId'>, hubLabel: string) {
+/** Read the engine's existing committed projection; never submit a trade here. */
+async function readMarketRoutes(parties: Pick<CrossParties, 'sourceHubId' | 'targetHubId'>, hubLabel: string) {
+  if (process.env['XLN_HLT_ENGINE'] === 'rust' && hubLabel === 'H1') {
+    const origin = new URL(process.env['UI_E2E_BASE_URL'] ?? '');
+    if (origin.hostname !== '127.0.0.1' || !origin.port) throw new Error('NATIVE_MARKET_PRIVATE_ORIGIN_REQUIRED');
+    const api = `http://127.0.0.1:${Number(origin.port) + 8}`;
+    return (await readNativeCrossState(api, parties.targetHubId)).routes;
+  }
   const standRoot = process.env['XLN_RDB_ROOT'];
   if (!standRoot) throw new Error('Cross market observation requires XLN_RDB_ROOT');
-  const manifest: unknown = JSON.parse(
-    readFileSync(join(standRoot, 'prod-mesh', 'runtime-import-manifest.json'), 'utf8'),
-  );
+  const manifest: unknown = JSON.parse(readFileSync(join(standRoot, 'prod-mesh', 'runtime-import-manifest.json'), 'utf8'));
   const entry = decodeRuntimeManifestEntries(manifest).find(candidate => candidate.label === hubLabel);
   if (!entry) throw new Error('Cross market hub runtime unavailable');
   const adapter = new RemoteRuntimeAdapter();
   try {
     await adapter.connect({ mode: 'remote', wsUrl: entry.wsUrl, authKey: entry.token, requestTimeoutMs: 5000 });
-    // The maker's source is our receive side: use worker-cross.ts's committed
-    // projection and matching helper, never an inferred opposite UI book.
-    const routes = decodeCommittedCrossRoutes(await adapter.read<unknown>(`entity/${parties.targetHubId}`));
-    return selectMarketMakerCrossRoutes(routes, parties.targetHubId, parties.sourceHubId).map(route => ({
-      orderId: route.orderId,
-      status: route.status,
-      venueId: route.venueId,
-      priceTicks: route.priceTicks,
-      source: route.source,
-      target: route.target,
-      filledSource: route.filledSourceAmount,
-      filledTarget: route.filledTargetAmount,
-      remaining: getCrossJurisdictionRouteRemainingAmounts(route),
-    }));
+    return decodeCommittedCrossRoutes(await adapter.read<unknown>(`entity/${parties.targetHubId}`));
   } finally {
     adapter.disconnect();
   }
+}
+
+async function readOppositeMarket(parties: Pick<CrossParties, 'sourceHubId' | 'targetHubId'>, hubLabel: string) {
+  const routes = await readMarketRoutes(parties, hubLabel);
+  return selectMarketMakerCrossRoutes(routes, parties.targetHubId, parties.sourceHubId).map(route => ({
+    orderId: route.orderId, status: route.status, venueId: route.venueId, priceTicks: route.priceTicks,
+    source: route.source, target: route.target, filledSource: route.filledSourceAmount,
+    filledTarget: route.filledTargetAmount, remaining: getCrossJurisdictionRouteRemainingAmounts(route),
+  }));
 }
 
 /** Observe committed account balances and route state. No setup or financial mutation bypasses the UI. */

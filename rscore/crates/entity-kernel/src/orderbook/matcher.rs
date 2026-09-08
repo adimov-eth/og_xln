@@ -209,6 +209,29 @@ fn split_order_id(value: &str) -> Result<(String, String), EntityKernelError> {
     Ok((account.to_string(), offer.to_string()))
 }
 
+fn project_cross_remainder(
+    account_id: &str,
+    offer: &SameJOffer,
+    market: &crate::cross_j::CrossJurisdictionMarket,
+) -> Result<MaterializedOffer, EntityKernelError> {
+    let qty_lots = &market.base_amount / lot_scale(market.dimensions.base_token_decimals);
+    if qty_lots <= BigInt::from(0) {
+        return Err(EntityKernelError::SwapRejected {
+            code: "cross-dust-remainder",
+        });
+    }
+    Ok(MaterializedOffer {
+        account_id: account_id.to_string(),
+        pair_id: market.pair_id.clone(),
+        dimensions: market.dimensions,
+        side: market.side,
+        qty_lots,
+        owner_id: market.maker_id.clone(),
+        order_id: order_id(account_id, &offer.offer_id)?,
+        time_in_force: offer.time_in_force.unwrap_or(0),
+    })
+}
+
 fn materialize(
     account_id: &str,
     offer: &SameJOffer,
@@ -222,29 +245,14 @@ fn materialize(
     }
     if let Some(route) = &offer.cross_jurisdiction {
         let market = crate::cross_j::cross_jurisdiction_market(route)?;
-        let scale = lot_scale(market.dimensions.base_token_decimals);
-        let qty_lots = &market.base_amount / &scale;
-        if qty_lots <= BigInt::from(0) {
-            return Err(EntityKernelError::SwapRejected {
-                code: "cross-dust-remainder",
-            });
-        }
+        let materialized = project_cross_remainder(account_id, offer, &market)?;
         let exact = exact_quote_lot_multiple(market.dimensions, &market.price_ticks)?;
-        if &qty_lots % exact != BigInt::from(0) {
+        if &materialized.qty_lots % exact != BigInt::from(0) {
             return Err(EntityKernelError::SwapRejected {
                 code: "cross-quote-lot-misaligned",
             });
         }
-        return Ok(MaterializedOffer {
-            account_id: account_id.to_string(),
-            pair_id: market.pair_id,
-            dimensions: market.dimensions,
-            side: market.side,
-            qty_lots,
-            owner_id: market.maker_id,
-            order_id: order_id(account_id, &offer.offer_id)?,
-            time_in_force,
-        });
+        return Ok(materialized);
     }
     let (_, _, pair_id) = canonical_pair(offer.give_token_id, offer.want_token_id);
     let side = side_for(offer.give_token_id, offer.want_token_id);
@@ -536,6 +544,22 @@ fn sorted_upserts<'a>(
     Ok(offers)
 }
 
+// Committed cross-J rows retain their admission price while signed fill progress
+// resizes quantity. Rounding the remainder must not re-run fresh-order admission.
+fn materialize_committed(
+    account_id: &str,
+    offer: &SameJOffer,
+) -> Result<MaterializedOffer, EntityKernelError> {
+    if let Some(route) = &offer.cross_jurisdiction {
+        return project_cross_remainder(
+            account_id,
+            offer,
+            &crate::cross_j::cross_jurisdiction_market(route)?,
+        );
+    }
+    materialize(account_id, offer, &BigInt::from(0))
+}
+
 fn classify_maker(
     offers: &BTreeMap<(String, String), SameJOffer>,
     resolving: &BTreeSet<(String, String)>,
@@ -552,9 +576,9 @@ fn classify_maker(
     if resolving.contains(&key) {
         return Ok(MakerDisposition::Suspended);
     }
-    let canonical = materialize(&account_id, offer, &BigInt::from(0))?;
+    let canonical = materialize_committed(&account_id, offer)?;
     if canonical.side != order.side
-        || offer.price_ticks != order.price_ticks
+        || (offer.cross_jurisdiction.is_none() && offer.price_ticks != order.price_ticks)
         || canonical.owner_id != order.owner_id
         || canonical.qty_lots != order.qty_lots
     {
@@ -581,7 +605,7 @@ pub(super) fn validate_restored_state(state: &OrderbookState) -> Result<(), Enti
                 .offers
                 .get(&(account_id.clone(), offer_id))
                 .ok_or_else(|| EntityKernelError::orderbook("ORDERBOOK_SAME_SNAPSHOT_MISSING"))?;
-            let materialized = materialize(&account_id, offer, &BigInt::from(0))?;
+            let materialized = materialize_committed(&account_id, offer)?;
             // Cross-J dimensions belong to each authenticated route, not the
             // same-J pairDimensions map. Materialization still verifies every
             // restored order against its canonical route and venue.
@@ -1303,7 +1327,14 @@ pub(crate) fn apply_cross_jurisdiction_fill_deltas(
                 let key = (account_id.clone(), offer.offer_id.clone());
                 state.offers.insert(key.clone(), offer.as_ref().clone());
                 state.resolving_offers.remove(&key);
-                let materialized = materialize(account_id, offer, &BigInt::from(0))?;
+                // Signed uint16 progress rounds both claims independently. Resize the
+                // committed remainder like TS updateBookOrderForProgress; fresh-order
+                // quote-lot admission would reject a valid post-fill remainder.
+                let route = offer.cross_jurisdiction.as_ref().ok_or_else(|| {
+                    EntityKernelError::orderbook("CROSS_J_BOOK_PROGRESS_ROUTE_MISSING")
+                })?;
+                let market = crate::cross_j::cross_jurisdiction_market(route)?;
+                let materialized = project_cross_remainder(account_id, offer, &market)?;
                 let pair_id = state
                     .pair_by_order
                     .get(&materialized.order_id)

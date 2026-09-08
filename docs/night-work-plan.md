@@ -51,6 +51,30 @@ HLT measured sequentially: 1,000 sovereign users, five processes, 8 workers, 20-
 - Pending: final source check/commit, verify the simplified wallet entry in browser, remaining scenarios
   and E2E. TS throughput acceptance remains red; do not claim all gates green.
 
+## Method review — 2026-09-08 23:11 UTC
+
+Native browser Cross-J exposed `cross-quote-lot-misaligned` after a real partial maker fill.
+The previous payment-only HLT replay did not cover this counterexample. Preserve that evidence
+scope: it is not full Cross-J parity. Fix the first divergence before expanding UI polish or load.
+Committed signed fill ratios round both remaining amounts; Rust incorrectly reapplied fresh-order
+lot admission to the remainder. The focused regression now covers two fills separated by an
+orderbook snapshot/restore. Entity-kernel unit suite: 207/207 green. Fresh native build and the same browser Cross-J run passed (1/1, no skips):
+`/tmp/xln-ui-cross-rust-r3-20260909/wallet-results.json`. Final exact replay and
+`bun run check` remain required.
+The owner reported the wallet gate at `/settings`; code shows disconnected sessions display
+Gate without changing the URL. A reload clears memory-only unlocked seeds; no evidence yet
+identifies whether this specific session reloaded, was locked, or disconnected.
+
+### Verified partial-fill milestone — 2026-09-08 23:18 UTC
+
+`bun run check`: 39/39 green (`/tmp/xln-cross-final-check.log`). Native Cross-J browser:
+1/1 green; entity-kernel 207/207. Six-engine replay reached five completed configurations
+before the 180-second wall limit killed Rust W8. Do not claim a new six-engine verdict.
+Evidence: `/tmp/xln-cross-fixed-parity.log`. Resume correctly refuses the dirty shared tree
+(`HLT_MIXED_PARITY_RESUME_REQUIRES_CLEAN_TREE`); preserve unrelated owner changes and do not
+bypass provenance. Previous complete 6/6 evidence remains tied to the earlier binary.
+Next: complete bounded parity with valid provenance; TS five-second HLT drain remains red.
+
 ## Active owner scope — 2026-09-07
 
 The latest owner instruction supersedes every earlier first-launch Lending

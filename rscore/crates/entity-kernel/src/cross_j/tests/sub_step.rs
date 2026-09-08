@@ -20,8 +20,9 @@ fn match_routes(
         );
     }
     let context = crate::DeterministicContext::hlt_default();
+    let entity_id = owner.entity_id.clone();
     let book = owner.orderbook.as_mut().unwrap();
-    let mut prepared = prepare_orderbook_outputs(book, &deltas, &context, "source-hub", None)
+    let mut prepared = prepare_orderbook_outputs(book, &deltas, &context, &entity_id, None)
         .expect("prepare production matcher");
     let results = prepared
         .take_jobs()
@@ -215,4 +216,59 @@ fn cross_j_sub_step_cancel_preserves_prior_claims_and_retires_the_book() {
         committed_fill(terminal, EntityTxKind::CrossJurisdictionFillNotice).unwrap(),
         (21_845, BigInt::from(1), BigInt::from(1))
     );
+}
+
+#[test]
+fn cross_j_live_usdt_usdc_partial_fill_keeps_the_committed_remainder() {
+    // Live wallet counterexample: take 50 USDC from a 10,200-USDC maker at 9999 ticks.
+    let mut maker = route("resting", true);
+    let mut source = field(&maker, "source").unwrap().clone();
+    let mut target = field(&maker, "target").unwrap().clone();
+    let source_j = field(&source, "jurisdiction").unwrap().clone();
+    let target_j = field(&target, "jurisdiction").unwrap().clone();
+    set(&mut source, "jurisdiction", target_j).unwrap();
+    set(&mut target, "jurisdiction", source_j).unwrap();
+    set(
+        &mut source,
+        "tokenId",
+        number(3, EntityTxKind::AdmitCrossJurisdictionBookOrder, "TOKEN").unwrap(),
+    )
+    .unwrap();
+    set(
+        &mut source,
+        "amount",
+        CanonicalValue::BigInt(10_198_980_000_u64.into()),
+    )
+    .unwrap();
+    set(
+        &mut target,
+        "amount",
+        CanonicalValue::BigInt(10_200_000_000_u64.into()),
+    )
+    .unwrap();
+    set(&mut maker, "source", source).unwrap();
+    set(&mut maker, "target", target).unwrap();
+    let taker = reciprocal(&maker, "take-50", 204);
+    let second_taker = reciprocal(&maker, "take-another-50", 204);
+    let mut owner = EntityStateSlice::empty("target-hub", 2_000);
+    owner.orderbook = Some(crate::OrderbookState::empty(10_000));
+    assert!(match_routes(&mut owner, vec![maker]).is_empty());
+    let fills = match_routes(&mut owner, vec![taker]);
+    assert_eq!(fills.len(), 2);
+    commit_fills(&mut owner, fills);
+    let book = owner.orderbook.as_ref().unwrap();
+    assert!(book.resolving_offers.is_empty());
+    assert_eq!(
+        book.books
+            .values()
+            .map(|book| book.orders.len())
+            .sum::<usize>(),
+        1
+    );
+    let snapshot = owner.orderbook.as_ref().unwrap().snapshot().unwrap();
+    owner.orderbook =
+        Some(crate::OrderbookState::restore(snapshot).expect("restore partial maker"));
+    let second_fills = match_routes(&mut owner, vec![second_taker]);
+    assert_eq!(second_fills.len(), 2);
+    commit_fills(&mut owner, second_fills);
 }
