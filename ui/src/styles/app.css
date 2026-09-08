@@ -2289,3 +2289,23 @@ textarea.input.boxed {
 }
 .wallet-overview .hero-label { display: block; margin-bottom: 8px; }
 .wallet-home .entity-switch .note { white-space: nowrap; font-weight: 400; font-size: 12px; }
+
+/* Entry has one primary action; saved identities stay distinct even with equal names. */
+.gate-welcome { gap: 22px; }
+.gate-resume { padding: 24px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); }
+.gate-resume h2, .gate-start h2 { font-size: 22px; margin: 8px 0; overflow-wrap: anywhere; }
+.gate-resume > .mono { font-size: 12px; }
+.gate-resume > .btn, .gate-start > .btn { width: 100%; margin-top: 18px; justify-content: center; }
+.gate-start > .muted { font-size: 14px; line-height: 1.6; }
+.gate-start .note { display: block; margin-top: 10px; }
+.gate-other-wallets { margin-top: 18px; text-align: left; font-size: 13px; }
+.gate-wallet-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; width: 100%; text-align: left; border-bottom: 1px solid var(--line); }
+.gate-wallet-row span { overflow-wrap: anywhere; }
+.gate-entry-actions { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); padding-top: 22px; gap: 18px; }
+.gate-entry-action { display: flex; align-items: center; gap: 10px; text-align: left; }
+.gate-entry-action strong, .gate-entry-action small { display: block; }
+.gate-entry-action strong { font-size: 14px; font-weight: 500; }
+.gate-entry-action small { font-size: 12px; color: var(--ink-2); margin-top: 5px; }
+.gate-advanced { color: var(--ink-2); font-size: 12px; }
+.gate-advanced .btn { margin-top: 12px; }
+@media (max-width: 420px) { .gate-entry-actions { grid-template-columns: 1fr; gap: 22px; } }

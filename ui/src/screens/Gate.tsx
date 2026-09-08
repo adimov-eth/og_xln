@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../components/Icons';
 import { Logo } from '../components/Logo';
+import { GateWelcome } from '../components/GateWelcome';
 import { RestoreChoice } from '../components/RestoreChoice';
 import { discoverTowerRestore } from '../runtime/restore';
 import { defaultTowerUrl, saveRecovery } from '../runtime/recovery';
@@ -36,7 +37,6 @@ export function Gate() {
 	const [busyStep, setBusyStep] = useState<string | null>(null);
 	const [progress, setProgress] = useState<BrainvaultProgress | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const vaults = useApp(s => s.vaults);
 	const toast = useApp(s => s.toast);
 
 	const [name, setName] = useState('');
@@ -231,12 +231,12 @@ export function Gate() {
 		<div className="gate">
 			<GateMark />
 			<h1 className="gate-title">xln</h1>
-			<p className="gate-sub muted">Your runtime. Your proofs. Your money.</p>
+			<p className="gate-sub muted">Payments and swaps, under your control.</p>
 			<p className="gate-stack muted" data-testid="gate-stack" data-state={stack === undefined ? 'probing' : stack ? 'online' : 'offline'}>
 				{stack === undefined
 					? 'Looking for a network at this address…'
 					: stack
-						? `${stack.jurisdiction.name} · hub ${stack.hubs[0]?.name ?? 'none'} · ${new URL(stack.apiBase).host}`
+						? `${stack.jurisdiction.name} · Connected`
 						: 'No xln network at this address. Open the wallet from a running stack.'}
 			</p>
 
@@ -246,68 +246,7 @@ export function Gate() {
 				</p>
 			) : null}
 
-			{mode === 'landing' && (
-				<div className="gate-cards fade-in">
-					{vaults.filter(vault => vault.kind !== 'sandbox').map(vault => (
-						<button key={vault.id} type="button" className="gate-card" onClick={() => unlockVault(vault)}>
-							<span className="gate-card-icon">
-								<Icon name={vault.kind === 'remote' ? 'bank' : 'lock'} size={18} />
-							</span>
-							<span>
-								<span className="gate-card-title">{vault.name}</span>
-								<span className="gate-card-sub muted">
-									{vault.kind === 'remote' ? 'Remote runtime' : 'Unlock'}
-								</span>
-							</span>
-							<Icon name="chevronRight" size={16} />
-						</button>
-					))}
-
-					<button type="button" className="gate-card" onClick={() => setMode('create')}>
-						<span className="gate-card-icon">
-							<Icon name="shield" size={18} />
-						</span>
-						<span>
-							<span className="gate-card-title">Create a BrainVault</span>
-							<span className="gate-card-sub muted">A name and a passphrase are the whole wallet</span>
-						</span>
-						<Icon name="chevronRight" size={16} />
-					</button>
-
-					<button type="button" className="gate-card" onClick={() => setMode('import')}>
-						<span className="gate-card-icon">
-							<Icon name="receive" size={18} />
-						</span>
-						<span>
-							<span className="gate-card-title">Import a phrase</span>
-							<span className="gate-card-sub muted">12 or 24 words, standard BIP39</span>
-						</span>
-						<Icon name="chevronRight" size={16} />
-					</button>
-
-					<button type="button" className="gate-card" onClick={() => setMode('remote')}>
-						<span className="gate-card-icon">
-							<Icon name="bank" size={18} />
-						</span>
-						<span>
-							<span className="gate-card-title">Connect a remote runtime</span>
-							<span className="gate-card-sub muted">Your server, over an authenticated channel</span>
-						</span>
-						<Icon name="chevronRight" size={16} />
-					</button>
-
-					<button type="button" className="gate-card gate-learn" onClick={learn} data-testid="gate-learn">
-						<span className="gate-card-icon">
-							<Icon name="bolt" size={18} />
-						</span>
-						<span>
-							<span className="gate-card-title">Learn xln in five minutes</span>
-							<span className="gate-card-sub muted">A guided tour on the live network: credit, a payment, collateral, swaps across two chains and a dispute</span>
-						</span>
-						<Icon name="chevronRight" size={16} />
-					</button>
-				</div>
-			)}
+			{mode === 'landing' && <GateWelcome onMode={setMode} onUnlock={unlockVault} onLearn={learn} networkReady={Boolean(stack)} />}
 
 			{mode === 'create' && (
 				<form
