@@ -5,7 +5,12 @@ import { join } from 'node:path';
 import {
   executeCertifiedBoardRotationVector,
   executeIntraFrameBoardOrderingVector,
+  intraFrameMixedBoardActivationFrame,
 } from '../../../../rscore/fixtures/certified-board-rotation/cases';
+import {
+  findCounterpartyBoardActivationConflict,
+  withoutCounterpartyBoardActivationConflicts,
+} from '../../../entity/consensus/proposal/policy';
 import { safeStringify } from '../../../protocol/serialization';
 
 const fixturePath = join(
@@ -44,37 +49,83 @@ test('resolveObserverCertifiedBoardRecord answers the new board right after Boar
 });
 
 // ---------------------------------------------------------------------------
-// Intra-frame ordering. TypeScript applies one Entity frame's transactions
-// strictly in order (`core/entity/consensus/frame/application.ts`,
-// `applyEntityTxsInOrder`), and the certified J range is prepended to the
-// proposal (`core/entity/consensus/proposal/selection.ts`). So when a frame
-// carries a `j_event` activating a counterparty's board followed by an
-// `accountInput` from that counterparty, the row is verified against the NEW
-// board.
+// Intra-frame ordering: the frame shape is FORBIDDEN.
 //
-// Rust freezes the same resolution from the state at the START of the frame
-// (`rscore/crates/runtime/src/machine/apply.rs`, `resolve_certified_boards`),
-// before the kernel applies that frame's J events
-// (`rscore/crates/entity-kernel/src/resident.rs`), so the row is verified
-// against the RETIRED board. The two Rust tests named below run the same frame
-// through the production reducers in each engine's order and record the two
-// different rejects.
+// TypeScript applies one Entity frame's transactions strictly in order
+// (`core/entity/consensus/frame/application.ts`, `applyEntityTxsInOrder`) with
+// the certified J range prepended (`core/entity/consensus/proposal/selection.ts`),
+// so a `j_event` activating a counterparty's board commits
+// (`core/entity/tx/j-events-board.ts`) before `prepareAccountConsensusRun`
+// resolves that counterparty's board for a later `accountInput`
+// (`core/entity/tx/handlers/account/input-phases.ts`): the row is verified
+// against the NEW board. Rust freezes the same resolution from start-of-frame
+// state (`rscore/crates/runtime/src/machine/apply.rs`) and applies the frame's J
+// events only after the whole Account ingress wave
+// (`rscore/crates/entity-kernel/src/resident.rs`): the RETIRED board. Both are
+// rejects, so the fork was silent.
 //
-// This test is the TypeScript half of that divergence record. It documents
-// current behaviour, not agreed behaviour: when the engines are reconciled,
-// one of the two halves must change with the fix.
+// `05a90c88e` recorded the split and presented the fork; the owner chose to
+// forbid the frame shape. These tests keep that evidence and now prove the
+// refusal. The Rust half lives in
+// `rscore/crates/runtime/tests/certified_board_rotation_parity.rs`.
 // ---------------------------------------------------------------------------
-test('a same-frame BoardActivated is visible to that frame\'s accountInput (TypeScript order)', () => {
+
+test('the two frame orders resolve different counterparty boards', () => {
   const ordering = executeIntraFrameBoardOrderingVector();
 
-  // Before the frame, and therefore what Rust resolves for the whole frame:
-  // see `rust_resolves_account_rows_before_the_same_frame_s_board_activation`.
+  // What Rust resolves for the whole frame, and what TypeScript resolved before
+  // the frame's `j_event` transaction: the retired registration board.
   expect(ordering.beforeFrame?.boardHash).toBe(ordering.registeredBoardHash);
   expect(ordering.beforeFrame?.activatedAtJHeight).toBe(2);
 
-  // What TypeScript resolves for the accountInput in the same frame: see
-  // `typescript_order_resolves_account_rows_after_the_same_frame_s_board_activation`.
+  // What TypeScript resolves for an `accountInput` placed after that `j_event`
+  // in the SAME frame: the board the frame just activated.
   expect(ordering.accountInputResolved?.boardHash).toBe(ordering.rotatedBoardHash);
   expect(ordering.accountInputResolved?.activatedAtJHeight).toBe(3);
   expect(ordering.accountInputResolved?.logIndex).toBe(0);
+
+  // One row, one frame, two certified boards. That is why the shape is refused.
+  expect(ordering.accountInputResolved?.boardHash).not.toBe(ordering.beforeFrame?.boardHash);
+});
+
+test('a proposer may not select a counterparty accountInput into that counterparty\'s activation frame', () => {
+  const ordering = executeIntraFrameBoardOrderingVector();
+  const mempool = intraFrameMixedBoardActivationFrame();
+  expect(mempool.map(tx => tx.type)).toEqual(['j_event', 'accountInput']);
+
+  // The certified J range keeps priority; the counterparty's row stays in the
+  // mempool and is proposed once the activation is committed.
+  const proposable = withoutCounterpartyBoardActivationConflicts(ordering.ownerEntityId, mempool);
+  expect(proposable.map(tx => tx.type)).toEqual(['j_event']);
+
+  // The rule is targeted: without the activation the same row is proposable.
+  const rowOnly = mempool.filter(tx => tx.type === 'accountInput');
+  expect(
+    withoutCounterpartyBoardActivationConflicts(ordering.ownerEntityId, rowOnly).map(tx => tx.type),
+  ).toEqual(['accountInput']);
+});
+
+test('a validator refuses a frame that mixes a counterparty board activation with that counterparty\'s row', () => {
+  const ordering = executeIntraFrameBoardOrderingVector();
+  const frameTxs = intraFrameMixedBoardActivationFrame();
+
+  // `preauthenticateEntityProposal` returns the typed reject
+  // `PROPOSAL_COUNTERPARTY_BOARD_ACTIVATION_MIXED` on exactly this answer, so a
+  // proposer that ignores the policy above cannot commit the frame anyway.
+  expect(findCounterpartyBoardActivationConflict(ordering.ownerEntityId, frameTxs))
+    .toBe(ordering.peerEntityId.toLowerCase());
+
+  // Neither half alone is refused.
+  expect(
+    findCounterpartyBoardActivationConflict(
+      ordering.ownerEntityId,
+      frameTxs.filter(tx => tx.type === 'j_event'),
+    ),
+  ).toBeNull();
+  expect(
+    findCounterpartyBoardActivationConflict(
+      ordering.ownerEntityId,
+      frameTxs.filter(tx => tx.type === 'accountInput'),
+    ),
+  ).toBeNull();
 });

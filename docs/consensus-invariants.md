@@ -87,3 +87,47 @@ legally runs ahead of its last "matched X%" message.
 verified reveal because it exceeded the informational ratio; source J had
 already paid the full revealed amount while target recovery refused to mirror
 it (audit P1-2). Both gates removed; the reveal is the truth.
+
+## one frame never mixes a counterparty board activation with that counterparty's row (owner decision 2026-09-08)
+
+**rule:** an Entity frame that carries a `j_event` whose certified J range
+activates entity C's board (`BoardActivated`, C != self) must not also carry an
+`accountInput` whose `fromEntityId` is C. Proposers defer C's rows to the next
+frame; validators refuse the frame.
+
+**why:** `resolveObserverCertifiedBoardRecord` is the only Entity-state read an
+inbound Account row makes, and the two engines read it on opposite sides of the
+frame's J ingress. TypeScript applies frame transactions strictly in order with
+the certified J range first (`core/entity/consensus/proposal/selection.ts`,
+`core/entity/consensus/frame/application.ts`), so the board commits
+(`core/entity/tx/j-events-board.ts`) before `prepareAccountConsensusRun`
+resolves it (`core/entity/tx/handlers/account/input-phases.ts`) — the row is
+judged against the NEW board. Rust resolves every inbound row from
+start-of-frame state (`rscore/crates/runtime/src/machine/apply.rs`) and applies
+the frame's J events only after the whole Account ingress wave
+(`rscore/crates/entity-kernel/src/resident.rs`) — the RETIRED board. Both
+outcomes are rejects on different branches, so Account state and Entity roots
+fork with no error. Measured by `05a90c88e`; the owner forbade the frame shape
+rather than reconcile the two orders.
+
+**enforcement:**
+
+| engine | proposal | frame validation |
+|---|---|---|
+| TypeScript | `withoutCounterpartyBoardActivationConflicts` (`core/entity/consensus/proposal/policy.ts`) drops C's rows from the selection; they stay in the mempool | `preauthenticateEntityProposal` rejects with `PROPOSAL_COUNTERPARTY_BOARD_ACTIVATION_MIXED` |
+| Rust | the Runtime defers that row's parent work and rebuilds the frame (`RSCORE_ENTITY_COUNTERPARTY_BOARD_ACTIVATION_DEFERRED`) | `apply_resident_entity_round` returns `ENTITY_FRAME_COUNTERPARTY_BOARD_ACTIVATION_MIXED` before any mutation |
+
+Both are typed rejects, never halts (AGENTS.md REJECT POLICY). The row is
+deferred, not discarded: the peer is not punished for the proposer's
+scheduling, and it is proposed again once the activation is committed. A
+rotation of the entity's OWN board is a different rule, already isolated into
+its own frame by the self-authority branch of `selectProposableEntityTxs`.
+
+**evidence:** `rscore/crates/runtime/tests/certified_board_rotation_parity.rs`
+and `core/__tests__/rscore/parity/certified-board-rotation-parity.test.ts` over
+the shared vector in `rscore/fixtures/certified-board-rotation/cases.ts`.
+
+**not covered:** `EntityRegistered` and `FoundationBootstrapped` mutate the same
+certified board registry for a counterparty and have the same read-ordering
+surface (`Lazy` before, `Certified` after). No divergence has been measured for
+them, so the rule stays on `BoardActivated` only.

@@ -22,6 +22,7 @@ import {
 } from '../../../core/jurisdiction/machine/board-registry';
 import type { EntityRuntimeContext } from '../../../core/entity/runtime-context';
 import type { EntityState } from '../../../core/entity/types';
+import type { EntityTx } from '../../../core/types/entity-tx';
 import type { JurisdictionEvent } from '../../../core/types/jurisdiction-events';
 
 const OWNER = `0x${'11'.repeat(32)}`;
@@ -200,10 +201,67 @@ export const executeIntraFrameBoardOrderingVector = () => {
   return {
     version: 1,
     canonicalSource: 'TypeScript production Entity frame transaction order',
+    ownerEntityId: OWNER,
     peerEntityId: PEER,
     registeredBoardHash: REGISTERED_BOARD,
     rotatedBoardHash: ROTATED_BOARD,
     beforeFrame,
     accountInputResolved,
   };
+};
+
+/**
+ * The exact Entity frame the owner forbade.
+ *
+ * One `j_event` whose certified J range activates the PEER's board at J height
+ * 3, log index 0, plus one `accountInput` from that same peer — the TypeScript
+ * twin of `board_hanko_refresh_row` in
+ * `rscore/crates/runtime/tests/certified_board_rotation_parity.rs`. Both engines
+ * must refuse this list: TypeScript defers the row at proposal
+ * (`withoutCounterpartyBoardActivationConflicts`) and rejects the frame at
+ * validation (`PROPOSAL_COUNTERPARTY_BOARD_ACTIVATION_MIXED`); Rust refuses it
+ * in `apply_resident_entity_round` before any mutation.
+ */
+export const intraFrameMixedBoardActivationFrame = (): EntityTx[] => {
+  const rotation = EVENTS[2]?.event;
+  if (!rotation) throw new Error('CERTIFIED_BOARD_ORDERING_ROTATION_MISSING');
+  const jRange: EntityTx = {
+    type: 'j_event',
+    data: {
+      from: OWNER,
+      jurisdictionRef: JURISDICTION.name,
+      baseHeight: 2,
+      scannedThroughHeight: 3,
+      tipBlockHash: `0x${'12'.repeat(32)}`,
+      eventHistoryRoot: `0x${'00'.repeat(32)}`,
+      rangeHash: `0x${'00'.repeat(32)}`,
+      blocks: [
+        {
+          blockNumber: 3,
+          blockHash: `0x${'12'.repeat(32)}`,
+          eventsHash: `0x${'00'.repeat(32)}`,
+          events: [rotation],
+        },
+      ],
+      signature: `0x${'00'.repeat(65)}`,
+      observedAt: 2_000,
+    },
+  };
+  const peerRow: EntityTx = {
+    type: 'accountInput',
+    data: {
+      fromEntityId: PEER,
+      toEntityId: OWNER,
+      domain: { chainId: JURISDICTION.chainId, depositoryAddress: JURISDICTION.depositoryAddress },
+      disputeConfig: { disputePeriodSeconds: 10, cooperativeCloseSeconds: 10 },
+      kind: 'board_hanko_refresh',
+      boardHankoRefresh: {
+        height: 1,
+        frameHash: `0x${'5a'.repeat(32)}`,
+        boardActivationJHeight: 3,
+        boardActivationLogIndex: 0,
+      },
+    },
+  } as unknown as EntityTx;
+  return [jRange, peerRow];
 };

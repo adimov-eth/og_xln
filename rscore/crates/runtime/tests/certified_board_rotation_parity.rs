@@ -27,9 +27,10 @@ use xln_rscore_engine::{
 };
 use xln_rscore_entity_kernel::{
     ConsensusMode, DeterministicContext, EntityConsensusConfig, EntityFrameAuthority,
-    EntityLeaderState, EntityStateSlice, FinalizedJEventBatch, ResidentEntityOperation,
-    ResidentEntityRequest, ResidentEntityResult, apply_finalized_j_event_batches,
-    apply_resident_entity_round, certified_board_stack_key,
+    EntityLeaderState, EntityStateSlice, FinalizedJEventBatch, JPrefixRangeClaim,
+    ResidentEntityError, ResidentEntityOperation, ResidentEntityRequest, ResidentEntityResult,
+    ResidentJEventProjection, apply_finalized_j_event_batches, apply_resident_entity_round,
+    certified_board_stack_key,
 };
 use xln_rscore_protocol::{CanonicalNumber, CanonicalValue};
 use xln_rscore_runtime::RuntimeEntityState;
@@ -292,26 +293,33 @@ fn board_rotation_committed_by_an_earlier_frame_is_resolved_without_restore() {
 }
 
 // ---------------------------------------------------------------------------
-// Intra-frame ordering.
+// Intra-frame ordering: the frame shape is FORBIDDEN.
 //
 // TypeScript applies the transactions of one Entity frame strictly in order
 // (`core/entity/consensus/frame/application.ts`, `applyEntityTxsInOrder`), and
 // the certified J range is prepended to the proposal
-// (`core/entity/consensus/proposal/selection.ts:65`), so a `j_event` carrying
+// (`core/entity/consensus/proposal/selection.ts`), so a `j_event` carrying
 // `BoardActivated` for a counterparty mutates `state.certifiedBoardState`
-// (`core/entity/tx/j-events-board.ts:49`) before a later `accountInput` from
-// that same counterparty resolves its board
-// (`core/entity/tx/handlers/account/input-phases.ts:218`).
+// (`core/entity/tx/j-events-board.ts`) before a later `accountInput` from that
+// same counterparty resolves its board
+// (`core/entity/tx/handlers/account/input-phases.ts`) — the NEW board.
 //
 // Rust resolves every inbound row from the state as it stood at the START of
-// the frame (`rscore/crates/runtime/src/machine/apply.rs:3638`) and only then
-// enters the kernel, which applies that frame's J events after the inbound
-// Account stage (`rscore/crates/entity-kernel/src/resident.rs:2790`).
+// the frame (`rscore/crates/runtime/src/machine/apply.rs`) and only then enters
+// the kernel, which applies that frame's J events after the inbound Account
+// stage (`rscore/crates/entity-kernel/src/resident.rs`) — the RETIRED board.
 //
-// The two tests below run the SAME Entity frame — one `BoardActivated` plus one
-// `board_hanko_refresh` row from the rotated counterparty — through the exact
-// production reducers in each engine's order. Only the resolution point
-// differs.
+// `05a90c88e` recorded that split and presented the fork. The owner chose to
+// forbid the frame shape rather than reconcile the two orders. These tests keep
+// the same fixture and the same evidence, and now prove the refusal:
+//
+// * `the_two_frame_orders_resolve_different_counterparty_boards` keeps the
+//   reason — the two orders really do resolve different boards for one row.
+// * `a_frame_activating_a_counterparty_board_refuses_that_counterparty_s_row`
+//   proves the kernel refuses the mixed frame before any mutation, with a typed
+//   error the Runtime turns into a deferral, never a halt.
+// * `a_frame_without_the_activation_processes_the_counterparty_row_normally` is
+//   the control: the refusal is specific to the mixed shape.
 // ---------------------------------------------------------------------------
 
 const ORDERING_SEED: &str = "0x7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a";
@@ -421,6 +429,29 @@ fn board_hanko_refresh_row(owner: &EntityId, peer: &EntityId) -> AccountInputRow
     }
 }
 
+/// The certified J range this one frame carries, exactly as `apply.rs` hands it
+/// to the kernel: the projection whose batches the kernel applies after the
+/// inbound Account stage.
+fn ordering_j_projection(rotation: &FinalizedJEventBatch) -> ResidentJEventProjection {
+    ResidentJEventProjection {
+        scanned_through: 3,
+        batches: vec![rotation.clone()],
+        runtime_seed: ORDERING_SEED.to_string(),
+        claim: JPrefixRangeClaim {
+            jurisdiction_ref: "certified-board-rotation-fixture".to_string(),
+            base_height: 2,
+            scanned_through_height: 3,
+            tip_block_hash: format!("0x{}", hex::encode(rotation.j_block_hash)),
+            event_history_root: format!("0x{}", "00".repeat(32)),
+            range_hash: format!("0x{}", "00".repeat(32)),
+            headers: Vec::new(),
+            blocks: Vec::new(),
+        },
+        proposer_signer_id: ORDERING_SIGNER.to_string(),
+        proposer_signature: String::new(),
+    }
+}
+
 /// Exactly one resident Entity round over the rows the parent already resolved,
 /// mirroring `apply_resident_entity_round` as `apply.rs` drives it.
 fn ordering_round(
@@ -429,7 +460,8 @@ fn ordering_round(
     state: EntityStateSlice,
     rows: Vec<AccountInputRow>,
     authority: &EntityFrameAuthority,
-) -> ResidentEntityResult {
+    finalized_j_events: Option<ResidentJEventProjection>,
+) -> Result<ResidentEntityResult, ResidentEntityError> {
     let expected_accounts_root = accounts.accounts_root();
     let len = rows.len();
     apply_resident_entity_round(
@@ -457,7 +489,7 @@ fn ordering_round(
             scheduled_wake: None,
             propose_accounts_now: Vec::new(),
             expected_proposer_signer_id: ORDERING_SIGNER.to_string(),
-            finalized_j_events: None,
+            finalized_j_events,
             entity_authority: Some(authority.clone()),
             local_account_genesis_policy: None,
             cross_j_opening_sibling_views: Vec::new(),
@@ -465,7 +497,6 @@ fn ordering_round(
         },
         &DeterministicContext::hlt_default(),
     )
-    .expect("a rejected board Hanko refresh is a typed reject, never a round fault")
 }
 
 /// Everything the two orderings share: the fixture, the pre-rotation Entity
@@ -567,19 +598,27 @@ fn refresh_reject_reason(verdict: &AccountInputVerdict) -> &str {
     }
 }
 
-/// Rust production order: `apply.rs:3638` resolves the row from the pre-frame
-/// state, then `resident.rs:2790` applies this frame's `BoardActivated`.
+/// Why the shape is forbidden, kept exactly as `05a90c88e` measured it: one
+/// identical row resolves two different certified boards depending on which
+/// side of the frame's J ingress the resolution happens.
+///
+/// Rust production order: `apply.rs` resolves the row from the pre-frame state,
+/// then `resident.rs` applies this frame's `BoardActivated`. TypeScript order:
+/// `applyEntityTxsInOrder` runs the `j_event` tx first, so `input-phases.ts`
+/// resolves the row from the rotated board. Neither order is wrong on its own;
+/// carrying both events in ONE frame is what makes them disagree, so that frame
+/// is what the two engines now refuse.
 #[test]
-fn rust_resolves_account_rows_before_the_same_frame_s_board_activation() {
+fn the_two_frame_orders_resolve_different_counterparty_boards() {
     let mut case = intra_frame_case();
-    let mut accounts = ordering_engine(&case.owner, &case.peer);
-    let mut row = board_hanko_refresh_row(&case.owner, &case.peer);
 
-    // apply.rs:3638 — every row is resolved from the state as it stood at the
-    // start of the frame.
-    row.resolve_certified_boards(&case.state.certified_board_authority())
+    // Rust order: resolved from the state as it stood at the start of the frame.
+    let mut rust_order = board_hanko_refresh_row(&case.owner, &case.peer);
+    rust_order
+        .resolve_certified_boards(&case.state.certified_board_authority())
         .expect("row board resolution");
-    let AccountInputBoardAuthority::Certified(resolved) = row.certified_board_authority else {
+    let AccountInputBoardAuthority::Certified(resolved) = rust_order.certified_board_authority
+    else {
         panic!("the peer is registered, so the row must carry a certified board");
     };
     assert_eq!(
@@ -587,14 +626,14 @@ fn rust_resolves_account_rows_before_the_same_frame_s_board_activation() {
         "the retired registration board, not the rotation this frame commits",
     );
 
-    // resident.rs:2790 — the kernel applies this frame's J events only after the
-    // inbound Account stage has already consumed the rows above.
+    // TypeScript order: the frame's `j_event` transaction commits first.
     commit_rotation(&mut case);
+    let mut typescript_order = board_hanko_refresh_row(&case.owner, &case.peer);
+    typescript_order
+        .resolve_certified_boards(&case.state.certified_board_authority())
+        .expect("row board resolution");
     assert_eq!(
-        case.state
-            .certified_board_authority()
-            .resolve_certified_board(case.peer.as_bytes())
-            .expect("post-frame board"),
+        typescript_order.certified_board_authority,
         AccountInputBoardAuthority::Certified(CertifiedBoardAuthority {
             entity_id: *case.peer.as_bytes(),
             registered_board_hash: word(&format!("0x{}", "c3".repeat(32))),
@@ -603,45 +642,73 @@ fn rust_resolves_account_rows_before_the_same_frame_s_board_activation() {
             activated_at_j_height: 3,
             activation_log_index: 0,
         }),
-        "the same frame does commit the rotation — the row simply never saw it",
+        "the board this frame activated",
     );
+    assert_ne!(
+        rust_order.certified_board_authority, typescript_order.certified_board_authority,
+        "one row, one frame, two certified boards — the reason the shape is refused",
+    );
+}
+
+/// The refusal. One frame carrying the counterparty's `BoardActivated` AND that
+/// counterparty's `accountInput` is rejected by the kernel before any mutation,
+/// with a typed error naming the exact row. The Runtime maps it to a deferral of
+/// that one parent `accountInput` and rebuilds the frame
+/// (`RSCORE_ENTITY_COUNTERPARTY_BOARD_ACTIVATION_DEFERRED`); it never halts, and
+/// no Account or Entity state was touched here.
+#[test]
+fn a_frame_activating_a_counterparty_board_refuses_that_counterparty_s_row() {
+    let case = intra_frame_case();
+    let mut accounts = ordering_engine(&case.owner, &case.peer);
+    let mut row = board_hanko_refresh_row(&case.owner, &case.peer);
+    row.resolve_certified_boards(&case.state.certified_board_authority())
+        .expect("row board resolution");
 
     let state = case.state.entity.clone();
-    let result = ordering_round(
+    let Err(error) = ordering_round(
         &mut accounts,
         &case.owner,
         state,
         vec![row],
         &case.authority,
-    );
-    assert_eq!(result.rejected_inbound_inputs.len(), 1);
+        Some(ordering_j_projection(&case.rotation)),
+    ) else {
+        panic!("the mixed frame shape must be refused");
+    };
+    let ResidentEntityError::CounterpartyBoardActivationMixed {
+        row_index,
+        counterparty,
+    } = &error
+    else {
+        panic!("expected the frame-shape refusal, got {error:?}");
+    };
+    assert_eq!(*row_index, 0);
+    assert_eq!(counterparty.as_str(), case.peer.to_string().as_str());
     assert_eq!(
-        refresh_reject_reason(&result.inbound.applied[0].verdict),
-        "ACCOUNT_BOARD_HANKO_REFRESH_ACTIVATION_MISMATCH:3:0:2:0",
-        "Rust rejects the counterparty's refresh against the retired board",
+        error.to_string(),
+        format!(
+            "ENTITY_FRAME_COUNTERPARTY_BOARD_ACTIVATION_MIXED:row=0:counterparty={}",
+            case.peer
+        ),
     );
 }
 
-/// TypeScript production order: `applyEntityTxsInOrder` runs the `j_event` tx
-/// first, so `input-phases.ts:218` resolves the row from the rotated board.
+/// Control: the refusal is specific to the mixed shape. The identical row in a
+/// frame that does NOT activate the counterparty's board is processed by the
+/// ordinary reducer and reaches its ordinary Account-height reject — the row is
+/// deferred by one frame, not discarded, and the peer is not punished for the
+/// proposer's scheduling.
 #[test]
-fn typescript_order_resolves_account_rows_after_the_same_frame_s_board_activation() {
+fn a_frame_without_the_activation_processes_the_counterparty_row_normally() {
     let mut case = intra_frame_case();
     let mut accounts = ordering_engine(&case.owner, &case.peer);
     let mut row = board_hanko_refresh_row(&case.owner, &case.peer);
 
-    // The frame's `j_event` transaction commits first.
+    // The activation is committed by an EARLIER frame; this frame carries only
+    // the counterparty's row, which is exactly the shape the policy produces.
     commit_rotation(&mut case);
-    // Only then does the frame's `accountInput` transaction resolve its board.
     row.resolve_certified_boards(&case.state.certified_board_authority())
         .expect("row board resolution");
-    let AccountInputBoardAuthority::Certified(resolved) = row.certified_board_authority else {
-        panic!("the peer is registered, so the row must carry a certified board");
-    };
-    assert_eq!(
-        resolved.activated_at_j_height, 3,
-        "the board this frame activated",
-    );
 
     let state = case.state.entity.clone();
     let result = ordering_round(
@@ -650,12 +717,12 @@ fn typescript_order_resolves_account_rows_after_the_same_frame_s_board_activatio
         state,
         vec![row],
         &case.authority,
-    );
-    // The activation check passes under this order: the input reaches the next
-    // check in `apply_board_hanko_refresh`, the Account frame height. Same
-    // frame, same row, same reducer, a different branch.
+        None,
+    )
+    .expect("a rejected board Hanko refresh is a typed reject, never a round fault");
     assert_eq!(
         refresh_reject_reason(&result.inbound.applied[0].verdict),
         "ACCOUNT_BOARD_HANKO_REFRESH_HEIGHT_MISMATCH:1:0",
+        "the activation check passed; only the Account frame height rejects",
     );
 }

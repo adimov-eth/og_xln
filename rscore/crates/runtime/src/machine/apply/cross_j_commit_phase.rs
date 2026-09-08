@@ -181,6 +181,30 @@ impl CommitPhaseWorkSelection {
         Ok(())
     }
 
+    /// Move one selected work item to the next frame instead of dropping it.
+    /// `evict_selected` retires rejected work; a frame-shape refusal is not the
+    /// sender's fault, so the row returns to the Entity mempool in its original
+    /// position through `into_remaining` and is proposed again once the board
+    /// activation it collided with is committed.
+    pub(super) fn defer_selected(&mut self, index: usize) -> Result<(), RuntimeMachineError> {
+        if index >= self.selected.len() || self.selected.len() != self.selected_positions.len() {
+            return Err(RuntimeMachineError::InputCountOverflow);
+        }
+        let work = self
+            .selected
+            .remove(index)
+            .ok_or(RuntimeMachineError::InputCountOverflow)?;
+        let position = self
+            .selected_positions
+            .remove(index)
+            .ok_or(RuntimeMachineError::InputCountOverflow)?;
+        let at = self
+            .deferred
+            .partition_point(|(deferred_position, _)| *deferred_position < position);
+        self.deferred.insert(at, (position, work));
+        Ok(())
+    }
+
     pub(super) fn consume_selected_prefix(
         &mut self,
         count: usize,

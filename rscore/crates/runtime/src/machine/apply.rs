@@ -3838,6 +3838,49 @@ fn apply_entity_group(
                 continue;
             }
             Ok(core) => core,
+            // Frame-shape refusal, never a halt. This frame's certified J range
+            // activates a counterparty's board, so it may not also carry that
+            // counterparty's `accountInput`: the two engines resolve the row's
+            // certified board on opposite sides of the frame's J ingress and
+            // would fork silently. TS defers the same row at proposal
+            // (`withoutCounterpartyBoardActivationConflicts`) and refuses the
+            // shape at frame validation; defer it here and rebuild, so the row
+            // is proposed again once the activation is committed.
+            Err(
+                xln_rscore_entity_kernel::ResidentEntityError::CounterpartyBoardActivationMixed {
+                    row_index,
+                    counterparty,
+                },
+            ) => {
+                let work_index = *selected
+                    .row_work_indices
+                    .get(row_index)
+                    .ok_or(RuntimeMachineError::InputCountOverflow)?;
+                commit_phase_work.defer_selected(work_index)?;
+                eprintln!(
+                    "RSCORE_ENTITY_COUNTERPARTY_BOARD_ACTIVATION_DEFERRED:entity={}:work={work_index}:row={row_index}:counterparty={counterparty}",
+                    slot.state.entity.entity_id
+                );
+                if commit_phase_work.selected.is_empty() {
+                    slot.replica.entity_mempool = commit_phase_work.into_remaining()?;
+                    let pending_count = slot.replica.entity_mempool.len();
+                    return Ok(AppliedEntityGroup {
+                        evicted_context: Some((group_key, next_entity_height, context)),
+                        state: slot.state,
+                        replica: slot.replica,
+                        outputs: None,
+                        account_commits: Vec::new(),
+                        touched_accounts: Vec::new(),
+                        book_touched: false,
+                        synthetic_input,
+                        selected_count: 0,
+                        pending_count,
+                        post_commit_j_actions: Vec::new(),
+                        apply_profile,
+                    });
+                }
+                continue;
+            }
             Err(xln_rscore_entity_kernel::ResidentEntityError::LocalCommandRejected {
                 operation_index,
                 kind,

@@ -8,7 +8,10 @@ import {
   type ApplyEntityInputContext,
   type ApplyEntityInputResult,
 } from '../input/types';
-import { validateProposedFrameLeader } from './policy';
+import {
+  findCounterpartyBoardActivationConflict,
+  validateProposedFrameLeader,
+} from './policy';
 import { TIMING } from '../../../config/constants';
 
 const reject = (
@@ -42,6 +45,13 @@ const hasCanonicalProposalEnvelope = (
   }
   if (frame.parentFrameHash !== getPrevFrameHash(state)) {
     return 'PROPOSAL_PARENT_MISMATCH';
+  }
+  // Proposal policy is not enough on its own: a proposer that ignores
+  // `withoutCounterpartyBoardActivationConflicts` would otherwise commit a frame
+  // whose counterparty rows resolve against a different certified board on each
+  // engine, silently and without a halt. Refuse the shape here too.
+  if (findCounterpartyBoardActivationConflict(state.entityId, frame.txs)) {
+    return 'PROPOSAL_COUNTERPARTY_BOARD_ACTIVATION_MIXED';
   }
   return null;
 };

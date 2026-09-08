@@ -41,6 +41,107 @@ const getSelfAuthorityTargetFromJRange = (
   return target;
 };
 
+/** Nested Entity transactions a frame applies through the same reducers. */
+const nestedEntityTxs = (tx: EntityTx): readonly EntityTx[] =>
+  tx.type === 'runtimeOutput' ? tx.data.entityTxs
+  : tx.type === 'entityCommand' ? tx.data.txs
+  : [];
+
+/**
+ * Counterparty boards this transaction list activates.
+ *
+ * `BoardActivated` retires a board the counterparty may still be signing under,
+ * and `resolveObserverCertifiedBoardRecord` is the only Entity-state read an
+ * inbound Account row makes (`core/entity/tx/handlers/account/input-phases.ts`).
+ * Activating the entity's OWN board is a different rule, isolated by the
+ * self-authority branch of `selectProposableEntityTxs` below.
+ */
+const collectCounterpartyBoardActivations = (
+  txs: readonly EntityTx[],
+  entityId: string,
+  activated: Set<string>,
+): void => {
+  for (const tx of txs) {
+    if (tx.type !== 'j_event') {
+      collectCounterpartyBoardActivations(nestedEntityTxs(tx), entityId, activated);
+      continue;
+    }
+    for (const block of tx.data.blocks) {
+      for (const event of block.events) {
+        if (event.type !== 'BoardActivated') continue;
+        const target = event.data.entityId.toLowerCase();
+        if (target !== entityId) activated.add(target);
+      }
+    }
+  }
+};
+
+const findConflictingAccountInput = (
+  tx: EntityTx,
+  activated: ReadonlySet<string>,
+): string | null => {
+  if (tx.type === 'accountInput') {
+    const from = tx.data.fromEntityId.toLowerCase();
+    return activated.has(from) ? from : null;
+  }
+  for (const nested of nestedEntityTxs(tx)) {
+    const conflict = findConflictingAccountInput(nested, activated);
+    if (conflict) return conflict;
+  }
+  return null;
+};
+
+/**
+ * Forbidden frame shape: one Entity frame both activating a counterparty's
+ * certified board and carrying an `accountInput` from that same counterparty.
+ *
+ * TypeScript applies frame transactions strictly in order with the certified J
+ * range first, so the row is verified against the NEW board. Rust resolves every
+ * inbound row from start-of-frame state and applies the frame's J events after
+ * the whole Account ingress wave, so the same row is verified against the
+ * RETIRED board. Both engines merely reject the row, on different branches, so
+ * the split is silent: Account state and Entity roots fork with no error.
+ * Recorded by `05a90c88e`; the shape is refused instead of reconciled.
+ *
+ * Signer/authority: the counterparty signs its Account frame Hanko under one
+ * certified board; nonce/lineage is the Account frame height carried in the row.
+ * Old state = the registered board, new state = the activated board. Adversarial
+ * counterexample: a proposer that wants a peer's refresh judged against the
+ * retired board packs the activation into the same frame; a validator on the
+ * other engine commits the opposite verdict and neither halts.
+ *
+ * @returns the counterparty id that both activates a board and sends a row.
+ */
+export const findCounterpartyBoardActivationConflict = (
+  entityId: string,
+  txs: readonly EntityTx[],
+): string | null => {
+  const activated = new Set<string>();
+  collectCounterpartyBoardActivations(txs, entityId.toLowerCase(), activated);
+  if (activated.size === 0) return null;
+  for (const tx of txs) {
+    const conflict = findConflictingAccountInput(tx, activated);
+    if (conflict) return conflict;
+  }
+  return null;
+};
+
+/**
+ * Proposal side of the same rule: the certified J range keeps priority and the
+ * counterparty's rows wait for the next frame, exactly as the self-authority
+ * branch below makes a self board rotation wait out every other transaction.
+ * Deferred work stays in the replica mempool unchanged.
+ */
+export const withoutCounterpartyBoardActivationConflicts = (
+  entityId: string,
+  txs: EntityTx[],
+): EntityTx[] => {
+  const activated = new Set<string>();
+  collectCounterpartyBoardActivations(txs, entityId.toLowerCase(), activated);
+  if (activated.size === 0) return txs;
+  return txs.filter(tx => !findConflictingAccountInput(tx, activated));
+};
+
 export type ProposableEntityTxSelection = {
   txs: EntityTx[];
   currentAuthorityReady: boolean;
@@ -129,11 +230,17 @@ export const selectProposableEntityTxs = async (
     return { txs: [], currentAuthorityReady: false, reason: 'SELF_BOARD_CERTIFICATION_REQUIRED' };
   }
 
-  const phaseSelection = selectCrossJCommitPhaseTxs(mempool);
+  const proposable = withoutCounterpartyBoardActivationConflicts(normalizedEntityId, mempool);
+  const deferredForCounterpartyBoard = proposable.length !== mempool.length;
+  const phaseSelection = selectCrossJCommitPhaseTxs(proposable);
   return applyJRangeBudgetToSelection({
     txs: phaseSelection.txs,
     currentAuthorityReady: true,
-    ...(phaseSelection.deferredCrossJSetup ? { reason: 'CROSS_J_ACCOUNT_COMMIT_PRIORITY' } : {}),
+    ...(deferredForCounterpartyBoard
+      ? { reason: 'COUNTERPARTY_BOARD_ACTIVATION_PRIORITY' }
+      : phaseSelection.deferredCrossJSetup
+        ? { reason: 'CROSS_J_ACCOUNT_COMMIT_PRIORITY' }
+        : {}),
   });
 };
 

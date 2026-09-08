@@ -19,6 +19,7 @@ use xln_rscore_batch::{
 };
 use xln_rscore_engine::{
     AccountTx, CommittedFrameEvidence, Disposition, EntityId, HtlcResolveOutcome, HtlcResolveTx,
+    JurisdictionEvent,
 };
 use xln_rscore_protocol::{CanonicalNumber, CanonicalValue, SlotOutcome, SlotWork};
 
@@ -356,6 +357,20 @@ pub enum ResidentEntityError {
     ManifestWitnessDuplicate(String),
     #[error("ENTITY_RESIDENT_OPERATION_PLAN:{0}")]
     OperationPlan(String),
+    /// Forbidden frame shape, refused before any mutation: this frame's
+    /// certified J range activates a counterparty's board AND the same frame
+    /// carries an inbound Account row from that counterparty. The Runtime
+    /// defers exactly that row's parent `accountInput` to the next frame and
+    /// rebuilds; it never halts. TS refuses the same shape at proposal
+    /// (`withoutCounterpartyBoardActivationConflicts`) and at frame validation
+    /// (`PROPOSAL_COUNTERPARTY_BOARD_ACTIVATION_MIXED`).
+    #[error(
+        "ENTITY_FRAME_COUNTERPARTY_BOARD_ACTIVATION_MIXED:row={row_index}:counterparty={counterparty}"
+    )]
+    CounterpartyBoardActivationMixed {
+        row_index: usize,
+        counterparty: String,
+    },
     #[error(transparent)]
     Scheduler(#[from] SchedulerError),
 }
@@ -2306,6 +2321,67 @@ fn resolve_propose_accounts_now(
     Ok(counterparties)
 }
 
+/// Certified boards this frame's J range activates for someone other than the
+/// owner. Activating the owner's OWN board is a different rule, isolated by the
+/// board-handover path.
+fn counterparty_board_activations(
+    owner_entity_id: &[u8; 32],
+    projection: &ResidentJEventProjection,
+) -> BTreeSet<[u8; 32]> {
+    let mut activated = BTreeSet::new();
+    for event in projection.batches.iter().flat_map(|batch| &batch.events) {
+        let JurisdictionEvent::BoardActivated(event) = event else {
+            continue;
+        };
+        let entity_id = *event.entity_id.as_bytes();
+        if &entity_id != owner_entity_id {
+            activated.insert(entity_id);
+        }
+    }
+    activated
+}
+
+/// Frame-shape validation, judged before any mutation and from the frame alone.
+///
+/// One frame must not both activate a counterparty's certified board and carry
+/// an `accountInput` from that counterparty: `resolve_certified_boards` is the
+/// only Entity-state read an inbound Account row makes, and the two engines read
+/// it on opposite sides of the frame's J ingress. Rust resolves the row from
+/// start-of-frame state (`runtime/src/machine/apply.rs`) and applies the J
+/// events after the whole Account ingress wave (below), so the row is judged
+/// against the RETIRED board; TypeScript walks frame transactions in order with
+/// the certified J range first, so the identical row is judged against the NEW
+/// board. Both outcomes are rejects on different branches, so the fork is
+/// silent. Recorded by `05a90c88e`; the owner forbade the shape.
+///
+/// Signer/authority: the counterparty signs its Account frame Hanko under one
+/// certified board; nonce/lineage is the Account frame height inside the row.
+/// Old state is the registered board, new state the activated board.
+/// Adversarial counterexample: a proposer that wants a peer's refresh judged
+/// against the retired board packs the activation into the same frame, and the
+/// two engines commit opposite verdicts with neither of them halting.
+fn refuse_counterparty_board_activation_mix(
+    request: &ResidentEntityRequest,
+) -> Result<(), ResidentEntityError> {
+    let Some(projection) = request.finalized_j_events.as_ref() else {
+        return Ok(());
+    };
+    let activated = counterparty_board_activations(&request.inbound.owner_entity_id, projection);
+    if activated.is_empty() {
+        return Ok(());
+    }
+    for (row_index, row) in request.inbound.rows.iter().enumerate() {
+        let from = row.input.envelope.from_entity_id;
+        if activated.contains(&from) {
+            return Err(ResidentEntityError::CounterpartyBoardActivationMixed {
+                row_index,
+                counterparty: hex_prefixed(&from),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn apply_resident_entity_round_core_attempt(
     accounts: &mut ResidentConsensusEngine,
     mut state: EntityStateSlice,
@@ -2331,6 +2407,7 @@ fn apply_resident_entity_round_core_attempt(
     state.height = request.entity_height;
     state.timestamp = request.outbound_timestamp;
     validate_operation_plan(&request.operations, request.inbound.rows.len())?;
+    refuse_counterparty_board_activation_mix(&request)?;
     if let Some(wake) = request.scheduled_wake.as_ref() {
         validate_scheduled_wake(wake, &request.expected_proposer_signer_id, state.timestamp)?;
     }
