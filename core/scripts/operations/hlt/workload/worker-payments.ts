@@ -92,7 +92,7 @@ import type {
   AccountDeliveryHop,
   HltPaymentOperationLedgerSnapshot,
 } from '../../../../support/performance/account-delivery-trace';
-import { assertHltW4ReleaseTpsFloor } from '../metrics';
+import { assertHltPaymentDrainWindow, assertHltW4ReleaseTpsFloor } from '../metrics';
 
 /** Payments move the quote token; the swap workload owns the base token. */
 export const PAYMENT_TOKEN_ID = 1;
@@ -1165,6 +1165,7 @@ export const runPaymentProductionLoad = async (args: WorkerArgs): Promise<void> 
     }
     const authoritativeCardinality = paymentEvidence === 'tps-authority';
     if (authoritativeCardinality && report) {
+      assertHltPaymentDrainWindow(args.rounds * args.cadenceMs, report.drainCompleteElapsedMs);
       assertHltW4ReleaseTpsFloor({
         engine: selection.engine,
         accountWorkers: report.environment.accountWorkers,

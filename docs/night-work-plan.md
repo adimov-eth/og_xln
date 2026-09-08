@@ -29,6 +29,28 @@ Acceptance evidence at 2026-09-08 22:27 UTC:
 - Final acceptance requires scenarios, E2E, parity and all applicable gates green; skips do not count as passes.
 
 
+## Method review — 2026-09-08 22:40 UTC
+
+Owner prioritized HLT parity and measured TS/Rust throughput while preserving the remaining E2E goal.
+Keep one failing production boundary at a time. Do not repeat setup hypotheses without fresh evidence.
+The isolated browser runner now proves Cross-J and dispute rather than skipping them.
+The Rust H1-only launcher had created a secondary owner without its quote authority; genesis now
+selects matching jurisdiction and owner inventories using the existing primary-only setting.
+Native live J/Move passed on the current binary: 5,000/5,000 payments and account settlement.
+
+HLT measured sequentially: 1,000 sovereign users, five processes, 8 workers, 20-second window,
+1,000 offered payments/s, real H1 WAL/fsync; one sample per engine, not saturation capacity.
+- TS: 20,000/20,000 completed, 672.65 payments/s, complete at 29,733ms, drain at 29,896ms.
+  REJECT for TPS acceptance: the five-second drain deadline is 25,000ms.
+- Rust: 20,000/20,000 completed, 952.38 TPS, complete at 21,000ms, drain at 22,787ms; no pending ACKs.
+- Reports: `/tmp/xln-tps-ts-20260909/hlt-payment-load-report.json` and
+  `/tmp/xln-tps-rust-20260909/hlt-payment-load-report.json`.
+- The existing HLT checker incorrectly started the five-second drain after settlement. Fixed the
+  publication gate to enforce the offered-window deadline; actual reports now reject TS and accept Rust.
+  Focused genesis and HLT regressions: 50/50, 1,190 assertions.
+- Pending: final source check/commit, verify the simplified wallet entry in browser, remaining scenarios
+  and E2E. TS throughput acceptance remains red; do not claim all gates green.
+
 ## Active owner scope — 2026-09-07
 
 The latest owner instruction supersedes every earlier first-launch Lending

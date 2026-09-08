@@ -10,6 +10,7 @@ import {
 import {
   assertExactCrashRecovery,
   assertHltW4ReleaseTpsFloor,
+  assertHltPaymentDrainWindow,
   HLT_W4_TPS_POLICY,
   summarizeProductionSwapLoadStep,
 } from '../../../scripts/operations/hlt/metrics';
@@ -1065,4 +1066,13 @@ describe('production swap load evidence', () => {
     expect(() => assertExactCrashRecovery(before, observation({ runtimeHeight: 42, canonicalStateHash: root('d') })))
       .toThrow('PRODUCTION_SWAP_LOAD_CRASH_ROOT_MISMATCH');
   });
+});
+
+
+test('payment TPS rejects late settlement even when the subsequent ACK drain is empty', () => {
+  expect(() => assertHltPaymentDrainWindow(20_000, 29_896)).toThrow('HLT_PAYMENT_DRAIN_EXCEEDED');
+  expect(() => assertHltPaymentDrainWindow(20_000, 22_787)).not.toThrow();
+  expect(() => assertHltPaymentDrainWindow(20_000, 25_000)).not.toThrow();
+  expect(() => assertHltPaymentDrainWindow(20_000, 25_001)).toThrow('HLT_PAYMENT_DRAIN_EXCEEDED');
+  expect(() => assertHltPaymentDrainWindow(20_000, NaN)).toThrow('HLT_PAYMENT_DRAIN_TIMING_INVALID');
 });

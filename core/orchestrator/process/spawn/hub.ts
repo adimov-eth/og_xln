@@ -1,3 +1,4 @@
+import { readBooleanEnv } from '../../../config/environment';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -118,6 +119,7 @@ const buildRustHubInvocation = (child: HubChild, deps: HubSpawnerDeps, rustIdent
     runtimeId: deriveSignerAddressSync(child.seed, '1').toLowerCase(),
     seed: child.seed,
     signerLabel: child.signerLabel,
+    primaryJurisdictionOnly: readBooleanEnv('XLN_MESH_PRIMARY_JURISDICTION_ONLY', false),
     jurisdictionsJson: readFileSync(deps.shardJurisdictionsPath, 'utf8'),
     rpcUrls: deps.args.rpcUrls,
     minFrameDelayMs: resolveHubRuntimeFrameDelayMs(process.env),

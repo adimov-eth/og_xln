@@ -200,12 +200,13 @@ test('Rust stdout readiness is strict and process-owned', () => {
   expect(() => parseRustHubStatus('{"status":"ready","height":0}')).toThrow('RUST_HUB_READY_IDENTITY_INVALID');
 });
 
-test('Rust H1 genesis is explicit native machine configuration, not imported state', () => {
+test.each([false, true])('Rust H1 genesis preserves explicit owner selection (primary-only=%s)', primaryJurisdictionOnly => {
   const address = (byte: string): string => `0x${byte.repeat(40)}`;
   const genesis = buildRustHubGenesisConfig({
     name: 'H1',
     runtimeId: address('1'),
     seed: 'native-genesis-test',
+    primaryJurisdictionOnly,
     signerLabel: 'h1-hub',
     jurisdictionsJson: safeStringify({
       jurisdictions: {
@@ -271,10 +272,10 @@ test('Rust H1 genesis is explicit native machine configuration, not imported sta
   };
   expect(genesis.machine.runtimeId).toBe(address('1'));
   expect(genesis.machine.activeJurisdiction).toBe('Testnet');
-  expect(genesis.machine.jReplicas).toHaveLength(2);
-  expect(genesis.entities.map(owner => owner.signerLabel)).toEqual(['h1-hub', 'h1-hub:Tron']);
+  expect(genesis.machine.jReplicas).toHaveLength(primaryJurisdictionOnly ? 1 : 2);
+  expect(genesis.entities.map(owner => owner.signerLabel)).toEqual(primaryJurisdictionOnly ? ['h1-hub'] : ['h1-hub', 'h1-hub:Tron']);
   expect(genesis).not.toHaveProperty('entityProfile');
-  expect(genesis.entities[1]!.entityProfile).toMatchObject({ name: 'H1', isHub: true });
+  for (const owner of genesis.entities) expect(owner.entityProfile).toMatchObject({ name: 'H1', isHub: true });
   expect(safeStringify(genesis.machine.jReplicas)).toContain('tokenRegistry');
   expect(genesis.entities[0]!.entityProfile).toMatchObject({ name: 'H1', isHub: true });
   expect(safeStringify(genesis)).not.toContain('checkpoint');

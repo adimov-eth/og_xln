@@ -31,6 +31,17 @@ export const assertHltW4ReleaseTpsFloor = (options: Readonly<{
   }
 };
 
+/** The five-second drain starts at the offered-window end, never after settlement. */
+export const assertHltPaymentDrainWindow = (offeredWindowMs: number, drainCompleteElapsedMs: number): void => {
+  if (!Number.isSafeInteger(offeredWindowMs) || offeredWindowMs <= 0 ||
+      !Number.isSafeInteger(drainCompleteElapsedMs) || drainCompleteElapsedMs < 0) {
+    throw new Error('HLT_PAYMENT_DRAIN_TIMING_INVALID');
+  }
+  if (drainCompleteElapsedMs > offeredWindowMs + 5_000) {
+    throw new Error(`HLT_PAYMENT_DRAIN_EXCEEDED:elapsedMs=${drainCompleteElapsedMs}:deadlineMs=${offeredWindowMs + 5_000}`);
+  }
+};
+
 export type ProductionSwapLoadStepResult = Readonly<{
   offeredRate: number;
   completedTps: number;

@@ -14,6 +14,7 @@ type RustHubGenesisInput = Readonly<{
   jurisdictionsJson: string;
   rpcUrls: Readonly<Record<number, string>>;
   minFrameDelayMs: number;
+  primaryJurisdictionOnly?: boolean;
 }>;
 
 const requireSafePositive = (value: unknown, code: string): number => {
@@ -63,7 +64,8 @@ export const buildRustHubGenesisConfig = (input: RustHubGenesisInput): Record<st
   const primary = configured.find(([, value]) => value['primary'] === true) ?? configured[0];
   if (!primary) throw new Error('RUST_HUB_GENESIS_PRIMARY_JURISDICTION_MISSING');
 
-  const jReplicas = configured.map(([key, value], index) => {
+  const selected = input.primaryJurisdictionOnly ? [primary] : configured;
+  const jReplicas = selected.map(([key, value], index) => {
     const name = String(value.name || key).trim();
     if (!name) throw new Error(`RUST_HUB_GENESIS_JURISDICTION_NAME:${key}`);
     const chainId = requireSafePositive(value.chainId, `RUST_HUB_GENESIS_CHAIN_ID:${key}`);
@@ -108,7 +110,10 @@ export const buildRustHubGenesisConfig = (input: RustHubGenesisInput): Record<st
   const [primaryKey, primaryValue] = primary;
   const primaryName = String(primaryValue.name || primaryKey).trim();
   const custodySeed = Buffer.from(canonicalEntitySeed(input.seed).slice(2), 'hex');
-  const entities = [primary, ...configured.filter(([key]) => key !== primaryKey)].map(([key, value]) => {
+  // Match the TS owner selection: a primary-only H1 must not create an extra
+  // sovereign Entity whose quote authority and bootstrap peers were excluded.
+  const owned = [primary, ...selected.filter(([key]) => key !== primaryKey)];
+  const entities = owned.map(([key, value]) => {
     const jurisdictionName = String(value.name || key).trim();
     const signerLabel = key === primaryKey ? input.signerLabel : `${input.signerLabel}:${jurisdictionName}`;
     const identity = deriveManagedEntityIdentity({ name, seed: input.seed, signerLabel });
