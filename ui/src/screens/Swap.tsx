@@ -609,6 +609,12 @@ export function Swap() {
 								<h3 className="caps">Your open orders</h3>
 								<span className="more">{mine.length}</span>
 							</div>
+							{/* An order that fills leaves this list without a word, and the
+							    only record of the price it got is the movement it wrote. */}
+							<p className="note" style={{ padding: '2px 0 8px' }}>
+								A filled order leaves this list. What it traded at is on{' '}
+								<Link to="/activity">Activity</Link>.
+							</p>
 							{mine.map((offer, index) => {
 								const gMeta = getTokenMeta(offer.giveTokenId);
 								const wMeta = getTokenMeta(offer.wantTokenId);
