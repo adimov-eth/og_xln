@@ -1161,14 +1161,14 @@ fn submit_committed_attempt(
                 gas_headroom_bps: 12_000,
             },
         )?;
-        let (_, entity_replica) = replica
+        let (entity_state, _) = replica
             .entity_slot(
                 &attempt.sealed.entity_id,
                 &format!("0x{}", hex::encode(attempt.sealed.signer_id)),
             )
             .ok_or(JSubmitError::Transaction("local-entity-slot"))?;
-        let current_board = entity_replica
-            .certified_board_registry
+        let current_board = entity_state
+            .certified_board_authority()
             .current_board_hash(&attempt.sealed.entity_id);
         let authority = |entity_id: &[u8; 32], board_hash: &[u8; 32], _claim_index: usize| {
             entity_id == &attempt.sealed.entity_id && current_board.as_ref() == Some(board_hash)
@@ -1267,7 +1267,7 @@ fn submit_committed_provider_attempt(
     let submit = || -> Result<JSubmitOutcome, JSubmitError> {
         let entity_word =
             parse_word(&entity_id).ok_or(JSubmitError::Transaction("provider-entity-id"))?;
-        let (_, entity_replica) = replica
+        let (entity_state, _) = replica
             .entity_slot(&entity_word, &signer_id)
             .ok_or(JSubmitError::Transaction("provider-local-entity-slot"))?;
         let still_pending = replica
@@ -1328,8 +1328,8 @@ fn submit_committed_provider_attempt(
                 gas_headroom_bps: 12_000,
             },
         )?;
-        let current_board = entity_replica
-            .certified_board_registry
+        let current_board = entity_state
+            .certified_board_authority()
             .current_board_hash(&entity_word);
         let authority = |claimed_entity: &[u8; 32], board_hash: &[u8; 32], _claim_index: usize| {
             claimed_entity == &entity_word && current_board.as_ref() == Some(board_hash)
@@ -1460,7 +1460,7 @@ fn submit_committed_governance_attempt(
         if pending_count != 1 {
             return Err(JSubmitError::Transaction("governance-pending-duplicated"));
         }
-        let (_, entity_replica) = replica
+        let (entity_state, _) = replica
             .entity_slot(&attempt.shareholder_entity_id, &signer_id)
             .ok_or(JSubmitError::Transaction("governance-local-entity-slot"))?;
         let (rpc, config, entity_provider) =
@@ -1472,8 +1472,8 @@ fn submit_committed_governance_attempt(
             .map(|vote| (&vote.entity_id, vote.hanko.as_slice()))
             .collect::<Vec<_>>();
         let authority = |claimed_entity: &[u8; 32], board_hash: &[u8; 32], _claim_index: usize| {
-            entity_replica
-                .certified_board_registry
+            entity_state
+                .certified_board_authority()
                 .current_board_hash(claimed_entity)
                 .as_ref()
                 == Some(board_hash)

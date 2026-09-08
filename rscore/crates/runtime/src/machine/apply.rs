@@ -682,11 +682,12 @@ fn local_j_prefix_attestable_height(
 }
 
 fn command_board(slot: &EntityApplySlot) -> Result<EntityCommandBoard, RuntimeMachineError> {
-    command_board_for_replica(&slot.replica)
+    command_board_for_replica(&slot.replica, slot.state.certified_board_authority())
 }
 
 fn command_board_for_replica(
     replica: &RuntimeEntityReplica,
+    certified_boards: crate::CertifiedBoardAuthorityView<'_>,
 ) -> Result<EntityCommandBoard, RuntimeMachineError> {
     let authority = replica
         .entity_consensus
@@ -717,8 +718,7 @@ fn command_board_for_replica(
     let board_epoch = if replica.entity_id == board_bytes {
         0
     } else {
-        let record = replica
-            .certified_board_registry
+        let record = certified_boards
             .entity_command_board(&replica.entity_id)
             .ok_or_else(|| {
                 RuntimeMachineError::EntityCommandContext(format!(
@@ -2514,7 +2514,10 @@ fn reject_invalid_remote_commands(
             continue;
         };
         if !boards.contains_key(&key) {
-            let board = command_board_for_replica(entity_replica)?;
+            let board = command_board_for_replica(
+                entity_replica,
+                entity_state.certified_board_authority(),
+            )?;
             let mut nonce_state = entity_state.entity.entity_command_nonces.clone();
             normalize_entity_command_nonce_board(&mut nonce_state, &board)?;
             boards.insert(key.clone(), (board, nonce_state));
@@ -3632,7 +3635,7 @@ fn apply_entity_group(
         for (expected, row) in rows.iter_mut().enumerate() {
             row.operation_index =
                 u64::try_from(expected).map_err(|_| RuntimeMachineError::InputCountOverflow)?;
-            row.resolve_certified_boards(&slot.replica.certified_board_registry)?;
+            row.resolve_certified_boards(&slot.state.certified_board_authority())?;
         }
         attach_inbound_genesis_policies(
             &mut rows,
@@ -3722,8 +3725,8 @@ fn apply_entity_group(
                 post_accounts: false,
             },
             local_certified_board_authority: slot
-                .replica
-                .certified_board_registry
+                .state
+                .certified_board_authority()
                 .resolve_certified_board(&group.entity_id)?,
             entity_height: next_entity_height,
             outbound_timestamp: frame.timestamp,

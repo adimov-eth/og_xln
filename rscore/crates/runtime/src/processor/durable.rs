@@ -697,9 +697,9 @@ impl DurableRuntimeProcessor {
             .as_ref()
             .ok_or(DurableRuntimeProcessorError::Poisoned)?;
         let mut authority = None;
-        for entity in replica.e_replicas.values() {
+        for entity in replica.state.e_replicas.values() {
             let Some(candidate) = entity
-                .certified_board_registry
+                .certified_board_authority()
                 .current_authority(&entity_id)
             else {
                 continue;

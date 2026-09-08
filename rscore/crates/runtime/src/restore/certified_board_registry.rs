@@ -5,13 +5,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Map, Value};
 use sha3::{Digest as _, Keccak256};
 use thiserror::Error;
-use xln_rscore_engine::CertifiedBoardAuthority;
 use xln_rscore_entity_kernel::{
     CertifiedBoardRecord as EntityCertifiedBoardRecord, CertifiedBoardSource,
 };
 
-use crate::certified_board_registry::EntityCommandCertifiedBoard;
-use crate::{CertifiedBoardRegistry, StorageMessagePackError, decode_storage_payload};
+use crate::{StorageMessagePackError, decode_storage_payload};
 
 use super::HydratedEntityGraph;
 
@@ -65,11 +63,6 @@ struct StoredNode {
     physical_key: Vec<u8>,
     path: PhysicalPath,
     node: CertifiedBoardNode,
-}
-
-pub struct HydratedCertifiedBoardRegistry {
-    pub registry: CertifiedBoardRegistry,
-    pub records: Vec<EntityCertifiedBoardRecord>,
 }
 
 fn invalid(detail: impl Into<String>) -> CertifiedBoardRegistryRestoreError {
@@ -393,8 +386,7 @@ struct Walker<'a> {
     stack_key: [u8; 32],
     active: BTreeSet<[u8; 32]>,
     used: BTreeSet<[u8; 32]>,
-    authorities: BTreeMap<[u8; 32], CertifiedBoardAuthority>,
-    command_boards: BTreeMap<[u8; 32], EntityCommandCertifiedBoard>,
+    entities: BTreeSet<[u8; 32]>,
     records: Vec<EntityCertifiedBoardRecord>,
 }
 
@@ -431,6 +423,9 @@ impl Walker<'_> {
                     3 => CertifiedBoardSource::BoardActivated,
                     _ => return Err(invalid("RECORD_SOURCE")),
                 };
+                if !self.entities.insert(record.entity_id) {
+                    return Err(invalid("RECORD_ENTITY_DUPLICATE"));
+                }
                 self.records.push(EntityCertifiedBoardRecord {
                     stack_key: record.stack_key,
                     entity_id: record.entity_id,
@@ -444,28 +439,6 @@ impl Walker<'_> {
                     transaction_hash: record.transaction_hash,
                     source,
                 });
-                let authority = CertifiedBoardAuthority {
-                    entity_id: record.entity_id,
-                    registered_board_hash: record.board_hash,
-                    previous_board_hash: record.previous_board_hash,
-                    previous_board_valid_until: record.previous_board_valid_until,
-                    activated_at_j_height: record.activated_at_j_height,
-                    activation_log_index: u64::from(record.log_index),
-                };
-                if self
-                    .authorities
-                    .insert(record.entity_id, authority)
-                    .is_some()
-                {
-                    return Err(invalid("RECORD_ENTITY_DUPLICATE"));
-                }
-                self.command_boards.insert(
-                    record.entity_id,
-                    EntityCommandCertifiedBoard {
-                        board_hash: record.board_hash,
-                        board_epoch: record.board_epoch,
-                    },
-                );
                 key
             }
             CertifiedBoardNode::Branch { bit, left, right } => {
@@ -493,32 +466,23 @@ impl Walker<'_> {
     }
 }
 
-/// Hydrate and authenticate the only board-authority registry Account inputs
-/// may consult. Every 0x2a row must be reachable from the Entity-committed
-/// root; only after that proof can a missing exact Entity key mean `Lazy`.
-pub fn hydrate_certified_board_registry(
-    rows: &BTreeMap<Vec<u8>, Vec<u8>>,
-    graph: &HydratedEntityGraph,
-) -> Result<CertifiedBoardRegistry, CertifiedBoardRegistryRestoreError> {
-    Ok(hydrate_certified_board_state(rows, graph)?.registry)
-}
-
-/// Authenticate the path-keyed board tree once and return both consumers of
-/// that same proof: Account authority lookup and the Entity machine's records.
+/// Authenticate the path-keyed board tree and return the Entity records it
+/// proves. Every 0x2a row must be reachable from the Entity-committed root.
+/// These records are the only board authority the process ever holds: they are
+/// restored into `EntityState.certifiedBoardState`, which both Account
+/// verification and later `BoardActivated` J events read and update. There is
+/// no second registry copy that a live rotation could leave stale.
 pub fn hydrate_certified_board_state(
     rows: &BTreeMap<Vec<u8>, Vec<u8>>,
     graph: &HydratedEntityGraph,
-) -> Result<HydratedCertifiedBoardRegistry, CertifiedBoardRegistryRestoreError> {
+) -> Result<Vec<EntityCertifiedBoardRecord>, CertifiedBoardRegistryRestoreError> {
     let board_rows = rows
         .iter()
         .filter(|(key, _)| key.first() == Some(&CERTIFIED_BOARD_TAG))
         .collect::<Vec<_>>();
     let Some((stack_key, root)) = parse_state(graph)? else {
         if board_rows.is_empty() {
-            return Ok(HydratedCertifiedBoardRegistry {
-                registry: CertifiedBoardRegistry::empty(),
-                records: Vec::new(),
-            });
+            return Ok(Vec::new());
         }
         return Err(invalid("ROWS_WITHOUT_STATE"));
     };
@@ -526,15 +490,7 @@ pub fn hydrate_certified_board_state(
         if !board_rows.is_empty() {
             return Err(invalid("ROWS_FOR_EMPTY_ROOT"));
         }
-        return Ok(HydratedCertifiedBoardRegistry {
-            registry: CertifiedBoardRegistry::restored(
-                stack_key,
-                root,
-                BTreeMap::new(),
-                BTreeMap::new(),
-            ),
-            records: Vec::new(),
-        });
+        return Ok(Vec::new());
     }
     let mut nodes = BTreeMap::new();
     for (key, value) in board_rows {
@@ -548,8 +504,7 @@ pub fn hydrate_certified_board_state(
         stack_key,
         active: BTreeSet::new(),
         used: BTreeSet::new(),
-        authorities: BTreeMap::new(),
-        command_boards: BTreeMap::new(),
+        entities: BTreeSet::new(),
         records: Vec::new(),
     };
     walker.visit(root, None)?;
@@ -561,15 +516,7 @@ pub fn hydrate_certified_board_state(
             .unwrap_or_default();
         return Err(invalid(format!("NODE_ORPHAN:{}", hex(orphan))));
     }
-    Ok(HydratedCertifiedBoardRegistry {
-        registry: CertifiedBoardRegistry::restored(
-            stack_key,
-            root,
-            walker.authorities,
-            walker.command_boards,
-        ),
-        records: walker.records,
-    })
+    Ok(walker.records)
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -586,6 +533,20 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use xln_rscore_batch::{AccountInputBoardAuthority, CertifiedBoardAuthorityResolver};
+    use xln_rscore_entity_kernel::CertifiedBoardState;
+
+    /// Restore the authenticated records into the one committed board tree the
+    /// process reads. There is no second registry to install beside it.
+    fn board_state_of(
+        stack_key: [u8; 32],
+        records: Vec<EntityCertifiedBoardRecord>,
+    ) -> CertifiedBoardState {
+        let mut state = CertifiedBoardState::empty(stack_key);
+        for record in records {
+            state.put(record).expect("restored record");
+        }
+        state
+    }
 
     fn word_text(byte: u8) -> String {
         format!("0x{}", hex(&[byte; 32]))
@@ -667,21 +628,19 @@ mod tests {
             hex(&root),
             "20b786c1f8ecdae119ddcc7e840d4c96b25a3dc195d3eb106100aa91807eab67"
         );
-        let hydrated = hydrate_certified_board_state(&BTreeMap::from([(key, value)]), &core(root))
-            .expect("restored registry and Entity records");
-        assert_eq!(hydrated.records.len(), 1);
-        assert_eq!(hydrated.records[0].entity_id, [0x22; 32]);
-        assert_eq!(hydrated.records[0].board_hash, [0x33; 32]);
-        assert_eq!(
-            hydrated.records[0].source,
-            CertifiedBoardSource::BoardActivated
-        );
-        let registry = hydrated.registry;
-        assert_eq!(registry.len(), 1);
-        assert_eq!(registry.stack_key(), Some(&[0x11; 32]));
-        assert_eq!(registry.root(), Some(&root));
+        let records = hydrate_certified_board_state(&BTreeMap::from([(key, value)]), &core(root))
+            .expect("restored Entity records");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].entity_id, [0x22; 32]);
+        assert_eq!(records[0].board_hash, [0x33; 32]);
+        assert_eq!(records[0].source, CertifiedBoardSource::BoardActivated);
+        let board_state = board_state_of([0x11; 32], records);
+        assert_eq!(board_state.board_registry_root, root);
+        let authority = crate::CertifiedBoardAuthorityView::new(Some(&board_state));
+        assert_eq!(authority.stack_key(), Some([0x11; 32]));
+        assert_eq!(authority.root(), Some(root));
         assert!(matches!(
-            registry
+            authority
                 .resolve_certified_board(&[0x22; 32])
                 .expect("resolved"),
             AccountInputBoardAuthority::Certified(authority)
@@ -693,7 +652,7 @@ mod tests {
                     && authority.activation_log_index == 3
         ));
         assert_eq!(
-            registry
+            authority
                 .resolve_certified_board(&[0xfe; 32])
                 .expect("authenticated absence"),
             AccountInputBoardAuthority::Lazy,
@@ -713,7 +672,7 @@ mod tests {
         let (key, value, root) = leaf_row(0x22, 0x33);
         let rows = BTreeMap::from([(key.clone(), value.clone())]);
         assert!(matches!(
-            hydrate_certified_board_registry(&rows, &core([0x99; 32])),
+            hydrate_certified_board_state(&rows, &core([0x99; 32])),
             Err(CertifiedBoardRegistryRestoreError::Invalid(detail))
                 if detail == "NODE_MISSING"
         ));
@@ -722,7 +681,7 @@ mod tests {
         corrupt_value["node"]["record"]["boardHash"] = Value::String(word_text(0x34));
         let corrupt_rows = BTreeMap::from([(key.clone(), encode(&corrupt_value))]);
         assert!(matches!(
-            hydrate_certified_board_registry(&corrupt_rows, &core(root)),
+            hydrate_certified_board_state(&corrupt_rows, &core(root)),
             Err(CertifiedBoardRegistryRestoreError::Invalid(detail))
                 if detail == "ROW_HASH_MISMATCH"
         ));
@@ -730,7 +689,7 @@ mod tests {
         let (orphan_key, orphan_value, _) = leaf_row(0x23, 0x35);
         let orphan_rows = BTreeMap::from([(key, value), (orphan_key, orphan_value)]);
         assert!(matches!(
-            hydrate_certified_board_registry(&orphan_rows, &core(root)),
+            hydrate_certified_board_state(&orphan_rows, &core(root)),
             Err(CertifiedBoardRegistryRestoreError::Invalid(detail))
                 if detail.starts_with("NODE_ORPHAN:")
         ));
@@ -852,11 +811,11 @@ mod tests {
         };
         let (registry_key, registry_value, registry_root) =
             leaf_row_words(peer_entity_id, board_hash);
-        let registry = hydrate_certified_board_registry(
+        let records = hydrate_certified_board_state(
             &BTreeMap::from([(registry_key, registry_value)]),
             &core(registry_root),
         )
-        .expect("checkpoint board registry");
+        .expect("checkpoint board records");
         let entity_key = runtime
             .state
             .e_replicas
@@ -865,10 +824,12 @@ mod tests {
             .expect("fixture Entity key")
             .clone();
         runtime
+            .state
             .e_replicas
             .get_mut(&entity_key)
-            .expect("fixture Entity replica")
-            .install_certified_board_registry(registry);
+            .expect("fixture Entity state")
+            .entity
+            .certified_board_state = Some(board_state_of([0x11; 32], records));
         let row = AccountInputRow {
             operation_index: 77,
             account_id,
@@ -939,7 +900,7 @@ mod tests {
     fn empty_root_rejects_any_physical_board_row() {
         let (key, value, _) = leaf_row(0x22, 0x33);
         assert!(matches!(
-            hydrate_certified_board_registry(
+            hydrate_certified_board_state(
                 &BTreeMap::from([(key, value)]),
                 &core(empty_root()),
             ),

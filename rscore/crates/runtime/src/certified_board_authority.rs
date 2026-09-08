@@ -1,20 +1,24 @@
-//! Restored Entity-certified board authority used by Account verification.
+//! Entity-certified board authority read by Account verification.
 //!
-//! The registry is built only from the Entity checkpoint graph. Account input
-//! bytes never select or supply a board, and a missing exact record means the
-//! peer is a lazy Entity rather than an implicit compatibility fallback.
-
-use std::collections::BTreeMap;
+//! The authority is resolved straight from the Entity-committed
+//! `certified_board_state`, the same tree the checkpoint graph is projected
+//! from. Nothing is copied into the live replica, so a `BoardActivated`
+//! committed by frame N is visible to frame N+1 inside the same process,
+//! exactly like the TypeScript `resolveObserverCertifiedBoardRecord`.
+//! Account input bytes never select or supply a board, and a missing exact
+//! record means the peer is a lazy Entity rather than an implicit
+//! compatibility fallback.
 
 use xln_rscore_batch::{AccountInputBoardAuthority, BatchError, CertifiedBoardAuthorityResolver};
 use xln_rscore_engine::CertifiedBoardAuthority;
+use xln_rscore_entity_kernel::{CertifiedBoardRecord, CertifiedBoardState};
 
-#[derive(Clone, Debug, Default)]
-pub struct CertifiedBoardRegistry {
-    stack_key: Option<[u8; 32]>,
-    root: Option<[u8; 32]>,
-    authorities: BTreeMap<[u8; 32], CertifiedBoardAuthority>,
-    command_boards: BTreeMap<[u8; 32], EntityCommandCertifiedBoard>,
+/// Borrowed view over one Entity's committed certified board tree. It owns no
+/// records: every lookup reads the committed state, so the live process can
+/// never answer with a board that a committed rotation already replaced.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CertifiedBoardAuthorityView<'a> {
+    state: Option<&'a CertifiedBoardState>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,74 +27,69 @@ pub(crate) struct EntityCommandCertifiedBoard {
     pub board_epoch: u64,
 }
 
-impl CertifiedBoardRegistry {
-    pub fn empty() -> Self {
-        Self::default()
+fn certified_authority(record: &CertifiedBoardRecord) -> CertifiedBoardAuthority {
+    CertifiedBoardAuthority {
+        entity_id: record.entity_id,
+        registered_board_hash: record.board_hash,
+        previous_board_hash: record.previous_board_hash,
+        previous_board_valid_until: record.previous_board_valid_until,
+        activated_at_j_height: record.activated_at_j_height,
+        activation_log_index: u64::from(record.log_index),
+    }
+}
+
+impl<'a> CertifiedBoardAuthorityView<'a> {
+    pub fn new(state: Option<&'a CertifiedBoardState>) -> Self {
+        Self { state }
     }
 
-    pub(crate) fn restored(
-        stack_key: [u8; 32],
-        root: [u8; 32],
-        authorities: BTreeMap<[u8; 32], CertifiedBoardAuthority>,
-        command_boards: BTreeMap<[u8; 32], EntityCommandCertifiedBoard>,
-    ) -> Self {
-        Self {
-            stack_key: Some(stack_key),
-            root: Some(root),
-            authorities,
-            command_boards,
-        }
+    pub fn stack_key(&self) -> Option<[u8; 32]> {
+        self.state.map(|state| state.stack_key)
     }
 
-    pub fn stack_key(&self) -> Option<&[u8; 32]> {
-        self.stack_key.as_ref()
+    pub fn root(&self) -> Option<[u8; 32]> {
+        self.state.map(|state| state.board_registry_root)
     }
 
-    pub fn root(&self) -> Option<&[u8; 32]> {
-        self.root.as_ref()
-    }
-
-    pub fn len(&self) -> usize {
-        self.authorities.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.authorities.is_empty()
+    fn record(&self, entity_id: &[u8; 32]) -> Option<&'a CertifiedBoardRecord> {
+        self.state?.resolve(entity_id)
     }
 
     /// Exact currently registered board accepted by Depository for outer
     /// `processBatch` authorization. Historical boards are deliberately not
     /// returned: their seven-day window is dispute evidence only.
     pub fn current_board_hash(&self, entity_id: &[u8; 32]) -> Option<[u8; 32]> {
-        self.authorities
-            .get(entity_id)
-            .map(|authority| authority.registered_board_hash)
+        self.record(entity_id).map(|record| record.board_hash)
     }
 
     pub(crate) fn current_authority(
         &self,
         entity_id: &[u8; 32],
     ) -> Option<CertifiedBoardAuthority> {
-        self.authorities.get(entity_id).copied()
+        self.record(entity_id).map(certified_authority)
     }
 
     pub(crate) fn entity_command_board(
         &self,
         entity_id: &[u8; 32],
     ) -> Option<EntityCommandCertifiedBoard> {
-        self.command_boards.get(entity_id).copied()
+        self.record(entity_id)
+            .map(|record| EntityCommandCertifiedBoard {
+                board_hash: record.board_hash,
+                board_epoch: record.board_epoch,
+            })
     }
 }
 
-impl CertifiedBoardAuthorityResolver for CertifiedBoardRegistry {
+impl CertifiedBoardAuthorityResolver for CertifiedBoardAuthorityView<'_> {
     type Error = BatchError;
 
     fn resolve_certified_board(
         &self,
         peer_entity_id: &[u8; 32],
     ) -> Result<AccountInputBoardAuthority, Self::Error> {
-        Ok(match self.authorities.get(peer_entity_id) {
-            Some(authority) => AccountInputBoardAuthority::Certified(*authority),
+        Ok(match self.record(peer_entity_id) {
+            Some(record) => AccountInputBoardAuthority::Certified(certified_authority(record)),
             None => AccountInputBoardAuthority::Lazy,
         })
     }

@@ -15,8 +15,8 @@ use xln_rscore_entity_kernel::{
 };
 
 use crate::{
-    CertifiedBoardRegistry, RuntimeDurableEnvelope, RuntimeEntityKey, RuntimeInput, RuntimeLimits,
-    RuntimeMachineError, RuntimeReplica, RuntimeState, StoredRscoreCheckpoint, apply_runtime,
+    RuntimeDurableEnvelope, RuntimeEntityKey, RuntimeInput, RuntimeLimits, RuntimeMachineError,
+    RuntimeReplica, RuntimeState, StoredRscoreCheckpoint, apply_runtime,
 };
 
 use super::{AccountWireRestoreError, decode_account_rows};
@@ -47,9 +47,6 @@ pub struct DecodedRuntimeEntityCheckpoint {
     /// Entity signer derived from the same operator seed and durable signer
     /// identity as the Account engine, then bound to the restored authority.
     pub entity_signer: EntitySingleSigner,
-    /// Exact Entity-certified peer board registry restored from path-keyed
-    /// 0x2a rows and bound to `entity_snapshot.certifiedBoardState`.
-    pub certified_board_registry: CertifiedBoardRegistry,
     /// Exact public HTLC fee policy projected from authenticated Entity state.
     /// The Entity encryption public key stays in `entity_snapshot`; the
     /// private key and liveness remain operator/network infrastructure.
@@ -343,7 +340,6 @@ fn restore_entity_checkpoint(
         stored.protocol_fingerprint,
         runtime_height,
     )?;
-    live.install_certified_board_registry(checkpoint.certified_board_registry);
     live.install_replica_metadata(checkpoint.replica_metadata)?;
     Ok((key, state, live))
 }

@@ -982,6 +982,15 @@ pub struct RuntimeEntityState {
     pub entity: EntityStateSlice,
 }
 
+impl RuntimeEntityState {
+    /// Single board-authority surface for this Entity. It borrows the
+    /// committed `certified_board_state`, so a rotation committed by an
+    /// earlier frame is answered by the very next frame without a restore.
+    pub fn certified_board_authority(&self) -> crate::CertifiedBoardAuthorityView<'_> {
+        crate::CertifiedBoardAuthorityView::new(self.entity.certified_board_state.as_ref())
+    }
+}
+
 /// Deterministic data fixed by one committed Runtime frame.
 pub struct RuntimeState {
     pub height: u64,
@@ -1006,7 +1015,6 @@ pub struct RuntimeEntityReplica {
     /// Exact canonical EntityReplica envelope. It is part of Runtime live
     /// state, not a parallel consensus state or an implementation sidecar.
     pub(crate) replica_metadata: Value,
-    pub(crate) certified_board_registry: crate::CertifiedBoardRegistry,
     /// Durable storage cadence anchor. This is replica envelope state, not a
     /// second consensus root; recovery initializes it from the exact
     /// materialized Runtime checkpoint and WAL replay advances it only when a
@@ -1095,17 +1103,9 @@ impl RuntimeEntityReplica {
             entity_signer,
             protocol_fingerprint,
             replica_metadata,
-            certified_board_registry: crate::CertifiedBoardRegistry::empty(),
             last_materialized_height: runtime_height,
             entity_mempool: VecDeque::new(),
         })
-    }
-
-    pub(crate) fn install_certified_board_registry(
-        &mut self,
-        registry: crate::CertifiedBoardRegistry,
-    ) {
-        self.certified_board_registry = registry;
     }
 
     pub(crate) fn install_replica_metadata(

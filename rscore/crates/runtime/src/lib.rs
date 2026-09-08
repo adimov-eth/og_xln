@@ -8,7 +8,7 @@
 
 #[path = "codec/account_input_json.rs"]
 mod account_input_json;
-mod certified_board_registry;
+mod certified_board_authority;
 #[path = "checkpoint/checkpoint_node_key.rs"]
 mod checkpoint_node_key;
 #[path = "checkpoint/checkpoint_projection_metadata.rs"]
@@ -40,7 +40,7 @@ pub use account_input_json::{
     AccountInputJsonError, decode_account_input_row, decode_account_tx_json,
     decode_entity_account_input_row, decode_entity_account_input_rows,
 };
-pub use certified_board_registry::CertifiedBoardRegistry;
+pub use certified_board_authority::CertifiedBoardAuthorityView;
 pub(crate) use checkpoint_projection_metadata::{
     EntityCheckpointProjectionMetadata, EntityFieldProjectionDescriptor,
     EntityTreeProjectionDescriptor,

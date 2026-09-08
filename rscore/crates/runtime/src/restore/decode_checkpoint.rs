@@ -266,7 +266,7 @@ fn decode_entity_checkpoint(
     keyring: &BTreeMap<String, [u8; 32]>,
 ) -> Result<DecodedRuntimeEntityCheckpoint, ConcreteCheckpointDecodeError> {
     let graph = hydrate_entity_graph(rows)?;
-    let hydrated_certified_board = hydrate_certified_board_state(rows, &graph)?;
+    let certified_board_records = hydrate_certified_board_state(rows, &graph)?;
     if graph.entity_id != owner {
         return Err(invalid("CANONICAL_ENTITY_OWNER"));
     }
@@ -295,11 +295,10 @@ fn decode_entity_checkpoint(
         orderbook,
     )?;
     match entity_snapshot.certified_board_state.as_mut() {
-        Some(state) => state.restore_records(hydrated_certified_board.records)?,
-        None if hydrated_certified_board.records.is_empty() => {}
+        Some(state) => state.restore_records(certified_board_records)?,
+        None if certified_board_records.is_empty() => {}
         None => return Err(invalid("CERTIFIED_BOARD_RECORDS_WITHOUT_STATE")),
     }
-    let certified_board_registry = hydrated_certified_board.registry;
     let signer_private_key = *keyring
         .get(&metadata.signer_id.to_lowercase())
         .ok_or_else(|| {
@@ -319,7 +318,6 @@ fn decode_entity_checkpoint(
         entity_snapshot,
         entity_consensus,
         entity_signer,
-        certified_board_registry,
         htlc_routing_fee_ppm,
         htlc_routing_base_fee,
         replica_metadata: metadata.value,
