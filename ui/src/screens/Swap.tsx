@@ -9,6 +9,7 @@ import { quoteForBase, useOrderbook, type BookLevel } from '../runtime/financial
 import { Icon } from '../components/Icons';
 import { TokenPicker } from '../components/TokenPicker';
 import { useApp } from '../runtime/store';
+import { switchActiveEntity } from '../runtime/entities';
 import { peekXLN } from '../runtime/xln-loader';
 import { sendEntityTxs } from '../runtime/tx';
 import { hubTakerFeeBps, jurisdictionRef, openSwapReceiveAccount, planSwap, readAccountState, submitSwapPlan } from '../runtime/financial/swap';
@@ -481,7 +482,9 @@ export function Swap() {
 							) : <p className="note">The receiving account has no committed collateral fee policy available. This does not mean zero fees.</p>}
 							<p className="note">If your account automatically requests collateral after receiving, its fee is deducted from your balance. The final fee and net amount depend on your account policy and balance at that time.</p>
 							{receivingAccount ? <Link className="btn quiet" to={`/accounts/${receivingHubId}`} onClick={() => {
-								useApp.getState().setActiveEntityId(receivingOwnerId);
+								// The receiving account belongs to our sibling entity on the other chain:
+								// the same switch the entity switcher performs, so nothing per-entity survives it.
+								switchActiveEntity(receivingOwnerId);
 								useApp.getState().setSelectedTokenId(wantTokenId);
 							}}>Receiving account · collateral settings</Link> : null}
 						</section>

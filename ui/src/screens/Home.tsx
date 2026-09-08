@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UsdAmount } from '../components/Amount';
 import { Bar, DeltaBar, DeltaCaption } from '../components/Bars';
+import { EntitySwitcher } from '../components/EntitySwitcher';
 import { Icon } from '../components/Icons';
 import { PendingBatch } from '../components/PendingBatch';
 import { Sheet } from '../components/Sheet';
@@ -81,13 +82,14 @@ export function Home() {
 		<div className="screen fade-in">
 			<div className="screen-header">
 				<span className="screen-title">
-					<span className="avatar sm">{wallet.name.slice(0, 1).toUpperCase()}</span>
-					<span>
-						<span style={{ display: 'block', lineHeight: 1.2 }}>{wallet.name}</span>
-						<span className="state st-settled" style={{ fontSize: 11 }} data-testid="home-frame" title={`Frame ${wallet.frameHeight.toLocaleString('en-US')}`}>
-							synced
-						</span>
-					</span>
+					<EntitySwitcher
+						name={wallet.name}
+						status={
+							<span className="state st-settled" style={{ fontSize: 11 }} data-testid="home-frame" title={`Frame ${wallet.frameHeight.toLocaleString('en-US')}`}>
+								synced
+							</span>
+						}
+					/>
 				</span>
 				<button type="button" className="icon-btn" onClick={() => navigate('/sovereignty')} aria-label="Sovereignty" title="Keys, proofs, what is at risk" data-testid="home-sovereignty">
 					<Icon name="shield" size={18} />

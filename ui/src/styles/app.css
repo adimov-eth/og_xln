@@ -868,6 +868,54 @@ textarea.input.boxed {
 	gap: 8px;
 }
 
+/* ---------- entity switcher ---------- */
+
+/* The identity block on Home and Desk, opened as a picker over the runtime's entities. */
+.entity-switch {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	max-width: 100%;
+	padding: 4px 8px 4px 4px;
+	margin-left: -4px;
+	border-radius: 12px;
+	font-size: 17px;
+	font-weight: 600;
+	text-align: left;
+	transition: background var(--dur-fast) var(--ease);
+}
+
+.entity-switch:hover {
+	background: var(--surface-2);
+}
+
+.entity-switch .id {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	line-height: 1.2;
+	min-width: 0;
+}
+
+.entity-switch .n {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.entity-switch .caret {
+	color: var(--ink-3);
+	display: inline-flex;
+}
+
+.entity-switcher-menu {
+	min-width: 280px;
+}
+
 .chips {
 	display: flex;
 	gap: 6px;

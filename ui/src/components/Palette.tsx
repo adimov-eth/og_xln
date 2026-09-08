@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon, type IconName } from './Icons';
 import { useApp } from '../runtime/store';
+import { switchActiveEntity, useServedEntities } from '../runtime/entities';
 import { useWallet } from '../runtime/views';
 
-type Command = { id: string; title: string; hint?: string; icon: IconName; run: () => void; keywords?: string };
+type Command = { id: string; title: string; hint?: string; icon: IconName; run: () => void; keywords?: string; testId?: string };
 
 /**
  * ⌘K. Every destination and every account, one keystroke away. Desktop only:
@@ -19,6 +20,7 @@ export function Palette() {
 	const setDensity = useApp(s => s.setDensity);
 	const setTour = useApp(s => s.setTour);
 	const wallet = useWallet(entityId);
+	const entities = useServedEntities();
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState('');
 	const [cursor, setCursor] = useState(0);
@@ -63,6 +65,22 @@ export function Palette() {
 			{ id: 'theme', title: theme === 'dark' ? 'Light theme' : 'Dark theme', icon: theme === 'dark' ? 'sun' : 'moon', run: () => setTheme(theme === 'dark' ? 'light' : 'dark'), keywords: 'theme appearance' },
 			{ id: 'density', title: density === 'desk' ? 'Comfort layout' : 'Desk layout', icon: 'filter', run: () => setDensity(density === 'desk' ? 'comfort' : 'desk'), keywords: 'layout density' },
 		];
+		// Every entity this runtime serves, so a second one is reachable without leaving the keyboard.
+		for (const entity of entities) {
+			const active = entity.entityId === entityId;
+			list.push({
+				id: `entity-${entity.entityId}`,
+				title: `Switch to ${entity.label}`,
+				hint: [active ? 'active entity' : 'entity', entity.isHub ? 'hub' : '', entity.jurisdiction].filter(Boolean).join(' · '),
+				icon: active ? 'check' : 'shield',
+				run: () => {
+					switchActiveEntity(entity.entityId);
+					navigate('/');
+				},
+				keywords: `${entity.entityId} entity switch identity`,
+				testId: 'palette-entity',
+			});
+		}
 		for (const account of wallet.accounts) {
 			list.push({
 				id: `account-${account.counterpartyId}`,
@@ -75,7 +93,7 @@ export function Palette() {
 			list.push({ id: `pay-${account.counterpartyId}`, title: `Pay ${account.label}`, icon: 'pay', run: go(`/pay?to=${account.counterpartyId}`), keywords: 'send' });
 		}
 		return list;
-	}, [navigate, theme, setTheme, density, setDensity, setTour, wallet.accounts]);
+	}, [navigate, theme, setTheme, density, setDensity, setTour, wallet.accounts, entities, entityId]);
 
 	const matches = useMemo(() => {
 		const needle = query.trim().toLowerCase();
@@ -117,7 +135,7 @@ export function Palette() {
 				</div>
 				<div className="palette-list" role="listbox">
 					{matches.map((command, index) => (
-						<button key={command.id} type="button" role="option" aria-selected={index === cursor} className={`palette-item${index === cursor ? ' active' : ''}`} onMouseEnter={() => setCursor(index)} onClick={() => pick(command)}>
+						<button key={command.id} type="button" role="option" aria-selected={index === cursor} className={`palette-item${index === cursor ? ' active' : ''}`} onMouseEnter={() => setCursor(index)} onClick={() => pick(command)} {...(command.testId ? { 'data-testid': command.testId } : {})}>
 							<Icon name={command.icon} size={15} />
 							<span className="t">{command.title}</span>
 							{command.hint ? <span className="s">{command.hint}</span> : null}

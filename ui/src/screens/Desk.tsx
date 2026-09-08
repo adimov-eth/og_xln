@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bar, DeltaBar, Legend } from '../components/Bars';
+import { EntitySwitcher } from '../components/EntitySwitcher';
 import { Icon } from '../components/Icons';
 import { Orderbook } from '../components/Orderbook';
 import { PendingBatch } from '../components/PendingBatch';
@@ -53,13 +54,14 @@ export function Desk() {
 		<div className="screen fade-in" data-testid="desk">
 			<div className="screen-header">
 				<span className="screen-title">
-					<span className="avatar sm">{wallet.name.slice(0, 1).toUpperCase()}</span>
-					<span>
-						<span style={{ display: 'block', lineHeight: 1.2 }}>{wallet.name}</span>
-						<span className="state st-settled" style={{ fontSize: 11 }}>
-							frame #{wallet.frameHeight.toLocaleString('en-US')} · <span className="num">1 px = ${usdPerPx.toLocaleString('en-US')}</span>
-						</span>
-					</span>
+					<EntitySwitcher
+						name={wallet.name}
+						status={
+							<span className="state st-settled" style={{ fontSize: 11 }}>
+								frame #{wallet.frameHeight.toLocaleString('en-US')} · <span className="num">1 px = ${usdPerPx.toLocaleString('en-US')}</span>
+							</span>
+						}
+					/>
 				</span>
 				<span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
 					<span className="faint">
