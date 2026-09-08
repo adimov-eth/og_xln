@@ -27,7 +27,11 @@ const frontendTests = listPlaywrightTestMetadata(listSpecs('frontend/tests'), {
   profile: 'brainvault',
   project: 'brainvault',
 });
-const tests = [...mainTests, ...frontendTests];
+const walletTests = listPlaywrightTestMetadata(listSpecs('ui/tests'), {
+  cwd: 'ui',
+  project: 'chromium',
+});
+const tests = [...mainTests, ...frontendTests, ...walletTests];
 const violations = tests.flatMap((test) => {
   const violation = inspectQaTestCategory(test);
   return violation ? [violation] : [];

@@ -53,6 +53,13 @@ export const parsePlaywrightTestMetadata = (payload: unknown): QaTaggedTest[] =>
 export type PlaywrightMetadataOptions = {
   profile?: string | undefined;
   project?: string | undefined;
+  /**
+   * Package root the listing runs in. `ui/` ships its own `@playwright/test`, so a
+   * root-cwd listing loads the runner from `node_modules` and the specs from
+   * `ui/node_modules` and Playwright rejects every `test()` call. Listing from the
+   * owning package keeps one runner instance. Returned paths stay repo-relative.
+   */
+  cwd?: string | undefined;
 };
 
 export const listPlaywrightTestMetadata = (
@@ -60,11 +67,12 @@ export const listPlaywrightTestMetadata = (
   options: PlaywrightMetadataOptions = {},
 ): QaTaggedTest[] => {
   if (files.length === 0) return [];
+  const cwd = resolve(process.cwd(), options.cwd ?? '.');
   const args = ['playwright', 'test', '--config', 'playwright.config.ts', '--list', '--reporter=json'];
   if (options.project) args.push(`--project=${options.project}`);
-  args.push(...files);
+  args.push(...files.map((file) => normalizePath(relative(cwd, resolve(process.cwd(), file)))));
   const result = spawnSync('bunx', args, {
-    cwd: process.cwd(),
+    cwd,
     env: {
       ...process.env,
       PW_SKIP_WEBSERVER: '1',
