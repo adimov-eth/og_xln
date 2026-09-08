@@ -1,5 +1,6 @@
 import type { EntityCandidateEffect, EntityState, HashToSign } from '../types';
 import type { BookIntentSlotWriter } from '../books/book-intents';
+import type { AccountTxTarget } from '../tx/handlers/account/orderbook/queue';
 
 /**
  * One isolated Entity reducer pass only needs the candidate State and its id.
@@ -89,4 +90,10 @@ export type CrontabExecutionContext = {
   hashesToSign?: HashToSign[];
   accountChanges: Set<string>;
   candidateEffects?: EntityCandidateEffect[];
+  /**
+   * Entity-owned Account work decided by a due deadline. It belongs to the
+   * same signed wake frame, so it uses the ordinary `accountTxs` admission
+   * instead of a second Runtime round trip.
+   */
+  accountTxs?: AccountTxTarget[];
 };

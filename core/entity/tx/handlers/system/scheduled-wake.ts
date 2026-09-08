@@ -5,6 +5,7 @@ import { executeCrontab } from '../../../scheduler';
 import { assertScheduledWakeMatchesState } from '../../../scheduler/wake/scheduled-wake-validation';
 import { isCollectiveEntityActionTx } from '../../../auth/authorization';
 import type { BookIntentSlotWriter } from '../../../books/book-intents';
+import type { AccountTxTarget } from '../account/orderbook/queue';
 
 type ScheduledWakeTx = Extract<EntityTx, { type: 'scheduledWake' }>;
 
@@ -26,12 +27,14 @@ export const handleScheduledWakeEntityTx = async (
   const hashesToSign: HashToSign[] = [];
   const accountChanges = new Set<string>();
   const candidateEffects: EntityCandidateEffect[] = [];
+  const accountTxs: AccountTxTarget[] = [];
   const outputs = await executeCrontab(env, transition, state.crontabState, {
     manualBroadcastInInput,
     ...(bookIntentSlot ? { bookIntentSlot } : {}),
     hashesToSign,
     accountChanges,
     candidateEffects,
+    accountTxs,
   });
   const approvedEntityTxs: EntityTx[] = [];
   const externalOutputs = outputs.filter((output) => {
@@ -51,6 +54,7 @@ export const handleScheduledWakeEntityTx = async (
     // certifying an output back to the same Entity adds a second Runtime frame
     // and lets the command become stale behind unrelated local progress.
     ...(approvedEntityTxs.length > 0 ? { approvedEntityTxs } : {}),
+    ...(accountTxs.length > 0 ? { accountTxs } : {}),
     ...(hashesToSign.length > 0 ? { hashesToSign } : {}),
     ...(accountChanges.size > 0 ? { accountChanges: [...accountChanges].sort() } : {}),
     ...(candidateEffects.length > 0 ? { candidateEffects } : {}),

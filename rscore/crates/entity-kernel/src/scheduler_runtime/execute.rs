@@ -62,6 +62,10 @@ pub enum SchedulerCommand {
     ProcessHtlcTimeouts {
         expired_locks: Vec<(String, String)>,
     },
+    /// Loans whose committed term passed unpaid, in derived-deadline order.
+    SettleOverdueLending {
+        loans: Vec<crate::OverdueLendingLoan>,
+    },
     AutoFinalizeDispute {
         counterparty_entity_id: String,
     },
@@ -87,6 +91,9 @@ pub struct CrontabExecutionContext<'a> {
     /// Committed HTLC locks whose timelock has passed, in (timelock, lockId)
     /// order; derived from Account state by the caller, never from hooks.
     pub expired_htlc_locks: &'a [(String, String)],
+    /// Overdue loans derived from committed lending state by the caller, in
+    /// `(due_at, loan id)` order; never from hooks.
+    pub overdue_lending_loans: &'a [crate::OverdueLendingLoan],
     pub secret_acks_requiring_dispute: &'a BTreeSet<String>,
     pub dispute_views: &'a BTreeMap<String, xln_rscore_batch::ResidentAccountDisputeView>,
     pub j_batch_state: Option<&'a JBatchState>,
@@ -352,6 +359,7 @@ pub fn execute_crontab(
         expected_proposer_signer_id,
         now,
         expired_htlc_locks,
+        overdue_lending_loans,
         secret_acks_requiring_dispute,
         dispute_views,
         j_batch_state,
@@ -522,6 +530,11 @@ pub fn execute_crontab(
         }
     }
 
+    if !overdue_lending_loans.is_empty() {
+        commands.push(SchedulerCommand::SettleOverdueLending {
+            loans: overdue_lending_loans.to_vec(),
+        });
+    }
     if !expired_locks.is_empty() {
         commands.push(SchedulerCommand::ProcessHtlcTimeouts { expired_locks });
     }
@@ -685,6 +698,7 @@ mod tests {
                 expected_proposer_signer_id: "HUB",
                 now: 1_000,
                 expired_htlc_locks: &expired,
+                overdue_lending_loans: &[],
                 secret_acks_requiring_dispute: &BTreeSet::new(),
                 dispute_views: &BTreeMap::new(),
                 j_batch_state: None,
@@ -722,6 +736,7 @@ mod tests {
                 expected_proposer_signer_id: "hub",
                 now: 10,
                 expired_htlc_locks: &[],
+                overdue_lending_loans: &[],
                 secret_acks_requiring_dispute: &BTreeSet::new(),
                 dispute_views: &BTreeMap::new(),
                 j_batch_state: None,
@@ -754,6 +769,7 @@ mod tests {
                 expected_proposer_signer_id: "hub",
                 now: 1_000,
                 expired_htlc_locks: &[],
+                overdue_lending_loans: &[],
                 secret_acks_requiring_dispute: &BTreeSet::new(),
                 dispute_views: &BTreeMap::from([("peer".into(), dispute_view(false, 9))]),
                 j_batch_state: None,
@@ -780,6 +796,7 @@ mod tests {
                 expected_proposer_signer_id: "hub",
                 now: 10_000,
                 expired_htlc_locks: &[],
+                overdue_lending_loans: &[],
                 secret_acks_requiring_dispute: &BTreeSet::new(),
                 dispute_views: &BTreeMap::from([("peer".into(), dispute_view(true, 9))]),
                 j_batch_state: None,
@@ -838,6 +855,7 @@ mod tests {
                 expected_proposer_signer_id: PROPOSER,
                 now: NOW,
                 expired_htlc_locks: &[],
+                overdue_lending_loans: &[],
                 secret_acks_requiring_dispute: &BTreeSet::new(),
                 dispute_views: &BTreeMap::from([(
                     ACCOUNT.into(),
@@ -883,6 +901,7 @@ mod tests {
                 expected_proposer_signer_id: "hub",
                 now: 10_000,
                 expired_htlc_locks: &[],
+                overdue_lending_loans: &[],
                 secret_acks_requiring_dispute: &BTreeSet::new(),
                 dispute_views: &BTreeMap::from([(
                     "peer".into(),
@@ -946,6 +965,7 @@ mod tests {
                 expected_proposer_signer_id: "hub",
                 now: 10_000,
                 expired_htlc_locks: &[],
+                overdue_lending_loans: &[],
                 secret_acks_requiring_dispute: &BTreeSet::new(),
                 dispute_views: &BTreeMap::from([(
                     account_id.clone(),
@@ -1014,6 +1034,7 @@ mod tests {
                 expected_proposer_signer_id: "hub",
                 now: 10_000,
                 expired_htlc_locks: &[],
+                overdue_lending_loans: &[],
                 secret_acks_requiring_dispute: &BTreeSet::new(),
                 dispute_views: &BTreeMap::from([(account_id.clone(), dispute_view(true, 9))]),
                 j_batch_state: Some(&j_batch_state),
@@ -1069,6 +1090,7 @@ mod tests {
                 expected_proposer_signer_id: "hub",
                 now: 1_500,
                 expired_htlc_locks: &[],
+                overdue_lending_loans: &[],
                 secret_acks_requiring_dispute: &BTreeSet::new(),
                 dispute_views: &BTreeMap::new(),
                 j_batch_state: None,
@@ -1111,6 +1133,7 @@ mod tests {
                 expected_proposer_signer_id: "hub",
                 now: 1_000,
                 expired_htlc_locks: &[],
+                overdue_lending_loans: &[],
                 secret_acks_requiring_dispute: &BTreeSet::new(),
                 dispute_views: &BTreeMap::new(),
                 j_batch_state: None,

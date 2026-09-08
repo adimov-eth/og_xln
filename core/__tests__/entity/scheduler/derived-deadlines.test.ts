@@ -116,6 +116,49 @@ describe('derived per-payment deadlines', () => {
     expect(earliestDerivedDeadline(base)).toBe(100);
   });
 
+  test('overdue loans join the same derived set and only while active', () => {
+    // Mirrors the Rust `lending_overdue_*` fixtures: only `active` loans whose
+    // committed `dueAt` has passed produce a settlement deadline, ordered with
+    // every other derived deadline by (triggerAt, id).
+    const base = state();
+    const loan = (loanId: string, dueAt: number, status: string) =>
+      [loanId, { loanId, positionId: 'lend-1111111111111111', dueAt, status }] as const;
+    base.lending = {
+      pools: new Map(),
+      loans: new Map([
+        loan('loan-b', 150, 'active'),
+        loan('loan-a', 150, 'active'),
+        loan('loan-repaid', 50, 'repaid'),
+        loan('loan-opening', 60, 'opening'),
+      ]),
+    };
+    expect(collectDerivedDeadlines(base, 1_000).map((deadline) => deadline.id)).toEqual([
+      'htlc-timeout:lock-z',
+      'lending-overdue:loan-a',
+      'lending-overdue:loan-b',
+      `htlc-secret-ack:${id('7')}`,
+      'htlc-timeout:lock-a',
+      'htlc-timeout:lock-b',
+      `htlc-secret-ack:${id('9')}`,
+    ]);
+    expect(collectDerivedDeadlines(base, 149).map((deadline) => deadline.id)).toEqual([
+      'htlc-timeout:lock-z',
+    ]);
+    expect(collectDerivedDeadlines(base, 150)[1]).toEqual({
+      id: 'lending-overdue:loan-a',
+      triggerAt: 150,
+      type: 'lending_overdue',
+      data: { loanId: 'loan-a' },
+    });
+    base.accounts.clear();
+    base.paybook.entries.clear();
+    expect(earliestDerivedDeadline(base)).toBe(150);
+    base.lending.loans.get('loan-a').status = 'defaulted';
+    base.lending.loans.get('loan-b').status = 'defaulted';
+    expect(earliestDerivedDeadline(base)).toBeNull();
+    expect(collectDerivedDeadlines(base, 1_000)).toEqual([]);
+  });
+
   test('earliest deadline drives the idle wake and ignores unusable timelocks', () => {
     const base = state();
     expect(earliestDerivedDeadline(base)).toBe(100);

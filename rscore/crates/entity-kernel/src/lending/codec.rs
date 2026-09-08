@@ -91,6 +91,7 @@ fn loan_status(value: &CanonicalValue) -> Result<LendingLoanStatus, EntityKernel
         "active" => Ok(LendingLoanStatus::Active),
         "closing" => Ok(LendingLoanStatus::Closing),
         "repaid" => Ok(LendingLoanStatus::Repaid),
+        "defaulted" => Ok(LendingLoanStatus::Defaulted),
         _ => Err(invalid("LOAN_STATUS")),
     }
 }

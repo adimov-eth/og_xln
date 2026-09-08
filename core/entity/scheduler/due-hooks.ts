@@ -14,6 +14,7 @@ import { createDueHookPlan, type DueHookPlan } from './due-hook-types';
 import { processDisputeDeadlineHook } from './dispute-deadline-hook';
 import { processBoardHankoRefreshHook } from './board-hanko-refresh-hook';
 import { isDisputeReadyPayment } from '../paybook/views';
+import { settleOverdueLendingLoan } from '../tx/handlers/account/committed-lending-close';
 
 const crontabLog = createStructuredLogger('entity.crontab');
 
@@ -91,6 +92,12 @@ const processDueHook = (
     case 'htlc_secret_ack_timeout':
       processSecretAckTimeout(hook, replica, context, plan);
       return;
+    case 'lending_overdue': {
+      const accountTxs = context.accountTxs;
+      if (!accountTxs) throw new Error('SCHEDULED_WAKE_ACCOUNT_TX_SINK_REQUIRED');
+      settleOverdueLendingLoan(replica.state, hook.data.loanId, accountTxs);
+      return;
+    }
     case 'settlement_window':
     case 'watchdog':
       crontabLog.debug('hook.unimplemented', { type: hook.type });

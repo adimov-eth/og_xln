@@ -718,11 +718,15 @@ fn group_proposal_work(account_txs: Vec<TargetedAccountTx>) -> Vec<AccountPropos
 }
 
 fn append_scheduled_account_txs(
+    state: &mut EntityStateSlice,
     commands: &[SchedulerCommand],
     account_txs: &mut Vec<TargetedAccountTx>,
 ) -> Result<(), EntityKernelError> {
     for command in commands {
         match command {
+            SchedulerCommand::SettleOverdueLending { loans } => {
+                crate::lending::settle_overdue_lending_loans(state, loans, account_txs)?;
+            }
             SchedulerCommand::ProcessHtlcTimeouts { expired_locks } => {
                 account_txs.extend(expired_locks.iter().map(|(account_id, lock_id)| {
                     (
@@ -782,6 +786,7 @@ fn append_scheduled_entity_outputs(
             // Resident admission already applied the cross-j collective action
             // in this frame, before dispatching the canonical Book jobs.
             SchedulerCommand::ProcessHtlcTimeouts { .. }
+            | SchedulerCommand::SettleOverdueLending { .. }
             | SchedulerCommand::CrossJOrderbookSweep { .. }
             | SchedulerCommand::HubRebalance => {}
         }
@@ -1251,7 +1256,7 @@ pub(crate) fn finish_orderbook_stage(
             });
         }
     }
-    append_scheduled_account_txs(scheduled_commands, &mut account_txs)?;
+    append_scheduled_account_txs(&mut result.state, scheduled_commands, &mut account_txs)?;
     append_scheduled_entity_outputs(
         &result.state,
         scheduled_commands,

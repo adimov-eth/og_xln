@@ -23,7 +23,15 @@ export type DerivedSecretAckTimeout = ScheduledHookBase<'htlc_secret_ack_timeout
   counterpartyEntityId: string;
 }>;
 
-export type DerivedDeadline = DerivedHtlcTimeout | DerivedSecretAckTimeout;
+/**
+ * A loan whose term passed without full repayment. `dueAt` is committed Entity
+ * state, so the settlement wake is derived exactly like an HTLC timelock.
+ */
+type DerivedLendingOverdue = ScheduledHookBase<'lending_overdue', {
+  loanId: string;
+}>;
+
+export type DerivedDeadline = DerivedHtlcTimeout | DerivedSecretAckTimeout | DerivedLendingOverdue;
 
 export const compareDeadlines = (
   left: Readonly<{ triggerAt: number; id: string }>,
@@ -74,6 +82,16 @@ export const collectDerivedDeadlines = (
       data: { hashlock: entry.hashlock, counterpartyEntityId: entry.inboundEntity },
     });
   }
+  for (const loan of state.lending?.loans.values() ?? []) {
+    if (loan.status !== 'active') continue;
+    if (now !== undefined && loan.dueAt > now) continue;
+    due.push({
+      id: `lending-overdue:${loan.loanId}`,
+      triggerAt: loan.dueAt,
+      type: 'lending_overdue',
+      data: { loanId: loan.loanId },
+    });
+  }
   return due.sort(compareDeadlines);
 };
 
@@ -91,6 +109,9 @@ export const earliestDerivedDeadline = (state: EntityState): number | null => {
     if (isSecretAckPendingPayment(entry) && entry.secretAckDeadlineAt < earliest) {
       earliest = entry.secretAckDeadlineAt;
     }
+  }
+  for (const loan of state.lending?.loans.values() ?? []) {
+    if (loan.status === 'active' && loan.dueAt < earliest) earliest = loan.dueAt;
   }
   return Number.isFinite(earliest) ? earliest : null;
 };

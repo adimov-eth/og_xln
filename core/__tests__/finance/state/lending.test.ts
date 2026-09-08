@@ -4,6 +4,8 @@ import { applyAccountTx, applyAccountTxToMutableReplica } from '../../../account
 import { createEmptyAccountJClaimAccumulator } from '../../../account/j-claims/j-claim-accumulator';
 import { createEntityFrameHash } from '../../../entity/consensus/frame';
 import { applyCommittedAccountFrameFollowups, type AccountTxTarget } from '../../../entity/tx/handlers/account/index';
+import { collectDerivedDeadlines } from '../../../entity/scheduler/derived-deadlines';
+import { settleOverdueLendingLoan } from '../../../entity/tx/handlers/account/committed-lending-close';
 import type { AccountFrame, AccountReplica, AccountTx } from '../../../types/account';
 import type { ConsensusConfig, EntityState } from '../../../entity/types';
 import { createDefaultDelta } from '../../../account/state/delta';
@@ -315,6 +317,80 @@ describe('payer-authenticated hub lending', () => {
 
     await commit(state, LENDER, payout!.tx, true, 4_001);
     expect(pool).toMatchObject({ status: 'closed', availableAmount: 0n, borrowedAmount: 0n });
+  });
+
+  test('an overdue loan defaults: pool released, credit called in, debt recorded', async () => {
+    const state = makeState();
+    state.accounts = state.accounts.updated(LENDER, makeAccount(LENDER));
+    state.accounts = state.accounts.updated(BORROWER, makeAccount(BORROWER));
+    await commit(state, LENDER, {
+      type: 'lending_fund',
+      data: {
+        positionId: POSITION_ID,
+        hubEntityId: HUB,
+        lenderEntityId: LENDER,
+        tokenId: 1,
+        amount: 10_000n,
+        termId: '1d',
+        interestBps: 100,
+      },
+    }, false, 1_000);
+    const [grant] = await commit(state, BORROWER, {
+      type: 'lending_borrow_request',
+      data: {
+        requestId: BORROW_REQUEST_ID,
+        hubEntityId: HUB,
+        borrowerEntityId: BORROWER,
+        tokenId: 1,
+        amount: 2_500n,
+        termId: '1d',
+        maxInterestBps: 150,
+      },
+    }, false, 2_000);
+    await commit(state, BORROWER, grant!.tx, true, 2_001);
+    const loan = Array.from(state.lending!.loans.values())[0]!;
+    const pool = state.lending!.pools.get(POSITION_ID)!;
+    expect(loan).toMatchObject({ status: 'active', dueAt: 2_000 + 86_400_000 });
+    expect(pool).toMatchObject({ availableAmount: 7_500n, borrowedAmount: 2_500n });
+
+    // Nothing fires before the term ends; the deadline is the loan's own dueAt.
+    state.timestamp = loan.dueAt - 1;
+    expect(collectDerivedDeadlines(state, state.timestamp)).toEqual([]);
+    state.timestamp = loan.dueAt;
+    expect(collectDerivedDeadlines(state, state.timestamp).map(deadline => deadline.id))
+      .toEqual([`lending-overdue:${loan.loanId}`]);
+
+    const settlement: AccountTxTarget[] = [];
+    settleOverdueLendingLoan(state, loan.loanId, settlement);
+    // The lender's principal is released; the interest is never earned.
+    expect(loan).toMatchObject({ status: 'defaulted', repaidAmount: 0n, repaymentAmount: 2_525n });
+    expect(pool).toMatchObject({ availableAmount: 10_000n, borrowedAmount: 0n });
+    expect(settlement).toHaveLength(1);
+    expect(settlement[0]!.tx).toMatchObject({
+      type: 'lending_credit',
+      data: { action: 'revoke', loanId: loan.loanId, creditLimit: 20_000n },
+    });
+    // The deadline is drained by the settlement: it never re-arms.
+    expect(collectDerivedDeadlines(state, state.timestamp)).toEqual([]);
+    settleOverdueLendingLoan(state, loan.loanId, settlement);
+    expect(settlement).toHaveLength(1);
+
+    // Committing the revoke lands only the credit-line reduction.
+    await commit(state, BORROWER, settlement[0]!.tx, true, loan.dueAt + 1);
+    expect(loan).toMatchObject({ status: 'defaulted', repaidAmount: 0n });
+    expect(pool).toMatchObject({ availableAmount: 10_000n, borrowedAmount: 0n });
+
+    // The lender withdraws the released capital; the borrower keeps the debt.
+    const [payout] = await commit(state, LENDER, {
+      type: 'lending_close_request',
+      data: { positionId: POSITION_ID, hubEntityId: HUB, lenderEntityId: LENDER },
+    }, false, loan.dueAt + 2);
+    expect(payout?.tx).toMatchObject({
+      type: 'lending_close_payout',
+      data: { positionId: POSITION_ID, amount: 10_000n },
+    });
+    await commit(state, LENDER, payout!.tx, true, loan.dueAt + 3);
+    expect(pool).toMatchObject({ status: 'closed', availableAmount: 0n });
   });
 
   test('rejects forged payer direction and duplicate financial intents before moving delta twice', async () => {

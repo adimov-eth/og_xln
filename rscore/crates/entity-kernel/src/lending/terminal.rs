@@ -5,7 +5,7 @@ use crate::EntityKernelError;
 use crate::local_financial::LocalAccountFinancialView;
 use crate::types::TargetedAccountTx;
 
-use super::followups::projected_credit;
+use super::followups::{projected_credit, projected_credit_from};
 use super::{LendingLoanStatus, LendingPoolStatus, LendingState};
 
 #[expect(
@@ -168,5 +168,79 @@ pub(super) fn apply_close_payout(
     pool.available_amount = BigInt::from(0);
     pool.status = LendingPoolStatus::Closed;
     pool.updated_at = now;
+    lending.put_pool(pool)
+}
+
+/// Overdue loan settlement — the banking half of the loan lifecycle, and the
+/// exact mirror of TS `settleOverdueLendingLoan`.
+///
+/// A pool's cash never leaves the hub: `LendingFund` moves it lender -> hub and
+/// `LendingBorrowRequest` only grants the borrower a credit line against it. So
+/// when the term passes unpaid the hub settles it the way a bank does:
+///
+///  - the lender's principal returns to the pool, because the hub still holds
+///    that cash and owes the depositor, not the borrower;
+///  - the drawn exposure stays a hub receivable against the borrower — signed
+///    bilateral debt a lower credit limit can never erase — so the hub absorbs
+///    the credit loss;
+///  - the credit line is called in through the same `LendingCredit` revoke the
+///    repay path uses, so a defaulted borrower cannot draw again;
+///  - `repayment_amount - repaid_amount` stays recorded against the borrower on
+///    a terminal `Defaulted` loan. Interest is not earned on a default.
+///
+/// A loan that no longer qualifies is skipped, never raised: one loan can never
+/// halt the Runtime (docs/reject-policy.md).
+pub(super) fn settle_overdue(
+    lending: &mut LendingState,
+    loan_id: &str,
+    committed_credit_limit: BigInt,
+    hub: &str,
+    now: u64,
+    queued: &mut Vec<TargetedAccountTx>,
+) -> Result<(), EntityKernelError> {
+    let Some(mut loan) = lending
+        .loan(loan_id)
+        .cloned()
+        .filter(|loan| loan.status == LendingLoanStatus::Active && loan.due_at <= now)
+    else {
+        return Ok(());
+    };
+    let Some(mut pool) = lending
+        .pool(&loan.position_id)
+        .cloned()
+        .filter(|pool| pool.borrowed_amount >= loan.principal_amount)
+    else {
+        return Ok(());
+    };
+    let token = TokenId::new(u32::from(loan.token_id))
+        .map_err(|_| EntityKernelError::lending("TOKEN_ID"))?;
+    loan.status = LendingLoanStatus::Defaulted;
+    loan.updated_at = now;
+    pool.borrowed_amount -= &loan.principal_amount;
+    pool.available_amount += &loan.principal_amount;
+    pool.updated_at = now;
+    let current = projected_credit_from(
+        committed_credit_limit,
+        &loan.borrower_entity_id,
+        token,
+        queued,
+    );
+    let credit_limit = if current > loan.principal_amount {
+        current - &loan.principal_amount
+    } else {
+        BigInt::from(0)
+    };
+    queued.push((
+        loan.borrower_entity_id.clone(),
+        AccountTx::LendingCredit {
+            action: LendingAction::Revoke,
+            loan_id: loan.loan_id.clone(),
+            hub_entity_id: hub.to_string(),
+            borrower_entity_id: loan.borrower_entity_id.clone(),
+            token_id: token,
+            credit_limit,
+        },
+    ));
+    lending.put_loan(loan)?;
     lending.put_pool(pool)
 }

@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 
-import type { AccountState } from '../types/account';
+import type { AccountReplica, AccountState, AccountTx } from '../types/account';
 import type { EntityState } from '../entity/types';
 import type { LendingLoan, LendingPoolPosition, LendingState, LendingTermId } from '../types/finance/lending';
 import { deriveDelta } from '../account/utils';
@@ -63,7 +63,7 @@ export const ensureLendingState = (state: EntityState): LendingState => {
   return state.lending;
 };
 
-export const getCreditGrantedByAccountOwner = (
+const getCreditGrantedByAccountOwner = (
   account: AccountState,
   ownerEntityId: string,
   tokenId: number,
@@ -80,6 +80,40 @@ export const getCreditGrantedByAccountOwner = (
   // select left/right storage fields here: LEFT writes rightCreditLimit and
   // RIGHT writes leftCreditLimit, which is easy to invert at call sites.
   return deriveDelta(delta, owner === left).peerCreditLimit;
+};
+
+const creditTarget = (tx: AccountTx, tokenId: number): bigint | undefined => {
+  if (tx.type === 'set_credit_limit' && tx.data.tokenId === tokenId) return tx.data.amount;
+  if (tx.type === 'lending_credit' && tx.data.tokenId === tokenId) return tx.data.creditLimit;
+  return undefined;
+};
+
+/**
+ * The credit the hub will have granted this counterparty once every already
+ * decided write lands. Borrow, repay and the overdue settlement all move the
+ * grant through this one projection; a second formula would drift it.
+ */
+export const projectedHubCreditLimit = (
+  account: AccountReplica,
+  hubEntityId: string,
+  counterpartyId: string,
+  accountTxs: readonly { accountId: string; tx: AccountTx }[],
+  tokenId: number,
+): bigint => {
+  let projected = getCreditGrantedByAccountOwner(account.state, hubEntityId, tokenId);
+  const apply = (txs: readonly AccountTx[]): void => {
+    for (const tx of txs) projected = creditTarget(tx, tokenId) ?? projected;
+  };
+  const lower = (value: unknown): string => String(value || '').toLowerCase();
+  const hubIsLeft = lower(account.state.leftEntity) === hubEntityId;
+  const pendingProposerIsLeft = lower(account.proofHeader.fromEntity)
+    === lower(account.state.leftEntity);
+  if (account.pendingFrame && pendingProposerIsLeft === hubIsLeft) apply(account.pendingFrame.accountTxs);
+  apply(account.mempool);
+  apply(accountTxs
+    .filter(output => lower(output.accountId) === counterpartyId)
+    .map(output => output.tx));
+  return projected;
 };
 
 export const getAccountOutCapacity = (

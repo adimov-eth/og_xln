@@ -28,6 +28,10 @@ pub enum LendingLoanStatus {
     Active,
     Closing,
     Repaid,
+    /// Terminal: the term passed unpaid, the hub called the loan in and
+    /// released the pool. `repayment_amount - repaid_amount` stays recorded
+    /// against the borrower.
+    Defaulted,
 }
 
 impl LendingLoanStatus {
@@ -37,6 +41,7 @@ impl LendingLoanStatus {
             Self::Active => "active",
             Self::Closing => "closing",
             Self::Repaid => "repaid",
+            Self::Defaulted => "defaulted",
         }
     }
 }

@@ -5,8 +5,8 @@ import {
   buildLendingLoanId,
   computeLendingInterest,
   ensureLendingState,
-  getCreditGrantedByAccountOwner,
   LENDING_TERM_MS,
+  projectedHubCreditLimit,
   selectBestLendingPool,
 } from '../../../../extensions/lending';
 import type { AccountTxTarget } from './orderbook/queue';
@@ -28,31 +28,16 @@ export type LendingFollowupContext = {
   accountTxs: AccountTxTarget[];
 };
 
-const creditTarget = (tx: AccountTx, tokenId: number): bigint | undefined => {
-  if (tx.type === 'set_credit_limit' && tx.data.tokenId === tokenId) return tx.data.amount;
-  if (tx.type === 'lending_credit' && tx.data.tokenId === tokenId) return tx.data.creditLimit;
-  return undefined;
-};
-
-const projectedHubCreditLimit = (
+const projectedContextCreditLimit = (
   context: LendingFollowupContext,
   tokenId: number,
-): bigint => {
-  const { account, accountTxs, counterpartyId, hubEntityId } = context;
-  let projected = getCreditGrantedByAccountOwner(account.state, hubEntityId, tokenId);
-  const apply = (txs: readonly AccountTx[]): void => {
-    for (const tx of txs) projected = creditTarget(tx, tokenId) ?? projected;
-  };
-  const hubIsLeft = normalizeEntityRef(account.state.leftEntity) === hubEntityId;
-  const pendingProposerIsLeft = normalizeEntityRef(account.proofHeader.fromEntity)
-    === normalizeEntityRef(account.state.leftEntity);
-  if (account.pendingFrame && pendingProposerIsLeft === hubIsLeft) apply(account.pendingFrame.accountTxs);
-  apply(account.mempool);
-  apply(accountTxs
-    .filter(output => normalizeEntityRef(output.accountId) === counterpartyId)
-    .map(output => output.tx));
-  return projected;
-};
+): bigint => projectedHubCreditLimit(
+  context.account,
+  context.hubEntityId,
+  context.counterpartyId,
+  context.accountTxs,
+  tokenId,
+);
 
 const lendingCreditOp = (
   accountId: string,
@@ -148,7 +133,7 @@ function applyLendingBorrow(
     updatedAt: now,
     status: 'opening',
   });
-  const currentLimit = projectedHubCreditLimit(context, tx.data.tokenId);
+  const currentLimit = projectedContextCreditLimit(context, tx.data.tokenId);
   accountTxs.push(lendingCreditOp(proposer, {
     action: 'grant',
     loanId,
@@ -174,6 +159,12 @@ function applyLendingCredit(
       throw new Error(`LENDING_GRANT_STATUS_INVALID:${loan.loanId}:${loan.status}`);
     }
     loan.status = 'active';
+    loan.updatedAt = now;
+    return;
+  }
+  if (loan.status === 'defaulted') {
+    // The overdue settlement already released the pool at the derived
+    // deadline. This revoke only lands the credit-line reduction.
     loan.updatedAt = now;
     return;
   }
@@ -218,7 +209,7 @@ function applyLendingRepay(
   }
   loan.status = 'closing';
   loan.updatedAt = now;
-  const currentLimit = projectedHubCreditLimit(context, loan.tokenId);
+  const currentLimit = projectedContextCreditLimit(context, loan.tokenId);
   accountTxs.push(lendingCreditOp(proposer, {
     action: 'revoke',
     loanId: loan.loanId,

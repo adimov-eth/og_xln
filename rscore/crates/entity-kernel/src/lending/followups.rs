@@ -75,11 +75,27 @@ pub(super) fn projected_credit(
     token_id: TokenId,
     queued: &[TargetedAccountTx],
 ) -> BigInt {
-    let mut value = view
-        .owner_peer_credit_limit
-        .get(&token_id)
-        .cloned()
-        .unwrap_or_else(|| BigInt::from(0));
+    projected_credit_from(
+        view.owner_peer_credit_limit
+            .get(&token_id)
+            .cloned()
+            .unwrap_or_else(|| BigInt::from(0)),
+        account_id,
+        token_id,
+        queued,
+    )
+}
+
+/// The single credit-grant projection: the committed grant plus every write
+/// this frame already decided. Repay, close and the overdue settlement share
+/// it so no second grant formula can drift.
+pub(super) fn projected_credit_from(
+    committed: BigInt,
+    account_id: &str,
+    token_id: TokenId,
+    queued: &[TargetedAccountTx],
+) -> BigInt {
+    let mut value = committed;
     for (_, tx) in queued.iter().filter(|(target, _)| target == account_id) {
         match tx {
             AccountTx::SetCreditLimit {
@@ -291,6 +307,12 @@ pub(super) fn apply_credit(
             pool.updated_at = now;
             state.put_loan(loan)?;
             state.put_pool(pool)
+        }
+        // The overdue settlement already released the pool at the derived
+        // deadline. This revoke only lands the credit-line reduction.
+        LendingAction::Revoke if loan.status == LendingLoanStatus::Defaulted => {
+            loan.updated_at = now;
+            state.put_loan(loan)
         }
         LendingAction::Grant => Err(EntityKernelError::lending("GRANT_STATUS_INVALID")),
         LendingAction::Revoke => Err(EntityKernelError::lending("REVOKE_STATUS_INVALID")),

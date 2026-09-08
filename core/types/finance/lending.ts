@@ -1,7 +1,12 @@
 export type LendingTermId = '1h' | '1d' | '1m';
 
 type LendingPoolStatus = 'open' | 'closing' | 'closed';
-type LendingLoanStatus = 'opening' | 'active' | 'closing' | 'repaid';
+/**
+ * `defaulted` is terminal: the term passed without repayment, the hub called
+ * the loan in and released the pool. `repaymentAmount - repaidAmount` is the
+ * amount still recorded against the borrower.
+ */
+type LendingLoanStatus = 'opening' | 'active' | 'closing' | 'repaid' | 'defaulted';
 
 export interface LendingPoolPosition {
   positionId: string;
