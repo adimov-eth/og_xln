@@ -393,6 +393,9 @@ fn verdict_value(verdict: &AccountVerdict) -> AbiValue {
             let kind = match rejection {
                 AccountRejection::Validation(_) => "validation",
                 AccountRejection::ClosedForDispute { .. } => "account_closed_for_dispute",
+                AccountRejection::SettlementSignedAccountFrozen { .. } => {
+                    "settlement_signed_account_frozen"
+                }
                 AccountRejection::DeltaRowLimitExceeded { .. } => "delta_row_limit_exceeded",
                 AccountRejection::HtlcLockCapacity { .. } => "htlc_lock_capacity",
             };

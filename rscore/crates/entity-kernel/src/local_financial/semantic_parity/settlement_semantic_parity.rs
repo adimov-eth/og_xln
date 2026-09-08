@@ -24,7 +24,7 @@ use xln_rscore_protocol::{CanonicalNumber, CanonicalValue};
 
 use super::*;
 
-const FIXTURE: &str = include_str!("../../../../fixtures/entity-settlement/settlement-v1.json");
+const FIXTURE: &str = include_str!("../../../../../fixtures/entity-settlement/settlement-v1.json");
 
 fn fixture() -> Value {
     serde_json::from_str(FIXTURE).expect("TypeScript Entity settlement fixture")

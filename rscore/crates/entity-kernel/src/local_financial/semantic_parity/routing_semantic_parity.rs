@@ -5,7 +5,8 @@ use xln_rscore_engine::canonical_tx_digest;
 use super::*;
 use crate::local_financial::types::ProcessHtlcTimeoutsEntityTx;
 
-const FIXTURE: &str = include_str!("../../../../fixtures/entity-routing-semantics/parity-v1.json");
+const FIXTURE: &str =
+    include_str!("../../../../../fixtures/entity-routing-semantics/parity-v1.json");
 const PEER: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const EXTERNAL: &str = "0x3333333333333333333333333333333333333333333333333333333333333333";
 

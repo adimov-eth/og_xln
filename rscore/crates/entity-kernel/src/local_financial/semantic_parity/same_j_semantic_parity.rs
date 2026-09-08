@@ -18,7 +18,8 @@ use crate::local_financial::types::{
     RequestCollateralEntityTx, SetRebalancePolicyEntityTx,
 };
 
-const FIXTURE: &str = include_str!("../../../../fixtures/entity-kernel/same-j-financial-v1.json");
+const FIXTURE: &str =
+    include_str!("../../../../../fixtures/entity-kernel/same-j-financial-v1.json");
 const OWNER: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
 const PEER: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 

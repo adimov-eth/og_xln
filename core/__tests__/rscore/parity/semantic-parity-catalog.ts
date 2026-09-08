@@ -79,13 +79,13 @@ const CROSS_J_ENTITY_KINDS_EVIDENCE = [
 ] as const;
 const ENTITY_SAME_J_FINANCIAL_EVIDENCE = [
   'core/__tests__/rscore/parity/entity-same-j-financial-semantic-parity.test.ts',
-  'rscore/crates/entity-kernel/src/local_financial/same_j_semantic_parity.rs',
+  'rscore/crates/entity-kernel/src/local_financial/semantic_parity/same_j_semantic_parity.rs',
   'rscore/fixtures/entity-kernel/same-j-financial-v1.json',
 ] as const;
 const ENTITY_ROUTING_SEMANTIC_EVIDENCE = [
   'core/__tests__/rscore/parity/entity-routing-semantic-parity.test.ts',
   'rscore/crates/entity-kernel/tests/entity_routing_semantic_parity.rs',
-  'rscore/crates/entity-kernel/src/local_financial/routing_semantic_parity.rs',
+  'rscore/crates/entity-kernel/src/local_financial/semantic_parity/routing_semantic_parity.rs',
   'rscore/fixtures/entity-routing-semantics/parity-v1.json',
 ] as const;
 const ENTITY_CONTROL_SEMANTIC_EVIDENCE = [
@@ -95,7 +95,7 @@ const ENTITY_CONTROL_SEMANTIC_EVIDENCE = [
 ] as const;
 const ENTITY_SETTLEMENT_SEMANTIC_EVIDENCE = [
   'rscore/fixtures/entity-settlement/generate.ts',
-  'rscore/crates/entity-kernel/src/local_financial/settlement_semantic_parity.rs',
+  'rscore/crates/entity-kernel/src/local_financial/semantic_parity/settlement_semantic_parity.rs',
   'rscore/fixtures/entity-settlement/settlement-v1.json',
 ] as const;
 const MIXED_REPLAY_EVIDENCE = [
