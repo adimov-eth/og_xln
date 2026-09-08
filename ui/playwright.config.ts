@@ -1,9 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Browser E2E for the wallet UI. The app boots its own embedded runtime in the
- * sandbox, so no anvil, orchestrator or relay is needed: one dev server, one
- * browser, real consensus in the page.
+ * Browser E2E for the wallet UI. The wallet talks to the real dev stack — two
+ * anvil chains, the orchestrator and the relay — through the ordinary RPC
+ * jurisdiction adapter. There is no in-page chain: `bun run dev` below brings
+ * the whole stand up, and the tests assert against the Depository on chain.
  */
 const PORT = process.env['UI_E2E_PORT'] || '5183';
 const BASE_URL = process.env['UI_E2E_BASE_URL'] || `http://localhost:${PORT}`;
