@@ -202,3 +202,51 @@ export async function submitSwapPlan(plan: SwapCommandPlan): Promise<void> {
 	if (plan.targetSetupInput) throw new Error('Prepare the target account capacity before swapping.');
 	await submitCrossIntent(plan.crossJurisdictionIntent, false);
 }
+
+/**
+ * This wallet's cross-jurisdiction orders that are still live.
+ *
+ * A cross order lives in the Entity's own committed state, not in a bilateral
+ * book, so the same-network offer list never showed it. Without this a position
+ * that stopped moving was invisible and therefore unclearable, which is how
+ * money gets stranded across two chains.
+ */
+export type CrossOrderView = {
+	orderId: string;
+	status: string;
+	sourceTokenId: number;
+	sourceAmount: bigint;
+	targetTokenId: number;
+	targetAmount: bigint;
+	sourceJurisdiction: string;
+	targetJurisdiction: string;
+	filledSourceAmount: bigint;
+	clearRequested: boolean;
+};
+
+const LIVE_CROSS_STATUSES = new Set(['intent', 'target_prepared', 'resting', 'partially_filled', 'clear_requested', 'clearing']);
+
+export function liveCrossOrders(frame: RuntimeAdapterViewFrame | null, entityId: string): CrossOrderView[] {
+	const routes = frame?.activeEntity?.core?.crossJurisdictionSwaps;
+	if (!(routes instanceof Map) || !entityId) return [];
+	const self = entityId.toLowerCase();
+	const orders: CrossOrderView[] = [];
+	for (const route of routes.values()) {
+		const status = String(route?.status ?? '');
+		if (!LIVE_CROSS_STATUSES.has(status)) continue;
+		if (String(route?.source?.entityId ?? '').toLowerCase() !== self) continue;
+		orders.push({
+			orderId: String(route.orderId ?? ''),
+			status,
+			sourceTokenId: Number(route.source?.tokenId ?? 0),
+			sourceAmount: route.source?.amount ?? 0n,
+			targetTokenId: Number(route.target?.tokenId ?? 0),
+			targetAmount: route.target?.amount ?? 0n,
+			sourceJurisdiction: String(route.source?.jurisdiction ?? ''),
+			targetJurisdiction: String(route.target?.jurisdiction ?? ''),
+			filledSourceAmount: route.filledSourceAmount ?? 0n,
+			clearRequested: status === 'clear_requested' || status === 'clearing',
+		});
+	}
+	return orders.filter(order => order.orderId).sort((left, right) => left.orderId.localeCompare(right.orderId));
+}

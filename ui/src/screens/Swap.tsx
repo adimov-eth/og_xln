@@ -12,7 +12,7 @@ import { useApp } from '../runtime/store';
 import { switchActiveEntity } from '../runtime/entities';
 import { peekXLN } from '../runtime/xln-loader';
 import { sendEntityTxs } from '../runtime/tx';
-import { hubTakerFeeBps, jurisdictionRef, openSwapReceiveAccount, planSwap, readAccountState, submitSwapPlan } from '../runtime/financial/swap';
+import { hubTakerFeeBps, jurisdictionRef, liveCrossOrders, openSwapReceiveAccount, planSwap, readAccountState, submitSwapPlan } from '../runtime/financial/swap';
 import { amountInputText, formatMoney, getTokenMeta, parseAmount } from '../runtime/format';
 import { openSwapOffers, useWallet } from '../runtime/views';
 import { counterpartyFeePolicy } from '../runtime/financial/manage';
@@ -306,7 +306,28 @@ export function Swap() {
 		}
 	};
 
+	/**
+	 * A cross order rests across two chains, so cancelling it bilaterally is not
+	 * enough: the entity has to ask for the route to be cleared. Without this a
+	 * position that stopped moving stayed on the books for good.
+	 */
+	const clearCross = async (orderId: string, cancelRemainder: boolean): Promise<void> => {
+		if (!wallet.entityId || !wallet.signerId) return;
+		setCancelingId(orderId);
+		try {
+			await sendEntityTxs(wallet.entityId, wallet.signerId, [
+				{ type: 'requestCrossJurisdictionClear', data: { orderId, cancelRemainder } },
+			]);
+			toast(cancelRemainder ? 'Cancel and clear requested' : 'Clear requested');
+		} catch (error) {
+			toast(error instanceof Error ? error.message : String(error), 'danger');
+		} finally {
+			setCancelingId(null);
+		}
+	};
+
 	const mine = openSwapOffers(wallet.frame, wallet.entityId).filter(offer => offer.mine);
+	const crossOrders = liveCrossOrders(wallet.frame, wallet.entityId);
 	const disabledReason = !hub ? 'No hub account to swap through' : sameToken ? 'Choose two different tokens' : overCapacity ? 'Exceeds what you can send' : !inboundReady ? `One step first: allow ${(mode === 'cross' ? targetHub?.label : hub.label) ?? 'the hub'} to owe you ${wantMeta.symbol} (the panel above, one tap)` : null;
 
 	return (
@@ -523,6 +544,64 @@ export function Swap() {
 							{showBook ? <Orderbook book={book} hubLabel={hub.label} onPick={pickLevel} /> : null}
 						</div>
 					) : null}
+
+					{crossOrders.length > 0 && (
+						<div data-testid="cross-orders">
+							<div className="sect">
+								<h3 className="caps">Cross-network orders</h3>
+								<span className="more">{crossOrders.length}</span>
+							</div>
+							{crossOrders.map((order, index) => {
+								const sMeta = getTokenMeta(order.sourceTokenId);
+								const tMeta = getTokenMeta(order.targetTokenId);
+								return (
+									<div key={order.orderId} className={`row${index === 0 ? ' first' : ''}`} data-testid="cross-order-row" data-order-id={order.orderId}>
+										<div className="rt">
+											<span className="ev-ic swap">
+												<Icon name="swap" size={15} />
+											</span>
+											<span className="tx">
+												<span className="t num">
+													{formatMoney(order.sourceAmount, sMeta.decimals, 4)} {sMeta.symbol} on {order.sourceJurisdiction || 'source'} for{' '}
+													{formatMoney(order.targetAmount, tMeta.decimals, 4)} {tMeta.symbol} on {order.targetJurisdiction || 'target'}
+												</span>
+												<span className="s">
+													{order.filledSourceAmount > 0n
+														? `filled ${formatMoney(order.filledSourceAmount, sMeta.decimals, 4)} ${sMeta.symbol} so far`
+														: 'nothing filled yet'}
+												</span>
+											</span>
+											<span className="r">
+												<span className="state st-inflight">{order.status.replace(/_/g, ' ')}</span>
+												<div>
+													<button
+														type="button"
+														className="btn quiet"
+														style={{ fontSize: 12 }}
+														disabled={cancelingId === order.orderId || order.clearRequested}
+														onClick={() => void clearCross(order.orderId, false)}
+														data-testid="cross-order-clear"
+													>
+														{order.clearRequested ? 'Clearing…' : 'Clear'}
+													</button>
+													<button
+														type="button"
+														className="btn quiet"
+														style={{ fontSize: 12 }}
+														disabled={cancelingId === order.orderId || order.clearRequested}
+														onClick={() => void clearCross(order.orderId, true)}
+														data-testid="cross-order-cancel-clear"
+													>
+														Cancel rest
+													</button>
+												</div>
+											</span>
+										</div>
+									</div>
+								);
+							})}
+						</div>
+					)}
 
 					{mine.length > 0 && (
 						<div>
