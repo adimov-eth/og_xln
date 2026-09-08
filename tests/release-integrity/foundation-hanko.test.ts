@@ -71,8 +71,22 @@ describe('Foundation release Hanko', () => {
   test('rejects envelope and Hanko tampering', () => {
     const board = createFoundationReleaseBoard(ADDRESSES, 2);
     const attestation = signReleaseEnvelope(ENVELOPE, board, PRIVATE_KEYS);
+    const hanko = attestation.hanko;
+    // The encoding ends in signature padding, so overwriting the last byte with
+    // zero reproduces the original bytes and tests nothing. Flip it instead.
+    const lastByte = hanko.slice(-2);
+    expect(lastByte).toBe('00');
+    const flippedTail = `${hanko.slice(0, -2)}01`;
+    expect(flippedTail).not.toBe(hanko);
+
     expect(verifyReleaseAttestation({ ...attestation, envelope: { ...ENVELOPE, version: '0.1.8' } }, board)).toBe(false);
-    expect(verifyReleaseAttestation({ ...attestation, hanko: `${attestation.hanko.slice(0, -2)}00` }, board)).toBe(false);
+    expect(verifyReleaseAttestation({ ...attestation, hanko: flippedTail }, board)).toBe(false);
+    expect(verifyReleaseAttestation({ ...attestation, hanko: `${hanko}00` }, board)).toBe(false);
+    const middle = hanko.slice(0, 200) + (hanko[200] === 'f' ? 'e' : 'f') + hanko.slice(201);
+    expect(middle).not.toBe(hanko);
+    expect(verifyReleaseAttestation({ ...attestation, hanko: middle }, board)).toBe(false);
+    expect(verifyReleaseAttestation({ ...attestation, signerCount: attestation.signerCount + 1 }, board)).toBe(false);
+    expect(verifyReleaseAttestation({ ...attestation, envelopeHash: `0x${'00'.repeat(32)}` }, board)).toBe(false);
   });
 
   test('hash and packed Hanko are deterministic for fixed inputs', () => {
