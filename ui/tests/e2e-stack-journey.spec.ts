@@ -131,6 +131,13 @@ async function oppositeQuote(label: string, sourceHub: string, targetHub: string
   } finally { adapter.disconnect(); }
 }
 
+// Same private-chain requirement as the dispute finality test, plus the
+// maker-side manifest the cross-network leg reads.
+test.skip(
+  !process.env['XLN_UI_DISPUTE_PRIVATE_RPC'] || !process.env['XLN_UI_DISPUTE_PRIVATE_ORIGIN'],
+  'needs a private dispute stand: XLN_UI_DISPUTE_PRIVATE_RPC and XLN_UI_DISPUTE_PRIVATE_ORIGIN',
+);
+
 test('one wallet funds 100, pays, swaps on both networks, disputes and moves recovered reserve to another hub', { tag: '@functional' }, async ({ page, baseURL }, info) => {
   test.setTimeout(60_000);
   const provider = privateChain(baseURL); const errors: string[] = []; const faucets: string[] = []; const evidence: Record<string, unknown> = {};

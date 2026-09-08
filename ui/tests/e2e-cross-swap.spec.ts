@@ -172,6 +172,16 @@ const readCrossRecoveryProof = (page: Page, parties: CrossParties, orderId: stri
     return { runtimeId: adapter.runtimeId, frame: { height, frameHash: frame.frameHash, postStateHash: frame.postStateHash }, preparations, accounts };
   }, { parties, orderId, atHeight });
 
+// The maker's committed projection is read through a privileged runtime
+// connection, whose address comes from a runtime import manifest that only the
+// local-prod-smoke stand writes, at <XLN_RDB_ROOT>/prod-mesh. The dev stack
+// keeps neither that layout nor a lasting manifest, so on any other stand this
+// test states what it needs rather than failing for the wrong reason.
+test.skip(
+  !process.env['XLN_RDB_ROOT'],
+  'needs the local-prod-smoke stand: XLN_RDB_ROOT with a prod-mesh runtime import manifest',
+);
+
 test(
   'cross-network swap prepares target incoming capacity before both bilateral legs commit',
   { tag: '@functional' },

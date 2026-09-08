@@ -145,6 +145,15 @@ async function chainMoney(contract: Depository, owner: string, hub: string) {
   return { reserve: reserve.toString(), peerReserve: peerReserve.toString(), collateral: collateral.collateral.toString(), ondelta: decodeInt512(collateral.ondelta).toString(), nonce: account.nonce.toString(), disputeHash: account.disputeHash, timeout: Number(account.disputeTimeout) };
 }
 
+// The signed dispute window is waited out by moving a private chain's clock,
+// so this needs a stand nobody else shares: its own anvil on a leased local
+// port with the wallet served two ports above it. No stand in the repository
+// sets these today, so elsewhere the test says what it needs and stops.
+test.skip(
+  !process.env['XLN_UI_DISPUTE_PRIVATE_RPC'] || !process.env['XLN_UI_DISPUTE_PRIVATE_ORIGIN'],
+  'needs a private dispute stand: XLN_UI_DISPUTE_PRIVATE_RPC and XLN_UI_DISPUTE_PRIVATE_ORIGIN',
+);
+
 test('UI dispute rejects early finalization, then releases exactly 100 USDC after its signed window', { tag: '@functional' }, async ({ page, baseURL }, testInfo) => {
   test.setTimeout(50_000);
   const provider = privateChain(baseURL);
