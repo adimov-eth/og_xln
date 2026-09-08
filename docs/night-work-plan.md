@@ -75,6 +75,21 @@ Evidence: `/tmp/xln-cross-fixed-parity.log`. Resume correctly refuses the dirty 
 bypass provenance. Previous complete 6/6 evidence remains tied to the earlier binary.
 Next: complete bounded parity with valid provenance; TS five-second HLT drain remains red.
 
+### Wallet recovery and Move — 2026-09-08 23:37 UTC
+
+Four more real browser checks passed: Manage/token lane/dispute (1), Move LEFT/RIGHT (2),
+and tower restoration on a clean device (1). Move conserves all 100 USDC and drains pending
+work. Tower recovery compares the canonical Runtime root and Account proofs, then refuses
+an overwrite of existing local storage. Reports:
+- `/tmp/xln-ui-move-manage-r2-20260909/wallet-results.json` (3/3, 27.5s).
+- `/tmp/xln-ui-tower-restore-r3-20260909/wallet-results.json` (1/1, 18.8s).
+The Manage test had a case-sensitive stale label (90s wasted); fixed and bounded to 60s.
+The tower test dynamically imported core into Vite and triggered dependency optimization
+and a page reload. It now bundles the unchanged canonical hash helper before opening a
+wallet. A discarded plain serialization attempt could not preserve persistent collections;
+the final test hashes the original loaded state and retains every semantic assertion.
+Next: capacity, remaining browser scenarios and Svelte, exact new-binary parity, TS drain.
+
 ## Active owner scope — 2026-09-07
 
 The latest owner instruction supersedes every earlier first-launch Lending

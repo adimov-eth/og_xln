@@ -6,12 +6,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { enterStack } from './stack';
 
-const BOOT_TIMEOUT = 180_000;
-const CHAIN_TIMEOUT = 90_000;
+const CHAIN_TIMEOUT = 15_000;
 
 
 test.describe('wallet UI account management', () => {
 	test('adds a token lane, then prepares and signs a dispute', { tag: '@functional' }, async ({ page }) => {
+		test.setTimeout(60_000);
 		const pageErrors: string[] = [];
 		page.on('pageerror', error => pageErrors.push(error.message));
 
@@ -53,7 +53,7 @@ test.describe('wallet UI account management', () => {
 		// The embedded runtime does not yet apply its own DisputeStarted log back to the account (core
 		// finding, see docs/audit), so the status reads "sent" here and "Disputed" once that lands.
 		await expect(batch).toHaveCount(0, { timeout: CHAIN_TIMEOUT });
-		await expect(page.getByTestId('account-row').first()).toContainText('dispute', { timeout: CHAIN_TIMEOUT });
+		await expect(page.getByTestId('account-row').first()).toContainText(/dispute/i, { timeout: CHAIN_TIMEOUT });
 		await page.getByTestId('account-row').first().click();
 		await expect(page.getByTestId('account-status')).toHaveText(/Dispute sent|Disputed/, { timeout: CHAIN_TIMEOUT });
 		await page.getByTestId('account-manage').click();

@@ -1,5 +1,17 @@
 import { expect, test, type Page } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { enterStack, fundFromHub, readWalletCheckpoint } from './stack';
+
+// Bundle before opening a wallet: a raw core import makes Vite optimize new
+// dependencies and reload the live page, destroying its memory-only session.
+const hashModule = fileURLToPath(new URL('../../.logs/qa/browser-helpers/canonical-hash.mjs', import.meta.url));
+test.beforeAll(() => {
+  mkdirSync(fileURLToPath(new URL('../../.logs/qa/browser-helpers/', import.meta.url)), { recursive: true });
+  execFileSync('bun', ['build', fileURLToPath(new URL('../../core/storage/canonical-hash.ts', import.meta.url)),
+    '--target=browser', '--outfile', hashModule], { timeout: 60_000, stdio: 'pipe' });
+});
 
 async function journal(page: Page, height: number) {
   return page.evaluate(async height => {
@@ -10,7 +22,7 @@ async function journal(page: Page, height: number) {
 }
 
 async function canonicalRoot(page: Page, height: number): Promise<string> {
-  const moduleUrl = `/@fs${new URL('../../core/storage/canonical-hash.ts', import.meta.url).pathname}`;
+  const moduleUrl = `/@fs${hashModule}`;
   return page.evaluate(async ({ height, moduleUrl }) => {
     const debug = (window as Window & { __xln: { env(): import('../../core/api/public/runtime-module').RuntimeReplica; xln(): Promise<import('../../core/api/public/runtime-module').XLNModule> } }).__xln;
     const xln = await debug.xln();
