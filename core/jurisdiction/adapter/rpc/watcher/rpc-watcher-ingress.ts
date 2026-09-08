@@ -2,6 +2,7 @@ import type { RuntimeReplica, RuntimeInput } from '../../../../runtime/types';
 import {
   applyJBlockHeadersIngressTransform,
   enqueueJHistoryRange,
+  getMinimumScannedSignerJHeight,
   type PendingWatcherJHistoryRange,
   type findWatcherJurisdictionReplica,
   processEventBatch,
@@ -237,6 +238,20 @@ export const applyAuthenticatedWatcherRange = async (
       fromBlock: request.fromBlock,
       toBlock: request.toBlock,
       rawEventCount: decoded.events.length,
+    });
+    return false;
+  }
+  // A signer can be imported while receipt authentication awaits RPC. Its
+  // certified prefix may precede this range: admitting 515..770 to a signer
+  // anchored at 2 makes pending-history wait forever for missing 3..514.
+  // Re-read from the current minimum before publishing any of these inputs.
+  const minimumLocalScan = getMinimumScannedSignerJHeight(request.activeEnv, request.watcherReplica);
+  if (minimumLocalScan !== null && request.fromBlock > minimumLocalScan + 1) {
+    request.emitDebug({
+      event: 'j_watch_range_rebased_after_signer_import',
+      fromBlock: request.fromBlock,
+      toBlock: request.toBlock,
+      nextFromBlock: minimumLocalScan + 1,
     });
     return false;
   }
