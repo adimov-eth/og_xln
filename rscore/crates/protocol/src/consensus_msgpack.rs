@@ -253,11 +253,29 @@ impl Encoder {
             self.write_u64(value);
             return Ok(());
         }
-        let value = i128::try_from(value)
-            .map_err(|_| ConsensusMessagePackError::BigIntOutOfRange(value.to_string()))?;
-        self.bytes.extend_from_slice(&[0xd8, 0x42]);
-        self.bytes.extend_from_slice(&value.to_be_bytes());
-        Ok(())
+        // msgpackr's overflow path packs the value as 64-bit limbs, most
+        // significant first, and emits them as one ext(0x42) payload. That is
+        // exactly the minimal two's-complement big-endian encoding left-padded
+        // with the sign byte to a multiple of eight. Int512 ProofBody offsets
+        // (up to 512 bits) reach this path; capping at i128 rejected the exact
+        // values TypeScript writes into a dispute jBatch.
+        let mut payload = value.to_signed_bytes_be();
+        // Beyond 65_536 bits msgpackr switches to a different (unpadded)
+        // representation. Nothing in consensus state is that wide; refuse
+        // rather than emit bytes TypeScript would not produce.
+        if payload.len() > 8_192 {
+            return Err(ConsensusMessagePackError::BigIntOutOfRange(
+                value.to_string(),
+            ));
+        }
+        let padding = (8 - payload.len() % 8) % 8;
+        if padding > 0 {
+            let fill = if value.sign() == Sign::Minus { 0xff } else { 0 };
+            let mut padded = vec![fill; padding];
+            padded.append(&mut payload);
+            payload = padded;
+        }
+        self.write_extension(0x42, &payload)
     }
 
     fn write_map(
@@ -437,6 +455,36 @@ mod tests {
         assert_eq!(
             hex(values),
             "963fcc40cb41f0000000000000cfffffffffffffffffd84200000000000000010000000000000000d842ffffffffffffffff7fffffffffffffff"
+        );
+    }
+
+    /// Regression: Int512 ProofBody offsets in a dispute jBatch exceed i128.
+    /// msgpackr limbs them into 64-bit words, so the ext(0x42) payload is a
+    /// sign-extended big-endian two's complement padded to a multiple of eight.
+    /// Capping at i128 halted the Rust replay of the production H1 recording.
+    #[test]
+    fn matches_typescript_msgpackr_bigints_wider_than_i128() {
+        let big = |value: BigInt| hex(CanonicalValue::BigInt(value));
+        let word = BigInt::from(1_u8) << 256_u32;
+        assert_eq!(
+            big(&word - BigInt::from(80_040_000_000_000_000_u64)),
+            "c728420000000000000000fffffffffffffffffffffffffffffffffffffffffffffffffee3a40b482d8000"
+        );
+        assert_eq!(
+            big(BigInt::from(1_u8) << 127_u32),
+            "c71842000000000000000080000000000000000000000000000000"
+        );
+        assert_eq!(
+            big(-(BigInt::from(1_u8) << 127_u32)),
+            "d84280000000000000000000000000000000"
+        );
+        assert_eq!(
+            big((BigInt::from(1_u8) << 511_u32) - BigInt::from(1_u8)),
+            "c740427fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+        assert_eq!(
+            big(-(BigInt::from(1_u8) << 511_u32)),
+            "c7404280000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
         );
     }
 

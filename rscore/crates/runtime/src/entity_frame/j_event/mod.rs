@@ -338,7 +338,12 @@ mod tests {
             "watchSeed": hash,
             "leftResponseSeconds": 10,
             "rightResponseSeconds": 20,
-            "offdeltas": [{"__xlnType":"BigInt","value":"-1"}],
+            // TypeScript `validateProofBody` re-encodes every offdelta through
+            // `encodeInt512`, so a signed offset arrives as two limbs.
+            "offdeltas": [{
+                "high": {"__xlnType":"BigInt","value":"-1"},
+                "low": {"__xlnType":"BigInt","value":"115792089237316195423570985008687907853269984665640564039457584007913129639935"}
+            }],
             "tokenIds": [{"__xlnType":"BigInt","value":"7"}],
             "transformers": []
         });
@@ -371,6 +376,14 @@ mod tests {
         assert_eq!(
             events[0]["data"]["initialProofbody"]["tokenIds"][0]["value"],
             "7"
+        );
+        assert_eq!(
+            events[0]["data"]["initialProofbody"]["offdeltas"][0]["high"]["value"],
+            "-1"
+        );
+        assert_eq!(
+            events[0]["data"]["initialProofbody"]["offdeltas"][0]["low"]["value"],
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935"
         );
         assert_eq!(events[3]["data"]["fillRatio"], 65535);
     }

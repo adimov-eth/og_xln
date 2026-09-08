@@ -1,0 +1,1682 @@
+{
+  "canonicalSource": "TypeScript production Entity settlement and dispute-start reducers",
+  "cases": [
+    {
+      "accountStatus": "active",
+      "accountView": {
+        "counterpartyDispute": null,
+        "disputePrepare": null,
+        "jNonce": 0,
+        "ownerIsLeft": false,
+        "settlementExecution": null,
+        "settlementTransitionPending": false,
+        "settlementWorkspace": null,
+        "status": "active"
+      },
+      "after": {
+        "root": "0x59664058c2be6b52602a77d98435eff0bbd09d9c13563fbc3a8f1ff822401bac",
+        "sections": [
+          {
+            "digest": "0x57e5c462b78d7eee6504efcebf74bf1816caeaf48d68fcd56a1d08bc07746a92",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "before": {
+        "root": "0x59664058c2be6b52602a77d98435eff0bbd09d9c13563fbc3a8f1ff822401bac",
+        "sections": [
+          {
+            "digest": "0x57e5c462b78d7eee6504efcebf74bf1816caeaf48d68fcd56a1d08bc07746a92",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "changedSections": [],
+      "evidence": {
+        "accountTxs": [
+          {
+            "accountId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+            "tx": {
+              "data": {
+                "executorIsLeft": false,
+                "kind": "upsert",
+                "memo": "fixture-propose",
+                "ops": [
+                  {
+                    "amount": {
+                      "__xlnType": "BigInt",
+                      "value": "500"
+                    },
+                    "tokenId": 1,
+                    "type": "r2c"
+                  }
+                ],
+                "revision": 1
+              },
+              "type": "settle_transition"
+            }
+          }
+        ],
+        "events": [
+          {
+            "message": "⚖️ Settlement proposal queued for bilateral Account consensus",
+            "type": "status"
+          }
+        ],
+        "hashesToSign": [],
+        "jOutputs": [],
+        "outputs": []
+      },
+      "evidenceDigest": "0x1361f18fce593b01bc2743947c70f7458d74d60b19d9f27173c48d9077a105c3",
+      "jBatchState": null,
+      "name": "settle_propose",
+      "setup": {
+        "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+        "deltaTransformer": "0x7777777777777777777777777777777777777777",
+        "disputeConfig": {
+          "leftResponseSeconds": 86400,
+          "rightResponseSeconds": 3600
+        },
+        "domain": {
+          "chainId": 31337,
+          "depositoryAddress": "0x8888888888888888888888888888888888888888"
+        },
+        "entityId": "0x6b2c590f6020288802fc61e72c7c5dd829c4ddce59c7ec3f81d67f902dce58d2",
+        "localIsLeft": false,
+        "offdeltas": [
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "5200080000"
+            },
+            "tokenId": 1
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "-80040000000000000"
+            },
+            "tokenId": 2
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "0"
+            },
+            "tokenId": 3
+          }
+        ],
+        "timestamp": 2000,
+        "watchSeed": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+      },
+      "tx": {
+        "data": {
+          "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+          "memo": "fixture-propose",
+          "ops": [
+            {
+              "amount": {
+                "__xlnType": "BigInt",
+                "value": "500"
+              },
+              "tokenId": 1,
+              "type": "r2c"
+            }
+          ]
+        },
+        "type": "settle_propose"
+      }
+    },
+    {
+      "accountStatus": "active",
+      "accountView": {
+        "counterpartyDispute": null,
+        "disputePrepare": null,
+        "jNonce": 0,
+        "ownerIsLeft": false,
+        "settlementExecution": null,
+        "settlementTransitionPending": false,
+        "settlementWorkspace": {
+          "createdAt": 2000,
+          "executorIsLeft": false,
+          "lastModifiedByLeft": false,
+          "lastUpdatedAt": 2000,
+          "ops": [
+            {
+              "amount": {
+                "__xlnType": "BigInt",
+                "value": "500"
+              },
+              "tokenId": 1,
+              "type": "r2c"
+            }
+          ],
+          "revision": 1,
+          "status": "draft",
+          "workspaceHash": "0x083e73f611f4361596c9470b912bd4a72bd7e4af696ebcc15aba749694934d8c"
+        },
+        "status": "active"
+      },
+      "after": {
+        "root": "0xc802083668cb79ac877cd8d1824fcdc84b4265f0ffc22d1c65cb9c618198276d",
+        "sections": [
+          {
+            "digest": "0x4df047b81d55766ee72eb724503689d6230d1b141b149b3c798aa6434ac80c40",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "before": {
+        "root": "0xc802083668cb79ac877cd8d1824fcdc84b4265f0ffc22d1c65cb9c618198276d",
+        "sections": [
+          {
+            "digest": "0x4df047b81d55766ee72eb724503689d6230d1b141b149b3c798aa6434ac80c40",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "changedSections": [],
+      "evidence": {
+        "accountTxs": [
+          {
+            "accountId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+            "tx": {
+              "data": {
+                "executorIsLeft": false,
+                "kind": "upsert",
+                "memo": "fixture-update",
+                "ops": [
+                  {
+                    "amount": {
+                      "__xlnType": "BigInt",
+                      "value": "700"
+                    },
+                    "tokenId": 1,
+                    "type": "r2c"
+                  }
+                ],
+                "previousWorkspaceHash": "0x083e73f611f4361596c9470b912bd4a72bd7e4af696ebcc15aba749694934d8c",
+                "revision": 2
+              },
+              "type": "settle_transition"
+            }
+          }
+        ],
+        "events": [
+          {
+            "message": "⚖️ Settlement update v2 queued for bilateral Account consensus",
+            "type": "status"
+          }
+        ],
+        "hashesToSign": [],
+        "jOutputs": [],
+        "outputs": []
+      },
+      "evidenceDigest": "0x96e1742f8b96c7cf8de1e2b9f21868a925edca6817ac663c70d5cd75190560c2",
+      "jBatchState": null,
+      "name": "settle_update",
+      "setup": {
+        "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+        "deltaTransformer": "0x7777777777777777777777777777777777777777",
+        "disputeConfig": {
+          "leftResponseSeconds": 86400,
+          "rightResponseSeconds": 3600
+        },
+        "domain": {
+          "chainId": 31337,
+          "depositoryAddress": "0x8888888888888888888888888888888888888888"
+        },
+        "entityId": "0x6b2c590f6020288802fc61e72c7c5dd829c4ddce59c7ec3f81d67f902dce58d2",
+        "localIsLeft": false,
+        "offdeltas": [
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "5200080000"
+            },
+            "tokenId": 1
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "-80040000000000000"
+            },
+            "tokenId": 2
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "0"
+            },
+            "tokenId": 3
+          }
+        ],
+        "timestamp": 2000,
+        "watchSeed": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+      },
+      "tx": {
+        "data": {
+          "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+          "memo": "fixture-update",
+          "ops": [
+            {
+              "amount": {
+                "__xlnType": "BigInt",
+                "value": "700"
+              },
+              "tokenId": 1,
+              "type": "r2c"
+            }
+          ]
+        },
+        "type": "settle_update"
+      }
+    },
+    {
+      "accountStatus": "active",
+      "accountView": {
+        "counterpartyDispute": null,
+        "disputePrepare": null,
+        "jNonce": 0,
+        "ownerIsLeft": false,
+        "settlementExecution": null,
+        "settlementTransitionPending": false,
+        "settlementWorkspace": {
+          "createdAt": 2000,
+          "executorIsLeft": false,
+          "lastModifiedByLeft": false,
+          "lastUpdatedAt": 2000,
+          "ops": [
+            {
+              "amount": {
+                "__xlnType": "BigInt",
+                "value": "500"
+              },
+              "tokenId": 1,
+              "type": "r2c"
+            }
+          ],
+          "revision": 1,
+          "status": "draft",
+          "workspaceHash": "0x083e73f611f4361596c9470b912bd4a72bd7e4af696ebcc15aba749694934d8c"
+        },
+        "status": "active"
+      },
+      "after": {
+        "root": "0x3cd22acbf63d37b49ffb601da456b369048e3489afc0c609d05a3f3752595844",
+        "sections": [
+          {
+            "digest": "0x4df047b81d55766ee72eb724503689d6230d1b141b149b3c798aa6434ac80c40",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x4f8712499a9e6ae855652843c3a7f1602075e30c469fd37a8817c4a1f56d20e6",
+            "field": "deferredAccountProposals"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "before": {
+        "root": "0xc802083668cb79ac877cd8d1824fcdc84b4265f0ffc22d1c65cb9c618198276d",
+        "sections": [
+          {
+            "digest": "0x4df047b81d55766ee72eb724503689d6230d1b141b149b3c798aa6434ac80c40",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "changedSections": [
+        "deferredAccountProposals"
+      ],
+      "evidence": {
+        "accountTxs": [],
+        "events": [
+          {
+            "message": "⚖️ Settlement approval accepted; waiting for prior Account work",
+            "type": "status"
+          }
+        ],
+        "hashesToSign": [],
+        "jOutputs": [],
+        "outputs": []
+      },
+      "evidenceDigest": "0x0fb007c6fc213dfe57c61ec37ec8a055538d97513cd1989b60795896135b1c8b",
+      "jBatchState": null,
+      "name": "settle_approve",
+      "setup": {
+        "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+        "deltaTransformer": "0x7777777777777777777777777777777777777777",
+        "disputeConfig": {
+          "leftResponseSeconds": 86400,
+          "rightResponseSeconds": 3600
+        },
+        "domain": {
+          "chainId": 31337,
+          "depositoryAddress": "0x8888888888888888888888888888888888888888"
+        },
+        "entityId": "0x6b2c590f6020288802fc61e72c7c5dd829c4ddce59c7ec3f81d67f902dce58d2",
+        "localIsLeft": false,
+        "offdeltas": [
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "5200080000"
+            },
+            "tokenId": 1
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "-80040000000000000"
+            },
+            "tokenId": 2
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "0"
+            },
+            "tokenId": 3
+          }
+        ],
+        "timestamp": 2000,
+        "watchSeed": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+      },
+      "tx": {
+        "data": {
+          "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+          "workspaceHash": "0x083e73f611f4361596c9470b912bd4a72bd7e4af696ebcc15aba749694934d8c"
+        },
+        "type": "settle_approve"
+      }
+    },
+    {
+      "accountStatus": "active",
+      "accountView": {
+        "counterpartyDispute": null,
+        "disputePrepare": null,
+        "jNonce": 0,
+        "ownerIsLeft": false,
+        "settlementExecution": null,
+        "settlementTransitionPending": false,
+        "settlementWorkspace": {
+          "createdAt": 2000,
+          "executorIsLeft": false,
+          "lastModifiedByLeft": false,
+          "lastUpdatedAt": 2000,
+          "ops": [
+            {
+              "amount": {
+                "__xlnType": "BigInt",
+                "value": "500"
+              },
+              "tokenId": 1,
+              "type": "r2c"
+            }
+          ],
+          "revision": 1,
+          "status": "draft",
+          "workspaceHash": "0x083e73f611f4361596c9470b912bd4a72bd7e4af696ebcc15aba749694934d8c"
+        },
+        "status": "active"
+      },
+      "after": {
+        "root": "0xc802083668cb79ac877cd8d1824fcdc84b4265f0ffc22d1c65cb9c618198276d",
+        "sections": [
+          {
+            "digest": "0x4df047b81d55766ee72eb724503689d6230d1b141b149b3c798aa6434ac80c40",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "before": {
+        "root": "0xc802083668cb79ac877cd8d1824fcdc84b4265f0ffc22d1c65cb9c618198276d",
+        "sections": [
+          {
+            "digest": "0x4df047b81d55766ee72eb724503689d6230d1b141b149b3c798aa6434ac80c40",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "changedSections": [],
+      "evidence": {
+        "accountTxs": [
+          {
+            "accountId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+            "tx": {
+              "data": {
+                "kind": "clear",
+                "revision": 1,
+                "workspaceHash": "0x083e73f611f4361596c9470b912bd4a72bd7e4af696ebcc15aba749694934d8c"
+              },
+              "type": "settle_transition"
+            }
+          }
+        ],
+        "events": [
+          {
+            "message": "❌ Settlement clear queued: fixture-reject",
+            "type": "status"
+          }
+        ],
+        "hashesToSign": [],
+        "jOutputs": [],
+        "outputs": []
+      },
+      "evidenceDigest": "0xe7432de8e3fe3771cff32482e567c80e9899df507eebdea353e69029060490e6",
+      "jBatchState": null,
+      "name": "settle_reject",
+      "setup": {
+        "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+        "deltaTransformer": "0x7777777777777777777777777777777777777777",
+        "disputeConfig": {
+          "leftResponseSeconds": 86400,
+          "rightResponseSeconds": 3600
+        },
+        "domain": {
+          "chainId": 31337,
+          "depositoryAddress": "0x8888888888888888888888888888888888888888"
+        },
+        "entityId": "0x6b2c590f6020288802fc61e72c7c5dd829c4ddce59c7ec3f81d67f902dce58d2",
+        "localIsLeft": false,
+        "offdeltas": [
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "5200080000"
+            },
+            "tokenId": 1
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "-80040000000000000"
+            },
+            "tokenId": 2
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "0"
+            },
+            "tokenId": 3
+          }
+        ],
+        "timestamp": 2000,
+        "watchSeed": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+      },
+      "tx": {
+        "data": {
+          "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+          "reason": "fixture-reject"
+        },
+        "type": "settle_reject"
+      }
+    },
+    {
+      "accountStatus": "active",
+      "accountView": {
+        "counterpartyDispute": null,
+        "disputePrepare": null,
+        "jNonce": 0,
+        "ownerIsLeft": false,
+        "settlementExecution": {
+          "counterpartyHanko": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004104f7773edace58ceb3bbd7de5c6fe90ccdbf6d82a36a30fc6ce5580c0f6bee354da36d086460776dad514c2b854d96944dc1c2ab6c2e8cf78bca13389fe86e850000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000203f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e8700000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "diffs": [
+            {
+              "collateralDiff": {
+                "__xlnType": "BigInt",
+                "value": "500"
+              },
+              "leftDiff": {
+                "__xlnType": "BigInt",
+                "value": "0"
+              },
+              "ondeltaDiff": {
+                "__xlnType": "BigInt",
+                "value": "0"
+              },
+              "rightDiff": {
+                "__xlnType": "BigInt",
+                "value": "-500"
+              },
+              "tokenId": 1
+            }
+          ],
+          "forgiveTokenIds": [],
+          "nonce": 1,
+          "revision": 1,
+          "workspaceHash": "0x083e73f611f4361596c9470b912bd4a72bd7e4af696ebcc15aba749694934d8c"
+        },
+        "settlementTransitionPending": false,
+        "settlementWorkspace": {
+          "createdAt": 2000,
+          "executorIsLeft": false,
+          "lastModifiedByLeft": false,
+          "lastUpdatedAt": 2000,
+          "leftHanko": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004104f7773edace58ceb3bbd7de5c6fe90ccdbf6d82a36a30fc6ce5580c0f6bee354da36d086460776dad514c2b854d96944dc1c2ab6c2e8cf78bca13389fe86e850000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000203f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e8700000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "nonceAtSign": 1,
+          "ops": [
+            {
+              "amount": {
+                "__xlnType": "BigInt",
+                "value": "500"
+              },
+              "tokenId": 1,
+              "type": "r2c"
+            }
+          ],
+          "postSettlementDisputeProof": {
+            "disputeHash": "0xed1e674f31f35f12abcac00febdad654f01183abe7a4524e84a46488714fff85",
+            "leftHanko": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004102b7b79deaf687af41640bc35b845ae9163af5d0c89023d9530db62c6e060c964ea0f609178dea76dd4e59983ac7d433337eac66fd436e0b7b5c80543ea54b690100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000203f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e8700000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+            "nonce": 2,
+            "proofBodyHash": "0x05de987cfbb9ae3fe26ed2139ac123c96b3dc923d4987cee5051152d9a04743c",
+            "proposerIsLeft": false,
+            "rightHanko": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000002c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000041ba8686e58db414afcc6f2a292370f058539ce088ee3baa5dd7f70588d20d2bef0f05c8915213a5794ad731521132939bd03da283fae7417bdb3bdfda4792a6810000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000206b2c590f6020288802fc61e72c7c5dd829c4ddce59c7ec3f81d67f902dce58d200000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "revision": 1,
+          "rightHanko": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000412e7d655dd18dacca414bc9e443f43a185938c1bd9eef9b39a8cae9c5ad361db6339f696850f436fdde71f473c59ac951f7ed17598a4bd25851a4a909e8e720890000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000206b2c590f6020288802fc61e72c7c5dd829c4ddce59c7ec3f81d67f902dce58d200000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "settlementHash": "0xbb8fafed8c642c40ecb2339a885031f2380fbb9d0ca26cc11628224a07ef935a",
+          "status": "ready_to_submit",
+          "workspaceHash": "0x083e73f611f4361596c9470b912bd4a72bd7e4af696ebcc15aba749694934d8c"
+        },
+        "status": "active"
+      },
+      "after": {
+        "root": "0x64609e0f45ea94ef09f44009bbf7a4c56ba03c1508a57f087ae3ee7325129c62",
+        "sections": [
+          {
+            "digest": "0x1c41bafe226ccab2ca8dc5645ce520e75ec1dc32d708b9b9adacd1ef9a761c54",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0xae7220accfbf5b7b9bd4f5f8e746934e731d12502f7e6982119c286e689a4189",
+            "field": "jBatchState"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "before": {
+        "root": "0xd203c5625428fc2ca1720a29401169cfe8abe97c15c2a92437aa9207c8d0c097",
+        "sections": [
+          {
+            "digest": "0x1c41bafe226ccab2ca8dc5645ce520e75ec1dc32d708b9b9adacd1ef9a761c54",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "changedSections": [
+        "jBatchState"
+      ],
+      "evidence": {
+        "accountTxs": [
+          {
+            "accountId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+            "tx": {
+              "data": {
+                "kind": "submit",
+                "revision": 1,
+                "workspaceHash": "0x083e73f611f4361596c9470b912bd4a72bd7e4af696ebcc15aba749694934d8c"
+              },
+              "type": "settle_transition"
+            }
+          }
+        ],
+        "events": [
+          {
+            "message": "✅ Settlement submission queued (1 diffs) - use j_broadcast to commit",
+            "type": "status"
+          }
+        ],
+        "hashesToSign": [],
+        "jOutputs": [],
+        "outputs": []
+      },
+      "evidenceDigest": "0x26ee2b83426330de7655351370d865171e4be01db57a1ede11f7364dcf6572ec",
+      "jBatchState": {
+        "batch": {
+          "collateralToReserve": [],
+          "counterDisputes": [],
+          "disputeFinalizations": [],
+          "disputeStarts": [],
+          "externalTokenToReserve": [],
+          "hashLadderRegistrations": [],
+          "reserveToCollateral": [],
+          "reserveToExternalToken": [],
+          "reserveToReserve": [],
+          "revealSecrets": [],
+          "settlements": [
+            {
+              "diffs": [
+                {
+                  "collateralDiff": {
+                    "__xlnType": "BigInt",
+                    "value": "500"
+                  },
+                  "leftDiff": {
+                    "__xlnType": "BigInt",
+                    "value": "0"
+                  },
+                  "ondeltaDiff": {
+                    "__xlnType": "BigInt",
+                    "value": "0"
+                  },
+                  "rightDiff": {
+                    "__xlnType": "BigInt",
+                    "value": "-500"
+                  },
+                  "tokenId": 1
+                }
+              ],
+              "forgiveDebtsInTokenIds": [],
+              "leftEntity": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+              "nonce": 1,
+              "rightEntity": "0x6b2c590f6020288802fc61e72c7c5dd829c4ddce59c7ec3f81d67f902dce58d2",
+              "sig": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004104f7773edace58ceb3bbd7de5c6fe90ccdbf6d82a36a30fc6ce5580c0f6bee354da36d086460776dad514c2b854d96944dc1c2ab6c2e8cf78bca13389fe86e850000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000203f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e8700000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000"
+            }
+          ]
+        },
+        "broadcastCount": 0,
+        "failedAttempts": 0,
+        "jurisdiction": null,
+        "lastBroadcast": 0,
+        "status": "accumulating"
+      },
+      "name": "settle_execute",
+      "setup": {
+        "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+        "deltaTransformer": "0x7777777777777777777777777777777777777777",
+        "disputeConfig": {
+          "leftResponseSeconds": 86400,
+          "rightResponseSeconds": 3600
+        },
+        "domain": {
+          "chainId": 31337,
+          "depositoryAddress": "0x8888888888888888888888888888888888888888"
+        },
+        "entityId": "0x6b2c590f6020288802fc61e72c7c5dd829c4ddce59c7ec3f81d67f902dce58d2",
+        "localIsLeft": false,
+        "offdeltas": [
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "5200080000"
+            },
+            "tokenId": 1
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "-80040000000000000"
+            },
+            "tokenId": 2
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "0"
+            },
+            "tokenId": 3
+          }
+        ],
+        "timestamp": 2000,
+        "watchSeed": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+      },
+      "tx": {
+        "data": {
+          "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87"
+        },
+        "type": "settle_execute"
+      }
+    },
+    {
+      "accountStatus": "disputed",
+      "accountView": {
+        "counterpartyDispute": {
+          "hanko": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000415b38e6105eca2e74104782265ed80d2274a2e99fdf07e84bfa79a69641f72acc2bb39c800f6253e2908212f2529c41580b48ba78862112ad26107af3fe1c38a60100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000203f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e8700000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "nonce": 20,
+          "proofBodyHash": "0x05de987cfbb9ae3fe26ed2139ac123c96b3dc923d4987cee5051152d9a04743c",
+          "proposerIsLeft": true
+        },
+        "disputePrepare": {
+          "readyAfter": 2000,
+          "reason": "fixture-prepare",
+          "startIntent": {
+            "description": "fixture-dispute"
+          },
+          "startedAt": 2000
+        },
+        "jNonce": 0,
+        "ownerIsLeft": false,
+        "settlementExecution": null,
+        "settlementTransitionPending": false,
+        "settlementWorkspace": null,
+        "status": "dispute_preparing"
+      },
+      "after": {
+        "root": "0x2e836571e183b1bc4623c11b88ab40252be3f3c08efc347ca956cd67892f8a4e",
+        "sections": [
+          {
+            "digest": "0x2196432bea7da590a6d9ac31cc9fc6b71182019d4f7ea060273998033bf72571",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x4d9209010f8b0d04e5c2c22cd8b2b7c5b3b7e50802a125fa7cc9ecc7bfff851e",
+            "field": "jBatchState"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "before": {
+        "root": "0x705bdb9a373d7aa76ba9fc5cbd7b2a2f9782f937ac5c3650a93f9ca96b028085",
+        "sections": [
+          {
+            "digest": "0xdb021a57ece74114fdb78c4bf4165b5f7ecba26de5ee3080eb6f9b769f6c2da2",
+            "field": "accounts"
+          },
+          {
+            "digest": "0x9f1c60277cb552023d8410ac823f07a37e1ac737eece6ca7159dc240c143f3f2",
+            "field": "config"
+          },
+          {
+            "digest": "0x5e65d3813e8e3d52d7c18b0d27f1c8e6cd0ab26b12c4ac64e1440a6fed7906da",
+            "field": "crontabState"
+          },
+          {
+            "digest": "0x8da35fa86085acf78702493a83220be74630991737e86bc92f8ac865d40f3e1c",
+            "field": "entityEncryptionPublicKey"
+          },
+          {
+            "digest": "0x356026c26796885f78fbae121385f8a405e61989b2f061c766ff239f84153221",
+            "field": "entityId"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "height"
+          },
+          {
+            "digest": "0x44a7fea870a135b47d67ba1ef2cafd30a7c84292020012f690afeacfbb47eef8",
+            "field": "hubRebalanceConfig"
+          },
+          {
+            "digest": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            "field": "lastFinalizedJHeight"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "nonces"
+          },
+          {
+            "digest": "0x102e542f25cf8b52ee024185deb49b2d140bc3033ffc1dd798e94faf771585e4",
+            "field": "paybook"
+          },
+          {
+            "digest": "0x8c93140d54462bb9007ae08fb4cfc0e9d7ec4722b66dd8a29810b42647808c64",
+            "field": "profile"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "proposals"
+          },
+          {
+            "digest": "0x76be8b528d0075f7aae98d6fa57a6d3c83ae480a8469e668d7b0af968995ac71",
+            "field": "reserves"
+          },
+          {
+            "digest": "0x0c48602e82a6a8f1f32306cf2913757129a5b17b9137130ffcc984b4dbd09710",
+            "field": "timestamp"
+          }
+        ]
+      },
+      "changedSections": [
+        "accounts",
+        "jBatchState"
+      ],
+      "evidence": {
+        "accountTxs": [],
+        "counterpartyDispute": {
+          "disputeHash": "0x1a354344242f0271ac7d15464fb4eb29599bf5d96687759dcd26f6292b4da6b8",
+          "hanko": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000415b38e6105eca2e74104782265ed80d2274a2e99fdf07e84bfa79a69641f72acc2bb39c800f6253e2908212f2529c41580b48ba78862112ad26107af3fe1c38a60100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000203f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e8700000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+          "nonce": 20,
+          "proofBodyHash": "0x05de987cfbb9ae3fe26ed2139ac123c96b3dc923d4987cee5051152d9a04743c",
+          "proposerIsLeft": true
+        },
+        "events": [
+          {
+            "message": "⚔️ Dispute started vs 2e87 (fixture-dispute) - account frozen, use jBroadcast to commit",
+            "type": "status"
+          }
+        ],
+        "hashesToSign": [],
+        "jOutputs": [],
+        "outputs": [],
+        "proofBody": {
+          "leftResponseSeconds": 86400,
+          "offdeltas": [
+            {
+              "high": {
+                "__xlnType": "BigInt",
+                "value": "0"
+              },
+              "low": {
+                "__xlnType": "BigInt",
+                "value": "5200080000"
+              }
+            },
+            {
+              "high": {
+                "__xlnType": "BigInt",
+                "value": "-1"
+              },
+              "low": {
+                "__xlnType": "BigInt",
+                "value": "115792089237316195423570985008687907853269984665640564039457503967913129639936"
+              }
+            },
+            {
+              "high": {
+                "__xlnType": "BigInt",
+                "value": "0"
+              },
+              "low": {
+                "__xlnType": "BigInt",
+                "value": "0"
+              }
+            }
+          ],
+          "rightResponseSeconds": 3600,
+          "tokenIds": [
+            {
+              "__xlnType": "BigInt",
+              "value": "1"
+            },
+            {
+              "__xlnType": "BigInt",
+              "value": "2"
+            },
+            {
+              "__xlnType": "BigInt",
+              "value": "3"
+            }
+          ],
+          "transformers": [],
+          "watchSeed": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+        }
+      },
+      "evidenceDigest": "0x39c67cedc4416cbcdd5cd97c42c165b0467d71d2a3f69f5ac465f8ceaf5b4f2d",
+      "jBatchState": {
+        "batch": {
+          "collateralToReserve": [],
+          "counterDisputes": [],
+          "disputeFinalizations": [],
+          "disputeStarts": [
+            {
+              "counterentity": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+              "initialProofbody": {
+                "leftResponseSeconds": 86400,
+                "offdeltas": [
+                  {
+                    "high": {
+                      "__xlnType": "BigInt",
+                      "value": "0"
+                    },
+                    "low": {
+                      "__xlnType": "BigInt",
+                      "value": "5200080000"
+                    }
+                  },
+                  {
+                    "high": {
+                      "__xlnType": "BigInt",
+                      "value": "-1"
+                    },
+                    "low": {
+                      "__xlnType": "BigInt",
+                      "value": "115792089237316195423570985008687907853269984665640564039457503967913129639936"
+                    }
+                  },
+                  {
+                    "high": {
+                      "__xlnType": "BigInt",
+                      "value": "0"
+                    },
+                    "low": {
+                      "__xlnType": "BigInt",
+                      "value": "0"
+                    }
+                  }
+                ],
+                "rightResponseSeconds": 3600,
+                "tokenIds": [
+                  {
+                    "__xlnType": "BigInt",
+                    "value": "1"
+                  },
+                  {
+                    "__xlnType": "BigInt",
+                    "value": "2"
+                  },
+                  {
+                    "__xlnType": "BigInt",
+                    "value": "3"
+                  }
+                ],
+                "transformers": [],
+                "watchSeed": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+              },
+              "nonce": 20,
+              "proofbodyHash": "0x05de987cfbb9ae3fe26ed2139ac123c96b3dc923d4987cee5051152d9a04743c",
+              "proposerIsLeft": true,
+              "sig": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000415b38e6105eca2e74104782265ed80d2274a2e99fdf07e84bfa79a69641f72acc2bb39c800f6253e2908212f2529c41580b48ba78862112ad26107af3fe1c38a60100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000203f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e8700000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+              "starterCounterArguments": "0x",
+              "starterCounterProofCommitment": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "starterInitialArguments": "0x",
+              "watchSeed": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+            }
+          ],
+          "externalTokenToReserve": [],
+          "hashLadderRegistrations": [],
+          "reserveToCollateral": [],
+          "reserveToExternalToken": [],
+          "reserveToReserve": [],
+          "revealSecrets": [],
+          "settlements": []
+        },
+        "broadcastCount": 0,
+        "failedAttempts": 0,
+        "jurisdiction": null,
+        "lastBroadcast": 0,
+        "status": "empty"
+      },
+      "name": "disputeStart",
+      "setup": {
+        "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+        "deltaTransformer": "0x7777777777777777777777777777777777777777",
+        "disputeConfig": {
+          "leftResponseSeconds": 86400,
+          "rightResponseSeconds": 3600
+        },
+        "domain": {
+          "chainId": 31337,
+          "depositoryAddress": "0x8888888888888888888888888888888888888888"
+        },
+        "entityId": "0x6b2c590f6020288802fc61e72c7c5dd829c4ddce59c7ec3f81d67f902dce58d2",
+        "localIsLeft": false,
+        "offdeltas": [
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "5200080000"
+            },
+            "tokenId": 1
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "-80040000000000000"
+            },
+            "tokenId": 2
+          },
+          {
+            "collateral": {
+              "__xlnType": "BigInt",
+              "value": "10000"
+            },
+            "offdelta": {
+              "__xlnType": "BigInt",
+              "value": "0"
+            },
+            "tokenId": 3
+          }
+        ],
+        "timestamp": 2000,
+        "watchSeed": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+      },
+      "tx": {
+        "data": {
+          "counterpartyEntityId": "0x3f3b923f21441baef2e09e060878cf91ca90ac8e9a3ba10f8554765ff1822e87",
+          "description": "fixture-dispute"
+        },
+        "type": "disputeStart"
+      }
+    }
+  ],
+  "version": 1
+}

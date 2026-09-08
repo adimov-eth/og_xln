@@ -64,6 +64,42 @@ fn signed(value: &BigInt) -> CanonicalValue {
     CanonicalValue::BigInt(value.clone())
 }
 
+/// Canonical `Int512` limb split, byte-identical to the TypeScript
+/// `encodeInt512` used by `canonicalizeProofBodyStruct`.
+///
+/// The signed ProofBody offset is a Solidity `Int512 { int256 high; uint256 low }`
+/// tuple. TypeScript keeps that exact two-limb shape in the live jBatch draft,
+/// in the persisted Entity graph, and therefore inside the `jBatchState`
+/// consensus section. Projecting a single flat `BigInt` here produced a
+/// different Entity state root for every batch carrying a dispute proof.
+fn int512_limbs(value: &BigInt) -> Result<CanonicalValue, JBatchError> {
+    let modulus = BigInt::from(1_u8) << 256_u32;
+    let mut low = value % &modulus;
+    if low.sign() == Sign::Minus {
+        low += &modulus;
+    }
+    let high = (value - &low) / &modulus;
+    // TS `assertInt512` rejects anything outside int512; keep the same fence so
+    // an out-of-range offset fails loud instead of silently truncating a limb.
+    if high.to_signed_bytes_be().len() > 32 {
+        return Err(err(format!("INT512_WIDTH:{value}")));
+    }
+    Ok(object([("high", signed(&high)), ("low", signed(&low))]))
+}
+
+fn int512_value(value: &CanonicalValue, context: &str) -> Result<BigInt, JBatchError> {
+    let fields = Fields::new(value, context, &["high", "low"], &[])?;
+    let high = signed_big(fields.get("high")?, &format!("{context}.high"))?;
+    let low = signed_big(fields.get("low")?, &format!("{context}.low"))?;
+    if low.sign() == Sign::Minus || low >= (BigInt::from(1_u8) << 256_u32) {
+        return Err(err(format!("INT512_LOW:{context}")));
+    }
+    if high.to_signed_bytes_be().len() > 32 {
+        return Err(err(format!("INT512_HIGH:{context}")));
+    }
+    Ok((high << 256_u32) + low)
+}
+
 fn proof_body(value: &ProofBody) -> Result<CanonicalValue, JBatchError> {
     Ok(object([
         ("watchSeed", text(hex(&value.watch_seed))),
@@ -83,7 +119,13 @@ fn proof_body(value: &ProofBody) -> Result<CanonicalValue, JBatchError> {
         ),
         (
             "offdeltas",
-            CanonicalValue::Array(value.offdeltas.iter().map(signed).collect()),
+            CanonicalValue::Array(
+                value
+                    .offdeltas
+                    .iter()
+                    .map(int512_limbs)
+                    .collect::<Result<_, _>>()?,
+            ),
         ),
         (
             "tokenIds",
@@ -713,7 +755,7 @@ fn decode_proof(value: &CanonicalValue, context: &str) -> Result<ProofBody, JBat
         offdeltas: decode_vec(
             f.get("offdeltas")?,
             &format!("{context}.offdeltas"),
-            signed_big,
+            int512_value,
         )?,
         token_ids: decode_vec(f.get("tokenIds")?, &format!("{context}.tokenIds"), big_uint)?,
         transformers: decode_vec(
@@ -1346,6 +1388,89 @@ mod tests {
                 .to_string()
                 .contains("NUMBER:proofBody.leftResponseSeconds")
         );
+    }
+
+    /// Regression: the production 111-frame H1 recording diverged at frame 57
+    /// (`prepareDispute` → `disputeStart`) because this projection flattened the
+    /// signed ProofBody offsets into one `BigInt` while TypeScript keeps the
+    /// `Int512 { high, low }` limbs from `encodeInt512`.
+    #[test]
+    fn proof_offdeltas_project_typescript_int512_limbs() {
+        let word = BigInt::from(1_u8) << 256_u32;
+        let expected = ProofBody {
+            watch_seed: [0; 32],
+            left_response_seconds: 0,
+            right_response_seconds: 0,
+            offdeltas: vec![
+                BigInt::from(5_200_080_000_i64),
+                BigInt::from(-80_040_000_000_000_000_i64),
+                BigInt::from(0),
+            ],
+            token_ids: Vec::new(),
+            transformers: Vec::new(),
+        };
+        let value = proof_body(&expected).expect("proof body");
+        assert_eq!(decode_proof(&value, "proofBody").expect("decode"), expected);
+        let CanonicalValue::Object(fields) = &value else {
+            panic!("proof body object")
+        };
+        let (_, offdeltas) = fields
+            .iter()
+            .find(|(key, _)| key == "offdeltas")
+            .expect("offdeltas");
+        assert_eq!(
+            *offdeltas,
+            CanonicalValue::Array(vec![
+                object([
+                    ("high", signed(&BigInt::from(0))),
+                    ("low", signed(&BigInt::from(5_200_080_000_i64))),
+                ]),
+                object([
+                    ("high", signed(&BigInt::from(-1))),
+                    (
+                        "low",
+                        signed(&(&word - BigInt::from(80_040_000_000_000_000_i64)))
+                    ),
+                ]),
+                object([
+                    ("high", signed(&BigInt::from(0))),
+                    ("low", signed(&BigInt::from(0))),
+                ]),
+            ]),
+        );
+        // A retired flat BigInt offset must fail loud, never decode as zero.
+        let mut retired = value;
+        let CanonicalValue::Object(fields) = &mut retired else {
+            panic!("proof body object")
+        };
+        let (_, offdeltas) = fields
+            .iter_mut()
+            .find(|(key, _)| key == "offdeltas")
+            .expect("offdeltas");
+        *offdeltas = CanonicalValue::Array(vec![CanonicalValue::BigInt(BigInt::from(1))]);
+        assert!(
+            decode_proof(&retired, "proofBody")
+                .expect_err("canonical storage rejects retired flat BigInt offsets")
+                .to_string()
+                .contains("proofBody.offdeltas[0]")
+        );
+    }
+
+    /// Int512 extremes must survive the limb split without losing a bit.
+    #[test]
+    fn proof_offdeltas_round_trip_int512_extremes() {
+        let max = (BigInt::from(1_u8) << 511_u32) - BigInt::from(1_u8);
+        let min = -(BigInt::from(1_u8) << 511_u32);
+        for value in [max.clone(), min.clone(), BigInt::from(-1), BigInt::from(1)] {
+            let projected = int512_limbs(&value).expect("limbs");
+            assert_eq!(
+                int512_value(&projected, "offdelta").expect("value"),
+                value,
+                "round trip {value}"
+            );
+        }
+        assert!(int512_limbs(&(max + BigInt::from(1_u8))).is_err());
+        assert!(int512_limbs(&(min - BigInt::from(1_u8))).is_err());
     }
 
     #[test]

@@ -241,9 +241,14 @@ fn all_eighteen_events_round_trip_and_match_typescript_hash() {
             *event
         );
     }
+    // Re-derived from the TypeScript oracle (`normalizeJurisdictionEvent` +
+    // `canonicalJurisdictionEventsHash`) over this exact catalog. The previous
+    // constant predated the Int512 ProofBody offsets: `validateProofBody`
+    // rejects a flat offdelta outright, so no TypeScript event ever hashed the
+    // shape the old value pinned.
     assert_eq!(
         hex_bytes(&canonical_events_hash(&events).expect("events hash")),
-        "0xf6b1ebbd287475146ee7443b5c892d762eaf94fc2c1462032d391f91f2980f8c",
+        "0x57518b290e3b29241be269838aec91a8ed3767b2f2b47d0f428211465c5557ab",
     );
 }
 

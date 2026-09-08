@@ -217,9 +217,21 @@ impl Encoder {
             self.bytes.extend_from_slice(&value.to_be_bytes());
             return Ok(());
         }
-        let value = i128::try_from(value)
-            .map_err(|_| RuntimeTransportError::MessagePack("bigint-range".into()))?;
-        self.extension(0x42, &value.to_be_bytes())
+        // msgpackr limbs the overflow BigInt into 64-bit words, most
+        // significant first: big-endian two's complement padded with the sign
+        // byte to a multiple of eight. Int512 ProofBody offsets need 40 bytes.
+        let mut payload = value.to_signed_bytes_be();
+        if payload.len() > 8_192 {
+            return Err(RuntimeTransportError::MessagePack("bigint-range".into()));
+        }
+        let padding = (8 - payload.len() % 8) % 8;
+        if padding > 0 {
+            let fill = if value.sign() == Sign::Minus { 0xff } else { 0 };
+            let mut padded = vec![fill; padding];
+            padded.append(&mut payload);
+            payload = padded;
+        }
+        self.extension(0x42, &payload)
     }
 
     fn object(

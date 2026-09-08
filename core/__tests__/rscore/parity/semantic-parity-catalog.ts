@@ -35,13 +35,6 @@ const covered = <K extends AccountTx['type']>(
   evidence,
 });
 
-const missingEntity = <K extends EntityTx['type']>(
-  type: K,
-  productionPath: string,
-): EntityTxSemanticCatalogEntry<K> => ({
-  layer: 'entity', type, productionPath, semanticEvidence: 'missing',
-});
-
 const coveredEntity = <K extends EntityTx['type']>(
   type: K,
   productionPath: string,
@@ -100,6 +93,11 @@ const ENTITY_CONTROL_SEMANTIC_EVIDENCE = [
   'rscore/crates/entity-kernel/tests/entity_control_semantic_parity.rs',
   'rscore/fixtures/entity-control-semantics/group-b-v1.json',
 ] as const;
+const ENTITY_SETTLEMENT_SEMANTIC_EVIDENCE = [
+  'rscore/fixtures/entity-settlement/generate.ts',
+  'rscore/crates/entity-kernel/src/local_financial/settlement_semantic_parity.rs',
+  'rscore/fixtures/entity-settlement/settlement-v1.json',
+] as const;
 const MIXED_REPLAY_EVIDENCE = [
   'core/scripts/operations/hlt/replay/authority-evidence.ts',
   'core/scripts/operations/hlt/replay/commands/run-mixed-ts-rust-parity.ts',
@@ -154,7 +152,7 @@ export const ENTITY_TX_SEMANTIC_CATALOG = [
   coveredEntity('crossPullClose', 'core/entity/tx/handlers/payments/pull.ts', CROSS_J_ENTITY_KINDS_EVIDENCE),
   coveredEntity('directPayment', 'core/entity/tx/handlers/payments/direct-payment.ts', MIXED_REPLAY_EVIDENCE),
   coveredEntity('disputeFinalize', 'core/entity/tx/handlers/dispute/index.ts', MIXED_REPLAY_EVIDENCE),
-  missingEntity('disputeStart', 'core/entity/tx/handlers/dispute/index.ts'),
+  coveredEntity('disputeStart', 'core/entity/tx/handlers/dispute/index.ts', ENTITY_SETTLEMENT_SEMANTIC_EVIDENCE),
   coveredEntity('e2r', 'core/entity/tx/handlers/j-batch/e2r.ts', ENTITY_ROUTING_SEMANTIC_EVIDENCE),
   coveredEntity('entityCommand', 'core/entity/consensus/frame/application.ts#applyNestedEntityTx', CROSS_J_OPENING_LIFECYCLE_EVIDENCE),
   coveredEntity('entityProviderActivateBoard', 'core/entity/tx/handlers/control-board-proposal.ts', ENTITY_CONTROL_SEMANTIC_EVIDENCE),
@@ -199,11 +197,11 @@ export const ENTITY_TX_SEMANTIC_CATALOG = [
   coveredEntity('scheduledWake', 'core/entity/tx/handlers/system/scheduled-wake.ts', MIXED_REPLAY_EVIDENCE),
   coveredEntity('setHubConfig', 'core/entity/tx/handlers/account/lifecycle/admin.ts', ENTITY_CONTROL_SEMANTIC_EVIDENCE),
   coveredEntity('setRebalancePolicy', 'core/entity/tx/handlers/account/lifecycle/admin.ts', ENTITY_SAME_J_FINANCIAL_EVIDENCE),
-  missingEntity('settle_approve', 'core/entity/tx/handlers/payments/settle.ts'),
-  missingEntity('settle_execute', 'core/entity/tx/handlers/payments/settle.ts'),
-  missingEntity('settle_propose', 'core/entity/tx/handlers/payments/settle.ts'),
-  missingEntity('settle_reject', 'core/entity/tx/handlers/payments/settle.ts'),
-  missingEntity('settle_update', 'core/entity/tx/handlers/payments/settle.ts'),
+  coveredEntity('settle_approve', 'core/entity/tx/handlers/payments/settle.ts', ENTITY_SETTLEMENT_SEMANTIC_EVIDENCE),
+  coveredEntity('settle_execute', 'core/entity/tx/handlers/payments/settle.ts', ENTITY_SETTLEMENT_SEMANTIC_EVIDENCE),
+  coveredEntity('settle_propose', 'core/entity/tx/handlers/payments/settle.ts', ENTITY_SETTLEMENT_SEMANTIC_EVIDENCE),
+  coveredEntity('settle_reject', 'core/entity/tx/handlers/payments/settle.ts', ENTITY_SETTLEMENT_SEMANTIC_EVIDENCE),
+  coveredEntity('settle_update', 'core/entity/tx/handlers/payments/settle.ts', ENTITY_SETTLEMENT_SEMANTIC_EVIDENCE),
   coveredEntity('vote', 'core/entity/tx/handlers/system/basic.ts', ENTITY_CONTROL_SEMANTIC_EVIDENCE),
 ] as const satisfies readonly EntityTxSemanticCatalogEntry[];
 

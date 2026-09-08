@@ -18,6 +18,8 @@ mod routing_semantic_parity;
 #[cfg(test)]
 mod same_j_semantic_parity;
 mod settlement;
+#[cfg(test)]
+mod settlement_semantic_parity;
 mod swap_requests;
 mod types;
 

@@ -225,15 +225,12 @@ impl<'a> Decoder<'a> {
                 Value::Array(values) => Ok(tagged("Set", Value::Array(values))),
                 _ => Err(StorageMessagePackError::RecordKeys),
             },
-            0x42 if payload.len() == 16 => {
-                let bytes: [u8; 16] =
-                    payload
-                        .try_into()
-                        .map_err(|_| StorageMessagePackError::Extension {
-                            extension_type,
-                            length,
-                        })?;
-                Ok(bigint(BigInt::from(i128::from_be_bytes(bytes))))
+            // msgpackr writes the overflow BigInt as 64-bit limbs, most
+            // significant first: one big-endian two's-complement payload whose
+            // length is a multiple of eight. Int512 ProofBody offsets in a
+            // durable dispute jBatch are 40 bytes wide, not 16.
+            0x42 if !payload.is_empty() && payload.len() % 8 == 0 => {
+                Ok(bigint(BigInt::from_signed_bytes_be(&payload)))
             }
             0x74 if !payload.is_empty() => typed_array(payload[0], &payload[1..]),
             _ => Err(StorageMessagePackError::Extension {

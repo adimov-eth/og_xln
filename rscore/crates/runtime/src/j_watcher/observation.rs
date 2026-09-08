@@ -133,6 +133,31 @@ fn bigint(value: &Value, path: &str) -> Result<AbiValue, JWatcherError> {
     Ok(AbiValue::Text(value))
 }
 
+/// Decode one TypeScript `Int512 { high, low }` limb pair into the flat signed
+/// integer the Rust ProofBody stores. `validateProofBody` writes every offdelta
+/// through `encodeInt512`, so a flat integer here is a retired shape.
+fn int512(value: &Value, path: &str) -> Result<AbiValue, JWatcherError> {
+    let object = object(value, path)?;
+    exact(object, &["high", "low"], &[], path)?;
+    let limb = |name: &str| -> Result<num_bigint::BigInt, JWatcherError> {
+        let AbiValue::Text(text) = bigint(field(object, name, path)?, path)? else {
+            return Err(invalid(format!("BIGINT:{path}.{name}")));
+        };
+        text.parse::<num_bigint::BigInt>()
+            .map_err(|_| invalid(format!("BIGINT:{path}.{name}")))
+    };
+    let word = num_bigint::BigInt::from(1_u8) << 256_u32;
+    let high = limb("high")?;
+    let low = limb("low")?;
+    if low.sign() == num_bigint::Sign::Minus || low >= word {
+        return Err(invalid(format!("INT512_LOW:{path}")));
+    }
+    if high.to_signed_bytes_be().len() > 32 {
+        return Err(invalid(format!("INT512_HIGH:{path}")));
+    }
+    Ok(AbiValue::Text(((high << 256_u32) + low).to_string()))
+}
+
 fn optional(
     value: Option<&Value>,
     map: impl FnOnce(&Value) -> Result<AbiValue, JWatcherError>,
@@ -173,6 +198,15 @@ fn proof_body(value: &Value, path: &str) -> Result<AbiValue, JWatcherError> {
                 .collect::<Result<Vec<_>, _>>()?,
         ))
     };
+    // TypeScript keeps each signed ProofBody offset as the Solidity
+    // `Int512 { int256 high; uint256 low }` tuple (`encodeInt512`), so the
+    // durable observation row carries two limbs, never a flat integer.
+    let offdeltas = tuple(
+        array(field(value, "offdeltas", path)?, path)?
+            .iter()
+            .map(|v| int512(v, path))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
     let transformers = array(field(value, "transformers", path)?, path)?
         .iter()
         .map(|raw| {
@@ -211,7 +245,7 @@ fn proof_body(value: &Value, path: &str) -> Result<AbiValue, JWatcherError> {
         AbiValue::Text(text(&value["watchSeed"], path)?),
         integer(number(&value["leftResponseSeconds"], path)?),
         integer(number(&value["rightResponseSeconds"], path)?),
-        bigs("offdeltas")?,
+        offdeltas,
         bigs("tokenIds")?,
         tuple(transformers),
     ]))

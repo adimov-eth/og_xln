@@ -38,9 +38,8 @@ pub(crate) fn proof_body(value: &ProofBody) -> Result<CanonicalValue, StateError
                 value
                     .offdeltas
                     .iter()
-                    .cloned()
-                    .map(CanonicalValue::BigInt)
-                    .collect(),
+                    .map(int512_limbs)
+                    .collect::<Result<Vec<_>, _>>()?,
             ),
         ),
         (
@@ -75,6 +74,26 @@ fn transformer(value: &ProofTransformerClause) -> Result<CanonicalValue, StateEr
             "allowances",
             CanonicalValue::Array(value.allowances.iter().map(allowance).collect()),
         ),
+    ]))
+}
+
+/// TypeScript `encodeInt512`: a signed ProofBody offset is the Solidity
+/// `Int512 { int256 high; uint256 low }` tuple. `validateProofBody` normalizes
+/// every J-event offdelta through those limbs, and the canonical event key
+/// hashes that exact shape.
+fn int512_limbs(value: &num_bigint::BigInt) -> Result<CanonicalValue, StateError> {
+    let word = num_bigint::BigInt::from(1_u8) << 256_u32;
+    let mut low = value % &word;
+    if low.sign() == num_bigint::Sign::Minus {
+        low += &word;
+    }
+    let high = (value - &low) / &word;
+    if high.to_signed_bytes_be().len() > 32 {
+        return Err(j_error(format!("JURISDICTION_EVENT_INT512:{value}")));
+    }
+    Ok(object(vec![
+        ("high", CanonicalValue::BigInt(high)),
+        ("low", CanonicalValue::BigInt(low)),
     ]))
 }
 

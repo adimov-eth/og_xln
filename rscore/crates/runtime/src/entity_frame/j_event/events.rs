@@ -62,6 +62,41 @@ fn exact_fields(value: &Map<String, Value>, names: &[&str]) -> bool {
     value.len() == names.len() && names.iter().all(|name| value.contains_key(*name))
 }
 
+/// TypeScript `decodeInt512` + `encodeInt512`: a signed ProofBody offset is the
+/// Solidity `Int512 { int256 high; uint256 low }` tuple, never a flat integer.
+/// `validateProofBody` re-encodes every offdelta through those limbs, so the
+/// normalized J event this mirrors carries the same two-field object.
+fn int512_value(value: &Value) -> Option<Value> {
+    let word = BigInt::from(1_u8) << 256_u32;
+    let limb = |name: &str| -> Option<BigInt> {
+        let object = record(value)?;
+        if !exact_fields(object, &["high", "low"]) {
+            return None;
+        }
+        normalize_big_numberish(object.get(name)?)?
+            .parse::<BigInt>()
+            .ok()
+    };
+    let high = limb("high")?;
+    let low = limb("low")?;
+    if low.sign() == num_bigint::Sign::Minus || low >= word {
+        return None;
+    }
+    if high >= (BigInt::from(1_u8) << 255_u32) || high < -(BigInt::from(1_u8) << 255_u32) {
+        return None;
+    }
+    let tagged = |value: BigInt| {
+        Value::Object(Map::from_iter([
+            ("__xlnType".into(), Value::String("BigInt".into())),
+            ("value".into(), Value::String(value.to_string())),
+        ]))
+    };
+    Some(Value::Object(Map::from_iter([
+        ("high".into(), tagged(high)),
+        ("low".into(), tagged(low)),
+    ])))
+}
+
 fn proof_body(value: &Value) -> Option<Value> {
     let proof = record(value)?;
     let names = [
@@ -151,7 +186,17 @@ fn proof_body(value: &Value) -> Option<Value> {
             "rightResponseSeconds".into(),
             int_value(normalize_int(proof.get("rightResponseSeconds")?)?),
         ),
-        ("offdeltas".into(), bigints("offdeltas", false)?),
+        (
+            "offdeltas".into(),
+            Value::Array(
+                proof
+                    .get("offdeltas")?
+                    .as_array()?
+                    .iter()
+                    .map(int512_value)
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+        ),
         ("tokenIds".into(), bigints("tokenIds", true)?),
         ("transformers".into(), Value::Array(transformers)),
     ])))
