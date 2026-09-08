@@ -16,9 +16,9 @@ import { shortId } from '../runtime/format';
  */
 export function EntitySwitcher({ name, status }: { name: string; status: ReactNode }) {
 	const activeEntityId = useApp(s => s.activeEntityId);
-	const entities = useServedEntities();
 	const navigate = useNavigate();
 	const [open, setOpen] = useState(false);
+	const entities = useServedEntities(open);
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {

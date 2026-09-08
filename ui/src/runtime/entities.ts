@@ -33,12 +33,16 @@ function servedByRuntime(summary: RuntimeAdapterEntitySummary, runtimeId: string
 /**
  * Every entity this runtime can sign for, best first: hubs, then by label.
  *
- * One read per committed frame, the same path Home's projection uses. A wallet
- * booted against a multi-jurisdiction stack has one entity per chain, and a
- * granted or newly created entity appears here as soon as its replica exists.
+ * A wallet booted against a multi-jurisdiction stack has one entity per chain,
+ * and a granted or newly created entity appears as soon as its replica exists.
+ *
+ * The read costs one round trip per committed frame, so it is asked for only
+ * while a list is actually on screen: the palette is mounted for its shortcut
+ * but closed almost always, and so is the switcher's menu. Pass `false` and the
+ * hook reads nothing.
  */
-export function useServedEntities(): ServedEntity[] {
-	const read = useAdapterRead<RuntimeAdapterEntitySummary[]>('entities');
+export function useServedEntities(enabled = true): ServedEntity[] {
+	const read = useAdapterRead<RuntimeAdapterEntitySummary[]>(enabled ? 'entities' : null);
 	const status = useApp(s => s.adapterStatus);
 	const summaries = read.data;
 

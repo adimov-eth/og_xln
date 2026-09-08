@@ -20,8 +20,8 @@ export function Palette() {
 	const setDensity = useApp(s => s.setDensity);
 	const setTour = useApp(s => s.setTour);
 	const wallet = useWallet(entityId);
-	const entities = useServedEntities();
 	const [open, setOpen] = useState(false);
+	const entities = useServedEntities(open);
 	const [query, setQuery] = useState('');
 	const [cursor, setCursor] = useState(0);
 	const input = useRef<HTMLInputElement>(null);
