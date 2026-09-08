@@ -14,11 +14,14 @@ mod request_collateral;
 #[path = "payments/resolve_htlc.rs"]
 mod resolve_htlc;
 #[cfg(test)]
+#[path = "semantic_parity/routing_semantic_parity.rs"]
 mod routing_semantic_parity;
 #[cfg(test)]
+#[path = "semantic_parity/same_j_semantic_parity.rs"]
 mod same_j_semantic_parity;
 mod settlement;
 #[cfg(test)]
+#[path = "semantic_parity/settlement_semantic_parity.rs"]
 mod settlement_semantic_parity;
 mod swap_requests;
 mod types;
