@@ -49,7 +49,7 @@ const rejectedIngressHalt = (evidence: RejectedEntityIngressEvidence, count: num
  * Nothing inside the R → E → A cascade may call this: the transition only
  * records the typed rejection, the loop decides what the frame does with it.
  */
-export const rejectedIngressPolicy = (): 'surface' | 'drop' =>
+const rejectedIngressPolicy = (): 'surface' | 'drop' =>
   rejectFailFast() ? 'surface' : 'drop';
 
 /**

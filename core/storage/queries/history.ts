@@ -187,7 +187,7 @@ const readAccountFrameHistoryRecords = async (
   return records.slice(-boundedLimit);
 };
 
-export const readAccountFrameHistory = async (
+const readAccountFrameHistory = async (
   deps: PersistenceQueryDeps,
   env: RuntimeReplica,
   entityId: string,

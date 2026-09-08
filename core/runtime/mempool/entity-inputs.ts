@@ -52,7 +52,7 @@ type EntityInputBatchContext = ReturnType<typeof createRuntimeEntityInputBatchCo
  * one frame from stalling on a hostile queue. The remainder stays in the
  * replica mempool and is certified by the next wake, one tx at a time.
  */
-export const MAX_REPLICA_FLUSH_EVICTIONS = 8;
+const MAX_REPLICA_FLUSH_EVICTIONS = 8;
 
 export type RuntimeEntityInputBatchResult = RuntimeEntityInputApplyResult & {
   /** Typed rejections decided inside this frame; the Runtime loop applies the policy once. */

@@ -949,7 +949,7 @@ for (const [path, markers] of [
   ['core/__tests__/architecture/state/validation-utils.test.ts', ['validateAccountDeltas fails loud', 'ACCOUNT_DELTAS_MISSING']],
   [
     'core/__tests__/network/relay/relay-router.test.ts',
-    ['relay router and local delivery verbose diagnostics use structured logging', 'relay.local_delivery'],
+    ['relay router verbose diagnostics use structured logging and the relay carries no financial path', 'relay.router'],
   ],
   [
     'core/__tests__/runtime/transport/runtime-ws-recovery.test.ts',
