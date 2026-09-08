@@ -8,6 +8,10 @@ import { countBatchOps } from '../runtime/financial/move';
 import { displayEntityName, type WalletView } from '../runtime/views';
 import { releaseFundingDrafts } from '../runtime/financial/funding-submission';
 
+/** First rebroadcast asks 10% over the original fee; each further one doubles, to 160%. */
+const FIRST_BUMP_BPS = 1000;
+const MAX_BUMP_BPS = 16_000;
+
 type Item = { key: string; title: string; detail: string };
 
 const normalizeId = (value: unknown): String => String(value || '').trim().toLowerCase();
@@ -53,6 +57,7 @@ export function batchItems(batch: JBatch, self: string, names: Map<string, strin
  */
 export function PendingBatch({ wallet, compact = false }: { wallet: WalletView; compact?: boolean }) {
 	const toast = useApp(s => s.toast);
+	const [bumpBps, setBumpBps] = useState(FIRST_BUMP_BPS);
 	const [busy, setBusy] = useState<string | null>(null);
 	const [open, setOpen] = useState(!compact);
 	const state = wallet.frame?.activeEntity?.core?.jBatchState;
@@ -74,10 +79,20 @@ export function PendingBatch({ wallet, compact = false }: { wallet: WalletView; 
 					? { type: 'j_clear_batch', data: { reason: 'global-batch-bar-clear' } }
 					: action === 'broadcast'
 						? { type: 'j_broadcast', data: {} }
-						: { type: 'j_rebroadcast', data: { gasBumpBps: 1000 } },
+						: { type: 'j_rebroadcast', data: { gasBumpBps: bumpBps } },
 			]);
 			if (action === 'clear') releaseFundingDrafts(wallet.entityId);
-			toast(action === 'clear' ? 'Batch cleared' : action === 'broadcast' ? 'Batch signed and sent to the chain' : 'Batch re-sent with a higher fee');
+			// One fixed bump cannot free a batch a busy chain has priced out, and
+			// pressing again at the same number changes nothing. Each attempt asks
+			// for more, up to a ceiling, and says what it asked for.
+			if (action === 'rebroadcast') setBumpBps(current => Math.min(MAX_BUMP_BPS, current * 2));
+			toast(
+				action === 'clear'
+					? 'Batch cleared'
+					: action === 'broadcast'
+						? 'Batch signed and sent to the chain'
+						: `Batch re-sent at ${(bumpBps / 100).toFixed(bumpBps % 100 === 0 ? 0 : 1)}% above the fee it first offered`,
+			);
 		} catch (error) {
 			toast(error instanceof Error ? error.message : String(error), 'danger');
 		} finally {
@@ -125,7 +140,7 @@ export function PendingBatch({ wallet, compact = false }: { wallet: WalletView; 
 					</>
 				) : (
 					<button type="button" className="btn ghost" disabled={busy !== null} onClick={() => void run('rebroadcast')}>
-						{busy === 'rebroadcast' ? 'Sending…' : 'Re-send with higher fee'}
+						{busy === 'rebroadcast' ? 'Sending…' : `Re-send at +${(bumpBps / 100).toFixed(bumpBps % 100 === 0 ? 0 : 1)}%`}
 					</button>
 				)}
 			</div>
