@@ -6,6 +6,8 @@ import { CopyId } from '../components/CopyId';
 import { Icon } from '../components/Icons';
 import { clampUsdPerPx, USD_PER_PX_MAX, USD_PER_PX_MIN, useApp, type PlaceKey } from '../runtime/store';
 import { disconnectAdapter, getAdapter } from '../runtime/adapter';
+import { sendEntityTxs } from '../runtime/tx';
+import { useWallet } from '../runtime/views';
 
 const PRESETS = [1, 2, 5, 10, 25, 100, 1000];
 const LOG_MIN = Math.log10(USD_PER_PX_MIN);
@@ -47,6 +49,39 @@ function ScalePreview({ usdPerPx }: { usdPerPx: number }) {
 }
 
 export function SettingsScreen() {
+	const entityId = useApp(s => s.activeEntityId);
+	const wallet = useWallet(entityId);
+	const [profileName, setProfileName] = useState('');
+	const [profileBio, setProfileBio] = useState('');
+	const [profileWebsite, setProfileWebsite] = useState('');
+	const [publishing, setPublishing] = useState(false);
+
+	/** The profile is signed state other entities read, so this is a committed tx, not a local label. */
+	const publishProfile = async (): Promise<void> => {
+		if (!wallet.entityId || !wallet.signerId) return;
+		setPublishing(true);
+		try {
+			await sendEntityTxs(wallet.entityId, wallet.signerId, [
+				{
+					type: 'profile-update',
+					data: {
+						profile: {
+							entityId: wallet.entityId,
+							name: profileName.trim(),
+							bio: profileBio.trim(),
+							website: profileWebsite.trim(),
+						},
+					},
+				},
+			]);
+			toast('Profile published');
+		} catch (error) {
+			toast(error instanceof Error ? error.message : String(error), 'danger');
+		} finally {
+			setPublishing(false);
+		}
+	};
+
 	const theme = useApp(s => s.theme);
 	const density = useApp(s => s.density);
 	const setDensity = useApp(s => s.setDensity);
@@ -283,6 +318,50 @@ export function SettingsScreen() {
 						{tour.completed || tour.index > 0 ? 'Replay' : 'Start'}
 					</button>
 				</span>
+			</div>
+
+			<div className="sect">
+				<h3 className="caps">Identity</h3>
+				<span className="faint">what other entities see</span>
+			</div>
+			<div className="setting first" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+				<div>
+					<div className="t">Published name</div>
+					<div className="s">Your name was set once when this wallet was created and could never be changed. This publishes a new one to everyone who has an account with you.</div>
+				</div>
+				<div className="field-row">
+					<input
+						className="input"
+						value={profileName}
+						placeholder={wallet.name}
+						onChange={event => setProfileName(event.target.value)}
+						data-testid="profile-name"
+					/>
+					<button
+						type="button"
+						className="btn sm"
+						disabled={publishing || !profileName.trim() || profileName.trim() === wallet.name}
+						onClick={() => void publishProfile()}
+						data-testid="profile-publish"
+					>
+						{publishing ? 'Publishing…' : 'Publish'}
+					</button>
+				</div>
+				<input
+					className="input"
+					value={profileWebsite}
+					placeholder="website · optional"
+					onChange={event => setProfileWebsite(event.target.value)}
+					data-testid="profile-website"
+				/>
+				<textarea
+					className="input"
+					rows={2}
+					value={profileBio}
+					placeholder="a line about you · optional"
+					onChange={event => setProfileBio(event.target.value)}
+					data-testid="profile-bio"
+				/>
 			</div>
 
 			<div className="sect">
