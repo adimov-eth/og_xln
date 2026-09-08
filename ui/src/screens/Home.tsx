@@ -9,7 +9,7 @@ import { Sheet } from '../components/Sheet';
 import { TokenIcon } from '../components/TokenPicker';
 import { useApp } from '../runtime/store';
 import { sendEntityTxs } from '../runtime/tx';
-import { accountDisputeConfig } from '../runtime/financial/roles';
+import { accountDisputeConfig, gossipProfile } from '../runtime/financial/roles';
 import { formatMoney, formatSigned, formatUsd, getTokenMeta, parseAmount, shortId } from '../runtime/format';
 import { isUsdStable, usdOf } from '../runtime/financial/prices';
 import { useWallet, type AccountView, type TokenTotals, type WalletView } from '../runtime/views';
@@ -542,6 +542,18 @@ function OpenAccountSheet({ wallet, onClose }: { wallet: WalletView; onClose: ()
 		}
 	};
 
+	/** Routing fee, swap fee and jurisdiction, straight off the signed profile. */
+	const counterpartyTerms = (id: string): string => {
+		const metadata = gossipProfile(id)?.metadata;
+		if (!metadata) return 'terms not published yet';
+		const parts: string[] = [];
+		if (Number.isFinite(metadata.routingFeePPM)) parts.push(`${metadata.routingFeePPM} ppm to route`);
+		if (Number.isSafeInteger(metadata.swapTakerFeeBps)) parts.push(`${metadata.swapTakerFeeBps} bps to take a swap`);
+		const jurisdiction = String(metadata.jurisdiction?.name || '').trim();
+		if (jurisdiction) parts.push(`on ${jurisdiction}`);
+		return parts.length > 0 ? parts.join(' · ') : 'terms not published yet';
+	};
+
 	return (
 		<Sheet title="Open account" onClose={onClose}>
 			<div className="field">
@@ -559,6 +571,9 @@ function OpenAccountSheet({ wallet, onClose }: { wallet: WalletView; onClose: ()
 							{wallet.hubs.has(id) ? <span className="chip hub">hub</span> : null}
 						</span>
 						<span className="hash">{shortId(id, 10, 6)}</span>
+						{/* What actually decides who to open an account with: what they
+						    charge to route and to take a swap, and where they are. */}
+						<span className="s">{counterpartyTerms(id)}</span>
 					</button>
 				))}
 				<input
