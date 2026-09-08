@@ -194,13 +194,11 @@ export function SettingsScreen() {
 						height={8}
 					/>
 				</div>
-				<div className="actions" style={{ marginTop: 10 }}>
-					<button type="button" className="btn primary sm">
-						Pay
-					</button>
-					<button type="button" className="btn sm">
-						Receive
-					</button>
+				{/* Presentation, not controls: this card shows what the chosen design
+				    looks like, so these must not read as buttons a person can press. */}
+				<div className="actions" style={{ marginTop: 10 }} aria-hidden>
+					<span className="btn primary sm">Pay</span>
+					<span className="btn sm">Receive</span>
 				</div>
 			</div>
 			<div className="setting first">
