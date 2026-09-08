@@ -153,12 +153,13 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'quiz-colors',
 		chapter: 'Start',
 		title: 'Quick check',
-		body: 'Your hub vanishes tonight, servers off, phone dead. Which part of your money is gone?',
+		body: 'Your hub vanishes tonight, servers off, phone dead. Which part of your money is at risk?',
+		more: 'Violet is at risk, which is not the same as gone. When a dispute finalizes, the chain pays what the hub owes you out of the hub\'s own on-chain reserve first, and records the rest as a debt against it. You lose only what the hub can never cover.',
 		mode: 'quiz',
 		options: [
-			{ label: 'The violet part', correct: true, why: 'Right. Violet is a promise from your hub. Everything green is yours by contract or on-chain, whatever the hub does.' },
+			{ label: 'The violet part', correct: true, why: 'Right. Violet is a promise from your hub. Green is yours by contract or on-chain, whatever the hub does.' },
 			{ label: 'The green part', why: 'No. Green is the part the blockchain guarantees. It does not depend on the hub existing.' },
-			{ label: 'All of it', why: 'No. Only the violet part depends on the hub. The green part is enforceable without it.' },
+			{ label: 'All of it', why: 'No. Only the violet part depends on the hub, and even that is paid from the hub\'s reserve first. The green part is enforceable without it.' },
 		],
 	},
 	{
