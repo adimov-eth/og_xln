@@ -227,7 +227,11 @@ export function Lending() {
 									<span className="v num">{formatMoney(state.totals.activePrincipal, meta.decimals)}</span>
 								</div>
 							</>
-						) : null}
+						) : stateError ? null : (
+							<p className="note">
+								{loading ? 'Reading the pool…' : 'This hub has published no pool yet, so there is nothing to lend into or borrow from.'}
+							</p>
+						)}
 					</div>
 					{myPools.length > 0 ? (
 						<div className="card">
