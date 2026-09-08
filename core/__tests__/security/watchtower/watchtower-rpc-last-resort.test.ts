@@ -525,9 +525,15 @@ describe('watchtower rpc last-resort integration', () => {
       await provider.send('evm_increaseTime', [Number(disputeTimeout - timestampAfterLock)]);
       await provider.send('evm_mine', []);
     }
-    expect(await runWatchtowerSweep(towerServer.store, {
-      ...liveSweepOptions,
-    })).toEqual({
+    const sweep = await runWatchtowerSweep(towerServer.store, { ...liveSweepOptions });
+    // A failed submission is recorded as an error receipt and nowhere else, so
+    // read the reason back before asserting: a bare count tells nobody why the
+    // tower did not defend the account.
+    const sweepReceipts = await towerServer.store.listActionReceipts(lookupKey);
+    const sweepErrors = sweepReceipts
+      .filter(receipt => receipt.status === 'error')
+      .map(receipt => receipt.error ?? 'no reason recorded');
+    expect(sweep, `sweep receipts: ${sweepErrors.join(' | ') || 'none'}`).toEqual({
       scanned: 1,
       submitted: 1,
       skipped: 0,
