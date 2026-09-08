@@ -245,14 +245,45 @@ function exportCsv(movements: Movement[]): void {
 	setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
+const PAGE = 200;
+
+/**
+ * Free-text search over what is already loaded: who it was with, the amount as
+ * it is written on the row, the state, and the frame hash. Searching the loaded
+ * page rather than the runtime keeps the filter instant and honest about its
+ * scope, which the row count under the list states.
+ */
+function matching(movements: Movement[], search: string, names: Map<string, string>): Movement[] {
+	const needle = search.trim().toLowerCase();
+	if (!needle) return movements;
+	return movements.filter(movement => {
+		const counterparty = movement.counterpartyId ?? '';
+		const haystack = [
+			movement.title,
+			movement.detail,
+			movement.state,
+			counterparty,
+			names.get(counterparty) ?? '',
+			movement.hash ?? '',
+			movement.amount !== null && movement.tokenId !== null ? formatUsd(usdOf(movement.tokenId, movement.amount)) : '',
+		];
+		return haystack.some(field => field.toLowerCase().includes(needle));
+	});
+}
+
 export function ActivityScreen() {
 	const entityId = useApp(s => s.activeEntityId);
 	const wallet = useWallet(entityId);
 	const [filter, setFilter] = useState('all');
 	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const [search, setSearch] = useState('');
+	// A page, not a ceiling: the books outlive any fixed number of rows.
+	const [limit, setLimit] = useState(PAGE);
 	const types = FILTERS.find(entry => entry.id === filter)?.types ?? USER_ACTIVITY_TYPES;
 	const accountIds = useMemo(() => wallet.accounts.map(account => account.counterpartyId), [wallet.accounts]);
-	const { movements, loading, error } = useMovements(entityId, types, 200, accountIds);
+	const { movements: loaded, loading, error } = useMovements(entityId, types, limit, accountIds);
+	const more = loaded.length >= limit;
+	const movements = useMemo(() => matching(loaded, search, wallet.names), [loaded, search, wallet.names]);
 	// Desktop shows the latest movement's receipt until the user picks another; on a phone the sheet opens only on tap.
 	const desktop = typeof window !== 'undefined' && window.matchMedia('(min-width: 1101px)').matches;
 	const selected = movements.find(movement => movement.id === selectedId) ?? (desktop ? (movements[0] ?? null) : null);
@@ -302,6 +333,15 @@ export function ActivityScreen() {
 			</div>
 			<div className="two-col activity">
 				<div>
+					<input
+						className="input"
+						type="search"
+						placeholder="Search who, how much, or a frame hash"
+						value={search}
+						onChange={event => setSearch(event.target.value)}
+						data-testid="activity-search"
+						style={{ marginBottom: 8 }}
+					/>
 					<div className="chips">
 						{FILTERS.map(entry => (
 							<button key={entry.id} type="button" className={filter === entry.id ? 'active' : ''} onClick={() => setFilter(entry.id)}>
@@ -317,8 +357,26 @@ export function ActivityScreen() {
 					))}
 					{movements.length === 0 && !loading && (
 						<p className="note" style={{ padding: '18px 0' }}>
-							Nothing here for this filter yet.
+							{search.trim() ? `Nothing loaded matches "${search.trim()}".` : 'Nothing here for this filter yet.'}
 						</p>
+					)}
+					{more && (
+						<div style={{ padding: '12px 0' }}>
+							<button
+								type="button"
+								className="btn quiet sm"
+								onClick={() => setLimit(value => value + PAGE)}
+								disabled={loading}
+								data-testid="activity-more"
+							>
+								{loading ? 'Loading…' : `Load ${PAGE} older`}
+							</button>
+							<span className="faint" style={{ fontSize: 12, marginLeft: 10 }}>
+								{search.trim()
+									? `Searching the ${loaded.length.toLocaleString('en-US')} most recent movements.`
+									: `Showing the ${loaded.length.toLocaleString('en-US')} most recent movements.`}
+							</span>
+						</div>
 					)}
 					{error && <p style={{ color: 'var(--dispute)', fontSize: 13 }}>{error}</p>}
 				</div>
