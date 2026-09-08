@@ -79,7 +79,7 @@ async function clickFaucet(page: Page, kind: FaucetKind, status = 200) {
 }
 
 test(
-  'Home faucet funds four real balances once and requires explicit incoming credit consent',
+  'Assets faucets fund four real balances once and require explicit incoming credit consent',
   { tag: '@functional' },
   async ({ page }, testInfo) => {
     test.setTimeout(50_000);
@@ -95,7 +95,8 @@ test(
       requests[match[1] as FaucetKind].push(String(body.amount));
     });
     await enterStack(page);
-    await page.getByTestId('home-faucet').click();
+    await page.getByTestId('home-add-money').click();
+    await page.getByTestId('add-money-onchain').click();
     await expect(page.getByTestId('faucets')).toBeVisible();
     await expect(page.getByTestId('external-balance-USDC')).toBeVisible({ timeout: 15_000 });
     await expect

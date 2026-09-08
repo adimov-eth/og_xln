@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { runWalletBrowserGate } from './browser/wallet-gate';
 import { appendFileSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, renameSync, closeSync, readFileSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -214,7 +215,7 @@ if (standLock) {
   process.on('exit', () => releaseStandLock(standLock));
 }
 const localTestLease = await acquireLocalTestPortLease({
-  requiredOffsets: [0, 1, 4, 7, 8, 10, 11, 12, 13],
+  requiredOffsets: [0, 1, 2, 4, 7, 8, 10, 11, 12, 13],
 });
 const inheritedProcessEnv = stripAmbientLocalStackEnv(process.env);
 const hltUsers = Number(process.env['XLN_HLT_USERS'] || '0');
@@ -1442,8 +1443,8 @@ const main = async (): Promise<void> => {
     XLN_MESH_PUBLIC_PORT_BASE: String(nodePortBase),
     XLN_MESH_CUSTODY_PORT: String(custodyPort),
     XLN_MESH_CUSTODY_DAEMON_PORT: String(custodyDaemonPort),
-    PUBLIC_WS_BASE_URL: `ws://127.0.0.1:${apiPort}`,
-    PUBLIC_RELAY_URL: `ws://127.0.0.1:${apiPort}/relay`,
+    PUBLIC_WS_BASE_URL: `ws://127.0.0.1:${process.env['XLN_LOCAL_PROD_SMOKE_WALLET_TESTS'] ? rpcPort + 2 : apiPort}`,
+    PUBLIC_RELAY_URL: `ws://127.0.0.1:${process.env['XLN_LOCAL_PROD_SMOKE_WALLET_TESTS'] ? rpcPort + 2 : apiPort}/relay`,
     INTERNAL_RELAY_URL: `ws://127.0.0.1:${apiPort}/relay`,
     RELAY_URL: `ws://127.0.0.1:${apiPort}/relay`,
     PUBLIC_RPC: `http://127.0.0.1:${apiPort}/rpc`,
@@ -1567,6 +1568,11 @@ const main = async (): Promise<void> => {
 
   await runAuthorityCheckpointRestart();
   await runProductionSwapLoadSmoke();
+  const walletTests = process.env['XLN_LOCAL_PROD_SMOKE_WALLET_TESTS'];
+  if (walletTests) await runWalletBrowserGate({
+    tests: walletTests, repoRoot, workDir, rpcPort, apiPort,
+    start: (name, command, args, env) => startManaged(name, command, args, env).proc,
+  });
 
   // Optional adversary branch AFTER same+cross books are green. Profiles only
   // exercise orchestrator recovery — they never alter MM quote formulas.

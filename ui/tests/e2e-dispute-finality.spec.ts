@@ -49,7 +49,7 @@ const readState = (page: Page, hubId: string) => page.evaluate(async counterpart
   const derived = xln.deriveDelta(delta, xln.isLeftEntity(entityId, counterpartyId));
   const batch = active.core.jBatchState;
   return { entityId, height: frame.height, timestamp: active.core.timestamp, depository: jurisdiction.depositoryAddress, lastFinalizedJHeight: active.core.lastFinalizedJHeight,
-    accountHeight: account.currentHeight, accountRoot: account.currentFrame.accountStateRoot, status: account.status,
+    disputeConfig: account.state.disputeConfig, accountHeight: account.currentHeight, accountRoot: account.currentFrame.accountStateRoot, status: account.status,
     reserve: (active.core.reserves.get(1) ?? 0n).toString(), collateral: delta.collateral.toString(), ondelta: delta.ondelta.toString(), offdelta: delta.offdelta.toString(),
     ownValue: (derived.outCollateral + derived.outPeerCredit - derived.inOwnCredit).toString(), jNonce: account.state.jNonce,
     pending: Boolean(account.pendingFrame), mempool: account.mempoolCount, dispute: account.activeDispute ?? null,
@@ -200,9 +200,12 @@ test('UI dispute rejects early finalization, then releases exactly 100 USDC afte
     expect(start.args.proofbodyHash).toBe(active.initialProofbodyHash);
     expect(Number(start.args.nonce)).toBe(active.initialNonce);
     expect(Number(start.args.disputeTimeout)).toBe(active.disputeTimeout);
-    expect(start.args.leftResponseSeconds).toBe(86_400n);
-    expect(start.args.rightResponseSeconds).toBe(86_400n);
-    expect(start.args.disputeTimeout).toBe(start.args.disputeStartTimestamp + 172_800n);
+    // The receipt must use the bilateral windows committed before the dispute.
+    const leftWindow = BigInt(funded.disputeConfig.leftResponseSeconds);
+    const rightWindow = BigInt(funded.disputeConfig.rightResponseSeconds);
+    expect(start.args.leftResponseSeconds).toBe(leftWindow);
+    expect(start.args.rightResponseSeconds).toBe(rightWindow);
+    expect(start.args.disputeTimeout).toBe(start.args.disputeStartTimestamp + leftWindow + rightWindow);
     expect(active.observedBlockNumber).toBe(start.blockNumber);
     expect((await start.getTransactionReceipt()).status).toBe(1);
     const startedChain = await chainMoney(contract, wallet.entityId, hubId);

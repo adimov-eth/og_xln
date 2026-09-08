@@ -1,5 +1,34 @@
 # Autonomous xln work
 
+## Current acceptance window — 2026-09-08 22:07 UTC
+
+Owner authorized several hours of prioritized production work and ten-minute status updates.
+Work window: through 2026-09-09 01:10 UTC; review the method every 30 minutes.
+No subagents, external model calls or usage resets. Preserve both frontend and ui.
+Report completed/total checks per stage, never an invented production-readiness percentage.
+
+1. Wallet money and recovery (4 checks): payment/duplicate-click/reload; canonical recovery;
+   assets/funding; entity isolation. All four are green (4/4).
+2. Cross-J execution and recovery: existing real cross-swap E2E, partial fill/cancel,
+   both legs and no remaining holds. Reach the first production failure before broad audits.
+3. Protection: joint settlement/batch, dispute/finalization, tower recovery and automatic response.
+   Time-changing tests run only on an isolated owned chain.
+4. Run the remaining relevant browser and core scenarios on TS and native Rust, exact replay,
+   production and test builds, then final checks. Lending remains disabled and excluded.
+
+Every financial scenario must prove actual committed outcomes and recovery, not only rendered UI.
+Use one heavy stand. Freeze source and builds throughout browser runs; previous live tests were
+invalidated by development hot reload. Commit verified milestones on main; preserve unrelated edits.
+Automation `xln-10` reports on this task every ten minutes and expires with this window.
+
+Acceptance evidence at 2026-09-08 22:27 UTC:
+- TS/Rust W1/W4/W8 exact replay: 6/6 engines, 111 frames; `.logs/qa/hlt/replays/1788905603729-parity.json`.
+- Real browser Cross-J: 1/1, 21.5s, both legs, no holds, reload recovery; `.logs/qa/wallet/cross-j-ts-20260908/`.
+- Real browser dispute: 1/1, 14.3s, early rejection and exact 100 USDC release; `.logs/qa/wallet/dispute-ts-20260908/`.
+- Browser evidence above uses the diagnostic UI against isolated production servers. It does not claim production-build coverage.
+- Final acceptance requires scenarios, E2E, parity and all applicable gates green; skips do not count as passes.
+
+
 ## Active owner scope — 2026-09-07
 
 The latest owner instruction supersedes every earlier first-launch Lending

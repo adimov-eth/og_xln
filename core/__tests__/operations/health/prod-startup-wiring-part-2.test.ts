@@ -1215,9 +1215,10 @@ describe('production startup wiring', () => {
     expect(p2pNode).not.toContain('createLocalDeliveryHandler(');
     expect(p2pNode).not.toContain('env.networkInbox.push(routedInput)');
     const hubTransport = readFileSync(join(repoRoot, 'core/orchestrator/hub/hub-runtime-transport.ts'), 'utf8');
-    const directInput = hubTransport.slice(hubTransport.indexOf('onEntityInputs: async'));
+    const directInput = extractSourceBlock(hubTransport, 'const admitDirectEntityInputs =', 'const wireDirectRuntimeInfrastructure =');
+    expect(hubTransport).toContain('admitDirectEntityInputs(env, isIngressReady, debug, from, envelope, ingressTimestamp, sessionAuthenticated === true)');
     const sourceVerified = directInput.indexOf(
-      'assertRuntimeEntityInputsEnvelopeSource(env, from, envelope, sessionAuthenticated === true);',
+      'assertRuntimeEntityInputsEnvelopeSource(env, from, envelope, sessionAuthenticated);',
     );
     const admitted = directInput.indexOf('const admission = handleInboundP2PEntityInputs(');
     expect(sourceVerified).toBeGreaterThan(0);
