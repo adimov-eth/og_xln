@@ -43,6 +43,7 @@ import {
   quoteAmountAtPrice,
 } from '../../../orderbook';
 import { projectBookPricePageTree } from '../../../orderbook/pages/page';
+import { getBookSideLevels } from '../../../orderbook/core';
 import {
   assertSwapNetAuthorization,
   deriveSwapNetAuthorization,
@@ -745,8 +746,14 @@ describe('production swap load evidence', () => {
       kind: 0, ownerId: 'maker', orderId: 'ask-2', side: 1, tif: 0,
       postOnly: true, priceTicks: secondPrice, qtyLots: 2n,
     }).state;
+    // Shaped exactly like the remote view the runtime adapter emits: the bounded
+    // ladder travels beside the page tree, so the boundary must see it here too.
+    const sideLevels = (side: 0 | 1) => getBookSideLevels(canonical, side, 5)
+      .map(({ priceTicks, qtyLots }) => ({ priceTicks, qtyLots }));
     const portable = {
       params: canonical.params,
+      bidLevels: sideLevels(0),
+      askLevels: sideLevels(1),
       bidPages: projectBookPricePageTree(canonical.bidPages),
       askPages: projectBookPricePageTree(canonical.askPages),
       nextSeq: canonical.nextSeq,
