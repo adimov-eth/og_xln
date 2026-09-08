@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bar } from '../components/Bars';
 import { CopyId } from '../components/CopyId';
 import { Icon } from '../components/Icons';
+import { Watchtower } from '../components/Watchtower';
 import { getAdapter } from '../runtime/adapter';
 import { useApp } from '../runtime/store';
 import { formatUsd, shortId, timeAgo } from '../runtime/format';
@@ -179,6 +180,7 @@ export function Sovereignty() {
 					</div>
 				</div>
 				<div className="aside">
+					<Watchtower accountCount={safety.length} />
 					<div className="card" data-testid="sovereignty-accounts">
 						<h3 className="caps">Per counterparty</h3>
 						{safety.length === 0 ? (

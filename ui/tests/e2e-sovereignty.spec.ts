@@ -2,7 +2,27 @@ import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import type { RuntimeAdapterViewFrame } from '../../core/api/public/runtime-module';
 import type { RuntimeAdapter } from '../../core/api/runtime-adapter/types';
+import { deriveRuntimeRecoveryLookupKey } from '../../core/storage/recovery/bundle/crypto';
 import { enterStack, fundFromHub } from './stack';
+
+/** The stand runs its own watchtower; a deployed stack names its own. */
+const TOWER_URL = process.env['UI_E2E_TOWER_URL'] || 'http://127.0.0.1:9100';
+
+/** The tower's own answer, asked from outside the browser: it must hold a bundle under our blind lookup key. */
+async function towerHolds(lookupKey: string): Promise<{ available: boolean; height: number; storedBytes: number }> {
+  const response = await fetch(`${TOWER_URL}/api/recovery/discover`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ lookupKey }),
+  });
+  const payload = (await response.json()) as { ok?: boolean; available?: boolean; latestReceipt?: { height?: number; storedBytes?: number } };
+  if (!response.ok || payload.ok !== true) throw new Error(`TOWER_DISCOVER_FAILED:${response.status}`);
+  return {
+    available: payload.available === true,
+    height: Number(payload.latestReceipt?.height ?? 0),
+    storedBytes: Number(payload.latestReceipt?.storedBytes ?? 0),
+  };
+}
 
 type DebugWindow = Window & { __xln?: { adapter: () => RuntimeAdapter | null } };
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -110,7 +130,7 @@ test(
   'exports the actual funded Account signatures, then opens Desk and Pay through the palette',
   { tag: '@functional' },
   async ({ page }, testInfo) => {
-    test.setTimeout(50_000);
+    test.setTimeout(90_000);
     const pageErrors: string[] = [];
     page.on('pageerror', error => pageErrors.push(error.message));
     const wallet = await enterStack(page);
@@ -158,6 +178,30 @@ test(
     console.log(
       `EVIDENCE_EXACT entity=${bundle.entityId} runtimeHeight=${bundle.runtimeHeight} accounts=${bundle.accounts.length} frameAndDisputeHankos=${bundle.accounts.length * 4}`,
     );
+
+    // The watchtower the tour promises: nobody is watching until the person names a tower,
+    // and "protecting you" is the tower's own answer, not a saved preference.
+    const lookupKey = deriveRuntimeRecoveryLookupKey(wallet.runtimeId, wallet.phrase);
+    expect(await towerHolds(lookupKey), 'a fresh wallet is not backed up anywhere').toMatchObject({ available: false });
+    await expect(page.getByTestId('sovereignty-watchtower')).toHaveAttribute('data-covered', 'no');
+    await expect(page.getByTestId('watchtower-state')).toHaveText('nobody');
+    await expect(page.getByTestId('watchtower-coverage-lastresort')).toContainText('not appointed');
+    await page.getByTestId('watchtower-url').fill(TOWER_URL);
+    await page.getByTestId('watchtower-add').click();
+    await expect(page.getByTestId('sovereignty-watchtower')).toHaveAttribute('data-covered', 'yes', { timeout: 30_000 });
+    await expect(page.getByTestId('watchtower-row')).toHaveCount(1);
+    await expect(page.getByTestId('watchtower-row')).toContainText('holding your frame #');
+    const stored = await towerHolds(lookupKey);
+    expect(stored.available, 'the tower now holds this wallet under its blind lookup key').toBe(true);
+    expect(stored.height).toBeGreaterThanOrEqual(before.runtimeHeight);
+    expect(stored.storedBytes).toBeGreaterThan(0);
+    await expect(page.getByTestId('watchtower-coverage-backup')).toContainText(`#${stored.height.toLocaleString('en-US')}`);
+    await expect(page.getByTestId('watchtower-coverage-accounts')).toContainText(String(before.accounts.length));
+    console.log(`WATCHTOWER_BACKUP tower=${TOWER_URL} height=${stored.height} storedBytes=${stored.storedBytes}`);
+    await page.getByTestId('watchtower-remove').click();
+    await expect(page.getByTestId('watchtower-row')).toHaveCount(0);
+    await expect(page.getByTestId('watchtower-state')).toHaveText('nobody');
+    await expect(page.getByTestId('watchtower-mode-local')).toHaveClass(/active/);
 
     await page.getByRole('link', { name: 'Settings' }).first().click();
     await page.getByTestId('density-desk').click();

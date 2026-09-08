@@ -6,10 +6,12 @@ export function deriveAddress(seed: string, index: number): string {
 	return HDNodeWallet.fromMnemonic(mnemonic, getIndexedAccountPath(index)).address.toLowerCase();
 }
 
+export function derivePrivateKey(seed: string, index: number): string {
+	return HDNodeWallet.fromMnemonic(Mnemonic.fromPhrase(seed), getIndexedAccountPath(index)).privateKey;
+}
+
 export function derivePrivateKeyBytes(seed: string, index: number): Uint8Array {
-	const mnemonic = Mnemonic.fromPhrase(seed);
-	const privateKey = HDNodeWallet.fromMnemonic(mnemonic, getIndexedAccountPath(index)).privateKey;
-	const hex = privateKey.slice(2);
+	const hex = derivePrivateKey(seed, index).slice(2);
 	const bytes = new Uint8Array(hex.length / 2);
 	for (let i = 0; i < bytes.length; i++) {
 		bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
