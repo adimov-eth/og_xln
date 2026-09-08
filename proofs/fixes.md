@@ -54,6 +54,18 @@ Touch points:
 Vectors: each of the 7 kinds → the same verdict type in both engines (local
 admit and incoming frame).
 
+Status 2026-09-08 — lending promoted into the production profile. The exclusion
+existed because the loan lifecycle was incomplete: `LendingLoan.dueAt` was never
+read, so a loan whose term passed stayed `active` forever and both the lender's
+capital and the borrower's credit line were stranded. `9acd5e3e6` closed that
+(overdue loan defaults, pool released, credit called in, TS/Rust parity), so the
+six `lending_*` kinds are now admitted by both engines and
+`OUT_OF_PROFILE_TX_KINDS` / `account_tx_admission_error` are empty. The FX-2
+mechanism itself stays in place, with the vectors above rewritten to the verdict
+that now holds (`core/__tests__/proofs/fx-admission.test.ts`,
+`rscore/crates/engine/tests/fx_admission.rs`). `reserve_to_collateral` was never
+a modelled `AccountTx` kind; it is refused by the transaction catalog, not here.
+
 ## FX-3 — F1: one shared j-claim validator, no bare Errors (D4)
 
 Semantics (one validator used by both admission and proposal):

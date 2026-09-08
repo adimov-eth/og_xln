@@ -35,22 +35,23 @@ pub const ACCOUNT_TX_TYPES: [&str; 21] = [
     "j_event_claim",
 ];
 
-/// Canonical live Account admission profile shared with TypeScript.
+/// Canonical live Account admission profile shared with TypeScript
+/// (`core/account/tx/admission-policy.ts`).
 ///
-/// Lending variants remain canonically hashable for historical signed-frame
-/// verification. They are not accepted into new local or peer RRS work until
-/// lending is deliberately promoted into the production profile.
+/// Lending was held outside the profile while its lifecycle was incomplete: an
+/// overdue loan stayed `active` forever, stranding the lender's capital and the
+/// borrower's credit line. `9acd5e3e6` closed that hole with TS/Rust parity, so
+/// the six `lending_*` variants are now inside the production profile.
+///
+/// A variant refused here is still canonically hashable, so historical signed
+/// frames keep verifying; it is only kept out of new local and peer work.
 pub(crate) fn account_tx_admission_error(tx: &AccountTx) -> Option<StateError> {
-    matches!(
-        tx,
-        AccountTx::LendingFund { .. }
-            | AccountTx::LendingBorrowRequest { .. }
-            | AccountTx::LendingRepay { .. }
-            | AccountTx::LendingCredit { .. }
-            | AccountTx::LendingCloseRequest { .. }
-            | AccountTx::LendingClosePayout { .. }
-    )
-    .then(|| StateError::AccountTxKindOutOfProfile(tx.wire_name()))
+    /// Wire names refused by live admission. Mirrors the TypeScript
+    /// `OUT_OF_PROFILE_TX_KINDS` set, which is empty for the same reason.
+    const OUT_OF_PROFILE_TX_KINDS: [&str; 0] = [];
+    OUT_OF_PROFILE_TX_KINDS
+        .contains(&tx.wire_name())
+        .then(|| StateError::AccountTxKindOutOfProfile(tx.wire_name()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

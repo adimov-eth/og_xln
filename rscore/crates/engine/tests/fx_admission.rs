@@ -4,11 +4,14 @@
 //! (core/__tests__/proofs/fx-admission.test.ts) — same accept/reject
 //! classification per case, different transport for the same verdict:
 //!
-//! - local admission: malformed fields and out-of-profile transaction kinds
-//!   retain their exact typed error and leave the mempool unchanged.
+//! - local admission: malformed fields retain their exact typed error and leave
+//!   the mempool unchanged; FX-2 lending is now inside the production profile
+//!   (9acd5e3e6 completed the overdue-loan settlement), so both engines admit
+//!   every lending kind and the profile exclusion set is empty in both.
 //! - incoming peer frame: `apply_incoming_frame` returns `Rejected` whose
-//!   reason carries the same `ACCOUNT_TX_KIND_OUT_OF_PROFILE:<kind>` message
-//!   as TypeScript before signature work or replay.
+//!   reason carries the same message as TypeScript before signature work or
+//!   replay; a lending frame now passes the profile check and is judged on its
+//!   own semantics.
 //! - boundary accept (policyVersion 0 and MAX): both engines admit; the
 //!   golden `matches_typescript_rebalance_policy_bytes_and_hashes` in
 //!   consensus/frame/hash.rs already pins MAX hashing identically.
@@ -273,6 +276,20 @@ fn incoming_from_left(
     )
 }
 
+/// The same peer frame, but with the digest the receiver will actually compute,
+/// so a hashable transaction reaches replay instead of stopping at the hash.
+fn hashed_incoming_from_left(
+    left: &Party,
+    right: &Party,
+    tx: AccountTx,
+) -> (xln_rscore_engine::AccountInputEnvelope, IncomingFrame) {
+    let (envelope, mut incoming) = incoming_from_left(left, right, tx);
+    let digest = incoming.frame.hash().expect("hashable frame");
+    incoming.state_hash = digest;
+    incoming.frame_hanko = Some(left.identity.sign_frame(&digest).expect("sign digest"));
+    (envelope, incoming)
+}
+
 #[test]
 fn admits_policy_version_at_both_bounds() {
     let (mut left, _right) = parties();
@@ -495,44 +512,41 @@ fn out_of_range_policy_version_reaching_the_hash_is_an_admission_bug() {
     );
 }
 
+/// Lending is inside the production profile since `9acd5e3e6` completed the
+/// overdue-loan settlement, so local admission takes every lending kind — the
+/// same verdict as TypeScript `enqueue admits %s into the mempool`.
 #[test]
-fn rejects_every_lending_kind_before_mempool_mutation() {
+fn admits_every_lending_kind_into_the_mempool() {
     for (kind, tx) in extended_transactions() {
         let (mut left, _right) = parties();
-        let error = left
-            .account
+        left.account
             .admit_txs(vec![tx.clone()], "test")
-            .expect_err("lending kind must not admit");
-        assert_eq!(
-            error,
-            xln_rscore_engine::StateError::AccountTxKindOutOfProfile(kind),
-            "{kind}",
-        );
-        assert_eq!(
-            error.to_string(),
-            format!(
-                "ACCOUNT_TX_KIND_OUT_OF_PROFILE:{kind} \
-                 (profile: pay/HTLC/same-J swap/j-event/rebalance)"
-            ),
-        );
-        assert!(left.account.mempool().is_empty(), "{kind}");
+            .unwrap_or_else(|error| panic!("{kind} must admit: {error}"));
+        assert_eq!(left.account.mempool(), std::slice::from_ref(&tx), "{kind}");
         assert!(
             xln_rscore_engine::is_frame_hashable(&tx),
-            "historical {kind} frame verification must remain available",
+            "{kind} frame verification must remain available",
         );
     }
 }
 
+/// The profile no longer refuses an incoming lending frame, so the peer frame
+/// reaches replay and is judged on lending semantics — the same shift as the
+/// TypeScript `incoming %s is no longer refused by the admission profile`.
 #[test]
-fn rejects_every_lending_peer_kind_before_replay_without_mutation() {
+fn an_incoming_lending_frame_is_judged_by_lending_semantics_not_the_profile() {
     let (left, mut right) = parties();
     for (kind, tx) in extended_transactions() {
         let before_leaf = right
             .account
             .entity_account_leaf()
             .expect("preflight Account leaf");
-        let (envelope, incoming) = incoming_from_left(&left, &right, tx);
-        let outcome = apply_incoming_frame(
+        let (envelope, incoming) = hashed_incoming_from_left(&left, &right, tx);
+        // Same shape as the TypeScript twin: the verdict may arrive as a typed
+        // rejection or as the per-transaction transition failure the Runtime
+        // loop dispositions, exactly as for the in-profile kinds that validate
+        // by throwing. Either way it names lending, never the profile.
+        let reason = match apply_incoming_frame(
             &mut right.account,
             &right.identity,
             &envelope,
@@ -540,18 +554,20 @@ fn rejects_every_lending_peer_kind_before_replay_without_mutation() {
             incoming,
             &market(),
             false,
-        )
-        .unwrap_or_else(|error| panic!("{kind} is a rejection, not a fault: {error}"));
-        let IncomingOutcome::Rejected { reason } = outcome else {
-            panic!("{kind} must reject, got {outcome:?}");
+        ) {
+            Ok(IncomingOutcome::Rejected { reason }) => reason,
+            Ok(outcome) => panic!("{kind} must not be accepted, got {outcome:?}"),
+            Err(error) => error.to_string(),
         };
-        assert_eq!(
-            reason,
-            format!(
-                "ACCOUNT_TX_KIND_OUT_OF_PROFILE:{kind} \
-                 (profile: pay/HTLC/same-J swap/j-event/rebalance)"
-            ),
-            "{kind}",
+        assert!(
+            !reason.contains("ACCOUNT_TX_KIND_OUT_OF_PROFILE"),
+            "{kind} must not be refused by the profile: {reason}",
+        );
+        // Positive evidence that preflight let it through: the verdict comes
+        // from the lending handler replaying the transaction.
+        assert!(
+            reason.contains("LENDING_"),
+            "{kind} must be judged by the lending handler: {reason}",
         );
         assert_eq!(right.account.current_height(), 0);
         assert!(right.account.mempool().is_empty(), "{kind}");

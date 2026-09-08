@@ -717,6 +717,9 @@ fn group_proposal_work(account_txs: Vec<TargetedAccountTx>) -> Vec<AccountPropos
     grouped
 }
 
+/// Emission order is the `commands` order, not the order of the arms below:
+/// `execute_crontab` builds the list in TypeScript's execution order (expired
+/// HTLC locks before overdue lending). Change it there, with its test.
 fn append_scheduled_account_txs(
     state: &mut EntityStateSlice,
     commands: &[SchedulerCommand],

@@ -95,7 +95,7 @@ async function readState(page: Page, ownerId: string) {
   return snapshot;
 }
 
-test('unavailable lending accepts no Offer or Borrow and leaves the wallet able to pay', { tag: '@functional' }, async ({ page }) => {
+test('available lending offers Offer and Borrow and leaves the wallet able to pay', { tag: '@functional' }, async ({ page }) => {
   test.setTimeout(50_000);
   const errors: string[] = [];
   const fatalMessages: string[] = [];
@@ -115,26 +115,25 @@ test('unavailable lending accepts no Offer or Borrow and leaves the wallet able 
   expect(before.financial.accounts).not.toHaveLength(0);
   expect(before.financial.batch).toEqual({ draftOperations: 0, sent: false });
 
+  // Lending is inside the production admission profile, so the wallet offers
+  // both sides instead of refusing them.
   await page.getByTestId('nav-manage').locator('visible=true').first().click();
-  await expect(page.getByTestId('manage-lend')).toContainText('Unavailable in this release');
+  await expect(page.getByTestId('manage-lend')).toContainText('Lend to a hub pool or borrow');
   await page.getByTestId('manage-lend').click();
-  await expect(page.getByTestId('lending-unavailable')).toContainText('Lending is unavailable in this release');
+  await expect(page.getByTestId('lending-unavailable')).toHaveCount(0);
   await expect(page.getByTestId('lending-state')).toBeVisible();
   for (const side of ['lend', 'borrow']) {
     await page.getByTestId(`lend-side-${side}`).click();
     await page.getByTestId('lend-amount').fill('25');
     await page.getByTestId('lend-rate').fill('100');
-    await expect(page.getByTestId('lend-submit')).toBeDisabled();
-    await page.getByTestId('lend-amount').press('Enter');
-    // Real pointer input on the disabled control must not enqueue a financial command.
-    await page.getByTestId('lend-submit').click({ force: true });
-    const rejected = await readState(page, wallet.entityId);
-    expect(rejected.financial).toEqual(before.financial);
-    expect(rejected.queues).toEqual(before.queues);
+    await expect(page.getByTestId('lend-submit')).toBeEnabled();
   }
-  const refused = await readState(page, wallet.entityId);
-  expect(refused.financial).toEqual(before.financial);
-  await test.info().attach('lending-unavailable-controls', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
+  // Offering an action is not taking it: nothing was submitted, so money and
+  // live queues are still exactly what they were. Submitting is e2e-lending.
+  const offered = await readState(page, wallet.entityId);
+  expect(offered.financial).toEqual(before.financial);
+  expect(offered.queues).toEqual(before.queues);
+  await test.info().attach('lending-available-controls', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
 
   await page.getByTestId('nav-home').locator('visible=true').first().click();
   await expect(page.getByTestId('token-net-USDC')).toHaveText('100.00');
@@ -162,14 +161,14 @@ test('unavailable lending accepts no Offer or Borrow and leaves the wallet able 
   expect(BigInt(committed.amount)).toBe(quote.recipient);
   expect(BigInt(committed.senderAmount)).toBe(BigInt(committed.amount) + BigInt(committed.fee));
   expect(BigInt(committed.senderAmount)).toBeLessThanOrEqual(quote.sender);
-  const expectedPaid = (BigInt(refused.financial.ownedUsdc) - BigInt(committed.senderAmount)).toString();
+  const expectedPaid = (BigInt(offered.financial.ownedUsdc) - BigInt(committed.senderAmount)).toString();
   await expect.poll(async () => {
     const current = (await readState(page, wallet.entityId)).financial;
     return { owned: current.ownedUsdc, drained: current.accounts.every(account => !account.pending && account.mempool === 0) };
   }, { timeout: 15_000 }).toEqual({ owned: expectedPaid, drained: true });
   await expect.poll(async () => Object.values((await readState(page, wallet.entityId)).queues).every(count => count === 0)).toBe(true);
   const paid = await readState(page, wallet.entityId);
-  expect(BigInt(refused.financial.ownedUsdc) - BigInt(paid.financial.ownedUsdc)).toBe(BigInt(committed.amount) + BigInt(committed.fee));
+  expect(BigInt(offered.financial.ownedUsdc) - BigInt(paid.financial.ownedUsdc)).toBe(BigInt(committed.amount) + BigInt(committed.fee));
   expect(paid.financial.reserves).toEqual(before.financial.reserves);
   expect(paid.financial.batch).toEqual({ draftOperations: 0, sent: false });
   expect(paid.financial.accounts.map(account => account.root)).not.toEqual(before.financial.accounts.map(account => account.root));
@@ -177,7 +176,7 @@ test('unavailable lending accepts no Offer or Borrow and leaves the wallet able 
   expect(paid.runtime.root).not.toBe(before.runtime.root);
   expect(errors).toEqual([]);
   expect(fatalMessages).toEqual([]);
-  await test.info().attach('lending-unavailable-real-account-and-payment', {
-    body: safeStringify({ before, refused, quoteCeiling: quote, committed, paid }, 2), contentType: 'application/json',
+  await test.info().attach('lending-available-real-account-and-payment', {
+    body: safeStringify({ before, offered, quoteCeiling: quote, committed, paid }, 2), contentType: 'application/json',
   });
 });

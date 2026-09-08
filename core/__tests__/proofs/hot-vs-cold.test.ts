@@ -918,10 +918,12 @@ describe('proofs/C2 hot-vs-cold account roots', () => {
     for (const field of ['locks', 'swapOffers', 'requestedRebalance', 'requestedRebalanceFeeState'] as const) {
       expect(coverage.shrank.has(field), `corpus delete-path ${field}`).toBe(true);
     }
-    // No in-profile tx writes these (lending is out of profile per FX-2;
-    // subcontracts/pendingWithdrawals/shadow maps have no Account-machine
-    // writer): their map-level hot==cold is checked, non-emptiness is a
-    // documented residual gap, not an asserted property.
+    // No in-profile tx writes these: subcontracts/pendingWithdrawals/shadow
+    // maps have no Account-machine writer, and the now in-profile lending
+    // kinds write `deltas` (already covered) plus Entity-level lending books,
+    // never a further Account collection. Their map-level hot==cold is
+    // checked; non-emptiness is a documented residual gap, not an asserted
+    // property.
   });
 
   test('conflicting j_event_claim is typed rejected at admission, committed roots stay hot==cold', async () => {

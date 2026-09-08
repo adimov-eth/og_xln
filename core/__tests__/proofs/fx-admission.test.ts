@@ -8,18 +8,19 @@
  * - local enqueue/admission:
  *   TS   `applyAccountInput({kind:'enqueue'})` throws `AccountTxAdmissionError`
  *        with code `ACCOUNT_TX_POLICY_VERSION_OUT_OF_RANGE` /
- *        `ACCOUNT_TX_KIND_OUT_OF_PROFILE`, mempool unchanged.
+ *        `ACCOUNT_TX_POLICY_VERSION_OUT_OF_RANGE`, mempool unchanged.
  *   Rust `AccountConsensus::admit_txs` returns
- *        `Err(StateError::PolicyVersionOutOfRange)` /
- *        `Err(StateError::AccountTxKindOutOfProfile(kind))`, mempool unchanged.
+ *        `Err(StateError::PolicyVersionOutOfRange)`, mempool unchanged.
+ *   FX-2: the six `lending_*` kinds are now inside the production profile
+ *        (9acd5e3e6 completed the overdue-loan settlement), so both engines
+ *        admit them; the profile set itself is empty in both.
  * - incoming counterparty frame:
  *   TS   preflight returns a typed Account input rejection
- *        `ACCOUNT_INPUT_FRAME_TX_POLICY_VERSION_OUT_OF_RANGE` /
- *        `ACCOUNT_INPUT_FRAME_TX_OUT_OF_PROFILE` (message names the kind),
- *        before signature work, replay, or mutation.
+ *        `ACCOUNT_INPUT_FRAME_TX_POLICY_VERSION_OUT_OF_RANGE` before signature
+ *        work, replay, or mutation; a lending frame passes that preflight.
  *   Rust `apply_incoming_frame` returns `Rejected` whose reason carries
- *        `ACCOUNT_TX_POLICY_VERSION_OUT_OF_RANGE` /
- *        `ACCOUNT_TX_KIND_OUT_OF_PROFILE:<kind>` before replay.
+ *        `ACCOUNT_TX_POLICY_VERSION_OUT_OF_RANGE` before replay; a lending
+ *        frame likewise passes.
  * - boundary accept (policyVersion 0 and MAX): TS admits (ok result) and
  *   Rust admits (Ok, frame hashable) — the golden
  *   `matches_typescript_rebalance_policy_bytes_and_hashes` already pins
@@ -33,6 +34,7 @@ import { computeAccountStateRoot } from '../../account/commitment/state-root';
 import {
   AccountTxAdmissionError,
   MAX_POLICY_VERSION,
+  accountTxAdmissionError,
 } from '../../account/tx/admission-policy';
 import { accountInputFailureMessage, accountInputPeerRejectionCode } from '../../account/consensus/result';
 import { createEmptyEnv } from '../../runtime';
@@ -76,7 +78,7 @@ const TWO_POW_54 = 2 ** 54;
 // precisely the divergence FX-1 exists to reject before hashing.
 const U64_MAX_APPROXIMATE = 18_446_744_073_709_551_615;
 
-const OUT_OF_PROFILE_TXS: Array<[string, AccountTx]> = [
+const LENDING_TXS: Array<[AccountTx['type'], AccountTx]> = [
   ['lending_fund', {
     type: 'lending_fund',
     data: {
@@ -259,27 +261,23 @@ describe('FX-3 exact lifecycle retry identity', () => {
   });
 });
 
-describe('FX-2 lending kinds are out of the production RRS profile', () => {
-  test.each(OUT_OF_PROFILE_TXS)('enqueue rejects %s before mempool mutation', async (kind, tx) => {
+describe('FX-2 lending kinds are inside the production RRS profile', () => {
+  test.each(LENDING_TXS)('enqueue admits %s into the mempool', async (kind, tx) => {
     const account = makeAccount('0xsender', '0xrecipient');
 
-    await expect(enqueue(account, [structuredClone(tx)]))
-      .rejects
-      .toThrow(`ACCOUNT_TX_KIND_OUT_OF_PROFILE:${kind}`);
-    expect(account.mempool).toEqual([]);
+    const result = await enqueue(account, [structuredClone(tx)]);
+
+    expect(result).toMatchObject({ ok: true, admittedAccountTxCount: 1 });
+    expect(account.mempool.map(entry => entry.type)).toEqual([kind]);
   });
 
-  test('typed rejection names the kind and production profile', async () => {
-    const account = makeAccount('0xsender', '0xrecipient');
-    const [kind, tx] = OUT_OF_PROFILE_TXS[0]!;
-
-    const rejection = enqueue(account, [structuredClone(tx)]);
-    await expect(rejection).rejects.toMatchObject({
-      name: 'AccountTxAdmissionError',
-      code: 'ACCOUNT_TX_KIND_OUT_OF_PROFILE',
-      txType: kind,
-    });
-    await expect(rejection).rejects.toThrow('pay/HTLC/same-J swap/j-event/rebalance');
+  // `isAccountTxKindAvailable` is deliberately not imported here: the wallet
+  // (ui/src/screens/Lending.tsx) is its only consumer, and check:unused-surface
+  // pins that external-consumer proof.
+  test('the live profile refuses no lending kind', () => {
+    expect(LENDING_TXS.map(([, tx]) => accountTxAdmissionError(tx))).toEqual(
+      LENDING_TXS.map(() => undefined),
+    );
   });
 });
 
@@ -312,8 +310,11 @@ describe('incoming counterparty frames reject before replay', () => {
     };
   };
 
-  test.each(OUT_OF_PROFILE_TXS)(
-    'incoming %s is rejected before replay without mutation',
+  // Lending now passes the profile preflight, so an incoming lending frame is
+  // judged on its own semantics like any other kind. Whatever verdict it gets,
+  // it is never the profile refusal any more.
+  test.each(LENDING_TXS)(
+    'incoming %s is no longer refused by the admission profile',
     async (kind, tx) => {
       const account = makeAccount('0xsender', '0xrecipient');
       const input = buildFrameInput(account, tx, '');
@@ -325,14 +326,19 @@ describe('incoming counterparty frames reject before replay', () => {
           entityId: expectedEntityId,
         }),
       } as Parameters<typeof applyAccountInput>[0];
-      const before = safeStringify(account);
 
-      const result = await applyAccountInput(context, account, input);
+      const outcome = await applyAccountInput(context, account, input)
+        .then(result => ({
+          code: accountInputPeerRejectionCode(result),
+          message: accountInputFailureMessage(result) ?? '',
+        }))
+        .catch((error: Error) => ({ code: undefined, message: error.message }));
 
-      expect(accountInputPeerRejectionCode(result)).toBe('ACCOUNT_INPUT_FRAME_TX_OUT_OF_PROFILE');
-      expect(accountInputFailureMessage(result)).toContain(`ACCOUNT_TX_KIND_OUT_OF_PROFILE:${kind}`);
-      expect(account.currentHeight).toBe(0);
-      expect(safeStringify(account)).toBe(before);
+      expect(outcome.code).not.toBe('ACCOUNT_INPUT_FRAME_TX_OUT_OF_PROFILE');
+      expect(outcome.message).not.toContain(`ACCOUNT_TX_KIND_OUT_OF_PROFILE:${kind}`);
+      // Positive evidence that preflight let it through: the verdict now comes
+      // from the lending handler replaying the transaction.
+      expect(outcome.message).toMatch(/^LENDING_/);
     },
   );
 

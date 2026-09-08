@@ -530,13 +530,22 @@ pub fn execute_crontab(
         }
     }
 
+    // `commands` is consumed in order by `append_scheduled_account_txs`, so this
+    // is the emitted Account-transaction order and it must equal TypeScript's.
+    // There, expired locks are batched into a `processHtlcTimeouts` EntityTx that
+    // `applyRegularEntityTx` runs as a nested approved tx *before* the wake's own
+    // `context.accountTxs` (the lending settlements) are drained
+    // (core/entity/consensus/frame/application.ts:333-346). One wake carrying an
+    // overdue loan and an expired lock on the same Account therefore emits
+    // htlc_resolve first, then lending_credit — see
+    // core/__tests__/entity/scheduler/scheduled-wake-account-tx-order.test.ts.
+    if !expired_locks.is_empty() {
+        commands.push(SchedulerCommand::ProcessHtlcTimeouts { expired_locks });
+    }
     if !overdue_lending_loans.is_empty() {
         commands.push(SchedulerCommand::SettleOverdueLending {
             loans: overdue_lending_loans.to_vec(),
         });
-    }
-    if !expired_locks.is_empty() {
-        commands.push(SchedulerCommand::ProcessHtlcTimeouts { expired_locks });
     }
 
     // Periodic tasks execute after hooks, so a due kick above is visible in
@@ -712,6 +721,53 @@ mod tests {
             vec![SchedulerCommand::ProcessHtlcTimeouts {
                 expired_locks: expired.to_vec(),
             }]
+        );
+    }
+
+    /// One wake carrying both an expired HTLC lock and an overdue loan.
+    /// `append_scheduled_account_txs` consumes `commands` in order, so this list
+    /// *is* the emitted Account-transaction order, and TypeScript emits the
+    /// htlc_resolve first (measured in
+    /// core/__tests__/entity/scheduler/scheduled-wake-account-tx-order.test.ts).
+    #[test]
+    fn one_wake_emits_htlc_timeouts_before_overdue_lending_settlement() {
+        let state = state();
+        let expired = [("borrower".to_string(), "lock-1".to_string())];
+        let overdue = [crate::OverdueLendingLoan {
+            loan_id: "loan-1".to_string(),
+            borrower_entity_id: "borrower".to_string(),
+            token_id: xln_rscore_engine::TokenId::new(1).expect("token"),
+            committed_credit_limit: num_bigint::BigInt::from(22_500),
+        }];
+        let result = execute_crontab(
+            &state,
+            &wake(vec![ScheduledWakeJob {
+                kind: ScheduledWakeJobKind::Hook,
+                id: "htlc-timeout:lock-1".to_string(),
+                due_at: 800,
+            }]),
+            CrontabExecutionContext {
+                expected_proposer_signer_id: "HUB",
+                now: 1_000,
+                expired_htlc_locks: &expired,
+                overdue_lending_loans: &overdue,
+                secret_acks_requiring_dispute: &BTreeSet::new(),
+                dispute_views: &BTreeMap::new(),
+                j_batch_state: None,
+                dispute_auto_finalize: true,
+            },
+        )
+        .expect("execution");
+        assert_eq!(
+            result.commands,
+            vec![
+                SchedulerCommand::ProcessHtlcTimeouts {
+                    expired_locks: expired.to_vec(),
+                },
+                SchedulerCommand::SettleOverdueLending {
+                    loans: overdue.to_vec(),
+                },
+            ]
         );
     }
 

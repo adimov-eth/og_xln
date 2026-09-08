@@ -17,19 +17,21 @@ import { TOKENS } from '../../config/constants';
 export const MAX_POLICY_VERSION = 9_007_199_254_740_991;
 
 /**
- * FX-2 (proofs/fixes.md, decision D3): lending is outside the production RRS
- * profile (pay / HTLC / same-J swap / j-event / rebalance). These variants
- * remain hashable so historical signed frames can still be verified, but new
- * local or peer admission must reject them before any Account mutation.
+ * FX-2 (proofs/fixes.md, decision D3): the live Account admission profile.
+ *
+ * Lending was held outside it while its lifecycle was incomplete: a loan that
+ * passed its term stayed `active` forever, so the pool's capital and the
+ * borrower's credit line were both stranded with no transition that could end
+ * them. `9acd5e3e6` closed that hole — an overdue loan defaults, releases the
+ * pool and calls the credit line in, with TS/Rust parity evidence — so the six
+ * `lending_*` variants are now inside the production profile and a hub accepts
+ * them from local and peer admission alike.
+ *
+ * The set stays as the profile mechanism: a variant listed here is hashable
+ * (historical signed frames still verify) but refused before any Account
+ * mutation, in both engines.
  */
-const OUT_OF_PROFILE_TX_KINDS: ReadonlySet<AccountTx['type']> = new Set<AccountTx['type']>([
-  'lending_fund',
-  'lending_borrow_request',
-  'lending_repay',
-  'lending_credit',
-  'lending_close_request',
-  'lending_close_payout',
-]);
+const OUT_OF_PROFILE_TX_KINDS: ReadonlySet<AccountTx['type']> = new Set<AccountTx['type']>([]);
 
 /** The live admission profile also owns which actions a client may offer. */
 export const isAccountTxKindAvailable = (kind: AccountTx['type']): boolean =>
@@ -67,7 +69,7 @@ export class AccountTxAdmissionError extends Error {
         ? `${ACCOUNT_TX_TOKEN_ID_OUT_OF_RANGE}:${txType}:${String(tokenId)} `
           + `(protocol range 0..=${TOKENS.MAX_TOKEN_ID})`
         : `${ACCOUNT_TX_KIND_OUT_OF_PROFILE}:${txType} `
-          + '(profile: pay/HTLC/same-J swap/j-event/rebalance)');
+          + '(profile: pay/HTLC/same-J swap/j-event/rebalance/lending)');
     this.name = 'AccountTxAdmissionError';
     this.code = code;
     this.txType = txType;
@@ -82,8 +84,8 @@ const isPolicyVersionInRange = (policyVersion: number): boolean =>
 
 /**
  * FX-1 alone: an out-of-range `RebalancePolicy.policyVersion`. The frame-hash
- * layer uses this narrower probe as its admission-bug tripwire. Lending stays
- * hashable for historical verification and is rejected only at live admission.
+ * layer uses this narrower probe as its admission-bug tripwire, so it must
+ * never widen into the profile check above.
  */
 export const policyVersionOutOfRangeError = (
   tx: AccountTx,
