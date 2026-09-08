@@ -1,4 +1,5 @@
 import { getXLN } from './xln-loader';
+import type { RuntimeRecoveryCandidate } from './restore';
 import { connectEmbedded, getEmbeddedEnv, requireAdapter } from './adapter';
 import { deriveAddress, derivePrivateKeyBytes } from './keys';
 import { readJson } from './http';
@@ -191,6 +192,7 @@ export type HostedVaultOptions = {
 	kind: VaultKind;
 	selfLabel: string;
 	stack: Stack;
+	recovery?: RuntimeRecoveryCandidate;
 	onStep?: (step: string) => void;
 };
 
@@ -214,7 +216,7 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 			const index = chain.key === stack.jurisdiction.key ? 0 : deriveJurisdictionSignerIndex(chain.name);
 			xln.registerSignerKey(seed, deriveAddress(seed, index), derivePrivateKeyBytes(seed, index));
 		}
-		await connectEmbedded(seed);
+		await connectEmbedded(seed, options.recovery);
 		const env = getEmbeddedEnv();
 		if (!env) throw new Error('EMBEDDED_ENV_MISSING');
 		const adapter = requireAdapter();
@@ -305,7 +307,7 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 		}
 
 		step('Publishing your profile');
-		if (String(findReplicaState(env, entityId)?.state?.profile?.name || '') !== options.selfLabel) {
+		if (!options.recovery && String(findReplicaState(env, entityId)?.state?.profile?.name || '') !== options.selfLabel) {
 			await sendEntity(entityId, signerId, [{ type: 'profile-update', data: { profile: { entityId, name: options.selfLabel, bio: '', website: '' } } }]);
 		}
 

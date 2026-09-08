@@ -1,292 +1,59 @@
+import { SwapHistory } from '../components/history/SwapHistory';
 import { useMemo, useState } from 'react';
-import { Bar } from '../components/Bars';
-import { CopyId } from '../components/CopyId';
-import { Icon, type IconName } from '../components/Icons';
 import { Sheet } from '../components/Sheet';
+import { ActivityRow } from '../components/history/ActivityRow';
+import { MovementDetail } from '../components/history/MovementDetail';
+import { exportCsv } from '../components/history/export';
 import { useApp } from '../runtime/store';
-import { dayLabel, formatClock, formatMoney, formatUsd, getTokenMeta } from '../runtime/format';
-import { displayEntityName, useWallet } from '../runtime/views';
+import { dayLabel, formatUsd } from '../runtime/format';
+import { useWallet } from '../runtime/views';
 import { usdOf } from '../runtime/financial/prices';
-import { USER_ACTIVITY_TYPES, useMovements, type Movement } from '../runtime/financial/movements';
-
+import { USER_ACTIVITY_TYPES, useMovements } from '../runtime/financial/movements';
+export { ActivityRow, formatMovementAmount, movementParty } from '../components/history/ActivityRow';
 export { USER_ACTIVITY_TYPES };
 
 const FILTERS: Array<{ id: string; label: string; types: string[] }> = [
+	{ id: 'executions', label: 'Order executions', types: [] },
 	{ id: 'all', label: 'All', types: USER_ACTIVITY_TYPES },
 	{ id: 'payments', label: 'Payments', types: ['payment', 'htlc'] },
 	{ id: 'swaps', label: 'Swaps', types: ['swap', 'cross_swap'] },
 	{ id: 'settlement', label: 'Settlement', types: ['settlement'] },
+	{ id: 'onchain', label: 'On-chain', types: ['j_event', 'j_batch'] },
 	{ id: 'accounts', label: 'Accounts', types: ['account'] },
 ];
 
-const TONE_CLASS: Record<Movement['tone'], string> = {
-	settled: 'st-settled',
-	inflight: 'st-inflight',
-	pending: 'st-pending',
-	failed: 'st-dispute',
-	neutral: 'st-neutral',
-};
-
-function movementIcon(movement: Movement): { icon: IconName; cls: string } {
-	if (movement.kind === 'swap') return { icon: 'swap', cls: 'swap' };
-	if (movement.kind === 'settlement') return { icon: 'bank', cls: 'reserve' };
-	if (movement.kind === 'account') return { icon: 'shield', cls: 'account' };
-	if (movement.direction === 'in') return { icon: 'receive', cls: 'in' };
-	return { icon: 'pay', cls: 'out' };
-}
-
-export function formatMovementAmount(movement: Movement): string | null {
-	if (movement.amount === null || movement.tokenId === null) return null;
-	const meta = getTokenMeta(movement.tokenId);
-	const sign = movement.kind === 'payment' ? (movement.direction === 'out' ? '−' : movement.direction === 'in' ? '+' : '') : '';
-	return `${sign}${formatMoney(movement.amount, meta.decimals)} ${meta.symbol}`;
-}
-
-/** "to Meridian Desk via Hub One" / "from Hub One" / "with Hub One". */
-export function movementParty(movement: Movement, names: Map<string, string>): string {
-	if (!movement.counterpartyId) return '';
-	const name = displayEntityName(names, movement.counterpartyId);
-	const preposition = movement.kind === 'payment' ? (movement.direction === 'out' ? 'to' : movement.direction === 'in' ? 'from' : 'via') : 'with';
-	const via = movement.viaId ? ` via ${displayEntityName(names, movement.viaId)}` : '';
-	return `${preposition} ${name}${via}`;
-}
-
-export function ActivityRow({
-	movement,
-	names,
-	first,
-	selected,
-	onClick,
-}: {
-	movement: Movement;
-	names: Map<string, string>;
-	first: boolean;
-	selected?: boolean;
-	onClick?: () => void;
-}) {
-	const amount = formatMovementAmount(movement);
-	const { icon, cls } = movementIcon(movement);
-	const party = movementParty(movement, names);
-	// A credit limit or collateral figure is a setting, not money that moved: keep it out of the money column.
-	const amountInline = movement.kind === 'account' || movement.kind === 'settlement';
-	// People read clocks, not frame numbers; the frame stays in the detail view for whoever needs the proof.
-	const subtitle =
-		[party, amountInline && amount ? amount : '', movement.detail].filter(Boolean).join(' · ') ||
-		(movement.timestamp ? new Date(movement.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : `frame #${movement.height}`);
-	// Money that moved is drawn at the wallet's one scale, like every other bar.
-	const bar =
-		movement.kind === 'payment' && movement.amount !== null && movement.tokenId !== null
-			? [{ usd: usdOf(movement.tokenId, movement.amount), kind: (movement.direction === 'in' ? 'coll' : 'credit') as 'coll' | 'credit' }]
-			: null;
-	const Tag = onClick ? 'button' : 'span';
-	return (
-		<div className={`row${onClick ? ' tappable' : ''}${selected ? ' sel' : ''}${first ? ' first' : ''}`} data-testid="activity-row">
-			<Tag {...(onClick ? { type: 'button' as const, onClick } : {})} className="rt" style={{ width: '100%', textAlign: 'left' }}>
-				<span className={`ev-ic ${cls}`}>
-					<Icon name={icon} size={15} />
-				</span>
-				<span className="tx">
-					<span className="t">{movement.title}</span>
-					<span className="s">{subtitle}</span>
-				</span>
-				<span className="r">
-					{amount && !amountInline ? <span className="v num">{amount}</span> : null}
-					<span className="u">
-						<span className={`state ${TONE_CLASS[movement.tone]}`}>{movement.state}</span>
-					</span>
-				</span>
-			</Tag>
-			{bar ? (
-				<div className="rb">
-					<Bar segments={bar} height={4} />
-				</div>
-			) : null}
-		</div>
-	);
-}
-
-function MovementDetail({ movement, names }: { movement: Movement; names: Map<string, string> }) {
-	const amount = formatMovementAmount(movement);
-	const party = movementParty(movement, names);
-	return (
-		<>
-			<div className="rcpt" style={{ textAlign: 'left', padding: 0 }}>
-				<div className="caps">
-					{movement.kind} · <span className={TONE_CLASS[movement.tone]}>{movement.state}</span>
-				</div>
-				<div className="a num" style={{ fontSize: 30, marginTop: 10 }}>
-					{amount ?? movement.title}
-				</div>
-				{amount ? <div className="to">{[movement.title, party].filter(Boolean).join(' ')}</div> : null}
-			</div>
-			<div>
-				{movement.counterpartyId ? (
-					<div className="kv">
-						<span className="k">{movement.direction === 'out' ? 'To' : movement.direction === 'in' ? 'From' : 'With'}</span>
-						<span className="v">
-							{displayEntityName(names, movement.counterpartyId)} <CopyId value={movement.counterpartyId} label="Entity id" head={8} tail={4} />
-						</span>
-					</div>
-				) : null}
-				{movement.viaId ? (
-					<div className="kv">
-						<span className="k">Via</span>
-						<span className="v">{displayEntityName(names, movement.viaId)}</span>
-					</div>
-				) : null}
-				{movement.detail ? (
-					<div className="kv">
-						<span className="k">Detail</span>
-						<span className="v" style={{ fontWeight: 400 }}>
-							{movement.detail}
-						</span>
-					</div>
-				) : null}
-				<div className="kv">
-					<span className="k">Frame</span>
-					<span className="v num">#{movement.height.toLocaleString('en-US')}</span>
-				</div>
-				<div className="kv">
-					<span className="k">Time</span>
-					<span className="v mono" style={{ color: 'var(--ink-2)' }}>
-						{movement.timestamp ? formatClock(movement.timestamp) : '—'}
-					</span>
-				</div>
-				{movement.hash ? (
-					<div className="kv">
-						<span className="k">Proof</span>
-						<span className="v">
-							<CopyId value={movement.hash} label="Proof" />
-						</span>
-					</div>
-				) : null}
-				{movement.events.length > 1 ? (
-					<div className="kv">
-						<span className="k">Frames</span>
-						<span className="v num">{movement.events.length} committed entries</span>
-					</div>
-				) : null}
-			</div>
-			<div className="state st-settled" style={{ justifyContent: 'center', display: 'flex' }}>
-				From your runtime's committed frames
-			</div>
-			<div className="actions" style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-				<button
-					type="button"
-					className="btn quiet"
-					style={{ flex: 1 }}
-					data-testid="movement-copy"
-					onClick={() => {
-						const lines = [
-							`${movement.title}${party ? ` ${party}` : ''}${amount ? ` · ${amount}` : ''}`,
-							`State: ${movement.state}`,
-							movement.timestamp ? `When: ${new Date(movement.timestamp).toISOString()}` : '',
-							`Frame: #${movement.height}`,
-							movement.hash ? `Proof: ${movement.hash}` : '',
-							'Signed by both parties · xln',
-						].filter(Boolean);
-						void navigator.clipboard?.writeText(lines.join('\n'));
-					}}
-				>
-					Copy
-				</button>
-				<button
-					type="button"
-					className="btn quiet"
-					style={{ flex: 1 }}
-					data-testid="movement-download"
-					title="This entry with its frame, proof and every committed event, as a file for the books"
-					onClick={() => {
-						const blob = new Blob([JSON.stringify(movement, (_key, value) => (typeof value === 'bigint' ? String(value) : value), 2)], { type: 'application/json' });
-						const url = URL.createObjectURL(blob);
-						const link = document.createElement('a');
-						link.href = url;
-						link.download = `xln-proof-frame-${movement.height}.json`;
-						link.click();
-						setTimeout(() => URL.revokeObjectURL(url), 1_000);
-					}}
-				>
-					Download proof
-				</button>
-			</div>
-		</>
-	);
-}
-
-
-/** A statement for the books: one line per movement, with the frame that carries it. */
-function exportCsv(movements: Movement[]): void {
-	const cell = (value: string | number | null | undefined): string => `"${String(value ?? '').replace(/"/g, '""')}"`;
-	const lines = [
-		['date', 'title', 'direction', 'amount', 'token', 'counterparty', 'via', 'state', 'detail', 'frame', 'hash'].join(','),
-		...movements.map(movement => {
-			const meta = movement.tokenId !== null ? getTokenMeta(movement.tokenId) : null;
-			return [
-				movement.timestamp ? new Date(movement.timestamp).toISOString() : '',
-				movement.title,
-				movement.direction,
-				movement.amount !== null && meta ? formatMoney(movement.amount, meta.decimals, meta.decimals) : '',
-				meta?.symbol ?? '',
-				movement.counterpartyId ?? '',
-				movement.viaId ?? '',
-				movement.state,
-				movement.detail,
-				movement.height,
-				movement.hash ?? '',
-			].map(cell).join(',');
-		}),
-	];
-	const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-	const url = URL.createObjectURL(blob);
-	const link = document.createElement('a');
-	link.href = url;
-	link.download = `xln-activity-${new Date().toISOString().slice(0, 10)}.csv`;
-	link.click();
-	setTimeout(() => URL.revokeObjectURL(url), 1_000);
-}
-
 const PAGE = 200;
-
-/**
- * Free-text search over what is already loaded: who it was with, the amount as
- * it is written on the row, the state, and the frame hash. Searching the loaded
- * page rather than the runtime keeps the filter instant and honest about its
- * scope, which the row count under the list states.
- */
-function matching(movements: Movement[], search: string, names: Map<string, string>): Movement[] {
-	const needle = search.trim().toLowerCase();
-	if (!needle) return movements;
-	return movements.filter(movement => {
-		const counterparty = movement.counterpartyId ?? '';
-		const haystack = [
-			movement.title,
-			movement.detail,
-			movement.state,
-			counterparty,
-			names.get(counterparty) ?? '',
-			movement.hash ?? '',
-			movement.amount !== null && movement.tokenId !== null ? formatUsd(usdOf(movement.tokenId, movement.amount)) : '',
-		];
-		return haystack.some(field => field.toLowerCase().includes(needle));
-	});
-}
 
 export function ActivityScreen() {
 	const entityId = useApp(s => s.activeEntityId);
+	return <EntityActivity key={entityId ?? 'none'} entityId={entityId} />;
+}
+
+function EntityActivity({ entityId }: { entityId: string | null }) {
 	const wallet = useWallet(entityId);
 	const [filter, setFilter] = useState('all');
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [search, setSearch] = useState('');
 	// A page, not a ceiling: the books outlive any fixed number of rows.
-	const [limit, setLimit] = useState(PAGE);
+	const [cursors, setCursors] = useState<Array<number | null>>([null]);
+	const [from, setFrom] = useState('');
+	const [to, setTo] = useState('');
+	const limit = PAGE;
+	const filters = useMemo(() => ({
+		...(cursors.at(-1) !== null ? { beforeHeight: cursors.at(-1)! } : {}),
+		...(search.trim() ? { q: search.trim() } : {}),
+		...(from ? { fromTimestamp: new Date(from).getTime() } : {}),
+		...(to ? { toTimestamp: new Date(to).getTime() } : {}),
+		scanLimit: 1000,
+	}), [cursors, search, from, to]);
 	const types = FILTERS.find(entry => entry.id === filter)?.types ?? USER_ACTIVITY_TYPES;
 	const accountIds = useMemo(() => wallet.accounts.map(account => account.counterpartyId), [wallet.accounts]);
-	const { movements: loaded, loading, error } = useMovements(entityId, types, limit, accountIds);
-	const more = loaded.length >= limit;
-	const movements = useMemo(() => matching(loaded, search, wallet.names), [loaded, search, wallet.names]);
+	const { movements: loaded, loading, error, nextBeforeHeight } = useMovements(filter === 'executions' ? null : entityId, types, limit, accountIds, filters);
+	const more = nextBeforeHeight !== null;
+	const movements = loaded;
 	// Desktop shows the latest movement's receipt until the user picks another; on a phone the sheet opens only on tap.
 	const desktop = typeof window !== 'undefined' && window.matchMedia('(min-width: 1101px)').matches;
-	const selected = movements.find(movement => movement.id === selectedId) ?? (desktop ? (movements[0] ?? null) : null);
+	const selected = filter === 'executions' ? null : movements.find(movement => movement.id === selectedId) ?? (desktop ? (movements[0] ?? null) : null);
 
 	// The day at a glance, for whoever closes the till: what came in, what went out, how many movements.
 	const today = useMemo(() => {
@@ -296,7 +63,7 @@ export function ActivityScreen() {
 		let sent = 0;
 		let count = 0;
 		for (const movement of movements) {
-			if (!movement.timestamp || movement.timestamp < startOfDay.getTime() || movement.amount === null || movement.tokenId === null) continue;
+			if (movement.kind !== 'payment' || movement.tone !== 'settled' || !movement.timestamp || movement.timestamp < startOfDay.getTime() || movement.amount === null || movement.tokenId === null) continue;
 			const usd = usdOf(movement.tokenId, movement.amount);
 			if (movement.direction === 'in') received += usd;
 			else if (movement.direction === 'out') sent += usd;
@@ -319,7 +86,7 @@ export function ActivityScreen() {
 				<span className="screen-title">Activity</span>
 				{today.count > 0 ? (
 					<span className="note num" data-testid="activity-today" style={{ marginLeft: 12 }}>
-						Today · in {formatUsd(today.received)} · out {formatUsd(today.sent)} · {today.count} {today.count === 1 ? 'movement' : 'movements'}
+						This page today · in {formatUsd(today.received)} · out {formatUsd(today.sent)} · {today.count} {today.count === 1 ? 'movement' : 'movements'}
 					</span>
 				) : null}
 				{movements.length > 0 ? (
@@ -333,54 +100,62 @@ export function ActivityScreen() {
 			</div>
 			<div className="two-col activity">
 				<div>
+					{filter !== 'executions' && <>
 					<input
 						className="input"
 						type="search"
-						placeholder="Search who, how much, or a frame hash"
+						placeholder="Search stored history"
 						value={search}
-						onChange={event => setSearch(event.target.value)}
+						onChange={event => { setSearch(event.target.value); setCursors([null]); }}
 						data-testid="activity-search"
 						style={{ marginBottom: 8 }}
 					/>
-					<div className="chips">
+					<div className="actions" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                        <label className="field">From<input className="input" type="datetime-local" value={from} onChange={event => { setFrom(event.target.value); setCursors([null]); }} /></label>
+                        <label className="field">Until<input className="input" type="datetime-local" value={to} onChange={event => { setTo(event.target.value); setCursors([null]); }} /></label>
+                    </div>
+                    {cursors.length > 1 && <button type="button" className="btn quiet sm" onClick={() => setCursors(value => value.slice(0, -1))}>Newer records</button>}
+                    </>}
+                    <div className="chips">
 						{FILTERS.map(entry => (
-							<button key={entry.id} type="button" className={filter === entry.id ? 'active' : ''} onClick={() => setFilter(entry.id)}>
+							<button key={entry.id} type="button" className={filter === entry.id ? 'active' : ''} onClick={() => { setFilter(entry.id); setCursors([null]); }}>
 								{entry.label}
 							</button>
 						))}
 					</div>
-					{rows.map(({ movement, day, first }) => (
+					{filter === 'executions' && entityId ? <SwapHistory key={entityId} entityId={entityId} accountIds={accountIds} names={wallet.names} /> : null}
+					{filter !== 'executions' && rows.map(({ movement, day, first }) => (
 						<div key={movement.id}>
 							{first ? <div className="caps day">{day}</div> : null}
 							<ActivityRow movement={movement} names={wallet.names} first={first} selected={movement.id === selected?.id} onClick={() => setSelectedId(movement.id)} />
 						</div>
 					))}
-					{movements.length === 0 && !loading && (
+					{filter !== 'executions' && movements.length === 0 && !loading && !error && (
 						<p className="note" style={{ padding: '18px 0' }}>
 							{search.trim() ? `Nothing loaded matches "${search.trim()}".` : 'Nothing here for this filter yet.'}
 						</p>
 					)}
-					{more && (
+					{filter !== 'executions' && more && (
 						<div style={{ padding: '12px 0' }}>
 							<button
 								type="button"
 								className="btn quiet sm"
-								onClick={() => setLimit(value => value + PAGE)}
-								disabled={loading}
+								onClick={() => { if (nextBeforeHeight !== null) setCursors(value => [...value, nextBeforeHeight]); }}
+								disabled={loading || Boolean(error)}
 								data-testid="activity-more"
 							>
-								{loading ? 'Loading…' : `Load ${PAGE} older`}
+								{loading ? 'Loading…' : 'Earlier records'}
 							</button>
 							<span className="faint" style={{ fontSize: 12, marginLeft: 10 }}>
 								{search.trim()
-									? `Searching the ${loaded.length.toLocaleString('en-US')} most recent movements.`
-									: `Showing the ${loaded.length.toLocaleString('en-US')} most recent movements.`}
+									? `Searching the ${loaded.length.toLocaleString('en-US')} movements on this page.`
+									: `Showing the ${loaded.length.toLocaleString('en-US')} movements on this page.`}
 							</span>
 						</div>
 					)}
 					{error && <p style={{ color: 'var(--dispute)', fontSize: 13 }}>{error}</p>}
 				</div>
-				<div className="aside desktop-only">
+				{filter !== 'executions' && <div className="aside desktop-only">
 					{selected ? (
 						<div className="card">
 							<MovementDetail movement={selected} names={wallet.names} />
@@ -390,7 +165,7 @@ export function ActivityScreen() {
 							<p className="note">Select a movement to see its receipt.</p>
 						</div>
 					)}
-				</div>
+				</div>}
 			</div>
 			{selected && (
 				<div className="mobile-only">

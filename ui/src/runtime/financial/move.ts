@@ -23,8 +23,6 @@ import {
 	type MoveEndpoint,
 } from '@xln/frontend/lib/components/Entity/move-routes';
 import { getEmbeddedEnv } from '../adapter';
-import { deriveAddress, derivePrivateKeyBytes } from '../keys';
-import { useApp } from '../store';
 import { sendEntityTxs } from '../tx';
 import { getXLN } from '../xln-loader';
 import type { WalletView } from '../views';
@@ -266,14 +264,14 @@ export { isExternalTransferMoveRoute };
 // adapter and the vault seed (the sandbox, an embedded runtime).
 // ---------------------------------------------------------------------------
 
-function signerPrivateKey(signerId: string): Uint8Array {
-	const state = useApp.getState();
-	const seed = state.activeVaultId ? state.sessionSeeds[state.activeVaultId] : undefined;
-	if (!seed) throw new Error('SIGNER_KEY_LOCKED');
-	for (let index = 0; index < 8; index += 1) {
-		if (deriveAddress(seed, index) === normalizeId(signerId)) return derivePrivateKeyBytes(seed, index);
-	}
-	throw new Error('SIGNER_KEY_NOT_IN_VAULT');
+async function signerPrivateKey(signerId: string): Promise<Uint8Array> {
+	const env = getEmbeddedEnv();
+	if (!env) throw new Error('ONCHAIN_ACTIONS_NEED_A_LOCAL_RUNTIME');
+	// Hosted boot and recovery register the exact signer keys, including the
+	// jurisdiction-derived HD paths. Never guess a path or another vault's key.
+	const key = (await getXLN()).getCachedSignerPrivateKey(env, signerId);
+	if (!key) throw new Error('SIGNER_KEY_NOT_IN_VAULT');
+	return key;
 }
 
 export async function hostedJAdapter(entityId: string, signerId: string) {
@@ -297,7 +295,7 @@ export async function depositoryAddress(entityId: string, signerId: string): Pro
 export async function approveDepository(entityId: string, signerId: string, tokenAddress: string, amount: bigint, tokenId: number): Promise<bigint> {
 	const jadapter = await hostedJAdapter(entityId, signerId);
 	const spender = jadapter.addresses.depository;
-	await jadapter.approveErc20(signerPrivateKey(signerId), tokenAddress, spender, amount, { entityId, tokenId });
+	await jadapter.approveErc20(await signerPrivateKey(signerId), tokenAddress, spender, amount, { entityId, tokenId });
 	const deadline = Date.now() + 5_000;
 	for (;;) {
 		const allowance = await jadapter.getErc20Allowance(tokenAddress, signerId, spender);
@@ -310,5 +308,5 @@ export async function approveDepository(entityId: string, signerId: string, toke
 /** Wallet-to-wallet ERC20 transfer signed by the entity's signer; no runtime input. */
 export async function sendExternal(entityId: string, signerId: string, tokenAddress: string, to: string, amount: bigint): Promise<string> {
 	const jadapter = await hostedJAdapter(entityId, signerId);
-	return jadapter.transferErc20(signerPrivateKey(signerId), tokenAddress, to, amount);
+	return jadapter.transferErc20(await signerPrivateKey(signerId), tokenAddress, to, amount);
 }

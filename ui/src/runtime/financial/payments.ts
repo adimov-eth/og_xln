@@ -3,7 +3,6 @@ import type { RuntimeAdapterPaymentRoutesResponse, RuntimeAdapterSendResult } fr
 import { buildPaymentRuntimeInput } from '@xln/frontend/lib/components/Entity/payments/runtime/payment-command';
 import type { PaymentRouteQuote } from '@xln/frontend/lib/components/Entity/payments/runtime/payment-route-quote';
 import { requireAdapter } from '../adapter';
-import { usePaymentIntents } from './movements';
 
 export type { PaymentRouteQuote };
 
@@ -99,14 +98,5 @@ export async function submitPayment(input: {
 	description: string;
 	route: PaymentRouteQuote;
 }): Promise<RuntimeAdapterSendResult> {
-	const result = await requireAdapter().send(buildPaymentRuntimeInput(input));
-	usePaymentIntents.getState().record({
-		entityId: input.entityId,
-		targetEntityId: input.targetEntityId,
-		tokenId: input.tokenId,
-		amounts: [input.route.recipientAmount.toString(), input.route.senderAmount.toString()],
-		description: input.description.trim(),
-		submittedAt: Date.now(),
-	});
-	return result;
+	return requireAdapter().send(buildPaymentRuntimeInput(input));
 }

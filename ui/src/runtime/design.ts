@@ -20,7 +20,7 @@ export type DesignPrefs = {
 
 export const DESIGN_KEY = 'xln-ui-design';
 
-export const DEFAULT_DESIGN: DesignPrefs = { material: 'obsidian', accent: 'indigo', accentHex: '#6e7cff', numbers: 'sans', risk: 'violet' };
+export const DEFAULT_DESIGN: DesignPrefs = { material: 'bank', accent: 'mono', accentHex: '#c9a962', numbers: 'sans', risk: 'violet' };
 
 export const MATERIALS: Array<{ id: Material; title: string; hint: string }> = [
 	{ id: 'obsidian', title: 'Obsidian', hint: 'Matte black, two surfaces, hairlines. Light theme is paper.' },

@@ -15,7 +15,11 @@ async function towerHolds(lookupKey: string): Promise<{ available: boolean; heig
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ lookupKey }),
   });
-  const payload = (await response.json()) as { ok?: boolean; available?: boolean; latestReceipt?: { height?: number; storedBytes?: number } };
+  const payload = (await response.json()) as {
+    ok?: boolean;
+    available?: boolean;
+    latestReceipt?: { height?: number; storedBytes?: number };
+  };
   if (!response.ok || payload.ok !== true) throw new Error(`TOWER_DISCOVER_FAILED:${response.status}`);
   return {
     available: payload.available === true,
@@ -184,23 +188,50 @@ test(
     const lookupKey = deriveRuntimeRecoveryLookupKey(wallet.runtimeId, wallet.phrase);
     expect(await towerHolds(lookupKey), 'a fresh wallet is not backed up anywhere').toMatchObject({ available: false });
     await expect(page.getByTestId('sovereignty-watchtower')).toHaveAttribute('data-covered', 'no');
-    await expect(page.getByTestId('watchtower-state')).toHaveText('nobody');
-    await expect(page.getByTestId('watchtower-coverage-lastresort')).toContainText('not appointed');
+    await expect(page.getByTestId('watchtower-state')).toHaveText('not backed up');
+    await expect(page.getByTestId('watchtower-coverage-lastresort')).toContainText(
+      'No appointments verified in this session',
+    );
     await page.getByTestId('watchtower-url').fill(TOWER_URL);
     await page.getByTestId('watchtower-add').click();
-    await expect(page.getByTestId('sovereignty-watchtower')).toHaveAttribute('data-covered', 'yes', { timeout: 30_000 });
+    await expect(page.getByTestId('sovereignty-watchtower')).toHaveAttribute('data-covered', 'yes', {
+      timeout: 30_000,
+    });
     await expect(page.getByTestId('watchtower-row')).toHaveCount(1);
     await expect(page.getByTestId('watchtower-row')).toContainText('holding your frame #');
     const stored = await towerHolds(lookupKey);
     expect(stored.available, 'the tower now holds this wallet under its blind lookup key').toBe(true);
     expect(stored.height).toBeGreaterThanOrEqual(before.runtimeHeight);
     expect(stored.storedBytes).toBeGreaterThan(0);
-    await expect(page.getByTestId('watchtower-coverage-backup')).toContainText(`#${stored.height.toLocaleString('en-US')}`);
+    await expect(page.getByTestId('watchtower-coverage-backup')).toContainText(
+      `#${stored.height.toLocaleString('en-US')}`,
+    );
     await expect(page.getByTestId('watchtower-coverage-accounts')).toContainText(String(before.accounts.length));
     console.log(`WATCHTOWER_BACKUP tower=${TOWER_URL} height=${stored.height} storedBytes=${stored.storedBytes}`);
+    const appointmentResponse = page.waitForResponse(
+      response =>
+        response.request().method() === 'PUT' &&
+        response.url().includes('watchtower-proxy') &&
+        response.request().postDataJSON()?.towerMode === 'delayed_last_resort',
+    );
+    await page.getByTestId('protection-appoint').click();
+    const accepted = await appointmentResponse;
+    expect(accepted.ok()).toBe(true);
+    const { receipt } = await accepted.json();
+    expect(receipt.towerMode).toBe('delayed_last_resort');
+    expect(receipt.appointmentSequence).toBeGreaterThan(0);
+    expect(receipt.expiresAt).toBeGreaterThan(Date.now());
+    await expect(page.getByTestId('protection-state')).toContainText('account appointment receipts received');
+    await page.getByTestId('watchtower-coverage-lastresort').locator('summary').first().click();
+    await expect(page.getByTestId('watchtower-coverage-lastresort')).toContainText('Proof hash');
+    await testInfo.attach('tower-protection-receipt', {
+      body: JSON.stringify(receipt),
+      contentType: 'application/json',
+    });
+
     await page.getByTestId('watchtower-remove').click();
     await expect(page.getByTestId('watchtower-row')).toHaveCount(0);
-    await expect(page.getByTestId('watchtower-state')).toHaveText('nobody');
+    await expect(page.getByTestId('watchtower-state')).toHaveText('not backed up');
     await expect(page.getByTestId('watchtower-mode-local')).toHaveClass(/active/);
 
     await page.getByRole('link', { name: 'Settings' }).first().click();

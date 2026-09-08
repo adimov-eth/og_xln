@@ -34,9 +34,11 @@
 }
 
 .rail-item {
-	width: 44px;
-	height: 44px;
+	width: 56px;
+	min-height: 58px;
 	border-radius: 12px;
+	flex-direction: column;
+	gap: 5px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -53,6 +55,11 @@
 .rail-item.active {
 	color: var(--ink);
 	background: var(--surface-2);
+}
+
+.rail-label {
+	font-size: 10px;
+	font-weight: 500;
 }
 
 .rail-spacer {
@@ -2251,4 +2258,9 @@ textarea.input.boxed {
 	.two-col { display: block !important; }
 	.card, .sheet-card { border: 1px solid #ccc !important; page-break-inside: avoid; }
 	a::after { content: ''; }
+}
+
+.faucet-page {
+	max-width: 640px;
+	margin: 0 auto;
 }

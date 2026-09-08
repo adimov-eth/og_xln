@@ -16,71 +16,100 @@ import { observeFundingBatches } from '../runtime/financial/funding-submission';
  * back control, so no action is ever offered twice on one screen.
  */
 const NAV: Array<{ to: string; label: string; icon: IconName; match: (pathname: string) => boolean }> = [
-	{
-		to: '/',
-		label: 'Home',
-		icon: 'home',
-		match: pathname => pathname === '/' || pathname.startsWith('/accounts') || pathname === '/pay' || pathname === '/receive' || pathname === '/swap' || pathname === '/move',
-	},
-	{ to: '/activity', label: 'Activity', icon: 'activity', match: pathname => pathname.startsWith('/activity') },
-	{
-		to: '/manage',
-		label: 'Manage',
-		icon: 'accounts',
-		match: pathname => pathname.startsWith('/manage') || pathname.startsWith('/assets') || pathname.startsWith('/lend') || pathname.startsWith('/ownership') || pathname.startsWith('/sovereignty') || pathname.startsWith('/desk'),
-	},
-	{ to: '/settings', label: 'Settings', icon: 'settings', match: pathname => pathname.startsWith('/settings') },
+  {
+    to: '/',
+    label: 'Home',
+    icon: 'home',
+    match: pathname =>
+      pathname === '/' ||
+      pathname.startsWith('/accounts') ||
+      pathname === '/pay' ||
+      pathname === '/receive' ||
+      pathname === '/swap' ||
+      pathname === '/move',
+  },
+  { to: '/activity', label: 'Activity', icon: 'activity', match: pathname => pathname.startsWith('/activity') },
+  {
+    to: '/manage',
+    label: 'Manage',
+    icon: 'accounts',
+    match: pathname =>
+      pathname.startsWith('/manage') ||
+      pathname.startsWith('/assets') ||
+      pathname.startsWith('/lend') ||
+      pathname.startsWith('/ownership') ||
+      pathname.startsWith('/sovereignty') ||
+      pathname.startsWith('/desk'),
+  },
+  { to: '/settings', label: 'Settings', icon: 'settings', match: pathname => pathname.startsWith('/settings') },
 ];
 
 /** Screens with their own back control and one primary action; the tab bar would compete with them on a phone. */
 const FLOW_ROUTES = new Set(['/pay', '/receive', '/swap', '/move']);
 
 export function Shell({ children }: { children: ReactNode }) {
-	const { pathname } = useLocation();
-	const entityId = useApp(s => s.activeEntityId);
-	const wallet = useWallet(entityId);
-	useExternalWalletSync(wallet.entityId, wallet.signerId);
-	const batches = wallet.frame?.activeEntity?.core?.jBatchState;
-	useEffect(() => { observeFundingBatches(wallet.entityId, [batches?.batch, batches?.sentBatch?.batch, ...(batches?.recoveryBatches ?? [])]); }, [wallet.entityId, batches]);
-	const clearToasts = useApp(s => s.clearToasts);
-	// A toast belongs to the screen that raised it.
-	useEffect(() => clearToasts(), [pathname, clearToasts]);
+  const { pathname } = useLocation();
+  const entityId = useApp(s => s.activeEntityId);
+  const wallet = useWallet(entityId);
+  useExternalWalletSync(wallet.entityId, wallet.signerId);
+  const batches = wallet.frame?.activeEntity?.core?.jBatchState;
+  useEffect(() => {
+    observeFundingBatches(wallet.entityId, [
+      batches?.batch,
+      batches?.sentBatch?.batch,
+      ...(batches?.recoveryBatches ?? []),
+    ]);
+  }, [wallet.entityId, batches]);
+  const clearToasts = useApp(s => s.clearToasts);
+  // A toast belongs to the screen that raised it.
+  useEffect(() => clearToasts(), [pathname, clearToasts]);
 
-	return (
-		<div className="app">
-			<Palette />
-			<Tour />
-			<nav className="rail" aria-label="Primary">
-				<div className="rail-mark" aria-hidden>
-					<Logo size={22} />
-				</div>
-				{NAV.map(item => (
-					<NavLink
-						key={item.to}
-						to={item.to}
-						className={`rail-item${item.match(pathname) ? ' active' : ''}`}
-						data-testid={`nav-${item.label.toLowerCase()}`}
-						aria-label={item.label}
-						title={item.label}
-					>
-						<Icon name={item.icon} size={19} />
-					</NavLink>
-				))}
-				<div className="rail-spacer" />
-			</nav>
+  return (
+    <div className="app">
+      <a className="skip-link" href="#wallet-content">
+        Skip to content
+      </a>
+      <Palette />
+      <Tour />
+      <nav className="rail" aria-label="Primary">
+        <div className="rail-mark" aria-hidden>
+          <Logo size={22} />
+        </div>
+        {NAV.map(item => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            className={`rail-item${item.match(pathname) ? ' active' : ''}`}
+            data-testid={`nav-${item.label.toLowerCase()}`}
+            aria-label={item.label}
+            title={item.label}
+          >
+            <Icon name={item.icon} size={19} />
+            <span className="rail-label">{item.label}</span>
+          </NavLink>
+        ))}
+        <div className="rail-spacer" />
+      </nav>
 
-			<main className="main">{children}</main>
+      <main className="main" id="wallet-content" tabIndex={-1}>
+        {children}
+      </main>
 
-			<nav className={`tabbar${FLOW_ROUTES.has(pathname) ? ' flow' : ''}`} aria-label="Primary">
-				{NAV.map(item => (
-					<NavLink key={item.to} to={item.to} className={`tabbar-item${item.match(pathname) ? ' active' : ''}`} data-testid={`nav-${item.label.toLowerCase()}`}>
-						<Icon name={item.icon} size={20} />
-						<span>{item.label}</span>
-					</NavLink>
-				))}
-			</nav>
+      <nav className={`tabbar${FLOW_ROUTES.has(pathname) ? ' flow' : ''}`} aria-label="Primary">
+        {NAV.map(item => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            className={`tabbar-item${item.match(pathname) ? ' active' : ''}`}
+            data-testid={`nav-${item.label.toLowerCase()}`}
+          >
+            <Icon name={item.icon} size={20} />
+            <span>{item.label}</span>
+          </NavLink>
+        ))}
+      </nav>
 
-			<Toasts />
-		</div>
-	);
+      <Toasts />
+    </div>
+  );
 }

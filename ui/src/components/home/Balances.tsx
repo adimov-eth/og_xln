@@ -1,0 +1,229 @@
+import { Bar, DeltaBar, DeltaCaption } from '../Bars';
+import { Icon } from '../Icons';
+import { TokenIcon } from '../TokenPicker';
+import { useApp } from '../../runtime/store';
+import { formatMoney, formatSigned, formatUsd, getTokenMeta } from '../../runtime/format';
+import { isUsdStable, usdOf } from '../../runtime/financial/prices';
+import type { AccountView, TokenTotals, WalletView } from '../../runtime/views';
+
+export function TokenRow({
+  total,
+  wallet,
+  first,
+  open,
+  onToggle,
+  onAccount,
+}: {
+  total: TokenTotals;
+  wallet: WalletView;
+  first: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onAccount: (counterpartyId: string) => void;
+}) {
+  const places = useApp(s => s.places);
+  const meta = getTokenMeta(total.tokenId);
+  const money = (value: bigint): string => formatMoney(value, meta.decimals);
+  const segments = [
+    { usd: places.onchain ? usdOf(total.tokenId, total.onchain) : 0, kind: 'onchain' as const },
+    { usd: places.reserve ? usdOf(total.tokenId, total.reserve) : 0, kind: 'reserve' as const },
+    { usd: places.reserve ? usdOf(total.tokenId, total.pending) : 0, kind: 'pend' as const },
+    { usd: places.accounts ? usdOf(total.tokenId, total.secured) : 0, kind: 'coll' as const },
+    { usd: places.accounts ? usdOf(total.tokenId, total.risk) : 0, kind: 'risk' as const },
+  ];
+  const visibleNet =
+    (places.onchain ? total.onchain : 0n) +
+    (places.reserve ? total.reserve : 0n) +
+    (places.accounts ? total.receivable + total.owed : 0n);
+  const accounts = wallet.accounts.filter(account => account.tokens.some(token => token.tokenId === total.tokenId));
+
+  return (
+    <div className={`row${first ? ' first' : ''}`} data-testid={`token-row-${meta.symbol}`}>
+      <button
+        type="button"
+        className="rt"
+        style={{ width: '100%', textAlign: 'left' }}
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        <TokenIcon tokenId={total.tokenId} />
+        <span className="tx">
+          <span className="t">{meta.symbol}</span>
+          <span className="s">
+            {meta.name}
+            {places.accounts && total.owed < 0n ? (
+              <>
+                {' · '}
+                <span className="st-pending num">you owe {money(-total.owed)}</span>
+              </>
+            ) : null}
+          </span>
+        </span>
+        <span className="r">
+          <span className="v num" data-testid={`token-net-${meta.symbol}`}>
+            {money(visibleNet)}
+          </span>
+          <span className="u num">
+            {isUsdStable(total.tokenId) ? '' : `≈ ${formatUsd(usdOf(total.tokenId, visibleNet))}`}
+            {places.reserve && total.pending > 0n ? (
+              <span className="st-pending"> +{money(total.pending)} pending</span>
+            ) : null}
+          </span>
+        </span>
+        <span className="chev">
+          <Icon name={open ? 'chevronDown' : 'chevronRight'} size={16} />
+        </span>
+      </button>
+      <div className="rb">
+        <Bar segments={segments} />
+      </div>
+      {open && (
+        <div className="fade-in">
+          {places.onchain &&
+            wallet.onchain
+              .filter(row => row.tokenId === total.tokenId)
+              .map(row => (
+                <div key={`onchain-${row.jurisdiction}`} className="sub">
+                  <div className="rt">
+                    <span className="tx">
+                      <span className="t">On-chain{row.jurisdiction ? ` · ${row.jurisdiction}` : ''}</span>
+                      <span className="s">Your wallet</span>
+                    </span>
+                    <span className="r">
+                      <span className="v num">{money(row.amount)}</span>
+                    </span>
+                  </div>
+                  <div className="rb">
+                    <Bar segments={[{ usd: usdOf(total.tokenId, row.amount), kind: 'onchain' }]} height={4} />
+                  </div>
+                </div>
+              ))}
+          {places.reserve &&
+            wallet.reserves
+              .filter(row => row.tokenId === total.tokenId)
+              .map(row => (
+                <div key={`reserve-${row.jurisdiction}`} className="sub">
+                  <div className="rt">
+                    <span className="tx">
+                      <span className="t">Reserve{row.jurisdiction ? ` · ${row.jurisdiction}` : ''}</span>
+                      <span className="s">
+                        Depository escrow
+                        {row.pending > 0n ? (
+                          <>
+                            {' · '}
+                            <span className="st-pending num">{money(row.pending)} depositing</span>
+                          </>
+                        ) : null}
+                      </span>
+                    </span>
+                    <span className="r">
+                      <span className="v num">{money(row.amount)}</span>
+                    </span>
+                  </div>
+                  <div className="rb">
+                    <Bar
+                      segments={[
+                        { usd: usdOf(total.tokenId, row.amount), kind: 'reserve' },
+                        { usd: usdOf(total.tokenId, row.pending), kind: 'pend' },
+                      ]}
+                      height={4}
+                    />
+                  </div>
+                </div>
+              ))}
+          {places.accounts &&
+            accounts.map(account => {
+              const token = account.tokens.find(entry => entry.tokenId === total.tokenId);
+              if (!token) return null;
+              return (
+                <button
+                  key={account.counterpartyId}
+                  type="button"
+                  className="sub"
+                  style={{ width: '100%', textAlign: 'left', display: 'block' }}
+                  onClick={() => onAccount(account.counterpartyId)}
+                >
+                  <div className="rt">
+                    <span className="tx">
+                      <span className="t">
+                        {account.label}
+                        {account.isHub ? <span className="chip hub">hub</span> : null}
+                        {wallet.jurisdiction ? <span className="faint">· {wallet.jurisdiction}</span> : null}
+                      </span>
+                      <span className="s">
+                        {token.signed > 0n ? 'owes you' : token.signed < 0n ? 'you owe' : 'even'}
+                      </span>
+                    </span>
+                    <span className="r">
+                      <span className="v num">{formatSigned(token.signed, meta.decimals)}</span>
+                    </span>
+                  </div>
+                  <div className="rb">
+                    <DeltaBar derived={token.derived} tokenId={total.tokenId} />
+                    <DeltaCaption derived={token.derived} format={money} />
+                  </div>
+                </button>
+              );
+            })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function AccountRow({ account, first, onClick }: { account: AccountView; first: boolean; onClick: () => void }) {
+  const selectedTokenId = useApp(s => s.selectedTokenId);
+  const token = account.tokens.find(entry => entry.tokenId === selectedTokenId) ?? account.tokens[0];
+  const meta = getTokenMeta(token?.tokenId ?? selectedTokenId);
+  const hold = token?.derived.outTotalHold ?? 0n;
+  return (
+    <button
+      type="button"
+      className={`row tappable${first ? ' first' : ''}`}
+      onClick={onClick}
+      data-testid="account-row"
+    >
+      <span className="rt">
+        <span className="avatar">{account.label.slice(0, 1).toUpperCase()}</span>
+        <span className="tx">
+          <span className="t">
+            {account.label}
+            {account.isHub ? <span className="chip hub">hub</span> : null}
+            {account.dispute === 'closed' ? <span className="state">closed</span> : null}
+            {account.dispute === 'active' || account.dispute === 'queued' || account.dispute === 'sent' ? (
+              <span className="state st-dispute">dispute</span>
+            ) : account.dispute === 'preparing' ? (
+              <span className="state st-dispute">dispute preparing</span>
+            ) : null}
+            {account.settlement === 'awaiting_you' ? (
+              <span className="state st-pending">sign settlement</span>
+            ) : account.settlement !== 'none' ? (
+              <span className="state st-inflight">settling</span>
+            ) : null}
+          </span>
+          <span className="s">
+            {meta.symbol}
+            {hold > 0n ? (
+              <>
+                {' · '}
+                <span className="st-inflight num">{formatMoney(hold, meta.decimals)} in flight</span>
+              </>
+            ) : null}
+          </span>
+        </span>
+        <span className="r">
+          <span className="v num">{token ? formatSigned(token.signed, meta.decimals) : '—'}</span>
+          <span className="u">
+            {token ? (token.signed > 0n ? 'owes you' : token.signed < 0n ? 'you owe' : 'even') : 'no tokens'}
+          </span>
+        </span>
+      </span>
+      {token ? (
+        <span className="rb" style={{ display: 'block' }}>
+          <DeltaBar derived={token.derived} tokenId={token.tokenId} />
+          <DeltaCaption derived={token.derived} format={value => formatMoney(value, meta.decimals)} />
+        </span>
+      ) : null}
+    </button>
+  );
+}

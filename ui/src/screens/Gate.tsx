@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../components/Icons';
 import { Logo } from '../components/Logo';
+import { RestoreChoice } from '../components/RestoreChoice';
+import { discoverTowerRestore } from '../runtime/restore';
+import { defaultTowerUrl, saveRecovery } from '../runtime/recovery';
 import { useApp } from '../runtime/store';
 import { bootHostedVault, bootLearnVault, detectStack, type Stack } from '../runtime/hosted';
 import {
@@ -41,6 +44,8 @@ export function Gate() {
 	const [factor, setFactor] = useState(3);
 	const [customShards, setCustomShards] = useState('');
 	const [phrase, setPhrase] = useState('');
+	const [restore, setRestore] = useState(false);
+	const [towerUrl, setTowerUrl] = useState(defaultTowerUrl);
 	const [wsUrl, setWsUrl] = useState('wss://xln.finance/rpc');
 	const [authKey, setAuthKey] = useState('');
 	const [remoteEntities, setRemoteEntities] = useState<RuntimeAdapterEntitySummary[] | null>(null);
@@ -68,6 +73,15 @@ export function Gate() {
 			setBusyStep(null);
 			setProgress(null);
 		}
+	};
+
+	const recoveryFor = async (seed: string) => {
+		if (!restore) return undefined;
+		setBusyStep('Finding and verifying your encrypted backup');
+		return discoverTowerRestore(seed, towerUrl);
+	};
+	const rememberTower = (vaultId: string): void => {
+		if (restore) saveRecovery(vaultId, { mode: 'tower', towers: [towerUrl.trim()] });
 	};
 
 	const NO_STACK = 'No xln network answers at this address. Open the wallet from a running stack (bun run dev, or xln.finance/ui).';
@@ -103,8 +117,10 @@ export function Gate() {
 			const vaultId = runtimeIdForSeed(result.mnemonic).toLowerCase();
 			const vaultOptions = { vaultId, vaultName: name.trim(), kind: 'brainvault' as const, selfLabel: name.trim(), onStep: (step: string) => setBusyStep(step) };
 			if (!stack) throw new Error(NO_STACK);
-			await bootHostedVault(result.mnemonic, { ...vaultOptions, stack });
-			toast('Vault created. Write nothing down: your name and passphrase are the backup.');
+			const recovery = await recoveryFor(result.mnemonic);
+			await bootHostedVault(result.mnemonic, { ...vaultOptions, stack, ...(recovery ? { recovery } : {}) });
+			rememberTower(vaultId);
+			toast(recovery ? 'Verified backup restored.' : 'Vault opened. Keep your credentials safe and set up an encrypted backup in Protection.');
 		});
 	};
 
@@ -115,7 +131,9 @@ export function Gate() {
 			const vaultId = runtimeIdForSeed(seed).toLowerCase();
 			const vaultOptions = { vaultId, vaultName: 'Imported vault', kind: 'mnemonic' as const, selfLabel: 'Main', onStep: (step: string) => setBusyStep(step) };
 			if (!stack) throw new Error(NO_STACK);
-			await bootHostedVault(seed, { ...vaultOptions, stack });
+			const recovery = await recoveryFor(seed);
+			await bootHostedVault(seed, { ...vaultOptions, stack, ...(recovery ? { recovery } : {}) });
+			rememberTower(vaultId);
 		});
 	};
 
@@ -347,12 +365,13 @@ export function Gate() {
 							Each shard is one unit of Argon2 memory-hard work. The same name, passphrase, and work reopen this vault on any device.
 						</span>
 					</div>
+					<RestoreChoice enabled={restore} address={towerUrl} onToggle={setRestore} onAddress={setTowerUrl} />
 					<div className="gate-form-actions">
 						<button type="button" className="btn quiet" onClick={() => setMode('landing')}>
 							Back
 						</button>
 						<button type="submit" className="btn" disabled={name.trim().length < 2 || passphrase.length < 8 || !work}>
-							Derive vault
+							{restore ? 'Derive and restore' : 'Derive vault'}
 						</button>
 					</div>
 				</form>
@@ -370,12 +389,13 @@ export function Gate() {
 						<span className="field-label">Recovery phrase</span>
 						<textarea className="input boxed" rows={3} value={phrase} onChange={e => setPhrase(e.target.value)} placeholder="words separated by spaces" autoFocus />
 					</label>
+					<RestoreChoice enabled={restore} address={towerUrl} onToggle={setRestore} onAddress={setTowerUrl} />
 					<div className="gate-form-actions">
 						<button type="button" className="btn quiet" onClick={() => setMode('landing')}>
 							Back
 						</button>
 						<button type="submit" className="btn" disabled={phrase.trim().split(/\s+/).length < 12}>
-							Unlock
+							{restore ? 'Restore wallet' : 'Unlock'}
 						</button>
 					</div>
 				</form>

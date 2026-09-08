@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { requestPushWakeDeviceToken } from '$lib/utils/recovery/pushWakeDevice';
+  import { readPushWakeRegistrationRecords, removePushWakeRegistrationRecord, upsertPushWakeRegistrationRecord } from '$lib/utils/recovery/pushWakeRecords';
+  import type { PushWakeRegistrationRecord } from '$lib/utils/recovery/pushWakeTypes';
   import type { RuntimeReplica } from '@xln/core/api/public/runtime-module';
   import type { RecoveryTowerConfig, Runtime } from '$lib/stores/vault/vaultStore';
   import { vaultOperations } from '$lib/stores/vault/vaultStore';
@@ -8,12 +11,7 @@
     buildPushWakeUnregisterPayload,
     buildPushWakeUnregisterRequest,
     buildWatchtowerPushRequestUrl,
-    readPushWakeRegistrationRecords,
-    removePushWakeRegistrationRecord,
-    requestPushWakeDeviceToken,
     resolvePushWakeTarget,
-    upsertPushWakeRegistrationRecord,
-    type PushWakeRegistrationRecord,
   } from '$lib/utils/recovery/pushWakeRegistration';
   import { normalizeTowerMode } from '$lib/utils/recovery/recoverySettings';
   import { Bell, BellOff, Check, LoaderCircle } from 'lucide-svelte';

@@ -5,7 +5,7 @@ import { Icon } from '../components/Icons';
 import { PendingBatch } from '../components/PendingBatch';
 import { TokenPicker } from '../components/TokenPicker';
 import { useApp } from '../runtime/store';
-import { formatMoney, getTokenMeta, parseAmount } from '../runtime/format';
+import { formatMoney, getTokenMeta, parseAmount, amountInputText } from '../runtime/format';
 import { usdOf } from '../runtime/financial/prices';
 import {
 	MOVE_ENDPOINTS,
@@ -248,7 +248,7 @@ export function Move() {
 					<div className="field">
 						<div className="field-head">
 							<span>Amount</span>
-							<button type="button" className="more" disabled={Boolean(funding)} onClick={() => setAmountText(formatMoney(available, meta.decimals, meta.decimals).replace(/,/g, '').replace(/\.?0+$/, ''))}>
+							<button type="button" className="more" disabled={Boolean(funding)} onClick={() => setAmountText(amountInputText(available, meta.decimals))}>
 								up to {formatMoney(available, meta.decimals)} {meta.symbol}
 							</button>
 						</div>

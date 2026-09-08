@@ -1,3 +1,7 @@
+import { useMemo } from 'react';
+import type { RuntimeAdapterActivityPage } from '@xln/core/api/public/runtime-module';
+import { useAdapterRead } from '../runtime/hooks';
+import { originatedRecipient, paymentReceiptFacts } from '../runtime/financial/payment-receipt-view';
 import { CopyId } from './CopyId';
 import { Icon } from './Icons';
 import { Sheet } from './Sheet';
@@ -17,21 +21,18 @@ export function PaymentReceiptSheet() {
 	// Same name source as Home: the entity's own view frame.
 	const { names } = useWallet(receipt ? entityId : null);
 
+	const hash = String(receipt?.data['hashlock'] ?? receipt?.data['lockId'] ?? '');
+	const query = useMemo(() => ({ entityId: entityId ?? '', q: hash, types: ['payment'], limit: 100, scanLimit: 1000 }), [entityId, hash]);
+	const history = useAdapterRead<RuntimeAdapterActivityPage>(receipt && hash ? 'activity' : null, query);
+	const recipient = originatedRecipient(history.data?.events ?? [], entityId ?? '', hash);
 	if (!receipt) return null;
 
 	const data = receipt.data;
-	const tokenId = Number(data['tokenId']);
-	const meta = getTokenMeta(Number.isFinite(tokenId) ? tokenId : 1);
-	let amount = 0n;
-	try {
-		amount = BigInt(String(data['amount'] ?? '0'));
-	} catch {
-		amount = 0n;
-	}
-	const sent = receipt.name === 'HtlcFinalized';
-	const hop = String((sent ? data['toEntity'] : data['fromEntity']) || '').toLowerCase();
-	const counterparty = receipt.recipientId ?? hop;
-	const via = sent && receipt.recipientId && hop && hop !== receipt.recipientId ? displayEntityName(names, hop) : '';
+	const { sent, counterparty: observedAccount, tokenId, amount } = paymentReceiptFacts(receipt.name, data);
+	const counterparty = recipient ?? observedAccount;
+	const partyLabel = sent ? recipient ? 'to' : 'via account' : 'from account';
+	const meta = tokenId === null ? null : getTokenMeta(tokenId);
+	const amountLabel = amount !== null && meta ? `${formatMoney(amount, meta.decimals)} ${meta.symbol}` : 'Amount not recorded';
 	const elapsedRaw = Number(data['finalizedInMs'] ?? data['elapsedMs'] ?? 0);
 	const elapsed = Number.isFinite(elapsedRaw) && elapsedRaw > 0 ? Math.max(1, Math.floor(elapsedRaw)) : null;
 	const description = String(data['description'] || '').trim();
@@ -49,11 +50,10 @@ export function PaymentReceiptSheet() {
 					{sent ? 'Paid' : 'Received'}
 				</div>
 				<div className="a num" data-testid="receipt-amount">
-					{formatMoney(amount, meta.decimals)} <small>{meta.symbol}</small>
+					{amountLabel}
 				</div>
 				<div className="to" data-testid="receipt-title">
-					{sent ? 'to' : 'from'} {counterparty ? displayEntityName(names, counterparty) : '—'}
-					{via ? <span className="faint"> via {via}</span> : null}
+					{partyLabel} {counterparty ? displayEntityName(names, counterparty) : '—'}
 					{description ? ` · ${description}` : ''}
 				</div>
 			</div>
@@ -62,7 +62,7 @@ export function PaymentReceiptSheet() {
 					<span className="k">Settled</span>
 					<span className="v st-settled">
 						{clock ? <span className="mono" style={{ color: 'var(--ink-2)', marginRight: 8 }}>{clock}</span> : null}
-						{elapsed === null ? 'Instantly' : elapsed < 1_000 ? 'in under a second' : `in ${Math.round(elapsed / 1000)} s`}
+						{elapsed === null ? 'Duration not recorded' : elapsed < 1_000 ? 'in under a second' : `in ${Math.round(elapsed / 1000)} s`}
 					</span>
 				</div>
 				<div className="kv">
@@ -71,15 +71,15 @@ export function PaymentReceiptSheet() {
 				</div>
 				{proof ? (
 					<div className="kv">
-						<span className="k">Proof</span>
+						<span className="k">Hashlock</span>
 						<span className="v">
-							<CopyId value={proof} label="Proof" head={10} tail={4} />
+							<CopyId value={proof} label="Hashlock" head={10} tail={4} />
 						</span>
 					</div>
 				) : null}
 			</div>
 			<div className="state st-settled" style={{ justifyContent: 'center', display: 'flex' }}>
-				Verified by your runtime
+				Recorded by your runtime
 			</div>
 			<div className="actions" style={{ display: 'flex', gap: 8 }}>
 				<button
@@ -89,12 +89,12 @@ export function PaymentReceiptSheet() {
 					data-testid="receipt-copy"
 					onClick={() => {
 						const lines = [
-							`${sent ? 'Paid' : 'Received'} ${formatMoney(amount, meta.decimals)} ${meta.symbol} ${sent ? 'to' : 'from'} ${counterparty ? displayEntityName(names, counterparty) : '—'}`,
+							`${sent ? 'Paid' : 'Received'} ${amountLabel} ${partyLabel} ${counterparty ? displayEntityName(names, counterparty) : '—'}`,
 							description ? `For: ${description}` : '',
 							clock ? `Settled: ${clock}` : '',
 							`Frame: #${receipt.height}`,
-							proof ? `Proof: ${proof}` : '',
-							'Signed by both parties · xln',
+							proof ? `Hashlock: ${proof}` : '',
+							'Committed payment event · xln',
 						].filter(Boolean);
 						void navigator.clipboard?.writeText(lines.join('\n'));
 					}}
@@ -108,7 +108,7 @@ export function PaymentReceiptSheet() {
 					data-testid="receipt-download"
 					title="The receipt with its frame, proof and every event, as a file for your books"
 					onClick={() => {
-						const blob = new Blob([JSON.stringify({ kind: sent ? 'paid' : 'received', amount: formatMoney(amount, meta.decimals), token: meta.symbol, counterparty, via: via || undefined, description: description || undefined, settledAt: clock || undefined, frame: receipt.height, proof: proof || undefined, event: receipt.name, data }, (_key, value) => (typeof value === 'bigint' ? String(value) : value), 2)], { type: 'application/json' });
+						const blob = new Blob([JSON.stringify({ kind: sent ? 'paid' : 'received', amount: amount?.toString() ?? null, tokenId, counterparty, description: description || undefined, settledAt: clock || undefined, frame: receipt.height, proof: proof || undefined, event: receipt.name, data }, (_key, value) => (typeof value === 'bigint' ? String(value) : value), 2)], { type: 'application/json' });
 						const url = URL.createObjectURL(blob);
 						const link = document.createElement('a');
 						link.href = url;

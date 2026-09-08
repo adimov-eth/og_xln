@@ -215,3 +215,42 @@ button.hash.copy:hover {
 .fade-in {
 	animation: fade-in var(--dur-slow) var(--ease);
 }
+
+/* Native disclosure keeps detail keyboard-accessible without hidden UI state. */
+.disclosure {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.disclosure > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  padding: 5px 0;
+}
+.disclosure[open] > summary {
+  margin-bottom: 10px;
+  color: var(--ink);
+}
+.disclosure .kv {
+  gap: 16px;
+  align-items: start;
+}
+.disclosure .kv .hash {
+  min-width: 0;
+  text-align: right;
+}
+.disclosure > .note {
+  margin: 10px 0;
+}
+.skip-link {
+  position: fixed;
+  top: -80px;
+  left: 12px;
+  padding: 12px 20px;
+  background: var(--ink);
+  color: var(--bg);
+  z-index: 100;
+}
+.skip-link:focus {
+  top: 12px;
+}

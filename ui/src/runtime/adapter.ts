@@ -7,6 +7,8 @@ import type {
 import type { RuntimeReplica } from '@xln/core/api/public/runtime-module';
 import { getXLN } from './xln-loader';
 import { useApp } from './store';
+import { restoreFreshRuntime, type RuntimeRecoveryCandidate } from './restore';
+import { runtimeIdForSeed } from './keys';
 
 /**
  * Liveness is a host-observed fact the runtime asks its transport for. Every
@@ -64,15 +66,19 @@ export function disconnectAdapter(): void {
 	useApp.getState().setAdapterState({ status: 'disconnected', height: 0, commandReady: false });
 }
 
-export async function connectEmbedded(seed: string): Promise<RuntimeAdapter> {
+export async function connectEmbedded(seed: string, recovery?: RuntimeRecoveryCandidate): Promise<RuntimeAdapter> {
 	const xln = await getXLN();
+	if (recovery && currentEnv) throw new Error('Close this wallet and reload before restoring on a clean device.');
 	disconnectAdapter();
 
 	let env: RuntimeReplica | null = null;
 	const adapter = new xln.EmbeddedRuntimeAdapter({
 		getEnv: () => env,
 		main: async (runtimeSeed?: string | null) => {
-			env = await xln.main(runtimeSeed ?? seed);
+			// Serialize local bootstrap/import across tabs before either opens storage.
+			env = await navigator.locks.request(`xln-wallet-bootstrap:${runtimeIdForSeed(seed)}`, () =>
+				recovery ? restoreFreshRuntime(xln, seed, recovery) : xln.main(runtimeSeed ?? seed),
+			);
 			installHostedLivenessObserver(env);
 			currentEnv = env;
 			return env;

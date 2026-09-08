@@ -1,23 +1,9 @@
-import { HDNodeWallet, Mnemonic, getIndexedAccountPath } from 'ethers';
+import { Mnemonic, getBytes } from 'ethers';
+import { deriveRuntimeSignerAddress, deriveRuntimeSignerPrivateKey } from '@xln/core/storage/recovery/bundle/seed-identity';
 
-/** Same BIP44 account-path derivation the canonical wallet uses (vault-recovery.ts). */
-export function deriveAddress(seed: string, index: number): string {
-	const mnemonic = Mnemonic.fromPhrase(seed);
-	return HDNodeWallet.fromMnemonic(mnemonic, getIndexedAccountPath(index)).address.toLowerCase();
-}
-
-export function derivePrivateKey(seed: string, index: number): string {
-	return HDNodeWallet.fromMnemonic(Mnemonic.fromPhrase(seed), getIndexedAccountPath(index)).privateKey;
-}
-
-export function derivePrivateKeyBytes(seed: string, index: number): Uint8Array {
-	const hex = derivePrivateKey(seed, index).slice(2);
-	const bytes = new Uint8Array(hex.length / 2);
-	for (let i = 0; i < bytes.length; i++) {
-		bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-	}
-	return bytes;
-}
+export function deriveAddress(seed: string, index: number): string { return deriveRuntimeSignerAddress(seed, index); }
+export function derivePrivateKey(seed: string, index: number): string { return deriveRuntimeSignerPrivateKey(seed, index); }
+export function derivePrivateKeyBytes(seed: string, index: number): Uint8Array { return getBytes(derivePrivateKey(seed, index)); }
 
 export function isValidMnemonic(phrase: string): boolean {
 	try {

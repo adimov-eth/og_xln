@@ -12,7 +12,6 @@ import {
 import { getAdapter, getEmbeddedEnv } from '../adapter';
 import { useApp } from '../store';
 import { getXLN } from '../xln-loader';
-import { usePaymentIntents } from './movements';
 
 /**
  * A settled payment surfaces as a receipt the moment its terminal frame log is
@@ -24,14 +23,12 @@ export type PaymentReceipt = {
 	height: number;
 	name: PaymentTerminalEvent['name'];
 	data: Record<string, unknown>;
-	/** The recipient this wallet addressed, when the payment was sent from here. */
-	recipientId: string | null;
 	observedAt: number;
 };
 
 type ReceiptState = {
 	latest: PaymentReceipt | null;
-	show: (event: PaymentTerminalEvent, recipientId: string | null) => void;
+	show: (event: PaymentTerminalEvent) => void;
 	dismiss: () => void;
 };
 
@@ -39,14 +36,13 @@ let receiptSeq = 0;
 
 export const useReceipts = create<ReceiptState>(set => ({
 	latest: null,
-	show: (event, recipientId) =>
+	show: event =>
 		set({
 			latest: {
 				id: `receipt-${++receiptSeq}`,
 				height: event.height,
 				name: event.name,
 				data: event.data,
-				recipientId,
 				observedAt: Date.now(),
 			},
 		}),
@@ -105,10 +101,8 @@ export function startPaymentTerminal(): () => void {
 				useApp.getState().toast(reason ? `Payment failed: ${reason}` : 'Payment failed', 'danger');
 				return;
 			}
-			const entityId = useApp.getState().activeEntityId ?? '';
-			const recipientId = event.name === 'HtlcFinalized' ? usePaymentIntents.getState().bind(entityId, event.data) : null;
 			useApp.getState().clearToasts();
-			useReceipts.getState().show(event, recipientId);
+			useReceipts.getState().show(event);
 		},
 		onError: error => {
 			const message = error instanceof Error ? error.message : String(error);

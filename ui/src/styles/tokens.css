@@ -4,9 +4,9 @@
 	/* Sums and hero figures. A design preset swaps this; body text never changes. */
 	--font-num: var(--font-ui);
 
-	--radius-s: 10px;
-	--radius-m: 14px;
-	--radius-l: 20px;
+	--radius-s: 6px;
+	--radius-m: 10px;
+	--radius-l: 14px;
 	--radius-pill: 999px;
 
 	--dur-fast: 140ms;
@@ -97,10 +97,10 @@
 
 :root[data-material='bank'],
 :root[data-material='bank'][data-theme='dark'] {
-	--bg: #14131a;
-	--surface: #1b1a22;
-	--surface-2: #23222c;
-	--surface-3: #2c2b37;
+	--bg: #141413;
+	--surface: #1b1b19;
+	--surface-2: #232320;
+	--surface-3: #2c2c28;
 	--line: rgba(240, 236, 228, 0.09);
 	--line-2: rgba(240, 236, 228, 0.16);
 	--ink: #f0ece4;

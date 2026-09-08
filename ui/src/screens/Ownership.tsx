@@ -1,3 +1,4 @@
+import { Formation } from '../components/Formation';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CopyId } from '../components/CopyId';
@@ -43,6 +44,7 @@ export function Ownership() {
 	const targets = takeoverTargets(wallet.entityId, wallet.signerId, wallet.names);
 	const validators = core?.config?.validators ?? [];
 	const threshold = core?.config?.threshold ?? 0n;
+	const votingWeight = validators.reduce((sum, validator) => sum + (core?.config?.shares[validator] ?? 0n), 0n);
 
 	const refreshShares = useCallback(async () => {
 		if (!numbered || !wallet.entityId || !wallet.signerId) return;
@@ -80,6 +82,7 @@ export function Ownership() {
 					Ownership
 				</span>
 			</div>
+			<Formation />
 			<div className="two-col">
 				<div>
 					<div className="card" data-testid="board">
@@ -97,20 +100,19 @@ export function Ownership() {
 						<div className="kv">
 							<span className="k">Threshold</span>
 							<span className="v num">
-								{threshold.toString()} of {validators.length}
+								{threshold.toString()} of {votingWeight.toString()} voting weight
 							</span>
 						</div>
 						{validators.length === 1 ? (
 							<p className="note" style={{ marginTop: 8 }}>
-								One key runs this entity today: yours. A board can grow to several signers with a quorum (2 of 3, 3 of 5); every change is a rotation
-								signed by the current board and published on-chain, so a lost key never means a lost entity.
+								This entity has one signing key. Losing it can prevent access. Keep your recovery phrase safe; a backup cannot replace a lost signing key.
 							</p>
 						) : null}
 						{validators.map(validator => (
 							<div key={validator} className="kv">
 								<span className="k">Signer</span>
 								<span className="v mono" style={{ fontWeight: 400 }}>
-									{shortId(validator, 8, 6)}
+									<CopyId value={validator} label="Board signer" /> · weight {(core?.config?.shares[validator] ?? 0n).toString()}
 									{validator.toLowerCase() === wallet.signerId ? <span className="chip hub" style={{ marginLeft: 6 }}>you</span> : null}
 								</span>
 							</div>
@@ -183,13 +185,13 @@ export function Ownership() {
 										<div className="kv">
 											<span className="k">Current board</span>
 											<span className="v mono" style={{ fontWeight: 400 }}>
-												{shortId(status.currentBoardHash, 8, 6)}
+												<CopyId value={status.currentBoardHash} label="Current board hash" />
 											</span>
 										</div>
 										<div className="kv">
 											<span className="k">Proposed board</span>
 											<span className="v mono" style={{ fontWeight: 400 }}>
-												{/^0x0+$/.test(status.proposedBoardHash) ? 'none' : shortId(status.proposedBoardHash, 8, 6)}
+												{/^0x0+$/.test(status.proposedBoardHash) ? 'none' : <CopyId value={status.proposedBoardHash} label="Proposed board hash" />}
 											</span>
 										</div>
 										<div className="kv">

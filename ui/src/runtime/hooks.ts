@@ -19,6 +19,8 @@ export type ReadState<T> = {
 export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterReadQuery): ReadState<T> {
 	const height = useApp(s => s.height);
 	const status = useApp(s => s.adapterStatus);
+	const vaultId = useApp(s => s.activeVaultId);
+	const [resolvedKey, setResolvedKey] = useState<string | null>(null);
 	const [data, setData] = useState<T | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState<boolean>(Boolean(path));
@@ -26,6 +28,7 @@ export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterRea
 	const generation = useRef(0);
 
 	const queryKey = useMemo(() => JSON.stringify(query ?? null), [query]);
+	const readKey = JSON.stringify([vaultId, path, queryKey]);
 
 	useEffect(() => {
 		const adapter = getAdapter();
@@ -33,17 +36,21 @@ export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterRea
 			return;
 		}
 		const gen = ++generation.current;
+		setLoading(true);
 		let cancelled = false;
 		adapter
 			.read<T>(path, query)
 			.then(result => {
 				if (cancelled || gen !== generation.current) return;
 				setData(result);
+				setResolvedKey(readKey);
 				setError(null);
 				setLoading(false);
 			})
 			.catch((readError: unknown) => {
 				if (cancelled || gen !== generation.current) return;
+				setData(null);
+				setResolvedKey(readKey);
 				setError(readError instanceof Error ? readError.message : String(readError));
 				setLoading(false);
 			});
@@ -51,11 +58,13 @@ export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterRea
 			cancelled = true;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [path, queryKey, height, status, manualTick]);
+	}, [path, queryKey, readKey, height, status, manualTick]);
 
 	const refresh = useCallback(() => setManualTick(t => t + 1), []);
 
-	return { data, error, loading, refresh };
+	const active = Boolean(path) && status === 'connected';
+	const current = active && resolvedKey === readKey;
+	return { data: current ? data : null, error: current ? error : null, loading: active && (!current || loading), refresh };
 }
 
 export function useConnected(): boolean {

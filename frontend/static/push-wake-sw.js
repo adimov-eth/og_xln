@@ -19,11 +19,13 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const rawUrl = event.notification.data && typeof event.notification.data.url === 'string'
     ? event.notification.data.url
-    : '/app';
+    : new URL(self.location.href).searchParams.get('wallet') || '/app';
+  const destination = new URL(rawUrl, self.location.origin);
+  const safeUrl = destination.origin === self.location.origin ? destination.href : self.location.origin;
   event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
     for (const client of clients) {
       if ('focus' in client) return client.focus();
     }
-    return self.clients.openWindow(rawUrl);
+    return self.clients.openWindow(safeUrl);
   }));
 });
