@@ -38,7 +38,7 @@ export const TOUR_STEPS: TourStep[] = [
     target: ctx =>
       ctx.pathname !== '/pay'
         ? home(ctx, 'home-pay')
-        : !ctx.dom.value('pay-to').trim()
+        : ctx.dom.has('pay-recipient-options') || !ctx.dom.value('pay-to').trim()
           ? 'pay-to'
           : !ctx.dom.value('pay-amount').trim()
             ? 'pay-amount'
@@ -46,7 +46,7 @@ export const TOUR_STEPS: TourStep[] = [
     instruction: ctx =>
       ctx.pathname !== '/pay'
         ? 'Press Pay.'
-        : !ctx.dom.value('pay-to').trim()
+        : ctx.dom.has('pay-recipient-options') || !ctx.dom.value('pay-to').trim()
           ? 'Choose a recipient from the suggestions, for example H2.'
           : !ctx.dom.value('pay-amount').trim()
             ? 'Enter 25 USDC.'

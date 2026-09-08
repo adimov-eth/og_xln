@@ -238,7 +238,7 @@ export function Pay() {
 								onBlur={() => setToFocused(false)}
 							/>
 							{toFocused && suggestions.length > 0 && (
-								<div className="picker-menu">
+								<div className="picker-menu" data-testid="pay-recipient-options">
 									{suggestions.map(entry => (
 										<button
 											key={entry.entityId}

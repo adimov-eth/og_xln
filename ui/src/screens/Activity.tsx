@@ -1,3 +1,4 @@
+import { useLocation } from 'react-router-dom';
 import { SwapHistory } from '../components/history/SwapHistory';
 import { useMemo, useState } from 'react';
 import { Sheet } from '../components/Sheet';
@@ -32,7 +33,9 @@ export function ActivityScreen() {
 function EntityActivity({ entityId }: { entityId: string | null }) {
 	const wallet = useWallet(entityId);
 	const [filter, setFilter] = useState('all');
-	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const location = useLocation();
+	const [selectedId, setSelectedId] = useState<string | null>(() =>
+		typeof location.state?.movementId === 'string' ? location.state.movementId : null);
 	const [search, setSearch] = useState('');
 	// A page, not a ceiling: the books outlive any fixed number of rows.
 	const [cursors, setCursors] = useState<Array<number | null>>([null]);

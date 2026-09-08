@@ -74,9 +74,11 @@ export function TokenRow({
           <Icon name={open ? 'chevronDown' : 'chevronRight'} size={16} />
         </span>
       </button>
-      <div className="rb">
-        <Bar segments={segments} />
-      </div>
+      {open && (
+        <div className="rb">
+          <Bar segments={segments} />
+        </div>
+      )}
       {open && (
         <div className="fade-in">
           {places.onchain &&
@@ -172,10 +174,11 @@ export function TokenRow({
 }
 
 export function AccountRow({ account, first, onClick }: { account: AccountView; first: boolean; onClick: () => void }) {
-  const selectedTokenId = useApp(s => s.selectedTokenId);
-  const token = account.tokens.find(entry => entry.tokenId === selectedTokenId) ?? account.tokens[0];
-  const meta = getTokenMeta(token?.tokenId ?? selectedTokenId);
-  const hold = token?.derived.outTotalHold ?? 0n;
+  const status = account.disputed
+    ? 'Dispute in progress'
+    : account.settlement !== 'none'
+      ? 'Settlement in progress'
+      : 'Payment connection';
   return (
     <button
       type="button"
@@ -186,44 +189,11 @@ export function AccountRow({ account, first, onClick }: { account: AccountView; 
       <span className="rt">
         <span className="avatar">{account.label.slice(0, 1).toUpperCase()}</span>
         <span className="tx">
-          <span className="t">
-            {account.label}
-            {account.isHub ? <span className="chip hub">hub</span> : null}
-            {account.dispute === 'closed' ? <span className="state">closed</span> : null}
-            {account.dispute === 'active' || account.dispute === 'queued' || account.dispute === 'sent' ? (
-              <span className="state st-dispute">dispute</span>
-            ) : account.dispute === 'preparing' ? (
-              <span className="state st-dispute">dispute preparing</span>
-            ) : null}
-            {account.settlement === 'awaiting_you' ? (
-              <span className="state st-pending">sign settlement</span>
-            ) : account.settlement !== 'none' ? (
-              <span className="state st-inflight">settling</span>
-            ) : null}
-          </span>
-          <span className="s">
-            {meta.symbol}
-            {hold > 0n ? (
-              <>
-                {' · '}
-                <span className="st-inflight num">{formatMoney(hold, meta.decimals)} in flight</span>
-              </>
-            ) : null}
-          </span>
+          <span className="t">{account.label}</span>
+          <span className="s">{status}</span>
         </span>
-        <span className="r">
-          <span className="v num">{token ? formatSigned(token.signed, meta.decimals) : '—'}</span>
-          <span className="u">
-            {token ? (token.signed > 0n ? 'owes you' : token.signed < 0n ? 'you owe' : 'even') : 'no tokens'}
-          </span>
-        </span>
+        <Icon name="chevronRight" size={16} />
       </span>
-      {token ? (
-        <span className="rb" style={{ display: 'block' }}>
-          <DeltaBar derived={token.derived} tokenId={token.tokenId} />
-          <DeltaCaption derived={token.derived} format={value => formatMoney(value, meta.decimals)} />
-        </span>
-      ) : null}
     </button>
   );
 }

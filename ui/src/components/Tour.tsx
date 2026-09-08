@@ -27,6 +27,7 @@ export function Tour() {
   const [tick, setTick] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
   const [cardHeight, setCardHeight] = useState(150);
+  const [menuBottom, setMenuBottom] = useState<number | null>(null);
   const ctx = useMemo(() => ({ wallet, pathname, baseline: baseline.current, dom }), [wallet, pathname]);
   const index = Math.min(tour.index, TOUR_STEPS.length - 1);
   const step = tour.active ? TOUR_STEPS[index] : undefined;
@@ -69,6 +70,8 @@ export function Tour() {
       return;
     }
     const bounds = node.getBoundingClientRect();
+    const menu = document.querySelector<HTMLElement>('.picker-menu');
+    setMenuBottom(menu && menu.getClientRects().length > 0 ? menu.getBoundingClientRect().bottom : null);
     const next = { top: bounds.top - 6, left: bounds.left - 6, width: bounds.width + 12, height: bounds.height + 12 };
     setRect(previous =>
       previous && Object.keys(next).every(key => previous[key as keyof Rect] === next[key as keyof Rect])
@@ -88,8 +91,12 @@ export function Tour() {
   const left = rect
     ? Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))
     : window.innerWidth - width - 12;
-  const below = rect ? rect.top + rect.height + 14 : 24;
-  const top = rect && below + cardHeight > window.innerHeight - 80 ? Math.max(12, rect.top - cardHeight - 14) : below;
+  const below = rect ? Math.max(rect.top + rect.height, menuBottom ?? 0) + 14 : 24;
+  const above = rect ? rect.top - cardHeight - 14 : -1;
+  const fitsAbove = above >= 12;
+  const fitsBelow = below + cardHeight <= window.innerHeight - 12;
+  const top = fitsAbove && (menuBottom !== null || !fitsBelow) ? above : below;
+  const menuNeedsSpace = menuBottom !== null && !fitsAbove && !fitsBelow;
   const finish = step.id === 'finish';
   return (
     <div className="tour" data-testid="tour" data-step={step.id} data-target={target}>
@@ -97,7 +104,15 @@ export function Tour() {
       <div
         ref={card}
         className="tour-card anchored"
-        style={{ left, top, width, right: 'auto', bottom: 'auto' }}
+        style={{
+          left,
+          top,
+          width,
+          right: 'auto',
+          bottom: 'auto',
+          pointerEvents: 'none',
+          visibility: menuNeedsSpace ? 'hidden' : 'visible',
+        }}
         role="status"
         aria-live="polite"
       >
@@ -108,6 +123,7 @@ export function Tour() {
             className="icon-btn"
             aria-label="Exit the tour"
             data-testid="tour-exit"
+            style={{ pointerEvents: 'auto' }}
             onClick={() => setTour({ active: false })}
           >
             <Icon name="close" size={14} />
@@ -122,6 +138,7 @@ export function Tour() {
             type="button"
             className="btn primary sm"
             data-testid="tour-next"
+            style={{ pointerEvents: 'auto' }}
             onClick={() => setTour({ active: false, index: 0, completed: true })}
           >
             Finish

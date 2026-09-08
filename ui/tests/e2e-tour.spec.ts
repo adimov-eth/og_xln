@@ -20,9 +20,26 @@ test(
     expect(grants).toBe(1);
     await expect(page.getByTestId('token-net-USDC')).toContainText('100');
     await page.screenshot({ path: 'tests/test-results/guide-next-payment.png', fullPage: true });
+    await page.getByTestId('home-show-zero').click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByTestId('token-row-WETH')).toBeVisible();
+    await page.getByTestId('home-show-zero').click();
     await page.getByTestId('home-pay').click();
     await expect(guide).toHaveAttribute('data-target', 'pay-to');
-    await page.getByTestId('pay-to').fill('H2');
+    await page.getByTestId('pay-to').fill('H');
+    await expect(guide).toHaveAttribute('data-target', 'pay-to');
+    await expect
+      .poll(async () =>
+        page.evaluate(() => {
+          const card = document.querySelector<HTMLElement>('.tour-card')!;
+          if (getComputedStyle(card).visibility === 'hidden') return true;
+          const a = card.getBoundingClientRect();
+          const b = document.querySelector<HTMLElement>('[data-testid=pay-recipient-options]')!.getBoundingClientRect();
+          return a.bottom <= b.top || a.top >= b.bottom || a.right <= b.left || a.left >= b.right;
+        }),
+      )
+      .toBe(true);
+    await page.locator('[data-testid^=pay-suggestion-H2]').first().click();
     await expect(guide).toHaveAttribute('data-target', 'pay-amount');
     await page.getByTestId('pay-amount').fill('25');
     await expect(guide).toHaveAttribute('data-target', 'pay-submit');

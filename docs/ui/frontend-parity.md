@@ -1,34 +1,36 @@
-# Перенос frontend → ui
+# Frontend and ui coverage
 
-Обновлено 2026-09-08. Полный перенос и готовность к релизу ещё не доказаны. frontend пока не удалять.
+Updated 2026-09-09. Keep both interfaces, as requested by the owner. Full feature parity and release readiness remain unproven.
 
-## Проверено на живом стенде
+## Verified on the live stand
 
-- Свежий кошелёк на длинной цепи, открытие аккаунта, платёж и сохранение после reload.
-- Home faucet: одно нажатие → ровно 100 USDC в Account. Данные сохраняются после reload.
-- Туториал: faucet → платёж 25 USDC → исполненный своп → история. Два E2E проверяют начало до и после пополнения; каждый делает ровно один запрос faucet. Без промежуточных подтверждений чтения.
-- Same-J своп: фактические суммы и комиссии сверены с каноническим расчётом.
-- Move reserve → collateral: обе стороны Account; сохранение ровно 100 USDC.
-- Чистое восстановление из башни: одинаковые канонические Runtime roots, Account state и балансы; существующая локальная база не перезаписывается.
-- Назначение защитника: принятие и поля квитанции башни, экспорт подписанных доказательств. Автоматическое исполнение не доказано.
-- Наблюдатель: исправлена запись пустого диапазона при каждом опросе после порога 100 блоков. 41 тест; живое наблюдение — 0 Runtime кадров за 8 секунд простоя. Периодические записи раз в 100 блоков сохраняются.
+- Fresh wallet on a long chain, account opening, payment and persistence after reload.
+- Home faucet: one click credits exactly 100 USDC to the Account, surviving reload.
+- Tutorial: faucet, 25 USDC payment, executed swap, history. Two E2Es start before and after funding; each issues exactly one faucet request, without acknowledgement clicks.
+- Repeat H3 payment after 90 seconds idle: 100 to 75 to 50 USDC. Originated HTLC deadlines use the candidate frame clock and preceding certified J range, rather than the old parent clock.
+- Same-jurisdiction swap: actual amounts and fees match canonical calculations.
+- Move reserve to collateral: both Account sides conserve exactly 100 USDC.
+- Clean tower restore: matching canonical Runtime roots, Account state and balances; existing local storage is preserved.
+- Protection appointment: tower receipt acceptance and fields, signed evidence export. Automatic execution remains unverified.
+- Watcher: authenticated header progress is recorded promptly for payment safety. Header observations may create Runtime WAL frames, but never empty Entity financial frames. The earlier 100-block recording throttle was unsafe for 50-block HTLC deadlines and has been removed.
 
-## Реализовано, приёмка неполная
+## Implemented with incomplete acceptance
 
-- Activity: фильтры, даты, курсор, CSV, обе ноги свопа, on-chain события, чтение исполнений из Account history. Получатель HTLC определяется по каноническому hashlock; локальный кэш намерений удалён. Equal direct payments не объединяются по сумме.
-- Formation: lazy/numbered, веса и порог board. Ownership показывает фактические веса и полные идентификаторы.
-- Networks: импорт RPC/контрактов с проверкой chain ID и deployed code.
-- Push: общий Web Push путь с frontend, регистрация/отзыв. На стенде push и автоматический sweep выключены; UI это сообщает. Доставка уведомлений не проверена.
-- AccountDetail и Settings разделены на компоненты; финансовые операции остаются в канонических API.
+- Activity: filters, dates, cursors, CSV, both swap legs, on-chain events and Account history execution reads. HTLC recipients use canonical hashlocks; the local intent cache is removed. Equal direct payments are not merged by amount.
+- Formation: lazy/numbered entities, board weights and threshold. Ownership exposes actual weights and full identifiers.
+- Networks: RPC/contract import validates chain IDs and deployed code.
+- Push: shared Web Push registration/revocation with frontend. Push and automatic sweep are disabled on this stand and reported in the UI. Notification delivery remains unverified.
+- AccountDetail and Settings are split into components; financial operations remain in canonical APIs.
+- Home revamp: a single primary balance, local zero-asset expansion, compact account connections and expandable verification details. Pending and failed payments remain distinct from settled payments.
 
-## Осталось до заявления о полном переносе
+## Remaining acceptance
 
-1. Межсетевой своп, clear/cancel и история после восстановления, границы страниц.
-2. Settlement с совместными подписями, batch, dispute и финализация на изолированном стенде.
-3. Lending/долги, shares/takeover, Formation и добавление сети: полные пользовательские сценарии.
-4. Переключение сущностей, invoice/получение и все маршруты Move; отдельная приёмка каждого.
-5. Настроенная башня: автоматический dispute response и реальная доставка push.
+1. Cross-jurisdiction swap, clear/cancel, history after restore and page boundaries.
+2. Joint-signature settlement, batch, dispute and finalization on an isolated stand.
+3. Lending/debt, shares/takeover, Formation and network import: complete user journeys.
+4. Entity switching, invoices/receiving and every Move route, each verified separately.
+5. Configured tower: automatic dispute response and actual push delivery.
 
-Поиск истории ограничен окном хранилища; старые окна читаются курсором. Receipt/UI export не равнозначны полному dispute proof. Новый короткий туториал не является гейтом всех финансовых функций: их проверяют специализированные E2E.
+History searches cover a storage window; cursors read older windows. Receipt/UI exports are not full dispute proofs. The short tutorial does not gate every financial feature; dedicated E2Es must cover them.
 
-Вне переноса кошелька: QA/HLT панели, 3D/VR, маркетинг, релизные и административные инструменты. Это не разрешение на их удаление.
+Outside wallet parity: QA/HLT panels, 3D/VR, marketing, release and administration tools. This does not authorize their removal.

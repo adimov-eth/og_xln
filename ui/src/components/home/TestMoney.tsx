@@ -77,10 +77,10 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
     }
   };
   return (
-    <section className="test-money" aria-label="Try xln">
+    <section className={`test-money${wallet.usd.net > 0 ? ' funded' : ''}`} aria-label="Try xln">
       <button
         type="button"
-        className="btn primary"
+        className={wallet.usd.net > 0 ? 'btn quiet sm' : 'btn primary'}
         disabled={busy || !hub || done}
         onClick={() => void receive()}
         data-testid="home-faucet"
@@ -90,7 +90,7 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
       <button type="button" className="more" onClick={() => setTour({ active: true, index: 0 })}>
         Show me how
       </button>
-      {!done && <p className="note">One click to try payments and swaps. No real money.</p>}
+      {!done && wallet.usd.net <= 0 && <p className="note">One click to try payments and swaps. No real money.</p>}
       {!done && hub && (
         <details className="disclosure">
           <summary>Test funding details</summary>
