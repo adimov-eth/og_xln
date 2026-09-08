@@ -9,7 +9,7 @@ import { useApp } from '../runtime/store';
 import { accountSafety, formatDuration } from '../runtime/financial/sovereignty';
 import { usdOf } from '../runtime/financial/prices';
 import { sendEntityTxs } from '../runtime/tx';
-import { formatMoney, formatSigned, formatUsd, getTokenMeta, knownTokenIds, parseAmount } from '../runtime/format';
+import { formatMoney, formatSigned, formatUsd, getTokenMeta, knownTokenIds, parseAmount, plainAmount } from '../runtime/format';
 import { useWallet, type AccountTokenView, type AccountView, type WalletView } from '../runtime/views';
 import {
 	buildAddTokenTx,
@@ -205,6 +205,17 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 	const fee = policy && amount > 0n ? collateralFee(policy, amount) : 0n;
 	const net = amount > fee ? amount - fee : 0n;
 
+	// What is actually worth covering: the part of what they owe that no
+	// collateral stands behind. Collateral past that secures nothing and still
+	// pays their fee, so the form says so instead of letting it happen quietly.
+	const uncoveredPromise = account.tokens.find(token => token.tokenId === tokenId)?.derived.outPeerCredit ?? 0n;
+	const grossToCover = useMemo(() => {
+		if (!policy || uncoveredPromise <= 0n) return 0n;
+		const denominator = 10_000n - policy.liquidityFeeBps;
+		if (denominator <= 0n) return 0n;
+		return ((uncoveredPromise + policy.baseFee + policy.gasFee) * 10_000n + denominator - 1n) / denominator;
+	}, [policy, uncoveredPromise]);
+
 	const run = async (label: string, work: () => Promise<void>): Promise<void> => {
 		setBusy(true);
 		try {
@@ -261,7 +272,22 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 						<div className="field-row">
 							<input className="input big" placeholder="0.00" inputMode="decimal" value={amountText} onChange={event => setAmountText(event.target.value)} data-testid="collateral-amount" />
 							<span className="muted">{meta.symbol}</span>
+							{grossToCover > 0n ? (
+								<button
+									type="button"
+									className="btn quiet sm"
+									onClick={() => setAmountText(plainAmount(grossToCover, meta.decimals))}
+									data-testid="collateral-cover-promise"
+								>
+									Cover the promise
+								</button>
+							) : null}
 						</div>
+						{uncoveredPromise > 0n ? (
+							<p className="note">
+								{account.label} owes you {formatMoney(uncoveredPromise, meta.decimals)} {meta.symbol} that no collateral stands behind.
+							</p>
+						) : null}
 					</div>
 					{policy ? (
 						<div style={{ marginBottom: 12 }}>
@@ -289,6 +315,12 @@ function ManageSheet({ account, wallet, onClose, initialTab }: { account: Accoun
 							{account.label} has not published a fee policy for {meta.symbol} on this account yet. The request needs their committed policy frame.
 						</p>
 					)}
+					{net > uncoveredPromise && uncoveredPromise >= 0n && amount > 0n ? (
+						<p className="note" style={{ color: 'var(--debt)' }}>
+							This locks {formatMoney(net - uncoveredPromise, meta.decimals)} {meta.symbol} more collateral than {account.label} owes you. The excess secures
+							nothing and you still pay their fee on it.
+						</p>
+					) : null}
 					<button type="button" className="btn primary" disabled={account.disputed || busy || !policy || amount <= 0n || net <= 0n} onClick={() => void run(`Collateral request sent to ${account.label}`, async () => { await send([buildRequestCollateralTx(counterpartyId, tokenId, amount, policy!)]); })} data-testid="collateral-request">
 						{busy ? 'Sending…' : 'Request collateral'}
 					</button>

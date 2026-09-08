@@ -13,7 +13,7 @@ import { switchActiveEntity } from '../runtime/entities';
 import { peekXLN } from '../runtime/xln-loader';
 import { sendEntityTxs } from '../runtime/tx';
 import { hubTakerFeeBps, jurisdictionRef, liveCrossOrders, openSwapReceiveAccount, planSwap, readAccountState, submitSwapPlan } from '../runtime/financial/swap';
-import { amountInputText, formatMoney, getTokenMeta, parseAmount } from '../runtime/format';
+import { amountInputText, formatMoney, getTokenMeta, parseAmount, plainAmount} from '../runtime/format';
 import { openSwapOffers, useWallet } from '../runtime/views';
 import { counterpartyFeePolicy } from '../runtime/financial/manage';
 
@@ -702,14 +702,6 @@ export function Swap() {
 			</div>
 		</div>
 	);
-}
-
-/** Decimal text for an input field: no grouping, trailing zeros trimmed. */
-function plainAmount(amount: bigint, decimals: number): string {
-	const unit = 10n ** BigInt(decimals);
-	const whole = amount / unit;
-	const fraction = (amount % unit).toString().padStart(decimals, '0').replace(/0+$/, '');
-	return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
 export type { RuntimeAdapterEntitySummary };

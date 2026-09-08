@@ -138,3 +138,11 @@ export function dayLabel(timestamp: number): string {
 	if (sameDay(date, yesterday)) return 'Yesterday';
 	return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
+
+/** Decimal text for an input field: no grouping, trailing zeros trimmed. */
+export function plainAmount(amount: bigint, decimals: number): string {
+	const unit = 10n ** BigInt(decimals);
+	const whole = amount / unit;
+	const fraction = (amount % unit).toString().padStart(decimals, '0').replace(/0+$/, '');
+	return fraction ? `${whole}.${fraction}` : whole.toString();
+}
