@@ -30,6 +30,21 @@ The first attempt's MM Bun crash is separately evidenced in macOS DiagnosticRepo
 bun-2026-09-09-031918.ips (pid42093,303threads); W1 explicitly set for TS peers as well
 as Rust passed startup and the swap. This is not a proven causal crash fix.
 
+### Runtime checkpoint cadence fixed — 2026-09-09 00:34 UTC
+
+The committer now answers checkpoint cadence from the canonical durable HEAD after
+the preceding fsync, and Runtime projection materializes every Entity when due.
+No new durable state, fallback or relaxed storage validation. Regression advances
+101 frames without Entity work, verifies unchanged Account root, checkpoint101 and
+empty WAL tail on reopen. Genesis socket coalescing still proves two authenticated
+inputs -> one Runtime frame with zero economic outputs; frame1 now materializes as TS.
+Rust W1 cross-J full fill + process restart recovery passes in36.9s:
+/tmp/xln-native-cross-recovery-w1-r4-20260909/production-cross-swap-recovery-report.json.
+Hub92->120, load25->35, settled route preserved. This is economic descendant recovery,
+NOT equal full-state hashes at different heights. Check39/39 passes:
+/tmp/xln-native-cadence-check-r2.log. Next: same native scenario W4, TS equivalents,
+then remaining named scenarios and updated exact replay; no E2E yet.
+
 ## Current acceptance window — 2026-09-08 22:07 UTC
 
 Owner authorized several hours of prioritized production work and ten-minute status updates.

@@ -1210,13 +1210,14 @@ fn two_authenticated_socket_messages_coalesce_into_one_durable_runtime_frame() {
     let mut reopened = NativeRuntimeStore::open(&target_path, NativeStorageConfig::default())
         .expect("restart target store");
     let recovery = reopened.recover().expect("recover target frame");
-    assert!(
-        recovery.checkpoint.is_none(),
-        "empty Entity inputs do not invent a checkpoint"
+    assert_eq!(
+        recovery.checkpoint.as_ref().map(|row| row.height),
+        Some(1),
+        "the first Runtime frame materializes even without Entity work"
     );
-    assert_eq!(recovery.wal_frames.len(), 1);
-    assert_eq!(recovery.wal_frames[0].height, 1);
-    let frame = crate::decode_storage_payload(&recovery.wal_frames[0].frame_bytes)
+    assert!(recovery.wal_frames.is_empty());
+    let durable = reopened.read_durable_frame(1).expect("genesis frame");
+    let frame = crate::decode_storage_payload(&durable.frame_bytes)
         .expect("recovered coalesced Runtime frame");
     let source_runtime_id =
         derive_local_runtime_id(source_seed, source_signer).expect("authenticated sender");
@@ -1588,7 +1589,7 @@ fn restart_rebinds_a_known_peer_from_the_durable_outbox_and_publishes_once() {
 }
 
 #[test]
-fn canonical_hash_cadence_does_not_materialize_path_nodes() {
+fn runtime_checkpoint_cadence_materializes_without_entity_work() {
     let path = path();
     let _ = std::fs::remove_dir_all(&path);
     let mut replica = processor_replica();
@@ -1635,6 +1636,22 @@ fn canonical_hash_cadence_does_not_materialize_path_nodes() {
         entity_state(processor.replica().expect("idle replica")).accounts_root,
         first_root
     );
+    assert_payment_proposal(&processor.read_durable_frame(1).unwrap().outputs);
+    // No Entity transition produces a checkpoint in these empty admissions.
+    // The Runtime must still materialize at HEAD(1) + period(100).
+    for height in 3..=101 {
+        let input = empty_entity_input_at(processor.replica().unwrap(), 300 + height);
+        processor
+            .process(input)
+            .expect("Runtime cadence without Entity work");
+    }
+    let durable = processor.read_durable_frame(101).expect("cadence frame");
+    let frame = crate::decode_storage_payload(&durable.frame_bytes).unwrap();
+    assert_eq!(frame.get("materializedState"), Some(&Value::Bool(true)));
+    assert_eq!(
+        entity_state(processor.replica().unwrap()).accounts_root,
+        first_root
+    );
     ingress
         .shutdown()
         .expect("canonical cadence reactor shutdown");
@@ -1649,10 +1666,17 @@ fn canonical_hash_cadence_does_not_materialize_path_nodes() {
     )
     .expect("reopen");
     let recovery = reopened.recover().expect("recover");
-    assert_eq!(recovery.checkpoint.as_ref().map(|row| row.height), Some(1));
-    assert_eq!(recovery.wal_frames.len(), 1);
-    assert_eq!(recovery.wal_frames[0].height, 2);
-    assert_payment_proposal(&recovery.pending_outbox[0].outputs);
+    assert_eq!(
+        recovery.checkpoint.as_ref().map(|row| row.height),
+        Some(101)
+    );
+    assert!(recovery.wal_frames.is_empty());
+    assert!(
+        recovery
+            .pending_outbox
+            .iter()
+            .all(|frame| frame.outputs.is_empty())
+    );
     drop(reopened);
     std::fs::remove_dir_all(path).expect("remove processor fixture");
 }

@@ -93,6 +93,16 @@ impl NativeRuntimeStore {
         })
     }
 
+    /// Runtime-wide cadence from the committed HEAD, independent of which
+    /// Entity happened to execute in the next frame.
+    pub(crate) fn checkpoint_due(&self, height: u64) -> bool {
+        crate::machine::materialization_due(
+            height,
+            self.head.latest_materialized_height,
+            self.config.checkpoint_period_frames,
+        )
+    }
+
     pub fn latest_height(&self) -> u64 {
         self.head.latest_height
     }
@@ -283,14 +293,7 @@ impl NativeRuntimeStore {
         // Genesis-only WALs remain recoverable without a materialized graph;
         // the production machine requests one at height 1. Once a durable
         // head exists, enforce the same relative cadence as TypeScript.
-        if self.head.latest_height > 0
-            && crate::machine::materialization_due(
-                height,
-                self.head.latest_materialized_height,
-                self.config.checkpoint_period_frames,
-            )
-            && checkpoint.is_none()
-        {
+        if self.head.latest_height > 0 && self.checkpoint_due(height) && checkpoint.is_none() {
             return Err(NativeStorageError::CheckpointRequired(height));
         }
         let Some(checkpoint) = checkpoint else {

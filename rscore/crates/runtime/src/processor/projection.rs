@@ -387,11 +387,12 @@ pub(crate) fn project_durable_frame(
     mut result: RuntimeApplyResult,
     routes: &EntityRouteTable,
     prior_checkpoint_rows: Option<&BTreeMap<Vec<u8>, Vec<u8>>>,
+    materialize_runtime: bool,
     capture_replay_diagnostics: bool,
     exact_replay: bool,
     retained_replay_outbox: super::replay_outbox::RetainedReplayOutbox,
 ) -> Result<DurableProjection, RuntimeFrameProjectionError> {
-    let checkpoint_due = checkpoint_graph_due(&result);
+    let checkpoint_due = materialize_runtime || checkpoint_graph_due(&result);
     let Some(applied) = result.applied_frame.take() else {
         if result.applied_input.is_some()
             || !result.outputs.entities.is_empty()
@@ -700,7 +701,8 @@ pub(crate) fn project_durable_frame(
 
     // The first native checkpoint owns the entire initial Entity inventory,
     // including height-zero siblings not selected by this Runtime input.
-    let full_checkpoint = checkpoint_barrier
+    let full_checkpoint = materialize_runtime
+        || checkpoint_barrier
         || (checkpoint_due && prior_checkpoint_rows.is_some_and(BTreeMap::is_empty));
     let barrier_checkpoints = export_checkpoint_barrier(&mut result, full_checkpoint)?;
     let phase_started = std::time::Instant::now();
@@ -1512,6 +1514,7 @@ mod settlement_rejection_tests {
             result,
             &routes,
             None,
+            false,
             true,
             false,
             super::super::replay_outbox::RetainedReplayOutbox::default(),
@@ -1560,6 +1563,7 @@ mod settlement_rejection_tests {
             replay,
             &routes,
             None,
+            false,
             true,
             true,
             super::super::replay_outbox::RetainedReplayOutbox::default(),
@@ -1625,6 +1629,7 @@ mod settlement_rejection_tests {
             result,
             &EntityRouteTable::new(Vec::new()).expect("routes"),
             None,
+            false,
             true,
             false,
             super::super::replay_outbox::RetainedReplayOutbox::default(),

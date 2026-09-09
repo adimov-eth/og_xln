@@ -212,6 +212,7 @@ enum CommitterCommand {
     Backlog(Sender<(PublicationBacklog, u64)>),
     AttachInboundSessions(InboundSessionTable),
     SetDeliveryReady(bool, Sender<Result<(), RuntimeTransportError>>),
+    CheckpointDue(u64, Sender<bool>),
     CheckpointRows(Sender<CheckpointRowsResult>),
     ReadDurableFrame(
         u64,
@@ -318,6 +319,9 @@ impl Committer {
                         self.publisher.set_delivery_ready(ready)
                     };
                     let _ = reply.send(result);
+                }
+                CommitterCommand::CheckpointDue(height, reply) => {
+                    let _ = reply.send(self.store.checkpoint_due(height));
                 }
                 CommitterCommand::CheckpointRows(reply) => {
                     let result = if self.failed {
@@ -865,7 +869,18 @@ impl DurableRuntimeProcessor {
             }
         }
         let projection_started = Instant::now();
-        let prior_checkpoint_rows = if checkpoint_graph_due(&applied) {
+        // Query only after the previous fsync has completed: cadence belongs
+        // to the durable Runtime HEAD, not each Entity's last active frame.
+        let materialize_runtime = if applied.applied_frame.is_some() {
+            let height = applied.replica.state.height;
+            match self.committer_call(|reply| CommitterCommand::CheckpointDue(height, reply)) {
+                Ok(due) => due,
+                Err(error) => return self.fail_stop(error),
+            }
+        } else {
+            false
+        };
+        let prior_checkpoint_rows = if materialize_runtime || checkpoint_graph_due(&applied) {
             match self.committer_call(CommitterCommand::CheckpointRows) {
                 Ok(Ok(rows)) => Some(rows),
                 Ok(Err(error)) | Err(error) => return self.fail_stop(error),
@@ -877,6 +892,7 @@ impl DurableRuntimeProcessor {
             applied,
             &self.routes,
             prior_checkpoint_rows.as_ref(),
+            materialize_runtime,
             capture_replay_diagnostics,
             exact_replay,
             retained_replay_outbox,
