@@ -64,6 +64,7 @@ export async function reopenStack(page: Page, wallet: StackWallet): Promise<void
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByLabel('Password', { exact: true }).fill(LOCAL_PASSWORD);
   await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await page.getByTestId('nav-home').first().click();
   await expect(page.getByTestId('home-total')).toBeVisible({ timeout: BOOT_TIMEOUT });
   const identity = await readWalletIdentity(page);
   expect(identity.runtimeId).toBe(wallet.runtimeId);

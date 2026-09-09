@@ -1248,3 +1248,14 @@ Focused L1/L2, real UI/F12, synchronized contract artifacts and explicit bytecod
 review for Solidity changes, exact replay, live J, production and test Rust compilation,
 transaction-kind coverage, bun run check and valid live TPS. Preserve unrelated changes;
 stop concurrent writers and inspect the specific diff before commit or push on main.
+
+### Owner-requested Claude audit — 2026-09-09 22:00 UTC
+
+Scope: one read-only audit each of keys/unlock, payment state, and recovery/publication,
+against 57b48293e8161513c39e0154d167b1968f9ed4a7. Authorization is this request only;
+no retries or model substitution. Claude Code2.1.259, requested claude-fable-5-1,
+effort high, Read/Grep/Glob only, immutable source snapshot in
+/tmp/xln-audit-57b48293e. Auth status confirmed claude.ai Max subscription, first-party.
+First invocation returned “out of usage credits”, modelUsage empty, reported cost0;
+no audit was produced and the other two were not launched. No paid API route used.
+Prepared packets and exact failure are in that directory. Quorum paid reservations unchanged.
