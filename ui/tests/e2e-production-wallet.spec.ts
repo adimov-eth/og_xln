@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { HDNodeWallet } from 'ethers';
-import { importStackPhraseUi } from './stack';
+import { importStackPhraseUi, LOCAL_PASSWORD } from './stack';
 
 const WAIT = { timeout: 15_000 };
 const home = (page: Page) => page.getByTestId('nav-home').locator('visible=true').first().click();
@@ -85,7 +85,7 @@ test('production wallet imports, funds 100, moves reserve, pays 25 and preserves
   await expect(page.getByTestId('receipt-kicker')).toHaveText('Paid', WAIT);
   await expect(page.getByTestId('receipt-amount')).toHaveText('25.00 USDC');
   await expect(page.getByTestId('receipt-title')).toContainText('H2');
-  const proof = page.getByTestId('payment-receipt').locator('.kv').filter({ hasText: 'Proof' }).locator('button.hash');
+  const proof = page.getByTestId('payment-receipt').locator('.kv').filter({ hasText: 'Hashlock' }).locator('button.hash');
   await expect(proof).toHaveAttribute('title', /^0x[0-9a-f]{64} · tap to copy$/i);
   const proofTitle = await proof.getAttribute('title');
   await page.getByTestId('receipt-done').click();
@@ -94,7 +94,9 @@ test('production wallet imports, funds 100, moves reserve, pays 25 and preserves
   await expect(page.getByTestId('faucet-reserve-balance')).toHaveText('0.00 USDC', WAIT);
 
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await importStackPhraseUi(page, phrase);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByLabel('Password', { exact: true }).fill(LOCAL_PASSWORD);
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
   expect(await entityIdentity(page)).toBe(entityId);
   await assets(page);
   await expect(page.getByTestId('faucet-account-balance')).toHaveText(expectedBalance, WAIT);
