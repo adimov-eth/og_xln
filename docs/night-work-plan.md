@@ -70,6 +70,29 @@ TS-only in-process18-scenario runner is not a Rust gate; do not relabel its resu
 Full scenario equivalence, live J on the new binary, final transaction-kind execution
 coverage, current W1/W4 TPS/profile and both frontend E2E remain unfinished.
 
+### Live J and the first missing native BFT boundary — 2026-09-09
+
+Current-binary Rust W1/W4 production live J gates both pass: 5000/5000 payments,
+freeze/business-input rejection/finalized dispute, plus r2r/r2c/c2r with independent
+on-chain reserve/collateral arithmetic. Functional five-second runs, NOT TPS.
+Artifacts /tmp/xln-native-j-dispute-move-w1-20260909 and
+/tmp/xln-native-j-dispute-move-w4-20260909, dispute and settlement JSON reports.
+Critical remaining implementation gap: native Entity consensus is single-signer.
+RuntimeEntityInput::decode rejects proposedFrame/hashPrecommits/hashPrecommitFrame/
+leaderTimeoutVote; restore rejects multi-validator authority with SINGLE_SIGNER_REQUIRED.
+Therefore multi-sig and multi-validator company scenarios cannot currently pass natively.
+Do not remove those guards without implementing the corresponding TS BFT transitions.
+Recorded the real TS multi-sig132-frame input/output trace, 1514792 bytes:
+/tmp/xln-multisig-native-oracle-20260909/inputs.json. First proposal at Runtime5,
+first precommit at6;92 proposedFrame inputs and102 hashPrecommits inputs.
+The existing --trail is only UI graph evidence; new --input-trace=FILE preserves raw
+scenario wire inputs/outputs using the existing scoped collector. It refuses empty
+traces and all-scenario runs. This is NOT a checkpoint/WAL/root parity artifact.
+Check39/39 passed at /tmp/xln-bft-input-trace-check.log.
+Next implementation boundary: native processing of the actual Runtime5 proposal,
+with TS Entity consensus as the canonical algorithm; do not substitute more one-signer
+smokes for the owner's requested all-scenario native equivalence.
+
 ## Current acceptance window — 2026-09-08 22:07 UTC
 
 Owner authorized several hours of prioritized production work and ten-minute status updates.

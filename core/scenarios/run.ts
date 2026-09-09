@@ -54,6 +54,7 @@ function parseArgs(): {
   workers?: number;
   set?: string;
   trail?: string;
+  inputTrace?: string;
   single: boolean;
 } {
   const args = process.argv.slice(2);
@@ -80,6 +81,7 @@ function parseArgs(): {
     workers?: number;
     set?: string;
     trail?: string;
+    inputTrace?: string;
     single: boolean;
   } = { single: args.includes('--single') };
   if (scenario !== undefined) parsed.scenario = scenario;
@@ -92,6 +94,8 @@ function parseArgs(): {
   if (set !== undefined) parsed.set = set;
   const trail = getFlag('trail') ?? process.env['XLN_SCENARIO_TRAIL_DIR'];
   if (trail !== undefined) parsed.trail = trail;
+  const inputTrace = getFlag('input-trace');
+  if (inputTrace !== undefined) parsed.inputTrace = inputTrace;
   return parsed;
 }
 
@@ -389,15 +393,16 @@ async function runParallelScenarios(mode: string, workersArg?: number, setName?:
 
 async function main() {
   if (process.argv.slice(2).some(argument => argument === '--help' || argument === '-h')) {
-    console.log('Usage: bun core/scenarios/run.ts [all|<scenario>] [--mode=browservm|rpc] [--rpc=URL] [--workers=N] [--trail=DIR|FILE] [--single]');
+    console.log('Usage: bun core/scenarios/run.ts [all|<scenario>] [--mode=browservm|rpc] [--rpc=URL] [--workers=N] [--trail=DIR|FILE] [--input-trace=FILE] [--single]');
     console.log(`\nAvailable scenarios: ${availableScenarioIds().join(', ')}`);
     return;
   }
-  const { scenario, mode, rpc, workers, set, trail, single } = parseArgs();
+  const { scenario, mode, rpc, workers, set, trail, inputTrace, single } = parseArgs();
 
   const requestedMode = (mode || process.env['JADAPTER_MODE'] || 'rpc').toLowerCase();
   const runAll = !single && (!scenario || scenario === 'all');
 
+  if (runAll && inputTrace) throw new Error('SCENARIO_INPUT_TRACE_REQUIRES_SINGLE_SCENARIO');
   if (runAll) {
     const selected = resolveScenarioSet((set || process.env['SCENARIO_SET'] || 'full').toLowerCase());
     assertBroadRunHasNoUnresolvedReruns(undefined, { kind: 'scenario', targets: selected });
@@ -406,7 +411,7 @@ async function main() {
   }
 
   if (!scenario) {
-    console.log('Usage: bun core/scenarios/run.ts [all|<scenario>] [--mode=browservm|rpc] [--rpc=URL] [--workers=N] [--trail=DIR|FILE]');
+    console.log('Usage: bun core/scenarios/run.ts [all|<scenario>] [--mode=browservm|rpc] [--rpc=URL] [--workers=N] [--trail=DIR|FILE] [--input-trace=FILE]');
     console.log(`\nAvailable scenarios: ${availableScenarioIds().join(', ')}`);
     process.exitCode = 1;
     return;
@@ -467,13 +472,27 @@ async function main() {
     const seed = String(process.env['XLN_RUNTIME_SEED'] || `${scenarioName}-cli-seed-42`);
     const env = createEmptyEnv(seed);
     const trailDestination = trail;
-    const trace = trailDestination
+    const trace = trailDestination || inputTrace
       ? (await import('../runtime/observability/runtime-trace')).startRuntimeTraceForTesting(env)
       : null;
 
     try {
       await entry.run(env);
       if (entry.provePersistence) await verifyScenarioPersistence(env, scenarioName);
+      if (inputTrace && trace) {
+        const { safeStringify } = await import('../protocol/serialization');
+        const destination = resolve(inputTrace);
+        mkdirSync(dirname(destination), { recursive: true });
+        const frames = trace.snapshots.map(snapshot => ({
+          height: snapshot.state.height,
+          runtimeInput: snapshot.runtimeInput,
+          runtimeOutputs: snapshot.runtimeOutputs,
+        }));
+        if (frames.length === 0) throw new Error('SCENARIO_INPUT_TRACE_EMPTY');
+        // Diagnostic wire evidence only; this has no checkpoint or per-frame root proof.
+        writeFileSync(destination, safeStringify({ scenario: scenarioName, seed, codeHash, frames }));
+        console.log(`SCENARIO_INPUT_TRACE_WRITTEN:${destination}:frames=${frames.length}`);
+      }
       if (trailDestination && trace) {
         const runtimeId = env.runtimeId;
         if (!runtimeId) throw new Error('SCENARIO_TRAIL_RUNTIME_ID_MISSING');
