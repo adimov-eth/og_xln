@@ -10,12 +10,16 @@ test(
     await gotoApp(page, { appBaseUrl: 'https://localhost:8080' });
     const identity = await createRuntimeIdentity(page, 'Password audit', HDNodeWallet.createRandom().mnemonic!.phrase);
     await page.reload();
+    await expect(page.getByRole('button', { name: 'Create a wallet', exact: true })).toBeVisible();
+    await expect(page.locator('input[type="password"]')).toHaveCount(0);
+    await page.getByRole('button', { name: /Password audit.*Unlock/ }).click();
     await expect(page.getByRole('heading', { name: 'Set a local password', exact: true })).toBeVisible();
     await page.getByLabel('Password', { exact: true }).fill('local-password-audit');
     await page.getByLabel('Confirm password', { exact: true }).fill('local-password-audit');
     await page.getByRole('button', { name: 'Save and open', exact: true }).click();
     await page.getByTestId('context-current').first().click();
     await page.getByRole('button', { name: 'Lock wallet', exact: true }).click();
+    await page.getByRole('button', { name: /Password audit.*Unlock/ }).click();
     await expect(page.getByRole('heading', { name: 'Unlock wallet', exact: true })).toBeVisible();
     await expect(page.locator('input[type="password"]')).toHaveCount(1);
     await expect(page.getByRole('tab', { name: 'Brain Vault', exact: true })).toHaveCount(0);
@@ -41,6 +45,8 @@ test('a new Svelte wallet sets its password before leaving creation', { tag: '@f
   await expect(page.getByRole('heading', { name: 'Set a local password', exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Configure account', exact: true })).toBeVisible();
   await page.reload();
+  await expect(page.getByRole('button', { name: 'Create a wallet', exact: true })).toBeVisible();
+  await page.locator('button.wallet').first().click();
   await expect(page.getByRole('heading', { name: 'Unlock wallet', exact: true })).toBeVisible();
   await expect(page.locator('input[type="password"]')).toHaveCount(1);
 });
