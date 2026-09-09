@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { PasswordEntry } from '../components/PasswordEntry';
 import { hasPasswordVault, savePasswordVault } from '../../../frontend/src/lib/security/passwordVault';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -23,6 +24,7 @@ import type { RuntimeAdapterEntitySummary } from '@xln/core/api/public/runtime-m
 type GateMode = 'landing' | 'create' | 'import' | 'remote';
 
 export function Gate() {
+	const navigate = useNavigate();
 	const [mode, setMode] = useState<GateMode>('landing');
 	const [passwordEntry, setPasswordEntry] = useState<{ id: string; name: string; seed?: string; open: (seed: string) => Promise<void> } | null>(null);
 
@@ -94,6 +96,7 @@ export function Gate() {
 		void run(async () => {
 			if (!stack) throw new Error(NO_STACK);
 			await bootLearnVault(stack, step => setBusyStep(step));
+			navigate('/', { replace: true });
 			useApp.getState().setTour({ active: true, index: 0 });
 		});
 	};

@@ -545,6 +545,8 @@ interface RuntimeInfrastructure {
   pendingP2PConfig?: RuntimeP2PConfig | null;
   lastP2PConfig?: RuntimeP2PConfig | null;
   envChangeCallbacks?: Set<(state: RuntimeReplica) => void>;
+  /** Terminal lifecycle notification, independent of an uncommitted financial frame. */
+  runtimeHaltCallbacks?: Set<() => void>;
   runtimeFrameCommitCallbacks?: Set<(frame: { height: number; runtimeInput: RuntimeInput }) => void>;
   storageDb?: Level<Buffer, Buffer> | null | undefined;
   storageDbOpenPromise?: Promise<boolean> | null | undefined;

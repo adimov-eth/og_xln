@@ -91,3 +91,14 @@ test(
     await page.screenshot({ path: 'tests/test-results/guide-mobile.png', fullPage: true });
   },
 );
+
+
+test('starting the guided demo from Settings opens Home and its faucet', { tag: '@functional' }, async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('/settings');
+  await expect(page.getByTestId('gate-stack')).toHaveAttribute('data-state', 'online', { timeout: 20_000 });
+  await page.getByRole('button', { name: 'Try with test money', exact: true }).click();
+  await expect(page.getByTestId('home-faucet')).toBeEnabled({ timeout: 40_000 });
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('tour')).toHaveAttribute('data-target', 'home-faucet');
+});

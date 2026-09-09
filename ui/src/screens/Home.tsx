@@ -17,6 +17,7 @@ import { USER_ACTIVITY_TYPES, useMovements } from '../runtime/financial/movement
 import { ActivityRow } from './Activity';
 
 export function Home() {
+  const commandReady = useApp(s => s.commandReady);
   const entityId = useApp(s => s.activeEntityId);
   const places = useApp(s => s.places);
   const wallet = useWallet(entityId);
@@ -68,7 +69,7 @@ export function Home() {
         )}
         {wallet.frame && places.accounts && (
           <p className="note" data-testid="home-send-capacity">
-            {Math.abs(visibleNet - wallet.usd.sendCapacity) < 0.005
+            {!commandReady ? 'Wallet connection stopped. Reopen the wallet to continue.' : Math.abs(visibleNet - wallet.usd.sendCapacity) < 0.005
               ? 'Ready to send'
               : `${formatUsd(wallet.usd.sendCapacity)} available to send`}
           </p>
@@ -80,7 +81,7 @@ export function Home() {
         )}
       </section>
       <div className="actions wallet-actions">
-        <button type="button" className="btn primary" disabled={!wallet.frame || Boolean(wallet.error)} onClick={() => navigate('/pay')} data-testid="home-pay">
+        <button type="button" className="btn primary" disabled={!commandReady || !wallet.frame || Boolean(wallet.error)} onClick={() => navigate('/pay')} data-testid="home-pay">
           <Icon name="pay" size={18} />
           Pay
         </button>
@@ -88,7 +89,7 @@ export function Home() {
           <Icon name="receive" size={18} />
           Receive
         </button>
-        <button type="button" className="btn" disabled={!wallet.frame || Boolean(wallet.error)} onClick={() => navigate('/swap')} data-testid="home-swap">
+        <button type="button" className="btn" disabled={!commandReady || !wallet.frame || Boolean(wallet.error)} onClick={() => navigate('/swap')} data-testid="home-swap">
           <Icon name="swap" size={18} />
           Swap
         </button>

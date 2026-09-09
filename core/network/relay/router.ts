@@ -154,19 +154,6 @@ const closeDuplicateRuntimeSocket = (ws: RelaySocketLike): void => {
   }
 };
 
-const closeSupersededRuntimeSocket = (ws: RelaySocketLike): void => {
-  markDuplicateClosingSocket(ws);
-  try {
-    ws.close?.(4009, 'superseded-runtime');
-  } catch (error) {
-    // The newly authenticated session is already authoritative. Keep it live,
-    // but preserve a loud transport diagnostic for the stale socket.
-    relayRouterLog.warn('superseded_socket.close_failed', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-};
-
 const closeInvalidRelaySession = (
   store: RelayStore,
   ws: RelaySocketLike,
@@ -361,22 +348,9 @@ const handleHello = (context: RelayRouteContext): boolean => {
     encryptionPubKey: fromEncryptionPubKey!,
     lastAuthTimestamp: 0,
   });
-  const existingClient = store.clients.get(fromKey);
-  if (existingClient && existingClient.ws !== ws) {
-    // A fresh challenge signed by the same runtime key proves reconnect
-    // authority. Install the new socket before closing the stale one so its
-    // close callback cannot remove the replacement.
-    removeClient(store, existingClient.ws);
-    closeSupersededRuntimeSocket(existingClient.ws);
-    pushDebugEvent(store, {
-      event: 'ws_runtime_replaced',
-      runtimeId: fromKey,
-      from: fromKey,
-      msgType: type,
-      status: 'reconnected',
-      details: { traceId },
-    });
-  }
+  // Match the direct Account transport's single-writer admission: possessing
+  // the same key does not prove the old session drained its committed ACKs.
+  // A second wallet must not evict the live writer and strand both runtimes.
   if (!registerClient(store, from, ws)) {
     pushDebugEvent(store, {
       event: 'hello',
@@ -387,6 +361,7 @@ const handleHello = (context: RelayRouteContext): boolean => {
       reason: 'DUPLICATE_RUNTIME_CONNECTION',
       details: { traceId },
     });
+    send(ws, serializeWsMessage({ type: 'error', error: `DUPLICATE_RUNTIME_CONNECTION:${fromKey}` }));
     closeDuplicateRuntimeSocket(ws);
     return true;
   }

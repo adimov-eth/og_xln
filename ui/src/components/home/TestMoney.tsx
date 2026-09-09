@@ -10,6 +10,7 @@ import { sendEntityTxs, waitFor } from '../../runtime/tx';
 
 /** Test-credit consent stays beside the action; success requires committed funds. */
 export function TestMoney({ wallet }: { wallet: WalletView }) {
+  const commandReady = useApp(state => state.commandReady);
   const setTour = useApp(state => state.setTour);
   const hub = wallet.accounts.find(account => account.isHub && !account.disputed);
   const [stage, setStage] = useState('');
@@ -17,7 +18,7 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   const receive = async () => {
-    if (busy || !hub) return;
+    if (busy || !hub || !requireAdapter().commandReady) return;
     setBusy(true);
     setError('');
     try {
@@ -34,6 +35,7 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
         allowOpenAccount: false,
       };
       const read = async () => {
+        if (!requireAdapter().commandReady) throw new Error('Wallet connection stopped. Reopen the wallet before continuing.');
         const account = await readAccountState(entityId, hub.counterpartyId);
         if (!account) throw new Error('Hub account is not ready');
         return account;
@@ -83,7 +85,7 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
       <button
         type="button"
         className="btn sm"
-        disabled={busy || !hub || done}
+        disabled={busy || !hub || done || !commandReady}
         onClick={() => void receive()}
         data-testid="home-faucet"
         aria-label={done ? '100 USDC received' : 'Get 100 test USDC'}

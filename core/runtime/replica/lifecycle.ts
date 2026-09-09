@@ -50,6 +50,7 @@ export const haltRuntimeRequiresOperator = (
     timestamp: Math.max(0, env.state.timestamp ?? 0),
   };
   state.stopLoop?.();
+  for (const callback of state.runtimeHaltCallbacks ?? []) callback();
 };
 
 export type RuntimeCommandReadiness =

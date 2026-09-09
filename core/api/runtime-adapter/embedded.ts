@@ -88,7 +88,8 @@ export class EmbeddedRuntimeAdapter implements RuntimeAdapter {
   }
 
   get commandReady(): boolean {
-    return this.currentStatus === 'connected' && this.publishedCommandReady;
+    const env = this.resolveEnv();
+    return this.currentStatus === 'connected' && this.publishedCommandReady && Boolean(env && getRuntimeCommandReadiness(env).ready);
   }
 
   get commandReadyReason(): string | null {

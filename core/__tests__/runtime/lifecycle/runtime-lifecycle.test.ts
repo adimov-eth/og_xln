@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   assertRuntimeCommandReady,
+  haltRuntimeRequiresOperator,
   inferRuntimeLifecyclePhase,
   transitionRuntimeLifecycle,
 } from '../../../runtime/replica/lifecycle';
@@ -15,6 +16,7 @@ import {
 } from '../../../runtime';
 import type { RuntimeReplica } from '../../../runtime/types';
 import { reportFatalLoopError } from '../../../runtime/loop/loop-failure';
+import { registerRuntimePublishedCallback, type RuntimePublishedNotice } from '../../../runtime/loop/loop-environment';
 import { setRuntimeDeliveryReady } from '../../../runtime/envelope/p2p-lifecycle';
 
 describe('runtime lifecycle', () => {
@@ -63,6 +65,27 @@ describe('runtime lifecycle', () => {
     expect(healthy.infrastructure?.lifecyclePhase).toBe('running');
     expect(healthy.infrastructure?.halted).not.toBe(true);
     expect(() => assertRuntimeCommandReady(healthy)).not.toThrow();
+  });
+
+  test('a terminal halt publishes readiness without exposing the uncommitted next frame', () => {
+    const env = createEmptyEnv('runtime-halt-publication');
+    env.infrastructure = { lifecyclePhase: 'running', loopActive: true };
+    env.state.height = 4;
+    env.state.timestamp = 100;
+    const notices: RuntimePublishedNotice[] = [];
+    const unsubscribe = registerRuntimePublishedCallback(env, notice => notices.push(notice));
+    // Transport can fail while H+1 is being built. Observers must retain H.
+    env.infrastructure.stateMutationInFlight = true;
+    env.state.height = 5;
+    env.state.timestamp = 200;
+    haltRuntimeRequiresOperator(env, new Error('DIRECT_DUPLICATE_RUNTIME_SESSION'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ height: 4, timestamp: 100,
+      lifecyclePhase: 'halted', commandReady: false, commandReadyReason: 'HALTED_REQUIRES_OPERATOR' });
+    expect(Object.isFrozen(notices[0])).toBe(true);
+    unsubscribe();
+    expect(env.infrastructure.runtimeHaltCallbacks?.size).toBe(0);
+    expect(env.infrastructure.envChangeCallbacks?.size).toBe(0);
   });
 
   test('admits commands only while running without a persistence fence', () => {

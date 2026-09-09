@@ -74,25 +74,40 @@ export type RuntimePublishedNotice = Readonly<{
  * This adapter deliberately publishes only an immutable scalar notice; callers
  * fetch bounded, owned projections through RuntimeAdapter reads.
  */
+const runtimePublishedNotice = (env: RuntimeReplica): RuntimePublishedNotice => {
+  const state = ensureRuntimeInfrastructure(env);
+  if (state.stateMutationInFlight) throw new Error('RUNTIME_PUBLISHED_NOTICE_BEFORE_COMMIT');
+  const readiness = getRuntimeCommandReadiness(env);
+  return Object.freeze({
+    runtimeId: String(env.runtimeId || '').trim().toLowerCase(),
+    height: Math.max(0, Math.floor(Number(env.state.height || 0))),
+    timestamp: Math.max(0, Math.floor(Number(env.state.timestamp || 0))),
+    lifecyclePhase: inferRuntimeLifecyclePhase(state),
+    commandReady: readiness.ready,
+    commandReadyReason: readiness.reason,
+  });
+};
+
 export const registerRuntimePublishedCallback = (
   env: RuntimeReplica,
   callback: (notice: RuntimePublishedNotice) => void,
-): (() => void) =>
-  registerEnvChangeCallback(env, (committedEnv) => {
-    const state = ensureRuntimeInfrastructure(committedEnv);
-    if (state.stateMutationInFlight) {
-      throw new Error('RUNTIME_PUBLISHED_NOTICE_BEFORE_COMMIT');
-    }
-    const readiness = getRuntimeCommandReadiness(committedEnv);
-    callback(Object.freeze({
-      runtimeId: String(committedEnv.runtimeId || '').trim().toLowerCase(),
-      height: Math.max(0, Math.floor(Number(committedEnv.state.height || 0))),
-      timestamp: Math.max(0, Math.floor(Number(committedEnv.state.timestamp || 0))),
-      lifecyclePhase: inferRuntimeLifecyclePhase(state),
-      commandReady: readiness.ready,
-      commandReadyReason: readiness.reason,
-    }));
+): (() => void) => {
+  const state = ensureRuntimeInfrastructure(env);
+  let committed = state.stateMutationInFlight ? null : runtimePublishedNotice(env);
+  const offCommit = registerEnvChangeCallback(env, next => {
+    committed = runtimePublishedNotice(next);
+    callback(committed);
   });
+  const onHalt = () => {
+    // A transport/storage halt may interrupt H+1. Publish only readiness and the
+    // cached committed H; never expose the partially mutated financial state.
+    if (committed) callback(Object.freeze({ ...committed, lifecyclePhase: 'halted',
+      commandReady: false, commandReadyReason: 'HALTED_REQUIRES_OPERATOR' }));
+  };
+  state.runtimeHaltCallbacks ??= new Set();
+  state.runtimeHaltCallbacks.add(onHalt);
+  return () => { offCommit(); state.runtimeHaltCallbacks?.delete(onHalt); };
+};
 
 export const registerRuntimeFrameCommitCallback = (
   env: RuntimeReplica,

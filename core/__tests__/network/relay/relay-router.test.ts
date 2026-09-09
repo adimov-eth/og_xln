@@ -501,7 +501,7 @@ describe('relay-router gossip fanout', () => {
     expect(lastResponse?.payload?.profiles?.map((profile) => profile.entityId)).toEqual([ENTITY_B, ENTITY_A]);
   });
 
-  test('new authenticated hello atomically replaces the previous runtime socket', async () => {
+  test('duplicate authenticated hello preserves the live writer and rejects the newcomer', async () => {
     const store = createRelayStore(SERVER_RUNTIME_ID);
     const sentBySocket = new Map<FakeWs, unknown[]>();
     let replacementClose: { code?: number; reason?: string } | null = null;
@@ -530,17 +530,17 @@ describe('relay-router gossip fanout', () => {
     await relayRoute(config, fresh, signedHello(RUNTIME_A, SEED_A, KEY_A));
     await relayRoute(config, wsA, {
       type: 'gossip_announce',
-      id: 'superseded-followup',
+      id: 'original-followup',
       from: RUNTIME_A,
       fromEncryptionPubKey: KEY_A,
       to: SERVER_RUNTIME_ID,
       payload: { profiles: [], jurisdictions: [] },
     });
 
-    expect(store.clients.get(RUNTIME_A)?.ws).toBe(fresh);
-    expect(replacementClose).toEqual({ code: 4009, reason: 'superseded-runtime' });
-    expect(freshCloseCount).toBe(0);
-    expect(sentBySocket.get(fresh)?.at(-1)).toEqual({ type: 'hello_ack', to: RUNTIME_A.toLowerCase() });
+    expect(store.clients.get(RUNTIME_A)?.ws).toBe(wsA);
+    expect(replacementClose).toBeNull();
+    expect(freshCloseCount).toBe(1);
+    expect(sentBySocket.get(fresh)?.at(-1)).toEqual({ type: 'error', error: `DUPLICATE_RUNTIME_CONNECTION:${RUNTIME_A.toLowerCase()}` });
     expect(sentBySocket.get(wsA)).toEqual([{ type: 'hello_ack', to: RUNTIME_A.toLowerCase() }]);
   });
 

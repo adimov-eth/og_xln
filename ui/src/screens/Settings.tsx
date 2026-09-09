@@ -4,13 +4,33 @@ import { Appearance } from '../components/settings/Appearance';
 import { BalanceSettings, ScalePreview } from '../components/settings/BalanceSettings';
 import { Profile } from '../components/settings/Profile';
 import { Vault } from '../components/settings/Vault';
-import { getAdapter } from '../runtime/adapter';
+import { useState } from 'react';
+import { peekXLN } from '../runtime/xln-loader';
+import { getAdapter, getEmbeddedEnv } from '../runtime/adapter';
 import { useApp } from '../runtime/store';
 
 export function SettingsScreen() {
   const height = useApp(s => s.height);
   const usdPerPx = useApp(s => s.usdPerPx);
   const adapter = getAdapter();
+  const [diagnostics, setDiagnostics] = useState('');
+  const inspect = () => {
+    const env = getEmbeddedEnv();
+    if (!env) return setDiagnostics('No local runtime');
+    const infra = env.infrastructure;
+    const p2p = peekXLN()?.getP2P(env);
+    setDiagnostics(JSON.stringify({
+      height: env.state.height, phase: infra?.lifecyclePhase, loopActive: infra?.loopActive,
+      halted: infra?.halted, fatal: infra?.fatalDebugPayload?.message,
+      paused: infra?.persistencePaused, quiescing: infra?.persistenceQuiescing,
+      inputsReady: infra?.entityInputsReady, networkInbox: env.networkInbox?.length,
+      peers: p2p?.getDirectPeerState(), queues: p2p?.getQueueState(),
+      accounts: [...env.state.eReplicas.values()].flatMap(entity => [...entity.state.accounts].map(([id, account]) => ({
+        owner: entity.entityId, peer: id, height: account.currentHeight,
+        pending: account.pendingFrame?.height, mempool: account.mempool.length,
+      }))),
+    }, null, 2));
+  };
   return (
     <div className="screen fade-in">
       <div className="screen-header">
@@ -38,6 +58,11 @@ export function SettingsScreen() {
             <span className="mono muted">#{height.toLocaleString('en-US')}</span>
           </div>
 
+          <details className="disclosure">
+            <summary>Connection diagnostics</summary>
+            <button type="button" className="btn sm" onClick={inspect}>Inspect connection</button>
+            <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{diagnostics}</pre>
+          </details>
           <Vault />
         </div>
         <div className="aside">
