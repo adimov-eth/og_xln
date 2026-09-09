@@ -93,6 +93,29 @@ Next implementation boundary: native processing of the actual Runtime5 proposal,
 with TS Entity consensus as the canonical algorithm; do not substitute more one-signer
 smokes for the owner's requested all-scenario native equivalence.
 
+### Durable multi-sig oracle — 2026-09-09 01:05 UTC
+
+Scenario runner --recording=FILE now exports the existing signed RuntimeRecording
+(checkpoint + actual persisted WAL), with canonical hash period1 enabled before boot.
+It refuses a recording without a journal tail. Initial run failed correctly at
+RECOVERY_BUNDLE_JOURNAL_CANONICAL_STATE_HASH_REQUIRED:height=2; enabling the existing
+hash cadence, without weakening bundle validation, makes the repeated scenario pass.
+Artifact /tmp/xln-multisig-native-oracle-20260909/recording.json: checkpoint1,
+131 WAL frames through132. Independent TS restore from that file reaches root
+0x5a6d0688542333ad8af4134fbdf1fcbe8af89f59750a7c6f13173bd16bcb6dba.
+Manifest 0xea42e714864df2b00d7a1a5e6e101927b9131cbd2077676e9b93c3ed540dae4c.
+Logs /tmp/xln-multisig-persisted-r2-20260909.log and
+/tmp/xln-multisig-recording-replay-20260909.log. This is TS evidence, not native parity.
+Native BFT requires more than admitting new fields: Runtime apply currently immediately
+certifies the resident result; EntitySingleSigner also emits single-member Hankos.
+Reuse the existing resident Account base/candidate mechanism for speculative state,
+and port TS authenticated proposal replay, manifest signature collection, quorum commit
+and output publication before removing single-signer guards. No protocol changes made.
+Root check39/39 passed at /tmp/xln-multisig-recording-check.log.
+The portable restore is read-only recovery evidence; it is NOT a certified W1/W4
+authority benchmark. Setting worker-count environment variables alone does not
+prove which executor the recovery path used.
+
 ## Current acceptance window — 2026-09-08 22:07 UTC
 
 Owner authorized several hours of prioritized production work and ten-minute status updates.
