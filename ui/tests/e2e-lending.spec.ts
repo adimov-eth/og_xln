@@ -185,6 +185,12 @@ test(
     expect(prepared.balance).toBe('0');
     expect(prepared.debt).toBe('0');
     expect(await readPools(page, parties)).toEqual(pools);
+    const tariff = page.getByTestId('lending-close-tariff');
+    if (!prepared.feePolicy) throw new Error('Committed lending collateral tariff missing');
+    await expect(tariff).toHaveAttribute('data-policy-version', String(prepared.feePolicy.version));
+    await expect(tariff).toHaveAttribute('data-base', prepared.feePolicy.base);
+    await expect(tariff).toHaveAttribute('data-gas', prepared.feePolicy.gas);
+    await expect(tariff).toHaveAttribute('data-bps', prepared.feePolicy.bps);
     const preCloseText = await close.locator('..').innerText();
     await page.screenshot({ path: '/tmp/xln-lending-receive-ready.png', fullPage: true });
     console.log(

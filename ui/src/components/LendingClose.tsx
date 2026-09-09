@@ -4,7 +4,8 @@ import type { LendingPool } from '../runtime/financial/lending';
 import type { WalletView } from '../runtime/views';
 import { sendEntityTxs } from '../runtime/tx';
 import { useApp } from '../runtime/store';
-import { formatMoney, getTokenMeta } from '../runtime/format';
+import { amountInputText, formatMoney, getTokenMeta } from '../runtime/format';
+import { counterpartyFeePolicy } from '../runtime/financial/manage';
 import { ReceiveCapacity } from './ReceiveCapacity';
 
 /** Only the lender receives a close payout. Borrowing itself grants outbound credit. */
@@ -30,6 +31,7 @@ export function LendingClose({
 		return null;
 	const available = account.tokens.find(token => token.tokenId === pool.tokenId)?.derived.inCapacity ?? 0n;
 	const meta = getTokenMeta(pool.tokenId);
+	const tariff = counterpartyFeePolicy(account.doc, account.isLeft, pool.tokenId);
 	const close = async () => {
 		if (!closeAvailable) { toast('Lending is unavailable in this release', 'danger'); return; }
 		if (busy || account.disputed || available < pool.availableAmount || !wallet.signerId) return;
@@ -62,6 +64,11 @@ export function LendingClose({
 					disabled={!closeAvailable || busy || account.disputed}
 				/>
 			) : null}
+			<p className="note" data-testid="lending-close-tariff" data-policy-version={tariff?.policyVersion}
+				data-base={tariff?.baseFee.toString()} data-gas={tariff?.gasFee.toString()} data-bps={tariff?.liquidityFeeBps.toString()}>
+				{tariff ? `${account.label} collateral tariff: ${amountInputText(tariff.baseFee, meta.decimals)} ${meta.symbol} base + ${amountInputText(tariff.gasFee, meta.decimals)} ${meta.symbol} gas + ${tariff.liquidityFeeBps} bps.` : 'Collateral tariff unavailable; this does not mean zero fees.'}
+				{' '}Applies if your account automatically requests collateral after the payout; deducted from your balance.
+			</p>
 			<button
 				type="button"
 				className="btn ghost"
