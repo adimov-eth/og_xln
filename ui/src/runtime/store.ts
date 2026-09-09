@@ -1,3 +1,4 @@
+import { removePasswordVault } from '../../../frontend/src/lib/security/passwordVault';
 import { create } from 'zustand';
 import type { RuntimeAdapterStatus } from '@xln/core/api/public/runtime-module';
 import type { ExternalWalletRow } from './financial/external';
@@ -260,6 +261,7 @@ export const useApp = create<AppState>((set, get) => ({
 		set({ vaults });
 	},
 	removeVault: id => {
+		removePasswordVault(id);
 		const vaults = get().vaults.filter(v => v.id !== id);
 		persistVaults(vaults);
 		const sessionSeeds = { ...get().sessionSeeds };

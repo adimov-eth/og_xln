@@ -1,3 +1,5 @@
+import { closeRuntimeSession, suspendRuntimeActivity } from '$lib/security/runtimeSession';
+import { hasPasswordVault, removePasswordVault } from '$lib/security/passwordVault';
 import { derived, get, writable } from 'svelte/store';
 import { parseJsonUnknown } from '$lib/utils/boundary';
 
@@ -82,7 +84,6 @@ import {
   RECOVERY_SNAPSHOT_INTERVAL_FRAMES,
   RECOVERY_TOWER_STATUS_LIMIT,
   RECOVERY_UPLOAD_DEBOUNCE_MS,
-  RUNTIME_P2P_SHUTDOWN_TIMEOUT_MS,
   applyRecoveryBundleMetadata,
   buildDefaultRuntimeRecoveryConfig,
   buildRuntimeRecoveryMeta,
@@ -135,7 +136,6 @@ import {
 } from './vault-bootstrap';
 import {
   getRuntimeFatalDiagnostics,
-  runtimeQuiesceWorkSummary,
 } from './vault-lifecycle-helpers';
 export { buildDelayedLastResortAppointmentsForTower } from './vault-watchtower';
 
@@ -360,12 +360,13 @@ const protectRuntimeForDevice = async (
       errorLog.log('Previous wallet key cleanup failed', 'Runtime Security', { runtimeId: runtime.id, error });
     }
   }
+  if (hasPasswordVault(runtime.id)) await deleteVaultDeviceKey(runtime.id, nextProtection);
   scheduleVaultLock(runtime);
 };
 
 const restoreRuntimeFromDevice = async (runtime: Runtime): Promise<boolean> => {
   if (runtime.seed) return true;
-  if (!runtime.protectedSecrets) return false;
+  if (hasPasswordVault(runtime.id) || !runtime.protectedSecrets) return false;
   const secrets = await unprotectVaultSecrets(runtime.id, runtime.protectedSecrets);
   if (!secrets) return false;
   runtime.seed = secrets.seed;
@@ -877,65 +878,11 @@ async function cleanupRuntimeEnv(runtimeId: string): Promise<void> {
 }
 
 async function stopRuntimeEnv(env: RuntimeReplica): Promise<void> {
-  await suspendRuntimeEnvActivity(env);
-  const xln = await getXLN();
-
-  if (typeof xln.closeRuntimeDb === 'function') {
-    await xln.closeRuntimeDb(env);
-  }
-  if (typeof xln.closeInfraDb === 'function') {
-    await xln.closeInfraDb(env);
-  }
+  await closeRuntimeSession(env, await getXLN());
 }
 
 async function suspendRuntimeEnvActivity(env: RuntimeReplica, loadedXln?: XLNModule): Promise<void> {
-  const xln = loadedXln ?? (await getXLN());
-  const failures: string[] = [];
-
-  // Fence new P2P/J ingress before draining work that was already accepted.
-  // The loop remains alive for the drain, but cannot resurrect a watcher after
-  // stopJurisdictionWatchersAndWait has returned.
-  if (env.infrastructure) env.infrastructure.persistenceQuiescing = true;
-
-  try {
-    await xln.stopJurisdictionWatchersAndWait(env);
-  } catch (error) {
-    failures.push(`watchers:${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  // Scheduled hooks remain durable and resume with the runtime; they are not
-  // shutdown work and must not make repeated quiesce calls time out.
-  try {
-    const drained = await xln.waitForRuntimeWorkDrained(env, 30_000);
-    if (!drained) {
-      failures.push(`runtime_work:drain_timeout:${JSON.stringify(runtimeQuiesceWorkSummary(env))}`);
-    }
-  } catch (error) {
-    failures.push(
-      `runtime_work:${error instanceof Error ? error.message : String(error)}` +
-        `:${JSON.stringify(runtimeQuiesceWorkSummary(env))}`,
-    );
-  }
-
-  if (env.infrastructure) {
-    env.infrastructure.persistencePaused = true;
-  }
-
-  const idle = await xln.stopRuntimeLoopAndWait(env, 30_000);
-  if (!idle) failures.push('runtime_loop:drain_timeout');
-
-  // Keep transport alive until every accepted output has drained. Reliable
-  // consensus lanes can emit their final delivery/receipt while the runtime
-  // becomes idle; stopping P2P earlier strands that durable output locally.
-  try {
-    await xln.stopP2PAndWait(env, RUNTIME_P2P_SHUTDOWN_TIMEOUT_MS);
-  } catch (error) {
-    failures.push(`p2p:${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  if (failures.length > 0) {
-    throw new Error(`RUNTIME_QUIESCE_FAILED:${failures.join('|')}`);
-  }
+  await suspendRuntimeActivity(env, loadedXln ?? await getXLN());
 }
 
 async function suspendInactiveRuntimeActivity(activeRuntimeId: string): Promise<void> {
@@ -2685,6 +2632,7 @@ export const vaultOperations = {
   // Delete runtime
   async deleteRuntime(runtimeId: string) {
     const normalizedRuntimeId = normalizeRuntimeId(runtimeId);
+    removePasswordVault(normalizedRuntimeId);
     await cleanupRuntimeEnv(normalizedRuntimeId);
 
     let nextActiveId: string | null = null;

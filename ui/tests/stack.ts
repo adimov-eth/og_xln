@@ -6,6 +6,7 @@ import type { RuntimeAdapter } from '../../core/api/runtime-adapter/types';
 import type { RuntimeAdapterFrameSummary } from '../../core/api/runtime-adapter/resolve';
 
 export const BOOT_TIMEOUT = 180_000;
+export const LOCAL_PASSWORD = 'e2e-local-wallet-password';
 
 type DebugWindow = Window & {
   __xln?: {
@@ -19,9 +20,13 @@ export type StackWallet = Readonly<{ phrase: string; runtimeId: string; entityId
 /** Import through the public wallet UI, including production builds without diagnostics. */
 export async function importStackPhraseUi(page: Page, phrase: string): Promise<void> {
   await expect(page.getByTestId('gate-stack')).toHaveAttribute('data-state', 'online', { timeout: 20_000 });
-  await page.getByRole('button', { name: /Import a phrase/ }).click();
+  await page.getByRole('button', { name: /Restore a wallet/ }).click();
   await page.locator('textarea').fill(phrase);
   await page.locator('button[type="submit"]').click();
+  await expect(page.getByRole('heading', { name: 'Set a local password' })).toBeVisible({ timeout: BOOT_TIMEOUT });
+  await page.getByLabel('Password', { exact: true }).fill(LOCAL_PASSWORD);
+  await page.getByLabel('Confirm password', { exact: true }).fill(LOCAL_PASSWORD);
+  await page.getByRole('button', { name: 'Save and open', exact: true }).click();
   // Surface the first recovery invariant immediately instead of timing out on Home.
   await expect(page.locator('[data-testid="nav-home"]:visible, .gate-error').first()).toBeVisible({ timeout: BOOT_TIMEOUT });
   const errors = await page.locator('.gate-error').allTextContents();
@@ -30,6 +35,10 @@ export async function importStackPhraseUi(page: Page, phrase: string): Promise<v
 
 async function importStackPhrase(page: Page, phrase: string): Promise<Omit<StackWallet, 'phrase'>> {
   await importStackPhraseUi(page, phrase);
+  return readWalletIdentity(page);
+}
+
+async function readWalletIdentity(page: Page): Promise<Omit<StackWallet, 'phrase'>> {
   return page.evaluate(() => {
     const debug = (window as DebugWindow).__xln;
     if (!debug) throw new Error('Wallet diagnostics unavailable');
@@ -52,8 +61,14 @@ export async function enterStack(page: Page, providedPhrase?: string): Promise<S
 
 /** Unlock the same durable wallet after reload; never generate a replacement phrase or clear storage. */
 export async function reopenStack(page: Page, wallet: StackWallet): Promise<void> {
-  const identity = await importStackPhrase(page, wallet.phrase);
-  expect(identity).toEqual({ runtimeId: wallet.runtimeId, entityId: wallet.entityId, vaultId: wallet.vaultId });
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByLabel('Password', { exact: true }).fill(LOCAL_PASSWORD);
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await expect(page.getByTestId('home-total')).toBeVisible({ timeout: BOOT_TIMEOUT });
+  const identity = await readWalletIdentity(page);
+  expect(identity.runtimeId).toBe(wallet.runtimeId);
+  expect(identity.entityId).toBe(wallet.entityId);
+  expect(identity.vaultId).toBe(wallet.vaultId);
   await page.getByTestId('nav-home').locator('visible=true').first().click();
   await expect(page.getByTestId('home-total')).toBeVisible();
 }

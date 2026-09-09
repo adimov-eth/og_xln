@@ -3,6 +3,8 @@
   import { browser } from '$app/environment';
   import { page } from '$app/stores';
   import RuntimeStateCard from '$lib/components/shared/RuntimeStateCard.svelte';
+  import { hasPasswordVault } from '$lib/security/passwordVault';
+  import WalletUnlock from '$lib/components/Views/WalletUnlock.svelte';
   import { appState } from '$lib/stores/appStateStore';
   import {
     initializeXLN,
@@ -24,7 +26,7 @@
   import { settingsOperations } from '$lib/stores/settingsStore';
   import { tabOperations } from '$lib/stores/ui/tabStore';
   import { timeOperations } from '$lib/stores/timeStore';
-  import { vaultOperations } from '$lib/stores/vault/vaultStore';
+  import { activeRuntime, vaultOperations } from '$lib/stores/vault/vaultStore';
   import { resolveDeployVersionAction } from '$lib/utils/deployVersionPolicy';
   import { resetEverything } from '$lib/utils/control/resetEverything';
   import { parseStorageSchemaMismatch } from '$lib/utils/recovery/storageSchemaRecovery';
@@ -69,6 +71,12 @@
   let recoveringStorage = $state(false);
   let storageRecoveryError = $state('');
   let bootGeneration = $state(0);
+  let passwordRuntimeId = $state('');
+  $effect(() => {
+    if ($error && /^(RUNTIME_LOCKED|VAULT_UNLOCK_EXPIRED):/.test($error)) {
+      passwordRuntimeId = $error.slice($error.indexOf(':') + 1);
+    }
+  });
   const initialSearchParams = browser ? new URLSearchParams(window.location.search) : null;
   let lockTestMode = $state(initialSearchParams?.get('locktest') === '1' && canUseLockTestMode());
   let scenarioPreviewMode = $state(initialSearchParams?.get('scenarioPreview') === '1');
@@ -485,6 +493,10 @@
       const bootingRemoteRuntime = shouldBootRemoteRuntime();
       if (!bootingRemoteRuntime) {
         await vaultOperations.initialize();
+        if ($activeRuntime && (!$activeRuntime.seed || !hasPasswordVault($activeRuntime.id))) {
+          error.set(`RUNTIME_LOCKED:${$activeRuntime.id}`);
+          return;
+        }
       }
       if (generation !== bootGeneration || !hasActiveTabLock) return;
       await initializeXLN();
@@ -649,6 +661,8 @@
   {@render children?.()}
 {:else if lockTestMode}
   <main class="app-shell-ready app-shell-ready--empty" data-testid="app-runtime-ready"></main>
+{:else if passwordRuntimeId}
+  <WalletUnlock runtimeId={passwordRuntimeId} on:unlocked={() => { error.set(null); passwordRuntimeId = ''; void bootApp(); }} />
 {:else if $error}
   <div class="error-screen" data-testid="app-initialization-error">
     {#if storageSchemaMismatch}

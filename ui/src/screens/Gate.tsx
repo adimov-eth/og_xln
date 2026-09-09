@@ -1,3 +1,5 @@
+import { PasswordEntry } from '../components/PasswordEntry';
+import { hasPasswordVault } from '../../../frontend/src/lib/security/passwordVault';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../components/Icons';
 import { Logo } from '../components/Logo';
@@ -22,6 +24,7 @@ type GateMode = 'landing' | 'create' | 'import' | 'remote';
 
 export function Gate() {
 	const [mode, setMode] = useState<GateMode>('landing');
+	const [passwordEntry, setPasswordEntry] = useState<{ id: string; name: string; seed?: string; open: (seed: string) => Promise<void> } | null>(null);
 
 	/** The xln stack serving this page (local orchestrator or xln.finance); null on a static host. */
 	const [stack, setStack] = useState<Stack | null | undefined>(undefined);
@@ -118,9 +121,13 @@ export function Gate() {
 			const vaultOptions = { vaultId, vaultName: name.trim(), kind: 'brainvault' as const, selfLabel: name.trim(), onStep: (step: string) => setBusyStep(step) };
 			if (!stack) throw new Error(NO_STACK);
 			const recovery = await recoveryFor(result.mnemonic);
-			await bootHostedVault(result.mnemonic, { ...vaultOptions, stack, ...(recovery ? { recovery } : {}) });
-			rememberTower(vaultId);
-			toast(recovery ? 'Verified backup restored.' : 'Vault opened. Keep your credentials safe and set up an encrypted backup in Protection.');
+			setPassphrase('');
+			setPasswordEntry({ id: vaultId, name: vaultOptions.vaultName, seed: result.mnemonic, open: async seed => {
+				await bootHostedVault(seed, { ...vaultOptions, stack, ...(recovery ? { recovery } : {}) });
+				rememberTower(vaultId);
+				toast(recovery ? 'Verified backup restored.' : 'Wallet opened.');
+			} });
+			setBusyStep(null);
 		});
 	};
 
@@ -132,8 +139,12 @@ export function Gate() {
 			const vaultOptions = { vaultId, vaultName: 'Imported vault', kind: 'mnemonic' as const, selfLabel: 'Main', onStep: (step: string) => setBusyStep(step) };
 			if (!stack) throw new Error(NO_STACK);
 			const recovery = await recoveryFor(seed);
-			await bootHostedVault(seed, { ...vaultOptions, stack, ...(recovery ? { recovery } : {}) });
-			rememberTower(vaultId);
+			setPhrase('');
+			setPasswordEntry({ id: vaultId, name: vaultOptions.vaultName, seed, open: async unlocked => {
+				await bootHostedVault(unlocked, { ...vaultOptions, stack, ...(recovery ? { recovery } : {}) });
+				rememberTower(vaultId);
+			} });
+			setBusyStep(null);
 		});
 	};
 
@@ -171,12 +182,20 @@ export function Gate() {
 		});
 	};
 
-	const unlockVault = (vault: { kind: string; name: string; remote?: { wsUrl: string } }): void => {
+	const unlockVault = (vault: import('../runtime/store').VaultMeta): void => {
 		if (vault.kind === 'remote') {
 			// A remote runtime holds the keys; asking this person for a seed phrase
 			// they never had is the wrong question. Reopen the endpoint instead.
 			if (vault.remote?.wsUrl) setWsUrl(vault.remote.wsUrl);
 			setMode('remote');
+			return;
+		}
+		if (hasPasswordVault(vault.id)) {
+			setPasswordEntry({ id: vault.id, name: vault.name, open: async seed => {
+				if (!stack) throw new Error(NO_STACK);
+				if (runtimeIdForSeed(seed).toLowerCase() !== vault.id.toLowerCase()) throw new Error('Wallet identity mismatch.');
+				await bootHostedVault(seed, { vaultId: vault.id, vaultName: vault.name, kind: vault.kind, selfLabel: vault.name, stack });
+			} });
 			return;
 		}
 		if (vault.kind === 'brainvault') {
@@ -186,6 +205,8 @@ export function Gate() {
 		}
 		setMode('import');
 	};
+
+	if (passwordEntry) return <PasswordEntry {...passwordEntry} onOpen={passwordEntry.open} onBack={() => setPasswordEntry(null)} />;
 
 	if (busyStep) {
 		const etaSeconds =

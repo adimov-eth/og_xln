@@ -14,7 +14,7 @@
   import { runtimeView, setRuntimeViewActiveEntityId } from '$lib/stores/runtimeViewStore';
   import { errorLog } from '$lib/stores/errorLogStore';
   import { resetEverything } from '$lib/utils/control/resetEverything';
-  import { refreshCurrentRuntimeProjection, xlnFunctions, xlnInstance } from '$lib/stores/xlnStore';
+  import { refreshCurrentRuntimeProjection, xlnFunctions, xlnInstance, error as runtimeError } from '$lib/stores/xlnStore';
   import type { RuntimeAdapterEntitySummary } from '@xln/core/api/public/runtime-module';
   import type { Tab } from '$lib/types/ui';
   import { entityAvatar, preferredAvatar } from '$lib/utils/identity/avatar';
@@ -30,6 +30,21 @@
   const dispatch = createEventDispatcher();
 
   let open = false;
+  let locking = false;
+  let lockFailure = '';
+  async function lockActiveWallet(): Promise<void> {
+    const id = $activeRuntime?.id;
+    if (!id || locking) return;
+    locking = true; lockFailure = '';
+    try {
+      await vaultOperations.lockRuntime(id);
+      runtimeError.set(`RUNTIME_LOCKED:${id}`);
+      open = false;
+    } catch (cause) {
+      lockFailure = cause instanceof Error ? cause.message : String(cause);
+      errorLog.log(lockFailure, 'Wallet Lock', { runtimeId: id });
+    } finally { locking = false; }
+  }
   let focusedRuntimeId = '';
   let runtimeSelectionRequestId = 0;
 
@@ -662,6 +677,10 @@
           <button class="add-runtime-btn secondary-action" on:click={handleAddEntity}>+ Entity</button>
         {/if}
       </div>
+      {#if $activeRuntime?.seed && $runtimeControllerHandle.mode === 'embedded'}
+        <button class="add-runtime-btn secondary-action" disabled={locking} on:click={lockActiveWallet}>{locking ? 'Locking…' : 'Lock wallet'}</button>
+      {/if}
+      {#if lockFailure}<p role="alert">{lockFailure}</p>{/if}
       <button class="reset-btn" on:click={handleReset}>Reset all data</button>
     </div>
   </div>

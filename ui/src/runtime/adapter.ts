@@ -1,3 +1,4 @@
+import { closeRuntimeSession } from '../../../frontend/src/lib/security/runtimeSession';
 import type {
 	RuntimeAdapter,
 	RuntimeAdapterConfig,
@@ -30,6 +31,7 @@ function installHostedLivenessObserver(env: RuntimeReplica): void {
 let currentAdapter: RuntimeAdapter | null = null;
 let currentEnv: RuntimeReplica | null = null;
 let detach: (() => void) | null = null;
+let closing: Promise<void> | null = null;
 
 export function getAdapter(): RuntimeAdapter | null {
 	return currentAdapter;
@@ -66,7 +68,29 @@ export function disconnectAdapter(): void {
 	useApp.getState().setAdapterState({ status: 'disconnected', height: 0, commandReady: false });
 }
 
+/** Stop accepted work before revoking the in-memory signing authority. */
+export function lockEmbeddedRuntime(): Promise<void> {
+  if (!closing) closing = closeAndLockRuntime().finally(() => { closing = null; });
+  return closing;
+}
+
+async function closeAndLockRuntime(): Promise<void> {
+  const env = currentEnv;
+  const seed = env?.runtimeSeed;
+  disconnectAdapter();
+  useApp.getState().lockAll();
+  if (!env) return;
+  const xln = await getXLN();
+  try {
+    await closeRuntimeSession(env, xln);
+  } finally {
+    if (seed) xln.clearSignerKeys(seed);
+    env.runtimeSeed = undefined;
+  }
+}
+
 export async function connectEmbedded(seed: string, recovery?: RuntimeRecoveryCandidate): Promise<RuntimeAdapter> {
+	await closing;
 	const xln = await getXLN();
 	if (recovery && currentEnv) throw new Error('Close this wallet and reload before restoring on a clean device.');
 	disconnectAdapter();
@@ -159,6 +183,7 @@ export async function connectEmbedded(seed: string, recovery?: RuntimeRecoveryCa
 }
 
 export async function connectRemote(wsUrl: string, authKey?: string): Promise<RuntimeAdapter> {
+	await closing;
 	const xln = await getXLN();
 	disconnectAdapter();
 

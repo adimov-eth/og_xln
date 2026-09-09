@@ -2,13 +2,12 @@ import { useState } from 'react';
 import { Sheet } from '../Sheet';
 import { Icon } from '../Icons';
 import { useApp } from '../../runtime/store';
-import { disconnectAdapter } from '../../runtime/adapter';
+import { lockEmbeddedRuntime } from '../../runtime/adapter';
 
 export function Vault() {
   const vaults = useApp(s => s.vaults);
   const activeVaultId = useApp(s => s.activeVaultId);
   const sessionSeeds = useApp(s => s.sessionSeeds);
-  const lockAll = useApp(s => s.lockAll);
   const removeVault = useApp(s => s.removeVault);
   const toast = useApp(s => s.toast);
   const [revealing, setRevealing] = useState(false);
@@ -18,8 +17,7 @@ export function Vault() {
   const seed = activeVaultId ? sessionSeeds[activeVaultId] : undefined;
 
   const lock = (): void => {
-    lockAll();
-    disconnectAdapter();
+    void lockEmbeddedRuntime().catch(error => toast(`Wallet stopped with an error: ${error instanceof Error ? error.message : String(error)}`));
   };
 
   return (

@@ -1,4 +1,8 @@
 <script lang="ts">
+  import WalletPasswordForm from './WalletPasswordForm.svelte';
+  import { hasPasswordVault } from '$lib/security/passwordVault';
+  let passwordSetupRuntimeId: string | null = null;
+  let pendingPasswordOpen: (() => Promise<boolean>) | null = null;
   import './runtime-creation.css';
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { locale, translations$, initI18n, loadTranslations } from '$lib/i18n';
@@ -59,7 +63,8 @@
 
   // Props
   export let embedded: boolean = false;
-  const dispatch = createEventDispatcher<{ nodeReadyComplete: { entityId: string } }>();
+  export let unlockRuntimeId: string | null = null;
+  const dispatch = createEventDispatcher<{ nodeReadyComplete: { entityId: string }; walletReady: { runtimeId: string } }>();
 
   $: t = $translations$;
 
@@ -392,6 +397,12 @@
 
   async function prepareRecoveryDecisionFromCurrentSeed(labelOverride?: string): Promise<boolean> {
     if (!mnemonic24 || !ethereumAddress) return false;
+    if (unlockRuntimeId && ethereumAddress.toLowerCase() !== unlockRuntimeId.toLowerCase()) {
+      clearSensitiveWalletMaterial();
+      derivationError = 'These inputs belong to a different wallet. Enter the original name and secret, or recovery phrase.';
+      phase = 'input';
+      return false;
+    }
 
     const runToken = ++recoveryRunToken;
 
@@ -469,6 +480,11 @@
     } = {},
   ): Promise<boolean> {
     if (!mnemonic24 || !ethereumAddress || creatingRuntime) return false;
+    if (!hasPasswordVault(ethereumAddress)) {
+      passwordSetupRuntimeId = ethereumAddress;
+      pendingPasswordOpen = () => createXlnWalletFromCurrentSeed(labelOverride, options);
+      return false;
+    }
 
     creatingRuntime = true;
     derivationError = '';
@@ -492,11 +508,7 @@
       }
       createLoginType = 'manual';
       clearSensitiveWalletMaterial();
-      vaultUiOperations.hideVault();
-      if (!embedded) {
-        appStateOperations.setMode('user');
-        appStateOperations.setViewMode('home');
-      }
+      finishWalletEntry(runtimeId);
       return true;
     } catch (err) {
       logRuntimeCreationDiagnostic('Failed to create XLN wallet', err);
@@ -506,6 +518,23 @@
       return false;
     } finally {
       creatingRuntime = false;
+    }
+  }
+
+  async function continuePasswordOpen(): Promise<void> {
+    const open = pendingPasswordOpen;
+    pendingPasswordOpen = null;
+    passwordSetupRuntimeId = null;
+    if (open) await open();
+  }
+
+  function finishWalletEntry(runtimeId: string): void {
+    passwordSetupRuntimeId = null;
+    dispatch('walletReady', { runtimeId });
+    vaultUiOperations.hideVault();
+    if (!embedded) {
+      appStateOperations.setMode('user');
+      appStateOperations.setViewMode('home');
     }
   }
 
@@ -1353,6 +1382,9 @@
   </aside>
 {/snippet}
 
+{#if passwordSetupRuntimeId}
+  <WalletPasswordForm runtimeId={passwordSetupRuntimeId} seed={mnemonic24} on:unlocked={continuePasswordOpen} />
+{:else}
 <div class="brainvault-wrapper" class:embedded class:scheme-light={scheme === 'light'}>
   <!-- Hierarchical Navigation (only in standalone mode) -->
   {#if !embedded}
@@ -1408,7 +1440,7 @@
     {#if phase === 'input' || phase === 'deriving'}
       <div class="glass-card input-section" class:deriving={phase === 'deriving'}>
         {#if phase === 'input'}
-        {#if embedded && savedVaults.length > 0}
+        {#if embedded && savedVaults.length > 0 && !unlockRuntimeId}
           <div class="creation-context-bar">
             <div class="creation-context-copy">Create another wallet</div>
             <button type="button" class="back-to-create" on:click={closeWalletEntry}>
@@ -1450,7 +1482,7 @@
 
         <div class="wallet-create-title">
           <div>
-            <h1>{rehearsalMode !== null
+            <h1>{unlockRuntimeId ? 'Unlock your wallet' : rehearsalMode !== null
               ? 'Verify recovery'
               : inputMode === 'brainvault'
               ? 'Create xln wallet'
@@ -1988,3 +2020,5 @@
 <!-- Close brainvault-container -->
 </div>
 <!-- Close brainvault-wrapper -->
+
+{/if}
