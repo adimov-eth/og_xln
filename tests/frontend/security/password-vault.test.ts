@@ -18,7 +18,12 @@ test('password vault rejects wrong passwords, another wallet and modified cipher
   record.ciphertext = (record.ciphertext[0] === 'A' ? 'B' : 'A') + record.ciphertext.slice(1);
   await expect(decryptPasswordVault('wallet-1', JSON.stringify(record), password)).rejects.toThrow();
 });
-test('password vault rejects unknown formats and short enrollment passwords', async () => {
+test('password vault rejects unknown formats and empty passwords', async () => {
   await expect(decryptPasswordVault('wallet-1', '{"version":2}', password)).rejects.toThrow();
-  await expect(encryptPasswordVault('wallet-1', seed, 'short')).rejects.toThrow();
+  await expect(encryptPasswordVault('wallet-1', seed, '')).rejects.toThrow();
+});
+
+test('an existing short BrainVault secret can unlock its encrypted local wallet', async () => {
+  const raw = await encryptPasswordVault('wallet-1', seed, '123');
+  expect(await decryptPasswordVault('wallet-1', raw, '123')).toBe(seed);
 });

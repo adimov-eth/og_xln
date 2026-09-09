@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { savePasswordVault, unlockPasswordVault } from '../../../frontend/src/lib/security/passwordVault';
 
-type Props = { id: string; name: string; seed?: string; onOpen: (seed: string) => Promise<void>; onBack: () => void };
-export function PasswordEntry({ id, name, seed, onOpen, onBack }: Props) {
+type Props = { status?: string | null; id: string; name: string; seed?: string; onOpen: (seed: string) => Promise<void>; onBack: () => void };
+export function PasswordEntry({ status, id, name, seed, onOpen, onBack }: Props) {
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [busy, setBusy] = useState(false);
@@ -14,6 +14,7 @@ export function PasswordEntry({ id, name, seed, onOpen, onBack }: Props) {
     const secret = password;
     setPassword('');
     try {
+      if (seed && secret.length < 8) throw new Error('Use at least 8 characters.');
       if (seed && secret !== confirmation) throw new Error('Passwords do not match.');
       if (seed) await savePasswordVault(id, seed, secret);
       await onOpen(seed ?? (await unlockPasswordVault(id, secret)));
@@ -64,7 +65,7 @@ export function PasswordEntry({ id, name, seed, onOpen, onBack }: Props) {
         )}
         {error && <p role="alert">{error}</p>}
         <button type="submit" className="btn" disabled={busy || !password}>
-          {busy ? 'Opening…' : seed ? 'Save and open' : 'Unlock'}
+          {busy ? status || 'Opening…' : seed ? 'Save and open' : 'Unlock'}
         </button>
         <button type="button" className="btn quiet" onClick={onBack} disabled={busy}>
           Back

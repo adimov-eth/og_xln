@@ -17,6 +17,7 @@
     password = '';
     try {
       if (setup) {
+        if (secret.length < 8) throw new Error('Use at least 8 characters.');
         if (secret !== confirmation) throw new Error('Passwords do not match.');
         const unlockedSeed = seed || wallet?.seed;
         if (!unlockedSeed) throw new Error('Restore your wallet first.');

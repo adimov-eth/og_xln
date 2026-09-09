@@ -7,7 +7,7 @@ test(
   { tag: '@functional' },
   async ({ page }) => {
     test.setTimeout(55_000);
-    await gotoApp(page, { appBaseUrl: 'https://localhost:8080' });
+    await gotoApp(page);
     const identity = await createRuntimeIdentity(page, 'Password audit', HDNodeWallet.createRandom().mnemonic!.phrase);
     await page.reload();
     await expect(page.getByRole('button', { name: 'Create a wallet', exact: true })).toBeVisible();
@@ -34,7 +34,7 @@ test(
 
 test('a new Svelte wallet sets its password before leaving creation', { tag: '@functional' }, async ({ page }) => {
   test.setTimeout(55_000);
-  await gotoApp(page, { appBaseUrl: 'https://localhost:8080' });
+  await gotoApp(page);
   await page.getByRole('tab', { name: 'Mnemonic', exact: true }).click();
   await page.getByLabel('Seed phrase', { exact: true }).fill(HDNodeWallet.createRandom().mnemonic!.phrase);
   await page.getByRole('button', { name: 'Continue with seed', exact: true }).click();
@@ -49,4 +49,21 @@ test('a new Svelte wallet sets its password before leaving creation', { tag: '@f
   await page.locator('button.wallet').first().click();
   await expect(page.getByRole('heading', { name: 'Unlock wallet', exact: true })).toBeVisible();
   await expect(page.locator('input[type="password"]')).toHaveCount(1);
+});
+
+test('Svelte BrainVault uses its original secret for local unlock', { tag: '@functional' }, async ({ page }) => {
+  test.setTimeout(55_000);
+  await gotoApp(page);
+  await page.locator('#name').fill(`Original ${Date.now()}`);
+  await page.locator('#passphrase').fill('123');
+  await page.locator('.advanced-toggle').click();
+  await page.locator('.factor-btn').first().click();
+  await page.getByRole('button', { name: 'Derive wallet', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Configure account', exact: true })).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByRole('heading', { name: 'Set a local password' })).toHaveCount(0);
+  await page.reload();
+  await page.locator('button.wallet').first().click();
+  await page.getByLabel('Password', { exact: true }).fill('123');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Configure account', exact: true })).toBeVisible();
 });

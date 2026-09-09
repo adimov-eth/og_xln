@@ -26,7 +26,8 @@ const keyFor = async (password: string, salt: Uint8Array<ArrayBuffer>): Promise<
 export const hasPasswordVault = (id: string): boolean => localStorage.getItem(PREFIX + identity(id)) !== null;
 
 export async function encryptPasswordVault(id: string, seed: string, password: string): Promise<string> {
-  if (password.length < 8) throw new Error('Use at least 8 characters.');
+  // Existing BrainVault secrets follow their original policy; never require a replacement secret.
+  if (!password.length) throw new Error('Password is required.');
   if (!seed.trim() || !identity(id)) throw new Error('Wallet is not unlocked.');
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));

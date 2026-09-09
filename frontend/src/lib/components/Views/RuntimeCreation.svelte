@@ -1,6 +1,6 @@
 <script lang="ts">
   import WalletPasswordForm from './WalletPasswordForm.svelte';
-  import { hasPasswordVault } from '$lib/security/passwordVault';
+  import { hasPasswordVault, savePasswordVault } from '$lib/security/passwordVault';
   let passwordSetupRuntimeId: string | null = null;
   let pendingPasswordOpen: (() => Promise<boolean>) | null = null;
   import './runtime-creation.css';
@@ -1230,6 +1230,11 @@
       const nextEthereumAddress = await deriveEthereumAddress(nextMnemonic24);
       if (!isCurrentRun()) return;
       const nextEntityId = generateLazyEntityIdPreview([nextEthereumAddress], 1n);
+      if (!unlockRuntimeId || nextEthereumAddress.toLowerCase() === unlockRuntimeId.toLowerCase()) {
+        await savePasswordVault(nextEthereumAddress, nextMnemonic24, run.passphrase);
+        if (!isCurrentRun()) return;
+      }
+
 
       // Commit derived strings together only after every async crypto step
       // still belongs to the active run. Cancel/reset may start another run

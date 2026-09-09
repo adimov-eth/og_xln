@@ -40,3 +40,21 @@ test(
     await runtime.dispose();
   },
 );
+
+test('BrainVault reuses the original password without a second enrollment form', { tag: '@functional' }, async ({ page }) => {
+  test.setTimeout(55_000);
+  page.on('console', message => { if (message.text().startsWith('[hosted] chain scan')) console.log(message.text()); });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Create a wallet/ }).click();
+  await page.getByLabel('Vault name', { exact: true }).fill(`Original ${Date.now()}`);
+  await page.getByLabel('Passphrase', { exact: true }).fill('original-wallet-secret');
+  await page.getByRole('button', { name: 'Test 1 shard', exact: true }).click();
+  await page.getByRole('button', { name: 'Derive vault', exact: true }).click();
+  await expect(page.getByTestId('home-total')).toBeVisible({ timeout: 50_000 });
+  await expect(page.getByRole('heading', { name: 'Set a local password' })).toHaveCount(0);
+  await page.reload();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByLabel('Password', { exact: true }).fill('original-wallet-secret');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await expect(page.getByTestId('home-total')).toBeVisible({ timeout: 12_000 });
+});
