@@ -17,15 +17,15 @@ function OrderRecord({ order }: { order: Order }) {
   return <details className="card" data-testid="swap-history-order">
     <summary>
       <strong>{getTokenMeta(order.giveTokenId).symbol} → {getTokenMeta(order.wantTokenId).symbol}</strong>
-      <span className="note"> · {order.closed ? 'Closed' : order.cancelRequested ? 'Cancellation requested' : 'Open'} · {order.resolves.length} execution records</span>
+      <span className="note"> · {order.closed ? 'Closed' : order.cancelRequested ? 'Cancellation requested' : 'Open'} · {order.resolves.length} executions</span>
     </summary>
     <div className="kv"><span className="k">Requested</span><span className="v num">{amount(order.originalGiveAmount, order.giveTokenId)} → {amount(order.originalWantAmount, order.wantTokenId)}</span></div>
     {order.liveGiveAmount !== null && <div className="kv"><span className="k">Remaining</span><span className="v num">{amount(order.liveGiveAmount, order.giveTokenId)}</span></div>}
     {order.resolves.map((fill, index) => <div key={`${fill.height}:${index}`} className="card">
       <div className="caps">Account frame #{fill.height} · {fill.cancelRemainder ? 'Remainder cancelled' : 'Execution'}</div>
-      <div className="kv"><span className="k">Gave</span><span className="v num">{amount(fill.executionGiveAmount, order.giveTokenId)}</span></div>
-      <div className="kv"><span className="k">Received</span><span className="v num">{amount(fill.executionWantAmount, order.wantTokenId)}</span></div>
-      {fill.feeTokenId !== null && <div className="kv"><span className="k">Fee</span><span className="v num">{amount(fill.feeAmount, fill.feeTokenId)}</span></div>}
+      <div className="kv"><span className="k">Gave</span><span className="v num" data-field="gave" data-amount={fill.executionGiveAmount?.toString()}>{amount(fill.executionGiveAmount, order.giveTokenId)}</span></div>
+      <div className="kv"><span className="k">Received</span><span className="v num" data-field="received" data-amount={fill.executionWantAmount?.toString()}>{amount(fill.executionWantAmount, order.wantTokenId)}</span></div>
+      {fill.feeTokenId !== null && <div className="kv"><span className="k">Fee</span><span className="v num" data-field="fee" data-amount={fill.feeAmount?.toString()}>{amount(fill.feeAmount, fill.feeTokenId)}</span></div>}
       {fill.comment && <p className="note">{fill.comment}</p>}
     </div>)}
     {order.resolves.length === 0 && <p className="note">No execution recorded.</p>}
@@ -57,9 +57,9 @@ function AccountOrders({ entityId, accountId }: { entityId: string; accountId: s
 export function SwapHistory({ entityId, accountIds, names }: { entityId: string; accountIds: readonly string[]; names: Map<string, string> }) {
   const [chosen, setChosen] = useState('');
   const accountId = accountIds.includes(chosen) ? chosen : accountIds[0];
-  return <section aria-label="Order executions">
-    <h2>Order executions</h2>
-    <p className="note">Exact fills and cancellations, read from your stored account frames.</p>
+  return <section aria-label="Swap history">
+    <h2>Swaps</h2>
+    <p className="note">Executed amounts, fees and cancellations.</p>
     {accountId ? <>
       <label className="field">Account<select className="input" value={accountId} onChange={event => setChosen(event.target.value)}>
         {accountIds.map(id => <option key={id} value={id}>{displayEntityName(names, id)}</option>)}

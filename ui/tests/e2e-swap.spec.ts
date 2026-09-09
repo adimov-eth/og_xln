@@ -192,6 +192,16 @@ test(
     console.log(
       `SWAP_COMMITTED accountHeight=${after.height} usdcDebit=${debit} wethReceived=${received} permanentWethCredit=${after.wethCredit} root=${after.root}`,
     );
+    await page.getByTestId('nav-activity').first().click();
+    await page.getByRole('button', { name: 'Swaps', exact: true }).click();
+    const history = page.getByTestId('swap-history-order');
+    await expect(history).toHaveCount(1);
+    await history.locator('summary').click();
+    await expect(history).not.toContainText('Not recorded');
+    await expect(history.locator('[data-field="gave"]')).toHaveAttribute('data-amount', debit.toString());
+    const gross = BigInt(await history.locator('[data-field="received"]').getAttribute('data-amount') ?? '-1');
+    const fee = BigInt(await history.locator('[data-field="fee"]').getAttribute('data-amount') ?? '0');
+    expect(gross - fee).toBe(received);
     expect(pageErrors).toEqual([]);
     expect(authErrors).toEqual([]);
   },

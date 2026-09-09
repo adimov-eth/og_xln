@@ -14,10 +14,10 @@ export { ActivityRow, formatMovementAmount, movementParty } from '../components/
 export { USER_ACTIVITY_TYPES };
 
 const FILTERS: Array<{ id: string; label: string; types: string[] }> = [
-	{ id: 'executions', label: 'Order executions', types: [] },
 	{ id: 'all', label: 'All', types: USER_ACTIVITY_TYPES },
 	{ id: 'payments', label: 'Payments', types: ['payment', 'htlc'] },
-	{ id: 'swaps', label: 'Swaps', types: ['swap', 'cross_swap'] },
+	{ id: 'swaps', label: 'Swaps', types: [] },
+	{ id: 'cross-swaps', label: 'Across networks', types: ['cross_swap'] },
 	{ id: 'settlement', label: 'Settlement', types: ['settlement'] },
 	{ id: 'onchain', label: 'On-chain', types: ['j_event', 'j_batch'] },
 	{ id: 'accounts', label: 'Accounts', types: ['account'] },
@@ -51,12 +51,12 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 	}), [cursors, search, from, to]);
 	const types = FILTERS.find(entry => entry.id === filter)?.types ?? USER_ACTIVITY_TYPES;
 	const accountIds = useMemo(() => wallet.accounts.map(account => account.counterpartyId), [wallet.accounts]);
-	const { movements: loaded, loading, error, nextBeforeHeight } = useMovements(filter === 'executions' ? null : entityId, types, limit, accountIds, filters);
+	const { movements: loaded, loading, error, nextBeforeHeight } = useMovements(filter === 'swaps' ? null : entityId, types, limit, accountIds, filters);
 	const more = nextBeforeHeight !== null;
 	const movements = loaded;
 	// Desktop shows the latest movement's receipt until the user picks another; on a phone the sheet opens only on tap.
 	const desktop = typeof window !== 'undefined' && window.matchMedia('(min-width: 1101px)').matches;
-	const selected = filter === 'executions' ? null : movements.find(movement => movement.id === selectedId) ?? (desktop ? (movements[0] ?? null) : null);
+	const selected = filter === 'swaps' ? null : movements.find(movement => movement.id === selectedId) ?? (desktop ? (movements[0] ?? null) : null);
 
 	// The day at a glance, for whoever closes the till: what came in, what went out, how many movements.
 	const today = useMemo(() => {
@@ -87,23 +87,23 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 		<div className="screen fade-in">
 			<div className="screen-header">
 				<span className="screen-title">Activity</span>
-				{today.count > 0 ? (
+				{filter !== 'swaps' && today.count > 0 ? (
 					<span className="note num" data-testid="activity-today" style={{ marginLeft: 12 }}>
 						This page today · in {formatUsd(today.received)} · out {formatUsd(today.sent)} · {today.count} {today.count === 1 ? 'movement' : 'movements'}
 					</span>
 				) : null}
-				{movements.length > 0 ? (
+				{filter !== 'swaps' && movements.length > 0 ? (
 					<button type="button" className="btn quiet sm" onClick={() => exportCsv(movements)} data-testid="activity-export" title="Every movement shown here, with frame height and hash, for your books">
 						Export CSV
 					</button>
 				) : null}
-				<span className="faint" style={{ fontSize: 12 }}>
+				<span className="faint" style={{ fontSize: 12 }} hidden={filter === 'swaps'}>
 					{movements.length} {movements.length === 1 ? 'movement' : 'movements'}
 				</span>
 			</div>
 			<div className="two-col activity">
 				<div>
-					{filter !== 'executions' && <>
+					{filter !== 'swaps' && <>
 					<input
 						className="input"
 						type="search"
@@ -126,19 +126,19 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 							</button>
 						))}
 					</div>
-					{filter === 'executions' && entityId ? <SwapHistory key={entityId} entityId={entityId} accountIds={accountIds} names={wallet.names} /> : null}
-					{filter !== 'executions' && rows.map(({ movement, day, first }) => (
+					{filter === 'swaps' && entityId ? <SwapHistory key={entityId} entityId={entityId} accountIds={accountIds} names={wallet.names} /> : null}
+					{filter !== 'swaps' && rows.map(({ movement, day, first }) => (
 						<div key={movement.id}>
 							{first ? <div className="caps day">{day}</div> : null}
 							<ActivityRow movement={movement} names={wallet.names} first={first} selected={movement.id === selected?.id} onClick={() => setSelectedId(movement.id)} />
 						</div>
 					))}
-					{filter !== 'executions' && movements.length === 0 && !loading && !error && (
+					{filter !== 'swaps' && movements.length === 0 && !loading && !error && (
 						<p className="note" style={{ padding: '18px 0' }}>
 							{search.trim() ? `Nothing loaded matches "${search.trim()}".` : more ? 'No matching activity on this page.' : 'No matching activity.'}
 						</p>
 					)}
-					{filter !== 'executions' && more && (
+					{filter !== 'swaps' && more && (
 						<div style={{ padding: '12px 0' }}>
 							<button
 								type="button"
@@ -158,7 +158,7 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 					)}
 					{error && <p style={{ color: 'var(--dispute)', fontSize: 13 }}>{error}</p>}
 				</div>
-				{filter !== 'executions' && <div className="aside desktop-only">
+				{filter !== 'swaps' && <div className="aside desktop-only">
 					{selected ? (
 						<div className="card">
 							<MovementDetail movement={selected} names={wallet.names} />

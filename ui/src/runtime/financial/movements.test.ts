@@ -17,6 +17,7 @@ test('swap history retains both quoted assets and the order identity', () => {
   expect(result[0]!.quoteAmount).toBe(2000000n);
   expect(result[0]!.quoteTokenId).toBe(2);
   expect(result[0]!.detail).toBe('Order order-7');
+  expect(result[0]!.state).toBe('placed'); // A past placement is not evidence the order remains open.
 });
 
 test('cross-jurisdiction history retains the remote recipient without a bilateral account', () => {

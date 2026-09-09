@@ -78,7 +78,7 @@ function paymentTone(events: RuntimeActivityEvent[]): { tone: MovementTone; stat
 function swapTone(event: RuntimeActivityEvent): { tone: MovementTone; state: string } {
 	const status = String(event.status || '').toLowerCase();
 	if (status === 'filled') return { tone: 'settled', state: 'filled' };
-	if (status === 'placed') return { tone: 'pending', state: 'open' };
+	if (status === 'placed') return { tone: 'neutral', state: 'placed' };
 	if (status === 'cancel requested') return { tone: 'pending', state: 'cancelling' };
 	if (status === 'closed') return { tone: 'neutral', state: 'closed' };
 	if (/fail|reject|abort/.test(status)) return { tone: 'failed', state: status };

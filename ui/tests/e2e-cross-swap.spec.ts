@@ -281,6 +281,7 @@ test(
     await expect(spectrum).toContainText('Tron');
     await expect(spectrum).toContainText(receiveToken.symbol);
     await expect(spectrum).toContainText('This preparation submits no collateral request.');
+    await expect(page.getByTestId('swap-rebalance-tariff')).toBeVisible({ timeout: 5_000 });
     const before = await readCross(page, parties);
     expect(BigInt(before.source.balance)).toBeGreaterThanOrEqual(take.effectiveGive);
     expect(BigInt(before.source.balance)).toBeLessThanOrEqual(100_000_000n);
