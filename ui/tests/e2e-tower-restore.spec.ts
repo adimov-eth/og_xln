@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { enterStack, fundFromHub, readWalletCheckpoint } from './stack';
+import { enterStack, fundFromHub, readWalletCheckpoint, reopenStack, LOCAL_PASSWORD } from './stack';
 
 // Bundle before opening a wallet: a raw core import makes Vite optimize new
 // dependencies and reload the live page, destroying its memory-only session.
@@ -46,7 +46,7 @@ async function canonicalRoot(page: Page, height: number): Promise<string> {
 const TOWER = 'http://127.0.0.1:9100';
 
 test('tower backup restores funded Account proofs on a clean device and refuses local overwrite', { tag: '@resilience' }, async ({ browser }) => {
-	test.setTimeout(180_000);
+	test.setTimeout(60_000);
 	const source = await browser.newContext();
 	const target = await browser.newContext();
 	try {
@@ -71,14 +71,17 @@ test('tower backup restores funded Account proofs on a clean device and refuses 
 		await restoredPage.goto('/');
 		const restore = async () => {
 			await expect(restoredPage.getByTestId('gate-stack')).toHaveAttribute('data-state', 'online');
-			await restoredPage.getByRole('button', { name: /Import a phrase/ }).click();
+			await restoredPage.getByRole('button', { name: /Restore a wallet/ }).click();
 			await restoredPage.locator('textarea').fill(wallet.phrase);
 			await restoredPage.getByTestId('restore-from-tower').check();
 			await restoredPage.getByTestId('restore-tower-url').fill(TOWER);
 			await restoredPage.getByRole('button', { name: 'Restore wallet', exact: true }).click();
 		};
 		await restore();
-		await expect(restoredPage.locator('[data-testid="nav-home"]:visible, .gate-error').first()).toBeVisible({ timeout: 90_000 });
+		await restoredPage.getByLabel('Password', { exact: true }).fill(LOCAL_PASSWORD);
+		await restoredPage.getByLabel('Confirm password', { exact: true }).fill(LOCAL_PASSWORD);
+		await restoredPage.getByRole('button', { name: 'Save and open', exact: true }).click();
+		await expect(restoredPage.locator('[data-testid="nav-home"]:visible, .gate-error').first()).toBeVisible({ timeout: 25_000 });
 		await expect(restoredPage.locator('.gate-error')).toHaveCount(0);
 		const after = await readWalletCheckpoint(restoredPage, before.frame.height);
 		await test.info().attach('restored-frame', { body: await journal(restoredPage, before.frame.height), contentType: 'application/json' });
@@ -91,7 +94,11 @@ test('tower backup restores funded Account proofs on a clean device and refuses 
 		expect(after.accounts).toEqual(before.accounts);
 		await restoredPage.reload();
 		await restore();
-		await expect(restoredPage.getByRole('alert')).toContainText('already has data', { timeout: 20_000 });
+		await expect(restoredPage.getByRole('alert')).toContainText('already has data', { timeout: 5000 });
+		await expect(restoredPage.getByRole('heading', { name: 'Set a local password' })).toHaveCount(0);
+		await restoredPage.reload();
+		await reopenStack(restoredPage, wallet);
+		expect((await readWalletCheckpoint(restoredPage, before.frame.height)).accounts).toEqual(before.accounts);
 		console.log(`TOWER_RESTORE runtime=${after.runtimeId} height=${after.frame.height} root=${after.frame.postStateHash} accounts=${after.accounts.length}`);
 	} finally {
 		await source.close();

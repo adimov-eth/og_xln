@@ -7,6 +7,7 @@ import { getXLN } from './xln-loader';
 export type { RuntimeRecoveryCandidate };
 
 export async function discoverTowerRestore(seed: string, address: string): Promise<RuntimeRecoveryCandidate> {
+	await requireFreshDevice(runtimeIdForSeed(seed).toLowerCase());
 	const url = normalizeTowerUrl(address || defaultTowerUrl());
 	if (!url) throw new Error('Enter the address of the tower holding your backup.');
 	const xln = await getXLN();
