@@ -1,5 +1,35 @@
 # Autonomous xln work
 
+## Owner correction — core before browser acceptance (2026-09-09)
+
+E2E is paused. The 18/18 scenario result covers TS only; the six-engine 111-frame
+replay does not establish every scenario on native Rust. The scenario runner invokes
+the TS Runtime directly; embedded Rust authority is explicitly retired. Use native
+xlnrs production scenarios and retain the same financial assertions, not an engine
+environment flag on a TS-only runner. First current native artifact: cross-J full fill
+and process restart/recovery, W1, /tmp/xln-native-cross-recovery-w1-20260909.log.
+After individual scenario equivalence, measure current TS and Rust W1/W4 on identical
+production H1 load, collect phase profiles and optimize only measured bottlenecks.
+There is no current W1/W4 TPS matrix or established largest phase. Historical W8
+numbers do not answer that request. Resume both frontend E2E only after core gates.
+
+### Native cross-J recovery: first real failure fixed
+
+W1 cross-chain full fill passes; restarting the same production processes exposed
+RRS_RESTORE_ENTITY_GRAPH:ROOT_COUNT:2 during the next checkpoint projection.
+Projection now selects its exact owner's manifest from the shared Runtime graph;
+full hydration still rejects foreign/multiple roots. Named Rust regression1/1 and
+root check39/39 pass (/tmp/xln-native-owner-regression.log, /tmp/xln-native-owner-check.log).
+Repeated real swap/restart advances past that error and exposes the NEXT boundary:
+RRS_STORAGE_CHECKPOINT_REQUIRED:101. Evidence:
+/tmp/xln-native-cross-recovery-w1-r3-20260909/server.log.
+Storage enforces Runtime-relative cadence but projection only requests checkpoints
+from Entity outputs. Align checkpoint preparation with canonical durable HEAD cadence,
+then rerun this exact production artifact before any broader scenario or E2E.
+The first attempt's MM Bun crash is separately evidenced in macOS DiagnosticReports
+bun-2026-09-09-031918.ips (pid42093,303threads); W1 explicitly set for TS peers as well
+as Rust passed startup and the swap. This is not a proven causal crash fix.
+
 ## Current acceptance window — 2026-09-08 22:07 UTC
 
 Owner authorized several hours of prioritized production work and ten-minute status updates.

@@ -272,6 +272,13 @@ fn parse_entity_manifest(
     let [(root_key, root_bytes)] = roots.as_slice() else {
         return Err(invalid(format!("ROOT_COUNT:{}", roots.len())));
     };
+    parse_entity_manifest_row(root_key, root_bytes)
+}
+
+fn parse_entity_manifest_row(
+    root_key: &[u8],
+    root_bytes: &[u8],
+) -> Result<ParsedEntityManifest, EntityGraphRestoreError> {
     let entity_id: [u8; 32] = root_key[1..]
         .try_into()
         .map_err(|_| invalid("ROOT_OWNER"))?;
@@ -311,7 +318,7 @@ fn parse_entity_manifest(
         return Err(invalid("TREE_DUPLICATE"));
     }
     Ok(ParsedEntityManifest {
-        root_key: (*root_key).clone(),
+        root_key: root_key.to_vec(),
         entity_id,
         fields,
         trees,
@@ -323,8 +330,14 @@ fn parse_entity_manifest(
 /// metadata copy merely to rewrite the next checkpoint.
 pub(crate) fn entity_projection_metadata(
     rows: &BTreeMap<Vec<u8>, Vec<u8>>,
+    owner: &[u8; 32],
 ) -> Result<EntityCheckpointProjectionMetadata, EntityGraphRestoreError> {
-    let manifest = parse_entity_manifest(rows)?;
+    // Projection sees the whole Runtime checkpoint after restart. Select the
+    // exact owner; never use another Entity's retained fields or descriptors.
+    // Full graph hydration still rejects multiple roots in its owner slice.
+    let key = [vec![0x21], owner.to_vec()].concat();
+    let bytes = rows.get(&key).ok_or_else(|| invalid("ROOT_MISSING"))?;
+    let manifest = parse_entity_manifest_row(&key, bytes)?;
     Ok(EntityCheckpointProjectionMetadata::new(
         manifest.entity_id,
         manifest.fields,
@@ -388,4 +401,33 @@ pub fn hydrate_entity_graph(
         core,
         carried_sections,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_projection_selects_owner_after_multi_entity_restart() {
+        let value = serde_json::json!({"schemaVersion":5,"fields":[],"trees":[]});
+        let canonical = crate::canonical_value_from_tagged_json(&value).unwrap();
+        let bytes = crate::encode_storage_payload(&canonical).unwrap();
+        let rows = [0x11, 0x22]
+            .into_iter()
+            .map(|owner| ([vec![0x21], vec![owner; 32]].concat(), bytes.clone()))
+            .collect::<BTreeMap<_, _>>();
+        for owner in [[0x11; 32], [0x22; 32]] {
+            assert_eq!(
+                entity_projection_metadata(&rows, &owner)
+                    .unwrap()
+                    .entity_id(),
+                &owner
+            );
+        }
+        assert!(entity_projection_metadata(&rows, &[0x33; 32]).is_err());
+        // The full decoder must still reject an unpartitioned/foreign graph.
+        assert!(
+            matches!(hydrate_entity_graph(&rows), Err(EntityGraphRestoreError::Invalid(ref code)) if code == "ROOT_COUNT:2")
+        );
+    }
 }
