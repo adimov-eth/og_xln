@@ -669,7 +669,7 @@ test('HubDiscoveryPanel renders a supplied projection instead of scanning eRepli
   expect(accountWorkspace).toContain('{canOpenAccounts}');
   expect(accountWorkspace).toContain('{submitRuntimeInput}');
   expect(tabs).toContain('canOpenAccounts = canSubmitHubOpenAccount');
-  expect(tabs).toContain('profiles: directoryPanelView.profiles?.length ? directoryPanelView.profiles : panelProfiles');
+  expect(tabs).toContain('profiles: panelProfiles');
   expect(tabs).toMatch(/import \{ runtimes \} from ["']\.\.\/\.\.\/\.\.\/\.\.\/stores\/runtimeStore["']/);
   expect(tabs).toContain('remoteHubs: remoteHubCandidates');
   expect(tabs).toContain('if (!canOpenAccounts)');
@@ -696,4 +696,27 @@ test('HubDiscoveryPanel renders a supplied projection instead of scanning eRepli
   expect(tabs).toContain('authLevel: $runtimeControllerHandle.authLevel');
   expect(tabs).not.toContain('appRuntimeAdapterMode');
   expect(tabs).not.toContain('runtimeAdapterAuthLevel');
+});
+
+test('committed hub stays open in both live persistent Accounts and projected Maps', async () => {
+  const { PersistentEntityAccountMap } = await import('../../../core/entity/state/persistent-account-map');
+  const { computeEntityAccountValueHash } = await import('../../../core/entity/consensus/state-root');
+  const { makeAccount } = await import('../../../core/__tests__/helpers/cross-j');
+  const account = makeAccount(SOURCE, HUB);
+  account.currentHeight = 3;
+  account.currentFrame = { ...account.currentFrame, height: 3 };
+  const projected = new Map([[HUB, account]]);
+  const live = PersistentEntityAccountMap.fromMap(projected, SOURCE, computeEntityAccountValueHash);
+  expect(live instanceof Map).toBe(false);
+  for (const accounts of [projected, live]) {
+    const projection = buildHubDiscoveryProjection({
+      entityId: SOURCE,
+      runtimeId: RUNTIME,
+      replicas: new Map([[`${SOURCE}:${SIGNER}`, {
+        entityId: SOURCE,
+        state: { entityId: SOURCE, config: { jurisdiction: JURISDICTION }, accounts },
+      }]]) as never,
+    });
+    expect(projection.connectionByHubId.get(HUB)).toEqual({ isConnected: true, isOpening: false });
+  }
 });

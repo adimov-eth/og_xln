@@ -38,6 +38,7 @@
   let workspaceProjectionFrame: RuntimeAdapterViewFrame | null = null;
   let workspaceProjectionError: string | null = null;
   let workspaceProjectionKey = '';
+  let workspaceProjectionContext = '';
   let workspaceProjectionRequestId = 0;
   const WORKSPACE_VIEW_PAGE_SIZE = REMOTE_RUNTIME.VIEW_PAGE_SIZE;
 
@@ -102,7 +103,6 @@
       workspaceProjectionError = null;
     } catch (error) {
       if (requestId !== workspaceProjectionRequestId || key !== workspaceProjectionKey) return;
-      workspaceProjectionFrame = null;
       workspaceProjectionError = errorMessage(error);
     }
   }
@@ -124,6 +124,11 @@
     // Connection state is not projection identity. Keep the last certified
     // frame mounted while the adapter reconnects so the command gate can
     // disable mutations without erasing the user's workspace.
+    const context = `${selectedRuntimeId}|${entityId}|h:${selectedAtHeight ?? 'live'}|a:${accountsPage}|b:${booksPage}`;
+    if (context !== workspaceProjectionContext) {
+      workspaceProjectionContext = context;
+      workspaceProjectionFrame = null;
+    }
     const nextKey = `${selectedRuntimeId}|${entityId}|h:${minimumLiveHeight}|a:${accountsPage}|b:${booksPage}`;
     if (
       runtimeProjectionMatchesRuntime($runtimeView.runtimeId, selectedRuntimeId)
@@ -145,7 +150,6 @@
       workspaceProjectionError = null;
     } else if (nextKey !== workspaceProjectionKey) {
       workspaceProjectionKey = nextKey;
-      workspaceProjectionFrame = null;
       workspaceProjectionError = null;
       if (handle.status === 'connected' && entityId) {
         void refreshWorkspaceProjection(nextKey, entityId, selectedAtHeight, minimumLiveHeight, accountsPage, booksPage);

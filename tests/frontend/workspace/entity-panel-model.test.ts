@@ -228,7 +228,7 @@ describe('entity panel model helpers', () => {
     };
 
     const view = buildEntityPanelView(
-      { runtimeId: 'remote-h2' } as any,
+      { runtimeId: 'remote-h2', gossip: { profiles: [{ entityId: hubOne, runtimeId: 'h1-transport' }] } } as any,
       entityId,
       signerId,
       'rev-remote',
@@ -243,6 +243,7 @@ describe('entity panel model helpers', () => {
     expect(view.replica?.state?.accounts?.get(hubTwo)?.state.deltas.get(1)?.offdelta).toBe(-2n);
     expect(() => view.replica?.state.accounts.rootHash()).toThrow();
     expect(view.entityNames.get(hubOne)).toBe('H1');
+    expect(view.profileByEntityId.get(hubOne)?.runtimeId).toBe('h1-transport');
     expect(view.jurisdictions).toEqual([{ name: 'Testnet', chainId: 31337 }]);
     expect(view.isDevnet).toBe(true);
     expect(accountPage.entries.map((entry) => entry.counterpartyId)).toEqual([hubOne, hubTwo]);
@@ -253,7 +254,7 @@ describe('entity panel model helpers', () => {
     expect(source).toContain('displayEnv = activeIsLive ? (actionRuntimeEnv ?? activeEnv) : activeEnv');
     expect(source).toContain('displayProjectionFrame = runtimeProjectionFrame');
     expect(source).toContain('panelView = buildEntityPanelView(displayEnv, tab.entityId, tab.signerId, envRevision, displayProjectionFrame)');
-    expect(source).toContain('directoryPanelView = runtimeProjectionFrame');
+    expect(source).not.toContain('directoryPanelView');
     expect(source).toContain('activeReplicas = panelView.replicas');
     expect(source).toContain('panelProfiles = panelView.profiles');
     expect(source).toContain('availableJurisdictions = panelView.jurisdictions');

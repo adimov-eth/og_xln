@@ -61,7 +61,7 @@ type RuntimeStateWithP2PSingleton = RuntimeReplica & {
 
 const p2pState = (env: RuntimeReplica): RuntimeStateWithP2PSingleton => env;
 
-const prepareCommittedOutboxRoutes = (env: RuntimeReplica): void => {
+const prepareCommittedPeerRoutes = (env: RuntimeReplica): void => {
   const state = ensureRuntimeInfrastructure(env);
   const p2p = state.p2p;
   if (!p2p || state.directEntityInputsDispatch) return;
@@ -69,6 +69,11 @@ const prepareCommittedOutboxRoutes = (env: RuntimeReplica): void => {
   // canDeliver before dialing would strand an idle Runtime forever. Only open
   // authenticated routes here; the Runtime writer still owns every send.
   const targets = new Set((env.pendingNetworkOutputs ?? []).map(output => output.entityId));
+  // A restored receiver may have no outbox. Its existing Accounts still need
+  // inbound delivery, and a browser must dial the Hub before the Hub can send.
+  for (const replica of env.state.eReplicas.values()) {
+    for (const counterpartyId of replica.state.accounts.keys()) targets.add(counterpartyId);
+  }
   for (const entityId of targets) p2p.prepareDirectEntityRoutes([entityId]);
 };
 
@@ -77,7 +82,7 @@ export const setRuntimeDeliveryReady = (env: RuntimeReplica, ready: boolean): vo
   const state = ensureRuntimeInfrastructure(env);
   state.entityInputsReady = ready;
   state.p2p?.setReady(ready);
-  prepareCommittedOutboxRoutes(env);
+  prepareCommittedPeerRoutes(env);
   requestRuntimeLoopWake(env);
 };
 
@@ -142,7 +147,7 @@ const buildRuntimeP2POptions = (
     },
     onGossipProfiles: (_from, profiles) => {
       if (profiles.length === 0) return;
-      prepareCommittedOutboxRoutes(env);
+      prepareCommittedPeerRoutes(env);
       deps.notifyEnvChange(env);
       env.info('network', 'GOSSIP_PROFILE_UPDATE', {
         count: profiles.length,
@@ -216,7 +221,7 @@ export const startRuntimeP2P = (
   const reusable = reuseProcessP2P(env, state, config, resolvedRuntimeId) ??
     reuseAttachedP2P(state, config, resolvedRuntimeId);
   if (reusable) {
-    prepareCommittedOutboxRoutes(env);
+    prepareCommittedPeerRoutes(env);
     return reusable;
   }
 
@@ -238,7 +243,7 @@ export const startRuntimeP2P = (
   };
   p2pState(env)[ENV_P2P_SINGLETON_KEY] = state.p2p;
   state.p2p.connect();
-  prepareCommittedOutboxRoutes(env);
+  prepareCommittedPeerRoutes(env);
   return state.p2p;
 };
 

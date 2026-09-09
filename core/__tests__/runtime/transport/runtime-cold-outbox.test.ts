@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { makeAccount } from '../../helpers/cross-j';
+import { PersistentEntityAccountMap } from '../../../entity/state/persistent-account-map';
+import { computeEntityAccountValueHash } from '../../../entity/consensus/state-root';
 
 import {
   closeInfraDb,
@@ -110,6 +113,23 @@ describe('cold committed Runtime outbox', () => {
       expect(hub.order).toEqual(['gossip_announce', 'entity_inputs', 'entity_inputs']);
       expect(hub.announcements).toHaveLength(1);
       expect(hub.failures).toEqual([]);
+      // Restore an idle receiver: no outgoing payment may be required to
+      // recreate the authenticated inbound route for an existing Account.
+      await stopP2PAndWait(env);
+      await waitFor(() => !hub.route.hasOpenSession(env.runtimeId!));
+      const owner = [...env.state.eReplicas.values()].find(replica => replica.entityId === local.entityId)!;
+      owner.state.accounts = PersistentEntityAccountMap.fromMap(
+        new Map([[hub.profile.entityId, makeAccount(local.entityId, hub.profile.entityId)]]),
+        local.entityId, computeEntityAccountValueHash,
+      );
+      env.pendingNetworkOutputs = [];
+      const restored = startP2P(env, { relayUrls: [], signerId: '1' });
+      if (!restored) throw new Error('TEST_RESTORED_P2P_MISSING');
+      await restored.admitSharedProfiles([hub.profile]);
+      await waitFor(() => hub.route.canDeliver(env.runtimeId!));
+      expect(env.pendingNetworkOutputs).toEqual([]);
+      expect(hub.received).toHaveLength(2);
+
     } finally {
       await stopRuntimeLoopAndWait(env, 1_000);
       await stopP2PAndWait(env);

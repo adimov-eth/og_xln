@@ -1,3 +1,4 @@
+import { isAccountsMapLike } from '../core/account-list-view';
 import type { AccountReadView, EntityReadView } from '$lib/components/Entity/core/entity-panel-types';
 import type { RuntimeReplica, Profile as GossipProfile, RuntimeInput } from '@xln/core/api/public/runtime-module';
 import { getJurisdictionStackId } from '@xln/core/jurisdiction/machine/jurisdiction-stack';
@@ -317,7 +318,7 @@ function findAccountForCounterparty(
 ): AccountReadView | null {
   const accounts = ownerReplica?.state?.accounts;
   const target = normalizeHubEntityId(counterpartyEntityId);
-  if (!target || !(accounts instanceof Map)) return null;
+  if (!target || !isAccountsMapLike(accounts)) return null;
   const direct = accounts.get(target) ?? accounts.get(counterpartyEntityId);
   if (direct) return direct;
   for (const [key, account] of accounts.entries()) {
@@ -346,7 +347,7 @@ function buildAccountConnectionStates(
   ownerEntityId: string,
 ): Map<string, HubDiscoveryConnectionState> {
   const accounts = ownerReplica?.state?.accounts;
-  if (!(accounts instanceof Map)) return new Map();
+  if (!isAccountsMapLike(accounts)) return new Map();
 
   const owner = normalizeHubEntityId(ownerEntityId);
   const states = new Map<string, HubDiscoveryConnectionState>();

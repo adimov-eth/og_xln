@@ -23,7 +23,6 @@ export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterRea
 	const [resolvedKey, setResolvedKey] = useState<string | null>(null);
 	const [data, setData] = useState<T | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [loading, setLoading] = useState<boolean>(Boolean(path));
 	const [manualTick, setManualTick] = useState(0);
 	const generation = useRef(0);
 
@@ -36,7 +35,6 @@ export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterRea
 			return;
 		}
 		const gen = ++generation.current;
-		setLoading(true);
 		let cancelled = false;
 		adapter
 			.read<T>(path, query)
@@ -45,14 +43,12 @@ export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterRea
 				setData(result);
 				setResolvedKey(readKey);
 				setError(null);
-				setLoading(false);
 			})
 			.catch((readError: unknown) => {
 				if (cancelled || gen !== generation.current) return;
 				setData(null);
 				setResolvedKey(readKey);
 				setError(readError instanceof Error ? readError.message : String(readError));
-				setLoading(false);
 			});
 		return () => {
 			cancelled = true;
@@ -64,7 +60,7 @@ export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterRea
 
 	const active = Boolean(path) && status === 'connected';
 	const current = active && resolvedKey === readKey;
-	return { data: current ? data : null, error: current ? error : null, loading: active && (!current || loading), refresh };
+	return { data: current ? data : null, error: current ? error : null, loading: active && !current, refresh };
 }
 
 export function useConnected(): boolean {

@@ -286,7 +286,9 @@ function startP2PPoll() {
     const env = get(xlnEnvironment);
     if (!env) return;
     try {
-      const state = xln.getP2PState(env);
+      const liveEnv = unwrapLiveRuntimeEnv(env);
+      if (!liveEnv) return;
+      const state = xln.getP2PState(liveEnv);
       if (state) {
         const previous = get(p2pState);
         if (!areP2PStatesEqual(previous, state)) {

@@ -736,8 +736,6 @@ import type { AccountReadView } from '$lib/components/Entity/core/entity-panel-t
     row-gap: 6px;
   }
 
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-
   .status-dot-wrap {
     position: relative;
     display: inline-flex;
@@ -764,9 +762,9 @@ import type { AccountReadView } from '$lib/components/Entity/core/entity-panel-t
     flex-shrink: 0;
   }
   .status-indicator.green .status-dot-inner { background: var(--account-preview-credit); box-shadow: 0 0 6px color-mix(in srgb, var(--account-preview-credit) 50%, transparent); }
-  .status-indicator.amber .status-dot-inner { background: var(--account-preview-accent); box-shadow: 0 0 6px color-mix(in srgb, var(--account-preview-accent) 50%, transparent); animation: pulse 2s infinite; }
+  .status-indicator.amber .status-dot-inner { background: var(--account-preview-accent); box-shadow: 0 0 6px color-mix(in srgb, var(--account-preview-accent) 50%, transparent); }
   .status-indicator.orange .status-dot-inner { background: color-mix(in srgb, var(--account-preview-accent) 74%, #f97316); box-shadow: 0 0 6px color-mix(in srgb, var(--account-preview-accent) 34%, transparent); }
-  .status-indicator.red .status-dot-inner { background: var(--account-preview-debit); box-shadow: 0 0 6px color-mix(in srgb, var(--account-preview-debit) 50%, transparent); animation: pulse 1.5s infinite; }
+  .status-indicator.red .status-dot-inner { background: var(--account-preview-debit); box-shadow: 0 0 6px color-mix(in srgb, var(--account-preview-debit) 50%, transparent); }
   .status-indicator.gray .status-dot-inner { background: color-mix(in srgb, var(--account-preview-text-muted) 58%, transparent); }
 
   .status-frame {

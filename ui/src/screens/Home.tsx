@@ -61,8 +61,12 @@ export function Home() {
         <span className="hero-label">
           {places.onchain && places.reserve && places.accounts ? 'Total balance' : 'Selected balances'}
         </span>
-        <UsdAmount value={visibleNet} size={52} testId="home-total" />
-        {places.accounts && (
+        {wallet.frame ? (
+          <UsdAmount value={visibleNet} size={52} testId="home-total" />
+        ) : (
+          <p className="hero-label" role="status">{wallet.error ? 'Balance unavailable' : 'Loading balance…'}</p>
+        )}
+        {wallet.frame && places.accounts && (
           <p className="note" data-testid="home-send-capacity">
             {Math.abs(visibleNet - wallet.usd.sendCapacity) < 0.005
               ? 'Ready to send'
@@ -76,7 +80,7 @@ export function Home() {
         )}
       </section>
       <div className="actions wallet-actions">
-        <button type="button" className="btn primary" onClick={() => navigate('/pay')} data-testid="home-pay">
+        <button type="button" className="btn primary" disabled={!wallet.frame || Boolean(wallet.error)} onClick={() => navigate('/pay')} data-testid="home-pay">
           <Icon name="pay" size={18} />
           Pay
         </button>
@@ -84,7 +88,7 @@ export function Home() {
           <Icon name="receive" size={18} />
           Receive
         </button>
-        <button type="button" className="btn" onClick={() => navigate('/swap')} data-testid="home-swap">
+        <button type="button" className="btn" disabled={!wallet.frame || Boolean(wallet.error)} onClick={() => navigate('/swap')} data-testid="home-swap">
           <Icon name="swap" size={18} />
           Swap
         </button>
@@ -110,7 +114,7 @@ export function Home() {
               onAccount={id => navigate(`/accounts/${id}`)}
             />
           ))}
-          {totals.length === 0 && !wallet.loading && (
+          {totals.length === 0 && !wallet.loading && !wallet.error && (
             <p className="note wallet-empty">No funds yet. Get test money above to make your first payment.</p>
           )}
           {emptyCount > 0 && (
@@ -141,8 +145,12 @@ export function Home() {
               onClick={() => navigate('/activity', { state: { movementId: movement.id } })}
             />
           ))}
-          {movements.length === 0 && !recent.loading && (
-            <p className="note wallet-empty">Your payments and swaps will appear here.</p>
+          {movements.length === 0 && !recent.loading && !recent.error && (
+            recent.nextBeforeHeight !== null ? (
+              <button type="button" className="more" onClick={() => navigate('/activity')}>View earlier activity</button>
+            ) : (
+              <p className="note wallet-empty">Your payments and swaps will appear here.</p>
+            )
           )}
           {recent.error && (
             <p role="alert" className="note">

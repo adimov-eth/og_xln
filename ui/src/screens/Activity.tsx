@@ -135,7 +135,7 @@ function EntityActivity({ entityId }: { entityId: string | null }) {
 					))}
 					{filter !== 'executions' && movements.length === 0 && !loading && !error && (
 						<p className="note" style={{ padding: '18px 0' }}>
-							{search.trim() ? `Nothing loaded matches "${search.trim()}".` : 'Nothing here for this filter yet.'}
+							{search.trim() ? `Nothing loaded matches "${search.trim()}".` : more ? 'No matching activity on this page.' : 'No matching activity.'}
 						</p>
 					)}
 					{filter !== 'executions' && more && (

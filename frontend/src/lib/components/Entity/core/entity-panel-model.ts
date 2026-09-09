@@ -215,7 +215,12 @@ function buildEntityPanelViewFromRuntimeProjection(
   const activeKey = `${activeReplica.entityId}:${normalizeEntityId(activeReplica.signerId || signerId)}`;
   replicas.set(activeKey, activeReplica);
 
-  const profiles = (frame.entities ?? []).map(summaryProfile);
+  const transportProfiles = new Map(getGossipProfiles(sourceEnv).map(profile => [normalizeEntityId(profile.entityId), profile]));
+  const profiles = (frame.entities ?? []).map(summary => ({
+    ...summaryProfile(summary),
+    // Transport identity belongs to Gossip; a financial summary does not contain it.
+    runtimeId: transportProfiles.get(normalizeEntityId(summary.entityId))?.runtimeId ?? '',
+  }));
   const entityNames = new Map<string, string>();
   const profileByEntityId = new Map<string, GossipProfile>();
   for (const profile of profiles) {

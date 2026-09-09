@@ -607,20 +607,19 @@ $: displayEnv = activeIsLive ? (actionRuntimeEnv ?? activeEnv) : activeEnv;
 // Display only the owned post-WAL projection; the live Runtime is an action handle.
 $: displayProjectionFrame = runtimeProjectionFrame;
 $: panelView = buildEntityPanelView(displayEnv, tab.entityId, tab.signerId, envRevision, displayProjectionFrame);
-$: directoryPanelView = runtimeProjectionFrame ? buildEntityPanelView(activeEnv, tab.entityId, tab.signerId, envRevision, runtimeProjectionFrame) : panelView;
 $: activeReplicas = panelView.replicas;
 $: panelProfiles = panelView.profiles;
 $: directoryProfiles = (() => {
   const liveProfiles = getGossipProfiles(actionRuntimeEnv);
-  return liveProfiles.length > 0 ? liveProfiles : directoryPanelView.profiles;
+  return liveProfiles.length > 0 ? liveProfiles : panelProfiles;
 })();
 $: replica = panelView.replica;
 $: remoteHubCandidates = buildHubDiscoveryRemoteHubsFromRuntimes($runtimes.values());
 $: hubDiscoveryProjection = buildHubDiscoveryProjection({
   entityId: currentEntityValue || tab.entityId,
   runtimeId: panelView.runtimeId,
-  replicas: directoryPanelView.replicas ?? activeReplicas,
-  profiles: directoryPanelView.profiles?.length ? directoryPanelView.profiles : panelProfiles,
+  replicas: activeReplicas,
+  profiles: panelProfiles,
   remoteHubs: remoteHubCandidates,
   formatRawProfile: formatHubDiscoveryRawProfile,
   avatarForEntity: resolveHubDiscoveryAvatar,
@@ -765,13 +764,6 @@ $: workspaceAccountIds = accountIds.filter((id) => {
   if (!account) return false;
   return String(account.status || "") !== "disputed";
 });
-let lastAccountReplicaSignature = "";
-$: {
-  const signature = [String(tab.entityId || ""), String(tab.signerId || ""), String(panelView.runtimeId || ""), String(replica?.state?.entityId || ""), String(accountIds.length), String(workspaceAccountIds.length), accountIds.join(",")].join("|");
-  if (signature !== lastAccountReplicaSignature) {
-    lastAccountReplicaSignature = signature;
-  }
-}
 $: if (!workspaceAccountId || !workspaceAccountIds.includes(workspaceAccountId)) {
   workspaceAccountId = workspaceAccountIds[0] || "";
 }
