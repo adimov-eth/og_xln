@@ -3,11 +3,7 @@
  * tokens follow, the choice survives a reload, and the default comes back.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { enterStack } from './stack';
-
-const BOOT_TIMEOUT = 180_000;
-const CHAIN_TIMEOUT = 90_000;
-
+import { enterStack, reopenStack } from './stack';
 
 const cssVar = (page: Page, name: string): Promise<string> => page.evaluate(variable => getComputedStyle(document.documentElement).getPropertyValue(variable).trim(), name);
 
@@ -16,16 +12,16 @@ test.describe('wallet UI design presets', () => {
 		const pageErrors: string[] = [];
 		page.on('pageerror', error => pageErrors.push(error.message));
 
-		await enterStack(page);
+		const wallet = await enterStack(page);
 		await page.getByRole('link', { name: 'Settings' }).first().click();
 		await expect(page.getByTestId('design-sample')).toBeVisible();
 		const html = page.locator('html');
-		await expect(html).toHaveAttribute('data-material', 'obsidian');
-		const indigo = await cssVar(page, '--accent');
+		await expect(html).toHaveAttribute('data-material', 'bank');
+		const initialAccent = await cssVar(page, '--accent');
 
 		await page.getByTestId('design-material-terminal').click();
 		await expect(html).toHaveAttribute('data-material', 'terminal');
-		expect(await cssVar(page, '--accent')).not.toBe(indigo);
+		expect(await cssVar(page, '--accent')).not.toBe(initialAccent);
 
 		await page.getByTestId('design-material-obsidian').click();
 		await page.getByTestId('design-accent-brass').click();
@@ -46,8 +42,8 @@ test.describe('wallet UI design presets', () => {
 		await expect(html).toHaveAttribute('data-risk', 'red');
 		await expect(html).toHaveAttribute('data-numbers', 'serif');
 
-		// The reload locks the vault; re-enter the sandbox, then put the stock look back for other specs.
-		await enterStack(page);
+		// Unlock the same wallet, retaining its persisted appearance choices.
+		await reopenStack(page, wallet);
 		await page.getByRole('link', { name: 'Settings' }).first().click();
 		await page.getByTestId('design-accent-indigo').click();
 		await page.getByTestId('design-risk-violet').click();

@@ -6,6 +6,7 @@
  */
 import { expect, test } from '@playwright/test';
 import { HDNodeWallet } from 'ethers';
+import { importStackPhraseUi } from './stack';
 
 const BOOT_TIMEOUT = 30_000;
 /** A fresh phrase every run: the stack remembers accounts, a re-imported old phrase would replay a stale height. */
@@ -29,9 +30,7 @@ test.describe('wallet UI on a hosted stack', () => {
 		await expect(stack).toHaveAttribute('data-state', 'online', { timeout: 20_000 });
 		await expect(stack).toContainText('Connected');
 
-		await page.getByRole('button', { name: /Import a phrase/ }).click();
-		await page.locator('textarea').fill(PHRASE);
-		await page.locator('button[type="submit"]').click();
+		await importStackPhraseUi(page, PHRASE);
 		await expect(page.getByTestId('home-total')).toBeVisible({ timeout: BOOT_TIMEOUT });
 
 		// The account with the stack hub exists on our side once the hub answered over the relay.
