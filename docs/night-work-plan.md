@@ -18,6 +18,40 @@ Compact faucet follows the old Svelte inline layout; one committed success messa
 one-click funding retained. Tour E2E 2/2 in 15.2s:
 `/tmp/xln-faucet-ux-r2-20260909/wallet-results.json`. UI types green.
 
+### Scenario/parity acceptance — 2026-09-08 23:57 UTC
+
+All 18 canonical TS scenarios passed individually on isolated RPC chains under the stand
+lock at `ad0742a62`: rebalance, lock-ahb, htlc-lazy, ahb, swap, settle, htlc-4hop, grid,
+swap-market, multi-sig, company-ipo, rapid-fire, settle-rebalance, processbatch,
+dispute-lifecycle, dispute-transformer, cross-j, mm-mesh. Logs:
+`/tmp/xln-scenario-<id>-20260909.log`. IPO includes durable recovery at height212 with root
+`0xd9ce07f383f95fe337ecac978ce0028d389d469c736d1c23d5d4887b6c85b8e0`.
+Cross-J/MM run child Runtimes (outer Frames:0 is not zero economic execution).
+
+New binary semantic replay: 6/6 TS/Rust W1/W4/W8, 111 frames, all checked roots and ordered
+outputs equal; 170.2s. `/tmp/xln-parity-scenarios-20260909.log`, canonical result
+`.logs/qa/hlt/replays/1788911794633-parity.json`. Logging restricted to runtime scope to
+avoid Entity log overhead; assertions unchanged. No resume/provenance bypass used.
+Binary SHA256 `7bfc2c7ad6a058af6ce7f29e493f9ffbe590693ea1b604a2ed3e39b365cf6461`.
+Native live J + c2r settlement passed with 5,000/5,000 payments; Account32->38, jNonce25->29.
+`/tmp/xln-live-j-final-20260909.log`. Five-second functional window is NOT TPS evidence.
+Production/cfg(test) compilation is in the green check39/39. The 111-frame WAL still does
+not by itself prove transaction-kind completeness or all adversarial scenario variants.
+
+### Independent Quorum review — 2026-09-08 23:59 UTC
+
+One code/evidence packet at `ad0742a62`, job `cross-remainder-review-20260909-01`, completed
+GLM-5.3 low subscription; no retries. Result `/tmp/xln-cross-review-quorum-result.json`.
+USD0.25 reservation retained; cash unknown. Findings were independently checked:
+1. Claimed restored price substitution: disproved by the exact partial-fill snapshot test.
+   Changing page price to8888 rejects with PAGES_ROOT_MISMATCH; committed page roots remain
+   authoritative. Added this adversarial assertion to the existing regression.
+2. Claimed TS accepts zero-lot resize while Rust rejects: incorrect. TS
+   `core/orderbook/cross-j/index.ts:resizeBookOrderById` rejects <=0 with ORDERBOOK_RESIZE_INVALID.
+   Reachability of a dust route is not established by the supplied counterexample.
+3. Skipping fresh lot admission for authenticated committed remainders is the intended fix;
+   no external mutation counterexample was supplied. No production approval inferred.
+
 ## Owner priority override — 2026-09-08 23:43 UTC
 
 Active Codex goal: all applicable production scenarios and full semantic parity, then

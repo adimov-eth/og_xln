@@ -265,6 +265,19 @@ fn cross_j_live_usdt_usdc_partial_fill_keeps_the_committed_remainder() {
             .sum::<usize>(),
         1
     );
+    // A restored price is authenticated by the committed page root, not the
+    // rounded remaining quote/base ratio. The review counterexample must fail.
+    let mut tampered = owner.orderbook.as_ref().unwrap().snapshot().unwrap();
+    let cached = tampered.books.values_mut().next().unwrap();
+    let page = cached
+        .bid_pages
+        .iter_mut()
+        .chain(cached.ask_pages.iter_mut())
+        .next()
+        .unwrap();
+    page.price_ticks = BigInt::from(8_888);
+    let error = crate::OrderbookState::restore(tampered).unwrap_err();
+    assert!(error.to_string().contains("PAGES_ROOT_MISMATCH"), "{error}");
     let snapshot = owner.orderbook.as_ref().unwrap().snapshot().unwrap();
     owner.orderbook =
         Some(crate::OrderbookState::restore(snapshot).expect("restore partial maker"));
