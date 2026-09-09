@@ -75,12 +75,23 @@ else
     echo "🆕 Starting fresh anvil (no state file)"
 fi
 
+# A private dispute stand can begin in the past while host authentication clocks
+# stay real. Never override a persisted chain's genesis.
+ANVIL_MINING_ARGS=(--mixed-mining)
+if [ -n "${ANVIL_GENESIS_TIMESTAMP:-}" ]; then
+    if [[ ! "$ANVIL_GENESIS_TIMESTAMP" =~ ^[0-9]+$ ]] || [ -f "$ANVIL_STATE" ]; then
+        echo "ANVIL_GENESIS_TIMESTAMP_REQUIRES_FRESH_CHAIN" >&2
+        exit 1
+    fi
+    ANVIL_MINING_ARGS+=(--timestamp "$ANVIL_GENESIS_TIMESTAMP")
+fi
+
 # exec makes Anvil the supervised process. A logging pipeline would leave PM2
 # monitoring this shell, so max_memory_restart could never observe Anvil RSS.
 exec anvil --host 0.0.0.0 --port "$ANVIL_PORT" \
       --chain-id "$ANVIL_CHAIN_ID" \
       --quiet \
-      --mixed-mining \
+      "${ANVIL_MINING_ARGS[@]}" \
       --block-time "$ANVIL_BLOCK_TIME" \
       --block-gas-limit 60000000 \
       --code-size-limit 65536 \

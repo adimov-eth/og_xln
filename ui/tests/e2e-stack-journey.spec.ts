@@ -49,7 +49,7 @@ const snapshot = (page: Page, entityId: string, hubId: string) => page.evaluate(
     const derived = delta ? xln.deriveDelta(delta, xln.isLeftEntity(entityId, hubId)) : null;
     return { tokenId, reserve: String(active.core.reserves.get(tokenId) ?? 0n), owned: String(derived ? derived.outCollateral + derived.outPeerCredit - derived.inOwnCredit : 0n), collateral: String(delta?.collateral ?? 0n), offdelta: String(delta?.offdelta ?? 0n) };
   });
-  return { height: frame.height, accountHeight: account.currentHeight, root: account.currentFrame.accountStateRoot, status: account.status, dispute: account.activeDispute ?? null, jNonce: account.state.jNonce, depository: active.core.config.jurisdiction.depositoryAddress, tokens,
+  return { disputeConfig: account.state.disputeConfig, height: frame.height, accountHeight: account.currentHeight, root: account.currentFrame.accountStateRoot, status: account.status, dispute: account.activeDispute ?? null, jNonce: account.state.jNonce, depository: active.core.config.jurisdiction.depositoryAddress, tokens,
     chainTimeWait: submit?.lastResultOutcome === 'transientFailure' && submit.lastFailure?.adapterFailure?.code === 'DISPUTE_FINALIZATION_AWAITING_CHAIN_TIME',
     sentBatch: sent ? { hash: sent.batchHash, nonce: sent.entityNonce, generation: active.core.jBatchState!.broadcastCount, notBefore: sent.batch.disputeFinalizations.map(row => row.submitNotBeforeTimestamp) } : null,
     otherHubs: frame.entities.filter(row => row.isHub && row.entityId !== hubId && row.jurisdiction?.name === active.core.config.jurisdiction?.name).map(row => ({ id: row.entityId, label: row.label })),
@@ -236,15 +236,16 @@ test('one wallet funds 100, pays, swaps on both networks, disputes and moves rec
       const started = await snapshot(page, wallet.entityId, hub);
       const starts = await contract.queryFilter(contract.filters.DisputeStarted(wallet.entityId, hub), fromBlock);
       expect(starts).toHaveLength(1); const start = starts[0]; if (!start) throw new Error('Journey signed dispute start missing');
-      expect(start.args.leftResponseSeconds).toBe(86_400n); expect(start.args.rightResponseSeconds).toBe(86_400n);
+      expect(start.args.leftResponseSeconds).toBe(BigInt(before.disputeConfig.leftResponseSeconds));
+      expect(start.args.rightResponseSeconds).toBe(BigInt(before.disputeConfig.rightResponseSeconds));
       expect(start.args.disputeTimeout).toBe(start.args.disputeStartTimestamp + start.args.leftResponseSeconds + start.args.rightResponseSeconds);
       const deadline = Number(start.args.disputeTimeout) + 1;
-      expect(deadline).toBeLessThan(Math.floor(Date.now() / 1000));
-      // Private genesis is old; all participants still sign with real wall time.
+      // Only the isolated chain advances; all transport authentication clocks stay real.
       // H1 may legally accept the initial proof before T; the starter must wait for T.
       // This journey verifies the exact payout from either real protocol finalizer.
       const beforeDeadlineBlock = await provider.getBlock('latest');
       expect(beforeDeadlineBlock?.timestamp).toBeLessThan(Number(start.args.disputeTimeout));
+      expect(deadline, 'Journey requires ANVIL_GENESIS_TIMESTAMP at least three days in the past').toBeLessThan(Math.floor(Date.now() / 1000));
       await provider.send('evm_setNextBlockTimestamp', [deadline]); await provider.send('evm_mine', []);
       const deadlineBlock = await provider.getBlock('latest');
       expect(deadlineBlock?.timestamp).toBe(deadline);
@@ -269,7 +270,7 @@ test('one wallet funds 100, pays, swaps on both networks, disputes and moves rec
     await phase('move-recovered-reserve-to-second-hub', async () => {
       const second = (await settled(page, wallet.entityId, hub)).otherHubs.find(row => row.label === 'H2');
       if (!second) throw new Error('Journey second hub on the same jurisdiction unavailable');
-      await home(page); await page.getByRole('button', { name: 'Open account', exact: true }).click();
+      await home(page); await page.getByRole('button', { name: 'Connect another account', exact: true }).click({ timeout: 5000 });
       const sheet = page.getByRole('dialog', { name: 'Open account', exact: true });
       await sheet.getByPlaceholder('or paste an entity id, 0x…').fill(second.id);
       const secondHub = await sheet.getByPlaceholder('or paste an entity id, 0x…').inputValue(); expect(secondHub).not.toBe(hub);

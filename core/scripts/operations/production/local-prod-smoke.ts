@@ -1393,8 +1393,12 @@ const main = async (): Promise<void> => {
     mkdirSync(dirname(seedPath), { recursive: true });
     writeFileSync(seedPath, `${explicitMeshRootSeed}\n`, { mode: 0o600 });
   }
+  const genesisEnv = process.env['ANVIL_GENESIS_TIMESTAMP']
+    ? { ANVIL_GENESIS_TIMESTAMP: process.env['ANVIL_GENESIS_TIMESTAMP'] }
+    : {};
   startManaged('anvil', 'scripts/operations/start-anvil.sh', useSnapshotTemplate ? [] : ['--reset'], {
     XLN_PORT_BASE: String(portBase),
+    ...genesisEnv,
     ANVIL_STATE: join(workDir, 'anvil-state.json'),
     ANVIL_LOG: join(workDir, 'anvil.log'),
     ANVIL_TMPDIR: join(workDir, 'anvil-tmp'),
@@ -1406,6 +1410,7 @@ const main = async (): Promise<void> => {
   // timestamp-derived temp path and kill both before either binds its port.
   startManaged('anvil2', 'scripts/operations/start-anvil2.sh', useSnapshotTemplate ? [] : ['--reset'], {
     XLN_PORT_BASE: String(portBase),
+    ...genesisEnv,
     ANVIL2_STATE: join(workDir, 'anvil2-state.json'),
     ANVIL2_LOG: join(workDir, 'anvil2.log'),
     ANVIL_TMPDIR: join(workDir, 'anvil2-tmp'),

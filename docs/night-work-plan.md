@@ -52,6 +52,22 @@ USD0.25 reservation retained; cash unknown. Findings were independently checked:
 3. Skipping fresh lot admission for authenticated committed remainders is the intended fix;
    no external mutation counterexample was supplied. No production approval inferred.
 
+### Method review and wallet journey — 2026-09-09 00:12 UTC
+
+Capacity, hosted entry, sovereignty and catch-up are green. Hosted now verifies the actual
+connected Account entity ID against /api/hubs, not stale UI wording; absent servers fail.
+Full same-wallet journey passed in21.8s: funding, Pay25, same-chain/cross-chain swaps,
+dispute finality, recovered reserve moved to H2, reload and exact preserved state.
+Artifact `/tmp/xln-ui-journey-r5-20260909/wallet-results.json`.
+The journey requires a fresh private genesis at least three days old; configured with
+ANVIL_GENESIS_TIMESTAMP=1788652800. The launcher supports this optional genesis setting,
+rejects its use with persisted chain state, and never changes host authentication clocks.
+Advancing only the browser clock was rejected as a method: it correctly triggers hello
+clock-skew protection when connecting a new peer. That attempt was removed, not bypassed.
+Dispute receipts are compared to the signed bilateral windows, never hard-coded24h.
+Check39/39 and UI types passed. Next: five remaining React E2E files, production UI artifact,
+Svelte full suite, parity transaction-kind coverage. No cosmetic work or TPS tuning yet.
+
 ## Owner priority override — 2026-09-08 23:43 UTC
 
 Active Codex goal: all applicable production scenarios and full semantic parity, then
