@@ -45,6 +45,31 @@ NOT equal full-state hashes at different heights. Check39/39 passes:
 /tmp/xln-native-cadence-check-r2.log. Next: same native scenario W4, TS equivalents,
 then remaining named scenarios and updated exact replay; no E2E yet.
 
+### Post-fix evidence and method review — 2026-09-09 00:47 UTC
+
+At52e5190a4, cross-J full fill + replacement/recovery passes TS/Rust W1/W4 (4/4).
+All reports agree source10201020000, target10200000000, settled, different server PIDs.
+Artifacts: /tmp/xln-native-cross-recovery-w1-r4-20260909,
+/tmp/xln-native-cross-recovery-w4-20260909, /tmp/xln-ts-cross-recovery-w1-20260909,
+/tmp/xln-ts-cross-recovery-w4-20260909. Those use the launcher's default fail-fast policy;
+they prove happy-path financial recovery, not production rejection handling.
+Exact111-frame replay also passes6/6 TS/Rust W1/W4/W8 on binary
+0xde0d43a94696325c28ad5d35d108be16abb32fa1a6865fbc7313a3bfb3770af0.
+Result .logs/hlt-evidence/2026-09-07T22-27-58-651Z/replays/1788914371662-parity.json.
+Log /tmp/xln-parity-checkpoint-fix-20260909.log. No parity assertion weakened.
+Production NODE_ENV=production mm-mesh adversaries pass4/4: hub-kill and mm-restart,
+each with TS and Rust H1 W4. Logs /tmp/xln-native-hub-kill-prod-w4-20260909.log,
+/tmp/xln-ts-hub-kill-prod-w4-20260909.log,
+/tmp/xln-rust-mm-restart-prod-w4-20260909.log,
+/tmp/xln-ts-mm-restart-prod-w4-20260909.log. Checks prove PID replacement and restored
+same/cross books. They are not independent payment-conservation or TPS evidence.
+Initial hub-kill used default dev fail-fast and correctly halted a TS neighbour on
+unexpected socket close; explicitly rerun production policy without changing core.
+Method review: continue missing native financial scenarios before TPS/E2E. Existing
+TS-only in-process18-scenario runner is not a Rust gate; do not relabel its result.
+Full scenario equivalence, live J on the new binary, final transaction-kind execution
+coverage, current W1/W4 TPS/profile and both frontend E2E remain unfinished.
+
 ## Current acceptance window — 2026-09-08 22:07 UTC
 
 Owner authorized several hours of prioritized production work and ten-minute status updates.
