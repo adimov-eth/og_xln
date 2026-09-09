@@ -116,6 +116,24 @@ The portable restore is read-only recovery evidence; it is NOT a certified W1/W4
 authority benchmark. Setting worker-count environment variables alone does not
 prove which executor the recovery path used.
 
+### Window checkpoint — 2026-09-09 01:10 UTC
+
+SHA1d686464d. Last green: bun run check,39/39,
+/tmp/xln-multisig-recording-check.log. First executed native red: actual TS Runtime5
+proposal decoded by RuntimeEntityInput::decode gives
+EntityInputFieldUnsupported("proposedFrame"),0/1 tests,0 ignored.
+Log /tmp/xln-native-bft-first-boundary-r2.log; temporary regression body retained at
+/tmp/xln-native-bft-first-boundary-regression.rs. Temporary test insertion was removed;
+production source is unchanged. The first diagnostic filter matched0 tests and is
+NOT evidence; only the r2 log contains the executed failure.
+Next single diagnostic command (already-built diagnostic binary, not release binary):
+bun tools/stand-lock.ts run --reason native-bft-proposal-boundary --timeout-ms 60000 -- rscore/target/debug/deps/xln_rscore_runtime-269ac9f64eb6ede3 --exact machine::tests::multisig_recorded_runtime_5_proposal_native_admission --nocapture
+Existing Account candidate selection is in resident_consensus.rs entity_inbound_inner;
+reuse it for BFT, do not add a parallel Account store. Remaining final gates unchanged:
+full native BFT + all scenarios, per-frame roots and ordered outputs, live J and cfg(test),
+current W1/W4 TPS/profile, bounded verified Quorum, E2E both frontends. Automation xln-10
+paused at the recorded window boundary. Goal remains incomplete; no production-ready claim.
+
 ## Current acceptance window — 2026-09-08 22:07 UTC
 
 Owner authorized several hours of prioritized production work and ten-minute status updates.
