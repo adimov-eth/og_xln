@@ -64,6 +64,24 @@ This does not implement `importReplica` decoding/execution or native BFT; the or
 recorded admission remains red. Continue there, without relabeling this prerequisite
 as scenario parity.
 
+Next prerequisite implemented: native checkpoint/replay configuration accepts multiple
+explicit signer derivation base labels, retaining the same labels for native restart.
+The runtime-replay CLI now takes `--entity-signer-labels` as a JSON string array;
+its canonical TS caller was updated atomically. No old-flag fallback. Live single-owner
+startup retains its existing single-label CLI and supplies a one-element keyring.
+The keyring still derives each configured base's existing jurisdiction labels, never
+guesses labels from persisted signer addresses, and rejects empty/duplicate configuration.
+Tests cover 13 local scenario validators and the existing hub jurisdiction keys: 3/3.
+Full check39/39: `/tmp/xln-native-scenario-keyring-check.log`.
+This does not yet provide live multi-validator execution or importReplica execution.
+Production regression replay passes 6/6 (TS/Rust W1/W4/W8), 111 frames, in168.3s
+under the stand lock. Evidence `/tmp/xln-production-parity-keyring-regression.log`
+and `.logs/hlt-evidence/2026-09-07T22-27-58-651Z/replays/1789001911958-parity.json`.
+Native binary SHA256 `0xb29a074d7383fc94a192f1292799b3ccd1e7febb2f1b016febf7476fd29f45c7`.
+This is the existing mixed single-validator artifact, not the missing multisig scenario
+and not live TPS. Next action remains actual importReplica transition, with these
+explicit operator labels used for signer-key lookup; no additional prerequisite audit.
+
 ## Owner correction — core before browser acceptance (2026-09-09)
 
 E2E is paused. The 18/18 scenario result covers TS only; the six-engine 111-frame

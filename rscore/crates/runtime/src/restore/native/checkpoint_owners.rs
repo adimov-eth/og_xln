@@ -82,6 +82,12 @@ fn derive_operator_signers(
     seed: &str,
     labels: &[String],
 ) -> Result<BTreeMap<String, [u8; 32]>, ConcreteCheckpointDecodeError> {
+    if labels.is_empty() || labels.iter().any(|label| label.trim().is_empty()) {
+        return Err(invalid("SIGNER_DERIVATION_LABEL_EMPTY"));
+    }
+    if labels.iter().collect::<BTreeSet<_>>().len() != labels.len() {
+        return Err(invalid("SIGNER_DERIVATION_LABEL_DUPLICATE"));
+    }
     labels
         .iter()
         .map(|label| {
@@ -101,20 +107,18 @@ pub(super) fn signer_keyring(
     configuration: &ConcreteCheckpointConfiguration,
     envelope: &RuntimeDurableEnvelope,
 ) -> Result<BTreeMap<String, [u8; 32]>, ConcreteCheckpointDecodeError> {
-    let base = &configuration.signer_derivation_label;
-    if base.trim().is_empty() {
-        return Err(invalid("SIGNER_DERIVATION_LABEL_EMPTY"));
-    }
-    let mut labels = vec![base.clone()];
-    for row in envelope
-        .j_replicas()
-        .as_array()
-        .expect("validated J replica array")
-    {
-        labels.push(format!(
-            "{base}:{}",
-            row[0].as_str().expect("validated J name")
-        ));
+    let mut labels = configuration.signer_derivation_labels.clone();
+    for base in &configuration.signer_derivation_labels {
+        for row in envelope
+            .j_replicas()
+            .as_array()
+            .expect("validated J replica array")
+        {
+            labels.push(format!(
+                "{base}:{}",
+                row[0].as_str().expect("validated J name")
+            ));
+        }
     }
     derive_operator_signers(&configuration.runtime_seed, &labels)
 }
@@ -122,6 +126,36 @@ pub(super) fn signer_keyring(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scenario_keyring_restores_all_explicit_validator_labels() {
+        let labels = (1..=13).map(|index| index.to_string()).collect::<Vec<_>>();
+        let configuration = ConcreteCheckpointConfiguration {
+            runtime_seed: "0x0123456789abcdef".into(),
+            signer_derivation_labels: labels.clone(),
+            worker_count: 1,
+            limits: crate::RuntimeLimits::hlt(),
+            swap_market: std::sync::Arc::new(crate::canonical_swap_market_policy()),
+            expected_protocol_fingerprint: [0; 32],
+            board_delays: xln_rscore_engine::BoardDelays::default(),
+        };
+        let envelope = RuntimeDurableEnvelope::fixture();
+        let keys = signer_keyring(&configuration, &envelope).expect("all scenario validators");
+        let jurisdictions = envelope.j_replicas().as_array().unwrap().len();
+        assert_eq!(keys.len(), 13 * (1 + jurisdictions));
+        for label in labels {
+            let key = derive_signer_key(&configuration.runtime_seed, &label).unwrap();
+            let address = format!("0x{}", hex_bytes(&address_of_private_key(&key).unwrap()));
+            assert_eq!(keys.get(&address), Some(&key));
+        }
+    }
+
+    #[test]
+    fn operator_keyring_rejects_empty_or_duplicate_label_configuration() {
+        for labels in [vec![], vec!["".into()], vec!["1".into(), "1".into()]] {
+            assert!(derive_operator_signers("0x0123456789abcdef", &labels).is_err());
+        }
+    }
 
     #[test]
     fn owner_partition_retains_every_row_and_rejects_foreign_or_missing_manifests() {

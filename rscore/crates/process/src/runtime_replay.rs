@@ -516,7 +516,7 @@ pub fn replay_runtime_wal(
     recording_manifest_hash: &str,
     runtime_seed: &str,
     runtime_signer_label: &str,
-    entity_signer_label: &str,
+    entity_signer_labels: &[String],
     native_database: impl AsRef<Path>,
     from: u64,
     to: u64,
@@ -550,7 +550,7 @@ pub fn replay_runtime_wal(
     replay_limits.canonical_hash_period_frames = 1;
     let configuration = ConcreteCheckpointConfiguration {
         runtime_seed: runtime_seed.to_string(),
-        signer_derivation_label: entity_signer_label.to_string(),
+        signer_derivation_labels: entity_signer_labels.to_vec(),
         worker_count: workers,
         limits: replay_limits,
         swap_market: Arc::new(canonical_swap_market_policy()),
@@ -1071,7 +1071,7 @@ pub fn replay_runtime_wal(
         native_database,
         runtime_seed,
         runtime_signer_label,
-        entity_signer_label,
+        entity_signer_labels,
         workers,
         restart_routes,
         // The migration boundary was the imported TS checkpoint above. By

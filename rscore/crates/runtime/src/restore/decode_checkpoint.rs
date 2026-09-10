@@ -23,11 +23,11 @@ use super::{
 
 pub struct ConcreteCheckpointConfiguration {
     pub runtime_seed: String,
-    /// Operator keyring label.  The persisted signer id is an address, not a
+    /// Operator keyring base labels.  The persisted signer id is an address, not a
     /// derivation label; deriving from that address silently selects a
     /// different key.  Restore proves this label against canonical 0x26 before
     /// either Entity or Account receives the key.
-    pub signer_derivation_label: String,
+    pub signer_derivation_labels: Vec<String>,
     pub worker_count: usize,
     pub limits: RuntimeLimits,
     pub swap_market: Arc<SwapMarketPolicy>,

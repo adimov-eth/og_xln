@@ -52,7 +52,7 @@ fn arguments(args: &[String]) -> Result<BTreeMap<&str, &str>, String> {
         "--ts-parity-report",
         "--runtime-seed-file",
         "--runtime-signer-label",
-        "--entity-signer-label",
+        "--entity-signer-labels",
         "--native-db",
         "--workers",
     ];
@@ -122,7 +122,8 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
     let parity_report_path = args["--ts-parity-report"];
     let seed_path = args["--runtime-seed-file"];
     let runtime_signer_label = args["--runtime-signer-label"];
-    let entity_signer_label = args["--entity-signer-label"];
+    let entity_signer_labels: Vec<String> = serde_json::from_str(args["--entity-signer-labels"])
+        .map_err(|error| format!("RUNTIME_REPLAY_SIGNER_LABELS:{error}"))?;
     let native_path = args["--native-db"];
     let workers = args["--workers"]
         .parse::<usize>()
@@ -155,7 +156,7 @@ pub(crate) fn run(args: Vec<String>) -> Result<(), String> {
         recording_manifest_hash,
         runtime_seed,
         runtime_signer_label,
-        entity_signer_label,
+        &entity_signer_labels,
         native_path,
         from,
         to,
