@@ -1,71 +1,73 @@
-# Кошелёк xln: путь пользователя и приёмка
+# xln wallet: user journey and acceptance
 
-Рабочий план от 2026-09-10. Точка отсчёта: main `a64d3a340` плюс
-незавершённые изменения восстановления и чтения receipts. Это план приёмки,
-а не свидетельство готовности. Владелец выбрал первого пользователя: человек,
-который переводит деньги другому человеку. Результат часа: два новых React-кошелька, перевод и reload с точными балансами.
+Working plan dated 2026-09-10. Starting point: main `a64d3a340` plus the
+then-unfinished recovery and receipt-reading changes. This is an acceptance
+plan, not readiness evidence. The owner selected the first user: a person
+sending money to another person. The selected hour's result is two new React
+wallets, a transfer and reload with exact balances.
 
-## Результат продукта
+## Product outcome
 
-Новый пользователь без помощи инженера создаёт кошелёк, получает тестовые деньги,
-переводит их другому новому пользователю, меняет актив и возвращается после
-перезагрузки с теми же подтверждёнными средствами и историей. Он понимает сумму,
-получателя, комиссию, статус и способ восстановления. React — основной интерфейс;
-Svelte сохраняет тот же финансовый путь. Хаб — Runtime с ролью хаба; xln — сеть Runtime.
+Without engineering help, a new user creates a wallet, receives test money,
+pays another new user, swaps assets and returns after reload with the same
+confirmed funds and history. They understand the amount, recipient, fee,
+status and recovery method. React is the primary interface; Svelte preserves
+the same financial path. A hub is a Runtime with the hub role; xln is a network
+of Runtimes.
 
-## Восемь проверок пользовательского пути
+## Eight user-journey checks
 
-| Шаг | Что делает пользователь | Критерий приёмки | Текущие доказательства |
+| Step | User action | Acceptance criterion | Current evidence |
 |---|---|---|---|
-| 1. Создание | Открывает стартовый экран, вводит имя и пароль | Создание первым; сохранённые кошельки ниже. BrainVault передаёт 24 слова в общий импорт. Исходный пароль шифрует локальное хранилище. Фраза появляется скрытой, раскрывается по «Показать». Remote Runtime доступен | Частично реализовано; весь критерий не пройден |
-| 2. Первый вход | Ждёт готовности нового кошелька | Настоящий RAdapter, существующая длинная цепь, проверенная синхронизация, без сброса и увеличения таймаутов | Пройдено: Home за 23,337 с на цепи 193219 блоков |
-| 3. Первые деньги | Один раз нажимает faucet на Home | Получает ровно 100 USDC; подтверждённый баланс, нет pending Account proposal | Пройдено: +2,021 с после Home |
-| 4. Получение | Второй новый пользователь открывает Receive и передаёт адрес/запрос первому | Первый видит правильного получателя; неверный ввод и потерявшая силу котировка не допускают платёж | Два новых кошелька проверены; Bob явно подготовил Receive на 25 USDC, адрес распознан. Неверные суммы/адрес и отозванная котировка проверены: отдельный E2E 30,2 с |
-| 5. Перевод | Первый проверяет сумму и комиссию, подтверждает перевод | У первого списаны сумма + фактическая комиссия; второй получил ровно сумму. Обе стороны имеют конечный статус, совпадающее доказательство перевода, пустые очереди. Двойное нажатие не создаёт второй платёж | Пройдено: Alice → Bob 25 USDC; комиссия 0,000025; Alice 74,999975, Bob 125. Совпадающий hashlock, по одному receipt, очереди пусты |
-| 6. Обмен | Выбирает активы, проверяет условия, подтверждает swap | Обе суммы и комиссии сверены с подтверждёнными состояниями; конечный статус, нет зависшей блокировки. Same-J и Cross-J проверяются отдельно | В ручном туториале наблюдался Swap filled; точные суммы и reload swap ещё не доказаны |
-| 7. Возвращение | Перезагружает оба кошелька, вводит только пароль | Идентичность сохранена; прежние кадры и корни совпадают, актуальные балансы точны; нет второго перевода, swap или дублей истории | Баланс и Account roots обоих пользователей после перевода/reload совпали. Swap/reload не проверен. Общий одношаговый payment/reload остаётся за пределом 50 с |
-| 8. Восстановление | Выбирает «У меня есть фраза восстановления», вводит 12/24 слова в новом профиле | Каноническая идентичность совпадает. CLI BrainVault, React, Svelte дают одинаковые результаты при одинаковых входах; доступные подтверждённые данные восстанавливаются через существующий путь | Не доказано на текущем кандидате |
+| 1. Creation | Opens the entry screen, enters name and password | Creation first, saved wallets below. BrainVault passes 24 words into shared import. The original password encrypts local storage. Recovery phrase appears hidden and is revealed by Show. Remote Runtime remains available | Partially implemented; full criterion not passed |
+| 2. First login | Waits for a new wallet to become ready | Real RAdapter, existing long chain, verified synchronization without resetting the chain or increasing deadlines | Passed: Home in 23.337 s at 193219 blocks |
+| 3. First funds | Clicks the Home faucet | Exactly 100 USDC received; committed balance, no pending Account proposal | Passed: 2.021 s after Home |
+| 4. Receiving | Second new user opens Receive and shares address/request with the first | Sender sees correct recipient; invalid input and a revoked quote cannot submit a payment | Two new wallets checked; Bob explicitly prepared Receive for 25 USDC and the address was recognized. Invalid amounts/address and revoked quote passed separate E2E in 30.2 s |
+| 5. Payment | Sender checks amount and fee, then confirms | Sender loses amount plus actual fee; recipient receives the exact amount. Both sides reach terminal status with matching evidence and empty queues. Double click cannot create a second payment | Passed: Alice to Bob 25 USDC; fee 0.000025; Alice 74.999975, Bob 125. Matching hashlock, one receipt each, empty queues |
+| 6. Swap | Selects assets, reviews terms and confirms | Both amounts and fees match committed states; terminal status, no stuck hold. Same-J and Cross-J checked separately | Swap filled observed in manual tutorial; exact amounts and swap reload not yet proven |
+| 7. Return | Reloads both wallets, enters password only | Identity preserved; prior frames and roots match, current balances exact; no duplicate payment, swap or history | Both users' balances and Account roots matched after payment/reload. Swap/reload not checked. The combined single-case payment/reload still exceeds 50 s |
+| 8. Recovery | Selects existing recovery phrase and enters 12/24 words in a fresh profile | Canonical identity matches. CLI BrainVault, React and Svelte agree for identical inputs; available committed data recovers through the existing path | Not proven on current candidate |
 
-Пройдено полностью **4/8 (50%) критериев этого маршрута**. Это не процент
-готовности mainnet. Успешные вспомогательные тесты не закрывают целый шаг.
+Fully passed: **4/8 (50%) of this journey's criteria**. This is not a mainnet
+readiness percentage. Supporting tests do not close an entire step.
 
-Источник новых доказательств: [proof.json](evidence/wallet-transfer-20260911/proof.json).
-Три ограниченных прогона прошли: подготовка Alice 28,2 с, Bob 28,6 с,
-перевод и reload обеих реальных баз 26,8 с. Старый единый 50-секундный тест
-остаётся красным: `/tmp/xln-payment-paged-history.log`. Его ограничение не увеличено.
-Узкие проверки восстановления/ключей: 18/18, 112 assertions.
+New evidence: [proof.json](evidence/wallet-transfer-20260911/proof.json).
+Three bounded runs passed: Alice preparation 28.2 s, Bob 28.6 s, transfer and
+reload of both real databases 26.8 s. The original combined 50-second test
+remains red: `/tmp/xln-payment-paged-history.log`. Its deadline was not raised.
+Focused recovery/key tests: 18/18, 112 assertions.
 
-## Результат выбранного часа
+## Selected hour's result
 
-**3/3 проверки пройдены:** два новых кошелька профинансированы, платёж подтверждён
-обеими сторонами, балансы и Account roots сохранены после reload. Подготовка и
-денежный этап разделены на процессы; между ними перенесены реальные IndexedDB/WAL.
-Это доказательство денежного сценария, не устранение медленного общего входа.
+**3/3 checks passed:** two new wallets funded, payment confirmed by both sides,
+balances and Account roots preserved after reload. Preparation and the money
+phase use separate processes, transferring actual IndexedDB/WAL between them.
+This proves the financial scenario; slow combined login remains unresolved.
 
-Следующая проверка: swap между активами с точными суммами, комиссиями и reload.
-Каждый повтор обязан пройти или дать новую причину. После повторного падения без
-новых данных меняется гипотеза. Перед готовностью этапа: узкие тесты, реальный
-браузер, `bun run check`, diff и отдельный коммит своих изменений. Не пушить.
+Next check: swap with exact amounts, fees and reload. Every rerun must pass or
+produce a new cause. Repeated failure without new evidence requires a changed
+hypothesis. Before completion: focused tests, real browser, `bun run check`,
+diff review and a separate scoped commit. Do not push.
 
-## Следующие этапы и инженерные условия
+## Following stages and engineering constraints
 
-После двухстороннего перевода и reload — swap; затем единый путь создания и
-восстановления обоих интерфейсов. Ошибки неверного пароля/фразы, недоступного peer,
-повторного нажатия и перезагрузки в незавершённом состоянии проверяются рядом с
-соответствующим действием: понятный отказ, отсутствие ложного успеха и лишнего списания.
+After bilateral payment/reload: swap, then shared creation and recovery in both
+interfaces. Check wrong passwords/phrases, unavailable peers, repeated clicks
+and reload during unfinished work alongside each action: clear rejection,
+no false success and no additional debit.
 
-Далее существующие TS-сценарии исполняются с H1 на TS и Rust без переписывания
-сценарной логики. Сначала устранить противоречие primary-jurisdiction-only и ожидания
-Cross-J в native-стенде. На одном неизменяемом WAL сравнить каждый R/E/A root и
-упорядоченные outputs в TS W1/W4 и Rust W1/W4; исправлять первое расхождение.
-Затем live Rust J watcher → Entity → batch → receipt, production и cfg(test) Rust,
-финальные E2E React и Svelte. Replay не подменяет live-доказательство.
+Then run existing TS scenarios with H1 on TS or Rust without rewriting scenario
+logic. First fix the contradiction between primary-jurisdiction-only and waiting
+for Cross-J routes in the native stand. On one immutable WAL compare every R/E/A
+root and ordered output for TS W1/W4 and Rust W1/W4; fix the first divergence.
+Then live Rust J watcher to Entity to batch to receipt, production and cfg(test)
+Rust builds, and full React/Svelte E2E. Replay does not replace live proof.
 
-Работать одному, один тяжёлый стенд под stand-lock, main без уничтожения чужих
-изменений, пользовательских кошельков и девсети. Не менять протокол ради скорости.
-TPS только по критериям AGENTS.md. Пользовательская ценность считается по уникальным
-завершённым экономическим операциям, без повторного счёта переходов через хабы.
+Work alone, one heavy stand under stand-lock, on main, preserving unrelated
+changes, user wallets and the devnet. Do not change the protocol for speed.
+TPS must meet AGENTS.md criteria. User value counts unique completed economic
+operations, never repeated hops through hubs.
 
-После технической приёмки владелец сам проходит маршрут без инженерной помощи;
-следующий внешний рубеж выбирается по его ответу. Деплой и публикация этим планом
-не выполнены и не утверждены.
+After technical acceptance, the owner walks the journey without engineering
+help; their feedback determines the next external milestone. This plan neither
+performs nor authorizes deployment or publication.

@@ -74,11 +74,9 @@ export function TokenRow({
           <Icon name={open ? 'chevronDown' : 'chevronRight'} size={16} />
         </span>
       </button>
-      {open && (
-        <div className="rb">
-          <Bar segments={segments} />
-        </div>
-      )}
+      <div className="rb">
+        <Bar segments={segments} />
+      </div>
       {open && (
         <div className="fade-in">
           {places.onchain &&

@@ -21,6 +21,7 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
     if (busy || !hub || !requireAdapter().commandReady) return;
     setBusy(true);
     setError('');
+    setDone(false);
     try {
       const xln = peekXLN();
       if (!xln) throw new Error('Wallet runtime is not ready');
@@ -35,7 +36,8 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
         allowOpenAccount: false,
       };
       const read = async () => {
-        if (!requireAdapter().commandReady) throw new Error('Wallet connection stopped. Reopen the wallet before continuing.');
+        if (!requireAdapter().commandReady)
+          throw new Error('Wallet connection stopped. Reopen the wallet before continuing.');
         const account = await readAccountState(entityId, hub.counterpartyId);
         if (!account) throw new Error('Hub account is not ready');
         return account;
@@ -85,24 +87,29 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
       <button
         type="button"
         className="btn sm"
-        disabled={busy || !hub || done || !commandReady}
+        disabled={busy || !hub || !commandReady}
         onClick={() => void receive()}
         data-testid="home-faucet"
-        aria-label={done ? '100 USDC received' : 'Get 100 test USDC'}
+        aria-label="Get 100 test USDC"
       >
-        {done ? <span role="status" data-testid="test-money-status">100 USDC received</span> : busy ? stage || 'Receiving…' : '+100'}
+        {busy ? stage || 'Receiving…' : '+100'}
       </button>
       <button type="button" className="more" onClick={() => setTour({ active: true, index: 0 })}>
         Tour
       </button>
-      {!done && hub && (
+      {hub && (
         <details className="disclosure">
           <summary>Details</summary>
           <p className="note">
-            This action lets {hub.label} owe you 100 USDC of test money without collateral. Existing credit is used
-            first.
+            Each click adds 100 USDC of test money. Existing credit is used first; if needed, this action increases how
+            much {hub.label} can owe you without collateral.
           </p>
         </details>
+      )}
+      {done && (
+        <span role="status" data-testid="test-money-status">
+          100 USDC received
+        </span>
       )}
       {!hub && <p role="status">Connecting your hub account…</p>}
       {error && <p role="alert">{error} Check your balance before trying again.</p>}

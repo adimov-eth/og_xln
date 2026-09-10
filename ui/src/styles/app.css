@@ -2276,6 +2276,9 @@ textarea.input.boxed {
 .wallet-empty { padding: 20px 0; }
 .wallet-show-assets { margin-top: 16px; }
 .wallet-details { border-top: 1px solid var(--line); margin-top: 36px; padding-top: 12px; }
+.wallet-breakdown { margin: 16px 0; padding: 14px 0; border-block: 1px solid var(--line); }
+.wallet-breakdown > .bw { margin-top: 12px; }
+.wallet-breakdown > .disclosure { padding-bottom: 0; border-bottom: 0; }
 .wallet-connections { margin: 20px 0; max-width: 500px; }
 .wallet-connections .avatar { width: 32px; height: 32px; font-size: 13px; }
 .test-money { margin: 18px 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }

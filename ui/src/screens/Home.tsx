@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UsdAmount } from '../components/Amount';
+import { Legend } from '../components/Bars';
 import { TokenRow, AccountRow } from '../components/home/Balances';
 import { BalanceDetails } from '../components/home/BalanceDetails';
 import { TestMoney } from '../components/home/TestMoney';
@@ -22,7 +23,7 @@ export function Home() {
   const places = useApp(s => s.places);
   const wallet = useWallet(entityId);
   const navigate = useNavigate();
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(() => new Set());
   const [showZero, setShowZero] = useState(false);
   const [opening, setOpening] = useState(false);
   const [addingMoney, setAddingMoney] = useState(false);
@@ -65,13 +66,17 @@ export function Home() {
         {wallet.frame ? (
           <UsdAmount value={visibleNet} size={52} testId="home-total" />
         ) : (
-          <p className="hero-label" role="status">{wallet.error ? 'Balance unavailable' : 'Loading balance…'}</p>
+          <p className="hero-label" role="status">
+            {wallet.error ? 'Balance unavailable' : 'Loading balance…'}
+          </p>
         )}
         {wallet.frame && places.accounts && (
           <p className="note" data-testid="home-send-capacity">
-            {!commandReady ? 'Wallet connection stopped. Reopen the wallet to continue.' : Math.abs(visibleNet - wallet.usd.sendCapacity) < 0.005
-              ? 'Ready to send'
-              : `${formatUsd(wallet.usd.sendCapacity)} available to send`}
+            {!commandReady
+              ? 'Wallet connection stopped. Reopen the wallet to continue.'
+              : Math.abs(visibleNet - wallet.usd.sendCapacity) < 0.005
+                ? 'Ready to send'
+                : `${formatUsd(wallet.usd.sendCapacity)} available to send`}
           </p>
         )}
         {held > 0 && (
@@ -80,8 +85,15 @@ export function Home() {
           </button>
         )}
       </section>
+      <BalanceDetails wallet={wallet} />
       <div className="actions wallet-actions">
-        <button type="button" className="btn primary" disabled={!commandReady || !wallet.frame || Boolean(wallet.error)} onClick={() => navigate('/pay')} data-testid="home-pay">
+        <button
+          type="button"
+          className="btn primary"
+          disabled={!commandReady || !wallet.frame || Boolean(wallet.error)}
+          onClick={() => navigate('/pay')}
+          data-testid="home-pay"
+        >
           <Icon name="pay" size={18} />
           Pay
         </button>
@@ -89,7 +101,13 @@ export function Home() {
           <Icon name="receive" size={18} />
           Receive
         </button>
-        <button type="button" className="btn" disabled={!commandReady || !wallet.frame || Boolean(wallet.error)} onClick={() => navigate('/swap')} data-testid="home-swap">
+        <button
+          type="button"
+          className="btn"
+          disabled={!commandReady || !wallet.frame || Boolean(wallet.error)}
+          onClick={() => navigate('/swap')}
+          data-testid="home-swap"
+        >
           <Icon name="swap" size={18} />
           Swap
         </button>
@@ -104,14 +122,22 @@ export function Home() {
               Add money
             </button>
           </div>
+          {totals.length > 0 && <Legend places />}
           {totals.map((total, index) => (
             <TokenRow
               key={total.tokenId}
               total={total}
               wallet={wallet}
               first={index === 0}
-              open={expanded === total.tokenId}
-              onToggle={() => setExpanded(expanded === total.tokenId ? null : total.tokenId)}
+              open={!collapsed.has(total.tokenId)}
+              onToggle={() =>
+                setCollapsed(previous => {
+                  const next = new Set(previous);
+                  if (next.has(total.tokenId)) next.delete(total.tokenId);
+                  else next.add(total.tokenId);
+                  return next;
+                })
+              }
               onAccount={id => navigate(`/accounts/${id}`)}
             />
           ))}
@@ -146,13 +172,16 @@ export function Home() {
               onClick={() => navigate('/activity', { state: { movementId: movement.id } })}
             />
           ))}
-          {movements.length === 0 && !recent.loading && !recent.error && (
-            recent.nextBeforeHeight !== null ? (
-              <button type="button" className="more" onClick={() => navigate('/activity')}>View earlier activity</button>
+          {movements.length === 0 &&
+            !recent.loading &&
+            !recent.error &&
+            (recent.nextBeforeHeight !== null ? (
+              <button type="button" className="more" onClick={() => navigate('/activity')}>
+                View earlier activity
+              </button>
             ) : (
               <p className="note wallet-empty">Your payments and swaps will appear here.</p>
-            )
-          )}
+            ))}
           {recent.error && (
             <p role="alert" className="note">
               Activity unavailable: {recent.error}
@@ -161,7 +190,6 @@ export function Home() {
         </section>
       </div>
       <footer className="wallet-details">
-        <BalanceDetails wallet={wallet} />
         <section className="wallet-connections" data-testid="home-accounts">
           <h3 className="caps">Connected accounts</h3>
           {wallet.accounts.map((account, index) => (

@@ -1,12 +1,21 @@
 import { CopyId } from '../CopyId';
+import { Bar } from '../Bars';
 import { formatUsd } from '../../runtime/format';
 import { useApp } from '../../runtime/store';
 import type { WalletView } from '../../runtime/views';
 export function BalanceDetails({ wallet }: { wallet: WalletView }) {
   const places = useApp(s => s.places);
   return (
-    <details className="disclosure">
-      <summary>Balance details</summary>
+    <section className="wallet-breakdown" aria-label="Where your money is" data-testid="home-balance-breakdown">
+      <h3 className="caps">Where your money is</h3>
+      <Bar
+        segments={[
+          { usd: places.onchain ? wallet.usd.onchain : 0, kind: 'onchain' },
+          { usd: places.reserve ? wallet.usd.reserve : 0, kind: 'reserve' },
+          { usd: places.accounts ? wallet.usd.secured : 0, kind: 'coll' },
+          { usd: places.accounts ? wallet.usd.risk : 0, kind: 'risk' },
+        ]}
+      />
       <div className="tiers">
         {places.onchain && (
           <span data-testid="home-onchain">
@@ -24,15 +33,15 @@ export function BalanceDetails({ wallet }: { wallet: WalletView }) {
           </span>
         )}
         {places.accounts && (
-          <span>
+          <span data-testid="home-secured">
             <i className="sw c-coll" />
-            Secured <b className="num">{formatUsd(wallet.usd.secured)}</b>
+            Collateral-backed <b className="num">{formatUsd(wallet.usd.secured)}</b>
           </span>
         )}
         {places.accounts && (
           <span data-testid="home-risk">
             <i className="sw c-risk" />
-            <span title="A hub owes you this and has only promised to pay. Move it into collateral, or dispute, to make the chain enforce it.">
+            <span title="Your counterparty owes you this amount without on-chain collateral backing it.">
               Unsecured
             </span>{' '}
             <b className="num">{formatUsd(wallet.usd.risk)}</b>
@@ -46,12 +55,15 @@ export function BalanceDetails({ wallet }: { wallet: WalletView }) {
         )}
       </div>
       <p className="note">
-        Secured funds are backed by collateral. Unsecured funds depend on your counterparty paying.
+        Collateral is locked on-chain. Unsecured funds are what your counterparty owes you without collateral.
       </p>
-      <div className="kv">
-        <span className="k">Entity · frame {wallet.frameHeight}</span>
-        <CopyId value={wallet.entityId} label="Entity ID" full />
-      </div>
-    </details>
+      <details className="disclosure">
+        <summary>Wallet identity</summary>
+        <div className="kv">
+          <span className="k">Entity · frame {wallet.frameHeight}</span>
+          <CopyId value={wallet.entityId} label="Entity ID" full />
+        </div>
+      </details>
+    </section>
   );
 }
