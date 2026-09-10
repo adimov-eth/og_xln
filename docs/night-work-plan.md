@@ -1,5 +1,36 @@
 # Autonomous xln work
 
+## React faucet after aged-chain login — 2026-09-10
+
+Current committed scan SHA: `645125eb2`. Fresh Home plus one-click 100 USDC
+is green on the preserved primary chain at 193219 blocks: Home 23337 ms,
+funded 25358 ms, Account height 4, no pending Account proposal, Runtime
+inputs, committed readers or queued writers. Evidence:
+`/tmp/xln-faucet-final-demo.log` (27.0 s test, 27.6 s runner).
+The existing five-second faucet assertion and application deadlines are unchanged.
+
+The first receipt failure came from embedded payment-terminal reads bypassing
+RAdapter's committed-read lease. Embedded and WebSocket receipts now share
+the same reader under that lease. The subsequent faucet delay was Activity
+rereading its full historical page on every committed Runtime frame, holding
+up the Account ACK. React now keeps one volatile query page and reads only
+new frames, preserving the canonical event deduplication and older-page cursor.
+Point WAL reads also no longer enumerate checkpoints. A separate attempted
+batching of Activity event reads did not resolve the boundary and was removed.
+
+Real-WAL tests compare incremental pages against full reads at limits 2 and 20,
+including the rolling scan boundary, and prove receipt reads hold a stable
+head while a real commit queues. The focused run has 24 passing tests and
+142 assertions: `/tmp/xln-faucet-final-regression.log`.
+
+Next command: rerun `ui/tests/e2e-payment.spec.ts --project=chromium --trace=off`
+under stand-lock, without editing UI modules during the run. This spec now
+uses the verified Home faucet; its exact payment/fee/receipt/reload assertions
+remain. The separate Assets helper is still red with `faucet-offchain` disabled
+(`/tmp/xln-payment-activity-fixed.log`) and requires later investigation.
+Remaining gates: final `bun run check`, scoped commit, two-sided user payment,
+swap/reload, shared wallet creation, exact TS/Rust replay and live Rust J.
+
 ## Current scan candidate and next wallet boundary — 2026-09-10
 
 Fresh React Home is reached in 23,057 ms on the preserved chain at primary

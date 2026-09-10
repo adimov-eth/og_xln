@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RuntimeAdapterReadQuery } from '@xln/core/api/runtime-adapter/types';
 import { getAdapter } from './adapter';
 import { useApp } from './store';
+import { createActivityPageReader } from './financial/activity-reader';
 
 export type ReadState<T> = {
 	data: T | null;
@@ -11,7 +12,8 @@ export type ReadState<T> = {
 };
 
 /**
- * Adapter read that re-runs on every committed runtime frame.
+ * Adapter read that refreshes on every committed runtime frame. Activity
+ * retains its page and reads only new frames instead of rescanning history.
  *
  * Single code path for embedded and remote: both come through
  * RuntimeAdapter.read plus the onChange tick mirrored in the store.
@@ -28,6 +30,12 @@ export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterRea
 
 	const queryKey = useMemo(() => JSON.stringify(query ?? null), [query]);
 	const readKey = JSON.stringify([vaultId, path, queryKey]);
+	const activityReader = useMemo(
+		() => (path === 'activity' ? createActivityPageReader(query) : null),
+		// A new query or explicit refresh starts a fresh authoritative page.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[readKey, manualTick, status],
+	);
 
 	useEffect(() => {
 		const adapter = getAdapter();
@@ -36,8 +44,8 @@ export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterRea
 		}
 		const gen = ++generation.current;
 		let cancelled = false;
-		adapter
-			.read<T>(path, query)
+		const read = activityReader ? (activityReader(adapter, height) as Promise<T>) : adapter.read<T>(path, query);
+		read
 			.then(result => {
 				if (cancelled || gen !== generation.current) return;
 				setData(result);

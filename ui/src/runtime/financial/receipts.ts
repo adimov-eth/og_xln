@@ -9,9 +9,8 @@ import {
 	type PaymentTerminalReadRequest,
 	type PaymentTerminalReceiptPage,
 } from '@xln/frontend/lib/stores/network/paymentTerminalMonitor';
-import { getAdapter, getEmbeddedEnv } from '../adapter';
+import { getAdapter } from '../adapter';
 import { useApp } from '../store';
-import { getXLN } from '../xln-loader';
 
 /**
  * A settled payment surfaces as a receipt the moment its terminal frame log is
@@ -49,27 +48,10 @@ export const useReceipts = create<ReceiptState>(set => ({
 	dismiss: () => set({ latest: null }),
 }));
 
-const normalizeId = (value: unknown): string => String(value || '').trim().toLowerCase();
-
-async function readEmbeddedReceipts(request: PaymentTerminalReadRequest): Promise<PaymentTerminalReceiptPage> {
-	const env = getEmbeddedEnv();
-	if (!env) throw new Error('PAYMENT_TERMINAL_EMBEDDED_ENV_UNAVAILABLE');
-	if (normalizeId(env.runtimeId) !== request.runtimeId) {
-		throw new Error(`PAYMENT_TERMINAL_RUNTIME_MISMATCH:${request.runtimeId}`);
-	}
-	const xln = await getXLN();
-	// Frame logs live in the runtime-activity view since core ee77386af; the
-	// plain frame journal returns `logs: []` (docs/audit/2026-09-04-wallet-ui-core-findings.md #14).
-	const receipts: PaymentTerminalReceiptPage['receipts'] = [];
-	let scannedThroughHeight = request.fromHeight - 1;
-	for (let height = request.fromHeight; height <= request.toHeight; height += 1) {
-		const journal = await xln.readPersistedRuntimeActivityJournal(env, height);
-		if (!journal) break;
-		receipts.push({ height, logs: journal.logs ?? [] });
-		scannedThroughHeight = height;
-	}
-	return { scannedThroughHeight, receipts };
-}
+const normalizeId = (value: unknown): string =>
+	String(value || '')
+		.trim()
+		.toLowerCase();
 
 async function readReceipts(request: PaymentTerminalReadRequest): Promise<PaymentTerminalReceiptPage> {
 	const adapter = getAdapter();
@@ -77,7 +59,6 @@ async function readReceipts(request: PaymentTerminalReadRequest): Promise<Paymen
 	if (normalizeId(adapter.runtimeId) !== request.runtimeId) {
 		throw new Error(`PAYMENT_TERMINAL_ADAPTER_MISMATCH:${request.runtimeId}`);
 	}
-	if (adapter.mode === 'embedded') return readEmbeddedReceipts(request);
 	const response = await adapter.read<RuntimeAdapterFrameReceiptResponse>('frame-receipts', {
 		fromHeight: request.fromHeight,
 		toHeight: request.toHeight,

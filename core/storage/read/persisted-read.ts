@@ -46,15 +46,16 @@ const createPersistedStorageNavigationApi = (
     return env;
   };
 
+  const readPersistedWal = async (env: RuntimeReplica) => {
+    await requireStorageDbOpen(() => deps.tryOpenRuntimeWalDb(env), 'runtime-wal:read');
+    const db = deps.getRuntimeWalDb(env);
+    return { db, head: await readStorageHead(db) };
+  };
+
   const listPersistedStorageHandles = async (
     env: RuntimeReplica,
   ): Promise<PersistedStorageHandle[]> => {
-    await requireStorageDbOpen(
-      () => deps.tryOpenRuntimeWalDb(env),
-      'runtime-wal:list-persisted-handles',
-    );
-    const db = deps.getRuntimeWalDb(env);
-    const head = await readStorageHead(db);
+    const { db, head } = await readPersistedWal(env);
     if (!head || head.latestHeight <= 0) return [];
     return [{
       role: 'wal',
@@ -100,11 +101,7 @@ const createPersistedStorageNavigationApi = (
   const resolvePersistedLatestHeight = async (
     env: RuntimeReplica,
   ): Promise<number> => {
-    const handles = await listPersistedStorageHandles(env);
-    return handles.reduce(
-      (max, handle) => Math.max(max, handle.latestHeight),
-      0,
-    );
+    return (await readPersistedWal(env)).head?.latestHeight ?? 0;
   };
 
   const resolvePersistedCheckpointHeights = async (
@@ -126,12 +123,10 @@ const createPersistedStorageNavigationApi = (
   > => {
     const targetHeight = Number.isFinite(height) ? Math.floor(height) : 0;
     if (targetHeight <= 0) return null;
-    for (const handle of await listPersistedStorageHandles(env)) {
-      if (targetHeight > handle.latestHeight) continue;
-      const frame = await readStorageFrameRecord(handle.db, targetHeight);
-      if (frame) return frame;
-    }
-    return null;
+    // One WAL owns frame records. Enumerate snapshots only for checkpoint selection.
+    const { db, head } = await readPersistedWal(env);
+    if (!head || targetHeight > head.latestHeight) return null;
+    return readStorageFrameRecord(db, targetHeight);
   };
 
   const readPersistedStorageFramePayloads = async (

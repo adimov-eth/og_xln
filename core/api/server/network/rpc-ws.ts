@@ -1,3 +1,4 @@
+import { readRuntimeFrameReceipts } from '../../runtime-adapter/frame-receipts';
 import {
   ensureGossipProfiles,
   enqueueRuntimeInput,
@@ -19,7 +20,6 @@ import { handleRuntimeAdapterMessage, type RuntimeAdapterServerDeps } from '../.
 import { RuntimeAdapterError } from '../../runtime-adapter/errors';
 import { resolveRuntimeAdminControl } from '../control/runtime-admin';
 import type {
-  RuntimeAdapterFrameReceiptResponse,
   RuntimeAdapterPaymentRoutesResponse,
   RuntimeAdapterReadQuery,
   RuntimeAdapterRequest,
@@ -33,59 +33,14 @@ type ServerRpcHandlerDeps = {
   revealBrainVaultMnemonic?: RuntimeAdapterServerDeps['revealBrainVaultMnemonic'];
 };
 
-const stringList = (value: string[] | string | undefined): string[] =>
-  (Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [])
-    .map(entry => entry.trim())
-    .filter(Boolean);
-
-const readFrameReceipts = async (
-  env: RuntimeReplica,
-  query: RuntimeAdapterReadQuery = {},
-): Promise<RuntimeAdapterFrameReceiptResponse> => {
-  const latestHeight = await getPersistedLatestHeight(env);
-  const fromHeight = Math.max(1, Math.floor(Number(query.fromHeight ?? 1)));
-  const requestedToHeight = Math.max(fromHeight, Math.floor(Number(query.toHeight ?? latestHeight)));
-  const toHeight = latestHeight > 0 ? Math.min(latestHeight, requestedToHeight) : 0;
-  const limit = Math.max(1, Math.min(500, Math.floor(Number(query.limit ?? 200))));
-  const pageToHeight = toHeight >= fromHeight ? Math.min(toHeight, fromHeight + limit - 1) : 0;
-  const entityId = String(query.entityId || '')
-    .trim()
-    .toLowerCase();
-  if (entityId && !/^0x[0-9a-f]{64}$/.test(entityId)) {
-    throw new RuntimeAdapterError('E_BAD_QUERY', 'frame receipt entityId must be a 32-byte entity id');
-  }
-  const eventNames = new Set(stringList(query.eventNames));
-  const receipts = [];
-  if (pageToHeight > 0) {
-    for (let height = fromHeight; height <= pageToHeight; height += 1) {
-      const activity = await readPersistedRuntimeActivityJournal(env, height);
-      if (!activity) {
-        throw new RuntimeAdapterError(
-          'E_NOT_FOUND',
-          `frame receipt history is unavailable for contiguous range ${fromHeight}-${pageToHeight}`,
-        );
-      }
-      receipts.push({ height, timestamp: activity.timestamp, logs: activity.logs });
-    }
-  }
-  const filtered = receipts.flatMap(receipt => {
-    const logs = receipt.logs.filter(log => {
-      if (eventNames.size > 0 && !eventNames.has(log.message)) return false;
-      if (!entityId) return true;
-      const hintedEntityId = String(log.entityId ?? log.data?.['entityId'] ?? '')
-        .trim()
-        .toLowerCase();
-      return hintedEntityId === entityId;
-    });
-    if ((entityId || eventNames.size > 0) && logs.length === 0) return [];
-    return [{ height: receipt.height, timestamp: receipt.timestamp, logs }];
-  });
-  // A caught-up reader starts one height beyond the durable head. Report that
-  // head as the scanned watermark instead of zero, or durable consumers would
-  // rewind their cursors and rescan the full journal on every idle poll.
-  const scannedThroughHeight = pageToHeight > 0 ? pageToHeight : toHeight;
-  return { fromHeight, toHeight: scannedThroughHeight, returned: filtered.length, receipts: filtered };
-};
+const readFrameReceipts = (env: RuntimeReplica, query?: RuntimeAdapterReadQuery) =>
+  readRuntimeFrameReceipts(
+    {
+      latestHeight: () => getPersistedLatestHeight(env),
+      journal: height => readPersistedRuntimeActivityJournal(env, height),
+    },
+    query,
+  );
 
 const findPaymentRoutes = async (
   env: RuntimeReplica,

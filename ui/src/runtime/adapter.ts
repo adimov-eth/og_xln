@@ -129,6 +129,14 @@ export async function connectEmbedded(seed: string, recovery?: RuntimeRecoveryCa
 				xln.loadEntityViewPageFromStorageDb(target, entityId, height, query as never),
 			listEntityIdsAtHeight: (height: number) => xln.listPersistedEntityIdsAtHeight(target, height),
 			readActivityPage: (opts: unknown) => xln.readPersistedRuntimeActivityPage(target, opts as never),
+			readFrameReceipts: query =>
+				xln.readRuntimeFrameReceipts(
+					{
+						latestHeight: () => xln.getPersistedLatestHeight(target),
+						journal: height => xln.readPersistedRuntimeActivityJournal(target, height),
+					},
+					query,
+				),
 			readAccountSwapHistoryPage: (entityId, counterpartyId, options) =>
 				xln.readPersistedAccountSwapHistoryPage(target, entityId, counterpartyId, options),
 			readAccountFrameHistory: (entityId: string, counterpartyId: string, limit: number) =>

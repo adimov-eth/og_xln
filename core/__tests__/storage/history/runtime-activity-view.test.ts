@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { createActivityPageReader } from '../../../../ui/src/runtime/financial/activity-reader';
 import { mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 
@@ -34,6 +35,9 @@ import { getStorageDb, withStorageConsistentRead } from '../../../storage/runtim
 import { ensureRuntimeActivityView } from '../../../storage/history/runtime-activity-repair';
 import { buildRecoveryJournalFromStorageFrame } from '../../../storage/queries/history';
 import type { PersistenceQueryDeps } from '../../../storage/queries/deps';
+import { resolveRuntimeAdapterRead } from '../../../api/runtime-adapter/resolve';
+import { readRuntimeFrameReceipts } from '../../../api/runtime-adapter/frame-receipts';
+import type { RuntimeAdapterFrameReceiptResponse, RuntimeAdapterReadQuery } from '../../../api/runtime-adapter/types';
 
 const barrier = <T>() => {
   let resolve!: (value: T) => void;
@@ -85,6 +89,96 @@ const commitRuntimeTick = async (env: ReturnType<typeof createEmptyEnv>): Promis
 };
 
 describe('disposable Runtime activity view', () => {
+  test.each([2, 20])('live Activity refresh retains the exact bounded page at limit %i', async limit => {
+    const { env, runtimeId } = await createStoredRuntime('activity-incremental-page');
+    try {
+      const queries: RuntimeAdapterReadQuery[] = [];
+      const adapter = {
+        read: <T>(path: string, query?: RuntimeAdapterReadQuery) => {
+          queries.push(query ?? {});
+          return resolveRuntimeAdapterRead<T>(
+            {
+              env,
+              readActivityPage: opts => readPersistedRuntimeActivityPage(env, opts),
+            },
+            path,
+            query,
+          );
+        },
+      };
+      const query = { limit, scanLimit: 3 };
+      const read = createActivityPageReader(query);
+      await commitRuntimeTick(env);
+      const initial = await read(adapter, env.state.height);
+      for (let i = 0; i < 4; i += 1) {
+        await commitRuntimeTick(env);
+        const updated = await read(adapter, env.state.height);
+        const full = await readPersistedRuntimeActivityPage(env, query);
+        expect(updated.events).toEqual(full.events);
+        expect(updated.fromHeight).toBe(full.fromHeight);
+        expect(updated.nextBeforeHeight).toBe(full.nextBeforeHeight);
+      }
+      expect(initial.toHeight).toBe(2);
+      expect(queries.map(query => query.scanLimit)).toEqual([3, 1, 1, 1, 1]);
+      await read(adapter, env.state.height);
+      expect(queries).toHaveLength(5);
+    } finally {
+      await closeRuntimeDb(env);
+      await closeInfraDb(env);
+      cleanup(runtimeId);
+    }
+  });
+
+  test('RAdapter receipt reads keep their captured storage head stable across a queued live commit', async () => {
+    const { env, runtimeId } = await createStoredRuntime('receipt-read-live-commit');
+    const captured = barrier<number>();
+    const resume = barrier<void>();
+    let writer: Promise<void> | undefined;
+    try {
+      await commitRuntimeTick(env);
+      const read = resolveRuntimeAdapterRead<RuntimeAdapterFrameReceiptResponse>(
+        {
+          env,
+          readFrameReceipts: query =>
+            readRuntimeFrameReceipts(
+              {
+                latestHeight: async () => {
+                  const height = await getPersistedLatestHeight(env);
+                  captured.resolve(height);
+                  await resume.promise;
+                  return height;
+                },
+                journal: height => readPersistedRuntimeActivityJournal(env, height),
+              },
+              query,
+            ),
+        },
+        'frame-receipts',
+        { fromHeight: 2, toHeight: 3, eventNames: ['RuntimeTick'] },
+      );
+      expect(await captured.promise).toBe(2);
+      writer = commitRuntimeTick(env);
+      await Bun.sleep(10);
+      expect(env.state.height).toBe(2);
+      expect(env.infrastructure?.activeCommittedReaders).toBe(1);
+      resume.resolve();
+      const page = await read;
+      expect(page.toHeight).toBe(2);
+      expect(page.receipts.map(receipt => [receipt.height, receipt.logs.map(log => log.message)])).toEqual([
+        [2, ['RuntimeTick']],
+      ]);
+      await writer;
+      expect(await getPersistedLatestHeight(env)).toBe(3);
+      expect(env.infrastructure?.activeCommittedReaders).toBe(0);
+    } finally {
+      resume.resolve();
+      await writer;
+      await closeRuntimeDb(env);
+      await closeInfraDb(env);
+      cleanup(runtimeId);
+    }
+  });
+
   test('an activity read cannot rewind a newer committed view while awaiting WAL I/O', async () => {
     const { env, runtimeId } = await createStoredRuntime('activity-live-append-race');
     const captured = barrier<number>();
