@@ -1,5 +1,28 @@
 # Autonomous xln work
 
+## Active owner correction — 2026-09-10
+
+Priority: production TS/Rust parity on one immutable checkpoint/WAL, W1/W4,
+comparing every R/E/A root and ordered event/effect/outbox digest. Reproduce the
+first divergence, fix its canonical cause, rerun that same artifact before expanding.
+First boundary after quorum and independent source/artifact inspection: checkpoint1
+has no Entity replicas; Runtime2 imports replicas using `importReplica`, which native
+Runtime rejects. Reproduce that full-recording boundary before working on Runtime5
+`proposedFrame`. The old diagnostic binary still fails proposal admission (0/1),
+but that is not proof that native replay ever reached Runtime5.
+Never remove single-signer guards without the corresponding authenticated consensus.
+
+No UI work, broad audit campaign or TPS optimization before this core boundary.
+Use one bounded read-only quorum question to challenge the selected next step;
+independently verify its answer. New abstractions and repeated green smokes are not progress.
+Review evidence every 10 minutes. After 30 minutes without a new verified boundary,
+fix or passing production artifact, stop and wait for the owner. Changing a command
+or rephrasing the plan does not reset that deadline. A protocol fork needs a concrete
+decision; routine implementation of the existing TS canon does not.
+
+The app goal remains the existing unfinished parity goal. Its tool rejects replacing
+an unfinished objective; do not falsely mark it complete merely to rename it.
+
 ## Owner correction — core before browser acceptance (2026-09-09)
 
 E2E is paused. The 18/18 scenario result covers TS only; the six-engine 111-frame
