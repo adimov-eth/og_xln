@@ -2,6 +2,28 @@
 
 ## Active owner correction — 2026-09-10
 
+Execution correction after source inspection: the latest owner request swaps H1,
+not every client validator into Rust. `multi-sig.ts` gives its hub one validator
+(alias5); the 3-of-4 boards belong to clients. Therefore native client BFT/import of
+all nine cohosted replicas must not block the first unchanged-scenario H1 swap.
+`canonicalHubEngine` already selects Rust for H1 alone, and `mm-mesh` uses that real
+orchestrator without scenario edits. Validate this live path first, then extend the
+shared scenario execution boundary for currently in-process scenarios. Keep native
+whole-Runtime BFT as a separately unfulfilled capability; do not call it proven.
+Do not add more importer prerequisites before reaching the requested H1 boundary.
+Live unchanged `mm-mesh` passes with H1 Rust22.4s and H1 TS21.6s; this proves
+bootstrap/book readiness/empty queues, not equal wall-clock-dependent live roots.
+Logs `/tmp/xln-h1-rust-scenario-current.log`, `/tmp/xln-h1-ts-scenario-current.log`.
+Added explicit `--hub-engine=ts|rust` to the scenario launcher. Rust selection on
+the other still-in-process scenarios now fails before launch instead of silently
+running TS and creating false native evidence. Missing/empty/unknown selector rejects.
+Boundary tests3/3; explicit `--hub-engine=rust` overriding inherited TS also passes
+unchanged mm-mesh22.95s, with actual h1/rscore-native storage:
+`/tmp/xln-h1-selector-rust.log`, `/tmp/xln-h1-selector-rust/prod-mesh/h1/rscore-native`.
+Remaining task: shared external-H1 execution boundary for the in-process scenarios;
+scenario body/financial assertions stay unchanged. The six-engine111-frame replay
+remains separate exact-root evidence and is not all-scenario coverage.
+
 Delegation restriction: owner permits non-GPT subagents only, using pi, Claude or
 GLM. Do not spawn GPT subagents or silently substitute GPT when another harness
 fails. Verify the actual selected model; a harness name alone is not model identity.
