@@ -2,6 +2,22 @@
 
 ## Active owner correction — 2026-09-10
 
+Delegation restriction: owner permits non-GPT subagents only, using pi, Claude or
+GLM. Do not spawn GPT subagents or silently substitute GPT when another harness
+fails. Verify the actual selected model; a harness name alone is not model identity.
+External calls remain subject to the shared cumulative budget and unresolved holds.
+
+Latest deliverable: every existing TypeScript scenario must run unchanged against
+H1 implemented in TypeScript and H1 implemented in Rust. Engine selection belongs
+in the launcher/production boundary, never in scenario assertions or an embedded
+TS fallback. Preserve identical initial conditions and controlled inputs; compare
+per-frame R/E/A roots and ordered events/effects/outbox, W1/W4. Recording/replay is
+the first diagnostic artifact, not a substitute for live interchangeable H1 coverage.
+Only after this scenario matrix, native live J, production/cfg(test) and check are
+green may work advance to new UI end-to-end acceptance. Do not rewrite scenarios
+into a separate Rust-only suite. Inspect their current in-process versus external
+Runtime dependency before selecting the minimal canonical execution boundary.
+
 Priority: production TS/Rust parity on one immutable checkpoint/WAL, W1/W4,
 comparing every R/E/A root and ordered event/effect/outbox digest. Reproduce the
 first divergence, fix its canonical cause, rerun that same artifact before expanding.
@@ -20,8 +36,33 @@ fix or passing production artifact, stop and wait for the owner. Changing a comm
 or rephrasing the plan does not reset that deadline. A protocol fork needs a concrete
 decision; routine implementation of the existing TS canon does not.
 
-The app goal remains the existing unfinished parity goal. Its tool rejects replacing
-an unfinished objective; do not falsely mark it complete merely to rename it.
+The app goal is ACTIVE again (verified with get_goal after owner activation).
+It remains the existing unfinished parity goal; do not falsely mark it complete
+merely to rename it. The latest unchanged-scenario deliverable above governs execution.
+
+Current-source diagnostic on 2026-09-10: compiled native WAL transaction decoder
+against the unmodified recording's first post-checkpoint input. One test executed,
+0 passed / 1 failed, build 12.13s. Exact first rejection:
+`frame2 tx0 importReplica: FIELDS:runtimeTxs[0]:missing=none:extra=entityId`.
+The decoder globally assumes `{type,data}`, while this canonical transaction also
+has `entityId,signerId`; recognizing those fields alone does not implement import.
+Evidence: `/tmp/xln-recorded-first-native-admission.log`; diagnostic test source
+saved to `/tmp/xln-recorded-first-native-admission.rs` and removed from production
+source. This is the real input through the production decoder, not full WAL replay.
+Next: implement canonical replica import with authority/key/state ownership, then
+repeat this admission and full recording. Do not claim parity from admission alone.
+The 10-minute heartbeat is ACTIVE for this core task; its old UI prompt was replaced.
+
+Native replica creation prerequisite: `RuntimeEntityReplica::new` previously marked
+every local signer `isProposer:true` and did not reject a local key outside the board.
+It now derives the role from validator order and rejects non-members, matching TS
+import authority. Both new tests fail against the previous code and pass with the
+fix; the complete Runtime library passes 347/347, no skips. Logs:
+`/tmp/xln-native-replica-authority-before.log`,
+`/tmp/xln-native-runtime-authority-regression.log`.
+This does not implement `importReplica` decoding/execution or native BFT; the original
+recorded admission remains red. Continue there, without relabeling this prerequisite
+as scenario parity.
 
 ## Owner correction — core before browser acceptance (2026-09-09)
 

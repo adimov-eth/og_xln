@@ -1090,10 +1090,27 @@ impl RuntimeEntityReplica {
             return Err(RuntimeMachineError::AccountEntitySignerMismatch);
         }
         entity_consensus.validate_restored(&state.entity.entity_id, state.entity.height)?;
+        // Replica role is bound to the ordered board, as in TS importReplica.
+        // Marking every local validator proposer lets a follower impersonate the
+        // proposer in the committed replica metadata before any quorum exists.
+        let validator_position = entity_consensus
+            .state
+            .authority
+            .config
+            .validators
+            .iter()
+            .position(|validator| {
+                validator
+                    .trim()
+                    .eq_ignore_ascii_case(entity_signer.signer_id())
+            })
+            .ok_or_else(|| {
+                RuntimeMachineError::ReplicaMetadata("SIGNER_OUTSIDE_AUTHORITY".into())
+            })?;
         let replica_metadata = serde_json::json!({
             "entityId": state.entity.entity_id,
             "signerId": entity_signer.signer_id(),
-            "isProposer": true,
+            "isProposer": validator_position == 0,
         });
         Ok(Self {
             entity_id,

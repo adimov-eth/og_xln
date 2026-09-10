@@ -38,6 +38,9 @@ mod cross_j_lifecycle_fixture;
 #[path = "tests/inbound_reject_eviction.rs"]
 mod inbound_reject_eviction;
 
+#[path = "tests/replica_authority.rs"]
+mod replica_authority;
+
 const SEED: &str = "0x7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a";
 pub(super) const SIGNER: &str = "h1-hub";
 
