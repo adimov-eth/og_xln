@@ -19,7 +19,7 @@ import type { RuntimeReplica } from '../../runtime/types';
 import { defaultAccountDisputeConfigForParties } from '../../account/config/dispute-config';
 import type { EntityInput } from '../../entity/types';
 import type { JAdapter } from '../../jurisdiction/adapter/types';
-import { getProcess, usd, snap, assertRuntimeIdle, enableStrictScenario, ensureSignerKeysFromSeed, requireRuntimeSeed, findReplica, assert, assertBilateralSync, getOffdelta, processJEvents, converge, syncChain, commitRuntimeInput, setScenarioStorageEnabled } from '../harness/helpers';
+import { getProcess, processWithOffline, usd, snap, assertRuntimeIdle, enableStrictScenario, ensureSignerKeysFromSeed, requireRuntimeSeed, findReplica, assert, assertBilateralSync, getOffdelta, processJEvents, converge, syncChain, commitRuntimeInput, setScenarioStorageEnabled } from '../harness/helpers';
 import { bindScenarioJReplica, ensureJAdapter, registerEntities, createJReplica, createJurisdictionConfig, getScenarioJAdapter, isScenarioJAdapterMissingError, resolveScenarioBoardSigner } from '../harness/boot';
 import { formatRuntime } from '../../qa/runtime-ascii';
 import { isLeftEntity } from '../../account/utils';
@@ -1493,16 +1493,16 @@ export async function lockAhb(env: RuntimeReplica): Promise<void> {
       }]
     }]);
 
-    const pendingBeforeOffline = env.pendingOutputs ? [...env.pendingOutputs] : [];
-    const dropped = pendingBeforeOffline.filter(o => o.entityId === hub.id);
-    env.pendingOutputs = pendingBeforeOffline.filter(o => o.entityId !== hub.id);
-    console.log(`🔌 Offline: dropped ${dropped.length} outputs to Hub for 1 tick`);
-
-    await process(env);
-
-    env.pendingOutputs = [...(env.pendingOutputs || []), ...dropped];
-    console.log(`🔌 Online: requeued ${dropped.length} outputs to Hub`);
+    const hubHeightBeforeOffline = findReplica(env, hub.id)[1].state.height;
+    await processWithOffline(env, undefined, new Set([hub.signer]), 'lock-ahb-hub-offline');
+    const deferred = (env.pendingOutputs ?? []).filter(input => input.entityId === hub.id);
+    assert(deferred.length > 0, 'Offline simulation must delay an actual Hub input');
+    assert(findReplica(env, hub.id)[1].state.height === hubHeightBeforeOffline,
+      'Offline Hub must not commit while its inputs are withheld');
+    console.log(`🔌 Offline: deferred ${deferred.length} Hub inputs; committed height unchanged`);
     await converge(env);
+    assert(findReplica(env, hub.id)[1].state.height > hubHeightBeforeOffline,
+      'Reconnected Hub must commit the deferred payment');
 
     await process(env, [{
       entityId: hub.id,

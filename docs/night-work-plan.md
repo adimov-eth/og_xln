@@ -2,6 +2,27 @@
 
 ## Active owner correction — 2026-09-10
 
+Owner resumed execution on 2026-09-10 after the hourly report. Mechanical scenario
+connection changes are authorized; retain all economic steps and assertions. The
+earlier unanswered executor question below is historical, not a current blocker.
+Work alone. Send a memo every ten minutes: new verified facts, completed/total
+checks and percentage for the current stage, proposed direction and next concrete
+mainnet prerequisite. Immediately flag an observed bad code pattern to the owner
+with its location, consequence and proposed correction; distinguish hypotheses.
+The heartbeat has been reactivated. Do not claim the app goal is active without
+reading it: its last observed state was blocked and this API cannot resume it.
+
+First new finding: the old lock-ahb offline phase reported zero dropped/requeued
+Hub inputs, then success. Inputs had already entered the runtime mempool, so its
+manual pendingOutputs edit did not isolate the Hub. Reuse processWithOffline and
+assert a deferred Hub input, unchanged Hub committed height while offline and a
+new commit after reconnection. The updated TS scenario passes 93 frames and
+actually defers one Hub input. Evidence:
+`/tmp/xln-lock-ahb-offline-witness-after.log`. This is not native H1 coverage.
+An initial run failed before scenario execution on the workspace size gate;
+inactive rebuildable debug artifacts were moved intact to
+`/tmp/xln-debug-cache-egor-20260910-2020`. No user database was moved or reset.
+
 Execution correction after source inspection: the latest owner request swaps H1,
 not every client validator into Rust. `multi-sig.ts` gives its hub one validator
 (alias5); the 3-of-4 boards belong to clients. Therefore native client BFT/import of
