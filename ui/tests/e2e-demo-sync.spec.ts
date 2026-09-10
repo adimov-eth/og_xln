@@ -4,7 +4,7 @@ import type { RuntimeReplica } from '../../core/api/public/runtime-module';
 // Capture compact scan evidence without recording every historical RPC payload.
 test.use({ trace: 'off', video: 'off' });
 
-test('guided demo reaches Home on the running chain', { tag: '@resilience' }, async ({ page }, info) => {
+test('guided demo reaches Home and receives test funds on the running chain', { tag: '@resilience' }, async ({ page }, info) => {
 	test.setTimeout(57_000);
 	console.log('DEMO_STAGE navigate');
 	await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 10_000 });
@@ -13,6 +13,10 @@ test('guided demo reaches Home on the running chain', { tag: '@resilience' }, as
 	console.log('DEMO_STAGE syncing');
 	try {
 		await expect(page.getByTestId('home-total')).toBeVisible({ timeout: 55_000 });
+		await page.getByTestId('home-faucet').click();
+		await expect(page.getByTestId('test-money-status')).toHaveText('100 USDC received');
+		await expect(page.getByTestId('token-net-USDC')).toContainText('100');
+		await expect(page).toHaveURL(/\/$/);
 	} finally {
 		const evidence = await page.evaluate(() => {
 			const debug = (window as Window & { __xln?: {
