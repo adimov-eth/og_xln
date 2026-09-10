@@ -66,6 +66,13 @@ test.describe('E2E HTLC Payment Flow', () => {
     process.stdout.write('Step 1: Loading app...\n');
     await gotoApp(page, { appBaseUrl: APP_BASE_URL, initTimeoutMs: 60_000, settleMs: 500 });
     const alice = await createRuntimeIdentity(page, 'alice', selectDemoMnemonic('alice'));
+    // The imported fixture must use the same local unlock flow as a saved wallet.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: /alice.*Unlock/ }).click();
+    await page.getByLabel('Password', { exact: true }).fill('payment-local-password');
+    await page.getByLabel('Confirm password', { exact: true }).fill('payment-local-password');
+    await page.getByRole('button', { name: 'Save and open', exact: true }).click();
+    await expect(page.getByTestId('context-current').first()).toHaveAttribute('data-entity-id', alice.entityId);
     process.stdout.write('  Runtime initialized.\n');
 
     // ── Step 2: Open account with first baseline hub ──
@@ -172,6 +179,10 @@ test.describe('E2E HTLC Payment Flow', () => {
     // ── Step 6: Reload and verify snapshot + WAL restore ──
     process.stdout.write('Step 6: Reload and verify persisted payment state...\n');
     await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: /alice.*Unlock/ }).click();
+    await page.getByLabel('Password', { exact: true }).fill('payment-local-password');
+    await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+    await expect(page.getByTestId('context-current').first()).toHaveAttribute('data-entity-id', alice.entityId);
     await page.waitForFunction(() => {
       const maybeWindow = window as typeof window & {
         isolatedEnv?: {
