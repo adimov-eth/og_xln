@@ -1,5 +1,39 @@
 # Autonomous xln work
 
+## React swap and recovery proof — 2026-09-11
+
+The real React/RAdapter USDC-to-WETH path passes on the preserved devnet.
+A fresh wallet receives 100 USDC, explicitly grants incoming WETH credit, checks
+invalid inputs, double-clicks submit and records one closed order/one execution.
+Exact debit: 99.999996 USDC; gross receive: 0.039992 WETH; taker fee:
+0.0000039992 WETH (1 bps); net receive: 0.0399880008 WETH.
+The final balances are 0.000004 USDC and 0.0399880008 WETH.
+No live offers, pending Account proposal, mempool entries or token holds remain.
+
+The first bounded run executes the swap, verifies signed history, reloads to the
+password gate, then exports the actual IndexedDB/WAL: 48.7 s. A second process
+unlocks that post-reload database, verifies identical identity, Account root,
+balances and full order history, and checks the displayed receipt: 19.0 s.
+No seed-only reconstruction, timeout increase or chain reset was used. A combined
+fresh-login/swap/unlock process exceeded 60 s and remains a performance limit;
+these two bounded runs prove financial recovery, not a fast combined journey.
+Proof: `docs/evidence/wallet-swap-20260911/proof.json`.
+Logs: `/tmp/xln-swap-financial-final.log`, `/tmp/xln-swap-recovery-final.log`.
+
+The first test failure was an outdated Manage-faucet helper racing asynchronous
+capacity UI; this swap test now uses the primary Home faucet. The next production
+failure was slow swap history. Account history now reads the captured WAL directly
+and verifies ordered outputs without loading unused Entity contexts or Runtime
+trees. React joins repeated reads of the same pending query and catches up after
+completion without resetting the incremental Activity page. The missing-ACK-row
+regression still rejects corrupted output evidence. Storage/history/fee tests:
+53 passed, 263 assertions (`/tmp/xln-swap-final-regressions.log`).
+Final candidate gate log: `/tmp/xln-swap-final-check.log`.
+
+Next: shared wallet creation/recovery in React and Svelte. Full TS/Rust parity,
+native primary-only/Cross-J configuration, live Rust J and full frontend acceptance
+remain outstanding. This proof is neither production readiness nor live TPS.
+
 ## Two React wallets and repeated dev startup — 2026-09-11
 
 Dev startup fix is committed as `a64d3a340`: repeating ordinary `bun run dev`

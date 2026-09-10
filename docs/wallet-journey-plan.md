@@ -24,11 +24,11 @@ of Runtimes.
 | 3. First funds | Clicks the Home faucet | Exactly 100 USDC received; committed balance, no pending Account proposal | Passed: 2.021 s after Home |
 | 4. Receiving | Second new user opens Receive and shares address/request with the first | Sender sees correct recipient; invalid input and a revoked quote cannot submit a payment | Two new wallets checked; Bob explicitly prepared Receive for 25 USDC and the address was recognized. Invalid amounts/address and revoked quote passed separate E2E in 30.2 s |
 | 5. Payment | Sender checks amount and fee, then confirms | Sender loses amount plus actual fee; recipient receives the exact amount. Both sides reach terminal status with matching evidence and empty queues. Double click cannot create a second payment | Passed: Alice to Bob 25 USDC; fee 0.000025; Alice 74.999975, Bob 125. Matching hashlock, one receipt each, empty queues |
-| 6. Swap | Selects assets, reviews terms and confirms | Both amounts and fees match committed states; terminal status, no stuck hold. Same-J and Cross-J checked separately | Swap filled observed in manual tutorial; exact amounts and swap reload not yet proven |
-| 7. Return | Reloads both wallets, enters password only | Identity preserved; prior frames and roots match, current balances exact; no duplicate payment, swap or history | Both users' balances and Account roots matched after payment/reload. Swap/reload not checked. The combined single-case payment/reload still exceeds 50 s |
+| 6. Swap | Selects assets, reviews terms and confirms | Both amounts and fees match committed states; terminal status, no stuck hold. Same-J and Cross-J checked separately | Same-J passed: debit 99.999996 USDC, gross 0.039992 WETH, fee 0.0000039992 WETH; exact net and history survive reload. Cross-J remains unproven |
+| 7. Return | Reloads both wallets, enters password only | Identity preserved; prior frames and roots match, current balances exact; no duplicate payment, swap or history | Payment and same-J swap balances, identity, Account roots and history matched after reload in bounded runs. Combined single-process latency remains unresolved |
 | 8. Recovery | Selects existing recovery phrase and enters 12/24 words in a fresh profile | Canonical identity matches. CLI BrainVault, React and Svelte agree for identical inputs; available committed data recovers through the existing path | Not proven on current candidate |
 
-Fully passed: **4/8 (50%) of this journey's criteria**. This is not a mainnet
+Fully passed: **5/8 (62.5%) of this journey's criteria** (steps 2–5 and 7). This is not a mainnet
 readiness percentage. Supporting tests do not close an entire step.
 
 New evidence: [proof.json](evidence/wallet-transfer-20260911/proof.json).
@@ -44,7 +44,7 @@ balances and Account roots preserved after reload. Preparation and the money
 phase use separate processes, transferring actual IndexedDB/WAL between them.
 This proves the financial scenario; slow combined login remains unresolved.
 
-Next check: swap with exact amounts, fees and reload. Every rerun must pass or
+Same-J swap and reload now pass: [swap proof](evidence/wallet-swap-20260911/proof.json). Next: shared wallet creation and recovery; Cross-J swap remains a separate acceptance check. Every rerun must pass or
 produce a new cause. Repeated failure without new evidence requires a changed
 hypothesis. Before completion: focused tests, real browser, `bun run check`,
 diff review and a separate scoped commit. Do not push.

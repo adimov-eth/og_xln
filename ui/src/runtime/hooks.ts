@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RuntimeAdapterReadQuery } from '@xln/core/api/runtime-adapter/types';
+import type { RuntimeAdapter, RuntimeAdapterReadQuery } from '@xln/core/api/runtime-adapter/types';
 import { getAdapter } from './adapter';
 import { useApp } from './store';
 import { createActivityPageReader } from './financial/activity-reader';
 
 export type ReadState<T> = {
-	data: T | null;
-	error: string | null;
-	loading: boolean;
-	refresh: () => void;
+  data: T | null;
+  error: string | null;
+  loading: boolean;
+  refresh: () => void;
 };
 
 /**
@@ -19,58 +19,74 @@ export type ReadState<T> = {
  * RuntimeAdapter.read plus the onChange tick mirrored in the store.
  */
 export function useAdapterRead<T>(path: string | null, query?: RuntimeAdapterReadQuery): ReadState<T> {
-	const height = useApp(s => s.height);
-	const status = useApp(s => s.adapterStatus);
-	const vaultId = useApp(s => s.activeVaultId);
-	const [resolvedKey, setResolvedKey] = useState<string | null>(null);
-	const [data, setData] = useState<T | null>(null);
-	const [error, setError] = useState<string | null>(null);
-	const [manualTick, setManualTick] = useState(0);
-	const generation = useRef(0);
+  const height = useApp(s => s.height);
+  const status = useApp(s => s.adapterStatus);
+  const vaultId = useApp(s => s.activeVaultId);
+  const [resolvedKey, setResolvedKey] = useState<string | null>(null);
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [manualTick, setManualTick] = useState(0);
+  const [catchUpTick, setCatchUpTick] = useState(0);
+  const generation = useRef(0);
+  const inFlight = useRef<{ adapter: RuntimeAdapter; key: string; height: number; promise: Promise<T> } | null>(null);
 
-	const queryKey = useMemo(() => JSON.stringify(query ?? null), [query]);
-	const readKey = JSON.stringify([vaultId, path, queryKey]);
-	const activityReader = useMemo(
-		() => (path === 'activity' ? createActivityPageReader(query) : null),
-		// A new query or explicit refresh starts a fresh authoritative page.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[readKey, manualTick, status],
-	);
+  const queryKey = useMemo(() => JSON.stringify(query ?? null), [query]);
+  const readKey = JSON.stringify([vaultId, path, queryKey]);
+  const activityReader = useMemo(
+    () => (path === 'activity' ? createActivityPageReader(query) : null),
+    // A new query or explicit refresh starts a fresh authoritative page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [readKey, manualTick, status],
+  );
 
-	useEffect(() => {
-		const adapter = getAdapter();
-		if (!path || !adapter || status !== 'connected') {
-			return;
-		}
-		const gen = ++generation.current;
-		let cancelled = false;
-		const read = activityReader ? (activityReader(adapter, height) as Promise<T>) : adapter.read<T>(path, query);
-		read
-			.then(result => {
-				if (cancelled || gen !== generation.current) return;
-				setData(result);
-				setResolvedKey(readKey);
-				setError(null);
-			})
-			.catch((readError: unknown) => {
-				if (cancelled || gen !== generation.current) return;
-				setData(null);
-				setResolvedKey(readKey);
-				setError(readError instanceof Error ? readError.message : String(readError));
-			});
-		return () => {
-			cancelled = true;
-		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [path, queryKey, readKey, height, status, manualTick]);
+  useEffect(() => {
+    const adapter = getAdapter();
+    if (!path || !adapter || status !== 'connected') {
+      return;
+    }
+    const gen = ++generation.current;
+    let cancelled = false;
+    // Repeated effects and frame notifications join the same pending read.
+    // Publish its committed result, then catch up once if the head advanced.
+    const requestKey = JSON.stringify([readKey, manualTick, status]);
+    let request = inFlight.current;
+    if (!request || request.adapter !== adapter || request.key !== requestKey) {
+      const promise = activityReader ? (activityReader(adapter, height) as Promise<T>) : adapter.read<T>(path, query);
+      request = { adapter, key: requestKey, height, promise };
+      inFlight.current = request;
+      const release = () => {
+        if (inFlight.current === request) inFlight.current = null;
+      };
+      void promise.then(release, release);
+    }
+    const requestedHeight = request.height;
+    request.promise
+      .then(result => {
+        if (cancelled || gen !== generation.current) return;
+        setData(result);
+        setResolvedKey(readKey);
+        setError(null);
+        if (requestedHeight !== height) setCatchUpTick(t => t + 1);
+      })
+      .catch((readError: unknown) => {
+        if (cancelled || gen !== generation.current) return;
+        setData(null);
+        setResolvedKey(readKey);
+        setError(readError instanceof Error ? readError.message : String(readError));
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, queryKey, readKey, height, status, manualTick, catchUpTick]);
 
-	const refresh = useCallback(() => setManualTick(t => t + 1), []);
+  const refresh = useCallback(() => setManualTick(t => t + 1), []);
 
-	const active = Boolean(path) && status === 'connected';
-	const current = active && resolvedKey === readKey;
-	return { data: current ? data : null, error: current ? error : null, loading: active && !current, refresh };
+  const active = Boolean(path) && status === 'connected';
+  const current = active && resolvedKey === readKey;
+  return { data: current ? data : null, error: current ? error : null, loading: active && !current, refresh };
 }
 
 export function useConnected(): boolean {
-	return useApp(s => s.adapterStatus === 'connected');
+  return useApp(s => s.adapterStatus === 'connected');
 }

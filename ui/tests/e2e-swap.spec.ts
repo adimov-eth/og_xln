@@ -1,61 +1,21 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { formatUnits, parseUnits } from 'ethers';
-import type { RuntimeAdapterViewFrame, XLNModule } from '../../core/api/public/runtime-module';
-import type { RuntimeAdapter } from '../../core/api/runtime-adapter/types';
-import { enterStack, fundFromHub } from './stack';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { deriveSwapFillPolicyFee } from '../../core/account/swap/swap-net-authorization';
+import { safeParse, safeStringify } from '../../core/protocol/serialization';
+import type { RuntimeAdapterSwapHistoryPage } from '../../core/api/runtime-adapter/types';
+import { enterStack, reopenStack, type StackWallet } from './stack';
 
-type DebugWindow = Window & {
-  __xln?: {
-    adapter: () => RuntimeAdapter | null;
-    xln: () => Promise<XLNModule>;
-    store: { getState: () => { activeEntityId: string | null } };
-  };
-};
+import { readAccount, readOrders, type DebugWindow } from './swap-evidence';
 
-/** Read the same committed Account as the wallet; all financial actions still use real UI controls. */
-const readAccount = (page: Page, hubId: string) =>
-  page.evaluate(async counterpartyId => {
-    const debug = (window as DebugWindow).__xln;
-    if (!debug) throw new Error('Wallet diagnostics unavailable');
-    const adapter = debug.adapter();
-    const entityId = debug.store.getState().activeEntityId;
-    if (!adapter || !entityId) throw new Error('Wallet Account owner unavailable');
-    const account = await adapter.read<NonNullable<RuntimeAdapterViewFrame['activeEntity']>['accounts']['items'][number]>(`entity/${entityId}/account/${counterpartyId}`);
-    const xln = await debug.xln();
-    const isLeft = xln.isLeftEntity(entityId, counterpartyId);
-    const usdcDelta = account.state.deltas.get(1);
-    if (!usdcDelta) throw new Error('Swap USDC delta unavailable');
-    const signed = (tokenId: number) => {
-      const delta = account.state.deltas.get(tokenId);
-      if (!delta) return '0';
-      const derived = xln.deriveDelta(delta, isLeft);
-      return (derived.outCollateral + derived.outPeerCredit - derived.inOwnCredit).toString();
-    };
-    const incoming = xln.readAccountCapacity({
-      account: account.state,
-      ownerEntityId: entityId,
-      counterpartyEntityId: counterpartyId,
-      tokenId: 2,
-    });
-    return {
-      height: account.currentHeight,
-      root: account.currentFrame.accountStateRoot,
-      pending: Boolean(account.pendingFrame),
-      mempool: account.mempoolCount,
-      offers: account.state.swapOffers.size,
-      usdc: signed(1),
-      weth: signed(2),
-      wethCredit: incoming.peerCreditLimit.toString(),
-      wethCapacity: incoming.inCapacity.toString(),
-      usdcSpendable: xln.deriveDelta(usdcDelta, isLeft).outCapacity.toString(),
-    };
-  }, hubId);
+const directory = process.env['XLN_SWAP_E2E_DIR'] ?? '/tmp/xln-swap-e2e';
 
 test(
-  'same-network swap prepares incoming WETH explicitly before a real bilateral fill',
+  'same-network swap confirms exact amounts and fee once before reload',
   { tag: '@functional' },
   async ({ page }) => {
     test.setTimeout(60_000);
+    const started = Date.now();
     const pageErrors: string[] = [];
     const authErrors: string[] = [];
     page.on('pageerror', error => pageErrors.push(error.message));
@@ -65,14 +25,16 @@ test(
       if (/MAC.*(?:INVALID|FAIL|MISMATCH)|(?:INVALID|FAIL|MISMATCH).*MAC|WS_MESSAGE_AUTH/i.test(message.text()))
         authErrors.push(message.text());
     });
-    await enterStack(page);
+    const wallet = await enterStack(page);
+    console.log('SWAP_HOME_MS', Date.now() - started);
     const fundingResponse = page.waitForResponse(
       response => new URL(response.url()).pathname === '/api/faucet/offchain' && response.request().method() === 'POST',
     );
     await Promise.all([
-      fundFromHub(page, '100'),
+      page.getByTestId('home-faucet').click(),
       fundingResponse.then(async funding => expect(funding.ok(), await funding.text()).toBe(true)),
     ]);
+    await expect(page.getByTestId('test-money-status')).toHaveText('100 USDC received');
     await page.getByTestId('account-row').first().click();
     const hubId = new URL(page.url()).pathname.split('/accounts/')[1];
     if (!hubId || !/^0x[0-9a-f]{64}$/.test(hubId)) throw new Error('Expected the fresh wallet hub Account');
@@ -167,7 +129,7 @@ test(
     }
     await giveInput.fill(validGive);
     await expect(submit).toBeEnabled();
-    await submit.click();
+    await submit.dblclick();
     await expect
       .poll(async () => BigInt((await readAccount(page, hubId)).weth), { timeout: 15_000 })
       .toBeGreaterThan(0n);
@@ -189,6 +151,7 @@ test(
     expect(debit).toBeLessThanOrEqual(BigInt(quote.give));
     expect(received).toBeGreaterThanOrEqual(BigInt(quote.minNet));
     expect(after.wethCredit).toBe(preparedAccount.wethCredit);
+    expect(after.holds.every(hold => hold.outgoing === '0' && hold.incoming === '0')).toBe(true);
     console.log(
       `SWAP_COMMITTED accountHeight=${after.height} usdcDebit=${debit} wethReceived=${received} permanentWethCredit=${after.wethCredit} root=${after.root}`,
     );
@@ -199,10 +162,107 @@ test(
     await history.locator('summary').click();
     await expect(history).not.toContainText('Not recorded');
     await expect(history.locator('[data-field="gave"]')).toHaveAttribute('data-amount', debit.toString());
-    const gross = BigInt(await history.locator('[data-field="received"]').getAttribute('data-amount') ?? '-1');
-    const fee = BigInt(await history.locator('[data-field="fee"]').getAttribute('data-amount') ?? '0');
+    const gross = BigInt((await history.locator('[data-field="received"]').getAttribute('data-amount')) ?? '-1');
+    const fee = BigInt((await history.locator('[data-field="fee"]').getAttribute('data-amount')) ?? '0');
     expect(gross - fee).toBe(received);
+    const orders = await readOrders(page, hubId);
+    expect(orders.nextCursor).toBeNull();
+    expect(orders.items).toHaveLength(1);
+    const order = orders.items[0]!;
+    expect(order.closed).toBe(true);
+    expect(order.cancelRequested).toBe(false);
+    expect(order.resolves).toHaveLength(1);
+    const fill = order.resolves[0]!;
+    expect(fill.executionGiveAmount).toBe(debit);
+    expect(fill.executionWantAmount).toBe(gross);
+    expect(fill.feeTokenId).toBe(2);
+    expect(fill.feeAmount).toBe(fee);
+    expect(fee).toBe(
+      deriveSwapFillPolicyFee(
+        { giveAmount: order.originalGiveAmount, wantAmount: order.originalWantAmount },
+        debit,
+        gross,
+        ticket.feeBps,
+        fill.cancelRemainder,
+      ),
+    );
+    console.log('SWAP_HISTORY_MS', Date.now() - started, 'fee', String(fee));
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
     expect(pageErrors).toEqual([]);
     expect(authErrors).toEqual([]);
+    const evidence = {
+      runtimeId: wallet.runtimeId,
+      entityId: wallet.entityId,
+      hubId,
+      ticket,
+      quote,
+      before,
+      after,
+      debit,
+      gross,
+      fee,
+      received,
+      orders,
+      elapsedMs: Date.now() - started,
+    };
+    await mkdir(directory, { recursive: true });
+    await page.context().storageState({ path: `${directory}/storage.json`, indexedDB: true });
+    await writeFile(`${directory}/wallet.json`, JSON.stringify(wallet));
+    await writeFile(`${directory}/swapped.json`, safeStringify(evidence));
+    console.log('SWAP_RELOADED_TO_LOCKED_WALLET_MS', evidence.elapsedMs);
+  },
+);
+
+test(
+  'unlock after swap reload preserves exact balances and one terminal history record',
+  { tag: '@functional' },
+  async ({ browser, baseURL }) => {
+    test.setTimeout(55_000);
+    const wallet = JSON.parse(await readFile(`${directory}/wallet.json`, 'utf8')) as StackWallet;
+    const evidence = safeParse(await readFile(`${directory}/swapped.json`, 'utf8')) as {
+      hubId: string;
+      after: Awaited<ReturnType<typeof readAccount>>;
+      orders: RuntimeAdapterSwapHistoryPage;
+      debit: bigint;
+      gross: bigint;
+      fee: bigint;
+    };
+    const context = await browser.newContext({ baseURL, storageState: `${directory}/storage.json` });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => {
+      if (/MAC.*(?:INVALID|FAIL|MISMATCH)|(?:INVALID|FAIL|MISMATCH).*MAC|WS_MESSAGE_AUTH/i.test(message.text()))
+        errors.push(message.text());
+    });
+    const started = Date.now();
+    try {
+      await page.goto('/');
+      await reopenStack(page, wallet);
+      await expect(page.getByTestId('home-swap')).toBeEnabled();
+      const restored = await readAccount(page, evidence.hubId);
+      expect(restored).toEqual(evidence.after);
+      const recoveredOrders = await readOrders(page, evidence.hubId);
+      expect(recoveredOrders).toEqual(evidence.orders);
+      await page.getByTestId('nav-activity').first().click();
+      await page.getByRole('button', { name: 'Swaps', exact: true }).click();
+      const history = page.getByTestId('swap-history-order');
+      await expect(history).toHaveCount(1);
+      await expect(history.locator('summary')).toContainText('Closed');
+      await history.locator('summary').click();
+      await expect(history.locator('[data-field="gave"]')).toHaveAttribute('data-amount', String(evidence.debit));
+      await expect(history.locator('[data-field="received"]')).toHaveAttribute('data-amount', String(evidence.gross));
+      await expect(history.locator('[data-field="fee"]')).toHaveAttribute('data-amount', String(evidence.fee));
+      expect(errors).toEqual([]);
+      await writeFile(
+        '/tmp/xln-swap-reload-proof.json',
+        safeStringify({ ...evidence, restored, recoveredOrders, recoveryElapsedMs: Date.now() - started }),
+      );
+      await page.screenshot({ path: '/tmp/xln-swap-reload-receipt.png', fullPage: true });
+      console.log('SWAP_RECOVERY_PROVEN_MS', Date.now() - started);
+    } finally {
+      await context.close();
+    }
   },
 );

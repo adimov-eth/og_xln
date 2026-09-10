@@ -1,0 +1,240 @@
+{
+  "after": {
+    "height": 7,
+    "holds": [
+      {
+        "incoming": "0",
+        "outgoing": "0",
+        "tokenId": 1
+      },
+      {
+        "incoming": "0",
+        "outgoing": "0",
+        "tokenId": 2
+      },
+      {
+        "incoming": "0",
+        "outgoing": "0",
+        "tokenId": 3
+      }
+    ],
+    "mempool": 0,
+    "offers": 0,
+    "pending": false,
+    "root": "0x327a3bf1328341ff91392f6a3815bb93577baa9adcc68701470f8625d03e1cca",
+    "usdc": "4",
+    "usdcSpendable": "4",
+    "weth": "39988000800000000",
+    "wethCapacity": "4003199200000000",
+    "wethCredit": "43991200000000000"
+  },
+  "before": {
+    "height": 4,
+    "holds": [
+      {
+        "incoming": "0",
+        "outgoing": "0",
+        "tokenId": 1
+      },
+      {
+        "incoming": "0",
+        "outgoing": "0",
+        "tokenId": 2
+      },
+      {
+        "incoming": "0",
+        "outgoing": "0",
+        "tokenId": 3
+      }
+    ],
+    "mempool": 0,
+    "offers": 0,
+    "pending": false,
+    "root": "0xe605e2e80cc25467a3216654963c031f48010a82e15c79d8b15a3c1006070678",
+    "usdc": "100000000",
+    "usdcSpendable": "100000000",
+    "weth": "0",
+    "wethCapacity": "0",
+    "wethCredit": "0"
+  },
+  "debit": {
+    "__xlnType": "BigInt",
+    "value": "99999996"
+  },
+  "elapsedMs": 47427,
+  "entityId": "0x4f5a5f5659019cde125ec2cc19441c8b026db96fd107d3d9b84f67ae25a8b89c",
+  "fee": {
+    "__xlnType": "BigInt",
+    "value": "3999200000000"
+  },
+  "gross": {
+    "__xlnType": "BigInt",
+    "value": "39992000000000000"
+  },
+  "hubId": "0x23d8a399a44479f8f140e4c0b6049ab2e5bdf3ddf05e10e8e51b0821ee6121b7",
+  "orders": {
+    "accountId": "0x23d8a399a44479f8f140e4c0b6049ab2e5bdf3ddf05e10e8e51b0821ee6121b7",
+    "entityId": "0x4f5a5f5659019cde125ec2cc19441c8b026db96fd107d3d9b84f67ae25a8b89c",
+    "items": [
+      {
+        "cancelRequested": false,
+        "closed": true,
+        "createdHeight": 6,
+        "giveTokenId": 1,
+        "lastUpdatedHeight": 7,
+        "liveGiveAmount": null,
+        "liveWantAmount": null,
+        "offerId": "swap-mtw6fh5p-9-2m38gfb2u3v8w",
+        "originalGiveAmount": {
+          "__xlnType": "BigInt",
+          "value": "99999996"
+        },
+        "originalWantAmount": {
+          "__xlnType": "BigInt",
+          "value": "39992000000000000"
+        },
+        "priceTicks": {
+          "__xlnType": "BigInt",
+          "value": "25005000"
+        },
+        "resolves": [
+          {
+            "cancelRemainder": true,
+            "comment": "",
+            "executionGiveAmount": {
+              "__xlnType": "BigInt",
+              "value": "99999996"
+            },
+            "executionWantAmount": {
+              "__xlnType": "BigInt",
+              "value": "39992000000000000"
+            },
+            "feeAmount": {
+              "__xlnType": "BigInt",
+              "value": "3999200000000"
+            },
+            "feeTokenId": 2,
+            "fillDenominator": {
+              "__xlnType": "BigInt",
+              "value": "1"
+            },
+            "fillNumerator": {
+              "__xlnType": "BigInt",
+              "value": "1"
+            },
+            "fillRatio": 65535,
+            "height": 7
+          }
+        ],
+        "wantTokenId": 2
+      }
+    ],
+    "latestHeight": 7,
+    "nextCursor": null
+  },
+  "quote": {
+    "give": "99999996",
+    "minNet": "39988000800000000",
+    "want": "39992000000000000"
+  },
+  "received": {
+    "__xlnType": "BigInt",
+    "value": "39988000800000000"
+  },
+  "recoveredOrders": {
+    "accountId": "0x23d8a399a44479f8f140e4c0b6049ab2e5bdf3ddf05e10e8e51b0821ee6121b7",
+    "entityId": "0x4f5a5f5659019cde125ec2cc19441c8b026db96fd107d3d9b84f67ae25a8b89c",
+    "items": [
+      {
+        "cancelRequested": false,
+        "closed": true,
+        "createdHeight": 6,
+        "giveTokenId": 1,
+        "lastUpdatedHeight": 7,
+        "liveGiveAmount": null,
+        "liveWantAmount": null,
+        "offerId": "swap-mtw6fh5p-9-2m38gfb2u3v8w",
+        "originalGiveAmount": {
+          "__xlnType": "BigInt",
+          "value": "99999996"
+        },
+        "originalWantAmount": {
+          "__xlnType": "BigInt",
+          "value": "39992000000000000"
+        },
+        "priceTicks": {
+          "__xlnType": "BigInt",
+          "value": "25005000"
+        },
+        "resolves": [
+          {
+            "cancelRemainder": true,
+            "comment": "",
+            "executionGiveAmount": {
+              "__xlnType": "BigInt",
+              "value": "99999996"
+            },
+            "executionWantAmount": {
+              "__xlnType": "BigInt",
+              "value": "39992000000000000"
+            },
+            "feeAmount": {
+              "__xlnType": "BigInt",
+              "value": "3999200000000"
+            },
+            "feeTokenId": 2,
+            "fillDenominator": {
+              "__xlnType": "BigInt",
+              "value": "1"
+            },
+            "fillNumerator": {
+              "__xlnType": "BigInt",
+              "value": "1"
+            },
+            "fillRatio": 65535,
+            "height": 7
+          }
+        ],
+        "wantTokenId": 2
+      }
+    ],
+    "latestHeight": 7,
+    "nextCursor": null
+  },
+  "recoveryElapsedMs": 13043,
+  "restored": {
+    "height": 7,
+    "holds": [
+      {
+        "incoming": "0",
+        "outgoing": "0",
+        "tokenId": 1
+      },
+      {
+        "incoming": "0",
+        "outgoing": "0",
+        "tokenId": 2
+      },
+      {
+        "incoming": "0",
+        "outgoing": "0",
+        "tokenId": 3
+      }
+    ],
+    "mempool": 0,
+    "offers": 0,
+    "pending": false,
+    "root": "0x327a3bf1328341ff91392f6a3815bb93577baa9adcc68701470f8625d03e1cca",
+    "usdc": "4",
+    "usdcSpendable": "4",
+    "weth": "39988000800000000",
+    "wethCapacity": "4003199200000000",
+    "wethCredit": "43991200000000000"
+  },
+  "runtimeId": "0x52249045aa97b83bbecdc3e47b1ed2be603db9a7",
+  "ticket": {
+    "feeBps": 1,
+    "give": "100000000",
+    "want": "39992001599680063"
+  }
+}

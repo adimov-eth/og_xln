@@ -19,6 +19,8 @@ import type {
 } from '../types';
 import type { PersistenceQueryDeps } from './deps';
 import { ensureRuntimeActivityView } from '../history/runtime-activity-repair';
+import { readRuntimeOutputRows } from '../wal/outbox-payload';
+import { readStorageFrameRecord } from '../read/read';
 import {
   readRuntimeActivityViewFrame,
   readRuntimeActivityViewStatus,
@@ -143,13 +145,19 @@ const readAccountFrameHistoryRecords = async (
   const acknowledgements = new Map<string, { runtimeHeight: number; timestamp: number }>();
 
   // One bounded sequential WAL scan. No per-Account queries and no eager fan-out.
+  const walDb = deps.getRuntimeWalDb(env);
   for (let runtimeHeight = 1; runtimeHeight <= maxRuntimeHeight; runtimeHeight += 1) {
-    const runtimeFrame = await deps.readPersistedStorageFrameRecord(env, runtimeHeight);
+    const runtimeFrame = await readStorageFrameRecord(walDb, runtimeHeight);
     if (!runtimeFrame) continue;
-    const payloads = await deps.readPersistedStorageFramePayloads(env, runtimeFrame);
+    // Account proposals/ACKs are in Runtime inputs and verified ordered outputs.
+    // Entity contexts and checkpoint Runtime trees cannot contribute history.
+    const runtimeOutputs = await readRuntimeOutputRows(walDb, runtimeHeight, {
+      count: runtimeFrame.runtimeOutputCount,
+      digest: runtimeFrame.runtimeOutputsDigest,
+    });
     const inputs = [
       ...accountInputsOf(runtimeFrame.runtimeInput.entityInputs as RoutedEntityInput[]),
-      ...accountInputsOf(payloads.runtimeOutputs ?? []),
+      ...accountInputsOf(runtimeOutputs),
     ];
     for (const input of inputs) {
       if (!accountInputMatchesAccount(input, entityId, counterpartyId)) continue;

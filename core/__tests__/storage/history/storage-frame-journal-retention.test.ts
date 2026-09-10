@@ -287,6 +287,13 @@ describe('storage frame journal retention', () => {
       { accountHeight: 18, source: 'counterpartyCommit', stateHash: final.stateHash, runtimeHeight: 3 },
     ]);
 
+    // Direct WAL history still verifies every ordered output. Losing the ACK
+    // row must reject, never turn a committed frame into incomplete history.
+    await getRuntimeWalDb(env).del(keyRuntimeOutputRow(3, 0));
+    await expect(readPersistedAccountFrameHistoryRecords(env, user, hub, 10)).rejects.toThrow(
+      'STORAGE_RUNTIME_OUTPUT_ROW_MISSING:3:0',
+    );
+
     await closeRuntimeDb(env);
     await closeInfraDb(env);
   });
