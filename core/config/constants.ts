@@ -243,8 +243,11 @@ export const BLOCKCHAIN = {
   // chain failover and therefore may stay deliberately cold.
   J_WATCHER_POLL_INTERVAL_MS: 5_000,
 
-  /** Maximum finalized block range fetched by one J-watcher poll. */
-  J_WATCHER_MAX_BLOCKS_PER_POLL: 256,
+  /** Bound catch-up work while amortizing history copies and WAL commits.
+   * Every header and the post-receipt fence remain checked; RPC batches stay
+   * capped independently at 128 calls by the receipt reader.
+   */
+  J_WATCHER_MAX_BLOCKS_PER_POLL: 2048,
 
   /** Maximum gas price willing to pay (in gwei) */
   MAX_GAS_PRICE_GWEI: 300,

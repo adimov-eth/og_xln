@@ -55,17 +55,20 @@ export type CanonicalRpcReceipt = {
   depositReceiptVersion?: string | number;
 };
 
-export const parseReceiptHex = (value: unknown, label: string, bytes?: number): Uint8Array => {
+const validatedReceiptHex = (value: unknown, label: string, bytes?: number): string => {
   const normalized = String(value ?? '').trim();
   if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(normalized)) {
     throw new Error(`J_RECEIPT_${label}_HEX_INVALID`);
   }
-  const result = hexToBytes(normalized);
-  if (bytes !== undefined && result.length !== bytes) {
-    throw new Error(`J_RECEIPT_${label}_LENGTH_INVALID:${result.length}`);
+  const length = (normalized.length - 2) / 2;
+  if (bytes !== undefined && length !== bytes) {
+    throw new Error(`J_RECEIPT_${label}_LENGTH_INVALID:${length}`);
   }
-  return result;
+  return normalized;
 };
+
+export const parseReceiptHex = (value: unknown, label: string, bytes?: number): Uint8Array =>
+  hexToBytes(validatedReceiptHex(value, label, bytes));
 
 export const parseReceiptQuantity = (value: unknown, label: string): bigint => {
   try {
@@ -83,7 +86,7 @@ export const parseReceiptQuantity = (value: unknown, label: string): bigint => {
 };
 
 export const normalizeReceiptHash = (value: unknown, label: string): string =>
-  ethers.hexlify(parseReceiptHex(value, label, 32)).toLowerCase();
+  validatedReceiptHex(value, label, 32).toLowerCase();
 
 const concatBytes = (...values: Uint8Array[]): Uint8Array => {
   const length = values.reduce((total, value) => total + value.length, 0);

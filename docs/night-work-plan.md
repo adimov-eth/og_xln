@@ -1,5 +1,38 @@
 # Autonomous xln work
 
+## Current scan candidate and next wallet boundary — 2026-09-10
+
+Fresh React Home is reached in 23,057 ms on the preserved chain at primary
+finalized height 191569. `/tmp/xln-chain-range-demo.log` records the actual
+milestone; the following faucet assertion remains red after five seconds in
+Preparing, so this is successful login evidence, not a complete wallet flow.
+The payment spec reaches faucet preparation in 31.3 seconds instead of dying
+in chain scan; it also exposed a payment-terminal historical-read race:
+`STORAGE_DIRECT_HISTORICAL_READ_FORBIDDEN:requested=101:materialized=201:checkpoint=1`.
+Evidence: `/tmp/xln-payment-range.log`. Investigate that read boundary and
+the pending credit confirmation next; do not increase application deadlines.
+
+The fresh CPU profile contains 33,058 samples; local-history copying owns
+7,025 (21.3%). `/tmp/xln-chain-profile/cpu.json` and `runtime.js.map` preserve
+the profile and source mapping. The selected fix batches up to 2048 fully
+authenticated headers per watcher poll, retaining the 128-call RPC cap and
+the complete post-receipt reorg fence. Hash normalization validates the same
+hex and length before lowercase conversion without a bytes/hex roundtrip.
+The attempted native Map clone did not remove the observed boundary and was
+discarded. Payment tracing generated 650 MB before timeout; `--trace=off`
+keeps the original financial assertions and 50-second test deadline.
+
+136 focused tests pass in `/tmp/xln-chain-range-regression.log`; its remaining
+integration fixture initially blocked on an unread Anvil stdout pipe. Both
+stdout and stderr are now consumed. An obsolete empty-tail expectation also
+fails with the original 256-block window (723 versus 724), independently of
+this change: `/tmp/xln-chain-backlog-control.log`. Corrected expectations keep
+the Entity-finalized anchor and financial reserves unchanged while tracking
+authenticated local history. The 4700-block, multi-page real Anvil integration
+now passes all 20 assertions in 8.47 seconds, including Runtime snapshot restore
+and watcher shutdown (`/tmp/xln-chain-backlog-final.log`). `bun run check` and
+`git diff --check` pass (`/tmp/xln-chain-range-check.log`). No push.
+
 ## Aged-chain wallet verification — 2026-09-10
 
 Verified candidate `589b6bb02f4affacd82b0b7f3f91f9145c0dc78b` on main.

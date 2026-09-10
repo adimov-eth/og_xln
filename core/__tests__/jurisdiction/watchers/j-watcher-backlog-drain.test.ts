@@ -35,7 +35,7 @@ const SIGNER_ID = deriveSignerAddressSync(RUNTIME_SEED, '2').toLowerCase();
 const LATE_SIGNER_ID = deriveSignerAddressSync(RUNTIME_SEED, '3').toLowerCase();
 const TOKEN_ID = 1;
 const RESERVE_AMOUNT = 123_456n;
-const BACKLOG_BLOCKS = 700;
+const BACKLOG_BLOCKS = 4700;
 
 const singleSignerEncodedBoard = (privateKey: Uint8Array): string =>
   encodeSingleSignerBoard(new ethers.Wallet(ethers.hexlify(privateKey)).address);
@@ -44,7 +44,7 @@ type ManagedAnvil = {
   child: ChildProcessWithoutNullStreams;
   rpcUrl: string;
   tmpRoot: string;
-  stderr: string;
+  output: string;
 };
 
 type RpcGateControl = {
@@ -93,7 +93,7 @@ const waitForRpc = async (managed: ManagedAnvil): Promise<void> => {
     await Bun.sleep(50);
   }
   await provider.destroy();
-  throw new Error(`J_WATCHER_BACKLOG_RPC_NOT_READY:${lastError}\nanvil=${managed.stderr}`);
+  throw new Error(`J_WATCHER_BACKLOG_RPC_NOT_READY:${lastError}\nanvil=${managed.output}`);
 };
 
 const startAnvil = async (): Promise<ManagedAnvil> => {
@@ -112,11 +112,13 @@ const startAnvil = async (): Promise<ManagedAnvil> => {
     child,
     rpcUrl: `http://127.0.0.1:${port}`,
     tmpRoot,
-    stderr: '',
+    output: '',
   };
-  child.stderr.on('data', (chunk) => {
-    managed.stderr += chunk.toString();
-  });
+  // Anvil emits RPC/mining logs even with --silent. An unread stdout pipe
+  // fills during the long backlog and blocks the actual mining RPC forever.
+  const captureOutput = (chunk: Buffer): void => { managed.output += chunk.toString(); };
+  child.stderr.on('data', captureOutput);
+  child.stdout.on('data', captureOutput);
   await waitForRpc(managed);
   return managed;
 };
@@ -208,7 +210,7 @@ afterAll(async () => {
 });
 
 describe('RPC J-watcher backlog drain', () => {
-  test('delivers an authenticated event beyond two 256-block pages before returning', async () => {
+  test('delivers an authenticated event beyond two 2048-block pages before returning', async () => {
     managedAnvil = await startAnvil();
     rpcProxy = startRpcGateProxy(managedAnvil.rpcUrl);
     adapter = await createJAdapter({ mode: 'rpc', chainId: CHAIN_ID, rpcUrl: rpcProxy.rpcUrl });
@@ -273,7 +275,7 @@ describe('RPC J-watcher backlog drain', () => {
     await provider.send('anvil_mine', [ethers.toQuantity(BACKLOG_BLOCKS)]);
     const receiptEvents = await adapter.debugFundReserves(entityId, TOKEN_ID, RESERVE_AMOUNT);
     const reserveEvent = receiptEvents.find((event) => event.name === 'ReserveUpdated');
-    expect(Number(reserveEvent?.blockNumber ?? 0)).toBeGreaterThan(2 * 256);
+    expect(Number(reserveEvent?.blockNumber ?? 0)).toBeGreaterThan(2 * 2048);
 
     await processJEvents(env);
 
@@ -291,13 +293,13 @@ describe('RPC J-watcher backlog drain', () => {
     expect(Number(env.state.jReplicas.get(jurisdictionName)?.blockNumber ?? 0n)).toBe(durableSemanticHeight);
     expect(adapter.getWatcherScanProgress?.().scannedThroughHeight).toBe(authenticatedEmptyTail);
     const currentReplica = env.state.eReplicas.get(`${entityId}:${SIGNER_ID}`);
-    expect(currentReplica?.jHistory?.scannedThroughHeight).toBe(durableSemanticHeight);
+    expect(currentReplica?.jHistory?.scannedThroughHeight).toBe(authenticatedEmptyTail);
     expect(currentReplica?.state.lastFinalizedJHeight).toBe(durableSemanticHeight);
 
     // A watched ERC20 receipt can be perfectly authentic yet irrelevant to
-    // every Entity in this Runtime. It advances only transient authenticated
-    // scan progress; WAL state remains event-driven and a restart safely
-    // rescans the bounded empty suffix.
+    // every Entity in this Runtime. The WAL retains authenticated local scan
+    // evidence, while the committed Entity anchor and financial state remain
+    // at the last relevant semantic event.
     const [watchedToken] = await adapter.getTokenRegistry();
     if (!watchedToken) throw new Error('J_WATCHER_BACKLOG_WATCHED_TOKEN_MISSING');
     const watchedErc20 = new ethers.Contract(
@@ -314,8 +316,9 @@ describe('RPC J-watcher backlog drain', () => {
     await processJEvents(env);
 
     const afterIrrelevantLog = env.state.eReplicas.get(`${entityId}:${SIGNER_ID}`);
-    expect(afterIrrelevantLog?.jHistory?.scannedThroughHeight).toBe(durableSemanticHeight);
-    expect(afterIrrelevantLog?.jHistory?.contiguousThroughHeight).toBe(durableSemanticHeight);
+    expect(afterIrrelevantLog?.jHistory?.scannedThroughHeight).toBe(irrelevantLogHeight);
+    expect(afterIrrelevantLog?.jHistory?.contiguousThroughHeight).toBe(irrelevantLogHeight);
+    expect(afterIrrelevantLog?.state.lastFinalizedJHeight).toBe(durableSemanticHeight);
     expect(adapter.getWatcherScanProgress?.().scannedThroughHeight).toBe(irrelevantLogHeight);
 
     const restored = createEmptyEnv(RUNTIME_SEED);
@@ -325,7 +328,7 @@ describe('RPC J-watcher backlog drain', () => {
 
     expect(Number(restored.state.jReplicas.get(jurisdictionName)?.blockNumber ?? 0n)).toBe(durableSemanticHeight);
     expect(restored.state.eReplicas.get(`${entityId}:${SIGNER_ID}`)?.jHistory?.scannedThroughHeight)
-      .toBe(durableSemanticHeight);
+      .toBe(irrelevantLogHeight);
 
     const lateSignerPrivateKey = getSignerPrivateKey(env, LATE_SIGNER_ID);
     const lateSignerAddress = new ethers.Wallet(ethers.hexlify(lateSignerPrivateKey)).address;

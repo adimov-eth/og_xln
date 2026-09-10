@@ -307,6 +307,9 @@ describe('JAdapter watcher ingress', () => {
 
   test('RPC watcher bounds historical catch-up without skipping the safe tip', () => {
     expect(resolveWatcherPollToBlock(1, 10_000, 256)).toBe(256);
+    expect(resolveWatcherPollToBlock(1, 190_000)).toBe(2048);
+    expect(resolveWatcherPollToBlock(2049, 190_000)).toBe(4096);
+    expect(resolveWatcherPollToBlock(189_900, 190_000)).toBe(190_000);
     expect(resolveWatcherPollToBlock(257, 10_000, 256)).toBe(512);
     expect(resolveWatcherPollToBlock(9_900, 10_000, 256)).toBe(10_000);
     expect(resolveWatcherPollToBlock(10_000, 10_000, 256)).toBe(10_000);

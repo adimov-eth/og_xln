@@ -19,7 +19,7 @@ const blockFor = (height: number) => ({
 });
 
 describe('authenticated J watcher RPC batching', () => {
-  test('reads a whole header range through two HTTP-sized batches while preserving the reorg fence', async () => {
+  test.each([256, 2048])('reads %i headers in bounded RPC batches with the complete reorg fence', async (rangeSize) => {
     let scalarCalls = 0;
     const batches: RpcBatchCall[][] = [];
     const send = async (): Promise<unknown> => {
@@ -34,18 +34,18 @@ describe('authenticated J watcher RPC batching', () => {
     const result = await readAuthenticatedReceiptRange(
       send,
       2,
-      257,
+      rangeSize + 1,
       ['0x000000000000000000000000000000000000dEaD'],
       {},
       sendBatch,
     );
 
-    expect(result.headers).toHaveLength(256);
+    expect(result.headers).toHaveLength(rangeSize);
     expect(result.logs).toEqual([]);
     expect(scalarCalls).toBe(0);
-    expect(batches.length).toBe(6);
+    expect(batches.length).toBe(2 * Math.ceil((rangeSize + 1) / 128));
     expect(batches.every((batch) => batch.length <= 128)).toBe(true);
-    expect(batches.reduce((total, batch) => total + batch.length, 0)).toBe(514);
+    expect(batches.reduce((total, batch) => total + batch.length, 0)).toBe(2 * (rangeSize + 1));
     expect(batches.every((batch) => batch.every((call) => call.method === 'eth_getBlockByNumber'))).toBe(true);
   });
 });

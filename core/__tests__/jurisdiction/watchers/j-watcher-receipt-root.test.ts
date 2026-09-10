@@ -19,10 +19,26 @@ import {
   type CanonicalRpcReceipt,
 } from '../../../jurisdiction/adapter/receipt-root';
 import { isTransientRpcUnavailableError } from '../../../jurisdiction/adapter/rpc-public';
-import { createLogBloomMatcher } from '../../../jurisdiction/machine/receipt-codec';
+import { createLogBloomMatcher, normalizeReceiptHash, parseReceiptHex } from '../../../jurisdiction/machine/receipt-codec';
 import { ERC20Mock__factory } from '../../../../jurisdictions/typechain-types';
 
 const zeroBloom = `0x${'00'.repeat(256)}`;
+
+test('receipt hash normalization preserves exact bytes and malformed-input rejections without a byte roundtrip', () => {
+  for (let byte = 0; byte < 256; byte += 1) {
+    const hash = `0x${byte.toString(16).padStart(2, '0').repeat(32)}`;
+    const input = `  0x${hash.slice(2).toUpperCase()}\n`;
+    expect(normalizeReceiptHash(input, 'BLOCK_HASH')).toBe(hash);
+    expect(normalizeReceiptHash(input, 'BLOCK_HASH')).toBe(ethers.hexlify(parseReceiptHex(input, 'BLOCK_HASH', 32)));
+  }
+  for (const input of [undefined, null, '', '0X' + 'ab'.repeat(32), '0x' + 'gg'.repeat(32), '0x' + 'a'.repeat(63)]) {
+    expect(() => normalizeReceiptHash(input, 'BLOCK_HASH')).toThrow('J_RECEIPT_BLOCK_HASH_HEX_INVALID');
+  }
+  for (const length of [0, 1, 31, 33]) {
+    expect(() => normalizeReceiptHash(`0x${'ab'.repeat(length)}`, 'BLOCK_HASH'))
+      .toThrow(`J_RECEIPT_BLOCK_HASH_LENGTH_INVALID:${length}`);
+  }
+});
 
 // Independently captured from Anvil 1.4.0 for one EIP-1559 value transfer:
 // status=1, cumulativeGasUsed=21000, no logs, transactionIndex=0.

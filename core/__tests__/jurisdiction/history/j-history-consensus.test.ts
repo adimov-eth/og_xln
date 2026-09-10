@@ -593,6 +593,32 @@ describe('J validator-local history and Entity-finalized ranges', () => {
     expect(replica.lockedFrame).toBeUndefined();
   });
 
+  test('catch-up history copies preserve out-of-order entries, the base header and previous snapshots', () => {
+    const history = recordValidatorJHistory(undefined, {
+      jurisdictionRef, scannedThroughHeight: 12, tipBlockHash: blockHash(12),
+      blocks: [eventBlock(12, '12'), eventBlock(7, '7'), eventBlock(9, '9')],
+    });
+    const previous = structuredClone(history);
+    const entityState = state();
+    entityState.config.jurisdiction!.entityProviderDeploymentBlock = 8;
+    entityState.lastFinalizedJHeight = 7;
+    const next = recordValidatorJHistory(history, {
+      jurisdictionRef, scannedThroughHeight: 13, tipBlockHash: blockHash(13), blocks: [],
+      headers: [{ jHeight: 13, jBlockHash: blockHash(13) }],
+    }, entityState);
+    expect([...next.eventBlocks.keys()]).toEqual([12, 9]);
+    expect([...next.blockHashes.keys()]).toEqual([12, 7, 9, 13]);
+    expect(next.eventBlocks).not.toBe(history.eventBlocks);
+    expect(next.blockHashes).not.toBe(history.blockHashes);
+    expect(history).toEqual(previous);
+    expect(() => recordValidatorJHistory(next, {
+      jurisdictionRef, scannedThroughHeight: 13, tipBlockHash: blockHash(13), blocks: [],
+      headers: [{ jHeight: 9, jBlockHash: blockHash(99) }],
+    }, entityState)).toThrow('J_HISTORY_LOCAL_REORG_AT_BLOCK:9');
+    expect(history).toEqual(previous);
+    expect(next.blockHashes.get(9)).toBe(blockHash(9));
+  });
+
   test('prunes only finalized local evidence and retains later observations', () => {
     const history = recordValidatorJHistory(undefined, {
       jurisdictionRef,
