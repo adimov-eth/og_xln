@@ -1,5 +1,27 @@
 # Autonomous xln work
 
+## Aged-chain wallet verification — 2026-09-10
+
+Verified candidate `589b6bb02f4affacd82b0b7f3f91f9145c0dc78b` on main.
+The bloom and local-history changes are already committed in `de42eea2e`;
+the faucet assertion is in `589b6bb02`. HANDOFF.md predates both.
+History plus receipt regressions pass: 91 tests, 376 assertions, 2.83 seconds
+(`/tmp/xln-chain-history-current.log`). The existing React demo test passes
+under stand-lock on the preserved long chain: Home plus one-click 100 USDC,
+54.2 seconds test time, 55.1 seconds runner time. Primary Entity finalized
+and scanned height 190360, one retained header, zero mempool entries.
+The second jurisdiction was still scanning (172359); this run does not prove
+its readiness, a payment, swap, or recovery. No chain reset or timeout change.
+Evidence: `/tmp/xln-chain-login-current.log`. `bun run check` exits zero and
+`git diff --check` passes (`/tmp/xln-current-check.log`). Unrelated workspace
+deletions and the existing generated worker change remain outside this work.
+The current task's Goal API returned null; an active Goal is not established.
+Viewing automation `automation` returned a UI card without model-readable
+status, and the local automation files contain no matching Egor MML entry.
+No duplicate automation was created or existing automation modified.
+Next boundary: the real React payment flow on the same chain, then both-party
+balances, fees, terminal receipts, swap and reload before broad parity gates.
+
 ## Egor MML objective — owner update 2026-09-10
 
 MML means useful unique economic value actually settled by the xln Runtime
