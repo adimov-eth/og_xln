@@ -24,6 +24,19 @@ Remaining task: shared external-H1 execution boundary for the in-process scenari
 scenario body/financial assertions stay unchanged. The six-engine111-frame replay
 remains separate exact-root evidence and is not all-scenario coverage.
 
+Fresh unchanged lock-ahb reference at7a3b07930: TS succeeds through frame93,
+checkpoint1 +92 inputs. Recording `/tmp/xln-lock-ahb-current-recording.json`, log
+`/tmp/xln-lock-ahb-current-recording.log`; file SHA256
+`3bc740917ada5c381aa10c9fe50de54dfde0fa5c3738619b1531e770ae1c4674`, manifest
+`0x3c4418a53f61a742db83f03e15edc8738f2a86886b29b8f292f3301ea3a16f91`.
+First post-checkpoint input contains three importReplica transactions. No Rust
+execution of this recording has passed. Lock-ahb uses shared getProcess/commit helpers,
+controlled time and direct pendingOutputs removal/restoration for offline simulation
+(payments/lock-ahb.ts:1498/1503). A wall-clock HTTP swap alone cannot preserve that
+execution contract. An asynchronous owner question asks whether mechanical scenario
+imports/calls may move to a shared executor with all economic steps/assertions retained;
+no answer yet. Do not interpret elapsed time as permission or weaken the scenario.
+
 Delegation restriction: owner permits non-GPT subagents only, using pi, Claude or
 GLM. Do not spawn GPT subagents or silently substitute GPT when another harness
 fails. Verify the actual selected model; a harness name alone is not model identity.
