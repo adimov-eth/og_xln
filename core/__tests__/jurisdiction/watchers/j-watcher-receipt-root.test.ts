@@ -19,6 +19,7 @@ import {
   type CanonicalRpcReceipt,
 } from '../../../jurisdiction/adapter/receipt-root';
 import { isTransientRpcUnavailableError } from '../../../jurisdiction/adapter/rpc-public';
+import { createLogBloomMatcher } from '../../../jurisdiction/machine/receipt-codec';
 import { ERC20Mock__factory } from '../../../../jurisdictions/typechain-types';
 
 const zeroBloom = `0x${'00'.repeat(256)}`;
@@ -288,6 +289,20 @@ describe('authenticated J watcher receipts', () => {
   test('uses block bloom only as a no-false-negative receipt-fetch prefilter', () => {
     expect(bloomMayContain(erc20DeployBloom, '0x5fbdb2315678afecb367f032d93f642f64180aa3')).toBe(true);
     expect(bloomMayContain(erc20DeployBloom, '0x000000000000000000000000000000000000dead')).toBe(false);
+  });
+
+  test('reuses a watched bloom matcher without losing positive logs or accepting malformed blooms', () => {
+    const absent = '0x000000000000000000000000000000000000dead';
+    const present = '0x5fbdb2315678afecb367f032d93f642f64180aa3';
+    const values = [absent, present];
+    const matches = createLogBloomMatcher(values);
+    values.length = 0;
+    expect(matches(erc20DeployBloom)).toBe(true);
+    expect(matches(zeroBloom)).toBe(false);
+    expect(matches(erc20DeployBloom)).toBe(true);
+    expect(createLogBloomMatcher([absent])(erc20DeployBloom)).toBe(false);
+    expect(() => matches('0x00')).toThrow();
+    expect(() => createLogBloomMatcher(['invalid'])).toThrow();
   });
 
   test('reconstructs real Anvil logs without trusting eth_getLogs', async () => {

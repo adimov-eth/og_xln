@@ -1,6 +1,42 @@
 # Autonomous xln work
 
+## Egor MML objective — owner update 2026-09-10
+
+MML means useful unique economic value actually settled by the xln Runtime
+network. Measure completed user operations and settled amounts per asset without
+counting intermediate hops, retries, submitted traffic or duplicate receipts.
+Testnet nominal value proves functionality, not real mainnet economic value.
+Safety, determinism and recovery are constraints, not exchangeable for throughput.
+
+Execution hierarchy (supersedes older immediate priorities below):
+1. Deliver one usable React wallet journey through the real RAdapter: create/unlock,
+   test funding, payment to a second wallet, swap, accurate receipt/history and
+   reload. Verify both parties' balances and terminal outcomes. Fix the earliest
+   failing production owner; UI never acquires duplicate financial logic.
+2. Prove the foundation: preserve scenario economic assertions across TS and Rust
+   H1, identical recorded inputs/roots/ordered outputs, W1/W4, native live J and
+   recovery. Hubs are Runtimes; other Runtime roles may remain TS.
+3. Establish release evidence: full relevant E2E on React and Svelte, production
+   and cfg(test) Rust coverage, check, then valid live throughput and measured
+   bottlenecks. Old frontend remains available; no duplicate feature development.
+4. Expand product scope only when it removes an observed blocker to useful settled
+   operations. Defer cosmetic rewrites, speculative abstractions and broad audits.
+
+Ten-minute heartbeat: new evidence, completed/total current-stage checks and
+percentage, next concrete result and any justified direction change. Report bad
+patterns immediately with location, consequence and correction. After thirty
+minutes without real progress change method; repeated failure without new evidence
+means stop and report the blocker, not manufacture activity. Work alone by default.
+The app heartbeat is ACTIVE (automation id: `automation`). The separate app goal
+was last observed blocked; this document and heartbeat do not falsely resume it.
+
 ## Active owner correction — 2026-09-10
+
+Owner architecture clarification: xln is a network of Runtimes. A hub is a
+Runtime serving a hub role, not a separate layer above or below Runtime.
+Describe wallet interactions as UI → RAdapter → local/remote Runtime ↔ peer
+Runtimes (including hub Runtimes). Entity and Account remain the internal
+consensus layers; never imply that a hub exists outside the Runtime model.
 
 Owner resumed execution on 2026-09-10 after the hourly report. Mechanical scenario
 connection changes are authorized; retain all economic steps and assertions. The

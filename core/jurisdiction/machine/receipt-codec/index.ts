@@ -1,5 +1,6 @@
 import type { Input } from '@ethereumjs/rlp';
 import { ethers } from 'ethers';
+import { hexToBytes } from '../../../support/bytes/hex-bytes';
 
 export type CanonicalRpcLog = {
   address: string;
@@ -59,7 +60,7 @@ export const parseReceiptHex = (value: unknown, label: string, bytes?: number): 
   if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(normalized)) {
     throw new Error(`J_RECEIPT_${label}_HEX_INVALID`);
   }
-  const result = ethers.getBytes(normalized);
+  const result = hexToBytes(normalized);
   if (bytes !== undefined && result.length !== bytes) {
     throw new Error(`J_RECEIPT_${label}_LENGTH_INVALID:${result.length}`);
   }
@@ -246,14 +247,29 @@ export const assertCanonicalReceiptsRoot = async (
   }
 };
 
+const bloomValueBits = (value: string): number[] => {
+  const digest = ethers.getBytes(ethers.keccak256(parseReceiptHex(value, 'BLOOM_VALUE')));
+  const bits: number[] = [];
+  for (let offset = 0; offset < 6; offset += 2) {
+    bits.push(((digest[offset]! << 8) | digest[offset + 1]!) & 2047);
+  }
+  return bits;
+};
+
+const bloomContainsBits = (bloom: Uint8Array, bits: readonly number[]): boolean =>
+  bits.every(bit => (bloom[255 - Math.floor(bit / 8)]! & (1 << (bit % 8))) !== 0);
+
 /** Ethereum log bloom membership has false positives but never false negatives. */
 export const bloomMayContain = (logsBloom: string, value: string): boolean => {
   const bloom = parseReceiptHex(logsBloom, 'BLOOM', 256);
-  const digest = ethers.getBytes(ethers.keccak256(parseReceiptHex(value, 'BLOOM_VALUE')));
-  for (let offset = 0; offset < 6; offset += 2) {
-    const bit = ((digest[offset]! << 8) | digest[offset + 1]!) & 2047;
-    const byteIndex = bloom.length - 1 - Math.floor(bit / 8);
-    if ((bloom[byteIndex]! & (1 << (bit % 8))) === 0) return false;
-  }
-  return true;
+  return bloomContainsBits(bloom, bloomValueBits(value));
+};
+
+/** One fixed watch list per range: hash values once, decode each block bloom once. */
+export const createLogBloomMatcher = (values: readonly string[]): ((logsBloom: string) => boolean) => {
+  const watchedBits = values.map(bloomValueBits);
+  return logsBloom => {
+    const bloom = parseReceiptHex(logsBloom, 'BLOOM', 256);
+    return watchedBits.some(bits => bloomContainsBits(bloom, bits));
+  };
 };

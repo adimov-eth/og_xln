@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 import {
   assertCanonicalReceiptsRoot,
-  bloomMayContain,
+  createLogBloomMatcher,
   createCanonicalReceiptProofs,
   encodeCanonicalRpcReceipt,
   normalizeReceiptHash,
@@ -432,9 +432,10 @@ export const readAuthenticatedReceiptRange = async (
   const rangeBlocks = await readCanonicalBlocks(send, rangeHeights, sendBatch);
   assertContiguousBlocks(rangeBlocks, profile.expectedParent);
   const blocks = rangeBlocks.filter(block => Number(parseReceiptQuantity(block.number, 'BLOCK_NUMBER')) >= fromBlock);
+  const matchesWatchedBloom = createLogBloomMatcher([...addresses]);
   const logsByBlock = await mapConcurrent(blocks, 4, async (block) => {
     if (commitment === 'ethereum-trie' &&
-      ![...addresses].some((address) => bloomMayContain(block.logsBloom, address))) return [];
+      !matchesWatchedBloom(block.logsBloom)) return [];
     if (commitment === 'tron-complete-receipts') {
       return collectWatchedLogs(block, await readTronReceipts(send, block), addresses, undefined, profile.nativeRpc);
     }

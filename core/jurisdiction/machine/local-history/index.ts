@@ -226,6 +226,20 @@ export const getValidatorJContiguousThroughHeight = (
   return contiguousThroughHeight;
 };
 
+const copyRetainedHistory = <T>(
+  source: ReadonlyMap<number, T> | undefined,
+  minimumHeight: number,
+  includeMinimum: boolean,
+): Map<number, T> => {
+  const retained = new Map<number, T>();
+  for (const [height, value] of source ?? []) {
+    if (height > minimumHeight || (includeMinimum && height === minimumHeight)) {
+      retained.set(height, value);
+    }
+  }
+  return retained;
+};
+
 export const recordValidatorJHistory = (
   current: ValidatorJHistory | undefined,
   input: {
@@ -259,12 +273,8 @@ export const recordValidatorJHistory = (
   assertValidatorJHistoryMatchesAnchor(anchor, current);
 
   const minimumRetainedHeight = state ? Number(state.lastFinalizedJHeight) : 0;
-  const eventBlocks = new Map(
-    [...(current?.eventBlocks ?? [])].filter(([height]) => height > minimumRetainedHeight),
-  );
-  const blockHashes = new Map(
-    [...(current?.blockHashes ?? [])].filter(([height]) => height >= minimumRetainedHeight),
-  );
+  const eventBlocks = copyRetainedHistory(current?.eventBlocks, minimumRetainedHeight, false);
+  const blockHashes = copyRetainedHistory(current?.blockHashes, minimumRetainedHeight, true);
   if (anchor) blockHashes.set(anchor.height, anchor.hash);
 
   for (const header of input.headers ?? []) {
