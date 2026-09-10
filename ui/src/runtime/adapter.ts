@@ -133,7 +133,7 @@ export async function connectEmbedded(seed: string, recovery?: RuntimeRecoveryCa
 				xln.readRuntimeFrameReceipts(
 					{
 						latestHeight: () => xln.getPersistedLatestHeight(target),
-						journal: height => xln.readPersistedRuntimeActivityJournal(target, height),
+						journals: (from, to) => xln.readPersistedRuntimeActivityJournals(target, from, to),
 					},
 					query,
 				),

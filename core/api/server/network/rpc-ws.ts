@@ -9,7 +9,7 @@ import {
   loadEntityStateFromStorageDb,
   loadEntityViewPageFromStorageDb,
   readPersistedRuntimeActivityPage,
-  readPersistedRuntimeActivityJournal,
+  readPersistedRuntimeActivityJournals,
   readPersistedAccountFrameHistory,
   readPersistedAccountSwapHistoryPage,
   readPersistedStorageFrameRecord,
@@ -37,7 +37,7 @@ const readFrameReceipts = (env: RuntimeReplica, query?: RuntimeAdapterReadQuery)
   readRuntimeFrameReceipts(
     {
       latestHeight: () => getPersistedLatestHeight(env),
-      journal: height => readPersistedRuntimeActivityJournal(env, height),
+      journals: (from, to) => readPersistedRuntimeActivityJournals(env, from, to),
     },
     query,
   );

@@ -11,6 +11,7 @@ import {
   createEmptyEnv,
   enqueueRuntimeInput,
   getRuntimeWalDb,
+  getRuntimeStorageDb,
   getPersistedLatestHeight,
   listPersistedCheckpointHeights,
   loadEnvFromStorageByReplay,
@@ -22,6 +23,7 @@ import {
   tryOpenRuntimeWalDb,
   processRuntime,
   readPersistedRuntimeActivityJournal,
+  readPersistedRuntimeActivityJournals,
   readPersistedRuntimeActivityPage,
   saveEnvToDB,
 } from '../../../runtime';
@@ -30,7 +32,9 @@ import {
   readRuntimeActivityViewStatus,
   resetRuntimeActivityViewAtFloor,
 } from '../../../storage/history/runtime-activity-view';
-import { readStorageFrameRecord } from '../../../storage';
+import { readStorageFrameRecord, recoverStorageDbFromWal, resolveStorageRuntimeConfig } from '../../../storage';
+import { encodeBuffer } from '../../../storage/codec/codec';
+import { KEY_LIVE_ENTITY, keyFrame } from '../../../storage/keys';
 import { getStorageDb, withStorageConsistentRead } from '../../../storage/runtime-dbs';
 import { ensureRuntimeActivityView } from '../../../storage/history/runtime-activity-repair';
 import { buildRecoveryJournalFromStorageFrame } from '../../../storage/queries/history';
@@ -89,6 +93,44 @@ const commitRuntimeTick = async (env: ReturnType<typeof createEmptyEnv>): Promis
 };
 
 describe('disposable Runtime activity view', () => {
+  test('open WAL verification preserves current repair and rejects a damaged later head', async () => {
+    const { env, runtimeId } = await createStoredRuntime('verified-open-wal-recovery');
+    try {
+      await commitRuntimeTick(env);
+      await closeRuntimeDb(env);
+      expect(env.infrastructure?.storageVerifiedWalHeight).toBeUndefined();
+      await tryOpenStorageDb(env);
+      await tryOpenRuntimeWalDb(env);
+      const verifiedWalHeight = env.infrastructure?.storageVerifiedWalHeight;
+      expect(verifiedWalHeight).toBe(2);
+      if (verifiedWalHeight === undefined) throw new Error('Open WAL verification height missing');
+      const db = getRuntimeStorageDb(env);
+      const walDb = getRuntimeWalDb(env);
+      const recoveryOptions = { db, walDb, config: resolveStorageRuntimeConfig(env), verifiedWalHeight };
+      const intact = await recoverStorageDbFromWal(recoveryOptions);
+      expect(intact.diagnostics.verifiedCurrent).toBe(true);
+      expect(intact.recovered).toBe(false);
+
+      // A verified authoritative WAL must never bless a damaged current copy.
+      await db.put(Buffer.from([KEY_LIVE_ENTITY]), Buffer.from([0]));
+      const repaired = await recoverStorageDbFromWal(recoveryOptions);
+      expect(repaired.recovered).toBe(true);
+      expect(repaired.diagnostics.headChanged).toBe(true);
+      await commitRuntimeTick(env);
+      const frame = await readStorageFrameRecord(walDb, 3);
+      if (!frame) throw new Error('Recovery regression frame missing');
+      await walDb.put(keyFrame(3), encodeBuffer({ ...frame, timestamp: frame.timestamp + 1 }));
+      await expect(recoverStorageDbFromWal(recoveryOptions)).rejects.toThrow('STORAGE_VERIFY_CANONICAL_HASH_MISMATCH');
+      await closeRuntimeDb(env);
+      expect(env.infrastructure?.storageVerifiedWalHeight).toBeUndefined();
+      await expect(tryOpenRuntimeWalDb(env)).rejects.toThrow('STORAGE_VERIFY_CANONICAL_HASH_MISMATCH');
+    } finally {
+      await closeRuntimeDb(env);
+      await closeInfraDb(env);
+      cleanup(runtimeId);
+    }
+  });
+
   test.each([2, 20])('live Activity refresh retains the exact bounded page at limit %i', async limit => {
     const { env, runtimeId } = await createStoredRuntime('activity-incremental-page');
     try {
@@ -136,6 +178,8 @@ describe('disposable Runtime activity view', () => {
     let writer: Promise<void> | undefined;
     try {
       await commitRuntimeTick(env);
+      await commitRuntimeTick(env);
+      await commitRuntimeTick(env);
       const read = resolveRuntimeAdapterRead<RuntimeAdapterFrameReceiptResponse>(
         {
           env,
@@ -148,27 +192,29 @@ describe('disposable Runtime activity view', () => {
                   await resume.promise;
                   return height;
                 },
-                journal: height => readPersistedRuntimeActivityJournal(env, height),
+                journals: (from, to) => readPersistedRuntimeActivityJournals(env, from, to),
               },
               query,
             ),
         },
         'frame-receipts',
-        { fromHeight: 2, toHeight: 3, eventNames: ['RuntimeTick'] },
+        { fromHeight: 2, toHeight: 5, eventNames: ['RuntimeTick'] },
       );
-      expect(await captured.promise).toBe(2);
+      expect(await captured.promise).toBe(4);
       writer = commitRuntimeTick(env);
       await Bun.sleep(10);
-      expect(env.state.height).toBe(2);
+      expect(env.state.height).toBe(4);
       expect(env.infrastructure?.activeCommittedReaders).toBe(1);
       resume.resolve();
       const page = await read;
-      expect(page.toHeight).toBe(2);
+      expect(page.toHeight).toBe(4);
       expect(page.receipts.map(receipt => [receipt.height, receipt.logs.map(log => log.message)])).toEqual([
         [2, ['RuntimeTick']],
+        [3, ['RuntimeTick']],
+        [4, ['RuntimeTick']],
       ]);
       await writer;
-      expect(await getPersistedLatestHeight(env)).toBe(3);
+      expect(await getPersistedLatestHeight(env)).toBe(5);
       expect(env.infrastructure?.activeCommittedReaders).toBe(0);
     } finally {
       resume.resolve();

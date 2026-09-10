@@ -368,6 +368,25 @@ const readPersistedFrameJournals = async (
   return frames;
 };
 
+const readPersistedRuntimeActivityJournals = async function* (
+  deps: PersistenceQueryDeps,
+  env: RuntimeReplica,
+  readReady: (env: RuntimeReplica, height: number) => Promise<(PersistedActivityJournal & { logs: FrameLogEntry[] }) | null>,
+  fromHeight: number,
+  toHeight: number,
+) {
+  if (!Number.isSafeInteger(fromHeight) || !Number.isSafeInteger(toHeight)
+    || fromHeight < 1 || toHeight < fromHeight || toHeight - fromHeight >= 500) {
+    throw new Error(`RUNTIME_ACTIVITY_RECEIPT_RANGE_INVALID:${fromHeight}:${toHeight}`);
+  }
+  // The caller owns one committed-read lease for the range. Prepare once,
+  // then verify each WAL/view hash pair without retaining historical inputs.
+  await ensureRuntimeActivityView(deps, env, buildRecoveryJournalFromStorageFrame);
+  for (let height = fromHeight; height <= toHeight; height += 1) {
+    yield await readReady(env, height);
+  }
+};
+
 export const createPersistenceHistoryQueries = (deps: PersistenceQueryDeps) => {
   const readPersistedFrameJournal = async (
     env: RuntimeReplica,
@@ -479,6 +498,8 @@ export const createPersistenceHistoryQueries = (deps: PersistenceQueryDeps) => {
   return {
     readPersistedFrameJournal,
     readPersistedRuntimeActivityJournal,
+    readPersistedRuntimeActivityJournals: (env: RuntimeReplica, from: number, to: number) =>
+      readPersistedRuntimeActivityJournals(deps, env, readReadyRuntimeActivityJournal, from, to),
     readPersistedRuntimeActivityRecord,
     readPersistedAccountFrameHistory: (
       env: RuntimeReplica,

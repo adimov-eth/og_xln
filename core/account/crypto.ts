@@ -249,11 +249,9 @@ export function prewarmSignerKeyCache(seed: Uint8Array | string, count = 20): st
   }
   const warmed: string[] = [];
   for (let i = 1; i <= count; i++) {
-    const indexId = String(i);
-    const privateKey = deriveSignerKeySync(seed, indexId);
-    const address = privateKeyToAddress(privateKey);
-    registerSignerKey(seed, address, privateKey);
-    warmed.push(address);
+    // Recovery creates several Runtime envelopes for the same vault. Reuse
+    // its existing numeric key cache; another vault has a different store.
+    warmed.push(getOrDeriveNumericSigner(seed, String(i)).address);
   }
   return warmed;
 }
@@ -301,7 +299,7 @@ const getOrDeriveNumericSigner = (
   const cached = store.numericKeys.get(key);
   if (cached) return cached;
   const privateKey = deriveSignerKeySync(seed, signerId);
-  const address = deriveSignerAddressSync(seed, signerId).toLowerCase();
+  const address = privateKeyToAddress(privateKey);
   const publicKey = secp256k1.getPublicKey(privateKey);
   const derived = { privateKey, publicKey, address };
   store.numericKeys.set(key, derived);

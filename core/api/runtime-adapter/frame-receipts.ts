@@ -4,7 +4,7 @@ import type { RuntimeAdapterFrameReceiptResponse, RuntimeAdapterReadQuery } from
 
 type ReceiptSource = {
   latestHeight(): Promise<number>;
-  journal(height: number): Promise<{ timestamp: number; logs: FrameLogEntry[] } | null>;
+  journals(fromHeight: number, toHeight: number): AsyncIterable<{ height: number; timestamp: number; logs: FrameLogEntry[] } | null>;
 };
 
 const receiptRange = (latestHeight: number, query: RuntimeAdapterReadQuery) => {
@@ -51,9 +51,10 @@ export const readRuntimeFrameReceipts = async (
   const range = receiptRange(await source.latestHeight(), query);
   const filter = receiptFilter(query);
   const receipts: RuntimeAdapterFrameReceiptResponse['receipts'] = [];
-  for (let height = range.fromHeight; height <= range.pageToHeight; height += 1) {
-    const activity = await source.journal(height);
-    if (!activity) {
+  let height = range.fromHeight;
+  const journals = range.pageToHeight >= height ? source.journals(height, range.pageToHeight) : [];
+  for await (const activity of journals) {
+    if (!activity || activity.height !== height || height > range.pageToHeight) {
       throw new RuntimeAdapterError(
         'E_NOT_FOUND',
         `frame receipt history is unavailable for contiguous range ${range.fromHeight}-${range.pageToHeight}`,
@@ -61,7 +62,9 @@ export const readRuntimeFrameReceipts = async (
     }
     const logs = activity.logs.filter(filter.matches);
     if (!filter.active || logs.length > 0) receipts.push({ height, timestamp: activity.timestamp, logs });
+    height += 1;
   }
+  if (height <= range.pageToHeight) throw new RuntimeAdapterError('E_NOT_FOUND', 'frame receipt range ended early');
   // An idle reader keeps the durable head watermark instead of rewinding to zero.
   const toHeight = range.pageToHeight > 0 ? range.pageToHeight : range.toHeight;
   return { fromHeight: range.fromHeight, toHeight, returned: receipts.length, receipts };

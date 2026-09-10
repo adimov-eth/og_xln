@@ -1,0 +1,218 @@
+{
+  "paidA": {
+    "accounts": [
+      {
+        "balances": [
+          {
+            "collateral": "0",
+            "leftCreditLimit": "100000000",
+            "offdelta": "-74999975",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 1
+          },
+          {
+            "collateral": "0",
+            "leftCreditLimit": "0",
+            "offdelta": "0",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 2
+          },
+          {
+            "collateral": "0",
+            "leftCreditLimit": "0",
+            "offdelta": "0",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 3
+          }
+        ],
+        "height": 6,
+        "leftEntity": "0x23d8a399a44479f8f140e4c0b6049ab2e5bdf3ddf05e10e8e51b0821ee6121b7",
+        "mempool": 0,
+        "pending": false,
+        "rightEntity": "0x8f13ae84e6eefccf35fd26c7c4e36d06aa8091e9d20c3f83f4e897fc9921be9f",
+        "root": "0xc3fa73c8d8d2b9d03faef1ec3f50c1c79afcea2ba568ebff49c7bc9e70ca3870"
+      }
+    ],
+    "entityId": "0x8f13ae84e6eefccf35fd26c7c4e36d06aa8091e9d20c3f83f4e897fc9921be9f",
+    "frame": {
+      "frameHash": "0x74d2317c0edd331da1e0000189de98aae022b0220d77ec91b3fcca84064383fa",
+      "height": 225,
+      "postStateHash": "0x60603a977e26228b96c0a019db6b860b4797e902c4a4e41442ac595571584b02"
+    },
+    "latestHeight": 225,
+    "runtimeId": "0xbb6ff1c8f97c64499f33502eb2a34aa6ad946c60",
+    "vaultId": "0xbb6ff1c8f97c64499f33502eb2a34aa6ad946c60"
+  },
+  "paidB": {
+    "accounts": [
+      {
+        "balances": [
+          {
+            "collateral": "0",
+            "leftCreditLimit": "137500000",
+            "offdelta": "-125000000",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 1
+          },
+          {
+            "collateral": "0",
+            "leftCreditLimit": "0",
+            "offdelta": "0",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 2
+          },
+          {
+            "collateral": "0",
+            "leftCreditLimit": "0",
+            "offdelta": "0",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 3
+          }
+        ],
+        "height": 7,
+        "leftEntity": "0x23d8a399a44479f8f140e4c0b6049ab2e5bdf3ddf05e10e8e51b0821ee6121b7",
+        "mempool": 0,
+        "pending": false,
+        "rightEntity": "0x980883801e12665114bff8ebebd05baa27991e1c8e3fa5af2a757a28c0d9531f",
+        "root": "0x0fa5e62e138199c4bd0ca3388180ee74269084061439223713b4657ed351bea3"
+      }
+    ],
+    "entityId": "0x980883801e12665114bff8ebebd05baa27991e1c8e3fa5af2a757a28c0d9531f",
+    "frame": {
+      "frameHash": "0xb4acbf5bce5cbcb19304beb81a6f70f377adb5166ac8aa80b13842f90abac763",
+      "height": 235,
+      "postStateHash": "0xa8c2762e3a416e2f866c40c63a854e27cad2974363b5e25ace6bca0c636ad352"
+    },
+    "latestHeight": 235,
+    "runtimeId": "0x4d3ce6a4739cd4f42cd952d0396d315016f70de4",
+    "vaultId": "0x4d3ce6a4739cd4f42cd952d0396d315016f70de4"
+  },
+  "payment": {
+    "amount": "25000000",
+    "fee": "25",
+    "hashlock": "0xcfc2324e3d2fbc87dbd1b90e2ea6827776ed69ee8ad2c00b6b760ae1ca69edef",
+    "senderAmount": "25000025"
+  },
+  "received": [
+    {
+      "category": "system",
+      "data": {
+        "amount": "25000000",
+        "elapsedMs": 1,
+        "entityId": "0x980883801e12665114bff8ebebd05baa27991e1c8e3fa5af2a757a28c0d9531f",
+        "fromEntity": "0x23d8a399a44479f8f140e4c0b6049ab2e5bdf3ddf05e10e8e51b0821ee6121b7",
+        "hashlock": "0xcfc2324e3d2fbc87dbd1b90e2ea6827776ed69ee8ad2c00b6b760ae1ca69edef",
+        "jurisdictionId": "Testnet",
+        "lockId": "0xcfc2324e3d2fbc87dbd1b90e2ea6827776ed69ee8ad2c00b6b760ae1ca69edef",
+        "receivedAtMs": 1789077456560,
+        "startedAtMs": 1789077456560,
+        "toEntity": "0x980883801e12665114bff8ebebd05baa27991e1c8e3fa5af2a757a28c0d9531f",
+        "tokenId": 1
+      },
+      "id": 0,
+      "level": "info",
+      "message": "HtlcReceived",
+      "timestamp": 1789077456560
+    }
+  ],
+  "restoredA": {
+    "accounts": [
+      {
+        "balances": [
+          {
+            "collateral": "0",
+            "leftCreditLimit": "100000000",
+            "offdelta": "-74999975",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 1
+          },
+          {
+            "collateral": "0",
+            "leftCreditLimit": "0",
+            "offdelta": "0",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 2
+          },
+          {
+            "collateral": "0",
+            "leftCreditLimit": "0",
+            "offdelta": "0",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 3
+          }
+        ],
+        "height": 6,
+        "leftEntity": "0x23d8a399a44479f8f140e4c0b6049ab2e5bdf3ddf05e10e8e51b0821ee6121b7",
+        "mempool": 0,
+        "pending": false,
+        "rightEntity": "0x8f13ae84e6eefccf35fd26c7c4e36d06aa8091e9d20c3f83f4e897fc9921be9f",
+        "root": "0xc3fa73c8d8d2b9d03faef1ec3f50c1c79afcea2ba568ebff49c7bc9e70ca3870"
+      }
+    ],
+    "entityId": "0x8f13ae84e6eefccf35fd26c7c4e36d06aa8091e9d20c3f83f4e897fc9921be9f",
+    "frame": {
+      "frameHash": "0xb2e08a3a4d18537351186a46d1a788e3ea06b352b821a4cf48504697f4b885a7",
+      "height": 228,
+      "postStateHash": "0xe1d6953d625d9f3960020f2ce38b12f00cbf90c1884976be90217302359e85e3"
+    },
+    "latestHeight": 228,
+    "runtimeId": "0xbb6ff1c8f97c64499f33502eb2a34aa6ad946c60",
+    "vaultId": "0xbb6ff1c8f97c64499f33502eb2a34aa6ad946c60"
+  },
+  "restoredB": {
+    "accounts": [
+      {
+        "balances": [
+          {
+            "collateral": "0",
+            "leftCreditLimit": "137500000",
+            "offdelta": "-125000000",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 1
+          },
+          {
+            "collateral": "0",
+            "leftCreditLimit": "0",
+            "offdelta": "0",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 2
+          },
+          {
+            "collateral": "0",
+            "leftCreditLimit": "0",
+            "offdelta": "0",
+            "ondelta": "0",
+            "rightCreditLimit": "0",
+            "tokenId": 3
+          }
+        ],
+        "height": 7,
+        "leftEntity": "0x23d8a399a44479f8f140e4c0b6049ab2e5bdf3ddf05e10e8e51b0821ee6121b7",
+        "mempool": 0,
+        "pending": false,
+        "rightEntity": "0x980883801e12665114bff8ebebd05baa27991e1c8e3fa5af2a757a28c0d9531f",
+        "root": "0x0fa5e62e138199c4bd0ca3388180ee74269084061439223713b4657ed351bea3"
+      }
+    ],
+    "entityId": "0x980883801e12665114bff8ebebd05baa27991e1c8e3fa5af2a757a28c0d9531f",
+    "frame": {
+      "frameHash": "0x6d82f392ca0bd5423532ae6166f8f99880072e748849fae1c1be54ca6a31aee1",
+      "height": 241,
+      "postStateHash": "0x13f45830516ccd39d5ae36feaccde366059de7c0914101b3c1f8871854ba6d75"
+    },
+    "latestHeight": 241,
+    "runtimeId": "0x4d3ce6a4739cd4f42cd952d0396d315016f70de4",
+    "vaultId": "0x4d3ce6a4739cd4f42cd952d0396d315016f70de4"
+  }
+}

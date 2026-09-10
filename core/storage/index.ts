@@ -421,6 +421,7 @@ export const recoverStorageDbFromWal = async (options: {
   config: Required<StorageRuntimeConfig>;
   onPersistenceProgress?: StoragePersistenceProgressHook;
   verifyCurrentProjection?: boolean;
+  verifiedWalHeight?: number;
 }): Promise<{ recovered: boolean; diagnostics: StorageRecoveryDiagnostics }> => {
   const recoveryStages: Record<string, number> = {};
   let stageStartedAt = getPerfMs();
@@ -469,7 +470,12 @@ export const recoverStorageDbFromWal = async (options: {
   const shouldVerifyCurrent = headsMatch && options.verifyCurrentProjection !== false;
   let currentProjectionInvalid = false;
   if (shouldVerifyCurrent) {
-    await verifyStorageTailIntegrity(options.walDb);
+    // The namespace's single writer reuses only the verification of this open
+    // WAL at the same head. A later head still needs its complete tail check;
+    // the disposable current projection is independently checked below.
+    if (options.verifiedWalHeight !== walLatestHeight) {
+      await verifyStorageTailIntegrity(options.walDb);
+    }
     try {
       await assertCurrentProjectionIntegrity(
         options.db,
@@ -865,6 +871,7 @@ const prepareStorageFrameSave = async (options: StorageFrameSaveOptions) => {
       walDb,
       config,
       verifyCurrentProjection: state.storageCurrentProjectionVerified !== true,
+      ...(state.storageVerifiedWalHeight === undefined ? {} : { verifiedWalHeight: state.storageVerifiedWalHeight }),
       ...(options.onPersistenceProgress
         ? { onPersistenceProgress: options.onPersistenceProgress }
         : {}),

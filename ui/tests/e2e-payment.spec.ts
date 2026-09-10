@@ -13,9 +13,10 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import type { RuntimeAdapterViewFrame, XLNModule } from '../../core/api/public/runtime-module';
-import type { RuntimeAdapter, RuntimeAdapterActivityPage } from '../../core/api/runtime-adapter/types';
+import type { RuntimeAdapter, RuntimeAdapterFrameReceiptResponse } from '../../core/api/runtime-adapter/types';
+import type { RuntimeAdapterFrameSummary } from '../../core/api/runtime-adapter/resolve';
 import { safeStringify } from '../../core/protocol/serialization';
-import { enterStack, fundFromHub, readWalletCheckpoint, reopenStack } from './stack';
+import { enterStack, readWalletCheckpoint, reopenStack } from './stack';
 import { readCommittedPayment } from './payment-evidence';
 
 const PAYMENT_AMOUNT = '25';
@@ -52,26 +53,61 @@ async function readUsdcAccount(page: Page, entityId: string) {
   }, entityId);
 }
 
-async function readPaymentStarts(page: Page, entityId: string) {
-  return page.evaluate(async owner => {
+async function readPaymentStarts(page: Page, entityId: string, fromHeight = 1) {
+  return page.evaluate(async ({ owner, from }) => {
     const adapter = (window as Window & { __xln?: { adapter: () => RuntimeAdapter | null } }).__xln?.adapter();
-    if (!adapter) throw new Error('Payment Activity unavailable');
-    const activity = await adapter.read<RuntimeAdapterActivityPage>('activity', {
-      entityId: owner, types: ['payment', 'htlc'], limit: 100, scanLimit: 500,
+    if (!adapter) throw new Error('Payment receipts unavailable');
+    const head = await adapter.read<RuntimeAdapterViewFrame>('view-frame', { entityId: owner });
+    if (head.height - from >= 500) throw new Error('Payment fixture exceeds receipt range');
+    const receipts = await adapter.read<RuntimeAdapterFrameReceiptResponse>('frame-receipts', {
+      entityId: owner, fromHeight: from, toHeight: head.height, limit: 500, eventNames: ['HtlcInitiated'],
     });
-    if (activity.nextBeforeHeight !== null) throw new Error('Payment fixture exceeds Activity page');
-    // Activity deliberately suppresses raw htlcPayment inputs: certified
-    // lifecycle logs are its canonical payment evidence.
-    return activity.events.filter(event => event.source === 'runtime_log' && event.rawType === 'HtlcInitiated' && event.direction === 'out');
-  }, entityId);
+    if (receipts.toHeight !== head.height) throw new Error('Payment initiation receipt range is incomplete');
+    // Raw WAL receipts preserve duplicates that the user-facing Activity projection folds.
+    return receipts.receipts.flatMap(receipt => receipt.logs).map(log => ({
+      amount: String(log.data?.['amount']), hash: String(log.data?.['hashlock']),
+    }));
+  }, { owner: entityId, from: fromHeight });
 }
 
 test.describe('wallet UI payment', () => {
+  test('invalid amounts and recipients cannot admit a payment or retain a revoked quote', { tag: '@functional' }, async ({ page }) => {
+    test.setTimeout(50_000);
+    const wallet = await enterStack(page);
+    await page.getByTestId('home-faucet').click();
+    await expect(page.getByTestId('test-money-status')).toHaveText('100 USDC received');
+    const before = await readUsdcAccount(page, wallet.entityId);
+    await page.getByTestId('home-pay').click();
+    await page.getByTestId('pay-to').fill('H2');
+    const submit = page.getByTestId('pay-submit');
+    for (const amount of ['', '0', '-1', 'invalid', '101']) {
+      await page.getByTestId('pay-amount').fill(amount);
+      await expect(submit, `invalid or unfunded payment ${amount}`).toBeDisabled();
+    }
+    await page.getByTestId('pay-amount').fill(PAYMENT_AMOUNT);
+    await page.getByTestId('pay-to').fill('unknown-recipient');
+    await expect(submit).toBeDisabled();
+    expect(await readUsdcAccount(page, wallet.entityId)).toEqual(before);
+    await expect(page.getByTestId('payment-receipt')).toHaveCount(0);
+    await page.getByTestId('pay-to').fill('H2');
+    await expect(submit).toBeEnabled({ timeout: CONSENSUS_TIMEOUT });
+    // Clearing a valid recipient must revoke its previously usable quote.
+    await page.getByTestId('pay-to').fill('unknown-recipient');
+    await expect(submit).toBeDisabled();
+    await expect(page.getByTestId('pay-quote')).toHaveCount(0);
+    expect(await readUsdcAccount(page, wallet.entityId)).toEqual(before);
+    await page.getByTestId('pay-to').fill('H2');
+    await expect(submit).toBeEnabled({ timeout: CONSENSUS_TIMEOUT });
+    expect(await readUsdcAccount(page, wallet.entityId)).toEqual(before);
+    expect(await readPaymentStarts(page, wallet.entityId)).toHaveLength(0);
+  });
+
   test(
     'pays the merchant through the hub and shows the committed receipt',
     { tag: '@functional' },
     async ({ page }) => {
       test.setTimeout(50_000);
+      const startedAt = Date.now();
       const pageErrors: string[] = [];
       page.on('pageerror', error => pageErrors.push(error.message));
       page.on('console', message => {
@@ -82,7 +118,10 @@ test.describe('wallet UI payment', () => {
       });
 
       const wallet = await enterStack(page);
-      await fundFromHub(page, '100');
+      console.log('PAYMENT_HOME_MS', Date.now() - startedAt);
+      await page.getByTestId('home-faucet').click();
+      await expect(page.getByTestId('test-money-status')).toHaveText('100 USDC received');
+      console.log('PAYMENT_FUNDED_MS', Date.now() - startedAt);
       await expect.poll(async () => {
         const account = await readUsdcAccount(page, wallet.entityId);
         return { owned: account.owned, pending: account.pending, mempool: account.mempool };
@@ -90,28 +129,11 @@ test.describe('wallet UI payment', () => {
       await expect.poll(() => readUsdcNet(page), { timeout: CONSENSUS_TIMEOUT }).toBe(100);
       await page.screenshot({ path: 'tests/test-results/ui-home.png', fullPage: true });
       const netBefore = await readUsdcNet(page);
-      const before = await readUsdcAccount(page, wallet.entityId);
 
       await page.getByTestId('home-pay').click();
       await page.getByTestId('pay-to').fill('H2');
       const submit = page.getByTestId('pay-submit');
-      for (const amount of ['', '0', '-1', 'invalid', '101']) {
-        await page.getByTestId('pay-amount').fill(amount);
-        await expect(submit, `invalid or unfunded payment ${amount}`).toBeDisabled();
-      }
       await page.getByTestId('pay-amount').fill(PAYMENT_AMOUNT);
-      await page.getByTestId('pay-to').fill('unknown-recipient');
-      await expect(submit).toBeDisabled();
-      expect(await readUsdcAccount(page, wallet.entityId)).toEqual(before);
-      await expect(page.getByTestId('payment-receipt')).toHaveCount(0);
-      await page.getByTestId('pay-to').fill('H2');
-      await expect(submit).toBeEnabled({ timeout: CONSENSUS_TIMEOUT });
-      // Clearing a valid recipient must revoke its previously usable quote.
-      await page.getByTestId('pay-to').fill('unknown-recipient');
-      await expect(submit).toBeDisabled();
-      await expect(page.getByTestId('pay-quote')).toHaveCount(0);
-      expect(await readUsdcAccount(page, wallet.entityId)).toEqual(before);
-      await page.getByTestId('pay-to').fill('H2');
       await expect(submit).toBeEnabled({ timeout: CONSENSUS_TIMEOUT });
       await expect(submit).toHaveText(new RegExp(`Pay ${PAYMENT_AMOUNT}\\.00 USDC`));
       await page.screenshot({ path: 'tests/test-results/ui-pay.png', fullPage: true });
@@ -131,6 +153,7 @@ test.describe('wallet UI payment', () => {
       const receipt = page.getByTestId('payment-receipt');
       await expect(receipt).toBeVisible({ timeout: CONSENSUS_TIMEOUT });
       await expect(receipt.getByTestId('receipt-kicker')).toHaveText('Paid');
+      console.log('PAYMENT_COMMITTED_MS', Date.now() - startedAt);
       await expect(receipt.getByTestId('receipt-amount')).toContainText(`${PAYMENT_AMOUNT}.00`);
       await expect(receipt.getByTestId('receipt-title')).toContainText('H2');
       const committed = await readCommittedPayment(page, wallet.entityId, fromHeight);
@@ -152,7 +175,7 @@ test.describe('wallet UI payment', () => {
         const account = await readUsdcAccount(page, wallet.entityId);
         return { owned: account.owned, pending: account.pending, mempool: account.mempool };
       }).toEqual({ owned: expectedOwned, pending: false, mempool: 0 });
-      await expect.poll(async () => (await readPaymentStarts(page, wallet.entityId)).length).toBe(1);
+      await expect.poll(async () => (await readPaymentStarts(page, wallet.entityId, fromHeight)).length).toBe(1);
       const checkpoint = await readWalletCheckpoint(page);
       expect(checkpoint.accounts.every(account => !account.pending && account.mempool === 0)).toBe(true);
 
@@ -164,29 +187,29 @@ test.describe('wallet UI payment', () => {
       });
       await page.screenshot({ path: 'tests/test-results/ui-activity.png', fullPage: true });
 
+      await test.info().attach('committed-payment-before-reload', {
+        body: safeStringify({ senderCeiling: senderText, recipientAmount: recipientText, feeCeiling: feeText, committed, expectedOwned }),
+        contentType: 'application/json',
+      });
+      console.log('PAYMENT_RELOAD_MS', Date.now() - startedAt);
       await page.reload({ waitUntil: 'domcontentloaded' });
       await reopenStack(page, wallet);
-      const recovered = await readWalletCheckpoint(page, checkpoint.frame.height);
+      console.log('PAYMENT_RESTORED_MS', Date.now() - startedAt);
+      const recovered = await readWalletCheckpoint(page);
       expect(recovered.latestHeight).toBeGreaterThanOrEqual(checkpoint.latestHeight);
-      expect(recovered.frame).toEqual(checkpoint.frame);
+      const retainedFrame = await page.evaluate(async height => {
+        const adapter = (window as Window & { __xln?: { adapter(): RuntimeAdapter | null } }).__xln?.adapter();
+        if (!adapter) throw new Error('Recovery adapter unavailable');
+        const frame = await adapter.read<RuntimeAdapterFrameSummary>(`frame/${height}`);
+        return { height: frame.height, frameHash: frame.frameHash, postStateHash: frame.postStateHash };
+      }, checkpoint.frame.height);
+      expect(retainedFrame).toEqual(checkpoint.frame);
+      // Current roots and exact balances must survive recovery, as well as the
+      // immutable pre-reload Runtime frame; replaying old Accounts proves less.
       expect(recovered.accounts).toEqual(checkpoint.accounts);
-      const current = await readWalletCheckpoint(page);
-      expect(
-        current.accounts.map(account => ({
-          leftEntity: account.leftEntity,
-          rightEntity: account.rightEntity,
-          balances: account.balances,
-        })),
-      ).toEqual(
-        checkpoint.accounts.map(account => ({
-          leftEntity: account.leftEntity,
-          rightEntity: account.rightEntity,
-          balances: account.balances,
-        })),
-      );
       await expect.poll(async () => readUsdcNet(page), { timeout: CONSENSUS_TIMEOUT }).toBeCloseTo(netAfter, 2);
       expect((await readUsdcAccount(page, wallet.entityId)).owned).toBe(expectedOwned);
-      const payments = await readPaymentStarts(page, wallet.entityId);
+      const payments = await readPaymentStarts(page, wallet.entityId, fromHeight);
       expect(payments).toHaveLength(1);
       expect(payments[0]?.amount).toBe('25000000');
       expect(payments[0]?.hash).toBe(committed.hashlock);

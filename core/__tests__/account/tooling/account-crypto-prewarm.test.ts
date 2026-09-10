@@ -18,6 +18,31 @@ const SIGNER_INDEX_VECTORS = `${import.meta.dir}/signer-index-vectors.txt`;
 const SIGNER_INDEX_VECTOR_SEED = 'signer-index-boundary-seed';
 
 describe('signer cache prewarm', () => {
+  test('repeated recovery prewarm reuses only the owning vault cache and clear revokes it', () => {
+    const seed = 'recovery-prewarm-owner';
+    const other = 'recovery-prewarm-other';
+    clearSignerKeys(seed);
+    clearSignerKeys(other);
+    try {
+      const ids = prewarmRuntimeSignerCache(seed, 2);
+      const keys = ids.map(id => getCachedSignerPrivateKey(seed, id));
+      expect(prewarmRuntimeSignerCache(seed, 2)).toEqual(ids);
+      for (const [index, id] of ids.entries()) {
+        expect(getCachedSignerPrivateKey(seed, id)).toBe(keys[index]);
+        expect(getCachedSignerPrivateKey(seed, id)).toEqual(deriveSignerKeySync(seed, String(index + 1)));
+        expect(getCachedSignerPrivateKey(other, id)).toBeNull();
+      }
+      clearSignerKeys(seed);
+      expect(ids.map(id => getCachedSignerPrivateKey(seed, id))).toEqual([null, null]);
+      expect(prewarmRuntimeSignerCache(seed, 2)).toEqual(ids);
+      expect(getCachedSignerPrivateKey(seed, ids[0]!)).toEqual(keys[0]);
+      expect(getCachedSignerPrivateKey(seed, ids[0]!)).not.toBe(keys[0]);
+    } finally {
+      clearSignerKeys(seed);
+      clearSignerKeys(other);
+    }
+  });
+
   test('matches the shared strict signer-index boundary vectors', async () => {
     const rows = (await Bun.file(SIGNER_INDEX_VECTORS).text())
       .split('\n')

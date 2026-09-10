@@ -318,6 +318,7 @@ export const {
   verifyLiveRuntimeStorage,
   readPersistedFrameJournal,
   readPersistedRuntimeActivityJournal,
+  readPersistedRuntimeActivityJournals,
   readPersistedRuntimeActivityRecord,
   readPersistedAccountFrameHistory,
   readPersistedAccountFrameHistoryRecords,

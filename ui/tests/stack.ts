@@ -82,10 +82,15 @@ export async function readWalletCheckpoint(page: Page, atHeight?: number) {
     const adapter = debug.adapter();
     const { activeEntityId: entityId, activeVaultId: vaultId } = debug.store.getState();
     if (!adapter || !entityId || !vaultId) throw new Error('Wallet identity unavailable');
-    const head = await adapter.read<StorageHead>('head');
-    const height = requestedHeight ?? head.latestHeight;
+    // Capture current Accounts and their Runtime height together. Reading HEAD
+    // first races live commits and accidentally turns a current read into replay.
+    const current = requestedHeight === undefined
+      ? await adapter.read<RuntimeAdapterViewFrame>('view-frame', { entityId, accountsLimit: 100 })
+      : null;
+    const latestHeight = current?.height ?? (await adapter.read<StorageHead>('head')).latestHeight;
+    const height = requestedHeight ?? latestHeight;
     const frame = await adapter.read<RuntimeAdapterFrameSummary>(`frame/${height}`);
-    const accounts = await adapter.read<{ items: NonNullable<RuntimeAdapterViewFrame['activeEntity']>['accounts']['items']; nextCursor: string | null }>(
+    const accounts = current?.activeEntity?.accounts ?? await adapter.read<{ items: NonNullable<RuntimeAdapterViewFrame['activeEntity']>['accounts']['items']; nextCursor: string | null }>(
       `entity/${entityId}/accounts`,
       { atHeight: height, accountsLimit: 100 },
     );
@@ -94,7 +99,7 @@ export async function readWalletCheckpoint(page: Page, atHeight?: number) {
       runtimeId: adapter.runtimeId,
       entityId,
       vaultId,
-      latestHeight: head.latestHeight,
+      latestHeight,
       frame: { height: frame.height, frameHash: frame.frameHash, postStateHash: frame.postStateHash },
       accounts: accounts.items
         .map(account => ({

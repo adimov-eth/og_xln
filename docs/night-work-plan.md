@@ -1,5 +1,40 @@
 # Autonomous xln work
 
+## Two React wallets and repeated dev startup — 2026-09-11
+
+Dev startup fix is committed as `a64d3a340`: repeating ordinary `bun run dev`
+checks the existing wallet endpoint and exits 0 without starting processes or
+resetting data. Explicit clean/mode requests retain the singleton rejection.
+Three focused regressions and the real repeated command pass; full check passes
+in `/tmp/xln-dev-repeat-final-check.log`.
+
+The selected two-user payment boundary passes in three bounded runs against the
+preserved devnet: fresh Alice + 100 USDC (28.2 s), fresh Bob + 100 USDC (28.6 s),
+then both real IndexedDB databases reopened, payment and both reloads (26.8 s).
+Bob explicitly prepares Receive for 25 USDC: faucet had consumed his prior
+100-USDC receive credit. A no-route rejection before this grant was correct;
+no routing implementation change was needed. No implicit credit grant was added.
+Alice ends at 74.999975 USDC, Bob at 125 USDC, routing fee 0.000025 USDC.
+Both Account roots/balances survive reload, pending/mempool are empty, and raw
+receipts contain one matching sender initiation/finalization and receiver receipt.
+Proof: `docs/evidence/wallet-transfer-20260911/proof.json`.
+The separate invalid amount/recipient/revoked-quote E2E passes in 30.2 s.
+Full current-candidate check passes: `/tmp/xln-two-wallet-final-check.log`.
+Logs: `/tmp/xln-two-wallet-alice.log`, `/tmp/xln-two-wallet-bob.log`,
+`/tmp/xln-two-wallet-receive.log`. The test retains 50-second case deadlines;
+preparation exports actual browser IndexedDB/WAL, not a seed-only reconstruction.
+
+The original single-case fresh-login/payment/reload still exceeds 50 seconds:
+`/tmp/xln-payment-paged-history.log`. Diagnostics isolated overlapping Activity
+history reads holding committed-reader leases after reload. Per-frame DB batching
+and a smaller Activity page did not close that case and were removed. This
+performance blocker remains open; the staged financial result does not erase it.
+
+Next: same-user swap plus reload
+with exact debits/credits and fees. Shared creation, full TS/Rust roots/ordered
+outputs, native configuration contradiction and live Rust J remain outstanding.
+This section supersedes older immediate-next-command entries below.
+
 ## React faucet after aged-chain login — 2026-09-10
 
 Current committed scan SHA: `645125eb2`. Fresh Home plus one-click 100 USDC
