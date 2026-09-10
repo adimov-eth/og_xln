@@ -32,6 +32,29 @@ const capabilityMatches = (actual: string, expected: string): boolean => {
   return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 };
 
+export const isDevSingletonConflict = (error: unknown): boolean =>
+  error instanceof Error && error.cause instanceof Error && 'code' in error.cause && error.cause.code === 'EADDRINUSE';
+
+const reportRunningDev = async (): Promise<number> => {
+  const response = await fetch('http://localhost:5183/api/jurisdictions', {
+    signal: AbortSignal.timeout(3_000),
+  });
+  if (!response.ok) throw new Error(`DEV_RUNNING_UI_UNAVAILABLE:HTTP_${response.status}`);
+  const config: unknown = await response.json();
+  if (
+    !config ||
+    typeof config !== 'object' ||
+    !('jurisdictions' in config) ||
+    !config.jurisdictions ||
+    typeof config.jurisdictions !== 'object'
+  ) {
+    throw new Error('DEV_RUNNING_UI_UNAVAILABLE:INVALID_JURISDICTIONS');
+  }
+  console.log('[dev] Already running. Wallet: http://localhost:5183/');
+  console.log('[dev] Reusing the running stack; no processes or data were changed.');
+  return 0;
+};
+
 export function acquireDevSingleton(port = DEV_SINGLETON_PORT): DevSingletonLease {
   if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
     throw new Error(`DEV_SINGLETON_PORT_INVALID:${String(port)}`);
@@ -44,7 +67,8 @@ export function acquireDevSingleton(port = DEV_SINGLETON_PORT): DevSingletonLeas
       port,
       fetch: request => {
         const url = new URL(request.url);
-        const allowed = request.method === 'POST' &&
+        const allowed =
+          request.method === 'POST' &&
           url.pathname === '/capability' &&
           capabilityMatches(request.headers.get(DEV_CAPABILITY_HEADER) ?? '', capability);
         return new Response(null, { status: allowed ? 204 : 403 });
@@ -201,7 +225,15 @@ export const runDevCommands = async (
 const runDev = async (): Promise<number> => {
   if (process.env['XLN_PORT_BASE']) throw new Error('DEV_PORT_OVERRIDE_FORBIDDEN:XLN_PORT_BASE');
   const { mode, commands } = parseInvocation();
-  const lease = acquireDevSingleton();
+  let lease: DevSingletonLease;
+  try {
+    lease = acquireDevSingleton();
+  } catch (error) {
+    // Only an ordinary repeat is idempotent. Explicit clean/mode requests must
+    // not report success without applying their requested operation.
+    if (process.argv.length === 2 && isDevSingletonConflict(error)) return reportRunningDev();
+    throw error;
+  }
   try {
     return await runDevCommands(commands, environmentForMode(mode, lease));
   } finally {
@@ -211,7 +243,9 @@ const runDev = async (): Promise<number> => {
 
 if (import.meta.main) {
   runDev().then(
-    exitCode => { process.exitCode = exitCode; },
+    exitCode => {
+      process.exitCode = exitCode;
+    },
     error => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;

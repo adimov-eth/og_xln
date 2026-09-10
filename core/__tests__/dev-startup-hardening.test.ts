@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { acquireDevSingleton, runDevCommands, type DevSingletonLease } from '../../scripts/dev/run-dev';
+import { acquireDevSingleton, isDevSingletonConflict, runDevCommands, type DevSingletonLease } from '../../scripts/dev/run-dev';
 import {
   DEV_ROLES,
   isExpectedDevTerminationNotice,
@@ -200,11 +200,29 @@ test('ordinary dev uses a kernel-held machine-wide singleton', () => {
   const first = acquireDevSingleton(0);
   try {
     expect(() => acquireDevSingleton(first.port)).toThrow(`DEV_ALREADY_RUNNING:127.0.0.1:${first.port}`);
+    try {
+      acquireDevSingleton(first.port);
+      throw new Error('Duplicate dev acquired the singleton');
+    } catch (error) {
+      expect(isDevSingletonConflict(error)).toBe(true);
+    }
   } finally {
     first.release();
   }
   const replacement = acquireDevSingleton(first.port);
   replacement.release();
+});
+
+test('dev reuse never masks invalid ports or unrelated listener failures', () => {
+  expect(isDevSingletonConflict(new Error('DEV_ALREADY_RUNNING'))).toBe(false);
+  expect(
+    isDevSingletonConflict(
+      new Error('listener denied', {
+        cause: Object.assign(new Error('permission denied'), { code: 'EACCES' }),
+      }),
+    ),
+  ).toBe(false);
+  expect(() => acquireDevSingleton(-1)).toThrow('DEV_SINGLETON_PORT_INVALID');
 });
 
 test('dev shell capability is exact and direct shell entrypoints fail before mutation', async () => {
