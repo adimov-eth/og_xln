@@ -1,8 +1,9 @@
-import { Bar, DeltaBar, DeltaCaption } from '../Bars';
+import { Bar } from '../Bars';
+import { AccountBalance } from './AccountBalance';
 import { Icon } from '../Icons';
 import { TokenIcon } from '../TokenPicker';
 import { useApp } from '../../runtime/store';
-import { formatMoney, formatSigned, formatUsd, getTokenMeta } from '../../runtime/format';
+import { formatAmount, formatMoney, formatUsd, getTokenMeta } from '../../runtime/format';
 import { isUsdStable, usdOf } from '../../runtime/financial/prices';
 import type { AccountView, TokenTotals, WalletView } from '../../runtime/views';
 
@@ -23,7 +24,10 @@ export function TokenRow({
 }) {
   const places = useApp(s => s.places);
   const meta = getTokenMeta(total.tokenId);
-  const money = (value: bigint): string => formatMoney(value, meta.decimals);
+  const money = (value: bigint): string =>
+    isUsdStable(total.tokenId) && value % 10n ** BigInt(Math.max(0, meta.decimals - 2)) === 0n
+      ? formatMoney(value, meta.decimals)
+      : formatAmount(value, meta.decimals, meta.decimals);
   const segments = [
     { usd: places.onchain ? usdOf(total.tokenId, total.onchain) : 0, kind: 'onchain' as const },
     { usd: places.reserve ? usdOf(total.tokenId, total.reserve) : 0, kind: 'reserve' as const },
@@ -86,7 +90,7 @@ export function TokenRow({
                 <div key={`onchain-${row.jurisdiction}`} className="sub">
                   <div className="rt">
                     <span className="tx">
-                      <span className="t">On-chain{row.jurisdiction ? ` · ${row.jurisdiction}` : ''}</span>
+                      <span className="t">Blockchain wallet{row.jurisdiction ? ` · ${row.jurisdiction}` : ''}</span>
                       <span className="s">Your wallet</span>
                     </span>
                     <span className="r">
@@ -107,7 +111,7 @@ export function TokenRow({
                     <span className="tx">
                       <span className="t">Reserve{row.jurisdiction ? ` · ${row.jurisdiction}` : ''}</span>
                       <span className="s">
-                        Depository escrow
+                        Held in the XLN contract
                         {row.pending > 0n ? (
                           <>
                             {' · '}
@@ -139,7 +143,7 @@ export function TokenRow({
                 <button
                   key={account.counterpartyId}
                   type="button"
-                  className="sub"
+                  className="sub wallet-account"
                   style={{ width: '100%', textAlign: 'left', display: 'block' }}
                   onClick={() => onAccount(account.counterpartyId)}
                 >
@@ -147,21 +151,20 @@ export function TokenRow({
                     <span className="tx">
                       <span className="t">
                         {account.label}
-                        {account.isHub ? <span className="chip hub">hub</span> : null}
+                        {account.isHub ? <span className="chip hub">Payment hub</span> : null}
                         {wallet.jurisdiction ? <span className="faint">· {wallet.jurisdiction}</span> : null}
                       </span>
                       <span className="s">
-                        {token.signed > 0n ? 'owes you' : token.signed < 0n ? 'you owe' : 'even'}
+                        {token.signed < 0n ? 'Your debt on this account' : 'Your balance on this account'}
                       </span>
                     </span>
                     <span className="r">
-                      <span className="v num">{formatSigned(token.signed, meta.decimals)}</span>
+                      <span className="v num">
+                        {money(token.signed)} {meta.symbol}
+                      </span>
                     </span>
                   </div>
-                  <div className="rb">
-                    <DeltaBar derived={token.derived} tokenId={total.tokenId} />
-                    <DeltaCaption derived={token.derived} format={money} />
-                  </div>
+                  <AccountBalance token={token} symbol={meta.symbol} money={money} />
                 </button>
               );
             })}

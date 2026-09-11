@@ -1,3 +1,4 @@
+import { niceUsdPerPx } from './bar-scale';
 import { removePasswordVault } from '../../../frontend/src/lib/security/passwordVault';
 import { create } from 'zustand';
 import type { RuntimeAdapterStatus } from '@xln/core/api/public/runtime-module';
@@ -40,7 +41,6 @@ const SCALE_MODE_KEY = 'xln-ui-scale-mode';
 /** Track the auto scale fits the largest balance into: the hero bar on desktop, the screen width on a phone. */
 const AUTO_FIT_PX = 560;
 const autoFitPx = (): number => Math.min(AUTO_FIT_PX, Math.max(240, (typeof window === 'undefined' ? AUTO_FIT_PX : window.innerWidth) - 56));
-const NICE_STEPS = [1, 2, 5];
 const PLACES_KEY = 'xln-ui-places';
 
 export const USD_PER_PX_MIN = 1;
@@ -94,17 +94,6 @@ function readInitialScaleMode(): ScaleMode {
 	return localStorage.getItem(SCALE_MODE_KEY) === 'fixed' ? 'fixed' : 'auto';
 }
 
-/** Smallest 1-2-5 step (dollars per pixel) at which `maxUsd` fits the auto-fit track. */
-export function niceUsdPerPx(maxUsd: number): number {
-	const raw = Math.max(USD_PER_PX_MIN, maxUsd / autoFitPx());
-	let magnitude = 1;
-	while (magnitude * 10 <= raw) magnitude *= 10;
-	for (const step of NICE_STEPS) {
-		if (step * magnitude >= raw) return clampUsdPerPx(step * magnitude);
-	}
-	return clampUsdPerPx(10 * magnitude);
-}
-
 function readInitialPlaces(): PlaceVisibility {
 	const defaults: PlaceVisibility = { onchain: true, reserve: true, accounts: true };
 	try {
@@ -145,7 +134,7 @@ type AppState = {
 	setUsdPerPx: (usdPerPx: number) => void;
 	setScaleMode: (mode: ScaleMode) => void;
 	/** Home reports its largest bar; in auto mode the scale follows it. */
-	fitScale: (maxUsd: number) => void;
+	fitScale: (maxUsd: number, trackPx?: number) => void;
 
 	places: PlaceVisibility;
 	setPlaceVisible: (place: PlaceKey, visible: boolean) => void;
@@ -231,9 +220,9 @@ export const useApp = create<AppState>((set, get) => ({
 		localStorage.setItem(SCALE_MODE_KEY, mode);
 		set({ scaleMode: mode });
 	},
-	fitScale: maxUsd => {
+	fitScale: (maxUsd, trackPx) => {
 		if (get().scaleMode !== 'auto' || !(maxUsd > 0)) return;
-		const usdPerPx = niceUsdPerPx(maxUsd);
+		const usdPerPx = niceUsdPerPx(maxUsd, trackPx ?? autoFitPx());
 		if (usdPerPx === get().usdPerPx) return;
 		applyUsdPerPx(usdPerPx);
 		set({ usdPerPx });

@@ -82,8 +82,10 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
   };
   return (
     <section className="test-money" aria-label="Test money faucet">
-      <span className="test-money-label">Faucet</span>
-      <span className="test-money-token">USDC</span>
+      <div className="test-money-intro">
+        <span className="test-money-label">Test money</span>
+        <span className="note">For trying payments · no real value</span>
+      </div>
       <button
         type="button"
         className="btn sm"
@@ -92,14 +94,14 @@ export function TestMoney({ wallet }: { wallet: WalletView }) {
         data-testid="home-faucet"
         aria-label="Get 100 test USDC"
       >
-        {busy ? stage || 'Receiving…' : '+100'}
+        {busy ? stage || 'Receiving…' : 'Get 100 USDC'}
       </button>
       <button type="button" className="more" onClick={() => setTour({ active: true, index: 0 })}>
         Tour
       </button>
       {hub && (
         <details className="disclosure">
-          <summary>Details</summary>
+          <summary>How test money works</summary>
           <p className="note">
             Each click adds 100 USDC of test money. Existing credit is used first; if needed, this action increases how
             much {hub.label} can owe you without collateral.

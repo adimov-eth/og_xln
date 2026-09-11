@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UsdAmount } from '../components/Amount';
-import { Legend } from '../components/Bars';
+import { CopyId } from '../components/CopyId';
 import { TokenRow, AccountRow } from '../components/home/Balances';
+import { WalletScale } from '../components/home/WalletScale';
 import { BalanceDetails } from '../components/home/BalanceDetails';
 import { TestMoney } from '../components/home/TestMoney';
 import { OpenAccountSheet } from '../components/home/OpenAccountSheet';
@@ -43,7 +44,7 @@ export function Home() {
   );
 
   return (
-    <div className="screen wallet-home fade-in">
+    <WalletScale>
       <div className="screen-header">
         <EntitySwitcher name={wallet.name} status={<span className="note">Wallet</span>} />
         <button
@@ -85,7 +86,6 @@ export function Home() {
           </button>
         )}
       </section>
-      <BalanceDetails wallet={wallet} />
       <div className="actions wallet-actions">
         <button
           type="button"
@@ -114,6 +114,7 @@ export function Home() {
       </div>
       <PendingBatch wallet={wallet} compact />
       <TestMoney key={wallet.entityId} wallet={wallet} />
+      <BalanceDetails wallet={wallet} />
       <div className="wallet-sections">
         <section aria-label="Assets">
           <div className="sect">
@@ -122,7 +123,6 @@ export function Home() {
               Add money
             </button>
           </div>
-          {totals.length > 0 && <Legend places />}
           {totals.map((total, index) => (
             <TokenRow
               key={total.tokenId}
@@ -152,7 +152,9 @@ export function Home() {
               data-testid="home-show-zero"
               onClick={() => setShowZero(value => !value)}
             >
-              {showZero ? 'Hide zero balances' : 'Show all assets'}
+              {showZero
+                ? 'Hide zero balances'
+                : `Show ${emptyCount} ${emptyCount === 1 ? 'asset' : 'assets'} with zero balance`}
             </button>
           )}
         </section>
@@ -163,6 +165,11 @@ export function Home() {
               View all
             </button>
           </div>
+          {recent.loading && (
+            <p className="note" role="status">
+              Loading recent activity…
+            </p>
+          )}
           {movements.map((movement, index) => (
             <ActivityRow
               key={movement.id}
@@ -177,7 +184,7 @@ export function Home() {
             !recent.error &&
             (recent.nextBeforeHeight !== null ? (
               <button type="button" className="more" onClick={() => navigate('/activity')}>
-                View earlier activity
+                Open full payment history
               </button>
             ) : (
               <p className="note wallet-empty">Your payments and swaps will appear here.</p>
@@ -204,6 +211,14 @@ export function Home() {
             Connect another account
           </button>
         </section>
+        <details className="disclosure">
+          <summary>Wallet address and technical details</summary>
+          <div className="kv">
+            <span className="k">Payment address (Entity ID)</span>
+            <CopyId value={wallet.entityId} label="Entity ID" full />
+          </div>
+          <p className="note">Confirmed frame: {wallet.frameHeight}</p>
+        </details>
         <button type="button" className="more" onClick={() => navigate('/move')} data-testid="home-move">
           Transfer between accounts
         </button>
@@ -232,6 +247,6 @@ export function Home() {
           </div>
         </Sheet>
       )}
-    </div>
+    </WalletScale>
   );
 }

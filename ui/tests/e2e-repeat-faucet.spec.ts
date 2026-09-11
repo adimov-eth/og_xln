@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { RuntimeAdapterViewFrame, XLNModule } from '../../core/api/public/runtime-module';
 import type { RuntimeAdapter } from '../../core/api/runtime-adapter/types';
+import { expectDollarScale } from './balance-scale';
 import { enterStack } from './stack';
 
 test('faucet can fund twice on the same page without duplicate payments', { tag: '@functional' }, async ({ page }) => {
@@ -43,19 +44,27 @@ test('faucet can fund twice on the same page without duplicate payments', { tag:
       .toEqual({ owned: String(count * 100_000_000), pending: false, mempool: 0 });
     expect(requests).toHaveLength(count);
     await expect(page.getByTestId('home-balance-breakdown')).toBeVisible();
-    await expect(page.getByTestId('home-secured')).toHaveText('Collateral-backed $0.00');
-    await expect(page.getByTestId('home-risk')).toHaveText(`Unsecured $${count * 100}.00`);
-    await expect(page.getByTestId('token-row-USDC').locator('.dbar')).toBeVisible();
+    await expect(page.getByTestId('home-secured')).toHaveText('Backed by collateral$0.00');
+    await expect(page.getByTestId('home-risk')).toHaveText(`Without collateral$${count * 100}.00`);
+    await expect(page.getByTestId('token-row-USDC').locator('.account-funding .bw')).toBeVisible();
+    await expect(page.getByTestId('token-row-USDC').locator('.account-limits')).toContainText(
+      `Can send now${count * 100}.00 USDC`,
+    );
+    await expect(page.getByTestId('token-row-USDC').locator('.account-limits')).toContainText(
+      'Can receive now0.00 USDC',
+    );
     await expect(faucet).toBeEnabled();
-    await expect(faucet).toHaveText('+100');
+    await expect(faucet).toHaveText('Get 100 USDC');
     await expect(page).toHaveURL(/\/$/);
+    await expectDollarScale(page);
     console.log('REPEAT_FAUCET_COMMITTED', count, count * 100_000_000);
   }
   expect(errors).toEqual([]);
   await page.screenshot({ path: '/tmp/xln-wallet-bars-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByTestId('home-balance-breakdown')).toBeVisible();
-  await expect(page.getByTestId('token-row-USDC').locator('.dbar')).toBeVisible();
+  await expect(page.getByTestId('token-row-USDC').locator('.account-funding .bw')).toBeVisible();
+  await expectDollarScale(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: '/tmp/xln-wallet-bars-mobile.png', fullPage: true });
 });

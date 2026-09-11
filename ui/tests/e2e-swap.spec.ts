@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { deriveSwapFillPolicyFee } from '../../core/account/swap/swap-net-authorization';
 import { safeParse, safeStringify } from '../../core/protocol/serialization';
 import type { RuntimeAdapterSwapHistoryPage } from '../../core/api/runtime-adapter/types';
+import { expectDollarScale } from './balance-scale';
 import { enterStack, reopenStack, type StackWallet } from './stack';
 
 import { readAccount, readOrders, type DebugWindow } from './swap-evidence';
@@ -243,6 +244,15 @@ test(
       await expect(page.getByTestId('home-swap')).toBeEnabled();
       const restored = await readAccount(page, evidence.hubId);
       expect(restored).toEqual(evidence.after);
+      await expect(page.getByTestId('token-net-USDC')).toHaveText(formatUnits(BigInt(evidence.after.usdc), 6));
+      await expect(page.getByTestId('token-net-WETH')).toHaveText(formatUnits(BigInt(evidence.after.weth), 18));
+      await expectDollarScale(page);
+      await page.screenshot({ path: '/tmp/xln-home-mixed-desktop.png', fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expectDollarScale(page);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: '/tmp/xln-home-mixed-mobile.png', fullPage: true });
+      await page.setViewportSize({ width: 1280, height: 860 });
       const recoveredOrders = await readOrders(page, evidence.hubId);
       expect(recoveredOrders).toEqual(evidence.orders);
       await page.getByTestId('nav-activity').first().click();
