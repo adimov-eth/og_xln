@@ -166,12 +166,10 @@ export async function superviseDev(options: DevSupervisorOptions): Promise<numbe
   };
 
   const onSignal = (exitCode: number): void => {
-    if (stopping) {
-      for (const roleProcess of roleProcesses) {
-        if (roleProcess.signalable) signalProcessGroup(roleProcess.processGroupId, 'SIGKILL');
-      }
-      return;
-    }
+    // A group signal also reaches the shell, which forwards it here again.
+    // That duplicate must not SIGKILL Anvil midway through its state dump.
+    // The shutdown deadline below remains the sole forced-stop authority.
+    if (stopping) return;
     requestStop(exitCode);
   };
   const onInterrupt = (): void => onSignal(130);

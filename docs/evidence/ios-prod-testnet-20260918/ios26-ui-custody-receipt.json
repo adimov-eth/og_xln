@@ -1,0 +1,71 @@
+{
+  "activity": [
+    {
+      "amountDisplay": "1.000001",
+      "amountMinor": "1000001",
+      "counterpartyEntityId": "0x9b8489a4114c3c04bb14145782254e662636b915c8e4757c802e6583c3356dfa",
+      "createdAt": 1789704620775,
+      "description": "Native QR payment acceptance | uid:usr_fe10be0a78aa498f95e8",
+      "finalizedAt": 1789704620775,
+      "frameHeight": 26,
+      "hashlock": "0x2967a998e3ad9a80191dbfef4f7a2fa6d52059b9cbdcb39627bd168e925f78cf",
+      "id": "deposit:26:0",
+      "kind": "deposit",
+      "startedAtMs": 1789704620775,
+      "status": "finalized",
+      "tokenId": 1,
+      "updatedAt": 1789704620775
+    }
+  ],
+  "custody": {
+    "connected": true,
+    "daemonWsUrl": "ws://127.0.0.1:8088/rpc",
+    "entityId": "0x56146e643f38696293ab0fe54dcc09e015fdd312f6433b09c28c7818a0e0bef3",
+    "jurisdictionId": "arrakis",
+    "lastSyncError": null,
+    "lastSyncOkAt": 1789704621508,
+    "name": "Custody",
+    "signerId": "0x6dd9e807881a83a27f80a1e9800565bc57162fb6",
+    "walletUrl": "http://localhost:8081/app"
+  },
+  "headlineBalance": {
+    "amountDisplay": "1.000001",
+    "amountMinor": "1000001",
+    "symbol": "USDC",
+    "tokenId": 1
+  },
+  "session": {
+    "createdAt": 1789704539479,
+    "lastSeenAt": 1789704539479,
+    "userId": "usr_fe10be0a78aa498f95e8"
+  },
+  "tokens": [
+    {
+      "accent": "#0f766e",
+      "amountDisplay": "1.000001",
+      "amountMinor": "1000001",
+      "decimals": 6,
+      "name": "USD Coin",
+      "symbol": "USDC",
+      "tokenId": 1
+    },
+    {
+      "accent": "#2563eb",
+      "amountDisplay": "0",
+      "amountMinor": "0",
+      "decimals": 18,
+      "name": "Wrapped Ether",
+      "symbol": "WETH",
+      "tokenId": 2
+    },
+    {
+      "accent": "#b45309",
+      "amountDisplay": "0",
+      "amountMinor": "0",
+      "decimals": 6,
+      "name": "Tether USD",
+      "symbol": "USDT",
+      "tokenId": 3
+    }
+  ]
+}

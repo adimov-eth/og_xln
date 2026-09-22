@@ -5,6 +5,7 @@
 
 import type { NetworkGraph, AccountEdge } from './graph';
 import { getEdge } from './graph';
+import { calculateRequiredInboundForDesiredForward } from '../protocol/htlc/utils';
 
 export interface PaymentRoute {
   path: string[]; // Array of entity IDs from source to target
@@ -48,7 +49,8 @@ export class PathFinder {
     if (!this.graph.nodes.has(source) || !this.graph.nodes.has(target)) return [];
 
     const routes: PaymentRoute[] = [];
-    const visited = new Map<string, Set<string>>(); // node -> set of previous nodes
+    // Distinct loop-free prefixes can have different capacity outcomes. Keep
+    // them until the complete route is checked; bound total search work.
     const MAX_PATHFINDER_POPS = 4_096;
     let pops = 0;
 
@@ -74,17 +76,10 @@ export class PathFinder {
 
       const current = queue.shift()!;
 
-      // Check if we've visited this node from this previous node
-      const prevNode = current.path[current.path.length - 2] || 'START';
-      const visitedFrom = visited.get(current.node) || new Set();
-      if (visitedFrom.has(prevNode)) continue;
-      visitedFrom.add(prevNode);
-      visited.set(current.node, visitedFrom);
-
       // Found target - build route
       if (current.node === target) {
         const route = this.buildRoute(current.path, amount, tokenId);
-        if (route && (!fundingAccountId || this.downstreamCapacityFits(route, tokenId))) {
+        if (route && this.capacityFits(route, tokenId, Boolean(fundingAccountId))) {
           routes.push(route);
         }
         continue;
@@ -102,16 +97,12 @@ export class PathFinder {
         // Skip if already in path (no loops)
         if (current.path.includes(edge.to)) continue;
 
-        // Calculate required amount at this hop (working backwards)
-        const requiredAmount = this.calculateRequiredAmount(amount, [...current.path, edge.to], target, tokenId);
-
-        // Prefix fees do not describe a downstream edge's local debit. Funding
-        // quotes check every downstream edge against the completed exact route.
-        if (requiredAmount === null || (!fundingAccountId && requiredAmount > edge.capacity)) continue;
-
-        // Calculate fee for this edge
-        const edgeFee = this.calculateFee(edge, requiredAmount);
-        const newTotalFee = current.totalFee + edgeFee;
+        // Recipient principal is a lower bound for every edge. Exact fees are
+        // checked on the completed route, on the Account that actually locks them.
+        if (!(current.node === source && fundingAccountId) && amount > edge.capacity) continue;
+        const prefix = this.buildRoute([...current.path, edge.to], amount, tokenId);
+        if (!prefix) continue;
+        const newTotalFee = prefix.totalFee;
 
         // Add to queue with updated cost
         queue.push({
@@ -131,139 +122,40 @@ export class PathFinder {
     });
   }
 
-  private downstreamCapacityFits(route: PaymentRoute, tokenId: number): boolean {
+  private capacityFits(route: PaymentRoute, tokenId: number, fundingFirstAccount: boolean): boolean {
     let required = route.totalAmount;
     for (const [index, hop] of route.hops.entries()) {
-      const edge = getEdge(this.graph, hop.from, hop.to, tokenId);
-      if (!edge || (index > 0 && required > edge.capacity)) return false;
+      // The current forwarder retains its fee before locking on its outgoing
+      // Account. Charging it to that Account rejects an exact-capacity receiver.
       required -= hop.fee;
+      const edge = getEdge(this.graph, hop.from, hop.to, tokenId);
+      if (!edge || (!(index === 0 && fundingFirstAccount) && required > edge.capacity)) return false;
     }
     return true;
   }
 
-  /**
-   * Calculate fee for an edge
-   */
-  private calculateFee(edge: AccountEdge, amount: bigint): bigint {
-    // Fee = baseFee + (amount * feePPM / 1,000,000)
-    const proportionalFee = (amount * BigInt(edge.feePPM)) / 1_000_000n;
-    return edge.baseFee + proportionalFee;
-  }
-
-  private calculateInboundAmount(edge: AccountEdge, forwardAmount: bigint): bigint | null {
-    // At 100% PPM, `inbound - fee(inbound)` can never grow to the requested
-    // output; doubling `high` would only grow a BigInt forever.
-    if (!Number.isInteger(edge.feePPM) || edge.feePPM < 0 || edge.feePPM >= 1_000_000) return null;
-    let low = forwardAmount + edge.baseFee;
-    let high = low;
-    const forwardOut = (inbound: bigint): bigint => inbound - this.calculateFee(edge, inbound);
-    for (let iteration = 0; forwardOut(high) < forwardAmount && iteration < 128; iteration += 1) {
-      high *= 2n;
-    }
-    if (forwardOut(high) < forwardAmount) return null;
-    while (low < high) {
-      const mid = (low + high) / 2n;
-      if (forwardOut(mid) >= forwardAmount) high = mid;
-      else low = mid + 1n;
-    }
-    return low;
-  }
-
-  /**
-   * Calculate required amount at each hop (working backwards from target)
-   */
-  private calculateRequiredAmount(finalAmount: bigint, path: string[], target: string, tokenId: number): bigint | null {
-    let amount = finalAmount;
-
-    // Work backwards from target to source
-    for (let i = path.length - 1; i > 0; i--) {
-      if (path[i] === target) continue; // Skip target node
-
-      const edge = getEdge(this.graph, path[i - 1]!, path[i]!, tokenId);
-      if (edge) {
-        // Invert forward equation:
-        //   forward = inbound - fee(inbound)
-        // solve minimal inbound s.t. forward >= amount.
-        const inbound = this.calculateInboundAmount(edge, amount);
-        if (inbound === null) return null;
-        amount = inbound;
-      }
-    }
-
-    return amount;
-  }
-
-  /**
-   * Build complete route details from path
-   */
   private buildRoute(path: string[], amount: bigint, tokenId: number): PaymentRoute | null {
     if (path.length < 2) return null;
-
-    const hops: PaymentRoute['hops'] = [];
-    let totalFee = 0n;
-
-    // Exact-receive math: compute required inbound per hop from target to source.
-    const inboundAmounts: bigint[] = new Array(path.length).fill(0n);
-    inboundAmounts[path.length - 1] = amount;
-    for (let i = path.length - 2; i >= 0; i--) {
-      const edge = getEdge(this.graph, path[i]!, path[i + 1]!, tokenId);
-      if (!edge) return null;
-      const forwardAmount = inboundAmounts[i + 1]!;
-      // Binary search inversion of forward fee equation:
-      // forward = inbound - (baseFee + inbound*ppm/1e6)
-      const inbound = this.calculateInboundAmount(edge, forwardAmount);
-      if (inbound === null) return null;
-      inboundAmounts[i] = inbound;
-    }
-
+    const edges: AccountEdge[] = [];
     for (let i = 0; i < path.length - 1; i++) {
       const edge = getEdge(this.graph, path[i]!, path[i + 1]!, tokenId);
-      if (!edge) return null;
-      const inbound = inboundAmounts[i]!;
-      const forward = inboundAmounts[i + 1]!;
-      const fee = inbound - forward;
-      hops.push({ from: path[i]!, to: path[i + 1]!, fee, feePPM: edge.feePPM });
-      totalFee += fee;
+      if (!edge || !Number.isInteger(edge.feePPM) || edge.feePPM < 0 || edge.feePPM >= 1_000_000) return null;
+      edges.push(edge);
     }
-
-    // Calculate success probability
-    const probability = this.calculateProbability(path, amount, tokenId);
-
-    return {
-      path,
-      hops,
-      totalFee,
-      totalAmount: amount + totalFee,
-      probability,
-    };
-  }
-
-  /**
-   * Calculate success probability based on account utilization
-   */
-  private calculateProbability(path: string[], amount: bigint, tokenId: number): number {
-    let probability = 1.0;
-    const inboundAmounts: bigint[] = new Array(path.length).fill(0n);
-    inboundAmounts[path.length - 1] = amount;
-    for (let i = path.length - 2; i >= 0; i--) {
-      const edge = getEdge(this.graph, path[i]!, path[i + 1]!, tokenId);
-      if (!edge) continue;
-      const inbound = this.calculateInboundAmount(edge, inboundAmounts[i + 1]!);
-      if (inbound === null) return 0;
-      inboundAmounts[i] = inbound;
+    const amounts = new Array<bigint>(edges.length).fill(amount);
+    // Same fee inversion and intermediary ownership as quoteHtlcPaymentRoute.
+    // The sender does not pay itself a routing fee; the last Account locks
+    // exactly the recipient amount, with its hub's fee on the preceding Account.
+    for (let i = edges.length - 1; i >= 1; i--) {
+      const edge = edges[i]!;
+      amounts[i - 1] = calculateRequiredInboundForDesiredForward(amounts[i]!, edge.feePPM, edge.baseFee);
     }
-
-    for (let i = 0; i < path.length - 1; i++) {
-      const edge = getEdge(this.graph, path[i]!, path[i + 1]!, tokenId);
-      if (edge && edge.capacity > 0n) {
-        const hopAmount = inboundAmounts[i]!;
-        const utilization = Number(hopAmount) / Number(edge.capacity);
-        // Higher utilization = lower success probability
-        // Using exponential decay: e^(-2 * utilization)
-        probability *= Math.exp(-2 * utilization);
-      }
-    }
-
-    return Math.max(0.01, Math.min(1.0, probability));
+    const hops = edges.map((edge, i) => ({
+      from: edge.from, to: edge.to, fee: i === 0 ? 0n : amounts[i - 1]! - amounts[i]!, feePPM: edge.feePPM,
+    }));
+    const probability = edges.reduce((value, edge, i) => edge.capacity > 0n
+      ? value * Math.exp(-2 * Number(amounts[i]!) / Number(edge.capacity)) : value, 1);
+    return { path, hops, totalFee: amounts[0]! - amount, totalAmount: amounts[0]!,
+      probability: Math.max(0.01, Math.min(1, probability)) };
   }
 }

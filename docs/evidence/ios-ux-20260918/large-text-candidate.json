@@ -1,0 +1,26 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "files": [
+    {
+      "path": "frontend/ios/App/App/WalletRoot.swift",
+      "sha256": "3eae35602b868e29f09856e3fa35754b99678bfcf3cde6d29a69dd1e5f740d9b"
+    },
+    {
+      "path": "frontend/ios/App/App/WalletBrainvault.swift",
+      "sha256": "b5e001c42af068e47150b630c7d89e32f1feac9aa746536a143d9d7d497fc722"
+    },
+    {
+      "path": "frontend/ios/App/AppUITests/PaymentUITests.swift",
+      "sha256": "f97d255dca05cb8c140ffab5652bf346c35cf97127bd56b28eb40eb2c0df3525"
+    },
+    {
+      "path": "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/App.debug.dylib",
+      "sha256": "8e4504c0fde88bddb85c746b473a5c2412c99c448fb356f32cefd1ecc39c0d6b"
+    },
+    {
+      "path": "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/public/native-network.json",
+      "sha256": "2d1d82a5113605a26891519d1dd467c76db9a80822d1f05785c59b45b90bad29"
+    }
+  ]
+}

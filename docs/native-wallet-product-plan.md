@@ -1,5 +1,16 @@
 # XLN Native Wallet Product Plan
 
+## iOS direction update — 2026-09-12
+
+The owner requested a native iPhone UI with Liquid Glass. The implementation plan is
+[ios-native-plan.md](ios-native-plan.md). For iOS, its SwiftUI presentation direction
+supersedes the shared Svelte UI requirement and iOS UI instructions below. The local-first,
+self-custodial TypeScript runtime remains canonical; the native host bridge must be proven
+before a full screen migration. Android and desktop scope is unchanged. SwiftUI Home, payment,
+same-J swap, activity and settings now run in the existing project with the packaged canonical
+runtime. Local simulator payments, swaps and recovery passed; production and App Store release
+remain unproven. See the iOS plan for exact evidence and open release gates.
+
 ## Non-negotiable Architecture
 
 XLN Wallet is local-first and self-custodial by default. The TypeScript runtime is the single source of truth across browser, iOS, Android, desktop, and future extension surfaces. Server infrastructure may relay frames, notify users, provide discovery, and act as a watchtower, but it must not hold spend-capable user keys in the default consumer product.

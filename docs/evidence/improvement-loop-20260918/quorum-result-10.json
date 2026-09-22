@@ -1,0 +1,23 @@
+{
+  "id": "method-review-20260918-10",
+  "completed": false,
+  "error": "INVALID_OR_TRUNCATED_SSE_DATA",
+  "budget": {
+    "id": "owner-2026-09-06t183142z",
+    "limitMicroUsd": 10000000,
+    "authorizedAt": "2026-09-06T18:31:42Z",
+    "expiresAt": null,
+    "windowMs": 3600000,
+    "defaultWaveTargetMicroUsd": 1000000,
+    "scope": "quorum-managed-dispatch-only",
+    "externalSpendCoverage": "unknown",
+    "knownMicroUsd": 0,
+    "reservedMicroUsd": 3750000,
+    "remainingMicroUsd": 6250000,
+    "attempts": 15,
+    "asOf": "2026-09-18T10:35:45.307Z",
+    "windowStartsAt": "2026-09-18T09:35:45.307Z"
+  },
+  "response": "",
+  "reasoningCharacters": 14110
+}

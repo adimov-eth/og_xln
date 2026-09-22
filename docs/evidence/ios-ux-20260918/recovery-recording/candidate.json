@@ -1,0 +1,44 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "core/storage/queries/recording.ts": "2b44221d123c3f5b36977ceec6416b4b4b5044dc531573daf7a6a7999df14fc1",
+    "core/__tests__/storage/recovery/recovery-tower.test.ts": "a7ad81326b439b42a014eeb12bf7635880e2f8093c113536501c312f05f79488",
+    "scripts/native/tests/payments/recovery-recording.js": "391eff25510be7937fca48b70b5a00e3eb26eb409e84d29cadf45d5dad09abd9",
+    "scripts/native/run-session.ts": "b6bf3a39b1c929e27aa04a8191710bc26a56a6f42c245a3a852ada99719f5245"
+  },
+  "scope": "Real local canonical TS/WebKit payment, retained checkpoint+WAL recording export and detached verified replay. No persistent import, iOS binary update, deployment or mock.",
+  "firstFailure": "RECOVERY_BUNDLE_JOURNAL_CANONICAL_STATE_HASH_REQUIRED:height=2",
+  "secondFailure": "Portable checkpoint was exported in storage shape; restore required core/books projection",
+  "fixes": [
+    "Derive portable roots only after strict replay verification",
+    "Use canonical portable recovery checkpoint projection"
+  ],
+  "checks": {
+    "recoveryTests": 10,
+    "recoveryAssertions": 84,
+    "retentionTests": 31,
+    "retentionAssertions": 152,
+    "liveVerifiedFrames": 19,
+    "baseHeight": 1,
+    "targetHeight": 20,
+    "paymentHeight": 20,
+    "paymentUSDC": "1",
+    "senderUSDC": "99",
+    "exactFinalizedEvent": true,
+    "localServicesHealthy": true
+  },
+  "limits": [
+    "Retained history only; pruning can remove earlier frames",
+    "Tower still backs up tip only; persistent import still starts history at tip",
+    "Full fresh-device history acceptance remains red",
+    "Native iPhone binary not rebuilt for this export-only change"
+  ],
+  "sourceGates": {
+    "passed": 39,
+    "total": 39,
+    "sourceSeconds": 31.032,
+    "fullCheckPassed": true
+  },
+  "liveEvidenceCandidateNote": "Live replay passed before cleanup-error aggregation refinement and harness relocation; final unit suite and full source checks cover final candidate. Financial replay behavior unchanged."
+}

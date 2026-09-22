@@ -1,0 +1,23 @@
+{
+  "id": "method-review-20260918-07",
+  "completed": true,
+  "error": null,
+  "budget": {
+    "id": "owner-2026-09-06t183142z",
+    "limitMicroUsd": 10000000,
+    "authorizedAt": "2026-09-06T18:31:42Z",
+    "expiresAt": null,
+    "windowMs": 3600000,
+    "defaultWaveTargetMicroUsd": 1000000,
+    "scope": "quorum-managed-dispatch-only",
+    "externalSpendCoverage": "unknown",
+    "knownMicroUsd": 0,
+    "reservedMicroUsd": 3000000,
+    "remainingMicroUsd": 7000000,
+    "attempts": 12,
+    "asOf": "2026-09-18T08:46:40.912Z",
+    "windowStartsAt": "2026-09-18T07:46:40.912Z"
+  },
+  "response": "# Второе мнение (ограниченное)\n\n**Главный риск ложноположительного:** перенос «чистого» устройства подменяет реальный fresh-install. Симулятор второго iPhone без данных приложения — не доказательство восстановления с нуля: ключи/состояние могут остаться в iOS Keychain симулятора или в артефактах «реального стенда/башни», остающихся живыми. «Public test credentials, remembered» — ещё один канал утечки: restore может пройти не через BrainVault-шифрование, а через серверную сессию/stand-идентичность. Плюс тайминг (160–180s при бюджете 180s) почти без запаса — риск «timeout = failure» по причинам, не связанным с восстановлением.\n\n**Минимальное улучшение:** перед restore зафиксировать один дискриминирующий факт — полное стирание/пересоздание второго симулятора (erased device) и запрет «remembered credentials»: ввод публичных кредов вручную. Тогда успех = восстановление только из зашифрованного BrainVault-башни.\n\n**Неопределённость:** нет доступа к коду; не знаю, хранит ли реализация что-то вне IndexedDB (Keychain/NSUserDefaults). Верификация — одна команда: стереть второй симулятор (`xcrun simctl erase`) и повторить restore-шаг.",
+  "reasoningCharacters": 0
+}

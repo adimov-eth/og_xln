@@ -30,6 +30,8 @@ import {
 import { createRuntimeInputReducer } from './frame/intake/reducer';
 import { createRuntimeProcessor } from './frame/process';
 import { clearRuntimeDatabases } from './envelope/storage-admin';
+import { restoreRuntimeFromRecording,
+  type RecoveryArchiveImportOptions } from '../storage/recovery/bundle/import';
 import { loadLiveRuntimeFromDB } from './recovery/live-restore';
 import {
   bootstrapRuntime,
@@ -366,6 +368,17 @@ export const loadEnvFromDB = async (
   registerCommittedSingleSignerWallets,
   discardAccountAuthority: discardAuthorityRuntime,
 }, runtimeId, runtimeSeed, options);
+
+export const importRuntimeRecoveryRecording = (
+  recording: import('../storage/recovery/bundle/types').RuntimeRecording,
+  runtimeSeed: string,
+  options?: RecoveryArchiveImportOptions,
+): Promise<RuntimeReplica> => restoreRuntimeFromRecording({
+  createEmptyEnv, restoreEnvFromRecoveryBundles, persistRestoredEnvToDB,
+  replayRecoveryFrameJournals, saveEnvToDB, readPersistedFrameJournal, loadEnvFromDB,
+  closeRuntimeDb, closeInfraDb, getRuntimeWalDb, tryOpenRuntimeWalDb, tryOpenStorageDb,
+  getStorageDb, getInfraDb, tryOpenInfraDb: runtimeLoopApi.tryOpenInfraDb,
+}, recording, runtimeSeed, options);
 
 export const clearDB = async (env?: RuntimeReplica): Promise<void> => {
   const targetEnv = env ?? createEmptyEnv(null);

@@ -404,7 +404,11 @@ const materializeSettlementContinuation = async (
   context: ApplyEntityTxsInOrderContext,
   state: EntityState,
 ): Promise<EntityState> => {
-  const disposition = selectSettlementContinuation(state);
+  const stage = context.env.accountAuthorityEntityStage;
+  const disposition = selectSettlementContinuation(
+    state,
+    stage ? accountId => stage.hasQueuedSettlementTransition(accountId) : undefined,
+  );
   if (disposition.kind === 'none' || disposition.kind === 'wait') return state;
   if (disposition.kind === 'discard') {
     state.settlementContinuations?.delete(disposition.counterpartyId);

@@ -5,7 +5,7 @@ import { getJurisdictionStackId } from '@xln/core/api/public/runtime-module';
 import { ReceiveCapacity } from '../components/ReceiveCapacity';
 import { DeltaBar, DeltaCaption } from '../components/Bars';
 import { Orderbook, type BookSide } from '../components/Orderbook';
-import { quoteForBase, useOrderbook, type BookLevel } from '../runtime/financial/orderbook';
+import { quoteAtBestLevel, quoteForBase, swapMinimumError, useOrderbook, type BookLevel } from '../runtime/financial/orderbook';
 import { Icon } from '../components/Icons';
 import { TokenPicker } from '../components/TokenPicker';
 import { useApp } from '../runtime/store';
@@ -159,18 +159,9 @@ export function Swap() {
 		if (give <= 0n) return '';
 		const base = getTokenMeta(book.baseTokenId);
 		const quote = getTokenMeta(book.quoteTokenId);
-		if (giveTokenId === book.quoteTokenId && wantTokenId === book.baseTokenId) {
-			const level = book.asks[0];
-			if (!level) return '';
-			const quoteForLevel = quoteForBase(level.size, level.priceTicks, base.decimals, quote.decimals);
-			return quoteForLevel > 0n ? plainAmount((level.size * give) / quoteForLevel, base.decimals) : '';
-		}
-		if (giveTokenId === book.baseTokenId && wantTokenId === book.quoteTokenId) {
-			const level = book.bids[0];
-			return level ? plainAmount(quoteForBase(give, level.priceTicks, base.decimals, quote.decimals), quote.decimals) : '';
-		}
-		return '';
-	}, [book, wantText, giveText, giveTokenId, wantTokenId, giveMeta.decimals]);
+		const quoteAtLevel = quoteAtBestLevel(book, giveTokenId, wantTokenId, give, base.decimals, quote.decimals);
+		return quoteAtLevel ? plainAmount(quoteAtLevel.want, wantMeta.decimals) : '';
+	}, [book, wantText, giveText, giveTokenId, wantTokenId, giveMeta.decimals, wantMeta.decimals]);
 	const parsedWant = useMemo(() => {
 		try {
 			const value = parseAmount(wantText || impliedWantText || '0', wantMeta.decimals);
@@ -239,6 +230,7 @@ export function Swap() {
 
 	const place = async (): Promise<void> => {
 		if (!wallet.frame || !hub || !prepared || !wallet.signerId || !inboundReady) return;
+		if (mode === 'same' && swapMinimumError(book, giveTokenId, prepared)) return;
 		setSubmitting(true);
 		try {
 			const source = {
@@ -328,7 +320,8 @@ export function Swap() {
 
 	const mine = openSwapOffers(wallet.frame, wallet.entityId).filter(offer => offer.mine);
 	const crossOrders = liveCrossOrders(wallet.frame, wallet.entityId);
-	const disabledReason = !hub ? 'No hub account to swap through' : sameToken ? 'Choose two different tokens' : overCapacity ? 'Exceeds what you can send' : !inboundReady ? `One step first: allow ${(mode === 'cross' ? targetHub?.label : hub.label) ?? 'the hub'} to owe you ${wantMeta.symbol} (the panel above, one tap)` : null;
+	const minimumError = mode === 'same' && prepared ? swapMinimumError(book, giveTokenId, prepared) : null;
+	const disabledReason = minimumError ?? (!hub ? 'No hub account to swap through' : sameToken ? 'Choose two different tokens' : overCapacity ? 'Exceeds what you can send' : !inboundReady ? `One step first: allow ${(mode === 'cross' ? targetHub?.label : hub.label) ?? 'the hub'} to owe you ${wantMeta.symbol} (the panel above, one tap)` : null);
 
 	return (
 		<div className="screen fade-in">

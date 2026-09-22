@@ -85,10 +85,7 @@ fn digest(value: &Value, path: &str) -> Result<[u8; 32], EntityGraphRestoreError
         .filter(|value| value.len() == 64)
         .ok_or_else(|| invalid(format!("DIGEST:{path}")))?;
     let mut output = [0_u8; 32];
-    for (index, byte) in output.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&payload[index * 2..index * 2 + 2], 16)
-            .map_err(|_| invalid(format!("DIGEST:{path}")))?;
-    }
+    hex::decode_to_slice(payload, &mut output).map_err(|_| invalid(format!("DIGEST:{path}")))?;
     Ok(output)
 }
 
@@ -405,6 +402,23 @@ pub fn hydrate_entity_graph(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn untrusted_hex_rejects_unicode_and_preserves_valid_words() {
+        for prefix in ["€", "0€", "+1", "gg"] {
+            assert!(
+                super::digest(
+                    &serde_json::json!(format!("0x{prefix}{}", "0".repeat(64 - prefix.len()))),
+                    "root"
+                )
+                .is_err()
+            );
+        }
+        assert_eq!(
+            super::digest(&serde_json::json!(format!("0x{}", "aB".repeat(32))), "root").unwrap(),
+            [0xab; 32]
+        );
+    }
+
     use super::*;
 
     #[test]

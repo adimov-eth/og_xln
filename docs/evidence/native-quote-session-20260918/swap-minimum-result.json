@@ -1,0 +1,13 @@
+{
+  "passed": 4,
+  "belowMinimumRejected": true,
+  "roundedMinimumRejected": true,
+  "filled": true,
+  "reopenedExactBalances": true,
+  "offerId": "swap-mu6a3cu4-8-22is70da30ez5",
+  "usdc": "75000001",
+  "weth": "9997000200000000",
+  "gave": "24999999",
+  "received": "9998000000000000",
+  "fee": "999800000000"
+}

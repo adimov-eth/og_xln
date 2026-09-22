@@ -207,6 +207,7 @@ export const decodeMarketSnapshotPayload = (value: unknown): MarketSnapshotPaylo
     'displayDecimals',
     'priceScale',
     'bucketWidthTicks',
+    'minTradeSize',
     'bids',
     'asks',
     'spread',
@@ -235,6 +236,9 @@ export const decodeMarketSnapshotPayload = (value: unknown): MarketSnapshotPaylo
     'MARKET_WIRE_SNAPSHOT_pairId_INVALID',
   );
   requireUnsignedDecimal(payload['priceScale'], 'MARKET_WIRE_SNAPSHOT_priceScale_INVALID', false);
+  if (payload['minTradeSize'] !== null) {
+    requireUnsignedDecimal(payload['minTradeSize'], 'MARKET_WIRE_SNAPSHOT_minTradeSize_INVALID', true);
+  }
   const spreadPercent = requireString(payload['spreadPercent'], 'MARKET_WIRE_SNAPSHOT_spreadPercent_INVALID');
   if (spreadPercent !== '-' && !/^(0|[1-9]\d*)(\.\d+)?$/.test(spreadPercent)) {
     throw new Error('MARKET_WIRE_SNAPSHOT_spreadPercent_INVALID');
@@ -279,6 +283,7 @@ const validateRelayMarketSource = (value: unknown): RelayMarketSource => {
     'entityStateHash',
     'hubUpdatedAt',
     'snapshotUpdatedAt',
+    'minTradeSize',
     'tradeCount',
     'lastTradePrice',
   ], [], 'MARKET_WIRE_AGGREGATE_SOURCE_FIELDS_INVALID');
@@ -294,6 +299,9 @@ const validateRelayMarketSource = (value: unknown): RelayMarketSource => {
     && !/^0x[0-9a-f]{64}$/.test(requireString(source['entityStateHash'], 'MARKET_WIRE_AGGREGATE_SOURCE_HASH_INVALID'))
   ) throw new Error('MARKET_WIRE_AGGREGATE_SOURCE_HASH_INVALID');
   const tradeCount = Number(source['tradeCount']);
+  if (source['minTradeSize'] !== null) {
+    requireUnsignedDecimal(source['minTradeSize'], 'MARKET_WIRE_AGGREGATE_SOURCE_MIN_TRADE_INVALID', true);
+  }
   if (source['lastTradePrice'] === null) {
     if (tradeCount !== 0) throw new Error('MARKET_WIRE_AGGREGATE_SOURCE_LAST_TRADE_INVALID');
   } else {

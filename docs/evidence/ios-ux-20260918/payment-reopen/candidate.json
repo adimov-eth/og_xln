@@ -1,0 +1,42 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "frontend/ios/App/AppUITests/PaymentUITests.swift": "2d4ad06b17c0ab073b858aa3af41df3bb2ee845da425ed5c14076484add38ee0",
+    "frontend/ios/App/AppUITests/PaymentRecovery.swift": "1b5c30888903f97e21c34cc9f81537429f7b9dc5e1dbff425a80c2d2ca5cb6eb",
+    "frontend/ios/App/App.xcodeproj/project.pbxproj": "f5c62e1de68d61e5a2d851c98274010756abbe3881271bcb2fb5ce1cfb5a80ce",
+    "frontend/ios/App/App/WalletModel.swift": "4127a20bf0e639b7c48901358ef8232a5884c6937f5ffe75d56450c3a857d775",
+    "ui/src/native/brainvault.ts": "1946aac4e717ef037eec5df24d22f67038824ace8363900df1b0579636608641",
+    "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/App.debug.dylib": "f1f5566dc7daeb2e34ed58f2dae12d4d53352bae09583190326e062b685a377c"
+  },
+  "scope": "Payment test extended with actual app termination/relaunch, locked-screen check, remembered credentials, exact persisted balance/history and independent recipient credit. Product code unchanged.",
+  "device": "iPhone 17 Pro simulator",
+  "os": "26.5",
+  "locale": "en_US",
+  "appearance": "light",
+  "contentSize": "large",
+  "network": "real isolated local three-hub stand",
+  "passed": 1,
+  "total": 1,
+  "testSeconds": 117.716,
+  "brainvaultShards": 100,
+  "senderUSDC": "98.999998",
+  "recipientUSDC": "1.000001",
+  "confirmedSentRecords": 1,
+  "initialRun": {
+    "testSeconds": 118.341,
+    "passed": true,
+    "visualIssue": "Balance screenshot captured during unlock-sheet dismissal; test now waits for submit control to disappear."
+  },
+  "sourceGates": 39,
+  "sourceCheckSeconds": 31.269,
+  "screenshots": 9,
+  "video": "output/ios-ux-2026-09-18/payment-reopen/payment-reopen-demo.mp4",
+  "videoSeconds": 68.974315,
+  "videoSetupTrimSeconds": 52,
+  "limits": [
+    "Local persisted-data reopen only; not lost-device or fresh-install tower recovery",
+    "Payment requested via typed invoice, not physical camera",
+    "Public deployment/signing and intermittent Bun worker failure remain unresolved"
+  ]
+}

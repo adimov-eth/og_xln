@@ -51,7 +51,7 @@ test('faucet commits update the balance without remounting wallet sections', { t
     };
   });
   await page.getByTestId('home-faucet').click();
-  await expect(page.getByTestId('home-total')).toHaveText('$100.00', { timeout: 15_000 });
+  await expect(page.getByTestId('home-total')).toHaveText('100', { timeout: 15_000 });
   await expect(page.getByTestId('test-money-status')).toContainText('100 USDC received');
   await expect(page.getByTestId('token-net-USDC')).toHaveText('100.00');
   const samples = await observation;
@@ -61,8 +61,8 @@ test('faucet commits update the balance without remounting wallet sections', { t
   for (const state of samples.states) {
     const value = JSON.parse(state);
     expect(value).toMatchObject({ accountsMounted: true, activityMounted: true });
-    expect(['$0.00', '$100.00']).toContain(value.total);
+    expect(['0', '100']).toContain(value.total);
   }
-  expect(JSON.parse(samples.states.at(-1)!)).toMatchObject({ total: '$100.00' });
+  expect(JSON.parse(samples.states.at(-1)!)).toMatchObject({ total: '100' });
   expect(errors).toEqual([]);
 });

@@ -37,7 +37,8 @@ test('a funded wallet pays H3 twice without leaving held funds', { tag: '@functi
     await expect(page.getByTestId('receipt-kicker')).toHaveText('Paid', { timeout: 15_000 });
     await page.getByTestId('receipt-done').click();
     await page.getByTestId('nav-home').locator('visible=true').first().click();
-    await expect(page.getByTestId('home-total')).toContainText(i === 0 ? '$75.00' : '$50.00');
+    await expect(page.getByTestId('home-balance-asset')).toHaveValue('1');
+    await expect(page.getByTestId('home-total')).toHaveText(i === 0 ? '75' : '50');
   }
   await expect
     .poll(() =>

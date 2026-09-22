@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { importJurisdiction } from './hub/node/import-jurisdiction';
 import { configureCryptoPoolEntry } from '../protocol/crypto/crypto-pool';
 import { ethers, getIndexedAccountPath, HDNodeWallet, Mnemonic } from 'ethers';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -112,7 +113,6 @@ import {
   getEntityJAdapter,
   registerRuntimeFrameCommitCallback,
   validateRuntimeInputAdmission,
-  waitForRuntimeWorkDrained,
   buildRuntimeRecoveryBundle,
 } from '../runtime.ts';
 import { withRuntimeCommittedRead } from '../runtime/frame/lifecycle/writer-lock';
@@ -147,7 +147,6 @@ import {
   waitUntil,
 } from './mesh/mesh-common';
 import {
-  requireJurisdictionBlockTimeMs,
   resetMeshJurisdictionsCache,
   resolveMeshJurisdictionConfig,
   resolveMeshJurisdictionRpcBindings,
@@ -888,34 +887,6 @@ const getImportedJurisdictionContracts = (
     ...(depositoryAddress ? { depositoryAddress } : {}),
     ...(entityProviderAddress ? { entityProviderAddress } : {}),
   };
-};
-
-const importJurisdiction = async (
-  env: RuntimeReplica,
-  jurisdiction: JurisdictionConfig,
-): Promise<void> => {
-  enqueueRuntimeInput(env, {
-    runtimeTxs: [{
-      type: 'importJ',
-      data: {
-        name: jurisdiction.name,
-        chainId: jurisdiction.chainId,
-        ticker: 'XLN',
-        rpcs: [jurisdiction.rpc],
-        entityProviderDeploymentBlock:
-          jurisdiction.entityProviderDeploymentBlock,
-        blockTimeMs: requireJurisdictionBlockTimeMs(jurisdiction),
-        ...(jurisdiction.contracts
-          ? { contracts: jurisdiction.contracts }
-          : {}),
-      },
-    }],
-    entityInputs: [],
-  });
-  const drained = await waitForRuntimeWorkDrained(env, 10_000, 0);
-  if (!drained || !env.state.jReplicas.has(jurisdiction.name)) {
-    throw new Error(`HUB_JURISDICTION_IMPORT_COMMIT_MISSING:${jurisdiction.name}`);
-  }
 };
 
 type HubBootstrapPosition = NonNullable<

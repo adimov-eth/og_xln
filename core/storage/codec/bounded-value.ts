@@ -104,12 +104,13 @@ export const prepareBoundedStorageValueRows = (
   const ownerValue = encodeBuffer(manifest);
   assertPhysicalBudget(ownerValue, 'manifest');
   const rows: BoundedStorageRow[] = [{ key: ownerKey, value: ownerValue }];
-  // Chunks are raw slices of the already-encoded value: the manifest binds
-  // length, count and digest, so wrapping each slice in its own MessagePack
-  // record only copied every multi-megabyte frame one more time.
+  // IndexedDB clones a view's entire backing buffer. Each raw chunk must own
+  // its bytes or every 9 KB row stores the entire frame. The manifest still
+  // binds the same length, count and digest; no persisted byte format changes.
   for (let index = 0; index < chunkCount; index += 1) {
     const start = index * BOUNDED_VALUE_CHUNK_PAYLOAD_BYTES;
-    const value = encodedValue.subarray(start, start + BOUNDED_VALUE_CHUNK_PAYLOAD_BYTES);
+    const value = Buffer.alloc(Math.min(BOUNDED_VALUE_CHUNK_PAYLOAD_BYTES, encodedValue.byteLength - start));
+    encodedValue.copy(value, 0, start, start + value.byteLength);
     rows.push({ key: keyBoundedValueChunk(ownerKey, index), value });
   }
   return rows;
@@ -132,7 +133,10 @@ const readManifestValue = async (
   ownerKey: Buffer,
   manifest: BoundedValueManifest,
 ): Promise<Buffer> => {
-  const chunks = await Promise.all(Array.from({ length: manifest.chunkCount }, async (_, index) => {
+  const encoded = Buffer.alloc(manifest.byteLength);
+  // Bound reads to one chunk: existing IndexedDB rows can retain a full-frame
+  // backing buffer. Parallel reads retain one such allocation per continuation.
+  for (let index = 0; index < manifest.chunkCount; index += 1) {
     const chunkRaw = await readRawOrNull(db, keyBoundedValueChunk(ownerKey, index));
     if (!chunkRaw) throw new Error(`STORAGE_BOUNDED_CHUNK_MISSING:${ownerKey.toString('hex')}:${index}`);
     const remaining = manifest.byteLength - index * BOUNDED_VALUE_CHUNK_PAYLOAD_BYTES;
@@ -140,9 +144,8 @@ const readManifestValue = async (
     if (chunkRaw.byteLength !== expectedBytes) {
       throw new Error(`STORAGE_BOUNDED_CHUNK_BYTES_INVALID:${index}:${chunkRaw.byteLength}:${expectedBytes}`);
     }
-    return chunkRaw;
-  }));
-  const encoded = Buffer.concat(chunks, manifest.byteLength);
+    chunkRaw.copy(encoded, index * BOUNDED_VALUE_CHUNK_PAYLOAD_BYTES);
+  }
   const digest = computeIntegrityDigest(encoded).toLowerCase();
   if (digest !== manifest.digest) {
     throw new Error(

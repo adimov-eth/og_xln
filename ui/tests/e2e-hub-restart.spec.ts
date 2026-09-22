@@ -35,7 +35,7 @@ test('payments survive recipient hub process replacement without duplicate debit
     return payment;
   };
   const first = await pay();
-  await expect(page.getByTestId('home-total')).toHaveText('$75.00');
+  await expect(page.getByTestId('home-total')).toHaveText('75');
   const paid = await readWalletCheckpoint(page);
   const before = await health();
   const child = before.process?.children?.find(row => row.role === 'hub' && row.name === 'H2');
@@ -55,7 +55,7 @@ test('payments survive recipient hub process replacement without duplicate debit
   expect(recovered.accounts).toEqual(paid.accounts);
   const second = await pay();
   expect(second.hashlock).not.toBe(first.hashlock);
-  await expect(page.getByTestId('home-total')).toHaveText('$50.00');
+  await expect(page.getByTestId('home-total')).toHaveText('50');
   const final = await readWalletCheckpoint(page);
   expect(final.accounts.every(account => !account.pending && account.mempool === 0)).toBe(true);
   await test.info().attach('hub-restart-payments', {

@@ -1,0 +1,262 @@
+{
+  "chainId": 2414086651,
+  "claimHashes": [
+    "0xe15e04e8b1903dad02a4db14c358598dff01c23e856da7802d1c3e597af8c43f"
+  ],
+  "evidence": [
+    {
+      "activationHeight": 10,
+      "blockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+      "boardHash": "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea",
+      "chainId": 2414086651,
+      "confirmationDepth": 0,
+      "data": "0x00000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001",
+      "emitter": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+      "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "finality": "tron-solidified",
+      "logIndex": 3,
+      "observedHeadHeight": 26,
+      "observedThroughHeight": 25,
+      "observedTipBlockHash": "0x00000000000000196c034e2a9937ec63310ea27a875cd5387877822e330081e2",
+      "rawLogDigest": "0x30edb807bda158ee22d84eb9bf76dda5832bde3d9ae96b2f897a7ae8a55d595b",
+      "receiptKind": "tron-rpc-attested",
+      "receiptLogIndex": 3,
+      "rpcEndpointHash": "0xa704d6936120aaab71551e75f1487fc125406bd0911182baeaa8ceb29426e9a6",
+      "source": "FoundationBootstrapped",
+      "stackKey": "0xd85c80b5bfcc71d11330d600ab2f4a3d180680aac065154f06438c634e4a245b",
+      "topics": [
+        "0xb0887eed9a1aa3118afaf26b345c629ec7b797fb3d121bbd5dd62580b361c9bd",
+        "0x0000000000000000000000007e5f4552091a69125d5dfcb7b8c2659029395bdf",
+        "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea"
+      ],
+      "transactionHash": "0x0fd7de8bda5a242c82c66a56d74ac789f92d1c1f8537dffd35559f6b64274fcd",
+      "transactionIndex": 0,
+      "version": 1,
+      "witnessRuntimeId": "0xc36ea41949c3238c4cd2ba5c51db37d089d1d0f2",
+      "witnessSignature": "0x7eeadf3b3d98d77b11450102b1c4e492bc10883fba08b3b9b7c2b939c3b92cdc6b869dea1b8fd2cf70a693ffa1069056c3ca3270c6694a94e0d35f2b035029e201"
+    }
+  ],
+  "evidenceHashes": [
+    "0x153f6d1fa99dac0399496e2393939162f7e637988f4767ee04a9249f48acf9aa"
+  ],
+  "frameHash": "0x98c520506272e8c24522a18787f2eab5ce79511e967eafc4f784e1d277255e60",
+  "frames": [
+    {
+      "canonicalEntityHashes": [],
+      "canonicalStateHash": "0xf427c8f05a4d69c1aecc5294405ce036c3cf873ed46edf434a1cb008f3195611",
+      "frameHash": "0xea0319a51b995931065fb3d2cf1b7309be21ed1ce8ca6bf977789ddaa10b76ba",
+      "height": 1,
+      "materializedState": true,
+      "postStateHash": "0xa8dfe3fb38964b62bc0f0514ca4267de769a4d59ec4202d07420ca6c3c98915c",
+      "prevFrameHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "replicaMetaDigest": "0x4d037f1c6ee2ececc418e17ffeef18409a278a262714575cf5ae0ca852fce912",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blockTimeMs": 3000,
+              "chainId": 2414086651,
+              "contracts": {
+                "account": "0xae5bb4ad4f31843fd50b75f3c48b01ff4cb852c1",
+                "deltaTransformer": "0xd70bd6f2688d5eca823275835eda94d0ea6a53e2",
+                "depository": "0x4cf93900621b8929de88ed82053190751ce6dc48",
+                "entityProvider": "0x8e34c766d3f10abd417074b7814354c45ab84839"
+              },
+              "entityProviderDeploymentBlock": 10,
+              "name": "Native TVM",
+              "rpcs": [
+                "http://127.0.0.1:18545/jsonrpc"
+              ],
+              "ticker": "TRX"
+            },
+            "type": "importJ"
+          }
+        ]
+      },
+      "runtimeMachineRoot": {
+        "leafCount": 24,
+        "rootHash": "0x31829048f08b75b18787e99b084b5280f5237276e75e6fb52b00bebb6e03a9b7"
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789697730306,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": []
+    },
+    {
+      "frameHash": "0xe0f6f0567b81fba30d67b32a51cd6df2fd21b849d5b1bca09f632995f94e8bb1",
+      "height": 2,
+      "materializedState": false,
+      "postStateHash": "0x4a2ff5d1ae50206cbc87d4efd8033f754c2e62ba31afdf8e366622c10e4207bd",
+      "prevFrameHash": "0xea0319a51b995931065fb3d2cf1b7309be21ed1ce8ca6bf977789ddaa10b76ba",
+      "replicaMetaDigest": "0x4d037f1c6ee2ececc418e17ffeef18409a278a262714575cf5ae0ca852fce912",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blockNumber": "9",
+              "blockTimeMs": 3000,
+              "chainId": 2414086651,
+              "contracts": {
+                "account": "0xae5bb4ad4f31843fd50b75f3c48b01ff4cb852c1",
+                "deltaTransformer": "0xd70bd6f2688d5eca823275835eda94d0ea6a53e2",
+                "depository": "0x4cf93900621b8929de88ed82053190751ce6dc48",
+                "entityProvider": "0x8e34c766d3f10abd417074b7814354c45ab84839"
+              },
+              "entityProviderDeploymentBlock": 10,
+              "importId": "0x427204e476572d81293f063f6c628d04bfcd30493258f3d5bdc8f3e2225a24b8",
+              "name": "Native TVM",
+              "requestHash": "0x427204e476572d81293f063f6c628d04bfcd30493258f3d5bdc8f3e2225a24b8",
+              "rpcs": [
+                "http://127.0.0.1:18545/jsonrpc"
+              ],
+              "stateRoot": null,
+              "ticker": "TRX",
+              "tokenRegistry": [
+                {
+                  "address": "0x18f353242d8e3f6a358fed080a877ed8b3353f2d",
+                  "decimals": 6,
+                  "externalTokenId": {
+                    "__xlnType": "BigInt",
+                    "value": "0"
+                  },
+                  "name": "XLN Local Test USD",
+                  "symbol": "XLNUSD",
+                  "tokenId": 1,
+                  "tokenType": 0
+                }
+              ],
+              "watcherConfirmationDepth": 0,
+              "watcherReceiptCommitment": "tron-rpc-attested"
+            },
+            "type": "completeImportJ"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789697730476,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": []
+    },
+    {
+      "frameHash": "0xbf26370375aa1b78408a2579e9ac16f2add3f01e1acc3c1b7e0ac36e8a7dc147",
+      "height": 3,
+      "materializedState": false,
+      "postStateHash": "0xccd0e63677f342195c4d1e62d3334832e84ba524204a48f7114ba1394a90384f",
+      "prevFrameHash": "0xe0f6f0567b81fba30d67b32a51cd6df2fd21b849d5b1bca09f632995f94e8bb1",
+      "replicaMetaDigest": "0x4d037f1c6ee2ececc418e17ffeef18409a278a262714575cf5ae0ca852fce912",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "activationHeight": 10,
+              "blockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+              "boardHash": "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea",
+              "chainId": 2414086651,
+              "confirmationDepth": 0,
+              "data": "0x00000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001",
+              "emitter": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "finality": "tron-solidified",
+              "logIndex": 3,
+              "observedHeadHeight": 26,
+              "observedThroughHeight": 25,
+              "observedTipBlockHash": "0x00000000000000196c034e2a9937ec63310ea27a875cd5387877822e330081e2",
+              "rawLogDigest": "0x30edb807bda158ee22d84eb9bf76dda5832bde3d9ae96b2f897a7ae8a55d595b",
+              "receiptKind": "tron-rpc-attested",
+              "receiptLogIndex": 3,
+              "rpcEndpointHash": "0xa704d6936120aaab71551e75f1487fc125406bd0911182baeaa8ceb29426e9a6",
+              "source": "FoundationBootstrapped",
+              "stackKey": "0xd85c80b5bfcc71d11330d600ab2f4a3d180680aac065154f06438c634e4a245b",
+              "topics": [
+                "0xb0887eed9a1aa3118afaf26b345c629ec7b797fb3d121bbd5dd62580b361c9bd",
+                "0x0000000000000000000000007e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea"
+              ],
+              "transactionHash": "0x0fd7de8bda5a242c82c66a56d74ac789f92d1c1f8537dffd35559f6b64274fcd",
+              "transactionIndex": 0,
+              "version": 1,
+              "witnessRuntimeId": "0xc36ea41949c3238c4cd2ba5c51db37d089d1d0f2",
+              "witnessSignature": "0x7eeadf3b3d98d77b11450102b1c4e492bc10883fba08b3b9b7c2b939c3b92cdc6b869dea1b8fd2cf70a693ffa1069056c3ca3270c6694a94e0d35f2b035029e201"
+            },
+            "type": "recordAuthenticatedJAuthority"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789697730476,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": []
+    },
+    {
+      "frameHash": "0x98c520506272e8c24522a18787f2eab5ce79511e967eafc4f784e1d277255e60",
+      "height": 4,
+      "materializedState": false,
+      "postStateHash": "0xc76c90bafced7781d35729da9ca524b0f635fe179407b3c8e781a3a93eb65927",
+      "prevFrameHash": "0xbf26370375aa1b78408a2579e9ac16f2add3f01e1acc3c1b7e0ac36e8a7dc147",
+      "replicaMetaDigest": "0x4d037f1c6ee2ececc418e17ffeef18409a278a262714575cf5ae0ca852fce912",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "activationHeight": 10,
+              "blockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+              "boardHash": "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea",
+              "chainId": 2414086651,
+              "confirmationDepth": 0,
+              "data": "0x00000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001",
+              "emitter": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "finality": "tron-solidified",
+              "logIndex": 3,
+              "observedHeadHeight": 26,
+              "observedThroughHeight": 25,
+              "observedTipBlockHash": "0x00000000000000196c034e2a9937ec63310ea27a875cd5387877822e330081e2",
+              "rawLogDigest": "0x30edb807bda158ee22d84eb9bf76dda5832bde3d9ae96b2f897a7ae8a55d595b",
+              "receiptKind": "tron-rpc-attested",
+              "receiptLogIndex": 3,
+              "rpcEndpointHash": "0xa704d6936120aaab71551e75f1487fc125406bd0911182baeaa8ceb29426e9a6",
+              "source": "FoundationBootstrapped",
+              "stackKey": "0xd85c80b5bfcc71d11330d600ab2f4a3d180680aac065154f06438c634e4a245b",
+              "topics": [
+                "0xb0887eed9a1aa3118afaf26b345c629ec7b797fb3d121bbd5dd62580b361c9bd",
+                "0x0000000000000000000000007e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea"
+              ],
+              "transactionHash": "0x0fd7de8bda5a242c82c66a56d74ac789f92d1c1f8537dffd35559f6b64274fcd",
+              "transactionIndex": 0,
+              "version": 1,
+              "witnessRuntimeId": "0xc36ea41949c3238c4cd2ba5c51db37d089d1d0f2",
+              "witnessSignature": "0x7eeadf3b3d98d77b11450102b1c4e492bc10883fba08b3b9b7c2b939c3b92cdc6b869dea1b8fd2cf70a693ffa1069056c3ca3270c6694a94e0d35f2b035029e201"
+            },
+            "type": "recordAuthenticatedJAuthority"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789697730476,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": []
+    }
+  ],
+  "kind": "NATIVE_RUNTIME_AUTHORITY",
+  "mode": "tron",
+  "observedThroughHeight": 25,
+  "postStateHash": "0xc76c90bafced7781d35729da9ca524b0f635fe179407b3c8e781a3a93eb65927",
+  "restore": false,
+  "resumeImport": true,
+  "runtimeHeight": 4,
+  "runtimeId": "0xc36ea41949c3238c4cd2ba5c51db37d089d1d0f2",
+  "scope": "Real native RPC-attested Runtime authority and WAL; no Entity financial or cross-J claim"
+}

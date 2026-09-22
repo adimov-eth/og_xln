@@ -32,6 +32,8 @@ export type MarketSnapshotPayload = {
   displayDecimals: number;
   priceScale: string;
   bucketWidthTicks: string | null;
+  /** Hub admission minimum in raw quote units; null means no orderbook policy. */
+  minTradeSize: string | null;
   bids: MarketSideLevel[];
   asks: MarketSideLevel[];
   spread: string | null;
@@ -116,6 +118,7 @@ export const buildMarketSnapshotForReplica = (
     displayDecimals: 4,
     priceScale: ORDERBOOK_PRICE_SCALE.toString(),
     bucketWidthTicks: book ? book.params.bucketWidthTicks.toString() : null,
+    minTradeSize: replica?.state.orderbookExt?.hubProfile.minTradeSize.toString() ?? null,
     bids,
     asks,
     spread: spreadTicks?.toString() ?? null,

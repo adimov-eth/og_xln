@@ -669,14 +669,23 @@ pub fn parse_root_hex(value: &str) -> Option<[u8; 32]> {
         return None;
     }
     let mut out = [0_u8; 32];
-    for (index, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&clean[index * 2..index * 2 + 2], 16).ok()?;
-    }
+    hex::decode_to_slice(clean, &mut out).ok()?;
     Some(out)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn untrusted_hex_rejects_unicode_and_preserves_valid_words() {
+        for prefix in ["€", "0€", "+1", "gg"] {
+            assert!(
+                super::parse_root_hex(&format!("0x{prefix}{}", "0".repeat(64 - prefix.len())))
+                    .is_none()
+            );
+        }
+        assert_eq!(super::parse_root_hex(&"aB".repeat(32)), Some([0xab; 32]));
+    }
+
     use num_bigint::BigInt;
 
     use super::*;

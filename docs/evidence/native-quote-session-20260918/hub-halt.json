@@ -1,0 +1,10 @@
+{
+  "child": "H1",
+  "fatal": {
+    "height": 179564,
+    "message": "DIRECT_OUTPUT_REJECTED_BY_PEER:{\"direction\":\"outbound\",\"error\":\"P2P_INBOUND_ENTITY_INPUT_REJECTED:INBOUND_ENTITY_RUNTIME_QUIESCING: entity=0x4b50995ced015c4686436cc6efcb55e6a8db3a9b81b0955e4be6c513ade69eb7 signer=0xbd25c5818d45f20c849b222c46736192a4c6da94 txTypes=accountInput\",\"messageId\":\"msg_3250\",\"peerRuntimeId\":\"0xbd25c5818d45f20c849b222c46736192a4c6da94\"}",
+    "stack": "Error: DIRECT_OUTPUT_REJECTED_BY_PEER:{\"direction\":\"outbound\",\"error\":\"P2P_INBOUND_ENTITY_INPUT_REJECTED:INBOUND_ENTITY_RUNTIME_QUIESCING: entity=0x4b50995ced015c4686436cc6efcb55e6a8db3a9b81b0955e4be6c513ade69eb7 signer=0xbd25c5818d45f20c849b222c46736192a4c6da94 txTypes=accountInput\",\"messageId\":\"msg_3250\",\"peerRuntimeId\":\"0xbd25c5818d45f20c849b222c46736192a4c6da94\"}\n    at applyTransportPeerFailurePolicy (/Users/zigota/xln/core/network/p2p/transport-peer-failure-policy.ts:28:42)\n    at handleDirectDeliveryFailure (/Users/zigota/xln/core/orchestrator/hub/hub-runtime-transport.ts:137:3)\n    at handlePeerDeliveryFailure (/Users/zigota/xln/core/network/p2p/direct-runtime-bun.ts:942:19)\n    at <anonymous> (/Users/zigota/xln/core/network/p2p/direct-runtime-bun.ts:1017:7)\n    at message (/Users/zigota/xln/core/network/p2p/direct-runtime-bun.ts:1110:16)",
+    "timestamp": 1789691769225
+  },
+  "receiptPath": "/Users/zigota/xln/db/dev/rdb/mesh/.control-plane/diagnostics/20260918T003700727Z-H1-4060ccec-bd41-4314-bd69-cfebefb06f53.json"
+}

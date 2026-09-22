@@ -1,0 +1,28 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "frontend/ios/App/App/WalletActionSheet.swift": "b2b4063353cc12a8bfb0ff86f2d0e3e4b621b12dbe3c029a1747ff8908a90b84",
+    "frontend/ios/App/App/WalletActivity.swift": "f780e05684b1339e5b65d0eb800f50bac2828f4623ef19564515cc2c453d8091",
+    "frontend/ios/App/App/WalletQuote.swift": "1c2facaf5aa2fb53fa84467c5cabbcbd4ae78312435a6eb5ad9e96c5741374bc",
+    "frontend/ios/App/AppUITests/PaymentUITests.swift": "c2517b97668d26e5bd19b36bc8037b7722376e55fbf8f4ed4ce4089615d738c9",
+    "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/App.debug.dylib": "361383593193d68665e4d63df62bcbb3d8ae5381b73f3dc117acb214b27e7758"
+  },
+  "device": "iPhone 17 Pro simulator",
+  "os": "26.5",
+  "locale": "en",
+  "appearance": "light",
+  "contentSize": "accessibility-extra-extra-extra-large",
+  "network": "real isolated local stand",
+  "test": {
+    "passed": 1,
+    "seconds": 130.325
+  },
+  "sourceGates": 39,
+  "data": "/var/folders/zq/fvt20j1s0fx3v9c8l41czctr0000gn/T/xln-native-session-kLTDyZ",
+  "limitations": [
+    "No physical camera, public payment or default BrainVault latency acceptance",
+    "Intermittent worker crash unresolved",
+    "No full VoiceOver task evaluation"
+  ]
+}

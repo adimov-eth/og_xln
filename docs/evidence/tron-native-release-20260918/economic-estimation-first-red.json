@@ -1,0 +1,21 @@
+{
+  "before": {
+    "amount": {
+      "__xlnType": "BigInt",
+      "value": "1000000"
+    },
+    "externalBefore": {
+      "__xlnType": "BigInt",
+      "value": "1000000000000"
+    },
+    "nonceBefore": {
+      "__xlnType": "BigInt",
+      "value": "0"
+    },
+    "reserveBefore": {
+      "__xlnType": "BigInt",
+      "value": "0"
+    }
+  },
+  "stage": "deposit-submitting"
+}

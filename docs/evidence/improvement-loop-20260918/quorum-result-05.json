@@ -1,0 +1,23 @@
+{
+  "id": "method-review-20260918-05",
+  "completed": true,
+  "error": null,
+  "budget": {
+    "id": "owner-2026-09-06t183142z",
+    "limitMicroUsd": 10000000,
+    "authorizedAt": "2026-09-06T18:31:42Z",
+    "expiresAt": null,
+    "windowMs": 3600000,
+    "defaultWaveTargetMicroUsd": 1000000,
+    "scope": "quorum-managed-dispatch-only",
+    "externalSpendCoverage": "unknown",
+    "knownMicroUsd": 0,
+    "reservedMicroUsd": 2500000,
+    "remainingMicroUsd": 7500000,
+    "attempts": 10,
+    "asOf": "2026-09-18T07:34:37.253Z",
+    "windowStartsAt": "2026-09-18T06:34:37.253Z"
+  },
+  "response": "**Next action:** Run one bounded default-settings native onboarding measurement (production Swift factor 3 → 100 shards, TS derivation as shipped), wall limit 180 s, UI test limit 150 s. Report the actual timeout honestly; do not tune defaults.\n\n**Why this over Russian swap:** the default-onboarding path is the only untested default-on gap that every new user hits; Russian swap is coverage of an already-working flow.\n\n**Counterexample:** if the run completes under 180 s with correct addresses, the \"default latency risk\" concern weakens and the next action becomes Russian swap or VoiceOver. If it times out at, say, 210 s on device, the gap is confirmed real and needs a design fix (progress UI/expectation-setting), not a lowered work factor.\n\n**Stop rule:** stop after one run (success or timeout), record numbers, do not re-run with adjusted settings or repeat polling of unchanged blockers. Uncertainty: simulator camera/signing gate means custody steps remain unmeasured on-device.",
+  "reasoningCharacters": 121
+}

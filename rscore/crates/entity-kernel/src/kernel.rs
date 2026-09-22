@@ -104,15 +104,12 @@ fn initial_hub_policy_txs(
     token_ids
         .into_iter()
         .map(|token_id| {
-            let decimals = match token_id {
-                1 | 3 | 4 => 6,
-                2 | 5 => 18,
-                _ => {
-                    return Err(EntityKernelError::HubRebalanceConfigInvalid {
+            let decimals =
+                crate::canonical_token_decimals(u32::from(token_id)).ok_or_else(|| {
+                    EntityKernelError::HubRebalanceConfigInvalid {
                         detail: format!("TOKEN_METADATA_UNAVAILABLE:{token_id}"),
-                    });
-                }
-            };
+                    }
+                })?;
             Ok(AccountTx::RebalancePolicy {
                 token_id: u32::from(token_id),
                 policy_version,

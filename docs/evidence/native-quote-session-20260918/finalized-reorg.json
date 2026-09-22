@@ -1,0 +1,16 @@
+[
+  {
+    "chainId": 31337,
+    "error": {
+      "message": "J_HISTORY_FINALIZED_REORG:90211:chain=31337:owners=0x23d8a399/Testnet/31337:expected=0xc7e63ffdac4034a30f2ee9e20d51ea1a10ab19916f0fedca012f4f43a95a8c82:canonical=0xf081e3fab9f1fd9fb00f866e17b8357c482484e8d92c60101c2d8e87892fab37",
+      "name": "Error"
+    },
+    "event": "j_watch_error",
+    "fromBlock": null,
+    "lastSyncedBlock": 90210,
+    "message": "J_HISTORY_FINALIZED_REORG:90211:chain=31337:owners=0x23d8a399/Testnet/31337:expected=0xc7e63ffdac4034a30f2ee9e20d51ea1a10ab19916f0fedca012f4f43a95a8c82:canonical=0xf081e3fab9f1fd9fb00f866e17b8357c482484e8d92c60101c2d8e87892fab37",
+    "rpcUrl": "http://localhost:8545/",
+    "step": "verifyCanonicalTip:90210",
+    "toBlock": null
+  }
+]

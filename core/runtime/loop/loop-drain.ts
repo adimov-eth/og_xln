@@ -3,6 +3,7 @@ import { inferRuntimeLifecyclePhase } from '../replica/lifecycle.ts';
 import { requestRuntimeLoopWake } from '../mempool/input-queue.ts';
 import { getRemainingRuntimeFrameDelayMs } from './loop-work.ts';
 import { ensureRuntimeInfrastructure } from '../envelope/replica-envelope.ts';
+import { hasQueuedOrPendingAccountWork } from '../../entity/consensus/account/work-index';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -42,6 +43,13 @@ const waitForProcessingCycle = async (env: RuntimeReplica, remaining: number): P
 };
 
 const hasRuntimeDrainBlocker = (env: RuntimeReplica): boolean => {
+  // A proposal awaiting its peer has no local wake work, but is not drained.
+  // Otherwise the quiet window can expire before the ACK arrives and a wallet
+  // lock closes the only transport carrying that accepted financial work.
+  for (const replica of env.state.eReplicas.values()) {
+    if (replica.mempool.length > 0 || replica.proposal || replica.lockedFrame ||
+      hasQueuedOrPendingAccountWork(replica.state)) return true;
+  }
   const state = env.infrastructure;
   return Boolean(
     (state?.inFlightEntityInputs ?? 0) > 0 ||

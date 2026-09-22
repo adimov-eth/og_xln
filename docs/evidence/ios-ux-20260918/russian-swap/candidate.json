@@ -1,0 +1,46 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "frontend/ios/App/AppUITests/PaymentUITests.swift": "7118c45e5081b8b537187531b79ac27157c22e22c7c81f65184adf7c08cecf71",
+    "scripts/native/ios-ui-session.ts": "0ec96967233ba19dd2d690452cc6be19a1adc58fe5094311dd5559a2226ab928",
+    "scripts/native/run-session.ts": "6a470ff57145893f3d8e81d212ab107518047d60182475027a2df8b0299f6e67",
+    "frontend/ios/App/App/WalletBrainvault.swift": "a09b1f71ea1e7b73bd807b7db680d3e819920ed8484a0e8756f996f410d55312",
+    "frontend/ios/App/App/WalletActivity.swift": "d1b5c3776c5d93234ee8864a90656a5d4a938787b67c3187a4105b98264140d8",
+    "frontend/ios/App/App/WalletActionSheet.swift": "b2b4063353cc12a8bfb0ff86f2d0e3e4b621b12dbe3c029a1747ff8908a90b84",
+    "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/App.debug.dylib": "f1f5566dc7daeb2e34ed58f2dae12d4d53352bae09583190326e062b685a377c"
+  },
+  "scope": "Russian native swap using shipped default BrainVault; test-only localization and removal of custom recovery settings.",
+  "device": "iPhone 17 Pro simulator",
+  "os": "26.5",
+  "locale": "ru_RU",
+  "appearance": "light",
+  "contentSize": "large",
+  "network": "real isolated local stand",
+  "passed": 1,
+  "total": 1,
+  "testSeconds": 91.467,
+  "brainvault": {
+    "factor": 3,
+    "shards": 100,
+    "submitHelperToReadySeconds": 11.014003958349349,
+    "samples": 1
+  },
+  "receipt": {
+    "debitUSDC": "24.999999",
+    "grossWETH": "0.009998",
+    "feeWETH": "0.0000009998",
+    "netWETH": "0.0099970002",
+    "remainingUSDC": "75.000001"
+  },
+  "sourceGates": 39,
+  "sourceCheckSeconds": 32.421,
+  "screenshots": 6,
+  "video": "output/ios-ux-2026-09-18/russian-swap/swap-demo.mp4",
+  "videoSetupTrimSeconds": 52,
+  "limits": [
+    "No public-testnet, physical-camera or physical-device acceptance",
+    "BrainVault timing includes XCTest pre-tap waits, network and polling",
+    "Existing intermittent Bun worker crash remains unresolved"
+  ]
+}

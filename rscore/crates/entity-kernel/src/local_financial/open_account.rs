@@ -38,11 +38,8 @@ fn hub_policy_tx(config: &CanonicalValue, token_id: u32) -> Result<AccountTx, En
         Some(CanonicalValue::BigInt(value)) => value.clone(),
         _ => return Err(invalid("HUB_POLICY_LIQUIDITY_FEE")),
     };
-    let decimals = match token_id {
-        1 | 3 => 6_u32,
-        2 => 18_u32,
-        _ => return Err(invalid(format!("TOKEN_DECIMALS_UNKNOWN:{token_id}"))),
-    };
+    let decimals = crate::canonical_token_decimals(token_id)
+        .ok_or_else(|| invalid(format!("TOKEN_DECIMALS_UNKNOWN:{token_id}")))?;
     Ok(AccountTx::RebalancePolicy {
         token_id,
         policy_version,
@@ -207,6 +204,35 @@ mod tests {
             ("hardLimit".into(), CanonicalValue::BigInt(10_000.into())),
             ("maxAcceptableFee".into(), CanonicalValue::BigInt(15.into())),
         ])
+    }
+
+    #[test]
+    fn hub_open_account_supports_all_canonical_token_decimals() {
+        let config = CanonicalValue::Object(vec![
+            (
+                "policyVersion".into(),
+                CanonicalValue::Number(xln_rscore_protocol::CanonicalNumber::from_u32(1)),
+            ),
+            (
+                "rebalanceLiquidityFeeBps".into(),
+                CanonicalValue::BigInt(0.into()),
+            ),
+        ]);
+        for (token, expected_fee) in [
+            (1, 100_000_u64),
+            (2, 100_000_000_000_000_000),
+            (3, 100_000),
+            (4, 100_000),
+            (5, 100_000_000_000_000_000),
+        ] {
+            let AccountTx::RebalancePolicy { base_fee, .. } =
+                hub_policy_tx(&config, token).unwrap()
+            else {
+                panic!("rebalance policy");
+            };
+            assert_eq!(base_fee, BigInt::from(expected_fee));
+        }
+        assert!(hub_policy_tx(&config, 6).is_err());
     }
 
     #[test]

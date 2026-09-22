@@ -1,0 +1,69 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "ui/src/native/evidence.ts": "e4efb70ba62538b8eae94a3acbc3a37109f40d39ebe56d74ee51cea31a561417",
+    "scripts/native/tests/payments/recovery-recording.js": "1f62badf4d2f5bedd7513a67c3d9cba2bc01d1d3ce37462cdad2b0ff491deb13"
+  },
+  "scope": "Real local hubs, native WebKit commands, two fresh-storage archive imports with new payment and swap between them. Existing generated test wallet only; no mocks or copied source database.",
+  "result": {
+    "verifiedFrames": 19,
+    "baseHeight": 1,
+    "targetHeight": 20,
+    "finalized": [
+      {
+        "height": 20,
+        "hashlock": "0xfa122e3d53b37df1e16cf629dd26add028469cdfa4ceb0c42689abd7d7ca20d9"
+      }
+    ],
+    "postRecovery": {
+      "newPayment": true,
+      "swap": true,
+      "reopen": true,
+      "swapArchiveFreshRestore": true,
+      "paymentReceipts": 2,
+      "swapExecutions": 1,
+      "usdc": "73000001",
+      "weth": "9997000200000000",
+      "gave": "24999999",
+      "received": "9998000000000000",
+      "fee": "999800000000",
+      "offerId": "swap-mu6ugj77-c-1kxl9reeehpga"
+    },
+    "senderBalance": "99000000",
+    "atomicImportAndReopen": true,
+    "towerTransfer": true,
+    "restoredHeight": 21,
+    "scope": "Real local payment; tower restore, new native payment and swap, exact balances and receipts after reopening"
+  },
+  "checks": {
+    "passed": 4,
+    "total": 4,
+    "criteria": [
+      "New payment after tower restoration",
+      "New swap after restoration",
+      "Exact balances and receipts after ordinary reopen",
+      "Fresh tower restoration of both payments and filled swap"
+    ],
+    "sourceGates": 39,
+    "sourceCheckSeconds": 31.156,
+    "uiTypes": true,
+    "iosTestBuild": true,
+    "localHealth": true,
+    "standFree": true,
+    "standWallMs": [
+      28999,
+      35300,
+      36195
+    ]
+  },
+  "fix": "Native acceptance evidence export now uses canonical retained-history boundaries and reports partial availability; missing frames no longer cause an invalid full-history scan.",
+  "limits": [
+    "One sample of each new boundary, not full financial or UX release acceptance.",
+    "Native WebKit commands; no new SwiftUI UI recording this block.",
+    "Real local test network, not public testnet or physical iPhone camera.",
+    "Signing status at 10:57 UTC: zero valid identities.",
+    "Backup quota rejection, OS power-loss and retry after interrupted empty-target import not established by these results."
+  ],
+  "next": "Verify backup quota rejection preserves last complete archive and improve interrupted-import retry without replacing existing wallet data."
+}

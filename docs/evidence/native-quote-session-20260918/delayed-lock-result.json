@@ -1,0 +1,141 @@
+{
+  "scope": "Local Anvil three-hub stand, actual H1 process paused with SIGSTOP/SIGCONT, production WebKit/Swift socket transport",
+  "before": {
+    "pauseMs": 1500,
+    "lockedAfterMs": 286,
+    "error": "LOCK_RETURNED_BEFORE_PEER_REPLY",
+    "log": "delayed-lock-before.log"
+  },
+  "after": {
+    "result": {
+      "passed": 3,
+      "lockedImmediately": true,
+      "pendingAtLock": true,
+      "atLock": {
+        "processing": true,
+        "queuedInputs": 1,
+        "pendingOutputs": 0,
+        "consensusPending": false
+      },
+      "peerPause": {
+        "pauseMs": 1500,
+        "pid": 72893
+      },
+      "lockedAfterMs": 1895,
+      "recoveredBalance": "99000000",
+      "sameIdentity": true,
+      "exactSinglePaymentReceipt": true,
+      "receipts": [
+        {
+          "event": "HtlcInitiated",
+          "height": 20,
+          "amount": "1000000",
+          "senderAmount": "1000000",
+          "fee": "0",
+          "hashlock": "0x3e5b7c4fed09fce5794f6f85e8410a83cdbb7b7e5394a9655c69ede7507cd96a"
+        },
+        {
+          "event": "HtlcFinalized",
+          "height": 21,
+          "amount": "1000000",
+          "senderAmount": null,
+          "fee": null,
+          "hashlock": "0x3e5b7c4fed09fce5794f6f85e8410a83cdbb7b7e5394a9655c69ede7507cd96a"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "0xfeb0849e02bd6f8db8abc9e34eb0cfa2e331370b044eab0fc9cf82398544abb5",
+          "height": 6,
+          "root": "0x58cd00316484cf71d983223de6a4bfdf257d01089e980d17aef743399cbfc2e3",
+          "pending": false,
+          "mempool": 0,
+          "offers": 0
+        }
+      ]
+    },
+    "health": {
+      "systemOk": true,
+      "failures": []
+    },
+    "log": "delayed-lock-after.log"
+  },
+  "relatedTests": {
+    "passed": 43,
+    "assertions": 181
+  },
+  "limitations": [
+    "No forced application termination or permanent peer loss covered",
+    "No native Tron/public network coverage"
+  ],
+  "reproducibleRun": {
+    "compiledProbeFromSource": true,
+    "probe": "scripts/native/tests/quote-session.swift",
+    "result": {
+      "passed": 3,
+      "lockedImmediately": true,
+      "pendingAtLock": true,
+      "atLock": {
+        "processing": true,
+        "queuedInputs": 1,
+        "pendingOutputs": 0,
+        "consensusPending": false
+      },
+      "peerPause": {
+        "pauseMs": 1500,
+        "pid": 77231
+      },
+      "lockedAfterMs": 1892,
+      "recoveredBalance": "99000000",
+      "sameIdentity": true,
+      "exactSinglePaymentReceipt": true,
+      "receipts": [
+        {
+          "event": "HtlcInitiated",
+          "height": 20,
+          "amount": "1000000",
+          "senderAmount": "1000000",
+          "fee": "0",
+          "hashlock": "0xc10535f5508798111b25499297349d598b4cd8b65b558667b1db485c36761eff"
+        },
+        {
+          "event": "HtlcFinalized",
+          "height": 21,
+          "amount": "1000000",
+          "senderAmount": null,
+          "fee": null,
+          "hashlock": "0xc10535f5508798111b25499297349d598b4cd8b65b558667b1db485c36761eff"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "0xf83a3a1a02b65bfde525f7beae79cb10a9376b72354bcb9ab375abe41b97aad4",
+          "height": 6,
+          "root": "0x817f99c74d6204bbb29a547b7c04ba0c560dc128bd5fb18f0955f1d98c1ccb22",
+          "pending": false,
+          "mempool": 0,
+          "offers": 0
+        }
+      ]
+    },
+    "health": {
+      "failures": [],
+      "systemOk": true
+    },
+    "command": "bun run stand:run --reason native-delayed-lock --timeout-ms 180000 -- bun scripts/native/run-session.ts immediate-payment-lock.js 1500"
+  },
+  "fullCheck": {
+    "passed": true,
+    "sourceGates": 39,
+    "sourceMs": 39887,
+    "log": "/tmp/xln-consensus-drain-final-check.log"
+  },
+  "ios": {
+    "build": "passed",
+    "installed": true,
+    "installedResourcesMatch": true,
+    "device": "XLNReleaseAcceptance — iPhone 17 Pro / iOS 26.5",
+    "log": "/tmp/xln-consensus-drain-ios-build.log",
+    "uiRetest": false
+  }
+}

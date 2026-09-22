@@ -54,7 +54,8 @@ const base = process.env['XLN_UI_BASE'] ?? '/';
  */
 const stackOrigin = process.env['XLN_UI_STACK_ORIGIN'] ?? (process.env['API_PORT'] ? `http://127.0.0.1:${process.env['API_PORT']}` : '');
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+	...(mode === 'ios' ? { root: fileURLToPath(new URL('./native', import.meta.url)), publicDir: '../public' } : {}),
 	base,
 	// A TLS stack (xln.finance) cannot be WebSocket-proxied by this dev server; the wallet dials its relay directly.
 	// The wallet compiles ../core from source, so the browser process shim in
@@ -70,6 +71,9 @@ export default defineConfig({
 	server: {
 		port: 5183,
 		strictPort: true,
+		// Packaged iOS code has a stable custom origin. Keep Vite's loopback origins
+		// and permit this origin's preflight before the existing API/RPC proxy.
+		cors: { origin: [/^https?:\/\/(?:(?:[^:]+\.)?localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/, 'xln://localhost'] },
 		...(stackOrigin
 			? {
 					proxy: {
@@ -103,5 +107,6 @@ export default defineConfig({
 	},
 	build: {
 		target: 'es2022',
+		...(mode === 'ios' ? { outDir: '../native-dist', emptyOutDir: true } : {}),
 	},
-});
+}));

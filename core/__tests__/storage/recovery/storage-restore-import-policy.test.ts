@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { rmSync } from 'fs';
 
 import {
+  buildPersistedRuntimeRecording,
+  importRuntimeRecoveryRecording,
   closeInfraDb,
   closeRuntimeDb,
   createEmptyEnv,
@@ -11,11 +13,16 @@ import {
   persistRestoredEnvToDB,
   processRuntime,
   readPersistedRuntimeActivityJournal,
+  readPersistedFrameJournal,
   registerSignerKey,
 } from '../../../runtime';
+import { computeCanonicalStateHashFromEnv } from '../../../storage/canonical-hash';
+import { createCheckpointBarrierRuntimeTx } from '../../../runtime/checkpoint/barrier';
+import { resetRuntimeActivityViewAtFloor } from '../../../storage/history/runtime-activity-view';
 import {
   deriveSignerAddressSync,
   deriveSignerKeySync,
+  clearSignerKeys,
 } from '../../../account/crypto';
 import { generateLazyEntityId } from '../../../entity/factory';
 import { readStorageFrameRecord } from '../../../storage';
@@ -143,6 +150,86 @@ const assertFreshState = async (
 };
 
 describe('restored checkpoint conflict policy', () => {
+  test('atomic recording import preserves checkpoint and verified tail through reopening', async () => {
+    const seed = `restore recorded tail ${process.pid} deterministic seed`;
+    const source = await createRecoveryEnv(seed, true, 'recorded-profile', 'source');
+    cleanupPaths.push(resolveDbPath(source.env, 'core'));
+    const recording = await buildPersistedRuntimeRecording(source.env, {
+      signers: [{ index: 0, derivationIndex: 0, address: source.signerId, name: 'Signer' }],
+    });
+    const tail = recording.bundles.find(bundle => bundle.kind === 'journal_tail');
+    expect(tail?.frames?.length).toBeGreaterThan(0);
+    const expectedHash = computeCanonicalStateHashFromEnv(source.env);
+    clearSignerKeys(seed);
+    const restored = await importRuntimeRecoveryRecording(recording, seed);
+    cleanupPaths.push(resolveDbPath(restored, 'core'));
+    try {
+      expect(computeCanonicalStateHashFromEnv(restored)).toBe(expectedHash);
+    } finally {
+      await closeRecoveryEnv(restored);
+      await closeRecoveryEnv(source.env);
+    }
+    // A disposable activity index cannot serve as the recovery authority.
+    rmSync(`${resolveDbPath(restored, 'core')}-history-views`, { recursive: true, force: true });
+    const reopened = await loadEnvFromDB(source.signerId, seed);
+    expect(reopened).toBeTruthy();
+    let checkpointHash = '';
+    try {
+      expect(computeCanonicalStateHashFromEnv(reopened!)).toBe(expectedHash);
+      const journal = await readPersistedFrameJournal(reopened!, recording.targetHeight);
+      expect(journal!.runtimeInput).toEqual(tail!.frames!.at(-1)!.runtimeInput);
+      expect(await readPersistedRuntimeActivityJournal(reopened!, recording.targetHeight)).toBeTruthy();
+      enqueueRuntimeInput(reopened!, { runtimeTxs: [createCheckpointBarrierRuntimeTx()], entityInputs: [] });
+      await processRuntime(reopened!);
+      expect(reopened!.state.height).toBe(recording.targetHeight + 1);
+      expect([...reopened!.state.eReplicas.values()][0]!.state.profile.name).toBe('recorded-profile');
+      checkpointHash = computeCanonicalStateHashFromEnv(reopened!);
+    } finally {
+      await closeRecoveryEnv(reopened!);
+    }
+    const materialized = await loadEnvFromDB(source.signerId, seed);
+    expect(computeCanonicalStateHashFromEnv(materialized!)).toBe(checkpointHash);
+    await closeRecoveryEnv(materialized!);
+    await expect(importRuntimeRecoveryRecording(recording, seed)).rejects.toThrow('RECOVERY_IMPORT_DESTINATION_NOT_EMPTY');
+  });
+
+  test.each(['before-publish', 'after-publish'] as const)('recording interruption at %s exposes no partial tip', async boundary => {
+    const seed = `restore publication ${boundary} ${process.pid}`;
+    const source = await createRecoveryEnv(seed, true, 'complete-archive', 'source');
+    const target = createEmptyEnv(seed);
+    cleanupPaths.push(resolveDbPath(source.env, 'core'), resolveDbPath(target, 'core'));
+    const recording = await buildPersistedRuntimeRecording(source.env, {
+      signers: [{ index: 0, address: source.signerId, name: 'Signer' }],
+    });
+    const expectedHash = computeCanonicalStateHashFromEnv(source.env);
+    await expect(importRuntimeRecoveryRecording(recording, seed, {
+      onPublicationBoundary: point => { if (point === boundary) throw new Error(`INTERRUPTED:${point}`); },
+    })).rejects.toThrow(`INTERRUPTED:${boundary}`);
+    await closeRecoveryEnv(source.env);
+    const reopened = await loadEnvFromDB(source.signerId, seed);
+    if (boundary === 'before-publish') expect(reopened).toBeNull();
+    else {
+      expect(reopened!.state.height).toBe(recording.targetHeight);
+      expect(computeCanonicalStateHashFromEnv(reopened!)).toBe(expectedHash);
+      await closeRecoveryEnv(reopened!);
+    }
+  });
+
+  test('recording import rejects leftover activity on an otherwise empty destination', async () => {
+    const seed = `restore stale activity ${process.pid}`;
+    const source = await createRecoveryEnv(seed, true, 'complete-archive', 'source');
+    const target = createEmptyEnv(seed);
+    cleanupPaths.push(resolveDbPath(source.env, 'core'), resolveDbPath(target, 'core'));
+    await resetRuntimeActivityViewAtFloor(target, 1);
+    await closeRecoveryEnv(target);
+    const recording = await buildPersistedRuntimeRecording(source.env, {
+      signers: [{ index: 0, address: source.signerId, name: 'Signer' }],
+    });
+    await expect(importRuntimeRecoveryRecording(recording, seed)).rejects.toThrow('RECOVERY_IMPORT_ACTIVITY_NOT_EMPTY');
+    await closeRecoveryEnv(source.env);
+    expect(await loadEnvFromDB(source.signerId, seed)).toBeNull();
+  });
+
   test('atomically advances an older complete recovery base', async () => {
     const seed = `restore advance ${process.pid} deterministic seed`;
     const base = await createRecoveryEnv(seed);

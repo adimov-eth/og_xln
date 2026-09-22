@@ -254,10 +254,7 @@ fn decode_hex<const N: usize>(value: &str) -> Result<[u8; N], RuntimeTransportEr
         return Err(RuntimeTransportError::Crypto("hex-length"));
     }
     let mut output = [0_u8; N];
-    for (index, byte) in output.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&body[index * 2..index * 2 + 2], 16)
-            .map_err(|_| RuntimeTransportError::Crypto("hex"))?;
-    }
+    hex::decode_to_slice(body, &mut output).map_err(|_| RuntimeTransportError::Crypto("hex"))?;
     Ok(output)
 }
 
@@ -269,4 +266,24 @@ pub(super) fn hex_lower(bytes: &[u8]) -> String {
         output.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
     }
     output
+}
+
+#[cfg(test)]
+mod hex_regressions {
+    use super::*;
+
+    #[test]
+    fn untrusted_hex_rejects_unicode_and_signs_without_panicking() {
+        // Peer keys are parsed before signature verification. Byte length alone
+        // cannot authorize slicing a UTF-8 string at hex-pair boundaries.
+        for prefix in ["€", "0€", "+1", "gg"] {
+            let body = format!("{prefix}{}", "0".repeat(64 - prefix.len()));
+            assert!(parse_public_hex(&format!("0x{body}")).is_err());
+        }
+        assert_eq!(
+            parse_public_hex(&format!("0x{}", "aB".repeat(32))).unwrap(),
+            [0xab; 32]
+        );
+        assert!(parse_public_hex("0x00").is_err());
+    }
 }

@@ -1,0 +1,16 @@
+{
+  "kind": "NATIVE_TRON_RESTORED_WAL_PROOF",
+  "originalHeight": 4,
+  "restoredFromHeight": 5,
+  "finalHeight": 6,
+  "preservedEvidenceHash": "0x153f6d1fa99dac0399496e2393939162f7e637988f4767ee04a9249f48acf9aa",
+  "freshEvidenceHash": "0x0ccb53ccda6c5eef2b7ce0c819f739048b786738f10676616d5e7a05259c59a4",
+  "unchangedClaimHash": "0xe15e04e8b1903dad02a4db14c358598dff01c23e856da7802d1c3e597af8c43f",
+  "authorityObservedThroughHeight": 25,
+  "freshObservedThroughHeight": 35,
+  "scan": {
+    "replicaScannedThrough": {},
+    "scannedThroughHeight": 35
+  },
+  "scope": "Same WAL restore, stable certified authority, fresh native RPC-attested observation committed; no Entity financial or cross-J claim"
+}

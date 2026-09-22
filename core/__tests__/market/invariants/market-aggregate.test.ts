@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import { aggregateMarketSnapshots } from '../../../network/relay/market/aggregate';
+import { decodeMarketSnapshotPayload } from '../../../network/relay/market/wire';
 import type { MarketSnapshotPayload } from '../../../network/relay/market/snapshot';
 
 const hubId = (hex: string): string => `0x${hex.repeat(64)}`;
@@ -22,6 +23,7 @@ const snapshot = (
   displayDecimals: 4,
   priceScale: '10000',
   bucketWidthTicks: '1',
+  minTradeSize: '0',
   bids: [{ price: input.bid, size: '2', total: '2', orderCount: 1 }],
   asks: [{ price: input.ask, size: '3', total: '3', orderCount: 1 }],
   spread: (BigInt(input.ask) - BigInt(input.bid)).toString(),
@@ -83,4 +85,16 @@ test('relay rejects a Hub trade counter rollback', () => {
   expect(() => aggregateMarketSnapshots([
     snapshot(hubId('1'), { bid: '90', ask: '110', lastTradePrice: '99', tradeCount: 1 }),
   ], 20, 2_000, observations)).toThrow('MARKET_TRADE_COUNT_ROLLBACK');
+});
+
+
+test('market limits survive aggregation per hub and malformed limits are rejected', () => {
+  const first = { ...snapshot(hubId('1'), { bid: '90', ask: '110', lastTradePrice: null, tradeCount: 0 }), minTradeSize: '10000000' };
+  const second = { ...snapshot(hubId('2'), { bid: '90', ask: '110', lastTradePrice: null, tradeCount: 0 }), minTradeSize: '25000000' };
+  expect(decodeMarketSnapshotPayload(first).minTradeSize).toBe('10000000');
+  expect(aggregateMarketSnapshots([second, first], 20, 1000, new Map()).sources.map(source => source.minTradeSize)).toEqual(['10000000', '25000000']);
+  expect(decodeMarketSnapshotPayload({ ...first, minTradeSize: null }).minTradeSize).toBeNull();
+  for (const invalid of [undefined, -1, '-1', '01', '1.5', '1e7']) {
+    expect(() => decodeMarketSnapshotPayload({ ...first, minTradeSize: invalid })).toThrow();
+  }
 });

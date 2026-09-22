@@ -45,22 +45,22 @@ describe('read-only first Account funding quote', () => {
     expect(await routes.findPaths(OWNER, TARGET, 25_000_000n, 1)).toEqual([]);
     const [quote] = await routes.findPaths(OWNER, TARGET, 25_000_000n, 1, HUB);
     expect(quote?.path).toEqual([OWNER, HUB, TARGET]);
-    expect(quote?.totalAmount).toBe(25_000_050n);
-    expect(quote?.totalFee).toBe(50n);
+    expect(quote?.totalAmount).toBe(25_000_025n);
+    expect(quote?.totalFee).toBe(25n);
     expect(await routes.findPaths(OWNER, TARGET, 25_000_000n, 1)).toEqual([]);
   });
 
-  test('upstream fees do not inflate the downstream capacity requirement', async () => {
-    const [quote] = await graph(25_000_025n, 100_000).findPaths(OWNER, TARGET, 25_000_000n, 1, HUB);
+  test('the sender pays no fee to itself and the last Account needs only recipient principal', async () => {
+    const [quote] = await graph(25_000_000n, 100_000).findPaths(OWNER, TARGET, 25_000_000n, 1, HUB);
     expect(quote?.path).toEqual([OWNER, HUB, TARGET]);
-    expect(quote?.totalAmount).toBe(27_777_805n);
+    expect(quote?.totalAmount).toBe(25_000_025n);
     expect(quote?.hops[1]?.fee).toBe(25n);
-    expect(await graph(25_000_024n, 100_000).findPaths(OWNER, TARGET, 25_000_000n, 1, HUB)).toEqual([]);
+    expect(await graph(24_999_999n, 100_000).findPaths(OWNER, TARGET, 25_000_000n, 1, HUB)).toEqual([]);
   });
 
-  test('selected first hop cannot bypass downstream principal or exact fee capacity', async () => {
+  test('selected first hop cannot bypass downstream principal capacity', async () => {
     expect(await graph(24_999_999n).findPaths(OWNER, TARGET, 25_000_000n, 1, HUB)).toEqual([]);
-    expect(await graph(25_000_000n).findPaths(OWNER, TARGET, 25_000_000n, 1, HUB)).toEqual([]);
+    expect((await graph(25_000_000n).findPaths(OWNER, TARGET, 25_000_000n, 1, HUB)).length).toBe(1);
     expect((await graph(25_000_025n).findPaths(OWNER, TARGET, 25_000_000n, 1, HUB)).length).toBe(1);
     expect(await graph(1_000_000_000n).findPaths(OWNER, TARGET, 25_000_000n, 1, OTHER)).toEqual([]);
   });

@@ -22,7 +22,7 @@ export type SwapParty = {
 	hubEntityId: string;
 	/** Jurisdiction stack id of the entity's configured jurisdiction. */
 	jurisdiction: string;
-	account: AccountState | null;
+	account: SwapCommandPlanInput['source']['account'];
 };
 
 export function jurisdictionRef(frame: RuntimeAdapterViewFrame | null): string {

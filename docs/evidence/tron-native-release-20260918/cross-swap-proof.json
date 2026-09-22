@@ -1,0 +1,240 @@
+{
+  "accounts": [
+    {
+      "collateral": {
+        "__xlnType": "BigInt",
+        "value": "0"
+      },
+      "height": 5,
+      "offers": 0,
+      "outCapacity": {
+        "__xlnType": "BigInt",
+        "value": "90000000"
+      },
+      "owner": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+      "peer": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+      "pending": false,
+      "pulls": 0,
+      "root": "0xf09682b4af1552d4329659e860556eed8fc3536939517e7d55d47910494b7210"
+    },
+    {
+      "collateral": {
+        "__xlnType": "BigInt",
+        "value": "0"
+      },
+      "height": 5,
+      "offers": 0,
+      "outCapacity": {
+        "__xlnType": "BigInt",
+        "value": "110000000"
+      },
+      "owner": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+      "peer": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+      "pending": false,
+      "pulls": 0,
+      "root": "0x5ab726f4a76762b9a84dc091532f29f36739090cc800f25e7821cc3d9bbb5d8c"
+    },
+    {
+      "collateral": {
+        "__xlnType": "BigInt",
+        "value": "0"
+      },
+      "height": 5,
+      "offers": 0,
+      "outCapacity": {
+        "__xlnType": "BigInt",
+        "value": "110000000"
+      },
+      "owner": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+      "peer": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+      "pending": false,
+      "pulls": 0,
+      "root": "0xe2cadf04dcaba73d8e656f6f650ece7e7acf8752c23bc2e3fd40bd0a52697a35"
+    },
+    {
+      "collateral": {
+        "__xlnType": "BigInt",
+        "value": "0"
+      },
+      "height": 5,
+      "offers": 0,
+      "outCapacity": {
+        "__xlnType": "BigInt",
+        "value": "90000000"
+      },
+      "owner": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+      "peer": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+      "pending": false,
+      "pulls": 0,
+      "root": "0x82a72c16708c2e3e905a7c81ad3893f19ddbfec10bc9e5d69a6a98835499af08"
+    }
+  ],
+  "anchors": [
+    {
+      "frameHash": "0xb36898d96fd92d49d3b1041755dd1ffcb3f57c3046cca28d0aff6bc8848162b7",
+      "height": 71,
+      "postStateHash": "0xa5797fb76984abe7a061e1742e7ccd4928564b6a33b47092a7dc36becedb849c",
+      "runtimeId": "0xbc5795505911836788913ed909cf20a8558997dc"
+    },
+    {
+      "frameHash": "0x36b1e5e755ef75f6b234f0a9193b83d7bce8af1daeb8e49999e0e88e5253fba8",
+      "height": 64,
+      "postStateHash": "0x688809b94c26cca8efa90960c2ee8c5f210f45b301d6b0e9f82e4913b255043d",
+      "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd"
+    }
+  ],
+  "commands": [
+    {
+      "domain": {
+        "hashSchema": "route-domain",
+        "protocol": "xln-cross-j",
+        "sourceAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+        "sourceEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+        "sourceStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+        "targetAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+        "targetEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+        "targetStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+      },
+      "entityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+      "height": 56,
+      "orderId": "native-cross-alice-20260918",
+      "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd",
+      "source": {
+        "amount": {
+          "__xlnType": "BigInt",
+          "value": "10000000"
+        },
+        "counterpartyEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+        "entityId": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+        "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+        "tokenId": 1
+      },
+      "target": {
+        "amount": {
+          "__xlnType": "BigInt",
+          "value": "10000000"
+        },
+        "counterpartyEntityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+        "entityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+        "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+        "tokenId": 1
+      }
+    },
+    {
+      "domain": {
+        "hashSchema": "route-domain",
+        "protocol": "xln-cross-j",
+        "sourceAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+        "sourceEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+        "sourceStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+        "targetAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+        "targetEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+        "targetStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+      },
+      "entityId": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+      "height": 56,
+      "orderId": "native-cross-alice-20260918",
+      "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd",
+      "source": {
+        "amount": {
+          "__xlnType": "BigInt",
+          "value": "10000000"
+        },
+        "counterpartyEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+        "entityId": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+        "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+        "tokenId": 1
+      },
+      "target": {
+        "amount": {
+          "__xlnType": "BigInt",
+          "value": "10000000"
+        },
+        "counterpartyEntityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+        "entityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+        "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+        "tokenId": 1
+      }
+    },
+    {
+      "domain": {
+        "hashSchema": "route-domain",
+        "protocol": "xln-cross-j",
+        "sourceAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+        "sourceEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+        "sourceStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+        "targetAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+        "targetEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+        "targetStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853"
+      },
+      "entityId": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+      "height": 58,
+      "orderId": "native-cross-bob-20260918",
+      "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd",
+      "source": {
+        "amount": {
+          "__xlnType": "BigInt",
+          "value": "10000000"
+        },
+        "counterpartyEntityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+        "entityId": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+        "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+        "tokenId": 1
+      },
+      "target": {
+        "amount": {
+          "__xlnType": "BigInt",
+          "value": "10000000"
+        },
+        "counterpartyEntityId": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+        "entityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+        "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+        "tokenId": 1
+      }
+    },
+    {
+      "domain": {
+        "hashSchema": "route-domain",
+        "protocol": "xln-cross-j",
+        "sourceAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+        "sourceEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+        "sourceStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+        "targetAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+        "targetEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+        "targetStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853"
+      },
+      "entityId": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+      "height": 58,
+      "orderId": "native-cross-bob-20260918",
+      "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd",
+      "source": {
+        "amount": {
+          "__xlnType": "BigInt",
+          "value": "10000000"
+        },
+        "counterpartyEntityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+        "entityId": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+        "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+        "tokenId": 1
+      },
+      "target": {
+        "amount": {
+          "__xlnType": "BigInt",
+          "value": "10000000"
+        },
+        "counterpartyEntityId": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+        "entityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+        "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+        "tokenId": 1
+      }
+    }
+  ],
+  "exactAccountRecovery": true,
+  "exactRouteRecovery": true,
+  "exactRuntimeRecovery": true,
+  "kind": "PRIVATE_NATIVE_CROSS_SWAP_RECOVERY",
+  "matchedExchanges": 1,
+  "scope": "Credit-backed private-chain exchange of 10 six-decimal test-token units per direction. One match, two opposing orders; no GDP attribution, public release, mainnet assets or rendered app claim.",
+  "uniqueOrders": 2,
+  "userCommandCount": 4
+}

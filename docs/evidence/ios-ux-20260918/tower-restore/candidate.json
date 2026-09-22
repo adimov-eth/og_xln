@@ -1,0 +1,47 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "frontend/ios/App/AppUITests/PaymentUITests.swift": "29e5fd79c59180b5e2563401a3656798a1677701aef0b42634dcbee99c860017",
+    "frontend/ios/App/AppUITests/PaymentRecovery.swift": "42dd7aea0724c40b15f0c07431b940efd1c148f118f5bfab1969f3ed96ae466e",
+    "scripts/native/ios-ui-session.ts": "82269f957a4f4c8f07e08213f2dbfff7bf5522bc0d70f136d4f2cf4dc7e28fc3",
+    "scripts/native/run-session.ts": "dd213544d63fe2584e5602d7a5e63993572397a9d199766dcb6e67bc03a5b533",
+    "ui/src/runtime/recovery.ts": "e7bea5a847efcd0ca35f00bf14604259efac9bcd2d1ad3c07fb311f1e6fba156",
+    "ui/src/native/history.ts": "86df9bfe397e129912b18e1345ffcd62e1e5dee880d9b7759fff83e0ccf8b36b",
+    "core/storage/recovery/import.ts": "95008ee102342e95d7fa44f7ff2356e9a3073fac088e280233258008b95baf0e",
+    "core/storage/queries/history.ts": "f79e4ba34b98f7b8e42ede929b5a3d266abd12e6fa5338643d63b7d25b81f3a3",
+    "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/App.debug.dylib": "f1f5566dc7daeb2e34ed58f2dae12d4d53352bae09583190326e062b685a377c"
+  },
+  "scope": "Post-payment native backup, then fresh second simulator restore; no local state copied. Product code unchanged.",
+  "device": "iPhone 17 Pro simulator",
+  "os": "26.5",
+  "locale": "en_US",
+  "appearance": "light",
+  "network": "real isolated local three-hub stand",
+  "sourceDevice": "59209751-39EB-4274-AF6C-A88DE1099CAD",
+  "freshRestoreDevice": "CFA23D80-93CE-467A-8348-B37127E1D816",
+  "backup": {
+    "passed": true,
+    "testSeconds": 103.543,
+    "snapshotHeight": 157,
+    "displayedEncryptedSize": "43 KB"
+  },
+  "restore": {
+    "passed": false,
+    "testSeconds": 38.754,
+    "restoredUSDC": "98.999998",
+    "failure": "Expected confirmed Sent history missing; Activity shows No activity on this page."
+  },
+  "passed": 1,
+  "total": 2,
+  "sourceGates": 39,
+  "sourceCheckSeconds": 32.853,
+  "restoreVideo": "output/ios-ux-2026-09-18/tower-restore/restore.mp4",
+  "restoreVideoSeconds": 44.216667,
+  "cause": "Current snapshot backup carries checkpoint plus tip journal. Restore replaces local persistence base at that tip; earlier activity cannot be rebuilt. Native history projection drops canonical availability metadata.",
+  "limits": [
+    "Fresh balance restore passed but full history recovery failed; do not claim release readiness",
+    "Independent recipient post-restore check was not reached because UI test failed",
+    "No physical camera/public deployment/device signing proof"
+  ]
+}

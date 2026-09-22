@@ -21,13 +21,14 @@ import { withRuntimeCommittedRead } from '@xln/core/runtime/frame/lifecycle/writ
 import { deriveJurisdictionSignerIndex } from '@xln/core/jurisdiction/machine/config/signer-derivation';
 import { Wallet } from 'ethers';
 import { deriveAddress, derivePrivateKey } from './keys';
+import { requireBackupCapacity } from './backup-size';
 
 /** `tower`: an encrypted copy leaves this device. `local`: nothing does. */
 export type RecoveryMode = 'tower' | 'local';
 export type RecoveryConfig = { mode: RecoveryMode; towers: string[] };
 
 /** What the tower says about itself before we trust it with anything. */
-export type TowerHealth = { towerId: string; signerAddress: string; lookupKeys: number; sweepEnabled: boolean; pushEnabled: boolean; pushSender: string };
+export type TowerHealth = { towerId: string; signerAddress: string; maxStoredBytesPerLookupKey: number; lookupKeys: number; sweepEnabled: boolean; pushEnabled: boolean; pushSender: string };
 
 /** What the tower says it actually holds for us, read back from the tower, not from our own hopes. */
 export type TowerCoverage = {
@@ -110,7 +111,7 @@ export function towerRequestUrl(towerUrl: string, towerPath: string): string {
   const path = towerPath.startsWith('/') ? towerPath : `/${towerPath}`;
   const target = new URL(`${base}/`);
   if (target.protocol === 'http:' && (target.hostname === '127.0.0.1' || target.hostname === 'localhost')) {
-    const proxy = new URL('/api/watchtower-proxy', window.location.origin);
+    const proxy = new URL('/api/watchtower-proxy', window.location.href);
     proxy.searchParams.set('target', base);
     proxy.searchParams.set('path', path);
     return proxy.toString();
@@ -131,6 +132,7 @@ export async function towerHealth(towerUrl: string): Promise<TowerHealth> {
     throw new Error(`This address did not answer as a tower (HTTP ${response.status}).`);
   return {
     towerId: String(payload['towerId'] || 'tower'),
+    maxStoredBytesPerLookupKey: Number(payload['maxStoredBytesPerLookupKey']),
     signerAddress: String(payload['signerAddress'] || ''),
     lookupKeys: Number(asRecord(payload['stats'])['lookupCount'] || 0),
     sweepEnabled: asRecord(payload['sweep'])['enabled'] === true,
@@ -232,8 +234,8 @@ async function buildBackupAppointment(
   runtimeId: string,
   seed: string,
   encrypted: EncryptedRuntimeRecoveryBundleV1,
+  signedAt: number,
 ): Promise<TowerAppointmentV1> {
-  const signedAt = Date.now();
   const message = xln.buildTowerAppointmentOwnerMessage(
     runtimeId,
     'blind_backup',
@@ -258,7 +260,7 @@ async function buildBackupAppointment(
 export type BackupResult = { url: string; receipt: TowerReceiptV1 | null; error: string | null };
 
 /**
- * Send the current encrypted tip to every configured tower. Returns one row per
+ * Send one committed checkpoint and retained history atomically to each tower. Returns one row per
  * tower so the screen can show exactly which of them accepted it; a tower that
  * refuses is reported, never swallowed.
  */
@@ -269,19 +271,29 @@ export async function backupToTowers(
   towers: string[],
 ): Promise<BackupResult[]> {
   if (towers.length === 0) return [];
-  const encrypted = await encryptTip(xln, env, seed);
-  if (!encrypted) throw new Error('This runtime has no committed frame to back up yet.');
-  const appointment = await buildBackupAppointment(xln, encrypted.runtimeId, seed, encrypted);
-  const body = JSON.stringify(appointment);
+  const recording = await withRuntimeCommittedRead(env, () => xln.buildPersistedRuntimeRecording(env, {
+    signers: recoverySigners(env, seed),
+    meta: { label: 'xln wallet', activeSignerIndex: 0, loginType: 'manual', createdAt: Date.now() },
+  }));
+  const signedAt = Date.now();
+  const encrypted = await Promise.all(recording.bundles.map(bundle => xln.encryptRuntimeRecoveryBundle(bundle, seed)));
+  const appointments = await Promise.all(encrypted.map(bundle =>
+    buildBackupAppointment(xln, recording.runtimeId, seed, bundle, signedAt)));
+  const body = JSON.stringify(appointments.length === 1 ? appointments[0] : appointments);
+  const bundleBytes = new TextEncoder().encode(JSON.stringify(encrypted)).byteLength;
   return Promise.all(
     towers.map(async url => {
       try {
+        const health = await towerHealth(url);
+        requireBackupCapacity(bundleBytes, health.maxStoredBytesPerLookupKey);
         const response = await fetch(towerRequestUrl(url, '/api/tower/appointment'), {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body,
         });
-        const payload = asRecord(await response.json());
+        const payload = asRecord(await response.json().catch(() => {
+          throw new Error(`Recovery service returned an invalid response (HTTP ${response.status}).`);
+        }));
         if (!response.ok || payload['ok'] !== true)
           throw new Error(String(payload['error'] || `HTTP_${response.status}`));
         const receipt = payload['receipt'];

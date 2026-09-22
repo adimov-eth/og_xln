@@ -1370,15 +1370,10 @@ pub(crate) fn has_rebalance_work(account: &AccountConsensus) -> Result<bool, Bat
         if available <= zero {
             continue;
         }
-        let decimals = match token_id.get() {
-            1 | 3 | 4 => 6_u32,
-            2 | 5 => 18_u32,
-            unknown => {
-                return Err(BatchError::FinancialView(format!(
-                    "TOKEN_METADATA_UNAVAILABLE:{unknown}"
-                )));
-            }
-        };
+        let decimals = xln_rscore_protocol::canonical_token_decimals(u32::from(token_id.get()))
+            .ok_or_else(|| {
+                BatchError::FinancialView(format!("TOKEN_METADATA_UNAVAILABLE:{}", token_id.get()))
+            })?;
         let soft_limit = BigInt::from(500_u16) * BigInt::from(10_u8).pow(decimals);
         if available > soft_limit {
             return Ok(true);

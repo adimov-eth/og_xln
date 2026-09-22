@@ -273,54 +273,7 @@ const makeSingleSignerConfigFor = (signerId: string): EntityState['config'] => (
   },
 });
 
-const installSingleSignerBoard = (env: RuntimeReplica, state: EntityState, slot = '1'): string => {
-  const seed = env.runtimeSeed;
-  if (!seed) throw new Error('TEST_RUNTIME_SEED_REQUIRED');
-  const signerId = deriveSignerAddressSync(seed, slot).toLowerCase();
-  registerSignerKey(env, signerId, deriveSignerKeySync(seed, slot));
-  state.config = makeSingleSignerConfigFor(signerId);
-  return signerId;
-};
-
-const hex20 = (byte: string): string => `0x${byte.repeat(byte.length === 2 ? 20 : 40)}`;
-
-const hexBytes = (bytes: Uint8Array): string =>
-  `0x${Array.from(bytes)
-    .map(byte => byte.toString(16).padStart(2, '0'))
-    .join('')}`;
-
 const HANKO_DELAYS = resolveHankoBoardDelays();
-
-const hashHankoBoard = (threshold: number, boardEntityIds: string[], weights: number[]): string => {
-  const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-  return ethers
-    .keccak256(
-      abiCoder.encode(
-        ['tuple(uint16,bytes32[],uint16[],uint32,uint32,uint32)'],
-        [[threshold, boardEntityIds, weights, 0, 0, 0]],
-      ),
-    )
-    .toLowerCase();
-};
-
-const signedHankoForTest = (
-  hash: string,
-  privateKeys: readonly Uint8Array[],
-  placeholders: readonly string[],
-  claims: readonly [string, readonly bigint[], readonly bigint[], bigint][],
-): string =>
-  encodeSignedHanko({
-    digest: hash,
-    privateKeys,
-    placeholders: placeholders.map(value => value as `0x${string}`),
-    claims: claims.map(([entityId, entityIndexes, weights, threshold]) => ({
-      entityId: entityId as `0x${string}`,
-      entityIndexes,
-      weights,
-      threshold,
-      ...HANKO_DELAYS,
-    })),
-  });
 
 const makeEmptyProofBody = () => ({
   watchSeed: `0x${'f1'.repeat(32)}`,
@@ -370,81 +323,6 @@ const makeProposalAccount = (mempool: AccountTx[], leftEntity: string, rightEnti
     pendingWithdrawals: PersistentAccountStateMap.empty('pendingWithdrawals'),
     shadow: { rebalance: { policy: PersistentAccountStateMap.empty('rebalanceShadowPolicy'), submittedAtByToken: PersistentAccountStateMap.empty('rebalanceShadowSubmitted') } },
   };
-};
-
-const setSyntheticPendingAccountProposal = (
-  account: AccountReplica,
-  accountTxs: AccountTx[],
-  timestamp: number,
-): void => {
-  const pendingFrame = {
-    ...account.currentFrame,
-    height: account.currentHeight + 1,
-    timestamp,
-    accountTxs: structuredClone(accountTxs),
-    prevFrameHash: account.currentHeight === 0 ? 'genesis' : account.currentFrame.stateHash,
-    stateHash: `0x${'f0'.repeat(32)}`,
-  };
-  account.pendingFrame = pendingFrame;
-  account.pendingAccountInput = {
-    kind: 'ack_frame',
-    fromEntityId: account.proofHeader.fromEntity,
-    toEntityId: account.proofHeader.toEntity,
-    domain: structuredClone(account.state.domain),
-    disputeConfig: structuredClone(account.state.disputeConfig),
-    proposal: { frame: structuredClone(pendingFrame) },
-  };
-};
-
-const makeIncomingAccountFrame = (
-  account: AccountReplica,
-  tx: AccountTx,
-  byLeft: boolean,
-  timestamp = 10_000,
-  jHeight = 1,
-): AccountFrame => ({
-  ...account.currentFrame,
-  height: account.currentHeight + 1,
-  timestamp,
-  jHeight,
-  accountTxs: [tx],
-  byLeft,
-});
-
-const attachSigningReplica = (env: ReturnType<typeof createEmptyEnv>, entityId: string, signerId: string): void => {
-  const config = makeSingleSignerConfigFor(signerId);
-  const jurisdiction = config.jurisdiction!;
-  if (!env.state.jReplicas.has('__audit_test__')) {
-    env.state.jReplicas.set('__audit_test__', {
-      name: '__audit_test__',
-      chainId: jurisdiction.chainId,
-      rpcs: [],
-      contracts: { depository: jurisdiction.depositoryAddress, entityProvider: jurisdiction.entityProviderAddress },
-      contracts: {
-        depository: jurisdiction.depositoryAddress,
-        entityProvider: jurisdiction.entityProviderAddress,
-        account: hex20('98'),
-        deltaTransformer: hex20('99'),
-      },
-      blockNumber: 0n,
-      stateRoot: null,
-      mempool: [],
-      blockDelayMs: 0,
-      lastBlockTimestamp: 0,
-      position: { x: 0, y: 0, z: 0 },
-    });
-  }
-  env.state.eReplicas.set(`${entityId}:${signerId}`, {
-    entityId,
-    signerId,
-    entityEncPubKey: '',
-    mempool: [],
-    isProposer: true,
-    state: {
-      ...makeEntityState(entityId),
-      config,
-    },
-  } satisfies EntityReplica);
 };
 
 const registerLazySigner = (seed: string, signerSlot: string): { signerId: string; entityId: string } => {
@@ -595,56 +473,6 @@ const makeEntityState = (entityId: string): EntityState => createEntityFrameCand
   swapTradingPairs: [],
   crontabState: initCrontab(),
 });
-
-const makeDisputeFinalizedFixture = (seed: string, finalProofbody: ProofBodyStruct) => {
-  const entityId = `0x${'12'.repeat(32)}`;
-  const counterpartyId = `0x${'34'.repeat(32)}`;
-  const state = makeEntityState(entityId);
-  const account = makeProposalAccount([], entityId, counterpartyId);
-  const finalProofbodyHash = hashProofBodyStruct(finalProofbody);
-  account.activeDispute = {
-    startedByLeft: true,
-    disputeTimeout: 1700000123,
-    disputeStartTimestamp: 1700000000,
-    initialProofbodyHash: finalProofbodyHash,
-    initialNonce: 7,
-    finalizeQueued: true,
-  } as AccountState['activeDispute'];
-  state.accounts.set(counterpartyId, account);
-  return {
-    account,
-    counterpartyId,
-    env: createEmptyEnv(seed),
-    event: {
-      type: 'DisputeFinalized',
-      data: {
-        sender: entityId,
-        counterentity: counterpartyId,
-        initialNonce: 7,
-        initialProofbodyHash: finalProofbodyHash,
-        finalProofbodyHash,
-        finalizationEvidenceHash: ethers.ZeroHash,
-      },
-    } satisfies JurisdictionEvent,
-    finalProofbodyHash,
-    state,
-  };
-};
-
-const applyDisputeFinalizedFixture = async (fixture: ReturnType<typeof makeDisputeFinalizedFixture>) =>
-  applyJEventRange(
-    fixture.state,
-    {
-      from: '1',
-      observedAt: 22,
-      blockNumber: 22,
-      blockHash: `0x${'99'.repeat(32)}`,
-      transactionHash: `0x${'88'.repeat(32)}`,
-      event: fixture.event,
-      jurisdictionRef: getJEventJurisdictionRef(fixture.state.config.jurisdiction),
-    },
-    fixture.env,
-  );
 
 const sealAuditJSubmitAttempts = (env: RuntimeReplica, inputs: JInput[]): void => {
   for (const input of inputs) {

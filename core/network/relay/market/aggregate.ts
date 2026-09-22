@@ -8,6 +8,7 @@ export type RelayMarketSource = Readonly<{
   entityStateHash: string | null;
   hubUpdatedAt: number;
   snapshotUpdatedAt: number;
+  minTradeSize: string | null;
   tradeCount: number;
   lastTradePrice: string | null;
 }>;
@@ -174,6 +175,7 @@ export const aggregateMarketSnapshots = (
     entityStateHash: snapshot.entityStateHash,
     hubUpdatedAt: snapshot.hubUpdatedAt,
     snapshotUpdatedAt: snapshot.updatedAt,
+    minTradeSize: snapshot.minTradeSize,
     tradeCount: snapshot.tradeCount,
     lastTradePrice: snapshot.lastTradePrice,
   })).sort((left, right) => compareStableText(left.hubEntityId, right.hubEntityId));

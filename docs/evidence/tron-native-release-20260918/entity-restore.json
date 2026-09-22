@@ -1,0 +1,1116 @@
+{
+  "chainId": 2414086651,
+  "deposit": {
+    "args": {
+      "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "newBalance": {
+        "__xlnType": "BigInt",
+        "value": "1000000"
+      },
+      "tokenId": {
+        "__xlnType": "BigInt",
+        "value": "1"
+      }
+    },
+    "blockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48",
+    "blockNumber": 23,
+    "logIndex": 1,
+    "name": "ReserveUpdated",
+    "transactionHash": "0xd28a9889dc5c69e1a1477b4f1bab163ced67d05f7c4fa6e60f1f0805ef6aa91f"
+  },
+  "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+  "final": {
+    "entityFrameHash": "0x29d0c9a58145e126afd7c740db52b8cee0a9bccc31275bdd54886de3f9a7c76e",
+    "entityHeight": 1,
+    "finalizedJHeight": 35,
+    "nonce": 2,
+    "reserve": "0",
+    "runtimeHeight": 11
+  },
+  "frameHash": "0x5c6b18f736d8676cdc5cf5d504418d2af5d38773b388734530ef372d4569d965",
+  "frames": [
+    {
+      "frameHash": "0xbe735c88f0c10ff8e8e87b549bffee1295b5a1b96ccfb7d33f78166cca1c7f99",
+      "height": 7,
+      "materializedState": false,
+      "postStateHash": "0x4d32434ead70ab9ae54d7e0fdc663c04f0b8df017de0ed2f2319429a1c42a373",
+      "prevFrameHash": "0x98ab6f29226bae9719ec23c89734b924613cc55159ec1656e466c4f4452212c1",
+      "replicaMetaDigest": "0xdd64004b510e5ee5674fb7aa28d82232c3b5e177b90b77409ed0c51a655f8e28",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "config": {
+                "jurisdiction": {
+                  "address": "http://127.0.0.1:18545/jsonrpc",
+                  "chainId": 2414086651,
+                  "depositoryAddress": "0x4cf93900621b8929de88ed82053190751ce6dc48",
+                  "entityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+                  "name": "Native TVM",
+                  "registrationBlock": 10
+                },
+                "mode": "proposer-based",
+                "shares": {
+                  "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf": {
+                    "__xlnType": "BigInt",
+                    "value": "1"
+                  }
+                },
+                "threshold": {
+                  "__xlnType": "BigInt",
+                  "value": "1"
+                },
+                "validators": [
+                  "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+                ]
+              },
+              "entitySeed": "0xedbf45e95f172af57ae775e74970657336c32a404549593779bd5afcedbfcfb34e85837f653c4bfa2bbe4bd8158a97c0e764921ff8a98247d3d6d72c60970a79",
+              "isProposer": true
+            },
+            "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+            "type": "importReplica"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789698924549,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    },
+    {
+      "entityContextRefs": {
+        "__xlnType": "Map",
+        "value": [
+          [
+            "0x0000000000000000000000000000000000000000000000000000000000000001:0x7e5f4552091a69125d5dfcb7b8c2659029395bdf:1",
+            "0xcc4ac8a1bbce7fc99dd7293d2c810b45e51ae10a31ca5813ebc0ccf782c8622c"
+          ]
+        ]
+      },
+      "frameHash": "0xbeadad34d2d937e1cfd754245423ac9c74c2cdac1c778b3388778f978048606b",
+      "height": 8,
+      "materializedState": false,
+      "postStateHash": "0x91be0f92400876d5554dbb43a35fcc27d849b5ce5950b68c6dfca8e28c59cf4d",
+      "prevFrameHash": "0xbe735c88f0c10ff8e8e87b549bffee1295b5a1b96ccfb7d33f78166cca1c7f99",
+      "replicaMetaDigest": "0x41a04b90084afd352275ba19e70294a4fdcdb578b798dd964b34877aea1b9132",
+      "runtimeInput": {
+        "entityInputs": [
+          {
+            "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "jPrefixAttestations": {
+              "__xlnType": "Map",
+              "value": [
+                [
+                  "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                  {
+                    "baseHeight": 9,
+                    "blocks": [
+                      {
+                        "blockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+                        "blockNumber": 10,
+                        "events": [
+                          {
+                            "blockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+                            "blockNumber": 10,
+                            "data": {
+                              "boardHash": "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea",
+                              "controlTokenId": "1",
+                              "dividendTokenId": "57896044618658097711785492504343953926634992332820282019728792003956564819969",
+                              "recipient": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+                            },
+                            "logIndex": 3,
+                            "transactionHash": "0x0fd7de8bda5a242c82c66a56d74ac789f92d1c1f8537dffd35559f6b64274fcd",
+                            "type": "FoundationBootstrapped"
+                          }
+                        ],
+                        "eventsHash": "0x1a0cd3144a0bfbda44b8a62692171280b2e05a5ef3cc93b8bd977ddec40d3f14"
+                      },
+                      {
+                        "blockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48",
+                        "blockNumber": 23,
+                        "events": [
+                          {
+                            "blockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48",
+                            "blockNumber": 23,
+                            "data": {
+                              "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                              "newBalance": "1000000",
+                              "tokenId": 1
+                            },
+                            "logIndex": 1,
+                            "transactionHash": "0xd28a9889dc5c69e1a1477b4f1bab163ced67d05f7c4fa6e60f1f0805ef6aa91f",
+                            "type": "ReserveUpdated"
+                          },
+                          {
+                            "blockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48",
+                            "blockNumber": 23,
+                            "data": {
+                              "batchHash": "0x4ea7ff99990675e80dff9db98e5e6839a085c6a29981a843fb7612bd45eb86dc",
+                              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                              "nonce": 1
+                            },
+                            "logIndex": 2,
+                            "transactionHash": "0xd28a9889dc5c69e1a1477b4f1bab163ced67d05f7c4fa6e60f1f0805ef6aa91f",
+                            "type": "HankoBatchProcessed"
+                          }
+                        ],
+                        "eventsHash": "0xbb65cc5ca763bf92c7afb1f2241dd3160f6737704873927b2f2f9f23d6353410"
+                      },
+                      {
+                        "blockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+                        "blockNumber": 24,
+                        "events": [
+                          {
+                            "blockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+                            "blockNumber": 24,
+                            "data": {
+                              "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                              "newBalance": "0",
+                              "tokenId": 1
+                            },
+                            "logIndex": 0,
+                            "transactionHash": "0xc0d8b87075d4c19ca67ab03ffd941433cc415ed69c625e4d54ffe937e01abfd3",
+                            "type": "ReserveUpdated"
+                          },
+                          {
+                            "blockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+                            "blockNumber": 24,
+                            "data": {
+                              "batchHash": "0x7f359ff9609c4e82303577c30812c3e62b9aaf177306a5544041a3f1613ebc63",
+                              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                              "nonce": 2
+                            },
+                            "logIndex": 2,
+                            "transactionHash": "0xc0d8b87075d4c19ca67ab03ffd941433cc415ed69c625e4d54ffe937e01abfd3",
+                            "type": "HankoBatchProcessed"
+                          }
+                        ],
+                        "eventsHash": "0xf7db1e4650b61d1ae1f0b1988b963245424f412883c7cceadf7bd99c0f8af3e6"
+                      }
+                    ],
+                    "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    "eventHistoryRoot": "0xa1cf03c985face16ea72d05e6fe2948dfc15317676a7796348cafbc25ba4fdbe",
+                    "headers": [
+                      {
+                        "jBlockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+                        "jHeight": 10
+                      },
+                      {
+                        "jBlockHash": "0x000000000000000b4c028f69aa6bed4a29c9fb389fffa15c2aef04face529fe5",
+                        "jHeight": 11
+                      },
+                      {
+                        "jBlockHash": "0x000000000000000c9e2dbf21d4781b6cdeda140b9f1dc50cd5405aaccdeec66f",
+                        "jHeight": 12
+                      },
+                      {
+                        "jBlockHash": "0x000000000000000df93823200d261f3f1ab5aa53287792a2e11ce2116a1ede7f",
+                        "jHeight": 13
+                      },
+                      {
+                        "jBlockHash": "0x000000000000000e046f2d3bbe84d98a39e3892e47756a0a0611f74f4d65b61e",
+                        "jHeight": 14
+                      },
+                      {
+                        "jBlockHash": "0x000000000000000ff42e8c64591bc3eeeaf83cef4c45610213e54c0f00c75d94",
+                        "jHeight": 15
+                      },
+                      {
+                        "jBlockHash": "0x00000000000000104653674d40429d01e202f5a785fc69ec91b63c9320043ced",
+                        "jHeight": 16
+                      },
+                      {
+                        "jBlockHash": "0x0000000000000011569fdf9cc837e9cd8ba6a700e2d2e5a3e4a7dd13db5fc705",
+                        "jHeight": 17
+                      },
+                      {
+                        "jBlockHash": "0x00000000000000125fca7bcb8eb2a6970c64eba64f4ca2a485e02114059f99c8",
+                        "jHeight": 18
+                      },
+                      {
+                        "jBlockHash": "0x0000000000000013d47f9f1f5fbc7cc6ee688bcbc86e9be3d1ebf639fe98a012",
+                        "jHeight": 19
+                      },
+                      {
+                        "jBlockHash": "0x0000000000000014bf097223390ae8984b4294828a413ef5a7af5deb90e8d9d9",
+                        "jHeight": 20
+                      },
+                      {
+                        "jBlockHash": "0x00000000000000153eb0b445ebd77f1ae69e618fd55ab3ec33c6e3cd59c32407",
+                        "jHeight": 21
+                      },
+                      {
+                        "jBlockHash": "0x00000000000000163205e30fdec00e82f13ffb7c2a88bc0095e77f78b5af427a",
+                        "jHeight": 22
+                      },
+                      {
+                        "jBlockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48",
+                        "jHeight": 23
+                      },
+                      {
+                        "jBlockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+                        "jHeight": 24
+                      },
+                      {
+                        "jBlockHash": "0x00000000000000196c034e2a9937ec63310ea27a875cd5387877822e330081e2",
+                        "jHeight": 25
+                      },
+                      {
+                        "jBlockHash": "0x000000000000001a8c2b11d2c2c495b659f55e8600c44c108c397f2bb730c4af",
+                        "jHeight": 26
+                      },
+                      {
+                        "jBlockHash": "0x000000000000001b661800ba243f394c9f8358514cc7d2efe6f0ce271188428b",
+                        "jHeight": 27
+                      },
+                      {
+                        "jBlockHash": "0x000000000000001c2fae0796321f5ca318bda583ac354b3e862e34afb59e31b0",
+                        "jHeight": 28
+                      },
+                      {
+                        "jBlockHash": "0x000000000000001d1bfbe5f5d3907e090f9e933d74dd433c579bd7d4894a13fd",
+                        "jHeight": 29
+                      },
+                      {
+                        "jBlockHash": "0x000000000000001e1d5e50beb8e835c2a93aff83516202d6465f6660f0975dd5",
+                        "jHeight": 30
+                      },
+                      {
+                        "jBlockHash": "0x000000000000001fab581eef3012bfcafd7283fad80bf57e2d48bf1bb7eed573",
+                        "jHeight": 31
+                      },
+                      {
+                        "jBlockHash": "0x00000000000000206ad3e4a15306eb2c0e5e776dd817e49ead830765810bb50d",
+                        "jHeight": 32
+                      },
+                      {
+                        "jBlockHash": "0x00000000000000210fbe12f92bf95a53c1f72fd671c9a8923e7f1e7df41d92c1",
+                        "jHeight": 33
+                      },
+                      {
+                        "jBlockHash": "0x000000000000002277d64178653adcba87e499546089ea5cdaa7d0a4187097e8",
+                        "jHeight": 34
+                      },
+                      {
+                        "jBlockHash": "0x0000000000000023701c5923f0571cd65ca82d419091ed04c1ab531c040d9ca8",
+                        "jHeight": 35
+                      }
+                    ],
+                    "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+                    "parentFrameHash": "genesis",
+                    "rangeHash": "0x4e36d1a198d647ca97f5e90a95bb058eb6a04840e18e99aec45cd023b0eb35ff",
+                    "scannedThroughHeight": 35,
+                    "signature": "0xd1a2499ef3aeb9ed35f547b1a1f58b83503c1c606382ba1973c98b41ce86a58449b46e8f3d74c557a7a6b666433200cbec262b9aa23f03c6a3651f3bbde8c68a00",
+                    "targetEntityHeight": 1,
+                    "tipBlockHash": "0x0000000000000023701c5923f0571cd65ca82d419091ed04c1ab531c040d9ca8",
+                    "validatorId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                    "version": 1
+                  }
+                ]
+              ]
+            },
+            "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+          }
+        ],
+        "runtimeTxs": [
+          {
+            "data": {
+              "activationHeight": 10,
+              "blockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+              "boardHash": "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea",
+              "chainId": 2414086651,
+              "confirmationDepth": 0,
+              "data": "0x00000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001",
+              "emitter": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "finality": "tron-solidified",
+              "logIndex": 3,
+              "observedHeadHeight": 36,
+              "observedThroughHeight": 35,
+              "observedTipBlockHash": "0x0000000000000023701c5923f0571cd65ca82d419091ed04c1ab531c040d9ca8",
+              "rawLogDigest": "0x30edb807bda158ee22d84eb9bf76dda5832bde3d9ae96b2f897a7ae8a55d595b",
+              "receiptKind": "tron-rpc-attested",
+              "receiptLogIndex": 3,
+              "rpcEndpointHash": "0xa704d6936120aaab71551e75f1487fc125406bd0911182baeaa8ceb29426e9a6",
+              "source": "FoundationBootstrapped",
+              "stackKey": "0xd85c80b5bfcc71d11330d600ab2f4a3d180680aac065154f06438c634e4a245b",
+              "topics": [
+                "0xb0887eed9a1aa3118afaf26b345c629ec7b797fb3d121bbd5dd62580b361c9bd",
+                "0x0000000000000000000000007e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea"
+              ],
+              "transactionHash": "0x0fd7de8bda5a242c82c66a56d74ac789f92d1c1f8537dffd35559f6b64274fcd",
+              "transactionIndex": 0,
+              "version": 1,
+              "witnessRuntimeId": "0xc36ea41949c3238c4cd2ba5c51db37d089d1d0f2",
+              "witnessSignature": "0x94b63172ae320b998e43c8ce7e32299f0b7d89dbddd105d130a850ba649fd84e7b86b1468836a256eaabf24cc48f41ff943a0f880724bcbd55770cc72467e75400"
+            },
+            "type": "recordAuthenticatedJAuthority"
+          },
+          {
+            "data": {
+              "blocks": [
+                {
+                  "events": [
+                    {
+                      "blockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+                      "blockNumber": 10,
+                      "data": {
+                        "boardHash": "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea",
+                        "controlTokenId": "1",
+                        "dividendTokenId": "57896044618658097711785492504343953926634992332820282019728792003956564819969",
+                        "recipient": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+                      },
+                      "logIndex": 3,
+                      "transactionHash": "0x0fd7de8bda5a242c82c66a56d74ac789f92d1c1f8537dffd35559f6b64274fcd",
+                      "type": "FoundationBootstrapped"
+                    }
+                  ],
+                  "eventsHash": "0x1a0cd3144a0bfbda44b8a62692171280b2e05a5ef3cc93b8bd977ddec40d3f14",
+                  "jBlockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+                  "jHeight": 10,
+                  "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+                }
+              ],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 10,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813"
+            },
+            "type": "observeJRange"
+          },
+          {
+            "data": {
+              "blocks": [
+                {
+                  "events": [
+                    {
+                      "blockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48",
+                      "blockNumber": 23,
+                      "data": {
+                        "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                        "newBalance": "1000000",
+                        "tokenId": 1
+                      },
+                      "logIndex": 1,
+                      "transactionHash": "0xd28a9889dc5c69e1a1477b4f1bab163ced67d05f7c4fa6e60f1f0805ef6aa91f",
+                      "type": "ReserveUpdated"
+                    },
+                    {
+                      "blockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48",
+                      "blockNumber": 23,
+                      "data": {
+                        "batchHash": "0x4ea7ff99990675e80dff9db98e5e6839a085c6a29981a843fb7612bd45eb86dc",
+                        "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                        "nonce": 1
+                      },
+                      "logIndex": 2,
+                      "transactionHash": "0xd28a9889dc5c69e1a1477b4f1bab163ced67d05f7c4fa6e60f1f0805ef6aa91f",
+                      "type": "HankoBatchProcessed"
+                    }
+                  ],
+                  "eventsHash": "0xbb65cc5ca763bf92c7afb1f2241dd3160f6737704873927b2f2f9f23d6353410",
+                  "jBlockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48",
+                  "jHeight": 23,
+                  "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+                }
+              ],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 23,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48"
+            },
+            "type": "observeJRange"
+          },
+          {
+            "data": {
+              "blocks": [
+                {
+                  "events": [
+                    {
+                      "blockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+                      "blockNumber": 24,
+                      "data": {
+                        "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                        "newBalance": "0",
+                        "tokenId": 1
+                      },
+                      "logIndex": 0,
+                      "transactionHash": "0xc0d8b87075d4c19ca67ab03ffd941433cc415ed69c625e4d54ffe937e01abfd3",
+                      "type": "ReserveUpdated"
+                    },
+                    {
+                      "blockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+                      "blockNumber": 24,
+                      "data": {
+                        "batchHash": "0x7f359ff9609c4e82303577c30812c3e62b9aaf177306a5544041a3f1613ebc63",
+                        "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                        "nonce": 2
+                      },
+                      "logIndex": 2,
+                      "transactionHash": "0xc0d8b87075d4c19ca67ab03ffd941433cc415ed69c625e4d54ffe937e01abfd3",
+                      "type": "HankoBatchProcessed"
+                    }
+                  ],
+                  "eventsHash": "0xf7db1e4650b61d1ae1f0b1988b963245424f412883c7cceadf7bd99c0f8af3e6",
+                  "jBlockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+                  "jHeight": 24,
+                  "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+                }
+              ],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 24,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5"
+            },
+            "type": "observeJRange"
+          },
+          {
+            "data": {
+              "blocks": [],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "headers": [
+                {
+                  "jBlockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+                  "jHeight": 10
+                },
+                {
+                  "jBlockHash": "0x000000000000000b4c028f69aa6bed4a29c9fb389fffa15c2aef04face529fe5",
+                  "jHeight": 11
+                },
+                {
+                  "jBlockHash": "0x000000000000000c9e2dbf21d4781b6cdeda140b9f1dc50cd5405aaccdeec66f",
+                  "jHeight": 12
+                },
+                {
+                  "jBlockHash": "0x000000000000000df93823200d261f3f1ab5aa53287792a2e11ce2116a1ede7f",
+                  "jHeight": 13
+                },
+                {
+                  "jBlockHash": "0x000000000000000e046f2d3bbe84d98a39e3892e47756a0a0611f74f4d65b61e",
+                  "jHeight": 14
+                },
+                {
+                  "jBlockHash": "0x000000000000000ff42e8c64591bc3eeeaf83cef4c45610213e54c0f00c75d94",
+                  "jHeight": 15
+                },
+                {
+                  "jBlockHash": "0x00000000000000104653674d40429d01e202f5a785fc69ec91b63c9320043ced",
+                  "jHeight": 16
+                },
+                {
+                  "jBlockHash": "0x0000000000000011569fdf9cc837e9cd8ba6a700e2d2e5a3e4a7dd13db5fc705",
+                  "jHeight": 17
+                },
+                {
+                  "jBlockHash": "0x00000000000000125fca7bcb8eb2a6970c64eba64f4ca2a485e02114059f99c8",
+                  "jHeight": 18
+                },
+                {
+                  "jBlockHash": "0x0000000000000013d47f9f1f5fbc7cc6ee688bcbc86e9be3d1ebf639fe98a012",
+                  "jHeight": 19
+                },
+                {
+                  "jBlockHash": "0x0000000000000014bf097223390ae8984b4294828a413ef5a7af5deb90e8d9d9",
+                  "jHeight": 20
+                },
+                {
+                  "jBlockHash": "0x00000000000000153eb0b445ebd77f1ae69e618fd55ab3ec33c6e3cd59c32407",
+                  "jHeight": 21
+                },
+                {
+                  "jBlockHash": "0x00000000000000163205e30fdec00e82f13ffb7c2a88bc0095e77f78b5af427a",
+                  "jHeight": 22
+                },
+                {
+                  "jBlockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48",
+                  "jHeight": 23
+                },
+                {
+                  "jBlockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+                  "jHeight": 24
+                },
+                {
+                  "jBlockHash": "0x00000000000000196c034e2a9937ec63310ea27a875cd5387877822e330081e2",
+                  "jHeight": 25
+                },
+                {
+                  "jBlockHash": "0x000000000000001a8c2b11d2c2c495b659f55e8600c44c108c397f2bb730c4af",
+                  "jHeight": 26
+                },
+                {
+                  "jBlockHash": "0x000000000000001b661800ba243f394c9f8358514cc7d2efe6f0ce271188428b",
+                  "jHeight": 27
+                },
+                {
+                  "jBlockHash": "0x000000000000001c2fae0796321f5ca318bda583ac354b3e862e34afb59e31b0",
+                  "jHeight": 28
+                },
+                {
+                  "jBlockHash": "0x000000000000001d1bfbe5f5d3907e090f9e933d74dd433c579bd7d4894a13fd",
+                  "jHeight": 29
+                },
+                {
+                  "jBlockHash": "0x000000000000001e1d5e50beb8e835c2a93aff83516202d6465f6660f0975dd5",
+                  "jHeight": 30
+                },
+                {
+                  "jBlockHash": "0x000000000000001fab581eef3012bfcafd7283fad80bf57e2d48bf1bb7eed573",
+                  "jHeight": 31
+                },
+                {
+                  "jBlockHash": "0x00000000000000206ad3e4a15306eb2c0e5e776dd817e49ead830765810bb50d",
+                  "jHeight": 32
+                },
+                {
+                  "jBlockHash": "0x00000000000000210fbe12f92bf95a53c1f72fd671c9a8923e7f1e7df41d92c1",
+                  "jHeight": 33
+                },
+                {
+                  "jBlockHash": "0x000000000000002277d64178653adcba87e499546089ea5cdaa7d0a4187097e8",
+                  "jHeight": 34
+                },
+                {
+                  "jBlockHash": "0x0000000000000023701c5923f0571cd65ca82d419091ed04c1ab531c040d9ca8",
+                  "jHeight": 35
+                }
+              ],
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 35,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x0000000000000023701c5923f0571cd65ca82d419091ed04c1ab531c040d9ca8"
+            },
+            "type": "observeJRange"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789698924549,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    },
+    {
+      "frameHash": "0xe0c4d39f8d3eff836a4b67fb7c50a713287f9914bbe2c324deabb0fa029fef43",
+      "height": 9,
+      "materializedState": false,
+      "postStateHash": "0x0cc75e41c5945558a33125072d1e9b115072d86498f3c39f08990393cc1aa77f",
+      "prevFrameHash": "0xbeadad34d2d937e1cfd754245423ac9c74c2cdac1c778b3388778f978048606b",
+      "replicaMetaDigest": "0x41a04b90084afd352275ba19e70294a4fdcdb578b798dd964b34877aea1b9132",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "activationHeight": 10,
+              "blockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+              "boardHash": "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea",
+              "chainId": 2414086651,
+              "confirmationDepth": 0,
+              "data": "0x00000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000001",
+              "emitter": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "finality": "tron-solidified",
+              "logIndex": 3,
+              "observedHeadHeight": 52,
+              "observedThroughHeight": 51,
+              "observedTipBlockHash": "0x0000000000000033cf425f8a857ae32282e91bd1f84d6942c3216e3a99de17e0",
+              "rawLogDigest": "0x30edb807bda158ee22d84eb9bf76dda5832bde3d9ae96b2f897a7ae8a55d595b",
+              "receiptKind": "tron-rpc-attested",
+              "receiptLogIndex": 3,
+              "rpcEndpointHash": "0xa704d6936120aaab71551e75f1487fc125406bd0911182baeaa8ceb29426e9a6",
+              "source": "FoundationBootstrapped",
+              "stackKey": "0xd85c80b5bfcc71d11330d600ab2f4a3d180680aac065154f06438c634e4a245b",
+              "topics": [
+                "0xb0887eed9a1aa3118afaf26b345c629ec7b797fb3d121bbd5dd62580b361c9bd",
+                "0x0000000000000000000000007e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                "0x03daa2cc6a91f488a30e6ab87864bdc666916cfedac9d8772974a6e76ae199ea"
+              ],
+              "transactionHash": "0x0fd7de8bda5a242c82c66a56d74ac789f92d1c1f8537dffd35559f6b64274fcd",
+              "transactionIndex": 0,
+              "version": 1,
+              "witnessRuntimeId": "0xc36ea41949c3238c4cd2ba5c51db37d089d1d0f2",
+              "witnessSignature": "0x17f2085869680904d14df3528946007fb0a2bdf27da5e718adb80fb87b8a570c4a4676cc812e9de11bfcf57ef1f8a1a3a7eca3584d3d3c0b561affc5e0f50ea601"
+            },
+            "type": "recordAuthenticatedJAuthority"
+          },
+          {
+            "data": {
+              "blocks": [],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "headers": [
+                {
+                  "jBlockHash": "0x000000000000000ab1edc77022e0a201a508bca6fb15cadfc5fcd638a9218813",
+                  "jHeight": 10
+                },
+                {
+                  "jBlockHash": "0x000000000000000b4c028f69aa6bed4a29c9fb389fffa15c2aef04face529fe5",
+                  "jHeight": 11
+                },
+                {
+                  "jBlockHash": "0x000000000000000c9e2dbf21d4781b6cdeda140b9f1dc50cd5405aaccdeec66f",
+                  "jHeight": 12
+                },
+                {
+                  "jBlockHash": "0x000000000000000df93823200d261f3f1ab5aa53287792a2e11ce2116a1ede7f",
+                  "jHeight": 13
+                },
+                {
+                  "jBlockHash": "0x000000000000000e046f2d3bbe84d98a39e3892e47756a0a0611f74f4d65b61e",
+                  "jHeight": 14
+                },
+                {
+                  "jBlockHash": "0x000000000000000ff42e8c64591bc3eeeaf83cef4c45610213e54c0f00c75d94",
+                  "jHeight": 15
+                },
+                {
+                  "jBlockHash": "0x00000000000000104653674d40429d01e202f5a785fc69ec91b63c9320043ced",
+                  "jHeight": 16
+                },
+                {
+                  "jBlockHash": "0x0000000000000011569fdf9cc837e9cd8ba6a700e2d2e5a3e4a7dd13db5fc705",
+                  "jHeight": 17
+                },
+                {
+                  "jBlockHash": "0x00000000000000125fca7bcb8eb2a6970c64eba64f4ca2a485e02114059f99c8",
+                  "jHeight": 18
+                },
+                {
+                  "jBlockHash": "0x0000000000000013d47f9f1f5fbc7cc6ee688bcbc86e9be3d1ebf639fe98a012",
+                  "jHeight": 19
+                },
+                {
+                  "jBlockHash": "0x0000000000000014bf097223390ae8984b4294828a413ef5a7af5deb90e8d9d9",
+                  "jHeight": 20
+                },
+                {
+                  "jBlockHash": "0x00000000000000153eb0b445ebd77f1ae69e618fd55ab3ec33c6e3cd59c32407",
+                  "jHeight": 21
+                },
+                {
+                  "jBlockHash": "0x00000000000000163205e30fdec00e82f13ffb7c2a88bc0095e77f78b5af427a",
+                  "jHeight": 22
+                },
+                {
+                  "jBlockHash": "0x0000000000000017ff6442f59e556b3ee805d1c9c781eb89b7495a99c210bd48",
+                  "jHeight": 23
+                },
+                {
+                  "jBlockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+                  "jHeight": 24
+                },
+                {
+                  "jBlockHash": "0x00000000000000196c034e2a9937ec63310ea27a875cd5387877822e330081e2",
+                  "jHeight": 25
+                },
+                {
+                  "jBlockHash": "0x000000000000001a8c2b11d2c2c495b659f55e8600c44c108c397f2bb730c4af",
+                  "jHeight": 26
+                },
+                {
+                  "jBlockHash": "0x000000000000001b661800ba243f394c9f8358514cc7d2efe6f0ce271188428b",
+                  "jHeight": 27
+                },
+                {
+                  "jBlockHash": "0x000000000000001c2fae0796321f5ca318bda583ac354b3e862e34afb59e31b0",
+                  "jHeight": 28
+                },
+                {
+                  "jBlockHash": "0x000000000000001d1bfbe5f5d3907e090f9e933d74dd433c579bd7d4894a13fd",
+                  "jHeight": 29
+                },
+                {
+                  "jBlockHash": "0x000000000000001e1d5e50beb8e835c2a93aff83516202d6465f6660f0975dd5",
+                  "jHeight": 30
+                },
+                {
+                  "jBlockHash": "0x000000000000001fab581eef3012bfcafd7283fad80bf57e2d48bf1bb7eed573",
+                  "jHeight": 31
+                },
+                {
+                  "jBlockHash": "0x00000000000000206ad3e4a15306eb2c0e5e776dd817e49ead830765810bb50d",
+                  "jHeight": 32
+                },
+                {
+                  "jBlockHash": "0x00000000000000210fbe12f92bf95a53c1f72fd671c9a8923e7f1e7df41d92c1",
+                  "jHeight": 33
+                },
+                {
+                  "jBlockHash": "0x000000000000002277d64178653adcba87e499546089ea5cdaa7d0a4187097e8",
+                  "jHeight": 34
+                },
+                {
+                  "jBlockHash": "0x0000000000000023701c5923f0571cd65ca82d419091ed04c1ab531c040d9ca8",
+                  "jHeight": 35
+                },
+                {
+                  "jBlockHash": "0x00000000000000246e98fa60b9a2fd0fceb134413304b33b6bb8a5c2b73539a0",
+                  "jHeight": 36
+                },
+                {
+                  "jBlockHash": "0x000000000000002516efed41966927b7eeebeeeae78ce479d2a64c7b0d02d9c3",
+                  "jHeight": 37
+                },
+                {
+                  "jBlockHash": "0x0000000000000026e72999b0b6e06ab50b7838427b10acd8f80e90c7e5319ece",
+                  "jHeight": 38
+                },
+                {
+                  "jBlockHash": "0x0000000000000027ff077d338c39830ee58d2a2ec72a83ff141a47bef099a7c0",
+                  "jHeight": 39
+                },
+                {
+                  "jBlockHash": "0x00000000000000283a87badec7f4d2e9fe82f117fc278c5d119b0843a8d700e6",
+                  "jHeight": 40
+                },
+                {
+                  "jBlockHash": "0x0000000000000029dcf9e06535a7b4f064b7b6988bc556ca855eed2727975db7",
+                  "jHeight": 41
+                },
+                {
+                  "jBlockHash": "0x000000000000002ac2c6f7bb46351414827cf1fbd3425281f7fa673684f428c4",
+                  "jHeight": 42
+                },
+                {
+                  "jBlockHash": "0x000000000000002bc796378c2dd531c0a1efbb547089a8ff76bc53f3c0abcc35",
+                  "jHeight": 43
+                },
+                {
+                  "jBlockHash": "0x000000000000002ce9b08b467ae00ff18ca2c62ed407e19ed298ae92feefccef",
+                  "jHeight": 44
+                },
+                {
+                  "jBlockHash": "0x000000000000002db779135deb825b6cd26a495eb9ad20156026ade4bed5f95a",
+                  "jHeight": 45
+                },
+                {
+                  "jBlockHash": "0x000000000000002ed3432d844e40b50cd8b20efcbf996a61259d2c51ead032c9",
+                  "jHeight": 46
+                },
+                {
+                  "jBlockHash": "0x000000000000002fe52b298b2a0c0e9e6e210dcdaae7ea485bfef682dadd28ee",
+                  "jHeight": 47
+                },
+                {
+                  "jBlockHash": "0x00000000000000308d96ce9d13001b483c65918cfed580dc871df284010fcda9",
+                  "jHeight": 48
+                },
+                {
+                  "jBlockHash": "0x000000000000003148d34a7997e09cf71073065cbe775059767c43198cd1f339",
+                  "jHeight": 49
+                },
+                {
+                  "jBlockHash": "0x0000000000000032ec38667db68a760716953603793e4c03f0cc21d2f8957901",
+                  "jHeight": 50
+                },
+                {
+                  "jBlockHash": "0x0000000000000033cf425f8a857ae32282e91bd1f84d6942c3216e3a99de17e0",
+                  "jHeight": 51
+                }
+              ],
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 51,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x0000000000000033cf425f8a857ae32282e91bd1f84d6942c3216e3a99de17e0"
+            },
+            "type": "observeJRange"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789698924549,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    },
+    {
+      "frameHash": "0xd389521e3008345fdbd708e58ad7f306f6171bc5f4c1f1a47bb79777fc052b67",
+      "height": 10,
+      "materializedState": false,
+      "postStateHash": "0xf34ddcc0472f7f43e1ea9fcbc7c4231ce7b10affdabb8ab41c9ec7677de941cd",
+      "prevFrameHash": "0xe0c4d39f8d3eff836a4b67fb7c50a713287f9914bbe2c324deabb0fa029fef43",
+      "replicaMetaDigest": "0x41a04b90084afd352275ba19e70294a4fdcdb578b798dd964b34877aea1b9132",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blockNumber": 35,
+              "chainId": 2414086651,
+              "depositoryAddress": "0x4cf93900621b8929de88ed82053190751ce6dc48"
+            },
+            "type": "advanceJWatcherCursor"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789698924549,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": []
+    },
+    {
+      "frameHash": "0x5c6b18f736d8676cdc5cf5d504418d2af5d38773b388734530ef372d4569d965",
+      "height": 11,
+      "materializedState": false,
+      "postStateHash": "0x696dae6e4ed938538369f81904102ce2c80af9076e378b5d9093a126243cb24e",
+      "prevFrameHash": "0xd389521e3008345fdbd708e58ad7f306f6171bc5f4c1f1a47bb79777fc052b67",
+      "replicaMetaDigest": "0x41a04b90084afd352275ba19e70294a4fdcdb578b798dd964b34877aea1b9132",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blocks": [],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "headers": [
+                {
+                  "jBlockHash": "0x00000000000000246e98fa60b9a2fd0fceb134413304b33b6bb8a5c2b73539a0",
+                  "jHeight": 36
+                },
+                {
+                  "jBlockHash": "0x000000000000002516efed41966927b7eeebeeeae78ce479d2a64c7b0d02d9c3",
+                  "jHeight": 37
+                },
+                {
+                  "jBlockHash": "0x0000000000000026e72999b0b6e06ab50b7838427b10acd8f80e90c7e5319ece",
+                  "jHeight": 38
+                },
+                {
+                  "jBlockHash": "0x0000000000000027ff077d338c39830ee58d2a2ec72a83ff141a47bef099a7c0",
+                  "jHeight": 39
+                },
+                {
+                  "jBlockHash": "0x00000000000000283a87badec7f4d2e9fe82f117fc278c5d119b0843a8d700e6",
+                  "jHeight": 40
+                },
+                {
+                  "jBlockHash": "0x0000000000000029dcf9e06535a7b4f064b7b6988bc556ca855eed2727975db7",
+                  "jHeight": 41
+                },
+                {
+                  "jBlockHash": "0x000000000000002ac2c6f7bb46351414827cf1fbd3425281f7fa673684f428c4",
+                  "jHeight": 42
+                },
+                {
+                  "jBlockHash": "0x000000000000002bc796378c2dd531c0a1efbb547089a8ff76bc53f3c0abcc35",
+                  "jHeight": 43
+                },
+                {
+                  "jBlockHash": "0x000000000000002ce9b08b467ae00ff18ca2c62ed407e19ed298ae92feefccef",
+                  "jHeight": 44
+                },
+                {
+                  "jBlockHash": "0x000000000000002db779135deb825b6cd26a495eb9ad20156026ade4bed5f95a",
+                  "jHeight": 45
+                },
+                {
+                  "jBlockHash": "0x000000000000002ed3432d844e40b50cd8b20efcbf996a61259d2c51ead032c9",
+                  "jHeight": 46
+                },
+                {
+                  "jBlockHash": "0x000000000000002fe52b298b2a0c0e9e6e210dcdaae7ea485bfef682dadd28ee",
+                  "jHeight": 47
+                },
+                {
+                  "jBlockHash": "0x00000000000000308d96ce9d13001b483c65918cfed580dc871df284010fcda9",
+                  "jHeight": 48
+                },
+                {
+                  "jBlockHash": "0x000000000000003148d34a7997e09cf71073065cbe775059767c43198cd1f339",
+                  "jHeight": 49
+                },
+                {
+                  "jBlockHash": "0x0000000000000032ec38667db68a760716953603793e4c03f0cc21d2f8957901",
+                  "jHeight": 50
+                },
+                {
+                  "jBlockHash": "0x0000000000000033cf425f8a857ae32282e91bd1f84d6942c3216e3a99de17e0",
+                  "jHeight": 51
+                },
+                {
+                  "jBlockHash": "0x0000000000000034812f576ed5c04b07a5a12a16cbcf70a020cb12c34069e0d5",
+                  "jHeight": 52
+                },
+                {
+                  "jBlockHash": "0x000000000000003511bc01358a334b220bba9fa7ff175f7cc3dbd2a937b2b4ba",
+                  "jHeight": 53
+                },
+                {
+                  "jBlockHash": "0x0000000000000036ccc4343bca74ae805787a786463e41b77a5053bc56610eea",
+                  "jHeight": 54
+                },
+                {
+                  "jBlockHash": "0x0000000000000037f8bfb3f5dc1c94eb5131902187d8bd32fc9865f5960221a9",
+                  "jHeight": 55
+                },
+                {
+                  "jBlockHash": "0x0000000000000038189182e6a59aa31b8a5e9cd76b469b3881e34dc540f04eb7",
+                  "jHeight": 56
+                },
+                {
+                  "jBlockHash": "0x00000000000000399a1fee6ae03417439ae06a702d07fe68c2059525437d8891",
+                  "jHeight": 57
+                },
+                {
+                  "jBlockHash": "0x000000000000003aee98e928e58f90799fc825790351fb300675baf678c67c6e",
+                  "jHeight": 58
+                },
+                {
+                  "jBlockHash": "0x000000000000003b89e299681006cebb8754e3487a81bd8d997265ebf2cd6eaf",
+                  "jHeight": 59
+                },
+                {
+                  "jBlockHash": "0x000000000000003c10a241dce8b2751754c01353aba9e3a0f430819da56e15e1",
+                  "jHeight": 60
+                },
+                {
+                  "jBlockHash": "0x000000000000003d839061eb390bf300bd21009fc88449082ec79fd1152cc513",
+                  "jHeight": 61
+                },
+                {
+                  "jBlockHash": "0x000000000000003e840f7e0aba9c845b783f9cb12f0523d87077e42bb12c4c12",
+                  "jHeight": 62
+                },
+                {
+                  "jBlockHash": "0x000000000000003f03426f2ac3c7b77c3b7995b3e69f18f7429e85fe906dc87d",
+                  "jHeight": 63
+                },
+                {
+                  "jBlockHash": "0x000000000000004009227659ae35285ae2d4f8f3ef467a90c4966158c671c7fc",
+                  "jHeight": 64
+                },
+                {
+                  "jBlockHash": "0x00000000000000411faa41d642082cc2786c151493ad00f55382fce8f8fc97fe",
+                  "jHeight": 65
+                },
+                {
+                  "jBlockHash": "0x00000000000000423b7412f07ebcc69a0ff86fba1efc28a9a566bc1f167d6118",
+                  "jHeight": 66
+                },
+                {
+                  "jBlockHash": "0x00000000000000435f4bcf48aead83e6c07a048483111ad314170180977f6a2e",
+                  "jHeight": 67
+                }
+              ],
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 67,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x00000000000000435f4bcf48aead83e6c07a048483111ad314170180977f6a2e"
+            },
+            "type": "observeJRange"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789698924549,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    }
+  ],
+  "kind": "NATIVE_ENTITY_FINANCE",
+  "mode": "tron",
+  "observations": [
+    {
+      "entityFrameHash": "0x29d0c9a58145e126afd7c740db52b8cee0a9bccc31275bdd54886de3f9a7c76e",
+      "entityHeight": 1,
+      "finalizedJHeight": 35,
+      "nonce": 2,
+      "reserve": "0",
+      "runtimeHeight": 11
+    }
+  ],
+  "postStateHash": "0x696dae6e4ed938538369f81904102ce2c80af9076e378b5d9093a126243cb24e",
+  "reserves": [
+    {
+      "balance": "1000000",
+      "block": 23,
+      "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "tokenId": 1,
+      "transaction": "0xd28a9889dc5c69e1a1477b4f1bab163ced67d05f7c4fa6e60f1f0805ef6aa91f"
+    },
+    {
+      "balance": "0",
+      "block": 24,
+      "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "tokenId": 1,
+      "transaction": "0xc0d8b87075d4c19ca67ab03ffd941433cc415ed69c625e4d54ffe937e01abfd3"
+    }
+  ],
+  "restore": true,
+  "restoredAnchor": {
+    "final": {
+      "entityFrameHash": "0x29d0c9a58145e126afd7c740db52b8cee0a9bccc31275bdd54886de3f9a7c76e",
+      "entityHeight": 1,
+      "finalizedJHeight": 35,
+      "nonce": 2,
+      "reserve": "0",
+      "runtimeHeight": 10
+    },
+    "frameHash": "0xd389521e3008345fdbd708e58ad7f306f6171bc5f4c1f1a47bb79777fc052b67",
+    "postStateHash": "0xf34ddcc0472f7f43e1ea9fcbc7c4231ce7b10affdabb8ab41c9ec7677de941cd"
+  },
+  "runtimeId": "0xc36ea41949c3238c4cd2ba5c51db37d089d1d0f2",
+  "scope": "Private native Tron receipts through canonical Runtime and Entity; no cross-J or public-app claim",
+  "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+  "startHeight": 10,
+  "withdrawal": {
+    "blockNumber": 24,
+    "events": [
+      {
+        "args": {
+          "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "newBalance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "tokenId": {
+            "__xlnType": "BigInt",
+            "value": "1"
+          }
+        },
+        "blockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+        "blockNumber": 24,
+        "logIndex": 0,
+        "name": "ReserveUpdated",
+        "transactionHash": "0xc0d8b87075d4c19ca67ab03ffd941433cc415ed69c625e4d54ffe937e01abfd3"
+      },
+      {
+        "args": {
+          "batchHash": "0x7f359ff9609c4e82303577c30812c3e62b9aaf177306a5544041a3f1613ebc63",
+          "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "nonce": {
+            "__xlnType": "BigInt",
+            "value": "2"
+          }
+        },
+        "blockHash": "0x000000000000001866ae636948690a07e1e6a2a60f98c390fbfc5caacf25b7c5",
+        "blockNumber": 24,
+        "logIndex": 2,
+        "name": "HankoBatchProcessed",
+        "transactionHash": "0xc0d8b87075d4c19ca67ab03ffd941433cc415ed69c625e4d54ffe937e01abfd3"
+      }
+    ],
+    "txHash": "0xc0d8b87075d4c19ca67ab03ffd941433cc415ed69c625e4d54ffe937e01abfd3"
+  }
+}

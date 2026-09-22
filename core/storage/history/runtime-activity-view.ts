@@ -313,6 +313,11 @@ export type RuntimeActivityViewAccess = Readonly<{
 export const readRuntimeActivityViewStatus = (env: RuntimeReplica): Promise<RuntimeActivityViewHead | null> =>
   withRuntimeActivityViewLock(env, readRuntimeActivityViewHead);
 
+export const assertRuntimeActivityViewEmpty = (env: RuntimeReplica): Promise<void> =>
+  withRuntimeActivityViewLock(env, async db => {
+    for await (const _key of db.keys()) throw new Error('RECOVERY_IMPORT_ACTIVITY_NOT_EMPTY');
+  });
+
 export const withRuntimeActivityRepairFlight = async (
   env: RuntimeReplica,
   repair: (view: RuntimeActivityViewAccess) => Promise<void>,

@@ -1,0 +1,48 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "core/storage/recovery/bundle/import.ts": "c72cf34779d8b8a7f99c627398092eeff1cfda9701828b1c9dac70ebdb92b255",
+    "core/runtime/composition.ts": "4a57036ce0195d2a893fcf616accbc7b6ded9ccf72054b0de719d5b8db68f486",
+    "core/storage/history/runtime-activity-view.ts": "0250848abcddfdb1711c7f0fb7da290534ea4a0ed59739519cd2011ae7325c61",
+    "core/__tests__/storage/recovery/storage-restore-import-policy.test.ts": "86a4bda992f1f63547c87f2b97d31204886629f6c4e77990c45010f8ddae7795",
+    "scripts/native/tests/payments/recovery-recording.js": "3347231a6b89b2d7df3b1348231574dc59ea4b2b368853c7081e2e8d9596d0d7"
+  },
+  "scope": "Production fresh-destination canonical archive import, atomic WAL publication and normal-loader reopen. Tower and wallet UI not connected.",
+  "checks": {
+    "recoveryTestsPassed": 20,
+    "recoveryTestsTotal": 20,
+    "assertions": 131,
+    "testSeconds": 11.55,
+    "sourceGatesPassed": 39,
+    "sourceGatesTotal": 39,
+    "sourceCheckSeconds": 31.358,
+    "baseHeight": 1,
+    "targetHeight": 22,
+    "verifiedFrames": 21,
+    "commitmentsPerFrame": [
+      "replicaMetaDigest",
+      "postStateHash",
+      "runtimeOutputsDigest",
+      "runtimeOutputCount"
+    ],
+    "exactFinalizedPaymentsRestored": 1,
+    "senderUSDC": "99",
+    "paymentUSDC": "1",
+    "nextCheckpointAndReopen": true,
+    "beforePublicationInterruption": true,
+    "afterPublicationInterruption": true,
+    "staleActivityRejected": true,
+    "existingDestinationRejected": true
+  },
+  "limits": [
+    "Real local hubs and native WebKit host, not public testnet or SwiftUI fresh-device acceptance.",
+    "Injected errors at publication boundaries are not OS kill/power-loss tests.",
+    "Tower still uploads a tip snapshot; native restored-history acceptance remains 1/2.",
+    "Retained history is partial before checkpoint R1.",
+    "Private staging database containers may remain empty after cleanup.",
+    "UI fresh-device guard currently rejects empty destination containers left by a failed attempt; retry UX is not connected.",
+    "No new screenshots/video or physical iPhone installation."
+  ],
+  "next": "Publish checkpoint and history tail together through existing tower authentication/quota path; connect canonical importer and rerun strict fresh-device payment-history UI test."
+}

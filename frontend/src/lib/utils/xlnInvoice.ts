@@ -76,14 +76,24 @@ const extractPayHashPayload = (rawHash: string): string => {
 };
 
 const parseInvoiceParams = (params: URLSearchParams, source: ParsedXlnInvoice['source'], raw: string): ParsedXlnInvoice => {
+  for (const key of ['target', 'token', 'amount', 'desc', 'u', 'jId']) {
+    if (params.getAll(key).length > 1) throw new Error('Invoice contains duplicate payment fields');
+  }
+  // Untrusted invoices must not silently change an asset, amount or custody
+  // recipient through rounding/truncation before the user authorizes payment.
+  for (const [key, limit] of [['amount', 64], ['u', 96], ['jId', 64]] as const) {
+    if ((params.get(key)?.length ?? 0) > limit) throw new Error('Invoice payment field is too long');
+  }
   const targetEntityId = sanitizeText(params.get('target'), 120).toLowerCase();
   if (!isEntityId(targetEntityId)) {
     throw new Error('Invoice is missing a valid recipient entity id');
   }
 
-  const tokenRaw = sanitizeText(params.get('token'), 12);
+  const tokenRaw = params.get('token') ?? '';
   const parsedToken = tokenRaw ? Number(tokenRaw) : null;
-  const tokenId = Number.isFinite(parsedToken) && parsedToken && parsedToken > 0 ? Math.floor(parsedToken) : null;
+  if (params.has('token') && (!/^[1-9]\d*$/.test(tokenRaw) || !Number.isSafeInteger(parsedToken)))
+    throw new Error('Invoice contains an invalid token id');
+  const tokenId = parsedToken;
   const amount = sanitizeText(params.get('amount'), 64);
   const description = sanitizeText(params.get('desc'), 200);
   const recipientUserId = sanitizeText(params.get('u'), 96);

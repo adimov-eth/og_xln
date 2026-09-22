@@ -11,6 +11,18 @@ const MULTILINGUAL_FILES = new Set([
   // Preserve the original external-review quotations, including their language.
   'design/review/2026-09-06-b02/openrouter_deepseek_deepseek-v4-flash-vision-exp.desktop-dark.json',
   'design/review/2026-09-06-b02/summary.md',
+  'docs/evidence/improvement-loop-20260918/quorum-result-02.json',
+  'docs/evidence/improvement-loop-20260918/quorum-result-06.json',
+  'docs/evidence/improvement-loop-20260918/quorum-result-07.json',
+  'docs/evidence/improvement-loop-20260918/quorum-result-11.json',
+  'docs/evidence/improvement-loop-20260918/quorum-result.json',
+  'docs/evidence/ios-ux-20260918/quorum-result.json',
+  // These dated September 13 reports retain the owner's original Russian wording.
+  'docs/ios-e2e-video-2026-09-13.md',
+  'docs/ios-native-plan.md',
+  'docs/ios-storage-recovery-2026-09-13.md',
+  'docs/three-hub-stage-2026-09-13.md',
+  'docs/xln-gtm-review-2026-09-13.md',
   'debates/server.ts',
   'debates/tests/viral-surface.spec.ts',
   'frontend/src/lib/ai/xln-guide-context.ts',

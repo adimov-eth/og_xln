@@ -1,0 +1,36 @@
+{
+  "chainId": "0x8fe409fb",
+  "full": {
+    "blockID": "00000000000000153eb0b445ebd77f1ae69e618fd55ab3ec33c6e3cd59c32407",
+    "block_header": {
+      "raw_data": {
+        "number": 21,
+        "parentHash": "0000000000000014bf097223390ae8984b4294828a413ef5a7af5deb90e8d9d9",
+        "timestamp": 1789697358000,
+        "txTrieRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+        "version": 36,
+        "witness_address": "417e5f4552091a69125d5dfcb7b8c2659029395bdf"
+      },
+      "witness_signature": "725dd0761a4c34f98eaf263a179b5835a9b9a748ec9a9a8a5a16851d921f679357dd370a15a8f43615dea396dca09b430d5175d0b9871c879a69bf4e9c6798be00"
+    }
+  },
+  "head": 21,
+  "kind": "NATIVE_TRON_BOOT",
+  "signer": "TMVQGm1qAQYVdetCeGRRkTWYYrLXuHK2HC",
+  "solid": 20,
+  "solidBlock": {
+    "blockID": "0000000000000014bf097223390ae8984b4294828a413ef5a7af5deb90e8d9d9",
+    "block_header": {
+      "raw_data": {
+        "number": 20,
+        "parentHash": "0000000000000013d47f9f1f5fbc7cc6ee688bcbc86e9be3d1ebf639fe98a012",
+        "timestamp": 1789697127000,
+        "txTrieRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+        "version": 36,
+        "witness_address": "417e5f4552091a69125d5dfcb7b8c2659029395bdf"
+      },
+      "witness_signature": "8e0569481a98a1b83fd3db8eacc957643d2c687a501c9f13d39a4af04e167a591b05af36e572120d234e7cc012bfb5809d7ae32843a9394e7f21df3b55e9b84401"
+    }
+  },
+  "version": "4.8.2.1-f8b05d4"
+}

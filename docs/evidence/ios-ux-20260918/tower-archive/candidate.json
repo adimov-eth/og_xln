@@ -1,0 +1,50 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "core/watchtower/http.ts": "15e791b02713945dd4f3eed24688a7f4d23bc29dad0b2ed6d7c42b35ac162cb3",
+    "core/watchtower/store/appointments.ts": "3290677615c672ed6b4354e9fc38a77bcee05a06c441d28d6960af3703b68494",
+    "core/watchtower/store/index.ts": "adeef13484ca3558933015020956708b7878d162af47221e17f3c37f1b2c5def",
+    "core/__tests__/storage/recovery/recovery-tower.test.ts": "926a486a2285910c8375f683cd671ce5727accae0eb5e7a9829eb840eff39950",
+    "ui/src/runtime/recovery.ts": "7d870c9b3e930d159d10416ac05ed66cfd39c354ab51bf36f4650196345cbb36",
+    "ui/src/runtime/restore.ts": "b627b90d8aa7eb378063b2c747df79c66a0bdc640ef1cd97d43162d59e60ef6a",
+    "scripts/native/tests/payments/recovery-recording.js": "094c78a950de2642574e712142e21a78f4f6d9b8b5487ae42381418aa24d9a15",
+    "frontend/ios/App/App/WalletBackup.swift": "5c1c16dcfc2d068610c2d2937d7607a0df4712f2e740a66629eeb1e5f4aacc2b",
+    "frontend/ios/App/App/Localizable.xcstrings": "8709fe99db5c91e92e5232e63649e894cd8ccaa3c915d90e938c068191493e50"
+  },
+  "scope": "Native SwiftUI payment, encrypted archive upload, fresh second simulator restoration of balance and exact payment history; real isolated local hubs and custody recipient.",
+  "checks": {
+    "relatedTests": 27,
+    "relatedAssertions": 163,
+    "relatedSeconds": 3.57,
+    "sourceGates": 39,
+    "sourceCheckSeconds": 32.436,
+    "uiTypes": true,
+    "iosBuild": true,
+    "paymentBackupSeconds": 103.291,
+    "freshRestoreSeconds": 33.181,
+    "acceptancePassed": 2,
+    "acceptanceTotal": 2,
+    "standMs": 173066,
+    "recipientCreditUSDC": "1.000001",
+    "restoredBalanceUSDC": "98.999998",
+    "confirmedSentEntries": 1,
+    "partialHistoryDisclosed": true,
+    "localHealth": true
+  },
+  "artifacts": {
+    "paymentVideo": "/Users/zigota/xln/output/ios-ux-2026-09-18/tower-archive/payment.mp4",
+    "restoreVideo": "/Users/zigota/xln/output/ios-ux-2026-09-18/tower-archive/restore.mp4",
+    "restoredHistory": "/Users/zigota/xln/output/ios-ux-2026-09-18/tower-archive/restore/E69834E2-139F-4239-A2B0-D05AFC99F0A6.png"
+  },
+  "limits": [
+    "No public deployment, physical installation or hardware camera test.",
+    "Single English simulator sample; no claim of 95/100 UX or production readiness.",
+    "Only retained history is available; earlier history warning intentionally remains.",
+    "Videos precede the final EN/RU correction of obsolete backup copy; that wording correction was rebuilt successfully, not another E2E run.",
+    "Pair publication tested through authenticated HTTP, second-step rejection and process reopen; not OS power-loss testing. Existing tower write durability policy unchanged.",
+    "Prepublication failed local import may leave empty DB containers that the UI fresh-device guard rejects; retry UX remains unfinished.",
+    "Swap after fresh-device recovery not yet tested."
+  ],
+  "next": "Exercise swap and a new payment after recovery; retain evidence without repeating unchanged signing/public-service polling."
+}

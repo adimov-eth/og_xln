@@ -11,7 +11,9 @@ mod persistent_node;
 mod persistent_records;
 mod radix;
 mod rlp;
+mod tokens;
 mod value;
+pub use tokens::{canonical_token_decimals, canonical_token_metadata};
 
 #[cfg(test)]
 #[path = "persistent/tests.rs"]

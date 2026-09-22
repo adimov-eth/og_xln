@@ -130,23 +130,6 @@ const decodeTestRuntimeAdapterMessage = <T>(raw: unknown): T =>
     ? decodeRuntimeAdapterBrowserMessage(raw)
     : decodeRuntimeAdapterMessage(raw)) as unknown as T;
 
-const makeHubProfile = (id: string, name: string, lastUpdated = 7): Profile =>
-  buildCryptographicProfileFixture({
-    entityId: id,
-    signingSeed: `radapter-live-profile:${id}:${name}`,
-    name,
-    lastUpdated,
-    runtimeId: deriveSignerAddressSync(`radapter-live-profile:${id}:${name}`, '1').toLowerCase(),
-    runtimeEncPubKey: `0x${'11'.repeat(32)}`,
-    isHub: true,
-    jurisdiction: {
-      name: 'Testnet',
-      chainId: 31337,
-      entityProviderAddress: '0x0000000000000000000000000000000000000001',
-      depositoryAddress: '0x0000000000000000000000000000000000000002',
-    },
-  });
-
 const makeEnv = (): RuntimeReplica =>
   ({
     state: {
@@ -315,17 +298,6 @@ const makeOrderbookExt = (books: Map<string, BookState>): OrderbookExtState => (
   },
 });
 
-const makeTestDelta = (tokenId: number, value: bigint): Delta => ({
-  tokenId,
-  collateral: 0n,
-  ondelta: value,
-  offdelta: 0n,
-  leftCreditLimit: 1_000_000n,
-  rightCreditLimit: 1_000_000n,
-  leftAllowance: 0n,
-  rightAllowance: 0n,
-});
-
 const compareAscii = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
 
 const readTestPageLimit = (raw: unknown, defaultValue = 10): number => {
@@ -433,12 +405,6 @@ const makeMemoryDb = (entries: Array<[Buffer, Buffer]>): RuntimeDbLike => {
   };
 };
 
-const snapshotAccountKey = (height: number, entity: string, counterparty: string): Buffer =>
-  Buffer.concat([keySnapshotAccountPrefix(height, entity), hexBytes(counterparty)]);
-
-const snapshotBookKey = (height: number, entity: string, pairId: string): Buffer =>
-  Buffer.concat([keySnapshotBookPrefix(height, entity), textBytes(pairId)]);
-
 const capabilityTokenUnchecked = (seed: string, role: 'read' | 'full', expiresAtMs: number): string => {
   const level = role === 'read' ? 'inspect' : 'admin';
   const audience = 'xln-runtime';
@@ -452,9 +418,6 @@ const capabilityTokenUnchecked = (seed: string, role: 'read' | 'full', expiresAt
     .digest('hex');
   return `xlnra1.${role}.${expiresAtMs}.${encodedAudience}.${encodedKeyId}.${encodedTokenId}.${signature}`;
 };
-
-const oldStaticAuthKey = (seed: string, level: 'inspect' | 'admin'): string =>
-  createHmac('sha256', seed).update(`xln-radapter-v1:${level}`).digest('hex');
 
 const inspectToken = (): string => deriveRuntimeAdapterCapabilityToken('seed', 'read', Date.now() + 60_000);
 

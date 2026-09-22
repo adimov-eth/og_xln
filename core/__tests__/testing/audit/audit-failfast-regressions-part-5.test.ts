@@ -275,54 +275,9 @@ const makeSingleSignerConfigFor = (signerId: string): EntityState['config'] => (
   },
 });
 
-const installSingleSignerBoard = (env: RuntimeReplica, state: EntityState, slot = '1'): string => {
-  const seed = env.runtimeSeed;
-  if (!seed) throw new Error('TEST_RUNTIME_SEED_REQUIRED');
-  const signerId = deriveSignerAddressSync(seed, slot).toLowerCase();
-  registerSignerKey(env, signerId, deriveSignerKeySync(seed, slot));
-  state.config = makeSingleSignerConfigFor(signerId);
-  return signerId;
-};
-
 const hex20 = (byte: string): string => `0x${byte.repeat(byte.length === 2 ? 20 : 40)}`;
 
-const hexBytes = (bytes: Uint8Array): string =>
-  `0x${Array.from(bytes)
-    .map(byte => byte.toString(16).padStart(2, '0'))
-    .join('')}`;
-
 const HANKO_DELAYS = resolveHankoBoardDelays();
-
-const hashHankoBoard = (threshold: number, boardEntityIds: string[], weights: number[]): string => {
-  const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-  return ethers
-    .keccak256(
-      abiCoder.encode(
-        ['tuple(uint16,bytes32[],uint16[],uint32,uint32,uint32)'],
-        [[threshold, boardEntityIds, weights, 0, 0, 0]],
-      ),
-    )
-    .toLowerCase();
-};
-
-const signedHankoForTest = (
-  hash: string,
-  privateKeys: readonly Uint8Array[],
-  placeholders: readonly string[],
-  claims: readonly [string, readonly bigint[], readonly bigint[], bigint][],
-): string =>
-  encodeSignedHanko({
-    digest: hash,
-    privateKeys,
-    placeholders: placeholders.map(value => value as `0x${string}`),
-    claims: claims.map(([entityId, entityIndexes, weights, threshold]) => ({
-      entityId: entityId as `0x${string}`,
-      entityIndexes,
-      weights,
-      threshold,
-      ...HANKO_DELAYS,
-    })),
-  });
 
 const makeEmptyProofBody = () => ({
   watchSeed: `0x${'f1'.repeat(32)}`,
@@ -381,45 +336,6 @@ const makeProposalAccount = (mempool: AccountTx[], leftEntity: string, rightEnti
   };
 };
 
-const setSyntheticPendingAccountProposal = (
-  account: AccountReplica,
-  accountTxs: AccountTx[],
-  timestamp: number,
-): void => {
-  const pendingFrame = {
-    ...account.currentFrame,
-    height: account.currentHeight + 1,
-    timestamp,
-    accountTxs: structuredClone(accountTxs),
-    prevFrameHash: account.currentHeight === 0 ? 'genesis' : account.currentFrame.stateHash,
-    stateHash: `0x${'f0'.repeat(32)}`,
-  };
-  account.pendingFrame = pendingFrame;
-  account.pendingAccountInput = {
-    kind: 'ack_frame',
-    fromEntityId: account.proofHeader.fromEntity,
-    toEntityId: account.proofHeader.toEntity,
-    domain: structuredClone(account.state.domain),
-    disputeConfig: structuredClone(account.state.disputeConfig),
-    proposal: { frame: structuredClone(pendingFrame) },
-  };
-};
-
-const makeIncomingAccountFrame = (
-  account: AccountReplica,
-  tx: AccountTx,
-  byLeft: boolean,
-  timestamp = 10_000,
-  jHeight = 1,
-): AccountFrame => ({
-  ...account.currentFrame,
-  height: account.currentHeight + 1,
-  timestamp,
-  jHeight,
-  accountTxs: [tx],
-  byLeft,
-});
-
 const attachSigningReplica = (env: ReturnType<typeof createEmptyEnv>, entityId: string, signerId: string): void => {
   const config = makeSingleSignerConfigFor(signerId);
   const jurisdiction = config.jurisdiction!;
@@ -467,74 +383,6 @@ const registerLazySigner = (seed: string, signerSlot: string): { signerId: strin
   };
 };
 
-const ensureCanonicalCommandBoardAuthority = async (env: RuntimeReplica, state: EntityState): Promise<void> => {
-  const boardHash = hashBoard(encodeBoard(state.config, env)).toLowerCase();
-  if (state.entityId.toLowerCase() === boardHash) return;
-  const jurisdiction = state.config.jurisdiction;
-  if (!jurisdiction) throw new Error(`TEST_ENTITY_JURISDICTION_REQUIRED:${state.entityId}`);
-  const existing = resolveObserverCertifiedBoardRecord(state, getCertifiedBoardNodeStore(env), state.entityId);
-  if (existing) {
-    if (existing.boardHash !== boardHash) {
-      throw new Error(`TEST_ENTITY_BOARD_AUTHORITY_CONFLICT:${existing.boardHash}:${boardHash}`);
-    }
-    return;
-  }
-  let replica = Array.from(env.state.jReplicas.values()).find(
-    candidate =>
-      candidate.chainId === jurisdiction.chainId &&
-      (candidate.contracts?.depository?.toLowerCase()
-        || candidate.depositoryAddress?.toLowerCase()) === jurisdiction.depositoryAddress.toLowerCase() &&
-      (candidate.contracts?.entityProvider?.toLowerCase()
-        || candidate.entityProviderAddress?.toLowerCase()) === jurisdiction.entityProviderAddress.toLowerCase(),
-  );
-  if (!replica) {
-    replica = createJReplica(env, jurisdiction.name, jurisdiction.depositoryAddress);
-    replica.chainId = jurisdiction.chainId;
-    replica.contracts = { ...replica.contracts, depository: jurisdiction.depositoryAddress };
-    replica.contracts = { ...replica.contracts, entityProvider: jurisdiction.entityProviderAddress };
-  }
-  replica.contracts = {
-    depository: jurisdiction.depositoryAddress,
-    entityProvider: jurisdiction.entityProviderAddress,
-    account: replica.contracts?.account || hex20('98'),
-    deltaTransformer: replica.contracts?.deltaTransformer || hex20('99'),
-  };
-  replica.watcherConfirmationDepth = 0;
-  await installCanonicalRegisteredBoardAuthority(env, jurisdiction, state, boardHash);
-};
-
-const buildQuorumAuthorizedFrameTxs = async (
-  env: RuntimeReplica,
-  state: EntityState,
-  collectiveTxs: EntityTx[],
-  frameTimestamp: number = env.state.timestamp,
-): Promise<EntityTx[]> => {
-  await ensureCanonicalCommandBoardAuthority(env, state);
-  const [proposer, ...otherValidators] = state.config.validators;
-  if (!proposer) throw new Error('TEST_ENTITY_PROPOSER_REQUIRED');
-  const proposalTx = buildCollectiveEntityProposalTx(proposer, collectiveTxs);
-  if (proposalTx.type !== 'propose') throw new Error('TEST_ENTITY_PROPOSAL_TX_INVALID');
-  const proposalId = generateProposalId(env, proposalTx.data.action, proposer.toLowerCase(), {
-    ...state,
-    timestamp: frameTimestamp,
-  });
-  const frameTxs = [signedEntityCommandTx(buildSignedEntityCommand(env, state, proposer, [proposalTx]))];
-  let approvedPower = state.config.shares[proposer] ?? 0n;
-  for (const validator of otherValidators) {
-    if (approvedPower >= state.config.threshold) break;
-    const voteTx: EntityTx = {
-      type: 'vote',
-      data: { proposalId, voter: validator, choice: 'yes' },
-    };
-    frameTxs.push(signedEntityCommandTx(buildSignedEntityCommand(env, state, validator, [voteTx])));
-    approvedPower += state.config.shares[validator] ?? 0n;
-  }
-  if (approvedPower < state.config.threshold) {
-    throw new Error(`TEST_ENTITY_PROPOSAL_QUORUM_UNAVAILABLE:${approvedPower}:${state.config.threshold}`);
-  }
-  return frameTxs;
-};
-
 const prepareJEventInput = (
   env: ReturnType<typeof createEmptyEnv>,
   entityId: string,
@@ -559,39 +407,6 @@ const prepareJEventInput = (
     ...(disputeFinalizationEvidenceHash ? { disputeFinalizationEvidenceHash } : {}),
   };
 };
-
-const makeReplicaMissingPrevFrameHash = (): EntityReplica => ({
-  entityId: `0x${'11'.repeat(32)}`,
-  signerId: '1',
-  entityEncPubKey: '',
-  mempool: [],
-  isProposer: true,
-  state: {
-    entityId: `0x${'11'.repeat(32)}`,
-    height: 1,
-    timestamp: 0,
-    nonces: new Map(),
-    proposals: new Map(),
-    config: makeSingleSignerConfig(),
-    reserves: new Map(),
-    accounts: PersistentEntityAccountMap.empty(
-      `0x${'11'.repeat(32)}`,
-      computeEntityAccountValueHash,
-    ),
-    deferredAccountProposals: new Map(),
-    lastFinalizedJHeight: 0,
-    profile: {
-      name: 'Audit Entity',
-      isHub: false,
-      avatar: '',
-      bio: '',
-      website: '',
-    },
-    paybook: { entries: new Map(), feesEarned: 0n },
-    swapTradingPairs: [],
-    crontabState: initCrontab(),
-  },
-});
 
 const makeEntityState = (entityId: string): EntityState => ({
   entityId,
@@ -698,83 +513,6 @@ const applyDisputeFinalizedFixture = async (
     },
     fixture.env,
   );
-};
-
-const sealAuditJSubmitAttempts = (env: RuntimeReplica, inputs: JInput[]): void => {
-  for (const input of inputs) {
-    for (const jTx of input.jTxs) {
-      if (jTx.type !== 'batch' || !jTx.data.runtimeSubmitAttempt) continue;
-      const signerId = String(jTx.data.signerId || '');
-      const batchGeneration = 1;
-      const attemptId = buildJSubmitAttemptId({
-        jurisdictionName: input.jurisdictionName,
-        entityId: jTx.entityId,
-        signerId,
-        entityNonce: Number(jTx.data.entityNonce),
-        batchGeneration,
-        batchHash: String(jTx.data.batchHash || ''),
-        attemptNumber: jTx.data.runtimeSubmitAttempt.attemptNumber,
-      });
-      jTx.data.batchGeneration = batchGeneration;
-      jTx.data.runtimeSubmitAttempt = {
-        ...jTx.data.runtimeSubmitAttempt,
-        attemptId,
-        batchGeneration,
-      };
-      const existing = Array.from(env.state.eReplicas.values()).find(
-        replica =>
-          replica.entityId.toLowerCase() === jTx.entityId.toLowerCase() &&
-          replica.signerId.toLowerCase() === signerId.toLowerCase(),
-      );
-      const state = existing?.state ?? makeEntityState(jTx.entityId);
-      state.jBatchState = {
-        batch: createEmptyBatch(),
-        jurisdiction: null,
-        lastBroadcast: jTx.timestamp,
-        broadcastCount: batchGeneration,
-        failedAttempts: 0,
-        status: 'sent',
-        sentBatch: {
-          batch: structuredClone(jTx.data.batch),
-          batchHash: String(jTx.data.batchHash || ''),
-          encodedBatch: String(jTx.data.encodedBatch || '0x'),
-          entityNonce: Number(jTx.data.entityNonce),
-          firstSubmittedAt: jTx.data.runtimeSubmitAttempt.attemptedAt,
-          lastSubmittedAt: jTx.data.runtimeSubmitAttempt.attemptedAt,
-          submitAttempts: jTx.data.runtimeSubmitAttempt.attemptNumber,
-        },
-      };
-      const replica =
-        existing ??
-        ({
-          entityId: jTx.entityId,
-          signerId,
-          entityEncPubKey: '',
-          mempool: [],
-          isProposer: true,
-          state,
-        } as EntityReplica);
-      replica.jSubmitState = {
-        jurisdictionName: input.jurisdictionName,
-        batchHash: String(jTx.data.batchHash || ''),
-        entityNonce: Number(jTx.data.entityNonce),
-        batchGeneration,
-        submitAttempts: jTx.data.runtimeSubmitAttempt.attemptNumber,
-        lastSubmittedAt: jTx.data.runtimeSubmitAttempt.attemptedAt,
-      };
-      env.state.eReplicas.set(`${jTx.entityId}:${signerId}`, replica);
-    }
-  }
-  registerPendingCommittedJOutbox(env, inputs);
-};
-
-const submitAuditRuntimeJOutbox = async (
-  env: RuntimeReplica,
-  inputs: JInput[],
-  deps: Parameters<typeof submitRuntimeJOutbox>[2],
-): Promise<void> => {
-  sealAuditJSubmitAttempts(env, inputs);
-  await submitRuntimeJOutbox(env, inputs, deps);
 };
 
 describe('audit fail-fast regressions', () => {

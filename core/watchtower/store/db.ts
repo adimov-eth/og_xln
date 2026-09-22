@@ -184,6 +184,11 @@ export const writeLookup = async (context: WatchtowerStoreContext, doc: StoredLo
   const storageKey = lookupKeyFor(doc.lookupKey);
   const serialized = serializeTaggedJson(doc);
   const storedBytes = Buffer.byteLength(serialized, 'utf8');
+  // Enforce the limit on the final document, including newly signed receipts.
+  // Preparation estimates must never authorize an oversized persisted backup.
+  if (storedBytes > context.maxStoredBytesPerLookupKey) {
+    throw new Error(`TOWER_QUOTA_EXCEEDED: bytes=${storedBytes} max=${context.maxStoredBytesPerLookupKey}`);
+  }
   const usage = await readLookupUsage(context);
   const previousBytes = usage.bytesByKey.get(storageKey) ?? 0;
   const nextLookupCount = usage.bytesByKey.size + (previousBytes === 0 ? 1 : 0);

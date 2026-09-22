@@ -350,10 +350,11 @@ export const handleTowerAppointment = async (req: Request, store: WatchtowerStor
     // The HTTP envelope must be able to carry any bundle that the configured
     // storage quota can accept. Keep a bounded allowance for signatures and
     // appointment metadata; the store still enforces the authoritative quota.
-    const appointment = verifyTowerAppointment(
-      await parseJsonBody(req, resolveAppointmentBodyLimit(store)),
-    );
-    const receipt = await store.upsertAppointment(appointment);
+    const body = await parseJsonBody(req, resolveAppointmentBodyLimit(store));
+    if (Array.isArray(body) && body.length !== 2) throw new Error('TOWER_ARCHIVE_PAIR_INVALID');
+    const receipt = Array.isArray(body)
+      ? await store.upsertRecoveryArchive([verifyTowerAppointment(body[0]), verifyTowerAppointment(body[1])])
+      : await store.upsertAppointment(verifyTowerAppointment(body));
     return new Response(serializeTaggedJson({ ok: true, receipt }), {
       headers: { 'content-type': 'application/json' },
     });

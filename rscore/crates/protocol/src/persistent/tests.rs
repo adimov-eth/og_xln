@@ -854,3 +854,26 @@ fn last_with_prefix_visits_one_trie_path_not_every_matching_leaf() {
         "a fixed-width Patricia seek must be bounded by key depth, not 4096 leaves",
     );
 }
+
+#[test]
+fn empty_key_batch_rejects_before_dispatch_and_preserves_base() {
+    let base = PersistentRadixMap::empty()
+        .updated(vec![0x12], digest(1), digest(1))
+        .unwrap();
+    let root = base.root_hash();
+    for bad in [
+        PersistentRadixMutation::Put {
+            key: vec![],
+            value: digest(2),
+            value_digest: digest(2),
+        },
+        PersistentRadixMutation::Remove { key: vec![] },
+    ] {
+        let result = base.mutated_batch_two_levels(vec![bad], |_| {
+            panic!("invalid key must not dispatch workers")
+        });
+        assert!(matches!(result, Err(PersistentRadixMapError::EmptyKey)));
+        assert_eq!(base.root_hash(), root);
+        assert_eq!(base.get(&[0x12]), Some(&digest(1)));
+    }
+}

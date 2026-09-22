@@ -1,0 +1,26 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "device": "iPhone17Pro simulator",
+  "os": "iOS26.5",
+  "paymentContentSize": "accessibility-extra-extra-extra-large",
+  "network": "isolated local real hubs",
+  "files": [
+    {
+      "path": "frontend/ios/App/App/WalletBrainvault.swift",
+      "sha256": "a09b1f71ea1e7b73bd807b7db680d3e819920ed8484a0e8756f996f410d55312"
+    },
+    {
+      "path": "frontend/ios/App/App/WalletActionSheet.swift",
+      "sha256": "4d483a8edf773fc3e70123489dcd7131f05398474967c41d5f724cf7d644459b"
+    },
+    {
+      "path": "frontend/ios/App/AppUITests/PaymentUITests.swift",
+      "sha256": "59e2f64a4949bfd0327d45977b49d56681bd57287cf557cbc0676472864df690"
+    },
+    {
+      "path": "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/App.debug.dylib",
+      "sha256": "4f6827b3e23a2dd49570d41bcf0621e55c7f1e30d1125b0911cae9ec0a2c3b1c"
+    }
+  ]
+}

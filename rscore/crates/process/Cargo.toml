@@ -12,6 +12,7 @@ default = ["bench"]
 bench = ["xln-rscore-entity-kernel/bench"]
 
 [dependencies]
+hex.workspace = true
 base64.workspace = true
 getrandom.workspace = true
 form_urlencoded.workspace = true
@@ -29,8 +30,6 @@ xln-rscore-runtime = { path = "../runtime" }
 xln-rscore-crypto = { path = "../crypto" }
 serde_json = "1.0"
 
-[dev-dependencies]
-hex.workspace = true
 
 [[bin]]
 name = "xlnrs"

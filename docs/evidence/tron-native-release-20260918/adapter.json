@@ -1,0 +1,19 @@
+{
+  "chainId": 2414086651,
+  "mode": "tron",
+  "registry": [
+    {
+      "address": "0x18F353242D8e3f6A358fEd080a877eD8b3353F2D",
+      "decimals": 6,
+      "externalTokenId": {
+        "__xlnType": "BigInt",
+        "value": "0"
+      },
+      "name": "XLN Local Test USD",
+      "symbol": "XLNUSD",
+      "tokenId": 1,
+      "tokenType": 0
+    }
+  ],
+  "solidifiedBlock": 20
+}

@@ -20,6 +20,17 @@ const digest = ethers.keccak256(ethers.toUtf8Bytes('xln:hanko:short-form'));
 const DEPOSITORY = '0x1111111111111111111111111111111111111111';
 
 describe('65-byte Hanko shortcut', () => {
+  test('rejects every recovery byte outside the chain short-signature domain', () => {
+    const signature = wallet.signingKey.sign(digest).serialized;
+    for (let recovery = 0; recovery <= 255; recovery += 1) {
+      const candidate = `${signature.slice(0, -2)}${recovery.toString(16).padStart(2, '0')}`;
+      if ([0, 1, 27, 28].includes(recovery)) {
+        expect(() => recoverShortHankoEntityId(candidate, digest)).not.toThrow();
+      } else {
+        expect(() => recoverShortHankoEntityId(candidate, digest)).toThrow('SHORT_HANKO_RECOVERY_INVALID');
+      }
+    }
+  });
   test('lazy entity id equals the canonical 1-of-1 board hash core already computes', () => {
     const lazyId = lazySingleSignerEntityId(wallet.address);
     expect(lazyId).toBe(hashBoard(encodeSingleSignerBoard(wallet.address)).toLowerCase());

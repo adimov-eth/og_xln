@@ -86,15 +86,15 @@ const validateAppointmentMode = (appointment: TowerAppointmentV1, towerMode: Tow
   }
 };
 
-const upsertAppointmentUnlocked = async (
+const prepareAppointment = async (
   context: WatchtowerStoreContext,
   appointment: TowerAppointmentV1,
-): Promise<TowerReceiptV1> => {
+  existing: StoredLookupDoc,
+): Promise<StoredLookupDoc> => {
   const lookupKey = normalizeLookupKey(appointment.lookupKey);
   const towerMode = towerModeOf(appointment);
   const slot = slotOf(appointment);
   validateAppointmentMode(appointment, towerMode);
-  const existing = await readLookup(context, lookupKey) ?? emptyStoredDoc(lookupKey);
   const runtimeId = String(appointment.bundle.runtimeId || '')
     .trim()
     .toLowerCase();
@@ -183,8 +183,7 @@ const upsertAppointmentUnlocked = async (
     towerSignature: await context.signer.signMessage(buildReceiptMessage(unsignedReceipt)),
   };
   nextDoc.receipts = [receipt, ...existing.receipts].slice(0, context.maxBundlesPerLookupKey);
-  await writeLookup(context, nextDoc);
-  return receipt;
+  return nextDoc;
 };
 
 export const upsertAppointment = async (
@@ -192,8 +191,44 @@ export const upsertAppointment = async (
   appointment: TowerAppointmentV1,
 ): Promise<TowerReceiptV1> => runSerializedAppointmentWrite(
   context,
-  () => upsertAppointmentUnlocked(context, appointment),
+  async () => {
+    const key = normalizeLookupKey(appointment.lookupKey);
+    const doc = await prepareAppointment(context, appointment, await readLookup(context, key) ?? emptyStoredDoc(key));
+    await writeLookup(context, doc);
+    const receipt = doc.receipts[0];
+    if (!receipt) throw new Error('TOWER_RECEIPT_MISSING');
+    return receipt;
+  },
 );
+
+/** One owner-signed checkpoint and matching tail, published as one lookup document. */
+export const upsertRecoveryArchive = async (
+  context: WatchtowerStoreContext,
+  appointments: readonly [TowerAppointmentV1, TowerAppointmentV1],
+): Promise<TowerReceiptV1> => runSerializedAppointmentWrite(context, async () => {
+  const [snapshot, tail] = appointments;
+  if (appointments.some(item => towerModeOf(item) !== 'blind_backup') ||
+      snapshot.bundle.kind !== 'snapshot' || tail.bundle.kind !== 'journal_tail' ||
+      snapshot.lookupKey !== tail.lookupKey || snapshot.bundle.runtimeId !== tail.bundle.runtimeId ||
+      slotOf(snapshot) !== slotOf(tail) ||
+      snapshot.ownerProof.signedAt !== tail.ownerProof.signedAt ||
+      tail.bundle.baseRuntimeHeight !== snapshot.bundle.height || tail.bundle.height <= snapshot.bundle.height)
+    throw new Error('TOWER_ARCHIVE_PAIR_INVALID');
+  const key = normalizeLookupKey(snapshot.lookupKey);
+  let doc = await readLookup(context, key) ?? emptyStoredDoc(key);
+  for (const appointment of appointments) doc = await prepareAppointment(context, appointment, doc);
+  for (const appointment of appointments) {
+    if (!doc.bundles.some(entry => entry.encryptedEnvelopeHash === computeEncryptedRuntimeRecoveryEnvelopeHash(appointment.bundle)))
+      throw new Error('TOWER_ARCHIVE_PAIR_NOT_RETAINED');
+  }
+  // Signature, stale/replay, retention and quota failures leave the prior complete
+  // document intact. The blind tower binds visible identity/base metadata; the
+  // recipient additionally authenticates and matches the encrypted checkpoint hash.
+  await writeLookup(context, doc);
+  const receipt = doc.receipts[0];
+  if (!receipt) throw new Error('TOWER_RECEIPT_MISSING');
+  return receipt;
+});
 
 export const getLatest = async (
   context: WatchtowerStoreContext,

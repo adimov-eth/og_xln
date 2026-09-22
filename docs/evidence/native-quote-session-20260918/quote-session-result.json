@@ -1,0 +1,34 @@
+{
+  "passed": 4,
+  "results": [
+    {
+      "transition": "lock",
+      "staleQuoteRejected": true,
+      "unexpired": true,
+      "balance": "100000000"
+    },
+    {
+      "transition": "boot",
+      "staleQuoteRejected": true,
+      "unexpired": true,
+      "balance": "100000000"
+    },
+    {
+      "transition": "brainvault",
+      "staleQuoteRejected": true,
+      "unexpired": true,
+      "balance": "100000000"
+    },
+    {
+      "freshQuoteConfirmed": true,
+      "duplicateRejected": true,
+      "balance": "99000000"
+    }
+  ],
+  "environment": {
+    "host": "macOS WKWebView",
+    "transport": "production NativeSockets.swift",
+    "chains": "two local Anvil chains; not native Tron",
+    "stand": "/tmp/xln-native-release-zEZarI"
+  }
+}

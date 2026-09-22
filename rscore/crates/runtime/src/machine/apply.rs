@@ -801,18 +801,14 @@ fn jurisdiction_stack_key(
 fn parse_hex32(value: &str) -> Option<[u8; 32]> {
     let payload = value.strip_prefix("0x").filter(|value| value.len() == 64)?;
     let mut output = [0_u8; 32];
-    for (index, byte) in output.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&payload[index * 2..index * 2 + 2], 16).ok()?;
-    }
+    hex::decode_to_slice(payload, &mut output).ok()?;
     Some(output)
 }
 
 fn parse_hex20(value: &str) -> Option<[u8; 20]> {
     let payload = value.strip_prefix("0x").filter(|value| value.len() == 40)?;
     let mut output = [0_u8; 20];
-    for (index, byte) in output.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&payload[index * 2..index * 2 + 2], 16).ok()?;
-    }
+    hex::decode_to_slice(payload, &mut output).ok()?;
     Some(output)
 }
 
@@ -4847,6 +4843,28 @@ fn insert_j_history_row(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn untrusted_hex_rejects_unicode_and_preserves_valid_words() {
+        for prefix in ["€", "0€", "+1", "gg"] {
+            assert!(
+                super::parse_hex32(&format!("0x{prefix}{}", "0".repeat(64 - prefix.len())))
+                    .is_none()
+            );
+            assert!(
+                super::parse_hex20(&format!("0x{prefix}{}", "0".repeat(40 - prefix.len())))
+                    .is_none()
+            );
+        }
+        assert_eq!(
+            super::parse_hex32(&format!("0x{}", "aB".repeat(32))),
+            Some([0xab; 32])
+        );
+        assert_eq!(
+            super::parse_hex20(&format!("0x{}", "aB".repeat(20))),
+            Some([0xab; 20])
+        );
+    }
+
     use std::collections::{BTreeMap, VecDeque};
 
     use xln_rscore_batch::{AccountInputResult, AccountInputVerdict};

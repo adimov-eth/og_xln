@@ -1289,7 +1289,7 @@ describe('validator J-prefix consensus', () => {
     expect(hasRuntimeWork(env)).toBe(false);
   });
 
-  test('single signer finalizes an arbitrarily long empty J-prefix without a timer wake', async () => {
+  test.each([5_783, 150_000])('single signer finalizes an empty J-prefix through %i without a timer wake', async (headHeight) => {
     const env = createEmptyEnv('j-prefix-budgeted-empty-catch-up');
     env.state.timestamp = 2_000;
     env.quietRuntimeLogs = true;
@@ -1306,7 +1306,7 @@ describe('validator J-prefix consensus', () => {
       state,
       mempool: [],
       isProposer: true,
-      jHistory: observedThrough(5_783, false),
+      jHistory: observedThrough(headHeight, false),
     };
     const firstHead = buildLocalJPrefixAttestation(env, replica)!;
     replica.jPrefixRound = mergeJPrefixAttestations(
@@ -1317,7 +1317,7 @@ describe('validator J-prefix consensus', () => {
     );
 
     let frames = 0;
-    while (replica.state.lastFinalizedJHeight < 5_783 && frames < 10) {
+    while (replica.state.lastFinalizedJHeight < headHeight && frames < 10) {
       const result = await applyEntityInput(env, replica, {
         entityId,
         signerId: validatorId,
@@ -1326,7 +1326,7 @@ describe('validator J-prefix consensus', () => {
       expect(result.outcome).toEqual({ kind: 'committed' });
       replica = result.workingReplica;
       frames += 1;
-      if (replica.state.lastFinalizedJHeight < 5_783) {
+      if (replica.state.lastFinalizedJHeight < headHeight) {
         expect(result.outputs.some((output) =>
           output.entityId === entityId && output.signerId === validatorId && output.entityTxs?.length === 0
         )).toBe(true);
@@ -1334,10 +1334,10 @@ describe('validator J-prefix consensus', () => {
       env.state.timestamp += 1;
     }
 
-    expect(replica.state.lastFinalizedJHeight).toBe(5_783);
+    expect(replica.state.lastFinalizedJHeight).toBe(headHeight);
     expect(frames).toBe(1);
     expect(replica.jPrefixRound).toBeUndefined();
-  });
+  }, 30_000);
 
   test('an active proposer cannot censor an observed DisputeStarted before or after timeout', async () => {
     // Three runtimes intentionally own only their validator key. A single

@@ -1,0 +1,16 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "frontend/ios/App/App/WalletQuote.swift": "38d63a66c688e063620876d5490cd800067334db9545882591626dfed22f253c",
+    "frontend/ios/App/App/WalletActivity.swift": "d1b5c3776c5d93234ee8864a90656a5d4a938787b67c3187a4105b98264140d8",
+    "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/App.debug.dylib": "f1f5566dc7daeb2e34ed58f2dae12d4d53352bae09583190326e062b685a377c"
+  },
+  "change": "Unchanged WalletAmountRow moved out of Foundation-only quote model",
+  "checks": {
+    "quoteExpiryAssertions": 5,
+    "nativeBuild": "passed",
+    "sourceGates": 39
+  },
+  "financialE2E": "Latest complete native swap evidence is from07:02 before this source-only relocation; not rerun"
+}

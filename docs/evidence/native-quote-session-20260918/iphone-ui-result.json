@@ -1,0 +1,36 @@
+{
+  "date": "2026-09-18",
+  "device": "iPhone 17 Pro",
+  "os": "iOS 26.5 Simulator",
+  "bundle": "finance.xln.wallet",
+  "ui": "SwiftUI",
+  "runtime": "canonical TypeScript in WKWebView with NativeSockets.swift",
+  "environment": "isolated two-Anvil local stand; no native Tron or public testnet",
+  "observations": {
+    "creation": true,
+    "initialEncryptedBackupVerified": true,
+    "fundingUSDC": "100",
+    "paymentUSDC": "1",
+    "postPaymentUSDC": "99",
+    "swapDebitUSDC": "24.999999",
+    "swapGrossWETH": "0.009998",
+    "swapFeeWETH": "0.0000009998",
+    "postSwapUSDC": "75.000001",
+    "postSwapWETH": "0.0099970002",
+    "swapBelowMinimumRejectedBeforeConfirmation": true,
+    "marketDepthVisible": true
+  },
+  "videos": [
+    "output/ios-release-2026-09-18/payment-proof.mp4",
+    "output/ios-release-2026-09-18/swap-proof.mp4"
+  ],
+  "verification": "Actual Simulator accessibility interactions, visible confirmed receipt and balances; independent WebKit/Swift exact-balance regression in swap-minimum-result.json. Payment and swap videos use separate isolated wallets/stands.",
+  "unproven": [
+    "native Tron",
+    "cross-chain swaps",
+    "lending UI",
+    "continuous remote recovery",
+    "immediate-close recovery",
+    "all-platform release acceptance"
+  ]
+}

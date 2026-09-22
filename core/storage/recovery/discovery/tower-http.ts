@@ -26,11 +26,11 @@ export const buildTowerRequestUrl = (towerUrl: string, towerPath: string, pageUr
   if (pageUrl) {
     const page = new URL(pageUrl);
     const target = new URL(`${normalizedBaseUrl}/`);
-    const isSecurePage = page.protocol === 'https:';
+    const needsLocalProxy = page.protocol === 'https:' || page.protocol === 'xln:';
     const isLocalInsecureTower =
       target.protocol === 'http:' && (target.hostname === '127.0.0.1' || target.hostname === 'localhost');
-    if (isSecurePage && isLocalInsecureTower) {
-      const proxyUrl = new URL('/api/watchtower-proxy', page.origin);
+    if (needsLocalProxy && isLocalInsecureTower) {
+      const proxyUrl = new URL('/api/watchtower-proxy', page.href);
       proxyUrl.searchParams.set('target', normalizedBaseUrl);
       proxyUrl.searchParams.set('path', normalizedPath);
       return proxyUrl.toString();
@@ -69,8 +69,10 @@ export async function towerHasRecoveryBundle(
   tower: RecoveryTowerConfig,
   lookupKey: string,
   pageUrl?: string,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const response = await fetch(buildTowerRequestUrl(tower.url, '/api/recovery/discover', pageUrl), {
+    signal: signal ?? null,
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: safeStringify({ lookupKey }),
@@ -94,8 +96,10 @@ export async function fetchTowerRecoveryBundles(
   tower: RecoveryTowerConfig,
   lookupKey: string,
   pageUrl?: string,
+  signal?: AbortSignal,
 ): Promise<TowerRestoreOutcome> {
   const response = await fetch(buildTowerRequestUrl(tower.url, '/api/tower/restore', pageUrl), {
+    signal: signal ?? null,
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: safeStringify({ lookupKey }),

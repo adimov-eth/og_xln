@@ -1,0 +1,782 @@
+{
+  "chainId": 2414086651,
+  "final": {
+    "entityFrameHash": "0xd531ea6619d2108cda7c7d6b335b7522753629413bd2e158542f92ba037f3a93",
+    "entityHeight": 5,
+    "finalizedJHeight": 72,
+    "nonce": 4,
+    "pending": false,
+    "reserve": "0",
+    "runtimeHeight": 22
+  },
+  "frameHash": "0x5a0a695a58815033f12ba7c51ceb8d84878dd98edfeca81dda613e6051d2c7ca",
+  "frames": [
+    {
+      "entityContextRefs": {
+        "__xlnType": "Map",
+        "value": [
+          [
+            "0x0000000000000000000000000000000000000000000000000000000000000001:0x7e5f4552091a69125d5dfcb7b8c2659029395bdf:2",
+            "0x614436f1bfeb90e2e689666a5816df5bceda6ff8d14f0e3340e6df3f75f9ce7b"
+          ]
+        ]
+      },
+      "frameHash": "0xfd4254a598fd5cb51e6c4d5ede75cec4325db4248b2692d3da32618ebc1cc731",
+      "height": 12,
+      "materializedState": false,
+      "postStateHash": "0xdf4f9e6a0134284b0c960e05a030311f0c952baf7cb86cab7dedc5adff343a62",
+      "prevFrameHash": "0x5c6b18f736d8676cdc5cf5d504418d2af5d38773b388734530ef372d4569d965",
+      "replicaMetaDigest": "0x95962675e037463ac6c6aa9f60db2aac715ea7aa5dcf833ee896064d7865d2ed",
+      "runtimeInput": {
+        "entityInputs": [
+          {
+            "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "entityTxs": [
+              {
+                "data": {
+                  "amount": {
+                    "__xlnType": "BigInt",
+                    "value": "1000000"
+                  },
+                  "contractAddress": "0x18f353242d8e3f6a358fed080a877ed8b3353f2d",
+                  "internalTokenId": 1
+                },
+                "type": "e2r"
+              },
+              {
+                "data": {},
+                "type": "j_broadcast"
+              }
+            ],
+            "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+          }
+        ],
+        "runtimeTxs": []
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699449842,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    },
+    {
+      "frameHash": "0x49dc0680811893114d5c3073ccad1c0f6badb6ba1b4b16b17fcd881f1d1629bf",
+      "height": 13,
+      "materializedState": false,
+      "postStateHash": "0x230af072dcc79bfbed8d42b3bdc256fe29f18c232f46823d0b2560e9529340f0",
+      "prevFrameHash": "0xfd4254a598fd5cb51e6c4d5ede75cec4325db4248b2692d3da32618ebc1cc731",
+      "replicaMetaDigest": "0x70a6def350cf9fbffc2578d4a602f639a1a56772f58cae146a79172fa0f40ebb",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "batchGeneration": 1,
+              "batchHash": "0x3cf5ea6239e5e0242977cf2cc6d7577e770d1b1e7f1a0cef11026ee98c4f4c67",
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "entityNonce": 3,
+              "jurisdictionName": "Native TVM",
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+            },
+            "type": "retryJSubmit"
+          },
+          {
+            "data": {
+              "batchGeneration": 1,
+              "batchHash": "0x3cf5ea6239e5e0242977cf2cc6d7577e770d1b1e7f1a0cef11026ee98c4f4c67",
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "entityNonce": 3,
+              "jurisdictionName": "Native TVM",
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+            },
+            "type": "retryJSubmit"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699449842,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": []
+    },
+    {
+      "frameHash": "0xc89038e91149c6fff3d624dc10552381e93ff979457542cfa26e9ee357bfab1f",
+      "height": 14,
+      "materializedState": false,
+      "postStateHash": "0x307b6a65079cbe2e95aa25aa39859aad8336629ccb7f6dd8d3f4ede3c2c3296f",
+      "prevFrameHash": "0x49dc0680811893114d5c3073ccad1c0f6badb6ba1b4b16b17fcd881f1d1629bf",
+      "replicaMetaDigest": "0x7eb35959f264f7cf2b62ac8244008e0b12b36defc0deb02f583c1db86d664886",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blockNumber": 67,
+              "chainId": 2414086651,
+              "depositoryAddress": "0x4cf93900621b8929de88ed82053190751ce6dc48"
+            },
+            "type": "advanceJWatcherCursor"
+          },
+          {
+            "data": {
+              "blockNumber": 67,
+              "chainId": 2414086651,
+              "depositoryAddress": "0x4cf93900621b8929de88ed82053190751ce6dc48"
+            },
+            "type": "advanceJWatcherCursor"
+          },
+          {
+            "data": {
+              "blockNumber": 67,
+              "chainId": 2414086651,
+              "depositoryAddress": "0x4cf93900621b8929de88ed82053190751ce6dc48"
+            },
+            "type": "advanceJWatcherCursor"
+          },
+          {
+            "data": {
+              "blocks": [],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "headers": [
+                {
+                  "jBlockHash": "0x0000000000000044e4af65a0980a8e37eeafa9bfafa8e3b925cb28756d09298f",
+                  "jHeight": 68
+                }
+              ],
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 68,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x0000000000000044e4af65a0980a8e37eeafa9bfafa8e3b925cb28756d09298f"
+            },
+            "type": "observeJRange"
+          },
+          {
+            "data": {
+              "attemptId": "0x36ee9c1376558aab9883db929961f0349fadc10f355b8a4e2c951056e5caa2c4",
+              "attemptNumber": 1,
+              "attemptedAt": 1789699449842,
+              "batchGeneration": 1,
+              "batchHash": "0x3cf5ea6239e5e0242977cf2cc6d7577e770d1b1e7f1a0cef11026ee98c4f4c67",
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "entityNonce": 3,
+              "jurisdictionName": "Native TVM",
+              "outcome": "submitted",
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "txHash": "0x3e25acc74ebb49809cde1bda56e49b2c06fc1e16bcdf640a714399bd0e3621fe"
+            },
+            "type": "recordJSubmitResult"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699449842,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    },
+    {
+      "entityContextRefs": {
+        "__xlnType": "Map",
+        "value": [
+          [
+            "0x0000000000000000000000000000000000000000000000000000000000000001:0x7e5f4552091a69125d5dfcb7b8c2659029395bdf:3",
+            "0x73cdbe44c5da0a2d73b4a662e8c62aea6de763a0713288cdd655c2e2c823b8af"
+          ]
+        ]
+      },
+      "frameHash": "0xa0618efeb00b479aef74f7fe4a724ff162f9433372b389a9e964e1f4a7309794",
+      "height": 15,
+      "materializedState": false,
+      "postStateHash": "0xed347a65d4c2bce830352fcd978edce5cd2286d6dfa820dcc0d4c00445d11e77",
+      "prevFrameHash": "0xc89038e91149c6fff3d624dc10552381e93ff979457542cfa26e9ee357bfab1f",
+      "replicaMetaDigest": "0x090ccf850fcb0fb69cc92e82e1ec8d3f67c7b3e464941dd5f575d77c9aa5e39a",
+      "runtimeInput": {
+        "entityInputs": [
+          {
+            "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "jPrefixAttestations": {
+              "__xlnType": "Map",
+              "value": [
+                [
+                  "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                  {
+                    "baseHeight": 67,
+                    "blocks": [
+                      {
+                        "blockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e",
+                        "blockNumber": 69,
+                        "events": [
+                          {
+                            "blockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e",
+                            "blockNumber": 69,
+                            "data": {
+                              "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                              "newBalance": "1000000",
+                              "tokenId": 1
+                            },
+                            "logIndex": 1,
+                            "transactionHash": "0x3e25acc74ebb49809cde1bda56e49b2c06fc1e16bcdf640a714399bd0e3621fe",
+                            "type": "ReserveUpdated"
+                          },
+                          {
+                            "blockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e",
+                            "blockNumber": 69,
+                            "data": {
+                              "batchHash": "0x3cf5ea6239e5e0242977cf2cc6d7577e770d1b1e7f1a0cef11026ee98c4f4c67",
+                              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                              "nonce": 3
+                            },
+                            "logIndex": 2,
+                            "transactionHash": "0x3e25acc74ebb49809cde1bda56e49b2c06fc1e16bcdf640a714399bd0e3621fe",
+                            "type": "HankoBatchProcessed"
+                          }
+                        ],
+                        "eventsHash": "0xd0f448eaef78214540b970e4128225698dab2f32272785caa9b66b39434e1ae7"
+                      }
+                    ],
+                    "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    "eventHistoryRoot": "0x26f03048223bcf14add0f807fcd4805514996b76f702a517bfa2e40452b58a5a",
+                    "headers": [
+                      {
+                        "jBlockHash": "0x0000000000000044e4af65a0980a8e37eeafa9bfafa8e3b925cb28756d09298f",
+                        "jHeight": 68
+                      },
+                      {
+                        "jBlockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e",
+                        "jHeight": 69
+                      }
+                    ],
+                    "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+                    "parentFrameHash": "0x025cf48d478a0e3641cbe6b77fda30ed8893bc0cee293638ca816b3b8d4d9232",
+                    "rangeHash": "0x685284cf5ab98c7ae57bbac07a958c05f81076c38da7d86405c115e639909b60",
+                    "scannedThroughHeight": 69,
+                    "signature": "0x71f23793e71443c5440dbd781bfe297bdfe0ce11ef3dd72a8d24f7eac0a6aea464d323f01182871a87223c2befc3a96551dc67d829408c46daaf107543931b7b01",
+                    "targetEntityHeight": 3,
+                    "tipBlockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e",
+                    "validatorId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                    "version": 1
+                  }
+                ]
+              ]
+            },
+            "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+          }
+        ],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blocks": [
+                {
+                  "events": [
+                    {
+                      "blockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e",
+                      "blockNumber": 69,
+                      "data": {
+                        "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                        "newBalance": "1000000",
+                        "tokenId": 1
+                      },
+                      "logIndex": 1,
+                      "transactionHash": "0x3e25acc74ebb49809cde1bda56e49b2c06fc1e16bcdf640a714399bd0e3621fe",
+                      "type": "ReserveUpdated"
+                    },
+                    {
+                      "blockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e",
+                      "blockNumber": 69,
+                      "data": {
+                        "batchHash": "0x3cf5ea6239e5e0242977cf2cc6d7577e770d1b1e7f1a0cef11026ee98c4f4c67",
+                        "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                        "nonce": 3
+                      },
+                      "logIndex": 2,
+                      "transactionHash": "0x3e25acc74ebb49809cde1bda56e49b2c06fc1e16bcdf640a714399bd0e3621fe",
+                      "type": "HankoBatchProcessed"
+                    }
+                  ],
+                  "eventsHash": "0xd0f448eaef78214540b970e4128225698dab2f32272785caa9b66b39434e1ae7",
+                  "jBlockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e",
+                  "jHeight": 69,
+                  "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+                }
+              ],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 69,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e"
+            },
+            "type": "observeJRange"
+          },
+          {
+            "data": {
+              "blocks": [],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "headers": [
+                {
+                  "jBlockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e",
+                  "jHeight": 69
+                }
+              ],
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 69,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e"
+            },
+            "type": "observeJRange"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699449842,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    },
+    {
+      "frameHash": "0xba5cc57750a7e8911fc1dd2e2dd3a802c1647cec23541e9fb3cdaf928f28891f",
+      "height": 16,
+      "materializedState": false,
+      "postStateHash": "0x30460dc2898c4d52653f58d72a39e6ced1720a1e2b7eedb9a0c66ea977081588",
+      "prevFrameHash": "0xa0618efeb00b479aef74f7fe4a724ff162f9433372b389a9e964e1f4a7309794",
+      "replicaMetaDigest": "0x090ccf850fcb0fb69cc92e82e1ec8d3f67c7b3e464941dd5f575d77c9aa5e39a",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blockNumber": 69,
+              "chainId": 2414086651,
+              "depositoryAddress": "0x4cf93900621b8929de88ed82053190751ce6dc48"
+            },
+            "type": "advanceJWatcherCursor"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699449842,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": []
+    },
+    {
+      "entityContextRefs": {
+        "__xlnType": "Map",
+        "value": [
+          [
+            "0x0000000000000000000000000000000000000000000000000000000000000001:0x7e5f4552091a69125d5dfcb7b8c2659029395bdf:4",
+            "0x9bdef85bc75003a67e4a48e6a073f32d01f97c70eb631f21f6d876b8a7a1c5df"
+          ]
+        ]
+      },
+      "frameHash": "0xa827dca78230b00b84c77c2b1f2141b782e84271de2a0b02e44591d932025369",
+      "height": 17,
+      "materializedState": false,
+      "postStateHash": "0x39fcbefe780e33d640ea674fe60d7d740ed90b9fdbc8444ebbd2e24c9fe736f4",
+      "prevFrameHash": "0xba5cc57750a7e8911fc1dd2e2dd3a802c1647cec23541e9fb3cdaf928f28891f",
+      "replicaMetaDigest": "0xfadbd55270a956d1c0772825ba19030555cdcc133cc2536ee2c59b6d7b95aebc",
+      "runtimeInput": {
+        "entityInputs": [
+          {
+            "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "entityTxs": [
+              {
+                "data": {
+                  "amount": {
+                    "__xlnType": "BigInt",
+                    "value": "1000000"
+                  },
+                  "receivingEntity": "0x0000000000000000000000007e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                  "tokenId": 1
+                },
+                "type": "r2e"
+              },
+              {
+                "data": {},
+                "type": "j_broadcast"
+              }
+            ],
+            "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+          }
+        ],
+        "runtimeTxs": []
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699458201,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    },
+    {
+      "frameHash": "0x8b7e2cdc612bdaa3d0f5da4098ad9358fb3dbb3d93d44a1873ca49706e5eb16c",
+      "height": 18,
+      "materializedState": false,
+      "postStateHash": "0xf0e36de71706b7c8bea4f028d7b5c48b8712201ad576df2fe6bb404edfb22540",
+      "prevFrameHash": "0xa827dca78230b00b84c77c2b1f2141b782e84271de2a0b02e44591d932025369",
+      "replicaMetaDigest": "0x968be0cda8ac816ee4b2c66b0190dba98f891911e5554d86de0ce05909280bf5",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "batchGeneration": 2,
+              "batchHash": "0x323775aa98ae2dd0d6651755fc492f2451237416c91c2206fc1a2405d326d529",
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "entityNonce": 4,
+              "jurisdictionName": "Native TVM",
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+            },
+            "type": "retryJSubmit"
+          },
+          {
+            "data": {
+              "batchGeneration": 2,
+              "batchHash": "0x323775aa98ae2dd0d6651755fc492f2451237416c91c2206fc1a2405d326d529",
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "entityNonce": 4,
+              "jurisdictionName": "Native TVM",
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+            },
+            "type": "retryJSubmit"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699458201,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": []
+    },
+    {
+      "frameHash": "0xf02c5535c62ff344fc1cc3be7b75f00c72387fd0f9aec0875babd50d40f41b1b",
+      "height": 19,
+      "materializedState": false,
+      "postStateHash": "0x2d09ee0b0c491fff4977265c6ba3e3585e140f73a3f1222d1650503e093188f8",
+      "prevFrameHash": "0x8b7e2cdc612bdaa3d0f5da4098ad9358fb3dbb3d93d44a1873ca49706e5eb16c",
+      "replicaMetaDigest": "0x33a3afba0bde9680382d6fd9e63747271b0ce6503606ed15e472afe98c42b3cd",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blocks": [],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "headers": [
+                {
+                  "jBlockHash": "0x0000000000000046390c59997ec0a38479c066290892d4ba9df15ab52eeb25dc",
+                  "jHeight": 70
+                }
+              ],
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 70,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x0000000000000046390c59997ec0a38479c066290892d4ba9df15ab52eeb25dc"
+            },
+            "type": "observeJRange"
+          },
+          {
+            "data": {
+              "attemptId": "0x42aa5f2e419a0a0fed6ed1ac8751ddb7e046df29b093074d6a9fcb5a6ba6c88f",
+              "attemptNumber": 1,
+              "attemptedAt": 1789699458201,
+              "batchGeneration": 2,
+              "batchHash": "0x323775aa98ae2dd0d6651755fc492f2451237416c91c2206fc1a2405d326d529",
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "entityNonce": 4,
+              "jurisdictionName": "Native TVM",
+              "outcome": "submitted",
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "txHash": "0xe41df63c67d53c914b81e3e6e882c68a6a3172d97b333681b163ce1cf03ca742"
+            },
+            "type": "recordJSubmitResult"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699458201,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    },
+    {
+      "frameHash": "0x30ac7a7aadf01fc3c506b7d3efa3c5de08a6460714f41ee8dc3dd9b0af1668a8",
+      "height": 20,
+      "materializedState": false,
+      "postStateHash": "0x9210953688dbcdbdaf189adbc4be1c025cbc7bcadd85587e698eadca73e5d863",
+      "prevFrameHash": "0xf02c5535c62ff344fc1cc3be7b75f00c72387fd0f9aec0875babd50d40f41b1b",
+      "replicaMetaDigest": "0x33a3afba0bde9680382d6fd9e63747271b0ce6503606ed15e472afe98c42b3cd",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blocks": [],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "headers": [
+                {
+                  "jBlockHash": "0x0000000000000047097f4935fd76714215dcf0d134089bd70884248870d678f0",
+                  "jHeight": 71
+                }
+              ],
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 71,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x0000000000000047097f4935fd76714215dcf0d134089bd70884248870d678f0"
+            },
+            "type": "observeJRange"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699458201,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    },
+    {
+      "entityContextRefs": {
+        "__xlnType": "Map",
+        "value": [
+          [
+            "0x0000000000000000000000000000000000000000000000000000000000000001:0x7e5f4552091a69125d5dfcb7b8c2659029395bdf:5",
+            "0x5235b0bf476b446358928f4db77d43548885d09695c98140c7c8193c1be0fc0b"
+          ]
+        ]
+      },
+      "frameHash": "0x4c24485626f900054e0a2668a88d485320b4d342a39212dae988c7540cf3e000",
+      "height": 21,
+      "materializedState": false,
+      "postStateHash": "0xd6830ea0d230d03a9056681a0f4797291053afd482836d25d34ca0831fc30a4d",
+      "prevFrameHash": "0x30ac7a7aadf01fc3c506b7d3efa3c5de08a6460714f41ee8dc3dd9b0af1668a8",
+      "replicaMetaDigest": "0x93880368a16e6f838e4d4f071cd21d3b63b7ec423ec79199b98b1d77ce42100b",
+      "runtimeInput": {
+        "entityInputs": [
+          {
+            "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "jPrefixAttestations": {
+              "__xlnType": "Map",
+              "value": [
+                [
+                  "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                  {
+                    "baseHeight": 69,
+                    "blocks": [
+                      {
+                        "blockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1",
+                        "blockNumber": 72,
+                        "events": [
+                          {
+                            "blockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1",
+                            "blockNumber": 72,
+                            "data": {
+                              "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                              "newBalance": "0",
+                              "tokenId": 1
+                            },
+                            "logIndex": 0,
+                            "transactionHash": "0xe41df63c67d53c914b81e3e6e882c68a6a3172d97b333681b163ce1cf03ca742",
+                            "type": "ReserveUpdated"
+                          },
+                          {
+                            "blockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1",
+                            "blockNumber": 72,
+                            "data": {
+                              "batchHash": "0x323775aa98ae2dd0d6651755fc492f2451237416c91c2206fc1a2405d326d529",
+                              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                              "nonce": 4
+                            },
+                            "logIndex": 2,
+                            "transactionHash": "0xe41df63c67d53c914b81e3e6e882c68a6a3172d97b333681b163ce1cf03ca742",
+                            "type": "HankoBatchProcessed"
+                          }
+                        ],
+                        "eventsHash": "0xd87cee8cc905184977392a76a0a3e301fbff39e82974d24df49e0c49f7f6e833"
+                      }
+                    ],
+                    "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    "eventHistoryRoot": "0x8b9ad847d4b62a294819dd867671641da044bfa8ff54e5a902f299e53930dfd0",
+                    "headers": [
+                      {
+                        "jBlockHash": "0x0000000000000046390c59997ec0a38479c066290892d4ba9df15ab52eeb25dc",
+                        "jHeight": 70
+                      },
+                      {
+                        "jBlockHash": "0x0000000000000047097f4935fd76714215dcf0d134089bd70884248870d678f0",
+                        "jHeight": 71
+                      },
+                      {
+                        "jBlockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1",
+                        "jHeight": 72
+                      }
+                    ],
+                    "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+                    "parentFrameHash": "0x717fdae3a26ffd40d3a6fd2d147bd34b6ed0c6cefb08ee4ad502b770ad9b095c",
+                    "rangeHash": "0xa6f9efbbb557532e96e82f7280b4bf3262307f3b9fd4246e09a8fc7fc7da5fb9",
+                    "scannedThroughHeight": 72,
+                    "signature": "0xfa63f2abde8b6e78b3a9345b546f13fc568c6b42eb6561228a0002d1684850f607f03fab750222e3c071b52d8822aad245c947bf6fffa96058ebc3861aba05cc01",
+                    "targetEntityHeight": 5,
+                    "tipBlockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1",
+                    "validatorId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+                    "version": 1
+                  }
+                ]
+              ]
+            },
+            "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+          }
+        ],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blocks": [
+                {
+                  "events": [
+                    {
+                      "blockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1",
+                      "blockNumber": 72,
+                      "data": {
+                        "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                        "newBalance": "0",
+                        "tokenId": 1
+                      },
+                      "logIndex": 0,
+                      "transactionHash": "0xe41df63c67d53c914b81e3e6e882c68a6a3172d97b333681b163ce1cf03ca742",
+                      "type": "ReserveUpdated"
+                    },
+                    {
+                      "blockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1",
+                      "blockNumber": 72,
+                      "data": {
+                        "batchHash": "0x323775aa98ae2dd0d6651755fc492f2451237416c91c2206fc1a2405d326d529",
+                        "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                        "nonce": 4
+                      },
+                      "logIndex": 2,
+                      "transactionHash": "0xe41df63c67d53c914b81e3e6e882c68a6a3172d97b333681b163ce1cf03ca742",
+                      "type": "HankoBatchProcessed"
+                    }
+                  ],
+                  "eventsHash": "0xd87cee8cc905184977392a76a0a3e301fbff39e82974d24df49e0c49f7f6e833",
+                  "jBlockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1",
+                  "jHeight": 72,
+                  "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+                }
+              ],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 72,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1"
+            },
+            "type": "observeJRange"
+          },
+          {
+            "data": {
+              "blocks": [],
+              "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+              "headers": [
+                {
+                  "jBlockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1",
+                  "jHeight": 72
+                }
+              ],
+              "jurisdictionRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+              "scannedThroughHeight": 72,
+              "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+              "tipBlockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1"
+            },
+            "type": "observeJRange"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699458201,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+      ]
+    },
+    {
+      "frameHash": "0x5a0a695a58815033f12ba7c51ceb8d84878dd98edfeca81dda613e6051d2c7ca",
+      "height": 22,
+      "materializedState": false,
+      "postStateHash": "0x5f0dde753538bcdf15a3a90348119919b1667aaca60e2c2ff15216f55d3a247e",
+      "prevFrameHash": "0x4c24485626f900054e0a2668a88d485320b4d342a39212dae988c7540cf3e000",
+      "replicaMetaDigest": "0x93880368a16e6f838e4d4f071cd21d3b63b7ec423ec79199b98b1d77ce42100b",
+      "runtimeInput": {
+        "entityInputs": [],
+        "runtimeTxs": [
+          {
+            "data": {
+              "blockNumber": 72,
+              "chainId": 2414086651,
+              "depositoryAddress": "0x4cf93900621b8929de88ed82053190751ce6dc48"
+            },
+            "type": "advanceJWatcherCursor"
+          }
+        ]
+      },
+      "runtimeOutputCount": 0,
+      "runtimeOutputsDigest": "0x56cc30822c85fae6a34ca5bd7047a22371f2bc0101275dc7240013b675347827",
+      "timestamp": 1789699458201,
+      "touchedAccounts": [],
+      "touchedBookEntities": [],
+      "touchedEntities": []
+    }
+  ],
+  "kind": "NATIVE_WALLET_MOVE",
+  "mode": "tron",
+  "postStateHash": "0x5f0dde753538bcdf15a3a90348119919b1667aaca60e2c2ff15216f55d3a247e",
+  "reserves": [
+    {
+      "blockHash": "0x0000000000000045b2aaaa9f7dc6e590e7c7c9c643ef32807ef0bd119af1b61e",
+      "blockNumber": 69,
+      "data": {
+        "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "newBalance": "1000000",
+        "tokenId": 1
+      },
+      "logIndex": 1,
+      "transactionHash": "0x3e25acc74ebb49809cde1bda56e49b2c06fc1e16bcdf640a714399bd0e3621fe",
+      "type": "ReserveUpdated"
+    },
+    {
+      "blockHash": "0x0000000000000048fe0f287c3651e7a7725ceea190925f50c2ba12da34926cc1",
+      "blockNumber": 72,
+      "data": {
+        "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "newBalance": "0",
+        "tokenId": 1
+      },
+      "logIndex": 0,
+      "transactionHash": "0xe41df63c67d53c914b81e3e6e882c68a6a3172d97b333681b163ce1cf03ca742",
+      "type": "ReserveUpdated"
+    }
+  ],
+  "restore": true,
+  "runtimeId": "0xc36ea41949c3238c4cd2ba5c51db37d089d1d0f2",
+  "scope": "Real frontend transaction builders and EmbeddedRuntimeAdapter on private native Tron; no rendered UI or cross-J claim",
+  "startHeight": 22
+}

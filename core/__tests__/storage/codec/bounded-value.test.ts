@@ -48,6 +48,16 @@ const makeMemoryDb = (rows: ReadonlyArray<Readonly<{ key: Buffer; value: Buffer 
 };
 
 describe('bounded physical storage values', () => {
+  test('IndexedDB structured cloning keeps each continuation below the physical row budget', () => {
+    const encoded = encodeBuffer({ bytes: Buffer.alloc(40_000, 0x5a) });
+    const rows = prepareBoundedStorageValueRows(Buffer.from([0x10, 1]), encoded);
+    const chunks = rows.slice(1).map(row => structuredClone(row.value));
+    // IndexedDB clones the entire backing ArrayBuffer, including bytes outside
+    // a typed-array view. A 9 KB slice of a large frame must not store that frame.
+    expect(chunks.every(chunk => chunk.buffer.byteLength < MAX_PHYSICAL_STORAGE_VALUE_BYTES)).toBe(true);
+    expect(Buffer.concat(chunks)).toEqual(encoded);
+  });
+
   test('keeps small MessagePack values raw and reconstructs large values from static owner pages', async () => {
     const ownerKey = Buffer.from([0x10, 0, 0, 0, 1]);
     const small = encodeBuffer({ value: 'small' });

@@ -201,7 +201,9 @@ describe('dev process lifecycle', () => {
       await waitForFile(recordPath);
       let childPid = 0;
       await waitUntil(() => {
-        childPid = Number(Bun.spawnSync(['pgrep', '-P', String(wrapper.pid)]).stdout.toString().trim());
+        // This existing fixture execs sleep; the cache-pruner shell is a
+        // separate child and must not turn a multi-PID result into NaN.
+        childPid = Number(Bun.spawnSync(['pgrep', '-P', String(wrapper.pid), '-x', 'sleep']).stdout.toString().trim());
         return childPid > 0;
       }, `anvil-child-for-wrapper=${wrapper.pid}`);
       cleanupPids.add(childPid);

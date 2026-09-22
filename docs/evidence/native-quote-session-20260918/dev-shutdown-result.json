@@ -1,0 +1,53 @@
+{
+  "before": {
+    "log": "/tmp/xln-stand-snapshot-before-valid.log",
+    "data": "/tmp/xln-native-release-7kNhUY",
+    "exists": true,
+    "bytes": 24550,
+    "valid": false,
+    "error": "SyntaxError: Failed to parse JSON"
+  },
+  "after": {
+    "log": "/tmp/xln-stand-snapshot-after.log",
+    "data": "/tmp/xln-native-release-y8o7Vd",
+    "exists": true,
+    "bytes": 3181904,
+    "valid": true,
+    "error": ""
+  },
+  "restart": {
+    "log": "/tmp/xln-stand-snapshot-restart.log",
+    "data": "/tmp/xln-native-release-y8o7Vd",
+    "exists": true,
+    "bytes": 3213592,
+    "valid": true,
+    "error": "",
+    "threeHubHealthAndCodeVerified": true
+  },
+  "regression": {
+    "test": "core/__tests__/development/dev/dev-anvil-shutdown.test.ts",
+    "log": "/tmp/xln-anvil-shutdown-regression.log",
+    "passed": 1,
+    "assertions": 5,
+    "durationMs": 20879.81,
+    "checks": [
+      "launcher exits with requested termination status",
+      "snapshot parses",
+      "snapshot contains nontruncated test code",
+      "reloaded code exact",
+      "mined block number/hash exact"
+    ]
+  },
+  "scope": "Local Anvil clean shutdown and three-hub saved-state restart; original damaged snapshots and immediate-close wallet failure remain unrepaired.",
+  "verification": {
+    "lifecycleTests": 30,
+    "lifecycleAssertions": 172,
+    "lifecycleLog": "/tmp/xln-dev-shutdown-lifecycle.log",
+    "fullCheckPassed": true,
+    "sourceGates": 39,
+    "sourceCheckMs": 40564,
+    "fullCheckLog": "/tmp/xln-shutdown-recovery-final-check.log",
+    "diffCheckPassed": true,
+    "standStopped": true
+  }
+}

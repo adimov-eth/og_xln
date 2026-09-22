@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
-  classifyRuntimeImportReadinessReason,
   classifyRuntimeMarketMakerFailure,
 } from '../../../protocol/errors/failure-taxonomy';
 import { resolveRuntimeImportReadiness } from '../../../orchestrator/replica-import/runtime-import-readiness';
@@ -188,21 +187,6 @@ describe('runtime import readiness gate', () => {
         retryable: true,
         fatal: false,
       },
-    });
-  });
-
-  test('classifies non-startup readiness reasons without string parsing at callers', () => {
-    expect(classifyRuntimeImportReadinessReason('NO_MANAGED_RUNTIME_IMPORTS')).toMatchObject({
-      category: 'ExpectedEmpty',
-      code: 'NO_MANAGED_RUNTIME_IMPORTS',
-      retryable: false,
-      fatal: false,
-    });
-    expect(classifyRuntimeImportReadinessReason('INVALID_RUNTIME_IMPORT_MANIFEST:bad-token')).toMatchObject({
-      category: 'Contradiction',
-      code: 'INVALID_RUNTIME_IMPORT_MANIFEST',
-      retryable: false,
-      fatal: true,
     });
   });
 });

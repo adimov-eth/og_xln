@@ -167,14 +167,8 @@ fn suffix(value: &str, count: usize) -> &str {
 }
 
 fn token_metadata(token_id: u16) -> Result<(u32, &'static str), EntityKernelError> {
-    match token_id {
-        1 => Ok((6, "USDC")),
-        2 => Ok((18, "WETH")),
-        3 => Ok((6, "USDT")),
-        4 => Ok((6, "TRX")),
-        5 => Ok((18, "SUN")),
-        _ => Err(invalid(format!("TOKEN_METADATA_UNAVAILABLE:{token_id}"))),
-    }
+    xln_rscore_protocol::canonical_token_metadata(u32::from(token_id))
+        .ok_or_else(|| invalid(format!("TOKEN_METADATA_UNAVAILABLE:{token_id}")))
 }
 
 fn format_token_amount(token_id: u16, amount: &BigInt) -> Result<String, EntityKernelError> {

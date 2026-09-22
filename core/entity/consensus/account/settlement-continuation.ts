@@ -54,6 +54,7 @@ const continuationActionToTx = (
  */
 export const selectSettlementContinuation = (
   state: EntityState,
+  hasQueuedTransition?: (counterpartyId: string) => boolean,
 ): SettlementContinuationDisposition => {
   const entries = [...(state.settlementContinuations?.entries() ?? [])]
     .sort(([left], [right]) => compareStableText(left, right));
@@ -64,7 +65,10 @@ export const selectSettlementContinuation = (
   if (!account) {
     throw new Error(`SETTLEMENT_CONTINUATION_ACCOUNT_MISSING:${counterpartyId}`);
   }
-  if (hasPendingSettlementTransition(account)) {
+  // Stage 2 queues locally authorized transitions; stage 3 admits/proposes
+  // them. Until then the Account leaf still has its pre-admission state.
+  // A missing workspace here must not discard the signed withdrawal intent.
+  if (hasQueuedTransition?.(counterpartyId) || hasPendingSettlementTransition(account)) {
     return { kind: 'wait', counterpartyId };
   }
   const workspace = account.state.settlementWorkspace;

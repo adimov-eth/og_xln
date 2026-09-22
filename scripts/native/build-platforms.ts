@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildIosRuntime } from './build-ios-runtime';
 
 type Platform = 'ios' | 'android' | 'desktop' | 'extension';
 type ArtifactStatus = 'built' | 'synced' | 'reused';
@@ -711,6 +712,7 @@ async function main(): Promise<void> {
 	for (const target of targets) {
 		if (target === 'ios' || target === 'android') {
 			artifacts.push(syncCapacitorPlatform(target));
+			if (target === 'ios') buildIosRuntime(flags.has('--no-build'));
 			if (flags.has('--package')) artifacts.push(packageCapacitorPlatform(target, flags));
 			if (flags.has('--open')) run('bunx', ['cap', 'open', target], FRONTEND);
 		} else if (target === 'desktop') {

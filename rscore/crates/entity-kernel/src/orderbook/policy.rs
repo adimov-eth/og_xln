@@ -6,13 +6,7 @@ pub fn is_canonical_liquid_token(token_id: u32) -> bool {
     matches!(token_id, 1 | 3)
 }
 
-pub fn canonical_token_decimals(token_id: u32) -> Option<u32> {
-    match token_id {
-        1 | 3 | 4 => Some(6),
-        2 | 5 => Some(18),
-        _ => None,
-    }
-}
+pub use xln_rscore_protocol::canonical_token_decimals;
 
 pub fn canonical_pair_orientation(left: u32, right: u32) -> (u32, u32) {
     match (

@@ -1,5 +1,7 @@
 import { useApp } from './store';
 
+declare const __XLN_STACK_ORIGIN__: string;
+
 /**
  * HTTP origin of the runtime this wallet talks to. A remote vault derives it
  * from the WebSocket URL the way the SvelteKit frontend does; an embedded
@@ -18,7 +20,8 @@ export function resolveApiBase(): string {
 		parsed.hash = '';
 		return parsed.origin;
 	}
-	return window.location.origin;
+	return typeof __XLN_STACK_ORIGIN__ === 'string' && __XLN_STACK_ORIGIN__
+		? new URL(__XLN_STACK_ORIGIN__).origin : window.location.origin;
 }
 
 const NO_API = 'The runtime has no HTTP API at this address';

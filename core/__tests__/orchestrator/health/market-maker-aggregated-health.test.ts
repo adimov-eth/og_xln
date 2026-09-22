@@ -18,6 +18,7 @@ describe('aggregated market maker health', () => {
       displayDecimals: 4,
       priceScale: '1000000',
       bucketWidthTicks: null,
+  minTradeSize: '0',
       bids: [{ price: '1', size: '1', total: '1', orderCount: 4 }],
       asks: [
         { price: '2', size: '1', total: '1', orderCount: 6 },

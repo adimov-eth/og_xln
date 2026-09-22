@@ -41,6 +41,9 @@ const TRANSIENT_TEXT = ['timeout', 'offline', 'connect', 'network', 'fetch'] as 
 const categorizeRecoveryFailure = (code: string, message: string): RuntimeRecoveryFailureCategory => {
   if (EXPECTED_EMPTY_CODES.has(code)) return 'ExpectedEmpty';
   const lower = message.toLowerCase();
+  // WebKit reports a rejected fetch as TypeError("Load failed"). This is
+  // transport failure, not evidence contradicting the wallet or its backup.
+  if (lower === 'load failed') return 'TransientRace';
   if (code.startsWith('HTTP_5') || TRANSIENT_CODES.has(code)) return 'TransientRace';
   return TRANSIENT_TEXT.some(fragment => lower.includes(fragment)) ? 'TransientRace' : 'Contradiction';
 };

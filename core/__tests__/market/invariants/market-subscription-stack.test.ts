@@ -28,6 +28,7 @@ const makeSnapshot = (hubEntityId: string, pairId: string, depth: number): Marke
   displayDecimals: 4,
   priceScale: '100000000',
   bucketWidthTicks: null,
+  minTradeSize: '0',
   bids: [],
   asks: [],
   spread: null,

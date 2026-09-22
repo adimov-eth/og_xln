@@ -267,35 +267,9 @@ const makeSingleSignerConfigFor = (signerId: string): EntityState['config'] => (
   },
 });
 
-const installSingleSignerBoard = (env: RuntimeReplica, state: EntityState, slot = '1'): string => {
-  const seed = env.runtimeSeed;
-  if (!seed) throw new Error('TEST_RUNTIME_SEED_REQUIRED');
-  const signerId = deriveSignerAddressSync(seed, slot).toLowerCase();
-  registerSignerKey(env, signerId, deriveSignerKeySync(seed, slot));
-  state.config = makeSingleSignerConfigFor(signerId);
-  return signerId;
-};
-
 const hex20 = (byte: string): string => `0x${byte.repeat(byte.length === 2 ? 20 : 40)}`;
 
-const hexBytes = (bytes: Uint8Array): string =>
-  `0x${Array.from(bytes)
-    .map(byte => byte.toString(16).padStart(2, '0'))
-    .join('')}`;
-
 const HANKO_DELAYS = resolveHankoBoardDelays();
-
-const hashHankoBoard = (threshold: number, boardEntityIds: string[], weights: number[]): string => {
-  const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-  return ethers
-    .keccak256(
-      abiCoder.encode(
-        ['tuple(uint16,bytes32[],uint16[],uint32,uint32,uint32)'],
-        [[threshold, boardEntityIds, weights, 0, 0, 0]],
-      ),
-    )
-    .toLowerCase();
-};
 
 const signedHankoForTest = (
   hash: string,
@@ -315,15 +289,6 @@ const signedHankoForTest = (
       ...HANKO_DELAYS,
     })),
   });
-
-const makeEmptyProofBody = () => ({
-  watchSeed: `0x${'f1'.repeat(32)}`,
-  leftResponseSeconds: 10,
-  rightResponseSeconds: 10,
-  offdeltas: [],
-  tokenIds: [],
-  transformers: [],
-});
 
 const makeProposalAccount = (mempool: AccountTx[], leftEntity: string, rightEntity: string): AccountReplica => {
   return {
@@ -395,21 +360,6 @@ const setSyntheticPendingAccountProposal = (
     proposal: { frame: structuredClone(pendingFrame) },
   };
 };
-
-const makeIncomingAccountFrame = (
-  account: AccountReplica,
-  tx: AccountTx,
-  byLeft: boolean,
-  timestamp = 10_000,
-  jHeight = 1,
-): AccountFrame => ({
-  ...account.currentFrame,
-  height: account.currentHeight + 1,
-  timestamp,
-  jHeight,
-  accountTxs: [tx],
-  byLeft,
-});
 
 const attachSigningReplica = (env: ReturnType<typeof createEmptyEnv>, entityId: string, signerId: string): void => {
   const config = makeSingleSignerConfigFor(signerId);
@@ -517,31 +467,6 @@ const buildQuorumAuthorizedFrameTxs = async (
   return frameTxs;
 };
 
-const prepareJEventInput = (
-  env: ReturnType<typeof createEmptyEnv>,
-  entityId: string,
-  signerId: string,
-  input: {
-    blockNumber: number;
-    blockHash: string;
-    transactionHash: string;
-    events: JurisdictionEvent[];
-    disputeFinalizationEvidence?: DisputeFinalizationEvidence[];
-    jurisdictionRef?: string;
-  },
-): { jurisdictionRef: string; eventsHash: string; disputeFinalizationEvidenceHash?: string } => {
-  const eventsHash = canonicalJurisdictionEventsHash(input.events);
-  const jurisdictionRef = input.jurisdictionRef ?? getJEventJurisdictionRef(undefined);
-  const disputeFinalizationEvidenceHash = input.disputeFinalizationEvidence?.length
-    ? canonicalDisputeFinalizationEvidenceHash(input.disputeFinalizationEvidence)
-    : undefined;
-  return {
-    jurisdictionRef,
-    eventsHash,
-    ...(disputeFinalizationEvidenceHash ? { disputeFinalizationEvidenceHash } : {}),
-  };
-};
-
 const makeReplicaMissingPrevFrameHash = (): EntityReplica => ({
   entityId: `0x${'11'.repeat(32)}`,
   signerId: '1',
@@ -595,133 +520,6 @@ const makeEntityState = (entityId: string): EntityState => createEntityFrameCand
   swapTradingPairs: [],
   crontabState: initCrontab(),
 });
-
-const makeDisputeFinalizedFixture = (seed: string, finalProofbody: ProofBodyStruct) => {
-  const entityId = `0x${'12'.repeat(32)}`;
-  const counterpartyId = `0x${'34'.repeat(32)}`;
-  const state = makeEntityState(entityId);
-  const account = makeProposalAccount([], entityId, counterpartyId);
-  const finalProofbodyHash = hashProofBodyStruct(finalProofbody);
-  account.activeDispute = {
-    startedByLeft: true,
-    disputeTimeout: 1700000123,
-    disputeStartTimestamp: 1700000000,
-    initialProofbodyHash: finalProofbodyHash,
-    initialNonce: 7,
-    finalizeQueued: true,
-  } as AccountState['activeDispute'];
-  state.accounts.set(counterpartyId, account);
-  return {
-    account,
-    counterpartyId,
-    env: createEmptyEnv(seed),
-    event: {
-      type: 'DisputeFinalized',
-      data: {
-        sender: entityId,
-        counterentity: counterpartyId,
-        initialNonce: 7,
-        initialProofbodyHash: finalProofbodyHash,
-        finalProofbodyHash,
-        finalizationEvidenceHash: ethers.ZeroHash,
-      },
-    } satisfies JurisdictionEvent,
-    finalProofbodyHash,
-    state,
-  };
-};
-
-const applyDisputeFinalizedFixture = async (fixture: ReturnType<typeof makeDisputeFinalizedFixture>) =>
-  applyJEventRange(
-    fixture.state,
-    {
-      from: '1',
-      observedAt: 22,
-      blockNumber: 22,
-      blockHash: `0x${'99'.repeat(32)}`,
-      transactionHash: `0x${'88'.repeat(32)}`,
-      event: fixture.event,
-      jurisdictionRef: getJEventJurisdictionRef(fixture.state.config.jurisdiction),
-    },
-    fixture.env,
-  );
-
-const sealAuditJSubmitAttempts = (env: RuntimeReplica, inputs: JInput[]): void => {
-  for (const input of inputs) {
-    for (const jTx of input.jTxs) {
-      if (jTx.type !== 'batch' || !jTx.data.runtimeSubmitAttempt) continue;
-      const signerId = String(jTx.data.signerId || '');
-      const batchGeneration = 1;
-      const attemptId = buildJSubmitAttemptId({
-        jurisdictionName: input.jurisdictionName,
-        entityId: jTx.entityId,
-        signerId,
-        entityNonce: Number(jTx.data.entityNonce),
-        batchGeneration,
-        batchHash: String(jTx.data.batchHash || ''),
-        attemptNumber: jTx.data.runtimeSubmitAttempt.attemptNumber,
-      });
-      jTx.data.batchGeneration = batchGeneration;
-      jTx.data.runtimeSubmitAttempt = {
-        ...jTx.data.runtimeSubmitAttempt,
-        attemptId,
-        batchGeneration,
-      };
-      const existing = Array.from(env.state.eReplicas.values()).find(
-        replica =>
-          replica.entityId.toLowerCase() === jTx.entityId.toLowerCase() &&
-          replica.signerId.toLowerCase() === signerId.toLowerCase(),
-      );
-      const state = existing?.state ?? makeEntityState(jTx.entityId);
-      state.jBatchState = {
-        batch: createEmptyBatch(),
-        jurisdiction: null,
-        lastBroadcast: jTx.timestamp,
-        broadcastCount: batchGeneration,
-        failedAttempts: 0,
-        status: 'sent',
-        sentBatch: {
-          batch: structuredClone(jTx.data.batch),
-          batchHash: String(jTx.data.batchHash || ''),
-          encodedBatch: String(jTx.data.encodedBatch || '0x'),
-          entityNonce: Number(jTx.data.entityNonce),
-          firstSubmittedAt: jTx.data.runtimeSubmitAttempt.attemptedAt,
-          lastSubmittedAt: jTx.data.runtimeSubmitAttempt.attemptedAt,
-          submitAttempts: jTx.data.runtimeSubmitAttempt.attemptNumber,
-        },
-      };
-      const replica =
-        existing ??
-        ({
-          entityId: jTx.entityId,
-          signerId,
-          entityEncPubKey: '',
-          mempool: [],
-          isProposer: true,
-          state,
-        } as EntityReplica);
-      replica.jSubmitState = {
-        jurisdictionName: input.jurisdictionName,
-        batchHash: String(jTx.data.batchHash || ''),
-        entityNonce: Number(jTx.data.entityNonce),
-        batchGeneration,
-        submitAttempts: jTx.data.runtimeSubmitAttempt.attemptNumber,
-        lastSubmittedAt: jTx.data.runtimeSubmitAttempt.attemptedAt,
-      };
-      env.state.eReplicas.set(`${jTx.entityId}:${signerId}`, replica);
-    }
-  }
-  registerPendingCommittedJOutbox(env, inputs);
-};
-
-const submitAuditRuntimeJOutbox = async (
-  env: RuntimeReplica,
-  inputs: JInput[],
-  deps: Parameters<typeof submitRuntimeJOutbox>[2],
-): Promise<void> => {
-  sealAuditJSubmitAttempts(env, inputs);
-  await submitRuntimeJOutbox(env, inputs, deps);
-};
 
 describe('audit fail-fast regressions', () => {
   test('entity validator signs only the secondary hash manifest emitted by local replay', async () => {

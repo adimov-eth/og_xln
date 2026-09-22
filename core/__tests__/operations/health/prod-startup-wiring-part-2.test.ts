@@ -1093,9 +1093,6 @@ describe('production startup wiring', () => {
       '"test:e2e:mm": "bun run prod:bootstrap:soundcheck && bun core/scripts/e2e/runners/run-e2e-parallel-isolated.ts --all --market-maker-only --strict-browser-health --shards=7 --workers-per-shard=1 --max-mm-concurrency=1',
     );
     expect(packageJson).toContain(
-      '"test:e2e:all": "bun core/scripts/e2e/runners/run-e2e-parallel-isolated.ts --all --strict-browser-health --shards=7 --workers-per-shard=1 --max-mm-concurrency=1',
-    );
-    expect(packageJson).toContain(
       '"test:p2p:relay": "bun core/scripts/e2e/runners/run-with-test-cleanup.ts --reason=p2p-relay -- bun core/scenarios/network/p2p-relay.ts"',
     );
     expect(bootstrapSoundcheck).toContain(

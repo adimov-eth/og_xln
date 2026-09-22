@@ -1,0 +1,23 @@
+{
+  "id": "method-review-20260918-08",
+  "completed": true,
+  "error": null,
+  "budget": {
+    "id": "owner-2026-09-06t183142z",
+    "limitMicroUsd": 10000000,
+    "authorizedAt": "2026-09-06T18:31:42Z",
+    "expiresAt": null,
+    "windowMs": 3600000,
+    "defaultWaveTargetMicroUsd": 1000000,
+    "scope": "quorum-managed-dispatch-only",
+    "externalSpendCoverage": "unknown",
+    "knownMicroUsd": 0,
+    "reservedMicroUsd": 3250000,
+    "remainingMicroUsd": 6750000,
+    "attempts": 13,
+    "asOf": "2026-09-18T09:26:13.832Z",
+    "windowStartsAt": "2026-09-18T08:26:13.832Z"
+  },
+  "response": "# Review Findings\n\n## Strongest counterexample to the proposed next action\n\nThe proposed experiment — \"exercise buildPersistedRuntimeRecording → restore on real persisted payment\" — presumes the recorded artifacts already satisfy the canonical rule. Evidence contradicts this:\n\n- **buildPersistedRuntimeRecording does not persist historical frames** and **replayRecoveryFrameJournals has onVerifiedFrame(frame,events) but not canonical journal persistence**. So restoring a real persisted payment stand will reproduce exactly the already-fixed simulator result: post-payment balance restored, Sent activity absent. The experiment cannot fail informatively because the known root cause (activity index is disposable, history not persisted) is upstream of what it exercises.\n- **replaceRestoredStorageBase removes old WAL** and replaces base at tip — restoring is destructive-by-design on the local base; running it on a *real* payment stand without a copied DB (explicitly forbidden: \"No copied DB/keychain\") risks data loss, and \"no destructive reset authorized.\"\n\n**Severity: High.** The counterexample is structural: the smallest-step criterion is met, but it tests a path whose failure mode is already known and whose safety constraint is already violated.\n\n**Uncertainty: Medium.** It's conceivable the real stand diverges earlier than the simulator (e.g., at R91 metadata), which *would* be informative — but the packet doesn't claim any observed divergence specific to real stands.\n\n## One bounded production-path experiment\n\n**Bounded experiment:** run canonical replay of the existing **signed contiguous journal_tail** (already exported by buildPersistedRuntimeRecording) **in memory only**, with `onVerifiedFrame` wired to a temporary assertion that each replayed frame's events reconcile against the live disposable activity index before restore is committed. Do **not** modify tower format, do **not** persist a new store, do **not** invoke replaceRestoredStorageBase — abort before storage swap.\n\n- **Why this is the strongest smallest step:** it isolates the **first replay divergence** (packet's own stated goal) without destructive swap, without new retention, and directly determines whether the Sent-activity gap is a journal-content gap (frames lack the event) or an index-rebuild gap (frames have it, restore doesn't feed it).\n- **Decision gate:** if the journal_tail frames *contain* the payment events, the fix is confined to feeding the existing replay callback into index rebuild — small, demo-enabling. If they *don't*, the demo must scope Sent-activity to post-restore transactions and the archive question is formally deferred, not absorbed.\n- **Verification step:** single assertion — the frame at the payment tip yields the Sent event via `onVerifiedFrame` — run on the existing simulator harness first (2/2 already green there, so delta is observable only on the real persisted stand's journal_tail).\n\n**Uncertainty:** whether journal_tail length actually covers the payment frame on the real stand (retention ≤10000 frames assumed but unverified). One log line confirming tail span at export resolves this before running.\n\n## Explicit non-recommendations honored\n\nNo new receipt DB, no mocks, no weakened assertions, no unbounded retention, no broad audit — the experiment reuses existing export/replay code paths unchanged, reads only, and has a single abort-before-commit bound.",
+  "reasoningCharacters": 0
+}

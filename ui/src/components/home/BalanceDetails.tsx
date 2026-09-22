@@ -44,7 +44,7 @@ export function BalanceDetails({ wallet }: { wallet: WalletView }) {
   return (
     <section className="wallet-breakdown" aria-label="Balance breakdown" data-testid="home-balance-breakdown">
       <h3 className="caps">Balance breakdown</h3>
-      <p className="note">How your funds are held · estimated USD value</p>
+      <p className="note">How your funds are held · fixed reference prices, not live market value</p>
       <Bar segments={parts.map(part => ({ usd: part.amount, kind: part.kind }))} />
       <p className="note wallet-scale-note">
         Same dollar value = same bar length · {scaleMode === 'auto' ? 'Auto scale' : 'Fixed scale'}

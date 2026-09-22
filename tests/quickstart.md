@@ -32,7 +32,7 @@ Use exact test titles for focused work. The runner expands each title into its o
 ## Full Browser Sweep
 
 ```bash
-bun run test:e2e:all
+bun run test:e2e:full
 ```
 
 Use this after focused L1/L2 failures are fixed. Default local parallelism is capped conservatively for a high-core workstation; market-maker tests still have their own concurrency limiter.

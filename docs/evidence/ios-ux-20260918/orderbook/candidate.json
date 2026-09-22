@@ -1,0 +1,48 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "frontend/ios/App/AppUITests/PaymentUITests.swift": "94da2fcaa6e7a8a4e01180021be3182c88cf5ab0effecec8985c704ac740be93",
+    "scripts/native/ios-ui-session.ts": "59d08d757f32605511f8209eb556310485825602208a22a2b4142c028f2ddfaa",
+    "scripts/native/run-session.ts": "5e9b004a3269324ae6a2f8016e1267e3c993ced06d2415cec538b824fd562c48",
+    "frontend/ios/App/App/WalletMarket.swift": "77e92c208c3896ac8624d88fb8227203b75e84db6ae958519a3a846c4e979092",
+    "frontend/ios/App/App/WalletActionSheet.swift": "b2b4063353cc12a8bfb0ff86f2d0e3e4b621b12dbe3c029a1747ff8908a90b84",
+    "frontend/ios/App/App/WalletActivity.swift": "d1b5c3776c5d93234ee8864a90656a5d4a938787b67c3187a4105b98264140d8",
+    "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/App.debug.dylib": "f1f5566dc7daeb2e34ed58f2dae12d4d53352bae09583190326e062b685a377c"
+  },
+  "scope": "New native orderbook entry test reusing existing exact swap receipt and balance reconciliation; product code unchanged.",
+  "device": "iPhone 17 Pro simulator",
+  "os": "26.5",
+  "locale": "en_US",
+  "appearance": "light",
+  "contentSize": "large",
+  "network": "real isolated local three-hub stand",
+  "passed": 1,
+  "total": 1,
+  "testSeconds": 105.177,
+  "brainvault": {
+    "factor": 3,
+    "shards": 100,
+    "submitHelperToReadySeconds": 10.97589804168092,
+    "samples": 1
+  },
+  "receipt": {
+    "selectedPriceUSDC": "2500.5",
+    "debitUSDC": "22.5045",
+    "grossWETH": "0.009",
+    "feeWETH": "0.0000009",
+    "netWETH": "0.0089991",
+    "remainingUSDC": "77.4955"
+  },
+  "sourceGates": 39,
+  "sourceCheckSeconds": 31.133,
+  "screenshots": 7,
+  "video": "output/ios-ux-2026-09-18/orderbook/orderbook-demo.mp4",
+  "videoSeconds": 55.454099,
+  "videoSetupTrimSeconds": 54,
+  "limits": [
+    "Not public-testnet, physical-camera or physical-device acceptance",
+    "Immediate marketable limit fill only; resting orders, partial fills and cancellation unverified by this run",
+    "Existing intermittent Bun worker crash remains unresolved"
+  ]
+}

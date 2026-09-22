@@ -7,6 +7,18 @@ import {
 } from '../../../network/relay/market/wire';
 
 describe('frontend market JSON protocol', () => {
+  const source = (minTradeSize: unknown) => ({
+        hubEntityId: `0x${'11'.repeat(32)}`,
+        jurisdictionRef: `stack:1:0x${'c'.repeat(40)}`,
+        entityHeight: 3,
+        entityStateHash: `0x${'22'.repeat(32)}`,
+        hubUpdatedAt: 4,
+        snapshotUpdatedAt: 5,
+        minTradeSize,
+        tradeCount: 1,
+        lastTradePrice: '10000',
+  });
+
   const snapshotEnvelope = (overrides: Record<string, unknown> = {}): string => JSON.stringify({
     v: 1,
     type: 'market_snapshot',
@@ -28,19 +40,20 @@ describe('frontend market JSON protocol', () => {
       lastTradeHubEntityId: `0x${'11'.repeat(32)}`,
       source: 'relayAggregate',
       sourceCount: 1,
-      sources: [{
-        hubEntityId: `0x${'11'.repeat(32)}`,
-        jurisdictionRef: `stack:1:0x${'c'.repeat(40)}`,
-        entityHeight: 3,
-        entityStateHash: `0x${'22'.repeat(32)}`,
-        hubUpdatedAt: 4,
-        snapshotUpdatedAt: 5,
-        tradeCount: 1,
-        lastTradePrice: '10000',
-      }],
+      sources: [source('0')],
       updatedAt: 5,
       ...overrides,
     },
+  });
+
+
+  test('relay sources require a canonical per-hub minimum, never silently zero', () => {
+    for (const invalid of [undefined, -1, '-1', '01', '1.5', '1e7']) {
+      expect(() => decodeMarketWireMessage(snapshotEnvelope({ sources: [source(invalid)] }))).toThrow();
+    }
+    for (const valid of [null, '0', '10000000']) {
+      expect(decodeMarketWireMessage(snapshotEnvelope({ sources: [source(valid)] })).type).toBe('market_snapshot');
+    }
   });
 
   test('adds global protocol version and pins readable bytes', () => {

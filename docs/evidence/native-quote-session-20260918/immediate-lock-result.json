@@ -1,0 +1,75 @@
+{
+  "scope": "Real macOS WKWebView and Swift socket bridge, canonical TS runtime, local two-Anvil three-hub stand; no native Tron or public network claim",
+  "before": {
+    "log": "immediate-lock-before.log",
+    "failure": "INBOUND_ENTITY_RUNTIME_QUIESCING -> DIRECT_OUTPUT_REJECTED_BY_PEER -> H1 halt"
+  },
+  "result": {
+    "passed": 3,
+    "lockedImmediately": true,
+    "pendingAtLock": true,
+    "atLock": {
+      "processing": true,
+      "queuedInputs": 1,
+      "pendingOutputs": 0,
+      "consensusPending": false
+    },
+    "recoveredBalance": "99000000",
+    "sameIdentity": true,
+    "exactSinglePaymentReceipt": true,
+    "receipts": [
+      {
+        "event": "HtlcInitiated",
+        "height": 21,
+        "amount": "1000000",
+        "senderAmount": "1000000",
+        "fee": "0",
+        "hashlock": "0x2780f56dadf5cda8660b70e756a85dbef495ef0ff4c17f6dbd838f0bc496c04f"
+      },
+      {
+        "event": "HtlcFinalized",
+        "height": 22,
+        "amount": "1000000",
+        "senderAmount": null,
+        "fee": null,
+        "hashlock": "0x2780f56dadf5cda8660b70e756a85dbef495ef0ff4c17f6dbd838f0bc496c04f"
+      }
+    ],
+    "accounts": [
+      {
+        "id": "0x8cb26efe6d8f84ca3fd2556983d59eb37fda0dffcfd19d2d1b5d7751c9b35013",
+        "height": 6,
+        "root": "0x9a4f53957dff22814e65e8e4208886a4cb79f0f921b5cf9077c044b350279e3c",
+        "pending": false,
+        "mempool": 0,
+        "offers": 0
+      }
+    ]
+  },
+  "health": {
+    "systemOk": true,
+    "failures": []
+  },
+  "relatedTests": {
+    "passed": 36,
+    "assertions": 153
+  },
+  "uiTypecheck": "passed",
+  "limitations": [
+    "Delayed or disconnected peer shutdown remains unverified",
+    "Fresh simulator UI retest remains separate from the macOS WKWebView regression"
+  ],
+  "fullCheck": {
+    "passed": true,
+    "sourceGates": 39,
+    "sourceMs": 39231,
+    "log": "/tmp/xln-immediate-lock-full-check.log"
+  },
+  "ios": {
+    "build": "passed",
+    "installed": true,
+    "device": "XLNReleaseAcceptance — iPhone 17 Pro / iOS 26.5",
+    "log": "/tmp/xln-immediate-lock-ios-build.log",
+    "uiRetest": false
+  }
+}

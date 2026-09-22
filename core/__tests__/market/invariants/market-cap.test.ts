@@ -89,6 +89,7 @@ const market = (pairId: string, price: string, observedAt: number): RelayMarketS
     entityStateHash: null,
     hubUpdatedAt: observedAt,
     snapshotUpdatedAt: observedAt,
+    minTradeSize: '0',
     tradeCount: 1,
     lastTradePrice: price,
   }],

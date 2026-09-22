@@ -1,0 +1,257 @@
+{
+  "time": "2026-09-18 08:34:08.0796 +0300",
+  "pid": 35291,
+  "os": {
+    "train": "macOS 27.0",
+    "build": "26A428",
+    "releaseType": "User"
+  },
+  "exception": {
+    "codes": "0x0000000000000001, 0x000000010505573c",
+    "rawCodes": [
+      1,
+      4379203388
+    ],
+    "type": "EXC_BREAKPOINT",
+    "signal": "SIGKILL"
+  },
+  "termination": {
+    "namespace": "FOUNDATION",
+    "flags": 2,
+    "code": 1
+  },
+  "threadCount": 126,
+  "thread": {
+    "triggered": true,
+    "id": 10526227,
+    "name": "Worker",
+    "threadState": {
+      "x": [
+        {
+          "value": 196
+        },
+        {
+          "value": 4437903706
+        },
+        {
+          "value": 4437386407
+        },
+        {
+          "value": 0
+        },
+        {
+          "value": 3834311660648
+        },
+        {
+          "value": 8
+        },
+        {
+          "value": 7
+        },
+        {
+          "value": 3
+        },
+        {
+          "value": 1125899923619840
+        },
+        {
+          "value": 3834234016800
+        },
+        {
+          "value": 2
+        },
+        {
+          "value": 16
+        },
+        {
+          "value": 1115
+        },
+        {
+          "value": 3833824496000
+        },
+        {
+          "value": 3834076702000
+        },
+        {
+          "value": 1
+        },
+        {
+          "value": 6697788468,
+          "symbolLocation": 0,
+          "symbol": "void std::__1::__sort<std::__1::__less<unsigned int, unsigned int>&, unsigned int*>(unsigned int*, unsigned int*, std::__1::__less<unsigned int, unsigned int>&)"
+        },
+        {
+          "value": 3834076702000
+        },
+        {
+          "value": 0
+        },
+        {
+          "value": 6376661896
+        },
+        {
+          "value": 3834401580224
+        },
+        {
+          "value": 1073741824
+        },
+        {
+          "value": 3834262390848
+        },
+        {
+          "value": 3834078858240
+        },
+        {
+          "value": 4440096768
+        },
+        {
+          "value": 255
+        },
+        {
+          "value": 2147483647
+        },
+        {
+          "value": 6376662656
+        },
+        {
+          "value": 6376662652
+        }
+      ],
+      "flavor": "ARM_THREAD_STATE64",
+      "lr": {
+        "value": 4379896724
+      },
+      "cpsr": {
+        "value": 536875008
+      },
+      "fp": {
+        "value": 6376661824
+      },
+      "sp": {
+        "value": 6376661808
+      },
+      "esr": {
+        "value": 4060134152,
+        "description": "(Breakpoint) brk 47880"
+      },
+      "pc": {
+        "value": 4379203388,
+        "matchesCrashFrame": 1
+      },
+      "far": {
+        "value": 0
+      }
+    },
+    "frames": [
+      {
+        "imageOffset": 2299708,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 2993044,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 2934464,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 2255444,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 2503628,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 2439008,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 2481004,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 4525162528,
+        "imageIndex": 7
+      },
+      {
+        "imageOffset": 53872228,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 53872228,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 53727412,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 6798836,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 1631992,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 1624392,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 1022604,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 6671092,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 1619984,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 10935764,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 13539352,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 3617432,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 1619648,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 1617144,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 24990836,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 3398572,
+        "imageIndex": 0
+      },
+      {
+        "imageOffset": 27904,
+        "symbol": "_pthread_start",
+        "symbolLocation": 136,
+        "imageIndex": 8
+      },
+      {
+        "imageOffset": 7404,
+        "symbol": "thread_start",
+        "symbolLocation": 8,
+        "imageIndex": 8
+      }
+    ]
+  },
+  "original": "/Users/zigota/Library/Logs/DiagnosticReports/bun-2026-09-18-083408.ips"
+}

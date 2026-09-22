@@ -1,0 +1,36 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "core/__tests__/storage/recovery/storage-restore-import-policy.test.ts": "5761c7f2aad4f9b27f35f393451851ae07c5d866c9d7c04b83f7424dec027e15",
+    "scripts/native/tests/payments/recovery-recording.js": "5ebb69c1db35afcec9e49fa93f75c4450ced9e7ec66b7f505ee47351cc8d65a4"
+  },
+  "scope": "Acceptance prototype only; canonical checkpoint and tail imported into isolated storage, closed and reopened. No production import API or wallet publication change.",
+  "checks": {
+    "storageTests": 7,
+    "storageAssertions": 37,
+    "verifiedFrames": 21,
+    "baseHeight": 1,
+    "targetHeight": 22,
+    "commitmentsComparedPerFrame": [
+      "replicaMetaDigest",
+      "postStateHash",
+      "runtimeOutputsDigest",
+      "runtimeOutputCount"
+    ],
+    "exactFinalizedPaymentAfterReopen": 1,
+    "sourceSenderUSDC": "99",
+    "sourcePaymentUSDC": "1",
+    "activityAvailability": "partial",
+    "sourceGatesPassed": 39,
+    "localHealth": true
+  },
+  "limits": [
+    "Default source is native WebKit host with real local hubs, not SwiftUI simulator acceptance",
+    "Isolated staged import is not atomically published to the wallet namespace",
+    "Tower still stores a tip snapshot; fresh-device full-history UI test remains red",
+    "Payment history restored within retained span only; earlier history stays explicitly partial",
+    "No new UX screenshots/video or signed device installation"
+  ],
+  "next": "Build complete archive privately, validate stored commitments, atomically publish its WAL only after target tip verified, invalidate current cache, then reopen using existing canonical loader to reconstruct sparse overlays; preserve fresh-device-only guard and crash evidence."
+}

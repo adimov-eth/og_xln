@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UsdAmount } from '../components/Amount';
 import { CopyId } from '../components/CopyId';
 import { TokenRow, AccountRow } from '../components/home/Balances';
 import { WalletScale } from '../components/home/WalletScale';
@@ -12,8 +11,7 @@ import { Icon } from '../components/Icons';
 import { PendingBatch } from '../components/PendingBatch';
 import { Sheet } from '../components/Sheet';
 import { useApp } from '../runtime/store';
-import { formatUsd } from '../runtime/format';
-import { usdOf } from '../runtime/financial/prices';
+import { formatAmount, getTokenMeta } from '../runtime/format';
 import { useWallet } from '../runtime/views';
 import { USER_ACTIVITY_TYPES, useMovements } from '../runtime/financial/movements';
 import { ActivityRow } from './Activity';
@@ -28,19 +26,25 @@ export function Home() {
   const [showZero, setShowZero] = useState(false);
   const [opening, setOpening] = useState(false);
   const [addingMoney, setAddingMoney] = useState(false);
+  const [selectedToken, setSelectedToken] = useState(1);
   const accountIds = useMemo(() => wallet.accounts.map(account => account.counterpartyId), [wallet.accounts]);
   const recent = useMovements(entityId, USER_ACTIVITY_TYPES, 80, accountIds);
   const movements = recent.movements.filter(row => row.kind !== 'account').slice(0, 5);
   const totals = wallet.totals.filter(total => showZero || total.active);
   const emptyCount = wallet.totals.filter(total => !total.active).length;
-  const visibleNet =
-    (places.onchain ? wallet.usd.onchain : 0) +
-    (places.reserve ? wallet.usd.reserve : 0) +
-    (places.accounts ? wallet.usd.receivable - wallet.usd.owed : 0);
+  const balanceTokens = wallet.totals.filter(total => total.active || total.tokenId === 1);
+  const balanceToken = balanceTokens.find(total => total.tokenId === selectedToken) ?? balanceTokens[0];
+  const meta = balanceToken ? getTokenMeta(balanceToken.tokenId) : null;
+  const visibleNet = balanceToken ?
+    (places.onchain ? balanceToken.onchain : 0n) +
+    (places.reserve ? balanceToken.reserve : 0n) +
+    (places.accounts ? balanceToken.receivable + balanceToken.owed : 0n) : 0n;
+  const money = (amount: bigint) => meta ? `${formatAmount(amount, meta.decimals, meta.decimals)} ${meta.symbol}` : '0';
   const held = wallet.accounts.reduce(
     (sum, account) =>
-      sum + account.tokens.reduce((amount, token) => amount + usdOf(token.tokenId, token.derived.outTotalHold), 0),
-    0,
+      sum + account.tokens.filter(token => token.tokenId === balanceToken?.tokenId)
+        .reduce((amount, token) => amount + token.derived.outTotalHold, 0n),
+    0n,
   );
 
   return (
@@ -62,10 +66,16 @@ export function Home() {
       </div>
       <section className="wallet-overview" aria-label="Your balance">
         <span className="hero-label">
-          {places.onchain && places.reserve && places.accounts ? 'Total balance' : 'Selected balances'}
+          {places.onchain && places.reserve && places.accounts ? 'Balance' : 'Selected balances'}
         </span>
+        {balanceToken && <select className="input" style={{ width: 'auto', marginBottom: 8 }} aria-label="Balance asset" data-testid="home-balance-asset"
+          value={balanceToken.tokenId} onChange={event => setSelectedToken(Number(event.target.value))}>
+          {balanceTokens.map(token => <option key={token.tokenId} value={token.tokenId}>{getTokenMeta(token.tokenId).symbol}</option>)}
+        </select>}
         {wallet.frame ? (
-          <UsdAmount value={visibleNet} size={52} testId="home-total" />
+          <div className="display num" style={{ fontSize: 52, overflowWrap: 'anywhere' }} data-testid="home-total">
+            {meta ? formatAmount(visibleNet, meta.decimals, meta.decimals) : '0'}
+          </div>
         ) : (
           <p className="hero-label" role="status">
             {wallet.error ? 'Balance unavailable' : 'Loading balance…'}
@@ -75,14 +85,12 @@ export function Home() {
           <p className="note" data-testid="home-send-capacity">
             {!commandReady
               ? 'Wallet connection stopped. Reopen the wallet to continue.'
-              : Math.abs(visibleNet - wallet.usd.sendCapacity) < 0.005
-                ? 'Ready to send'
-                : `${formatUsd(wallet.usd.sendCapacity)} available to send`}
+              : `Payment capacity: ${money(balanceToken?.sendCapacity ?? 0n)} · includes available credit`}
           </p>
         )}
-        {held > 0 && (
+        {held > 0n && (
           <button type="button" className="wallet-pending" onClick={() => navigate('/activity')}>
-            {formatUsd(held)} pending · View activity <Icon name="chevronRight" size={14} />
+            {money(held)} pending · View activity <Icon name="chevronRight" size={14} />
           </button>
         )}
       </section>

@@ -222,64 +222,6 @@ const makeEnv = (): RuntimeReplica =>
     },
   }) as RuntimeReplica;
 
-const makeBook = (_price: bigint): BookState => ({
-  params: { bucketWidthTicks: 1n, maxOrders: 100, stpPolicy: 0 },
-  orders: new Map(),
-  bidBuckets: new Map(),
-  askBuckets: new Map(),
-  bidBucketIdsDesc: [],
-  askBucketIdsAsc: [],
-  nextSeq: 1,
-  tradeCount: 0,
-  tradeQtySum: 0n,
-  lastTradePriceTicks: 0n,
-  lastAcceptedUsdAskPriceTicks: 0n,
-  eventHash: 0n,
-});
-
-const makeCrowdedBidLevelBook = (price: bigint, orderCount: number): BookState => {
-  const orderIds = Array.from({ length: orderCount }, (_, index) => `order-${index.toString().padStart(2, '0')}`);
-  const orders = new Map(
-    orderIds.map((orderId, index) => [
-      orderId,
-      {
-        orderId,
-        ownerId: `0x${(index + 1).toString(16).padStart(64, '0')}`,
-        side: 0 as const,
-        priceTicks: price,
-        qtyLots: 1n,
-        seq: index + 1,
-        bucketId: price,
-      },
-    ]),
-  );
-  return {
-    ...makeBook(price),
-    orders,
-    bidBuckets: new Map([
-      [
-        price.toString(),
-        {
-          bucketId: price,
-          pricesAsc: [price],
-          levels: new Map([
-            [
-              price.toString(),
-              {
-                priceTicks: price,
-                orderIds,
-                totalQtyLots: BigInt(orderCount),
-              },
-            ],
-          ]),
-        },
-      ],
-    ]),
-    bidBucketIdsDesc: [price],
-    nextSeq: orderCount + 1,
-  };
-};
-
 const makeOrderbookExt = (books: Map<string, BookState>): OrderbookExtState => ({
   books,
   orderPairs: new Map(),
@@ -366,82 +308,8 @@ const makeTestViewPageLoader =
     };
   };
 
-const makeMemoryDb = (entries: Array<[Buffer, Buffer]>): RuntimeDbLike => {
-  const store = new Map<string, { key: Buffer; value: Buffer }>();
-  const putValue = (key: Buffer, value: Buffer): void => {
-    store.set(key.toString('hex'), { key: Buffer.from(key), value: Buffer.from(value) });
-  };
-  for (const [key, value] of entries) putValue(key, value);
-  return {
-    get: async (key: Buffer) => {
-      const item = store.get(key.toString('hex'));
-      if (!item) {
-        const error = new Error('NotFound') as Error & { code?: string; notFound?: boolean };
-        error.code = 'LEVEL_NOT_FOUND';
-        error.notFound = true;
-        throw error;
-      }
-      return Buffer.from(item.value);
-    },
-    batch: () => {
-      const puts: Array<[Buffer, Buffer]> = [];
-      const dels: Buffer[] = [];
-      return {
-        put: (key: Buffer, value: Buffer) => {
-          puts.push([Buffer.from(key), Buffer.from(value)]);
-        },
-        del: (key: Buffer) => {
-          dels.push(Buffer.from(key));
-        },
-        write: async () => {
-          for (const key of dels) store.delete(key.toString('hex'));
-          for (const [key, value] of puts) putValue(key, value);
-        },
-      };
-    },
-    keys: async function* (options?: { gte?: Buffer; lt?: Buffer; reverse?: boolean }) {
-      const ordered = Array.from(store.values())
-        .map(item => item.key)
-        .sort(Buffer.compare);
-      if (options?.reverse) ordered.reverse();
-      for (const key of ordered) {
-        if (options?.gte && Buffer.compare(key, options.gte) < 0) continue;
-        if (options?.lt && Buffer.compare(key, options.lt) >= 0) continue;
-        yield Buffer.from(key);
-      }
-    },
-  };
-};
-
-const snapshotAccountKey = (height: number, entity: string, counterparty: string): Buffer =>
-  Buffer.concat([keySnapshotAccountPrefix(height, entity), hexBytes(counterparty)]);
-
-const snapshotBookKey = (height: number, entity: string, pairId: string): Buffer =>
-  Buffer.concat([keySnapshotBookPrefix(height, entity), textBytes(pairId)]);
-
-const capabilityTokenUnchecked = (seed: string, role: 'read' | 'full', expiresAtMs: number): string => {
-  const level = role === 'read' ? 'inspect' : 'admin';
-  const audience = 'xln-runtime';
-  const keyId = 'test';
-  const tokenId = 'unchecked';
-  const encodedAudience = Buffer.from(audience, 'utf8').toString('base64url');
-  const encodedKeyId = Buffer.from(keyId, 'utf8').toString('base64url');
-  const encodedTokenId = Buffer.from(tokenId, 'utf8').toString('base64url');
-  const signature = createHmac('sha256', seed)
-    .update(`xln-radapter-v1:cap:${level}:${expiresAtMs}:${audience}:${keyId}:${tokenId}`)
-    .digest('hex');
-  return `xlnra1.${role}.${expiresAtMs}.${encodedAudience}.${encodedKeyId}.${encodedTokenId}.${signature}`;
-};
-
 const oldStaticAuthKey = (seed: string, level: 'inspect' | 'admin'): string =>
   createHmac('sha256', seed).update(`xln-radapter-v1:${level}`).digest('hex');
-
-const inspectToken = (): string => deriveRuntimeAdapterCapabilityToken('seed', 'read', Date.now() + 60_000);
-
-const ownerBindingSignature = (runtimeId: string, challenge: string, capability: string): string =>
-  new SigningKey(hexlify(deriveSignerKeySync('seed', '1')))
-    .sign(buildRuntimeAdapterOwnerBindingDigest(runtimeId, challenge, capability))
-    .serialized.toLowerCase();
 
 test('runtime adapter solvency-summary returns per-stack asset conservation', async () => {
   const env = makeEnv();

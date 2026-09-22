@@ -14,6 +14,8 @@ import { FailureDispositionError } from '../../../protocol/errors/failure-taxono
 import { createSettlementWorkspaceHash } from '../../../account/tx/handlers/settlement/transition';
 import { applyEntityFrameWithMaterializedTestInfraContext } from '../../helpers/entity-frame';
 import { selectSettlementContinuation } from '../../../entity/consensus/account/settlement-continuation';
+import { runAccountAuthorityEntityStage } from '../../../rscore/authority/entity-stage';
+import { TsAccountWorkerAuthority } from '../../../rscore/ts-worker';
 import { proposeAccountFrame } from '../../../account/consensus/proposal/propose';
 import {
   assertEntityStateRootCache,
@@ -903,6 +905,36 @@ describe('atomic settlement Account transition', () => {
       actions: [{ type: 'r2r', toEntityId: entity('33'), tokenId: 1, amount: 4n }],
       broadcast: true,
     });
+  });
+
+  test.each([0, 1, 4])('settle_propose retains its withdrawal continuation through the complete Entity frame (workers=%i)', async (workers) => {
+    const seed = 'settlement-continuation-frame-admission';
+    const env = createEmptyEnv(seed);
+    const jurisdiction = makeJurisdiction(seed, 31337, 'a5', 'b6');
+    const signerA = registerTestSigner(env, seed, '1');
+    const signerB = registerTestSigner(env, seed, '2');
+    const entityA = generateLazyEntityId([signerA], 1n).toLowerCase();
+    const entityB = generateLazyEntityId([signerB], 1n).toLowerCase();
+    const [left, right] = entityA < entityB ? [entityA, entityB] : [entityB, entityA];
+    const signer = left === entityA ? signerA : signerB;
+    const state = makeState(left, signer, jurisdiction, right);
+    addReplica(env, state, signer);
+    installProofStack(env, state);
+    const command = buildCollectiveEntityProposalTx(signer, [{ type: 'settle_propose', data: {
+      counterpartyEntityId: right, ops: [{ type: 'c2r', tokenId: 1, amount: 4n }],
+      continuation: { actions: [{ type: 'r2e', receivingEntity: entity('44'), tokenId: 1, amount: 4n }], broadcast: true },
+    } }]);
+    const authority = workers > 0 ? new TsAccountWorkerAuthority(env, workers) : null;
+    try {
+      const result = await runAccountAuthorityEntityStage(env, authority ? {
+        ownerEntityId: left, ownerSignerId: signer, provider: authority.provider,
+        occurrence: { kind: 'runtime-input', inputIndex: 0 }, deferProposal: false,
+      } : null, () => applyEntityFrameWithMaterializedTestInfraContext(env, state, [
+        signedEntityCommandTx(buildSignedEntityCommand(env, state, signer, [command])),
+      ], 2_000));
+      expect(result.newState.settlementContinuations?.has(right)).toBe(true);
+      expect(selectSettlementContinuation(result.newState)).toEqual({ kind: 'wait', counterpartyId: right });
+    } finally { await authority?.close(); }
   });
 
   test('continuation executes once only for its exact ready workspace and an empty J draft', () => {

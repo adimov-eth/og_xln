@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { Level } from 'level';
 import { Wallet, getBytes, hexlify } from 'ethers';
 
 import { serializeTaggedJson, deserializeTaggedJson, safeStringify } from '../../../protocol/serialization';
@@ -604,6 +605,34 @@ describe('runtime recovery tower', () => {
       .toThrow('RUNTIME_RECORDING_MANIFEST_MISMATCH');
   });
 
+  test('recording exports sparse WAL roots through verified replay without rewriting WAL', async () => {
+    const { env, runtimeSeed, runtimeId, jurisdiction } = await buildRuntimeEnv();
+    env.runtimeConfig = { ...env.runtimeConfig, storage: {
+      ...env.runtimeConfig?.storage, canonicalHashPeriodFrames: 0, materializePeriodFrames: 1000,
+    } };
+    const signerId = deriveSignerAddressSync(runtimeSeed, '2').toLowerCase();
+    const entityId = generateLazyEntityId([signerId], 1n, env).toLowerCase();
+    enqueueRuntimeInput(env, { runtimeTxs: [createTestEntityImportRuntimeTx(env, {
+      entityId, signerId, data: {
+        config: { mode: 'proposer-based', threshold: 1n, validators: [signerId],
+          shares: { [signerId]: 1n }, jurisdiction },
+        isProposer: true, profileName: 'Sparse recording',
+      },
+    })], entityInputs: [] });
+    await processRuntime(env);
+    const originalFrame = await readPersistedFrameJournal(env, env.state.height);
+    expect(originalFrame).toBeTruthy();
+    expect(originalFrame!.canonicalStateHash).toBeUndefined();
+    const recording = await buildPersistedRuntimeRecording(env, {
+      signers: [{ index: 0, derivationIndex: 0, address: runtimeId, name: 'Signer 1' }],
+    });
+    const tail = recording.bundles.find(bundle => bundle.kind === 'journal_tail');
+    expect(tail!.frames!.at(-1)!.canonicalStateHash).toBe(computeCanonicalStateHashFromEnv(env));
+    const restored = trackRuntimeEnv(await restoreEnvFromRecoveryBundles(recording.bundles, { runtimeSeed, runtimeId }));
+    expect(computeCanonicalStateHashFromEnv(restored)).toBe(computeCanonicalStateHashFromEnv(env));
+    expect(await readPersistedFrameJournal(env, env.state.height)).toEqual(originalFrame);
+  });
+
   test('tower stores blind backup appointments and serves restore payloads', async () => {
     const { env, runtimeSeed, runtimeId, entityId, wallet, jurisdiction } = await buildRuntimeEnv();
     const bundle = buildRuntimeRecoveryBundle(env, {
@@ -715,4 +744,84 @@ describe('runtime recovery tower', () => {
     expect(serializeTaggedJson(restoredBundle.signers)).toBe(serializeTaggedJson(bundle.signers));
     await store.close();
   });
+  test('tower publishes an authenticated archive pair atomically and preserves it on rejection', async () => {
+    const { env, runtimeSeed, runtimeId, entityId, wallet } = await buildRuntimeEnv();
+    const signers = [{ index: 0, address: runtimeId, name: 'Signer' }];
+    const initial = await buildPersistedRuntimeRecording(env, { signers });
+    enqueueRuntimeInput(env, { runtimeTxs: [], entityInputs: [{ entityId, signerId: runtimeId,
+      entityTxs: [{ type: 'profile-update', data: { profile: { entityId, name: 'Recovered archive' } } }],
+    }] });
+    await processRuntime(env);
+    const recording = await buildPersistedRuntimeRecording(env, { signers });
+    expect(recording.bundles).toHaveLength(2);
+    const signedAt = Date.now();
+    const appointments = await Promise.all(recording.bundles.map(async bundle => {
+      const encrypted = await encryptRuntimeRecoveryBundle(bundle, runtimeSeed);
+      return { type: 'tower_appointment' as const, version: 1 as const, towerMode: 'blind_backup' as const,
+        lookupKey: encrypted.lookupKey, slot: 0, bundle: encrypted,
+        ownerProof: { runtimeId, signedAt, signature: await wallet.signMessage(
+          buildTowerAppointmentOwnerMessage(runtimeId, 'blind_backup', encrypted.lookupKey, 0, encrypted, signedAt, undefined)) },
+      };
+    }));
+    const dbPath = join(process.cwd(), '.tmp-tests', 'archive-' + Date.now() + '-' + runtimeCounter);
+    const store = createWatchtowerStore({ dbPath });
+    const submit = (body: unknown) => handleTowerAppointment(new Request('http://xln.test/api/tower/appointment',
+      { method: 'PUT', body: safeStringify(body) }), store);
+    const key = appointments[0]!.lookupKey;
+    try {
+      expect((await submit(appointments[0])).status).toBe(200);
+      const prior = await store.getLatest(key);
+      expect(prior!.bundle.height).toBe(initial.targetHeight);
+      const badSignature = structuredClone(appointments);
+      badSignature[1]!.ownerProof.signature = appointments[0]!.ownerProof.signature;
+      expect((await submit(badSignature)).status).toBe(400);
+      expect(await store.getLatest(key)).toEqual(prior);
+      expect((await submit(appointments)).status).toBe(200);
+      const published = await store.getLatest(key);
+      expect(published!.bundles).toHaveLength(2);
+      expect(published!.receipt.height).toBe(recording.targetHeight);
+      const decrypted = await Promise.all(published!.bundles.map(bundle => decryptRuntimeRecoveryBundle(bundle, runtimeSeed)));
+      const restored = trackRuntimeEnv(await restoreEnvFromRecoveryBundles(decrypted, { runtimeSeed, runtimeId }));
+      expect(computeCanonicalStateHashFromEnv(restored)).toBe(computeCanonicalStateHashFromEnv(env));
+      expect((await submit([...appointments].reverse())).status).toBe(400);
+      expect(await store.getLatest(key)).toEqual(published);
+      // First preparation succeeds; the second conflicts at the same signed time.
+      // No prepared snapshot/receipt may leak into the stored lookup document.
+      const conflicting = [...appointments];
+      conflicting[1] = { ...conflicting[1]!, bundle: await encryptRuntimeRecoveryBundle(recording.bundles[1]!, runtimeSeed) };
+      await expect(store.upsertRecoveryArchive([conflicting[0]!, conflicting[1]!]))
+        .rejects.toThrow('TOWER_APPOINTMENT_REPLAY_MISMATCH');
+      expect(await store.getLatest(key)).toEqual(published);
+    } finally { await store.close(); }
+    const rawStore = new Level<string, string>(dbPath, { valueEncoding: 'utf8' });
+    let storedBytes: number;
+    try { storedBytes = Buffer.byteLength(await rawStore.get('lookup:' + key), 'utf8'); }
+    finally { await rawStore.close(); }
+    // Account for the final signed receipt, not just ciphertext and old receipts.
+    // The bound is just below the actual complete stored document from this run.
+    const limitedPath = dbPath + '-quota';
+    const limited = createWatchtowerStore({ dbPath: limitedPath, maxStoredBytesPerLookupKey: storedBytes - 64 });
+    const putLimited = (body: unknown) => handleTowerAppointment(new Request('http://xln.test/api/tower/appointment',
+      { method: 'PUT', body: safeStringify(body) }), limited);
+    try {
+      expect((await putLimited(appointments[0])).status).toBe(200);
+      const prior = await limited.getLatest(key);
+      const rejected = await putLimited(appointments);
+      expect(rejected.status).toBe(413);
+      expect(await limited.getLatest(key)).toEqual(prior);
+      expect((await putLimited(appointments[0])).status).toBe(200);
+    } finally { await limited.close(); }
+    const quotaReopened = createWatchtowerStore({ dbPath: limitedPath, maxStoredBytesPerLookupKey: storedBytes - 64 });
+    try {
+      expect((await quotaReopened.getLatest(key))!.bundles).toHaveLength(1);
+      expect((await quotaReopened.getLatest(key))!.receipt.height).toBe(initial.targetHeight);
+    } finally { await quotaReopened.close(); rmSync(limitedPath, { recursive: true, force: true }); }
+    const reopened = createWatchtowerStore({ dbPath });
+    try {
+      const durable = await reopened.getLatest(key);
+      expect(durable!.bundles).toHaveLength(2);
+      expect(durable!.receipt.height).toBe(recording.targetHeight);
+    } finally { await reopened.close(); rmSync(dbPath, { recursive: true, force: true }); }
+  });
+
 });

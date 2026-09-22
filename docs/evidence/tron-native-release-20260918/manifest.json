@@ -1,0 +1,658 @@
+{
+  "scope": "Private native TVM contracts, frontend deposit/withdrawal command builders through EmbeddedRuntimeAdapter, real Runtime/Entity submission and receipt finalization, exact same-WAL recovery. No rendered wallet UI, cross-J, lending, public deployment or complete release claim.",
+  "javaTron": {
+    "version": "4.8.2.1-f8b05d4",
+    "jarSha256": "63f8a5fffe023f20a6b8dc44ef72513e50cb323e130b6235025aa3e6b87e2b4d"
+  },
+  "jdk": {
+    "version": "Temurin 17.0.20.1+1 aarch64 macOS",
+    "archiveSha256": "196d13ba5f10414bef7f6a05a9b3f00edacb18ebacef2b99485db9e2ee18f0e8"
+  },
+  "ledger": "db/native-tron-release-20260918",
+  "chainId": 2414086651,
+  "contracts": 8,
+  "testToken": "XLNUSD; repository ERC20Mock, not real USDT",
+  "result": {
+    "depositBlock": 23,
+    "withdrawalBlock": 24,
+    "reserve": [
+      "0",
+      "1000000",
+      "0"
+    ],
+    "externalBefore": "1000000000000",
+    "externalAfter": "1000000000000",
+    "entityNonce": [
+      "0",
+      "1",
+      "2"
+    ]
+  },
+  "entries": [
+    {
+      "file": "boot.json",
+      "sha256": "8d04411532a0aac971c73796a25f8321cec4ff6c1e57c8663a1311149ed7b8de"
+    },
+    {
+      "file": "graph.json",
+      "sha256": "d1cc869887847d4d297a04bf8543952d55cb367f7359e142616391010a595e4f"
+    },
+    {
+      "file": "token.json",
+      "sha256": "726bf0e3a2c92baadf6b7b6cbdc617a773c91fe33d2f767796f638d98388a69f"
+    },
+    {
+      "file": "adapter.json",
+      "sha256": "cf6ffe82e3bd0e96252b15aafaf308d95d985f7f4478210a13058e4da25d944a"
+    },
+    {
+      "file": "economic.json",
+      "sha256": "0eecd7cf1681bf1c088cbc2284f40f73c318f635fc71ba9615a08fcc02985db3"
+    },
+    {
+      "file": "artifact-sources.json",
+      "sha256": "d60ad4a10956a1e3977e2691da93515632206778ec7dd011953f117d44cae6b6"
+    },
+    {
+      "file": "parameters.json",
+      "sha256": "b4da3f554eb60e3857d2603e8e03e2a3525678fbe3a179d2cc73a1b4944eeb8b"
+    },
+    {
+      "file": "runtime-import.json",
+      "sha256": "10993aaad5ca907ff328e89512e722750ea7245a3d5c0f2fdd13b37af8a88e06"
+    },
+    {
+      "file": "runtime-restore.json",
+      "sha256": "dac962514874f1a0925ce4ee70ad60b1a562b837bf0e388aed7d2da41f965560"
+    },
+    {
+      "file": "runtime-proof.json",
+      "sha256": "6209f9b7f7ef5f304fb2b0e13bee9a376641c57675aad5fb91f00cee4e18fba2"
+    },
+    {
+      "file": "runtime-recovered-before-poll.json",
+      "sha256": "afcedc0a7adae684b8d14c97f7704377b53490ca1b39c3564844e4254a587f29"
+    },
+    {
+      "file": "runtime-import-first-red.log",
+      "sha256": "ca19f19600edc5498415378d6a480d6861e514576ee48f1e164ed20db093f16e"
+    },
+    {
+      "file": "runtime-import-resumed.log",
+      "sha256": "c6eddc11118d39ebaa719f39cf8afe5d9f1e17952c00e2d5f3cdb22c4f85536d"
+    },
+    {
+      "file": "runtime-restore-first-red.log",
+      "sha256": "5406dc5d81d016e228785ef69c3c6476d403eec446812a0df2f5086d9396343a"
+    },
+    {
+      "file": "runtime-restore-passed.log",
+      "sha256": "694f2da27b1ef769cf72a5c6d5b851cc0e1453517d08d9e487d6a90bc401d831"
+    },
+    {
+      "file": "entity-finance.json",
+      "sha256": "66a1d0f566410e795c9883aed9883530717bb0e2610c35a93e617111f3124a74"
+    },
+    {
+      "file": "entity-restore.json",
+      "sha256": "6fc723daf5c41867328e9ac900c5f0e0ab4a5096a59bccb43f2309925e2ded5d"
+    },
+    {
+      "file": "entity-finance-first-shutdown-timeout.log",
+      "sha256": "f01e67155809acd51dc8500098afc95442e8aed6d214c689cc06502f36569414"
+    },
+    {
+      "file": "entity-restore-first-red.log",
+      "sha256": "d7bee63c35b03387012fe5fb6a1015442a701df8a8d253554fe7f973c88524a7"
+    },
+    {
+      "file": "entity-restore-shutdown-timeout.log",
+      "sha256": "35888c361ee62c2cf4e5a054a64313291df7d5328bb7c350957b2717f93bc439"
+    },
+    {
+      "file": "entity-restore-passed.log",
+      "sha256": "a3f61b4bdfcdc8c8441178455fe49735f025d98e68ceaa2c30d155704af11584"
+    },
+    {
+      "file": "wallet-move.json",
+      "sha256": "9fef3c7e0ef0f6fd1fe82cc61c6ef28ffc75c1801aa3b7e52513b19bec907281"
+    },
+    {
+      "file": "wallet-restore.json",
+      "sha256": "93f836fbac6cca17411c8b6666ee621e1a290ef080ab731cfa764784d72cb4cd"
+    },
+    {
+      "file": "wallet-funded.json",
+      "sha256": "0359473aee07b1e8d7ffaffc3dc7b13150bc67639e702789d832b61b941d98b0"
+    },
+    {
+      "file": "wallet-proof.json",
+      "sha256": "0d2f1356457ee0d88db8d25859974e67c7bfb34bc8e479862d5bd4712db2741d"
+    },
+    {
+      "file": "wallet-move-first-red.log",
+      "sha256": "5ddf8268318cd098598c89a3e0df69450ac795a298c049b65cafd44ac1d5a350"
+    },
+    {
+      "file": "wallet-move-passed.log",
+      "sha256": "4248a37934464a693a47d0a9c0949cd0e2462e2442a60bfce4597f97bf677e4b"
+    },
+    {
+      "file": "wallet-restore-passed.log",
+      "sha256": "03a36ae788862e87405131563fbba088984ba3679df63d217f44fca76be7255c"
+    },
+    {
+      "file": "cross-network.json",
+      "sha256": "3d76b33a85bab8b85ea8dce7e6fb3a9713e83562731ecba61e609e518b4ca315"
+    },
+    {
+      "file": "cross-network-restore.json",
+      "sha256": "c53aa8c964e1d7c02a1ffa5683fdcd3b5836a3610f65908046c498529338f835"
+    },
+    {
+      "file": "ethereum-graph.json",
+      "sha256": "d207c9cd87b2fe298ba2d0684ad5d4e101b5e20dfb40103cadccb0c6b202e95b"
+    },
+    {
+      "file": "ethereum-readback.json",
+      "sha256": "d207c9cd87b2fe298ba2d0684ad5d4e101b5e20dfb40103cadccb0c6b202e95b"
+    },
+    {
+      "file": "cross-network-file-read-failed.log",
+      "sha256": "e70b04d2afd95082594b402b1f37bd542b4930b771a3fc9d01db34eb112b18df"
+    },
+    {
+      "file": "cross-network-assertion-failed.log",
+      "sha256": "dd6a67fbc2848edce927bc5bad169e784e79e06f1b5864a1a07a2c60ae0e8011"
+    },
+    {
+      "file": "cross-network-import-passed.log",
+      "sha256": "baf10d5d061f35f4229f3bc40cbcf83da8e16cc5c95f5a2317f5bf2589c2b759"
+    },
+    {
+      "file": "cross-network-restore-passed.log",
+      "sha256": "59bc723490cfbbb791e78d16766332386b7f888c1aa005a71d2282d05651822c"
+    },
+    {
+      "file": "cross-swap.json",
+      "sha256": "db6316b5a05953d066694827036fe2e22969db78e6067e46e2520bea9e170a67"
+    },
+    {
+      "file": "cross-swap-restore.json",
+      "sha256": "eb059144bc791308a10f221ab4ce158ae52ab204cd7bc22801e8ce0f6efe2022"
+    },
+    {
+      "file": "cross-swap-before.json",
+      "sha256": "0dfa41cbdac22769c4f31f4883576f4172a64c31984de2fe6b6ca717fed79337"
+    },
+    {
+      "file": "cross-swap-proof.json",
+      "sha256": "100bdfa4686769949f0bbf421e951cad845dbbe2eccec4ea2f583a6cd20c8860"
+    },
+    {
+      "file": "cross-swap-profile-wait-failed.log",
+      "sha256": "bf0d9190a5113b5a14ab46c4e0779039ad187c2256217447f5a571874e4f055a"
+    },
+    {
+      "file": "cross-swap-passed.log",
+      "sha256": "573680648f32f0a12c456d58cbba955e0f87210fa28ae102f4facbd0e06fabec"
+    },
+    {
+      "file": "cross-swap-restore-passed.log",
+      "sha256": "ccbdedb0c4d8ce11976ef537b456cbb4d0f78e5e7486582c994bd1bcca4b26a5"
+    },
+    {
+      "file": "cross-withdraw.json",
+      "sha256": "4542a443a6a28248d19b94361990b20f056c9be39ffdda6ba02904214059116d"
+    },
+    {
+      "file": "cross-withdraw-restore.json",
+      "sha256": "29eb550cf6778b6e1ab2825bf04d8c4e51e4461a92fd0365bfbf031a4405685d"
+    },
+    {
+      "file": "automatic-withdraw.json",
+      "sha256": "32a7c7db753ffce640b11e1f6777960f51f6faeac754ba170a61e4217eb5214a"
+    },
+    {
+      "file": "automatic-withdraw-restore.json",
+      "sha256": "fec8b8bd3dc92ff8583c97c1af94a72ba2d600712cdceb1e1ab52842b5267d6f"
+    },
+    {
+      "file": "withdrawal-regression-red.log",
+      "sha256": "8acbc1a4ae721a1e99f9c3865edd9ce02056df82e3433d8bd83911399ad62170"
+    },
+    {
+      "file": "withdrawal-regressions-passed.log",
+      "sha256": "9998b502758e2585b16a88d6e52bf0207abdc53ba8eeb2261a32c03d4c2d91d2"
+    },
+    {
+      "file": "withdrawal-resume-passed.log",
+      "sha256": "57d664c975b6b2b4e605f3ab495bceea997369fa297bb823144a271d865ede07"
+    },
+    {
+      "file": "withdrawal-resume-restore-passed.log",
+      "sha256": "d01567a8e212388796f73894723b67913c4a3e6638e4402da44633e05a9e8b64"
+    },
+    {
+      "file": "withdrawal-automatic-passed.log",
+      "sha256": "88a176adf0cce070ad3eb3e22df64a597761c51e4ee334ccc9e4a01fe80ece74"
+    },
+    {
+      "file": "withdrawal-automatic-restore-passed.log",
+      "sha256": "9d4b56918a2e5bdb1a5ad59a035e26244585920cc34ac508440705b7211336e2"
+    },
+    {
+      "file": "withdrawal-historical-replay-rejected.log",
+      "sha256": "12a2b6ba65b6387a6bd78c178039444e8ba176c33db2a8b6d206118168d808b9"
+    },
+    {
+      "file": "withdrawal-proof.json",
+      "sha256": "0b649d14d054da1b4d911ef35302d46e6d270300c5aa224a810f7c87c1821054"
+    }
+  ],
+  "fullCheck": {
+    "passed": true,
+    "sourceGates": 39,
+    "sourceMs": 40864,
+    "log": "/tmp/xln-cross-swap-final-check.log"
+  },
+  "nodeStopped": true,
+  "standReleased": true,
+  "runtimeAuthority": {
+    "kind": "NATIVE_TRON_RESTORED_WAL_PROOF",
+    "originalHeight": 4,
+    "restoredFromHeight": 5,
+    "finalHeight": 6,
+    "preservedEvidenceHash": "0x153f6d1fa99dac0399496e2393939162f7e637988f4767ee04a9249f48acf9aa",
+    "freshEvidenceHash": "0x0ccb53ccda6c5eef2b7ce0c819f739048b786738f10676616d5e7a05259c59a4",
+    "unchangedClaimHash": "0xe15e04e8b1903dad02a4db14c358598dff01c23e856da7802d1c3e597af8c43f",
+    "authorityObservedThroughHeight": 25,
+    "freshObservedThroughHeight": 35,
+    "scan": {
+      "replicaScannedThrough": {},
+      "scannedThroughHeight": 35
+    },
+    "scope": "Same WAL restore, stable certified authority, fresh native RPC-attested observation committed; no Entity financial or cross-J claim"
+  },
+  "entityFinance": {
+    "final": {
+      "entityFrameHash": "0x29d0c9a58145e126afd7c740db52b8cee0a9bccc31275bdd54886de3f9a7c76e",
+      "entityHeight": 1,
+      "finalizedJHeight": 35,
+      "nonce": 2,
+      "reserve": "0",
+      "runtimeHeight": 11
+    },
+    "restoredAnchor": {
+      "final": {
+        "entityFrameHash": "0x29d0c9a58145e126afd7c740db52b8cee0a9bccc31275bdd54886de3f9a7c76e",
+        "entityHeight": 1,
+        "finalizedJHeight": 35,
+        "nonce": 2,
+        "reserve": "0",
+        "runtimeHeight": 10
+      },
+      "frameHash": "0xd389521e3008345fdbd708e58ad7f306f6171bc5f4c1f1a47bb79777fc052b67",
+      "postStateHash": "0xf34ddcc0472f7f43e1ea9fcbc7c4231ce7b10affdabb8ab41c9ec7677de941cd"
+    },
+    "reserves": [
+      {
+        "balance": "1000000",
+        "block": 23,
+        "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "tokenId": 1,
+        "transaction": "0xd28a9889dc5c69e1a1477b4f1bab163ced67d05f7c4fa6e60f1f0805ef6aa91f"
+      },
+      {
+        "balance": "0",
+        "block": 24,
+        "entity": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "tokenId": 1,
+        "transaction": "0xc0d8b87075d4c19ca67ab03ffd941433cc415ed69c625e4d54ffe937e01abfd3"
+      }
+    ],
+    "frameHash": "0x5c6b18f736d8676cdc5cf5d504418d2af5d38773b388734530ef372d4569d965",
+    "postStateHash": "0x696dae6e4ed938538369f81904102ce2c80af9076e378b5d9093a126243cb24e"
+  },
+  "walletCommandPath": {
+    "kind": "NATIVE_WALLET_COMMAND_RECEIPT_RECOVERY_PROOF",
+    "commands": [
+      "e2r",
+      "j_broadcast",
+      "r2e",
+      "j_broadcast"
+    ],
+    "submitted": [
+      {
+        "attemptId": "0x36ee9c1376558aab9883db929961f0349fadc10f355b8a4e2c951056e5caa2c4",
+        "attemptNumber": 1,
+        "attemptedAt": 1789699449842,
+        "batchGeneration": 1,
+        "batchHash": "0x3cf5ea6239e5e0242977cf2cc6d7577e770d1b1e7f1a0cef11026ee98c4f4c67",
+        "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "entityNonce": 3,
+        "jurisdictionName": "Native TVM",
+        "outcome": "submitted",
+        "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+        "txHash": "0x3e25acc74ebb49809cde1bda56e49b2c06fc1e16bcdf640a714399bd0e3621fe"
+      },
+      {
+        "attemptId": "0x42aa5f2e419a0a0fed6ed1ac8751ddb7e046df29b093074d6a9fcb5a6ba6c88f",
+        "attemptNumber": 1,
+        "attemptedAt": 1789699458201,
+        "batchGeneration": 2,
+        "batchHash": "0x323775aa98ae2dd0d6651755fc492f2451237416c91c2206fc1a2405d326d529",
+        "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "entityNonce": 4,
+        "jurisdictionName": "Native TVM",
+        "outcome": "submitted",
+        "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+        "txHash": "0xe41df63c67d53c914b81e3e6e882c68a6a3172d97b333681b163ce1cf03ca742"
+      }
+    ],
+    "depositState": {
+      "entityFrameHash": "0x99919282abf57ce8e33cd7cc58735dc11de00c9126d03e0ce21a8bb3e4b4beb6",
+      "entityHeight": 3,
+      "finalizedJHeight": 69,
+      "nonce": 3,
+      "pending": false,
+      "reserve": "1000000",
+      "runtimeHeight": 16
+    },
+    "restoredState": {
+      "entityFrameHash": "0xd531ea6619d2108cda7c7d6b335b7522753629413bd2e158542f92ba037f3a93",
+      "entityHeight": 5,
+      "finalizedJHeight": 72,
+      "nonce": 4,
+      "pending": false,
+      "reserve": "0",
+      "runtimeHeight": 22
+    },
+    "frameHash": "0x5a0a695a58815033f12ba7c51ceb8d84878dd98edfeca81dda613e6051d2c7ca",
+    "postStateHash": "0x5f0dde753538bcdf15a3a90348119919b1667aaca60e2c2ff15216f55d3a247e",
+    "scope": "Real frontend command builders and embedded wallet adapter; private TVM; no rendered UI or cross-J claim"
+  },
+  "dualChainImport": {
+    "claimHashes": [
+      "0x10894f37db3a0d86232eb7c9e93d0b85ad847a3a7291c3fea26b39eac4c37cbf",
+      "0xe15e04e8b1903dad02a4db14c358598dff01c23e856da7802d1c3e597af8c43f"
+    ],
+    "frameHash": "0x45e25de3485e4b37b452969fe3508308d993a9ada6654ea38399889e9f55008a",
+    "jurisdictions": [
+      {
+        "chainId": 2414086651,
+        "mode": "tron",
+        "name": "Native TVM"
+      },
+      {
+        "chainId": 31337,
+        "mode": "rpc",
+        "name": "Private Ethereum"
+      }
+    ],
+    "kind": "EVM_NATIVE_TVM_RUNTIME_IMPORT",
+    "postStateHash": "0x0553a67680116d623c0e2dfec809f817301f3ba0a23cd2a6d3a9f32751a7977b",
+    "restore": true,
+    "restoredFromHeight": 4,
+    "resume": false,
+    "runtimeHeight": 5,
+    "runtimeId": "0xbc5795505911836788913ed909cf20a8558997dc",
+    "scope": "Two real local chains and authenticated Runtime import/recovery; cross-J financial execution not yet tested"
+  },
+  "crossJurisdictionSwap": {
+    "accounts": [
+      {
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "height": 5,
+        "offers": 0,
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "90000000"
+        },
+        "owner": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+        "peer": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+        "pending": false,
+        "pulls": 0,
+        "root": "0xf09682b4af1552d4329659e860556eed8fc3536939517e7d55d47910494b7210"
+      },
+      {
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "height": 5,
+        "offers": 0,
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "110000000"
+        },
+        "owner": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+        "peer": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+        "pending": false,
+        "pulls": 0,
+        "root": "0x5ab726f4a76762b9a84dc091532f29f36739090cc800f25e7821cc3d9bbb5d8c"
+      },
+      {
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "height": 5,
+        "offers": 0,
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "110000000"
+        },
+        "owner": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+        "peer": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+        "pending": false,
+        "pulls": 0,
+        "root": "0xe2cadf04dcaba73d8e656f6f650ece7e7acf8752c23bc2e3fd40bd0a52697a35"
+      },
+      {
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "height": 5,
+        "offers": 0,
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "90000000"
+        },
+        "owner": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+        "peer": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+        "pending": false,
+        "pulls": 0,
+        "root": "0x82a72c16708c2e3e905a7c81ad3893f19ddbfec10bc9e5d69a6a98835499af08"
+      }
+    ],
+    "anchors": [
+      {
+        "frameHash": "0xb36898d96fd92d49d3b1041755dd1ffcb3f57c3046cca28d0aff6bc8848162b7",
+        "height": 71,
+        "postStateHash": "0xa5797fb76984abe7a061e1742e7ccd4928564b6a33b47092a7dc36becedb849c",
+        "runtimeId": "0xbc5795505911836788913ed909cf20a8558997dc"
+      },
+      {
+        "frameHash": "0x36b1e5e755ef75f6b234f0a9193b83d7bce8af1daeb8e49999e0e88e5253fba8",
+        "height": 64,
+        "postStateHash": "0x688809b94c26cca8efa90960c2ee8c5f210f45b301d6b0e9f82e4913b255043d",
+        "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd"
+      }
+    ],
+    "commands": [
+      {
+        "domain": {
+          "hashSchema": "route-domain",
+          "protocol": "xln-cross-j",
+          "sourceAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+          "sourceEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+          "sourceStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+          "targetAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+          "targetEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+          "targetStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+        },
+        "entityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+        "height": 56,
+        "orderId": "native-cross-alice-20260918",
+        "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd",
+        "source": {
+          "amount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "counterpartyEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "entityId": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+          "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+          "tokenId": 1
+        },
+        "target": {
+          "amount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "counterpartyEntityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+          "entityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+          "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+          "tokenId": 1
+        }
+      },
+      {
+        "domain": {
+          "hashSchema": "route-domain",
+          "protocol": "xln-cross-j",
+          "sourceAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+          "sourceEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+          "sourceStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+          "targetAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+          "targetEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+          "targetStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+        },
+        "entityId": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+        "height": 56,
+        "orderId": "native-cross-alice-20260918",
+        "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd",
+        "source": {
+          "amount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "counterpartyEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "entityId": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+          "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+          "tokenId": 1
+        },
+        "target": {
+          "amount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "counterpartyEntityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+          "entityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+          "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+          "tokenId": 1
+        }
+      },
+      {
+        "domain": {
+          "hashSchema": "route-domain",
+          "protocol": "xln-cross-j",
+          "sourceAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+          "sourceEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+          "sourceStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+          "targetAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+          "targetEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+          "targetStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853"
+        },
+        "entityId": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+        "height": 58,
+        "orderId": "native-cross-bob-20260918",
+        "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd",
+        "source": {
+          "amount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "counterpartyEntityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+          "entityId": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+          "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+          "tokenId": 1
+        },
+        "target": {
+          "amount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "counterpartyEntityId": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+          "entityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+          "tokenId": 1
+        }
+      },
+      {
+        "domain": {
+          "hashSchema": "route-domain",
+          "protocol": "xln-cross-j",
+          "sourceAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+          "sourceEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+          "sourceStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+          "targetAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+          "targetEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+          "targetStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853"
+        },
+        "entityId": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+        "height": 58,
+        "orderId": "native-cross-bob-20260918",
+        "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd",
+        "source": {
+          "amount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "counterpartyEntityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+          "entityId": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+          "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+          "tokenId": 1
+        },
+        "target": {
+          "amount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "counterpartyEntityId": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+          "entityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+          "tokenId": 1
+        }
+      }
+    ],
+    "exactAccountRecovery": true,
+    "exactRouteRecovery": true,
+    "exactRuntimeRecovery": true,
+    "kind": "PRIVATE_NATIVE_CROSS_SWAP_RECOVERY",
+    "matchedExchanges": 1,
+    "scope": "Credit-backed private-chain exchange of 10 six-decimal test-token units per direction. One match, two opposing orders; no GDP attribution, public release, mainnet assets or rendered app claim.",
+    "uniqueOrders": 2,
+    "userCommandCount": 4
+  },
+  "crossSwapStrictTypeCheck": {
+    "passed": true,
+    "config": "/tmp/xln-tron-swap-tsconfig.json",
+    "log": "/tmp/xln-cross-swap-types.log"
+  },
+  "nativeWithdrawal": {
+    "proof": "withdrawal-proof.json",
+    "latestStateRestart": true,
+    "historicalReplayCompatible": false,
+    "releaseGate": "Offline checkpoint migration and cold recovery remain unverified",
+    "checks": {
+      "settlementTests": 56,
+      "sourceGates": 39,
+      "sourceWallMs": 44571
+    }
+  }
+}

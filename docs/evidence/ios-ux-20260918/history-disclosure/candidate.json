@@ -1,0 +1,38 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "ui/src/native/history.ts": "0efaec2bbea60b99be5cc18f24dc2eb4022d9450316e49e5700eb4250da2e102",
+    "frontend/ios/App/App/WalletActivity.swift": "6b65662979aa0a18e3719fab7010d984982fc91d95799589b133dbd97fb751e0",
+    "frontend/ios/App/App/Localizable.xcstrings": "9c6a6bea044c1128ef4d9302633e57eb0c2a0f740890d563d739ff3d761643f1",
+    "frontend/ios/App/AppUITests/PaymentRecovery.swift": "fb4e4f765cd4197948a404f3bbdbf77b2604393361788f0512490db6d09fbce4",
+    "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/App.debug.dylib": "2d101e1d98caf88114a9ad2f1d47f2e6c053ea6633b0c794534c34072d90f517",
+    "/tmp/xln-ios-ui-derived/Build/Products/Debug-iphonesimulator/App.app/public/index.html": "ca0122fa6748d2301f0b8fdef13cf1b2584bf9e105dc26267480164277edc4c3"
+  },
+  "scope": "Canonical activity availability forwarded by native WebKit projection and decoded into SwiftUI; missing historical records disclosed instead of an empty-history claim. No persistence or financial transitions changed.",
+  "device": "iPhone 17 Pro simulator",
+  "os": "26.5",
+  "locale": "en_US",
+  "appearance": "light",
+  "network": "real isolated local three-hub stand",
+  "restoreDevice": "C3EE2375-4FF1-4E2F-8141-A0AD5ECF67E1",
+  "checks": {
+    "warningVisible": true,
+    "misleadingEmptyMessageAbsent": true,
+    "restoredUSDC": "98.999998",
+    "paymentBackupPassed": true,
+    "paymentBackupSeconds": 100.192,
+    "fullHistoryRestorePassed": false,
+    "restoreSeconds": 39.98,
+    "firstFailure": "Original Sent-history assertion remains red, PaymentRecovery.swift:48"
+  },
+  "sourceGates": 39,
+  "sourceCheckSeconds": 33.468,
+  "screenshot": "output/ios-ux-2026-09-18/history-disclosure/screenshots/5C3326CD-418D-4E15-ACD4-40A892CFFE1B.png",
+  "video": "output/ios-ux-2026-09-18/history-disclosure/restore.mp4",
+  "limits": [
+    "Russian strings added but this new disclosure was visually tested in English only",
+    "Full history recovery remains failed1/2; source gates do not establish release readiness",
+    "No public deployment, physical camera or signed iPhone installation"
+  ]
+}

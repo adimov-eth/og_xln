@@ -1,0 +1,75 @@
+[
+  {
+    "child": "H1",
+    "fatal": {
+      "height": 179564,
+      "message": "DIRECT_OUTPUT_REJECTED_BY_PEER:{\"direction\":\"outbound\",\"error\":\"P2P_INBOUND_ENTITY_INPUT_REJECTED:INBOUND_ENTITY_RUNTIME_QUIESCING: entity=0x4b50995ced015c4686436cc6efcb55e6a8db3a9b81b0955e4be6c513ade69eb7 signer=0xbd25c5818d45f20c849b222c46736192a4c6da94 txTypes=accountInput\",\"messageId\":\"msg_3250\",\"peerRuntimeId\":\"0xbd25c5818d45f20c849b222c46736192a4c6da94\"}",
+      "stack": "Error: DIRECT_OUTPUT_REJECTED_BY_PEER:{\"direction\":\"outbound\",\"error\":\"P2P_INBOUND_ENTITY_INPUT_REJECTED:INBOUND_ENTITY_RUNTIME_QUIESCING: entity=0x4b50995ced015c4686436cc6efcb55e6a8db3a9b81b0955e4be6c513ade69eb7 signer=0xbd25c5818d45f20c849b222c46736192a4c6da94 txTypes=accountInput\",\"messageId\":\"msg_3250\",\"peerRuntimeId\":\"0xbd25c5818d45f20c849b222c46736192a4c6da94\"}\n    at applyTransportPeerFailurePolicy (/Users/zigota/xln/core/network/p2p/transport-peer-failure-policy.ts:28:42)\n    at handleDirectDeliveryFailure (/Users/zigota/xln/core/orchestrator/hub/hub-runtime-transport.ts:137:3)\n    at handlePeerDeliveryFailure (/Users/zigota/xln/core/network/p2p/direct-runtime-bun.ts:942:19)\n    at <anonymous> (/Users/zigota/xln/core/network/p2p/direct-runtime-bun.ts:1017:7)\n    at message (/Users/zigota/xln/core/network/p2p/direct-runtime-bun.ts:1110:16)",
+      "timestamp": 1789691769225
+    },
+    "receiptPath": "/Users/zigota/xln/db/dev/rdb/mesh/.control-plane/diagnostics/20260918T003700727Z-H1-4060ccec-bd41-4314-bd69-cfebefb06f53.json"
+  },
+  {
+    "action": "recover",
+    "child": "H1",
+    "code": 1,
+    "fingerprint": "93e4acf2c51a26e0cb55235d32d74cd7e39c965301ac6653c3ca79583da76888",
+    "identicalFailureCount": 1,
+    "reasonCode": "NODE_RUNTIME_QUIESCE_FAILED",
+    "receiptPath": "/Users/zigota/xln/db/dev/rdb/mesh/.control-plane/diagnostics/20260918T004317133Z-H1-9c56e37d-881d-4dcf-9b25-8232a1ef70f0.json",
+    "signal": null
+  },
+  {
+    "child": "H2",
+    "fatal": {
+      "height": 180320,
+      "message": "WS_DIRECT_FATAL:{\"endpoint\":\"ws://127.0.0.1:8092/ws\",\"error\":\"WS_UNEXPECTED_CLOSE:runtime=0x06760cf933877c315f9e9ce867412f3853ff76bf:url=ws://127.0.0.1:8092/ws:generation=1:code=1006:reason=Connection ended:helloAcknowledged=1:readyState=3:buffered=0\",\"targetRuntimeId\":\"0x9c97ed7d74fe07f01c12c89ff6c3d50e6d70a96d\"}",
+      "stack": "Error: WS_DIRECT_FATAL:{\"endpoint\":\"ws://127.0.0.1:8092/ws\",\"error\":\"WS_UNEXPECTED_CLOSE:runtime=0x06760cf933877c315f9e9ce867412f3853ff76bf:url=ws://127.0.0.1:8092/ws:generation=1:code=1006:reason=Connection ended:helloAcknowledged=1:readyState=3:buffered=0\",\"targetRuntimeId\":\"0x9c97ed7d74fe07f01c12c89ff6c3d50e6d70a96d\"}\n    at applyTransportPeerFailurePolicy (/Users/zigota/xln/core/network/p2p/transport-peer-failure-policy.ts:28:42)\n    at reportDirectClientError (/Users/zigota/xln/core/network/p2p/p2p.ts:111:3)\n    at onError (/Users/zigota/xln/core/network/p2p/p2p.ts:2109:9)\n    at handleSocketClose (/Users/zigota/xln/core/network/p2p/ws-client.ts:375:18)\n    at <anonymous> (/Users/zigota/xln/core/network/p2p/ws-client.ts:412:12)\n    at emit (node:events:106:22)\n    at <anonymous> (ws:263:20)",
+      "timestamp": 1789689600002
+    },
+    "receiptPath": "/Users/zigota/xln/db/dev/rdb/mesh/.control-plane/diagnostics/20260918T004329583Z-H2-5f67a02f-e125-4b6d-a206-e4622798e119.json"
+  },
+  {
+    "child": "H3",
+    "fatal": {
+      "height": 180302,
+      "message": "WS_DIRECT_FATAL:{\"endpoint\":\"ws://127.0.0.1:8092/ws\",\"error\":\"WS_UNEXPECTED_CLOSE:runtime=0x123c146a1febb1905930ff7477ffe07080a615b9:url=ws://127.0.0.1:8092/ws:generation=1:code=1006:reason=Connection ended:helloAcknowledged=1:readyState=3:buffered=0\",\"targetRuntimeId\":\"0x9c97ed7d74fe07f01c12c89ff6c3d50e6d70a96d\"}",
+      "stack": "Error: WS_DIRECT_FATAL:{\"endpoint\":\"ws://127.0.0.1:8092/ws\",\"error\":\"WS_UNEXPECTED_CLOSE:runtime=0x123c146a1febb1905930ff7477ffe07080a615b9:url=ws://127.0.0.1:8092/ws:generation=1:code=1006:reason=Connection ended:helloAcknowledged=1:readyState=3:buffered=0\",\"targetRuntimeId\":\"0x9c97ed7d74fe07f01c12c89ff6c3d50e6d70a96d\"}\n    at applyTransportPeerFailurePolicy (/Users/zigota/xln/core/network/p2p/transport-peer-failure-policy.ts:28:42)\n    at reportDirectClientError (/Users/zigota/xln/core/network/p2p/p2p.ts:111:3)\n    at onError (/Users/zigota/xln/core/network/p2p/p2p.ts:2109:9)\n    at handleSocketClose (/Users/zigota/xln/core/network/p2p/ws-client.ts:375:18)\n    at <anonymous> (/Users/zigota/xln/core/network/p2p/ws-client.ts:412:12)\n    at emit (node:events:106:22)\n    at <anonymous> (ws:263:20)",
+      "timestamp": 1789689600002
+    },
+    "receiptPath": "/Users/zigota/xln/db/dev/rdb/mesh/.control-plane/diagnostics/20260918T004329585Z-H3-9b21c6ab-f21b-4bc9-92d4-13b27f6305cc.json"
+  },
+  {
+    "action": "recover",
+    "child": "H1",
+    "code": 1,
+    "fingerprint": "dbae68fd133571afd67a8ad852aee84e66f7436ca0136e966f86f5fa28987587",
+    "identicalFailureCount": 1,
+    "reasonCode": "HUB_JURISDICTION_IMPORT_COMMIT_MISSING",
+    "receiptPath": "/Users/zigota/xln/db/dev/rdb/mesh/.control-plane/diagnostics/20260918T004331208Z-H1-647b2701-a9bd-4e1d-8b64-273fdade6679.json",
+    "signal": null
+  },
+  {
+    "action": "recover",
+    "child": "H1",
+    "code": 1,
+    "fingerprint": "dbae68fd133571afd67a8ad852aee84e66f7436ca0136e966f86f5fa28987587",
+    "identicalFailureCount": 2,
+    "reasonCode": "HUB_JURISDICTION_IMPORT_COMMIT_MISSING",
+    "receiptPath": "/Users/zigota/xln/db/dev/rdb/mesh/.control-plane/diagnostics/20260918T004345718Z-H1-9d1d0464-36b7-4865-afb0-176e414612b7.json",
+    "signal": null
+  },
+  {
+    "action": "fail-stop",
+    "child": "H1",
+    "code": 1,
+    "fingerprint": "dbae68fd133571afd67a8ad852aee84e66f7436ca0136e966f86f5fa28987587",
+    "identicalFailureCount": 3,
+    "reasonCode": "HUB_JURISDICTION_IMPORT_COMMIT_MISSING",
+    "receiptPath": "/Users/zigota/xln/db/dev/rdb/mesh/.control-plane/diagnostics/20260918T004401924Z-H1-cccc2ed4-8c16-408e-9f72-63a40fed861b.json",
+    "signal": null
+  },
+  {
+    "message": "H1 repeated HUB_JURISDICTION_IMPORT_COMMIT_MISSING 3 times; receipt=/Users/zigota/xln/db/dev/rdb/mesh/.control-plane/diagnostics/20260918T004401924Z-H1-cccc2ed4-8c16-408e-9f72-63a40fed861b.json"
+  }
+]

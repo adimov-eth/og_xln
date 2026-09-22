@@ -1,0 +1,722 @@
+[
+  {
+    "hub": {
+      "height": 3,
+      "offers": 0,
+      "owner": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+      "peer": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+      "pending": false,
+      "pulls": 0,
+      "queued": 0,
+      "root": "0xbcd2757edac1330e0166ba14d5a2adc6a15adfc8ddac404afa5fcf80c1c0625c",
+      "view": {
+        "ascii": "[-------------------------|-------------------------]",
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "delta": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "ownCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "ownCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "peerCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "peerCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "totalCapacity": {
+          "__xlnType": "BigInt",
+          "value": "200000000"
+        }
+      }
+    },
+    "user": {
+      "height": 3,
+      "offers": 0,
+      "owner": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+      "peer": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+      "pending": false,
+      "pulls": 0,
+      "queued": 0,
+      "root": "0xbcd2757edac1330e0166ba14d5a2adc6a15adfc8ddac404afa5fcf80c1c0625c",
+      "view": {
+        "ascii": "[-------------------------|-------------------------]",
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "delta": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "ownCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "ownCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "peerCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "peerCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "totalCapacity": {
+          "__xlnType": "BigInt",
+          "value": "200000000"
+        }
+      }
+    }
+  },
+  {
+    "hub": {
+      "height": 3,
+      "offers": 0,
+      "owner": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+      "peer": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+      "pending": false,
+      "pulls": 0,
+      "queued": 0,
+      "root": "0xd4f90da9ab5b0d185c346b8d9aa0aa058990568c0a5a0d015d46c50b789e0a86",
+      "view": {
+        "ascii": "[-------------------------|-------------------------]",
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "delta": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "ownCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "ownCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "peerCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "peerCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "totalCapacity": {
+          "__xlnType": "BigInt",
+          "value": "200000000"
+        }
+      }
+    },
+    "user": {
+      "height": 3,
+      "offers": 0,
+      "owner": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+      "peer": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+      "pending": false,
+      "pulls": 0,
+      "queued": 0,
+      "root": "0xd4f90da9ab5b0d185c346b8d9aa0aa058990568c0a5a0d015d46c50b789e0a86",
+      "view": {
+        "ascii": "[-------------------------|-------------------------]",
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "delta": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "ownCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "ownCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "peerCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "peerCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "totalCapacity": {
+          "__xlnType": "BigInt",
+          "value": "200000000"
+        }
+      }
+    }
+  },
+  {
+    "hub": {
+      "height": 3,
+      "offers": 0,
+      "owner": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+      "peer": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+      "pending": false,
+      "pulls": 0,
+      "queued": 0,
+      "root": "0xf46c92bcbbb0cc295a6344bff8e266d3fae51af1a697c87cbb58193c3ed93f06",
+      "view": {
+        "ascii": "[-------------------------|-------------------------]",
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "delta": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "ownCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "ownCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "peerCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "peerCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "totalCapacity": {
+          "__xlnType": "BigInt",
+          "value": "200000000"
+        }
+      }
+    },
+    "user": {
+      "height": 3,
+      "offers": 0,
+      "owner": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+      "peer": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+      "pending": false,
+      "pulls": 0,
+      "queued": 0,
+      "root": "0xf46c92bcbbb0cc295a6344bff8e266d3fae51af1a697c87cbb58193c3ed93f06",
+      "view": {
+        "ascii": "[-------------------------|-------------------------]",
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "delta": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "ownCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "ownCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "peerCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "peerCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "totalCapacity": {
+          "__xlnType": "BigInt",
+          "value": "200000000"
+        }
+      }
+    }
+  },
+  {
+    "hub": {
+      "height": 3,
+      "offers": 0,
+      "owner": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+      "peer": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+      "pending": false,
+      "pulls": 0,
+      "queued": 0,
+      "root": "0xb70a4c426201b409973f1d852830917d2e4a81d971866891bfddd4d4305c7da4",
+      "view": {
+        "ascii": "[-------------------------|-------------------------]",
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "delta": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "ownCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "ownCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "peerCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "peerCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "totalCapacity": {
+          "__xlnType": "BigInt",
+          "value": "200000000"
+        }
+      }
+    },
+    "user": {
+      "height": 3,
+      "offers": 0,
+      "owner": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+      "peer": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+      "pending": false,
+      "pulls": 0,
+      "queued": 0,
+      "root": "0xb70a4c426201b409973f1d852830917d2e4a81d971866891bfddd4d4305c7da4",
+      "view": {
+        "ascii": "[-------------------------|-------------------------]",
+        "collateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "delta": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "inPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "inTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outAllowance": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outCapacity": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outCollateral": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outOwnCredit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "outPeerCredit": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "outTotalHold": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "ownCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "ownCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "peerCreditLimit": {
+          "__xlnType": "BigInt",
+          "value": "100000000"
+        },
+        "peerCreditUsed": {
+          "__xlnType": "BigInt",
+          "value": "0"
+        },
+        "totalCapacity": {
+          "__xlnType": "BigInt",
+          "value": "200000000"
+        }
+      }
+    }
+  }
+]

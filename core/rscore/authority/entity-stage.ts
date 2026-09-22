@@ -564,6 +564,13 @@ class AccountAuthorityEntityStageImpl implements AccountAuthorityEntityStage {
     assertNoTypeScriptAccountExecution(this);
   }
 
+  hasQueuedSettlementTransition(accountId: string): boolean {
+    return this.admissionRequests.some(request =>
+      normalizeEntityId(request.account.proofHeader.toEntity) === normalizeEntityId(accountId)
+      && request.input.kind === 'enqueue'
+      && request.input.txs.some(tx => tx.type === 'settle_transition'));
+  }
+
   async executeAccountInput(request: AccountAuthorityInputRequest): Promise<HandleAccountInputResult | null> {
     if (!this.frameOpened) throw new Error(`ACCOUNT_AUTHORITY_FRAME_NOT_OPEN:${this.ownerEntityId}`);
     if (request.input.kind === 'enqueue') {

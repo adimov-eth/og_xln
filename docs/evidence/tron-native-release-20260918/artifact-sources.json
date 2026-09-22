@@ -1,0 +1,83 @@
+[
+  {
+    "name": "Account",
+    "sha256": "ee72ba3800063f2e0410d314b676ec21c1e84bf0a65718674914c20dda15e3a7",
+    "compiler": {
+      "name": "solc",
+      "version": "0.8.25+commit.b61c2a91.Emscripten.clang"
+    },
+    "sources": 7
+  },
+  {
+    "name": "DepositoryBounds",
+    "sha256": "9fa37249c7daf1e9336bb7cdc8abf889237b0f1a8481adf21bfc7a4ee5dd1a5e",
+    "compiler": {
+      "name": "solc",
+      "version": "0.8.25+commit.b61c2a91.Emscripten.clang"
+    },
+    "sources": 3
+  },
+  {
+    "name": "HashLadderRegistry",
+    "sha256": "002207af14d77a61808c84c9250d164b9213eb0c50858fa0bc9393abb52d3714",
+    "compiler": {
+      "name": "solc",
+      "version": "0.8.25+commit.b61c2a91.Emscripten.clang"
+    },
+    "sources": 4
+  },
+  {
+    "name": "NftCustody",
+    "sha256": "1309a48367e974b7f0fecf32856c927d2bb650c7371c1c77d18038f3ad8c1c30",
+    "compiler": {
+      "name": "solc",
+      "version": "0.8.25+commit.b61c2a91.Emscripten.clang"
+    },
+    "sources": 1
+  },
+  {
+    "name": "DeltaTransformer",
+    "sha256": "92e1ea82424cfba3ccc643ac1461c8c5af3e0f4130cf80582f2e232e49c59f38",
+    "compiler": {
+      "name": "solc",
+      "version": "0.8.25+commit.b61c2a91.Emscripten.clang"
+    },
+    "sources": 2
+  },
+  {
+    "name": "HankoVerifier",
+    "sha256": "dc9f7d1aa683cb2c4051f252e7874dacf17859f388dbdf2596c257d83ae0f7f3",
+    "compiler": {
+      "name": "solc",
+      "version": "0.8.25+commit.b61c2a91.Emscripten.clang"
+    },
+    "sources": 2
+  },
+  {
+    "name": "EntityProvider",
+    "sha256": "48d8429dbccd259b8366956e3110ec34209b5d9b1515ef4651f55dcfcbcb8628",
+    "compiler": {
+      "name": "solc",
+      "version": "0.8.25+commit.b61c2a91.Emscripten.clang"
+    },
+    "sources": 24
+  },
+  {
+    "name": "Depository",
+    "sha256": "fcc3c9ba28194ffef361fae3b724a87bf785a4543e4a3b7349e0b1045bbbf200",
+    "compiler": {
+      "name": "solc",
+      "version": "0.8.25+commit.b61c2a91.Emscripten.clang"
+    },
+    "sources": 32
+  },
+  {
+    "name": "ERC20Mock",
+    "sha256": "06dbecdf953d7d53658c38289902c86098672880de0e70873a448e01f490a0f0",
+    "compiler": {
+      "name": "solc",
+      "version": "0.8.25+commit.b61c2a91.Emscripten.clang"
+    },
+    "sources": 6
+  }
+]

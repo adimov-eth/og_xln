@@ -1,5 +1,840 @@
 # Autonomous xln work
 
+## Active release objective — 2026-09-18
+
+Working method: `docs/improvement-loop.md`. Last deeper review: 2026-09-18
+11:11 UTC. Existing ten-minute heartbeat now performs the thirty-minute review
+in the same task; no second concurrent automation. Current method change:
+stop repeated polling of unchanged external blockers, and count screenshot
+disagreements as acceptance failures even when interaction assertions pass.
+Quorum `method-review-20260918-01` completed once; USD0.25 remains reserved,
+cash unknown. No Claude generation was invoked. Latest owner correction:
+working pay/swap in web and iOS takes priority over more reflection or polish.
+Verify financial interruption/recovery boundaries while signing/public-service
+blockers remain unchanged; do not count repeat happy-path runs as fixes.
+
+11:16 short review: fixed2 observed backup failures. Actual authenticated
+HTTP/LevelDB quota regression initially returned200 where413 required: quota
+was checked before the new signed receipt joined the stored document. Canonical
+writeLookup now enforces exact final serialized bytes before any mutation.
+Prior backup remains exact after rejection/reopen; a valid upload still succeeds
+immediately after rejection. Related tests27/27,169assertions,2.45s.
+Actual native WebKit interrupted prepublication import left empty IndexedDB
+containers; retry failed with existing-wallet message. Replaced duplicate
+name-only heuristics in native BrainVault open and restore with one read-only
+hasLocalWalletData record-count query. Any records remain occupied; inspection
+errors propagate; no deletion, storage schema or canonical import guard change.
+New live regression checks interrupted retry succeeds and occupied wallet restore
+rejects, then new payment/swap/reopen and second fresh archive all pass6/6.
+Exactly2paymentreceipts+1swap, final73.000001USDC/0.0099970002WETH. Original21frames
+verified; isolated stand43.486s, health green/free. First red stand25.479s.
+Final sourcechecks39/39,33.667s; UI types and iOS runtime/Swift build pass;
+source native-network restored to public URL. No new SwiftUI video or physical
+install. Evidence docs/evidence/ios-ux-20260918/backup-failures. Interruption is
+injected before atomic publication, not OS kill/power-loss evidence.
+Next useful UI gates remain camera-denial handling and VoiceOver, plus hardware
+and public-service blockers; avoid repeating unchanged payment/swap happy paths.
+
+11:11 deep review: one guarded Quorum method-review-20260918-11, short immutable
+packet with candidate hashes and observed quota failure. Verified existing route
+and caps; no retries, fallback, Claude, new grant or recursive review. Model
+suggested speculative preparation-time usage mutation; locally rejected because
+usage updates only follow successful writeLookup put. Added useful valid-upload-
+after-rejection assertion, which passes. Accepted next-boundary choice: reproduce
+interrupted-import retry rather than repeat happy-path UI; produced the second
+actual fix above. No method rule change. LedgerUSD4.00reserved/USD6.00remaining,
+actual cash/account-wide costs unknown. Next hourly report remains11:32.
+
+10:58 short review: post-recovery spending milestone4/4 passes on real local
+hubs through native WebKit: new payment, swap, ordinary reopen, then a new tower
+archive imported into fresh wallet storage. Exactly2 finalized payment receipts
+and1 closed swap execution survive, with exact give/want/fee. End balances:
+73.000001USDC and0.0099970002WETH; swap debit24.999999USDC, gross0.009998WETH,
+fee0.0000009998WETH. Fresh archive includes both payments and the swap. No mocks,
+owner wallet deletion, public mutation or repeated unchanged happy-path stand.
+First run stopped in acceptance evidence export, not payment execution:
+walletEvidence scanned frame1 although restored history correctly declares that
+height unavailable. Fixed the diagnostic to read canonical activity metadata,
+start at its retained boundary, and export availability explicitly. Regression
+asserts the recovered floor before new spending; does not hide missing history.
+First rerun21/21 original frames exact; extended swap-archive run19/19, then
+validated receipts and balances after another actual fresh import. Local health
+healthy/free. iOS runtime+Swift test build and UI types green. This block adds
+native WebKit acceptance, no new SwiftUI videos or physical-camera coverage.
+Evidence docs/evidence/ios-ux-20260918/post-recovery. Signing rechecked10:57:
+0valid identities; owner installation remains blocked. No unchanged public probe.
+No Quorum call: last deep review10:35, not due. USD3.75reserved unchanged; actual
+cash unknown. Next: interruption/quota rejection preserving last usable backup,
+and fresh-storage retry behavior; keep existing payment/swap receipt assertions.
+Final source gate result recorded in this block's candidate artifact.
+
+10:41 result: native fresh-device payment recovery now passes2/2. Production
+wallet backup exports the retained signed checkpoint+tail under committed-read
+lock, encrypts them with existing crypto and submits one HTTP pair. Tower uses
+existing owner verification, retention and quota preparation, then writes only
+the final lookup document; second-entry rejection leaves prior backup intact.
+Wallet restore uses canonical atomic recording importer, deleting duplicate
+signer registration and old tip-only persistence. No new receipt authority.
+Related tests27/27,163assertions,3.57s. Full WebKit real local payment→tower→fresh
+import→second reopen passes; original21frames exact, restoredtip24, one receipt.
+SwiftUI source payment+backup103.291s; new clean iPhone17Pro simulator restore
+33.181s. Restored98.999998USDC, exactlyone confirmedSent1.000001; independent
+custody recipient credited1.000001. Whole stand173.066s, health green/free.
+Exported videos+11screenshots and visually inspected backup/restored history.
+Backup screenshot exposed obsolete claim that another-iPhone restore unavailable;
+replaced with honest manual-backup reminder in EN/RU and rebuilt SwiftUI. Videos
+precede that wording-only correction; no claim of a second visual run. Original
+strict history assertions retained. No camera hardware/public install claim.
+First source gate rejected2new non-null assertions in tower receipt handling;
+replaced with explicit missing-receipt failure. Final checks39/39,32.436s; UI types
+and Swift build pass, diff clean. Source resources remain public xln.finance;
+local compiled test product separate. New simulator shut down, data preserved.
+Evidence: docs/evidence/ios-ux-20260918/tower-archive; videos in
+output/ios-ux-2026-09-18/tower-archive. No Quorum retry; USD3.75reserved unchanged,
+actual cash unknown. Next useful acceptance: payment/swap after recovered wallet
+rejoins, not repeated recovery happy path. UI retry after empty-target failed
+import, archive quota boundaries and OS power-loss remain unverified limitations.
+Public/signing blockers unchanged; milestone2/2 is narrow recovery, not release.
+
+10:35 deep review: tower archive integration is now the first useful boundary.
+One guarded Quorum call method-review-20260918-10 used an immutable source packet
+with per-file hashes. Same verified pi/CodingPlan route and caps; no Claude,
+retry or fallback. Returned INVALID_OR_TRUNCATED_SSE_DATA with no usable answer.
+Keep full reservation: USD3.75 reserved,USD6.25remaining; cash unknown. No method
+rule change or speculative fix based on missing output. Prior method continues
+to produce new evidence: local import then full WebKit tower round trip green;
+next actual SwiftUI fresh-device test is running, without weakening assertions.
+Hourly update delivered10:32: previous block export+import verified20/20 tests,
+21/21frames,39/39sourcegates. Actual effort and account-wide spend are unmetered;
+known test times in their artifacts, no new installed public product. Next report11:32.
+
+10:21 short review: production fresh-destination archive import now stages and
+verifies checkpoint + retained WAL, publishes the complete WAL in one sync batch,
+then reopens via the canonical loader. Existing current/previous/WAL/infra or
+activity data rejects import. No new receipt authority or persistence schema.
+Actual WebKit run first failed MISSING_SIGNER_KEY after source lock; importer now
+authenticates bundles and derives/registers their signed signer indexes locally.
+Real local three-hub payment rerun passes21/21 frames R2–R22 from checkpointR1,
+all four stored commitments per frame, exactly1 matching HtlcFinalized after a
+second reopen, sender99USDC after paying1. Local stand healthy and free.
+Recovery tests20/20,131assertions,11.55s: next checkpoint and another reopen,
+pre/post-publication injected interruption, destination and stale-index rejection.
+The extra checkpoint test initially used an unauthorized raw checkpointBarrier;
+fixed the test to use the canonical local builder, no guard bypass. Final source
+checks39/39,31.358s. No public mutation, UI acceptance rerun or device install.
+Evidence: docs/evidence/ios-ux-20260918/atomic-archive. Native fresh restoration
+remains1/2 until tower and UI use this archive. Next: atomic tower publication
+of checkpoint + tail; sequential uploads can evict the previous complete pair.
+Do not repeat the unchanged tip-only simulator test. Empty staging containers
+and UI retry after empty-target interruption remain integration limitations.
+
+10:05 deep review: one bounded guarded Quorum method-review-20260918-09,
+immutable packet/result in docs/evidence/improvement-loop-20260918. Verified
+route pi0.84.4 to Z.AI CodingPlan GLM5.3 low, existing caps8192/64KB/USD0.25;
+no retries, fallback, tools or Claude. Accepted content-level stale activity
+counterexample: added actual empty activity/infra checks and regression. Rejected
+speculative extra receipt/sequence authorities; canonical WAL remains truth.
+No method rule change. Reservation ledger returnedUSD3.50 reserved/6.50remaining;
+actual cash and account-wide spend unknown. Hourly report remains due10:24.
+
+09:54 short review: proved persistent archive construction using existing
+checkpoint import + per-frame verified replay + ordinary saveEnvToDB after each
+replay returns. Replay-mode write guard remains intact. All work uses an isolated
+storage namespace; no unfinished prefix published to the wallet. New recovery
+regression closes/reopens and deletes disposable activity index before verifying
+reconstruction:7/7 tests,37assertions. Real local native WebKit payment then
+isolated persistence/reopen passes21/21 frames R2–R22 from checkpointR1, with all
+four stored commitments matching the original each frame (replica metadata,
+post-state, ordered outbox digest and count). One exact HtlcFinalized restored.
+Source paid1USDC and held99; full wallet UI not rerun. History remains honestly
+partial before retained baseR1. Initial live assertion used raw log fields on
+projected activity; corrected to rawType/hash and htlc type, then passed. Second
+run added original-versus-imported commitment checks, not another happy-path
+repeat. Local services healthy/free. Source checks39/39, diff clean.
+This block adds acceptance evidence only, no product fix or new storage API.
+Evidence: docs/evidence/ios-ux-20260918/archive-stage. Full fresh-device native
+history still1/2; tower integration and atomic publication remain unfinished.
+Next design must stage complete archive, publish WAL atomically, invalidate
+current cache and reopen via canonical loader so sparse materialization overlays
+are rebuilt. Do not resume the old in-memory tip after swapping sparse WAL,
+and never expose a partly imported prefix. No duplicate receipt authority.
+No Quorum call: last deep review09:26, not due; reservationsUSD3.25 unchanged,
+actual cash unknown. Hourly report next10:24. No public mutation/device install.
+
+09:34 short review: isolated real WebKit payment exposed a new first failure:
+recording export rejected R2 because default sparse WAL lacks per-frame full
+canonicalStateHash. Fixed export to replay the retained tail with all existing
+checks before deriving portable full roots, leaving original WAL untouched.
+This exposed the next codec mismatch: readPersistedCheckpointSnapshot used
+internal storage shape rather than the canonical portable recovery projection.
+Switched to existing recovery projection, no fallback/schema weakening.
+Recovery suite10/10 (84assertions) and related retention suite31/31 (152assertions)
+pass. Real local payment→recording→detached replay passes19/19 frames R2–R20
+from checkpointR1; exactly one matching HtlcFinalized atR20, sender99USDC after
+1USDC payment. Local services healthy/free afterward. No persistent import,
+tower format change, copied wallet, mock, public mutation or iOS binary rebuild.
+Canonical recording now works for this payment; full fresh-device history still
+1/2 because tower exports tip and persistent restore resets WAL base.
+New harness lives scripts/native/tests/payments/recovery-recording.js; invoke
+with existing run-session under stand lock. Broader gates first caught unsafe
+finally throw, now cleanup preserves original+cleanup failures; second run
+caught test-folder width, new test moved into existing payments directory.
+Final bun run check passes39/39 source gates (31.032s), frontend/short gates
+also green; diff check passes. Stand free.
+Evidence in docs/evidence/ios-ux-20260918/recovery-recording. Quorum unchanged
+USD3.25 reserved, actual cash unknown. Next: verified canonical archive import,
+then tower integration, then rerun strict clean-simulator history acceptance.
+
+09:26 deep review / hourly report: previous hour proves same-install payment
+reopen, fresh-device balance restoration, and the missing-history disclosure.
+One user-visible fix (partial-history warning), not three product fixes; native
+fresh restoration remains1/2. Latest source checks39/39. New root evidence:
+backup exports only a tip snapshot, and import deliberately resets WAL base to
+that tip. Existing buildPersistedRuntimeRecording exports a retained checkpoint
+plus contiguous signed tail, but verified persistent import is not implemented.
+Next experiment: real local payment, detached verified recording replay and exact
+HtlcFinalized correlation; never invoke persistent import or touch public data.
+Quorum method-review-20260918-08 supports isolated replay. Reject its inference
+that an ephemeral stand forbids copies/destructively modifies public data, and
+its suggestion that merely rebuilding an index solves durability: history must
+remain reproducible from canonical stored checkpoint/WAL after another restart.
+No method rule change; establish replay before archive implementation. Guarded
+route/caps and current official tariff checked, one call/no retries/fallbacks.
+Cumulative reservedUSD3.25, remainingUSD6.75; cash/account-wide spend unknown.
+Known final UI run durations since last hourly report:117.716+103.543+38.754+
+100.192+39.980=400.185s, excluding initial reruns/builds/setup/checks; active
+effort not metered. No deploy/install/signing or unchanged public polling.
+Hourly report delivered09:24; next due10:24.
+
+09:11 short review: fixed misleading native empty-history state. Native history
+projection now passes through the existing complete/partial availability field;
+Swift decoder requires a known value. Partial history shows Earlier history
+unavailable plus explanation, in EN/RU resources; no empty-page claim. No new
+state, receipt store or consensus logic. Rebuilt the actual WebKit host and
+SwiftUI app. Real post-payment backup passes100.192 s; a second clean simulator
+restores98.999998 USDC. Both new disclosure assertions pass2/2; screenshot
+visually inspected. Original full-history assertion still fails39.980 s, so
+milestone remains1/2. No assertion removed; missing history is still unresolved.
+Stand healthy/free afterward, new simulator shut down without deleting data.
+Source checks39/39 (33.468 s), diff check passes, source public network restored.
+Artifacts in `history-disclosure/` under existing iOS evidence/output folders.
+No new Quorum call: last deep review08:49, no method fork. ReservationsUSD3.00,
+cash unknown. Next work must inspect canonical checkpoint+WAL archive restore
+options; do not repeat this known-red E2E without a historical-recovery change.
+EN disclosure verified live; RU copy added but not separately visually exercised.
+No public mutation or physical installation; hourly report last08:15.
+
+08:54 result: fresh-device recovery milestone is1/2, not complete. Native
+post-payment backup passes103.543 s, verified snapshot157 /43 KB displayed.
+Second simulator was newly created (not cloned), with no XLN installation before
+test. Remembered credentials restore exact98.999998 USDC, but Sent history is
+absent; strict testTowerRestore fails38.754 s. Whole stand finishes169.957 s,
+within180 s, health green. Independent custody post-check is not reached because
+the UI test fails; do not imply that verification ran in this scenario.
+Root cause from canonical source: encryptTip exports current checkpoint plus one
+tip journal; persistRestoredRuntimeState replaces local persistence at that tip.
+Earlier history is absent by construction. History query exposes partial
+availability, but ui/src/native/history.ts discards it and WalletActivity says
+No activity. Keep full-history test red; do not manufacture receipts or remove
+its assertion. First useful fix: pass existing availability metadata through to
+native Activity and show an explicit missing-history notice. Full history needs
+canonical retained checkpoint/WAL archive work, not a second receipt store.
+Six source screenshots and fresh-restore failure attachments/videos preserved;
+balance/backup inspected, missing-history frame extracted from actual video.
+Evidence in `tower-restore/` under existing iOS folders. Source checks39/39
+(32.853 s), native test build green, diff clean, stand free. No product code fix
+in this block; only reproducible test/runner additions. Original simulator/data
+preserved; new simulator shut down after capture to save resources. No public
+mutation/signing recheck. Quorum reservationsUSD3.00, actual cash unknown.
+
+08:49 deep review: same-install reopen is now proven, but not fresh-device
+recovery. Existing native code discovers tower recovery when local IndexedDB
+is absent; backup screen still labels transfer unavailable. Test that boundary
+before changing copy. Preparing one post-payment backup + fresh second-simulator
+restore, preserving the original simulator. Same stand stays alive,180 s total;
+no timeout relaxation. New simulator CFA23D80-93CE-467A-8348-B37127E1D816 was
+created and booted, never cloned; app absence is checked before the run. Only
+public test name/password are entered, no DB/keychain copying or runtime bypass.
+Quorum method-review-20260918-07 raises stale local/keychain state as a false
+positive. This new device addresses it; reject redundant erasure/recreation and
+its suggestion to prohibit remembered credentials, which are the intended UX.
+Live tower retention is required, not a false-positive by itself. Shared guarded
+reservationsUSD3.00, remainingUSD7.00, actual cash/account-wide spend unknown.
+One call, no retries/fallback/Claude; current tariff/caps checked. No new method
+rule: verify rendered evidence and distinguish persisted reopen from remote restore.
+
+08:35 short review: default BrainVault native payment→terminate→relaunch→
+password reopen passes1/1 in117.716 s. Relaunched app stays locked; same remembered
+name/password restores98.999998 USDC and exactly one confirmed1.000001-USDC Sent
+record. Independent custody verifies1.000001 received after reopening; all local
+services healthy. Initial run also passed118.341 s, but screenshot review caught
+the balance capture during unlock-sheet dismissal. Added a semantic wait for
+that sheet's submit control to disappear; one rerun now shows the actual balance.
+This is a test/evidence timing correction, not a wallet bug fix. Corrected the
+new helper's initial XCTest element-vs-query compile error before live execution.
+Nine final screenshots exported; restored balance/history visually inspected.
+68.974 s normal-speed video excludes52 s setup; full and initial runs retained.
+Evidence/video in `payment-reopen/` under existing folders. Source checks39/39
+(source stage31.269 s), diff check passes, stand free, source network remains
+xln.finance. Local persisted recovery only; fresh-install tower recovery remains
+unverified. Next useful boundary: native encrypted backup verification after a
+payment, then fresh-install restoration from that exact backup. No Quorum call:
+last deep review08:12, not yet due, no new method fork. ReservationsUSD2.75,
+actual cash unchanged/unknown; no public poll, deployment, reset or install.
+
+08:15 result / hourly report: native Market ask→limit buy→receipt passes1/1
+in105.177 s. Selected2500.5 USDC price matches prefilled input; buy0.009 WETH
+debits22.5045 USDC, gross0.009 WETH, fee0.0000009, net0.0089991,
+remaining77.4955 USDC. Receipt and both balances reconcile; WETH headline
+selection passes. Real local stand healthy; default100-shard BrainVault used.
+Seven screenshots exported; book/review/receipt/balances visually inspected.
+55.454 s normal-speed demo excludes54 s setup; full recording also retained.
+Evidence in `orderbook/` under existing iOS evidence/output folders. Source
+checks39/39 (31.133 s), diff check passes, stand free, production source network
+configuration preserved. Product code unchanged in this block. Resting orders,
+partial fills and cancellation are not proven by a marketable limit fill.
+Past hour: four new native acceptance runs passed4/4—Russian payment, default
+BrainVault creation, Russian swap with defaults, and Market limit buy. This is
+coverage, not four bug fixes or release readiness. Removed custom test creation
+branch and extended locale/entry-path assertions. Known test runtimes326.179 s
+combined, excluding build/check/review/setup; total active effort not metered.
+Two bounded Quorum consultations in this hour addedUSD0.50 reservations;
+cumulativeUSD2.75 reserved, actual cash and external spend unknown. Public
+startup/signing/camera remain blocked/unverified; no deploy/reset/install.
+Next smallest user-visible safety boundary: real default BrainVault reopen and
+restored payment/swap history after app termination, using the remembered secret.
+
+08:12 deep review: previous two blocks closed default BrainVault and Russian
+swap evidence gaps; default setup now shared by financial tests, custom6-shard
+branch removed. New bounded decision: native Market price tap has never been
+covered by the Home swap test. Quorum method-review-20260918-06 supports one
+real orderbook limit-buy run using the existing exact receipt/balance assertions.
+Locally verified Market row IDs contain price ticks and draft prepopulates price;
+new test checks that value rather than inventing a separate financial formula.
+Retain the Home swap case; do not replace existing coverage as the model suggested.
+Model confidence is opinion, not acceptance. Its passive-order warning is valid:
+a tapped ask may move; report an unfilled result honestly if that happens.
+No new method rule or infrastructure. Build passes; one bounded stand now running.
+One guarded GLM call, zero retries/fallbacks/Claude. Shared reservationUSD2.75,
+remainingUSD7.25; actual cash/account-wide spend unknown. Guarded caps and current
+Z.AI price page checked; no new authorization or release of historical reserves.
+
+07:56 short review: Russian native swap passes1/1 in91.467 s using the shipped
+factor3/100-shard BrainVault defaults. Removed the custom-six-shard setup from
+all financial UI tests after the previous default-path measurement proved it
+fits the existing limits. Locale-aware labels and Decimal parsing preserve
+exact receipt and balance assertions. Debit24.999999 USDC; gross0.009998 WETH;
+fee0.0000009998; net0.0099970002; remaining75.000001 USDC. WETH headline
+selection passes. Six screenshots exported; review/receipt visually inspected;
+normal-speed43.043 s demo removes52 s of setup. Services healthy afterward.
+Default submit-helper-to-ready11.0140 s includes UI/network/polling overhead.
+Final source checks39/39, source stage32.421 s. Evidence in `russian-swap/`
+under the existing iOS evidence/output folders. Test simplification and new
+locale acceptance, not a product bug fix. Source network configuration restored
+to xln.finance; no public mutations. Signing still has zero identities at07:52.
+No new Quorum call: last deep review07:35, no new method fork; reservations
+unchangedUSD2.50, cash unknown. Next useful boundary: native orderbook price tap
+through limit-order confirmation and receipt, rather than another swap repeat.
+
+07:35 deep review: Russian native payment passes 1/1 in95.387 s, with exact
+localized review values (maximum1,000002; recipient1,000001; fee0,000001 USDC),
+independent custody credit1.000001, sender98,999998, Russian Activity and
+background lock. Screenshots inspected; real isolated local services healthy.
+Source checks pass39/39 (source stage31.718 s). Changes here extend the existing
+test/runner to select English/Russian and assert localized amounts, not wallet
+financial behavior. Evidence/video: `russian-payment/` in the existing folders.
+
+Quorum `method-review-20260918-05` supports measuring the untouched default
+BrainVault path next: Swift factor3 selects100 shards; UI financial tests used
+custom6. Verified those constants locally before choosing the experiment.
+One default-settings native creation run completed, with the existing180 s
+stand /150 s UI limits and a100 s post-confirmation readiness bound. The prior
+40 s bound remains for custom-shard financial cases. Record confirmation-to-ready
+time including UI/network overhead, not pure KDF time or physical iPhone speed.
+No security parameter changes, repeat-until-green loop or new test framework.
+Default creation passes1/1 in34.148 s overall; timed submit-helper start to
+wallet visibility10.9897 s, including roughly2.3 s of XCTest pre-tap waiting,
+network/backup work and polling. Tap dispatch25.06 s to visibility33.71 s is
+approximately8.65 s at test-log precision, not an isolated KDF benchmark.
+Single simulator sample on this Mac; no physical-phone latency claim. Video
+frame shows BrainVault52/100; ready screenshot shows the actual joined wallet.
+No recovery-settings detour or shard override. Evidence/video in
+`default-brainvault/` under the existing iOS evidence/output folders.
+Final source checks pass39/39 (source stage31.188 s), diff check passes, stand
+free, source native-network configuration remains public xln.finance. Two new
+acceptance gaps closed in this block; no product bug fix, deployment or install.
+Reject Quorum's example of a210 s completion under a180 s deadline as impossible
+in this experiment. Shared reservationsUSD2.50, remainingUSD7.50; cash unknown.
+One guarded call, no retry/Claude. Keep the existing method: first useful boundary
+and visual evidence alongside assertions; do not invent another reflection rule.
+
+07:18 short review / hourly update: bounded public diagnosis confirms the same
+deployed SHA 4dfabd621b913e9e79da315f33d21a1b9708778b. PM2 reports 5,070 existing
+server restarts. Fresh 07:16 logs show all three hubs failing the unchanged
+10,313,244 / 13,336,516 / 13,336,514-byte frame heads against 5,666,667 bytes.
+The earlier online flags were transient startup observations, not restored
+connectivity. Stop investigating direct links as an independent fault. Keep the
+existing schema/contract upgrade and destructive-reset owner decision open;
+no public restart, deployment, backup, reset or ledger mutation was performed.
+Evidence: `docs/evidence/ios-prod-testnet-20260918/startup-0717.log`.
+
+Caught a regression introduced by the large-text UI fix: its shared amount view
+had been placed in WalletQuote.swift, coupling the Foundation-only quote decoder
+to SwiftUI/localization and breaking the existing standalone expiry vector's
+compilation. Moved that unchanged view into WalletActivity.swift. Original quote
+expiry vector now passes 5/5, simulator build passes; final source checks pass
+39/39 (source stage32.309 s), diff check passes and stand is free. Evidence in
+`docs/evidence/ios-ux-20260918/model-separation/`.
+The 07:02 full swap video precedes this source-only relocation; no new financial
+claim is based on compilation. Past hour delivered one amount-readability fix,
+the consent test correction and the correction of this introduced coupling;
+normal-text and maximum-text swap flows passed, plus worker isolation evidence.
+Public demo and intermittent Bun startup crash remain unresolved. External
+managed reservations still USD2.25, actual cash unknown; no new model call.
+
+06:57 short review: maximum-text swap first failed because the test treated
+an off-screen lazy receiving-capacity button as optional and skipped consent.
+The fresh-wallet test now always scrolls to consent and prepares WETH capacity.
+It then passes 1/1 in 131.716 s with reconciled receipt/balances and healthy local
+services. Screenshot review still rejects visual acceptance: the minimum WETH
+amount wraps mid-number. A shared native amount row now keeps review and fill
+quantities on one line with font scaling; the header does the same. Fresh
+maximum-text swap validation initially caught separated receipt accessibility
+labels; the row now uses the original native LabeledContent accessibility
+representation with the exact same value. Final full swap passes 1/1 in
+130.325 s, including receipt/debit/fee/balance assertions and healthy services.
+Final review screenshot confirms complete, unbroken amounts at maximum size.
+Source checks pass 39/39 (source stage 32.222 s), diff check passes, stand free,
+simulator text size restored to normal. This confirms
+why rendered evidence must remain independent of green interaction assertions.
+No extra Quorum call: the last bounded review was 06:33, and no new method fork
+needs an external opinion. At 06:48 public hubs report online 3/3, but aggregate
+service health still fails and signing identities remain zero. No public changes.
+
+07:04 deep review: retain visual inspection plus financial assertions; no new
+reflection mechanism. Quorum `method-review-20260918-04` recommends next examining
+public startup read-only, which directly gates the owner's demo. Verify its
+claim before acting: the saved 06:48 health snapshot still has zero direct hub
+links despite three online flags, so its assertion that connectivity is cleared
+is unsupported. Also reject its inference that unchanged dependency inputs prove
+a health-check bug. Next smallest action: inspect the first public direct-link
+failure in existing logs, preserving the ledger and reset authority. No further
+speculative Bun restart loop. Shared reservations USD2.25, remaining USD7.75;
+actual cash and external account spend unknown. One call, no retry/Claude.
+
+06:33 review: isolated the startup hypothesis before repeating the full swap.
+Existing real-worker parity passes 20/20 (80 assertions, 4.05 s). A bounded
+production coordinator lifecycle probe starts/closes 48 pools of eight workers
+in three waves (128 concurrently, 384 total) in 16.046 s without a crash. Empty
+worker churn is therefore insufficient to reproduce the failure; this is not
+financial or startup reliability acceptance. The decoded native crash is in
+JSC garbage collection; root cause remains unknown. Added field-name/type-only
+diagnostics to the existing unmatched-response fail-stop, preserving rejection
+and avoiding payload/key logging. The instrumented native swap passes 1/1 in
+100.510 seconds, with healthy services afterward: receipt debit 24.999999 USDC,
+gross 0.009998 WETH, fee 0.0000009998 WETH, net 0.0099970002 WETH, remaining
+75.000001 USDC. Review/receipt screenshots inspected; amounts start visible.
+Video and seven screenshots: `output/ios-ux-2026-09-18/swap-current/`.
+This clears the current UI regression, not the intermittent startup gate.
+Final unchanged-code `bun run check`: 39 source gates pass, source stage
+31.866 s; `git diff --check` passes and stand lock is free. This block added
+diagnostic evidence, not a crash fix. Current public/signing observations remain
+the 06:16 ones; no unnecessary repeat poll or public mutation.
+Quorum `method-review-20260918-03` agrees the observation is useful but a clean
+run cannot clear intermittency. Reject its suggested ~20 stand repetitions:
+unknown frequency gives no basis for that number and displaces client evidence.
+Keep the existing method; capture first failure or stop after this one bounded
+swap acceptance run. No Claude call. Shared reservations USD2.00, remainder
+USD8.00; cash/account-wide spend unknown. Evidence in `worker-startup/` under
+the existing iOS evidence directory and `improvement-loop-20260918/`.
+
+06:00 review: maximum-text payment testing exposed a half-height recovery sheet
+and a test tap outside the viewport despite XCTest's hittable flag. Recovery
+settings now use full height at accessibility sizes; wallet creation succeeds.
+The consent interaction now verifies its actual tap point. A further real UI
+defect retained the input form's bottom scroll position on entering review.
+New quote identity now resets the Form to the amounts. Largest-text payment
+passes 1/1 in 114.954 seconds, including independent 1.000001-USDC custody credit,
+exact sender balance, Activity and background lock. Source checks pass 39/39 in
+31.803 s. Generated output videos/screenshots are Git ignored (retained on disk):
+the unchanged canonical-payment gate now passes 7/7 in 1.64 s instead of timing
+out while decoding 1.48 GB of mixed source/evidence files. Swap regression is
+blocked before UI launch by a second Bun Worker crash: MM logs
+`TS_ACCOUNT_WORKER_UNMATCHED_RESPONSE:4:undefined`, then SIGSEGV, 299 process
+threads. Evidence: `docs/evidence/ios-ux-20260918/large-payment/`. Next smallest
+failure: isolate malformed worker response/startup crash before repeating swap.
+At 06:16 UTC public H1/H2/H3 remain offline and signing has zero valid identities.
+Quorum `method-review-20260918-02` returned once: reuse a healthy
+owned stand for repeated UI debugging, but retain fresh-stand final acceptance.
+Adopt this as the next repeated-debugging method trial, not a reason to build
+new stand infrastructure now; claimed savings are unmeasured. Keep the Bun crash
+as an independent startup gate. Shared reservations USD1.75, managed remainder
+USD8.25, cash/external account costs unknown. No Claude call or fresh grant.
+
+Current robustness evidence: Chromium payment validation and double-confirm /
+reload tests pass 2/2 in 38.9 seconds. Native WebKit plus NativeSockets passes
+in-flight lock with the real H1 paused for ten seconds: lock completes after
+10,398 ms, the reopened wallet has exactly 99 USDC, one matching initiated /
+finalized 1-USDC payment, and no pending Account work. This is a macOS WebKit
+runtime probe, not an iOS background-suspension or camera test. The first run
+never reached the probe: H1's Bun 1.4.0 worker crashed during startup
+(macOS EXC_BREAKPOINT / SIGKILL); peers then halted. The controlled rerun passed,
+but the native Bun crash is unresolved, not fixed. Logs and crash summary:
+`docs/evidence/ios-ux-20260918/robustness/`. Native swap minimums, fee accounting
+and exact balances after reopen also pass: below-minimum and rounded-below-minimum
+quotes reject without changing balances; one closed fill and reopened balances
+match its recorded debit, gross receipt and fee. Four current scenarios pass
+(two browser tests and two native-runtime probes), with one separate startup
+crash still unresolved. This block produced verification evidence, no code fix.
+Next client boundary: financial confirmation at largest text, while public
+recovery/signing and native Bun crash reproduction remain separate open gates.
+
+Latest owner steering: continue simulator testing and establish evidence-backed
+native UX/UI acceptance, target 95/100. See `docs/ios-ux-acceptance.md`; do not
+declare that score before evaluating every criterion. Ten-minute reflection
+heartbeat `xln-10-minute-reflection` is active in the current thread. Change a
+stalled method after two attempts without new evidence, and use bounded Quorum
+consultation for real uncertainty. First UX review `ios-ux-20260918-01` completed;
+one request, no retry, USD 0.25 reserved with cash cost unknown. Public/device
+blockers below remain open; simulator work must not imply they are resolved.
+
+Owner priority correction: finish the physical iPhone scan → confirm → receipt
+demo before extending the cross-chain/recovery work. Do not use extra coverage
+or broad milestones as a substitute for removing installation/service blockers.
+One work block must remove a concrete blocker or produce visible acceptance
+evidence. The withdrawal fix and its historical replay limitation remain saved;
+checkpoint migration is deferred while the phone/public-demo path is active.
+
+Fresh device evidence: the physical iPhone 17 Pro is now connected over USB and
+paired; the latest CoreDevice check confirms Developer Mode enabled. Xcode's
+Apple Accounts UI still shows the Sign In screen, and Keychain reports zero
+valid signing identities. Apple sign-in remains required; do not ask the owner
+to enable Developer Mode again. No installation claim. Public `/api/health` remains HTTP 200 with
+`coreOk=false`, `systemOk=false`, `HUB_MESH_NOT_READY`, `CUSTODY_NOT_READY` and
+other readiness failures. It reports reset/startup in progress; that flag alone
+does not prove active recovery. No public mutation was performed by this task.
+
+Latest financial fix: the production Entity stage used to discard a newly
+created withdrawal continuation before its queued Account transition was
+materialized. The fix reads the existing pending admissions; inline / TS W1 /
+TS W4 regressions pass, with 56 focused settlement tests / 367 assertions.
+The stranded signed cross-swap withdrawal was recovered through the canonical
+explicit execution command after checking chain nonce and exact workspace.
+A separate fresh automatic deposit → collateral → withdrawal returned the same
+10 private native-Tron test tokens without manual execution. Real receipts at
+blocks 121/124/127, nonces 2/3/4; latest-head restart exactly reproduces hub R220
+and user R188. `bun run check` passes 39 source gates / 44.571 seconds.
+
+Next financial release gate: prove an explicit offline checkpoint migration and
+cold recovery. Historical replay with the fix loudly rejects the old buggy R91
+(`RECOVERY_JOURNAL_REPLICA_META_DIGEST_MISMATCH`); latest-head restoration alone
+does not establish upgrade compatibility. Preserve that history, never bypass
+its hashes or silently run old transition logic. Current ledger inspection
+entrypoint is `--automatic-withdraw-restore`; older commands below refer to
+superseded heads. Evidence: `docs/evidence/tron-native-release-20260918/withdrawal-proof.json`.
+Lending, rendered cross-chain app acceptance, public-ledger recovery and physical
+iPhone installation remain unfinished. No release or deployment claim.
+
+Latest native UI acceptance: payments passed on iPhone 17 Pro simulators on
+iOS 26.5 and 27, with independent custody receipt verification. A native swap
+also passed on iOS 26.5: debit 24.999999 USDC, gross 0.009998 WETH, fee
+0.0000009998 WETH, exact final balances 75.000001 USDC / 0.0099970002 WETH.
+The UI test used real local hubs/market maker; videos and evidence are in
+`docs/evidence/ios-prod-testnet-20260918/readme.md`. No mocks or public deployment.
+Xcode 27 license is now cleared; native compilation passes, but physical-device
+reachability/signing and the public-ledger recovery decision still block install.
+The older license failures below are historical. The misleading $109.99
+reference-price headline is now removed: native and React Home show the selected
+asset's exact balance and separate payment capacity. Native asset-sheet selection
+and a real Chromium swap both pass against committed balances. Evidence/video:
+`output/ios-balance-2026-09-18/`. Web allocation charts retain explicitly labeled
+fixed reference prices; no live portfolio valuation is claimed. Physical install
+and public-testnet recovery still have priority when their blockers clear.
+
+Latest cross-chain milestone: one real match between two opposite orders
+exchanges 10 six-decimal test-token credit claims per direction across private
+Ethereum and native TVM. Two sovereign Runtimes use authenticated direct sockets;
+four bilateral Account pairs end at height 5 with equal peer roots, outgoing
+capacities 90/110/110/90 (from 100), and zero pending frames, offers or pulls.
+Restart reproduces hub R71 and user R64 frame/root hashes and all Account/route
+states exactly. User WAL has four prepares: one per owner, two per order, one
+economic match. Proof: `docs/evidence/tron-native-release-20260918/cross-swap-proof.json`.
+Final focused strict TypeScript check and full `bun run check` pass (39 source
+gates / 40.864 seconds). 43 evidence hashes pass; stand free, nodes stopped.
+No financial core edit, mock, public deployment or GDP attribution. First failed
+driver waited for user profiles before dialing the direct connection; setup
+order fixed and existing WAL preserved. Current dual-ledger entrypoint is
+`--cross-swap-restore`; the old observer-only restore lacks the Entity keys.
+Next release gaps: native-chain withdrawal after swap, lending and actual app
+acceptance. Physical iPhone install/demo retains priority when Xcode setup and
+the public-ledger recovery decision are resolved.
+
+Earlier dual-chain boundary: a real private Ethereum node and native TVM node
+are authenticated in one Runtime. Restore preserves the original R4 frame/root
+and both certified registration claims, then commits R5 observations. Import
+and recovery pass; cross-J financial execution remains untested. Evidence:
+`docs/evidence/tron-native-release-20260918/cross-network-restore.json`.
+Use `--cross-network-restore`; preserve both ledgers and the existing WAL.
+Full repository check passes: 39 source gates / 40.512 seconds; 36 evidence
+hashes verified, stand free, no chain processes left running.
+The owner's renewed phone confirmation triggered a fresh device check, but
+Xcode exits 69 for an unaccepted license and signing has zero identities.
+Current phone reachability cannot be revalidated until setup finishes. Fresh
+public health remains unhealthy. Physical installation is still the priority.
+
+Latest wallet milestone: the real frontend Move builders and
+EmbeddedRuntimeAdapter submitted a private-native-Tron deposit and withdrawal
+through the running canonical Runtime. Deposit at block 69 commits 1,000,000
+XLNUSD base units / nonce 3; withdrawal at block 72 commits reserve 0 / nonce 4,
+no pending batch, exact external token balance restored. Same-WAL restart
+reproduces R22 frame/root and Entity frame 5 exactly. Submitted transaction
+hashes match both observed receipts. Evidence:
+`docs/evidence/tron-native-release-20260918/wallet-proof.json`.
+Full `bun run check` passes: 39 source gates / 40.949 seconds,
+`/tmp/xln-tron-wallet-final-check.log`; diff check and 28 evidence hashes pass.
+Current reuse is `--wallet-restore`; prior nonce-2 `--entity-restore` is historical.
+One initial harness attempt failed before submission because the Bun driver had
+not started the normal Runtime loop; that lifecycle setup is fixed. No core
+financial change. Both successful stands exit zero, node stopped and lock free.
+This is shared wallet command-path evidence, not rendered native UI acceptance.
+Next native gap is ETH↔native-Tron bilateral execution, then lending/app acceptance.
+Physical iPhone installation remains the immediate owner priority when external
+device/signing prerequisites and the pending public-ledger decision are resolved.
+
+Latest native milestone: canonical TS Runtime/Entity consumed the real private
+Tron deposit/withdrawal receipts (blocks 23/24), finalized nonce 2 and reserve 0,
+and restored the same Entity frame hash from WAL. The ordered signed prefix
+contains reserve 1,000,000 then 0 and nonces 1 then 2 exactly once. Final recovery
+run restores R10, ends at R11, exits 0, closes databases and stops the native node.
+Harness fixes: load the known disposable Foundation signer before replay and
+exit the bounded CLI after cleanup because crypto pools live until process exit.
+Failures remain recorded. Current reuse is `--entity-restore`; authority-only
+`--runtime-restore` cannot restore the newly imported Foundation signer.
+Evidence: `docs/evidence/tron-native-release-20260918/entity-restore.json`.
+Full check passes, 39 source gates / 40.288 seconds, log
+`/tmp/xln-tron-entity-final-check-retry.log`; diff whitespace check passes.
+The first full run had an unrelated advisor process-group cleanup `EPERM`;
+focused 4/4 and unchanged full retry pass, intermittent cause remains unresolved.
+Next native gap: wallet-originated financial work and ETH↔native-Tron execution;
+this catch-up proof does not demonstrate cross-chain swap, lending or the app UI.
+
+Host setup changed during this work: Apple Xcode tooling now reports an
+unaccepted license. Existing Command Line Tools Git still runs, so repository
+checks use its PATH without changing global Xcode selection or accepting terms.
+The owner must finish Xcode setup before device build/install can proceed.
+
+Immediate owner priority: install the first native build on the owner's physical
+iPhone 17 Pro, connect to `https://xln.finance`, and prove one real public-testnet
+payment. Public-testnet connection/demo testing is now explicitly authorized;
+this does not authorize mainnet spending or destructive public-ledger resets.
+Current build: `/tmp/xln-ios-prod-testnet-device/Build/Products/Debug-iphoneos/App.app`.
+Physical-device compilation and bundled production origin/recovery configuration
+pass. Signing fails because no development team/valid signing identity exists.
+The known phone is unavailable; direct USB inspection finds no iPhone even after
+the owner reported connecting it and enabling Developer Mode. Owner is signing
+in to Apple; Xcode first-launch component setup was attempted, but LaunchServices
+reports incompatible application version on this Mac. No physical install yet.
+Public testnet is independently unhealthy: deployed SHA
+`4dfabd621b913e9e79da315f33d21a1b9708778b`, all three hubs repeatedly fail
+`ENTITY_FRAME_HEAD_WIRE_LIMIT_EXCEEDED` (10,313,244 / 13,336,516 / 13,336,514
+bytes against 5,666,667). Only read-only production diagnostics performed;
+no restarts, reset, deployment or payment. Tower health passes. Current public
+active chains are EVM 31337/31338; native Nile/Sepolia entries remain pending.
+Full `bun run check` passes (39 source gates, 40.030-second source phase).
+Evidence: `docs/evidence/ios-prod-testnet-20260918/readme.md`.
+
+Production upgrade preflight: current committed code has a 100 MB frame limit;
+the deployed source still has 10 MB. A new 150,000-empty-block catch-up case passes
+without a production-code change; complete J-prefix suite passes 19/19 with 141
+assertions. Old production storage format is 7 versus current 5, and contracts
+have changed. No code-only upgrade or ad-hoc limit backport is justified. The
+owner has been asked whether to archive and rebuild the testnet, losing active
+test balances/channels. This decision is pending. Remote state sizes: JDB 680 MB,
+hub mesh 6.7 GB, watchtower 356 KB, free disk 8.6 GB; stream a consistent stopped
+backup off-host rather than exhausting remote disk with an uncompressed copy.
+Release source preflight also rejects the dirty shared tree. Published main was
+`dc4b000af39d99c5052cc8b2d4599c4f2ce80b97`, local HEAD
+`a8210663e8378f76c387359f59f69eb35d3f4324`; do not deploy an unverified mixed version.
+
+Native Runtime authority recovery now passes on the preserved ledger. Fixed the
+test harness to read authoritative frames from Runtime WAL, not the materialized
+state database. Recovered the interrupted import without clearing its frames.
+The original R4 frame/root and signed Foundation authority are retained; restart
+from R5 then commits R6 with fresh native RPC-attested observation through block
+35. The stored original evidence still observes block 25, correctly unchanged by
+idempotent repeated authority. Authenticated watcher scan reaches 35. An initial
+assertion incorrectly expected the immutable stored authority to advance; its
+failed log remains saved. No production fallback or financial code changed.
+Evidence: `docs/evidence/tron-native-release-20260918/runtime-proof.json`.
+Reuse `--runtime-restore`, never fresh import or `--economic` over this ledger.
+Full `bun run check` passes (39 source gates, 41.711-second source phase), native
+node stopped and stand free. Next native step: Entity financial transitions on
+this real native jurisdiction, then ETH↔Tron and lending. iPhone install/demo
+retains priority as soon as phone/signing and testnet rollout decisions permit it.
+
+Owner: Egor Homakov. MML: by 2050, 51% of world GDP runs on XLN bilateral
+lines. The immediate deliverable is an ETH ↔ Tron release with pay, swap and
+base lending, recovery, and working web/iOS/Android/desktop apps; the existing
+extension remains a companion. This supersedes the September 7 lending exclusion.
+Use the existing capped-testnet acceptance policy as the preparation baseline.
+The later physical-iPhone demo request authorizes public-testnet connection and
+payment testing. Mainnet deployment and real-money transactions remain unauthorized.
+
+Execution order: repair the first live financial/lifecycle failure; prove pay,
+cross-chain swap in both directions, lending and recovery on the canonical runtime;
+connect the supported app surfaces to those same paths; package and verify each
+target; then run the existing release gates and canary. Native Tron TVM/public
+network evidence must be distinguished from the current two-Anvil dev stack.
+An iOS same-chain quote is not ETH ↔ Tron coverage. A build is not app acceptance.
+
+Immediate-lock follow-up (2026-09-18): reproduced payment-confirm → lock causing
+H1 to halt because the wallet raised its P2P ingress fence before receiving the
+accepted payment's reply. Shared web/native shutdown now pauses J watchers first,
+drains with peer ingress still active, then fences persistence. The real
+WKWebView/Swift-socket regression observes pending work at lock, restores the
+same identity and exactly 99 USDC from 100, has one matching finalized payment,
+zero pending Account work, and healthy hubs. Evidence:
+`docs/evidence/native-quote-session-20260918/immediate-lock-result.json`.
+Related tests: 36/36, 153 assertions; UI typecheck and full `bun run check` pass
+(39 source gates, 39.231 seconds). Updated iOS simulator build passes. This does
+not prove disconnected peer closure or forced-kill recovery. Next: reach the
+native Tron cross-chain production boundary and lending acceptance. Forced
+shutdown remains mandatory before claiming general payment recovery/release.
+
+Delayed-peer follow-up: pausing the actual H1 process for 1,500 ms exposed a
+false-success drain (lock returned after 286 ms). Runtime drain now also waits
+for live Entity consensus and the existing indexed queued/pending Account work.
+The same delayed-peer payment/lock/reopen succeeds with exactly 99 USDC, one
+finalized payment and healthy hubs. The source-built canonical native probe
+independently passes with lock returning after 1,892 ms. The reusable command is
+`bun run stand:run --reason native-delayed-lock --timeout-ms 180000 -- bun scripts/native/run-session.ts immediate-payment-lock.js 1500`.
+The normal run omits `1500`. Focused/related tests pass 43/43 with 181 assertions.
+Evidence: `docs/evidence/native-quote-session-20260918/delayed-lock-result.json`.
+This uses real WebKit/Swift sockets and local Anvil; neither forced process
+termination nor native Tron/public-network coverage is claimed.
+Full `bun run check` now passes (39 source gates, 39.887 seconds); the updated
+iOS runtime/Swift simulator build passes and is installed. The earlier folder
+width failure was fixed by reusing the existing Swift probe and keeping its
+runner in `scripts/native`. No commit, push or public deployment.
+
+Native Tron next-step clarification: the owner's recorded 17:31 decision below
+already authorizes configured RPC-attested native evidence, including external
+RPCs. Do not reopen the old FullNode-versus-portable-proof fork. Current code
+contains that implementation, and the September 6 authority manifest records
+same-WAL recovery and fresh native watcher observations. Revalidate current
+source against the actual TVM fixture, then advance financial/cross-J execution.
+Public deployment network authorization remains separate and unanswered.
+
+Native Tron restoration (2026-09-18): the old `/tmp` fixture was absent. Exact
+java-tron 4.8.2.1 ARM and Temurin 17.0.20.1+1 binaries were restored from official
+assets and matched the recorded SHA-256 hashes. A new private native ledger is
+now preserved at `db/native-tron-release-20260918`; this is not restoration of
+the old chain history. Nine artifact metadata source sets match current Solidity.
+The canonical deployer deployed eight XLN contracts plus a local XLNUSD test
+token. After node restart the canonical JAdapter reads the real registry in
+`tron` mode. Native deposit block 23 and signed withdrawal block 24 pass:
+reserve 0→1,000,000→0, external balance exactly restored, Entity nonce 0→1→2,
+with withdrawal solidification awaited. The disabled energy-estimation API was
+the first financial failure; enabling the native API fixed configuration without
+a signer fallback. Its failure evidence and unchanged initial-state checks remain.
+Full `bun run check` passes: 39 source gates, 41.289-second source phase.
+Evidence: `docs/evidence/tron-native-release-20260918/readme.md` and `manifest.json`.
+Reuse the existing graph with `bun run stand:run --reason native-tron-readback --timeout-ms 60000 -- bun scripts/tron/native-stand.ts --verify-graph`.
+Do not repeat `--economic`: it intentionally rejects an existing progress file.
+Next: current Runtime authority import/Entity financial execution on this native
+graph, then ETH↔native Tron cross-J pay/swap and lending/app acceptance. The old
+temporary import driver references a different graph and must not be reused
+without adapting its actual bindings. No public deployment or full release claim.
+
+Native session follow-up: four live WebKit/Swift-transport regression cases now
+pass on an isolated healthy two-Anvil stand. Unexpired quotes are rejected after
+lock, invalid boot and invalid BrainVault entry; a fresh one-USDC payment leaves
+99 USDC from 100, and duplicate confirmation rejects. A discovered same-page
+Runtime leak is repaired by awaiting canonical shutdown before native boot or
+BrainVault replacement. UI typecheck passes. The updated iPhone simulator app
+builds; actual iPhone UI acceptance and native Tron remain unverified. Evidence:
+`docs/evidence/native-quote-session-20260918/quote-session-result.json`.
+
+The original immediate-close failure remains open: H1 halted at Runtime height
+179564 after a closing wallet rejected an Account input as
+`INBOUND_ENTITY_RUNTIME_QUIESCING`. Preserve its evidence and databases. Do not
+conflate passing settled-payment lock/reopen with immediate-close safety.
+
+Follow-up evidence: restarting only halted H1 preserved its database, but the
+supervisor exhausted three recovery attempts with
+`HUB_JURISDICTION_IMPORT_COMMIT_MISSING:Testnet`. H2/H3 also halted when H1's
+socket closed. H1's last health reported one queued Account transaction and one
+pending Account frame. The hub import now waits for the exact submitted input
+commit and J replica rather than global idleness. Focused regression reproduced
+the old ten-second timeout under continuing unrelated ingress; two tests/five
+assertions now pass, including conflicting chain rejection. Runtime typecheck
+and production function-size gates pass.
+
+A data-preserving restart passed H1/H2/H3 imports in 272/428/482 ms, then exposed
+`J_HISTORY_FINALIZED_REORG` at local chain 31337 block 90211. Expected hash
+`0xc7e63ffdac4034a30f2ee9e20d51ea1a10ab19916f0fedca012f4f43a95a8c82` differed from
+RPC hash `0xf081e3fab9f1fd9fb00f866e17b8357c482484e8d92c60101c2d8e87892fab37`.
+The original dev data remains intact and the bounded stand has stopped. Do not
+retry this unchanged state or weaken finality checks. Compare the saved chain
+history with Runtime evidence; an isolated fresh test stand can unblock further
+app tests while preserving this failure, but cannot certify recovery of this one.
+Evidence: `docs/evidence/native-quote-session-20260918/import-recovery-health.json`
+and `finalized-reorg.json`. Immediate native shutdown and full release acceptance are still open; the quote
+regression has since passed on the separate stand described above.
+
+Source verification: the current candidate passes full `bun run check` under
+its 60-second stand lock (39 source gates; `check:src` 54.646 seconds). UI
+typecheck and the iPhone simulator build also pass. Log:
+`/tmp/xln-native-session-check.log`. The previous iOS folder-width failure was
+fixed by grouping the three native bridge files in `App/runtime`, without
+changing the limit. BrainVault E2E category tags remain fixed (195 tests).
+No push or deployment. Actual iPhone UI financial acceptance, native Tron,
+cross-chain swaps/lending on the native surface, and immediate-close recovery
+remain incomplete.
+
+## Current native acceptance — 2026-09-18
+
+Actual iPhone 17 Pro / iOS 26.5 creation, 100-test-USDC funding and confirmed
+one-USDC payment are recorded in `output/ios-release-2026-09-18/payment-proof.mp4`.
+The first-run Create flow is explicit; ordinary Open still requires local state
+or verified recovery. Five live creation/rejection/reopen checks pass. Creation
+verifies an initial encrypted backup; continuous backup remains unproven.
+
+The recording exposed submission below the hub minimum. Market snapshots now
+publish that committed policy per hub; native and React quote review reject a
+rounded amount below it, and unknown policy stays unavailable. Live native-host
+checks pass 4/4, including a 24.999999-USDC debit, 0.0099970002-WETH net receipt,
+and exact balances after reopen. Focused tests pass 23/23 (96 assertions). Full `bun run check` passes
+(39 source gates; 40.313 seconds for source, 23.092 seconds for frontend).
+Detailed evidence: `docs/evidence/native-quote-session-20260918/readme.md`.
+The updated packaged iPhone swap UI also passes: exact completed order/fee,
+matching balances and rejection before confirming an undersized quote. Recording:
+`output/ios-release-2026-09-18/swap-proof.mp4`. The native Market screen displays
+live depth. Reference-price fiat valuation remains a limitation.
+Next: canonical cross-chain and lending surfaces, retaining the recovery blockers. No native-Tron or all-platform acceptance claim.
+
+A second saved local stand failed restart with truncated Anvil state JSON.
+Keep `/tmp/xln-native-release-hGfpwg` intact. Separate fresh test stands unblock
+app checks without certifying preserved-state recovery. No public deployment,
+real-money transaction, commit or push.
+
+## Current saved-stand recovery repair — 2026-09-18
+
+Normal launcher shutdown was reproducibly truncating Anvil snapshots: duplicate
+forwarded signals triggered immediate SIGKILL, while shell cleanup raced the
+supervisor. Shutdown is now idempotent and waits before cleanup; bounded forced
+termination remains. The same reproduction changes from invalid 24,550-byte
+JSON to valid 3,181,904-byte JSON. A preserved three-hub restart becomes healthy
+and restores the exact contract code. The real-Anvil regression passes one test /
+five assertions, including identical mined block hash after reload. Related
+lifecycle tests pass 30/30 (172 assertions); full `bun run check` passes with
+39 source gates (40.564-second source phase).
+Evidence: `docs/evidence/native-quote-session-20260918/dev-shutdown-result.json`.
+Original damaged data remains intact. This does not certify abrupt-crash or
+immediate-wallet-close recovery. Next financial boundary: close immediately
+after payment submission, then recover exact balances and receipts without
+halting a hub; subsequently native Tron, cross-chain/lending and app acceptance.
+
 ## React swap and recovery proof — 2026-09-11
 
 The real React/RAdapter USDC-to-WETH path passes on the preserved devnet.
@@ -623,9 +1458,9 @@ wallet. A discarded plain serialization attempt could not preserve persistent co
 the final test hashes the original loaded state and retains every semantic assertion.
 Next: capacity, remaining browser scenarios and Svelte, exact new-binary parity, TS drain.
 
-## Active owner scope — 2026-09-07
+## Historical owner scope — 2026-09-07 (superseded 2026-09-18)
 
-The latest owner instruction supersedes every earlier first-launch Lending
+The then-current owner instruction superseded every earlier first-launch Lending
 requirement in this document. Lending is OUT OF SCOPE and stays disabled.
 Do not implement it or ask further Lending questions. Do not weaken existing
 admission rejection, restore retired financial paths, skip tests, or increase
@@ -633,7 +1468,7 @@ budgets. The sole objective is the existing core: Pay, Swap, Move, Dispute,
 Cross-J and recovery, with all scenarios, tests and end-to-end checks green on
 TypeScript and the native Rust hub engine.
 
-## Current todo, in execution order
+## Historical execution queue — 2026-09-07
 
 - [x] Close the HTLC boundary: 23/23 focused tests on canonical Paybook;
   corrected duplicate TS self-cycle HtlcFinalized emission to outbound-only,

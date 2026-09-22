@@ -106,8 +106,24 @@ signal_dev_supervisor() {
   kill -"$1" "$dev_supervisor_pid" 2>/dev/null || true
 }
 
-trap 'signal_dev_supervisor INT; exit 130' INT
-trap 'signal_dev_supervisor TERM; exit 143' TERM
+stop_dev_supervisor() {
+  local signal="$1" exit_status="$2"
+  # Group delivery and forwarding can arrive twice. Let the supervisor finish
+  # its bounded shutdown before EXIT cleanup signals any surviving wrappers.
+  trap '' INT TERM
+  signal_dev_supervisor "$signal"
+  if [[ -n "$dev_supervisor_pid" ]]; then
+    local supervisor_status=0
+    wait "$dev_supervisor_pid" || supervisor_status=$?
+    if [[ "$supervisor_status" -ne 0 && "$supervisor_status" -ne "$exit_status" ]]; then
+      echo "DEV_SUPERVISOR_STOP_FAILED:status=${supervisor_status}" >&2
+    fi
+  fi
+  exit "$exit_status"
+}
+
+trap 'stop_dev_supervisor INT 130' INT
+trap 'stop_dev_supervisor TERM 143' TERM
 trap cleanup_dev_stack EXIT
 
 cd "$REPO_ROOT"

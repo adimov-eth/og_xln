@@ -1,0 +1,300 @@
+[
+  {
+    "port": 8082,
+    "status": 200,
+    "systemOk": false,
+    "timings": {
+      "reset_clear_state": {
+        "completedAt": 1789693217732,
+        "ms": 44,
+        "startedAt": 1789693217688
+      },
+      "reset_custody": {
+        "completedAt": 1789693223039,
+        "ms": 2134,
+        "startedAt": 1789693220905
+      },
+      "reset_market_maker": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": 1789693220904
+      },
+      "reset_persist_ready_snapshots": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "reset_spawn_h1": {
+        "completedAt": 1789693217855,
+        "ms": 123,
+        "startedAt": 1789693217732
+      },
+      "reset_spawn_h23": {
+        "completedAt": 1789693217855,
+        "ms": 123,
+        "startedAt": 1789693217732
+      },
+      "reset_stop_children": {
+        "completedAt": 1789693217688,
+        "ms": 0,
+        "startedAt": 1789693217688
+      },
+      "reset_total": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": 1789693217688
+      },
+      "reset_wait_h1": {
+        "completedAt": 1789693220901,
+        "ms": 3046,
+        "startedAt": 1789693217855
+      },
+      "reset_wait_hubs": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": 1789693220903
+      }
+    },
+    "degraded": [
+      "reset",
+      "marketMaker",
+      "bootstrapReserveTargets"
+    ],
+    "failures": [
+      {
+        "category": "TransientRace",
+        "code": "RESET_NOT_READY",
+        "fatal": false,
+        "message": "reset",
+        "retryable": true
+      },
+      {
+        "category": "TransientRace",
+        "code": "MARKET_MAKER_STARTUP_PHASE_NOT_READY",
+        "fatal": false,
+        "message": "market-maker startup phase is boot",
+        "retryable": true
+      },
+      {
+        "category": "TransientRace",
+        "code": "BOOTSTRAP_RESERVE_TARGETS_NOT_READY",
+        "fatal": false,
+        "message": "bootstrapReserveTargets",
+        "retryable": true
+      }
+    ]
+  },
+  {
+    "port": 8092,
+    "status": 200,
+    "name": "H1",
+    "runtimeId": "0x9c97ed7d74fe07f01c12c89ff6c3d50e6d70a96d",
+    "height": 180919,
+    "runtime": {
+      "fatalDebugPayload": null,
+      "halted": false,
+      "lifecyclePhase": "booting",
+      "operatorStatus": null,
+      "securityIncidents": []
+    },
+    "quiescence": {
+      "accountMempoolTxs": 1,
+      "pendingAccountFrames": 1,
+      "pendingRuntimeWork": 1
+    },
+    "timings": {
+      "gossip_ready": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "hub_bootstrap": {
+        "completedAt": 1789693220898,
+        "ms": 7,
+        "startedAt": 1789693220891
+      },
+      "import_j": {
+        "completedAt": 1789693220891,
+        "ms": 272,
+        "startedAt": 1789693220619
+      },
+      "mesh_accounts": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "mesh_credit": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "mesh_ready_total": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "orderbook_init": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "p2p_connect": {
+        "completedAt": 1789693220617,
+        "ms": 1,
+        "startedAt": 1789693220616
+      },
+      "reserve_funding": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "runtime_boot": {
+        "completedAt": 1789693220616,
+        "ms": 2556,
+        "startedAt": 1789693218060
+      }
+    }
+  },
+  {
+    "port": 8093,
+    "status": 200,
+    "name": "H2",
+    "runtimeId": "0x06760cf933877c315f9e9ce867412f3853ff76bf",
+    "height": 180518,
+    "runtime": {
+      "fatalDebugPayload": null,
+      "halted": false,
+      "lifecyclePhase": "booting",
+      "operatorStatus": null,
+      "securityIncidents": []
+    },
+    "quiescence": {
+      "accountMempoolTxs": 0,
+      "pendingAccountFrames": 0,
+      "pendingRuntimeWork": 0
+    },
+    "timings": {
+      "gossip_ready": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "hub_bootstrap": {
+        "completedAt": 1789693220170,
+        "ms": 3,
+        "startedAt": 1789693220167
+      },
+      "import_j": {
+        "completedAt": 1789693220167,
+        "ms": 428,
+        "startedAt": 1789693219739
+      },
+      "mesh_accounts": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "mesh_credit": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "mesh_ready_total": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "orderbook_init": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "p2p_connect": {
+        "completedAt": 1789693219736,
+        "ms": 1,
+        "startedAt": 1789693219735
+      },
+      "reserve_funding": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "runtime_boot": {
+        "completedAt": 1789693219735,
+        "ms": 1668,
+        "startedAt": 1789693218067
+      }
+    }
+  },
+  {
+    "port": 8094,
+    "status": 200,
+    "name": "H3",
+    "runtimeId": "0x123c146a1febb1905930ff7477ffe07080a615b9",
+    "height": 180502,
+    "runtime": {
+      "fatalDebugPayload": null,
+      "halted": false,
+      "lifecyclePhase": "booting",
+      "operatorStatus": null,
+      "securityIncidents": []
+    },
+    "quiescence": {
+      "accountMempoolTxs": 0,
+      "pendingAccountFrames": 0,
+      "pendingRuntimeWork": 0
+    },
+    "timings": {
+      "gossip_ready": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "hub_bootstrap": {
+        "completedAt": 1789693220115,
+        "ms": 2,
+        "startedAt": 1789693220113
+      },
+      "import_j": {
+        "completedAt": 1789693220113,
+        "ms": 482,
+        "startedAt": 1789693219631
+      },
+      "mesh_accounts": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "mesh_credit": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "mesh_ready_total": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "orderbook_init": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "p2p_connect": {
+        "completedAt": 1789693219627,
+        "ms": 2,
+        "startedAt": 1789693219625
+      },
+      "reserve_funding": {
+        "completedAt": null,
+        "ms": null,
+        "startedAt": null
+      },
+      "runtime_boot": {
+        "completedAt": 1789693219625,
+        "ms": 1565,
+        "startedAt": 1789693218060
+      }
+    }
+  }
+]

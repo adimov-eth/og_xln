@@ -16,10 +16,11 @@ export async function closeRuntimeSession(env: RuntimeReplica, xln: XLNModule): 
 export async function suspendRuntimeActivity(env: RuntimeReplica, xln: XLNModule): Promise<void> {
   const failures: string[] = [];
 
-  // Fence new P2P/J ingress before draining work that was already accepted.
-  // The loop remains alive for the drain, but cannot resurrect a watcher after
-  // stopJurisdictionWatchersAndWait has returned.
-  if (env.infrastructure) env.infrastructure.persistenceQuiescing = true;
+  // Stop new chain observations, but keep peer replies admissible while accepted
+  // financial work drains. Fencing P2P here rejects the ACK for a payment that
+  // was submitted immediately before lock and strands its bilateral proposal.
+  const previousWatcherPause = env.infrastructure?.jurisdictionWatchersPaused;
+  if (env.infrastructure) env.infrastructure.jurisdictionWatchersPaused = true;
 
   try {
     await xln.stopJurisdictionWatchersAndWait(env);
@@ -27,8 +28,7 @@ export async function suspendRuntimeActivity(env: RuntimeReplica, xln: XLNModule
     failures.push(`watchers:${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // Scheduled hooks remain durable and resume with the runtime; they are not
-  // shutdown work and must not make repeated quiesce calls time out.
+  // The runtime and transport must both remain active for this drain.
   try {
     const drained = await xln.waitForRuntimeWorkDrained(env, 30_000);
     if (!drained) {
@@ -42,6 +42,9 @@ export async function suspendRuntimeActivity(env: RuntimeReplica, xln: XLNModule
   }
 
   if (env.infrastructure) {
+    env.infrastructure.persistenceQuiescing = true;
+    if (previousWatcherPause === undefined) delete env.infrastructure.jurisdictionWatchersPaused;
+    else env.infrastructure.jurisdictionWatchersPaused = previousWatcherPause;
     env.infrastructure.persistencePaused = true;
   }
 

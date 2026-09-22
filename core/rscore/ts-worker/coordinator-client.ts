@@ -63,7 +63,13 @@ export class TsAccountWorkerClient {
   #handleResponse(response: TsAccountWorkerResponseEnvelope): void {
     const pending = this.#pending.get(response.requestId);
     if (!pending) {
-      this.#retire(new Error(`TS_ACCOUNT_WORKER_UNMATCHED_RESPONSE:${this.#workerIndex}:${response.requestId}`));
+      // Preserve envelope shape, never financial payloads or signing material,
+      // when a foreign/malformed message poisons this isolate's mailbox.
+      const fields = Object.keys(response).slice(0, 8).map(key => key.slice(0, 32)).join(',');
+      this.#retire(new Error(
+        `TS_ACCOUNT_WORKER_UNMATCHED_RESPONSE:${this.#workerIndex}:${response.requestId}`
+        + `:fields=${fields}:kindType=${typeof response.kind}:pending=${this.#pending.size}`,
+      ));
       return;
     }
     this.#pending.delete(response.requestId);

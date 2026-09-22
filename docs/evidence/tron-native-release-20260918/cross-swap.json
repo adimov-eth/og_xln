@@ -1,0 +1,1372 @@
+{
+  "accounts": [
+    {
+      "hub": {
+        "height": 5,
+        "offers": 0,
+        "owner": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+        "peer": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+        "pending": false,
+        "pulls": 0,
+        "queued": 0,
+        "root": "0xf09682b4af1552d4329659e860556eed8fc3536939517e7d55d47910494b7210",
+        "view": {
+          "ascii": "[----------------------|----------------------------]",
+          "collateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "delta": {
+            "__xlnType": "BigInt",
+            "value": "-10000000"
+          },
+          "inAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inCapacity": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "inCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "inTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outCapacity": {
+            "__xlnType": "BigInt",
+            "value": "110000000"
+          },
+          "outCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "outPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "outTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "ownCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "ownCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "peerCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "peerCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "totalCapacity": {
+            "__xlnType": "BigInt",
+            "value": "200000000"
+          }
+        }
+      },
+      "user": {
+        "height": 5,
+        "offers": 0,
+        "owner": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+        "peer": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+        "pending": false,
+        "pulls": 0,
+        "queued": 0,
+        "root": "0xf09682b4af1552d4329659e860556eed8fc3536939517e7d55d47910494b7210",
+        "view": {
+          "ascii": "[----------------------|----------------------------]",
+          "collateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "delta": {
+            "__xlnType": "BigInt",
+            "value": "-10000000"
+          },
+          "inAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inCapacity": {
+            "__xlnType": "BigInt",
+            "value": "110000000"
+          },
+          "inCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "inPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "inTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outCapacity": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "outCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "outPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "ownCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "ownCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "peerCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "peerCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "totalCapacity": {
+            "__xlnType": "BigInt",
+            "value": "200000000"
+          }
+        }
+      }
+    },
+    {
+      "hub": {
+        "height": 5,
+        "offers": 0,
+        "owner": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+        "peer": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+        "pending": false,
+        "pulls": 0,
+        "queued": 0,
+        "root": "0x5ab726f4a76762b9a84dc091532f29f36739090cc800f25e7821cc3d9bbb5d8c",
+        "view": {
+          "ascii": "[---------------------------|-----------------------]",
+          "collateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "delta": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "inAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inCapacity": {
+            "__xlnType": "BigInt",
+            "value": "110000000"
+          },
+          "inCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "inPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "inTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outCapacity": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "outCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "outPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "ownCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "ownCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "peerCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "peerCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "totalCapacity": {
+            "__xlnType": "BigInt",
+            "value": "200000000"
+          }
+        }
+      },
+      "user": {
+        "height": 5,
+        "offers": 0,
+        "owner": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+        "peer": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+        "pending": false,
+        "pulls": 0,
+        "queued": 0,
+        "root": "0x5ab726f4a76762b9a84dc091532f29f36739090cc800f25e7821cc3d9bbb5d8c",
+        "view": {
+          "ascii": "[---------------------------|-----------------------]",
+          "collateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "delta": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "inAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inCapacity": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "inCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "inTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outCapacity": {
+            "__xlnType": "BigInt",
+            "value": "110000000"
+          },
+          "outCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "outPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "outTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "ownCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "ownCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "peerCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "peerCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "totalCapacity": {
+            "__xlnType": "BigInt",
+            "value": "200000000"
+          }
+        }
+      }
+    },
+    {
+      "hub": {
+        "height": 5,
+        "offers": 0,
+        "owner": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+        "peer": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+        "pending": false,
+        "pulls": 0,
+        "queued": 0,
+        "root": "0xe2cadf04dcaba73d8e656f6f650ece7e7acf8752c23bc2e3fd40bd0a52697a35",
+        "view": {
+          "ascii": "[---------------------------|-----------------------]",
+          "collateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "delta": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "inAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inCapacity": {
+            "__xlnType": "BigInt",
+            "value": "110000000"
+          },
+          "inCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "inPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "inTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outCapacity": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "outCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "outPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "ownCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "ownCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "peerCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "peerCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "totalCapacity": {
+            "__xlnType": "BigInt",
+            "value": "200000000"
+          }
+        }
+      },
+      "user": {
+        "height": 5,
+        "offers": 0,
+        "owner": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+        "peer": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+        "pending": false,
+        "pulls": 0,
+        "queued": 0,
+        "root": "0xe2cadf04dcaba73d8e656f6f650ece7e7acf8752c23bc2e3fd40bd0a52697a35",
+        "view": {
+          "ascii": "[---------------------------|-----------------------]",
+          "collateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "delta": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "inAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inCapacity": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "inCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "inTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outCapacity": {
+            "__xlnType": "BigInt",
+            "value": "110000000"
+          },
+          "outCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "outPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "outTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "ownCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "ownCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "peerCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "peerCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "totalCapacity": {
+            "__xlnType": "BigInt",
+            "value": "200000000"
+          }
+        }
+      }
+    },
+    {
+      "hub": {
+        "height": 5,
+        "offers": 0,
+        "owner": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+        "peer": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+        "pending": false,
+        "pulls": 0,
+        "queued": 0,
+        "root": "0x82a72c16708c2e3e905a7c81ad3893f19ddbfec10bc9e5d69a6a98835499af08",
+        "view": {
+          "ascii": "[----------------------|----------------------------]",
+          "collateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "delta": {
+            "__xlnType": "BigInt",
+            "value": "-10000000"
+          },
+          "inAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inCapacity": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "inCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "inTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outCapacity": {
+            "__xlnType": "BigInt",
+            "value": "110000000"
+          },
+          "outCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "outPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "outTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "ownCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "ownCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "peerCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "peerCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "totalCapacity": {
+            "__xlnType": "BigInt",
+            "value": "200000000"
+          }
+        }
+      },
+      "user": {
+        "height": 5,
+        "offers": 0,
+        "owner": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+        "peer": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+        "pending": false,
+        "pulls": 0,
+        "queued": 0,
+        "root": "0x82a72c16708c2e3e905a7c81ad3893f19ddbfec10bc9e5d69a6a98835499af08",
+        "view": {
+          "ascii": "[----------------------|----------------------------]",
+          "collateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "delta": {
+            "__xlnType": "BigInt",
+            "value": "-10000000"
+          },
+          "inAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inCapacity": {
+            "__xlnType": "BigInt",
+            "value": "110000000"
+          },
+          "inCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "inOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "inPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "inTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outAllowance": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outCapacity": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "outCollateral": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outOwnCredit": {
+            "__xlnType": "BigInt",
+            "value": "90000000"
+          },
+          "outPeerCredit": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "outTotalHold": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "ownCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "ownCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "0"
+          },
+          "peerCreditLimit": {
+            "__xlnType": "BigInt",
+            "value": "100000000"
+          },
+          "peerCreditUsed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "totalCapacity": {
+            "__xlnType": "BigInt",
+            "value": "200000000"
+          }
+        }
+      }
+    }
+  ],
+  "anchors": [
+    {
+      "frameHash": "0xb36898d96fd92d49d3b1041755dd1ffcb3f57c3046cca28d0aff6bc8848162b7",
+      "height": 71,
+      "postStateHash": "0xa5797fb76984abe7a061e1742e7ccd4928564b6a33b47092a7dc36becedb849c",
+      "runtimeId": "0xbc5795505911836788913ed909cf20a8558997dc"
+    },
+    {
+      "frameHash": "0x36b1e5e755ef75f6b234f0a9193b83d7bce8af1daeb8e49999e0e88e5253fba8",
+      "height": 64,
+      "postStateHash": "0x688809b94c26cca8efa90960c2ee8c5f210f45b301d6b0e9f82e4913b255043d",
+      "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd"
+    }
+  ],
+  "kind": "PRIVATE_ETHEREUM_NATIVE_TRON_CREDIT_SWAP",
+  "restore": false,
+  "routes": [
+    {
+      "hub": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+      "routes": [
+        {
+          "bookHubSignerId": "0xcffda6bbee2d4d2bf43eb94dbfaab25de051ffcd",
+          "bookOwnerEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "claimedRatio": 65535,
+          "clearingPolicy": "full_fill",
+          "createdAt": 1789700520981,
+          "cumulativeFillRatio": 65535,
+          "domain": {
+            "hashSchema": "route-domain",
+            "protocol": "xln-cross-j",
+            "sourceAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+            "sourceEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+            "sourceStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+            "targetAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+            "targetEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+            "targetStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+          },
+          "expiresAt": 1789701120981,
+          "fillDenominator": {
+            "__xlnType": "BigInt",
+            "value": "65535"
+          },
+          "fillNumerator": {
+            "__xlnType": "BigInt",
+            "value": "65535"
+          },
+          "fillSeq": 1,
+          "filledSourceAmount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "filledTargetAmount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "hubEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "makerEntityId": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+          "orderId": "native-cross-alice-20260918",
+          "pendingClearRequestedAt": 1789700520926,
+          "riskMode": "fully_collateralized",
+          "routeHash": "0x0599b7f96660872be281838cfc10e220edad96e809faae6e43cea83d14cfda24",
+          "settledAt": 1789700520926,
+          "source": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "counterpartyEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+            "entityId": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+            "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+            "tokenId": 1
+          },
+          "sourceClaimed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "sourceCloseProof": {
+            "binaryHash": "0x06ff80e486ef4fcf8fdde95ef83d1eaa0eadcf62d064187e9eec1169cafee4fd",
+            "closeMode": "full",
+            "cumulativeSourceAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "cumulativeTargetAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fillRatio": 65535,
+            "orderId": "native-cross-alice-20260918",
+            "routeHash": "0x0599b7f96660872be281838cfc10e220edad96e809faae6e43cea83d14cfda24",
+            "sourcePullId": "0x46438ebb8833f9e8fd0a2a363e9a59a4cfca68e3d1390eb32ef3418b3e7c1bbe",
+            "targetPullId": "0xe44e8f46c8213893af924c47fbad018f2b9d851e04bc49a9c2f804e313eb54cc"
+          },
+          "sourceDisputeConfig": {
+            "leftResponseSeconds": 86400,
+            "rightResponseSeconds": 3600
+          },
+          "sourceHubSignerId": "0xcffda6bbee2d4d2bf43eb94dbfaab25de051ffcd",
+          "sourcePull": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fullHash": "0x06ff80e486ef4fcf8fdde95ef83d1eaa0eadcf62d064187e9eec1169cafee4fd",
+            "partialRoot": "0x7a06cb1d7a2e8fad140d501875c9b028ad94d70cd9a0cc4a7715d81f7f5f12b8",
+            "pullId": "0x46438ebb8833f9e8fd0a2a363e9a59a4cfca68e3d1390eb32ef3418b3e7c1bbe",
+            "signedAmount": {
+              "__xlnType": "BigInt",
+              "value": "-10000000"
+            },
+            "tokenId": 1
+          },
+          "sourceSignerId": "0x52718c10f1260746d19a91f3be40d632d1c12582",
+          "status": "settled",
+          "target": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "counterpartyEntityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+            "entityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+            "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+            "tokenId": 1
+          },
+          "targetClaimed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "targetCloseProof": {
+            "binaryHash": "0x06ff80e486ef4fcf8fdde95ef83d1eaa0eadcf62d064187e9eec1169cafee4fd",
+            "closeMode": "full",
+            "cumulativeSourceAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "cumulativeTargetAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fillRatio": 65535,
+            "orderId": "native-cross-alice-20260918",
+            "routeHash": "0x0599b7f96660872be281838cfc10e220edad96e809faae6e43cea83d14cfda24",
+            "sourcePullId": "0x46438ebb8833f9e8fd0a2a363e9a59a4cfca68e3d1390eb32ef3418b3e7c1bbe",
+            "targetPullId": "0xe44e8f46c8213893af924c47fbad018f2b9d851e04bc49a9c2f804e313eb54cc"
+          },
+          "targetDisputeConfig": {
+            "leftResponseSeconds": 86400,
+            "rightResponseSeconds": 3600
+          },
+          "targetHubSignerId": "0xde7560289181730115d4bbc80fadad31044e43c3",
+          "targetPull": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fullHash": "0x06ff80e486ef4fcf8fdde95ef83d1eaa0eadcf62d064187e9eec1169cafee4fd",
+            "partialRoot": "0x7a06cb1d7a2e8fad140d501875c9b028ad94d70cd9a0cc4a7715d81f7f5f12b8",
+            "pullId": "0xe44e8f46c8213893af924c47fbad018f2b9d851e04bc49a9c2f804e313eb54cc",
+            "signedAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "tokenId": 1
+          },
+          "targetSignerId": "0xa69d2e0da0056679e9389cc3c03ccd716db049a8",
+          "timePolicy": {
+            "deadlineConversion": "floor_ms_to_unix_seconds",
+            "finalityPolicy": "independent_beneficiary_windows_pull_sum_finality",
+            "runtimeClock": "unix_ms",
+            "runtimeExpiresAtMs": 1789701120981,
+            "settlementClock": "unix_seconds"
+          },
+          "updatedAt": 1789700520926,
+          "venueId": "cross:stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1/stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1"
+        },
+        {
+          "bookHubSignerId": "0xcffda6bbee2d4d2bf43eb94dbfaab25de051ffcd",
+          "bookOwnerEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "claimedRatio": 65535,
+          "clearingPolicy": "cancel_and_clear",
+          "createdAt": 1789700521033,
+          "cumulativeFillRatio": 65535,
+          "domain": {
+            "hashSchema": "route-domain",
+            "protocol": "xln-cross-j",
+            "sourceAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+            "sourceEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+            "sourceStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+            "targetAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+            "targetEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+            "targetStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853"
+          },
+          "expiresAt": 1789701121033,
+          "fillDenominator": {
+            "__xlnType": "BigInt",
+            "value": "65535"
+          },
+          "fillNumerator": {
+            "__xlnType": "BigInt",
+            "value": "65535"
+          },
+          "fillSeq": 1,
+          "filledSourceAmount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "filledTargetAmount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "hubEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "makerEntityId": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+          "orderId": "native-cross-bob-20260918",
+          "pendingClearRequestedAt": 1789700520926,
+          "riskMode": "fully_collateralized",
+          "routeHash": "0xd68efed193883867193dc7eacac4bc925ac59c89f066184cc815dcda7e046560",
+          "settledAt": 1789700520926,
+          "source": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "counterpartyEntityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+            "entityId": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+            "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+            "tokenId": 1
+          },
+          "sourceClaimed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "sourceCloseProof": {
+            "binaryHash": "0x79e718e6da86873f26935f83a16a6b981dc6b9feef8eba5b4955d3eb560aead4",
+            "closeMode": "full",
+            "cumulativeSourceAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "cumulativeTargetAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fillRatio": 65535,
+            "orderId": "native-cross-bob-20260918",
+            "routeHash": "0xd68efed193883867193dc7eacac4bc925ac59c89f066184cc815dcda7e046560",
+            "sourcePullId": "0x4c07b50d13ad6198812c67ea73875878c4d455524f38f7745fd36396a13ec17b",
+            "targetPullId": "0xe71a0fcca68df0488d3548e4256e3fd947c38ad9376d410bd90bdc57701d2b25"
+          },
+          "sourceDisputeConfig": {
+            "leftResponseSeconds": 86400,
+            "rightResponseSeconds": 3600
+          },
+          "sourceHubSignerId": "0xde7560289181730115d4bbc80fadad31044e43c3",
+          "sourcePull": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fullHash": "0x79e718e6da86873f26935f83a16a6b981dc6b9feef8eba5b4955d3eb560aead4",
+            "partialRoot": "0x0a6bdaa8f228398d61a9bbd0c7bc2b2d52b9f5bf12fc91949ab8b7a014fed7fe",
+            "pullId": "0x4c07b50d13ad6198812c67ea73875878c4d455524f38f7745fd36396a13ec17b",
+            "signedAmount": {
+              "__xlnType": "BigInt",
+              "value": "-10000000"
+            },
+            "tokenId": 1
+          },
+          "sourceSignerId": "0xc0e481ad93dbfe98a2d909c0f6198947a4c94643",
+          "status": "settled",
+          "target": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "counterpartyEntityId": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+            "entityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+            "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+            "tokenId": 1
+          },
+          "targetClaimed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "targetCloseProof": {
+            "binaryHash": "0x79e718e6da86873f26935f83a16a6b981dc6b9feef8eba5b4955d3eb560aead4",
+            "closeMode": "full",
+            "cumulativeSourceAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "cumulativeTargetAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fillRatio": 65535,
+            "orderId": "native-cross-bob-20260918",
+            "routeHash": "0xd68efed193883867193dc7eacac4bc925ac59c89f066184cc815dcda7e046560",
+            "sourcePullId": "0x4c07b50d13ad6198812c67ea73875878c4d455524f38f7745fd36396a13ec17b",
+            "targetPullId": "0xe71a0fcca68df0488d3548e4256e3fd947c38ad9376d410bd90bdc57701d2b25"
+          },
+          "targetDisputeConfig": {
+            "leftResponseSeconds": 86400,
+            "rightResponseSeconds": 3600
+          },
+          "targetHubSignerId": "0xcffda6bbee2d4d2bf43eb94dbfaab25de051ffcd",
+          "targetPull": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fullHash": "0x79e718e6da86873f26935f83a16a6b981dc6b9feef8eba5b4955d3eb560aead4",
+            "partialRoot": "0x0a6bdaa8f228398d61a9bbd0c7bc2b2d52b9f5bf12fc91949ab8b7a014fed7fe",
+            "pullId": "0xe71a0fcca68df0488d3548e4256e3fd947c38ad9376d410bd90bdc57701d2b25",
+            "signedAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "tokenId": 1
+          },
+          "targetSignerId": "0x3d44ff94be0d5855f389a505a0cce0dc699cff66",
+          "timePolicy": {
+            "deadlineConversion": "floor_ms_to_unix_seconds",
+            "finalityPolicy": "independent_beneficiary_windows_pull_sum_finality",
+            "runtimeClock": "unix_ms",
+            "runtimeExpiresAtMs": 1789701121033,
+            "settlementClock": "unix_seconds"
+          },
+          "updatedAt": 1789700520926,
+          "venueId": "cross:stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1/stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1"
+        }
+      ]
+    },
+    {
+      "hub": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+      "routes": [
+        {
+          "bookHubSignerId": "0xcffda6bbee2d4d2bf43eb94dbfaab25de051ffcd",
+          "bookOwnerEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "claimedRatio": 65535,
+          "clearingPolicy": "cancel_and_clear",
+          "createdAt": 1789700520981,
+          "cumulativeFillRatio": 65535,
+          "domain": {
+            "hashSchema": "route-domain",
+            "protocol": "xln-cross-j",
+            "sourceAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+            "sourceEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+            "sourceStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+            "targetAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+            "targetEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+            "targetStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48"
+          },
+          "expiresAt": 1789701120981,
+          "fillDenominator": {
+            "__xlnType": "BigInt",
+            "value": "65535"
+          },
+          "fillNumerator": {
+            "__xlnType": "BigInt",
+            "value": "65535"
+          },
+          "filledSourceAmount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "filledTargetAmount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "hubEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "makerEntityId": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+          "orderId": "native-cross-alice-20260918",
+          "pendingClearRequestedAt": 1789700520926,
+          "riskMode": "fully_collateralized",
+          "routeHash": "0x0599b7f96660872be281838cfc10e220edad96e809faae6e43cea83d14cfda24",
+          "settledAt": 1789700520926,
+          "source": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "counterpartyEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+            "entityId": "0xbc8388193becb3c64f6cf92880fb5ee99a3b37da5f4a8f4d1e16537d1284785c",
+            "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+            "tokenId": 1
+          },
+          "sourceClaimed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "sourceCloseProof": {
+            "binaryHash": "0x06ff80e486ef4fcf8fdde95ef83d1eaa0eadcf62d064187e9eec1169cafee4fd",
+            "closeMode": "full",
+            "cumulativeSourceAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "cumulativeTargetAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fillRatio": 65535,
+            "orderId": "native-cross-alice-20260918",
+            "routeHash": "0x0599b7f96660872be281838cfc10e220edad96e809faae6e43cea83d14cfda24",
+            "sourcePullId": "0x46438ebb8833f9e8fd0a2a363e9a59a4cfca68e3d1390eb32ef3418b3e7c1bbe",
+            "targetPullId": "0xe44e8f46c8213893af924c47fbad018f2b9d851e04bc49a9c2f804e313eb54cc"
+          },
+          "sourceDisputeConfig": {
+            "leftResponseSeconds": 86400,
+            "rightResponseSeconds": 3600
+          },
+          "sourceHubSignerId": "0xcffda6bbee2d4d2bf43eb94dbfaab25de051ffcd",
+          "sourcePull": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fullHash": "0x06ff80e486ef4fcf8fdde95ef83d1eaa0eadcf62d064187e9eec1169cafee4fd",
+            "partialRoot": "0x7a06cb1d7a2e8fad140d501875c9b028ad94d70cd9a0cc4a7715d81f7f5f12b8",
+            "pullId": "0x46438ebb8833f9e8fd0a2a363e9a59a4cfca68e3d1390eb32ef3418b3e7c1bbe",
+            "signedAmount": {
+              "__xlnType": "BigInt",
+              "value": "-10000000"
+            },
+            "tokenId": 1
+          },
+          "sourceSignerId": "0x52718c10f1260746d19a91f3be40d632d1c12582",
+          "status": "settled",
+          "target": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "counterpartyEntityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+            "entityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+            "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+            "tokenId": 1
+          },
+          "targetClaimed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "targetCloseProof": {
+            "binaryHash": "0x06ff80e486ef4fcf8fdde95ef83d1eaa0eadcf62d064187e9eec1169cafee4fd",
+            "closeMode": "full",
+            "cumulativeSourceAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "cumulativeTargetAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fillRatio": 65535,
+            "orderId": "native-cross-alice-20260918",
+            "routeHash": "0x0599b7f96660872be281838cfc10e220edad96e809faae6e43cea83d14cfda24",
+            "sourcePullId": "0x46438ebb8833f9e8fd0a2a363e9a59a4cfca68e3d1390eb32ef3418b3e7c1bbe",
+            "targetPullId": "0xe44e8f46c8213893af924c47fbad018f2b9d851e04bc49a9c2f804e313eb54cc"
+          },
+          "targetDisputeConfig": {
+            "leftResponseSeconds": 86400,
+            "rightResponseSeconds": 3600
+          },
+          "targetHubSignerId": "0xde7560289181730115d4bbc80fadad31044e43c3",
+          "targetPull": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fullHash": "0x06ff80e486ef4fcf8fdde95ef83d1eaa0eadcf62d064187e9eec1169cafee4fd",
+            "partialRoot": "0x7a06cb1d7a2e8fad140d501875c9b028ad94d70cd9a0cc4a7715d81f7f5f12b8",
+            "pullId": "0xe44e8f46c8213893af924c47fbad018f2b9d851e04bc49a9c2f804e313eb54cc",
+            "signedAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "tokenId": 1
+          },
+          "targetSignerId": "0xa69d2e0da0056679e9389cc3c03ccd716db049a8",
+          "timePolicy": {
+            "deadlineConversion": "floor_ms_to_unix_seconds",
+            "finalityPolicy": "independent_beneficiary_windows_pull_sum_finality",
+            "runtimeClock": "unix_ms",
+            "runtimeExpiresAtMs": 1789701120981,
+            "settlementClock": "unix_seconds"
+          },
+          "updatedAt": 1789700520926,
+          "venueId": "cross:stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1/stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1"
+        },
+        {
+          "bookHubSignerId": "0xcffda6bbee2d4d2bf43eb94dbfaab25de051ffcd",
+          "bookOwnerEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "claimedRatio": 65535,
+          "clearingPolicy": "full_fill",
+          "createdAt": 1789700521033,
+          "cumulativeFillRatio": 65535,
+          "domain": {
+            "hashSchema": "route-domain",
+            "protocol": "xln-cross-j",
+            "sourceAssetRef": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1",
+            "sourceEntityProviderAddress": "0x8e34c766d3f10abd417074b7814354c45ab84839",
+            "sourceStackId": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+            "targetAssetRef": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1",
+            "targetEntityProviderAddress": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+            "targetStackId": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853"
+          },
+          "expiresAt": 1789701121033,
+          "fillDenominator": {
+            "__xlnType": "BigInt",
+            "value": "65535"
+          },
+          "fillNumerator": {
+            "__xlnType": "BigInt",
+            "value": "65535"
+          },
+          "fillSeq": 1,
+          "filledSourceAmount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "filledTargetAmount": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "hubEntityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+          "makerEntityId": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+          "orderId": "native-cross-bob-20260918",
+          "pendingClearRequestedAt": 1789700520926,
+          "riskMode": "fully_collateralized",
+          "routeHash": "0xd68efed193883867193dc7eacac4bc925ac59c89f066184cc815dcda7e046560",
+          "settledAt": 1789700520926,
+          "source": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "counterpartyEntityId": "0xa6f543cbc7b23a0f135caef74e0e94fc7a4d0165b16bfd2bc0373dd6ccafb985",
+            "entityId": "0x8e757bce3650d565702f926d40cccc919a8ff73e45177f8522e7d75ef119bdbb",
+            "jurisdiction": "stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48",
+            "tokenId": 1
+          },
+          "sourceClaimed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "sourceCloseProof": {
+            "binaryHash": "0x79e718e6da86873f26935f83a16a6b981dc6b9feef8eba5b4955d3eb560aead4",
+            "closeMode": "full",
+            "cumulativeSourceAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "cumulativeTargetAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fillRatio": 65535,
+            "orderId": "native-cross-bob-20260918",
+            "routeHash": "0xd68efed193883867193dc7eacac4bc925ac59c89f066184cc815dcda7e046560",
+            "sourcePullId": "0x4c07b50d13ad6198812c67ea73875878c4d455524f38f7745fd36396a13ec17b",
+            "targetPullId": "0xe71a0fcca68df0488d3548e4256e3fd947c38ad9376d410bd90bdc57701d2b25"
+          },
+          "sourceDisputeConfig": {
+            "leftResponseSeconds": 86400,
+            "rightResponseSeconds": 3600
+          },
+          "sourceHubSignerId": "0xde7560289181730115d4bbc80fadad31044e43c3",
+          "sourcePull": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fullHash": "0x79e718e6da86873f26935f83a16a6b981dc6b9feef8eba5b4955d3eb560aead4",
+            "partialRoot": "0x0a6bdaa8f228398d61a9bbd0c7bc2b2d52b9f5bf12fc91949ab8b7a014fed7fe",
+            "pullId": "0x4c07b50d13ad6198812c67ea73875878c4d455524f38f7745fd36396a13ec17b",
+            "signedAmount": {
+              "__xlnType": "BigInt",
+              "value": "-10000000"
+            },
+            "tokenId": 1
+          },
+          "sourceSignerId": "0xc0e481ad93dbfe98a2d909c0f6198947a4c94643",
+          "status": "settled",
+          "target": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "counterpartyEntityId": "0xc066ee5395efa00f9631503f3c5823871b036bfd9c55b17934148336b0f57a1b",
+            "entityId": "0xf68a4312061f271dcf645efd1d1c21ffa01ab7562af62b681462da6ae293116c",
+            "jurisdiction": "stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+            "tokenId": 1
+          },
+          "targetClaimed": {
+            "__xlnType": "BigInt",
+            "value": "10000000"
+          },
+          "targetCloseProof": {
+            "binaryHash": "0x79e718e6da86873f26935f83a16a6b981dc6b9feef8eba5b4955d3eb560aead4",
+            "closeMode": "full",
+            "cumulativeSourceAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "cumulativeTargetAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fillRatio": 65535,
+            "orderId": "native-cross-bob-20260918",
+            "routeHash": "0xd68efed193883867193dc7eacac4bc925ac59c89f066184cc815dcda7e046560",
+            "sourcePullId": "0x4c07b50d13ad6198812c67ea73875878c4d455524f38f7745fd36396a13ec17b",
+            "targetPullId": "0xe71a0fcca68df0488d3548e4256e3fd947c38ad9376d410bd90bdc57701d2b25"
+          },
+          "targetDisputeConfig": {
+            "leftResponseSeconds": 86400,
+            "rightResponseSeconds": 3600
+          },
+          "targetHubSignerId": "0xcffda6bbee2d4d2bf43eb94dbfaab25de051ffcd",
+          "targetPull": {
+            "amount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "fullHash": "0x79e718e6da86873f26935f83a16a6b981dc6b9feef8eba5b4955d3eb560aead4",
+            "partialRoot": "0x0a6bdaa8f228398d61a9bbd0c7bc2b2d52b9f5bf12fc91949ab8b7a014fed7fe",
+            "pullId": "0xe71a0fcca68df0488d3548e4256e3fd947c38ad9376d410bd90bdc57701d2b25",
+            "signedAmount": {
+              "__xlnType": "BigInt",
+              "value": "10000000"
+            },
+            "tokenId": 1
+          },
+          "targetSignerId": "0x3d44ff94be0d5855f389a505a0cce0dc699cff66",
+          "timePolicy": {
+            "deadlineConversion": "floor_ms_to_unix_seconds",
+            "finalityPolicy": "independent_beneficiary_windows_pull_sum_finality",
+            "runtimeClock": "unix_ms",
+            "runtimeExpiresAtMs": 1789701121033,
+            "settlementClock": "unix_seconds"
+          },
+          "updatedAt": 1789700520926,
+          "venueId": "cross:stack:2414086651:0x4cf93900621b8929de88ed82053190751ce6dc48:1/stack:31337:0xa513e6e4b8f2a923d98304ec87f64353c4d5c853:1"
+        }
+      ]
+    }
+  ],
+  "scope": "Two sovereign Runtimes over authenticated sockets, private Ethereum and native TVM, bilateral credit; no public deployment or rendered UI claim"
+}

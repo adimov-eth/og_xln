@@ -6,9 +6,12 @@ import {
   buildRuntimeRecording,
   validateRuntimeRecording,
 } from '../recovery/bundle/recording';
-import { buildRuntimeCheckpointSnapshot } from '../wal/snapshot';
+import { buildRuntimeRecoveryCheckpointSnapshot } from '../wal/snapshot';
+import { computeCanonicalStateHashFromEnv } from '../canonical-hash';
+import type { PersistedFrameJournal } from '../types';
 import type {
   RuntimeRecording,
+  RuntimeRecoveryBundleV1,
   RuntimeRecoveryMetaV1,
   RuntimeRecoverySignerV1,
 } from '../recovery/bundle/types';
@@ -29,6 +32,36 @@ export type DetachedRuntimeRecordingAdapter = {
 };
 
 const MAX_RUNTIME_RECORDING_JOURNAL_FRAMES = 10_000;
+
+const verifyRecordingFrames = async (
+  deps: PersistenceQueryDeps,
+  env: RuntimeReplica,
+  snapshot: RuntimeRecoveryBundleV1,
+  frames: PersistedFrameJournal[],
+): Promise<PersistedFrameJournal[]> => {
+  if (!env.runtimeSeed || !env.runtimeId) throw new Error('RUNTIME_RECORDING_TRUSTED_IDENTITY_REQUIRED');
+  const restored = await deps.restoreEnvFromRecoveryBundles([snapshot], {
+    runtimeSeed: env.runtimeSeed, runtimeId: env.runtimeId,
+    targetHeight: snapshot.runtimeHeight, readOnly: true,
+  });
+  const verified: PersistedFrameJournal[] = [];
+  const results = await Promise.allSettled([
+    deps.replayRecoveryFrameJournals(restored, frames, {
+      verify: true,
+      onVerifiedFrame(frame) {
+        // Sparse WAL omits some full roots. Derive them only after canonical
+        // replay verifies the stored commitments and ordered outputs. Never
+        // sign a tip root as an earlier frame's root or weaken tail validation.
+        verified.push({ ...frame, canonicalStateHash: computeCanonicalStateHashFromEnv(restored) });
+      },
+    }),
+  ]);
+  results.push(...await Promise.allSettled([deps.closeRuntimeDb(restored), deps.closeInfraDb(restored)]));
+  const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, 'RUNTIME_RECORDING_REPLAY_AND_CLEANUP_FAILED');
+  return verified;
+};
 
 const readCheckpointSnapshot = async (
   deps: PersistenceQueryDeps,
@@ -56,7 +89,7 @@ const readCheckpointSnapshot = async (
       return null;
     }
     try {
-      return buildRuntimeCheckpointSnapshot(restored.env);
+      return buildRuntimeRecoveryCheckpointSnapshot(restored.env);
     } finally {
       await deps.closeRuntimeDb(restored.env);
     }
@@ -153,7 +186,7 @@ export const createPersistenceRecordingQueries = (
         height: baseHeight,
         hash: snapshotBundle.checkpointHash!,
       },
-      frames,
+      frames: await verifyRecordingFrames(deps, env, snapshotBundle, frames),
     });
     return buildRuntimeRecording([snapshotBundle, tailBundle], createdAt);
   };

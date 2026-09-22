@@ -45,6 +45,9 @@ export const recoverShortHankoEntityId = (hanko: string, digest: string): HankoH
 const packSingle = (signature: string): HankoHex => {
   const bytes = ethers.getBytes(signature);
   const recovery = bytes[64]!;
+  if (recovery !== 0 && recovery !== 1 && recovery !== 27 && recovery !== 28) {
+    throw new Error('SHORT_HANKO_RECOVERY_INVALID');
+  }
   const packed = new Uint8Array(65);
   packed.set(bytes.subarray(0, 64), 0);
   packed[64] = recovery === 28 || recovery === 1 ? 1 : 0;

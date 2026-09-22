@@ -229,7 +229,7 @@ surface or fuse stages 2 and 3.
 
 ## DEBUGGING AND COMMUNICATION
 
-- Owner preference (2026-09-05): Russian, MAX ADHD readability. Lead with the result; use short
+- Owner preference (updated 2026-09-18): English, MAX ADHD readability. Lead with the result; use short
   paragraphs, concrete numbers and next actions. Remove filler, repeated context and invented certainty.
 - Proactively recommend the better next step without waiting for an owner question. Prioritize MML:
   useful unique economic value processed by xln, never double-counted hops, submitted traffic or hype.

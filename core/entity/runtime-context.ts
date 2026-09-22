@@ -61,6 +61,7 @@ export type AccountAuthorityCommittedHankosRequest = Readonly<{
 
 /** Narrow child-machine capability; lifecycle ownership remains in Runtime. */
 export interface AccountAuthorityEntityStageCapability extends AccountAuthorityExecutionScope {
+  hasQueuedSettlementTransition(accountId: string): boolean;
   beginEntityAccountFrame(request: AccountAuthorityFrameBeginRequest): Promise<void>;
   executeEntityBooks(request: AccountAuthorityFrameBooksRequest): Promise<void>;
   recordAccountEnvelopeUpdate(accountId: string, update: AccountEnvelopeUpdate): void;

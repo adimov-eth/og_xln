@@ -1218,6 +1218,7 @@ impl<V: Clone> PersistentRadixMap<V> {
         }
         let mut work = self.prepare_two_level_slots()?;
         for mutation in mutations {
+            validate_key_path(mutation.key())?;
             let path = path_slots(mutation.key());
             let slot = usize::from(path[0]) * 16 + usize::from(path[1]);
             work[slot].push_two_level_mutation(slot, mutation)?;

@@ -33,6 +33,8 @@ export default defineConfig({
 		command: 'cd .. && bun run dev',
 		url: `${BASE_URL.replace(/\/$/, '')}/api/jurisdictions`,
 		reuseExistingServer: true,
+		// Let the dev launcher stop its separately owned service groups before exit.
+		gracefulShutdown: { signal: 'SIGTERM', timeout: 60_000 },
 		timeout: 240_000,
 	},
 });

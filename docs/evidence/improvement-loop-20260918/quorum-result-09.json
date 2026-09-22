@@ -1,0 +1,23 @@
+{
+  "id": "method-review-20260918-09",
+  "completed": true,
+  "error": null,
+  "budget": {
+    "id": "owner-2026-09-06t183142z",
+    "limitMicroUsd": 10000000,
+    "authorizedAt": "2026-09-06T18:31:42Z",
+    "expiresAt": null,
+    "windowMs": 3600000,
+    "defaultWaveTargetMicroUsd": 1000000,
+    "scope": "quorum-managed-dispatch-only",
+    "externalSpendCoverage": "unknown",
+    "knownMicroUsd": 0,
+    "reservedMicroUsd": 3500000,
+    "remainingMicroUsd": 6500000,
+    "attempts": 14,
+    "asOf": "2026-09-18T10:05:00.960Z",
+    "windowStartsAt": "2026-09-18T09:05:00.960Z"
+  },
+  "response": "# Challenge: Bounded atomic archive publication plan\n\n## Strongest counterexample\n\n**\"Empty\" is checked against the existing target storage writer lock, but the plan never proves the target DB is empty *by content* — only that the writer holds the lock and that current/previous/WAL tables read empty.** The canonical reload path (\"close target and reload via canonical loader to rebuild sparse overlays\") then treats whatever it loads as the newly published archive.\n\nConcrete failure: the low-level target store contains **stale rows outside the checked tables** — e.g. receipt/meta rows, sequence/counters, or a leftover sparse full root from an earlier failed session — written by a code path that doesn't go through the checked three (current/previous/WAL). The batch copies canonical WAL rows atomically, reload succeeds, and the wallet exposes **history that is a merge of the archive and residue**, not the archive. The \"crash pre-batch leaves nothing\" claim holds; the \"crash post-batch gives complete tip/history\" claim silently assumes the target was byte-equivalent to empty, which the emptiness predicate doesn't establish. Equivalently: emptiness-by-lock ≠ emptiness-by-store, and only the latter justifies skip-checkpoint publication.\n\nSecondary (weaker) counterexample if you reject the above: the **post-publication retry rejection** requires durable state distinguishing \"published\" from \"never attempted.\" Plan says \"no new durable field\" — so rejection must be inferred from the now-non-empty target. But the residue case above makes that inference ambiguous: retry after residue-only crash is correctly rejected *by accident*, while a legitimate fresh retry is also rejected. Not a correctness break, but shows the emptiness predicate is doing double duty it can't support.\n\n## Smallest adversarial test\n\nOn a real fresh-device stage DB (no mocks):\n\n1. Seed the target through any writer path **other than** the three checked tables (e.g. one receipt row or one counter bump via normal unlock flow).\n2. Run the publication.\n3. Close, canonical reload, rebuild history.\n4. **Fail** if any artifact not present in the canonical archive appears in the exposed wallet (extra HTLC frame, extra balance source, divergent postStateHash).\n\nIf that's infeasible to seed, minimal variant: assert after reload that the full reconstructed state (meta digest, postStateHash, outbox digest, frame count) **equals** the archive frame-21 values *and* that a byte/page-level scan of the target store contains no rows predating the batch — i.e., test emptiness-by-store, not emptiness-by-lock.\n\n## Verdict\n\nPlan is sound *conditional on* strengthening the emptiness check from \"tables empty under writer lock\" to \"store contains nothing outside the single batch,\" or proving every writer path funnels through the three checked tables. One test, one predicate fix; no framework change.",
+  "reasoningCharacters": 0
+}

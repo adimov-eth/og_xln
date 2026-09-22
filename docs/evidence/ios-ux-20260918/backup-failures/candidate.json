@@ -1,0 +1,90 @@
+{
+  "baseSha": "a8210663e8378f76c387359f59f69eb35d3f4324",
+  "dirty": true,
+  "hashes": {
+    "core/watchtower/store/db.ts": "458bae0bd32da8fd2702b1ee2461a4af5929d031dc46a6d898566513cf3b2f70",
+    "core/__tests__/storage/recovery/recovery-tower.test.ts": "264fd04cc3fb4d8583ca441207b39269f575742cd4db3662ddca76ea54a55518",
+    "ui/src/runtime/local-wallet-data.ts": "4fc4a0ff4f03382fe838acd352878388d480fdeaa2cfa0313ce3364ffcca7323",
+    "ui/src/runtime/restore.ts": "2565c70266b4882659ed1315778fc08a8416f3c1703d075df3c341570d100f48",
+    "ui/src/native/brainvault.ts": "3400be71e81d25b0fd45109cd1b1289024a8b18e595ea4b69a019bdbd1d2f1bc",
+    "scripts/native/tests/payments/recovery-recording.js": "1bd75bcc91b54d72702fd0c8a8dd791a9accee392e50f9790dd1eac3f6ce1e07"
+  },
+  "fixes": [
+    "Quota checked on final serialized tower document, including signed receipts, before storage or usage mutations.",
+    "Local wallet presence uses read-only record counts rather than database names; empty interrupted-import containers allow retry, existing records still block replacement."
+  ],
+  "checks": {
+    "relatedPassed": 27,
+    "relatedTotal": 27,
+    "assertions": 169,
+    "testSeconds": 2.45,
+    "sourceGatesPassed": 39,
+    "sourceGatesTotal": 39,
+    "sourceSeconds": 33.667,
+    "uiTypes": true,
+    "iosBuild": true,
+    "livePassed": 6,
+    "liveTotal": 6,
+    "liveCriteria": [
+      "Payment after recovery",
+      "Swap after recovery",
+      "Ordinary reopen balances and receipts",
+      "Fresh archive restores swap and both payments",
+      "Prepublication interruption then retry succeeds",
+      "Occupied wallet still rejects recovery"
+    ],
+    "quotaRejectHttp": 413,
+    "priorBackupPreserved": true,
+    "validUploadAfterRejection": true,
+    "priorBackupReopen": true,
+    "localHealth": true,
+    "standMs": 43486
+  },
+  "liveResult": {
+    "verifiedFrames": 21,
+    "baseHeight": 1,
+    "targetHeight": 22,
+    "finalized": [
+      {
+        "height": 21,
+        "hashlock": "0xe61644f62af84a9abbe624d78a5b7dc02886ef0a680851b71327aa452b4ccf9e"
+      }
+    ],
+    "postRecovery": {
+      "newPayment": true,
+      "swap": true,
+      "reopen": true,
+      "swapArchiveFreshRestore": true,
+      "interruptedImportRetry": true,
+      "existingWalletProtected": true,
+      "paymentReceipts": 2,
+      "swapExecutions": 1,
+      "usdc": "73000001",
+      "weth": "9997000200000000",
+      "gave": "24999999",
+      "received": "9998000000000000",
+      "fee": "999800000000",
+      "offerId": "swap-mu6v2cqm-c-3gfecu5myzmg2"
+    },
+    "senderBalance": "99000000",
+    "atomicImportAndReopen": true,
+    "towerTransfer": true,
+    "restoredHeight": 23,
+    "scope": "Real local payment; tower restore, new native payment and swap, exact balances and receipts after reopening"
+  },
+  "limits": [
+    "Interruption is an injected prepublication error, not OS process kill or power-loss testing.",
+    "No new SwiftUI screenshots/video this block; native WebKit runs the production UI/runtime modules.",
+    "No public deploy, hardware camera proof or physical install.",
+    "History before the retained base remains explicitly partial."
+  ],
+  "quorum": {
+    "id": "method-review-20260918-11",
+    "calls": 1,
+    "retries": 0,
+    "reservedUsd": 4,
+    "remainingUsd": 6,
+    "cashCost": "unknown"
+  },
+  "next": "Address remaining native camera-denial/VoiceOver acceptance or physical signing when available; do not repeat unchanged payment/swap happy paths."
+}

@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { StorageEntityCoreDoc } from '@xln/core/storage/types';
 import type { AccountState } from '@xln/core/api/public/runtime-module';
 import { decodeMarketWireResponse, encodeMarketWireMessage } from '@xln/core/network/relay/market/wire';
 import { normalizeMarketPairId } from '@xln/core/network/relay/market/identifiers';
-import { resolveOrderbookRelayWsUrl } from '@xln/frontend/lib/components/Trading/orderbook-relay-url';
+import { resolveOrderbookRelayWsUrl, type BrowserLocationLike } from '@xln/frontend/lib/components/Trading/orderbook-relay-url';
 import { getAdapter } from '../adapter';
 import { useAdapterRead } from '../hooks';
 import { useApp } from '../store';
 import { peekXLN } from '../xln-loader';
-
-/** Canonical price unit of the runtime orderbook: ticks per quote unit, 4 decimals. */
-export const PRICE_SCALE = 10_000n;
 
 export type BookLevel = {
 	priceTicks: bigint;
@@ -26,6 +24,7 @@ export type BookView = {
 	pairId: string;
 	baseTokenId: number;
 	quoteTokenId: number;
+	minTradeSize: bigint | null;
 	/** Best price first on both sides. */
 	bids: BookLevel[];
 	asks: BookLevel[];
@@ -51,12 +50,7 @@ export function orientPair(tokenA: number, tokenB: number): { baseTokenId: numbe
 	return { baseTokenId: left, quoteTokenId: right, pairId };
 }
 
-/** Quote amount for `size` base units at `priceTicks`, in raw quote units. */
-export function quoteForBase(size: bigint, priceTicks: bigint, baseDecimals: number, quoteDecimals: number): bigint {
-	const baseUnit = 10n ** BigInt(baseDecimals);
-	const quoteUnit = 10n ** BigInt(quoteDecimals);
-	return (size * priceTicks * quoteUnit) / (PRICE_SCALE * baseUnit);
-}
+export { quoteForBase, quoteAtBestLevel, swapMinimumError, PRICE_SCALE } from './orderbook-quote';
 
 // ---------------------------------------------------------------------------
 // Hosted hub: the book is the union of resting offers on the hub's accounts.
@@ -122,7 +116,7 @@ export function bookFromHostedAccounts(
 // ---------------------------------------------------------------------------
 
 type RelayLevel = { price: string; size: string; total: string; orderCount?: number; ownerIds?: string[] };
-type RelaySnapshot = { pairId: string; bids: RelayLevel[]; asks: RelayLevel[]; spread: string | null; lastTradePrice: string | null; updatedAt: number };
+type RelaySnapshot = { sources: Array<{ hubEntityId: string; minTradeSize: string | null }>; pairId: string; bids: RelayLevel[]; asks: RelayLevel[]; spread: string | null; lastTradePrice: string | null; updatedAt: number };
 
 function relayLevels(levels: RelayLevel[], ownEntityId: string, lotScale: bigint): BookLevel[] {
 	const own = normalizeId(ownEntityId);
@@ -141,7 +135,7 @@ const RELAY_STALE_MS = 15_000;
  * The relay's market feed for one hub and pair. Same wire protocol and same
  * URL resolution as the SvelteKit OrderbookPanel; one socket per hook.
  */
-function useRelayBook(input: { enabled: boolean; hubId: string; relayUrl: string; pairId: string; depth: number; ownEntityId: string; lotScale: bigint }) {
+function useRelayBook(input: { enabled: boolean; hubId: string; relayUrl: string; pairId: string; depth: number; ownEntityId: string; lotScale: bigint; pageLocation?: BrowserLocationLike }) {
 	const [snapshot, setSnapshot] = useState<RelaySnapshot | null>(null);
 	const [status, setStatus] = useState<BookView['status']>('syncing');
 	const [error, setError] = useState<string | null>(null);
@@ -149,7 +143,7 @@ function useRelayBook(input: { enabled: boolean; hubId: string; relayUrl: string
 
 	useEffect(() => {
 		if (!input.enabled || !input.hubId || !input.pairId) return;
-		const resolution = resolveOrderbookRelayWsUrl(input.relayUrl, typeof window === 'undefined' ? null : window.location);
+		const resolution = resolveOrderbookRelayWsUrl(input.relayUrl, input.pageLocation ?? (typeof window === 'undefined' ? null : window.location));
 		if (!resolution.url) {
 			setStatus('unavailable');
 			setError(resolution.unavailableReason || 'RELAY_URL_UNAVAILABLE');
@@ -214,12 +208,14 @@ function useRelayBook(input: { enabled: boolean; hubId: string; relayUrl: string
 			socket.close();
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [input.enabled, input.hubId, input.relayUrl, input.pairId, input.depth]);
+	}, [input.enabled, input.hubId, input.relayUrl, input.pageLocation, input.pairId, input.depth]);
 
 	return useMemo(() => {
 		if (!input.enabled) return null;
+		const minimum = snapshot?.sources.find(source => source.hubEntityId === input.hubId)?.minTradeSize;
 		const stale = snapshot ? Date.now() - snapshot.updatedAt > RELAY_STALE_MS : false;
 		return {
+			minTradeSize: minimum == null ? null : BigInt(minimum),
 			bids: snapshot ? relayLevels(snapshot.bids, input.ownEntityId, input.lotScale) : [],
 			asks: snapshot ? relayLevels(snapshot.asks, input.ownEntityId, input.lotScale) : [],
 			spreadTicks: snapshot?.spread ? BigInt(snapshot.spread) : null,
@@ -228,7 +224,7 @@ function useRelayBook(input: { enabled: boolean; hubId: string; relayUrl: string
 			updatedAt: snapshot?.updatedAt ?? 0,
 			error,
 		};
-	}, [input.enabled, input.ownEntityId, input.lotScale, snapshot, status, error]);
+	}, [input.enabled, input.hubId, input.ownEntityId, input.lotScale, snapshot, status, error]);
 }
 
 /**
@@ -243,6 +239,8 @@ export function useOrderbook(input: {
 	depth?: number;
 	ownEntityId: string;
 	relayUrl?: string;
+	/** Packaged native hosts resolve trust against their compiled network origin. */
+	relayPageLocation?: BrowserLocationLike;
 	baseDecimals: number;
 }): BookView {
 	const depth = input.depth ?? 12;
@@ -250,6 +248,7 @@ export function useOrderbook(input: {
 	const hubId = normalizeId(input.hubId);
 	const query = useMemo(() => ({ accountsLimit: 200 }), []);
 	const hosted = useAdapterRead<HostedAccountsPage>(hubId ? `entity/${encodeURIComponent(hubId)}/accounts` : null, query);
+	const policy = useAdapterRead<StorageEntityCoreDoc>(hosted.data && hubId ? `entity/${encodeURIComponent(hubId)}` : null);
 	const height = useApp(s => s.height);
 	const hostedMissing = Boolean(hosted.error && /E_NOT_FOUND|entity not found/i.test(hosted.error));
 	// Relay lots are base units scaled to six decimals; a base token with fewer decimals uses its own scale.
@@ -258,6 +257,7 @@ export function useOrderbook(input: {
 		enabled: hostedMissing || (getAdapter()?.mode === 'remote' && !hosted.data && !hosted.loading),
 		hubId,
 		relayUrl: input.relayUrl ?? '',
+		...(input.relayPageLocation ? { pageLocation: input.relayPageLocation } : {}),
 		pairId: pair.pairId,
 		depth,
 		ownEntityId: input.ownEntityId,
@@ -276,6 +276,7 @@ export function useOrderbook(input: {
 			pairId: pair.pairId,
 			baseTokenId: pair.baseTokenId,
 			quoteTokenId: pair.quoteTokenId,
+			minTradeSize: policy.data?.orderbookHubProfile?.minTradeSize ?? null,
 			bids,
 			asks,
 			spreadTicks: bestBid !== null && bestAsk !== null ? bestAsk - bestBid : null,
@@ -285,5 +286,5 @@ export function useOrderbook(input: {
 			updatedAt: height,
 			error: hosted.error,
 		};
-	}, [relay, hostedMissing, hosted.data, hosted.loading, hosted.error, pair, input.ownEntityId, depth, height]);
+	}, [relay, hostedMissing, hosted.data, hosted.loading, hosted.error, policy.data, pair, input.ownEntityId, depth, height]);
 }

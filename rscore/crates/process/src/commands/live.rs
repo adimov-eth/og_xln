@@ -88,10 +88,8 @@ fn parse_hex32(value: &str, field: &str) -> Result<[u8; 32], String> {
         .filter(|_| value == value.to_ascii_lowercase())
         .ok_or_else(|| format!("RRS_RUNTIME_{field}_FORMAT"))?;
     let mut output = [0_u8; 32];
-    for (index, byte) in output.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&payload[index * 2..index * 2 + 2], 16)
-            .map_err(|_| format!("RRS_RUNTIME_{field}_FORMAT"))?;
-    }
+    hex::decode_to_slice(payload, &mut output)
+        .map_err(|_| format!("RRS_RUNTIME_{field}_FORMAT"))?;
     Ok(output)
 }
 
@@ -1139,10 +1137,8 @@ fn secret_key(path: &Path) -> Result<[u8; 32], String> {
         .filter(|_| value == value.to_ascii_lowercase())
         .ok_or_else(|| "RRS_RUNTIME_HTLC_SECRET_FORMAT".to_string())?;
     let mut output = [0_u8; 32];
-    for (index, byte) in output.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&payload[index * 2..index * 2 + 2], 16)
-            .map_err(|_| "RRS_RUNTIME_HTLC_SECRET_FORMAT".to_string())?;
-    }
+    hex::decode_to_slice(payload, &mut output)
+        .map_err(|_| "RRS_RUNTIME_HTLC_SECRET_FORMAT".to_string())?;
     Ok(output)
 }
 

@@ -1,0 +1,145 @@
+{
+  "time": "2026-09-18 09:10:52.1042 +0300",
+  "pid": 62940,
+  "exception": {
+    "codes": "0x0000000000000001, 0x0002f091eb168038",
+    "rawCodes": [
+      1,
+      827459458465848
+    ],
+    "type": "EXC_BAD_ACCESS",
+    "signal": "SIGSEGV",
+    "subtype": "KERN_INVALID_ADDRESS at 0x0002f091eb168038 -> 0x00007091eb168038 (possible pointer authentication failure)"
+  },
+  "termination": {
+    "flags": 0,
+    "code": 11,
+    "namespace": "SIGNAL",
+    "indicator": "Segmentation fault: 11",
+    "byProc": "bun",
+    "byPid": 62940
+  },
+  "threadCount": 299,
+  "threadName": "Worker",
+  "frames": [
+    {
+      "image": "libsystem_kernel.dylib",
+      "offset": 38480,
+      "symbol": "__pthread_kill"
+    },
+    {
+      "image": "libsystem_pthread.dylib",
+      "offset": 27004,
+      "symbol": "pthread_kill"
+    },
+    {
+      "image": "libsystem_c.dylib",
+      "offset": 273324,
+      "symbol": "raise"
+    },
+    {
+      "image": "bun",
+      "offset": 32459604
+    },
+    {
+      "image": "bun",
+      "offset": 32456564
+    },
+    {
+      "image": "bun",
+      "offset": 32459152
+    },
+    {
+      "image": "libsystem_platform.dylib",
+      "offset": 16708,
+      "symbol": "_sigtramp"
+    },
+    {
+      "image": "bun",
+      "offset": 3244868
+    },
+    {
+      "image": "bun",
+      "offset": 3244868
+    },
+    {
+      "image": "bun",
+      "offset": 3205288
+    },
+    {
+      "image": "bun",
+      "offset": 3202496
+    },
+    {
+      "image": "bun",
+      "offset": 3163520
+    },
+    {
+      "image": "bun",
+      "offset": 3156052
+    },
+    {
+      "image": "bun",
+      "offset": 3122888
+    },
+    {
+      "image": "bun",
+      "offset": 3155608
+    },
+    {
+      "image": "bun",
+      "offset": 3152952
+    },
+    {
+      "image": "bun",
+      "offset": 3122416
+    },
+    {
+      "image": "bun",
+      "offset": 1087780
+    },
+    {
+      "image": "bun",
+      "offset": 42231248
+    },
+    {
+      "image": "bun",
+      "offset": 50410104
+    },
+    {
+      "image": "bun",
+      "offset": 50371168
+    },
+    {
+      "image": "bun",
+      "offset": 13559652
+    },
+    {
+      "image": "bun",
+      "offset": 25050156
+    },
+    {
+      "image": "bun",
+      "offset": 25066020
+    },
+    {
+      "image": "bun",
+      "offset": 24989644
+    },
+    {
+      "image": "bun",
+      "offset": 3398572
+    },
+    {
+      "image": "libsystem_pthread.dylib",
+      "offset": 27904,
+      "symbol": "_pthread_start"
+    },
+    {
+      "image": "libsystem_pthread.dylib",
+      "offset": 7404,
+      "symbol": "thread_start"
+    }
+  ],
+  "original": "/Users/zigota/Library/Logs/DiagnosticReports/bun-2026-09-18-091052.ips"
+}

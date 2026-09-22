@@ -29,6 +29,8 @@ export type RuntimeRecoveryDiscoveryOptions = {
   crypto?: RuntimeRecoveryCryptoPort | undefined;
   /** Browsing context asking, when one exists; enables the local-tower proxy. */
   pageUrl?: string | undefined;
+  /** Abort tower transport and prevent publication of cancelled discovery results. */
+  signal?: AbortSignal | undefined;
 };
 
 type FailureRecorder = (
@@ -44,12 +46,13 @@ const collectTowerCandidates = async (
 ): Promise<RuntimeRecoveryCandidate[]> => {
   const candidates: RuntimeRecoveryCandidate[] = [];
   for (const tower of towers) {
+    request.options.signal?.throwIfAborted();
     try {
-      if (!(await towerHasRecoveryBundle(tower, request.lookupKey, request.options.pageUrl))) {
+      if (!(await towerHasRecoveryBundle(tower, request.lookupKey, request.options.pageUrl, request.options.signal))) {
         recordFailure('tower', tower.url, 'TOWER_BUNDLE_NOT_FOUND');
         continue;
       }
-      const restore = await fetchTowerRecoveryBundles(tower, request.lookupKey, request.options.pageUrl);
+      const restore = await fetchTowerRecoveryBundles(tower, request.lookupKey, request.options.pageUrl, request.options.signal);
       if (!restore.ok) {
         recordFailure('tower', tower.url, restore.message);
         continue;
@@ -72,6 +75,7 @@ const collectTowerCandidates = async (
         }),
       );
     } catch (error) {
+      request.options.signal?.throwIfAborted();
       recordFailure('tower', tower.url, error instanceof Error ? error.message : String(error));
     }
   }
@@ -85,6 +89,7 @@ const collectPeerCandidates = async (
 ): Promise<RuntimeRecoveryCandidate[]> => {
   const candidates: RuntimeRecoveryCandidate[] = [];
   for (const peer of peers) {
+    request.options.signal?.throwIfAborted();
     const sourceLabel = String(peer.label || peer.id || 'Peer').trim() || 'Peer';
     try {
       const payload = await peer.fetchBundles({ runtimeId: request.runtimeId, lookupKey: request.lookupKey });
@@ -105,6 +110,7 @@ const collectPeerCandidates = async (
         }),
       );
     } catch (error) {
+      request.options.signal?.throwIfAborted();
       recordFailure('peer', sourceLabel, error instanceof Error ? error.message : String(error));
     }
   }
@@ -120,6 +126,7 @@ export async function discoverRuntimeRecoveryCandidates(
   seed: string,
   options: RuntimeRecoveryDiscoveryOptions,
 ): Promise<RuntimeRecoveryDiscoveryResult> {
+  options.signal?.throwIfAborted();
   const runtimeId = requireRuntimeIdForSeed(seed);
   const deriveLookupKey = options.crypto?.deriveRuntimeRecoveryLookupKey ?? deriveRuntimeRecoveryLookupKey;
   const lookupKey = deriveLookupKey(runtimeId, seed);
@@ -138,6 +145,9 @@ export async function discoverRuntimeRecoveryCandidates(
     ...(await collectPeerCandidates(peers, request, recordFailure)),
   ];
 
+  // Discovery is read-only. Cancellation must never look like missing or invalid
+  // evidence, nor allow a late result to start wallet recovery after Cancel.
+  options.signal?.throwIfAborted();
   candidates.sort(sortRecoveryCandidatesByTip);
   return {
     runtimeId,

@@ -1,0 +1,134 @@
+{
+  "kind": "NATIVE_WITHDRAWAL_CONTINUATION_FIX",
+  "firstDivergence": [
+    {
+      "continuations": [],
+      "events": [
+        {
+          "message": "⚖️ Settlement proposal queued for bilateral Account consensus",
+          "type": "status"
+        },
+        {
+          "message": "Settlement continuation cleared: workspace missing",
+          "type": "status"
+        },
+        {
+          "message": "🚀 Proposed frame 8 with 1 transactions",
+          "type": "status"
+        }
+      ],
+      "h": 91,
+      "pending": [
+        "settle_transition"
+      ],
+      "queued": []
+    },
+    {
+      "continuations": [],
+      "events": [
+        {
+          "message": "🚀 Proposed frame 10 with 1 transactions",
+          "type": "status"
+        }
+      ],
+      "h": 92,
+      "hash": "0x0556df4e7f68c3c50241ebfce5a5675cbba1cb4e9ced27acf16c35e095fc6bbe",
+      "pending": [
+        "settle_transition"
+      ],
+      "queued": [],
+      "workspace": "awaiting_counterparty"
+    },
+    {
+      "continuations": [],
+      "events": [
+        {
+          "message": "✅ Frame 10 confirmed and committed",
+          "type": "status"
+        }
+      ],
+      "h": 93,
+      "hash": "0x0556df4e7f68c3c50241ebfce5a5675cbba1cb4e9ced27acf16c35e095fc6bbe",
+      "queued": [],
+      "workspace": "ready_to_submit"
+    }
+  ],
+  "localRegression": {
+    "before": {
+      "passed": 1,
+      "failed": 2
+    },
+    "after": {
+      "passed": 56,
+      "failed": 0,
+      "assertions": 367
+    }
+  },
+  "automatic": {
+    "baseUnits": "10000000",
+    "decimals": 6,
+    "chainId": 2414086651,
+    "receipts": [
+      {
+        "blockHash": "0x000000000000007938c02b0f76e023e6f9ce25ebcc901b87988ceb860748c515",
+        "blockNumber": 121,
+        "data": {
+          "batchHash": "0x16e14b235fd377b0331c4e9c1eb1941d11231f7d23c2a73bf2a8c6942e66dc16",
+          "entityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+          "nonce": 2
+        },
+        "logIndex": 2,
+        "transactionHash": "0x54939c2492b551116590681ffd4558519d9cb546958df30502d4fee685df847d",
+        "type": "HankoBatchProcessed"
+      },
+      {
+        "blockHash": "0x000000000000007c74de7baaea74b3dd02d3cb1429ac0f7a9173cbee9cda04c7",
+        "blockNumber": 124,
+        "data": {
+          "batchHash": "0x9196f4e77d91594cb8038912b6b983d25353c962b4b88e924ee7300cca7ecfd2",
+          "entityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+          "nonce": 3
+        },
+        "logIndex": 2,
+        "transactionHash": "0x004313cd8320460dc7af696ea02bfd65ece9eb17f930691064c4e04fb37ec64b",
+        "type": "HankoBatchProcessed"
+      },
+      {
+        "blockHash": "0x000000000000007fba61a9f16b8acd847fbea0407bd341d26442b26ac9913979",
+        "blockNumber": 127,
+        "data": {
+          "batchHash": "0x79b432c416771ccb4d7862b51441d6e80d4416285660a3bf49ba56a46260419b",
+          "entityId": "0x711a3afdfb5b6ff37024a0bb4971932b35b18e8c5e4a2bb2e1040a17af39db29",
+          "nonce": 4
+        },
+        "logIndex": 4,
+        "transactionHash": "0xebc5a00d5d22c94915777ecd1e1f40a2bf4e421384a4138ba01d4b1e76a601a0",
+        "type": "HankoBatchProcessed"
+      }
+    ],
+    "anchors": [
+      {
+        "frameHash": "0x8274ef6ebcab3bee1dacaf82dc125ee838ad8137f9c84be2b79049f8daa4c7a0",
+        "height": 220,
+        "postStateHash": "0x95e303e8d55ad3576d946297e9afe93fe293e1c25745622397c71e7344bac712",
+        "runtimeId": "0xbc5795505911836788913ed909cf20a8558997dc"
+      },
+      {
+        "frameHash": "0x0d42c7c99fed818c2ca3635ffab5985668f2928614a16bfbf3ce715b343166c2",
+        "height": 188,
+        "postStateHash": "0x355315d58829c5f3433262cc70807ab1342ed0e47ef57168eb257b122eb777dd",
+        "runtimeId": "0x04d31cf1ca238bdaba7e619670b5d11c988d92fd"
+      }
+    ],
+    "restartAnchorsMatch": true
+  },
+  "historicalReplay": {
+    "height": 91,
+    "outcome": "loud-rejection",
+    "code": "RECOVERY_JOURNAL_REPLICA_META_DIGEST_MISMATCH",
+    "expected": "0xb365e2c69e980d67c60ef8846c1e4bf9f04279d2206542745f0352bb1e899d3f",
+    "actual": "0xb9f270f6faf4a0db03336ad4d399b4e69587cf99fb60a0f32b412920e503226c",
+    "releaseGate": "Explicit offline checkpoint migration and cold recovery remain unverified"
+  },
+  "scope": "Private native TVM; actual canonical wallet commands and chain receipts. No rendered cross-chain UI, public testnet, mainnet or GDP attribution."
+}

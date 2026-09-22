@@ -1,0 +1,15 @@
+{
+  "passed": 5,
+  "passwordMismatchRejected": true,
+  "missingRecoveryRejected": true,
+  "created": true,
+  "duplicateCreationRejected": true,
+  "reopenedSameIdentity": true,
+  "entityId": "0xfc0a427185709c480c4683efc7422d6bd6cbd98fcd566591d2e179523f7dbaeb",
+  "backup": {
+    "address": "http://127.0.0.1:9100",
+    "height": 12,
+    "checkpoint": "0xd1050aea7053bed0b7c3048274ed8148fb903166212478d1041fce946c7c2db5",
+    "bytes": 29622
+  }
+}

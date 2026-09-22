@@ -44,7 +44,7 @@ const USDC = 1;
  * Authenticated empty headers need not create financial frames, but pending
  * financial events and certified prefixes must finish before admission opens.
  */
-async function waitForChainScan(xln: Awaited<ReturnType<typeof getXLN>>, env: RuntimeReplica, entityId: string, signerId: string, timeoutMs: number): Promise<void> {
+async function waitForChainScan(xln: Awaited<ReturnType<typeof getXLN>>, env: RuntimeReplica, entityId: string, signerId: string, timeoutMs: number, onProgress?: (step: string) => void): Promise<void> {
 	const jadapter = xln.getEntityJAdapter(env, entityId, signerId);
 	if (!jadapter?.getCurrentBlockNumber || !jadapter.getFinalityDepth) throw new Error(`J_WATCHER_DRAIN_API_MISSING:${entityId}`);
 	const head = Number(await jadapter.getCurrentBlockNumber());
@@ -53,7 +53,11 @@ async function waitForChainScan(xln: Awaited<ReturnType<typeof getXLN>>, env: Ru
 	const target = { adapter: jadapter, targetBlock: Math.max(0, head - depth) };
 	const startedAt = Date.now();
 	try {
-		await waitFor(() => xln.isJWatcherDrainComplete(xln.getJWatcherDrainStatus(env, target)), 'chain scan', timeoutMs, 250);
+		await waitFor(() => {
+			const status = xln.getJWatcherDrainStatus(env, target);
+			onProgress?.(`Syncing with the chain · ${Math.min(100, Math.floor(status.authenticatedThrough * 100 / Math.max(1, status.targetBlock)))}%`);
+			return xln.isJWatcherDrainComplete(status);
+		}, 'chain scan', timeoutMs, 250);
 	} finally {
 		console.info('[hosted] chain scan', {
 			...xln.getJWatcherDrainStatus(env, target),
@@ -158,11 +162,16 @@ async function fetchApi(apiBase: string, path: string): Promise<Record<string, u
 	}
 }
 
+/** The hosted wallet and invoice reader share the same network catalog. */
+export async function loadStackJurisdictions(apiBase: string): Promise<StackJurisdiction[]> {
+  return pickJurisdictions(await fetchApi(apiBase, '/api/jurisdictions'), apiBase);
+}
+
 /** Null when this origin serves no xln API: the wallet then offers only the offline sandbox. */
 export async function detectStack(apiBase: string = window.location.origin): Promise<Stack | null> {
 	let jurisdictions: StackJurisdiction[];
 	try {
-		jurisdictions = pickJurisdictions(await fetchApi(apiBase, '/api/jurisdictions'), apiBase);
+		jurisdictions = await loadStackJurisdictions(apiBase);
 	} catch {
 		return null;
 	}
@@ -193,6 +202,8 @@ export type HostedVaultOptions = {
 	selfLabel: string;
 	stack: Stack;
 	recovery?: RuntimeRecoveryCandidate;
+	/** Mobile first-run history verification can exceed a minute; admission stays gated. */
+	chainScanTimeoutMs?: number;
 	onStep?: (step: string) => void;
 };
 
@@ -295,7 +306,7 @@ export async function bootHostedVault(seed: string, options: HostedVaultOptions)
 		// Transport authentication may advance during catch-up; new financial
 		// operations stay behind the gate and replayed outputs retain their outbox.
 		step('Syncing with the chain');
-		await waitForChainScan(xln, env, entityId, signerId, 60_000);
+		await waitForChainScan(xln, env, entityId, signerId, options.chainScanTimeoutMs ?? 60_000, options.onStep);
 
 		const connected = (): boolean => Boolean(xln.getP2P(env)?.isConnected?.());
 		let online = true;

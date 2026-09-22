@@ -1,0 +1,58 @@
+{
+  "kind": "NATIVE_WALLET_COMMAND_RECEIPT_RECOVERY_PROOF",
+  "commands": [
+    "e2r",
+    "j_broadcast",
+    "r2e",
+    "j_broadcast"
+  ],
+  "submitted": [
+    {
+      "attemptId": "0x36ee9c1376558aab9883db929961f0349fadc10f355b8a4e2c951056e5caa2c4",
+      "attemptNumber": 1,
+      "attemptedAt": 1789699449842,
+      "batchGeneration": 1,
+      "batchHash": "0x3cf5ea6239e5e0242977cf2cc6d7577e770d1b1e7f1a0cef11026ee98c4f4c67",
+      "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "entityNonce": 3,
+      "jurisdictionName": "Native TVM",
+      "outcome": "submitted",
+      "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+      "txHash": "0x3e25acc74ebb49809cde1bda56e49b2c06fc1e16bcdf640a714399bd0e3621fe"
+    },
+    {
+      "attemptId": "0x42aa5f2e419a0a0fed6ed1ac8751ddb7e046df29b093074d6a9fcb5a6ba6c88f",
+      "attemptNumber": 1,
+      "attemptedAt": 1789699458201,
+      "batchGeneration": 2,
+      "batchHash": "0x323775aa98ae2dd0d6651755fc492f2451237416c91c2206fc1a2405d326d529",
+      "entityId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "entityNonce": 4,
+      "jurisdictionName": "Native TVM",
+      "outcome": "submitted",
+      "signerId": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+      "txHash": "0xe41df63c67d53c914b81e3e6e882c68a6a3172d97b333681b163ce1cf03ca742"
+    }
+  ],
+  "depositState": {
+    "entityFrameHash": "0x99919282abf57ce8e33cd7cc58735dc11de00c9126d03e0ce21a8bb3e4b4beb6",
+    "entityHeight": 3,
+    "finalizedJHeight": 69,
+    "nonce": 3,
+    "pending": false,
+    "reserve": "1000000",
+    "runtimeHeight": 16
+  },
+  "restoredState": {
+    "entityFrameHash": "0xd531ea6619d2108cda7c7d6b335b7522753629413bd2e158542f92ba037f3a93",
+    "entityHeight": 5,
+    "finalizedJHeight": 72,
+    "nonce": 4,
+    "pending": false,
+    "reserve": "0",
+    "runtimeHeight": 22
+  },
+  "frameHash": "0x5a0a695a58815033f12ba7c51ceb8d84878dd98edfeca81dda613e6051d2c7ca",
+  "postStateHash": "0x5f0dde753538bcdf15a3a90348119919b1667aaca60e2c2ff15216f55d3a247e",
+  "scope": "Real frontend command builders and embedded wallet adapter; private TVM; no rendered UI or cross-J claim"
+}
