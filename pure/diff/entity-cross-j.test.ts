@@ -155,3 +155,154 @@ describe("entity-cross-j: route economics (og pathfinding/htlc-quote.ts, fees.ts
     expect(accepted).toBeGreaterThan(50);
   });
 });
+
+// ---- Entity htlcPayment (og entity/paybook/payment-admission.ts, tx/handlers/htlc/payment.ts) ----
+import * as ogAdmission from "../../core/entity/paybook/payment-admission.ts";
+import { withDeterministicHtlcTestSecret } from "../../core/protocol/htlc/test-secret-capability.ts";
+import { handleHtlcPayment } from "../../core/entity/tx/handlers/htlc/payment.ts";
+import { createBookIntentProgram, applyBookIntentProgram } from "../../core/entity/books/book-intents.ts";
+import { validateHtlcPreparedInfraContext } from "../../core/entity/paybook/prepared-context-validation.ts";
+import { entityCollectionCommitment as ogCollection } from "../../core/entity/state/persistent-collection-map.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, unwrap, verifiers } from "../xln_run.ts";
+import {
+  applyRuntime, assertOriginated, convertOutput, createEntity, createRuntime, entityCollectionCommitment, holds, htlcPaymentTxHash, isLeft, materializeOriginated, preparedOriginOf, replicaId, replicaKey, spawn, tokenId,
+  validatePreparedHtlcPayment, wireTx, type AccountReplica, type Address, type Binary, type EntityId, type EntityReplica, type EntityTx, type HtlcFrameInfra, type PreparedOriginated, type RoutedEntityInput, type Runtime,
+} from "../xln.ts";
+
+const JUR = TERMS.domain;
+const ENTITY_KEYS = new Map([ALICE, BOB, CAROL].map((id, i) => { const priv = new Uint8Array(32).fill(i + 7); return [id, { priv: "0x" + Buffer.from(priv).toString("hex"), pub: "0x" + Buffer.from(x25519.getPublicKey(priv)).toString("hex") }] as const; }));
+const SIGNERS = new Map<EntityId, Address>([[ALICE, aliceAddr], [BOB, bobAddr], [CAROL, carolAddr]]);
+const entityOf = (id: EntityId) => unwrap(createEntity({ id, jurisdiction: JUR, threshold: 1n, members: new Map([[SIGNERS.get(id)!, { shares: 1n }]]), committed: { entityEncryptionPublicKey: ENTITY_KEYS.get(id)!.pub } }));
+const inputOf = (id: EntityId, txs: EntityTx[], timestamp: bigint): RoutedEntityInput => ({ entityId: id, signerId: SIGNERS.get(id)!, input: { kind: "txs", timestamp, txs } });
+const quiet = (start: Runtime, first: RoutedEntityInput[], ctx: object = verifiers): Runtime => {
+  let rt = start, clock = NOW;
+  const queue = [...first];
+  for (let n = 0; queue.length > 0; n++) {
+    if (n > 200) throw new Error("no quiescence");
+    const input = queue.shift() as RoutedEntityInput;
+    const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, ctx as typeof verifiers));
+    if (out.rejected.length > 0) throw new Error(JSON.stringify(out.rejected, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
+    rt = out.runtime; clock += 1n;
+    for (const o of out.outbox) {
+      if ("input" in o && o.input.kind === "txs" && o.input.txs.length === 0 && o.to === input.entityId) continue;
+      queue.push(unwrap(convertOutput(rt, o, input.entityId, clock)));
+    }
+  }
+  return rt;
+};
+const open = (to: EntityId, creditAmount?: bigint): EntityTx => ({ type: "openAccount", data: { targetEntityId: to, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig, ...(creditAmount === undefined ? {} : { creditAmount, tokenId: unwrap(tokenId("1")) }) } } as EntityTx);
+/** Alice -- Bob -- Carol: Bob opens both Accounts and extends Alice 1000 of credit; Carol extends Bob 1000. */
+const network = (): Runtime => {
+  let rt = spawn(spawn(spawn(createRuntime(), entityOf(ALICE)), entityOf(BOB)), entityOf(CAROL));
+  rt = quiet(rt, [inputOf(BOB, [open(ALICE, 1000n), open(CAROL)], NOW)]);
+  return quiet(rt, [inputOf(CAROL, [{ type: "extendCredit", data: { counterpartyEntityId: BOB, tokenId: unwrap(tokenId("1")), amount: 1000n } }], NOW + 100n)]);
+};
+const replicaOf = (rt: Runtime, id: EntityId): EntityReplica => rt.entities.get(replicaKey(id, SIGNERS.get(id)!))!;
+/** og AccountReplica view the admission code reads: status, domain, sides, deltas with holds. */
+const ogAccount = (c: AccountReplica, status?: string) => {
+  const id = replicaId(c);
+  return {
+    status: status ?? (c._tag === "preparing" ? "dispute_preparing" : c._tag === "disputed" ? "disputed" : "active"),
+    state: { domain: c.state.terms.domain, leftEntity: id.left, rightEntity: id.right, deltas: new Map([...c.state.account.deltas].map(([tk, d]) => [Number(tk), { ...d, tokenId: Number(tk), leftAllowance: 0n, rightAllowance: 0n, leftHold: holds(c.state, tk, true), rightHold: holds(c.state, tk, false) }])) },
+  };
+};
+const ogStateOf = (r: EntityReplica, timestamp: number, paybook = new Map<string, unknown>()) => ({
+  entityId: r.state.id, timestamp, lastFinalizedJHeight: 0, entityEncryptionPublicKey: String(r.state.committed["entityEncryptionPublicKey"]),
+  paybook: { entries: paybook, feesEarned: 0n }, accounts: new Map([...r.accountReplicas].map(([peer, c]) => [peer, ogAccount(c)])),
+});
+const profile = (id: EntityId, accounts: readonly { counterpartyId: string; domain: unknown; tokenCapacities: Map<number, { inCapacity: bigint; outCapacity: bigint }> }[], meta: object = {}): Binary =>
+  ({ entityId: id, entityEncryptionPublicKey: ENTITY_KEYS.get(id)!.pub, name: id.slice(-4), metadata: { isHub: false, routingFeePPM: 100, baseFee: 0n, ...meta }, accounts }) as unknown as Binary;
+const caps = (inC: bigint, outC: bigint) => new Map([[1, { inCapacity: inC, outCapacity: outC }]]);
+
+describe("entity-cross-j: Entity htlcPayment origination (og payment-admission.ts + handlers/htlc/payment.ts)", () => {
+  const rt = network(), alice = replicaOf(rt, ALICE), ts = Number(NOW + 1000n);
+  const view = { id: ALICE, timestamp: ts, jHeight: 0, encryptionKey: ENTITY_KEYS.get(ALICE)!.pub, paybook: { entries: new Map(), feesEarned: 0n }, replicas: alice.accountReplicas };
+  const baseProfiles = (): Binary[] => [
+    profile(ALICE, []), profile(BOB, [{ counterpartyId: ALICE, domain: JUR, tokenCapacities: caps(1000n, 0n) }, { counterpartyId: CAROL, domain: JUR, tokenCapacities: caps(0n, 1000n) }], { routingFeePPM: 5000, baseFee: 1n }), profile(CAROL, []),
+  ];
+  const payment = (over: object = {}): EntityTx => ({ type: "htlcPayment", data: { targetEntityId: CAROL, tokenId: 1, amount: 100n, maxSenderDebit: 200n, route: [ALICE, BOB, CAROL], deliveryMode: "instant", ...over } } as EntityTx);
+
+  test("MATCH: hashRawHtlcPaymentTx, materializeOriginatedHtlcPayments, assertOriginatedHtlcPayments and validatePreparedHtlcPayment on 250 random payments, profiles and paybooks", async () => {
+    const r = rng(21);
+    let accepted = 0;
+    for (let i = 0; i < 250; i++) {
+      const profiles = baseProfiles() as any[];
+      const mut = int(r, 14);
+      if (mut === 1) profiles[1] = { ...profiles[1], metadata: { ...profiles[1].metadata, routingFeePPM: pick(r, [0, 1, 999_999]), baseFee: BigInt(int(r, 50)) } };
+      if (mut === 2) profiles[1] = { ...profiles[1], accounts: profiles[1].accounts.slice(0, 1) };
+      if (mut === 3) profiles[1] = { ...profiles[1], accounts: [{ ...profiles[1].accounts[0], domain: { ...JUR, chainId: 999 } }, profiles[1].accounts[1]] };
+      if (mut === 4) profiles[0] = { ...profiles[0], entityEncryptionPublicKey: ENTITY_KEYS.get(BOB)!.pub };
+      if (mut === 5) profiles.pop();
+      if (mut === 6) profiles.push(profiles[2]);
+      if (mut === 7) profiles[2] = { ...profiles[2], accounts: [{ counterpartyId: BOB, domain: { ...JUR, depositoryAddress: "0x" + JUR.depositoryAddress.slice(2).toUpperCase() }, tokenCapacities: caps(5n, 5n) }] };
+      if (mut === 8) profiles[1] = { ...profiles[1], accounts: profiles[1].accounts.map((a: any) => ({ ...a, tokenCapacities: new Map() })) };
+      const over: Record<string, unknown> = {};
+      const m2 = int(r, 16);
+      if (m2 === 1) over.amount = BigInt(int(r, 3000));
+      if (m2 === 2) over.maxSenderDebit = BigInt(int(r, 150));
+      if (m2 === 3) over.route = [ALICE, CAROL];
+      if (m2 === 4) over.route = [ALICE, "0x" + BOB.slice(2).toUpperCase(), CAROL];
+      if (m2 === 5) over.route = [];
+      if (m2 === 6) over.description = pick(r, ["pay", " pad", "x".repeat(300), ""]);
+      if (m2 === 7) over.deliveryMode = pick(r, ["async", "direct"]);
+      if (m2 === 8) over.startedAtMs = pick(r, [ts, ts + 1, 1.5]);
+      if (m2 === 9) over.tokenId = pick(r, [2, -1, 70000]);
+      if (m2 === 10) over.route = [ALICE, BOB, ALICE];
+      if (m2 === 11) over.extra = 1;
+      if (m2 === 12) over.amount = 0n;
+      const secret = hex(r, 32);
+      let tx = payment(over) as any;
+      const registered = ogTry(() => withDeterministicHtlcTestSecret(tx, secret));
+      if (registered.ok) tx = registered.value;
+      if (r() < 0.05) tx = { ...tx, data: { ...tx.data, hashlock: hex(r, 32) } };
+      const ogHash = ogTry(() => ogAdmission.hashRawHtlcPaymentTx(tx));
+      same(ogHash, htlcPaymentTxHash(tx), `hash${i}`);
+      const paybook = r() < 0.05 && registered.ok ? new Map([[tx.data.hashlock, { hashlock: tx.data.hashlock, createdTimestamp: 1 }]]) : new Map();
+      const og = await ogTryAsync(() => ogAdmission.materializeOriginatedHtlcPayments({ state: ogStateOf(alice, ts, paybook) as never, proposalTxs: [tx], profiles: profiles as never, height: 1, resolveRoute: async () => { throw new Error("no route"); } }));
+      const rw = materializeOriginated({ ...view, paybook: { entries: paybook as never, feesEarned: 0n } }, profiles, [tx], { profiles, secretFor: (h) => (ogHash.ok && h === ogHash.value && registered.ok ? secret : undefined) });
+      same(og, rw.refused.size === 0 ? { ok: true, value: rw.originated } : { ok: false }, `mat${i}`);
+      if (!og.ok || rw.refused.size > 0) continue;
+      accepted++;
+      const infra: HtlcFrameInfra = { gossipProfiles: profiles, peerAssertions: [], originated: rw.originated };
+      // tamper one committed field of the prepared origin; og and the rewrite must agree on every variant
+      const t = int(r, 8), o = rw.originated[0]!;
+      const tampered: PreparedOriginated = t === 1 ? { ...o, senderLockAmount: o.senderLockAmount + 1n, totalFee: o.totalFee + 1n } : t === 2 ? { ...o, timelock: o.timelock - 1n } : t === 3 ? { ...o, revealBeforeHeight: o.revealBeforeHeight + 3 }
+        : t === 4 ? { ...o, description: "other" } : t === 5 ? { ...o, hashlock: hex(r, 32) } : t === 6 ? { ...o, txHash: hex(r, 32) } : o;
+      const frameCtx = { version: 1, entries: [], originated: [tampered] };
+      same(ogTry(() => { validateHtlcPreparedInfraContext(frameCtx); return 1; }), preparedOriginOf(tampered as never) === null ? { ok: false } : { ok: true, value: 1 }, `shape${i}`);
+      same(ogTry(() => ogAdmission.assertOriginatedHtlcPayments({ state: ogStateOf(alice, ts) as never, proposalTxs: [tx], profiles: profiles as never, height: 1, originated: [tampered] as never })),
+        assertOriginated(view, { ...infra, originated: [tampered] }, [tx]), `assert${i}`);
+      const status = pick(r, [undefined, undefined, "disputed"]);
+      const ogS = { ...ogStateOf(alice, ts), accounts: new Map([[BOB, ogAccount(alice.accountReplicas.get(BOB)!, status)]]) };
+      const rwReplicas = status === "disputed" ? new Map([[BOB, { ...alice.accountReplicas.get(BOB)!, _tag: "disputed" } as AccountReplica]]) : alice.accountReplicas;
+      same(ogTry(() => ogAdmission.validatePreparedHtlcPayment(ogS as never, tx, { htlc: { version: 1, entries: [], originated: [tampered] } } as never)), validatePreparedHtlcPayment({ ...view, replicas: rwReplicas }, tx, { ...infra, originated: [tampered] }), `valid${i}`);
+    }
+    expect(accepted).toBeGreaterThan(60);
+  });
+
+  test("MATCH: Alice's frame commits og's prepared origin, her paybook entry and root equal og handleHtlcPayment's, and the first-hop htlc_lock is og's wire tx", async () => {
+    const profiles = baseProfiles(), secret = "0x" + "42".repeat(32);
+    const tx = withDeterministicHtlcTestSecret({ type: "htlcPayment", data: { targetEntityId: CAROL, tokenId: 1, amount: 100n, maxSenderDebit: 200n, route: [ALICE, BOB, CAROL], deliveryMode: "instant", description: "invoice 7" } } as never, secret) as unknown as EntityTx;
+    const txHash = ogAdmission.hashRawHtlcPaymentTx(tx as never);
+    const ctx = { ...verifiers, htlcInfra: (id: EntityId) => (id === ALICE ? { profiles, secretFor: (h: string) => (h === txHash ? secret : undefined), online: () => true } : undefined) };
+    const step = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], BigInt(ts))] }, ctx as never));
+    expect(step.rejected.length).toBe(0);
+    const after = replicaOf(step.runtime, ALICE);
+    const og = await ogAdmission.materializeOriginatedHtlcPayments({ state: ogStateOf(alice, ts) as never, proposalTxs: [tx as never], profiles: profiles as never, height: 1, resolveRoute: async () => [] });
+    // og handleHtlcPayment on the same prepared context: paybook entry and first-hop lock
+    const program = createBookIntentProgram(), ogState = ogStateOf(alice, ts) as any;
+    const handled = await handleHtlcPayment(ogState, tx as never, { quietRuntimeLogs: true } as never, [], true, { htlc: { version: 1, entries: [], originated: og } } as never, program.openSlot());
+    applyBookIntentProgram(handled.newState, program);
+    expect(stableJson([...(after.state.paybook?.entries ?? new Map())])).toBe(stableJson([...handled.newState.paybook.entries]));
+    expect(stableJson(unwrap(entityCollectionCommitment(after.state.paybook!.entries as never, "paybookHashlock")))).toBe(stableJson(ogCollection(handled.newState.paybook.entries, false, "paybookHashlock")));
+    const lock = step.outbox.find((o) => "tx" in o && o.tx.data.kind === "ack_frame");
+    if (lock === undefined || !("tx" in lock) || lock.tx.data.kind !== "ack_frame") throw new Error("no first-hop frame");
+    const child = after.accountReplicas.get(BOB)!;
+    expect(stableJson(unwrap(wireTx(lock.tx.data.frame.txs[0] as never, replicaId(child), isLeft(ALICE, replicaId(child)))))).toBe(stableJson(handled.accountTxs[0]!.tx));
+    // the committed Entity frame carries exactly og's prepared origin; replaying the same input reproduces the same outbox
+    const committed = [...step.runtime.entities.values()].length;
+    expect(committed).toBe(3);
+    const replayed = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], BigInt(ts))] }, ctx as never));
+    expect(stableJson(replayed.outbox)).toBe(stableJson(step.outbox));
+  });
+});

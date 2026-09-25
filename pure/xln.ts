@@ -4198,6 +4198,8 @@ export type EntityState = {
   readonly id: EntityId; readonly quorum: Quorum; readonly jurisdiction: Domain; readonly accounts: ReadonlyMap<EntityId, AccountState>;
   readonly height: bigint; readonly timestamp: bigint; readonly jurisdictionConfig?: JurisdictionConfig | undefined; readonly committed: EntityCommitted;
   readonly leaderState?: LeaderState | undefined;
+  /** og EntityState.paybook: absent until the first HTLC entry; the root then commits it instead of `committed.paybook`. */
+  readonly paybook?: Paybook | undefined;
 };
 /** og EntityLeaderTimeoutVoteBody (leader/index.ts buildEntityLeaderVoteBody). */
 export type LeaderVoteBody = { readonly entityId: string; readonly targetHeight: number; readonly previousFrameHash: string; readonly fromView: number; readonly toView: number; readonly previousLeaderId: string; readonly nextLeaderId: string };
@@ -4219,6 +4221,7 @@ export type EntityTx =
   | { readonly type: "chatMessage"; readonly data: { readonly message: string; readonly timestamp: number; readonly metadata?: Readonly<Record<string, unknown>> | undefined } }
   | { readonly type: "requestCollateral"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number } }
   | { readonly type: "profile-update"; readonly data: { readonly profile: ProfileUpdate } }
+  | { readonly type: "htlcPayment"; readonly data: HtlcPaymentData }
   | LendingEntityTx;
 /** og types/entity-tx.ts lendingOffer/Borrow/Repay/ClosePosition: each queues one Account lending tx on the hub Account. */
 export type LendingEntityTx =
@@ -4259,7 +4262,7 @@ export interface ProposedEntity extends Tagged<"proposed", EntityEnv & EntityCan
 /** og `lockedFrame`: this validator replayed and signed `frame`. */
 export interface LockedEntity extends Tagged<"locked", EntityEnv & EntityCandidate> {}
 export type EntityReplica = OpenEntity | ProposedEntity | LockedEntity;
-export type EntityContext = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign; readonly self: EntityId; readonly signerId: Address; readonly from?: EntityId | undefined };
+export type EntityContext = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign; readonly self: EntityId; readonly signerId: Address; readonly from?: EntityId | undefined; readonly htlc?: HtlcProposerInfra | undefined };
 export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large">;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
@@ -4271,6 +4274,7 @@ export type EntityError =
   | Tagged<"precommit_frame_mismatch" | "precommit_not_active" | "precommit_signer_equivocation" | "commit_conflict" | "commit_wait">
   | Tagged<"leader_vote_invalid" | "leader_vote_equivocation" | "leader_prepared_rejected" | "proposal_superseded" | "hanko_build">
   | Tagged<"profile_update", { reason: "entity" | "entity_kind" | "sectors_invalid" | "sectors_noncanonical" }>
+  | Tagged<"htlc_payment", { code: string }>
   | Tagged<"unknown_member" | "duplicate_member" | "not_proposer" | "invalid_signature" | "wrong_replica", { address: string }>;
 export type EntityGrammar = { readonly table: typeof EntityTransition; readonly replica: EntityReplica; readonly input: EntityInput; readonly ctx: { readonly [E in EntityEvent]: EntityContext }; readonly output: EntityOutput; readonly error: EntityError };
 export type NextEntityPhase<S extends EntityPhase, E extends EntityEvent> = Next<EntityGrammar, S, E>;
@@ -4280,7 +4284,7 @@ export const encodeEntityState = (s: EntityState): string => canon({
   id: s.id,
   quorum: match(s.quorum, { teaching: (q) => ({ threshold: q.threshold, members: q.members }), board: (q) => ({ board: encodeBoardHash({ board: q.board }), entityId: q.entityId }) }),
   jurisdiction: s.jurisdiction, accounts: new Map([...s.accounts].map(([peer, a]) => [peer, hashAccountState(a)])),
-  height: s.height, timestamp: s.timestamp, jurisdictionConfig: s.jurisdictionConfig, committed: s.committed, leaderState: s.leaderState,
+  height: s.height, timestamp: s.timestamp, jurisdictionConfig: s.jurisdictionConfig, committed: s.committed, leaderState: s.leaderState, paybook: s.paybook,
 } satisfies Record<keyof EntityState, unknown>);
 export const hashEntityState = (s: EntityState): EntityStateHash => keccakUtf8(encodeEntityState(s)) as EntityStateHash;
 const HEX_EXT = 0x48;
@@ -4436,6 +4440,16 @@ const accountLeaf = (account: EntityRootAccount): Result<readonly [Uint8Array, U
     },
   }), (encoded) => ok([key, sha256(concat([ACCOUNT_LEAF, encoded]))] as const))));
 };
+/** og entityCollectionCommitment (entity/state/persistent-collection-map.ts): radix-16 over the raw keys (u16-prefixed text, or a paybook hashlock's 32 bytes), each leaf the integrity digest of the value's consensus bytes. */
+export type EntityCollectionCommitment = { readonly radix: 16; readonly leafCount: number; readonly root: string };
+export const entityCollectionCommitment = (entries: ReadonlyMap<string, Binary>, keyCodec: "text" | "paybookHashlock" = "text"): Result<EntityCollectionCommitment, EntityRootError> =>
+  map(traverse([...entries], ([key, value]): Result<Leaf, EntityRootError> => {
+    const text = utf8(key);
+    if (keyCodec === "paybookHashlock" ? !/^0x[0-9a-f]{64}$/.test(key) : text.length > 0xffff) return err({ _tag: "bad_key" });
+    if (holdsCollection(value)) return err({ _tag: "nested_collection" });
+    const k = keyCodec === "paybookHashlock" ? hexToBytes(key) : concat([u16(text.length), text]);
+    return chain(encodeConsensus(value), (bytes): Result<Leaf, EntityRootError> => (bytes.length > MAX_LEAF_BYTES ? err({ _tag: "leaf_too_large" }) : ok({ nibbles: nibblesOf(k), key: k, digest: sha256(bytes) })));
+  }), (leaves) => ({ radix: 16 as const, leafCount: leaves.length, root: sealRadix(leaves) }));
 const sectionDigest = (value: Binary): Result<string, BinaryError> => map(encodeConsensus(value), integrity);
 /** og ENTITY_STATE_ROOT_FIELDS (state-root.ts:50). Every present field is one root section. */
 export const ENTITY_STATE_ROOT_FIELDS = ["entityId", "height", "timestamp", "nonces", "entityCommandNonces", "proposals", "config", "leaderState", "reserves", "accounts", "externalWallet",
@@ -4785,7 +4799,7 @@ export const localTimeoutVote = (r: EntityReplica, timestamp: bigint): EntityInp
   return { kind: "leaderTimeoutVote", timestamp, local: true, vote: { ...leaderVoteBody(r.state, r.head), voterId: signerId(r.signerId), signature: "", ...opt("preparedFrame", lock) } };
 };
 
-type FoldContext = { readonly verify: Verify; readonly timestamp: bigint };
+type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined };
 type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 /** Who the tx is about: og routes accountInput by its envelope, the rest by an explicit counterparty. */
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
@@ -4794,6 +4808,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   requestCollateral: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
+  htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -4979,6 +4994,233 @@ const profileUpdate = (state: EntityState, p: ProfileUpdate): Result<Binary, Ent
     avatar: typeof p.avatar === "string" ? p.avatar : text("avatar"), bio: typeof p.bio === "string" ? p.bio : text("bio"), website: typeof p.website === "string" ? p.website : text("website"),
   });
 };
+// ---- og Entity htlcPayment: entity/paybook/payment-admission.ts, tx/handlers/htlc/payment.ts, types/entity/htlc-infra-context.ts ----
+/** og EntityTx htlcPayment data: the route is the full path source..target; the preimage never enters consensus. */
+export type HtlcPaymentData = {
+  readonly targetEntityId: string; readonly tokenId: number; readonly amount: bigint; readonly maxSenderDebit: bigint; readonly route: readonly string[];
+  readonly description?: string | undefined; readonly deliveryMode: ConditionalMode; readonly startedAtMs?: number | undefined; readonly hashlock?: string | undefined;
+};
+/** og PreparedOriginatedHtlcPayment: the proposer's public facts for one raw htlcPayment tx, committed in the frame's entityContext.htlc.originated. */
+export type PreparedOriginated = {
+  readonly txHash: string; readonly targetEntityId: string; readonly tokenId: number; readonly recipientAmount: bigint; readonly route: readonly string[]; readonly description: string;
+  readonly deliveryMode: ConditionalMode; readonly startedAtMs: number; readonly hashlock: string; readonly senderLockAmount: bigint; readonly maxSenderDebit: bigint; readonly totalFee: bigint;
+  readonly timelock: bigint; readonly revealBeforeHeight: number; readonly nextHopEntityId: string; readonly envelope: HtlcEnvelope;
+};
+/** og PaybookEntry (entity/types.ts): one hashlock-keyed payment machine entry. */
+export type PaybookEntry = {
+  readonly hashlock: string; readonly description?: string | undefined; readonly tokenId?: number | undefined; readonly amount?: bigint | undefined; readonly startedAtMs?: number | undefined;
+  readonly originated?: true | undefined; readonly inboundEntity?: string | undefined; readonly outboundEntity?: string | undefined; readonly inboundSettled?: true | undefined; readonly outboundSettled?: true | undefined;
+  readonly secret?: string | undefined; readonly secretAckPending?: boolean | undefined; readonly secretAckStartedAt?: number | undefined; readonly secretAckDeadlineAt?: number | undefined; readonly secretAckedAt?: number | undefined;
+  readonly pendingFee?: bigint | undefined; readonly crossJurisdictionRelay?: Binary | undefined; readonly createdTimestamp: number;
+};
+export type Paybook = { readonly entries: ReadonlyMap<string, PaybookEntry>; readonly feesEarned: bigint };
+export const EMPTY_PAYBOOK: Paybook = { entries: new Map(), feesEarned: 0n };
+/** og state-root.ts projectEntityConsensusState paybook section: the hashlock-keyed collection commitment and the fee total. */
+export const paybookSection = (p: Paybook): Result<Binary, EntityRootError> =>
+  map(entityCollectionCommitment(new Map([...p.entries].map(([k, v]) => [k, v as unknown as Binary])), "paybookHashlock"), (entries) => ({ entries, feesEarned: p.feesEarned }));
+/** The proposer's HTLC infrastructure (og proposal/infra-context.ts): gossip profiles as og Profile values, plus proposer-only entropy. */
+export type HtlcProposerInfra = {
+  readonly profiles: readonly Binary[];
+  /** og getDeterministicHtlcTestSecret: a secret registered for this exact canonical payment; its ephemeral keys then derive from the tx hash. */
+  readonly secretFor?: ((txHash: string) => string | undefined) | undefined;
+  /** og secureRandomBytes32Hex: fresh proposer entropy (32-byte hex) for a label; the rewrite takes it as input. */
+  readonly entropy?: ((label: string) => string | undefined) | undefined;
+  /** og observeOnlineEntityIds: the proposer's liveness view of a peer, committed as a peer assertion. */
+  readonly online?: ((entityId: string) => boolean) | undefined;
+};
+/** The frame's committed HTLC context as the fold consumes it. */
+export type HtlcFrameInfra = { readonly gossipProfiles: readonly Binary[]; readonly peerAssertions: readonly Binary[]; readonly originated: readonly PreparedOriginated[] };
+export const EMPTY_HTLC_INFRA: HtlcFrameInfra = { gossipProfiles: [], peerAssertions: [], originated: [] };
+const HTLC_NOTE_MAX_BYTES = 256, MAX_TOKEN_ID = 65535;
+const htlcReject = (code: string): Result<never, EntityError> => err({ _tag: "htlc_payment", code });
+const fromOnion = <T>(r: Result<T, OnionError>): Result<T, EntityError> => mapErr(r, (e): EntityError => ({ _tag: "htlc_payment", code: e.code }));
+const bytes32Id = (value: unknown, code: string): Result<string, EntityError> => { const n = lower(value); return /^0x[0-9a-f]{64}$/.test(n) ? ok(n) : htlcReject(code); };
+type HtlcPaymentTx = Extract<EntityTx, { type: "htlcPayment" }>;
+/** og hashRawHtlcPaymentTx: keccak of the canonical consensus bytes of the exact raw tx. */
+export const htlcPaymentTxHash = (tx: HtlcPaymentTx): Result<string, EntityError> =>
+  chain(binaryBody(tx), (b) => map(encodeConsensus(b), keccak256Hex));
+/** og assertRawHtlcPayment. */
+const rawHtlcPayment = (tx: HtlcPaymentTx): Result<HtlcPaymentData, EntityError> => {
+  const d = tx.data, allowed = new Set(["amount", "deliveryMode", "maxSenderDebit", "route", "targetEntityId", "tokenId", "description", "hashlock", "startedAtMs"]);
+  if (Object.keys(d).some((k) => !allowed.has(k))) return htlcReject("HTLC_PAYMENT_FIELDS_INVALID");
+  if (!Number.isSafeInteger(d.tokenId) || d.tokenId < 0 || d.tokenId > MAX_TOKEN_ID) return htlcReject("HTLC_PAYMENT_TOKEN_INVALID");
+  if (typeof d.amount !== "bigint" || d.amount <= 0n) return htlcReject("HTLC_PAYMENT_AMOUNT_INVALID");
+  if (typeof d.maxSenderDebit !== "bigint" || d.maxSenderDebit <= 0n) return htlcReject("HTLC_PAYMENT_MAX_SENDER_DEBIT_INVALID");
+  if (d.maxSenderDebit < d.amount) return htlcReject("HTLC_PAYMENT_MAX_SENDER_DEBIT_BELOW_AMOUNT");
+  if (d.deliveryMode !== "instant" && d.deliveryMode !== "async") return htlcReject("HTLC_PAYMENT_DELIVERY_MODE_INVALID");
+  if (d.description !== undefined && (typeof d.description !== "string" || d.description !== d.description.trim() || utf8(d.description).byteLength > HTLC_NOTE_MAX_BYTES)) return htlcReject("HTLC_PAYMENT_DESCRIPTION_INVALID");
+  if (d.hashlock !== undefined && !/^0x[0-9a-f]{64}$/.test(d.hashlock)) return htlcReject("HTLC_PAYMENT_HASHLOCK_INVALID");
+  return ok(d);
+};
+/** og normalizeRoute: lowercase ids, source first, target last, at most 100 hops, loop-free (a self route needs two unique intermediates). */
+const htlcRoute = (raw: readonly string[], source: string, target: string): Result<readonly string[], EntityError> => chain(traverse(raw, (v) => bytes32Id(v, "HTLC_PAYMENT_ROUTE_ENTITY_INVALID")), (route) => {
+  if (route.length < 2 || route[0] !== source || route[route.length - 1] !== target) return htlcReject("HTLC_PAYMENT_ROUTE_INVALID");
+  if (route.length - 1 > HTLC_MAX_HOPS) return htlcReject("HTLC_PAYMENT_ROUTE_TOO_LONG");
+  const inner = route.slice(1, -1), selfRoute = source === target;
+  const validSelf = selfRoute && inner.length >= 2 && new Set(inner).size === inner.length && !inner.includes(source);
+  return (!selfRoute && new Set(route).size !== route.length) || (selfRoute && !validSelf) ? htlcReject("HTLC_PAYMENT_ROUTE_LOOP") : ok(route);
+});
+const sameDomainCanonical = (a: Domain, b: Domain): Result<boolean, EntityError> =>
+  chain(mapErr(domainOf(a), (): EntityError => ({ _tag: "htlc_payment", code: "ACCOUNT_STATE_DOMAIN_INVALID" })), (x) => map(mapErr(domainOf(b), (): EntityError => ({ _tag: "htlc_payment", code: "ACCOUNT_STATE_DOMAIN_INVALID" })), (y) => x.chainId === y.chainId && x.depositoryAddress === y.depositoryAddress));
+/** og Profile -> RoutingProfile: the fields pathfinding/htlc-quote.ts reads (routingFeePPM ?? 1, baseFee ?? 0n, tokenCapacities as a Map or a Record). */
+export const routingProfileOf = (b: Binary): RoutingProfile | null => {
+  if (b === null || typeof b !== "object" || Array.isArray(b) || b instanceof Map) return null;
+  const p = b as { readonly [k: string]: unknown }, meta = (p["metadata"] ?? {}) as { readonly [k: string]: unknown };
+  const accounts = Array.isArray(p["accounts"]) ? (p["accounts"] as readonly { readonly [k: string]: unknown }[]) : [];
+  return {
+    entityId: String(p["entityId"] ?? ""), entityEncryptionPublicKey: String(p["entityEncryptionPublicKey"] ?? ""),
+    metadata: { ...opt("routingFeePPM", meta["routingFeePPM"] as number | undefined), ...opt("baseFee", typeof meta["baseFee"] === "bigint" ? meta["baseFee"] : undefined) },
+    accounts: accounts.map((a): RoutingAccount => {
+      const caps = a["tokenCapacities"], rows: [unknown, unknown][] = caps instanceof Map ? [...caps] : caps !== null && typeof caps === "object" ? Object.entries(caps) : [];
+      return { counterpartyId: String(a["counterpartyId"] ?? ""), domain: a["domain"] as Domain, tokenCapacities: new Map(rows.map(([k, v]) => [Number(k), v as { readonly inCapacity: bigint; readonly outCapacity: bigint }])) };
+    }),
+  };
+};
+/** og hopAccountDomain: the lane's domain as whichever Profile advertises it; two advertisements must agree. */
+const hopDomain = (index: RoutingIndex, from: string, to: string): Result<Domain, EntityError> => chain(fromOnion(uniqueProfile(index, from)), (fp) => chain(fromOnion(uniqueProfile(index, to)), (tp) => {
+  const own = fp.accounts.find((a) => a.counterpartyId.toLowerCase() === to), mirror = tp.accounts.find((a) => a.counterpartyId.toLowerCase() === from);
+  if (own === undefined && mirror === undefined) return htlcReject(`HTLC_PAYMENT_PROFILE_ACCOUNT_MISSING:${from}:${to}`);
+  if (own !== undefined && mirror !== undefined) return chain(sameDomainCanonical(own.domain, mirror.domain), (same) => (same ? ok(own.domain) : htlcReject(`HTLC_PAYMENT_PROFILE_ACCOUNT_DOMAIN_MISMATCH:${from}:${to}`)));
+  return ok((own ?? mirror)?.domain as Domain);
+}));
+type HtlcOriginView = { readonly id: EntityId; readonly timestamp: number; readonly jHeight: number; readonly encryptionKey: string; readonly paybook: Paybook; readonly replicas: Replicas };
+/** og assertOriginRouteEvidence (shared with materialization): source profile key, every hop's domain, the first hop against the local Account. */
+const originRouteEvidence = (v: HtlcOriginView, index: RoutingIndex, route: readonly string[]): Result<readonly Domain[], EntityError> =>
+  chain(fromOnion(uniqueProfile(index, route[0] ?? "")), (source) => source.entityEncryptionPublicKey !== v.encryptionKey ? htlcReject("HTLC_PAYMENT_SOURCE_PROFILE_KEY_MISMATCH")
+    : traverse(route.slice(0, -1), (from, i) => chain(hopDomain(index, from, route[i + 1] ?? ""), (domain): Result<Domain, EntityError> => {
+      if (i !== 0) return ok(domain);
+      const local = v.replicas.get((route[1] ?? "") as EntityId);
+      return local === undefined ? htlcReject(`HTLC_PAYMENT_SOURCE_ACCOUNT_DOMAIN_MISMATCH:${route[0]}:${route[1]}`)
+        : chain(sameDomainCanonical(local.state.terms.domain, domain), (same) => (same ? ok(domain) : htlcReject(`HTLC_PAYMENT_SOURCE_ACCOUNT_DOMAIN_MISMATCH:${route[0]}:${route[1]}`)));
+    })));
+type OriginEconomics = { readonly startedAtMs: number; readonly senderLockAmount: bigint; readonly hopForwardAmounts: ReadonlyMap<string, bigint>; readonly timelock: bigint; readonly revealBeforeHeight: number };
+/** og quote + deadline window for one payment at the frame clock. */
+const originEconomics = (v: HtlcOriginView, index: RoutingIndex, d: HtlcPaymentData, route: readonly string[]): Result<OriginEconomics, EntityError> => {
+  const startedAtMs = d.startedAtMs ?? v.timestamp;
+  if (!Number.isSafeInteger(startedAtMs) || startedAtMs !== v.timestamp) return htlcReject("HTLC_PAYMENT_STARTED_AT_INVALID");
+  return chain(fromOnion(quoteHtlcRoute(index, route, d.tokenId, d.amount)), (quote) => quote.senderLockAmount > d.maxSenderDebit ? htlcReject("HTLC_PAYMENT_MAX_SENDER_DEBIT_EXCEEDED")
+    : map(fromOnion(paymentDeadlineWindow(d.deliveryMode, v.jHeight, startedAtMs, route.length - 1)), (w) => ({
+      startedAtMs, senderLockAmount: quote.senderLockAmount, hopForwardAmounts: quote.hopForwardAmounts, timelock: hopTimelock(w.baseTimelock, 0), revealBeforeHeight: hopRevealHeight(w.baseHeight, 0, route.length - 1),
+    })));
+};
+/** og generateHtlcEphemeralPrivateKey: 32 bytes (keccak of the deterministic seed, or entropy), clamped per RFC 7748. */
+const clampedX25519 = (hex32: string): string => { const b = hexToBytes(hex32); b[0] = (b[0] ?? 0) & 248; b[31] = ((b[31] ?? 0) & 127) | 64; return bytesToHex(b); };
+/**
+ * og materializeOriginatedHtlcPayments (proposer only): per htlcPayment in order, the raw checks, route, secret -> hashlock, quote, deadline window,
+ * profile/domain evidence and the onion; sorted by tx hash. The rewrite requires an explicit route (og's gossip route discovery is not ported).
+ */
+export const materializeOriginated = (v: HtlcOriginView, profiles: readonly Binary[], txs: readonly EntityTx[], infra: HtlcProposerInfra): { readonly originated: readonly PreparedOriginated[]; readonly refused: ReadonlyMap<EntityTx, EntityError> } => {
+  const index = routingIndex(profiles.flatMap((b) => { const p = routingProfileOf(b); return p === null ? [] : [p]; }));
+  const taken = new Set<string>(), hashes = new Set<string>(), refused = new Map<EntityTx, EntityError>(), originated: PreparedOriginated[] = [];
+  for (const tx of txs) {
+    if (tx.type !== "htlcPayment") continue;
+    const one = chain(rawHtlcPayment(tx), (d) => chain(bytes32Id(v.id, "HTLC_PAYMENT_SOURCE_INVALID"), (source) => chain(bytes32Id(d.targetEntityId, "HTLC_PAYMENT_TARGET_INVALID"), (target) =>
+      chain(d.route.length > 0 ? htlcRoute(d.route, source, target) : htlcReject("HTLC_PAYMENT_ROUTE_RESOLUTION_UNAVAILABLE"), (route) => chain(htlcPaymentTxHash(tx), (txHash): Result<PreparedOriginated, EntityError> => {
+        const local = infra.secretFor?.(txHash), secret = local ?? infra.entropy?.(`htlc-secret:${txHash}`) ?? "";
+        if (!/^0x[0-9a-f]{64}$/.test(secret)) return htlcReject("HTLC_PAYMENT_PREIMAGE_INVALID");
+        const hashlock = (hashHtlcSecret(secret) ?? "").toLowerCase();
+        if (d.hashlock !== undefined && d.hashlock !== hashlock) return htlcReject("HTLC_PAYMENT_HASHLOCK_MISMATCH");
+        if (v.paybook.entries.has(hashlock) || taken.has(hashlock)) return htlcReject(`HTLC_PAYMENT_HASHLOCK_ALREADY_ACTIVE:${hashlock}`);
+        return chain(originEconomics(v, index, d, route), (e) => chain(originRouteEvidence(v, index, route), (domains) => {
+          const keys = new Map(route.map((id) => [id, unwrapOr(map(uniqueProfile(index, id), (p) => p.entityEncryptionPublicKey), () => "")]));
+          let keyIndex = 0;
+          const ephemeral = (): string => clampedX25519(local !== undefined ? keccak256Hex(utf8(`${txHash}:${keyIndex++}`)) : infra.entropy?.(`htlc-ephemeral:${txHash}:${keyIndex++}`) ?? ZERO_WORD);
+          return map(fromOnion(createOnionEnvelopes(route, secret, keys, domains, e.hopForwardAmounts, d.description, e.startedAtMs,
+            { hashlock, tokenId: d.tokenId, senderLockAmount: e.senderLockAmount, timelock: e.timelock, revealBeforeHeight: e.revealBeforeHeight }, ephemeral)), (envelope): PreparedOriginated => ({
+            txHash, targetEntityId: target, tokenId: d.tokenId, recipientAmount: d.amount, route, description: d.description ?? "", deliveryMode: d.deliveryMode, startedAtMs: e.startedAtMs,
+            hashlock, senderLockAmount: e.senderLockAmount, maxSenderDebit: d.maxSenderDebit, totalFee: e.senderLockAmount - d.amount, timelock: e.timelock, revealBeforeHeight: e.revealBeforeHeight,
+            nextHopEntityId: route[1] ?? "", envelope,
+          }));
+        }));
+      })))));
+    if (!one.ok) { refused.set(tx, one.error); continue; }
+    if (hashes.has(one.value.txHash)) { refused.set(tx, { _tag: "htlc_payment", code: `HTLC_PAYMENT_TX_DUPLICATE:${one.value.txHash}` }); continue; }
+    hashes.add(one.value.txHash); taken.add(one.value.hashlock); originated.push(one.value);
+  }
+  return { originated: [...originated].sort((a, b) => asc(a.txHash, b.txHash)), refused };
+};
+/** og assertOriginatedHtlcPayments (validators): one prepared origin per htlcPayment, unique hashlocks, route evidence and economics recomputed from public facts. */
+export const assertOriginated = (v: HtlcOriginView, infra: HtlcFrameInfra, txs: readonly EntityTx[]): Result<void, EntityError> => {
+  const payments = txs.filter((tx): tx is HtlcPaymentTx => tx.type === "htlcPayment");
+  if (payments.length !== infra.originated.length) return htlcReject("HTLC_PAYMENT_PREPARED_ORIGIN_COUNT_MISMATCH");
+  const index = routingIndex(infra.gossipProfiles.flatMap((b) => { const p = routingProfileOf(b); return p === null ? [] : [p]; }));
+  const origins = new Map(infra.originated.map((o) => [o.txHash, o])), taken = new Set<string>();
+  return map(traverse(payments, (tx) => chain(rawHtlcPayment(tx), (d) => chain(htlcPaymentTxHash(tx), (txHash): Result<void, EntityError> => {
+    const o = origins.get(txHash);
+    if (o === undefined) return htlcReject(`HTLC_PAYMENT_PREPARED_CONTEXT_REQUIRED:${txHash}`);
+    if (v.paybook.entries.has(o.hashlock) || taken.has(o.hashlock)) return htlcReject(`HTLC_PAYMENT_HASHLOCK_ALREADY_ACTIVE:${o.hashlock}`);
+    taken.add(o.hashlock);
+    return chain(bytes32Id(v.id, "HTLC_PAYMENT_SOURCE_INVALID"), (source) => chain(bytes32Id(d.targetEntityId, "HTLC_PAYMENT_TARGET_INVALID"), (target) => chain(htlcRoute(o.route, source, target), (route) => {
+      if (d.route.length > 0 && canon(route) !== canon(d.route)) return htlcReject(`HTLC_PAYMENT_PREPARED_ROUTE_MISMATCH:${txHash}`);
+      return chain(originRouteEvidence(v, index, route), () => chain(originEconomics(v, index, d, o.route), (e): Result<void, EntityError> => {
+        if (d.hashlock !== undefined && d.hashlock !== o.hashlock) return htlcReject(`HTLC_PAYMENT_PREPARED_HASHLOCK_MISMATCH:${txHash}`);
+        const expected: readonly (readonly [string, unknown, unknown])[] = [
+          ["targetEntityId", o.targetEntityId, d.targetEntityId.toLowerCase()], ["tokenId", o.tokenId, d.tokenId], ["recipientAmount", o.recipientAmount, d.amount], ["description", o.description, d.description ?? ""],
+          ["deliveryMode", o.deliveryMode, d.deliveryMode], ["startedAtMs", o.startedAtMs, e.startedAtMs], ["senderLockAmount", o.senderLockAmount, e.senderLockAmount], ["maxSenderDebit", o.maxSenderDebit, d.maxSenderDebit],
+          ["totalFee", o.totalFee, e.senderLockAmount - d.amount], ["timelock", o.timelock, e.timelock], ["revealBeforeHeight", o.revealBeforeHeight, e.revealBeforeHeight], ["nextHopEntityId", o.nextHopEntityId, o.route[1]],
+        ];
+        const bad = expected.find(([, a, b]) => a !== b);
+        return bad === undefined ? ok(undefined) : htlcReject(`HTLC_PAYMENT_PREPARED_${bad[0].toUpperCase()}_MISMATCH:${txHash}`);
+      }));
+    })));
+  }))), () => undefined);
+};
+/** og validatePreparedHtlcPayment: the tx's prepared origin, a fresh hashlock, an active next-hop Account with committed out-capacity for the sender lock. */
+export const validatePreparedHtlcPayment = (v: HtlcOriginView, tx: HtlcPaymentTx, infra: HtlcFrameInfra): Result<PreparedOriginated, EntityError> =>
+  chain(rawHtlcPayment(tx), (d) => chain(htlcPaymentTxHash(tx), (txHash): Result<PreparedOriginated, EntityError> => {
+    const p = infra.originated.find((o) => o.txHash === txHash);
+    if (p === undefined) return htlcReject(`HTLC_PAYMENT_PREPARED_CONTEXT_REQUIRED:${txHash}`);
+    if (p.targetEntityId !== d.targetEntityId.toLowerCase() || p.tokenId !== d.tokenId || p.recipientAmount !== d.amount || p.maxSenderDebit !== d.maxSenderDebit || p.deliveryMode !== d.deliveryMode
+      || (d.startedAtMs !== undefined && p.startedAtMs !== d.startedAtMs)) return htlcReject(`HTLC_PAYMENT_PREPARED_CONTEXT_MISMATCH:${txHash}`);
+    if (v.paybook.entries.has(p.hashlock)) return htlcReject(`HTLC_PAYMENT_HASHLOCK_ALREADY_ACTIVE:${p.hashlock}`);
+    const child = v.replicas.get(p.nextHopEntityId as EntityId);
+    if (child === undefined || child._tag === "preparing" || child._tag === "disputed") return htlcReject(`HTLC_PAYMENT_OUTBOUND_ACCOUNT_UNAVAILABLE:${txHash}`);
+    const tk = String(p.tokenId) as TokenId, body = child.state, byLeft = isLeft(v.id, replicaId(child));
+    return !body.account.deltas.has(tk) || outCapacity(getDelta(body.account, tk), byLeft, holds(body, tk, byLeft)) < p.senderLockAmount ? htlcReject(`HTLC_PAYMENT_OUTBOUND_CAPACITY_INSUFFICIENT:${txHash}`) : ok(p);
+  }));
+/** og handleHtlcPayment: record the originated paybook entry and queue the first-hop htlc_lock carrying the onion (no output; the Account frame proposes in this Entity frame). */
+export const htlcPaymentStep = (p: PreparedOriginated, paybook: Paybook, timestamp: number): { readonly paybook: Paybook; readonly lock: AccountTx } => ({
+  paybook: { ...paybook, entries: mapSet(paybook.entries, p.hashlock, {
+    hashlock: p.hashlock, ...(p.description ? { description: p.description } : {}), tokenId: p.tokenId, amount: p.recipientAmount, startedAtMs: p.startedAtMs, originated: true, outboundEntity: p.nextHopEntityId, createdTimestamp: timestamp,
+  }) },
+  lock: { type: "htlc_lock", lockId: p.hashlock, hashlock: p.hashlock, timelock: p.timelock, revealBeforeHeight: BigInt(p.revealBeforeHeight), amount: p.senderLockAmount, tokenId: String(p.tokenId) as TokenId, deliveryMode: p.deliveryMode, envelope: p.envelope },
+});
+/** og selectInfraProfiles + the committed gossipProfiles: exactly the Profiles of every entity on an originated route, sorted by entity id. */
+const frameProfiles = (profiles: readonly Binary[], originated: readonly PreparedOriginated[]): readonly Binary[] => {
+  const ids = new Set(originated.flatMap((o) => o.route));
+  return profiles.filter((b) => ids.has(lower((b as { readonly entityId?: unknown } | null)?.entityId))).sort((a, b) => asc(String((a as { entityId: string }).entityId), String((b as { entityId: string }).entityId)));
+};
+/** og materializeFreshEntityInfraContext: the committed context for the payments this frame actually includes (profiles of every route entity, liveness of every next hop). */
+const frameHtlcInfra = (infra: HtlcProposerInfra | undefined, originated: readonly PreparedOriginated[], included: readonly EntityTx[]): Result<HtlcFrameInfra, EntityError> => {
+  if (originated.length === 0) return ok(EMPTY_HTLC_INFRA);
+  const kept = new Set<string>();
+  for (const tx of included) if (tx.type === "htlcPayment") { const h = htlcPaymentTxHash(tx); if (!h.ok) return h; kept.add(h.value); }
+  const final = originated.filter((o) => kept.has(o.txHash)), hops = [...new Set(final.map((o) => o.nextHopEntityId))].sort(asc);
+  return ok({ gossipProfiles: frameProfiles(infra?.profiles ?? [], final), peerAssertions: hops.map((entityId) => ({ entityId, online: infra?.online?.(entityId) === true })), originated: final });
+};
+/** og validateHtlcPreparedInfraContext (originated half): exact field set, canonical ids, strictly sorted tx hashes, route and economics shape, opaque envelope. */
+export const preparedOriginOf = (b: Binary): PreparedOriginated | null => {
+  const KEYS = "deliveryMode,description,envelope,hashlock,maxSenderDebit,nextHopEntityId,recipientAmount,revealBeforeHeight,route,senderLockAmount,startedAtMs,targetEntityId,timelock,tokenId,totalFee,txHash";
+  if (b === null || typeof b !== "object" || Array.isArray(b) || b instanceof Map || Object.keys(b).sort().join(",") !== KEYS) return null;
+  const o = b as unknown as PreparedOriginated, id = (v: unknown): boolean => typeof v === "string" && /^0x[0-9a-f]{64}$/.test(v);
+  const route = o.route, inner = Array.isArray(route) ? route.slice(1, -1) : [];
+  if (![o.txHash, o.targetEntityId, o.hashlock, o.nextHopEntityId].every(id) || !Array.isArray(route) || route.length < 2 || route.length > 101 || !route.every(id)) return null;
+  if (route[0] === route[route.length - 1] ? inner.length < 2 || new Set(inner).size !== inner.length || inner.includes(route[0] as string) : new Set(route).size !== route.length) return null;
+  if (o.targetEntityId !== route[route.length - 1] || o.nextHopEntityId !== route[1]) return null;
+  if (!Number.isSafeInteger(o.tokenId) || o.tokenId < 0 || o.tokenId > MAX_TOKEN_ID) return null;
+  if (typeof o.recipientAmount !== "bigint" || o.recipientAmount <= 0n || typeof o.senderLockAmount !== "bigint" || o.senderLockAmount < o.recipientAmount || typeof o.maxSenderDebit !== "bigint" || o.maxSenderDebit < o.senderLockAmount
+    || typeof o.totalFee !== "bigint" || o.totalFee !== o.senderLockAmount - o.recipientAmount || typeof o.timelock !== "bigint" || o.timelock <= 0n) return null;
+  if ((o.deliveryMode !== "instant" && o.deliveryMode !== "async") || !Number.isSafeInteger(o.startedAtMs) || o.startedAtMs <= 0 || !Number.isSafeInteger(o.revealBeforeHeight) || o.revealBeforeHeight <= 0) return null;
+  return typeof o.description !== "string" || utf8(o.description).byteLength > HTLC_NOTE_MAX_BYTES || htlcEnvelopeHash(o.envelope) === null ? null : o;
+};
+const frameInfraOf = (frame: EntityFrame): Result<HtlcFrameInfra, EntityError> => {
+  const origins = frame.entityContext.htlc.originated.map(preparedOriginOf);
+  if (origins.some((o, i) => o === null || (i > 0 && (origins[i - 1]?.txHash ?? "") >= o.txHash))) return htlcReject("HTLC_PREPARED_CONTEXT_INVALID");
+  return ok({ gossipProfiles: frame.entityContext.gossipProfiles, peerAssertions: frame.entityContext.peerAssertions, originated: origins as readonly PreparedOriginated[] });
+};
+const originView = (state: EntityState, replicas: Replicas, timestamp: bigint): HtlcOriginView => ({
+  id: state.id, timestamp: Number(timestamp), jHeight: Number(entityJHeight(state)), encryptionKey: String(state.committed["entityEncryptionPublicKey"] ?? ""), paybook: state.paybook ?? EMPTY_PAYBOOK, replicas,
+});
 const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldContext): Result<Draft, EntityError> => {
   const origin = originOf(tx, state.id), peer = peerOf(tx, state.id);
   const enqueue = (target: EntityId, accountTxs: readonly AccountTx[], outputs: readonly EntityOutput[]): Result<Draft, EntityError> =>
@@ -5012,6 +5254,10 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       return replicas.has(to) ? enqueue(to, [{ type: "request_collateral", tokenId, amount, ...opt("feeTokenId", feeTokenId), feeAmount, policyVersion }], [wake(state, ctx.timestamp)]) : ok(skip);
     },
     "profile-update": (x) => map(profileUpdate(state, x.data.profile), (profile) => ({ ...skip, state: { ...state, committed: { ...state.committed, profile } } })),
+    htlcPayment: (x) => chain(validatePreparedHtlcPayment(originView(state, replicas, ctx.timestamp), x, ctx.htlc ?? EMPTY_HTLC_INFRA), (p) => {
+      const next = htlcPaymentStep(p, state.paybook ?? EMPTY_PAYBOOK, Number(ctx.timestamp));
+      return map(enqueue(p.nextHopEntityId as EntityId, [next.lock], []), (d) => ({ ...d, state: { ...d.state, paybook: next.paybook } }));
+    }),
     accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => {
       const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp };
       const apply = (at: Folded): Result<Draft, EntityError> => withChild(at.accountReplicas, peer, (child) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)));
@@ -5094,7 +5340,8 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
 /** og computeCanonicalEntityConsensusStateHash over the draft: entityId, height, timestamp, config, accounts and every committed section. */
 export const entityRootOf = (state: EntityState, replicas: Replicas): Result<string, EntityError> =>
   chain(frameNumber(state.height), (height) => chain(frameNumber(state.timestamp), (timestamp) => chain(traverse([...replicas], ([peer, child]) => installedAccount(state.id, peer, child)),
-    (accounts) => entityStateRoot({ config: rootConfig(state), accounts, entityId: state.id, height, timestamp, committed: state.committed, leaderState: state.leaderState }))));
+    (accounts) => chain(state.paybook === undefined ? ok(state.committed) : map(paybookSection(state.paybook), (paybook): EntityCommitted => ({ ...state.committed, paybook })),
+      (committed) => entityStateRoot({ config: rootConfig(state), accounts, entityId: state.id, height, timestamp, committed, leaderState: state.leaderState })))));
 /** og computeEntityFrameAuthorityRoot(buildEntityFrameAuthority(state)): config + normalizeAuthorityLeader(leaderState). */
 const authorityRoot = (state: EntityState): Result<string, EntityRootError> => {
   const config = rootConfig(state), leader = signerId(state.leaderState?.activeValidatorId ?? config.validators[0] ?? "");
@@ -5129,14 +5376,14 @@ const hashesToSignOf = (entityId: EntityId, height: bigint, frameHash: string, o
 };
 const GENESIS_PARENT = "genesis";
 /** og certifyEntityProposal: the proposal state takes height+1 and the frame timestamp, then state root, authority root, frame hash, manifest. */
-const buildFrame = (r: EntityEnv, leader: FrameLeader, leaderState: LeaderState, timestamp: bigint, txs: readonly EntityTx[], folded: Draft): Result<EntityCandidate, EntityError> => {
+const buildFrame = (r: EntityEnv, leader: FrameLeader, leaderState: LeaderState, timestamp: bigint, txs: readonly EntityTx[], folded: Draft, infra: HtlcFrameInfra = EMPTY_HTLC_INFRA): Result<EntityCandidate, EntityError> => {
   const height = r.head.height + 1n, parent = parentOf(r.head), signer = signerId(leader.proposerSignerId);
   const committed: EntityCommitted = "crontabState" in folded.state.committed ? folded.state.committed : { ...folded.state.committed, crontabState: DEFAULT_CRONTAB };
   const draft: Draft = { ...folded, state: { ...folded.state, height, timestamp, committed, leaderState } };
   return chain(frameNumber(height), (heightNo) => chain(entityRootOf(draft.state, draft.accountReplicas), (stateRoot) => chain(authorityRoot(draft.state), (root) => {
     const body = {
       height, prevFrameHash: parent as EntityFrameHash, timestamp, txs, events: [], stateRoot, authorityRoot: root, leader,
-      entityContext: { version: 1, proposerReplicaId: `${draft.state.id}:${signer}`, entityId: draft.state.id, proposerSignerId: signer, parentFrameHash: parent, height: heightNo, gossipProfiles: [], peerAssertions: [], htlc: { version: 1, entries: [], originated: [] } },
+      entityContext: { version: 1, proposerReplicaId: `${draft.state.id}:${signer}`, entityId: draft.state.id, proposerSignerId: signer, parentFrameHash: parent, height: heightNo, gossipProfiles: infra.gossipProfiles, peerAssertions: infra.peerAssertions, htlc: { version: 1, entries: [], originated: infra.originated as unknown as readonly Binary[] } },
     };
     return chain(hashEntityFrame({ ...body, hashesToSign: [] }), (frameHash) =>
       map(hashesToSignOf(draft.state.id, height, frameHash, draft.outputs), (hashesToSign): EntityCandidate => ({ frame: { ...body, hashesToSign }, signatures: new Map(), draft })));
@@ -5186,15 +5433,20 @@ const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: Entity
   const view = proposalLeader(queued).view, self = signerId(queued.signerId), pending = queued.pendingLeaderCertificate;
   const leader: FrameLeader = { proposerSignerId: self, view, ...opt("certificate", pending) };
   const leaderState: LeaderState = { activeValidatorId: self, view, changedAtHeight: pending !== undefined ? Number(queued.head.height) + 1 : queued.state.leaderState?.changedAtHeight ?? 0 };
-  return chain(foldTxs(queued.state, queued.accountReplicas, queued.mempool, { verify: ctx.verify, timestamp }), ({ draft, included, evicted }) => {
-    const pool = withoutTxs(queued.mempool, evicted);
-    return chain(buildFrame(queued, leader, leaderState, timestamp, included, draft), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+  // og materializeEntityInfraContext: the proposer prepares every htlcPayment before the fold; a payment it cannot prepare is evicted like any refused tx.
+  const prepared = queued.mempool.some((tx) => tx.type === "htlcPayment") ? materializeOriginated(originView(queued.state, queued.accountReplicas, timestamp), ctx.htlc?.profiles ?? [], queued.mempool, ctx.htlc ?? { profiles: [] }) : { originated: [], refused: new Map<EntityTx, EntityError>() };
+  const txs = queued.mempool.filter((tx) => !prepared.refused.has(tx)), [firstRefusal] = prepared.refused.values();
+  if (txs.length === 0 && firstRefusal !== undefined) return err(firstRefusal);
+  const foldInfra: HtlcFrameInfra = { ...EMPTY_HTLC_INFRA, originated: prepared.originated };
+  return chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: foldInfra }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, prepared.originated, included), (infra) => {
+    const pool = withoutTxs(queued.mempool, [...prepared.refused.keys(), ...evicted]);
+    return chain(buildFrame(queued, leader, leaderState, timestamp, included, draft, infra), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
       const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[self, own]]) };
       if (isSingleSigner(queued.state.quorum)) return installFrame(proposed, frameHash, proposed.signatures, false);
       const others = [...membersOf(queued.state.quorum).keys()].filter((v) => signerId(v) !== self);
       return ok(done<OpenEntity | ProposedEntity, EntityOutput>(proposed, others.map((v): EntityOutput => ({ to: queued.state.id, signerId: v, input: { kind: "proposal", frame: candidate.frame, signatures: proposed.signatures } }))));
     })));
-  });
+  }));
 };
 export const applyTxsOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> =>
   chain(admitTxs(r, input, ctx), (queued) => startProposal(queued, input.timestamp, ctx));
@@ -5220,11 +5472,13 @@ const preauthenticate = (r: EntityEnv, frame: EntityFrame, signatures: Precommit
 /** og replayProposedEntityFrame: a validator folds the frame's txs itself; any difference in the manifest refuses the proposal. */
 const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHash, ctx: EntityContext): Result<EntityCandidate, EntityError> => {
   if (frame.timestamp < r.state.timestamp) return err({ _tag: "frame_timestamp_regression", timestamp: frame.timestamp });
-  return chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp }), ({ draft, evicted }) => {
-    if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
-    return chain(buildFrame(r, frame.leader, committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
-      local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame })));
-  });
+  // og assertHtlcPreparedInfraContext: validators check the committed origins against public facts, never recreating proposer entropy.
+  return chain(frameInfraOf(frame), (infra) => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
+    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra }), ({ draft, evicted }) => {
+      if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
+      return chain(buildFrame(r, frame.leader, committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
+        local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame })));
+    })));
 };
 const heldFrame = (r: EntityReplica): (EntityEnv & EntityCandidate) | undefined => match(r, { open: () => undefined, proposed: (p): (EntityEnv & EntityCandidate) | undefined => p, locked: (l): (EntityEnv & EntityCandidate) | undefined => l });
 /** og handleCommitNotification: a frame carrying a quorum certificate installs (after replay unless already locked on it). */
@@ -5425,7 +5679,9 @@ export type Runtime = {
 export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }> | Tagged<"runtime_frame" | "runtime_tx" | "runtime_tx_unsupported", { code: string }>;
 export type Verifiers = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign };
 /** og capability markers: `local` holds the exact RuntimeTx objects this process authorized (og's Symbol tags); replay trusts the WAL. */
-export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; readonly local?: ReadonlySet<RuntimeTx> | undefined };
+export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; readonly local?: ReadonlySet<RuntimeTx> | undefined;
+  /** og EntityRuntimeContext gossip + liveness + proposer entropy, per Entity (the HTLC proposer infrastructure). */
+  readonly htlcInfra?: ((entityId: EntityId) => HtlcProposerInfra | undefined) | undefined };
 export const ZERO_FRAME_HASH = `0x${"00".repeat(32)}`;
 export const replicaKey = (entity: EntityId, signer: string): string => `${entity}:${signerId(signer)}`;
 export const createRuntime = (jurisdictions: Iterable<string> = []): Runtime =>
@@ -5692,7 +5948,7 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
       const key = replicaKey(routed.entityId, routed.signerId), r = read(key);
       if (r === undefined) return refused({ _tag: "no_such_entity", id: routed.entityId });
       const stamped: RoutedEntityInput = routed.input.kind === "txs" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
-      const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx });
+      const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: ctx.htlcInfra?.(routed.entityId) });
       if (!applied.ok) return refused(applied.error);
       return { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [], applied: [stamped], committed: applied.value.replica.head.height > r.head.height }, stop: false };
     });
