@@ -1619,11 +1619,12 @@ export interface DisputedAccount extends Tagged<"disputed", Frozen & { start: Di
 export type FrozenAccount = PreparingAccount | DisputedAccount;
 export type AccountReplica = OpenAccount | ProposedAccount | ReceivedAccount | FrozenAccount;
 export const certifies = (verify: Verify, digest: string, hanko: Hanko, entity: EntityId): Result<void, Tagged<"invalid_hanko", { entity: EntityId }>> => guard(verify(digest, hanko, entity), { _tag: "invalid_hanko", entity });
-export type DoorContext = { readonly verify: Verify; readonly self: EntityId; readonly now: bigint };
+/** `finalizedJHeight`: the owning Entity's finalized J height (og securityContext); defaults to the Account's own. */
+export type DoorContext = { readonly verify: Verify; readonly self: EntityId; readonly now: bigint; readonly finalizedJHeight?: bigint | undefined };
 export type AccountContext = { readonly verify: Verify; readonly party: Party };
 export type AckContext = AccountContext & { readonly delivery: Delivery };
 export type ReceivedContext = AccountContext & { readonly from: EntityId };
-export type InboundAccountContext = ReceivedContext & { readonly now: bigint };
+export type InboundAccountContext = ReceivedContext & { readonly now: bigint; readonly finalizedJHeight: bigint };
 export type CtxFor<I extends AccountInput> = I extends { kind: "ack_frame" } ? InboundAccountContext : I extends { kind: "ack" } ? AckContext : I extends { kind: "dispute" } ? ReceivedContext : AccountContext;
 export type AccountInputFor<E extends AccountEvent> = Extract<AccountInput, { readonly kind: E }>;
 export type AccountGrammar = { readonly table: typeof AccountTransition; readonly replica: AccountReplica; readonly input: AccountInput; readonly ctx: { readonly [E in AccountEvent]: CtxFor<AccountInputFor<E>> }; readonly output: AccountOutput; readonly error: AccountReplicaError };
@@ -1636,7 +1637,7 @@ export interface RejectedAfterAck extends Tagged<"rejected_after_ack", { cause: 
 export type AccountReplicaError =
   | BodyError | DisputeError | EnvelopeError | DisputeRequired | RejectedAfterAck
   | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch" | "frame_hash_mismatch" | "state_root_mismatch" | "ack_unmatched">
-  | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }>
+  | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }> | DeadlineViolation["error"]
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
   | Tagged<"bad_account", { reason: "entity_id" | "same_entity" | TermsError["_tag"] }>
   | Tagged<"ack_conflict", { field: "frameHash" | "frameHanko" | "disputeHanko" | "height" }>
@@ -1714,6 +1715,43 @@ const frameStructure = (f: AccountFrame): Result<void, AccountReplicaError> => {
   return field === null ? ok(undefined) : err({ _tag: "frame_structure", field });
 };
 export const receiverClock = (f: AccountFrame, now: bigint): Result<void, AccountReplicaError> => guard(f.timestamp - now <= ACCOUNT_NETWORK_ALLOWANCE_MS, { _tag: "frame_structure", field: "future_timestamp" });
+/** First refusal among checks run in order; a later check never runs after an earlier refusal. */
+const lazyChecks = <E>(...gs: readonly (() => Result<unknown, E>)[]): Result<void, E> => foldResult(gs, undefined as void, (_, g) => map(g(), () => undefined));
+export const HTLC_ENFORCEMENT_RESERVE_MS = ACCOUNT_NETWORK_ALLOWANCE_MS;
+export type DeadlineReason = "lock_window" | "secret_window" | "secret_frame_expired" | "payer_cancel_early" | "timeout_not_expired";
+export type DeadlineViolation = { readonly error: Tagged<"frame_deadline", { reason: DeadlineReason; lockId: string }>; readonly dispute: boolean };
+type DeadlineLock = Pick<HtlcLock, "hashlock" | "timelock" | "revealBeforeHeight" | "senderIsLeft">;
+type Clock = { readonly timestamp: bigint; readonly jHeight: bigint };
+// og htlc-deadline.ts: the time bound is exclusive, the J-height bound inclusive.
+const deadlinePassed = (l: DeadlineLock, c: Clock): boolean => c.jHeight > l.revealBeforeHeight || c.timestamp >= l.timelock;
+// Mirrors the htlc_resolve arm's preimage check.
+const opensLock = (l: DeadlineLock, secret: string): boolean => keccakUtf8(secret) === l.hashlock;
+/** og dispute/deadline-policy.ts getIncomingAccountDeadlineViolation: a speculative HTLC scan of a peer frame against our local clock. */
+export const incomingDeadline = (s: AccountBody, f: AccountFrame, proposerIsLeft: boolean, ctx: { readonly now: bigint; readonly finalizedJHeight: bigint }): Result<void, DeadlineViolation> => {
+  const local: Clock = { timestamp: ctx.now, jHeight: ctx.finalizedJHeight };
+  const violation = (reason: DeadlineReason, lockId: string, dispute = false): Result<ReadonlyMap<string, DeadlineLock>, DeadlineViolation> => err({ error: { _tag: "frame_deadline", reason, lockId }, dispute });
+  const scanned = foldResult(f.txs, s.locks as ReadonlyMap<string, DeadlineLock>, (locks, tx): Result<ReadonlyMap<string, DeadlineLock>, DeadlineViolation> => {
+    if (tx.type === "htlc_lock") {
+      if (locks.has(tx.lockId)) return ok(locks);
+      const unsafe = tx.timelock <= ctx.now + HTLC_ENFORCEMENT_RESERVE_MS || tx.revealBeforeHeight <= ctx.finalizedJHeight || f.timestamp >= tx.timelock || tx.revealBeforeHeight <= f.jHeight;
+      return unsafe ? violation("lock_window", tx.lockId) : ok(mapSet(locks, tx.lockId, { hashlock: tx.hashlock, timelock: tx.timelock, revealBeforeHeight: tx.revealBeforeHeight, senderIsLeft: proposerIsLeft }));
+    }
+    if (tx.type !== "htlc_resolve" && tx.type !== "htlc_timeout") return ok(locks);
+    const lock = locks.get(tx.lockId);
+    if (lock === undefined) return ok(locks);
+    if (tx.type === "htlc_resolve") {
+      if (!opensLock(lock, tx.secret)) return ok(locks);
+      if (deadlinePassed(lock, { timestamp: local.timestamp + HTLC_ENFORCEMENT_RESERVE_MS, jHeight: local.jHeight })) return violation("secret_window", tx.lockId, true);
+      return deadlinePassed(lock, f) ? violation("secret_frame_expired", tx.lockId) : ok(mapDelete(locks, tx.lockId));
+    }
+    // htlc_timeout is og's `outcome: 'error', reason: 'timeout'`.
+    const locallyExpired = deadlinePassed(lock, local);
+    if (proposerIsLeft === lock.senderIsLeft && !locallyExpired) return violation("payer_cancel_early", tx.lockId);
+    if (!deadlinePassed(lock, f)) return violation("timeout_not_expired", tx.lockId);
+    return ok(locallyExpired ? mapDelete(locks, tx.lockId) : locks);
+  });
+  return map(scanned, () => undefined);
+};
 type SignedPair = { readonly left: Hanko; readonly right: Hanko };
 const signedBy = (party: Party, ours: Hanko, theirs: Hanko): SignedPair => ({ left: at(ours, theirs, party.left), right: at(ours, theirs, other(party.left)) });
 const install = (r: ProposedAccount | ReceivedAccount, signed: SignedPair, after: { readonly dispute: DisputeWitnesses; readonly acknowledged?: AccountAck | undefined }): Step<OpenAccount, Effect> => {
@@ -1845,9 +1883,12 @@ const receipt = <R extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAc
   const { frame } = input, validated = receivedDispute(r, input.disputeHanko, ctx.from, ctx.verify);
   if (!validated.ok) return answered(validated);
   if (frame.height < r.head.height) return answered(ok(done(r)));
-  const gates = checks(frameStructure(frame), receiverClock(frame, ctx.now),
-    guard(frame.prevFrameHash === r.head.prevFrameHash, { _tag: "hash_mismatch" } as AccountReplicaError), guard(frame.height === r.head.height + 1n, { _tag: "height_mismatch" } as AccountReplicaError),
-    certifies(ctx.verify, frame.stateHash, input.frameHanko, ctx.from));
+  // og incoming/preflight.ts order: structure, chain, tx profile, then (only then) the Hanko, then HTLC deadlines.
+  const byLeft = other(ctx.party.left);
+  const gates = lazyChecks<AccountReplicaError>(() => frameStructure(frame), () => receiverClock(frame, ctx.now),
+    () => guard(frame.prevFrameHash === r.head.prevFrameHash, { _tag: "hash_mismatch" }), () => guard(frame.height === r.head.height + 1n, { _tag: "height_mismatch" }),
+    () => traverse(frame.txs, (tx) => wireTx(tx, replicaId(r), byLeft)), () => certifies(ctx.verify, frame.stateHash, input.frameHanko, ctx.from),
+    () => mapErr(incomingDeadline(r.state, frame, byLeft, ctx), (v): AccountReplicaError => (v.dispute ? { _tag: "dispute_required", cause: v.error, frame, frameHanko: input.frameHanko } : v.error)));
   return gates.ok ? { _tag: "continue", validated: validated.value } : answered(gates);
 };
 const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined): Verb<ReceivedAccount> => {
@@ -1962,7 +2003,7 @@ export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: D
   propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c),
   dispute: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => dispute(r, i, { ...c, from: sender })),
   ack: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ack(r, i, { ...c, delivery: sender === c.party.self ? { _tag: "local" } : { _tag: "received", from: sender } })),
-  ack_frame: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ackFrame(r, i, { ...c, now: ctx.now, from: sender })),
+  ack_frame: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ackFrame(r, i, { ...c, now: ctx.now, finalizedJHeight: ctx.finalizedJHeight ?? r.state.finalizedJHeight, from: sender })),
 }));
 export const applyDelivered = (r: AccountReplica, input: AccountInput, delivery: Delivery, ctx: DoorContext): Result<AccountApply, AccountReplicaError> =>
   chain(matchBy("kind", input, {

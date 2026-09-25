@@ -7,6 +7,8 @@ import { applyAccountInput as ogApply } from "../../core/account/consensus/index
 import { computeFrameHash, getAccountFrameStructuralError, MAX_ACCOUNT_FRAME_TXS } from "../../core/account/consensus/frame/hash.ts";
 import { ACCOUNT_NETWORK_ALLOWANCE_MS as OG_ALLOWANCE, MEMPOOL_LIMIT } from "../../core/account/consensus/constants.ts";
 import { getDisputeHankoRequirementError } from "../../core/account/consensus/dispute/hanko.ts";
+import { getIncomingAccountDeadlineViolation } from "../../core/account/consensus/dispute/deadline-policy.ts";
+import { hashHtlcSecret } from "../../core/protocol/htlc/utils.ts";
 import { getDisputeHankoShapeError } from "../../core/account/consensus/incoming/replay.ts";
 import { prepareProposalAdmission } from "../../core/account/consensus/proposal/admission.ts";
 import { validateProposalTransactions } from "../../core/account/consensus/proposal/transactions.ts";
@@ -25,7 +27,7 @@ import type { AccountFrame as OgFrame, AccountInput as OgInput, AccountReplica a
 
 // ---- rewrite ----
 import {
-  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, accountDisputeHash, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, disputeRequirement, disputeShapes, frameStateHash, localProof, proposalPlan, receiverClock, replicaId, unqueued,
+  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, accountDisputeHash, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, incomingDeadline, keccakUtf8, disputeRequirement, disputeShapes, frameStateHash, localProof, proposalPlan, receiverClock, replicaId, unqueued,
 } from "../xln.ts";
 import type { AccountFrame, AccountInput, AccountReplica, EntityId, WireAccountTx } from "../xln.ts";
 import { ALICE, BOB, CLOCK, NOW, causeOf, ackInput, disputeFor, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap, unwrapErr } from "../xln_run.ts";
@@ -478,5 +480,63 @@ describe("account-consensus: driven scenarios", () => {
     const b = ogAccount();
     expect(applyAccountEnqueue(b, { kind: "enqueue", txs: many.slice(1) }, ctx.jClaimNodeStore).ok).toBe(true);
     expect(admit(genesisAB(), manyW.slice(1)).ok).toBe(true);
+  });
+});
+
+// =====================================================================================================
+describe("account-consensus: incoming preflight", () => {
+  test("MATCH: HTLC deadline preflight (og getIncomingAccountDeadlineViolation) — none / reject / dispute over randomized frames", () => {
+    const now = 1_000_000, fin = 10, secret = W("5a");
+    let seed = 42;
+    const rnd = (n: number) => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t ^= t + Math.imul(t ^ (t >>> 7), 61 | t); return ((t ^ (t >>> 14)) >>> 0) % n; };
+    const around = (base: number, spread: number) => base - spread + rnd(2 * spread + 1);
+    const verdicts = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      const proposerIsLeft = rnd(2) === 0, senderIsLeft = rnd(2) === 0;
+      const lock = { timelock: BigInt(around(now + 30_000, 40_000)), rbh: around(fin + 2, 5) };
+      const frame = { timestamp: around(now, 40_000), jHeight: around(fin, 5), height: 2 };
+      const kind = rnd(4); // 0 new lock, 1 good secret, 2 bad secret, 3 timeout
+      const existing = kind !== 0;
+      // og
+      const ogLock = { lockId: "L", hashlock: hashHtlcSecret(secret), timelock: lock.timelock, revealBeforeHeight: lock.rbh, amount: 1n, tokenId: 1, senderIsLeft, createdHeight: 1, createdTimestamp: 0 };
+      const ogTx = kind === 0 ? { type: "htlc_lock", data: { lockId: "L", hashlock: hashHtlcSecret(secret), timelock: lock.timelock, revealBeforeHeight: lock.rbh, amount: 1n, tokenId: 1 } }
+        : kind === 3 ? { type: "htlc_resolve", data: { lockId: "L", outcome: "error", reason: "timeout" } }
+        : { type: "htlc_resolve", data: { lockId: "L", outcome: "secret", secret: kind === 1 ? secret : W("5b") } };
+      const og = getIncomingAccountDeadlineViolation({ ...ogAccount().state, locks: new Map(existing ? [["L", ogLock]] : []) } as never, { ...frame, accountTxs: [ogTx] } as never, proposerIsLeft, { entityTimestamp: now, finalizedJHeight: fin } as never);
+      // rewrite
+      const hashlock = keccakUtf8(secret);
+      const rwLock = { lockId: "L", hashlock, timelock: lock.timelock, revealBeforeHeight: BigInt(lock.rbh), amount: 1n, tokenId: "1", senderIsLeft, createdHeight: 1n, createdTimestamp: 0n } as never;
+      const rwTx = (kind === 0 ? { type: "htlc_lock", lockId: "L", hashlock, timelock: lock.timelock, revealBeforeHeight: BigInt(lock.rbh), amount: 1n, tokenId: "1" }
+        : kind === 3 ? { type: "htlc_timeout", lockId: "L" } : { type: "htlc_resolve", lockId: "L", secret: kind === 1 ? secret : W("5b") }) as WireAccountTx;
+      const body = { ...genesisAB().state, locks: new Map(existing ? [["L", rwLock]] : []) };
+      const rw = incomingDeadline(body, { ...frame, timestamp: BigInt(frame.timestamp), jHeight: BigInt(frame.jHeight), height: 2n, txs: [rwTx] } as unknown as AccountFrame, proposerIsLeft, { now: BigInt(now), finalizedJHeight: BigInt(fin) });
+      const ogV = og === undefined ? "none" : og.disposition;
+      const rwV = rw.ok ? "none" : rw.error.dispute ? "dispute" : "reject";
+      verdicts.add(ogV);
+      expect(rwV).toBe(ogV);
+    }
+    expect([...verdicts].sort()).toEqual(["dispute", "none", "reject"]);
+  });
+
+  test("MATCH: an incoming frame with a too-short HTLC lock is refused before replay", () => {
+    const r = genesisAB(), from = rightOf(), self = leftOf();
+    const lock = { type: "htlc_lock", lockId: "L", hashlock: keccakUtf8(W("5a")), timelock: NOW + 10_000n, revealBeforeHeight: 100n, amount: 1n, tokenId: "0" } as WireAccountTx;
+    const e = unwrapErr(applyAccountInput(r, ackFrameOf(r, from, peerFrame(r, from, { txs: [lock] })), DOOR(self)));
+    expect(e).toEqual({ _tag: "frame_deadline", reason: "lock_window", lockId: "L" });
+  });
+
+  test("MATCH: tx profile is checked before the frame Hanko (og preflight order)", async () => {
+    const ctx = ogCtx("diff-profile-order", async () => ({ valid: false, entityId: null }));
+    const a = ogAccount(L, R);
+    const f = ogFrame(a, { accountTxs: [scl(70_000, 1n)] });
+    const res = await ogApply(ctx, a, { kind: "ack_frame", ...ogEnvelope(a), proposal: { frame: f, frameHanko: `0x${"66".repeat(65)}` } } as OgInput);
+    expect(accountInputPeerRejectionCode(res)).toBe("ACCOUNT_INPUT_FRAME_TX_TOKEN_ID_OUT_OF_RANGE");
+    const r = genesisAB(), from = rightOf(), self = leftOf();
+    const good = peerFrame(r, from, { txs: [TX] });
+    const bad = { ...good, txs: [{ ...TX, tokenId: "70000" } as WireAccountTx] };
+    const input = { ...ackFrameOf(r, from, good), frame: bad, frameHanko: `0x${"66".repeat(65)}` } as AccountInput;
+    expect(unwrapErr(applyAccountInput(r, input, DOOR(self)))._tag).toBe("uncommitted");
+    // with a valid profile the bad Hanko is what refuses
+    expect(unwrapErr(applyAccountInput(r, { ...input, frame: good } as AccountInput, DOOR(self)))._tag).toBe("invalid_hanko");
   });
 });
