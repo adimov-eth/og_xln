@@ -5,10 +5,12 @@ import {
 import { expectedCommittedLeaderState, verifyEntityLeaderCertificate } from "../../core/entity/consensus/leader/certificates.ts";
 import { buildEntityFrameAuthority, computeEntityFrameAuthorityRoot } from "../../core/entity/consensus/state-root.ts";
 import {
-  address, entityId, applyEntityInput, buildLeaderCertificate, quorumHanko, type Hash, createEntity, hashEntityFrame, hashLeaderVote, leaderOrder, leaderStateOf, leaderTimeoutMs, leaderVoteBody, localTimeoutVote, nextFailoverLeader,
+  address, admit, applyAccountInput, certifiedBy, tokenId, type AccountReplica, type BoardRefresh, type BoardRefreshRefusal, type CertifiedBoard, type DoorContext, type EntityId, type HankoAuthority, type ProposedAccount, type Verify,
+  entityId, applyEntityInput, buildLeaderCertificate, quorumHanko, type Hash, createEntity, hashEntityFrame, hashLeaderVote, leaderOrder, leaderStateOf, leaderTimeoutMs, leaderVoteBody, localTimeoutVote, nextFailoverLeader,
   type Address, type EntityFrame, type EntityFrameHash, type EntityInput, type EntityOutput, type EntityReplica, type EntityState, type EntityTx, type LeaderCertificate, type LeaderState, type LeaderVote,
 } from "../xln.ts";
-import { ALICE, BOB, NOW, TERMS, aliceAddr, bobAddr, carolAddr, crypto, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, NOW, TERMS, ackInput, aliceAddr, bobAddr, carolAddr, crypto, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, unwrap, verifiers } from "../xln_run.ts";
+import { handleBoardHankoRefresh } from "../../core/account/consensus/incoming/board-hanko-refresh.ts";
 import { buildQuorumHanko, getEntityConfigBoardHash } from "../../core/hanko/signing.ts";
 
 // og leader failover (core/entity/consensus/leader/*): view change, timeout votes and certificates (ER-18)
@@ -152,5 +154,91 @@ describe("entity-consensus-2: account Hankos through hashesToSign (ER-4)", () =>
     expect(frame.hashesToSign.some((h) => h.type === "accountFrame" && h.context === `account:${BOB.slice(-8)}:frame:1`)).toBe(true);
     expect(frame.hashesToSign[0]?.hash).toBe(unwrap(hashEntityFrame(frame)));
     expect(b0._tag).toBe("open");
+  });
+});
+
+describe("entity-consensus-2: board Hanko refresh and the previous-board grace (AC-13)", () => {
+  // Alice's Account with Bob at height 1, committed through the ordinary propose / ack_frame / ack exchange
+  const committedAlice = (): AccountReplica => {
+    const door = (self: EntityId): DoorContext => ({ verify: hankoVerify, self, now: NOW });
+    const a0 = unwrap(admit(genesisAB(), [{ type: "add_delta", tokenId: unwrap(tokenId("1")) }]));
+    const proposed = unwrap(applyAccountInput(a0, proposeInput(a0, ALICE), door(ALICE))).replica as ProposedAccount;
+    const received = unwrap(applyAccountInput(genesisAB(), offerOf(proposed, ALICE), door(BOB))).replica;
+    return unwrap(applyAccountInput(proposed, ackInput(received, BOB), door(ALICE))).replica;
+  };
+  const BOARD: CertifiedBoard = { boardHash: word(900), activatedAtJHeight: 7, logIndex: 2 };
+  const CODES: Record<BoardRefreshRefusal, string> = {
+    party_mismatch: "PARTY_MISMATCH", activation_height: "ACTIVATION_HEIGHT_INVALID", activation_log_index: "ACTIVATION_LOG_INDEX_INVALID", certified_board_missing: "CERTIFIED_BOARD_MISSING",
+    activation_mismatch: "ACTIVATION_MISMATCH", activation_order: "ACTIVATION_ORDER_INVALID", height_mismatch: "HEIGHT_MISMATCH", frame_hash_mismatch: "FRAME_HASH_MISMATCH",
+    frame_hanko_missing: "FRAME_HANKO_MISSING", frame_hanko_invalid: "FRAME_HANKO_INVALID", dispute_mismatch: "DISPUTE_MISMATCH",
+  };
+  test("MATCH (og incoming/board-hanko-refresh.ts handleBoardHankoRefresh): 800 random refreshes -- same verdict, same refusal, same installed frame Hanko and refresh record, frame Hanko checked under the current board only", async () => {
+    const alice = committedAlice();
+    if (alice._tag !== "open" || alice.head._tag !== "installed") throw new Error("not committed");
+    const head = alice.head, frameHash = head.prevFrameHash, peerDispute = alice.dispute.counterparty;
+    const verdicts = { accepted: 0, rejected: new Set<string>() };
+    for (let i = 0; i < 800; i++) {
+      const pick = <X>(xs: readonly X[]): X => xs[ri(xs.length)] as X;
+      const board = rng() < 0.1 ? undefined : BOARD;
+      const aH = pick([7, 7, 7, 6, 0, 8]), aL = pick([2, 2, 2, 1, 3, -1]);
+      const prev: BoardRefresh | undefined = pick([undefined, undefined, { activationJHeight: 7, activationLogIndex: 2, frameHeight: 1, frameHash }, { activationJHeight: 6, activationLogIndex: 9, frameHeight: 1, frameHash }, { activationJHeight: 7, activationLogIndex: 1, frameHeight: 1, frameHash: word(5) }]);
+      const height = pick([1n, 1n, 1n, 2n, 0n]), hash = pick([frameHash, frameHash, frameHash.toUpperCase().replace("0X", "0x"), word(3), "junk"]);
+      const hanko = pick([`0x${"ab".repeat(40)}`, `0x${"cd".repeat(40)}`, "", "0xbad0"]);
+      const from = rng() < 0.08 ? ALICE : BOB;
+      const dispute = rng() < 0.25 && peerDispute !== undefined ? { ...peerDispute, proofNonce: peerDispute.proofNonce + (rng() < 0.5 ? 0 : 1) } : undefined;
+      const seen: HankoAuthority[] = [];
+      const verify: Verify = (_d, h, _e, authority) => { if (authority !== undefined) seen.push(authority); return h !== "0xbad0" && h.length > 0; };
+      const input = { kind: "board_hanko_refresh" as const, ...envelopeAB(from), height, frameHash: hash, frameHanko: hanko, boardActivationJHeight: aH, boardActivationLogIndex: aL, ...(dispute === undefined ? {} : { disputeHanko: { ...dispute, proofNonce: dispute.proofNonce } }) };
+      // a dispute Hanko that passes the tuple match reaches og's full witness validation (Account state); keep to the tuple-level verdicts here
+      if (dispute !== undefined && dispute.proofNonce === peerDispute?.proofNonce) continue;
+      const rw = applyAccountInput({ ...alice, ...(prev === undefined ? {} : { boardRefresh: prev }) }, input, { verify, self: ALICE, now: NOW, ...(board === undefined ? {} : { counterpartyBoard: board }) });
+      const account: any = {
+        proofHeader: { fromEntity: ALICE, toEntity: BOB }, currentHeight: 1, currentFrame: { height: 1, stateHash: frameHash }, counterpartyFrameHanko: certifiedBy(head.certificate, partyIn(alice, ALICE)).peer,
+        ...(prev === undefined ? {} : { counterpartyBoardHankoRefresh: prev }),
+        ...(peerDispute === undefined ? {} : { counterpartyDisputeHash: peerDispute.hash, counterpartyDisputeProofBodyHash: peerDispute.proofBodyHash, counterpartyDisputeProofNonce: peerDispute.proofNonce, counterpartyDisputeProofProposerIsLeft: peerDispute.proposerIsLeft }),
+      };
+      const ogSeen: unknown[] = [];
+      const og = await handleBoardHankoRefresh(account, {
+        kind: "board_hanko_refresh", fromEntityId: from, toEntityId: from === BOB ? ALICE : BOB,
+        boardHankoRefresh: { height: Number(height), frameHash: hash, frameHanko: hanko, ...(dispute === undefined ? {} : { disputeHanko: dispute }), boardActivationJHeight: aH, boardActivationLogIndex: aL },
+      } as never, {
+        ...(board === undefined ? {} : { counterpartyCertifiedBoard: board }),
+        verifyHanko: async (h: string, _hash: string, entity: string, authority: unknown) => { ogSeen.push(authority); return { valid: h !== "0xbad0" && h.length > 0, entityId: entity }; },
+      } as never);
+      if (og === undefined) throw new Error("not a refresh");
+      if (!og.ok) {
+        const message = String((og as any).rejection.message);
+        expect(rw.ok).toBe(false);
+        if (rw.ok) continue;
+        if (rw.error._tag !== "board_hanko_refresh") throw new Error(`${rw.error._tag} vs ${message}`);
+        verdicts.rejected.add(rw.error.reason);
+        expect(message.startsWith(from === ALICE ? "ACCOUNT_BOARD_HANKO_REFRESH_PARTY_MISMATCH" : `ACCOUNT_BOARD_HANKO_REFRESH_${CODES[rw.error.reason]}`)).toBe(true);
+        continue;
+      }
+      expect(rw.ok).toBe(true);
+      if (!rw.ok) continue;
+      const after = rw.value.replica;
+      expect(after.head._tag === "installed" ? certifiedBy(after.head.certificate, partyIn(after, ALICE)).peer : undefined).toBe(account.counterpartyFrameHanko);
+      expect(after.boardRefresh).toEqual(account.counterpartyBoardHankoRefresh);
+      expect(rw.value.outputs).toEqual([]);
+      expect(seen).toEqual(ogSeen as HankoAuthority[]);
+      expect(seen).toEqual([{ registeredBoardHash: BOARD.boardHash, allowPreviousBoard: false }]);
+      verdicts.accepted += 1;
+    }
+    expect(verdicts.accepted).toBeGreaterThan(10);
+    expect(verdicts.rejected.size).toBeGreaterThan(7);
+  });
+  test("MATCH (og ack-commit.ts allowPreviousBoard: true, preflight.ts false): ACK Hankos are checked with the previous-board grace, a fresh frame's Hanko without it", () => {
+    const seen: [string, HankoAuthority | undefined][] = [];
+    const door = (self: EntityId): DoorContext => ({ verify: (d, h, e, authority) => { seen.push([e.toLowerCase() === ALICE.toLowerCase() ? "alice" : "bob", authority]); return hankoVerify(d, h, e); }, self, now: NOW, counterpartyBoard: BOARD });
+    const a0 = unwrap(admit(genesisAB(), [{ type: "add_delta", tokenId: unwrap(tokenId("1")) }]));
+    const proposed = unwrap(applyAccountInput(a0, proposeInput(a0, ALICE), { verify: hankoVerify, self: ALICE, now: NOW })).replica as ProposedAccount;
+    seen.length = 0;
+    const received = unwrap(applyAccountInput(genesisAB(), offerOf(proposed, ALICE), door(BOB))).replica;
+    expect(seen.filter(([who]) => who === "alice").map(([, a]) => a?.allowPreviousBoard)).toContain(false); // the frame Hanko: og preflight.ts
+    seen.length = 0;
+    unwrap(applyAccountInput(proposed, ackInput(received, BOB), door(ALICE)));
+    const frameChecks = seen.filter(([who]) => who === "bob").map(([, a]) => a);
+    expect(frameChecks).toContainEqual({ registeredBoardHash: BOARD.boardHash, allowPreviousBoard: true }); // og ack-commit.ts
   });
 });
