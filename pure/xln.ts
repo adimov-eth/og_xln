@@ -1013,7 +1013,7 @@ export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" 
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
   | Tagged<"above_custody", { have: bigint; requested: bigint }>
-  | Tagged<"not_hub" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "quote_expired" | "quote_mismatch" | "no_policy" | "policy_bound" | "no_quote" | "duplicate" | "missing" | "not_maker" | "expired_offer" | "below_min_fill" | "before_deadline" | "preimage" | "pending_full" | "not_counterparty" | "bad_allowance" | "index" | "too_many_rows">
+  | Tagged<"not_hub" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "quote_expired" | "quote_mismatch" | "no_policy" | "policy_bound" | "no_quote" | "duplicate" | "missing" | "not_maker" | "expired_offer" | "below_min_fill" | "before_deadline" | "preimage" | "pending_full" | "not_counterparty" | "bad_allowance" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
   | Tagged<"unchosen", { hole: Hole }>;
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint };
@@ -1032,13 +1032,12 @@ export type DeltaEffect = { readonly tokenId: TokenId; readonly offdelta: bigint
 export type Resolution = { readonly args: string; readonly effects: readonly DeltaEffect[]; readonly proposerIsLeft: boolean };
 export type ClauseState = Tagged<"pending" | "live", { clause: Clause }> | Tagged<"resolving", { clause: Clause; resolution: Resolution }>;
 export type CustodyDebit = { readonly tokenId: TokenId; readonly amount: bigint; readonly reason: string; readonly referenceId?: string | undefined };
-export type JObservation = { readonly jHeight: bigint; readonly jBlockHash: Hash; readonly events: readonly AccountSettlement[]; readonly observedAt: bigint };
 export type JClaimProof = { readonly version: 1; readonly nodes: readonly [] };
 export type ClaimRow = { readonly onLeft: boolean; readonly jHeight: bigint; readonly jBlockHash: string; readonly eventsHash: string };
 export type AccountBody = {
   readonly account: AccountState; readonly terms: AccountTerms; readonly hub: HubSide; readonly custody: ReadonlyMap<TokenId, bigint>; readonly locks: ReadonlyMap<string, HtlcLock>;
   readonly offers: ReadonlyMap<string, SwapOffer>; readonly policy: ReadonlyMap<TokenId, RebalancePolicy>; readonly clauses: ReadonlyMap<ClauseId, ClauseState>; readonly debits: readonly CustodyDebit[];
-  readonly quote?: RebalanceQuote | undefined; readonly request?: { readonly tokenId: TokenId; readonly targetAmount: bigint } | undefined; readonly leftJ?: JObservation | undefined; readonly rightJ?: JObservation | undefined; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint;
+  readonly quote?: RebalanceQuote | undefined; readonly request?: { readonly tokenId: TokenId; readonly targetAmount: bigint } | undefined; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly jNonce: number;
   readonly settlement?: { readonly revision: number; readonly workspaceHash: string; readonly settlementHash: string } | undefined;
 };
 export type AccountStep<E extends Effect = Effect> = Step<AccountBody, E>;
@@ -1105,7 +1104,7 @@ export const AccountKinds = {
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
 export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret"> : K extends "deposit_collateral" ? Of<Effect, "queue_r2c"> : never;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
-export const genesisAccountBody = (account: AccountState, terms: AccountTerms, hub: HubSide = null): AccountBody => ({ account, terms, hub, custody: new Map(), locks: new Map(), offers: new Map(), policy: new Map(), clauses: new Map(), debits: [], finalizedJHeight: 0n });
+export const genesisAccountBody = (account: AccountState, terms: AccountTerms, hub: HubSide = null): AccountBody => ({ account, terms, hub, custody: new Map(), locks: new Map(), offers: new Map(), policy: new Map(), clauses: new Map(), debits: [], finalizedJHeight: 0n, jNonce: 0 });
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
 const authorized = (tx: WireAccountTx, hub: HubSide, byLeft: boolean): Result<void, BodyError> =>
   arm(AccountKinds, tx.type).author !== "hub" || (hub !== null && byLeft === (hub === "left")) ? ok(undefined) : err({ _tag: "not_hub" });
@@ -1174,19 +1173,32 @@ const claimFrame = (tx: TxOf<"j_event_claim">): Result<{ readonly version: "xln:
   chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash, events }) => ({ version: "xln:account-j-event-claim-frame:v1", jHeight: Number(jHeight), jBlockHash, eventsHash, events }))));
 const claimRowOf = (tx: TxOf<"j_event_claim">, onLeft: boolean): Result<ClaimRow, ClaimError> =>
   chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash }) => ({ onLeft, jHeight, jBlockHash, eventsHash }))));
-const rememberClaim = (rows: readonly ClaimRow[] | undefined, row: ClaimRow): Result<readonly ClaimRow[], ClaimError> => {
-  const held = rows ?? [], prior = held.find((r) => r.onLeft === row.onLeft && r.jHeight === row.jHeight);
-  return prior === undefined ? ok([...held, row]) : prior.jBlockHash === row.jBlockHash && prior.eventsHash === row.eventsHash ? ok(held) : err({ _tag: "claim_conflict" });
+const sameEvidence = (x: ClaimRow, y: ClaimRow): boolean => x.jBlockHash === y.jBlockHash && x.eventsHash === y.eventsHash;
+const pruneThrough = (rows: readonly ClaimRow[], height: bigint): readonly ClaimRow[] | undefined => { const kept = rows.filter((r) => r.jHeight > height); return kept.length === 0 ? undefined : kept; };
+/** og j-events/finality.ts: every AccountSettled names this pair, nonces never regress below jNonce, and each token row takes the chain's collateral/ondelta. */
+const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[]): Result<AccountBody, BodyError> => {
+  const left = a.account.id.left.toLowerCase(), right = a.account.id.right.toLowerCase();
+  return chain(foldResult(events, a.jNonce, (prev, e): Result<number, BodyError> =>
+    e.data.leftEntity !== left || e.data.rightEntity !== right ? err({ _tag: "settled_pair" }) : e.data.nonce < prev ? err({ _tag: "settled_nonce" }) : ok(e.data.nonce)), (jNonce) =>
+    map(foldResult(events, a, (b, e): Result<AccountBody, BodyError> => chain(mapErr(tokenId(String(e.data.tokenId)), (): BodyError => ({ _tag: "index" })), (tk) => {
+      const fresh = !b.account.deltas.has(tk);
+      if (fresh && (e.data.tokenId === 0 || b.account.deltas.size + 1 > MAX_ROWS)) return err(e.data.tokenId === 0 ? { _tag: "index" } : { _tag: "too_many_rows" });
+      const was = getDelta(b.account, tk), now = settle(was, BigInt(e.data.collateral), BigInt(e.data.ondelta)), increase = floor0(now.collateral - was.collateral);
+      const settled = putState(b, setDelta(b.account, now)), requested = b.request?.tokenId === tk ? b.request.targetAmount : 0n;
+      if (requested <= 0n || increase <= 0n) return ok(settled);
+      return ok(requested > increase ? { ...settled, request: { tokenId: tk, targetAmount: requested - increase } } : { ...settled, request: undefined, quote: settled.quote?.tokenId === tk ? undefined : settled.quote });
+    })), (b) => ({ ...b, jNonce })));
 };
-const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (row) => chain(rememberClaim(a.claimRows, row), (claimRows) => {
-  const obs: JObservation = { jHeight: tx.jHeight, jBlockHash: tx.jBlockHash, events: tx.events, observedAt: tx.observedAt };
-  const stored: AccountBody = { ...(ctx.byLeft ? { ...a, leftJ: obs } : { ...a, rightJ: obs }), claimRows }, seen = at(a.leftJ, a.rightJ, other(ctx.byLeft));
-  if (seen === undefined || seen.jHeight !== obs.jHeight || seen.jBlockHash !== obs.jBlockHash || canon(seen.events) !== canon(obs.events)) return ok(step(stored));
-  const kept = claimRows.filter((r) => r.jHeight > obs.jHeight);
-  const tokens = obs.events.filter((entry) => sameAccount(entry, stored.account.id)).flatMap((entry) => entry.tokens);
-  return map(foldResult(tokens, stored.account, (s, tk): Result<AccountState, BodyError> => map(mapErr(tokenId(tk.tokenId.toString()), (): BodyError => ({ _tag: "index" })), (id) => setDelta(s, settle(getDelta(s, id), tk.collateral, tk.ondelta)))),
-    (account) => step({ ...stored, account, claimRows: kept.length === 0 ? undefined : kept, leftJ: undefined, rightJ: undefined, finalizedJHeight: obs.jHeight }));
-}));
+/** og j-claim-transition.ts: conflict on either side refuses; stale prunes; the first side waits; the peer's matching record at any pending height finalizes. */
+const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (own) => {
+  const held = a.claimRows ?? [], peer: ClaimRow = { ...own, onLeft: !own.onLeft };
+  const member = (r: ClaimRow): ClaimRow | undefined => held.find((h) => h.onLeft === r.onLeft && h.jHeight === r.jHeight);
+  const ownHeld = member(own), peerHeld = member(peer);
+  if ((ownHeld !== undefined && !sameEvidence(ownHeld, own)) || (peerHeld !== undefined && !sameEvidence(peerHeld, peer))) return err({ _tag: "claim_conflict" });
+  if (own.jHeight <= a.finalizedJHeight) return ok(step({ ...a, claimRows: pruneThrough(held, a.finalizedJHeight) }));
+  if (peerHeld === undefined) return ok(step(ownHeld !== undefined ? a : { ...a, claimRows: [...held, own] }));
+  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events), (b) => step({ ...b, claimRows: pruneThrough(held, own.jHeight), finalizedJHeight: own.jHeight })));
+});
 type Arms = { readonly [K in AccountTx["type"]]: (tx: WireTxOf<K>) => BodyStep<EffectOf<K>> };
 const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Effect> => matchBy<"type", WireAccountTx, BodyStep<Effect>>("type", tx, {
 
@@ -1319,7 +1331,7 @@ export const applyAccountBody: Layer<AccountBody, WireAccountTx, FoldCtx, Effect
   return chain(authorized(tx, a.hub, ctx.byLeft), () => chain(applyArm(a, tx, ctx), (next) => (next.state.account.deltas.size > MAX_ROWS ? err({ _tag: "too_many_rows" }) : commits(a, tx, next))));
 };
 export const accountSnapshot = (a: AccountBody): Required<Omit<AccountBody, "account">> & { readonly state: Hash } =>
-  ({ state: hashAccountState(a.account), terms: a.terms, hub: a.hub, custody: a.custody, locks: a.locks, offers: a.offers, policy: a.policy, clauses: a.clauses, debits: a.debits, quote: a.quote, request: a.request, leftJ: a.leftJ, rightJ: a.rightJ, claimRows: a.claimRows, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
+  ({ state: hashAccountState(a.account), terms: a.terms, hub: a.hub, custody: a.custody, locks: a.locks, offers: a.offers, policy: a.policy, clauses: a.clauses, debits: a.debits, quote: a.quote, request: a.request, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
 
 
 export type ViewError = CommitmentError | Tagged<"token_id", { tokenId: TokenId }> | ClaimError;
@@ -1410,7 +1422,7 @@ const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
     if (b.settlement !== undefined) hubRows.set("settlement", b.settlement.settlementHash);
     return ok({
       domain: terms.domain, leftEntity: b.account.id.left, rightEntity: b.account.id.right, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig,
-      jNonce: 0, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
+      jNonce: b.jNonce, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
       deltas: committedDeltas(b), locks: b.locks, pulls: new Map(), swapOffers: b.offers, subcontracts: new Map([...b.clauses].map(([id, s]) => [id, clauseRow(id, s)])), lendingIntents: hubRows,
       requestedRebalance: byToken(b.request === undefined ? [] : [[b.request.tokenId, b.request.targetAmount] as const]),
       requestedRebalanceFeeState: byToken(b.quote === undefined ? [] : [[b.quote.tokenId, b.quote] as const]), rebalanceFeePolicies: byToken(b.policy),

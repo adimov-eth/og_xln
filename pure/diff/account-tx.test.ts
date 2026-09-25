@@ -12,10 +12,15 @@ import { validateSwapOfferAdmission } from "../../core/account/tx/handlers/swap/
 import { handleSettleTransition } from "../../core/account/tx/handlers/settlement/transition.ts";
 import { hashHtlcSecret } from "../../core/protocol/htlc/utils.ts";
 import { createDefaultDelta } from "../../core/account/state/delta.ts";
+import { handleJEventClaim } from "../../core/account/tx/handlers/j-events/claim.ts";
+import { prepareAccountJClaimTx } from "../../core/account/j-claims/j-claim-transition.ts";
+import { createAccountJClaimSession } from "../../core/account/j-claims/j-claim-session.ts";
+import { createEmptyAccountJClaimAccumulator } from "../../core/account/j-claims/j-claim-accumulator.ts";
 import {
   accountId,
   accountTerms,
   applyAccountBody,
+  committed,
   entityId,
   genesisAccount,
   genesisAccountBody,
@@ -369,44 +374,115 @@ describe("account-tx: settlement + j_event_claim", () => {
     expect((applied as any).value.state.settlement.settlementHash).toBe(word("62"));
   });
 
-  const claim = (jHeight: bigint, collateral: bigint, nonce = 1n) => ({
-    type: "j_event_claim" as const,
-    jHeight,
-    jBlockHash: word(jHeight === 10n ? "0a" : "05"),
-    observedAt: 1n,
-    events: [{ left: A, right: B, nonce, tokens: [{ tokenId: 1n, leftReserve: 0n, rightReserve: 0n, collateral, ondelta: 0n }] }],
+  const DEP = `0x${"ab".repeat(20)}`;
+  const jurisdictions = { jReplicas: new Map([["j", { chainId: 1, contracts: { depository: DEP, entityProvider: `0x${"c1".repeat(20)}`, account: `0x${"c2".repeat(20)}`, deltaTransformer: `0x${"c3".repeat(20)}` } }]]) } as any;
+  /** og side: the real handleJEventClaim with proofs from prepareAccountJClaimTx and a node store that outlives each tx. */
+  const ogClaimHarness = () => {
+    const state: any = { ...ogState([ogDelta(1, { leftCreditLimit: 20n, rightCreditLimit: 20n })]), domain: { chainId: 1, depositoryAddress: DEP }, jNonce: 0, lastFinalizedJHeight: 0,
+      leftPendingJClaims: createEmptyAccountJClaimAccumulator(), rightPendingJClaims: createEmptyAccountJClaimAccumulator() };
+    const account: any = { proofHeader: { fromEntity: A, toEntity: B }, state, currentHeight: 1, shadow: { rebalance: { submittedAtByToken: new PMap() } } };
+    const store = new Map<string, any>();
+    const apply = (tx: any, byLeft: boolean): boolean => {
+      const before = { ...state, deltas: new PMap([...state.deltas].map(([k, v]: any) => [k, { ...v }])) };
+      const session = createAccountJClaimSession({ get: (h: string) => store.get(h) } as any);
+      try {
+        const prepared = prepareAccountJClaimTx(state, tx, { chainId: 1, depositoryAddress: DEP }, session);
+        const r = handleJEventClaim(account, prepared as any, byLeft, 1, A, [], jurisdictions, session);
+        if (!r.ok) { Object.assign(state, before); return false; }
+        const changes = session.changes();
+        for (const { hash, node } of changes?.newNodes ?? []) store.set(hash, node);
+        return true;
+      } catch { Object.assign(state, before); return false; }
+    };
+    return { state, apply };
+  };
+  const ogSettled = (tokenId: number, collateral: bigint, ondelta: bigint, nonce: number, left = A, right = B) =>
+    ({ type: "AccountSettled", data: { leftEntity: left, rightEntity: right, tokenId, leftReserve: "0", rightReserve: "0", collateral: collateral.toString(), ondelta: ondelta.toString(), nonce } });
+  const rwClaim = (jHeight: number, block: string, rows: { tokenId: number; collateral: bigint; ondelta: bigint; nonce: number; left?: string; right?: string }[]) => ({
+    type: "j_event_claim" as const, jHeight: BigInt(jHeight), jBlockHash: block, observedAt: 1n,
+    events: rows.map((r) => ({ left: r.left ?? A, right: r.right ?? B, nonce: BigInt(r.nonce), tokens: [{ tokenId: BigInt(r.tokenId), leftReserve: 0n, rightReserve: 0n, collateral: r.collateral, ondelta: r.ondelta }] })),
   });
+  const ogClaim = (jHeight: number, block: string, rows: Parameters<typeof rwClaim>[2]) =>
+    ({ type: "j_event_claim", data: { jHeight, jBlockHash: block, events: rows.map((r) => ogSettled(r.tokenId, r.collateral, r.ondelta, r.nonce, r.left, r.right)) } });
+  const same = (og: ReturnType<typeof ogClaimHarness>, body: AccountBody) => {
+    const view = unwrap(committed(body) as any) as any;
+    expect(view.view.lastFinalizedJHeight).toBe(og.state.lastFinalizedJHeight);
+    expect(view.view.jNonce).toBe(og.state.jNonce);
+    expect(view.view.leftPendingJClaims.root).toBe(og.state.leftPendingJClaims.root);
+    expect(view.view.rightPendingJClaims.root).toBe(og.state.rightPendingJClaims.root);
+    expect(view.view.leftPendingJClaims.count).toBe(BigInt(og.state.leftPendingJClaims.count));
+    for (const [k, d] of og.state.deltas as Map<number, any>) {
+      expect(getDelta(body.account, String(k) as any).collateral).toBe(d.collateral);
+      expect(getDelta(body.account, String(k) as any).ondelta).toBe(d.ondelta);
+    }
+  };
 
-  test("DIVERGES: stale j_event_claim (jHeight <= lastFinalized) re-finalizes and rolls back collateral + finalizedJHeight in rewrite (og: status 'stale', no-op)", () => {
+  test("MATCH: stale j_event_claim is a no-op in both (no collateral rollback, no finalized-height regression)", () => {
+    const og = ogClaimHarness();
     let { body, ctx } = open();
-    body = unwrap(apply(body, claim(10n, 100n, 2n), ctx)).state;
-    body = unwrap(apply(body, claim(10n, 100n, 2n), { ...ctx, byLeft: false })).state;
+    const steps: [number, string, number, bigint, boolean][] = [[10, word("0a"), 2, 100n, true], [10, word("0a"), 2, 100n, false], [5, word("05"), 1, 7n, true], [5, word("05"), 1, 7n, false]];
+    for (const [h, blk, nonce, col, byLeft] of steps) {
+      const rows = [{ tokenId: 1, collateral: col, ondelta: 0n, nonce }];
+      const ok1 = og.apply(ogClaim(h, blk, rows), byLeft);
+      const r = apply(body, rwClaim(h, blk, rows), { ...ctx, byLeft });
+      expect(r.ok).toBe(ok1);
+      if (r.ok) body = r.value.state;
+      same(og, body);
+    }
     expect(body.finalizedJHeight).toBe(10n);
     expect(getDelta(body.account, "1" as any).collateral).toBe(100n);
-    body = unwrap(apply(body, claim(5n, 7n, 1n), ctx)).state;
-    body = unwrap(apply(body, claim(5n, 7n, 1n), { ...ctx, byLeft: false })).state;
-    // og j-claim-transition.ts:214 returns 'stale' and never calls applyFinalizedAccountJEventsOnView;
-    // og finality.ts:172 would also throw ACCOUNT_SETTLED_NONCE_REGRESSION (nonce 2 → 1).
+  });
+
+  test("MATCH: peer claim at an older pending height finalizes by membership in both", () => {
+    const og = ogClaimHarness();
+    let { body, ctx } = open();
+    const seq: [number, string, bigint, boolean][] = [[5, word("05"), 7n, true], [10, word("0a"), 100n, true], [5, word("05"), 7n, false]];
+    for (const [h, blk, col, byLeft] of seq) {
+      const rows = [{ tokenId: 1, collateral: col, ondelta: 0n, nonce: 1 }];
+      expect(og.apply(ogClaim(h, blk, rows), byLeft)).toBe(true);
+      body = unwrap(apply(body, rwClaim(h, blk, rows), { ...ctx, byLeft })).state;
+      same(og, body);
+    }
     expect(body.finalizedJHeight).toBe(5n);
     expect(getDelta(body.account, "1" as any).collateral).toBe(7n);
   });
 
-  test("DIVERGES: peer claim at an older pending height never finalizes in rewrite (single leftJ/rightJ slot); og accumulator finalizes by membership", () => {
+  test("MATCH: AccountSettled for a different pair, nonce regression and conflicting evidence are refused by both", () => {
+    for (const [rows, second] of [
+      [[{ tokenId: 1, collateral: 9n, ondelta: 0n, nonce: 1, left: word("33"), right: word("44") }], undefined],
+      [[{ tokenId: 1, collateral: 9n, ondelta: 0n, nonce: 1 }], [{ tokenId: 1, collateral: 5n, ondelta: 0n, nonce: 0 }]],
+    ] as const) {
+      const og = ogClaimHarness();
+      let { body, ctx } = open();
+      const run = (h: number, rs: any, byLeft: boolean) => { const o = og.apply(ogClaim(h, word("0a"), rs), byLeft); const r = apply(body, rwClaim(h, word("0a"), rs), { ...ctx, byLeft }); expect(r.ok).toBe(o); if (r.ok) body = r.value.state; same(og, body); return o; };
+      run(10, rows, true);
+      const fin = run(10, rows, false);
+      if (second !== undefined) { expect(fin).toBe(true); run(11, second, true); expect(run(11, second, false)).toBe(false); }
+      else expect(fin).toBe(false);
+    }
+    // same height, different block: conflict on the peer side
+    const og = ogClaimHarness();
     let { body, ctx } = open();
-    body = unwrap(apply(body, claim(5n, 7n), ctx)).state; // left claims h5
-    body = unwrap(apply(body, claim(10n, 100n), ctx)).state; // left claims h10 (overwrites leftJ)
-    body = unwrap(apply(body, claim(5n, 7n), { ...ctx, byLeft: false })).state; // right claims h5
-    // og: peerResult for h5 is 'member' in leftPendingJClaims → 'finalized' (j-claim-transition.ts:229-255)
-    expect(body.finalizedJHeight).toBe(0n);
-    expect(getDelta(body.account, "1" as any).collateral).toBe(0n);
+    const rows = [{ tokenId: 1, collateral: 9n, ondelta: 0n, nonce: 1 }];
+    expect(og.apply(ogClaim(10, word("0a"), rows), true)).toBe(true);
+    body = unwrap(apply(body, rwClaim(10, word("0a"), rows), ctx)).state;
+    expect(og.apply(ogClaim(10, word("0b"), rows), false)).toBe(false);
+    expect(apply(body, rwClaim(10, word("0b"), rows), { ...ctx, byLeft: false }).ok).toBe(false);
   });
 
-  test("DIVERGES: AccountSettled row for a different account pair — og throws ACCOUNT_SETTLED_PAIR_MISMATCH, rewrite silently skips and still finalizes", () => {
-    let { body, ctx } = open();
-    const foreign = { ...claim(10n, 100n), events: [{ left: word("33"), right: word("44"), nonce: 1n, tokens: [{ tokenId: 1n, leftReserve: 0n, rightReserve: 0n, collateral: 9n, ondelta: 0n }] }] };
-    body = unwrap(apply(body, foreign, ctx)).state;
-    body = unwrap(apply(body, foreign, { ...ctx, byLeft: false })).state;
-    expect(body.finalizedJHeight).toBe(10n);
-    expect(getDelta(body.account, "1" as any).collateral).toBe(0n);
+  test("MATCH: 40 random claim sequences (heights, sides, evidence, multi-token rows, nonces) keep og and rewrite in lockstep", () => {
+    for (let n = 0; n < 40; n++) {
+      const og = ogClaimHarness();
+      let { body, ctx } = open();
+      for (let i = 0; i < 10; i++) {
+        const h = 1 + ri(6), blk = word(pick3(["0a", "0b"])), byLeft = ri(2) === 0;
+        const rows = Array.from({ length: 1 + ri(2) }, (_, k) => ({ tokenId: 1 + k + ri(2), collateral: BigInt(ri(50)), ondelta: BigInt(ri(9)) - 4n, nonce: ri(4) }));
+        const o = og.apply(ogClaim(h, blk, rows), byLeft);
+        const r = apply(body, rwClaim(h, blk, rows), { ...ctx, byLeft });
+        expect(r.ok).toBe(o);
+        if (r.ok) body = r.value.state;
+        same(og, body);
+      }
+    }
   });
 });
