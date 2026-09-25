@@ -872,11 +872,447 @@ export const revealSlot = (prev: RatioRecord | undefined, next: { readonly fillR
   return prev !== undefined && next.fillRatio < prev.fillRatio ? err({ _tag: "e12" }) : ok(fresh);
 };
 export const uncollateralizedCredit = (hubDebtToUser: bigint, collateral: bigint): bigint => (hubDebtToUser > collateral ? hubDebtToUser - collateral : 0n);
-export const checkCrossClose = (p: { readonly amount: bigint; readonly ratio: number; readonly proofRatio: number; readonly leg: bigint; readonly binaryHash: Hash; readonly hubAuthored: boolean }): Result<bigint, RatioError> => {
-  if (!p.hubAuthored) return err({ _tag: "hub_authorship" });
-  if (p.ratio !== p.proofRatio) return err({ _tag: "ratio_mismatch" });
-  return chain(floorRatio(p.amount < 0n ? -p.amount : p.amount, p.ratio), (leg) => (leg !== p.leg ? err({ _tag: "leg_mismatch" }) : ok(p.leg)));
+// ---- cross-jurisdiction kernel: og protocol/htlc/hash-ladder.ts, extensions/cross-j/{index,market,status,prepared-route}.ts ----
+export type CrossError = Tagged<"cross_j", { reason: string }>;
+const crossErr = (reason: string): Result<never, CrossError> => err({ _tag: "cross_j", reason });
+/** og protocol/serialization safeStringify: sorted keys, undefined dropped, bigint tagged, arrays keep holes as null. */
+const jsonNode = (v: unknown): unknown => {
+  if (v === undefined || typeof v === "function" || typeof v === "symbol") return undefined;
+  if (v === null || typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
+  if (typeof v === "bigint") return { __xlnType: "BigInt", value: v.toString() };
+  if (Array.isArray(v)) return v.map((x) => jsonNode(x) ?? null);
+  const r = v as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(r).sort(asc).flatMap((k) => { const x = jsonNode(r[k]); return x === undefined ? [] : [[k, x]]; }));
 };
+export const stableJson = (v: unknown): string => JSON.stringify(jsonNode(v) ?? null);
+const HEX32 = /^0x[0-9a-fA-F]{64}$/;
+const LADDER_NIBBLE_MAX = 15;
+const ladderHash = (node: string): string => keccak256Hex(hexToBytes(node));
+const ladderSteps = (node: string, steps: number): string => { let r = node; for (let i = 0; i < Math.max(0, Math.floor(steps)); i++) r = ladderHash(r); return r; };
+const clampRatio = (v: unknown): number => Math.max(0, Math.min(MAX_FILL, Math.floor(Number(v) || 0)));
+const ladderDigits = (ratio: number): readonly [number, number, number, number] => { const r = clampRatio(ratio); return [(r >> 12) & 0x0f, (r >> 8) & 0x0f, (r >> 4) & 0x0f, r & 0x0f]; };
+const ladderRoot = (roots: readonly string[]): string => keccak256Hex(concat(roots.map(hexToBytes)));
+export type Reveals = readonly [string, string, string, string];
+export type HashLadderCommitment = { readonly fullHash: string; readonly partialRoot: string };
+export type HashLadderProof = HashLadderCommitment & { readonly fullSecret: string; readonly nibbleBases: Reveals };
+export type HashLadderReveal = { readonly fillRatio: number; readonly binary: string; readonly fullSecret?: string; readonly reveals?: Reveals };
+export type DecodedLadder = { readonly fillRatio: number; readonly fullSecret?: string; readonly reveals?: Reveals };
+/** og buildHashLadderProof: keccak(`${seed}:full|n0..n3`); fullHash = keccak(full), partialRoot = keccak(packed 15-step roots). */
+export const buildHashLadderProof = (seed: string): HashLadderProof => {
+  const secretFor = (suffix: string): string => keccak256Hex(utf8(`${seed}:${suffix}`));
+  const fullSecret = secretFor("full"), nibbleBases: Reveals = [secretFor("n0"), secretFor("n1"), secretFor("n2"), secretFor("n3")];
+  return { fullSecret, nibbleBases, fullHash: ladderHash(fullSecret), partialRoot: ladderRoot(nibbleBases.map((b) => ladderSteps(b, LADDER_NIBBLE_MAX))) };
+};
+/** og revealHashLadder: 0 → `0x`, 65535 → the full secret, else uint16 ratio ‖ four nibble reveals. */
+export const revealHashLadder = (p: HashLadderProof, fillRatio: number): HashLadderReveal => {
+  const ratio = clampRatio(fillRatio);
+  if (ratio === 0) return { fillRatio: 0, binary: "0x" };
+  if (ratio === MAX_FILL) return { fillRatio: ratio, binary: p.fullSecret, fullSecret: p.fullSecret };
+  const digits = ladderDigits(ratio), reveals = p.nibbleBases.map((b, i) => ladderSteps(b, LADDER_NIBBLE_MAX - (digits[i] ?? 0))) as unknown as Reveals;
+  return { fillRatio: ratio, binary: `0x${ratio.toString(16).padStart(4, "0")}${reveals.map((r) => r.slice(2)).join("")}`, reveals };
+};
+/** og decodeHashLadderBinary. */
+export const decodeHashLadderBinary = (binary?: string): Result<DecodedLadder, CrossError> => {
+  const value = String(binary || "0x").toLowerCase();
+  if (value === "0x") return ok({ fillRatio: 0 });
+  if (!value.startsWith("0x") || value.length % 2 !== 0) return crossErr("HASHLADDER_BINARY_INVALID_HEX");
+  const size = (value.length - 2) / 2;
+  if (size === 32) return HEX32.test(value) ? ok({ fillRatio: MAX_FILL, fullSecret: value }) : crossErr("HASHLADDER_FULL_BINARY_INVALID");
+  if (size !== 130) return crossErr("HASHLADDER_BINARY_INVALID_LENGTH");
+  const fillRatio = Number.parseInt(value.slice(2, 6), 16);
+  if (!Number.isInteger(fillRatio) || fillRatio <= 0 || fillRatio >= MAX_FILL) return crossErr("HASHLADDER_PARTIAL_BINARY_RATIO_INVALID");
+  const reveals = [0, 1, 2, 3].map((i) => `0x${value.slice(6 + i * 64, 70 + i * 64)}`) as unknown as Reveals;
+  return reveals.every((r) => HEX32.test(r)) ? ok({ fillRatio, reveals }) : crossErr("HASHLADDER_PARTIAL_BINARY_REVEALS_INVALID");
+};
+const ladderRevealOk = (c: HashLadderCommitment, d: DecodedLadder): boolean => {
+  const ratio = clampRatio(d.fillRatio);
+  if (ratio === 0) return true;
+  if (ratio === MAX_FILL) return d.fullSecret !== undefined && HEX32.test(d.fullSecret) && ladderHash(d.fullSecret).toLowerCase() === c.fullHash.toLowerCase();
+  const reveals = d.reveals, digits = ladderDigits(ratio);
+  return reveals !== undefined && reveals.length === 4 && ladderRoot(reveals.map((r, i) => ladderSteps(r, digits[i] ?? 0))).toLowerCase() === c.partialRoot.toLowerCase();
+};
+/** og verifyHashLadderBinary: decode, then the reveal must open the commitment at exactly its ratio. */
+export const verifyHashLadderBinary = (c: HashLadderCommitment, binary?: string): Result<DecodedLadder, CrossError> =>
+  chain(decodeHashLadderBinary(binary), (d) => (ladderRevealOk(c, d) ? ok(d) : crossErr("HASHLADDER_BINARY_VERIFY_FAILED")));
+
+export const CROSS_STATUSES = ["intent", "target_prepared", "resting", "partially_filled", "clear_requested", "clearing", "settled", "cancelled", "expired"] as const;
+export type CrossStatus = (typeof CROSS_STATUSES)[number];
+export type CrossLeg = { readonly jurisdiction: string; readonly entityId: string; readonly counterpartyEntityId: string; readonly tokenId: number; readonly amount: bigint };
+export type CrossPullLeg = { readonly pullId: string; readonly tokenId: number; readonly amount: bigint; readonly signedAmount: bigint; readonly fullHash: string; readonly partialRoot: string };
+export type CrossCloseProof = {
+  readonly orderId: string; readonly routeHash: string; readonly sourcePullId: string; readonly targetPullId: string; readonly fillRatio: number;
+  readonly cumulativeSourceAmount: bigint; readonly cumulativeTargetAmount: bigint; readonly binaryHash: string; readonly closeMode: "full" | "partial_cancel_remainder" | "pure_cancel";
+};
+export type CrossRouteDomain = {
+  readonly protocol: "xln-cross-j"; readonly hashSchema: "route-domain"; readonly sourceStackId: string; readonly targetStackId: string;
+  readonly sourceEntityProviderAddress?: string; readonly targetEntityProviderAddress?: string; readonly sourceDeltaTransformerAddress?: string; readonly targetDeltaTransformerAddress?: string;
+  readonly sourceAssetRef: string; readonly targetAssetRef: string;
+};
+export type CrossTimePolicy = { readonly runtimeClock: "unix_ms"; readonly settlementClock: "unix_seconds"; readonly deadlineConversion: "floor_ms_to_unix_seconds"; readonly runtimeExpiresAtMs: number; readonly finalityPolicy: "independent_beneficiary_windows_pull_sum_finality" };
+export type CrossPullBinding = { readonly orderId: string; readonly routeHash: string; readonly leg: "source" | "target"; readonly status?: CrossStatus };
+type CrossRecord = { readonly fillRatio: number; readonly revealedAt: number };
+type CrossPendingReveal = { readonly fillRatio: number; readonly fullSecret: string; readonly reveals: Reveals };
+/** og types/cross-jurisdiction.ts CrossJurisdictionSwapRoute, field for field. */
+export type CrossRoute = {
+  readonly orderId: string; readonly routeHash?: string; readonly bookOwnerEntityId?: string; readonly venueId?: string;
+  readonly sourceSignerId?: string; readonly sourceHubSignerId?: string; readonly targetHubSignerId?: string; readonly targetSignerId?: string; readonly bookHubSignerId?: string;
+  readonly makerEntityId: string; readonly hubEntityId: string; readonly source: CrossLeg; readonly target: CrossLeg; readonly sourceDisputeConfig: DisputeConfig; readonly targetDisputeConfig: DisputeConfig;
+  readonly sourcePull?: CrossPullLeg; readonly targetPull?: CrossPullLeg; readonly sourceCloseProof?: CrossCloseProof; readonly targetCloseProof?: CrossCloseProof;
+  readonly priceTicks?: bigint; readonly fillSeq?: number; readonly cumulativeFillRatio?: number; readonly fillNumerator?: bigint; readonly fillDenominator?: bigint;
+  readonly filledSourceAmount?: bigint; readonly filledTargetAmount?: bigint; readonly pendingClearRequestedAt?: number; readonly domain?: CrossRouteDomain; readonly timePolicy?: CrossTimePolicy;
+  readonly clearingPolicy?: "manual" | "full_fill" | "cancel_and_clear"; readonly riskMode?: "fully_collateralized" | "partially_collateralized" | "credit_line" | "unsecured_internalized";
+  readonly claimedRatio?: number; readonly sourceRegistryFillRatio?: number; readonly targetRegistryFillRatio?: number; readonly sourceRegistryRecord?: CrossRecord; readonly targetRegistryRecord?: CrossRecord;
+  readonly pendingSourceRegistryReveal?: CrossPendingReveal; readonly pendingTargetRegistryReveal?: CrossPendingReveal;
+  readonly sourceClaimed?: bigint; readonly targetClaimed?: bigint; readonly status: CrossStatus; readonly createdAt: number; readonly updatedAt: number;
+  readonly expiresAt?: number; readonly settledAt?: number; readonly error?: string; readonly memo?: string;
+};
+type MutableRoute = { -readonly [K in keyof CrossRoute]: CrossRoute[K] };
+const CROSS_RANK: Readonly<Record<CrossStatus, number>> = { intent: 10, target_prepared: 20, resting: 40, partially_filled: 50, clear_requested: 60, clearing: 70, settled: 120, cancelled: 120, expired: 120 };
+const CROSS_NEXT: Readonly<Record<CrossStatus, readonly CrossStatus[]>> = {
+  intent: ["intent", "target_prepared", "resting", "cancelled", "expired"], target_prepared: ["target_prepared", "resting", "clearing", "cancelled", "expired"],
+  resting: ["resting", "partially_filled", "clear_requested", "clearing", "cancelled", "expired"], partially_filled: ["partially_filled", "clear_requested", "clearing", "cancelled", "expired"],
+  clear_requested: ["clear_requested", "clearing", "cancelled", "expired"], clearing: ["clearing", "settled", "cancelled", "expired"], settled: ["settled"], cancelled: ["cancelled"], expired: ["expired"],
+};
+export const isCrossStatus = (v: unknown): v is CrossStatus => (CROSS_STATUSES as readonly unknown[]).includes(v);
+export const isCrossTerminal = (s: CrossStatus | undefined): boolean => s === "settled" || s === "cancelled" || s === "expired";
+export const compareCrossStatus = (current: CrossStatus | undefined, next: CrossStatus | undefined): number => (CROSS_RANK[next || "intent"] ?? 0) - (CROSS_RANK[current || "intent"] ?? 0);
+export const crossTransitionAllowed = (current: CrossStatus | undefined, next: CrossStatus | undefined): boolean => !current || !next || (CROSS_NEXT[current]?.includes(next) ?? false);
+export const transitionCrossStatus = (r: CrossRoute, next: CrossStatus, updatedAt: number): Result<CrossRoute, CrossError> =>
+  crossTransitionAllowed(r.status, next) ? ok({ ...r, status: next, updatedAt }) : crossErr("CROSS_J_ROUTE_TRANSITION_INVALID");
+export const isCrossExpired = (r: CrossRoute, now: number): boolean => { const at = Number(r.expiresAt || 0); return Number.isFinite(at) && at > 0 && at <= now; };
+// og market.ts: stack identities, canonical base/quote, venue and book owner.
+const lowerText = (v: unknown): string => String(v || "").toLowerCase();
+const trimLower = (v: unknown): string => String(v ?? "").trim().toLowerCase();
+const stackOf = (j: unknown): { readonly chainId: number; readonly depositoryAddress: string } | undefined => {
+  if (typeof j !== "string") return undefined;
+  const m = /^stack:(\d+):(0x[0-9a-fA-F]{40})$/.exec(j.trim()), chainId = Number(m?.[1]);
+  return m === null || !Number.isSafeInteger(chainId) || chainId <= 0 ? undefined : { chainId, depositoryAddress: (m[2] ?? "").toLowerCase() };
+};
+/** og getJurisdictionStackId: the `stack:<chainId>:<depository>` label of an Account domain. */
+export const stackIdOf = (d: { readonly chainId?: unknown; readonly depositoryAddress?: unknown }): string => {
+  const dep = typeof d.depositoryAddress === "string" ? d.depositoryAddress.trim().toLowerCase() : "", chainId = Number(d.chainId);
+  return dep === "" ? "" : Number.isSafeInteger(chainId) && chainId > 0 ? `stack:${chainId}:${dep}` : `stack:${dep}`;
+};
+const assetKey = (j: string, tokenId: number): Result<string, CrossError> => { const s = stackOf(j); return s === undefined ? crossErr("CROSS_J_MARKET_JURISDICTION_INVALID") : ok(`stack:${s.chainId}:${s.depositoryAddress}:${Math.floor(Number(tokenId) || 0)}`); };
+export type CrossMarket = { readonly sourceKey: string; readonly targetKey: string; readonly baseKey: string; readonly quoteKey: string; readonly sourceIsBase: boolean; readonly venueId: string };
+export const crossMarketForLegs = (sj: string, st: number, tj: string, tt: number): Result<CrossMarket, CrossError> => chain(assetKey(sj, st), (sourceKey) => map(assetKey(tj, tt), (targetKey): CrossMarket => {
+  const sl = REFERENCE_STABLES.has(st), tl = REFERENCE_STABLES.has(tt), sourceIsBase = sl !== tl ? !sl : sourceKey <= targetKey;
+  const baseKey = sourceIsBase ? sourceKey : targetKey, quoteKey = sourceIsBase ? targetKey : sourceKey;
+  return { sourceKey, targetKey, baseKey, quoteKey, sourceIsBase, venueId: `cross:${baseKey}/${quoteKey}` };
+}));
+export const crossMarket = (r: Pick<CrossRoute, "source" | "target">): Result<CrossMarket, CrossError> => crossMarketForLegs(r.source.jurisdiction, r.source.tokenId, r.target.jurisdiction, r.target.tokenId);
+export const crossBookOwnerForLegs = (sj: string, sourceHub: string, tj: string, targetHub: string): Result<string, CrossError> => {
+  const s = stackOf(sj), t = stackOf(tj);
+  if (s === undefined || t === undefined) return crossErr("CROSS_J_BOOK_JURISDICTION_INVALID");
+  if (s.chainId === t.chainId && s.depositoryAddress === t.depositoryAddress) return crossErr("CROSS_J_REQUIRES_DISTINCT_STACKS");
+  return ok(lowerText(s.chainId < t.chainId || (s.chainId === t.chainId && s.depositoryAddress < t.depositoryAddress) ? sourceHub : targetHub));
+};
+export const crossBookOwner = (r: Pick<CrossRoute, "source" | "target">): Result<string, CrossError> => crossBookOwnerForLegs(r.source.jurisdiction, r.source.counterpartyEntityId, r.target.jurisdiction, r.target.entityId);
+/** og canonicalAccountDisputeConfig: Number-coerced uint32 windows, total at most one year. */
+const canonDisputeConfig = (c: unknown): Result<DisputeConfig, CrossError> => {
+  if (!c || typeof c !== "object") return crossErr("ACCOUNT_DISPUTE_CONFIG_INVALID");
+  const secs = (v: unknown): number | undefined => { const n = Number(v); return Number.isSafeInteger(n) && n >= 0 && n <= MAX_UINT32 ? n : undefined; };
+  const l = secs((c as DisputeConfig).leftResponseSeconds), r = secs((c as DisputeConfig).rightResponseSeconds);
+  if (l === undefined || r === undefined) return crossErr("ACCOUNT_DISPUTE_RESPONSE_SECONDS_INVALID");
+  return l + r > MAX_DISPUTE_SECONDS ? crossErr("ACCOUNT_DISPUTE_RESPONSE_TOTAL_EXCEEDED") : ok({ leftResponseSeconds: l, rightResponseSeconds: r });
+};
+const optAddress = (v: unknown): string | undefined => { const t = trimLower(v); return /^0x[0-9a-f]{40}$/.test(t) ? t : undefined; };
+const routeDomain = (r: CrossRoute): CrossRouteDomain => {
+  const d = r.domain, asset = (j: string, tk: number): string => `${trimLower(j)}:${Math.floor(Number(tk))}`;
+  return {
+    protocol: "xln-cross-j", hashSchema: "route-domain", sourceStackId: trimLower(d?.sourceStackId || r.source.jurisdiction), targetStackId: trimLower(d?.targetStackId || r.target.jurisdiction),
+    ...opt("sourceEntityProviderAddress", optAddress(d?.sourceEntityProviderAddress)), ...opt("targetEntityProviderAddress", optAddress(d?.targetEntityProviderAddress)),
+    ...opt("sourceDeltaTransformerAddress", optAddress(d?.sourceDeltaTransformerAddress)), ...opt("targetDeltaTransformerAddress", optAddress(d?.targetDeltaTransformerAddress)),
+    sourceAssetRef: String(d?.sourceAssetRef || asset(r.source.jurisdiction, r.source.tokenId)).trim().toLowerCase(), targetAssetRef: String(d?.targetAssetRef || asset(r.target.jurisdiction, r.target.tokenId)).trim().toLowerCase(),
+  };
+};
+const routeTimePolicy = (r: CrossRoute): Result<CrossTimePolicy, CrossError> => {
+  const at = Math.floor(Number(r.timePolicy?.runtimeExpiresAtMs ?? r.expiresAt ?? 0));
+  return !Number.isFinite(at) || at < 0 ? crossErr("CROSS_J_TIME_POLICY_EXPIRES_INVALID")
+    : ok({ runtimeClock: "unix_ms", settlementClock: "unix_seconds", deadlineConversion: "floor_ms_to_unix_seconds", runtimeExpiresAtMs: at, finalityPolicy: "independent_beneficiary_windows_pull_sum_finality" });
+};
+/** og withCrossJurisdictionPolicyDefaults. */
+const policyDefaults = (r: CrossRoute): Result<CrossRoute, CrossError> =>
+  chain(canonDisputeConfig(r.sourceDisputeConfig), (sourceDisputeConfig) => chain(canonDisputeConfig(r.targetDisputeConfig), (targetDisputeConfig) => map(routeTimePolicy(r), (timePolicy) =>
+    ({ ...r, sourceDisputeConfig, targetDisputeConfig, riskMode: r.riskMode || "fully_collateralized", domain: routeDomain(r), timePolicy }))));
+const abiText = (s: string): Abi => { if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s)) throw new Error("ABI_ENCODE_INVALID_VALUE:utf8"); return A.bytes(bytesToHex(utf8(s))); };
+const abiUint = (v: bigint, bits: number): Abi => { if (v < 0n || v >= 1n << BigInt(bits)) throw new Error("ABI_ENCODE_INVALID_VALUE:uint-range"); return A.uint(v); };
+/** og deriveCrossJurisdictionRouteHash: keccak of the 43-field ABI tuple over the policy-defaulted route. */
+export const crossRouteHash = (route: CrossRoute): Result<string, CrossError> => chain(policyDefaults(route), (r): Result<string, CrossError> => {
+  const d = r.domain as CrossRouteDomain, tp = r.timePolicy as CrossTimePolicy, s = (v: unknown): Abi => abiText(String(v)), e = (v: unknown): Abi => abiText(lowerText(v));
+  const u = (v: unknown): Abi => abiUint(BigInt(v as bigint), 256), u32 = (v: number): Abi => abiUint(BigInt(v), 32);
+  try {
+    return ok(keccak256Hex(abiEncode([
+      s(r.orderId || ""), e(r.bookOwnerEntityId || r.source.counterpartyEntityId || r.hubEntityId), s(r.venueId || ""), e(r.makerEntityId), e(r.hubEntityId),
+      e(r.sourceSignerId || ""), e(r.sourceHubSignerId || ""), e(r.targetHubSignerId || ""), e(r.targetSignerId || ""), e(r.bookHubSignerId || ""),
+      s(trimLower(r.source.jurisdiction || "")), e(r.source.entityId), e(r.source.counterpartyEntityId), u(BigInt(String(Math.floor(Number(r.source.tokenId))))), u(r.source.amount),
+      s(trimLower(r.target.jurisdiction || "")), e(r.target.entityId), e(r.target.counterpartyEntityId), u(BigInt(String(Math.floor(Number(r.target.tokenId))))), u(r.target.amount),
+      A.bool(r.priceTicks !== undefined), ((v: bigint): Abi => { if (v < -(1n << 255n) || v >= 1n << 255n) throw new Error("ABI_ENCODE_INVALID_VALUE:int-range"); return A.int(v); })(BigInt(r.priceTicks ?? 0n)),
+      u(Math.floor(Number(r.expiresAt ?? 0))), s(String(r.riskMode || "")),
+      s(d.protocol), s(d.hashSchema), s(d.sourceStackId), s(d.targetStackId), s(d.sourceEntityProviderAddress || ""), s(d.targetEntityProviderAddress || ""),
+      s(d.sourceDeltaTransformerAddress || ""), s(d.targetDeltaTransformerAddress || ""), s(d.sourceAssetRef), s(d.targetAssetRef),
+      s(tp.runtimeClock), s(tp.settlementClock), s(tp.deadlineConversion), u(tp.runtimeExpiresAtMs), s(tp.finalityPolicy),
+      u32(r.sourceDisputeConfig.leftResponseSeconds), u32(r.sourceDisputeConfig.rightResponseSeconds), u32(r.targetDisputeConfig.leftResponseSeconds), u32(r.targetDisputeConfig.rightResponseSeconds),
+    ])));
+  } catch { return crossErr("CROSS_J_ROUTE_HASH_ENCODING"); }
+});
+/** og withCanonicalCrossJurisdictionRouteHash: venue defaults (book owner, venue, hub), policy defaults, fully collateralized only, then the hash (a supplied one must agree). */
+export const canonicalCrossRoute = (route: CrossRoute): Result<CrossRoute, CrossError> =>
+  chain(route.bookOwnerEntityId ? ok(route.bookOwnerEntityId) : crossBookOwner(route), (owner) => chain(route.venueId ? ok(route.venueId) : map(crossMarket(route), (m) => m.venueId), (venueId) => {
+    const bookOwnerEntityId = lowerText(owner);
+    return chain(policyDefaults({ ...route, bookOwnerEntityId, venueId, hubEntityId: route.hubEntityId || bookOwnerEntityId }), (r) =>
+      (r.riskMode || "fully_collateralized") !== "fully_collateralized" ? crossErr("CROSS_J_RISK_MODE_UNSUPPORTED")
+      : chain(crossRouteHash(r), (routeHash) => (r.routeHash && String(r.routeHash).toLowerCase() !== routeHash.toLowerCase() ? crossErr("CROSS_J_ROUTE_HASH_MISMATCH") : ok({ ...r, routeHash }))));
+  }));
+const hashOrDerive = (r: CrossRoute): Result<string, CrossError> => (r.routeHash ? ok(r.routeHash) : crossRouteHash(r));
+/** og deriveCrossJurisdictionPullId. */
+export const crossPullId = (r: CrossRoute, leg: "source" | "target"): Result<string, CrossError> => map(hashOrDerive(r), (h) => keccak256Hex(utf8(`xln:cross-j:pull-id:v1:${h}:${leg}`)));
+/** og deriveCrossJurisdictionPrivateSeed: the hash-ladder seed is private to the runtime seed and bound to the route hash. */
+export const crossPrivateSeed = (runtimeSeed: string | undefined, r: CrossRoute): Result<string, CrossError> => {
+  const seed = String(runtimeSeed || "").trim();
+  return seed === "" ? crossErr("CRYPTO_DETERMINISM_VIOLATION") : map(hashOrDerive(r), (h) => keccak256Hex(utf8(`xln:cross-j:hashladder-private-seed:v1:${seed}:${h}`)));
+};
+/** og signedCrossJurisdictionAmountForBeneficiary: positive when the beneficiary is the left entity. */
+export const crossSignedAmount = (beneficiary: string, counterparty: string, amount: bigint): bigint => (before(lowerText(beneficiary), lowerText(counterparty)) ? amount : -amount);
+const cloneLeg = (l: CrossLeg): CrossLeg => ({ jurisdiction: String(l.jurisdiction || ""), entityId: String(l.entityId || ""), counterpartyEntityId: String(l.counterpartyEntityId || ""), tokenId: Number(l.tokenId), amount: BigInt(l.amount) });
+const clonePull = (p: CrossPullLeg | undefined): CrossPullLeg | undefined => p === undefined ? undefined
+  : { pullId: String(p.pullId || ""), tokenId: Number(p.tokenId), amount: BigInt(p.amount), signedAmount: BigInt(p.signedAmount), fullHash: String(p.fullHash || ""), partialRoot: String(p.partialRoot || "") };
+const CLOSE_MODES: readonly unknown[] = ["full", "partial_cancel_remainder", "pure_cancel"];
+/** og cloneCrossJurisdictionCloseProof: exact uint16 ratio and a known close mode. */
+export const cloneCloseProof = (p: CrossCloseProof): Result<CrossCloseProof, CrossError> => {
+  const fillRatio = Number(p.fillRatio);
+  if (!Number.isSafeInteger(fillRatio) || fillRatio < 0 || fillRatio > MAX_FILL) return crossErr("CROSS_J_CLOSE_PROOF_FILL_RATIO_INVALID");
+  if (!CLOSE_MODES.includes(p.closeMode)) return crossErr("CROSS_J_CLOSE_PROOF_MODE_INVALID");
+  return ok({ orderId: String(p.orderId || ""), routeHash: String(p.routeHash || ""), sourcePullId: String(p.sourcePullId || ""), targetPullId: String(p.targetPullId || ""), fillRatio,
+    cumulativeSourceAmount: BigInt(p.cumulativeSourceAmount ?? 0n), cumulativeTargetAmount: BigInt(p.cumulativeTargetAmount ?? 0n), binaryHash: String(p.binaryHash || ""), closeMode: p.closeMode });
+};
+const optText = (v: unknown): string | undefined => { const t = String(v ?? "").trim(); return t === "" ? undefined : t; };
+const optNum = (v: unknown): number | undefined => (v === undefined || v === null ? undefined : Number(v));
+const optBig = (v: unknown): bigint | undefined => (v === undefined || v === null ? undefined : BigInt(v as bigint));
+/** og cloneCrossJurisdictionRoute: the public route with every field normalized and blanks dropped. */
+export const cloneCrossRoute = (r: CrossRoute): Result<CrossRoute, CrossError> => {
+  if (!isCrossStatus(r.status)) return crossErr("CROSS_J_ROUTE_STATUS_INVALID");
+  const proof = (p: CrossCloseProof | undefined): Result<CrossCloseProof | undefined, CrossError> => (p ? cloneCloseProof(p) : ok(undefined));
+  return chain(proof(r.sourceCloseProof), (sourceCloseProof) => chain(proof(r.targetCloseProof), (targetCloseProof): Result<CrossRoute, CrossError> => {
+    const d = r.domain, tp = r.timePolicy, reveal = (x: CrossPendingReveal | undefined): CrossPendingReveal | undefined => (x ? { fillRatio: x.fillRatio, fullSecret: x.fullSecret, reveals: [...x.reveals] as unknown as Reveals } : undefined);
+    const clone: MutableRoute = {
+      orderId: String(r.orderId || ""), makerEntityId: String(r.makerEntityId || ""), hubEntityId: String(r.hubEntityId || ""), source: cloneLeg(r.source), target: cloneLeg(r.target),
+      sourceDisputeConfig: { leftResponseSeconds: Number(r.sourceDisputeConfig.leftResponseSeconds), rightResponseSeconds: Number(r.sourceDisputeConfig.rightResponseSeconds) },
+      targetDisputeConfig: { leftResponseSeconds: Number(r.targetDisputeConfig.leftResponseSeconds), rightResponseSeconds: Number(r.targetDisputeConfig.rightResponseSeconds) },
+      status: r.status, createdAt: Number(r.createdAt || 0), updatedAt: Number(r.updatedAt || 0),
+      ...opt("routeHash", optText(r.routeHash)), ...opt("bookOwnerEntityId", optText(r.bookOwnerEntityId)), ...opt("venueId", optText(r.venueId)), ...opt("sourceSignerId", optText(r.sourceSignerId)),
+      ...opt("sourceHubSignerId", optText(r.sourceHubSignerId)), ...opt("targetHubSignerId", optText(r.targetHubSignerId)), ...opt("targetSignerId", optText(r.targetSignerId)), ...opt("bookHubSignerId", optText(r.bookHubSignerId)),
+      ...opt("sourcePull", clonePull(r.sourcePull)), ...opt("targetPull", clonePull(r.targetPull)), ...opt("sourceCloseProof", sourceCloseProof), ...opt("targetCloseProof", targetCloseProof),
+      ...opt("priceTicks", optBig(r.priceTicks)), ...opt("fillSeq", optNum(r.fillSeq)), ...opt("cumulativeFillRatio", optNum(r.cumulativeFillRatio)), ...opt("fillNumerator", optBig(r.fillNumerator)),
+      ...opt("fillDenominator", optBig(r.fillDenominator)), ...opt("filledSourceAmount", optBig(r.filledSourceAmount)), ...opt("filledTargetAmount", optBig(r.filledTargetAmount)),
+      ...opt("pendingClearRequestedAt", optNum(r.pendingClearRequestedAt)),
+      ...(d ? { domain: {
+        protocol: "xln-cross-j", hashSchema: "route-domain", sourceStackId: String(d.sourceStackId || ""), targetStackId: String(d.targetStackId || ""),
+        ...(d.sourceEntityProviderAddress ? { sourceEntityProviderAddress: String(d.sourceEntityProviderAddress) } : {}), ...(d.targetEntityProviderAddress ? { targetEntityProviderAddress: String(d.targetEntityProviderAddress) } : {}),
+        ...(d.sourceDeltaTransformerAddress ? { sourceDeltaTransformerAddress: String(d.sourceDeltaTransformerAddress) } : {}), ...(d.targetDeltaTransformerAddress ? { targetDeltaTransformerAddress: String(d.targetDeltaTransformerAddress) } : {}),
+        sourceAssetRef: String(d.sourceAssetRef || ""), targetAssetRef: String(d.targetAssetRef || ""),
+      } } : {}),
+      ...(tp ? { timePolicy: { runtimeClock: "unix_ms", settlementClock: "unix_seconds", deadlineConversion: "floor_ms_to_unix_seconds", runtimeExpiresAtMs: Number(tp.runtimeExpiresAtMs || 0), finalityPolicy: "independent_beneficiary_windows_pull_sum_finality" } } : {}),
+      ...(r.clearingPolicy ? { clearingPolicy: r.clearingPolicy } : {}), ...(r.riskMode ? { riskMode: r.riskMode } : {}),
+      ...opt("claimedRatio", optNum(r.claimedRatio)), ...opt("sourceRegistryFillRatio", optNum(r.sourceRegistryFillRatio)), ...opt("targetRegistryFillRatio", optNum(r.targetRegistryFillRatio)),
+      ...(r.sourceRegistryRecord ? { sourceRegistryRecord: { fillRatio: r.sourceRegistryRecord.fillRatio, revealedAt: r.sourceRegistryRecord.revealedAt } } : {}),
+      ...(r.targetRegistryRecord ? { targetRegistryRecord: { fillRatio: r.targetRegistryRecord.fillRatio, revealedAt: r.targetRegistryRecord.revealedAt } } : {}),
+      ...opt("pendingSourceRegistryReveal", reveal(r.pendingSourceRegistryReveal)), ...opt("pendingTargetRegistryReveal", reveal(r.pendingTargetRegistryReveal)),
+      ...opt("sourceClaimed", optBig(r.sourceClaimed)), ...opt("targetClaimed", optBig(r.targetClaimed)), ...opt("expiresAt", optNum(r.expiresAt)), ...opt("settledAt", optNum(r.settledAt)),
+      ...opt("error", optText(r.error)), ...opt("memo", optText(r.memo)),
+    };
+    return ok(clone);
+  }));
+};
+/** og cloneCrossJurisdictionPullBinding. */
+export const cloneCrossBinding = (b: CrossPullBinding): Result<CrossPullBinding, CrossError> =>
+  b.status !== undefined && !isCrossStatus(b.status) ? crossErr("CROSS_J_ROUTE_STATUS_INVALID")
+  : ok({ orderId: String(b.orderId || ""), routeHash: String(b.routeHash || ""), leg: b.leg, ...opt("status", b.status) });
+/** og buildCrossJurisdictionPullBinding: the opening binding of one leg to the canonical route. */
+export const crossPullBinding = (route: CrossRoute, leg: "source" | "target"): Result<CrossPullBinding, CrossError> =>
+  chain(canonicalCrossRoute(route), (c) => chain(hashOrDerive(c), (routeHash) => cloneCrossBinding({ orderId: c.orderId, routeHash, leg, status: c.status })));
+/** og hashCrossJurisdictionCloseBinary: keccak of the ladder reveal bytes. */
+export const crossCloseBinaryHash = (binary: string): Result<string, CrossError> => { const b = parseHex(String(binary || "0x")); return b === null || !String(binary || "0x").startsWith("0x") ? crossErr("CROSS_J_CLOSE_BINARY_INVALID") : ok(keccak256Hex(b)); };
+// og exact fill progress: cumulative amounts are exact n/d scalings; the uint16 ratio is only the dispute projection.
+type ExactRatio = { readonly numerator: bigint; readonly denominator: bigint };
+const readExactRatio = (x: { readonly fillNumerator?: bigint | undefined; readonly fillDenominator?: bigint | undefined }): Result<ExactRatio | undefined, CrossError> => {
+  if (x.fillNumerator === undefined && x.fillDenominator === undefined) return ok(undefined);
+  if (x.fillNumerator === undefined || x.fillDenominator === undefined) return crossErr("CROSS_J_EXACT_FILL_RATIO_INCOMPLETE");
+  return x.fillDenominator <= 0n || x.fillNumerator < 0n || x.fillNumerator > x.fillDenominator ? crossErr("CROSS_J_EXACT_FILL_RATIO_INVALID") : ok({ numerator: x.fillNumerator, denominator: x.fillDenominator });
+};
+const scaleExact = (total: bigint, r: ExactRatio): bigint => (r.numerator >= r.denominator ? total : (total * r.numerator) / r.denominator);
+type ProofRatioInput = { readonly cumulativeFillRatio?: number | undefined; readonly claimedRatio?: number | undefined; readonly fillNumerator?: bigint | undefined; readonly fillDenominator?: bigint | undefined };
+/** og getCrossJurisdictionCommittedProofRatio: the uint16 projection of the exact ratio; coarse fields must agree with it. */
+export const crossProofRatio = (x: ProofRatioInput): Result<number, CrossError> => chain(readExactRatio(x), (exact): Result<number, CrossError> => {
+  if (exact === undefined) return Math.max(clampRatio(x.cumulativeFillRatio), clampRatio(x.claimedRatio)) > 0 ? crossErr("CROSS_J_EXACT_FILL_RATIO_REQUIRED") : ok(0);
+  const derived = fillRatioOf({ n: exact.numerator, d: exact.denominator });
+  return [x.cumulativeFillRatio, x.claimedRatio].some((v) => v !== undefined && clampRatio(v) !== derived) ? crossErr("CROSS_J_COARSE_EXACT_RATIO_MISMATCH") : ok(derived);
+});
+export type CrossFillAmounts = { readonly sourceTotal: bigint; readonly targetTotal: bigint; readonly filledSourceAmount: bigint; readonly filledTargetAmount: bigint; readonly fillRatio: number };
+/** og getCrossJurisdictionCommittedFillAmounts. */
+export const crossFillAmounts = (r: CrossRoute): Result<CrossFillAmounts, CrossError> => chain(readExactRatio(r), (exact) => {
+  const sourceTotal = BigInt(r.source.amount), targetTotal = BigInt(r.target.amount);
+  if (exact === undefined && [r.filledSourceAmount, r.filledTargetAmount, r.sourceClaimed, r.targetClaimed].some((v) => v !== undefined && v !== 0n)) return crossErr("CROSS_J_EXACT_FILL_RATIO_REQUIRED");
+  const src = exact ? scaleExact(sourceTotal, exact) : 0n, tgt = exact ? scaleExact(targetTotal, exact) : 0n;
+  return chain(crossProofRatio(r), (fillRatio) => ([[r.filledSourceAmount, src], [r.filledTargetAmount, tgt], [r.sourceClaimed, src], [r.targetClaimed, tgt]] as const).some(([have, want]) => have !== undefined && have !== want)
+    ? crossErr("CROSS_J_COMMITTED_AMOUNT_MISMATCH") : ok({ sourceTotal, targetTotal, filledSourceAmount: src, filledTargetAmount: tgt, fillRatio }));
+});
+export const hasCrossCommittedFill = (r: CrossRoute): Result<boolean, CrossError> => map(crossFillAmounts(r), (c) => c.fillRatio > 0 || c.filledSourceAmount > 0n || c.filledTargetAmount > 0n);
+export const isCrossFillTerminal = (r: CrossRoute, x: { readonly nextRatio: number; readonly cancelRemainder?: boolean | undefined }): Result<boolean, CrossError> =>
+  map(crossFillAmounts(r), (c) => x.nextRatio >= MAX_FILL || c.filledSourceAmount >= BigInt(r.source.amount) || c.filledTargetAmount >= BigInt(r.target.amount) || Boolean(x.cancelRemainder));
+export type CrossFillInput = ProofRatioInput & { readonly fillSeq?: number | undefined; readonly cumulativeFillRatio: number; readonly incrementalSourceAmount?: bigint | undefined; readonly incrementalTargetAmount?: bigint | undefined; readonly cumulativeSourceAmount?: bigint | undefined; readonly cumulativeTargetAmount?: bigint | undefined };
+export type CrossFillProgress = {
+  readonly fillSeq: number; readonly previousRatio: number; readonly nextRatio: number; readonly fillNumerator: bigint; readonly fillDenominator: bigint; readonly previousSourceAmount: bigint; readonly previousTargetAmount: bigint;
+  readonly cumulativeSourceAmount: bigint; readonly cumulativeTargetAmount: bigint; readonly incrementalSourceAmount: bigint; readonly incrementalTargetAmount: bigint;
+};
+/** og validateCrossJurisdictionFillProgress: next sequence, exact ratio strictly increasing, positive increments, echoed amounts must agree. */
+export const crossFillProgress = (r: CrossRoute, x: CrossFillInput): Result<CrossFillProgress, CrossError> => {
+  const prevSeq = Math.max(0, Math.floor(Number(r.fillSeq ?? 0) || 0)), nextSeq = x.fillSeq === undefined ? prevSeq + 1 : Math.floor(Number(x.fillSeq));
+  if (!Number.isInteger(nextSeq) || nextSeq !== prevSeq + 1) return crossErr("CROSS_J_FILL_SEQ");
+  return chain(readExactRatio(x), (exact) => exact === undefined ? crossErr("CROSS_J_EXACT_FILL_RATIO_REQUIRED") : chain(crossProofRatio(r), (previousRatio) =>
+    chain(crossProofRatio({ cumulativeFillRatio: x.cumulativeFillRatio, fillNumerator: x.fillNumerator, fillDenominator: x.fillDenominator }), (nextRatio): Result<CrossFillProgress, CrossError> => {
+      if (nextRatio <= previousRatio) return crossErr("CROSS_J_FILL_NON_MONOTONIC");
+      const sourceTotal = BigInt(r.source.amount), targetTotal = BigInt(r.target.amount);
+      if (sourceTotal <= 0n || targetTotal <= 0n) return crossErr("CROSS_J_FILL_ROUTE_AMOUNT");
+      return chain(crossFillAmounts(r), (c): Result<CrossFillProgress, CrossError> => {
+        const cs = scaleExact(sourceTotal, exact), ct = scaleExact(targetTotal, exact), is = cs - c.filledSourceAmount, it = ct - c.filledTargetAmount;
+        if (is <= 0n || it <= 0n) return crossErr("CROSS_J_FILL_NO_INCREMENT");
+        if ((x.cumulativeSourceAmount !== undefined && x.cumulativeSourceAmount !== cs) || (x.cumulativeTargetAmount !== undefined && x.cumulativeTargetAmount !== ct)
+          || (x.incrementalSourceAmount !== undefined && x.incrementalSourceAmount !== is) || (x.incrementalTargetAmount !== undefined && x.incrementalTargetAmount !== it)) return crossErr("CROSS_J_FILL_AMOUNT_MISMATCH");
+        return ok({ fillSeq: nextSeq, previousRatio, nextRatio, fillNumerator: exact.numerator, fillDenominator: exact.denominator, previousSourceAmount: c.filledSourceAmount, previousTargetAmount: c.filledTargetAmount,
+          cumulativeSourceAmount: cs, cumulativeTargetAmount: ct, incrementalSourceAmount: is, incrementalTargetAmount: it });
+      });
+    })));
+};
+/** og applyCrossJurisdictionFillProgress: the validated progress written onto the route. */
+export const applyCrossFill = (r: CrossRoute, x: CrossFillInput, updatedAt: number): Result<CrossRoute, CrossError> => map(crossFillProgress(r, x), (f) => ({
+  ...r, fillSeq: f.fillSeq, cumulativeFillRatio: f.nextRatio, fillNumerator: f.fillNumerator, fillDenominator: f.fillDenominator, claimedRatio: f.nextRatio,
+  filledSourceAmount: f.cumulativeSourceAmount, filledTargetAmount: f.cumulativeTargetAmount, sourceClaimed: f.cumulativeSourceAmount, targetClaimed: f.cumulativeTargetAmount,
+  status: f.nextRatio >= MAX_FILL ? "clear_requested" : "partially_filled", updatedAt,
+}));
+/** og withCrossJurisdictionCloseProofProgress. */
+export const withCloseProofProgress = (r: CrossRoute, p: CrossCloseProof, updatedAt: number): CrossRoute => ({
+  ...r, cumulativeFillRatio: p.fillRatio, fillNumerator: BigInt(p.fillRatio), fillDenominator: BigInt(MAX_FILL), claimedRatio: p.fillRatio,
+  filledSourceAmount: p.cumulativeSourceAmount, filledTargetAmount: p.cumulativeTargetAmount, sourceClaimed: p.cumulativeSourceAmount, targetClaimed: p.cumulativeTargetAmount, updatedAt,
+});
+/** og buildCrossJurisdictionCloseProof: the Hub's exact source+target close cohort at the committed ratio. */
+export const buildCrossCloseProof = (route: CrossRoute, binary: string): Result<CrossCloseProof, CrossError> => chain(canonicalCrossRoute(route), (c) => {
+  if (!c.sourcePull || !c.targetPull) return crossErr("CROSS_J_CLOSE_PROOF_PULLS_MISSING");
+  const { sourcePull, targetPull } = c;
+  return chain(crossFillAmounts(c), (f) => chain(hashOrDerive(c), (routeHash) => chain(crossCloseBinaryHash(binary), (binaryHash) => cloneCloseProof({
+    orderId: c.orderId, routeHash, sourcePullId: sourcePull.pullId, targetPullId: targetPull.pullId, fillRatio: f.fillRatio, cumulativeSourceAmount: f.filledSourceAmount, cumulativeTargetAmount: f.filledTargetAmount,
+    binaryHash, closeMode: f.fillRatio >= MAX_FILL ? "full" : f.fillRatio <= 0 ? "pure_cancel" : "partial_cancel_remainder",
+  }))));
+});
+const CROSS_DEFAULT_BOOK_TTL_MS = 60_000;
+/** og buildPreparedCrossJurisdictionRoute: book TTL, canonical hash, a useful asset route, both pulls from the private ladder. */
+export const prepareCrossRoute = (route: CrossRoute, o: { readonly runtimeSeed?: string | undefined; readonly now: number }): Result<CrossRoute, CrossError> => {
+  const now = Math.floor(Number(o.now || 0));
+  if (!Number.isFinite(now) || now <= 0) return crossErr("CROSS_J_NOW_INVALID");
+  const expiresAt = Math.floor(Number(route.expiresAt ?? now + CROSS_DEFAULT_BOOK_TTL_MS));
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) return crossErr("CROSS_J_EXPIRES_AT_INVALID");
+  return chain(canonicalCrossRoute({ ...route, expiresAt }), (c) => {
+    if (trimLower(c.source.jurisdiction) === trimLower(c.target.jurisdiction) && Number(c.source.tokenId) === Number(c.target.tokenId)) return crossErr("CROSS_J_SAME_JURISDICTION_TOKEN_INVALID");
+    return chain(crossPrivateSeed(o.runtimeSeed, c), (seed) => chain(crossPullId(c, "source"), (sourcePullId) => map(crossPullId(c, "target"), (targetPullId): CrossRoute => {
+      const ladder = buildHashLadderProof(seed), sa = BigInt(c.source.amount), ta = BigInt(c.target.amount);
+      return {
+        ...c,
+        sourcePull: { pullId: sourcePullId, tokenId: Number(route.source.tokenId), amount: sa, signedAmount: crossSignedAmount(route.source.counterpartyEntityId, route.source.entityId, sa), fullHash: ladder.fullHash, partialRoot: ladder.partialRoot },
+        targetPull: { pullId: targetPullId, tokenId: Number(route.target.tokenId), amount: ta, signedAmount: crossSignedAmount(route.target.counterpartyEntityId, route.target.entityId, ta), fullHash: ladder.fullHash, partialRoot: ladder.partialRoot },
+        status: "target_prepared", updatedAt: now, expiresAt,
+      };
+    })));
+  });
+};
+/** og buildCrossJurisdictionPullReveal: the ladder reveal at a ratio, from the route's private seed. */
+export const crossPullReveal = (fillRatio: number, privateSeed: string): Result<HashLadderReveal, CrossError> =>
+  String(privateSeed || "").trim() === "" ? crossErr("CROSS_J_HASHLADDER_PRIVATE_SEED_MISSING") : ok(revealHashLadder(buildHashLadderProof(String(privateSeed).trim()), fillRatio));
+// ---- pull registry settlement: og account/pull-registry-settlement.ts ----
+export type SignedProofBodyPull = { readonly amount: bigint; readonly claimedRatio: number; readonly targetRole: boolean; readonly fullHash: string; readonly partialRoot: string };
+export type HashLadderRegistryRecord = { readonly fillRatio: number; readonly revealedAt: number };
+/**
+ * The DeltaTransformer batch `(payment[], swap[], pull[])` decoded as ethers' AbiCoder does: offsets and counts are
+ * safe-integer indices, a count needs a word of data per item, element reads past the end overrun; uint16 masks, bools are nonzero.
+ * A bad payment/swap count ethers keeps as an unread error value; a bad pull section rejects because its pulls are read.
+ */
+const decodeBatchPulls = (hex: string): Result<readonly SignedProofBodyPull[], CrossError> => {
+  const bad = crossErr("CROSS_J_FINAL_DELTA_BATCH_INVALID");
+  const data = /^0x([0-9a-fA-F]{2})*$/.test(hex) ? parseHex(hex) : null;
+  if (data === null) return bad;
+  const word = (b: Uint8Array, at: number): bigint | undefined => (at + 32 > b.length ? undefined : BigInt(bytesToHex(b.subarray(at, at + 32))));
+  type Index = { readonly overrun: true } | { readonly overrun: false; readonly value?: number };
+  const index = (b: Uint8Array, at: number): Index => { const w = word(b, at); return w === undefined ? { overrun: true } : { overrun: false, ...(w <= BigInt(Number.MAX_SAFE_INTEGER) ? { value: Number(w) } : {}) }; };
+  const top = index(data, 0);
+  if (top.overrun || top.value === undefined) return bad;
+  const tuple = data.subarray(top.value);
+  const arrays: Array<{ readonly items?: Uint8Array; readonly count?: number }> = [];
+  for (const [slot, size] of [[0, 5], [1, 5], [2, 7]] as const) {
+    const off = index(tuple, slot * 32);
+    if (off.overrun || off.value === undefined) return bad;
+    const arr = tuple.subarray(off.value), count = index(arr, 0);
+    if (count.overrun) return bad;
+    if (count.value === undefined) { arrays.push({}); continue; }
+    if (count.value * 32 > arr.length || 32 + count.value * size * 32 > arr.length) return bad;
+    arrays.push({ items: arr.subarray(32, 32 + count.value * size * 32), count: count.value });
+  }
+  const pulls = arrays[2];
+  if (pulls?.items === undefined || pulls.count === undefined) return bad;
+  const items = pulls.items, out: SignedProofBodyPull[] = [];
+  for (let i = 0; i < pulls.count; i++) {
+    const at = i * 7 * 32, w = (k: number): bigint => word(items, at + k * 32) ?? 0n, h = (k: number): string => bytesToHex(items.subarray(at + k * 32, at + k * 32 + 32));
+    const negative = w(1) !== 0n, magnitude = w(2);
+    if (negative && magnitude === 0n) return crossErr("ABI_MONEY_NEGATIVE_ZERO");
+    out.push({ amount: negative ? -magnitude : magnitude, claimedRatio: Number(w(3) & 0xffffn), fullHash: h(4).toLowerCase(), partialRoot: h(5).toLowerCase(), targetRole: w(6) !== 0n });
+  }
+  return ok(out);
+};
+/** ethers isAddress over a hex address: 0x optional; a mixed-case spelling must be its EIP-55 checksum. */
+const isAddressText = (a: string): boolean => {
+  if (!/^(0x)?[0-9a-fA-F]{40}$/.test(a)) return false;
+  const body = a.startsWith("0x") ? a.slice(2) : a;
+  return !(/[a-f]/.test(body) && /[A-F]/.test(body)) || checksum(`0x${body}`) === `0x${body}`;
+};
+const signedProofBodyPulls = (proofbody: Pick<ProofBody, "transformers">, transformerAddress: string): Result<readonly SignedProofBodyPull[], CrossError> => {
+  if (!isAddressText(transformerAddress)) return crossErr("CROSS_J_FINAL_DELTA_TRANSFORMER_ADDRESS_INVALID");
+  const canonical = transformerAddress.toLowerCase(), clauses = proofbody.transformers.filter((t) => String(t.transformerAddress).toLowerCase() === canonical);
+  return clauses.length === 0 ? crossErr("CROSS_J_FINAL_DELTA_TRANSFORMER_MISSING") : map(traverse(clauses, (t) => decodeBatchPulls(t.encodedBatch)), (rows) => rows.flat());
+};
+/** og findExactSignedProofBodyPull: the one signed pull with this role, hash material and signed amount; two is ambiguous. */
+export const findSignedProofBodyPull = (proofbody: Pick<ProofBody, "transformers">, expected: CrossPullLeg, targetRole: boolean, transformerAddress: string): Result<SignedProofBodyPull | undefined, CrossError> =>
+  chain(signedProofBodyPulls(proofbody, transformerAddress), (pulls) => {
+    const hits = pulls.filter((p) => p.targetRole === targetRole && p.fullHash === expected.fullHash.toLowerCase() && p.partialRoot === expected.partialRoot.toLowerCase() && p.amount === expected.signedAmount);
+    return hits.length > 1 ? crossErr("CROSS_J_FINAL_PULL_AMBIGUOUS") : ok(hits[0]);
+  });
+const safeUintOf = (v: unknown, max: number): number | undefined => { const n = Number(v); return Number.isSafeInteger(n) && n >= 0 && n <= max ? n : undefined; };
+/** og resolveFinalizedCrossJurisdictionRouteLeg: the leg whose unordered pair is this Account and whose stack is this Account's stack. */
+export const finalizedRouteLeg = (x: { readonly route: Pick<CrossRoute, "orderId" | "source" | "target">; readonly self: string; readonly counterparty: string; readonly localStack?: string | undefined }): Result<"source" | "target" | undefined, CrossError> => {
+  const self = x.self.toLowerCase(), peer = x.counterparty.toLowerCase();
+  const pair = (l: CrossLeg): boolean => { const e = l.entityId.toLowerCase(), c = l.counterpartyEntityId.toLowerCase(); return (e === self && c === peer) || (e === peer && c === self); };
+  const candidates = (["source", "target"] as const).filter((role) => pair(x.route[role]));
+  if (candidates.length === 0) return ok(undefined);
+  if (!x.localStack) return crossErr("CROSS_J_FINALITY_JURISDICTION_MISSING");
+  const stack = x.localStack.toLowerCase(), exact = candidates.filter((role) => x.route[role].jurisdiction.toLowerCase() === stack);
+  return exact.length === 1 && exact[0] !== undefined ? ok(exact[0]) : crossErr(exact.length === 0 ? "CROSS_J_FINALITY_LEG_MISSING" : "CROSS_J_FINALITY_LEG_AMBIGUOUS");
+};
+/**
+ * og resolveFinalizedPullFillRatio (DeltaTransformer.applyPull): the signed claimedRatio, raised by a registry record revealed
+ * within the beneficiary's own window of the active dispute (timeout must be start + left + right).
+ */
+export const finalizedPullFillRatio = (x: {
+  readonly active?: { readonly disputeStartTimestamp?: unknown; readonly disputeTimeout?: unknown } | undefined; readonly proofbody: Pick<ProofBody, "transformers" | "leftResponseSeconds" | "rightResponseSeconds">;
+  readonly transformerAddress: string; readonly expectedPull: CrossPullLeg; readonly targetRole: boolean; readonly record?: HashLadderRegistryRecord | undefined;
+}): Result<number, CrossError> => chain(findSignedProofBodyPull(x.proofbody, x.expectedPull, x.targetRole, x.transformerAddress), (pull): Result<number, CrossError> => {
+  if (pull === undefined) return crossErr("CROSS_J_FINAL_PULL_MISSING");
+  const left = safeUintOf(x.proofbody.leftResponseSeconds, 0xffff_ffff), right = safeUintOf(x.proofbody.rightResponseSeconds, 0xffff_ffff);
+  const start = safeUintOf(x.active?.disputeStartTimestamp, Number.MAX_SAFE_INTEGER), timeout = safeUintOf(x.active?.disputeTimeout, Number.MAX_SAFE_INTEGER);
+  if (left === undefined || right === undefined || start === undefined || timeout === undefined) return crossErr("CROSS_J_FINAL_WINDOW_INVALID");
+  if (timeout !== start + left + right) return crossErr("CROSS_J_FINAL_CLOCK_MISMATCH");
+  const window = pull.amount > 0n ? left : right;
+  if (x.record === undefined) return ok(pull.claimedRatio);
+  const ratio = safeUintOf(x.record.fillRatio, MAX_FILL), revealedAt = safeUintOf(x.record.revealedAt, Number.MAX_SAFE_INTEGER);
+  if (ratio === undefined || revealedAt === undefined) return crossErr("CROSS_J_REGISTRY_RECORD_INVALID");
+  return ok(revealedAt >= start && revealedAt <= start + window && ratio > pull.claimedRatio ? ratio : pull.claimedRatio);
+});
 
 
 export type Delta = { readonly tokenId: TokenId; readonly collateral: bigint; readonly ondelta: bigint; readonly offdelta: bigint; readonly leftCreditLimit: bigint; readonly rightCreditLimit: bigint };
@@ -975,29 +1411,79 @@ export const checkEnvelope = (id: AccountId, terms: AccountTerms, e: AccountEnve
 export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" | "claim_entity" | "claim_conflict" | "claim_proof">;
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
-  | Tagged<"settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
+  | Tagged<"settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_envelope" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
   | Tagged<"settlement", { reason: string }>
   | Tagged<"swap", { reason: string }>
   | Tagged<"rebalance", { reason: string }>
   | Tagged<"lending", { reason: string }>
   | Tagged<"payment_route", { reason: string }>
+  | CrossError
   | Tagged<"unchosen", { hole: Hole }>;
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
 export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
-export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }>;
+/**
+ * Account outputs to the parent Entity (og apply-result outcomes and AccountOutput candidate effects), perspective-free:
+ * the consumer adds its own side (og fills entityId/accountId from proofHeader, and only the gateway forwards a trusted payment).
+ */
+export type Effect =
+  | Tagged<"forward_secret", { hashlock: string; secret: string }>
+  | Tagged<"htlc_error", { lockId: string; hashlock: string; tokenId: number; amount: bigint; reason?: string }>
+  | Tagged<"swap_cancel_requested", { offerId: string }>
+  | Tagged<"swap_cancelled", { offerId: string; makerId: string }>
+  | Tagged<"request_collateral_committed", { tokenId: number; requestedAmount: bigint; prepaidFee: bigint; requestedAt: number }>
+  | Tagged<"direct_payment_forward", { tokenId: number; amount: bigint; route: readonly string[]; description?: string; trustedGatewayEntityId: string }>;
 const MAX_ROWS = 128;
-export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly encryptedPackage?: string | undefined };
+export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly envelopeHash?: string | undefined };
+/** og protocol/htlc/multi-recipient.ts OpaqueHtlcCiphertext: exactly {version, ciphertext}, canonical padded base64 of ephemeralKey(32) || AES-GCM body || tag(16). */
+export type HtlcEnvelope = { readonly version: "xln:htlc-opaque:aes-gcm"; readonly ciphertext: string };
+const HTLC_ENVELOPE_VERSION = "xln:htlc-opaque:aes-gcm";
+const MAX_HTLC_BINARY_LAYER_BYTES = Math.floor(((100_000_000 - 1_000_000) * 3) / 4);
+const MAX_HTLC_PACKED_BYTES = 32 + MAX_HTLC_BINARY_LAYER_BYTES + 16;
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+/** og serialization/base64.ts decodeBase64Bytes: padded RFC 4648 only; any non-canonical spelling is refused. */
+export const decodeBase64 = (text: string): Uint8Array | null => {
+  if (text.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(text)) return null;
+  const out: number[] = [];
+  let acc = 0, bits = 0;
+  for (const ch of text.replace(/=+$/, "")) {
+    acc = ((acc << 6) | B64.indexOf(ch)) & 0xffff; bits += 6;
+    if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 0xff); }
+  }
+  const bytes = Uint8Array.from(out);
+  return encodeBase64(bytes) === text ? bytes : null;
+};
+export const encodeBase64 = (bytes: Uint8Array): string => {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i] ?? 0, b = bytes[i + 1], c = bytes[i + 2], n = (a << 16) | ((b ?? 0) << 8) | (c ?? 0);
+    s += (B64[(n >> 18) & 63] ?? "") + (B64[(n >> 12) & 63] ?? "") + (b === undefined ? "=" : B64[(n >> 6) & 63] ?? "") + (c === undefined ? "=" : B64[n & 63] ?? "");
+  }
+  return s;
+};
+/** og assertOpaqueHtlcCiphertext + hashOpaqueHtlcCiphertext: the committed envelopeHash is sha256 of the decoded packed bytes. */
+export const htlcEnvelopeHash = (v: unknown): string | null => {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const rec = v as Record<string, unknown>, keys = Object.keys(rec), ct = rec["ciphertext"];
+  if (keys.length !== 2 || !keys.includes("ciphertext") || !keys.includes("version") || rec["version"] !== HTLC_ENVELOPE_VERSION || typeof ct !== "string" || ct.length === 0 || ct.length > Math.ceil(MAX_HTLC_PACKED_BYTES / 3) * 4) return null;
+  const packed = decodeBase64(ct);
+  return packed === null || packed.length < 48 || packed.length > MAX_HTLC_PACKED_BYTES ? null : bytesToHex(sha256(packed));
+};
 /** og types/account.ts SwapOffer (same-jurisdiction): quantized amounts, canonical price and the maker's signed fee authority. */
 export type SwapOffer = {
   readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
-  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks: bigint; readonly timeInForce?: number | undefined; readonly makerIsLeft: boolean; readonly createdHeight: number; readonly quantizedGive: bigint; readonly quantizedWant: bigint;
+  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks: bigint; readonly timeInForce?: number | undefined; readonly makerIsLeft: boolean; readonly createdHeight: number; readonly quantizedGive: bigint; readonly quantizedWant: bigint; readonly crossJurisdiction?: CrossRoute | undefined;
+};
+/** og types/account.ts PullCommitment: a cross-j pull's committed row; its |amount| is held on the loser (payer) side until cross_pull_close. */
+export type PullRow = {
+  readonly pullId: string; readonly tokenId: number; readonly amount: bigint; readonly claimedRatio: number; readonly claimedAmount: bigint; readonly fullHash: string; readonly partialRoot: string;
+  readonly crossJurisdiction: CrossPullBinding; readonly createdHeight: number; readonly createdTimestamp: number;
 };
 /** og AccountTx swap_offer data (same-jurisdiction). */
 export type SwapOfferTerms = {
   readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
-  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: number | undefined;
+  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: number | undefined; readonly crossJurisdiction?: CrossRoute | undefined;
 };
 /** og AccountTx swap_resolve data. */
 export type SwapResolveTerms = {
@@ -1034,15 +1520,23 @@ export type AccountBody = {
   readonly account: AccountState; readonly terms: AccountTerms; readonly locks: ReadonlyMap<string, HtlcLock>; readonly offers: ReadonlyMap<string, SwapOffer>;
   readonly requested: ReadonlyMap<TokenId, bigint>; readonly requestFees: ReadonlyMap<TokenId, RebalanceRequestFeeState>; readonly feePolicies: ReadonlyMap<TokenId, BilateralFeePolicy>;
   readonly lendingIntents: ReadonlyMap<string, LendingIntentKind>; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly jNonce: number;
-  readonly settlement?: SettlementWorkspace | undefined;
+  readonly settlement?: SettlementWorkspace | undefined; readonly pulls?: ReadonlyMap<string, PullRow> | undefined;
+  /** og replica shadow.rebalance.submittedAtByToken: local J-batch submission marker per token; outside the Account state root, committed in the Entity's account leaf. */
+  readonly submittedAt?: ReadonlyMap<number, number> | undefined;
 };
+/** og envelope/entity-update.ts setRebalanceSubmittedAt: set, or (undefined) clear, one token's submission marker. */
+export const setRebalanceSubmittedAt = (a: AccountBody, tokenId: number, submittedAt: number | undefined): AccountBody =>
+  ({ ...a, submittedAt: submittedAt === undefined ? mapDelete(a.submittedAt ?? new Map<number, number>(), tokenId) : mapSet(a.submittedAt ?? new Map<number, number>(), tokenId, submittedAt) });
+const clearSubmittedAt = (a: AccountBody, tk: TokenId): AccountBody => (a.submittedAt?.has(Number(tk)) ? { ...a, submittedAt: mapDelete(a.submittedAt, Number(tk)) } : a);
+/** og state-root.ts submittedAtByTokenRoot: the shadow map's root, as the Entity account leaf commits it. */
+export const submittedAtRoot = (a: AccountBody): Result<string, CommitmentError> => mapRoot(a.submittedAt ?? new Map<number, number>());
 export type AccountStep<E extends Effect = Effect> = Step<AccountBody, E>;
 type BodyStep<E extends Effect = never> = Result<AccountStep<E>, BodyError>;
 export type AccountTx =
   | { readonly type: "add_delta"; readonly tokenId: TokenId }
   | { readonly type: "set_credit_limit"; readonly tokenId: TokenId; readonly limit: bigint }
   | { readonly type: "payment"; readonly tokenId: TokenId; readonly amount: bigint; readonly route?: readonly string[] | undefined; readonly description?: string | undefined; readonly fromEntityId?: string | undefined; readonly toEntityId?: string | undefined; readonly deliveryMode?: "direct" | "trusted" | undefined; readonly trustedGatewayEntityId?: string | undefined }
-  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly encryptedPackage?: string | undefined }
+  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly deliveryMode?: "instant" | "async" | undefined; readonly envelope?: HtlcEnvelope | undefined }
   | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "secret"; readonly secret: string }
   | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "error"; readonly reason?: string | undefined }
   | ({ readonly type: "swap_offer" } & SwapOfferTerms)
@@ -1057,8 +1551,8 @@ export type AccountTx =
   | { readonly type: "lending_credit"; readonly action: "grant" | "revoke"; readonly loanId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly creditLimit: bigint }
   | { readonly type: "lending_close_request"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string }
   | { readonly type: "lending_close_payout"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "cross_pull_lock" }
-  | { readonly type: "cross_pull_close"; readonly orderId: string; readonly amount: bigint; readonly ratio: number; readonly proofRatio: number; readonly leg: bigint; readonly binaryHash: Hash; readonly hubAuthored: boolean }
+  | { readonly type: "cross_pull_lock"; readonly pullId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly fullHash: string; readonly partialRoot: string; readonly crossJurisdiction: CrossPullBinding; readonly crossJurisdictionRoute: CrossRoute }
+  | { readonly type: "cross_pull_close"; readonly pullId: string; readonly binary: string; readonly proof: CrossCloseProof }
   | { readonly type: "j_event_claim"; readonly jHeight: bigint; readonly jBlockHash: Hash; readonly events: readonly AccountSettlement[]; readonly observedAt: bigint; readonly leftProof?: JClaimProof | undefined; readonly rightProof?: JClaimProof | undefined }
   | { readonly type: "settle_transition"; readonly kind: "upsert"; readonly revision: number; readonly previousWorkspaceHash?: string | undefined; readonly ops: readonly SettlementOp[]; readonly executorIsLeft: boolean; readonly memo?: string | undefined }
   | { readonly type: "settle_transition"; readonly kind: "submit" | "clear"; readonly revision: number; readonly workspaceHash: string }
@@ -1078,18 +1572,19 @@ type Author = "bilateral" | "unchosen";
 export type KindRow = { readonly author: Author; readonly l0: boolean; readonly repeatable: boolean; readonly effects: readonly Effect["_tag"][] };
 const kind = <R extends KindRow>(author: Author, l0: boolean, repeatable: boolean, effects: readonly Effect["_tag"][] = []): R => ({ author, l0, repeatable, effects }) as R;
 export const AccountKinds = {
-  add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true),
-  htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret"]),
-  swap_offer: kind("bilateral", false, false), swap_cancel_request: kind("bilateral", false, false), swap_resolve: kind("bilateral", false, false),
+  add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true, ["direct_payment_forward"]),
+  htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret", "htlc_error"]),
+  swap_offer: kind("bilateral", false, false), swap_cancel_request: kind("bilateral", false, false, ["swap_cancel_requested"]), swap_resolve: kind("bilateral", false, false, ["swap_cancelled"]),
   settle_transition: kind("bilateral", false, false),
-  request_collateral: kind("bilateral", false, false), rebalance_refund: kind("bilateral", false, false), rebalance_policy: kind("bilateral", false, false),
+  request_collateral: kind("bilateral", false, false, ["request_collateral_committed"]), rebalance_refund: kind("bilateral", false, false), rebalance_policy: kind("bilateral", false, false),
   lending_fund: kind("bilateral", false, false), lending_borrow_request: kind("bilateral", false, false), lending_repay: kind("bilateral", false, false), lending_credit: kind("bilateral", false, false),
   lending_close_request: kind("bilateral", false, false), lending_close_payout: kind("bilateral", false, false),
-  cross_pull_lock: kind("unchosen", false, false), cross_pull_close: kind("unchosen", false, false),
+  cross_pull_lock: kind("bilateral", false, false), cross_pull_close: kind("bilateral", false, false),
   j_event_claim: kind("bilateral", false, false),
 } as const satisfies Kinds<AccountTx["type"], KindRow>;
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
-export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret"> : never;
+export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret" | "htlc_error"> : K extends "swap_cancel_request" ? Of<Effect, "swap_cancel_requested">
+  : K extends "swap_resolve" ? Of<Effect, "swap_cancelled"> : K extends "request_collateral" ? Of<Effect, "request_collateral_committed"> : K extends "payment" ? Of<Effect, "direct_payment_forward"> : never;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
 export const genesisAccountBody = (account: AccountState, terms: AccountTerms): AccountBody => ({ account, terms, locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), finalizedJHeight: 0n, jNonce: 0 });
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
@@ -1138,10 +1633,10 @@ const claimFrame = (tx: TxOf<"j_event_claim">): Result<{ readonly version: "xln:
   chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash, events }) => ({ version: "xln:account-j-event-claim-frame:v1", jHeight: Number(jHeight), jBlockHash, eventsHash, events }))));
 const claimRowOf = (tx: TxOf<"j_event_claim">, onLeft: boolean): Result<ClaimRow, ClaimError> =>
   chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash }) => ({ onLeft, jHeight, jBlockHash, eventsHash }))));
-/** og types/account.ts HtlcLock as committed: numeric token/height/timestamp fields; the rewrite-only encryptedPackage is kept only when present (og commits envelopeHash of its onion instead). */
+/** og types/account.ts HtlcLock as committed: numeric token/height/timestamp fields, and envelopeHash only when the lock carried an encrypted envelope. */
 const ogLockRow = (l: HtlcLock): Record<string, unknown> => {
-  const { encryptedPackage, ...rest } = l;
-  return { ...rest, revealBeforeHeight: Number(l.revealBeforeHeight), tokenId: Number(l.tokenId), createdHeight: Number(l.createdHeight), createdTimestamp: Number(l.createdTimestamp), ...(encryptedPackage === undefined ? {} : { encryptedPackage }) };
+  const { envelopeHash, ...rest } = l;
+  return { ...rest, revealBeforeHeight: Number(l.revealBeforeHeight), tokenId: Number(l.tokenId), createdHeight: Number(l.createdHeight), createdTimestamp: Number(l.createdTimestamp), ...(envelopeHash === undefined ? {} : { envelopeHash }) };
 };
 const sameEvidence = (x: ClaimRow, y: ClaimRow): boolean => x.jBlockHash === y.jBlockHash && x.eventsHash === y.eventsHash;
 const pruneThrough = (rows: readonly ClaimRow[], height: bigint): readonly ClaimRow[] | undefined => { const kept = rows.filter((r) => r.jHeight > height); return kept.length === 0 ? undefined : kept; };
@@ -1156,7 +1651,8 @@ const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[]): Resul
       const was = getDelta(b.account, tk), now = settle(was, BigInt(e.data.collateral), BigInt(e.data.ondelta)), increase = floor0(now.collateral - was.collateral);
       const settled = putState(b, setDelta(b.account, now)), requested = b.requested.get(tk) ?? 0n;
       if (requested <= 0n || increase <= 0n) return ok(settled);
-      return ok(requested > increase ? { ...settled, requested: mapSet(settled.requested, tk, requested - increase) } : { ...settled, requested: mapDelete(settled.requested, tk), requestFees: mapDelete(settled.requestFees, tk) });
+      // og finality.ts: a collateral increase against a pending request also clears the shadow submission marker.
+      return ok(clearSubmittedAt(requested > increase ? { ...settled, requested: mapSet(settled.requested, tk, requested - increase) } : { ...settled, requested: mapDelete(settled.requested, tk), requestFees: mapDelete(settled.requestFees, tk) }, tk));
     })), (b) => map(activateWorkspace(b, jNonce), (c) => ({ ...c, jNonce }))));
 };
 /** og j-claim-transition.ts: conflict on either side refuses; stale prunes; the first side waits; the peer's matching record at any pending height finalizes. */
@@ -1439,22 +1935,62 @@ const requantizeAuth = (o: Authorized, give: bigint, want: bigint): Result<NetAu
 };
 const decimalsOk = (d: number): boolean => Number.isSafeInteger(d) && d >= 0 && d <= 255;
 /** og swap/offer: admission (limits, shape, market cap), quantization, capacity, hold. */
+/** og swap-limits.ts accountSwapMarketKey: same-j offers by token direction, cross-j offers by canonical venue and side. */
+const offerMarketKey = (o: { readonly giveTokenId: TokenId; readonly wantTokenId: TokenId; readonly crossJurisdiction?: CrossRoute | undefined }): Result<string, BodyError> =>
+  o.crossJurisdiction === undefined ? ok(`same:${Number(o.giveTokenId)}>${Number(o.wantTokenId)}`) : map(noteErr(crossMarket(o.crossJurisdiction)), (m) => `${m.venueId}:${m.sourceIsBase ? "base>quote" : "quote>base"}`);
 const swapOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx): BodyStep => {
+  const route = x.crossJurisdiction;
   if (x.offerId.includes(":")) return swapErr("SWAP_OFFER_ID_COLON");
   if (a.offers.has(x.offerId)) return err({ _tag: "duplicate" });
   if (a.offers.size >= MAX_ACCOUNT_SWAP_OFFERS) return swapErr("SWAP_OFFER_LIMIT");
-  if (a.offers.size >= MAX_ACCOUNT_SAME_J_SWAP_OFFERS) return swapErr("SWAP_SAME_J_OFFER_LIMIT");
+  const sameJ = [...a.offers.values()].filter((o) => o.crossJurisdiction === undefined).length;
+  if (route === undefined && sameJ >= MAX_ACCOUNT_SAME_J_SWAP_OFFERS) return swapErr("SWAP_SAME_J_OFFER_LIMIT");
+  if (route !== undefined && a.offers.size - sameJ >= MAX_ACCOUNT_CROSS_J_SWAP_OFFERS) return swapErr("SWAP_CROSS_J_OFFER_LIMIT");
   if (!decimalsOk(x.giveTokenDecimals) || !decimalsOk(x.wantTokenDecimals)) return swapErr("SWAP_TOKEN_DECIMALS_INVALID");
   if (x.giveAmount < 1n || x.giveAmount > MAX_PAYMENT_AMOUNT || x.wantAmount < 1n || x.wantAmount > MAX_PAYMENT_AMOUNT) return swapErr("SWAP_OFFER_AMOUNT_INVALID");
   if (x.maxFee >= x.wantAmount || x.minNetReceive <= 0n) return swapErr("SWAP_NET_AUTH_INITIAL_TERMS_INVALID");
   const initial = netAuthError(x, 0n, 0n, 0n, false);
   if (initial !== undefined) return swapErr(initial);
-  if (x.giveTokenId === x.wantTokenId) return swapErr("SWAP_SAME_TOKEN");
+  // og admission.ts: cross-j settles gross through its paired pulls, so no fee authority, and the route must already be prepared and resting.
+  if (route !== undefined && (x.maxFee !== 0n || x.minNetReceive !== x.wantAmount)) return swapErr("CROSS_J_SWAP_NET_AUTH_INVALID");
+  if (route === undefined && x.giveTokenId === x.wantTokenId) return swapErr("SWAP_SAME_TOKEN");
+  if (route !== undefined && (route.status !== "resting" || !route.sourcePull || !route.targetPull)) return swapErr("CROSS_J_SWAP_NOT_PREPARED");
   if (x.timeInForce !== undefined && ![0, 1, 2].includes(x.timeInForce)) return swapErr("SWAP_TIME_IN_FORCE_INVALID");
-  const makerIsLeft = ctx.byLeft;
-  let market = 0;
-  for (const o of a.offers.values()) if (o.makerIsLeft === makerIsLeft && o.giveTokenId === x.giveTokenId && o.wantTokenId === x.wantTokenId) market++;
-  if (market >= MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET) return swapErr("SWAP_MARKET_OFFER_LIMIT");
+  const { left, right } = a.account.id, proposer = (ctx.byLeft ? left : right).toLowerCase();
+  const makerIsLeft = route === undefined ? ctx.byLeft : route.makerEntityId.toLowerCase() === left.toLowerCase();
+  if (route !== undefined && (route.makerEntityId.toLowerCase() !== (makerIsLeft ? left : right).toLowerCase() || ![route.makerEntityId, route.source.counterpartyEntityId].some((e) => e.toLowerCase() === proposer)))
+    return swapErr("CROSS_J_SWAP_PROPOSER");
+  return chain(offerMarketKey(x), (key) => chain(traverse([...a.offers.values()].filter((o) => o.makerIsLeft === makerIsLeft), offerMarketKey), (keys) =>
+    keys.filter((k) => k === key).length >= MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET ? swapErr("SWAP_MARKET_OFFER_LIMIT") : route === undefined ? sameJOffer(a, x, ctx, makerIsLeft) : crossJOffer(a, x, route, ctx, makerIsLeft)));
+};
+/** og quantization.ts + cross-j-binding.ts + commit.ts for a cross-j offer: exact route amounts on the canonical side, lot-aligned base, the paired source pull, no second hold. */
+const crossJOffer = (a: AccountBody, x: TxOf<"swap_offer">, route: CrossRoute, ctx: FoldCtx, makerIsLeft: boolean): BodyStep => chain(noteErr(crossMarket(route)), (m) => {
+  const side = m.sourceIsBase ? 1 : 0, base = side === 1 ? x.giveAmount : x.wantAmount, quote = side === 1 ? x.wantAmount : x.giveAmount;
+  const d: SwapDims = side === 1 ? { side, bd: x.giveTokenDecimals, qd: x.wantTokenDecimals } : { side, bd: x.wantTokenDecimals, qd: x.giveTokenDecimals }, lot = lotScale(d.bd);
+  if (base < lot) return swapErr("SWAP_ORDER_BELOW_LOT");
+  if (base % lot !== 0n) return swapErr("CROSS_J_SWAP_LOT_ALIGNMENT");
+  const priceTicks = priceTicksOf(d, base, quote);
+  if (priceTicks <= 0n) return swapErr("SWAP_PRICE_INVALID");
+  if (x.giveAmount !== BigInt(route.source.amount) || x.wantAmount !== BigInt(route.target.amount)) return swapErr("CROSS_J_SWAP_AMOUNT_CHANGED");
+  return chain(noteErr(canonicalCrossRoute(route)), (canonical): BodyStep => {
+    const sp = route.sourcePull, paired = sp === undefined ? undefined : a.pulls?.get(sp.pullId);
+    if (sp === undefined || paired === undefined) return swapErr("CROSS_J_SWAP_SOURCE_PULL_MISSING");
+    if (paired.tokenId !== sp.tokenId || paired.tokenId !== Number(x.giveTokenId) || paired.amount !== sp.signedAmount
+      || (paired.fullHash || "").toLowerCase() !== sp.fullHash.toLowerCase() || (paired.partialRoot || "").toLowerCase() !== sp.partialRoot.toLowerCase()) return swapErr("CROSS_J_SWAP_SOURCE_PULL_MISMATCH");
+    const b = paired.crossJurisdiction;
+    if (!b || b.leg !== "source" || b.orderId !== canonical.orderId || (b.routeHash || "").toLowerCase() !== (canonical.routeHash || "").toLowerCase()) return swapErr("CROSS_J_SWAP_SOURCE_BINDING_MISMATCH");
+    return chain(requantizeAuth(x, x.giveAmount, x.wantAmount), (auth) => map(noteErr(cloneCrossRoute(route)), (publicRoute) => {
+      const offer: SwapOffer = {
+        offerId: x.offerId, giveTokenId: x.giveTokenId, giveTokenDecimals: x.giveTokenDecimals, giveAmount: x.giveAmount, wantTokenId: x.wantTokenId, wantTokenDecimals: x.wantTokenDecimals, wantAmount: x.wantAmount,
+        maxFee: auth.maxFee, minNetReceive: auth.minNetReceive, priceTicks, ...(x.timeInForce !== undefined ? { timeInForce: x.timeInForce } : {}), makerIsLeft,
+        createdHeight: Number(ctx.jHeight), quantizedGive: x.giveAmount, quantizedWant: x.wantAmount, crossJurisdiction: publicRoute,
+      };
+      return step({ ...a, offers: mapSet(a.offers, x.offerId, offer) });
+    }));
+  });
+});
+/** og same-j quantization and commit: canonical price, lot-quantized amounts, capacity, and the maker's give hold. */
+const sameJOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx, makerIsLeft: boolean): BodyStep => {
   const d = swapDims(x), base = d.side === 1 ? x.giveAmount : x.wantAmount, quote = d.side === 1 ? x.wantAmount : x.giveAmount, lot = lotScale(d.bd);
   if (base < lot) return swapErr("SWAP_ORDER_BELOW_LOT");
   const prepared = preparedPrice(d, base, quote);
@@ -1494,9 +2030,10 @@ const fillRatioOf = (r: { readonly n: bigint; readonly d: bigint }): number => {
   return c;
 };
 /** og swap/resolve: canonical offer, explicit execution at or above the maker's limit, fee authority, counterparty capacity, requantized remainder. */
-const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): BodyStep => {
+const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): BodyStep<Of<Effect, "swap_cancelled">> => {
   const offer = a.offers.get(x.offerId);
   if (offer === undefined) return MISSING;
+  if (offer.crossJurisdiction !== undefined) return swapErr("SWAP_RESOLVE_CROSS_J");
   if ((x.restingGiveAmount !== undefined && x.restingGiveAmount !== offer.giveAmount) || (x.restingWantAmount !== undefined && x.restingWantAmount !== offer.wantAmount)
     || (x.restingQuantizedGive !== undefined && x.restingQuantizedGive !== offer.quantizedGive) || (x.restingQuantizedWant !== undefined && x.restingQuantizedWant !== offer.quantizedWant)
     || (x.restingPriceTicks !== undefined && x.restingPriceTicks !== offer.priceTicks)) return swapErr("SWAP_RESTING_TERMS_MISMATCH");
@@ -1531,11 +2068,13 @@ const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): Bod
   return chain(fW > 0n ? chain(ensureRoom(a, offer.wantTokenId, fW, !offer.makerIsLeft), () => ok(undefined)) : ok(undefined), () => {
     const giveRow = shift(getDelta(a.account, offer.giveTokenId), fG > 0n ? byMaker(fG) : 0n);
     const wantRow = shift(getDelta(a.account, offer.wantTokenId), (fG > 0n ? -byMaker(fW) : 0n) + (fee > 0n ? byMaker(fee) : 0n));
-    return chain(representable(a, giveRow), () => chain(representable(a, wantRow), (): BodyStep => {
+    return chain(representable(a, giveRow), () => chain(representable(a, wantRow), (): BodyStep<Of<Effect, "swap_cancelled">> => {
       const moved = putState(closed, setDelta(setDelta(a.account, giveRow), wantRow));
-      if (x.cancelRemainder || x.fillRatio === 0 || canonical === MAX_FILL) return ok(step(moved));
+      // og remainder.ts closeSwapOffer: every removal of the resting offer reports swap_cancelled with the maker's entity.
+      const removed = ok(step(moved, [{ _tag: "swap_cancelled" as const, offerId: offer.offerId, makerId: offer.makerIsLeft ? a.account.id.left : a.account.id.right }]));
+      if (x.cancelRemainder || x.fillRatio === 0 || canonical === MAX_FILL) return removed;
       const d = swapDims(offer), remaining = d.side === 1 ? qG - fG : qW - fW, next = requantizeRemaining(d, remaining, offer.priceTicks);
-      if (next === undefined) return ok(step(moved));
+      if (next === undefined) return removed;
       if (qG - fG - next.give < 0n) return swapErr("SWAP_REMAINDER_EXCEEDS_HOLD");
       return map(requantizeAuth(offer, next.give, next.want), (na) => step({ ...moved, offers: mapSet(moved.offers, offer.offerId, { ...offer, giveAmount: next.give, wantAmount: next.want, maxFee: na.maxFee, minNetReceive: na.minNetReceive, quantizedGive: next.give, quantizedWant: next.want }) }));
     }));
@@ -1544,7 +2083,7 @@ const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): Bod
 // ---- rebalance: og handlers/rebalance/{request-collateral,refund,policy}.ts ----
 const rebalanceErr = (reason: string): Result<never, BodyError> => err({ _tag: "rebalance", reason });
 /** og request-collateral.ts: the requester prepays the fee now; one immutable request per token until finality or full refund. */
-const requestCollateral = (a: AccountBody, x: TxOf<"request_collateral">, ctx: FoldCtx): BodyStep => {
+const requestCollateral = (a: AccountBody, x: TxOf<"request_collateral">, ctx: FoldCtx): BodyStep<Of<Effect, "request_collateral_committed">> => {
   if (x.amount <= 0n) return rebalanceErr("REQUEST_COLLATERAL_AMOUNT");
   if (x.feeAmount < 0n) return rebalanceErr("REQUEST_COLLATERAL_FEE");
   if (!Number.isFinite(x.policyVersion) || x.policyVersion < 1) return rebalanceErr("REQUEST_COLLATERAL_POLICY_VERSION");
@@ -1555,10 +2094,11 @@ const requestCollateral = (a: AccountBody, x: TxOf<"request_collateral">, ctx: F
   if (!a.account.deltas.has(feeToken)) return rebalanceErr("REQUEST_COLLATERAL_NO_FEE_DELTA");
   const amount = feeToken !== x.tokenId ? x.amount : x.amount > x.feeAmount ? x.amount - x.feeAmount : 0n;
   if (amount <= 0n) return ok(step(a));
-  return map(spend(a, feeToken, x.feeAmount, ctx.byLeft), (paid) => step({
+  // og mutation.ts applyCollateralRequest: a freshly created request reports request_collateral_committed.
+  return map(spend(a, feeToken, x.feeAmount, ctx.byLeft), (paid) => step<AccountBody, Of<Effect, "request_collateral_committed">>({
     ...paid, requested: mapSet(paid.requested, x.tokenId, amount),
     requestFees: mapSet(paid.requestFees, x.tokenId, { requestId: `rebalance:${ctx.byLeft ? "left" : "right"}:${Number(x.tokenId)}:${ctx.accountHeight}`, feeTokenId: Number(feeToken), feePaidUpfront: x.feeAmount, requestedAmount: amount, policyVersion: x.policyVersion, requestedAt: Number(ctx.nowMs), requestedByLeft: ctx.byLeft }),
-  }));
+  }, [{ _tag: "request_collateral_committed", tokenId: Number(x.tokenId), requestedAmount: amount, prepaidFee: x.feeAmount, requestedAt: Number(ctx.nowMs) }]));
 };
 /** og refund.ts: the counterparty returns prepaid fee, partially or in full; a full refund clears the request. */
 const rebalanceRefund = (a: AccountBody, x: TxOf<"rebalance_refund">, ctx: FoldCtx): BodyStep => {
@@ -1573,8 +2113,9 @@ const rebalanceRefund = (a: AccountBody, x: TxOf<"rebalance_refund">, ctx: FoldC
   if (!a.account.deltas.has(feeToken)) return rebalanceErr("REBALANCE_REFUND_NO_FEE_DELTA");
   return map(spend(a, feeToken, x.amount, ctx.byLeft), (paid) => {
     const next = refunded + x.amount;
+    // og refund.ts: a full refund clears the request and its shadow submission marker, so a new request for the token may enter a J-batch.
     return step(next === fees.feePaidUpfront
-      ? { ...paid, requested: mapDelete(paid.requested, x.requestTokenId), requestFees: mapDelete(paid.requestFees, x.requestTokenId) }
+      ? clearSubmittedAt({ ...paid, requested: mapDelete(paid.requested, x.requestTokenId), requestFees: mapDelete(paid.requestFees, x.requestTokenId) }, x.requestTokenId)
       : { ...paid, requestFees: mapSet(paid.requestFees, x.requestTokenId, { ...fees, refund: { reason: x.reason, refundedAmount: next } }) });
   });
 };
@@ -1666,12 +2207,101 @@ const paymentRoute = (a: AccountBody, x: TxOf<"payment">, byLeft: boolean): Resu
   const final = String(route[1] || "").toLowerCase();
   return to === g && route.length === 2 && is(route[0], to) && final !== "" && final !== g && final !== from ? ok(undefined) : bad("TRUSTED_ROUTE");
 };
+// ---- cross-j pulls: og handlers/settlement/pull.ts ----
+const MAX_ACCOUNT_CROSS_J_SWAP_OFFERS = 18;
+const absBig = (v: bigint): bigint => (v < 0n ? -v : v);
+const crossReject = (reason: string): Result<never, BodyError> => err({ _tag: "cross_j", reason });
+const noteErr = <T,>(r: Result<T, CrossError>): Result<T, BodyError> => r;
+/** og validateCrossJurisdictionPullRoute: a canonical, zero-progress resting route whose binding, pull terms, endpoints and stack match this Account. */
+const pullRouteError = (a: AccountBody, x: TxOf<"cross_pull_lock">): Result<void, BodyError> => {
+  const binding = x.crossJurisdiction, supplied = x.crossJurisdictionRoute;
+  if (!binding || !supplied) return crossReject("CROSS_J_PULL_ROUTE_REQUIRED");
+  const canonical = canonicalCrossRoute(supplied);
+  if (!canonical.ok) return crossReject("CROSS_J_PULL_ROUTE_INVALID");
+  const route = canonical.value;
+  if (stableJson(route) !== stableJson(supplied)) return crossReject("CROSS_J_PULL_ROUTE_NOT_CANONICAL");
+  const progressed = [route.sourceCloseProof, route.targetCloseProof, route.fillSeq, route.cumulativeFillRatio, route.fillNumerator, route.fillDenominator, route.filledSourceAmount, route.filledTargetAmount,
+    route.pendingClearRequestedAt, route.claimedRatio, route.sourceClaimed, route.targetClaimed, route.settledAt].some((v) => v !== undefined);
+  if (route.status !== "resting" || binding.status !== "resting" || progressed) return crossReject("CROSS_J_PULL_NOT_RESTING");
+  if (binding.leg !== "source" && binding.leg !== "target") return crossReject("CROSS_J_PULL_LEG_INVALID");
+  const expected = crossPullBinding(route, binding.leg);
+  if (!expected.ok || stableJson(binding) !== stableJson(expected.value)) return crossReject("CROSS_J_PULL_BINDING_MISMATCH");
+  const leg = binding.leg === "source" ? route.source : route.target, pull = binding.leg === "source" ? route.sourcePull : route.targetPull;
+  if (pull === undefined || x.pullId !== pull.pullId || Number(x.tokenId) !== pull.tokenId || x.amount !== pull.signedAmount
+    || x.fullHash.toLowerCase() !== pull.fullHash.toLowerCase() || x.partialRoot.toLowerCase() !== pull.partialRoot.toLowerCase()) return crossReject("CROSS_J_PULL_TERMS_MISMATCH");
+  const ends = new Set([a.account.id.left.toLowerCase(), a.account.id.right.toLowerCase()]);
+  if (!ends.has(leg.entityId.toLowerCase()) || !ends.has(leg.counterpartyEntityId.toLowerCase())) return crossReject("CROSS_J_PULL_ENDPOINTS");
+  return stackIdOf(a.terms.domain) === leg.jurisdiction.toLowerCase() ? ok(undefined) : crossReject("CROSS_J_PULL_JURISDICTION");
+};
+/** og getPullLockAdmissionError: route, slot (id, uniqueness, 50 total, 18 cross-j), hash material, token, amount, payer capacity. */
+const pullAdmission = (a: AccountBody, x: TxOf<"cross_pull_lock">): Result<void, BodyError> => chain(pullRouteError(a, x), (): Result<void, BodyError> => {
+  const pulls = a.pulls ?? new Map<string, PullRow>();
+  if (!x.pullId || x.pullId.includes(":")) return crossReject("CROSS_J_PULL_ID_INVALID");
+  if (pulls.has(x.pullId)) return err({ _tag: "duplicate" });
+  if (pulls.size >= MAX_ACCOUNT_SWAP_OFFERS) return crossReject("CROSS_J_PULL_LIMIT");
+  if (x.crossJurisdiction && [...pulls.values()].filter((p) => p.crossJurisdiction).length >= MAX_ACCOUNT_CROSS_J_SWAP_OFFERS) return crossReject("CROSS_J_PULL_CROSS_LIMIT");
+  if (!HEX32.test(x.fullHash) || !HEX32.test(x.partialRoot)) return crossReject("CROSS_J_PULL_HASH_INVALID");
+  const orderId = String(x.crossJurisdiction?.orderId || "").trim(), fh = x.fullHash.toLowerCase(), pr = x.partialRoot.toLowerCase();
+  for (const p of pulls.values()) {
+    const other = String(p.crossJurisdiction?.orderId || "").trim();
+    if (other && orderId && other === orderId) continue;
+    if (p.fullHash.toLowerCase() === fh || p.partialRoot.toLowerCase() === pr) return crossReject("CROSS_J_PULL_HASH_COLLISION");
+  }
+  const tk = Number(x.tokenId);
+  if (!Number.isSafeInteger(tk) || tk < 0 || tk > 65_535) return crossReject("CROSS_J_PULL_TOKEN_INVALID");
+  if (x.amount === 0n) return crossReject("CROSS_J_PULL_AMOUNT_ZERO");
+  const amount = absBig(x.amount);
+  return amount > MAX_PAYMENT_AMOUNT ? crossReject("CROSS_J_PULL_AMOUNT_RANGE") : ensureRoom(a, x.tokenId, amount, x.amount < 0n);
+});
+/** og handlePullLock: admission, the payer-side hold (uint256), and the committed PullCommitment at the frame's jHeight. */
+const crossPullLock = (a: AccountBody, x: TxOf<"cross_pull_lock">, ctx: FoldCtx): BodyStep => chain(pullAdmission(a, x), (): BodyStep => {
+  const amount = absBig(x.amount), loserIsLeft = x.amount < 0n, totals = sideTotals(a, x.tokenId);
+  if ((loserIsLeft ? totals.leftHold : totals.rightHold) + amount > MAX_PAYMENT_AMOUNT) return err({ _tag: "hold_overflow" });
+  return map(noteErr(cloneCrossBinding(x.crossJurisdiction)), (crossJurisdiction) => {
+    const row: PullRow = { pullId: x.pullId, tokenId: Number(x.tokenId), amount: x.amount, claimedRatio: 0, claimedAmount: 0n, fullHash: x.fullHash, partialRoot: x.partialRoot, crossJurisdiction, createdHeight: Number(ctx.jHeight), createdTimestamp: Number(ctx.nowMs) };
+    return step({ ...a, pulls: mapSet(a.pulls ?? new Map<string, PullRow>(), x.pullId, row) });
+  });
+});
+/** og validateCrossPullCloseEvidence: uint16 ratio, close mode, proof bound to this pull (chain-proportional leg amount), binary hash, and the hash-ladder reveal at exactly that ratio. */
+const closeEvidence = (pull: PullRow, binding: CrossPullBinding, x: TxOf<"cross_pull_close">): Result<number, BodyError> => {
+  const { binary, proof } = x;
+  if (!Number.isSafeInteger(proof.fillRatio) || proof.fillRatio < 0 || proof.fillRatio > MAX_FILL) return crossReject("CROSS_J_CLOSE_RATIO_RANGE");
+  if (proof.closeMode !== "full" && proof.closeMode !== "partial_cancel_remainder" && proof.closeMode !== "pure_cancel") return crossReject("CROSS_J_CLOSE_MODE_INVALID");
+  if (proof.orderId !== binding.orderId || (proof.routeHash || "").toLowerCase() !== (binding.routeHash || "").toLowerCase()) return crossReject("CROSS_J_CLOSE_PROOF_MISMATCH");
+  if ((binding.leg === "source" ? proof.sourcePullId : proof.targetPullId) !== pull.pullId) return crossReject("CROSS_J_CLOSE_PROOF_MISMATCH");
+  const total = absBig(pull.amount), expected = proof.fillRatio >= MAX_FILL ? total : (total * BigInt(proof.fillRatio)) / BigInt(MAX_FILL);
+  if ((binding.leg === "source" ? proof.cumulativeSourceAmount : proof.cumulativeTargetAmount) !== expected) return crossReject("CROSS_J_CLOSE_PROOF_MISMATCH");
+  return chain(noteErr(crossCloseBinaryHash(binary)), (h) => h.toLowerCase() !== String(proof.binaryHash).toLowerCase() ? crossReject("CROSS_J_CLOSE_BINARY_HASH")
+    : chain(noteErr(verifyHashLadderBinary({ fullHash: pull.fullHash, partialRoot: pull.partialRoot }, binary)), (d) => d.fillRatio === proof.fillRatio ? ok(proof.fillRatio) : crossReject("CROSS_J_CLOSE_RATIO_MISMATCH")));
+};
+/** og handleCrossPullClose: only the leg's Hub closes; the whole hold is released, the claimed part moves, and the source close retires its cross-j offer. */
+const crossPullClose = (a: AccountBody, x: TxOf<"cross_pull_close">, ctx: FoldCtx): BodyStep => {
+  const pull = a.pulls?.get(x.pullId);
+  if (pull === undefined) return MISSING;
+  const binding = pull.crossJurisdiction;
+  if (!binding) return crossReject("CROSS_J_CLOSE_BINDING_MISSING");
+  return chain(closeEvidence(pull, binding, x), (): BodyStep => {
+    const beneficiaryIsLeft = pull.amount > 0n, hubIsLeft = binding.leg === "source" ? beneficiaryIsLeft : !beneficiaryIsLeft;
+    if (ctx.byLeft !== hubIsLeft) return crossReject("CROSS_J_CLOSE_NOT_HUB");
+    const tk = String(pull.tokenId) as TokenId, applied = binding.leg === "source" ? x.proof.cumulativeSourceAmount : x.proof.cumulativeTargetAmount;
+    const released: AccountBody = { ...a, pulls: mapDelete(a.pulls ?? new Map<string, PullRow>(), x.pullId) };
+    const moved = applied > 0n ? shift(getDelta(a.account, tk), beneficiaryIsLeft ? applied : -applied) : getDelta(a.account, tk);
+    return map(representable(released, moved), () => {
+      const next = putState(released, setDelta(a.account, moved)), offer = binding.leg === "source" ? next.offers.get(binding.orderId) : undefined;
+      return step(offer?.crossJurisdiction !== undefined ? { ...next, offers: mapDelete(next.offers, binding.orderId) } : next);
+    });
+  });
+};
+/** og direct-payment.ts buildPaymentForward: a trusted payer->gateway leg (route [gateway, final]) asks the gateway, and only it, to forward to the final recipient. */
+const paymentForward = (x: TxOf<"payment">): readonly Of<Effect, "direct_payment_forward">[] =>
+  x.route === undefined || x.route.length <= 1 || x.trustedGatewayEntityId === undefined ? []
+  : [{ _tag: "direct_payment_forward", tokenId: Number(x.tokenId), amount: x.amount, route: [...x.route], ...(x.description ? { description: x.description } : {}), trustedGatewayEntityId: x.trustedGatewayEntityId }];
 type Arms = { readonly [K in AccountTx["type"]]: (tx: WireTxOf<K>) => BodyStep<EffectOf<K>> };
 const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Effect> => matchBy<"type", WireAccountTx, BodyStep<Effect>>("type", tx, {
 
   add_delta: (x) => ok(step(a.account.deltas.has(x.tokenId) ? a : putState(a, setDelta(a.account, zeroDelta(x.tokenId))))),
   set_credit_limit: (x) => map(updateDelta(a.account, x.tokenId, (d) => setCreditLimit(d, x.limit, ctx.byLeft)), (s) => step(putState(a, s))),
-  payment: (x) => chain(paymentRoute(a, x, ctx.byLeft), () => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b))),
+  payment: (x) => chain(paymentRoute(a, x, ctx.byLeft), () => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b, paymentForward(x)))),
   htlc_lock: (x) => {
     // og handlers/htlc/lock.ts:32-52,71-81,95-116 in order: identity, expiry, amount, 32-lock cap, capacity, int512 range, uint256 hold.
     if (x.lockId !== x.hashlock) return err({ _tag: "lock_id" });
@@ -1679,11 +2309,14 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
     if (ctx.nowMs >= x.timelock || x.revealBeforeHeight <= ctx.jHeight) return err({ _tag: "htlc_expired" });
     if (x.amount < 1n || x.amount > MAX_PAYMENT_AMOUNT) return err({ _tag: "non_positive_payment" });
     if (a.locks.size >= MAX_ACCOUNT_HTLC_LOCKS) return err({ _tag: "htlc_lock_capacity" });
+    // og lock.ts: an envelope must be an opaque encrypted layer; the Account commits only its hash.
+    const envelopeHash = x.envelope === undefined ? undefined : htlcEnvelopeHash(x.envelope);
+    if (envelopeHash === null) return err({ _tag: "htlc_envelope" });
     const totals = sideTotals(a, x.tokenId), held = ctx.byLeft ? totals.leftHold : totals.rightHold;
     return chain(ensureRoom(a, x.tokenId, x.amount, ctx.byLeft), () => chain(representable(a, getDelta(a.account, x.tokenId), { senderIsLeft: ctx.byLeft, amount: x.amount }), () =>
       held + x.amount > MAX_PAYMENT_AMOUNT ? err({ _tag: "hold_overflow" }) : ok(step({ ...a, locks: mapSet(a.locks, x.lockId, {
         lockId: x.lockId, hashlock: x.hashlock, timelock: x.timelock, revealBeforeHeight: x.revealBeforeHeight, amount: x.amount, tokenId: x.tokenId,
-        senderIsLeft: ctx.byLeft, createdHeight: floor0(ctx.accountHeight - 1n), createdTimestamp: ctx.nowMs, encryptedPackage: x.encryptedPackage,
+        senderIsLeft: ctx.byLeft, createdHeight: floor0(ctx.accountHeight - 1n), createdTimestamp: ctx.nowMs, ...opt("envelopeHash", envelopeHash),
       }) }))));
   },
   htlc_resolve: (x) => {
@@ -1694,7 +2327,8 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
     if (x.outcome === "error") {
       const beneficiary = ctx.byLeft !== live.senderIsLeft;
       if (!beneficiary && !expired) return err({ _tag: "before_deadline" });
-      return x.reason === "timeout" && !expired ? err({ _tag: "before_deadline" }) : ok(step({ ...a, locks: mapDelete(a.locks, x.lockId) }));
+      return x.reason === "timeout" && !expired ? err({ _tag: "before_deadline" })
+        : ok(step({ ...a, locks: mapDelete(a.locks, x.lockId) }, [{ _tag: "htlc_error", lockId: live.lockId, hashlock: live.hashlock, tokenId: Number(live.tokenId), amount: live.amount, ...opt("reason", x.reason) }]));
     }
     if (expired) return err({ _tag: "htlc_expired" });
     if (hashHtlcSecret(x.secret) !== live.hashlock) return err({ _tag: "preimage" });
@@ -1707,7 +2341,7 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
   swap_cancel_request: (x) => {
     // og lifecycle/cancel.ts: the maker only requests; the offer and its hold stay until the counterparty's swap_resolve.
     const offer = a.offers.get(x.offerId);
-    return offer === undefined ? MISSING : ctx.byLeft !== offer.makerIsLeft ? err({ _tag: "not_maker" }) : ok(step(a));
+    return offer === undefined ? MISSING : ctx.byLeft !== offer.makerIsLeft ? err({ _tag: "not_maker" }) : ok(step(a, [{ _tag: "swap_cancel_requested", offerId: x.offerId }]));
   },
   swap_resolve: (x) => swapResolve(a, x, ctx),
   request_collateral: (x) => requestCollateral(a, x, ctx),
@@ -1715,8 +2349,8 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
   rebalance_policy: (x) => rebalancePolicy(a, x, ctx),
   lending_fund: (x) => lending(a, x, ctx), lending_borrow_request: (x) => lending(a, x, ctx), lending_repay: (x) => lending(a, x, ctx),
   lending_credit: (x) => lending(a, x, ctx), lending_close_request: (x) => lending(a, x, ctx), lending_close_payout: (x) => lending(a, x, ctx),
-  cross_pull_lock: () => err({ _tag: "unchosen", hole: "cross_open" }),
-  cross_pull_close: () => err({ _tag: "unchosen", hole: "cross_open" }),
+  cross_pull_lock: (x) => crossPullLock(a, x, ctx),
+  cross_pull_close: (x) => crossPullClose(a, x, ctx),
   j_event_claim: (x) => claimJ(a, x, ctx),
   settle_transition: (x) => settleTransition(a, x, ctx),
 } satisfies Arms);
@@ -1725,7 +2359,7 @@ const namedTokens = (tx: WireAccountTx): readonly string[] => matchBy("type", tx
   add_delta: one, set_credit_limit: one, payment: one, htlc_lock: one, htlc_resolve: none, swap_offer: (x) => [x.giveTokenId, x.wantTokenId], swap_cancel_request: none, swap_resolve: (x) => (x.feeTokenId === undefined ? [] : [x.feeTokenId]),
   request_collateral: (x) => (x.feeTokenId === undefined ? [x.tokenId] : [x.tokenId, x.feeTokenId]), rebalance_refund: (x) => [x.requestTokenId], rebalance_policy: one,
   lending_fund: one, lending_borrow_request: one, lending_repay: one, lending_credit: one, lending_close_request: none, lending_close_payout: one,
-  cross_pull_lock: none, cross_pull_close: none, j_event_claim: (x) => x.events.flatMap((row) => row.tokens.map((tk) => tk.tokenId.toString())), settle_transition: none,
+  cross_pull_lock: one, cross_pull_close: none, j_event_claim: (x) => x.events.flatMap((row) => row.tokens.map((tk) => tk.tokenId.toString())), settle_transition: none,
 });
 const commits = (before: AccountBody, tx: WireAccountTx, next: AccountStep): BodyStep<Effect> =>
   chain(mapErr(prepareStep(before, next.state), uncommitted), () => map(mapErr(isL0Tx(tx) ? ok(undefined) : txRefusal(wireOf(tx)), uncommitted), () => next));
@@ -1737,7 +2371,7 @@ export const applyAccountBody: Layer<AccountBody, WireAccountTx, FoldCtx, Effect
   return chain(applyArm(a, tx, ctx), (next) => (next.state.account.deltas.size > MAX_ROWS ? err({ _tag: "too_many_rows" }) : commits(a, tx, next)));
 };
 export const accountSnapshot = (a: AccountBody): Required<Omit<AccountBody, "account">> & { readonly state: Hash } =>
-  ({ state: hashAccountState(a.account), terms: a.terms, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
+  ({ state: hashAccountState(a.account), terms: a.terms, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight, pulls: a.pulls, submittedAt: a.submittedAt });
 
 
 export type ViewError = CommitmentError | Tagged<"token_id", { tokenId: TokenId }> | ClaimError;
@@ -1793,7 +2427,9 @@ const totalsOn = (b: AccountBody, counted: (id: TokenId) => boolean): ReadonlyMa
   const on = (id: TokenId) => { const held = totals.get(id); if (held !== undefined) return held; const fresh = { ...NO_TOTALS }; totals.set(id, fresh); return fresh; };
   const holdOn = (id: TokenId, onLeft: boolean, n: bigint): void => { const s = on(id); if (onLeft) s.leftHold += n; else s.rightHold += n; };
   for (const l of b.locks.values()) if (counted(l.tokenId)) holdOn(l.tokenId, l.senderIsLeft, l.amount);
-  for (const o of b.offers.values()) if (counted(o.giveTokenId)) holdOn(o.giveTokenId, o.makerIsLeft, o.giveAmount);
+  // og commit.ts: a cross-j offer adds no hold (its source pull already owns the lock); a pull holds |amount| on the payer side.
+  for (const o of b.offers.values()) if (o.crossJurisdiction === undefined && counted(o.giveTokenId)) holdOn(o.giveTokenId, o.makerIsLeft, o.giveAmount);
+  for (const p of b.pulls?.values() ?? []) { const id = String(p.tokenId) as TokenId; if (counted(id)) holdOn(id, p.amount < 0n, p.amount < 0n ? -p.amount : p.amount); }
   if (b.settlement !== undefined && b.settlement.status !== "submitted") for (const d of workspaceDiffs(b.settlement)) {
     const id = String(d.tokenId) as TokenId;
     if (!counted(id)) continue;
@@ -1820,7 +2456,7 @@ const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
     return ok({
       domain: terms.domain, leftEntity: b.account.id.left, rightEntity: b.account.id.right, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig,
       jNonce: b.jNonce, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
-      deltas: committedDeltas(b), locks: new Map([...b.locks].map(([id, l]) => [id, ogLockRow(l)])), pulls: new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map(), lendingIntents: b.lendingIntents,
+      deltas: committedDeltas(b), locks: new Map([...b.locks].map(([id, l]) => [id, ogLockRow(l)])), pulls: b.pulls ?? new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map(), lendingIntents: b.lendingIntents,
       requestedRebalance: byToken(b.requested), requestedRebalanceFeeState: byToken(b.requestFees), rebalanceFeePolicies: byToken(b.feePolicies), settlementWorkspace: b.settlement,
     });
   }));
@@ -3004,8 +3640,9 @@ const owesCreateAck = (child: AccountReplica): boolean => match(child, { open: (
 const isCreateAck = (tx: EntityTx, origin: Delivery): boolean => tx.type === "accountInput" && origin._tag === "local" && tx.data.kind === "ack";
 const putChild = (state: EntityState, replicas: Replicas, peer: EntityId, child: AccountReplica): Folded => ({ state: { ...state, accounts: mapSet(state.accounts, peer, child.state.account) }, accountReplicas: mapSet(replicas, peer, child) });
 const withChild = (replicas: Replicas, target: EntityId, f: (child: AccountReplica) => Result<Draft, EntityError>): Result<Draft, EntityError> => { const child = replicas.get(target); return child === undefined ? err({ _tag: "no_such_account", target }) : f(child); };
+// A trusted payment's direct_payment_forward is an L0 side effect; forwarding it on to the final recipient is not ported at the Entity layer yet (dropped here, as before it existed).
 const routed = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Draft, EntityError> => chain(applied, (a) =>
-  map(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: () => err({ _tag: "not_l0" }), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
+  map(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: ({ effect }) => (effect._tag === "direct_payment_forward" ? ok([]) : err({ _tag: "not_l0" })), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
     (messages) => ({ ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((data): EntityOutput => ({ to: target, tx: { type: "accountInput", data } })) })));
 const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
 /** og DEFAULT_ACCOUNT_TOKEN_IDS (account/config/defaults.ts). */
@@ -3143,7 +3780,7 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
   });
   return chain(linked, (link): Result<EntityRootAccount, EntityError> => chain(mapErr(committedView(body), (): EntityError => ({ _tag: "account_envelope", target: peer })), (state): Result<EntityRootAccount, EntityError> => ok({
     fromEntity: self, toEntity: peer, status, currentHeight: link.height, nextProofNonce: child.dispute.nextProofNonce, currentFrameHash: link.frame,
-    pendingWithdrawals: ZERO_WORD, policyRoot: ZERO_WORD, submittedAtByTokenRoot: ZERO_WORD, state,
+    pendingWithdrawals: ZERO_WORD, policyRoot: ZERO_WORD, submittedAtByTokenRoot: unwrapOr(submittedAtRoot(body), () => ZERO_WORD), state,
     committed: { ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active) : {}) },
     ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
   })));
