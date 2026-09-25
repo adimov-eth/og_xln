@@ -9,6 +9,8 @@ import { ACCOUNT_NETWORK_ALLOWANCE_MS as OG_ALLOWANCE, MEMPOOL_LIMIT } from "../
 import { getDisputeHankoRequirementError } from "../../core/account/consensus/dispute/hanko.ts";
 import { getDisputeHankoShapeError } from "../../core/account/consensus/incoming/replay.ts";
 import { prepareProposalAdmission } from "../../core/account/consensus/proposal/admission.ts";
+import { validateProposalTransactions } from "../../core/account/consensus/proposal/transactions.ts";
+import { makeAccount } from "../../core/__tests__/helpers/cross-j.ts";
 import { prependUniqueMempoolTxs, buildAccountProofBodyFromJurisdictions } from "../../core/account/consensus/helpers.ts";
 import { applyAccountEnqueue } from "../../core/account/input/local-tx-admission.ts";
 import { computeAccountStateRoot } from "../../core/account/commitment/state-root.ts";
@@ -216,6 +218,25 @@ describe("account-consensus: driven scenarios", () => {
     const ack = step(received, ackInput(received, BOB), BOB).outputs.find((o) => o.kind === "ack") as AccountInput;
     const committed = step(queued, ack, ALICE).replica;
     expect([committed._tag, committed.head.height, committed.mempool]).toEqual(["open", 1n, [TX2]]);
+  });
+
+  test("MATCH: proposal disposition — a failed matcher-owned swap_resolve halts, an ordinary failed tx is removed, the rest are proposed", async () => {
+    const pctx = { runtimeTimestamp: 1_000, quietLogs: true, jReplicas: new Map(), jClaimNodeStore: new Map(), verifyHanko: async () => ({ valid: true, entityId: null }), resolveSettlementBoardAuthority: async () => undefined } as unknown as AccountConsensusContext;
+    const validate = (txs: OgTx[]) => validateProposalTransactions({ consensusContext: pctx, account: makeAccount(L, R), proposalWindow: txs, frameTimestamp: 1_000, frameJHeight: 0, jClaimNodeStore: new Map() });
+    await expect(validate([{ type: "swap_resolve", data: { offerId: "missing", fillRatio: 1, cancelRemainder: true } } as unknown as OgTx])).rejects.toThrow("SWAP_RESOLVE_PROPOSAL_FAILED");
+    const bad = { type: "add_delta", data: { tokenId: 1 << 30 } } as unknown as OgTx;
+    const og = await validate([scl(1, 5n), bad, scl(2, 5n)]);
+    expect([og.validTxs.length, og.txsToRemove.length, og.deferredTxCount]).toEqual([2, 1, 0]);
+    // rewrite
+    const resolve = { type: "swap_resolve", offerId: "missing", fillRatio: 1, cancelRemainder: true } as WireAccountTx;
+    const halted = unwrap(admit(genesisAB(), [resolve]));
+    expect(unwrapErr(applyAccountInput(halted, { kind: "propose", ...CLOCK }, DOOR(ALICE)))).toMatchObject({ _tag: "proposal_halt", txType: "swap_resolve" });
+    const overdraw = { type: "payment", tokenId: "0", amount: 10n ** 30n } as WireAccountTx;
+    const proposed = proposeFrom(genesisAB(), ALICE, [TX, overdraw, { ...TX2, tokenId: "1" } as WireAccountTx]).replica;
+    if (proposed._tag !== "proposed") throw new Error(proposed._tag);
+    expect([proposed.candidate.frame.txs.length, proposed.mempool.length]).toEqual([2, 0]);
+    const idle = step(unwrap(admit(genesisAB(), [overdraw])), { kind: "propose", ...CLOCK }, ALICE).replica;
+    expect([idle._tag, idle.mempool.length]).toEqual(["open", 0]);
   });
 
   test("MATCH: the mempool limit counts pending-frame txs (og mempool.ts outstanding = mempool + pendingFrame)", () => {

@@ -1633,7 +1633,7 @@ export type AccountReplicaError =
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
   | Tagged<"bad_account", { reason: "entity_id" | "same_entity" | TermsError["_tag"] }>
   | Tagged<"ack_conflict", { field: "frameHash" | "frameHanko" | "disputeHanko" | "height" }>
-  | Tagged<"halt_runtime", { reason: "state_hash_after_verify" }> | Tagged<"mempool_full", { limit: number }> | Tagged<"frozen", { phase: FrozenAccount["_tag"] }>;
+  | Tagged<"halt_runtime", { reason: "state_hash_after_verify" }> | Tagged<"proposal_halt", { txType: WireAccountTx["type"]; cause: BodyError }> | Tagged<"mempool_full", { limit: number }> | Tagged<"frozen", { phase: FrozenAccount["_tag"] }>;
 export const evidenceOf = (e: AccountReplicaError): FrameEvidence | null => {
 
   if (e._tag !== "dispute_required") return null;
@@ -1647,19 +1647,33 @@ export const lifecycleKey = (tx: WireAccountTx): string | undefined => (arm(Acco
 export const unqueued = (txs: readonly WireAccountTx[], queued: readonly WireAccountTx[]): readonly WireAccountTx[] => firstBy(txs, lifecycleKey, queued.flatMap((tx) => lifecycleKey(tx) ?? []));
 const frozenError = (phase: FrozenAccount["_tag"]): AccountReplicaError => ({ _tag: "frozen", phase });
 
-export type Preview = { readonly frame: AccountFrame; readonly draft: FrameFold; readonly frameProof: LocalProof; readonly dispute: DisputePlan };
-export type ProposalPlan = Tagged<"frame", { preview: Preview }> | Tagged<"idle", { refused: AccountReplicaError }>;
+/** `deferred`: refused txs that stay queued for retry (og proposal/transactions.ts `retry`); every other refused tx leaves the mempool. */
+export type Preview = { readonly frame: AccountFrame; readonly draft: FrameFold; readonly frameProof: LocalProof; readonly dispute: DisputePlan; readonly deferred: readonly WireAccountTx[] };
+export type ProposalPlan = Tagged<"frame", { preview: Preview }> | Tagged<"idle", { refused: AccountReplicaError; deferred: readonly WireAccountTx[] }>;
+// og proposal/transactions.ts: a refused matcher/settlement-owned tx halts; capacity and signed-settlement-freeze refusals are retried.
+const PROPOSAL_HALTS: readonly WireAccountTx["type"][] = ["settle_transition", "swap_resolve", "cross_pull_lock", "cross_pull_close"];
+const DEFERRED_REFUSALS: readonly string[] = ["htlc_lock_capacity", "settlement_frozen"];
+const deferredRefusal = (e: BodyError): boolean => DEFERRED_REFUSALS.includes(e._tag);
+type Refusals = ProposalFold["refused"];
+const proposalRefusals = (mempool: readonly WireAccountTx[], refused: Refusals): Result<readonly WireAccountTx[], AccountReplicaError> => {
+  const txAt = (i: number): WireAccountTx => mempool[i] ?? assertNever(i as never);
+  const halted = refused.find(({ index, error }) => !deferredRefusal(error) && PROPOSAL_HALTS.includes(txAt(index).type));
+  if (halted !== undefined) return err({ _tag: "proposal_halt", txType: txAt(halted.index).type, cause: halted.error });
+  return ok(refused.flatMap(({ index, error }) => (deferredRefusal(error) ? [txAt(index)] : [])));
+};
 export const planOpen = (r: OpenAccount, party: Party, entityClock: FrameClock): Result<ProposalPlan, AccountReplicaError> => {
   if (r.mempool.length === 0) return err({ _tag: "empty_mempool" });
   // og admission.ts: a lagging proposer never mints a frame behind the committed watermark.
   const clock: FrameClock = { ...entityClock, timestamp: entityClock.timestamp > r.head.timestamp ? entityClock.timestamp : r.head.timestamp };
   const height = r.head.height + 1n, folded = proposalFold(r.state, r.mempool, foldCtx({ height, ...clock }, party.left)), firstRefusal = folded.refused[0];
-  if (folded.included.length === 0 && firstRefusal !== undefined) return ok({ _tag: "idle", refused: firstRefusal.error });
-  return chain(commit(folded.state), ({ view, root }) => chain(stampClaims(folded.included, r.state.claimRows), (txs) => {
-    const unhashed = { height, timestamp: clock.timestamp, jHeight: clock.jHeight, prevFrameHash: r.head.prevFrameHash, txs, accountStateRoot: root };
-    return chain(frameStateHash(unhashed, replicaId(r), party.left), (stateHash) => chain(localProof(view), (frameProof) => map(proposalPlan(view, frameProof, r.dispute, party.left), (dispute): ProposalPlan =>
-      ({ _tag: "frame", preview: { frame: { ...unhashed, stateHash }, draft: { state: folded.state, effects: folded.effects }, frameProof, dispute } }))));
-  }));
+  return chain(proposalRefusals(r.mempool, folded.refused), (deferred) => {
+    if (folded.included.length === 0 && firstRefusal !== undefined) return ok({ _tag: "idle", refused: firstRefusal.error, deferred });
+    return chain(commit(folded.state), ({ view, root }) => chain(stampClaims(folded.included, r.state.claimRows), (txs) => {
+      const unhashed = { height, timestamp: clock.timestamp, jHeight: clock.jHeight, prevFrameHash: r.head.prevFrameHash, txs, accountStateRoot: root };
+      return chain(frameStateHash(unhashed, replicaId(r), party.left), (stateHash) => chain(localProof(view), (frameProof) => map(proposalPlan(view, frameProof, r.dispute, party.left), (dispute): ProposalPlan =>
+        ({ _tag: "frame", preview: { frame: { ...unhashed, stateHash }, draft: { state: folded.state, effects: folded.effects }, frameProof, dispute, deferred } }))));
+    }));
+  });
 };
 export const planAccountProposal = (r: AccountReplica, self: EntityId, clock: FrameClock): Result<ProposalPlan, AccountReplicaError> => chain(partyOf(replicaId(r), self), (party) => match(r, {
   open: (o) => planOpen(o, party, clock), proposed: () => err({ _tag: "already_proposed" }), received: () => err({ _tag: "already_proposed" }), preparing: () => err(frozenError("preparing")), disputed: () => err(frozenError("disputed")),
@@ -1700,13 +1714,13 @@ const install = (r: ProposedAccount | ReceivedAccount, signed: SignedPair, after
 };
 const residentAck = (r: OpenAccount): AccountAck | null => (r.acknowledged !== undefined && r.acknowledged.height === r.head.height ? r.acknowledged : null);
 export const proposeOpen = (r: OpenAccount, input: Propose, ctx: AccountContext): Verb<OpenAccount | ProposedAccount> => chain(planOpen(r, ctx.party, { timestamp: input.timestamp, jHeight: input.jHeight }), (planned) => match(planned, {
-  idle: ({ refused }): Verb<OpenAccount | ProposedAccount> => (input.frameHanko === undefined && input.disputeHanko === undefined ? ok(done({ ...r, mempool: [] })) : err(refused)),
-  frame: ({ preview: { frame, draft, frameProof, dispute } }): Verb<OpenAccount | ProposedAccount> => {
+  idle: ({ refused, deferred }): Verb<OpenAccount | ProposedAccount> => (input.frameHanko === undefined && input.disputeHanko === undefined ? ok(done({ ...r, mempool: deferred })) : err(refused)),
+  frame: ({ preview: { frame, draft, frameProof, dispute, deferred } }): Verb<OpenAccount | ProposedAccount> => {
     const frameHanko = input.frameHanko;
     if (frameHanko === undefined) return err({ _tag: "invalid_hanko", entity: ctx.party.self });
 
     return chain(checks(frameStructure(frame), certifies(ctx.verify, frame.stateHash, frameHanko, ctx.party.self)), () => map(settleLocal(dispute, input.disputeHanko, r.dispute, ctx.party.self, ctx.verify), ({ carried, witnesses }) => {
-      const proposed: ProposedAccount = { ...r, _tag: "proposed", mempool: [], candidate: new Candidate(frame, frameHanko, frameProof, draft), dispute: witnesses };
+      const proposed: ProposedAccount = { ...r, _tag: "proposed", mempool: deferred, candidate: new Candidate(frame, frameHanko, frameProof, draft), dispute: witnesses };
       return done<OpenAccount | ProposedAccount, AccountOutput>(proposed, [{ kind: "ack_frame", ...sentBy(r, ctx.party), ack: residentAck(r), frame, frameHanko, ...opt("disputeHanko", carried) }]);
     }));
   },
