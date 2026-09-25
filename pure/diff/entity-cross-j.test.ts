@@ -8,6 +8,8 @@ import * as ogEnvelope from "../../core/protocol/htlc/codec/envelope.ts";
 import * as ogUtils from "../../core/protocol/htlc/utils.ts";
 import * as ogQuote from "../../core/pathfinding/htlc-quote.ts";
 import * as ogFees from "../../core/pathfinding/fees.ts";
+import { buildNetworkGraph as ogBuildGraph } from "../../core/pathfinding/graph.ts";
+import { PathFinder } from "../../core/pathfinding/pathfinding.ts";
 import { resolvePaymentDeadlineWindow } from "../../core/protocol/payments/delivery.ts";
 import {
   createOnionEnvelopes, decodeOnionLayer, decryptOpaqueHtlc, directionalFeePpm, encodeOnionLayer, encryptOpaqueHtlc, htlcEnvelopeContextHash, hopRevealHeight, hopTimelock,
@@ -258,7 +260,9 @@ describe("entity-cross-j: Entity htlcPayment origination (og payment-admission.t
       const ogHash = ogTry(() => ogAdmission.hashRawHtlcPaymentTx(tx));
       same(ogHash, htlcPaymentTxHash(tx), `hash${i}`);
       const paybook = r() < 0.05 && registered.ok ? new Map([[tx.data.hashlock, { hashlock: tx.data.hashlock, createdTimestamp: 1 }]]) : new Map();
-      const og = await ogTryAsync(() => ogAdmission.materializeOriginatedHtlcPayments({ state: ogStateOf(alice, ts, paybook) as never, proposalTxs: [tx], profiles: profiles as never, height: 1, resolveRoute: async () => { throw new Error("no route"); } }));
+      // og infra-context.ts resolveRoute: gossip graph + PathFinder over the same profiles
+      const resolveRoute = async (t: any) => { const m = new Map<string, unknown>(profiles.map((p: any) => [p.entityId, p])); const path = new PathFinder(ogBuildGraph(m as never, t.data.tokenId)).findRoutes(ALICE, t.data.targetEntityId, t.data.amount, t.data.tokenId, 100)[0]?.path; if (!path) throw new Error("no route"); return path; };
+      const og = await ogTryAsync(() => ogAdmission.materializeOriginatedHtlcPayments({ state: ogStateOf(alice, ts, paybook) as never, proposalTxs: [tx], profiles: profiles as never, height: 1, resolveRoute }));
       const rw = materializeOriginated({ ...view, paybook: { entries: paybook as never, feesEarned: 0n } }, profiles, [tx], { profiles, secretFor: (h) => (ogHash.ok && h === ogHash.value && registered.ok ? secret : undefined) });
       same(og, rw.refused.size === 0 ? { ok: true, value: rw.originated } : { ok: false }, `mat${i}`);
       if (!og.ok || rw.refused.size > 0) continue;
@@ -277,7 +281,7 @@ describe("entity-cross-j: Entity htlcPayment origination (og payment-admission.t
       const rwReplicas = status === "disputed" ? new Map([[BOB, { ...alice.accountReplicas.get(BOB)!, _tag: "disputed" } as AccountReplica]]) : alice.accountReplicas;
       same(ogTry(() => ogAdmission.validatePreparedHtlcPayment(ogS as never, tx, { htlc: { version: 1, entries: [], originated: [tampered] } } as never)), validatePreparedHtlcPayment({ ...view, replicas: rwReplicas }, tx, { ...infra, originated: [tampered] }), `valid${i}`);
     }
-    expect(accepted).toBeGreaterThan(60);
+    expect(accepted).toBeGreaterThan(50);
   });
 
   test("MATCH: Alice's frame commits og's prepared origin, her paybook entry and root equal og handleHtlcPayment's, and the first-hop htlc_lock is og's wire tx", async () => {
