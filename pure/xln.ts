@@ -143,6 +143,8 @@ export const canon = (v: unknown): string => {
   if (typeof v === "number") return len("d", String(v));
   if (v instanceof Map) { const rows = sortedBy([...v].map(([k, x]) => [canon(k), x] as const), ([k]) => k); return `m${len("d", String(rows.length))}${rows.map(([k, x]) => k + canon(x)).join("")}`; }
   if (Array.isArray(v)) return `a${len("d", String(v.length))}${v.map(canon).join("")}`;
+  if (v instanceof Set) { const rows = [...v].map(canon).sort(asc); return `S${len("d", String(rows.length))}${rows.join("")}`; }
+  if (v instanceof Uint8Array) return len("b", nobleHex(v));
   if (typeof v === "object") { const r = v as Record<string, unknown>, keys = Object.keys(r).filter((k) => r[k] !== undefined).sort(); return `o${len("d", String(keys.length))}${keys.map((k) => len("s", k) + canon(r[k])).join("")}`; }
   return "u";
 };
@@ -437,10 +439,10 @@ export const accountStateCommitment = (state: CommittedAccountState): Result<str
 
 export type WireTx = { readonly type: string; readonly data: unknown };
 export type AccountFrameInputs = { readonly height: number; readonly timestamp: number; readonly jHeight: number; readonly prevFrameHash: string; readonly accountStateRoot: string; readonly accountTxs: readonly WireTx[] };
-export type FrameHashError = CanonicalValueError | Tagged<"tx_unported", { type: string }> | Tagged<"policy_version"> | ClaimError;
+export type FrameHashError = CanonicalValueError | Tagged<"tx_unported", { type: string }> | Tagged<"policy_version" | "settle_witness_shape"> | ClaimError;
 const fieldOf = (data: unknown, name: string): unknown => (data !== null && typeof data === "object" && Object.hasOwn(data, name) ? (data as Record<string, unknown>)[name] : undefined);
 const withoutHankoWitness = (tx: WireTx): WireTx => {
-  if (tx.type !== "settle_transition" || String(fieldOf(tx.data, "kind")) !== "hanko" || tx.data === null || typeof tx.data !== "object") return tx;
+  if (tx.type !== "settle_transition" || fieldOf(tx.data, "kind") !== "hanko" || tx.data === null || typeof tx.data !== "object") return tx;
   const { settlementHanko: _settlementHanko, ...rest } = tx.data as Record<string, unknown>;
   const post = rest.postProof;
   if (post === null || typeof post !== "object" || Array.isArray(post)) return { type: tx.type, data: rest };
@@ -449,6 +451,8 @@ const withoutHankoWitness = (tx: WireTx): WireTx => {
 };
 const projectionRefusal = (tx: WireTx): Result<void, FrameHashError> => {
   if (tx.type === "rebalance_policy") { const v = fieldOf(tx.data, "policyVersion"); if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) return err({ _tag: "policy_version" }); }
+  // og accountTxWithoutPostCommitHankos (witness-projection.ts:53) dereferences `data.kind` and, for kind hanko, `data.postProof.hanko`.
+  if (tx.type === "settle_transition" && (tx.data === null || tx.data === undefined || (fieldOf(tx.data, "kind") === "hanko" && (fieldOf(tx.data, "postProof") ?? null) === null))) return err({ _tag: "settle_witness_shape" });
   return ok(undefined);
 };
 export const ownWire = (tx: { readonly type: string }): WireTx => { const { type, ...data } = tx; return { type, data }; };
@@ -486,8 +490,12 @@ export const emptyBatch = (): Batch => total(BATCH_FIELDS, [] as never) as Batch
 const t = A.tuple;
 const allowanceAbi = (r: JAllowance): Abi => t([A.uint(r.deltaIndex), A.uint(r.rightAllowance), A.uint(r.leftAllowance)]);
 const transformerAbi = (c: TransformerClause): Abi => t([A.address(c.transformerAddress), A.bytes(c.encodedBatch), arr(c.allowances, allowanceAbi)]);
-const proofBodyAbi = (b: ProofBody): Abi => t([A.b32(b.watchSeed), A.uint(b.leftResponseSeconds), A.uint(b.rightResponseSeconds), arr(b.offdeltas, A.int), arr(b.tokenIds, A.uint), arr(b.transformers, transformerAbi)]);
-const diffAbi = (d: SettlementDiff): Abi => t([A.uint(d.tokenId), A.int(d.leftDiff), A.int(d.rightDiff), A.int(d.collateralDiff), A.int(d.ondeltaDiff)]);
+/** Types.sol `Int512{int256 high; uint256 low}` (abi-money.ts encodeInt512): high is the arithmetic shift, so a value outside int512 fails the int256 word. */
+const int512Abi = (n: bigint): Abi => t([A.int(n >> 256n), A.uint(n & ((1n << 256n) - 1n))]);
+/** Types.sol `SignedAmount{bool negative; uint256 magnitude}` (encodeSignedAmount): ±(2^256-1), zero is never negative. */
+const signedAmountAbi = (n: bigint): Abi => t([A.bool(n < 0n), A.uint(n < 0n ? -n : n)]);
+const proofBodyAbi = (b: ProofBody): Abi => t([A.b32(b.watchSeed), A.uint(b.leftResponseSeconds), A.uint(b.rightResponseSeconds), arr(b.offdeltas, int512Abi), arr(b.tokenIds, A.uint), arr(b.transformers, transformerAbi)]);
+const diffAbi = (d: SettlementDiff): Abi => t([A.uint(d.tokenId), signedAmountAbi(d.leftDiff), signedAmountAbi(d.rightDiff), signedAmountAbi(d.collateralDiff), signedAmountAbi(d.ondeltaDiff)]);
 const witnessAbi = (w: HashLadderWitness): Abi => t([A.uint(w.fillRatio), A.b32(w.fullSecret), ...w.reveals.map((r) => A.b32(r))]);
 const batchAbi = (b: Batch): Abi => t([
   arr(b.reserveToReserve, (r) => t([A.b32(r.receivingEntity), A.uint(r.tokenId), A.uint(r.amount)])),
@@ -507,7 +515,7 @@ export const encodeProofBodyBytes = (b: ProofBody): string => abiEncodeHex([proo
 export const J_EVENT_SIGNATURES = {
   HankoBatchProcessed: "HankoBatchProcessed(bytes32,bytes32,uint256)",
   ReserveUpdated: "ReserveUpdated(bytes32,uint256,uint256)",
-  AccountSettled: "AccountSettled((bytes32,bytes32,(uint256,uint256,uint256,uint256,int256)[],uint256)[])",
+  AccountSettled: "AccountSettled((bytes32,bytes32,(uint256,uint256,uint256,uint256,(int256,uint256))[],uint256)[])",
   DisputeStarted: "DisputeStarted(bytes32,bytes32,uint256,bool,bytes32,bytes32,bytes,bytes,bytes32,uint256,uint256,uint32,uint32)",
   DisputeFinalized: "DisputeFinalized(bytes32,bytes32,uint256,bytes32,bytes32)",
 } as const;
@@ -536,9 +544,9 @@ const readSettled = (buf: Uint8Array): readonly AccountSettlement[] => {
   const rows = abiLengthRef(buf, abiRoot(), 0);
   return Array.from({ length: countOf(rows, 32) }, (_, i) => {
     const row = abiTupleElement(buf, rows, i), tokensAt = abiLengthRef(buf, row, 64);
-    const tokens = Array.from({ length: countOf(tokensAt, 160) }, (_, k): TokenSettlement => {
-      const at = abiInlineTuple(tokensAt, k, 160);
-      return { tokenId: abiWord(buf, at, 0), leftReserve: abiWord(buf, at, 32), rightReserve: abiWord(buf, at, 64), collateral: abiWord(buf, at, 96), ondelta: signedWord(abiWord(buf, at, 128)) };
+    const tokens = Array.from({ length: countOf(tokensAt, 192) }, (_, k): TokenSettlement => {
+      const at = abiInlineTuple(tokensAt, k, 192);
+      return { tokenId: abiWord(buf, at, 0), leftReserve: abiWord(buf, at, 32), rightReserve: abiWord(buf, at, 64), collateral: abiWord(buf, at, 96), ondelta: (signedWord(abiWord(buf, at, 128)) << 256n) + abiWord(buf, at, 160) };
     });
     return { left: wordHex(bytesToHex(abiTupleBytes(buf, row, 0))), right: wordHex(bytesToHex(abiTupleBytes(buf, row, 32))), tokens, nonce: abiWord(buf, row, 96) };
   });
@@ -552,6 +560,9 @@ const readOne = (log: ChainLog): JEventClaimBody | undefined => {
   if (is("AccountSettled")) return { type: "AccountSettled", settled: readSettled(buf) };
   if (is("DisputeStarted")) {
     const [sender, counterentity, nonce] = topicsOf(log, 3, "DisputeStarted");
+    const timeout = abiWord(buf, head, 192), start = abiWord(buf, head, 224), left = abiWord(buf, head, 256), right = abiWord(buf, head, 288), SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+    // og j-event-payloads.ts assertRawEventSpecificFields: a positive safe-integer clock whose timeout is exactly start + both response windows.
+    if (timeout <= 0n || timeout > SAFE || start <= 0n || start > SAFE || timeout < start || left > 0xffff_ffffn || right > 0xffff_ffffn || timeout !== start + left + right) throw new Error(`J_EVENT_DISPUTE_CLOCK_INVALID:${start}:${timeout}:${left}:${right}`);
     return {
       type: "DisputeStarted", sender: wordHex(sender ?? ""), counterentity: wordHex(counterentity ?? ""), nonce: BigInt(nonce ?? "0"), proposerIsLeft: abiWord(buf, head, 0) === 1n,
       proofbodyHash: wordHex(bytesToHex(abiTupleBytes(buf, head, 32))), watchSeed: wordHex(bytesToHex(abiTupleBytes(buf, head, 64))),
@@ -569,12 +580,14 @@ const readOne = (log: ChainLog): JEventClaimBody | undefined => {
 export const readJEvents = (logs: readonly ChainLog[]): readonly JEventClaimBody[] => logs.flatMap((l) => { const r = readOne(l); return r === undefined ? [] : [r]; });
 export const readJEventVector = (inputs: { readonly logs: readonly ChainLog[] }): unknown => JSON.parse(JSON.stringify(readJEvents(inputs.logs), (_k, v: unknown) => (typeof v === "bigint" ? v.toString() : v)));
 export const encodeAccountSettledData = (settled: readonly AccountSettlement[]): string => abiEncodeHex([arr(settled, (r) =>
-  t([A.b32(r.left), A.b32(r.right), arr(r.tokens, (x) => t([A.uint(x.tokenId), A.uint(x.leftReserve), A.uint(x.rightReserve), A.uint(x.collateral), A.int(x.ondelta)])), A.uint(r.nonce)]))]);
+  t([A.b32(r.left), A.b32(r.right), arr(r.tokens, (x) => t([A.uint(x.tokenId), A.uint(x.leftReserve), A.uint(x.rightReserve), A.uint(x.collateral), int512Abi(x.ondelta)])), A.uint(r.nonce)]))]);
 
 
 type Word = string;
+/** og computeAccountKey (contract-codec.ts:6): two bytes32 words, ordered and packed lowercase. */
 export const encodeAccountKey = ({ e1, e2 }: { readonly e1: Word; readonly e2: Word }): { readonly lesserThenGreater: string; readonly greaterThenLesser: string } => {
-  const [lesser, greater] = BigInt(e1) < BigInt(e2) ? [e1, e2] : [e2, e1];
+  const [a, b] = [e1, e2].map((e) => { if (!/^0[xX][0-9a-fA-F]{64}$/.test(e)) throw new Error(`account key entity is not bytes32: ${e}`); return e.toLowerCase(); }) as [string, string];
+  const [lesser, greater] = a < b ? [a, b] : [b, a];
   return { lesserThenGreater: joinHex([lesser, greater]), greaterThenLesser: joinHex([greater, lesser]) };
 };
 type ProofBodyText = { readonly watchSeed: Word; readonly leftResponseSeconds: number; readonly rightResponseSeconds: number; readonly offdeltas: readonly string[]; readonly tokenIds: readonly string[]; readonly transformers: readonly { readonly transformerAddress: string; readonly encodedBatch: string; readonly allowances: readonly { readonly deltaIndex: string; readonly rightAllowance: string; readonly leftAllowance: string }[] }[] };
@@ -583,14 +596,20 @@ const proofBodyOfText = (b: ProofBodyText): ProofBody => ({
   transformers: b.transformers.map((c) => ({ transformerAddress: c.transformerAddress, encodedBatch: c.encodedBatch, allowances: c.allowances.map((a) => ({ deltaIndex: BigInt(a.deltaIndex), rightAllowance: BigInt(a.rightAllowance), leftAllowance: BigInt(a.leftAllowance) })) })),
 });
 export const encodeProofBody = (inputs: { readonly proofBody: ProofBodyText }): string => keccak256Hex(hexToBytes(encodeProofBodyBytes(proofBodyOfText(inputs.proofBody))));
+/** og requireDepositoryDomain (onchain-domain.ts:139): chainId > 0 and a valid, non-zero depository address, or the digest is refused. */
+const depositoryDomain = (chainId: number, depository: string): bigint => {
+  if (!domainOf({ chainId, depositoryAddress: depository }).ok || /^0x0{40}$/.test(depository)) throw new Error(`INVALID_HANKO_DOMAIN:${chainId}:${depository}`);
+  return BigInt(chainId);
+};
+export const DEPOSITORY_BATCH_HANKO_DOMAIN = keccak256Hex(utf8("XLN_DEPOSITORY_HANKO_V1"));
 export const encodeDisputeProofHash = (i: { readonly messageType: number; readonly chainId: number; readonly contractAddress: string; readonly accountKey: string; readonly nonce: string; readonly proposerIsLeft: boolean; readonly proofbodyHash: Word; readonly watchSeed: Word }): string =>
-  keccak256Hex(abiEncode([A.uint(BigInt(i.messageType)), A.uint(BigInt(i.chainId)), A.address(i.contractAddress), A.bytes(i.accountKey), A.uint(BigInt(i.nonce)), A.bool(i.proposerIsLeft), A.b32(i.proofbodyHash), A.b32(i.watchSeed)]));
+  keccak256Hex(abiEncode([A.uint(BigInt(i.messageType)), A.uint(depositoryDomain(i.chainId, i.contractAddress)), A.address(i.contractAddress), A.bytes(i.accountKey), A.uint(BigInt(i.nonce)), A.bool(i.proposerIsLeft), A.b32(i.proofbodyHash), A.b32(i.watchSeed)]));
 type DiffText = { readonly tokenId: string; readonly leftDiff: string; readonly rightDiff: string; readonly collateralDiff: string; readonly ondeltaDiff: string };
 export const encodeCooperativeUpdateHash = (i: { readonly messageType: number; readonly chainId: number; readonly contractAddress: string; readonly accountKey: string; readonly nonce: string; readonly diffs: readonly DiffText[]; readonly forgiveDebtsInTokenIds: readonly string[] }): string =>
-  keccak256Hex(abiEncode([A.uint(BigInt(i.messageType)), A.uint(BigInt(i.chainId)), A.address(i.contractAddress), A.bytes(i.accountKey), A.uint(BigInt(i.nonce)),
-    arr(i.diffs, (d) => t([A.uint(BigInt(d.tokenId)), A.int(BigInt(d.leftDiff)), A.int(BigInt(d.rightDiff)), A.int(BigInt(d.collateralDiff)), A.int(BigInt(d.ondeltaDiff))])), arr(i.forgiveDebtsInTokenIds, (id) => A.uint(BigInt(id)))]));
-export const encodeBatchHash = (i: { readonly domainSeparator: Word; readonly chainId: number; readonly depository: string; readonly encodedBatch: string; readonly nonce: string }): string =>
-  keccak256Hex(encodePacked([{ _tag: "bytes32", value: i.domainSeparator }, { _tag: "uint256", value: BigInt(i.chainId) }, { _tag: "address", value: i.depository }, { _tag: "bytes", value: i.encodedBatch }, { _tag: "uint256", value: BigInt(i.nonce) }]));
+  keccak256Hex(abiEncode([A.uint(BigInt(i.messageType)), A.uint(depositoryDomain(i.chainId, i.contractAddress)), A.address(i.contractAddress), A.bytes(i.accountKey), A.uint(BigInt(i.nonce)),
+    arr(i.diffs, (d) => diffAbi({ tokenId: BigInt(d.tokenId), leftDiff: BigInt(d.leftDiff), rightDiff: BigInt(d.rightDiff), collateralDiff: BigInt(d.collateralDiff), ondeltaDiff: BigInt(d.ondeltaDiff) })), arr(i.forgiveDebtsInTokenIds, (id) => A.uint(BigInt(id)))]));
+export const encodeBatchHash = (i: { readonly chainId: number; readonly depository: string; readonly encodedBatch: string; readonly nonce: string }): string =>
+  keccak256Hex(encodePacked([{ _tag: "bytes32", value: DEPOSITORY_BATCH_HANKO_DOMAIN }, { _tag: "uint256", value: depositoryDomain(i.chainId, i.depository) }, { _tag: "address", value: i.depository }, { _tag: "bytes", value: i.encodedBatch }, { _tag: "uint256", value: BigInt(i.nonce) }]));
 type DisputeCase = { readonly nonce: string; readonly startedByLeft: boolean; readonly initialProposerIsLeft: boolean; readonly timeout: string; readonly leftResponseSeconds: number; readonly rightResponseSeconds: number; readonly proofbodyHash: Word; readonly disputeStartTimestamp: string; readonly starterInitialArguments: string; readonly starterCounterArguments: string; readonly starterCounterProofCommitment: Word };
 export const encodeDisputeHash = ({ cases }: { readonly cases: readonly DisputeCase[] }): readonly string[] => cases.map((c) => {
   const commitment = (args: string): string => keccak256Hex(abiEncode([A.bytes(args), A.bool(c.startedByLeft), A.uint(BigInt(c.disputeStartTimestamp))]));
@@ -630,8 +649,11 @@ const claimAbi = (c: HankoClaim): Abi => t([A.b32(c.entityId), arr(c.entityIndex
 const claimWords = (c: HankoClaimInput): HankoClaim => ({ entityId: c.entityId, entityIndexes: c.entityIndexes.map((x) => BigInt(x)), weights: c.weights.map((x) => BigInt(x)), threshold: BigInt(c.threshold), boardChangeDelay: BigInt(c.boardChangeDelay), controlChangeDelay: BigInt(c.controlChangeDelay), dividendChangeDelay: BigInt(c.dividendChangeDelay) });
 const envelopeHex = (h: HankoBytes): string => abiEncodeHex([t([arr(h.placeholders, A.b32), A.bytes(bytesToHex(h.packedSignatures)), arr(h.claims, claimAbi), arr(h.memberSignatures, (s) => A.bytes(bytesToHex(s)))])]);
 export const encodeHankoEnvelope = (h: HankoEnvelope): string => envelopeHex({ placeholders: h.placeholders, packedSignatures: h.packedSignatures, claims: h.claims.map(claimWords), memberSignatures: h.memberSignatures.map((s) => hexToBytes(s)) });
+/** og assertCanonicalSignature (codec.ts:277): 32-byte r and s, v in {27,28}, non-zero r and s, low s. */
+const canonicalSig = (sig: RawSig): boolean => sig.r.length === 32 && sig.s.length === 32 && (sig.v === 27 || sig.v === 28) && !isZeroWord(sig.r) && !isZeroWord(sig.s) && wordAt(sig.s, 0) <= HALF_ORDER;
 export const packSignatures = (sigs: readonly RawSig[]): Uint8Array => {
   if (sigs.length === 0) return new Uint8Array();
+  sigs.forEach((sig, i) => { if (!canonicalSig(sig)) throw new Error(`HANKO_SIGNATURE_NON_CANONICAL:${i}`); });
   const bits = new Uint8Array(Math.ceil(sigs.length / 8));
   sigs.forEach((sig, i) => { if (sig.v === 28) bits[i >> 3] = (bits[i >> 3] ?? 0) | (1 << (i & 7)); });
   return concat([...sigs.flatMap((sig) => [sig.r, sig.s]), bits]);
@@ -644,21 +666,6 @@ const packedCount = (byteLength: number): number | null => {
 const packedPaddingClear = (packed: Uint8Array, count: number): boolean => count % 8 === 0 || ((packed[packed.length - 1] ?? 0) >> (count % 8)) === 0;
 const packedAt = (packed: Uint8Array, count: number, i: number): { readonly r: Uint8Array; readonly s: Uint8Array; readonly bit: number } =>
   ({ r: packed.subarray(i * 64, i * 64 + 32), s: packed.subarray(i * 64 + 32, i * 64 + 64), bit: ((packed[count * 64 + (i >> 3)] ?? 0) >> (i & 7)) & 1 });
-const recoverPacked = (h: Uint8Array, packed: Uint8Array): Result<readonly string[], HankoError> => {
-  const count = packedCount(packed.length);
-  if (count === null || !packedPaddingClear(packed, count)) return err({ _tag: "packed" });
-  const signers: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const { r, s, bit } = packedAt(packed, count, i);
-    if (wordAt(s, 0) > HALF_ORDER) return err({ _tag: "packed" });
-    const key = recoverPublicKey(h, r, s, bit);
-    if (key === null) return ok([]);
-    const signer = addressOf(key);
-    if (signers.some((p) => p.toLowerCase() === signer.toLowerCase())) return err({ _tag: "duplicate_signer" });
-    signers.push(signer);
-  }
-  return ok(signers);
-};
 const chainV = (v: number): number => (v < 27 ? v + 27 : v);
 export const recoverRawSigner = (hashHex: string, signatureHex: string): string | null => {
   const raw = parseHex(signatureHex), h = parseHex(hashHex);
@@ -673,62 +680,12 @@ export const encodeHanko65 = (i: { readonly hash: string; readonly hanko: string
   return signer === null ? INVALID : { entityId: encodeLazyEntityId({ signer }), valid: true };
 };
 export type Registration = { readonly encodedBoard: string; readonly entityId: string };
-type Evaluated = { readonly boardHash: string; readonly votingPower: bigint; readonly placeholders: readonly number[]; readonly signatures: readonly number[] };
-const memberAt = (h: HankoBytes, signers: readonly string[], index: number, pc: number, sc: number, claimIndex: number): Result<string, HankoError> => {
-  const found = index < pc ? h.placeholders[index] : index < pc + sc ? signers[index - pc] : index - pc - sc < claimIndex ? h.claims[index - pc - sc]?.entityId : undefined;
-  return found === undefined ? err({ _tag: "claim_order" }) : ok(index >= pc && index < pc + sc ? addressAsId(found) : found);
-};
-const evaluate = (h: HankoBytes, claim: HankoClaim, signers: readonly string[], claimIndex: number, totalCount: number): Result<Evaluated, HankoError> => {
-  const pc = h.placeholders.length, sc = signers.length, seen = new Set<number>();
-  const ids: string[] = [], powers: number[] = [], placeholders: number[] = [], signatures: number[] = [];
-  let votingPower = 0n;
-  for (let i = 0; i < claim.entityIndexes.length; i++) {
-    const word = claim.entityIndexes[i], index = word === undefined || word >= BigInt(totalCount) ? -1 : Number(word);
-    if (index < 0 || seen.has(index)) return err(seen.has(index) ? { _tag: "duplicate_entity_index" } : { _tag: "claim_order" });
-    seen.add(index);
-    const weight = claim.weights[i];
-    if (weight === undefined || weight === 0n || weight > 65535n) return err({ _tag: "weight" });
-    const resolved = memberAt(h, signers, index, pc, sc, claimIndex);
-    if (!resolved.ok) return resolved;
-    if (index < pc) placeholders.push(index);
-    else { if (index < pc + sc) signatures.push(index - pc); votingPower += weight; }
-    ids.push(resolved.value); powers.push(Number(weight));
-  }
-  if (claim.threshold === 0n || claim.threshold > 65535n) return err({ _tag: "threshold" });
-  return ok({ boardHash: boardOf(claim.threshold, ids, powers, claim), votingPower, placeholders, signatures });
-};
-const assertMinimal = (h: HankoBytes, sc: number, usedP: readonly boolean[], usedS: readonly boolean[]): Result<void, HankoError> => {
-  const reachable = h.claims.map((_, i) => i === h.claims.length - 1), firstClaim = h.placeholders.length + sc;
-  for (let ci = h.claims.length - 1; ci >= 0; ci--) if (reachable[ci]) for (const index of h.claims[ci]?.entityIndexes ?? []) if (index >= BigInt(firstClaim)) reachable[Number(index) - firstClaim] = true;
-  return checks(guard(reachable.every(Boolean), { _tag: "unused_claim" } as HankoError), guard(usedP.every(Boolean), { _tag: "unused_placeholder" } as HankoError), guard(usedS.every(Boolean), { _tag: "unused_signature" } as HankoError));
-};
+/** og verifyCanonicalHanko: with a registration the target is the registered entity and its board is the registered one; without, og has no expected target. */
 export const verifyHankoLocal = (hankoHex: string, hashHex: string, registration: Registration | null): Result<Verdict, HankoError> => {
-  const hankoBytes = parseHex(hankoHex), hashBytes = parseHex(hashHex), encodedBoard = registration === null ? null : parseHex(registration.encodedBoard);
-
-  if (hankoBytes === null || hashBytes === null || (registration !== null && encodedBoard === null)) return err({ _tag: "decode" });
-  return chain(decodeHanko(hankoBytes), (h): Result<Verdict, HankoError> => {
-    if (h.claims.length === 0 || h.memberSignatures.some((s) => s.length !== 0)) return ok(INVALID);
-    return chain(recoverPacked(hashBytes, h.packedSignatures), (signers): Result<Verdict, HankoError> => {
-      if (signers.length === 0) return ok(INVALID);
-      const usedP = h.placeholders.map(() => false), usedS = signers.map(() => false), seen = new Set<string>(), totalCount = h.placeholders.length + signers.length + h.claims.length;
-      const registeredId = registration?.entityId.toLowerCase(), registeredBoard = encodedBoard === null ? null : keccak256Hex(encodedBoard);
-      for (let ci = 0; ci < h.claims.length; ci++) {
-        const claim = h.claims[ci];
-        if (claim === undefined) return ok(INVALID);
-        const id = claim.entityId.toLowerCase();
-        if (seen.has(id)) return err({ _tag: "duplicate_claim_entity" });
-        seen.add(id);
-        const ev = evaluate(h, claim, signers, ci, totalCount);
-        if (!ev.ok) return ev;
-        for (const p of ev.value.placeholders) usedP[p] = true;
-        for (const s of ev.value.signatures) usedS[s] = true;
-        const boardOk = id === registeredId ? ev.value.boardHash === registeredBoard : id === ev.value.boardHash.toLowerCase();
-        if (!boardOk || ev.value.votingPower < claim.threshold) return ok(INVALID);
-      }
-      const last = h.claims[h.claims.length - 1];
-      return map(assertMinimal(h, signers.length, usedP, usedS), () => (last === undefined ? INVALID : { entityId: last.entityId, valid: true }));
-    });
-  });
+  const encodedBoard = registration === null ? null : parseHex(registration.encodedBoard);
+  if (registration !== null && encodedBoard === null) return err({ _tag: "decode" });
+  const verified = verifyAccountHanko(hankoHex, hashHex, registration?.entityId ?? "", encodedBoard === null ? undefined : keccak256Hex(encodedBoard));
+  return ok(verified.ok ? { entityId: verified.value.entityId, valid: true } : INVALID);
 };
 const verdictOf = (r: Result<Verdict, HankoError>): Verdict => unwrapOr(r, () => INVALID);
 export const encodeHankoBytes = (i: { readonly encodedBoard: string; readonly entityId: string; readonly hash: string; readonly twoOfThree: string; readonly oneOfThree: string }): { readonly twoOfThree: Verdict; readonly oneOfThree: Verdict } =>
@@ -739,7 +696,8 @@ const signatureFor = (signedBy: ReadonlyMap<string, string>, entityWord: string)
   const found = [...signedBy].reduce<string | undefined>((last, [signer, sig]) => (sameHex(signer, addr) ? sig : last), undefined);
   if (found === undefined) return null;
   const raw = hexToBytes(found.startsWith("0x") ? found : `0x${found}`);
-  return raw.length !== 65 ? null : { r: raw.subarray(0, 32), s: raw.subarray(32, 64), v: chainV(raw[64] ?? 0) };
+  const sig = raw.length !== 65 ? null : { r: raw.subarray(0, 32), s: raw.subarray(32, 64), v: chainV(raw[64] ?? 0) };
+  return sig !== null && canonicalSig(sig) ? sig : null;
 };
 export const encodeBoardHanko = (board: Board & { readonly entityId: string }, signedBy: ReadonlyMap<string, string>): string => {
   const slots = board.entityIds.map((id) => ({ id, sig: signatureFor(signedBy, id) }));
@@ -781,12 +739,8 @@ export type AccountHankoVerdict = { readonly entityId: string; readonly signers:
 const ACCOUNT_HANKO_MAX_BYTES = 64 * 1024, MAX_ENTITIES = 256, MAX_CLAIMS = 64, MAX_MEMBERS_PER_CLAIM = 256, MAX_TOTAL_MEMBERS = 1024, MAX_MEMBER_SIGNATURES = 8;
 const MAX_POWER = 0xffffn, MAX_DELAY = 0xffff_ffffn, MAX_SAFE_INDEX = BigInt(Number.MAX_SAFE_INTEGER), ADDRESS_MAX = (1n << 160n) - 1n;
 const hankoRefuse = (_tag: AccountHankoTag): Result<never, AccountHankoError> => err({ _tag });
-const bytes32Of = (text: string): string | null => {
-  const trimmed = text.trim();
-  if (!/^(?:0[xX][0-9a-fA-F]+|[0-9]+)$/.test(trimmed)) return null;
-  const value = BigInt(trimmed);
-  return value >= 1n << 256n ? null : bytesToHex(wordOf(value));
-};
+/** og asHankoBytes32 (codec.ts:83): exactly `0x` + 64 hex, lowercased. */
+const bytes32Of = (text: string): string | null => (/^0x[0-9a-f]{64}$/i.test(text) ? text.toLowerCase() : null);
 const unique = (xs: readonly string[]): boolean => new Set(xs).size === xs.length;
 const isZeroWord = (w: Uint8Array): boolean => w.every((b) => b === 0);
 export const isAddressId = (id: string): boolean => { const v = BigInt(id); return v > 0n && v <= ADDRESS_MAX; };
@@ -852,11 +806,10 @@ const accountReachability = (pc: number, sc: number, claims: readonly ResolvedCl
   if (Array.from({ length: sc }, (_, i) => pc + i).some((i) => !used.has(i))) return hankoRefuse("unused_signature");
   return ok(undefined);
 };
+/** og verifyCanonicalHanko. An empty expected entity is og's absent `expectedTargetEntityId`: the last claim is the target and only self-hashed boards authorize. */
 export const verifyAccountHanko = (hanko: string, digest: string, expectedEntityId: string, registeredBoardHash?: string): Result<AccountHankoVerdict, AccountHankoError> => {
-  const target = bytes32Of(expectedEntityId);
+  const target = expectedEntityId === "" ? undefined : bytes32Of(expectedEntityId);
   if (target === null) return hankoRefuse("expected_entity");
-
-  if (registeredBoardHash !== undefined && !/^0[xX][0-9a-fA-F]{64}$/.test(expectedEntityId)) return hankoRefuse("expected_entity");
   if (!/^0[xX][0-9a-fA-F]{64}$/.test(digest)) return hankoRefuse("digest");
   if (!/^0[xX](?:[0-9a-fA-F]{2})*$/.test(hanko)) return hankoRefuse("decode");
   const bytes = hexToBytes(hanko);
@@ -879,7 +832,7 @@ export const verifyAccountHanko = (hanko: string, digest: string, expectedEntity
       const registered = registeredBoardHash?.trim().toLowerCase(), last = claims[claims.length - 1];
       const authorized = (c: ResolvedClaim): boolean => c.entityId === c.boardHash || (c.entityId === target && c.boardHash === registered);
       return chain(accountReachability(env.placeholders.length, signerIds.length, claims), () =>
-        !claims.every(authorized) ? hankoRefuse("authority") : last === undefined || last.entityId !== target ? hankoRefuse("target") : ok({ entityId: target, signers }));
+        !claims.every(authorized) ? hankoRefuse("authority") : last === undefined || (target !== undefined && last.entityId !== target) ? hankoRefuse("target") : ok({ entityId: last.entityId, signers }));
     });
   });
 };
@@ -1970,7 +1923,7 @@ export interface OpenEntity extends Tagged<"open", EntityEnv> {}
 export interface ProposedEntity extends Tagged<"proposed", EntityEnv & { frame: EntityFrame; signatures: ReadonlyMap<Address, Signature>; draft: Draft }> {}
 export type EntityReplica = OpenEntity | ProposedEntity;
 export type EntityContext = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly self: EntityId; readonly signerId: Address; readonly from?: EntityId | undefined };
-export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }>;
+export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large">;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
   | Tagged<"account_exists" | "no_such_account" | "create_ack_required" | "account_envelope", { target: EntityId }>
@@ -2013,7 +1966,9 @@ export type BinaryError = Tagged<"binary">;
 const packedHex = (value: string): HexPack | string =>
   value.length >= 34 && value.startsWith("0x") && value.length % 2 === 0 && /^0x[0-9a-f]+$/.test(value) ? new HexPack(value) : value;
 const walkBinary = (value: Binary): Result<Binary | HexPack, BinaryError> => {
-  if (value === null || typeof value === "boolean" || typeof value === "bigint" || typeof value === "number") return ok(value);
+  if (value === null || typeof value === "boolean" || typeof value === "bigint") return ok(value);
+  // og binary-codec.ts canonicalize: no non-finite, unsafe-integer or negative-zero numbers.
+  if (typeof value === "number") return !Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)) || Object.is(value, -0) ? err({ _tag: "binary" }) : ok(value);
   if (typeof value === "string") return ok(packedHex(value));
   if (Array.isArray(value)) {
     const items: (Binary | HexPack)[] = [];
@@ -2056,11 +2011,23 @@ export type EntityRootAccount = {
   readonly status: "active" | "dispute_preparing" | "disputed";
   readonly currentHeight: number;
   readonly nextProofNonce: number;
-  readonly currentFrameHash: string;
+  /** og commits `currentFrame.stateHash` only when the replica has a current frame. */
+  readonly currentFrameHash?: string | undefined;
   readonly pendingWithdrawals: string;
   readonly policyRoot: string;
   readonly submittedAtByTokenRoot: string;
+  /** og ACCOUNT_ENTITY_COMMITTED_FIELDS that are committed only when present (state-root.ts:184); the three counterparty Hankos are committed as their integrity digest. */
+  readonly committed?: Partial<Readonly<Record<EntityLeafOptional, unknown>>> | undefined;
+  /** og counterpartySettlementHankos(settlementWorkspace, localIsLeft), when present. */
+  readonly counterpartySettlementHankos?: unknown;
+  readonly activeQuote?: unknown; readonly pendingRequest?: unknown;
+  readonly rejectedFrameEvidence?: { readonly reason: unknown; readonly frameHash: unknown; readonly frameHanko: unknown } | undefined;
 };
+export const ENTITY_LEAF_OPTIONAL = ["publicPinned", "boardHankoRefreshMigration", "counterpartyBoardHankoRefresh", "counterpartyFrameHanko", "counterpartyDisputeProofHanko", "counterpartySettlementHanko",
+  "currentDisputeProofNonce", "currentDisputeProofProposerIsLeft", "currentDisputeProofBodyHash", "currentDisputeHash", "counterpartyDisputeProofNonce", "counterpartyDisputeProofProposerIsLeft",
+  "counterpartyDisputeProofBodyHash", "counterpartyDisputeHash", "disputePrepare", "activeDispute"] as const;
+export type EntityLeafOptional = (typeof ENTITY_LEAF_OPTIONAL)[number];
+const LEAF_HANKO_FIELDS: ReadonlySet<string> = new Set(["counterpartyFrameHanko", "counterpartyDisputeProofHanko", "counterpartySettlementHanko"]);
 type EntityPaybook = {
   readonly entries: { readonly radix: 16; readonly leafCount: number; readonly root: string };
   readonly feesEarned: bigint;
@@ -2087,11 +2054,18 @@ const ACCOUNT_LEAF = utf8("xln.entity.account-leaf.v3");
 const accountLeaf = (account: EntityRootAccount): Result<readonly [Uint8Array, Uint8Array], EntityRootError> => {
   const owner = signerId(account.fromEntity);
   if (owner !== signerId(account.state.leftEntity) && owner !== signerId(account.state.rightEntity)) return err({ _tag: "account_owner" });
+  const optional = Object.fromEntries(ENTITY_LEAF_OPTIONAL.flatMap((field) => {
+    const value = account.committed?.[field];
+    return value === undefined ? [] : [[field, LEAF_HANKO_FIELDS.has(field) && typeof value === "string" ? integrity(utf8(value)) : value]];
+  }));
   return chain(accountKey(account.toEntity), (key) => chain(accountStateCommitment(account.state), (accountStateRoot) => chain(encodeCanonicalValue({
-    status: account.status, currentHeight: account.currentHeight,
+    ...optional, status: account.status, currentHeight: account.currentHeight,
     proofHeader: { fromEntity: account.fromEntity, toEntity: account.toEntity, nextProofNonce: account.nextProofNonce },
-    accountStateRoot, currentFrameHash: account.currentFrameHash, pendingWithdrawals: account.pendingWithdrawals,
-    shadow: { rebalance: { policyRoot: account.policyRoot, submittedAtByTokenRoot: account.submittedAtByTokenRoot } },
+    accountStateRoot, ...opt("currentFrameHash", account.currentFrameHash), ...opt("counterpartySettlementHankos", account.counterpartySettlementHankos), pendingWithdrawals: account.pendingWithdrawals,
+    shadow: {
+      rebalance: { policyRoot: account.policyRoot, submittedAtByTokenRoot: account.submittedAtByTokenRoot, ...opt("activeQuote", account.activeQuote), ...opt("pendingRequest", account.pendingRequest) },
+      ...opt("rejectedFrameEvidence", account.rejectedFrameEvidence),
+    },
   }), (encoded) => ok([key, sha256(concat([ACCOUNT_LEAF, encoded]))] as const))));
 };
 const sectionDigest = (value: Binary): Result<string, BinaryError> => map(encodeConsensus(value), integrity);
@@ -2117,7 +2091,7 @@ const accountInputCommitment = (value: Binary): Result<{ readonly domain: string
 };
 const entityTxForHash = (tx: EntityFrameTx): Result<{ readonly type: string; readonly data: unknown }, BinaryError> =>
   tx.type === "accountInput" ? map(accountInputCommitment(tx.data), (data) => ({ type: tx.type, data })) : ok(tx);
-const entityTxDigest = (txs: readonly EntityFrameTx[]): Result<string, BinaryError> => {
+const entityTxDigest = (txs: readonly EntityFrameTx[]): Result<{ readonly digest: string; readonly bytes: number }, BinaryError> => {
   const encoded: Uint8Array[] = [];
   for (const tx of txs) {
     const hashed = entityTxForHash(tx);
@@ -2132,7 +2106,7 @@ const entityTxDigest = (txs: readonly EntityFrameTx[]): Result<string, BinaryErr
   const view = new DataView(preimage.buffer);
   let offset = domain.byteLength;
   for (const bytes of encoded) { view.setUint32(offset, bytes.byteLength); preimage.set(bytes, offset + 4); offset += 4 + bytes.byteLength; }
-  return ok(integrity(preimage));
+  return ok({ digest: integrity(preimage), bytes: offset - domain.byteLength });
 };
 export type EntityInfraContext = {
   readonly version: number; readonly proposerReplicaId: string; readonly entityId: string; readonly proposerSignerId: string;
@@ -2147,18 +2121,26 @@ export type EntityFrameHashInput = {
   readonly entityId: string; readonly stateRoot: string; readonly authorityRoot: string; readonly entityContext: EntityInfraContext;
   readonly jPrefixCertificate?: Binary | null;
 };
-export const entityFrameHash = (input: EntityFrameHashInput): Result<string, BinaryError> => {
+/** og LIMITS.MAX_FRAME_SIZE_BYTES: the event budget and the whole frame (header + context + length-prefixed txs). */
+const MAX_FRAME_SIZE_BYTES = 100_000_000;
+/** og createEntityFrameHashFromStateRoot (frame.ts:393): event budget, canonical lowercase roots, then the total wire budget. */
+export const entityFrameHash = (input: EntityFrameHashInput): Result<string, EntityFrameHashError> => {
+  const events = input.events.length === 0 ? ok(new Uint8Array()) : encodeBinary(input.events);
+  if (!events.ok) return events;
+  if (events.value.byteLength > MAX_FRAME_SIZE_BYTES) return err({ _tag: "frame_too_large" });
+  for (const root of [input.stateRoot, input.authorityRoot]) if (!/^0x[0-9a-f]{64}$/.test(root)) return err({ _tag: "frame_root", value: root });
   const txs = entityTxDigest(input.txs);
   if (!txs.ok) return txs;
   const context = encodeBinary(input.entityContext);
   if (!context.ok) return context;
   const header = encodeBinary({
     domain: "xln:entity-frame:binary-context-digest",
-    prevFrameHash: input.prevFrameHash, height: input.height, timestamp: input.timestamp, txCount: input.txs.length, txsDigest: txs.value,
+    prevFrameHash: input.prevFrameHash, height: input.height, timestamp: input.timestamp, txCount: input.txs.length, txsDigest: txs.value.digest,
     events: input.events, entityId: input.entityId, stateRoot: input.stateRoot.toLowerCase(), authorityRoot: input.authorityRoot.toLowerCase(),
     entityContextDigest: integrity(context.value), jPrefixCertificate: input.jPrefixCertificate ?? null,
   });
-  return header.ok ? ok(bytesToHex(keccak_256(header.value))) : header;
+  if (!header.ok) return header;
+  return header.value.byteLength + context.value.byteLength + txs.value.bytes > MAX_FRAME_SIZE_BYTES ? err({ _tag: "frame_too_large" }) : ok(bytesToHex(keccak_256(header.value)));
 };
 
 const frameWord = (value: string): string => value.startsWith("0x") ? value.toLowerCase() : `0x${value.toLowerCase()}`;

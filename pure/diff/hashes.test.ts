@@ -7,8 +7,9 @@ import { ethers, Interface } from "ethers";
 import { Depository__factory } from "../../jurisdictions/typechain-types/factories/Depository.sol/Depository__factory.ts";
 import { encodeJBatch, computeBatchHankoHash, createEmptyBatch } from "../../core/jurisdiction/machine/batch/index.ts";
 import { hashProofBodyStruct, createDisputeProofHashWithNonce, createSettlementHashWithNonce } from "../../core/protocol/dispute/proof-builder.ts";
-import { encodeInt512 } from "../../core/protocol/crypto/abi-money.ts";
+import { encodeInt512, decodeInt512 } from "../../core/protocol/crypto/abi-money.ts";
 import { computeAccountKey } from "../../core/jurisdiction/adapter/events/contract-codec.ts";
+import { rawEventToJEvents } from "../../core/jurisdiction/adapter/events/j-event-payloads.ts";
 import { encodeSignedHanko, encodeHankoEnvelope as ogEncodeHankoEnvelope, packHankoSignatures } from "../../core/hanko/codec.ts";
 import { verifyCanonicalHanko } from "../../core/hanko/claims.ts";
 import { lazySingleSignerEntityId, recoverShortHankoEntityId } from "../../core/hanko/short.ts";
@@ -20,7 +21,7 @@ import { applyAccountJClaimInsert, createEmptyAccountJClaimAccumulator } from ".
 import { createAccountJClaimProof } from "../../core/account/j-claims/j-claim-proof.ts";
 import { canonicalJurisdictionEventsHash } from "../../core/jurisdiction/machine/event-observation.ts";
 import { canon, encodeCanonicalValue, flatDigest, mapRoot, bytesToHex, accountFrameHash, accountStateCommitment, EMPTY_J_ROOT, type CommittedAccountState,
-  J_EVENT_SIGNATURES, jEventTopic, readJEvents, encodeAccountSettledData, encodeBatch, emptyBatch, encodeBatchHash, encodeProofBodyBytes, proofBodyHash, encodeDisputeProofHash, encodeCooperativeUpdateHash, encodeDisputeHash, encodeAccountKey,
+  J_EVENT_SIGNATURES, jEventTopic, readJEvents, encodeAccountSettledData, encodeBatch, emptyBatch, encodeBatchHash, DEPOSITORY_BATCH_HANKO_DOMAIN, encodeProofBodyBytes, proofBodyHash, encodeDisputeProofHash, encodeCooperativeUpdateHash, encodeDisputeHash, encodeAccountKey,
   encodeLazyEntityId, encodeHanko65, encodeHankoEnvelope, packSignatures, verifyAccountHanko, verifyHankoLocal, encodeBoardBytes, entityStateRoot, entityFrameHash, keccak256Hex, accountId as rwAccountId, entityId as rwEntityId, accountTerms, admit, genesisReplica, previewAccountProposal, applyAccountBody, committed, hexToBytes, signRaw, wordOf, concat, addressOf, type Batch, type ProofBody } from "../xln.ts";
 
 // seeded PRNG (mulberry32)
@@ -133,10 +134,15 @@ describe("account frame hash", () => {
     expect(() => computeFrameHash({ ...f, stateHash: "" } as any)).toThrow();
     expect(accountFrameHash(f)).toEqual({ ok: false, error: { _tag: "policy_version" } });
   });
-  test("DIVERGES (malformed input): settle_transition kind=hanko without postProof: og throws TypeError, rewrite hashes", () => {
-    const f = { height: 1, timestamp: 1, jHeight: 1, prevFrameHash: W("00"), accountStateRoot: W("00"), accountTxs: [{ type: "settle_transition", data: { kind: "hanko", settlementHanko: "0x01" } }] };
-    expect(() => computeFrameHash({ ...f, stateHash: "" } as any)).toThrow();
-    expect(accountFrameHash(f).ok).toBe(true);
+  test("MATCH (malformed input): settle_transition with null data, or kind=hanko without postProof, is refused by both; other malformed shapes hash identically", () => {
+    const frame = (data: unknown) => ({ height: 1, timestamp: 1, jHeight: 1, prevFrameHash: W("00"), accountStateRoot: W("00"), accountTxs: [{ type: "settle_transition", data }] });
+    const og = (data: unknown) => { try { return computeFrameHash({ ...frame(data), stateHash: "" } as any); } catch { return "REJECT"; } };
+    const rw = (data: unknown) => { const r = accountFrameHash(frame(data)); return r.ok ? r.value : "REJECT"; };
+    for (const data of [null, { kind: "hanko", settlementHanko: "0x01" }, { kind: "hanko", postProof: null }, { kind: "hanko", postProof: "x", settlementHanko: "0x01" }, { kind: "hanko", postProof: [1] }, { kind: "hanko", postProof: { hanko: "0x02", nonce: 1 } }, { kind: "propose", settlementHanko: "0x01" }, { kind: new String("hanko"), settlementHanko: "0x01" }, "x", 5]) {
+      expect(rw(data)).toBe(og(data));
+    }
+    expect(rw(null)).toBe("REJECT");
+    expect(rw({ kind: "hanko" })).toBe("REJECT");
   });
 });
 
@@ -197,17 +203,24 @@ describe("J event signatures vs Depository ABI (typechain from Types.sol/Deposit
       expect(jEventTopic(n)).toBe(e.topicHash);
     }
   });
-  test("DIVERGES: AccountSettled -- contract TokenSettlement.ondelta is Int512 (int256 high, uint256 low); rewrite declares int256, so topic0 differs", () => {
+  test("MATCH: AccountSettled -- contract TokenSettlement.ondelta is Int512 (int256 high, uint256 low); rewrite signature and topic0 equal the contract's", () => {
     const e = DEPOSITORY.getEvent("AccountSettled")!;
     expect(e.format("sighash")).toBe("AccountSettled((bytes32,bytes32,(uint256,uint256,uint256,uint256,(int256,uint256))[],uint256)[])");
-    expect(J_EVENT_SIGNATURES.AccountSettled).toBe("AccountSettled((bytes32,bytes32,(uint256,uint256,uint256,uint256,int256)[],uint256)[])");
-    expect(jEventTopic("AccountSettled")).not.toBe(e.topicHash);
+    expect(J_EVENT_SIGNATURES.AccountSettled).toBe(e.format("sighash"));
+    expect(jEventTopic("AccountSettled")).toBe(e.topicHash);
   });
-  test("DIVERGES: readJEvents silently drops a real contract AccountSettled log (topic unknown); rewrite's own encoder emits a non-contract layout", () => {
-    const settled = [{ left: W("11"), right: W("22"), tokens: [{ tokenId: 1n, leftReserve: 5n, rightReserve: 6n, collateral: 125n, ondelta: -7n }], nonce: 3n }];
-    const log = DEPOSITORY.encodeEventLog("AccountSettled", [settled.map((r) => [r.left, r.right, r.tokens.map((t) => [t.tokenId, t.leftReserve, t.rightReserve, t.collateral, [(t.ondelta >> 256n), t.ondelta & ((1n << 256n) - 1n)]]), r.nonce])]);
-    expect(readJEvents([{ topics: log.topics, data: log.data }])).toEqual([]);
-    expect(encodeAccountSettledData(settled)).not.toBe(log.data);
+  test("MATCH: readJEvents decodes real contract AccountSettled logs (Int512 ondelta, og decodeInt512) and encodeAccountSettledData emits the contract layout (50 random)", () => {
+    const I512 = [0n, 1n, -1n, -7n, (1n << 255n), -(1n << 256n) - 3n, (1n << 511n) - 1n, -(1n << 511n)];
+    for (let i = 0; i < 50; i++) {
+      const settled = arrOf(() => ({ left: W(pick(["11", "aa"])), right: W(pick(["22", "bb"])), tokens: arrOf(() => ({ tokenId: ru(), leftReserve: ru(), rightReserve: ru(), collateral: ru(), ondelta: pick(I512) })), nonce: ru() }));
+      const log = DEPOSITORY.encodeEventLog("AccountSettled", [settled.map((r) => [r.left, r.right, r.tokens.map((t) => [t.tokenId, t.leftReserve, t.rightReserve, t.collateral, encodeInt512(t.ondelta)]), r.nonce])]);
+      const parsed = DEPOSITORY.parseLog(log)!.args[0] as any[];
+      const ogOndeltas = [...parsed].flatMap((r: any) => [...r[2]].map((t: any) => decodeInt512([t[4][0], t[4][1]])));
+      const got = readJEvents([{ topics: log.topics, data: log.data }]);
+      expect(got).toEqual([{ type: "AccountSettled", settled }]);
+      expect(got.flatMap((g: any) => g.settled.flatMap((r: any) => r.tokens.map((t: any) => t.ondelta)))).toEqual(ogOndeltas);
+      expect(encodeAccountSettledData(settled)).toBe(log.data);
+    }
   });
   test("MATCH: readJEvents decodes contract-encoded HankoBatchProcessed / ReserveUpdated / DisputeStarted / DisputeFinalized logs (randomized, 50 each)", () => {
     for (let i = 0; i < 50; i++) {
@@ -215,7 +228,8 @@ describe("J event signatures vs Depository ABI (typechain from Types.sol/Deposit
       const u = () => pick([0n, 1n, (1n << 256n) - 1n, BigInt(ri(1e9))]);
       const h = DEPOSITORY.encodeEventLog("HankoBatchProcessed", [b(), b(), u()]);
       const r = DEPOSITORY.encodeEventLog("ReserveUpdated", [b(), u(), u()]);
-      const ds = [b(), b(), u(), rng() < 0.5, b(), b(), "0x" + "ab".repeat(ri(40)), "0x" + "cd".repeat(ri(3)), b(), u(), u(), ri(2 ** 32), ri(2 ** 32)] as const;
+      const lw = ri(2 ** 32), rw = ri(2 ** 32), start = BigInt(1 + ri(2 ** 40));
+      const ds = [b(), b(), u(), rng() < 0.5, b(), b(), "0x" + "ab".repeat(ri(40)), "0x" + "cd".repeat(ri(3)), b(), start + BigInt(lw + rw), start, lw, rw] as const;
       const d = DEPOSITORY.encodeEventLog("DisputeStarted", [...ds]);
       const f = DEPOSITORY.encodeEventLog("DisputeFinalized", [b(), b(), u(), b(), b()]);
       const got = readJEvents([h, r, d, f].map((l) => ({ topics: l.topics, data: l.data })));
@@ -232,6 +246,28 @@ describe("J event signatures vs Depository ABI (typechain from Types.sol/Deposit
   });
 });
 
+describe("DisputeStarted clock validation (og j-event-payloads.ts assertRawEventSpecificFields)", () => {
+  test("MATCH: a DisputeStarted log whose clock is not a positive safe-integer start + windows = timeout is refused by og ingress and by readJEvents", () => {
+    const b = W("11");
+    const MAX = BigInt(Number.MAX_SAFE_INTEGER);
+    const ogAccepts = (log: { topics: readonly string[]; data: string }): boolean => {
+      const args = DEPOSITORY.parseLog(log as any)!.args.toObject();
+      // og ingress attaches the initial ProofBody from the batch calldata; the log itself does not carry it.
+      const initialProofbody = { watchSeed: args.watchSeed, leftResponseSeconds: args.leftResponseSeconds, rightResponseSeconds: args.rightResponseSeconds, offdeltas: [], tokenIds: [], transformers: [] };
+      try { return rawEventToJEvents({ name: "DisputeStarted", args: { ...args, initialProofbody }, blockNumber: 1, blockHash: W("01"), transactionHash: W("02"), logIndex: 0 } as any, b).length === 1; } catch { return false; }
+    };
+    const cases: [bigint, bigint, number, number][] = [[10n, 5n, 2, 3], [0n, 0n, 0, 0], [5n, 5n, 0, 0], [11n, 5n, 2, 3], [9n, 5n, 2, 3], [MAX, MAX - 7n, 3, 4], [MAX + 1n, MAX - 6n, 3, 4], [(1n << 256n) - 1n, 1n, 0, 0], [3n, 5n, 0, 0], [7n, 0n, 3, 4]];
+    let accepted = 0;
+    for (const [timeout, start, l, r] of cases) {
+      const log = DEPOSITORY.encodeEventLog("DisputeStarted", [b, b, 1n, true, b, b, "0x", "0x", b, timeout, start, l, r]);
+      const rwOk = (() => { try { return readJEvents([{ topics: log.topics, data: log.data }]).length === 1; } catch { return false; } })();
+      expect(rwOk).toBe(ogAccepts(log));
+      if (rwOk) accepted++;
+    }
+    expect(accepted).toBeGreaterThanOrEqual(3);
+  });
+});
+
 // ---------------------------------------------------------------- batch / proof body / hanko payloads
 const U256 = (1n << 256n) - 1n;
 const rb32 = () => W(pick(["11", "22", "aa", "00", "fe"]));
@@ -244,6 +280,7 @@ const randProofBody = (offdeltas = true): ProofBody => {
   return { watchSeed: rb32(), leftResponseSeconds: BigInt(ri(2 ** 32)), rightResponseSeconds: BigInt(ri(2 ** 32)), offdeltas: offdeltas ? Array.from({ length: n }, () => pick([0n, -1n, 1n, -(1n << 255n), (1n << 255n) - 1n])) : [], tokenIds: offdeltas ? Array.from({ length: n }, () => BigInt(ri(100))) : [],
     transformers: arrOf(() => ({ transformerAddress: addr(), encodedBatch: rbytes(), allowances: arrOf(() => ({ deltaIndex: BigInt(ri(4)), rightAllowance: ru(), leftAllowance: ru() })) }), 2) };
 };
+const PROOF_BODY_TYPE = "tuple(bytes32 watchSeed,uint32 leftResponseSeconds,uint32 rightResponseSeconds,tuple(int256 high,uint256 low)[] offdeltas,uint256[] tokenIds,tuple(address transformerAddress,bytes encodedBatch,tuple(uint256 deltaIndex,uint256 rightAllowance,uint256 leftAllowance)[] allowances)[] transformers)";
 const ogProofBody = (b: ProofBody) => ({ ...b, offdeltas: b.offdeltas.map(encodeInt512) });
 const randBatch = (withSignedMoney: boolean): Batch => ({
   reserveToReserve: arrOf(() => ({ receivingEntity: rb32(), tokenId: ru(), amount: ru() })),
@@ -277,43 +314,57 @@ describe("Depository Batch ABI", () => {
     expect(n).toBeGreaterThan(150);
     expect(encodeBatch(emptyBatch())).toBe(encodeJBatch(createEmptyBatch()));
   });
-  test("DIVERGES: any batch with a non-empty settlement diff or dispute proof body with a token encodes differently (SettlementDiff uses SignedAmount, ProofBody.offdeltas uses Int512 on-chain)", () => {
-    let diverged = 0, checked = 0;
+  test("MATCH: encodeBatch == og encodeJBatch for 200 random batches with settlement diffs (SignedAmount) and dispute proof bodies (Int512 offdeltas)", () => {
+    let wide = 0, checked = 0;
     for (let i = 0; i < 200; i++) {
       const b = randBatch(true);
       const og = ogEncodeBatchNoLimit(b);
       if (og.startsWith("THROW")) continue;
       checked++;
-      const touchesWide = b.settlements.some((s) => s.diffs.length > 0) || [...b.disputeStarts.map((d) => d.initialProofbody), ...b.counterDisputes.map((d) => d.counterProofbody), ...b.disputeFinalizations.map((d) => d.finalProofbody)].some((p) => p.offdeltas.length > 0);
-      if (touchesWide) { diverged++; expect(encodeBatch(b)).not.toBe(og); } else expect(encodeBatch(b)).toBe(og);
+      if (b.settlements.some((s) => s.diffs.length > 0) || [...b.disputeStarts.map((d) => d.initialProofbody), ...b.counterDisputes.map((d) => d.counterProofbody), ...b.disputeFinalizations.map((d) => d.finalProofbody)].some((p) => p.offdeltas.length > 0)) wide++;
+      expect(encodeBatch(b)).toBe(og);
     }
-    expect(diverged).toBeGreaterThan(50);
+    expect(wide).toBeGreaterThan(50);
     expect(checked).toBeGreaterThan(100);
   });
-  test("MATCH: encodeBatchHash(domainSeparator=keccak('XLN_DEPOSITORY_HANKO_V1')) == og computeBatchHankoHash (100 random)", () => {
-    const dom = keccak256Hex(new TextEncoder().encode("XLN_DEPOSITORY_HANKO_V1"));
+  test("MATCH: encodeBatchHash (fixed domain keccak('XLN_DEPOSITORY_HANKO_V1')) == og computeBatchHankoHash (100 random)", () => {
+    expect(DEPOSITORY_BATCH_HANKO_DOMAIN).toBe(keccak256Hex(new TextEncoder().encode("XLN_DEPOSITORY_HANKO_V1")));
     for (let i = 0; i < 100; i++) {
-      const encodedBatch = encodeBatch(randBatch(false)), chainId = 1 + ri(1e6), depository = addr(), nonce = ru();
-      expect(encodeBatchHash({ domainSeparator: dom, chainId, depository, encodedBatch, nonce: nonce.toString() })).toBe(computeBatchHankoHash(BigInt(chainId), depository, encodedBatch, nonce));
+      const encodedBatch = encodeBatch(randBatch(true)), chainId = 1 + ri(1e6), depository = addr(), nonce = ru();
+      expect(encodeBatchHash({ chainId, depository, encodedBatch, nonce: nonce.toString() })).toBe(computeBatchHankoHash(BigInt(chainId), depository, encodedBatch, nonce));
     }
   });
-  test("DIVERGES (EXTRA laxness): encodeBatchHash accepts chainId 0 and the zero depository; og requireDepositoryDomain refuses both", () => {
-    const dom = keccak256Hex(new TextEncoder().encode("XLN_DEPOSITORY_HANKO_V1"));
-    expect(() => computeBatchHankoHash(0n, addr(), "0x", 1n)).toThrow();
-    expect(() => computeBatchHankoHash(1n, `0x${"00".repeat(20)}`, "0x", 1n)).toThrow();
-    expect(encodeBatchHash({ domainSeparator: dom, chainId: 0, depository: `0x${"00".repeat(20)}`, encodedBatch: "0x", nonce: "1" })).toMatch(/^0x[0-9a-f]{64}$/);
+  test("MATCH: chainId 0, the zero depository and a bad-checksum depository are refused by og requireDepositoryDomain and by every rewrite depository digest", () => {
+    const bad = [[0, addr()], [1, `0x${"00".repeat(20)}`], [1, "0x5fbDB2315678afecb367f032d93F642f64180aa3"], [-1, addr()]] as const;
+    for (const [chainId, depository] of bad) {
+      expect(() => computeBatchHankoHash(BigInt(chainId), depository, "0x", 1n)).toThrow();
+      expect(() => encodeBatchHash({ chainId, depository, encodedBatch: "0x", nonce: "1" })).toThrow();
+      expect(() => createDisputeProofHashWithNonce({ leftEntity: W("11"), rightEntity: W("22"), watchSeed: W("44") } as any, W("33"), { chainId, depositoryAddress: depository }, 1, true)).toThrow();
+      expect(() => encodeDisputeProofHash({ messageType: 1, chainId, contractAddress: depository, accountKey: computeAccountKey(W("11"), W("22")), nonce: "1", proposerIsLeft: true, proofbodyHash: W("33"), watchSeed: W("44") })).toThrow();
+      expect(() => createSettlementHashWithNonce({ leftEntity: W("11"), rightEntity: W("22") } as any, [], [], { chainId, depositoryAddress: depository }, 1)).toThrow();
+      expect(() => encodeCooperativeUpdateHash({ messageType: 0, chainId, contractAddress: depository, accountKey: computeAccountKey(W("11"), W("22")), nonce: "1", diffs: [], forgiveDebtsInTokenIds: [] })).toThrow();
+    }
   });
 });
 
 describe("ProofBody hash", () => {
-  test("DIVERGES: proofBodyHash(int256[] offdeltas) != og hashProofBodyStruct(Int512[] offdeltas) whenever the body has >= 1 token", () => {
+  test("MATCH: proofBodyHash (Int512[] offdeltas) == og hashProofBodyStruct on 200 random bodies with tokens, incl. offdeltas beyond int256", () => {
     let n = 0;
     for (let i = 0; i < 200; i++) {
-      const b = randProofBody();
-      const og = hashProofBodyStruct(ogProofBody(b) as any);
-      if (b.offdeltas.length > 0) { n++; expect(proofBodyHash(b)).not.toBe(og); } else expect(proofBodyHash(b)).toBe(og);
+      const b0 = randProofBody();
+      const b = { ...b0, offdeltas: b0.offdeltas.map((x) => (rng() < 0.3 ? pick([(1n << 511n) - 1n, -(1n << 511n), -(1n << 300n) + 5n, 1n << 256n]) : x)) };
+      if (b.offdeltas.length > 0) n++;
+      expect(proofBodyHash(b)).toBe(hashProofBodyStruct(ogProofBody(b) as any));
+      expect(encodeProofBodyBytes(b)).toBe(ethers.AbiCoder.defaultAbiCoder().encode([PROOF_BODY_TYPE], [ogProofBody(b)]));
     }
     expect(n).toBeGreaterThan(100);
+  });
+  test("MATCH: offdeltas outside int512 are refused by both", () => {
+    for (const x of [1n << 511n, -(1n << 511n) - 1n]) {
+      const b = { ...randProofBody(false), offdeltas: [x], tokenIds: [1n] };
+      expect(() => ogProofBody(b)).toThrow();
+      expect(() => proofBodyHash(b)).toThrow();
+    }
   });
   test("MATCH: token-free bodies (the only case where int256[] and Int512[] coincide: empty array) hash identically, incl. transformers", () => {
     for (let i = 0; i < 100; i++) { const b = randProofBody(false); expect(proofBodyHash(b)).toBe(hashProofBodyStruct(ogProofBody(b) as any)); }
@@ -331,20 +382,24 @@ describe("dispute / cooperative-update hanko digests", () => {
         .toBe(createDisputeProofHashWithNonce({ leftEntity: l, rightEntity: r, watchSeed: seed } as any, pbh, domain, nonce, prop));
     }
   });
-  test("DIVERGES (cosmetic): encodeAccountKey preserves input hex case, og computeAccountKey (solidityPacked) returns lowercase", () => {
-    const k = encodeAccountKey({ e1: W("AA"), e2: W("bb") }).lesserThenGreater;
-    expect(k).toBe(`0x${"AA".repeat(32)}${"bb".repeat(32)}`);
-    expect(computeAccountKey(W("AA"), W("bb"))).toBe(k.toLowerCase());
+  test("MATCH: encodeAccountKey == og computeAccountKey (lowercase packed, mixed-case input); non-bytes32 input refused by both", () => {
+    for (const [x, y] of [[W("AA"), W("bb")], [W("bb"), W("AA")], [W("00"), W("fF")], [W("Cd"), W("cD")], [`0X${"aa".repeat(32)}`, W("bb")]] as const) expect(encodeAccountKey({ e1: x, e2: y }).lesserThenGreater).toBe(computeAccountKey(x, y));
+    for (const bad of ["0x1234", `0x${"aa".repeat(31)}`, "12"]) {
+      expect(() => computeAccountKey(bad, W("bb"))).toThrow();
+      expect(() => encodeAccountKey({ e1: bad, e2: W("bb") })).toThrow();
+    }
   });
-  test("DIVERGES: encodeCooperativeUpdateHash (int256 diffs) != og createSettlementHashWithNonce (SignedAmount diffs) whenever diffs is non-empty", () => {
+  test("MATCH: encodeCooperativeUpdateHash (SignedAmount diffs) == og createSettlementHashWithNonce on 100 random diff lists incl. ±(2^256-1); beyond that both refuse", () => {
     for (let i = 0; i < 100; i++) {
       const diffs = arrOf(() => ({ tokenId: ri(100), leftDiff: pick([0n, 5n, -5n, U256, -U256]), rightDiff: pick([0n, 3n, -3n]), collateralDiff: pick([0n, 2n, -2n]), ondeltaDiff: pick([0n, -1n, 1n]) }));
       const forgive = arrOf(() => ri(50)), nonce = ri(1e6), l = W("11"), r = W("22");
-      const og = createSettlementHashWithNonce({ leftEntity: l, rightEntity: r } as any, diffs, forgive, domain, nonce);
-      const within = diffs.every((d) => [d.leftDiff, d.rightDiff, d.collateralDiff, d.ondeltaDiff].every((x) => x >= -(1n << 255n) && x < 1n << 255n));
-      if (!within) { expect(() => encodeCooperativeUpdateHash({ messageType: 0, chainId: domain.chainId, contractAddress: domain.depositoryAddress, accountKey: computeAccountKey(l, r), nonce: String(nonce), diffs: diffs.map((d) => ({ tokenId: String(d.tokenId), leftDiff: String(d.leftDiff), rightDiff: String(d.rightDiff), collateralDiff: String(d.collateralDiff), ondeltaDiff: String(d.ondeltaDiff) })), forgiveDebtsInTokenIds: forgive.map(String) })).toThrow("int256 out of range"); continue; }
-      const rw = encodeCooperativeUpdateHash({ messageType: 0, chainId: domain.chainId, contractAddress: domain.depositoryAddress, accountKey: computeAccountKey(l, r), nonce: String(nonce), diffs: diffs.map((d) => ({ tokenId: String(d.tokenId), leftDiff: String(d.leftDiff), rightDiff: String(d.rightDiff), collateralDiff: String(d.collateralDiff), ondeltaDiff: String(d.ondeltaDiff) })), forgiveDebtsInTokenIds: forgive.map(String) });
-      if (diffs.length === 0) expect(rw).toBe(og); else expect(rw).not.toBe(og);
+      const rwText = (ds: typeof diffs) => ({ messageType: 0, chainId: domain.chainId, contractAddress: domain.depositoryAddress, accountKey: computeAccountKey(l, r), nonce: String(nonce), diffs: ds.map((d) => ({ tokenId: String(d.tokenId), leftDiff: String(d.leftDiff), rightDiff: String(d.rightDiff), collateralDiff: String(d.collateralDiff), ondeltaDiff: String(d.ondeltaDiff) })), forgiveDebtsInTokenIds: forgive.map(String) });
+      expect(encodeCooperativeUpdateHash(rwText(diffs))).toBe(createSettlementHashWithNonce({ leftEntity: l, rightEntity: r } as any, diffs, forgive, domain, nonce));
+      for (const edge of [U256 + 1n, -U256 - 1n]) {
+        const wide = [{ tokenId: 1, leftDiff: 0n, rightDiff: 0n, collateralDiff: 0n, ondeltaDiff: edge }];
+        expect(() => createSettlementHashWithNonce({ leftEntity: l, rightEntity: r } as any, wide, forgive, domain, nonce)).toThrow();
+        expect(() => encodeCooperativeUpdateHash(rwText(wide))).toThrow();
+      }
     }
   });
   test("MATCH: encodeDisputeHash == keccak(solidityPacked(...)) with Account.sol _encodeDisputeHash layout and _argumentCommitment (100 random)", () => {
@@ -399,10 +454,15 @@ describe("hanko", () => {
       expect(encodeHankoEnvelope({ placeholders: [W("0a")], packedSignatures: ethers.getBytes(packedOg), claims, memberSignatures: [] })).toBe(og);
     }
   });
-  test("DIVERGES (EXTRA laxness): packSignatures accepts v outside {27,28} (treated as bit 0) and high-s; og packHankoSignatures throws", () => {
-    const r = new Uint8Array(32).fill(1), s = new Uint8Array(32).fill(0xff);
-    expect(() => packHankoSignatures([concat([r, s, Uint8Array.of(5)])])).toThrow();
-    expect(packSignatures([{ r, s, v: 5 }]).length).toBe(65);
+  test("MATCH: packSignatures refuses exactly what og packHankoSignatures refuses: v outside {27,28}, zero r or s, high-s (and packs the rest identically)", () => {
+    const n = BigInt("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141"), half = n >> 1n;
+    const one = new Uint8Array(32).fill(1), zero = new Uint8Array(32);
+    for (const [r, s, v] of [[one, wordOf(half + 1n), 27], [one, new Uint8Array(32).fill(0xff), 27], [one, one, 5], [one, one, 0], [one, one, 1], [zero, one, 27], [one, zero, 28], [one, wordOf(half), 28], [one, one, 27]] as const) {
+      const raw = concat([r, s, Uint8Array.of(v)]);
+      let og: string; try { og = packHankoSignatures([raw, raw]); } catch { og = "THROW"; }
+      let rw: string; try { rw = ethers.hexlify(packSignatures([{ r, s, v }, { r, s, v }])); } catch { rw = "THROW"; }
+      expect(rw).toBe(og);
+    }
   });
   test("MATCH: verifyAccountHanko accept/reject + target == og verifyCanonicalHanko on 300 random board hankos (self-hash and registered boards, placeholders, mutations)", () => {
     const digest = ethers.keccak256(ethers.toUtf8Bytes("board-digest"));
@@ -458,15 +518,56 @@ describe("hanko", () => {
     expect(ogVerify(unused, digest, boardHashOf(1n, [a1], [1n]))).toBe("REJECT");
     expect(rwVerify(unused, digest, boardHashOf(1n, [a1], [1n]))).toBe("REJECT");
   });
-  test("DIVERGES: verifyAccountHanko accepts a numeric/short expected entity id (bytes32Of pads decimal or short hex); og asHankoBytes32 requires 0x+64 hex", () => {
+  test("MATCH: expected entity must be 0x+64 hex (og asHankoBytes32): decimal, short hex and padded forms are refused by both; mixed case and 0X accepted by both", () => {
     const digest = ethers.keccak256(ethers.toUtf8Bytes("lazy"));
     const a = addrOf(KEYS[0]!), lazy = lazySingleSignerEntityId(a);
     const hanko = encodeSignedHanko({ digest, privateKeys: [ethers.getBytes(KEYS[0]!)], placeholders: [], claims: [{ entityId: lazy, entityIndexes: [0n], weights: [1n], threshold: 1n, boardChangeDelay: 0n, controlChangeDelay: 0n, dividendChangeDelay: 0n }] as any });
-    const decimal = BigInt(lazy).toString();
-    expect(ogVerify(hanko, digest, decimal)).toBe("REJECT");
-    expect(rwVerify(hanko, digest, decimal)).toBe(lazy);
+    for (const target of [BigInt(lazy).toString(), `0x${BigInt(lazy).toString(16)}`.replace(/^0x0+/, "0x"), ` ${lazy}`, lazy.toUpperCase().replace(/^0X/, "0x"), lazy.replace(/^0x/, "0X"), "0x" + lazy.slice(3)]) {
+      expect(rwVerify(hanko, digest, target)).toBe(ogVerify(hanko, digest, target));
+    }
+    expect(rwVerify(hanko, digest, lazy.toUpperCase().replace(/^0X/, "0x"))).toBe(lazy);
   });
-  test("DIVERGES: verifyHankoLocal (used for board-quorum entity frames, xln.ts:2220) accepts a board whose first member is a non-address placeholder; og verifyCanonicalHanko (and HankoVerifier.sol InvalidHankoFirstMember) reject", () => {
+  const ogLocal = (hanko: string, digest: string, registration: { encodedBoard: string; entityId: string } | null): string => {
+    try {
+      const board = registration === null ? undefined : ethers.keccak256(registration.encodedBoard).toLowerCase();
+      return verifyCanonicalHanko({ digest, hanko: hanko as any, ...(registration === null ? {} : { expectedTargetEntityId: registration.entityId }), validateBoardAuthority: (id, bh) => registration !== null && id === registration.entityId.toLowerCase() && bh === board }).targetEntityId;
+    } catch { return "REJECT"; }
+  };
+  const rwLocal = (hanko: string, digest: string, registration: { encodedBoard: string; entityId: string } | null): string => { const r = verifyHankoLocal(hanko, digest, registration); return r.ok && r.value.valid ? r.value.entityId : "REJECT"; };
+  test("MATCH: verifyHankoLocal accept/reject + entity == og verifyCanonicalHanko on 300 random board hankos (no registration = no expected target; registration = registered board authority), incl. first-member placeholder, duplicate member, threshold > power", () => {
+    const digest = ethers.keccak256(ethers.toUtf8Bytes("local-board"));
+    const coder = ethers.AbiCoder.defaultAbiCoder();
+    let accepted = 0, rejected = 0;
+    for (let i = 0; i < 300; i++) {
+      const members = KEYS.slice(0, 1 + ri(4));
+      const ids = members.map((k) => idOf(addrOf(k)));
+      const weights = members.map(() => BigInt(1 + ri(3)));
+      const total = weights.reduce((x, y) => x + y, 0n);
+      const threshold = pick([1n, total, 1n + BigInt(ri(Number(total))), total + 1n]);
+      const signs = members.map(() => rng() < 0.6);
+      const mut = ri(7);
+      if (mut === 1) { ids[0] = W("ff"); signs[0] = false; }
+      if (mut === 2 && ids.length > 1) { ids[1] = ids[0]!; signs[1] = false; signs[0] = false; }
+      const placeholderIds = ids.filter((_, j) => !signs[j]);
+      if (mut === 2 && ids.length > 1) placeholderIds.splice(1, 1);
+      let pIdx = 0, sIdx = 0;
+      const entityIndexes = ids.map((_, j) => BigInt(signs[j] ? placeholderIds.length + sIdx++ : mut === 2 && j === 1 ? 0 : pIdx++));
+      const board = boardHashOf(threshold, ids, weights);
+      const encodedBoard = coder.encode(["tuple(uint16,bytes32[],uint16[],uint32,uint32,uint32)"], [[threshold, ids, weights, 0, 0, 0]]);
+      const registered = mut === 3 || mut === 4;
+      const entityId = registered ? W("ee") : board;
+      let hanko: string;
+      try { hanko = encodeSignedHanko({ digest, privateKeys: members.filter((_, j) => signs[j]).map((k) => ethers.getBytes(k)), placeholders: placeholderIds as any, claims: [{ entityId, entityIndexes, weights, threshold, boardChangeDelay: 0n, controlChangeDelay: 0n, dividendChangeDelay: 0n }] as any }); }
+      catch { continue; }
+      const registration = registered ? { encodedBoard: mut === 4 ? coder.encode(["tuple(uint16,bytes32[],uint16[],uint32,uint32,uint32)"], [[1n, [W("01")], [1n], 0, 0, 0]]) : encodedBoard, entityId } : rng() < 0.5 ? null : { encodedBoard, entityId: board };
+      const og = ogLocal(hanko, digest, registration), rw = rwLocal(hanko, digest, registration);
+      expect(rw).toBe(og);
+      if (og === "REJECT") rejected++; else accepted++;
+    }
+    expect(accepted).toBeGreaterThan(30);
+    expect(rejected).toBeGreaterThan(30);
+  });
+  test("MATCH: verifyHankoLocal rejects a board whose first member is a non-address placeholder, like og verifyCanonicalHanko (HANKO_FIRST_MEMBER_EOA_REQUIRED) and HankoVerifier.sol InvalidHankoFirstMember", () => {
     const digest = ethers.keccak256(ethers.toUtf8Bytes("local"));
     const a0 = idOf(addrOf(KEYS[0]!));
     const ph = W("ff");
@@ -474,8 +575,8 @@ describe("hanko", () => {
     const hanko = encodeSignedHanko({ digest, privateKeys: [ethers.getBytes(KEYS[0]!)], placeholders: [ph] as any, claims: [{ entityId: board, entityIndexes: [0n, 1n], weights: [1n, 1n], threshold: 1n, boardChangeDelay: 0n, controlChangeDelay: 0n, dividendChangeDelay: 0n }] as any });
     expect(ogVerify(hanko, digest, board)).toBe("REJECT");
     expect(rwVerify(hanko, digest, board)).toBe("REJECT");
-    const local = verifyHankoLocal(hanko, digest, null);
-    expect(local.ok && local.value.valid).toBe(true);
+    expect(ogLocal(hanko, digest, null)).toBe("REJECT");
+    expect(rwLocal(hanko, digest, null)).toBe("REJECT");
   });
 });
 
@@ -528,10 +629,35 @@ describe("entity state root", () => {
       expect(unwrap(entityStateRoot({ config: CONFIG, accounts: rw }))).toBe(computeCanonicalEntityConsensusStateHash(ogState));
     }
   });
-  test("DIVERGES: og leaf omits currentFrameHash when the replica has no currentFrame and adds counterparty hanko digests / dispute fields when present; rewrite always commits currentFrameHash and has none of the optional fields", () => {
+  test("MATCH: og leaf optional fields -- no currentFrame omits currentFrameHash, counterparty hanko digests, dispute fields, settlement hankos, shadow quote/request/rejected evidence -- on 100 random accounts", () => {
     const self = W("aa"), peer = W("bb");
-    const withHanko: any = { config: CONFIG, accounts: ogAccounts(self, [[peer, ogReplica(self, peer, { counterpartyFrameHanko: "0xabcd", currentDisputeProofNonce: 2 })]]), paybook: { entries: new Map(), feesEarned: 0n } };
-    expect(computeCanonicalEntityConsensusStateHash(withHanko)).not.toBe("0x72ac0104afdbba762c83b6e958f4a9ca787f1706e62f368aab62bfb635f35d2b");
+    const optional: Record<string, () => unknown> = {
+      publicPinned: () => rng() < 0.5, boardHankoRefreshMigration: () => ({ fromBoardHash: W("0c"), stage: ri(3) }), counterpartyBoardHankoRefresh: () => ({ hanko: "0x" + "ab".repeat(ri(6)), nonce: ri(9) }),
+      counterpartyFrameHanko: () => "0x" + "cd".repeat(ri(40)), counterpartyDisputeProofHanko: () => "0x" + "ef".repeat(ri(40)), counterpartySettlementHanko: () => "0x" + "12".repeat(ri(40)),
+      currentDisputeProofNonce: () => ri(100), currentDisputeProofProposerIsLeft: () => rng() < 0.5, currentDisputeProofBodyHash: () => W("3a"), currentDisputeHash: () => W("3b"),
+      counterpartyDisputeProofNonce: () => ri(100), counterpartyDisputeProofProposerIsLeft: () => rng() < 0.5, counterpartyDisputeProofBodyHash: () => W("4a"), counterpartyDisputeHash: () => W("4b"),
+      disputePrepare: () => ({ reason: pick(["timeout", "body_mismatch"]), atHeight: ri(50), nonce: BigInt(ri(9)) }), activeDispute: () => ({ startedByLeft: rng() < 0.5, initialNonce: ri(9), disputeTimeout: BigInt(ri(1e6)) }),
+    };
+    let compared = 0;
+    for (let i = 0; i < 100; i++) {
+      const committedFields = Object.fromEntries(Object.entries(optional).filter(() => rng() < 0.3).map(([k, f]) => [k, f()]));
+      const hasFrame = rng() < 0.5, fh = W(pick(["12", "34"]));
+      const activeQuote = rng() < 0.3 ? { quoteId: ri(99), feePpm: BigInt(ri(1000)) } : undefined, pendingRequest = rng() < 0.3 ? { tokenId: 1, amount: BigInt(ri(1e6)) } : undefined;
+      const rejected = rng() < 0.3 ? { reason: "bad_frame", frame: { stateHash: W("5e") }, frameHanko: rng() < 0.5 ? "0xabcd" : undefined } : undefined;
+      const settlementHankos = rng() < 0.3 ? { settlementHanko: "0x" + "77".repeat(3) } : undefined;
+      const ogRep = ogReplica(self, peer, { ...committedFields, currentFrame: hasFrame ? { stateHash: fh } : undefined,
+        shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted"), ...(activeQuote ? { activeQuote } : {}), ...(pendingRequest ? { pendingRequest } : {}) }, ...(rejected ? { rejectedFrameEvidence: rejected } : {}) } });
+      if (!hasFrame) delete ogRep.currentFrame;
+      if (settlementHankos) ogRep.state.settlementWorkspace = { version: 1, status: "awaiting_counterparty", diffs: [], nonce: 1, rightHanko: settlementHankos.settlementHanko };
+      const ogState: any = { config: CONFIG, accounts: ogAccounts(self, [[peer, ogRep]]), paybook: { entries: new Map(), feesEarned: 0n } };
+      let og: string; try { og = computeCanonicalEntityConsensusStateHash(ogState); } catch { continue; }
+      const rw = rwAccount(self, peer, { currentFrameHash: hasFrame ? fh : undefined, committed: committedFields, counterpartySettlementHankos: settlementHankos, activeQuote, pendingRequest,
+        rejectedFrameEvidence: rejected ? { reason: rejected.reason, frameHash: rejected.frame.stateHash, frameHanko: rejected.frameHanko } : undefined });
+      if (settlementHankos) continue; // a live workspace also moves og's accountStateRoot (H5, account-tx area); the leaf field itself is covered below
+      expect(unwrap(entityStateRoot({ config: CONFIG, accounts: [rw] }))).toBe(og);
+      compared++;
+    }
+    expect(compared).toBeGreaterThan(50);
   });
 });
 
@@ -552,20 +678,28 @@ describe("entity frame hash", () => {
       expect(unwrap(entityFrameHash(input as any))).toBe(createEntityFrameHashFromStateRoot(input.prevFrameHash, input.height, input.timestamp, txs as any, events as any, input.entityId, input.stateRoot, input.authorityRoot, ctx as any));
     }
   });
-  test("DIVERGES: non-canonical numbers (-0, unsafe integer) in events: og binary codec throws XLN_BINARY_CODEC_UNSUPPORTED, rewrite hashes them", () => {
-    for (const bad of [-0, 2 ** 53]) {
-      const ctx = ENTITY_CONTEXT();
-      const input = { prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [], events: [{ n: bad }], entityId: W("aa"), stateRoot: W("31"), authorityRoot: W("32"), entityContext: ctx };
-      expect(() => createEntityFrameHashFromStateRoot(input.prevFrameHash, 1, 1, [], input.events as any, input.entityId, input.stateRoot, input.authorityRoot, ctx as any)).toThrow();
-      expect(entityFrameHash(input as any).ok).toBe(true);
+  test("MATCH: non-canonical numbers (-0, unsafe integers, NaN, Infinity) anywhere in events, txs or context are refused by both (og XLN_BINARY_CODEC_UNSUPPORTED)", () => {
+    const og = (input: any) => { try { return createEntityFrameHashFromStateRoot(input.prevFrameHash, input.height, input.timestamp, input.txs, input.events, input.entityId, input.stateRoot, input.authorityRoot, input.entityContext); } catch { return "REJECT"; } };
+    const rw = (input: any) => { const r = entityFrameHash(input); return r.ok ? r.value : "REJECT"; };
+    for (const bad of [-0, 2 ** 53, -(2 ** 53), 1e21, NaN, Infinity, -Infinity]) {
+      const base = { prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [] as any[], events: [] as any[], entityId: W("aa"), stateRoot: W("31"), authorityRoot: W("32"), entityContext: ENTITY_CONTEXT() };
+      for (const input of [{ ...base, events: [{ n: bad }] }, { ...base, txs: [{ type: "directPayment", data: { v: [bad] } }] }, { ...base, txs: [{ type: "accountInput", data: { x: bad } }] }, { ...base, entityContext: { ...base.entityContext, height: bad } }]) {
+        expect(og(input)).toBe("REJECT");
+        expect(rw(input)).toBe("REJECT");
+      }
+    }
+    for (const fine of [0, -1, 1.5, 2 ** 53 - 1, -(2 ** 53) + 1, 1e-7]) {
+      const input = { prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [], events: [{ n: fine }], entityId: W("aa"), stateRoot: W("31"), authorityRoot: W("32"), entityContext: ENTITY_CONTEXT() };
+      expect(rw(input)).toBe(og(input));
     }
   });
-  test("DIVERGES: malformed or UPPERCASE stateRoot/authorityRoot: og throws ENTITY_FRAME_STATE_ROOT_INVALID, rewrite lowercases and hashes", () => {
+  test("MATCH: malformed or UPPERCASE stateRoot/authorityRoot are refused by both (og ENTITY_FRAME_STATE_ROOT_INVALID / AUTHORITY_ROOT_INVALID)", () => {
     const ctx = ENTITY_CONTEXT();
-    expect(() => createEntityFrameHashFromStateRoot(W("22"), 1, 1, [], [], W("aa"), W("AB"), W("32"), ctx as any)).toThrow("ENTITY_FRAME_STATE_ROOT_INVALID");
-    expect(entityFrameHash({ prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [], events: [], entityId: W("aa"), stateRoot: W("AB"), authorityRoot: W("32"), entityContext: ctx } as any).ok).toBe(true);
-    expect(() => createEntityFrameHashFromStateRoot(W("22"), 1, 1, [], [], W("aa"), "0x1234", W("32"), ctx as any)).toThrow();
-    expect(entityFrameHash({ prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [], events: [], entityId: W("aa"), stateRoot: "0x1234", authorityRoot: W("32"), entityContext: ctx } as any).ok).toBe(true);
+    for (const [stateRoot, authorityRoot] of [[W("AB"), W("32")], [W("31"), W("Cd")], ["0x1234", W("32")], [W("31"), "31".repeat(32)], [`0X${"31".repeat(32)}`, W("32")], [W("31"), W("32")]]) {
+      let og: string; try { og = createEntityFrameHashFromStateRoot(W("22"), 1, 1, [], [], W("aa"), stateRoot!, authorityRoot!, ctx as any); } catch { og = "REJECT"; }
+      const r = entityFrameHash({ prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [], events: [], entityId: W("aa"), stateRoot: stateRoot!, authorityRoot: authorityRoot!, entityContext: ctx } as any);
+      expect(r.ok ? r.value : "REJECT").toBe(og);
+    }
   });
 });
 
@@ -617,9 +751,12 @@ describe("golden hashes hardcoded in pure/oracle.test.ts: does og itself produce
 });
 
 describe("rewrite-only canon text (hashEntityState / hashAccountState / encodeEntityTx) -- no og counterpart", () => {
-  test("EXTRA: canon() maps every Set (and Uint8Array contents) to a plain-object encoding, so distinct values collide; og's RLP/msgpack codecs keep them distinct", () => {
-    expect(canon(new Set([1, 2]))).toBe(canon({}));
-    expect(canon(Uint8Array.of(1))).toBe(canon({ 0: 1 }));
+  test("EXTRA (kept: hashEntityState / hashAccountState / encodeEntityTx depend on it; no og counterpart): canon() keeps Sets and byte arrays distinct from plain objects, as og's RLP codec does", () => {
+    expect(canon(new Set([1, 2]))).not.toBe(canon({}));
+    expect(canon(new Set([1, 2]))).toBe(canon(new Set([2, 1])));
+    expect(canon(new Set([1, 2]))).not.toBe(canon([1, 2]));
+    expect(canon(Uint8Array.of(1))).not.toBe(canon({ 0: 1 }));
+    expect(canon(Uint8Array.of(1))).not.toBe(canon(Uint8Array.of(1, 0)));
     expect(hex(encodeAccountStateValue(new Set([1, 2])))).not.toBe(hex(encodeAccountStateValue({})));
   });
 });
