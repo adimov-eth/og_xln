@@ -11,6 +11,9 @@ import {
 } from "../xln.ts";
 import { ALICE, BOB, NOW, TERMS, ackInput, aliceAddr, bobAddr, carolAddr, crypto, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, unwrap, verifiers } from "../xln_run.ts";
 import { handleBoardHankoRefresh } from "../../core/account/consensus/incoming/board-hanko-refresh.ts";
+import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
+import { handleProfileUpdateEntityTx } from "../../core/entity/tx/handlers/system/basic.ts";
+import { handleRequestCollateralEntityTx } from "../../core/entity/tx/handlers/account/lifecycle/admin.ts";
 import { buildQuorumHanko, getEntityConfigBoardHash } from "../../core/hanko/signing.ts";
 
 // og leader failover (core/entity/consensus/leader/*): view change, timeout votes and certificates (ER-18)
@@ -240,5 +243,56 @@ describe("entity-consensus-2: board Hanko refresh and the previous-board grace (
     unwrap(applyAccountInput(proposed, ackInput(received, BOB), door(ALICE)));
     const frameChecks = seen.filter(([who]) => who === "bob").map(([, a]) => a);
     expect(frameChecks).toContainEqual({ registeredBoardHash: BOARD.boardHash, allowPreviousBoard: true }); // og ack-commit.ts
+  });
+});
+
+describe("entity-consensus-2: entity txs chat, chatMessage, requestCollateral, profile-update", () => {
+  const single = () => teaching([[A, 1n]], 1n, A);
+  const opened = () => unwrap(applyEntityInput(single(), { kind: "txs", timestamp: NOW, txs: [openBob] }, ctx(A))).replica;
+  test("MATCH (og handleProfileUpdateEntityTx): 300 random updates -- same refusal or the same committed profile", () => {
+    const kinds = [undefined, null, "company", "person", "robot"], sectorSets = [undefined, [], ["finance"], ["energy", "finance"], ["finance", "energy"], ["finance", "finance"], ["mining"], ["commerce", "education", "energy", "finance", "media"]];
+    const texts = [undefined, "", "  Hub  ", "x"];
+    for (let i = 0; i < 300; i++) {
+      const pick = <X>(xs: readonly X[]): X => xs[ri(xs.length)] as X;
+      const prev = { name: pick(["Old", ""]), isHub: rng() < 0.5, ...(rng() < 0.5 ? { entityKind: "company" } : {}), ...(rng() < 0.5 ? { sectors: ["media"] } : {}), avatar: "a", bio: "b", website: "w" };
+      const r = teaching([[A, 1n]], 1n, A);
+      const base = { ...r, state: { ...r.state, committed: { ...r.state.committed, profile: prev } } } as EntityReplica;
+      const profile: Record<string, unknown> = { entityId: rng() < 0.05 ? BOB : ENTITY };
+      for (const [k, v] of [["name", pick(texts)], ["entityKind", pick(kinds)], ["sectors", pick(sectorSets)], ["avatar", pick(texts)], ["bio", pick(texts)], ["website", pick(texts)]] as const) if (v !== undefined) profile[k] = v;
+      const tx = { type: "profile-update", data: { profile } } as EntityTx;
+      let ogProfile: unknown, ogError: string | undefined;
+      try { ogProfile = handleProfileUpdateEntityTx({} as never, { entityId: ENTITY, profile: structuredClone(prev) } as never, tx as never, true).newState.profile; } catch (e) { ogError = String(e); }
+      const rw = applyEntityInput(base, { kind: "txs", timestamp: NOW, txs: [tx] }, ctx(A));
+      if (ogError !== undefined) { expect(rw.ok).toBe(false); continue; }
+      const committed = unwrap(rw).replica.state.committed["profile"];
+      expect(JSON.parse(JSON.stringify(committed))).toEqual(JSON.parse(JSON.stringify(ogProfile)));
+    }
+  });
+  test("MATCH (og handleRequestCollateralEntityTx): a missing Account is a no-op; otherwise the request_collateral Account tx is queued and proposed in the same frame", () => {
+    const tx = (to: EntityId): EntityTx => ({ type: "requestCollateral", data: { counterpartyEntityId: to, tokenId: unwrap(tokenId("1")), amount: 50n, feeTokenId: unwrap(tokenId("1")), feeAmount: 2n, policyVersion: 1 } });
+    const og = handleRequestCollateralEntityTx({ entityId: ENTITY, accounts: new Map([[BOB, {}]]), config: { validators: [A] } } as never, { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: 1, amount: 50n, feeTokenId: 1, feeAmount: 2n, policyVersion: 1 } } as never, true);
+    expect(og.accountTxs).toEqual([{ accountId: BOB, tx: { type: "request_collateral", data: { tokenId: 1, amount: 50n, feeTokenId: 1, feeAmount: 2n, policyVersion: 1 } } }]);
+    const missing = handleRequestCollateralEntityTx({ entityId: ENTITY, accounts: new Map(), config: { validators: [A] } } as never, { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: 1, amount: 50n, feeAmount: 2n, policyVersion: 1 } } as never, true);
+    expect(missing.outputs).toEqual([]);
+    const none = unwrap(applyEntityInput(single(), { kind: "txs", timestamp: NOW, txs: [tx(BOB)] }, ctx(A)));
+    expect(none.outputs).toEqual([]);
+    expect(none.replica.head.height).toBe(1n);
+  });
+  test("MATCH (og createEntityFrameHashFromStateRoot): chat, chatMessage, requestCollateral and profile-update txs hash into the frame exactly as og's wire txs", () => {
+    const r = opened();
+    const list: EntityTx[] = [
+      { type: "chat", data: { from: A, message: "hello" } },
+      { type: "chatMessage", data: { message: "note", timestamp: 5, metadata: { type: "info", height: 2 } } },
+      { type: "profile-update", data: { profile: { entityId: ENTITY, name: "Hub", sectors: ["finance"] } } },
+    ];
+    const p = unwrap(applyEntityInput(r, { kind: "txs", timestamp: NOW + 1n, txs: list }, ctx(A)));
+    expect(p.replica.head.height).toBe(2n);
+    expect(p.replica.state.committed["profile"]).toMatchObject({ name: "Hub", sectors: ["finance"] });
+    // a held 2-of-2 proposal exposes the frame: its hash is og's over og's wire txs (numeric token ids, the same data keys)
+    const held = unwrap(applyEntityInput(teaching([[A, 1n], [B, 1n]], 2n, A), { kind: "txs", timestamp: NOW, txs: [...list, { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: unwrap(tokenId("1")), amount: 5n, feeTokenId: unwrap(tokenId("2")), feeAmount: 1n, policyVersion: 1 } }] }, ctx(A))).replica;
+    if (held._tag !== "proposed") throw new Error("phase");
+    const f = held.frame;
+    const ogTxs = [...list.map((t) => ({ type: t.type, data: t.data })), { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: 1, amount: 5n, feeTokenId: 2, feeAmount: 1n, policyVersion: 1 } }];
+    expect(unwrap(hashEntityFrame(f))).toBe(createEntityFrameHashFromStateRoot("genesis", 1, Number(NOW), ogTxs as never, [], ENTITY, f.stateRoot, f.authorityRoot, f.entityContext as never));
   });
 });

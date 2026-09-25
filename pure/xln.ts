@@ -2665,7 +2665,14 @@ export type EntityTx =
   | { readonly type: "openAccount"; readonly data: { readonly targetEntityId: EntityId; readonly disputeConfig: DisputeConfig; readonly accountDomain: Domain; readonly watchSeed: string; readonly creditAmount?: bigint | undefined; readonly tokenId?: TokenId | undefined } }
   | { readonly type: "accountInput"; readonly data: AccountPeerInput }
   | { readonly type: "extendCredit"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint } }
-  | { readonly type: "directPayment"; readonly data: { readonly targetEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly route: readonly EntityId[]; readonly description?: string | undefined; readonly deliveryMode: "direct" | "trusted"; readonly trustedGatewayEntityId?: EntityId | undefined } };
+  | { readonly type: "directPayment"; readonly data: { readonly targetEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly route: readonly EntityId[]; readonly description?: string | undefined; readonly deliveryMode: "direct" | "trusted"; readonly trustedGatewayEntityId?: EntityId | undefined } }
+  /** og chat / chatMessage: frame-local messages, never part of the committed state. */
+  | { readonly type: "chat"; readonly data: { readonly from: string; readonly message: string } }
+  | { readonly type: "chatMessage"; readonly data: { readonly message: string; readonly timestamp: number; readonly metadata?: Readonly<Record<string, unknown>> | undefined } }
+  | { readonly type: "requestCollateral"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number } }
+  | { readonly type: "profile-update"; readonly data: { readonly profile: ProfileUpdate } };
+/** og ProfileUpdateTx & { entityId }. */
+export type ProfileUpdate = { readonly entityId: string; readonly name?: string | undefined; readonly entityKind?: string | null | undefined; readonly sectors?: readonly string[] | undefined; readonly avatar?: string | undefined; readonly bio?: string | undefined; readonly website?: string | undefined };
 export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute"; readonly context: string };
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
@@ -2707,6 +2714,7 @@ export type EntityError =
   | Tagged<"proposal_digest" | "proposal_parent" | "proposal_leader" | "proposal_hash" | "proposal_manifest" | "proposal_signature" | "proposal_conflict" | "proposal_wait" | "local_manifest_mismatch" | "local_precommit_conflict">
   | Tagged<"precommit_frame_mismatch" | "precommit_not_active" | "precommit_signer_equivocation" | "commit_conflict" | "commit_wait">
   | Tagged<"leader_vote_invalid" | "leader_vote_equivocation" | "leader_prepared_rejected" | "proposal_superseded" | "hanko_build">
+  | Tagged<"profile_update", { reason: "entity" | "entity_kind" | "sectors_invalid" | "sectors_noncanonical" }>
   | Tagged<"unknown_member" | "duplicate_member" | "not_proposer" | "invalid_signature" | "wrong_replica", { address: string }>;
 export type EntityGrammar = { readonly table: typeof EntityTransition; readonly replica: EntityReplica; readonly input: EntityInput; readonly ctx: { readonly [E in EntityEvent]: EntityContext }; readonly output: EntityOutput; readonly error: EntityError };
 export type NextEntityPhase<S extends EntityPhase, E extends EntityEvent> = Next<EntityGrammar, S, E>;
@@ -2986,7 +2994,10 @@ const binaryBody = (value: unknown): Result<Binary, BinaryError> => {
   return ok(out);
 };
 /** og wire: token ids are numbers inside entity tx data. */
-const wireData = (tx: EntityTx): unknown => (tx.type !== "accountInput" && "tokenId" in tx.data && tx.data.tokenId !== undefined ? { ...tx.data, tokenId: Number(tx.data.tokenId) } : tx.data);
+const wireData = (tx: EntityTx): unknown => {
+  if (tx.type === "requestCollateral") return { ...tx.data, tokenId: Number(tx.data.tokenId), ...(tx.data.feeTokenId === undefined ? {} : { feeTokenId: Number(tx.data.feeTokenId) }) };
+  return tx.type !== "accountInput" && "tokenId" in tx.data && tx.data.tokenId !== undefined ? { ...tx.data, tokenId: Number(tx.data.tokenId) } : tx.data;
+};
 const entityFrameTx = (tx: EntityTx): Result<EntityFrameTx, BinaryError> => map(binaryBody(wireData(tx)), (data) => ({ type: tx.type, data }));
 export const hashEntityFrame = (f: EntityFrame): Result<EntityFrameHash, EntityFrameHashError> =>
   chain(frameNumber(f.height), (height) => chain(frameNumber(f.timestamp), (timestamp) => chain(traverse(f.txs, entityFrameTx), (txs) => map(entityFrameHash({
@@ -3224,6 +3235,7 @@ type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
   extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId,
+  requestCollateral: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -3353,6 +3365,26 @@ const fillHankos = (d: Draft, frame: EntityFrame, signatures: Precommits): Resul
   });
   return ok({ ...d, accountReplicas: new Map([...d.accountReplicas].map(([k, c]) => [k, replica(c)])), outputs: d.outputs.map((o) => ("tx" in o ? { to: o.to, tx: { type: "accountInput" as const, data: message(o.tx.data) } } : o)) });
 };
+const PROFILE_ENTITY_KINDS: ReadonlySet<string> = new Set(["company", "foundation", "government", "nonprofit", "person", "protocol"]);
+const PROFILE_ENTITY_SECTORS: ReadonlySet<string> = new Set(["commerce", "education", "energy", "finance", "healthcare", "infrastructure", "media", "professional-services", "public-sector", "real-estate", "technology"]);
+/** og system/basic.ts handleProfileUpdateEntityTx: the committed profile with og's defaults, kind and canonical sector rules; `isHub` is never taken from the update. */
+const profileUpdate = (state: EntityState, p: ProfileUpdate): Result<Binary, EntityError> => {
+  const bad = (reason: Of<EntityError, "profile_update">["reason"]): Result<never, EntityError> => err({ _tag: "profile_update", reason });
+  if (p.entityId !== state.id) return bad("entity");
+  const prev = (state.committed["profile"] ?? {}) as { readonly [k: string]: unknown };
+  const text = (k: string): string => { const v = prev[k]; return typeof v === "string" ? v : ""; };
+  const entityKind = p.entityKind === undefined ? (typeof prev["entityKind"] === "string" ? prev["entityKind"] : undefined) : p.entityKind === null ? undefined : p.entityKind;
+  if (entityKind !== undefined && !PROFILE_ENTITY_KINDS.has(entityKind)) return bad("entity_kind");
+  const sectors = p.sectors ?? (Array.isArray(prev["sectors"]) ? (prev["sectors"] as readonly string[]) : []);
+  if (!Array.isArray(sectors) || sectors.length > 4 || sectors.some((s) => !PROFILE_ENTITY_SECTORS.has(s))) return bad("sectors_invalid");
+  const canonical = [...sectors].sort(asc);
+  if (new Set(sectors).size !== sectors.length || canonical.some((s, i) => s !== sectors[i])) return bad("sectors_noncanonical");
+  const rawName = p.name ?? prev["name"], name = typeof rawName === "string" && rawName.trim().length > 0 ? rawName.trim() : `Entity ${state.id.slice(-4)}`;
+  return ok({
+    name, ...(prev["isHub"] === undefined ? {} : { isHub: prev["isHub"] as Binary }), ...(entityKind ? { entityKind } : {}), ...(canonical.length > 0 ? { sectors: canonical } : {}),
+    avatar: typeof p.avatar === "string" ? p.avatar : text("avatar"), bio: typeof p.bio === "string" ? p.bio : text("bio"), website: typeof p.website === "string" ? p.website : text("website"),
+  });
+};
 const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldContext): Result<Draft, EntityError> => {
   const origin = originOf(tx, state.id), peer = peerOf(tx, state.id);
   const enqueue = (target: EntityId, accountTxs: readonly AccountTx[], outputs: readonly EntityOutput[]): Result<Draft, EntityError> =>
@@ -3368,6 +3400,15 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       if (deliveryMode !== "direct" || trustedGatewayEntityId !== undefined || route.length !== 2) return err({ _tag: "payment_route" });
       return replicas.has(targetEntityId) ? enqueue(targetEntityId, [{ type: "payment", tokenId, amount }], [wake(state, ctx.timestamp)]) : err({ _tag: "no_such_account", target: targetEntityId });
     },
+    // og system/basic.ts: chat messages live in the frame-local message log, which the state root does not commit (an invalid chat message is a silent no-op)
+    chat: () => ok(skip),
+    chatMessage: () => ok(skip),
+    // og admin.ts handleRequestCollateralEntityTx: a missing Account is a no-op; otherwise queue request_collateral and wake validators[0]
+    requestCollateral: (x) => {
+      const { counterpartyEntityId: to, tokenId, amount, feeTokenId, feeAmount, policyVersion } = x.data;
+      return replicas.has(to) ? enqueue(to, [{ type: "request_collateral", tokenId, amount, ...opt("feeTokenId", feeTokenId), feeAmount, policyVersion }], [wake(state, ctx.timestamp)]) : ok(skip);
+    },
+    "profile-update": (x) => map(profileUpdate(state, x.data.profile), (profile) => ({ ...skip, state: { ...state, committed: { ...state.committed, profile } } })),
     accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => {
       const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp };
       const apply = (at: Folded): Result<Draft, EntityError> => withChild(at.accountReplicas, peer, (child) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)));
