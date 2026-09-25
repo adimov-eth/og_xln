@@ -1582,9 +1582,10 @@ export type ProposalFold = Lenient<AccountBody, WireAccountTx, Effect, BodyError
 export type Hanko = string;
 export const GENESIS_LINK = "genesis";
 export type HeadCertificate = { readonly parent: string; readonly left: Hanko; readonly right: Hanko };
-export type AccountHead = Tagged<"genesis", { height: 0n; prevFrameHash: typeof GENESIS_LINK }> | Tagged<"installed", { height: bigint; prevFrameHash: string; certificate: HeadCertificate }>;
+/** `timestamp` is the last committed frame's clock (og `currentFrame.timestamp`, 0 at genesis). */
+export type AccountHead = Tagged<"genesis", { height: 0n; prevFrameHash: typeof GENESIS_LINK; timestamp: 0n }> | Tagged<"installed", { height: bigint; prevFrameHash: string; timestamp: bigint; certificate: HeadCertificate }>;
 export type InstalledHead = Of<AccountHead, "installed">;
-export const genesisAccountHead = (): AccountHead => ({ _tag: "genesis", height: 0n, prevFrameHash: GENESIS_LINK });
+export const genesisAccountHead = (): AccountHead => ({ _tag: "genesis", height: 0n, prevFrameHash: GENESIS_LINK, timestamp: 0n });
 export type AccountAck = { readonly height: bigint; readonly frameHash: string; readonly frameHanko: Hanko; readonly disputeHanko?: DisputeHanko | undefined };
 export const certifiedBy = (c: HeadCertificate, party: Party): { readonly own: Hanko; readonly peer: Hanko } => ({ own: at(c.left, c.right, party.left), peer: at(c.left, c.right, other(party.left)) });
 export type FrameEvidence = { readonly cause: AccountReplicaError; readonly frame: AccountFrame; readonly frameHanko: Hanko };
@@ -1648,8 +1649,10 @@ const frozenError = (phase: FrozenAccount["_tag"]): AccountReplicaError => ({ _t
 
 export type Preview = { readonly frame: AccountFrame; readonly draft: FrameFold; readonly frameProof: LocalProof; readonly dispute: DisputePlan };
 export type ProposalPlan = Tagged<"frame", { preview: Preview }> | Tagged<"idle", { refused: AccountReplicaError }>;
-export const planOpen = (r: OpenAccount, party: Party, clock: FrameClock): Result<ProposalPlan, AccountReplicaError> => {
+export const planOpen = (r: OpenAccount, party: Party, entityClock: FrameClock): Result<ProposalPlan, AccountReplicaError> => {
   if (r.mempool.length === 0) return err({ _tag: "empty_mempool" });
+  // og admission.ts: a lagging proposer never mints a frame behind the committed watermark.
+  const clock: FrameClock = { ...entityClock, timestamp: entityClock.timestamp > r.head.timestamp ? entityClock.timestamp : r.head.timestamp };
   const height = r.head.height + 1n, folded = proposalFold(r.state, r.mempool, foldCtx({ height, ...clock }, party.left)), firstRefusal = folded.refused[0];
   if (folded.included.length === 0 && firstRefusal !== undefined) return ok({ _tag: "idle", refused: firstRefusal.error });
   return chain(commit(folded.state), ({ view, root }) => chain(stampClaims(folded.included, r.state.claimRows), (txs) => {
@@ -1685,7 +1688,7 @@ type Replayed = { readonly draft: FrameFold; readonly view: CommittedAccountStat
 const replay = (s: AccountBody, f: AccountFrame, byLeft: boolean): Result<Replayed, AccountReplicaError> =>
   chain(foldFrame(s, f, byLeft), (draft) => chain(commit(draft.state), ({ view, root }) => (root === f.accountStateRoot ? ok({ draft, view }) : err({ _tag: "state_root_mismatch" }))));
 const frameStructure = (f: AccountFrame): Result<void, AccountReplicaError> => {
-  const field = f.timestamp <= 0n ? "timestamp" : f.jHeight < 0n ? "jHeight" : f.txs.length > ACCOUNT_MEMPOOL_SIZE ? "txs" : !BYTES32.test(f.accountStateRoot) ? "accountStateRoot" : null;
+  const field = f.timestamp < 0n ? "timestamp" : f.jHeight < 0n ? "jHeight" : f.txs.length > ACCOUNT_MEMPOOL_SIZE ? "txs" : !BYTES32.test(f.accountStateRoot) ? "accountStateRoot" : null;
   return field === null ? ok(undefined) : err({ _tag: "frame_structure", field });
 };
 export const receiverClock = (f: AccountFrame, now: bigint): Result<void, AccountReplicaError> => guard(f.timestamp - now <= ACCOUNT_NETWORK_ALLOWANCE_MS, { _tag: "frame_structure", field: "future_timestamp" });
@@ -1693,7 +1696,7 @@ type SignedPair = { readonly left: Hanko; readonly right: Hanko };
 const signedBy = (party: Party, ours: Hanko, theirs: Hanko): SignedPair => ({ left: at(ours, theirs, party.left), right: at(ours, theirs, other(party.left)) });
 const install = (r: ProposedAccount | ReceivedAccount, signed: SignedPair, after: { readonly dispute: DisputeWitnesses; readonly acknowledged?: AccountAck | undefined }): Step<OpenAccount, Effect> => {
   const { frame, draft } = r.candidate;
-  return step(reopen(r, { state: draft.state, head: { _tag: "installed", height: frame.height, prevFrameHash: frame.stateHash, certificate: { parent: frame.prevFrameHash, ...signed } }, mempool: r.mempool, acknowledged: after.acknowledged, dispute: after.dispute }), draft.effects);
+  return step(reopen(r, { state: draft.state, head: { _tag: "installed", height: frame.height, prevFrameHash: frame.stateHash, timestamp: frame.timestamp, certificate: { parent: frame.prevFrameHash, ...signed } }, mempool: r.mempool, acknowledged: after.acknowledged, dispute: after.dispute }), draft.effects);
 };
 const residentAck = (r: OpenAccount): AccountAck | null => (r.acknowledged !== undefined && r.acknowledged.height === r.head.height ? r.acknowledged : null);
 export const proposeOpen = (r: OpenAccount, input: Propose, ctx: AccountContext): Verb<OpenAccount | ProposedAccount> => chain(planOpen(r, ctx.party, { timestamp: input.timestamp, jHeight: input.jHeight }), (planned) => match(planned, {

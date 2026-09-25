@@ -177,11 +177,19 @@ describe("account-consensus: driven scenarios", () => {
     expect(unwrapErr(applyAccountInput(r, ackFrameOf(r, from, f), DOOR(self)))._tag).toBe("empty_frame");
   });
 
-  test("DIVERGES: frame timestamp 0 is structurally valid in og, refused frame_structure/timestamp by the rewrite", () => {
-    expect(getAccountFrameStructuralError({ height: 1, jHeight: 0, timestamp: 0, accountTxs: [], accountStateRoot: W("00") } as unknown as OgFrame, 0)).toBe("");
-    const r = genesisAB(), from = rightOf(), self = leftOf();
-    const f = peerFrame(r, from, { txs: [TX], timestamp: 0n });
-    expect(unwrapErr(applyAccountInput(r, ackFrameOf(r, from, f), DOOR(self)))).toEqual({ _tag: "frame_structure", field: "timestamp" });
+  test("MATCH: frame timestamp 0 is structurally valid on both sides (negative is refused)", () => {
+    expect(getAccountFrameStructuralError({ height: 1, jHeight: 0, timestamp: -1, accountTxs: [], accountStateRoot: W("00") } as unknown as OgFrame, 0)).not.toBe("");
+    for (const ts of [0, 1]) {
+      const og = getAccountFrameStructuralError({ height: 1, jHeight: 0, timestamp: ts, accountTxs: [], accountStateRoot: W("00") } as unknown as OgFrame, 0) === "";
+      const r = genesisAB(), from = rightOf(), self = leftOf();
+      const f = peerFrame(r, from, { txs: [TX], timestamp: BigInt(ts) });
+      const res = applyAccountInput(r, ackFrameOf(r, from, f), DOOR(self));
+      const structural = !res.ok && res.error._tag === "frame_structure";
+      expect(!structural).toBe(og);
+    }
+    // A full round at timestamp 0 commits.
+    const { p, q } = round(genesisAB(), genesisAB(), ALICE, BOB, [TX], { timestamp: 0n, jHeight: 0n });
+    expect([p.head.height, q.head.height]).toEqual([1n, 1n]);
   });
 
   test("DIVERGES: local tx admission while a proposal awaits ACK — og queues it, rewrite refuses already_proposed", () => {
@@ -197,19 +205,24 @@ describe("account-consensus: driven scenarios", () => {
     expect(unwrapErr(admit(proposed, [TX2]))._tag).toBe("already_proposed");
   });
 
-  test("DIVERGES: proposer clock below the last committed frame — og clamps to the previous timestamp, rewrite signs the regressed timestamp", () => {
-    const a = ogAccount();
-    a.currentHeight = 1;
-    a.currentFrame = { ...a.currentFrame, height: 1, timestamp: 5_000, stateHash: W("99") };
-    a.mempool = [scl(1, 1n)];
-    const adm = prepareProposalAdmission({ runtimeTimestamp: 0, quietLogs: true }, a, 1_000, 0, undefined);
-    if (!adm.ok) throw new Error("admission refused");
-    expect(adm.frameTimestamp).toBe(5_000);
+  test("MATCH: proposer clock below the last committed frame — both clamp to max(entityTs, lastFrame.timestamp)", () => {
+    const pairs: Array<[number, number]> = [[1_000, 5_000], [5_000, 5_000], [9_000, 5_000], [0, 0], [0, 7]];
+    let seed = 7;
+    for (let i = 0; i < 6; i++) { seed = (seed * 1103515245 + 12345) % 2 ** 31; pairs.push([seed % 100_000, (seed >> 8) % 100_000]); }
+    for (const [entityTs, prevTs] of pairs) {
+      const a = ogAccount();
+      a.currentHeight = 1;
+      a.currentFrame = { ...a.currentFrame, height: 1, timestamp: prevTs, stateHash: W("99") };
+      a.mempool = [scl(1, 1n)];
+      const adm = prepareProposalAdmission({ runtimeTimestamp: 0, quietLogs: true }, a, entityTs, 0, undefined);
+      if (!adm.ok) throw new Error("admission refused");
 
-    const { p } = round(genesisAB(), genesisAB(), ALICE, BOB, [TX], { timestamp: 5_000n, jHeight: 0n });
-    const second = proposeFrom(p, ALICE, [TX2], { timestamp: 1_000n, jHeight: 0n }).replica;
-    if (second._tag !== "proposed") throw new Error(second._tag);
-    expect(second.candidate.frame.timestamp).toBe(1_000n);                 // og would have signed 5000
+      const { p } = round(genesisAB(), genesisAB(), ALICE, BOB, [TX], { timestamp: BigInt(prevTs), jHeight: 0n });
+      expect(p.head.timestamp).toBe(BigInt(prevTs));
+      const second = proposeFrom(p, ALICE, [TX2], { timestamp: BigInt(entityTs), jHeight: 0n }).replica;
+      if (second._tag !== "proposed") throw new Error(second._tag);
+      expect(second.candidate.frame.timestamp).toBe(BigInt(adm.frameTimestamp));
+    }
   });
 
   test("MATCH: simultaneous proposals — LEFT ignores RIGHT's same-height frame and keeps its own pending frame", async () => {
