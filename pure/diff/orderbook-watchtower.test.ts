@@ -10,9 +10,11 @@ import { createWatchtowerStore } from "../../core/watchtower/store/index.ts";
 import { handleTowerAppointment } from "../../core/watchtower/http.ts";
 import { buildTowerAppointmentOwnerMessage, computeEncryptedRuntimeRecoveryEnvelopeHash, computeTowerLastResortPayloadDigest } from "../../core/storage/recovery/bundle/crypto.ts";
 import { serializeTaggedJson } from "../../core/protocol/serialization/index.ts";
+import { handleCancelSwapRequest, handlePlaceSwapOfferRequest } from "../../core/entity/tx/handlers/payments/swap-requests.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, unwrap, unwrapErr, verifiers } from "../xln_run.ts";
 import {
   decodeTowerLookupDoc, hexToBytes, isEthersAddress, recoverPersonalMessage, signPersonalMessage, towerEnvelopeHash, towerPayloadDigest, upsertTowerAppointment, upsertTowerRecoveryArchive,
-  verifyTowerAppointment, verifyTowerReceiptSignature,
+  verifyTowerAppointment, verifyTowerReceiptSignature, applyEntityInput, admitAt, createEntity, tokenId, type EntityTx, type WireAccountTx,
   type TowerAppointmentV1, type TowerLookupDoc, type TowerStoreConfig, type TowerWrite, type Result, type TowerError,
 } from "../xln.ts";
 
@@ -211,5 +213,46 @@ describe("orderbook-watchtower: watchtower (ER-24)", () => {
     expect("acceptBundle" in xln || "acceptReceipt" in xln || "acceptAppointment" in xln).toBe(false);
     const probe: TowerAppointmentV1 | undefined = undefined;
     expect(probe).toBeUndefined();
+  });
+});
+
+describe("orderbook-watchtower: entity swap requests (og payments/swap-requests.ts)", () => {
+  const ctx = { ...verifiers, self: ALICE, signerId: aliceAddr };
+  const openBob: EntityTx = { type: "openAccount", data: { targetEntityId: BOB, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig } };
+  const opened = () => unwrap(applyEntityInput(unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]) })), { kind: "txs", timestamp: NOW, txs: [openBob] }, ctx)).replica;
+  const ogState = (accounts: readonly string[]) => ({ entityId: ALICE, accounts: new Map(accounts.map((a) => [a, { state: {} }])), config: { validators: [aliceAddr] } }) as never;
+  /** og AccountTx `{type, data}` (numeric token ids) as the rewrite's flat wire tx. */
+  const rwAccountTx = (t: { type: string; data: Record<string, unknown> }): WireAccountTx =>
+    ({ type: t.type, ...t.data, ...(typeof t.data["giveTokenId"] === "number" ? { giveTokenId: String(t.data["giveTokenId"]), wantTokenId: String(t.data["wantTokenId"]) } : {}) }) as never;
+  /** The entity tx must enqueue exactly og's Account tx: the same verdict and replica as admitting og's tx on the same Account directly. */
+  const sameAsOg = (entityTx: EntityTx, ogTx: { type: string; data: Record<string, unknown> }): string => {
+    const base = opened(), child = base.accountReplicas.get(BOB);
+    if (child === undefined) throw new Error("no account");
+    const direct = admitAt(child, [rwAccountTx(ogTx)], ALICE, { timestamp: 0n, jHeight: 0n }, verifiers.verify);
+    const via = applyEntityInput(base, { kind: "txs", timestamp: NOW + 1n, txs: [entityTx] }, ctx);
+    expect(via.ok).toBe(direct.ok);
+    if (direct.ok && via.ok) {
+      expect(via.value.replica.accountReplicas.get(BOB)?.mempool).toEqual(direct.value.mempool);
+      return "queued";
+    }
+    if (!direct.ok && !via.ok) expect(via.error).toEqual(direct.error);
+    return "refused";
+  };
+  test("MATCH: placeSwapOffer / proposeCancelSwap build og's exact Account tx for the counterparty Account and wake validators[0]; a missing Account halts", () => {
+    const rand = prng(3), verdicts = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      const withPrice = rand() < 0.5, withTif = rand() < 0.5, tif = Math.floor(rand() * 3) as 0 | 1 | 2;
+      const data = { counterpartyEntityId: BOB, offerId: `o${i}`, giveTokenId: 1, giveTokenDecimals: 18, giveAmount: BigInt(1 + Math.floor(rand() * 1e9)) * 10n ** 15n, wantTokenId: 2, wantTokenDecimals: 18, wantAmount: BigInt(1 + Math.floor(rand() * 1e9)) * 10n ** 15n, maxFee: 0n, minNetReceive: 1n, ...(withPrice ? { priceTicks: 12345n } : {}), ...(withTif ? { timeInForce: tif } : {}) };
+      const og = handlePlaceSwapOfferRequest(ogState([BOB]), { type: "placeSwapOffer", data } as never, { mutableFrameState: true } as never);
+      expect(og.outputs).toEqual([{ entityId: ALICE, signerId: aliceAddr, entityTxs: [] }]);
+      expect(og.accountTxs?.length).toBe(1);
+      verdicts.add(sameAsOg({ type: "placeSwapOffer", data: { ...data, giveTokenId: unwrap(tokenId("1")), wantTokenId: unwrap(tokenId("2")) } }, og.accountTxs?.[0]?.tx as never));
+      const cancel = handleCancelSwapRequest(ogState([BOB]), { type: "proposeCancelSwap", data: { counterpartyEntityId: BOB, offerId: `o${i}` } } as never, { mutableFrameState: true } as never);
+      verdicts.add(sameAsOg({ type: "proposeCancelSwap", data: { counterpartyEntityId: BOB, offerId: `o${i}` } }, cancel.accountTxs?.[0]?.tx as never));
+    }
+    expect(verdicts.has("refused")).toBe(true);
+    expect(() => handlePlaceSwapOfferRequest(ogState([]), { type: "placeSwapOffer", data: { counterpartyEntityId: CAROL } } as never, { mutableFrameState: true } as never)).toThrow("SWAP_REQUEST_ACCOUNT_MISSING");
+    expect(() => handleCancelSwapRequest(ogState([]), { type: "proposeCancelSwap", data: { counterpartyEntityId: CAROL, offerId: "x" } } as never, { mutableFrameState: true } as never)).toThrow("SWAP_REQUEST_ACCOUNT_MISSING");
+    expect(unwrapErr(applyEntityInput(opened(), { kind: "txs", timestamp: NOW + 1n, txs: [{ type: "proposeCancelSwap", data: { counterpartyEntityId: CAROL, offerId: "x" } }] }, ctx))).toEqual({ _tag: "swap_request_account_missing", target: CAROL });
   });
 });

@@ -3993,7 +3993,12 @@ export type EntityTx =
   | { readonly type: "chatMessage"; readonly data: { readonly message: string; readonly timestamp: number; readonly metadata?: Readonly<Record<string, unknown>> | undefined } }
   | { readonly type: "requestCollateral"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number } }
   | { readonly type: "profile-update"; readonly data: { readonly profile: ProfileUpdate } }
+  | SwapRequestEntityTx
   | LendingEntityTx;
+/** og types/entity-tx.ts placeSwapOffer / proposeCancelSwap (payments/swap-requests.ts): one swap Account tx on the hub Account. */
+export type SwapRequestEntityTx =
+  | { readonly type: "placeSwapOffer"; readonly data: { readonly counterpartyEntityId: EntityId; readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint; readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: 0 | 1 | 2 | undefined } }
+  | { readonly type: "proposeCancelSwap"; readonly data: { readonly counterpartyEntityId: EntityId; readonly offerId: string } };
 /** og types/entity-tx.ts lendingOffer/Borrow/Repay/ClosePosition: each queues one Account lending tx on the hub Account. */
 export type LendingEntityTx =
   | { readonly type: "lendingOffer"; readonly data: { readonly positionId: string; readonly hubEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly interestBps: number } }
@@ -4037,7 +4042,7 @@ export type EntityContext = { readonly verify: Verify; readonly verifyMember: Me
 export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large">;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
-  | Tagged<"account_exists" | "no_such_account" | "create_ack_required" | "account_envelope", { target: EntityId }>
+  | Tagged<"account_exists" | "no_such_account" | "create_ack_required" | "account_envelope" | "swap_request_account_missing", { target: EntityId }>
   | Tagged<"self_account" | "wrong_entity" | "bad_quorum" | "bad_jurisdiction" | "from_not_converted" | "not_l0" | "mempool_full" | "sign_failed" | "payment_route" | "secondary_hash_duplicate">
   | Tagged<"frame_timestamp_invalid" | "frame_timestamp_regression", { timestamp: bigint }>
   | Tagged<"lending_entity", { reason: string }>
@@ -4325,6 +4330,7 @@ const binaryBody = (value: unknown): Result<Binary, BinaryError> => {
 };
 /** og wire: token ids are numbers inside entity tx data. */
 const wireData = (tx: EntityTx): unknown => {
+  if (tx.type === "placeSwapOffer") return { ...tx.data, giveTokenId: Number(tx.data.giveTokenId), wantTokenId: Number(tx.data.wantTokenId) };
   if (tx.type === "requestCollateral") return { ...tx.data, tokenId: Number(tx.data.tokenId), ...(tx.data.feeTokenId === undefined ? {} : { feeTokenId: Number(tx.data.feeTokenId) }) };
   return tx.type !== "accountInput" && "tokenId" in tx.data && tx.data.tokenId !== undefined ? { ...tx.data, tokenId: Number(tx.data.tokenId) } : tx.data;
 };
@@ -4565,7 +4571,7 @@ type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
   extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId,
-  requestCollateral: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self,
+  requestCollateral: (x) => x.data.counterpartyEntityId, placeSwapOffer: (x) => x.data.counterpartyEntityId, proposeCancelSwap: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
 });
@@ -4785,6 +4791,13 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const { counterpartyEntityId: to, tokenId, amount, feeTokenId, feeAmount, policyVersion } = x.data;
       return replicas.has(to) ? enqueue(to, [{ type: "request_collateral", tokenId, amount, ...opt("feeTokenId", feeTokenId), feeAmount, policyVersion }], [wake(state, ctx.timestamp)]) : ok(skip);
     },
+    // og payments/swap-requests.ts: a missing Account halts (SWAP_REQUEST_ACCOUNT_MISSING, the whole input); otherwise queue the swap Account tx and wake validators[0]
+    placeSwapOffer: (x) => {
+      const { counterpartyEntityId: to, offerId, giveTokenId, giveTokenDecimals, giveAmount, wantTokenId, wantTokenDecimals, wantAmount, maxFee, minNetReceive, priceTicks, timeInForce } = x.data;
+      const offer: AccountTx = { type: "swap_offer", offerId, giveTokenId, giveTokenDecimals, giveAmount, wantTokenId, wantTokenDecimals, wantAmount, maxFee, minNetReceive, ...opt("priceTicks", priceTicks), ...opt("timeInForce", timeInForce) };
+      return replicas.has(to) ? enqueue(to, [offer], [wake(state, ctx.timestamp)]) : err({ _tag: "swap_request_account_missing", target: to });
+    },
+    proposeCancelSwap: (x) => (replicas.has(x.data.counterpartyEntityId) ? enqueue(x.data.counterpartyEntityId, [{ type: "swap_cancel_request", offerId: x.data.offerId }], [wake(state, ctx.timestamp)]) : err({ _tag: "swap_request_account_missing", target: x.data.counterpartyEntityId })),
     "profile-update": (x) => map(profileUpdate(state, x.data.profile), (profile) => ({ ...skip, state: { ...state, committed: { ...state.committed, profile } } })),
     accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => {
       const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp };
@@ -4816,7 +4829,7 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   return chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state, accountReplicas: replicas, outputs: [] }, included: [], evicted: [] }, (acc, tx) => {
     const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
     if (r.ok) return ok({ ...acc, draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs] }, included: [...acc.included, tx] });
-    return tx.type === "openAccount" || r.error._tag === "lending_entity" ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
+    return tx.type === "openAccount" || r.error._tag === "lending_entity" || r.error._tag === "swap_request_account_missing" ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
     // Accounts that received follow-up work (a gateway's forwarded leg) join after the directly touched ones.
