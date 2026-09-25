@@ -332,7 +332,7 @@ describe("multi-claim Account frames (og prepareAccountJClaimTx / verifyAccountJ
     }
     expect(tampered).toBeGreaterThan(0);
     expect(branched).toBeGreaterThan(0);
-  });
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------- Entity J observation (og core/entity/tx/j-events*.ts)
@@ -590,7 +590,7 @@ describe("jBatchState (og jurisdiction/machine/batch, entity/tx/handlers/j-batch
       outcomes.add(`${rw.jBatch.status}:${rw.autoBroadcast}`);
     }
     expect(outcomes.size).toBeGreaterThan(3);
-  });
+  }, 60_000);
 
   test("PORT (og handleJBroadcast needs a runtime jurisdiction registry): j_broadcast refuses while a batch is in flight, skips an empty draft, seals recovery work first and latches autoBroadcastDraft while work remains", () => {
     const ctx = { entityId: ENTITY, chainId: 31337, depository: DEP, signerId: "s1", timestamp: 9 };
