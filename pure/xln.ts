@@ -971,7 +971,7 @@ export const disputeFinalizedInput = (e: Extract<JEvent, { readonly type: "Dispu
 // ---- og jBatchState (core/jurisdiction/machine/batch/{index,reserve-simulation}.ts, entity/tx/handlers/j-batch/*, j-events-batch.ts) ----
 export type SentJBatch = {
   readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly firstSubmittedAt: number; readonly lastSubmittedAt: number; readonly submitAttempts: number;
-  readonly terminalFailure?: { readonly message: string; readonly failedAt: number } | undefined;
+  readonly terminalFailure?: { readonly message: string; readonly failedAt: number } | undefined; readonly feeOverrides?: { readonly gasBumpBps: number } | undefined;
 };
 /** og JBatchState: the editable draft, the one in-flight sent batch, recovered work that broadcasts first, and the last chain-observed entity nonce. */
 export type JBatchState = {
@@ -1158,7 +1158,7 @@ export const takeBroadcastBatch = (b: Batch): { readonly selected: Batch; readon
   return { selected: { ...emptyBatch(), ...base, disputeFinalizations: b.disputeFinalizations.slice(0, 1) }, remainder: { ...b, disputeStarts: [], counterDisputes: [], disputeFinalizations: b.disputeFinalizations.slice(1), revealSecrets: [] }, disputePriority: true };
 };
 /** og JTx `batch` (types/jurisdiction-runtime.ts) as j_broadcast emits it, before the quorum Hanko is attached. */
-export type JBatchTx = { readonly type: "batch"; readonly entityId: string; readonly data: { readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly batchGeneration: number; readonly batchSize: number; readonly signerId: string }; readonly timestamp: number };
+export type JBatchTx = { readonly type: "batch"; readonly entityId: string; readonly data: { readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly batchGeneration: number; readonly batchSize: number; readonly signerId: string; readonly feeOverrides?: { readonly gasBumpBps: number } | undefined }; readonly timestamp: number };
 /** og HashToSign of type "jBatch" (the Entity quorum signs the batch hash for Hanko). */
 export type JBatchHashToSign = { readonly hash: string; readonly type: "jBatch"; readonly context: string };
 export type Broadcast = { readonly jBatch: JBatchState; readonly jTx?: JBatchTx | undefined; readonly hashToSign?: JBatchHashToSign | undefined; readonly note?: string | undefined };
@@ -1198,6 +1198,58 @@ export const applyHankoBatchProcessed = (s: JBatchState | undefined, entity: str
   if (sent === undefined || nonce < sent.entityNonce) return ok({ jBatch: { ...cur, entityNonce: synced }, autoBroadcast: false });
   return ok({ autoBroadcast: false, jBatch: { ...cur, entityNonce: synced, status: "failed", sentBatch: { ...sent, terminalFailure: { message: `J_BATCH_NONCE_CONSUMED_BY_DIFFERENT_HASH:${hash}:pending=${sent.batchHash.toLowerCase()}:pendingNonce=${sent.entityNonce}:finalizedNonce=${nonce}`, failedAt: timestamp } } } });
 };
+/** og jRebroadcast normalizeGasBumpBps: floored and clamped to [0, 20000]; a non-finite bump is dropped. */
+const gasBump = (v: number | undefined): number | undefined => (v === undefined || !Number.isFinite(Number(v)) ? undefined : Math.min(20_000, Math.max(0, Math.floor(Number(v)))));
+/** og handleJRebroadcast: resend the sentBatch exactly as stored (re-sealed at its own nonce, next generation); an empty stale sentBatch is dropped. */
+export const jRebroadcast = (s: JBatchState | undefined, ctx: { readonly entityId: string; readonly chainId: number; readonly depository: string; readonly signerId: string; readonly timestamp: number; readonly gasBumpBps?: number | undefined }): Result<Broadcast, JBatchError> => {
+  const sent = s?.sentBatch;
+  if (s === undefined || sent === undefined) return ok({ jBatch: s ?? initJBatch(), note: "⚠️ j_rebroadcast skipped: no sentBatch" });
+  if (sent.terminalFailure !== undefined) return batchErr(`❌ Cannot rebroadcast quarantined jBatch nonce=${sent.entityNonce}: ${sent.terminalFailure.message}`);
+  if (ctx.signerId === "") return batchErr("❌ No signerId available for j_rebroadcast");
+  const bump = gasBump(ctx.gasBumpBps);
+  if (ctx.chainId === 0) return ok({ jBatch: s, note: "❌ Missing chainId for j_rebroadcast" });
+  if (!domainOf({ chainId: ctx.chainId, depositoryAddress: ctx.depository }).ok || /^0x0{40}$/.test(ctx.depository)) return ok({ jBatch: s, note: `❌ Jurisdiction unavailable for j_rebroadcast: depository ${ctx.depository}` });
+  const generation = s.broadcastCount + 1;
+  if (batchEmpty(sent.batch)) {
+    const { sentBatch: _s, ...rest } = s;
+    return ok({ jBatch: { ...rest, status: batchEmpty(s.batch) ? "empty" : "accumulating" }, note: `🧹 j_rebroadcast cleared empty stale sentBatch nonce=${sent.entityNonce}` });
+  }
+  const encodedBatch = encodeBatch(sent.batch), batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(sent.entityNonce) }), fee = bump === undefined ? {} : { feeOverrides: { gasBumpBps: bump } };
+  const jBatch: JBatchState = { ...s, sentBatch: { ...sent, batchHash, encodedBatch, ...fee }, lastBroadcast: ctx.timestamp, broadcastCount: generation, status: "sent" };
+  return ok({ jBatch, note: `📤 Rebroadcast intent queued nonce=${sent.entityNonce}${bump === undefined ? "" : ` bump=${bump}bps`}`,
+    jTx: { type: "batch", entityId: ctx.entityId, data: { batch: sent.batch, batchHash, encodedBatch, entityNonce: sent.entityNonce, batchGeneration: generation, batchSize: batchOpCount(sent.batch), signerId: ctx.signerId, ...fee }, timestamp: ctx.timestamp },
+    hashToSign: { hash: batchHash, type: "jBatch", context: `jBatch:${ctx.entityId.slice(-4)}:nonce:${sent.entityNonce}:rebroadcast` } });
+};
+/** Latches a j-batch recovery releases on the Entity's Accounts: R2C submitted markers (og setRebalanceSubmittedAt without a time) and dispute finalize latches. */
+export type JLatchRelease = { readonly submitted: readonly { readonly accountId: string; readonly tokenId: number }[]; readonly finalizers: readonly string[] };
+export type JRecovered = { readonly jBatch: JBatchState | undefined; readonly note: string; readonly release: JLatchRelease };
+const finalizersOf = (b: Batch): readonly string[] => b.disputeFinalizations.map((op) => op.counterentity.toLowerCase());
+/** og handleJAbortSentBatch: requeue (default) drops dispute finalizations and C2Rs at or below the Account's jNonce, then parks the rest as the first recovery batch; drop releases the R2C submitted markers. */
+export const jAbortSentBatch = (s: JBatchState | undefined, x: { readonly requeueToCurrent?: boolean | undefined; readonly reason?: string | undefined }, jNonceOf: (counterparty: string) => number): JRecovered => {
+  const sent = s?.sentBatch, none: JLatchRelease = { submitted: [], finalizers: [] };
+  if (s === undefined || sent === undefined) return { jBatch: s, note: "⚠️ No sentBatch to abort", release: none };
+  const requeue = x.requeueToCurrent !== false, reason = x.reason ? ` (${x.reason})` : "", size = batchOpCount(sent.batch), finalizers = [...new Set(finalizersOf(sent.batch))];
+  const kept: Batch = { ...sent.batch, disputeFinalizations: [], collateralToReserve: sent.batch.collateralToReserve.filter((op) => op.nonce > BigInt(jNonceOf(op.counterparty.toLowerCase()))) };
+  const { sentBatch: _s, recoveryBatches, ...rest } = s;
+  const queue = requeue && !batchEmpty(kept) ? [kept, ...(recoveryBatches ?? [])] : recoveryBatches;
+  const parked: JBatchState = { ...rest, ...(queue === undefined ? {} : { recoveryBatches: queue }) };
+  const submitted = requeue ? [] : sent.batch.reserveToCollateral.flatMap((op) => op.pairs.map((p) => ({ accountId: p.entity.toLowerCase(), tokenId: Number(op.tokenId) })));
+  return { jBatch: { ...parked, status: hasJBatchWork(parked) ? "accumulating" : "empty" }, note: `🛑 Aborted sentBatch nonce=${sent.entityNonce} ops=${size}${requeue ? " (requeued to current)" : " (dropped)"}${reason}`, release: { submitted, finalizers } };
+};
+/** og handleJClearBatch: drop the draft, the sentBatch and every recovery batch; release every Account's submitted markers and the dropped finalize latches. */
+export const jClearBatch = (s: JBatchState | undefined, x: { readonly reason?: string | undefined }, submittedTokens: ReadonlyMap<string, readonly number[]>): JRecovered => {
+  if (s === undefined) return { jBatch: s, note: "⚠️ No jBatchState to clear", release: { submitted: [], finalizers: [] } };
+  const recovery = s.recoveryBatches ?? [], current = batchOpCount(s.batch), recoveryOps = recovery.reduce((n, b) => n + batchOpCount(b), 0), sentOps = s.sentBatch === undefined ? 0 : batchOpCount(s.sentBatch.batch);
+  const finalizers = [...new Set([...finalizersOf(s.batch), ...(s.sentBatch === undefined ? [] : finalizersOf(s.sentBatch.batch)), ...recovery.flatMap(finalizersOf)])];
+  const submitted = [...submittedTokens].flatMap(([accountId, tokens]) => [...tokens].sort((a, b) => a - b).map((tokenId) => ({ accountId, tokenId })));
+  const { sentBatch: _s, recoveryBatches: _r, ...rest } = s;
+  const note = `🗑️ Cleared jBatch current=${current}${s.sentBatch === undefined ? "" : ` [sentBatch=${sentOps} ops]`}${recoveryOps > 0 ? ` [recoveryBatch=${recoveryOps} ops]` : ""}${x.reason ? ` (${x.reason})` : ""}${submitted.length > 0 ? `; reset ${submitted.length} submitted rebalance marker(s)` : ""}`;
+  return { jBatch: { ...rest, batch: emptyBatch(), status: "empty" }, note, release: { submitted, finalizers } };
+};
+/** og JTx `mint` (handleMintReserves): a direct admin mint, outside the batch. */
+export type JMintTx = { readonly type: "mint"; readonly entityId: string; readonly data: { readonly entityId: string; readonly tokenId: number; readonly amount: bigint }; readonly timestamp: number };
+export const mintReservesTx = (entityId: string, tokenId: number, amount: bigint, timestamp: number): { readonly jTx: JMintTx; readonly note: string } =>
+  ({ jTx: { type: "mint", entityId, data: { entityId, tokenId, amount }, timestamp }, note: `💰 Minting ${amount} of token ${tokenId}` });
 
 type Word = string;
 /** og computeAccountKey (contract-codec.ts:6): two bytes32 words, ordered and packed lowercase. */
@@ -6933,6 +6985,11 @@ export type JOp =
   | { readonly type: "et2r"; readonly tokenAddress: string; readonly amount: bigint; readonly internalTokenId: TokenId }
   | { readonly type: "r2et"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
   | { readonly type: "j_broadcast"; readonly chainId: number; readonly depository: string; readonly signerId: string }
+  /** og j_rebroadcast / j_abort_sent_batch / j_clear_batch / mintReserves (entity/tx/handlers/j-batch): the J submit lifecycle. */
+  | { readonly type: "j_rebroadcast"; readonly chainId: number; readonly depository: string; readonly signerId: string; readonly gasBumpBps?: number | undefined }
+  | { readonly type: "j_abort_sent_batch"; readonly reason?: string | undefined; readonly requeueToCurrent?: boolean | undefined }
+  | { readonly type: "j_clear_batch"; readonly reason?: string | undefined }
+  | { readonly type: "mintReserves"; readonly tokenId: number; readonly amount: bigint }
   | { readonly type: "j_event"; readonly blockNumber: number; readonly event: JEvent };
 /** og EntityState reserves / outDebtsByToken / inDebtsByToken / jBatchState: reserves change only through finalized J events. */
 export type JState = { readonly reserves: ReadonlyMap<number, bigint>; readonly debts: DebtLedger; readonly jBatch?: JBatchState | undefined };
@@ -6944,7 +7001,9 @@ export type EntityRouteTx =
   | { readonly type: "registerCrossJurisdictionSwap" };
 export type HostInput = { readonly kind: "dispute" };
 export type HostCtx = { readonly timestamp: bigint; readonly jHeight: bigint; readonly from?: EntityId | undefined };
-export type HostEffect = Effect | Tagged<"start_dispute", { start: DisputeStart }> | Tagged<"send", { message: AccountPeerInput }>;
+/** `j_submit`: og jOutputs `{jurisdictionName, jTxs:[jTx]}` plus the jBatch hash the Entity quorum signs; `j_broadcast_request`: og finalizePendingBatch's self input `{entityTxs:[{type:"j_broadcast"}]}`. */
+export type HostEffect = Effect | Tagged<"start_dispute", { start: DisputeStart }> | Tagged<"send", { message: AccountPeerInput }>
+  | Tagged<"j_submit", { jTx: JBatchTx | JMintTx; hashToSign?: JBatchHashToSign | undefined }> | Tagged<"j_broadcast_request", { entityId: string }>;
 export type OutboxEntry = { readonly id: Hash; readonly effect: HostEffect };
 export type HostTx =
   | { readonly layer: "account"; readonly tx: WireAccountTx } | { readonly layer: "frame"; readonly input: AccountInput } | { readonly layer: "j"; readonly tx: JOp }
@@ -6956,19 +7015,33 @@ export type HostStep = Step<Host, HostEffect>;
 export const genesisHost = (self: EntityId, account: AccountReplica): Result<Host, AccountReplicaError> =>
   map(partyOf(replicaId(account), self), () => ({ self, account, j: { reserves: new Map(), debts: EMPTY_DEBTS }, ladder: new Map(), height: 0n, frameHash: ZERO_HASH as RuntimeFrameHash, outbox: [] }));
 const jEntityOf = (j: JState, self: EntityId, peer: string): JEntity => ({ entityId: self, reserves: j.reserves, debts: j.debts, jBatch: j.jBatch, accounts: new Set([peer]) });
-/** og handleR2R / handleR2C / handleR2E / handleE2R / handleJBroadcast and the Entity's reserve, debt and HankoBatchProcessed J-event handlers, for the Host's one Account. */
-export const applyJ = (j: JState, op: JOp, self: EntityId, peer: string, ctx: HostCtx): Result<JState, HostError> => {
-  const e = jEntityOf(j, self, peer), queued = (r: Result<JBatchState, JBatchError>): Result<JState, HostError> => map(r, (jBatch) => ({ ...j, jBatch }));
+/** `release`: the Account latches a J recovery tx frees (og applyEntityAccountEnvelopeUpdate setRebalanceSubmittedAt / replaceDisputeLifecycle). */
+export type JApplied = { readonly j: JState; readonly effects: readonly HostEffect[]; readonly release?: JLatchRelease | undefined };
+/** og handleR2R / handleR2C / handleR2E / handleE2R / handleJBroadcast / handleJRebroadcast / handleJAbortSentBatch / handleJClearBatch / handleMintReserves and the Entity's reserve, debt and HankoBatchProcessed J-event handlers, for the Host's one Account. */
+export const applyJ = (j: JState, op: JOp, self: EntityId, peer: string, ctx: HostCtx, account?: AccountBody): Result<JApplied, HostError> => {
+  const e = jEntityOf(j, self, peer), just = (next: JState): JApplied => ({ j: next, effects: [] }), queued = (r: Result<JBatchState, JBatchError>): Result<JApplied, HostError> => map(r, (jBatch) => just({ ...j, jBatch }));
+  const submit = (b: Broadcast): JApplied => ({ j: { ...j, jBatch: b.jBatch }, effects: b.jTx === undefined ? [] : [{ _tag: "j_submit", jTx: b.jTx, ...opt("hashToSign", b.hashToSign) }] });
+  const recovered = (r: JRecovered): JApplied => ({ j: { ...j, jBatch: r.jBatch }, effects: [], release: r.release });
+  const jNonceOf = (counterparty: string): number => (account !== undefined && counterparty === peer.toLowerCase() ? account.jNonce : 0);
   return matchBy("type", op, {
     r2r: (x) => queued(queueR2R(e, x.toEntity, Number(x.tokenId), x.amount)),
-    r2c: (x) => map(queueR2C(e, x.counterparty, Number(x.tokenId), x.amount, x.receivingEntity), (q) => (q.note === undefined ? { ...j, jBatch: q.jBatch } : j)),
+    r2c: (x) => map(queueR2C(e, x.counterparty, Number(x.tokenId), x.amount, x.receivingEntity), (q) => just(q.note === undefined ? { ...j, jBatch: q.jBatch } : j)),
     r2et: (x) => queued(queueR2E(e, x.recipient, Number(x.tokenId), x.amount)),
     et2r: (x) => queued(queueE2R(e, { contractAddress: x.tokenAddress, amount: x.amount, internalTokenId: Number(x.internalTokenId) })),
-    j_broadcast: (x) => map(jBroadcast(j.jBatch, { entityId: self, chainId: x.chainId, depository: x.depository, signerId: x.signerId, timestamp: Number(ctx.timestamp) }), (b) => ({ ...j, jBatch: b.jBatch })),
+    j_broadcast: (x) => map(jBroadcast(j.jBatch, { entityId: self, chainId: x.chainId, depository: x.depository, signerId: x.signerId, timestamp: Number(ctx.timestamp) }), submit),
+    j_rebroadcast: (x) => map(jRebroadcast(j.jBatch, { entityId: self, chainId: x.chainId, depository: x.depository, signerId: x.signerId, timestamp: Number(ctx.timestamp), gasBumpBps: x.gasBumpBps }), submit),
+    j_abort_sent_batch: (x) => ok(recovered(jAbortSentBatch(j.jBatch, x, jNonceOf))),
+    j_clear_batch: (x) => ok(recovered(jClearBatch(j.jBatch, x, account === undefined ? new Map() : new Map([[peer.toLowerCase(), [...(account.submittedAt ?? new Map<number, number>()).keys()]]])))),
+    mintReserves: (x) => ok({ j, effects: [{ _tag: "j_submit", jTx: mintReservesTx(self, x.tokenId, x.amount, Number(ctx.timestamp)).jTx }] }),
     j_event: (x) => x.event.type === "HankoBatchProcessed"
-      ? map(applyHankoBatchProcessed(j.jBatch, self, x.event, Number(ctx.timestamp)), (b) => ({ ...j, jBatch: b.jBatch }))
-      : map(observeJBlocks({ entityId: self, reserves: j.reserves, debts: j.debts, accounts: new Map() }, [{ blockNumber: x.blockNumber, events: [x.event] }]), (o) => ({ ...j, reserves: o.observer.reserves, debts: o.observer.debts })),
+      ? map(applyHankoBatchProcessed(j.jBatch, self, x.event, Number(ctx.timestamp)), (b): JApplied => ({ j: { ...j, jBatch: b.jBatch }, effects: b.autoBroadcast ? [{ _tag: "j_broadcast_request", entityId: self }] : [] }))
+      : map(observeJBlocks({ entityId: self, reserves: j.reserves, debts: j.debts, accounts: new Map() }, [{ blockNumber: x.blockNumber, events: [x.event] }]), (o) => just({ ...j, reserves: o.observer.reserves, debts: o.observer.debts })),
   });
+};
+/** og releaseR2CSubmittedLatches / clear's submitted-marker reset on the Host's one Account (finalize latches: the rewrite never sets finalizeQueued). */
+const releaseLatches = (account: AccountReplica, peer: string, release: JLatchRelease | undefined): AccountReplica => {
+  const mine = (release?.submitted ?? []).filter((r) => r.accountId === peer.toLowerCase());
+  return mine.length === 0 ? account : ({ ...account, state: mine.reduce((b, r) => setRebalanceSubmittedAt(b, r.tokenId, undefined), account.state) } as AccountReplica);
 };
 const ladderKey = (tx: LadderTx): string => `${tx.revealer}|${tx.counter}|${tx.ladderHash}|${tx.targetRole ? "t" : "s"}`;
 const admitTx = (host: Host, tx: WireAccountTx, ctx: HostCtx, verify: Verify): Result<HostStep, AccountReplicaError> => map(admitAt(host.account, [tx], host.self, { timestamp: ctx.timestamp, jHeight: ctx.jHeight }, verify), (account) => step({ ...host, account }));
@@ -7009,10 +7082,10 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
     const delivery: Delivery = ctx.from === undefined ? { _tag: "local" } : { _tag: "received", from: ctx.from }, door: DoorContext = { verify, self: host.self, now: ctx.timestamp };
     return accountStep(host, disputeUnsafe(host.account, applyDelivered(host.account, i.input, delivery, door), door));
   },
-  j: (i) => chain(partyOf(replicaId(host.account), host.self), (party) => chain(applyJ(host.j, i.tx, host.self, party.peer, ctx), (j) => {
-    const moved: Host = { ...host, j };
-    return chain(disputeFinalityOf(host, i.tx, party.peer), (finality): Result<HostStep, AccountReplicaError | HostError> => (finality === undefined ? ok(step(moved))
-      : accountStep(moved, applyAccountInput(host.account, { kind: "external_finality", ...envelopeOf(host.account.state.terms, party), finality }, { verify, self: host.self, now: ctx.timestamp }))));
+  j: (i) => chain(partyOf(replicaId(host.account), host.self), (party) => chain(applyJ(host.j, i.tx, host.self, party.peer, ctx, host.account.state), ({ j, effects, release }) => {
+    const moved: Host = { ...host, j, account: releaseLatches(host.account, party.peer, release) };
+    return chain(disputeFinalityOf(host, i.tx, party.peer), (finality): Result<HostStep, AccountReplicaError | HostError> => (finality === undefined ? ok(step(moved, effects))
+      : map(accountStep(moved, applyAccountInput(host.account, { kind: "external_finality", ...envelopeOf(host.account.state.terms, party), finality }, { verify, self: host.self, now: ctx.timestamp })), (s) => step(s.state, [...effects, ...s.effects]))));
   })),
   ladder: (i) => { const key = ladderKey(i.tx); return map(revealSlot(host.ladder.get(key), i.tx), (slot) => step({ ...host, ladder: mapSet(host.ladder, key, slot) })); },
   entity: (i) => chain(routeEntity(i.tx, host.self, replicaId(host.account)), (routed) => admitTx(host, routed, ctx, verify)),
