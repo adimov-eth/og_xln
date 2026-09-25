@@ -1918,7 +1918,7 @@ export interface OpenEntity extends Tagged<"open", EntityEnv> {}
 export interface ProposedEntity extends Tagged<"proposed", EntityEnv & { frame: EntityFrame; signatures: ReadonlyMap<Address, Signature>; draft: Draft }> {}
 export type EntityReplica = OpenEntity | ProposedEntity;
 export type EntityContext = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly self: EntityId; readonly signerId: Address; readonly from?: EntityId | undefined };
-export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }>;
+export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large">;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
   | Tagged<"account_exists" | "no_such_account" | "create_ack_required" | "account_envelope", { target: EntityId }>
@@ -1961,7 +1961,9 @@ export type BinaryError = Tagged<"binary">;
 const packedHex = (value: string): HexPack | string =>
   value.length >= 34 && value.startsWith("0x") && value.length % 2 === 0 && /^0x[0-9a-f]+$/.test(value) ? new HexPack(value) : value;
 const walkBinary = (value: Binary): Result<Binary | HexPack, BinaryError> => {
-  if (value === null || typeof value === "boolean" || typeof value === "bigint" || typeof value === "number") return ok(value);
+  if (value === null || typeof value === "boolean" || typeof value === "bigint") return ok(value);
+  // og binary-codec.ts canonicalize: no non-finite, unsafe-integer or negative-zero numbers.
+  if (typeof value === "number") return !Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)) || Object.is(value, -0) ? err({ _tag: "binary" }) : ok(value);
   if (typeof value === "string") return ok(packedHex(value));
   if (Array.isArray(value)) {
     const items: (Binary | HexPack)[] = [];
@@ -2065,7 +2067,7 @@ const accountInputCommitment = (value: Binary): Result<{ readonly domain: string
 };
 const entityTxForHash = (tx: EntityFrameTx): Result<{ readonly type: string; readonly data: unknown }, BinaryError> =>
   tx.type === "accountInput" ? map(accountInputCommitment(tx.data), (data) => ({ type: tx.type, data })) : ok(tx);
-const entityTxDigest = (txs: readonly EntityFrameTx[]): Result<string, BinaryError> => {
+const entityTxDigest = (txs: readonly EntityFrameTx[]): Result<{ readonly digest: string; readonly bytes: number }, BinaryError> => {
   const encoded: Uint8Array[] = [];
   for (const tx of txs) {
     const hashed = entityTxForHash(tx);
@@ -2080,7 +2082,7 @@ const entityTxDigest = (txs: readonly EntityFrameTx[]): Result<string, BinaryErr
   const view = new DataView(preimage.buffer);
   let offset = domain.byteLength;
   for (const bytes of encoded) { view.setUint32(offset, bytes.byteLength); preimage.set(bytes, offset + 4); offset += 4 + bytes.byteLength; }
-  return ok(integrity(preimage));
+  return ok({ digest: integrity(preimage), bytes: offset - domain.byteLength });
 };
 export type EntityInfraContext = {
   readonly version: number; readonly proposerReplicaId: string; readonly entityId: string; readonly proposerSignerId: string;
@@ -2095,18 +2097,26 @@ export type EntityFrameHashInput = {
   readonly entityId: string; readonly stateRoot: string; readonly authorityRoot: string; readonly entityContext: EntityInfraContext;
   readonly jPrefixCertificate?: Binary | null;
 };
-export const entityFrameHash = (input: EntityFrameHashInput): Result<string, BinaryError> => {
+/** og LIMITS.MAX_FRAME_SIZE_BYTES: the event budget and the whole frame (header + context + length-prefixed txs). */
+const MAX_FRAME_SIZE_BYTES = 100_000_000;
+/** og createEntityFrameHashFromStateRoot (frame.ts:393): event budget, canonical lowercase roots, then the total wire budget. */
+export const entityFrameHash = (input: EntityFrameHashInput): Result<string, EntityFrameHashError> => {
+  const events = input.events.length === 0 ? ok(new Uint8Array()) : encodeBinary(input.events);
+  if (!events.ok) return events;
+  if (events.value.byteLength > MAX_FRAME_SIZE_BYTES) return err({ _tag: "frame_too_large" });
+  for (const root of [input.stateRoot, input.authorityRoot]) if (!/^0x[0-9a-f]{64}$/.test(root)) return err({ _tag: "frame_root", value: root });
   const txs = entityTxDigest(input.txs);
   if (!txs.ok) return txs;
   const context = encodeBinary(input.entityContext);
   if (!context.ok) return context;
   const header = encodeBinary({
     domain: "xln:entity-frame:binary-context-digest",
-    prevFrameHash: input.prevFrameHash, height: input.height, timestamp: input.timestamp, txCount: input.txs.length, txsDigest: txs.value,
+    prevFrameHash: input.prevFrameHash, height: input.height, timestamp: input.timestamp, txCount: input.txs.length, txsDigest: txs.value.digest,
     events: input.events, entityId: input.entityId, stateRoot: input.stateRoot.toLowerCase(), authorityRoot: input.authorityRoot.toLowerCase(),
     entityContextDigest: integrity(context.value), jPrefixCertificate: input.jPrefixCertificate ?? null,
   });
-  return header.ok ? ok(bytesToHex(keccak_256(header.value))) : header;
+  if (!header.ok) return header;
+  return header.value.byteLength + context.value.byteLength + txs.value.bytes > MAX_FRAME_SIZE_BYTES ? err({ _tag: "frame_too_large" }) : ok(bytesToHex(keccak_256(header.value)));
 };
 
 const frameWord = (value: string): string => value.startsWith("0x") ? value.toLowerCase() : `0x${value.toLowerCase()}`;

@@ -629,20 +629,28 @@ describe("entity frame hash", () => {
       expect(unwrap(entityFrameHash(input as any))).toBe(createEntityFrameHashFromStateRoot(input.prevFrameHash, input.height, input.timestamp, txs as any, events as any, input.entityId, input.stateRoot, input.authorityRoot, ctx as any));
     }
   });
-  test("DIVERGES: non-canonical numbers (-0, unsafe integer) in events: og binary codec throws XLN_BINARY_CODEC_UNSUPPORTED, rewrite hashes them", () => {
-    for (const bad of [-0, 2 ** 53]) {
-      const ctx = ENTITY_CONTEXT();
-      const input = { prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [], events: [{ n: bad }], entityId: W("aa"), stateRoot: W("31"), authorityRoot: W("32"), entityContext: ctx };
-      expect(() => createEntityFrameHashFromStateRoot(input.prevFrameHash, 1, 1, [], input.events as any, input.entityId, input.stateRoot, input.authorityRoot, ctx as any)).toThrow();
-      expect(entityFrameHash(input as any).ok).toBe(true);
+  test("MATCH: non-canonical numbers (-0, unsafe integers, NaN, Infinity) anywhere in events, txs or context are refused by both (og XLN_BINARY_CODEC_UNSUPPORTED)", () => {
+    const og = (input: any) => { try { return createEntityFrameHashFromStateRoot(input.prevFrameHash, input.height, input.timestamp, input.txs, input.events, input.entityId, input.stateRoot, input.authorityRoot, input.entityContext); } catch { return "REJECT"; } };
+    const rw = (input: any) => { const r = entityFrameHash(input); return r.ok ? r.value : "REJECT"; };
+    for (const bad of [-0, 2 ** 53, -(2 ** 53), 1e21, NaN, Infinity, -Infinity]) {
+      const base = { prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [] as any[], events: [] as any[], entityId: W("aa"), stateRoot: W("31"), authorityRoot: W("32"), entityContext: ENTITY_CONTEXT() };
+      for (const input of [{ ...base, events: [{ n: bad }] }, { ...base, txs: [{ type: "directPayment", data: { v: [bad] } }] }, { ...base, txs: [{ type: "accountInput", data: { x: bad } }] }, { ...base, entityContext: { ...base.entityContext, height: bad } }]) {
+        expect(og(input)).toBe("REJECT");
+        expect(rw(input)).toBe("REJECT");
+      }
+    }
+    for (const fine of [0, -1, 1.5, 2 ** 53 - 1, -(2 ** 53) + 1, 1e-7]) {
+      const input = { prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [], events: [{ n: fine }], entityId: W("aa"), stateRoot: W("31"), authorityRoot: W("32"), entityContext: ENTITY_CONTEXT() };
+      expect(rw(input)).toBe(og(input));
     }
   });
-  test("DIVERGES: malformed or UPPERCASE stateRoot/authorityRoot: og throws ENTITY_FRAME_STATE_ROOT_INVALID, rewrite lowercases and hashes", () => {
+  test("MATCH: malformed or UPPERCASE stateRoot/authorityRoot are refused by both (og ENTITY_FRAME_STATE_ROOT_INVALID / AUTHORITY_ROOT_INVALID)", () => {
     const ctx = ENTITY_CONTEXT();
-    expect(() => createEntityFrameHashFromStateRoot(W("22"), 1, 1, [], [], W("aa"), W("AB"), W("32"), ctx as any)).toThrow("ENTITY_FRAME_STATE_ROOT_INVALID");
-    expect(entityFrameHash({ prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [], events: [], entityId: W("aa"), stateRoot: W("AB"), authorityRoot: W("32"), entityContext: ctx } as any).ok).toBe(true);
-    expect(() => createEntityFrameHashFromStateRoot(W("22"), 1, 1, [], [], W("aa"), "0x1234", W("32"), ctx as any)).toThrow();
-    expect(entityFrameHash({ prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [], events: [], entityId: W("aa"), stateRoot: "0x1234", authorityRoot: W("32"), entityContext: ctx } as any).ok).toBe(true);
+    for (const [stateRoot, authorityRoot] of [[W("AB"), W("32")], [W("31"), W("Cd")], ["0x1234", W("32")], [W("31"), "31".repeat(32)], [`0X${"31".repeat(32)}`, W("32")], [W("31"), W("32")]]) {
+      let og: string; try { og = createEntityFrameHashFromStateRoot(W("22"), 1, 1, [], [], W("aa"), stateRoot!, authorityRoot!, ctx as any); } catch { og = "REJECT"; }
+      const r = entityFrameHash({ prevFrameHash: W("22"), height: 1, timestamp: 1, txs: [], events: [], entityId: W("aa"), stateRoot: stateRoot!, authorityRoot: authorityRoot!, entityContext: ctx } as any);
+      expect(r.ok ? r.value : "REJECT").toBe(og);
+    }
   });
 });
 
