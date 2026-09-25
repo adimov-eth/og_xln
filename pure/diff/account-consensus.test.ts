@@ -25,7 +25,7 @@ import type { AccountFrame as OgFrame, AccountInput as OgInput, AccountReplica a
 
 // ---- rewrite ----
 import {
-  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, disputeRequirement, disputeShapes, frameStateHash, localProof, proposalPlan, receiverClock, replicaId, unqueued,
+  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, accountDisputeHash, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, disputeRequirement, disputeShapes, frameStateHash, localProof, proposalPlan, receiverClock, replicaId, unqueued,
 } from "../xln.ts";
 import type { AccountFrame, AccountInput, AccountReplica, EntityId, WireAccountTx } from "../xln.ts";
 import { ALICE, BOB, CLOCK, NOW, causeOf, ackInput, disputeFor, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap, unwrapErr } from "../xln_run.ts";
@@ -237,6 +237,41 @@ describe("account-consensus: driven scenarios", () => {
     expect([proposed.candidate.frame.txs.length, proposed.mempool.length]).toEqual([2, 0]);
     const idle = step(unwrap(admit(genesisAB(), [overdraw])), { kind: "propose", ...CLOCK }, ALICE).replica;
     expect([idle._tag, idle.mempool.length]).toEqual(["open", 0]);
+  });
+
+  test("MATCH: standalone peer 'dispute' witness — unexpected without a local draft, nonce ladder against the stored witness, stored on accept", async () => {
+    // og
+    const ogVerdict = async (setup: (a: OgReplica, body: string) => void, nonce: number) => {
+      const ctx = ogCtx("diff-peer-dispute");
+      const a = ogAccount(L, R);
+      const w = ogPeerDispute(ctx, a, false, nonce);
+      setup(a, w.proofBodyHash);
+      const res = await ogApply(ctx, a, { kind: "dispute", ...ogEnvelope(a), disputeHanko: w } as unknown as OgInput);
+      return { ok: res.ok, stored: a.counterpartyDisputeProofNonce };
+    };
+    // rewrite: ALICE after one committed round holds her own draft and BOB's witness
+    const { p } = round(genesisAB(), genesisAB(), ALICE, BOB, [TX]);
+    const view = unwrap(committedView(p.state)), bodyHash = unwrap(localProof(view)).bodyHash;
+    const prev = p.dispute.counterparty;
+    if (prev === undefined || p.dispute.current === undefined) throw new Error("setup");
+    const witness = (r: AccountReplica, nonce: number) => {
+      const v = unwrap(committedView(r.state)), b = unwrap(localProof(v)).bodyHash, flag = prev.proposerIsLeft;
+      return disputeFor({ _tag: "sign", draft: { hash: unwrap(accountDisputeHash(v, b, nonce, flag)), proofBodyHash: b, proofNonce: nonce, proposerIsLeft: flag } }, BOB)!;
+    };
+    const peerDispute = (r: AccountReplica, nonce: number) => ({ kind: "dispute", ...envelopeAB(BOB), disputeHanko: witness(r, nonce) }) as AccountInput;
+    // no local draft -> unexpected (og: DISPUTE_HANKO_UNEXPECTED_WITHOUT_LOCAL_PROOF)
+    expect((await ogVerdict(() => {}, 1)).ok).toBe(false);
+    expect(unwrapErr(applyAccountInput(genesisAB(), peerDispute(genesisAB(), 1), DOOR(ALICE)))).toEqual({ _tag: "dispute_hanko", reason: "unexpected" });
+    // ladder against the stored witness
+    for (const nonce of [0, prev.proofNonce - 1, prev.proofNonce, prev.proofNonce + 1, prev.proofNonce + 5].filter((n) => n >= 0)) {
+      const og = await ogVerdict((a, body) => { a.currentDisputeProofBodyHash = body; a.counterpartyDisputeProofBodyHash = body; a.counterpartyDisputeProofNonce = prev.proofNonce; }, nonce);
+      const pure = applyAccountInput(p, peerDispute(p, nonce), DOOR(ALICE));
+      expect(pure.ok).toBe(og.ok);
+      if (pure.ok) expect(pure.value.replica.dispute.counterparty?.proofNonce).toBe(og.stored);
+    }
+    // the sender must be the peer
+    expect(unwrapErr(applyAccountInput(p, { ...peerDispute(p, prev.proofNonce + 1), ...envelopeAB(ALICE) } as AccountInput, DOOR(ALICE)))._tag).toBe("unknown_signer");
+    expect(bodyHash).toBe(prev.proofBodyHash);
   });
 
   test("MATCH: the mempool limit counts pending-frame txs (og mempool.ts outstanding = mempool + pendingFrame)", () => {

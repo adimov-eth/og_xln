@@ -78,7 +78,8 @@ export const AccountTransition = {
   propose: { open: ["open", "proposed"] },
   ack: { open: ["open"], proposed: ["open", "proposed"], received: ["open", "received"], preparing: ["preparing"], disputed: ["disputed"] },
   ack_frame: { open: ["open", "received"], proposed: ["open", "proposed", "received"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
-  dispute: { open: ["preparing", "disputed"], proposed: ["preparing", "disputed"], received: ["preparing", "disputed"], preparing: ["preparing", "disputed"], disputed: ["disputed"] },
+  freeze: { open: ["preparing", "disputed"], proposed: ["preparing", "disputed"], received: ["preparing", "disputed"], preparing: ["preparing", "disputed"], disputed: ["disputed"] },
+  dispute: { open: ["open"], proposed: ["proposed"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
 } as const;
 export const EntityTransition = { txs: { open: ["proposed"] }, precommit: { proposed: ["open", "proposed"] } } as const;
 
@@ -1591,10 +1592,14 @@ export const certifiedBy = (c: HeadCertificate, party: Party): { readonly own: H
 export type FrameEvidence = { readonly cause: AccountReplicaError; readonly frame: AccountFrame; readonly frameHanko: Hanko };
 export type AccountInput =
   | ({ readonly kind: "propose"; readonly frameHanko?: Hanko | undefined; readonly disputeHanko?: DisputeHanko | undefined } & FrameClock)
-  | { readonly kind: "dispute"; readonly evidence?: FrameEvidence | undefined }
+  | { readonly kind: "freeze"; readonly evidence?: FrameEvidence | undefined }
   | ({ readonly kind: "ack" } & AccountAck & AccountEnvelope)
-  | ({ readonly kind: "ack_frame"; readonly ack: AccountAck | null; readonly frame: AccountFrame; readonly frameHanko: Hanko; readonly disputeHanko?: DisputeHanko | undefined } & AccountEnvelope);
+  | ({ readonly kind: "ack_frame"; readonly ack: AccountAck | null; readonly frame: AccountFrame; readonly frameHanko: Hanko; readonly disputeHanko?: DisputeHanko | undefined } & AccountEnvelope)
+  /** og `kind: 'dispute'`: a standalone peer dispute-Hanko witness, sequenced by its proof nonce rather than a frame height. */
+  | ({ readonly kind: "dispute"; readonly disputeHanko: DisputeHanko } & AccountEnvelope);
 export type AccountMessage = Extract<AccountInput, { readonly kind: "ack" | "ack_frame" }>;
+/** Every peer-originated input (og routes `dispute` through the same Entity accountInput lane). */
+export type AccountPeerInput = Extract<AccountInput, { readonly kind: "ack" | "ack_frame" | "dispute" }>;
 export type AccountOutput = AccountMessage | { readonly kind: "effect"; readonly effect: Effect } | { readonly kind: "start_dispute"; readonly start: DisputeStart };
 export type AccountPhase = "open" | "proposed" | "received" | "preparing" | "disputed";
 export type AccountEvent = AccountInput["kind"];
@@ -1619,7 +1624,7 @@ export type AccountContext = { readonly verify: Verify; readonly party: Party };
 export type AckContext = AccountContext & { readonly delivery: Delivery };
 export type ReceivedContext = AccountContext & { readonly from: EntityId };
 export type InboundAccountContext = ReceivedContext & { readonly now: bigint };
-export type CtxFor<I extends AccountInput> = I extends { kind: "ack_frame" } ? InboundAccountContext : I extends { kind: "ack" } ? AckContext : AccountContext;
+export type CtxFor<I extends AccountInput> = I extends { kind: "ack_frame" } ? InboundAccountContext : I extends { kind: "ack" } ? AckContext : I extends { kind: "dispute" } ? ReceivedContext : AccountContext;
 export type AccountInputFor<E extends AccountEvent> = Extract<AccountInput, { readonly kind: E }>;
 export type AccountGrammar = { readonly table: typeof AccountTransition; readonly replica: AccountReplica; readonly input: AccountInput; readonly ctx: { readonly [E in AccountEvent]: CtxFor<AccountInputFor<E>> }; readonly output: AccountOutput; readonly error: AccountReplicaError };
 export type NextAccountPhase<S extends AccountPhase, E extends AccountEvent> = Next<AccountGrammar, S, E>;
@@ -1695,7 +1700,8 @@ export const previewAck = (r: AccountReplica, self: EntityId): Result<AckPreview
 type Propose = AccountInputFor<"propose">;
 type Ack = AccountInputFor<"ack">;
 type AckFrame = AccountInputFor<"ack_frame">;
-type Dispute = AccountInputFor<"dispute">;
+type Freeze = AccountInputFor<"freeze">;
+type PeerDispute = AccountInputFor<"dispute">;
 type Verb<R extends AccountReplica> = Result<AccountApply<R>, AccountReplicaError>;
 const reopen = (r: AccountReplica, next: { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute?: DisputeWitnesses | undefined }): OpenAccount =>
   ({ _tag: "open", state: next.state, head: next.head, mempool: next.mempool, acknowledged: next.acknowledged ?? r.acknowledged, dispute: next.dispute ?? r.dispute });
@@ -1873,9 +1879,18 @@ const freeze = (r: AccountReplica, evidence: FrameEvidence | undefined, ctx: Acc
   if (!start.ok) return ok(done<PreparingAccount, AccountOutput>({ _tag: "preparing", ...frozen, unready: start.error }));
   return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", ...frozen, start: start.value }, [{ kind: "start_dispute", start: start.value }]));
 };
-export const disputeLive = (r: OpenAccount | ProposedAccount | ReceivedAccount, input: Dispute, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => freeze(r, input.evidence, ctx);
-export const disputePreparing = (r: PreparingAccount, _input: Dispute, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => freeze(r, r.evidence, ctx);
+export const disputeLive = (r: OpenAccount | ProposedAccount | ReceivedAccount, input: Freeze, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => freeze(r, input.evidence, ctx);
+export const disputePreparing = (r: PreparingAccount, _input: Freeze, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => freeze(r, r.evidence, ctx);
 export const disputeDisputed = (r: DisputedAccount): Verb<DisputedAccount> => ok(done(r));
+/** og index.ts handleStandaloneDispute: shape, validate against the committed state, then the requirement ladder against our own current draft (og `currentDisputeProofBodyHash`), then store. */
+export const peerWitness = <R extends LiveAccount>(r: R, input: PeerDispute, ctx: ReceivedContext): Verb<R> => {
+  if (ctx.from !== ctx.party.peer) return err({ _tag: "unknown_signer", entity: ctx.from });
+  const { current, counterparty } = r.dispute;
+  return chain(disputeShapes([input.disputeHanko]), () => chain(validateCounterparty(r.state, input.disputeHanko, ctx.from, ctx.verify), (validated) => chain(asProof(committedView(r.state)), (view): Verb<R> => {
+    const reason = disputeRequirement(current?.proofBodyHash, counterparty?.proofBodyHash, counterparty?.proofNonce, view.jNonce, validated);
+    return reason !== undefined ? err(refuseDispute(reason)) : ok(done<R, AccountOutput>({ ...r, dispute: storeCounterparty(r.dispute, validated) }));
+  })));
+};
 const checkAckFrame = (input: AckFrame, ctx: InboundAccountContext): Result<void, AccountReplicaError> =>
   ctx.from !== ctx.party.peer ? err({ _tag: "unknown_signer", entity: ctx.from }) : disputeShapes([input.disputeHanko, input.ack?.disputeHanko]);
 const carriedWithoutFrame = (r: OpenAccount | ReceivedAccount, input: AckFrame, ctx: InboundAccountContext): Result<void, AccountReplicaError> =>
@@ -1911,7 +1926,8 @@ const accountVerb = grammar<AccountGrammar>(AccountTransition);
 export const propose = accountVerb("propose", { open: proposeOpen, proposed: { _tag: "already_proposed" }, received: { _tag: "already_proposed" }, preparing: frozenError("preparing"), disputed: frozenError("disputed") });
 export const ack = accountVerb("ack", { open: ackOpen, proposed: ackProposed, received: ackReceived, preparing: dropFrozen, disputed: dropFrozen });
 export const ackFrame = accountVerb("ack_frame", { open: ackFrameOpen, proposed: ackFrameProposed, received: ackFrameReceived, preparing: dropFrozen, disputed: dropFrozen });
-export const dispute = accountVerb("dispute", { open: disputeLive, proposed: disputeLive, received: disputeLive, preparing: disputePreparing, disputed: disputeDisputed });
+export const freezeAccount = accountVerb("freeze", { open: disputeLive, proposed: disputeLive, received: disputeLive, preparing: disputePreparing, disputed: disputeDisputed });
+export const dispute = accountVerb("dispute", { open: peerWitness, proposed: peerWitness, received: peerWitness, preparing: dropFrozen, disputed: dropFrozen });
 
 
 export const admissionFold = (mempool: readonly WireAccountTx[], added: number, s: AccountBody, self: EntityId, at: FoldAt): Result<void, AccountReplicaError> => chain(partyOf(s.account.id, self), (party) => {
@@ -1943,14 +1959,16 @@ export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: 
   chain(enqueue(r, txs), ({ replica, queued }) => { const base = nextBase(replica); return map(admissionFold(replica.mempool, queued.length, base.state, self, { height: base.height + 1n, ...clock }), () => replica); }));
 const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party }));
 export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => chain(accountContext(r, ctx), (c) => matchBy("kind", input, {
-  propose: (i) => propose(r, i, c), dispute: (i) => dispute(r, i, c),
+  propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c),
+  dispute: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => dispute(r, i, { ...c, from: sender })),
   ack: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ack(r, i, { ...c, delivery: sender === c.party.self ? { _tag: "local" } : { _tag: "received", from: sender } })),
   ack_frame: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ackFrame(r, i, { ...c, now: ctx.now, from: sender })),
 }));
 export const applyDelivered = (r: AccountReplica, input: AccountInput, delivery: Delivery, ctx: DoorContext): Result<AccountApply, AccountReplicaError> =>
   chain(matchBy("kind", input, {
     propose: (): Result<void, AccountReplicaError> => localOnly(delivery),
-    dispute: (): Result<void, AccountReplicaError> => localOnly(delivery),
+    freeze: (): Result<void, AccountReplicaError> => localOnly(delivery),
+    dispute: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
     ack: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
     ack_frame: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
   }), () => applyAccountInput(r, input, ctx));
@@ -1959,7 +1977,7 @@ export const disputeUnsafe = (r: AccountReplica, applied: Result<AccountApply, A
   const after = applied.error._tag === "rejected_after_ack" ? applied.error : undefined;
   const evidence = evidenceOf(after?.cause ?? applied.error);
   if (evidence === null) return applied;
-  return map(applyAccountInput(after?.committed.replica ?? r, { kind: "dispute", evidence }, ctx), (d) => ({ replica: d.replica, outputs: [...(after?.committed.outputs ?? []), ...d.outputs] }));
+  return map(applyAccountInput(after?.committed.replica ?? r, { kind: "freeze", evidence }, ctx), (d) => ({ replica: d.replica, outputs: [...(after?.committed.outputs ?? []), ...d.outputs] }));
 };
 export const restoreAccount = (r: AccountReplica, self: EntityId, verify: Verify): Result<AccountReplica, AccountReplicaError> => chain(partyOf(replicaId(r), self), (party) => {
   const restored = <R extends ProposedAccount | ReceivedAccount>(held: R): Result<AccountReplica, AccountReplicaError> => map(restoreCandidate(held, party, verify), (candidate) => ({ ...held, candidate }));
@@ -2512,7 +2530,7 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
   ladder: (i) => { const key = ladderKey(i.tx); return map(revealSlot(host.ladder.get(key), i.tx), (slot) => step({ ...host, ladder: mapSet(host.ladder, key, slot) })); },
   entity: (i) => chain(routeEntity(i.tx, host.self, replicaId(host.account)), (routed) => admitTx(host, routed, ctx)),
   input: (i) => matchBy("kind", i.input, {
-    dispute: () => accountStep(host, applyAccountInput(host.account, { kind: "dispute" }, { verify, self: host.self, now: ctx.timestamp })),
+    dispute: () => accountStep(host, applyAccountInput(host.account, { kind: "freeze" }, { verify, self: host.self, now: ctx.timestamp })),
     board_hanko_refresh: () => err({ _tag: "unchosen", hole: "board_hanko_refresh" }), leaderTimeoutVote: () => err({ _tag: "unchosen", hole: "leader_timeout_vote" }),
   }),
 
