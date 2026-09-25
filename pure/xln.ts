@@ -4993,18 +4993,387 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
   receipt: (i) => ok(step({ ...host, outbox: host.outbox.filter((e) => e.id !== i.id) })),
 });
 
-export type TowerReceiptV1 = { readonly type: "tower_receipt"; readonly towerId: string; readonly lookupKey: string; readonly slot: bigint; readonly height: bigint; readonly bundleHash: Hash; readonly storedAt: bigint; readonly expiresAt: bigint; readonly towerSignature?: string | undefined };
-export type AccountRecoveryBundleV1 = {
-  readonly account: { readonly accountId: string; readonly jurisdictionId: string; readonly left: string; readonly right: string; readonly owner: string; readonly counterparty: string };
-  readonly latestCommitted: { readonly height: bigint; readonly frameHash: Hash; readonly ownerFrameHanko: string; readonly counterpartyFrameHanko: string };
-  readonly dispute: { readonly proofBodyHash: Hash; readonly nonce: bigint }; readonly bundleHash: Hash;
+// ---- watchtower: og storage/recovery/bundle/{types,crypto}.ts, watchtower/http.ts verifyTowerAppointment, watchtower/store/{appointments,decode,db}.ts ----
+// The HTTP body reader, LevelDB, the store-wide quotas (maxLookupKeys, maxTotalStoredBytes), push, sweep and the on-chain action are I/O:
+// the stored lookup document is threaded as a value, and the tower's clock and key are inputs.
+export type TowerModeV1 = "blind_backup" | "delayed_last_resort";
+export type EncryptedRuntimeRecoveryBundleV1 = {
+  readonly version: 1; readonly kind?: "snapshot" | "journal_tail" | undefined; readonly runtimeId: string; readonly lookupKey: string; readonly height: number; readonly createdAt: number;
+  readonly bundleHash: string; readonly baseRuntimeHeight?: number | undefined; readonly baseCheckpointHash?: string | undefined; readonly iv: string; readonly ciphertext: string; readonly compression?: "gzip" | undefined;
 };
-export type TowerMode = "blind_backup" | "delayed_last_resort";
-export type LastResortPayload = { readonly triggerHint: string; readonly encryptedRemedy: string; readonly actionKind: "counter_dispute_only"; readonly appointmentSequence: bigint; readonly proofNonce: bigint; readonly proofBodyHash: Hash; readonly responseMode: "last_resort"; readonly lastResortWindowSeconds: bigint; readonly safetyMarginSeconds: bigint; readonly maxFeeToken?: TokenId | undefined; readonly feeBudget?: bigint | undefined };
-export type TowerAppointmentV1 = { readonly type: "tower_appointment"; readonly towerMode: TowerMode; readonly lookupKey: string; readonly slot: bigint; readonly height: bigint; readonly bundleHash: Hash; readonly encryptedBundle: string; readonly ownerEntityId: string; readonly ownerHanko: string; readonly lastResortPayload?: LastResortPayload | undefined };
-/** og watchtower decode `text()`: a required string is non-empty after trim. */
-const whenSigned = <X>(x: X, ...hankos: readonly string[]): Result<X, HostError> => (hankos.every((h) => h.trim().length > 0) ? ok(x) : err({ _tag: "unsigned" }));
-/** og decodeReceipt: `towerSignature` is optional; when present it is non-empty text. */
-export const acceptReceipt = (r: TowerReceiptV1): Result<TowerReceiptV1, HostError> => whenSigned(r, r.towerId, r.lookupKey, r.bundleHash, ...(r.towerSignature === undefined ? [] : [r.towerSignature]));
-export const acceptBundle = (b: AccountRecoveryBundleV1): Result<AccountRecoveryBundleV1, HostError> => whenSigned(b, b.latestCommitted.ownerFrameHanko, b.latestCommitted.counterpartyFrameHanko);
-export const acceptAppointment = (a: TowerAppointmentV1): Result<TowerAppointmentV1, HostError> => whenSigned(a, a.ownerHanko);
+export type TowerLastResortWatchV1 = { readonly rpcUrl: string; readonly chainId: number; readonly depositoryAddress: string; readonly watchedEntityId: string; readonly counterentity: string };
+export type TowerLastResortPayloadV1 = {
+  readonly triggerHint: string; readonly watch: TowerLastResortWatchV1; readonly encryptedRemedy: string; readonly actionKind: "counter_dispute_only"; readonly appointmentSequence: number; readonly proofNonce: number;
+  readonly proofBodyHash: string; readonly responseMode: "last_resort"; readonly lastResortWindowSeconds: number; readonly maxFeeToken?: string | undefined; readonly feeBudget?: string | undefined;
+};
+export type TowerAppointmentOwnerProofV1 = { readonly runtimeId: string; readonly signedAt: number; readonly signature: string };
+export type TowerAppointmentV1 = {
+  readonly type: "tower_appointment"; readonly version: 1; readonly towerMode?: TowerModeV1 | undefined; readonly lookupKey: string; readonly slot?: number | undefined;
+  readonly bundle: EncryptedRuntimeRecoveryBundleV1; readonly lastResortPayload?: TowerLastResortPayloadV1 | undefined; readonly ownerProof: TowerAppointmentOwnerProofV1;
+};
+export type TowerReceiptV1 = {
+  readonly type: "tower_receipt"; readonly version: 1; readonly towerId: string; readonly lookupKey: string; readonly runtimeId: string; readonly height: number; readonly bundleHash: string;
+  readonly towerMode?: TowerModeV1 | undefined; readonly slot?: number | undefined; readonly storedAt?: number | undefined; readonly receivedAt: number; readonly expiresAt?: number | undefined;
+  readonly sequence: number; readonly retainedSlots: number; readonly storedBytes?: number | undefined; readonly maxStoredBytes?: number | undefined; readonly quotaOk?: boolean | undefined;
+  readonly appointmentSequence?: number | null | undefined; readonly towerSignature?: string | undefined;
+};
+export type TowerStoredBundle = {
+  readonly slot: number; readonly towerMode: TowerModeV1; readonly bundle: EncryptedRuntimeRecoveryBundleV1; readonly ownerSignedAt: number; readonly encryptedEnvelopeHash: string;
+  readonly lastResortPayloadDigest: string; readonly lastResortPayload?: TowerLastResortPayloadV1 | undefined;
+};
+/** og StoredLookupDoc: one lookup key's receipts (newest first) and retained bundles. */
+export type TowerLookupDoc = { readonly lookupKey: string; readonly runtimeId: string; readonly updatedAt: number; readonly receipts: readonly TowerReceiptV1[]; readonly bundles: readonly TowerStoredBundle[] };
+/** og WatchtowerStoreContext minus I/O: `now` is the one `context.now()` reading for this write, `towerPrivateKey` og's `signer`. */
+export type TowerStoreConfig = { readonly towerId: string; readonly towerPrivateKey: Uint8Array; readonly maxBundlesPerLookupKey: number; readonly maxStoredBytesPerLookupKey: number; readonly receiptTtlMs: number; readonly now: number };
+/** `code` is og's thrown message. */
+export type TowerError = Tagged<"tower", { code: string }>;
+type Rec = { readonly [k: string]: unknown };
+const towerErr = (code: string): Result<never, TowerError> => err({ _tag: "tower", code });
+/** Sequential guards: the first failing code, as og's first throw. */
+const towerChecks = (...checks: readonly (() => string | undefined)[]): Result<void, TowerError> => {
+  for (const check of checks) { const code = check(); if (code !== undefined) return towerErr(code); }
+  return ok(undefined);
+};
+/** og requireBoundaryRecord. */
+const plainRecord = (v: unknown): v is Rec => {
+  if (!v || typeof v !== "object" || Array.isArray(v) || v instanceof Map) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+};
+/** og requireExactBoundaryKeys. */
+const exactKeys = (r: Rec, required: readonly string[], optional: readonly string[], code: string): string | undefined => {
+  const allowed = new Set([...required, ...optional]), missing = required.filter((k) => !Object.hasOwn(r, k)), extra = Object.keys(r).filter((k) => !allowed.has(k));
+  return missing.length > 0 || extra.length > 0 ? `${code}:missing=${missing.join(",") || "none"}:extra=${extra.join(",") || "none"}` : undefined;
+};
+const recordShape = (v: unknown, code: string, required: readonly string[], optional: readonly string[], fieldsCode: string): string | undefined =>
+  !plainRecord(v) ? code : exactKeys(v, required, optional, fieldsCode);
+const jsText = (v: unknown): string => String(v || "");
+const jsInt = (v: unknown): number => Math.max(0, Math.floor(Number(v || 0)));
+/** og normalizeTowerModeV1. */
+export const normalizeTowerMode = (mode: unknown): Result<TowerModeV1, TowerError> => {
+  const raw = jsText(mode).trim();
+  return !raw || raw === "blind_backup" ? ok("blind_backup") : raw === "delayed_last_resort" ? ok("delayed_last_resort") : towerErr(`TOWER_MODE_INVALID:${raw}`);
+};
+const towerHashText = (text: string): string => keccak256Hex(utf8(text));
+/** og computeEncryptedRuntimeRecoveryEnvelopeHash: keccak of the tagged-JSON envelope. */
+export const towerEnvelopeHash = (bundle: EncryptedRuntimeRecoveryBundleV1): string => towerHashText(stableJson(bundle));
+/** og computeTowerLastResortPayloadDigest: ZeroHash when absent. */
+export const towerPayloadDigest = (payload: TowerLastResortPayloadV1 | null | undefined): string => (payload ? towerHashText(stableJson(payload)) : ZERO_WORD);
+/** og buildTowerAppointmentOwnerMessage. */
+export const towerAppointmentOwnerMessage = (runtimeId: string, towerMode: TowerModeV1, lookupKey: string, slot: number, bundle: EncryptedRuntimeRecoveryBundleV1, signedAt: number, payload?: TowerLastResortPayloadV1 | null): string =>
+  `xln:tower:appointment:v1|${runtimeId.toLowerCase()}|${towerMode}|${lookupKey}|${jsInt(slot)}|${towerEnvelopeHash(bundle)}|${jsInt(signedAt)}|${towerPayloadDigest(payload)}`;
+/** og appointments.ts buildReceiptMessage. */
+export const towerReceiptMessage = (r: TowerReceiptV1): string =>
+  `xln:watchtower:receipt:v1|${r.towerId}|${r.lookupKey}|${r.runtimeId}|${r.height}|${r.bundleHash}|${jsInt(r.sequence)}|${jsInt(r.slot)}|${String(r.towerMode || "blind_backup")}|${jsInt(r.storedBytes)}|${jsInt(r.maxStoredBytes)}|${jsInt(r.expiresAt)}`;
+const eip191Digest = (message: string): Uint8Array => { const body = utf8(message); return keccak256(concat([utf8(`\x19Ethereum Signed Message:\n${body.length}`), body])); };
+/** ethers Wallet.signMessage: EIP-191, RFC 6979 low-s, v = 27 + parity. */
+export const signPersonalMessage = (message: string, privateKey: Uint8Array): string => {
+  const s = signRaw(eip191Digest(message), privateKey);
+  return joinHex([s.r.toString(16).padStart(64, "0"), s.s.toString(16).padStart(64, "0"), (27 + s.recovery).toString(16)]);
+};
+/** ethers verifyMessage (Signature.from: 64-byte EIP-2098 or 65-byte with v 0/1/27/28/EIP-155): the lowercase signer, or undefined where ethers throws. */
+export const recoverPersonalMessage = (message: string, signature: string): string | undefined => {
+  const bytes = /^0x([0-9a-fA-F]{2})*$/.test(signature) ? hexToBytes(signature) : undefined;
+  if (bytes === undefined || (bytes.length !== 64 && bytes.length !== 65)) return undefined;
+  const s = bytes.slice(32, 64), v = bytes.length === 64 ? ((s[0] ?? 0) & 0x80 ? 28 : 27) : bytes[64] ?? 0;
+  if (bytes.length === 64) s[0] = (s[0] ?? 0) & 0x7f;
+  const parity = v === 0 || v === 27 ? 0 : v === 1 || v === 28 ? 1 : v >= 35 ? (v & 1 ? 0 : 1) : undefined;
+  if (parity === undefined) return undefined;
+  const pub = recoverPublicKey(eip191Digest(message), bytes.slice(0, 32), s, parity);
+  return pub === null ? undefined : addressOf(pub).toLowerCase();
+};
+const ibanChecksum = (address: string): string => {
+  const letters = (c: string): string => (/[0-9]/.test(c) ? c : String(c.charCodeAt(0) - 55));
+  let expanded = [...`${address.toUpperCase().substring(4)}${address.toUpperCase().substring(0, 2)}00`].map(letters).join("");
+  while (expanded.length >= 15) { const block = expanded.substring(0, 15); expanded = String(parseInt(block, 10) % 97) + expanded.substring(block.length); }
+  return String(98 - (parseInt(expanded, 10) % 97)).padStart(2, "0");
+};
+/** ethers isAddress: hex with optional 0x (mixed case must checksum), or a direct-mode ICAP. */
+export const isEthersAddress = (value: string): boolean => {
+  if (/^(0x)?[0-9a-fA-F]{40}$/.test(value)) { const a = value.startsWith("0x") ? value : `0x${value}`; return !/([A-F].*[a-f])|([a-f].*[A-F])/.test(a) || checksum(a) === a; }
+  return /^XE[0-9]{2}[0-9A-Za-z]{30,31}$/.test(value) && value.substring(2, 4) === ibanChecksum(value);
+};
+const TOWER_BYTES32 = /^0x[0-9a-f]{64}$/;
+const towerLookupKey = (v: unknown): Result<string, TowerError> => { const k = jsText(v).trim().toLowerCase(); return TOWER_BYTES32.test(k) ? ok(k) : towerErr(`TOWER_LOOKUP_KEY_INVALID: ${String(v)}`); };
+const bytes32Code = (v: unknown, label: string): string | undefined => (TOWER_BYTES32.test(jsText(v).trim().toLowerCase()) ? undefined : `TOWER_${label}_INVALID: ${String(v)}`);
+const hexBytesCode = (v: unknown, label: string): string | undefined => (/^0x([0-9a-f]{2})*$/.test(jsText(v).trim().toLowerCase()) ? undefined : `TOWER_${label}_INVALID`);
+const nonNegative = (v: unknown): number | undefined => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined; };
+const nonNegativeCode = (v: unknown, label: string): string | undefined => (nonNegative(v) === undefined ? `TOWER_${label}_INVALID` : undefined);
+const positiveCode = (v: unknown, label: string): string | undefined => { const n = nonNegative(v); return n === undefined ? `TOWER_${label}_INVALID` : n <= 0 ? `TOWER_${label}_INVALID` : undefined; };
+const BUNDLE_FIELDS = ["version", "runtimeId", "lookupKey", "height", "createdAt", "bundleHash", "iv", "ciphertext"] as const, BUNDLE_OPTIONAL = ["kind", "baseRuntimeHeight", "baseCheckpointHash", "compression"] as const;
+/** og http.ts decodeTowerAppointmentEnvelope: exact fields before any signed value is read. */
+const towerEnvelopeCode = (a: Rec): string | undefined => {
+  const payload = a["lastResortPayload"];
+  const found = [
+    () => exactKeys(a, ["type", "version", "lookupKey", "bundle", "ownerProof"], ["towerMode", "slot", "lastResortPayload"], "TOWER_APPOINTMENT_FIELDS_INVALID"),
+    () => (a["type"] !== "tower_appointment" || a["version"] !== 1 ? "TOWER_APPOINTMENT_INVALID" : undefined),
+    () => recordShape(a["bundle"], "TOWER_BUNDLE_INVALID", BUNDLE_FIELDS, BUNDLE_OPTIONAL, "TOWER_BUNDLE_FIELDS_INVALID"),
+    () => recordShape(a["ownerProof"], "TOWER_APPOINTMENT_OWNER_PROOF_INVALID", ["runtimeId", "signedAt", "signature"], [], "TOWER_APPOINTMENT_OWNER_PROOF_FIELDS_INVALID"),
+    () => payload === undefined ? undefined : recordShape(payload, "TOWER_LAST_RESORT_PAYLOAD_INVALID",
+      ["triggerHint", "watch", "encryptedRemedy", "actionKind", "appointmentSequence", "proofNonce", "proofBodyHash", "responseMode", "lastResortWindowSeconds"], ["maxFeeToken", "feeBudget"], "TOWER_LAST_RESORT_PAYLOAD_FIELDS_INVALID"),
+    () => payload === undefined ? undefined : recordShape((payload as Rec)["watch"], "TOWER_LAST_RESORT_PAYLOAD_WATCH_MISSING", ["rpcUrl", "chainId", "depositoryAddress", "watchedEntityId", "counterentity"], [], "TOWER_LAST_RESORT_PAYLOAD_WATCH_FIELDS_INVALID"),
+  ].map((f) => f()).find((c) => c !== undefined);
+  return found;
+};
+/** og http.ts verifyEncryptedBundleShape. */
+const towerBundleShapeCode = (b: Rec): string | undefined => {
+  if (b["version"] !== 1) return "TOWER_BUNDLE_VERSION_UNSUPPORTED";
+  if (!jsText(b["runtimeId"]).trim()) return "TOWER_BUNDLE_RUNTIME_ID_REQUIRED";
+  const key = towerLookupKey(b["lookupKey"]);
+  if (!key.ok) return key.error.code;
+  const first = [nonNegativeCode(b["height"], "BUNDLE_HEIGHT"), nonNegativeCode(b["createdAt"], "BUNDLE_CREATED_AT"), bytes32Code(b["bundleHash"], "BUNDLE_HASH"), hexBytesCode(b["iv"], "BUNDLE_IV"), hexBytesCode(b["ciphertext"], "BUNDLE_CIPHERTEXT")].find((c) => c !== undefined);
+  if (first !== undefined) return first;
+  if (jsText(b["ciphertext"]).trim().length <= 2) return "TOWER_BUNDLE_CIPHERTEXT_EMPTY";
+  return b["compression"] !== undefined && b["compression"] !== "gzip" ? `TOWER_BUNDLE_COMPRESSION_UNSUPPORTED: ${String(b["compression"])}` : undefined;
+};
+/** og assertEncryptedLastResortPayload: `encryptedRemedy` is a tagged-JSON `tower_encrypted_payload` v1 record. */
+const encryptedRemedyCode = (payload: Rec | undefined): string | undefined => {
+  const raw = jsText(payload?.["encryptedRemedy"]).trim();
+  if (!raw) return "TOWER_LAST_RESORT_PAYLOAD_REMEDY_MISSING";
+  const parsed = parseTaggedJson(raw);
+  return parsed.ok && plainRecord(parsed.value) && parsed.value["type"] === "tower_encrypted_payload" && parsed.value["version"] === 1 && parsed.value["alg"] === "watch-seed-aes-256-gcm"
+    && typeof parsed.value["iv"] === "string" && typeof parsed.value["ciphertext"] === "string" ? undefined : "TOWER_LAST_RESORT_PAYLOAD_REMEDY_NOT_ENCRYPTED";
+};
+/** og http.ts verifyLastResortPayload + verifyLastResortWatch. */
+const lastResortPayloadCode = (p: Rec | undefined): string | undefined => {
+  if (!p) return "TOWER_LAST_RESORT_PAYLOAD_MISSING";
+  if (p["actionKind"] !== "counter_dispute_only") return "TOWER_LAST_RESORT_PAYLOAD_ACTION_KIND_UNSUPPORTED";
+  if (p["responseMode"] !== "last_resort") return "TOWER_LAST_RESORT_PAYLOAD_RESPONSE_MODE_UNSUPPORTED";
+  const w = p["watch"];
+  if (!w || typeof w !== "object") return "TOWER_LAST_RESORT_PAYLOAD_WATCH_MISSING";
+  const watch = w as Rec, rpcUrl = jsText(watch["rpcUrl"]).trim(), hint = jsText(p["triggerHint"]).trim();
+  const found = [
+    () => (!rpcUrl || rpcUrl.length > 512 || !/^https?:\/\//i.test(rpcUrl) ? "TOWER_LAST_RESORT_PAYLOAD_WATCH_RPC_INVALID" : undefined),
+    () => positiveCode(watch["chainId"], "LAST_RESORT_PAYLOAD_WATCH_CHAIN_ID"),
+    () => (isEthersAddress(jsText(watch["depositoryAddress"])) ? undefined : "TOWER_LAST_RESORT_PAYLOAD_WATCH_DEPOSITORY_INVALID"),
+    () => bytes32Code(watch["watchedEntityId"], "LAST_RESORT_PAYLOAD_WATCH_ENTITY"),
+    () => bytes32Code(watch["counterentity"], "LAST_RESORT_PAYLOAD_WATCH_COUNTERENTITY"),
+    () => (!hint || hint.length > 256 ? "TOWER_LAST_RESORT_PAYLOAD_TRIGGER_HINT_INVALID" : undefined),
+    () => positiveCode(p["appointmentSequence"], "LAST_RESORT_PAYLOAD_APPOINTMENT_SEQUENCE"),
+    () => positiveCode(p["proofNonce"], "LAST_RESORT_PAYLOAD_PROOF_NONCE"),
+    () => bytes32Code(p["proofBodyHash"], "LAST_RESORT_PAYLOAD_PROOF_BODY_HASH"),
+    () => positiveCode(p["lastResortWindowSeconds"], "LAST_RESORT_PAYLOAD_LAST_RESORT_WINDOW"),
+    () => encryptedRemedyCode(p),
+  ];
+  for (const f of found) { const c = f(); if (c !== undefined) return c; }
+  return undefined;
+};
+export const TOWER_APPOINTMENT_MAX_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
+/**
+ * og http.ts verifyTowerAppointment: exact envelope, bundle shape, lookup/runtime binding, owner clock within 24h of the tower clock `nowMs`,
+ * mode/payload rules, and the owner's EIP-191 signature recovering `ownerProof.runtimeId`. Returns og's normalized appointment.
+ */
+export const verifyTowerAppointment = (input: unknown, nowMs: number): Result<TowerAppointmentV1, TowerError> => {
+  if (!plainRecord(input)) return towerErr("TOWER_APPOINTMENT_INVALID");
+  const envelope = towerEnvelopeCode(input);
+  if (envelope !== undefined) return towerErr(envelope);
+  const a = input as unknown as TowerAppointmentV1, bundle = input["bundle"] as Rec, proof = input["ownerProof"] as Rec, payload = input["lastResortPayload"] as Rec | undefined;
+  const shape = towerBundleShapeCode(bundle);
+  if (shape !== undefined) return towerErr(shape);
+  return chain(towerLookupKey(a.lookupKey), (lookupKey) => {
+    if (bundle["lookupKey"] !== lookupKey) return towerErr("TOWER_APPOINTMENT_LOOKUP_MISMATCH");
+    const runtimeId = jsText(proof["runtimeId"]).trim().toLowerCase();
+    if (!runtimeId || runtimeId !== jsText(bundle["runtimeId"]).trim().toLowerCase()) return towerErr("TOWER_APPOINTMENT_RUNTIME_ID_MISMATCH");
+    const signedAt = Math.max(0, Math.floor(Number(proof["signedAt"] || 0)));
+    if (!Number.isSafeInteger(signedAt) || signedAt <= 0) return towerErr("TOWER_APPOINTMENT_SIGNED_AT_INVALID");
+    if (Math.abs(nowMs - signedAt) > TOWER_APPOINTMENT_MAX_CLOCK_SKEW_MS) return towerErr("TOWER_APPOINTMENT_STALE");
+    const slot = Math.max(0, Math.floor(Number(input["slot"] ?? 0)));
+    return chain(normalizeTowerMode(input["towerMode"]), (towerMode) => {
+      if (towerMode === "blind_backup" && payload) return towerErr("TOWER_BACKUP_LAST_RESORT_PAYLOAD_FORBIDDEN");
+      const payloadCode = towerMode === "delayed_last_resort" ? lastResortPayloadCode(payload) : undefined;
+      if (payloadCode !== undefined) return towerErr(payloadCode);
+      const message = towerAppointmentOwnerMessage(runtimeId, towerMode, lookupKey, slot, a.bundle, signedAt, a.lastResortPayload);
+      const recovered = recoverPersonalMessage(message, jsText(proof["signature"]));
+      if (recovered === undefined) return towerErr("TOWER_APPOINTMENT_SIGNATURE_UNREADABLE");
+      if (recovered !== runtimeId) return towerErr(`TOWER_APPOINTMENT_SIGNATURE_INVALID: recovered=${recovered} expected=${runtimeId}`);
+      return ok({
+        ...a, towerMode, lookupKey, slot, ownerProof: { ...a.ownerProof, runtimeId, signedAt, signature: jsText(proof["signature"]) },
+        bundle: { ...a.bundle, runtimeId, lookupKey, height: jsInt(bundle["height"]), createdAt: jsInt(bundle["createdAt"]) },
+      });
+    });
+  });
+};
+export const emptyTowerLookupDoc = (lookupKey: string): TowerLookupDoc => ({ lookupKey, runtimeId: "", updatedAt: 0, receipts: [], bundles: [] });
+/** og computeStoredLookupBytes: UTF-8 bytes of the tagged-JSON document. */
+export const towerLookupBytes = (doc: TowerLookupDoc): number => utf8(stableJson(doc)).length;
+const bundleKind = (b: EncryptedRuntimeRecoveryBundleV1): string => b.kind ?? "snapshot";
+/** og sortStoredBundles: height, then createdAt, then slot, all descending (stable). */
+const sortTowerBundles = (bundles: readonly TowerStoredBundle[]): readonly TowerStoredBundle[] =>
+  [...bundles].sort((l, r) => (r.bundle.height !== l.bundle.height ? r.bundle.height - l.bundle.height : r.bundle.createdAt !== l.bundle.createdAt ? r.bundle.createdAt - l.bundle.createdAt : r.slot - l.slot));
+/** og retainAppointmentBundles: a blind backup pins the newest snapshot and the newest tail before the cut. */
+const retainTowerBundles = (bundles: readonly TowerStoredBundle[], towerMode: TowerModeV1, limit: number): readonly TowerStoredBundle[] => {
+  const pins = towerMode !== "blind_backup" ? [] : [bundles.find((e) => e.towerMode === "blind_backup" && e.bundle.kind !== "journal_tail"), bundles.find((e) => e.towerMode === "blind_backup" && e.bundle.kind === "journal_tail")];
+  const pinned = pins.filter((e, i): e is TowerStoredBundle => e !== undefined && pins.indexOf(e) === i);
+  return [...pinned, ...bundles.filter((e) => !pinned.includes(e))].slice(0, limit);
+};
+/** og store validateAppointmentMode. */
+const towerStoreModeCode = (a: TowerAppointmentV1, towerMode: TowerModeV1): string | undefined => {
+  if (towerMode === "blind_backup" && a.lastResortPayload) return "TOWER_BACKUP_LAST_RESORT_PAYLOAD_FORBIDDEN";
+  if (towerMode === "delayed_last_resort" && !a.lastResortPayload) return "TOWER_LAST_RESORT_PAYLOAD_MISSING";
+  return towerMode === "delayed_last_resort" ? encryptedRemedyCode(a.lastResortPayload as Rec | undefined) : undefined;
+};
+/**
+ * og appointments.ts prepareAppointment: per (slot, mode, kind) the newest owner signature wins; an older `signedAt` is TOWER_APPOINTMENT_STALE,
+ * the same `signedAt` over different envelope or payload bytes is TOWER_APPOINTMENT_REPLAY_MISMATCH. The tower signs the receipt (EIP-191).
+ */
+const prepareTowerAppointment = (cfg: TowerStoreConfig, a: TowerAppointmentV1, existing: TowerLookupDoc): Result<TowerLookupDoc, TowerError> =>
+  chain(towerLookupKey(a.lookupKey), (lookupKey) => chain(normalizeTowerMode(a.towerMode), (towerMode) => {
+    const slot = Math.max(0, Math.floor(Number(a.slot ?? 0)));
+    const runtimeId = jsText(a.bundle.runtimeId).trim().toLowerCase();
+    const sequence = Math.max(0, ...existing.receipts.map((r) => r.sequence || 0)) + 1, ownerSignedAt = jsInt(a.ownerProof.signedAt);
+    const lastResortPayloadDigest = towerPayloadDigest(a.lastResortPayload), encryptedEnvelopeHash = towerEnvelopeHash(a.bundle);
+    const sameSlot = (e: TowerStoredBundle): boolean => e.slot === slot && e.towerMode === towerMode && bundleKind(e.bundle) === bundleKind(a.bundle);
+    const latest = existing.bundles.filter(sameSlot).reduce<TowerStoredBundle | undefined>((l, e) => (!l || e.ownerSignedAt > l.ownerSignedAt ? e : l), undefined);
+    return chain(towerChecks(
+      () => towerStoreModeCode(a, towerMode),
+      () => (existing.runtimeId && existing.runtimeId !== runtimeId ? `TOWER_LOOKUP_RUNTIME_ID_MISMATCH:${existing.runtimeId}:${runtimeId}` : undefined),
+      () => (latest && latest.ownerSignedAt > ownerSignedAt ? "TOWER_APPOINTMENT_STALE" : undefined),
+      () => (latest && latest.ownerSignedAt === ownerSignedAt && (latest.encryptedEnvelopeHash !== encryptedEnvelopeHash || latest.lastResortPayloadDigest !== lastResortPayloadDigest) ? "TOWER_APPOINTMENT_REPLAY_MISMATCH" : undefined),
+    ), () => {
+      const candidate: TowerStoredBundle = { slot, towerMode, bundle: a.bundle, ownerSignedAt, encryptedEnvelopeHash, lastResortPayloadDigest, ...opt("lastResortPayload", a.lastResortPayload || undefined) };
+      const bundles = retainTowerBundles(sortTowerBundles([candidate, ...existing.bundles.filter((e) => !sameSlot(e))]), towerMode, cfg.maxBundlesPerLookupKey);
+      const draft: TowerLookupDoc = { lookupKey, runtimeId, updatedAt: cfg.now, receipts: existing.receipts, bundles };
+      const storedBytes = towerLookupBytes(draft);
+      if (storedBytes > cfg.maxStoredBytesPerLookupKey) return towerErr(`TOWER_QUOTA_EXCEEDED: bytes=${storedBytes} max=${cfg.maxStoredBytesPerLookupKey}`);
+      const seq = Number(a.lastResortPayload?.appointmentSequence);
+      const unsigned: TowerReceiptV1 = {
+        type: "tower_receipt", version: 1, towerId: cfg.towerId, lookupKey, runtimeId, height: jsInt(a.bundle.height), bundleHash: a.bundle.bundleHash, towerMode, slot,
+        storedAt: cfg.now, receivedAt: cfg.now, expiresAt: cfg.now + cfg.receiptTtlMs, sequence, retainedSlots: bundles.length, storedBytes, maxStoredBytes: cfg.maxStoredBytesPerLookupKey, quotaOk: true,
+        appointmentSequence: Number.isFinite(seq) ? jsInt(a.lastResortPayload?.appointmentSequence) : null,
+      };
+      const receipt: TowerReceiptV1 = { ...unsigned, towerSignature: signPersonalMessage(towerReceiptMessage(unsigned), cfg.towerPrivateKey) };
+      return ok({ ...draft, receipts: [receipt, ...existing.receipts].slice(0, cfg.maxBundlesPerLookupKey) });
+    });
+  }));
+export type TowerWrite = { readonly doc: TowerLookupDoc; readonly receipt: TowerReceiptV1 };
+/** og writeLookup's per-lookup quota on the final signed document (the store-wide quotas are the host's). */
+const sealTowerWrite = (cfg: TowerStoreConfig, doc: TowerLookupDoc): Result<TowerWrite, TowerError> => {
+  const bytes = towerLookupBytes(doc), receipt = doc.receipts[0];
+  if (bytes > cfg.maxStoredBytesPerLookupKey) return towerErr(`TOWER_QUOTA_EXCEEDED: bytes=${bytes} max=${cfg.maxStoredBytesPerLookupKey}`);
+  return receipt === undefined ? towerErr("TOWER_RECEIPT_MISSING") : ok({ doc, receipt });
+};
+/** og store upsertAppointment over the stored lookup document (`existing` undefined when the key is new). */
+export const upsertTowerAppointment = (cfg: TowerStoreConfig, a: TowerAppointmentV1, existing?: TowerLookupDoc): Result<TowerWrite, TowerError> =>
+  chain(towerLookupKey(a.lookupKey), (key) => chain(prepareTowerAppointment(cfg, a, existing ?? emptyTowerLookupDoc(key)), (doc) => sealTowerWrite(cfg, doc)));
+/** og upsertRecoveryArchive: one owner-signed snapshot and its tail, written as one document or not at all. */
+export const upsertTowerRecoveryArchive = (cfg: TowerStoreConfig, pair: readonly [TowerAppointmentV1, TowerAppointmentV1], existing?: TowerLookupDoc): Result<TowerWrite, TowerError> => {
+  const [snapshot, tail] = pair;
+  const modes = pair.map((x) => normalizeTowerMode(x.towerMode));
+  const bad = modes.find((m) => !m.ok);
+  if (bad !== undefined && !bad.ok) return bad;
+  if (modes.some((m) => m.ok && m.value !== "blind_backup") || snapshot.bundle.kind !== "snapshot" || tail.bundle.kind !== "journal_tail" || snapshot.lookupKey !== tail.lookupKey || snapshot.bundle.runtimeId !== tail.bundle.runtimeId
+    || Math.max(0, Math.floor(Number(snapshot.slot ?? 0))) !== Math.max(0, Math.floor(Number(tail.slot ?? 0))) || snapshot.ownerProof.signedAt !== tail.ownerProof.signedAt
+    || tail.bundle.baseRuntimeHeight !== snapshot.bundle.height || tail.bundle.height <= snapshot.bundle.height) return towerErr("TOWER_ARCHIVE_PAIR_INVALID");
+  return chain(towerLookupKey(snapshot.lookupKey), (key) => chain(foldResult(pair, existing ?? emptyTowerLookupDoc(key), (doc, a) => prepareTowerAppointment(cfg, a, doc)), (doc) =>
+    pair.every((a) => doc.bundles.some((e) => e.encryptedEnvelopeHash === towerEnvelopeHash(a.bundle))) ? sealTowerWrite(cfg, doc) : towerErr("TOWER_ARCHIVE_PAIR_NOT_RETAINED")));
+};
+/** Client check of og's receipt signature (og signs in prepareAppointment and ships no verifier): the tower address the receipt message recovers to. */
+export const verifyTowerReceiptSignature = (receipt: TowerReceiptV1, towerAddress: string): Result<TowerReceiptV1, TowerError> => {
+  if (receipt.towerSignature === undefined) return towerErr("TOWER_RECEIPT_SIGNATURE_MISSING");
+  const { towerSignature, ...unsigned } = receipt;
+  return recoverPersonalMessage(towerReceiptMessage(unsigned as TowerReceiptV1), towerSignature) === towerAddress.toLowerCase() ? ok(receipt) : towerErr("TOWER_RECEIPT_SIGNATURE_INVALID");
+};
+/** og deserializeTaggedJson: JSON with BigInt/Map/Set/Buffer/Date/TypedArray envelopes revived. */
+const parseTaggedJson = (raw: string): Result<unknown, TowerError> => {
+  try {
+    return ok(JSON.parse(raw, (_k, v: unknown) => {
+      if (!plainRecord(v) || typeof v["__xlnType"] !== "string") return v;
+      const x = v["value"];
+      switch (v["__xlnType"]) {
+        case "BigInt": return typeof x === "string" ? BigInt(x) : v;
+        case "Map": return Array.isArray(x) ? new Map(x as [unknown, unknown][]) : v;
+        case "Set": return Array.isArray(x) ? new Set(x) : v;
+        case "Buffer": return Array.isArray(x) ? Uint8Array.from(x as number[]) : v;
+        case "Date": return typeof x === "string" ? new Date(x) : v;
+        case "TypedArray": return typeof v["kind"] === "string" && typeof x === "string" ? new Uint8Array(0) : v;
+        default: return v;
+      }
+    }));
+  } catch { return towerErr("TOWER_JSON_INVALID"); }
+};
+const safeIntCode = (v: unknown, code: string): string | undefined => (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0 ? code : undefined);
+const optionalSafeIntCode = (v: unknown, code: string): string | undefined => (v === undefined || v === null ? undefined : safeIntCode(v, code));
+const textCode = (v: unknown, code: string): string | undefined => (typeof v !== "string" || v.trim().length === 0 ? code : undefined);
+const firstCode = (checks: readonly (() => string | undefined)[]): string | undefined => { for (const c of checks) { const code = c(); if (code !== undefined) return code; } return undefined; };
+/** og decode.ts decodeReceipt: a stored receipt bound to its lookup key and runtime; `towerSignature` is optional but non-empty when present. */
+export const decodeTowerReceipt = (value: unknown, lookupKey: string, runtimeId: string): Result<TowerReceiptV1, TowerError> => {
+  if (!plainRecord(value)) return towerErr("TOWER_STORED_RECEIPT_INVALID");
+  const r = value;
+  const code = firstCode([
+    () => exactKeys(r, ["type", "version", "towerId", "lookupKey", "runtimeId", "height", "bundleHash", "receivedAt", "sequence", "retainedSlots"],
+      ["towerMode", "slot", "storedAt", "expiresAt", "storedBytes", "maxStoredBytes", "quotaOk", "appointmentSequence", "towerSignature"], "TOWER_STORED_RECEIPT_FIELDS_INVALID"),
+    () => (r["type"] !== "tower_receipt" || r["version"] !== 1 ? "TOWER_STORED_RECEIPT_VERSION_INVALID" : undefined),
+    () => textCode(r["lookupKey"], "TOWER_STORED_RECEIPT_LOOKUP_INVALID") ?? (r["lookupKey"] !== lookupKey ? "TOWER_STORED_RECEIPT_LOOKUP_MISMATCH" : undefined),
+    () => textCode(r["runtimeId"], "TOWER_STORED_RECEIPT_RUNTIME_INVALID") ?? ((r["runtimeId"] as string).toLowerCase() !== runtimeId ? "TOWER_STORED_RECEIPT_RUNTIME_MISMATCH" : undefined),
+    () => textCode(r["towerId"], "TOWER_STORED_RECEIPT_TOWER_INVALID"),
+    () => textCode(r["bundleHash"], "TOWER_STORED_RECEIPT_HASH_INVALID"),
+    ...(["height", "receivedAt", "sequence", "retainedSlots"] as const).map((f) => () => safeIntCode(r[f], `TOWER_STORED_RECEIPT_${f.toUpperCase()}_INVALID`)),
+    ...(["slot", "storedAt", "expiresAt", "storedBytes", "maxStoredBytes", "appointmentSequence"] as const).map((f) => () => optionalSafeIntCode(r[f], `TOWER_STORED_RECEIPT_${f.toUpperCase()}_INVALID`)),
+    () => { if (r["towerMode"] === undefined) return undefined; const m = normalizeTowerMode(r["towerMode"]); return m.ok ? undefined : m.error.code; },
+    () => (r["quotaOk"] !== undefined && typeof r["quotaOk"] !== "boolean" ? "TOWER_STORED_RECEIPT_QUOTA_INVALID" : undefined),
+    () => (r["towerSignature"] !== undefined ? textCode(r["towerSignature"], "TOWER_STORED_RECEIPT_SIGNATURE_INVALID") : undefined),
+  ]);
+  return code === undefined ? ok(value as unknown as TowerReceiptV1) : towerErr(code);
+};
+/** og decode.ts decodeBundle. */
+export const decodeTowerBundle = (value: unknown, lookupKey: string, runtimeId: string): Result<EncryptedRuntimeRecoveryBundleV1, TowerError> => {
+  if (!plainRecord(value)) return towerErr("TOWER_STORED_BUNDLE_INVALID");
+  const b = value;
+  const code = firstCode([
+    () => exactKeys(b, BUNDLE_FIELDS, BUNDLE_OPTIONAL, "TOWER_STORED_BUNDLE_FIELDS_INVALID"),
+    () => (b["version"] !== 1 ? "TOWER_STORED_BUNDLE_VERSION_INVALID" : undefined),
+    () => (b["kind"] !== undefined && b["kind"] !== "snapshot" && b["kind"] !== "journal_tail" ? "TOWER_STORED_BUNDLE_KIND_INVALID" : undefined),
+    () => textCode(b["lookupKey"], "TOWER_STORED_BUNDLE_LOOKUP_INVALID") ?? (b["lookupKey"] !== lookupKey ? "TOWER_STORED_BUNDLE_LOOKUP_MISMATCH" : undefined),
+    () => textCode(b["runtimeId"], "TOWER_STORED_BUNDLE_RUNTIME_INVALID") ?? ((b["runtimeId"] as string).toLowerCase() !== runtimeId ? "TOWER_STORED_BUNDLE_RUNTIME_MISMATCH" : undefined),
+    () => safeIntCode(b["height"], "TOWER_STORED_BUNDLE_HEIGHT_INVALID"),
+    () => safeIntCode(b["createdAt"], "TOWER_STORED_BUNDLE_CREATED_AT_INVALID"),
+    () => optionalSafeIntCode(b["baseRuntimeHeight"], "TOWER_STORED_BUNDLE_BASE_HEIGHT_INVALID"),
+    () => textCode(b["bundleHash"], "TOWER_STORED_BUNDLE_HASH_INVALID"),
+    () => textCode(b["iv"], "TOWER_STORED_BUNDLE_IV_INVALID"),
+    () => textCode(b["ciphertext"], "TOWER_STORED_BUNDLE_CIPHERTEXT_INVALID"),
+    () => (b["compression"] !== undefined && b["compression"] !== "gzip" ? "TOWER_STORED_BUNDLE_COMPRESSION_INVALID" : undefined),
+  ]);
+  return code === undefined ? ok(value as unknown as EncryptedRuntimeRecoveryBundleV1) : towerErr(code);
+};
+/** og decode.ts decodeStoredLookupDoc: a persisted lookup document, every receipt and bundle bound to its key and runtime. */
+export const decodeTowerLookupDoc = (raw: string, expectedLookupKey?: string): Result<TowerLookupDoc, TowerError> => chain(parseTaggedJson(raw), (value) => {
+  if (!plainRecord(value)) return towerErr("TOWER_STORED_LOOKUP_INVALID");
+  const d = value;
+  const fields = exactKeys(d, ["lookupKey", "runtimeId", "updatedAt", "receipts", "bundles"], [], "TOWER_STORED_LOOKUP_FIELDS_INVALID");
+  if (fields !== undefined) return towerErr(fields);
+  const keyCode = textCode(d["lookupKey"], "TOWER_STORED_LOOKUP_KEY_INVALID");
+  if (keyCode !== undefined) return towerErr(keyCode);
+  const lookupKey = (d["lookupKey"] as string).toLowerCase();
+  if (!TOWER_BYTES32.test(lookupKey)) return towerErr("TOWER_STORED_LOOKUP_KEY_INVALID");
+  if (expectedLookupKey && lookupKey !== expectedLookupKey) return towerErr("TOWER_STORED_LOOKUP_KEY_MISMATCH");
+  const runtimeCode = textCode(d["runtimeId"], "TOWER_STORED_RUNTIME_INVALID");
+  if (runtimeCode !== undefined) return towerErr(runtimeCode);
+  const runtimeId = (d["runtimeId"] as string).toLowerCase();
+  const code = firstCode([
+    () => (/^0x[0-9a-f]{40}$/.test(runtimeId) ? undefined : "TOWER_STORED_RUNTIME_INVALID"),
+    () => safeIntCode(d["updatedAt"], "TOWER_STORED_UPDATED_AT_INVALID"),
+    () => (Array.isArray(d["receipts"]) ? undefined : "TOWER_STORED_RECEIPTS_INVALID"),
+    () => (Array.isArray(d["bundles"]) ? undefined : "TOWER_STORED_BUNDLES_INVALID"),
+  ]);
+  if (code !== undefined) return towerErr(code);
+  return chain(traverse(d["receipts"] as readonly unknown[], (r) => decodeTowerReceipt(r, lookupKey, runtimeId)), (receipts) =>
+    map(traverse(d["bundles"] as readonly unknown[], (v): Result<TowerStoredBundle, TowerError> => {
+      if (!plainRecord(v)) return towerErr("TOWER_STORED_BUNDLE_ENTRY_INVALID");
+      const e = v, entryFields = exactKeys(e, ["slot", "towerMode", "bundle", "ownerSignedAt", "encryptedEnvelopeHash", "lastResortPayloadDigest"], ["lastResortPayload"], "TOWER_STORED_BUNDLE_ENTRY_FIELDS_INVALID");
+      if (entryFields !== undefined) return towerErr(entryFields);
+      const slotCode = safeIntCode(e["slot"], "TOWER_STORED_BUNDLE_SLOT_INVALID");
+      if (slotCode !== undefined) return towerErr(slotCode);
+      return chain(normalizeTowerMode(e["towerMode"]), (towerMode) => chain(decodeTowerBundle(e["bundle"], lookupKey, runtimeId), (bundle) => {
+        const c = firstCode([
+          () => safeIntCode(e["ownerSignedAt"], "TOWER_STORED_OWNER_SIGNED_AT_INVALID"),
+          () => textCode(e["encryptedEnvelopeHash"], "TOWER_STORED_ENCRYPTED_ENVELOPE_HASH_INVALID") ?? (TOWER_BYTES32.test((e["encryptedEnvelopeHash"] as string).toLowerCase()) ? undefined : "TOWER_STORED_ENCRYPTED_ENVELOPE_HASH_INVALID"),
+          () => textCode(e["lastResortPayloadDigest"], "TOWER_STORED_LAST_RESORT_DIGEST_INVALID"),
+          () => (e["lastResortPayload"] !== undefined && !plainRecord(e["lastResortPayload"]) ? "TOWER_STORED_LAST_RESORT_PAYLOAD_INVALID" : undefined),
+        ]);
+        return c !== undefined ? towerErr(c) : ok({
+          slot: e["slot"] as number, towerMode, bundle, ownerSignedAt: e["ownerSignedAt"] as number, encryptedEnvelopeHash: (e["encryptedEnvelopeHash"] as string).toLowerCase(),
+          lastResortPayloadDigest: e["lastResortPayloadDigest"] as string, ...opt("lastResortPayload", e["lastResortPayload"] as TowerLastResortPayloadV1 | undefined),
+        });
+      }));
+    }), (bundles) => ({ lookupKey, runtimeId, updatedAt: d["updatedAt"] as number, receipts, bundles })));
+});
