@@ -13,8 +13,8 @@ og (`core/`, `jurisdictions/`) is the spec. Tests: `pure/diff/entity-consensus-2
 | ER-15b | Final-destination receipt | direct-payment.ts | FIXED (n/a) | Unreachable in og: direct needs route length 2 and trusted needs length 3. Nothing to port. |
 | ER-24 | Watchtower stale/replay checks | watchtower store | REMAINING | The rewrite's TowerAppointmentV1 is not og's wire shape. The og store needs EncryptedRuntimeRecoveryBundleV1 and serializeTaggedJson digests, a separate storage subsystem. |
 | H7-a | Leaf `publicPinned` | lifecycle/open-account.ts resolveOpenAccountPublicPin | FIXED | The opener pins unless `pinPublic===false` or 100 accounts are already pinned. The leaf root matches og. |
-| H7-b | Leaf shadow rebalance policy (policyRoot) | open-account.ts | REMAINING | og seeds the policy per token on every open. That needs the token-decimals registry and a Patricia policyRoot; policyRoot stays ZERO_WORD. |
-| H7-c | Leaf disputePrepare | dispute prepare | REMAINING | The rewrite has no og dispute-prepare state. |
+| H7-b | Leaf shadow rebalance policy (policyRoot) | open-account.ts | FIXED | entity-txs-3 H7-b: the policy map is seeded, and policyRoot equals og PersistentAccountStateMap root |
+| H7-c | Leaf disputePrepare | dispute prepare | FIXED | entity-txs-3 H7-c: disputePrepare and the queued activeDispute are in the leaf |
 
 ## Entity tx types (og core/types/entity-tx.ts vs rewrite EntityTx)
 
@@ -26,12 +26,12 @@ og (`core/`, `jurisdictions/`) is the spec. Tests: `pure/diff/entity-consensus-2
 | directPayment (trusted mode) | FIXED | ER-15 |
 | openAccount pinPublic | FIXED | H7-a |
 | proposeAccount (rewrite-only) | FIXED (removed) | og has no equivalent |
-| propose / vote (governance proposals) | REMAINING | Needs board epoch and generateProposalId env |
-| setHubConfig, setRebalancePolicy | REMAINING | Need token defaults and the shadow policy (H7-b) |
-| proposeAccountsNow, scheduledWake / crontab | REMAINING | Needs a scheduler subsystem |
+| propose / vote (governance proposals) | FIXED | entity-txs-3 T3-1/T3-2 (inside a signed entityCommand) |
+| setHubConfig, setRebalancePolicy | FIXED | entity-txs-3 T3-5/T3-6 |
+| proposeAccountsNow, scheduledWake / crontab | REMAINING | og crontab scheduler, and the rewrite does not keep pendingAccountInput bytes (entity-txs-3) |
 | initOrderbookExt, placeSwapOffer (og shape), proposeCancelSwap | REMAINING | Needs an orderbook extension subsystem |
-| prepareDispute, disputeStart, disputeFinalize | REMAINING | Needs dispute-prepare state (H7-c) and a J submit path |
-| settle_* | REMAINING | Settlement workspace not ported |
+| prepareDispute, disputeStart, disputeFinalize | PARTIAL | prepare/start are FIXED (entity-txs-3 T3-7), except orderbook removal, argument override and cross-j. disputeFinalize is REMAINING (finalize-proof selection, crontab) |
+| settle_* | REMAINING | og payments/settle.ts entity settlement orchestration is not ported (entity-txs-3) |
 | boardHandover, entityProvider* | REMAINING | Needs the board registry (AC-13b) |
-| entityCommand, runtimeOutput | REMAINING | Runtime-level wrappers, not entity-state txs in the rewrite |
+| entityCommand, runtimeOutput | PARTIAL | entityCommand is FIXED (entity-txs-3 T3-1). runtimeOutput is REMAINING (the cross-j agent owns it) |
 | j-batch / r2r / r2c, cross-j, htlcPayment / onion, lending | n/a | Owned by other agents |
