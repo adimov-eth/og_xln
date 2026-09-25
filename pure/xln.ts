@@ -143,6 +143,8 @@ export const canon = (v: unknown): string => {
   if (typeof v === "number") return len("d", String(v));
   if (v instanceof Map) { const rows = sortedBy([...v].map(([k, x]) => [canon(k), x] as const), ([k]) => k); return `m${len("d", String(rows.length))}${rows.map(([k, x]) => k + canon(x)).join("")}`; }
   if (Array.isArray(v)) return `a${len("d", String(v.length))}${v.map(canon).join("")}`;
+  if (v instanceof Set) { const rows = [...v].map(canon).sort(asc); return `S${len("d", String(rows.length))}${rows.join("")}`; }
+  if (v instanceof Uint8Array) return len("b", nobleHex(v));
   if (typeof v === "object") { const r = v as Record<string, unknown>, keys = Object.keys(r).filter((k) => r[k] !== undefined).sort(); return `o${len("d", String(keys.length))}${keys.map((k) => len("s", k) + canon(r[k])).join("")}`; }
   return "u";
 };

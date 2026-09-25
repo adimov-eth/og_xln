@@ -727,9 +727,12 @@ describe("golden hashes hardcoded in pure/oracle.test.ts: does og itself produce
 });
 
 describe("rewrite-only canon text (hashEntityState / hashAccountState / encodeEntityTx) -- no og counterpart", () => {
-  test("EXTRA: canon() maps every Set (and Uint8Array contents) to a plain-object encoding, so distinct values collide; og's RLP/msgpack codecs keep them distinct", () => {
-    expect(canon(new Set([1, 2]))).toBe(canon({}));
-    expect(canon(Uint8Array.of(1))).toBe(canon({ 0: 1 }));
+  test("EXTRA (kept: hashEntityState / hashAccountState / encodeEntityTx depend on it; no og counterpart): canon() keeps Sets and byte arrays distinct from plain objects, as og's RLP codec does", () => {
+    expect(canon(new Set([1, 2]))).not.toBe(canon({}));
+    expect(canon(new Set([1, 2]))).toBe(canon(new Set([2, 1])));
+    expect(canon(new Set([1, 2]))).not.toBe(canon([1, 2]));
+    expect(canon(Uint8Array.of(1))).not.toBe(canon({ 0: 1 }));
+    expect(canon(Uint8Array.of(1))).not.toBe(canon(Uint8Array.of(1, 0)));
     expect(hex(encodeAccountStateValue(new Set([1, 2])))).not.toBe(hex(encodeAccountStateValue({})));
   });
 });
