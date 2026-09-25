@@ -963,6 +963,237 @@ export const disputeFinalizedInput = (e: Extract<JEvent, { readonly type: "Dispu
     return map(eventNonce, (n) => ({ kind: "dispute_finalized", finalizedJNonce: Math.max(d.jNonce, n), finalizedTokenIds: body.tokenIds.map(Number) }));
   }));
 
+// ---- og jBatchState (core/jurisdiction/machine/batch/{index,reserve-simulation}.ts, entity/tx/handlers/j-batch/*, j-events-batch.ts) ----
+export type SentJBatch = {
+  readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly firstSubmittedAt: number; readonly lastSubmittedAt: number; readonly submitAttempts: number;
+  readonly terminalFailure?: { readonly message: string; readonly failedAt: number } | undefined;
+};
+/** og JBatchState: the editable draft, the one in-flight sent batch, recovered work that broadcasts first, and the last chain-observed entity nonce. */
+export type JBatchState = {
+  readonly batch: Batch; readonly jurisdiction: null; readonly lastBroadcast: number; readonly broadcastCount: number; readonly failedAttempts: number; readonly status: "empty" | "accumulating" | "sent" | "failed";
+  readonly sentBatch?: SentJBatch | undefined; readonly recoveryBatches?: readonly Batch[] | undefined; readonly autoBroadcastDraft?: boolean | undefined; readonly entityNonce?: number | undefined;
+};
+export const initJBatch = (): JBatchState => ({ batch: emptyBatch(), jurisdiction: null, lastBroadcast: 0, broadcastCount: 0, failedAttempts: 0, status: "empty" });
+export const J_BATCH_LIMITS = { maxTotalOps: 50, maxSettlements: 32, maxSettlementDiffs: 32, maxSettlementForgivenessIds: 32, maxDisputeStarts: 8, maxCounterDisputes: 8, maxDisputeFinalizations: 1, maxReserveToCollateralPairs: 64, maxReserveToCollateralPairsTotal: 256, maxSecretReveals: 32, maxHashLadderRegistrations: 32 } as const;
+export const batchOpCount = (b: Batch): number => BATCH_FIELDS.reduce((n, f) => n + b[f].length, 0);
+const batchEmpty = (b: Batch): boolean => batchOpCount(b) === 0;
+export const hasJBatchWork = (s: JBatchState): boolean => (s.recoveryBatches ?? []).some((b) => !batchEmpty(b)) || !batchEmpty(s.batch);
+export type JBatchError = Tagged<"j_batch", { reason: string }>;
+const batchErr = (reason: string): Result<never, JBatchError> => err({ _tag: "j_batch", reason });
+const pairCount = (b: Batch): number => b.reserveToCollateral.reduce((n, op) => n + op.pairs.length, 0);
+/** og getJBatchContractLimitIssue. */
+export const jBatchLimitIssue = (b: Batch): string | undefined => {
+  const L = J_BATCH_LIMITS, over = ([name, n, max]: readonly [string, number, number]): string | undefined => (n > max ? `${name} ${n}/${max}` : undefined);
+  const first = [["total ops", batchOpCount(b), L.maxTotalOps], ["settlements", b.settlements.length, L.maxSettlements], ["disputeStarts", b.disputeStarts.length, L.maxDisputeStarts], ["counterDisputes", b.counterDisputes.length, L.maxCounterDisputes],
+    ["disputeFinalizations", b.disputeFinalizations.length, L.maxDisputeFinalizations], ["revealSecrets", b.revealSecrets.length, L.maxSecretReveals], ["hashLadderRegistrations", b.hashLadderRegistrations.length, L.maxHashLadderRegistrations]] as const;
+  for (const row of first) { const issue = over(row); if (issue !== undefined) return issue; }
+  for (const [i, op] of b.reserveToCollateral.entries()) {
+    if (op.tokenId <= 0n || op.tokenId > SAFE_UINT) return `reserveToCollateral[${i}].tokenId must be a positive safe integer`;
+    if (op.pairs.length === 0) return `reserveToCollateral[${i}].pairs must not be empty`;
+    if (op.pairs.some((p) => p.amount <= 0n)) return `reserveToCollateral[${i}].pairs amounts must be positive`;
+    if (op.pairs.length > L.maxReserveToCollateralPairs) return `reserveToCollateral[${i}].pairs ${op.pairs.length}/${L.maxReserveToCollateralPairs}`;
+  }
+  if (pairCount(b) > L.maxReserveToCollateralPairsTotal) return `reserveToCollateral.pairs total ${pairCount(b)}/${L.maxReserveToCollateralPairsTotal}`;
+  for (const [i, s] of b.settlements.entries()) {
+    if (s.diffs.length > L.maxSettlementDiffs) return `settlements[${i}].diffs ${s.diffs.length}/${L.maxSettlementDiffs}`;
+    if (s.forgiveDebtsInTokenIds.length > L.maxSettlementForgivenessIds) return `settlements[${i}].forgiveDebtsInTokenIds ${s.forgiveDebtsInTokenIds.length}/${L.maxSettlementForgivenessIds}`;
+  }
+  return undefined;
+};
+export type ReserveOpType = "reserveToReserve" | "settlement" | "reserveToCollateral" | "reserveToExternalToken";
+/** og DraftBatchReserveIssue: the op whose outflow reverts the whole batch on chain. */
+export type ReserveIssue = {
+  readonly tokenId: number; readonly opType: ReserveOpType; readonly opIndex: number; readonly failureMode: "batchRevert"; readonly requiredAmount: bigint;
+  readonly availableAfterDebt: bigint; readonly debtClaimPaid: bigint; readonly remainingDebtAfterSweep: bigint; readonly unrepaidDeficit: bigint;
+};
+export type ReserveSimulation = { readonly issues: readonly ReserveIssue[]; readonly reservesByToken: ReadonlyMap<number, bigint>; readonly outgoingDebtByToken: ReadonlyMap<number, bigint>; readonly deficitByToken: ReadonlyMap<number, bigint> };
+/** og getOpenOutgoingDebtTotals: the open outgoing debt per token. */
+export const openOutgoingDebtTotals = (book: DebtBook): ReadonlyMap<number, bigint> =>
+  new Map([...book].flatMap(([tk, bucket]) => { const total = [...bucket.values()].reduce((n, d) => (d.status === "open" ? n + d.remainingAmount : n), 0n); return total > 0n ? [[tk, total] as const] : []; }));
+type DebtSweep = { readonly availableAfterDebt: bigint; readonly debtClaimPaid: bigint; readonly remainingDebtAfterSweep: bigint };
+/** og simulateDraftBatchReserveAvailability: Depository._processBatch for the initiator's own reserves: FIFO debt sweeps before every outflow, the implicit flash deficit a debt-free initiator may open, and a revert unless every deficit is repaid. */
+export const simulateBatchReserves = (entity: string, reserves: ReadonlyMap<number, bigint>, batch: Batch, outgoingDebt: ReadonlyMap<number, bigint>): ReserveSimulation => {
+  const me = entity.toLowerCase(), res = new Map(reserves), debt = new Map(outgoingDebt), deficit = new Map<number, bigint>(), issues: ReserveIssue[] = [];
+  const origins = new Map<number, DebtSweep & { readonly opType: ReserveOpType; readonly opIndex: number; readonly requiredAmount: bigint }>();
+  const read = (m: ReadonlyMap<number, bigint>, t: number): bigint => m.get(t) ?? 0n;
+  const write = (m: Map<number, bigint>, t: number, a: bigint): void => { if (a === 0n) m.delete(t); else m.set(t, a); };
+  const credit = (t: number, a: bigint): void => {
+    if (a <= 0n) return;
+    const owed = read(deficit, t), repaid = a < owed ? a : owed;
+    write(deficit, t, owed - repaid);
+    if (a - repaid > 0n) write(res, t, read(res, t) + (a - repaid));
+  };
+  const debit = (t: number, a: bigint, remainingDebt: bigint): "spent" | "deficit" | "rejected" => {
+    const reserve = read(res, t);
+    if (reserve >= a) { write(res, t, reserve - a); return "spent"; }
+    if (remainingDebt !== 0n) return "rejected";
+    write(deficit, t, read(deficit, t) + (a - reserve)); write(res, t, 0n);
+    return "deficit";
+  };
+  const sweep = (t: number): DebtSweep => {
+    const reserve = read(res, t), owed = read(debt, t), paid = reserve < owed ? reserve : owed;
+    write(res, t, reserve - paid); write(debt, t, owed - paid);
+    return { availableAfterDebt: reserve - paid, debtClaimPaid: paid, remainingDebtAfterSweep: owed - paid };
+  };
+  const origin = (t: number, s: DebtSweep, opType: ReserveOpType, opIndex: number, requiredAmount: bigint): void => { if (!origins.has(t)) origins.set(t, { ...s, opType, opIndex, requiredAmount }); };
+  const revert = (s: DebtSweep, tokenId: number, opType: ReserveOpType, opIndex: number, requiredAmount: bigint, unrepaidDeficit: bigint): void => { issues.push({ tokenId, opType, opIndex, failureMode: "batchRevert", requiredAmount, ...s, unrepaidDeficit }); };
+  const spend = (t: number, a: bigint, opType: ReserveOpType, i: number): boolean => {
+    const s = sweep(t), outcome = debit(t, a, s.remainingDebtAfterSweep);
+    if (outcome === "rejected") { revert(s, t, opType, i, a, 0n); return false; }
+    if (outcome === "deficit") origin(t, s, opType, i, a);
+    return true;
+  };
+  for (const op of batch.externalTokenToReserve) if ((op.entity === "" ? me : op.entity.toLowerCase()) === me) credit(Number(op.internalTokenId), op.amount);
+  for (const [i, op] of batch.reserveToReserve.entries()) if (spend(Number(op.tokenId), op.amount, "reserveToReserve", i) && op.receivingEntity.toLowerCase() === me) credit(Number(op.tokenId), op.amount);
+  for (const op of batch.collateralToReserve) credit(Number(op.tokenId), op.amount);
+  const own = (s: Settlement, d: SettlementDiff): bigint => (s.leftEntity.toLowerCase() === me ? d.leftDiff : s.rightEntity.toLowerCase() === me ? d.rightDiff : 0n);
+  const sweeps = new Map<number, DebtSweep>();
+  for (const s of batch.settlements) for (const d of s.diffs) {
+    if (own(s, d) >= 0n) continue;
+    const t = Number(d.tokenId), swept = sweep(t), prior = sweeps.get(t);
+    sweeps.set(t, { availableAfterDebt: swept.availableAfterDebt, debtClaimPaid: (prior?.debtClaimPaid ?? 0n) + swept.debtClaimPaid, remainingDebtAfterSweep: swept.remainingDebtAfterSweep });
+  }
+  for (const [i, s] of batch.settlements.entries()) {
+    if (s.leftEntity.toLowerCase() !== me && s.rightEntity.toLowerCase() !== me) continue;
+    const blocked = s.diffs.find((d) => { const o = own(s, d), t = Number(d.tokenId), have = read(res, t) > read(debt, t) ? read(res, t) - read(debt, t) : 0n; return o < 0n && have < -o && read(debt, t) !== 0n; });
+    if (blocked !== undefined) {
+      const t = Number(blocked.tokenId), have = read(res, t) > read(debt, t) ? read(res, t) - read(debt, t) : 0n;
+      revert({ availableAfterDebt: have, debtClaimPaid: sweeps.get(t)?.debtClaimPaid ?? 0n, remainingDebtAfterSweep: read(debt, t) }, t, "settlement", i, -own(s, blocked), 0n);
+      continue;
+    }
+    for (const d of s.diffs) {
+      const o = own(s, d), t = Number(d.tokenId);
+      if (o >= 0n) { credit(t, o); continue; }
+      const snap: DebtSweep = { availableAfterDebt: read(res, t), debtClaimPaid: sweeps.get(t)?.debtClaimPaid ?? 0n, remainingDebtAfterSweep: read(debt, t) };
+      if (debit(t, -o, snap.remainingDebtAfterSweep) === "deficit") origin(t, snap, "settlement", i, -o);
+    }
+  }
+  for (const [i, op] of batch.reserveToCollateral.entries()) spend(Number(op.tokenId), op.pairs.reduce((n, p) => n + p.amount, 0n), "reserveToCollateral", i);
+  for (const [i, op] of batch.reserveToExternalToken.entries()) spend(Number(op.tokenId), op.amount, "reserveToExternalToken", i);
+  const open = [...deficit].find(([, d]) => d !== 0n);
+  if (open !== undefined) {
+    const o = origins.get(open[0]);
+    if (o === undefined) throw new Error(`DRAFT_BATCH_DEFICIT_WITHOUT_ORIGIN:${open[0]}`);
+    const { opType, opIndex, requiredAmount, ...s } = o;
+    revert(s, open[0], opType, opIndex, requiredAmount, open[1]);
+  }
+  return issues.length > 0 ? { issues, reservesByToken: new Map(reserves), outgoingDebtByToken: new Map(outgoingDebt), deficitByToken: new Map() } : { issues, reservesByToken: res, outgoingDebtByToken: debt, deficitByToken: deficit };
+};
+export type ReserveCandidate =
+  | { readonly type: "reserveToReserve"; readonly receivingEntity: string; readonly tokenId: number; readonly amount: bigint }
+  | { readonly type: "reserveToCollateral"; readonly receivingEntity: string; readonly counterparty: string; readonly tokenId: number; readonly amount: bigint }
+  | { readonly type: "reserveToExternalToken"; readonly receivingEntity: string; readonly tokenId: number; readonly amount: bigint };
+/** og j-batch-reserve-admission.ts appendCandidate: an R2C joins the (receivingEntity, tokenId) entry, adding to or opening its pair. */
+const appendCandidate = (b: Batch, c: ReserveCandidate): { readonly batch: Batch; readonly index: number } => {
+  if (c.type !== "reserveToCollateral") return { batch: { ...b, [c.type]: [...b[c.type], { receivingEntity: c.receivingEntity, tokenId: BigInt(c.tokenId), amount: c.amount }] }, index: b[c.type].length };
+  const at = b.reserveToCollateral.findIndex((op) => op.receivingEntity === c.receivingEntity && op.tokenId === BigInt(c.tokenId));
+  if (at < 0) return { batch: { ...b, reserveToCollateral: [...b.reserveToCollateral, { tokenId: BigInt(c.tokenId), receivingEntity: c.receivingEntity, pairs: [{ entity: c.counterparty, amount: c.amount }] }] }, index: b.reserveToCollateral.length };
+  const op = b.reserveToCollateral[at]!, has = op.pairs.some((p) => p.entity === c.counterparty);
+  const pairs = has ? op.pairs.map((p) => (p.entity === c.counterparty ? { ...p, amount: p.amount + c.amount } : p)) : [...op.pairs, { entity: c.counterparty, amount: c.amount }];
+  return { batch: { ...b, reserveToCollateral: b.reserveToCollateral.map((x, i) => (i === at ? { ...x, pairs } : x)) }, index: at };
+};
+/** The Entity-side view og's j-batch handlers read. */
+export type JEntity = { readonly entityId: string; readonly reserves: ReadonlyMap<number, bigint>; readonly debts: DebtLedger; readonly jBatch?: JBatchState | undefined; readonly accounts: ReadonlySet<string> };
+/** og getReserveCandidateIssue: simulate the draft with the candidate appended; the candidate's own issue, else the draft's first. */
+export const reserveCandidateIssue = (e: JEntity, c: ReserveCandidate): ReserveIssue | undefined => {
+  const { batch, index } = appendCandidate(e.jBatch?.batch ?? emptyBatch(), c), sim = simulateBatchReserves(e.entityId, e.reserves, batch, openOutgoingDebtTotals(e.debts.out));
+  return sim.issues.find((i) => i.opType === c.type && i.opIndex === index) ?? sim.issues[0];
+};
+const accumulating = (s: JBatchState, batch: Batch): JBatchState => ({ ...s, batch, status: s.status === "empty" ? "accumulating" : s.status });
+const batchRoom = (b: Batch, op: string): Result<void, JBatchError> => guard(batchOpCount(b) + 1 <= J_BATCH_LIMITS.maxTotalOps, { _tag: "j_batch", reason: `J_BATCH_LIMIT_EXCEEDED: ${op}` });
+/** og batchAddReserveToReserve / batchAddReserveToExternal / batchAddExternalTokenToReserve: one appended op within the 50-op contract limit. */
+const addOp = <F extends "reserveToReserve" | "reserveToExternalToken" | "externalTokenToReserve">(s: JBatchState, field: F, op: Batch[F][number], label: string): Result<JBatchState, JBatchError> =>
+  map(batchRoom(s.batch, label), () => accumulating(s, { ...s.batch, [field]: [...s.batch[field], op] }));
+/** og batchAddReserveToCollateral: aggregate into the (receivingEntity, tokenId) entry within the pair limits. */
+export const addReserveToCollateral = (s: JBatchState, entity: string, counterparty: string, tokenId: number, amount: bigint): Result<JBatchState, JBatchError> => {
+  if (amount <= 0n) return batchErr("R2C_AMOUNT_MUST_BE_POSITIVE");
+  if (!Number.isSafeInteger(tokenId) || tokenId <= 0) return batchErr("R2C_TOKEN_ID_INVALID");
+  if (entity === "" || counterparty === "" || entity === counterparty) return batchErr("R2C_ACCOUNT_PARTIES_INVALID");
+  const existing = s.batch.reserveToCollateral.find((op) => op.receivingEntity === entity && op.tokenId === BigInt(tokenId)), total = pairCount(s.batch);
+  if (existing !== undefined && existing.pairs.some((p) => p.entity === counterparty)) return ok(accumulating(s, appendCandidate(s.batch, { type: "reserveToCollateral", receivingEntity: entity, counterparty, tokenId, amount }).batch));
+  if (existing === undefined && batchOpCount(s.batch) + 1 > J_BATCH_LIMITS.maxTotalOps) return batchErr("J_BATCH_LIMIT_EXCEEDED: reserveToCollateral");
+  if (total + 1 > J_BATCH_LIMITS.maxReserveToCollateralPairsTotal) return batchErr("J_BATCH_LIMIT_EXCEEDED: reserveToCollateral.pairs total");
+  if (existing !== undefined && existing.pairs.length + 1 > J_BATCH_LIMITS.maxReserveToCollateralPairs) return batchErr("J_BATCH_LIMIT_EXCEEDED: reserveToCollateral.pairs");
+  return ok(accumulating(s, appendCandidate(s.batch, { type: "reserveToCollateral", receivingEntity: entity, counterparty, tokenId, amount }).batch));
+};
+/** `note`: og's addMessage text when the handler refuses without throwing (r2c leaves the Entity unchanged). */
+export type JQueued = { readonly jBatch: JBatchState; readonly note?: string | undefined };
+const insufficient = (issue: ReserveIssue, amount: bigint, tokenId: number): string => `Insufficient spendable reserve: have ${issue.availableAfterDebt}, need ${amount} token ${tokenId}`;
+/** og handleR2R: debt-aware reserve admission, then queue (reserves move only when the batch's J events finalize). */
+export const queueR2R = (e: JEntity, to: string, tokenId: number, amount: bigint): Result<JBatchState, JBatchError> => {
+  const issue = reserveCandidateIssue(e, { type: "reserveToReserve", receivingEntity: to, tokenId, amount });
+  return issue !== undefined ? batchErr(insufficient(issue, amount, tokenId)) : addOp(e.jBatch ?? initJBatch(), "reserveToReserve", { receivingEntity: to, tokenId: BigInt(tokenId), amount }, "reserveToReserve");
+};
+/** og handleR2E. */
+export const queueR2E = (e: JEntity, receivingEntity: string, tokenId: number, amount: bigint): Result<JBatchState, JBatchError> => {
+  const issue = reserveCandidateIssue(e, { type: "reserveToExternalToken", receivingEntity, tokenId, amount });
+  return issue !== undefined ? batchErr(insufficient(issue, amount, tokenId)) : addOp(e.jBatch ?? initJBatch(), "reserveToExternalToken", { receivingEntity, tokenId: BigInt(tokenId), amount }, "reserveToExternalToken");
+};
+/** og handleE2R: a non-zero token contract and a positive amount, credited to this Entity when the batch executes. */
+export const queueE2R = (e: JEntity, x: { readonly contractAddress: string; readonly amount: bigint; readonly tokenType?: number | undefined; readonly externalTokenId?: bigint | undefined; readonly internalTokenId?: number | undefined }): Result<JBatchState, JBatchError> => {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(x.contractAddress) || /^0x0{40}$/.test(x.contractAddress)) return batchErr(`Invalid external token contract: ${x.contractAddress}`);
+  if (x.amount <= 0n) return batchErr("External → Reserve amount must be positive");
+  return addOp(e.jBatch ?? initJBatch(), "externalTokenToReserve", { entity: e.entityId, contractAddress: x.contractAddress, externalTokenId: x.externalTokenId ?? 0n, tokenType: BigInt(x.tokenType ?? 0), internalTokenId: BigInt(x.internalTokenId ?? 0), amount: x.amount }, "externalTokenToReserve");
+};
+/** og handleR2C (no rebalance quote): admission, debt-aware reserve and local-account checks refuse with a note and leave the draft unchanged. */
+export const queueR2C = (e: JEntity, counterparty: string, tokenId: number, amount: bigint, receivingEntityId?: string): Result<JQueued, JBatchError> => {
+  const receiving = (receivingEntityId ?? e.entityId).trim().toLowerCase(), local = receiving === e.entityId.trim().toLowerCase(), unchanged = e.jBatch ?? initJBatch();
+  if (amount <= 0n || !Number.isSafeInteger(tokenId) || tokenId <= 0) return ok({ jBatch: unchanged, note: "Collateral deposit requires a positive amount and registered tokenId" });
+  if (receiving === "" || receiving === counterparty.toLowerCase()) return ok({ jBatch: unchanged, note: "Collateral deposit requires two distinct non-empty entities" });
+  const issue = reserveCandidateIssue(e, { type: "reserveToCollateral", receivingEntity: receiving, counterparty, tokenId, amount });
+  if (issue !== undefined) return ok({ jBatch: unchanged, note: `Insufficient spendable reserve for collateral deposit: have ${issue.availableAfterDebt}, need ${amount} token ${tokenId}` });
+  if (local && !e.accounts.has(counterparty)) return ok({ jBatch: unchanged, note: "Cannot deposit collateral: no account" });
+  return map(addReserveToCollateral(unchanged, receiving, counterparty, tokenId, amount), (jBatch) => ({ jBatch }));
+};
+/** og takeBroadcastBatch: dispute work broadcasts first (one finalization at a time; registrations with starts); everything else waits in the remainder. */
+export const takeBroadcastBatch = (b: Batch): { readonly selected: Batch; readonly remainder: Batch; readonly disputePriority: boolean } => {
+  if (b.disputeStarts.length === 0 && b.counterDisputes.length === 0 && b.disputeFinalizations.length === 0) return { selected: b, remainder: emptyBatch(), disputePriority: false };
+  const base = { disputeStarts: b.disputeStarts, counterDisputes: b.counterDisputes, revealSecrets: b.revealSecrets };
+  if (b.hashLadderRegistrations.length > 0) return { selected: { ...emptyBatch(), ...base, hashLadderRegistrations: b.hashLadderRegistrations }, remainder: { ...b, disputeStarts: [], counterDisputes: [], hashLadderRegistrations: [], revealSecrets: [] }, disputePriority: true };
+  return { selected: { ...emptyBatch(), ...base, disputeFinalizations: b.disputeFinalizations.slice(0, 1) }, remainder: { ...b, disputeStarts: [], counterDisputes: [], disputeFinalizations: b.disputeFinalizations.slice(1), revealSecrets: [] }, disputePriority: true };
+};
+/** og JTx `batch` (types/jurisdiction-runtime.ts) as j_broadcast emits it, before the quorum Hanko is attached. */
+export type JBatchTx = { readonly type: "batch"; readonly entityId: string; readonly data: { readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly batchGeneration: number; readonly batchSize: number; readonly signerId: string }; readonly timestamp: number };
+/** og HashToSign of type "jBatch" (the Entity quorum signs the batch hash for Hanko). */
+export type JBatchHashToSign = { readonly hash: string; readonly type: "jBatch"; readonly context: string };
+export type Broadcast = { readonly jBatch: JBatchState; readonly jTx?: JBatchTx | undefined; readonly hashToSign?: JBatchHashToSign | undefined; readonly note?: string | undefined };
+/** og handleJBroadcast: refuse while a batch is in flight; skip an empty draft; seal the next batch (recovery first) at entityNonce + 1, park the rest, and hand its batch hash to the quorum. */
+export const jBroadcast = (s: JBatchState | undefined, ctx: { readonly entityId: string; readonly chainId: number; readonly depository: string; readonly signerId: string; readonly timestamp: number }): Result<Broadcast, JBatchError> => {
+  if (s === undefined) return batchErr("No jBatchState found for j_broadcast");
+  if (s.sentBatch !== undefined) return batchErr(`Cannot broadcast: sentBatch pending nonce=${s.sentBatch.entityNonce} attempts=${s.sentBatch.submitAttempts}`);
+  if (!hasJBatchWork(s)) return ok({ jBatch: s, note: "j_broadcast skipped: jBatch is empty" });
+  if (ctx.chainId === 0) return ok({ jBatch: s, note: "Missing chainId" });
+  if (ctx.signerId === "") return ok({ jBatch: s, note: "No signerId available" });
+  const recovery = s.recoveryBatches?.[0], fromRecovery = recovery !== undefined && !batchEmpty(recovery), { selected, remainder } = takeBroadcastBatch(fromRecovery ? recovery : s.batch);
+  if (!domainOf({ chainId: ctx.chainId, depositoryAddress: ctx.depository }).ok || /^0x0{40}$/.test(ctx.depository)) return batchErr(`INVALID_HANKO_DOMAIN:${ctx.chainId}:${ctx.depository}`);
+  const limit = jBatchLimitIssue(selected);
+  if (limit !== undefined) return batchErr(`J_BATCH_LIMIT_EXCEEDED: j_broadcast: ${limit}`);
+  const nonce = (s.entityNonce ?? 0) + 1, encodedBatch = encodeBatch(selected), batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(nonce) }), generation = s.broadcastCount + 1;
+  const queue = fromRecovery ? (batchEmpty(remainder) ? (s.recoveryBatches ?? []).slice(1) : [remainder, ...(s.recoveryBatches ?? []).slice(1)]) : s.recoveryBatches;
+  const { recoveryBatches: _r, autoBroadcastDraft: _a, ...rest } = s;
+  const parked: JBatchState = { ...rest, batch: fromRecovery ? s.batch : remainder, ...(queue === undefined || queue.length === 0 ? {} : { recoveryBatches: queue }) };
+  const jBatch: JBatchState = { ...parked, ...(hasJBatchWork(parked) ? { autoBroadcastDraft: true } : {}), sentBatch: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, firstSubmittedAt: ctx.timestamp, lastSubmittedAt: 0, submitAttempts: 0 }, broadcastCount: generation, lastBroadcast: ctx.timestamp, status: "sent" };
+  return ok({ jBatch, jTx: { type: "batch", entityId: ctx.entityId, data: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, batchGeneration: generation, batchSize: batchOpCount(selected), signerId: ctx.signerId }, timestamp: ctx.timestamp },
+    hashToSign: { hash: batchHash, type: "jBatch", context: `jBatch:${ctx.entityId.slice(-4)}:nonce:${nonce}` } });
+};
+/** og j-events-batch.ts applyHankoBatchProcessedEvent: the chain nonce is authoritative; the exact pending (nonce, hash) finalizes, a different hash at or past it quarantines the pending batch.
+ *  `autoBroadcast`: og finalizePendingBatch queues a follow-up j_broadcast when the sealed batch parked work behind it. */
+export type BatchProcessed = { readonly jBatch: JBatchState | undefined; readonly autoBroadcast: boolean };
+export const applyHankoBatchProcessed = (s: JBatchState | undefined, entity: string, e: Extract<JEvent, { readonly type: "HankoBatchProcessed" }>, timestamp: number): Result<BatchProcessed, JBatchError> => {
+  if (e.entityId.toLowerCase() !== entity.toLowerCase()) return ok({ jBatch: s, autoBroadcast: false });
+  const hash = e.batchHash.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(hash)) return batchErr("J_BATCH_EVENT_BATCH_HASH_INVALID");
+  if (e.nonce < 1n || e.nonce > SAFE_UINT) return batchErr("J_BATCH_EVENT_NONCE_INVALID");
+  const cur = s ?? initJBatch(), nonce = Number(e.nonce), synced = Math.max(cur.entityNonce ?? 0, nonce), sent = cur.sentBatch;
+  if (sent !== undefined && sent.entityNonce === nonce && sent.batchHash.toLowerCase() === hash) {
+    const { sentBatch: _s, ...rest } = cur;
+    const jBatch: JBatchState = { ...rest, status: hasJBatchWork(cur) ? "accumulating" : "empty", entityNonce: synced };
+    return ok({ jBatch, autoBroadcast: jBatch.autoBroadcastDraft === true && hasJBatchWork(jBatch) });
+  }
+  if (sent === undefined || nonce < sent.entityNonce) return ok({ jBatch: { ...cur, entityNonce: synced }, autoBroadcast: false });
+  return ok({ autoBroadcast: false, jBatch: { ...cur, entityNonce: synced, status: "failed", sentBatch: { ...sent, terminalFailure: { message: `J_BATCH_NONCE_CONSUMED_BY_DIFFERENT_HASH:${hash}:pending=${sent.batchHash.toLowerCase()}:pendingNonce=${sent.entityNonce}:finalizedNonce=${nonce}`, failedAt: timestamp } } } });
+};
+
 type Word = string;
 /** og computeAccountKey (contract-codec.ts:6): two bytes32 words, ordered and packed lowercase. */
 export const encodeAccountKey = ({ e1, e2 }: { readonly e1: Word; readonly e2: Word }): { readonly lesserThenGreater: string; readonly greaterThenLesser: string } => {
@@ -3795,13 +4026,16 @@ export type LendingTx =
   | { readonly type: "lending_fund"; readonly id: string; readonly lenderAccountId: string; readonly principal: bigint; readonly termSeconds: bigint; readonly annualRatePpm: bigint }
   | { readonly type: "lending_borrow_request"; readonly offerId: string; readonly loanId: string; readonly borrowerAccountId: string; readonly hubEntityId: string }
   | { readonly type: "lending_repay"; readonly loanId: string } | { readonly type: "lending_close_request"; readonly id: string };
+/** og entity j-batch txs (r2r / r2c / r2e / e2r queue into jBatchState; j_broadcast seals it) and the finalized J events that move reserves (entity-runtime ER-16). */
 export type JOp =
   | { readonly type: "r2r"; readonly toEntity: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "r2c"; readonly counterparty: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "c2r"; readonly counterparty: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
+  | { readonly type: "r2c"; readonly counterparty: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly receivingEntity?: EntityId | undefined }
   | { readonly type: "et2r"; readonly tokenAddress: string; readonly amount: bigint; readonly internalTokenId: TokenId }
-  | { readonly type: "r2et"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint };
-export type JState = { readonly reserves: ReadonlyMap<EntityId, ReadonlyMap<TokenId, bigint>>; readonly escrow: ReadonlyMap<string, ReadonlyMap<TokenId, bigint>> };
+  | { readonly type: "r2et"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
+  | { readonly type: "j_broadcast"; readonly chainId: number; readonly depository: string; readonly signerId: string }
+  | { readonly type: "j_event"; readonly blockNumber: number; readonly event: JEvent };
+/** og EntityState reserves / outDebtsByToken / inDebtsByToken / jBatchState: reserves change only through finalized J events. */
+export type JState = { readonly reserves: ReadonlyMap<number, bigint>; readonly debts: DebtLedger; readonly jBatch?: JBatchState | undefined };
 export type LadderTx = { readonly type: "ladder_reveal"; readonly revealer: EntityId; readonly counter: EntityId; readonly ladderHash: Hash; readonly targetRole: boolean; readonly fillRatio: number; readonly revealedAt: bigint };
 export type EntityRouteTx =
   | { readonly type: "directPayment"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly description?: string | undefined; readonly invoiceId?: string | undefined }
@@ -3821,31 +4055,25 @@ export type Stamped = { readonly tx: HostTx; readonly ctx: HostCtx };
 export type RuntimeFrameRecord = { readonly protocolVersion: number; readonly height: bigint; readonly timestamp: bigint; readonly previousFrameHash: RuntimeFrameHash; readonly previousHostRoot: HostRoot; readonly inputRefs: readonly Stamped[]; readonly postHostRoot: HostRoot; readonly outboxRefs: readonly Hash[] };
 export type RecoverFrame = { readonly record: RuntimeFrameRecord; readonly inputs: readonly Stamped[] };
 export type Commit = { readonly frame: RecoverFrame; readonly host: Host; readonly effects: readonly OutboxEntry[] };
-export type HostError = BodyError | Tagged<"unsigned" | "chain" | "root" | "version" | "reserve" | "status" | "recipient"> | Tagged<"candidate", { cause: AccountReplicaError }>;
+export type HostError = BodyError | Tagged<"unsigned" | "chain" | "root" | "version" | "reserve" | "status" | "recipient"> | Tagged<"candidate", { cause: AccountReplicaError }> | JBatchError | JObserveError;
 export type HostStep = Step<Host, HostEffect>;
 export const PROTOCOL_VERSION = 2;
 export const emptyPool = (assetId: TokenId, jurisdictionId: string): LendingPool => ({ assetId, jurisdictionId, availablePrincipal: 0n, lentPrincipal: 0n, borrowedPrincipal: 0n, accruedInterest: 0n, offers: new Map(), loans: new Map() });
 export const genesisHost = (self: EntityId, account: AccountReplica, pool: LendingPool): Result<Host, AccountReplicaError> =>
-  map(partyOf(replicaId(account), self), () => ({ self, account, pool, j: { reserves: new Map(), escrow: new Map() }, ladder: new Map(), height: 0n, frameHash: ZERO_HASH as RuntimeFrameHash, outbox: [] }));
-type Balances<K> = ReadonlyMap<K, ReadonlyMap<TokenId, bigint>>;
-const shiftBalance = <K>(outer: Balances<K>, key: K, tk: TokenId, delta: bigint): Result<Balances<K>, HostError> => {
-  const row = outer.get(key) ?? new Map<TokenId, bigint>();
-  if ((row.get(tk) ?? 0n) + delta < 0n) return err({ _tag: "reserve" });
-  const inner = bump(row, tk, delta);
-  return ok(inner.size === 0 ? mapDelete(outer, key) : mapSet(outer, key, inner));
-};
-const escrowKey = (entity: EntityId, counterparty: EntityId): string => `${entity}|${counterparty}`;
-export const applyJ = (j: JState, op: JOp, self: EntityId): Result<JState, HostError> => {
-  if (op.amount <= 0n) return err({ _tag: "non_positive_payment" });
-  const reserve = (key: EntityId, tk: TokenId, by: bigint) => (s: JState): Result<JState, HostError> => map(shiftBalance(s.reserves, key, tk, by), (reserves) => ({ ...s, reserves }));
-  const escrow = (counterparty: EntityId, tk: TokenId, by: bigint) => (s: JState): Result<JState, HostError> => map(shiftBalance(s.escrow, escrowKey(self, counterparty), tk, by), (escrow) => ({ ...s, escrow }));
-  const via = (...steps: readonly ((s: JState) => Result<JState, HostError>)[]): Result<JState, HostError> => foldResult(steps, j, (s, f) => f(s));
+  map(partyOf(replicaId(account), self), () => ({ self, account, pool, j: { reserves: new Map(), debts: EMPTY_DEBTS }, ladder: new Map(), height: 0n, frameHash: ZERO_HASH as RuntimeFrameHash, outbox: [] }));
+const jEntityOf = (j: JState, self: EntityId, peer: string): JEntity => ({ entityId: self, reserves: j.reserves, debts: j.debts, jBatch: j.jBatch, accounts: new Set([peer]) });
+/** og handleR2R / handleR2C / handleR2E / handleE2R / handleJBroadcast and the Entity's reserve, debt and HankoBatchProcessed J-event handlers, for the Host's one Account. */
+export const applyJ = (j: JState, op: JOp, self: EntityId, peer: string, ctx: HostCtx): Result<JState, HostError> => {
+  const e = jEntityOf(j, self, peer), queued = (r: Result<JBatchState, JBatchError>): Result<JState, HostError> => map(r, (jBatch) => ({ ...j, jBatch }));
   return matchBy("type", op, {
-    r2r: (x) => via(reserve(self, x.tokenId, -x.amount), reserve(x.toEntity, x.tokenId, x.amount)),
-    r2c: (x) => via(reserve(self, x.tokenId, -x.amount), escrow(x.counterparty, x.tokenId, x.amount)),
-    c2r: (x) => via(escrow(x.counterparty, x.tokenId, -x.amount), reserve(self, x.tokenId, x.amount)),
-    et2r: (x) => via(reserve(self, x.internalTokenId, x.amount)),
-    r2et: (x) => via(reserve(self, x.tokenId, -x.amount)),
+    r2r: (x) => queued(queueR2R(e, x.toEntity, Number(x.tokenId), x.amount)),
+    r2c: (x) => map(queueR2C(e, x.counterparty, Number(x.tokenId), x.amount, x.receivingEntity), (q) => (q.note === undefined ? { ...j, jBatch: q.jBatch } : j)),
+    r2et: (x) => queued(queueR2E(e, x.recipient, Number(x.tokenId), x.amount)),
+    et2r: (x) => queued(queueE2R(e, { contractAddress: x.tokenAddress, amount: x.amount, internalTokenId: Number(x.internalTokenId) })),
+    j_broadcast: (x) => map(jBroadcast(j.jBatch, { entityId: self, chainId: x.chainId, depository: x.depository, signerId: x.signerId, timestamp: Number(ctx.timestamp) }), (b) => ({ ...j, jBatch: b.jBatch })),
+    j_event: (x) => x.event.type === "HankoBatchProcessed"
+      ? map(applyHankoBatchProcessed(j.jBatch, self, x.event, Number(ctx.timestamp)), (b) => ({ ...j, jBatch: b.jBatch }))
+      : map(observeJBlocks({ entityId: self, reserves: j.reserves, debts: j.debts, accounts: new Map() }, [{ blockNumber: x.blockNumber, events: [x.event] }]), (o) => ({ ...j, reserves: o.observer.reserves, debts: o.observer.debts })),
   });
 };
 const closeLoan = (pool: LendingPool, loan: LoanPosition, status: LoanStatus): LendingPool => ({
@@ -3898,7 +4126,7 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
     return accountStep(host, disputeUnsafe(host.account, applyDelivered(host.account, i.input, delivery, door), door));
   },
   pool: (i) => map(applyLending(host.pool, i.tx, ctx), (pool) => step({ ...host, pool })),
-  j: (i) => map(applyJ(host.j, i.tx, host.self), (j) => step({ ...host, j })),
+  j: (i) => chain(partyOf(replicaId(host.account), host.self), (party) => map(applyJ(host.j, i.tx, host.self, party.peer, ctx), (j) => step({ ...host, j }))),
   ladder: (i) => { const key = ladderKey(i.tx); return map(revealSlot(host.ladder.get(key), i.tx), (slot) => step({ ...host, ladder: mapSet(host.ladder, key, slot) })); },
   entity: (i) => chain(routeEntity(i.tx, host.self, replicaId(host.account)), (routed) => admitTx(host, routed, ctx, verify)),
   input: (i) => matchBy("kind", i.input, {

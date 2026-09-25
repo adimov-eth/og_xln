@@ -6,7 +6,12 @@ import { DEPOSITORY_J_EVENTS, ENTITY_PROVIDER_J_EVENTS } from "../../core/jurisd
 import { extractCanonicalDepositoryEventArgs } from "../../core/jurisdiction/adapter/events/depository-event-codec.ts";
 import { rawEventToJEvents } from "../../core/jurisdiction/adapter/events/j-event-payloads.ts";
 import { decodeDisputeFinalizationEvidenceCalldata, decodeDisputeProofBodyEvidenceCalldata, resolveDisputeFinalizationEvidence, resolveDisputeProofBodyEvidence } from "../../core/jurisdiction/adapter/rpc-public.ts";
-import { createEmptyBatch, decodeJBatch, encodeJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
+import { computeBatchHankoHash, createEmptyBatch, decodeJBatch, encodeJBatch, getOpenOutgoingDebtTotals, simulateDraftBatchReserveAvailability } from "../../core/jurisdiction/machine/batch/index.ts";
+import { handleR2R } from "../../core/entity/tx/handlers/j-batch/r2r.ts";
+import { handleR2C } from "../../core/entity/tx/handlers/j-batch/r2c.ts";
+import { handleR2E } from "../../core/entity/tx/handlers/j-batch/r2e.ts";
+import { takeBroadcastBatch as ogTakeBroadcastBatch } from "../../core/entity/tx/handlers/j-batch/j-broadcast.ts";
+import { applyHankoBatchProcessedEvent } from "../../core/entity/tx/j-events-batch.ts";
 import { encodeInt512, encodeUint512 } from "../../core/protocol/crypto/abi-money.ts";
 import { hashProofBodyStruct } from "../../core/protocol/dispute/proof-builder.ts";
 import { handleJEventClaim } from "../../core/account/tx/handlers/j-events/claim.ts";
@@ -22,10 +27,11 @@ import { EntityAccountCandidateMap } from "../../core/entity/state/persistent-ac
 import {
   J_EVENT_SIGNATURES, jEventTopic, readJEvents, decodeBatch, disputeProofEvidence, finalizationEvidence, withDisputeCalldata, encodeBatch, emptyBatch, proofBodyHash, PROCESS_BATCH_SELECTOR, WATCHTOWER_COUNTER_DISPUTE_SELECTOR,
   admit, applyAccountInput, committed, frameStateHash, getDelta, planAccountProposal, replicaId, entityJEvents, observeJBlocks, applyDebtEvent, withBatchNonces, EMPTY_DEBTS,
-  type JObserver, type JObservation, type JBlock, type DebtLedger,
+  simulateBatchReserves, openOutgoingDebtTotals, queueR2R, queueR2C, queueR2E, jBroadcast, takeBroadcastBatch, applyHankoBatchProcessed, initJBatch, genesisHost, emptyPool, applyHost,
+  type JObserver, type JObservation, type JBlock, type DebtLedger, type JEntity, type JBatchState,
   type Batch, type ProofBody, type JEvent, type AccountFrame, type AccountInput, type AccountReplica, type EntityId, type ProposedAccount, type WireAccountTx,
 } from "../xln.ts";
-import { ALICE, BOB, CLOCK, NOW, TERMS, ackInput, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap } from "../xln_run.ts";
+import { ALICE, BOB, CLOCK, NOW, TERMS, TOKEN, ackInput, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap } from "../xln_run.ts";
 
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const rng = prng(0x5eed_1a);
@@ -448,5 +454,166 @@ describe("Entity J observation (og j-event-payloads expandAccountSettled, j-even
       starterCounterProofCommitment: W("00"), disputeTimeout: 3n, disputeStartTimestamp: 1n, leftResponseSeconds: 1n, rightResponseSeconds: 1n, meta: { ...meta, transactionHash } });
     const out = withBatchNonces([{ type: "HankoBatchProcessed", entityId: ENTITY, batchHash: W("dd"), nonce: 7n, meta }, started(ENTITY, tx.toUpperCase().replace("0X", "0x")), started(ENTITY, other), started(PEER_ACTIVE, tx)]);
     expect(out.map((e) => (e.type === "DisputeStarted" ? e.batchNonce : "batch"))).toEqual(["batch", 7, undefined, undefined]);
+  });
+});
+
+// ---------------------------------------------------------------- jBatchState queue, reserve admission, broadcast (og jurisdiction/machine/batch, entity/tx/handlers/j-batch, j-events-batch.ts)
+const OTHER = W("aa"), DEP = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+const ogDecoded = (b: Batch): any => decodeJBatch(encodeBatch(b));
+const amt = () => BigInt(ri(100));
+const tok = () => 1 + ri(3);
+const randomReserves = () => new Map(Array.from({ length: 3 }, (_, k) => [k + 1, BigInt(ri(150))] as const).filter(() => rng() < 0.8));
+const randomDebt = () => new Map(Array.from({ length: 3 }, (_, k) => [k + 1, BigInt(ri(60))] as const).filter(([, d]) => d > 0n && rng() < 0.4));
+/** A debt book whose open outgoing totals equal `debt` (og getOpenOutgoingDebtTotals reads only status and remainingAmount). */
+const debtBook = (debt: ReadonlyMap<number, bigint>) => new Map([...debt].map(([tk, d]) => [tk, new Map([[`d${tk}`, { status: "open", remainingAmount: d } as any]])] as const));
+const randomDraft = (): Batch => {
+  const b: any = Object.fromEntries(Object.keys(emptyBatch()).map((f) => [f, []]));
+  for (let k = ri(7); k > 0; k--) {
+    const t = BigInt(tok());
+    switch (ri(6)) {
+      case 0: b.externalTokenToReserve.push({ entity: pick([ENTITY, OTHER]), contractAddress: `0x${"ab".repeat(20)}`, externalTokenId: 0n, tokenType: 0n, internalTokenId: t, amount: amt() }); break;
+      case 1: b.reserveToReserve.push({ receivingEntity: pick([ENTITY, PEER_ACTIVE, OTHER]), tokenId: t, amount: amt() }); break;
+      case 2: b.collateralToReserve.push({ counterparty: PEER_ACTIVE, tokenId: t, amount: amt(), nonce: 1n, sig: "0x" }); break;
+      case 3: {
+        const [l, r] = pick([[PEER_ACTIVE, ENTITY], [PEER_ACTIVE, OTHER]]);
+        b.settlements.push({ leftEntity: l, rightEntity: r, diffs: Array.from({ length: 1 + ri(2) }, () => ({ tokenId: BigInt(tok()), leftDiff: amt() - 50n, rightDiff: amt() - 50n, collateralDiff: 0n, ondeltaDiff: 0n })), forgiveDebtsInTokenIds: [], sig: "0x", nonce: 1n });
+        break;
+      }
+      case 4: b.reserveToCollateral.push({ tokenId: t, receivingEntity: ENTITY, pairs: Array.from({ length: 1 + ri(2) }, () => ({ entity: pick([PEER_ACTIVE, OTHER]), amount: 1n + amt() })) }); break;
+      default: b.reserveToExternalToken.push({ receivingEntity: OTHER, tokenId: t, amount: amt() });
+    }
+  }
+  return b;
+};
+
+describe("jBatchState (og jurisdiction/machine/batch, entity/tx/handlers/j-batch/*, j-events-batch.ts; entity-runtime ER-16)", () => {
+  test("MATCH: 400 random drafts simulate the initiator's reserves like og simulateDraftBatchReserveAvailability (debt sweeps, implicit flash deficit, batchRevert issues, final maps)", () => {
+    let issues = 0, deficits = 0;
+    for (let n = 0; n < 400; n++) {
+      const reserves = randomReserves(), debt = randomDebt(), b = randomDraft();
+      const rw = simulateBatchReserves(ENTITY, reserves, b, debt), og = simulateDraftBatchReserveAvailability(ENTITY, reserves, ogDecoded(b), debt);
+      expect(rw.issues).toEqual(og.issues);
+      expect(new Map(rw.reservesByToken)).toEqual(og.reservesByToken);
+      expect(new Map(rw.outgoingDebtByToken)).toEqual(og.outgoingDebtByToken);
+      expect(new Map(rw.deficitByToken)).toEqual(og.deficitByToken);
+      expect(openOutgoingDebtTotals(debtBook(debt) as any)).toEqual(getOpenOutgoingDebtTotals(debtBook(debt)));
+      issues += og.issues.length; deficits += og.issues.filter((i) => i.unrepaidDeficit > 0n).length;
+    }
+    expect(issues).toBeGreaterThan(40);
+    expect(deficits).toBeGreaterThan(5);
+  });
+
+  test("MATCH: 25 random r2r / r2c / r2e sequences (60 ops, debt-aware admission, R2C aggregation, local-account check, 50-op limit) queue exactly like og handleR2R / handleR2C / handleR2E", async () => {
+    let refusedR2C = 0, thrown = 0, queued = 0;
+    for (let n = 0; n < 25; n++) {
+      const reserves = new Map([[1, BigInt(ri(400))], [2, BigInt(ri(400))], [3, BigInt(ri(400))]]), debt = randomDebt();
+      const og: any = { entityId: ENTITY, reserves: new Map(reserves), outDebtsByToken: debtBook(debt), accounts: new Map([[PEER_ACTIVE, {}]]) };
+      let rw: JEntity = { entityId: ENTITY, reserves, debts: { out: debtBook(debt) as any, in: new Map() }, accounts: new Set([PEER_ACTIVE]) };
+      for (let s = 0; s < 60; s++) {
+        const tokenId = rng() < 0.05 ? 0 : tok(), amount = BigInt(ri(40));
+        const before = og.jBatchState === undefined ? undefined : encodeJBatch(og.jBatchState.batch);
+        let ogThrew = false;
+        const kind = pick(["r2r", "r2c", "r2c", "r2e"] as const), to = pick([PEER_ACTIVE, OTHER]);
+        try {
+          if (kind === "r2r") await handleR2R(og, { type: "r2r", data: { toEntityId: to, tokenId, amount } } as any, true);
+          else if (kind === "r2e") await handleR2E(og, { type: "r2e", data: { receivingEntity: OTHER, tokenId, amount } } as any, true);
+        } catch { ogThrew = true; }
+        if (kind === "r2c") {
+          const counterparty = pick([PEER_ACTIVE, PEER_ACTIVE, OTHER, ENTITY]), receivingEntityId = rng() < 0.2 ? OTHER : undefined;
+          try { await handleR2C({} as any, og, { type: "r2c", data: { counterpartyId: counterparty, receivingEntityId, tokenId, amount } } as any, true); } catch { ogThrew = true; }
+          const r = queueR2C(rw, counterparty, tokenId, amount, receivingEntityId);
+          expect(r.ok).toBe(!ogThrew);
+          if (r.ok) {
+            const ogChanged = og.jBatchState !== undefined && encodeJBatch(og.jBatchState.batch) !== before;
+            expect(r.value.note === undefined).toBe(ogChanged);
+            if (r.value.note === undefined) rw = { ...rw, jBatch: r.value.jBatch }; else refusedR2C++;
+          }
+        } else {
+          const r = kind === "r2r" ? queueR2R(rw, to, tokenId, amount) : queueR2E(rw, OTHER, tokenId, amount);
+          expect(r.ok).toBe(!ogThrew);
+          if (r.ok) rw = { ...rw, jBatch: r.value }; else thrown++;
+        }
+        if (og.jBatchState !== undefined && rw.jBatch !== undefined) {
+          expect(encodeBatch(rw.jBatch.batch)).toBe(encodeJBatch(og.jBatchState.batch));
+          expect(rw.jBatch.status).toBe(og.jBatchState.status);
+        }
+        queued++;
+      }
+    }
+    expect(refusedR2C).toBeGreaterThan(20);
+    expect(thrown).toBeGreaterThan(20);
+    expect(queued).toBe(25 * 60);
+  }, 60_000);
+
+  test("MATCH: 200 random drafts split for broadcast like og takeBroadcastBatch (dispute priority, one finalization, registrations with starts)", () => {
+    const fields = ["reserveToReserve", "reserveToCollateral", "collateralToReserve", "settlements", "disputeStarts", "counterDisputes", "disputeFinalizations", "externalTokenToReserve", "reserveToExternalToken", "revealSecrets", "hashLadderRegistrations"] as const;
+    let priority = 0;
+    for (let n = 0; n < 200; n++) {
+      const b: any = createEmptyBatch();
+      for (const f of fields) for (let k = rng() < 0.5 ? 0 : ri(3); k > 0; k--) b[f].push({ f, k });
+      const og = ogTakeBroadcastBatch(structuredClone(b)), rw = takeBroadcastBatch(b);
+      expect(rw).toEqual(og as any);
+      if (og.disputePriority) priority++;
+    }
+    expect(priority).toBeGreaterThan(100);
+  });
+
+  test("MATCH: 60 random broadcast / HankoBatchProcessed lifecycles: the sealed batch hash equals og computeBatchHankoHash(encodeJBatch) at entityNonce+1, and the event (exact, other hash, lower / higher nonce, other Entity) updates the state like og applyHankoBatchProcessedEvent", async () => {
+    const outcomes = new Set<string>();
+    for (let n = 0; n < 60; n++) {
+      const e: JEntity = { entityId: ENTITY, reserves: new Map([[1, 1000n], [2, 1000n]]), debts: EMPTY_DEBTS, accounts: new Set([PEER_ACTIVE]) };
+      let s: JBatchState = { ...initJBatch(), entityNonce: ri(4) };
+      for (let k = 1 + ri(3); k > 0; k--) s = unwrap(queueR2R({ ...e, jBatch: s }, OTHER, 1 + ri(2), BigInt(1 + ri(9))) as any);
+      if (rng() < 0.4) {
+        const drafted = s;
+        s = { ...initJBatch(), entityNonce: drafted.entityNonce, recoveryBatches: [drafted.batch] };
+        if (rng() < 0.6) s = unwrap(queueR2R({ ...e, jBatch: s }, PEER_ACTIVE, 2, 5n) as any);
+      }
+      const sealed = unwrap(jBroadcast(s, { entityId: ENTITY, chainId: 31337, depository: DEP, signerId: "s1", timestamp: 5 }) as any) as any;
+      const sent = sealed.jBatch.sentBatch;
+      expect(sent.entityNonce).toBe((s.entityNonce ?? 0) + 1);
+      expect(sent.batchHash).toBe(computeBatchHankoHash(31337n, DEP, encodeJBatch(ogDecoded(sent.batch)), BigInt(sent.entityNonce)));
+      expect(sealed.jTx.data.encodedBatch).toBe(encodeJBatch(ogDecoded(sent.batch)));
+      const kind = pick(["exact", "exact", "hash", "lower", "higher", "entity"] as const);
+      const nonce = kind === "lower" ? Math.max(1, sent.entityNonce - 1) : kind === "higher" ? sent.entityNonce + 1 : sent.entityNonce;
+      const event = { type: "HankoBatchProcessed" as const, entityId: kind === "entity" ? OTHER : ENTITY.toUpperCase().replace("0X", "0x"), batchHash: kind === "exact" ? sent.batchHash.toUpperCase().replace("0X", "0x") : W("dd"), nonce: BigInt(nonce) };
+      const toOg = (j: JBatchState): any => ({ ...j, batch: ogDecoded(j.batch), ...(j.sentBatch === undefined ? {} : { sentBatch: { ...j.sentBatch, batch: ogDecoded(j.sentBatch.batch) } }), ...(j.recoveryBatches === undefined ? {} : { recoveryBatches: j.recoveryBatches.map(ogDecoded) }) });
+      const og: any = { entityId: ENTITY, timestamp: 77, config: { validators: ["s1"] }, jBatchState: toOg(sealed.jBatch) }, outputs: any[] = [];
+      await applyHankoBatchProcessedEvent({ newState: og, event: { type: "HankoBatchProcessed", data: { entityId: event.entityId, batchHash: event.batchHash, nonce } } as any, blockNumber: 1, outputs });
+      const rw = unwrap(applyHankoBatchProcessed(sealed.jBatch, ENTITY, event, 77) as any) as any;
+      expect(rw.jBatch.status).toBe(og.jBatchState.status);
+      expect(rw.jBatch.entityNonce).toBe(og.jBatchState.entityNonce);
+      expect(rw.jBatch.sentBatch?.terminalFailure).toEqual(og.jBatchState.sentBatch?.terminalFailure);
+      expect(rw.jBatch.sentBatch === undefined).toBe(og.jBatchState.sentBatch === undefined);
+      expect(encodeBatch(rw.jBatch.batch)).toBe(encodeJBatch(og.jBatchState.batch));
+      expect(rw.autoBroadcast).toBe(outputs.length > 0);
+      outcomes.add(`${rw.jBatch.status}:${rw.autoBroadcast}`);
+    }
+    expect(outcomes.size).toBeGreaterThan(3);
+  });
+
+  test("PORT (og handleJBroadcast needs a runtime jurisdiction registry): j_broadcast refuses while a batch is in flight, skips an empty draft, seals recovery work first and latches autoBroadcastDraft while work remains", () => {
+    const ctx = { entityId: ENTITY, chainId: 31337, depository: DEP, signerId: "s1", timestamp: 9 };
+    expect(unwrap(jBroadcast(initJBatch(), ctx) as any)).toEqual({ jBatch: initJBatch(), note: "j_broadcast skipped: jBatch is empty" });
+    const e: JEntity = { entityId: ENTITY, reserves: new Map([[1, 100n]]), debts: EMPTY_DEBTS, accounts: new Set() };
+    const draft = unwrap(queueR2R(e, OTHER, 1, 3n) as any) as JBatchState, recovered = unwrap(queueR2R(e, PEER_ACTIVE, 1, 4n) as any) as JBatchState;
+    const first = unwrap(jBroadcast({ ...draft, recoveryBatches: [recovered.batch] }, ctx) as any) as any;
+    expect(first.jBatch.sentBatch.batch).toEqual(recovered.batch);
+    expect(first.jBatch.batch).toEqual(draft.batch);
+    expect(first.jBatch.recoveryBatches).toBeUndefined();
+    expect(first.jBatch.autoBroadcastDraft).toBe(true);
+    expect(first.hashToSign).toEqual({ hash: first.jBatch.sentBatch.batchHash, type: "jBatch", context: `jBatch:${ENTITY.slice(-4)}:nonce:1` });
+    expect(jBroadcast(first.jBatch, ctx).ok).toBe(false);
+  });
+
+  test("MATCH (ER-16): the Host's r2r only queues into jBatchState; reserves move only on the finalized ReserveUpdated J event", () => {
+    const host = unwrap(genesisHost(ALICE, genesisAB(), emptyPool(TOKEN, "j")) as any) as any;
+    const ctx = { timestamp: 1n, jHeight: 0n };
+    const funded = unwrap(applyHost(host, { layer: "j", tx: { type: "j_event", blockNumber: 1, event: { type: "ReserveUpdated", entity: ALICE, tokenId: 1n, newBalance: 50n } } } as any, ctx, hankoVerify) as any) as any;
+    expect(funded.state.j.reserves).toEqual(new Map([[1, 50n]]));
+    expect(applyHost(funded.state, { layer: "j", tx: { type: "r2r", toEntity: BOB, tokenId: "1", amount: 60n } } as any, ctx, hankoVerify).ok).toBe(false);
+    const queued = unwrap(applyHost(funded.state, { layer: "j", tx: { type: "r2r", toEntity: BOB, tokenId: "1", amount: 20n } } as any, ctx, hankoVerify) as any) as any;
+    expect(queued.state.j.reserves).toEqual(new Map([[1, 50n]]));
+    expect(queued.state.j.jBatch.batch.reserveToReserve).toEqual([{ receivingEntity: BOB, tokenId: 1n, amount: 20n }]);
   });
 });
