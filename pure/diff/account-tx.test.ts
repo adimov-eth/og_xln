@@ -50,6 +50,8 @@ import {
   zeroDelta,
   MAX_FILL,
   applyAccountInput,
+  frameStateHash,
+  planAccountProposal,
   genesisReplica,
   genesisWitnesses,
   previewAccountProposal,
@@ -974,8 +976,20 @@ describe("account-tx: settlement + j_event_claim", () => {
     const o2 = await og2.run(right, false, 5, settleOgCtx);
     expect(o2.error).toMatch(/SETTLEMENT_HANKO_NONCE_MISMATCH/);
     const held = { hanko: "0x01", hash: word("71"), proofBodyHash: word("72"), proofNonce: 3, proposerIsLeft: true };
-    expect(previewAccountProposal(replicaOn(upserted, r.mempool, { nextProofNonce: 4, current: held }), B as any, clock, () => true))
-      .toMatchObject({ ok: false, error: { _tag: "proposal_halt", cause: { reason: "SETTLEMENT_HANKO_NONCE_MISMATCH" } } });
+    // og proposalFailureDisposition (isRefreshableStaleSettlementHanko): an account-basis stale nonce for the unsigned workspace is `retry`, so the hanko stays queued instead of halting.
+    const [, supplied, required] = /SETTLEMENT_HANKO_NONCE_MISMATCH:(\d+):(\d+):j=/.exec(o2.error ?? "") ?? [];
+    const stalePlan: any = unwrap(planAccountProposal(replicaOn(upserted, r.mempool, { nextProofNonce: 4, current: held }), B as any, clock, () => true) as any);
+    expect(stalePlan).toMatchObject({ _tag: "idle", refused: { _tag: "settlement", reason: "SETTLEMENT_HANKO_NONCE_MISMATCH", nonce: { supplied: Number(supplied), required: Number(required), basis: "account" } } });
+    expect(stalePlan.deferred).toEqual(r.mempool);
+    // og classifyIncomingValidationFailure: the same stale hanko received in a peer frame is ACCOUNT_INPUT_FRAME_STALE_SETTLEMENT_HANKO (a plain refusal), unless the frame carries it twice.
+    const recv = replicaOn(upserted, [], { nextProofNonce: 4, current: held });
+    const received = (txs: readonly any[]) => {
+      const bare = { height: recv.head.height + 1n, timestamp: 5n, jHeight: 0n, prevFrameHash: recv.head.prevFrameHash, accountStateRoot: word("ab"), txs };
+      const frame = { ...bare, stateHash: unwrap(frameStateHash(bare as any, pairId(), false) as any) };
+      return applyAccountInput(recv, { kind: "ack_frame", fromEntityId: B, toEntityId: A, ...rawTerms, ack: null, frame, frameHanko: "0x01" } as any, { verify: () => true, self: A as any, now: 5n } as any);
+    };
+    expect(received(r.mempool)).toMatchObject({ ok: false, error: { _tag: "stale_settlement_hanko", cause: { reason: "SETTLEMENT_HANKO_NONCE_MISMATCH" } } });
+    expect(received([...r.mempool, ...r.mempool])).toMatchObject({ ok: false, error: { _tag: "dispute_required", cause: { reason: "SETTLEMENT_HANKO_NONCE_MISMATCH" } } });
   });
 
   test("MATCH (AT-10c): the frame finalizing the signed nonce promotes both N+1 hankos and bumps nextProofNonce like og activatePostSettlementProof", async () => {

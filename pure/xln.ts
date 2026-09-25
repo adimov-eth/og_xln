@@ -1198,11 +1198,13 @@ export const checkEnvelope = (id: AccountId, terms: AccountTerms, e: AccountEnve
 
 
 export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" | "claim_entity" | "claim_conflict" | "claim_proof">;
+/** og SettlementHankoNonceRejection: `account` = the derived minimum safe nonce, `workspace` = the nonce pinned at first signature. */
+export type SettlementNonceMismatch = { readonly supplied: number; readonly required: number; readonly basis: "account" | "workspace" };
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
   | Tagged<"settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
-  | Tagged<"settlement", { reason: string }>
+  | Tagged<"settlement", { reason: string; nonce?: SettlementNonceMismatch | undefined }>
   | Tagged<"swap", { reason: string }>
   | Tagged<"rebalance", { reason: string }>
   | Tagged<"lending", { reason: string }>
@@ -1553,7 +1555,7 @@ const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_tr
     if (!Number.isSafeInteger(nonce) || nonce < 1) return settleErr("SETTLEMENT_HANKO_NONCE_INVALID");
     const floor = Math.max(a.jNonce + 1, auth.proofNonceFloor);
     if (floor >= Number.MAX_SAFE_INTEGER) return settleErr("SETTLEMENT_NONCE_EXHAUSTED");
-    if (nonce !== (w.nonceAtSign ?? floor)) return settleErr("SETTLEMENT_HANKO_NONCE_MISMATCH");
+    if (nonce !== (w.nonceAtSign ?? floor)) return err({ _tag: "settlement", reason: "SETTLEMENT_HANKO_NONCE_MISMATCH", nonce: { supplied: nonce, required: w.nonceAtSign ?? floor, basis: w.nonceAtSign === undefined ? "account" : "workspace" } });
     return chain(compileOps(w.ops, w.lastModifiedByLeft), ({ diffs, forgive }) => chain(settlementHashOf(a, diffs, forgive, nonce), (settlementHash) => {
       if (typeof x.settlementHash !== "string" || !WORKSPACE_HASH.test(x.settlementHash)) return settleErr("SETTLEMENT_HANKO_HASH_INVALID");
       if (x.settlementHash.toLowerCase() !== settlementHash.toLowerCase()) return settleErr("SETTLEMENT_HANKO_HASH_MISMATCH");
@@ -2397,7 +2399,7 @@ export type AccountReplicaError =
   | Tagged<"proposal_selection", { reason: "empty" | "too_large" | "not_in_mempool" }>
   | Tagged<"finality", { reason: "initial_nonce" | "j_nonce" | "observed_block" | "timeout" | "clock_mismatch" | "finalized_nonce" | "token_id" }>
   | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch" | "frame_hash_mismatch" | "state_root_mismatch" | "ack_unmatched" | "not_preparing">
-  | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }> | DeadlineViolation["error"]
+  | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }> | DeadlineViolation["error"] | Tagged<"stale_settlement_hanko", { cause: Of<BodyError, "settlement"> }>
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
   | Tagged<"bad_account", { reason: "entity_id" | "same_entity" | TermsError["_tag"] }>
   | Tagged<"ack_conflict", { field: "frameHash" | "frameHanko" | "disputeHanko" | "height" }>
@@ -2422,12 +2424,22 @@ export type ProposalPlan = Tagged<"frame", { preview: Preview }> | Tagged<"idle"
 const PROPOSAL_HALTS: readonly WireAccountTx["type"][] = ["settle_transition", "swap_resolve", "cross_pull_lock", "cross_pull_close"];
 const DEFERRED_REFUSALS: readonly string[] = ["htlc_lock_capacity", "settlement_frozen"];
 const deferredRefusal = (e: BodyError): boolean => DEFERRED_REFUSALS.includes(e._tag);
+/** A settle hanko refused only for an `account`-basis nonce against an unsigned workspace it targets exactly (og isRefreshableStaleSettlementHanko / isRefreshableStaleIncomingSettlementHanko). */
+const staleHankoNonce = (s: AccountBody, tx: WireAccountTx, e: BodyError): SettlementNonceMismatch | undefined => {
+  const ws = s.settlement, n = e._tag === "settlement" ? e.nonce : undefined;
+  if (tx.type !== "settle_transition" || tx.kind !== "hanko" || n === undefined || n.basis !== "account" || ws === undefined || ws.nonceAtSign !== undefined) return undefined;
+  return tx.revision === ws.revision && typeof tx.workspaceHash === "string" && tx.workspaceHash.toLowerCase() === ws.workspaceHash.toLowerCase() && n.supplied === tx.settlementNonce ? n : undefined;
+};
+/** og getMinimumSafeSettlementNonce (== getNextSettlementNonce) on the committed replica. */
+const minimumSafeNonce = (s: AccountBody, w: DisputeWitnesses): number => Math.max(s.jNonce + 1, proofNonceFloor(w));
 type Refusals = ProposalFold["refused"];
-const proposalRefusals = (mempool: readonly WireAccountTx[], refused: Refusals): Result<readonly WireAccountTx[], AccountReplicaError> => {
+/** `retry`: og proposalFailureDisposition's extra `retry` cases beyond the capacity/freeze refusals. */
+const proposalRefusals = (mempool: readonly WireAccountTx[], refused: Refusals, retry: (tx: WireAccountTx, e: BodyError) => boolean = () => false): Result<readonly WireAccountTx[], AccountReplicaError> => {
   const txAt = (i: number): WireAccountTx => mempool[i] ?? assertNever(i as never);
-  const halted = refused.find(({ index, error }) => !deferredRefusal(error) && PROPOSAL_HALTS.includes(txAt(index).type));
+  const retried = (index: number, error: BodyError): boolean => deferredRefusal(error) || retry(txAt(index), error);
+  const halted = refused.find(({ index, error }) => !retried(index, error) && PROPOSAL_HALTS.includes(txAt(index).type));
   if (halted !== undefined) return err({ _tag: "proposal_halt", txType: txAt(halted.index).type, cause: halted.error });
-  return ok(refused.flatMap(({ index, error }) => (deferredRefusal(error) ? [txAt(index)] : [])));
+  return ok(refused.flatMap(({ index, error }) => (retried(index, error) ? [txAt(index)] : [])));
 };
 /** `verify` present: settle_transition hankos fold with og's settlement context (verifyHanko + minimum safe nonce); absent, they refuse as context-missing. */
 /** og tx-multiset.ts removeCommittedTxsFromMempool: drop each removed tx once, by exact bytes, keeping mempool order. */
@@ -2451,7 +2463,8 @@ const planWindow = (r: OpenAccount, window: readonly WireAccountTx[], party: Par
   // og admission.ts: a lagging proposer never mints a frame behind the committed watermark.
   const clock: FrameClock = { ...entityClock, timestamp: entityClock.timestamp > r.head.timestamp ? entityClock.timestamp : r.head.timestamp };
   const height = r.head.height + 1n, floor = proofNonceFloor(r.dispute), folded = proposalFold(r.state, window, foldCtx({ height, ...clock }, party.left, verify === undefined ? undefined : { verify, proofNonceFloor: floor })), firstRefusal = folded.refused[0];
-  return chain(map(proposalRefusals(window, folded.refused), (retried) => withoutAccountTxs(r.mempool, withoutAccountTxs(window, retried))), (deferred) => {
+  const required = minimumSafeNonce(r.state, r.dispute), stale = (tx: WireAccountTx, e: BodyError): boolean => { const n = staleHankoNonce(r.state, tx, e); return n !== undefined && n.required === required && n.supplied !== required; };
+  return chain(map(proposalRefusals(window, folded.refused, stale), (retried) => withoutAccountTxs(r.mempool, withoutAccountTxs(window, retried))), (deferred) => {
     if (folded.included.length === 0 && firstRefusal !== undefined) return ok({ _tag: "idle", refused: firstRefusal.error, deferred });
     return chain(commit(folded.state), ({ view, root }) => chain(stampClaims(folded.included, r.state, party.left), ({ txs, finalized }) => {
       const unhashed = { height, timestamp: clock.timestamp, jHeight: clock.jHeight, prevFrameHash: r.head.prevFrameHash, txs, accountStateRoot: root };
@@ -2675,7 +2688,12 @@ const receipt = <R extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAc
 const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify): Verb<ReceivedAccount> => {
   const { frame } = input, onLeft = other(party.left), floor = proofNonceFloor(cur.dispute);
   const evidence = (cause: AccountReplicaError): AccountReplicaError => ({ _tag: "dispute_required", cause, frame, frameHanko: input.frameHanko });
-  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor }), evidence), ({ draft, view, finalized }) => chain(localProof(view), (frameProof) =>
+  // og consensus/index.ts classifyIncomingValidationFailure: a stale account-basis hanko for the one unsigned workspace is a plain refusal, not dispute evidence.
+  const required = minimumSafeNonce(cur.state, cur.dispute), replayed = (cause: AccountReplicaError): AccountReplicaError => {
+    const stale = cause._tag === "settlement" ? frame.txs.filter((tx) => { const n = staleHankoNonce(cur.state, tx, cause); return n !== undefined && n.supplied < n.required && n.required === required; }) : [];
+    return cause._tag === "settlement" && stale.length === 1 ? { _tag: "stale_settlement_hanko", cause } : evidence(cause);
+  };
+  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor }), replayed), ({ draft, view, finalized }) => chain(localProof(view), (frameProof) =>
     chain(mapErr(promoteSettled(cur.dispute, cur.state, draft.state, party.left, finalized), evidence), (witnesses) =>
       map(mapErr(requireDispute(frameProof, witnesses, validated), evidence), () => done<ReceivedAccount, AccountOutput>({ ...cur, _tag: "received", candidate: new Candidate(frame, input.frameHanko, frameProof, draft, floor), disputeHanko: validated, dispute: witnesses }))))));
 };
