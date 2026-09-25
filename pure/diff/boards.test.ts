@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyBoardRegistryEvent, boardProof, emptyBoardRegistry, EMPTY_CERTIFIED_BOARD_ROOT, hashBoardNode, lookupBoardRecord, reachableBoardNodes, verifyBoardProof, advanceBoardFinality, boardStackKey,
-  applyBoardJEvent, applyEntityInput, assertBoardAuthority, boardProposalHash, verifyAccountHanko, applyEntityProviderActionJEvent, foldTxs, hashEntityFrame, buildCommand, createEntity, entityId, entityRootOf, quorumBoardHash, quorumHanko,
+  applyBoardJEvent, applyEntityInput, assertBoardAuthority, admit, applyAccountInput, tokenId, type DoorContext, type EntityId, type ProposedAccount, type Verify, boardProposalHash, verifyAccountHanko, applyEntityProviderActionJEvent, foldTxs, hashEntityFrame, buildCommand, createEntity, entityId, entityRootOf, quorumBoardHash, quorumHanko,
   type BoardNodes, type CertifiedBoardNode, type CertifiedBoardRegistryState, type EntityState, type EntityTx, type Hash, type JEvent,
 } from "../xln.ts";
-import { aliceAddr, bobAddr, carolAddr, crypto, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, NOW, ackInput, aliceAddr, bobAddr, carolAddr, crypto, envelopeAB, genesisAB, hankoVerify, offerOf, proposeInput, unwrap, verifiers } from "../xln_run.ts";
 import { assertEntityConfigBoardAuthority, buildQuorumHanko } from "../../core/hanko/signing.ts";
 import { handleEntityProviderActivateBoard, handleEntityProviderProposeControlBoard } from "../../core/entity/tx/handlers/control-board-proposal.ts";
 import { handleEntityProviderCancelAction, handleEntityProviderReleaseControlShares, handleEntityProviderTransfer } from "../../core/entity/tx/handlers/entity-provider-action.ts";
@@ -402,5 +402,31 @@ describe("CONTROL board proposal and activation (og entity/tx/handlers/control-b
       seen.add(`consents:${(ogR.value.jOutputs[0].jTxs[0].data.supporterVotes ?? []).length}`);
     }
     for (const v of ["entityProviderProposeControlBoard:ok", "entityProviderActivateBoard:ok", "entityProviderProposeControlBoard:CONTROL_BOARD_PROPOSAL_SUPPORTER_HANKO_INVALID", "entityProviderProposeControlBoard:CONTROL_BOARD_PROPOSAL_TARGET_AUTHORITY_MISSING", "consents:2"]) expect(seen.has(v)).toBe(true);
+  });
+});
+
+describe("AC-13b receiving side: the Entity supplies counterpartyCertifiedBoard from its registry (og input-phases.ts)", () => {
+  test("MATCH: a board_hanko_refresh for a committed Account is checked against the sender's certified board record; without one the Account refuses (og CERTIFIED_BOARD_MISSING)", () => {
+    const door = (self: EntityId): DoorContext => ({ verify: hankoVerify, self, now: NOW });
+    const a0 = unwrap(admit(genesisAB(), [{ type: "add_delta", tokenId: unwrap(tokenId("1")) }]));
+    const proposed = unwrap(applyAccountInput(a0, proposeInput(a0, ALICE), door(ALICE))).replica as ProposedAccount;
+    const received = unwrap(applyAccountInput(genesisAB(), offerOf(proposed, ALICE), door(BOB))).replica;
+    const alice = unwrap(applyAccountInput(proposed, ackInput(received, BOB), door(ALICE))).replica;
+    if (alice.head._tag !== "installed") throw new Error("not committed");
+    const frameHash = alice.head.prevFrameHash;
+    const base = unwrap(createEntity({ id: ALICE, jurisdiction: DOMAIN, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: JCONF })).state;
+    const activated: JEvent = { type: "BoardActivated", entityId: BOB, previousBoardHash: word(500), newBoardHash: word(900), previousBoardValidUntil: 1_800_000_000n, meta: { blockNumber: 7, blockHash: word(71), transactionHash: word(72), logIndex: 2 } };
+    const certified = observe(base, [foundation, registered(BOB, word(500)), activated]).state;
+    const input = { kind: "board_hanko_refresh" as const, ...envelopeAB(BOB), height: 1n, frameHash, frameHanko: `0x${"ab".repeat(40)}`, boardActivationJHeight: 7, boardActivationLogIndex: 2 };
+    const seen: unknown[] = [];
+    const verify: Verify = (_d, _h, _e, authority) => { seen.push(authority); return true; };
+    const run = (state: EntityState) => foldTxs(state, new Map([[BOB, alice]]), [{ type: "accountInput", data: input }], { verify, timestamp: NOW });
+    const refused = run(base);
+    expect(refused.ok).toBe(false);
+    expect(JSON.stringify(refused.ok ? null : refused.error)).toContain("certified_board_missing");
+    const accepted = run(certified);
+    expect(accepted.ok).toBe(true);
+    expect(seen).toEqual([{ registeredBoardHash: word(900), allowPreviousBoard: false }]);
+    expect(accepted.ok && accepted.value.draft.accountReplicas.get(BOB)?.boardRefresh).toEqual({ activationJHeight: 7, activationLogIndex: 2, frameHeight: 1, frameHash });
   });
 });

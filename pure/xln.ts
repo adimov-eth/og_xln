@@ -6626,8 +6626,9 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const next = htlcPaymentStep(p, state.paybook ?? EMPTY_PAYBOOK, Number(ctx.timestamp));
       return map(enqueue(p.nextHopEntityId as EntityId, [next.lock], []), (d) => ({ ...d, state: { ...d.state, paybook: next.paybook } }));
     }),
-    accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => {
-      const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp };
+    // og input-phases.ts: the sender's record in this Entity's certified registry is the Account's counterpartyCertifiedBoard
+    accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => chain(observerBoardRecord(state, x.data.fromEntityId), (record) => {
+      const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp, ...(record === null ? {} : { counterpartyBoard: { boardHash: record.boardHash, activatedAtJHeight: record.activatedAtJHeight, logIndex: record.logIndex } }) };
       const apply = (at: Folded): Result<Draft, EntityError> => withChild(at.accountReplicas, peer, (child) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)));
       const held: Folded = { state, accountReplicas: replicas };
       // og committedFrames: our own frame commits when the peer's ACK for it lands; the peer's frame commits when we sign it (answerFrame).
@@ -6637,7 +6638,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
         ack: () => chain(apply(held), (d) => htlcFollowups(d, peer, ownCommitted(d), undefined, ctx)),
         // og routes the standalone peer dispute witness through the same accountInput lane; an unknown Account has no genesis for it (og ACCOUNT_GENESIS_FRAME_REQUIRED).
         dispute: () => apply(held),
-        // og board-hanko-refresh.ts: the Entity supplies counterpartyCertifiedBoard; the rewrite has no certified board registry, so the Account refuses it (certified_board_missing)
+        // og board-hanko-refresh.ts: checked against the sender's certified board (certified_board_missing without a record)
         board_hanko_refresh: () => apply(held),
         ack_frame: (i) => match(origin, {
           local: (): Result<Draft, EntityError> => err({ _tag: "from_not_converted" }),
@@ -6650,7 +6651,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
           }),
         }),
       });
-    }),
+    })),
   });
 };
 export type FoldedTxs = { readonly draft: Draft; readonly included: readonly EntityTx[]; readonly evicted: readonly EntityTx[] };
