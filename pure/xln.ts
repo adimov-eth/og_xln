@@ -1,6 +1,8 @@
 
 
 import { secp256k1 } from "@noble/curves/secp256k1";
+import { x25519 } from "@noble/curves/ed25519";
+import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha2";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { bytesToHex as nobleHex } from "@noble/hashes/utils";
@@ -3344,31 +3346,438 @@ export const applyEntityInput = (r: EntityReplica, input: EntityInput, ctx: Enti
   return matchBy("kind", input, { txs: (i) => applyTxs(r, i, ctx), proposal: (i) => applyProposal(r, i, ctx), precommit: (i) => applyPrecommit(r, i, ctx) });
 };
 
-/** og `eReplicas`: one replica per `entityId:signerId` (signer lowercased). */
-export type Runtime = { readonly entities: ReadonlyMap<string, EntityReplica> };
-type RuntimeBase = { readonly entityId: EntityId; readonly signerId: Address; readonly input: EntityInput };
-export type RuntimeInput = (RuntimeBase & { readonly kind: "create" }) | (RuntimeBase & { readonly kind: "receive"; readonly from: EntityId });
-export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }>;
-export type Verifiers = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign };
-export const replicaKey = (entity: EntityId, signer: string): string => `${entity}:${signerId(signer)}`;
-export const createRuntime = (): Runtime => ({ entities: new Map() });
-export const spawn = (rt: Runtime, r: EntityReplica): Runtime => ({ entities: mapSet(rt.entities, replicaKey(r.state.id, r.signerId), r) });
-/** og resolveEntityProposerId: an Account message goes to the receiver's leader `validators[0]`; a consensus input to the named validator. */
-export const convertOutput = (rt: Runtime, item: EntityOutput, from: EntityId, timestamp: bigint): Result<RuntimeInput, RuntimeError> => {
-  if ("input" in item) return ok({ kind: "create", entityId: item.to, signerId: item.signerId, input: item.input });
-  const receiver = [...rt.entities.values()].find((r) => r.state.id === item.to);
-  return receiver === undefined ? err({ _tag: "no_such_entity", id: item.to }) : ok({ kind: "receive", entityId: item.to, from, signerId: allowedProposer(receiver.state.quorum), input: { kind: "txs", timestamp, txs: [item.tx] } });
+/** og runtime/types.ts JInput: one deterministic child-machine input for a J replica; the rewrite carries the J txs uninterpreted (J area). */
+export type JInput = { readonly jurisdictionName: string; readonly jTxs: readonly Binary[] };
+/** og RoutedEntityInput: an EntityInput addressed to one validator replica; `from` is the source Runtime (absent for local work). */
+export type RoutedEntityInput = { readonly entityId: EntityId; readonly signerId: string; readonly input: EntityInput; readonly from?: string | undefined };
+/** og ConsensusConfig as carried by importReplica. */
+export type ImportConfig = EntityRootConfig & { readonly jurisdiction?: (EntityRootJurisdiction & { readonly name?: string | undefined }) | undefined };
+type RuntimeData = { readonly [field: string]: Binary };
+/** og runtime/types.ts RuntimeTx: every kind with og's field names. */
+export type RuntimeTx =
+  | { readonly type: "checkpointBarrier"; readonly data: Record<string, never> }
+  | { readonly type: "recordRuntimeAdapterCommand"; readonly data: { readonly laneId: string; readonly sequence: number; readonly commandId: string; readonly inputHash: string; readonly expiresAtMs: number | null } }
+  | { readonly type: "recordNumberedRegistrationIntent"; readonly data: RuntimeData }
+  | { readonly type: "resolveNumberedRegistrationIntent"; readonly data: RuntimeData }
+  | { readonly type: "recordAuthenticatedJAuthority"; readonly data: RuntimeData }
+  | { readonly type: "importReplica"; readonly entityId: string; readonly signerId: string; readonly data: { readonly config: ImportConfig; readonly isProposer: boolean; readonly entitySeed: string; readonly profileName?: string | undefined; readonly position?: { readonly x: number; readonly y: number; readonly z: number; readonly jurisdiction?: string | undefined } | undefined } }
+  | { readonly type: "observeJRange"; readonly data: { readonly entityId: string; readonly signerId: string; readonly jurisdictionRef: string; readonly scannedThroughHeight: number; readonly tipBlockHash: string; readonly headers?: readonly Binary[] | undefined; readonly blocks: readonly Binary[] } }
+  | { readonly type: "advanceJWatcherCursor"; readonly data: { readonly depositoryAddress: string; readonly chainId: number; readonly blockNumber: number } }
+  | { readonly type: "rewindJHistory"; readonly data: { readonly entityId: string; readonly signerId: string; readonly jurisdictionRef: string; readonly conflictingHeight: number; readonly conflictingBlockHash: string } }
+  | { readonly type: "retryJSubmit"; readonly data: { readonly entityId: string; readonly signerId: string; readonly jurisdictionName: string; readonly batchHash: string; readonly entityNonce: number; readonly batchGeneration: number; readonly feeOverrides?: Binary | undefined } }
+  | { readonly type: "recordJSubmitResult"; readonly data: RuntimeData }
+  | { readonly type: "retryEntityProviderAction"; readonly data: RuntimeData }
+  | { readonly type: "recordEntityProviderActionSubmitResult"; readonly data: RuntimeData }
+  | { readonly type: "recordGovernanceJSubmitResult"; readonly data: RuntimeData }
+  | { readonly type: "importJ"; readonly data: RuntimeData }
+  | { readonly type: "completeImportJ"; readonly data: RuntimeData };
+export type RuntimeTxType = RuntimeTx["type"];
+/** og RuntimeInput: runtime txs first, then entity inputs, then J inputs (queued to the J mempool). `timestamp` is the ingress seed. */
+export type RuntimeInput = { readonly runtimeTxs: readonly RuntimeTx[]; readonly entityInputs: readonly RoutedEntityInput[]; readonly jInputs?: readonly JInput[] | undefined; readonly timestamp?: bigint | undefined };
+/** og infrastructure.runtimeAdapterCommandFrontiers row. */
+export type AdapterFrontier = { readonly lastContiguousSequence: number; readonly lastInputHash: string; readonly lastCommandId: string; readonly observedHeight: number; readonly expiresAtMs: number | null };
+/**
+ * og RuntimeReplica: `entities` is `eReplicas` (one replica per `entityId:signerId`, signer lowercased); `height`/`timestamp` are RuntimeState;
+ * `jurisdictions` names the J replicas; `adapterFrontiers` and `encryptionSeeds` are og infrastructure maps; `frameHash` is the WAL head.
+ */
+export type Runtime = {
+  readonly entities: ReadonlyMap<string, EntityReplica>; readonly height: bigint; readonly timestamp: bigint; readonly jurisdictions: ReadonlySet<string>;
+  readonly adapterFrontiers: ReadonlyMap<string, AdapterFrontier>; readonly encryptionSeeds: ReadonlyMap<string, string>; readonly frameHash: string;
 };
-export const applyRuntime = (rt: Runtime, inputs: readonly RuntimeInput[], verifiers: Verifiers): { runtime: Runtime; outbox: readonly EntityOutput[]; rejected: readonly RuntimeError[] } => {
-  type Out = { readonly outputs: readonly EntityOutput[]; readonly rejected: readonly RuntimeError[] };
-  const refused = (error: RuntimeError): StoreStep<string, EntityReplica, Out> => ({ writes: [], out: { outputs: [], rejected: [error] }, stop: false });
-  const { store, outs } = foldStore(rt.entities, inputs, (read, input): StoreStep<string, EntityReplica, Out> => {
-    const key = replicaKey(input.entityId, input.signerId), r = read(key);
-    if (r === undefined) return refused({ _tag: "no_such_entity", id: input.entityId });
-    const applied = applyEntityInput(r, input.input, { self: input.entityId, signerId: input.signerId, ...verifiers, from: matchBy("kind", input, { create: () => undefined, receive: (i) => i.from }) });
-    return applied.ok ? { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [] }, stop: false } : refused(applied.error);
+/** A whole-frame refusal carries og's error code (og throws out of the Runtime reducer, so nothing of the frame applies). */
+export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }> | Tagged<"runtime_frame" | "runtime_tx" | "runtime_tx_unsupported", { code: string }>;
+export type Verifiers = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign };
+/** og capability markers: `local` holds the exact RuntimeTx objects this process authorized (og's Symbol tags); replay trusts the WAL. */
+export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; readonly local?: ReadonlySet<RuntimeTx> | undefined };
+export const ZERO_FRAME_HASH = `0x${"00".repeat(32)}`;
+export const replicaKey = (entity: EntityId, signer: string): string => `${entity}:${signerId(signer)}`;
+export const createRuntime = (jurisdictions: Iterable<string> = []): Runtime =>
+  ({ entities: new Map(), height: 0n, timestamp: 0n, jurisdictions: new Set(jurisdictions), adapterFrontiers: new Map(), encryptionSeeds: new Map(), frameHash: ZERO_FRAME_HASH });
+export const spawn = (rt: Runtime, r: EntityReplica): Runtime => ({ ...rt, entities: mapSet(rt.entities, replicaKey(r.state.id, r.signerId), r) });
+/** og resolveEntityProposerId: an Account message goes to the receiver's leader `validators[0]`; a consensus input to the named validator. */
+export const convertOutput = (rt: Runtime, item: EntityOutput, from: EntityId, timestamp: bigint): Result<RoutedEntityInput, RuntimeError> => {
+  if ("input" in item) return ok({ entityId: item.to, signerId: item.signerId, input: item.input });
+  const receiver = [...rt.entities.values()].find((r) => r.state.id === item.to);
+  return receiver === undefined ? err({ _tag: "no_such_entity", id: item.to }) : ok({ entityId: item.to, from, signerId: allowedProposer(receiver.state.quorum), input: { kind: "txs", timestamp, txs: [item.tx] } });
+};
+
+// ---- og runtime/frame/intake: shape limits, capabilities, merge ----
+const MAX_RUNTIME_INPUT_RUNTIME_TXS = 10_000, MAX_RUNTIME_INPUT_ENTITY_INPUTS = 10_000, MAX_RUNTIME_J_INPUTS = 256, MAX_RUNTIME_J_TXS = 1_024, MAX_RUNTIME_J_TXS_PER_JURISDICTION = 512;
+const frameErr = (code: string): Result<never, RuntimeError> => err({ _tag: "runtime_frame", code });
+/** og validateRuntimeInputShapeAndLimits + collectJOutbox: a checkpoint barrier stands alone; bounded counts; every J input names a known J replica. */
+export const validateRuntimeInput = (rt: Runtime, input: RuntimeInput): Result<readonly JInput[], RuntimeError> => {
+  const barriers = input.runtimeTxs.filter((tx) => tx.type === "checkpointBarrier").length, jInputs = input.jInputs ?? [];
+  if (barriers > 0 && (barriers !== 1 || input.runtimeTxs.length !== 1 || input.entityInputs.length !== 0 || jInputs.length !== 0)) return frameErr("CHECKPOINT_BARRIER_NOT_ALONE");
+  if (input.jInputs !== undefined) {
+    if (jInputs.length > MAX_RUNTIME_J_INPUTS) return frameErr("RUNTIME_J_INPUTS_MAX");
+    let total = 0;
+    const perJ = new Map<string, number>();
+    for (const j of jInputs) {
+      if (!rt.jurisdictions.has(j.jurisdictionName)) return frameErr("RUNTIME_J_UNKNOWN_JURISDICTION");
+      total += j.jTxs.length;
+      if (total > MAX_RUNTIME_J_TXS) return frameErr("RUNTIME_J_TXS_MAX");
+      const n = (perJ.get(j.jurisdictionName) ?? 0) + j.jTxs.length;
+      if (n > MAX_RUNTIME_J_TXS_PER_JURISDICTION) return frameErr("RUNTIME_J_TXS_PER_JURISDICTION_MAX");
+      perJ.set(j.jurisdictionName, n);
+    }
+  }
+  if (input.runtimeTxs.length > MAX_RUNTIME_INPUT_RUNTIME_TXS) return frameErr("RUNTIME_TXS_MAX");
+  return input.entityInputs.length > MAX_RUNTIME_INPUT_ENTITY_INPUTS ? frameErr("RUNTIME_ENTITY_INPUTS_MAX") : ok(jInputs);
+};
+/** og internal-tx-auth.ts: every RuntimeTx except importReplica/importJ needs a local capability, or replay. */
+const CAPABILITY_CODES: { readonly [T in RuntimeTxType]: string | null } = {
+  checkpointBarrier: "CHECKPOINT_BARRIER_EXTERNAL_RUNTIME_TX_REJECTED", recordRuntimeAdapterCommand: "RADAPTER_COMMAND_RUNTIME_TX_UNAUTHORIZED",
+  recordNumberedRegistrationIntent: "NUMBERED_REGISTRATION_EXTERNAL_RUNTIME_TX_REJECTED", resolveNumberedRegistrationIntent: "NUMBERED_REGISTRATION_EXTERNAL_RUNTIME_TX_REJECTED",
+  recordAuthenticatedJAuthority: "J_AUTHORITY_RUNTIME_TX_EXTERNAL_INGRESS_REJECTED", observeJRange: "J_AUTHORITY_RUNTIME_TX_EXTERNAL_INGRESS_REJECTED",
+  advanceJWatcherCursor: "J_AUTHORITY_RUNTIME_TX_EXTERNAL_INGRESS_REJECTED", rewindJHistory: "J_AUTHORITY_RUNTIME_TX_EXTERNAL_INGRESS_REJECTED",
+  retryJSubmit: "J_SUBMIT_RUNTIME_TX_EXTERNAL_INGRESS_REJECTED", recordJSubmitResult: "J_SUBMIT_RUNTIME_TX_EXTERNAL_INGRESS_REJECTED",
+  retryEntityProviderAction: "ENTITY_PROVIDER_ACTION_RUNTIME_TX_EXTERNAL_INGRESS_REJECTED", recordEntityProviderActionSubmitResult: "ENTITY_PROVIDER_ACTION_RUNTIME_TX_EXTERNAL_INGRESS_REJECTED",
+  recordGovernanceJSubmitResult: "GOVERNANCE_SUBMIT_RESULT_EXTERNAL_INGRESS_REJECTED", completeImportJ: "J_IMPORT_RESULT_EXTERNAL_INGRESS_REJECTED",
+  importReplica: null, importJ: null,
+};
+export const runtimeTxAuthorized = (tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<void, RuntimeError> => {
+  const code = CAPABILITY_CODES[tx.type];
+  return code === null || ctx.replay === true || ctx.local?.has(tx) === true ? ok(undefined) : err({ _tag: "runtime_tx", code });
+};
+const inputFingerprint = (tx: EntityTx): string => encodeEntityTx(tx);
+const frameIdOf = (frame: EntityFrame): string => { const h = hashEntityFrame(frame); return h.ok ? h.value : canon(frame); };
+type Lane = { readonly entityId: EntityId; readonly signerId: string; readonly from?: string | undefined; readonly timestamp: bigint; readonly txs?: readonly EntityTx[] | undefined; readonly proposal?: Extract<EntityInput, { kind: "proposal" }> | undefined; readonly precommit?: Extract<EntityInput, { kind: "precommit" }> | undefined };
+const laneOf = (i: RoutedEntityInput): Lane => matchBy("kind", i.input, {
+  txs: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.timestamp, txs: x.txs }),
+  proposal: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.frame.timestamp, proposal: x }),
+  precommit: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: 0n, precommit: x }),
+});
+/** og entityInputMergeKey (without runtimeOutput / cross-j / J-prefix / leader-vote lanes, which the rewrite does not carry). */
+const mergeKey = (l: Lane): string => {
+  const base = `${lower(l.entityId)}:${lower(l.signerId)}`;
+  if (l.precommit !== undefined) return `${base}:precommit:${l.precommit.height}:${lower(l.precommit.frameHash)}`;
+  return l.txs !== undefined && l.txs.length > 0 ? `${base}:tx-origin:${lower(l.from)}` : base;
+};
+/** og mergePrecommitBundles: signer ids trimmed/lowercased; a second different bundle from one signer is equivocation. */
+const mergeBundles = (existing: Precommits, incoming: Precommits): Result<Precommits, RuntimeError> => {
+  const normalize = (m: Precommits, source: string): Result<Map<string, readonly Signature[]>, RuntimeError> => {
+    const out = new Map<string, readonly Signature[]>();
+    for (const [raw, sigs] of m) { const id = signerId(raw); if (out.has(id)) return frameErr(`ENTITY_INPUT_PRECOMMIT_DUPLICATE_SIGNER:${source}`); out.set(id, sigs); }
+    return ok(out);
+  };
+  return chain(normalize(existing, "existing"), (merged) => chain(normalize(incoming, "incoming"), (next) => {
+    for (const [id, sigs] of next) {
+      const previous = merged.get(id);
+      if (previous === undefined) merged.set(id, sigs);
+      else if (!sameSigs(previous, sigs)) return frameErr("ENTITY_INPUT_PRECOMMIT_EQUIVOCATION");
+    }
+    return ok(merged);
+  }));
+};
+/** og isExactTransactionReplay: the same origin re-delivering the exact same tx list is one input. */
+const exactReplay = (a: Lane, b: Lane): boolean => lower(a.from) === lower(b.from) && canon((a.txs ?? []).map(inputFingerprint)) === canon((b.txs ?? []).map(inputFingerprint));
+/** og mergeExactAccountInputReplays: an exact duplicate accountInput inside one lane is dropped. */
+const dedupAccountInputs = (txs: readonly EntityTx[]): readonly EntityTx[] => firstBy(txs, (tx) => (tx.type === "accountInput" ? inputFingerprint(tx) : undefined));
+/**
+ * og mergeEntityInputs: inputs for one replica lane collapse into one, in first-arrival order; a second different proposal for the lane
+ * is kept as a conflict after every merged input; a precommit equivocation refuses the whole Runtime frame.
+ */
+export const mergeEntityInputs = (inputs: readonly RoutedEntityInput[]): Result<readonly RoutedEntityInput[], RuntimeError> => {
+  const merged = new Map<string, Lane>(), conflicts: Lane[] = [];
+  for (const input of inputs) {
+    const lane = laneOf(input), key = mergeKey(lane), existing = merged.get(key);
+    if (existing === undefined) { merged.set(key, lane); continue; }
+    if (existing.proposal !== undefined && lane.proposal !== undefined && (frameIdOf(existing.proposal.frame) !== frameIdOf(lane.proposal.frame) || existing.proposal.frame.height !== lane.proposal.frame.height)) { conflicts.push(lane); continue; }
+    let next: Lane = existing;
+    if (lane.txs !== undefined && !exactReplay(existing, lane)) next = { ...next, txs: [...(existing.txs ?? []), ...lane.txs] };
+    if (lane.precommit !== undefined && existing.precommit !== undefined) {
+      const bundles = mergeBundles(existing.precommit.signatures, lane.precommit.signatures);
+      if (!bundles.ok) return bundles;
+      next = { ...next, precommit: { ...existing.precommit, signatures: bundles.value } };
+    }
+    if (lane.proposal !== undefined && existing.proposal === undefined) next = { ...next, proposal: lane.proposal };
+    merged.set(key, next);
+  }
+  return ok([...merged.values(), ...conflicts].map((l): RoutedEntityInput => {
+    const input: EntityInput = l.proposal ?? l.precommit ?? { kind: "txs", timestamp: l.timestamp, txs: dedupAccountInputs(l.txs ?? []) };
+    return { entityId: l.entityId, signerId: l.signerId, input, ...opt("from", l.from) };
+  }));
+};
+
+// ---- og runtime/tx/tx-handlers.ts ----
+const HASH_32 = /^0x[0-9a-f]{64}$/, COMMAND_ID = /^[A-Za-z0-9._:-]{16,128}$/, MAX_ACTIVE_RUNTIME_ADAPTER_COMMAND_LANES = 1_024;
+const txErr = (code: string): Result<never, RuntimeError> => err({ _tag: "runtime_tx", code });
+/** og applyRuntimeAdapterCommandMarker: validate, prune other expired lanes, require the next contiguous sequence, record the frontier. */
+const adapterCommand = (rt: Runtime, raw: Extract<RuntimeTx, { type: "recordRuntimeAdapterCommand" }>["data"]): Result<Runtime, RuntimeError> => {
+  const laneId = lower(raw.laneId), commandId = String(raw.commandId || "").trim(), inputHash = lower(raw.inputHash), sequence = Number(raw.sequence);
+  const expiresAtMs = raw.expiresAtMs === null ? null : Number(raw.expiresAtMs);
+  if (!Number.isSafeInteger(sequence) || sequence <= 0) return txErr("RADAPTER_COMMAND_SEQUENCE_INVALID");
+  if (!HASH_32.test(laneId)) return txErr("RADAPTER_COMMAND_LANE_INVALID");
+  if (!COMMAND_ID.test(commandId)) return txErr("RADAPTER_COMMAND_ID_INVALID");
+  if (!HASH_32.test(inputHash)) return txErr("RADAPTER_COMMAND_INPUT_HASH_INVALID");
+  if (expiresAtMs !== null && (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= 0)) return txErr("RADAPTER_COMMAND_EXPIRY_INVALID");
+  const nowMs = rt.timestamp < 0n ? 0 : Number(rt.timestamp);
+  const kept = new Map([...rt.adapterFrontiers].filter(([id, f]) => id === laneId || f.expiresAtMs === null || f.expiresAtMs > nowMs));
+  const prior = kept.get(laneId);
+  if (sequence !== (prior?.lastContiguousSequence ?? 0) + 1) return txErr("RADAPTER_COMMAND_FRONTIER_NONCONTIGUOUS");
+  if (prior === undefined && kept.size >= MAX_ACTIVE_RUNTIME_ADAPTER_COMMAND_LANES) return txErr("RADAPTER_COMMAND_FRONTIER_CAPACITY_EXCEEDED");
+  kept.set(laneId, { lastContiguousSequence: sequence, lastInputHash: inputHash, lastCommandId: commandId, observedHeight: Number(rt.height) + 1, expiresAtMs });
+  return ok({ ...rt, adapterFrontiers: kept });
+};
+/** og registration/entity-creation/crypto.ts + entity/auth/crypto.ts: HKDF-SHA256(seed, salt=entityId, info) then X25519. */
+export const entityEncryptionPublicKey = (seed: string, entity: string): string => {
+  const priv = hkdf(sha256, hexToBytes(seed), utf8(lower(entity)), utf8("xln:entity-encryption:v1"), 32);
+  return bytesToHex(x25519.getPublicKey(priv)).toLowerCase();
+};
+const MAX_NUMBERED_ENTITY = 1_000_000n;
+/** Called only on a 0x-prefixed 32-byte hex id (checked first), so the BigInt parse cannot fail. */
+const isNumberedEntity = (id: string): boolean => { const n = BigInt(id); return n > 0n && n < MAX_NUMBERED_ENTITY; };
+/** og ethers.getAddress: a mixed-case address must carry its EIP-55 checksum. */
+const checksumValid = (a: string): boolean => { const body = a.slice(2); return body === body.toLowerCase() || body === body.toUpperCase() || checksum(a) === a; };
+/** og ethers.computeAddress over a 33/65-byte secp256k1 public key; an off-curve key is refused (og throws). */
+const pubkeyAddress = (key: string): string | null => {
+  try { return bytesToHex(keccak256(secp256k1.ProjectivePoint.fromHex(hexBody(key)).toRawBytes(false).slice(1)).slice(12)); } catch { return null; }
+};
+/** og toBoardEntityId + resolveValidatorAddress: a bytes32 id as is, an EOA (or public key) as its zero-padded address. */
+const boardValidatorId = (v: string): Result<string, RuntimeError> => {
+  if (/^0x[0-9a-f]{64}$/i.test(v)) return ok(v.toLowerCase());
+  if (v.startsWith("0x") && v.length === 42) return /^0x[0-9a-fA-F]{40}$/.test(v) && checksumValid(v) ? ok(addressAsId(v)) : txErr("BOARD_VALIDATOR_ADDRESS_INVALID");
+  if (v.startsWith("0x") && (v.length === 68 || v.length === 132)) { const a = pubkeyAddress(v); return a === null ? txErr("BOARD_VALIDATOR_PUBLIC_KEY_INVALID") : ok(addressAsId(a)); }
+  return txErr("BOARD_VALIDATOR_ADDRESS_REQUIRED");
+};
+/** og factory.ts encodeBoard -> hashBoard: the lazy Entity id of a board config (validators positional, shares as uint16 powers, zero delays). */
+export const lazyBoardEntityId = (config: EntityRootConfig): Result<string, RuntimeError> => {
+  if (config.validators.length === 0) return txErr("BOARD_EMPTY");
+  const seen = new Set<string>();
+  for (const v of config.validators) { const id = lower(v); if (id === "" || seen.has(id)) return txErr("BOARD_VALIDATOR_DUPLICATE_OR_EMPTY"); seen.add(id); }
+  const proposer = config.validators[0] ?? "";
+  if (!/^0x[0-9a-f]{40}$/i.test(proposer)) return txErr("BOARD_PROPOSER_EOA_REQUIRED");
+  if (!checksumValid(proposer)) return txErr("BOARD_VALIDATOR_ADDRESS_INVALID");
+  const shares = new Map<string, bigint>();
+  for (const [raw, share] of Object.entries(config.shares)) {
+    const id = lower(raw);
+    if (id === "" || shares.has(id)) return txErr("BOARD_SHARE_DUPLICATE_OR_EMPTY");
+    if (!seen.has(id)) return txErr("BOARD_SHARE_NOT_VALIDATOR");
+    if (typeof share !== "bigint" || share <= 0n) return txErr("BOARD_VOTING_POWER_NOT_POSITIVE");
+    shares.set(id, share);
+  }
+  return chain(traverse(config.validators, boardValidatorId), (ids): Result<string, RuntimeError> => {
+    const powers: number[] = [];
+    for (const v of config.validators) { const s = shares.get(lower(v)); if (s === undefined) return txErr("BOARD_VOTING_POWER_MISSING"); if (s > 0xffffn) return txErr("BOARD_WEIGHT_OUT_OF_RANGE"); powers.push(Number(s)); }
+    if (config.threshold <= 0n) return txErr("BOARD_THRESHOLD_NOT_POSITIVE");
+    if (config.threshold > 0xffffn) return txErr("BOARD_THRESHOLD_OUT_OF_RANGE");
+    if (config.threshold > powers.reduce((t, p) => t + BigInt(p), 0n)) return txErr("BOARD_THRESHOLD_EXCEEDS_POWER");
+    return ok(boardHashOf({ votingThreshold: Number(config.threshold), entityIds: ids, votingPowers: powers, boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 }));
   });
-  return { runtime: { entities: store }, outbox: outs.flatMap((o) => o.outputs), rejected: outs.flatMap((o) => o.rejected) };
+};
+const sameJurisdictionStack = (a: Domain, b: Domain): boolean => a.chainId === b.chainId && lower(a.depositoryAddress) === lower(b.depositoryAddress);
+const quorumOf = (config: ImportConfig): Result<Authority, RuntimeError> => {
+  const members = new Map<Address, { readonly shares: bigint }>();
+  for (const v of config.validators) {
+    const a = address(v), share = Object.entries(config.shares).find(([k]) => lower(k) === lower(v))?.[1];
+    if (!a.ok || share === undefined) return txErr("IMPORT_REPLICA_VALIDATOR_NOT_EOA");
+    members.set(a.value, { shares: share });
+  }
+  return ok({ _tag: "teaching", threshold: config.threshold, members });
+};
+/**
+ * og importReplicaRuntimeTx: normalize the identity, bind the jurisdiction, prove board authority (signer on board, proposer flag = board index 0,
+ * lazy id = hashBoard(encodeBoard(config)); a numbered Entity needs certified registration evidence), check the seed-derived encryption key
+ * against siblings and the retained seed, then reuse / checkpoint-import / create the genesis replica.
+ */
+const importReplica = (rt: Runtime, tx: Extract<RuntimeTx, { type: "importReplica" }>): Result<Runtime, RuntimeError> => {
+  const entity = lower(tx.entityId), signer = lower(tx.signerId), { config, isProposer, entitySeed } = tx.data;
+  if (entity === "" || signer === "") return txErr("IMPORT_REPLICA_INVALID_ID");
+  const key = `${entity}:${signer}`, existing = [...rt.entities].find(([k]) => lower(k) === key);
+  const j = config.jurisdiction;
+  if (j === undefined || (j.name ?? "") === "") return txErr("ENTITY_JURISDICTION_MISSING");
+  if (!rt.jurisdictions.has(j.name ?? "")) return txErr("ENTITY_JURISDICTION_RESOLVE_FAILED");
+  if (j.depositoryAddress === "" || j.entityProviderAddress === "" || j.chainId === undefined || j.chainId === 0) return txErr("ENTITY_JURISDICTION_INCOMPLETE");
+  const domain: Domain = { chainId: j.chainId, depositoryAddress: j.depositoryAddress };
+  const siblings = [...rt.entities.values()].filter((r) => lower(r.state.id) === entity);
+  if (siblings.some((r) => !sameJurisdictionStack(r.state.jurisdiction, domain))) return txErr("ENTITY_JURISDICTION_CONFLICT");
+  const boardIndex = config.validators.findIndex((v) => lower(v) === signer);
+  if (boardIndex < 0) return txErr("IMPORT_REPLICA_SIGNER_NOT_ON_BOARD");
+  if (isProposer !== (boardIndex === 0)) return txErr("IMPORT_REPLICA_PROPOSER_FLAG_INVALID");
+  if (!/^0x[0-9a-f]{64}$/i.test(entity)) return txErr("FINTECH_SAFETY_INVALID_ENTITY_ID");
+  if (isNumberedEntity(entity)) return txErr("NUMBERED_REPLICA_REGISTRATION_EVIDENCE_MISSING");
+  return chain(lazyBoardEntityId(config), (boardId): Result<Runtime, RuntimeError> => {
+    if (lower(boardId) !== entity) return txErr("IMPORT_REPLICA_LAZY_BOARD_ID_MISMATCH");
+    if (!/^0x[0-9a-f]{128}$/.test(entitySeed)) return txErr("IMPORT_REPLICA_ENTITY_SEED_INVALID");
+    const publicKey = entityEncryptionPublicKey(entitySeed, entity);
+    if (siblings.some((r) => r.state.committed["entityEncryptionPublicKey"] !== publicKey)) return txErr("IMPORT_REPLICA_ENTITY_ENCRYPTION_PUBLIC_KEY_MISMATCH");
+    const retained = rt.encryptionSeeds.get(entity);
+    if (retained !== undefined && retained !== entitySeed) return txErr("ENTITY_ENCRYPTION_SEED_CONFLICT");
+    const finish = (r: EntityReplica, drop?: string): Runtime => ({
+      ...rt, entities: mapSet(drop === undefined ? rt.entities : mapDelete(rt.entities, drop), key, r), encryptionSeeds: mapSet(rt.encryptionSeeds, entity, entitySeed),
+    });
+    return chain(quorumOf(config), (authority) => chain(admitQuorum(authority), (quorum): Result<Runtime, RuntimeError> => {
+      const certified = siblings.reduce<EntityReplica | undefined>((best, r) => (best === undefined || r.head.height > best.head.height ? r : best), undefined);
+      const sameAuthority = (from: EntityReplica): Result<void, RuntimeError> => chain(authorityRoot({ ...from.state, quorum }), (supplied) =>
+        chain(authorityRoot(from.state), (held) => (supplied === held ? ok(undefined) : txErr("IMPORT_REPLICA_CONFIG_CHECKPOINT_MISMATCH"))));
+      const at = (from: EntityReplica, state: EntityState, mempool: readonly EntityTx[]): OpenEntity => openEntity(memberId(quorum, signer as Address) ?? (signer as Address), state, from.head, mempool, from.accountReplicas);
+      if (existing !== undefined) {
+        const [oldKey, replica] = existing;
+        // A certified Entity keeps its state: re-import changes validator-local routing only (og reuseExistingReplica).
+        if (replica.head.height > 0n || siblings.some((r) => r.head.height > 0n)) return map(sameAuthority(replica), () => finish(replica, oldKey === key ? undefined : oldKey));
+        return ok(finish(at(replica, { ...replica.state, quorum, jurisdiction: domain }, replica.mempool), oldKey === key ? undefined : oldKey));
+      }
+      if (certified !== undefined) return map(sameAuthority(certified), () => finish(at(certified, certified.state, [])));
+      const committed: EntityCommitted = { entityEncryptionPublicKey: publicKey };
+      return map(mapErr(createEntity({ id: entity as EntityId, jurisdiction: domain, threshold: config.threshold, members: (authority as Extract<Authority, { _tag: "teaching" }>).members, signerId: signer as Address, timestamp: rt.timestamp, committed }), (e): RuntimeError => e), (r) => finish(r));
+    }));
+  });
+};
+/** og applyRuntimeTx. The J watcher / J history, J submit, registration evidence, EntityProvider action, governance and J import subsystems are not in the rewrite. */
+export const applyRuntimeTx = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<Runtime, RuntimeError> => chain(runtimeTxAuthorized(tx, ctx), (): Result<Runtime, RuntimeError> => {
+  switch (tx.type) {
+    case "checkpointBarrier": return ok(rt);
+    case "recordRuntimeAdapterCommand": return adapterCommand(rt, tx.data);
+    case "importReplica": return importReplica(rt, tx);
+    default: return err({ _tag: "runtime_tx_unsupported", code: tx.type });
+  }
+});
+
+/** One applied Runtime frame: `outbox` is positional (merged input order, then each input's outputs); `jOutbox` carries the ingress J inputs. */
+export type RuntimeStep = { readonly runtime: Runtime; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly rejected: readonly RuntimeError[]; readonly advanced: boolean };
+/**
+ * og createRuntimeInputReducer: validate shape/limits, apply every RuntimeTx in order (any failure refuses the whole frame), merge the entity inputs,
+ * discard inputs whose replica is unknown (og drop policy for unroutable ingress), apply the rest, and advance the Runtime height only when the frame
+ * did work (og advanceAppliedRuntimeFrame). The frame timestamp is max(previous, ingress seed) and stamps every txs input (og env.state.timestamp).
+ */
+export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx): Result<RuntimeStep, RuntimeError> => chain(validateRuntimeInput(rt, input), (jOutbox) => {
+  const seeds = input.entityInputs.flatMap((i) => (i.input.kind === "txs" ? [i.input.timestamp] : []));
+  const timestamp = [input.timestamp ?? rt.timestamp, ...(input.timestamp === undefined ? seeds : [])].reduce((a, b) => (b > a ? b : a), rt.timestamp);
+  return chain(foldResult(input.runtimeTxs, { ...rt, timestamp }, (at, tx) => applyRuntimeTx(at, tx, ctx)), (afterTxs) => chain(mergeEntityInputs(input.entityInputs), (merged) => {
+    type Out = { readonly outputs: readonly EntityOutput[]; readonly rejected: readonly RuntimeError[]; readonly applied: readonly RoutedEntityInput[]; readonly committed: boolean };
+    const refused = (error: RuntimeError): StoreStep<string, EntityReplica, Out> => ({ writes: [], out: { outputs: [], rejected: [error], applied: [], committed: false }, stop: false });
+    const { store, outs } = foldStore(afterTxs.entities, merged, (read, routed): StoreStep<string, EntityReplica, Out> => {
+      const key = replicaKey(routed.entityId, routed.signerId), r = read(key);
+      if (r === undefined) return refused({ _tag: "no_such_entity", id: routed.entityId });
+      const stamped: RoutedEntityInput = routed.input.kind === "txs" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
+      const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx });
+      if (!applied.ok) return refused(applied.error);
+      return { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [], applied: [stamped], committed: applied.value.replica.head.height > r.head.height }, stop: false };
+    });
+    const applied = outs.flatMap((o) => o.applied), outbox = outs.flatMap((o) => o.outputs);
+    const meaningful = applied.filter((i) => i.input.kind !== "txs" || i.input.txs.length > 0).length;
+    const entityInputCount = outs.some((o) => o.committed) ? Math.max(meaningful, applied.length) : meaningful;
+    const advanced = input.runtimeTxs.length > 0 || entityInputCount > 0 || outbox.length > 0 || jOutbox.length > 0;
+    const runtime: Runtime = { ...afterTxs, entities: store, height: advanced ? afterTxs.height + 1n : afterTxs.height };
+    const appliedInput: RuntimeInput = { runtimeTxs: input.runtimeTxs, entityInputs: applied, ...(jOutbox.length > 0 ? { jInputs: jOutbox } : {}) };
+    return ok({ runtime, applied: appliedInput, outbox, jOutbox, rejected: outs.flatMap((o) => o.rejected), advanced });
+  }));
+});
+
+// ---- og storage/hashes.ts, canonical-hash.ts, replica-meta-digest.ts, wal/outbox-payload.ts: Runtime WAL commitments ----
+/** og computeIntegrityDigest(encodeBinaryPayload(value)): 0x-sha256 over the 0x03-framed canonical msgpack. */
+const hashStable = (value: Binary): Result<string, BinaryError> => map(encodeBinary(value), integrity);
+export type StorageFrameEntityHash = { readonly entityId: string; readonly hash: string; readonly cellCount: number };
+const sortedEntityHashes = (rows: readonly StorageFrameEntityHash[]): readonly StorageFrameEntityHash[] =>
+  rows.map((r) => ({ entityId: r.entityId.toLowerCase(), hash: r.hash, cellCount: r.cellCount })).sort((a, b) => asc(a.entityId, b.entityId));
+/** og RuntimeFrame (storage/types.ts): the WAL row. `runtimeInput` is the applied input; optional og fields are absent when empty. */
+export type StorageFrame = {
+  readonly height: number; readonly timestamp: number; readonly prevFrameHash?: string | undefined; readonly frameHash?: string | undefined;
+  readonly replicaMetaDigest: string; readonly postStateHash: string; readonly materializedState: boolean;
+  readonly canonicalStateHash?: string | undefined; readonly canonicalEntityHashes?: readonly StorageFrameEntityHash[] | undefined;
+  readonly runtimeInput: Binary; readonly runtimeOutputCount: number; readonly runtimeOutputsDigest: string;
+  readonly touchedEntities: readonly string[]; readonly touchedAccounts: readonly { readonly entityId: string; readonly counterpartyId: string }[]; readonly touchedBookEntities: readonly string[];
+  readonly [extra: string]: Binary | undefined;
+};
+const definedFields = (record: { readonly [field: string]: Binary | undefined }): { readonly [field: string]: Binary } =>
+  Object.fromEntries(Object.entries(record).filter((e): e is [string, Binary] => e[1] !== undefined));
+/** og computeStorageFrameHash: the frame without `frameHash`, under domain `xln.storage.frame`, canonical Entity hashes normalized and sorted. */
+export const storageFrameHash = (record: StorageFrame): Result<string, BinaryError> => {
+  const { frameHash: _, ...rest } = record;
+  return hashStable({ kind: "xln.storage.frame", ...definedFields(rest), canonicalEntityHashes: sortedEntityHashes(record.canonicalEntityHashes ?? []) });
+};
+/** og computeCanonicalRuntimeStateHash: keccak of the JSON text {kind, height, timestamp, entities}. */
+export const canonicalRuntimeStateHash = (height: number, timestamp: number, entities: readonly StorageFrameEntityHash[]): string =>
+  `0x${keccakUtf8(JSON.stringify({ kind: "xln.storage.canonicalRuntimeHash.v2", height, timestamp, entities: sortedEntityHashes(entities) }))}`;
+export type ComponentDigest = { readonly key: string; readonly valueHash: string };
+/** og computeRuntimePostStateComponentDigests: one integrity hash per Runtime component, keys sorted. */
+export const runtimeComponentDigests = (view: { readonly [key: string]: Binary }): Result<readonly ComponentDigest[], BinaryError> =>
+  traverse(Object.keys(view).sort(asc), (key) => map(hashStable(view[key] as Binary), (valueHash) => ({ key, valueHash })));
+/** og computeStoragePostStateHash: the per-frame replay oracle. */
+export const storagePostStateHash = (i: { readonly height: number; readonly timestamp: number; readonly replicaMetaDigest: string; readonly runtimeComponentDigests: readonly ComponentDigest[]; readonly runtimeOutputCount: number; readonly runtimeOutputsDigest: string }): Result<string, BinaryError> =>
+  hashStable({ kind: "xln.storage.postState", height: i.height, timestamp: i.timestamp, replicaMetaDigest: i.replicaMetaDigest, runtimeComponentDigests: i.runtimeComponentDigests, runtimeOutputCount: i.runtimeOutputCount, runtimeOutputsDigest: i.runtimeOutputsDigest });
+/** og computeStorageReplicaMetaDigest: rows sorted by hex key then value hash; values hashed independently. */
+export const replicaMetaDigest = (rows: readonly { readonly key: Uint8Array; readonly value: Uint8Array }[]): Result<string, BinaryError> =>
+  hashStable({ kind: "xln.storage.replicaMeta.v1", entries: rows.map((r) => ({ key: bytesToHex(r.key).toLowerCase(), valueHash: integrity(r.value) })).sort((a, b) => asc(a.key, b.key) || asc(a.valueHash, b.valueHash)) });
+const MAX_RUNTIME_OUTPUT_ROWS = 10_000;
+const u32 = (n: number): Uint8Array => Uint8Array.of((n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff);
+/** og computeRuntimeOutputsDigest: sha256("xln.runtime.outbox.v1" | u32 count | (u32 len | row)*), rows in `(height, index)` order. */
+export const runtimeOutputsDigest = (rows: readonly Uint8Array[]): Result<string, RuntimeError> =>
+  rows.length > MAX_RUNTIME_OUTPUT_ROWS ? frameErr("STORAGE_RUNTIME_OUTPUT_COUNT_MAX") : ok(bytesToHex(sha256(concat([utf8("xln.runtime.outbox.v1"), u32(rows.length), ...rows.flatMap((r) => [u32(r.byteLength), r])]))));
+
+/** Rewrite values as og binary payload: optional fields the rewrite leaves `undefined` are absent (og builders spread them in only when set). */
+const binaryOf = (v: unknown): Binary => {
+  if (v === null || typeof v !== "object") return v as Binary;
+  if (Array.isArray(v)) return v.map(binaryOf);
+  if (v instanceof Map) return new Map([...v].map(([k, x]) => [binaryOf(k), binaryOf(x)]));
+  return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [k, binaryOf(x)]));
+};
+/** og buildCertifiedEntityHeadPlan: one replica per Entity, the one with the highest certified height (first on a tie). */
+const certifiedHeads = (rt: Runtime): readonly EntityReplica[] => {
+  const heads = new Map<string, EntityReplica>();
+  for (const r of rt.entities.values()) { const id = lower(r.state.id), held = heads.get(id); if (held === undefined || r.head.height > held.head.height) heads.set(id, r); }
+  return [...heads.values()];
+};
+/** og computeCanonicalEntityHash: the Entity consensus state root of the certified head, one cell. */
+export const canonicalEntityHashes = (rt: Runtime): Result<readonly StorageFrameEntityHash[], RuntimeError> =>
+  map(traverse(certifiedHeads(rt), (r) => map(entityRootOf(r.state, r.accountReplicas), (hash) => ({ entityId: lower(r.state.id), hash, cellCount: 1 }))), sortedEntityHashes);
+const KEY_LIVE_REPLICA_META = 0x26;
+/** og buildStorageLiveReplicaMetaCommitment row for the fields the rewrite replica carries (no certified lineage link, leader votes or J submit state). */
+const replicaMetaRows = (rt: Runtime): Result<readonly { readonly key: Uint8Array; readonly value: Uint8Array }[], RuntimeError> =>
+  traverse([...rt.entities], ([key, r]) => {
+    const entity = lower(r.state.id), signer = signerId(r.signerId);
+    const rowKey = concat([Uint8Array.of(KEY_LIVE_REPLICA_META), hexToBytes(entity), new Uint8Array(12), hexToBytes(signer)]);
+    return chain(frameNumber(r.state.height), (height) => chain(frameNumber(r.state.timestamp), (timestamp) => map(encodeBinary({
+      replicaKey: key.toLowerCase(), entityId: entity, signerId: signer, isProposer: signerId(r.state.quorum.proposer) === signer,
+      entityHead: { entityId: entity, height, timestamp, frameHash: r.head.height === 0n ? "" : frameWord(r.head.prevFrameHash) },
+    }), (value) => ({ key: rowKey, value }))));
+  });
+/** The Runtime components the rewrite holds (og buildReplayVerifiableRuntimePostStateView: infrastructure + J replicas). */
+const runtimeView = (rt: Runtime): { readonly [key: string]: Binary } => ({
+  infrastructure: binaryOf({ runtimeAdapterCommandFrontiers: rt.adapterFrontiers, entityEncryptionSeeds: rt.encryptionSeeds }),
+  jReplicas: [...rt.jurisdictions].sort(asc),
+});
+export type RuntimeFrameCommit = { readonly runtime: Runtime; readonly frame: StorageFrame; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly rejected: readonly RuntimeError[] };
+const outputRows = (outbox: readonly EntityOutput[]): Result<readonly Uint8Array[], RuntimeError> => traverse(outbox, (o) => encodeBinary(binaryOf(o)));
+const sealFrame = (rt: Runtime, step: RuntimeStep): Result<RuntimeFrameCommit, RuntimeError> => {
+  const after = step.runtime;
+  return chain(frameNumber(after.height), (height) => chain(frameNumber(after.timestamp), (timestamp) => chain(outputRows(step.outbox), (rows) => chain(runtimeOutputsDigest(rows), (outputsDigest) =>
+    chain(replicaMetaRows(after), (metaRows) => chain(replicaMetaDigest(metaRows), (metaDigest) => chain(runtimeComponentDigests(runtimeView(after)), (components) =>
+      chain(storagePostStateHash({ height, timestamp, replicaMetaDigest: metaDigest, runtimeComponentDigests: components, runtimeOutputCount: rows.length, runtimeOutputsDigest: outputsDigest }), (postStateHash) =>
+        chain(canonicalEntityHashes(after), (entityHashes) => {
+          const touched = [...new Set([...step.applied.entityInputs.map((i) => lower(i.entityId)), ...step.applied.runtimeTxs.flatMap((tx) => (tx.type === "importReplica" ? [lower(tx.entityId)] : []))])].sort(asc);
+          const body: StorageFrame = {
+            height, timestamp, prevFrameHash: rt.frameHash, replicaMetaDigest: metaDigest, postStateHash, materializedState: false,
+            canonicalStateHash: canonicalRuntimeStateHash(height, timestamp, entityHashes), canonicalEntityHashes: entityHashes,
+            runtimeInput: binaryOf(step.applied), runtimeOutputCount: rows.length, runtimeOutputsDigest: outputsDigest, touchedEntities: touched, touchedAccounts: [], touchedBookEntities: [],
+          };
+          return map(storageFrameHash(body), (frameHash) => ({ runtime: { ...after, frameHash }, frame: { ...body, frameHash }, applied: step.applied, outbox: step.outbox, jOutbox: step.jOutbox, rejected: step.rejected }));
+        })))))))));
+};
+/**
+ * og process + saveRuntimeFrame: apply one Runtime input and, when the frame advanced, seal its WAL row (prev hash chain from ZERO_FRAME_HASH,
+ * canonical state hash, post-state oracle, ordered outbox digest). A frame that did no work writes no row.
+ */
+export const commitRuntimeFrame = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx): Result<RuntimeFrameCommit | null, RuntimeError> =>
+  chain(applyRuntime(rt, input, ctx), (step) => (step.advanced ? sealFrame(rt, step) : ok(null)));
+export type RuntimeRecovery = { readonly runtime: Runtime; readonly outbox: readonly EntityOutput[] };
+/**
+ * og verifyStorageTailIntegrity + replay: every row continues the chain (height+1, prevFrameHash), its canonical state hash recomputes from its own
+ * coordinates, and its frame hash recomputes; replaying its applied input (with replay capabilities) must reproduce the row byte-for-byte.
+ * The recovered outbox is every replayed frame's ordered outputs (nothing is terminal without a receipt) and must equal the persisted rows positionally.
+ */
+export const recoverRuntime = (checkpoint: Runtime, frames: readonly StorageFrame[], inputs: readonly RuntimeInput[], outbox: readonly EntityOutput[], ctx: Verifiers): Result<RuntimeRecovery, RuntimeError> => {
+  if (frames.length !== inputs.length) return frameErr("STORAGE_VERIFY_FRAME_INPUT_MISSING");
+  type Replayed = { readonly runtime: Runtime; readonly outbox: readonly EntityOutput[] };
+  return chain(foldResult(frames.map((f, i) => [f, inputs[i] as RuntimeInput] as const), { runtime: checkpoint, outbox: [] } as Replayed, ({ runtime, outbox: pending }, [frame, input]): Result<Replayed, RuntimeError> => {
+    if (BigInt(frame.height) !== runtime.height + 1n) return frameErr("STORAGE_VERIFY_FRAME_HEIGHT_MISMATCH");
+    if (frame.prevFrameHash !== runtime.frameHash) return frameErr("STORAGE_VERIFY_FRAME_CHAIN_BROKEN");
+    if (frame.canonicalStateHash !== undefined && frame.canonicalStateHash !== canonicalRuntimeStateHash(frame.height, frame.timestamp, frame.canonicalEntityHashes ?? [])) return frameErr("STORAGE_VERIFY_CANONICAL_HASH_MISMATCH");
+    const own = storageFrameHash(frame);
+    if (!own.ok || own.value !== frame.frameHash) return frameErr("STORAGE_VERIFY_FRAME_HASH_MISMATCH");
+    return chain(commitRuntimeFrame(runtime, { ...input, timestamp: BigInt(frame.timestamp) }, { ...ctx, replay: true }), (replayed): Result<Replayed, RuntimeError> =>
+      replayed === null || replayed.frame.frameHash !== frame.frameHash ? frameErr("STORAGE_REPLAY_POST_STATE_MISMATCH") : ok({ runtime: replayed.runtime, outbox: [...pending, ...replayed.outbox] }));
+  }), (done) => (canon(done.outbox) !== canon(outbox) ? frameErr("STORAGE_RECOVERY_OUTBOX_MISMATCH") : ok(done)));
 };
 
 
@@ -3395,12 +3804,8 @@ export type HostTx =
   | { readonly layer: "ladder"; readonly tx: LadderTx } | { readonly layer: "entity"; readonly tx: EntityRouteTx } | { readonly layer: "input"; readonly input: HostInput } | { readonly layer: "receipt"; readonly id: Hash };
 export type Host = { readonly self: EntityId; readonly account: AccountReplica; readonly j: JState; readonly ladder: ReadonlyMap<string, RatioRecord>; readonly height: bigint; readonly frameHash: RuntimeFrameHash; readonly outbox: readonly OutboxEntry[] };
 export type Stamped = { readonly tx: HostTx; readonly ctx: HostCtx };
-export type RuntimeFrameRecord = { readonly protocolVersion: number; readonly height: bigint; readonly timestamp: bigint; readonly previousFrameHash: RuntimeFrameHash; readonly previousHostRoot: HostRoot; readonly inputRefs: readonly Stamped[]; readonly postHostRoot: HostRoot; readonly outboxRefs: readonly Hash[] };
-export type RecoverFrame = { readonly record: RuntimeFrameRecord; readonly inputs: readonly Stamped[] };
-export type Commit = { readonly frame: RecoverFrame; readonly host: Host; readonly effects: readonly OutboxEntry[] };
 export type HostError = BodyError | Tagged<"unsigned" | "chain" | "root" | "version" | "reserve" | "status" | "recipient"> | Tagged<"candidate", { cause: AccountReplicaError }>;
 export type HostStep = Step<Host, HostEffect>;
-export const PROTOCOL_VERSION = 2;
 export const genesisHost = (self: EntityId, account: AccountReplica): Result<Host, AccountReplicaError> =>
   map(partyOf(replicaId(account), self), () => ({ self, account, j: { reserves: new Map(), escrow: new Map() }, ladder: new Map(), height: 0n, frameHash: ZERO_HASH as RuntimeFrameHash, outbox: [] }));
 type Balances<K> = ReadonlyMap<K, ReadonlyMap<TokenId, bigint>>;
@@ -3454,46 +3859,6 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
 
   receipt: (i) => ok(step({ ...host, outbox: host.outbox.filter((e) => e.id !== i.id) })),
 });
-type DisputeRecord = { readonly phase: "preparing"; readonly evidence: FrameEvidence | undefined; readonly unready: StartRefusal } | { readonly phase: "disputed"; readonly evidence: FrameEvidence | undefined; readonly start?: DisputeStart | undefined; readonly active?: ActiveDispute | undefined };
-const disputeRecord = (a: AccountReplica): DisputeRecord | undefined => match(a, {
-  open: () => undefined, proposed: () => undefined, received: () => undefined,
-  preparing: ({ evidence, unready }) => ({ phase: "preparing", evidence, unready }), disputed: ({ evidence, start, active }) => ({ phase: "disputed", evidence, ...opt("start", start), ...opt("active", active) }),
-});
-export const hostRoot = (h: Host): HostRoot => keccakUtf8(canon({ account: accountSnapshot(h.account.state), dispute: disputeRecord(h.account), j: h.j, ladder: h.ladder, outbox: h.outbox.map((e) => e.id) })) as HostRoot;
-export const hashFrame = (record: RuntimeFrameRecord): RuntimeFrameHash => keccakUtf8(canon(record)) as RuntimeFrameHash;
-const foldStamped = strictFold<Host, Stamped, Verify, HostEffect, AccountReplicaError | HostError>((h, stamped, verify) => applyHost(h, stamped.tx, stamped.ctx, verify));
-const outputId = (height: bigint, ordinal: number, effect: HostEffect): Hash => keccakUtf8(canon({ height, ordinal, effect }));
-const messageOf = (e: HostEffect): AccountPeerInput | null => match(e, { send: (x) => x.message, forward_secret: () => null, start_dispute: () => null });
-/** An ACK already riding on an ack_frame in the same batch is not sent again on its own. */
-const carriedOnce = (effects: readonly HostEffect[]): readonly HostEffect[] => {
-  const carried = new Set(effects.flatMap((e) => { const m = messageOf(e); return m === null ? [] : matchBy("kind", m, { ack: () => [], ack_frame: (f) => (f.ack === null ? [] : [canon(f.ack)]), dispute: () => [] }); }));
-  return effects.filter((e) => { const m = messageOf(e); return m === null ? true : matchBy("kind", m, { ack: (a) => !carried.has(canon(ackOf(a))), ack_frame: () => true, dispute: () => true }); });
-};
-type Advanced = { readonly record: RuntimeFrameRecord; readonly host: Host; readonly created: readonly OutboxEntry[] };
-const advance = (host: Host, previousHostRoot: HostRoot, inputs: readonly Stamped[], timestamp: bigint, verify: Verify): Result<Advanced, AccountReplicaError | HostError> => map(foldStamped(host, inputs, verify), (folded) => {
-  const height = host.height + 1n, created = carriedOnce(folded.effects).map((effect, ordinal) => ({ id: outputId(height, ordinal, effect), effect }));
-  const after: Host = { ...folded.state, height, outbox: [...folded.state.outbox, ...created] };
-  const record: RuntimeFrameRecord = { protocolVersion: PROTOCOL_VERSION, height, timestamp, previousFrameHash: host.frameHash, previousHostRoot, inputRefs: inputs, postHostRoot: hostRoot(after), outboxRefs: created.map((e) => e.id) };
-  return { record, host: { ...after, frameHash: hashFrame(record) }, created };
-});
-export const commitFrame = (host: Host, inputs: readonly Stamped[], nowMs: bigint, verify: Verify): Result<Commit, AccountReplicaError | HostError> =>
-  map(advance(host, hostRoot(host), inputs, nowMs, verify), (next) => ({ frame: { record: next.record, inputs }, host: next.host, effects: next.created }));
-export type Recovery = { readonly host: Host; readonly pending: readonly OutboxEntry[]; readonly effects: readonly OutboxEntry[] };
-export const recover = (graph: Host, frames: readonly RecoverFrame[], outbox: readonly OutboxEntry[], verify: Verify): Result<Recovery, AccountReplicaError | HostError> => {
-  if (frames.some((f) => f.record.protocolVersion !== PROTOCOL_VERSION)) return err({ _tag: "version" });
-  return chain(mapErr(restoreAccount(graph.account, graph.self, verify), (cause): HostError => ({ _tag: "candidate", cause })), (account) => {
-    const start: Host = { ...graph, account };
-    type HostReplayed = { readonly host: Host; readonly root: HostRoot; readonly effects: readonly OutboxEntry[] };
-    return chain(foldResult(frames, { host: start, root: hostRoot(start), effects: [] } as HostReplayed, ({ host, root, effects }, frame): Result<HostReplayed, AccountReplicaError | HostError> => {
-      const r = frame.record;
-      if (r.previousFrameHash !== host.frameHash || r.height !== host.height + 1n || r.previousHostRoot !== root || canon(frame.inputs) !== canon(r.inputRefs)) return err({ _tag: "chain" });
-      return chain(advance(host, root, frame.inputs, r.timestamp, verify), (next) => (hashFrame(next.record) === hashFrame(r) && canon(next.record.outboxRefs) === canon(r.outboxRefs) ? ok({ host: next.host, root: r.postHostRoot, effects: [...effects, ...next.created] }) : err({ _tag: "root" })));
-    }), ({ host, effects }) => {
-      /** og outbox-payload.ts: rows are ordered `(height, index)`; order is part of the digest, never a multiset. */
-      return canon(outbox) !== canon(host.outbox) ? err({ _tag: "chain" }) : ok({ host, pending: host.outbox, effects });
-    });
-  });
-};
 
 export type TowerReceiptV1 = { readonly type: "tower_receipt"; readonly towerId: string; readonly lookupKey: string; readonly slot: bigint; readonly height: bigint; readonly bundleHash: Hash; readonly storedAt: bigint; readonly expiresAt: bigint; readonly towerSignature?: string | undefined };
 export type AccountRecoveryBundleV1 = {

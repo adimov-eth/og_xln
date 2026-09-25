@@ -10,8 +10,8 @@ import { buildEntityHashesToSign } from "../../core/entity/consensus/input/hanko
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
 import { appendEntityMempoolTransactions } from "../../core/entity/consensus/input/admission.ts";
 import {
-  acceptAppointment, acceptBundle, acceptReceipt, address, genesisHost, recover, allowedProposer, applyEntityInput, applyRuntime, convertOutput, createEntity, createRuntime, entityRootOf, entityStateRoot,
-  hashEntityFrame, hashEntityState, isSingleSigner, replicaKey, spawn, signature, tokenId, ZERO_WORD,
+  acceptAppointment, acceptBundle, acceptReceipt, address, allowedProposer, applyEntityInput, applyRuntime, convertOutput, createEntity, createRuntime, entityRootOf, entityStateRoot,
+  commitRuntimeFrame, hashEntityFrame, hashEntityState, isSingleSigner, recoverRuntime, replicaKey, spawn, signature, tokenId, ZERO_WORD,
   type Address, type EntityCommitted, type EntityFrame, type EntityId, type EntityInput, type EntityOutput, type EntityReplica, type EntityTx, type Precommits, type Signature,
 } from "../xln.ts";
 import { ALICE, BOB, CAROL, NOW, TERMS, TOKEN, ackInput, aliceAddr, genesisAB, bobAddr, proposeInput, signEntityFrame, signManifestAs, unwrap, unwrapErr, verifiers } from "../xln_run.ts";
@@ -78,7 +78,7 @@ describe("entity-runtime: proposer selection (ER-1, ER-3)", () => {
     expect(routed.signerId).toBe(B);
     expect(getEntityLeaderState({ entityId: BOB, height: 0, prevFrameHash: "", config: ogConfig([B, A], { [B]: 1n, [A]: 1n }, 2n) } as never).activeValidatorId).toBe(B);
     const consensus = unwrap(convertOutput(rt, { to: BOB, signerId: A, input: txs([]) }, BOB, 1n));
-    expect(consensus).toEqual({ kind: "create", entityId: BOB, signerId: A, input: txs([]) });
+    expect(consensus).toEqual({ entityId: BOB, signerId: A, input: txs([]) });
   });
 });
 
@@ -369,13 +369,13 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
     const alice = unwrap(createEntity({ id: ALICE, jurisdiction: JUR, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]) }));
     const bob = unwrap(createEntity({ id: BOB, jurisdiction: JUR, threshold: 1n, members: new Map([[bobAddr, { shares: 1n }]]) }));
     let rt = spawn(spawn(createRuntime(), alice), bob);
-    const run = (inputs: Parameters<typeof applyRuntime>[1]) => { const out = applyRuntime(rt, inputs, verifiers); expect(out.rejected).toEqual([]); rt = out.runtime; return out.outbox; };
-    run([{ kind: "create", entityId: ALICE, signerId: aliceAddr, input: txs([open], NOW) }]);
+    const run = (entityInputs: Parameters<typeof applyRuntime>[1]["entityInputs"]) => { const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs }, verifiers)); expect(out.rejected).toEqual([]); rt = out.runtime; return out.outbox; };
+    run([{ entityId: ALICE, signerId: aliceAddr, input: txs([open], NOW) }]);
     const opened = rt.entities.get(replicaKey(ALICE, aliceAddr));
     const child = opened?.accountReplicas.get(BOB);
     if (child === undefined) throw new Error("no account");
     const { kind: _, ...clock } = proposeInput(child, ALICE);
-    const outbox = run([{ kind: "create", entityId: ALICE, signerId: aliceAddr, input: txs([{ type: "proposeAccount", data: { counterpartyEntityId: BOB, ...clock } }], NOW + 1n) }]);
+    const outbox = run([{ entityId: ALICE, signerId: aliceAddr, input: txs([{ type: "proposeAccount", data: { counterpartyEntityId: BOB, ...clock } }], NOW + 1n) }]);
     expect(outbox.map((o) => ("tx" in o ? o.tx.data.kind : "consensus"))).toEqual(["ack_frame"]);
     const delivered = outbox.map((o) => unwrap(convertOutput(rt, o, ALICE, NOW + 2n)));
     expect(delivered[0]?.signerId).toBe(bobAddr);
@@ -383,7 +383,7 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
     const bobSide = rt.entities.get(replicaKey(BOB, bobAddr))?.accountReplicas.get(ALICE);
     if (bobSide === undefined) throw new Error("inbound account missing");
     expect(bobSide._tag).toBe("received");
-    const back = run([{ kind: "create", entityId: BOB, signerId: bobAddr, input: txs([{ type: "accountInput", data: ackInput(bobSide, BOB) }], NOW + 3n) }]);
+    const back = run([{ entityId: BOB, signerId: bobAddr, input: txs([{ type: "accountInput", data: ackInput(bobSide, BOB) }], NOW + 3n) }]);
     expect(back.map((o) => ("tx" in o ? o.tx.data.kind : "consensus"))).toEqual(["ack"]);
   });
   test("MATCH: runtime outbox preserves positional (input, then per-input) order, never sorted", () => {
@@ -391,7 +391,7 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
     const opened = unwrap(propose(e1, A, [openTo(CAROL), open])).replica;
     const pay = (to: EntityId): EntityTx => ({ type: "extendCredit", data: { counterpartyEntityId: to, tokenId: unwrap(tokenId("1")), amount: 1n } });
     const rt = spawn(createRuntime(), opened);
-    const out = applyRuntime(rt, [{ kind: "create", entityId: ALICE, signerId: A, input: txs([pay(CAROL), pay(BOB)], 3n) }], verifiers);
+    const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([pay(CAROL), pay(BOB)], 3n) }] }, verifiers));
     expect(out.rejected).toEqual([]);
     expect(out.outbox.length).toBe(2);
     expect(out.outbox.every((o) => "input" in o && o.signerId === A)).toBe(true);
@@ -400,7 +400,11 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
     const r = teaching([[A, 1n]], 1n);
     expect(unwrapErr(applyEntityInput(r, txs([open]), { ...ctx(A), self: BOB }))._tag).toBe("wrong_entity");
     const rt = spawn(createRuntime(), r);
-    const out = applyRuntime(rt, [{ kind: "create", entityId: ALICE, signerId: A, input: txs([open, open]) }, { kind: "create", entityId: ALICE, signerId: A, input: txs([open]) }], verifiers);
+    // og mergeEntityInputs: two local lanes for one replica collapse into one input, so the duplicate refuses both; a lane from another origin stays apart.
+    const merged = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([open, open]) }, { entityId: ALICE, signerId: A, input: txs([open]) }] }, verifiers));
+    expect(merged.rejected.map((e) => e._tag)).toEqual(["account_exists"]);
+    expect(merged.runtime.entities.get(replicaKey(ALICE, A))?.state.accounts.has(BOB)).toBe(false);
+    const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([open, open]) }, { entityId: ALICE, signerId: A, from: "0x" + "77".repeat(20), input: txs([open]) }] }, verifiers));
     expect(out.rejected.map((e) => e._tag)).toEqual(["account_exists"]);
     expect(out.runtime.entities.get(replicaKey(ALICE, A))?.state.accounts.has(BOB)).toBe(true);
   });
@@ -410,13 +414,18 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
   });
 });
 
-describe("entity-runtime: host recovery (ER-23)", () => {
-  test("MATCH (og outbox-payload.ts ordered rows): recover binds the persisted outbox positionally; a reordered outbox is refused", () => {
-    const host = unwrap(genesisHost(ALICE, genesisAB()));
-    const e = (n: number) => ({ id: `${n.toString(16).padStart(2, "0").repeat(32)}` as never, effect: { _tag: "send", message: {} } as never });
-    const graph = { ...host, outbox: [e(1), e(2)] };
-    expect(unwrap(recover(graph, [], [e(1), e(2)], verifiers.verify)).pending).toEqual([e(1), e(2)]);
-    expect(unwrapErr(recover(graph, [], [e(2), e(1)], verifiers.verify))._tag).toBe("chain");
+describe("entity-runtime: runtime recovery (ER-23)", () => {
+  test("MATCH (og outbox-payload.ts ordered rows): recoverRuntime binds the persisted outbox positionally; a reordered outbox is refused", () => {
+    const credit = (to: EntityId): EntityTx => ({ type: "extendCredit", data: { counterpartyEntityId: to, tokenId: unwrap(tokenId("1")), amount: 1n } });
+    const alice = unwrap(propose(teaching([[A, 1n]], 1n), A, [open])).replica;
+    const bob = unwrap(applyEntityInput(unwrap(createEntity({ id: BOB, jurisdiction: JUR, threshold: 1n, members: new Map([[B, { shares: 1n }]]) })), txs([openTo(ALICE)]), { ...ctx(B), self: BOB })).replica;
+    const start = spawn(spawn(createRuntime(), alice), bob);
+    const commit = unwrap(commitRuntimeFrame(start, { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: A, input: txs([credit(BOB)], 3n) }, { entityId: BOB, signerId: B, input: txs([credit(ALICE)], 3n) }] }, verifiers));
+    if (commit === null) throw new Error("no frame");
+    const outbox = commit.outbox;
+    expect(outbox.map((o) => o.to)).toEqual([ALICE, BOB]);
+    expect(unwrap(recoverRuntime(start, [commit.frame], [commit.applied], outbox, verifiers)).outbox).toEqual(outbox);
+    expect(unwrapErr(recoverRuntime(start, [commit.frame], [commit.applied], [...outbox].reverse(), verifiers))).toEqual({ _tag: "runtime_frame", code: "STORAGE_RECOVERY_OUTBOX_MISMATCH" });
   });
 });
 
