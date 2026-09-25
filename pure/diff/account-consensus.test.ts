@@ -512,6 +512,27 @@ describe("account-consensus: dispute preparation", () => {
   });
 });
 
+describe("account-consensus: frozen admission", () => {
+  test("MATCH: og applyAccountEnqueue admits in any status — a preparing or disputed Account queues local txs (deduped), and nothing proposes them", () => {
+    const ctx = ogCtx("diff-frozen-enqueue");
+    for (const status of ["dispute_preparing", "disputed"] as const) {
+      const a = ogAccount();
+      a.status = status;
+      const res = applyAccountEnqueue(a, { kind: "enqueue", txs: [scl(2, 5n), scl(2, 5n)] }, ctx.jClaimNodeStore);
+      expect([res.ok, a.mempool.length]).toEqual([true, 1]);
+    }
+    const preparing = step(proposeFrom(genesisAB(), ALICE, [TX]).replica, { kind: "freeze" }, ALICE).replica;
+    const { p } = round(genesisAB(), genesisAB(), ALICE, BOB, [TX]);
+    const disputed = step(p, { kind: "freeze" }, ALICE).replica;
+    expect([preparing._tag, disputed._tag]).toEqual(["preparing", "disputed"]);
+    for (const frozen of [preparing, disputed]) {
+      const queued = unwrap(admit(frozen, [TX2, TX2]));
+      expect([queued._tag, queued.mempool.length - frozen.mempool.length]).toEqual([frozen._tag, 1]);
+      expect(applyAccountInput(queued, { kind: "propose", ...CLOCK }, DOOR(ALICE)).ok).toBe(false);
+    }
+  });
+});
+
 // =====================================================================================================
 describe("account-consensus: incoming preflight", () => {
   test("MATCH: HTLC deadline preflight (og getIncomingAccountDeadlineViolation) — none / reject / dispute over randomized frames", () => {

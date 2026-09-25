@@ -2046,7 +2046,8 @@ export interface ProposedAccount extends Tagged<"proposed", Held> {}
 export interface ReceivedAccount extends Tagged<"received", Held & { disputeHanko: DisputeHanko | undefined }> {}
 /** og `dispute_preparing` keeps deferred J claims and dispute evidence queued (dispute/policy.ts); `disputed` keeps nothing. */
 export interface PreparingAccount extends Tagged<"preparing", Frozen & { mempool: readonly WireAccountTx[]; unready: StartRefusal }> {}
-export interface DisputedAccount extends Tagged<"disputed", Frozen & { mempool: readonly []; start: DisputeStart }> {}
+/** og admits local txs into a disputed Account's mempool too (local-tx-admission.ts has no status gate); nothing ever proposes them. */
+export interface DisputedAccount extends Tagged<"disputed", Frozen & { mempool: readonly WireAccountTx[]; start: DisputeStart }> {}
 export type FrozenAccount = PreparingAccount | DisputedAccount;
 export type AccountReplica = OpenAccount | ProposedAccount | ReceivedAccount | FrozenAccount;
 export const certifies = (verify: Verify, digest: string, hanko: Hanko, entity: EntityId): Result<void, Tagged<"invalid_hanko", { entity: EntityId }>> => guard(verify(digest, hanko, entity), { _tag: "invalid_hanko", entity });
@@ -2427,21 +2428,24 @@ export const genesisReplica = (id: AccountId, terms: AccountTerms): Result<OpenA
     ({ _tag: "open", state: genesisAccountBody(genesisAccount(id), normalized), head: genesisAccountHead(), mempool: [], dispute: genesisWitnesses() }));
 };
 export type LiveAccount = OpenAccount | ProposedAccount | ReceivedAccount;
-type Queued = { readonly replica: LiveAccount; readonly queued: readonly WireAccountTx[] };
-/** og local-tx-admission.ts: dedupe against mempool + own pending frame; the limit counts both (mempool.ts). A received frame is committed in og, so it pends nothing. */
-const queueOn = <R extends LiveAccount>(r: R, pending: readonly WireAccountTx[], txs: readonly WireAccountTx[]): Result<Queued, AccountReplicaError> => {
+type Queued<R extends AccountReplica = AccountReplica> = { readonly replica: R; readonly queued: readonly WireAccountTx[] };
+/** og local-tx-admission.ts: dedupe against mempool + own pending frame; the limit counts both (mempool.ts). A received frame is committed in og, so it pends nothing. og has no status gate: a frozen Account queues too. */
+const queueOn = <R extends AccountReplica>(r: R, pending: readonly WireAccountTx[], txs: readonly WireAccountTx[]): Result<Queued<R>, AccountReplicaError> => {
   const queued = unqueued(txs, [...r.mempool, ...pending]);
   return r.mempool.length + pending.length + queued.length > ACCOUNT_MEMPOOL_SIZE ? err({ _tag: "mempool_full", limit: ACCOUNT_MEMPOOL_SIZE }) : ok({ replica: { ...r, mempool: [...r.mempool, ...queued] }, queued });
 };
 const enqueue = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<Queued, AccountReplicaError> => match(r, {
-  open: (o) => queueOn(o, [], txs), proposed: (p) => queueOn(p, p.candidate.frame.txs, txs), received: (h) => queueOn(h, [], txs),
-  preparing: () => err(frozenError("preparing")), disputed: () => err(frozenError("disputed")),
+  open: (o) => queueOn<AccountReplica>(o, [], txs), proposed: (p) => queueOn<AccountReplica>(p, p.candidate.frame.txs, txs), received: (h) => queueOn<AccountReplica>(h, [], txs),
+  preparing: (f) => queueOn<AccountReplica>(f, [], txs), disputed: (f) => queueOn<AccountReplica>(f, [], txs),
 });
+const isLive = (r: AccountReplica): r is LiveAccount => r._tag === "open" || r._tag === "proposed" || r._tag === "received";
 /** The state and height the next proposal builds on: a held candidate is about to commit. */
 const nextBase = (r: LiveAccount): { readonly state: AccountBody; readonly height: bigint } => (r._tag === "open" ? { state: r.state, height: r.head.height } : { state: r.candidate.draft.state, height: r.candidate.frame.height });
-export const admit = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<LiveAccount, AccountReplicaError> => map(enqueue(r, txs), (q) => q.replica);
-export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, clock: FrameClock): Result<LiveAccount, AccountReplicaError> => chain(partyOf(replicaId(r), self), () =>
-  chain(enqueue(r, txs), ({ replica, queued }) => { const base = nextBase(replica); return map(admissionFold(replica.mempool, queued.length, base.state, self, { height: base.height + 1n, ...clock }), () => replica); }));
+/** og applyAccountEnqueue: the Account-level lane admits in every status. */
+export const admit = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<AccountReplica, AccountReplicaError> => map(enqueue(r, txs), (q) => q.replica);
+/** Entity-owned admission. og tx-effects.ts shouldSuppressReturnedAccountTx: a frozen Account silently takes no new work. */
+export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, clock: FrameClock): Result<AccountReplica, AccountReplicaError> => chain(partyOf(replicaId(r), self), () => !isLive(r) ? ok(r)
+  : chain(enqueue(r, txs), ({ replica, queued }): Result<AccountReplica, AccountReplicaError> => { if (!isLive(replica)) return ok(replica); const base = nextBase(replica); return map(admissionFold(replica.mempool, queued.length, base.state, self, { height: base.height + 1n, ...clock }), () => replica); }));
 const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party }));
 export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => chain(accountContext(r, ctx), (c) => matchBy("kind", input, {
   propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c), resume: (i) => resume(r, i, c),
