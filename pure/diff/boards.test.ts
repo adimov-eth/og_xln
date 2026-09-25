@@ -1,8 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyBoardRegistryEvent, boardProof, emptyBoardRegistry, EMPTY_CERTIFIED_BOARD_ROOT, hashBoardNode, lookupBoardRecord, reachableBoardNodes, verifyBoardProof, advanceBoardFinality, boardStackKey,
-  type BoardNodes, type CertifiedBoardNode, type CertifiedBoardRegistryState, type JEvent,
+  applyBoardJEvent, applyEntityInput, assertBoardAuthority, buildCommand, createEntity, entityId, entityRootOf, quorumBoardHash, quorumHanko,
+  type BoardNodes, type CertifiedBoardNode, type CertifiedBoardRegistryState, type EntityState, type EntityTx, type Hash, type JEvent,
 } from "../xln.ts";
+import { aliceAddr, bobAddr, carolAddr, crypto, unwrap, verifiers } from "../xln_run.ts";
+import { assertEntityConfigBoardAuthority, buildQuorumHanko } from "../../core/hanko/signing.ts";
+import { resolveEntityCommandBoard } from "../../core/entity/command/index.ts";
+import { computeCanonicalEntityConsensusStateHash, computeEntityAccountValueHash } from "../../core/entity/consensus/state-root.ts";
+import { PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
+import { PersistentEntityCollectionMap } from "../../core/entity/state/persistent-collection-map.ts";
 import {
   advanceCertifiedBoardFinality, applyCertifiedBoardRegistryEvent, collectReachableCertifiedBoardNodes, createCertifiedBoardProof, getCertifiedBoardStackKey, lookupCertifiedBoardRecord, verifyCertifiedBoardProof,
 } from "../../core/jurisdiction/machine/board-registry/index.ts";
@@ -116,5 +123,118 @@ describe("certified-board registry (og jurisdiction/machine/board-registry)", ()
     const ogCorrupt = new Map([...ogNodes].map(([h, n]) => [h, n.type === "leaf" ? { ...n, record: { ...n.record, logIndex: n.record.logIndex + 1 } } : n]));
     const og = msg(() => lookupCertifiedBoardRecord(ogCorrupt, ogState.boardRegistryRoot, ogState.stackKey, word(2))), mine = lookupBoardRecord(corrupt, state.boardRegistryRoot, state.stackKey, word(2));
     expect(mine.ok ? { ok: true, value: mine.value } : { ok: false, code: mine.error.code }).toEqual(og);
+  });
+});
+
+// ---- ER-4b: quorum board binding (og hanko/signing.ts assertQuorumBoardBinding) ----
+const toOgEvent = (e: JEvent): any => {
+  const { meta, type, ...data } = e as any;
+  const text = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v]));
+  return { type, blockNumber: meta.blockNumber, blockHash: meta.blockHash, transactionHash: meta.transactionHash, logIndex: meta.logIndex, data: text };
+};
+const JCONF = { entityProviderAddress: JUR.entityProviderAddress };
+const OG_J = { name: "j", chainId: JUR.chainId, depositoryAddress: JUR.depositoryAddress, entityProviderAddress: JUR.entityProviderAddress };
+const DOMAIN = { chainId: JUR.chainId, depositoryAddress: JUR.depositoryAddress };
+const foundation: JEvent = { type: "FoundationBootstrapped", recipient: "0x" + "11".repeat(20), boardHash: word(900), controlTokenId: 1n, dividendTokenId: 2n, meta: { blockNumber: 2, blockHash: word(21), transactionHash: word(22), logIndex: 0 } };
+const registered = (id: string, board: string, block = 3, log = 0): JEvent => ({ type: "EntityRegistered", entityId: id, entityNumber: BigInt(id), boardHash: board, meta: { blockNumber: block, blockHash: word(30 + block), transactionHash: word(40 + block + log), logIndex: log } });
+/** Both sides observe the same board events: the rewrite through applyBoardJEvent, og through applyCertifiedBoardRegistryEvent on an og node store. */
+const observe = (state: EntityState, events: readonly JEvent[]): { state: EntityState; ogRegistry: any; ogNodes: Map<string, any> } => {
+  let s = state, ogRegistry: any;
+  const ogNodes = new Map<string, any>();
+  for (const [i, e] of events.entries()) {
+    s = unwrap(applyBoardJEvent(s, e, e.meta?.blockNumber ?? i)).state;
+    const og = applyCertifiedBoardRegistryEvent(ogRegistry, ogNodes, OG_J as any, toOgEvent(e));
+    ogRegistry = og.state;
+    for (const [h, n] of og.newNodes) ogNodes.set(h, n);
+  }
+  return { state: s, ogRegistry, ogNodes };
+};
+const ogConfigOf = (s: EntityState, withJ: boolean) => {
+  if (s.quorum._tag !== "teaching") throw new Error("teaching");
+  const members = [...s.quorum.members];
+  return { mode: "proposer-based" as const, threshold: s.quorum.threshold, validators: members.map(([a]) => a.toLowerCase()), shares: Object.fromEntries(members.map(([a, m]) => [a.toLowerCase(), m.shares])), ...(withJ ? { jurisdiction: OG_J } : {}) };
+};
+const reasonOf = (r: { ok: boolean; error?: unknown }): string => (r.ok ? "ok" : String((r.error as { reason?: string }).reason ?? (r.error as { _tag: string })._tag));
+
+describe("ER-4b: quorum board binding (og assertQuorumBoardBinding)", () => {
+  const SIGNERS = [aliceAddr, bobAddr, carolAddr] as const;
+  test("MATCH: 200 random boards x {lazy id, certified match, certified mismatch, unregistered, no registry, no jurisdiction} give og's assertEntityConfigBoardAuthority verdict", async () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i += 1) {
+      const n = 1 + ri(3), members = [...SIGNERS].sort(() => rng() - 0.5).slice(0, n).map((a) => [a, BigInt(1 + ri(3))] as const);
+      const power = members.reduce((t, [, s]) => t + s, 0n), threshold = BigInt(1 + ri(Number(power)));
+      const authority = { _tag: "teaching" as const, threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])) }, board = quorumBoardHash(authority);
+      const mode = pick(["lazy", "match", "mismatch", "unregistered", "noRegistry", "noJurisdiction"] as const), numbered = word(2 + ri(8));
+      const id = mode === "lazy" ? board : numbered, withJ = mode !== "noJurisdiction";
+      const base = unwrap(createEntity({ id: unwrap(entityId(id)), jurisdiction: DOMAIN, threshold, members: authority.members, ...(withJ ? { jurisdictionConfig: JCONF } : {}) }));
+      const events = mode === "noRegistry" || mode === "noJurisdiction" ? [] : [foundation, ...(mode === "unregistered" ? [registered(word(99), rword())] : [registered(numbered, mode === "match" ? board : rword())])];
+      const { state, ogRegistry, ogNodes } = observe(base.state, events);
+      const config = ogConfigOf(state, withJ), ogState = { entityId: id, config, ...(ogRegistry === undefined ? {} : { certifiedBoardState: ogRegistry }) };
+      let og = "ok";
+      try { await assertEntityConfigBoardAuthority({ infrastructure: { certifiedBoardNodes: ogNodes } } as never, id, config as never, ogState as never); } catch (e) { og = (e as Error).message; }
+      expect(reasonOf(assertBoardAuthority(state))).toBe(og);
+      seen.add(og.split(/[: ]/)[0] ?? og);
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(4);
+  });
+
+  test("MATCH: a certified numbered 2-of-3 Entity builds og's buildQuorumHanko over its registry; an uncertified one refuses", async () => {
+    const members = new Map(SIGNERS.map((a) => [a, { shares: 1n }] as const)), authority = { _tag: "teaching" as const, threshold: 2n, members };
+    const id = word(7), digest = word(12345);
+    const base = unwrap(createEntity({ id: unwrap(entityId(id)), jurisdiction: DOMAIN, threshold: 2n, members, jurisdictionConfig: JCONF }));
+    const { state, ogRegistry, ogNodes } = observe(base.state, [foundation, registered(id, quorumBoardHash(authority))]);
+    const sigs = new Map([bobAddr, carolAddr].map((s) => [s, unwrap(crypto.sign(digest as Hash, s))] as const));
+    const ogSigs = [...sigs].map(([s, g]) => ({ signerId: s.toLowerCase(), signature: g.startsWith("0x") ? g : `0x${g}` }));
+    const og = await buildQuorumHanko({ infrastructure: { certifiedBoardNodes: ogNodes } } as never, id, digest, ogSigs, ogConfigOf(state, true) as never, { entityId: id, config: ogConfigOf(state, true), certifiedBoardState: ogRegistry } as never);
+    expect(unwrap(quorumHanko(state, digest, sigs))).toBe(og);
+    let ogRefusal = "ok";
+    try { await buildQuorumHanko({} as never, id, digest, ogSigs, ogConfigOf(base.state, true) as never, { entityId: id, config: ogConfigOf(base.state, true) } as never); } catch (e) { ogRefusal = (e as Error).message; }
+    expect(reasonOf(quorumHanko(base.state, digest, sigs))).toBe(ogRefusal);
+  });
+
+  test("MATCH: a numbered 1-of-1 Entity proposes only once its EntityRegistered is certified (og signProposalManifest)", () => {
+    const id = unwrap(entityId(word(5))), members = new Map([[aliceAddr, { shares: 1n }]]);
+    const base = unwrap(createEntity({ id, jurisdiction: DOMAIN, threshold: 1n, members, jurisdictionConfig: JCONF }));
+    const chat: EntityTx = { type: "chat", data: { from: aliceAddr, message: "hi" } };
+    const run = (r: typeof base) => applyEntityInput(r, { kind: "txs", timestamp: 10n, txs: [chat] }, { ...verifiers, self: id, signerId: aliceAddr });
+    expect(reasonOf(run(base))).toStartWith("CERTIFIED_BOARD_SIGNING_ROOT_MISSING");
+    const certified = run({ ...base, state: observe(base.state, [foundation, registered(id, quorumBoardHash({ _tag: "teaching", threshold: 1n, members }))]).state });
+    expect(certified.ok && certified.value.replica.head.height).toBe(1n);
+    expect(reasonOf(run({ ...base, state: observe(base.state, [foundation, registered(id, word(4242))]).state }))).toStartWith("BUILD_QUORUM_HANKO_BOARD_MISMATCH");
+  });
+});
+
+describe("certifiedBoardState in the Entity root (og state-root.ts ENTITY_STATE_ROOT_FIELDS)", () => {
+  test("MATCH: the committed registry section moves the root exactly as og's computeCanonicalEntityConsensusStateHash", () => {
+    const members = new Map([[aliceAddr, { shares: 1n }]]), id = unwrap(entityId(word(6)));
+    const base = unwrap(createEntity({ id, jurisdiction: DOMAIN, threshold: 1n, members, jurisdictionConfig: JCONF }));
+    const { state, ogRegistry } = observe(base.state, [foundation, registered(id, word(77))]);
+    const ogOf = (extra: Record<string, unknown>): any => ({
+      entityId: id, height: 0, timestamp: 0, accounts: PersistentEntityAccountMap.fromEntries([], id, computeEntityAccountValueHash),
+      config: { mode: "proposer-based", threshold: 1n, validators: [aliceAddr], shares: { [aliceAddr]: 1n }, jurisdiction: { name: "j", address: "", ...OG_J } },
+      paybook: { entries: PersistentEntityCollectionMap.empty("paybookHashlock"), feesEarned: 0n }, ...extra,
+    });
+    const withJ = { ...state, jurisdictionConfig: { entityProviderAddress: JUR.entityProviderAddress } };
+    const rootOf = (s: EntityState) => unwrap(entityRootOf(s, new Map()));
+    const ogJ = ogOf({}).config.jurisdiction;
+    expect(rootOf({ ...withJ, committed: {} })).toBe(computeCanonicalEntityConsensusStateHash({ ...ogOf({}), config: { ...ogOf({}).config, jurisdiction: ogJ } }));
+    expect(rootOf(withJ)).toBe(computeCanonicalEntityConsensusStateHash(ogOf({ certifiedBoardState: ogRegistry })));
+    expect(rootOf(withJ)).not.toBe(rootOf({ ...withJ, committed: {} }));
+  });
+});
+
+describe("entity command board from the certified registry (og resolveEntityCommandBoard)", () => {
+  test("MATCH: a certified numbered Entity signs commands at its record's epoch; a registry board that is not the config board refuses", () => {
+    const members = new Map([[bobAddr, { shares: 1n }]]), id = word(8), board = quorumBoardHash({ _tag: "teaching", threshold: 1n, members });
+    const base = unwrap(createEntity({ id: unwrap(entityId(id)), jurisdiction: DOMAIN, threshold: 1n, members, jurisdictionConfig: JCONF }));
+    const activated = (next: string): JEvent => ({ type: "BoardActivated", entityId: id, previousBoardHash: word(55), newBoardHash: next, previousBoardValidUntil: 1_800_000_000n, meta: { blockNumber: 9, blockHash: word(91), transactionHash: word(92), logIndex: 1 } });
+    for (const next of [board, word(66)]) {
+      const { state, ogRegistry, ogNodes } = observe(base.state, [foundation, registered(id, word(55)), activated(next)]);
+      let og: any;
+      try { og = resolveEntityCommandBoard({ infrastructure: { certifiedBoardNodes: ogNodes } } as never, { entityId: id, config: ogConfigOf(state, true), certifiedBoardState: ogRegistry } as never); } catch (e) { og = (e as Error).message; }
+      const built = buildCommand(state, bobAddr, [{ type: "chat", data: { from: bobAddr, message: "x" } }], (d) => crypto.sign(d, bobAddr));
+      if (typeof og === "string") expect(reasonOf(built)).toBe(og);
+      else expect(built.ok && { boardHash: built.value.boardHash, boardEpoch: built.value.boardEpoch }).toEqual({ boardHash: og.boardHash, boardEpoch: og.boardEpoch });
+    }
   });
 });

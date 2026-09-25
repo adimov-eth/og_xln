@@ -10,8 +10,8 @@ import { buildEntityHashesToSign } from "../../core/entity/consensus/input/hanko
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
 import { appendEntityMempoolTransactions } from "../../core/entity/consensus/input/admission.ts";
 import {
-  address, allowedProposer, applyEntityInput, applyRuntime, convertOutput, createEntity, createRuntime, entityRootOf, entityStateRoot,
-  commitRuntimeFrame, hashEntityFrame, hashEntityState, isSingleSigner, leaderOrder, recoverRuntime, replicaKey, spawn, signature, tokenId, ZERO_WORD,
+  address, allowedProposer, applyEntityInput as applyEntityInputAt, applyRuntime, convertOutput, createEntity, createRuntime, entityRootOf, entityStateRoot,
+  commitRuntimeFrame, entityId, hashEntityFrame, hashEntityState, isSingleSigner, quorumBoardHash, leaderOrder, recoverRuntime, replicaKey, spawn, signature, tokenId, ZERO_WORD,
   type Address, type EntityCommitted, type EntityFrame, type EntityId, type EntityInput, type EntityOutput, type EntityReplica, type EntityTx, type Precommits, type Signature,
 } from "../xln.ts";
 import { ALICE, BOB, CAROL, NOW, TERMS, TOKEN, ackInput, aliceAddr, genesisAB, bobAddr, carolAddr, proposeInput, signEntityFrame, signManifestAs, unwrap, unwrapErr, verifiers } from "../xln_run.ts";
@@ -22,9 +22,13 @@ const C = carolAddr;
 const JUR = TERMS.domain;
 const ogConfig = (validators: readonly string[], shares: Record<string, bigint>, threshold: bigint) =>
   ({ mode: "proposer-based" as const, threshold, validators: [...validators], shares });
+/** og assertQuorumBoardBinding: an Entity without a certified board registry signs only as its lazy id (the hash of its own board). */
+const lazyId = (members: readonly (readonly [Address, bigint])[], threshold: bigint): EntityId => unwrap(entityId(quorumBoardHash({ _tag: "teaching", threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])) })));
 const teaching = (members: readonly (readonly [Address, bigint])[], threshold: bigint, signerId?: Address) =>
-  unwrap(createEntity({ id: ALICE, jurisdiction: JUR, threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])), ...(signerId === undefined ? {} : { signerId }) }));
+  unwrap(createEntity({ id: lazyId(members, threshold), jurisdiction: JUR, threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])), ...(signerId === undefined ? {} : { signerId }) }));
 const ctx = (signerId: Address, extra: Partial<{ from: EntityId }> = {}) => ({ ...verifiers, self: ALICE, signerId, ...extra });
+/** The fixture ctx names ALICE (the 1-of-1 lazy id); a multi-signer fixture Entity is its own lazy board id, so that placeholder resolves to the replica. */
+const applyEntityInput: typeof applyEntityInputAt = (r, input, c) => applyEntityInputAt(r, input, c.self === ALICE ? { ...c, self: r.state.id } : c);
 const openTo = (target: EntityId, extra: Record<string, unknown> = {}): EntityTx =>
   ({ type: "openAccount", data: { targetEntityId: target, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig, ...extra } }) as EntityTx;
 const open = openTo(BOB);
@@ -54,7 +58,7 @@ describe("entity-runtime: proposer selection (ER-1, ER-3)", () => {
     const forwarded = unwrap(propose(validatorA, A));
     expect(forwarded.replica._tag).toBe("open");
     expect(forwarded.replica.mempool).toEqual([open]);
-    expect(forwarded.outputs).toEqual([{ to: ALICE, signerId: B, input: txs([open]) }]);
+    expect(forwarded.outputs).toEqual([{ to: validatorA.state.id, signerId: B, input: txs([open]) }]);
   });
   test("MATCH: 40 random boards -- leader is og getEntityLeaderState(config).activeValidatorId", () => {
     for (let i = 0; i < 40; i++) {
@@ -154,7 +158,7 @@ describe("entity-runtime: entity state root commits every og field (H6)", () => 
   test("MATCH: a proposed frame's stateRoot is og's root of the proposal state (height+1, frame timestamp, og crontab default) and its hash is og's frame hash", () => {
     const { og, rw } = committedPair(99);
     const { crontabState: _c, ...rwNoCron } = rw, { crontabState: _o, ...ogNoCron } = og;
-    const r = unwrap(createEntity({ id: ALICE, jurisdiction: JUR, threshold: 2n, members: new Map([[A, { shares: 1n }], [B, { shares: 1n }]]), committed: rwNoCron, timestamp: 50n, jurisdictionConfig: JCONF }));
+    const r = unwrap(createEntity({ id: lazyId([[A, 1n], [B, 1n]], 2n), jurisdiction: JUR, threshold: 2n, members: new Map([[A, { shares: 1n }], [B, { shares: 1n }]]), committed: rwNoCron, timestamp: 50n, jurisdictionConfig: JCONF }));
     const credit: EntityTx = { type: "extendCredit", data: { counterpartyEntityId: CAROL, tokenId: unwrap(tokenId("1")), amount: 5n } }; // no account: og no-op
     const p = unwrap(applyEntityInput(r, txs([credit], 40n), ctx(A)));
     const frame = held(p.replica);
@@ -162,9 +166,9 @@ describe("entity-runtime: entity state root commits every og field (H6)", () => 
     const ogState = { ...ogEntityState({ ...r, state: { ...r.state, height: 1n, timestamp: 50n } }, { ...ogNoCron, crontabState: initCrontab() }, ogJurisdiction), leaderState: { activeValidatorId: A.toLowerCase(), view: 0, changedAtHeight: 0 } }; // og proposal state records the proposer's leaderState
     expect(frame.stateRoot).toBe(computeCanonicalEntityConsensusStateHash(ogState));
     const ogTxs = [{ type: "extendCredit", data: { counterpartyEntityId: CAROL, tokenId: 1, amount: 5n } }];
-    const ogHash = createEntityFrameHashFromStateRoot("genesis", 1, 50, ogTxs as never, [], ALICE, frame.stateRoot, frame.authorityRoot, frame.entityContext as never);
+    const ogHash = createEntityFrameHashFromStateRoot("genesis", 1, 50, ogTxs as never, [], r.state.id, frame.stateRoot, frame.authorityRoot, frame.entityContext as never);
     expect(unwrap(hashEntityFrame(frame))).toBe(ogHash);
-    expect(frame.hashesToSign).toEqual(buildEntityHashesToSign(ALICE, 1, ogHash));
+    expect(frame.hashesToSign).toEqual(buildEntityHashesToSign(r.state.id, 1, ogHash));
   });
 });
 
@@ -292,7 +296,7 @@ describe("entity-runtime: validator replay (ER-6)", () => {
     const resigned = (() => {
       const frame = { ...moved.frame, hashesToSign: [] };
       const h = unwrap(hashEntityFrame(frame));
-      const f = { ...frame, hashesToSign: [{ hash: h, type: "entityFrame" as const, context: `entity:${ALICE.slice(-4)}:frame:1` }] };
+      const f = { ...frame, hashesToSign: [{ hash: h, type: "entityFrame" as const, context: `entity:${board(B).state.id.slice(-4)}:frame:1` }] };
       return { ...proposal, frame: f, signatures: new Map([[A.toLowerCase(), signManifestAs(f, A)]]) } as EntityInput;
     })();
     expect(unwrapErr(applyEntityInput(board(B), resigned, ctx(B)))._tag).toBe("local_manifest_mismatch");
@@ -300,7 +304,7 @@ describe("entity-runtime: validator replay (ER-6)", () => {
     expect(unwrapErr(applyEntityInput(board(B), unsigned, ctx(B)))._tag).toBe("proposal_signature");
   });
   test("MATCH (og ENTITY_FRAME_TIMESTAMP_REGRESSION): a validator refuses a frame older than its committed clock", () => {
-    const later = unwrap(createEntity({ id: ALICE, jurisdiction: JUR, threshold: 2n, members: new Map([[A, { shares: 1n }], [B, { shares: 1n }]]), signerId: B, timestamp: 100n }));
+    const later = unwrap(createEntity({ id: lazyId([[A, 1n], [B, 1n]], 2n), jurisdiction: JUR, threshold: 2n, members: new Map([[A, { shares: 1n }], [B, { shares: 1n }]]), signerId: B, timestamp: 100n }));
     const leader = unwrap(propose(board(A), A, [open], 50n));
     expect(unwrapErr(applyEntityInput(later, consensusFor(leader.outputs, B)[0] as EntityInput, ctx(B)))._tag).toBe("frame_timestamp_regression");
   });
@@ -326,8 +330,8 @@ describe("entity-runtime: mempool (ER-10, ER-21)", () => {
     expect(once.replica.mempool.length).toBe(3);
   });
   test("MATCH: a peer may deliver several Account inputs in one entity input; each must name the peer as sender", () => {
-    const ai = (from: EntityId) => ({ type: "accountInput", data: { kind: "ack", fromEntityId: from, toEntityId: ALICE, height: 1n } }) as unknown as EntityTx;
     const r = teaching([[B, 1n], [A, 1n]], 2n, A);
+    const ai = (from: EntityId) => ({ type: "accountInput", data: { kind: "ack", fromEntityId: from, toEntityId: r.state.id, height: 1n } }) as unknown as EntityTx;
     expect(unwrap(applyEntityInput(r, txs([ai(BOB), { ...ai(BOB), data: { ...ai(BOB).data, height: 2n } } as EntityTx]), ctx(A, { from: BOB }))).replica.mempool.length).toBe(2);
     expect(unwrapErr(applyEntityInput(r, txs([ai(BOB), ai(CAROL)]), ctx(A, { from: BOB })))._tag).toBe("from_not_converted");
   });

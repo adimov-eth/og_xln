@@ -14,6 +14,7 @@ import {
   applyAccountBody,
   applyEntityInput,
   createEntity,
+  quorumBoardHash,
   applyAccountInput,
   chargeSettlement,
   committed,
@@ -451,7 +452,6 @@ describe("oracle", () => {
   });
 
   test("a proposed entity frame hash is entityFrameHash of its own fields", () => {
-    const self = unwrap(entityId(word("aa")));
     const peer = unwrap(entityId(word("bb")));
     const signer = unwrap(address(`0x${"01".repeat(20)}`));
     const terms = unwrap(accountTerms({
@@ -460,6 +460,8 @@ describe("oracle", () => {
       disputeConfig: { leftResponseSeconds: 1, rightResponseSeconds: 1 },
     }));
     const second = unwrap(address(`0x${"02".repeat(20)}`));
+    // og assertQuorumBoardBinding: without a certified registry the Entity id is its own lazy board hash
+    const self = unwrap(entityId(quorumBoardHash({ _tag: "teaching", threshold: 2n, members: new Map([[signer, { shares: 1n }], [second, { shares: 1n }]]) })));
     const created = unwrap(createEntity({ id: self, jurisdiction: terms.domain, threshold: 2n, members: new Map([[signer, { shares: 1n }], [second, { shares: 1n }]]) }));
     const open = { targetEntityId: peer, accountDomain: terms.domain, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig };
     const proposed = unwrap(applyEntityInput(created, { kind: "txs", timestamp: 5n, txs: [{ type: "openAccount", data: open }] }, {
@@ -525,7 +527,6 @@ describe("oracle", () => {
       return unwrap(address(recovered));
     };
     const signers = keys.map(signerAt);
-    const self = unwrap(entityId(word("aa")));
     const peer = unwrap(entityId(word("bb")));
     const terms = unwrap(accountTerms({
       domain: { chainId: 1, depositoryAddress: `0x${"ab".repeat(20)}` },
@@ -541,6 +542,8 @@ describe("oracle", () => {
       controlChangeDelay: 2,
       dividendChangeDelay: 3,
     };
+    // og assertQuorumBoardBinding: the Entity signs as its lazy board id (the board hash, delays included)
+    const self = unwrap(entityId(quorumBoardHash({ _tag: "board", board, entityId: board.entityId })));
     const entity = unwrap(createEntity({ id: self, jurisdiction: terms.domain, board }));
     const proposer = allowedProposer(entity.state.quorum);
     expect<string | undefined>(proposer.toLowerCase()).toBe(signers[0]?.toLowerCase());

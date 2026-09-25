@@ -6,7 +6,7 @@ import { expectedCommittedLeaderState, verifyEntityLeaderCertificate } from "../
 import { buildEntityFrameAuthority, computeEntityFrameAuthorityRoot } from "../../core/entity/consensus/state-root.ts";
 import {
   address, admit, applyAccountInput, certifiedBy, tokenId, type AccountReplica, type BoardRefresh, type BoardRefreshRefusal, type CertifiedBoard, type DoorContext, type EntityId, type HankoAuthority, type ProposedAccount, type Verify,
-  entityId, applyEntityInput, buildLeaderCertificate, quorumHanko, type Hash, createEntity, hashEntityFrame, hashLeaderVote, leaderOrder, leaderStateOf, leaderTimeoutMs, leaderVoteBody, localTimeoutVote, nextFailoverLeader,
+  entityId, applyEntityInput as applyEntityInputAt, quorumBoardHash, buildLeaderCertificate, quorumHanko, type Hash, createEntity, hashEntityFrame, hashLeaderVote, leaderOrder, leaderStateOf, leaderTimeoutMs, leaderVoteBody, localTimeoutVote, nextFailoverLeader,
   applyRuntime, convertOutput, createRuntime, isLeft, replicaId, replicaKey, spawn, wireTx, type Runtime, type RoutedEntityInput,
   type Address, type EntityFrame, type EntityFrameHash, type EntityInput, type EntityOutput, type EntityReplica, type EntityState, type EntityTx, type LeaderCertificate, type LeaderState, type LeaderVote,
 } from "../xln.ts";
@@ -29,9 +29,13 @@ const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; ret
 const ri = (n: number): number => Math.floor(rng() * n);
 const addr = (i: number): Address => unwrap(address(`0x${(i + 16).toString(16).padStart(2, "0").repeat(20)}`));
 const word = (i: number): string => `0x${(i + 1).toString(16).padStart(64, "0")}`;
+/** og assertQuorumBoardBinding: an Entity without a certified registry is its own lazy board id (ENTITY for the 2-of-3 [A,B,C] board). */
+const lazyId = (members: readonly (readonly [Address, bigint])[], threshold: bigint): EntityId => unwrap(entityId(quorumBoardHash({ _tag: "teaching", threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])) })));
 const teaching = (members: readonly (readonly [Address, bigint])[], threshold: bigint, signerId?: Address) =>
-  unwrap(createEntity({ id: ENTITY, jurisdiction: JUR, threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])), ...(signerId === undefined ? {} : { signerId }) }));
+  unwrap(createEntity({ id: lazyId(members, threshold), jurisdiction: JUR, threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])), ...(signerId === undefined ? {} : { signerId }) }));
 const ctx = (signerId: Address) => ({ ...verifiers, self: ENTITY, signerId });
+/** The fixture ctx names ENTITY; another fixture board is its own lazy id, so that placeholder resolves to the replica. */
+const applyEntityInput: typeof applyEntityInputAt = (r, input, c) => applyEntityInputAt(r, input, c.self === ENTITY ? { ...c, self: r.state.id } : c);
 const ogConfigOf = (s: EntityState) => {
   if (s.quorum._tag !== "teaching") throw new Error("teaching");
   const members = [...s.quorum.members];
@@ -260,11 +264,11 @@ describe("entity-consensus-2: entity txs chat, chatMessage, requestCollateral, p
       const prev = { name: pick(["Old", ""]), isHub: rng() < 0.5, ...(rng() < 0.5 ? { entityKind: "company" } : {}), ...(rng() < 0.5 ? { sectors: ["media"] } : {}), avatar: "a", bio: "b", website: "w" };
       const r = teaching([[A, 1n]], 1n, A);
       const base = { ...r, state: { ...r.state, committed: { ...r.state.committed, profile: prev } } } as EntityReplica;
-      const profile: Record<string, unknown> = { entityId: rng() < 0.05 ? BOB : ENTITY };
+      const profile: Record<string, unknown> = { entityId: rng() < 0.05 ? BOB : r.state.id };
       for (const [k, v] of [["name", pick(texts)], ["entityKind", pick(kinds)], ["sectors", pick(sectorSets)], ["avatar", pick(texts)], ["bio", pick(texts)], ["website", pick(texts)]] as const) if (v !== undefined) profile[k] = v;
       const tx = { type: "profile-update", data: { profile } } as EntityTx;
       let ogProfile: unknown, ogError: string | undefined;
-      try { ogProfile = handleProfileUpdateEntityTx({} as never, { entityId: ENTITY, profile: structuredClone(prev) } as never, tx as never, true).newState.profile; } catch (e) { ogError = String(e); }
+      try { ogProfile = handleProfileUpdateEntityTx({} as never, { entityId: r.state.id, profile: structuredClone(prev) } as never, tx as never, true).newState.profile; } catch (e) { ogError = String(e); }
       const rw = applyEntityInput(base, { kind: "txs", timestamp: NOW, txs: [tx] }, ctx(A));
       if (ogError !== undefined) { expect(rw.ok).toBe(false); continue; }
       const committed = unwrap(rw).replica.state.committed["profile"];
@@ -282,27 +286,28 @@ describe("entity-consensus-2: entity txs chat, chatMessage, requestCollateral, p
     expect(none.replica.head.height).toBe(1n);
   });
   test("MATCH (og createEntityFrameHashFromStateRoot): chat, chatMessage, requestCollateral and profile-update txs hash into the frame exactly as og's wire txs", () => {
-    const r = opened();
-    const list: EntityTx[] = [
+    const r = opened(), pair = teaching([[A, 1n], [B, 1n]], 2n, A);
+    const listFor = (id: EntityId): EntityTx[] => [
       { type: "chat", data: { from: A, message: "hello" } },
       { type: "chatMessage", data: { message: "note", timestamp: 5, metadata: { type: "info", height: 2 } } },
-      { type: "profile-update", data: { profile: { entityId: ENTITY, name: "Hub", sectors: ["finance"] } } },
+      { type: "profile-update", data: { profile: { entityId: id, name: "Hub", sectors: ["finance"] } } },
     ];
+    const list = listFor(r.state.id), pairList = listFor(pair.state.id);
     const p = unwrap(applyEntityInput(r, { kind: "txs", timestamp: NOW + 1n, txs: list }, ctx(A)));
     expect(p.replica.head.height).toBe(2n);
     expect(p.replica.state.committed["profile"]).toMatchObject({ name: "Hub", sectors: ["finance"] });
     // a held 2-of-2 proposal exposes the frame: its hash is og's over og's wire txs (numeric token ids, the same data keys)
-    const held = unwrap(applyEntityInput(teaching([[A, 1n], [B, 1n]], 2n, A), { kind: "txs", timestamp: NOW, txs: [...list, { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: unwrap(tokenId("1")), amount: 5n, feeTokenId: unwrap(tokenId("2")), feeAmount: 1n, policyVersion: 1 } }] }, ctx(A))).replica;
+    const held = unwrap(applyEntityInput(pair, { kind: "txs", timestamp: NOW, txs: [...pairList, { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: unwrap(tokenId("1")), amount: 5n, feeTokenId: unwrap(tokenId("2")), feeAmount: 1n, policyVersion: 1 } }] }, ctx(A))).replica;
     if (held._tag !== "proposed") throw new Error("phase");
     const f = held.frame;
-    const ogTxs = [...list.map((t) => ({ type: t.type, data: t.data })), { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: 1, amount: 5n, feeTokenId: 2, feeAmount: 1n, policyVersion: 1 } }];
+    const ogTxs = [...pairList.map((t) => ({ type: t.type, data: t.data })), { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: 1, amount: 5n, feeTokenId: 2, feeAmount: 1n, policyVersion: 1 } }];
     // og frame events: the chat text event and the chatMessage status event, as og's handlers record them
-    const ogState: any = { entityId: ENTITY };
+    const ogState: any = { entityId: pair.state.id };
     handleChatEntityTx(ogState, list[0] as never, true);
     handleChatMessageEntityTx(ogState, list[1] as never, true);
     const ogEvents = readEntityFrameEvents(ogState);
     expect(f.events).toEqual(ogEvents as never);
-    expect(unwrap(hashEntityFrame(f))).toBe(createEntityFrameHashFromStateRoot("genesis", 1, Number(NOW), ogTxs as never, ogEvents, ENTITY, f.stateRoot, f.authorityRoot, f.entityContext as never));
+    expect(unwrap(hashEntityFrame(f))).toBe(createEntityFrameHashFromStateRoot("genesis", 1, Number(NOW), ogTxs as never, ogEvents, pair.state.id, f.stateRoot, f.authorityRoot, f.entityContext as never));
   });
 });
 
