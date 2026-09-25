@@ -8,6 +8,9 @@ import { handleHtlcLock } from "../../core/account/tx/handlers/htlc/lock.ts";
 import { handleHtlcResolve } from "../../core/account/tx/handlers/htlc/resolve.ts";
 import { handleSwapCancelRequest } from "../../core/account/tx/handlers/swap/lifecycle/cancel.ts";
 import { handleSwapResolve } from "../../core/account/tx/handlers/swap/resolve/index.ts";
+import { handleRequestCollateral } from "../../core/account/tx/handlers/rebalance/request-collateral.ts";
+import { handleRebalanceRefund } from "../../core/account/tx/handlers/rebalance/refund.ts";
+import { handleRebalancePolicy } from "../../core/account/tx/handlers/rebalance/policy.ts";
 import { handleSwapOffer } from "../../core/account/tx/handlers/swap/offer/index.ts";
 import { deriveExactSwapFillRatio, exactFillRatioToUint16 } from "../../core/orderbook/swap-execution.ts";
 import { handleSettleTransition, getSignedSettlementWorkspaceTxError } from "../../core/account/tx/handlers/settlement/transition.ts";
@@ -92,7 +95,7 @@ const ogHarness = (body: AccountBody) => {
   const state: any = { domain: v.domain, leftEntity: v.leftEntity, rightEntity: v.rightEntity, watchSeed: v.watchSeed, disputeConfig: v.disputeConfig, jNonce: v.jNonce, lastFinalizedJHeight: v.lastFinalizedJHeight,
     leftPendingJClaims: v.leftPendingJClaims, rightPendingJClaims: v.rightPendingJClaims,
     ...Object.fromEntries(["deltas", "locks", "pulls", "swapOffers", "subcontracts", "lendingIntents", "requestedRebalance", "requestedRebalanceFeeState", "rebalanceFeePolicies"].map((n) => [n, PA(n, v[n])])) };
-  let replica: any = { state, status: "active", currentHeight: 1, proofHeader: { fromEntity: A, toEntity: B, nextProofNonce: 1 }, currentFrame: { stateHash: "" }, pendingWithdrawals: PA("pendingWithdrawals"),
+  let replica: any = { state, status: "active", currentHeight: 0, proofHeader: { fromEntity: A, toEntity: B, nextProofNonce: 1 }, currentFrame: { stateHash: "" }, pendingWithdrawals: PA("pendingWithdrawals"),
     shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted") } }, mempool: [] };
   const run = async (handler: (draft: any) => Promise<any> | any): Promise<{ ok: boolean; root?: string; error?: string }> => {
     const overlay = beginAccountTransition(replica);
@@ -292,8 +295,8 @@ const swapLockstep = (start: AccountBody) => {
   const step = async (tx: any, byLeft: boolean): Promise<boolean> => {
     const ogTx = toOgTx(tx);
     const handler = tx.type === "swap_offer" ? handleSwapOffer : tx.type === "swap_resolve" ? handleSwapResolve : handleSwapCancelRequest;
-    const o = await og.run((acc) => (handler as any)(acc, ogTx, byLeft, 0));
-    const r = apply(body, tx, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n });
+    const o = await og.run((acc) => (handler as any)(acc, ogTx, byLeft, 3));
+    const r = apply(body, tx, { byLeft, nowMs: 1n, jHeight: 3n, accountHeight: 1n });
     if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${r.ok ? "ok" : JSON.stringify(r.error, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
     if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
     return r.ok;
@@ -377,6 +380,78 @@ describe("account-tx: swap", () => {
       }
     }
     expect(accepted).toBeGreaterThan(100);
+  });
+});
+
+// ---------- rebalance ----------
+/** request_collateral / rebalance_refund / rebalance_policy through og handlers on the overlay and the rewrite; accept/reject and Account roots agree. */
+const rebalanceLockstep = (start: AccountBody) => {
+  const og = ogHarness(start);
+  let body = start;
+  const step = async (tx: any, byLeft: boolean, nowMs = 1_000n): Promise<boolean> => {
+    const ogTx = toOgTx(tx);
+    for (const k of ["tokenId", "requestTokenId"]) if (typeof ogTx.data[k] === "string") ogTx.data[k] = Number(ogTx.data[k]);
+    const ts = Number(nowMs);
+    const o = await og.run((acc) => tx.type === "request_collateral" ? handleRequestCollateral(acc, ogTx, byLeft, ts) : tx.type === "rebalance_refund" ? handleRebalanceRefund(acc, ogTx, byLeft) : handleRebalancePolicy(acc.state, ogTx, byLeft, ts));
+    const r = apply(body, tx, { byLeft, nowMs, jHeight: 0n, accountHeight: 1n });
+    if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${r.ok ? "ok" : JSON.stringify(r.error, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
+    if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
+    return r.ok;
+  };
+  return { step, body: () => body, og };
+};
+const reqTx = (tokenId: string, amount: bigint, feeAmount: bigint, patch: Record<string, unknown> = {}) => ({ type: "request_collateral", tokenId, amount, feeAmount, policyVersion: 1, ...patch });
+const refundTx = (requestId: string, requestTokenId: string, amount: bigint, reason = "manual") => ({ type: "rebalance_refund", requestId, requestTokenId, amount, reason });
+const policyTx = (tokenId: string, policyVersion: number, baseFee = 1n, liquidityFeeBps = 10n, gasFee = 2n) => ({ type: "rebalance_policy", tokenId, policyVersion, baseFee, liquidityFeeBps, gasFee });
+
+describe("account-tx: rebalance (og request_collateral / rebalance_refund / rebalance_policy)", () => {
+  test("MATCH: request_collateral prepays the fee, stores one immutable request; refunds by the counterparty only, partial then full", async () => {
+    const ls = rebalanceLockstep(open().body);
+    expect(await ls.step(reqTx("1", 10n, 0n), true)).toBe(false); // fee must be > 0
+    expect(await ls.step(reqTx("7", 10n, 1n), true)).toBe(false); // no delta
+    expect(await ls.step(reqTx("1", 3n, 3n), true)).toBe(true); // fee consumes the request: no-op
+    expect(await ls.step(reqTx("1", 30n, 21n), true)).toBe(false); // beyond capacity
+    expect(await ls.step(reqTx("1", 10n, 4n), true)).toBe(true);
+    expect(ls.body().requested.get("1" as any)).toBe(6n);
+    expect(await ls.step(reqTx("1", 50n, 4n), true)).toBe(true); // immutable: no-op
+    const id = ls.body().requestFees.get("1" as any)!.requestId;
+    expect(id).toBe("rebalance:left:1:1");
+    expect(await ls.step(refundTx(id, "1", 1n), true)).toBe(false); // requester cannot refund itself
+    expect(await ls.step(refundTx("rebalance:x", "1", 1n), false)).toBe(false);
+    expect(await ls.step(refundTx(id, "1", 5n), false)).toBe(false); // above outstanding
+    expect(await ls.step(refundTx(id, "1", 1n, "timeout"), false)).toBe(true);
+    expect(await ls.step(refundTx(id, "1", 1n, "manual"), false)).toBe(false); // reason conflicts
+    expect(await ls.step(refundTx(id, "1", 3n, "timeout"), false)).toBe(true);
+    expect(ls.body().requested.has("1" as any)).toBe(false);
+    expect(await ls.step(reqTx("1", 10n, 2n, { feeTokenId: "0" }), false)).toBe(true); // fee in another token: full amount requested
+    expect(ls.body().requested.get("1" as any)).toBe(10n);
+  });
+
+  test("MATCH: rebalance_policy versions per side — stale ignored, exact retry no-op, same-version change refused, bounds", async () => {
+    const ls = rebalanceLockstep(open().body);
+    const cases: [any, boolean, boolean][] = [
+      [policyTx("0", 1), true, false], [policyTx("9", 1), true, false], [policyTx("1", 0), true, false], [policyTx("1", 1, 0n, 10_001n), true, false], [policyTx("1", 1, -1n), true, false],
+      [policyTx("1", 2), true, true], [policyTx("1", 2), true, true], [policyTx("1", 2, 5n), true, false], [policyTx("1", 1, 9n), true, true], [policyTx("1", 1, 9n), false, true], [policyTx("1", 3, 4n), true, true],
+    ];
+    for (const [i, [tx, byLeft, want]] of cases.entries()) expect([i, await ls.step(tx, byLeft)]).toEqual([i, want]);
+    expect(ls.body().feePolicies.get("1" as any)?.left?.policyVersion).toBe(3);
+    expect(await ls.step(policyTx("1", 4), true, 0n)).toBe(false); // committed timestamp must be positive
+  });
+
+  test("MATCH: 60 random request/refund/policy sequences keep og and rewrite roots equal", async () => {
+    let accepted = 0;
+    for (let n = 0; n < 60; n++) {
+      const ls = rebalanceLockstep(open().body);
+      for (let i = 0; i < 10; i++) {
+        const k = ri(3), byLeft = ri(2) === 0, tk = pick3(["0", "1", "2"]);
+        const fees = [...ls.body().requestFees.entries()], held = fees.length > 0 && ri(4) !== 0 ? pick3(fees) : undefined;
+        const tx = k === 0 ? reqTx(tk, BigInt(ri(30)), BigInt(ri(8)), ri(3) === 0 ? { feeTokenId: pick3(["0", "1"]) } : {})
+          : k === 1 ? refundTx(held === undefined ? "rebalance:left:1:1" : held[1].requestId, held === undefined ? tk : held[0], BigInt(ri(6)), pick3(["manual", "timeout"]))
+          : policyTx(tk, 1 + ri(3), BigInt(ri(3)), BigInt(ri(3)) * 5000n, BigInt(ri(2)));
+        if (await ls.step(tx, byLeft, BigInt(1 + ri(5)))) accepted++;
+      }
+    }
+    expect(accepted).toBeGreaterThan(150);
   });
 });
 
@@ -629,6 +704,27 @@ describe("account-tx: settlement + j_event_claim", () => {
     body = unwrap(apply(body, rwClaim(10, word("0a"), rows), ctx)).state;
     expect(og.apply(ogClaim(10, word("0b"), rows), false)).toBe(false);
     expect(apply(body, rwClaim(10, word("0b"), rows), { ...ctx, byLeft: false }).ok).toBe(false);
+  });
+
+  test("MATCH (AT-20): a finalized collateral increase reduces the pending rebalance request; reaching zero clears request and fee state", () => {
+    const og = ogClaimHarness();
+    const fees = { requestId: "rebalance:left:1:1", feeTokenId: 1, feePaidUpfront: 2n, requestedAmount: 10n, policyVersion: 1, requestedAt: 1, requestedByLeft: true };
+    og.state.requestedRebalance.put(1, 10n);
+    og.state.requestedRebalanceFeeState.put(1, fees);
+    let { body, ctx } = open();
+    body = { ...body, requested: new Map([["1" as any, 10n]]), requestFees: new Map([["1" as any, fees]]) };
+    const seq: [number, bigint, bigint | undefined][] = [[5, 4n, 6n], [6, 3n, 6n], [7, 20n, undefined]];
+    for (const [h, col, left] of seq) for (const byLeft of [true, false]) {
+      const rows = [{ tokenId: 1, collateral: col, ondelta: 0n, nonce: h }];
+      expect(og.apply(ogClaim(h, word("0a"), rows), byLeft)).toBe(true);
+      body = unwrap(apply(body, rwClaim(h, word("0a"), rows), { ...ctx, byLeft })).state;
+      same(og, body);
+      if (!byLeft) {
+        expect(body.requested.get("1" as any)).toBe(og.state.requestedRebalance.get(1));
+        expect(body.requested.get("1" as any)).toBe(left);
+        expect(body.requestFees.has("1" as any)).toBe(og.state.requestedRebalanceFeeState.has(1));
+      }
+    }
   });
 
   test("MATCH: 40 random claim sequences (heights, sides, evidence, multi-token rows, nonces) keep og and rewrite in lockstep", () => {
