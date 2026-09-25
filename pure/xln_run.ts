@@ -5,7 +5,7 @@ import { bytesToHex as nobleHex } from "@noble/hashes/utils";
 import {
   accountId, ackPlan, address, addressOf, applyAccountBody, bytesToHex, concat, encodeHankoEnvelope, encodeLazyAccountHanko, encodeLazyEntityId, entityId, genesisAccount, genesisAccountBody,
   genesisReplica, getDelta, hashEntityFrame, hexToBytes, isLeft, match, matchBy, ok, opt, packSignatures, partyOf, planAccountProposal, previewAck, replicaId, sentBy, setCreditLimit, signRaw, signature, tokenId,
-  unwrapOr, updateDelta, verifyAccountHanko, wordOf,
+  recoverRawSigner, unwrapOr, updateDelta, verifyAccountHanko, wordOf,
 } from "./xln.ts";
 import type {
   AccountEnvelope, AccountFrame, AccountGrammar, AccountId, AccountInput, AccountInputFor, AccountMessage, AccountOutput, AccountPhase, AccountReplica, AccountReplicaError, AccountTerms, Address, At, Board, DisputeHanko,
@@ -38,10 +38,17 @@ export const TOKEN = unwrap(tokenId("0"));
 
 
 const digest = (h: Hash, addr: Address): Signature => unwrap(signature(nobleHex(keccak_256(new TextEncoder().encode(`sig:${h}:${addr}`)))));
+/** Anvil-keyed signer addresses sign real ECDSA (0/1 recovery, og's validator signatures, so og's quorum Hanko builds); any other address signs a fake digest. */
+let keyedSigners: ReadonlyMap<string, string> | undefined;
+const keyFor = (addr: string): string | undefined => (keyedSigners ??= new Map(ANVIL_KEYS.map((k) => [signerAddress(k), k] as const))).get(addr.toLowerCase());
 export const makeCrypto = () => {
   const issued = new Map<string, Signature>();
-  const sign = (h: Hash, addr: Address): Result<Signature, "sign_failed"> => { const sig = digest(h, addr); issued.set(`${h}:${addr}`, sig); return ok(sig); };
-  const verify = (h: Hash, sig: Signature, addr: Address): boolean => issued.get(`${h}:${addr}`) === sig;
+  const sign = (h: Hash, addr: Address): Result<Signature, "sign_failed"> => {
+    const key = keyFor(addr);
+    if (key !== undefined) return ok(unwrap(signature(signDigestHex(h, key).slice(2))));
+    const sig = digest(h, addr); issued.set(`${h}:${addr}`, sig); return ok(sig);
+  };
+  const verify = (h: Hash, sig: Signature, addr: Address): boolean => (keyFor(addr) !== undefined ? (recoverRawSigner(h, sig) ?? "").toLowerCase() === addr.toLowerCase() : issued.get(`${h}:${addr}`) === sig);
   return { sign, verify };
 };
 export const crypto = makeCrypto();

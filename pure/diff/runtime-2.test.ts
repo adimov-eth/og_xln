@@ -48,7 +48,8 @@ const runOg = (tx: { readonly type: string; readonly data: Record<string, unknow
     return { ok: false, code: String((e as Error).message).split(/[:\s]/)[0] ?? "" };
   }
 };
-const runRewrite = (tx: EntityTx) => applyEntityInput(fundedHubAccount(), { kind: "txs", timestamp: NOW + 1n, txs: [tx] }, { ...verifiers, self: ALICE, signerId: aliceAddr });
+let hubAccount: OpenEntity | undefined;
+const runRewrite = (tx: EntityTx) => applyEntityInput((hubAccount ??= fundedHubAccount()), { kind: "txs", timestamp: NOW + 1n, txs: [tx] }, { ...verifiers, self: ALICE, signerId: aliceAddr });
 
 describe("runtime-2: entity lending (ER-17, og payments/lending.ts)", () => {
   const randomTx = (): EntityTx => {

@@ -11,14 +11,14 @@ import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/
 import { appendEntityMempoolTransactions } from "../../core/entity/consensus/input/admission.ts";
 import {
   acceptAppointment, acceptBundle, acceptReceipt, address, allowedProposer, applyEntityInput, applyRuntime, convertOutput, createEntity, createRuntime, entityRootOf, entityStateRoot,
-  commitRuntimeFrame, hashEntityFrame, hashEntityState, isSingleSigner, recoverRuntime, replicaKey, spawn, signature, tokenId, ZERO_WORD,
+  commitRuntimeFrame, hashEntityFrame, hashEntityState, isSingleSigner, leaderOrder, recoverRuntime, replicaKey, spawn, signature, tokenId, ZERO_WORD,
   type Address, type EntityCommitted, type EntityFrame, type EntityId, type EntityInput, type EntityOutput, type EntityReplica, type EntityTx, type Precommits, type Signature,
 } from "../xln.ts";
-import { ALICE, BOB, CAROL, NOW, TERMS, TOKEN, ackInput, aliceAddr, genesisAB, bobAddr, proposeInput, signEntityFrame, signManifestAs, unwrap, unwrapErr, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, TOKEN, ackInput, aliceAddr, genesisAB, bobAddr, carolAddr, proposeInput, signEntityFrame, signManifestAs, unwrap, unwrapErr, verifiers } from "../xln_run.ts";
 
-const A = unwrap(address(`0x${"01".repeat(20)}`)); // lexicographically lower
-const B = unwrap(address(`0x${"02".repeat(20)}`)); // lexicographically higher
-const C = unwrap(address(`0x${"03".repeat(20)}`));
+const A = aliceAddr; // lexicographically lower (anvil-keyed: og quorum Hankos need real signatures)
+const B = bobAddr; // lexicographically higher
+const C = carolAddr;
 const JUR = TERMS.domain;
 const ogConfig = (validators: readonly string[], shares: Record<string, bigint>, threshold: bigint) =>
   ({ mode: "proposer-based" as const, threshold, validators: [...validators], shares });
@@ -66,8 +66,9 @@ describe("entity-runtime: proposer selection (ER-1, ER-3)", () => {
       expect(isSingleSigner(rw.state.quorum)).toBe(isSingleSignerBoard(ogConfig(ids, Object.fromEntries(ids.map((a, j) => [a, shares[j] ?? 1n])), threshold)));
     }
   });
-  test("REMAINING (ER-18): og failover order sorts successors by shares desc and rotates views; the rewrite has no view change", () => {
+  test("MATCH (ER-18): og failover order sorts successors by shares desc (view change: diff/entity-consensus-2.test.ts)", () => {
     expect(getEntityLeaderOrder(ogConfig([B, A, C], { [B]: 1n, [A]: 1n, [C]: 5n }, 2n))).toEqual([B, C, A]);
+    expect(leaderOrder(teaching([[B, 1n], [A, 1n], [C, 5n]], 2n).state.quorum)).toEqual([B, C, A]);
   });
   test("MATCH: runtime convertOutput routes an Account message to the receiver's validators[0]; a consensus output to its named validator", () => {
     const receiver = unwrap(createEntity({ id: BOB, jurisdiction: JUR, threshold: 2n, members: new Map([[B, { shares: 1n }], [A, { shares: 1n }]]) }));
@@ -158,7 +159,7 @@ describe("entity-runtime: entity state root commits every og field (H6)", () => 
     const p = unwrap(applyEntityInput(r, txs([credit], 40n), ctx(A)));
     const frame = held(p.replica);
     expect(frame.timestamp).toBe(50n); // og resolveEntityProposalTimestamp = max(runtime, committed)
-    const ogState = ogEntityState({ ...r, state: { ...r.state, height: 1n, timestamp: 50n } }, { ...ogNoCron, crontabState: initCrontab() }, ogJurisdiction);
+    const ogState = { ...ogEntityState({ ...r, state: { ...r.state, height: 1n, timestamp: 50n } }, { ...ogNoCron, crontabState: initCrontab() }, ogJurisdiction), leaderState: { activeValidatorId: A.toLowerCase(), view: 0, changedAtHeight: 0 } }; // og proposal state records the proposer's leaderState
     expect(frame.stateRoot).toBe(computeCanonicalEntityConsensusStateHash(ogState));
     const ogTxs = [{ type: "extendCredit", data: { counterpartyEntityId: CAROL, tokenId: 1, amount: 5n } }];
     const ogHash = createEntityFrameHashFromStateRoot("genesis", 1, 50, ogTxs as never, [], ALICE, frame.stateRoot, frame.authorityRoot, frame.entityContext as never);
@@ -344,11 +345,16 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
   test("MATCH (og OPEN_ACCOUNT_ALREADY_EXISTS, a plain Error): a duplicate openAccount refuses the whole input", () => {
     expect(unwrapErr(propose(teaching([[A, 1n]], 1n), A, [open, open]))._tag).toBe("account_exists");
   });
-  test("MATCH (og open-account.ts:262): openAccount emits no output and seeds add_delta for tokenId + [1,3,2] and the credit line", () => {
+  test("MATCH (og open-account.ts:262 + proposePendingAccountFrames): openAccount seeds add_delta for tokenId + [1,3,2] and the credit line; the same Entity frame proposes them as the first Account frame", () => {
     const p = unwrap(propose(teaching([[A, 1n]], 1n), A, [openTo(BOB, { tokenId: unwrap(tokenId("7")), creditAmount: 9n })]));
-    expect(p.outputs).toEqual([]);
     const child = p.replica.accountReplicas.get(BOB);
-    expect(child?.mempool).toEqual([{ type: "add_delta", tokenId: "7" }, { type: "add_delta", tokenId: "1" }, { type: "add_delta", tokenId: "3" }, { type: "add_delta", tokenId: "2" }, { type: "set_credit_limit", tokenId: "7", limit: 9n }]);
+    expect(child?._tag).toBe("proposed");
+    expect(child?.mempool).toEqual([]);
+    expect(p.outputs.map((o) => ("tx" in o ? o.tx.data.kind : "consensus"))).toEqual(["ack_frame"]);
+    const sent = p.outputs[0];
+    if (sent === undefined || !("tx" in sent) || sent.tx.data.kind !== "ack_frame") throw new Error("no frame");
+    expect(sent.tx.data.frame.height).toBe(1n);
+    expect(sent.tx.data.frame.txs.map((t) => [t.type, "tokenId" in t ? t.tokenId : undefined])).toEqual([["add_delta", "7"], ["add_delta", "1"], ["add_delta", "3"], ["add_delta", "2"], ["set_credit_limit", "7"]]);
   });
   test("MATCH (og direct-payment.ts): amount < 1 is a silent no-op, a non-bilateral direct route and a trusted route are refused, a paid hop queues a payment and wakes validators[0]", () => {
     const opened = unwrap(propose(teaching([[A, 1n]], 1n), A)).replica;
@@ -370,21 +376,17 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
     const bob = unwrap(createEntity({ id: BOB, jurisdiction: JUR, threshold: 1n, members: new Map([[bobAddr, { shares: 1n }]]) }));
     let rt = spawn(spawn(createRuntime(), alice), bob);
     const run = (entityInputs: Parameters<typeof applyRuntime>[1]["entityInputs"]) => { const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs }, verifiers)); expect(out.rejected).toEqual([]); rt = out.runtime; return out.outbox; };
-    run([{ entityId: ALICE, signerId: aliceAddr, input: txs([open], NOW) }]);
-    const opened = rt.entities.get(replicaKey(ALICE, aliceAddr));
-    const child = opened?.accountReplicas.get(BOB);
-    if (child === undefined) throw new Error("no account");
-    const { kind: _, ...clock } = proposeInput(child, ALICE);
-    const outbox = run([{ entityId: ALICE, signerId: aliceAddr, input: txs([{ type: "proposeAccount", data: { counterpartyEntityId: BOB, ...clock } }], NOW + 1n) }]);
+    // og proposePendingAccountFrames: the openAccount frame itself proposes the first Account frame, Hanko'd through the manifest
+    const outbox = run([{ entityId: ALICE, signerId: aliceAddr, input: txs([open], NOW) }]);
     expect(outbox.map((o) => ("tx" in o ? o.tx.data.kind : "consensus"))).toEqual(["ack_frame"]);
     const delivered = outbox.map((o) => unwrap(convertOutput(rt, o, ALICE, NOW + 2n)));
     expect(delivered[0]?.signerId).toBe(bobAddr);
-    expect(run(delivered)).toEqual([]);
-    const bobSide = rt.entities.get(replicaKey(BOB, bobAddr))?.accountReplicas.get(ALICE);
-    if (bobSide === undefined) throw new Error("inbound account missing");
-    expect(bobSide._tag).toBe("received");
-    const back = run([{ entityId: BOB, signerId: bobAddr, input: txs([{ type: "accountInput", data: ackInput(bobSide, BOB) }], NOW + 3n) }]);
+    // og accountInput response: Bob opens the inbound Account, commits the frame and answers with the forced ACK in the same Entity frame
+    const back = run(delivered);
     expect(back.map((o) => ("tx" in o ? o.tx.data.kind : "consensus"))).toEqual(["ack"]);
+    expect(rt.entities.get(replicaKey(BOB, bobAddr))?.accountReplicas.get(ALICE)?._tag).toBe("open");
+    expect(run(back.map((o) => unwrap(convertOutput(rt, o, BOB, NOW + 3n))))).toEqual([]);
+    expect(rt.entities.get(replicaKey(ALICE, aliceAddr))?.accountReplicas.get(BOB)?._tag).toBe("open");
   });
   test("MATCH: runtime outbox preserves positional (input, then per-input) order, never sorted", () => {
     const e1 = teaching([[A, 1n]], 1n);

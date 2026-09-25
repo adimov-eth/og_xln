@@ -82,6 +82,7 @@ export const AccountTransition = {
   ack_frame: { open: ["open", "received"], proposed: ["open", "proposed", "received"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
   freeze: { open: ["preparing", "disputed"], proposed: ["preparing", "disputed"], received: ["preparing", "disputed"], preparing: ["preparing", "disputed"], disputed: ["disputed"] },
   dispute: { open: ["open"], proposed: ["proposed"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
+  board_hanko_refresh: { open: ["open"], proposed: ["proposed"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
   resume: { preparing: ["open"] },
   external_finality: { open: ["disputed"], proposed: ["disputed"], received: ["disputed"], preparing: ["disputed"], disputed: ["disputed"] },
 } as const;
@@ -89,6 +90,7 @@ export const EntityTransition = {
   txs: { open: ["open", "proposed"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
   proposal: { open: ["open", "locked"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
   precommit: { open: ["open"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
+  leaderTimeoutVote: { open: ["open", "proposed", "locked"], proposed: ["open", "proposed"], locked: ["open", "proposed", "locked"] },
 } as const;
 
 
@@ -99,7 +101,7 @@ export const LendingTxNames = ["lendingOffer", "lendingBorrow", "lendingRepay", 
 export const EntityTxNames = ["directPayment", "placeSwapOffer", "htlcPayment", "prepareCrossJurisdictionSwap", "registerCrossJurisdictionSwap"] as const;
 export const AccountInputKinds = ["dispute", "board_hanko_refresh"] as const;
 export const EntityInputKinds = ["leaderTimeoutVote"] as const;
-export const HoleNames = ["cross_open", "leader_timeout_vote", "reveal_before_height", "quote_last_ms", "onion", "board_hanko_refresh"] as const;
+export const HoleNames = ["cross_open", "reveal_before_height", "quote_last_ms", "onion"] as const;
 export type Hole = (typeof HoleNames)[number];
 
 
@@ -2520,7 +2522,9 @@ export type DisputeReason = "hanko_missing" | "shape" | "hash_mismatch" | "hanko
 export type DisputeError = Tagged<"dispute_hanko", { reason: DisputeReason }> | Tagged<"dispute_proof", { error: ProofError | ViewError }>;
 const refuseDispute = (reason: DisputeReason): DisputeError => ({ _tag: "dispute_hanko", reason });
 const asProof = <X>(r: Result<X, ProofError | ViewError>): Result<X, DisputeError> => mapErr(r, (error): DisputeError => ({ _tag: "dispute_proof", error }));
-export type Verify = (digest: string, hanko: string, entity: EntityId) => boolean;
+/** og securityContext.verifyHanko authority: `allowPreviousBoard` admits the immediately previous board within its grace window (ACK and replay paths only, never a fresh proposal); `registeredBoardHash` pins the certified board. */
+export type HankoAuthority = { readonly allowPreviousBoard: boolean; readonly registeredBoardHash?: string | undefined };
+export type Verify = (digest: string, hanko: string, entity: EntityId, authority?: HankoAuthority) => boolean;
 export type Omission = Tagged<"locks" | "pulls" | "swapOffers" | "subcontracts", { count: number }>;
 export type Omitted = readonly [Omission, ...Omission[]];
 export type LocalProof = Tagged<"complete", { body: ProofBody; bodyHash: string; jNonce: number }> | Tagged<"partial", { bodyHash: string; jNonce: number; omitted: Omitted }>;
@@ -2599,12 +2603,12 @@ export const promoteSettled = (w: DisputeWitnesses, pre: AccountBody, post: Acco
     nextProofNonce: Math.max(w.nextProofNonce, p.nonce + 1, (current?.proofNonce ?? 0) + 1, (counterparty?.proofNonce ?? 0) + 1, signed + 1),
   })));
 };
-export const validateCounterparty = (body: AccountBody, given: DisputeHanko, from: EntityId, verify: Verify): Result<DisputeHanko, DisputeError> => {
+export const validateCounterparty = (body: AccountBody, given: DisputeHanko, from: EntityId, verify: Verify, authority: HankoAuthority = { allowPreviousBoard: true }): Result<DisputeHanko, DisputeError> => {
   if (given.hanko.length === 0) return err(refuseDispute("hanko_missing"));
   const shaped = WORD.test(given.hash) && WORD.test(given.proofBodyHash) && Number.isSafeInteger(given.proofNonce) && given.proofNonce >= 0 && typeof given.proposerIsLeft === "boolean";
   if (!shaped) return err(refuseDispute("shape"));
   return chain(asProof(committedView(body)), (view) => chain(asProof(accountDisputeHash(view, given.proofBodyHash, given.proofNonce, given.proposerIsLeft)), (expected) =>
-    !sameHex(given.hash, expected) ? err(refuseDispute("hash_mismatch")) : !verify(expected, given.hanko, from) ? err(refuseDispute("hanko_invalid")) : ok({ ...given, hash: expected })));
+    !sameHex(given.hash, expected) ? err(refuseDispute("hash_mismatch")) : !verify(expected, given.hanko, from, authority) ? err(refuseDispute("hanko_invalid")) : ok({ ...given, hash: expected })));
 };
 export const disputeRequirement = (expectedBody: string | undefined, previousBody: string | undefined, previousNonce: number | undefined, jNonce: number, received: { readonly proofNonce: number; readonly proofBodyHash: string } | undefined): DisputeReason | undefined => {
   if (expectedBody === undefined) return received === undefined ? undefined : "unexpected";
@@ -2687,6 +2691,8 @@ export type AccountInput =
   | ({ readonly kind: "ack_frame"; readonly ack: AccountAck | null; readonly frame: AccountFrame; readonly frameHanko: Hanko; readonly disputeHanko?: DisputeHanko | undefined } & AccountEnvelope)
   /** og `kind: 'dispute'`: a standalone peer dispute-Hanko witness, sequenced by its proof nonce rather than a frame height. */
   | ({ readonly kind: "dispute"; readonly disputeHanko: DisputeHanko } & AccountEnvelope)
+  /** og `kind: 'board_hanko_refresh'` (AccountBoardHankoRefresh): the peer re-Hankos our committed frame (and dispute proof) under its newly activated board. */
+  | ({ readonly kind: "board_hanko_refresh"; readonly boardActivationJHeight: number; readonly boardActivationLogIndex: number } & AccountAck & AccountEnvelope)
   /** og AccountFinality: an authenticated Depository dispute event routed by the owning Entity; applied unilaterally, never ACKed. */
   | ({ readonly kind: "external_finality"; readonly finality: AccountFinality } & AccountEnvelope);
 /** og types/account.ts AccountFinality['finality']. */
@@ -2704,7 +2710,7 @@ export type ActiveDispute = {
 };
 export type AccountMessage = Extract<AccountInput, { readonly kind: "ack" | "ack_frame" }>;
 /** Every peer-originated input (og routes `dispute` through the same Entity accountInput lane). */
-export type AccountPeerInput = Extract<AccountInput, { readonly kind: "ack" | "ack_frame" | "dispute" }>;
+export type AccountPeerInput = Extract<AccountInput, { readonly kind: "ack" | "ack_frame" | "dispute" | "board_hanko_refresh" }>;
 export type AccountOutput = AccountMessage | { readonly kind: "effect"; readonly effect: Effect } | { readonly kind: "start_dispute"; readonly start: DisputeStart };
 export type AccountPhase = "open" | "proposed" | "received" | "preparing" | "disputed";
 export type AccountEvent = AccountInput["kind"];
@@ -2714,7 +2720,9 @@ export class Candidate {
   /** `floor`: the settlement proof-nonce floor the frame's txs folded under (og reads the pre-frame replica cursors). */
   constructor(readonly frame: AccountFrame, readonly frameHanko: Hanko, readonly frameProof: LocalProof, readonly draft: FrameFold, readonly floor: number) {}
 }
-type AccountEnv = { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute: DisputeWitnesses };
+type AccountEnv = { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute: DisputeWitnesses; readonly boardRefresh?: BoardRefresh | undefined; readonly publicPinned?: true | undefined };
+/** Entity-side Account envelope fields every phase keeps (og counterpartyBoardHankoRefresh, publicPinned). */
+const envMeta = (r: Pick<AccountEnv, "boardRefresh" | "publicPinned">): Pick<AccountEnv, "boardRefresh" | "publicPinned"> => ({ ...opt("boardRefresh", r.boardRefresh), ...opt("publicPinned", r.publicPinned) });
 type Held = AccountEnv & { readonly candidate: Candidate };
 type Frozen = Omit<AccountEnv, "mempool"> & { readonly evidence?: FrameEvidence | undefined };
 export interface OpenAccount extends Tagged<"open", AccountEnv> {}
@@ -2727,14 +2735,20 @@ export interface PreparingAccount extends Tagged<"preparing", Frozen & { mempool
 export interface DisputedAccount extends Tagged<"disputed", Frozen & { mempool: readonly WireAccountTx[]; start?: DisputeStart | undefined; active?: ActiveDispute | undefined }> {}
 export type FrozenAccount = PreparingAccount | DisputedAccount;
 export type AccountReplica = OpenAccount | ProposedAccount | ReceivedAccount | FrozenAccount;
-export const certifies = (verify: Verify, digest: string, hanko: Hanko, entity: EntityId): Result<void, Tagged<"invalid_hanko", { entity: EntityId }>> => guard(verify(digest, hanko, entity), { _tag: "invalid_hanko", entity });
-/** `finalizedJHeight`: the owning Entity's finalized J height (og securityContext); defaults to the Account's own. */
-export type DoorContext = { readonly verify: Verify; readonly self: EntityId; readonly now: bigint; readonly finalizedJHeight?: bigint | undefined };
-export type AccountContext = { readonly verify: Verify; readonly party: Party };
+export const certifies = (verify: Verify, digest: string, hanko: Hanko, entity: EntityId, authority?: HankoAuthority): Result<void, Tagged<"invalid_hanko", { entity: EntityId }>> => guard(verify(digest, hanko, entity, authority), { _tag: "invalid_hanko", entity });
+/** og securityContext.counterpartyCertifiedBoard: the peer's certified board and the ordered EVM log position that activated it. */
+export type CertifiedBoard = { readonly boardHash: string; readonly activatedAtJHeight: number; readonly logIndex: number };
+/** og AccountReplica.counterpartyBoardHankoRefresh: the last board activation the peer re-Hanko'd our committed frame under. */
+export type BoardRefresh = { readonly activationJHeight: number; readonly activationLogIndex: number; readonly frameHeight: number; readonly frameHash: string };
+/** `finalizedJHeight`: the owning Entity's finalized J height (og securityContext); defaults to the Account's own. `counterpartyBoard`: og counterpartyCertifiedBoard. */
+export type DoorContext = { readonly verify: Verify; readonly self: EntityId; readonly now: bigint; readonly finalizedJHeight?: bigint | undefined; readonly counterpartyBoard?: CertifiedBoard | undefined };
+export type AccountContext = { readonly verify: Verify; readonly party: Party; readonly counterpartyBoard?: CertifiedBoard | undefined };
+/** og verifyHanko authority for a peer Hanko: the certified board when known, and whether its predecessor's grace window applies. */
+const peerAuthority = (ctx: AccountContext, allowPreviousBoard: boolean): HankoAuthority => ({ ...opt("registeredBoardHash", ctx.counterpartyBoard?.boardHash), allowPreviousBoard });
 export type AckContext = AccountContext & { readonly delivery: Delivery };
 export type ReceivedContext = AccountContext & { readonly from: EntityId };
 export type InboundAccountContext = ReceivedContext & { readonly now: bigint; readonly finalizedJHeight: bigint };
-export type CtxFor<I extends AccountInput> = I extends { kind: "ack_frame" } ? InboundAccountContext : I extends { kind: "ack" } ? AckContext : I extends { kind: "dispute" } ? ReceivedContext : AccountContext;
+export type CtxFor<I extends AccountInput> = I extends { kind: "ack_frame" } ? InboundAccountContext : I extends { kind: "ack" } ? AckContext : I extends { kind: "dispute" | "board_hanko_refresh" } ? ReceivedContext : AccountContext;
 export type AccountInputFor<E extends AccountEvent> = Extract<AccountInput, { readonly kind: E }>;
 export type AccountGrammar = { readonly table: typeof AccountTransition; readonly replica: AccountReplica; readonly input: AccountInput; readonly ctx: { readonly [E in AccountEvent]: CtxFor<AccountInputFor<E>> }; readonly output: AccountOutput; readonly error: AccountReplicaError };
 export type NextAccountPhase<S extends AccountPhase, E extends AccountEvent> = Next<AccountGrammar, S, E>;
@@ -2747,6 +2761,7 @@ export type AccountReplicaError =
   | BodyError | DisputeError | EnvelopeError | DisputeRequired | RejectedAfterAck
   | Tagged<"proposal_selection", { reason: "empty" | "too_large" | "not_in_mempool" }>
   | Tagged<"finality", { reason: "initial_nonce" | "j_nonce" | "observed_block" | "timeout" | "clock_mismatch" | "finalized_nonce" | "token_id" }>
+  | Tagged<"board_hanko_refresh", { reason: BoardRefreshRefusal }>
   | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch" | "frame_hash_mismatch" | "state_root_mismatch" | "ack_unmatched" | "not_preparing">
   | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }> | DeadlineViolation["error"]
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
@@ -2833,7 +2848,7 @@ type Freeze = AccountInputFor<"freeze">;
 type PeerDispute = AccountInputFor<"dispute">;
 type Verb<R extends AccountReplica> = Result<AccountApply<R>, AccountReplicaError>;
 const reopen = (r: AccountReplica, next: { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute?: DisputeWitnesses | undefined }): OpenAccount =>
-  ({ _tag: "open", state: next.state, head: next.head, mempool: next.mempool, acknowledged: next.acknowledged ?? r.acknowledged, dispute: next.dispute ?? r.dispute });
+  ({ _tag: "open", state: next.state, head: next.head, mempool: next.mempool, acknowledged: next.acknowledged ?? r.acknowledged, dispute: next.dispute ?? r.dispute, ...envMeta(r) });
 const effectsOut = (effects: readonly Effect[]): readonly AccountOutput[] => effects.map((effect) => ({ kind: "effect", effect }));
 type Replayed = { readonly draft: FrameFold; readonly view: CommittedAccountState };
 const replay = (s: AccountBody, f: AccountFrame, byLeft: boolean, settlement: SettlementCtx): Result<Replayed, AccountReplicaError> =>
@@ -2902,9 +2917,9 @@ export const proposeOpen = (r: OpenAccount, input: Propose, ctx: AccountContext)
 const receivedDispute = (r: AccountReplica, d: DisputeHanko | undefined, from: EntityId, verify: Verify): Result<DisputeHanko | undefined, AccountReplicaError> => (d === undefined ? ok(undefined) : validateCounterparty(r.state, d, from, verify));
 const sameWitness = (a: DisputeHanko, b: DisputeHanko | undefined): boolean => b !== undefined && sameHex(a.hanko, b.hanko) && sameHex(a.hash, b.hash) && sameHex(a.proofBodyHash, b.proofBodyHash) && a.proofNonce === b.proofNonce && a.proposerIsLeft === b.proposerIsLeft;
 const conflict = (field: "frameHash" | "frameHanko" | "disputeHanko" | "height"): AccountReplicaError => ({ _tag: "ack_conflict", field });
-const predecessorAck = (r: AccountReplica, a: AccountAck, from: EntityId, verify: Verify): Result<void, AccountReplicaError> => match(r.head, {
+const predecessorAck = (r: AccountReplica, a: AccountAck, from: EntityId, verify: Verify, authority: HankoAuthority): Result<void, AccountReplicaError> => match(r.head, {
   genesis: (): Result<void, AccountReplicaError> => err(conflict("frameHash")),
-  installed: ({ certificate: { parent } }): Result<void, AccountReplicaError> => (sameHex(a.frameHash, parent) ? certifies(verify, parent, a.frameHanko, from) : err(conflict("frameHash"))),
+  installed: ({ certificate: { parent } }): Result<void, AccountReplicaError> => (sameHex(a.frameHash, parent) ? certifies(verify, parent, a.frameHanko, from, authority) : err(conflict("frameHash"))),
 });
 const repeatedAck = (r: AccountReplica, a: AccountAck, validated: DisputeHanko | undefined, ctx: ReceivedContext): Result<void, AccountReplicaError> => match(r.head, {
   genesis: (): Result<void, AccountReplicaError> => err(conflict("frameHash")),
@@ -2912,14 +2927,14 @@ const repeatedAck = (r: AccountReplica, a: AccountAck, validated: DisputeHanko |
     if (!sameHex(a.frameHash, h)) return err(conflict("frameHash"));
     if (a.frameHanko.length === 0 || !sameHex(a.frameHanko, certifiedBy(certificate, ctx.party).peer)) return err(conflict("frameHanko"));
     if (validated !== undefined && !sameWitness(validated, r.dispute.counterparty)) return err(conflict("disputeHanko"));
-    return certifies(ctx.verify, h, a.frameHanko, ctx.from);
+    return certifies(ctx.verify, h, a.frameHanko, ctx.from, peerAuthority(ctx, true));
   },
 });
 type HeadAck = Tagged<"identity"> | Tagged<"advance", { target: bigint; validated: DisputeHanko | undefined }>;
 const IDENTITY: HeadAck = { _tag: "identity" };
 const headAck = (r: AccountReplica, a: AccountAck, ctx: ReceivedContext, riding: bigint | undefined, target: bigint): Result<HeadAck, AccountReplicaError> => chain(receivedDispute(r, a.disputeHanko, ctx.from, ctx.verify), (validated): Result<HeadAck, AccountReplicaError> => {
   const height = r.head.height;
-  if (riding === undefined && height > 1n && a.height === height - 1n) return map(predecessorAck(r, a, ctx.from, ctx.verify), () => IDENTITY);
+  if (riding === undefined && height > 1n && a.height === height - 1n) return map(predecessorAck(r, a, ctx.from, ctx.verify, peerAuthority(ctx, true)), () => IDENTITY);
   if (target < height - 1n) return ok(IDENTITY);
   if (target === height && height > 0n) return map(repeatedAck(r, a, validated, ctx), () => IDENTITY);
   return ok({ _tag: "advance", target, validated });
@@ -2928,7 +2943,7 @@ const commitOwn = (r: ProposedAccount, a: AccountAck, validated: DisputeHanko | 
   const { frame, frameHanko, frameProof } = r.candidate;
   return chain(requireDispute(frameProof, r.dispute, validated), (): Verb<OpenAccount> => {
     if (!sameHex(a.frameHash, frame.stateHash)) return err({ _tag: "hash_mismatch" });
-    return map(certifies(ctx.verify, frame.stateHash, a.frameHanko, ctx.from), () => {
+    return map(certifies(ctx.verify, frame.stateHash, a.frameHanko, ctx.from, peerAuthority(ctx, true)), () => {
       const installed = install(r, signedBy(ctx.party, frameHanko, a.frameHanko), { dispute: storeCounterparty(r.dispute, validated) });
       return done(installed.state, effectsOut(installed.effects));
     });
@@ -2992,7 +3007,7 @@ const duplicateOfHead = <R extends AccountReplica>(r: R, head: InstalledHead, in
     const ack = input.ack;
     const priorAck: Result<void, AccountReplicaError> = ack === null ? ok(undefined)
       : height <= 1n || ack.height !== height - 1n ? err(conflict("height"))
-      : chain(receivedDispute(r, ack.disputeHanko, ctx.from, ctx.verify), () => predecessorAck(r, ack, ctx.from, ctx.verify));
+      : chain(receivedDispute(r, ack.disputeHanko, ctx.from, ctx.verify), () => predecessorAck(r, ack, ctx.from, ctx.verify, peerAuthority(ctx, true)));
     return chain(priorAck, () => {
       const sent = r.acknowledged;
       if (sent !== undefined && sent.height === height) return ok(done<R, AccountOutput>(r, [{ kind: "ack", ...sentBy(r, ctx.party), ...sent }]));
@@ -3018,7 +3033,7 @@ const receipt = <R extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAc
   const byLeft = other(ctx.party.left);
   const gates = lazyChecks<AccountReplicaError>(() => frameStructure(frame), () => receiverClock(frame, ctx.now),
     () => guard(frame.prevFrameHash === r.head.prevFrameHash, { _tag: "hash_mismatch" }), () => guard(frame.height === r.head.height + 1n, { _tag: "height_mismatch" }),
-    () => traverse(frame.txs, (tx) => wireTx(tx, replicaId(r), byLeft)), () => certifies(ctx.verify, frame.stateHash, input.frameHanko, ctx.from),
+    () => traverse(frame.txs, (tx) => wireTx(tx, replicaId(r), byLeft)), () => certifies(ctx.verify, frame.stateHash, input.frameHanko, ctx.from, peerAuthority(ctx, false)),
     () => mapErr(incomingDeadline(r.state, frame, byLeft, ctx), (v): AccountReplicaError => (v.dispute ? { _tag: "dispute_required", cause: v.error, frame, frameHanko: input.frameHanko } : v.error)));
   return gates.ok ? { _tag: "continue", validated: validated.value } : answered(gates);
 };
@@ -3042,7 +3057,7 @@ const proposalOnReceived = (r: ReceivedAccount, input: AckFrame, ctx: InboundAcc
 export const restoreCandidate = (held: ProposedAccount | ReceivedAccount, party: Party, verify: Verify): Result<Candidate, AccountReplicaError> => {
   const { frame, frameHanko } = held.candidate, byLeft = proposerIsLeft(held, party);
   return chain(acceptFrame(frame, replicaId(held), byLeft), () =>
-    chain(certifies(verify, frame.stateHash, frameHanko, at(party.self, party.peer, byLeft === party.left)), () =>
+    chain(certifies(verify, frame.stateHash, frameHanko, at(party.self, party.peer, byLeft === party.left), { allowPreviousBoard: true }), () =>
       chain(replay(held.state, frame, byLeft, { verify, proofNonceFloor: held.candidate.floor }), ({ draft, view }) => map(localProof(view), (frameProof) => new Candidate(frame, frameHanko, frameProof, draft, held.candidate.floor)))));
 };
 export const dropFrozen = <R extends FrozenAccount>(r: R): Verb<R> => ok(done(r));
@@ -3054,7 +3069,7 @@ const retainedThroughFreeze = (r: AccountReplica, keep: (tx: WireAccountTx) => b
   return [...unqueued(pending, queued), ...queued];
 };
 const freeze = (r: AccountReplica, evidence: FrameEvidence | undefined, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => {
-  const { state, head, dispute: witnesses, acknowledged } = r, frozen = { state, head, dispute: witnesses, acknowledged, evidence };
+  const { state, head, dispute: witnesses, acknowledged } = r, frozen = { state, head, dispute: witnesses, acknowledged, evidence, ...envMeta(r) };
   const start = startOf(state, witnesses, ctx.party.peer, ctx.verify);
   if (!start.ok) return ok(done<PreparingAccount, AccountOutput>({ _tag: "preparing", ...frozen, mempool: retainedThroughFreeze(r, (tx) => isDeferredClaim(tx) || isDisputeEvidence(tx)), unready: start.error }));
   return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", ...frozen, mempool: [], start: start.value }, [{ kind: "start_dispute", start: start.value }]));
@@ -3072,6 +3087,46 @@ export const peerWitness = <R extends LiveAccount>(r: R, input: PeerDispute, ctx
     const reason = disputeRequirement(current?.proofBodyHash, counterparty?.proofBodyHash, counterparty?.proofNonce, view.jNonce, validated);
     return reason !== undefined ? err(refuseDispute(reason)) : ok(done<R, AccountOutput>({ ...r, dispute: storeCounterparty(r.dispute, validated) }));
   })));
+};
+export type BoardRefreshRefusal = "party_mismatch" | "activation_height" | "activation_log_index" | "certified_board_missing" | "activation_mismatch" | "activation_order" | "height_mismatch" | "frame_hash_mismatch"
+  | "frame_hanko_missing" | "frame_hanko_invalid" | "dispute_mismatch";
+const refuseRefresh = (reason: BoardRefreshRefusal): Result<never, AccountReplicaError> => err({ _tag: "board_hanko_refresh", reason });
+/** og currentHeight/currentFrame: the committed head, or a received frame (og commits it on receipt; the rewrite holds it until the Entity answers). */
+const currentFrameOf = (r: AccountReplica): { readonly height: bigint; readonly hash: string } =>
+  r._tag === "received" ? { height: r.candidate.frame.height, hash: r.candidate.frame.stateHash } : match(r.head, { genesis: () => ({ height: 0n, hash: "" }), installed: (h) => ({ height: h.height, hash: h.prevFrameHash }) });
+/** og incoming/board-hanko-refresh.ts handleBoardHankoRefresh: party, activation against the certified board, activation order (an exact retry passes), the current frame, then the
+ * frame Hanko and optional dispute Hanko under the current board only (allowPreviousBoard false). Installs the Hankos and the refresh record; money and nonces never change. */
+export const refreshBoardHanko = <R extends AccountReplica>(r: R, input: AccountInputFor<"board_hanko_refresh">, ctx: ReceivedContext): Verb<R> => {
+  if (ctx.from !== ctx.party.peer) return refuseRefresh("party_mismatch");
+  const aH = input.boardActivationJHeight, aL = input.boardActivationLogIndex, board = ctx.counterpartyBoard;
+  if (!Number.isSafeInteger(aH) || aH < 1) return refuseRefresh("activation_height");
+  if (!Number.isSafeInteger(aL) || aL < 0) return refuseRefresh("activation_log_index");
+  if (board === undefined) return refuseRefresh("certified_board_missing");
+  if (aH !== board.activatedAtJHeight || aL !== board.logIndex) return refuseRefresh("activation_mismatch");
+  const prev = r.boardRefresh, hash = input.frameHash.toLowerCase(), height = input.height;
+  const notNewer = prev !== undefined && (aH < prev.activationJHeight || (aH === prev.activationJHeight && aL <= prev.activationLogIndex));
+  const exactRetry = prev !== undefined && aH === prev.activationJHeight && aL === prev.activationLogIndex && height === BigInt(prev.frameHeight) && hash === prev.frameHash;
+  if (notNewer && !exactRetry) return refuseRefresh("activation_order");
+  const current = currentFrameOf(r), currentHash = current.hash.toLowerCase();
+  if (height < 1n || height > BigInt(Number.MAX_SAFE_INTEGER) || height !== current.height) return refuseRefresh("height_mismatch");
+  if (!/^0x[0-9a-f]{64}$/.test(hash) || hash !== currentHash) return refuseRefresh("frame_hash_mismatch");
+  if (input.frameHanko.length === 0) return refuseRefresh("frame_hanko_missing");
+  const fresh = peerAuthority(ctx, false);
+  if (!ctx.verify(currentHash, input.frameHanko, ctx.from, fresh)) return refuseRefresh("frame_hanko_invalid");
+  const d = input.disputeHanko, held = r.dispute.counterparty;
+  const dispute: Result<DisputeHanko | undefined, AccountReplicaError> = d === undefined ? ok(undefined)
+    : held === undefined || !sameHex(d.hash, held.hash) || !sameHex(d.proofBodyHash, held.proofBodyHash) || d.proofNonce !== held.proofNonce || d.proposerIsLeft !== held.proposerIsLeft ? refuseRefresh("dispute_mismatch")
+    : validateCounterparty(r.state, d, ctx.from, ctx.verify, fresh);
+  return map(dispute, (verified) => {
+    const peerSide = (c: HeadCertificate): HeadCertificate => (ctx.party.left ? { ...c, right: input.frameHanko } : { ...c, left: input.frameHanko });
+    const head: AccountHead = r._tag !== "received" && r.head._tag === "installed" ? { ...r.head, certificate: peerSide(r.head.certificate) } : r.head;
+    const refreshed = {
+      ...r, head, dispute: verified === undefined ? r.dispute : { ...r.dispute, counterparty: { ...(held as DisputeHanko), hanko: verified.hanko } },
+      boardRefresh: { activationJHeight: aH, activationLogIndex: aL, frameHeight: Number(height), frameHash: currentHash },
+      ...(r._tag === "received" ? { candidate: new Candidate(r.candidate.frame, input.frameHanko, r.candidate.frameProof, r.candidate.draft, r.candidate.floor) } : {}),
+    } as R;
+    return done<R, AccountOutput>(refreshed);
+  });
 };
 const checkAckFrame = (input: AckFrame, ctx: InboundAccountContext): Result<void, AccountReplicaError> =>
   ctx.from !== ctx.party.peer ? err({ _tag: "unknown_signer", entity: ctx.from }) : disputeShapes([input.disputeHanko, input.ack?.disputeHanko]);
@@ -3110,6 +3165,7 @@ export const ack = accountVerb("ack", { open: ackOpen, proposed: ackProposed, re
 export const ackFrame = accountVerb("ack_frame", { open: ackFrameOpen, proposed: ackFrameProposed, received: ackFrameReceived, preparing: dropFrozen, disputed: dropFrozen });
 export const freezeAccount = accountVerb("freeze", { open: disputeLive, proposed: disputeLive, received: disputeLive, preparing: disputePreparing, disputed: disputeDisputed });
 export const dispute = accountVerb("dispute", { open: peerWitness, proposed: peerWitness, received: peerWitness, preparing: dropFrozen, disputed: dropFrozen });
+export const boardHankoRefresh = accountVerb("board_hanko_refresh", { open: refreshBoardHanko, proposed: refreshBoardHanko, received: refreshBoardHanko, preparing: refreshBoardHanko, disputed: refreshBoardHanko });
 const finalityErr = (reason: Of<AccountReplicaError, "finality">["reason"]): Result<never, AccountReplicaError> => err({ _tag: "finality", reason });
 const safeNonce = (n: number): boolean => Number.isSafeInteger(n) && n >= 0;
 /** og j-finality.ts applyAccountDisputeStarted: validate nonces and the dispute clock, freeze keeping evidence, record activeDispute, raise jNonce. */
@@ -3128,7 +3184,7 @@ const disputeStarted = (r: AccountReplica, f: DisputeStartedFinality): Verb<Disp
   };
   // og sets status 'disputed' before freezeAccountForDispute(account, true): deferred claims are dropped, dispute evidence (queued or in our pending frame) is kept.
   const { head, dispute: witnesses, acknowledged } = r, evidence = r._tag === "preparing" || r._tag === "disputed" ? r.evidence : undefined, start = r._tag === "disputed" ? r.start : undefined;
-  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state: { ...r.state, jNonce: Math.max(r.state.jNonce, f.jNonce) }, head, dispute: witnesses, acknowledged, evidence, mempool: retainedThroughFreeze(r, isDisputeEvidence), ...opt("start", start), active }));
+  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state: { ...r.state, jNonce: Math.max(r.state.jNonce, f.jNonce) }, head, dispute: witnesses, acknowledged, evidence, mempool: retainedThroughFreeze(r, isDisputeEvidence), ...opt("start", start), active, ...envMeta(r) }));
 };
 /** og j-finality.ts applyAccountDisputeFinality: the winning proof's nonce becomes jNonce; off-chain economics, holds and encumbrances are retired; the peer witness tuple is dropped. */
 const disputeFinalized = (r: AccountReplica, f: Extract<AccountFinality, { kind: "dispute_finalized" }>): Verb<DisputedAccount> => {
@@ -3139,7 +3195,7 @@ const disputeFinalized = (r: AccountReplica, f: Extract<AccountFinality, { kind:
   const state: AccountBody = { ...r.state, settlement: undefined, jNonce: f.finalizedJNonce, account: { ...r.state.account, deltas }, locks: new Map(), offers: new Map() };
   const { current, nextProofNonce } = r.dispute, evidence = r._tag === "preparing" || r._tag === "disputed" ? r.evidence : undefined, start = r._tag === "disputed" ? r.start : undefined;
   const witnesses: DisputeWitnesses = { ...opt("current", current), nextProofNonce: nextProofNonce <= f.finalizedJNonce ? f.finalizedJNonce + 1 : nextProofNonce };
-  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state, head: r.head, dispute: witnesses, acknowledged: r.acknowledged, evidence, mempool: [], ...opt("start", start) }));
+  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state, head: r.head, dispute: witnesses, acknowledged: r.acknowledged, evidence, mempool: [], ...opt("start", start), ...envMeta(r) }));
 };
 export const applyFinality = (r: AccountReplica, input: AccountInputFor<"external_finality">): Verb<DisputedAccount> =>
   input.finality.kind === "dispute_started" ? disputeStarted(r, input.finality) : disputeFinalized(r, input.finality);
@@ -3177,10 +3233,11 @@ export const admit = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<
 /** Entity-owned admission. og tx-effects.ts shouldSuppressReturnedAccountTx: a frozen Account silently takes no new work. */
 export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, clock: FrameClock, verify?: Verify): Result<AccountReplica, AccountReplicaError> => chain(partyOf(replicaId(r), self), () => !isLive(r) ? ok(r)
   : chain(enqueue(r, txs), ({ replica, queued }): Result<AccountReplica, AccountReplicaError> => { if (!isLive(replica)) return ok(replica); const base = nextBase(replica); return map(admissionFold(replica.mempool, queued.length, base.state, self, { height: base.height + 1n, ...clock }, verify === undefined ? undefined : settlementOf(replica.dispute, verify)), () => replica); }));
-const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party }));
+const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party, ...opt("counterpartyBoard", ctx.counterpartyBoard) }));
 export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => chain(accountContext(r, ctx), (c) => matchBy("kind", input, {
   propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c), resume: (i) => resume(r, i, c),
   dispute: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => dispute(r, i, { ...c, from: sender })),
+  board_hanko_refresh: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => boardHankoRefresh(r, i, { ...c, from: sender })),
   external_finality: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), () => externalFinality(r, i, c)),
   ack: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ack(r, i, { ...c, delivery: sender === c.party.self ? { _tag: "local" } : { _tag: "received", from: sender } })),
   ack_frame: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ackFrame(r, i, { ...c, now: ctx.now, finalizedJHeight: ctx.finalizedJHeight ?? r.state.finalizedJHeight, from: sender })),
@@ -3191,6 +3248,7 @@ export const applyDelivered = (r: AccountReplica, input: AccountInput, delivery:
     freeze: (): Result<void, AccountReplicaError> => localOnly(delivery), resume: (): Result<void, AccountReplicaError> => localOnly(delivery),
     external_finality: (): Result<void, AccountReplicaError> => localOnly(delivery),
     dispute: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
+    board_hanko_refresh: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
     ack: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
     ack_frame: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
   }), () => applyAccountInput(r, input, ctx));
@@ -3226,17 +3284,33 @@ export type JurisdictionConfig = {
 };
 /** og EntityState root fields the rewrite carries without interpreting (nonces, reserves, profile, crontabState, ...), by og field name; collection fields in committed radix form. */
 export type EntityCommitted = { readonly [field: string]: Binary };
+/** og EntityLeaderState: absent until the first frame; every proposal state carries it (og buildProposalState). */
+export type LeaderState = { readonly activeValidatorId: string; readonly view: number; readonly changedAtHeight: number };
 export type EntityState = {
   readonly id: EntityId; readonly quorum: Quorum; readonly jurisdiction: Domain; readonly accounts: ReadonlyMap<EntityId, AccountState>;
   readonly height: bigint; readonly timestamp: bigint; readonly jurisdictionConfig?: JurisdictionConfig | undefined; readonly committed: EntityCommitted;
+  readonly leaderState?: LeaderState | undefined;
 };
-/** og `core/types/entity-tx.ts` wire shape `{type, data}`. `proposeAccount` is rewrite-only: og proposes Account frames itself and builds their Hanko from the quorum's precommits. */
+/** og EntityLeaderTimeoutVoteBody (leader/index.ts buildEntityLeaderVoteBody). */
+export type LeaderVoteBody = { readonly entityId: string; readonly targetHeight: number; readonly previousFrameHash: string; readonly fromView: number; readonly toView: number; readonly previousLeaderId: string; readonly nextLeaderId: string };
+/** og vote.preparedFrame: the voter's exact locked frame with every precommit bundle it holds (og collectedSigs). */
+export type PreparedFrame = { readonly frame: EntityFrame; readonly signatures: Precommits };
+export type LeaderVote = LeaderVoteBody & { readonly voterId: string; readonly signature: string; readonly preparedFrame?: PreparedFrame | undefined };
+/** og EntityLeaderCertificate: compact `votes` unless some vote carried prepared evidence (`preparedVotes`). */
+export type LeaderCertificate = LeaderVoteBody & { readonly votes: ReadonlyMap<string, string>; readonly preparedVotes?: ReadonlyMap<string, LeaderVote> | undefined; readonly preparedFrameHash?: string | undefined };
+/** og EntityFrame.leader: not in the frame hash; bound through the committed leaderState in stateRoot/authorityRoot. */
+export type FrameLeader = { readonly proposerSignerId: string; readonly view: number; readonly certificate?: LeaderCertificate | undefined; readonly relayCertificate?: LeaderCertificate | undefined };
+/** og `core/types/entity-tx.ts` wire shape `{type, data}`. Account frames are proposed by the Entity frame itself (og proposePendingAccountFrames). */
 export type EntityTx =
-  | { readonly type: "openAccount"; readonly data: { readonly targetEntityId: EntityId; readonly disputeConfig: DisputeConfig; readonly accountDomain: Domain; readonly watchSeed: string; readonly creditAmount?: bigint | undefined; readonly tokenId?: TokenId | undefined } }
+  | { readonly type: "openAccount"; readonly data: { readonly targetEntityId: EntityId; readonly disputeConfig: DisputeConfig; readonly accountDomain: Domain; readonly watchSeed: string; readonly creditAmount?: bigint | undefined; readonly tokenId?: TokenId | undefined; readonly pinPublic?: boolean | undefined } }
   | { readonly type: "accountInput"; readonly data: AccountPeerInput }
   | { readonly type: "extendCredit"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint } }
   | { readonly type: "directPayment"; readonly data: { readonly targetEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly route: readonly EntityId[]; readonly description?: string | undefined; readonly deliveryMode: "direct" | "trusted"; readonly trustedGatewayEntityId?: EntityId | undefined } }
-  | { readonly type: "proposeAccount"; readonly data: { readonly counterpartyEntityId: EntityId; readonly frameHanko?: Hanko | undefined; readonly disputeHanko?: DisputeHanko | undefined } & FrameClock }
+  /** og chat / chatMessage: frame-local messages, never part of the committed state. */
+  | { readonly type: "chat"; readonly data: { readonly from: string; readonly message: string } }
+  | { readonly type: "chatMessage"; readonly data: { readonly message: string; readonly timestamp: number; readonly metadata?: Readonly<Record<string, unknown>> | undefined } }
+  | { readonly type: "requestCollateral"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number } }
+  | { readonly type: "profile-update"; readonly data: { readonly profile: ProfileUpdate } }
   | LendingEntityTx;
 /** og types/entity-tx.ts lendingOffer/Borrow/Repay/ClosePosition: each queues one Account lending tx on the hub Account. */
 export type LendingEntityTx =
@@ -3244,10 +3318,12 @@ export type LendingEntityTx =
   | { readonly type: "lendingBorrow"; readonly data: { readonly requestId: string; readonly hubEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly maxInterestBps?: number | undefined } }
   | { readonly type: "lendingRepay"; readonly data: { readonly hubEntityId: string; readonly loanId: string; readonly tokenId: TokenId; readonly amount: bigint } }
   | { readonly type: "lendingClosePosition"; readonly data: { readonly hubEntityId: string; readonly positionId: string } };
+/** og ProfileUpdateTx & { entityId }. */
+export type ProfileUpdate = { readonly entityId: string; readonly name?: string | undefined; readonly entityKind?: string | null | undefined; readonly sectors?: readonly string[] | undefined; readonly avatar?: string | undefined; readonly bio?: string | undefined; readonly website?: string | undefined };
 export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute"; readonly context: string };
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
-  readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[];
+  readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[]; readonly leader: FrameLeader;
 };
 /** og `hashPrecommits`/`collectedSigs`: lowercase signer id to one signature per `hashesToSign` entry. */
 export type Precommits = ReadonlyMap<string, readonly Signature[]>;
@@ -3258,12 +3334,16 @@ export type EntityOutput = { readonly to: EntityId; readonly tx: OutputTx } | { 
 export type EntityInput =
   | { readonly kind: "txs"; readonly timestamp: bigint; readonly txs: readonly EntityTx[] }
   | { readonly kind: "proposal"; readonly frame: EntityFrame; readonly signatures: Precommits }
-  | { readonly kind: "precommit"; readonly height: bigint; readonly frameHash: EntityFrameHash; readonly signatures: Precommits };
+  | { readonly kind: "precommit"; readonly height: bigint; readonly frameHash: EntityFrameHash; readonly signatures: Precommits }
+  /** og `leaderTimeoutVote` lane. `local` is og's process-local marker: the scheduler's unsigned intent for this replica's own signer, never set on an output. */
+  | { readonly kind: "leaderTimeoutVote"; readonly timestamp: bigint; readonly vote: LeaderVote; readonly local?: boolean | undefined };
 export type EntityPhase = "open" | "proposed" | "locked";
 export type EntityEvent = EntityInput["kind"];
 export type Folded = { readonly state: EntityState; readonly accountReplicas: ReadonlyMap<EntityId, AccountReplica> };
 export type Draft = Folded & { readonly outputs: readonly EntityOutput[] };
-type EntityEnv = Folded & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
+/** og replica `leaderVotes` (one collection key at a time) and `pendingLeaderCertificate`. */
+type LeaderLane = { readonly leaderVotes?: ReadonlyMap<string, LeaderVote> | undefined; readonly pendingLeaderCertificate?: LeaderCertificate | undefined };
+type EntityEnv = Folded & LeaderLane & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
 type EntityCandidate = { readonly frame: EntityFrame; readonly signatures: Precommits; readonly draft: Draft };
 export interface OpenEntity extends Tagged<"open", EntityEnv> {}
 /** og `proposal`: this replica proposed `frame` and collects precommits. */
@@ -3281,6 +3361,8 @@ export type EntityError =
   | Tagged<"lending_entity", { reason: string }>
   | Tagged<"proposal_digest" | "proposal_parent" | "proposal_leader" | "proposal_hash" | "proposal_manifest" | "proposal_signature" | "proposal_conflict" | "proposal_wait" | "local_manifest_mismatch" | "local_precommit_conflict">
   | Tagged<"precommit_frame_mismatch" | "precommit_not_active" | "precommit_signer_equivocation" | "commit_conflict" | "commit_wait">
+  | Tagged<"leader_vote_invalid" | "leader_vote_equivocation" | "leader_prepared_rejected" | "proposal_superseded" | "hanko_build">
+  | Tagged<"profile_update", { reason: "entity" | "entity_kind" | "sectors_invalid" | "sectors_noncanonical" }>
   | Tagged<"unknown_member" | "duplicate_member" | "not_proposer" | "invalid_signature" | "wrong_replica", { address: string }>;
 export type EntityGrammar = { readonly table: typeof EntityTransition; readonly replica: EntityReplica; readonly input: EntityInput; readonly ctx: { readonly [E in EntityEvent]: EntityContext }; readonly output: EntityOutput; readonly error: EntityError };
 export type NextEntityPhase<S extends EntityPhase, E extends EntityEvent> = Next<EntityGrammar, S, E>;
@@ -3290,7 +3372,7 @@ export const encodeEntityState = (s: EntityState): string => canon({
   id: s.id,
   quorum: match(s.quorum, { teaching: (q) => ({ threshold: q.threshold, members: q.members }), board: (q) => ({ board: encodeBoardHash({ board: q.board }), entityId: q.entityId }) }),
   jurisdiction: s.jurisdiction, accounts: new Map([...s.accounts].map(([peer, a]) => [peer, hashAccountState(a)])),
-  height: s.height, timestamp: s.timestamp, jurisdictionConfig: s.jurisdictionConfig, committed: s.committed,
+  height: s.height, timestamp: s.timestamp, jurisdictionConfig: s.jurisdictionConfig, committed: s.committed, leaderState: s.leaderState,
 } satisfies Record<keyof EntityState, unknown>);
 export const hashEntityState = (s: EntityState): EntityStateHash => keccakUtf8(encodeEntityState(s)) as EntityStateHash;
 const HEX_EXT = 0x48;
@@ -3452,11 +3534,12 @@ export const ENTITY_STATE_ROOT_FIELDS = ["entityId", "height", "timestamp", "non
   "deferredAccountProposals", "settlementContinuations", "lastFinalizedJHeight", "jHistoryFinality", "certifiedBoardState", "crontabState", "jBatchState", "entityProviderActionState",
   "entityEncryptionPublicKey", "profile", "paybook", "outDebtsByToken", "inDebtsByToken", "orderbookExt", "swapTradingPairs", "crossJurisdictionSwaps", "crossJurisdictionAuthorizations",
   "crossJurisdictionBookAdmissions", "hubRebalanceConfig", "lending"] as const;
-/** Derived by the rewrite itself; never taken from `committed`. `leaderState` stays absent: no view change (og leader failover). */
+/** Derived by the rewrite itself; never taken from `committed`. `leaderState` is the replica's og leader failover state. */
 const DERIVED_ROOT_FIELDS: ReadonlySet<string> = new Set(["entityId", "height", "timestamp", "config", "accounts", "leaderState"]);
 export type EntityRootInput = {
   readonly config: EntityRootConfig; readonly accounts: readonly EntityRootAccount[];
   readonly entityId?: string | undefined; readonly height?: number | undefined; readonly timestamp?: number | undefined; readonly committed?: EntityCommitted | undefined;
+  readonly leaderState?: LeaderState | undefined;
 };
 export const entityStateRoot = (input: EntityRootInput): Result<string, EntityRootError> =>
   chain(consensusConfig(input.config), (config) => chain(traverse(input.accounts, accountLeaf), (leaves): Result<string, EntityRootError> => {
@@ -3471,6 +3554,7 @@ export const entityStateRoot = (input: EntityRootInput): Result<string, EntityRo
       ...(input.entityId === undefined ? [] : [["entityId", input.entityId] as const]),
       ...(input.height === undefined ? [] : [["height", input.height] as const]),
       ...(input.timestamp === undefined ? [] : [["timestamp", input.timestamp] as const]),
+      ...(input.leaderState === undefined ? [] : [["leaderState", { ...input.leaderState }] as const]),
       ...committed,
     ];
     return chain(traverse([...sections].sort(([left], [right]) => asc(left, right)), ([field, value]) => map(sectionDigest(value), (digest) => ({ field, digest }))),
@@ -3558,7 +3642,10 @@ const binaryBody = (value: unknown): Result<Binary, BinaryError> => {
   return ok(out);
 };
 /** og wire: token ids are numbers inside entity tx data. */
-const wireData = (tx: EntityTx): unknown => (tx.type !== "accountInput" && "tokenId" in tx.data && tx.data.tokenId !== undefined ? { ...tx.data, tokenId: Number(tx.data.tokenId) } : tx.data);
+const wireData = (tx: EntityTx): unknown => {
+  if (tx.type === "requestCollateral") return { ...tx.data, tokenId: Number(tx.data.tokenId), ...(tx.data.feeTokenId === undefined ? {} : { feeTokenId: Number(tx.data.feeTokenId) }) };
+  return tx.type !== "accountInput" && "tokenId" in tx.data && tx.data.tokenId !== undefined ? { ...tx.data, tokenId: Number(tx.data.tokenId) } : tx.data;
+};
 const entityFrameTx = (tx: EntityTx): Result<EntityFrameTx, BinaryError> => map(binaryBody(wireData(tx)), (data) => ({ type: tx.type, data }));
 export const hashEntityFrame = (f: EntityFrame): Result<EntityFrameHash, EntityFrameHashError> =>
   chain(frameNumber(f.height), (height) => chain(frameNumber(f.timestamp), (timestamp) => chain(traverse(f.txs, entityFrameTx), (txs) => map(entityFrameHash({
@@ -3625,25 +3712,199 @@ const signManifest = (hashes: readonly HashToSign[], signer: Address, ctx: Entit
   traverse(hashes, (h) => mapErr(ctx.sign(h.hash as Hash, signer), (): EntityError => ({ _tag: "sign_failed" })));
 const sameSigs = (a: readonly Signature[], b: readonly Signature[]): boolean => a.length === b.length && a.every((sig, i) => sig === b[i]);
 
+// ---- leader failover: og leader/{index,certificates,timeout-input}.ts ----
+const LEADER_TIMEOUT_BASE_MS = 10_000, LEADER_TIMEOUT_MAX_MS = 60_000;
+/** og getEntityLeaderOrder: the CEO `validators[0]`, then successors by shares descending, then position. */
+export const leaderOrder = (q: Quorum): readonly string[] => {
+  const validators = [...membersOf(q).keys()].map(signerId), [ceo] = validators;
+  if (ceo === undefined) return [];
+  return [ceo, ...validators.slice(1).sort((l, r) => { const a = sharesOf(q, l), b = sharesOf(q, r); return a !== b ? (a > b ? -1 : 1) : validators.indexOf(l) - validators.indexOf(r) || asc(l, r); })];
+};
+/** og getEntityLeaderState: the committed leader, defaulting to the CEO at view 0. */
+export const leaderStateOf = (state: EntityState): LeaderState =>
+  ({ activeValidatorId: signerId(state.leaderState?.activeValidatorId ?? leaderOrder(state.quorum)[0] ?? ""), view: state.leaderState?.view ?? 0, changedAtHeight: state.leaderState?.changedAtHeight ?? 0 });
+/** og getNextEntityFailoverLeader: rotate through the successors, never back to the CEO. */
+export const nextFailoverLeader = (state: EntityState): string => {
+  const order = leaderOrder(state.quorum);
+  if (order.length < 2) return order[0] ?? "";
+  const active = order.indexOf(leaderStateOf(state).activeValidatorId);
+  return (active <= 0 ? order[1] : order[1 + (active % (order.length - 1))]) ?? "";
+};
+/** og getEntityLeaderTimeoutMs. */
+export const leaderTimeoutMs = (nextView: number): number => Math.min(LEADER_TIMEOUT_MAX_MS, LEADER_TIMEOUT_BASE_MS * Math.max(1, Math.floor(nextView)));
+const parentOf = (head: Head): string => (head.height === 0n ? GENESIS_PARENT : frameWord(head.prevFrameHash));
+/** og buildEntityLeaderVoteBody over the committed state. */
+export const leaderVoteBody = (state: EntityState, head: Head): LeaderVoteBody => {
+  const l = leaderStateOf(state);
+  return { entityId: signerId(state.id), targetHeight: Number(head.height) + 1, previousFrameHash: parentOf(head), fromView: l.view, toView: l.view + 1, previousLeaderId: l.activeValidatorId, nextLeaderId: nextFailoverLeader(state) };
+};
+const voteFields = (v: LeaderVoteBody): LeaderVoteBody => ({
+  entityId: signerId(v.entityId), targetHeight: v.targetHeight, previousFrameHash: v.previousFrameHash, fromView: v.fromView, toView: v.toView, previousLeaderId: signerId(v.previousLeaderId), nextLeaderId: signerId(v.nextLeaderId),
+});
+/** og signatures are `0x`-prefixed lowercase hex; the rewrite's Signature is bare hex. Both parse. */
+const ogSig = (s: string): string => (s.startsWith("0x") ? s.toLowerCase() : `0x${s}`);
+const sigOf = (s: string): Signature | undefined => unwrapOr(signature(s.startsWith("0x") ? s.slice(2).toLowerCase() : s), () => undefined);
+const precommitsBinary = (sigs: Precommits): Binary => new Map([...sigs].map(([k, v]) => [k, v.map(ogSig)]));
+const certificateBinary = (c: LeaderCertificate): Result<Binary, EntityError> => {
+  const prepared = c.preparedVotes;
+  return map(prepared === undefined ? ok(undefined) : traverse([...prepared], ([k, v]) => map(voteBinary(v), (b) => [k, b] as const)), (rows): Binary => ({
+    ...voteFields(c), votes: new Map([...c.votes].map(([k, s]) => [k, ogSig(s)])), ...(rows === undefined ? {} : { preparedVotes: new Map(rows) }), ...opt("preparedFrameHash", c.preparedFrameHash),
+  }));
+};
+const leaderBinary = (l: FrameLeader, evidence: boolean): Result<Binary, EntityError> =>
+  chain(l.certificate === undefined ? ok(undefined) : certificateBinary(l.certificate), (certificate) => map(evidence || l.relayCertificate === undefined ? ok(undefined) : certificateBinary(l.relayCertificate), (relayCertificate): Binary =>
+    ({ proposerSignerId: l.proposerSignerId, view: l.view, ...opt("certificate", certificate), ...opt("relayCertificate", relayCertificate) })));
+/** og EntityFrame wire shape (height, parentFrameHash, roots, txs, hash, leader, manifest, collectedSigs); `evidence` is og buildPreparedFrameEvidence (no relay certificate, no hankos). */
+const frameBinary = (f: EntityFrame, signatures: Precommits | undefined, evidence: boolean): Result<Binary, EntityError> =>
+  chain(hashEntityFrame(f), (hash) => chain(traverse(f.txs, entityFrameTx), (txs) => chain(frameNumber(f.height), (height) => chain(frameNumber(f.timestamp), (timestamp) => map(leaderBinary(f.leader, evidence), (leader): Binary => ({
+    height, parentFrameHash: f.prevFrameHash, stateRoot: f.stateRoot, authorityRoot: f.authorityRoot, timestamp, entityContext: f.entityContext as unknown as Binary, txs: txs as unknown as Binary, events: f.events,
+    hash, leader, hashesToSign: f.hashesToSign as unknown as Binary, ...(signatures === undefined ? {} : { collectedSigs: precommitsBinary(signatures) }),
+  }))))));
+const voteBinary = (v: LeaderVote): Result<Binary, EntityError> =>
+  map(v.preparedFrame === undefined ? ok(undefined) : frameBinary(v.preparedFrame.frame, v.preparedFrame.signatures, true), (preparedFrame): Binary =>
+    ({ ...voteFields(v), voterId: signerId(v.voterId), signature: ogSig(v.signature), ...opt("preparedFrame", preparedFrame) }));
+const bytesKeccak = (value: Binary): Result<string, EntityError> => map(encodeConsensus(value), (bytes) => bytesToHex(keccak_256(bytes)));
+/** og hashEntityLeaderVoteBody: domain, normalized body fields, prepared evidence or null. */
+export const hashLeaderVote = (v: LeaderVoteBody & { readonly preparedFrame?: PreparedFrame | undefined }): Result<string, EntityError> =>
+  chain(v.preparedFrame === undefined ? ok(null) : frameBinary(v.preparedFrame.frame, v.preparedFrame.signatures, true), (preparedFrame) => bytesKeccak({ domain: "xln.entity.leader-timeout.v1", ...voteFields(v), preparedFrame }));
+const collectionKey = (v: LeaderVoteBody): Result<string, EntityError> => hashLeaderVote(voteFields(v));
+const voteMatchesState = (state: EntityState, head: Head, v: LeaderVoteBody): boolean => canon(voteFields(v)) === canon(leaderVoteBody(state, head));
+/** og buildEntityLeaderCertificate: votes sorted by normalized signer; per-voter votes only when some carried prepared evidence. */
+export const buildLeaderCertificate = (body: LeaderVoteBody, votes: ReadonlyMap<string, LeaderVote>): LeaderCertificate => {
+  const rows = [...votes].map(([k, v]) => [signerId(k), v] as const).sort(([a], [b]) => asc(a, b));
+  const prepared = rows.some(([, v]) => v.preparedFrame !== undefined)
+    ? new Map(rows.map(([k, v]): readonly [string, LeaderVote] => [k, { ...voteFields(v), voterId: signerId(v.voterId), signature: v.signature, ...opt("preparedFrame", v.preparedFrame) }])) : undefined;
+  return { ...voteFields(body), votes: new Map(rows.map(([k, v]) => [k, v.signature])), ...opt("preparedVotes", prepared) };
+};
+/** og getCertificateSignedVotes. */
+const certificateVotes = (c: LeaderCertificate): Result<ReadonlyMap<string, LeaderVote>, EntityError> => {
+  const bad: EntityError = { _tag: "leader_vote_invalid" }, compact = new Map<string, string>();
+  for (const [raw, sig] of c.votes) { const id = signerId(raw); if (compact.has(id)) return err(bad); compact.set(id, sig); }
+  if (c.preparedVotes === undefined) return ok(new Map([...compact].map(([id, signature]) => [id, { ...voteFields(c), voterId: id, signature }])));
+  const prepared = new Map<string, LeaderVote>();
+  for (const [raw, vote] of c.preparedVotes) {
+    const id = signerId(raw);
+    if (prepared.has(id) || signerId(vote.voterId) !== id || compact.get(id) !== vote.signature) return err(bad);
+    prepared.set(id, vote);
+  }
+  return prepared.size === compact.size ? ok(prepared) : err(bad);
+};
+type LeaderView = { readonly state: EntityState; readonly head: Head };
+/** og verifyEntityLeaderCertificate: no certificate means the committed leader at the committed view; otherwise a quorum of signed timeout votes for this exact view change. */
+const verifyLeaderCertificate = (at: LeaderView, leader: FrameLeader, ctx: EntityContext): boolean => {
+  const committed = leaderStateOf(at.state), proposed = signerId(leader.proposerSignerId), c = leader.certificate, q = at.state.quorum;
+  if (c === undefined) return proposed === committed.activeValidatorId && leader.view === committed.view;
+  if (!voteMatchesState(at.state, at.head, c) || proposed !== signerId(c.nextLeaderId) || leader.view !== c.toView) return false;
+  const signed = certificateVotes(c), key = collectionKey(c);
+  if (!signed.ok || !key.ok) return false;
+  const valid: string[] = [];
+  for (const [id, vote] of signed.value) {
+    const addr = memberId(q, id), h = hashLeaderVote(vote), k = collectionKey(vote);
+    const sig = sigOf(vote.signature);
+    if (addr === undefined || signerId(vote.voterId) !== id || !k.ok || k.value !== key.value || !h.ok || sig === undefined || !memberSigned(q, h.value, sig, addr, ctx)) return false;
+    valid.push(id);
+  }
+  return valid.reduce((n, id) => n + sharesOf(q, id), 0n) >= thresholdOf(q);
+};
+/** og hasVerifiedPreparedQuorum: a canonical manifest, every bundle valid (else refused), at least the threshold. */
+const preparedQuorum = (q: Quorum, frame: EntityFrame, sigs: Precommits, ctx: EntityContext): Result<boolean, EntityError> => chain(hashEntityFrame(frame), (hash) => {
+  const head = frame.hashesToSign[0];
+  if (head === undefined || head.type !== "entityFrame" || head.hash !== hash) return err({ _tag: "leader_prepared_rejected" });
+  return chain(normalizeBundles(q, sigs), (bundles) => ([...bundles].some(([id, s]) => !bundleValid(q, frame.hashesToSign, id, s, ctx)) ? err({ _tag: "leader_prepared_rejected" }) : ok(quorumPower(q, bundles) >= thresholdOf(q))));
+});
+/** og validatePreparedFrameEvidence. */
+const preparedEvidence = (at: LeaderView, c: LeaderCertificate, pf: PreparedFrame, ctx: EntityContext): Result<Precommits, EntityError> => {
+  const f = pf.frame, rejected: EntityError = { _tag: "leader_prepared_rejected" };
+  if (f.height !== BigInt(c.targetHeight) || f.prevFrameHash !== parentOf(at.head) || f.leader.relayCertificate !== undefined || !verifyLeaderCertificate(at, f.leader, ctx)) return err(rejected);
+  return chain(preparedQuorum(at.state.quorum, f, pf.signatures, ctx), () => normalizeBundles(at.state.quorum, pf.signatures));
+};
+/** og selectPreparedFrameFromCertificate: group valid evidence by frame hash, keep quorum groups, the highest view must be unique. */
+const selectPrepared = (at: LeaderView, c: LeaderCertificate, ctx: EntityContext): Result<PreparedFrame | null, EntityError> => chain(certificateVotes(c), (votes) => {
+  type Group = { readonly frame: EntityFrame; readonly body: string; readonly signatures: Precommits };
+  const groups = new Map<string, Group>(), rejected: EntityError = { _tag: "leader_prepared_rejected" };
+  for (const vote of votes.values()) {
+    const pf = vote.preparedFrame;
+    if (pf === undefined) continue;
+    const merged = chain(preparedEvidence(at, c, pf, ctx), (sigs) => chain(hashEntityFrame(pf.frame), (hash) => chain(frameBinary(pf.frame, undefined, true), (bodyValue) => chain(encodeConsensus(bodyValue), (bytes): Result<void, EntityError> => {
+      const body = bytesToHex(bytes), group = groups.get(hash) ?? { frame: pf.frame, body, signatures: new Map() };
+      if (group.body !== body) return err(rejected);
+      let signatures = group.signatures;
+      for (const [id, s] of sigs) { const held = signatures.get(id); if (held !== undefined && !sameSigs(held, s)) return err(rejected); signatures = mapSet(signatures, id, s); }
+      groups.set(hash, { ...group, signatures });
+      return ok(undefined);
+    }))));
+    if (!merged.ok) return merged;
+  }
+  const prepared = [...groups.values()].filter((g) => quorumPower(at.state.quorum, g.signatures) >= thresholdOf(at.state.quorum));
+  if (prepared.length === 0) return ok(null);
+  const view = Math.max(...prepared.map((g) => g.frame.leader.view)), highest = prepared.filter((g) => g.frame.leader.view === view);
+  const [only] = highest;
+  return highest.length !== 1 || only === undefined ? err(rejected) : ok({ frame: only.frame, signatures: new Map([...only.signatures].sort(([a], [b]) => asc(a, b))) });
+});
+/** og verifyEntityRelayCertificate: a relayed frame is exactly the prepared frame its relay certificate selects. */
+const verifyRelayCertificate = (at: LeaderView, frame: EntityFrame, frameHash: string, ctx: EntityContext): boolean => {
+  const relay = frame.leader.relayCertificate;
+  if (relay === undefined) return true;
+  if (!verifyLeaderCertificate(at, { proposerSignerId: relay.nextLeaderId, view: relay.toView, certificate: relay }, ctx)) return false;
+  const selected = selectPrepared(at, relay, ctx);
+  return selected.ok && selected.value !== null && unwrapOr(hashEntityFrame(selected.value.frame), () => "") === frameHash && relay.preparedFrameHash === frameHash;
+};
+/** og expectedCommittedLeaderState: a certified view change installs the next leader at this height. */
+const committedLeaderFor = (state: EntityState, frame: EntityFrame): LeaderState => {
+  const c = frame.leader.certificate;
+  return c === undefined ? leaderStateOf(state) : { activeValidatorId: signerId(c.nextLeaderId), view: c.toView, changedAtHeight: Number(frame.height) };
+};
+/** og getReplicaProposalLeader: a pending certificate for the next height names the leader, else the committed one. */
+export const proposalLeader = (r: EntityEnv): LeaderState => {
+  const c = r.pendingLeaderCertificate;
+  return c === undefined || c.targetHeight !== Number(r.head.height) + 1 ? leaderStateOf(r.state) : { activeValidatorId: signerId(c.nextLeaderId), view: c.toView, changedAtHeight: c.targetHeight };
+};
+const isProposalLeader = (r: EntityEnv): boolean => proposalLeader(r).activeValidatorId === signerId(r.signerId);
+export const isActiveLeader = (r: EntityReplica): boolean => leaderStateOf(r.state).activeValidatorId === signerId(r.signerId);
+/** og hasEntityLeaderWork (without J-prefix rounds): queued txs, a frame in flight, a pending certificate or queued Account work. */
+export const hasLeaderWork = (r: EntityReplica): boolean => r.mempool.length > 0 || r._tag !== "open" || r.pendingLeaderCertificate !== undefined || hasProposableAccount(r);
+/** og nextReplicaDeadline (non-leader branch): when this validator's timeout vote falls due, given its last consensus progress. */
+export const leaderTimeoutDue = (r: EntityReplica, lastProgressAt: bigint): bigint | undefined => {
+  if (isActiveLeader(r) || !hasLeaderWork(r)) return undefined;
+  const body = leaderVoteBody(r.state, r.head), mine = r.leaderVotes?.get(signerId(r.signerId));
+  if (mine !== undefined && canon(voteFields(mine)) === canon(voteFields(body))) return undefined;
+  return lastProgressAt + BigInt(leaderTimeoutMs(body.toView));
+};
+/** og createDueScheduledWakeInputs (non-leader branch): the local unsigned vote carrying this replica's lock as prepared evidence. */
+export const localTimeoutVote = (r: EntityReplica, timestamp: bigint): EntityInput | undefined => {
+  if (isActiveLeader(r) || !hasLeaderWork(r)) return undefined;
+  const lock = r._tag === "locked" ? { frame: r.frame, signatures: r.signatures } : undefined;
+  return { kind: "leaderTimeoutVote", timestamp, local: true, vote: { ...leaderVoteBody(r.state, r.head), voterId: signerId(r.signerId), signature: "", ...opt("preparedFrame", lock) } };
+};
+
 type FoldContext = { readonly verify: Verify; readonly timestamp: bigint };
 type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 /** Who the tx is about: og routes accountInput by its envelope, the rest by an explicit counterparty. */
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
-  extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId, proposeAccount: (x) => x.data.counterpartyEntityId,
+  extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId,
+  requestCollateral: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
-const owesCreateAck = (child: AccountReplica): boolean => match(child, { open: () => false, proposed: () => false, received: () => true, preparing: () => false, disputed: () => false });
-const isCreateAck = (tx: EntityTx, origin: Delivery): boolean => tx.type === "accountInput" && origin._tag === "local" && tx.data.kind === "ack";
 const putChild = (state: EntityState, replicas: Replicas, peer: EntityId, child: AccountReplica): Folded => ({ state: { ...state, accounts: mapSet(state.accounts, peer, child.state.account) }, accountReplicas: mapSet(replicas, peer, child) });
 const withChild = (replicas: Replicas, target: EntityId, f: (child: AccountReplica) => Result<Draft, EntityError>): Result<Draft, EntityError> => { const child = replicas.get(target); return child === undefined ? err({ _tag: "no_such_account", target }) : f(child); };
-// A trusted payment's direct_payment_forward is an L0 side effect; forwarding it on to the final recipient is not ported at the Entity layer yet (dropped here, as before it existed).
 const routed = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Draft, EntityError> => chain(applied, (a) =>
-  map(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: ({ effect }) => (effect._tag === "direct_payment_forward" ? ok([]) : err({ _tag: "not_l0" })), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
-    (messages) => ({ ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((data): EntityOutput => ({ to: target, tx: { type: "accountInput", data } })) })));
+  chain(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: (e) => (e.effect._tag === "direct_payment_forward" ? ok([]) : err({ _tag: "not_l0" })), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
+    (messages) => {
+      const base: Draft = { ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((data): EntityOutput => ({ to: target, tx: { type: "accountInput", data } })) };
+      const forwards = a.outputs.flatMap((o) => (o.kind === "effect" && o.effect._tag === "direct_payment_forward" && sameHex(o.effect.route[0], state.id) ? [o.effect] : []));
+      return foldResult<Draft, Of<Effect, "direct_payment_forward">, EntityError>(forwards, base, forwardPayment);
+    }));
+/** og applyDirectPaymentForwardFollowups: the gateway queues the next leg on its Account with route[1] (a missing Account refuses the input). */
+const forwardPayment = (d: Draft, f: Of<Effect, "direct_payment_forward">): Result<Draft, EntityError> => {
+  const self = d.state.id, next = f.route[1] as EntityId | undefined, child = next === undefined ? undefined : d.accountReplicas.get(next);
+  if (next === undefined || child === undefined) return err({ _tag: "no_such_account", target: (next ?? "") as EntityId });
+  const leg: AccountTx = { type: "payment", tokenId: String(f.tokenId) as TokenId, amount: f.amount, route: f.route.slice(1), description: f.description || "Forwarded payment", fromEntityId: self, toEntityId: next, deliveryMode: "trusted", trustedGatewayEntityId: f.trustedGatewayEntityId };
+  return map(admitAt(child, [leg], self, L0_CLOCK), (admitted) => ({ ...putChild(d.state, d.accountReplicas, next, admitted), outputs: d.outputs }));
+};
 const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
 /** og DEFAULT_ACCOUNT_TOKEN_IDS (account/config/defaults.ts). */
 const DEFAULT_ACCOUNT_TOKEN_IDS = ["1", "3", "2"] as const;
@@ -3660,7 +3921,9 @@ const openChild = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx,
     if (replicas.has(target)) return err({ _tag: "account_exists", target });
     const credit = tokenId ?? "1", tokens = [...new Set([credit, ...DEFAULT_ACCOUNT_TOKEN_IDS])].filter((t) => Number(t) > 0) as TokenId[];
     const seeded: readonly AccountTx[] = [...tokens.map((t): AccountTx => ({ type: "add_delta", tokenId: t })), ...(creditAmount !== undefined && creditAmount > 0n ? [{ type: "set_credit_limit", tokenId: credit as TokenId, limit: creditAmount } as AccountTx] : [])];
-    return map(admitAt(opened, seeded, state.id, L0_CLOCK), (admitted) => ({ ...putChild(state, replicas, target, admitted), outputs: [] }));
+    // og resolveOpenAccountPublicPin: the opener pins unless `pinPublic: false` or MAX_PROFILE_ADVERTISED_ACCOUNTS (100) are already pinned
+    const pinned = tx.data.pinPublic !== false && [...replicas.values()].filter((c) => c.publicPinned === true).length < 100;
+    return map(admitAt(pinned ? { ...opened, publicPinned: true } : opened, seeded, state.id, L0_CLOCK), (admitted) => ({ ...putChild(state, replicas, target, admitted), outputs: [] }));
   });
 };
 /** og createInboundAccountState: an unknown peer's first proposal (height 1) opens the Account from its envelope. */
@@ -3694,9 +3957,122 @@ const entityLending = (state: EntityState, replicas: Replicas, tx: LendingEntity
     case "lendingClosePosition": return chain(intent(tx.data.positionId, "lend"), (positionId) => queue(key, { type: "lending_close_request", positionId, hubEntityId: hub, lenderEntityId: self }));
   }
 };
-const foldTx =(state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldContext): Result<Draft, EntityError> => {
-  const origin = originOf(tx, state.id), peer = peerOf(tx, state.id), owed = replicas.get(peer);
-  if (owed !== undefined && owesCreateAck(owed) && !isCreateAck(tx, origin)) return err({ _tag: "create_ack_required", target: peer });
+// ---- Account Hankos through the Entity manifest: og accountInput response + proposePendingAccountFrames, hanko-witness.ts, hanko/signing.ts ----
+/**
+ * og signs Account frames, ACKs and dispute proofs as secondary `hashesToSign` of the Entity frame and attaches the quorum Hanko only after the
+ * frame certifies. While the frame folds, this Entity's own Hanko on digest `d` is the placeholder `pendingHanko(d)`; `installFrame` replaces it
+ * with og's quorum Hanko. Own Hankos never enter the Entity state root (only the peer's do), so the placeholder never reaches a hash.
+ */
+const pendingHanko = (digest: string): Hanko => `0xfe${hexBody(digest).toLowerCase()}`;
+const pendingVerify = (verify: Verify, self: EntityId): Verify => (d, h, e) => (h === pendingHanko(d) && sameHex(e, self)) || verify(d, h, e);
+const pendingDispute = (plan: DisputePlan): DisputeHanko | undefined => match(plan, { sign: ({ draft }): DisputeHanko | undefined => ({ ...draft, hanko: pendingHanko(draft.hash) }), resend: ({ disputeHanko }) => disputeHanko, none: () => undefined });
+/** og accountHasProposableMempool (without the settlement-freeze and HTLC-cap refinements): an active Account with no frame in flight and queued txs. */
+const proposableChild = (c: AccountReplica | undefined): c is OpenAccount => c !== undefined && c._tag === "open" && c.mempool.length > 0;
+const hasProposableAccount = (r: Folded): boolean => [...r.accountReplicas.values()].some(proposableChild);
+/** og commits a received Account frame and answers it in the same Entity frame (the forced ACK response), signed through the manifest. */
+const answerFrame = (d: Draft, peer: EntityId, ctx: FoldContext): Result<Draft, EntityError> => {
+  const child = d.accountReplicas.get(peer), self = d.state.id;
+  if (child === undefined || child._tag !== "received") return ok(d);
+  return chain(partyOf(replicaId(child), self), (party) => chain(previewAck(child, self), (p) => {
+    const ack: AccountInput = { kind: "ack", ...sentBy(child, party), height: p.height, frameHash: p.frameHash, frameHanko: pendingHanko(p.frameHash), ...opt("disputeHanko", pendingDispute(p.dispute)) };
+    return map(routed(d.state, d.accountReplicas, peer, applyAccountInput(child, ack, { verify: pendingVerify(ctx.verify, self), self, now: ctx.timestamp })), (acked) => ({ ...acked, outputs: [...d.outputs, ...acked.outputs] }));
+  }));
+};
+const entityJHeight = (state: EntityState): bigint => { const h = state.committed["lastFinalizedJHeight"]; return typeof h === "number" && Number.isSafeInteger(h) && h >= 0 ? BigInt(h) : 0n; };
+/** og proposePendingAccountFrames: every proposable Account in worklist order proposes one frame at the Entity clock; a refused proposal is not a frame. */
+const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext): { readonly draft: Draft; readonly frames: number } => {
+  const self = d.state.id, clock: FrameClock = { timestamp: ctx.timestamp, jHeight: entityJHeight(d.state) };
+  let draft = d, frames = 0;
+  for (const peer of order) {
+    const child = draft.accountReplicas.get(peer);
+    if (!proposableChild(child)) continue;
+    const plan = planAccountProposal(child, self, clock, ctx.verify), party = partyOf(replicaId(child), self);
+    if (!plan.ok || !party.ok) continue;
+    const input: AccountInput = match(plan.value, {
+      frame: ({ preview }): AccountInput => ({ kind: "propose", frameHanko: pendingHanko(preview.frame.stateHash), ...opt("disputeHanko", pendingDispute(preview.dispute)), ...clock }),
+      idle: (): AccountInput => ({ kind: "propose", ...clock }),
+    });
+    const next = routed(draft.state, draft.accountReplicas, peer, propose(child, input as Propose, { verify: pendingVerify(ctx.verify, self), party: party.value }));
+    if (!next.ok) continue;
+    if (plan.value._tag === "frame") frames += 1;
+    draft = { ...next.value, outputs: [...draft.outputs, ...next.value.outputs] };
+  }
+  // og sends one final Account input per Account: an ACK already riding on that Account's new frame is not sent again.
+  const carried = new Set(draft.outputs.flatMap((o) => ("tx" in o && o.tx.data.kind === "ack_frame" && o.tx.data.ack !== null ? [`${o.to}|${canon(o.tx.data.ack)}`] : [])));
+  return { draft: { ...draft, outputs: draft.outputs.filter((o) => !("tx" in o && o.tx.data.kind === "ack" && carried.has(`${o.to}|${canon(ackOf(o.tx.data))}`))) }, frames };
+};
+/** og buildQuorumHanko (single signer: encodeSingleSignerEntityHankos): canonical 0/1-recovery signatures by the named validators, signers then placeholders sorted by address. */
+export const quorumHanko = (state: EntityState, digest: string, sigs: ReadonlyMap<string, Signature>): Result<Hanko, EntityError> => {
+  const q = state.quorum, bad: EntityError = { _tag: "hanko_build" };
+  const validators = [...membersOf(q)].map(([addr, m]) => ({ key: signerId(addr), share: m.shares }));
+  const packed = new Map<string, RawSig>();
+  for (const [raw, sig] of sigs) {
+    const key = signerId(raw), v = validators.find((x) => x.key === key), bytes = parseHex(sig);
+    if (v === undefined || packed.has(key) || bytes === null || bytes.length !== 65) return err(bad);
+    const recovery = bytes[64] ?? 0, r = bytes.subarray(0, 32), s = bytes.subarray(32, 64);
+    if ((recovery !== 0 && recovery !== 1) || isZeroWord(s) || wordAt(s, 0) > HALF_ORDER || !sameHex(recoverRawSigner(digest, sig) ?? undefined, key)) return err(bad);
+    packed.set(key, { r, s, v: 27 + recovery });
+  }
+  if (validators.reduce((n, v) => n + (packed.has(v.key) ? v.share : 0n), 0n) < thresholdOf(q)) return err(bad);
+  const entityWord = `0x${BigInt(state.id).toString(16).padStart(64, "0")}`, zero = { boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 };
+  if (isSingleSigner(q)) return ok(encodeHankoEnvelope({ placeholders: [], packedSignatures: packSignatures([...packed.values()]), memberSignatures: [], claims: [{ entityId: entityWord, entityIndexes: [0], weights: [1], threshold: 1, ...zero }] }));
+  const delays = match<Authority, typeof zero>(q, { teaching: () => zero, board: ({ board }) => ({ boardChangeDelay: board.boardChangeDelay, controlChangeDelay: board.controlChangeDelay, dividendChangeDelay: board.dividendChangeDelay }) });
+  const signing = validators.filter((v) => packed.has(v.key)).sort((a, b) => asc(a.key, b.key)), idle = validators.filter((v) => !packed.has(v.key)).sort((a, b) => asc(a.key, b.key));
+  const entityIndexes = validators.map((v) => { const i = signing.indexOf(v); return i < 0 ? idle.indexOf(v) : idle.length + i; });
+  return ok(encodeHankoEnvelope({
+    placeholders: idle.map((v) => `0x${hexBody(v.key).padStart(64, "0")}`), packedSignatures: packSignatures(signing.map((v) => packed.get(v.key) as RawSig)), memberSignatures: [],
+    claims: [{ entityId: entityWord, entityIndexes, weights: validators.map((v) => Number(v.share)), threshold: Number(thresholdOf(q)), ...delays }],
+  }));
+};
+/** og attachHankoWitnessToOutputs/State: each secondary manifest entry's quorum Hanko replaces its placeholder in the Account replicas and outputs. */
+const fillHankos = (d: Draft, frame: EntityFrame, signatures: Precommits): Result<Draft, EntityError> => {
+  const table = new Map<string, Hanko>();
+  for (const [i, h] of frame.hashesToSign.entries()) {
+    if (i === 0) continue;
+    const sigs = new Map([...signatures].flatMap(([id, bundle]) => { const s = bundle[i]; return s === undefined ? [] : [[id, s] as const]; }));
+    const built = quorumHanko(d.state, h.hash, sigs);
+    if (!built.ok) return built;
+    table.set(pendingHanko(h.hash), built.value);
+  }
+  if (table.size === 0) return ok(d);
+  const f = (h: Hanko): Hanko => table.get(h) ?? h, fd = (x: DisputeHanko | undefined): DisputeHanko | undefined => (x === undefined ? undefined : { ...x, hanko: f(x.hanko) });
+  const fa = (a: AccountAck): AccountAck => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) });
+  const replica = (c: AccountReplica): AccountReplica => {
+    const head: AccountHead = c.head._tag === "installed" ? { ...c.head, certificate: { ...c.head.certificate, left: f(c.head.certificate.left), right: f(c.head.certificate.right) } } : c.head;
+    const dispute: DisputeWitnesses = { ...c.dispute, ...opt("current", fd(c.dispute.current)) };
+    const base = { ...c, head, dispute, ...(c.acknowledged === undefined ? {} : { acknowledged: fa(c.acknowledged) }) };
+    return "candidate" in c ? ({ ...base, candidate: new Candidate(c.candidate.frame, f(c.candidate.frameHanko), c.candidate.frameProof, c.candidate.draft, c.candidate.floor) } as AccountReplica) : (base as AccountReplica);
+  };
+  const message = (m: AccountPeerInput): AccountPeerInput => matchBy("kind", m, {
+    ack: (a): AccountPeerInput => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
+    ack_frame: (a): AccountPeerInput => ({ ...a, ack: a.ack === null ? null : fa(a.ack), frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
+    dispute: (a): AccountPeerInput => ({ ...a, disputeHanko: { ...a.disputeHanko, hanko: f(a.disputeHanko.hanko) } }),
+    board_hanko_refresh: (a): AccountPeerInput => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
+  });
+  return ok({ ...d, accountReplicas: new Map([...d.accountReplicas].map(([k, c]) => [k, replica(c)])), outputs: d.outputs.map((o) => ("tx" in o ? { to: o.to, tx: { type: "accountInput" as const, data: message(o.tx.data) } } : o)) });
+};
+const PROFILE_ENTITY_KINDS: ReadonlySet<string> = new Set(["company", "foundation", "government", "nonprofit", "person", "protocol"]);
+const PROFILE_ENTITY_SECTORS: ReadonlySet<string> = new Set(["commerce", "education", "energy", "finance", "healthcare", "infrastructure", "media", "professional-services", "public-sector", "real-estate", "technology"]);
+/** og system/basic.ts handleProfileUpdateEntityTx: the committed profile with og's defaults, kind and canonical sector rules; `isHub` is never taken from the update. */
+const profileUpdate = (state: EntityState, p: ProfileUpdate): Result<Binary, EntityError> => {
+  const bad = (reason: Of<EntityError, "profile_update">["reason"]): Result<never, EntityError> => err({ _tag: "profile_update", reason });
+  if (p.entityId !== state.id) return bad("entity");
+  const prev = (state.committed["profile"] ?? {}) as { readonly [k: string]: unknown };
+  const text = (k: string): string => { const v = prev[k]; return typeof v === "string" ? v : ""; };
+  const entityKind = p.entityKind === undefined ? (typeof prev["entityKind"] === "string" ? prev["entityKind"] : undefined) : p.entityKind === null ? undefined : p.entityKind;
+  if (entityKind !== undefined && !PROFILE_ENTITY_KINDS.has(entityKind)) return bad("entity_kind");
+  const sectors = p.sectors ?? (Array.isArray(prev["sectors"]) ? (prev["sectors"] as readonly string[]) : []);
+  if (!Array.isArray(sectors) || sectors.length > 4 || sectors.some((s) => !PROFILE_ENTITY_SECTORS.has(s))) return bad("sectors_invalid");
+  const canonical = [...sectors].sort(asc);
+  if (new Set(sectors).size !== sectors.length || canonical.some((s, i) => s !== sectors[i])) return bad("sectors_noncanonical");
+  const rawName = p.name ?? prev["name"], name = typeof rawName === "string" && rawName.trim().length > 0 ? rawName.trim() : `Entity ${state.id.slice(-4)}`;
+  return ok({
+    name, ...(prev["isHub"] === undefined ? {} : { isHub: prev["isHub"] as Binary }), ...(entityKind ? { entityKind } : {}), ...(canonical.length > 0 ? { sectors: canonical } : {}),
+    avatar: typeof p.avatar === "string" ? p.avatar : text("avatar"), bio: typeof p.bio === "string" ? p.bio : text("bio"), website: typeof p.website === "string" ? p.website : text("website"),
+  });
+};
+const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldContext): Result<Draft, EntityError> => {
+  const origin = originOf(tx, state.id), peer = peerOf(tx, state.id);
   const enqueue = (target: EntityId, accountTxs: readonly AccountTx[], outputs: readonly EntityOutput[]): Result<Draft, EntityError> =>
     withChild(replicas, target, (child) => map(admitAt(child, accountTxs, state.id, L0_CLOCK, ctx.verify), (admitted) => ({ ...putChild(state, replicas, target, admitted), outputs })));
   const skip: Draft = { state, accountReplicas: replicas, outputs: [] };
@@ -3704,18 +4080,30 @@ const foldTx =(state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldCo
     openAccount: (x) => openChild(state, replicas, x),
     extendCredit: (x) => (replicas.has(x.data.counterpartyEntityId) ? enqueue(x.data.counterpartyEntityId, [{ type: "set_credit_limit", tokenId: x.data.tokenId, limit: x.data.amount }], [wake(state, ctx.timestamp)]) : ok(skip)),
     directPayment: (x) => {
-      const { route, targetEntityId, amount, deliveryMode, trustedGatewayEntityId, tokenId } = x.data;
+      const { route, targetEntityId, amount, deliveryMode, trustedGatewayEntityId, tokenId, description } = x.data;
       if (route.length === 0 || route.length > 100 || route[0] !== state.id || route[route.length - 1] !== targetEntityId) return err({ _tag: "payment_route" });
+      if (deliveryMode !== "direct" && deliveryMode !== "trusted") return err({ _tag: "payment_route" });
       if (amount < 1n || amount > UINT256_MAX) return ok(skip);
-      if (deliveryMode !== "direct" || trustedGatewayEntityId !== undefined || route.length !== 2) return err({ _tag: "payment_route" });
-      return replicas.has(targetEntityId) ? enqueue(targetEntityId, [{ type: "payment", tokenId, amount }], [wake(state, ctx.timestamp)]) : err({ _tag: "no_such_account", target: targetEntityId });
+      // og requireTrustedPaymentGateway: exactly [source, gateway, target] with the declared gateway distinct from both ends
+      if (deliveryMode === "trusted" ? route.length !== 3 || route[1] !== trustedGatewayEntityId || route[1] === route[0] || route[1] === targetEntityId : trustedGatewayEntityId !== undefined || route.length !== 2) return err({ _tag: "payment_route" });
+      const next = route[1] as EntityId;
+      // og buildNextHopPayment: the first leg carries the remaining route, the default description and the delivery mode
+      const leg: AccountTx = { type: "payment", tokenId, amount, route: route.slice(1), description: description || `Payment to ${targetEntityId}`, fromEntityId: state.id, toEntityId: next, deliveryMode, ...opt("trustedGatewayEntityId", trustedGatewayEntityId) };
+      return replicas.has(next) ? enqueue(next, [leg], [wake(state, ctx.timestamp)]) : err({ _tag: "no_such_account", target: next });
     },
     lendingOffer: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
     lendingBorrow: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
     lendingRepay: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
     lendingClosePosition: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
-    proposeAccount: (x) => withChild(replicas, x.data.counterpartyEntityId, (child) => chain(partyOf(replicaId(child), state.id), (party) =>
-      routed(state, replicas, x.data.counterpartyEntityId, propose(child, { kind: "propose", frameHanko: x.data.frameHanko, disputeHanko: x.data.disputeHanko, timestamp: x.data.timestamp, jHeight: x.data.jHeight }, { verify: ctx.verify, party })))),
+    // og system/basic.ts: chat messages live in the frame-local message log, which the state root does not commit (an invalid chat message is a silent no-op)
+    chat: () => ok(skip),
+    chatMessage: () => ok(skip),
+    // og admin.ts handleRequestCollateralEntityTx: a missing Account is a no-op; otherwise queue request_collateral and wake validators[0]
+    requestCollateral: (x) => {
+      const { counterpartyEntityId: to, tokenId, amount, feeTokenId, feeAmount, policyVersion } = x.data;
+      return replicas.has(to) ? enqueue(to, [{ type: "request_collateral", tokenId, amount, ...opt("feeTokenId", feeTokenId), feeAmount, policyVersion }], [wake(state, ctx.timestamp)]) : ok(skip);
+    },
+    "profile-update": (x) => map(profileUpdate(state, x.data.profile), (profile) => ({ ...skip, state: { ...state, committed: { ...state.committed, profile } } })),
     accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => {
       const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp };
       const apply = (at: Folded): Result<Draft, EntityError> => withChild(at.accountReplicas, peer, (child) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)));
@@ -3724,9 +4112,11 @@ const foldTx =(state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldCo
         ack: () => apply(held),
         // og routes the standalone peer dispute witness through the same accountInput lane; an unknown Account has no genesis for it (og ACCOUNT_GENESIS_FRAME_REQUIRED).
         dispute: () => apply(held),
+        // og board-hanko-refresh.ts: the Entity supplies counterpartyCertifiedBoard; the rewrite has no certified board registry, so the Account refuses it (certified_board_missing)
+        board_hanko_refresh: () => apply(held),
         ack_frame: (i) => match(origin, {
           local: (): Result<Draft, EntityError> => err({ _tag: "from_not_converted" }),
-          received: ({ from }) => (!i.frame.txs.every(isL0Tx) ? err({ _tag: "not_l0" }) : replicas.has(from) ? apply(held) : chain(inboundChild(state, replicas, from, i), apply)),
+          received: ({ from }) => chain(!i.frame.txs.every(isL0Tx) ? err({ _tag: "not_l0" }) : replicas.has(from) ? apply(held) : chain(inboundChild(state, replicas, from, i), apply), (d) => answerFrame(d, from, ctx)),
         }),
       });
     }),
@@ -3739,11 +4129,19 @@ export type FoldedTxs = { readonly draft: Draft; readonly included: readonly Ent
  */
 export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly EntityTx[], ctx: FoldContext): Result<FoldedTxs, EntityError> => {
   type Acc = FoldedTxs & { readonly first?: EntityError | undefined };
+  // og proposePendingAccountFrames worklist: Accounts proposable before the frame (sorted), then the Accounts the included txs touched, in order.
+  const primed = [...replicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
   return chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state, accountReplicas: replicas, outputs: [] }, included: [], evicted: [] }, (acc, tx) => {
     const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
     if (r.ok) return ok({ ...acc, draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs] }, included: [...acc.included, tx] });
     return tx.type === "openAccount" || r.error._tag === "lending_entity" ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
-  }), ({ first, ...folded }) => (folded.included.length === 0 && first !== undefined ? err(first) : ok(folded)));
+  }), ({ first, ...folded }) => {
+    if (folded.included.length === 0 && first !== undefined) return err(first);
+    // Accounts that received follow-up work (a gateway's forwarded leg) join after the directly touched ones.
+    const followups = [...folded.draft.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
+    const order = [...new Set([...primed, ...folded.included.map((tx) => peerOf(tx, state.id)), ...followups])];
+    return ok({ ...folded, draft: proposeAccounts(folded.draft, order, ctx).draft });
+  });
 };
 const EMPTY_COLLECTION = { radix: 16, leafCount: 0, root: ZERO_WORD } as const;
 /** og applyEntityFrame `state.crontabState ??= initCrontab()`: the hubRebalance task at the 1s cadence, no hooks. */
@@ -3781,20 +4179,21 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
   return chain(linked, (link): Result<EntityRootAccount, EntityError> => chain(mapErr(committedView(body), (): EntityError => ({ _tag: "account_envelope", target: peer })), (state): Result<EntityRootAccount, EntityError> => ok({
     fromEntity: self, toEntity: peer, status, currentHeight: link.height, nextProofNonce: child.dispute.nextProofNonce, currentFrameHash: link.frame,
     pendingWithdrawals: ZERO_WORD, policyRoot: ZERO_WORD, submittedAtByTokenRoot: unwrapOr(submittedAtRoot(body), () => ZERO_WORD), state,
-    committed: { ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active) : {}) },
+    committed: { ...opt("publicPinned", child.publicPinned), ...opt("counterpartyBoardHankoRefresh", child.boardRefresh), ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active) : {}) },
     ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
   })));
 };
 /** og computeCanonicalEntityConsensusStateHash over the draft: entityId, height, timestamp, config, accounts and every committed section. */
 export const entityRootOf = (state: EntityState, replicas: Replicas): Result<string, EntityError> =>
   chain(frameNumber(state.height), (height) => chain(frameNumber(state.timestamp), (timestamp) => chain(traverse([...replicas], ([peer, child]) => installedAccount(state.id, peer, child)),
-    (accounts) => entityStateRoot({ config: rootConfig(state), accounts, entityId: state.id, height, timestamp, committed: state.committed }))));
+    (accounts) => entityStateRoot({ config: rootConfig(state), accounts, entityId: state.id, height, timestamp, committed: state.committed, leaderState: state.leaderState }))));
+/** og computeEntityFrameAuthorityRoot(buildEntityFrameAuthority(state)): config + normalizeAuthorityLeader(leaderState). */
 const authorityRoot = (state: EntityState): Result<string, EntityRootError> => {
-  const config = rootConfig(state), leader = config.validators[0];
-  if (leader === undefined || leader.length === 0) return err({ _tag: "bad_config" });
+  const config = rootConfig(state), leader = signerId(state.leaderState?.activeValidatorId ?? config.validators[0] ?? "");
+  if (leader.length === 0) return err({ _tag: "bad_config" });
   return chain(consensusConfig(config), (normalized) => map(encodeConsensus({
     domain: "xln.entity.frame-authority:binary",
-    authority: { config: normalized, leaderState: { activeValidatorId: leader, view: 0, changedAtHeight: 0 } },
+    authority: { config: normalized, leaderState: { activeValidatorId: leader, view: state.leaderState?.view ?? 0, changedAtHeight: state.leaderState?.changedAtHeight ?? 0 } },
   }), (bytes) => bytesToHex(keccak_256(bytes))));
 };
 /** og account/consensus hashesToSign: the Account frames and dispute proofs this frame signs for, as secondary manifest entries. */
@@ -3809,6 +4208,8 @@ const messageHashes = (peer: EntityId, m: AccountPeerInput): readonly HashToSign
     ack_frame: (f) => [...(f.ack === null ? [] : acked(f.ack)), { hash: f.frame.stateHash, type: "accountFrame", context: `account:${tail}:frame:${f.frame.height}` },
       ...(f.disputeHanko === undefined ? [] : [{ hash: f.disputeHanko.hash, type: "dispute", context: `account:${tail}:dispute` } as const])],
     dispute: (d) => [{ hash: d.disputeHanko.hash, type: "dispute", context: `account:${tail}:dispute` }],
+    // og: a refresh re-Hankos an already committed frame; this Entity never originates one (the board-rotation flush is not ported)
+    board_hanko_refresh: () => [],
   });
 };
 /** og buildEntityHashesToSign: the frame hash first, then the secondary hashes sorted, a duplicate is fatal. */
@@ -3820,13 +4221,13 @@ const hashesToSignOf = (entityId: EntityId, height: bigint, frameHash: string, o
 };
 const GENESIS_PARENT = "genesis";
 /** og certifyEntityProposal: the proposal state takes height+1 and the frame timestamp, then state root, authority root, frame hash, manifest. */
-const buildFrame = (r: EntityEnv, proposer: Address, timestamp: bigint, txs: readonly EntityTx[], folded: Draft): Result<EntityCandidate, EntityError> => {
-  const height = r.head.height + 1n, parent = r.head.height === 0n ? GENESIS_PARENT : frameWord(r.head.prevFrameHash), signer = signerId(proposer);
+const buildFrame = (r: EntityEnv, leader: FrameLeader, leaderState: LeaderState, timestamp: bigint, txs: readonly EntityTx[], folded: Draft): Result<EntityCandidate, EntityError> => {
+  const height = r.head.height + 1n, parent = parentOf(r.head), signer = signerId(leader.proposerSignerId);
   const committed: EntityCommitted = "crontabState" in folded.state.committed ? folded.state.committed : { ...folded.state.committed, crontabState: DEFAULT_CRONTAB };
-  const draft: Draft = { ...folded, state: { ...folded.state, height, timestamp, committed } };
+  const draft: Draft = { ...folded, state: { ...folded.state, height, timestamp, committed, leaderState } };
   return chain(frameNumber(height), (heightNo) => chain(entityRootOf(draft.state, draft.accountReplicas), (stateRoot) => chain(authorityRoot(draft.state), (root) => {
     const body = {
-      height, prevFrameHash: parent as EntityFrameHash, timestamp, txs, events: [], stateRoot, authorityRoot: root,
+      height, prevFrameHash: parent as EntityFrameHash, timestamp, txs, events: [], stateRoot, authorityRoot: root, leader,
       entityContext: { version: 1, proposerReplicaId: `${draft.state.id}:${signer}`, entityId: draft.state.id, proposerSignerId: signer, parentFrameHash: parent, height: heightNo, gossipProfiles: [], peerAssertions: [], htlc: { version: 1, entries: [], originated: [] } },
     };
     return chain(hashEntityFrame({ ...body, hashesToSign: [] }), (frameHash) =>
@@ -3847,11 +4248,13 @@ const appendMempool = (mempool: readonly EntityTx[], admitted: readonly EntityTx
   return [...mempool, ...firstBy(admitted, accountKey, mempool.flatMap((tx) => { const k = accountKey(tx); return k === undefined ? [] : [k]; }))];
 };
 /** og finalizeCommitNotification: install the candidate, emit its Account outputs, optionally broadcast the certified frame to the other validators. */
-const installFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean): EntityApply<OpenEntity> => {
-  const others = broadcast ? [...membersOf(r.draft.state.quorum).keys()].filter((v) => signerId(v) !== signerId(r.signerId)) : [];
-  return done(openEntity(r.signerId, r.draft.state, { height: r.frame.height, prevFrameHash: frameHash }, withoutTxs(r.mempool, r.frame.txs), r.draft.accountReplicas),
-    [...r.draft.outputs, ...others.map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "proposal", frame: r.frame, signatures } }))]);
-};
+const installFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean): Result<EntityApply<OpenEntity>, EntityError> => chain(fillHankos(r.draft, r.frame, signatures), (draft) => {
+  const others = broadcast ? [...membersOf(draft.state.quorum).keys()].filter((v) => signerId(v) !== signerId(r.signerId)) : [];
+  // og finalizeCommitNotification: votes reset; a relay certificate for exactly this frame stays pending.
+  const relay = r.frame.leader.relayCertificate, pending = relay !== undefined && relay.preparedFrameHash === frameHash ? relay : undefined;
+  const opened: OpenEntity = { ...openEntity(r.signerId, draft.state, { height: r.frame.height, prevFrameHash: frameHash }, withoutTxs(r.mempool, r.frame.txs), draft.accountReplicas), leaderVotes: new Map(), ...opt("pendingLeaderCertificate", pending) };
+  return ok(done(opened, [...draft.outputs, ...others.map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "proposal", frame: r.frame, signatures } }))]));
+});
 /** og admitEntityTransactions + startEntityProposalIfReady: queue, forward a non-leader mempool to the leader, or propose from the mempool. */
 const admitTxs = <R extends EntityReplica>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<R, EntityError> => {
   if (input.timestamp < 0n || input.timestamp > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "frame_timestamp_invalid", timestamp: input.timestamp });
@@ -3860,35 +4263,47 @@ const admitTxs = <R extends EntityReplica>(r: R, input: Extract<EntityInput, { k
   if (input.txs.length > ENTITY_MEMPOOL_SIZE || r.mempool.length + input.txs.length > ENTITY_MEMPOOL_SIZE) return err({ _tag: "mempool_full" });
   return ok({ ...r, mempool: appendMempool(r.mempool, input.txs) });
 };
-const forwarded = (r: EntityEnv, timestamp: bigint): readonly EntityOutput[] =>
-  signerId(r.signerId) === signerId(r.state.quorum.proposer) || r.mempool.length === 0 ? [] : [{ to: r.state.id, signerId: r.state.quorum.proposer, input: { kind: "txs", timestamp, txs: r.mempool } }];
-export const applyTxsOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => chain(admitTxs(r, input, ctx), (queued): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
-  if (signerId(queued.signerId) !== signerId(queued.state.quorum.proposer) || queued.mempool.length === 0) return ok(done(queued, forwarded(queued, input.timestamp)));
+/** og admission: a replica that is not the proposal leader forwards its mempool to that leader. */
+const forwarded = (r: EntityEnv, timestamp: bigint): readonly EntityOutput[] => {
+  const leader = proposalLeader(r).activeValidatorId, to = memberId(r.state.quorum, leader);
+  return isProposalLeader(r) || r.mempool.length === 0 || to === undefined ? [] : [{ to: r.state.id, signerId: to, input: { kind: "txs", timestamp, txs: r.mempool } }];
+};
+/** og shouldStartProposal: a certified view change (without a prepared frame to relay) proposes even an empty frame. */
+const certifiedTransition = (r: EntityEnv): boolean => { const c = r.pendingLeaderCertificate; return c !== undefined && c.targetHeight === Number(r.head.height) + 1 && c.preparedFrameHash === undefined; };
+/** og startEntityProposalIfReady + certifyEntityProposal: fold the mempool, commit the proposal leader's view, self-sign, commit alone or broadcast. */
+const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+  if (!isProposalLeader(queued) || (queued.mempool.length === 0 && !certifiedTransition(queued) && !hasProposableAccount(queued))) return ok(done(queued, forwarded(queued, runtimeTimestamp)));
   /** og resolveEntityProposalTimestamp: never behind the committed clock. */
-  const timestamp = input.timestamp > queued.state.timestamp ? input.timestamp : queued.state.timestamp;
+  const timestamp = runtimeTimestamp > queued.state.timestamp ? runtimeTimestamp : queued.state.timestamp;
+  const view = proposalLeader(queued).view, self = signerId(queued.signerId), pending = queued.pendingLeaderCertificate;
+  const leader: FrameLeader = { proposerSignerId: self, view, ...opt("certificate", pending) };
+  const leaderState: LeaderState = { activeValidatorId: self, view, changedAtHeight: pending !== undefined ? Number(queued.head.height) + 1 : queued.state.leaderState?.changedAtHeight ?? 0 };
   return chain(foldTxs(queued.state, queued.accountReplicas, queued.mempool, { verify: ctx.verify, timestamp }), ({ draft, included, evicted }) => {
     const pool = withoutTxs(queued.mempool, evicted);
-    return chain(buildFrame(queued, queued.signerId, timestamp, included, draft), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
-      const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[signerId(queued.signerId), own]]) };
-      if (isSingleSigner(queued.state.quorum)) return ok(installFrame(proposed, frameHash, proposed.signatures, false));
-      const others = [...membersOf(queued.state.quorum).keys()].filter((v) => signerId(v) !== signerId(queued.signerId));
+    return chain(buildFrame(queued, leader, leaderState, timestamp, included, draft), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+      const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[self, own]]) };
+      if (isSingleSigner(queued.state.quorum)) return installFrame(proposed, frameHash, proposed.signatures, false);
+      const others = [...membersOf(queued.state.quorum).keys()].filter((v) => signerId(v) !== self);
       return ok(done<OpenEntity | ProposedEntity, EntityOutput>(proposed, others.map((v): EntityOutput => ({ to: queued.state.id, signerId: v, input: { kind: "proposal", frame: candidate.frame, signatures: proposed.signatures } }))));
     })));
   });
-});
+};
+export const applyTxsOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> =>
+  chain(admitTxs(r, input, ctx), (queued) => startProposal(queued, input.timestamp, ctx));
 /** og runs handleHashPrecommits on every input: a held frame whose collected signatures already reach quorum installs now. */
 const heldQuorum = <R extends ProposedEntity | LockedEntity>(r: R, before: readonly EntityOutput[]): Result<EntityApply<OpenEntity | R>, EntityError> =>
   quorumPower(r.state.quorum, r.signatures) < thresholdOf(r.state.quorum) ? ok(done<OpenEntity | R, EntityOutput>(r, before))
-    : map(hashEntityFrame(r.frame), (frameHash) => { const c = installFrame(r, frameHash, r.signatures, true); return done<OpenEntity | R, EntityOutput>(c.replica, [...before, ...c.outputs]); });
+    : chain(hashEntityFrame(r.frame), (frameHash) => map(installFrame(r, frameHash, r.signatures, true), (c) => done<OpenEntity | R, EntityOutput>(c.replica, [...before, ...c.outputs])));
 const queueOnly = <R extends ProposedEntity | LockedEntity>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> =>
   chain(admitTxs(r, input, ctx), (queued) => heldQuorum(queued, forwarded(queued, input.timestamp)));
 /** og preauthenticateEntityProposal: canonical digests, parent, leader, recomputed hash, manifest head, the proposer's frame signature. */
 const DIGEST = /^0x[0-9a-f]{64}$/;
 const preauthenticate = (r: EntityEnv, frame: EntityFrame, signatures: Precommits, ctx: EntityContext): Result<EntityFrameHash, EntityError> => chain(hashEntityFrame(frame), (frameHash): Result<EntityFrameHash, EntityError> => {
   if (!DIGEST.test(frame.stateRoot) || !DIGEST.test(frame.authorityRoot)) return err({ _tag: "proposal_digest" });
-  if (frame.prevFrameHash !== (r.head.height === 0n ? GENESIS_PARENT : frameWord(r.head.prevFrameHash))) return err({ _tag: "proposal_parent" });
-  const proposer = frame.entityContext.proposerSignerId;
-  if (signerId(proposer) !== signerId(r.state.quorum.proposer) || frame.entityContext.entityId !== r.state.id) return err({ _tag: "proposal_leader" });
+  if (frame.prevFrameHash !== parentOf(r.head)) return err({ _tag: "proposal_parent" });
+  // og validateProposedFrameLeader: the leader certificate (or the committed leader and view) and any relay certificate.
+  const proposer = frame.leader.proposerSignerId;
+  if (!verifyLeaderCertificate(r, frame.leader, ctx) || !verifyRelayCertificate(r, frame, frameHash, ctx) || frame.entityContext.entityId !== r.state.id) return err({ _tag: "proposal_leader" });
   const head = frame.hashesToSign[0];
   if (head === undefined || head.hash !== frameHash || head.type !== "entityFrame" || head.context !== `entity:${r.state.id.slice(-4)}:frame:${frame.height}`) return err({ _tag: "proposal_manifest" });
   const own = [...signatures].filter(([id]) => signerId(id) === signerId(proposer)), sig = own.length === 1 ? own[0]?.[1][0] : undefined, addr = memberId(r.state.quorum, proposer);
@@ -3899,7 +4314,7 @@ const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHas
   if (frame.timestamp < r.state.timestamp) return err({ _tag: "frame_timestamp_regression", timestamp: frame.timestamp });
   return chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp }), ({ draft, evicted }) => {
     if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
-    return chain(buildFrame(r, r.state.quorum.proposer, frame.timestamp, frame.txs, draft), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
+    return chain(buildFrame(r, frame.leader, committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
       local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame })));
   });
 };
@@ -3917,8 +4332,8 @@ const commitNotification = <R extends EntityReplica>(r: R, frame: EntityFrame, b
     return chain(preauthenticate(r, frame, bundles, ctx), () => chain(normalized, (sigs): Result<EntityApply<OpenEntity | R>, EntityError> => {
       if ([...sigs].some(([id, s]) => !bundleValid(r.state.quorum, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
       const held = heldFrame(r);
-      if (held !== undefined) return unwrapOr(hashEntityFrame(held.frame), () => "") === frameHash ? ok(installFrame(held, frameHash, sigs, false)) : err({ _tag: "commit_conflict" });
-      return map(replayFrame(r, frame, frameHash, ctx), (candidate) => installFrame({ ...r, ...candidate }, frameHash, sigs, false));
+      if (held !== undefined) return unwrapOr(hashEntityFrame(held.frame), () => "") === frameHash ? installFrame(held, frameHash, sigs, false) : err({ _tag: "commit_conflict" });
+      return chain(replayFrame(r, frame, frameHash, ctx), (candidate) => installFrame({ ...r, ...candidate }, frameHash, sigs, false));
     }));
   });
 };
@@ -3928,7 +4343,7 @@ const signProposal = (r: OpenEntity, frame: EntityFrame, bundles: Precommits, ct
   return chain(hashEntityFrame(frame), (frameHash): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
     if (frame.height === r.head.height) return frameHash === r.head.prevFrameHash ? ok(done<OpenEntity | LockedEntity, EntityOutput>(r)) : err({ _tag: "proposal_conflict" });
     if (frame.height !== r.head.height + 1n) return err({ _tag: "proposal_wait" });
-    return chain(preauthenticate(r, frame, bundles, ctx), () => chain(replayFrame(r, frame, frameHash, ctx), (candidate) => chain(signManifest(candidate.frame.hashesToSign, r.signerId, ctx), (own) =>
+    return chain(preauthenticate(r, frame, bundles, ctx), () => chain(notSuperseded(r, frame), () => chain(replayFrame(r, frame, frameHash, ctx), (candidate) => chain(signManifest(candidate.frame.hashesToSign, r.signerId, ctx), (own) =>
       chain(normalizeBundles(r.state.quorum, bundles), (sigs): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
         if ([...sigs].some(([id, s]) => !bundleValid(r.state.quorum, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
         const self = signerId(r.signerId), mine = sigs.get(self);
@@ -3937,10 +4352,17 @@ const signProposal = (r: OpenEntity, frame: EntityFrame, bundles: Precommits, ct
         const precommits = [...membersOf(r.state.quorum).keys()].filter((v) => signerId(v) !== self)
           .map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "precommit", height: frame.height, frameHash, signatures: new Map([[self, own]]) } }));
         if (quorumPower(r.state.quorum, locked.signatures) < thresholdOf(r.state.quorum)) return ok(done<OpenEntity | LockedEntity, EntityOutput>(locked, precommits));
-        const committed = installFrame(locked, frameHash, locked.signatures, true);
-        return ok(done<OpenEntity | LockedEntity, EntityOutput>(committed.replica, [...precommits, ...committed.outputs]));
-      }))));
+        return map(installFrame(locked, frameHash, locked.signatures, true), (committed) => done<OpenEntity | LockedEntity, EntityOutput>(committed.replica, [...precommits, ...committed.outputs]));
+      })))));
   });
+};
+/** og validateProposalViewAndJRange: a view this validator already voted past (or holds a certificate for) supersedes the proposal. */
+const notSuperseded = (r: EntityEnv, frame: EntityFrame): Result<void, EntityError> => {
+  const height = Number(frame.height), self = signerId(r.signerId);
+  const effective = Math.max(frame.leader.view, frame.leader.certificate?.toView ?? -1, frame.leader.relayCertificate?.toView ?? -1);
+  const voted = Math.max(-1, ...[...(r.leaderVotes?.values() ?? [])].filter((v) => signerId(v.voterId) === self && v.targetHeight === height && v.signature.length > 0).map((v) => v.toView));
+  const certified = r.pendingLeaderCertificate?.targetHeight === height ? r.pendingLeaderCertificate.toView : -1;
+  return guard(Math.max(voted, certified) <= effective, { _tag: "proposal_superseded" });
 };
 /** og respondToActiveDuplicate: the same proposal again re-sends this validator's precommit. */
 const resendPrecommit = (r: LockedEntity, frame: EntityFrame): Result<EntityApply<LockedEntity>, EntityError> => chain(hashEntityFrame(r.frame), (held) => chain(hashEntityFrame(frame), (frameHash): Result<EntityApply<LockedEntity>, EntityError> => {
@@ -3972,15 +4394,85 @@ export const applyPrecommitHeld = <R extends ProposedEntity | LockedEntity>(r: R
 /** og: no active frame; a precommit for a height already committed is a no-op so reliable ingress can terminalize it. */
 const precommitOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "precommit" }>): Result<EntityApply<OpenEntity>, EntityError> =>
   input.signatures.size === 0 || r.head.height > input.height ? ok(done(r)) : err({ _tag: "precommit_not_active" });
+type VoteInput = Extract<EntityInput, { kind: "leaderTimeoutVote" }>;
+/** og handleLeaderTimeoutVote: the vote must be for exactly this view change from a validator; a local intent is signed here and broadcast. */
+const acceptVote = (r: EntityReplica, input: VoteInput, ctx: EntityContext): Result<{ readonly vote: LeaderVote; readonly outputs: readonly EntityOutput[] }, EntityError> => {
+  const incoming = input.vote, q = r.state.quorum, voter = signerId(incoming.voterId), invalid: EntityError = { _tag: "leader_vote_invalid" }, addr = memberId(q, voter);
+  if (!voteMatchesState(r.state, r.head, incoming) || addr === undefined) return err(invalid);
+  return chain(hashLeaderVote(incoming), (h): Result<{ readonly vote: LeaderVote; readonly outputs: readonly EntityOutput[] }, EntityError> => {
+    if (input.local !== true) { const sig = sigOf(incoming.signature); return sig !== undefined && memberSigned(q, h, sig, addr, ctx) ? ok({ vote: incoming, outputs: [] }) : err(invalid); }
+    if (voter !== signerId(r.signerId) || incoming.signature !== "") return err(invalid);
+    return map(mapErr(ctx.sign(h as Hash, r.signerId), (): EntityError => ({ _tag: "sign_failed" })), (sig) => {
+      const vote: LeaderVote = { ...incoming, signature: sig };
+      return { vote, outputs: [...membersOf(q).keys()].filter((v) => signerId(v) !== voter).map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "leaderTimeoutVote", timestamp: input.timestamp, vote } })) };
+    });
+  });
+};
+/** og: votes are collected under one collection key (a newer view change resets them); a different second vote from a voter is equivocation, an identical one a no-op. */
+const addVote = (r: EntityEnv, vote: LeaderVote): Result<{ readonly votes: ReadonlyMap<string, LeaderVote>; readonly fresh: boolean }, EntityError> => chain(collectionKey(vote), (key) => {
+  const [first] = r.leaderVotes?.values() ?? [], voter = signerId(vote.voterId);
+  const votes = first === undefined || unwrapOr(collectionKey(first), () => "") === key ? r.leaderVotes ?? new Map<string, LeaderVote>() : new Map<string, LeaderVote>();
+  const prev = votes.get(voter);
+  if (prev === undefined) return ok({ votes: mapSet(votes, voter, vote), fresh: true as boolean });
+  const bytes = (v: LeaderVote): Result<string, EntityError> => chain(voteBinary(v), (b) => map(encodeConsensus(b), bytesToHex));
+  return chain(bytes(prev), (a) => chain(bytes(vote), (b) => (a === b ? ok({ votes, fresh: false as boolean }) : err({ _tag: "leader_vote_equivocation" }))));
+});
+/** og installLeaderCertificate + selectPreparedFrame: at quorum, certify the view change; a prepared quorum frame becomes this replica's lock, a sub-quorum lock is dropped. */
+const certify = (r: EntityReplica, vote: LeaderVote, votes: ReadonlyMap<string, LeaderVote>, ctx: EntityContext): Result<EntityReplica, EntityError> => {
+  const q = r.state.quorum, base: EntityReplica = { ...r, leaderVotes: votes };
+  if ([...votes.keys()].reduce((n, id) => n + sharesOf(q, id), 0n) < thresholdOf(q)) return ok(base);
+  const cert = buildLeaderCertificate(vote, votes), lock = r._tag === "locked" ? r : undefined, rejected: EntityError = { _tag: "leader_prepared_rejected" };
+  return chain(lock === undefined ? ok(false) : preparedQuorum(q, lock.frame, lock.signatures, ctx), (lockQuorum) => chain(selectPrepared(r, cert, ctx), (prepared): Result<EntityReplica, EntityError> => {
+    if (prepared === null) {
+      if (lockQuorum) return err(rejected);
+      return ok(lock === undefined ? { ...base, pendingLeaderCertificate: cert } : { ...openEntity(lock.signerId, lock.state, lock.head, lock.mempool, lock.accountReplicas), leaderVotes: votes, pendingLeaderCertificate: cert });
+    }
+    return chain(hashEntityFrame(prepared.frame), (hash): Result<EntityReplica, EntityError> => {
+      const lockHash = lock === undefined ? undefined : unwrapOr(hashEntityFrame(lock.frame), () => "");
+      if (lock !== undefined && lockQuorum && lockHash !== hash && lock.frame.leader.view >= prepared.frame.leader.view) return err(rejected);
+      const pending: LeaderCertificate = { ...cert, preparedFrameHash: hash }, frame: EntityFrame = { ...prepared.frame, leader: { ...prepared.frame.leader, relayCertificate: pending } };
+      if (r._tag === "proposed") return ok({ ...base, pendingLeaderCertificate: pending });
+      if (lock !== undefined && lockHash === hash) return ok({ ...lock, leaderVotes: votes, pendingLeaderCertificate: pending, frame, signatures: prepared.signatures });
+      return map(replayFrame(r, prepared.frame, hash as EntityFrameHash, ctx), (candidate): EntityReplica =>
+        ({ ...openEntity(r.signerId, r.state, r.head, r.mempool, r.accountReplicas), ...candidate, _tag: "locked", frame, signatures: prepared.signatures, leaderVotes: votes, pendingLeaderCertificate: pending }));
+    });
+  }));
+};
+/** og relayPreparedFrameIfReady: the certified leader re-proposes exactly the prepared frame with its relay certificate. */
+const relayPrepared = (l: LockedEntity): Result<EntityApply<LockedEntity | ProposedEntity>, EntityError> | undefined => {
+  const c = l.pendingLeaderCertificate;
+  if (!isProposalLeader(l) || isSingleSigner(l.state.quorum) || c === undefined || c.targetHeight !== Number(l.head.height) + 1 || c.preparedFrameHash === undefined) return undefined;
+  return chain(hashEntityFrame(l.frame), (hash): Result<EntityApply<LockedEntity | ProposedEntity>, EntityError> => {
+    if (hash !== c.preparedFrameHash) return err({ _tag: "leader_prepared_rejected" });
+    const frame: EntityFrame = { ...l.frame, leader: { ...l.frame.leader, relayCertificate: c } }, self = signerId(l.signerId);
+    return ok(done<LockedEntity | ProposedEntity, EntityOutput>({ ...l, _tag: "proposed", frame }, [...membersOf(l.state.quorum).keys()].filter((v) => signerId(v) !== self)
+      .map((v): EntityOutput => ({ to: l.state.id, signerId: v, input: { kind: "proposal", frame, signatures: l.signatures } }))));
+  });
+};
+/** og applyEntityInput with a `leaderTimeoutVote` lane: vote, maybe certify, then the ordinary proposal step (relay, a certified empty frame, or a held quorum). */
+const leaderVote = (r: EntityReplica, input: VoteInput, ctx: EntityContext): Result<EntityApply<EntityReplica>, EntityError> => chain(acceptVote(r, input, ctx), ({ vote, outputs }) =>
+  chain(addVote(r, vote), ({ votes, fresh }) => chain(fresh ? certify(r, vote, votes, ctx) : ok(r), (next): Result<EntityApply<EntityReplica>, EntityError> => {
+    const after = match(next, {
+      open: (o): Result<EntityApply<EntityReplica>, EntityError> => startProposal(o, input.timestamp, ctx),
+      proposed: (p): Result<EntityApply<EntityReplica>, EntityError> => heldQuorum(p, []),
+      locked: (l): Result<EntityApply<EntityReplica>, EntityError> => relayPrepared(l) ?? heldQuorum(l, []),
+    });
+    return map(after, (a) => done(a.replica, [...outputs, ...a.outputs]));
+  })));
 const entityVerb = grammar<EntityGrammar>(EntityTransition);
 const applyTxs = entityVerb("txs", { open: applyTxsOpen, proposed: (r: ProposedEntity, i, c) => queueOnly(r, i, c), locked: (r: LockedEntity, i, c) => queueOnly(r, i, c) });
 const applyProposal = entityVerb("proposal", { open: proposalOpen, proposed: proposalProposed, locked: proposalLocked });
 const applyPrecommit = entityVerb("precommit", { open: precommitOpen, proposed: (r: ProposedEntity, i, c) => applyPrecommitHeld(r, i, c), locked: (r: LockedEntity, i, c) => applyPrecommitHeld(r, i, c) });
+/** A proposed replica keeps its own proposal (og never replaces `proposal` on a view change), so it only ever leaves as open or proposed. */
+const applyLeaderVote = entityVerb("leaderTimeoutVote", {
+  open: (r: OpenEntity, i, c) => leaderVote(r, i, c), locked: (r: LockedEntity, i, c) => leaderVote(r, i, c),
+  proposed: (r: ProposedEntity, i, c) => leaderVote(r, i, c) as Result<EntityApply<OpenEntity | ProposedEntity>, EntityError>,
+});
 /** One input to one validator replica (og applyEntityInput); `ctx.signerId` must name this replica. */
 export const applyEntityInput = (r: EntityReplica, input: EntityInput, ctx: EntityContext): Result<EntityApply, EntityError> => {
   if (ctx.self !== r.state.id) return err({ _tag: "wrong_entity" });
   if (signerId(ctx.signerId) !== signerId(r.signerId)) return err({ _tag: "wrong_replica", address: ctx.signerId });
-  return matchBy("kind", input, { txs: (i) => applyTxs(r, i, ctx), proposal: (i) => applyProposal(r, i, ctx), precommit: (i) => applyPrecommit(r, i, ctx) });
+  return matchBy("kind", input, { txs: (i) => applyTxs(r, i, ctx), proposal: (i) => applyProposal(r, i, ctx), precommit: (i) => applyPrecommit(r, i, ctx), leaderTimeoutVote: (i) => applyLeaderVote(r, i, ctx) });
 };
 
 /** og runtime/types.ts JInput: one deterministic child-machine input for a J replica; the rewrite carries the J txs uninterpreted (J area). */
@@ -4031,11 +4523,13 @@ export const replicaKey = (entity: EntityId, signer: string): string => `${entit
 export const createRuntime = (jurisdictions: Iterable<string> = []): Runtime =>
   ({ entities: new Map(), height: 0n, timestamp: 0n, jurisdictions: new Set(jurisdictions), adapterFrontiers: new Map(), encryptionSeeds: new Map(), frameHash: ZERO_FRAME_HASH });
 export const spawn = (rt: Runtime, r: EntityReplica): Runtime => ({ ...rt, entities: mapSet(rt.entities, replicaKey(r.state.id, r.signerId), r) });
-/** og resolveEntityProposerId: an Account message goes to the receiver's leader `validators[0]`; a consensus input to the named validator. */
+/** og resolveEntityProposerId: an Account message goes to the receiver's active leader (the CEO `validators[0]` until a view change); a consensus input to the named validator. */
 export const convertOutput = (rt: Runtime, item: EntityOutput, from: EntityId, timestamp: bigint): Result<RoutedEntityInput, RuntimeError> => {
   if ("input" in item) return ok({ entityId: item.to, signerId: item.signerId, input: item.input });
   const receiver = [...rt.entities.values()].find((r) => r.state.id === item.to);
-  return receiver === undefined ? err({ _tag: "no_such_entity", id: item.to }) : ok({ entityId: item.to, from, signerId: allowedProposer(receiver.state.quorum), input: { kind: "txs", timestamp, txs: [item.tx] } });
+  if (receiver === undefined) return err({ _tag: "no_such_entity", id: item.to });
+  const leader = memberId(receiver.state.quorum, leaderStateOf(receiver.state).activeValidatorId) ?? allowedProposer(receiver.state.quorum);
+  return ok({ entityId: item.to, from, signerId: leader, input: { kind: "txs", timestamp, txs: [item.tx] } });
 };
 
 // ---- og runtime/frame/intake: shape limits, capabilities, merge ----
@@ -4078,15 +4572,17 @@ export const runtimeTxAuthorized = (tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay
 };
 const inputFingerprint = (tx: EntityTx): string => encodeEntityTx(tx);
 const frameIdOf = (frame: EntityFrame): string => { const h = hashEntityFrame(frame); return h.ok ? h.value : canon(frame); };
-type Lane = { readonly entityId: EntityId; readonly signerId: string; readonly from?: string | undefined; readonly timestamp: bigint; readonly txs?: readonly EntityTx[] | undefined; readonly proposal?: Extract<EntityInput, { kind: "proposal" }> | undefined; readonly precommit?: Extract<EntityInput, { kind: "precommit" }> | undefined };
+type Lane = { readonly entityId: EntityId; readonly signerId: string; readonly from?: string | undefined; readonly timestamp: bigint; readonly txs?: readonly EntityTx[] | undefined; readonly proposal?: Extract<EntityInput, { kind: "proposal" }> | undefined; readonly precommit?: Extract<EntityInput, { kind: "precommit" }> | undefined; readonly vote?: VoteInput | undefined };
 const laneOf = (i: RoutedEntityInput): Lane => matchBy("kind", i.input, {
   txs: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.timestamp, txs: x.txs }),
   proposal: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.frame.timestamp, proposal: x }),
   precommit: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: 0n, precommit: x }),
+  leaderTimeoutVote: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.timestamp, vote: x }),
 });
-/** og entityInputMergeKey (without runtimeOutput / cross-j / J-prefix / leader-vote lanes, which the rewrite does not carry). */
+/** og entityInputMergeKey (without runtimeOutput / cross-j / J-prefix lanes, which the rewrite does not carry); each timeout vote is its own lane. */
 const mergeKey = (l: Lane): string => {
   const base = `${lower(l.entityId)}:${lower(l.signerId)}`;
+  if (l.vote !== undefined) return `${base}:leader:${l.vote.vote.targetHeight}:${lower(l.vote.vote.voterId)}:${unwrapOr(hashLeaderVote(l.vote.vote), () => canon(l.vote?.vote))}`;
   if (l.precommit !== undefined) return `${base}:precommit:${l.precommit.height}:${lower(l.precommit.frameHash)}`;
   return l.txs !== undefined && l.txs.length > 0 ? `${base}:tx-origin:${lower(l.from)}` : base;
 };
@@ -4120,6 +4616,7 @@ export const mergeEntityInputs = (inputs: readonly RoutedEntityInput[]): Result<
     const lane = laneOf(input), key = mergeKey(lane), existing = merged.get(key);
     if (existing === undefined) { merged.set(key, lane); continue; }
     if (existing.proposal !== undefined && lane.proposal !== undefined && (frameIdOf(existing.proposal.frame) !== frameIdOf(lane.proposal.frame) || existing.proposal.frame.height !== lane.proposal.frame.height)) { conflicts.push(lane); continue; }
+    if ((lane.vote !== undefined || existing.vote !== undefined) && canon(lane.vote?.vote) !== canon(existing.vote?.vote)) return frameErr(`ENTITY_LEADER_VOTE_EQUIVOCATION:${lane.vote?.vote.voterId ?? "missing"}`);
     let next: Lane = existing;
     if (lane.txs !== undefined && !exactReplay(existing, lane)) next = { ...next, txs: [...(existing.txs ?? []), ...lane.txs] };
     if (lane.precommit !== undefined && existing.precommit !== undefined) {
@@ -4131,7 +4628,7 @@ export const mergeEntityInputs = (inputs: readonly RoutedEntityInput[]): Result<
     merged.set(key, next);
   }
   return ok([...merged.values(), ...conflicts].map((l): RoutedEntityInput => {
-    const input: EntityInput = l.proposal ?? l.precommit ?? { kind: "txs", timestamp: l.timestamp, txs: dedupAccountInputs(l.txs ?? []) };
+    const input: EntityInput = l.vote ?? l.proposal ?? l.precommit ?? { kind: "txs", timestamp: l.timestamp, txs: dedupAccountInputs(l.txs ?? []) };
     return { entityId: l.entityId, signerId: l.signerId, input, ...opt("from", l.from) };
   }));
 };
@@ -4432,7 +4929,7 @@ export type EntityRouteTx =
   | { readonly type: "htlcPayment"; readonly route: readonly EntityId[]; readonly finalRecipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly description?: string | undefined }
   | { readonly type: "prepareCrossJurisdictionSwap" }
   | { readonly type: "registerCrossJurisdictionSwap" };
-export type HostInput = { readonly kind: "dispute" | "board_hanko_refresh" | "leaderTimeoutVote" };
+export type HostInput = { readonly kind: "dispute" };
 export type HostCtx = { readonly timestamp: bigint; readonly jHeight: bigint; readonly from?: EntityId | undefined };
 export type HostEffect = Effect | Tagged<"start_dispute", { start: DisputeStart }> | Tagged<"send", { message: AccountPeerInput }>;
 export type OutboxEntry = { readonly id: Hash; readonly effect: HostEffect };
@@ -4491,7 +4988,6 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
   entity: (i) => chain(routeEntity(i.tx, host.self, replicaId(host.account)), (routed) => admitTx(host, routed, ctx, verify)),
   input: (i) => matchBy("kind", i.input, {
     dispute: () => accountStep(host, applyAccountInput(host.account, { kind: "freeze" }, { verify, self: host.self, now: ctx.timestamp })),
-    board_hanko_refresh: () => err({ _tag: "unchosen", hole: "board_hanko_refresh" }), leaderTimeoutVote: () => err({ _tag: "unchosen", hole: "leader_timeout_vote" }),
   }),
 
   receipt: (i) => ok(step({ ...host, outbox: host.outbox.filter((e) => e.id !== i.id) })),
