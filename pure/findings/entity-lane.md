@@ -1,0 +1,36 @@
+# entity-lane: og Entity -> Entity command lane, cross-j Entity setup, gossip pathfinding vs pure/xln.ts
+
+Tests: `pure/diff/entity-lane.test.ts`. Run from `pure/` with `bun test diff/entity-lane.test.ts`: 9 pass, 0 fail.
+
+Every test is `MATCH:` and runs live og (`core/`, HEAD 566c850) on the same seeded random input:
+
+- **Handler tests** call og `handlePrepare/Materialize/RegisterCrossJurisdictionSwapEntityTx` on an og `EntityState` built from the same fixture. They compare four things:
+  - The disposition. og `MalformedEntityFrameInputError` is a reject; og `haltRuntimeFailure` or a plain `Error` is fatal. Rejects compare on og's `rejection` text, fatals on the message.
+  - Frame messages.
+  - Both collections and their root commitments.
+  - Entity outputs and Account txs.
+- **The lane test** drives real rewrite Entity frames through `applyRuntime`. At every frame it replays og on the pre-state. The chain is: user authorization → certified command → hub raw intent and wake → default-proposer materialization → both register commands → the hub's own register queuing its Account legs.
+
+## Findings
+
+| Item | og | rewrite | Status |
+|---|---|---|---|
+| Gossip network graph and pathfinding | `core/pathfinding/{graph,pathfinding,capacity,fees}.ts`, gossip `findPaths` | `buildNetworkGraph`, `findPaths`, `findPaymentRoutes` | FIXED. 400 random profile graphs MATCH og: hub metadata, mirrored rows, funding first hop, Map/Record capacities, fees. |
+| `htlcPayment` with an empty route | `infra-context.ts` `resolveRoute` = first `findPaths` route, or `HTLC_PAYMENT_ROUTE_NOT_FOUND` | `materializeOriginated` → `resolveHtlcRoute` | FIXED. 150 random cases MATCH og. An end-to-end Alice → Carol payment with `route: []` settles via Bob, and Bob earns og's fee. `entity-cross-j.test.ts` now resolves through og's PathFinder too. |
+| Cross-j setup txs | `handlers/cross-j/setup.ts` | `crossPrepare`, `crossMaterialize`, `crossRegister` (foldTx `prepareCrossJurisdictionSwap`, `materializeCrossJurisdictionSwap`, `registerCrossJurisdictionSwap`) | FIXED. 400 prepare, 300 materialize and 300 register cases MATCH. Every reachable og branch is hit: user authorize and retry, conflicts, expiry, binding, raw intent, replay absorb, materialization, USD cap, register pre-check. |
+| og error texts | the thrown `withCanonicalCrossJurisdictionRouteHash`, `canonicalAccountDisputeConfig` and `getPullLockAdmissionError` messages | `crossRouteErrorText`, `pullAdmissionText` render the rewrite's bare codes as og text | FIXED. They are exercised by the handler tests above. |
+| `crossJurisdictionSwaps` / `crossJurisdictionAuthorizations` | `EntityState` collections; state-root text-keyed collection commitments | `EntityState` fields, `encodeEntityState`, `entityRootOf` (`crossSections`) | FIXED. Commitments MATCH og `entityCollectionCommitment`. |
+| Prepared-route validation | `prepared-route.ts` `validatePreparedCrossJurisdictionRoute`, `committedCrossJSourceResponseWindowMs` | `validatePreparedCrossRoute`, `crossLegClockError` | FIXED |
+| Local binding | `validateCrossJurisdictionLocalBinding` (stack ref, local stack, signer hint is a validator) | `crossLocalBindingError` | FIXED. The rewrite `JurisdictionConfig` gained an optional `name`, used only in og's message. |
+| Gossip route canonicalization | `canonicalizeCrossJurisdictionRouteForKnownEntities` | none | FIXED. og returns the route unchanged (labels are route identity), so there is nothing to port. |
+| Certified Entity → Entity command lane | `runtimeOutput` EntityTx; `publication.ts` `materializeCommittedEntityOutputs` (only the emitter publishes, stamped with its signer; wakes pass on every replica); `authorization.ts` `assertRuntimeOutputAuthorization`; `applyRuntimeOutput` | `EntityTx` `runtimeOutput`, `crossDraft` + `publishCommitted` in `installFrame`, `runtimeOutputAuthError`, foldTx `runtimeOutput` → `foldNested(..., "runtime")` | FIXED. 400 random envelopes MATCH og authorization, and the lane test MATCHes og publication. `admitTxs` accepts a single `runtimeOutput` from its source Entity. |
+| Default-proposer materialization | `appendDefaultProposerCrossJMaterializations` (seed materialization at admission) | `crossMaterializations` in `admitTxs`; `EntityContext` / `RuntimeCtx.runtimeSeed` | FIXED for setup. The lane test MATCHes og. The clear branch (`materializeCrossJurisdictionClear`) is REMAINING, because the rewrite has no `clear_requested` route. |
+| Commit-phase selection | `selectCrossJCommitPhaseTxs` | `selectCommitPhaseTxs` in `startProposal` | FIXED |
+| `cross_open` hole | — | removed from `HoleNames`, `EntityTxNames`, `EntityRouteTx` and `routeEntity` | FIXED |
+| USD cap for non-reference tokens | `internalUsdPrice` reads `orderbookExt` `lastAcceptedUsdAskPriceTicks` | reference stables are priced at par; other tokens are unpriced (`null`) | REMAINING. The rewrite `EntityState` has no `orderbookExt` (orderbook owner). This matches og for an Entity without a book. |
+| The other cross-j Entity txs: `crossJurisdictionFillNotice`, `requestCrossJurisdictionClear`, `materializeCrossJurisdictionClear`, `crossPullClose`, `crossJurisdictionSalvage`, `crossJurisdictionForceSiblingDispute`, `orderbookSweepCrossJurisdiction`, `admit/removeCrossJurisdictionBookOrder`, `crossJurisdictionBookOrderRemoved` | `handlers/cross-j/*` | not ported; `runtimeOutputAuthError` refuses them as `RUNTIME_OUTPUT_SEMANTIC_VARIANT_FORBIDDEN` | REMAINING. They need the hub orderbook (`orderbookExt`, book admissions), the dispute / J-event registry stash and the scheduler. Those belong to the orderbook, disputes and J owners. |
+| Cross-j `disputeStart` / `resolveHtlcLock` runtimeOutput authority | `assertRuntimeCrossJRecoveryAuthority` | refused as a forbidden variant | REMAINING. It is only emitted by the salvage / sibling-dispute paths above. |
+| `flushDeferredHashLadderReveals` | `tx/j-events-htlc/index.ts:234` | not called | REMAINING. It drains `pending{Source,Target}RegistryReveal`, which only og's J-event `stashPendingRegistryReveal` writes. It needs the jBatch hash-ladder registration queue and `activeDispute`. Those belong to the J and disputes owners. No reachable rewrite state has a pending reveal, so og's flush returns 0 today. |
+| Peer frames carrying `cross_pull_lock` / `swap_offer` | og applies any committed Account tx; `selectCrossJOpeningAccountProposalTxs` gates the sibling cohort; atomic cross-j admission | `entityAcceptsPeerTx` still refuses them (`not_l0`) | REMAINING. The paired-leg opening needs og's runtime atomic admission and sibling-replica cohort gating. Those belong to the runtime and admission-timing owners. The hub queues its legs exactly like og (lane test). |
+| Account work after registration | og commits the registration, then the Runtime's account-work input proposes at H+1 | the registering frame's `proposeAccounts` proposes the queued legs in the same frame | REMAINING. This is admission timing (parallel owner). The committed Entity state and queued txs are equal. |
+| Same-frame local drain | `drainImmediateCrossJurisdictionOutputs` (coalescing, cycle check, budgets) | outputs leave in `outbox`; the caller routes them into the next `applyRuntime` | REMAINING. This is runtime frame scheduling (runtime owner). Each delivered command applies as og. |
