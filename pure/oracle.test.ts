@@ -543,7 +543,7 @@ describe("oracle", () => {
       const key = keys[index];
       if (key === undefined) throw new Error("key");
       const signed = signRaw(hexToBytes(digest), hexToBytes(key));
-      return unwrap(signature(bytesToHex(concat([wordOf(signed.r), wordOf(signed.s), Uint8Array.of(signed.recovery + 27)])).slice(2)));
+      return unwrap(signature(bytesToHex(concat([wordOf(signed.r), wordOf(signed.s), Uint8Array.of(signed.recovery)])).slice(2)));
     };
     const sign = (digest: string, who: string) => ({ ok: true as const, value: raw(signers.findIndex((s) => s.toLowerCase() === who.toLowerCase()), digest) });
     const open = { targetEntityId: peer, accountDomain: terms.domain, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig };
@@ -554,7 +554,7 @@ describe("oracle", () => {
     const frame = proposed.replica.frame;
     const frameHash = unwrap(hashEntityFrame(frame));
     // the proposer's own manifest signature is one of two needed: the frame stays proposed
-    expect(proposed.replica.signatures.get(proposer.toLowerCase())).toEqual([raw(0, frameHash)]);
+    expect(proposed.replica.signatures.get(proposer.toLowerCase())).toEqual(frame.hashesToSign.map((h) => raw(0, h.hash))); // og: the frame hash plus the Account frame and dispute proof it Hankos
     const precommit = (index: number) => ({ kind: "precommit" as const, height: frame.height, frameHash, signatures: new Map([[(signers[index] ?? "").toLowerCase(), frame.hashesToSign.map((h) => raw(index, h.hash))]]) });
     const bad = applyEntityInput(proposed.replica, { ...precommit(1), signatures: new Map([[(signers[1] ?? "").toLowerCase(), [raw(2, frameHash)]]]) }, {
       self, signerId: proposer, verify: () => true, verifyMember: () => false, sign,
