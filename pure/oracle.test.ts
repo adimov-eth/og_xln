@@ -46,13 +46,17 @@ import {
   signRaw,
   signature,
   wordOf,
+  tokenId,
   type AccountBody,
+  type Hash,
   type Delta,
   type EntityFrameHashInput,
   type FoldCtx,
 } from "./xln.ts";
 
 const word = (byte: string): string => `0x${byte.repeat(32)}`;
+/** og jBlockHash is a 0x-prefixed block hash; the rewrite's Hash brand has no 0x constructor, so this one fixture is branded directly. */
+const jBlock = (s: string): Hash => s as Hash;
 const ACCOUNT_FRAME_GOLDEN = "0x48209002630a2dae349c0ec270c3668afd11e7bad2970121e24d7af157fdc75b";
 const SETTLEMENT_GOLDEN = "0x31c1e688138ea34d358f85463110cac28bbb667cf756fd6d369aebff9c69330b";
 const SETTLEMENT_HASH_MOVED = "0x2bbd97062af15e91acbf9af9973adbad7b3494d67f8c955d8ab9a5d2e8267cd4";
@@ -64,6 +68,7 @@ const unwrap = <T, E>(result: { ok: true; value: T } | { ok: false; error: E }):
   if (!result.ok) throw new Error(JSON.stringify(result.error, (_, value: unknown) => (typeof value === "bigint" ? value.toString() : value)));
   return result.value;
 };
+const T0 = unwrap(tokenId("0")), T1 = unwrap(tokenId("1"));
 
 const accountFixture = () => ({
   height: 7,
@@ -136,7 +141,7 @@ const capacities = (money: Money): { left: bigint; right: bigint } => {
     leftHold: money.leftHold ?? 0n,
     rightHold: money.rightHold ?? 0n,
   };
-  const fold: Delta = { ...zeroDelta("1"), ...theirs, tokenId: "1" };
+  const fold: Delta = { ...zeroDelta(T1), ...theirs, tokenId: T1 };
   return {
     left: outCapacity(fold, true, theirs.leftHold + theirs.leftAllowance),
     right: outCapacity(fold, false, theirs.rightHold + theirs.rightAllowance),
@@ -183,7 +188,7 @@ describe("oracle", () => {
   });
 
   test("left is their isLeftEntity", () => {
-    const pairs = [
+    const pairs: readonly (readonly [string, string])[] = [
       [word("aa"), word("bb")],
       [word("BB"), word("aa")],
       ["0x0b", `${word("00").slice(0, -2)}0c`],
@@ -236,15 +241,15 @@ describe("oracle", () => {
 
   test("a left grant writes the right limit, including past the retired uint128 ceiling", () => {
     const grant = ((1n << 128n) - 1n) * 1000n + 1n;
-    const left = unwrap(setCreditLimit(zeroDelta("1"), 3n, true));
-    const right = unwrap(setCreditLimit(zeroDelta("1"), 4n, false));
-    const huge = unwrap(setCreditLimit(zeroDelta("1"), grant, true));
+    const left = unwrap(setCreditLimit(zeroDelta(T1), 3n, true));
+    const right = unwrap(setCreditLimit(zeroDelta(T1), 4n, false));
+    const huge = unwrap(setCreditLimit(zeroDelta(T1), grant, true));
     expect(left.rightCreditLimit).toBe(3n);
     expect(left.leftCreditLimit).toBe(0n);
     expect(right.leftCreditLimit).toBe(4n);
     expect(huge.rightCreditLimit).toBe(grant);
-    expect(setCreditLimit(zeroDelta("1"), -1n, true)).toEqual({ ok: false, error: { _tag: "negative_credit_limit" } });
-    expect(setCreditLimit(zeroDelta("1"), MAX_CREDIT_LIMIT + 1n, true)).toEqual({ ok: false, error: { _tag: "credit_limit_too_large" } });
+    expect(setCreditLimit(zeroDelta(T1), -1n, true)).toEqual({ ok: false, error: { _tag: "negative_credit_limit" } });
+    expect(setCreditLimit(zeroDelta(T1), MAX_CREDIT_LIMIT + 1n, true)).toEqual({ ok: false, error: { _tag: "credit_limit_too_large" } });
   });
 
   test("a payment moves offdelta by their sign and refuses a non-positive amount", () => {
@@ -257,16 +262,16 @@ describe("oracle", () => {
     }));
     const ctx = { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 0n };
     let body = genesisAccountBody(genesisAccount(unwrap(accountId(alice, bob))), terms);
-    body = unwrap(applyAccountBody(body, { type: "set_credit_limit", tokenId: "0", limit: 10n }, ctx)).state;
-    body = unwrap(applyAccountBody(body, { type: "set_credit_limit", tokenId: "0", limit: 10n }, { ...ctx, byLeft: false })).state;
-    const paid = unwrap(applyAccountBody(body, { type: "payment", tokenId: "0", amount: 4n }, ctx)).state;
-    expect(paid.account.deltas.get("0")?.offdelta).toBe(deriveTransferOffdeltaChange(true, 4n));
-    expect(paid.account.deltas.get("0")?.collateral).toBe(0n);
-    expect(paid.account.deltas.get("0")?.ondelta).toBe(0n);
-    const fromRight = unwrap(applyAccountBody(paid, { type: "payment", tokenId: "0", amount: 1n }, { ...ctx, byLeft: false })).state;
-    expect(fromRight.account.deltas.get("0")?.offdelta).toBe(-4n + deriveTransferOffdeltaChange(false, 1n));
-    expect(applyAccountBody(body, { type: "payment", tokenId: "0", amount: 0n }, ctx).ok).toBe(false);
-    expect(applyAccountBody(body, { type: "payment", tokenId: "0", amount: -1n }, ctx).ok).toBe(false);
+    body = unwrap(applyAccountBody(body, { type: "set_credit_limit", tokenId: T0, limit: 10n }, ctx)).state;
+    body = unwrap(applyAccountBody(body, { type: "set_credit_limit", tokenId: T0, limit: 10n }, { ...ctx, byLeft: false })).state;
+    const paid = unwrap(applyAccountBody(body, { type: "payment", tokenId: T0, amount: 4n }, ctx)).state;
+    expect(paid.account.deltas.get(T0)?.offdelta).toBe(deriveTransferOffdeltaChange(true, 4n));
+    expect(paid.account.deltas.get(T0)?.collateral).toBe(0n);
+    expect(paid.account.deltas.get(T0)?.ondelta).toBe(0n);
+    const fromRight = unwrap(applyAccountBody(paid, { type: "payment", tokenId: T0, amount: 1n }, { ...ctx, byLeft: false })).state;
+    expect(fromRight.account.deltas.get(T0)?.offdelta).toBe(-4n + deriveTransferOffdeltaChange(false, 1n));
+    expect(applyAccountBody(body, { type: "payment", tokenId: T0, amount: 0n }, ctx).ok).toBe(false);
+    expect(applyAccountBody(body, { type: "payment", tokenId: T0, amount: -1n }, ctx).ok).toBe(false);
   });
 
   test("an HTLC resolve moves offdelta by their sign and a timeout does not", () => {
@@ -274,33 +279,33 @@ describe("oracle", () => {
     const secret = word("5a");
     const hashlock = hashHtlcSecret(secret);
     if (hashlock === null) throw new Error("secret");
-    const lock = { type: "htlc_lock" as const, lockId: hashlock, hashlock, timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "0" as const };
+    const lock = { type: "htlc_lock" as const, lockId: hashlock, hashlock, timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: T0 };
     const locked = unwrap(applyAccountBody(body, lock, ctx)).state;
-    expect(getDelta(locked.account, "0").offdelta).toBe(0n);
-    expect(outCapacity(getDelta(locked.account, "0"), true, holds(locked, "0", true))).toBe(15n);
+    expect(getDelta(locked.account, T0).offdelta).toBe(0n);
+    expect(outCapacity(getDelta(locked.account, T0), true, holds(locked, T0, true))).toBe(15n);
     const resolved = unwrap(applyAccountBody(locked, { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret }, ctx)).state;
-    expect(getDelta(resolved.account, "0").offdelta).toBe(deriveTransferOffdeltaChange(true, 5n));
-    expect(getDelta(resolved.account, "0").collateral).toBe(0n);
-    expect(getDelta(resolved.account, "0").ondelta).toBe(0n);
+    expect(getDelta(resolved.account, T0).offdelta).toBe(deriveTransferOffdeltaChange(true, 5n));
+    expect(getDelta(resolved.account, T0).collateral).toBe(0n);
+    expect(getDelta(resolved.account, T0).ondelta).toBe(0n);
     const proof = unwrap(accountProofBody(unwrap(committed(resolved)).view));
-    expect(proof.offdeltas).toEqual([getDelta(resolved.account, "0").offdelta, getDelta(resolved.account, "1").offdelta]);
+    expect(proof.offdeltas).toEqual([getDelta(resolved.account, T0).offdelta, getDelta(resolved.account, T1).offdelta]);
     expect(proof.tokenIds).toEqual([0n, 1n]);
     expect(resolved.locks.has(hashlock)).toBe(false);
     expect(applyAccountBody(locked, { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret: word("5b") }, ctx).ok).toBe(false);
     const expired = unwrap(applyAccountBody(locked, { type: "htlc_resolve", lockId: hashlock, outcome: "error", reason: "timeout" }, { ...ctx, jHeight: 6n })).state;
-    expect(getDelta(expired.account, "0").offdelta).toBe(0n);
+    expect(getDelta(expired.account, T0).offdelta).toBe(0n);
     expect(expired.locks.has(hashlock)).toBe(false);
   });
 
   test("a filled swap moves give and want by their two signs", () => {
     const { body, ctx } = open();
     const offered = unwrap(applyAccountBody(body, {
-      type: "swap_offer", offerId: "S", giveTokenId: "0", giveTokenDecimals: 0, giveAmount: 6n, wantTokenId: "1", wantTokenDecimals: 0, wantAmount: 3n, maxFee: 0n, minNetReceive: 3n,
+      type: "swap_offer", offerId: "S", giveTokenId: T0, giveTokenDecimals: 0, giveAmount: 6n, wantTokenId: T1, wantTokenDecimals: 0, wantAmount: 3n, maxFee: 0n, minNetReceive: 3n,
     }, ctx)).state;
     expect(applyAccountBody(offered, { type: "swap_resolve", offerId: "S", fillRatio: MAX_FILL, cancelRemainder: true, executionGiveAmount: 6n, executionWantAmount: 3n }, ctx).ok).toBe(false);
     const filled = unwrap(applyAccountBody(offered, { type: "swap_resolve", offerId: "S", fillRatio: MAX_FILL, cancelRemainder: true, executionGiveAmount: 6n, executionWantAmount: 3n }, { ...ctx, byLeft: false })).state;
-    expect(getDelta(filled.account, "0").offdelta).toBe(deriveTransferOffdeltaChange(true, 6n));
-    expect(getDelta(filled.account, "1").offdelta).toBe(deriveTransferOffdeltaChange(false, 3n));
+    expect(getDelta(filled.account, T0).offdelta).toBe(deriveTransferOffdeltaChange(true, 6n));
+    expect(getDelta(filled.account, T1).offdelta).toBe(deriveTransferOffdeltaChange(false, 3n));
     expect(filled.offers.has("S")).toBe(false);
   });
 
@@ -310,7 +315,7 @@ describe("oracle", () => {
     const before = unwrap(committed(body)).root;
     const tx = { type: "settle_transition" as const, kind: "upsert" as const, revision: 1, ops: [{ type: "r2r" as const, tokenId: 0, amount: 2n }], executorIsLeft: true };
     const applied = unwrap(applyAccountBody(body, tx, ctx)).state;
-    expect(getDelta(applied.account, "0").offdelta).toBe(getDelta(body.account, "0").offdelta);
+    expect(getDelta(applied.account, T0).offdelta).toBe(getDelta(body.account, T0).offdelta);
     expect(applied.settlement?.status).toBe("awaiting_counterparty");
     const root = unwrap(committed(applied)).root;
     expect(root).not.toBe(before);
@@ -336,13 +341,13 @@ describe("oracle", () => {
     const verify = (): boolean => true;
     const now = 1_000n;
     const clock = { timestamp: now, jHeight: 0n };
-    const opened = unwrap(admit(unwrap(genesisReplica(id, terms)), [{ type: "set_credit_limit", tokenId: "0", limit: 4n }]));
+    const opened = unwrap(admit(unwrap(genesisReplica(id, terms)), [{ type: "set_credit_limit", tokenId: T0, limit: 4n }]));
     const preview = unwrap(previewAccountProposal(opened, bob, clock));
     if (preview.dispute._tag !== "sign") throw new Error(preview.dispute._tag);
     const proposed = unwrap(applyAccountInput(opened, { kind: "propose", ...clock, frameHanko: "0xaabb", disputeHanko: { ...preview.dispute.draft, hanko: "0xccdd" } }, { verify, self: bob, now }));
     if (proposed.replica._tag !== "proposed") throw new Error(proposed.replica._tag);
     const own = proposed.replica.candidate.frame.stateHash;
-    const leftTx = { type: "set_credit_limit" as const, tokenId: "0" as const, limit: 9n };
+    const leftTx = { type: "set_credit_limit" as const, tokenId: T0, limit: 9n };
     const leftBody = unwrap(applyAccountBody(unwrap(genesisReplica(id, terms)).state, leftTx, { byLeft: true, nowMs: now, jHeight: 0n, accountHeight: 1n })).state;
     const leftView = unwrap(committed(leftBody));
     const proof = unwrap(localProof(leftView.view));
@@ -365,12 +370,12 @@ describe("oracle", () => {
     if (taken.replica._tag === "received") {
       expect(taken.replica.candidate.frame.stateHash).toBe(stateHash);
       expect(taken.replica.candidate.frame.stateHash).not.toBe(own);
-      expect(getDelta(taken.replica.candidate.draft.state.account, "0").rightCreditLimit).toBe(9n);
+      expect(getDelta(taken.replica.candidate.draft.state.account, T0).rightCreditLimit).toBe(9n);
     }
   });
 
   test("a negative settlement diff is a hold against deriveDelta", () => {
-    const row = { ...zeroDelta("1"), collateral: 100n, leftCreditLimit: 40n, rightCreditLimit: 10n };
+    const row = { ...zeroDelta(T1), collateral: 100n, leftCreditLimit: 40n, rightCreditLimit: 10n };
     const hold = unwrap(chargeSettlement(row, { leftDiff: -15n, rightDiff: -4n, collateralDiff: 0n }, { left: 0n, right: 0n }));
     expect(hold).toEqual({ left: 15n, right: 4n });
     const theirs = { tokenId: 1, collateral: 100n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 40n, rightCreditLimit: 10n, leftAllowance: 0n, rightAllowance: 0n, leftHold: hold.left, rightHold: hold.right };
@@ -464,16 +469,16 @@ describe("oracle", () => {
     const frame = proposed.replica.frame;
     const [tx] = frame.txs;
     if (tx === undefined || tx.type !== "openAccount") throw new Error("open");
-    expect(frame.prevFrameHash).toBe("genesis");
+    expect<string>(frame.prevFrameHash).toBe("genesis");
     const fields = (stateRoot: string, events: typeof frame.events) => ({
       prevFrameHash: frame.prevFrameHash, height: Number(frame.height), timestamp: Number(frame.timestamp),
       txs: [{ type: tx.type, data: open }], events, entityId: frame.entityContext.entityId,
       stateRoot, authorityRoot: frame.authorityRoot, entityContext: frame.entityContext,
     });
     const hashed = unwrap(hashEntityFrame(frame));
-    expect(hashed).toBe(unwrap(entityFrameHash(fields(frame.stateRoot, frame.events))));
+    expect<string>(hashed).toBe(unwrap(entityFrameHash(fields(frame.stateRoot, frame.events))));
     const moved = { ...frame, stateRoot: word("ab") };
-    expect(unwrap(hashEntityFrame(moved))).toBe(unwrap(entityFrameHash(fields(word("ab"), frame.events))));
+    expect<string>(unwrap(hashEntityFrame(moved))).toBe(unwrap(entityFrameHash(fields(word("ab"), frame.events))));
     expect(unwrap(hashEntityFrame(moved))).not.toBe(hashed);
     expect(unwrap(entityFrameHash(entityInput("0x1234")))).toBe(ENTITY_FRAME_GOLDEN);
   });
@@ -491,7 +496,7 @@ describe("oracle", () => {
       left, right, tokens: [{ tokenId: 1n, leftReserve: 0n, rightReserve: 0n, collateral, ondelta }], nonce,
     });
     const claim = (jHeight: bigint, block: string, collateral: bigint, ondelta: bigint, nonce: bigint) => ({
-      type: "j_event_claim" as const, jHeight, jBlockHash: block, events: [settled(collateral, ondelta, nonce)], observedAt: 1n,
+      type: "j_event_claim" as const, jHeight, jBlockHash: jBlock(block), events: [settled(collateral, ondelta, nonce)], observedAt: 1n,
     });
     const clock = { timestamp: 1_700_000_000_123n, jHeight: 42n };
     const openReplica = unwrap(admit(unwrap(genesisReplica(id, terms)), [claim(7n, word("33"), 125n, 7n, 3n)]));
@@ -538,7 +543,7 @@ describe("oracle", () => {
     };
     const entity = unwrap(createEntity({ id: self, jurisdiction: terms.domain, board }));
     const proposer = allowedProposer(entity.state.quorum);
-    expect(proposer.toLowerCase()).toBe(signers[0]?.toLowerCase());
+    expect<string | undefined>(proposer.toLowerCase()).toBe(signers[0]?.toLowerCase());
     const raw = (index: number, digest: string) => {
       const key = keys[index];
       if (key === undefined) throw new Error("key");
@@ -578,7 +583,7 @@ const open = (): { body: AccountBody; ctx: FoldCtx } => {
   }));
   const ctx: FoldCtx = { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n };
   let body = genesisAccountBody(genesisAccount(unwrap(accountId(alice, bob))), terms);
-  for (const tokenId of ["0", "1"] as const) {
+  for (const tokenId of [T0, T1]) {
     body = unwrap(applyAccountBody(body, { type: "set_credit_limit", tokenId, limit: 20n }, ctx)).state;
     body = unwrap(applyAccountBody(body, { type: "set_credit_limit", tokenId, limit: 20n }, { ...ctx, byLeft: false })).state;
   }
