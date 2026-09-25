@@ -501,3 +501,37 @@ describe("entity-cross-j: Account outputs above the Account (og committed-input.
     expect(stableJson([...a.state.requested, ...a.state.requestFees])).toBe(stableJson([...b.state.requested, ...b.state.requestFees]));
   });
 });
+
+import { getEntityConfigBoardHash } from "../../core/hanko/signing.ts";
+import { entityId } from "../xln.ts";
+
+describe("entity-cross-j: inbound HTLC on a 2-of-2 hub (og assertHtlcPreparedInfraContext validator replay)", () => {
+  test("MATCH: the hub's second validator re-derives the proposer's inbound entries from the frame's peer assertions; the routed payment settles", async () => {
+    const board = { threshold: 2n, validators: [bobAddr, carolAddr].map((a) => a.toLowerCase()), shares: Object.fromEntries([bobAddr, carolAddr].map((a) => [a.toLowerCase(), 1n])) };
+    const HUB = unwrap(entityId(await getEntityConfigBoardHash({} as never, board as never)));
+    const hubKey = (() => { const priv = new Uint8Array(32).fill(29); return { priv: "0x" + Buffer.from(priv).toString("hex"), pub: "0x" + Buffer.from(x25519.getPublicKey(priv)).toString("hex") }; })();
+    const hub = (signer: Address) => unwrap(createEntity({ id: HUB, jurisdiction: JUR, threshold: 2n, members: new Map([[bobAddr, { shares: 1n }], [carolAddr, { shares: 1n }]]), signerId: signer, committed: { entityEncryptionPublicKey: hubKey.pub } }));
+    const hubInput = (txs: EntityTx[], timestamp: bigint): RoutedEntityInput => ({ entityId: HUB, signerId: bobAddr, input: { kind: "txs", timestamp, txs } });
+    let rt = spawn(spawn(spawn(spawn(createRuntime(), entityOf(ALICE)), hub(bobAddr)), hub(carolAddr)), entityOf(CAROL));
+    rt = quiet(rt, [hubInput([open(ALICE, 1000n), open(CAROL)], NOW)]);
+    rt = quiet(rt, [inputOf(CAROL, [{ type: "extendCredit", data: { counterpartyEntityId: HUB, tokenId: unwrap(tokenId("1")), amount: 1000n } }], NOW + 100n)]);
+    const secret = "0x" + "31".repeat(32);
+    const tx = withDeterministicHtlcTestSecret({ type: "htlcPayment", data: { targetEntityId: CAROL, tokenId: 1, amount: 100n, maxSenderDebit: 200n, route: [ALICE, HUB, CAROL], deliveryMode: "instant" } } as never, secret) as unknown as EntityTx;
+    const txHash = ogAdmission.hashRawHtlcPaymentTx(tx as never);
+    const hubProfile = { ...(profile(BOB, [{ counterpartyId: ALICE, domain: JUR, tokenCapacities: caps(1000n, 0n) }, { counterpartyId: CAROL, domain: JUR, tokenCapacities: caps(0n, 1000n) }], { routingFeePPM: 5000, baseFee: 1n }) as object), entityId: HUB, entityEncryptionPublicKey: hubKey.pub } as unknown as Binary;
+    const profiles: Binary[] = [profile(ALICE, []), hubProfile, profile(CAROL, [])];
+    const keyFor = (id: EntityId) => (id === HUB ? hubKey.priv : ENTITY_KEYS.get(id)!.priv);
+    const ctx = { ...verifiers, htlcInfra: (id: EntityId) => ({ profiles, online: () => true, encryptionPrivateKey: keyFor(id), ...(id === ALICE ? { secretFor: (h: string) => (h === txHash ? secret : undefined) } : {}) }) };
+    const done = quiet(rt, [inputOf(ALICE, [tx], NOW + 1000n)], ctx);
+    const hubs = [...done.entities.values()].filter((r) => r.state.id === HUB);
+    expect(hubs.length).toBe(2);
+    for (const r of hubs) expect([...(r.state.paybook?.entries ?? new Map()).keys()]).toEqual([]);
+    const fees = hubs.map((r) => r.state.paybook?.feesEarned);
+    expect(fees[0]).toBe(fees[1]);
+    expect((fees[0] ?? 0n) > 0n).toBe(true);
+    expect(hubs[0]!.head.height).toBe(hubs[1]!.head.height);
+    // a hub replica without the Entity key cannot materialize or replay inbound entries: og requireEntityEncryptionPrivateKey halts it
+    const blind = { ...ctx, htlcInfra: (id: EntityId) => (id === HUB ? { profiles, online: () => true } : ctx.htlcInfra(id)) };
+    expect(() => quiet(rt, [inputOf(ALICE, [tx], NOW + 1000n)], blind)).toThrow("HTLC_ENTITY_ENCRYPTION_PRIVATE_KEY_INVALID");
+  });
+});
