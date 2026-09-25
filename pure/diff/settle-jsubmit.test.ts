@@ -169,7 +169,7 @@ import { handleSettleApprove, handleSettleExecute, handleSettlePropose, handleSe
 import { entityCollectionCommitment as ogCollectionCommitment } from "../../core/entity/state/persistent-collection-map.ts";
 import { batchAddSettlement, initJBatch as ogInitJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
 import {
-  applyEntityInput, createEntity, foldTxs, isLeft, mapSet, ownWire, wireOf, workspaceHashOf, zeroDelta, tokenId, canAutoApproveWorkspace, entityCollectionCommitment,
+  applyEntityInput, createEntity, foldTxs, isLeft, mapSet, ownWire, wireOf, workspaceHashOf, zeroDelta, tokenId, canAutoApproveWorkspace, entityCollectionCommitment, addSettlementRow,
   type AccountReplica, type EntityTx, type OpenEntity, type SettlementOp, type SettlementWorkspace, type WireAccountTx,
 } from "../xln.ts";
 import { CAROL, NOW, TERMS, aliceAddr, verifiers } from "../xln_run.ts";
@@ -303,5 +303,92 @@ describe("settle-jsubmit: settle_propose / update / approve / reject (og payment
       if (ogRes) yes++;
     }
     expect(yes).toBeGreaterThan(20);
+  });
+});
+
+describe("settle-jsubmit: settle_execute gates (og payments/settle.ts handleSettleExecute)", () => {
+  test("MATCH: 300 random settle_execute txs -- same skip status, same reject / fatal refusal code as og before the execution is prepared", async () => {
+    const counts = { skipped: 0, refused: 0 };
+    const aliceLeft = isLeft(ALICE, ACCOUNT_ID);
+    for (let n = 0; n < 300; n++) {
+      const kind = pick<WsKind>(["none", "unsigned", "signed", "signed", "submitted", "corrupt"]);
+      const w = workspaceOf(kind, [{ type: "r2c", tokenId: 1, amount: 3n }], rng() < 0.5, rng() < 0.5, undefined), pending = rng() < 0.2, peer = rng() < 0.1 ? CAROL : BOB;
+      // og would go on to prepare and verify the execution (real Hankos): out of this gate test's scope
+      if (w !== undefined && kind === "signed" && !pending && peer === BOB && w.executorIsLeft === aliceLeft && !aliceLeft) continue;
+      const data: any = { counterpartyEntityId: peer, ...(rng() < 0.3 ? { disableC2RShortcut: true } : {}) };
+      const child = SETTLE_BASE.accountReplicas.get(BOB)!;
+      const pendingTx: WireAccountTx[] = pending ? [{ type: "settle_transition", kind: "clear", revision: 1, workspaceHash: W("01") } as any] : [];
+      const replicas = mapSet(SETTLE_BASE.accountReplicas, BOB, { ...child, mempool: pendingTx, state: { ...child.state, settlement: w } } as AccountReplica);
+      const og: any = { entityId: ALICE, accounts: new Map([[BOB, ogAccountOf(w, pending)]]) };
+      let ogOut: any, ogErr: string | undefined;
+      try { ogOut = await handleSettleExecute(og, { type: "settle_execute", data: structuredClone(data) } as any, {} as any, true); } catch (e) { ogErr = (e as Error).message; }
+      const rw = foldTxs(SETTLE_BASE.state, replicas, [{ type: "settle_execute", data } as EntityTx], { verify: hankoVerify, timestamp: NOW + 1n });
+      if (ogErr !== undefined) {
+        expect(rw.ok).toBe(false);
+        if (!rw.ok) expect(codeOf((rw.error as any).reason ?? rw.error._tag)).toBe(codeOf(ogErr));
+        counts.refused++;
+        continue;
+      }
+      expect(ogOut.accountTxs).toEqual([]);
+      if (!rw.ok) {
+        // og's frame then asserts the queued Account's workspace canonical (refreshStaleUncommittedSettlementHankos), as foldTxs does
+        expect(kind === "corrupt" && pending).toBe(true);
+        expect((rw.error as any).reason).toStartWith("SETTLEMENT_WORKSPACE_HASH_CORRUPTION:");
+        continue;
+      }
+      expect(unwrap(rw as any).draft.events).toEqual(readEntityFrameEvents(og) as never);
+      counts.skipped++;
+    }
+    expect(counts.skipped).toBeGreaterThan(50);
+    expect(counts.refused).toBeGreaterThan(50);
+  });
+});
+
+describe("settle-jsubmit: settle_execute jBatch row (og jurisdiction/machine/batch batchAddSettlement)", () => {
+  test("MATCH: 300 random settlement-row sequences -- same full-settlement / pure-C2R shortcut rows, exact-retry no-op, conflict and limit refusals as og", () => {
+    const ids = [W("11"), W("22"), W("33")];
+    const diffOf = (): any => {
+      const amount = pick([1n, 7n]);
+      switch (ri(4)) {
+        case 0: return { tokenId: pick([1, 2]), leftDiff: amount, rightDiff: 0n, collateralDiff: -amount, ondeltaDiff: -amount };
+        case 1: return { tokenId: pick([1, 2]), leftDiff: 0n, rightDiff: amount, collateralDiff: -amount, ondeltaDiff: 0n };
+        case 2: return { tokenId: pick([1, 2]), leftDiff: -amount, rightDiff: 0n, collateralDiff: amount, ondeltaDiff: amount };
+        default: return { tokenId: pick([1, 2]), leftDiff: pick([0n, 1n]), rightDiff: pick([0n, -1n]), collateralDiff: pick([0n, -1n]), ondeltaDiff: 0n };
+      }
+    };
+    const counts = { settlements: 0, shortcuts: 0, conflicts: 0 };
+    for (let n = 0; n < 300; n++) {
+      const og: any = ogInitJBatch();
+      let rw: any = structuredClone(og);
+      const prior: any[] = [];
+      for (let k = 0; k < 1 + ri(4); k++) {
+        const retry = prior.length > 0 && rng() < 0.3 ? structuredClone(pick(prior)) : undefined;
+        const [a, b] = rng() < 0.05 ? [ids[1]!, ids[0]!] : pick([[ids[0]!, ids[1]!], [ids[0]!, ids[2]!], [ids[1]!, ids[2]!]]);
+        const row = retry ?? {
+          leftEntity: a, rightEntity: b, diffs: Array.from({ length: rng() < 0.8 ? 1 : ri(3) }, diffOf), forgiveDebtsInTokenIds: rng() < 0.1 ? [1] : [],
+          sig: pick(["0xaa", "0xaa", "0xbb", "", "0x"]), nonce: pick([1, 2]), initiator: pick([a, b, undefined]), disable: rng() < 0.2,
+        };
+        prior.push(row);
+        let ogErr: string | undefined;
+        try { batchAddSettlement(og, row.leftEntity, row.rightEntity, structuredClone(row.diffs), [...row.forgiveDebtsInTokenIds], row.sig, row.nonce, row.initiator, row.disable); } catch (e) { ogErr = (e as Error).message; }
+        const r = addSettlementRow(rw, { leftEntity: row.leftEntity, rightEntity: row.rightEntity, diffs: row.diffs, forgiveDebtsInTokenIds: row.forgiveDebtsInTokenIds, sig: row.sig, nonce: row.nonce }, row.initiator ?? "", row.disable);
+        if (ogErr !== undefined) {
+          expect(r.ok).toBe(false);
+          if (!r.ok) expect((r.error as any).reason).toBe(ogErr);
+          if (ogErr.startsWith("J_BATCH_SETTLEMENT_CONFLICT")) counts.conflicts++;
+          break;
+        }
+        expect(r.ok).toBe(true);
+        rw = unwrap(r as any);
+      }
+      expect(rw.status).toBe(og.status);
+      expect(rw.batch.settlements).toEqual(og.batch.settlements);
+      expect(rw.batch.collateralToReserve).toEqual(og.batch.collateralToReserve);
+      counts.settlements += og.batch.settlements.length;
+      counts.shortcuts += og.batch.collateralToReserve.length;
+    }
+    expect(counts.settlements).toBeGreaterThan(50);
+    expect(counts.shortcuts).toBeGreaterThan(20);
+    expect(counts.conflicts).toBeGreaterThan(10);
   });
 });

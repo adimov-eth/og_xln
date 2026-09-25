@@ -6185,7 +6185,7 @@ const pureC2R = (diffs: readonly OgSettlementDiff[], forgive: readonly number[])
   return d.leftDiff === 0n && d.rightDiff === amount && d.ondeltaDiff === 0n ? { withdrawer: "right", tokenId: d.tokenId, amount } : undefined;
 };
 /** og batchAddSettlement on the committed (og-shaped) jBatchState: exact retries are ignored, a conflict throws, a pure C2R the initiator withdraws is compressed into collateralToReserve. */
-const addSettlementRow = (jb: CommittedJBatch & { readonly status?: string }, row: OgSettlementRow, initiator: string, disableShortcut: boolean): Result<CommittedJBatch, EntityError> => {
+export const addSettlementRow = (jb: CommittedJBatch & { readonly status?: string }, row: OgSettlementRow, initiator: string, disableShortcut: boolean): Result<CommittedJBatch, EntityError> => {
   const L = J_BATCH_LIMITS, n = (s: string): string => s.trim().toLowerCase(), tag = `${row.leftEntity.slice(-4)}:${row.rightEntity.slice(-4)}`, b = jb.batch;
   if (row.diffs.length > L.maxSettlementDiffs) return invariant(`J_BATCH_LIMIT_EXCEEDED: settlement.diffs ${row.diffs.length}/${L.maxSettlementDiffs}`);
   if (row.forgiveDebtsInTokenIds.length > L.maxSettlementForgivenessIds) return invariant(`J_BATCH_LIMIT_EXCEEDED: settlement.forgiveDebtsInTokenIds ${row.forgiveDebtsInTokenIds.length}/${L.maxSettlementForgivenessIds}`);
