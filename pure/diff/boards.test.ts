@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyBoardRegistryEvent, boardProof, emptyBoardRegistry, EMPTY_CERTIFIED_BOARD_ROOT, hashBoardNode, lookupBoardRecord, reachableBoardNodes, verifyBoardProof, advanceBoardFinality, boardStackKey,
-  applyBoardJEvent, applyEntityInput, assertBoardAuthority, applyEntityProviderActionJEvent, foldTxs, hashEntityFrame, buildCommand, createEntity, entityId, entityRootOf, quorumBoardHash, quorumHanko,
+  applyBoardJEvent, applyEntityInput, assertBoardAuthority, boardProposalHash, verifyAccountHanko, applyEntityProviderActionJEvent, foldTxs, hashEntityFrame, buildCommand, createEntity, entityId, entityRootOf, quorumBoardHash, quorumHanko,
   type BoardNodes, type CertifiedBoardNode, type CertifiedBoardRegistryState, type EntityState, type EntityTx, type Hash, type JEvent,
 } from "../xln.ts";
 import { aliceAddr, bobAddr, carolAddr, crypto, unwrap, verifiers } from "../xln_run.ts";
 import { assertEntityConfigBoardAuthority, buildQuorumHanko } from "../../core/hanko/signing.ts";
+import { handleEntityProviderActivateBoard, handleEntityProviderProposeControlBoard } from "../../core/entity/tx/handlers/control-board-proposal.ts";
 import { handleEntityProviderCancelAction, handleEntityProviderReleaseControlShares, handleEntityProviderTransfer } from "../../core/entity/tx/handlers/entity-provider-action.ts";
 import { applyEntityProviderActionCancelled, applyEntityProviderActionExecuted } from "../../core/entity/tx/j-events-entity-provider-action.ts";
 import { applyCertifiedBoardJEvent } from "../../core/entity/tx/j-events-board.ts";
@@ -357,5 +358,49 @@ describe("EntityProvider actions (og entity/tx/handlers/entity-provider-action.t
     const frameHash = unwrap(hashEntityFrame(p.frame));
     expect(p.frame.hashesToSign).toEqual(buildEntityHashesToSign(id, 1, frameHash, [{ hash: action.actionHash, type: "entityProviderAction", context: `entityProviderAction:${id.slice(-4)}:entityTransferTokens:nonce:1` }]));
     expect(p.frame.hashesToSign.length).toBe(2);
+  });
+});
+
+describe("CONTROL board proposal and activation (og entity/tx/handlers/control-board-proposal.ts)", () => {
+  const EP_J = { ...JCONF, name: "j" };
+  const og = async (f: () => any): Promise<{ ok: true; value: any } | { ok: false; code: string }> => { try { return { ok: true, value: await f() }; } catch (e) { return { ok: false, code: (e as Error).message }; } };
+  const realVerify = (d: string, hanko: string, entity: string, authority?: { readonly registeredBoardHash?: string | undefined }): boolean => verifyAccountHanko(hanko, d, entity, authority?.registeredBoardHash).ok;
+  test("MATCH: random proposals (targets, board hashes, nonces, supporter consents) and activations give og's verdicts, proposal hash, J outputs and messages", async () => {
+    const S = word(80), T = word(81), U = word(82), X = word(83);
+    const one = new Map([[bobAddr, { shares: 1n }]]), three = new Map([aliceAddr, bobAddr, carolAddr].map((a) => [a, { shares: 1n }] as const));
+    const uAuthority = { _tag: "teaching" as const, threshold: 2n, members: three };
+    const base = unwrap(createEntity({ id: unwrap(entityId(S)), jurisdiction: DOMAIN, threshold: 1n, members: one, jurisdictionConfig: EP_J }));
+    const uBase = unwrap(createEntity({ id: unwrap(entityId(U)), jurisdiction: DOMAIN, threshold: 2n, members: three, jurisdictionConfig: JCONF }));
+    const events = [foundation, registered(S, quorumBoardHash({ _tag: "teaching", threshold: 1n, members: one }), 3, 0), registered(T, word(777), 3, 1), registered(U, quorumBoardHash(uAuthority), 3, 2)];
+    const { state, ogRegistry, ogNodes } = observe(base.state, events);
+    const uState = observe(uBase.state, events).state;
+    const env: any = { state: { jReplicas: new Map([["j", { name: "j", chainId: JUR.chainId, depositoryAddress: JUR.depositoryAddress, entityProviderAddress: JUR.entityProviderAddress, contracts: { depository: JUR.depositoryAddress, entityProvider: JUR.entityProviderAddress } }]]) }, infrastructure: { certifiedBoardNodes: ogNodes } };
+    const ogState = (): any => ({ entityId: S, height: 0, timestamp: 77, config: ogConfigOf(state, true), certifiedBoardState: ogRegistry, accounts: PersistentEntityAccountMap.fromEntries([], S, computeEntityAccountValueHash) });
+    const consent = (digest: string, signers: readonly string[]): string => unwrap(quorumHanko(uState, digest, new Map(signers.map((a) => [a, unwrap(crypto.sign(digest as Hash, a))] as const))));
+    const seen = new Set<string>();
+    for (let i = 0; i < 60; i += 1) {
+      const activate = rng() < 0.2;
+      const target = pick([T, T, T, X, U, "0x12", T.toUpperCase().replace("0X", "0x")]);
+      let tx: EntityTx;
+      if (activate) tx = { type: "entityProviderActivateBoard", data: { targetEntityId: target } };
+      else {
+        const nonce = pick([1n, 2n, 0n, -1n]), newBoardHash = pick([word(4242), "0x1234", word(99).toUpperCase().replace("0X", "0x")]);
+        const probe = target.length !== 66 || newBoardHash.length !== 66 ? word(1) : boardProposalHash({ chainId: BigInt(JUR.chainId), entityProviderAddress: JUR.entityProviderAddress, boardEpoch: 0n, entityId: target.toLowerCase(), newBoardHash: newBoardHash.toLowerCase(), authority: 1, actionNonce: nonce > 0n ? nonce : 1n });
+        const supporterVotes = pick([[], [{ entityId: U, hankoSignature: consent(probe, [aliceAddr, carolAddr]) }], [{ entityId: U, hankoSignature: consent(probe, [bobAddr, carolAddr]).slice(0, -2) + "00" }], [{ entityId: U, hankoSignature: consent(word(1), [aliceAddr, bobAddr]) }],
+          [{ entityId: S, hankoSignature: "0x" }], [{ entityId: X, hankoSignature: "0x" }], [{ entityId: U, hankoSignature: consent(probe, [aliceAddr, carolAddr]) }, { entityId: U, hankoSignature: "0x" }]]);
+        tx = { type: "entityProviderProposeControlBoard", data: { targetEntityId: target, newBoardHash, actionNonce: nonce, ...(rng() < 0.2 && supporterVotes.length === 0 ? {} : { supporterVotes }) } };
+      }
+      const ogS = ogState();
+      const ogR = await og(() => (activate ? handleEntityProviderActivateBoard(ogS, tx as any, env, true) : handleEntityProviderProposeControlBoard(ogS, tx as any, env, true)));
+      const f = foldTxs(state, new Map(), [tx], { verify: realVerify, timestamp: 77n });
+      expect(f.ok ? "ok" : reasonOf(f)).toBe(ogR.ok ? "ok" : ogR.code);
+      seen.add(`${tx.type}:${ogR.ok ? "ok" : ogR.code.split(":")[0]}`);
+      if (!f.ok || !ogR.ok) continue;
+      expect(f.value.draft.jOutputs).toEqual(ogR.value.jOutputs);
+      expect(f.value.draft.hashes).toEqual(ogR.value.hashesToSign);
+      expect((f.value.draft.events ?? []).map((e) => e.message)).toEqual(readEntityFrameEventMessages(ogS));
+      seen.add(`consents:${(ogR.value.jOutputs[0].jTxs[0].data.supporterVotes ?? []).length}`);
+    }
+    for (const v of ["entityProviderProposeControlBoard:ok", "entityProviderActivateBoard:ok", "entityProviderProposeControlBoard:CONTROL_BOARD_PROPOSAL_SUPPORTER_HANKO_INVALID", "entityProviderProposeControlBoard:CONTROL_BOARD_PROPOSAL_TARGET_AUTHORITY_MISSING", "consents:2"]) expect(seen.has(v)).toBe(true);
   });
 });

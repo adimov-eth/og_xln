@@ -4264,6 +4264,9 @@ export type EntityTx =
   | { readonly type: "entityProviderTransfer"; readonly data: { readonly to: string; readonly tokenId: bigint; readonly amount: bigint } }
   | { readonly type: "entityProviderReleaseControlShares"; readonly data: { readonly recipientAddress: string; readonly controlAmount: bigint; readonly dividendAmount: bigint; readonly purpose: string } }
   | { readonly type: "entityProviderCancelAction"; readonly data: { readonly actionHash: string } }
+  /** og entityProviderProposeControlBoard / entityProviderActivateBoard (entity/tx/handlers/control-board-proposal.ts). */
+  | { readonly type: "entityProviderProposeControlBoard"; readonly data: { readonly targetEntityId: string; readonly newBoardHash: string; readonly actionNonce: bigint; readonly supporterVotes?: readonly { readonly entityId: string; readonly hankoSignature: string }[] | undefined } }
+  | { readonly type: "entityProviderActivateBoard"; readonly data: { readonly targetEntityId: string } }
   | SwapRequestEntityTx
   | LendingEntityTx;
 /** og types/entity-tx.ts placeSwapOffer / proposeCancelSwap (payments/swap-requests.ts): one swap Account tx on the hub Account. */
@@ -4889,7 +4892,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
   extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId,
   requestCollateral: (x) => x.data.counterpartyEntityId, placeSwapOffer: (x) => x.data.counterpartyEntityId, proposeCancelSwap: (x) => x.data.counterpartyEntityId, setRebalancePolicy: (x) => x.data.counterpartyEntityId, setHubConfig: () => self, prepareDispute: (x) => x.data.counterpartyEntityId, disputeStart: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self, entityCommand: () => self, propose: () => self, vote: () => self,
-  entityProviderTransfer: () => self, entityProviderReleaseControlShares: () => self, entityProviderCancelAction: () => self,
+  entityProviderTransfer: () => self, entityProviderReleaseControlShares: () => self, entityProviderCancelAction: () => self, entityProviderProposeControlBoard: () => self, entityProviderActivateBoard: () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
   htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId,
@@ -5675,6 +5678,69 @@ export const applyEntityProviderActionJEvent = (state: EntityState, event: JEven
       });
     }));
   });
+};
+// ---- og entity/tx/handlers/control-board-proposal.ts + hanko/onchain-domain.ts encodeBoardProposalHankoPayload
+const BOARD_PROPOSAL_DOMAIN = keccak256Hex(utf8("XLN_ENTITY_PROVIDER_BOARD_PROPOSAL_V1"));
+/** og hashBoardProposalHankoPayload: keccak(abi.encode(domain, chainId, entityProvider, entityId, boardEpoch, newBoardHash, authority, actionNonce)). */
+export const boardProposalHash = (i: { readonly chainId: bigint; readonly entityProviderAddress: string; readonly boardEpoch: bigint; readonly entityId: string; readonly newBoardHash: string; readonly authority: number; readonly actionNonce: bigint }): string =>
+  keccak256Hex(abiEncode([A.b32(BOARD_PROPOSAL_DOMAIN), A.uint(i.chainId), A.address(i.entityProviderAddress), A.b32(i.entityId), A.uint(i.boardEpoch), A.b32(i.newBoardHash), A.uint(BigInt(i.authority)), A.uint(i.actionNonce)])).toLowerCase();
+/** og toEntityId (protocol/identity): a 32-byte hex id, lowercased by the caller. */
+const cbEntityId = (value: unknown): Result<string, EntityError> =>
+  typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value) ? ok(value.toLowerCase()) : epFail(`FINTECH-SAFETY: Invalid EntityId format: ${String(value)}`);
+const cbRecord = (state: EntityState, entityId: string, missing: string): Result<CertifiedBoardRecord, EntityError> =>
+  chain(observerBoardRecord(state, entityId), (record) => (record === null ? epFail(`${missing}:${entityId}`) : ok(record)));
+type ControlProposalTx = Extract<EntityTx, { readonly type: "entityProviderProposeControlBoard" }>;
+/**
+ * og handleEntityProviderProposeControlBoard: this Entity, a CONTROL shareholder of `targetEntityId`, signs a board proposal (with the verified
+ * written consents of other shareholders) for EntityProvider; the proposal hash is a frame-signed hash and the proposal a J output.
+ */
+const proposeControlBoard = (state: EntityState, replicas: Replicas, tx: ControlProposalTx, ctx: FoldContext): Result<Draft, EntityError> => {
+  const j = state.jurisdictionConfig, name = (j?.name ?? "").trim();
+  if (j === undefined || name === "") return epFail("CONTROL_BOARD_PROPOSAL_JURISDICTION_MISSING");
+  const chainId = BigInt(state.jurisdiction.chainId);
+  if (chainId <= 0n) return epFail(`CONTROL_BOARD_PROPOSAL_CHAIN_ID_INVALID:${chainId}`);
+  const provider = ethAddress(j.entityProviderAddress);
+  if (provider === null || provider === EP_ZERO_ADDRESS) return epFail("INVALID_ENTITY_PROVIDER_ADDRESS");
+  const d = tx.data;
+  return chain(cbEntityId(d.targetEntityId), (target) => chain(cbEntityId(state.id), (shareholder): Result<Draft, EntityError> => {
+    if (typeof d.newBoardHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(d.newBoardHash)) return epFail(`PROTOCOL_BOARD_HASH_INVALID:${String(d.newBoardHash)}`);
+    const newBoardHash = d.newBoardHash.toLowerCase(), nonce = d.actionNonce;
+    if (typeof nonce !== "bigint" || nonce <= 0n || nonce > EP_MAX_UINT) return epFail(`CONTROL_BOARD_PROPOSAL_NONCE_INVALID:${String(nonce)}`);
+    return chain(cbRecord(state, target, "CONTROL_BOARD_PROPOSAL_TARGET_AUTHORITY_MISSING"), (targetBoard) => chain(cbRecord(state, shareholder, "CONTROL_BOARD_PROPOSAL_SHAREHOLDER_AUTHORITY_MISSING"), (): Result<Draft, EntityError> => {
+      const proposalHash = boardProposalHash({ chainId, entityProviderAddress: provider, boardEpoch: BigInt(targetBoard.boardEpoch), entityId: target, newBoardHash, authority: 1, actionNonce: nonce });
+      const supplied = d.supporterVotes ?? [];
+      if (supplied.length >= 256) return epFail(`CONTROL_BOARD_PROPOSAL_SUPPORTERS_OVERSIZED:${supplied.length}`);
+      // og verifyControlSupporterVotes (8 Del. C. § 228 written consent): each supporter Hanko is checked against its certified current board
+      const votes = foldResult<readonly { readonly entityId: string; readonly hankoSignature?: string }[], { readonly entityId: string; readonly hankoSignature: string }, EntityError>(supplied, [], (acc, vote) =>
+        chain(cbEntityId(vote.entityId), (supporter) => {
+          if (supporter === shareholder || acc.some((v) => v.entityId === supporter)) return epFail(`CONTROL_BOARD_PROPOSAL_SUPPORTER_DUPLICATE:${supporter}`);
+          return chain(cbRecord(state, supporter, "CONTROL_BOARD_PROPOSAL_SUPPORTER_AUTHORITY_MISSING"), (record) =>
+            ctx.verify(proposalHash, vote.hankoSignature, supporter as EntityId, { allowPreviousBoard: false, registeredBoardHash: record.boardHash })
+              ? ok([...acc, { entityId: supporter, hankoSignature: vote.hankoSignature }]) : epFail(`CONTROL_BOARD_PROPOSAL_SUPPORTER_HANKO_INVALID:${supporter}`));
+        }));
+      return chain(votes, (verified): Result<Draft, EntityError> => {
+        const signer = leaderStateOf(state).activeValidatorId;
+        if (signer === "") return epFail("CONTROL_BOARD_PROPOSAL_SUBMITTER_MISSING");
+        const supporterVotes = [...verified, { entityId: shareholder }].sort((a, b) => asc(a.entityId, b.entityId));
+        const jTx = { type: "entityProviderProposeControlBoard", entityId: shareholder, data: { targetEntityId: target, newBoardHash, boardEpoch: BigInt(targetBoard.boardEpoch), actionNonce: nonce, proposalHash, supporterVotes, signerId: signer }, timestamp: Number(ctx.timestamp) } as unknown as Binary;
+        return ok({
+          state, accountReplicas: replicas, outputs: [], events: [status(`🗳️ CONTROL vote ${shareholder.slice(-4)} → ${target.slice(-4)}`)],
+          jOutputs: [{ jurisdictionName: name, jTxs: [jTx] }], hashes: [{ hash: proposalHash, type: "entityProviderAction", context: `controlBoard:${target.slice(-4)}:nonce:${nonce}` }],
+        });
+      });
+    }));
+  }));
+};
+/** og handleEntityProviderActivateBoard: the permissionless activation call for a certified target once its proposal delay has passed. */
+const activateBoard = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx, { readonly type: "entityProviderActivateBoard" }>, timestamp: bigint): Result<Draft, EntityError> => {
+  const name = (state.jurisdictionConfig?.name ?? "").trim();
+  if (name === "") return epFail("CONTROL_BOARD_ACTIVATION_JURISDICTION_MISSING");
+  return chain(cbEntityId(tx.data.targetEntityId), (target) => chain(cbRecord(state, target, "CONTROL_BOARD_ACTIVATION_TARGET_MISSING"), (): Result<Draft, EntityError> => {
+    const signer = leaderStateOf(state).activeValidatorId;
+    if (signer === "") return epFail("CONTROL_BOARD_ACTIVATION_SUBMITTER_MISSING");
+    const jTx = { type: "entityProviderActivateBoard", entityId: state.id, data: { targetEntityId: target, signerId: signer }, timestamp: Number(timestamp) } as unknown as Binary;
+    return ok({ state, accountReplicas: replicas, outputs: [], events: [status(`🔐 Activate board ${target.slice(-4)}`)], jOutputs: [{ jurisdictionName: name, jTxs: [jTx] }] });
+  }));
 };
 /** og canonicalBoardHash: the quorum's board (validator addresses, shares, the board's delays). */
 export const quorumBoardHash = (q: Authority): string => match(q, { teaching: () => configBoardHash(q), board: ({ board }) => boardHashOf(board).toLowerCase() });
@@ -6517,6 +6583,8 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     entityProviderTransfer: (x) => entityProviderAction(state, replicas, x, ctx.timestamp),
     entityProviderReleaseControlShares: (x) => entityProviderAction(state, replicas, x, ctx.timestamp),
     entityProviderCancelAction: (x) => entityProviderCancel(state, replicas, x, ctx.timestamp),
+    entityProviderProposeControlBoard: (x) => proposeControlBoard(state, replicas, x, ctx),
+    entityProviderActivateBoard: (x) => activateBoard(state, replicas, x, ctx.timestamp),
     propose: (x) => foldPropose(state, replicas, x.data, ctx),
     vote: (x) => foldVote(state, replicas, x.data, ctx),
     // og admin.ts handleRequestCollateralEntityTx: a missing Account is a no-op; otherwise queue request_collateral and wake validators[0]
