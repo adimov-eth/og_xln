@@ -1225,6 +1225,92 @@ export const prepareCrossRoute = (route: CrossRoute, o: { readonly runtimeSeed?:
 /** og buildCrossJurisdictionPullReveal: the ladder reveal at a ratio, from the route's private seed. */
 export const crossPullReveal = (fillRatio: number, privateSeed: string): Result<HashLadderReveal, CrossError> =>
   String(privateSeed || "").trim() === "" ? crossErr("CROSS_J_HASHLADDER_PRIVATE_SEED_MISSING") : ok(revealHashLadder(buildHashLadderProof(String(privateSeed).trim()), fillRatio));
+// ---- pull registry settlement: og account/pull-registry-settlement.ts ----
+export type SignedProofBodyPull = { readonly amount: bigint; readonly claimedRatio: number; readonly targetRole: boolean; readonly fullHash: string; readonly partialRoot: string };
+export type HashLadderRegistryRecord = { readonly fillRatio: number; readonly revealedAt: number };
+/**
+ * The DeltaTransformer batch `(payment[], swap[], pull[])` decoded as ethers' AbiCoder does: offsets and counts are
+ * safe-integer indices, a count needs a word of data per item, element reads past the end overrun; uint16 masks, bools are nonzero.
+ * A bad payment/swap count ethers keeps as an unread error value; a bad pull section rejects because its pulls are read.
+ */
+const decodeBatchPulls = (hex: string): Result<readonly SignedProofBodyPull[], CrossError> => {
+  const bad = crossErr("CROSS_J_FINAL_DELTA_BATCH_INVALID");
+  const data = /^0x([0-9a-fA-F]{2})*$/.test(hex) ? parseHex(hex) : null;
+  if (data === null) return bad;
+  const word = (b: Uint8Array, at: number): bigint | undefined => (at + 32 > b.length ? undefined : BigInt(bytesToHex(b.subarray(at, at + 32))));
+  type Index = { readonly overrun: true } | { readonly overrun: false; readonly value?: number };
+  const index = (b: Uint8Array, at: number): Index => { const w = word(b, at); return w === undefined ? { overrun: true } : { overrun: false, ...(w <= BigInt(Number.MAX_SAFE_INTEGER) ? { value: Number(w) } : {}) }; };
+  const top = index(data, 0);
+  if (top.overrun || top.value === undefined) return bad;
+  const tuple = data.subarray(top.value);
+  const arrays: Array<{ readonly items?: Uint8Array; readonly count?: number }> = [];
+  for (const [slot, size] of [[0, 5], [1, 5], [2, 7]] as const) {
+    const off = index(tuple, slot * 32);
+    if (off.overrun || off.value === undefined) return bad;
+    const arr = tuple.subarray(off.value), count = index(arr, 0);
+    if (count.overrun) return bad;
+    if (count.value === undefined) { arrays.push({}); continue; }
+    if (count.value * 32 > arr.length || 32 + count.value * size * 32 > arr.length) return bad;
+    arrays.push({ items: arr.subarray(32, 32 + count.value * size * 32), count: count.value });
+  }
+  const pulls = arrays[2];
+  if (pulls?.items === undefined || pulls.count === undefined) return bad;
+  const items = pulls.items, out: SignedProofBodyPull[] = [];
+  for (let i = 0; i < pulls.count; i++) {
+    const at = i * 7 * 32, w = (k: number): bigint => word(items, at + k * 32) ?? 0n, h = (k: number): string => bytesToHex(items.subarray(at + k * 32, at + k * 32 + 32));
+    const negative = w(1) !== 0n, magnitude = w(2);
+    if (negative && magnitude === 0n) return crossErr("ABI_MONEY_NEGATIVE_ZERO");
+    out.push({ amount: negative ? -magnitude : magnitude, claimedRatio: Number(w(3) & 0xffffn), fullHash: h(4).toLowerCase(), partialRoot: h(5).toLowerCase(), targetRole: w(6) !== 0n });
+  }
+  return ok(out);
+};
+/** ethers isAddress over a hex address: 0x optional; a mixed-case spelling must be its EIP-55 checksum. */
+const isAddressText = (a: string): boolean => {
+  if (!/^(0x)?[0-9a-fA-F]{40}$/.test(a)) return false;
+  const body = a.startsWith("0x") ? a.slice(2) : a;
+  return !(/[a-f]/.test(body) && /[A-F]/.test(body)) || checksum(`0x${body}`) === `0x${body}`;
+};
+const signedProofBodyPulls = (proofbody: Pick<ProofBody, "transformers">, transformerAddress: string): Result<readonly SignedProofBodyPull[], CrossError> => {
+  if (!isAddressText(transformerAddress)) return crossErr("CROSS_J_FINAL_DELTA_TRANSFORMER_ADDRESS_INVALID");
+  const canonical = transformerAddress.toLowerCase(), clauses = proofbody.transformers.filter((t) => String(t.transformerAddress).toLowerCase() === canonical);
+  return clauses.length === 0 ? crossErr("CROSS_J_FINAL_DELTA_TRANSFORMER_MISSING") : map(traverse(clauses, (t) => decodeBatchPulls(t.encodedBatch)), (rows) => rows.flat());
+};
+/** og findExactSignedProofBodyPull: the one signed pull with this role, hash material and signed amount; two is ambiguous. */
+export const findSignedProofBodyPull = (proofbody: Pick<ProofBody, "transformers">, expected: CrossPullLeg, targetRole: boolean, transformerAddress: string): Result<SignedProofBodyPull | undefined, CrossError> =>
+  chain(signedProofBodyPulls(proofbody, transformerAddress), (pulls) => {
+    const hits = pulls.filter((p) => p.targetRole === targetRole && p.fullHash === expected.fullHash.toLowerCase() && p.partialRoot === expected.partialRoot.toLowerCase() && p.amount === expected.signedAmount);
+    return hits.length > 1 ? crossErr("CROSS_J_FINAL_PULL_AMBIGUOUS") : ok(hits[0]);
+  });
+const safeUintOf = (v: unknown, max: number): number | undefined => { const n = Number(v); return Number.isSafeInteger(n) && n >= 0 && n <= max ? n : undefined; };
+/** og resolveFinalizedCrossJurisdictionRouteLeg: the leg whose unordered pair is this Account and whose stack is this Account's stack. */
+export const finalizedRouteLeg = (x: { readonly route: Pick<CrossRoute, "orderId" | "source" | "target">; readonly self: string; readonly counterparty: string; readonly localStack?: string | undefined }): Result<"source" | "target" | undefined, CrossError> => {
+  const self = x.self.toLowerCase(), peer = x.counterparty.toLowerCase();
+  const pair = (l: CrossLeg): boolean => { const e = l.entityId.toLowerCase(), c = l.counterpartyEntityId.toLowerCase(); return (e === self && c === peer) || (e === peer && c === self); };
+  const candidates = (["source", "target"] as const).filter((role) => pair(x.route[role]));
+  if (candidates.length === 0) return ok(undefined);
+  if (!x.localStack) return crossErr("CROSS_J_FINALITY_JURISDICTION_MISSING");
+  const stack = x.localStack.toLowerCase(), exact = candidates.filter((role) => x.route[role].jurisdiction.toLowerCase() === stack);
+  return exact.length === 1 && exact[0] !== undefined ? ok(exact[0]) : crossErr(exact.length === 0 ? "CROSS_J_FINALITY_LEG_MISSING" : "CROSS_J_FINALITY_LEG_AMBIGUOUS");
+};
+/**
+ * og resolveFinalizedPullFillRatio (DeltaTransformer.applyPull): the signed claimedRatio, raised by a registry record revealed
+ * within the beneficiary's own window of the active dispute (timeout must be start + left + right).
+ */
+export const finalizedPullFillRatio = (x: {
+  readonly active?: { readonly disputeStartTimestamp?: unknown; readonly disputeTimeout?: unknown } | undefined; readonly proofbody: Pick<ProofBody, "transformers" | "leftResponseSeconds" | "rightResponseSeconds">;
+  readonly transformerAddress: string; readonly expectedPull: CrossPullLeg; readonly targetRole: boolean; readonly record?: HashLadderRegistryRecord | undefined;
+}): Result<number, CrossError> => chain(findSignedProofBodyPull(x.proofbody, x.expectedPull, x.targetRole, x.transformerAddress), (pull): Result<number, CrossError> => {
+  if (pull === undefined) return crossErr("CROSS_J_FINAL_PULL_MISSING");
+  const left = safeUintOf(x.proofbody.leftResponseSeconds, 0xffff_ffff), right = safeUintOf(x.proofbody.rightResponseSeconds, 0xffff_ffff);
+  const start = safeUintOf(x.active?.disputeStartTimestamp, Number.MAX_SAFE_INTEGER), timeout = safeUintOf(x.active?.disputeTimeout, Number.MAX_SAFE_INTEGER);
+  if (left === undefined || right === undefined || start === undefined || timeout === undefined) return crossErr("CROSS_J_FINAL_WINDOW_INVALID");
+  if (timeout !== start + left + right) return crossErr("CROSS_J_FINAL_CLOCK_MISMATCH");
+  const window = pull.amount > 0n ? left : right;
+  if (x.record === undefined) return ok(pull.claimedRatio);
+  const ratio = safeUintOf(x.record.fillRatio, MAX_FILL), revealedAt = safeUintOf(x.record.revealedAt, Number.MAX_SAFE_INTEGER);
+  if (ratio === undefined || revealedAt === undefined) return crossErr("CROSS_J_REGISTRY_RECORD_INVALID");
+  return ok(revealedAt >= start && revealedAt <= start + window && ratio > pull.claimedRatio ? ratio : pull.claimedRatio);
+});
 
 
 export type Delta = { readonly tokenId: TokenId; readonly collateral: bigint; readonly ondelta: bigint; readonly offdelta: bigint; readonly leftCreditLimit: bigint; readonly rightCreditLimit: bigint };

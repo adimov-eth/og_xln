@@ -15,6 +15,8 @@ import { ethers } from "ethers";
 import { handleHtlcLock } from "../../core/account/tx/handlers/htlc/lock.ts";
 import { applyAccountTxMutation } from "../../core/account/tx/mutation.ts";
 import { applyFinalizedAccountJEventsOnView } from "../../core/account/tx/handlers/j-events/finality.ts";
+import { findExactSignedProofBodyPull, resolveFinalizedPullFillRatio, resolveFinalizedCrossJurisdictionRouteLeg } from "../../core/account/pull-registry-settlement.ts";
+import { BATCH_ABI } from "../../core/protocol/dispute/proof-body.ts";
 import { assertOpaqueHtlcCiphertext, hashOpaqueHtlcCiphertext } from "../../core/protocol/htlc/multi-recipient.ts";
 import {
   buildHashLadderProof,
@@ -52,6 +54,10 @@ import {
   htlcEnvelopeHash,
   setRebalanceSubmittedAt,
   submittedAtRoot,
+  findSignedProofBodyPull,
+  finalizedPullFillRatio,
+  finalizedRouteLeg,
+  type CrossPullLeg,
   type AccountBody,
   type CrossRoute,
 } from "../xln.ts";
@@ -566,6 +572,64 @@ describe("cross-j: submittedAtByToken shadow", () => {
       expect(unwrapR(submittedAtRoot(body))).toBe(shadowRoot(og));
       expect(body.submittedAt?.has(1)).toBe(cover === 0n);
       expect(body.submittedAt?.has(2)).toBe(true);
+    }
+  });
+});
+
+// ---------- pull registry settlement (og account/pull-registry-settlement.ts) ----------
+describe("cross-j: pull registry settlement", () => {
+  const BATCH = ethers.ParamType.from(BATCH_ABI);
+  const DT = `0x${"d7".repeat(20)}`;
+  const encodeBatch = (pulls: Array<{ amount: bigint; claimedRatio: number; fullHash: string; partialRoot: string; targetRole: boolean }>, payments = 0): string =>
+    ethers.AbiCoder.defaultAbiCoder().encode([BATCH], [{
+      payment: Array.from({ length: payments }, (_, i) => ({ deltaIndex: i, amount: { negative: false, magnitude: 5n }, revealedUntilTimestamp: 1, hash: W("aa") })),
+      swap: [],
+      pull: pulls.map((p, i) => ({ deltaIndex: i, amount: { negative: p.amount < 0n, magnitude: p.amount < 0n ? -p.amount : p.amount }, claimedRatio: p.claimedRatio, fullHash: p.fullHash, partialRoot: p.partialRoot, targetRole: p.targetRole })),
+    }]);
+  const corrupt = (r: Rand, hexText: string): string => {
+    const k = Math.floor(r() * 8), body = hexText.slice(2);
+    if (k === 0) return hexText.slice(0, 2 + 2 * Math.floor(r() * (body.length / 2)));
+    if (k === 1) return hexText + "0";
+    if (k === 2) { const at = 64 * Math.floor(r() * Math.min(8, body.length / 64)) + 62; return `0x${body.slice(0, at)}${hex(r, 1).slice(2)}${body.slice(at + 2)}`; }
+    if (k === 3) { const at = 64 * Math.floor(r() * Math.min(8, body.length / 64)); return `0x${body.slice(0, at)}${"ff".repeat(32)}${body.slice(at + 64)}`; }
+    if (k === 4) { const at = 64 * Math.floor(r() * Math.min(8, body.length / 64)); return `0x${body.slice(0, at)}${"00".repeat(24)}${"ff".repeat(8)}${body.slice(at + 64)}`; }
+    return hexText;
+  };
+  const leg = (r: Rand): CrossPullLeg => ({ pullId: W("01"), tokenId: 1, amount: 5n, signedAmount: pick(r, [5n, -5n, 7n]), fullHash: pick(r, [W("f1"), W("F2")]), partialRoot: pick(r, [W("e1"), W("e2")]) });
+
+  test("MATCH: findExactSignedProofBodyPull over 500 random (and corrupted) DeltaTransformer batches", () => {
+    const r = rng(505);
+    let found = 0, rejected = 0;
+    for (let i = 0; i < 500; i++) {
+      const pulls = Array.from({ length: Math.floor(r() * 4) }, () => ({ amount: pick(r, [5n, -5n, 7n, 0n]), claimedRatio: Math.floor(r() * 65_536), fullHash: pick(r, [W("f1"), W("f2")]), partialRoot: pick(r, [W("e1"), W("e2")]), targetRole: r() < 0.5 }));
+      const batch = corrupt(r, encodeBatch(pulls, Math.floor(r() * 2)));
+      const clauses = [{ transformerAddress: pick(r, [DT, DT.toUpperCase().replace("0X", "0x"), `0x${"11".repeat(20)}`]), encodedBatch: batch, allowances: [] },
+        ...(r() < 0.2 ? [{ transformerAddress: DT, encodedBatch: encodeBatch(pulls), allowances: [] }] : [])];
+      const proofbody: any = { transformers: clauses, leftResponseSeconds: 10n, rightResponseSeconds: 20n };
+      const addr = pick(r, [DT, DT, ethers.getAddress(DT), "0x1234", DT.slice(2)]);
+      const expected = leg(r), targetRole = r() < 0.5;
+      const og = ogTry(() => findExactSignedProofBodyPull(proofbody, expected as never, targetRole, addr));
+      agree(og, findSignedProofBodyPull(proofbody, expected, targetRole, addr));
+      if (og.ok && og.value !== undefined) found++;
+      if (!og.ok) rejected++;
+    }
+    expect(found).toBeGreaterThan(3);
+    expect(rejected).toBeGreaterThan(20);
+  });
+
+  test("MATCH: resolveFinalizedPullFillRatio (beneficiary window, late records, clock mismatch) and resolveFinalizedCrossJurisdictionRouteLeg", () => {
+    const r = rng(606);
+    for (let i = 0; i < 400; i++) {
+      const expected = leg(r), targetRole = r() < 0.5, claimedRatio = Math.floor(r() * 1000);
+      const batch = encodeBatch([{ amount: expected.signedAmount, claimedRatio, fullHash: expected.fullHash.toLowerCase(), partialRoot: expected.partialRoot.toLowerCase(), targetRole: r() < 0.8 ? targetRole : !targetRole }]);
+      const left = pick(r, [10n, 60n]), right = pick(r, [20n, 90n]), start = 1_000 + Math.floor(r() * 10);
+      const proofbody: any = { transformers: [{ transformerAddress: DT, encodedBatch: batch, allowances: [] }], leftResponseSeconds: left, rightResponseSeconds: right };
+      const active = r() < 0.1 ? undefined : { disputeStartTimestamp: start, disputeTimeout: start + Number(left + right) + (r() < 0.1 ? 1 : 0) };
+      const record = r() < 0.2 ? undefined : { fillRatio: pick(r, [0, 500, 999, 5000, 65_535, 70_000]), revealedAt: start + pick(r, [-1, 0, 5, 10, 20, 60, 90, 200]) };
+      const og = ogTry(() => resolveFinalizedPullFillRatio({ account: { activeDispute: active } as never, proofbody, canonicalDeltaTransformerAddress: DT, expectedPull: expected as never, targetRole, ...(record ? { record } : {}) }));
+      agree(og, finalizedPullFillRatio({ active, proofbody, transformerAddress: DT, expectedPull: expected, targetRole, record }));
+      const route = randomRoute(r), self = pick(r, [...ENTS]), peer = pick(r, [...ENTS]), localStack = r() < 0.1 ? undefined : pick(r, [...STACKS, STACKS[0].toUpperCase()]);
+      agree(ogTry(() => resolveFinalizedCrossJurisdictionRouteLeg({ route: route as never, self, counterparty: peer, ...(localStack ? { localStack } : {}) })), finalizedRouteLeg({ route, self, counterparty: peer, localStack }));
     }
   });
 });
