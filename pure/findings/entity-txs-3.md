@@ -17,8 +17,8 @@ Scope: the REMAINING entity-tx items in `entity-consensus-2.md` and `entity-runt
 | H7-c | Leaf disputePrepare, and a queued activeDispute (observedOnChain:false) | dispute/prepare.ts, dispute/start.ts | FIXED | tested in the 60-case prepare/start test |
 | T3-7 | prepareDispute / disputeStart | entity/tx/handlers/dispute | PARTIAL | Ported: cooldown readiness, the admission then evidence order, jBatchState.batch.disputeStarts rows, the batch limits, og status messages, and ogProofBody equal to og canonicalizeProofBodyStruct. Tested on 60 random calls. REMAINING: removing orderbook rows on prepare (the invariant is DISPUTE_PREPARE_ORDERBOOK_REMOVAL_NOT_PORTED). Also remaining: the starter-argument override (DISPUTE_START_ARGUMENT_OVERRIDE_NOT_PORTED), proofs carrying locks, swaps or pulls, and the cross-j route (DISPUTE_START_CROSS_J_ROUTE_MISSING). The live og test has no success-path fixture with a counterparty hanko, so success is checked through the rewrite and the og refusal classes |
 | T3-8 | J7 side effects | j-events.ts | REMAINING | The crontab dispute-deadline hook, the jBatch scrub, the counter-proof, and the HTLC / cross-j settlement on finality all need og's crontab and cross-j subsystems |
-| ER-4b | Quorum board binding (assertQuorumBoardBinding) | hanko/signing.ts | REMAINING | The check was ported and then reverted. It needs og's certified-board registry (board-registry, 676 lines), and without it 11 fixture tests in entity-runtime, oracle and entity-consensus-2 fail, because they use non-lazy multi-signer ids |
-| AC-13b | certified-board registry, refresh producer | entity board rotation | REMAINING | same registry as ER-4b |
+| ER-4b | Quorum board binding (assertQuorumBoardBinding) | hanko/signing.ts | FIXED | Ported together with the certified-board registry; fixtures use og-valid lazy ids (see boards.md) |
+| AC-13b | certified-board registry, refresh producer | entity board rotation | REMAINING | The registry and receiving side are FIXED; the refresh producer (crontab hook) is REMAINING (see boards.md) |
 | T3-9 | Admission wrapper | local admission | REMAINING | og local admission only dedups lifecycle txs. The rewrite's admitAt runs a trial fold, so policy txs are admitted with a real clock timestamp |
 | T3-10 | Account-level frame events | account frame events | REMAINING | the Account reducer emits no og account events |
 
@@ -36,7 +36,8 @@ Scope: the REMAINING entity-tx items in `entity-consensus-2.md` and `entity-runt
 | disputeFinalize | BLOCKED | og finalize-proof selection, the timing gates and the crontab hooks (core/entity/tx/handlers/dispute/finalize.ts, crontab) |
 | scheduledWake | BLOCKED | og executeCrontab scheduler (core/entity/crontab) |
 | proposeAccountsNow | BLOCKED | the rewrite does not keep og's pendingAccountInput bytes |
-| boardHandover, entityProviderActivateBoard, entityProviderCancelAction, entityProviderProposeControlBoard, entityProviderReleaseControlShares, entityProviderTransfer | BLOCKED | the certified-board registry and EntityProvider action state (board-registry, entity-provider actions) |
+| entityProviderActivateBoard, entityProviderCancelAction, entityProviderProposeControlBoard, entityProviderReleaseControlShares, entityProviderTransfer | FIXED | see boards.md EP-1..EP-5 |
+| boardHandover | REMAINING | needs a j_event entity tx and consensus frame config (boards.md BH-1) |
 | settle_propose, settle_update, settle_approve, settle_execute, settle_reject | BLOCKED | og entity settlement orchestration (core/entity/tx/handlers/payments/settle.ts: settlement workspace, co-signing, jBatch settle rows) |
 | resolveHtlcLock, processHtlcTimeouts | BLOCKED | owned by the htlc agent (paybook lock lifecycle) |
 | initOrderbookExt | BLOCKED | owned by the orderbook agent (orderbook extension state) |
