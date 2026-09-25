@@ -1628,7 +1628,7 @@ export type AccountApply<R extends AccountReplica = AccountReplica> = Apply<R, A
 export interface DisputeRequired extends Tagged<"dispute_required", FrameEvidence> {}
 export type AccountReplicaError =
   | BodyError | DisputeError | EnvelopeError | DisputeRequired
-  | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch" | "frame_hash_mismatch" | "state_root_mismatch" | "empty_frame" | "ack_unmatched">
+  | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch" | "frame_hash_mismatch" | "state_root_mismatch" | "ack_unmatched">
   | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }>
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
   | Tagged<"bad_account", { reason: "entity_id" | "same_entity" | TermsError["_tag"] }>
@@ -1861,7 +1861,7 @@ export const disputeLive = (r: OpenAccount | ProposedAccount | ReceivedAccount, 
 export const disputePreparing = (r: PreparingAccount, _input: Dispute, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => freeze(r, r.evidence, ctx);
 export const disputeDisputed = (r: DisputedAccount): Verb<DisputedAccount> => ok(done(r));
 const checkAckFrame = (input: AckFrame, ctx: InboundAccountContext): Result<void, AccountReplicaError> =>
-  input.frame.txs.length === 0 ? err({ _tag: "empty_frame" }) : ctx.from !== ctx.party.peer ? err({ _tag: "unknown_signer", entity: ctx.from }) : disputeShapes([input.disputeHanko, input.ack?.disputeHanko]);
+  ctx.from !== ctx.party.peer ? err({ _tag: "unknown_signer", entity: ctx.from }) : disputeShapes([input.disputeHanko, input.ack?.disputeHanko]);
 const carriedWithoutFrame = (r: OpenAccount | ReceivedAccount, input: AckFrame, ctx: InboundAccountContext): Result<void, AccountReplicaError> =>
   input.ack === null ? ok(undefined) : map(headAck(r, input.ack, ctx, input.frame.height, input.ack.height), () => undefined);
 const pastGates = <R extends AccountReplica, S extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAccountContext, rest: () => Verb<S>): Verb<R | S> =>

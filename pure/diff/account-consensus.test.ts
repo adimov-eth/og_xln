@@ -23,10 +23,10 @@ import type { AccountFrame as OgFrame, AccountInput as OgInput, AccountReplica a
 
 // ---- rewrite ----
 import {
-  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, admit, applyAccountInput, disputeUnsafe, disputeRequirement, disputeShapes, frameStateHash, receiverClock, replicaId, unqueued,
+  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, disputeRequirement, disputeShapes, frameStateHash, localProof, proposalPlan, receiverClock, replicaId, unqueued,
 } from "../xln.ts";
 import type { AccountFrame, AccountInput, AccountReplica, EntityId, WireAccountTx } from "../xln.ts";
-import { ALICE, BOB, CLOCK, NOW, causeOf, ackInput, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap, unwrapErr } from "../xln_run.ts";
+import { ALICE, BOB, CLOCK, NOW, causeOf, ackInput, disputeFor, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap, unwrapErr } from "../xln_run.ts";
 
 // ============ og fixture (copied from core/__tests__/account/consensus/account-input-rejection.test.ts) ============
 const L = `0x${"11".repeat(32)}`, R = `0x${"22".repeat(32)}`;
@@ -163,7 +163,7 @@ describe("account-consensus: pure predicates", () => {
 
 // =====================================================================================================
 describe("account-consensus: driven scenarios", () => {
-  test("DIVERGES: an authenticated EMPTY peer frame is accepted by og but refused (empty_frame) by the rewrite", async () => {
+  test("MATCH: an authenticated EMPTY peer frame is accepted and commits on both sides", async () => {
     const ctx = ogCtx("diff-empty-frame");
     const a = ogAccount(L, R);                                   // we are LEFT, RIGHT proposes
     const frame = ogFrame(a, { accountTxs: [] });
@@ -173,8 +173,14 @@ describe("account-consensus: driven scenarios", () => {
     expect(a.currentHeight).toBe(1);
 
     const r = genesisAB(), from = rightOf(), self = leftOf();
-    const f = peerFrame(r, from, { txs: [] });
-    expect(unwrapErr(applyAccountInput(r, ackFrameOf(r, from, f), DOOR(self)))._tag).toBe("empty_frame");
+    const f = peerFrame(r, from, { txs: [], accountStateRoot: unwrap(accountStateRoot(r.state)) });
+    const view = unwrap(committedView(r.state));
+    const disputeHanko = disputeFor(unwrap(proposalPlan(view, unwrap(localProof(view)), r.dispute, partyIn(r, from).left)), from);
+    const received = step(r, { ...ackFrameOf(r, from, f), disputeHanko } as AccountInput, self).replica;
+    expect(received._tag).toBe("received");
+    const acked = step(received, ackInput(received, self), self);
+    expect(acked.replica.head.height).toBe(1n);
+    expect(acked.outputs.map((o) => o.kind)).toEqual(["ack"]);
   });
 
   test("MATCH: frame timestamp 0 is structurally valid on both sides (negative is refused)", () => {
