@@ -12,6 +12,7 @@ import { handleRequestCollateral } from "../../core/account/tx/handlers/rebalanc
 import { handleRebalanceRefund } from "../../core/account/tx/handlers/rebalance/refund.ts";
 import { handleRebalancePolicy } from "../../core/account/tx/handlers/rebalance/policy.ts";
 import { handleLendingAccountTx } from "../../core/account/tx/handlers/balance/lending.ts";
+import { computeFrameHash } from "../../core/account/consensus/frame/hash.ts";
 import { handleSwapOffer } from "../../core/account/tx/handlers/swap/offer/index.ts";
 import { deriveExactSwapFillRatio, exactFillRatioToUint16 } from "../../core/orderbook/swap-execution.ts";
 import { handleSettleTransition, getSignedSettlementWorkspaceTxError } from "../../core/account/tx/handlers/settlement/transition.ts";
@@ -26,8 +27,11 @@ import { createEmptyAccountJClaimAccumulator } from "../../core/account/j-claims
 import {
   accountId,
   accountTerms,
+  accountFrameHash,
   applyAccountBody,
   committed,
+  ownWire,
+  wireOf,
   entityId,
   genesisAccount,
   genesisAccountBody,
@@ -515,6 +519,31 @@ describe("account-tx: lending (og handlers/balance/lending.ts)", () => {
       }
     }
     expect(accepted).toBeGreaterThan(100);
+  });
+});
+
+// ---------- wire form ----------
+describe("account-tx: wire form of the ported kinds", () => {
+  test("MATCH: rewrite wireOf/ownWire of swap, rebalance, lending, settlement and htlc kinds is og's AccountTx, so og computeFrameHash equals accountFrameHash", () => {
+    const L = `lend-${"0".repeat(15)}1`;
+    const pairs: [any, any][] = [
+      [{ type: "swap_offer", offerId: "S", giveTokenId: "2", giveTokenDecimals: 18, giveAmount: 5n, wantTokenId: "1", wantTokenDecimals: 6, wantAmount: 7n, maxFee: 0n, minNetReceive: 7n, priceTicks: 14_000n },
+        { type: "swap_offer", data: { offerId: "S", giveTokenId: 2, giveTokenDecimals: 18, giveAmount: 5n, wantTokenId: 1, wantTokenDecimals: 6, wantAmount: 7n, maxFee: 0n, minNetReceive: 7n, priceTicks: 14_000n } }],
+      [{ type: "swap_cancel_request", offerId: "S" }, { type: "swap_cancel_request", data: { offerId: "S" } }],
+      [{ type: "swap_resolve", offerId: "S", fillRatio: 65535, cancelRemainder: true, executionGiveAmount: 5n, executionWantAmount: 7n, feeTokenId: "1", feeAmount: 1n },
+        { type: "swap_resolve", data: { offerId: "S", fillRatio: 65535, cancelRemainder: true, executionGiveAmount: 5n, executionWantAmount: 7n, feeTokenId: 1, feeAmount: 1n } }],
+      [{ type: "request_collateral", tokenId: "1", amount: 9n, feeTokenId: "2", feeAmount: 1n, policyVersion: 3 }, { type: "request_collateral", data: { tokenId: 1, amount: 9n, feeTokenId: 2, feeAmount: 1n, policyVersion: 3 } }],
+      [{ type: "rebalance_refund", requestId: "rebalance:left:1:4", requestTokenId: "1", amount: 1n, reason: "timeout" }, { type: "rebalance_refund", data: { requestId: "rebalance:left:1:4", requestTokenId: 1, amount: 1n, reason: "timeout" } }],
+      [{ type: "rebalance_policy", tokenId: "1", policyVersion: 2, baseFee: 1n, liquidityFeeBps: 5n, gasFee: 0n }, { type: "rebalance_policy", data: { tokenId: 1, policyVersion: 2, baseFee: 1n, liquidityFeeBps: 5n, gasFee: 0n } }],
+      [{ type: "lending_fund", positionId: L, hubEntityId: B, lenderEntityId: A, tokenId: "1", amount: 3n, termId: "1d", interestBps: 5 }, { type: "lending_fund", data: { positionId: L, hubEntityId: B, lenderEntityId: A, tokenId: 1, amount: 3n, termId: "1d", interestBps: 5 } }],
+      [{ type: "lending_close_request", positionId: L, hubEntityId: B, lenderEntityId: A }, { type: "lending_close_request", data: { positionId: L, hubEntityId: B, lenderEntityId: A } }],
+      [{ type: "settle_transition", kind: "upsert", revision: 1, ops: [{ type: "r2c", tokenId: 1, amount: 2n }], executorIsLeft: true }, { type: "settle_transition", data: { kind: "upsert", revision: 1, ops: [{ type: "r2c", tokenId: 1, amount: 2n }], executorIsLeft: true } }],
+      [{ type: "htlc_lock", lockId: word("aa"), hashlock: word("aa"), timelock: 9n, revealBeforeHeight: 4n, amount: 2n, tokenId: "1" }, { type: "htlc_lock", data: { lockId: word("aa"), hashlock: word("aa"), timelock: 9n, revealBeforeHeight: 4, amount: 2n, tokenId: 1 } }],
+      [{ type: "htlc_resolve", lockId: word("aa"), outcome: "secret", secret: word("01") }, { type: "htlc_resolve", data: { lockId: word("aa"), outcome: "secret", secret: word("01") } }],
+    ];
+    for (const [rw, og] of pairs) expect(ownWire(wireOf(rw))).toEqual(og);
+    const frame = { height: 3, timestamp: 1_700_000_000_000, jHeight: 2, prevFrameHash: word("00"), accountStateRoot: word("33") };
+    expect(unwrap(accountFrameHash({ ...frame, accountTxs: pairs.map(([rw]) => ownWire(wireOf(rw))) }) as any)).toBe(computeFrameHash({ ...frame, stateHash: "", accountTxs: pairs.map(([, og]) => og) } as any));
   });
 });
 

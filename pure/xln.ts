@@ -1122,8 +1122,14 @@ export type AccountTx =
 export type TxOf<K extends AccountTx["type"]> = Extract<AccountTx, { readonly type: K }>;
 export type WireAccountTx = AccountTx;
 type WireTxOf<K extends AccountTx["type"]> = Extract<WireAccountTx, { readonly type: K }>;
-const same = <X>(x: X): X => x;
-export const wireOf = (tx: WireAccountTx): WireAccountTx => matchBy<"type", WireAccountTx, WireAccountTx>("type", tx, total(AccountTxNames, same));
+const OG_TOKEN_FIELDS = ["tokenId", "giveTokenId", "wantTokenId", "feeTokenId", "requestTokenId"] as const;
+/** og wire AccountTx fields: token ids (and htlc revealBeforeHeight) are JS numbers, never the rewrite's decimal strings. */
+export const wireOf = (tx: WireAccountTx): { readonly type: string } => {
+  const out: Record<string, unknown> = { ...tx };
+  for (const k of OG_TOKEN_FIELDS) if (typeof out[k] === "string") out[k] = Number(out[k]);
+  if (tx.type === "htlc_lock") out["revealBeforeHeight"] = Number(tx.revealBeforeHeight);
+  return out as { readonly type: string };
+};
 type Author = "bilateral" | "hub" | "unchosen";
 export type KindRow = { readonly author: Author; readonly l0: boolean; readonly repeatable: boolean; readonly effects: readonly Effect["_tag"][] };
 const kind = <R extends KindRow>(author: Author, l0: boolean, repeatable: boolean, effects: readonly Effect["_tag"][] = []): R => ({ author, l0, repeatable, effects }) as R;
