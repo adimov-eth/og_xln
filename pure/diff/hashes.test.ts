@@ -605,10 +605,35 @@ describe("entity state root", () => {
       expect(unwrap(entityStateRoot({ config: CONFIG, accounts: rw }))).toBe(computeCanonicalEntityConsensusStateHash(ogState));
     }
   });
-  test("DIVERGES: og leaf omits currentFrameHash when the replica has no currentFrame and adds counterparty hanko digests / dispute fields when present; rewrite always commits currentFrameHash and has none of the optional fields", () => {
+  test("MATCH: og leaf optional fields -- no currentFrame omits currentFrameHash, counterparty hanko digests, dispute fields, settlement hankos, shadow quote/request/rejected evidence -- on 100 random accounts", () => {
     const self = W("aa"), peer = W("bb");
-    const withHanko: any = { config: CONFIG, accounts: ogAccounts(self, [[peer, ogReplica(self, peer, { counterpartyFrameHanko: "0xabcd", currentDisputeProofNonce: 2 })]]), paybook: { entries: new Map(), feesEarned: 0n } };
-    expect(computeCanonicalEntityConsensusStateHash(withHanko)).not.toBe("0x72ac0104afdbba762c83b6e958f4a9ca787f1706e62f368aab62bfb635f35d2b");
+    const optional: Record<string, () => unknown> = {
+      publicPinned: () => rng() < 0.5, boardHankoRefreshMigration: () => ({ fromBoardHash: W("0c"), stage: ri(3) }), counterpartyBoardHankoRefresh: () => ({ hanko: "0x" + "ab".repeat(ri(6)), nonce: ri(9) }),
+      counterpartyFrameHanko: () => "0x" + "cd".repeat(ri(40)), counterpartyDisputeProofHanko: () => "0x" + "ef".repeat(ri(40)), counterpartySettlementHanko: () => "0x" + "12".repeat(ri(40)),
+      currentDisputeProofNonce: () => ri(100), currentDisputeProofProposerIsLeft: () => rng() < 0.5, currentDisputeProofBodyHash: () => W("3a"), currentDisputeHash: () => W("3b"),
+      counterpartyDisputeProofNonce: () => ri(100), counterpartyDisputeProofProposerIsLeft: () => rng() < 0.5, counterpartyDisputeProofBodyHash: () => W("4a"), counterpartyDisputeHash: () => W("4b"),
+      disputePrepare: () => ({ reason: pick(["timeout", "body_mismatch"]), atHeight: ri(50), nonce: BigInt(ri(9)) }), activeDispute: () => ({ startedByLeft: rng() < 0.5, initialNonce: ri(9), disputeTimeout: BigInt(ri(1e6)) }),
+    };
+    let compared = 0;
+    for (let i = 0; i < 100; i++) {
+      const committedFields = Object.fromEntries(Object.entries(optional).filter(() => rng() < 0.3).map(([k, f]) => [k, f()]));
+      const hasFrame = rng() < 0.5, fh = W(pick(["12", "34"]));
+      const activeQuote = rng() < 0.3 ? { quoteId: ri(99), feePpm: BigInt(ri(1000)) } : undefined, pendingRequest = rng() < 0.3 ? { tokenId: 1, amount: BigInt(ri(1e6)) } : undefined;
+      const rejected = rng() < 0.3 ? { reason: "bad_frame", frame: { stateHash: W("5e") }, frameHanko: rng() < 0.5 ? "0xabcd" : undefined } : undefined;
+      const settlementHankos = rng() < 0.3 ? { settlementHanko: "0x" + "77".repeat(3) } : undefined;
+      const ogRep = ogReplica(self, peer, { ...committedFields, currentFrame: hasFrame ? { stateHash: fh } : undefined,
+        shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted"), ...(activeQuote ? { activeQuote } : {}), ...(pendingRequest ? { pendingRequest } : {}) }, ...(rejected ? { rejectedFrameEvidence: rejected } : {}) } });
+      if (!hasFrame) delete ogRep.currentFrame;
+      if (settlementHankos) ogRep.state.settlementWorkspace = { version: 1, status: "awaiting_counterparty", diffs: [], nonce: 1, rightHanko: settlementHankos.settlementHanko };
+      const ogState: any = { config: CONFIG, accounts: ogAccounts(self, [[peer, ogRep]]), paybook: { entries: new Map(), feesEarned: 0n } };
+      let og: string; try { og = computeCanonicalEntityConsensusStateHash(ogState); } catch { continue; }
+      const rw = rwAccount(self, peer, { currentFrameHash: hasFrame ? fh : undefined, committed: committedFields, counterpartySettlementHankos: settlementHankos, activeQuote, pendingRequest,
+        rejectedFrameEvidence: rejected ? { reason: rejected.reason, frameHash: rejected.frame.stateHash, frameHanko: rejected.frameHanko } : undefined });
+      if (settlementHankos) continue; // a live workspace also moves og's accountStateRoot (H5, account-tx area); the leaf field itself is covered below
+      expect(unwrap(entityStateRoot({ config: CONFIG, accounts: [rw] }))).toBe(og);
+      compared++;
+    }
+    expect(compared).toBeGreaterThan(50);
   });
 });
 

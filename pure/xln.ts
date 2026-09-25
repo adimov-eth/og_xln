@@ -2006,11 +2006,23 @@ export type EntityRootAccount = {
   readonly status: "active" | "dispute_preparing" | "disputed";
   readonly currentHeight: number;
   readonly nextProofNonce: number;
-  readonly currentFrameHash: string;
+  /** og commits `currentFrame.stateHash` only when the replica has a current frame. */
+  readonly currentFrameHash?: string | undefined;
   readonly pendingWithdrawals: string;
   readonly policyRoot: string;
   readonly submittedAtByTokenRoot: string;
+  /** og ACCOUNT_ENTITY_COMMITTED_FIELDS that are committed only when present (state-root.ts:184); the three counterparty Hankos are committed as their integrity digest. */
+  readonly committed?: Partial<Readonly<Record<EntityLeafOptional, unknown>>> | undefined;
+  /** og counterpartySettlementHankos(settlementWorkspace, localIsLeft), when present. */
+  readonly counterpartySettlementHankos?: unknown;
+  readonly activeQuote?: unknown; readonly pendingRequest?: unknown;
+  readonly rejectedFrameEvidence?: { readonly reason: unknown; readonly frameHash: unknown; readonly frameHanko: unknown } | undefined;
 };
+export const ENTITY_LEAF_OPTIONAL = ["publicPinned", "boardHankoRefreshMigration", "counterpartyBoardHankoRefresh", "counterpartyFrameHanko", "counterpartyDisputeProofHanko", "counterpartySettlementHanko",
+  "currentDisputeProofNonce", "currentDisputeProofProposerIsLeft", "currentDisputeProofBodyHash", "currentDisputeHash", "counterpartyDisputeProofNonce", "counterpartyDisputeProofProposerIsLeft",
+  "counterpartyDisputeProofBodyHash", "counterpartyDisputeHash", "disputePrepare", "activeDispute"] as const;
+export type EntityLeafOptional = (typeof ENTITY_LEAF_OPTIONAL)[number];
+const LEAF_HANKO_FIELDS: ReadonlySet<string> = new Set(["counterpartyFrameHanko", "counterpartyDisputeProofHanko", "counterpartySettlementHanko"]);
 type EntityPaybook = {
   readonly entries: { readonly radix: 16; readonly leafCount: number; readonly root: string };
   readonly feesEarned: bigint;
@@ -2037,11 +2049,18 @@ const ACCOUNT_LEAF = utf8("xln.entity.account-leaf.v3");
 const accountLeaf = (account: EntityRootAccount): Result<readonly [Uint8Array, Uint8Array], EntityRootError> => {
   const owner = signerId(account.fromEntity);
   if (owner !== signerId(account.state.leftEntity) && owner !== signerId(account.state.rightEntity)) return err({ _tag: "account_owner" });
+  const optional = Object.fromEntries(ENTITY_LEAF_OPTIONAL.flatMap((field) => {
+    const value = account.committed?.[field];
+    return value === undefined ? [] : [[field, LEAF_HANKO_FIELDS.has(field) && typeof value === "string" ? integrity(utf8(value)) : value]];
+  }));
   return chain(accountKey(account.toEntity), (key) => chain(accountStateCommitment(account.state), (accountStateRoot) => chain(encodeCanonicalValue({
-    status: account.status, currentHeight: account.currentHeight,
+    ...optional, status: account.status, currentHeight: account.currentHeight,
     proofHeader: { fromEntity: account.fromEntity, toEntity: account.toEntity, nextProofNonce: account.nextProofNonce },
-    accountStateRoot, currentFrameHash: account.currentFrameHash, pendingWithdrawals: account.pendingWithdrawals,
-    shadow: { rebalance: { policyRoot: account.policyRoot, submittedAtByTokenRoot: account.submittedAtByTokenRoot } },
+    accountStateRoot, ...opt("currentFrameHash", account.currentFrameHash), ...opt("counterpartySettlementHankos", account.counterpartySettlementHankos), pendingWithdrawals: account.pendingWithdrawals,
+    shadow: {
+      rebalance: { policyRoot: account.policyRoot, submittedAtByTokenRoot: account.submittedAtByTokenRoot, ...opt("activeQuote", account.activeQuote), ...opt("pendingRequest", account.pendingRequest) },
+      ...opt("rejectedFrameEvidence", account.rejectedFrameEvidence),
+    },
   }), (encoded) => ok([key, sha256(concat([ACCOUNT_LEAF, encoded]))] as const))));
 };
 const sectionDigest = (value: Binary): Result<string, BinaryError> => map(encodeConsensus(value), integrity);
