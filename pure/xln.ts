@@ -3385,9 +3385,12 @@ export class Candidate {
   /** `floor`: the settlement proof-nonce floor the frame's txs folded under (og reads the pre-frame replica cursors). */
   constructor(readonly frame: AccountFrame, readonly frameHanko: Hanko, readonly frameProof: LocalProof, readonly draft: FrameFold, readonly floor: number) {}
 }
-type AccountEnv = { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute: DisputeWitnesses; readonly boardRefresh?: BoardRefresh | undefined; readonly publicPinned?: true | undefined };
-/** Entity-side Account envelope fields every phase keeps (og counterpartyBoardHankoRefresh, publicPinned). */
-const envMeta = (r: Pick<AccountEnv, "boardRefresh" | "publicPinned">): Pick<AccountEnv, "boardRefresh" | "publicPinned"> => ({ ...opt("boardRefresh", r.boardRefresh), ...opt("publicPinned", r.publicPinned) });
+/** og RebalancePolicy (types/finance/rebalance.ts): the Entity's private per-token automation policy on one Account. */
+export type RebalancePolicy = { readonly r2cRequestSoftLimit: bigint; readonly hardLimit: bigint; readonly maxAcceptableFee: bigint };
+/** `rebalancePolicy`: og replica shadow.rebalance.policy, outside the Account state root, committed as the Entity leaf's policyRoot. */
+type AccountEnv = { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute: DisputeWitnesses; readonly boardRefresh?: BoardRefresh | undefined; readonly publicPinned?: true | undefined; readonly rebalancePolicy?: ReadonlyMap<number, RebalancePolicy> | undefined };
+/** Entity-side Account envelope fields every phase keeps (og counterpartyBoardHankoRefresh, publicPinned, shadow.rebalance.policy). */
+const envMeta = (r: Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy">): Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy"> => ({ ...opt("boardRefresh", r.boardRefresh), ...opt("publicPinned", r.publicPinned), ...opt("rebalancePolicy", r.rebalancePolicy) });
 type Held = AccountEnv & { readonly candidate: Candidate };
 type Frozen = Omit<AccountEnv, "mempool"> & { readonly evidence?: FrameEvidence | undefined };
 export interface OpenAccount extends Tagged<"open", AccountEnv> {}
@@ -3962,7 +3965,8 @@ export type Quorum = Authority & { readonly proposer: Address };
 /** og `config.jurisdiction` beyond the account Domain; committed inside the root's config section when present. */
 export type JurisdictionConfig = {
   readonly entityProviderAddress: string; readonly registrationBlock?: number | undefined; readonly entityProviderDeploymentBlock?: number | undefined; readonly blockTimeMs?: number | undefined;
-  readonly rebalancePolicyUsd?: { readonly r2cRequestSoftLimit: bigint; readonly hardLimit: bigint; readonly maxFee: bigint } | undefined;
+  /** og JurisdictionConfig.rebalancePolicyUsd: whole-USD numbers (og commits them as numbers). */
+  readonly rebalancePolicyUsd?: { readonly r2cRequestSoftLimit: number; readonly hardLimit: number; readonly maxFee: number } | undefined;
 };
 /** og EntityState root fields the rewrite carries without interpreting (nonces, reserves, profile, crontabState, ...), by og field name; collection fields in committed radix form. */
 export type EntityCommitted = { readonly [field: string]: Binary };
@@ -3984,7 +3988,7 @@ export type LeaderCertificate = LeaderVoteBody & { readonly votes: ReadonlyMap<s
 export type FrameLeader = { readonly proposerSignerId: string; readonly view: number; readonly certificate?: LeaderCertificate | undefined; readonly relayCertificate?: LeaderCertificate | undefined };
 /** og `core/types/entity-tx.ts` wire shape `{type, data}`. Account frames are proposed by the Entity frame itself (og proposePendingAccountFrames). */
 export type EntityTx =
-  | { readonly type: "openAccount"; readonly data: { readonly targetEntityId: EntityId; readonly disputeConfig: DisputeConfig; readonly accountDomain: Domain; readonly watchSeed: string; readonly creditAmount?: bigint | undefined; readonly tokenId?: TokenId | undefined; readonly pinPublic?: boolean | undefined } }
+  | { readonly type: "openAccount"; readonly data: { readonly targetEntityId: EntityId; readonly disputeConfig: DisputeConfig; readonly accountDomain: Domain; readonly watchSeed: string; readonly creditAmount?: bigint | undefined; readonly tokenId?: TokenId | undefined; readonly pinPublic?: boolean | undefined; readonly rebalancePolicy?: RebalancePolicy | undefined } }
   | { readonly type: "accountInput"; readonly data: AccountPeerInput }
   | { readonly type: "extendCredit"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint } }
   | { readonly type: "directPayment"; readonly data: { readonly targetEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly route: readonly EntityId[]; readonly description?: string | undefined; readonly deliveryMode: "direct" | "trusted"; readonly trustedGatewayEntityId?: EntityId | undefined } }
@@ -3993,12 +3997,22 @@ export type EntityTx =
   | { readonly type: "chatMessage"; readonly data: { readonly message: string; readonly timestamp: number; readonly metadata?: Readonly<Record<string, unknown>> | undefined } }
   | { readonly type: "requestCollateral"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number } }
   | { readonly type: "profile-update"; readonly data: { readonly profile: ProfileUpdate } }
+  /** og setHubConfig (lifecycle/admin.ts): the hub's committed rebalance fee policy; raw token-unit overrides are refused. */
+  | { readonly type: "setHubConfig"; readonly data: HubConfigInput }
+  /** og setRebalancePolicy: this Entity's private per-token automation policy on one Account (the leaf's policyRoot). */
+  | { readonly type: "setRebalancePolicy"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly r2cRequestSoftLimit: bigint; readonly hardLimit: bigint; readonly maxAcceptableFee: bigint } }
   /** og entityCommand: one board member's signed individual command (og command/command-codec.ts SignedEntityCommandV1). */
   | { readonly type: "entityCommand"; readonly data: EntityCommand }
   /** og governance (system/basic.ts): a board proposal and a vote on it; both reach the reducer only inside an entityCommand. */
   | { readonly type: "propose"; readonly data: { readonly action: ProposalAction; readonly proposer: string } }
   | { readonly type: "vote"; readonly data: { readonly proposalId: string; readonly voter: string; readonly choice: "yes" | "no"; readonly comment?: string | undefined } }
   | LendingEntityTx;
+/** og setHubConfig data (types/entity-tx.ts). */
+export type HubConfigInput = {
+  readonly hubName?: string | undefined; readonly matchingStrategy?: "amount" | "time" | "fee" | undefined; readonly policyVersion?: number | undefined; readonly routingFeePPM?: number | undefined;
+  readonly baseFee?: bigint | undefined; readonly swapTakerFeeBps?: number | undefined; readonly disputeAutoFinalizeMode?: "auto" | "ignore" | undefined; readonly minCollateralThreshold?: bigint | undefined;
+  readonly c2rWithdrawSoftLimit?: bigint | undefined; readonly rebalanceBaseFee?: bigint | undefined; readonly rebalanceLiquidityFeeBps?: bigint | undefined; readonly rebalanceGasFee?: bigint | undefined; readonly rebalanceTimeoutMs?: number | undefined;
+};
 /** og SignedEntityCommandV1: `signature` is og's `0x` compact signature (recovery 0/1) over hashEntityCommand. */
 export type EntityCommand = {
   readonly version: 1; readonly entityId: string; readonly stackKey: string; readonly boardHash: string; readonly boardEpoch: number;
@@ -4597,7 +4611,7 @@ type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
   extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId,
-  requestCollateral: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self, entityCommand: () => self, propose: () => self, vote: () => self,
+  requestCollateral: (x) => x.data.counterpartyEntityId, setRebalancePolicy: (x) => x.data.counterpartyEntityId, setHubConfig: () => self, chat: () => self, chatMessage: () => self, "profile-update": () => self, entityCommand: () => self, propose: () => self, vote: () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
 });
@@ -4622,11 +4636,69 @@ const forwardPayment = (d: Draft, f: Of<Effect, "direct_payment_forward">): Resu
 const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
 /** og DEFAULT_ACCOUNT_TOKEN_IDS (account/config/defaults.ts). */
 const DEFAULT_ACCOUNT_TOKEN_IDS = ["1", "3", "2"] as const;
+/** og TOKEN_REGISTRY decimals (account/utils.ts over DEFAULT_TOKENS + TRON_ONLY_DEFAULT_TOKENS): USDC, WETH, USDT, TRX, SUN. */
+const TOKEN_DECIMALS: ReadonlyMap<number, number> = new Map([[1, 6], [2, 18], [3, 6], [4, 6], [5, 18]]);
+/** og getTokenInfo(tokenId).decimals: an unknown token is a plain Error (TOKEN_METADATA_UNAVAILABLE). */
+const tokenDecimals = (tokenId: number): Result<bigint, EntityError> => { const d = Number.isSafeInteger(tokenId) && tokenId > 0 ? TOKEN_DECIMALS.get(tokenId) : undefined; return d === undefined ? invariant(`TOKEN_METADATA_UNAVAILABLE:${String(tokenId)}`) : ok(BigInt(d)); };
+/** og resolveJurisdictionRebalanceDefaults: 500 / 10_000 / 15 whole tokens, or the jurisdiction's whole-USD policy scaled to the token's decimals. */
+export const rebalanceDefaults = (j: JurisdictionConfig | undefined, tokenId: number): Result<RebalancePolicy, EntityError> => {
+  const raw = j?.rebalancePolicyUsd;
+  if (raw === undefined) return map(tokenDecimals(tokenId), (d) => ({ r2cRequestSoftLimit: 500n * 10n ** d, hardLimit: 10_000n * 10n ** d, maxAcceptableFee: 15n * 10n ** d }));
+  // og scaleWholePolicyAmount: the value is checked before the token's decimals are read
+  const scale = (v: number): Result<bigint, EntityError> => (!Number.isFinite(v) || v < 0 ? invariant(`REBALANCE_POLICY_USD_INVALID:token=${tokenId}:value=${String(v)}`) : map(tokenDecimals(tokenId), (d) => BigInt(Math.floor(v)) * 10n ** d));
+  return chain(scale(raw.r2cRequestSoftLimit), (soft) => chain(scale(raw.hardLimit), (hard) => chain(scale(raw.maxFee), (fee): Result<RebalancePolicy, EntityError> =>
+    soft <= 0n || hard < soft ? invariant(`REBALANCE_POLICY_USD_INVALID:token=${tokenId}`) : ok({ r2cRequestSoftLimit: soft, hardLimit: hard, maxAcceptableFee: fee }))));
+};
+/** og getDefaultRebalanceBaseFeeForToken: 0.1 of the token's whole unit. */
+export const defaultRebalanceBaseFee = (tokenId: number): Result<bigint, EntityError> => chain(tokenDecimals(tokenId), (d) => (d === 0n ? invariant("TOKEN_AMOUNT_PRECISION_UNREPRESENTABLE:0.1:0") : ok(10n ** (d - 1n))));
+/** og HubRebalanceConfig as committed in EntityState.hubRebalanceConfig. */
+type HubConfig = { readonly hubName?: string; readonly matchingStrategy: string; readonly policyVersion: number; readonly routingFeePPM: number; readonly baseFee: bigint; readonly swapTakerFeeBps: number; readonly disputeAutoFinalizeMode: string; readonly minCollateralThreshold: bigint; readonly rebalanceLiquidityFeeBps: bigint; readonly rebalanceTimeoutMs: number };
+const hubConfigOf = (state: EntityState): HubConfig | undefined => state.committed["hubRebalanceConfig"] as HubConfig | undefined;
+/** og buildHubRebalancePolicyTx: the hub's per-token fee terms at the token-default base fee and zero gas fee. */
+const hubPolicyTx = (config: HubConfig, tokenId: TokenId): Result<AccountTx, EntityError> =>
+  map(defaultRebalanceBaseFee(Number(tokenId)), (baseFee): AccountTx => ({ type: "rebalance_policy", tokenId, policyVersion: config.policyVersion, baseFee, liquidityFeeBps: config.rebalanceLiquidityFeeBps, gasFee: 0n }));
+/** og buildHubConfig: raw overrides refused, liquidity fee bounded, policyVersion stale / equivocation / auto-increment rules. */
+export const buildHubConfig = (previous: HubConfig | undefined, data: HubConfigInput): Result<HubConfig, EntityError> => {
+  const forbidden = [data.rebalanceBaseFee !== undefined ? "rebalanceBaseFee" : "", data.c2rWithdrawSoftLimit !== undefined ? "c2rWithdrawSoftLimit" : "", data.rebalanceGasFee !== undefined ? "rebalanceGasFee" : ""].filter(Boolean);
+  if (forbidden.length > 0) return invariant(`HUB_REBALANCE_TOKENLESS_RAW_OVERRIDE_FORBIDDEN:${forbidden.join(",")}`);
+  const liquidityFeeBps = data.rebalanceLiquidityFeeBps ?? 1n;
+  if (liquidityFeeBps < 0n || liquidityFeeBps > 10_000n) return invariant(`HUB_REBALANCE_LIQUIDITY_FEE_BPS_INVALID:${liquidityFeeBps}`);
+  const changed = previous === undefined || previous.rebalanceLiquidityFeeBps !== liquidityFeeBps, requested = data.policyVersion, prev = previous?.policyVersion ?? 0;
+  if (requested !== undefined && (!Number.isSafeInteger(requested) || Number(requested) <= 0)) return invariant(`HUB_REBALANCE_POLICY_VERSION_INVALID:${String(requested)}`);
+  if (requested !== undefined && requested < prev) return invariant(`HUB_REBALANCE_POLICY_VERSION_STALE:${requested}<${prev}`);
+  if (requested !== undefined && requested === prev && changed) return invariant(`HUB_REBALANCE_POLICY_EQUIVOCATION:version=${requested}`);
+  const policyVersion = requested ?? (prev <= 0 ? 1 : changed ? prev + 1 : prev);
+  const hubName = typeof data.hubName === "string" && data.hubName.trim() ? data.hubName.trim() : previous?.hubName;
+  return ok({
+    ...(hubName ? { hubName } : {}), matchingStrategy: data.matchingStrategy === "time" || data.matchingStrategy === "fee" ? data.matchingStrategy : "amount", policyVersion,
+    routingFeePPM: data.routingFeePPM ?? 1, baseFee: data.baseFee ?? 0n, swapTakerFeeBps: Math.max(0, Math.min(10_000, Math.floor(Number(data.swapTakerFeeBps ?? 0) || 0))),
+    disputeAutoFinalizeMode: data.disputeAutoFinalizeMode ?? "auto", minCollateralThreshold: data.minCollateralThreshold ?? 0n, rebalanceLiquidityFeeBps: liquidityFeeBps, rebalanceTimeoutMs: data.rebalanceTimeoutMs ?? 10 * 60 * 1000,
+  });
+};
+/**
+ * og checkAutoRebalance (account/tx/handlers/rebalance/request-collateral.ts): per policy token in ascending order, request collateral for the peer
+ * credit we use once it crosses the soft limit, priced by the peer's published fee terms, unless a request, a queued request, a pending frame or a
+ * settlement is in flight, the fee exceeds our ceiling, or the fee would eat the whole request.
+ */
+export const autoRebalance = (child: AccountReplica, self: EntityId): readonly AccountTx[] => {
+  const policies = [...(child.rebalancePolicy ?? new Map<number, RebalancePolicy>())].sort(([a], [b]) => a - b), body = child.state;
+  const isLeft = sameHex(body.account.id.left, self), mempool = "mempool" in child ? child.mempool : [];
+  return policies.flatMap(([token, policy]): AccountTx[] => {
+    const tokenId = String(token) as TokenId, fees = body.feePolicies.get(tokenId), fee = isLeft ? fees?.right : fees?.left, delta = body.account.deltas.get(tokenId);
+    if (fee === undefined || policy.r2cRequestSoftLimit === policy.hardLimit || delta === undefined || (body.requested.get(tokenId) ?? 0n) > 0n) return [];
+    if (mempool.some((t) => t.type === "request_collateral" && Number(t.tokenId) === token) || child._tag === "proposed") return [];
+    const total = delta.ondelta + delta.offdelta, outPeerCredit = isLeft ? floor0(total - floor0(delta.collateral)) : floor0(-total);
+    if (outPeerCredit < policy.r2cRequestSoftLimit) return [];
+    const feeAmount = fee.baseFee + fee.gasFee + (outPeerCredit * fee.liquidityFeeBps) / 10000n;
+    if (feeAmount > policy.maxAcceptableFee || outPeerCredit <= feeAmount || body.settlement !== undefined) return [];
+    return [{ type: "request_collateral", tokenId, amount: outPeerCredit, feeTokenId: tokenId, feeAmount, policyVersion: fee.policyVersion }];
+  });
+};
 /** og processingTrigger / direct-payment wake: an empty input to `validators[0]`. */
 const wake = (state: EntityState, timestamp: bigint): EntityOutput => ({ to: state.id, signerId: state.quorum.proposer, input: { kind: "txs", timestamp, txs: [] } });
 const sameDomain = (a: Domain, b: Domain): boolean => a.chainId === b.chainId && sameHex(a.depositoryAddress, b.depositoryAddress);
 /** og handleOpenAccountEntityTx: no output (the peer learns from the first Account frame); seeds add_delta for tokenId + defaults and an optional credit line. */
-const openChild = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx, { type: "openAccount" }>): Result<Draft, EntityError> => {
+const openChild = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx, { type: "openAccount" }>, now: bigint): Result<Draft, EntityError> => {
   const { targetEntityId: target, accountDomain, watchSeed, disputeConfig, creditAmount, tokenId } = tx.data;
   const id = accountId(state.id, target);
   if (!id.ok) return err({ _tag: "self_account" });
@@ -4634,10 +4706,18 @@ const openChild = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx,
     if (!sameDomain(opened.state.terms.domain, state.jurisdiction)) return err({ _tag: "domain_mismatch" });
     if (replicas.has(target)) return err({ _tag: "account_exists", target });
     const credit = tokenId ?? "1", tokens = [...new Set([credit, ...DEFAULT_ACCOUNT_TOKEN_IDS])].filter((t) => Number(t) > 0) as TokenId[];
-    const seeded: readonly AccountTx[] = [...tokens.map((t): AccountTx => ({ type: "add_delta", tokenId: t })), ...(creditAmount !== undefined && creditAmount > 0n ? [{ type: "set_credit_limit", tokenId: credit as TokenId, limit: creditAmount } as AccountTx] : [])];
-    // og resolveOpenAccountPublicPin: the opener pins unless `pinPublic: false` or MAX_PROFILE_ADVERTISED_ACCOUNTS (100) are already pinned
-    const pinned = tx.data.pinPublic !== false && [...replicas.values()].filter((c) => c.publicPinned === true).length < 100;
-    return map(admitAt(pinned ? { ...opened, publicPinned: true } : opened, seeded, state.id, L0_CLOCK), (admitted) => ({ ...putChild(state, replicas, target, admitted), outputs: [] }));
+    // og seedOpenAccountPolicies: the requested policy (validated) for tokenId, the jurisdiction defaults for the rest, then the hub's fee terms
+    const requested = tx.data.rebalancePolicy;
+    if (requested !== undefined && (requested.r2cRequestSoftLimit <= 0n || requested.hardLimit < requested.r2cRequestSoftLimit || requested.maxAcceptableFee < 0n)) return invariant(`REBALANCE_POLICY_INVALID:token=${Number(credit)}`);
+    const hub = hubConfigOf(state);
+    return chain(traverse(tokens, (t) => (requested !== undefined && t === credit ? ok(requested) : rebalanceDefaults(state.jurisdictionConfig, Number(t)))), (policies) => chain(traverse(hub === undefined ? [] : tokens, (t) => hubPolicyTx(hub as HubConfig, t)), (hubTxs) => {
+      const seeded: readonly AccountTx[] = [...tokens.map((t): AccountTx => ({ type: "add_delta", tokenId: t })), ...hubTxs, ...(creditAmount !== undefined && creditAmount > 0n ? [{ type: "set_credit_limit", tokenId: credit as TokenId, limit: creditAmount } as AccountTx] : [])];
+      // og resolveOpenAccountPublicPin: the opener pins unless `pinPublic: false` or MAX_PROFILE_ADVERTISED_ACCOUNTS (100) are already pinned
+      const pinned = tx.data.pinPublic !== false && [...replicas.values()].filter((c) => c.publicPinned === true).length < 100;
+      const withPolicy: AccountReplica = { ...opened, rebalancePolicy: new Map(tokens.map((t, i) => [Number(t), { ...(policies[i] as RebalancePolicy) }])) };
+      // og admission never folds; the rewrite's admission fold needs a real clock only for rebalance_policy's timestamp check
+      return map(admitAt(pinned ? { ...withPolicy, publicPinned: true } : withPolicy, seeded, state.id, hubTxs.length > 0 ? { ...L0_CLOCK, timestamp: now } : L0_CLOCK),(admitted) => ({ ...putChild(state, replicas, target, admitted), outputs: [] }));
+    }));
   });
 };
 /** og createInboundAccountState: an unknown peer's first proposal (height 1) opens the Account from its envelope. */
@@ -4645,7 +4725,10 @@ const inboundChild = (state: EntityState, replicas: Replicas, from: EntityId, m:
   if (m.frame.height !== 1n || m.watchSeed === undefined) return err({ _tag: "no_such_account", target: from });
   if (!sameDomain(m.domain, state.jurisdiction)) return err({ _tag: "domain_mismatch" });
   return chain(mapErr(accountId(state.id, from), (): EntityError => ({ _tag: "self_account" })), (id) =>
-    map(genesisReplica(id, { domain: m.domain, watchSeed: m.watchSeed ?? "", disputeConfig: m.disputeConfig }), (opened) => putChild(state, replicas, from, opened)));
+    chain(traverse(DEFAULT_ACCOUNT_TOKEN_IDS, (t) => rebalanceDefaults(state.jurisdictionConfig, Number(t))), (policies) =>
+      // og createInboundAccountState: shadow.rebalance.policy holds the jurisdiction defaults for DEFAULT_ACCOUNT_TOKEN_IDS
+      map(genesisReplica(id, { domain: m.domain, watchSeed: m.watchSeed ?? "", disputeConfig: m.disputeConfig }), (opened) =>
+        putChild(state, replicas, from, { ...opened, rebalancePolicy: new Map(DEFAULT_ACCOUNT_TOKEN_IDS.map((t, i) => [Number(t), policies[i] as RebalancePolicy])) }))));
 };
 const UINT256_MAX = (1n << 256n) - 1n;
 /**
@@ -5105,7 +5188,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
   const skip: Draft = { state, accountReplicas: replicas, outputs: [] };
   return matchBy("type", tx, {
     // og open-account.ts: the two status events around the insert
-    openAccount: (x) => map(openChild(state, replicas, x), (d) => say(d, `💳 Opening account with Entity ${x.data.targetEntityId}...`, `✅ Account opening request sent to Entity ${lower(x.data.targetEntityId)}`)),
+    openAccount: (x) => map(openChild(state, replicas, x, ctx.timestamp), (d) => say(d, `💳 Opening account with Entity ${x.data.targetEntityId}...`, `✅ Account opening request sent to Entity ${lower(x.data.targetEntityId)}`)),
     extendCredit: (x) => (replicas.has(x.data.counterpartyEntityId) ? map(enqueue(x.data.counterpartyEntityId, [{ type: "set_credit_limit", tokenId: x.data.tokenId, limit: x.data.amount }], [wake(state, ctx.timestamp)]), (d) => say(d, `💳 Extended credit of ${x.data.amount} to ${x.data.counterpartyEntityId.slice(-4)}`)) : ok(skip)),
     directPayment: (x) => {
       const { route, targetEntityId, amount, deliveryMode, trustedGatewayEntityId, tokenId, description } = x.data;
@@ -5135,6 +5218,26 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       return replicas.has(to) ? enqueue(to, [{ type: "request_collateral", tokenId, amount, ...opt("feeTokenId", feeTokenId), feeAmount, policyVersion }], [wake(state, ctx.timestamp)]) : ok(skip);
     },
     "profile-update": (x) => map(profileUpdate(state, x.data.profile), (profile) => ({ ...skip, state: { ...state, committed: { ...state.committed, profile } } })),
+    // og handleSetHubConfigEntityTx: commit the config, mark the profile a hub, then queue the fee terms on every Account's tokens (ids and tokens ascending) and wake
+    setHubConfig: (x) => chain(buildHubConfig(hubConfigOf(state), x.data), (config) => {
+      const committed = { ...state.committed, hubRebalanceConfig: config as unknown as Binary, profile: { ...((state.committed["profile"] ?? {}) as { readonly [k: string]: Binary }), isHub: true } };
+      const targets = [...replicas.keys()].sort(asc).flatMap((peer) => [...(replicas.get(peer)?.state.account.deltas.keys() ?? [])].sort((a, b) => Number(a) - Number(b)).map((t) => [peer, t] as const));
+      const message = `🏦 Hub config activated: ${config.matchingStrategy} strategy v${config.policyVersion}, ${config.routingFeePPM}ppm routing fee, swapTakerFee=${config.swapTakerFeeBps}bps, rebalance(base=token-default, liqBps=${config.rebalanceLiquidityFeeBps}, gas=token-default, c2rWithdrawSoftLimit=token-default)`;
+      const start: Draft = { state: { ...state, committed }, accountReplicas: replicas, outputs: [], touched: [...new Set(targets.map(([peer]) => peer))] };
+      return map(foldResult<Draft, readonly [EntityId, TokenId], EntityError>(targets, start, (d, [peer, t]) => chain(hubPolicyTx(config, t), (policyTx) =>
+        withChild(d.accountReplicas, peer, (child) => map(admitAt(child, [policyTx], state.id, { ...L0_CLOCK, timestamp: ctx.timestamp }, ctx.verify), (admitted) => ({ ...d, ...putChild(d.state, d.accountReplicas, peer, admitted) }))))),
+      (d) => say({ ...d, outputs: targets.length > 0 ? [wake(state, ctx.timestamp)] : [] }, message));
+    }),
+    // og handleSetRebalancePolicyEntityTx: a missing Account is a no-op; an invalid policy is a plain Error; without a hub config, run checkAutoRebalance
+    setRebalancePolicy: (x) => {
+      const { counterpartyEntityId: to, tokenId, r2cRequestSoftLimit, hardLimit, maxAcceptableFee } = x.data, child = replicas.get(to);
+      if (child === undefined) return ok(skip);
+      if (r2cRequestSoftLimit < 0n || hardLimit < r2cRequestSoftLimit || maxAcceptableFee < 0n) return invariant(`REBALANCE_POLICY_INVALID: token=${Number(tokenId)}`);
+      const updated: AccountReplica = { ...child, rebalancePolicy: mapSet(child.rebalancePolicy ?? new Map<number, RebalancePolicy>(), Number(tokenId), { r2cRequestSoftLimit, hardLimit, maxAcceptableFee }) };
+      const requests = hubConfigOf(state) === undefined ? autoRebalance(updated, state.id) : [];
+      const put = putChild(state, replicas, to, updated);
+      return requests.length === 0 ? ok({ ...put, outputs: [] }) : map(admitAt(updated, requests, state.id, L0_CLOCK, ctx.verify), (admitted) => ({ ...putChild(state, replicas, to, admitted), outputs: [wake(state, ctx.timestamp)] }));
+    },
     accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => {
       const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp };
       const apply = (at: Folded): Result<Draft, EntityError> => withChild(at.accountReplicas, peer, (child) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)));
@@ -5209,7 +5312,7 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
   });
   return chain(linked, (link): Result<EntityRootAccount, EntityError> => chain(mapErr(committedView(body), (): EntityError => ({ _tag: "account_envelope", target: peer })), (state): Result<EntityRootAccount, EntityError> => ok({
     fromEntity: self, toEntity: peer, status, currentHeight: link.height, nextProofNonce: child.dispute.nextProofNonce, currentFrameHash: link.frame,
-    pendingWithdrawals: ZERO_WORD, policyRoot: ZERO_WORD, submittedAtByTokenRoot: unwrapOr(submittedAtRoot(body), () => ZERO_WORD), state,
+    pendingWithdrawals: ZERO_WORD, policyRoot: unwrapOr(mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>()), () => ZERO_WORD), submittedAtByTokenRoot: unwrapOr(submittedAtRoot(body), () => ZERO_WORD), state,
     committed: { ...opt("publicPinned", child.publicPinned), ...opt("counterpartyBoardHankoRefresh", child.boardRefresh), ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active) : {}) },
     ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
   })));

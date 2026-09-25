@@ -346,7 +346,7 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
     expect(unwrapErr(propose(teaching([[A, 1n]], 1n), A, [open, open]))._tag).toBe("account_exists");
   });
   test("MATCH (og open-account.ts:262 + proposePendingAccountFrames): openAccount seeds add_delta for tokenId + [1,3,2] and the credit line; the same Entity frame proposes them as the first Account frame", () => {
-    const p = unwrap(propose(teaching([[A, 1n]], 1n), A, [openTo(BOB, { tokenId: unwrap(tokenId("7")), creditAmount: 9n })]));
+    const p = unwrap(propose(teaching([[A, 1n]], 1n), A, [openTo(BOB, { tokenId: unwrap(tokenId("5")), creditAmount: 9n })]));
     const child = p.replica.accountReplicas.get(BOB);
     expect(child?._tag).toBe("proposed");
     expect(child?.mempool).toEqual([]);
@@ -354,7 +354,7 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
     const sent = p.outputs[0];
     if (sent === undefined || !("tx" in sent) || sent.tx.data.kind !== "ack_frame") throw new Error("no frame");
     expect(sent.tx.data.frame.height).toBe(1n);
-    expect(sent.tx.data.frame.txs.map((t) => [t.type, "tokenId" in t ? t.tokenId : undefined])).toEqual([["add_delta", "7"], ["add_delta", "1"], ["add_delta", "3"], ["add_delta", "2"], ["set_credit_limit", "7"]]);
+    expect(sent.tx.data.frame.txs.map((t) => [t.type, "tokenId" in t ? t.tokenId : undefined])).toEqual([["add_delta", "5"], ["add_delta", "1"], ["add_delta", "3"], ["add_delta", "2"], ["set_credit_limit", "5"]]);
   });
   test("MATCH (og direct-payment.ts): amount < 1 is a silent no-op, a non-bilateral direct route and a trusted route are refused, a paid hop queues a payment and wakes validators[0]", () => {
     const opened = unwrap(propose(teaching([[A, 1n]], 1n), A)).replica;
