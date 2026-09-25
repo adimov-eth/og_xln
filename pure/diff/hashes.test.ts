@@ -231,8 +231,10 @@ describe("J event signatures vs Depository ABI (typechain from Types.sol/Deposit
     for (let i = 0; i < 50; i++) {
       const b = () => W(pick(["11", "aB", "00", "ff"]));
       const u = () => pick([0n, 1n, (1n << 256n) - 1n, BigInt(ri(1e9))]);
-      const h = DEPOSITORY.encodeEventLog("HankoBatchProcessed", [b(), b(), u()]);
-      const r = DEPOSITORY.encodeEventLog("ReserveUpdated", [b(), u(), u()]);
+      // og normalizers: a HankoBatchProcessed nonce is a safe integer >= 1 and a ReserveUpdated tokenId a safe integer (j-layer.test.ts covers the refusals).
+      const s = () => pick([1n, BigInt(1 + ri(1e9)), BigInt(Number.MAX_SAFE_INTEGER)]);
+      const h = DEPOSITORY.encodeEventLog("HankoBatchProcessed", [b(), b(), s()]);
+      const r = DEPOSITORY.encodeEventLog("ReserveUpdated", [b(), s(), u()]);
       const lw = ri(2 ** 32), rw = ri(2 ** 32), start = BigInt(1 + ri(2 ** 40));
       const ds = [b(), b(), u(), rng() < 0.5, b(), b(), "0x" + "ab".repeat(ri(40)), "0x" + "cd".repeat(ri(3)), b(), start + BigInt(lw + rw), start, lw, rw] as const;
       const d = DEPOSITORY.encodeEventLog("DisputeStarted", [...ds]);
