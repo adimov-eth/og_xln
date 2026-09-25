@@ -6121,13 +6121,35 @@ const routeEntity = (tx: EntityRouteTx, self: EntityId, id: AccountId): Result<A
   placeSwapOffer: ({ type: _, ...offer }) => ok({ type: "swap_offer", ...offer }),
   htlcPayment: () => err({ _tag: "unchosen", hole: "onion" }), prepareCrossJurisdictionSwap: () => err({ _tag: "unchosen", hole: "cross_open" }), registerCrossJurisdictionSwap: () => err({ _tag: "unchosen", hole: "cross_open" }),
 });
+/**
+ * og j-events.ts applyDisputeStartedJEvent / applyDisputeFinalizedJEvent (J7 dispatch): a DisputeStarted / DisputeFinalized event whose account
+ * (og resolveDisputeAccountContext: the counterentity when we sent it, else the sender) is the Host's one Account becomes that Account's
+ * external_finality, built by disputeStartedInput / disputeFinalizedInput against the frozen Account's current proof body. Other Accounts' events are
+ * og's `account_missing` no-op. Not ported here: counter-proof selection, jBatch scrubbing, crontab dispute-deadline hooks, HTLC / cross-j follow-ups.
+ */
+const disputeFinalityOf = (host: Host, op: JOp, peer: EntityId): Result<AccountFinality | undefined, HostError> => {
+  if (op.type !== "j_event" || (op.event.type !== "DisputeStarted" && op.event.type !== "DisputeFinalized")) return ok(undefined);
+  const e = op.event, self = host.self.toLowerCase(), counterparty = e.sender.toLowerCase() === self ? e.counterentity.toLowerCase() : e.sender.toLowerCase();
+  if (counterparty !== peer.toLowerCase()) return ok(undefined);
+  const body = host.account.state, frozen = chain(mapErr(committedView(body), (): JObserveError => ({ _tag: "j_observe", reason: "DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH" })), (view) =>
+    map(mapErr(localProof(view), (): JObserveError => ({ _tag: "j_observe", reason: "DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH" })), (p) => p.bodyHash));
+  return chain(frozen, (frozenHash): Result<AccountFinality, HostError> => {
+    if (e.type === "DisputeStarted") return disputeStartedInput(e, op.blockNumber, frozenHash);
+    const active = host.account._tag === "disputed" ? host.account.active : undefined;
+    return disputeFinalizedInput(e, { jNonce: body.jNonce, ...opt("initialProposerIsLeft", active?.initialProposerIsLeft) }, frozenHash);
+  });
+};
 export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify): Result<HostStep, AccountReplicaError | HostError> => matchBy("layer", tx, {
   account: (i) => admitTx(host, i.tx, ctx, verify),
   frame: (i) => {
     const delivery: Delivery = ctx.from === undefined ? { _tag: "local" } : { _tag: "received", from: ctx.from }, door: DoorContext = { verify, self: host.self, now: ctx.timestamp };
     return accountStep(host, disputeUnsafe(host.account, applyDelivered(host.account, i.input, delivery, door), door));
   },
-  j: (i) => chain(partyOf(replicaId(host.account), host.self), (party) => map(applyJ(host.j, i.tx, host.self, party.peer, ctx), (j) => step({ ...host, j }))),
+  j: (i) => chain(partyOf(replicaId(host.account), host.self), (party) => chain(applyJ(host.j, i.tx, host.self, party.peer, ctx), (j) => {
+    const moved: Host = { ...host, j };
+    return chain(disputeFinalityOf(host, i.tx, party.peer), (finality): Result<HostStep, AccountReplicaError | HostError> => (finality === undefined ? ok(step(moved))
+      : accountStep(moved, applyAccountInput(host.account, { kind: "external_finality", ...envelopeOf(host.account.state.terms, party), finality }, { verify, self: host.self, now: ctx.timestamp }))));
+  })),
   ladder: (i) => { const key = ladderKey(i.tx); return map(revealSlot(host.ladder.get(key), i.tx), (slot) => step({ ...host, ladder: mapSet(host.ladder, key, slot) })); },
   entity: (i) => chain(routeEntity(i.tx, host.self, replicaId(host.account)), (routed) => admitTx(host, routed, ctx, verify)),
   input: (i) => matchBy("kind", i.input, {

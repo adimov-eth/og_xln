@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   authorEntityTxs, buildCommand, certifiedBoardStackKey, checkCommand, configBoardHash, createEntity, entityId, entityTransactionAction, foldTxs, hashCommand, hashCommandTxs, hashEntityFrame,
-  hashProposalAction, applyEntityInput, proposalId, tokenId, wireEntityTx, installedAccount, ZERO_WORD, autoRebalance, spawn, createRuntime, applyRuntime, convertOutput, replicaKey,
+  hashProposalAction, applyEntityInput, proposalId, tokenId, wireEntityTx, installedAccount, ZERO_WORD, genesisHost, applyHost, localProof, committedView, envelopeOf, spawn, createRuntime, applyRuntime, convertOutput, replicaKey,
   type AccountReplica, type Address, type EntityCommand, type EntityError, type EntityId, type EntityReplica, type EntityState, type EntityTx, type Hash, type ProposalAction,
 } from "../xln.ts";
-import { ALICE, BOB, NOW, TERMS, aliceAddr, bobAddr, carolAddr, crypto, hankoVerify, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, crypto, genesisAB, hankoVerify, unwrap, verifiers } from "../xln_run.ts";
+import { createAccountDisputeFinalityInput, createAccountDisputeStartedInput } from "../../core/account/input.ts";
+import { applyAccountDisputeFinality, applyAccountDisputeStarted } from "../../core/account/settlement/j-finality.ts";
 import { encodeCanonicalConsensusBytes } from "../../core/protocol/serialization/binary-codec.ts";
 import { hashEntityCommand, hashEntityCommandTxs, UNREGISTERED_ENTITY_COMMAND_STACK_KEY } from "../../core/entity/command/command-codec.ts";
 import { advanceEntityCommandNonce, assertSignedEntityCommand, getEntityCommandDisposition, resolveEntityCommandBoard } from "../../core/entity/command/index.ts";
@@ -378,5 +380,71 @@ describe("entity-txs-3: setHubConfig / setRebalancePolicy (og lifecycle/admin.ts
     const d = unwrap(foldTxs(a.state, a.accountReplicas, [{ type: "setRebalancePolicy", data: { counterpartyEntityId: BOB, tokenId: unwrap(tokenId("1")), r2cRequestSoftLimit: -1n, hardLimit: 0n, maxAcceptableFee: 0n } }], { verify: hankoVerify, timestamp: NOW })).draft;
     const og = handleSetRebalancePolicyEntityTx(env, { entityId: a.state.id, accounts: new Map() } as never, { type: "setRebalancePolicy", data: { counterpartyEntityId: BOB, tokenId: 1, r2cRequestSoftLimit: -1n, hardLimit: 0n, maxAcceptableFee: 0n } } as never, true);
     expect([d.outputs.length, d.accountReplicas.size]).toEqual([og.outputs.length, 0]);
+  });
+});
+
+describe("entity-txs-3: J7 dispute J events reach the Account (og j-events.ts applyDisputeStartedJEvent / applyDisputeFinalizedJEvent)", () => {
+  /** og applyStartedDisputeAccountInput / resolveFinalizationEvidence (no evidence rows) field mapping, then og's own envelope builders and Account finality. */
+  const ogAccount = (jNonce: number): any => ({
+    state: { leftEntity: lower(ALICE), rightEntity: lower(BOB), domain: { ...TERMS.domain }, disputeConfig: { ...TERMS.disputeConfig }, jNonce, deltas: PersistentAccountStateMap.empty("deltas"), locks: PersistentAccountStateMap.empty("locks"),
+      swapOffers: PersistentAccountStateMap.empty("swapOffers"), pulls: PersistentAccountStateMap.empty("pulls") },
+    status: "active", mempool: [], proofHeader: { fromEntity: lower(ALICE), toEntity: lower(BOB), nextProofNonce: 1 },
+  });
+  const lower = (s: string): string => s.toLowerCase();
+  test("MATCH: 120 random DisputeStarted / DisputeFinalized events: the account resolution, the frozen proof-body check and the resulting Account finality equal og's", () => {
+    const host0 = unwrap(genesisHost(ALICE, genesisAB()) as any) as any;
+    const proof: any = unwrap(localProof(unwrap(committedView(host0.account.state))) as any);
+    const L = BigInt(TERMS.disputeConfig.leftResponseSeconds), R = BigInt(TERMS.disputeConfig.rightResponseSeconds);
+    let started = 0, finalized = 0;
+    for (let i = 0; i < 120; i++) {
+      const [sender, counterentity] = pick([[BOB, ALICE], [ALICE, BOB], [CAROL, ALICE], [ALICE, CAROL]] as const);
+      const goodHash = rng() < 0.85, nonce = BigInt(ri(6)), t0 = BigInt(1_000 + ri(50)), skew = rng() < 0.15 ? 1n : 0n, jNonce0 = ri(4);
+      const bodyHash = goodHash ? proof.bodyHash : `0x${"9".repeat(64)}`;
+      const host = { ...host0, account: { ...host0.account, state: { ...host0.account.state, jNonce: jNonce0 } } };
+      const ctx = { timestamp: NOW, jHeight: 0n };
+      if (rng() < 0.5) {
+        const event = { type: "DisputeStarted", sender, counterentity, nonce, proposerIsLeft: rng() < 0.5, proofbodyHash: bodyHash, watchSeed: TERMS.watchSeed, starterInitialArguments: "0x", starterCounterArguments: "0x",
+          starterCounterProofCommitment: ZERO_WORD, disputeTimeout: t0 + L + R + skew, disputeStartTimestamp: t0, leftResponseSeconds: L, rightResponseSeconds: R, initialProofbody: proof.body, batchNonce: ri(3) };
+        const rw = applyHost(host, { layer: "j", tx: { type: "j_event", blockNumber: 7, event } } as any, ctx, hankoVerify);
+        const og = ogThrows(() => {
+          const counterparty = lower(sender) === lower(ALICE) ? lower(counterentity) : lower(sender);
+          if (counterparty !== lower(BOB)) return undefined;
+          if (!goodHash) throw new Error("DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH");
+          const acc = ogAccount(jNonce0);
+          const input: any = createAccountDisputeStartedInput(acc.state, lower(ALICE), { kind: "dispute_started", starterEntityId: lower(sender), initialProofbodyHash: bodyHash, initialNonce: Number(nonce), initialProposerIsLeft: event.proposerIsLeft,
+            disputeTimeout: Number(event.disputeTimeout), disputeStartTimestamp: Number(t0), leftResponseSeconds: Number(L), rightResponseSeconds: Number(R), jNonce: Number(nonce), starterInitialArguments: "0x", starterCounterArguments: "0x",
+            starterCounterProofCommitment: ZERO_WORD, observedBlockNumber: 7, batchNonce: event.batchNonce } as any);
+          applyAccountDisputeStarted(acc, input.finality);
+          return { input, acc };
+        });
+        if (!og.ok) { expect(rw.ok).toBe(false); continue; }
+        const after: any = unwrap(rw as any);
+        if (og.value === undefined) { expect(after.state.account).toBe(host.account); continue; }
+        expect(after.state.account._tag).toBe("disputed");
+        expect(after.state.account.active).toEqual(og.value.acc.activeDispute);
+        expect(after.state.account.state.jNonce).toBe(og.value.acc.state.jNonce);
+        expect(envelopeOf(host.account.state.terms, { self: ALICE, peer: BOB, left: true })).toMatchObject({ fromEntityId: og.value.input.fromEntityId, toEntityId: og.value.input.toEntityId, domain: og.value.input.domain, disputeConfig: og.value.input.disputeConfig });
+        started++;
+      } else {
+        const initialProofbodyHash = rng() < 0.5 ? bodyHash : `0x${"8".repeat(64)}`;
+        const event = { type: "DisputeFinalized", sender, counterentity, nonce, finalProofbodyHash: bodyHash, finalizationEvidenceHash: ZERO_WORD, finalProofbody: proof.body, initialProofbodyHash };
+        const rw = applyHost(host, { layer: "j", tx: { type: "j_event", blockNumber: 7, event } } as any, ctx, hankoVerify);
+        const og = ogThrows(() => {
+          const counterparty = lower(sender) === lower(ALICE) ? lower(counterentity) : lower(sender);
+          if (counterparty !== lower(BOB)) return undefined;
+          if (!goodHash) throw new Error("DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH");
+          const eventJNonce = bodyHash.toLowerCase() === initialProofbodyHash.toLowerCase() ? Number(nonce) + 1 : Number(nonce);
+          const acc = ogAccount(jNonce0), input: any = createAccountDisputeFinalityInput(acc.state, lower(ALICE), Math.max(jNonce0, eventJNonce), proof.body.tokenIds.map(Number));
+          applyAccountDisputeFinality(acc, input.finality.finalizedJNonce, input.finality.finalizedTokenIds);
+          return { input, acc };
+        });
+        if (!og.ok) { expect(rw.ok).toBe(false); continue; }
+        const after: any = unwrap(rw as any);
+        if (og.value === undefined) { expect(after.state.account).toBe(host.account); continue; }
+        expect([after.state.account._tag, after.state.account.state.jNonce, after.state.account.dispute.nextProofNonce]).toEqual([og.value.acc.status, og.value.acc.state.jNonce, og.value.acc.proofHeader.nextProofNonce]);
+        finalized++;
+      }
+    }
+    expect(Math.min(started, finalized)).toBeGreaterThan(10);
   });
 });
