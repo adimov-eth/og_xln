@@ -18,7 +18,7 @@ Tests: `pure/diff/j-layer.test.ts` (17 tests). Run it from `pure/` with `bun tes
 
 ## Remaining (not in this pass)
 
-- `flushDeferredHashLadderReveals` (cross-j / HTLC area) is not called from `jBroadcast` or `applyHankoBatchProcessed`.
+- `flushDeferredHashLadderReveals` (cross-j / HTLC area) is not called from `jBroadcast` or `applyHankoBatchProcessed`. REMAINING, and today it changes no behaviour: it only walks the `crossJurisdictionSwaps` routes, which no rewrite state holds yet. It must land together with the Entity cross-j collections. See cross-j.md, wave 3.
 - The `r2c` rebalance-fee path (`rebalanceQuoteId`) is not ported. That needs the account rebalance quote state.
 - `j_rebroadcast`, `j_abort_sent_batch`, `j_clear_batch` and `mintReserves` are not ported.
 - The Host drops `jBroadcast`'s `jTx`, its `hashToSign`, and `applyHankoBatchProcessed`'s `autoBroadcast` flag. HostEffect has no J-submit or quorum-sign effect yet, and that is the runtime agent's area. The sealed batch stays in `jBatch.sentBatch`.
