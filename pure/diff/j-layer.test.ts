@@ -9,10 +9,18 @@ import { decodeDisputeFinalizationEvidenceCalldata, decodeDisputeProofBodyEviden
 import { createEmptyBatch, decodeJBatch, encodeJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
 import { encodeInt512, encodeUint512 } from "../../core/protocol/crypto/abi-money.ts";
 import { hashProofBodyStruct } from "../../core/protocol/dispute/proof-builder.ts";
+import { handleJEventClaim } from "../../core/account/tx/handlers/j-events/claim.ts";
+import { prepareAccountJClaimTx } from "../../core/account/j-claims/j-claim-transition.ts";
+import { createAccountJClaimSession } from "../../core/account/j-claims/j-claim-session.ts";
+import { createEmptyAccountJClaimAccumulator, createAccountJClaimRecord, verifyAccountJClaimProof } from "../../core/account/j-claims/j-claim-accumulator.ts";
+import { computeFrameHash } from "../../core/account/consensus/frame/hash.ts";
+import { canonicalJurisdictionEventsHash } from "../../core/jurisdiction/machine/event-observation.ts";
 import {
   J_EVENT_SIGNATURES, jEventTopic, readJEvents, decodeBatch, disputeProofEvidence, finalizationEvidence, withDisputeCalldata, encodeBatch, emptyBatch, proofBodyHash, PROCESS_BATCH_SELECTOR, WATCHTOWER_COUNTER_DISPUTE_SELECTOR,
-  type Batch, type ProofBody, type JEvent,
+  admit, applyAccountInput, committed, frameStateHash, getDelta, planAccountProposal, replicaId,
+  type Batch, type ProofBody, type JEvent, type AccountFrame, type AccountInput, type AccountReplica, type EntityId, type ProposedAccount, type WireAccountTx,
 } from "../xln.ts";
+import { ALICE, BOB, CLOCK, NOW, TERMS, ackInput, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap } from "../xln_run.ts";
 
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const rng = prng(0x5eed_1a);
@@ -221,5 +229,97 @@ describe("dispute calldata evidence (og rpc-public.ts decodeDisputeProofBodyEvid
       expect(() => decodeDisputeProofBodyEvidenceCalldata(bad)).toThrow();
       expect(() => disputeProofEvidence(bad)).toThrow();
     }
+  });
+});
+
+// ---------------------------------------------------------------- multi-claim Account frames (og j-claims/*, proposal/transactions.ts)
+const PMap = class<K, V> extends Map<K, V> { put(k: K, v: V): this { this.set(k, v); return this; } del(k: K): void { this.delete(k); } };
+const PARTY_LEFT = partyIn(genesisAB(), ALICE).left ? ALICE : BOB, PARTY_RIGHT = PARTY_LEFT === ALICE ? BOB : ALICE;
+/** og side: prepareAccountJClaimTx against the evolving tries, then the real handleJEventClaim; a node store outlives each tx like the proposal session. */
+const ogClaimAccount = () => {
+  const state: any = { leftEntity: PARTY_LEFT, rightEntity: PARTY_RIGHT, deltas: new PMap(), locks: new PMap(), swapOffers: new PMap(), requestedRebalance: new PMap(), requestedRebalanceFeeState: new PMap(),
+    domain: TERMS.domain, jNonce: 0, lastFinalizedJHeight: 0, leftPendingJClaims: createEmptyAccountJClaimAccumulator(), rightPendingJClaims: createEmptyAccountJClaimAccumulator() };
+  const account: any = { proofHeader: { fromEntity: PARTY_LEFT, toEntity: PARTY_RIGHT }, state, currentHeight: 1, shadow: { rebalance: { submittedAtByToken: new PMap() } } };
+  const jurisdictions: any = { jReplicas: new Map([["j", { chainId: TERMS.domain.chainId, contracts: { depository: TERMS.domain.depositoryAddress, entityProvider: `0x${"c1".repeat(20)}`, account: `0x${"c2".repeat(20)}`, deltaTransformer: `0x${"c3".repeat(20)}` } }]]) };
+  const store = new Map<string, any>();
+  const apply = (tx: any, byLeft: boolean): any | null => {
+    const before = { ...state, deltas: new PMap([...state.deltas].map(([k, v]: any) => [k, { ...v }])) };
+    const session = createAccountJClaimSession({ get: (h: string) => store.get(h) } as any);
+    try {
+      const prepared = prepareAccountJClaimTx(state, tx, TERMS.domain as any, session);
+      const r = handleJEventClaim(account, prepared as any, byLeft, 1, PARTY_LEFT, [], jurisdictions, session);
+      if (!r.ok) { Object.assign(state, before); return null; }
+      for (const { hash, node } of session.changes()?.newNodes ?? []) store.set(hash, node);
+      return prepared;
+    } catch { Object.assign(state, before); return null; }
+  };
+  return { state, apply };
+};
+type ClaimToken = { tokenId: number; collateral: bigint; ondelta: bigint; eventIndex?: number };
+type ClaimCase = { h: number; blk: string; nonce: number; tokens: ClaimToken[]; meta?: { blockNumber: number; blockHash: string; transactionHash: string; logIndex: number } };
+const rwClaimOf = (c: ClaimCase): WireAccountTx => ({ type: "j_event_claim", jHeight: BigInt(c.h), jBlockHash: c.blk, observedAt: 1n, events: [{ left: PARTY_LEFT, right: PARTY_RIGHT, nonce: BigInt(c.nonce),
+  tokens: c.tokens.map((t) => ({ tokenId: BigInt(t.tokenId), leftReserve: 0n, rightReserve: 0n, collateral: t.collateral, ondelta: t.ondelta, ...(t.eventIndex === undefined ? {} : { eventIndex: t.eventIndex }) })), ...(c.meta === undefined ? {} : { meta: c.meta }) }] }) as unknown as WireAccountTx;
+const ogClaimOf = (c: ClaimCase) => ({ type: "j_event_claim", data: { jHeight: c.h, jBlockHash: c.blk, events: c.tokens.map((t) => ({ ...(c.meta ?? {}), ...(t.eventIndex === undefined ? {} : { eventIndex: t.eventIndex }), type: "AccountSettled",
+  data: { leftEntity: PARTY_LEFT, rightEntity: PARTY_RIGHT, tokenId: t.tokenId, leftReserve: "0", rightReserve: "0", collateral: t.collateral.toString(), ondelta: t.ondelta.toString(), nonce: c.nonce } })) } });
+const randomClaim = (): ClaimCase => {
+  const h = 1 + ri(6), blk = W(pick(["0a", "0b"])), n = 1 + ri(2), first = 1 + ri(3);
+  const tokens = Array.from({ length: n }, (_, i) => ({ tokenId: first + i, collateral: BigInt(ri(50)), ondelta: BigInt(ri(9)) - 4n, ...(n > 1 ? { eventIndex: n - 1 - i } : {}) }));
+  return { h, blk, nonce: ri(4), tokens, ...(ri(2) === 0 ? { meta: { blockNumber: h, blockHash: ri(2) === 0 ? blk : `0x${blk.slice(2).toUpperCase()}`, transactionHash: W(pick(["0c", "Dd"])), logIndex: ri(3) } } : {}) };
+};
+const stepIn = (r: AccountReplica, input: AccountInput, self: EntityId) => applyAccountInput(r, input, { verify: hankoVerify, self, now: NOW });
+
+describe("multi-claim Account frames (og prepareAccountJClaimTx / verifyAccountJClaimProof / activatePostSettlementProof)", () => {
+  test("MATCH: 30 random claim sequences, 1-3 claims per frame from either side (metadata, eventIndex, stale, conflicts, finalizing second claims): proposer witnesses, frame hash, tries and finality equal og; the peer replays and acks", () => {
+    let tampered = 0, branched = 0;
+    for (let n = 0; n < 30; n++) {
+      const og = ogClaimAccount();
+      const reps = new Map<EntityId, AccountReplica>([[ALICE, genesisAB()], [BOB, genesisAB()]]);
+      for (let f = 0; f < 6; f++) {
+        const proposer = pick([ALICE, BOB]), peer = proposer === ALICE ? BOB : ALICE, byLeft = proposer === PARTY_LEFT;
+        const cases = Array.from({ length: 1 + ri(3) }, randomClaim);
+        const leftRootBefore = og.state.leftPendingJClaims.root;
+        const prepared = cases.map((c) => og.apply(ogClaimOf(c), byLeft)).filter((x) => x !== null);
+        const opened = unwrap(admit(reps.get(proposer)!, cases.map(rwClaimOf)));
+        const plan = unwrap(planAccountProposal(opened, proposer, CLOCK, hankoVerify));
+        if (plan._tag === "idle") { expect(prepared.length).toBe(0); continue; }
+        const proposed = unwrap(stepIn(opened, proposeInput(opened, proposer), proposer)).replica as ProposedAccount;
+        const frame = proposed.candidate.frame;
+        expect(frame.txs.length).toBe(prepared.length);
+        frame.txs.forEach((tx: any, i) => {
+          expect(tx.leftProof).toEqual(prepared[i].data.leftProof);
+          expect(tx.rightProof).toEqual(prepared[i].data.rightProof);
+          if (tx.leftProof.nodes.length > 1 || tx.rightProof.nodes.length > 1) branched++;
+        });
+        const ogFrame = { height: Number(frame.height), timestamp: Number(frame.timestamp), jHeight: Number(frame.jHeight), prevFrameHash: frame.prevFrameHash, accountStateRoot: frame.accountStateRoot, stateHash: "", accountTxs: prepared };
+        expect(computeFrameHash(ogFrame as any)).toBe(frame.stateHash);
+        // A received witness that is not the regenerated path refuses the frame, as og verifyAccountJClaimProof throws on it.
+        const first: any = frame.txs[0];
+        if (first !== undefined && first.leftProof.nodes.length > 0 && tampered < 5) {
+          tampered++;
+          const bad = { ...frame, txs: frame.txs.map((tx, i) => (i === 0 ? { ...tx, leftProof: { version: 1, nodes: [] } } : tx)) } as AccountFrame;
+          const signed = { ...bad, stateHash: unwrap(frameStateHash(bad, replicaId(opened), byLeft)) };
+          const offer = { ...offerOf(proposed, proposer), frame: signed, frameHanko: signAccountFrame(signed, proposer) };
+          expect(stepIn(reps.get(peer)!, offer as AccountInput, peer)).toMatchObject({ ok: false, error: { _tag: "dispute_required", cause: { _tag: "claim_proof" } } });
+          const p = prepared[0].data;
+          const record = createAccountJClaimRecord({ ...TERMS.domain, leftEntity: PARTY_LEFT, rightEntity: PARTY_RIGHT } as any, "left", { jHeight: p.jHeight, jBlockHash: p.jBlockHash, eventsHash: canonicalJurisdictionEventsHash(p.events) } as any);
+          expect(() => verifyAccountJClaimProof(leftRootBefore, record, { version: 1, nodes: [] })).toThrow();
+        }
+        const received = unwrap(stepIn(reps.get(peer)!, offerOf(proposed, proposer), peer)).replica;
+        const acked = unwrap(stepIn(received, ackInput(received, peer), peer));
+        const ack = acked.outputs.find((o: any) => o.kind === "ack") as AccountInput;
+        const done = unwrap(stepIn(proposed, ack, proposer)).replica;
+        reps.set(proposer, done); reps.set(peer, acked.replica);
+        for (const r of [done, acked.replica]) {
+          const v: any = unwrap(committed(r.state)).view;
+          expect(v.leftPendingJClaims.root).toBe(og.state.leftPendingJClaims.root);
+          expect(v.rightPendingJClaims.root).toBe(og.state.rightPendingJClaims.root);
+          expect(Number(v.lastFinalizedJHeight)).toBe(og.state.lastFinalizedJHeight);
+          expect(v.jNonce).toBe(og.state.jNonce);
+          for (const [tk, d] of og.state.deltas as Map<number, any>) expect(getDelta(r.state.account, String(tk) as any).collateral).toBe(d.collateral);
+        }
+      }
+    }
+    expect(tampered).toBeGreaterThan(0);
+    expect(branched).toBeGreaterThan(0);
   });
 });

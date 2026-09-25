@@ -997,6 +997,7 @@ describe("account-tx: settlement + j_event_claim", () => {
     // The on-chain AccountSettled row for r2c(5): find the ondelta og's finalized proof body accepts, then require the rewrite to agree.
     let rows: any[] = [];
     let ok = false;
+    const beforeClaims = og.replica();
     for (const ondelta of [0n, 5n, -5n]) {
       rows = [{ tokenId: 1, collateral: 5n, ondelta, nonce: 1 }];
       const before = og.replica();
@@ -1023,6 +1024,17 @@ describe("account-tx: settlement + j_event_claim", () => {
     // og equivocation: a held proof at the same nonce with a different body refuses.
     const clash = { hanko: "0x09", hash: word("73"), proofBodyHash: word("74"), proofNonce: 2, proposerIsLeft: true };
     expect(promoteSettled({ nextProofNonce: 3, current: clash }, first, second, false)).toMatchObject({ ok: false, error: { _tag: "dispute_hanko" } });
+    // One frame finalizing the signed nonce and then a later one: og runs activatePostSettlementProof per claim, so the first promotes and bumps nextProofNonce and the second finds the workspace cleared.
+    og.reset(beforeClaims);
+    const later = [{ ...rows[0], nonce: 2 }];
+    for (const [h, rs, byLeft] of [[10, rows, true], [11, later, true], [10, rows, false], [11, later, false]] as const) expect((await ogClaimRun(ogClaim(h, word(h === 10 ? "0a" : "0b"), rs), byLeft)).error ?? "ok").toBe("ok");
+    const og2: any = og.replica();
+    const pending = unwrap(apply(first, rwClaim(11, word("0b"), later), { byLeft: true, nowMs: 5n, jHeight: 0n, accountHeight: 2n })).state;
+    const both = unwrap(apply(unwrap(apply(pending, rwClaim(10, word("0a"), rows), { byLeft: false, nowMs: 6n, jHeight: 11n, accountHeight: 3n })).state, rwClaim(11, word("0b"), later), { byLeft: false, nowMs: 6n, jHeight: 11n, accountHeight: 3n })).state;
+    expect(both.jNonce).toBe(og2.state.jNonce);
+    const w2: any = unwrap(promoteSettled(genesisWitnesses(), pending, both, true, [1, 2]) as any);
+    expect(w2.current).toEqual({ hanko: og2.currentDisputeProofHanko, hash: og2.currentDisputeHash, proofBodyHash: og2.currentDisputeProofBodyHash, proofNonce: og2.currentDisputeProofNonce, proposerIsLeft: og2.currentDisputeProofProposerIsLeft });
+    expect(w2.nextProofNonce).toBe(og2.proofHeader.nextProofNonce);
   });
 });
 

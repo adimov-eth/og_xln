@@ -1240,7 +1240,10 @@ export type RebalanceRequestFeeState = {
   readonly requestId: string; readonly feeTokenId: number; readonly feePaidUpfront: bigint; readonly requestedAmount: bigint; readonly policyVersion: number; readonly requestedAt: number; readonly requestedByLeft: boolean;
   readonly refund?: { readonly reason: RefundReason; readonly refundedAmount: bigint };
 };
-export type JClaimProof = { readonly version: 1; readonly nodes: readonly [] };
+/** og types/finance/account-j-claims.ts AccountJClaimRecord / AccountJClaimNode / AccountJClaimProof (root-to-terminal-leaf path; empty for the EMPTY root). */
+export type JClaimRecord = { readonly version: 1; readonly accountKey: string; readonly side: "left" | "right"; readonly jHeight: number; readonly jBlockHash: string; readonly eventsHash: string };
+export type JClaimNode = { readonly version: 1; readonly type: "leaf"; readonly key: string; readonly record: JClaimRecord } | { readonly version: 1; readonly type: "branch"; readonly bit: number; readonly left: string; readonly right: string };
+export type JClaimProof = { readonly version: 1; readonly nodes: readonly JClaimNode[] };
 export type ClaimRow = { readonly onLeft: boolean; readonly jHeight: bigint; readonly jBlockHash: string; readonly eventsHash: string };
 /** og types/account.ts SettlementOp / SettlementWorkspace, field for field: the workspace (minus Hankos) is committed in the Account root. */
 export type SettlementOp =
@@ -1344,19 +1347,37 @@ const sameAccount = (row: AccountSettlement, id: AccountId): boolean => row.left
 const CLAIM_UINT64 = (1n << 64n) - 1n;
 const claimHeight = (h: bigint): Result<bigint, ClaimError> => (h >= 1n && h <= CLAIM_UINT64 && h <= BigInt(Number.MAX_SAFE_INTEGER) ? ok(h) : err({ _tag: "claim_height" }));
 const claimBlock = (h: string): Result<string, ClaimError> => (WORD.test(h) ? ok(h.toLowerCase()) : err({ _tag: "claim_block" }));
-type SettledEvent = { readonly type: "AccountSettled"; readonly data: { readonly leftEntity: string; readonly rightEntity: string; readonly tokenId: number; readonly leftReserve: string; readonly rightReserve: string; readonly collateral: string; readonly ondelta: string; readonly nonce: number } };
-const settledEvent = (row: AccountSettlement, token: TokenSettlement): Result<{ readonly key: string; readonly event: SettledEvent }, ClaimError> => {
+type SettledData = { readonly leftEntity: string; readonly rightEntity: string; readonly tokenId: number; readonly leftReserve: string; readonly rightReserve: string; readonly collateral: string; readonly ondelta: string; readonly nonce: number };
+/** og JurisdictionEvent AccountSettled with normalizeMetadata's EVM position (hashes kept as given; the key lowercases them). */
+type SettledEvent = { readonly blockNumber?: number; readonly blockHash?: string; readonly transactionHash?: string; readonly logIndex?: number; readonly eventIndex?: number; readonly type: "AccountSettled"; readonly data: SettledData };
+const settledPayload = (d: SettledData): string => ["AccountSettled", d.leftEntity, d.rightEntity, d.tokenId, d.leftReserve, d.rightReserve, d.collateral, d.ondelta, d.nonce].join(":");
+/** og event-normalization.ts canonicalJurisdictionEventKey. */
+const settledKey = (e: SettledEvent): string => JSON.stringify([e.blockNumber ?? null, e.blockHash?.toLowerCase() ?? null, e.transactionHash?.toLowerCase() ?? null, e.logIndex ?? null, e.eventIndex ?? null, settledPayload(e.data)]);
+const optIndex = (x: number | undefined, y: number | undefined): number => (x !== undefined && y !== undefined ? x - y : x !== undefined ? -1 : y !== undefined ? 1 : 0);
+const stableText = (x: string, y: string): number => (x < y ? -1 : x > y ? 1 : 0);
+/** og compareCanonicalJurisdictionEvents: EVM execution order first; the payload only orders synthetic ties. */
+const compareSettled = (x: SettledEvent, y: SettledEvent): number =>
+  optIndex(x.blockNumber, y.blockNumber) || optIndex(x.logIndex, y.logIndex) || optIndex(x.eventIndex, y.eventIndex) || stableText(x.transactionHash?.toLowerCase() ?? "", y.transactionHash?.toLowerCase() ?? "") || stableText(settledPayload(x.data), settledPayload(y.data));
+/** og normalizeMetadata: integer block/log/event positions (log/event non-negative) and non-blank hashes. */
+const settledMeta = (m: JEventMeta | undefined, eventIndex: number | undefined): Omit<SettledEvent, "type" | "data"> => ({
+  ...(m?.blockNumber !== undefined && Number.isInteger(m.blockNumber) ? { blockNumber: m.blockNumber } : {}),
+  ...(typeof m?.blockHash === "string" && m.blockHash.trim() !== "" ? { blockHash: m.blockHash } : {}),
+  ...(typeof m?.transactionHash === "string" && m.transactionHash.trim() !== "" ? { transactionHash: m.transactionHash } : {}),
+  ...(m?.logIndex !== undefined && Number.isInteger(m.logIndex) && m.logIndex >= 0 ? { logIndex: m.logIndex } : {}),
+  ...(eventIndex !== undefined && Number.isInteger(eventIndex) && eventIndex >= 0 ? { eventIndex } : {}),
+});
+const settledEvent = (row: AccountSettlement, token: TokenSettlement): Result<SettledEvent, ClaimError> => {
   if (row.nonce < 0n || row.nonce > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "claim_events" });
   const data = { leftEntity: row.left.toLowerCase(), rightEntity: row.right.toLowerCase(), tokenId: Number(token.tokenId), leftReserve: token.leftReserve.toString(), rightReserve: token.rightReserve.toString(), collateral: token.collateral.toString(), ondelta: token.ondelta.toString(), nonce: Number(row.nonce) };
-  const key = JSON.stringify([null, null, null, null, null, ["AccountSettled", data.leftEntity, data.rightEntity, data.tokenId, data.leftReserve, data.rightReserve, data.collateral, data.ondelta, data.nonce].join(":")]);
-  return ok({ key, event: { type: "AccountSettled", data } });
+  return ok({ ...settledMeta(row.meta, token.eventIndex), type: "AccountSettled", data });
 };
+/** og j-claim-transition.ts canonicalEvents + canonicalJurisdictionEventsHash: sorted, duplicate-free, keccak of the key list. */
 const claimEvidence = (events: readonly AccountSettlement[]): Result<{ readonly eventsHash: string; readonly events: readonly SettledEvent[] }, ClaimError> => {
   const rows = events.flatMap((row) => row.tokens.map((token) => ({ row, token })));
   if (rows.length === 0) return err({ _tag: "claim_events" });
   return chain(traverse(rows, ({ row, token }) => settledEvent(row, token)), (built) => {
-    const sorted = sortedBy(built, (s) => s.key);
-    return sorted.some((s, i) => i > 0 && s.key === sorted[i - 1]?.key) ? err({ _tag: "claim_events" }) : ok({ eventsHash: keccak256Hex(utf8(JSON.stringify(sorted.map((s) => s.key)))), events: sorted.map((s) => s.event) });
+    const sorted = [...built].sort(compareSettled), keys = sorted.map(settledKey);
+    return new Set(keys).size !== keys.length ? err({ _tag: "claim_events" }) : ok({ eventsHash: keccak256Hex(utf8(JSON.stringify(keys))), events: sorted });
   });
 };
 const claimFrame = (tx: TxOf<"j_event_claim">): Result<{ readonly version: "xln:account-j-event-claim-frame:v1"; readonly jHeight: number; readonly jBlockHash: string; readonly eventsHash: string; readonly events: readonly SettledEvent[] }, ClaimError> =>
@@ -1384,16 +1405,22 @@ const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[]): Resul
       return ok(requested > increase ? { ...settled, requested: mapSet(settled.requested, tk, requested - increase) } : { ...settled, requested: mapDelete(settled.requested, tk), requestFees: mapDelete(settled.requestFees, tk) });
     })), (b) => map(activateWorkspace(b, jNonce), (c) => ({ ...c, jNonce }))));
 };
-/** og j-claim-transition.ts: conflict on either side refuses; stale prunes; the first side waits; the peer's matching record at any pending height finalizes. */
-const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (own) => {
-  const held = a.claimRows ?? [], peer: ClaimRow = { ...own, onLeft: !own.onLeft };
+type ClaimCursor = { readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint };
+type ClaimStep = { readonly claimRows: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly finalizes: boolean };
+/** og j-claim-transition.ts applyAccountJClaimTransition on the pending rows: conflict on either side refuses; stale prunes; the first side waits; the peer's matching record at any pending height finalizes. */
+const claimStep = (c: ClaimCursor, own: ClaimRow): Result<ClaimStep, ClaimError> => {
+  const held = c.claimRows ?? [], peer: ClaimRow = { ...own, onLeft: !own.onLeft };
   const member = (r: ClaimRow): ClaimRow | undefined => held.find((h) => h.onLeft === r.onLeft && h.jHeight === r.jHeight);
   const ownHeld = member(own), peerHeld = member(peer);
   if ((ownHeld !== undefined && !sameEvidence(ownHeld, own)) || (peerHeld !== undefined && !sameEvidence(peerHeld, peer))) return err({ _tag: "claim_conflict" });
-  if (own.jHeight <= a.finalizedJHeight) return ok(step({ ...a, claimRows: pruneThrough(held, a.finalizedJHeight) }));
-  if (peerHeld === undefined) return ok(step(ownHeld !== undefined ? a : { ...a, claimRows: [...held, own] }));
-  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events), (b) => step({ ...b, claimRows: pruneThrough(held, own.jHeight), finalizedJHeight: own.jHeight })));
-});
+  if (own.jHeight <= c.finalizedJHeight) return ok({ claimRows: pruneThrough(held, c.finalizedJHeight), finalizedJHeight: c.finalizedJHeight, finalizes: false });
+  if (peerHeld === undefined) return ok({ claimRows: ownHeld !== undefined ? c.claimRows : [...held, own], finalizedJHeight: c.finalizedJHeight, finalizes: false });
+  return ok({ claimRows: pruneThrough(held, own.jHeight), finalizedJHeight: own.jHeight, finalizes: true });
+};
+const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (own) => chain(claimStep(a, own), (s) => {
+  if (!s.finalizes) return ok(step(s.claimRows === a.claimRows ? a : { ...a, claimRows: s.claimRows }));
+  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events), (b) => step({ ...b, claimRows: s.claimRows, finalizedJHeight: s.finalizedJHeight })));
+}));
 const settleErr = (reason: string): Result<never, BodyError> => err({ _tag: "settlement", reason });
 const settlementToken = (t: unknown): t is number => typeof t === "number" && Number.isSafeInteger(t) && t >= 0 && t <= 65_535;
 const MAX_SETTLEMENT_DIFFS = 32;
@@ -1973,43 +2000,56 @@ export const tokenNumber = (id: TokenId): Result<number, ViewError> => (tokenId(
 export const tokenOrder = (b: AccountBody): readonly TokenId[] => [...b.account.deltas.keys()].sort((x, y) => Number(x) - Number(y));
 const EMPTY_J_CLAIMS: JClaimAccumulator = { version: 1, root: EMPTY_J_ROOT, count: 0n };
 const CLAIM_ACCOUNT = keccak256Hex(utf8("xln.account-j-claim.account.v1")), CLAIM_KEY = keccak256Hex(utf8("xln.account-j-claim.key.v1")), CLAIM_RECORD = keccak256Hex(utf8("xln.account-j-claim.record.v1")), CLAIM_LEAF = keccak256Hex(utf8("xln.account-j-claim.leaf.v1")), CLAIM_BRANCH = keccak256Hex(utf8("xln.account-j-claim.branch.v1"));
-type ClaimNode = Tagged<"leaf", { key: string; record: string }> | Tagged<"branch", { bit: number; left: ClaimNode; right: ClaimNode }>;
+type ClaimLeaf = { readonly key: string; readonly record: string; readonly rec: JClaimRecord };
+type ClaimNode = Tagged<"leaf", ClaimLeaf> | Tagged<"branch", { bit: number; left: ClaimNode; right: ClaimNode }>;
 const claimBit = (key: string, index: number): 0 | 1 => ((Number.parseInt(key.slice(2 + (index >> 3) * 2, 4 + (index >> 3) * 2), 16) >> (7 - (index & 7))) & 1) === 0 ? 0 : 1;
 const claimAccountKey = (domain: Domain, left: string, right: string): string => keccak256Hex(abiEncode([A.b32(CLAIM_ACCOUNT), A.uint(BigInt(domain.chainId)), A.address(domain.depositoryAddress), A.b32(left), A.b32(right)]));
-const claimLeaf = (accountKey: string, row: ClaimRow): { readonly key: string; readonly record: string } => {
+const claimLeaf = (accountKey: string, row: ClaimRow): ClaimLeaf => {
   const side = row.onLeft ? 0n : 1n;
-  return { key: keccak256Hex(abiEncode([A.b32(CLAIM_KEY), A.b32(accountKey), A.uint(side), A.uint(row.jHeight)])), record: keccak256Hex(abiEncode([A.b32(CLAIM_RECORD), A.b32(accountKey), A.uint(side), A.uint(row.jHeight), A.b32(row.jBlockHash), A.b32(row.eventsHash)])) };
+  return {
+    key: keccak256Hex(abiEncode([A.b32(CLAIM_KEY), A.b32(accountKey), A.uint(side), A.uint(row.jHeight)])), record: keccak256Hex(abiEncode([A.b32(CLAIM_RECORD), A.b32(accountKey), A.uint(side), A.uint(row.jHeight), A.b32(row.jBlockHash), A.b32(row.eventsHash)])),
+    rec: { version: 1, accountKey: accountKey.toLowerCase(), side: row.onLeft ? "left" : "right", jHeight: Number(row.jHeight), jBlockHash: row.jBlockHash, eventsHash: row.eventsHash },
+  };
 };
 const claimNodeHash = (node: ClaimNode): string => match(node, {
   leaf: ({ key, record }) => keccak256Hex(abiEncode([A.b32(CLAIM_LEAF), A.uint(1n), A.b32(key), A.b32(record)])),
   branch: ({ bit, left, right }) => keccak256Hex(abiEncode([A.b32(CLAIM_BRANCH), A.uint(1n), A.uint(BigInt(bit)), A.b32(claimNodeHash(left)), A.b32(claimNodeHash(right))])),
 });
 const claimTerminal = (node: ClaimNode, key: string): Of<ClaimNode, "leaf"> => match(node, { leaf: (leaf) => leaf, branch: (b) => claimTerminal(claimBit(key, b.bit) === 0 ? b.left : b.right, key) });
-const claimPlace = (diff: number, key: string, leaf: Of<ClaimNode, "leaf">, other: ClaimNode): ClaimNode => {
-  const fresh: ClaimNode = { _tag: "leaf", key: leaf.key, record: leaf.record };
-  return { _tag: "branch", bit: diff, left: claimBit(key, diff) === 0 ? fresh : other, right: claimBit(key, diff) === 1 ? fresh : other };
-};
+const claimPlace = (diff: number, key: string, leaf: Of<ClaimNode, "leaf">, other: ClaimNode): ClaimNode =>
+  ({ _tag: "branch", bit: diff, left: claimBit(key, diff) === 0 ? leaf : other, right: claimBit(key, diff) === 1 ? leaf : other });
 const claimInsertAt = (node: ClaimNode, key: string, leaf: Of<ClaimNode, "leaf">, diff: number): ClaimNode => match(node, {
   leaf: () => claimPlace(diff, key, leaf, node),
   branch: (b) => (b.bit >= diff ? claimPlace(diff, key, leaf, node) : { ...b, ...(claimBit(key, b.bit) === 0 ? { left: claimInsertAt(b.left, key, leaf, diff) } : { right: claimInsertAt(b.right, key, leaf, diff) }) }),
 });
-const insertClaim = (node: ClaimNode, leaf: { readonly key: string; readonly record: string }): Result<ClaimNode, ClaimError> => {
+const insertClaim = (node: ClaimNode, leaf: ClaimLeaf): Result<ClaimNode, ClaimError> => {
   const term = claimTerminal(node, leaf.key);
   if (term.key === leaf.key) return term.record === leaf.record ? ok(node) : err({ _tag: "claim_conflict" });
   let diff = -1;
   for (let i = 0; i < 256; i++) if (claimBit(leaf.key, i) !== claimBit(term.key, i)) { diff = i; break; }
-  return diff < 0 ? err({ _tag: "claim_conflict" }) : ok(claimInsertAt(node, leaf.key, { _tag: "leaf", key: leaf.key, record: leaf.record }, diff));
+  return diff < 0 ? err({ _tag: "claim_conflict" }) : ok(claimInsertAt(node, leaf.key, { _tag: "leaf", ...leaf }, diff));
 };
-const claimAccumulator = (accountKey: string, rows: readonly ClaimRow[]): Result<JClaimAccumulator, ClaimError> => map(foldResult<ClaimNode | undefined, ClaimRow, ClaimError>(rows, undefined, (node, row) => {
+/** og's crit-bit Patricia trie is canonical in its key set, so any insertion order rebuilds the committed node structure. */
+const claimTree = (accountKey: string, rows: readonly ClaimRow[]): Result<ClaimNode | undefined, ClaimError> => foldResult<ClaimNode | undefined, ClaimRow, ClaimError>(rows, undefined, (node, row) => {
   const leaf = claimLeaf(accountKey, row);
-  return node === undefined ? ok({ _tag: "leaf", key: leaf.key, record: leaf.record }) : insertClaim(node, leaf);
-}), (node) => (node === undefined ? EMPTY_J_CLAIMS : { version: 1, root: claimNodeHash(node), count: BigInt(rows.length) }));
+  return node === undefined ? ok({ _tag: "leaf", ...leaf }) : insertClaim(node, leaf);
+});
+const claimAccumulator = (accountKey: string, rows: readonly ClaimRow[]): Result<JClaimAccumulator, ClaimError> =>
+  map(claimTree(accountKey, rows), (node) => (node === undefined ? EMPTY_J_CLAIMS : { version: 1, root: claimNodeHash(node), count: BigInt(rows.length) }));
+/** og j-claim-proof.ts createAccountJClaimProof: every node from the root down the key's bit path to the terminal leaf. */
+const claimPath = (node: ClaimNode, key: string): readonly JClaimNode[] => match(node, {
+  leaf: ({ key: k, rec }): readonly JClaimNode[] => [{ version: 1, type: "leaf", key: k, record: rec }],
+  branch: ({ bit, left, right }): readonly JClaimNode[] => [{ version: 1, type: "branch", bit, left: claimNodeHash(left), right: claimNodeHash(right) }, ...claimPath(claimBit(key, bit) === 0 ? left : right, key)],
+});
+const claimKeyOf = (b: Pick<AccountBody, "account" | "terms">): Result<string, ViewError> => {
+  const { left, right } = b.account.id;
+  if (!WORD.test(left) || !WORD.test(right)) return err({ _tag: "claim_entity" });
+  return map(domainOf(b.terms.domain), (domain) => claimAccountKey(domain, left.toLowerCase(), right.toLowerCase()));
+};
 const pendingOn = (b: AccountBody, onLeft: boolean): Result<JClaimAccumulator, ViewError> => {
   const rows = (b.claimRows ?? []).filter((r) => r.onLeft === onLeft);
   if (rows.length === 0) return ok(EMPTY_J_CLAIMS);
-  const { left, right } = b.account.id;
-  if (!WORD.test(left) || !WORD.test(right)) return err({ _tag: "claim_entity" });
-  return chain(domainOf(b.terms.domain), (domain) => claimAccumulator(claimAccountKey(domain, left.toLowerCase(), right.toLowerCase()), rows));
+  return chain(claimKeyOf(b), (accountKey) => claimAccumulator(accountKey, rows));
 };
 export type SideTotals = { readonly leftHold: bigint; readonly rightHold: bigint; readonly leftAllowance: bigint; readonly rightAllowance: bigint };
 const NO_TOTALS: SideTotals = { leftHold: 0n, rightHold: 0n, leftAllowance: 0n, rightAllowance: 0n };
@@ -2172,10 +2212,11 @@ export const settleLocal = (plan: DisputePlan, given: DisputeHanko | undefined, 
   none: (): Result<Settled, DisputeError> => (given === undefined ? ok({ carried: undefined, witnesses }) : err(refuseDispute("unexpected"))),
 });
 /** og finality.ts activatePostSettlementProof, replica side: the frame whose J claim finalizes the signed settlement nonce promotes both N+1 hankos
- * into the dispute witnesses (an equal nonce must be the same proof) and moves the proof cursor past everything spent. */
-export const promoteSettled = (w: DisputeWitnesses, pre: AccountBody, post: AccountBody, localIsLeft: boolean): Result<DisputeWitnesses, DisputeError> => {
-  const ws = pre.settlement, p = ws?.postSettlementDisputeProof, signed = ws?.nonceAtSign;
-  if (ws === undefined || !signedWorkspace(ws) || p === undefined || signed === undefined || pre.jNonce >= signed || post.jNonce !== signed || p.leftHanko === undefined || p.rightHanko === undefined) return ok(w);
+ * into the dispute witnesses (an equal nonce must be the same proof) and moves the proof cursor past everything spent.
+ * `finalized` lists each finalizing claim's reached nonce in frame order: the first to reach the signed nonce decides, even when a later claim of the same frame finalizes past it. */
+export const promoteSettled = (w: DisputeWitnesses, pre: AccountBody, post: AccountBody, localIsLeft: boolean, finalized: readonly number[] = post.jNonce !== pre.jNonce ? [post.jNonce] : []): Result<DisputeWitnesses, DisputeError> => {
+  const ws = pre.settlement, p = ws?.postSettlementDisputeProof, signed = ws?.nonceAtSign, reached = signed === undefined ? undefined : finalized.find((n) => n >= signed);
+  if (ws === undefined || !signedWorkspace(ws) || p === undefined || signed === undefined || pre.jNonce >= signed || reached !== signed || p.leftHanko === undefined || p.rightHanko === undefined) return ok(w);
   const side = (held: DisputeHanko | undefined, hanko: string): Result<DisputeHanko | undefined, DisputeError> => {
     const n = held?.proofNonce ?? 0;
     if (n > p.nonce) return ok(held);
@@ -2220,13 +2261,32 @@ export type FrameClock = { readonly timestamp: bigint; readonly jHeight: bigint 
 export type FoldAt = FrameClock & { readonly height: bigint };
 export type AccountFrame = FoldAt & { readonly prevFrameHash: string; readonly txs: readonly WireAccountTx[]; readonly accountStateRoot: string; readonly stateHash: string };
 const EMPTY_CLAIM_PROOF: JClaimProof = { version: 1, nodes: [] };
-// Empty proofs only. A second claim needs the branch witness; that frame is refused.
-const stampClaims = (txs: readonly WireAccountTx[], rows: readonly ClaimRow[] | undefined): Result<readonly WireAccountTx[], ClaimError> => {
-  const claims = txs.filter((tx) => tx.type === "j_event_claim");
-  if (claims.length === 0) return ok(txs);
-  if (claims.length > 1 || (rows?.length ?? 0) > 0) return err({ _tag: "claim_proof" });
-  return ok(txs.map((tx) => (tx.type === "j_event_claim" ? { ...tx, leftProof: EMPTY_CLAIM_PROOF, rightProof: EMPTY_CLAIM_PROOF } : tx)));
+/** `finalized`: the settled nonce each finalizing claim reaches, in frame order (og collectSettledEvents: max of jNonce and the claim's nonces). */
+export type StampedClaims = { readonly txs: readonly WireAccountTx[]; readonly finalized: readonly number[] };
+const claimProofOn = (accountKey: () => Result<string, ClaimError>, rows: readonly ClaimRow[], record: ClaimRow): Result<JClaimProof, ClaimError> =>
+  rows.length === 0 ? ok(EMPTY_CLAIM_PROOF) : chain(accountKey(), (k) => map(claimTree(k, rows), (node): JClaimProof => (node === undefined ? EMPTY_CLAIM_PROOF : { version: 1, nodes: claimPath(node, claimLeaf(k, record).key) })));
+type StampAcc = { readonly cursor: ClaimCursor; readonly jNonce: number; readonly txs: readonly WireAccountTx[]; readonly finalized: readonly number[] };
+/** og proposal/transactions.ts prepareAccountJClaimTx inside the fold: each claim carries both side witnesses against the pending tries as the frame's earlier claims left them. */
+const stampClaims = (txs: readonly WireAccountTx[], b: AccountBody, byLeft: boolean): Result<StampedClaims, ClaimError> => {
+  const accountKey = (): Result<string, ClaimError> => mapErr(claimKeyOf(b), (): ClaimError => ({ _tag: "claim_entity" }));
+  return map(foldResult<StampAcc, WireAccountTx, ClaimError>(txs, { cursor: b, jNonce: b.jNonce, txs: [], finalized: [] }, (acc, tx) => {
+    if (tx.type !== "j_event_claim") return ok({ ...acc, txs: [...acc.txs, tx] });
+    return chain(claimRowOf(tx, byLeft), (own) => {
+      const held = acc.cursor.claimRows ?? [], side = (onLeft: boolean): Result<JClaimProof, ClaimError> => claimProofOn(accountKey, held.filter((r) => r.onLeft === onLeft), { ...own, onLeft });
+      return chain(side(true), (leftProof) => chain(side(false), (rightProof) => chain(claimStep(acc.cursor, own), (s) => map(claimEvidence(tx.events), ({ events }): StampAcc => {
+        const reached = s.finalizes ? Math.max(acc.jNonce, ...events.map((e) => e.data.nonce)) : acc.jNonce;
+        return { cursor: s, jNonce: reached, txs: [...acc.txs, { ...tx, leftProof, rightProof }], finalized: s.finalizes ? [...acc.finalized, reached] : acc.finalized };
+      }))));
+    });
+  }), ({ txs: stamped, finalized }) => ({ txs: stamped, finalized }));
 };
+const lowerHexDeep = (v: unknown): unknown =>
+  typeof v === "string" ? (/^0x/i.test(v.trim()) ? v.trim().toLowerCase() : v) : Array.isArray(v) ? v.map(lowerHexDeep) : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, lowerHexDeep(x)])) : v;
+/** og verifyAccountJClaimProof: a root admits exactly one valid path per key, so a received witness verifies iff it is the regenerated one. */
+const claimProofsMatch = (given: readonly WireAccountTx[], stamped: readonly WireAccountTx[]): boolean => given.every((tx, i) => {
+  const s = stamped[i];
+  return tx.type !== "j_event_claim" || (s?.type === "j_event_claim" && tx.leftProof !== undefined && tx.rightProof !== undefined && canon(lowerHexDeep(tx.leftProof)) === canon(s.leftProof) && canon(lowerHexDeep(tx.rightProof)) === canon(s.rightProof));
+});
 const claimWire = (tx: TxOf<"j_event_claim">): Result<WireTx, ClaimError> => {
   const { leftProof, rightProof } = tx;
   if (leftProof === undefined || rightProof === undefined) return err({ _tag: "claim_proof" });
@@ -2393,9 +2453,9 @@ const planWindow = (r: OpenAccount, window: readonly WireAccountTx[], party: Par
   const height = r.head.height + 1n, floor = proofNonceFloor(r.dispute), folded = proposalFold(r.state, window, foldCtx({ height, ...clock }, party.left, verify === undefined ? undefined : { verify, proofNonceFloor: floor })), firstRefusal = folded.refused[0];
   return chain(map(proposalRefusals(window, folded.refused), (retried) => withoutAccountTxs(r.mempool, withoutAccountTxs(window, retried))), (deferred) => {
     if (folded.included.length === 0 && firstRefusal !== undefined) return ok({ _tag: "idle", refused: firstRefusal.error, deferred });
-    return chain(commit(folded.state), ({ view, root }) => chain(stampClaims(folded.included, r.state.claimRows), (txs) => {
+    return chain(commit(folded.state), ({ view, root }) => chain(stampClaims(folded.included, r.state, party.left), ({ txs, finalized }) => {
       const unhashed = { height, timestamp: clock.timestamp, jHeight: clock.jHeight, prevFrameHash: r.head.prevFrameHash, txs, accountStateRoot: root };
-      return chain(frameStateHash(unhashed, replicaId(r), party.left), (stateHash) => chain(localProof(view), (frameProof) => chain(promoteSettled(r.dispute, r.state, folded.state, party.left), (witnesses) => map(proposalPlan(view, frameProof, witnesses, party.left), (dispute): ProposalPlan =>
+      return chain(frameStateHash(unhashed, replicaId(r), party.left), (stateHash) => chain(localProof(view), (frameProof) => chain(promoteSettled(r.dispute, r.state, folded.state, party.left, finalized), (witnesses) => map(proposalPlan(view, frameProof, witnesses, party.left), (dispute): ProposalPlan =>
         ({ _tag: "frame", preview: { frame: { ...unhashed, stateHash }, draft: { state: folded.state, effects: folded.effects }, frameProof, dispute, deferred, witnesses, floor } })))));
     }));
   });
@@ -2424,9 +2484,10 @@ type Verb<R extends AccountReplica> = Result<AccountApply<R>, AccountReplicaErro
 const reopen = (r: AccountReplica, next: { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute?: DisputeWitnesses | undefined }): OpenAccount =>
   ({ _tag: "open", state: next.state, head: next.head, mempool: next.mempool, acknowledged: next.acknowledged ?? r.acknowledged, dispute: next.dispute ?? r.dispute });
 const effectsOut = (effects: readonly Effect[]): readonly AccountOutput[] => effects.map((effect) => ({ kind: "effect", effect }));
-type Replayed = { readonly draft: FrameFold; readonly view: CommittedAccountState };
+type Replayed = { readonly draft: FrameFold; readonly view: CommittedAccountState; readonly finalized: readonly number[] };
 const replay = (s: AccountBody, f: AccountFrame, byLeft: boolean, settlement: SettlementCtx): Result<Replayed, AccountReplicaError> =>
-  chain(foldFrame(s, f, byLeft, settlement), (draft) => chain(commit(draft.state), ({ view, root }) => (root === f.accountStateRoot ? ok({ draft, view }) : err({ _tag: "state_root_mismatch" }))));
+  chain(foldFrame(s, f, byLeft, settlement), (draft) => chain(stampClaims(f.txs, s, byLeft), (stamped): Result<Replayed, AccountReplicaError> => !claimProofsMatch(f.txs, stamped.txs) ? err({ _tag: "claim_proof" }) :
+    chain(commit(draft.state), ({ view, root }) => (root === f.accountStateRoot ? ok({ draft, view, finalized: stamped.finalized }) : err({ _tag: "state_root_mismatch" })))));
 const frameStructure = (f: AccountFrame): Result<void, AccountReplicaError> => {
   const field = f.timestamp < 0n ? "timestamp" : f.jHeight < 0n ? "jHeight" : f.txs.length > ACCOUNT_MEMPOOL_SIZE ? "txs" : !BYTES32.test(f.accountStateRoot) ? "accountStateRoot" : null;
   return field === null ? ok(undefined) : err({ _tag: "frame_structure", field });
@@ -2614,8 +2675,8 @@ const receipt = <R extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAc
 const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify): Verb<ReceivedAccount> => {
   const { frame } = input, onLeft = other(party.left), floor = proofNonceFloor(cur.dispute);
   const evidence = (cause: AccountReplicaError): AccountReplicaError => ({ _tag: "dispute_required", cause, frame, frameHanko: input.frameHanko });
-  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor }), evidence), ({ draft, view }) => chain(localProof(view), (frameProof) =>
-    chain(mapErr(promoteSettled(cur.dispute, cur.state, draft.state, party.left), evidence), (witnesses) =>
+  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor }), evidence), ({ draft, view, finalized }) => chain(localProof(view), (frameProof) =>
+    chain(mapErr(promoteSettled(cur.dispute, cur.state, draft.state, party.left, finalized), evidence), (witnesses) =>
       map(mapErr(requireDispute(frameProof, witnesses, validated), evidence), () => done<ReceivedAccount, AccountOutput>({ ...cur, _tag: "received", candidate: new Candidate(frame, input.frameHanko, frameProof, draft, floor), disputeHanko: validated, dispute: witnesses }))))));
 };
 const proposalOnOpen = (r: OpenAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ReceivedAccount> =>
