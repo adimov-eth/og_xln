@@ -9,11 +9,13 @@ import { createEmptyAccountJClaimAccumulator } from "../../core/account/j-claims
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import { createEmptyEnv } from "../../core/runtime.ts";
 import { createAccountConsensusContext } from "../../core/entity/account/account-consensus-context.ts";
+import { assertProposeAccountsNowMatchesState } from "../../core/entity/consensus/account/propose-accounts-now-validation.ts";
+import { handleProposeAccountsNowEntityTx } from "../../core/entity/tx/handlers/account/propose-accounts-now.ts";
 import type { AccountReplica as OgReplica, AccountTx as OgTx } from "../../core/types/account.ts";
 
 // ---- rewrite ----
-import { admit, admitAt, replicaId, tokenId, wireTx, type AccountReplica, type EntityId, type WireAccountTx } from "../xln.ts";
-import { ALICE, BOB, CAROL, genesisAB, partyIn, unwrap } from "../xln_run.ts";
+import { admit, admitAt, applyEntityInput, createEntity, pendingAccountInput, replicaId, tokenId, wireTx, type AccountReplica, type EntityId, type EntityTx, type WireAccountTx } from "../xln.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, genesisAB, partyIn, unwrap, verifiers } from "../xln_run.ts";
 
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const rng = prng(0xb00c_ad);
@@ -131,5 +133,60 @@ describe("book-admission: og applyAccountEnqueue timing (local-tx-admission.ts)"
     expect(conflicts).toBeGreaterThan(10);
     expect(dups).toBeGreaterThan(10);
     expect(bad).toBeGreaterThan(5);
+  });
+});
+
+// ============ og proposeAccountsNow (entity/tx/handlers/account/propose-accounts-now.ts) ============
+describe("book-admission: proposeAccountsNow re-emits og pendingAccountInput bytes", () => {
+  const ctx = { ...verifiers, self: ALICE, signerId: aliceAddr };
+  const ogState = (accounts: ReadonlyMap<string, unknown>) => ({ entityId: ALICE, height: 0, prevFrameHash: "", config: { validators: [aliceAddr], shares: { [aliceAddr]: 1n }, threshold: 1n, mode: "proposer-based" }, accounts }) as never;
+  const marker = (data: object): EntityTx => ({ type: "proposeAccountsNow", data } as EntityTx);
+  const alone = () => unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]) }));
+  test("MATCH: 300 random markers: og assertProposeAccountsNowMatchesState throws iff the rewrite refuses the whole input, with og's code", () => {
+    const ids = [BOB, CAROL, W("0d"), W("0e")].map((x) => x.toLowerCase()).sort();
+    const opened = unwrap(applyEntityInput(alone(), { kind: "txs", timestamp: NOW, txs: [] }, ctx)).replica;
+    let refused = 0, accepted = 0;
+    for (let i = 0; i < 300; i++) {
+      const n = pick([0, 1, 2, 3, 1001]);
+      let cps: unknown[] = n === 1001 ? Array.from({ length: 1001 }, (_, k) => `0x${k.toString(16).padStart(64, "0")}`) : Array.from({ length: n }, () => pick(ids));
+      if (n < 1001 && ri(2) === 0) cps = [...new Set(cps as string[])].sort();
+      if (ri(10) === 0) cps = cps.map((c) => (typeof c === "string" ? c.toUpperCase().replace("0X", "0x") : c));
+      if (ri(15) === 0) cps = [...cps, 7];
+      if (ri(15) === 0) cps = ["", ...cps];
+      const data = { version: pick([1, 1, 1, 2]), proposerSignerId: pick([aliceAddr, aliceAddr.toUpperCase().replace("0X", "0x"), bobAddr]), counterparties: cps };
+      let og: string | undefined;
+      try { assertProposeAccountsNowMatchesState(ogState(new Map()), { type: "proposeAccountsNow", data } as never); } catch (e) { og = (e as Error).message; }
+      const rw = applyEntityInput(opened, { kind: "txs", timestamp: NOW + 1n, txs: [marker(data)] }, ctx);
+      if (og !== undefined) {
+        refused++;
+        expect(rw.ok).toBe(false);
+        if (!rw.ok) expect(rw.error).toEqual({ _tag: "entity_invariant", reason: og } as never);
+      } else {
+        accepted++;
+        expect(rw.ok).toBe(true);
+        if (rw.ok) expect(rw.value.outputs).toEqual([]);
+      }
+    }
+    expect(refused).toBeGreaterThan(50);
+    expect(accepted).toBeGreaterThan(30);
+  });
+
+  test("MATCH: a proposed Account re-emits the exact ack_frame it sent (og cloneIsolatedAccountInput(pendingAccountInput)); an Account without one is owed nothing", () => {
+    const openBob: EntityTx = { type: "openAccount", data: { targetEntityId: BOB, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig } };
+    const first = unwrap(applyEntityInput(alone(), { kind: "txs", timestamp: NOW, txs: [openBob] }, ctx));
+    const sent = first.outputs.filter((o) => "tx" in o && o.tx.data.kind === "ack_frame");
+    expect(sent.length).toBe(1);
+    const child = first.replica.accountReplicas.get(BOB);
+    expect(child?._tag).toBe("proposed");
+    expect(pendingAccountInput(child as AccountReplica, ALICE)).toEqual((sent[0] as { tx: { data: unknown } }).tx.data as never);
+    // og: the handler hands back a clone of the retained bytes for every listed counterparty holding one, in list order
+    const ogPending = { kind: "ack_frame", fromEntityId: ALICE, toEntityId: BOB, domain: ogDomain, disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 10 }, watchSeed: W("33"),
+      proposal: { frame: { height: 1, timestamp: 1, jHeight: 0, accountTxs: [], prevFrameHash: "genesis", accountStateRoot: W("01"), stateHash: W("02") } } };
+    const listed = [BOB, CAROL].map((x) => x.toLowerCase()).sort();
+    const og = handleProposeAccountsNowEntityTx(ogState(new Map([[BOB.toLowerCase(), { pendingAccountInput: ogPending }], [CAROL.toLowerCase(), {}]])), { type: "proposeAccountsNow", data: { version: 1, proposerSignerId: aliceAddr, counterparties: listed } } as never);
+    expect(og.accountInputWorks.map((w) => [w.accountId, w.force, w.response])).toEqual([[BOB.toLowerCase(), true, ogPending]]);
+    const again = unwrap(applyEntityInput(first.replica, { kind: "txs", timestamp: NOW + 1n, txs: [marker({ version: 1, proposerSignerId: aliceAddr, counterparties: listed })] }, ctx));
+    expect(again.outputs.filter((o) => "tx" in o)).toEqual(sent);
+    expect(again.replica.accountReplicas.get(BOB)).toEqual(child);
   });
 });

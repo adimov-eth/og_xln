@@ -3609,8 +3609,10 @@ export type AccountEvent = AccountInput["kind"];
 export class Candidate {
   protected declare readonly established: true;
   /** `floor`: the settlement proof-nonce floor the frame's txs folded under (og reads the pre-frame replica cursors). */
-  constructor(readonly frame: AccountFrame, readonly frameHanko: Hanko, readonly frameProof: LocalProof, readonly draft: FrameFold, readonly floor: number) {}
+  /** `sent`: what og keeps as `pendingAccountInput` beside its own proposal: the bundled ACK and the dispute Hanko the ack_frame carried. */
+  constructor(readonly frame: AccountFrame, readonly frameHanko: Hanko, readonly frameProof: LocalProof, readonly draft: FrameFold, readonly floor: number, readonly sent?: SentProposal) {}
 }
+export type SentProposal = { readonly ack: AccountAck | null; readonly disputeHanko?: DisputeHanko | undefined };
 /** og RebalancePolicy (types/finance/rebalance.ts): the Entity's private per-token automation policy on one Account. */
 export type RebalancePolicy = { readonly r2cRequestSoftLimit: bigint; readonly hardLimit: bigint; readonly maxAcceptableFee: bigint };
 /** `rebalancePolicy`: og replica shadow.rebalance.policy, outside the Account state root, committed as the Entity leaf's policyRoot. */
@@ -3677,6 +3679,13 @@ export const evidenceOf = (e: AccountReplicaError): FrameEvidence | null => {
   return { cause, frame, frameHanko };
 };
 export const replicaId = (r: AccountReplica): AccountId => r.state.account.id;
+/** og AccountReplica.pendingAccountInput: the exact ack_frame our own unanswered proposal went out as; only a proposed Account holds one (og drops it on commit, rollback and freeze). */
+export const pendingAccountInput = (r: AccountReplica, self: EntityId): Extract<AccountMessage, { readonly kind: "ack_frame" }> | undefined => {
+  const party = partyOf(replicaId(r), self);
+  if (r._tag !== "proposed" || r.candidate.sent === undefined || !party.ok) return undefined;
+  const { frame, frameHanko, sent } = r.candidate;
+  return { kind: "ack_frame", ...sentBy(r, party.value), ack: sent.ack, frame, frameHanko, ...opt("disputeHanko", sent.disputeHanko) };
+};
 export const sentBy = (r: AccountReplica, party: Party): AccountEnvelope => envelopeOf(r.state.terms, party);
 export const ackOf = (m: Extract<AccountInput, { readonly kind: "ack" }>): AccountAck => ({ height: m.height, frameHash: m.frameHash, frameHanko: m.frameHanko, ...opt("disputeHanko", m.disputeHanko) });
 export const lifecycleKey = (tx: WireAccountTx): string | undefined => (arm(AccountKinds, tx.type).repeatable ? undefined : canon(wireOf(tx)));
@@ -3823,7 +3832,7 @@ export const proposeOpen = (r: OpenAccount, input: Propose, ctx: AccountContext)
     if (frameHanko === undefined) return err({ _tag: "invalid_hanko", entity: ctx.party.self });
 
     return chain(checks(frameStructure(frame), certifies(ctx.verify, frame.stateHash, frameHanko, ctx.party.self)), () => map(settleLocal(dispute, input.disputeHanko, promoted, ctx.party.self, ctx.verify), ({ carried, witnesses }) => {
-      const proposed: ProposedAccount = { ...r, _tag: "proposed", mempool: deferred, candidate: new Candidate(frame, frameHanko, frameProof, draft, floor), dispute: witnesses };
+      const proposed: ProposedAccount = { ...r, _tag: "proposed", mempool: deferred, candidate: new Candidate(frame, frameHanko, frameProof, draft, floor, { ack: residentAck(r), ...opt("disputeHanko", carried) }), dispute: witnesses };
       return done<OpenAccount | ProposedAccount, AccountOutput>(proposed, [{ kind: "ack_frame", ...sentBy(r, ctx.party), ack: residentAck(r), frame, frameHanko, ...opt("disputeHanko", carried) }]);
     }));
   },
@@ -3895,7 +3904,7 @@ export const ackProposed = (r: ProposedAccount, input: Ack, ctx: AckContext): Ve
   local: () => match(ownAck(r, input, ctx), {
     answered: ({ result }): Verb<OpenAccount | ProposedAccount> => result,
     continue: (): Verb<OpenAccount | ProposedAccount> => input.disputeHanko === undefined
-      ? ok(done({ ...r, candidate: new Candidate(r.candidate.frame, input.frameHanko, r.candidate.frameProof, r.candidate.draft, r.candidate.floor) }))
+      ? ok(done({ ...r, candidate: new Candidate(r.candidate.frame, input.frameHanko, r.candidate.frameProof, r.candidate.draft, r.candidate.floor, r.candidate.sent) }))
       : err(refuseDispute("unexpected")),
   }),
   received: ({ from }) => {
@@ -3977,7 +3986,7 @@ export const restoreCandidate = (held: ProposedAccount | ReceivedAccount, party:
   const { frame, frameHanko } = held.candidate, byLeft = proposerIsLeft(held, party);
   return chain(acceptFrame(frame, replicaId(held), byLeft), () =>
     chain(certifies(verify, frame.stateHash, frameHanko, at(party.self, party.peer, byLeft === party.left), { allowPreviousBoard: true }), () =>
-      chain(replay(held.state, frame, byLeft, { verify, proofNonceFloor: held.candidate.floor }), ({ draft, view }) => map(localProof(view), (frameProof) => new Candidate(frame, frameHanko, frameProof, draft, held.candidate.floor)))));
+      chain(replay(held.state, frame, byLeft, { verify, proofNonceFloor: held.candidate.floor }), ({ draft, view }) => map(localProof(view), (frameProof) => new Candidate(frame, frameHanko, frameProof, draft, held.candidate.floor, held.candidate.sent)))));
 };
 export const dropFrozen = <R extends FrozenAccount>(r: R): Verb<R> => ok(done(r));
 // og freezeAccountForDispute: J claims survive while preparation can still return to active; matcher evidence survives preparation only.
@@ -4280,6 +4289,8 @@ export type EntityTx =
   | { readonly type: "propose"; readonly data: { readonly action: ProposalAction; readonly proposer: string } }
   | { readonly type: "vote"; readonly data: { readonly proposalId: string; readonly voter: string; readonly choice: "yes" | "no"; readonly comment?: string | undefined } }
   | { readonly type: "htlcPayment"; readonly data: HtlcPaymentData }
+  /** og proposeAccountsNow (handlers/account/propose-accounts-now.ts): the active leader asks its Entity to re-send the retained proposals it still owes these peers. */
+  | { readonly type: "proposeAccountsNow"; readonly data: { readonly version: number; readonly proposerSignerId: string; readonly counterparties: readonly string[] } }
   | SwapRequestEntityTx
   | LendingEntityTx;
 /** og types/entity-tx.ts placeSwapOffer / proposeCancelSwap (payments/swap-requests.ts): one swap Account tx on the hub Account. */
@@ -4905,7 +4916,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   requestCollateral: (x) => x.data.counterpartyEntityId, placeSwapOffer: (x) => x.data.counterpartyEntityId, proposeCancelSwap: (x) => x.data.counterpartyEntityId, setRebalancePolicy: (x) => x.data.counterpartyEntityId, setHubConfig: () => self, prepareDispute: (x) => x.data.counterpartyEntityId, disputeStart: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self, entityCommand: () => self, propose: () => self, vote: () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
-  htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId,
+  htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId, proposeAccountsNow: () => self,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -4931,6 +4942,19 @@ const forwardPayment = (d: Draft, f: Of<Effect, "direct_payment_forward">): Resu
   return map(admitAt(child, [leg], self, L0_CLOCK), (admitted) => ({ ...putChild(d.state, d.accountReplicas, next, admitted), outputs: d.outputs }));
 };
 const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
+/** og assertProposeAccountsNowMatchesState: the marker's signer is the active leader, version 1, 1..1000 lowercase ids of at most 256 chars, strictly ascending. Plain Errors: the whole input is refused. */
+export const MAX_PROPOSE_ACCOUNTS_NOW_COUNTERPARTIES = 1_000;
+const proposeAccountsNowOk = (state: EntityState, d: Extract<EntityTx, { readonly type: "proposeAccountsNow" }>["data"]): Result<void, EntityError> => {
+  if (typeof d.proposerSignerId !== "string" || leaderStateOf(state).activeValidatorId.toLowerCase() !== d.proposerSignerId.toLowerCase()) return invariant("PROPOSE_ACCOUNTS_NOW_PROPOSER_MISMATCH");
+  const cps = d.counterparties;
+  if (d.version !== 1 || !Array.isArray(cps) || cps.length === 0 || cps.length > MAX_PROPOSE_ACCOUNTS_NOW_COUNTERPARTIES) return invariant(`PROPOSE_ACCOUNTS_NOW_INVALID_PAYLOAD:${Array.isArray(cps) ? cps.length : "not-array"}`);
+  for (const [i, cp] of cps.entries()) {
+    if (typeof cp !== "string" || cp.length === 0 || cp.length > 256 || cp !== cp.toLowerCase()) return invariant(`PROPOSE_ACCOUNTS_NOW_COUNTERPARTY_INVALID:${String(cp)}`);
+    const prev = cps[i - 1];
+    if (prev !== undefined && asc(prev, cp) >= 0) return invariant(`PROPOSE_ACCOUNTS_NOW_ORDER_INVALID:${prev}:${cp}`);
+  }
+  return ok(undefined);
+};
 /** Peer Account txs an Entity takes into a received frame: L0 plus the HTLC lock/resolve pair and the collateral request. */
 const entityAcceptsPeerTx = (tx: WireAccountTx): boolean => isL0Tx(tx) || tx.type === "htlc_lock" || tx.type === "htlc_resolve" || tx.type === "request_collateral";
 /** og DEFAULT_ACCOUNT_TOKEN_IDS (account/config/defaults.ts). */
@@ -5216,11 +5240,12 @@ const fillHankos = (d: Draft, frame: EntityFrame, signatures: Precommits): Resul
   if (table.size === 0) return ok(d);
   const f = (h: Hanko): Hanko => table.get(h) ?? h, fd = (x: DisputeHanko | undefined): DisputeHanko | undefined => (x === undefined ? undefined : { ...x, hanko: f(x.hanko) });
   const fa = (a: AccountAck): AccountAck => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) });
+  const sentHankos = (x: SentProposal | undefined): SentProposal | undefined => (x === undefined ? undefined : { ack: x.ack === null ? null : fa(x.ack), ...opt("disputeHanko", fd(x.disputeHanko)) });
   const replica = (c: AccountReplica): AccountReplica => {
     const head: AccountHead = c.head._tag === "installed" ? { ...c.head, certificate: { ...c.head.certificate, left: f(c.head.certificate.left), right: f(c.head.certificate.right) } } : c.head;
     const dispute: DisputeWitnesses = { ...c.dispute, ...opt("current", fd(c.dispute.current)) };
     const base = { ...c, head, dispute, ...(c.acknowledged === undefined ? {} : { acknowledged: fa(c.acknowledged) }) };
-    return "candidate" in c ? ({ ...base, candidate: new Candidate(c.candidate.frame, f(c.candidate.frameHanko), c.candidate.frameProof, c.candidate.draft, c.candidate.floor) } as AccountReplica) : (base as AccountReplica);
+    return "candidate" in c ? ({ ...base, candidate: new Candidate(c.candidate.frame, f(c.candidate.frameHanko), c.candidate.frameProof, c.candidate.draft, c.candidate.floor, sentHankos(c.candidate.sent)) } as AccountReplica) : (base as AccountReplica);
   };
   const message = (m: AccountPeerInput): AccountPeerInput => matchBy("kind", m, {
     ack: (a): AccountPeerInput => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
@@ -6078,6 +6103,11 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const offer: AccountTx = { type: "swap_offer", offerId, giveTokenId, giveTokenDecimals, giveAmount, wantTokenId, wantTokenDecimals, wantAmount, maxFee, minNetReceive, ...opt("priceTicks", priceTicks), ...opt("timeInForce", timeInForce) };
       return replicas.has(to) ? enqueue(to, [offer], [wake(state, ctx.timestamp)]) : err({ _tag: "swap_request_account_missing", target: to });
     },
+    proposeAccountsNow: (x) => map(proposeAccountsNowOk(state, x.data), () => ({ ...skip, outputs: x.data.counterparties.flatMap((peer): EntityOutput[] => {
+      // og re-emits the retained bytes unchanged; a peer with no Account or no unanswered proposal is owed nothing
+      const child = replicas.get(peer as EntityId), sent = child === undefined ? undefined : pendingAccountInput(child, state.id);
+      return sent === undefined ? [] : [{ to: peer as EntityId, tx: { type: "accountInput", data: sent } }];
+    }) })),
     proposeCancelSwap: (x) => (replicas.has(x.data.counterpartyEntityId) ? enqueue(x.data.counterpartyEntityId, [{ type: "swap_cancel_request", offerId: x.data.offerId }], [wake(state, ctx.timestamp)]) : err({ _tag: "swap_request_account_missing", target: x.data.counterpartyEntityId })),
     "profile-update": (x) => map(profileUpdate(state, x.data.profile), (profile) => ({ ...skip, state: { ...state, committed: { ...state.committed, profile } } })),
     // og handleSetHubConfigEntityTx: commit the config, mark the profile a hub, then queue the fee terms on every Account's tokens (ids and tokens ascending) and wake
