@@ -1,0 +1,72 @@
+# account-consensus: og `core/account/consensus` vs `pure/xln.ts`
+
+Evidence test: `pure/diff/account-consensus.test.ts`. Run it from `pure/` with `bun test diff/account-consensus.test.ts`. Result: 19 pass, 0 fail.
+The tests call og's real `applyAccountInput`, `applyAccountEnqueue`, `prepareProposalAdmission`, `getAccountFrameStructuralError`, `getDisputeHankoRequirementError`, `getDisputeHankoShapeError` and `prependUniqueMempoolTxs`. The og account fixture is copied from `core/__tests__/account/consensus/account-input-rejection.test.ts`. The test also adds a fake durable J stack to the context, so og can build proof bodies and dispute hashes. On the rewrite side, the tests drive `applyAccountInput`, `admit`, `disputeUnsafe` and the helpers in `xln_run.ts`.
+
+## Findings
+
+| id | severity | og file:line | rewrite xln.ts:line | what differs | proven by test? |
+|---|---|---|---|---|---|
+| AC-1 | high (frame-hash mismatch) | core/account/consensus/proposal/admission.ts:130 | xln.ts:1656, 1699 | The og proposer clamps the frame timestamp to `max(entityTs, currentFrame.timestamp)`. The rewrite signs `input.timestamp` as given. The same entity clock below the last committed frame therefore gives a different frame and a different `stateHash`: og gives 5000, the rewrite gives 1000. | yes: "DIVERGES: proposer clock below the last committed frame" |
+| AC-2 | high (liveness / lost user intent) | core/account/input/local-tx-admission.ts:38-45,116; core/account/input/mempool.ts:8-24 | xln.ts:1907-1913 (and the entity route at 2257) | og admits local AccountTxs while a frame is pending. It dedupes against mempool plus pendingFrame, and the limit counts `mempool + pendingFrame.txs`. The rewrite refuses any admission in `proposed`/`received` with `already_proposed`, so an Entity `pay`/`extendCredit` during an outstanding proposal fails the whole Entity tx instead of queueing. | yes: "DIVERGES: local tx admission while a proposal awaits ACK" |
+| AC-3 | medium | core/account/consensus/index.ts:977-1000 then 1264 (ACK phase commits before the proposal phase); og test "valid bundled ACK stays committed" | xln.ts:1879-1885, 1866-1868 | For `ack_frame` with a valid ACK and a bad successor frame, og installs the ACKed frame (currentHeight 1) and then returns `ACCOUNT_INPUT_FRAME_CHAIN_INVALID`. The rewrite is atomic: it returns `hash_mismatch` and the ACK is not committed. At Entity level og evicts the tx (MalformedEntityFrameInputError), which may undo this. Only the Account-level contract differs for certain. | yes: "DIVERGES: ack_frame with a valid ACK and an invalid successor" |
+| AC-4 | medium | core/account/consensus/frame/hash.ts:32-58 (no emptiness check) | xln.ts:1861 | og accepts a signed empty peer frame (`accountTxs: []`) and commits it: currentHeight 1, ACK emitted. The rewrite refuses it with `empty_frame`. An og peer never proposes an empty frame (admission.ts:79-81), so this matters only for crafted or foreign-engine frames. It is still a peer-visible accept/reject split. | yes: "DIVERGES: an authenticated EMPTY peer frame" |
+| AC-5 | low | core/account/consensus/frame/hash.ts:39 (`timestamp < 0`) | xln.ts:1688 (`timestamp <= 0n`) | og treats timestamp 0 as structurally valid. The rewrite refuses it with `frame_structure{timestamp}`. | yes: "DIVERGES: frame timestamp 0" |
+| AC-6 | medium | core/account/input/mempool.ts:21,40 (throws `ACCOUNT_MEMPOOL_LIMIT_EXCEEDED`) | xln.ts:1910 | The limit is the same (10000, inclusive). og throws a plain Error, which is not an AccountInput rejection and counts as a runtime fault under the reject policy. The rewrite returns typed `mempool_full`. og also counts pending-frame txs toward the limit. That difference is moot today because the rewrite never admits while proposed (AC-2). | yes: "DIVERGES: mempool overflow" |
+| AC-7 | medium | core/account/consensus/proposal/transactions.ts:204-234 (halts on failed `settle_transition`/`swap_resolve`/`cross_pull_lock`/cross-j `swap_offer`/`cross_pull_close`), 236-249 (`retry` keeps `htlc_lock_capacity`/settlement-frozen txs) | xln.ts:1579, 1653, 1700, 1706 (`proposalFold` is lenient; `mempool: []`) | When proposing, the rewrite silently drops every refused tx and clears the mempool. og halts the runtime for matcher- or settlement-owned kinds, and keeps "deferred" txs such as `htlc_lock` over capacity in the mempool for retry. For L0 kinds (add_delta, set_credit_limit, payment) the behaviour matches, because og also removes rejected txs. | no (code reading; the rewrite has handlers for htlc_lock and swap_resolve at xln.ts:1181, 1213) |
+| AC-8 | medium | core/account/consensus/index.ts:1203-1210, 1003-1035 (`kind:'dispute'` = standalone peer dispute-Hanko witness, validated and stored) | xln.ts:1593, 1857, 1892 | Both engines have an input called `dispute`, but they mean different things. In og it is a peer message carrying a new counterparty dispute Hanko. In the rewrite it is a local command that freezes the account (EXTRA semantics under the same name). og's standalone-witness lane is MISSING, so the rewrite cannot accept a refreshed peer witness outside a frame. | no (code reading) |
+| AC-9 | medium | core/account/consensus/incoming/preflight.ts:229-280 (`getIncomingAccountDeadlineViolation` → reject or dispute) | missing (receipt at xln.ts:1819-1827) | The rewrite has no HTLC and deadline safety check on incoming frames. og can turn an authenticated frame into `dispute` or `FRAME_DEADLINE_INVALID` before replay. The rewrite folds `htlc_lock`/`htlc_timeout` at frame time only. | no |
+| AC-10 | low | core/account/consensus/dispute/policy.ts:80-90 (`returnPreparedAccountToActive`), 46-60 (freeze keeps j_event_claim and evidence txs) | xln.ts:81 (`dispute: preparing → preparing/disputed` only), 1852 (`mempool: []`) | og can return `dispute_preparing` to active and keeps deferred j-claims and evidence through the freeze. In the rewrite, `preparing` is one-way and the freeze empties the mempool. | no |
+| AC-11 | low | core/account/consensus/index.ts:1135-1170 (`external_finality` dispute_started/finalized, advances `jNonce`); core/account/consensus/incoming/board-hanko-refresh.ts | xln.ts:1388 (`jNonce: 0` fixed), 88 (`board_hanko_refresh` hole) | MISSING: finality inputs and board-Hanko refresh. Because the rewrite's `jNonce` is always 0, every `> jNonce` rule currently collapses to `> 0`, for example the rebuilt duplicate ACK at xln.ts:1809 against og replay.ts `reusableCertifiedAckHanko`. | no |
+| AC-12 | low | core/account/consensus/incoming/preflight.ts:215-228 (tx admission profile checked before any signature work) | xln.ts:1823-1831 (token parse happens in `acceptFrame` after `certifies`) | Only the order of rejection differs. og refuses an out-of-profile or out-of-range token frame before verifying the Hanko. The rewrite verifies the Hanko first. `checks(...)` also evaluates `certifies` eagerly even when an earlier structural gate fails. | no |
+| AC-13 | low | core/account/consensus/incoming/ack-commit.ts:88-96, 234-245 (`allowPreviousBoard: true` for ACKs); preflight.ts:57-66 (`false` for fresh frames) | xln.ts:1615 (`certifies` has no board-epoch notion) | The rewrite's verification has no previous-board grace, so ACK authority across a board rotation is MISSING (a board-hanko-refresh hole). | no |
+
+## Rejection-code map (og ast-grep → rewrite `_tag`)
+
+I enumerated og codes with `ast-grep run -p 'rejectAccountInput($CODE, $$$)'`, `throw new Error($M)`, `throw new AccountInputEvidenceError($C,$M)`, `accountInputValidationRejected($M,$$$)`, `proposeAccountFrameRejected($M,$$$)` and `throw haltRuntimeFailure($C,$$$)` over consensus/, input*, validation, tx-validation and envelope.
+
+| og code / reason | rewrite |
+|---|---|
+| ACCOUNT_INPUT_DOMAIN_INVALID / DOMAIN_MISMATCH / PARTY_MISMATCH / DISPUTE_CONFIG_INVALID / DISPUTE_CONFIG_MISMATCH / WATCH_SEED_INVALID / WATCH_SEED_MISMATCH (input.ts:83-139) | EnvelopeError `domain_invalid` … `watch_seed_mismatch` (xln.ts:985), plus `unknown_signer` (1770, 1861) |
+| ACCOUNT_INPUT_HEIGHT_INVALID (index.ts:1215) | n/a (heights are `bigint` by type) |
+| ACCOUNT_INPUT_HANKO_SHAPE_INVALID (index.ts:1183) | `dispute_hanko{shape}` via `disputeShapes` (1536). MATCH, proven |
+| ACCOUNT_INPUT_DISPUTE_HANKO_INVALID: HANKO_MISSING / SHAPE / HASH_MISMATCH / HANKO_INVALID (hanko.ts:66-123) | `dispute_hanko{hanko_missing, shape, hash_mismatch, hanko_invalid}` (1513-1519) |
+| DISPUTE_HANKO_UNEXPECTED / NONCE_ALREADY_FINALIZED / NONCE_REGRESSION / NONCE_REUSE / PROOFBODY_MISMATCH / REQUIRED (hanko.ts:142-178) | `dispute_hanko{unexpected, nonce_finalized, nonce_regression, nonce_reuse, body_mismatch, required}` (1520-1529). MATCH, proven over 13 rows |
+| ACCOUNT_INPUT_BOARD_HANKO_REFRESH_INVALID | MISSING (hole `board_hanko_refresh`) |
+| ACCOUNT_INPUT_FRAME_HANKO_INVALID (preflight.ts:45,71; replay.ts:129 duplicate conflicts) | `invalid_hanko` (1615); duplicate → `ack_conflict{frameHanko}` (1800). MATCH, proven |
+| ACCOUNT_INPUT_FRAME_PROPOSER_INVALID | `unknown_signer` |
+| ACCOUNT_INPUT_FRAME_STRUCTURE_INVALID (height/jHeight/timestamp/tx count/root/future skew) | `frame_structure{timestamp, jHeight, txs, accountStateRoot, future_timestamp}` (1687-1691). The timestamp==0 case DIVERGES (AC-5) |
+| ACCOUNT_INPUT_FRAME_CHAIN_INVALID (prevFrameHash, then height) | `hash_mismatch`, then `height_mismatch` (1824). Same order. MATCH, proven |
+| ACCOUNT_INPUT_FRAME_HASH_INVALID (index.ts:179; replay.ts DUPLICATE_FRAME_BYTES_CONFLICT) | `frame_hash_mismatch` (1572) |
+| ACCOUNT_INPUT_FRAME_DEADLINE_INVALID | MISSING (AC-9) |
+| ACCOUNT_INPUT_FRAME_TX_OUT_OF_PROFILE / TOKEN_ID_OUT_OF_RANGE / POLICY_VERSION_OUT_OF_RANGE | partial: `uncommitted{…}` from `wireTx`/`tokenNumber`, after the signature check (AC-12) |
+| ACCOUNT_INPUT_FRAME_STALE_SETTLEMENT_HANKO (index.ts:774) | MISSING |
+| ACCOUNT_INPUT_ACK_CERTIFICATE_INVALID (ack-commit.ts:82-254; replay.ts:441,460) | `hash_mismatch`, `invalid_hanko`, `ack_conflict{frameHash, frameHanko, disputeHanko, height}`, `dispute_hanko{…}` |
+| ACCOUNT_INPUT_ACK_UNMATCHED (collision.ts:76,88) | `ack_unmatched` (1773, 1785, 1874) |
+| validation "Bilateral account state root mismatch" → dispute | `dispute_required{cause: state_root_mismatch}` (1686, 1831). MATCH, proven |
+| validation DISPUTE_HANKO_* on incoming frame → dispute | `dispute_required{cause: dispute_hanko}` (1832). MATCH, proven |
+| propose: "No transactions to propose" / "Waiting for ACK on pending frame" / ACCOUNT_PROPOSAL_STATUS_FROZEN / "Mempool overflow" | `empty_mempool` / `already_proposed` / `frozen{phase}` / `mempool_full` (at admission) |
+| ACCOUNT_PROPOSAL_SELECTION_EMPTY / TOO_LARGE / NOT_IN_MEMPOOL | MISSING (no partial selection; the whole mempool is always proposed) |
+| ACCOUNT_PROPOSAL_ENTITY_TIMESTAMP_INVALID | proposer-side `frame_structure{timestamp}` (1705) |
+| ACCOUNT_MEMPOOL_LIMIT_EXCEEDED (throw) | `mempool_full` (AC-6) |
+| SWAP_RESOLVE / CROSS_J_* / SETTLEMENT_TRANSITION _PROPOSAL_FAILED (halt) | MISSING (lenient drop, AC-7) |
+| DUPLICATE_ACK_* throws, ACCOUNT_COLLISION_PENDING_RESPONSE_MISSING, INBOUND_*_MISSING_* | n/a (made impossible by the typed phases `proposed`/`received` and `Candidate`) |
+| DISPUTE_PROOF_BUILD_FAILED (halt) | `dispute_proof{…}` / `uncommitted` as typed errors |
+
+## Coverage: checked and MATCH
+
+- **Who may propose.** Only an idle account with a non-empty mempool may propose. In og a pending frame blocks with "Waiting for ACK"; in the rewrite `proposed`/`received` block with `already_proposed`. Frozen accounts refuse in both.
+- **Collision.** A lexicographically-LEFT entity with a pending frame ignores RIGHT's same-height frame and emits nothing (og collision.ts:127-151 vs xln.ts:1838). RIGHT rolls back and puts its own txs back at the front of the mempool, deduped by exact payload except payments, which are always kept (helpers.ts:88-110 vs xln.ts:1795, 1645-1646). RIGHT then takes LEFT's frame. Proven: both collision tests and the restore-order test.
+- **Proof checks.** The prevFrameHash check comes before the height check. The frame Hanko is verified before collision resolution, and the frame-hash recompute happens after it (og index.ts:327 vs xln.ts:1831).
+- **Future skew.** The allowance is ≤ 30000 ms against the receiver's clock, inclusive (proven at 0, 29999, 30000, 30001 and 90000). og and the rewrite both **accept** timestamp regression on receive (preflight.ts:156, xln has no check).
+- **Frame size limits.** The frame tx cap and the mempool cap are both 10000 (proven).
+- **Duplicate ACK.** An exact duplicate ACK of the current head is a no-op, and a different frame Hanko is a loud rejection (ack-commit.ts:59-107 vs xln.ts:1718-1726). Proven.
+- **Duplicate committed frame.** Redelivery of the committed head frame re-sends the ACK (cached or rebuilt), and a different frame Hanko is rejected (replay.ts:420-491 vs xln.ts:1796-1817). Proven.
+- **Old ACKs.** An ACK below height−1 is a no-op. An ACK at exactly height−1 is checked as the immediate predecessor (ack-commit.ts:114-148 vs xln.ts:1731-1732). Proven for the no-op case.
+- **Unmatched ACK.** An unmatched ACK is rejected, except for a same-height simultaneous-proposal ACK, which is tolerated (collision.ts:44-89 vs xln.ts:1874).
+- **ACK commit order.** The dispute-Hanko requirement is checked first, then frameHash equality, then the counterparty Hanko (ack-commit.ts:150-252 vs xln.ts:1736-1745).
+- **Dispute-Hanko requirement ladder.** Proven with 13 cases.
+- **Proposer and acker dispute plans.** Both engines decide the same way whether to sign again, resend or send nothing: signing again happens when the body changed, the proposer flag changed (ACK only), or the nonce is ≤ jNonce, and the new nonce is `max(nextProofNonce, jNonce+1)` (proof.ts:42-60 and index.ts:569-590 vs xln.ts:1486-1498).
+- **Dispute trigger.** An authenticated frame that fails replay, misses the state root, or misses the dispute-Hanko requirement becomes a dispute. A bad frame hash, bad Hanko or bad chain link is a plain reject (index.ts:748-796 vs xln.ts:1828-1833, 1930-1934). Proven for the state-root and missing-Hanko cases.
+- **Frozen accounts.** Frozen accounts drop peer ACK and frame traffic as a no-op (entity/tx/handlers/account/frozen-input.ts vs xln.ts:1850).
+- **jHeight.** The frame's own `jHeight` drives the fold, jHeight < 0 is structurally invalid, and neither engine enforces jHeight monotonicity.

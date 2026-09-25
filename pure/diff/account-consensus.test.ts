@@ -1,0 +1,377 @@
+// Behavioural diff: og bilateral Account consensus (core/account/consensus) vs pure/xln.ts.
+// Each "DIVERGES:" test PASSES while asserting the observed difference; "MATCH:" tests assert equivalence.
+import { describe, expect, test } from "bun:test";
+
+// ---- og ----
+import { applyAccountInput as ogApply } from "../../core/account/consensus/index.ts";
+import { computeFrameHash, getAccountFrameStructuralError, MAX_ACCOUNT_FRAME_TXS } from "../../core/account/consensus/frame/hash.ts";
+import { ACCOUNT_NETWORK_ALLOWANCE_MS as OG_ALLOWANCE, MEMPOOL_LIMIT } from "../../core/account/consensus/constants.ts";
+import { getDisputeHankoRequirementError } from "../../core/account/consensus/dispute/hanko.ts";
+import { getDisputeHankoShapeError } from "../../core/account/consensus/incoming/replay.ts";
+import { prepareProposalAdmission } from "../../core/account/consensus/proposal/admission.ts";
+import { prependUniqueMempoolTxs, buildAccountProofBodyFromJurisdictions } from "../../core/account/consensus/helpers.ts";
+import { applyAccountEnqueue } from "../../core/account/input/local-tx-admission.ts";
+import { computeAccountStateRoot } from "../../core/account/commitment/state-root.ts";
+import { createEmptyAccountJClaimAccumulator } from "../../core/account/j-claims/j-claim-accumulator.ts";
+import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
+import { createEmptyEnv } from "../../core/runtime.ts";
+import { createAccountConsensusContext } from "../../core/entity/account/account-consensus-context.ts";
+import { createDisputeProofHashWithNonce } from "../../core/protocol/dispute/proof-builder.ts";
+import { accountInputPeerRejectionCode } from "../../core/account/consensus/result.ts";
+import type { AccountConsensusContext } from "../../core/account/consensus/context.ts";
+import type { AccountFrame as OgFrame, AccountInput as OgInput, AccountReplica as OgReplica, AccountTx as OgTx } from "../../core/types/account.ts";
+
+// ---- rewrite ----
+import {
+  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, admit, applyAccountInput, disputeUnsafe, disputeRequirement, disputeShapes, frameStateHash, receiverClock, replicaId, unqueued,
+} from "../xln.ts";
+import type { AccountFrame, AccountInput, AccountReplica, EntityId, WireAccountTx } from "../xln.ts";
+import { ALICE, BOB, CLOCK, NOW, causeOf, ackInput, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap, unwrapErr } from "../xln_run.ts";
+
+// ============ og fixture (copied from core/__tests__/account/consensus/account-input-rejection.test.ts) ============
+const L = `0x${"11".repeat(32)}`, R = `0x${"22".repeat(32)}`;
+const W = (b: string) => `0x${b.repeat(32)}`;
+const ogDomain = { chainId: 31_337, depositoryAddress: `0x${"44".repeat(20)}` };
+const ogAccount = (local = L, peer = R): OgReplica => {
+  const a: OgReplica = {
+    state: {
+      leftEntity: local < peer ? local : peer, rightEntity: local < peer ? peer : local, domain: { ...ogDomain }, watchSeed: W("33"),
+      deltas: PersistentAccountStateMap.empty("deltas"), locks: PersistentAccountStateMap.empty("locks"), swapOffers: PersistentAccountStateMap.empty("swapOffers"),
+      pulls: PersistentAccountStateMap.empty("pulls"), leftPendingJClaims: createEmptyAccountJClaimAccumulator(), rightPendingJClaims: createEmptyAccountJClaimAccumulator(),
+      lastFinalizedJHeight: 0, disputeConfig: { leftResponseSeconds: 10, rightResponseSeconds: 10 }, jNonce: 0,
+      requestedRebalance: PersistentAccountStateMap.empty("requestedRebalance"), requestedRebalanceFeeState: PersistentAccountStateMap.empty("requestedRebalanceFeeState"),
+    },
+    status: "active", mempool: [],
+    currentFrame: { height: 0, timestamp: 0, jHeight: 0, accountTxs: [], prevFrameHash: "", accountStateRoot: "", deltas: [], stateHash: "", byLeft: local < peer },
+    currentHeight: 0, rollbackCount: 0, proofHeader: { fromEntity: local, toEntity: peer, nextProofNonce: 1 },
+    pendingWithdrawals: PersistentAccountStateMap.empty("pendingWithdrawals"),
+    shadow: { rebalance: { policy: PersistentAccountStateMap.empty("rebalanceShadowPolicy"), submittedAtByToken: PersistentAccountStateMap.empty("rebalanceShadowSubmitted") } },
+  } as unknown as OgReplica;
+  a.currentFrame.accountStateRoot = computeAccountStateRoot(a.state);
+  return a;
+};
+const addr = (b: string) => `0x${b.repeat(20)}`;
+const ogCtx = (name: string, verify: AccountConsensusContext["verifyHanko"] = async (_h, _d, e) => ({ valid: true, entityId: e })): AccountConsensusContext => {
+  const env = createEmptyEnv(name);
+  env.quietRuntimeLogs = true;
+  const base = createAccountConsensusContext(env);
+  // A durable J stack so the og proof body (and hence dispute Hankos) can be built.
+  const jReplicas = new Map([["j", { chainId: 31_337, contracts: { depository: ogDomain.depositoryAddress, entityProvider: addr("55"), account: addr("66"), deltaTransformer: addr("77") } }]]);
+  return { ...base, jReplicas: jReplicas as unknown as AccountConsensusContext["jReplicas"], verifyHanko: verify };
+};
+const ogEnvelope = (a: OgReplica) => ({ fromEntityId: a.proofHeader.toEntity, toEntityId: a.proofHeader.fromEntity, domain: { ...a.state.domain }, disputeConfig: { ...a.state.disputeConfig }, watchSeed: a.state.watchSeed });
+const ogFrame = (a: OgReplica, over: Partial<OgFrame> = {}): OgFrame => {
+  const f = { height: a.currentHeight + 1, timestamp: 1_000, jHeight: 0, accountTxs: [], prevFrameHash: a.currentHeight === 0 ? "genesis" : a.currentFrame.stateHash, accountStateRoot: computeAccountStateRoot(a.state), deltas: [], stateHash: "", byLeft: false, ...over } as OgFrame;
+  f.stateHash = computeFrameHash(f);
+  return f;
+};
+/** Valid peer dispute Hanko for a frame that leaves state unchanged (proof body of the current state). */
+const ogPeerDispute = (ctx: AccountConsensusContext, a: OgReplica, proposerIsLeft: boolean, nonce = 1) => {
+  const proofBodyHash = buildAccountProofBodyFromJurisdictions(ctx, a).proofBodyHash;
+  return { hanko: `0x${"77".repeat(65)}`, hash: createDisputeProofHashWithNonce(a.state, proofBodyHash, a.state.domain, nonce, proposerIsLeft), proofBodyHash, proofNonce: nonce, proposerIsLeft };
+};
+const scl = (tokenId: number, amount: bigint): OgTx => ({ type: "set_credit_limit", data: { tokenId, amount } }) as OgTx;
+
+// ============ rewrite drivers ============
+const DOOR = (self: EntityId, now = NOW) => ({ verify: hankoVerify, self, now });
+const leftOf = (): EntityId => (partyIn(genesisAB(), ALICE).left ? ALICE : BOB);
+const rightOf = (): EntityId => (leftOf() === ALICE ? BOB : ALICE);
+const TX: WireAccountTx = { type: "set_credit_limit", tokenId: "0", limit: 7n } as WireAccountTx;
+const TX2: WireAccountTx = { type: "set_credit_limit", tokenId: "0", limit: 9n } as WireAccountTx;
+const step = (r: AccountReplica, input: AccountInput, self: EntityId, now = NOW) => unwrap(applyAccountInput(r, input, DOOR(self, now)));
+/** Propose one frame from `self` holding `txs`. */
+const proposeFrom = (r: AccountReplica, self: EntityId, txs: readonly WireAccountTx[], clock = CLOCK) => {
+  const opened = unwrap(admit(r, txs));
+  return step(opened, proposeInput(opened, self, clock), self);
+};
+/** Full round: `proposer` proposes, peer receives and acks, proposer commits. Returns both replicas. */
+const round = (p: AccountReplica, q: AccountReplica, proposer: EntityId, peer: EntityId, txs: readonly WireAccountTx[], clock = CLOCK) => {
+  const proposed = proposeFrom(p, proposer, txs, clock).replica;
+  if (proposed._tag !== "proposed") throw new Error(proposed._tag);
+  const received = step(q, offerOf(proposed, proposer), peer).replica;
+  const acked = step(received, ackInput(received, peer), peer);
+  const ackMsg = acked.outputs.find((o) => o.kind === "ack") as AccountInput;
+  const committed = step(proposed, ackMsg, proposer).replica;
+  return { p: committed, q: acked.replica, proposedFrame: proposed.candidate.frame, offer: offerOf(proposed, proposer), ack: ackMsg };
+};
+const peerFrame = (r: AccountReplica, from: EntityId, over: Partial<AccountFrame> & { txs: readonly WireAccountTx[] }): AccountFrame => {
+  const bare = { height: r.head.height + 1n, timestamp: NOW, jHeight: 0n, prevFrameHash: r.head.prevFrameHash, accountStateRoot: W("ab"), ...over };
+  const byLeft = partyIn(r, from).left;
+  return { ...bare, stateHash: unwrap(frameStateHash(bare, replicaId(r), byLeft)) };
+};
+const ackFrameOf = (r: AccountReplica, from: EntityId, frame: AccountFrame, ack: AccountInput | null = null): AccountInput => ({
+  kind: "ack_frame", ...envelopeAB(from), ack: ack === null || ack.kind !== "ack" ? null : { height: ack.height, frameHash: ack.frameHash, frameHanko: ack.frameHanko, ...(ack.disputeHanko ? { disputeHanko: ack.disputeHanko } : {}) },
+  frame, frameHanko: signAccountFrame(frame, from),
+} as AccountInput);
+
+// =====================================================================================================
+describe("account-consensus: pure predicates", () => {
+  test("MATCH: dispute-hanko requirement ladder (unexpected / finalized / regression / reuse / body / required)", () => {
+    const A = W("aa"), B = W("bb");
+    const rows: Array<[string | undefined, string | undefined, number | undefined, number, { nonce: number; body: string } | undefined]> = [
+      [undefined, undefined, undefined, 0, undefined], [undefined, undefined, undefined, 0, { nonce: 1, body: A }],
+      [A, undefined, undefined, 0, undefined], [A, A, 3, 0, undefined], [A, A, 3, 3, undefined], [A, B, 3, 0, undefined],
+      [A, A, 3, 5, { nonce: 5, body: A }], [A, A, 3, 0, { nonce: 2, body: A }], [A, B, 3, 0, { nonce: 3, body: A }],
+      [A, A, 3, 0, { nonce: 3, body: A }], [A, A, 3, 0, { nonce: 4, body: B }], [A, B, 3, 0, { nonce: 4, body: A }], [A, A, undefined, 0, { nonce: 1, body: A }],
+    ];
+    const ogClass = (s: string | undefined) => s === undefined ? undefined : s.startsWith("DISPUTE_HANKO_UNEXPECTED") ? "unexpected" : s.includes("ALREADY_FINALIZED") ? "nonce_finalized"
+      : s.includes("REGRESSION") ? "nonce_regression" : s.includes("REUSE") ? "nonce_reuse" : s.includes("PROOFBODY_MISMATCH") ? "body_mismatch" : s.includes("REQUIRED") ? "required" : `?${s}`;
+    for (const [exp, prevBody, prevNonce, jNonce, rcv] of rows) {
+      const og = getDisputeHankoRequirementError(exp, prevBody, prevNonce, jNonce, rcv && { hanko: "0x01", nonce: rcv.nonce, hash: W("cc"), proofBodyHash: rcv.body, proposerIsLeft: true });
+      const pure = disputeRequirement(exp, prevBody, prevNonce, jNonce, rcv && { proofNonce: rcv.nonce, proofBodyHash: rcv.body });
+      expect(pure).toBe(ogClass(og) as typeof pure);
+    }
+  });
+
+  test("MATCH: dispute-hanko hex shape (empty / 0x / odd length rejected, even accepted)", () => {
+    for (const h of ["", "0x", "0xabc", "abc", "0xabcd", "abcd", "0X"]) {
+      const og = getDisputeHankoShapeError({ kind: "dispute", disputeHanko: { hanko: h } } as unknown as OgInput) !== undefined;
+      const pure = !disputeShapes([{ hanko: h, hash: W("aa"), proofBodyHash: W("aa"), proofNonce: 1, proposerIsLeft: true }]).ok;
+      expect(pure).toBe(og);
+    }
+  });
+
+  test("MATCH: future-timestamp allowance is 30s inclusive on both sides", () => {
+    expect(Number(ACCOUNT_NETWORK_ALLOWANCE_MS)).toBe(OG_ALLOWANCE);
+    const now = 1_000_000;
+    const root = W("00");
+    for (const skew of [0, 29_999, 30_000, 30_001, 90_000]) {
+      const og = getAccountFrameStructuralError({ height: 1, jHeight: 0, timestamp: now + skew, accountTxs: [], accountStateRoot: root } as unknown as OgFrame, now) === "";
+      const pure = receiverClock({ timestamp: BigInt(now + skew) } as AccountFrame, BigInt(now)).ok;
+      expect(pure).toBe(og);
+    }
+  });
+
+  test("MATCH: frame tx-count cap and mempool cap are both LIMITS.ACCOUNT_MEMPOOL_SIZE (10000)", () => {
+    expect(ACCOUNT_MEMPOOL_SIZE).toBe(MAX_ACCOUNT_FRAME_TXS);
+    expect(ACCOUNT_MEMPOOL_SIZE).toBe(MEMPOOL_LIMIT);
+  });
+
+  test("MATCH: rollback restore dedupes lifecycle txs but keeps repeated payments, restored txs go FIRST", () => {
+    // og: prependUniqueMempoolTxs(account, pendingTxs) -> [...missing, ...mempool]
+    const a = ogAccount();
+    const dup = scl(1, 5n), pay = { type: "direct_payment", data: { tokenId: 1, amount: 3n, route: [], description: "" } } as unknown as OgTx;
+    a.mempool = [dup, pay];
+    prependUniqueMempoolTxs(a, [dup, pay, scl(2, 1n)]);
+    expect(a.mempool.map((t) => t.type)).toEqual(["direct_payment", "set_credit_limit", "set_credit_limit", "direct_payment"]);
+    // rewrite: restore() = [...unqueued(frame.txs, mempool), ...mempool]
+    const payW = { type: "payment", tokenId: "0", amount: 3n } as WireAccountTx;
+    const restored = [...unqueued([TX, payW, TX2], [TX, payW]), TX, payW];
+    expect(restored.map((t) => t.type)).toEqual(["payment", "set_credit_limit", "set_credit_limit", "payment"]);
+  });
+});
+
+// =====================================================================================================
+describe("account-consensus: driven scenarios", () => {
+  test("DIVERGES: an authenticated EMPTY peer frame is accepted by og but refused (empty_frame) by the rewrite", async () => {
+    const ctx = ogCtx("diff-empty-frame");
+    const a = ogAccount(L, R);                                   // we are LEFT, RIGHT proposes
+    const frame = ogFrame(a, { accountTxs: [] });
+    const input = { kind: "ack_frame", ...ogEnvelope(a), proposal: { frame, frameHanko: `0x${"66".repeat(65)}`, disputeHanko: ogPeerDispute(ctx, a, false) } } as OgInput;
+    const res = await ogApply(ctx, a, input);
+    expect(res.ok).toBe(true);
+    expect(a.currentHeight).toBe(1);
+
+    const r = genesisAB(), from = rightOf(), self = leftOf();
+    const f = peerFrame(r, from, { txs: [] });
+    expect(unwrapErr(applyAccountInput(r, ackFrameOf(r, from, f), DOOR(self)))._tag).toBe("empty_frame");
+  });
+
+  test("DIVERGES: frame timestamp 0 is structurally valid in og, refused frame_structure/timestamp by the rewrite", () => {
+    expect(getAccountFrameStructuralError({ height: 1, jHeight: 0, timestamp: 0, accountTxs: [], accountStateRoot: W("00") } as unknown as OgFrame, 0)).toBe("");
+    const r = genesisAB(), from = rightOf(), self = leftOf();
+    const f = peerFrame(r, from, { txs: [TX], timestamp: 0n });
+    expect(unwrapErr(applyAccountInput(r, ackFrameOf(r, from, f), DOOR(self)))).toEqual({ _tag: "frame_structure", field: "timestamp" });
+  });
+
+  test("DIVERGES: local tx admission while a proposal awaits ACK — og queues it, rewrite refuses already_proposed", () => {
+    const ctx = ogCtx("diff-admit-pending");
+    const a = ogAccount();
+    a.pendingFrame = ogFrame(a, { accountTxs: [scl(1, 1n)] });
+    const res = applyAccountEnqueue(a, { kind: "enqueue", txs: [scl(2, 5n)] }, ctx.jClaimNodeStore);
+    expect(res.ok).toBe(true);
+    expect(a.mempool.length).toBe(1);
+
+    const proposed = proposeFrom(genesisAB(), ALICE, [TX]).replica;
+    expect(proposed._tag).toBe("proposed");
+    expect(unwrapErr(admit(proposed, [TX2]))._tag).toBe("already_proposed");
+  });
+
+  test("DIVERGES: proposer clock below the last committed frame — og clamps to the previous timestamp, rewrite signs the regressed timestamp", () => {
+    const a = ogAccount();
+    a.currentHeight = 1;
+    a.currentFrame = { ...a.currentFrame, height: 1, timestamp: 5_000, stateHash: W("99") };
+    a.mempool = [scl(1, 1n)];
+    const adm = prepareProposalAdmission({ runtimeTimestamp: 0, quietLogs: true }, a, 1_000, 0, undefined);
+    if (!adm.ok) throw new Error("admission refused");
+    expect(adm.frameTimestamp).toBe(5_000);
+
+    const { p } = round(genesisAB(), genesisAB(), ALICE, BOB, [TX], { timestamp: 5_000n, jHeight: 0n });
+    const second = proposeFrom(p, ALICE, [TX2], { timestamp: 1_000n, jHeight: 0n }).replica;
+    if (second._tag !== "proposed") throw new Error(second._tag);
+    expect(second.candidate.frame.timestamp).toBe(1_000n);                 // og would have signed 5000
+  });
+
+  test("MATCH: simultaneous proposals — LEFT ignores RIGHT's same-height frame and keeps its own pending frame", async () => {
+    // og LEFT
+    const ctx = ogCtx("diff-collision-left");
+    const a = ogAccount(L, R);
+    const own = ogFrame(a, { accountTxs: [scl(1, 1n)], byLeft: true });
+    a.pendingFrame = own;
+    a.pendingAccountInput = { kind: "ack_frame", fromEntityId: L, toEntityId: R, domain: { ...ogDomain }, disputeConfig: { ...a.state.disputeConfig }, watchSeed: a.state.watchSeed, proposal: { frame: own } } as OgReplica["pendingAccountInput"];
+    const theirs = ogFrame(a, { accountTxs: [scl(2, 2n)], timestamp: 1_001 });
+    const res = await ogApply(ctx, a, { kind: "ack_frame", ...ogEnvelope(a), proposal: { frame: theirs, frameHanko: `0x${"66".repeat(65)}` } } as OgInput);
+    expect(res.ok).toBe(true);
+    expect(a.pendingFrame?.stateHash).toBe(own.stateHash);
+    expect(a.currentHeight).toBe(0);
+    // rewrite LEFT
+    const left = leftOf(), right = rightOf();
+    const lp = proposeFrom(genesisAB(), left, [TX]).replica;
+    const rp = proposeFrom(genesisAB(), right, [TX2]).replica;
+    if (lp._tag !== "proposed" || rp._tag !== "proposed") throw new Error("setup");
+    const out = step(lp, offerOf(rp, right), left);
+    expect(out.replica._tag).toBe("proposed");
+    expect(out.outputs).toEqual([]);
+  });
+
+  test("MATCH: simultaneous proposals — RIGHT rolls back, restores its txs to the FRONT of the mempool and takes LEFT's frame", async () => {
+    // og RIGHT (accepting an empty LEFT frame so the og proof/dispute path is simple)
+    const ctx = ogCtx("diff-collision-right");
+    const b = ogAccount(R, L);
+    b.pendingFrame = ogFrame(b, { accountTxs: [scl(1, 1n)], byLeft: false });
+    b.mempool = [scl(3, 3n)];
+    const theirs = ogFrame(b, { accountTxs: [], byLeft: true });
+    const res = await ogApply(ctx, b, { kind: "ack_frame", ...ogEnvelope(b), proposal: { frame: theirs, frameHanko: `0x${"66".repeat(65)}`, disputeHanko: ogPeerDispute(ctx, b, true) } } as OgInput);
+    expect(res.ok).toBe(true);
+    expect(b.currentHeight).toBe(1);
+    expect(b.pendingFrame).toBeUndefined();
+    expect(b.mempool.map((t) => (t.data as { tokenId: number }).tokenId)).toEqual([1, 3]);
+    // rewrite RIGHT
+    const left = leftOf(), right = rightOf();
+    const lp = proposeFrom(genesisAB(), left, [TX]).replica;
+    const rp = proposeFrom(genesisAB(), right, [TX2]).replica;
+    if (lp._tag !== "proposed" || rp._tag !== "proposed") throw new Error("setup");
+    const out = step(rp, offerOf(lp, left), right).replica;
+    expect(out._tag).toBe("received");
+    expect(out.mempool).toEqual([TX2]);
+  });
+
+  test("DIVERGES: ack_frame with a valid ACK and an invalid successor — og commits the ACK then rejects, rewrite rejects atomically (nothing committed)", async () => {
+    // og (mirrors core/__tests__/account/consensus/account-input-rejection.test.ts "valid bundled ACK stays committed")
+    const ctx = ogCtx("diff-ackframe-atomic");
+    const a = ogAccount();
+    a.pendingFrame = { height: 1, timestamp: 1, jHeight: 0, accountTxs: [], prevFrameHash: "genesis", accountStateRoot: computeAccountStateRoot(a.state), deltas: [], stateHash: W("55"), byLeft: true } as OgFrame;
+    const succ = ogFrame(a, { height: 2, prevFrameHash: W("ff") });
+    const res = await ogApply(ctx, a, { kind: "ack_frame", ...ogEnvelope(a), ack: { height: 1, frameHash: W("55"), frameHanko: `0x${"66".repeat(65)}` }, proposal: { frame: succ, frameHanko: `0x${"77".repeat(65)}` } } as OgInput);
+    expect(accountInputPeerRejectionCode(res)).toBe("ACCOUNT_INPUT_FRAME_CHAIN_INVALID");
+    expect(a.currentHeight).toBe(1);                                          // ACK half kept
+    // rewrite
+    const proposed = proposeFrom(genesisAB(), ALICE, [TX]).replica;
+    if (proposed._tag !== "proposed") throw new Error("setup");
+    const received = step(genesisAB(), offerOf(proposed, ALICE), BOB).replica;
+    const acked = step(received, ackInput(received, BOB), BOB);
+    const ack = acked.outputs.find((o) => o.kind === "ack") as AccountInput;
+    const bad = peerFrame(acked.replica, BOB, { txs: [TX2], prevFrameHash: W("ff") });
+    const e = unwrapErr(applyAccountInput(proposed, ackFrameOf(acked.replica, BOB, bad, ack), DOOR(ALICE)));
+    expect(e._tag).toBe("hash_mismatch");                                     // caller keeps `proposed`: frame 1 NOT committed
+  });
+
+  test("MATCH: repeated ACK for the current head — exact bytes are a no-op, a different frame Hanko is a loud rejection", async () => {
+    // og
+    const ctx = ogCtx("diff-repeat-ack");
+    const a = ogAccount();
+    a.currentHeight = 1;
+    a.currentFrame = { ...a.currentFrame, height: 1, prevFrameHash: "genesis", stateHash: W("55") };
+    a.counterpartyFrameHanko = `0x${"66".repeat(65)}`;
+    const ackOf = (hanko: string) => ({ kind: "ack", ...ogEnvelope(a), ack: { height: 1, frameHash: W("55"), frameHanko: hanko } }) as OgInput;
+    expect((await ogApply(ctx, a, ackOf(`0x${"66".repeat(65)}`))).ok).toBe(true);
+    expect(accountInputPeerRejectionCode(await ogApply(ctx, a, ackOf(`0x${"99".repeat(65)}`)))).toBe("ACCOUNT_INPUT_ACK_CERTIFICATE_INVALID");
+    // rewrite
+    const { p, ack } = round(genesisAB(), genesisAB(), ALICE, BOB, [TX]);
+    expect(step(p, ack, ALICE).outputs).toEqual([]);
+    if (ack.kind !== "ack") throw new Error("setup");
+    expect(unwrapErr(applyAccountInput(p, { ...ack, frameHanko: `0x${"99".repeat(65)}` }, DOOR(ALICE)))).toEqual({ _tag: "ack_conflict", field: "frameHanko" });
+  });
+
+  test("MATCH: duplicate delivery of the committed head frame re-sends the ACK; a different frame Hanko is rejected", async () => {
+    // og
+    const ctx = ogCtx("diff-dup-frame");
+    const a = ogAccount(L, R);
+    const f = ogFrame(a, { accountTxs: [] });
+    a.currentHeight = 1; a.currentFrame = f; a.counterpartyFrameHanko = `0x${"66".repeat(65)}`; a.currentFrameHanko = `0x${"88".repeat(65)}`;
+    const dup = (h: string) => ({ kind: "ack_frame", ...ogEnvelope(a), proposal: { frame: f, frameHanko: h } }) as OgInput;
+    const ok = await ogApply(ctx, a, dup(`0x${"66".repeat(65)}`));
+    expect(ok.ok && ok.response?.kind).toBe("ack");
+    expect(accountInputPeerRejectionCode(await ogApply(ctx, a, dup(`0x${"99".repeat(65)}`)))).toBe("ACCOUNT_INPUT_FRAME_HANKO_INVALID");
+    // rewrite
+    const { q, offer } = round(genesisAB(), genesisAB(), ALICE, BOB, [TX]);
+    const again = step(q, offer as AccountInput, BOB);
+    expect(again.outputs.map((o) => o.kind)).toEqual(["ack"]);
+    if (offer.kind !== "ack_frame") throw new Error("setup");
+    expect(unwrapErr(applyAccountInput(q, { ...offer, frameHanko: `0x${"99".repeat(65)}` }, DOOR(BOB)))).toEqual({ _tag: "ack_conflict", field: "frameHanko" });
+  });
+
+  test("MATCH: ACK older than the immediate predecessor is an idempotent no-op", async () => {
+    const ctx = ogCtx("diff-obsolete-ack", async () => ({ valid: false, entityId: null }));
+    const a = ogAccount();
+    a.currentHeight = 3; a.currentFrame = { ...a.currentFrame, height: 3, prevFrameHash: W("44"), stateHash: W("55") };
+    const res = await ogApply(ctx, a, { kind: "ack", ...ogEnvelope(a), ack: { height: 1, frameHash: W("aa"), frameHanko: `0x${"bb".repeat(65)}` } } as OgInput);
+    expect(res.ok).toBe(true);
+    let p = genesisAB(), q = genesisAB(), first: AccountInput | undefined;
+    for (const tx of [TX, TX2, { ...TX, limit: 11n } as WireAccountTx]) { const r = round(p, q, ALICE, BOB, [tx]); p = r.p; q = r.q; first ??= r.ack; }
+    expect(p.head.height).toBe(3n);
+    expect(step(p, first!, ALICE).outputs).toEqual([]);
+  });
+
+  test("MATCH: peer frame with wrong prevFrameHash / wrong height is refused before any replay", () => {
+    const r = genesisAB(), from = rightOf(), self = leftOf();
+    expect(unwrapErr(applyAccountInput(r, ackFrameOf(r, from, peerFrame(r, from, { txs: [TX], prevFrameHash: W("01") })), DOOR(self)))._tag).toBe("hash_mismatch");
+    expect(unwrapErr(applyAccountInput(r, ackFrameOf(r, from, peerFrame(r, from, { txs: [TX], height: 2n })), DOOR(self)))._tag).toBe("height_mismatch");
+    const a = ogAccount();
+    expect(getAccountFrameStructuralError(ogFrame(a, { accountTxs: [scl(1, 1n)] }), 1_000)).toBe("");
+  });
+
+  test("MATCH: authenticated frame whose replay misses accountStateRoot -> dispute (og disposition 'dispute', rewrite dispute_required -> freeze)", async () => {
+    const ctx = ogCtx("diff-root-mismatch");
+    const a = ogAccount(L, R);
+    const f = ogFrame(a, { accountTxs: [scl(1, 1n)], accountStateRoot: W("ab") });
+    const res = await ogApply(ctx, a, { kind: "ack_frame", ...ogEnvelope(a), proposal: { frame: f, frameHanko: `0x${"66".repeat(65)}` } } as OgInput);
+    expect(!res.ok && res.disposition).toBe("dispute");
+    const r = genesisAB(), from = rightOf(), self = leftOf();
+    const input = ackFrameOf(r, from, peerFrame(r, from, { txs: [TX], accountStateRoot: W("ab") }));
+    const e = unwrapErr(applyAccountInput(r, input, DOOR(self)));
+    expect(e._tag).toBe("dispute_required");
+    expect(causeOf(e)._tag).toBe("state_root_mismatch");
+    const frozen = unwrap(disputeUnsafe(r, applyAccountInput(r, input, DOOR(self)), DOOR(self))).replica._tag;
+    expect(["preparing", "disputed"]).toContain(frozen);
+  });
+
+  test("MATCH: authenticated frame that changes the proof but carries no peer dispute Hanko -> dispute on both", async () => {
+    const ctx = ogCtx("diff-dispute-required");
+    const a = ogAccount(L, R);
+    const res = await ogApply(ctx, a, { kind: "ack_frame", ...ogEnvelope(a), proposal: { frame: ogFrame(a, { accountTxs: [] }), frameHanko: `0x${"66".repeat(65)}` } } as OgInput);
+    expect(!res.ok && res.disposition).toBe("dispute");
+    expect(!res.ok && res.disposition === "dispute" && res.disputeRequired.reason).toContain("DISPUTE_HANKO_REQUIRED");
+    const left = leftOf(), right = rightOf();
+    const rp = proposeFrom(genesisAB(), right, [TX]).replica;
+    if (rp._tag !== "proposed") throw new Error("setup");
+    const stripped = { ...offerOf(rp, right) } as Extract<AccountInput, { kind: "ack_frame" }>;
+    delete (stripped as { disputeHanko?: unknown }).disputeHanko;
+    const e = unwrapErr(applyAccountInput(genesisAB(), stripped, DOOR(left)));
+    expect(e._tag).toBe("dispute_required");
+    expect(causeOf(e)).toEqual({ _tag: "dispute_hanko", reason: "required" });
+  });
+
+  test("DIVERGES: mempool overflow — og THROWS ACCOUNT_MEMPOOL_LIMIT_EXCEEDED (untyped), rewrite returns typed mempool_full", () => {
+    const ctx = ogCtx("diff-mempool-limit");
+    const a = ogAccount();
+    const many = Array.from({ length: ACCOUNT_MEMPOOL_SIZE + 1 }, (_, i) => scl(1, BigInt(i + 1)));
+    expect(() => applyAccountEnqueue(a, { kind: "enqueue", txs: many }, ctx.jClaimNodeStore)).toThrow("ACCOUNT_MEMPOOL_LIMIT_EXCEEDED");
+    const manyW = Array.from({ length: ACCOUNT_MEMPOOL_SIZE + 1 }, (_, i) => ({ type: "set_credit_limit", tokenId: "0", limit: BigInt(i + 1) }) as WireAccountTx);
+    expect(unwrapErr(admit(genesisAB(), manyW))).toEqual({ _tag: "mempool_full", limit: ACCOUNT_MEMPOOL_SIZE });
+    // exactly at the limit both admit
+    const b = ogAccount();
+    expect(applyAccountEnqueue(b, { kind: "enqueue", txs: many.slice(1) }, ctx.jClaimNodeStore).ok).toBe(true);
+    expect(admit(genesisAB(), manyW.slice(1)).ok).toBe(true);
+  });
+});
