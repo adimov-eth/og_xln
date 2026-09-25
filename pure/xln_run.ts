@@ -24,7 +24,7 @@ export const inPhase = <P extends AccountPhase>(r: AccountReplica, p: P): At<Acc
 };
 export const entityInPhase = <P extends EntityPhase>(r: EntityReplica, p: P): At<EntityGrammar, P> => {
   const at = expectPhase(p);
-  match(r, { open: at("open"), proposed: at("proposed") });
+  match(r, { open: at("open"), proposed: at("proposed"), locked: at("locked") });
   return r as At<EntityGrammar, P>;
 };
 export const outputOf = <K extends AccountOutput["kind"]>(outputs: readonly AccountOutput[], kind: K): Extract<AccountOutput, { readonly kind: K }> => {
@@ -117,7 +117,9 @@ const hankoOf = (d: string, entity: EntityId): Hanko => hankoAt(`${d}|${entity}`
 export const signAccountFrame = (frame: AccountFrame, entity: EntityId): Hanko => hankoOf(frame.stateHash, entity);
 const verdictAt = memo((key: string): boolean => { const [d, hanko, entity] = key.split("|") as [string, string, string]; return verifyAccountHanko(hanko, d, entity).ok; });
 export const hankoVerify: Verify = (d, hanko, entity) => verdictAt(`${d}|${hanko}|${entity}`);
-export const verifiers = { verify: hankoVerify, verifyMember: crypto.verify } as const;
+export const verifiers = { verify: hankoVerify, verifyMember: crypto.verify, sign: crypto.sign } as const;
+/** One signature per manifest entry, as og validators precommit (`hashPrecommits`). */
+export const signManifestAs = (frame: EntityFrame, addr: Address): readonly Signature[] => frame.hashesToSign.map((h) => unwrap(crypto.sign(h.hash as Hash, addr)));
 export const disputeFor = (plan: DisputePlan, entity: EntityId): DisputeHanko | undefined => match(plan, {
   sign: ({ draft }): DisputeHanko | undefined => ({ ...draft, hanko: hankoOf(draft.hash, entity) }), resend: ({ disputeHanko }): DisputeHanko | undefined => disputeHanko, none: (): DisputeHanko | undefined => undefined,
 });
