@@ -15,9 +15,14 @@ import { createAccountJClaimSession } from "../../core/account/j-claims/j-claim-
 import { createEmptyAccountJClaimAccumulator, createAccountJClaimRecord, verifyAccountJClaimProof } from "../../core/account/j-claims/j-claim-accumulator.ts";
 import { computeFrameHash } from "../../core/account/consensus/frame/hash.ts";
 import { canonicalJurisdictionEventsHash } from "../../core/jurisdiction/machine/event-observation.ts";
+import { applyAccountSettledJEvent } from "../../core/entity/tx/j-events-account-settled.ts";
+import { mergeJEventClaimOps } from "../../core/entity/tx/j-events-account.ts";
+import { applyDebtJEvent, applyReserveUpdatedJEvent } from "../../core/entity/tx/j-events-observations/index.ts";
+import { EntityAccountCandidateMap } from "../../core/entity/state/persistent-account-map.ts";
 import {
   J_EVENT_SIGNATURES, jEventTopic, readJEvents, decodeBatch, disputeProofEvidence, finalizationEvidence, withDisputeCalldata, encodeBatch, emptyBatch, proofBodyHash, PROCESS_BATCH_SELECTOR, WATCHTOWER_COUNTER_DISPUTE_SELECTOR,
-  admit, applyAccountInput, committed, frameStateHash, getDelta, planAccountProposal, replicaId,
+  admit, applyAccountInput, committed, frameStateHash, getDelta, planAccountProposal, replicaId, entityJEvents, observeJBlocks, applyDebtEvent, withBatchNonces, EMPTY_DEBTS,
+  type JObserver, type JObservation, type JBlock, type DebtLedger,
   type Batch, type ProofBody, type JEvent, type AccountFrame, type AccountInput, type AccountReplica, type EntityId, type ProposedAccount, type WireAccountTx,
 } from "../xln.ts";
 import { ALICE, BOB, CLOCK, NOW, TERMS, ackInput, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap } from "../xln_run.ts";
@@ -321,5 +326,127 @@ describe("multi-claim Account frames (og prepareAccountJClaimTx / verifyAccountJ
     }
     expect(tampered).toBeGreaterThan(0);
     expect(branched).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------- Entity J observation (og core/entity/tx/j-events*.ts)
+const ENTITY = W("e1"), PEER_ACTIVE = W("0f"), PEER_FROZEN = W("f0"), PEER_MISSING = W("f7");
+const settledLog = (rows: readonly { left: string; right: string; nonce: bigint; tokens: readonly { tokenId: bigint; leftReserve: bigint; rightReserve: bigint; collateral: bigint; ondelta: bigint }[] }[]) =>
+  DEPOSITORY.encodeEventLog("AccountSettled", [rows.map((r) => [r.left, r.right, r.tokens.map((t) => [t.tokenId, t.leftReserve, t.rightReserve, t.collateral, encodeInt512(t.ondelta)]), r.nonce])]);
+const ogSettledEvent = (row: any) => {
+  const t = row.tokens[0], m = row.meta ?? {};
+  return { ...m, ...(t.eventIndex === undefined ? {} : { eventIndex: t.eventIndex }), type: "AccountSettled",
+    data: { leftEntity: row.left, rightEntity: row.right, tokenId: Number(t.tokenId), leftReserve: S(t.leftReserve), rightReserve: S(t.rightReserve), collateral: S(t.collateral), ondelta: S(t.ondelta), nonce: Number(row.nonce) } };
+};
+const randomSettledRows = () => Array.from({ length: 1 + ri(3) }, () => {
+  const peer = pick([PEER_ACTIVE, PEER_FROZEN, PEER_MISSING, W("aa")]), mine = rng() < 0.8, [left, right] = mine ? (ENTITY < peer ? [ENTITY, peer] : [peer, ENTITY]) : [W("aa"), W("bb")];
+  return { left, right, nonce: BigInt(ri(4)), tokens: Array.from({ length: 1 + ri(2) }, (_, k) => ({ tokenId: BigInt(1 + k + ri(2)), leftReserve: BigInt(ri(1e6)), rightReserve: BigInt(ri(1e6)), collateral: BigInt(ri(1e6)), ondelta: BigInt(ri(2000)) - 1000n })) };
+});
+/** og FinalizedJEventContext around a plain Entity state whose accounts sit behind a candidate-map shell. */
+const ogEntity = () => {
+  const accounts = new Map<string, any>([[PEER_ACTIVE, { status: "active", state: {} }], [PEER_FROZEN, { status: "disputed", state: {} }]]);
+  const shell = Object.assign(Object.create(EntityAccountCandidateMap.prototype), { get: (id: string) => accounts.get(id), getForWrite: (id: string) => accounts.get(id), has: (id: string) => accounts.has(id) });
+  const state: any = { entityId: ENTITY, reserves: new Map<number, bigint>(), accounts: shell };
+  const accountTxs: any[] = [];
+  const apply = (event: any, blockNumber: number) => {
+    const context: any = { entityState: state, newState: state, event, blockNumber, transactionHash: event.transactionHash ?? "", accountTxs, outputs: [], dirtyAccounts: new Set<string>(), env: {}, accountConsensusContext: {} };
+    if (event.type === "AccountSettled") applyAccountSettledJEvent(context, []);
+    else if (event.type === "ReserveUpdated") applyReserveUpdatedJEvent(context);
+    else applyDebtJEvent(context);
+  };
+  return { state, accountTxs, apply };
+};
+const rwObserver = (): JObserver => ({ entityId: ENTITY, reserves: new Map(), debts: EMPTY_DEBTS, accounts: new Map([[PEER_ACTIVE, { active: true }], [PEER_FROZEN, { active: false }]]) });
+const ledgerRows = (book: ReadonlyMap<number, ReadonlyMap<string, any>> | undefined) => [...(book ?? new Map()).entries()].map(([tk, b]) => [tk, [...b.values()].map((d: any) => ({ ...d }))]);
+
+describe("Entity J observation (og j-event-payloads expandAccountSettled, j-events-account-settled.ts, j-events-observations/*, mergeJEventClaimOps)", () => {
+  test("MATCH: 80 random AccountSettled logs expand per Entity like og rawEventToJEvents (rows naming the Entity, one event per token, eventIndex only when several); none naming it refuses in both", () => {
+    let expanded = 0, empty = 0;
+    for (let i = 0; i < 80; i++) {
+      const log = settledLog(randomSettledRows()), og = ogIngress(DEPOSITORY, log, ENTITY);
+      let rw: readonly JEvent[] | null;
+      try { rw = entityJEvents(readJEvents([{ ...log, ...COORDS }]), ENTITY); } catch { rw = null; }
+      expect(rw === null).toBe(og === null);
+      if (og === null || rw === null) { empty++; continue; }
+      expect(rw.map((e) => (e.type === "AccountSettled" ? ogSettledEvent(e.settled[0]) : e))).toEqual(og);
+      expanded += og.length;
+    }
+    expect(expanded).toBeGreaterThan(80);
+    expect(empty).toBeGreaterThan(0);
+  });
+
+  test("MATCH: 40 random blocks of AccountSettled / ReserveUpdated: own reserves, claim suppression for missing and non-active Accounts, and the merged claim order equal og's handlers + mergeJEventClaimOps", () => {
+    let claims = 0;
+    for (let n = 0; n < 40; n++) {
+      const og = ogEntity(), blocks: JBlock[] = [];
+      for (let b = 0; b < 1 + ri(3); b++) {
+        const blockNumber = 10 + b, blockHash = W(pick(["b1", "b2"])), events: JEvent[] = [];
+        for (let k = 0; k < 1 + ri(3); k++) {
+          const coords = { blockNumber, blockHash, transactionHash: W(pick(["c1", "c2"])), logIndex: ri(5) };
+          const log = rng() < 0.7 ? settledLog(randomSettledRows()) : DEPOSITORY.encodeEventLog("ReserveUpdated", [pick([ENTITY, W("aa")]), BigInt(1 + ri(3)), BigInt(ri(1e6))]);
+          const ogEvents = (() => { try { const parsed = DEPOSITORY.parseLog(log)!; return rawEventToJEvents({ name: parsed.name, args: extractCanonicalDepositoryEventArgs(parsed), ...coords } as any, ENTITY); } catch { return null; } })();
+          if (ogEvents === null) continue;
+          for (const e of ogEvents) og.apply(e, blockNumber);
+          events.push(...entityJEvents(readJEvents([{ ...log, ...coords }]), ENTITY));
+        }
+        blocks.push({ blockNumber, events });
+      }
+      mergeJEventClaimOps(og.accountTxs);
+      const rw = unwrap(observeJBlocks(rwObserver(), blocks) as any) as JObservation;
+      expect(new Map(rw.observer.reserves)).toEqual(og.state.reserves);
+      expect(rw.claims.map((c) => ({ accountId: c.accountId, tx: { type: "j_event_claim", data: { jHeight: Number(c.tx.jHeight), jBlockHash: c.tx.jBlockHash, events: c.tx.events.map(ogSettledEvent) } } }))).toEqual(og.accountTxs);
+      claims += og.accountTxs.length;
+    }
+    expect(claims).toBeGreaterThan(10);
+  });
+
+  test("MATCH: 60 random debt sequences (created / enforced / forgiven, both directions, conflicts, divergence) keep the ledger equal to og applyDebtCreated / applyDebtEnforced / applyDebtForgiven", () => {
+    let refused = 0, retired = 0;
+    for (let n = 0; n < 60; n++) {
+      const og = ogEntity();
+      let ledger: DebtLedger = EMPTY_DEBTS;
+      for (let s = 0; s < 12; s++) {
+        const open = [...(og.state.outDebtsByToken?.values() ?? []), ...(og.state.inDebtsByToken?.values() ?? [])].flatMap((b: Map<string, any>) => [...b.values()]);
+        const known = open.length > 0 && rng() < 0.6 ? pick(open) : undefined;
+        const [debtor, creditor] = known !== undefined ? [known.debtor, known.creditor] : pick([[ENTITY, PEER_ACTIVE], [PEER_ACTIVE, ENTITY], [W("aa"), W("bb")]]);
+        const tokenId = known?.tokenId ?? 1 + ri(2), meta = { blockNumber: ri(3), transactionHash: W(pick(["c1", "C2"])) };
+        const kind = known === undefined ? pick(["DebtCreated", "DebtCreated", "DebtEnforced", "DebtForgiven"]) : pick(["DebtEnforced", "DebtForgiven", "DebtCreated"]);
+        let rwEvent: any, ogData: any;
+        if (kind === "DebtCreated") {
+          const amount = pick([0n, 5n, 10n]), debtIndex = ri(3);
+          rwEvent = { type: kind, debtor, creditor, tokenId: BigInt(tokenId), amount, debtIndex: BigInt(debtIndex) };
+          ogData = { debtor, creditor, tokenId, amount: S(amount), debtIndex };
+        } else if (kind === "DebtEnforced") {
+          const remaining = known !== undefined && rng() < 0.7 ? pick([0n, known.remainingAmount - 1n]) : pick([0n, 3n]);
+          const paid = known !== undefined && rng() < 0.8 ? known.remainingAmount - remaining : pick([0n, 2n]);
+          const idx = known !== undefined && rng() < 0.8 ? (remaining === 0n ? known.currentDebtIndex + 1 : known.currentDebtIndex) : ri(3);
+          rwEvent = { type: kind, debtor, creditor, tokenId: BigInt(tokenId), amountPaid: paid, remainingAmount: remaining, newDebtIndex: BigInt(idx) };
+          ogData = { debtor, creditor, tokenId, amountPaid: S(paid), remainingAmount: S(remaining), newDebtIndex: idx };
+        } else {
+          const amount = known !== undefined && rng() < 0.8 ? known.remainingAmount : pick([1n, 5n]), idx = known !== undefined && rng() < 0.8 ? known.currentDebtIndex : ri(3);
+          rwEvent = { type: kind, debtor, creditor, tokenId: BigInt(tokenId), amountForgiven: amount, debtIndex: BigInt(idx) };
+          ogData = { debtor, creditor, tokenId, amountForgiven: S(amount), debtIndex: idx };
+        }
+        let ogOk = true;
+        try { og.apply({ type: kind, data: ogData, ...meta }, meta.blockNumber); } catch { ogOk = false; }
+        const r = applyDebtEvent(ledger, ENTITY, { ...rwEvent, meta });
+        expect(r.ok).toBe(ogOk);
+        if (!r.ok) { refused++; break; }
+        if (kind !== "DebtCreated" && (ledgerRows(r.value.out).length + ledgerRows(r.value.in).length) < (ledgerRows(ledger.out).length + ledgerRows(ledger.in).length)) retired++;
+        ledger = r.value;
+        expect(ledgerRows(ledger.out)).toEqual(ledgerRows(og.state.outDebtsByToken));
+        expect(ledgerRows(ledger.in)).toEqual(ledgerRows(og.state.inDebtsByToken));
+      }
+    }
+    expect(refused).toBeGreaterThan(5);
+    expect(retired).toBeGreaterThan(0);
+  });
+
+  test("PORT (og enrichDisputeBatchNonces is module-private): a dispute event takes the HankoBatchProcessed nonce its sender logged in the same transaction (og enrichDisputeBatchNonces)", () => {
+    const tx = W("c1"), other = W("c2"), meta = { blockNumber: 1, blockHash: W("b1"), transactionHash: tx, logIndex: 0 };
+    const started = (sender: string, transactionHash: string): JEvent => ({ type: "DisputeStarted", sender, counterentity: PEER_ACTIVE, nonce: 1n, proposerIsLeft: true, proofbodyHash: W("aa"), watchSeed: W("bb"), starterInitialArguments: "0x", starterCounterArguments: "0x",
+      starterCounterProofCommitment: W("00"), disputeTimeout: 3n, disputeStartTimestamp: 1n, leftResponseSeconds: 1n, rightResponseSeconds: 1n, meta: { ...meta, transactionHash } });
+    const out = withBatchNonces([{ type: "HankoBatchProcessed", entityId: ENTITY, batchHash: W("dd"), nonce: 7n, meta }, started(ENTITY, tx.toUpperCase().replace("0X", "0x")), started(ENTITY, other), started(PEER_ACTIVE, tx)]);
+    expect(out.map((e) => (e.type === "DisputeStarted" ? e.batchNonce : "batch"))).toEqual(["batch", 7, undefined, undefined]);
   });
 });
