@@ -13,6 +13,7 @@ import { beginAccountTransition, accountTransitionView, commitAccountTransition,
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import { ethers } from "ethers";
 import { handleHtlcLock } from "../../core/account/tx/handlers/htlc/lock.ts";
+import { applyAccountTxMutation } from "../../core/account/tx/mutation.ts";
 import { assertOpaqueHtlcCiphertext, hashOpaqueHtlcCiphertext } from "../../core/protocol/htlc/multi-recipient.ts";
 import {
   buildHashLadderProof,
@@ -448,5 +449,70 @@ describe("cross-j: htlc_lock envelope and envelopeHash", () => {
       }
     }
     expect(accepted).toBeGreaterThan(40);
+  });
+});
+
+// ---------- Account outputs: htlc_error, swap cancel, request_collateral_committed, directPaymentForward (og tx/mutation.ts, apply-result.ts) ----------
+const FINAL = W("33");
+/** The rewrite's perspective-free effects, as og's outcome/candidateEffects from the given local side (og proofHeader.fromEntity). */
+const ogOutputsOf = (r: any, effects: any[]): unknown[] => {
+  const out: unknown[] = [];
+  if (r.outcome === "htlc_secret") out.push({ _tag: "forward_secret", hashlock: r.hashlock, secret: r.secret });
+  if (r.outcome === "htlc_error") out.push({ _tag: "htlc_error", lockId: r.lockId, hashlock: r.hashlock, tokenId: Number(r.tokenId), amount: r.amount, ...(r.reason === undefined ? {} : { reason: r.reason }) });
+  if (r.outcome === "swap_cancel_requested") out.push({ _tag: "swap_cancel_requested", offerId: r.swapOfferCancelRequested.offerId });
+  if (r.outcome === "swap_cancelled") out.push({ _tag: "swap_cancelled", offerId: r.swapOfferCancelled.offerId, makerId: r.swapOfferCancelled.accountId });
+  for (const e of [...effects, ...(r.candidateEffects ?? [])]) {
+    if (e.kind === "runtimeEvent" && e.eventName === "request_collateral_committed")
+      out.push({ _tag: "request_collateral_committed", tokenId: e.data.tokenId, requestedAmount: BigInt(e.data.requestedAmount), prepaidFee: BigInt(e.data.prepaidFee), requestedAt: e.data.requestedAt });
+    if (e.kind === "directPaymentForward")
+      out.push({ _tag: "direct_payment_forward", tokenId: e.tokenId, amount: e.amount, route: e.route, ...(e.description ? { description: e.description } : {}), trustedGatewayEntityId: e.trustedGatewayEntityId });
+  }
+  return out;
+};
+const ogMutationTx = (tx: any): any => {
+  if (tx.type !== "payment") return toOg(tx);
+  const { type: _t, ...data } = tx;
+  return { type: "direct_payment", data: { ...data, tokenId: Number(data.tokenId) } };
+};
+
+describe("cross-j: Account outputs through og applyAccountTxMutation", () => {
+  test("MATCH: 40 random sequences: accept/reject, Account root, and outputs (htlc_error, swap_cancel_requested, swap_cancelled, request_collateral_committed, directPaymentForward) agree", async () => {
+    const r = rng(303);
+    const seen = new Set<string>();
+    for (let n = 0; n < 40; n++) {
+      const start = openAccount(10n ** 22n);
+      const og = ogHarness(start);
+      let body = start;
+      const secrets: string[] = [], offers: string[] = [];
+      for (let i = 0; i < 14; i++) {
+        const byLeft = r() < 0.5, me = byLeft ? LEFT : RIGHT, peer = byLeft ? RIGHT : LEFT, ts = 10 + i, jh = 1 + Math.floor(i / 3);
+        let tx: any;
+        const k = Math.floor(r() * 7);
+        if (k === 0) tx = r() < 0.5
+          ? { type: "payment", tokenId: "1", amount: 1n + BigInt(Math.floor(r() * 100)), route: [peer, FINAL], description: pick(r, ["", "memo"]), fromEntityId: me, toEntityId: peer, deliveryMode: "trusted", trustedGatewayEntityId: peer }
+          : { type: "payment", tokenId: "1", amount: 1n + BigInt(Math.floor(r() * 100)), route: [peer], fromEntityId: me, toEntityId: peer, deliveryMode: "direct" };
+        else if (k === 1) tx = { type: "request_collateral", tokenId: pick(r, ["1", "2"]), amount: BigInt(Math.floor(r() * 50)), ...(r() < 0.5 ? { feeTokenId: "2" } : {}), feeAmount: BigInt(Math.floor(r() * 10)), policyVersion: 1 };
+        else if (k === 2) { const id = `off${i}`; offers.push(id); tx = { type: "swap_offer", offerId: id, giveTokenId: "1", giveTokenDecimals: 18, giveAmount: 10n ** 15n, wantTokenId: "2", wantTokenDecimals: 18, wantAmount: 2n * 10n ** 15n, maxFee: 0n, minNetReceive: 2n * 10n ** 15n }; }
+        else if (k === 3 && offers.length > 0) tx = { type: "swap_cancel_request", offerId: pick(r, offers) };
+        else if (k === 4 && offers.length > 0) tx = { type: "swap_resolve", offerId: pick(r, offers), fillRatio: 0, cancelRemainder: true };
+        else if (k === 5) { const secret = hex(r, 32); secrets.push(secret); const h = ethers.keccak256(secret); tx = { type: "htlc_lock", lockId: h, hashlock: h, timelock: 10n ** 6n, revealBeforeHeight: 100n, amount: 5n, tokenId: "1" }; }
+        else if (secrets.length > 0) { const secret = pick(r, secrets), h = ethers.keccak256(secret); tx = r() < 0.5 ? { type: "htlc_resolve", lockId: h, outcome: "secret", secret } : { type: "htlc_resolve", lockId: h, outcome: "error", ...(r() < 0.5 ? { reason: pick(r, ["no_route", "timeout"]) } : {}) }; }
+        else continue;
+        const ogTx = ogMutationTx(tx);
+        if (tx.type === "htlc_lock") ogTx.data.revealBeforeHeight = 100;
+        const effects: any[] = [];
+        const o = await og.run((acc) => applyAccountTxMutation(acc, ogTx, byLeft, ts, jh, false, undefined, undefined, undefined, effects));
+        const rw = applyAccountBody(body, tx, { byLeft, nowMs: BigInt(ts), jHeight: BigInt(jh), accountHeight: 1n }) as any;
+        if (rw.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${rw.ok ? "ok" : stableJson(rw.error)} tx=${stableJson(tx)}`);
+        if (!rw.ok) continue;
+        body = rw.value.state;
+        expect(unwrapR(committed(body) as never as { ok: true; value: { root: string } }).root).toBe(o.root!);
+        // og runs this Account from LEFT's side: a forward is emitted only where LEFT is the trusted gateway.
+        const mine = rw.value.effects.filter((e: any) => e._tag !== "direct_payment_forward" || e.trustedGatewayEntityId === LEFT);
+        expect(stableJson(mine)).toBe(stableJson(ogOutputsOf(o.value, effects)));
+        for (const e of rw.value.effects) seen.add(e._tag);
+      }
+    }
+    for (const tag of ["forward_secret", "htlc_error", "swap_cancel_requested", "swap_cancelled", "request_collateral_committed", "direct_payment_forward"]) expect(seen.has(tag)).toBe(true);
   });
 });

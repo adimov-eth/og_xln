@@ -1335,7 +1335,17 @@ export type BodyError =
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
 export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
-export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }>;
+/**
+ * Account outputs to the parent Entity (og apply-result outcomes and AccountOutput candidate effects), perspective-free:
+ * the consumer adds its own side (og fills entityId/accountId from proofHeader, and only the gateway forwards a trusted payment).
+ */
+export type Effect =
+  | Tagged<"forward_secret", { hashlock: string; secret: string }>
+  | Tagged<"htlc_error", { lockId: string; hashlock: string; tokenId: number; amount: bigint; reason?: string }>
+  | Tagged<"swap_cancel_requested", { offerId: string }>
+  | Tagged<"swap_cancelled", { offerId: string; makerId: string }>
+  | Tagged<"request_collateral_committed", { tokenId: number; requestedAmount: bigint; prepaidFee: bigint; requestedAt: number }>
+  | Tagged<"direct_payment_forward", { tokenId: number; amount: bigint; route: readonly string[]; description?: string; trustedGatewayEntityId: string }>;
 const MAX_ROWS = 128;
 export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly envelopeHash?: string | undefined };
 /** og protocol/htlc/multi-recipient.ts OpaqueHtlcCiphertext: exactly {version, ciphertext}, canonical padded base64 of ephemeralKey(32) || AES-GCM body || tag(16). */
@@ -1466,18 +1476,19 @@ type Author = "bilateral" | "unchosen";
 export type KindRow = { readonly author: Author; readonly l0: boolean; readonly repeatable: boolean; readonly effects: readonly Effect["_tag"][] };
 const kind = <R extends KindRow>(author: Author, l0: boolean, repeatable: boolean, effects: readonly Effect["_tag"][] = []): R => ({ author, l0, repeatable, effects }) as R;
 export const AccountKinds = {
-  add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true),
-  htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret"]),
-  swap_offer: kind("bilateral", false, false), swap_cancel_request: kind("bilateral", false, false), swap_resolve: kind("bilateral", false, false),
+  add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true, ["direct_payment_forward"]),
+  htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret", "htlc_error"]),
+  swap_offer: kind("bilateral", false, false), swap_cancel_request: kind("bilateral", false, false, ["swap_cancel_requested"]), swap_resolve: kind("bilateral", false, false, ["swap_cancelled"]),
   settle_transition: kind("bilateral", false, false),
-  request_collateral: kind("bilateral", false, false), rebalance_refund: kind("bilateral", false, false), rebalance_policy: kind("bilateral", false, false),
+  request_collateral: kind("bilateral", false, false, ["request_collateral_committed"]), rebalance_refund: kind("bilateral", false, false), rebalance_policy: kind("bilateral", false, false),
   lending_fund: kind("bilateral", false, false), lending_borrow_request: kind("bilateral", false, false), lending_repay: kind("bilateral", false, false), lending_credit: kind("bilateral", false, false),
   lending_close_request: kind("bilateral", false, false), lending_close_payout: kind("bilateral", false, false),
   cross_pull_lock: kind("bilateral", false, false), cross_pull_close: kind("bilateral", false, false),
   j_event_claim: kind("bilateral", false, false),
 } as const satisfies Kinds<AccountTx["type"], KindRow>;
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
-export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret"> : never;
+export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret" | "htlc_error"> : K extends "swap_cancel_request" ? Of<Effect, "swap_cancel_requested">
+  : K extends "swap_resolve" ? Of<Effect, "swap_cancelled"> : K extends "request_collateral" ? Of<Effect, "request_collateral_committed"> : K extends "payment" ? Of<Effect, "direct_payment_forward"> : never;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
 export const genesisAccountBody = (account: AccountState, terms: AccountTerms): AccountBody => ({ account, terms, locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), finalizedJHeight: 0n, jNonce: 0 });
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
@@ -1922,7 +1933,7 @@ const fillRatioOf = (r: { readonly n: bigint; readonly d: bigint }): number => {
   return c;
 };
 /** og swap/resolve: canonical offer, explicit execution at or above the maker's limit, fee authority, counterparty capacity, requantized remainder. */
-const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): BodyStep => {
+const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): BodyStep<Of<Effect, "swap_cancelled">> => {
   const offer = a.offers.get(x.offerId);
   if (offer === undefined) return MISSING;
   if (offer.crossJurisdiction !== undefined) return swapErr("SWAP_RESOLVE_CROSS_J");
@@ -1960,11 +1971,13 @@ const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): Bod
   return chain(fW > 0n ? chain(ensureRoom(a, offer.wantTokenId, fW, !offer.makerIsLeft), () => ok(undefined)) : ok(undefined), () => {
     const giveRow = shift(getDelta(a.account, offer.giveTokenId), fG > 0n ? byMaker(fG) : 0n);
     const wantRow = shift(getDelta(a.account, offer.wantTokenId), (fG > 0n ? -byMaker(fW) : 0n) + (fee > 0n ? byMaker(fee) : 0n));
-    return chain(representable(a, giveRow), () => chain(representable(a, wantRow), (): BodyStep => {
+    return chain(representable(a, giveRow), () => chain(representable(a, wantRow), (): BodyStep<Of<Effect, "swap_cancelled">> => {
       const moved = putState(closed, setDelta(setDelta(a.account, giveRow), wantRow));
-      if (x.cancelRemainder || x.fillRatio === 0 || canonical === MAX_FILL) return ok(step(moved));
+      // og remainder.ts closeSwapOffer: every removal of the resting offer reports swap_cancelled with the maker's entity.
+      const removed = ok(step(moved, [{ _tag: "swap_cancelled" as const, offerId: offer.offerId, makerId: offer.makerIsLeft ? a.account.id.left : a.account.id.right }]));
+      if (x.cancelRemainder || x.fillRatio === 0 || canonical === MAX_FILL) return removed;
       const d = swapDims(offer), remaining = d.side === 1 ? qG - fG : qW - fW, next = requantizeRemaining(d, remaining, offer.priceTicks);
-      if (next === undefined) return ok(step(moved));
+      if (next === undefined) return removed;
       if (qG - fG - next.give < 0n) return swapErr("SWAP_REMAINDER_EXCEEDS_HOLD");
       return map(requantizeAuth(offer, next.give, next.want), (na) => step({ ...moved, offers: mapSet(moved.offers, offer.offerId, { ...offer, giveAmount: next.give, wantAmount: next.want, maxFee: na.maxFee, minNetReceive: na.minNetReceive, quantizedGive: next.give, quantizedWant: next.want }) }));
     }));
@@ -1973,7 +1986,7 @@ const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): Bod
 // ---- rebalance: og handlers/rebalance/{request-collateral,refund,policy}.ts ----
 const rebalanceErr = (reason: string): Result<never, BodyError> => err({ _tag: "rebalance", reason });
 /** og request-collateral.ts: the requester prepays the fee now; one immutable request per token until finality or full refund. */
-const requestCollateral = (a: AccountBody, x: TxOf<"request_collateral">, ctx: FoldCtx): BodyStep => {
+const requestCollateral = (a: AccountBody, x: TxOf<"request_collateral">, ctx: FoldCtx): BodyStep<Of<Effect, "request_collateral_committed">> => {
   if (x.amount <= 0n) return rebalanceErr("REQUEST_COLLATERAL_AMOUNT");
   if (x.feeAmount < 0n) return rebalanceErr("REQUEST_COLLATERAL_FEE");
   if (!Number.isFinite(x.policyVersion) || x.policyVersion < 1) return rebalanceErr("REQUEST_COLLATERAL_POLICY_VERSION");
@@ -1984,10 +1997,11 @@ const requestCollateral = (a: AccountBody, x: TxOf<"request_collateral">, ctx: F
   if (!a.account.deltas.has(feeToken)) return rebalanceErr("REQUEST_COLLATERAL_NO_FEE_DELTA");
   const amount = feeToken !== x.tokenId ? x.amount : x.amount > x.feeAmount ? x.amount - x.feeAmount : 0n;
   if (amount <= 0n) return ok(step(a));
-  return map(spend(a, feeToken, x.feeAmount, ctx.byLeft), (paid) => step({
+  // og mutation.ts applyCollateralRequest: a freshly created request reports request_collateral_committed.
+  return map(spend(a, feeToken, x.feeAmount, ctx.byLeft), (paid) => step<AccountBody, Of<Effect, "request_collateral_committed">>({
     ...paid, requested: mapSet(paid.requested, x.tokenId, amount),
     requestFees: mapSet(paid.requestFees, x.tokenId, { requestId: `rebalance:${ctx.byLeft ? "left" : "right"}:${Number(x.tokenId)}:${ctx.accountHeight}`, feeTokenId: Number(feeToken), feePaidUpfront: x.feeAmount, requestedAmount: amount, policyVersion: x.policyVersion, requestedAt: Number(ctx.nowMs), requestedByLeft: ctx.byLeft }),
-  }));
+  }, [{ _tag: "request_collateral_committed", tokenId: Number(x.tokenId), requestedAmount: amount, prepaidFee: x.feeAmount, requestedAt: Number(ctx.nowMs) }]));
 };
 /** og refund.ts: the counterparty returns prepaid fee, partially or in full; a full refund clears the request. */
 const rebalanceRefund = (a: AccountBody, x: TxOf<"rebalance_refund">, ctx: FoldCtx): BodyStep => {
@@ -2180,12 +2194,16 @@ const crossPullClose = (a: AccountBody, x: TxOf<"cross_pull_close">, ctx: FoldCt
     });
   });
 };
+/** og direct-payment.ts buildPaymentForward: a trusted payer->gateway leg (route [gateway, final]) asks the gateway, and only it, to forward to the final recipient. */
+const paymentForward = (x: TxOf<"payment">): readonly Of<Effect, "direct_payment_forward">[] =>
+  x.route === undefined || x.route.length <= 1 || x.trustedGatewayEntityId === undefined ? []
+  : [{ _tag: "direct_payment_forward", tokenId: Number(x.tokenId), amount: x.amount, route: [...x.route], ...(x.description ? { description: x.description } : {}), trustedGatewayEntityId: x.trustedGatewayEntityId }];
 type Arms = { readonly [K in AccountTx["type"]]: (tx: WireTxOf<K>) => BodyStep<EffectOf<K>> };
 const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Effect> => matchBy<"type", WireAccountTx, BodyStep<Effect>>("type", tx, {
 
   add_delta: (x) => ok(step(a.account.deltas.has(x.tokenId) ? a : putState(a, setDelta(a.account, zeroDelta(x.tokenId))))),
   set_credit_limit: (x) => map(updateDelta(a.account, x.tokenId, (d) => setCreditLimit(d, x.limit, ctx.byLeft)), (s) => step(putState(a, s))),
-  payment: (x) => chain(paymentRoute(a, x, ctx.byLeft), () => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b))),
+  payment: (x) => chain(paymentRoute(a, x, ctx.byLeft), () => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b, paymentForward(x)))),
   htlc_lock: (x) => {
     // og handlers/htlc/lock.ts:32-52,71-81,95-116 in order: identity, expiry, amount, 32-lock cap, capacity, int512 range, uint256 hold.
     if (x.lockId !== x.hashlock) return err({ _tag: "lock_id" });
@@ -2211,7 +2229,8 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
     if (x.outcome === "error") {
       const beneficiary = ctx.byLeft !== live.senderIsLeft;
       if (!beneficiary && !expired) return err({ _tag: "before_deadline" });
-      return x.reason === "timeout" && !expired ? err({ _tag: "before_deadline" }) : ok(step({ ...a, locks: mapDelete(a.locks, x.lockId) }));
+      return x.reason === "timeout" && !expired ? err({ _tag: "before_deadline" })
+        : ok(step({ ...a, locks: mapDelete(a.locks, x.lockId) }, [{ _tag: "htlc_error", lockId: live.lockId, hashlock: live.hashlock, tokenId: Number(live.tokenId), amount: live.amount, ...opt("reason", x.reason) }]));
     }
     if (expired) return err({ _tag: "htlc_expired" });
     if (hashHtlcSecret(x.secret) !== live.hashlock) return err({ _tag: "preimage" });
@@ -2224,7 +2243,7 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
   swap_cancel_request: (x) => {
     // og lifecycle/cancel.ts: the maker only requests; the offer and its hold stay until the counterparty's swap_resolve.
     const offer = a.offers.get(x.offerId);
-    return offer === undefined ? MISSING : ctx.byLeft !== offer.makerIsLeft ? err({ _tag: "not_maker" }) : ok(step(a));
+    return offer === undefined ? MISSING : ctx.byLeft !== offer.makerIsLeft ? err({ _tag: "not_maker" }) : ok(step(a, [{ _tag: "swap_cancel_requested", offerId: x.offerId }]));
   },
   swap_resolve: (x) => swapResolve(a, x, ctx),
   request_collateral: (x) => requestCollateral(a, x, ctx),
@@ -3513,8 +3532,9 @@ const owesCreateAck = (child: AccountReplica): boolean => match(child, { open: (
 const isCreateAck = (tx: EntityTx, origin: Delivery): boolean => tx.type === "accountInput" && origin._tag === "local" && tx.data.kind === "ack";
 const putChild = (state: EntityState, replicas: Replicas, peer: EntityId, child: AccountReplica): Folded => ({ state: { ...state, accounts: mapSet(state.accounts, peer, child.state.account) }, accountReplicas: mapSet(replicas, peer, child) });
 const withChild = (replicas: Replicas, target: EntityId, f: (child: AccountReplica) => Result<Draft, EntityError>): Result<Draft, EntityError> => { const child = replicas.get(target); return child === undefined ? err({ _tag: "no_such_account", target }) : f(child); };
+// A trusted payment's direct_payment_forward is an L0 side effect; forwarding it on to the final recipient is not ported at the Entity layer yet (dropped here, as before it existed).
 const routed = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Draft, EntityError> => chain(applied, (a) =>
-  map(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: () => err({ _tag: "not_l0" }), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
+  map(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: ({ effect }) => (effect._tag === "direct_payment_forward" ? ok([]) : err({ _tag: "not_l0" })), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
     (messages) => ({ ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((data): EntityOutput => ({ to: target, tx: { type: "accountInput", data } })) })));
 const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
 /** og DEFAULT_ACCOUNT_TOKEN_IDS (account/config/defaults.ts). */
@@ -3987,7 +4007,7 @@ export const hostRoot = (h: Host): HostRoot => keccakUtf8(canon({ account: accou
 export const hashFrame = (record: RuntimeFrameRecord): RuntimeFrameHash => keccakUtf8(canon(record)) as RuntimeFrameHash;
 const foldStamped = strictFold<Host, Stamped, Verify, HostEffect, AccountReplicaError | HostError>((h, stamped, verify) => applyHost(h, stamped.tx, stamped.ctx, verify));
 const outputId = (height: bigint, ordinal: number, effect: HostEffect): Hash => keccakUtf8(canon({ height, ordinal, effect }));
-const messageOf = (e: HostEffect): AccountPeerInput | null => match(e, { send: (x) => x.message, forward_secret: () => null, start_dispute: () => null });
+const messageOf = (e: HostEffect): AccountPeerInput | null => match(e, { send: (x) => x.message, forward_secret: () => null, htlc_error: () => null, swap_cancel_requested: () => null, swap_cancelled: () => null, request_collateral_committed: () => null, direct_payment_forward: () => null, start_dispute: () => null });
 /** An ACK already riding on an ack_frame in the same batch is not sent again on its own. */
 const carriedOnce = (effects: readonly HostEffect[]): readonly HostEffect[] => {
   const carried = new Set(effects.flatMap((e) => { const m = messageOf(e); return m === null ? [] : matchBy("kind", m, { ack: () => [], ack_frame: (f) => (f.ack === null ? [] : [canon(f.ack)]), dispute: () => [] }); }));
