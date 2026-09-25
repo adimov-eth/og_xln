@@ -190,6 +190,42 @@ describe("account-tx: balance", () => {
   });
 });
 
+describe("account-tx: direct_payment envelope (route, deliveryMode, trusted gateway)", () => {
+  test("MATCH: 400 random direct_payment envelopes (routes, modes, gateways, asserted direction, case) are accepted/refused alike and give equal roots", async () => {
+    const C = word("33"), ents = [A, B, C, A.toUpperCase().replace("0X", "0x")];
+    let accepted = 0, n = 0;
+    const { body: start } = open(null, 100n);
+    const og = ogHarness(start);
+    let body = start;
+    const fixed: [boolean, string, string[], string | undefined, boolean][] = [
+      [true, "trusted", [B, C], B, true], [false, "trusted", [A, C], A, true], [true, "trusted", [B], A, true], [true, "trusted", [B, A], B, false], [true, "trusted", [B, B], B, false],
+      [true, "trusted", [B, C], C, false], [true, "direct", [B, C], undefined, false], [true, "direct", [B.toUpperCase().replace("0X", "0x")], undefined, true],
+    ];
+    for (const [byLeft, mode, route, gateway, want] of fixed) {
+      const data: any = { tokenId: 1, amount: 2n, route, fromEntityId: byLeft ? A : B, toEntityId: byLeft ? B : A, deliveryMode: mode, ...(gateway === undefined ? {} : { trustedGatewayEntityId: gateway }) };
+      const o = await og.run((acc) => handleDirectPayment(acc, { type: "direct_payment", data } as any, byLeft));
+      const { tokenId: _t, ...rest } = data;
+      const r = apply(body, { type: "payment", tokenId: "1", ...rest }, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n });
+      expect([route, r.ok, o.ok]).toEqual([route, want, want]);
+      if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); if (route.length === 2) n++; }
+    }
+    for (let i = 0; i < 400; i++) {
+      const byLeft = ri(2) === 0, payer = byLeft ? A : B, payee = byLeft ? B : A;
+      const mode = pick3(["direct", "trusted", "trusted", "instant"]), gateway = mode === "direct" ? (ri(6) === 0 ? pick3(ents) : undefined) : ri(6) === 0 ? undefined : pick3([payer, payee, C]);
+      const route = Array.from({ length: pick3([0, 1, 1, 2, 2, 3]) }, (_, k) => (k === 0 && ri(4) !== 0 ? payee : pick3(ents)));
+      const amount = BigInt(ri(12));
+      const data: any = { tokenId: 1, amount, route, fromEntityId: ri(8) === 0 ? payee : payer, toEntityId: ri(8) === 0 ? payer : payee, deliveryMode: mode, ...(gateway === undefined ? {} : { trustedGatewayEntityId: gateway }) };
+      const o = await og.run((acc) => handleDirectPayment(acc, { type: "direct_payment", data } as any, byLeft));
+      const { tokenId: _t, ...rest } = data;
+      const r = apply(body, { type: "payment", tokenId: "1", ...rest }, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n });
+      expect([i, r.ok]).toEqual([i, o.ok]);
+      if (r.ok) { body = r.value.state; accepted++; expect(unwrap(committed(body) as any).root).toBe(o.root); if (route.length === 2) n++; }
+    }
+    expect(accepted).toBeGreaterThan(15);
+    expect(n).toBeGreaterThan(1);
+  });
+});
+
 // ---------- HTLC ----------
 const HEX_SECRET = word("5a");
 const ogLockTx = (patch: Record<string, unknown> = {}) => ({

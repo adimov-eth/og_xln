@@ -1020,6 +1020,7 @@ export type BodyError =
   | Tagged<"swap", { reason: string }>
   | Tagged<"rebalance", { reason: string }>
   | Tagged<"lending", { reason: string }>
+  | Tagged<"payment_route", { reason: string }>
   | Tagged<"unchosen", { hole: Hole }>;
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
 export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
@@ -1089,7 +1090,7 @@ type BodyStep<E extends Effect = never> = Result<AccountStep<E>, BodyError>;
 export type AccountTx =
   | { readonly type: "add_delta"; readonly tokenId: TokenId }
   | { readonly type: "set_credit_limit"; readonly tokenId: TokenId; readonly limit: bigint }
-  | { readonly type: "payment"; readonly tokenId: TokenId; readonly amount: bigint }
+  | { readonly type: "payment"; readonly tokenId: TokenId; readonly amount: bigint; readonly route?: readonly string[] | undefined; readonly description?: string | undefined; readonly fromEntityId?: string | undefined; readonly toEntityId?: string | undefined; readonly deliveryMode?: "direct" | "trusted" | undefined; readonly trustedGatewayEntityId?: string | undefined }
   | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly encryptedPackage?: string | undefined }
   | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "secret"; readonly secret: string }
   | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "error"; readonly reason?: string | undefined }
@@ -1721,12 +1722,33 @@ const lending = (a: AccountBody, x: AccountLendingTx, ctx: FoldCtx): BodyStep =>
     case "lending_close_payout": return chain(lendingParties(a, ctx.byLeft, x.positionId, "lend", x.hubEntityId, x.lenderEntityId), () => chain(positive(x.amount), () => pay(x.tokenId, x.amount, `payout:${lower(x.positionId)}`, "close-payout")));
   }
 };
+// ---- direct payment envelope: og handlers/balance/direct-payment.ts validatePaymentEnvelope/resolvePaymentParties/validatePaymentRoute ----
+const MAX_ROUTE_HOPS = 100;
+/** Absent route/deliveryMode is the rewrite's own bilateral payment: route [recipient], direct. */
+const paymentRoute = (a: AccountBody, x: TxOf<"payment">, byLeft: boolean): Result<void, BodyError> => {
+  const bad = (reason: string): Result<never, BodyError> => err({ _tag: "payment_route", reason });
+  const from = (byLeft ? a.account.id.left : a.account.id.right).toLowerCase(), to = (byLeft ? a.account.id.right : a.account.id.left).toLowerCase();
+  const route = x.route ?? [to], mode = x.deliveryMode ?? "direct", gateway = x.trustedGatewayEntityId;
+  if (x.amount < 1n || x.amount > MAX_PAYMENT_AMOUNT) return err({ _tag: "non_positive_payment" });
+  if (route.length === 0 || route.length > MAX_ROUTE_HOPS) return bad("ROUTE_LENGTH");
+  if (mode !== "direct" && mode !== "trusted") return bad("DELIVERY_MODE");
+  if (mode === "direct" && gateway !== undefined) return bad("DIRECT_WITH_GATEWAY");
+  if (mode === "trusted" && !gateway) return bad("TRUSTED_WITHOUT_GATEWAY");
+  if ((x.fromEntityId && x.fromEntityId.toLowerCase() !== from) || (x.toEntityId && x.toEntityId.toLowerCase() !== to)) return bad("DIRECTION");
+  const is = (v: string | undefined, e: string): boolean => String(v || "").toLowerCase() === e;
+  const onlyRecipient = route.length === 1 && is(route[0], to);
+  if (mode === "direct") return onlyRecipient ? ok(undefined) : bad("DIRECT_ROUTE");
+  const g = String(gateway).toLowerCase();
+  if (from === g) return onlyRecipient ? ok(undefined) : bad("GATEWAY_FINAL_LEG");
+  const final = String(route[1] || "").toLowerCase();
+  return to === g && route.length === 2 && is(route[0], to) && final !== "" && final !== g && final !== from ? ok(undefined) : bad("TRUSTED_ROUTE");
+};
 type Arms = { readonly [K in AccountTx["type"]]: (tx: WireTxOf<K>) => BodyStep<EffectOf<K>> };
 const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Effect> => matchBy<"type", WireAccountTx, BodyStep<Effect>>("type", tx, {
 
   add_delta: (x) => ok(step(a.account.deltas.has(x.tokenId) ? a : putState(a, setDelta(a.account, zeroDelta(x.tokenId))))),
   set_credit_limit: (x) => map(updateDelta(a.account, x.tokenId, (d) => setCreditLimit(d, x.limit, ctx.byLeft)), (s) => step(putState(a, s))),
-  payment: (x) => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b)),
+  payment: (x) => chain(paymentRoute(a, x, ctx.byLeft), () => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b))),
   htlc_lock: (x) => {
     // og handlers/htlc/lock.ts:32-52,71-81,95-116 in order: identity, expiry, amount, 32-lock cap, capacity, int512 range, uint256 hold.
     if (x.lockId !== x.hashlock) return err({ _tag: "lock_id" });
@@ -2085,7 +2107,7 @@ export const wireTx = (tx: WireAccountTx, id: AccountId, byLeft: boolean): Resul
   return map(mapErr(tokenNumber(tx.tokenId), uncommitted), (tk) => matchBy("type", tx, {
     add_delta: (): WireTx => ({ type: "add_delta", data: { tokenId: tk } }),
     set_credit_limit: (c): WireTx => ({ type: "set_credit_limit", data: { tokenId: tk, amount: c.limit } }),
-    payment: (p): WireTx => ({ type: "direct_payment", data: { tokenId: tk, amount: p.amount, route: [payee], fromEntityId: payer, toEntityId: payee, deliveryMode: "direct" } }),
+    payment: (p): WireTx => ({ type: "direct_payment", data: { tokenId: tk, amount: p.amount, route: p.route ?? [payee], ...(p.description === undefined ? {} : { description: p.description }), fromEntityId: payer, toEntityId: payee, deliveryMode: p.deliveryMode ?? "direct", ...(p.trustedGatewayEntityId === undefined ? {} : { trustedGatewayEntityId: p.trustedGatewayEntityId }) } }),
   }));
 };
 const safe = (n: bigint): Result<number, Uncommitted> => (n >= 0n && n <= BigInt(Number.MAX_SAFE_INTEGER) ? ok(Number(n)) : err(uncommitted({ _tag: "unsafe_number" })));
