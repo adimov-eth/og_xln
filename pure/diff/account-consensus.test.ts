@@ -9,6 +9,7 @@ import { ACCOUNT_NETWORK_ALLOWANCE_MS as OG_ALLOWANCE, MEMPOOL_LIMIT } from "../
 import { getDisputeHankoRequirementError } from "../../core/account/consensus/dispute/hanko.ts";
 import { getIncomingAccountDeadlineViolation } from "../../core/account/consensus/dispute/deadline-policy.ts";
 import { hashHtlcSecret } from "../../core/protocol/htlc/utils.ts";
+import { freezeAccountForDispute, returnPreparedAccountToActive } from "../../core/account/consensus/dispute/policy.ts";
 import { getDisputeHankoShapeError } from "../../core/account/consensus/incoming/replay.ts";
 import { prepareProposalAdmission } from "../../core/account/consensus/proposal/admission.ts";
 import { validateProposalTransactions } from "../../core/account/consensus/proposal/transactions.ts";
@@ -480,6 +481,34 @@ describe("account-consensus: driven scenarios", () => {
     const b = ogAccount();
     expect(applyAccountEnqueue(b, { kind: "enqueue", txs: many.slice(1) }, ctx.jClaimNodeStore).ok).toBe(true);
     expect(admit(genesisAB(), manyW.slice(1)).ok).toBe(true);
+  });
+});
+
+// =====================================================================================================
+describe("account-consensus: dispute preparation", () => {
+  test("MATCH: freeze keeps J claims + matcher evidence while preparing; preparing returns to active keeping only J claims", () => {
+    // og
+    const a = ogAccount();
+    const claimOg = { type: "j_event_claim", data: { jHeight: 3 } } as unknown as OgTx, resolveOg = { type: "swap_resolve", data: { offerId: "o" } } as unknown as OgTx;
+    a.mempool = [claimOg, scl(2, 5n), resolveOg];
+    a.pendingFrame = ogFrame(a, { accountTxs: [scl(1, 1n)] });
+    a.status = "dispute_preparing";
+    freezeAccountForDispute(a, true);
+    const ogPreparing = a.mempool.map((t) => t.type);
+    returnPreparedAccountToActive(a);
+    const ogResumed = [a.status, a.mempool.map((t) => t.type)];
+    // rewrite (no counterparty witness yet, so the freeze stays in preparing)
+    const claim = { type: "j_event_claim", jHeight: 3n, jBlockHash: W("0c"), events: [], observedAt: 3n } as unknown as WireAccountTx;
+    const resolve = { type: "swap_resolve", offerId: "o", fillRatio: 1, cancelRemainder: true } as WireAccountTx;
+    const proposed = unwrap(admit(proposeFrom(genesisAB(), ALICE, [TX]).replica, [claim, TX2, resolve]));
+    const preparing = step(proposed, { kind: "freeze" }, ALICE).replica;
+    expect(preparing._tag).toBe("preparing");
+    expect(preparing.mempool.map((t) => t.type)).toEqual(ogPreparing);
+    const resumed = step(preparing, { kind: "resume" }, ALICE).replica;
+    expect([resumed._tag === "open" ? "active" : resumed._tag, resumed.mempool.map((t) => t.type)]).toEqual(ogResumed);
+    // only a preparing Account returns (og ACCOUNT_DISPUTE_PREPARATION_RETURN_INVALID)
+    expect(() => returnPreparedAccountToActive(ogAccount())).toThrow("ACCOUNT_DISPUTE_PREPARATION_RETURN_INVALID");
+    expect(applyAccountInput(genesisAB(), { kind: "resume" }, DOOR(ALICE)).ok).toBe(false);
   });
 });
 

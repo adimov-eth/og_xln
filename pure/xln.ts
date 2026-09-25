@@ -80,6 +80,7 @@ export const AccountTransition = {
   ack_frame: { open: ["open", "received"], proposed: ["open", "proposed", "received"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
   freeze: { open: ["preparing", "disputed"], proposed: ["preparing", "disputed"], received: ["preparing", "disputed"], preparing: ["preparing", "disputed"], disputed: ["disputed"] },
   dispute: { open: ["open"], proposed: ["proposed"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
+  resume: { preparing: ["open"] },
 } as const;
 export const EntityTransition = { txs: { open: ["proposed"] }, precommit: { proposed: ["open", "proposed"] } } as const;
 
@@ -1593,6 +1594,7 @@ export type FrameEvidence = { readonly cause: AccountReplicaError; readonly fram
 export type AccountInput =
   | ({ readonly kind: "propose"; readonly frameHanko?: Hanko | undefined; readonly disputeHanko?: DisputeHanko | undefined } & FrameClock)
   | { readonly kind: "freeze"; readonly evidence?: FrameEvidence | undefined }
+  | { readonly kind: "resume" }
   | ({ readonly kind: "ack" } & AccountAck & AccountEnvelope)
   | ({ readonly kind: "ack_frame"; readonly ack: AccountAck | null; readonly frame: AccountFrame; readonly frameHanko: Hanko; readonly disputeHanko?: DisputeHanko | undefined } & AccountEnvelope)
   /** og `kind: 'dispute'`: a standalone peer dispute-Hanko witness, sequenced by its proof nonce rather than a frame height. */
@@ -1610,12 +1612,13 @@ export class Candidate {
 }
 type AccountEnv = { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute: DisputeWitnesses };
 type Held = AccountEnv & { readonly candidate: Candidate };
-type Frozen = Omit<AccountEnv, "mempool"> & { readonly mempool: readonly []; readonly evidence?: FrameEvidence | undefined };
+type Frozen = Omit<AccountEnv, "mempool"> & { readonly evidence?: FrameEvidence | undefined };
 export interface OpenAccount extends Tagged<"open", AccountEnv> {}
 export interface ProposedAccount extends Tagged<"proposed", Held> {}
 export interface ReceivedAccount extends Tagged<"received", Held & { disputeHanko: DisputeHanko | undefined }> {}
-export interface PreparingAccount extends Tagged<"preparing", Frozen & { unready: StartRefusal }> {}
-export interface DisputedAccount extends Tagged<"disputed", Frozen & { start: DisputeStart }> {}
+/** og `dispute_preparing` keeps deferred J claims and dispute evidence queued (dispute/policy.ts); `disputed` keeps nothing. */
+export interface PreparingAccount extends Tagged<"preparing", Frozen & { mempool: readonly WireAccountTx[]; unready: StartRefusal }> {}
+export interface DisputedAccount extends Tagged<"disputed", Frozen & { mempool: readonly []; start: DisputeStart }> {}
 export type FrozenAccount = PreparingAccount | DisputedAccount;
 export type AccountReplica = OpenAccount | ProposedAccount | ReceivedAccount | FrozenAccount;
 export const certifies = (verify: Verify, digest: string, hanko: Hanko, entity: EntityId): Result<void, Tagged<"invalid_hanko", { entity: EntityId }>> => guard(verify(digest, hanko, entity), { _tag: "invalid_hanko", entity });
@@ -1636,7 +1639,7 @@ export interface DisputeRequired extends Tagged<"dispute_required", FrameEvidenc
 export interface RejectedAfterAck extends Tagged<"rejected_after_ack", { cause: AccountReplicaError; committed: AccountApply }> {}
 export type AccountReplicaError =
   | BodyError | DisputeError | EnvelopeError | DisputeRequired | RejectedAfterAck
-  | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch" | "frame_hash_mismatch" | "state_root_mismatch" | "ack_unmatched">
+  | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch" | "frame_hash_mismatch" | "state_root_mismatch" | "ack_unmatched" | "not_preparing">
   | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }> | DeadlineViolation["error"]
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
   | Tagged<"bad_account", { reason: "entity_id" | "same_entity" | TermsError["_tag"] }>
@@ -1914,12 +1917,21 @@ export const restoreCandidate = (held: ProposedAccount | ReceivedAccount, party:
       chain(replay(held.state, frame, byLeft), ({ draft, view }) => map(localProof(view), (frameProof) => new Candidate(frame, frameHanko, frameProof, draft)))));
 };
 export const dropFrozen = <R extends FrozenAccount>(r: R): Verb<R> => ok(done(r));
-const freeze = (r: AccountReplica, evidence: FrameEvidence | undefined, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => {
-  const { state, head, dispute: witnesses, acknowledged } = r, frozen = { state, head, mempool: [] as const, dispute: witnesses, acknowledged, evidence };
-  const start = startOf(state, witnesses, ctx.party.peer, ctx.verify);
-  if (!start.ok) return ok(done<PreparingAccount, AccountOutput>({ _tag: "preparing", ...frozen, unready: start.error }));
-  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", ...frozen, start: start.value }, [{ kind: "start_dispute", start: start.value }]));
+// og freezeAccountForDispute: J claims survive while preparation can still return to active; matcher evidence survives preparation only.
+const isDeferredClaim = (tx: WireAccountTx): boolean => tx.type === "j_event_claim";
+const isDisputeEvidence = (tx: WireAccountTx): boolean => tx.type === "swap_resolve";
+const retainedThroughFreeze = (r: AccountReplica, keep: (tx: WireAccountTx) => boolean): readonly WireAccountTx[] => {
+  const queued = r.mempool.filter(keep), pending = r._tag === "proposed" ? r.candidate.frame.txs.filter(keep) : [];
+  return [...unqueued(pending, queued), ...queued];
 };
+const freeze = (r: AccountReplica, evidence: FrameEvidence | undefined, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => {
+  const { state, head, dispute: witnesses, acknowledged } = r, frozen = { state, head, dispute: witnesses, acknowledged, evidence };
+  const start = startOf(state, witnesses, ctx.party.peer, ctx.verify);
+  if (!start.ok) return ok(done<PreparingAccount, AccountOutput>({ _tag: "preparing", ...frozen, mempool: retainedThroughFreeze(r, (tx) => isDeferredClaim(tx) || isDisputeEvidence(tx)), unready: start.error }));
+  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", ...frozen, mempool: [], start: start.value }, [{ kind: "start_dispute", start: start.value }]));
+};
+/** og returnPreparedAccountToActive: only a preparing Account reopens, keeping its deferred J claims. */
+export const resumePreparing = (r: PreparingAccount): Verb<OpenAccount> => ok(done(reopen(r, { state: r.state, head: r.head, mempool: retainedThroughFreeze(r, isDeferredClaim) })));
 export const disputeLive = (r: OpenAccount | ProposedAccount | ReceivedAccount, input: Freeze, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => freeze(r, input.evidence, ctx);
 export const disputePreparing = (r: PreparingAccount, _input: Freeze, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => freeze(r, r.evidence, ctx);
 export const disputeDisputed = (r: DisputedAccount): Verb<DisputedAccount> => ok(done(r));
@@ -1969,6 +1981,7 @@ export const ack = accountVerb("ack", { open: ackOpen, proposed: ackProposed, re
 export const ackFrame = accountVerb("ack_frame", { open: ackFrameOpen, proposed: ackFrameProposed, received: ackFrameReceived, preparing: dropFrozen, disputed: dropFrozen });
 export const freezeAccount = accountVerb("freeze", { open: disputeLive, proposed: disputeLive, received: disputeLive, preparing: disputePreparing, disputed: disputeDisputed });
 export const dispute = accountVerb("dispute", { open: peerWitness, proposed: peerWitness, received: peerWitness, preparing: dropFrozen, disputed: dropFrozen });
+export const resume = accountVerb("resume", { open: { _tag: "not_preparing" }, proposed: { _tag: "not_preparing" }, received: { _tag: "not_preparing" }, preparing: resumePreparing, disputed: frozenError("disputed") });
 
 
 export const admissionFold = (mempool: readonly WireAccountTx[], added: number, s: AccountBody, self: EntityId, at: FoldAt): Result<void, AccountReplicaError> => chain(partyOf(s.account.id, self), (party) => {
@@ -2000,7 +2013,7 @@ export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: 
   chain(enqueue(r, txs), ({ replica, queued }) => { const base = nextBase(replica); return map(admissionFold(replica.mempool, queued.length, base.state, self, { height: base.height + 1n, ...clock }), () => replica); }));
 const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party }));
 export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => chain(accountContext(r, ctx), (c) => matchBy("kind", input, {
-  propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c),
+  propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c), resume: (i) => resume(r, i, c),
   dispute: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => dispute(r, i, { ...c, from: sender })),
   ack: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ack(r, i, { ...c, delivery: sender === c.party.self ? { _tag: "local" } : { _tag: "received", from: sender } })),
   ack_frame: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ackFrame(r, i, { ...c, now: ctx.now, finalizedJHeight: ctx.finalizedJHeight ?? r.state.finalizedJHeight, from: sender })),
@@ -2008,7 +2021,7 @@ export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: D
 export const applyDelivered = (r: AccountReplica, input: AccountInput, delivery: Delivery, ctx: DoorContext): Result<AccountApply, AccountReplicaError> =>
   chain(matchBy("kind", input, {
     propose: (): Result<void, AccountReplicaError> => localOnly(delivery),
-    freeze: (): Result<void, AccountReplicaError> => localOnly(delivery),
+    freeze: (): Result<void, AccountReplicaError> => localOnly(delivery), resume: (): Result<void, AccountReplicaError> => localOnly(delivery),
     dispute: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
     ack: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
     ack_frame: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
