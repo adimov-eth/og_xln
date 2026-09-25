@@ -16,6 +16,7 @@ import { validateProposalTransactions } from "../../core/account/consensus/propo
 import { makeAccount } from "../../core/__tests__/helpers/cross-j.ts";
 import { prependUniqueMempoolTxs, buildAccountProofBodyFromJurisdictions } from "../../core/account/consensus/helpers.ts";
 import { applyAccountEnqueue } from "../../core/account/input/local-tx-admission.ts";
+import { removeCommittedTxsFromMempool } from "../../core/protocol/state/tx-multiset.ts";
 import { computeAccountStateRoot } from "../../core/account/commitment/state-root.ts";
 import { createEmptyAccountJClaimAccumulator } from "../../core/account/j-claims/j-claim-accumulator.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
@@ -28,7 +29,7 @@ import type { AccountFrame as OgFrame, AccountInput as OgInput, AccountReplica a
 
 // ---- rewrite ----
 import {
-  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, accountDisputeHash, applyEntityInput, createEntity, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, incomingDeadline, keccakUtf8, disputeRequirement, disputeShapes, frameStateHash, localProof, proposalPlan, receiverClock, replicaId, unqueued,
+  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, accountDisputeHash, applyEntityInput, createEntity, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, incomingDeadline, keccakUtf8, disputeRequirement, disputeShapes, frameStateHash, localProof, planAccountProposal, proposalPlan, receiverClock, replicaId, unqueued,
 } from "../xln.ts";
 import type { AccountFrame, AccountInput, AccountReplica, EntityId, WireAccountTx } from "../xln.ts";
 import { ALICE, BOB, CLOCK, NOW, TERMS, aliceAddr, verifiers, causeOf, ackInput, disputeFor, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap, unwrapErr } from "../xln_run.ts";
@@ -612,5 +613,44 @@ describe("account-consensus: incoming preflight", () => {
     expect(unwrapErr(applyAccountInput(r, input, DOOR(self)))._tag).toBe("uncommitted");
     // with a valid profile the bad Hanko is what refuses
     expect(unwrapErr(applyAccountInput(r, { ...input, frame: good } as AccountInput, DOOR(self)))._tag).toBe("invalid_hanko");
+  });
+});
+
+describe("account-consensus: proposal selection (og admission.ts selectProposalWindow)", () => {
+  test("MATCH: selected mempool subset — EMPTY / TOO_LARGE / NOT_IN_MEMPOOL refuse in both; a valid subset proposes only it and keeps the rest queued", () => {
+    const ogTxs = [scl(1, 1n), scl(2, 2n), scl(3, 3n)];
+    const rwTxs: WireAccountTx[] = [TX, TX2, { type: "set_credit_limit", tokenId: "0", limit: 11n } as WireAccountTx];
+    const TX4 = { type: "set_credit_limit", tokenId: "0", limit: 13n } as WireAccountTx;
+    const ogWindow = (sel: number[] | "none" | "huge" | "foreign"): string => {
+      const a = ogAccount(L, R);
+      a.mempool = [...ogTxs];
+      const selected = sel === "none" ? undefined : sel === "huge" ? Array.from({ length: ACCOUNT_MEMPOOL_SIZE + 1 }, () => ogTxs[0]!) : sel === "foreign" ? [scl(4, 4n)] : sel.map((i) => ogTxs[i]!);
+      try {
+        const adm = prepareProposalAdmission({ runtimeTimestamp: 0, quietLogs: true }, a, 1_000, 0, selected);
+        if (!adm.ok) return "refused";
+        return `ok:${adm.proposalWindow.map((tx) => ogTxs.indexOf(tx)).join(",")}|kept:${removeCommittedTxsFromMempool([...a.mempool], adm.proposalWindow).map((tx) => ogTxs.indexOf(tx)).join(",")}`;
+      } catch (e) { return String((e as Error).message).split(":")[0]!; }
+    };
+    const self = leftOf(), opened = unwrap(admit(genesisAB(), rwTxs));
+    const rwWindow = (sel: number[] | "none" | "huge" | "foreign"): string => {
+      const selected = sel === "none" ? undefined : sel === "huge" ? Array.from({ length: ACCOUNT_MEMPOOL_SIZE + 1 }, () => rwTxs[0]!) : sel === "foreign" ? [TX4] : sel.map((i) => rwTxs[i]!);
+      const planned = planAccountProposal(opened, self, CLOCK, hankoVerify, selected);
+      if (!planned.ok) return planned.error._tag === "proposal_selection" ? `ACCOUNT_PROPOSAL_SELECTION_${planned.error.reason.toUpperCase()}` : planned.error._tag;
+      if (planned.value._tag !== "frame") return "idle";
+      const { frame, deferred } = planned.value.preview;
+      return `ok:${frame.txs.map((tx) => rwTxs.indexOf(tx)).join(",")}|kept:${deferred.map((tx) => rwTxs.indexOf(tx)).join(",")}`;
+    };
+    const cases: (number[] | "none" | "huge" | "foreign")[] = ["none", [], "huge", "foreign", [0, 0], [1], [2, 0], [0, 1, 2]];
+    for (const c of cases) expect(rwWindow(c)).toBe(ogWindow(c));
+    expect(ogWindow("none")).toBe("ok:0,1,2|kept:");
+    expect(ogWindow([2, 0])).toBe("ok:2,0|kept:1");
+    expect(ogWindow([])).toBe("ACCOUNT_PROPOSAL_SELECTION_EMPTY");
+    expect(ogWindow("huge")).toBe("ACCOUNT_PROPOSAL_SELECTION_TOO_LARGE");
+    expect(ogWindow([0, 0])).toBe("ACCOUNT_PROPOSAL_SELECTION_NOT_IN_MEMPOOL");
+    // The Account input carries the selection: the proposed frame holds only it, the rest stays in the mempool (og finalizeAccountProposal).
+    const out = step(opened, proposeInput(opened, self, CLOCK, [rwTxs[1]!]), self).replica;
+    if (out._tag !== "proposed") throw new Error(out._tag);
+    expect(out.candidate.frame.txs).toEqual([rwTxs[1]]);
+    expect(out.mempool).toEqual([rwTxs[0], rwTxs[2]]);
   });
 });

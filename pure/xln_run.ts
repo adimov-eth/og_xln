@@ -9,7 +9,7 @@ import {
 } from "./xln.ts";
 import type {
   AccountEnvelope, AccountFrame, AccountGrammar, AccountId, AccountInput, AccountInputFor, AccountMessage, AccountOutput, AccountPhase, AccountReplica, AccountReplicaError, AccountTerms, Address, At, Board, DisputeHanko,
-  DisputePlan, EntityFrame, EntityGrammar, EntityId, EntityPhase, EntityReplica, FrameClock, Hanko, HankoClaimInput, Hash, OpenAccount, Party, ProposedAccount, RawSig, Result, Signature, Verify,
+  DisputePlan, EntityFrame, EntityGrammar, EntityId, EntityPhase, EntityReplica, FrameClock, Hanko, HankoClaimInput, Hash, OpenAccount, Party, ProposedAccount, RawSig, Result, Signature, Verify, WireAccountTx,
 } from "./xln.ts";
 
 
@@ -128,9 +128,9 @@ export const disputeFor = (plan: DisputePlan, entity: EntityId): DisputeHanko | 
 type ProposeInput = AccountInputFor<"propose">;
 type AckInput = AccountInputFor<"ack">;
 type AckFrameInput = AccountInputFor<"ack_frame">;
-export const proposeInput = (r: AccountReplica, self: EntityId, clock: FrameClock = CLOCK): ProposeInput => match(unwrap(planAccountProposal(r, self, clock, hankoVerify)), {
-  frame: ({ preview }): ProposeInput => ({ kind: "propose", frameHanko: signAccountFrame(preview.frame, self), ...opt("disputeHanko", disputeFor(preview.dispute, self)), ...clock }),
-  idle: (): ProposeInput => ({ kind: "propose", ...clock }),
+export const proposeInput = (r: AccountReplica, self: EntityId, clock: FrameClock = CLOCK, selected?: readonly WireAccountTx[]): ProposeInput => match(unwrap(planAccountProposal(r, self, clock, hankoVerify, selected)), {
+  frame: ({ preview }): ProposeInput => ({ kind: "propose", frameHanko: signAccountFrame(preview.frame, self), ...opt("disputeHanko", disputeFor(preview.dispute, self)), ...opt("selected", selected), ...clock }),
+  idle: (): ProposeInput => ({ kind: "propose", ...opt("selected", selected), ...clock }),
 });
 export const ackInput = (r: AccountReplica, self: EntityId): AckInput => {
   const p = unwrap(previewAck(r, self));

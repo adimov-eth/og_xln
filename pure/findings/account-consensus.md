@@ -46,7 +46,7 @@ I enumerated og codes with `ast-grep run -p 'rejectAccountInput($CODE, $$$)'`, `
 | validation "Bilateral account state root mismatch" → dispute | `dispute_required{cause: state_root_mismatch}` (1686, 1831). MATCH, proven |
 | validation DISPUTE_HANKO_* on incoming frame → dispute | `dispute_required{cause: dispute_hanko}` (1832). MATCH, proven |
 | propose: "No transactions to propose" / "Waiting for ACK on pending frame" / ACCOUNT_PROPOSAL_STATUS_FROZEN / "Mempool overflow" | `empty_mempool` / `already_proposed` / `frozen{phase}` / `mempool_full` (at admission) |
-| ACCOUNT_PROPOSAL_SELECTION_EMPTY / TOO_LARGE / NOT_IN_MEMPOOL | MISSING (no partial selection; the whole mempool is always proposed) |
+| ACCOUNT_PROPOSAL_SELECTION_EMPTY / TOO_LARGE / NOT_IN_MEMPOOL | `proposal_selection{empty\|too_large\|not_in_mempool}`. FIXED (integration): `propose.selected` / `planAccountProposal(..., selected)` run og `selectProposalWindow` (multiset subset), fold only the window, and keep the unselected txs queued (og `removeCommittedTxsFromMempool`). Test: "MATCH: selected mempool subset". Only og's Entity cross-J-opening selector, which picks the subset, is absent. |
 | ACCOUNT_PROPOSAL_ENTITY_TIMESTAMP_INVALID | proposer-side `frame_structure{timestamp}` (1705) |
 | ACCOUNT_MEMPOOL_LIMIT_EXCEEDED (throw) | `mempool_full` (AC-6) |
 | SWAP_RESOLVE / CROSS_J_* / SETTLEMENT_TRANSITION _PROPOSAL_FAILED (halt) | `proposal_halt{txType, cause}` (AC-7, fixed) |
