@@ -99,10 +99,10 @@ export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc
   "j_event_claim", "cross_pull_lock", "cross_pull_close", "request_collateral", "rebalance_refund",
   "rebalance_policy", "lending_fund", "lending_borrow_request", "lending_repay", "lending_credit", "lending_close_request", "lending_close_payout"] as const;
 export const LendingTxNames = ["lendingOffer", "lendingBorrow", "lendingRepay", "lendingClosePosition"] as const;
-export const EntityTxNames = ["directPayment", "placeSwapOffer", "prepareCrossJurisdictionSwap", "registerCrossJurisdictionSwap"] as const;
+export const EntityTxNames = ["directPayment", "placeSwapOffer"] as const;
 export const AccountInputKinds = ["dispute", "board_hanko_refresh"] as const;
 export const EntityInputKinds = ["leaderTimeoutVote"] as const;
-export const HoleNames = ["cross_open", "reveal_before_height", "quote_last_ms"] as const;
+export const HoleNames = ["reveal_before_height", "quote_last_ms"] as const;
 export type Hole = (typeof HoleNames)[number];
 
 
@@ -1670,6 +1670,31 @@ export const canonicalCrossRoute = (route: CrossRoute): Result<CrossRoute, Cross
       (r.riskMode || "fully_collateralized") !== "fully_collateralized" ? crossErr("CROSS_J_RISK_MODE_UNSUPPORTED")
       : chain(crossRouteHash(r), (routeHash) => (r.routeHash && String(r.routeHash).toLowerCase() !== routeHash.toLowerCase() ? crossErr("CROSS_J_ROUTE_HASH_MISMATCH") : ok({ ...r, routeHash }))));
   }));
+/** og canonicalAccountDisputeConfig's thrown text for the first invalid route clock (source, then target), or undefined. */
+const disputeConfigText = (configs: readonly unknown[]): string | undefined => {
+  for (const c of configs) {
+    if (!c || typeof c !== "object") return `ACCOUNT_DISPUTE_CONFIG_INVALID:${String(c)}`;
+    const bad = (v: unknown): boolean => { const n = Number(v); return !Number.isSafeInteger(n) || n < 0 || n > MAX_UINT32; };
+    const { leftResponseSeconds: l, rightResponseSeconds: r } = c as DisputeConfig;
+    if (bad(l)) return `ACCOUNT_DISPUTE_LEFT_RESPONSE_SECONDS_INVALID:${String(l)}`;
+    if (bad(r)) return `ACCOUNT_DISPUTE_RIGHT_RESPONSE_SECONDS_INVALID:${String(r)}`;
+    if (Number(l) + Number(r) > MAX_DISPUTE_SECONDS) return `ACCOUNT_DISPUTE_RESPONSE_TOTAL_EXCEEDED:${Number(l) + Number(r)}`;
+  }
+  return undefined;
+};
+/** og withCanonicalCrossJurisdictionRouteHash's thrown message for a canonicalCrossRoute refusal (the rewrite's reasons are bare codes). */
+export const crossRouteErrorText = (route: CrossRoute, reason: string): string => {
+  const firstBadStack = (): string => { for (const j of [route.source.jurisdiction, route.target.jurisdiction]) if (stackOf(j) === undefined) return `${reason}:${trimLower(j)}`; return reason; };
+  switch (reason) {
+    case "CROSS_J_BOOK_JURISDICTION_INVALID": case "CROSS_J_MARKET_JURISDICTION_INVALID": return firstBadStack();
+    case "CROSS_J_REQUIRES_DISTINCT_STACKS": { const s = stackOf(route.source.jurisdiction); return s === undefined ? reason : `${reason}:stack:${s.chainId}:${s.depositoryAddress}`; }
+    case "ACCOUNT_DISPUTE_CONFIG_INVALID": case "ACCOUNT_DISPUTE_RESPONSE_SECONDS_INVALID": case "ACCOUNT_DISPUTE_RESPONSE_TOTAL_EXCEEDED":
+      return disputeConfigText([route.sourceDisputeConfig, route.targetDisputeConfig]) ?? reason;
+    case "CROSS_J_TIME_POLICY_EXPIRES_INVALID": case "CROSS_J_ROUTE_HASH_MISMATCH": return `${reason}:${route.orderId}`;
+    case "CROSS_J_RISK_MODE_UNSUPPORTED": return `${reason}:${route.orderId}:${route.riskMode}`;
+    default: return reason;
+  }
+};
 const hashOrDerive = (r: CrossRoute): Result<string, CrossError> => (r.routeHash ? ok(r.routeHash) : crossRouteHash(r));
 /** og deriveCrossJurisdictionPullId. */
 export const crossPullId = (r: CrossRoute, leg: "source" | "target"): Result<string, CrossError> => map(hashOrDerive(r), (h) => keccak256Hex(utf8(`xln:cross-j:pull-id:v1:${h}:${leg}`)));
@@ -3223,6 +3248,39 @@ const pullAdmission = (a: AccountBody, x: TxOf<"cross_pull_lock">): Result<void,
   const amount = absBig(x.amount);
   return amount > MAX_PAYMENT_AMOUNT ? crossReject("CROSS_J_PULL_AMOUNT_RANGE") : ensureRoom(a, x.tokenId, amount, x.amount < 0n);
 });
+/** og getPullLockAdmissionError's text: pullAdmission's refusal rendered as og's message, or null when admitted. */
+export const pullAdmissionText = (a: AccountBody, x: TxOf<"cross_pull_lock">): string | null => {
+  const r = pullAdmission(a, x);
+  if (r.ok) return null;
+  const e = r.error;
+  if (e._tag === "duplicate") return `Pull ${x.pullId} already exists`;
+  if (e._tag === "insufficient_capacity") return `Insufficient pull capacity: need ${e.requested}, available ${e.available}`;
+  const reason = e._tag === "cross_j" ? e.reason : e._tag;
+  switch (reason) {
+    case "CROSS_J_PULL_ROUTE_REQUIRED": return "Cross-j pull requires both route and binding";
+    case "CROSS_J_PULL_ROUTE_INVALID": { const c = canonicalCrossRoute(x.crossJurisdictionRoute); return `Cross-j pull route invalid: ${c.ok ? reason : crossRouteErrorText(x.crossJurisdictionRoute, c.error.reason)}`; }
+    case "CROSS_J_PULL_ROUTE_NOT_CANONICAL": return "Cross-j pull route is not canonical";
+    case "CROSS_J_PULL_NOT_RESTING": return "Cross-j pull opening must be a zero-progress resting route";
+    case "CROSS_J_PULL_LEG_INVALID": return "Cross-j pull binding leg invalid";
+    case "CROSS_J_PULL_BINDING_MISMATCH": return "Cross-j pull binding does not match route";
+    case "CROSS_J_PULL_TERMS_MISMATCH": return "Cross-j pull terms do not match route";
+    case "CROSS_J_PULL_ENDPOINTS": return "Cross-j pull Account endpoints do not match route leg";
+    case "CROSS_J_PULL_JURISDICTION": return "Cross-j pull jurisdiction does not match Account domain";
+    case "CROSS_J_PULL_ID_INVALID": return "Invalid pullId";
+    case "CROSS_J_PULL_LIMIT": return "Too many open pulls";
+    case "CROSS_J_PULL_CROSS_LIMIT": return `Too many open cross-j pulls: max ${MAX_ACCOUNT_CROSS_J_SWAP_OFFERS}`;
+    case "CROSS_J_PULL_HASH_INVALID": return "Invalid pull hashladder commitment";
+    case "CROSS_J_PULL_HASH_COLLISION": {
+      const orderId = String(x.crossJurisdiction?.orderId || "").trim(), fh = x.fullHash.toLowerCase(), pr = x.partialRoot.toLowerCase();
+      const hit = [...(a.pulls ?? new Map<string, PullRow>()).values()].find((p) => { const o = String(p.crossJurisdiction?.orderId || "").trim(); return !(o && orderId && o === orderId) && (p.fullHash.toLowerCase() === fh || p.partialRoot.toLowerCase() === pr); });
+      return `Pull hash material collides with live pull ${hit?.pullId}`;
+    }
+    case "CROSS_J_PULL_TOKEN_INVALID": return "Invalid pull tokenId";
+    case "CROSS_J_PULL_AMOUNT_ZERO": return "Pull amount must be non-zero";
+    case "CROSS_J_PULL_AMOUNT_RANGE": return `Pull amount out of bounds: ${absBig(x.amount)}`;
+    default: return reason;
+  }
+};
 /** og handlePullLock: admission, the payer-side hold (uint256), and the committed PullCommitment at the frame's jHeight. */
 const crossPullLock = (a: AccountBody, x: TxOf<"cross_pull_lock">, ctx: FoldCtx): BodyStep => chain(pullAdmission(a, x), (): BodyStep => {
   const amount = absBig(x.amount), loserIsLeft = x.amount < 0n, totals = sideTotals(a, x.tokenId);
@@ -4321,6 +4379,8 @@ export type JurisdictionConfig = {
   readonly entityProviderAddress: string; readonly registrationBlock?: number | undefined; readonly entityProviderDeploymentBlock?: number | undefined; readonly blockTimeMs?: number | undefined;
   /** og JurisdictionConfig.rebalancePolicyUsd: whole-USD numbers (og commits them as numbers). */
   readonly rebalancePolicyUsd?: { readonly r2cRequestSoftLimit: number; readonly hardLimit: number; readonly maxFee: number } | undefined;
+  /** og JurisdictionConfig.name: only read for og's cross-j binding message; not committed by the rewrite's root config. */
+  readonly name?: string | undefined;
 };
 /** og EntityState root fields the rewrite carries without interpreting (nonces, reserves, profile, crontabState, ...), by og field name; collection fields in committed radix form. */
 export type EntityCommitted = { readonly [field: string]: Binary };
@@ -4332,6 +4392,9 @@ export type EntityState = {
   readonly leaderState?: LeaderState | undefined;
   /** og EntityState.paybook: absent until the first HTLC entry; the root then commits it instead of `committed.paybook`. */
   readonly paybook?: Paybook | undefined;
+  /** og crossJurisdictionSwaps / crossJurisdictionAuthorizations: absent until the first cross-j setup; the root then commits each as a text-keyed collection. */
+  readonly crossJurisdictionSwaps?: ReadonlyMap<string, CrossRoute> | undefined;
+  readonly crossJurisdictionAuthorizations?: ReadonlyMap<string, CrossRoute> | undefined;
 };
 /** og EntityLeaderTimeoutVoteBody (leader/index.ts buildEntityLeaderVoteBody). */
 export type LeaderVoteBody = { readonly entityId: string; readonly targetHeight: number; readonly previousFrameHash: string; readonly fromView: number; readonly toView: number; readonly previousLeaderId: string; readonly nextLeaderId: string };
@@ -4366,8 +4429,15 @@ export type EntityTx =
   | { readonly type: "propose"; readonly data: { readonly action: ProposalAction; readonly proposer: string } }
   | { readonly type: "vote"; readonly data: { readonly proposalId: string; readonly voter: string; readonly choice: "yes" | "no"; readonly comment?: string | undefined } }
   | { readonly type: "htlcPayment"; readonly data: HtlcPaymentData }
+  /** og cross-j setup (handlers/cross-j/setup.ts): user authorization / hub raw intent, the default proposer's prepared route, the paired hub registration. */
+  | { readonly type: "prepareCrossJurisdictionSwap"; readonly data: { readonly route: CrossRoute } }
+  | { readonly type: "materializeCrossJurisdictionSwap"; readonly data: { readonly proposerSignerId: string; readonly route: CrossRoute } }
+  | { readonly type: "registerCrossJurisdictionSwap"; readonly data: { readonly route: CrossRoute } }
+  /** og certified Entity->Entity command lane: a committed source frame's cross-j commands, wrapped by its emitter (consensus/output/publication.ts). */
+  | { readonly type: "runtimeOutput"; readonly data: RuntimeOutputData }
   | SwapRequestEntityTx
   | LendingEntityTx;
+export type RuntimeOutputData = { readonly protocol: "cross-j"; readonly sourceEntityId: string; readonly sourceSignerId: string; readonly targetEntityId: string; readonly entityTxs: readonly EntityTx[] };
 /** og types/entity-tx.ts placeSwapOffer / proposeCancelSwap (payments/swap-requests.ts): one swap Account tx on the hub Account. */
 export type SwapRequestEntityTx =
   | { readonly type: "placeSwapOffer"; readonly data: { readonly counterpartyEntityId: EntityId; readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint; readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: 0 | 1 | 2 | undefined } }
@@ -4429,7 +4499,9 @@ export interface ProposedEntity extends Tagged<"proposed", EntityEnv & EntityCan
 /** og `lockedFrame`: this validator replayed and signed `frame`. */
 export interface LockedEntity extends Tagged<"locked", EntityEnv & EntityCandidate> {}
 export type EntityReplica = OpenEntity | ProposedEntity | LockedEntity;
-export type EntityContext = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign; readonly self: EntityId; readonly signerId: Address; readonly from?: EntityId | undefined; readonly htlc?: HtlcProposerInfra | undefined };
+export type EntityContext = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign; readonly self: EntityId; readonly signerId: Address; readonly from?: EntityId | undefined; readonly htlc?: HtlcProposerInfra | undefined;
+  /** og env.runtimeSeed: the default proposer derives cross-j hash-ladder seeds from it (never committed). */
+  readonly runtimeSeed?: string | undefined };
 export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large">;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
@@ -4446,6 +4518,8 @@ export type EntityError =
   | Tagged<"leader_vote_invalid" | "leader_vote_equivocation" | "leader_prepared_rejected" | "proposal_superseded" | "hanko_build">
   | Tagged<"profile_update", { reason: "entity" | "entity_kind" | "sectors_invalid" | "sectors_noncanonical" }>
   | Tagged<"htlc_payment", { code: string }>
+  /** og MalformedEntityFrameInputError from a cross-j setup handler: a reject disposition, the outermost tx is evicted. */
+  | Tagged<"cross_j_entity", { reason: string }>
   | Tagged<"unknown_member" | "duplicate_member" | "not_proposer" | "invalid_signature" | "wrong_replica", { address: string }>;
 export type EntityGrammar = { readonly table: typeof EntityTransition; readonly replica: EntityReplica; readonly input: EntityInput; readonly ctx: { readonly [E in EntityEvent]: EntityContext }; readonly output: EntityOutput; readonly error: EntityError };
 export type NextEntityPhase<S extends EntityPhase, E extends EntityEvent> = Next<EntityGrammar, S, E>;
@@ -4456,6 +4530,7 @@ export const encodeEntityState = (s: EntityState): string => canon({
   quorum: match(s.quorum, { teaching: (q) => ({ threshold: q.threshold, members: q.members }), board: (q) => ({ board: encodeBoardHash({ board: q.board }), entityId: q.entityId }) }),
   jurisdiction: s.jurisdiction, accounts: new Map([...s.accounts].map(([peer, a]) => [peer, hashAccountState(a)])),
   height: s.height, timestamp: s.timestamp, jurisdictionConfig: s.jurisdictionConfig, committed: s.committed, leaderState: s.leaderState, paybook: s.paybook,
+  crossJurisdictionSwaps: s.crossJurisdictionSwaps, crossJurisdictionAuthorizations: s.crossJurisdictionAuthorizations,
 } satisfies Record<keyof EntityState, unknown>);
 export const hashEntityState = (s: EntityState): EntityStateHash => keccakUtf8(encodeEntityState(s)) as EntityStateHash;
 const HEX_EXT = 0x48;
@@ -4992,6 +5067,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
   htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId,
+  prepareCrossJurisdictionSwap: () => self, materializeCrossJurisdictionSwap: () => self, registerCrossJurisdictionSwap: () => self, runtimeOutput: () => self,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -5338,7 +5414,7 @@ const profileUpdate = (state: EntityState, p: ProfileUpdate): Result<Binary, Ent
 };
 // ---- og entity/command (command-codec.ts, index.ts), auth/authorization.ts, tx/processing/proposals.ts, system/basic.ts propose/vote ----
 /** og applyEntityTxsInOrder authorization lanes: top-level frame txs, a signed command's individual txs, an approved proposal's collective txs. */
-type TxLane = "top" | "command" | "collective";
+type TxLane = "top" | "command" | "collective" | "runtime";
 /** A tx that changes nothing but the Entity state: no outputs, no events, no Account touched. */
 const idle = (state: EntityState, replicas: Replicas): Draft => ({ state, accountReplicas: replicas, outputs: [], touched: [] });
 const status = (message: string): FrameEvent => ({ type: "status", message });
@@ -6125,6 +6201,358 @@ const htlcFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, 
 const originView = (state: EntityState, replicas: Replicas, timestamp: bigint): HtlcOriginView => ({
   id: state.id, timestamp: Number(timestamp), jHeight: Number(entityJHeight(state)), encryptionKey: String(state.committed["entityEncryptionPublicKey"] ?? ""), paybook: state.paybook ?? EMPTY_PAYBOOK, replicas,
 });
+// ---- og entity/tx/handlers/cross-j/setup.ts + extensions/cross-j/prepared-route.ts + j-events-htlc/cross-jurisdiction-helpers.ts ----
+/** The Entity state a cross-j setup handler reads (og EntityState fields: entityId, timestamp, config.validators/jurisdiction, accounts, both collections). */
+export type CrossEntityView = {
+  readonly id: EntityId; readonly timestamp: number; readonly validators: readonly string[]; readonly jurisdiction: Domain; readonly jurisdictionName?: string | undefined;
+  readonly replicas: Replicas; readonly swaps?: ReadonlyMap<string, CrossRoute> | undefined; readonly auths?: ReadonlyMap<string, CrossRoute> | undefined;
+};
+/** og buildCrossJurisdictionEntityOutput / the raw proposer wake: a certified Entity command (or an empty wake) for one target signer. */
+export type CrossEntityOutput = { readonly entityId: string; readonly signerId: string; readonly txs: readonly EntityTx[] };
+/** og CrossJSetupResult: the collections after the tx, frame messages, Entity outputs, Account work. */
+export type CrossSetup = {
+  readonly swaps?: ReadonlyMap<string, CrossRoute> | undefined; readonly auths?: ReadonlyMap<string, CrossRoute> | undefined;
+  readonly messages: readonly string[]; readonly outputs: readonly CrossEntityOutput[]; readonly accountTxs: readonly AccountTxTarget[];
+};
+type CrossStep = Result<CrossSetup, EntityError>;
+const crossView = (state: EntityState, replicas: Replicas, timestamp: bigint): CrossEntityView => ({
+  id: state.id, timestamp: Number(timestamp), validators: rootConfig(state).validators, jurisdiction: state.jurisdiction, jurisdictionName: state.jurisdictionConfig?.name,
+  replicas, swaps: state.crossJurisdictionSwaps, auths: state.crossJurisdictionAuthorizations,
+});
+const crossSetup = (v: CrossEntityView, o: Partial<CrossSetup> = {}): CrossSetup => ({ swaps: v.swaps, auths: v.auths, messages: [], outputs: [], accountTxs: [], ...o });
+const crossNote = (v: CrossEntityView, message: string, o: Partial<CrossSetup> = {}): CrossStep => ok(crossSetup(v, { ...o, messages: [message] }));
+/** og MalformedEntityFrameInputError (reject: the outer tx is evicted). og haltRuntimeFailure / plain Error map to `invariant` (the input is refused). */
+const crossReject2 = (reason: string): Result<never, EntityError> => err({ _tag: "cross_j_entity", reason });
+/** og normalizeEntityRef (entity/tx/account-key.ts): lowercase, not trimmed. */
+const entityRef = (v: unknown): string => String(v || "").toLowerCase();
+const fatalCross = <T,>(r: Result<T, CrossError>): Result<T, EntityError> => (r.ok ? r : invariant(r.error.reason));
+/** og exactRouteBytes: safeStringify(cloneCrossJurisdictionRoute(route)). */
+const exactRouteBytes = (r: CrossRoute): Result<string, EntityError> => map(fatalCross(cloneCrossRoute(r)), stableJson);
+/** og materializedIntentBytes: the route without pulls, at the stored status and update time. */
+const materializedIntentBytes = (route: CrossRoute, existing: CrossRoute): Result<string, EntityError> =>
+  chain(fatalCross(cloneCrossRoute(route)), ({ sourcePull: _s, targetPull: _t, ...intent }) => exactRouteBytes({ ...intent, status: existing.status, updatedAt: existing.updatedAt }));
+/** og mergeCrossJurisdictionRoute. */
+const mergeCrossRoute = (existing: CrossRoute | undefined, next: CrossRoute): Result<CrossRoute, EntityError> =>
+  chain(fatalCross(cloneCrossRoute(existing ?? next)), (base) => map(fatalCross(cloneCrossRoute(next)), (n) => ({ ...base, ...n })));
+/** og validateCrossJurisdictionRouteTransition. */
+export const crossRouteTransitionError = (existing: CrossRoute | undefined, next: CrossRoute): string | null => {
+  if (existing === undefined) return null;
+  if (existing.routeHash && next.routeHash && existing.routeHash.toLowerCase() !== next.routeHash.toLowerCase()) return "route hash mismatch";
+  if (isCrossTerminal(existing.status)) return `terminal state ${existing.status}`;
+  return crossTransitionAllowed(existing.status, next.status) ? null : `invalid transition ${existing.status}->${next.status}`;
+};
+/** og boundary.ts isCrossJurisdictionRouteParticipant. */
+export const isCrossRouteParticipant = (route: CrossRoute, entityId: string): boolean => {
+  const p = trimLower(entityId);
+  return p !== "" && [route.source.entityId, route.source.counterpartyEntityId, route.target.entityId, route.target.counterpartyEntityId, route.bookOwnerEntityId, route.hubEntityId].some((c) => trimLower(c) === p);
+};
+/** og boundary.ts crossJurisdictionRouteSigner: the board signer the route commits for one Entity owner. */
+export const crossRouteSigner = (route: CrossRoute, entityId: string): string | null => {
+  const t = trimLower(entityId), n = (v: unknown): string | null => trimLower(v) || null;
+  if (!t) return null;
+  if (trimLower(route.source.entityId) === t) return n(route.sourceSignerId);
+  if (trimLower(route.source.counterpartyEntityId) === t) return n(route.sourceHubSignerId);
+  if (trimLower(route.target.entityId) === t) return n(route.targetHubSignerId);
+  if (trimLower(route.target.counterpartyEntityId) === t) return n(route.targetSignerId);
+  const owner = trimLower(route.bookOwnerEntityId || route.source.counterpartyEntityId || route.hubEntityId);
+  if (owner !== t) return null;
+  if (owner === trimLower(route.source.counterpartyEntityId)) return n(route.sourceHubSignerId);
+  return owner === trimLower(route.target.entityId) ? n(route.targetHubSignerId) : null;
+};
+/** og validateCrossJurisdictionLocalBinding: the local leg's stack ref is this Entity's jurisdiction and its route signer is a validator. */
+export const crossLocalBindingError = (v: CrossEntityView, route: CrossRoute): string | null => {
+  const local = entityRef(v.id), is = (x: unknown): boolean => entityRef(x) === local;
+  const sourceP = is(route.source.entityId) || is(route.source.counterpartyEntityId), targetP = is(route.target.entityId) || is(route.target.counterpartyEntityId);
+  if (!sourceP && !targetP) return null;
+  const expected = String((sourceP ? route.source.jurisdiction : route.target.jurisdiction) || "").trim();
+  if (!expected) return "route jurisdiction missing";
+  if (!/^stack:(?:\d+:)?0x[0-9a-fA-F]{40}$/.test(expected)) return `route jurisdiction must be stack ref, got ${expected}`;
+  const localKey = stackIdOf(v.jurisdiction);
+  if (!(localKey && localKey.toLowerCase() === expected.trim().toLowerCase())) return `route jurisdiction ${expected} does not match local jurisdiction ${v.jurisdictionName}`;
+  const hint = is(route.source.entityId) ? trimLower(route.sourceSignerId) : is(route.source.counterpartyEntityId) ? trimLower(route.sourceHubSignerId)
+    : is(route.target.entityId) ? trimLower(route.targetHubSignerId) : trimLower(route.targetSignerId);
+  if (hint) {
+    const validators = new Set(v.validators.map(trimLower).filter(Boolean));
+    if (validators.size > 0 && !validators.has(hint)) return `route signer ${hint} is not a validator for local entity`;
+  }
+  return null;
+};
+/** og assertAccountClockMatchesRoute (prepared-route.ts): the halt message when this leg's Account clock is missing or differs from the route's. */
+const crossLegClockError = (v: CrossEntityView, route: CrossRoute, leg: "source" | "target"): string | null => {
+  const self = trimLower(v.id), l = route[leg], entity = trimLower(l.entityId), counterparty = trimLower(l.counterpartyEntityId), LEG = leg.toUpperCase();
+  const peer = self === entity ? counterparty : self === counterparty ? entity : "";
+  if (!peer) return `CROSS_J_PREPARED_${LEG}_PARTICIPANT_INVALID:${route.orderId}`;
+  const child = v.replicas.get(peer as EntityId);
+  if (child === undefined) return `CROSS_J_PREPARED_${LEG}_ACCOUNT_MISSING:${route.orderId}`;
+  const actual = child.state.terms.disputeConfig, expected = leg === "source" ? route.sourceDisputeConfig : route.targetDisputeConfig;
+  const text = disputeConfigText([actual, expected]);
+  if (text !== undefined) return text;
+  return actual.leftResponseSeconds !== Number(expected.leftResponseSeconds) || actual.rightResponseSeconds !== Number(expected.rightResponseSeconds)
+    ? `CROSS_J_PREPARED_${LEG}_ACCOUNT_CLOCK_MISMATCH:${route.orderId}:actual=${actual.leftResponseSeconds},${actual.rightResponseSeconds}:route=${Number(expected.leftResponseSeconds)},${Number(expected.rightResponseSeconds)}`
+    : null;
+};
+/** og validatePreparedCrossJurisdictionRoute: only public, signed preparation data (pull ids, amounts, signed amounts, clock, one ladder commitment). */
+export const validatePreparedCrossRoute = (v: CrossEntityView, raw: CrossRoute): Result<CrossRoute, EntityError> => {
+  const c = canonicalCrossRoute(raw);
+  if (!c.ok) return invariant(crossRouteErrorText(raw, c.error.reason));
+  const route = c.value, id = route.orderId, sp = route.sourcePull, tp = route.targetPull;
+  if (sp === undefined || tp === undefined) return invariant(`CROSS_J_PREPARED_PULLS_MISSING:${id}`);
+  const eq = (actual: unknown, expected: unknown, code: string): string | null => (actual !== expected ? `${code}:expected=${String(expected)}:actual=${String(actual)}` : null);
+  const status = eq(route.status, "target_prepared", "CROSS_J_PREPARED_STATUS_INVALID");
+  if (status) return invariant(status);
+  const preparedAt = Number(route.updatedAt);
+  if (!Number.isSafeInteger(preparedAt) || preparedAt <= 0) return invariant(`CROSS_J_PREPARED_TIMESTAMP_INVALID:${id}`);
+  if (!Number.isSafeInteger(v.timestamp) || preparedAt - v.timestamp > 30_000) return invariant(`CROSS_J_PREPARED_TIMESTAMP_FUTURE:${id}`);
+  return chain(fatalCross(crossPullId(route, "source")), (sourceId) => chain(fatalCross(crossPullId(route, "target")), (targetId): Result<CrossRoute, EntityError> => {
+    const self = trimLower(v.id), on = (l: CrossLeg): boolean => self === trimLower(l.entityId) || self === trimLower(l.counterpartyEntityId);
+    const hex32 = (x: unknown, code: string): string | null => (/^0x[0-9a-f]{64}$/.test(String(x ?? "").trim().toLowerCase()) ? null : code);
+    const norm = (x: string): string => x.trim().toLowerCase();
+    const checks: readonly (() => string | null)[] = [
+      () => eq(sp.pullId, sourceId, "CROSS_J_PREPARED_SOURCE_PULL_ID"), () => eq(tp.pullId, targetId, "CROSS_J_PREPARED_TARGET_PULL_ID"),
+      () => eq(sp.tokenId, Number(route.source.tokenId), "CROSS_J_PREPARED_SOURCE_TOKEN"), () => eq(tp.tokenId, Number(route.target.tokenId), "CROSS_J_PREPARED_TARGET_TOKEN"),
+      () => eq(sp.amount, BigInt(route.source.amount), "CROSS_J_PREPARED_SOURCE_AMOUNT"), () => eq(tp.amount, BigInt(route.target.amount), "CROSS_J_PREPARED_TARGET_AMOUNT"),
+      () => eq(sp.signedAmount, crossSignedAmount(route.source.counterpartyEntityId, route.source.entityId, BigInt(route.source.amount)), "CROSS_J_PREPARED_SOURCE_SIGNED_AMOUNT"),
+      () => eq(tp.signedAmount, crossSignedAmount(route.target.counterpartyEntityId, route.target.entityId, BigInt(route.target.amount)), "CROSS_J_PREPARED_TARGET_SIGNED_AMOUNT"),
+      () => (on(route.source) ? crossLegClockError(v, route, "source") : null), () => (on(route.target) ? crossLegClockError(v, route, "target") : null),
+      () => hex32(sp.fullHash, "CROSS_J_PREPARED_FULL_HASH_INVALID"), () => hex32(sp.partialRoot, "CROSS_J_PREPARED_PARTIAL_ROOT_INVALID"),
+      () => hex32(tp.fullHash, "CROSS_J_PREPARED_FULL_HASH_INVALID"), () => eq(norm(tp.fullHash), norm(sp.fullHash), "CROSS_J_PREPARED_FULL_HASH_MISMATCH"),
+      () => hex32(tp.partialRoot, "CROSS_J_PREPARED_PARTIAL_ROOT_INVALID"), () => eq(norm(tp.partialRoot), norm(sp.partialRoot), "CROSS_J_PREPARED_PARTIAL_ROOT_MISMATCH"),
+    ];
+    for (const check of checks) { const e = check(); if (e !== null) return invariant(e); }
+    return fatalCross(cloneCrossRoute(route));
+  }));
+};
+/** og CROSS_J_BOOK_MAX_USD_MICROS. */
+const CROSS_J_BOOK_MAX_USD_MICROS = 6_500_000n * 1_000_000n;
+/**
+ * og getCrossJurisdictionLocalUsdCapError: the local Hub leg's USD notional against the book cap. A reference stable is priced at par; any other
+ * token needs og's orderbookExt authority ask, which the rewrite Entity does not hold, so it is unpriced (null, permissionless) like og without one.
+ */
+export const crossUsdCapError = (v: CrossEntityView, route: CrossRoute): string | null => {
+  const entity = entityRef(v.id), stack = stackIdOf(v.jurisdiction).toLowerCase(), roles: ("source" | "target")[] = [];
+  if (entity === entityRef(route.source.counterpartyEntityId) && stack === String(route.source.jurisdiction).toLowerCase()) roles.push("source");
+  if (entity === entityRef(route.target.entityId) && stack === String(route.target.jurisdiction).toLowerCase()) roles.push("target");
+  const role = roles[0];
+  if (roles.length !== 1 || role === undefined) return `CROSS_J_BOOK_USD_VALIDATOR_LEG_INVALID:order=${route.orderId}:entity=${entity}:stack=${stack}:matches=${roles.length}`;
+  const leg = route[role], tokenId = Number(leg.tokenId);
+  if (!REFERENCE_STABLES.has(tokenId)) return null;
+  const amount = BigInt(leg.amount);
+  if (amount <= 0n) return `CROSS_J_BOOK_USD_AMOUNT_INVALID:token=${tokenId}`;
+  const decimals = BigInt(TOKEN_DECIMALS.get(tokenId) ?? 18), numerator = amount * PRICE_SCALE * 1_000_000n, denominator = 10n ** decimals * PRICE_SCALE;
+  const usdMicros = (numerator + denominator - 1n) / denominator;
+  return usdMicros > CROSS_J_BOOK_MAX_USD_MICROS ? `CROSS_J_BOOK_USD_CAP_EXCEEDED:order=${route.orderId}:leg=${role}:usdMicros=${usdMicros}:cap=${CROSS_J_BOOK_MAX_USD_MICROS}` : null;
+};
+/** og buildCrossJurisdictionEntityOutput: a trimmed, lowercased Entity and signer, both required. */
+const crossOutput = (entityId: string, signer: string | undefined, txs: readonly EntityTx[]): Result<CrossEntityOutput, EntityError> => {
+  const e = trimLower(entityId), s = trimLower(signer || "");
+  return !e || !s ? invariant(`CROSS_J_ENTITY_OUTPUT_ROUTE_MISSING:${e || "entity"}:${s || "signer"}`) : ok({ entityId: e, signerId: s, txs });
+};
+/** og authorizeCrossJurisdictionIntent: the user's own authorization record; the source user asks its hub to prepare. */
+const crossAuthorize = (v: CrossEntityView, route: CrossRoute, role: "source" | "target"): CrossStep => {
+  const id = route.orderId;
+  if (route.status !== "intent" || route.sourcePull || route.targetPull) return invariant(`CROSS_J_USER_AUTH_INTENT_INVALID:${id}`);
+  if (isCrossExpired(route, v.timestamp)) return invariant(`CROSS_J_USER_AUTH_EXPIRED:${id}`);
+  const clock = role === "source" ? crossLegClockError(v, route, "source") : null;
+  if (clock) return invariant(clock);
+  const signers: readonly [string, string | undefined][] = [["CROSS_J_SOURCE_SIGNER_MISSING", route.sourceSignerId], ["CROSS_J_SOURCE_HUB_SIGNER_MISSING", route.sourceHubSignerId], ["CROSS_J_TARGET_HUB_SIGNER_MISSING", route.targetHubSignerId], ["CROSS_J_TARGET_SIGNER_MISSING", route.targetSignerId]];
+  for (const [code, s] of signers) if (!entityRef(s)) return invariant(`${code}:${id}`);
+  const auths = v.auths ?? new Map<string, CrossRoute>(), existing = auths.get(id);
+  return chain(fatalCross(cloneCrossRoute(route)), (cloned) => chain(exactRouteBytes(route), (bytes) => chain(existing === undefined ? ok("") : exactRouteBytes(existing), (held): CrossStep => {
+    if (existing !== undefined && held !== bytes) return crossReject2(`CROSS_J_USER_AUTH_CONFLICT:${id}`);
+    const next = existing === undefined ? mapSet(auths, id, cloned) : auths;
+    const message = existing !== undefined ? `🌉 Cross-j swap ${id} auth retry re-emitted by ${role} user` : `🌉 Cross-j swap ${id} authorized by ${role} user`;
+    if (role !== "source") return ok(crossSetup(v, { auths: next, messages: [message] }));
+    return map(crossOutput(route.source.counterpartyEntityId, entityRef(route.sourceHubSignerId), [{ type: "prepareCrossJurisdictionSwap", data: { route: cloned } }]), (out) => crossSetup(v, { auths: next, outputs: [out], messages: [message] }));
+  })));
+};
+/** og prepareRawCrossJurisdictionIntent: the source hub stores the raw intent and wakes its default proposer. */
+const crossPrepareRaw = (v: CrossEntityView, route: CrossRoute): CrossStep => {
+  const id = route.orderId;
+  if (route.status !== "intent") return invariant(`CROSS_J_RAW_PREPARE_STATUS_INVALID:${id}:${route.status}`);
+  if (isCrossExpired(route, v.timestamp)) return crossNote(v, `❌ Cross-j prepare ${id} expired`);
+  if (trimLower(route.source.jurisdiction) === trimLower(route.target.jurisdiction) && Number(route.source.tokenId) === Number(route.target.tokenId)) return crossNote(v, `❌ Cross-j prepare ${id} must cross a jurisdiction or asset boundary`);
+  const clock = crossLegClockError(v, route, "source");
+  if (clock) return crossNote(v, `❌ Cross-j prepare ${id} blocked: ${clock}`);
+  const swaps = v.swaps ?? new Map<string, CrossRoute>(), existing = swaps.get(id);
+  if (existing !== undefined && isCrossTerminal(existing.status) && !existing.sourcePull && !existing.targetPull)
+    return chain(materializedIntentBytes(route, existing), (a) => chain(exactRouteBytes(existing), (b) => (a !== b ? crossReject2(`CROSS_J_RAW_PREPARE_CONFLICT:${id}`) : ok(crossSetup(v, { swaps })))));
+  if (existing?.sourcePull || existing?.targetPull) {
+    const stored = entityRef(existing.routeHash || ""), replay = entityRef(route.routeHash || "");
+    return stored && replay && stored === replay ? crossNote(v, `🌉 Cross-j prepare ${id} already materialized; replay ignored`, { swaps }) : crossReject2(`CROSS_J_RAW_PREPARE_AFTER_MATERIALIZATION:${id}`);
+  }
+  if (existing !== undefined) return chain(exactRouteBytes(existing), (a) => chain(exactRouteBytes(route), (b) => (a !== b ? crossReject2(`CROSS_J_RAW_PREPARE_CONFLICT:${id}`) : ok(crossSetup(v, { swaps })))));
+  return chain(fatalCross(cloneCrossRoute(route)), (cloned): CrossStep => {
+    const first = v.validators[0];
+    if (!first) return invariant(`CROSS_J_SOURCE_HUB_PROPOSER_MISSING:${id}`);
+    return crossNote(v, `🌉 Cross-j swap ${id} awaiting source-hub proposer commitments`, { swaps: mapSet(swaps, id, cloned), outputs: [{ entityId: v.id, signerId: first, txs: [] }] });
+  });
+};
+/** og prepareMaterializedCrossJurisdictionRoute: store the public prepared route and ask both hubs to register it in one frame. */
+const crossPrepareMaterialized = (v: CrossEntityView, route: CrossRoute): CrossStep => chain(validatePreparedCrossRoute(v, route), (prepared) => {
+  const swaps = v.swaps ?? new Map<string, CrossRoute>(), existing = swaps.get(prepared.orderId), blocked = crossRouteTransitionError(existing, prepared);
+  if (blocked) return crossNote(v, `❌ Cross-j prepare ${route.orderId} blocked: ${blocked}`, { swaps });
+  return chain(fatalCross(cloneCrossRoute(prepared)), (pub) => chain(mergeCrossRoute(existing, pub), (merged) => chain(fatalCross(cloneCrossRoute(pub)), (copy) => {
+    const ready: CrossRoute = { ...copy, status: "resting" };
+    return chain(crossOutput(ready.source.counterpartyEntityId, ready.sourceHubSignerId, [{ type: "registerCrossJurisdictionSwap", data: { route: ready } }]), (toSource) =>
+      map(crossOutput(ready.target.entityId, ready.targetHubSignerId, [{ type: "registerCrossJurisdictionSwap", data: { route: ready } }]), (toTarget) =>
+        crossSetup(v, { swaps: mapSet(swaps, pub.orderId, merged), outputs: [toSource, toTarget], messages: [`🌉 Cross-j swap ${prepared.orderId} paired source and target proposals requested by hub`] })));
+  })));
+});
+/** og handlePrepareCrossJurisdictionSwapEntityTx. `viaProposer` is og's default-proposer materialization lane, the only source of prepared payloads. */
+export const crossPrepare = (v: CrossEntityView, raw: CrossRoute, viaProposer = false): CrossStep => {
+  const c = canonicalCrossRoute(raw);
+  if (!c.ok) return crossNote(v, `❌ Cross-j prepare invalid route: ${crossRouteErrorText(raw, c.error.reason)}`);
+  const route = c.value, local = entityRef(v.id), sourceUser = entityRef(route.source.entityId), targetUser = entityRef(route.target.counterpartyEntityId), sourceHub = entityRef(route.source.counterpartyEntityId);
+  if (local !== sourceUser && local !== targetUser && local !== sourceHub) return crossNote(v, `❌ Cross-j prepare ${route.orderId} wrong source hub`);
+  const binding = crossLocalBindingError(v, route);
+  if (binding) return crossNote(v, `❌ Cross-j prepare ${route.orderId} blocked: ${binding}`);
+  const hasSource = route.sourcePull !== undefined, hasTarget = route.targetPull !== undefined;
+  if (hasSource !== hasTarget) return invariant(`CROSS_J_PREPARED_PAYLOAD_PARTIAL:${route.orderId}`);
+  if (local === sourceUser || local === targetUser) return hasSource ? invariant(`CROSS_J_USER_AUTH_PREPARED_FORBIDDEN:${route.orderId}`) : crossAuthorize(v, route, local === sourceUser ? "source" : "target");
+  if (hasSource && !viaProposer) return crossNote(v, `❌ Cross-j prepare ${route.orderId} rejected: prepared payloads require the hub proposer lane`);
+  return hasSource ? crossPrepareMaterialized(v, route) : crossPrepareRaw(v, route);
+};
+/** og handleMaterializeCrossJurisdictionSwapEntityTx: the default proposer's prepared route for exactly the stored raw intent, under the local USD cap. */
+export const crossMaterialize = (v: CrossEntityView, data: { readonly proposerSignerId: string; readonly route: CrossRoute }): CrossStep => {
+  const expected = entityRef(v.validators[0] || ""), claimed = entityRef(data.proposerSignerId), id = data.route.orderId;
+  if (!expected || claimed !== expected) return invariant(`CROSS_J_MATERIALIZE_PROPOSER_INVALID:${claimed || "missing"}:${expected || "missing"}`);
+  const existing = v.swaps?.get(id);
+  if (existing !== undefined && isCrossTerminal(existing.status) && !existing.sourcePull && !existing.targetPull)
+    return chain(materializedIntentBytes(data.route, existing), (a) => chain(exactRouteBytes(existing), (b) => (a !== b ? invariant(`CROSS_J_MATERIALIZE_INTENT_MISMATCH:${id}`) : ok(crossSetup(v)))));
+  if (existing === undefined || existing.sourcePull || existing.targetPull || existing.status !== "intent") return invariant(`CROSS_J_MATERIALIZE_INTENT_MISSING:${id}`);
+  return chain(materializedIntentBytes(data.route, existing), (a) => chain(exactRouteBytes(existing), (b): CrossStep => {
+    if (a !== b) return invariant(`CROSS_J_MATERIALIZE_INTENT_MISMATCH:${id}`);
+    const cap = crossUsdCapError(v, data.route);
+    if (cap !== null) return cap.startsWith("CROSS_J_BOOK_USD_CAP_EXCEEDED:") ? crossNote(v, `🌉 Cross-j materialization ${id} rejected before Account lock: ${cap}`) : invariant(cap);
+    return crossPrepare(v, data.route, true);
+  }));
+};
+/** og buildSourceRegistrationTxs / buildTargetRegistrationTxs: the hub's pull lock (and, on the source leg, the cross-j swap offer). */
+const crossRegistrationTxs = (v: CrossEntityView, route: CrossRoute, leg: "source" | "target"): Result<readonly AccountTxTarget[], EntityError> => {
+  const pull = leg === "source" ? route.sourcePull : route.targetPull, LEG = leg.toUpperCase();
+  if (pull === undefined) return invariant(`CROSS_J_REGISTER_${LEG}_PULL_MISSING:${route.orderId}`);
+  const peer = entityRef(leg === "source" ? route.source.entityId : route.target.counterpartyEntityId);
+  if (!v.replicas.has(peer as EntityId)) return invariant(`CROSS_J_${LEG}_ACCOUNT_MISSING:${route.orderId}`);
+  return chain(fatalCross(crossPullBinding(route, leg)), (binding) => chain(fatalCross(cloneCrossRoute(route)), (clone): Result<readonly AccountTxTarget[], EntityError> => {
+    const lock: AccountTxTarget = { accountId: peer, tx: { type: "cross_pull_lock", pullId: pull.pullId, tokenId: String(pull.tokenId) as TokenId, amount: pull.signedAmount, fullHash: pull.fullHash, partialRoot: pull.partialRoot, crossJurisdiction: binding, crossJurisdictionRoute: clone } };
+    if (leg === "target") return ok([lock]);
+    return chain(tokenDecimals(route.source.tokenId), (give) => map(tokenDecimals(route.target.tokenId), (want): readonly AccountTxTarget[] => [lock, { accountId: peer, tx: {
+      type: "swap_offer", offerId: route.orderId, giveTokenId: String(route.source.tokenId) as TokenId, giveTokenDecimals: Number(give), giveAmount: route.source.amount,
+      wantTokenId: String(route.target.tokenId) as TokenId, wantTokenDecimals: Number(want), wantAmount: route.target.amount, maxFee: 0n, minNetReceive: route.target.amount,
+      ...opt("priceTicks", route.priceTicks), timeInForce: 0, crossJurisdiction: clone,
+    } }]));
+  }));
+};
+/** og handleRegisterCrossJurisdictionSwapEntityTx: record the route; an opening `resting` registration queues this hub's Account legs after a pull pre-check. */
+export const crossRegister = (v: CrossEntityView, raw: CrossRoute): CrossStep => {
+  const c = canonicalCrossRoute(raw);
+  if (!c.ok) return crossNote(v, `❌ Cross-j register invalid route: ${crossRouteErrorText(raw, c.error.reason)}`);
+  const route = c.value, id = route.orderId;
+  if (!isCrossRouteParticipant(route, v.id)) return crossNote(v, `❌ Cross-j register ${id} routed to non-participant entity`);
+  const binding = crossLocalBindingError(v, route);
+  if (binding) return crossNote(v, `❌ Cross-j register ${id} blocked: ${binding}`);
+  const local = entityRef(v.id), sourceHub = entityRef(route.source.counterpartyEntityId), targetHub = entityRef(route.target.entityId);
+  const existing = v.swaps?.get(id), blocked = crossRouteTransitionError(existing, route);
+  if (blocked) return crossNote(v, `❌ Cross-j swap ${id} register blocked: ${blocked}`);
+  const opening = existing === undefined || existing.status === "intent" || existing.status === "target_prepared";
+  const leg: "source" | "target" | undefined = local === sourceHub ? "source" : local === targetHub ? "target" : undefined;
+  const precheck = (): Result<string | null, EntityError> => {
+    const pull = leg === undefined ? undefined : leg === "source" ? route.sourcePull : route.targetPull;
+    if (!opening || route.status !== "resting" || pull === undefined || leg === undefined) return ok(null);
+    const peer = leg === "source" ? route.source.entityId : route.target.counterpartyEntityId, child = v.replicas.get(entityRef(peer) as EntityId);
+    if (child === undefined) return invariant(`CROSS_J_REGISTER_ACCOUNT_MISSING:${id}:${peer}`);
+    return map(crossRegistrationTxs(v, route, leg), (txs) => { const lock = txs.find((t) => t.tx.type === "cross_pull_lock")?.tx; return lock?.type === "cross_pull_lock" ? pullAdmissionText(child.state, lock) : null; });
+  };
+  return chain(precheck(), (refused) => {
+    if (refused !== null) return crossNote(v, `❌ Cross-j register ${id} rejected before Account queue: ${refused}`);
+    return chain(mergeCrossRoute(existing, route), (merged): CrossStep => {
+      const registered = crossSetup(v, { swaps: mapSet(v.swaps ?? new Map<string, CrossRoute>(), id, merged), messages: [`🌉 Cross-j swap ${id} registered`] });
+      if (!opening || route.status !== "resting") return ok(registered);
+      if (!route.sourcePull || !route.targetPull) return invariant(`CROSS_J_REGISTER_OPENING_PULLS_MISSING:${id}`);
+      if (leg === undefined) return ok(registered);
+      const after: CrossEntityView = { ...v, swaps: registered.swaps };
+      const checked = leg === "source" ? map(validatePreparedCrossRoute(after, { ...route, status: "target_prepared" }), () => undefined) : ok(undefined);
+      return chain(checked, () => map(crossRegistrationTxs(after, route, leg), (accountTxs) => ({ ...registered, accountTxs })));
+    });
+  });
+};
+/** og assertRuntimeOutputAuthorization for the rewrite's tx kinds: self control continuations, or the two sibling edges a committed route names. */
+export const runtimeOutputAuthError = (state: EntityState, o: RuntimeOutputData): string | null => {
+  const source = trimLower(o.sourceEntityId), signer = trimLower(o.sourceSignerId), target = trimLower(o.targetEntityId);
+  if (!source || !signer || !target || target !== trimLower(state.id)) return `RUNTIME_OUTPUT_TARGET_MISMATCH:${target || "missing"}:${state.id}`;
+  if (o.entityTxs.length === 0) return "RUNTIME_OUTPUT_TXS_MISSING";
+  if (source === target && o.entityTxs.every((tx) => tx.type === "prepareDispute")) {
+    const board = new Set(rootConfig(state).validators);
+    return board.has(signer) ? null : `RUNTIME_OUTPUT_SOURCE_SIGNER_MISMATCH:${source}:${signer}:current-board`;
+  }
+  if (source === target && !o.entityTxs.every((tx) => tx.type === "registerCrossJurisdictionSwap" && trimLower(tx.data.route.source.counterpartyEntityId) === source))
+    return `RUNTIME_OUTPUT_SELF_FORBIDDEN:${source}:${o.entityTxs.map((tx) => tx.type).join(",")}`;
+  for (const tx of o.entityTxs) {
+    if (isProtocolTx(tx)) return `RUNTIME_OUTPUT_NESTED_PROTOCOL_TX_FORBIDDEN:${tx.type}`;
+    const route = tx.type === "disputeStart" ? (tx.data.crossJurisdictionRouteId ? state.crossJurisdictionSwaps?.get(tx.data.crossJurisdictionRouteId) : undefined)
+      : "data" in tx && tx.data !== null && typeof tx.data === "object" && "route" in tx.data ? (tx.data as { readonly route?: CrossRoute }).route : undefined;
+    if (route === undefined || typeof route !== "object" || !isCrossRouteParticipant(route, source) || !isCrossRouteParticipant(route, target)) return `RUNTIME_OUTPUT_NON_SIBLING_FORBIDDEN:${tx.type}:${source}:${target}`;
+    const expected = crossRouteSigner(route, source);
+    if (!expected || expected !== signer) return `RUNTIME_OUTPUT_SOURCE_SIGNER_MISMATCH:${source}:${signer}:${expected || "missing"}`;
+    const src = (allowed: readonly unknown[]): string | null => {
+      const set = new Set(allowed.map(entityRef).filter(Boolean));
+      return set.has(source) ? null : `RUNTIME_OUTPUT_SEMANTIC_SOURCE_MISMATCH:${tx.type}:${source || "missing"}:${[...set].join(",") || "none"}`;
+    };
+    if (tx.type === "prepareCrossJurisdictionSwap") {
+      const e = src([route.source.entityId]), want = trimLower(route.source.counterpartyEntityId);
+      if (e) return e;
+      if (!want || target !== want) return `RUNTIME_OUTPUT_SEMANTIC_TARGET_MISMATCH:${tx.type}:${target || "missing"}:${want || "missing"}`;
+    } else if (tx.type === "registerCrossJurisdictionSwap") {
+      const e = src([route.source.counterpartyEntityId]), sh = trimLower(route.source.counterpartyEntityId), th = trimLower(route.target.entityId);
+      if (e) return e;
+      if (target !== sh && target !== th) return `RUNTIME_OUTPUT_SEMANTIC_TARGET_MISMATCH:${tx.type}:${target}:${sh},${th}`;
+    } else return `RUNTIME_OUTPUT_SEMANTIC_VARIANT_FORBIDDEN:${tx.type}`;
+  }
+  return null;
+};
+/** A cross-j setup's effects on the Entity draft: both collections, frame messages, raw outputs (wrapped at commit), the hub's Account work. */
+const crossDraft = (state: EntityState, replicas: Replicas, s: CrossSetup, timestamp: bigint): Draft => {
+  const next: EntityState = { ...state, ...opt("crossJurisdictionSwaps", s.swaps), ...opt("crossJurisdictionAuthorizations", s.auths) };
+  const outputs = s.outputs.map((o): EntityOutput => o.txs.length === 0
+    ? { to: o.entityId as EntityId, signerId: o.signerId as Address, input: { kind: "txs", timestamp, txs: [] } }
+    : { to: o.entityId as EntityId, signerId: o.signerId as Address, input: { kind: "txs", timestamp, txs: [{ type: "runtimeOutput", data: { protocol: "cross-j", sourceEntityId: lower(state.id), sourceSignerId: "", targetEntityId: o.entityId, entityTxs: o.txs } }] } });
+  const start: Draft = { state: next, accountReplicas: replicas, outputs, events: s.messages.map(status), touched: [] };
+  return s.accountTxs.reduce((d, t) => ({ ...queueReturned(d, t), events: d.events, touched: [...(d.touched ?? []), t.accountId as EntityId] }), start);
+};
+/** og materializeCommittedEntityOutputs: a cross-j command leaves only from the frame's emitter, stamped with its signer; wakes pass on every replica. */
+const publishCommitted = (outputs: readonly EntityOutput[], self: Address, emitter: string): readonly EntityOutput[] => outputs.flatMap((o): readonly EntityOutput[] => {
+  const tx = "input" in o && o.input.kind === "txs" && o.input.txs.length === 1 ? o.input.txs[0] : undefined;
+  if (tx === undefined || tx.type !== "runtimeOutput" || tx.data.sourceSignerId !== "" || !("input" in o) || o.input.kind !== "txs") return [o];
+  return signerId(self) !== signerId(emitter) ? [] : [{ ...o, input: { ...o.input, txs: [{ ...tx, data: { ...tx.data, sourceSignerId: signerId(self) } }] } }];
+});
+/** og appendDefaultProposerCrossJMaterializations: the source hub's default proposer prepares each stored raw intent it owns, outside a commit phase. */
+const crossMaterializations = (r: EntityReplica, txs: readonly EntityTx[], ctx: EntityContext, now: bigint): Result<readonly EntityTx[], EntityError> => {
+  const proposer = trimLower(rootConfig(r.state).validators[0]);
+  if (!proposer || signerId(r.signerId) !== proposer) return ok(txs);
+  const nested = (tx: EntityTx): readonly EntityTx[] => (tx.type === "entityCommand" ? tx.data.txs : tx.type === "runtimeOutput" && tx.data.protocol === "cross-j" ? tx.data.entityTxs : [tx]);
+  if (txs.some((tx) => nested(tx).some((n) => n.type === "accountInput" || n.type === "registerCrossJurisdictionSwap"))) return ok(txs);
+  const pending = new Set([...r.mempool, ...txs].flatMap((tx) => nested(tx).flatMap((n) => (n.type === "materializeCrossJurisdictionSwap" || n.type === "registerCrossJurisdictionSwap" ? [n.data.route.orderId] : []))));
+  const routes = [...(r.state.crossJurisdictionSwaps?.values() ?? [])].sort((a, b) => a.orderId.localeCompare(b.orderId));
+  return map(foldResult<readonly EntityTx[], CrossRoute, EntityError>(routes, [], (added, route) => {
+    if (route.status !== "intent" || route.sourcePull || route.targetPull || pending.has(route.orderId) || trimLower(route.source.counterpartyEntityId) !== trimLower(r.state.id)) return ok(added);
+    pending.add(route.orderId);
+    return map(fatalCross(prepareCrossRoute(route, { runtimeSeed: ctx.runtimeSeed, now: Number(now) })), (prepared): readonly EntityTx[] => [...added, { type: "materializeCrossJurisdictionSwap", data: { proposerSignerId: signerId(r.signerId), route: prepared } }]);
+  }), (added) => (added.length > 0 ? [...txs, ...added] : txs));
+};
+/** og selectCrossJCommitPhaseTxs: an Account transition and a cross-j setup never share a frame; setup (and a deferred author's later commands) waits. */
+const selectCommitPhaseTxs = (txs: readonly EntityTx[]): readonly EntityTx[] => {
+  const nested = (tx: EntityTx): readonly EntityTx[] => (tx.type === "entityCommand" ? tx.data.txs : tx.type === "runtimeOutput" && tx.data.protocol === "cross-j" ? tx.data.entityTxs : [tx]);
+  const transition = (tx: EntityTx): boolean => nested(tx).some((n) => n.type === "accountInput");
+  const setup = (tx: EntityTx): boolean => nested(tx).some((n) => n.type === "materializeCrossJurisdictionSwap" || n.type === "registerCrossJurisdictionSwap");
+  if (!txs.some(transition) || !txs.some(setup)) return txs;
+  const deferred = new Set<string>();
+  return txs.filter((tx) => {
+    if (tx.type !== "entityCommand") return !setup(tx);
+    const author = `${tx.data.boardHash}:${tx.data.boardEpoch}:${tx.data.authorSignerId}`.toLowerCase();
+    if (deferred.has(author) || setup(tx)) { deferred.add(author); return false; }
+    return true;
+  });
+};
 const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldContext, lane: TxLane = "top"): Result<Draft, EntityError> => {
   const origin = originOf(tx, state.id), peer = peerOf(tx, state.id);
   const authorized = laneRefusal(tx, lane);
@@ -6193,6 +6621,15 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const requests = hubConfigOf(state) === undefined ? autoRebalance(updated, state.id) : [];
       const put = putChild(state, replicas, to, updated);
       return requests.length === 0 ? ok({ ...put, outputs: [] }) : map(admitAt(updated, requests, state.id, L0_CLOCK, ctx.verify), (admitted) => ({ ...putChild(state, replicas, to, admitted), outputs: [wake(state, ctx.timestamp)] }));
+    },
+    // og cross-j setup handlers (setup.ts) and the certified runtimeOutput lane (consensus/frame/application.ts applyRuntimeOutput)
+    prepareCrossJurisdictionSwap: (x) => map(crossPrepare(crossView(state, replicas, ctx.timestamp), x.data.route), (s) => crossDraft(state, replicas, s, ctx.timestamp)),
+    materializeCrossJurisdictionSwap: (x) => map(crossMaterialize(crossView(state, replicas, ctx.timestamp), x.data), (s) => crossDraft(state, replicas, s, ctx.timestamp)),
+    registerCrossJurisdictionSwap: (x) => map(crossRegister(crossView(state, replicas, ctx.timestamp), x.data.route), (s) => crossDraft(state, replicas, s, ctx.timestamp)),
+    runtimeOutput: (x) => {
+      if (x.data.protocol !== "cross-j") return invariant(`RUNTIME_OUTPUT_PROTOCOL_INVALID:${String(x.data.protocol)}`);
+      const refused = runtimeOutputAuthError(state, x.data);
+      return refused !== null ? invariant(refused) : foldNested(state, replicas, x.data.entityTxs, ctx, "runtime");
     },
     htlcPayment: (x) => chain(validatePreparedHtlcPayment(originView(state, replicas, ctx.timestamp), x, ctx.htlc ?? EMPTY_HTLC_INFRA), (p) => {
       const next = htlcPaymentStep(p, state.paybook ?? EMPTY_PAYBOOK, Number(ctx.timestamp));
@@ -6290,7 +6727,15 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
 export const entityRootOf = (state: EntityState, replicas: Replicas): Result<string, EntityError> =>
   chain(frameNumber(state.height), (height) => chain(frameNumber(state.timestamp), (timestamp) => chain(traverse([...replicas], ([peer, child]) => installedAccount(state.id, peer, child)),
     (accounts) => chain(state.paybook === undefined ? ok(state.committed) : map(paybookSection(state.paybook), (paybook): EntityCommitted => ({ ...state.committed, paybook })),
-      (committed) => entityStateRoot({ config: rootConfig(state), accounts, entityId: state.id, height, timestamp, committed, leaderState: state.leaderState })))));
+      (withPaybook) => chain(crossSections(withPaybook, state), (committed) => entityStateRoot({ config: rootConfig(state), accounts, entityId: state.id, height, timestamp, committed, leaderState: state.leaderState }))))));
+/** og state-root.ts: crossJurisdictionSwaps / crossJurisdictionAuthorizations commit as text-keyed collections once they exist. */
+const crossSections = (committed: EntityCommitted, state: EntityState): Result<EntityCommitted, EntityError> => {
+  const section = (m: ReadonlyMap<string, CrossRoute> | undefined): Result<Binary | undefined, EntityError> =>
+    m === undefined ? ok(undefined) : map(entityCollectionCommitment(new Map([...m].map(([k, v]) => [k, v as unknown as Binary]))), (c) => c as unknown as Binary);
+  return chain(section(state.crossJurisdictionSwaps), (swaps) => map(section(state.crossJurisdictionAuthorizations), (auths): EntityCommitted => ({
+    ...committed, ...(swaps === undefined ? {} : { crossJurisdictionSwaps: swaps }), ...(auths === undefined ? {} : { crossJurisdictionAuthorizations: auths }),
+  })));
+};
 /** og computeEntityFrameAuthorityRoot(buildEntityFrameAuthority(state)): config + normalizeAuthorityLeader(leaderState). */
 const authorityRoot = (state: EntityState): Result<string, EntityRootError> => {
   const config = rootConfig(state), leader = signerId(state.leaderState?.activeValidatorId ?? config.validators[0] ?? "");
@@ -6357,15 +6802,21 @@ const installFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash
   // og finalizeCommitNotification: votes reset; a relay certificate for exactly this frame stays pending.
   const relay = r.frame.leader.relayCertificate, pending = relay !== undefined && relay.preparedFrameHash === frameHash ? relay : undefined;
   const opened: OpenEntity = { ...openEntity(r.signerId, draft.state, { height: r.frame.height, prevFrameHash: frameHash }, withoutTxs(r.mempool, r.frame.txs), draft.accountReplicas), leaderVotes: new Map(), ...opt("pendingLeaderCertificate", pending) };
-  return ok(done(opened, [...draft.outputs, ...others.map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "proposal", frame: r.frame, signatures } }))]));
+  // og finalizeCommitNotification emitter: the relay certificate's next leader for exactly this frame, else the frame's proposer.
+  const emitter = pending !== undefined ? pending.nextLeaderId : r.frame.leader.proposerSignerId;
+  return ok(done(opened, [...publishCommitted(draft.outputs, r.signerId, emitter), ...others.map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "proposal", frame: r.frame, signatures } }))]));
 });
 /** og admitEntityTransactions + startEntityProposalIfReady: queue, forward a non-leader mempool to the leader, or propose from the mempool. */
 const admitTxs = <R extends EntityReplica>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<R, EntityError> => {
   if (input.timestamp < 0n || input.timestamp > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "frame_timestamp_invalid", timestamp: input.timestamp });
   const from = ctx.from;
-  if (from !== undefined && (from === ctx.self || !input.txs.every((tx) => tx.type === "accountInput" && namesEntity(tx.data.fromEntityId, from) && namesEntity(tx.data.toEntityId, ctx.self)))) return err({ _tag: "from_not_converted" });
-  if (input.txs.length > ENTITY_MEMPOOL_SIZE || r.mempool.length + input.txs.length > ENTITY_MEMPOOL_SIZE) return err({ _tag: "mempool_full" });
-  return ok({ ...r, mempool: appendMempool(r.mempool, input.txs) });
+  // og external ingress: Account inputs from their sender, or exactly one certified runtimeOutput naming the sending Entity as its source
+  const certified = input.txs.length === 1 && input.txs[0]?.type === "runtimeOutput" && from !== undefined && namesEntity(input.txs[0].data.sourceEntityId, from);
+  if (from !== undefined && !certified && (from === ctx.self || !input.txs.every((tx) => tx.type === "accountInput" && namesEntity(tx.data.fromEntityId, from) && namesEntity(tx.data.toEntityId, ctx.self)))) return err({ _tag: "from_not_converted" });
+  return chain(crossMaterializations(r, input.txs, ctx, input.timestamp), (txs): Result<R, EntityError> => {
+    if (txs.length > ENTITY_MEMPOOL_SIZE || r.mempool.length + txs.length > ENTITY_MEMPOOL_SIZE) return err({ _tag: "mempool_full" });
+    return ok({ ...r, mempool: appendMempool(r.mempool, txs) });
+  });
 };
 /** og admission: a replica that is not the proposal leader forwards its mempool to that leader. */
 const forwarded = (r: EntityEnv, timestamp: bigint): readonly EntityOutput[] => {
@@ -6383,8 +6834,10 @@ const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: Entity
   const leader: FrameLeader = { proposerSignerId: self, view, ...opt("certificate", pending) };
   const leaderState: LeaderState = { activeValidatorId: self, view, changedAtHeight: pending !== undefined ? Number(queued.head.height) + 1 : queued.state.leaderState?.changedAtHeight ?? 0 };
   // og materializeEntityInfraContext: the proposer prepares every htlcPayment before the fold; a payment it cannot prepare is evicted like any refused tx.
-  const prepared = queued.mempool.some((tx) => tx.type === "htlcPayment") ? materializeOriginated(originView(queued.state, queued.accountReplicas, timestamp), ctx.htlc?.profiles ?? [], queued.mempool, ctx.htlc ?? { profiles: [] }) : { originated: [], refused: new Map<EntityTx, EntityError>() };
-  const txs = queued.mempool.filter((tx) => !prepared.refused.has(tx)), [firstRefusal] = prepared.refused.values();
+  // og selectCrossJCommitPhaseTxs: cross-j setup never shares a frame with an Account transition; the deferred txs stay queued.
+  const phase = selectCommitPhaseTxs(queued.mempool);
+  const prepared = phase.some((tx) => tx.type === "htlcPayment") ? materializeOriginated(originView(queued.state, queued.accountReplicas, timestamp), ctx.htlc?.profiles ?? [], phase, ctx.htlc ?? { profiles: [] }) : { originated: [], refused: new Map<EntityTx, EntityError>() };
+  const txs = phase.filter((tx) => !prepared.refused.has(tx)), [firstRefusal] = prepared.refused.values();
   if (txs.length === 0 && firstRefusal !== undefined) return err(firstRefusal);
   // og materializeHtlcPreparedInfraContext: the proposer decrypts every inbound onion layer against the pre-frame state; validators replay the same bytes.
   const inbound = { state: queued.state, replicas: queued.accountReplicas, timestamp: Number(timestamp), publicKey: String(queued.state.committed["entityEncryptionPublicKey"] ?? ""), privateKey: ctx.htlc?.encryptionPrivateKey };
@@ -6639,7 +7092,9 @@ export type Verifiers = { readonly verify: Verify; readonly verifyMember: Member
 /** og capability markers: `local` holds the exact RuntimeTx objects this process authorized (og's Symbol tags); replay trusts the WAL. */
 export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; readonly local?: ReadonlySet<RuntimeTx> | undefined;
   /** og EntityRuntimeContext gossip + liveness + proposer entropy, per Entity (the HTLC proposer infrastructure). */
-  readonly htlcInfra?: ((entityId: EntityId) => HtlcProposerInfra | undefined) | undefined };
+  readonly htlcInfra?: ((entityId: EntityId) => HtlcProposerInfra | undefined) | undefined;
+  /** og env.runtimeSeed: the process's private seed; a source hub's default proposer derives cross-j hash-ladder seeds from it. */
+  readonly runtimeSeed?: string | undefined };
 export const ZERO_FRAME_HASH = `0x${"00".repeat(32)}`;
 export const replicaKey = (entity: EntityId, signer: string): string => `${entity}:${signerId(signer)}`;
 export const createRuntime = (jurisdictions: Iterable<string> = []): Runtime =>
@@ -7055,9 +7510,7 @@ export type JState = { readonly reserves: ReadonlyMap<number, bigint>; readonly 
 export type LadderTx = { readonly type: "ladder_reveal"; readonly revealer: EntityId; readonly counter: EntityId; readonly ladderHash: Hash; readonly targetRole: boolean; readonly fillRatio: number; readonly revealedAt: bigint };
 export type EntityRouteTx =
   | { readonly type: "directPayment"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly description?: string | undefined; readonly invoiceId?: string | undefined }
-  | ({ readonly type: "placeSwapOffer" } & SwapOfferTerms)
-  | { readonly type: "prepareCrossJurisdictionSwap" }
-  | { readonly type: "registerCrossJurisdictionSwap" };
+  | ({ readonly type: "placeSwapOffer" } & SwapOfferTerms);
 export type HostInput = { readonly kind: "dispute" };
 export type HostCtx = { readonly timestamp: bigint; readonly jHeight: bigint; readonly from?: EntityId | undefined };
 export type HostEffect = Effect | Tagged<"start_dispute", { start: DisputeStart }> | Tagged<"send", { message: AccountPeerInput }>;
@@ -7098,8 +7551,7 @@ const routeEntity = (tx: EntityRouteTx, self: EntityId, id: AccountId): Result<A
     return !party.ok || x.recipient !== party.value.peer ? err({ _tag: "recipient" }) : ok({ type: "payment", tokenId: x.tokenId, amount: x.amount });
   },
   placeSwapOffer: ({ type: _, ...offer }) => ok({ type: "swap_offer", ...offer }),
-  // og htlcPayment is an Entity tx with its own onion, paybook and prepared frame context (see foldTx `htlcPayment`), never a one-Account Host route.
-  prepareCrossJurisdictionSwap: () => err({ _tag: "unchosen", hole: "cross_open" }), registerCrossJurisdictionSwap: () => err({ _tag: "unchosen", hole: "cross_open" }),
+  // og htlcPayment and the cross-j setup (prepare / materialize / register, foldTx) are Entity txs, never a one-Account Host route.
 });
 /**
  * og j-events.ts applyDisputeStartedJEvent / applyDisputeFinalizedJEvent (J7 dispatch): a DisputeStarted / DisputeFinalized event whose account
