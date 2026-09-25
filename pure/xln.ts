@@ -1626,8 +1626,10 @@ export type NextAccountPhase<S extends AccountPhase, E extends AccountEvent> = N
 export type AccountCases<E extends AccountEvent> = Cases<AccountGrammar, E>;
 export type AccountApply<R extends AccountReplica = AccountReplica> = Apply<R, AccountOutput>;
 export interface DisputeRequired extends Tagged<"dispute_required", FrameEvidence> {}
+/** A refusal after the bundled ACK already committed: `committed` is the Account-level post-state og keeps (its Entity then evicts the whole input). */
+export interface RejectedAfterAck extends Tagged<"rejected_after_ack", { cause: AccountReplicaError; committed: AccountApply }> {}
 export type AccountReplicaError =
-  | BodyError | DisputeError | EnvelopeError | DisputeRequired
+  | BodyError | DisputeError | EnvelopeError | DisputeRequired | RejectedAfterAck
   | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch" | "frame_hash_mismatch" | "state_root_mismatch" | "ack_unmatched">
   | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }>
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
@@ -1880,9 +1882,12 @@ const carriedWithoutFrame = (r: OpenAccount | ReceivedAccount, input: AckFrame, 
   input.ack === null ? ok(undefined) : map(headAck(r, input.ack, ctx, input.frame.height, input.ack.height), () => undefined);
 const pastGates = <R extends AccountReplica, S extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAccountContext, rest: () => Verb<S>): Verb<R | S> =>
   chain(checkAckFrame(input, ctx), () => match(replayGate(r, input, ctx), { answered: ({ result }): Verb<R | S> => result, continue: (): Verb<R | S> => rest() }));
-const thenProposal = (acked: Verb<OpenAccount | ProposedAccount>, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => chain(acked, (a) =>
-  map(match(a.replica, { open: (o): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => proposalOnOpen(o, input, ctx), proposed: (p): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => proposalOnProposed(p, input, ctx) }),
-    (p) => ({ replica: p.replica, outputs: [...a.outputs, ...p.outputs] })));
+/** og index.ts: the ACK phase commits before the proposal phase runs, so a refused successor frame leaves the ACK installed. */
+const thenProposal = (acked: Verb<OpenAccount | ProposedAccount>, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => chain(acked, (a) => {
+  const next = match(a.replica, { open: (o): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => proposalOnOpen(o, input, ctx), proposed: (p): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => proposalOnProposed(p, input, ctx) });
+  if (!next.ok && a.replica._tag === "open") return err({ _tag: "rejected_after_ack", cause: next.error, committed: a });
+  return map(next, (p) => ({ replica: p.replica, outputs: [...a.outputs, ...p.outputs] }));
+});
 const carriedAck = (r: ProposedAccount, a: AccountAck, head: HeadAck, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ProposedAccount> => match(head, {
   identity: (): Verb<OpenAccount | ProposedAccount> => ok(done(r)),
   advance: ({ target, validated }): Verb<OpenAccount | ProposedAccount> => {
@@ -1951,8 +1956,10 @@ export const applyDelivered = (r: AccountReplica, input: AccountInput, delivery:
   }), () => applyAccountInput(r, input, ctx));
 export const disputeUnsafe = (r: AccountReplica, applied: Result<AccountApply, AccountReplicaError>, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => {
   if (applied.ok) return applied;
-  const evidence = evidenceOf(applied.error);
-  return evidence === null ? applied : applyAccountInput(r, { kind: "dispute", evidence }, ctx);
+  const after = applied.error._tag === "rejected_after_ack" ? applied.error : undefined;
+  const evidence = evidenceOf(after?.cause ?? applied.error);
+  if (evidence === null) return applied;
+  return map(applyAccountInput(after?.committed.replica ?? r, { kind: "dispute", evidence }, ctx), (d) => ({ replica: d.replica, outputs: [...(after?.committed.outputs ?? []), ...d.outputs] }));
 };
 export const restoreAccount = (r: AccountReplica, self: EntityId, verify: Verify): Result<AccountReplica, AccountReplicaError> => chain(partyOf(replicaId(r), self), (party) => {
   const restored = <R extends ProposedAccount | ReceivedAccount>(held: R): Result<AccountReplica, AccountReplicaError> => map(restoreCandidate(held, party, verify), (candidate) => ({ ...held, candidate }));

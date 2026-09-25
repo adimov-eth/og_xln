@@ -317,7 +317,7 @@ describe("account-consensus: driven scenarios", () => {
     expect(out.mempool).toEqual([TX2]);
   });
 
-  test("DIVERGES: ack_frame with a valid ACK and an invalid successor — og commits the ACK then rejects, rewrite rejects atomically (nothing committed)", async () => {
+  test("MATCH: ack_frame with a valid ACK and an invalid successor — both commit the ACK then reject the frame", async () => {
     // og (mirrors core/__tests__/account/consensus/account-input-rejection.test.ts "valid bundled ACK stays committed")
     const ctx = ogCtx("diff-ackframe-atomic");
     const a = ogAccount();
@@ -334,7 +334,15 @@ describe("account-consensus: driven scenarios", () => {
     const ack = acked.outputs.find((o) => o.kind === "ack") as AccountInput;
     const bad = peerFrame(acked.replica, BOB, { txs: [TX2], prevFrameHash: W("ff") });
     const e = unwrapErr(applyAccountInput(proposed, ackFrameOf(acked.replica, BOB, bad, ack), DOOR(ALICE)));
-    expect(e._tag).toBe("hash_mismatch");                                     // caller keeps `proposed`: frame 1 NOT committed
+    if (e._tag !== "rejected_after_ack") throw new Error(e._tag);
+    expect(e.cause._tag).toBe("hash_mismatch");                               // og ACCOUNT_INPUT_FRAME_CHAIN_INVALID
+    expect([e.committed.replica._tag, e.committed.replica.head.height]).toEqual(["open", 1n]);   // ACK half kept
+    // Without a bundled ACK nothing commits and the refusal is plain.
+    expect(unwrapErr(applyAccountInput(proposed, ackFrameOf(acked.replica, BOB, bad), DOOR(ALICE)))._tag).not.toBe("rejected_after_ack");
+    // An unsafe successor after the ACK disputes from the committed head.
+    const unsafe = peerFrame(acked.replica, BOB, { txs: [TX2], accountStateRoot: W("ab") });
+    const disputed = unwrap(disputeUnsafe(proposed, applyAccountInput(proposed, ackFrameOf(acked.replica, BOB, unsafe, ack), DOOR(ALICE)), DOOR(ALICE))).replica;
+    expect([["preparing", "disputed"].includes(disputed._tag), disputed.head.height]).toEqual([true, 1n]);
   });
 
   test("MATCH: repeated ACK for the current head — exact bytes are a no-op, a different frame Hanko is a loud rejection", async () => {
