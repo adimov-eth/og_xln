@@ -1534,7 +1534,7 @@ export type AccountTx =
   | { readonly type: "add_delta"; readonly tokenId: TokenId }
   | { readonly type: "set_credit_limit"; readonly tokenId: TokenId; readonly limit: bigint }
   | { readonly type: "payment"; readonly tokenId: TokenId; readonly amount: bigint; readonly route?: readonly string[] | undefined; readonly description?: string | undefined; readonly fromEntityId?: string | undefined; readonly toEntityId?: string | undefined; readonly deliveryMode?: "direct" | "trusted" | undefined; readonly trustedGatewayEntityId?: string | undefined }
-  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly envelope?: HtlcEnvelope | undefined }
+  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly deliveryMode?: "instant" | "async" | undefined; readonly envelope?: HtlcEnvelope | undefined }
   | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "secret"; readonly secret: string }
   | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "error"; readonly reason?: string | undefined }
   | ({ readonly type: "swap_offer" } & SwapOfferTerms)
