@@ -423,10 +423,15 @@ describe("hanko", () => {
       expect(encodeHankoEnvelope({ placeholders: [W("0a")], packedSignatures: ethers.getBytes(packedOg), claims, memberSignatures: [] })).toBe(og);
     }
   });
-  test("DIVERGES (EXTRA laxness): packSignatures accepts v outside {27,28} (treated as bit 0) and high-s; og packHankoSignatures throws", () => {
-    const r = new Uint8Array(32).fill(1), s = new Uint8Array(32).fill(0xff);
-    expect(() => packHankoSignatures([concat([r, s, Uint8Array.of(5)])])).toThrow();
-    expect(packSignatures([{ r, s, v: 5 }]).length).toBe(65);
+  test("MATCH: packSignatures refuses exactly what og packHankoSignatures refuses: v outside {27,28}, zero r or s, high-s (and packs the rest identically)", () => {
+    const n = BigInt("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141"), half = n >> 1n;
+    const one = new Uint8Array(32).fill(1), zero = new Uint8Array(32);
+    for (const [r, s, v] of [[one, wordOf(half + 1n), 27], [one, new Uint8Array(32).fill(0xff), 27], [one, one, 5], [one, one, 0], [one, one, 1], [zero, one, 27], [one, zero, 28], [one, wordOf(half), 28], [one, one, 27]] as const) {
+      const raw = concat([r, s, Uint8Array.of(v)]);
+      let og: string; try { og = packHankoSignatures([raw, raw]); } catch { og = "THROW"; }
+      let rw: string; try { rw = ethers.hexlify(packSignatures([{ r, s, v }, { r, s, v }])); } catch { rw = "THROW"; }
+      expect(rw).toBe(og);
+    }
   });
   test("MATCH: verifyAccountHanko accept/reject + target == og verifyCanonicalHanko on 300 random board hankos (self-hash and registered boards, placeholders, mutations)", () => {
     const digest = ethers.keccak256(ethers.toUtf8Bytes("board-digest"));
@@ -482,15 +487,56 @@ describe("hanko", () => {
     expect(ogVerify(unused, digest, boardHashOf(1n, [a1], [1n]))).toBe("REJECT");
     expect(rwVerify(unused, digest, boardHashOf(1n, [a1], [1n]))).toBe("REJECT");
   });
-  test("DIVERGES: verifyAccountHanko accepts a numeric/short expected entity id (bytes32Of pads decimal or short hex); og asHankoBytes32 requires 0x+64 hex", () => {
+  test("MATCH: expected entity must be 0x+64 hex (og asHankoBytes32): decimal, short hex and padded forms are refused by both; mixed case and 0X accepted by both", () => {
     const digest = ethers.keccak256(ethers.toUtf8Bytes("lazy"));
     const a = addrOf(KEYS[0]!), lazy = lazySingleSignerEntityId(a);
     const hanko = encodeSignedHanko({ digest, privateKeys: [ethers.getBytes(KEYS[0]!)], placeholders: [], claims: [{ entityId: lazy, entityIndexes: [0n], weights: [1n], threshold: 1n, boardChangeDelay: 0n, controlChangeDelay: 0n, dividendChangeDelay: 0n }] as any });
-    const decimal = BigInt(lazy).toString();
-    expect(ogVerify(hanko, digest, decimal)).toBe("REJECT");
-    expect(rwVerify(hanko, digest, decimal)).toBe(lazy);
+    for (const target of [BigInt(lazy).toString(), `0x${BigInt(lazy).toString(16)}`.replace(/^0x0+/, "0x"), ` ${lazy}`, lazy.toUpperCase().replace(/^0X/, "0x"), lazy.replace(/^0x/, "0X"), "0x" + lazy.slice(3)]) {
+      expect(rwVerify(hanko, digest, target)).toBe(ogVerify(hanko, digest, target));
+    }
+    expect(rwVerify(hanko, digest, lazy.toUpperCase().replace(/^0X/, "0x"))).toBe(lazy);
   });
-  test("DIVERGES: verifyHankoLocal (used for board-quorum entity frames, xln.ts:2220) accepts a board whose first member is a non-address placeholder; og verifyCanonicalHanko (and HankoVerifier.sol InvalidHankoFirstMember) reject", () => {
+  const ogLocal = (hanko: string, digest: string, registration: { encodedBoard: string; entityId: string } | null): string => {
+    try {
+      const board = registration === null ? undefined : ethers.keccak256(registration.encodedBoard).toLowerCase();
+      return verifyCanonicalHanko({ digest, hanko: hanko as any, ...(registration === null ? {} : { expectedTargetEntityId: registration.entityId }), validateBoardAuthority: (id, bh) => registration !== null && id === registration.entityId.toLowerCase() && bh === board }).targetEntityId;
+    } catch { return "REJECT"; }
+  };
+  const rwLocal = (hanko: string, digest: string, registration: { encodedBoard: string; entityId: string } | null): string => { const r = verifyHankoLocal(hanko, digest, registration); return r.ok && r.value.valid ? r.value.entityId : "REJECT"; };
+  test("MATCH: verifyHankoLocal accept/reject + entity == og verifyCanonicalHanko on 300 random board hankos (no registration = no expected target; registration = registered board authority), incl. first-member placeholder, duplicate member, threshold > power", () => {
+    const digest = ethers.keccak256(ethers.toUtf8Bytes("local-board"));
+    const coder = ethers.AbiCoder.defaultAbiCoder();
+    let accepted = 0, rejected = 0;
+    for (let i = 0; i < 300; i++) {
+      const members = KEYS.slice(0, 1 + ri(4));
+      const ids = members.map((k) => idOf(addrOf(k)));
+      const weights = members.map(() => BigInt(1 + ri(3)));
+      const total = weights.reduce((x, y) => x + y, 0n);
+      const threshold = pick([1n, total, 1n + BigInt(ri(Number(total))), total + 1n]);
+      const signs = members.map(() => rng() < 0.6);
+      const mut = ri(7);
+      if (mut === 1) { ids[0] = W("ff"); signs[0] = false; }
+      if (mut === 2 && ids.length > 1) { ids[1] = ids[0]!; signs[1] = false; signs[0] = false; }
+      const placeholderIds = ids.filter((_, j) => !signs[j]);
+      if (mut === 2 && ids.length > 1) placeholderIds.splice(1, 1);
+      let pIdx = 0, sIdx = 0;
+      const entityIndexes = ids.map((_, j) => BigInt(signs[j] ? placeholderIds.length + sIdx++ : mut === 2 && j === 1 ? 0 : pIdx++));
+      const board = boardHashOf(threshold, ids, weights);
+      const encodedBoard = coder.encode(["tuple(uint16,bytes32[],uint16[],uint32,uint32,uint32)"], [[threshold, ids, weights, 0, 0, 0]]);
+      const registered = mut === 3 || mut === 4;
+      const entityId = registered ? W("ee") : board;
+      let hanko: string;
+      try { hanko = encodeSignedHanko({ digest, privateKeys: members.filter((_, j) => signs[j]).map((k) => ethers.getBytes(k)), placeholders: placeholderIds as any, claims: [{ entityId, entityIndexes, weights, threshold, boardChangeDelay: 0n, controlChangeDelay: 0n, dividendChangeDelay: 0n }] as any }); }
+      catch { continue; }
+      const registration = registered ? { encodedBoard: mut === 4 ? coder.encode(["tuple(uint16,bytes32[],uint16[],uint32,uint32,uint32)"], [[1n, [W("01")], [1n], 0, 0, 0]]) : encodedBoard, entityId } : rng() < 0.5 ? null : { encodedBoard, entityId: board };
+      const og = ogLocal(hanko, digest, registration), rw = rwLocal(hanko, digest, registration);
+      expect(rw).toBe(og);
+      if (og === "REJECT") rejected++; else accepted++;
+    }
+    expect(accepted).toBeGreaterThan(30);
+    expect(rejected).toBeGreaterThan(30);
+  });
+  test("MATCH: verifyHankoLocal rejects a board whose first member is a non-address placeholder, like og verifyCanonicalHanko (HANKO_FIRST_MEMBER_EOA_REQUIRED) and HankoVerifier.sol InvalidHankoFirstMember", () => {
     const digest = ethers.keccak256(ethers.toUtf8Bytes("local"));
     const a0 = idOf(addrOf(KEYS[0]!));
     const ph = W("ff");
@@ -498,8 +544,8 @@ describe("hanko", () => {
     const hanko = encodeSignedHanko({ digest, privateKeys: [ethers.getBytes(KEYS[0]!)], placeholders: [ph] as any, claims: [{ entityId: board, entityIndexes: [0n, 1n], weights: [1n, 1n], threshold: 1n, boardChangeDelay: 0n, controlChangeDelay: 0n, dividendChangeDelay: 0n }] as any });
     expect(ogVerify(hanko, digest, board)).toBe("REJECT");
     expect(rwVerify(hanko, digest, board)).toBe("REJECT");
-    const local = verifyHankoLocal(hanko, digest, null);
-    expect(local.ok && local.value.valid).toBe(true);
+    expect(ogLocal(hanko, digest, null)).toBe("REJECT");
+    expect(rwLocal(hanko, digest, null)).toBe("REJECT");
   });
 });
 

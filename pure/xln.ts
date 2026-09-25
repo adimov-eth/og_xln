@@ -640,8 +640,11 @@ const claimAbi = (c: HankoClaim): Abi => t([A.b32(c.entityId), arr(c.entityIndex
 const claimWords = (c: HankoClaimInput): HankoClaim => ({ entityId: c.entityId, entityIndexes: c.entityIndexes.map((x) => BigInt(x)), weights: c.weights.map((x) => BigInt(x)), threshold: BigInt(c.threshold), boardChangeDelay: BigInt(c.boardChangeDelay), controlChangeDelay: BigInt(c.controlChangeDelay), dividendChangeDelay: BigInt(c.dividendChangeDelay) });
 const envelopeHex = (h: HankoBytes): string => abiEncodeHex([t([arr(h.placeholders, A.b32), A.bytes(bytesToHex(h.packedSignatures)), arr(h.claims, claimAbi), arr(h.memberSignatures, (s) => A.bytes(bytesToHex(s)))])]);
 export const encodeHankoEnvelope = (h: HankoEnvelope): string => envelopeHex({ placeholders: h.placeholders, packedSignatures: h.packedSignatures, claims: h.claims.map(claimWords), memberSignatures: h.memberSignatures.map((s) => hexToBytes(s)) });
+/** og assertCanonicalSignature (codec.ts:277): 32-byte r and s, v in {27,28}, non-zero r and s, low s. */
+const canonicalSig = (sig: RawSig): boolean => sig.r.length === 32 && sig.s.length === 32 && (sig.v === 27 || sig.v === 28) && !isZeroWord(sig.r) && !isZeroWord(sig.s) && wordAt(sig.s, 0) <= HALF_ORDER;
 export const packSignatures = (sigs: readonly RawSig[]): Uint8Array => {
   if (sigs.length === 0) return new Uint8Array();
+  sigs.forEach((sig, i) => { if (!canonicalSig(sig)) throw new Error(`HANKO_SIGNATURE_NON_CANONICAL:${i}`); });
   const bits = new Uint8Array(Math.ceil(sigs.length / 8));
   sigs.forEach((sig, i) => { if (sig.v === 28) bits[i >> 3] = (bits[i >> 3] ?? 0) | (1 << (i & 7)); });
   return concat([...sigs.flatMap((sig) => [sig.r, sig.s]), bits]);
@@ -654,21 +657,6 @@ const packedCount = (byteLength: number): number | null => {
 const packedPaddingClear = (packed: Uint8Array, count: number): boolean => count % 8 === 0 || ((packed[packed.length - 1] ?? 0) >> (count % 8)) === 0;
 const packedAt = (packed: Uint8Array, count: number, i: number): { readonly r: Uint8Array; readonly s: Uint8Array; readonly bit: number } =>
   ({ r: packed.subarray(i * 64, i * 64 + 32), s: packed.subarray(i * 64 + 32, i * 64 + 64), bit: ((packed[count * 64 + (i >> 3)] ?? 0) >> (i & 7)) & 1 });
-const recoverPacked = (h: Uint8Array, packed: Uint8Array): Result<readonly string[], HankoError> => {
-  const count = packedCount(packed.length);
-  if (count === null || !packedPaddingClear(packed, count)) return err({ _tag: "packed" });
-  const signers: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const { r, s, bit } = packedAt(packed, count, i);
-    if (wordAt(s, 0) > HALF_ORDER) return err({ _tag: "packed" });
-    const key = recoverPublicKey(h, r, s, bit);
-    if (key === null) return ok([]);
-    const signer = addressOf(key);
-    if (signers.some((p) => p.toLowerCase() === signer.toLowerCase())) return err({ _tag: "duplicate_signer" });
-    signers.push(signer);
-  }
-  return ok(signers);
-};
 const chainV = (v: number): number => (v < 27 ? v + 27 : v);
 export const recoverRawSigner = (hashHex: string, signatureHex: string): string | null => {
   const raw = parseHex(signatureHex), h = parseHex(hashHex);
@@ -683,62 +671,12 @@ export const encodeHanko65 = (i: { readonly hash: string; readonly hanko: string
   return signer === null ? INVALID : { entityId: encodeLazyEntityId({ signer }), valid: true };
 };
 export type Registration = { readonly encodedBoard: string; readonly entityId: string };
-type Evaluated = { readonly boardHash: string; readonly votingPower: bigint; readonly placeholders: readonly number[]; readonly signatures: readonly number[] };
-const memberAt = (h: HankoBytes, signers: readonly string[], index: number, pc: number, sc: number, claimIndex: number): Result<string, HankoError> => {
-  const found = index < pc ? h.placeholders[index] : index < pc + sc ? signers[index - pc] : index - pc - sc < claimIndex ? h.claims[index - pc - sc]?.entityId : undefined;
-  return found === undefined ? err({ _tag: "claim_order" }) : ok(index >= pc && index < pc + sc ? addressAsId(found) : found);
-};
-const evaluate = (h: HankoBytes, claim: HankoClaim, signers: readonly string[], claimIndex: number, totalCount: number): Result<Evaluated, HankoError> => {
-  const pc = h.placeholders.length, sc = signers.length, seen = new Set<number>();
-  const ids: string[] = [], powers: number[] = [], placeholders: number[] = [], signatures: number[] = [];
-  let votingPower = 0n;
-  for (let i = 0; i < claim.entityIndexes.length; i++) {
-    const word = claim.entityIndexes[i], index = word === undefined || word >= BigInt(totalCount) ? -1 : Number(word);
-    if (index < 0 || seen.has(index)) return err(seen.has(index) ? { _tag: "duplicate_entity_index" } : { _tag: "claim_order" });
-    seen.add(index);
-    const weight = claim.weights[i];
-    if (weight === undefined || weight === 0n || weight > 65535n) return err({ _tag: "weight" });
-    const resolved = memberAt(h, signers, index, pc, sc, claimIndex);
-    if (!resolved.ok) return resolved;
-    if (index < pc) placeholders.push(index);
-    else { if (index < pc + sc) signatures.push(index - pc); votingPower += weight; }
-    ids.push(resolved.value); powers.push(Number(weight));
-  }
-  if (claim.threshold === 0n || claim.threshold > 65535n) return err({ _tag: "threshold" });
-  return ok({ boardHash: boardOf(claim.threshold, ids, powers, claim), votingPower, placeholders, signatures });
-};
-const assertMinimal = (h: HankoBytes, sc: number, usedP: readonly boolean[], usedS: readonly boolean[]): Result<void, HankoError> => {
-  const reachable = h.claims.map((_, i) => i === h.claims.length - 1), firstClaim = h.placeholders.length + sc;
-  for (let ci = h.claims.length - 1; ci >= 0; ci--) if (reachable[ci]) for (const index of h.claims[ci]?.entityIndexes ?? []) if (index >= BigInt(firstClaim)) reachable[Number(index) - firstClaim] = true;
-  return checks(guard(reachable.every(Boolean), { _tag: "unused_claim" } as HankoError), guard(usedP.every(Boolean), { _tag: "unused_placeholder" } as HankoError), guard(usedS.every(Boolean), { _tag: "unused_signature" } as HankoError));
-};
+/** og verifyCanonicalHanko: with a registration the target is the registered entity and its board is the registered one; without, og has no expected target. */
 export const verifyHankoLocal = (hankoHex: string, hashHex: string, registration: Registration | null): Result<Verdict, HankoError> => {
-  const hankoBytes = parseHex(hankoHex), hashBytes = parseHex(hashHex), encodedBoard = registration === null ? null : parseHex(registration.encodedBoard);
-
-  if (hankoBytes === null || hashBytes === null || (registration !== null && encodedBoard === null)) return err({ _tag: "decode" });
-  return chain(decodeHanko(hankoBytes), (h): Result<Verdict, HankoError> => {
-    if (h.claims.length === 0 || h.memberSignatures.some((s) => s.length !== 0)) return ok(INVALID);
-    return chain(recoverPacked(hashBytes, h.packedSignatures), (signers): Result<Verdict, HankoError> => {
-      if (signers.length === 0) return ok(INVALID);
-      const usedP = h.placeholders.map(() => false), usedS = signers.map(() => false), seen = new Set<string>(), totalCount = h.placeholders.length + signers.length + h.claims.length;
-      const registeredId = registration?.entityId.toLowerCase(), registeredBoard = encodedBoard === null ? null : keccak256Hex(encodedBoard);
-      for (let ci = 0; ci < h.claims.length; ci++) {
-        const claim = h.claims[ci];
-        if (claim === undefined) return ok(INVALID);
-        const id = claim.entityId.toLowerCase();
-        if (seen.has(id)) return err({ _tag: "duplicate_claim_entity" });
-        seen.add(id);
-        const ev = evaluate(h, claim, signers, ci, totalCount);
-        if (!ev.ok) return ev;
-        for (const p of ev.value.placeholders) usedP[p] = true;
-        for (const s of ev.value.signatures) usedS[s] = true;
-        const boardOk = id === registeredId ? ev.value.boardHash === registeredBoard : id === ev.value.boardHash.toLowerCase();
-        if (!boardOk || ev.value.votingPower < claim.threshold) return ok(INVALID);
-      }
-      const last = h.claims[h.claims.length - 1];
-      return map(assertMinimal(h, signers.length, usedP, usedS), () => (last === undefined ? INVALID : { entityId: last.entityId, valid: true }));
-    });
-  });
+  const encodedBoard = registration === null ? null : parseHex(registration.encodedBoard);
+  if (registration !== null && encodedBoard === null) return err({ _tag: "decode" });
+  const verified = verifyAccountHanko(hankoHex, hashHex, registration?.entityId ?? "", encodedBoard === null ? undefined : keccak256Hex(encodedBoard));
+  return ok(verified.ok ? { entityId: verified.value.entityId, valid: true } : INVALID);
 };
 const verdictOf = (r: Result<Verdict, HankoError>): Verdict => unwrapOr(r, () => INVALID);
 export const encodeHankoBytes = (i: { readonly encodedBoard: string; readonly entityId: string; readonly hash: string; readonly twoOfThree: string; readonly oneOfThree: string }): { readonly twoOfThree: Verdict; readonly oneOfThree: Verdict } =>
@@ -749,7 +687,8 @@ const signatureFor = (signedBy: ReadonlyMap<string, string>, entityWord: string)
   const found = [...signedBy].reduce<string | undefined>((last, [signer, sig]) => (sameHex(signer, addr) ? sig : last), undefined);
   if (found === undefined) return null;
   const raw = hexToBytes(found.startsWith("0x") ? found : `0x${found}`);
-  return raw.length !== 65 ? null : { r: raw.subarray(0, 32), s: raw.subarray(32, 64), v: chainV(raw[64] ?? 0) };
+  const sig = raw.length !== 65 ? null : { r: raw.subarray(0, 32), s: raw.subarray(32, 64), v: chainV(raw[64] ?? 0) };
+  return sig !== null && canonicalSig(sig) ? sig : null;
 };
 export const encodeBoardHanko = (board: Board & { readonly entityId: string }, signedBy: ReadonlyMap<string, string>): string => {
   const slots = board.entityIds.map((id) => ({ id, sig: signatureFor(signedBy, id) }));
@@ -791,12 +730,8 @@ export type AccountHankoVerdict = { readonly entityId: string; readonly signers:
 const ACCOUNT_HANKO_MAX_BYTES = 64 * 1024, MAX_ENTITIES = 256, MAX_CLAIMS = 64, MAX_MEMBERS_PER_CLAIM = 256, MAX_TOTAL_MEMBERS = 1024, MAX_MEMBER_SIGNATURES = 8;
 const MAX_POWER = 0xffffn, MAX_DELAY = 0xffff_ffffn, MAX_SAFE_INDEX = BigInt(Number.MAX_SAFE_INTEGER), ADDRESS_MAX = (1n << 160n) - 1n;
 const hankoRefuse = (_tag: AccountHankoTag): Result<never, AccountHankoError> => err({ _tag });
-const bytes32Of = (text: string): string | null => {
-  const trimmed = text.trim();
-  if (!/^(?:0[xX][0-9a-fA-F]+|[0-9]+)$/.test(trimmed)) return null;
-  const value = BigInt(trimmed);
-  return value >= 1n << 256n ? null : bytesToHex(wordOf(value));
-};
+/** og asHankoBytes32 (codec.ts:83): exactly `0x` + 64 hex, lowercased. */
+const bytes32Of = (text: string): string | null => (/^0x[0-9a-f]{64}$/i.test(text) ? text.toLowerCase() : null);
 const unique = (xs: readonly string[]): boolean => new Set(xs).size === xs.length;
 const isZeroWord = (w: Uint8Array): boolean => w.every((b) => b === 0);
 export const isAddressId = (id: string): boolean => { const v = BigInt(id); return v > 0n && v <= ADDRESS_MAX; };
@@ -862,11 +797,10 @@ const accountReachability = (pc: number, sc: number, claims: readonly ResolvedCl
   if (Array.from({ length: sc }, (_, i) => pc + i).some((i) => !used.has(i))) return hankoRefuse("unused_signature");
   return ok(undefined);
 };
+/** og verifyCanonicalHanko. An empty expected entity is og's absent `expectedTargetEntityId`: the last claim is the target and only self-hashed boards authorize. */
 export const verifyAccountHanko = (hanko: string, digest: string, expectedEntityId: string, registeredBoardHash?: string): Result<AccountHankoVerdict, AccountHankoError> => {
-  const target = bytes32Of(expectedEntityId);
+  const target = expectedEntityId === "" ? undefined : bytes32Of(expectedEntityId);
   if (target === null) return hankoRefuse("expected_entity");
-
-  if (registeredBoardHash !== undefined && !/^0[xX][0-9a-fA-F]{64}$/.test(expectedEntityId)) return hankoRefuse("expected_entity");
   if (!/^0[xX][0-9a-fA-F]{64}$/.test(digest)) return hankoRefuse("digest");
   if (!/^0[xX](?:[0-9a-fA-F]{2})*$/.test(hanko)) return hankoRefuse("decode");
   const bytes = hexToBytes(hanko);
@@ -889,7 +823,7 @@ export const verifyAccountHanko = (hanko: string, digest: string, expectedEntity
       const registered = registeredBoardHash?.trim().toLowerCase(), last = claims[claims.length - 1];
       const authorized = (c: ResolvedClaim): boolean => c.entityId === c.boardHash || (c.entityId === target && c.boardHash === registered);
       return chain(accountReachability(env.placeholders.length, signerIds.length, claims), () =>
-        !claims.every(authorized) ? hankoRefuse("authority") : last === undefined || last.entityId !== target ? hankoRefuse("target") : ok({ entityId: target, signers }));
+        !claims.every(authorized) ? hankoRefuse("authority") : last === undefined || (target !== undefined && last.entityId !== target) ? hankoRefuse("target") : ok({ entityId: last.entityId, signers }));
     });
   });
 };
