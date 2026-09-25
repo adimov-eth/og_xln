@@ -2303,6 +2303,116 @@ export const quoteHtlcRoute = (index: RoutingIndex, route: readonly string[], to
     }));
   }), (q) => ({ senderLockAmount: q.inbound, hopForwardAmounts: q.forwards }));
 };
+// ---- og pathfinding/{graph,pathfinding,capacity}.ts: the gossip network graph and the Dijkstra route finder behind htlcPayment route discovery ----
+export type AccountEdge = { readonly from: string; readonly to: string; readonly tokenId: number; readonly capacity: bigint; readonly baseFee: bigint; readonly feePPM: number; readonly disabled: boolean };
+export type NetworkGraph = { readonly nodes: ReadonlySet<string>; readonly edges: ReadonlyMap<string, readonly AccountEdge[]>; readonly accountCapacities: ReadonlyMap<string, { readonly outbound: bigint; readonly inbound: bigint }> };
+export type PaymentRoute = { readonly path: readonly string[]; readonly hops: readonly { readonly from: string; readonly to: string; readonly fee: bigint; readonly feePPM: number }[]; readonly totalFee: bigint; readonly totalAmount: bigint; readonly probability: number };
+type GraphCaps = { readonly inCapacity: bigint; readonly outCapacity: bigint };
+type GraphProfile = { readonly entityId: string; readonly name: string; readonly isHub: boolean; readonly routingFeePPM: unknown; readonly baseFee: bigint; readonly accounts: readonly { readonly counterpartyId: string; readonly caps: (tokenId: number) => GraphCaps | null }[] };
+/** og Profile fields buildNetworkGraph reads; og getTokenCapacity: a Map keyed by number or string, or a Record keyed by string. */
+const graphProfileOf = (b: Binary): GraphProfile | null => {
+  if (b === null || typeof b !== "object" || Array.isArray(b) || b instanceof Map) return null;
+  const p = b as { readonly [k: string]: unknown }, meta = (p["metadata"] ?? {}) as { readonly [k: string]: unknown };
+  const accounts = Array.isArray(p["accounts"]) ? (p["accounts"] as readonly { readonly [k: string]: unknown }[]) : [];
+  return {
+    entityId: String(p["entityId"] ?? ""), name: typeof p["name"] === "string" ? p["name"] : "", isHub: meta["isHub"] === true, routingFeePPM: meta["routingFeePPM"], baseFee: typeof meta["baseFee"] === "bigint" ? meta["baseFee"] : 0n,
+    accounts: accounts.map((a) => {
+      const caps = a["tokenCapacities"] as unknown;
+      return { counterpartyId: String(a["counterpartyId"] ?? ""), caps: (tokenId: number): GraphCaps | null => {
+        if (caps === null || caps === undefined || typeof caps !== "object") return null;
+        const raw = caps instanceof Map ? (caps.get(tokenId) ?? caps.get(String(tokenId))) : (caps as { readonly [k: string]: unknown })[String(tokenId)];
+        return raw === null || raw === undefined || raw === false ? null : (raw as GraphCaps);
+      } };
+    }),
+  };
+};
+const routingMetadataOk = (p: GraphProfile): boolean => { const ppm = Number(p.routingFeePPM); return p.name.trim() !== "" && Number.isFinite(ppm) && ppm >= 0; };
+/** og buildNetworkGraph: one advertised Account row gives both directions (the mirror only if not already advertised); a hub Profile without routing metadata is dropped. A later Profile for the same entity replaces the earlier one in place (og Map.set). */
+export const buildNetworkGraph = (profileRows: readonly Binary[], tokenId: number, funding?: { readonly sourceEntityId: string; readonly accountId: string }): NetworkGraph => {
+  const profiles = new Map<string, GraphProfile>();
+  for (const b of profileRows) { const p = graphProfileOf(b); if (p !== null) profiles.set(p.entityId, p); }
+  const nodes = new Set([...profiles.values()].map((p) => p.entityId)), byFrom = new Map<string, AccountEdge[]>(), capacities = new Map<string, { outbound: bigint; inbound: bigint }>();
+  const push = (e: AccountEdge): void => { const xs = byFrom.get(e.from); if (xs === undefined) byFrom.set(e.from, [e]); else xs.push(e); };
+  const nonNeg = (v: bigint): bigint => (v < 0n ? 0n : v);
+  for (const profile of profiles.values()) {
+    const from = profile.entityId, own: AccountEdge[] = [];
+    if (profile.isHub && !routingMetadataOk(profile)) continue;
+    for (const account of profile.accounts) {
+      const to = account.counterpartyId;
+      if (!nodes.has(to)) continue;
+      const toProfile = profiles.get(to);
+      if (toProfile !== undefined && toProfile.isHub && !routingMetadataOk(toProfile)) continue;
+      const cap = account.caps(tokenId);
+      if (cap === null) continue;
+      if (cap.outCapacity > 0n || (funding?.sourceEntityId === from && funding.accountId === to))
+        own.push({ from, to, tokenId, capacity: cap.outCapacity, baseFee: nonNeg(profile.baseFee), feePPM: directionalFeePpm(sanitizeFeePpm(profile.routingFeePPM, 1), cap.outCapacity, cap.inCapacity), disabled: false });
+      capacities.set(`${from}:${to}:${tokenId}`, { outbound: cap.outCapacity, inbound: cap.inCapacity });
+      const mirrorKey = `${to}:${from}:${tokenId}`;
+      if (capacities.has(mirrorKey)) continue;
+      capacities.set(mirrorKey, { outbound: cap.inCapacity, inbound: cap.outCapacity });
+      if (cap.inCapacity > 0n || (funding?.sourceEntityId === to && funding.accountId === from))
+        push({ from: to, to: from, tokenId, capacity: cap.inCapacity, baseFee: nonNeg(toProfile?.baseFee ?? 0n), feePPM: directionalFeePpm(sanitizeFeePpm(toProfile?.routingFeePPM ?? 1, 1), cap.inCapacity, cap.outCapacity), disabled: false });
+    }
+    for (const e of own) push(e);
+  }
+  return { nodes, edges: new Map([...byFrom].filter(([, xs]) => xs.length > 0)), accountCapacities: capacities };
+};
+const graphEdge = (g: NetworkGraph, from: string, to: string, tokenId: number): AccountEdge | undefined => (g.edges.get(from) ?? []).find((e) => e.to === to && e.tokenId === tokenId);
+/** og PathFinder.buildRoute: the quoteHtlcPaymentRoute fee inversion over graph edges; the sender pays itself no fee. */
+const buildPaymentRoute = (g: NetworkGraph, path: readonly string[], amount: bigint, tokenId: number): Result<PaymentRoute | null, OnionError> => {
+  if (path.length < 2) return ok(null);
+  const edges: AccountEdge[] = [];
+  for (let i = 0; i < path.length - 1; i++) {
+    const e = graphEdge(g, path[i] ?? "", path[i + 1] ?? "", tokenId);
+    if (e === undefined || !Number.isInteger(e.feePPM) || e.feePPM < 0 || e.feePPM >= 1_000_000) return ok(null);
+    edges.push(e);
+  }
+  const amounts = edges.map(() => amount);
+  for (let i = edges.length - 1; i >= 1; i--) {
+    const e = edges[i] as AccountEdge, r = requiredInbound(amounts[i] as bigint, e.feePPM, e.baseFee);
+    if (!r.ok) return r;
+    amounts[i - 1] = r.value;
+  }
+  const hops = edges.map((e, i) => ({ from: e.from, to: e.to, fee: i === 0 ? 0n : (amounts[i - 1] as bigint) - (amounts[i] as bigint), feePPM: e.feePPM }));
+  const probability = edges.reduce((v, e, i) => (e.capacity > 0n ? v * Math.exp((-2 * Number(amounts[i] as bigint)) / Number(e.capacity)) : v), 1);
+  return ok({ path, hops, totalFee: (amounts[0] as bigint) - amount, totalAmount: amounts[0] as bigint, probability: Math.max(0.01, Math.min(1, probability)) });
+};
+/** og PathFinder.findRoutes: fee-ordered search (stable sort, at most 4096 pops) over loop-free paths; complete routes must fit every edge after each forwarder keeps its fee; results sorted by total fee. */
+export const findPaymentRoutes = (g: NetworkGraph, source: string, target: string, amount: bigint, tokenId: number, maxRoutes = 100, fundingAccountId?: string): Result<readonly PaymentRoute[], OnionError> => {
+  if (source === target || !g.nodes.has(source) || !g.nodes.has(target)) return ok([]);
+  const routes: PaymentRoute[] = [], funded = fundingAccountId !== undefined && fundingAccountId !== "";
+  const fits = (r: PaymentRoute): boolean => {
+    let required = r.totalAmount;
+    for (const [i, hop] of r.hops.entries()) { required -= hop.fee; const e = graphEdge(g, hop.from, hop.to, tokenId); if (e === undefined || (!(i === 0 && funded) && required > e.capacity)) return false; }
+    return true;
+  };
+  type Entry = { readonly cost: bigint; readonly node: string; readonly path: readonly string[] };
+  const queue: Entry[] = [{ cost: 0n, node: source, path: [source] }];
+  let pops = 0;
+  while (queue.length > 0 && routes.length < maxRoutes) {
+    if (++pops > 4_096) break;
+    queue.sort((a, b) => (a.cost < b.cost ? -1 : a.cost > b.cost ? 1 : 0));
+    const current = queue.shift() as Entry;
+    if (current.node === target) {
+      const r = buildPaymentRoute(g, current.path, amount, tokenId);
+      if (!r.ok) return r;
+      if (r.value !== null && fits(r.value)) routes.push(r.value);
+      continue;
+    }
+    for (const e of g.edges.get(current.node) ?? []) {
+      if (current.node === source && funded && e.to !== fundingAccountId) continue;
+      if (e.tokenId !== tokenId || e.disabled || current.path.includes(e.to)) continue;
+      if (!(current.node === source && funded) && amount > e.capacity) continue;
+      const prefix = buildPaymentRoute(g, [...current.path, e.to], amount, tokenId);
+      if (!prefix.ok) return prefix;
+      if (prefix.value !== null) queue.push({ cost: prefix.value.totalFee, node: e.to, path: [...current.path, e.to] });
+    }
+  }
+  return ok([...routes].sort((a, b) => (a.totalFee < b.totalFee ? -1 : a.totalFee > b.totalFee ? 1 : 0)));
+};
+/** og gossip getNetworkGraph().findPaths(source, target, amount ?? 1n, tokenId = 1, fundingAccountId): a fresh graph over the given Profiles. */
+export const findPaths = (profiles: readonly Binary[], source: string, target: string, amount = 1n, tokenId = 1, fundingAccountId?: string): Result<readonly PaymentRoute[], OnionError> =>
+  findPaymentRoutes(buildNetworkGraph(profiles, tokenId, fundingAccountId ? { sourceEntityId: source, accountId: fundingAccountId } : undefined), source, target, amount, tokenId, 100, fundingAccountId);
 /** og types/account.ts SwapOffer (same-jurisdiction): quantized amounts, canonical price and the maker's signed fee authority. */
 export type SwapOffer = {
   readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
@@ -5647,11 +5757,17 @@ const originEconomics = (v: HtlcOriginView, index: RoutingIndex, d: HtlcPaymentD
       startedAtMs, senderLockAmount: quote.senderLockAmount, hopForwardAmounts: quote.hopForwardAmounts, timelock: hopTimelock(w.baseTimelock, 0), revealBeforeHeight: hopRevealHeight(w.baseHeight, 0, route.length - 1),
     })));
 };
+/** og infra-context.ts resolveRoute: `findPaths(entityId, tx.data.targetEntityId, amount, tokenId)[0].path` (the raw target id, as og passes it). */
+const resolveHtlcRoute = (profiles: readonly Binary[], source: string, d: HtlcPaymentData): Result<readonly string[], EntityError> =>
+  chain(fromOnion(findPaths(profiles, source, d.targetEntityId, d.amount, d.tokenId)), (routes) => {
+    const path = routes[0]?.path;
+    return path === undefined ? htlcReject(`HTLC_PAYMENT_ROUTE_NOT_FOUND:${source}:${d.targetEntityId}`) : ok(path);
+  });
 /** og generateHtlcEphemeralPrivateKey: 32 bytes (keccak of the deterministic seed, or entropy), clamped per RFC 7748. */
 const clampedX25519 = (hex32: string): string => { const b = hexToBytes(hex32); b[0] = (b[0] ?? 0) & 248; b[31] = ((b[31] ?? 0) & 127) | 64; return bytesToHex(b); };
 /**
  * og materializeOriginatedHtlcPayments (proposer only): per htlcPayment in order, the raw checks, route, secret -> hashlock, quote, deadline window,
- * profile/domain evidence and the onion; sorted by tx hash. The rewrite requires an explicit route (og's gossip route discovery is not ported).
+ * profile/domain evidence and the onion; sorted by tx hash. An empty route is resolved like og resolveRoute: the cheapest findPaths route over every gossip Profile.
  */
 export const materializeOriginated = (v: HtlcOriginView, profiles: readonly Binary[], txs: readonly EntityTx[], infra: HtlcProposerInfra): { readonly originated: readonly PreparedOriginated[]; readonly refused: ReadonlyMap<EntityTx, EntityError> } => {
   const index = routingIndex(profiles.flatMap((b) => { const p = routingProfileOf(b); return p === null ? [] : [p]; }));
@@ -5659,7 +5775,7 @@ export const materializeOriginated = (v: HtlcOriginView, profiles: readonly Bina
   for (const tx of txs) {
     if (tx.type !== "htlcPayment") continue;
     const one = chain(rawHtlcPayment(tx), (d) => chain(bytes32Id(v.id, "HTLC_PAYMENT_SOURCE_INVALID"), (source) => chain(bytes32Id(d.targetEntityId, "HTLC_PAYMENT_TARGET_INVALID"), (target) =>
-      chain(d.route.length > 0 ? htlcRoute(d.route, source, target) : htlcReject("HTLC_PAYMENT_ROUTE_RESOLUTION_UNAVAILABLE"), (route) => chain(htlcPaymentTxHash(tx), (txHash): Result<PreparedOriginated, EntityError> => {
+      chain(d.route.length > 0 ? htlcRoute(d.route, source, target) : chain(resolveHtlcRoute(infra.profiles, source, d), (found) => htlcRoute(found, source, target)), (route) => chain(htlcPaymentTxHash(tx), (txHash): Result<PreparedOriginated, EntityError> => {
         const local = infra.secretFor?.(txHash), secret = local ?? infra.entropy?.(`htlc-secret:${txHash}`) ?? "";
         if (!/^0x[0-9a-f]{64}$/.test(secret)) return htlcReject("HTLC_PAYMENT_PREIMAGE_INVALID");
         const hashlock = (hashHtlcSecret(secret) ?? "").toLowerCase();
