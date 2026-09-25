@@ -705,7 +705,7 @@ describe("account-tx: settlement + j_event_claim", () => {
     }
   });
 
-  test("MATCH (conditional on H1/H2 proof hashes): hanko attach — og-derived settlement/proof/dispute hashes are accepted by both and give equal roots, ready_to_submit, submit", async () => {
+  test("MATCH: hanko attach — og-derived settlement/proof/dispute hashes are accepted by both and give equal roots, ready_to_submit, submit", async () => {
     const ogCtx: any = { jReplicas: jurisdictions.jReplicas, resolveSettlementBoardAuthority: async () => undefined, verifyHanko: async (_h: string, _m: string, entityId: string) => ({ valid: true, entityId }) };
     const rwCtx = (byLeft: boolean): FoldCtx => ({ byLeft, nowMs: 5n, jHeight: 0n, accountHeight: 1n, settlement: { verify: () => true, proofNonceFloor: 1 } });
     const ops = [{ type: "r2c", tokenId: 1, amount: 5n }];
@@ -741,13 +741,14 @@ describe("account-tx: settlement + j_event_claim", () => {
       body = r.value.state;
       expect(unwrap(committed(body) as any).root).toBe(o.root);
     }
-    if (rewriteAgrees) {
+    expect(rewriteAgrees).toBe(true);
+    {
       expect(body.settlement?.status).toBe("ready_to_submit");
       const upd = await og.run(upsert(2, ops, true, hash), true, 6, ogCtx);
       expect(upd.ok).toBe(false);
       expect(apply(body, { type: "settle_transition", ...upsert(2, ops, true, hash).data }, rwCtx(true)).ok).toBe(false);
       const sub = await og.run(target("submit", 1, hash), true, 7, ogCtx);
-      const r = apply(body, { type: "settle_transition", ...target("submit", 1, hash).data }, rwCtx(true));
+      const r = apply(body, { type: "settle_transition", ...target("submit", 1, hash).data }, { ...rwCtx(true), nowMs: 7n });
       expect(sub.ok).toBe(true);
       expect(unwrap(committed(unwrap(r).state) as any).root).toBe(sub.root);
     }

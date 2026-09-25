@@ -524,19 +524,19 @@ describe("account-consensus: incoming preflight", () => {
       const proposerIsLeft = rnd(2) === 0, senderIsLeft = rnd(2) === 0;
       const lock = { timelock: BigInt(around(now + 30_000, 40_000)), rbh: around(fin + 2, 5) };
       const frame = { timestamp: around(now, 40_000), jHeight: around(fin, 5), height: 2 };
-      const kind = rnd(4); // 0 new lock, 1 good secret, 2 bad secret, 3 timeout
+      const kind = rnd(5); // 0 new lock, 1 good secret, 2 bad secret, 3 timeout, 4 manual cancel
       const existing = kind !== 0;
       // og
       const ogLock = { lockId: "L", hashlock: hashHtlcSecret(secret), timelock: lock.timelock, revealBeforeHeight: lock.rbh, amount: 1n, tokenId: 1, senderIsLeft, createdHeight: 1, createdTimestamp: 0 };
       const ogTx = kind === 0 ? { type: "htlc_lock", data: { lockId: "L", hashlock: hashHtlcSecret(secret), timelock: lock.timelock, revealBeforeHeight: lock.rbh, amount: 1n, tokenId: 1 } }
-        : kind === 3 ? { type: "htlc_resolve", data: { lockId: "L", outcome: "error", reason: "timeout" } }
+        : kind >= 3 ? { type: "htlc_resolve", data: { lockId: "L", outcome: "error", reason: kind === 3 ? "timeout" : "manual" } }
         : { type: "htlc_resolve", data: { lockId: "L", outcome: "secret", secret: kind === 1 ? secret : W("5b") } };
       const og = getIncomingAccountDeadlineViolation({ ...ogAccount().state, locks: new Map(existing ? [["L", ogLock]] : []) } as never, { ...frame, accountTxs: [ogTx] } as never, proposerIsLeft, { entityTimestamp: now, finalizedJHeight: fin } as never);
       // rewrite
-      const hashlock = keccakUtf8(secret);
+      const hashlock = hashHtlcSecret(secret);
       const rwLock = { lockId: "L", hashlock, timelock: lock.timelock, revealBeforeHeight: BigInt(lock.rbh), amount: 1n, tokenId: "1", senderIsLeft, createdHeight: 1n, createdTimestamp: 0n } as never;
       const rwTx = (kind === 0 ? { type: "htlc_lock", lockId: "L", hashlock, timelock: lock.timelock, revealBeforeHeight: BigInt(lock.rbh), amount: 1n, tokenId: "1" }
-        : kind === 3 ? { type: "htlc_timeout", lockId: "L" } : { type: "htlc_resolve", lockId: "L", secret: kind === 1 ? secret : W("5b") }) as WireAccountTx;
+        : kind >= 3 ? { type: "htlc_resolve", lockId: "L", outcome: "error", reason: kind === 3 ? "timeout" : "manual" } : { type: "htlc_resolve", lockId: "L", outcome: "secret", secret: kind === 1 ? secret : W("5b") }) as WireAccountTx;
       const body = { ...genesisAB().state, locks: new Map(existing ? [["L", rwLock]] : []) };
       const rw = incomingDeadline(body, { ...frame, timestamp: BigInt(frame.timestamp), jHeight: BigInt(frame.jHeight), height: 2n, txs: [rwTx] } as unknown as AccountFrame, proposerIsLeft, { now: BigInt(now), finalizedJHeight: BigInt(fin) });
       const ogV = og === undefined ? "none" : og.disposition;

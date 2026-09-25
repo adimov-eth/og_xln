@@ -2178,8 +2178,8 @@ type DeadlineLock = Pick<HtlcLock, "hashlock" | "timelock" | "revealBeforeHeight
 type Clock = { readonly timestamp: bigint; readonly jHeight: bigint };
 // og htlc-deadline.ts: the time bound is exclusive, the J-height bound inclusive.
 const deadlinePassed = (l: DeadlineLock, c: Clock): boolean => c.jHeight > l.revealBeforeHeight || c.timestamp >= l.timelock;
-// Mirrors the htlc_resolve arm's preimage check.
-const opensLock = (l: DeadlineLock, secret: string): boolean => keccakUtf8(secret) === l.hashlock;
+// og validHtlcSecret: the htlc_resolve arm's 32-byte preimage check.
+const opensLock = (l: DeadlineLock, secret: string): boolean => hashHtlcSecret(secret) === l.hashlock;
 /** og dispute/deadline-policy.ts getIncomingAccountDeadlineViolation: a speculative HTLC scan of a peer frame against our local clock. */
 export const incomingDeadline = (s: AccountBody, f: AccountFrame, proposerIsLeft: boolean, ctx: { readonly now: bigint; readonly finalizedJHeight: bigint }): Result<void, DeadlineViolation> => {
   const local: Clock = { timestamp: ctx.now, jHeight: ctx.finalizedJHeight };
@@ -2190,19 +2190,19 @@ export const incomingDeadline = (s: AccountBody, f: AccountFrame, proposerIsLeft
       const unsafe = tx.timelock <= ctx.now + HTLC_ENFORCEMENT_RESERVE_MS || tx.revealBeforeHeight <= ctx.finalizedJHeight || f.timestamp >= tx.timelock || tx.revealBeforeHeight <= f.jHeight;
       return unsafe ? violation("lock_window", tx.lockId) : ok(mapSet(locks, tx.lockId, { hashlock: tx.hashlock, timelock: tx.timelock, revealBeforeHeight: tx.revealBeforeHeight, senderIsLeft: proposerIsLeft }));
     }
-    if (tx.type !== "htlc_resolve" && tx.type !== "htlc_timeout") return ok(locks);
+    if (tx.type !== "htlc_resolve") return ok(locks);
     const lock = locks.get(tx.lockId);
     if (lock === undefined) return ok(locks);
-    if (tx.type === "htlc_resolve") {
+    if (tx.outcome === "secret") {
       if (!opensLock(lock, tx.secret)) return ok(locks);
       if (deadlinePassed(lock, { timestamp: local.timestamp + HTLC_ENFORCEMENT_RESERVE_MS, jHeight: local.jHeight })) return violation("secret_window", tx.lockId, true);
       return deadlinePassed(lock, f) ? violation("secret_frame_expired", tx.lockId) : ok(mapDelete(locks, tx.lockId));
     }
-    // htlc_timeout is og's `outcome: 'error', reason: 'timeout'`.
-    const locallyExpired = deadlinePassed(lock, local);
-    if (proposerIsLeft === lock.senderIsLeft && !locallyExpired) return violation("payer_cancel_early", tx.lockId);
-    if (!deadlinePassed(lock, f)) return violation("timeout_not_expired", tx.lockId);
-    return ok(locallyExpired ? mapDelete(locks, tx.lockId) : locks);
+    // og `outcome: 'error'`: a payer cancel waits for local expiry; a payer cancel or a `timeout` needs an expired frame clock.
+    const payer = proposerIsLeft === lock.senderIsLeft, locallyExpired = deadlinePassed(lock, local);
+    if (payer && !locallyExpired) return violation("payer_cancel_early", tx.lockId);
+    if ((payer || tx.reason === "timeout") && !deadlinePassed(lock, f)) return violation("timeout_not_expired", tx.lockId);
+    return ok(locallyExpired || (!payer && tx.reason !== "timeout") ? mapDelete(locks, tx.lockId) : locks);
   });
   return map(scanned, () => undefined);
 };
