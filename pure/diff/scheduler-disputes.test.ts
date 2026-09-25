@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { ethers } from "ethers";
 import {
-  createEntity, derivedDeadlines, dueWakeJobs, entityRootOf, executeCrontab, foldTxs, initCrontab, prioritizeWake, scheduleHook, withCrontab, crontabOf, wireEntityTx, genesisHost, localProof, committedView, ZERO_WORD,
+  createEntity, derivedDeadlines, disputeFinalizedEffects, disputeStartedEffects, dueWakeJobs, entityRootOf, executeCrontab, foldTxs, initCrontab, prioritizeWake, scheduleHook, withCrontab, crontabOf, wireEntityTx, genesisHost, localProof, committedView, ZERO_WORD,
   type AccountReplica, type ActiveDispute, type Binary, type Crontab, type EntityError, type EntityId, type EntityState, type EntityTx, type PaybookEntry, type ScheduledHook, type ScheduledWakeJob,
 } from "../xln.ts";
 import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, genesisAB, hankoVerify, unwrap } from "../xln_run.ts";
@@ -21,7 +21,11 @@ import { computeCanonicalEntityConsensusStateHash, computeEntityAccountValueHash
 import { PersistentEntityCollectionMap } from "../../core/entity/state/persistent-collection-map.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import { EntityAccountCandidateMap, PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
-import { initJBatch as ogInitJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
+import { hasJBatchWork, initJBatch as ogInitJBatch, isBatchEmpty, prependRecoveryBatch } from "../../core/jurisdiction/machine/batch/index.ts";
+import {
+  scrubCounterDisputesForActiveStart, scrubCounterDisputesForCounterparty, scrubDisputeFinalizationsForCounterparty, scrubDisputeStartsForCounterparty, scrubSourceHashLadderRegistrationsForCounterparty,
+} from "../../core/entity/tx/dispute-finalize-guards.ts";
+import { sentBatchOwnsDisputeFinalityAck } from "../../core/entity/tx/j-events.ts";
 
 let seed = 11;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -275,4 +279,85 @@ describe("scheduler-disputes: disputeFinalize (og dispute/finalize.ts, finalize-
     expect(["⚖️ Dispute f", "DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH", "DISPUTE_COUNTER_FINALIZE_HASH_MISMATCH", "J_BATCH_LIMIT_EXCEEDED", "J_DISPUTE_HEX_INVALID"].filter((k) => !keys.includes(k))).toEqual([]);
     expect((counts.get("⚖️ Dispute f") ?? 0) > 20).toBe(true);
   }, 60_000);
+});
+
+describe("scheduler-disputes: J7 Entity-side dispute effects (og entity/tx/j-events.ts, dispute-finalize-guards.ts)", () => {
+  const h1 = word(71), h2 = word(72);
+  const peerId = (): string => pick([lowerId(BOB), lowerId(CAROL), BOB.toUpperCase().replace("0X", "0x")]);
+  const randomBatch = (): any => ({
+    ...ogInitJBatch().batch,
+    disputeStarts: Array.from({ length: ri(3) }, () => ({ counterentity: peerId(), proofbodyHash: pick([h1, h2]) })),
+    counterDisputes: Array.from({ length: ri(3) }, () => ({ counterentity: peerId(), initialProofbodyHash: pick([h1, h2, h1.toUpperCase().replace("0X", "0x")]), counterNonce: 2, proposerIsLeft: true })),
+    disputeFinalizations: Array.from({ length: ri(2) }, () => ({ counterentity: peerId(), initialProofbodyHash: pick([h1, h2]) })),
+    hashLadderRegistrations: Array.from({ length: ri(3) }, () => ({ counterpartyEntity: peerId(), targetRole: rng() < 0.5 })),
+    reserveToReserve: rng() < 0.3 ? [{ receivingEntity: lowerId(CAROL), tokenId: 1, amount: 5n }] : [],
+  });
+  const randomJBatch = (): any => ({ ...ogInitJBatch(), batch: randomBatch(), entityNonce: pick([0, 2, 5]),
+    ...(rng() < 0.6 ? { sentBatch: { batch: randomBatch(), entityNonce: pick([3, 5]) } } : {}), ...(rng() < 0.4 ? { recoveryBatches: Array.from({ length: 1 + ri(2) }, randomBatch) } : {}) });
+  // og j-events.ts, transcribed over og's own exported guards and batch helpers (the composing functions are module-private in og)
+  const ogSync = (st: any, sender: string, self: string, batchNonce: number | undefined, msgs: string[]): void => {
+    if (sender !== self || batchNonce === undefined || batchNonce <= 0 || !st.jBatchState) return;
+    const current = st.jBatchState.entityNonce || 0;
+    if (batchNonce > current) { st.jBatchState.entityNonce = batchNonce; msgs.push(`↻ Synced J batch nonce from event (${current} → ${batchNonce})`); }
+  };
+  const ogRetire = (st: any, scrub: (b: any) => number, keepSent: boolean): { removed: number; broadcast: boolean } => {
+    const removedDraft = scrub(st.jBatchState?.batch);
+    let removedRecovery = 0;
+    for (const b of st.jBatchState?.recoveryBatches ?? []) removedRecovery += scrub(b);
+    if (st.jBatchState?.recoveryBatches) { st.jBatchState.recoveryBatches = st.jBatchState.recoveryBatches.filter((b: any) => !isBatchEmpty(b)); if (st.jBatchState.recoveryBatches.length === 0) delete st.jBatchState.recoveryBatches; }
+    let removedSent = 0;
+    const js = st.jBatchState;
+    if (!keepSent && js?.sentBatch) {
+      const remaining = structuredClone(js.sentBatch.batch), removed = scrub(remaining);
+      if (removed > 0) { prependRecoveryBatch(js, remaining); delete js.sentBatch; js.status = hasJBatchWork(js) ? "accumulating" : "empty"; removedSent = removed; }
+    }
+    const broadcast = removedSent > 0 || removedRecovery > 0 ? Boolean(st.jBatchState && !st.jBatchState.sentBatch && hasJBatchWork(st.jBatchState)) : false;
+    return { removed: removedDraft + removedRecovery + removedSent, broadcast };
+  };
+  test("MATCH: 300 random DisputeStarted / DisputeFinalized events over random draft / sent / recovery batches -- og's J batch retirement, nonce sync, messages, J broadcast continuation and dispute-deadline hook", () => {
+    let removedAny = 0, broadcasts = 0, synced = 0;
+    for (let i = 0; i < 300; i++) {
+      const jBatch = rng() < 0.9 ? randomJBatch() : undefined, ts = pick([5_000_000 + ri(1000), -3]);
+      const sender = pick([ALICE, BOB, CAROL]), counterentity = pick([ALICE, BOB]), batchNonce = pick([undefined, 0, 3, 5, 7]);
+      const self = lowerId(ALICE), cp = lowerId(sender) === self ? lowerId(counterentity) : lowerId(sender);
+      const existing: ScheduledHook = { id: `dispute-deadline:${cp}`, triggerAt: 9, type: "dispute_deadline", data: { accountId: cp } };
+      const crontab = rng() < 0.5 ? scheduleHook(initCrontab(), existing) : initCrontab();
+      const state = withCrontab(entity([aliceAddr], false, jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }), crontab);
+      const og: any = { entityId: ALICE, timestamp: ts, crontabState: { tasks: crontab.tasks, hooks: new Map(crontab.hooks) }, ...(jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) };
+      const msgs: string[] = [];
+      let ogBroadcast: boolean, rw;
+      if (rng() < 0.5) {
+        const proofbodyHash = pick([h1, h2]), disputeTimeout = 5_000 + ri(99);
+        ogSync(og, lowerId(sender), self, batchNonce, msgs);
+        const weAreStarter = lowerId(sender) === self;
+        const own = weAreStarter && Boolean(og.jBatchState?.sentBatch?.batch.disputeStarts.some((s: any) => String(s.counterentity || "").toLowerCase() === cp && String(s.proofbodyHash || "").toLowerCase() === proofbodyHash));
+        const r = ogRetire(og, (b) => scrubDisputeStartsForCounterparty(b, cp) + scrubCounterDisputesForActiveStart(b, cp, proofbodyHash), own);
+        ogBroadcast = r.broadcast;
+        if (r.removed > 0) msgs.push(`🧹 Removed ${r.removed} stale dispute-start op(s) for ${cp.slice(-4)}`);
+        msgs.push(`⚔️ DISPUTE ${weAreStarter ? "STARTED" : "vs us"} with ${cp.slice(-4)}, timeout: unix ${disputeTimeout}`);
+        og.crontabState.hooks.set(`dispute-deadline:${cp}`, { id: `dispute-deadline:${cp}`, triggerAt: (Number.isFinite(ts) && ts >= 0 ? ts : 0) + (weAreStarter ? 1 : 5000), type: "dispute_deadline", data: { accountId: cp } });
+        rw = unwrap(disputeStartedEffects(state, { sender, counterentity, proofbodyHash, disputeTimeout, starterInitialArguments: "0x", ...(batchNonce === undefined ? {} : { batchNonce }) }, ts));
+      } else {
+        const initialProofbodyHash = pick([h1, h2]), hadActiveDispute = rng() < 0.7, settlementInvalidated = rng() < 0.2, initialNonce = ri(5);
+        ogSync(og, lowerId(sender), self, batchNonce, msgs);
+        if (settlementInvalidated) msgs.push(`🧹 Invalidated stale settlement intent after dispute finality with ${cp.slice(-4)}`);
+        if (hadActiveDispute) { msgs.push(`✅ DISPUTE FINALIZED with ${cp.slice(-4)} (nonce ${initialNonce})`); og.crontabState.hooks.delete(`dispute-deadline:${cp}`); }
+        const ownAck = lowerId(sender) === self && sentBatchOwnsDisputeFinalityAck(og, cp, initialProofbodyHash, batchNonce);
+        const r = ogRetire(og, (b) => scrubDisputeFinalizationsForCounterparty(b, cp) + scrubCounterDisputesForCounterparty(b, cp) + scrubSourceHashLadderRegistrationsForCounterparty(b, cp), ownAck);
+        ogBroadcast = r.broadcast;
+        if (r.removed > 0) msgs.push(`🧹 Removed ${r.removed} stale dispute-finalize op(s) for ${cp.slice(-4)}`);
+        rw = unwrap(disputeFinalizedEffects(state, { sender, counterentity, initialProofbodyHash, initialNonce, hadActiveDispute, settlementInvalidated, ...(batchNonce === undefined ? {} : { batchNonce }) }));
+      }
+      expect(rw.state.committed["jBatchState"]).toEqual(og.jBatchState);
+      expect(rw.events.map((e) => e.message)).toEqual(msgs);
+      expect(rw.broadcast).toBe(ogBroadcast);
+      expect(sortedEntries(unwrap(crontabOf(rw.state)).hooks)).toEqual(sortedEntries(og.crontabState.hooks) as never);
+      if (msgs.some((m) => m.startsWith("🧹 Removed"))) removedAny++;
+      if (ogBroadcast) broadcasts++;
+      if (msgs.some((m) => m.startsWith("↻"))) synced++;
+    }
+    expect([removedAny > 50, broadcasts > 10, synced > 5]).toEqual([true, true, true]);
+    // og applyKnownHtlcSecret for secrets in the starter's arguments is not ported: a named invariant
+    expect(disputeStartedEffects(entity([aliceAddr]), { sender: BOB, counterentity: ALICE, proofbodyHash: h1, disputeTimeout: 1, starterInitialArguments: "0xabcd" }, 0)).toEqual({ ok: false, error: { _tag: "entity_invariant", reason: "DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED" } });
+  });
 });

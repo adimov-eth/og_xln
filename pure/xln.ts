@@ -5401,6 +5401,94 @@ const foldWake = (state: EntityState, replicas: Replicas, w: Extract<EntityTx, {
     if (missing !== undefined) return invariant(`${missing.type === "j_broadcast" ? "J_BROADCAST" : "ORDERBOOK_SWEEP_CROSS_J"}_ENTITY_TX_NOT_PORTED`);
     return approved.length === 0 ? ok({ state: run.state, accountReplicas: run.accountReplicas, outputs: [] }) : foldNested(run.state, run.accountReplicas, approved as readonly EntityTx[], ctx, "collective");
   }));
+// ---- og entity/tx/j-events.ts J7 Entity-side dispute effects and tx/dispute-finalize-guards.ts: J batch retirement, nonce sync, the dispute-deadline hook ----
+type BatchRows = { readonly [field: string]: readonly Binary[] };
+type BatchRow = { readonly counterentity?: unknown; readonly initialProofbodyHash?: unknown; readonly targetRole?: unknown; readonly counterpartyEntity?: unknown };
+const rowId = (v: unknown): string => String(v || "").trim().toLowerCase();
+type Scrub = (b: BatchRows) => { readonly batch: BatchRows; readonly removed: number };
+const scrubRows = (field: string, keep: (row: BatchRow) => boolean): Scrub => (b) => {
+  const before = (b[field] ?? []) as readonly Binary[], after = before.filter((r) => keep(r as BatchRow));
+  return { batch: after.length === before.length ? b : { ...b, [field]: after }, removed: before.length - after.length };
+};
+/** og scrubDisputeStartsForCounterparty / scrubCounterDisputesForActiveStart / scrubDisputeFinalizationsForCounterparty / scrubCounterDisputesForCounterparty / scrubSourceHashLadderRegistrationsForCounterparty. */
+const scrubStarts = (peer: string): Scrub => scrubRows("disputeStarts", (r) => peer === "" || rowId(r.counterentity) !== peer);
+const scrubCountersForStart = (peer: string, initialHash: string): Scrub => scrubRows("counterDisputes", (r) => !(rowId(r.counterentity) === peer && String(r.initialProofbodyHash).toLowerCase() !== initialHash));
+const scrubFinalizations = (peer: string): Scrub => scrubRows("disputeFinalizations", (r) => peer === "" || rowId(r.counterentity) !== peer);
+const scrubCounters = (peer: string): Scrub => scrubRows("counterDisputes", (r) => rowId(r.counterentity) !== peer);
+const scrubSourceLadders = (peer: string): Scrub => scrubRows("hashLadderRegistrations", (r) => peer === "" || !(r.targetRole === false && rowId(r.counterpartyEntity) === peer));
+const scrubAll = (b: BatchRows, scrubs: readonly Scrub[]): { readonly batch: BatchRows; readonly removed: number } =>
+  scrubs.reduce((acc, s) => { const r = s(acc.batch); return { batch: r.batch, removed: acc.removed + r.removed }; }, { batch: b, removed: 0 });
+const rowsEmpty = (b: BatchRows): boolean => BATCH_FIELDS.every((f) => (b[f] ?? []).length === 0);
+type RetiringJBatch = { readonly batch: BatchRows; readonly sentBatch?: { readonly batch: BatchRows; readonly entityNonce: number } | undefined; readonly recoveryBatches?: readonly BatchRows[] | undefined; readonly entityNonce?: number | undefined; readonly status?: string | undefined };
+/**
+ * og's shared retirement shape (retireStartedDisputeBatchOps, retireFinalizedDisputeState): scrub the draft and every recovery batch (dropping the
+ * emptied ones), then, unless the sent batch will still be acknowledged, move a sent batch that lost operations to the front of the recovery queue
+ * (og retireSentBatchInvalidatedBy*). `broadcast`: og queueLocalJBatchBroadcast after a sent or recovery removal.
+ */
+const retireJBatch = (jb: RetiringJBatch, scrubs: readonly Scrub[], keepSent: boolean): { readonly jb: RetiringJBatch; readonly removed: number; readonly broadcast: boolean } => {
+  const draft = scrubAll(jb.batch, scrubs), recovered = (jb.recoveryBatches ?? []).map((b) => scrubAll(b, scrubs));
+  const removedRecovery = recovered.reduce((n, r) => n + r.removed, 0), left = recovered.map((r) => r.batch).filter((b) => !rowsEmpty(b));
+  const { recoveryBatches: _r, ...rest } = jb;
+  const scrubbed: RetiringJBatch = { ...rest, batch: draft.batch, ...(jb.recoveryBatches === undefined || left.length === 0 ? {} : { recoveryBatches: left }) };
+  const sent = keepSent || jb.sentBatch === undefined ? undefined : scrubAll(jb.sentBatch.batch, scrubs);
+  const removedSent = sent?.removed ?? 0;
+  const retired: RetiringJBatch = sent === undefined || removedSent === 0 ? scrubbed : (() => {
+    const { sentBatch: _s, ...unsent } = scrubbed, queue = rowsEmpty(sent.batch) ? scrubbed.recoveryBatches : [sent.batch, ...(scrubbed.recoveryBatches ?? [])];
+    const work = (queue ?? []).some((b) => !rowsEmpty(b)) || !rowsEmpty(unsent.batch);
+    return { ...unsent, ...(queue === undefined ? {} : { recoveryBatches: queue }), status: work ? "accumulating" : "empty" };
+  })();
+  const work = (retired.recoveryBatches ?? []).some((b) => !rowsEmpty(b)) || !rowsEmpty(retired.batch);
+  return { jb: retired, removed: draft.removed + removedRecovery + removedSent, broadcast: (removedSent > 0 || removedRecovery > 0) && retired.sentBatch === undefined && work };
+};
+/** og syncJBatchEntityNonceFromEvent: our own event's batch nonce raises the J batch nonce. */
+const syncBatchNonce = (jb: RetiringJBatch | undefined, sender: string, self: string, batchNonce: number | undefined): { readonly jb: RetiringJBatch | undefined; readonly message?: string | undefined } => {
+  if (rowId(sender) !== rowId(self) || batchNonce === undefined || batchNonce <= 0 || jb === undefined) return { jb };
+  const current = jb.entityNonce || 0;
+  return batchNonce > current ? { jb: { ...jb, entityNonce: batchNonce }, message: `↻ Synced J batch nonce from event (${current} → ${batchNonce})` } : { jb };
+};
+export type DisputeJEffects = { readonly state: EntityState; readonly events: readonly FrameEvent[]; readonly broadcast: boolean };
+const withJBatch = (state: EntityState, jb: RetiringJBatch | undefined): EntityState => (jb === undefined ? state : { ...state, committed: { ...state.committed, jBatchState: jb as unknown as Binary } });
+const disputePeerOf = (self: string, sender: string, counterentity: string): string => (rowId(sender) === rowId(self) ? rowId(counterentity) : rowId(sender));
+/**
+ * og initializeStartedDispute + applyStartedDisputeFollowups, the Entity-side part (the Account's external finality is the Account machine's):
+ * nonce sync, retirement of every stale start and non-binding counter-proof (keeping our own sent start until its HankoBatchProcessed), the
+ * `⚔️ DISPUTE` message and the dispute-deadline hook (1 ms for the starter, 5 s for the other side). Secrets in the starter's arguments feed og's
+ * applyKnownHtlcSecret, which is not ported here (DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED); the rewrite's proofs carry no Pulls, so og's
+ * counter-proof lock, cross-j recovery plan and Source hub claim have nothing to do.
+ */
+export const disputeStartedEffects = (state: EntityState, e: { readonly sender: string; readonly counterentity: string; readonly proofbodyHash: string; readonly disputeTimeout: number; readonly starterInitialArguments?: string | undefined; readonly batchNonce?: number | undefined }, timestamp: number): Result<DisputeJEffects, EntityError> => {
+  if ((e.starterInitialArguments ?? "0x") !== "0x" && e.starterInitialArguments !== "") return invariant("DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED");
+  const self = rowId(state.id), sender = rowId(e.sender), peer = disputePeerOf(self, e.sender, e.counterentity), weAreStarter = sender === self, initialHash = String(e.proofbodyHash).toLowerCase();
+  const synced = syncBatchNonce(committedJBatch(state) as RetiringJBatch | undefined, sender, self, e.batchNonce);
+  const ownSent = weAreStarter && (synced.jb?.sentBatch?.batch["disputeStarts"] ?? []).some((s) => rowId((s as BatchRow).counterentity) === peer && String((s as { readonly proofbodyHash?: unknown }).proofbodyHash || "").toLowerCase() === initialHash);
+  const retired = synced.jb === undefined ? undefined : retireJBatch(synced.jb, [scrubStarts(peer), scrubCountersForStart(peer, initialHash)], ownSent);
+  return map(crontabOf(state), (crontab) => {
+    const hooked = scheduleHook(crontab, { id: `dispute-deadline:${peer}`, triggerAt: Math.max(0, Number.isFinite(timestamp) ? timestamp : 0) + (weAreStarter ? 1 : 5000), type: "dispute_deadline", data: { accountId: peer } });
+    const messages = [...(synced.message === undefined ? [] : [synced.message]), ...(retired !== undefined && retired.removed > 0 ? [`🧹 Removed ${retired.removed} stale dispute-start op(s) for ${peer.slice(-4)}`] : []),
+      `⚔️ DISPUTE ${weAreStarter ? "STARTED" : "vs us"} with ${peer.slice(-4)}, timeout: unix ${e.disputeTimeout}`];
+    return { state: withCrontab(withJBatch(state, retired?.jb ?? synced.jb), hooked), events: messages.map(status), broadcast: retired?.broadcast ?? false };
+  });
+};
+/**
+ * og applyResolvedDisputeFinality + retireFinalizedDisputeState, the Entity-side part: nonce sync, the `✅ DISPUTE FINALIZED` message and the
+ * dispute-deadline hook's cancellation when the Account had an active dispute (`hadActiveDispute`, `initialNonce`: the Account finality's result),
+ * og's stale settlement-intent message (`settlementInvalidated`), then retirement of every finalization, counter-proof and Source hash-ladder
+ * registration for the Account (keeping a sent batch that will acknowledge exactly this finalization).
+ */
+export const disputeFinalizedEffects = (state: EntityState, e: { readonly sender: string; readonly counterentity: string; readonly initialProofbodyHash: string; readonly batchNonce?: number | undefined; readonly initialNonce: number; readonly hadActiveDispute: boolean; readonly settlementInvalidated: boolean }): Result<DisputeJEffects, EntityError> => {
+  const self = rowId(state.id), sender = rowId(e.sender), peer = disputePeerOf(self, e.sender, e.counterentity), initialHash = String(e.initialProofbodyHash || "").toLowerCase();
+  const synced = syncBatchNonce(committedJBatch(state) as RetiringJBatch | undefined, sender, self, e.batchNonce), sent = synced.jb?.sentBatch;
+  // og sentBatchOwnsDisputeFinalityAck
+  const ownAck = sender === self && sent !== undefined && e.batchNonce !== undefined && Number.isSafeInteger(e.batchNonce) && e.batchNonce > 0 && sent.entityNonce === e.batchNonce
+    && (sent.batch["disputeFinalizations"] ?? []).some((f) => rowId((f as BatchRow).counterentity) === peer && String((f as BatchRow).initialProofbodyHash || "").toLowerCase() === initialHash);
+  const retired = synced.jb === undefined ? undefined : retireJBatch(synced.jb, [scrubFinalizations(peer), scrubCounters(peer), scrubSourceLadders(peer)], ownAck);
+  return map(crontabOf(state), (crontab) => {
+    const messages = [...(synced.message === undefined ? [] : [synced.message]), ...(e.settlementInvalidated ? [`🧹 Invalidated stale settlement intent after dispute finality with ${peer.slice(-4)}`] : []),
+      ...(e.hadActiveDispute ? [`✅ DISPUTE FINALIZED with ${peer.slice(-4)} (nonce ${e.initialNonce})`] : []), ...(retired !== undefined && retired.removed > 0 ? [`🧹 Removed ${retired.removed} stale dispute-finalize op(s) for ${peer.slice(-4)}`] : [])];
+    const next = withJBatch(state, retired?.jb ?? synced.jb);
+    return { state: e.hadActiveDispute ? withCrontab(next, cancelHook(crontab, `dispute-deadline:${peer}`)) : next, events: messages.map(status), broadcast: retired?.broadcast ?? false };
+  });
+};
 // ---- Account Hankos through the Entity manifest: og accountInput response + proposePendingAccountFrames, hanko-witness.ts, hanko/signing.ts ----
 /**
  * og signs Account frames, ACKs and dispute proofs as secondary `hashesToSign` of the Entity frame and attaches the quorum Hanko only after the
