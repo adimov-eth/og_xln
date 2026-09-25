@@ -1,60 +1,74 @@
 # account-tx: og per-transaction Account transitions vs pure/xln.ts
 
-Tests: `pure/diff/account-tx.test.ts` (run from `pure/`: `bun test diff/account-tx.test.ts` → 26 pass). Each `DIVERGES:` test calls the og handler and the rewrite `applyAccountBody` on the same input and passes only when the difference is present.
+Tests: `pure/diff/account-tx.test.ts`. Run from `pure/` with `bun test diff/account-tx.test.ts`: 33 pass, 0 fail, about 10.4k expects.
 
-## Catalog mapping (from ast-grep of `core/account/tx/mutation.ts:196-240` switch vs `xln.ts:1176-1281` `applyArm`)
+Every test is `MATCH:`. It runs og's own handler and the rewrite `applyAccountBody` on the same input and asserts they agree. Most tests are lockstep tests. They seed a persistent og replica from the rewrite's committed view (`ogHarness`) and drive og through the real transition overlay:
 
-| og tx (catalog.ts:4-26) | rewrite arm | status |
+1. `beginAccountTransition`
+2. the handler
+3. `commitAccountTransition`
+
+After every tx, both sides must agree on accept or reject, and every accepted tx must give an equal `accountStateRoot`. Randomized cases use a seeded PRNG.
+
+## Catalog mapping (og `core/account/tx/catalog.ts` vs rewrite `AccountTxNames` / `applyArm`)
+
+| og tx | rewrite arm | status |
 |---|---|---|
-| add_delta | add_delta (1178) | MATCH |
-| set_credit_limit | set_credit_limit (1179) | MATCH |
-| direct_payment | payment (1180), wire `direct_payment` (1564) | DIVERGES (bounds) / MISSING (route, trusted gateway) |
-| htlc_lock | htlc_lock (1181) | DIVERGES |
-| htlc_resolve (secret / error) | htlc_resolve (1188) + htlc_timeout (1195) | DIVERGES |
-| swap_offer | swap_offer (1202) | DIVERGES |
-| swap_cancel_request | swap_cancel (1209) | DIVERGES |
-| swap_resolve | swap_resolve (1213) | DIVERGES |
-| settle_transition (upsert/submit/clear/hanko) | settle_transition (hanko only, 1280) | DIVERGES / MISSING |
-| j_event_claim | j_event_claim → claimJ (1166) | DIVERGES |
-| cross_pull_lock / cross_pull_close | refused as hole `cross_open` (1277-1278) | MISSING |
-| request_collateral / rebalance_refund / rebalance_policy | different vocabulary: set_rebalance_policy, rebalance_request/quote/accept, deposit_collateral (1229-1259) | MISSING (og) + EXTRA (rewrite) |
-| lending_* (6 kinds) | not account txs (entity-level pool, xln.ts:2376+) | MISSING |
-| — | deposit_to_custody / withdraw_from_custody / hub_custody_debit (1226-1228) | EXTRA |
-| — | subcontract_* (1260-1276) | EXTRA |
+| add_delta | add_delta | MATCH |
+| set_credit_limit | set_credit_limit | MATCH |
+| direct_payment | payment (wire `direct_payment`) | MATCH. Covers route, deliveryMode, trusted gateway and asserted direction. The forward effect is REMAINING (runtime). |
+| htlc_lock | htlc_lock | MATCH, including the committed HtlcLock shape. `envelope` is REMAINING (onion hole). |
+| htlc_resolve (secret / error) | htlc_resolve (outcome-based) | MATCH |
+| swap_offer | swap_offer (`swapOffer`) | MATCH for the same-jurisdiction path. Cross-j is REMAINING. |
+| swap_cancel_request | swap_cancel_request | MATCH |
+| swap_resolve | swap_resolve (`swapResolve`) | MATCH |
+| settle_transition (upsert/submit/clear/hanko) | settle_transition (`settleTransition`) | MATCH. Hanko success depends on H1/H2 and on consensus wiring. |
+| j_event_claim | j_event_claim (`claimJ` / `finalizeSettled`) | MATCH |
+| request_collateral / rebalance_refund / rebalance_policy | same names (`requestCollateral`, `rebalanceRefund`, `rebalancePolicy`) | MATCH. The rewrite quote/accept/deposit_collateral kinds are removed. |
+| lending_* (6 kinds) | same names (`lending`) | MATCH |
+| cross_pull_lock / cross_pull_close | refused as the `unchosen: cross_open` hole | REMAINING |
+| (none in og) | deposit_to_custody / withdraw_from_custody / hub_custody_debit | EXTRA, kept (see AT-22) |
+| (none in og) | subcontract_* | Removed. og never writes `subcontracts`. |
 
 ## Findings
 
-| id | severity | og file:line | rewrite xln.ts:line | what differs | proven by test? |
+| id | severity | og file:line | rewrite (now) | what differed | Status |
 |---|---|---|---|---|---|
-| AT-1 | critical | core/protocol/htlc/utils.ts:73-79; handlers/htlc/resolve.ts:183 | 1191 | HTLC hashlock: og = keccak256(32-byte secret) (on-chain convention); rewrite = keccak256(utf8 of the secret string). A lock made with an og/on-chain hashlock can never be resolved by the rewrite with the real secret (rejected `preimage`). | yes: "hashlock function" |
-| AT-2 | critical | handlers/htlc/resolve.ts:175-180; htlc-deadline.ts:18-23 | 1188-1193 | A secret reveal after expiry (jHeight > revealBeforeHeight or timestamp >= timelock) is refused by og but accepted by the rewrite, so the beneficiary is paid after the upstream hop may already have timed out. Money moves to the wrong party. | yes: "secret reveal after revealBeforeHeight" |
-| AT-3 | critical | handlers/swap/resolve/validation.ts:147-149, 203-228, 150-151 | 900, 1219 | Swap fill: the rewrite floors both legs from `fillRatio` on their own (`give=floor(G·r/65535)`, `want=floor(W·r/65535)`). og needs explicit execution amounts for any non-zero ratio and enforces `filledWant·qGive ≥ filledGive·qWant`. Its own limit path rounds want **up**. On an offer of 2 for 3 at r=32768, the rewrite settles 1 for 1, which is below the maker's limit price, and og rejects that execution. | yes: "fill below maker limit price" and "og requires explicit execution amounts" |
-| AT-4 | high | handlers/swap/lifecycle/cancel.ts:23-51 | 1209-1212 | og `swap_cancel_request` only emits a request: the offer and its hold stay until the counterparty's `swap_resolve`. The rewrite `swap_cancel` deletes the offer and frees the hold at once. The maker can therefore pull an offer from under a hub fill that is in flight. | yes: "swap_cancel" |
-| AT-5 | high | handlers/swap/resolve/validation.ts:128-130 | 1095, 1108-1109 | Resolver authority: og lets any non-maker counterparty resolve and forbids the maker. The rewrite allows only the designated `hub`. So an account with hub=null can never resolve, and a hub that is the maker can resolve its own offer. | yes: "resolver authority" |
-| AT-6 | high | handlers/swap/resolve/validation.ts:303 | 1222 | `fillRatio=0` with `cancelRemainder=false`: og treats it as a cancel (effectiveCancelRemainder), closes the offer and releases the hold. The rewrite keeps the offer open. | yes: "fillRatio=0" |
-| AT-7 | critical | j-claims/j-claim-transition.ts:214-221; tx/handlers/j-events/finality.ts:166-173 | 1166-1175 | A stale j_event_claim (jHeight ≤ lastFinalizedJHeight) is a no-op in og. The rewrite accepts it and, once both sides submit it, finalizes again: collateral/ondelta roll back to the older values and `finalizedJHeight` goes down. The rewrite also has no AccountSettled nonce-regression check, and jNonce is fixed at 0 (1388). | yes: "stale j_event_claim" |
-| AT-8 | high | j-claims/j-claim-transition.ts:229-255 | 1167-1169 | The rewrite remembers only the latest claim per side (`leftJ`/`rightJ`) for matching. A peer claim at an older height that is still pending never finalizes. og finalizes by accumulator membership at any pending height. The rewrite also stores a peer-side conflicting record as pending, where og rejects it (`exactMemberConflict`, :115-116). | yes: "peer claim at an older pending height" (conflict case by code reading) |
-| AT-9 | high | tx/handlers/j-events/finality.ts:28-34 | 1171 | An AccountSettled event for a different left/right pair makes og throw `ACCOUNT_SETTLED_PAIR_MISMATCH`. The rewrite filters it out without error and still finalizes the height (`sameAccount` is also case-sensitive, 1139). | yes: "different account pair" |
-| AT-10 | high | tx/handlers/settlement/transition.ts:251-262, 324-399, 650-720 | 1280 | settle_transition: og checks the hanko tx against the live workspace (revision, workspaceHash, exact nonce, recomputed settlementHash, postProof nonce = N+1, hanko signatures). The rewrite checks none of these: with no workspace at all it stores `settlementHash`, which changes the committed root. The upsert/submit/clear kinds and their hold add/release (transition.ts:152-229) are MISSING; `chargeSettlement` (935) is never called from the account fold. | yes: "settle_transition(hanko) with no workspace" |
-| AT-11 | medium | tx/mutation.ts:188-194; transition.ts:636-648 | — | og freezes an Account once a settlement workspace is signed (`SETTLEMENT_SIGNED_ACCOUNT_FROZEN`), allowing only j_event_claim and settle hanko/submit. The rewrite has no freeze, so payments and locks can move balances under a signed settlement. | code reading |
-| AT-12 | medium | handlers/htlc/lock.ts:42-47 | 1181-1187 | og refuses to lock an HTLC whose timelock has already passed (timestamp ≥ timelock) or whose revealBeforeHeight ≤ jHeight. The rewrite accepts both. | yes: "already-expired timelock" |
-| AT-13 | medium | handlers/htlc/lock.ts:40 | 1182 | og requires lockId == hashlock. The rewrite accepts any lockId and rejects a duplicate hashlock instead. | yes: "lockId must equal hashlock" |
-| AT-14 | medium | handlers/htlc/lock.ts:73-81 (LIMITS.MAX_ACCOUNT_HTLC_LOCKS=32) | 1181-1187 | og caps an account at 32 live HTLCs (a capacity rejection, which is retried). The rewrite has no cap. | yes: "33rd live lock" |
-| AT-15 | medium | handlers/htlc/resolve.ts:199-211 | 1195-1201 | og lets the beneficiary cancel (`outcome:error`) before expiry, and the payer after `timestamp >= timelock` even while jHeight ≤ revealBeforeHeight. The rewrite has only `htlc_timeout`, which is jHeight-only, for anyone, and after expiry only. Early refunds and timestamp expiry are impossible. | yes: "beneficiary may cancel" and "timestamp timelock expiry" |
-| AT-16 | medium | handlers/balance/direct-payment.ts:134 (UINT256_MAX); lock.ts:49-51 | 922, 957 | Payment ceiling: og accepts amounts up to 2^256-1 when capacity allows. The rewrite `move` refuses anything above 2^128-1 (`payment_too_large`), even with enough capacity. This covers payment and deposit_to_custody; HTLC lock and swap have no upper bound in the rewrite. | yes: "payment above 2^128-1" |
-| AT-17 | medium | handlers/swap/offer/admission.ts:115-117, 54-56, 58-69; quantization.ts:354-411 | 1202-1208 | swap_offer admission: og refuses a same-token swap, a ':' in offerId, and more than 50 offers or the per-market caps. It also enforces decimals, lot-size quantization, priceTicks, and maxFee/minNetReceive authorization. The rewrite has none of these. It stores raw amounts and adds `minFillRatio`/`expiresAtHeight` (EXTRA: og SwapOffer, types/account.ts:64-83, has neither). | yes: "same-token", "offerId containing ':'" |
-| AT-18 | medium | handlers/swap/resolve/validation.ts:233-257; remainder.ts:400-473 | 1219-1223 | Taker fee (feeAmount/feeTokenId) is MISSING. Partial-fill remainder: og re-quantizes the remainder to lot size at the canonical price and releases the dust hold. The rewrite subtracts the floored legs, so the resting remainder amounts differ. | code reading |
-| AT-19 | low | handlers/balance/direct-payment.ts:141-157, 194-226, 245-278 | 1180, 1564 | The route, deliveryMode and trusted-gateway checks and the `directPaymentForward` effect are MISSING. The rewrite payment has no route, and its wire form is always `deliveryMode:'direct'`. | code reading |
-| AT-20 | low | j-events/finality.ts:56-66 | 1171-1174 | og reduces `requestedRebalance` by the collateral increase when AccountSettled finalizes. The rewrite leaves `request` untouched. | code reading |
-| AT-21 | low | tx/mutation.ts:183-186 | — | The og dispute-status guard (`closedForDisputeRejection`) sits at tx level. In the rewrite it lives only at the replica phase level and is not re-checked per tx. | code reading |
-| AT-22 | info | handlers/rebalance/*, handlers/balance/lending.ts, handlers/settlement/pull.ts | 1226-1276 | The rebalance, lending and cross-pull tx kinds are MISSING or replaced by rewrite-specific kinds (custody, quote/accept, subcontract). They cannot interoperate with og peers on the wire. | n/a |
+| AT-1 | critical | protocol/htlc/utils.ts:73-79; htlc/resolve.ts:183 | `hashHtlcSecret`, htlc_resolve | The HTLC hashlock was keccak256(utf8 secret). og uses keccak256 of the 32-byte secret. | **FIXED**. Test: "hashlock = keccak256(bytes32 secret)". |
+| AT-2 | critical | htlc/resolve.ts:175-180; htlc-deadline.ts:18-23 | `htlcExpired` | The rewrite accepted a secret reveal after expiry. | **FIXED**. Test: "400 random resolves". |
+| AT-3 | critical | swap/resolve/validation.ts:147-228 | `swapResolve` | Fills came from the ratio alone, and no limit-price check was applied. | **FIXED**. Any non-zero fill now requires explicit execution amounts, `filledWant·qGive ≥ filledGive·qWant`, the canonical ratio (`exactFillRatioToUint16`), and exact-ratio / resting-terms checks. |
+| AT-4 | high | swap/lifecycle/cancel.ts | `swap_cancel_request` | The rewrite deleted the offer and freed the hold at once. | **FIXED**. `swap_cancel` is renamed; the maker-only request makes no state change. |
+| AT-5 | high | swap/resolve/validation.ts:128-130 | `swapResolve`, `AccountKinds.swap_resolve` = bilateral | Only the hub could resolve. | **FIXED**. Any non-maker resolves; the maker is refused. |
+| AT-6 | high | swap/resolve/validation.ts:303 | `swapResolve` | fillRatio 0 kept the offer open. | **FIXED**. It now closes the offer. |
+| AT-7 | critical | j-claim-transition.ts:214-221; j-events/finality.ts:166-173 | `claimJ`, `finalizeSettled`, `AccountBody.jNonce` | A stale claim rolled state back, nonces could regress, and jNonce was fixed at 0. | **FIXED**. |
+| AT-8 | high | j-claim-transition.ts:229-255, 115-116 | `claimJ` (`claimRows` membership) | A peer at an older pending height never finalized. A peer-side conflict was stored instead of rejected. | **FIXED** |
+| AT-9 | high | j-events/finality.ts:28-34 | `finalizeSettled` | A foreign pair was filtered out silently. | **FIXED**. It is now refused, and the pair match is case-insensitive. |
+| AT-10 | high | settlement/transition.ts:251-720 | `upsertWorkspace` / `hankoWorkspace` / `settleTransition` | A hanko attached with no workspace was accepted, and upsert/submit/clear were missing. | **FIXED** for all four kinds, holds and the revision chain. The workspace hash equals og `createSettlementWorkspaceHash`. **REMAINING**, three parts: (a) A successful hanko needs og-equal settlement and proof hashes, which wait on hashes H2 (SignedAmount diffs) and H1. The conditional MATCH test runs the full lockstep once they land. (b) The consensus `foldCtx` does not yet pass `FoldCtx.settlement` (`verify`, `proofNonceFloor`), so in-frame hanko is refused with `SETTLEMENT_HANKO_CONTEXT_MISSING` until the consensus region wires it. (c) `activatePostSettlementProof` witness promotion (dispute-proof nonce and hash fields) is replica-level. Only its body side is ported (`activateWorkspace`). |
+| AT-11 | medium | tx/mutation.ts:188-194; transition.ts:636-648 | `settlementFreeze` in `applyAccountBody` | There was no freeze. | **FIXED** |
+| AT-12 | medium | htlc/lock.ts:42-47 | htlc_lock | An already-expired lock was accepted. | **FIXED** |
+| AT-13 | medium | htlc/lock.ts:40 | htlc_lock | The rewrite did not require lockId == hashlock. | **FIXED** |
+| AT-14 | medium | htlc/lock.ts:73-81 | `MAX_ACCOUNT_HTLC_LOCKS` | There was no 32-lock cap. | **FIXED** |
+| AT-15 | medium | htlc/resolve.ts:199-211 | htlc_resolve `outcome:"error"` | The rewrite had no early beneficiary refund and no timestamp expiry. | **FIXED**. `htlc_timeout` is removed. |
+| AT-16 | medium | direct-payment.ts:134; lock.ts:49-51 | `MAX_PAYMENT_AMOUNT` = 2^256-1 | The ceiling was 2^128-1. | **FIXED**. `representable` adds og's int512 offdelta check. |
+| AT-17 | medium | swap/offer/{admission,quantization,commit}.ts; swap-limits.ts | `swapOffer`, `SwapOffer` (og shape) | Admission checks and quantization were missing. | **FIXED**: ':' check, duplicate, the 50/32 offer caps and the 32 per-side-per-market cap, decimals, amount bounds, maxFee/minNetReceive authority, same token, timeInForce, lot size, canonical price (step 1, stable-quote orientation), priceTicks drift, requantized authority, capacity and hold overflow. EXTRA `minFillRatio`/`expiresAtHeight` are removed. `createdHeight` = frame jHeight, as og mutation.ts passes it. **REMAINING**: cross-j offers (`crossJurisdiction`), because the cross-j route model is unported. |
+| AT-18 | medium | swap/resolve/{validation,settlement,remainder}.ts | `swapResolve` | The taker fee and the remainder requantization were missing. | **FIXED**: fee authority (`assertSwapNetAuthorization`), fee movement, exact-lot remainder requantization, dust release and pro-rata authority. |
+| AT-19 | low | direct-payment.ts:141-278 | `paymentRoute`, payment tx fields, `wireTx` payment | Route, deliveryMode and trusted gateway were missing. | **FIXED** for validation and wire form. **REMAINING**: the `directPaymentForward` effect for a trusted gateway is not emitted, because it is runtime/entity routing outside this region. |
+| AT-20 | low | j-events/finality.ts:56-66 | `finalizeSettled` | `requestedRebalance` was not reduced. | **FIXED** with og-shaped `requested`/`requestFees`. Test: "MATCH (AT-20)". The shadow `submittedAtByToken` deletion is replica-level and not ported. |
+| AT-21 | low | tx/mutation.ts:183-186 | replica phase grammar | The dispute-status guard is not re-checked per tx. | **EQUIVALENT, no change.** og `canProcessAccountTxForDisputeStatus` admits only `active`. In the rewrite, frames fold only in the `open`/`proposed`/`received` phases, which map to og `active`. `preparing`/`disputed` never fold txs. |
+| AT-22 | info | handlers/rebalance/*, balance/lending.ts, settlement/pull.ts | see catalog | Kinds were missing or replaced. | **FIXED**: request_collateral, rebalance_refund, rebalance_policy and lending_* are ported with og state (`requestedRebalance`, `requestedRebalanceFeeState`, `rebalanceFeePolicies`, `lendingIntents`), and root lockstep tests cover them. **REMOVED**: the EXTRA set_rebalance_policy, rebalance_request, rebalance_quote, rebalance_accept, deposit_collateral (with its `queue_r2c` effect) and subcontract_*. **REMAINING, three items:** (1) cross_pull_lock/close need og extensions/cross-j (about 2.4k lines: route canonicalization, pull binding, hash-ladder binary). They stay an explicit `unchosen: cross_open` refusal. (2) The EXTRA custody kinds are kept because `xln_run.ts` (consumerExample, hostRoot) depends on them. Their rows share the committed `lendingIntents` map (`custody:*`, `debit:*`, `hub`), so an account that uses custody or a hub side hashes differently from og. (3) The runtime events og returns (request_collateral_committed, swap cancel request, htlc error) are not emitted. |
+
+## Wire form
+
+`wireOf` now emits og's AccountTx field types: numeric `tokenId`/`giveTokenId`/`wantTokenId`/`feeTokenId`/`requestTokenId`, and a numeric htlc `revealBeforeHeight`. For the ported kinds, `ownWire(wireOf(tx))` deep-equals og's tx object, and `accountFrameHash` equals og `computeFrameHash` (test: "wire form of the ported kinds").
 
 ## Coverage (checked, MATCH)
 
-- **deriveDelta outCapacity** (utils.ts:26-61, 135-162) equals `outCapacity` (xln.ts:931-933) for both sides. The test covers a 5×5×5×5×2 grid including negative delta and holds. Right = max(c+R−t,0), left = max(t+L,0), and holds are subtracted with a floor at 0.
-- **set_credit_limit** (set-credit-limit.ts:68-99 vs xln.ts:961-962): the proposer writes the counterparty's field (byLeft → rightCreditLimit). Both reject values below 0 and above 2^256-1.
-- **Payment capacity refusal** (direct-payment.ts:297-303 vs xln.ts:953-958): an over-capacity payment is refused by both, and exactly-at-capacity is accepted by both. Sign is the same (left pays negative), and holds reduce room identically.
-- **HTLC**: secret resolve moves offdelta by the sender's sign and releases the hold (resolve.ts:221-233 vs 1193). A lock's capacity check includes existing holds (lock.ts:96-103 vs 1186). jHeight == revealBeforeHeight is not expired for a timeout in either (the rewrite refuses it as a `reveal_before_height` hole).
-- **swap_offer capacity** includes existing holds (commit.ts:207-214 vs 1207).
-- **Token-row cap** of 128: `LIMITS.MAX_ACCOUNT_TOKEN_ROWS` (state/delta.ts:62) equals `MAX_ROWS` (1020, 1294). The tokenId range is 0..65535 on both sides (units.ts:452 / xln.ts:258).
-- **Maker-only cancel authority** (cancel.ts:454 vs 1211) and **counterparty capacity for the want leg** (settlement.ts:488-503 vs `spend`, 1220).
+- deriveDelta outCapacity grid, set_credit_limit bounds, payment capacity and sign, and HTLC holds reducing payment capacity. These are the earlier MATCH tests, still green.
+- Committed-root lockstep, tx by tx, against og `commitAccountTransition` for random sequences of:
+  - HTLC lock/resolve
+  - swaps
+  - settle_transition upsert/clear/submit
+  - rebalance
+  - lending
+  - direct_payment envelopes
+- j_event_claim lockstep against og `handleJEventClaim`, with real `prepareAccountJClaimTx` proofs, covering pending roots, jNonce, lastFinalizedJHeight and collateral/ondelta.

@@ -31,7 +31,7 @@ import {
   genesisReplica,
   getDelta,
   holds,
-  keccakUtf8,
+  hashHtlcSecret,
   offdeltaChange,
   outCapacity,
   setCreditLimit,
@@ -271,59 +271,56 @@ describe("oracle", () => {
 
   test("an HTLC resolve moves offdelta by their sign and a timeout does not", () => {
     const { body, ctx } = open();
-    const secret = "preimage";
-    const hashlock = keccakUtf8(secret);
-    const lock = { type: "htlc_lock" as const, lockId: "L", hashlock, timelock: 0n, revealBeforeHeight: 5n, amount: 5n, tokenId: "0" as const };
+    const secret = word("5a");
+    const hashlock = hashHtlcSecret(secret);
+    if (hashlock === null) throw new Error("secret");
+    const lock = { type: "htlc_lock" as const, lockId: hashlock, hashlock, timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "0" as const };
     const locked = unwrap(applyAccountBody(body, lock, ctx)).state;
     expect(getDelta(locked.account, "0").offdelta).toBe(0n);
     expect(outCapacity(getDelta(locked.account, "0"), true, holds(locked, "0", true))).toBe(15n);
-    const resolved = unwrap(applyAccountBody(locked, { type: "htlc_resolve", lockId: "L", secret }, ctx)).state;
+    const resolved = unwrap(applyAccountBody(locked, { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret }, ctx)).state;
     expect(getDelta(resolved.account, "0").offdelta).toBe(deriveTransferOffdeltaChange(true, 5n));
     expect(getDelta(resolved.account, "0").collateral).toBe(0n);
     expect(getDelta(resolved.account, "0").ondelta).toBe(0n);
     const proof = unwrap(accountProofBody(unwrap(committed(resolved)).view));
     expect(proof.offdeltas).toEqual([getDelta(resolved.account, "0").offdelta, getDelta(resolved.account, "1").offdelta]);
     expect(proof.tokenIds).toEqual([0n, 1n]);
-    expect(resolved.locks.has("L")).toBe(false);
-    expect(applyAccountBody(locked, { type: "htlc_resolve", lockId: "L", secret: "wrong" }, ctx).ok).toBe(false);
-    const expired = unwrap(applyAccountBody(locked, { type: "htlc_timeout", lockId: "L" }, { ...ctx, jHeight: 6n })).state;
+    expect(resolved.locks.has(hashlock)).toBe(false);
+    expect(applyAccountBody(locked, { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret: word("5b") }, ctx).ok).toBe(false);
+    const expired = unwrap(applyAccountBody(locked, { type: "htlc_resolve", lockId: hashlock, outcome: "error", reason: "timeout" }, { ...ctx, jHeight: 6n })).state;
     expect(getDelta(expired.account, "0").offdelta).toBe(0n);
-    expect(expired.locks.has("L")).toBe(false);
+    expect(expired.locks.has(hashlock)).toBe(false);
   });
 
   test("a filled swap moves give and want by their two signs", () => {
     const { body, ctx } = open("left");
     const offered = unwrap(applyAccountBody(body, {
-      type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 6n, wantTokenId: "1", wantAmount: 2n, minFillRatio: 1, expiresAtHeight: 100n,
+      type: "swap_offer", offerId: "S", giveTokenId: "0", giveTokenDecimals: 0, giveAmount: 6n, wantTokenId: "1", wantTokenDecimals: 0, wantAmount: 3n, maxFee: 0n, minNetReceive: 3n,
     }, ctx)).state;
-    const filled = unwrap(applyAccountBody(offered, { type: "swap_resolve", offerId: "S", fillRatio: MAX_FILL, cancelRemainder: true }, ctx)).state;
+    expect(applyAccountBody(offered, { type: "swap_resolve", offerId: "S", fillRatio: MAX_FILL, cancelRemainder: true, executionGiveAmount: 6n, executionWantAmount: 3n }, ctx).ok).toBe(false);
+    const filled = unwrap(applyAccountBody(offered, { type: "swap_resolve", offerId: "S", fillRatio: MAX_FILL, cancelRemainder: true, executionGiveAmount: 6n, executionWantAmount: 3n }, { ...ctx, byLeft: false })).state;
     expect(getDelta(filled.account, "0").offdelta).toBe(deriveTransferOffdeltaChange(true, 6n));
-    expect(getDelta(filled.account, "1").offdelta).toBe(deriveTransferOffdeltaChange(false, 2n));
+    expect(getDelta(filled.account, "1").offdelta).toBe(deriveTransferOffdeltaChange(false, 3n));
     expect(filled.offers.has("S")).toBe(false);
   });
 
-  test("a hanko settlement keeps the money and commits the settlement hash", () => {
+  test("a settlement workspace keeps the money, holds its outflow and commits the workspace", () => {
     const { body } = open();
+    const ctx = { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n };
     const before = unwrap(committed(body)).root;
-    const tx = {
-      type: "settle_transition" as const,
-      kind: "hanko" as const,
-      revision: 1,
-      workspaceHash: word("61"),
-      settlementNonce: 2,
-      settlementHash: word("62"),
-      settlementHanko: "0xfirst-quorum",
-      postProof: { nonce: 3, proposerIsLeft: true, proofBodyHash: word("63"), disputeHash: word("64"), hanko: "0xfirst-proof-quorum" },
-    };
-    const applied = unwrap(applyAccountBody(body, tx, { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n })).state;
+    const tx = { type: "settle_transition" as const, kind: "upsert" as const, revision: 1, ops: [{ type: "r2r" as const, tokenId: 0, amount: 2n }], executorIsLeft: true };
+    const applied = unwrap(applyAccountBody(body, tx, ctx)).state;
     expect(getDelta(applied.account, "0").offdelta).toBe(getDelta(body.account, "0").offdelta);
-    expect(applied.settlement?.settlementHash).toBe(word("62"));
+    expect(applied.settlement?.status).toBe("awaiting_counterparty");
     const root = unwrap(committed(applied)).root;
     expect(root).not.toBe(before);
-    const otherWitness = unwrap(applyAccountBody(body, { ...tx, settlementHanko: "0xsecond-quorum", postProof: { ...tx.postProof, hanko: "0xsecond-proof-quorum" } }, { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n })).state;
-    expect(unwrap(committed(otherWitness)).root).toBe(root);
-    const otherTarget = unwrap(applyAccountBody(body, { ...tx, settlementHash: word("65") }, { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n })).state;
+    const otherTarget = unwrap(applyAccountBody(body, { ...tx, ops: [{ type: "r2r" as const, tokenId: 0, amount: 1n }] }, ctx)).state;
     expect(unwrap(committed(otherTarget)).root).not.toBe(root);
+    const hash = applied.settlement?.workspaceHash ?? "";
+    const cleared = unwrap(applyAccountBody(applied, { type: "settle_transition", kind: "clear", revision: 1, workspaceHash: hash }, { ...ctx, byLeft: false })).state;
+    expect(unwrap(committed(cleared)).root).toBe(before);
+    const hanko = { type: "settle_transition" as const, kind: "hanko" as const, revision: 1, workspaceHash: hash, settlementNonce: 1, settlementHash: word("62"), settlementHanko: "0x01", postProof: { nonce: 2, proposerIsLeft: true, proofBodyHash: word("63"), disputeHash: word("64"), hanko: "0x02" } };
+    expect(applyAccountBody(applied, hanko, ctx).ok).toBe(false);
     expect(unwrap(accountFrameHash({ ...accountFixture(), accountTxs: [{ type: tx.type, data: tx }] })).length).toBeGreaterThan(0);
   });
 

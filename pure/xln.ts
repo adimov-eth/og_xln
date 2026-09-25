@@ -89,9 +89,9 @@ export const EntityTransition = {
 } as const;
 
 
-export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "htlc_timeout", "swap_offer", "swap_cancel", "swap_resolve", "settle_transition",
-  "j_event_claim", "cross_pull_lock", "cross_pull_close", "deposit_to_custody", "withdraw_from_custody", "hub_custody_debit", "set_rebalance_policy", "rebalance_request",
-  "rebalance_quote", "rebalance_accept", "deposit_collateral", "subcontract_propose", "subcontract_approve", "subcontract_reject", "subcontract_resolve_propose", "subcontract_resolve_approve"] as const;
+export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "swap_offer", "swap_cancel_request", "swap_resolve", "settle_transition",
+  "j_event_claim", "cross_pull_lock", "cross_pull_close", "deposit_to_custody", "withdraw_from_custody", "hub_custody_debit", "request_collateral", "rebalance_refund",
+  "rebalance_policy", "lending_fund", "lending_borrow_request", "lending_repay", "lending_credit", "lending_close_request", "lending_close_payout"] as const;
 export const LendingTxNames = ["lending_fund", "lending_borrow_request", "lending_repay", "lending_close_request"] as const;
 export const EntityTxNames = ["directPayment", "placeSwapOffer", "htlcPayment", "prepareCrossJurisdictionSwap", "registerCrossJurisdictionSwap"] as const;
 export const AccountInputKinds = ["dispute", "board_hanko_refresh"] as const;
@@ -339,6 +339,7 @@ export type CommittedAccountState = {
   readonly jNonce: number; readonly lastFinalizedJHeight: number; readonly leftPendingJClaims: JClaimAccumulator; readonly rightPendingJClaims: JClaimAccumulator;
   readonly deltas: ReadonlyMap<number, CommittedDelta>; readonly locks: CommittedMap; readonly pulls: CommittedMap; readonly swapOffers: CommittedMap; readonly subcontracts: CommittedMap;
   readonly lendingIntents: CommittedMap; readonly requestedRebalance: CommittedMap; readonly requestedRebalanceFeeState: CommittedMap; readonly rebalanceFeePolicies: CommittedMap;
+  readonly settlementWorkspace?: SettlementWorkspace | undefined;
 };
 export type CommitmentError = CanonicalValueError | Tagged<"bad_domain" | "bad_j_claims" | "bad_key" | "key_prefix_collision" | "nested_collection" | "leaf_too_large">;
 const u16 = (n: number): Uint8Array => Uint8Array.of((n >> 8) & 0xff, n & 0xff);
@@ -417,7 +418,7 @@ export const preparedRoot = ({ state, domain, left, right, maps }: PreparedCommi
   return flatDigest("account.state", [
     ["identity", { chainId: domain.chainId, depositoryAddress: domain.depositoryAddress, leftEntity: state.leftEntity.toLowerCase(), rightEntity: state.rightEntity.toLowerCase(), watchSeed: state.watchSeed.toLowerCase() }],
     ["financial", { deltasRoot: root("deltas"), jNonce: state.jNonce, disputeConfig: state.disputeConfig }],
-    ["commitments", { locksRoot: root("locks"), pullsRoot: root("pulls"), swapOffersRoot: root("swapOffers"), subcontractsRoot: root("subcontracts"), lendingIntentsRoot: root("lendingIntents") }],
+    ["commitments", { locksRoot: root("locks"), pullsRoot: root("pulls"), swapOffersRoot: root("swapOffers"), subcontractsRoot: root("subcontracts"), lendingIntentsRoot: root("lendingIntents"), settlementWorkspace: workspaceWithoutHankos(state.settlementWorkspace) }],
     ["jurisdiction", { lastFinalizedJHeight: state.lastFinalizedJHeight, leftPendingJClaims: left, rightPendingJClaims: right }],
     ["rebalance", { requestedRebalanceRoot: root("requestedRebalance"), requestedRebalanceFeeStateRoot: root("requestedRebalanceFeeState"), rebalanceFeePoliciesRoot: root("rebalanceFeePolicies") }],
   ]);
@@ -878,7 +879,9 @@ export const checkCrossClose = (p: { readonly amount: bigint; readonly ratio: nu
 export type Delta = { readonly tokenId: TokenId; readonly collateral: bigint; readonly ondelta: bigint; readonly offdelta: bigint; readonly leftCreditLimit: bigint; readonly rightCreditLimit: bigint };
 export type AccountState = { readonly id: AccountId; readonly deltas: ReadonlyMap<TokenId, Delta> };
 export type AccountError = Tagged<"insufficient_capacity", { available: bigint; requested: bigint }> | Tagged<"negative_collateral" | "negative_credit_limit" | "negative_transfer" | "credit_limit_too_large" | "payment_too_large" | "non_positive_payment">;
-export const MAX_PAYMENT_AMOUNT = (1n << 128n) - 1n;
+/** og direct-payment.ts:30, lock.ts:49: either sender moves up to the full uint256 magnitude of SignedAmount. */
+export const MAX_PAYMENT_AMOUNT = (1n << 256n) - 1n;
+export const INT512_MIN = -(1n << 511n), INT512_MAX = (1n << 511n) - 1n;
 export const MAX_CREDIT_LIMIT = (1n << 256n) - 1n;
 const floor0 = (n: bigint): bigint => (n > 0n ? n : 0n);
 export const zeroDelta = (tokenId: TokenId): Delta => ({ tokenId, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n });
@@ -907,7 +910,7 @@ export const chargeSettlement = (
 /** Left pays negative, right pays positive. Zero stays zero. A negative amount is refused. */
 export const offdeltaChange = (payerIsLeft: boolean, amount: bigint): Result<bigint, AccountError> =>
   amount < 0n ? err({ _tag: "negative_transfer" }) : ok(payerIsLeft ? -amount : amount);
-/** Unchecked move: releases of prior holds (htlc resolve, swap give, subcontract effects). */
+/** Unchecked move: releases of prior holds (htlc resolve, swap give). */
 export const shift = (d: Delta, by: bigint): Delta => ({ ...d, offdelta: d.offdelta + by });
 /** Checked move: `offdeltaChange` picks the sign; holds reduce room. */
 export const move = (d: Delta, by: bigint, held: bigint): Result<Delta, AccountError> => {
@@ -970,99 +973,130 @@ export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" 
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
   | Tagged<"above_custody", { have: bigint; requested: bigint }>
-  | Tagged<"not_hub" | "quote_expired" | "quote_mismatch" | "no_policy" | "policy_bound" | "no_quote" | "duplicate" | "missing" | "not_maker" | "expired_offer" | "below_min_fill" | "before_deadline" | "preimage" | "pending_full" | "not_counterparty" | "bad_allowance" | "index" | "too_many_rows">
+  | Tagged<"not_hub" | "settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
+  | Tagged<"settlement", { reason: string }>
+  | Tagged<"swap", { reason: string }>
+  | Tagged<"rebalance", { reason: string }>
+  | Tagged<"lending", { reason: string }>
+  | Tagged<"payment_route", { reason: string }>
   | Tagged<"unchosen", { hole: Hole }>;
-export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint };
+/** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
+export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
+export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
 export type HubSide = "left" | "right" | null;
-export type Effect = Tagged<"forward_secret", { hashlock: Hash; secret: string }> | Tagged<"queue_r2c", { tokenId: TokenId; amount: bigint }>;
-const QUOTE_WINDOW_MS = 300_000n, MAX_PENDING = 16, MAX_ROWS = 128;
-export type HtlcLock = { readonly lockId: string; readonly hashlock: Hash; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly encryptedPackage?: string | undefined };
-export type SwapOffer = { readonly offerId: string; readonly giveTokenId: TokenId; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantAmount: bigint; readonly minFillRatio: number; readonly expiresAtHeight: bigint; readonly makerIsLeft: boolean };
-export type RebalancePolicy = { readonly softLimit: bigint; readonly hardLimit: bigint; readonly maxAcceptableFee: bigint };
-export type RebalanceQuote = { readonly quoteId: bigint; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId: TokenId; readonly feeAmount: bigint; readonly accepted: boolean };
-export type Allowance = { readonly deltaIndex: number; readonly leftAllowance: bigint; readonly rightAllowance: bigint };
-export type ClauseBody = { readonly transformerAddress: string; readonly encodedBatch: string; readonly allowances: readonly Allowance[]; readonly initcode: string; readonly codeHash: Hash; readonly solcMeta: string; readonly sourceHash: Hash; readonly expiresAt?: bigint | undefined };
-export type Clause = ClauseBody & { readonly proposerIsLeft: boolean };
-export type ClauseId = string;
-export type DeltaEffect = { readonly tokenId: TokenId; readonly offdelta: bigint };
-export type Resolution = { readonly args: string; readonly effects: readonly DeltaEffect[]; readonly proposerIsLeft: boolean };
-export type ClauseState = Tagged<"pending" | "live", { clause: Clause }> | Tagged<"resolving", { clause: Clause; resolution: Resolution }>;
+export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }>;
+const MAX_ROWS = 128;
+export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly encryptedPackage?: string | undefined };
+/** og types/account.ts SwapOffer (same-jurisdiction): quantized amounts, canonical price and the maker's signed fee authority. */
+export type SwapOffer = {
+  readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
+  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks: bigint; readonly timeInForce?: number | undefined; readonly makerIsLeft: boolean; readonly createdHeight: number; readonly quantizedGive: bigint; readonly quantizedWant: bigint;
+};
+/** og AccountTx swap_offer data (same-jurisdiction). */
+export type SwapOfferTerms = {
+  readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
+  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: number | undefined;
+};
+/** og AccountTx swap_resolve data. */
+export type SwapResolveTerms = {
+  readonly offerId: string; readonly fillRatio: number; readonly cancelRemainder: boolean; readonly fillNumerator?: bigint | undefined; readonly fillDenominator?: bigint | undefined;
+  readonly feeTokenId?: TokenId | undefined; readonly feeAmount?: bigint | undefined; readonly executionGiveAmount?: bigint | undefined; readonly executionWantAmount?: bigint | undefined;
+  readonly restingPriceTicks?: bigint | undefined; readonly restingGiveAmount?: bigint | undefined; readonly restingWantAmount?: bigint | undefined; readonly restingQuantizedGive?: bigint | undefined; readonly restingQuantizedWant?: bigint | undefined;
+};
+/** og types/finance/rebalance.ts: one side's committed fee terms, the bilateral register, and a prepaid request_collateral's fee state. */
+export type RebalanceFeeSnapshot = { readonly policyVersion: number; readonly baseFee: bigint; readonly liquidityFeeBps: bigint; readonly gasFee: bigint; readonly updatedAt: number };
+export type BilateralFeePolicy = { readonly left?: RebalanceFeeSnapshot; readonly right?: RebalanceFeeSnapshot };
+/** og types/account.ts AccountLendingIntentKind: the committed replay guard of each Account-level lending intent. */
+export type LendingIntentKind = "fund" | "borrow" | "repay" | "credit-grant" | "credit-revoke" | "close-request" | "close-payout";
+export type RefundReason = "policy_mismatch" | "timeout" | "fee_too_low" | "manual";
+export type RebalanceRequestFeeState = {
+  readonly requestId: string; readonly feeTokenId: number; readonly feePaidUpfront: bigint; readonly requestedAmount: bigint; readonly policyVersion: number; readonly requestedAt: number; readonly requestedByLeft: boolean;
+  readonly refund?: { readonly reason: RefundReason; readonly refundedAmount: bigint };
+};
 export type CustodyDebit = { readonly tokenId: TokenId; readonly amount: bigint; readonly reason: string; readonly referenceId?: string | undefined };
-export type JObservation = { readonly jHeight: bigint; readonly jBlockHash: Hash; readonly events: readonly AccountSettlement[]; readonly observedAt: bigint };
 export type JClaimProof = { readonly version: 1; readonly nodes: readonly [] };
 export type ClaimRow = { readonly onLeft: boolean; readonly jHeight: bigint; readonly jBlockHash: string; readonly eventsHash: string };
+/** og types/account.ts SettlementOp / SettlementWorkspace, field for field: the workspace (minus Hankos) is committed in the Account root. */
+export type SettlementOp =
+  | { readonly type: "r2c" | "c2r" | "r2r"; readonly tokenId: number; readonly amount: bigint }
+  | { readonly type: "forgive"; readonly tokenId: number }
+  | { readonly type: "rawDiff"; readonly tokenId: number; readonly leftDiff: bigint; readonly rightDiff: bigint; readonly collateralDiff: bigint; readonly ondeltaDiff: bigint };
+export type WorkspaceDiff = { readonly tokenId: number; readonly leftDiff: bigint; readonly rightDiff: bigint; readonly collateralDiff: bigint; readonly ondeltaDiff: bigint };
+export type PostSettlementProof = { readonly leftHanko?: string | undefined; readonly rightHanko?: string | undefined; readonly disputeHash: string; readonly proofBodyHash: string; readonly nonce: number; readonly proposerIsLeft: boolean };
+export type SettlementWorkspace = {
+  readonly workspaceHash: string; readonly ops: readonly SettlementOp[]; readonly compiledDiffs?: readonly WorkspaceDiff[] | undefined; readonly compiledForgiveTokenIds?: readonly number[] | undefined;
+  readonly leftHanko?: string | undefined; readonly rightHanko?: string | undefined; readonly settlementHash?: string | undefined; readonly lastModifiedByLeft: boolean;
+  readonly status: "draft" | "awaiting_counterparty" | "ready_to_submit" | "submitted"; readonly memo?: string | undefined; readonly revision: number; readonly createdAt: number; readonly lastUpdatedAt: number;
+  readonly executorIsLeft: boolean; readonly nonceAtSign?: number | undefined; readonly postSettlementDisputeProof?: PostSettlementProof | undefined;
+};
 export type AccountBody = {
   readonly account: AccountState; readonly terms: AccountTerms; readonly hub: HubSide; readonly custody: ReadonlyMap<TokenId, bigint>; readonly locks: ReadonlyMap<string, HtlcLock>;
-  readonly offers: ReadonlyMap<string, SwapOffer>; readonly policy: ReadonlyMap<TokenId, RebalancePolicy>; readonly clauses: ReadonlyMap<ClauseId, ClauseState>; readonly debits: readonly CustodyDebit[];
-  readonly quote?: RebalanceQuote | undefined; readonly request?: { readonly tokenId: TokenId; readonly targetAmount: bigint } | undefined; readonly leftJ?: JObservation | undefined; readonly rightJ?: JObservation | undefined; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint;
-  readonly settlement?: { readonly revision: number; readonly workspaceHash: string; readonly settlementHash: string } | undefined;
+  readonly offers: ReadonlyMap<string, SwapOffer>; readonly debits: readonly CustodyDebit[];
+  readonly requested: ReadonlyMap<TokenId, bigint>; readonly requestFees: ReadonlyMap<TokenId, RebalanceRequestFeeState>; readonly feePolicies: ReadonlyMap<TokenId, BilateralFeePolicy>;
+  readonly lendingIntents: ReadonlyMap<string, LendingIntentKind>; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly jNonce: number;
+  readonly settlement?: SettlementWorkspace | undefined;
 };
 export type AccountStep<E extends Effect = Effect> = Step<AccountBody, E>;
 type BodyStep<E extends Effect = never> = Result<AccountStep<E>, BodyError>;
-export type DepositFee = Tagged<"none"> | Tagged<"quote", { quoteId: bigint; tokenId: TokenId; amount: bigint }>;
 export type AccountTx =
   | { readonly type: "add_delta"; readonly tokenId: TokenId }
   | { readonly type: "set_credit_limit"; readonly tokenId: TokenId; readonly limit: bigint }
-  | { readonly type: "payment"; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: Hash; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly encryptedPackage?: string | undefined }
-  | { readonly type: "htlc_resolve"; readonly lockId: string; readonly secret: string }
-  | { readonly type: "htlc_timeout"; readonly lockId: string }
-  | { readonly type: "swap_offer"; readonly offerId: string; readonly giveTokenId: TokenId; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantAmount: bigint; readonly minFillRatio: number; readonly expiresAtHeight: bigint }
-  | { readonly type: "swap_cancel"; readonly offerId: string }
-  | { readonly type: "swap_resolve"; readonly offerId: string; readonly fillRatio: number; readonly cancelRemainder: boolean }
+  | { readonly type: "payment"; readonly tokenId: TokenId; readonly amount: bigint; readonly route?: readonly string[] | undefined; readonly description?: string | undefined; readonly fromEntityId?: string | undefined; readonly toEntityId?: string | undefined; readonly deliveryMode?: "direct" | "trusted" | undefined; readonly trustedGatewayEntityId?: string | undefined }
+  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly encryptedPackage?: string | undefined }
+  | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "secret"; readonly secret: string }
+  | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "error"; readonly reason?: string | undefined }
+  | ({ readonly type: "swap_offer" } & SwapOfferTerms)
+  | { readonly type: "swap_cancel_request"; readonly offerId: string }
+  | ({ readonly type: "swap_resolve" } & SwapResolveTerms)
   | { readonly type: "deposit_to_custody"; readonly tokenId: TokenId; readonly amount: bigint }
   | { readonly type: "withdraw_from_custody"; readonly tokenId: TokenId; readonly amount: bigint }
   | { readonly type: "hub_custody_debit"; readonly tokenId: TokenId; readonly amount: bigint; readonly reason: string; readonly referenceId?: string | undefined }
-  | { readonly type: "set_rebalance_policy"; readonly tokenId: TokenId; readonly softLimit: bigint; readonly hardLimit: bigint; readonly maxAcceptableFee: bigint }
-  | { readonly type: "rebalance_request"; readonly tokenId: TokenId; readonly targetAmount: bigint }
-  | { readonly type: "rebalance_quote"; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId: TokenId; readonly feeAmount: bigint }
-  | { readonly type: "rebalance_accept"; readonly quoteId: bigint }
-  | { readonly type: "deposit_collateral"; readonly tokenId: TokenId; readonly amount: bigint; readonly fee: DepositFee }
-  | { readonly type: "subcontract_propose"; readonly id: string; readonly clause: ClauseBody }
-  | { readonly type: "subcontract_approve"; readonly id: string }
-  | { readonly type: "subcontract_reject"; readonly id: string }
-  | { readonly type: "subcontract_resolve_approve"; readonly id: string }
-  | { readonly type: "subcontract_resolve_propose"; readonly id: string; readonly args: string; readonly effects: readonly DeltaEffect[] }
+  | { readonly type: "request_collateral"; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number }
+  | { readonly type: "rebalance_refund"; readonly requestId: string; readonly requestTokenId: TokenId; readonly amount: bigint; readonly reason: RefundReason }
+  | { readonly type: "rebalance_policy"; readonly tokenId: TokenId; readonly policyVersion: number; readonly baseFee: bigint; readonly liquidityFeeBps: bigint; readonly gasFee: bigint }
+  | { readonly type: "lending_fund"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly interestBps: number }
+  | { readonly type: "lending_borrow_request"; readonly requestId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly maxInterestBps: number }
+  | { readonly type: "lending_repay"; readonly loanId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly amount: bigint }
+  | { readonly type: "lending_credit"; readonly action: "grant" | "revoke"; readonly loanId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly creditLimit: bigint }
+  | { readonly type: "lending_close_request"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string }
+  | { readonly type: "lending_close_payout"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string; readonly tokenId: TokenId; readonly amount: bigint }
   | { readonly type: "cross_pull_lock" }
   | { readonly type: "cross_pull_close"; readonly orderId: string; readonly amount: bigint; readonly ratio: number; readonly proofRatio: number; readonly leg: bigint; readonly binaryHash: Hash; readonly hubAuthored: boolean }
   | { readonly type: "j_event_claim"; readonly jHeight: bigint; readonly jBlockHash: Hash; readonly events: readonly AccountSettlement[]; readonly observedAt: bigint; readonly leftProof?: JClaimProof | undefined; readonly rightProof?: JClaimProof | undefined }
-  | { readonly type: "settle_transition"; readonly kind: "hanko"; readonly revision: number; readonly workspaceHash: string; readonly settlementNonce: number; readonly settlementHash: string; readonly settlementHanko: string; readonly postProof: { readonly nonce: number; readonly proposerIsLeft: boolean; readonly proofBodyHash: string; readonly disputeHash: string; readonly hanko: string } };
+  | { readonly type: "settle_transition"; readonly kind: "upsert"; readonly revision: number; readonly previousWorkspaceHash?: string | undefined; readonly ops: readonly SettlementOp[]; readonly executorIsLeft: boolean; readonly memo?: string | undefined }
+  | { readonly type: "settle_transition"; readonly kind: "submit" | "clear"; readonly revision: number; readonly workspaceHash: string }
+  | { readonly type: "settle_transition"; readonly kind: "hanko"; readonly revision: number; readonly workspaceHash: string; readonly settlementNonce: number; readonly settlementHash: string; readonly settlementHanko?: string | undefined; readonly postProof: { readonly nonce: number; readonly proposerIsLeft: boolean; readonly proofBodyHash: string; readonly disputeHash: string; readonly hanko?: string | undefined } };
 export type TxOf<K extends AccountTx["type"]> = Extract<AccountTx, { readonly type: K }>;
-type DepositWire = { readonly type: "deposit_collateral"; readonly tokenId: TokenId; readonly amount: bigint; readonly rebalanceQuoteId?: bigint | undefined; readonly rebalanceFeeTokenId?: TokenId | undefined; readonly rebalanceFeeAmount?: bigint | undefined; readonly fee?: undefined };
-export type WireAccountTx = AccountTx | DepositWire;
+export type WireAccountTx = AccountTx;
 type WireTxOf<K extends AccountTx["type"]> = Extract<WireAccountTx, { readonly type: K }>;
-const depositTx = (tx: TxOf<"deposit_collateral"> | DepositWire): Result<TxOf<"deposit_collateral">, BodyError> => {
-  if (tx.fee !== undefined) return ok(tx);
-  const { rebalanceQuoteId: quoteId, rebalanceFeeTokenId: tokenId, rebalanceFeeAmount: amount } = tx;
-  const fee: Result<DepositFee, BodyError> = quoteId === undefined ? ok({ _tag: "none" }) : tokenId === undefined || amount === undefined ? err({ _tag: "quote_mismatch" }) : ok({ _tag: "quote", quoteId, tokenId, amount });
-  return map(fee, (f) => ({ type: tx.type, tokenId: tx.tokenId, amount: tx.amount, fee: f }));
+const OG_TOKEN_FIELDS = ["tokenId", "giveTokenId", "wantTokenId", "feeTokenId", "requestTokenId"] as const;
+/** og wire AccountTx fields: token ids (and htlc revealBeforeHeight) are JS numbers, never the rewrite's decimal strings. */
+export const wireOf = (tx: WireAccountTx): { readonly type: string } => {
+  const out: Record<string, unknown> = { ...tx };
+  for (const k of OG_TOKEN_FIELDS) if (typeof out[k] === "string") out[k] = Number(out[k]);
+  if (tx.type === "htlc_lock") out["revealBeforeHeight"] = Number(tx.revealBeforeHeight);
+  return out as { readonly type: string };
 };
-const depositWire = (tx: TxOf<"deposit_collateral"> | DepositWire): DepositWire => {
-  if (tx.fee === undefined) return tx;
-  const { fee, ...rest } = tx;
-  return match(fee, { none: () => rest, quote: (q) => ({ ...rest, rebalanceQuoteId: q.quoteId, rebalanceFeeTokenId: q.tokenId, rebalanceFeeAmount: q.amount }) });
-};
-const same = <X>(x: X): X => x;
-export const wireOf = (tx: WireAccountTx): WireAccountTx => matchBy<"type", WireAccountTx, WireAccountTx>("type", tx, { ...total(AccountTxNames, same), deposit_collateral: depositWire });
 type Author = "bilateral" | "hub" | "unchosen";
 export type KindRow = { readonly author: Author; readonly l0: boolean; readonly repeatable: boolean; readonly effects: readonly Effect["_tag"][] };
 const kind = <R extends KindRow>(author: Author, l0: boolean, repeatable: boolean, effects: readonly Effect["_tag"][] = []): R => ({ author, l0, repeatable, effects }) as R;
 export const AccountKinds = {
   add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true),
-  htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret"]), htlc_timeout: kind("bilateral", false, false),
-  swap_offer: kind("bilateral", false, false), swap_cancel: kind("bilateral", false, false), swap_resolve: kind("hub", false, false),
+  htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret"]),
+  swap_offer: kind("bilateral", false, false), swap_cancel_request: kind("bilateral", false, false), swap_resolve: kind("bilateral", false, false),
   settle_transition: kind("bilateral", false, false),
   deposit_to_custody: kind("bilateral", false, false), withdraw_from_custody: kind("bilateral", false, false), hub_custody_debit: kind("hub", false, false),
-  set_rebalance_policy: kind("bilateral", false, false), rebalance_request: kind("bilateral", false, false), rebalance_quote: kind("bilateral", false, false), rebalance_accept: kind("bilateral", false, false),
-  deposit_collateral: kind("bilateral", false, false, ["queue_r2c"]), subcontract_propose: kind("bilateral", false, false), subcontract_approve: kind("bilateral", false, false), subcontract_reject: kind("bilateral", false, false),
-  subcontract_resolve_propose: kind("bilateral", false, false), subcontract_resolve_approve: kind("bilateral", false, false), cross_pull_lock: kind("unchosen", false, false), cross_pull_close: kind("unchosen", false, false),
+  request_collateral: kind("bilateral", false, false), rebalance_refund: kind("bilateral", false, false), rebalance_policy: kind("bilateral", false, false),
+  lending_fund: kind("bilateral", false, false), lending_borrow_request: kind("bilateral", false, false), lending_repay: kind("bilateral", false, false), lending_credit: kind("bilateral", false, false),
+  lending_close_request: kind("bilateral", false, false), lending_close_payout: kind("bilateral", false, false),
+  cross_pull_lock: kind("unchosen", false, false), cross_pull_close: kind("unchosen", false, false),
   j_event_claim: kind("bilateral", false, false),
 } as const satisfies Kinds<AccountTx["type"], KindRow>;
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
-export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret"> : K extends "deposit_collateral" ? Of<Effect, "queue_r2c"> : never;
+export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret"> : never;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
-export const genesisAccountBody = (account: AccountState, terms: AccountTerms, hub: HubSide = null): AccountBody => ({ account, terms, hub, custody: new Map(), locks: new Map(), offers: new Map(), policy: new Map(), clauses: new Map(), debits: [], finalizedJHeight: 0n });
+export const genesisAccountBody = (account: AccountState, terms: AccountTerms, hub: HubSide = null): AccountBody => ({ account, terms, hub, custody: new Map(), locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), debits: [], finalizedJHeight: 0n, jNonce: 0 });
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
 const authorized = (tx: WireAccountTx, hub: HubSide, byLeft: boolean): Result<void, BodyError> =>
   arm(AccountKinds, tx.type).author !== "hub" || (hub !== null && byLeft === (hub === "left")) ? ok(undefined) : err({ _tag: "not_hub" });
@@ -1073,28 +1107,27 @@ const ensureRoom = (a: AccountBody, tk: TokenId, amount: bigint, byLeft: boolean
 };
 const positive = (amount: bigint): Result<void, BodyError> => guard(amount > 0n, { _tag: "non_positive_payment" });
 const spend = (a: AccountBody, tk: TokenId, amount: bigint, byLeft: boolean): Result<AccountBody, BodyError> =>
-  chain(positive(amount), () => chain(offdeltaChange(byLeft, amount), (by) => map(updateDelta(a.account, tk, (d) => move(d, by, holds(a, tk, byLeft))), (s) => putState(a, s))));
+  chain(positive(amount), () => chain(offdeltaChange(byLeft, amount), (by) => chain(move(getDelta(a.account, tk), by, holds(a, tk, byLeft)), (d) => map(representable(a, d), () => putState(a, setDelta(a.account, d))))));
+/** og protocol/htlc/utils.ts:73: keccak256 of the 32-byte secret (abi.encode(bytes32)); anything else is not a secret. */
+export const hashHtlcSecret = (secret: string): string | null => (/^0x[0-9a-fA-F]{64}$/.test(secret) ? keccak256Hex(hexToBytes(secret)) : null);
+/** og htlc-deadline.ts: expired once jHeight passes revealBeforeHeight or the timestamp reaches timelock. */
+export const htlcExpired = (l: Pick<HtlcLock, "timelock" | "revealBeforeHeight">, ctx: Pick<FoldCtx, "nowMs" | "jHeight">): boolean => ctx.jHeight > l.revealBeforeHeight || ctx.nowMs >= l.timelock;
+export const MAX_ACCOUNT_HTLC_LOCKS = 32;
+/** og delta-utils.ts getOffdeltaRepresentationError: offdelta plus every live lock movement, each alone, stays in int512. */
+const representable = (a: AccountBody, d: Delta, added?: { readonly senderIsLeft: boolean; readonly amount: bigint }): Result<void, BodyError> => {
+  let lower = d.offdelta, upper = d.offdelta;
+  const include = (senderIsLeft: boolean, amount: bigint): void => { if (senderIsLeft) lower -= amount; else upper += amount; };
+  for (const l of a.locks.values()) if (l.tokenId === d.tokenId) include(l.senderIsLeft, l.amount);
+  if (added !== undefined) include(added.senderIsLeft, added.amount);
+  return guard(lower >= INT512_MIN && upper <= INT512_MAX, { _tag: "offdelta_range" });
+};
 const shifted = (a: AccountBody, tk: TokenId, by: bigint): AccountBody => putState(a, setDelta(a.account, shift(getDelta(a.account, tk), by)));
 const custodyOf = (a: AccountBody, tk: TokenId): bigint => a.custody.get(tk) ?? 0n;
 const fromCustody = (a: AccountBody, tk: TokenId, amount: bigint): Result<void, BodyError> => {
   const have = custodyOf(a, tk);
   return chain(positive(amount), () => guard(amount <= have, { _tag: "above_custody", have, requested: amount }));
 };
-const quoteWindow = (q: RebalanceQuote, nowMs: bigint): Result<void, BodyError> => {
-  const expiry = q.quoteId + QUOTE_WINDOW_MS;
-  return nowMs > expiry ? err({ _tag: "quote_expired" }) : nowMs === expiry ? err({ _tag: "unchosen", hole: "quote_last_ms" }) : ok(undefined);
-};
 const MISSING: Result<never, BodyError> = err({ _tag: "missing" });
-const isPending = (s: ClauseState): boolean => match(s, { pending: () => true, live: () => false, resolving: () => false });
-const byCounterparty = <X>(x: X, proposerIsLeft: boolean, byLeft: boolean): Result<X, BodyError> => (byLeft === proposerIsLeft ? err({ _tag: "not_counterparty" }) : ok(x));
-const pendingOf = (a: AccountBody, id: ClauseId, byLeft: boolean): Result<Clause, BodyError> => {
-  const s = a.clauses.get(id);
-  return s === undefined ? MISSING : match<ClauseState, Result<Clause, BodyError>>(s, { pending: ({ clause }) => byCounterparty(clause, clause.proposerIsLeft, byLeft), live: () => MISSING, resolving: () => MISSING });
-};
-const resolutionOf = (a: AccountBody, id: ClauseId, byLeft: boolean): Result<Resolution, BodyError> => {
-  const s = a.clauses.get(id);
-  return s === undefined ? MISSING : match<ClauseState, Result<Resolution, BodyError>>(s, { pending: () => MISSING, live: () => MISSING, resolving: ({ resolution }) => byCounterparty(resolution, resolution.proposerIsLeft, byLeft) });
-};
 const sameAccount = (row: AccountSettlement, id: AccountId): boolean => row.left === id.left && row.right === id.right;
 const CLAIM_UINT64 = (1n << 64n) - 1n;
 const claimHeight = (h: bigint): Result<bigint, ClaimError> => (h >= 1n && h <= CLAIM_UINT64 && h <= BigInt(Number.MAX_SAFE_INTEGER) ? ok(h) : err({ _tag: "claim_height" }));
@@ -1118,142 +1151,609 @@ const claimFrame = (tx: TxOf<"j_event_claim">): Result<{ readonly version: "xln:
   chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash, events }) => ({ version: "xln:account-j-event-claim-frame:v1", jHeight: Number(jHeight), jBlockHash, eventsHash, events }))));
 const claimRowOf = (tx: TxOf<"j_event_claim">, onLeft: boolean): Result<ClaimRow, ClaimError> =>
   chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash }) => ({ onLeft, jHeight, jBlockHash, eventsHash }))));
-const rememberClaim = (rows: readonly ClaimRow[] | undefined, row: ClaimRow): Result<readonly ClaimRow[], ClaimError> => {
-  const held = rows ?? [], prior = held.find((r) => r.onLeft === row.onLeft && r.jHeight === row.jHeight);
-  return prior === undefined ? ok([...held, row]) : prior.jBlockHash === row.jBlockHash && prior.eventsHash === row.eventsHash ? ok(held) : err({ _tag: "claim_conflict" });
+/** og types/account.ts HtlcLock as committed: numeric token/height/timestamp fields; the rewrite-only encryptedPackage is kept only when present (og commits envelopeHash of its onion instead). */
+const ogLockRow = (l: HtlcLock): Record<string, unknown> => {
+  const { encryptedPackage, ...rest } = l;
+  return { ...rest, revealBeforeHeight: Number(l.revealBeforeHeight), tokenId: Number(l.tokenId), createdHeight: Number(l.createdHeight), createdTimestamp: Number(l.createdTimestamp), ...(encryptedPackage === undefined ? {} : { encryptedPackage }) };
 };
-const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (row) => chain(rememberClaim(a.claimRows, row), (claimRows) => {
-  const obs: JObservation = { jHeight: tx.jHeight, jBlockHash: tx.jBlockHash, events: tx.events, observedAt: tx.observedAt };
-  const stored: AccountBody = { ...(ctx.byLeft ? { ...a, leftJ: obs } : { ...a, rightJ: obs }), claimRows }, seen = at(a.leftJ, a.rightJ, other(ctx.byLeft));
-  if (seen === undefined || seen.jHeight !== obs.jHeight || seen.jBlockHash !== obs.jBlockHash || canon(seen.events) !== canon(obs.events)) return ok(step(stored));
-  const kept = claimRows.filter((r) => r.jHeight > obs.jHeight);
-  const tokens = obs.events.filter((entry) => sameAccount(entry, stored.account.id)).flatMap((entry) => entry.tokens);
-  return map(foldResult(tokens, stored.account, (s, tk): Result<AccountState, BodyError> => map(mapErr(tokenId(tk.tokenId.toString()), (): BodyError => ({ _tag: "index" })), (id) => setDelta(s, settle(getDelta(s, id), tk.collateral, tk.ondelta)))),
-    (account) => step({ ...stored, account, claimRows: kept.length === 0 ? undefined : kept, leftJ: undefined, rightJ: undefined, finalizedJHeight: obs.jHeight }));
-}));
+const sameEvidence = (x: ClaimRow, y: ClaimRow): boolean => x.jBlockHash === y.jBlockHash && x.eventsHash === y.eventsHash;
+const pruneThrough = (rows: readonly ClaimRow[], height: bigint): readonly ClaimRow[] | undefined => { const kept = rows.filter((r) => r.jHeight > height); return kept.length === 0 ? undefined : kept; };
+/** og j-events/finality.ts: every AccountSettled names this pair, nonces never regress below jNonce, and each token row takes the chain's collateral/ondelta. */
+const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[]): Result<AccountBody, BodyError> => {
+  const left = a.account.id.left.toLowerCase(), right = a.account.id.right.toLowerCase();
+  return chain(foldResult(events, a.jNonce, (prev, e): Result<number, BodyError> =>
+    e.data.leftEntity !== left || e.data.rightEntity !== right ? err({ _tag: "settled_pair" }) : e.data.nonce < prev ? err({ _tag: "settled_nonce" }) : ok(e.data.nonce)), (jNonce) =>
+    chain(foldResult(events, a, (b, e): Result<AccountBody, BodyError> => chain(mapErr(tokenId(String(e.data.tokenId)), (): BodyError => ({ _tag: "index" })), (tk) => {
+      const fresh = !b.account.deltas.has(tk);
+      if (fresh && (e.data.tokenId === 0 || b.account.deltas.size + 1 > MAX_ROWS)) return err(e.data.tokenId === 0 ? { _tag: "index" } : { _tag: "too_many_rows" });
+      const was = getDelta(b.account, tk), now = settle(was, BigInt(e.data.collateral), BigInt(e.data.ondelta)), increase = floor0(now.collateral - was.collateral);
+      const settled = putState(b, setDelta(b.account, now)), requested = b.requested.get(tk) ?? 0n;
+      if (requested <= 0n || increase <= 0n) return ok(settled);
+      return ok(requested > increase ? { ...settled, requested: mapSet(settled.requested, tk, requested - increase) } : { ...settled, requested: mapDelete(settled.requested, tk), requestFees: mapDelete(settled.requestFees, tk) });
+    })), (b) => map(activateWorkspace(b, jNonce), (c) => ({ ...c, jNonce }))));
+};
+/** og j-claim-transition.ts: conflict on either side refuses; stale prunes; the first side waits; the peer's matching record at any pending height finalizes. */
+const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (own) => {
+  const held = a.claimRows ?? [], peer: ClaimRow = { ...own, onLeft: !own.onLeft };
+  const member = (r: ClaimRow): ClaimRow | undefined => held.find((h) => h.onLeft === r.onLeft && h.jHeight === r.jHeight);
+  const ownHeld = member(own), peerHeld = member(peer);
+  if ((ownHeld !== undefined && !sameEvidence(ownHeld, own)) || (peerHeld !== undefined && !sameEvidence(peerHeld, peer))) return err({ _tag: "claim_conflict" });
+  if (own.jHeight <= a.finalizedJHeight) return ok(step({ ...a, claimRows: pruneThrough(held, a.finalizedJHeight) }));
+  if (peerHeld === undefined) return ok(step(ownHeld !== undefined ? a : { ...a, claimRows: [...held, own] }));
+  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events), (b) => step({ ...b, claimRows: pruneThrough(held, own.jHeight), finalizedJHeight: own.jHeight })));
+});
+const settleErr = (reason: string): Result<never, BodyError> => err({ _tag: "settlement", reason });
+const settlementToken = (t: unknown): t is number => typeof t === "number" && Number.isSafeInteger(t) && t >= 0 && t <= 65_535;
+const MAX_SETTLEMENT_DIFFS = 32;
+type MutableDiff = { -readonly [K in keyof WorkspaceDiff]: WorkspaceDiff[K] };
+/** og protocol/settlement/operations.ts compileOps: ops merge per token in first-seen order; every diff conserves and fits SignedAmount. */
+export const compileOps = (ops: readonly SettlementOp[], proposerIsLeft: boolean): Result<{ readonly diffs: readonly WorkspaceDiff[]; readonly forgive: readonly number[] }, BodyError> => {
+  const diffs = new Map<number, MutableDiff>(), forgive: number[] = [];
+  for (const op of ops) {
+    if (!settlementToken(op.tokenId)) return settleErr("SETTLEMENT_TOKEN_INVALID");
+    if (op.type === "forgive") { if (forgive.includes(op.tokenId)) return settleErr("SETTLEMENT_DUPLICATE_FORGIVENESS_TOKEN"); forgive.push(op.tokenId); continue; }
+    if (!["rawDiff", "r2c", "c2r", "r2r"].includes(op.type)) return settleErr("SETTLEMENT_UNKNOWN_OP_TYPE");
+    const d = diffs.get(op.tokenId) ?? { tokenId: op.tokenId, leftDiff: 0n, rightDiff: 0n, collateralDiff: 0n, ondeltaDiff: 0n };
+    diffs.set(op.tokenId, d);
+    if (op.type === "rawDiff") { d.leftDiff += op.leftDiff; d.rightDiff += op.rightDiff; d.collateralDiff += op.collateralDiff; d.ondeltaDiff += op.ondeltaDiff; continue; }
+    const n = op.amount;
+    if (op.type === "r2c") { if (proposerIsLeft) { d.leftDiff -= n; d.collateralDiff += n; d.ondeltaDiff += n; } else { d.rightDiff -= n; d.collateralDiff += n; } }
+    else if (op.type === "c2r") { d.collateralDiff -= n; if (proposerIsLeft) { d.leftDiff += n; d.ondeltaDiff -= n; } else d.rightDiff += n; }
+    else if (proposerIsLeft) { d.leftDiff -= n; d.rightDiff += n; } else { d.rightDiff -= n; d.leftDiff += n; }
+  }
+  const out = [...diffs.values()];
+  const wide = (v: bigint): boolean => v < -MAX_PAYMENT_AMOUNT || v > MAX_PAYMENT_AMOUNT;
+  if (out.some((d) => wide(d.leftDiff) || wide(d.rightDiff) || wide(d.collateralDiff) || wide(d.ondeltaDiff))) return settleErr("SETTLEMENT_SIGNED_AMOUNT_RANGE");
+  if (out.some((d) => d.leftDiff + d.rightDiff + d.collateralDiff !== 0n)) return settleErr("SETTLEMENT_INVARIANT_VIOLATION");
+  if (out.length > MAX_SETTLEMENT_DIFFS) return settleErr("SETTLEMENT_DIFF_LIMIT_EXCEEDED");
+  return forgive.length > MAX_SETTLEMENT_DIFFS ? settleErr("SETTLEMENT_FORGIVENESS_LIMIT_EXCEEDED") : ok({ diffs: out, forgive });
+};
+const checkOps = (ops: readonly SettlementOp[]): Result<void, BodyError> => {
+  if (!Array.isArray(ops) || ops.length === 0) return settleErr("SETTLEMENT_WORKSPACE_OPS_EMPTY");
+  for (const op of ops) {
+    if (!settlementToken(op.tokenId)) return settleErr("SETTLEMENT_TOKEN_INVALID");
+    if (op.type === "r2c" || op.type === "c2r" || op.type === "r2r") { if (typeof op.amount !== "bigint" || op.amount <= 0n) return settleErr("SETTLEMENT_WORKSPACE_AMOUNT_INVALID"); continue; }
+    if (op.type === "rawDiff") { if ([op.leftDiff, op.rightDiff, op.collateralDiff, op.ondeltaDiff].some((v) => typeof v !== "bigint")) return settleErr("SETTLEMENT_WORKSPACE_RAW_DIFF_INVALID"); continue; }
+    if (op.type !== "forgive") return settleErr("SETTLEMENT_WORKSPACE_OP_INVALID");
+  }
+  return ok(undefined);
+};
+const WORKSPACE_LEAF_KEY = keccak256(utf8("xln.settlement.workspace.body"));
+/** og transition.ts createSettlementWorkspaceHash: the one-leaf keccak radix root of the canonical body under `xln.settlement.workspace.body`. */
+export const workspaceHashOf = (id: AccountId, w: Pick<SettlementWorkspace, "revision" | "ops" | "lastModifiedByLeft" | "executorIsLeft" | "memo">): Result<string, BodyError> => map(
+  mapErr(encodeCanonicalValue({ domain: "xln:settlement-workspace:v1", leftEntity: id.left.toLowerCase(), rightEntity: id.right.toLowerCase(), revision: w.revision, ops: w.ops, lastModifiedByLeft: w.lastModifiedByLeft, executorIsLeft: w.executorIsLeft, memo: w.memo }), (): BodyError => ({ _tag: "settlement", reason: "SETTLEMENT_WORKSPACE_ENCODING" })),
+  (enc) => keccak256Hex(concat([LEAF, WORKSPACE_LEAF_KEY, enc])));
+/** og witness-projection.ts: the committed workspace keeps every decision and target, never the Hanko bytes. */
+export const workspaceWithoutHankos = (w: SettlementWorkspace | undefined): unknown => {
+  if (w === undefined) return undefined;
+  const { leftHanko: _l, rightHanko: _r, postSettlementDisputeProof: post, ...rest } = w;
+  if (post === undefined) return rest;
+  const { leftHanko: _pl, rightHanko: _pr, ...postRest } = post;
+  return { ...rest, postSettlementDisputeProof: postRest };
+};
+const signedWorkspace = (w: SettlementWorkspace): boolean => w.settlementHash !== undefined || w.leftHanko !== undefined || w.rightHanko !== undefined || w.postSettlementDisputeProof !== undefined;
+const workspaceDiffs = (w: SettlementWorkspace): readonly WorkspaceDiff[] => unwrapOr(map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs), () => []);
+/** og transition.ts:640 getSignedSettlementWorkspaceTxError: a signed workspace freezes the Account except j claims and settlement hanko/submit. */
+const settlementFreeze = (a: AccountBody, tx: WireAccountTx): Result<void, BodyError> => {
+  const w = a.settlement;
+  if (w === undefined || !signedWorkspace(w) || tx.type === "j_event_claim" || (tx.type === "settle_transition" && (tx.kind === "hanko" || tx.kind === "submit"))) return ok(undefined);
+  return err({ _tag: "settlement_frozen" });
+};
+/** og planWorkspaceHoldAdd: a negative side diff is a hold on an existing row, checked against capacity unless it funds collateral from reserve. */
+const workspaceRoom = (a: AccountBody, diffs: readonly WorkspaceDiff[]): Result<void, BodyError> => foldResult(diffs, undefined as void, (_, diff): Result<void, BodyError> => {
+  if (diff.leftDiff >= 0n && diff.rightDiff >= 0n) return ok(undefined);
+  const tk = String(diff.tokenId) as TokenId, d = a.account.deltas.get(tk);
+  if (d === undefined) return settleErr("SETTLEMENT_HOLD_DELTA_MISSING");
+  const t = sideTotals(a, tk);
+  return chain(chargeSettlement(d, diff, { left: holds(a, tk, true), right: holds(a, tk, false) }), (plan) =>
+    t.leftHold + plan.left > MAX_PAYMENT_AMOUNT || t.rightHold + plan.right > MAX_PAYMENT_AMOUNT ? settleErr("HOLD_ADD_OVERFLOW") : ok(undefined));
+});
+const WORKSPACE_HASH = /^0x[0-9a-fA-F]{64}$/;
+const currentWorkspace = (a: AccountBody, revision: number, hash: string): Result<SettlementWorkspace, BodyError> => {
+  if (!Number.isSafeInteger(revision) || revision < 1) return settleErr("SETTLEMENT_WORKSPACE_VERSION_INVALID");
+  const w = a.settlement;
+  if (w === undefined) return settleErr("SETTLEMENT_WORKSPACE_MISSING");
+  if (typeof hash !== "string" || !WORKSPACE_HASH.test(hash)) return settleErr("SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID");
+  if (w.revision !== revision) return settleErr("SETTLEMENT_WORKSPACE_VERSION_MISMATCH");
+  return w.workspaceHash.toLowerCase() !== hash.toLowerCase() ? settleErr("SETTLEMENT_WORKSPACE_TARGET_HASH_MISMATCH") : ok(w);
+};
+const upsertWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_transition"; kind: "upsert" }>, ctx: FoldCtx): BodyStep => {
+  if (!Number.isSafeInteger(x.revision) || x.revision < 1) return settleErr("SETTLEMENT_WORKSPACE_VERSION_INVALID");
+  return chain(checkOps(x.ops), () => typeof x.executorIsLeft !== "boolean" ? settleErr("SETTLEMENT_WORKSPACE_EXECUTOR_INVALID") : chain(compileOps(x.ops, ctx.byLeft), ({ diffs }) => {
+    const cur = a.settlement, prev = x.previousWorkspaceHash;
+    const linked: Result<void, BodyError> = x.revision === 1
+      ? (cur !== undefined ? settleErr("SETTLEMENT_WORKSPACE_ALREADY_EXISTS") : prev !== undefined ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_UNEXPECTED") : ok(undefined))
+      : cur === undefined ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_MISSING")
+      : cur.leftHanko !== undefined || cur.rightHanko !== undefined ? settleErr("SETTLEMENT_WORKSPACE_SIGNED_UPDATE_FORBIDDEN")
+      : cur.revision + 1 !== x.revision ? settleErr("SETTLEMENT_WORKSPACE_NON_CONTIGUOUS_VERSION")
+      : prev === undefined || !WORKSPACE_HASH.test(prev) ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_INVALID")
+      : cur.workspaceHash.toLowerCase() !== prev.toLowerCase() ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_MISMATCH") : ok(undefined);
+    const now = Number(ctx.nowMs);
+    const body = { ops: x.ops.map((op) => ({ ...op })), lastModifiedByLeft: ctx.byLeft, status: "awaiting_counterparty" as const, memo: x.memo, revision: x.revision, createdAt: cur?.createdAt ?? now, lastUpdatedAt: now, executorIsLeft: x.executorIsLeft };
+    return chain(linked, () => chain(workspaceHashOf(a.account.id, body), (workspaceHash) => map(workspaceRoom({ ...a, settlement: undefined }, diffs), () => step({ ...a, settlement: { workspaceHash, ...body } }))));
+  }));
+};
+/** og settlement-projection.ts: the post-settlement rows the dispute proof at nonce N+1 commits to. */
+const projectedProofHash = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[]): Result<string, BodyError> =>
+  chain(mapErr(committedView(a), uncommitted), (view) => {
+    const rows = new Map(view.deltas);
+    const row = (tokenId: number): Result<CommittedDelta, BodyError> => {
+      const held = rows.get(tokenId);
+      if (held !== undefined) return ok(held);
+      if (tokenId === 0) return settleErr("TOKEN_ID_INVALID");
+      if (rows.size + 1 > MAX_ROWS) return settleErr("ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED");
+      const fresh: CommittedDelta = { tokenId, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n, leftAllowance: 0n, rightAllowance: 0n, leftHold: 0n, rightHold: 0n };
+      rows.set(tokenId, fresh);
+      return ok(fresh);
+    };
+    return chain(foldResult(diffs, undefined as void, (_, diff) => chain(row(diff.tokenId), (d): Result<void, BodyError> => {
+      const collateral = d.collateral + diff.collateralDiff, ondelta = d.ondelta + diff.ondeltaDiff;
+      if (collateral < 0n || collateral > MAX_PAYMENT_AMOUNT) return settleErr("SETTLEMENT_PROJECTED_COLLATERAL_RANGE");
+      if (ondelta < INT512_MIN || ondelta > INT512_MAX) return settleErr("SETTLEMENT_PROJECTED_ONDELTA_RANGE");
+      rows.set(diff.tokenId, { ...d, collateral, ondelta });
+      return ok(undefined);
+    })), () => chain(traverse(forgive, row), () => map(mapErr(accountProofBody({ ...view, deltas: rows }), (e): BodyError => ({ _tag: "settlement", reason: e._tag })), proofBodyHash)));
+  });
+const settlementHashOf = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[], nonce: number): Result<string, BodyError> => {
+  const { domain } = a.terms, { left, right } = a.account.id;
+  if (/^0x0{40}$/i.test(domain.depositoryAddress) || !WORD.test(left) || !WORD.test(right)) return settleErr("SETTLEMENT_HASH_DOMAIN");
+  const text = (v: bigint): string => v.toString();
+  try {
+    return ok(encodeCooperativeUpdateHash({ messageType: 0, chainId: domain.chainId, contractAddress: domain.depositoryAddress, accountKey: joinHex([left, right]), nonce: String(nonce),
+      diffs: diffs.map((d) => ({ tokenId: String(d.tokenId), leftDiff: text(d.leftDiff), rightDiff: text(d.rightDiff), collateralDiff: text(d.collateralDiff), ondeltaDiff: text(d.ondeltaDiff) })), forgiveDebtsInTokenIds: forgive.map(String) }));
+  } catch { return settleErr("SETTLEMENT_HASH_ENCODING"); }
+};
+const exactHanko = (h: string | undefined): h is string => typeof h === "string" && h !== "0x" && /^0x(?:[0-9a-fA-F]{2})*$/.test(h);
+/** og transition.ts prepare/verify/commitSettlementHanko: exact workspace, exact nonce, recomputed targets, both authorities, then one write. */
+const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_transition"; kind: "hanko" }>, ctx: FoldCtx): BodyStep => {
+  const auth = ctx.settlement;
+  if (auth === undefined) return settleErr("SETTLEMENT_HANKO_CONTEXT_MISSING");
+  return chain(currentWorkspace(a, x.revision, x.workspaceHash), (w) => {
+    if (w.status === "submitted") return settleErr("SETTLEMENT_HANKO_SUBMITTED_FORBIDDEN");
+    const nonce = x.settlementNonce;
+    if (!Number.isSafeInteger(nonce) || nonce < 1) return settleErr("SETTLEMENT_HANKO_NONCE_INVALID");
+    const floor = Math.max(a.jNonce + 1, auth.proofNonceFloor);
+    if (floor >= Number.MAX_SAFE_INTEGER) return settleErr("SETTLEMENT_NONCE_EXHAUSTED");
+    if (nonce !== (w.nonceAtSign ?? floor)) return settleErr("SETTLEMENT_HANKO_NONCE_MISMATCH");
+    return chain(compileOps(w.ops, w.lastModifiedByLeft), ({ diffs, forgive }) => chain(settlementHashOf(a, diffs, forgive, nonce), (settlementHash) => {
+      if (typeof x.settlementHash !== "string" || !WORKSPACE_HASH.test(x.settlementHash)) return settleErr("SETTLEMENT_HANKO_HASH_INVALID");
+      if (x.settlementHash.toLowerCase() !== settlementHash.toLowerCase()) return settleErr("SETTLEMENT_HANKO_HASH_MISMATCH");
+      if (w.settlementHash !== undefined && w.settlementHash.toLowerCase() !== settlementHash.toLowerCase()) return settleErr("SETTLEMENT_HANKO_PINNED_HASH_MISMATCH");
+      const post = x.postProof, postNonce = post.nonce;
+      if (!Number.isSafeInteger(postNonce) || postNonce < 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_INVALID");
+      if (postNonce !== nonce + 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_MISMATCH");
+      return chain(projectedProofHash(a, diffs, forgive), (bodyHash) => {
+        if (post.proofBodyHash.toLowerCase() !== bodyHash.toLowerCase()) return settleErr("POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH");
+        return chain(chain(mapErr(committedView(a), uncommitted), (view) => mapErr(accountDisputeHash(view, bodyHash, postNonce, post.proposerIsLeft), (e): BodyError => ({ _tag: "settlement", reason: e._tag }))), (disputeHash) => {
+          if (post.disputeHash.toLowerCase() !== disputeHash.toLowerCase()) return settleErr("POST_SETTLEMENT_DISPUTE_HASH_MISMATCH");
+          const pinned = w.postSettlementDisputeProof;
+          if (pinned !== undefined && (pinned.nonce !== postNonce || pinned.proofBodyHash.toLowerCase() !== bodyHash.toLowerCase() || pinned.disputeHash.toLowerCase() !== disputeHash.toLowerCase() || pinned.proposerIsLeft !== post.proposerIsLeft)) return settleErr("POST_SETTLEMENT_PROOF_PIN_MISMATCH");
+          const source = (ctx.byLeft ? a.account.id.left : a.account.id.right) as EntityId;
+          if (!exactHanko(post.hanko)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
+          if (!auth.verify(disputeHash, post.hanko, source)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_INVALID");
+          const executor = w.executorIsLeft === ctx.byLeft, settlementHanko = x.settlementHanko;
+          if (executor && settlementHanko !== undefined) return settleErr("SETTLEMENT_EXECUTOR_HANKO_FORBIDDEN");
+          if (!executor && !exactHanko(settlementHanko)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_MISSING");
+          if (!executor && settlementHanko !== undefined && !auth.verify(settlementHash, settlementHanko, source)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
+          const pinnedOwn = ctx.byLeft ? pinned?.leftHanko : pinned?.rightHanko, ownSettlement = ctx.byLeft ? w.leftHanko : w.rightHanko;
+          if (pinnedOwn !== undefined && pinnedOwn.toLowerCase() !== post.hanko.toLowerCase()) return settleErr("POST_SETTLEMENT_PROOF_EQUIVOCATION");
+          if (settlementHanko !== undefined && ownSettlement !== undefined && ownSettlement.toLowerCase() !== settlementHanko.toLowerCase()) return settleErr("SETTLEMENT_HANKO_EQUIVOCATION");
+          const proof: PostSettlementProof = { disputeHash, proofBodyHash: bodyHash, nonce: postNonce, proposerIsLeft: post.proposerIsLeft, leftHanko: ctx.byLeft ? post.hanko : pinned?.leftHanko, rightHanko: ctx.byLeft ? pinned?.rightHanko : post.hanko };
+          const leftHanko = ctx.byLeft && settlementHanko !== undefined ? settlementHanko : w.leftHanko, rightHanko = !ctx.byLeft && settlementHanko !== undefined ? settlementHanko : w.rightHanko;
+          const ready = (w.executorIsLeft ? rightHanko : leftHanko) !== undefined && proof.leftHanko !== undefined && proof.rightHanko !== undefined;
+          return ok(step({ ...a, settlement: { ...w, compiledDiffs: diffs, compiledForgiveTokenIds: forgive, nonceAtSign: nonce, settlementHash, postSettlementDisputeProof: proof, leftHanko, rightHanko, status: ready ? "ready_to_submit" : "awaiting_counterparty", lastUpdatedAt: Number(ctx.nowMs) } }));
+        });
+      });
+    }));
+  });
+};
+const unsignedWorkspace = (w: SettlementWorkspace): boolean => (w.status === "draft" || w.status === "awaiting_counterparty") && w.compiledDiffs === undefined && w.compiledForgiveTokenIds === undefined && !signedWorkspace(w) && w.nonceAtSign === undefined;
+const settleTransition = (a: AccountBody, x: TxOf<"settle_transition">, ctx: FoldCtx): BodyStep => {
+  if (x.kind === "upsert") return upsertWorkspace(a, x, ctx);
+  if (x.kind === "hanko") return hankoWorkspace(a, x, ctx);
+  return chain(currentWorkspace(a, x.revision, x.workspaceHash), (w): BodyStep => {
+    if (x.kind === "submit") {
+      if (w.status === "submitted") return settleErr("SETTLEMENT_WORKSPACE_ALREADY_SUBMITTED");
+      if (ctx.byLeft !== w.executorIsLeft) return settleErr("SETTLEMENT_SUBMIT_EXECUTOR_MISMATCH");
+      if ((ctx.byLeft ? w.rightHanko : w.leftHanko) === undefined) return settleErr("SETTLEMENT_SUBMIT_COUNTERPARTY_HANKO_MISSING");
+      if (w.status !== "ready_to_submit" || w.postSettlementDisputeProof?.leftHanko === undefined || w.postSettlementDisputeProof.rightHanko === undefined) return settleErr("SETTLEMENT_SUBMIT_POST_PROOF_INCOMPLETE");
+      return ok(step({ ...a, settlement: { ...w, status: "submitted", lastUpdatedAt: Number(ctx.nowMs) } }));
+    }
+    if (w.status === "submitted") return settleErr("SETTLEMENT_CLEAR_SUBMITTED_FORBIDDEN");
+    return unsignedWorkspace(w) ? ok(step({ ...a, settlement: undefined })) : settleErr("SETTLEMENT_CLEAR_SIGNED_FORBIDDEN");
+  });
+};
+/** og finality.ts activatePostSettlementProof, body side: an unsigned workspace clears; a signed one clears once its nonce is final, after its N+1 proof checks out. */
+const activateWorkspace = (b: AccountBody, finalizedNonce: number): Result<AccountBody, BodyError> => {
+  const w = b.settlement;
+  if (w === undefined) return ok(b);
+  if (!signedWorkspace(w)) return ok({ ...b, settlement: undefined });
+  const signed = w.nonceAtSign;
+  if (signed === undefined || !Number.isSafeInteger(signed) || signed < 1) return settleErr("SETTLEMENT_SIGNED_NONCE_MISSING");
+  if (finalizedNonce < signed) return ok(b);
+  if (finalizedNonce > signed) return ok({ ...b, settlement: undefined });
+  const p = w.postSettlementDisputeProof;
+  if (p === undefined) return settleErr("POST_SETTLEMENT_PROOF_MISSING");
+  if (p.nonce !== signed + 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_MISMATCH");
+  if (p.leftHanko === undefined || p.rightHanko === undefined || p.leftHanko === "" || p.rightHanko === "") return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
+  if (p.disputeHash === "" || p.proofBodyHash === "") return settleErr("POST_SETTLEMENT_DISPUTE_HASH_MISSING");
+  return chain(projectedProofHash(b, [], []), (h) => h.toLowerCase() !== p.proofBodyHash.toLowerCase() ? settleErr("POST_SETTLEMENT_FINALIZED_PROOF_BODY_MISMATCH") : ok({ ...b, settlement: undefined }));
+};
+// ---- swaps: og handlers/swap/{offer,resolve}, account/swap/swap-net-authorization.ts, orderbook/types.ts quantization ----
+const swapErr = (reason: string): Result<never, BodyError> => err({ _tag: "swap", reason });
+const PRICE_SCALE = 10_000n;
+const MAX_ACCOUNT_SWAP_OFFERS = 50, MAX_ACCOUNT_SAME_J_SWAP_OFFERS = 32, MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET = 32;
+/** og account/utils.ts REFERENCE_STABLE_TOKEN_IDS (USDC, USDT): always the quote of a pair. */
+const REFERENCE_STABLES: ReadonlySet<number> = new Set([1, 3]);
+/** og getSwapPairOrientation + deriveSide: 1 when the give token is the pair's base. */
+export const swapSide = (give: number, want: number): 0 | 1 => {
+  const g = REFERENCE_STABLES.has(give), w = REFERENCE_STABLES.has(want);
+  return give === (g && !w ? want : !g && w ? give : Math.min(give, want)) ? 1 : 0;
+};
+const pow10 = (d: number): bigint => 10n ** BigInt(d);
+const lotScale = (baseDecimals: number): bigint => pow10(Math.max(0, baseDecimals - 6));
+const gcd = (x: bigint, y: bigint): bigint => { let [p, q] = [x, y]; while (q !== 0n) [p, q] = [q, p % q]; return p; };
+const ceilDiv = (n: bigint, d: bigint): bigint => (n + d - 1n) / d;
+const quoteAt = (bd: number, qd: number, base: bigint, price: bigint): bigint => (base <= 0n || price <= 0n ? 0n : (base * price * pow10(qd)) / (PRICE_SCALE * pow10(bd)));
+const exactQuoteLots = (bd: number, qd: number, price: bigint): bigint => { const den = PRICE_SCALE * pow10(bd); return den / gcd(lotScale(bd) * price * pow10(qd), den); };
+type SwapDims = { readonly side: 0 | 1; readonly bd: number; readonly qd: number };
+const swapDims = (o: Pick<SwapOffer, "giveTokenId" | "wantTokenId" | "giveTokenDecimals" | "wantTokenDecimals">): SwapDims => {
+  const side = swapSide(Number(o.giveTokenId), Number(o.wantTokenId));
+  return side === 1 ? { side, bd: o.giveTokenDecimals, qd: o.wantTokenDecimals } : { side, bd: o.wantTokenDecimals, qd: o.giveTokenDecimals };
+};
+/** og computePriceTicksForBaseQuoteDecimals under the one-tick step every og pair policy uses: bids round up, asks down. */
+const priceTicksOf = (d: SwapDims, base: bigint, quote: bigint): bigint => {
+  if (base <= 0n || quote <= 0n) return 0n;
+  const n = quote * pow10(d.bd) * PRICE_SCALE, den = base * pow10(d.qd), p = n / den + (d.side === 1 && n % den > 0n ? 1n : 0n);
+  return p > 0n ? p : 0n;
+};
+/** og prepareSwapOrderWithDimensions: the canonical price, or undefined when the order quantizes to nothing. */
+const preparedPrice = (d: SwapDims, base: bigint, quote: bigint): bigint | undefined => {
+  const lot = lotScale(d.bd);
+  if (base < lot || quote <= 0n) return undefined;
+  const price = priceTicksOf(d, base, quote);
+  if (price <= 0n) return undefined;
+  const unit = lot * exactQuoteLots(d.bd, d.qd, price), qb = (base / unit) * unit;
+  return qb <= 0n || quoteAt(d.bd, d.qd, qb, price) <= 0n ? undefined : price;
+};
+/** og requantizeRemainingSwapBaseAtPriceForDimensions. */
+const requantizeRemaining = (d: SwapDims, base: bigint, price: bigint): { readonly give: bigint; readonly want: bigint } | undefined => {
+  if (base <= 0n || price <= 0n) return undefined;
+  const unit = lotScale(d.bd) * exactQuoteLots(d.bd, d.qd, price), qb = (base / unit) * unit;
+  if (qb <= 0n) return undefined;
+  const qq = quoteAt(d.bd, d.qd, qb, price);
+  return qq <= 0n ? undefined : d.side === 1 ? { give: qb, want: qq } : { give: qq, want: qb };
+};
+type NetAuth = { readonly maxFee: bigint; readonly minNetReceive: bigint };
+type Authorized = NetAuth & { readonly giveAmount: bigint; readonly wantAmount: bigint };
+const offerAuthError = (o: Authorized): string | undefined =>
+  typeof o.giveAmount !== "bigint" || typeof o.wantAmount !== "bigint" || o.giveAmount <= 0n || o.wantAmount <= 0n ? "SWAP_NET_AUTH_OFFER_AMOUNT_INVALID"
+  : typeof o.maxFee !== "bigint" || o.maxFee < 0n || o.maxFee > o.wantAmount ? "SWAP_NET_AUTH_MAX_FEE_INVALID"
+  : typeof o.minNetReceive !== "bigint" || o.minNetReceive < 0n || o.minNetReceive > o.wantAmount ? "SWAP_NET_AUTH_MIN_RECEIVE_INVALID" : undefined;
+/** og assertSwapNetAuthorization: fee and net receive stay inside the maker's pro-rata authority; a terminal fill may use want progress. */
+const netAuthError = (o: Authorized, fG: bigint, fW: bigint, fee: bigint, closes: boolean): string | undefined => {
+  const bad = offerAuthError(o);
+  if (bad !== undefined) return bad;
+  if (fG < 0n || fG > o.giveAmount) return "SWAP_NET_AUTH_FILL_GIVE_INVALID";
+  if (fW < 0n || fee < 0n || fee > fW || (fW > 0n && fee >= fW)) return "SWAP_NET_AUTH_FILL_WANT_INVALID";
+  let num = fG, den = o.giveAmount;
+  if (closes) { const capped = fW < o.wantAmount ? fW : o.wantAmount; if (capped * den > num * o.wantAmount) { num = capped; den = o.wantAmount; } }
+  return fee > (o.maxFee * num) / den ? "SWAP_NET_AUTH_MAX_FEE_EXCEEDED" : fW - fee < ceilDiv(o.minNetReceive * num, den) ? "SWAP_NET_AUTH_MIN_RECEIVE_NOT_MET" : undefined;
+};
+/** og requantizeSwapNetAuthorization: the removed give share takes its pro-rata fee and receive authority with it. */
+const requantizeAuth = (o: Authorized, give: bigint, want: bigint): Result<NetAuth, BodyError> => {
+  const bad = offerAuthError(o);
+  if (bad !== undefined) return swapErr(bad);
+  if (give <= 0n || give > o.giveAmount || want <= 0n) return swapErr("SWAP_NET_AUTH_REMAINDER_INVALID");
+  const removed = o.giveAmount - give;
+  const auth: NetAuth = { maxFee: o.maxFee - (o.maxFee * removed) / o.giveAmount, minNetReceive: o.minNetReceive - ceilDiv(o.minNetReceive * removed, o.giveAmount) };
+  const after = offerAuthError({ giveAmount: give, wantAmount: want, ...auth });
+  return after === undefined ? ok(auth) : swapErr(after);
+};
+const decimalsOk = (d: number): boolean => Number.isSafeInteger(d) && d >= 0 && d <= 255;
+/** og swap/offer: admission (limits, shape, market cap), quantization, capacity, hold. */
+const swapOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx): BodyStep => {
+  if (x.offerId.includes(":")) return swapErr("SWAP_OFFER_ID_COLON");
+  if (a.offers.has(x.offerId)) return err({ _tag: "duplicate" });
+  if (a.offers.size >= MAX_ACCOUNT_SWAP_OFFERS) return swapErr("SWAP_OFFER_LIMIT");
+  if (a.offers.size >= MAX_ACCOUNT_SAME_J_SWAP_OFFERS) return swapErr("SWAP_SAME_J_OFFER_LIMIT");
+  if (!decimalsOk(x.giveTokenDecimals) || !decimalsOk(x.wantTokenDecimals)) return swapErr("SWAP_TOKEN_DECIMALS_INVALID");
+  if (x.giveAmount < 1n || x.giveAmount > MAX_PAYMENT_AMOUNT || x.wantAmount < 1n || x.wantAmount > MAX_PAYMENT_AMOUNT) return swapErr("SWAP_OFFER_AMOUNT_INVALID");
+  if (x.maxFee >= x.wantAmount || x.minNetReceive <= 0n) return swapErr("SWAP_NET_AUTH_INITIAL_TERMS_INVALID");
+  const initial = netAuthError(x, 0n, 0n, 0n, false);
+  if (initial !== undefined) return swapErr(initial);
+  if (x.giveTokenId === x.wantTokenId) return swapErr("SWAP_SAME_TOKEN");
+  if (x.timeInForce !== undefined && ![0, 1, 2].includes(x.timeInForce)) return swapErr("SWAP_TIME_IN_FORCE_INVALID");
+  const makerIsLeft = ctx.byLeft;
+  let market = 0;
+  for (const o of a.offers.values()) if (o.makerIsLeft === makerIsLeft && o.giveTokenId === x.giveTokenId && o.wantTokenId === x.wantTokenId) market++;
+  if (market >= MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET) return swapErr("SWAP_MARKET_OFFER_LIMIT");
+  const d = swapDims(x), base = d.side === 1 ? x.giveAmount : x.wantAmount, quote = d.side === 1 ? x.wantAmount : x.giveAmount, lot = lotScale(d.bd);
+  if (base < lot) return swapErr("SWAP_ORDER_BELOW_LOT");
+  const prepared = preparedPrice(d, base, quote);
+  if (prepared === undefined) return swapErr("SWAP_PRICE_INVALID");
+  const input = x.priceTicks;
+  if (input !== undefined && input <= 0n) return swapErr("SWAP_PRICE_TICKS_INVALID");
+  if (input !== undefined && (input > prepared ? input - prepared : prepared - input) > 1n) return swapErr("SWAP_PRICE_TICKS_MISMATCH");
+  const priceTicks = input ?? prepared, qb = (base / lot) * lot, qq = quoteAt(d.bd, d.qd, qb, priceTicks);
+  const give = d.side === 1 ? qb : qq, want = d.side === 1 ? qq : qb;
+  if (give < 1n || give > MAX_PAYMENT_AMOUNT || want < 1n || want > MAX_PAYMENT_AMOUNT) return swapErr("SWAP_QUANTIZED_AMOUNT_INVALID");
+  return chain(requantizeAuth(x, give, want), (auth) => chain(ensureRoom(a, x.giveTokenId, give, makerIsLeft), (): BodyStep => {
+    const totals = sideTotals(a, x.giveTokenId);
+    if ((makerIsLeft ? totals.leftHold : totals.rightHold) + give > MAX_PAYMENT_AMOUNT) return err({ _tag: "hold_overflow" });
+    const offer: SwapOffer = {
+      offerId: x.offerId, giveTokenId: x.giveTokenId, giveTokenDecimals: x.giveTokenDecimals, giveAmount: give, wantTokenId: x.wantTokenId, wantTokenDecimals: x.wantTokenDecimals, wantAmount: want,
+      maxFee: auth.maxFee, minNetReceive: auth.minNetReceive, priceTicks, ...(x.timeInForce !== undefined ? { timeInForce: x.timeInForce } : {}), makerIsLeft,
+      // og mutation.ts passes the frame's jHeight as the swap handlers' currentHeight.
+      createdHeight: Number(ctx.jHeight), quantizedGive: give, quantizedWant: want,
+    };
+    return ok(step({ ...a, offers: mapSet(a.offers, x.offerId, offer) }));
+  }));
+};
+/** og orderbook/swap-execution.ts deriveExactSwapFillRatio + exactFillRatioToUint16. */
+const exactFillRatio = (qG: bigint, fG: bigint): { readonly n: bigint; readonly d: bigint } => {
+  if (qG <= 0n || fG <= 0n) return { n: 0n, d: 1n };
+  if (fG >= qG) return { n: 1n, d: 1n };
+  const g = gcd(fG, qG);
+  return { n: fG / g, d: qG / g };
+};
+const fillRatioOf = (r: { readonly n: bigint; readonly d: bigint }): number => {
+  if (r.n <= 0n) return 0;
+  if (r.n >= r.d) return MAX_FILL;
+  const max = BigInt(MAX_FILL);
+  let c = Math.min(MAX_FILL, Math.max(0, Number((r.n * max + r.d - 1n) / r.d)));
+  while (c > 0 && (r.d * BigInt(c - 1)) / max >= r.n) c--;
+  while (c < MAX_FILL && (r.d * BigInt(c)) / max < r.n) c++;
+  return c;
+};
+/** og swap/resolve: canonical offer, explicit execution at or above the maker's limit, fee authority, counterparty capacity, requantized remainder. */
+const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): BodyStep => {
+  const offer = a.offers.get(x.offerId);
+  if (offer === undefined) return MISSING;
+  if ((x.restingGiveAmount !== undefined && x.restingGiveAmount !== offer.giveAmount) || (x.restingWantAmount !== undefined && x.restingWantAmount !== offer.wantAmount)
+    || (x.restingQuantizedGive !== undefined && x.restingQuantizedGive !== offer.quantizedGive) || (x.restingQuantizedWant !== undefined && x.restingQuantizedWant !== offer.quantizedWant)
+    || (x.restingPriceTicks !== undefined && x.restingPriceTicks !== offer.priceTicks)) return swapErr("SWAP_RESTING_TERMS_MISMATCH");
+  if (ctx.byLeft === offer.makerIsLeft) return err({ _tag: "not_counterparty" });
+  if (!Number.isInteger(x.fillRatio) || x.fillRatio < 0 || x.fillRatio > MAX_FILL) return err({ _tag: "bad_ratio" });
+  const provided = x.executionGiveAmount !== undefined || x.executionWantAmount !== undefined;
+  if (provided && (x.executionGiveAmount === undefined || x.executionWantAmount === undefined)) return swapErr("SWAP_EXECUTION_PARTIAL");
+  if (x.fillRatio > 0 && !provided) return swapErr("SWAP_EXECUTION_REQUIRED");
+  const qG = offer.quantizedGive, qW = offer.quantizedWant, limitGive = (qG * BigInt(x.fillRatio)) / BigInt(MAX_FILL);
+  const fG = x.executionGiveAmount ?? limitGive, fW = x.executionWantAmount ?? ceilDiv(limitGive * qW, qG);
+  const canonical = provided ? fillRatioOf(exactFillRatio(qG, fG)) : x.fillRatio;
+  const exact = x.fillNumerator !== undefined || x.fillDenominator !== undefined;
+  if (exact) {
+    const n = x.fillNumerator, dd = x.fillDenominator;
+    if (n === undefined || dd === undefined) return swapErr("SWAP_EXACT_RATIO_PARTIAL");
+    if (dd <= 0n || n < 0n || n > dd) return swapErr("SWAP_EXACT_RATIO_RANGE");
+    if (n * qG !== fG * dd) return swapErr("SWAP_EXACT_RATIO_MISMATCH");
+  }
+  const fee = x.feeAmount ?? 0n;
+  if (fee < 0n || (fee > 0n && fG <= 0n) || (fee > 0n && (x.feeTokenId ?? offer.wantTokenId) !== offer.wantTokenId) || (fee >= fW && fW > 0n)) return swapErr("SWAP_FEE_INVALID");
+  const auth = netAuthError(offer, fG, fW, fee, x.cancelRemainder);
+  if (auth !== undefined) return swapErr(auth);
+  const hasFill = fG > 0n || fW > 0n;
+  if (provided && hasFill && (fG <= 0n || fW <= 0n)) return swapErr("SWAP_EXECUTION_NOT_POSITIVE");
+  if (provided && x.fillRatio !== canonical) return swapErr("SWAP_FILL_RATIO_MISMATCH");
+  if (provided && hasFill && fG > qG) return swapErr("SWAP_EXECUTION_ABOVE_OFFER");
+  if (provided && hasFill && fW * qG < fG * qW) return swapErr("SWAP_MAKER_LIMIT_PRICE");
+  if (canonical > 0 && (fG < 1n || fG > MAX_PAYMENT_AMOUNT || fW < 1n || fW > MAX_PAYMENT_AMOUNT)) return swapErr("SWAP_FILL_AMOUNT_BOUNDS");
+  // Holds are derived from live offers: dropping or replacing the offer releases the filled give and any requantization dust.
+  const closed: AccountBody = { ...a, offers: mapDelete(a.offers, offer.offerId) };
+  const byMaker = (n: bigint): bigint => (offer.makerIsLeft ? -n : n);
+  return chain(fW > 0n ? chain(ensureRoom(a, offer.wantTokenId, fW, !offer.makerIsLeft), () => ok(undefined)) : ok(undefined), () => {
+    const giveRow = shift(getDelta(a.account, offer.giveTokenId), fG > 0n ? byMaker(fG) : 0n);
+    const wantRow = shift(getDelta(a.account, offer.wantTokenId), (fG > 0n ? -byMaker(fW) : 0n) + (fee > 0n ? byMaker(fee) : 0n));
+    return chain(representable(a, giveRow), () => chain(representable(a, wantRow), (): BodyStep => {
+      const moved = putState(closed, setDelta(setDelta(a.account, giveRow), wantRow));
+      if (x.cancelRemainder || x.fillRatio === 0 || canonical === MAX_FILL) return ok(step(moved));
+      const d = swapDims(offer), remaining = d.side === 1 ? qG - fG : qW - fW, next = requantizeRemaining(d, remaining, offer.priceTicks);
+      if (next === undefined) return ok(step(moved));
+      if (qG - fG - next.give < 0n) return swapErr("SWAP_REMAINDER_EXCEEDS_HOLD");
+      return map(requantizeAuth(offer, next.give, next.want), (na) => step({ ...moved, offers: mapSet(moved.offers, offer.offerId, { ...offer, giveAmount: next.give, wantAmount: next.want, maxFee: na.maxFee, minNetReceive: na.minNetReceive, quantizedGive: next.give, quantizedWant: next.want }) }));
+    }));
+  });
+};
+// ---- rebalance: og handlers/rebalance/{request-collateral,refund,policy}.ts ----
+const rebalanceErr = (reason: string): Result<never, BodyError> => err({ _tag: "rebalance", reason });
+/** og request-collateral.ts: the requester prepays the fee now; one immutable request per token until finality or full refund. */
+const requestCollateral = (a: AccountBody, x: TxOf<"request_collateral">, ctx: FoldCtx): BodyStep => {
+  if (x.amount <= 0n) return rebalanceErr("REQUEST_COLLATERAL_AMOUNT");
+  if (x.feeAmount < 0n) return rebalanceErr("REQUEST_COLLATERAL_FEE");
+  if (!Number.isFinite(x.policyVersion) || x.policyVersion < 1) return rebalanceErr("REQUEST_COLLATERAL_POLICY_VERSION");
+  if (!a.account.deltas.has(x.tokenId)) return rebalanceErr("REQUEST_COLLATERAL_NO_DELTA");
+  if ((a.requested.get(x.tokenId) ?? 0n) > 0n) return ok(step(a));
+  if (x.feeAmount <= 0n) return rebalanceErr("REQUEST_COLLATERAL_FEE_ZERO");
+  const feeToken = x.feeTokenId ?? x.tokenId;
+  if (!a.account.deltas.has(feeToken)) return rebalanceErr("REQUEST_COLLATERAL_NO_FEE_DELTA");
+  const amount = feeToken !== x.tokenId ? x.amount : x.amount > x.feeAmount ? x.amount - x.feeAmount : 0n;
+  if (amount <= 0n) return ok(step(a));
+  return map(spend(a, feeToken, x.feeAmount, ctx.byLeft), (paid) => step({
+    ...paid, requested: mapSet(paid.requested, x.tokenId, amount),
+    requestFees: mapSet(paid.requestFees, x.tokenId, { requestId: `rebalance:${ctx.byLeft ? "left" : "right"}:${Number(x.tokenId)}:${ctx.accountHeight}`, feeTokenId: Number(feeToken), feePaidUpfront: x.feeAmount, requestedAmount: amount, policyVersion: x.policyVersion, requestedAt: Number(ctx.nowMs), requestedByLeft: ctx.byLeft }),
+  }));
+};
+/** og refund.ts: the counterparty returns prepaid fee, partially or in full; a full refund clears the request. */
+const rebalanceRefund = (a: AccountBody, x: TxOf<"rebalance_refund">, ctx: FoldCtx): BodyStep => {
+  if (!x.requestId || x.amount <= 0n) return rebalanceErr("REBALANCE_REFUND_INPUT");
+  const fees = a.requestFees.get(x.requestTokenId);
+  if (fees === undefined || (a.requested.get(x.requestTokenId) ?? 0n) <= 0n || fees.requestId !== x.requestId) return rebalanceErr("REBALANCE_REFUND_NOT_FOUND");
+  if (ctx.byLeft === fees.requestedByLeft) return rebalanceErr("REBALANCE_REFUND_SELF");
+  if (fees.refund !== undefined && fees.refund.reason !== x.reason) return rebalanceErr("REBALANCE_REFUND_REASON");
+  const refunded = fees.refund?.refundedAmount ?? 0n, outstanding = fees.feePaidUpfront - refunded;
+  if (outstanding <= 0n || x.amount > outstanding) return rebalanceErr("REBALANCE_REFUND_OUTSTANDING");
+  const feeToken = String(fees.feeTokenId) as TokenId;
+  if (!a.account.deltas.has(feeToken)) return rebalanceErr("REBALANCE_REFUND_NO_FEE_DELTA");
+  return map(spend(a, feeToken, x.amount, ctx.byLeft), (paid) => {
+    const next = refunded + x.amount;
+    return step(next === fees.feePaidUpfront
+      ? { ...paid, requested: mapDelete(paid.requested, x.requestTokenId), requestFees: mapDelete(paid.requestFees, x.requestTokenId) }
+      : { ...paid, requestFees: mapSet(paid.requestFees, x.requestTokenId, { ...fees, refund: { reason: x.reason, refundedAmount: next } }) });
+  });
+};
+/** og policy.ts: each side publishes versioned fee terms; older versions are ignored, a same-version change is equivocation. */
+const rebalancePolicy = (a: AccountBody, x: TxOf<"rebalance_policy">, ctx: FoldCtx): BodyStep => {
+  const token = Number(x.tokenId), ts = Number(ctx.nowMs);
+  if (!Number.isSafeInteger(token) || token <= 0 || token > 65_535) return rebalanceErr("REBALANCE_POLICY_TOKEN");
+  if (!Number.isSafeInteger(x.policyVersion) || x.policyVersion <= 0) return rebalanceErr("REBALANCE_POLICY_VERSION");
+  if (typeof x.baseFee !== "bigint" || typeof x.liquidityFeeBps !== "bigint" || typeof x.gasFee !== "bigint") return rebalanceErr("REBALANCE_POLICY_FEE_TYPES");
+  if (!Number.isSafeInteger(ts) || ts <= 0) return rebalanceErr("REBALANCE_POLICY_TIMESTAMP");
+  if (x.baseFee < 0n || x.liquidityFeeBps < 0n || x.liquidityFeeBps > 10_000n || x.gasFee < 0n) return rebalanceErr("REBALANCE_POLICY_FEE_TERMS");
+  if (!a.account.deltas.has(x.tokenId)) return rebalanceErr("REBALANCE_POLICY_NO_DELTA");
+  const held = a.feePolicies.get(x.tokenId), current = ctx.byLeft ? held?.left : held?.right;
+  if (current !== undefined && x.policyVersion < current.policyVersion) return ok(step(a));
+  if (current !== undefined && x.policyVersion === current.policyVersion) {
+    return current.baseFee === x.baseFee && current.liquidityFeeBps === x.liquidityFeeBps && current.gasFee === x.gasFee ? ok(step(a)) : rebalanceErr("REBALANCE_POLICY_EQUIVOCATION");
+  }
+  const next: RebalanceFeeSnapshot = { policyVersion: x.policyVersion, baseFee: x.baseFee, liquidityFeeBps: x.liquidityFeeBps, gasFee: x.gasFee, updatedAt: ts };
+  return ok(step({ ...a, feePolicies: mapSet(a.feePolicies, x.tokenId, { ...held, ...(ctx.byLeft ? { left: next } : { right: next }) }) }));
+};
+// ---- Account-level lending: og handlers/balance/lending.ts ----
+const lendingErr = (reason: string): Result<never, BodyError> => err({ _tag: "lending", reason });
+const LENDING_ENTITY = /^0x[0-9a-f]{64}$/, LENDING_INTENT = /^(?:lend|borrow|loan)-[0-9a-f]{16}$/;
+const lower = (v: unknown): string => String(v || "").trim().toLowerCase();
+type AccountLendingTx = TxOf<"lending_fund" | "lending_borrow_request" | "lending_repay" | "lending_credit" | "lending_close_request" | "lending_close_payout">;
+/** og deriveDelta outOwnCredit: the proposer's own credit line it has not drawn yet. */
+const ownCreditLeft = (d: Delta, isLeft: boolean): bigint => {
+  const t = d.ondelta + d.offdelta;
+  return isLeft ? floor0(d.leftCreditLimit - floor0(-t)) : floor0(d.rightCreditLimit - floor0(t - d.collateral));
+};
+/** og requireIntentId, requireRole (the claimed actor is the frame proposer) and requireCounterparty. */
+const lendingParties = (a: AccountBody, byLeft: boolean, id: string, prefix: "lend" | "borrow" | "loan", actor: string, counterparty: string): Result<void, BodyError> => {
+  const intent = lower(id);
+  if (!LENDING_INTENT.test(intent) || !intent.startsWith(`${prefix}-`)) return lendingErr("LENDING_INTENT_ID_INVALID");
+  const claimed = lower(actor), left = lower(a.account.id.left), right = lower(a.account.id.right), proposer = byLeft ? left : right;
+  if (!LENDING_ENTITY.test(claimed)) return lendingErr("LENDING_ROLE_INVALID");
+  if (claimed !== proposer) return lendingErr("LENDING_ROLE_NOT_PROPOSER");
+  return lower(counterparty) !== (proposer === left ? right : left) ? lendingErr("LENDING_COUNTERPARTY_INVALID") : ok(undefined);
+};
+const LENDING_TERMS: ReadonlySet<unknown> = new Set(["1h", "1d", "1m"]);
+const interestOk = (v: unknown): boolean => { const n = Math.floor(Number(v)); return Number.isFinite(n) && n >= 0 && n <= 10_000; };
+const lending = (a: AccountBody, x: AccountLendingTx, ctx: FoldCtx): BodyStep => {
+  const record = (b: AccountBody, key: string, kind: LendingIntentKind): BodyStep => (b.lendingIntents.has(key) ? lendingErr("LENDING_INTENT_REPLAY") : ok(step({ ...b, lendingIntents: mapSet(b.lendingIntents, key, kind) })));
+  const unused = (key: string): Result<void, BodyError> => (a.lendingIntents.has(key) ? lendingErr("LENDING_INTENT_REPLAY") : ok(undefined));
+  const pay = (tk: TokenId, amount: bigint, key: string, kind: LendingIntentKind): BodyStep => chain(unused(key), () => chain(spend(a, tk, amount, ctx.byLeft), (b) => record(b, key, kind)));
+  const positive = (v: bigint): Result<void, BodyError> => (v <= 0n ? lendingErr("LENDING_AMOUNT_MUST_BE_POSITIVE") : ok(undefined));
+  switch (x.type) {
+    case "lending_fund": return chain(lendingParties(a, ctx.byLeft, x.positionId, "lend", x.lenderEntityId, x.hubEntityId), () => chain(positive(x.amount), (): BodyStep => {
+      if (!LENDING_TERMS.has(x.termId)) return lendingErr("LENDING_INVALID_TERM");
+      if (!interestOk(x.interestBps)) return lendingErr("LENDING_INVALID_INTEREST_BPS");
+      const key = `fund:${lower(x.positionId)}`;
+      return chain(unused(key), () => {
+        // Only owned funds may fund the pool: unused own credit does not count (outCapacity already excludes holds and allowances).
+        const d = a.account.deltas.get(x.tokenId);
+        if (d === undefined || x.amount + ownCreditLeft(d, ctx.byLeft) > outCapacity(d, ctx.byLeft, holds(a, x.tokenId, ctx.byLeft))) return lendingErr("LENDING_FUND_OWNED_BALANCE_INSUFFICIENT");
+        return pay(x.tokenId, x.amount, key, "fund");
+      });
+    }));
+    case "lending_borrow_request": return chain(lendingParties(a, ctx.byLeft, x.requestId, "borrow", x.borrowerEntityId, x.hubEntityId), () => chain(positive(x.amount), (): BodyStep =>
+      !LENDING_TERMS.has(x.termId) ? lendingErr("LENDING_INVALID_TERM") : !interestOk(x.maxInterestBps) ? lendingErr("LENDING_INVALID_INTEREST_BPS") : record(a, `borrow:${lower(x.requestId)}`, "borrow")));
+    case "lending_repay": return chain(lendingParties(a, ctx.byLeft, x.loanId, "loan", x.borrowerEntityId, x.hubEntityId), () => chain(positive(x.amount), () => pay(x.tokenId, x.amount, `repay:${lower(x.loanId)}`, "repay")));
+    case "lending_credit": return chain(lendingParties(a, ctx.byLeft, x.loanId, "loan", x.hubEntityId, x.borrowerEntityId), (): BodyStep => {
+      if (x.creditLimit < 0n) return lendingErr("LENDING_CREDIT_LIMIT_NEGATIVE");
+      return chain(updateDelta(a.account, x.tokenId, (d) => setCreditLimit(d, x.creditLimit, ctx.byLeft)), (s) =>
+        record(putState(a, s), `${x.action === "grant" ? "grant" : "revoke"}:${lower(x.loanId)}`, x.action === "grant" ? "credit-grant" : "credit-revoke"));
+    });
+    case "lending_close_request": return chain(lendingParties(a, ctx.byLeft, x.positionId, "lend", x.lenderEntityId, x.hubEntityId), () => record(a, `close:${lower(x.positionId)}`, "close-request"));
+    case "lending_close_payout": return chain(lendingParties(a, ctx.byLeft, x.positionId, "lend", x.hubEntityId, x.lenderEntityId), () => chain(positive(x.amount), () => pay(x.tokenId, x.amount, `payout:${lower(x.positionId)}`, "close-payout")));
+  }
+};
+// ---- direct payment envelope: og handlers/balance/direct-payment.ts validatePaymentEnvelope/resolvePaymentParties/validatePaymentRoute ----
+const MAX_ROUTE_HOPS = 100;
+/** Absent route/deliveryMode is the rewrite's own bilateral payment: route [recipient], direct. */
+const paymentRoute = (a: AccountBody, x: TxOf<"payment">, byLeft: boolean): Result<void, BodyError> => {
+  const bad = (reason: string): Result<never, BodyError> => err({ _tag: "payment_route", reason });
+  const from = (byLeft ? a.account.id.left : a.account.id.right).toLowerCase(), to = (byLeft ? a.account.id.right : a.account.id.left).toLowerCase();
+  const route = x.route ?? [to], mode = x.deliveryMode ?? "direct", gateway = x.trustedGatewayEntityId;
+  if (x.amount < 1n || x.amount > MAX_PAYMENT_AMOUNT) return err({ _tag: "non_positive_payment" });
+  if (route.length === 0 || route.length > MAX_ROUTE_HOPS) return bad("ROUTE_LENGTH");
+  if (mode !== "direct" && mode !== "trusted") return bad("DELIVERY_MODE");
+  if (mode === "direct" && gateway !== undefined) return bad("DIRECT_WITH_GATEWAY");
+  if (mode === "trusted" && !gateway) return bad("TRUSTED_WITHOUT_GATEWAY");
+  if ((x.fromEntityId && x.fromEntityId.toLowerCase() !== from) || (x.toEntityId && x.toEntityId.toLowerCase() !== to)) return bad("DIRECTION");
+  const is = (v: string | undefined, e: string): boolean => String(v || "").toLowerCase() === e;
+  const onlyRecipient = route.length === 1 && is(route[0], to);
+  if (mode === "direct") return onlyRecipient ? ok(undefined) : bad("DIRECT_ROUTE");
+  const g = String(gateway).toLowerCase();
+  if (from === g) return onlyRecipient ? ok(undefined) : bad("GATEWAY_FINAL_LEG");
+  const final = String(route[1] || "").toLowerCase();
+  return to === g && route.length === 2 && is(route[0], to) && final !== "" && final !== g && final !== from ? ok(undefined) : bad("TRUSTED_ROUTE");
+};
 type Arms = { readonly [K in AccountTx["type"]]: (tx: WireTxOf<K>) => BodyStep<EffectOf<K>> };
 const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Effect> => matchBy<"type", WireAccountTx, BodyStep<Effect>>("type", tx, {
 
   add_delta: (x) => ok(step(a.account.deltas.has(x.tokenId) ? a : putState(a, setDelta(a.account, zeroDelta(x.tokenId))))),
   set_credit_limit: (x) => map(updateDelta(a.account, x.tokenId, (d) => setCreditLimit(d, x.limit, ctx.byLeft)), (s) => step(putState(a, s))),
-  payment: (x) => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b)),
+  payment: (x) => chain(paymentRoute(a, x, ctx.byLeft), () => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b))),
   htlc_lock: (x) => {
-    if (a.locks.has(x.lockId) || [...a.locks.values()].some((l) => l.hashlock === x.hashlock)) return err({ _tag: "duplicate" });
-    return map(checks(positive(x.amount), ensureRoom(a, x.tokenId, x.amount, ctx.byLeft)), () => step({ ...a, locks: mapSet(a.locks, x.lockId, {
-      lockId: x.lockId, hashlock: x.hashlock, timelock: x.timelock, revealBeforeHeight: x.revealBeforeHeight, amount: x.amount, tokenId: x.tokenId,
-      senderIsLeft: ctx.byLeft, createdHeight: ctx.accountHeight, createdTimestamp: ctx.nowMs, encryptedPackage: x.encryptedPackage,
-    }) }));
+    // og handlers/htlc/lock.ts:32-52,71-81,95-116 in order: identity, expiry, amount, 32-lock cap, capacity, int512 range, uint256 hold.
+    if (x.lockId !== x.hashlock) return err({ _tag: "lock_id" });
+    if (a.locks.has(x.lockId)) return err({ _tag: "duplicate" });
+    if (ctx.nowMs >= x.timelock || x.revealBeforeHeight <= ctx.jHeight) return err({ _tag: "htlc_expired" });
+    if (x.amount < 1n || x.amount > MAX_PAYMENT_AMOUNT) return err({ _tag: "non_positive_payment" });
+    if (a.locks.size >= MAX_ACCOUNT_HTLC_LOCKS) return err({ _tag: "htlc_lock_capacity" });
+    const totals = sideTotals(a, x.tokenId), held = ctx.byLeft ? totals.leftHold : totals.rightHold;
+    return chain(ensureRoom(a, x.tokenId, x.amount, ctx.byLeft), () => chain(representable(a, getDelta(a.account, x.tokenId), { senderIsLeft: ctx.byLeft, amount: x.amount }), () =>
+      held + x.amount > MAX_PAYMENT_AMOUNT ? err({ _tag: "hold_overflow" }) : ok(step({ ...a, locks: mapSet(a.locks, x.lockId, {
+        lockId: x.lockId, hashlock: x.hashlock, timelock: x.timelock, revealBeforeHeight: x.revealBeforeHeight, amount: x.amount, tokenId: x.tokenId,
+        senderIsLeft: ctx.byLeft, createdHeight: floor0(ctx.accountHeight - 1n), createdTimestamp: ctx.nowMs, encryptedPackage: x.encryptedPackage,
+      }) }))));
   },
   htlc_resolve: (x) => {
+    // og handlers/htlc/resolve.ts: a secret pays only before expiry; an error refund is the beneficiary's any time, the payer's after expiry.
     const live = a.locks.get(x.lockId);
-    if (live === undefined) return MISSING;
-    if (keccakUtf8(x.secret) !== live.hashlock) return err({ _tag: "preimage" });
-
-    return map(offdeltaChange(live.senderIsLeft, live.amount), (by) => step({ ...shifted(a, live.tokenId, by), locks: mapDelete(a.locks, x.lockId) }, [{ _tag: "forward_secret", hashlock: live.hashlock, secret: x.secret }]));
+    if (live === undefined || !a.account.deltas.has(live.tokenId)) return MISSING;
+    const expired = htlcExpired(live, ctx);
+    if (x.outcome === "error") {
+      const beneficiary = ctx.byLeft !== live.senderIsLeft;
+      if (!beneficiary && !expired) return err({ _tag: "before_deadline" });
+      return x.reason === "timeout" && !expired ? err({ _tag: "before_deadline" }) : ok(step({ ...a, locks: mapDelete(a.locks, x.lockId) }));
+    }
+    if (expired) return err({ _tag: "htlc_expired" });
+    if (hashHtlcSecret(x.secret) !== live.hashlock) return err({ _tag: "preimage" });
+    return chain(offdeltaChange(live.senderIsLeft, live.amount), (by) => {
+      const released: AccountBody = { ...a, locks: mapDelete(a.locks, x.lockId) }, moved = shift(getDelta(a.account, live.tokenId), by);
+      return map(representable(released, moved), () => step(putState(released, setDelta(a.account, moved)), [{ _tag: "forward_secret", hashlock: live.hashlock, secret: x.secret }]));
+    });
   },
-  htlc_timeout: (x) => {
-    const live = a.locks.get(x.lockId);
-    if (live === undefined) return MISSING;
-    if (ctx.jHeight < live.revealBeforeHeight) return err({ _tag: "before_deadline" });
-    if (ctx.jHeight === live.revealBeforeHeight) return err({ _tag: "unchosen", hole: "reveal_before_height" });
-    return ok(step({ ...a, locks: mapDelete(a.locks, x.lockId) }));
-  },
-  swap_offer: (x) => {
-    if (a.offers.has(x.offerId)) return err({ _tag: "duplicate" });
-    if (x.giveAmount <= 0n || x.wantAmount <= 0n) return err({ _tag: "non_positive_payment" });
-    if (!validRatio(x.minFillRatio)) return err({ _tag: "bad_ratio" });
-    const offer: SwapOffer = { offerId: x.offerId, giveTokenId: x.giveTokenId, giveAmount: x.giveAmount, wantTokenId: x.wantTokenId, wantAmount: x.wantAmount, minFillRatio: x.minFillRatio, expiresAtHeight: x.expiresAtHeight, makerIsLeft: ctx.byLeft };
-    return map(ensureRoom(a, offer.giveTokenId, offer.giveAmount, ctx.byLeft), () => step({ ...a, offers: mapSet(a.offers, x.offerId, offer) }));
-  },
-  swap_cancel: (x) => {
+  swap_offer: (x) => swapOffer(a, x, ctx),
+  swap_cancel_request: (x) => {
+    // og lifecycle/cancel.ts: the maker only requests; the offer and its hold stay until the counterparty's swap_resolve.
     const offer = a.offers.get(x.offerId);
-    return offer === undefined ? MISSING : ctx.byLeft !== offer.makerIsLeft ? err({ _tag: "not_maker" }) : ok(step({ ...a, offers: mapDelete(a.offers, x.offerId) }));
+    return offer === undefined ? MISSING : ctx.byLeft !== offer.makerIsLeft ? err({ _tag: "not_maker" }) : ok(step(a));
   },
-  swap_resolve: (x) => {
-    const offer = a.offers.get(x.offerId);
-    if (offer === undefined) return MISSING;
-    if (ctx.accountHeight > offer.expiresAtHeight) return err({ _tag: "expired_offer" });
-    if (!validRatio(x.fillRatio)) return err({ _tag: "bad_ratio" });
-    if (x.fillRatio < offer.minFillRatio) return err({ _tag: "below_min_fill" });
-    return chain(all({ give: floorRatio(offer.giveAmount, x.fillRatio), want: floorRatio(offer.wantAmount, x.fillRatio) }), ({ give, want }) => chain(give === 0n ? ok(0n) : offdeltaChange(offer.makerIsLeft, give), (giveBy) => {
-      const released: AccountBody = { ...(give === 0n ? a : shifted(a, offer.giveTokenId, giveBy)), offers: mapDelete(a.offers, offer.offerId) };
-      return map(want === 0n ? ok(released) : spend(released, offer.wantTokenId, want, !offer.makerIsLeft), (paid) =>
-        x.cancelRemainder || x.fillRatio === MAX_FILL || offer.giveAmount === give ? step(paid)
-        : step({ ...paid, offers: mapSet(paid.offers, offer.offerId, { ...offer, giveAmount: offer.giveAmount - give, wantAmount: offer.wantAmount - want }) }));
-    }));
-  },
+  swap_resolve: (x) => swapResolve(a, x, ctx),
   deposit_to_custody: (x) => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step({ ...b, custody: bump(b.custody, x.tokenId, x.amount) })),
   withdraw_from_custody: (x) => chain(fromCustody(a, x.tokenId, x.amount), () => map(offdeltaChange(ctx.byLeft, x.amount), (by) => step({ ...shifted(a, x.tokenId, -by), custody: bump(a.custody, x.tokenId, -x.amount) }))),
   hub_custody_debit: (x) => map(fromCustody(a, x.tokenId, x.amount), () => step({ ...a, custody: bump(a.custody, x.tokenId, -x.amount), debits: [...a.debits, { tokenId: x.tokenId, amount: x.amount, reason: x.reason, referenceId: x.referenceId }] })),
-  set_rebalance_policy: (x) => x.softLimit > x.hardLimit || x.maxAcceptableFee < 0n ? err({ _tag: "policy_bound" })
-    : ok(step({ ...a, policy: mapSet(a.policy, x.tokenId, { softLimit: x.softLimit, hardLimit: x.hardLimit, maxAcceptableFee: x.maxAcceptableFee }) })),
-  rebalance_request: (x) => {
-    const policy = a.policy.get(x.tokenId);
-    if (policy === undefined) return err({ _tag: "no_policy" });
-    if (x.targetAmount <= 0n) return err({ _tag: "non_positive_payment" });
-    return x.targetAmount > policy.hardLimit ? err({ _tag: "policy_bound" }) : ok(step({ ...a, request: { tokenId: x.tokenId, targetAmount: x.targetAmount } }));
-  },
-  rebalance_quote: (x) => {
-    if (x.amount <= 0n || x.feeAmount < 0n) return err({ _tag: "non_positive_payment" });
-    const policy = a.policy.get(x.tokenId);
-    return ok(step({ ...a, quote: { quoteId: ctx.nowMs, tokenId: x.tokenId, amount: x.amount, feeTokenId: x.feeTokenId, feeAmount: x.feeAmount, accepted: policy !== undefined && x.feeAmount <= policy.maxAcceptableFee } }));
-  },
-  rebalance_accept: (x) => {
-    if (a.quote === undefined) return err({ _tag: "no_quote" });
-    if (a.quote.quoteId !== x.quoteId) return err({ _tag: "quote_mismatch" });
-    const accepted: RebalanceQuote = { ...a.quote, accepted: true };
-    return map(quoteWindow(a.quote, ctx.nowMs), () => step({ ...a, quote: accepted }));
-  },
-  deposit_collateral: (wire) => {
-    if (wire.amount <= 0n) return err({ _tag: "non_positive_payment" });
-    const effect: Of<Effect, "queue_r2c"> = { _tag: "queue_r2c", tokenId: wire.tokenId, amount: wire.amount };
-    return chain(depositTx(wire), (x) => match(x.fee, {
-      none: (): BodyStep<Of<Effect, "queue_r2c">> => ok(step(a, [effect])),
-      quote: (fee): BodyStep<Of<Effect, "queue_r2c">> => {
-        const q = a.quote;
-        if (q === undefined || q.quoteId !== fee.quoteId || !q.accepted || q.feeTokenId !== fee.tokenId || q.feeAmount !== fee.amount) return err({ _tag: "quote_mismatch" });
-        return chain(quoteWindow(q, ctx.nowMs), () => map(fee.amount === 0n ? ok(a) : spend(a, fee.tokenId, fee.amount, ctx.byLeft), (paid) => step({ ...paid, quote: undefined }, [effect])));
-      },
-    }));
-  },
-  subcontract_propose: (x) => {
-    if ([...a.clauses.values()].filter(isPending).length >= MAX_PENDING) return err({ _tag: "pending_full" });
-    if (a.clauses.has(x.id)) return err({ _tag: "duplicate" });
-    if (!x.clause.allowances.every((r) => r.deltaIndex >= 0 && r.leftAllowance >= 0n && r.rightAllowance >= 0n)) return err({ _tag: "bad_allowance" });
-    return ok(step({ ...a, clauses: mapSet(a.clauses, x.id, { _tag: "pending", clause: { ...x.clause, proposerIsLeft: ctx.byLeft } }) }));
-  },
-  subcontract_approve: (x) => chain(pendingOf(a, x.id, ctx.byLeft), (clause) => {
-    const order = tokenOrder(a);
-    return clause.allowances.some((r) => order[r.deltaIndex] === undefined) ? err({ _tag: "index" }) : ok(step({ ...a, clauses: mapSet(a.clauses, x.id, { _tag: "live", clause }) }));
-  }),
-  subcontract_reject: (x) => map(pendingOf(a, x.id, ctx.byLeft), () => step({ ...a, clauses: mapDelete(a.clauses, x.id) })),
-  subcontract_resolve_propose: (x) => {
-    const s = a.clauses.get(x.id), clause = s === undefined ? undefined : heldClause(s);
-    return clause === undefined ? MISSING : ok(step({ ...a, clauses: mapSet(a.clauses, x.id, { _tag: "resolving", clause, resolution: { args: x.args, effects: x.effects, proposerIsLeft: ctx.byLeft } }) }));
-  },
-  subcontract_resolve_approve: (x) => map(resolutionOf(a, x.id, ctx.byLeft), (r) =>
-    step({ ...putState(a, r.effects.reduce((s, e) => setDelta(s, shift(getDelta(s, e.tokenId), e.offdelta)), a.account)), clauses: mapDelete(a.clauses, x.id) })),
+  request_collateral: (x) => requestCollateral(a, x, ctx),
+  rebalance_refund: (x) => rebalanceRefund(a, x, ctx),
+  rebalance_policy: (x) => rebalancePolicy(a, x, ctx),
+  lending_fund: (x) => lending(a, x, ctx), lending_borrow_request: (x) => lending(a, x, ctx), lending_repay: (x) => lending(a, x, ctx),
+  lending_credit: (x) => lending(a, x, ctx), lending_close_request: (x) => lending(a, x, ctx), lending_close_payout: (x) => lending(a, x, ctx),
   cross_pull_lock: () => err({ _tag: "unchosen", hole: "cross_open" }),
   cross_pull_close: () => err({ _tag: "unchosen", hole: "cross_open" }),
   j_event_claim: (x) => claimJ(a, x, ctx),
-  settle_transition: (x) => ok(step({ ...a, settlement: { revision: x.revision, workspaceHash: x.workspaceHash, settlementHash: x.settlementHash.toLowerCase() } })),
+  settle_transition: (x) => settleTransition(a, x, ctx),
 } satisfies Arms);
 const one = (x: { readonly tokenId: TokenId }): readonly string[] => [x.tokenId], none = (): readonly string[] => [];
 const namedTokens = (tx: WireAccountTx): readonly string[] => matchBy("type", tx, {
-  add_delta: one, set_credit_limit: one, payment: one, htlc_lock: one, htlc_resolve: none, htlc_timeout: none, swap_offer: (x) => [x.giveTokenId, x.wantTokenId], swap_cancel: none, swap_resolve: none,
-  deposit_to_custody: one, withdraw_from_custody: one, hub_custody_debit: one, set_rebalance_policy: one, rebalance_request: one, rebalance_quote: (x) => [x.tokenId, x.feeTokenId], rebalance_accept: none,
-  deposit_collateral: one, subcontract_propose: none, subcontract_approve: none, subcontract_reject: none, subcontract_resolve_propose: (x) => x.effects.map((e) => e.tokenId), subcontract_resolve_approve: none,
+  add_delta: one, set_credit_limit: one, payment: one, htlc_lock: one, htlc_resolve: none, swap_offer: (x) => [x.giveTokenId, x.wantTokenId], swap_cancel_request: none, swap_resolve: (x) => (x.feeTokenId === undefined ? [] : [x.feeTokenId]),
+  deposit_to_custody: one, withdraw_from_custody: one, hub_custody_debit: one, request_collateral: (x) => (x.feeTokenId === undefined ? [x.tokenId] : [x.tokenId, x.feeTokenId]), rebalance_refund: (x) => [x.requestTokenId], rebalance_policy: one,
+  lending_fund: one, lending_borrow_request: one, lending_repay: one, lending_credit: one, lending_close_request: none, lending_close_payout: one,
   cross_pull_lock: none, cross_pull_close: none, j_event_claim: (x) => x.events.flatMap((row) => row.tokens.map((tk) => tk.tokenId.toString())), settle_transition: none,
 });
 const commits = (before: AccountBody, tx: WireAccountTx, next: AccountStep): BodyStep<Effect> =>
   chain(mapErr(prepareStep(before, next.state), uncommitted), () => map(mapErr(isL0Tx(tx) ? ok(undefined) : txRefusal(wireOf(tx)), uncommitted), () => next));
 export const applyAccountBody: Layer<AccountBody, WireAccountTx, FoldCtx, Effect, BodyError> = (a, tx, ctx) => {
+  const frozen = settlementFreeze(a, tx);
+  if (!frozen.ok) return frozen;
   const unfit = namedTokens(tx).find((n) => !tokenId(n).ok);
   if (unfit !== undefined) return err({ _tag: "token_id", tokenId: unfit });
   return chain(authorized(tx, a.hub, ctx.byLeft), () => chain(applyArm(a, tx, ctx), (next) => (next.state.account.deltas.size > MAX_ROWS ? err({ _tag: "too_many_rows" }) : commits(a, tx, next))));
 };
 export const accountSnapshot = (a: AccountBody): Required<Omit<AccountBody, "account">> & { readonly state: Hash } =>
-  ({ state: hashAccountState(a.account), terms: a.terms, hub: a.hub, custody: a.custody, locks: a.locks, offers: a.offers, policy: a.policy, clauses: a.clauses, debits: a.debits, quote: a.quote, request: a.request, leftJ: a.leftJ, rightJ: a.rightJ, claimRows: a.claimRows, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
+  ({ state: hashAccountState(a.account), terms: a.terms, hub: a.hub, custody: a.custody, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, debits: a.debits, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
 
 
 export type ViewError = CommitmentError | Tagged<"token_id", { tokenId: TokenId }> | ClaimError;
@@ -1262,7 +1762,6 @@ export type Uncommitted = Tagged<"uncommitted", { reason: UncommittedReason }>;
 export const uncommitted = (reason: UncommittedReason): Uncommitted => ({ _tag: "uncommitted", reason });
 export const tokenNumber = (id: TokenId): Result<number, ViewError> => (tokenId(id).ok ? ok(Number(id)) : err({ _tag: "token_id", tokenId: id }));
 export const tokenOrder = (b: AccountBody): readonly TokenId[] => [...b.account.deltas.keys()].sort((x, y) => Number(x) - Number(y));
-export const heldClause = (s: ClauseState): Clause | undefined => match<ClauseState, Clause | undefined>(s, { pending: () => undefined, live: ({ clause }) => clause, resolving: ({ clause }) => clause });
 const EMPTY_J_CLAIMS: JClaimAccumulator = { version: 1, root: EMPTY_J_ROOT, count: 0n };
 const CLAIM_ACCOUNT = keccak256Hex(utf8("xln.account-j-claim.account.v1")), CLAIM_KEY = keccak256Hex(utf8("xln.account-j-claim.key.v1")), CLAIM_RECORD = keccak256Hex(utf8("xln.account-j-claim.record.v1")), CLAIM_LEAF = keccak256Hex(utf8("xln.account-j-claim.leaf.v1")), CLAIM_BRANCH = keccak256Hex(utf8("xln.account-j-claim.branch.v1"));
 type ClaimNode = Tagged<"leaf", { key: string; record: string }> | Tagged<"branch", { bit: number; left: ClaimNode; right: ClaimNode }>;
@@ -1311,12 +1810,11 @@ const totalsOn = (b: AccountBody, counted: (id: TokenId) => boolean): ReadonlyMa
   const holdOn = (id: TokenId, onLeft: boolean, n: bigint): void => { const s = on(id); if (onLeft) s.leftHold += n; else s.rightHold += n; };
   for (const l of b.locks.values()) if (counted(l.tokenId)) holdOn(l.tokenId, l.senderIsLeft, l.amount);
   for (const o of b.offers.values()) if (counted(o.giveTokenId)) holdOn(o.giveTokenId, o.makerIsLeft, o.giveAmount);
-  let order: readonly TokenId[] | undefined;
-  for (const s of b.clauses.values()) for (const r of heldClause(s)?.allowances ?? []) {
-    order ??= tokenOrder(b);
-    const id = order[r.deltaIndex];
-    if (id === undefined || !counted(id)) continue;
-    const tot = on(id); tot.leftAllowance += r.leftAllowance; tot.rightAllowance += r.rightAllowance;
+  if (b.settlement !== undefined && b.settlement.status !== "submitted") for (const d of workspaceDiffs(b.settlement)) {
+    const id = String(d.tokenId) as TokenId;
+    if (!counted(id)) continue;
+    if (d.leftDiff < 0n) holdOn(id, true, -d.leftDiff);
+    if (d.rightDiff < 0n) holdOn(id, false, -d.rightDiff);
   }
   return totals;
 };
@@ -1329,25 +1827,21 @@ const committedDeltas = (b: AccountBody): ReadonlyMap<number, CommittedDelta> =>
     return [d.tokenId, { tokenId: Number(d.tokenId), collateral: d.collateral, ondelta: d.ondelta, offdelta: d.offdelta, leftCreditLimit: d.leftCreditLimit, rightCreditLimit: d.rightCreditLimit, leftAllowance: s.leftAllowance, rightAllowance: s.rightAllowance, leftHold: s.leftHold, rightHold: s.rightHold }];
   }));
 };
-const clauseRow = (id: ClauseId, s: ClauseState): unknown => match(s, {
-  pending: ({ clause }) => ({ stage: "pending", clause }), live: ({ clause }) => ({ stage: "live", clause, resolve: undefined }), resolving: ({ clause, resolution }) => ({ stage: "live", clause, resolve: { id, ...resolution } }),
-});
 const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
   const height = b.finalizedJHeight;
   if (height < 0n || height > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "bad_j_claims" });
-  const keys = [...b.account.deltas.keys(), ...b.policy.keys(), ...(b.request === undefined ? [] : [b.request.tokenId]), ...(b.quote === undefined ? [] : [b.quote.tokenId])];
+  const keys = [...b.account.deltas.keys(), ...b.requested.keys(), ...b.requestFees.keys(), ...b.feePolicies.keys()];
   return chain(traverse(keys, tokenNumber), () => chain(all({ left: pendingOn(b, true), right: pendingOn(b, false) }), ({ left, right }) => {
-    const { terms } = b, hubRows = new Map<string, unknown>();
+    // og lendingIntents first; the rewrite-only custody/debit/hub rows share this committed map (EXTRA, see findings AT-22).
+    const { terms } = b, hubRows = new Map<string, unknown>(b.lendingIntents);
     for (const [tk, amount] of b.custody) hubRows.set(`custody:${tk}`, amount);
     b.debits.forEach((debit, i) => hubRows.set(`debit:${i}`, debit));
     if (b.hub !== null) hubRows.set("hub", b.hub);
-    if (b.settlement !== undefined) hubRows.set("settlement", b.settlement.settlementHash);
     return ok({
       domain: terms.domain, leftEntity: b.account.id.left, rightEntity: b.account.id.right, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig,
-      jNonce: 0, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
-      deltas: committedDeltas(b), locks: b.locks, pulls: new Map(), swapOffers: b.offers, subcontracts: new Map([...b.clauses].map(([id, s]) => [id, clauseRow(id, s)])), lendingIntents: hubRows,
-      requestedRebalance: byToken(b.request === undefined ? [] : [[b.request.tokenId, b.request.targetAmount] as const]),
-      requestedRebalanceFeeState: byToken(b.quote === undefined ? [] : [[b.quote.tokenId, b.quote] as const]), rebalanceFeePolicies: byToken(b.policy),
+      jNonce: b.jNonce, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
+      deltas: committedDeltas(b), locks: new Map([...b.locks].map(([id, l]) => [id, ogLockRow(l)])), pulls: new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map(), lendingIntents: hubRows,
+      requestedRebalance: byToken(b.requested), requestedRebalanceFeeState: byToken(b.requestFees), rebalanceFeePolicies: byToken(b.feePolicies), settlementWorkspace: b.settlement,
     });
   }));
 };
@@ -1520,7 +2014,7 @@ export const wireTx = (tx: WireAccountTx, id: AccountId, byLeft: boolean): Resul
   return map(mapErr(tokenNumber(tx.tokenId), uncommitted), (tk) => matchBy("type", tx, {
     add_delta: (): WireTx => ({ type: "add_delta", data: { tokenId: tk } }),
     set_credit_limit: (c): WireTx => ({ type: "set_credit_limit", data: { tokenId: tk, amount: c.limit } }),
-    payment: (p): WireTx => ({ type: "direct_payment", data: { tokenId: tk, amount: p.amount, route: [payee], fromEntityId: payer, toEntityId: payee, deliveryMode: "direct" } }),
+    payment: (p): WireTx => ({ type: "direct_payment", data: { tokenId: tk, amount: p.amount, route: p.route ?? [payee], ...(p.description === undefined ? {} : { description: p.description }), fromEntityId: payer, toEntityId: payee, deliveryMode: p.deliveryMode ?? "direct", ...(p.trustedGatewayEntityId === undefined ? {} : { trustedGatewayEntityId: p.trustedGatewayEntityId }) } }),
   }));
 };
 const safe = (n: bigint): Result<number, Uncommitted> => (n >= 0n && n <= BigInt(Number.MAX_SAFE_INTEGER) ? ok(Number(n)) : err(uncommitted({ _tag: "unsafe_number" })));
@@ -2507,10 +3001,9 @@ const rootConfig = (state: EntityState): EntityRootConfig => {
     ...(j === undefined ? {} : { jurisdiction: { chainId: state.jurisdiction.chainId, depositoryAddress: state.jurisdiction.depositoryAddress, ...j } }),
   };
 };
-/** Empty rebalance shadow only. A policy, quote, or request has no radix root here. */
+/** Rebalance requests, fee state and fee policies are committed Account state (og requestedRebalance*, rebalanceFeePolicies); the local shadow is not part of the body. */
 const installedAccount = (self: EntityId, peer: EntityId, child: AccountReplica): Result<EntityRootAccount, EntityError> => {
   const body = child.state;
-  if (body.policy.size > 0 || body.quote !== undefined || body.request !== undefined) return err({ _tag: "account_envelope", target: peer });
   const status: EntityRootAccount["status"] = match(child, { open: () => "active", proposed: () => "active", received: () => "active", preparing: () => "dispute_preparing", disputed: () => "disputed" });
   const linked: Result<{ readonly height: number; readonly frame: string }, EntityFrameHashError> = match(child.head, { genesis: () => ok({ height: 0, frame: "" }), installed: (head) => map(frameNumber(head.height), (height) => ({ height, frame: head.prevFrameHash })) });
   return chain(linked, (link): Result<EntityRootAccount, EntityError> => chain(mapErr(committedView(body), (): EntityError => ({ _tag: "account_envelope", target: peer })), (state): Result<EntityRootAccount, EntityError> => ok({
@@ -2762,7 +3255,7 @@ export type JState = { readonly reserves: ReadonlyMap<EntityId, ReadonlyMap<Toke
 export type LadderTx = { readonly type: "ladder_reveal"; readonly revealer: EntityId; readonly counter: EntityId; readonly ladderHash: Hash; readonly targetRole: boolean; readonly fillRatio: number; readonly revealedAt: bigint };
 export type EntityRouteTx =
   | { readonly type: "directPayment"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly description?: string | undefined; readonly invoiceId?: string | undefined }
-  | { readonly type: "placeSwapOffer"; readonly offerId: string; readonly giveTokenId: TokenId; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantAmount: bigint; readonly minFillRatio: number; readonly expiresAtHeight: bigint }
+  | ({ readonly type: "placeSwapOffer" } & SwapOfferTerms)
   | { readonly type: "htlcPayment"; readonly route: readonly EntityId[]; readonly finalRecipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly description?: string | undefined }
   | { readonly type: "prepareCrossJurisdictionSwap" }
   | { readonly type: "registerCrossJurisdictionSwap" };
@@ -2874,7 +3367,7 @@ export const hostRoot = (h: Host): HostRoot => keccakUtf8(canon({ account: accou
 export const hashFrame = (record: RuntimeFrameRecord): RuntimeFrameHash => keccakUtf8(canon(record)) as RuntimeFrameHash;
 const foldStamped = strictFold<Host, Stamped, Verify, HostEffect, AccountReplicaError | HostError>((h, stamped, verify) => applyHost(h, stamped.tx, stamped.ctx, verify));
 const outputId = (height: bigint, ordinal: number, effect: HostEffect): Hash => keccakUtf8(canon({ height, ordinal, effect }));
-const messageOf = (e: HostEffect): AccountMessage | null => match(e, { send: (x) => x.message, forward_secret: () => null, queue_r2c: () => null, start_dispute: () => null });
+const messageOf = (e: HostEffect): AccountMessage | null => match(e, { send: (x) => x.message, forward_secret: () => null, start_dispute: () => null });
 /** An ACK already riding on an ack_frame in the same batch is not sent again on its own. */
 const carriedOnce = (effects: readonly HostEffect[]): readonly HostEffect[] => {
   const carried = new Set(effects.flatMap((e) => { const m = messageOf(e); return m === null ? [] : matchBy("kind", m, { ack: () => [], ack_frame: (f) => (f.ack === null ? [] : [canon(f.ack)]) }); }));
