@@ -486,8 +486,12 @@ export const emptyBatch = (): Batch => total(BATCH_FIELDS, [] as never) as Batch
 const t = A.tuple;
 const allowanceAbi = (r: JAllowance): Abi => t([A.uint(r.deltaIndex), A.uint(r.rightAllowance), A.uint(r.leftAllowance)]);
 const transformerAbi = (c: TransformerClause): Abi => t([A.address(c.transformerAddress), A.bytes(c.encodedBatch), arr(c.allowances, allowanceAbi)]);
-const proofBodyAbi = (b: ProofBody): Abi => t([A.b32(b.watchSeed), A.uint(b.leftResponseSeconds), A.uint(b.rightResponseSeconds), arr(b.offdeltas, A.int), arr(b.tokenIds, A.uint), arr(b.transformers, transformerAbi)]);
-const diffAbi = (d: SettlementDiff): Abi => t([A.uint(d.tokenId), A.int(d.leftDiff), A.int(d.rightDiff), A.int(d.collateralDiff), A.int(d.ondeltaDiff)]);
+/** Types.sol `Int512{int256 high; uint256 low}` (abi-money.ts encodeInt512): high is the arithmetic shift, so a value outside int512 fails the int256 word. */
+const int512Abi = (n: bigint): Abi => t([A.int(n >> 256n), A.uint(n & ((1n << 256n) - 1n))]);
+/** Types.sol `SignedAmount{bool negative; uint256 magnitude}` (encodeSignedAmount): ±(2^256-1), zero is never negative. */
+const signedAmountAbi = (n: bigint): Abi => t([A.bool(n < 0n), A.uint(n < 0n ? -n : n)]);
+const proofBodyAbi = (b: ProofBody): Abi => t([A.b32(b.watchSeed), A.uint(b.leftResponseSeconds), A.uint(b.rightResponseSeconds), arr(b.offdeltas, int512Abi), arr(b.tokenIds, A.uint), arr(b.transformers, transformerAbi)]);
+const diffAbi = (d: SettlementDiff): Abi => t([A.uint(d.tokenId), signedAmountAbi(d.leftDiff), signedAmountAbi(d.rightDiff), signedAmountAbi(d.collateralDiff), signedAmountAbi(d.ondeltaDiff)]);
 const witnessAbi = (w: HashLadderWitness): Abi => t([A.uint(w.fillRatio), A.b32(w.fullSecret), ...w.reveals.map((r) => A.b32(r))]);
 const batchAbi = (b: Batch): Abi => t([
   arr(b.reserveToReserve, (r) => t([A.b32(r.receivingEntity), A.uint(r.tokenId), A.uint(r.amount)])),
@@ -507,7 +511,7 @@ export const encodeProofBodyBytes = (b: ProofBody): string => abiEncodeHex([proo
 export const J_EVENT_SIGNATURES = {
   HankoBatchProcessed: "HankoBatchProcessed(bytes32,bytes32,uint256)",
   ReserveUpdated: "ReserveUpdated(bytes32,uint256,uint256)",
-  AccountSettled: "AccountSettled((bytes32,bytes32,(uint256,uint256,uint256,uint256,int256)[],uint256)[])",
+  AccountSettled: "AccountSettled((bytes32,bytes32,(uint256,uint256,uint256,uint256,(int256,uint256))[],uint256)[])",
   DisputeStarted: "DisputeStarted(bytes32,bytes32,uint256,bool,bytes32,bytes32,bytes,bytes,bytes32,uint256,uint256,uint32,uint32)",
   DisputeFinalized: "DisputeFinalized(bytes32,bytes32,uint256,bytes32,bytes32)",
 } as const;
@@ -536,9 +540,9 @@ const readSettled = (buf: Uint8Array): readonly AccountSettlement[] => {
   const rows = abiLengthRef(buf, abiRoot(), 0);
   return Array.from({ length: countOf(rows, 32) }, (_, i) => {
     const row = abiTupleElement(buf, rows, i), tokensAt = abiLengthRef(buf, row, 64);
-    const tokens = Array.from({ length: countOf(tokensAt, 160) }, (_, k): TokenSettlement => {
-      const at = abiInlineTuple(tokensAt, k, 160);
-      return { tokenId: abiWord(buf, at, 0), leftReserve: abiWord(buf, at, 32), rightReserve: abiWord(buf, at, 64), collateral: abiWord(buf, at, 96), ondelta: signedWord(abiWord(buf, at, 128)) };
+    const tokens = Array.from({ length: countOf(tokensAt, 192) }, (_, k): TokenSettlement => {
+      const at = abiInlineTuple(tokensAt, k, 192);
+      return { tokenId: abiWord(buf, at, 0), leftReserve: abiWord(buf, at, 32), rightReserve: abiWord(buf, at, 64), collateral: abiWord(buf, at, 96), ondelta: (signedWord(abiWord(buf, at, 128)) << 256n) + abiWord(buf, at, 160) };
     });
     return { left: wordHex(bytesToHex(abiTupleBytes(buf, row, 0))), right: wordHex(bytesToHex(abiTupleBytes(buf, row, 32))), tokens, nonce: abiWord(buf, row, 96) };
   });
@@ -569,7 +573,7 @@ const readOne = (log: ChainLog): JEventClaimBody | undefined => {
 export const readJEvents = (logs: readonly ChainLog[]): readonly JEventClaimBody[] => logs.flatMap((l) => { const r = readOne(l); return r === undefined ? [] : [r]; });
 export const readJEventVector = (inputs: { readonly logs: readonly ChainLog[] }): unknown => JSON.parse(JSON.stringify(readJEvents(inputs.logs), (_k, v: unknown) => (typeof v === "bigint" ? v.toString() : v)));
 export const encodeAccountSettledData = (settled: readonly AccountSettlement[]): string => abiEncodeHex([arr(settled, (r) =>
-  t([A.b32(r.left), A.b32(r.right), arr(r.tokens, (x) => t([A.uint(x.tokenId), A.uint(x.leftReserve), A.uint(x.rightReserve), A.uint(x.collateral), A.int(x.ondelta)])), A.uint(r.nonce)]))]);
+  t([A.b32(r.left), A.b32(r.right), arr(r.tokens, (x) => t([A.uint(x.tokenId), A.uint(x.leftReserve), A.uint(x.rightReserve), A.uint(x.collateral), int512Abi(x.ondelta)])), A.uint(r.nonce)]))]);
 
 
 type Word = string;
@@ -583,14 +587,20 @@ const proofBodyOfText = (b: ProofBodyText): ProofBody => ({
   transformers: b.transformers.map((c) => ({ transformerAddress: c.transformerAddress, encodedBatch: c.encodedBatch, allowances: c.allowances.map((a) => ({ deltaIndex: BigInt(a.deltaIndex), rightAllowance: BigInt(a.rightAllowance), leftAllowance: BigInt(a.leftAllowance) })) })),
 });
 export const encodeProofBody = (inputs: { readonly proofBody: ProofBodyText }): string => keccak256Hex(hexToBytes(encodeProofBodyBytes(proofBodyOfText(inputs.proofBody))));
+/** og requireDepositoryDomain (onchain-domain.ts:139): chainId > 0 and a valid, non-zero depository address, or the digest is refused. */
+const depositoryDomain = (chainId: number, depository: string): bigint => {
+  if (!domainOf({ chainId, depositoryAddress: depository }).ok || /^0x0{40}$/.test(depository)) throw new Error(`INVALID_HANKO_DOMAIN:${chainId}:${depository}`);
+  return BigInt(chainId);
+};
+export const DEPOSITORY_BATCH_HANKO_DOMAIN = keccak256Hex(utf8("XLN_DEPOSITORY_HANKO_V1"));
 export const encodeDisputeProofHash = (i: { readonly messageType: number; readonly chainId: number; readonly contractAddress: string; readonly accountKey: string; readonly nonce: string; readonly proposerIsLeft: boolean; readonly proofbodyHash: Word; readonly watchSeed: Word }): string =>
-  keccak256Hex(abiEncode([A.uint(BigInt(i.messageType)), A.uint(BigInt(i.chainId)), A.address(i.contractAddress), A.bytes(i.accountKey), A.uint(BigInt(i.nonce)), A.bool(i.proposerIsLeft), A.b32(i.proofbodyHash), A.b32(i.watchSeed)]));
+  keccak256Hex(abiEncode([A.uint(BigInt(i.messageType)), A.uint(depositoryDomain(i.chainId, i.contractAddress)), A.address(i.contractAddress), A.bytes(i.accountKey), A.uint(BigInt(i.nonce)), A.bool(i.proposerIsLeft), A.b32(i.proofbodyHash), A.b32(i.watchSeed)]));
 type DiffText = { readonly tokenId: string; readonly leftDiff: string; readonly rightDiff: string; readonly collateralDiff: string; readonly ondeltaDiff: string };
 export const encodeCooperativeUpdateHash = (i: { readonly messageType: number; readonly chainId: number; readonly contractAddress: string; readonly accountKey: string; readonly nonce: string; readonly diffs: readonly DiffText[]; readonly forgiveDebtsInTokenIds: readonly string[] }): string =>
-  keccak256Hex(abiEncode([A.uint(BigInt(i.messageType)), A.uint(BigInt(i.chainId)), A.address(i.contractAddress), A.bytes(i.accountKey), A.uint(BigInt(i.nonce)),
-    arr(i.diffs, (d) => t([A.uint(BigInt(d.tokenId)), A.int(BigInt(d.leftDiff)), A.int(BigInt(d.rightDiff)), A.int(BigInt(d.collateralDiff)), A.int(BigInt(d.ondeltaDiff))])), arr(i.forgiveDebtsInTokenIds, (id) => A.uint(BigInt(id)))]));
-export const encodeBatchHash = (i: { readonly domainSeparator: Word; readonly chainId: number; readonly depository: string; readonly encodedBatch: string; readonly nonce: string }): string =>
-  keccak256Hex(encodePacked([{ _tag: "bytes32", value: i.domainSeparator }, { _tag: "uint256", value: BigInt(i.chainId) }, { _tag: "address", value: i.depository }, { _tag: "bytes", value: i.encodedBatch }, { _tag: "uint256", value: BigInt(i.nonce) }]));
+  keccak256Hex(abiEncode([A.uint(BigInt(i.messageType)), A.uint(depositoryDomain(i.chainId, i.contractAddress)), A.address(i.contractAddress), A.bytes(i.accountKey), A.uint(BigInt(i.nonce)),
+    arr(i.diffs, (d) => diffAbi({ tokenId: BigInt(d.tokenId), leftDiff: BigInt(d.leftDiff), rightDiff: BigInt(d.rightDiff), collateralDiff: BigInt(d.collateralDiff), ondeltaDiff: BigInt(d.ondeltaDiff) })), arr(i.forgiveDebtsInTokenIds, (id) => A.uint(BigInt(id)))]));
+export const encodeBatchHash = (i: { readonly chainId: number; readonly depository: string; readonly encodedBatch: string; readonly nonce: string }): string =>
+  keccak256Hex(encodePacked([{ _tag: "bytes32", value: DEPOSITORY_BATCH_HANKO_DOMAIN }, { _tag: "uint256", value: depositoryDomain(i.chainId, i.depository) }, { _tag: "address", value: i.depository }, { _tag: "bytes", value: i.encodedBatch }, { _tag: "uint256", value: BigInt(i.nonce) }]));
 type DisputeCase = { readonly nonce: string; readonly startedByLeft: boolean; readonly initialProposerIsLeft: boolean; readonly timeout: string; readonly leftResponseSeconds: number; readonly rightResponseSeconds: number; readonly proofbodyHash: Word; readonly disputeStartTimestamp: string; readonly starterInitialArguments: string; readonly starterCounterArguments: string; readonly starterCounterProofCommitment: Word };
 export const encodeDisputeHash = ({ cases }: { readonly cases: readonly DisputeCase[] }): readonly string[] => cases.map((c) => {
   const commitment = (args: string): string => keccak256Hex(abiEncode([A.bytes(args), A.bool(c.startedByLeft), A.uint(BigInt(c.disputeStartTimestamp))]));
