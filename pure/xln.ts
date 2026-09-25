@@ -83,7 +83,7 @@ export const AccountTransition = {
 export const EntityTransition = { txs: { open: ["proposed"] }, precommit: { proposed: ["open", "proposed"] } } as const;
 
 
-export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "swap_offer", "swap_cancel", "swap_resolve", "settle_transition",
+export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "swap_offer", "swap_cancel_request", "swap_resolve", "settle_transition",
   "j_event_claim", "cross_pull_lock", "cross_pull_close", "deposit_to_custody", "withdraw_from_custody", "hub_custody_debit", "set_rebalance_policy", "rebalance_request",
   "rebalance_quote", "rebalance_accept", "deposit_collateral", "subcontract_propose", "subcontract_approve", "subcontract_reject", "subcontract_resolve_propose", "subcontract_resolve_approve"] as const;
 export const LendingTxNames = ["lending_fund", "lending_borrow_request", "lending_repay", "lending_close_request"] as const;
@@ -1014,9 +1014,10 @@ export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" 
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
   | Tagged<"above_custody", { have: bigint; requested: bigint }>
-  | Tagged<"not_hub" | "settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "quote_expired" | "quote_mismatch" | "no_policy" | "policy_bound" | "no_quote" | "duplicate" | "missing" | "not_maker" | "expired_offer" | "below_min_fill" | "before_deadline" | "preimage" | "pending_full" | "not_counterparty" | "bad_allowance" | "index" | "too_many_rows">
+  | Tagged<"not_hub" | "settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "quote_expired" | "quote_mismatch" | "no_policy" | "policy_bound" | "no_quote" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "pending_full" | "not_counterparty" | "bad_allowance" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
   | Tagged<"settlement", { reason: string }>
+  | Tagged<"swap", { reason: string }>
   | Tagged<"unchosen", { hole: Hole }>;
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
 export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
@@ -1025,7 +1026,22 @@ export type HubSide = "left" | "right" | null;
 export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }> | Tagged<"queue_r2c", { tokenId: TokenId; amount: bigint }>;
 const QUOTE_WINDOW_MS = 300_000n, MAX_PENDING = 16, MAX_ROWS = 128;
 export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly encryptedPackage?: string | undefined };
-export type SwapOffer = { readonly offerId: string; readonly giveTokenId: TokenId; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantAmount: bigint; readonly minFillRatio: number; readonly expiresAtHeight: bigint; readonly makerIsLeft: boolean };
+/** og types/account.ts SwapOffer (same-jurisdiction): quantized amounts, canonical price and the maker's signed fee authority. */
+export type SwapOffer = {
+  readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
+  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks: bigint; readonly timeInForce?: number | undefined; readonly makerIsLeft: boolean; readonly createdHeight: number; readonly quantizedGive: bigint; readonly quantizedWant: bigint;
+};
+/** og AccountTx swap_offer data (same-jurisdiction). */
+export type SwapOfferTerms = {
+  readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
+  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: number | undefined;
+};
+/** og AccountTx swap_resolve data. */
+export type SwapResolveTerms = {
+  readonly offerId: string; readonly fillRatio: number; readonly cancelRemainder: boolean; readonly fillNumerator?: bigint | undefined; readonly fillDenominator?: bigint | undefined;
+  readonly feeTokenId?: TokenId | undefined; readonly feeAmount?: bigint | undefined; readonly executionGiveAmount?: bigint | undefined; readonly executionWantAmount?: bigint | undefined;
+  readonly restingPriceTicks?: bigint | undefined; readonly restingGiveAmount?: bigint | undefined; readonly restingWantAmount?: bigint | undefined; readonly restingQuantizedGive?: bigint | undefined; readonly restingQuantizedWant?: bigint | undefined;
+};
 export type RebalancePolicy = { readonly softLimit: bigint; readonly hardLimit: bigint; readonly maxAcceptableFee: bigint };
 export type RebalanceQuote = { readonly quoteId: bigint; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId: TokenId; readonly feeAmount: bigint; readonly accepted: boolean };
 export type Allowance = { readonly deltaIndex: number; readonly leftAllowance: bigint; readonly rightAllowance: bigint };
@@ -1067,9 +1083,9 @@ export type AccountTx =
   | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly encryptedPackage?: string | undefined }
   | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "secret"; readonly secret: string }
   | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "error"; readonly reason?: string | undefined }
-  | { readonly type: "swap_offer"; readonly offerId: string; readonly giveTokenId: TokenId; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantAmount: bigint; readonly minFillRatio: number; readonly expiresAtHeight: bigint }
-  | { readonly type: "swap_cancel"; readonly offerId: string }
-  | { readonly type: "swap_resolve"; readonly offerId: string; readonly fillRatio: number; readonly cancelRemainder: boolean }
+  | ({ readonly type: "swap_offer" } & SwapOfferTerms)
+  | { readonly type: "swap_cancel_request"; readonly offerId: string }
+  | ({ readonly type: "swap_resolve" } & SwapResolveTerms)
   | { readonly type: "deposit_to_custody"; readonly tokenId: TokenId; readonly amount: bigint }
   | { readonly type: "withdraw_from_custody"; readonly tokenId: TokenId; readonly amount: bigint }
   | { readonly type: "hub_custody_debit"; readonly tokenId: TokenId; readonly amount: bigint; readonly reason: string; readonly referenceId?: string | undefined }
@@ -1112,7 +1128,7 @@ const kind = <R extends KindRow>(author: Author, l0: boolean, repeatable: boolea
 export const AccountKinds = {
   add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true),
   htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret"]),
-  swap_offer: kind("bilateral", false, false), swap_cancel: kind("bilateral", false, false), swap_resolve: kind("hub", false, false),
+  swap_offer: kind("bilateral", false, false), swap_cancel_request: kind("bilateral", false, false), swap_resolve: kind("bilateral", false, false),
   settle_transition: kind("bilateral", false, false),
   deposit_to_custody: kind("bilateral", false, false), withdraw_from_custody: kind("bilateral", false, false), hub_custody_debit: kind("hub", false, false),
   set_rebalance_policy: kind("bilateral", false, false), rebalance_request: kind("bilateral", false, false), rebalance_quote: kind("bilateral", false, false), rebalance_accept: kind("bilateral", false, false),
@@ -1415,6 +1431,180 @@ const activateWorkspace = (b: AccountBody, finalizedNonce: number): Result<Accou
   if (p.disputeHash === "" || p.proofBodyHash === "") return settleErr("POST_SETTLEMENT_DISPUTE_HASH_MISSING");
   return chain(projectedProofHash(b, [], []), (h) => h.toLowerCase() !== p.proofBodyHash.toLowerCase() ? settleErr("POST_SETTLEMENT_FINALIZED_PROOF_BODY_MISMATCH") : ok({ ...b, settlement: undefined }));
 };
+// ---- swaps: og handlers/swap/{offer,resolve}, account/swap/swap-net-authorization.ts, orderbook/types.ts quantization ----
+const swapErr = (reason: string): Result<never, BodyError> => err({ _tag: "swap", reason });
+const PRICE_SCALE = 10_000n;
+const MAX_ACCOUNT_SWAP_OFFERS = 50, MAX_ACCOUNT_SAME_J_SWAP_OFFERS = 32, MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET = 32;
+/** og account/utils.ts REFERENCE_STABLE_TOKEN_IDS (USDC, USDT): always the quote of a pair. */
+const REFERENCE_STABLES: ReadonlySet<number> = new Set([1, 3]);
+/** og getSwapPairOrientation + deriveSide: 1 when the give token is the pair's base. */
+export const swapSide = (give: number, want: number): 0 | 1 => {
+  const g = REFERENCE_STABLES.has(give), w = REFERENCE_STABLES.has(want);
+  return give === (g && !w ? want : !g && w ? give : Math.min(give, want)) ? 1 : 0;
+};
+const pow10 = (d: number): bigint => 10n ** BigInt(d);
+const lotScale = (baseDecimals: number): bigint => pow10(Math.max(0, baseDecimals - 6));
+const gcd = (x: bigint, y: bigint): bigint => { let [p, q] = [x, y]; while (q !== 0n) [p, q] = [q, p % q]; return p; };
+const ceilDiv = (n: bigint, d: bigint): bigint => (n + d - 1n) / d;
+const quoteAt = (bd: number, qd: number, base: bigint, price: bigint): bigint => (base <= 0n || price <= 0n ? 0n : (base * price * pow10(qd)) / (PRICE_SCALE * pow10(bd)));
+const exactQuoteLots = (bd: number, qd: number, price: bigint): bigint => { const den = PRICE_SCALE * pow10(bd); return den / gcd(lotScale(bd) * price * pow10(qd), den); };
+type SwapDims = { readonly side: 0 | 1; readonly bd: number; readonly qd: number };
+const swapDims = (o: Pick<SwapOffer, "giveTokenId" | "wantTokenId" | "giveTokenDecimals" | "wantTokenDecimals">): SwapDims => {
+  const side = swapSide(Number(o.giveTokenId), Number(o.wantTokenId));
+  return side === 1 ? { side, bd: o.giveTokenDecimals, qd: o.wantTokenDecimals } : { side, bd: o.wantTokenDecimals, qd: o.giveTokenDecimals };
+};
+/** og computePriceTicksForBaseQuoteDecimals under the one-tick step every og pair policy uses: bids round up, asks down. */
+const priceTicksOf = (d: SwapDims, base: bigint, quote: bigint): bigint => {
+  if (base <= 0n || quote <= 0n) return 0n;
+  const n = quote * pow10(d.bd) * PRICE_SCALE, den = base * pow10(d.qd), p = n / den + (d.side === 1 && n % den > 0n ? 1n : 0n);
+  return p > 0n ? p : 0n;
+};
+/** og prepareSwapOrderWithDimensions: the canonical price, or undefined when the order quantizes to nothing. */
+const preparedPrice = (d: SwapDims, base: bigint, quote: bigint): bigint | undefined => {
+  const lot = lotScale(d.bd);
+  if (base < lot || quote <= 0n) return undefined;
+  const price = priceTicksOf(d, base, quote);
+  if (price <= 0n) return undefined;
+  const unit = lot * exactQuoteLots(d.bd, d.qd, price), qb = (base / unit) * unit;
+  return qb <= 0n || quoteAt(d.bd, d.qd, qb, price) <= 0n ? undefined : price;
+};
+/** og requantizeRemainingSwapBaseAtPriceForDimensions. */
+const requantizeRemaining = (d: SwapDims, base: bigint, price: bigint): { readonly give: bigint; readonly want: bigint } | undefined => {
+  if (base <= 0n || price <= 0n) return undefined;
+  const unit = lotScale(d.bd) * exactQuoteLots(d.bd, d.qd, price), qb = (base / unit) * unit;
+  if (qb <= 0n) return undefined;
+  const qq = quoteAt(d.bd, d.qd, qb, price);
+  return qq <= 0n ? undefined : d.side === 1 ? { give: qb, want: qq } : { give: qq, want: qb };
+};
+type NetAuth = { readonly maxFee: bigint; readonly minNetReceive: bigint };
+type Authorized = NetAuth & { readonly giveAmount: bigint; readonly wantAmount: bigint };
+const offerAuthError = (o: Authorized): string | undefined =>
+  typeof o.giveAmount !== "bigint" || typeof o.wantAmount !== "bigint" || o.giveAmount <= 0n || o.wantAmount <= 0n ? "SWAP_NET_AUTH_OFFER_AMOUNT_INVALID"
+  : typeof o.maxFee !== "bigint" || o.maxFee < 0n || o.maxFee > o.wantAmount ? "SWAP_NET_AUTH_MAX_FEE_INVALID"
+  : typeof o.minNetReceive !== "bigint" || o.minNetReceive < 0n || o.minNetReceive > o.wantAmount ? "SWAP_NET_AUTH_MIN_RECEIVE_INVALID" : undefined;
+/** og assertSwapNetAuthorization: fee and net receive stay inside the maker's pro-rata authority; a terminal fill may use want progress. */
+const netAuthError = (o: Authorized, fG: bigint, fW: bigint, fee: bigint, closes: boolean): string | undefined => {
+  const bad = offerAuthError(o);
+  if (bad !== undefined) return bad;
+  if (fG < 0n || fG > o.giveAmount) return "SWAP_NET_AUTH_FILL_GIVE_INVALID";
+  if (fW < 0n || fee < 0n || fee > fW || (fW > 0n && fee >= fW)) return "SWAP_NET_AUTH_FILL_WANT_INVALID";
+  let num = fG, den = o.giveAmount;
+  if (closes) { const capped = fW < o.wantAmount ? fW : o.wantAmount; if (capped * den > num * o.wantAmount) { num = capped; den = o.wantAmount; } }
+  return fee > (o.maxFee * num) / den ? "SWAP_NET_AUTH_MAX_FEE_EXCEEDED" : fW - fee < ceilDiv(o.minNetReceive * num, den) ? "SWAP_NET_AUTH_MIN_RECEIVE_NOT_MET" : undefined;
+};
+/** og requantizeSwapNetAuthorization: the removed give share takes its pro-rata fee and receive authority with it. */
+const requantizeAuth = (o: Authorized, give: bigint, want: bigint): Result<NetAuth, BodyError> => {
+  const bad = offerAuthError(o);
+  if (bad !== undefined) return swapErr(bad);
+  if (give <= 0n || give > o.giveAmount || want <= 0n) return swapErr("SWAP_NET_AUTH_REMAINDER_INVALID");
+  const removed = o.giveAmount - give;
+  const auth: NetAuth = { maxFee: o.maxFee - (o.maxFee * removed) / o.giveAmount, minNetReceive: o.minNetReceive - ceilDiv(o.minNetReceive * removed, o.giveAmount) };
+  const after = offerAuthError({ giveAmount: give, wantAmount: want, ...auth });
+  return after === undefined ? ok(auth) : swapErr(after);
+};
+const decimalsOk = (d: number): boolean => Number.isSafeInteger(d) && d >= 0 && d <= 255;
+/** og swap/offer: admission (limits, shape, market cap), quantization, capacity, hold. */
+const swapOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx): BodyStep => {
+  if (x.offerId.includes(":")) return swapErr("SWAP_OFFER_ID_COLON");
+  if (a.offers.has(x.offerId)) return err({ _tag: "duplicate" });
+  if (a.offers.size >= MAX_ACCOUNT_SWAP_OFFERS) return swapErr("SWAP_OFFER_LIMIT");
+  if (a.offers.size >= MAX_ACCOUNT_SAME_J_SWAP_OFFERS) return swapErr("SWAP_SAME_J_OFFER_LIMIT");
+  if (!decimalsOk(x.giveTokenDecimals) || !decimalsOk(x.wantTokenDecimals)) return swapErr("SWAP_TOKEN_DECIMALS_INVALID");
+  if (x.giveAmount < 1n || x.giveAmount > MAX_PAYMENT_AMOUNT || x.wantAmount < 1n || x.wantAmount > MAX_PAYMENT_AMOUNT) return swapErr("SWAP_OFFER_AMOUNT_INVALID");
+  if (x.maxFee >= x.wantAmount || x.minNetReceive <= 0n) return swapErr("SWAP_NET_AUTH_INITIAL_TERMS_INVALID");
+  const initial = netAuthError(x, 0n, 0n, 0n, false);
+  if (initial !== undefined) return swapErr(initial);
+  if (x.giveTokenId === x.wantTokenId) return swapErr("SWAP_SAME_TOKEN");
+  if (x.timeInForce !== undefined && ![0, 1, 2].includes(x.timeInForce)) return swapErr("SWAP_TIME_IN_FORCE_INVALID");
+  const makerIsLeft = ctx.byLeft;
+  let market = 0;
+  for (const o of a.offers.values()) if (o.makerIsLeft === makerIsLeft && o.giveTokenId === x.giveTokenId && o.wantTokenId === x.wantTokenId) market++;
+  if (market >= MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET) return swapErr("SWAP_MARKET_OFFER_LIMIT");
+  const d = swapDims(x), base = d.side === 1 ? x.giveAmount : x.wantAmount, quote = d.side === 1 ? x.wantAmount : x.giveAmount, lot = lotScale(d.bd);
+  if (base < lot) return swapErr("SWAP_ORDER_BELOW_LOT");
+  const prepared = preparedPrice(d, base, quote);
+  if (prepared === undefined) return swapErr("SWAP_PRICE_INVALID");
+  const input = x.priceTicks;
+  if (input !== undefined && input <= 0n) return swapErr("SWAP_PRICE_TICKS_INVALID");
+  if (input !== undefined && (input > prepared ? input - prepared : prepared - input) > 1n) return swapErr("SWAP_PRICE_TICKS_MISMATCH");
+  const priceTicks = input ?? prepared, qb = (base / lot) * lot, qq = quoteAt(d.bd, d.qd, qb, priceTicks);
+  const give = d.side === 1 ? qb : qq, want = d.side === 1 ? qq : qb;
+  if (give < 1n || give > MAX_PAYMENT_AMOUNT || want < 1n || want > MAX_PAYMENT_AMOUNT) return swapErr("SWAP_QUANTIZED_AMOUNT_INVALID");
+  return chain(requantizeAuth(x, give, want), (auth) => chain(ensureRoom(a, x.giveTokenId, give, makerIsLeft), (): BodyStep => {
+    const totals = sideTotals(a, x.giveTokenId);
+    if ((makerIsLeft ? totals.leftHold : totals.rightHold) + give > MAX_PAYMENT_AMOUNT) return err({ _tag: "hold_overflow" });
+    const offer: SwapOffer = {
+      offerId: x.offerId, giveTokenId: x.giveTokenId, giveTokenDecimals: x.giveTokenDecimals, giveAmount: give, wantTokenId: x.wantTokenId, wantTokenDecimals: x.wantTokenDecimals, wantAmount: want,
+      maxFee: auth.maxFee, minNetReceive: auth.minNetReceive, priceTicks, ...(x.timeInForce !== undefined ? { timeInForce: x.timeInForce } : {}), makerIsLeft,
+      createdHeight: Number(floor0(ctx.accountHeight - 1n)), quantizedGive: give, quantizedWant: want,
+    };
+    return ok(step({ ...a, offers: mapSet(a.offers, x.offerId, offer) }));
+  }));
+};
+/** og orderbook/swap-execution.ts deriveExactSwapFillRatio + exactFillRatioToUint16. */
+const exactFillRatio = (qG: bigint, fG: bigint): { readonly n: bigint; readonly d: bigint } => {
+  if (qG <= 0n || fG <= 0n) return { n: 0n, d: 1n };
+  if (fG >= qG) return { n: 1n, d: 1n };
+  const g = gcd(fG, qG);
+  return { n: fG / g, d: qG / g };
+};
+const fillRatioOf = (r: { readonly n: bigint; readonly d: bigint }): number => {
+  if (r.n <= 0n) return 0;
+  if (r.n >= r.d) return MAX_FILL;
+  const max = BigInt(MAX_FILL);
+  let c = Math.min(MAX_FILL, Math.max(0, Number((r.n * max + r.d - 1n) / r.d)));
+  while (c > 0 && (r.d * BigInt(c - 1)) / max >= r.n) c--;
+  while (c < MAX_FILL && (r.d * BigInt(c)) / max < r.n) c++;
+  return c;
+};
+/** og swap/resolve: canonical offer, explicit execution at or above the maker's limit, fee authority, counterparty capacity, requantized remainder. */
+const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): BodyStep => {
+  const offer = a.offers.get(x.offerId);
+  if (offer === undefined) return MISSING;
+  if ((x.restingGiveAmount !== undefined && x.restingGiveAmount !== offer.giveAmount) || (x.restingWantAmount !== undefined && x.restingWantAmount !== offer.wantAmount)
+    || (x.restingQuantizedGive !== undefined && x.restingQuantizedGive !== offer.quantizedGive) || (x.restingQuantizedWant !== undefined && x.restingQuantizedWant !== offer.quantizedWant)
+    || (x.restingPriceTicks !== undefined && x.restingPriceTicks !== offer.priceTicks)) return swapErr("SWAP_RESTING_TERMS_MISMATCH");
+  if (ctx.byLeft === offer.makerIsLeft) return err({ _tag: "not_counterparty" });
+  if (!Number.isInteger(x.fillRatio) || x.fillRatio < 0 || x.fillRatio > MAX_FILL) return err({ _tag: "bad_ratio" });
+  const provided = x.executionGiveAmount !== undefined || x.executionWantAmount !== undefined;
+  if (provided && (x.executionGiveAmount === undefined || x.executionWantAmount === undefined)) return swapErr("SWAP_EXECUTION_PARTIAL");
+  if (x.fillRatio > 0 && !provided) return swapErr("SWAP_EXECUTION_REQUIRED");
+  const qG = offer.quantizedGive, qW = offer.quantizedWant, limitGive = (qG * BigInt(x.fillRatio)) / BigInt(MAX_FILL);
+  const fG = x.executionGiveAmount ?? limitGive, fW = x.executionWantAmount ?? ceilDiv(limitGive * qW, qG);
+  const canonical = provided ? fillRatioOf(exactFillRatio(qG, fG)) : x.fillRatio;
+  const exact = x.fillNumerator !== undefined || x.fillDenominator !== undefined;
+  if (exact) {
+    const n = x.fillNumerator, dd = x.fillDenominator;
+    if (n === undefined || dd === undefined) return swapErr("SWAP_EXACT_RATIO_PARTIAL");
+    if (dd <= 0n || n < 0n || n > dd) return swapErr("SWAP_EXACT_RATIO_RANGE");
+    if (n * qG !== fG * dd) return swapErr("SWAP_EXACT_RATIO_MISMATCH");
+  }
+  const fee = x.feeAmount ?? 0n;
+  if (fee < 0n || (fee > 0n && fG <= 0n) || (fee > 0n && (x.feeTokenId ?? offer.wantTokenId) !== offer.wantTokenId) || (fee >= fW && fW > 0n)) return swapErr("SWAP_FEE_INVALID");
+  const auth = netAuthError(offer, fG, fW, fee, x.cancelRemainder);
+  if (auth !== undefined) return swapErr(auth);
+  const hasFill = fG > 0n || fW > 0n;
+  if (provided && hasFill && (fG <= 0n || fW <= 0n)) return swapErr("SWAP_EXECUTION_NOT_POSITIVE");
+  if (provided && x.fillRatio !== canonical) return swapErr("SWAP_FILL_RATIO_MISMATCH");
+  if (provided && hasFill && fG > qG) return swapErr("SWAP_EXECUTION_ABOVE_OFFER");
+  if (provided && hasFill && fW * qG < fG * qW) return swapErr("SWAP_MAKER_LIMIT_PRICE");
+  if (canonical > 0 && (fG < 1n || fG > MAX_PAYMENT_AMOUNT || fW < 1n || fW > MAX_PAYMENT_AMOUNT)) return swapErr("SWAP_FILL_AMOUNT_BOUNDS");
+  // Holds are derived from live offers: dropping or replacing the offer releases the filled give and any requantization dust.
+  const closed: AccountBody = { ...a, offers: mapDelete(a.offers, offer.offerId) };
+  const byMaker = (n: bigint): bigint => (offer.makerIsLeft ? -n : n);
+  return chain(fW > 0n ? chain(ensureRoom(a, offer.wantTokenId, fW, !offer.makerIsLeft), () => ok(undefined)) : ok(undefined), () => {
+    const giveRow = shift(getDelta(a.account, offer.giveTokenId), fG > 0n ? byMaker(fG) : 0n);
+    const wantRow = shift(getDelta(a.account, offer.wantTokenId), (fG > 0n ? -byMaker(fW) : 0n) + (fee > 0n ? byMaker(fee) : 0n));
+    return chain(representable(a, giveRow), () => chain(representable(a, wantRow), (): BodyStep => {
+      const moved = putState(closed, setDelta(setDelta(a.account, giveRow), wantRow));
+      if (x.cancelRemainder || x.fillRatio === 0 || canonical === MAX_FILL) return ok(step(moved));
+      const d = swapDims(offer), remaining = d.side === 1 ? qG - fG : qW - fW, next = requantizeRemaining(d, remaining, offer.priceTicks);
+      if (next === undefined) return ok(step(moved));
+      if (qG - fG - next.give < 0n) return swapErr("SWAP_REMAINDER_EXCEEDS_HOLD");
+      return map(requantizeAuth(offer, next.give, next.want), (na) => step({ ...moved, offers: mapSet(moved.offers, offer.offerId, { ...offer, giveAmount: next.give, wantAmount: next.want, maxFee: na.maxFee, minNetReceive: na.minNetReceive, quantizedGive: next.give, quantizedWant: next.want }) }));
+    }));
+  });
+};
 type Arms = { readonly [K in AccountTx["type"]]: (tx: WireTxOf<K>) => BodyStep<EffectOf<K>> };
 const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Effect> => matchBy<"type", WireAccountTx, BodyStep<Effect>>("type", tx, {
 
@@ -1452,30 +1642,13 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
       return map(representable(released, moved), () => step(putState(released, setDelta(a.account, moved)), [{ _tag: "forward_secret", hashlock: live.hashlock, secret: x.secret }]));
     });
   },
-  swap_offer: (x) => {
-    if (a.offers.has(x.offerId)) return err({ _tag: "duplicate" });
-    if (x.giveAmount <= 0n || x.wantAmount <= 0n) return err({ _tag: "non_positive_payment" });
-    if (!validRatio(x.minFillRatio)) return err({ _tag: "bad_ratio" });
-    const offer: SwapOffer = { offerId: x.offerId, giveTokenId: x.giveTokenId, giveAmount: x.giveAmount, wantTokenId: x.wantTokenId, wantAmount: x.wantAmount, minFillRatio: x.minFillRatio, expiresAtHeight: x.expiresAtHeight, makerIsLeft: ctx.byLeft };
-    return map(ensureRoom(a, offer.giveTokenId, offer.giveAmount, ctx.byLeft), () => step({ ...a, offers: mapSet(a.offers, x.offerId, offer) }));
-  },
-  swap_cancel: (x) => {
+  swap_offer: (x) => swapOffer(a, x, ctx),
+  swap_cancel_request: (x) => {
+    // og lifecycle/cancel.ts: the maker only requests; the offer and its hold stay until the counterparty's swap_resolve.
     const offer = a.offers.get(x.offerId);
-    return offer === undefined ? MISSING : ctx.byLeft !== offer.makerIsLeft ? err({ _tag: "not_maker" }) : ok(step({ ...a, offers: mapDelete(a.offers, x.offerId) }));
+    return offer === undefined ? MISSING : ctx.byLeft !== offer.makerIsLeft ? err({ _tag: "not_maker" }) : ok(step(a));
   },
-  swap_resolve: (x) => {
-    const offer = a.offers.get(x.offerId);
-    if (offer === undefined) return MISSING;
-    if (ctx.accountHeight > offer.expiresAtHeight) return err({ _tag: "expired_offer" });
-    if (!validRatio(x.fillRatio)) return err({ _tag: "bad_ratio" });
-    if (x.fillRatio < offer.minFillRatio) return err({ _tag: "below_min_fill" });
-    return chain(all({ give: floorRatio(offer.giveAmount, x.fillRatio), want: floorRatio(offer.wantAmount, x.fillRatio) }), ({ give, want }) => chain(give === 0n ? ok(0n) : offdeltaChange(offer.makerIsLeft, give), (giveBy) => {
-      const released: AccountBody = { ...(give === 0n ? a : shifted(a, offer.giveTokenId, giveBy)), offers: mapDelete(a.offers, offer.offerId) };
-      return map(want === 0n ? ok(released) : spend(released, offer.wantTokenId, want, !offer.makerIsLeft), (paid) =>
-        x.cancelRemainder || x.fillRatio === MAX_FILL || offer.giveAmount === give ? step(paid)
-        : step({ ...paid, offers: mapSet(paid.offers, offer.offerId, { ...offer, giveAmount: offer.giveAmount - give, wantAmount: offer.wantAmount - want }) }));
-    }));
-  },
+  swap_resolve: (x) => swapResolve(a, x, ctx),
   deposit_to_custody: (x) => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step({ ...b, custody: bump(b.custody, x.tokenId, x.amount) })),
   withdraw_from_custody: (x) => chain(fromCustody(a, x.tokenId, x.amount), () => map(offdeltaChange(ctx.byLeft, x.amount), (by) => step({ ...shifted(a, x.tokenId, -by), custody: bump(a.custody, x.tokenId, -x.amount) }))),
   hub_custody_debit: (x) => map(fromCustody(a, x.tokenId, x.amount), () => step({ ...a, custody: bump(a.custody, x.tokenId, -x.amount), debits: [...a.debits, { tokenId: x.tokenId, amount: x.amount, reason: x.reason, referenceId: x.referenceId }] })),
@@ -1534,7 +1707,7 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
 } satisfies Arms);
 const one = (x: { readonly tokenId: TokenId }): readonly string[] => [x.tokenId], none = (): readonly string[] => [];
 const namedTokens = (tx: WireAccountTx): readonly string[] => matchBy("type", tx, {
-  add_delta: one, set_credit_limit: one, payment: one, htlc_lock: one, htlc_resolve: none, swap_offer: (x) => [x.giveTokenId, x.wantTokenId], swap_cancel: none, swap_resolve: none,
+  add_delta: one, set_credit_limit: one, payment: one, htlc_lock: one, htlc_resolve: none, swap_offer: (x) => [x.giveTokenId, x.wantTokenId], swap_cancel_request: none, swap_resolve: (x) => (x.feeTokenId === undefined ? [] : [x.feeTokenId]),
   deposit_to_custody: one, withdraw_from_custody: one, hub_custody_debit: one, set_rebalance_policy: one, rebalance_request: one, rebalance_quote: (x) => [x.tokenId, x.feeTokenId], rebalance_accept: none,
   deposit_collateral: one, subcontract_propose: none, subcontract_approve: none, subcontract_reject: none, subcontract_resolve_propose: (x) => x.effects.map((e) => e.tokenId), subcontract_resolve_approve: none,
   cross_pull_lock: none, cross_pull_close: none, j_event_claim: (x) => x.events.flatMap((row) => row.tokens.map((tk) => tk.tokenId.toString())), settle_transition: none,
@@ -1646,7 +1819,7 @@ const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
     return ok({
       domain: terms.domain, leftEntity: b.account.id.left, rightEntity: b.account.id.right, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig,
       jNonce: b.jNonce, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
-      deltas: committedDeltas(b), locks: b.locks, pulls: new Map(), swapOffers: b.offers, subcontracts: new Map([...b.clauses].map(([id, s]) => [id, clauseRow(id, s)])), lendingIntents: hubRows,
+      deltas: committedDeltas(b), locks: b.locks, pulls: new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map([...b.clauses].map(([id, s]) => [id, clauseRow(id, s)])), lendingIntents: hubRows,
       requestedRebalance: byToken(b.request === undefined ? [] : [[b.request.tokenId, b.request.targetAmount] as const]),
       requestedRebalanceFeeState: byToken(b.quote === undefined ? [] : [[b.quote.tokenId, b.quote] as const]), rebalanceFeePolicies: byToken(b.policy), settlementWorkspace: b.settlement,
     });
@@ -2646,7 +2819,7 @@ export type JState = { readonly reserves: ReadonlyMap<EntityId, ReadonlyMap<Toke
 export type LadderTx = { readonly type: "ladder_reveal"; readonly revealer: EntityId; readonly counter: EntityId; readonly ladderHash: Hash; readonly targetRole: boolean; readonly fillRatio: number; readonly revealedAt: bigint };
 export type EntityRouteTx =
   | { readonly type: "directPayment"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly description?: string | undefined; readonly invoiceId?: string | undefined }
-  | { readonly type: "placeSwapOffer"; readonly offerId: string; readonly giveTokenId: TokenId; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantAmount: bigint; readonly minFillRatio: number; readonly expiresAtHeight: bigint }
+  | ({ readonly type: "placeSwapOffer" } & SwapOfferTerms)
   | { readonly type: "htlcPayment"; readonly route: readonly EntityId[]; readonly finalRecipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly description?: string | undefined }
   | { readonly type: "prepareCrossJurisdictionSwap" }
   | { readonly type: "registerCrossJurisdictionSwap" };

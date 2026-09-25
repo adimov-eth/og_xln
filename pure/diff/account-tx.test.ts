@@ -8,7 +8,8 @@ import { handleHtlcLock } from "../../core/account/tx/handlers/htlc/lock.ts";
 import { handleHtlcResolve } from "../../core/account/tx/handlers/htlc/resolve.ts";
 import { handleSwapCancelRequest } from "../../core/account/tx/handlers/swap/lifecycle/cancel.ts";
 import { handleSwapResolve } from "../../core/account/tx/handlers/swap/resolve/index.ts";
-import { validateSwapOfferAdmission } from "../../core/account/tx/handlers/swap/offer/admission.ts";
+import { handleSwapOffer } from "../../core/account/tx/handlers/swap/offer/index.ts";
+import { deriveExactSwapFillRatio, exactFillRatioToUint16 } from "../../core/orderbook/swap-execution.ts";
 import { handleSettleTransition, getSignedSettlementWorkspaceTxError } from "../../core/account/tx/handlers/settlement/transition.ts";
 import { beginAccountTransition, accountTransitionView, commitAccountTransition, discardAccountTransition } from "../../core/account/state/candidate-overlay.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
@@ -82,6 +83,28 @@ const open = (hub: "left" | "right" | null = null, credit = 20n): { body: Accoun
   return { body, ctx };
 };
 const apply = (b: AccountBody, tx: any, ctx: FoldCtx) => applyAccountBody(b, tx, ctx) as any as R<{ state: AccountBody; effects: any[] }, any>;
+
+
+const PA = (ns: string, m: ReadonlyMap<any, any> = new Map()) => PersistentAccountStateMap.fromEntries(ns as any, m);
+/** og side of a lockstep: a persistent og replica seeded from the rewrite's committed view, driven through the real transition overlay; each accepted tx yields og's Account root. */
+const ogHarness = (body: AccountBody) => {
+  const v: any = unwrap(committed(body) as any).view;
+  const state: any = { domain: v.domain, leftEntity: v.leftEntity, rightEntity: v.rightEntity, watchSeed: v.watchSeed, disputeConfig: v.disputeConfig, jNonce: v.jNonce, lastFinalizedJHeight: v.lastFinalizedJHeight,
+    leftPendingJClaims: v.leftPendingJClaims, rightPendingJClaims: v.rightPendingJClaims,
+    ...Object.fromEntries(["deltas", "locks", "pulls", "swapOffers", "subcontracts", "lendingIntents", "requestedRebalance", "requestedRebalanceFeeState", "rebalanceFeePolicies"].map((n) => [n, PA(n, v[n])])) };
+  let replica: any = { state, status: "active", currentHeight: 1, proofHeader: { fromEntity: A, toEntity: B, nextProofNonce: 1 }, currentFrame: { stateHash: "" }, pendingWithdrawals: PA("pendingWithdrawals"),
+    shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted") } }, mempool: [] };
+  const run = async (handler: (draft: any) => Promise<any> | any): Promise<{ ok: boolean; root?: string; error?: string }> => {
+    const overlay = beginAccountTransition(replica);
+    let r: any;
+    try { r = await handler(accountTransitionView(overlay)); } catch (e) { r = { ok: false, rejection: { message: String(e) } }; }
+    if (!r.ok) { discardAccountTransition(overlay); return { ok: false, error: r.rejection?.message }; }
+    const c = commitAccountTransition(overlay, "diff");
+    replica = c.account;
+    return { ok: true, root: c.accountStateRoot };
+  };
+  return { run, replica: () => replica };
+};
 
 // ---------- balance ----------
 describe("account-tx: balance", () => {
@@ -255,131 +278,113 @@ describe("account-tx: htlc", () => {
 });
 
 // ---------- swaps ----------
-const ogOffer = (patch: Record<string, unknown> = {}) => ({
-  offerId: "S", giveTokenId: 1, giveTokenDecimals: 18, giveAmount: 2n, wantTokenId: 2, wantTokenDecimals: 18, wantAmount: 3n,
-  maxFee: 0n, minNetReceive: 1n, priceTicks: 15_000n, makerIsLeft: true, createdHeight: 0, quantizedGive: 2n, quantizedWant: 3n, ...patch,
-});
-const ogSwapState = () => {
-  const s = ogState([ogDelta(1, { leftCreditLimit: 100n, rightCreditLimit: 100n, leftHold: 2n }), ogDelta(2, { leftCreditLimit: 100n, rightCreditLimit: 100n })]);
-  s.swapOffers.put("S", ogOffer());
-  return s;
+const rwOffer = (offerId: string, give: number, giveAmount: bigint, want: number, wantAmount: bigint, patch: Record<string, unknown> = {}) =>
+  ({ type: "swap_offer", offerId, giveTokenId: String(give), giveTokenDecimals: 18, giveAmount, wantTokenId: String(want), wantTokenDecimals: 18, wantAmount, maxFee: 0n, minNetReceive: wantAmount, ...patch });
+const toOgTx = (tx: any): any => {
+  const { type, ...data } = tx;
+  for (const k of ["giveTokenId", "wantTokenId", "feeTokenId"]) if (typeof data[k] === "string") data[k] = Number(data[k]);
+  return { type, data };
 };
+/** One swap tx through og (handleSwapOffer / handleSwapCancelRequest / handleSwapResolve on the overlay) and the rewrite; accept/reject and Account roots must agree. */
+const swapLockstep = (start: AccountBody) => {
+  const og = ogHarness(start);
+  let body = start;
+  const step = async (tx: any, byLeft: boolean): Promise<boolean> => {
+    const ogTx = toOgTx(tx);
+    const handler = tx.type === "swap_offer" ? handleSwapOffer : tx.type === "swap_resolve" ? handleSwapResolve : handleSwapCancelRequest;
+    const o = await og.run((acc) => (handler as any)(acc, ogTx, byLeft, 0));
+    const r = apply(body, tx, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n });
+    if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${r.ok ? "ok" : JSON.stringify(r.error, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
+    if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
+    return r.ok;
+  };
+  return { step, body: () => body, og };
+};
+const E18 = 10n ** 18n;
 
 describe("account-tx: swap", () => {
-  test("DIVERGES: swap_cancel — og only emits a cancel *request* (offer + hold kept), rewrite deletes the offer and frees the hold at once", async () => {
-    const s = ogSwapState();
-    const r = await handleSwapCancelRequest(ogAccount(s), { type: "swap_cancel_request", data: { offerId: "S" } } as any, true, 0);
-    expect(r.ok).toBe(true);
-    expect(s.swapOffers.has("S")).toBe(true);
-    expect(s.deltas.get(1).leftHold).toBe(2n);
-    const { body, ctx } = open("right");
-    const offered = unwrap(apply(body, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 2n, wantTokenId: "1", wantAmount: 3n, minFillRatio: 0, expiresAtHeight: 100n }, ctx)).state;
-    const cancelled = unwrap(apply(offered, { type: "swap_cancel", offerId: "S" }, ctx)).state;
-    expect(cancelled.offers.has("S")).toBe(false);
-    expect(holds(cancelled, "0" as any, true)).toBe(0n);
+  test("MATCH: swap_cancel_request only requests — offer and hold stay in both; only the maker may ask", async () => {
+    const { body } = open(null, 100n * E18);
+    const ls = swapLockstep(body);
+    expect(await ls.step(rwOffer("S", 0, 2n * E18, 1, 3n * E18), true)).toBe(true);
+    expect(await ls.step({ type: "swap_cancel_request", offerId: "S" }, false)).toBe(false);
+    expect(await ls.step({ type: "swap_cancel_request", offerId: "S" }, true)).toBe(true);
+    expect(await ls.step({ type: "swap_cancel_request", offerId: "T" }, true)).toBe(false);
+    expect(ls.body().offers.has("S")).toBe(true);
+    expect(holds(ls.body(), "0" as any, true)).toBe(2n * E18);
   });
 
-  test("DIVERGES: fill below maker limit price — rewrite floors both legs by ratio (gives 1 for 1 on a 2:3 offer); og rejects that execution", async () => {
-    // rewrite: maker(left) offers 2 of token0 for 3 of token1; hub(right) fills at ratio 32768 (~1/2)
-    const { body, ctx } = open("right");
-    const offered = unwrap(apply(body, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 2n, wantTokenId: "1", wantAmount: 3n, minFillRatio: 0, expiresAtHeight: 100n }, ctx)).state;
-    const filled = unwrap(apply(offered, { type: "swap_resolve", offerId: "S", fillRatio: 32768, cancelRemainder: true }, { ...ctx, byLeft: false })).state;
-    const gave = -getDelta(filled.account, "0" as any).offdelta; // left paid give
-    const got = getDelta(filled.account, "1" as any).offdelta * -1n * -1n; // right paid want (positive = right pays)
-    expect(gave).toBe(1n);
-    expect(got).toBe(1n);
-    expect(got * 2n < gave * 3n).toBe(true); // below maker price 3/2
-    // og: same economic execution (give 1, want 1) on the same offer is refused.
-    const s = ogSwapState();
-    const r = await handleSwapResolve(ogAccount(s), { type: "swap_resolve", data: { offerId: "S", fillRatio: 32768, cancelRemainder: true, executionGiveAmount: 1n, executionWantAmount: 1n } } as any, false, 0);
-    expect(r.ok).toBe(false);
-    expect(JSON.stringify((r as any).rejection ?? r, (_k, v) => (typeof v === "bigint" ? String(v) : v))).toContain("maker limit");
+  test("MATCH: resolve needs explicit execution amounts at or above the maker's limit price; any non-maker resolves, the maker never", async () => {
+    const { body } = open(null, 100n * E18);
+    const ls = swapLockstep(body);
+    expect(await ls.step(rwOffer("S", 0, 2n * E18, 1, 3n * E18), true)).toBe(true);
+    const ratio = (g: bigint) => exactFillRatioToUint16(deriveExactSwapFillRatio(2n * E18, g));
+    expect(await ls.step({ type: "swap_resolve", offerId: "S", fillRatio: 32768, cancelRemainder: true }, false)).toBe(false); // no execution amounts
+    expect(await ls.step({ type: "swap_resolve", offerId: "S", fillRatio: ratio(E18), cancelRemainder: true, executionGiveAmount: E18, executionWantAmount: E18 }, false)).toBe(false); // below 2:3
+    expect(await ls.step({ type: "swap_resolve", offerId: "S", fillRatio: 0, cancelRemainder: true }, true)).toBe(false); // maker itself
+    expect(await ls.step({ type: "swap_resolve", offerId: "S", fillRatio: ratio(E18), cancelRemainder: false, executionGiveAmount: E18, executionWantAmount: 3n * E18 / 2n }, false)).toBe(true);
+    expect(ls.body().offers.get("S")?.giveAmount).toBe(E18);
+    expect(await ls.step({ type: "swap_resolve", offerId: "S", fillRatio: 0, cancelRemainder: false }, false)).toBe(true); // fillRatio 0 closes
+    expect(ls.body().offers.has("S")).toBe(false);
+    expect(holds(ls.body(), "0" as any, true)).toBe(0n);
   });
 
-  test("DIVERGES: og requires explicit execution amounts for any non-zero fillRatio; rewrite derives fills from the ratio alone", async () => {
-    const s = ogSwapState();
-    const r = await handleSwapResolve(ogAccount(s), { type: "swap_resolve", data: { offerId: "S", fillRatio: MAX_FILL, cancelRemainder: true } } as any, false, 0);
-    expect(r.ok).toBe(false);
-    const { body, ctx } = open("right");
-    const offered = unwrap(apply(body, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 2n, wantTokenId: "1", wantAmount: 3n, minFillRatio: 0, expiresAtHeight: 100n }, ctx)).state;
-    expect(apply(offered, { type: "swap_resolve", offerId: "S", fillRatio: MAX_FILL, cancelRemainder: true }, { ...ctx, byLeft: false }).ok).toBe(true);
+  test("MATCH: admission — same token, ':' in offerId, decimals, fee terms, timeInForce, lot size, priceTicks drift, capacity with existing holds", async () => {
+    const { body } = open(null, 100n * E18);
+    const ls = swapLockstep(body);
+    const cases: [any, boolean][] = [
+      [rwOffer("A", 0, E18, 0, E18), false], [rwOffer("a:b", 0, E18, 1, E18), false], [rwOffer("A", 0, E18, 1, E18, { giveTokenDecimals: 256 }), false],
+      [rwOffer("A", 0, E18, 1, E18, { maxFee: E18 }), false], [rwOffer("A", 0, E18, 1, E18, { minNetReceive: 0n }), false], [rwOffer("A", 0, E18, 1, E18, { minNetReceive: E18 + 1n }), false],
+      [rwOffer("A", 0, E18, 1, E18, { timeInForce: 3 }), false], [rwOffer("A", 0, 10n ** 11n, 1, E18), false], [rwOffer("A", 0, E18, 1, E18, { priceTicks: 10_002n }), false],
+      [rwOffer("A", 0, E18, 1, E18, { priceTicks: 10_001n, timeInForce: 1, maxFee: 10n ** 16n, minNetReceive: 99n * 10n ** 16n }), true], [rwOffer("A", 0, E18, 1, E18), false],
+      [rwOffer("B", 0, 100n * E18, 1, E18), false], [rwOffer("B", 0, 99n * E18, 1, E18), true], [rwOffer("C", 1, 7_000_123n, 0, 3n * E18 + 5n, { giveTokenDecimals: 6, minNetReceive: 3n * E18 }), true], [rwOffer("D", 1, 7n * E18, 0, 3n * E18 + 5n, { wantTokenDecimals: 6, minNetReceive: 3n * E18 }), false],
+    ];
+    for (const [i, [tx, want]] of cases.entries()) expect([i, await ls.step(tx, true)]).toEqual([i, want]);
+    expect(holds(ls.body(), "0" as any, true)).toBe(100n * E18);
   });
 
-  test("DIVERGES: fillRatio=0 with cancelRemainder=false — og closes the offer (effectiveCancelRemainder), rewrite keeps it open", async () => {
-    const s = ogSwapState();
-    const r = await handleSwapResolve(ogAccount(s), { type: "swap_resolve", data: { offerId: "S", fillRatio: 0, cancelRemainder: false } } as any, false, 0);
-    expect(r.ok).toBe(true);
-    expect(s.swapOffers.has("S")).toBe(false);
-    expect(s.deltas.get(1).leftHold).toBe(0n);
-    const { body, ctx } = open("right");
-    const offered = unwrap(apply(body, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 2n, wantTokenId: "1", wantAmount: 3n, minFillRatio: 0, expiresAtHeight: 100n }, ctx)).state;
-    const after = unwrap(apply(offered, { type: "swap_resolve", offerId: "S", fillRatio: 0, cancelRemainder: false }, { ...ctx, byLeft: false })).state;
-    expect(after.offers.has("S")).toBe(true);
+  test("MATCH: 32 same-j offers per account; the 33rd is refused by both", async () => {
+    const { body } = open(null, 100n * E18);
+    const ls = swapLockstep(body);
+    for (let i = 0; i < 33; i++) expect(await ls.step(rwOffer(`O${i}`, i % 2, E18, 1 - (i % 2), E18), i % 3 === 0)).toBe(i < 32);
   });
 
-  test("DIVERGES: resolver authority — og: any non-maker counterparty; rewrite: only the designated hub (hub=null account can never resolve)", async () => {
-    const s = ogSwapState();
-    expect((await handleSwapResolve(ogAccount(s), { type: "swap_resolve", data: { offerId: "S", fillRatio: 0, cancelRemainder: true } } as any, false, 0)).ok).toBe(true);
-    const s2 = ogSwapState();
-    expect((await handleSwapResolve(ogAccount(s2), { type: "swap_resolve", data: { offerId: "S", fillRatio: 0, cancelRemainder: true } } as any, true, 0)).ok).toBe(false); // maker itself
-    const { body, ctx } = open(null);
-    const offered = unwrap(apply(body, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 2n, wantTokenId: "1", wantAmount: 3n, minFillRatio: 0, expiresAtHeight: 100n }, ctx)).state;
-    const r = apply(offered, { type: "swap_resolve", offerId: "S", fillRatio: 0, cancelRemainder: true }, { ...ctx, byLeft: false });
-    expect(r.ok).toBe(false);
-    expect((r as any).error._tag).toBe("not_hub");
-    // and a hub that is itself the maker may resolve its own offer in the rewrite
-    const hubMaker = open("left");
-    const own = unwrap(apply(hubMaker.body, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 2n, wantTokenId: "1", wantAmount: 3n, minFillRatio: 0, expiresAtHeight: 100n }, hubMaker.ctx)).state;
-    expect(apply(own, { type: "swap_resolve", offerId: "S", fillRatio: 0, cancelRemainder: true }, hubMaker.ctx).ok).toBe(true);
-  });
-
-  test("DIVERGES: same-token swap offer — og refuses 'Cannot swap same token', rewrite accepts", () => {
-    const s = ogState();
-    const tx = { type: "swap_offer", data: { offerId: "S", giveTokenId: 1, giveTokenDecimals: 18, giveAmount: 10n ** 18n, wantTokenId: 1, wantTokenDecimals: 18, wantAmount: 10n ** 18n, maxFee: 0n, minNetReceive: 10n ** 18n } } as any;
-    const r = validateSwapOfferAdmission(s as any, tx, true);
-    expect(r.ok).toBe(false);
-    expect((r as any).message).toContain("same token");
-    const { body, ctx } = open();
-    expect(apply(body, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 2n, wantTokenId: "0", wantAmount: 2n, minFillRatio: 0, expiresAtHeight: 100n }, ctx).ok).toBe(true);
-  });
-
-  test("DIVERGES: offerId containing ':' — og refuses, rewrite accepts", () => {
-    const tx = { type: "swap_offer", data: { offerId: "a:b", giveTokenId: 1, giveTokenDecimals: 18, giveAmount: 10n ** 18n, wantTokenId: 2, wantTokenDecimals: 18, wantAmount: 10n ** 18n, maxFee: 0n, minNetReceive: 10n ** 18n } } as any;
-    expect(validateSwapOfferAdmission(ogState() as any, tx, true).ok).toBe(false);
-    const { body, ctx } = open();
-    expect(apply(body, { type: "swap_offer", offerId: "a:b", giveTokenId: "0", giveAmount: 2n, wantTokenId: "1", wantAmount: 2n, minFillRatio: 0, expiresAtHeight: 100n }, ctx).ok).toBe(true);
-  });
-
-  test("MATCH: swap_offer capacity check includes existing holds on the give token", () => {
-    const { body, ctx } = open("right"); // left can pay 20 on token0
-    const locked = unwrap(apply(body, rwLock(secretOf(9), { amount: 15n, tokenId: "0" }), ctx)).state;
-    expect(apply(locked, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 6n, wantTokenId: "1", wantAmount: 3n, minFillRatio: 0, expiresAtHeight: 100n }, ctx).ok).toBe(false);
-    expect(apply(locked, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 5n, wantTokenId: "1", wantAmount: 3n, minFillRatio: 0, expiresAtHeight: 100n }, ctx).ok).toBe(true);
-    // og commit.ts:208 uses deriveDelta(delta, makerIsLeft).outCapacity, which subtracts leftHold
-    expect(deriveDelta(ogDelta(0, { leftCreditLimit: 20n, rightCreditLimit: 20n, leftHold: 15n }), true).outCapacity).toBe(5n);
+  test("MATCH: 40 random offer/resolve/cancel sequences (decimals, orientation, partial fills, price improvement, fees, dust requantization) keep og and rewrite roots equal", async () => {
+    let accepted = 0;
+    for (let n = 0; n < 40; n++) {
+      const { body } = open(null, 10n ** 30n);
+      const ls = swapLockstep(body);
+      for (let i = 0; i < 10; i++) {
+        const live = [...ls.body().offers.values()], byLeft = ri(2) === 0, pickKind = ri(10);
+        let tx: any;
+        if (live.length === 0 || pickKind < 3) {
+          const give = ri(2), gd = pick3([0, 6, 8, 18]), wd = pick3([0, 6, 8, 18]);
+          const giveAmount = BigInt(1 + ri(1_000_000)) * 10n ** BigInt(Math.max(0, gd - 3)), wantAmount = BigInt(1 + ri(1_000_000)) * 10n ** BigInt(Math.max(0, wd - 3));
+          const maxFee = ri(3) === 0 ? 0n : wantAmount / BigInt(2 + ri(50));
+          tx = rwOffer(`R${i}`, give, giveAmount, 1 - give, wantAmount, { giveTokenDecimals: gd, wantTokenDecimals: wd, maxFee, minNetReceive: wantAmount - maxFee - BigInt(ri(2)) });
+        } else if (pickKind === 3) {
+          tx = { type: "swap_cancel_request", offerId: pick3(live).offerId };
+        } else {
+          const o = pick3(live), qG = o.quantizedGive, qW = o.quantizedWant;
+          const fG = ri(4) === 0 ? qG : (qG * BigInt(ri(1_000_001))) / 1_000_000n;
+          const fair = fG === 0n ? 0n : (fG * qW + qG - 1n) / qG, fW = fair + BigInt(ri(4)) - 1n < 0n ? 0n : fair + BigInt(ri(4)) - 1n;
+          const ratio = exactFillRatioToUint16(deriveExactSwapFillRatio(qG, fG));
+          const fee = ri(3) === 0 && fW > 1n ? (o.maxFee * fG) / qG : 0n;
+          tx = ri(8) === 0 ? { type: "swap_resolve", offerId: o.offerId, fillRatio: 0, cancelRemainder: ri(2) === 0 }
+            : { type: "swap_resolve", offerId: o.offerId, fillRatio: ri(10) === 0 ? ri(65536) : ratio, cancelRemainder: ri(3) === 0, executionGiveAmount: fG, executionWantAmount: fW, ...(fee > 0n ? { feeAmount: fee } : {}) };
+        }
+        if (await ls.step(tx, tx.type === "swap_offer" ? byLeft : tx.type === "swap_cancel_request" ? ls.body().offers.get(tx.offerId)!.makerIsLeft : ri(6) === 0 ? byLeft : !ls.body().offers.get(tx.offerId)!.makerIsLeft)) accepted++;
+      }
+    }
+    expect(accepted).toBeGreaterThan(100);
   });
 });
 
 // ---------- settlement / j-events ----------
 describe("account-tx: settlement + j_event_claim", () => {
-  const PA = (ns: string, m: ReadonlyMap<any, any> = new Map()) => PersistentAccountStateMap.fromEntries(ns as any, m);
-  /** og side: a persistent og replica seeded from the rewrite's committed view, driven through the real transition overlay. */
   const ogSettleHarness = (body: AccountBody) => {
-    const v: any = unwrap(committed(body) as any).view;
-    const state: any = { domain: v.domain, leftEntity: v.leftEntity, rightEntity: v.rightEntity, watchSeed: v.watchSeed, disputeConfig: v.disputeConfig, jNonce: v.jNonce, lastFinalizedJHeight: v.lastFinalizedJHeight,
-      leftPendingJClaims: v.leftPendingJClaims, rightPendingJClaims: v.rightPendingJClaims,
-      ...Object.fromEntries(["deltas", "locks", "pulls", "swapOffers", "subcontracts", "lendingIntents", "requestedRebalance", "requestedRebalanceFeeState", "rebalanceFeePolicies"].map((n) => [n, PA(n, v[n])])) };
-    let replica: any = { state, status: "active", currentHeight: 1, proofHeader: { fromEntity: A, toEntity: B, nextProofNonce: 1 }, currentFrame: { stateHash: "" }, pendingWithdrawals: PA("pendingWithdrawals"),
-      shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted") } }, mempool: [] };
-    const run = async (tx: any, byLeft: boolean, ts: number, context: any = {}): Promise<{ ok: boolean; root?: string; error?: string }> => {
-      const overlay = beginAccountTransition(replica);
-      const r: any = await handleSettleTransition(accountTransitionView(overlay), tx, byLeft, ts, context);
-      if (!r.ok) { discardAccountTransition(overlay); return { ok: false, error: r.rejection?.message }; }
-      const c = commitAccountTransition(overlay, "diff");
-      replica = c.account;
-      return { ok: true, root: c.accountStateRoot };
-    };
-    return { run, workspace: () => replica.state.settlementWorkspace, replica: () => replica };
+    const h = ogHarness(body);
+    return { run: (tx: any, byLeft: boolean, ts: number, context: any = {}) => h.run((acc) => handleSettleTransition(acc, tx, byLeft, ts, context)), workspace: () => h.replica().state.settlementWorkspace, replica: h.replica };
   };
   type Step = { tx: any; byLeft: boolean; ts: number };
   /** Runs the same settle_transition sequence through og and the rewrite; accept/reject and the full Account root must agree at every step. */
@@ -389,7 +394,7 @@ describe("account-tx: settlement + j_event_claim", () => {
     for (const { tx, byLeft, ts } of steps) {
       const o = await og.run(tx, byLeft, ts);
       const r = apply(body, { type: "settle_transition", ...tx.data }, { byLeft, nowMs: BigInt(ts), jHeight: 0n, accountHeight: 1n });
-      if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${JSON.stringify(r.ok ? "ok" : r.error)} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
+    if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${JSON.stringify(r.ok ? "ok" : r.error)} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
       if (r.ok) {
         body = r.value.state;
         accepted++;
@@ -464,7 +469,7 @@ describe("account-tx: settlement + j_event_claim", () => {
         const o = await og.run(tx, byLeft, ts);
         const r = apply(body, { type: "settle_transition", ...tx.data }, { byLeft, nowMs: BigInt(ts), jHeight: 0n, accountHeight: 1n });
         expect(r.ok).toBe(o.ok);
-        if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
+    if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
       }
     }
   });

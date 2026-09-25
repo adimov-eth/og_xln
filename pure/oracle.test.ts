@@ -297,11 +297,12 @@ describe("oracle", () => {
   test("a filled swap moves give and want by their two signs", () => {
     const { body, ctx } = open("left");
     const offered = unwrap(applyAccountBody(body, {
-      type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 6n, wantTokenId: "1", wantAmount: 2n, minFillRatio: 1, expiresAtHeight: 100n,
+      type: "swap_offer", offerId: "S", giveTokenId: "0", giveTokenDecimals: 0, giveAmount: 6n, wantTokenId: "1", wantTokenDecimals: 0, wantAmount: 3n, maxFee: 0n, minNetReceive: 3n,
     }, ctx)).state;
-    const filled = unwrap(applyAccountBody(offered, { type: "swap_resolve", offerId: "S", fillRatio: MAX_FILL, cancelRemainder: true }, ctx)).state;
+    expect(applyAccountBody(offered, { type: "swap_resolve", offerId: "S", fillRatio: MAX_FILL, cancelRemainder: true, executionGiveAmount: 6n, executionWantAmount: 3n }, ctx).ok).toBe(false);
+    const filled = unwrap(applyAccountBody(offered, { type: "swap_resolve", offerId: "S", fillRatio: MAX_FILL, cancelRemainder: true, executionGiveAmount: 6n, executionWantAmount: 3n }, { ...ctx, byLeft: false })).state;
     expect(getDelta(filled.account, "0").offdelta).toBe(deriveTransferOffdeltaChange(true, 6n));
-    expect(getDelta(filled.account, "1").offdelta).toBe(deriveTransferOffdeltaChange(false, 2n));
+    expect(getDelta(filled.account, "1").offdelta).toBe(deriveTransferOffdeltaChange(false, 3n));
     expect(filled.offers.has("S")).toBe(false);
   });
 
