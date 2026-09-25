@@ -299,6 +299,15 @@ describe("entity-consensus-2: entity txs chat, chatMessage, requestCollateral, p
   });
 });
 
+describe("entity-consensus-2: publicPinned (H7)", () => {
+  test("MATCH (og resolveOpenAccountPublicPin): the opener pins unless pinPublic is false; the leaf commits it (hashes.test.ts H7 compares the root with og)", () => {
+    const open = (extra: Record<string, unknown>): EntityTx => ({ type: "openAccount", data: { targetEntityId: BOB, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig, ...extra } } as EntityTx);
+    const run = (tx: EntityTx) => unwrap(applyEntityInput(teaching([[A, 1n]], 1n, A), { kind: "txs", timestamp: NOW, txs: [tx] }, ctx(A))).replica.accountReplicas.get(BOB);
+    expect(run(open({}))?.publicPinned).toBe(true);
+    expect(run(open({ pinPublic: false }))?.publicPinned).toBeUndefined();
+  });
+});
+
 describe("entity-consensus-2: trusted gateway payments (ER-15)", () => {
   // three single-signer Entities on one runtime; every output is delivered until the network is quiet
   const party = (id: EntityId, signer: Address) => unwrap(createEntity({ id, jurisdiction: JUR, threshold: 1n, members: new Map([[signer, { shares: 1n }]]) }));

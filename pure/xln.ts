@@ -2088,7 +2088,9 @@ export class Candidate {
   /** `floor`: the settlement proof-nonce floor the frame's txs folded under (og reads the pre-frame replica cursors). */
   constructor(readonly frame: AccountFrame, readonly frameHanko: Hanko, readonly frameProof: LocalProof, readonly draft: FrameFold, readonly floor: number) {}
 }
-type AccountEnv = { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute: DisputeWitnesses; readonly boardRefresh?: BoardRefresh | undefined };
+type AccountEnv = { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute: DisputeWitnesses; readonly boardRefresh?: BoardRefresh | undefined; readonly publicPinned?: true | undefined };
+/** Entity-side Account envelope fields every phase keeps (og counterpartyBoardHankoRefresh, publicPinned). */
+const envMeta = (r: Pick<AccountEnv, "boardRefresh" | "publicPinned">): Pick<AccountEnv, "boardRefresh" | "publicPinned"> => ({ ...opt("boardRefresh", r.boardRefresh), ...opt("publicPinned", r.publicPinned) });
 type Held = AccountEnv & { readonly candidate: Candidate };
 type Frozen = Omit<AccountEnv, "mempool"> & { readonly evidence?: FrameEvidence | undefined };
 export interface OpenAccount extends Tagged<"open", AccountEnv> {}
@@ -2214,7 +2216,7 @@ type Freeze = AccountInputFor<"freeze">;
 type PeerDispute = AccountInputFor<"dispute">;
 type Verb<R extends AccountReplica> = Result<AccountApply<R>, AccountReplicaError>;
 const reopen = (r: AccountReplica, next: { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute?: DisputeWitnesses | undefined }): OpenAccount =>
-  ({ _tag: "open", state: next.state, head: next.head, mempool: next.mempool, acknowledged: next.acknowledged ?? r.acknowledged, dispute: next.dispute ?? r.dispute, ...opt("boardRefresh", r.boardRefresh) });
+  ({ _tag: "open", state: next.state, head: next.head, mempool: next.mempool, acknowledged: next.acknowledged ?? r.acknowledged, dispute: next.dispute ?? r.dispute, ...envMeta(r) });
 const effectsOut = (effects: readonly Effect[]): readonly AccountOutput[] => effects.map((effect) => ({ kind: "effect", effect }));
 type Replayed = { readonly draft: FrameFold; readonly view: CommittedAccountState };
 const replay = (s: AccountBody, f: AccountFrame, byLeft: boolean, settlement: SettlementCtx): Result<Replayed, AccountReplicaError> =>
@@ -2435,7 +2437,7 @@ const retainedThroughFreeze = (r: AccountReplica, keep: (tx: WireAccountTx) => b
   return [...unqueued(pending, queued), ...queued];
 };
 const freeze = (r: AccountReplica, evidence: FrameEvidence | undefined, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => {
-  const { state, head, dispute: witnesses, acknowledged } = r, frozen = { state, head, dispute: witnesses, acknowledged, evidence, ...opt("boardRefresh", r.boardRefresh) };
+  const { state, head, dispute: witnesses, acknowledged } = r, frozen = { state, head, dispute: witnesses, acknowledged, evidence, ...envMeta(r) };
   const start = startOf(state, witnesses, ctx.party.peer, ctx.verify);
   if (!start.ok) return ok(done<PreparingAccount, AccountOutput>({ _tag: "preparing", ...frozen, mempool: retainedThroughFreeze(r, (tx) => isDeferredClaim(tx) || isDisputeEvidence(tx)), unready: start.error }));
   return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", ...frozen, mempool: [], start: start.value }, [{ kind: "start_dispute", start: start.value }]));
@@ -2550,7 +2552,7 @@ const disputeStarted = (r: AccountReplica, f: DisputeStartedFinality): Verb<Disp
   };
   // og sets status 'disputed' before freezeAccountForDispute(account, true): deferred claims are dropped, dispute evidence (queued or in our pending frame) is kept.
   const { head, dispute: witnesses, acknowledged } = r, evidence = r._tag === "preparing" || r._tag === "disputed" ? r.evidence : undefined, start = r._tag === "disputed" ? r.start : undefined;
-  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state: { ...r.state, jNonce: Math.max(r.state.jNonce, f.jNonce) }, head, dispute: witnesses, acknowledged, evidence, mempool: retainedThroughFreeze(r, isDisputeEvidence), ...opt("start", start), active, ...opt("boardRefresh", r.boardRefresh) }));
+  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state: { ...r.state, jNonce: Math.max(r.state.jNonce, f.jNonce) }, head, dispute: witnesses, acknowledged, evidence, mempool: retainedThroughFreeze(r, isDisputeEvidence), ...opt("start", start), active, ...envMeta(r) }));
 };
 /** og j-finality.ts applyAccountDisputeFinality: the winning proof's nonce becomes jNonce; off-chain economics, holds and encumbrances are retired; the peer witness tuple is dropped. */
 const disputeFinalized = (r: AccountReplica, f: Extract<AccountFinality, { kind: "dispute_finalized" }>): Verb<DisputedAccount> => {
@@ -2561,7 +2563,7 @@ const disputeFinalized = (r: AccountReplica, f: Extract<AccountFinality, { kind:
   const state: AccountBody = { ...r.state, settlement: undefined, jNonce: f.finalizedJNonce, account: { ...r.state.account, deltas }, locks: new Map(), offers: new Map() };
   const { current, nextProofNonce } = r.dispute, evidence = r._tag === "preparing" || r._tag === "disputed" ? r.evidence : undefined, start = r._tag === "disputed" ? r.start : undefined;
   const witnesses: DisputeWitnesses = { ...opt("current", current), nextProofNonce: nextProofNonce <= f.finalizedJNonce ? f.finalizedJNonce + 1 : nextProofNonce };
-  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state, head: r.head, dispute: witnesses, acknowledged: r.acknowledged, evidence, mempool: [], ...opt("start", start), ...opt("boardRefresh", r.boardRefresh) }));
+  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state, head: r.head, dispute: witnesses, acknowledged: r.acknowledged, evidence, mempool: [], ...opt("start", start), ...envMeta(r) }));
 };
 export const applyFinality = (r: AccountReplica, input: AccountInputFor<"external_finality">): Verb<DisputedAccount> =>
   input.finality.kind === "dispute_started" ? disputeStarted(r, input.finality) : disputeFinalized(r, input.finality);
@@ -2668,7 +2670,7 @@ export type LeaderCertificate = LeaderVoteBody & { readonly votes: ReadonlyMap<s
 export type FrameLeader = { readonly proposerSignerId: string; readonly view: number; readonly certificate?: LeaderCertificate | undefined; readonly relayCertificate?: LeaderCertificate | undefined };
 /** og `core/types/entity-tx.ts` wire shape `{type, data}`. Account frames are proposed by the Entity frame itself (og proposePendingAccountFrames). */
 export type EntityTx =
-  | { readonly type: "openAccount"; readonly data: { readonly targetEntityId: EntityId; readonly disputeConfig: DisputeConfig; readonly accountDomain: Domain; readonly watchSeed: string; readonly creditAmount?: bigint | undefined; readonly tokenId?: TokenId | undefined } }
+  | { readonly type: "openAccount"; readonly data: { readonly targetEntityId: EntityId; readonly disputeConfig: DisputeConfig; readonly accountDomain: Domain; readonly watchSeed: string; readonly creditAmount?: bigint | undefined; readonly tokenId?: TokenId | undefined; readonly pinPublic?: boolean | undefined } }
   | { readonly type: "accountInput"; readonly data: AccountPeerInput }
   | { readonly type: "extendCredit"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint } }
   | { readonly type: "directPayment"; readonly data: { readonly targetEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly route: readonly EntityId[]; readonly description?: string | undefined; readonly deliveryMode: "direct" | "trusted"; readonly trustedGatewayEntityId?: EntityId | undefined } }
@@ -3277,7 +3279,9 @@ const openChild = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx,
     if (replicas.has(target)) return err({ _tag: "account_exists", target });
     const credit = tokenId ?? "1", tokens = [...new Set([credit, ...DEFAULT_ACCOUNT_TOKEN_IDS])].filter((t) => Number(t) > 0) as TokenId[];
     const seeded: readonly AccountTx[] = [...tokens.map((t): AccountTx => ({ type: "add_delta", tokenId: t })), ...(creditAmount !== undefined && creditAmount > 0n ? [{ type: "set_credit_limit", tokenId: credit as TokenId, limit: creditAmount } as AccountTx] : [])];
-    return map(admitAt(opened, seeded, state.id, L0_CLOCK), (admitted) => ({ ...putChild(state, replicas, target, admitted), outputs: [] }));
+    // og resolveOpenAccountPublicPin: the opener pins unless `pinPublic: false` or MAX_PROFILE_ADVERTISED_ACCOUNTS (100) are already pinned
+    const pinned = tx.data.pinPublic !== false && [...replicas.values()].filter((c) => c.publicPinned === true).length < 100;
+    return map(admitAt(pinned ? { ...opened, publicPinned: true } : opened, seeded, state.id, L0_CLOCK), (admitted) => ({ ...putChild(state, replicas, target, admitted), outputs: [] }));
   });
 };
 /** og createInboundAccountState: an unknown peer's first proposal (height 1) opens the Account from its envelope. */
@@ -3506,7 +3510,7 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
   return chain(linked, (link): Result<EntityRootAccount, EntityError> => chain(mapErr(committedView(body), (): EntityError => ({ _tag: "account_envelope", target: peer })), (state): Result<EntityRootAccount, EntityError> => ok({
     fromEntity: self, toEntity: peer, status, currentHeight: link.height, nextProofNonce: child.dispute.nextProofNonce, currentFrameHash: link.frame,
     pendingWithdrawals: ZERO_WORD, policyRoot: ZERO_WORD, submittedAtByTokenRoot: ZERO_WORD, state,
-    committed: { ...opt("counterpartyBoardHankoRefresh", child.boardRefresh), ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active) : {}) },
+    committed: { ...opt("publicPinned", child.publicPinned), ...opt("counterpartyBoardHankoRefresh", child.boardRefresh), ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active) : {}) },
     ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
   })));
 };

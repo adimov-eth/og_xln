@@ -693,6 +693,11 @@ describe("entity account leaf, runtime side (H7)", () => {
     expect(leafRoot(ALICE, BOB, alice)).toBe(ogRoot(ALICE, BOB, alice));
     expect(leafRoot(BOB, ALICE, bob)).toBe(ogRoot(BOB, ALICE, bob));
     expect(leafRoot(ALICE, BOB, alice)).not.toBe(leafRoot(ALICE, BOB, { ...alice, dispute: { nextProofNonce: alice.dispute.nextProofNonce } }));
+    // og open-account.ts publicPinned (the opener's pin) and board-hanko-refresh.ts counterpartyBoardHankoRefresh are committed leaf fields
+    const refresh = { activationJHeight: 7, activationLogIndex: 2, frameHeight: 1, frameHash: alice.head.prevFrameHash };
+    expect(leafRoot(ALICE, BOB, { ...alice, publicPinned: true })).toBe(ogRoot(ALICE, BOB, alice, { publicPinned: true }));
+    expect(leafRoot(ALICE, BOB, { ...alice, boardRefresh: refresh })).toBe(ogRoot(ALICE, BOB, alice, { counterpartyBoardHankoRefresh: refresh }));
+    expect(leafRoot(ALICE, BOB, { ...alice, publicPinned: true })).not.toBe(leafRoot(ALICE, BOB, alice));
     // og applyAccountDisputeStarted: the disputed replica commits status and the activeDispute record in the leaf.
     const finality = { kind: "dispute_started", starterEntityId: BOB, initialProofbodyHash: W("5a"), initialNonce: 1, initialProposerIsLeft: true, disputeTimeout: 1_000 + 86_400 + 3_600, disputeStartTimestamp: 1_000,
       leftResponseSeconds: 86_400, rightResponseSeconds: 3_600, jNonce: 0, starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: W("00"), observedBlockNumber: 7 };
