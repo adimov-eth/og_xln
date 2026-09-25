@@ -5,6 +5,13 @@ import * as ogLadder from "../../core/protocol/htlc/hash-ladder.ts";
 import * as ogCross from "../../core/extensions/cross-j/index.ts";
 import * as ogMarket from "../../core/extensions/cross-j/market.ts";
 import { exactFillRatioToUint16 } from "../../core/orderbook/swap-execution.ts";
+import { handlePullLock, handleCrossPullClose } from "../../core/account/tx/handlers/settlement/pull.ts";
+import { handleSwapOffer } from "../../core/account/tx/handlers/swap/offer/index.ts";
+import { handleSwapResolve } from "../../core/account/tx/handlers/swap/resolve/index.ts";
+import { handleSwapCancelRequest } from "../../core/account/tx/handlers/swap/lifecycle/cancel.ts";
+import { beginAccountTransition, accountTransitionView, commitAccountTransition, discardAccountTransition } from "../../core/account/state/candidate-overlay.ts";
+import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
+import { ethers } from "ethers";
 import {
   buildHashLadderProof,
   revealHashLadder,
@@ -30,6 +37,15 @@ import {
   compareCrossStatus,
   CROSS_STATUSES,
   stableJson,
+  accountId,
+  accountTerms,
+  applyAccountBody,
+  committed,
+  entityId,
+  genesisAccount,
+  genesisAccountBody,
+  holds,
+  type AccountBody,
   type CrossRoute,
 } from "../xln.ts";
 
@@ -193,5 +209,184 @@ describe("cross-j: route kernel (core/extensions/cross-j/index.ts, market.ts)", 
       const route = { ...randomRoute(rng(1)), status: a };
       agree(ogTry(() => ogCross.transitionCrossJurisdictionRouteStatus(route as never, b, 5)), transitionCrossStatus(route, b, 5));
     }
+  });
+});
+
+// ---------- account txs: cross_pull_lock / cross_pull_close / cross-j swap_offer (og handlers/settlement/pull.ts, swap/offer) ----------
+const W = (byte: string): string => `0x${byte.repeat(32)}`;
+const LEFT = W("11"), RIGHT = W("22");
+const DEP = `0x${"ab".repeat(20)}`, HERE = `stack:1:${DEP}`, THERE = `stack:7:0x${"cd".repeat(20)}`;
+const unwrapR = <T,>(r: { ok: true; value: T } | { ok: false; error: unknown }): T => { if (!r.ok) throw new Error(`unwrap: ${stableJson(r.error)}`); return r.value; };
+const openAccount = (credit: bigint): AccountBody => {
+  const terms = unwrapR(accountTerms({ domain: { chainId: 1, depositoryAddress: DEP }, watchSeed: W("44"), disputeConfig: { leftResponseSeconds: 1, rightResponseSeconds: 1 } }) as never);
+  let body = genesisAccountBody(genesisAccount(unwrapR(accountId(unwrapR(entityId(LEFT) as never), unwrapR(entityId(RIGHT) as never)) as never)), terms as never);
+  for (const tokenId of ["1", "2", "3"]) for (const byLeft of [true, false])
+    body = unwrapR(applyAccountBody(body, { type: "set_credit_limit", tokenId, limit: credit } as never, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n }) as never as { ok: true; value: { state: AccountBody } }).state;
+  return body;
+};
+const PA = (ns: string, m: ReadonlyMap<unknown, unknown> = new Map()) => PersistentAccountStateMap.fromEntries(ns as never, m as never);
+/** og side of a lockstep: a persistent og replica seeded from the rewrite's committed view, driven through the real transition overlay. */
+export const ogHarness = (body: AccountBody) => {
+  const v: any = unwrapR(committed(body) as never as { ok: true; value: { view: unknown } }).view;
+  const state: any = { domain: v.domain, leftEntity: v.leftEntity, rightEntity: v.rightEntity, watchSeed: v.watchSeed, disputeConfig: v.disputeConfig, jNonce: v.jNonce, lastFinalizedJHeight: v.lastFinalizedJHeight,
+    leftPendingJClaims: v.leftPendingJClaims, rightPendingJClaims: v.rightPendingJClaims,
+    ...Object.fromEntries(["deltas", "locks", "pulls", "swapOffers", "subcontracts", "lendingIntents", "requestedRebalance", "requestedRebalanceFeeState", "rebalanceFeePolicies"].map((n) => [n, PA(n, v[n])])) };
+  let replica: any = { state, status: "active", currentHeight: 0, proofHeader: { fromEntity: LEFT, toEntity: RIGHT, nextProofNonce: 1 }, currentFrame: { stateHash: "" }, pendingWithdrawals: PA("pendingWithdrawals"),
+    shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted") } }, mempool: [] };
+  const run = async (handler: (draft: any) => Promise<any> | any): Promise<{ ok: boolean; root?: string; error?: string; value?: any }> => {
+    const overlay = beginAccountTransition(replica);
+    let r: any;
+    try { r = await handler(accountTransitionView(overlay)); } catch (e) { r = { ok: false, rejection: { message: String(e) } }; }
+    if (!r.ok) { discardAccountTransition(overlay); return { ok: false, error: r.rejection?.message }; }
+    const c = commitAccountTransition(overlay, "diff");
+    replica = c.account;
+    return { ok: true, root: c.accountStateRoot, value: r };
+  };
+  return { run, replica: () => replica };
+};
+const toOg = (tx: any): any => {
+  const { type, ...data } = tx;
+  for (const k of ["tokenId", "giveTokenId", "wantTokenId", "feeTokenId", "requestTokenId"]) if (typeof data[k] === "string") data[k] = Number(data[k]);
+  return { type, data };
+};
+const lockstep = (start: AccountBody) => {
+  const og = ogHarness(start);
+  let body = start;
+  const step = async (tx: any, byLeft: boolean, jh = 3, ts = 1000): Promise<boolean> => {
+    const ogTx = toOg(tx);
+    const o = await og.run((acc) => {
+      switch (tx.type) {
+        case "cross_pull_lock": return handlePullLock(acc.state, ogTx, byLeft, jh, ts);
+        case "cross_pull_close": return handleCrossPullClose(acc.state, ogTx, byLeft, ts);
+        case "swap_offer": return handleSwapOffer(acc, ogTx, byLeft, jh);
+        case "swap_resolve": return handleSwapResolve(acc, ogTx, byLeft, jh);
+        default: return handleSwapCancelRequest(acc, ogTx, byLeft, jh);
+      }
+    });
+    const r = applyAccountBody(body, tx, { byLeft, nowMs: BigInt(ts), jHeight: BigInt(jh), accountHeight: 1n }) as any;
+    if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${r.ok ? "ok" : stableJson(r.error)} tx=${stableJson(tx).slice(0, 400)}`);
+    if (r.ok) { body = r.value.state; expect(unwrapR(committed(body) as never as { ok: true; value: { root: string } }).root).toBe(o.root!); }
+    return r.ok;
+  };
+  return { step, body: () => body };
+};
+
+const SEED = W("5e");
+/** A resting route with one leg on this Account (stack HERE) and the other on another stack: the source leg, or (targetHere) the target leg. */
+const restingRoute = (r: Rand, makerIsLeft: boolean, targetHere: boolean): { route: CrossRoute; seed: string } => {
+  const maker = makerIsLeft ? LEFT : RIGHT, hub = makerIsLeft ? RIGHT : LEFT;
+  const sourceToken = pick(r, [1, 2]), targetToken = pick(r, [1, 2, 3]);
+  const lot = 10n ** 12n; // 18-decimal base: lot 10^12
+  const base: CrossRoute = {
+    orderId: `o-${Math.floor(r() * 1e9)}`, makerEntityId: maker, hubEntityId: hub,
+    source: { jurisdiction: targetHere ? THERE : HERE, entityId: maker, counterpartyEntityId: hub, tokenId: sourceToken, amount: lot * BigInt(1 + Math.floor(r() * 9)) },
+    target: { jurisdiction: targetHere ? HERE : THERE, entityId: hub, counterpartyEntityId: maker, tokenId: targetToken, amount: lot * BigInt(1 + Math.floor(r() * 9)) },
+    sourceDisputeConfig: { leftResponseSeconds: 60, rightResponseSeconds: 60 }, targetDisputeConfig: { leftResponseSeconds: 60, rightResponseSeconds: 60 },
+    status: "intent", createdAt: 1_000, updatedAt: 1_000,
+  };
+  const prepared = unwrapR(prepareCrossRoute(base, { runtimeSeed: SEED, now: 2_000 }));
+  const route = ogCross.withCanonicalCrossJurisdictionRouteHash({ ...prepared, status: "resting" } as never) as unknown as CrossRoute;
+  return { route, seed: ogCross.deriveCrossJurisdictionPrivateSeed(SEED, route as never) };
+};
+const lockTx = (route: CrossRoute, leg: "source" | "target"): any => {
+  const pull = leg === "source" ? route.sourcePull! : route.targetPull!;
+  return { type: "cross_pull_lock", pullId: pull.pullId, tokenId: String(pull.tokenId), amount: pull.signedAmount, fullHash: pull.fullHash, partialRoot: pull.partialRoot,
+    crossJurisdiction: unwrapR(crossPullBinding(route, leg)), crossJurisdictionRoute: route };
+};
+const offerTx = (route: CrossRoute, patch: Record<string, unknown> = {}): any => ({
+  type: "swap_offer", offerId: route.orderId, giveTokenId: String(route.source.tokenId), giveTokenDecimals: 18, giveAmount: route.source.amount,
+  wantTokenId: String(route.target.tokenId), wantTokenDecimals: 18, wantAmount: route.target.amount, maxFee: 0n, minNetReceive: route.target.amount, crossJurisdiction: route, ...patch,
+});
+const chainProp = (total: bigint, ratio: number): bigint => (ratio >= 65_535 ? total : (total * BigInt(ratio)) / 65_535n);
+const closeTx = (route: CrossRoute, leg: "source" | "target", seed: string, ratio: number): any => {
+  const reveal = revealHashLadder(buildHashLadderProof(seed), ratio);
+  return { type: "cross_pull_close", pullId: (leg === "source" ? route.sourcePull! : route.targetPull!).pullId, binary: reveal.binary, proof: {
+    orderId: route.orderId, routeHash: route.routeHash!, sourcePullId: route.sourcePull!.pullId, targetPullId: route.targetPull!.pullId, fillRatio: ratio,
+    cumulativeSourceAmount: chainProp(route.source.amount, ratio), cumulativeTargetAmount: chainProp(route.target.amount, ratio), binaryHash: ethers.keccak256(reveal.binary),
+    closeMode: ratio >= 65_535 ? "full" : ratio === 0 ? "pure_cancel" : "partial_cancel_remainder" } };
+};
+/** One random corruption of a tx (or none); both implementations must agree on the outcome. */
+const mutate = (r: Rand, tx: any): any => {
+  if (r() < 0.55) return tx;
+  const t = structuredClone(tx);
+  const which = Math.floor(r() * 10);
+  if (t.type === "cross_pull_lock") {
+    if (which === 0) t.amount = -t.amount;
+    else if (which === 1) t.pullId = t.pullId + ":x";
+    else if (which === 2) t.fullHash = W("99");
+    else if (which === 3) t.crossJurisdiction = { ...t.crossJurisdiction, status: "partially_filled" };
+    else if (which === 4) t.crossJurisdictionRoute = { ...t.crossJurisdictionRoute, memo: "x" };
+    else if (which === 5) t.tokenId = "3";
+    else if (which === 6) t.crossJurisdiction = { ...t.crossJurisdiction, leg: t.crossJurisdiction.leg === "source" ? "target" : "source" };
+    else if (which === 7) t.crossJurisdictionRoute = { ...t.crossJurisdictionRoute, fillSeq: 1 };
+    else t.partialRoot = t.partialRoot.toUpperCase().replace("0X", "0x");
+  } else if (t.type === "cross_pull_close") {
+    if (which === 0) t.proof.fillRatio = t.proof.fillRatio + 1;
+    else if (which === 1) t.proof.cumulativeSourceAmount += 1n;
+    else if (which === 2) t.proof.cumulativeTargetAmount += 1n;
+    else if (which === 3) t.proof.binaryHash = W("00");
+    else if (which === 4) t.proof.closeMode = "bogus";
+    else if (which === 5) t.binary = t.binary.slice(0, -2) + "00";
+    else if (which === 6) t.proof.routeHash = W("01");
+    else if (which === 7) t.proof.orderId = "nope";
+    else t.proof.binaryHash = t.proof.binaryHash.toUpperCase().replace("0X", "0x");
+  } else if (t.type === "swap_offer") {
+    if (which === 0) t.maxFee = 1n;
+    else if (which === 1) t.giveAmount = t.giveAmount + 1n;
+    else if (which === 2) t.crossJurisdiction = { ...t.crossJurisdiction, status: "partially_filled" };
+    else if (which === 3) t.giveTokenDecimals = 6;
+    else if (which === 4) t.minNetReceive = t.minNetReceive - 1n;
+    else if (which === 5) t.wantTokenDecimals = 30;
+    else if (which === 6) t.timeInForce = 1;
+    else t.priceTicks = 12345n;
+  }
+  return t;
+};
+
+describe("cross-j: account txs through the og transition overlay", () => {
+  test("MATCH: 60 random pull-lock / offer / resolve / close sequences agree on accept/reject and Account root", async () => {
+    const r = rng(101);
+    let locks = 0, offers = 0, closes = 0;
+    for (let n = 0; n < 60; n++) {
+      const credit = pick(r, [0n, 10n ** 13n, 10n ** 20n]);
+      const ls = lockstep(openAccount(credit));
+      const routes = Array.from({ length: 1 + Math.floor(r() * 3) }, () => restingRoute(r, r() < 0.5, r() < 0.6));
+      const plan: Array<{ tx: any; byLeft: boolean }> = [];
+      for (const { route, seed } of routes) {
+        const makerIsLeft = route.makerEntityId === LEFT, hubIsLeft = !makerIsLeft, targetHere = route.target.jurisdiction === HERE;
+        plan.push({ tx: lockTx(route, "source"), byLeft: r() < 0.5 });
+        if (targetHere) plan.push({ tx: lockTx(route, "target"), byLeft: r() < 0.5 });
+        plan.push({ tx: offerTx(route), byLeft: r() < 0.7 ? makerIsLeft : hubIsLeft });
+        if (r() < 0.3) plan.push({ tx: { type: "swap_resolve", offerId: route.orderId, fillRatio: 0, cancelRemainder: true }, byLeft: hubIsLeft });
+        if (r() < 0.2) plan.push({ tx: { type: "swap_cancel_request", offerId: route.orderId }, byLeft: makerIsLeft });
+        const ratio = pick(r, [0, 1, 32_767, 65_534, 65_535, Math.floor(r() * 65_536)]);
+        plan.push({ tx: closeTx(route, "source", seed, ratio), byLeft: r() < 0.85 ? hubIsLeft : makerIsLeft });
+        if (targetHere) plan.push({ tx: closeTx(route, "target", seed, ratio), byLeft: r() < 0.85 ? hubIsLeft : makerIsLeft });
+      }
+      for (const { tx, byLeft } of plan) {
+        const t = mutate(r, tx);
+        const ok = await ls.step(t, byLeft);
+        if (ok && t.type === "cross_pull_lock") locks++;
+        if (ok && t.type === "swap_offer") offers++;
+        if (ok && t.type === "cross_pull_close") closes++;
+        if (ok && r() < 0.1) await ls.step(t, byLeft); // replay: refused identically
+      }
+    }
+    expect(locks).toBeGreaterThan(20);
+    expect(offers).toBeGreaterThan(5);
+    expect(closes).toBeGreaterThan(10);
+  });
+
+  test("MATCH: a pull holds |amount| on the payer side; the source close releases it and retires the cross-j offer", async () => {
+    const { route, seed } = restingRoute(rng(5), true, false);
+    const ls = lockstep(openAccount(10n ** 20n));
+    expect(await ls.step(lockTx(route, "source"), true)).toBe(true);
+    const payerIsLeft = route.sourcePull!.signedAmount < 0n, tk = String(route.source.tokenId) as never;
+    expect(holds(ls.body(), tk, payerIsLeft)).toBe(route.source.amount);
+    expect(await ls.step(offerTx(route), true)).toBe(true);
+    expect(holds(ls.body(), tk, payerIsLeft)).toBe(route.source.amount);
+    expect(await ls.step(closeTx(route, "source", seed, 40_000), false)).toBe(true);
+    expect(holds(ls.body(), tk, payerIsLeft)).toBe(0n);
+    expect(ls.body().offers.size).toBe(0);
   });
 });
