@@ -3669,7 +3669,7 @@ export type AccountReplicaError =
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
   | Tagged<"bad_account", { reason: "entity_id" | "same_entity" | TermsError["_tag"] }>
   | Tagged<"ack_conflict", { field: "frameHash" | "frameHanko" | "disputeHanko" | "height" }>
-  | Tagged<"halt_runtime", { reason: "state_hash_after_verify" }> | Tagged<"proposal_halt", { txType: WireAccountTx["type"]; cause: BodyError }> | Tagged<"mempool_full", { limit: number }> | Tagged<"frozen", { phase: FrozenAccount["_tag"] }>;
+  | Tagged<"halt_runtime", { reason: "state_hash_after_verify" }> | Tagged<"proposal_halt", { txType: WireAccountTx["type"]; cause: BodyError }> | Tagged<"mempool_full", { limit: number }> | Tagged<"admission_policy", { reason: "policy_version" }> | Tagged<"frozen", { phase: FrozenAccount["_tag"] }>;
 export const evidenceOf = (e: AccountReplicaError): FrameEvidence | null => {
 
   if (e._tag !== "dispute_required") return null;
@@ -4132,10 +4132,6 @@ export const externalFinality = accountVerb("external_finality", { open: applyFi
 export const resume = accountVerb("resume", { open: { _tag: "not_preparing" }, proposed: { _tag: "not_preparing" }, received: { _tag: "not_preparing" }, preparing: resumePreparing, disputed: frozenError("disputed") });
 
 
-export const admissionFold = (mempool: readonly WireAccountTx[], added: number, s: AccountBody, self: EntityId, at: FoldAt, settlement?: SettlementCtx): Result<void, AccountReplicaError> => chain(partyOf(s.account.id, self), (party) => {
-  const first = proposalFold(s, mempool, foldCtx(at, party.left, settlement)).refused.find((x) => x.index >= mempool.length - added);
-  return first === undefined ? ok(undefined) : err(first.error);
-});
 const ENTITY_WORD = /^0x[0-9a-f]{64}$/;
 export const genesisReplica = (id: AccountId, terms: AccountTerms): Result<OpenAccount, AccountReplicaError> => {
   if (!ENTITY_WORD.test(id.left) || !ENTITY_WORD.test(id.right)) return err({ _tag: "bad_account", reason: "entity_id" });
@@ -4146,22 +4142,50 @@ export const genesisReplica = (id: AccountId, terms: AccountTerms): Result<OpenA
 export type LiveAccount = OpenAccount | ProposedAccount | ReceivedAccount;
 type Queued<R extends AccountReplica = AccountReplica> = { readonly replica: R; readonly queued: readonly WireAccountTx[] };
 /** og local-tx-admission.ts: dedupe against mempool + own pending frame; the limit counts both (mempool.ts). A received frame is committed in og, so it pends nothing. og has no status gate: a frozen Account queues too. */
-const queueOn = <R extends AccountReplica>(r: R, pending: readonly WireAccountTx[], txs: readonly WireAccountTx[]): Result<Queued<R>, AccountReplicaError> => {
-  const queued = unqueued(txs, [...r.mempool, ...pending]);
+/** og planAccountJClaimLocalAdmission: a claim at or below the finalized height, or already held on our own side or queued with the same evidence, is a duplicate; a different record at that height (either side, or queued) is a row conflict. `onLeft` undefined: the caller did not name its side, so no held record counts as our own. */
+const claimAdmission = (s: AccountBody, queued: readonly WireAccountTx[], tx: TxOf<"j_event_claim">, onLeft: boolean | undefined): Result<"admit" | "duplicate" | "conflict", AccountReplicaError> => chain(mapErr(claimRowOf(tx, onLeft ?? true), (e): AccountReplicaError => e), (own) => {
+  if (own.jHeight <= s.finalizedJHeight) return ok("duplicate");
+  for (const side of [true, false]) {
+    const held = (s.claimRows ?? []).find((h) => h.onLeft === side && h.jHeight === own.jHeight);
+    if (held === undefined) continue;
+    if (!sameEvidence(held, own)) return ok("conflict");
+    if (side === onLeft) return ok("duplicate");
+  }
+  for (const q of queued) {
+    if (q.type !== "j_event_claim" || q.jHeight !== tx.jHeight) continue;
+    const other = claimRowOf(q, true);
+    return ok(other.ok && sameEvidence(other.value, own) ? "duplicate" : "conflict");
+  }
+  return ok("admit");
+});
+/** og assertAccountTxsAdmissible: a rebalance_policy policyVersion outside 0..=MAX_SAFE_INTEGER refuses the whole batch before any mempool write. */
+const admissible = (txs: readonly WireAccountTx[]): Result<void, AccountReplicaError> =>
+  guard(txs.every((tx) => tx.type !== "rebalance_policy" || (Number.isSafeInteger(tx.policyVersion) && tx.policyVersion >= 0)), { _tag: "admission_policy", reason: "policy_version" });
+const queueOn = <R extends AccountReplica>(r: R, pending: readonly WireAccountTx[], txs: readonly WireAccountTx[], onLeft: boolean | undefined): Result<Queued<R>, AccountReplicaError> => chain(admissible(txs), () => {
+  const held = [...r.mempool, ...pending], taken = new Set(held.flatMap((tx) => lifecycleKey(tx) ?? [])), queued: WireAccountTx[] = [];
+  for (const tx of txs) {
+    const key = lifecycleKey(tx);
+    if (key !== undefined && taken.has(key)) continue;
+    if (tx.type === "j_event_claim") {
+      const plan = claimAdmission(r.state, [...held, ...queued], tx, onLeft);
+      if (!plan.ok) return plan;
+      if (plan.value !== "admit") continue;
+    }
+    if (key !== undefined) taken.add(key);
+    queued.push(tx);
+  }
   return r.mempool.length + pending.length + queued.length > ACCOUNT_MEMPOOL_SIZE ? err({ _tag: "mempool_full", limit: ACCOUNT_MEMPOOL_SIZE }) : ok({ replica: { ...r, mempool: [...r.mempool, ...queued] }, queued });
-};
-const enqueue = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<Queued, AccountReplicaError> => match(r, {
-  open: (o) => queueOn<AccountReplica>(o, [], txs), proposed: (p) => queueOn<AccountReplica>(p, p.candidate.frame.txs, txs), received: (h) => queueOn<AccountReplica>(h, [], txs),
-  preparing: (f) => queueOn<AccountReplica>(f, [], txs), disputed: (f) => queueOn<AccountReplica>(f, [], txs),
+});
+const enqueue = (r: AccountReplica, txs: readonly WireAccountTx[], onLeft?: boolean): Result<Queued, AccountReplicaError> => match(r, {
+  open: (o) => queueOn<AccountReplica>(o, [], txs, onLeft), proposed: (p) => queueOn<AccountReplica>(p, p.candidate.frame.txs, txs, onLeft), received: (h) => queueOn<AccountReplica>(h, [], txs, onLeft),
+  preparing: (f) => queueOn<AccountReplica>(f, [], txs, onLeft), disputed: (f) => queueOn<AccountReplica>(f, [], txs, onLeft),
 });
 const isLive = (r: AccountReplica): r is LiveAccount => r._tag === "open" || r._tag === "proposed" || r._tag === "received";
-/** The state and height the next proposal builds on: a held candidate is about to commit. */
-const nextBase = (r: LiveAccount): { readonly state: AccountBody; readonly height: bigint } => (r._tag === "open" ? { state: r.state, height: r.head.height } : { state: r.candidate.draft.state, height: r.candidate.frame.height });
-/** og applyAccountEnqueue: the Account-level lane admits in every status. */
-export const admit = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<AccountReplica, AccountReplicaError> => map(enqueue(r, txs), (q) => q.replica);
-/** Entity-owned admission. og tx-effects.ts shouldSuppressReturnedAccountTx: a frozen Account silently takes no new work. */
-export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, clock: FrameClock, verify?: Verify): Result<AccountReplica, AccountReplicaError> => chain(partyOf(replicaId(r), self), () => !isLive(r) ? ok(r)
-  : chain(enqueue(r, txs), ({ replica, queued }): Result<AccountReplica, AccountReplicaError> => { if (!isLive(replica)) return ok(replica); const base = nextBase(replica); return map(admissionFold(replica.mempool, queued.length, base.state, self, { height: base.height + 1n, ...clock }, verify === undefined ? undefined : settlementOf(replica.dispute, verify)), () => replica); }));
+/** og applyAccountEnqueue: the Account-level lane admits in every status. It never runs a tx body: validation happens when the tx is proposed (og proposal/transactions.ts). `self` names our side for the j-claim duplicate rule. */
+export const admit = (r: AccountReplica, txs: readonly WireAccountTx[], self?: EntityId): Result<AccountReplica, AccountReplicaError> =>
+  chain(self === undefined ? ok(undefined) : map(partyOf(replicaId(r), self), (p) => p.left), (onLeft) => map(enqueue(r, txs, onLeft), (q) => q.replica));
+/** Entity-owned admission (og tx-effects.ts applyLocalAccountEffects → applyAccountEnqueue). og shouldSuppressReturnedAccountTx: a frozen Account silently takes no new work. `clock`/`verify` are kept for callers; og admission reads neither. */
+export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, _clock?: FrameClock, _verify?: Verify): Result<AccountReplica, AccountReplicaError> => !isLive(r) ? map(partyOf(replicaId(r), self), () => r) : admit(r, txs, self);
 const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party, ...opt("counterpartyBoard", ctx.counterpartyBoard) }));
 export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => chain(accountContext(r, ctx), (c) => matchBy("kind", input, {
   propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c), resume: (i) => resume(r, i, c),

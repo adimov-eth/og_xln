@@ -67,7 +67,7 @@ describe("runtime-2: entity lending (ER-17, og payments/lending.ts)", () => {
   };
 
   test("MATCH: 400 random lendingOffer/Borrow/Repay/ClosePosition -- same accept/refuse code as og, same queued Account tx on the hub Account, same wake to validators[0]", () => {
-    let accepted = 0, refused = 0, admissionOnly = 0;
+    let accepted = 0, refused = 0;
     for (let i = 0; i < 400; i++) {
       const tx = randomTx(), og = runOg(tx as never), rw = runRewrite(tx);
       if (!og.ok) {
@@ -77,13 +77,8 @@ describe("runtime-2: entity lending (ER-17, og payments/lending.ts)", () => {
         refused++;
         continue;
       }
-      if (!rw.ok) {
-        // REMAINING (ER-15, account area): og local admission (local-tx-admission.ts) queues without applying; the rewrite's admitAt
-        // pre-applies, so a repay on an Account row without capacity is refused at enqueue here and only at the Account frame in og.
-        expect(["insufficient_capacity", "lending"]).toContain(rw.error._tag);
-        admissionOnly++;
-        continue;
-      }
+      // og local admission (local-tx-admission.ts) queues without applying, and so does the rewrite's admitAt: a repay without capacity is queued here too
+      if (!rw.ok) throw new Error(`rewrite refused an og-accepted lending tx: ${JSON.stringify(rw.error)}`);
       const hub = rw.value.replica.accountReplicas.get(BOB);
       const queued = hub?.mempool.at(-1);
       expect(og.accountId).toBe(BOB.toLowerCase());
@@ -94,7 +89,6 @@ describe("runtime-2: entity lending (ER-17, og payments/lending.ts)", () => {
     }
     expect(accepted).toBeGreaterThan(20);
     expect(refused).toBeGreaterThan(100);
-    expect(admissionOnly).toBeLessThan(accepted);
   });
 
   test("MATCH: a lendingOffer for a token the hub Account has not enabled is og LENDING_TOKEN_NOT_ENABLED; the missing hub is LENDING_HUB_ACCOUNT_MISSING", () => {

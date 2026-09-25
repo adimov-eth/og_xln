@@ -290,7 +290,8 @@ describe("multi-claim Account frames (og prepareAccountJClaimTx / verifyAccountJ
         const cases = Array.from({ length: 1 + ri(3) }, randomClaim);
         const leftRootBefore = og.state.leftPendingJClaims.root;
         const prepared = cases.map((c) => og.apply(ogClaimOf(c), byLeft)).filter((x) => x !== null);
-        const opened = unwrap(admit(reps.get(proposer)!, cases.map(rwClaimOf)));
+        // the proposal path is under test: seed the mempool directly (og admission would already drop exact duplicates, see diff/book-admission.test.ts)
+        const base = reps.get(proposer)!, opened = { ...base, mempool: [...base.mempool, ...cases.map(rwClaimOf)] } as AccountReplica;
         const plan = unwrap(planAccountProposal(opened, proposer, CLOCK, hankoVerify));
         if (plan._tag === "idle") { expect(prepared.length).toBe(0); continue; }
         const proposed = unwrap(stepIn(opened, proposeInput(opened, proposer), proposer)).replica as ProposedAccount;

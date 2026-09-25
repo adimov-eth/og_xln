@@ -364,8 +364,11 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
     expect(zero.outputs).toEqual([]);
     expect(unwrapErr(propose(opened, A, [pay(5n, [ALICE, BOB, CAROL])], 2n))._tag).toBe("payment_route");
     expect(unwrapErr(propose(opened, A, [pay(5n, [BOB, ALICE])], 2n))._tag).toBe("payment_route");
-    // the rewrite's Account admission checks capacity at enqueue (account area), so an unfunded hop is refused here
-    expect(unwrapErr(propose(opened, A, [pay(5n)], 2n))._tag).toBe("insufficient_capacity");
+    // og local-tx-admission.ts queues without validation: an unfunded hop commits the Entity frame and is dropped when the Account frame is proposed
+    const unfunded = unwrap(propose(opened, A, [pay(5n)], 2n));
+    expect(unfunded.replica.head.height).toBe(2n);
+    expect(unfunded.replica.accountReplicas.get(BOB)?.mempool.map((t) => t.type)).toEqual(["payment"]);
+    expect(unfunded.outputs).toEqual([{ to: ALICE, signerId: A, input: txs([], 2n) }]);
     const credit: EntityTx = { type: "extendCredit", data: { counterpartyEntityId: BOB, tokenId: unwrap(tokenId("1")), amount: 5n } };
     const extended = unwrap(propose(opened, A, [credit], 2n));
     expect(extended.replica.accountReplicas.get(BOB)?.mempool.at(-1)).toEqual({ type: "set_credit_limit", tokenId: "1", limit: 5n });

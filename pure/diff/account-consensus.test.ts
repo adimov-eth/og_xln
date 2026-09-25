@@ -525,7 +525,8 @@ describe("account-consensus: dispute preparation", () => {
     // rewrite (no counterparty witness yet, so the freeze stays in preparing)
     const claim = { type: "j_event_claim", jHeight: 3n, jBlockHash: W("0c"), events: [], observedAt: 3n } as unknown as WireAccountTx;
     const resolve = { type: "swap_resolve", offerId: "o", fillRatio: 1, cancelRemainder: true } as WireAccountTx;
-    const proposed = unwrap(admit(proposeFrom(genesisAB(), ALICE, [TX]).replica, [claim, TX2, resolve]));
+    // og queues whatever the matcher/j-watcher left in the mempool; an empty-events claim would be refused at admission (og ACCOUNT_J_CLAIM_EVENTS_INVALID), so seed it directly.
+    const held = proposeFrom(genesisAB(), ALICE, [TX]).replica, proposed = { ...held, mempool: [...held.mempool, claim, TX2, resolve] } as AccountReplica;
     const preparing = step(proposed, { kind: "freeze" }, ALICE).replica;
     expect(preparing._tag).toBe("preparing");
     expect(preparing.mempool.map((t) => t.type)).toEqual(ogPreparing);

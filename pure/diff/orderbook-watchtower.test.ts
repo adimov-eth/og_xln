@@ -253,7 +253,8 @@ describe("orderbook-watchtower: entity swap requests (og payments/swap-requests.
       const cancel = handleCancelSwapRequest(ogState([BOB]), { type: "proposeCancelSwap", data: { counterpartyEntityId: BOB, offerId: `o${i}` } } as never, { mutableFrameState: true } as never);
       verdicts.add(sameAsOg({ type: "proposeCancelSwap", data: { counterpartyEntityId: BOB, offerId: `o${i}` } }, cancel.accountTxs?.[0]?.tx as never));
     }
-    expect(verdicts.has("refused")).toBe(true);
+    // og applyAccountEnqueue queues every swap request without validating it (diff/book-admission.test.ts); refusals happen at proposal
+    expect([...verdicts]).toEqual(["queued"]);
     expect(() => handlePlaceSwapOfferRequest(ogState([]), { type: "placeSwapOffer", data: { counterpartyEntityId: CAROL } } as never, { mutableFrameState: true } as never)).toThrow("SWAP_REQUEST_ACCOUNT_MISSING");
     expect(() => handleCancelSwapRequest(ogState([]), { type: "proposeCancelSwap", data: { counterpartyEntityId: CAROL, offerId: "x" } } as never, { mutableFrameState: true } as never)).toThrow("SWAP_REQUEST_ACCOUNT_MISSING");
     expect(unwrapErr(applyEntityInput(opened(), { kind: "txs", timestamp: NOW + 1n, txs: [{ type: "proposeCancelSwap", data: { counterpartyEntityId: CAROL, offerId: "x" } }] }, ctx))).toEqual({ _tag: "swap_request_account_missing", target: CAROL });
