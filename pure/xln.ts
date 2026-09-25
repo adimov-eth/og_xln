@@ -3993,7 +3993,23 @@ export type EntityTx =
   | { readonly type: "chatMessage"; readonly data: { readonly message: string; readonly timestamp: number; readonly metadata?: Readonly<Record<string, unknown>> | undefined } }
   | { readonly type: "requestCollateral"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number } }
   | { readonly type: "profile-update"; readonly data: { readonly profile: ProfileUpdate } }
+  /** og entityCommand: one board member's signed individual command (og command/command-codec.ts SignedEntityCommandV1). */
+  | { readonly type: "entityCommand"; readonly data: EntityCommand }
+  /** og governance (system/basic.ts): a board proposal and a vote on it; both reach the reducer only inside an entityCommand. */
+  | { readonly type: "propose"; readonly data: { readonly action: ProposalAction; readonly proposer: string } }
+  | { readonly type: "vote"; readonly data: { readonly proposalId: string; readonly voter: string; readonly choice: "yes" | "no"; readonly comment?: string | undefined } }
   | LendingEntityTx;
+/** og SignedEntityCommandV1: `signature` is og's `0x` compact signature (recovery 0/1) over hashEntityCommand. */
+export type EntityCommand = {
+  readonly version: 1; readonly entityId: string; readonly stackKey: string; readonly boardHash: string; readonly boardEpoch: number;
+  readonly authorSignerId: string; readonly authorSigner: string; readonly nonce: bigint; readonly txsHash: string; readonly txs: readonly EntityTx[]; readonly signature: string;
+};
+/** og ProposalAction (entity/types.ts). */
+export type ProposalAction =
+  | { readonly type: "collective_message"; readonly data: { readonly message: string } }
+  | { readonly type: "entity_transaction"; readonly data: { readonly version: 1; readonly actionHash: string; readonly txs: readonly EntityTx[] } };
+/** og EntityFrameEvent (frame-events.ts): certified in the frame hash (`events`), never durable state. */
+export type FrameEvent = { readonly type: "status"; readonly message: string } | { readonly type: "text"; readonly validatorId: string; readonly message: string };
 /** og types/entity-tx.ts lendingOffer/Borrow/Repay/ClosePosition: each queues one Account lending tx on the hub Account. */
 export type LendingEntityTx =
   | { readonly type: "lendingOffer"; readonly data: { readonly positionId: string; readonly hubEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly interestBps: number } }
@@ -4022,7 +4038,8 @@ export type EntityInput =
 export type EntityPhase = "open" | "proposed" | "locked";
 export type EntityEvent = EntityInput["kind"];
 export type Folded = { readonly state: EntityState; readonly accountReplicas: ReadonlyMap<EntityId, AccountReplica> };
-export type Draft = Folded & { readonly outputs: readonly EntityOutput[] };
+/** `events`: og frame events the folded txs emitted (og addMessage / addTextMessage), in order. */
+export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readonly events?: readonly FrameEvent[] | undefined; readonly touched?: readonly EntityId[] | undefined };
 /** og replica `leaderVotes` (one collection key at a time) and `pendingLeaderCertificate`. */
 type LeaderLane = { readonly leaderVotes?: ReadonlyMap<string, LeaderVote> | undefined; readonly pendingLeaderCertificate?: LeaderCertificate | undefined };
 type EntityEnv = Folded & LeaderLane & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
@@ -4041,6 +4058,10 @@ export type EntityError =
   | Tagged<"self_account" | "wrong_entity" | "bad_quorum" | "bad_jurisdiction" | "from_not_converted" | "not_l0" | "mempool_full" | "sign_failed" | "payment_route" | "secondary_hash_duplicate">
   | Tagged<"frame_timestamp_invalid" | "frame_timestamp_regression", { timestamp: bigint }>
   | Tagged<"lending_entity", { reason: string }>
+  /** og EntityCommandRejectionError (a MalformedEntityFrameInputError): the outermost frame tx is evicted. */
+  | Tagged<"entity_command", { reason: string }>
+  /** og plain Error from an entity-tx reducer: not a reject disposition, so the whole input is refused. */
+  | Tagged<"entity_invariant", { reason: string }>
   | Tagged<"proposal_digest" | "proposal_parent" | "proposal_leader" | "proposal_hash" | "proposal_manifest" | "proposal_signature" | "proposal_conflict" | "proposal_wait" | "local_manifest_mismatch" | "local_precommit_conflict">
   | Tagged<"precommit_frame_mismatch" | "precommit_not_active" | "precommit_signer_equivocation" | "commit_conflict" | "commit_wait">
   | Tagged<"leader_vote_invalid" | "leader_vote_equivocation" | "leader_prepared_rejected" | "proposal_superseded" | "hanko_build">
@@ -4325,10 +4346,21 @@ const binaryBody = (value: unknown): Result<Binary, BinaryError> => {
 };
 /** og wire: token ids are numbers inside entity tx data. */
 const wireData = (tx: EntityTx): unknown => {
+  if (tx.type === "entityCommand") return { ...tx.data, txs: tx.data.txs.map(wireEntityTx) };
+  if (tx.type === "propose") return { ...tx.data, action: wireAction(tx.data.action) };
   if (tx.type === "requestCollateral") return { ...tx.data, tokenId: Number(tx.data.tokenId), ...(tx.data.feeTokenId === undefined ? {} : { feeTokenId: Number(tx.data.feeTokenId) }) };
   return tx.type !== "accountInput" && "tokenId" in tx.data && tx.data.tokenId !== undefined ? { ...tx.data, tokenId: Number(tx.data.tokenId) } : tx.data;
 };
-const entityFrameTx = (tx: EntityTx): Result<EntityFrameTx, BinaryError> => map(binaryBody(wireData(tx)), (data) => ({ type: tx.type, data }));
+/** og EntityTx wire object `{type, data}` (numeric token ids, nested command / proposal txs in wire form). */
+export const wireEntityTx = (tx: EntityTx): { readonly type: string; readonly data: unknown } => ({ type: tx.type, data: wireData(tx) });
+const wireAction = (a: ProposalAction): unknown => (a.type === "entity_transaction" ? { type: a.type, data: { ...a.data, txs: a.data.txs.map(wireEntityTx) } } : a);
+/** Inverse of wireData for the collective txs a stored proposal carries: token ids back to the rewrite's TokenId strings. */
+const unwireEntityTx = (w: { readonly type: string; readonly data: unknown }): EntityTx => {
+  const data = { ...(w.data as Record<string, unknown>) };
+  for (const k of ["tokenId", "feeTokenId"]) if (typeof data[k] === "number") data[k] = String(data[k]);
+  return { type: w.type, data } as EntityTx;
+};
+const entityFrameTx =(tx: EntityTx): Result<EntityFrameTx, BinaryError> => map(binaryBody(wireData(tx)), (data) => ({ type: tx.type, data }));
 export const hashEntityFrame = (f: EntityFrame): Result<EntityFrameHash, EntityFrameHashError> =>
   chain(frameNumber(f.height), (height) => chain(frameNumber(f.timestamp), (timestamp) => chain(traverse(f.txs, entityFrameTx), (txs) => map(entityFrameHash({
     prevFrameHash: frameWord(f.prevFrameHash), height, timestamp, txs, events: f.events, entityId: f.entityContext.entityId,
@@ -4565,7 +4597,7 @@ type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
   extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId,
-  requestCollateral: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self,
+  requestCollateral: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self, entityCommand: () => self, propose: () => self, vote: () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
 });
@@ -4753,33 +4785,350 @@ const profileUpdate = (state: EntityState, p: ProfileUpdate): Result<Binary, Ent
     avatar: typeof p.avatar === "string" ? p.avatar : text("avatar"), bio: typeof p.bio === "string" ? p.bio : text("bio"), website: typeof p.website === "string" ? p.website : text("website"),
   });
 };
-const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldContext): Result<Draft, EntityError> => {
+// ---- og entity/command (command-codec.ts, index.ts), auth/authorization.ts, tx/processing/proposals.ts, system/basic.ts propose/vote ----
+/** og applyEntityTxsInOrder authorization lanes: top-level frame txs, a signed command's individual txs, an approved proposal's collective txs. */
+type TxLane = "top" | "command" | "collective";
+/** A tx that changes nothing but the Entity state: no outputs, no events, no Account touched. */
+const idle = (state: EntityState, replicas: Replicas): Draft => ({ state, accountReplicas: replicas, outputs: [], touched: [] });
+const status = (message: string): FrameEvent => ({ type: "status", message });
+const lendingMessage = (tx: LendingEntityTx): string => {
+  switch (tx.type) {
+    case "lendingOffer": return `Lending pool funding requested: ${tx.data.amount} token=${Number(tx.data.tokenId)}`;
+    case "lendingBorrow": return `Loan requested: ${tx.data.amount} token=${Number(tx.data.tokenId)}`;
+    case "lendingRepay": return `Loan repayment requested: ${tx.data.loanId}`;
+    case "lendingClosePosition": return `Lending position close requested: ${tx.data.positionId}`;
+  }
+};
+const invariant = (reason: string): Result<never, EntityError> => err({ _tag: "entity_invariant", reason });
+const rejectCommand = (reason: string): Result<never, EntityError> => err({ _tag: "entity_command", reason });
+/** og isEntityProtocolTx / isIndividualEntityCommandTx / isCollectiveEntityActionTx over the rewrite's tx types. */
+const PROTOCOL_TXS: ReadonlySet<string> = new Set(["boardHandover", "entityCommand", "runtimeOutput", "scheduledWake", "proposeAccountsNow", "j_event", "accountInput"]);
+const INDIVIDUAL_TXS: ReadonlySet<string> = new Set(["chat", "materializeCrossJurisdictionClear", "materializeCrossJurisdictionSwap", "propose", "vote"]);
+const isProtocolTx = (tx: EntityTx): boolean => PROTOCOL_TXS.has(tx.type);
+const isIndividualTx = (tx: EntityTx): boolean => INDIVIDUAL_TXS.has(tx.type);
+const isCollectiveTx = (tx: EntityTx): boolean => !isProtocolTx(tx) && !isIndividualTx(tx);
+/**
+ * og assertEntityTxAuthorization. A signed command applies only individual txs and an approved proposal only collective ones. og refuses every
+ * other top-level tx with ENTITY_COMMAND_REQUIRED; the rewrite's top-level `txs` lane stays the trusted local lane for the txs it already carried,
+ * and refuses the governance txs og only accepts inside a command.
+ */
+const laneRefusal = (tx: EntityTx, lane: TxLane): EntityError | undefined => {
+  if (isProtocolTx(tx)) return undefined;
+  if (lane === "command" && !isIndividualTx(tx)) return { _tag: "entity_invariant", reason: `ENTITY_COMMAND_COLLECTIVE_ACTION_REQUIRES_PROPOSAL:${tx.type}` };
+  if (lane === "collective" && !isCollectiveTx(tx)) return { _tag: "entity_invariant", reason: `ENTITY_COLLECTIVE_ACTION_TX_FORBIDDEN:${tx.type}` };
+  if (lane === "top" && (tx.type === "propose" || tx.type === "vote")) return { _tag: "entity_invariant", reason: `ENTITY_COMMAND_REQUIRED:${tx.type}` };
+  return undefined;
+};
+/** og plain Errors (openAccount, lending, governance invariants) refuse the whole input; a reject disposition evicts only the outermost tx. */
+const fatalTx = (tx: EntityTx, e: EntityError): boolean => tx.type === "openAccount" || e._tag === "lending_entity" || e._tag === "entity_invariant";
+/** og applyEntityTxsInOrder for a nested lane: every tx in order, atomically; a fatal child makes the whole outer tx fatal. */
+const foldNested = (state: EntityState, replicas: Replicas, txs: readonly EntityTx[], ctx: FoldContext, lane: TxLane): Result<Draft, EntityError> =>
+  foldResult<Draft, EntityTx, EntityError>(txs, { state, accountReplicas: replicas, outputs: [], events: [] }, (acc, tx) => {
+    const r = foldTx(acc.state, acc.accountReplicas, tx, ctx, lane);
+    if (!r.ok) return fatalTx(tx, r.error) && r.error._tag !== "entity_invariant" ? invariant(`${tx.type}:${r.error._tag}`) : r;
+    return ok({ ...r.value, outputs: [...acc.outputs, ...r.value.outputs], events: [...(acc.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])] });
+  });
+const WORD32 = /^0x[0-9a-f]{64}$/, EOA = /^0x[0-9a-f]{40}$/;
+const COMMAND_DOMAIN = "xln:entity-command:binary", PROPOSAL_ACTION_DOMAIN = "xln:entity-proposal-action:v1";
+const MAX_PENDING_PROPOSALS = 100;
+/** og UNREGISTERED_ENTITY_COMMAND_STACK_KEY = ethers.id('xln:entity-command:unregistered-stack:v1'). */
+const UNREGISTERED_STACK_KEY = keccak256Hex(utf8("xln:entity-command:unregistered-stack:v1"));
+/** og getCertifiedBoardStackKey: keccak(abi.encode(STACK_DOMAIN, chainId, depository, entityProvider)). */
+export const certifiedBoardStackKey = (j: { readonly chainId: number; readonly depositoryAddress: string; readonly entityProviderAddress: string }): string =>
+  keccak256Hex(abiEncode([A.b32(keccak256Hex(utf8("xln.certified-board.stack.v1"))), A.uint(BigInt(j.chainId)), A.address(j.depositoryAddress.toLowerCase()), A.address(j.entityProviderAddress.toLowerCase())]));
+const commandStackKey = (state: EntityState): string => (state.jurisdictionConfig === undefined ? UNREGISTERED_STACK_KEY
+  : certifiedBoardStackKey({ chainId: state.jurisdiction.chainId, depositoryAddress: state.jurisdiction.depositoryAddress, entityProviderAddress: state.jurisdictionConfig.entityProviderAddress }));
+type BoardMember = { readonly signerId: string; readonly signer: string; readonly share: bigint };
+type CommandBoard = { readonly boardHash: string; readonly boardEpoch: number; readonly members: readonly BoardMember[] };
+/** og hashBoard(encodeBoard(config)): the config's positional validators as zero-padded EOAs, uint16 powers, no delays. */
+export const configBoardHash = (q: Authority): string => {
+  const members = [...membersOf(q)];
+  return boardHashOf({ votingThreshold: Number(thresholdOf(q)), entityIds: members.map(([a]) => addressAsId(a)), votingPowers: members.map(([, m]) => Number(m.shares)), boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 }).toLowerCase();
+};
+/**
+ * og resolveEntityCommandBoard: a lazy Entity (id == its config board hash) is at epoch 0; any other Entity needs its certified board record.
+ * The rewrite carries no certified board registry, so such an Entity refuses like og with an empty registry.
+ */
+const commandBoard = (state: EntityState): Result<CommandBoard, EntityError> => {
+  const members = [...membersOf(state.quorum)].map(([a, m]): BoardMember => ({ signerId: signerId(a), signer: signerId(a), share: m.shares }));
+  const boardHash = configBoardHash(state.quorum), entity = signerId(state.id);
+  return entity === boardHash ? ok({ boardHash, boardEpoch: 0, members }) : invariant(`ENTITY_COMMAND_CERTIFIED_BOARD_REQUIRED:${entity}`);
+};
+const consensusHash = (value: unknown): Result<string, EntityError> => chain(binaryBody(value), (b) => map(encodeConsensus(b), (bytes) => bytesToHex(keccak_256(bytes))));
+/** og hashEntityCommandTxs. */
+export const hashCommandTxs = (txs: readonly EntityTx[]): Result<string, EntityError> => consensusHash({ version: COMMAND_DOMAIN, txs: txs.map(wireEntityTx) });
+type CommandBody = Omit<EntityCommand, "signature">;
+/** og hashEntityCommand over the normalized body (txs enter through txsHash only). */
+export const hashCommand = (c: CommandBody): Result<string, EntityError> => consensusHash({
+  domain: COMMAND_DOMAIN, version: c.version, entityId: c.entityId, stackKey: c.stackKey, boardHash: c.boardHash, boardEpoch: c.boardEpoch,
+  authorSignerId: c.authorSignerId, authorSigner: c.authorSigner, nonce: c.nonce, txsHash: c.txsHash,
+});
+/** og hashCollectiveEntityActionTxs. */
+const hashCollectiveTxs = (txs: readonly EntityTx[]): Result<string, EntityError> => {
+  if (txs.length === 0 || txs.length > ENTITY_MEMPOOL_SIZE) return invariant(`ENTITY_COLLECTIVE_ACTION_TX_COUNT_INVALID:${txs.length}`);
+  const forbidden = txs.find((tx) => !isCollectiveTx(tx));
+  return forbidden !== undefined ? invariant(`ENTITY_COLLECTIVE_ACTION_TX_FORBIDDEN:${forbidden.type}`) : consensusHash({ domain: PROPOSAL_ACTION_DOMAIN, version: 1, txs: txs.map(wireEntityTx) });
+};
+/** og buildEntityTransactionProposalAction. */
+export const entityTransactionAction = (txs: readonly EntityTx[]): Result<ProposalAction, EntityError> => map(hashCollectiveTxs(txs), (actionHash) => ({ type: "entity_transaction", data: { version: 1, actionHash, txs } }));
+/** og assertEntityProposalAction: the recomputed collective action hash must equal the carried one. */
+const checkAction = (a: ProposalAction): Result<ProposalAction, EntityError> => {
+  if (a.type === "collective_message") return typeof a.data.message === "string" ? ok({ type: a.type, data: { message: a.data.message } }) : invariant("ENTITY_PROPOSAL_MESSAGE_DATA_INVALID");
+  if (a.type !== "entity_transaction") return invariant(`ENTITY_PROPOSAL_ACTION_TYPE_INVALID:${String((a as { type?: unknown }).type)}`);
+  if (a.data.version !== 1) return invariant("ENTITY_PROPOSAL_TRANSACTION_DATA_INVALID");
+  const carried = lower(a.data.actionHash);
+  return chain(hashCollectiveTxs(a.data.txs), (computed) => (carried !== computed ? invariant(`ENTITY_PROPOSAL_ACTION_HASH_MISMATCH:${carried || "missing"}:${computed}`) : ok({ type: a.type, data: { version: 1, actionHash: carried, txs: a.data.txs } })));
+};
+/** og hashEntityProposalAction. */
+export const hashProposalAction = (a: ProposalAction): Result<string, EntityError> => chain(checkAction(a), (checked) => consensusHash({ domain: PROPOSAL_ACTION_DOMAIN, action: wireAction(checked) }));
+type NonceSlot = { readonly nonce: bigint; readonly commandHash: string };
+/** og canonicalCommandNonceState: the committed fence for the current board, empty after a board rotation. */
+const nonceSlots = (state: EntityState, board: CommandBoard): ReadonlyMap<string, NonceSlot> => {
+  const stored = state.committed["entityCommandNonces"] as { readonly boardHash?: string; readonly boardEpoch?: number; readonly bySigner?: ReadonlyMap<string, NonceSlot> } | undefined;
+  return stored?.bySigner !== undefined && stored.boardHash === board.boardHash && stored.boardEpoch === board.boardEpoch ? stored.bySigner : new Map();
+};
+const nonceBinary = (board: CommandBoard, slots: ReadonlyMap<string, NonceSlot>): Binary =>
+  ({ version: 1, boardHash: board.boardHash, boardEpoch: board.boardEpoch, bySigner: new Map([...slots].map(([k, v]) => [k, { nonce: v.nonce, commandHash: v.commandHash }])) });
+type Disposition = "next" | "retry" | "cancel";
+/** og getEntityCommandDisposition: nonces only grow; an exact byte retry is idempotent, an older or rewritten slot is cancelled, a gap is refused. */
+const disposition = (slots: ReadonlyMap<string, NonceSlot>, c: EntityCommand, commandHash: string): Result<Disposition, EntityError> => {
+  const latest = slots.get(c.authorSignerId);
+  if (latest === undefined) return c.nonce !== 1n ? rejectCommand(`ENTITY_COMMAND_NONCE_MISMATCH:${c.nonce}:1`) : ok("next");
+  if (c.nonce === latest.nonce) return ok(commandHash === latest.commandHash ? "retry" : "cancel");
+  if (c.nonce < latest.nonce) return ok("cancel");
+  return c.nonce !== latest.nonce + 1n ? rejectCommand(`ENTITY_COMMAND_NONCE_MISMATCH:${c.nonce}:${latest.nonce + 1n}`) : ok("next");
+};
+/** og isCanonicalCompactSignatureHex: 0x + r,s + recovery 0/1, low-s, nonzero. */
+const canonicalCompactSig = (sig: string): boolean => {
+  if (!/^0x[0-9a-f]{130}$/.test(sig)) return false;
+  const bytes = hexToBytes(sig), r = wordAt(bytes, 0), sv = wordAt(bytes, 32), rec = bytes[64];
+  return (rec === 0 || rec === 1) && r !== 0n && sv !== 0n && r < secp256k1.CURVE.n && sv <= HALF_ORDER;
+};
+/** og assertEntityCommandTxs + normalizeEntityCommandBody + normalizeSignedEntityCommand. */
+const normalizeCommand = (c: EntityCommand): Result<EntityCommand, EntityError> => {
+  const bad = (code: string, v: unknown): Result<never, EntityError> => invariant(`${code}:${lower(v) || "missing"}`);
+  const commandTxs = (): Result<void, EntityError> => {
+    if (!Array.isArray(c.txs) || c.txs.length === 0 || c.txs.length > ENTITY_MEMPOOL_SIZE) return invariant(`ENTITY_COMMAND_TX_COUNT_INVALID:${Array.isArray(c.txs) ? c.txs.length : "not-array"}`);
+    const protocol = c.txs.find(isProtocolTx);
+    return protocol !== undefined ? invariant(`ENTITY_COMMAND_PROTOCOL_TX_FORBIDDEN:${protocol.type}`) : ok(undefined);
+  };
+  return chain(commandTxs(), () => {
+    if (c.version !== 1) return invariant(`ENTITY_COMMAND_VERSION_INVALID:${String(c.version)}`);
+    if (typeof c.nonce !== "bigint" || c.nonce < 1n) return invariant(`ENTITY_COMMAND_NONCE_INVALID:${String(c.nonce)}`);
+    const entityId = lower(c.entityId), stackKey = lower(c.stackKey), boardHash = lower(c.boardHash), authorSignerId = lower(c.authorSignerId), authorSigner = lower(c.authorSigner), txsHash = lower(c.txsHash);
+    if (!WORD32.test(entityId)) return bad("ENTITY_COMMAND_ENTITY_ID_INVALID", c.entityId);
+    if (!WORD32.test(stackKey)) return bad("ENTITY_COMMAND_STACK_KEY_INVALID", c.stackKey);
+    if (!WORD32.test(boardHash)) return bad("ENTITY_COMMAND_BOARD_HASH_INVALID", c.boardHash);
+    if (typeof c.boardEpoch !== "number" || !Number.isSafeInteger(c.boardEpoch) || c.boardEpoch < 0) return invariant(`ENTITY_COMMAND_BOARD_EPOCH_INVALID:${String(c.boardEpoch)}`);
+    if (authorSignerId === "") return invariant("ENTITY_COMMAND_AUTHOR_SIGNER_ID_REQUIRED");
+    if (!EOA.test(authorSigner)) return bad("ENTITY_COMMAND_AUTHOR_SIGNER_INVALID", c.authorSigner);
+    if (!WORD32.test(txsHash)) return bad("ENTITY_COMMAND_TXS_HASH_INVALID", c.txsHash);
+    return chain(hashCommandTxs(c.txs), (computed): Result<EntityCommand, EntityError> => {
+      if (txsHash !== computed) return invariant(`ENTITY_COMMAND_TXS_HASH_MISMATCH:${txsHash}:${computed}`);
+      const signature = lower(c.signature);
+      return canonicalCompactSig(signature) ? ok({ version: 1, entityId, stackKey, boardHash, boardEpoch: c.boardEpoch, authorSignerId, authorSigner, nonce: c.nonce, txsHash, txs: c.txs, signature }) : rejectCommand("ENTITY_COMMAND_SIGNATURE_INVALID");
+    });
+  });
+};
+/** og assertEntityCommandAuthorBindings: fields that claim an individual board identity must equal the author. */
+const authorBindings = (author: string, txs: readonly EntityTx[]): Result<void, EntityError> => {
+  for (const tx of txs) {
+    const [field, claimed] = tx.type === "chat" ? ["chat.from", tx.data.from] : tx.type === "propose" ? ["propose.proposer", tx.data.proposer] : tx.type === "vote" ? ["vote.voter", tx.data.voter] : [undefined, undefined];
+    if (field !== undefined && lower(claimed) !== author) return rejectCommand(`ENTITY_COMMAND_AUTHOR_FIELD_MISMATCH:${field}:${lower(claimed) || "missing"}:${author}`);
+  }
+  return ok(undefined);
+};
+/** og assertIndividualEntityCommandTxs. */
+const individualOnly = (txs: readonly EntityTx[]): Result<void, EntityError> => foldResult(txs, undefined as void, (_, tx): Result<void, EntityError> =>
+  !isIndividualTx(tx) ? rejectCommand(`ENTITY_COMMAND_COLLECTIVE_ACTION_REQUIRES_PROPOSAL:${tx.type}`) : tx.type === "propose" ? map(checkAction(tx.data.action), () => undefined) : ok(undefined));
+type CheckedCommand = { readonly command: EntityCommand; readonly board: CommandBoard; readonly commandHash: string; readonly disposition: Disposition };
+/** og assertSignedEntityCommand: entity, stack, board and epoch, author and its EOA, author bindings, individual txs, signature, nonce disposition. */
+export const checkCommand = (state: EntityState, raw: EntityCommand): Result<CheckedCommand, EntityError> => chain(normalizeCommand(raw), (c) => {
+  const entityId = lower(state.id), stackKey = commandStackKey(state);
+  if (c.entityId !== entityId) return rejectCommand(`ENTITY_COMMAND_ENTITY_MISMATCH:${c.entityId}:${entityId}`);
+  if (c.stackKey !== stackKey) return rejectCommand(`ENTITY_COMMAND_STACK_MISMATCH:${c.stackKey}:${stackKey}`);
+  return chain(commandBoard(state), (board) => {
+    if (c.boardHash !== board.boardHash) return rejectCommand(`ENTITY_COMMAND_BOARD_MISMATCH:${c.boardHash}:${board.boardHash}`);
+    if (c.boardEpoch !== board.boardEpoch) return rejectCommand(`ENTITY_COMMAND_EPOCH_MISMATCH:${c.boardEpoch}:${board.boardEpoch}`);
+    const author = board.members.find((m) => m.signerId === c.authorSignerId);
+    if (author === undefined) return rejectCommand(`ENTITY_COMMAND_AUTHOR_NOT_ON_BOARD:${c.authorSignerId}`);
+    if (c.authorSigner !== author.signer) return rejectCommand(`ENTITY_COMMAND_AUTHOR_EOA_MISMATCH:${c.authorSigner}:${author.signer}`);
+    return chain(authorBindings(c.authorSignerId, c.txs), () => chain(individualOnly(c.txs), () => chain(hashCommand(c), (commandHash) => {
+      if (!sameHex(recoverRawSigner(commandHash, c.signature) ?? undefined, author.signer)) return rejectCommand(`ENTITY_COMMAND_SIGNATURE_MISMATCH:${author.signerId}:${author.signer}`);
+      return map(disposition(nonceSlots(state, board), c, commandHash), (d): CheckedCommand => ({ command: c, board, commandHash, disposition: d }));
+    })));
+  });
+});
+/** og applyNestedEntityTx: a non-next command (exact retry or cancelled slot) is a no-op; otherwise its txs apply in order, then the nonce advances. */
+const foldCommand = (state: EntityState, replicas: Replicas, raw: EntityCommand, ctx: FoldContext): Result<Draft, EntityError> => chain(checkCommand(state, raw), ({ command, board, commandHash, disposition: d }) => {
+  if (d !== "next") return ok(idle(state, replicas));
+  return map(foldNested(state, replicas, command.txs, ctx, "command"), (applied) => {
+    const slots = new Map(nonceSlots(applied.state, board)).set(command.authorSignerId, { nonce: command.nonce, commandHash });
+    return { ...applied, state: { ...applied.state, committed: { ...applied.state.committed, entityCommandNonces: nonceBinary(board, slots) } } };
+  });
+});
+/** og nextEntityCommandNonce. */
+export const nextCommandNonce = (state: EntityState, author: string): Result<bigint, EntityError> => map(commandBoard(state), (board) => (nonceSlots(state, board).get(lower(author))?.nonce ?? 0n) + 1n);
+/** og board shares keyed by canonical signer id. */
+const boardShares = (state: EntityState): { readonly bySigner: ReadonlyMap<string, bigint>; readonly total: bigint } => {
+  const bySigner = new Map([...membersOf(state.quorum)].map(([a, m]) => [signerId(a), m.shares] as const));
+  return { bySigner, total: [...bySigner.values()].reduce((a, b) => a + b, 0n) };
+};
+type StoredVote = "yes" | "no" | { readonly choice: "yes" | "no"; readonly comment: string };
+type StoredProposal = { readonly id: string; readonly proposer: string; readonly boardHash: string; readonly boardEpoch: number; readonly action: Binary; readonly actionHash: string; readonly votes: ReadonlyMap<string, StoredVote>; readonly created: number };
+const proposalsOf = (state: EntityState): ReadonlyMap<string, StoredProposal> => (state.committed["proposals"] as ReadonlyMap<string, StoredProposal> | undefined) ?? new Map();
+const withProposals = (state: EntityState, proposals: ReadonlyMap<string, StoredProposal>): EntityState =>
+  ({ ...state, committed: { ...state.committed, proposals: proposals as unknown as Binary } });
+/** og generateProposalId: sha256 of safeStringify({actionHash, proposer, boardHash, boardEpoch, commandNonce}) with og's sorted keys and tagged bigint. */
+export const proposalId = (actionHash: string, proposer: string, board: { readonly boardHash: string; readonly boardEpoch: number }, commandNonce: bigint): string =>
+  `prop_${nobleHex(sha256(utf8(JSON.stringify({ actionHash, boardEpoch: board.boardEpoch, boardHash: board.boardHash, commandNonce: { __xlnType: "BigInt", value: commandNonce.toString() }, proposer }))))}`;
+/** og executeProposal (+ approvedEntityTxs): a collective message is a status event; an entity transaction applies its txs on the collective lane. */
+const executeProposal = (state: EntityState, replicas: Replicas, action: ProposalAction, ctx: FoldContext, prior: readonly FrameEvent[]): Result<Draft, EntityError> =>
+  action.type === "collective_message"
+    ? ok({ state, accountReplicas: replicas, outputs: [], events: [...prior, status(`[COLLECTIVE] ${action.data.message}`)], touched: [] })
+    : map(foldNested(state, replicas, action.data.txs, ctx, "collective"), (d) => ({ ...d, events: [...prior, ...(d.events ?? [])] }));
+/** og handleProposeEntityTx: board member, action, capacity, id; a proposer holding the threshold executes at once, otherwise the proposal waits for votes. */
+const foldPropose = (state: EntityState, replicas: Replicas, x: Extract<EntityTx, { type: "propose" }>["data"], ctx: FoldContext): Result<Draft, EntityError> => {
+  const proposer = lower(x.proposer), power = boardShares(state).bySigner.get(proposer);
+  if (power === undefined) return invariant(`ENTITY_PROPOSAL_PROPOSER_UNKNOWN:${proposer}`);
+  return chain(commandBoard(state), (board) => chain(checkAction(x.action), (action) => {
+    const proposals = proposalsOf(state);
+    if (proposals.size >= MAX_PENDING_PROPOSALS) return invariant(`ENTITY_PROPOSAL_PENDING_LIMIT_EXCEEDED:${proposals.size}:${MAX_PENDING_PROPOSALS}`);
+    const pending = [...proposals.values()].find((p) => lower(p.proposer) === proposer);
+    if (pending !== undefined) return invariant(`ENTITY_PROPOSAL_PROPOSER_PENDING_LIMIT:${proposer}:${pending.id}`);
+    return chain(hashProposalAction(action), (actionHash) => chain(binaryBody(wireAction(action)), (wired) => {
+      const id = proposalId(actionHash, proposer, board, (nonceSlots(state, board).get(proposer)?.nonce ?? 0n) + 1n);
+      if (proposals.has(id)) return invariant(`ENTITY_PROPOSAL_DUPLICATE:${id}`);
+      if (power >= thresholdOf(state.quorum)) return executeProposal(state, replicas, action, ctx, []);
+      const proposal: StoredProposal = { id, proposer, boardHash: board.boardHash, boardEpoch: board.boardEpoch, action: wired, actionHash, votes: new Map([[proposer, "yes"]]), created: Number(ctx.timestamp) };
+      return ok(idle(withProposals(state, new Map(proposals).set(id, proposal)), replicas));
+    }));
+  }));
+};
+/** og handleVoteEntityTx: same board and epoch, one vote per member; yes power reaching the threshold executes, no power that makes it unreachable drops it. */
+const foldVote = (state: EntityState, replicas: Replicas, x: Extract<EntityTx, { type: "vote" }>["data"], ctx: FoldContext): Result<Draft, EntityError> => {
+  const voter = lower(x.voter), proposals = proposalsOf(state), proposal = proposals.get(x.proposalId), shares = boardShares(state);
+  if (proposal === undefined) return invariant(`ENTITY_PROPOSAL_VOTE_TARGET_MISSING:${x.proposalId}`);
+  if (!shares.bySigner.has(voter)) return invariant(`ENTITY_PROPOSAL_VOTER_UNKNOWN:${voter}`);
+  return chain(commandBoard(state), (board) => {
+    if (proposal.boardHash.toLowerCase() !== board.boardHash) return invariant(`ENTITY_PROPOSAL_BOARD_MISMATCH:${x.proposalId}:${proposal.boardHash}:${board.boardHash}`);
+    if (proposal.boardEpoch !== board.boardEpoch) return invariant(`ENTITY_PROPOSAL_EPOCH_MISMATCH:${x.proposalId}:${proposal.boardEpoch}:${board.boardEpoch}`);
+    if (proposal.votes.has(voter)) return invariant(`ENTITY_PROPOSAL_DUPLICATE_VOTE:${x.proposalId}:${voter}`);
+    const votes = new Map(proposal.votes).set(voter, x.comment !== undefined ? { choice: x.choice, comment: x.comment } : x.choice);
+    const power = (choice: "yes" | "no"): bigint => [...votes].reduce((n, [id, v]) => ((typeof v === "object" ? v.choice : v) === choice ? n + (shares.bySigner.get(id) ?? 0n) : n), 0n);
+    const threshold = thresholdOf(state.quorum), rest = new Map(proposals);
+    rest.delete(x.proposalId);
+    if (power("yes") >= threshold) return executeProposal(withProposals(state, rest), replicas, actionOf(proposal.action), ctx, []);
+    if (power("no") >= shares.total - threshold + 1n) return ok(idle(withProposals(state, rest), replicas));
+    return ok(idle(withProposals(state, new Map(proposals).set(x.proposalId, { ...proposal, votes })), replicas));
+  });
+};
+const actionOf = (wired: Binary): ProposalAction => {
+  const a = wired as { readonly type: string; readonly data: { readonly message?: string; readonly version?: 1; readonly actionHash?: string; readonly txs?: readonly { readonly type: string; readonly data: unknown }[] } };
+  return a.type === "collective_message" ? { type: "collective_message", data: { message: a.data.message ?? "" } }
+    : { type: "entity_transaction", data: { version: 1, actionHash: a.data.actionHash ?? "", txs: (a.data.txs ?? []).map(unwireEntityTx) } };
+};
+/** og normalizeEntityProposalBoard + normalizeEntityCommandNonceBoard at frame start: work from another board or epoch is dropped. */
+const normalizeGovernance = (state: EntityState): Result<EntityState, EntityError> => {
+  const proposals = proposalsOf(state), nonces = state.committed["entityCommandNonces"] as { readonly boardHash?: string; readonly boardEpoch?: number } | undefined;
+  if (proposals.size === 0 && nonces === undefined) return ok(state);
+  return map(commandBoard(state), (board) => {
+    const kept = new Map([...proposals].filter(([, p]) => p.boardHash.toLowerCase() === board.boardHash && p.boardEpoch === board.boardEpoch));
+    const next = kept.size === proposals.size ? state : withProposals(state, kept);
+    return nonces === undefined || (nonces.boardHash === board.boardHash && nonces.boardEpoch === board.boardEpoch) ? next
+      : { ...next, committed: { ...next.committed, entityCommandNonces: nonceBinary(board, new Map()) } };
+  });
+};
+/**
+ * og prepareLocallyAuthoredEntityTxs (without its openAccount/directPayment materialization): protocol txs pass through, a signed command is
+ * re-checked against the running cursor (a stale one is dropped), runs of individual txs become one command and runs of collective txs one
+ * command carrying a `propose` of them. `sign` is the author's key on a 32-byte digest.
+ */
+export const authorEntityTxs = (state: EntityState, author: string, txs: readonly EntityTx[], sign: (digest: Hash) => Result<Signature, unknown>): Result<readonly EntityTx[], EntityError> => {
+  let cursor = state, run: EntityTx[] = [], kind: "individual" | "collective" | undefined;
+  const out: EntityTx[] = [], seen = new Map<string, string>();
+  const advance = (c: CheckedCommand): void => {
+    const slots = new Map(nonceSlots(cursor, c.board)).set(c.command.authorSignerId, { nonce: c.command.nonce, commandHash: c.commandHash });
+    cursor = { ...cursor, committed: { ...cursor.committed, entityCommandNonces: nonceBinary(c.board, slots) } };
+  };
+  const flush = (): Result<void, EntityError> => {
+    if (run.length === 0) return ok(undefined);
+    const batch = run, collective = kind === "collective";
+    run = []; kind = undefined;
+    const commandTxs = collective ? map(entityTransactionAction(batch), (action): readonly EntityTx[] => [{ type: "propose", data: { proposer: lower(author), action } }]) : ok(batch);
+    return chain(commandTxs, (ctxs) => chain(buildCommand(cursor, author, ctxs, sign), (command) => map(checkCommand(cursor, command), (checked) => { out.push({ type: "entityCommand", data: checked.command }); advance(checked); })));
+  };
+  for (const tx of txs) {
+    if (tx.type === "entityCommand") {
+      const slot = [tx.data.entityId, tx.data.stackKey, tx.data.boardHash, tx.data.boardEpoch, lower(tx.data.authorSignerId), tx.data.nonce].map(String).join("|"), identity = canon(wireEntityTx(tx));
+      if (seen.has(slot)) continue;
+      seen.set(slot, identity);
+      const flushed = flush();
+      if (!flushed.ok) return flushed;
+      const checked = checkCommand(cursor, tx.data);
+      if (!checked.ok) { if (checked.error._tag === "entity_command") continue; return checked; }
+      if (checked.value.disposition !== "next") continue;
+      out.push({ type: "entityCommand", data: checked.value.command });
+      advance(checked.value);
+      continue;
+    }
+    if (isProtocolTx(tx)) { const flushed = flush(); if (!flushed.ok) return flushed; out.push(tx); continue; }
+    const k = isIndividualTx(tx) ? "individual" : "collective";
+    if (kind !== undefined && kind !== k) { const flushed = flush(); if (!flushed.ok) return flushed; }
+    kind = k;
+    run.push(tx);
+  }
+  return map(flush(), () => out);
+};
+/** og buildSignedEntityCommand. */
+export const buildCommand = (state: EntityState, author: string, txs: readonly EntityTx[], sign: (digest: Hash) => Result<Signature, unknown>): Result<EntityCommand, EntityError> => {
+  const signer = lower(author);
+  if (txs.length === 0 || txs.length > ENTITY_MEMPOOL_SIZE) return invariant(`ENTITY_COMMAND_TX_COUNT_INVALID:${txs.length}`);
+  const protocol = txs.find(isProtocolTx);
+  if (protocol !== undefined) return invariant(`ENTITY_COMMAND_PROTOCOL_TX_FORBIDDEN:${protocol.type}`);
+  return chain(commandBoard(state), (board) => {
+    const member = board.members.find((m) => m.signerId === signer);
+    if (member === undefined) return rejectCommand(`ENTITY_COMMAND_AUTHOR_NOT_ON_BOARD:${signer}`);
+    return chain(authorBindings(signer, txs), () => chain(individualOnly(txs), () => chain(hashCommandTxs(txs), (txsHash) => {
+      const body: CommandBody = { version: 1, entityId: lower(state.id), stackKey: commandStackKey(state), boardHash: board.boardHash, boardEpoch: board.boardEpoch, authorSignerId: signer, authorSigner: member.signer, nonce: (nonceSlots(state, board).get(signer)?.nonce ?? 0n) + 1n, txsHash, txs };
+      return chain(hashCommand(body), (h) => map(mapErr(sign(h as Hash), (): EntityError => ({ _tag: "sign_failed" })), (sig): EntityCommand => ({ ...body, signature: `0x${hexBody(sig).toLowerCase()}` })));
+    })));
+  });
+};
+const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldContext, lane: TxLane = "top"): Result<Draft, EntityError> => {
   const origin = originOf(tx, state.id), peer = peerOf(tx, state.id);
+  const authorized = laneRefusal(tx, lane);
+  if (authorized !== undefined) return err(authorized);
+  const say = (d: Draft, ...messages: readonly string[]): Draft => ({ ...d, events: [...(d.events ?? []), ...messages.map(status)] });
   const enqueue = (target: EntityId, accountTxs: readonly AccountTx[], outputs: readonly EntityOutput[]): Result<Draft, EntityError> =>
     withChild(replicas, target, (child) => map(admitAt(child, accountTxs, state.id, L0_CLOCK, ctx.verify), (admitted) => ({ ...putChild(state, replicas, target, admitted), outputs })));
   const skip: Draft = { state, accountReplicas: replicas, outputs: [] };
   return matchBy("type", tx, {
-    openAccount: (x) => openChild(state, replicas, x),
-    extendCredit: (x) => (replicas.has(x.data.counterpartyEntityId) ? enqueue(x.data.counterpartyEntityId, [{ type: "set_credit_limit", tokenId: x.data.tokenId, limit: x.data.amount }], [wake(state, ctx.timestamp)]) : ok(skip)),
+    // og open-account.ts: the two status events around the insert
+    openAccount: (x) => map(openChild(state, replicas, x), (d) => say(d, `💳 Opening account with Entity ${x.data.targetEntityId}...`, `✅ Account opening request sent to Entity ${lower(x.data.targetEntityId)}`)),
+    extendCredit: (x) => (replicas.has(x.data.counterpartyEntityId) ? map(enqueue(x.data.counterpartyEntityId, [{ type: "set_credit_limit", tokenId: x.data.tokenId, limit: x.data.amount }], [wake(state, ctx.timestamp)]), (d) => say(d, `💳 Extended credit of ${x.data.amount} to ${x.data.counterpartyEntityId.slice(-4)}`)) : ok(skip)),
     directPayment: (x) => {
       const { route, targetEntityId, amount, deliveryMode, trustedGatewayEntityId, tokenId, description } = x.data;
       if (route.length === 0 || route.length > 100 || route[0] !== state.id || route[route.length - 1] !== targetEntityId) return err({ _tag: "payment_route" });
       if (deliveryMode !== "direct" && deliveryMode !== "trusted") return err({ _tag: "payment_route" });
-      if (amount < 1n || amount > UINT256_MAX) return ok(skip);
+      if (amount < 1n || amount > UINT256_MAX) return ok(say(skip, "❌ Payment failed: amount out of bounds"));
       // og requireTrustedPaymentGateway: exactly [source, gateway, target] with the declared gateway distinct from both ends
       if (deliveryMode === "trusted" ? route.length !== 3 || route[1] !== trustedGatewayEntityId || route[1] === route[0] || route[1] === targetEntityId : trustedGatewayEntityId !== undefined || route.length !== 2) return err({ _tag: "payment_route" });
       const next = route[1] as EntityId;
       // og buildNextHopPayment: the first leg carries the remaining route, the default description and the delivery mode
       const leg: AccountTx = { type: "payment", tokenId, amount, route: route.slice(1), description: description || `Payment to ${targetEntityId}`, fromEntityId: state.id, toEntityId: next, deliveryMode, ...opt("trustedGatewayEntityId", trustedGatewayEntityId) };
-      return replicas.has(next) ? enqueue(next, [leg], [wake(state, ctx.timestamp)]) : err({ _tag: "no_such_account", target: next });
+      return replicas.has(next) ? map(enqueue(next, [leg], [wake(state, ctx.timestamp)]), (d) => say(d, `💸 Sending ${amount} (token ${Number(tokenId)}) to ${targetEntityId} via ${route.length - 1} hops`)) : err({ _tag: "no_such_account", target: next });
     },
-    lendingOffer: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
-    lendingBorrow: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
-    lendingRepay: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
-    lendingClosePosition: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
-    // og system/basic.ts: chat messages live in the frame-local message log, which the state root does not commit (an invalid chat message is a silent no-op)
-    chat: () => ok(skip),
-    chatMessage: () => ok(skip),
+    lendingOffer: (x) => entityLending(state, replicas, x, (hub, accountTx) => map(enqueue(hub, [accountTx], [wake(state, ctx.timestamp)]), (d) => say(d, lendingMessage(x)))),
+    lendingBorrow: (x) => entityLending(state, replicas, x, (hub, accountTx) => map(enqueue(hub, [accountTx], [wake(state, ctx.timestamp)]), (d) => say(d, lendingMessage(x)))),
+    lendingRepay: (x) => entityLending(state, replicas, x, (hub, accountTx) => map(enqueue(hub, [accountTx], [wake(state, ctx.timestamp)]), (d) => say(d, lendingMessage(x)))),
+    lendingClosePosition: (x) => entityLending(state, replicas, x, (hub, accountTx) => map(enqueue(hub, [accountTx], [wake(state, ctx.timestamp)]), (d) => say(d, lendingMessage(x)))),
+    // og system/basic.ts: chat messages are frame events (certified in the frame hash, never in the state root); an invalid chat message is a silent no-op
+    chat: (x) => ok(typeof x.data.message === "string" && x.data.message.length > 0 && x.data.message.length <= 1000 ? { ...skip, events: [{ type: "text", validatorId: lower(x.data.from), message: x.data.message }] } : skip),
+    chatMessage: (x) => ok(say(skip, x.data.message)),
+    entityCommand: (x) => foldCommand(state, replicas, x.data, ctx),
+    propose: (x) => foldPropose(state, replicas, x.data, ctx),
+    vote: (x) => foldVote(state, replicas, x.data, ctx),
     // og admin.ts handleRequestCollateralEntityTx: a missing Account is a no-op; otherwise queue request_collateral and wake validators[0]
     requestCollateral: (x) => {
       const { counterpartyEntityId: to, tokenId, amount, feeTokenId, feeAmount, policyVersion } = x.data;
@@ -4813,17 +5162,17 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   type Acc = FoldedTxs & { readonly first?: EntityError | undefined };
   // og proposePendingAccountFrames worklist: Accounts proposable before the frame (sorted), then the Accounts the included txs touched, in order.
   const primed = [...replicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
-  return chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state, accountReplicas: replicas, outputs: [] }, included: [], evicted: [] }, (acc, tx) => {
+  return chain(normalizeGovernance(state), (normalized) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
     const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
-    if (r.ok) return ok({ ...acc, draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs] }, included: [...acc.included, tx] });
-    return tx.type === "openAccount" || r.error._tag === "lending_entity" ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
+    if (r.ok) return ok({ ...acc, included: [...acc.included, tx], draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs], events: [...(acc.draft.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.draft.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])] } });
+    return fatalTx(tx, r.error) ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
     // Accounts that received follow-up work (a gateway's forwarded leg) join after the directly touched ones.
     const followups = [...folded.draft.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
-    const order = [...new Set([...primed, ...folded.included.map((tx) => peerOf(tx, state.id)), ...followups])];
+    const order = [...new Set([...primed, ...(folded.draft.touched ?? []), ...followups])];
     return ok({ ...folded, draft: proposeAccounts(folded.draft, order, ctx).draft });
-  });
+  }));
 };
 const EMPTY_COLLECTION = { radix: 16, leafCount: 0, root: ZERO_WORD } as const;
 /** og applyEntityFrame `state.crontabState ??= initCrontab()`: the hubRebalance task at the 1s cadence, no hooks. */
@@ -4909,7 +5258,7 @@ const buildFrame = (r: EntityEnv, leader: FrameLeader, leaderState: LeaderState,
   const draft: Draft = { ...folded, state: { ...folded.state, height, timestamp, committed, leaderState } };
   return chain(frameNumber(height), (heightNo) => chain(entityRootOf(draft.state, draft.accountReplicas), (stateRoot) => chain(authorityRoot(draft.state), (root) => {
     const body = {
-      height, prevFrameHash: parent as EntityFrameHash, timestamp, txs, events: [], stateRoot, authorityRoot: root, leader,
+      height, prevFrameHash: parent as EntityFrameHash, timestamp, txs, events: (folded.events ?? []).map((e): Binary => ({ ...e })), stateRoot, authorityRoot: root, leader,
       entityContext: { version: 1, proposerReplicaId: `${draft.state.id}:${signer}`, entityId: draft.state.id, proposerSignerId: signer, parentFrameHash: parent, height: heightNo, gossipProfiles: [], peerAssertions: [], htlc: { version: 1, entries: [], originated: [] } },
     };
     return chain(hashEntityFrame({ ...body, hashesToSign: [] }), (frameHash) =>

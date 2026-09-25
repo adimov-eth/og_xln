@@ -14,7 +14,8 @@ import { ALICE, BOB, CAROL, NOW, TERMS, ackInput, aliceAddr, bobAddr, carolAddr,
 import { handleBoardHankoRefresh } from "../../core/account/consensus/incoming/board-hanko-refresh.ts";
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
 import { handleDirectPaymentEntityTx } from "../../core/entity/tx/handlers/payments/direct-payment.ts";
-import { handleProfileUpdateEntityTx } from "../../core/entity/tx/handlers/system/basic.ts";
+import { handleChatEntityTx, handleChatMessageEntityTx, handleProfileUpdateEntityTx } from "../../core/entity/tx/handlers/system/basic.ts";
+import { readEntityFrameEvents } from "../../core/entity/frame-events.ts";
 import { handleRequestCollateralEntityTx } from "../../core/entity/tx/handlers/account/lifecycle/admin.ts";
 import { buildQuorumHanko, getEntityConfigBoardHash } from "../../core/hanko/signing.ts";
 
@@ -295,7 +296,13 @@ describe("entity-consensus-2: entity txs chat, chatMessage, requestCollateral, p
     if (held._tag !== "proposed") throw new Error("phase");
     const f = held.frame;
     const ogTxs = [...list.map((t) => ({ type: t.type, data: t.data })), { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: 1, amount: 5n, feeTokenId: 2, feeAmount: 1n, policyVersion: 1 } }];
-    expect(unwrap(hashEntityFrame(f))).toBe(createEntityFrameHashFromStateRoot("genesis", 1, Number(NOW), ogTxs as never, [], ENTITY, f.stateRoot, f.authorityRoot, f.entityContext as never));
+    // og frame events: the chat text event and the chatMessage status event, as og's handlers record them
+    const ogState: any = { entityId: ENTITY };
+    handleChatEntityTx(ogState, list[0] as never, true);
+    handleChatMessageEntityTx(ogState, list[1] as never, true);
+    const ogEvents = readEntityFrameEvents(ogState);
+    expect(f.events).toEqual(ogEvents as never);
+    expect(unwrap(hashEntityFrame(f))).toBe(createEntityFrameHashFromStateRoot("genesis", 1, Number(NOW), ogTxs as never, ogEvents, ENTITY, f.stateRoot, f.authorityRoot, f.entityContext as never));
   });
 });
 
