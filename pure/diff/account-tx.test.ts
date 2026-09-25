@@ -20,6 +20,7 @@ import {
   genesisAccount,
   genesisAccountBody,
   getDelta,
+  hashHtlcSecret as rwHash,
   hexToBytes,
   holds,
   keccak256Hex,
@@ -132,23 +133,22 @@ describe("account-tx: balance", () => {
     expect(ogPay(og, 16n).ok).toBe(false);
     expect(ogPay(ogState([ogDelta(1, { leftCreditLimit: 20n, rightCreditLimit: 20n, leftHold: 5n })]), 15n).ok).toBe(true);
     const { body, ctx } = open();
-    const locked = unwrap(apply(body, { type: "htlc_lock", lockId: "L", hashlock: keccakUtf8("s"), timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1" }, ctx)).state;
+    const locked = unwrap(apply(body, rwLock(secretOf(9)), ctx)).state;
     expect(holds(locked, "1" as any, true)).toBe(5n);
     expect(apply(locked, { type: "payment", tokenId: "1", amount: 16n }, ctx).ok).toBe(false);
     expect(apply(locked, { type: "payment", tokenId: "1", amount: 15n }, ctx).ok).toBe(true);
   });
 
-  test("DIVERGES: payment above 2^128-1 — og accepts up to 2^256-1, rewrite refuses payment_too_large", () => {
-    const amount = 1n << 128n;
-    const big = 1n << 200n;
-    const og = ogState([ogDelta(1, { leftCreditLimit: big })]);
-    expect(ogPay(og, amount).ok).toBe(true);
-    let { body, ctx } = open();
-    body = unwrap(apply(body, { type: "set_credit_limit", tokenId: "1", limit: big }, { ...ctx, byLeft: false })).state; // right grants left
-    expect(outCapacity(getDelta(body.account, "1" as any), true, 0n) >= amount).toBe(true);
-    const r = apply(body, { type: "payment", tokenId: "1", amount }, ctx);
-    expect(r.ok).toBe(false);
-    expect((r as any).error._tag).toBe("payment_too_large");
+  test("MATCH: payment ceiling is uint256 max in both (2^128 accepted with capacity; 2^256 refused)", () => {
+    const big = (1n << 256n) - 1n;
+    for (const amount of [1n << 128n, (1n << 256n) - 1n, 1n << 256n]) {
+      const og = ogState([ogDelta(1, { leftCreditLimit: big })]);
+      let { body, ctx } = open();
+      body = unwrap(apply(body, { type: "set_credit_limit", tokenId: "1", limit: big }, { ...ctx, byLeft: false })).state; // right grants left
+      const r = apply(body, { type: "payment", tokenId: "1", amount }, ctx);
+      expect(r.ok).toBe(ogPay(og, amount).ok);
+      if (r.ok) expect(getDelta(r.value.state.account, "1" as any).offdelta).toBe(og.deltas.get(1).offdelta);
+    }
   });
 });
 
@@ -166,101 +166,84 @@ const lockedOg = async () => {
   return s;
 };
 
+// seeded PRNG (mulberry32) for randomized MATCH cases
+const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+const rng = prng(0xA7);
+const ri = (n: number) => Math.floor(rng() * n);
+const pick3 = <X,>(xs: readonly X[]): X => xs[ri(xs.length)] as X;
+const secretOf = (i: number) => `0x${i.toString(16).padStart(64, "0")}`;
+const rwLock = (secret: string, patch: Record<string, unknown> = {}) => ({ type: "htlc_lock", lockId: hashHtlcSecret(secret), hashlock: hashHtlcSecret(secret), timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1", ...patch });
+
 describe("account-tx: htlc", () => {
-  test("DIVERGES: hashlock function — og keccak256(bytes32 secret), rewrite keccak256(utf8 of the hex string)", () => {
-    const og = hashHtlcSecret(HEX_SECRET);
-    expect(og).toBe(keccak256Hex(hexToBytes(HEX_SECRET)).toLowerCase());
-    expect(keccakUtf8(HEX_SECRET)).not.toBe(og);
-    // An og-shaped lock (hashlock = og hash) can never be resolved by the rewrite with the real secret.
+  test("MATCH: hashlock = keccak256(bytes32 secret); a non-32-byte secret is refused by both", async () => {
+    expect(rwHash(HEX_SECRET)).toBe(hashHtlcSecret(HEX_SECRET));
+    expect(rwHash("preimage")).toBeNull();
+    expect(() => hashHtlcSecret("preimage")).toThrow();
     const { body, ctx } = open();
-    const locked = unwrap(apply(body, { type: "htlc_lock", lockId: og, hashlock: og, timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1" }, ctx)).state;
-    const r = apply(locked, { type: "htlc_resolve", lockId: og, secret: HEX_SECRET }, ctx);
-    expect(r.ok).toBe(false);
-    expect((r as any).error._tag).toBe("preimage");
+    const locked = unwrap(apply(body, rwLock(HEX_SECRET), ctx)).state;
+    const r = unwrap(apply(locked, { type: "htlc_resolve", lockId: hashHtlcSecret(HEX_SECRET), outcome: "secret", secret: HEX_SECRET }, { ...ctx, byLeft: false }));
+    expect(getDelta(r.state.account, "1" as any).offdelta).toBe(-5n);
+    expect(r.effects).toEqual([{ _tag: "forward_secret", hashlock: hashHtlcSecret(HEX_SECRET), secret: HEX_SECRET }]);
+    const og = await lockedOg();
+    expect((await handleHtlcResolve(og as any, { type: "htlc_resolve", data: { lockId: hashHtlcSecret(HEX_SECRET), outcome: "secret", secret: "preimage" } } as any, false, 0, 1)).ok).toBe(false);
+    expect(apply(locked, { type: "htlc_resolve", lockId: hashHtlcSecret(HEX_SECRET), outcome: "secret", secret: "preimage" }, ctx).ok).toBe(false);
   });
 
-  test("DIVERGES: secret reveal after revealBeforeHeight — og refuses (Lock expired), rewrite pays the beneficiary", async () => {
-    const s = await lockedOg();
-    const r = await handleHtlcResolve(s as any, { type: "htlc_resolve", data: { lockId: hashHtlcSecret(HEX_SECRET), outcome: "secret", secret: HEX_SECRET } } as any, false, 6, 1);
-    expect(r.ok).toBe(false);
-    expect(String((r as any).rejection?.message ?? (r as any).events ?? "")).toContain("expired");
-    const { body, ctx } = open();
-    const locked = unwrap(apply(body, { type: "htlc_lock", lockId: "L", hashlock: keccakUtf8("p"), timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1" }, ctx)).state;
-    const late = apply(locked, { type: "htlc_resolve", lockId: "L", secret: "p" }, { ...ctx, byLeft: false, jHeight: 6n, nowMs: 10n ** 16n });
-    expect(late.ok).toBe(true);
-    expect(getDelta((late as any).value.state.account, "1" as any).offdelta).toBe(-5n);
+  test("MATCH: htlc_lock admission (lockId==hashlock, duplicate, timelock/reveal expiry, amount bounds, capacity) on 300 random locks", async () => {
+    for (let i = 0; i < 300; i++) {
+      const secret = secretOf(1 + ri(4));
+      const lockId = ri(8) === 0 ? secretOf(99) : hashHtlcSecret(secret);
+      const timelock = BigInt(ri(4)), rbh = ri(4), ts = ri(4), jh = ri(4), amount = BigInt(ri(25)) - 1n, byLeft = ri(2) === 0;
+      const pre = ri(3) === 0;
+      const s = ogState([ogDelta(1, { leftCreditLimit: 20n, rightCreditLimit: 20n })]);
+      let { body, ctx } = open();
+      ctx = { ...ctx, byLeft, nowMs: BigInt(ts), jHeight: BigInt(jh) };
+      if (pre) {
+        expect((await handleHtlcLock(ogAccount(s), ogLockTx({ lockId: hashHtlcSecret(secretOf(1)), hashlock: hashHtlcSecret(secretOf(1)), amount: 3n }), true, ogClock(0, 0))).ok).toBe(true);
+        body = unwrap(apply(body, rwLock(secretOf(1), { amount: 3n }), { ...ctx, byLeft: true, nowMs: 0n, jHeight: 0n })).state;
+      }
+      const og = await handleHtlcLock(ogAccount(s), ogLockTx({ lockId, hashlock: hashHtlcSecret(secret), timelock, revealBeforeHeight: rbh, amount }), byLeft, ogClock(ts, jh));
+      const rw = apply(body, rwLock(secret, { lockId, timelock, revealBeforeHeight: BigInt(rbh), amount }), ctx);
+      expect(rw.ok).toBe(og.ok);
+      if (rw.ok) {
+        expect(holds(rw.value.state, "1" as any, true)).toBe(s.deltas.get(1).leftHold);
+        expect(holds(rw.value.state, "1" as any, false)).toBe(s.deltas.get(1).rightHold);
+        expect(rw.value.state.locks.size).toBe(s.locks.size);
+      }
+    }
   });
 
-  test("DIVERGES: htlc_lock with an already-expired timelock / passed revealBeforeHeight — og refuses, rewrite accepts", async () => {
-    const s1 = ogState([ogDelta(1, { leftCreditLimit: 20n })]);
-    expect((await handleHtlcLock(ogAccount(s1), ogLockTx({ timelock: 0n }), true, ogClock(1, 0))).ok).toBe(false);
-    const s2 = ogState([ogDelta(1, { leftCreditLimit: 20n })]);
-    expect((await handleHtlcLock(ogAccount(s2), ogLockTx({ revealBeforeHeight: 3 }), true, ogClock(1, 3))).ok).toBe(false);
-    const { body, ctx } = open();
-    expect(apply(body, { type: "htlc_lock", lockId: "L", hashlock: keccakUtf8("p"), timelock: 0n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1" }, { ...ctx, nowMs: 1n }).ok).toBe(true);
-    expect(apply(body, { type: "htlc_lock", lockId: "L", hashlock: keccakUtf8("p"), timelock: 10n ** 15n, revealBeforeHeight: 3n, amount: 5n, tokenId: "1" }, { ...ctx, jHeight: 3n }).ok).toBe(true);
-  });
-
-  test("DIVERGES: lockId must equal hashlock in og; rewrite accepts any lockId", async () => {
-    const s = ogState([ogDelta(1, { leftCreditLimit: 20n })]);
-    expect((await handleHtlcLock(ogAccount(s), ogLockTx({ lockId: "L" }), true, ogClock())).ok).toBe(false);
-    const { body, ctx } = open();
-    expect(apply(body, { type: "htlc_lock", lockId: "L", hashlock: hashHtlcSecret(HEX_SECRET), timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1" }, ctx).ok).toBe(true);
-  });
-
-  test("DIVERGES: 33rd live lock — og refuses (MAX_ACCOUNT_HTLC_LOCKS=32), rewrite has no cap", async () => {
+  test("MATCH: 33rd live lock refused by both (MAX_ACCOUNT_HTLC_LOCKS=32)", async () => {
     const s = ogState([ogDelta(1, { leftCreditLimit: 1000n })]);
     for (let i = 0; i < 32; i++) s.locks.put(`x${i}`, { tokenId: 2, amount: 1n, senderIsLeft: true });
     expect((await handleHtlcLock(ogAccount(s), ogLockTx({ amount: 1n }), true, ogClock())).ok).toBe(false);
     let { body, ctx } = open("left", 1000n);
-    for (let i = 0; i < 33; i++) {
-      body = unwrap(apply(body, { type: "htlc_lock", lockId: `L${i}`, hashlock: keccakUtf8(`p${i}`), timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 1n, tokenId: "1" }, ctx)).state;
-    }
-    expect(body.locks.size).toBe(33);
-  });
-
-  test("DIVERGES: beneficiary may cancel an active HTLC before expiry in og (outcome=error); rewrite has no such path", async () => {
-    const s = await lockedOg();
-    const r = await handleHtlcResolve(s as any, { type: "htlc_resolve", data: { lockId: hashHtlcSecret(HEX_SECRET), outcome: "error", reason: "no_route" } } as any, false, 0, 1);
-    expect(r.ok).toBe(true);
-    expect(s.locks.size).toBe(0);
-    expect(s.deltas.get(1).leftHold).toBe(0n);
-    const { body, ctx } = open();
-    const locked = unwrap(apply(body, { type: "htlc_lock", lockId: "L", hashlock: keccakUtf8("p"), timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1" }, ctx)).state;
-    const t = apply(locked, { type: "htlc_timeout", lockId: "L" }, { ...ctx, byLeft: false, jHeight: 0n });
-    expect(t.ok).toBe(false);
-    expect((t as any).error._tag).toBe("before_deadline");
-  });
-
-  test("DIVERGES: timestamp timelock expiry — og lets payer cancel once timestamp >= timelock; rewrite ignores timelock entirely", async () => {
-    const s = await lockedOg();
-    const r = await handleHtlcResolve(s as any, { type: "htlc_resolve", data: { lockId: hashHtlcSecret(HEX_SECRET), outcome: "error", reason: "timeout" } } as any, true, 0, 10 ** 15);
-    expect(r.ok).toBe(true);
-    const { body, ctx } = open();
-    const locked = unwrap(apply(body, { type: "htlc_lock", lockId: "L", hashlock: keccakUtf8("p"), timelock: 100n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1" }, ctx)).state;
-    const t = apply(locked, { type: "htlc_timeout", lockId: "L" }, { ...ctx, nowMs: 10n ** 15n, jHeight: 0n });
-    expect(t.ok).toBe(false);
-  });
-
-  test("MATCH: jHeight == revealBeforeHeight is not yet expired for timeout in either (og 'not expired', rewrite hole refusal)", async () => {
-    const s = await lockedOg();
-    const r = await handleHtlcResolve(s as any, { type: "htlc_resolve", data: { lockId: hashHtlcSecret(HEX_SECRET), outcome: "error", reason: "timeout" } } as any, true, 5, 1);
+    for (let i = 0; i < 32; i++) body = unwrap(apply(body, rwLock(secretOf(100 + i), { amount: 1n }), ctx)).state;
+    const r = apply(body, rwLock(secretOf(200), { amount: 1n }), ctx);
     expect(r.ok).toBe(false);
-    const { body, ctx } = open();
-    const locked = unwrap(apply(body, { type: "htlc_lock", lockId: "L", hashlock: keccakUtf8("p"), timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1" }, ctx)).state;
-    expect(apply(locked, { type: "htlc_timeout", lockId: "L" }, { ...ctx, jHeight: 5n }).ok).toBe(false);
-    expect(apply(locked, { type: "htlc_timeout", lockId: "L" }, { ...ctx, jHeight: 6n }).ok).toBe(true);
+    expect((r as any).error._tag).toBe("htlc_lock_capacity");
   });
 
-  test("MATCH: secret resolve moves offdelta by sender sign and releases the hold", async () => {
-    const s = await lockedOg();
-    const r = await handleHtlcResolve(s as any, { type: "htlc_resolve", data: { lockId: hashHtlcSecret(HEX_SECRET), outcome: "secret", secret: HEX_SECRET } } as any, false, 0, 1);
-    expect(r.ok).toBe(true);
-    const { body, ctx } = open();
-    const locked = unwrap(apply(body, { type: "htlc_lock", lockId: "L", hashlock: keccakUtf8("p"), timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1" }, ctx)).state;
-    const done = unwrap(apply(locked, { type: "htlc_resolve", lockId: "L", secret: "p" }, ctx)).state;
-    expect(getDelta(done.account, "1" as any).offdelta).toBe(s.deltas.get(1).offdelta);
-    expect(holds(done, "1" as any, true)).toBe(s.deltas.get(1).leftHold);
+  test("MATCH: htlc_resolve secret/error authority and expiry (payer/beneficiary x timestamp x jHeight x reason) on 400 random resolves", async () => {
+    for (let i = 0; i < 400; i++) {
+      const timelock = BigInt(1 + ri(4)), rbh = 1 + ri(3), ts = ri(6), jh = ri(5), resolverIsLeft = ri(2) === 0;
+      const outcome = ri(2) === 0 ? "secret" : "error";
+      const secret = ri(6) === 0 ? secretOf(7) : HEX_SECRET;
+      const reason = pick3(["timeout", "no_route", undefined]);
+      const s = ogState([ogDelta(1, { leftCreditLimit: 20n, rightCreditLimit: 20n })]);
+      expect((await handleHtlcLock(ogAccount(s), ogLockTx({ timelock, revealBeforeHeight: rbh }), true, ogClock(0, 0))).ok).toBe(true);
+      const data = outcome === "secret" ? { lockId: hashHtlcSecret(HEX_SECRET), outcome, secret } : { lockId: hashHtlcSecret(HEX_SECRET), outcome, ...(reason === undefined ? {} : { reason }) };
+      const og = await handleHtlcResolve(s as any, { type: "htlc_resolve", data } as any, resolverIsLeft, jh, ts);
+      const { body, ctx } = open();
+      const locked = unwrap(apply(body, rwLock(HEX_SECRET, { timelock, revealBeforeHeight: BigInt(rbh) }), { ...ctx, nowMs: 0n })).state;
+      const rw = apply(locked, { type: "htlc_resolve", ...data }, { ...ctx, byLeft: resolverIsLeft, nowMs: BigInt(ts), jHeight: BigInt(jh) });
+      expect(rw.ok).toBe(og.ok);
+      if (rw.ok) {
+        expect(getDelta(rw.value.state.account, "1" as any).offdelta).toBe(s.deltas.get(1).offdelta);
+        expect(holds(rw.value.state, "1" as any, true)).toBe(s.deltas.get(1).leftHold);
+        expect(rw.value.state.locks.size).toBe(0);
+      }
+    }
   });
 });
 
@@ -362,7 +345,7 @@ describe("account-tx: swap", () => {
 
   test("MATCH: swap_offer capacity check includes existing holds on the give token", () => {
     const { body, ctx } = open("right"); // left can pay 20 on token0
-    const locked = unwrap(apply(body, { type: "htlc_lock", lockId: "L", hashlock: keccakUtf8("p"), timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 15n, tokenId: "0" }, ctx)).state;
+    const locked = unwrap(apply(body, rwLock(secretOf(9), { amount: 15n, tokenId: "0" }), ctx)).state;
     expect(apply(locked, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 6n, wantTokenId: "1", wantAmount: 3n, minFillRatio: 0, expiresAtHeight: 100n }, ctx).ok).toBe(false);
     expect(apply(locked, { type: "swap_offer", offerId: "S", giveTokenId: "0", giveAmount: 5n, wantTokenId: "1", wantAmount: 3n, minFillRatio: 0, expiresAtHeight: 100n }, ctx).ok).toBe(true);
     // og commit.ts:208 uses deriveDelta(delta, makerIsLeft).outCapacity, which subtracts leftHold

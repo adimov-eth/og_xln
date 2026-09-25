@@ -83,7 +83,7 @@ export const AccountTransition = {
 export const EntityTransition = { txs: { open: ["proposed"] }, precommit: { proposed: ["open", "proposed"] } } as const;
 
 
-export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "htlc_timeout", "swap_offer", "swap_cancel", "swap_resolve", "settle_transition",
+export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "swap_offer", "swap_cancel", "swap_resolve", "settle_transition",
   "j_event_claim", "cross_pull_lock", "cross_pull_close", "deposit_to_custody", "withdraw_from_custody", "hub_custody_debit", "set_rebalance_policy", "rebalance_request",
   "rebalance_quote", "rebalance_accept", "deposit_collateral", "subcontract_propose", "subcontract_approve", "subcontract_reject", "subcontract_resolve_propose", "subcontract_resolve_approve"] as const;
 export const LendingTxNames = ["lending_fund", "lending_borrow_request", "lending_repay", "lending_close_request"] as const;
@@ -919,7 +919,9 @@ export const checkCrossClose = (p: { readonly amount: bigint; readonly ratio: nu
 export type Delta = { readonly tokenId: TokenId; readonly collateral: bigint; readonly ondelta: bigint; readonly offdelta: bigint; readonly leftCreditLimit: bigint; readonly rightCreditLimit: bigint };
 export type AccountState = { readonly id: AccountId; readonly deltas: ReadonlyMap<TokenId, Delta> };
 export type AccountError = Tagged<"insufficient_capacity", { available: bigint; requested: bigint }> | Tagged<"negative_collateral" | "negative_credit_limit" | "negative_transfer" | "credit_limit_too_large" | "payment_too_large" | "non_positive_payment">;
-export const MAX_PAYMENT_AMOUNT = (1n << 128n) - 1n;
+/** og direct-payment.ts:30, lock.ts:49: either sender moves up to the full uint256 magnitude of SignedAmount. */
+export const MAX_PAYMENT_AMOUNT = (1n << 256n) - 1n;
+export const INT512_MIN = -(1n << 511n), INT512_MAX = (1n << 511n) - 1n;
 export const MAX_CREDIT_LIMIT = (1n << 256n) - 1n;
 const floor0 = (n: bigint): bigint => (n > 0n ? n : 0n);
 export const zeroDelta = (tokenId: TokenId): Delta => ({ tokenId, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n });
@@ -1011,14 +1013,14 @@ export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" 
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
   | Tagged<"above_custody", { have: bigint; requested: bigint }>
-  | Tagged<"not_hub" | "quote_expired" | "quote_mismatch" | "no_policy" | "policy_bound" | "no_quote" | "duplicate" | "missing" | "not_maker" | "expired_offer" | "below_min_fill" | "before_deadline" | "preimage" | "pending_full" | "not_counterparty" | "bad_allowance" | "index" | "too_many_rows">
+  | Tagged<"not_hub" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "quote_expired" | "quote_mismatch" | "no_policy" | "policy_bound" | "no_quote" | "duplicate" | "missing" | "not_maker" | "expired_offer" | "below_min_fill" | "before_deadline" | "preimage" | "pending_full" | "not_counterparty" | "bad_allowance" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
   | Tagged<"unchosen", { hole: Hole }>;
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint };
 export type HubSide = "left" | "right" | null;
-export type Effect = Tagged<"forward_secret", { hashlock: Hash; secret: string }> | Tagged<"queue_r2c", { tokenId: TokenId; amount: bigint }>;
+export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }> | Tagged<"queue_r2c", { tokenId: TokenId; amount: bigint }>;
 const QUOTE_WINDOW_MS = 300_000n, MAX_PENDING = 16, MAX_ROWS = 128;
-export type HtlcLock = { readonly lockId: string; readonly hashlock: Hash; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly encryptedPackage?: string | undefined };
+export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly encryptedPackage?: string | undefined };
 export type SwapOffer = { readonly offerId: string; readonly giveTokenId: TokenId; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantAmount: bigint; readonly minFillRatio: number; readonly expiresAtHeight: bigint; readonly makerIsLeft: boolean };
 export type RebalancePolicy = { readonly softLimit: bigint; readonly hardLimit: bigint; readonly maxAcceptableFee: bigint };
 export type RebalanceQuote = { readonly quoteId: bigint; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId: TokenId; readonly feeAmount: bigint; readonly accepted: boolean };
@@ -1046,9 +1048,9 @@ export type AccountTx =
   | { readonly type: "add_delta"; readonly tokenId: TokenId }
   | { readonly type: "set_credit_limit"; readonly tokenId: TokenId; readonly limit: bigint }
   | { readonly type: "payment"; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: Hash; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly encryptedPackage?: string | undefined }
-  | { readonly type: "htlc_resolve"; readonly lockId: string; readonly secret: string }
-  | { readonly type: "htlc_timeout"; readonly lockId: string }
+  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly encryptedPackage?: string | undefined }
+  | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "secret"; readonly secret: string }
+  | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "error"; readonly reason?: string | undefined }
   | { readonly type: "swap_offer"; readonly offerId: string; readonly giveTokenId: TokenId; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantAmount: bigint; readonly minFillRatio: number; readonly expiresAtHeight: bigint }
   | { readonly type: "swap_cancel"; readonly offerId: string }
   | { readonly type: "swap_resolve"; readonly offerId: string; readonly fillRatio: number; readonly cancelRemainder: boolean }
@@ -1091,7 +1093,7 @@ export type KindRow = { readonly author: Author; readonly l0: boolean; readonly 
 const kind = <R extends KindRow>(author: Author, l0: boolean, repeatable: boolean, effects: readonly Effect["_tag"][] = []): R => ({ author, l0, repeatable, effects }) as R;
 export const AccountKinds = {
   add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true),
-  htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret"]), htlc_timeout: kind("bilateral", false, false),
+  htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret"]),
   swap_offer: kind("bilateral", false, false), swap_cancel: kind("bilateral", false, false), swap_resolve: kind("hub", false, false),
   settle_transition: kind("bilateral", false, false),
   deposit_to_custody: kind("bilateral", false, false), withdraw_from_custody: kind("bilateral", false, false), hub_custody_debit: kind("hub", false, false),
@@ -1114,7 +1116,20 @@ const ensureRoom = (a: AccountBody, tk: TokenId, amount: bigint, byLeft: boolean
 };
 const positive = (amount: bigint): Result<void, BodyError> => guard(amount > 0n, { _tag: "non_positive_payment" });
 const spend = (a: AccountBody, tk: TokenId, amount: bigint, byLeft: boolean): Result<AccountBody, BodyError> =>
-  chain(positive(amount), () => chain(offdeltaChange(byLeft, amount), (by) => map(updateDelta(a.account, tk, (d) => move(d, by, holds(a, tk, byLeft))), (s) => putState(a, s))));
+  chain(positive(amount), () => chain(offdeltaChange(byLeft, amount), (by) => chain(move(getDelta(a.account, tk), by, holds(a, tk, byLeft)), (d) => map(representable(a, d), () => putState(a, setDelta(a.account, d))))));
+/** og protocol/htlc/utils.ts:73: keccak256 of the 32-byte secret (abi.encode(bytes32)); anything else is not a secret. */
+export const hashHtlcSecret = (secret: string): string | null => (/^0x[0-9a-fA-F]{64}$/.test(secret) ? keccak256Hex(hexToBytes(secret)) : null);
+/** og htlc-deadline.ts: expired once jHeight passes revealBeforeHeight or the timestamp reaches timelock. */
+export const htlcExpired = (l: Pick<HtlcLock, "timelock" | "revealBeforeHeight">, ctx: Pick<FoldCtx, "nowMs" | "jHeight">): boolean => ctx.jHeight > l.revealBeforeHeight || ctx.nowMs >= l.timelock;
+export const MAX_ACCOUNT_HTLC_LOCKS = 32;
+/** og delta-utils.ts getOffdeltaRepresentationError: offdelta plus every live lock movement, each alone, stays in int512. */
+const representable = (a: AccountBody, d: Delta, added?: { readonly senderIsLeft: boolean; readonly amount: bigint }): Result<void, BodyError> => {
+  let lower = d.offdelta, upper = d.offdelta;
+  const include = (senderIsLeft: boolean, amount: bigint): void => { if (senderIsLeft) lower -= amount; else upper += amount; };
+  for (const l of a.locks.values()) if (l.tokenId === d.tokenId) include(l.senderIsLeft, l.amount);
+  if (added !== undefined) include(added.senderIsLeft, added.amount);
+  return guard(lower >= INT512_MIN && upper <= INT512_MAX, { _tag: "offdelta_range" });
+};
 const shifted = (a: AccountBody, tk: TokenId, by: bigint): AccountBody => putState(a, setDelta(a.account, shift(getDelta(a.account, tk), by)));
 const custodyOf = (a: AccountBody, tk: TokenId): bigint => a.custody.get(tk) ?? 0n;
 const fromCustody = (a: AccountBody, tk: TokenId, amount: bigint): Result<void, BodyError> => {
@@ -1179,25 +1194,35 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
   set_credit_limit: (x) => map(updateDelta(a.account, x.tokenId, (d) => setCreditLimit(d, x.limit, ctx.byLeft)), (s) => step(putState(a, s))),
   payment: (x) => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b)),
   htlc_lock: (x) => {
-    if (a.locks.has(x.lockId) || [...a.locks.values()].some((l) => l.hashlock === x.hashlock)) return err({ _tag: "duplicate" });
-    return map(checks(positive(x.amount), ensureRoom(a, x.tokenId, x.amount, ctx.byLeft)), () => step({ ...a, locks: mapSet(a.locks, x.lockId, {
-      lockId: x.lockId, hashlock: x.hashlock, timelock: x.timelock, revealBeforeHeight: x.revealBeforeHeight, amount: x.amount, tokenId: x.tokenId,
-      senderIsLeft: ctx.byLeft, createdHeight: ctx.accountHeight, createdTimestamp: ctx.nowMs, encryptedPackage: x.encryptedPackage,
-    }) }));
+    // og handlers/htlc/lock.ts:32-52,71-81,95-116 in order: identity, expiry, amount, 32-lock cap, capacity, int512 range, uint256 hold.
+    if (x.lockId !== x.hashlock) return err({ _tag: "lock_id" });
+    if (a.locks.has(x.lockId)) return err({ _tag: "duplicate" });
+    if (ctx.nowMs >= x.timelock || x.revealBeforeHeight <= ctx.jHeight) return err({ _tag: "htlc_expired" });
+    if (x.amount < 1n || x.amount > MAX_PAYMENT_AMOUNT) return err({ _tag: "non_positive_payment" });
+    if (a.locks.size >= MAX_ACCOUNT_HTLC_LOCKS) return err({ _tag: "htlc_lock_capacity" });
+    const totals = sideTotals(a, x.tokenId), held = ctx.byLeft ? totals.leftHold : totals.rightHold;
+    return chain(ensureRoom(a, x.tokenId, x.amount, ctx.byLeft), () => chain(representable(a, getDelta(a.account, x.tokenId), { senderIsLeft: ctx.byLeft, amount: x.amount }), () =>
+      held + x.amount > MAX_PAYMENT_AMOUNT ? err({ _tag: "hold_overflow" }) : ok(step({ ...a, locks: mapSet(a.locks, x.lockId, {
+        lockId: x.lockId, hashlock: x.hashlock, timelock: x.timelock, revealBeforeHeight: x.revealBeforeHeight, amount: x.amount, tokenId: x.tokenId,
+        senderIsLeft: ctx.byLeft, createdHeight: floor0(ctx.accountHeight - 1n), createdTimestamp: ctx.nowMs, encryptedPackage: x.encryptedPackage,
+      }) }))));
   },
   htlc_resolve: (x) => {
+    // og handlers/htlc/resolve.ts: a secret pays only before expiry; an error refund is the beneficiary's any time, the payer's after expiry.
     const live = a.locks.get(x.lockId);
-    if (live === undefined) return MISSING;
-    if (keccakUtf8(x.secret) !== live.hashlock) return err({ _tag: "preimage" });
-
-    return map(offdeltaChange(live.senderIsLeft, live.amount), (by) => step({ ...shifted(a, live.tokenId, by), locks: mapDelete(a.locks, x.lockId) }, [{ _tag: "forward_secret", hashlock: live.hashlock, secret: x.secret }]));
-  },
-  htlc_timeout: (x) => {
-    const live = a.locks.get(x.lockId);
-    if (live === undefined) return MISSING;
-    if (ctx.jHeight < live.revealBeforeHeight) return err({ _tag: "before_deadline" });
-    if (ctx.jHeight === live.revealBeforeHeight) return err({ _tag: "unchosen", hole: "reveal_before_height" });
-    return ok(step({ ...a, locks: mapDelete(a.locks, x.lockId) }));
+    if (live === undefined || !a.account.deltas.has(live.tokenId)) return MISSING;
+    const expired = htlcExpired(live, ctx);
+    if (x.outcome === "error") {
+      const beneficiary = ctx.byLeft !== live.senderIsLeft;
+      if (!beneficiary && !expired) return err({ _tag: "before_deadline" });
+      return x.reason === "timeout" && !expired ? err({ _tag: "before_deadline" }) : ok(step({ ...a, locks: mapDelete(a.locks, x.lockId) }));
+    }
+    if (expired) return err({ _tag: "htlc_expired" });
+    if (hashHtlcSecret(x.secret) !== live.hashlock) return err({ _tag: "preimage" });
+    return chain(offdeltaChange(live.senderIsLeft, live.amount), (by) => {
+      const released: AccountBody = { ...a, locks: mapDelete(a.locks, x.lockId) }, moved = shift(getDelta(a.account, live.tokenId), by);
+      return map(representable(released, moved), () => step(putState(released, setDelta(a.account, moved)), [{ _tag: "forward_secret", hashlock: live.hashlock, secret: x.secret }]));
+    });
   },
   swap_offer: (x) => {
     if (a.offers.has(x.offerId)) return err({ _tag: "duplicate" });
@@ -1281,7 +1306,7 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
 } satisfies Arms);
 const one = (x: { readonly tokenId: TokenId }): readonly string[] => [x.tokenId], none = (): readonly string[] => [];
 const namedTokens = (tx: WireAccountTx): readonly string[] => matchBy("type", tx, {
-  add_delta: one, set_credit_limit: one, payment: one, htlc_lock: one, htlc_resolve: none, htlc_timeout: none, swap_offer: (x) => [x.giveTokenId, x.wantTokenId], swap_cancel: none, swap_resolve: none,
+  add_delta: one, set_credit_limit: one, payment: one, htlc_lock: one, htlc_resolve: none, swap_offer: (x) => [x.giveTokenId, x.wantTokenId], swap_cancel: none, swap_resolve: none,
   deposit_to_custody: one, withdraw_from_custody: one, hub_custody_debit: one, set_rebalance_policy: one, rebalance_request: one, rebalance_quote: (x) => [x.tokenId, x.feeTokenId], rebalance_accept: none,
   deposit_collateral: one, subcontract_propose: none, subcontract_approve: none, subcontract_reject: none, subcontract_resolve_propose: (x) => x.effects.map((e) => e.tokenId), subcontract_resolve_approve: none,
   cross_pull_lock: none, cross_pull_close: none, j_event_claim: (x) => x.events.flatMap((row) => row.tokens.map((tk) => tk.tokenId.toString())), settle_transition: none,

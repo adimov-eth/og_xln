@@ -33,7 +33,7 @@ import {
   genesisReplica,
   getDelta,
   holds,
-  keccakUtf8,
+  hashHtlcSecret,
   offdeltaChange,
   outCapacity,
   setCreditLimit,
@@ -273,24 +273,25 @@ describe("oracle", () => {
 
   test("an HTLC resolve moves offdelta by their sign and a timeout does not", () => {
     const { body, ctx } = open();
-    const secret = "preimage";
-    const hashlock = keccakUtf8(secret);
-    const lock = { type: "htlc_lock" as const, lockId: "L", hashlock, timelock: 0n, revealBeforeHeight: 5n, amount: 5n, tokenId: "0" as const };
+    const secret = word("5a");
+    const hashlock = hashHtlcSecret(secret);
+    if (hashlock === null) throw new Error("secret");
+    const lock = { type: "htlc_lock" as const, lockId: hashlock, hashlock, timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "0" as const };
     const locked = unwrap(applyAccountBody(body, lock, ctx)).state;
     expect(getDelta(locked.account, "0").offdelta).toBe(0n);
     expect(outCapacity(getDelta(locked.account, "0"), true, holds(locked, "0", true))).toBe(15n);
-    const resolved = unwrap(applyAccountBody(locked, { type: "htlc_resolve", lockId: "L", secret }, ctx)).state;
+    const resolved = unwrap(applyAccountBody(locked, { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret }, ctx)).state;
     expect(getDelta(resolved.account, "0").offdelta).toBe(deriveTransferOffdeltaChange(true, 5n));
     expect(getDelta(resolved.account, "0").collateral).toBe(0n);
     expect(getDelta(resolved.account, "0").ondelta).toBe(0n);
     const proof = unwrap(accountProofBody(unwrap(committed(resolved)).view));
     expect(proof.offdeltas).toEqual([getDelta(resolved.account, "0").offdelta, getDelta(resolved.account, "1").offdelta]);
     expect(proof.tokenIds).toEqual([0n, 1n]);
-    expect(resolved.locks.has("L")).toBe(false);
-    expect(applyAccountBody(locked, { type: "htlc_resolve", lockId: "L", secret: "wrong" }, ctx).ok).toBe(false);
-    const expired = unwrap(applyAccountBody(locked, { type: "htlc_timeout", lockId: "L" }, { ...ctx, jHeight: 6n })).state;
+    expect(resolved.locks.has(hashlock)).toBe(false);
+    expect(applyAccountBody(locked, { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret: word("5b") }, ctx).ok).toBe(false);
+    const expired = unwrap(applyAccountBody(locked, { type: "htlc_resolve", lockId: hashlock, outcome: "error", reason: "timeout" }, { ...ctx, jHeight: 6n })).state;
     expect(getDelta(expired.account, "0").offdelta).toBe(0n);
-    expect(expired.locks.has("L")).toBe(false);
+    expect(expired.locks.has(hashlock)).toBe(false);
   });
 
   test("a filled swap moves give and want by their two signs", () => {
