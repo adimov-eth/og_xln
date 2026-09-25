@@ -16,11 +16,20 @@ import { computeCanonicalEntityConsensusStateHash, computeEntityAccountValueHash
 import { PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
 import { PersistentEntityCollectionMap } from "../../core/entity/state/persistent-collection-map.ts";
 import * as ogBook from "../../core/orderbook/core.ts";
+import { computeBookCommitmentHash } from "../../core/orderbook/commitment.ts";
+import { rebuildOrderbookPairIndex } from "../../core/orderbook/order-index.ts";
+import { getSwapExactQuoteLotMultipleAtPriceForDimensions } from "../../core/orderbook/types.ts";
+import { markWorkingOrderbookOffer, normalizeSwapOfferForOrderbook } from "../../core/orderbook/swap-execution.ts";
+import { processOrderbookSwaps as ogProcessSwaps } from "../../core/entity/tx/handlers/account/orderbook/index.ts";
+import { processOrderbookCancels as ogProcessCancels } from "../../core/entity/tx/handlers/account/orderbook/cancels.ts";
+import { applyCommittedSwapCancelsToOrderbook } from "../../core/orderbook/cross-j/orderbook.ts";
 import type { AccountReplica as OgReplica, AccountTx as OgTx } from "../../core/types/account.ts";
 
 // ---- rewrite ----
-import { admit, admitAt, applyBookCommand, applyEntityInput, createBook, createEntity, entityRootOf, pendingAccountInput, replicaId, tokenId, wireTx, type AccountReplica, type Book, type PairDimensions, type EntityId, type EntityTx, type WireAccountTx } from "../xln.ts";
-import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, genesisAB, partyIn, unwrap, verifiers } from "../xln_run.ts";
+import {
+  admit, admitAt, applyBookCommand, applyCommittedSwapCancels, applyEntityInput, applyRuntime, bookCommitmentHash, bookOrders, convertOutput, createBook, createEntity, createRuntime, entityRootOf, offersForMatching, pendingAccountInput,
+  processOrderbookCancels, processOrderbookSwaps, replicaId, replicaKey, spawn, tokenId, wireOf, wireTx, type EntityInput, type EntityOutput, type AccountReplica, type Book, type BookTx, type Hub, type HubAccount, type OrderbookExt, type PairDimensions, type SwapOffer, type SwapOfferEvent, type SwapRef, type EntityId, type EntityTx, type WireAccountTx } from "../xln.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, genesisAB, partyIn, unwrap, verifiers } from "../xln_run.ts";
 
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const rng = prng(0xb00c_ad);
@@ -257,5 +266,197 @@ describe("book-admission: orderbookExt state, init and root projection", () => {
       roots.add(root);
     }
     expect(roots.size).toBeGreaterThan(30);
+  });
+});
+
+// ============ og same-j hub matcher (entity/tx/handlers/account/orderbook/*, orderbook/cross-j/orderbook.ts) ============
+describe("book-admission: same-j hub matcher", () => {
+  const HUB = W("aa"), USERS = [W("0b"), W("cc"), W("0d"), W("ee")];
+  const PAIRS = [{ base: 2, quote: 1, bd: 18, qd: 6, mid: 25_000_000n }, { base: 4, quote: 1, bd: 6, qd: 6, mid: 1_200n }, { base: 7, quote: 8, bd: 6, qd: 6, mid: 5_000n }];
+  const lotOf = (d: number) => 10n ** BigInt(Math.max(0, d - 6));
+  const quoteAt = (bd: number, qd: number, base: bigint, price: bigint) => (base * price * 10n ** BigInt(qd)) / (10_000n * 10n ** BigInt(bd));
+  const toOgTx = (tx: WireAccountTx) => { const { type, ...data } = wireOf(tx) as { type: string }; return { type, data }; };
+  const toOgOffer = (o: SwapOffer) => ({ ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) });
+  const run = <X,>(f: () => X): X | Error => { try { return f(); } catch (e) { return e as Error; } };
+  const leftOf = (u: string) => (u < HUB ? u : HUB), rightOf = (u: string) => (u < HUB ? HUB : u);
+  type Truth = { offers: Map<string, Map<string, SwapOffer>>; mempool: Map<string, WireAccountTx[]>; active: Map<string, boolean> };
+  const rwHub = (t: Truth, ext: OrderbookExt, takerFeeBps: number): Hub => ({ id: HUB, ext, takerFeeBps, accounts: new Map(USERS.map((u): [string, HubAccount] => [u, { active: t.active.get(u)!, left: leftOf(u), right: rightOf(u), offers: t.offers.get(u)!, queued: t.mempool.get(u)! }])) });
+  const ogHub = (t: Truth, ext: any, takerFeeBps: number): any => ({
+    entityId: HUB, hubRebalanceConfig: { swapTakerFeeBps: takerFeeBps }, orderbookExt: ext,
+    accounts: new Map(USERS.map((u) => [u, { status: t.active.get(u) ? "active" : "disputed", mempool: t.mempool.get(u)!.map(toOgTx), state: { leftEntity: leftOf(u), rightEntity: rightOf(u), swapOffers: new Map([...t.offers.get(u)!].map(([id, o]) => [id, toOgOffer(o)])) } }])),
+  });
+  const sameBooks = (i: string, rw: OrderbookExt, og: any) => {
+    expect([i, [...rw.books.keys()].sort()]).toEqual([i, [...og.books.keys()].sort()]);
+    for (const [pairId, book] of rw.books) {
+      expect([i, pairId, bookCommitmentHash(book)]).toEqual([i, pairId, computeBookCommitmentHash(og.books.get(pairId))]);
+      expect(bookOrders(book).map((o) => [o.orderId, o.qtyLots])).toEqual(ogBook.getBookOrders(og.books.get(pairId)).map((o: any) => [o.orderId, o.qtyLots]));
+    }
+    expect([i, [...rw.pairDimensions].sort()]).toEqual([i, [...og.pairDimensions].sort()]);
+  };
+  const sameTxs = (i: string, rw: readonly BookTx[], og: readonly { accountId: string; tx: unknown }[]) =>
+    expect([i, rw.map(({ accountId, tx }) => ({ accountId, tx: toOgTx(tx) }))]).toEqual([i, og.map(({ accountId, tx }) => ({ accountId, tx }))]);
+  const sameHalt = (i: string, og: Error, rw: { ok: boolean; error?: unknown }) => expect([i, rw.ok ? "ok" : (rw.error as { reason: string }).reason]).toEqual([i, og.message]);
+
+  test("MATCH: 40 random hub streams (offers, fills, STP, bands, fees, dimensions, cancels, committed removals, resume): same resolves, books and pair dimensions", () => {
+    const comments = new Map<string, number>();
+    let halts = 0, fills = 0, resumes = 0, cancelTxs = 0;
+    for (let s = 0; s < 40; s++) {
+      const takerFeeBps = pick([0, 0, 5, 30, 10_000]);
+      const hubProfile = { entityId: HUB, name: "hub", spreadDistribution: { makerBps: 0, takerBps: 10_000, hubBps: 0, makerReferrerBps: 0, takerReferrerBps: 0 }, referenceTokenId: 1, usdQuoteAuthorityEntityId: pick([...USERS, W("99")]), minTradeSize: pick([0n, 0n, 1_000n]), supportedPairs: [] };
+      let rwExt: OrderbookExt = { books: new Map(), pairDimensions: new Map(), referrals: new Map(), hubProfile };
+      const ogExt: any = { books: new Map(), orderPairs: new Map(), pairDimensions: new Map(), referrals: new Map(), hubProfile };
+      const t: Truth = { offers: new Map(USERS.map((u) => [u, new Map()])), mempool: new Map(USERS.map((u) => [u, []])), active: new Map(USERS.map((u) => [u, ri(12) > 0])) };
+      let n = 0;
+      scenario: for (let pass = 0; pass < 8; pass++) {
+        const tag = `${s}/${pass}`;
+        // 1. committed removals: queued resolves commit (offer and resolve leave the Account), plus a few maker cancels
+        const cancelled: SwapRef[] = [];
+        for (const u of USERS) for (const [id] of [...t.offers.get(u)!]) {
+          const resolving = t.mempool.get(u)!.some((tx) => tx.type === "swap_resolve" && tx.offerId === id);
+          if ((resolving && ri(3) > 0) || ri(20) === 0) { t.offers.get(u)!.delete(id); cancelled.push({ offerId: id, accountId: u }); }
+        }
+        for (const u of USERS) t.mempool.set(u, t.mempool.get(u)!.filter((tx) => tx.type !== "swap_resolve" || t.offers.get(u)!.has(tx.offerId)));
+        const ogResume = run(() => applyCommittedSwapCancelsToOrderbook(undefined as never, ogHub(t, ogExt, takerFeeBps), cancelled));
+        const rwResume = applyCommittedSwapCancels(rwExt, cancelled);
+        if (ogResume instanceof Error) { sameHalt(tag, ogResume, rwResume); halts++; break scenario; }
+        expect([tag, rwResume.ok]).toEqual([tag, true]);
+        if (!rwResume.ok) break;
+        expect(rwResume.value.resumePairIds).toEqual(ogResume);
+        rwExt = rwResume.value.ext;
+        sameBooks(`${tag}:committed`, rwExt, ogExt);
+        // 2. maker cancel requests on live offers
+        const requests: SwapRef[] = USERS.flatMap((u) => [...t.offers.get(u)!.keys()].filter(() => ri(8) === 0).map((offerId) => ({ offerId, accountId: u })));
+        const ogCancel = run(() => ogProcessCancels(ogHub(t, ogExt, takerFeeBps), requests));
+        const rwCancel = processOrderbookCancels(rwHub(t, rwExt, takerFeeBps), requests);
+        if (ogCancel instanceof Error) { sameHalt(tag, ogCancel, rwCancel); halts++; break scenario; }
+        expect([tag, rwCancel.ok]).toEqual([tag, true]);
+        if (!rwCancel.ok) break;
+        sameTxs(`${tag}:cancel`, rwCancel.value.accountTxs, ogCancel.accountTxs);
+        expect([...rwCancel.value.books.keys()]).toEqual(ogCancel.bookUpdates.map((b) => b.pairId));
+        rwExt = { ...rwExt, books: new Map([...rwExt.books, ...rwCancel.value.books]) };
+        for (const { pairId, book } of ogCancel.bookUpdates) ogExt.books.set(pairId, book);
+        rebuildOrderbookPairIndex(ogExt);
+        for (const { accountId, tx } of rwCancel.value.accountTxs) t.mempool.get(accountId)!.push(tx);
+        cancelTxs += rwCancel.value.accountTxs.length;
+        sameBooks(`${tag}:cancelled`, rwExt, ogExt);
+        // 3. this frame's committed offers are matched
+        const events: SwapOfferEvent[] = [];
+        for (let k = ri(6); k > 0; k--) {
+          const u = pick(USERS), pair = pick(PAIRS), bd = ri(12) === 0 ? 6 : pair.bd, qd = pair.qd, sell = ri(2) === 0;
+          const spread = ri(8) === 0 ? 4_500 : 500, price = (pair.mid * BigInt(10_000 + ri(2 * spread) - spread)) / 10_000n || 1n;
+          const multiple = getSwapExactQuoteLotMultipleAtPriceForDimensions(bd, qd, price);
+          const qtyLots = BigInt(1 + ri(12)) * multiple + (ri(15) === 0 ? 1n : 0n), baseAmt = qtyLots * lotOf(bd) + (ri(20) === 0 && bd > 6 ? 1n : 0n), quoteAmt = quoteAt(bd, qd, baseAmt, price);
+          const [give, want, gd, wd, ga, wa] = sell ? [pair.base, pair.quote, bd, qd, baseAmt, quoteAmt] : [pair.quote, pair.base, qd, bd, quoteAmt, baseAmt];
+          const bps = BigInt(pick([0, 0, 10, 100])), maxFee = (wa * bps) / 10_000n, tf = pick([undefined, 0, 0, 1, 2] as const);
+          const offer: SwapOffer = { offerId: `o${++n}`, giveTokenId: T(give), giveTokenDecimals: gd, giveAmount: ga, wantTokenId: T(want), wantTokenDecimals: wd, wantAmount: wa, maxFee, minNetReceive: wa - maxFee, priceTicks: price,
+            ...(tf === undefined ? {} : { timeInForce: tf }), makerIsLeft: u < HUB, createdHeight: pass + ri(2), quantizedGive: ga, quantizedWant: wa };
+          t.offers.get(u)!.set(offer.offerId, offer);
+          events.push({ offerId: offer.offerId, accountId: u, makerIsLeft: offer.makerIsLeft, fromEntity: leftOf(u), toEntity: rightOf(u), createdHeight: offer.createdHeight, giveTokenId: give, giveTokenDecimals: gd, giveAmount: ga,
+            wantTokenId: want, wantTokenDecimals: wd, wantAmount: wa, maxFee, minNetReceive: wa - maxFee, priceTicks: price, ...(tf === undefined ? {} : { timeInForce: tf }) });
+        }
+        const hub = rwHub(t, rwExt, takerFeeBps), offers = unwrap(offersForMatching(hub, events));
+        expect(offers.map((o) => o.offerId)).toEqual(events.filter((e) => t.active.get(e.accountId)).map((e) => e.offerId));
+        const ogOffers = offers.map((o) => markWorkingOrderbookOffer(normalizeSwapOfferForOrderbook({ ...o, accountOutputVerified: true } as never, o.accountId)));
+        const resume = rwResume.value.resumePairIds;
+        if (resume.length > 0) resumes++;
+        const ogMatch = run(() => ogProcessSwaps(ogHub(t, ogExt, takerFeeBps), ogOffers, { resumeSamePairIds: resume }));
+        const rwMatch = processOrderbookSwaps(hub, offers, resume);
+        if (ogMatch instanceof Error) { sameHalt(tag, ogMatch, rwMatch); halts++; break scenario; }
+        expect([tag, rwMatch.ok ? "ok" : (rwMatch.error as { reason: string }).reason]).toEqual([tag, "ok"]);
+        if (!rwMatch.ok) break;
+        sameTxs(`${tag}:match`, rwMatch.value.accountTxs, ogMatch.accountTxs);
+        expect([tag, [...rwMatch.value.books.keys()]]).toEqual([tag, ogMatch.bookUpdates.map((b) => b.pairId)]);
+        for (const { pairId, book } of ogMatch.bookUpdates) expect([tag, pairId, bookCommitmentHash(rwMatch.value.books.get(pairId)!)]).toEqual([tag, pairId, computeBookCommitmentHash(book)]);
+        rwExt = { ...rwExt, books: new Map([...rwExt.books, ...rwMatch.value.books]), pairDimensions: rwMatch.value.pairDimensions };
+        for (const { pairId, book } of ogMatch.bookUpdates) ogExt.books.set(pairId, book);
+        rebuildOrderbookPairIndex(ogExt);
+        sameBooks(`${tag}:matched`, rwExt, ogExt);
+        for (const { accountId, tx } of rwMatch.value.accountTxs) {
+          t.mempool.get(accountId)!.push(tx);
+          if (tx.type !== "swap_resolve") continue;
+          if (tx.executionGiveAmount !== undefined) fills++;
+          const c = String(tx.comment ?? "fill").split(":")[0]!;
+          comments.set(c, (comments.get(c) ?? 0) + 1);
+        }
+      }
+    }
+    expect(fills).toBeGreaterThan(50);
+    expect(cancelTxs).toBeGreaterThan(5);
+    expect(resumes).toBeGreaterThan(5);
+    for (const c of ["fill", "outside-anchor-band", "STP", "fee-authorization-exceeded", "quote-lot-misaligned", "pair-decimals-mismatch"]) expect([c, (comments.get(c) ?? 0) > 0]).toEqual([c, true]);
+    expect(halts).toBeLessThan(40);
+  });
+});
+
+// ============ the book inside entity consensus: peer swap frames reach the hub, the post-tx phase matches and settles ============
+describe("book-admission: hub order book inside entity consensus", () => {
+  const entityOf = (id: EntityId, signer: typeof aliceAddr) => unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[signer, { shares: 1n }]]) }));
+  const signers = new Map<EntityId, typeof aliceAddr>([[ALICE, aliceAddr], [BOB, bobAddr], [CAROL, carolAddr]]);
+  const world = () => {
+    let rt = spawn(spawn(spawn(createRuntime(), entityOf(ALICE, aliceAddr)), entityOf(BOB, bobAddr)), entityOf(CAROL, carolAddr));
+    let now = NOW;
+    const send = (entityId: EntityId, txs: readonly EntityTx[]) => {
+      const queue: [EntityId, EntityOutput][] = [];
+      const step = (target: EntityId, input: EntityInput) => {
+        const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: target, signerId: signers.get(target)!, input }] }, verifiers));
+        expect(out.rejected).toEqual([]);
+        rt = out.runtime;
+        for (const o of out.outbox) queue.push([target, o]);
+      };
+      now += 1n;
+      step(entityId, { kind: "txs", timestamp: now, txs });
+      for (let guard = 0; queue.length > 0; guard++) {
+        if (guard > 400) throw new Error("no quiescence");
+        const [from, o] = queue.shift()!;
+        now += 1n;
+        if ("input" in o) { if (o.input.kind === "txs") step(o.to, { ...o.input, timestamp: now }); continue; }
+        const routed = unwrap(convertOutput(rt, o, from, now));
+        step(routed.entityId, routed.input);
+      }
+    };
+    const replica = (id: EntityId) => rt.entities.get(replicaKey(id, signers.get(id)!))!;
+    return { send, replica };
+  };
+  const open = (target: EntityId): EntityTx => ({ type: "openAccount", data: { targetEntityId: target, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig, creditAmount: 10n ** 30n, tokenId: T(2) } });
+  const credit = (to: EntityId, token: number): EntityTx => ({ type: "extendCredit", data: { counterpartyEntityId: to, tokenId: T(token), amount: 10n ** 30n } });
+  const offer = (offerId: string, sellWeth: boolean, priceUsdc: bigint, weth: bigint): EntityTx => {
+    const base = weth * 10n ** 18n, quote = weth * priceUsdc * 10n ** 6n;
+    return { type: "placeSwapOffer", data: { counterpartyEntityId: CAROL, offerId, giveTokenId: T(sellWeth ? 2 : 1), giveTokenDecimals: sellWeth ? 18 : 6, giveAmount: sellWeth ? base : quote,
+      wantTokenId: T(sellWeth ? 1 : 2), wantTokenDecimals: sellWeth ? 6 : 18, wantAmount: sellWeth ? quote : base, maxFee: 0n, minNetReceive: sellWeth ? quote : base } };
+  };
+  test("MATCH (og applyPostEntityTxPhases): a maker rests, a crossing taker fills it, both resolves commit and the book empties; a cancel request removes a resting offer", () => {
+    const { send, replica } = world();
+    send(CAROL, [{ type: "initOrderbookExt", data: { name: "hub", spreadDistribution: { makerBps: 0, takerBps: 10_000, hubBps: 0, makerReferrerBps: 0, takerReferrerBps: 0 }, referenceTokenId: 1, usdQuoteAuthorityEntityId: W("99"), minTradeSize: 0n, supportedPairs: ["1/2"] } }]);
+    send(ALICE, [open(CAROL)]);
+    send(BOB, [open(CAROL)]);
+    send(CAROL, [credit(ALICE, 1), credit(ALICE, 2), credit(BOB, 1), credit(BOB, 2)]);
+    send(ALICE, [credit(CAROL, 1), credit(CAROL, 2)]);
+    send(BOB, [credit(CAROL, 1), credit(CAROL, 2)]);
+    for (const [who, peer] of [[ALICE, CAROL], [BOB, CAROL], [CAROL, ALICE], [CAROL, BOB]] as const) expect(replica(who).accountReplicas.get(peer)?._tag).toBe("open");
+    // a maker's offer rests on the hub book
+    send(ALICE, [offer("ask1", true, 2500n, 1n)]);
+    const rested = replica(CAROL).state.orderbookExt!;
+    expect([...rested.books.keys()]).toEqual(["1/2"]);
+    expect(bookOrders(rested.books.get("1/2")!).map((o) => [o.orderId, o.ownerId, o.side, o.priceTicks])).toEqual([[`${ALICE}:ask1`, ALICE, 1, 25_000_000n]]);
+    expect(rested.pairDimensions.get("1/2")).toEqual({ baseTokenDecimals: 18, quoteTokenDecimals: 6 });
+    // a crossing taker: both offers are resolved in full and leave both Accounts
+    send(BOB, [offer("bid1", false, 2600n, 1n)]);
+    const traded = replica(CAROL).state.orderbookExt!.books.get("1/2")!;
+    expect([traded.tradeCount, bookOrders(traded).length]).toEqual([1, 0]);
+    for (const [who, peer] of [[ALICE, CAROL], [BOB, CAROL], [CAROL, ALICE], [CAROL, BOB]] as const) {
+      const child = replica(who).accountReplicas.get(peer)!;
+      expect([who, peer, child._tag, child.state.offers.size, child.mempool.length]).toEqual([who, peer, "open", 0, 0]);
+    }
+    // the maker sold 1 WETH for 2500 USDC at its resting price; the taker bought at that price (price improvement)
+    const moved = (who: EntityId, token: number) => { const d = replica(who).accountReplicas.get(CAROL)!.state.account.deltas.get(T(token))!; return d.offdelta < 0n ? -d.offdelta : d.offdelta; };
+    expect([moved(ALICE, 2), moved(ALICE, 1), moved(BOB, 2), moved(BOB, 1)]).toEqual([10n ** 18n, 2_500n * 10n ** 6n, 10n ** 18n, 2_500n * 10n ** 6n]);
+    // the maker's cancel request queues the hub's zero-fill resolve and takes the row off the book
+    send(ALICE, [offer("ask2", true, 2500n, 1n)]);
+    expect(bookOrders(replica(CAROL).state.orderbookExt!.books.get("1/2")!).map((o) => o.orderId)).toEqual([`${ALICE}:ask2`]);
+    send(ALICE, [{ type: "proposeCancelSwap", data: { counterpartyEntityId: CAROL, offerId: "ask2" } }]);
+    expect(bookOrders(replica(CAROL).state.orderbookExt!.books.get("1/2")!)).toEqual([]);
+    expect(replica(ALICE).accountReplicas.get(CAROL)!.state.offers.size).toBe(0);
+    // the root commits the book section
+    unwrap(entityRootOf(replica(CAROL).state, replica(CAROL).accountReplicas));
   });
 });

@@ -517,7 +517,8 @@ describe("cross-j: Account outputs through og applyAccountTxMutation", () => {
         body = rw.value.state;
         expect(unwrapR(committed(body) as never as { ok: true; value: { root: string } }).root).toBe(o.root!);
         // og runs this Account from LEFT's side: a forward is emitted only where LEFT is the trusted gateway.
-        const mine = rw.value.effects.filter((e: any) => e._tag !== "direct_payment_forward" || e.trustedGatewayEntityId === LEFT);
+        // swap_offer_upsert is og's frame-boundary output (same-j-swap-output.ts), not an applyAccountTxMutation outcome; diff/book-admission.test.ts covers it.
+        const mine = rw.value.effects.filter((e: any) => e._tag !== "swap_offer_upsert" && (e._tag !== "direct_payment_forward" || e.trustedGatewayEntityId === LEFT));
         expect(stableJson(mine)).toBe(stableJson(ogOutputsOf(o.value, effects)));
         for (const e of rw.value.effects) seen.add(e._tag);
       }
