@@ -3184,7 +3184,7 @@ const proofOf = (view: CommittedAccountState): Result<LocalProof, ProofError> =>
   });
 };
 export const localProof = (view: CommittedAccountState): Result<LocalProof, DisputeError> => asProof(proofOf(view));
-export type StartRefusal = Tagged<"no_witness" | "body_mismatch" | "nonce_stale" | "hash_mismatch" | "hanko_invalid"> | Tagged<"omits", { omitted: Omitted }> | Tagged<"proof", { error: ProofError | ViewError }>;
+export type StartRefusal = Tagged<"no_witness" | "body_mismatch" | "nonce_stale" | "hash_mismatch" | "hanko_invalid" | "not_attempted"> | Tagged<"omits", { omitted: Omitted }> | Tagged<"proof", { error: ProofError | ViewError }>;
 export const disputeStart = (view: CommittedAccountState, proof: CompleteProof, w: DisputeHanko, peer: EntityId, verify: Verify): Result<DisputeStart, StartRefusal> => {
   if (!sameHex(proof.bodyHash, w.proofBodyHash)) return err({ _tag: "body_mismatch" });
   if (w.proofNonce <= 0 || w.proofNonce <= proof.jNonce) return err({ _tag: "nonce_stale" });
@@ -3397,10 +3397,18 @@ export interface OpenAccount extends Tagged<"open", AccountEnv> {}
 export interface ProposedAccount extends Tagged<"proposed", Held> {}
 export interface ReceivedAccount extends Tagged<"received", Held & { disputeHanko: DisputeHanko | undefined }> {}
 /** og `dispute_preparing` keeps deferred J claims and dispute evidence queued (dispute/policy.ts); `disputed` keeps nothing. */
-export interface PreparingAccount extends Tagged<"preparing", Frozen & { mempool: readonly WireAccountTx[]; unready: StartRefusal }> {}
+/** `prepare`: og disputePrepare, set when the Entity's prepareDispute froze the Account (committed in the Entity leaf). */
+export interface PreparingAccount extends Tagged<"preparing", Frozen & { mempool: readonly WireAccountTx[]; unready: StartRefusal; prepare?: DisputePrepare | undefined }> {}
+/** og AccountReplica.disputePrepare (dispute/index.ts markAccountDisputePreparing). */
+export type DisputePrepare = { readonly startedAt: number; readonly readyAfter: number; readonly reason: string; readonly startIntent: { readonly description: string; readonly crossJurisdictionRouteId?: string | undefined; readonly starterInitialArguments?: string | undefined } };
+/** og activeDispute as handleDisputeStart (dispute/start.ts queueDisputeStart) writes it before the DisputeStarted event is observed. */
+export type QueuedDispute = {
+  readonly startedByLeft: boolean; readonly initialProofbodyHash: string; readonly initialNonce: number; readonly initialProposerIsLeft: boolean; readonly disputeTimeout: 0; readonly jNonce: number;
+  readonly starterInitialArguments: string; readonly starterCounterArguments: string; readonly starterCounterProofCommitment: string; readonly observedOnChain: false; readonly finalizeQueued: false;
+};
 /** og admits local txs into a disputed Account's mempool too (local-tx-admission.ts has no status gate); nothing ever proposes them. */
 /** `start`: our own dispute start, when we froze with a complete witness. `active`: og activeDispute, the on-chain dispute observed through external finality. */
-export interface DisputedAccount extends Tagged<"disputed", Frozen & { mempool: readonly WireAccountTx[]; start?: DisputeStart | undefined; active?: ActiveDispute | undefined }> {}
+export interface DisputedAccount extends Tagged<"disputed", Frozen & { mempool: readonly WireAccountTx[]; start?: DisputeStart | undefined; active?: ActiveDispute | undefined; queued?: QueuedDispute | undefined }> {}
 export type FrozenAccount = PreparingAccount | DisputedAccount;
 export type AccountReplica = OpenAccount | ProposedAccount | ReceivedAccount | FrozenAccount;
 export const certifies = (verify: Verify, digest: string, hanko: Hanko, entity: EntityId, authority?: HankoAuthority): Result<void, Tagged<"invalid_hanko", { entity: EntityId }>> => guard(verify(digest, hanko, entity, authority), { _tag: "invalid_hanko", entity });
@@ -3764,6 +3772,16 @@ export const resumePreparing = (r: PreparingAccount): Verb<OpenAccount> => ok(do
 export const disputeLive = (r: OpenAccount | ProposedAccount | ReceivedAccount, input: Freeze, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => freeze(r, input.evidence, ctx);
 export const disputePreparing = (r: PreparingAccount, _input: Freeze, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => freeze(r, r.evidence, ctx);
 export const disputeDisputed = (r: DisputedAccount): Verb<DisputedAccount> => ok(done(r));
+/** og markAccountDisputePreparing (replaceDisputeLifecycle → dispute_preparing): freeze keeping deferred J claims and dispute evidence, record disputePrepare. */
+export const prepareFrozen = (r: OpenAccount | ProposedAccount | ReceivedAccount, prepare: DisputePrepare, unready: StartRefusal): PreparingAccount => {
+  const { state, head, dispute: witnesses, acknowledged } = r;
+  return { _tag: "preparing", state, head, dispute: witnesses, acknowledged, evidence: undefined, ...envMeta(r), mempool: retainedThroughFreeze(r, (tx) => isDeferredClaim(tx) || isDisputeEvidence(tx)), unready, prepare };
+};
+/** og queueDisputeStart's replaceDisputeLifecycle → disputed: disputePrepare is dropped, the mempool is emptied, activeDispute is the unobserved start. */
+export const startPrepared = (r: PreparingAccount, start: DisputeStart, queued: QueuedDispute): DisputedAccount => {
+  const { state, head, dispute: witnesses, acknowledged, evidence } = r;
+  return { _tag: "disputed", state, head, dispute: witnesses, acknowledged, evidence, ...envMeta(r), mempool: [], start, queued };
+};
 /** og index.ts handleStandaloneDispute: shape, validate against the committed state, then the requirement ladder against our own current draft (og `currentDisputeProofBodyHash`), then store. */
 export const peerWitness = <R extends LiveAccount>(r: R, input: PeerDispute, ctx: ReceivedContext): Verb<R> => {
   if (ctx.from !== ctx.party.peer) return err({ _tag: "unknown_signer", entity: ctx.from });
@@ -3999,6 +4017,9 @@ export type EntityTx =
   | { readonly type: "profile-update"; readonly data: { readonly profile: ProfileUpdate } }
   /** og setHubConfig (lifecycle/admin.ts): the hub's committed rebalance fee policy; raw token-unit overrides are refused. */
   | { readonly type: "setHubConfig"; readonly data: HubConfigInput }
+  /** og prepareDispute / disputeStart (entity/tx/handlers/dispute): freeze the Account for a unilateral dispute, then queue its DisputeStart into jBatchState. */
+  | { readonly type: "prepareDispute"; readonly data: { readonly counterpartyEntityId: EntityId; readonly description?: string | undefined; readonly minCooldownMs?: number | undefined; readonly crossJurisdictionRouteId?: string | undefined; readonly starterInitialArguments?: string | undefined } }
+  | { readonly type: "disputeStart"; readonly data: { readonly counterpartyEntityId: EntityId; readonly crossJurisdictionRouteId?: string | undefined; readonly starterInitialArguments?: string | undefined; readonly starterCounterArguments?: string | undefined; readonly description?: string | undefined } }
   /** og setRebalancePolicy: this Entity's private per-token automation policy on one Account (the leaf's policyRoot). */
   | { readonly type: "setRebalancePolicy"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly r2cRequestSoftLimit: bigint; readonly hardLimit: bigint; readonly maxAcceptableFee: bigint } }
   /** og entityCommand: one board member's signed individual command (og command/command-codec.ts SignedEntityCommandV1). */
@@ -4617,7 +4638,7 @@ type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
   extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId,
-  requestCollateral: (x) => x.data.counterpartyEntityId, placeSwapOffer: (x) => x.data.counterpartyEntityId, proposeCancelSwap: (x) => x.data.counterpartyEntityId, setRebalancePolicy: (x) => x.data.counterpartyEntityId, setHubConfig: () => self, chat: () => self, chatMessage: () => self, "profile-update": () => self, entityCommand: () => self, propose: () => self, vote: () => self,
+  requestCollateral: (x) => x.data.counterpartyEntityId, placeSwapOffer: (x) => x.data.counterpartyEntityId, proposeCancelSwap: (x) => x.data.counterpartyEntityId, setRebalancePolicy: (x) => x.data.counterpartyEntityId, setHubConfig: () => self, prepareDispute: (x) => x.data.counterpartyEntityId, disputeStart: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self, entityCommand: () => self, propose: () => self, vote: () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
 });
@@ -4759,6 +4780,89 @@ const entityLending = (state: EntityState, replicas: Replicas, tx: LendingEntity
       queue(key, { type: "lending_repay", loanId, hubEntityId: hub, borrowerEntityId: self, tokenId: x.tokenId, amount: x.amount }))); }
     case "lendingClosePosition": return chain(intent(tx.data.positionId, "lend"), (positionId) => queue(key, { type: "lending_close_request", positionId, hubEntityId: hub, lenderEntityId: self }));
   }
+};
+// ---- og entity/tx/handlers/dispute/{index,start,start-admission,start-evidence,start-hanko}.ts: prepareDispute, disputeStart ----
+/** og EntityState.jBatchState as committed (the J-layer's JBatchState shape); only the dispute-start rows are read and written here. */
+type CommittedJBatch = { readonly batch: { readonly [field: string]: readonly Binary[] }; readonly sentBatch?: { readonly batch: { readonly [field: string]: readonly Binary[] }; readonly entityNonce: number } | undefined; readonly recoveryBatches?: readonly { readonly [field: string]: readonly Binary[] }[] | undefined };
+const committedJBatch = (state: EntityState): CommittedJBatch | undefined => state.committed["jBatchState"] as CommittedJBatch | undefined;
+/** og hasQueuedDisputeStart: a start for this counterparty in the draft, the sent batch or a recovery batch. */
+const queuedDisputeStart = (jb: CommittedJBatch, peer: EntityId): boolean => {
+  const target = lower(peer), matches = (rows: readonly Binary[] | undefined): boolean => (rows ?? []).some((r) => lower((r as { readonly counterentity?: string }).counterentity) === target);
+  return matches(jb.batch["disputeStarts"]) || matches(jb.sentBatch?.batch["disputeStarts"]) || (jb.recoveryBatches ?? []).some((b) => matches(b["disputeStarts"]));
+};
+/** og canonicalizeProofBodyStruct: u32 response seconds as numbers, offdeltas as Int512 {high, low} words. */
+export const ogProofBody = (b: ProofBody): Binary => ({
+  watchSeed: b.watchSeed, leftResponseSeconds: Number(b.leftResponseSeconds), rightResponseSeconds: Number(b.rightResponseSeconds),
+  offdeltas: b.offdeltas.map((v) => ({ high: v >> 256n, low: v & UINT256_MAX })), tokenIds: [...b.tokenIds],
+  transformers: b.transformers.map((c) => ({ transformerAddress: c.transformerAddress, encodedBatch: c.encodedBatch, allowances: c.allowances.map((a) => ({ deltaIndex: a.deltaIndex, rightAllowance: a.rightAllowance, leftAllowance: a.leftAllowance })) })),
+});
+/** og collectDisputeEvidenceReadinessIssues (without orderbook removals, which the rewrite does not queue). */
+const disputeIssues = (child: AccountReplica, now: number): readonly string[] => { const readyAfter = child._tag === "preparing" ? child.prepare?.readyAfter ?? 0 : 0; return readyAfter > now ? [`cooldown:${readyAfter - now}ms`] : []; };
+type StartIntent = DisputePrepare["startIntent"];
+/**
+ * og handleDisputeStart: admission (jBatchState seeded, account status, readiness, an already queued start), evidence (og loadStartProof /
+ * resolveStartNonce / verifyStartHanko through the rewrite's startOf), then the DisputeStart row in the draft batch and the Account disputed with
+ * og's unobserved activeDispute. A missing or unusable witness is og's status message; og's throws are fatal.
+ */
+const startDispute = (d: Draft, peer: EntityId, intent: StartIntent & { readonly starterCounterArguments?: string | undefined }, ctx: FoldContext): Result<Draft, EntityError> => {
+  const say = (x: Draft, message: string): Draft => ({ ...x, events: [...(x.events ?? []), status(message)] }), tag = peer.slice(-4);
+  if (intent.starterCounterArguments !== undefined) return invariant("DISPUTE_INCREMENTED_ARGUMENT_OVERRIDE_UNSUPPORTED");
+  if (intent.crossJurisdictionRouteId) return invariant(`DISPUTE_START_CROSS_J_ROUTE_MISSING:${intent.crossJurisdictionRouteId}`);
+  const jb = committedJBatch(d.state) ?? (initJBatch() as unknown as CommittedJBatch);
+  const seeded: Draft = { ...d, state: { ...d.state, committed: { ...d.state.committed, jBatchState: jb as unknown as Binary } } };
+  const admitted = jb.sentBatch === undefined ? seeded : say(seeded, `ℹ️ disputeStart queued to current batch while sentBatch nonce=${jb.sentBatch.entityNonce} is still pending`);
+  const child = d.accountReplicas.get(peer);
+  if (child === undefined) return ok(say(admitted, `❌ No account with ${tag} - cannot start dispute`));
+  if (child._tag === "disputed") return ok(say(admitted, `❌ Account with ${tag} is disputed - reopen required`));
+  if (child._tag !== "preparing") return ok(say(admitted, `❌ Account with ${tag} must enter dispute preparation before disputeStart`));
+  const issues = disputeIssues(child, Number(ctx.timestamp));
+  if (issues.length > 0) return ok(say(admitted, `⏳ disputeStart blocked until evidence is stable for ${tag}: ${issues.join("; ")}`));
+  if (queuedDisputeStart(jb, peer)) return ok(say(admitted, `ℹ️ disputeStart already queued for ${tag} (awaiting batch lifecycle)`));
+  if (intent.starterInitialArguments !== undefined && intent.starterInitialArguments !== "0x") return invariant("DISPUTE_START_ARGUMENT_OVERRIDE_NOT_PORTED");
+  const w = child.dispute.counterparty, jNonce = child.state.jNonce, signed = w?.proofNonce ?? 0;
+  const start = startOf(child.state, child.dispute, peer, ctx.verify);
+  if (!start.ok) {
+    switch (start.error._tag) {
+      case "no_witness": return ok(say(admitted, "❌ Missing counterparty dispute hanko - cannot start dispute"));
+      case "nonce_stale": return ok(say(admitted, `❌ Stale dispute proof nonce ${signed} (on-chain=${jNonce}) - reopen required`));
+      case "hanko_invalid": return ok(say(admitted, `❌ Counterparty dispute proof invalid for current account snapshot; nonce=${signed} onChain=${jNonce} source=counterpartyHanko`));
+      case "hash_mismatch": return invariant(`DISPUTE_STORED_HASH_MISMATCH:${peer}`);
+      // og builds the full ProofBody with locks, swaps and pulls (and their starter arguments); the rewrite's proof omits them
+      case "omits": return invariant("DISPUTE_START_PROOF_OMITS_NOT_PORTED");
+      default: return invariant("DISPUTE_START_EVIDENCE_INVALID");
+    }
+  }
+  const s = start.value, rows = jb.batch["disputeStarts"] ?? [], total = BATCH_FIELDS.reduce((n, f) => n + (jb.batch[f] ?? []).length, 0);
+  if (rows.length >= J_BATCH_LIMITS.maxDisputeStarts) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeStarts ${rows.length + 1}/${J_BATCH_LIMITS.maxDisputeStarts}`);
+  if (total + 1 > J_BATCH_LIMITS.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeStart would exceed total ops ${total + 1}/${J_BATCH_LIMITS.maxTotalOps}`);
+  const initialProofbody = ogProofBody(s.initialProofbody), nonce = Number(s.nonce);
+  const row: Binary = { counterentity: peer, nonce, proposerIsLeft: s.proposerIsLeft, proofbodyHash: s.proofbodyHash, initialProofbody, watchSeed: String(s.initialProofbody.watchSeed), sig: s.sig,
+    starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD };
+  const queued: QueuedDispute = { startedByLeft: sameHex(d.state.id, child.state.account.id.left), initialProofbodyHash: s.proofbodyHash, initialNonce: nonce, initialProposerIsLeft: s.proposerIsLeft, disputeTimeout: 0, jNonce,
+    starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD, observedOnChain: false, finalizeQueued: false };
+  const jBatchState = { ...jb, batch: { ...jb.batch, disputeStarts: [...rows, row] } } as unknown as Binary;
+  const disputed: Draft = { ...admitted, ...putChild({ ...admitted.state, committed: { ...admitted.state.committed, jBatchState } }, admitted.accountReplicas, peer, startPrepared(child, s, queued)) };
+  return ok(say(disputed, `⚔️ Dispute started vs ${tag} ${intent.description ? `(${intent.description})` : ""} - account frozen, use jBroadcast to commit`));
+};
+/** og handlePrepareDispute: status messages for a missing / already disputed / still preparing Account; otherwise freeze into dispute_preparing and start once ready. */
+const prepareDispute = (d: Draft, x: Extract<EntityTx, { type: "prepareDispute" }>["data"], ctx: FoldContext): Result<Draft, EntityError> => {
+  const say = (y: Draft, message: string): Draft => ({ ...y, events: [...(y.events ?? []), status(message)] }), peer = x.counterpartyEntityId, tag = peer.slice(-4);
+  const child = d.accountReplicas.get(peer), now = Number(ctx.timestamp), description = x.description ?? "prepare-dispute";
+  if (child === undefined) return ok(say(d, `❌ No account with ${tag} - cannot prepare dispute`));
+  if (child._tag === "disputed") return ok(say(d, `ℹ️ Dispute already active/queued for ${tag}`));
+  const intentOf = (p: DisputePrepare | undefined): StartIntent => p?.startIntent ?? { description: "prepare-dispute" };
+  if (child._tag === "preparing") {
+    const issues = disputeIssues(child, now);
+    return issues.length === 0 ? startDispute(d, peer, intentOf(child.prepare), ctx) : ok(say(d, `⏳ Dispute preparation still pending for ${tag}: ${issues.join("; ")}`));
+  }
+  // og removeDisputedAccountOrdersFromBook pulls the Account's resting orders out of the (local or cross-j) book first
+  if (child.state.offers.size > 0) return invariant("DISPUTE_PREPARE_ORDERBOOK_REMOVAL_NOT_PORTED");
+  const startIntent: StartIntent = { description, ...opt("crossJurisdictionRouteId", x.crossJurisdictionRouteId), ...opt("starterInitialArguments", x.starterInitialArguments) };
+  const prepare: DisputePrepare = { startedAt: now, readyAfter: now + Math.max(0, Math.floor(x.minCooldownMs ?? 0)), reason: description || "prepare-dispute", startIntent };
+  const frozen = prepareFrozen(child, prepare, { _tag: "not_attempted" }), issues = disputeIssues(frozen, now);
+  const prepared = say({ ...d, ...putChild(d.state, d.accountReplicas, peer, frozen) }, issues.length > 0
+    ? `⏳ Dispute prepared vs ${tag}; waiting for stable evidence: ${issues.join("; ")}` : `⏳ Dispute prepared vs ${tag}; evidence currently stable, queue disputeStart when ready`);
+  return issues.length > 0 ? ok(prepared) : startDispute(prepared, peer, startIntent, ctx);
 };
 // ---- Account Hankos through the Entity manifest: og accountInput response + proposePendingAccountFrames, hanko-witness.ts, hanko/signing.ts ----
 /**
@@ -5241,6 +5345,8 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
         withChild(d.accountReplicas, peer, (child) => map(admitAt(child, [policyTx], state.id, { ...L0_CLOCK, timestamp: ctx.timestamp }, ctx.verify), (admitted) => ({ ...d, ...putChild(d.state, d.accountReplicas, peer, admitted) }))))),
       (d) => say({ ...d, outputs: targets.length > 0 ? [wake(state, ctx.timestamp)] : [] }, message));
     }),
+    prepareDispute: (x) => prepareDispute(skip, x.data, ctx),
+    disputeStart: (x) => startDispute(skip, x.data.counterpartyEntityId, { description: x.data.description ?? "", ...opt("crossJurisdictionRouteId", x.data.crossJurisdictionRouteId), ...opt("starterInitialArguments", x.data.starterInitialArguments), ...opt("starterCounterArguments", x.data.starterCounterArguments) }, ctx),
     // og handleSetRebalancePolicyEntityTx: a missing Account is a no-op; an invalid policy is a plain Error; without a hub config, run checkAutoRebalance
     setRebalancePolicy: (x) => {
       const { counterpartyEntityId: to, tokenId, r2cRequestSoftLimit, hardLimit, maxAcceptableFee } = x.data, child = replicas.get(to);
@@ -5326,7 +5432,7 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
   return chain(linked, (link): Result<EntityRootAccount, EntityError> => chain(mapErr(committedView(body), (): EntityError => ({ _tag: "account_envelope", target: peer })), (state): Result<EntityRootAccount, EntityError> => ok({
     fromEntity: self, toEntity: peer, status, currentHeight: link.height, nextProofNonce: child.dispute.nextProofNonce, currentFrameHash: link.frame,
     pendingWithdrawals: ZERO_WORD, policyRoot: unwrapOr(mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>()), () => ZERO_WORD), submittedAtByTokenRoot: unwrapOr(submittedAtRoot(body), () => ZERO_WORD), state,
-    committed: { ...opt("publicPinned", child.publicPinned), ...opt("counterpartyBoardHankoRefresh", child.boardRefresh), ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active) : {}) },
+    committed: { ...opt("publicPinned", child.publicPinned), ...opt("counterpartyBoardHankoRefresh", child.boardRefresh), ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active ?? child.queued) : {}), ...(child._tag === "preparing" ? opt("disputePrepare", child.prepare) : {}) },
     ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
   })));
 };

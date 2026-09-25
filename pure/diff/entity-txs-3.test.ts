@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   authorEntityTxs, buildCommand, certifiedBoardStackKey, checkCommand, configBoardHash, createEntity, entityId, entityTransactionAction, foldTxs, hashCommand, hashCommandTxs, hashEntityFrame,
-  hashProposalAction, applyEntityInput, proposalId, tokenId, wireEntityTx, installedAccount, ZERO_WORD, genesisHost, applyHost, localProof, committedView, envelopeOf, spawn, createRuntime, applyRuntime, convertOutput, replicaKey,
+  hashProposalAction, applyEntityInput, proposalId, tokenId, wireEntityTx, installedAccount, ZERO_WORD, genesisHost, applyHost, localProof, committedView, envelopeOf, prepareFrozen, ogProofBody, spawn, createRuntime, applyRuntime, convertOutput, replicaKey,
   type AccountReplica, type Address, type EntityCommand, type EntityError, type EntityId, type EntityReplica, type EntityState, type EntityTx, type Hash, type ProposalAction,
 } from "../xln.ts";
 import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, crypto, genesisAB, hankoVerify, unwrap, verifiers } from "../xln_run.ts";
 import { createAccountDisputeFinalityInput, createAccountDisputeStartedInput } from "../../core/account/input.ts";
 import { applyAccountDisputeFinality, applyAccountDisputeStarted } from "../../core/account/settlement/j-finality.ts";
+import { canonicalizeProofBodyStruct, handleDisputeStart, handlePrepareDispute } from "../../core/entity/tx/handlers/dispute/index.ts";
 import { encodeCanonicalConsensusBytes } from "../../core/protocol/serialization/binary-codec.ts";
 import { hashEntityCommand, hashEntityCommandTxs, UNREGISTERED_ENTITY_COMMAND_STACK_KEY } from "../../core/entity/command/command-codec.ts";
 import { advanceEntityCommandNonce, assertSignedEntityCommand, getEntityCommandDisposition, resolveEntityCommandBoard } from "../../core/entity/command/index.ts";
@@ -446,5 +447,57 @@ describe("entity-txs-3: J7 dispute J events reach the Account (og j-events.ts ap
       }
     }
     expect(Math.min(started, finalized)).toBeGreaterThan(10);
+  });
+});
+
+describe("entity-txs-3: prepareDispute / disputeStart (og entity/tx/handlers/dispute)", () => {
+  const PA = (name: string) => PersistentAccountStateMap.empty(name);
+  /** An og Account the dispute handlers can claim through the frame's candidate map: no witnesses, no orders. */
+  const ogAcc = (status: string, disputePrepare?: unknown): any => ({
+    state: { leftEntity: lowerId(ALICE), rightEntity: lowerId(BOB), domain: { ...TERMS.domain }, watchSeed: TERMS.watchSeed, disputeConfig: { ...TERMS.disputeConfig }, jNonce: 0,
+      deltas: PA("deltas"), locks: PA("locks"), swapOffers: PA("swapOffers"), pulls: PA("pulls"), requestedRebalance: PA("requestedRebalance"), requestedRebalanceFeeState: PA("requestedRebalanceFeeState"), rebalanceFeePolicies: PA("rebalanceFeePolicies") },
+    status, mempool: [], currentHeight: 0, proofHeader: { fromEntity: lowerId(ALICE), toEntity: BOB, nextProofNonce: 1 }, pendingWithdrawals: PA("pendingWithdrawals"),
+    shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted") } }, ...(disputePrepare === undefined ? {} : { disputePrepare }),
+  });
+  const lowerId = (s: string): string => s.toLowerCase();
+  const ogEntity = (a: EntityState, ts: number, account?: any): any => ({ entityId: a.id, timestamp: ts, config: ogConfig(a), accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries(account === undefined ? [] : [[BOB, account]], a.id, () => ZERO_WORD as never)) });
+  const run = async (og: () => Promise<any>): Promise<{ ok: true; state: any } | { ok: false; reason: string }> => { try { return { ok: true, state: (await og()).newState }; } catch (e) { return { ok: false, reason: String((e as Error).message) }; } };
+  test("MATCH: 60 random prepare / start calls on missing, open, preparing (cooldown) and disputed Accounts: og's status events, disputePrepare leaf, jBatchState and Account status", async () => {
+    const a = lazyEntity([[aliceAddr, 1n]], 1n);
+    const opened = unwrap(foldTxs(a.state, a.accountReplicas, [openTx()], { verify: hankoVerify, timestamp: NOW })).draft;
+    const base = opened.accountReplicas.get(BOB);
+    if (base === undefined) throw new Error("no account");
+    const openChild = { ...base, _tag: "open" } as AccountReplica;
+    let checked = 0, missingHanko = 0;
+    for (let i = 0; i < 60; i++) {
+      const ts = 1_000_000 + ri(5_000), kind = pick(["missing", "open", "preparing", "disputed"] as const), readyAfter = ts + pick([-10, 0, 1, 2_500]);
+      const prepare = { startedAt: ts - 100, readyAfter, reason: "r", startIntent: { description: pick(["", "why"]) } };
+      const rwChild: AccountReplica | undefined = kind === "missing" ? undefined : kind === "open" ? openChild : kind === "preparing" ? prepareFrozen(openChild as never, prepare, { _tag: "not_attempted" })
+        : ({ ...openChild, _tag: "disputed", mempool: [] } as unknown as AccountReplica);
+      const tx: EntityTx = rng() < 0.6
+        ? { type: "prepareDispute", data: { counterpartyEntityId: BOB, ...(rng() < 0.5 ? { description: pick(["", "late peer"]) } : {}), ...(rng() < 0.5 ? { minCooldownMs: pick([0, 1, 1_500, -3, 2.7]) } : {}) } }
+        : { type: "disputeStart", data: { counterpartyEntityId: BOB, ...(rng() < 0.5 ? { description: "d" } : {}) } };
+      const rw = foldTxs(opened.state, new Map(rwChild === undefined ? [] : [[BOB, rwChild]]), [tx], { verify: hankoVerify, timestamp: BigInt(ts) });
+      const ogS = ogEntity(a.state, ts, kind === "missing" ? undefined : ogAcc(kind === "open" ? "active" : kind === "preparing" ? "dispute_preparing" : "disputed", kind === "preparing" ? prepare : undefined));
+      const og = await run(() => (tx.type === "prepareDispute" ? handlePrepareDispute(ogS, wire(tx) as never, env, [], true) : handleDisputeStart(ogS, wire(tx) as never, env, [], true)));
+      if (!og.ok) { expect(rw.ok ? "ok" : reasonOf(rw.error)).toBe(og.reason); continue; }
+      const d = unwrap(rw).draft;
+      expect(d.events).toEqual(readEntityFrameEvents(og.state) as never);
+      expect(d.state.committed["jBatchState"]).toEqual(og.state.jBatchState);
+      if ((d.events ?? []).some((e) => e.message.startsWith("❌ Missing counterparty dispute hanko"))) missingHanko++;
+      const ogAfter = og.state.accounts.get(BOB), after = d.accountReplicas.get(BOB);
+      if (ogAfter === undefined || after === undefined) { expect(after).toEqual(ogAfter); continue; }
+      expect({ active: "active", dispute_preparing: "preparing", disputed: "disputed" }[ogAfter.status as string]).toBe(after._tag === "proposed" ? "active" : after._tag === "open" ? "active" : after._tag);
+      expect(unwrap(installedAccount(a.state.id, BOB, after)).committed?.["disputePrepare"]).toEqual(ogAfter.disputePrepare);
+      checked++;
+    }
+    expect([checked > 30, missingHanko > 3]).toEqual([true, true]);
+  }, 60_000);
+  test("MATCH: ogProofBody equals og canonicalizeProofBodyStruct over random offdeltas, token ids and allowances", () => {
+    for (let i = 0; i < 100; i++) {
+      const body = { watchSeed: TERMS.watchSeed, leftResponseSeconds: BigInt(ri(99)), rightResponseSeconds: BigInt(ri(99)), offdeltas: Array.from({ length: ri(4) }, () => BigInt(ri(1e6)) * (rng() < 0.5 ? -1n : 1n) * (rng() < 0.2 ? 1n << 300n : 1n)),
+        tokenIds: Array.from({ length: ri(3) }, () => BigInt(ri(9))), transformers: Array.from({ length: ri(2) }, () => ({ transformerAddress: `0x${"12".repeat(20)}`, encodedBatch: "0x00", allowances: [{ deltaIndex: 0n, rightAllowance: BigInt(ri(9)), leftAllowance: BigInt(ri(9)) }] })) };
+      expect(ogProofBody(body)).toEqual(canonicalizeProofBodyStruct({ ...body, offdeltas: body.offdeltas.map((v) => ({ high: v >> 256n, low: v & ((1n << 256n) - 1n) })) }, ALICE, BOB, "t") as never);
+    }
   });
 });
