@@ -560,6 +560,9 @@ const readOne = (log: ChainLog): JEventClaimBody | undefined => {
   if (is("AccountSettled")) return { type: "AccountSettled", settled: readSettled(buf) };
   if (is("DisputeStarted")) {
     const [sender, counterentity, nonce] = topicsOf(log, 3, "DisputeStarted");
+    const timeout = abiWord(buf, head, 192), start = abiWord(buf, head, 224), left = abiWord(buf, head, 256), right = abiWord(buf, head, 288), SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+    // og j-event-payloads.ts assertRawEventSpecificFields: a positive safe-integer clock whose timeout is exactly start + both response windows.
+    if (timeout <= 0n || timeout > SAFE || start <= 0n || start > SAFE || timeout < start || left > 0xffff_ffffn || right > 0xffff_ffffn || timeout !== start + left + right) throw new Error(`J_EVENT_DISPUTE_CLOCK_INVALID:${start}:${timeout}:${left}:${right}`);
     return {
       type: "DisputeStarted", sender: wordHex(sender ?? ""), counterentity: wordHex(counterentity ?? ""), nonce: BigInt(nonce ?? "0"), proposerIsLeft: abiWord(buf, head, 0) === 1n,
       proofbodyHash: wordHex(bytesToHex(abiTupleBytes(buf, head, 32))), watchSeed: wordHex(bytesToHex(abiTupleBytes(buf, head, 64))),

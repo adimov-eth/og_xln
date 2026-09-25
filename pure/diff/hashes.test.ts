@@ -9,6 +9,7 @@ import { encodeJBatch, computeBatchHankoHash, createEmptyBatch } from "../../cor
 import { hashProofBodyStruct, createDisputeProofHashWithNonce, createSettlementHashWithNonce } from "../../core/protocol/dispute/proof-builder.ts";
 import { encodeInt512, decodeInt512 } from "../../core/protocol/crypto/abi-money.ts";
 import { computeAccountKey } from "../../core/jurisdiction/adapter/events/contract-codec.ts";
+import { rawEventToJEvents } from "../../core/jurisdiction/adapter/events/j-event-payloads.ts";
 import { encodeSignedHanko, encodeHankoEnvelope as ogEncodeHankoEnvelope, packHankoSignatures } from "../../core/hanko/codec.ts";
 import { verifyCanonicalHanko } from "../../core/hanko/claims.ts";
 import { lazySingleSignerEntityId, recoverShortHankoEntityId } from "../../core/hanko/short.ts";
@@ -227,7 +228,8 @@ describe("J event signatures vs Depository ABI (typechain from Types.sol/Deposit
       const u = () => pick([0n, 1n, (1n << 256n) - 1n, BigInt(ri(1e9))]);
       const h = DEPOSITORY.encodeEventLog("HankoBatchProcessed", [b(), b(), u()]);
       const r = DEPOSITORY.encodeEventLog("ReserveUpdated", [b(), u(), u()]);
-      const ds = [b(), b(), u(), rng() < 0.5, b(), b(), "0x" + "ab".repeat(ri(40)), "0x" + "cd".repeat(ri(3)), b(), u(), u(), ri(2 ** 32), ri(2 ** 32)] as const;
+      const lw = ri(2 ** 32), rw = ri(2 ** 32), start = BigInt(1 + ri(2 ** 40));
+      const ds = [b(), b(), u(), rng() < 0.5, b(), b(), "0x" + "ab".repeat(ri(40)), "0x" + "cd".repeat(ri(3)), b(), start + BigInt(lw + rw), start, lw, rw] as const;
       const d = DEPOSITORY.encodeEventLog("DisputeStarted", [...ds]);
       const f = DEPOSITORY.encodeEventLog("DisputeFinalized", [b(), b(), u(), b(), b()]);
       const got = readJEvents([h, r, d, f].map((l) => ({ topics: l.topics, data: l.data })));
@@ -241,6 +243,28 @@ describe("J event signatures vs Depository ABI (typechain from Types.sol/Deposit
         .toEqual([a[0].toLowerCase(), a[1].toLowerCase(), a[2], a[3], a[4].toLowerCase(), a[5].toLowerCase(), a[6], a[7], a[8].toLowerCase(), a[9], a[10], a[11], a[12]]);
       expect([gf.finalProofbodyHash, gf.finalizationEvidenceHash]).toEqual([parsed[3]!.args[3].toLowerCase(), parsed[3]!.args[4].toLowerCase()]);
     }
+  });
+});
+
+describe("DisputeStarted clock validation (og j-event-payloads.ts assertRawEventSpecificFields)", () => {
+  test("MATCH: a DisputeStarted log whose clock is not a positive safe-integer start + windows = timeout is refused by og ingress and by readJEvents", () => {
+    const b = W("11");
+    const MAX = BigInt(Number.MAX_SAFE_INTEGER);
+    const ogAccepts = (log: { topics: readonly string[]; data: string }): boolean => {
+      const args = DEPOSITORY.parseLog(log as any)!.args.toObject();
+      // og ingress attaches the initial ProofBody from the batch calldata; the log itself does not carry it.
+      const initialProofbody = { watchSeed: args.watchSeed, leftResponseSeconds: args.leftResponseSeconds, rightResponseSeconds: args.rightResponseSeconds, offdeltas: [], tokenIds: [], transformers: [] };
+      try { return rawEventToJEvents({ name: "DisputeStarted", args: { ...args, initialProofbody }, blockNumber: 1, blockHash: W("01"), transactionHash: W("02"), logIndex: 0 } as any, b).length === 1; } catch { return false; }
+    };
+    const cases: [bigint, bigint, number, number][] = [[10n, 5n, 2, 3], [0n, 0n, 0, 0], [5n, 5n, 0, 0], [11n, 5n, 2, 3], [9n, 5n, 2, 3], [MAX, MAX - 7n, 3, 4], [MAX + 1n, MAX - 6n, 3, 4], [(1n << 256n) - 1n, 1n, 0, 0], [3n, 5n, 0, 0], [7n, 0n, 3, 4]];
+    let accepted = 0;
+    for (const [timeout, start, l, r] of cases) {
+      const log = DEPOSITORY.encodeEventLog("DisputeStarted", [b, b, 1n, true, b, b, "0x", "0x", b, timeout, start, l, r]);
+      const rwOk = (() => { try { return readJEvents([{ topics: log.topics, data: log.data }]).length === 1; } catch { return false; } })();
+      expect(rwOk).toBe(ogAccepts(log));
+      if (rwOk) accepted++;
+    }
+    expect(accepted).toBeGreaterThanOrEqual(3);
   });
 });
 
