@@ -423,6 +423,7 @@ describe("entity-cross-j: inbound HTLC MATCH vs og (materialize-context.ts, comm
     const r = rng(47), toBob = (id: string) => ({ from: id, to: BOB, domain: JUR });
     const env = (n: number): HtlcEnvelope => unwrap(encryptOpaqueHtlc(bytes(r, 40 + n), ENTITY_KEYS.get(BOB)!.pub, hex(r, 32), keyPair(r).priv));
     let accepted = 0;
+    const eventNames = new Set<string>();
     for (let i = 0; i < 400; i++) {
       const secrets = Array.from({ length: 4 }, () => hex(r, 32)), locks = secrets.map((s) => hashHtlcSecret(s)!);
       const peer = pick(r, [ALICE, CAROL]), ts = 1_000_000 + int(r, 1000), fees0 = BigInt(int(r, 10));
@@ -458,7 +459,7 @@ describe("entity-cross-j: inbound HTLC MATCH vs og (materialize-context.ts, comm
       };
       const frames = [...(r() < 0.5 ? [frameOf(false, 3)] : []), ...(r() < 0.75 ? [frameOf(true, 4)] : [])];
       const received = frames.some((f) => f.viaNewFrame) ? toBob(peer) : undefined;
-      const rw = paybookFollowups({ paybook: { entries: entries0, feesEarned: fees0 }, queue: [] }, peer, frames, received as never, entries, ts);
+      const rw = paybookFollowups({ paybook: { entries: entries0, feesEarned: fees0 }, queue: [] }, peer, frames, received as never, entries, ts, BOB);
       // og committed-input.ts driver: per committed frame the frame followups then each tx's lock followup; then timeouts; then the peer frame's secrets
       const og = await ogTryAsync(async () => {
         const program = createBookIntentProgram(), slot = program.openSlot();
@@ -475,7 +476,7 @@ describe("entity-cross-j: inbound HTLC MATCH vs og (materialize-context.ts, comm
         ogHtlcFollow.applyHtlcTimeoutFollowups(fctx, timed);
         ogHtlcFollow.applyHtlcSecretFollowups(fctx, revealed);
         applyBookIntentProgram(newState, program);
-        return { entries: newState.paybook.entries, feesEarned: newState.paybook.feesEarned, accountTxs };
+        return { entries: newState.paybook.entries, feesEarned: newState.paybook.feesEarned, accountTxs, events: candidateEffects.map((e: any) => ({ eventName: e.eventName, data: e.data })) };
       });
       // og applies an Account-level resolve before the Entity sees it: a mismatched preimage never commits, so both sides must refuse it
       expect(`${i}:${rw.ok}`).toBe(`${i}:${og.ok}`);
@@ -484,7 +485,11 @@ describe("entity-cross-j: inbound HTLC MATCH vs og (materialize-context.ts, comm
       const value = rw.value;
       expect(sortedJson({ entries: value.paybook.entries, feesEarned: value.paybook.feesEarned })).toBe(sortedJson({ entries: og.value.entries, feesEarned: og.value.feesEarned }));
       expect(sortedJson(value.queue.map((q: AccountTxTarget) => ({ accountId: q.accountId, tx: ogAccountTx(q.tx) })))).toBe(sortedJson(og.value.accountTxs));
+      // og candidateEffects runtime events (HtlcReceived / HtlcFinalized / HtlcForwardAccepted / HtlcFailed), in order
+      expect(value.runtimeEvents ?? []).toEqual(og.value.events);
+      for (const e of value.runtimeEvents ?? []) eventNames.add(e.eventName);
     }
+    expect([...eventNames].sort()).toEqual(["HtlcFailed", "HtlcFinalized", "HtlcForwardAccepted", "HtlcReceived"]);
     expect(accepted).toBeGreaterThan(200);
   });
 });

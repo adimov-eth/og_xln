@@ -26,6 +26,9 @@ import {
   scrubCounterDisputesForActiveStart, scrubCounterDisputesForCounterparty, scrubDisputeFinalizationsForCounterparty, scrubDisputeStartsForCounterparty, scrubSourceHashLadderRegistrationsForCounterparty,
 } from "../../core/entity/tx/dispute-finalize-guards.ts";
 import { sentBatchOwnsDisputeFinalityAck } from "../../core/entity/tx/j-events.ts";
+import { handleOpenAccountEntityTx } from "../../core/entity/tx/handlers/account/lifecycle/open-account.ts";
+import { createEmptyEnv } from "../../core/runtime.ts";
+import { createAccountConsensusContext } from "../../core/entity/account/account-consensus-context.ts";
 
 let seed = 11;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -359,5 +362,22 @@ describe("scheduler-disputes: J7 Entity-side dispute effects (og entity/tx/j-eve
     expect([removedAny > 50, broadcasts > 10, synced > 5]).toEqual([true, true, true]);
     // og applyKnownHtlcSecret for secrets in the starter's arguments is not ported: a named invariant
     expect(disputeStartedEffects(entity([aliceAddr]), { sender: BOB, counterentity: ALICE, proofbodyHash: h1, disputeTimeout: 1, starterInitialArguments: "0xabcd" }, 0)).toEqual({ ok: false, error: { _tag: "entity_invariant", reason: "DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED" } });
+  });
+});
+
+describe("scheduler-disputes: Runtime/Entity event channel (og EntityCandidateEffect runtimeEvent)", () => {
+  test("MATCH: openAccount emits og's AccountOpening runtime event (og lifecycle/open-account.ts insertLocalAccount), and it survives the same frame's first Account proposal", async () => {
+    const ogEnv = createEmptyEnv("scheduler-disputes");
+    ogEnv.quietRuntimeLogs = true;
+    const ctx = createAccountConsensusContext(ogEnv);
+    for (const target of [BOB, CAROL]) {
+      const state = entity([aliceAddr], true);
+      const tx = { type: "openAccount", data: { targetEntityId: target, accountDomain: JUR, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig } } as EntityTx;
+      const rw = unwrap(foldTxs(state, new Map(), [tx], { verify: hankoVerify, timestamp: NOW })).draft;
+      const og: any = { entityId: ALICE, timestamp: Number(NOW), config: ogConfig(state, true), accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries([], ALICE, () => ZERO_WORD as never)), paybook: { entries: new Map(), feesEarned: 0n } };
+      const effects: any[] = [];
+      await handleOpenAccountEntityTx(og, wireEntityTx(tx) as never, ctx, effects, true);
+      expect(rw.runtimeEvents).toEqual(effects.map((e) => ({ eventName: e.eventName, data: e.data })));
+    }
   });
 });
