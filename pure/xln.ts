@@ -2500,7 +2500,7 @@ export type EntityState = {
 /** og `core/types/entity-tx.ts` wire shape `{type, data}`. `proposeAccount` is rewrite-only: og proposes Account frames itself and builds their Hanko from the quorum's precommits. */
 export type EntityTx =
   | { readonly type: "openAccount"; readonly data: { readonly targetEntityId: EntityId; readonly disputeConfig: DisputeConfig; readonly accountDomain: Domain; readonly watchSeed: string; readonly creditAmount?: bigint | undefined; readonly tokenId?: TokenId | undefined } }
-  | { readonly type: "accountInput"; readonly data: AccountMessage }
+  | { readonly type: "accountInput"; readonly data: AccountPeerInput }
   | { readonly type: "extendCredit"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint } }
   | { readonly type: "directPayment"; readonly data: { readonly targetEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly route: readonly EntityId[]; readonly description?: string | undefined; readonly deliveryMode: "direct" | "trusted"; readonly trustedGatewayEntityId?: EntityId | undefined } }
   | { readonly type: "proposeAccount"; readonly data: { readonly counterpartyEntityId: EntityId; readonly frameHanko?: Hanko | undefined; readonly disputeHanko?: DisputeHanko | undefined } & FrameClock };
@@ -2951,6 +2951,8 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const held: Folded = { state, accountReplicas: replicas };
       return matchBy("kind", x.data, {
         ack: () => apply(held),
+        // og routes the standalone peer dispute witness through the same accountInput lane; an unknown Account has no genesis for it (og ACCOUNT_GENESIS_FRAME_REQUIRED).
+        dispute: () => apply(held),
         ack_frame: (i) => match(origin, {
           local: (): Result<Draft, EntityError> => err({ _tag: "from_not_converted" }),
           received: ({ from }) => (!i.frame.txs.every(isL0Tx) ? err({ _tag: "not_l0" }) : replicas.has(from) ? apply(held) : chain(inboundChild(state, replicas, from, i), apply)),
@@ -3005,7 +3007,7 @@ const authorityRoot = (state: EntityState): Result<string, EntityRootError> => {
   }), (bytes) => bytesToHex(keccak_256(bytes))));
 };
 /** og account/consensus hashesToSign: the Account frames and dispute proofs this frame signs for, as secondary manifest entries. */
-const messageHashes = (peer: EntityId, m: AccountMessage): readonly HashToSign[] => {
+const messageHashes = (peer: EntityId, m: AccountPeerInput): readonly HashToSign[] => {
   const tail = peer.slice(-8);
   const acked = (a: AccountAck): readonly HashToSign[] => [
     { hash: a.frameHash, type: "accountFrame", context: `account:${tail}:ack:${a.height}` },
@@ -3015,6 +3017,7 @@ const messageHashes = (peer: EntityId, m: AccountMessage): readonly HashToSign[]
     ack: (a) => acked(a),
     ack_frame: (f) => [...(f.ack === null ? [] : acked(f.ack)), { hash: f.frame.stateHash, type: "accountFrame", context: `account:${tail}:frame:${f.frame.height}` },
       ...(f.disputeHanko === undefined ? [] : [{ hash: f.disputeHanko.hash, type: "dispute", context: `account:${tail}:dispute` } as const])],
+    dispute: (d) => [{ hash: d.disputeHanko.hash, type: "dispute", context: `account:${tail}:dispute` }],
   });
 };
 /** og buildEntityHashesToSign: the frame hash first, then the secondary hashes sorted, a duplicate is fatal. */
@@ -3242,7 +3245,7 @@ export type EntityRouteTx =
   | { readonly type: "registerCrossJurisdictionSwap" };
 export type HostInput = { readonly kind: "dispute" | "board_hanko_refresh" | "leaderTimeoutVote" };
 export type HostCtx = { readonly timestamp: bigint; readonly jHeight: bigint; readonly from?: EntityId | undefined };
-export type HostEffect = Effect | Tagged<"start_dispute", { start: DisputeStart }> | Tagged<"send", { message: AccountMessage }>;
+export type HostEffect = Effect | Tagged<"start_dispute", { start: DisputeStart }> | Tagged<"send", { message: AccountPeerInput }>;
 export type OutboxEntry = { readonly id: Hash; readonly effect: HostEffect };
 export type HostTx =
   | { readonly layer: "account"; readonly tx: WireAccountTx } | { readonly layer: "frame"; readonly input: AccountInput } | { readonly layer: "pool"; readonly tx: LendingTx } | { readonly layer: "j"; readonly tx: JOp }
@@ -3348,11 +3351,11 @@ export const hostRoot = (h: Host): HostRoot => keccakUtf8(canon({ account: accou
 export const hashFrame = (record: RuntimeFrameRecord): RuntimeFrameHash => keccakUtf8(canon(record)) as RuntimeFrameHash;
 const foldStamped = strictFold<Host, Stamped, Verify, HostEffect, AccountReplicaError | HostError>((h, stamped, verify) => applyHost(h, stamped.tx, stamped.ctx, verify));
 const outputId = (height: bigint, ordinal: number, effect: HostEffect): Hash => keccakUtf8(canon({ height, ordinal, effect }));
-const messageOf = (e: HostEffect): AccountMessage | null => match(e, { send: (x) => x.message, forward_secret: () => null, start_dispute: () => null });
+const messageOf = (e: HostEffect): AccountPeerInput | null => match(e, { send: (x) => x.message, forward_secret: () => null, start_dispute: () => null });
 /** An ACK already riding on an ack_frame in the same batch is not sent again on its own. */
 const carriedOnce = (effects: readonly HostEffect[]): readonly HostEffect[] => {
-  const carried = new Set(effects.flatMap((e) => { const m = messageOf(e); return m === null ? [] : matchBy("kind", m, { ack: () => [], ack_frame: (f) => (f.ack === null ? [] : [canon(f.ack)]) }); }));
-  return effects.filter((e) => { const m = messageOf(e); return m === null ? true : matchBy("kind", m, { ack: (a) => !carried.has(canon(ackOf(a))), ack_frame: () => true }); });
+  const carried = new Set(effects.flatMap((e) => { const m = messageOf(e); return m === null ? [] : matchBy("kind", m, { ack: () => [], ack_frame: (f) => (f.ack === null ? [] : [canon(f.ack)]), dispute: () => [] }); }));
+  return effects.filter((e) => { const m = messageOf(e); return m === null ? true : matchBy("kind", m, { ack: (a) => !carried.has(canon(ackOf(a))), ack_frame: () => true, dispute: () => true }); });
 };
 type Advanced = { readonly record: RuntimeFrameRecord; readonly host: Host; readonly created: readonly OutboxEntry[] };
 const advance = (host: Host, previousHostRoot: HostRoot, inputs: readonly Stamped[], timestamp: bigint, verify: Verify): Result<Advanced, AccountReplicaError | HostError> => map(foldStamped(host, inputs, verify), (folded) => {

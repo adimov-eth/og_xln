@@ -28,10 +28,10 @@ import type { AccountFrame as OgFrame, AccountInput as OgInput, AccountReplica a
 
 // ---- rewrite ----
 import {
-  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, accountDisputeHash, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, incomingDeadline, keccakUtf8, disputeRequirement, disputeShapes, frameStateHash, localProof, proposalPlan, receiverClock, replicaId, unqueued,
+  ACCOUNT_MEMPOOL_SIZE, ACCOUNT_NETWORK_ALLOWANCE_MS, accountDisputeHash, applyEntityInput, createEntity, accountStateRoot, admit, applyAccountInput, committedView, disputeUnsafe, incomingDeadline, keccakUtf8, disputeRequirement, disputeShapes, frameStateHash, localProof, proposalPlan, receiverClock, replicaId, unqueued,
 } from "../xln.ts";
 import type { AccountFrame, AccountInput, AccountReplica, EntityId, WireAccountTx } from "../xln.ts";
-import { ALICE, BOB, CLOCK, NOW, causeOf, ackInput, disputeFor, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap, unwrapErr } from "../xln_run.ts";
+import { ALICE, BOB, CLOCK, NOW, TERMS, aliceAddr, verifiers, causeOf, ackInput, disputeFor, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, signAccountFrame, unwrap, unwrapErr } from "../xln_run.ts";
 
 // ============ og fixture (copied from core/__tests__/account/consensus/account-input-rejection.test.ts) ============
 const L = `0x${"11".repeat(32)}`, R = `0x${"22".repeat(32)}`;
@@ -275,6 +275,30 @@ describe("account-consensus: driven scenarios", () => {
     // the sender must be the peer
     expect(unwrapErr(applyAccountInput(p, { ...peerDispute(p, prev.proofNonce + 1), ...envelopeAB(ALICE) } as AccountInput, DOOR(ALICE)))._tag).toBe("unknown_signer");
     expect(bodyHash).toBe(prev.proofBodyHash);
+  });
+
+  test("MATCH: the Entity accountInput lane carries og's peer 'dispute' input to the Account (og inbound-account.ts admits kind 'dispute'); refusal evicts, acceptance stores", async () => {
+    const { p } = round(genesisAB(), genesisAB(), ALICE, BOB, [TX]);
+    const prev = p.dispute.counterparty;
+    if (prev === undefined) throw new Error("setup");
+    const v = unwrap(committedView(p.state)), body = unwrap(localProof(v)).bodyHash;
+    const witness = (nonce: number) => disputeFor({ _tag: "sign", draft: { hash: unwrap(accountDisputeHash(v, body, nonce, prev.proposerIsLeft)), proofBodyHash: body, proofNonce: nonce, proposerIsLeft: prev.proposerIsLeft } }, BOB)!;
+    const entity = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]) }));
+    const seeded = { ...entity, state: { ...entity.state, accounts: new Map([[BOB, p.state.account]]) }, accountReplicas: new Map([[BOB, p as AccountReplica]]) };
+    const deliver = (nonce: number) => applyEntityInput(seeded, { kind: "txs", timestamp: NOW, txs: [{ type: "accountInput", data: { kind: "dispute", ...envelopeAB(BOB), disputeHanko: witness(nonce) } }] }, { ...verifiers, self: ALICE, signerId: aliceAddr });
+    const ogVerdict = async (nonce: number) => {
+      const ctx = ogCtx("diff-entity-peer-dispute"), a = ogAccount(L, R), w = ogPeerDispute(ctx, a, false, nonce);
+      a.currentDisputeProofBodyHash = w.proofBodyHash; a.counterpartyDisputeProofBodyHash = w.proofBodyHash; a.counterpartyDisputeProofNonce = prev.proofNonce;
+      return (await ogApply(ctx, a, { kind: "dispute", ...ogEnvelope(a), disputeHanko: w } as unknown as OgInput)).ok;
+    };
+    // a regressing nonce: og rejects, the rewrite Entity evicts the only tx and refuses the input
+    expect(await ogVerdict(prev.proofNonce - 1)).toBe(false);
+    expect(unwrapErr(deliver(prev.proofNonce - 1))).toMatchObject({ _tag: "dispute_hanko" });
+    // a fresh nonce: og stores it, the rewrite Entity commits the frame and the child holds the new witness
+    expect(await ogVerdict(prev.proofNonce + 1)).toBe(true);
+    const committed = unwrap(deliver(prev.proofNonce + 1)).replica;
+    expect(committed.head.height).toBe(1n);
+    expect(committed.accountReplicas.get(BOB)?.dispute.counterparty?.proofNonce).toBe(prev.proofNonce + 1);
   });
 
   test("MATCH: the mempool limit counts pending-frame txs (og mempool.ts outstanding = mempool + pendingFrame)", () => {
