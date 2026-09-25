@@ -1,0 +1,72 @@
+# entity-runtime: og vs pure/xln.ts
+
+Tests: `pure/diff/entity-runtime.test.ts` (18 pass; run from `pure/` with `bun test diff/entity-runtime.test.ts`).
+Where og was easy to call on its own (leader order, quorum power, single-signer rule, config validation, authority root), the test calls og directly. The consensus handlers (`handleHashPrecommits`, `applyEntityTx`, proposal start) need a full `ApplyEntityInputContext` and env, so for those rows the test runs the rewrite side only and the og behaviour is argued from the cited code.
+
+## Findings
+
+| id | severity | og file:line | rewrite xln.ts:line | what differs | proven by test? |
+|---|---|---|---|---|---|
+| ER-1 | critical | core/entity/consensus/leader/index.ts:34-44, 47-60; core/entity/factory.ts:108 | 2194, 2205 | og picks `validators[0]` as the proposer (positional). The rewrite picks the lowest address (`[...members.keys()].sort(asc)[0]`). For validators `[B,A]` og's leader is B, while the rewrite refuses B with `not_proposer` and only accepts A. | yes: "DIVERGES: og proposer = validators[0]…" |
+| ER-2 | critical | core/entity/consensus/state-root.ts:347-370, 797-827 | 2280-2283, 2297-2304 | The rewrite's `rootConfig` sorts validators by address before hashing, and it sets `leaderState.activeValidatorId` to the first of that sorted list. og keeps the positional validator list. Any quorum not given in sorted order gets a different `authorityRoot`, so the entity frame hash does not match og. (It does match when the validators are single or already sorted.) | yes: "DIVERGES: og commits positional validator order…" + 2 MATCH tests |
+| ER-3 | high | core/runtime/delivery/entity-output-signer.ts:52-110 | 2350-2353 | `convertOutput` sends every output to the receiver's lowest-address signer. og routes to the active leader, falling back to `validators[0]`, a certified account counterparty, or a replay hint. | yes: "DIVERGES: runtime convertOutput routes…" |
+| ER-4 | high (consensus) | core/entity/consensus/input/hanko-witness.ts:515-545; leader/certificates.ts:50-80; proposal/precommit-input.ts:98-128 | 1963, 2215-2216, 2325-2335 | In og a precommit is `hashPrecommits: Map<signer, sig[]>`: one EOA signature for each entry of `hashesToSign`, which is the entity frame hash plus sorted secondary hashes (account frames, disputes, settlements, jBatch). It is bound to `hashPrecommitFrame{height,frameHash}`, and one input can carry several signers. The rewrite's precommit is one signature over the entity frame hash only, and the signer comes from `ctx.signerId`. Account hankos arrive already signed inside `proposeAccount` txs (2266) and are not produced by entity quorum. | code reading |
+| ER-5 | high | core/entity/consensus/proposal/start.ts:611-684; replica-validation.ts:148-160 | 2317-2324 | For a single-signer board og self-signs and commits inside the proposing input, and a larger board starts with the proposer's own signatures (`collectedSigs` has the proposer, start.ts:515). The rewrite starts with `signatures: new Map()`, so even a 1-of-1 entity stays `proposed` until an explicit precommit arrives. | yes: "DIVERGES: og single-signer board commits…" |
+| ER-6 | high | core/entity/consensus/proposal/start.ts:651-684 (sends `proposedFrame` to validators); EntityInput.proposedFrame core/entity/types.ts:131 | 1963, 2325-2336 | The validator side is missing. og validators receive `proposedFrame`, replay the txs themselves, compare the manifest (`PRECOMMIT_LOCAL_MANIFEST_MISMATCH`), and only then sign. The rewrite has one replica per entity and no proposed-frame input: a precommit is a bare signature, and no one checks it against their own replay. | code reading |
+| ER-7 | high | core/entity/tx/apply.ts:597-620; consensus/proposal/start.ts:555-580; AGENTS.md "REJECT POLICY" | 97-99, 2277-2279, 2322 | `foldTxs` is a `strictFold`, so one refused tx refuses the whole input. og evicts or skips only that tx (`FailureDispositionError` 'reject' becomes `skippedError`, and `MalformedEntityFrameInputError` triggers an evict-and-retry) and certifies the rest. AGENTS.md says "evict exactly the rejected tx". | yes: "DIVERGES: one refused tx refuses the whole input" |
+| ER-8 | medium | core/entity/consensus/proposal/precommit-input.ts:112-121 | 2331 | A second, different valid signature from the same signer is `PRECOMMIT_SIGNER_EQUIVOCATION` in og. The rewrite silently overwrites it (`mapSet`). | yes (rewrite side): "DIVERGES: og rejects a second different precommit…" |
+| ER-9 | medium | core/entity/consensus/proposal/precommit-input.ts:140-153 | 2339 | A late precommit for an already-committed height is a no-op commit in og, so reliable ingress can terminalize it. The rewrite refuses it with `not_proposed`. | yes (rewrite side) |
+| ER-10 | medium | core/entity/consensus/input/admission.ts:97-110, 120-135; input/merge.ts:48-60 | 2338 | og queues txs in a mempool while a proposal is in flight, forwards non-proposer mempools to the proposer, and dedups exact `accountInput` replays. The rewrite refuses txs while proposed (`already_proposed`), refuses them from non-proposers (`not_proposer`), and its `mempool` field is always `[]`. | yes: "DIVERGES: txs arriving while a frame is proposed" |
+| ER-11 | medium | core/entity/consensus/frame/application.ts:1154-1158 | 1942, 2321 | og rejects `ENTITY_FRAME_TIMESTAMP_REGRESSION`. The rewrite's `Head` has no timestamp, so a child frame older than its parent is accepted. | yes: "DIVERGES: og rejects ENTITY_FRAME_TIMESTAMP_REGRESSION…" |
+| ER-12 | medium | core/entity/tx/handlers/account/lifecycle/open-account.ts:221-229, 262 | 2252-2254, 2260-2261 | A duplicate `openAccount` throws `OPEN_ACCOUNT_ALREADY_EXISTS` in og (a plain Error, so not a reject disposition). The rewrite treats identical terms as an idempotent no-op. | yes: "DIVERGES: duplicate openAccount…" |
+| ER-13 | medium | open-account.ts:262 (`outputs: []`), 146-194 | 2261 | The rewrite's local `openAccount` emits an `openAccount` output to the peer. og emits none, because the peer learns of the account from the first account frame. og also auto-enqueues `add_delta` for `tokenId` plus `DEFAULT_ACCOUNT_TOKEN_IDS`, rebalance-policy txs, and an optional `set_credit_limit`. The rewrite needs a separate `addDelta`. | yes (EXTRA test) |
+| ER-14 | medium | core/types/entity-tx.ts:191-243, 631-649 | 1951-1955, 2387-2392 | The wire shape is different. og uses `{type, data:{targetEntityId,…}}`. The rewrite uses a flat `{type, target,…}` and invents types `addDelta`/`pay`/`proposeAccount` (EXTRA). Its `directPayment` has `recipient` rather than `targetEntityId+route+deliveryMode`. Its `placeSwapOffer` has `minFillRatio/expiresAtHeight` where og has `counterpartyEntityId, give/wantTokenDecimals, maxFee, minNetReceive, priceTicks, timeInForce`. | code reading |
+| ER-15 | medium | core/entity/tx/handlers/payments/direct-payment.ts:44-60, 64-78, 157-165 | 2467-2471 | og's `directPayment` supports `trusted` gateway routes, handles final-destination receipt, treats amount < MIN(1) as a silent no-op (not an error), builds `direct_payment` account txs with route/from/to, and self-emits a wake output to `validators[0]`. The rewrite maps it to a one-hop `payment` and errors if the recipient is not the peer. | code reading |
+| ER-16 | medium | core/entity/tx/handlers/j-batch/r2r.ts:24-68 | 2419-2431 | og's r2r/r2c only queue an op into `jBatchState`, and reserves move after `j_broadcast` and the J event. `applyJ` in the rewrite moves reserves at once, and it checks raw reserve rather than og's debt-aware `availableAfterDebt`. | code reading |
+| ER-17 | medium | core/entity/tx/handlers/payments/lending.ts:60-150; core/account/tx/handlers/balance/lending.ts | 2375-2378, 2435-2460 | og lending is entity txs (`lendingOffer/Borrow/Repay/ClosePosition`) with `positionId/termId/interestBps` and intent-id regexes (`lend-…`), queued as account txs to a hub account. The rewrite's `applyLending` is a host-local pool keyed by offerId with `termSeconds/annualRatePpm`. It is a different model. | code reading |
+| ER-18 | medium | core/entity/consensus/leader/index.ts, leader/timeout-input.ts, leader/certificates.ts | 90, 2487 | There is no leader failover (views, timeout votes, certificates). `leaderTimeoutVote` is the declared hole `leader_timeout_vote`. | code reading (og order shown by test) |
+| ER-19 | low | core/entity/consensus/config-validation.ts:77-82, 111-120 | 2203-2207 | og caps threshold and shares at uint16 and rejects shares for non-validators. The rewrite accepts any bigint. | yes: "DIVERGES: og caps threshold/shares at uint16" |
+| ER-20 | low | core/entity/consensus/replica-validation.ts:203-222; normalizePrecommitBundles certificates.ts:27-47 | 2329 | og normalizes signer ids with trim+lowercase. The rewrite matches `ctx.signerId` against member Map keys exactly (case-sensitive). | code reading |
+| ER-21 | low | core/entity/types.ts:115-143 (entityTxs array) | 2222-2228 | A received input must carry exactly one tx whose target is the sender (`from_not_converted`). og accepts multi-tx `entityTxs` from a peer into the mempool. | code reading |
+| ER-22 | medium | core/storage/hashes.ts:52-66; docs/wal.md:303-313, 359-366 | 2402, 2498, 2511 | The rewrite's runtime frame hash is `keccak(canon(record))`. og uses an integrity digest over binary with a domain and `canonicalEntityHashes`. The rewrite's `inputRefs` carry full inputs, but wal.md says "header never becomes a blob". Its `previous/postHostRoot` covers a single-account Host. | code reading |
+| ER-23 | low | core/storage/wal/outbox-payload.ts:36-66 (ordered `(height,index)` rows + ordered digest) | 2527-2528 | `recover` compares the persisted outbox as a multiset sorted by id, so a reordered outbox passes. og binds order positionally. | code reading |
+| ER-24 | low | core/watchtower/store/decode.ts:143-145 (`towerSignature` optional); appointments.ts:119,129 (stale / replay checks) | 2542-2545 | The rewrite's `accept*` only require non-empty strings. It rejects a receipt without `towerSignature` (og allows that), and it has no stale/replay/lookup-key checks. Neither side verifies the signature cryptographically on decode. | code reading |
+| ER-25 | low | n/a | 2363 | The `halt_runtime` stop path in `applyRuntime` is dead code, because no `EntityError` has that tag. `applyEntityInput` reports an entity-id mismatch as `self_account`. | code reading |
+
+## Declared holes / unchosen (rewrite)
+
+`HoleNames` (xln.ts:90):
+- `cross_open`: account `cross_pull_lock/close` (1277-1278, and marked `unchosen` author at 1100); entity `prepareCrossJurisdictionSwap`/`registerCrossJurisdictionSwap` (2473).
+- `leader_timeout_vote`: host input `leaderTimeoutVote` (2487).
+- `reveal_before_height`: ladder reveal at exactly `revealBeforeHeight` (1199).
+- `quote_last_ms`: rebalance quote at exactly its expiry ms (1126).
+- `onion`: entity `htlcPayment` (2473).
+- `board_hanko_refresh`: host input (2487).
+
+Other gaps that are not declared as holes: the proposedFrame/validator replay path (ER-6), mempool (ER-10), and every og entity tx without a constructor (below).
+
+## Entity tx coverage (og `core/types/entity-tx.ts`, enumerated with ast-grep `property_signature name=type`)
+
+Rewrite entity txs (`EntityTx` 1951 + `EntityRouteTx` 2387):
+- `openAccount`: DIVERGES (ER-12, 13, 14).
+- `accountInput`: MATCH in intent (it carries an exact AccountInput); the shape differs (flat target).
+- `directPayment`: DIVERGES (ER-15).
+- `placeSwapOffer`: DIVERGES (ER-14).
+- `extendCredit`: DIVERGES in shape; it maps to `set_credit_limit`.
+- `htlcPayment`, `prepareCrossJurisdictionSwap`, `registerCrossJurisdictionSwap`: holes.
+- `r2r/r2c`: rewrite `JOp` (applyJ), DIVERGES (ER-16).
+- `lending*`: DIVERGES (ER-17).
+- `addDelta`, `pay`, `proposeAccount`: EXTRA.
+
+MISSING: accountInput-adjacent `proposeAccountsNow`, `resolveHtlcLock`, `processHtlcTimeouts`, `crossPullClose`, `requestCollateral`, `setHubConfig`, `setRebalancePolicy`, `proposeCancelSwap`, `initOrderbookExt`, `j_event`, `j_broadcast`, `j_rebroadcast`, `j_abort_sent_batch`, `j_clear_batch`, `e2r`, `r2e`, `mintReserves`, `settle_propose/update/approve/execute/reject`, `prepareDispute/disputeStart/disputeFinalize`, `boardHandover`, `entityProvider*` (5), `propose/vote/chat/chatMessage/profile-update`, `scheduledWake`, `entityCommand`, `runtimeOutput`, and all cross-J book/clear/salvage txs (9).
+
+Runtime input kinds: og `RuntimeInput{runtimeTxs, entityInputs, jInputs}`. Its RuntimeTx kinds are checkpointBarrier, recordRuntimeAdapterCommand, recordNumberedRegistrationIntent, resolveNumberedRegistrationIntent, recordAuthenticatedJAuthority, importReplica, observeJRange, batch, advanceJWatcherCursor, rewindJHistory, retryJSubmit, recordJSubmitResult, retryEntityProviderAction, recordEntityProviderActionSubmitResult, recordGovernanceJSubmitResult, importJ, completeImportJ. All are MISSING. The rewrite's `RuntimeInput` is `create | receive` carrying `txs | precommit`. og's EntityInput fields `proposedFrame`, `hashPrecommits`, `jPrefixAttestations` and `leaderTimeoutVote` are MISSING or a hole.
+
+## Coverage: checked and MATCH
+
+- The threshold rule is `>=` over summed shares, with shares weighting (og precommit-input.ts:179, certificates.ts:100; rewrite 2218). Proven by 2 tests.
+- The authority root encoding (domain `xln.entity.frame-authority:binary`, config + leaderState view 0) matches og for single or sorted validator sets. Proven.
+- The constraints threshold ≥ 1, shares > 0 and threshold ≤ total power match (config-validation.ts:93,111; rewrite 2206).
+- The runtime outbox is positional: input order first, then each input's output order, with no sorting (AGENTS.md:73; rewrite 2366). Proven.
+- The frame installs only after the quorum certificate, and draft outputs are released only on install (rewrite 2332-2334; og finalization). Consistent with rjea-architecture.md "candidate installs only after certification".
+- Recovery refuses a protocol-version mismatch, a broken prev-hash/height/root chain, or a post-root mismatch (rewrite 2518-2525; wal.md §12 steps 6-7).
