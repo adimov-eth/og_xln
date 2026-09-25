@@ -392,3 +392,30 @@ describe("settle-jsubmit: settle_execute jBatch row (og jurisdiction/machine/bat
     expect(counts.conflicts).toBeGreaterThan(10);
   });
 });
+
+// ---- og entity/tx/handlers/j-batch/r2c.ts collectRebalanceFee ----
+import { handleR2C } from "../../core/entity/tx/handlers/j-batch/r2c.ts";
+import { queueR2C } from "../xln.ts";
+
+describe("settle-jsubmit: r2c rebalance-fee path (og j-batch/r2c.ts collectRebalanceFee)", () => {
+  test("MATCH: 300 random r2c deposits with / without rebalanceQuoteId -- og has no activeQuote writer, so a quoted deposit is refused with the same status and the jBatch is untouched", async () => {
+    const OTHER = W("77"), counts = { fee: 0, queued: 0 };
+    for (let n = 0; n < 300; n++) {
+      const reserves = new Map([[1, BigInt(ri(100))]]), tokenId = pick([1, 1, 0]), amount = BigInt(ri(60));
+      const counterparty = pick([BOB, BOB, OTHER]), receivingEntityId = rng() < 0.2 ? OTHER : undefined;
+      const fee = rng() < 0.5 ? { rebalanceQuoteId: 1000 + ri(5), rebalanceFeeAmount: BigInt(ri(3)), rebalanceFeeTokenId: pick([1, 2]) } : undefined;
+      const og: any = { entityId: ALICE, timestamp: 5000, reserves: new Map(reserves), accounts: new Map([[BOB, { shadow: { rebalance: {} } }]]) };
+      const ogOut: any = await handleR2C({} as any, og, { type: "r2c", data: { counterpartyId: counterparty, receivingEntityId, tokenId, amount, ...(fee ?? {}) } } as any, true);
+      const rw: JEntity = { entityId: ALICE, reserves, debts: EMPTY_DEBTS, accounts: new Set([BOB]) } as any;
+      const r = unwrap(queueR2C(rw, counterparty, tokenId, amount, receivingEntityId, fee) as any) as any;
+      const ogQueued = og.jBatchState !== undefined && og.jBatchState.batch.reserveToCollateral.length > 0;
+      expect(r.note === undefined).toBe(ogQueued);
+      expect(ogOut.accountTxs ?? []).toEqual([]);
+      const message = String(readEntityFrameEvents(og).at(-1)?.message ?? "");
+      if (message.startsWith("❌ Rebalance fee")) { expect(`❌ ${r.note}`).toBe(message); counts.fee++; }
+      if (ogQueued) { expect(encodeBatch(r.jBatch.batch)).toBe(encodeJBatch(og.jBatchState.batch)); counts.queued++; }
+    }
+    expect(counts.fee).toBeGreaterThan(20);
+    expect(counts.queued).toBeGreaterThan(20);
+  });
+});

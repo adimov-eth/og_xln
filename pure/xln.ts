@@ -1141,13 +1141,20 @@ export const queueE2R = (e: JEntity, x: { readonly contractAddress: string; read
   return addOp(e.jBatch ?? initJBatch(), "externalTokenToReserve", { entity: e.entityId, contractAddress: x.contractAddress, externalTokenId: x.externalTokenId ?? 0n, tokenType: BigInt(x.tokenType ?? 0), internalTokenId: BigInt(x.internalTokenId ?? 0), amount: x.amount }, "externalTokenToReserve");
 };
 /** og handleR2C (no rebalance quote): admission, debt-aware reserve and local-account checks refuse with a note and leave the draft unchanged. */
-export const queueR2C = (e: JEntity, counterparty: string, tokenId: number, amount: bigint, receivingEntityId?: string): Result<JQueued, JBatchError> => {
+/**
+ * og r2c.ts collectRebalanceFee: a deposit carrying `rebalanceQuoteId` needs the Account's accepted `shadow.rebalance.activeQuote`. og core has no
+ * writer of activeQuote (only clearRebalanceActiveQuote deletes it), so from consensus the quote is always absent and the deposit is refused
+ * with a status, before it reaches the jBatch.
+ */
+export type RebalanceFee = { readonly rebalanceQuoteId: number; readonly rebalanceFeeAmount?: bigint | undefined; readonly rebalanceFeeTokenId?: number | undefined };
+export const queueR2C = (e: JEntity, counterparty: string, tokenId: number, amount: bigint, receivingEntityId?: string, fee?: RebalanceFee): Result<JQueued, JBatchError> => {
   const receiving = (receivingEntityId ?? e.entityId).trim().toLowerCase(), local = receiving === e.entityId.trim().toLowerCase(), unchanged = e.jBatch ?? initJBatch();
   if (amount <= 0n || !Number.isSafeInteger(tokenId) || tokenId <= 0) return ok({ jBatch: unchanged, note: "Collateral deposit requires a positive amount and registered tokenId" });
   if (receiving === "" || receiving === counterparty.toLowerCase()) return ok({ jBatch: unchanged, note: "Collateral deposit requires two distinct non-empty entities" });
   const issue = reserveCandidateIssue(e, { type: "reserveToCollateral", receivingEntity: receiving, counterparty, tokenId, amount });
   if (issue !== undefined) return ok({ jBatch: unchanged, note: `Insufficient spendable reserve for collateral deposit: have ${issue.availableAfterDebt}, need ${amount} token ${tokenId}` });
   if (local && !e.accounts.has(counterparty)) return ok({ jBatch: unchanged, note: "Cannot deposit collateral: no account" });
+  if (fee !== undefined) return ok({ jBatch: unchanged, note: local ? `Rebalance fee: no active quote for ${counterparty.slice(-4)}` : "Rebalance fee unsupported for remote reserve → account deposits" });
   return map(addReserveToCollateral(unchanged, receiving, counterparty, tokenId, amount), (jBatch) => ({ jBatch }));
 };
 /** og takeBroadcastBatch: dispute work broadcasts first (one finalization at a time; registrations with starts); everything else waits in the remainder. */
@@ -7319,7 +7326,7 @@ export const recoverRuntime = (checkpoint: Runtime, frames: readonly StorageFram
 /** og entity j-batch txs (r2r / r2c / r2e / e2r queue into jBatchState; j_broadcast seals it) and the finalized J events that move reserves (entity-runtime ER-16). */
 export type JOp =
   | { readonly type: "r2r"; readonly toEntity: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "r2c"; readonly counterparty: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly receivingEntity?: EntityId | undefined }
+  | { readonly type: "r2c"; readonly counterparty: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly receivingEntity?: EntityId | undefined; readonly rebalanceFee?: RebalanceFee | undefined }
   | { readonly type: "et2r"; readonly tokenAddress: string; readonly amount: bigint; readonly internalTokenId: TokenId }
   | { readonly type: "r2et"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
   | { readonly type: "j_broadcast"; readonly chainId: number; readonly depository: string; readonly signerId: string }
@@ -7363,7 +7370,7 @@ export const applyJ = (j: JState, op: JOp, self: EntityId, peer: string, ctx: Ho
   const jNonceOf = (counterparty: string): number => (account !== undefined && counterparty === peer.toLowerCase() ? account.jNonce : 0);
   return matchBy("type", op, {
     r2r: (x) => queued(queueR2R(e, x.toEntity, Number(x.tokenId), x.amount)),
-    r2c: (x) => map(queueR2C(e, x.counterparty, Number(x.tokenId), x.amount, x.receivingEntity), (q) => just(q.note === undefined ? { ...j, jBatch: q.jBatch } : j)),
+    r2c: (x) => map(queueR2C(e, x.counterparty, Number(x.tokenId), x.amount, x.receivingEntity, x.rebalanceFee), (q) => just(q.note === undefined ? { ...j, jBatch: q.jBatch } : j)),
     r2et: (x) => queued(queueR2E(e, x.recipient, Number(x.tokenId), x.amount)),
     et2r: (x) => queued(queueE2R(e, { contractAddress: x.tokenAddress, amount: x.amount, internalTokenId: Number(x.internalTokenId) })),
     j_broadcast: (x) => map(jBroadcast(j.jBatch, { entityId: self, chainId: x.chainId, depository: x.depository, signerId: x.signerId, timestamp: Number(ctx.timestamp) }), submit),
