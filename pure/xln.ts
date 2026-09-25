@@ -6540,7 +6540,7 @@ const crossMaterializations = (r: EntityReplica, txs: readonly EntityTx[], ctx: 
   }), (added) => (added.length > 0 ? [...txs, ...added] : txs));
 };
 /** og selectCrossJCommitPhaseTxs: an Account transition and a cross-j setup never share a frame; setup (and a deferred author's later commands) waits. */
-const selectCommitPhaseTxs = (txs: readonly EntityTx[]): readonly EntityTx[] => {
+export const selectCommitPhaseTxs = (txs: readonly EntityTx[]): readonly EntityTx[] => {
   const nested = (tx: EntityTx): readonly EntityTx[] => (tx.type === "entityCommand" ? tx.data.txs : tx.type === "runtimeOutput" && tx.data.protocol === "cross-j" ? tx.data.entityTxs : [tx]);
   const transition = (tx: EntityTx): boolean => nested(tx).some((n) => n.type === "accountInput");
   const setup = (tx: EntityTx): boolean => nested(tx).some((n) => n.type === "materializeCrossJurisdictionSwap" || n.type === "registerCrossJurisdictionSwap");
