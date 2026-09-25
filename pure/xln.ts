@@ -1433,7 +1433,15 @@ export type AccountBody = {
   readonly requested: ReadonlyMap<TokenId, bigint>; readonly requestFees: ReadonlyMap<TokenId, RebalanceRequestFeeState>; readonly feePolicies: ReadonlyMap<TokenId, BilateralFeePolicy>;
   readonly lendingIntents: ReadonlyMap<string, LendingIntentKind>; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly jNonce: number;
   readonly settlement?: SettlementWorkspace | undefined; readonly pulls?: ReadonlyMap<string, PullRow> | undefined;
+  /** og replica shadow.rebalance.submittedAtByToken: local J-batch submission marker per token; outside the Account state root, committed in the Entity's account leaf. */
+  readonly submittedAt?: ReadonlyMap<number, number> | undefined;
 };
+/** og envelope/entity-update.ts setRebalanceSubmittedAt: set, or (undefined) clear, one token's submission marker. */
+export const setRebalanceSubmittedAt = (a: AccountBody, tokenId: number, submittedAt: number | undefined): AccountBody =>
+  ({ ...a, submittedAt: submittedAt === undefined ? mapDelete(a.submittedAt ?? new Map<number, number>(), tokenId) : mapSet(a.submittedAt ?? new Map<number, number>(), tokenId, submittedAt) });
+const clearSubmittedAt = (a: AccountBody, tk: TokenId): AccountBody => (a.submittedAt?.has(Number(tk)) ? { ...a, submittedAt: mapDelete(a.submittedAt, Number(tk)) } : a);
+/** og state-root.ts submittedAtByTokenRoot: the shadow map's root, as the Entity account leaf commits it. */
+export const submittedAtRoot = (a: AccountBody): Result<string, CommitmentError> => mapRoot(a.submittedAt ?? new Map<number, number>());
 export type AccountStep<E extends Effect = Effect> = Step<AccountBody, E>;
 type BodyStep<E extends Effect = never> = Result<AccountStep<E>, BodyError>;
 export type AccountTx =
@@ -1555,7 +1563,8 @@ const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[]): Resul
       const was = getDelta(b.account, tk), now = settle(was, BigInt(e.data.collateral), BigInt(e.data.ondelta)), increase = floor0(now.collateral - was.collateral);
       const settled = putState(b, setDelta(b.account, now)), requested = b.requested.get(tk) ?? 0n;
       if (requested <= 0n || increase <= 0n) return ok(settled);
-      return ok(requested > increase ? { ...settled, requested: mapSet(settled.requested, tk, requested - increase) } : { ...settled, requested: mapDelete(settled.requested, tk), requestFees: mapDelete(settled.requestFees, tk) });
+      // og finality.ts: a collateral increase against a pending request also clears the shadow submission marker.
+      return ok(clearSubmittedAt(requested > increase ? { ...settled, requested: mapSet(settled.requested, tk, requested - increase) } : { ...settled, requested: mapDelete(settled.requested, tk), requestFees: mapDelete(settled.requestFees, tk) }, tk));
     })), (b) => map(activateWorkspace(b, jNonce), (c) => ({ ...c, jNonce }))));
 };
 /** og j-claim-transition.ts: conflict on either side refuses; stale prunes; the first side waits; the peer's matching record at any pending height finalizes. */
@@ -2016,8 +2025,9 @@ const rebalanceRefund = (a: AccountBody, x: TxOf<"rebalance_refund">, ctx: FoldC
   if (!a.account.deltas.has(feeToken)) return rebalanceErr("REBALANCE_REFUND_NO_FEE_DELTA");
   return map(spend(a, feeToken, x.amount, ctx.byLeft), (paid) => {
     const next = refunded + x.amount;
+    // og refund.ts: a full refund clears the request and its shadow submission marker, so a new request for the token may enter a J-batch.
     return step(next === fees.feePaidUpfront
-      ? { ...paid, requested: mapDelete(paid.requested, x.requestTokenId), requestFees: mapDelete(paid.requestFees, x.requestTokenId) }
+      ? clearSubmittedAt({ ...paid, requested: mapDelete(paid.requested, x.requestTokenId), requestFees: mapDelete(paid.requestFees, x.requestTokenId) }, x.requestTokenId)
       : { ...paid, requestFees: mapSet(paid.requestFees, x.requestTokenId, { ...fees, refund: { reason: x.reason, refundedAmount: next } }) });
   });
 };
@@ -2273,7 +2283,7 @@ export const applyAccountBody: Layer<AccountBody, WireAccountTx, FoldCtx, Effect
   return chain(applyArm(a, tx, ctx), (next) => (next.state.account.deltas.size > MAX_ROWS ? err({ _tag: "too_many_rows" }) : commits(a, tx, next)));
 };
 export const accountSnapshot = (a: AccountBody): Required<Omit<AccountBody, "account">> & { readonly state: Hash } =>
-  ({ state: hashAccountState(a.account), terms: a.terms, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight, pulls: a.pulls });
+  ({ state: hashAccountState(a.account), terms: a.terms, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight, pulls: a.pulls, submittedAt: a.submittedAt });
 
 
 export type ViewError = CommitmentError | Tagged<"token_id", { tokenId: TokenId }> | ClaimError;
@@ -3645,7 +3655,7 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
   });
   return chain(linked, (link): Result<EntityRootAccount, EntityError> => chain(mapErr(committedView(body), (): EntityError => ({ _tag: "account_envelope", target: peer })), (state): Result<EntityRootAccount, EntityError> => ok({
     fromEntity: self, toEntity: peer, status, currentHeight: link.height, nextProofNonce: child.dispute.nextProofNonce, currentFrameHash: link.frame,
-    pendingWithdrawals: ZERO_WORD, policyRoot: ZERO_WORD, submittedAtByTokenRoot: ZERO_WORD, state,
+    pendingWithdrawals: ZERO_WORD, policyRoot: ZERO_WORD, submittedAtByTokenRoot: unwrapOr(submittedAtRoot(body), () => ZERO_WORD), state,
     committed: { ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active) : {}) },
     ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
   })));

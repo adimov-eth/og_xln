@@ -14,6 +14,7 @@ import { PersistentAccountStateMap } from "../../core/account/state/persistent-s
 import { ethers } from "ethers";
 import { handleHtlcLock } from "../../core/account/tx/handlers/htlc/lock.ts";
 import { applyAccountTxMutation } from "../../core/account/tx/mutation.ts";
+import { applyFinalizedAccountJEventsOnView } from "../../core/account/tx/handlers/j-events/finality.ts";
 import { assertOpaqueHtlcCiphertext, hashOpaqueHtlcCiphertext } from "../../core/protocol/htlc/multi-recipient.ts";
 import {
   buildHashLadderProof,
@@ -49,6 +50,8 @@ import {
   genesisAccountBody,
   holds,
   htlcEnvelopeHash,
+  setRebalanceSubmittedAt,
+  submittedAtRoot,
   type AccountBody,
   type CrossRoute,
 } from "../xln.ts";
@@ -236,7 +239,7 @@ export const ogHarness = (body: AccountBody) => {
     leftPendingJClaims: v.leftPendingJClaims, rightPendingJClaims: v.rightPendingJClaims,
     ...Object.fromEntries(["deltas", "locks", "pulls", "swapOffers", "subcontracts", "lendingIntents", "requestedRebalance", "requestedRebalanceFeeState", "rebalanceFeePolicies"].map((n) => [n, PA(n, v[n])])) };
   let replica: any = { state, status: "active", currentHeight: 0, proofHeader: { fromEntity: LEFT, toEntity: RIGHT, nextProofNonce: 1 }, currentFrame: { stateHash: "" }, pendingWithdrawals: PA("pendingWithdrawals"),
-    shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted") } }, mempool: [] };
+    shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted", body.submittedAt ?? new Map()) } }, mempool: [] };
   const run = async (handler: (draft: any) => Promise<any> | any): Promise<{ ok: boolean; root?: string; error?: string; value?: any }> => {
     const overlay = beginAccountTransition(replica);
     let r: any;
@@ -514,5 +517,55 @@ describe("cross-j: Account outputs through og applyAccountTxMutation", () => {
       }
     }
     for (const tag of ["forward_secret", "htlc_error", "swap_cancel_requested", "swap_cancelled", "request_collateral_committed", "direct_payment_forward"]) expect(seen.has(tag)).toBe(true);
+  });
+});
+
+// ---------- replica shadow: rebalance submittedAtByToken (og refund.ts, j-events/finality.ts, envelope/entity-update.ts) ----------
+describe("cross-j: submittedAtByToken shadow", () => {
+  const shadowRoot = (og: ReturnType<typeof ogHarness>): string => og.replica().shadow.rebalance.submittedAtByToken.rootHash();
+  const requested = (body: AccountBody, byLeft: boolean, tokenId: string, fee: bigint): AccountBody =>
+    unwrapR(applyAccountBody(body, { type: "request_collateral", tokenId, amount: 1000n, feeAmount: fee, policyVersion: 1 } as never, { byLeft, nowMs: 5n, jHeight: 1n, accountHeight: 2n }) as never as { ok: true; value: { state: AccountBody } }).state;
+
+  test("MATCH: 120 random refunds clear the marker exactly when og does (full refund only), with the same shadow root", async () => {
+    const r = rng(404);
+    let cleared = 0;
+    for (let n = 0; n < 30; n++) {
+      const requesterIsLeft = r() < 0.5, fee = BigInt(2 + Math.floor(r() * 8));
+      let body = requested(openAccount(10n ** 6n), requesterIsLeft, "1", fee);
+      for (const tk of [1, 2, 3]) if (r() < 0.7) body = setRebalanceSubmittedAt(body, tk, 100 + tk);
+      const og = ogHarness(body);
+      expect(shadowRoot(og)).toBe(unwrapR(submittedAtRoot(body)));
+      const requestId = body.requestFees.get("1" as never)!.requestId;
+      for (let i = 0; i < 4; i++) {
+        const tx: any = { type: "rebalance_refund", requestId: r() < 0.9 ? requestId : "other", requestTokenId: "1", amount: BigInt(1 + Math.floor(r() * Number(fee))), reason: r() < 0.9 ? "manual" : "timeout" };
+        const byLeft = r() < 0.85 ? !requesterIsLeft : requesterIsLeft;
+        const o = await og.run((acc) => applyAccountTxMutation(acc, toOg(tx), byLeft, 9, 1, false, undefined, undefined, undefined, []));
+        const rw = applyAccountBody(body, tx, { byLeft, nowMs: 9n, jHeight: 1n, accountHeight: 3n }) as any;
+        expect(rw.ok).toBe(o.ok);
+        if (!rw.ok) continue;
+        const had = body.submittedAt?.has(1) ?? false;
+        body = rw.value.state;
+        if (had && !(body.submittedAt?.has(1) ?? false)) cleared++;
+        expect(unwrapR(committed(body) as never as { ok: true; value: { root: string } }).root).toBe(o.root!);
+        expect(unwrapR(submittedAtRoot(body))).toBe(shadowRoot(og));
+      }
+    }
+    expect(cleared).toBeGreaterThan(5);
+  });
+
+  test("MATCH: J finality that raises collateral against a pending request clears that token's marker (partial and full cover)", async () => {
+    for (const cover of [400n, 1000n, 5000n, 0n]) for (const alsoOther of [false, true]) {
+      let body = requested(openAccount(10n ** 6n), true, "1", 5n);
+      body = setRebalanceSubmittedAt(setRebalanceSubmittedAt(body, 1, 77), 2, 88);
+      const og = ogHarness(body);
+      const tokens = [{ tokenId: 1n, leftReserve: 0n, rightReserve: 0n, collateral: cover, ondelta: 0n }, ...(alsoOther ? [{ tokenId: 2n, leftReserve: 0n, rightReserve: 0n, collateral: 50n, ondelta: 0n }] : [])];
+      const claim: any = { type: "j_event_claim", jHeight: 10n, jBlockHash: W("0a"), observedAt: 1n, events: [{ left: LEFT, right: RIGHT, nonce: 1n, tokens }] };
+      for (const byLeft of [true, false]) body = unwrapR(applyAccountBody(body, claim, { byLeft, nowMs: 9n, jHeight: 10n, accountHeight: 3n }) as never as { ok: true; value: { state: AccountBody } }).state;
+      const ogEvents = tokens.map((t) => ({ type: "AccountSettled", data: { leftEntity: LEFT, rightEntity: RIGHT, tokenId: Number(t.tokenId), leftReserve: "0", rightReserve: "0", collateral: t.collateral.toString(), ondelta: "0", nonce: 1 } }));
+      expect((await og.run((acc) => { applyFinalizedAccountJEventsOnView(acc, RIGHT, ogEvents as never, `0x${"de".repeat(20)}`); return { ok: true }; })).ok).toBe(true);
+      expect(unwrapR(submittedAtRoot(body))).toBe(shadowRoot(og));
+      expect(body.submittedAt?.has(1)).toBe(cover === 0n);
+      expect(body.submittedAt?.has(2)).toBe(true);
+    }
   });
 });
