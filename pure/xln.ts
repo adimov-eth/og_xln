@@ -4208,6 +4208,8 @@ export type Authority = Tagged<"teaching", TeachingQuorum> | Tagged<"board", Boa
 export type Quorum = Authority & { readonly proposer: Address };
 /** og `config.jurisdiction` beyond the account Domain; committed inside the root's config section when present. */
 export type JurisdictionConfig = {
+  /** og JurisdictionConfig.name: the J replica an Entity's J outputs go to; never committed (og projectConsensusConfigCommitment). */
+  readonly name?: string | undefined;
   readonly entityProviderAddress: string; readonly registrationBlock?: number | undefined; readonly entityProviderDeploymentBlock?: number | undefined; readonly blockTimeMs?: number | undefined;
   /** og JurisdictionConfig.rebalancePolicyUsd: whole-USD numbers (og commits them as numbers). */
   readonly rebalancePolicyUsd?: { readonly r2cRequestSoftLimit: number; readonly hardLimit: number; readonly maxFee: number } | undefined;
@@ -4258,6 +4260,10 @@ export type EntityTx =
   | { readonly type: "propose"; readonly data: { readonly action: ProposalAction; readonly proposer: string } }
   | { readonly type: "vote"; readonly data: { readonly proposalId: string; readonly voter: string; readonly choice: "yes" | "no"; readonly comment?: string | undefined } }
   | { readonly type: "htlcPayment"; readonly data: HtlcPaymentData }
+  /** og entityProviderTransfer / entityProviderReleaseControlShares / entityProviderCancelAction (entity/tx/handlers/entity-provider-action.ts): collective EntityProvider actions. */
+  | { readonly type: "entityProviderTransfer"; readonly data: { readonly to: string; readonly tokenId: bigint; readonly amount: bigint } }
+  | { readonly type: "entityProviderReleaseControlShares"; readonly data: { readonly recipientAddress: string; readonly controlAmount: bigint; readonly dividendAmount: bigint; readonly purpose: string } }
+  | { readonly type: "entityProviderCancelAction"; readonly data: { readonly actionHash: string } }
   | SwapRequestEntityTx
   | LendingEntityTx;
 /** og types/entity-tx.ts placeSwapOffer / proposeCancelSwap (payments/swap-requests.ts): one swap Account tx on the hub Account. */
@@ -4289,7 +4295,7 @@ export type LendingEntityTx =
   | { readonly type: "lendingClosePosition"; readonly data: { readonly hubEntityId: string; readonly positionId: string } };
 /** og ProfileUpdateTx & { entityId }. */
 export type ProfileUpdate = { readonly entityId: string; readonly name?: string | undefined; readonly entityKind?: string | null | undefined; readonly sectors?: readonly string[] | undefined; readonly avatar?: string | undefined; readonly bio?: string | undefined; readonly website?: string | undefined };
-export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute"; readonly context: string };
+export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "entityProviderAction"; readonly context: string };
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
   readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[]; readonly leader: FrameLeader;
@@ -4310,7 +4316,8 @@ export type EntityPhase = "open" | "proposed" | "locked";
 export type EntityEvent = EntityInput["kind"];
 export type Folded = { readonly state: EntityState; readonly accountReplicas: ReadonlyMap<EntityId, AccountReplica> };
 /** `events`: og frame events the folded txs emitted (og addMessage / addTextMessage), in order. */
-export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readonly events?: readonly FrameEvent[] | undefined; readonly touched?: readonly EntityId[] | undefined };
+/** `hashes` / `jOutputs`: og EntityTxReducerResult hashesToSign and jOutputs of the folded txs (EntityProvider actions), in order. */
+export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readonly events?: readonly FrameEvent[] | undefined; readonly touched?: readonly EntityId[] | undefined; readonly hashes?: readonly HashToSign[] | undefined; readonly jOutputs?: readonly JInput[] | undefined };
 /** og replica `leaderVotes` (one collection key at a time) and `pendingLeaderCertificate`. */
 type LeaderLane = { readonly leaderVotes?: ReadonlyMap<string, LeaderVote> | undefined; readonly pendingLeaderCertificate?: LeaderCertificate | undefined };
 type EntityEnv = Folded & LeaderLane & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
@@ -4882,6 +4889,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
   extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId,
   requestCollateral: (x) => x.data.counterpartyEntityId, placeSwapOffer: (x) => x.data.counterpartyEntityId, proposeCancelSwap: (x) => x.data.counterpartyEntityId, setRebalancePolicy: (x) => x.data.counterpartyEntityId, setHubConfig: () => self, prepareDispute: (x) => x.data.counterpartyEntityId, disputeStart: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self, entityCommand: () => self, propose: () => self, vote: () => self,
+  entityProviderTransfer: () => self, entityProviderReleaseControlShares: () => self, entityProviderCancelAction: () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
   htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId,
@@ -5153,7 +5161,7 @@ const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext)
     const next = routed(draft.state, draft.accountReplicas, peer, propose(child, input as Propose, { verify: pendingVerify(ctx.verify, self), party: party.value }));
     if (!next.ok) continue;
     if (plan.value._tag === "frame") frames += 1;
-    draft = { ...next.value, outputs: [...draft.outputs, ...next.value.outputs] };
+    draft = { ...draft, ...next.value, outputs: [...draft.outputs, ...next.value.outputs] };
   }
   // og sends one final Account input per Account: an ACK already riding on that Account's new frame is not sent again.
   const carried = new Set(draft.outputs.flatMap((o) => ("tx" in o && o.tx.data.kind === "ack_frame" && o.tx.data.ack !== null ? [`${o.to}|${canon(o.tx.data.ack)}`] : [])));
@@ -5481,10 +5489,192 @@ export const applyBoardJEvent = (state: EntityState, event: JEvent, blockNumber:
   const j = entityBoardStack(state);
   if (j === undefined) return invariant("CERTIFIED_BOARD_ENTITY_JURISDICTION_MISSING");
   const nodes = state.boardNodes ?? new Map<string, CertifiedBoardNode>();
-  return map(fromRegistry(applyBoardRegistryEvent(entityBoardRegistry(state), nodes, j, event)), (applied): BoardJEventStep => ({
-    state: { ...state, committed: { ...state.committed, certifiedBoardState: { ...applied.state } }, boardNodes: applied.newNodes.size === 0 ? nodes : new Map([...nodes, ...applied.newNodes]) },
-    events: [{ type: "status", message: `🔐 BOARD AUTHORITY: ${event.type} | Block ${blockNumber}` }],
+  return chain(fromRegistry(applyBoardRegistryEvent(entityBoardRegistry(state), nodes, j, event)), (applied): Result<BoardJEventStep, EntityError> => {
+    const next: EntityState = { ...state, committed: { ...state.committed, certifiedBoardState: { ...applied.state } }, boardNodes: applied.newNodes.size === 0 ? nodes : new Map([...nodes, ...applied.newNodes]) };
+    const events: readonly FrameEvent[] = [status(`🔐 BOARD AUTHORITY: ${event.type} | Block ${blockNumber}`)];
+    const pending = epActionState(next).pending;
+    if (event.type !== "BoardActivated" || lower(event.entityId) !== lower(state.id) || pending === undefined) return ok({ state: next, events });
+    // og: a pending EntityProvider action signed under an older board epoch expires at the activation
+    return chain(observerBoardRecord(next, next.id), (record): Result<BoardJEventStep, EntityError> => {
+      if (record === null) return invariant(`ENTITY_PROVIDER_ACTION_CERTIFIED_BOARD_MISSING:${next.id}`);
+      const epoch = BigInt(record.boardEpoch);
+      if (pending.boardEpoch > epoch) return invariant(`ENTITY_PROVIDER_ACTION_PENDING_BOARD_EPOCH_AHEAD:${pending.boardEpoch}:${epoch}`);
+      if (pending.boardEpoch === epoch) return ok({ state: next, events });
+      const { pending: _expired, ...kept } = epActionState(next);
+      return ok({ state: putEpActionState(next, kept), events: [...events, status("🛑 Pending EntityProvider action expired at board activation")] });
+    });
+  });
+};
+
+// ---- og entity/entity-provider-action.ts, entity/tx/handlers/entity-provider-action.ts, entity/tx/j-events-entity-provider-action.ts,
+// ---- hanko/onchain-domain.ts (ENTITY_TRANSFER / RELEASE_CONTROL_SHARES / CANCEL_ENTITY_PROVIDER_ACTION payloads)
+export type EntityProviderActionPayload =
+  | { readonly kind: "entityTransferTokens"; readonly transfer: { readonly to: string; readonly tokenId: bigint; readonly amount: bigint } }
+  | { readonly kind: "releaseControlShares"; readonly release: { readonly recipientAddress: string; readonly controlAmount: bigint; readonly dividendAmount: bigint; readonly purpose: string } }
+  | { readonly kind: "cancelPendingAction"; readonly cancel: { readonly cancelledActionHash: string; readonly cancelledActionKind: 0 | 1 } };
+/** og EntityProviderActionIntent: the board-signed action the leader submits to EntityProvider; `actionHash` is its Hanko payload hash. */
+export type EntityProviderActionIntent = {
+  readonly version: 1; readonly entityId: string; readonly entityNumber: bigint; readonly chainId: bigint; readonly entityProviderAddress: string; readonly boardEpoch: bigint;
+  readonly actionNonce: bigint; readonly generation: number; readonly createdAt: number; readonly payload: EntityProviderActionPayload; readonly actionHash: string;
+};
+/** og EntityState.entityProviderActionState (committed): one action lane per Entity, `pending` until its J receipt or a board activation. */
+export type EntityProviderActionState = { readonly version: 1; readonly confirmedNonce: bigint; readonly generation: number; readonly pending?: EntityProviderActionIntent | undefined };
+const EP_ACTION_EMPTY: EntityProviderActionState = { version: 1, confirmedNonce: 0n, generation: 0 };
+const epActionState = (state: EntityState): EntityProviderActionState => (state.committed["entityProviderActionState"] as EntityProviderActionState | undefined) ?? EP_ACTION_EMPTY;
+const putEpActionState = (state: EntityState, s: EntityProviderActionState): EntityState => ({ ...state, committed: { ...state.committed, entityProviderActionState: s as unknown as Binary } });
+const packedLabel = (label: string): Packed => ({ _tag: "bytes", value: bytesToHex(utf8(label)) });
+const u256 = (value: bigint): Packed => ({ _tag: "uint256", value });
+/** og recomputeEntityProviderActionHash: keccak(abi.encodePacked(label, chainId, entityProvider, entityNumber, boardEpoch, ...action, nonce)). */
+export const entityProviderActionHash = (intent: Omit<EntityProviderActionIntent, "actionHash">): string => {
+  const head = [u256(intent.chainId), { _tag: "address", value: intent.entityProviderAddress } as Packed, u256(intent.entityNumber), u256(intent.boardEpoch)];
+  const p = intent.payload;
+  const parts: readonly Packed[] = p.kind === "entityTransferTokens"
+    ? [packedLabel("ENTITY_TRANSFER"), ...head, { _tag: "address", value: p.transfer.to }, u256(p.transfer.tokenId), u256(p.transfer.amount), u256(intent.actionNonce)]
+    : p.kind === "releaseControlShares"
+      ? [packedLabel("RELEASE_CONTROL_SHARES"), ...head, { _tag: "address", value: p.release.recipientAddress }, u256(p.release.controlAmount), u256(p.release.dividendAmount), { _tag: "bytes32", value: keccak256Hex(utf8(p.release.purpose)) }, u256(intent.actionNonce)]
+      : [packedLabel("CANCEL_ENTITY_PROVIDER_ACTION"), ...head, u256(intent.actionNonce), { _tag: "bytes32", value: p.cancel.cancelledActionHash }, { _tag: "bytes", value: `0x${p.cancel.cancelledActionKind.toString(16).padStart(2, "0")}` }];
+  return keccak256Hex(encodePacked(parts)).toLowerCase();
+};
+const EP_MAX_UINT = (1n << 256n) - 1n, EP_ZERO_ADDRESS = `0x${"00".repeat(20)}`;
+const epFail = (reason: string): Result<never, EntityError> => invariant(reason);
+const epAddress = (value: unknown, label: string): Result<string, EntityError> => {
+  const raw = String(value ?? "").trim(), a = ethAddress(raw);
+  return a === null || a === EP_ZERO_ADDRESS ? epFail(`ENTITY_PROVIDER_ACTION_${label}_INVALID:${raw || "missing"}`) : ok(a);
+};
+const epUint = (value: unknown, label: string, allowZero = true): Result<bigint, EntityError> =>
+  typeof value !== "bigint" || value < 0n || (!allowZero && value === 0n) ? epFail(`ENTITY_PROVIDER_ACTION_${label}_INVALID:${String(value)}`) : ok(value);
+type EpDomain = { readonly name: string; readonly chainId: bigint; readonly entityProviderAddress: string; readonly depositoryAddress: string };
+/** og resolveActionDomain; the rewrite's Entity carries the J replica's name and stack in its own config (og re-reads them from the named J replica). */
+const epDomain = (state: EntityState): Result<EpDomain, EntityError> => {
+  const j = state.jurisdictionConfig, name = (j?.name ?? "").trim();
+  if (j === undefined || name === "") return epFail("ENTITY_PROVIDER_ACTION_JURISDICTION_MISSING");
+  const chainId = BigInt(state.jurisdiction.chainId);
+  if (chainId <= 0n) return epFail(`ENTITY_PROVIDER_ACTION_CHAIN_ID_INVALID:${chainId}`);
+  const provider = ethAddress(j.entityProviderAddress), depository = ethAddress(state.jurisdiction.depositoryAddress);
+  if (provider === null || provider === EP_ZERO_ADDRESS) return epFail("INVALID_ENTITY_PROVIDER_ADDRESS");
+  if (depository === null || depository === EP_ZERO_ADDRESS) return epFail("INVALID_DEPOSITORY_ADDRESS");
+  return ok({ name, chainId, entityProviderAddress: provider, depositoryAddress: depository });
+};
+const epCurrent = (state: EntityState): Result<EntityProviderActionState, EntityError> => {
+  const c = epActionState(state);
+  return c.version !== 1 || typeof c.confirmedNonce !== "bigint" || c.confirmedNonce < 0n || c.confirmedNonce > EP_MAX_UINT || !Number.isSafeInteger(c.generation) || c.generation < 0
+    ? epFail("ENTITY_PROVIDER_ACTION_STATE_INVALID") : ok(c);
+};
+const epEntityNumber = (entityId: string): Result<bigint, EntityError> => {
+  if (!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(entityId.trim())) return epFail(`ENTITY_PROVIDER_ACTION_ENTITY_ID_INVALID:${entityId}`);
+  const n = BigInt(entityId.trim());
+  return n <= 0n || n > EP_MAX_UINT ? epFail(`ENTITY_PROVIDER_ACTION_ENTITY_NUMBER_INVALID:${entityId}`) : ok(n);
+};
+const epBoardEpoch = (state: EntityState): Result<bigint, EntityError> =>
+  chain(observerBoardRecord(state, state.id), (record) => (record === null ? epFail(`ENTITY_PROVIDER_ACTION_BOARD_AUTHORITY_MISSING:${state.id}`) : ok(BigInt(record.boardEpoch))));
+type EpActionTx = Extract<EntityTx, { readonly type: "entityProviderTransfer" | "entityProviderReleaseControlShares" }>;
+const epPayload = (tx: EpActionTx): Result<EntityProviderActionPayload, EntityError> => {
+  if (tx.type === "entityProviderTransfer") {
+    return chain(epAddress(tx.data.to, "RECIPIENT"), (to) => chain(epUint(tx.data.tokenId, "TOKEN_ID"), (tokenId) => map(epUint(tx.data.amount, "AMOUNT", false), (amount): EntityProviderActionPayload => ({ kind: "entityTransferTokens", transfer: { to, tokenId, amount } }))));
+  }
+  const d = tx.data;
+  return chain(epUint(d.controlAmount, "CONTROL_AMOUNT"), (controlAmount) => chain(epUint(d.dividendAmount, "DIVIDEND_AMOUNT"), (dividendAmount): Result<EntityProviderActionPayload, EntityError> => {
+    if (controlAmount === 0n && dividendAmount === 0n) return epFail("ENTITY_PROVIDER_ACTION_RELEASE_AMOUNT_EMPTY");
+    if (typeof d.purpose !== "string") return epFail("ENTITY_PROVIDER_ACTION_PURPOSE_INVALID:not-string");
+    const size = utf8(d.purpose).byteLength;
+    if (size > 1_024) return epFail(`ENTITY_PROVIDER_ACTION_PURPOSE_OVERSIZED:${size}:1024`);
+    return map(epAddress(d.recipientAddress, "RECIPIENT"), (recipientAddress) => ({ kind: "releaseControlShares", release: { recipientAddress, controlAmount, dividendAmount, purpose: d.purpose } }));
   }));
+};
+/** The frame effects of one EntityProvider action tx: the pending intent, its J submission and its board-signed hash. */
+const epIssue = (state: EntityState, replicas: Replicas, domain: EpDomain, current: EntityProviderActionState, intent: EntityProviderActionIntent, signer: string, message: string, context: string, timestamp: bigint): Draft => {
+  const jTx: Binary = { type: intent.payload.kind === "entityTransferTokens" ? "entityProviderTransfer" : intent.payload.kind === "releaseControlShares" ? "entityProviderReleaseControlShares" : "entityProviderCancelAction", entityId: state.id, data: { intent, signerId: signer }, timestamp: Number(timestamp) } as unknown as Binary;
+  return {
+    state: putEpActionState(state, { version: 1, confirmedNonce: current.confirmedNonce, generation: intent.generation, pending: intent }), accountReplicas: replicas, outputs: [], events: [status(message)],
+    jOutputs: [{ jurisdictionName: domain.name, jTxs: [jTx] }], hashes: [{ hash: intent.actionHash, type: "entityProviderAction", context }],
+  };
+};
+/** og handleEntityProviderTransfer / handleEntityProviderReleaseControlShares (handleAction). */
+const entityProviderAction = (state: EntityState, replicas: Replicas, tx: EpActionTx, timestamp: bigint): Result<Draft, EntityError> =>
+  chain(epDomain(state), (domain) => chain(epCurrent(state), (current): Result<Draft, EntityError> => {
+    if (current.pending !== undefined) return epFail(`ENTITY_PROVIDER_ACTION_PENDING:${current.pending.actionNonce}:${current.pending.actionHash}`);
+    if (current.confirmedNonce === EP_MAX_UINT) return epFail("ENTITY_PROVIDER_ACTION_NONCE_EXHAUSTED");
+    if (current.generation >= Number.MAX_SAFE_INTEGER) return epFail("ENTITY_PROVIDER_ACTION_GENERATION_EXHAUSTED");
+    const signer = leaderStateOf(state).activeValidatorId;
+    if (signer === "") return epFail("ENTITY_PROVIDER_ACTION_SUBMITTER_MISSING");
+    return chain(epEntityNumber(state.id), (entityNumber) => chain(epBoardEpoch(state), (boardEpoch) => map(epPayload(tx), (payload) => {
+      const unsigned = { version: 1 as const, entityId: lower(state.id), entityNumber, chainId: domain.chainId, entityProviderAddress: domain.entityProviderAddress, boardEpoch, actionNonce: current.confirmedNonce + 1n, generation: current.generation + 1, createdAt: Number(timestamp), payload };
+      const intent: EntityProviderActionIntent = { ...unsigned, actionHash: entityProviderActionHash(unsigned) };
+      return epIssue(state, replicas, domain, current, intent, signer, `📤 EntityProvider ${payload.kind} → hashesToSign [nonce=${intent.actionNonce}]`,
+        `entityProviderAction:${state.id.slice(-4)}:${payload.kind}:nonce:${intent.actionNonce}`, timestamp);
+    })));
+  }));
+/** og assertEntityProviderActionIntent over a stored intent: its envelope must still be this Entity's stack and epoch, and its hash must recompute. */
+const epIntentValid = (intent: EntityProviderActionIntent, domain: EpDomain, entityId: string, boardEpoch: bigint): Result<void, EntityError> => {
+  const envelope = intent.version === 1 && intent.entityNumber > 0n && lower(intent.entityId) === `0x${intent.entityNumber.toString(16).padStart(64, "0")}` && lower(intent.entityId) === lower(entityId)
+    && intent.chainId === domain.chainId && lower(intent.entityProviderAddress) === domain.entityProviderAddress && intent.boardEpoch === boardEpoch && intent.actionNonce > 0n
+    && Number.isSafeInteger(intent.generation) && intent.generation > 0 && Number.isSafeInteger(intent.createdAt) && intent.createdAt >= 0 && WORD32.test(lower(intent.actionHash));
+  if (!envelope) return epFail("ENTITY_PROVIDER_ACTION_INTENT_INVALID");
+  const recomputed = entityProviderActionHash(intent);
+  return recomputed === lower(intent.actionHash) ? ok(undefined) : epFail(`ENTITY_PROVIDER_ACTION_HASH_MISMATCH:${intent.actionHash}:${recomputed}`);
+};
+/** og handleEntityProviderCancelAction: a cancel intent at the same nonce, naming the pending executable action. */
+const entityProviderCancel = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx, { readonly type: "entityProviderCancelAction" }>, timestamp: bigint): Result<Draft, EntityError> =>
+  chain(epDomain(state), (domain) => chain(epCurrent(state), (current) => chain(epBoardEpoch(state), (boardEpoch): Result<Draft, EntityError> => {
+    const pending = current.pending;
+    if (pending === undefined) return epFail("ENTITY_PROVIDER_ACTION_CANCEL_PENDING_MISSING");
+    return chain(epIntentValid(pending, domain, state.id, boardEpoch), (): Result<Draft, EntityError> => {
+      if (pending.payload.kind === "cancelPendingAction") return epFail(`ENTITY_PROVIDER_ACTION_CANCEL_ALREADY_PENDING:${pending.actionHash}`);
+      const requested = String(tx.data.actionHash ?? "").trim().toLowerCase();
+      if (requested !== lower(pending.actionHash)) return epFail(`ENTITY_PROVIDER_ACTION_CANCEL_TARGET_MISMATCH:${requested || "missing"}:${pending.actionHash}`);
+      if (pending.actionNonce !== current.confirmedNonce + 1n) return epFail(`ENTITY_PROVIDER_ACTION_PENDING_NONCE_CORRUPT:${pending.actionNonce}:${current.confirmedNonce + 1n}`);
+      if (current.generation >= Number.MAX_SAFE_INTEGER) return epFail("ENTITY_PROVIDER_ACTION_GENERATION_EXHAUSTED");
+      const signer = leaderStateOf(state).activeValidatorId;
+      if (signer === "") return epFail("ENTITY_PROVIDER_ACTION_SUBMITTER_MISSING");
+      return map(epEntityNumber(state.id), (entityNumber) => {
+        const unsigned = {
+          version: 1 as const, entityId: lower(state.id), entityNumber, chainId: domain.chainId, entityProviderAddress: domain.entityProviderAddress, boardEpoch, actionNonce: pending.actionNonce, generation: current.generation + 1, createdAt: Number(timestamp),
+          payload: { kind: "cancelPendingAction" as const, cancel: { cancelledActionHash: lower(pending.actionHash), cancelledActionKind: pending.payload.kind === "entityTransferTokens" ? 0 as const : 1 as const } },
+        };
+        const intent: EntityProviderActionIntent = { ...unsigned, actionHash: entityProviderActionHash(unsigned) };
+        return epIssue(state, replicas, domain, current, intent, signer, `🛑 EntityProvider cancel → hashesToSign [nonce=${intent.actionNonce}]`, `entityProviderAction:${state.id.slice(-4)}:cancel:nonce:${intent.actionNonce}`, timestamp);
+      });
+    });
+  })));
+/** og executableIdentity: the action a receipt must name (a cancel intent names the action it cancels). */
+const epExecutable = (p: EntityProviderActionIntent): { readonly actionHash: string; readonly actionKind: 0 | 1 } => (p.payload.kind === "cancelPendingAction"
+  ? { actionHash: lower(p.payload.cancel.cancelledActionHash), actionKind: p.payload.cancel.cancelledActionKind }
+  : { actionHash: lower(p.actionHash), actionKind: p.payload.kind === "entityTransferTokens" ? 0 : 1 });
+/**
+ * og applyEntityProviderActionExecuted / applyEntityProviderActionCancelled: a finalized EntityProvider receipt confirms the next nonce and
+ * clears the pending intent, which it must match when one is pending.
+ */
+export const applyEntityProviderActionJEvent = (state: EntityState, event: JEvent, blockNumber: number): Result<BoardJEventStep, EntityError> => {
+  if (event.type !== "EntityProviderActionExecuted" && event.type !== "EntityProviderActionCancelled") return invariant(`J_EVENT_ENTITY_PROVIDER_ACTION_ROUTE_MISMATCH:${event.type}`);
+  const executed = event.type === "EntityProviderActionExecuted", tag = executed ? "ACTION" : "CANCEL";
+  const word = (v: unknown, code: string): Result<string, EntityError> => { const s = String(v ?? "").trim().toLowerCase(); return WORD32.test(s) ? ok(s) : epFail(`${code}:${s || "missing"}`); };
+  return chain(word(event.entityId, `ENTITY_PROVIDER_${tag}_EVENT_ENTITY_INVALID`), (entity): Result<BoardJEventStep, EntityError> => {
+    if (entity !== lower(state.id)) return epFail(`ENTITY_PROVIDER_${tag}_EVENT_ENTITY_MISMATCH:${entity}:${state.id}`);
+    const kind = executed ? event.actionKind : event.cancelledActionKind;
+    if (kind !== 0 && kind !== 1) return epFail(`ENTITY_PROVIDER_${tag}_EVENT_KIND_INVALID:${String(kind)}`);
+    const nonce = event.actionNonce;
+    const read = executed ? word(event.actionHash, "ENTITY_PROVIDER_ACTION_EVENT_HASH_INVALID")
+      : (nonce < 1n || nonce > EP_MAX_UINT ? epFail(`ENTITY_PROVIDER_ACTION_EVENT_NONCE_INVALID:${nonce}`) : word(event.cancelledActionHash, "ENTITY_PROVIDER_CANCEL_EVENT_ACTION_HASH_INVALID"));
+    return chain(read, (hash) => chain(executed ? ok("") : word(event.cancelHash, "ENTITY_PROVIDER_CANCEL_EVENT_HASH_INVALID"), (cancelHash): Result<BoardJEventStep, EntityError> => {
+      if (nonce < 1n || nonce > EP_MAX_UINT) return epFail(`ENTITY_PROVIDER_ACTION_EVENT_NONCE_INVALID:${nonce}`);
+      const current = epActionState(state);
+      if (current.version !== 1 || current.confirmedNonce < 0n || current.confirmedNonce >= EP_MAX_UINT || !Number.isSafeInteger(current.generation) || current.generation < 0) return epFail("ENTITY_PROVIDER_ACTION_STATE_CORRUPT");
+      const expected = current.confirmedNonce + 1n;
+      if (nonce !== expected) return epFail(`ENTITY_PROVIDER_${tag}_EVENT_NONCE_MISMATCH:${nonce}:${expected}`);
+      const pending = current.pending;
+      if (pending !== undefined) {
+        const x = epExecutable(pending), cancelMatches = executed || pending.payload.kind !== "cancelPendingAction" || lower(pending.actionHash) === cancelHash;
+        if (pending.actionNonce !== nonce || x.actionHash !== hash || x.actionKind !== kind || !cancelMatches) {
+          return epFail(executed ? `ENTITY_PROVIDER_ACTION_RECEIPT_MISMATCH:expected=${pending.actionNonce}:${x.actionHash}:${x.actionKind}:received=${nonce}:${hash}:${kind}`
+            : `ENTITY_PROVIDER_CANCEL_RECEIPT_MISMATCH:expected=${pending.actionNonce}:${x.actionHash}:${x.actionKind}:${pending.payload.kind === "cancelPendingAction" ? pending.actionHash : "external-cancel"}:received=${nonce}:${hash}:${kind}:${cancelHash}`);
+        }
+      }
+      return ok({
+        state: putEpActionState(state, { version: 1, confirmedNonce: nonce, generation: current.generation }),
+        events: [status(executed ? `✅ EntityProvider action finalized (nonce ${nonce}) | Block ${blockNumber}` : `🛑 EntityProvider action cancelled (nonce ${nonce}) | Block ${blockNumber}`)],
+      });
+    }));
+  });
 };
 /** og canonicalBoardHash: the quorum's board (validator addresses, shares, the board's delays). */
 export const quorumBoardHash = (q: Authority): string => match(q, { teaching: () => configBoardHash(q), board: ({ board }) => boardHashOf(board).toLowerCase() });
@@ -5541,12 +5731,17 @@ const laneRefusal = (tx: EntityTx, lane: TxLane): EntityError | undefined => {
 };
 /** og plain Errors (openAccount, lending, governance invariants) refuse the whole input; a reject disposition evicts only the outermost tx. */
 const fatalTx = (tx: EntityTx, e: EntityError): boolean => tx.type === "openAccount" || e._tag === "lending_entity" || e._tag === "swap_request_account_missing" || e._tag === "entity_invariant";
+/** The accumulated tx hashesToSign and jOutputs of two drafts (absent while empty). */
+const frameEffects = (a: Draft, b: Draft): Pick<Draft, "hashes" | "jOutputs"> => {
+  const hashes = [...(a.hashes ?? []), ...(b.hashes ?? [])], jOutputs = [...(a.jOutputs ?? []), ...(b.jOutputs ?? [])];
+  return { ...(hashes.length === 0 ? {} : { hashes }), ...(jOutputs.length === 0 ? {} : { jOutputs }) };
+};
 /** og applyEntityTxsInOrder for a nested lane: every tx in order, atomically; a fatal child makes the whole outer tx fatal. */
 const foldNested = (state: EntityState, replicas: Replicas, txs: readonly EntityTx[], ctx: FoldContext, lane: TxLane): Result<Draft, EntityError> =>
   foldResult<Draft, EntityTx, EntityError>(txs, { state, accountReplicas: replicas, outputs: [], events: [] }, (acc, tx) => {
     const r = foldTx(acc.state, acc.accountReplicas, tx, ctx, lane);
     if (!r.ok) return fatalTx(tx, r.error) && r.error._tag !== "entity_invariant" ? invariant(`${tx.type}:${r.error._tag}`) : r;
-    return ok({ ...r.value, outputs: [...acc.outputs, ...r.value.outputs], events: [...(acc.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])] });
+    return ok({ ...r.value, outputs: [...acc.outputs, ...r.value.outputs], events: [...(acc.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc, r.value) });
   });
 const WORD32 = /^0x[0-9a-f]{64}$/, EOA = /^0x[0-9a-f]{40}$/;
 const COMMAND_DOMAIN = "xln:entity-command:binary", PROPOSAL_ACTION_DOMAIN = "xln:entity-proposal-action:v1";
@@ -6319,6 +6514,9 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     chat: (x) => ok(typeof x.data.message === "string" && x.data.message.length > 0 && x.data.message.length <= 1000 ? { ...skip, events: [{ type: "text", validatorId: lower(x.data.from), message: x.data.message }] } : skip),
     chatMessage: (x) => ok(say(skip, x.data.message)),
     entityCommand: (x) => foldCommand(state, replicas, x.data, ctx),
+    entityProviderTransfer: (x) => entityProviderAction(state, replicas, x, ctx.timestamp),
+    entityProviderReleaseControlShares: (x) => entityProviderAction(state, replicas, x, ctx.timestamp),
+    entityProviderCancelAction: (x) => entityProviderCancel(state, replicas, x, ctx.timestamp),
     propose: (x) => foldPropose(state, replicas, x.data, ctx),
     vote: (x) => foldVote(state, replicas, x.data, ctx),
     // og admin.ts handleRequestCollateralEntityTx: a missing Account is a no-op; otherwise queue request_collateral and wake validators[0]
@@ -6398,7 +6596,7 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   const primed = [...replicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
   return chain(normalizeGovernance(state), (normalized) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
     const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
-    if (r.ok) return ok({ ...acc, included: [...acc.included, tx], draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs], events: [...(acc.draft.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.draft.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])] } });
+    if (r.ok) return ok({ ...acc, included: [...acc.included, tx], draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs], events: [...(acc.draft.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.draft.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc.draft, r.value) } });
     return fatalTx(tx, r.error) ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
@@ -6479,8 +6677,8 @@ const messageHashes = (peer: EntityId, m: AccountPeerInput): readonly HashToSign
   });
 };
 /** og buildEntityHashesToSign: the frame hash first, then the secondary hashes sorted, a duplicate is fatal. */
-const hashesToSignOf = (entityId: EntityId, height: bigint, frameHash: string, outputs: readonly EntityOutput[]): Result<readonly HashToSign[], EntityError> => {
-  const secondary = outputs.flatMap((o) => ("tx" in o ? messageHashes(o.to, o.tx.data) : []));
+const hashesToSignOf = (entityId: EntityId, height: bigint, frameHash: string, outputs: readonly EntityOutput[], txHashes: readonly HashToSign[] = []): Result<readonly HashToSign[], EntityError> => {
+  const secondary = [...txHashes, ...outputs.flatMap((o) => ("tx" in o ? messageHashes(o.to, o.tx.data) : []))];
   const hashes = [frameHash, ...secondary.map((h) => h.hash)];
   if (new Set(hashes).size !== hashes.length) return err({ _tag: "secondary_hash_duplicate" });
   return ok([{ hash: frameHash, type: "entityFrame", context: `entity:${entityId.slice(-4)}:frame:${height}` }, ...[...secondary].sort((a, b) => asc(a.hash, b.hash))]);
@@ -6497,7 +6695,7 @@ const buildFrame = (r: EntityEnv, leader: FrameLeader, leaderState: LeaderState,
       entityContext: { version: 1, proposerReplicaId: `${draft.state.id}:${signer}`, entityId: draft.state.id, proposerSignerId: signer, parentFrameHash: parent, height: heightNo, gossipProfiles: infra.gossipProfiles, peerAssertions: infra.peerAssertions, htlc: { version: 1, entries: infra.entries as unknown as readonly Binary[], originated: infra.originated as unknown as readonly Binary[] } },
     };
     return chain(hashEntityFrame({ ...body, hashesToSign: [] }), (frameHash) =>
-      map(hashesToSignOf(draft.state.id, height, frameHash, draft.outputs), (hashesToSign): EntityCandidate => ({ frame: { ...body, hashesToSign }, signatures: new Map(), draft })));
+      map(hashesToSignOf(draft.state.id, height, frameHash, draft.outputs, draft.hashes), (hashesToSign): EntityCandidate => ({ frame: { ...body, hashesToSign }, signatures: new Map(), draft })));
   })));
 };
 const frameKey = (tx: EntityTx): string => encodeEntityTx(tx);
