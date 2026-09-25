@@ -4280,6 +4280,8 @@ export type Authority = Tagged<"teaching", TeachingQuorum> | Tagged<"board", Boa
 export type Quorum = Authority & { readonly proposer: Address };
 /** og `config.jurisdiction` beyond the account Domain; committed inside the root's config section when present. */
 export type JurisdictionConfig = {
+  /** og JurisdictionConfig.name: the J replica an Entity's J outputs go to; never committed (og projectConsensusConfigCommitment). */
+  readonly name?: string | undefined;
   readonly entityProviderAddress: string; readonly registrationBlock?: number | undefined; readonly entityProviderDeploymentBlock?: number | undefined; readonly blockTimeMs?: number | undefined;
   /** og JurisdictionConfig.rebalancePolicyUsd: whole-USD numbers (og commits them as numbers). */
   readonly rebalancePolicyUsd?: { readonly r2cRequestSoftLimit: number; readonly hardLimit: number; readonly maxFee: number } | undefined;
@@ -4294,6 +4296,8 @@ export type EntityState = {
   readonly leaderState?: LeaderState | undefined;
   /** og EntityState.paybook: absent until the first HTLC entry; the root then commits it instead of `committed.paybook`. */
   readonly paybook?: Paybook | undefined;
+  /** og infrastructure.certifiedBoardNodes: the content-addressed registry nodes under `committed.certifiedBoardState`; never in the root. */
+  readonly boardNodes?: BoardNodes | undefined;
 };
 /** og EntityLeaderTimeoutVoteBody (leader/index.ts buildEntityLeaderVoteBody). */
 export type LeaderVoteBody = { readonly entityId: string; readonly targetHeight: number; readonly previousFrameHash: string; readonly fromView: number; readonly toView: number; readonly previousLeaderId: string; readonly nextLeaderId: string };
@@ -4328,6 +4332,13 @@ export type EntityTx =
   | { readonly type: "propose"; readonly data: { readonly action: ProposalAction; readonly proposer: string } }
   | { readonly type: "vote"; readonly data: { readonly proposalId: string; readonly voter: string; readonly choice: "yes" | "no"; readonly comment?: string | undefined } }
   | { readonly type: "htlcPayment"; readonly data: HtlcPaymentData }
+  /** og entityProviderTransfer / entityProviderReleaseControlShares / entityProviderCancelAction (entity/tx/handlers/entity-provider-action.ts): collective EntityProvider actions. */
+  | { readonly type: "entityProviderTransfer"; readonly data: { readonly to: string; readonly tokenId: bigint; readonly amount: bigint } }
+  | { readonly type: "entityProviderReleaseControlShares"; readonly data: { readonly recipientAddress: string; readonly controlAmount: bigint; readonly dividendAmount: bigint; readonly purpose: string } }
+  | { readonly type: "entityProviderCancelAction"; readonly data: { readonly actionHash: string } }
+  /** og entityProviderProposeControlBoard / entityProviderActivateBoard (entity/tx/handlers/control-board-proposal.ts). */
+  | { readonly type: "entityProviderProposeControlBoard"; readonly data: { readonly targetEntityId: string; readonly newBoardHash: string; readonly actionNonce: bigint; readonly supporterVotes?: readonly { readonly entityId: string; readonly hankoSignature: string }[] | undefined } }
+  | { readonly type: "entityProviderActivateBoard"; readonly data: { readonly targetEntityId: string } }
   | SwapRequestEntityTx
   | LendingEntityTx
   | SettleEntityTx;
@@ -4367,7 +4378,7 @@ export type LendingEntityTx =
   | { readonly type: "lendingClosePosition"; readonly data: { readonly hubEntityId: string; readonly positionId: string } };
 /** og ProfileUpdateTx & { entityId }. */
 export type ProfileUpdate = { readonly entityId: string; readonly name?: string | undefined; readonly entityKind?: string | null | undefined; readonly sectors?: readonly string[] | undefined; readonly avatar?: string | undefined; readonly bio?: string | undefined; readonly website?: string | undefined };
-export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "settlement"; readonly context: string };
+export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "settlement" | "entityProviderAction"; readonly context: string };
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
   readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[]; readonly leader: FrameLeader;
@@ -4388,8 +4399,8 @@ export type EntityPhase = "open" | "proposed" | "locked";
 export type EntityEvent = EntityInput["kind"];
 export type Folded = { readonly state: EntityState; readonly accountReplicas: ReadonlyMap<EntityId, AccountReplica> };
 /** `events`: og frame events the folded txs emitted (og addMessage / addTextMessage), in order. */
-/** `signing`: secondary manifest hashes the folded txs requested beyond the Account messages (og collectedHashes, e.g. settlement Hankos). */
-export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readonly events?: readonly FrameEvent[] | undefined; readonly touched?: readonly EntityId[] | undefined; readonly signing?: readonly HashToSign[] | undefined };
+/** `hashes` / `jOutputs`: og EntityTxReducerResult hashesToSign (settlement Hankos, EntityProvider actions) and jOutputs of the folded txs, in order. */
+export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readonly events?: readonly FrameEvent[] | undefined; readonly touched?: readonly EntityId[] | undefined; readonly hashes?: readonly HashToSign[] | undefined; readonly jOutputs?: readonly JInput[] | undefined };
 /** og replica `leaderVotes` (one collection key at a time) and `pendingLeaderCertificate`. */
 type LeaderLane = { readonly leaderVotes?: ReadonlyMap<string, LeaderVote> | undefined; readonly pendingLeaderCertificate?: LeaderCertificate | undefined };
 type EntityEnv = Folded & LeaderLane & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
@@ -4426,7 +4437,7 @@ export const encodeEntityState = (s: EntityState): string => canon({
   id: s.id,
   quorum: match(s.quorum, { teaching: (q) => ({ threshold: q.threshold, members: q.members }), board: (q) => ({ board: encodeBoardHash({ board: q.board }), entityId: q.entityId }) }),
   jurisdiction: s.jurisdiction, accounts: new Map([...s.accounts].map(([peer, a]) => [peer, hashAccountState(a)])),
-  height: s.height, timestamp: s.timestamp, jurisdictionConfig: s.jurisdictionConfig, committed: s.committed, leaderState: s.leaderState, paybook: s.paybook,
+  height: s.height, timestamp: s.timestamp, jurisdictionConfig: s.jurisdictionConfig, committed: s.committed, leaderState: s.leaderState, paybook: s.paybook, boardNodes: s.boardNodes,
 } satisfies Record<keyof EntityState, unknown>);
 export const hashEntityState = (s: EntityState): EntityStateHash => keccakUtf8(encodeEntityState(s)) as EntityStateHash;
 const HEX_EXT = 0x48;
@@ -4784,8 +4795,9 @@ const bundleValid = (q: Quorum, hashes: readonly HashToSign[], id: string, sigs:
   const addr = memberId(q, id);
   return addr !== undefined && hashes.length > 0 && sigs.length === hashes.length && hashes.every((h, i) => { const sig = sigs[i]; return sig !== undefined && memberSigned(q, h.hash, sig, addr, ctx); });
 };
-const signManifest = (hashes: readonly HashToSign[], signer: Address, ctx: EntityContext): Result<readonly Signature[], EntityError> =>
-  traverse(hashes, (h) => mapErr(ctx.sign(h.hash as Hash, signer), (): EntityError => ({ _tag: "sign_failed" })));
+/** og signProposalManifest / signAndLockProposal: the board authority of the frame's state is asserted before any manifest signature. */
+const signManifest = (hashes: readonly HashToSign[], signer: Address, ctx: EntityContext, state: EntityState): Result<readonly Signature[], EntityError> => chain(assertBoardAuthority(state), () =>
+  traverse(hashes, (h) => mapErr(ctx.sign(h.hash as Hash, signer), (): EntityError => ({ _tag: "sign_failed" }))));
 const sameSigs = (a: readonly Signature[], b: readonly Signature[]): boolean => a.length === b.length && a.every((sig, i) => sig === b[i]);
 
 // ---- leader failover: og leader/{index,certificates,timeout-input}.ts ----
@@ -4960,6 +4972,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
   extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId,
   requestCollateral: (x) => x.data.counterpartyEntityId, placeSwapOffer: (x) => x.data.counterpartyEntityId, proposeCancelSwap: (x) => x.data.counterpartyEntityId, setRebalancePolicy: (x) => x.data.counterpartyEntityId, setHubConfig: () => self, prepareDispute: (x) => x.data.counterpartyEntityId, disputeStart: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self, entityCommand: () => self, propose: () => self, vote: () => self,
+  entityProviderTransfer: () => self, entityProviderReleaseControlShares: () => self, entityProviderCancelAction: () => self, entityProviderProposeControlBoard: () => self, entityProviderActivateBoard: () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
   htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId,
@@ -5232,7 +5245,7 @@ const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext)
     const next = routed(draft.state, draft.accountReplicas, peer, propose(child, input as Propose, { verify: pendingVerify(ctx.verify, self), party: party.value }));
     if (!next.ok) continue;
     if (plan.value._tag === "frame") frames += 1;
-    draft = { ...draft, state: next.value.state, accountReplicas: next.value.accountReplicas, outputs: [...draft.outputs, ...next.value.outputs] };
+    draft = { ...draft, ...next.value, outputs: [...draft.outputs, ...next.value.outputs] };
   }
   // og sends one final Account input per Account: an ACK already riding on that Account's new frame is not sent again.
   const carried = new Set(draft.outputs.flatMap((o) => ("tx" in o && o.tx.data.kind === "ack_frame" && o.tx.data.ack !== null ? [`${o.to}|${canon(o.tx.data.ack)}`] : [])));
@@ -5251,6 +5264,8 @@ export const quorumHanko = (state: EntityState, digest: string, sigs: ReadonlyMa
     packed.set(key, { r, s, v: 27 + recovery });
   }
   if (validators.reduce((n, v) => n + (packed.has(v.key) ? v.share : 0n), 0n) < thresholdOf(q)) return err(bad);
+  const bound = assertBoardAuthority(state);
+  if (!bound.ok) return bound;
   const entityWord = `0x${BigInt(state.id).toString(16).padStart(64, "0")}`, zero = { boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 };
   if (isSingleSigner(q)) return ok(encodeHankoEnvelope({ placeholders: [], packedSignatures: packSignatures([...packed.values()]), memberSignatures: [], claims: [{ entityId: entityWord, entityIndexes: [0], weights: [1], threshold: 1, ...zero }] }));
   const delays = match<Authority, typeof zero>(q, { teaching: () => zero, board: ({ board }) => ({ boardChangeDelay: board.boardChangeDelay, controlChangeDelay: board.controlChangeDelay, dividendChangeDelay: board.dividendChangeDelay }) });
@@ -5313,6 +5328,525 @@ const profileUpdate = (state: EntityState, p: ProfileUpdate): Result<Binary, Ent
     avatar: typeof p.avatar === "string" ? p.avatar : text("avatar"), bio: typeof p.bio === "string" ? p.bio : text("bio"), website: typeof p.website === "string" ? p.website : text("website"),
   });
 };
+// ---- og jurisdiction/machine/board-registry/index.ts: the certified-board registry (one Patricia trie of board records per J stack) ----
+export type CertifiedBoardSource = "FoundationBootstrapped" | "EntityRegistered" | "BoardActivated";
+/** og CertifiedBoardRegistryState: the only board authority Entity consensus commits (EntityState.certifiedBoardState). */
+export type CertifiedBoardRegistryState = { readonly stackKey: string; readonly boardRegistryRoot: string; readonly finalizedJHeight: number; readonly finalizedJBlockHash: string; readonly eventHistoryRoot: string };
+export type CertifiedBoardRecord = {
+  readonly stackKey: string; readonly entityId: string; readonly boardHash: string; readonly boardEpoch: number; readonly previousBoardHash: string; readonly previousBoardValidUntil: number;
+  readonly activatedAtJHeight: number; readonly logIndex: number; readonly blockHash: string; readonly transactionHash: string; readonly source: CertifiedBoardSource;
+};
+export type CertifiedBoardNode = { readonly version: 1; readonly type: "leaf"; readonly key: string; readonly record: CertifiedBoardRecord } | { readonly version: 1; readonly type: "branch"; readonly bit: number; readonly left: string; readonly right: string };
+/** og infrastructure.certifiedBoardNodes: immutable content-addressed nodes, never part of the Entity root. */
+export type BoardNodes = ReadonlyMap<string, CertifiedBoardNode>;
+export type CertifiedBoardProof = { readonly version: 1; readonly stackKey: string; readonly entityId: string; readonly nodes: readonly CertifiedBoardNode[] };
+/** og config.jurisdiction fields the registry reads. */
+export type BoardStack = { readonly chainId: unknown; readonly depositoryAddress: unknown; readonly entityProviderAddress: unknown; readonly entityProviderDeploymentBlock?: number | undefined };
+/** og throws `CODE:detail`; `code` is the og message. */
+export type BoardRegistryError = Tagged<"board_registry", { readonly code: string }>;
+const boardErr = (code: string): Result<never, BoardRegistryError> => err({ _tag: "board_registry", code });
+const boardDomain = (label: string): string => keccak256Hex(utf8(label));
+const BOARD_KEY_DOMAIN = boardDomain("xln.certified-board.key.v1"), BOARD_RECORD_DOMAIN = boardDomain("xln.certified-board.record.v1");
+const BOARD_LEAF_DOMAIN = boardDomain("xln.certified-board.leaf.v1"), BOARD_BRANCH_DOMAIN = boardDomain("xln.certified-board.branch.v1");
+export const EMPTY_CERTIFIED_BOARD_ROOT = boardDomain("xln.certified-board.empty.v1");
+export const FOUNDATION_ENTITY_ID = `0x${"00".repeat(31)}01`;
+const BOARD_SOURCE_CODE: Readonly<Record<CertifiedBoardSource, bigint>> = { FoundationBootstrapped: 1n, EntityRegistered: 2n, BoardActivated: 3n };
+/** og ethers.getAddress: optional 0x, 40 hex, a mixed-case address must carry its EIP-55 checksum. */
+const ethAddress = (v: unknown): string | null => {
+  const s = String(v ?? ""), a = /^[0-9a-fA-F]{40}$/.test(s) ? `0x${s}` : s;
+  return /^0x[0-9a-fA-F]{40}$/.test(a) && checksumValid(a) ? a.toLowerCase() : null;
+};
+const boardWord = (v: unknown, label: string): Result<string, BoardRegistryError> => {
+  const s = String(v ?? "").trim().toLowerCase();
+  return /^0x[0-9a-f]{64}$/.test(s) ? ok(s) : boardErr(`CERTIFIED_BOARD_${label}_INVALID:${s || "missing"}`);
+};
+const boardJHeight = (v: unknown): Result<number, BoardRegistryError> => { const h = Number(v); return Number.isSafeInteger(h) && h >= 1 ? ok(h) : boardErr(`CERTIFIED_BOARD_J_HEIGHT_INVALID:${String(v)}`); };
+const boardSeconds = (v: unknown, label: string): Result<number, BoardRegistryError> => {
+  let n: bigint;
+  try { n = BigInt(String(v)); } catch { return boardErr(`CERTIFIED_BOARD_${label}_INVALID:${String(v)}`); }
+  return n < 0n || n > BigInt(Number.MAX_SAFE_INTEGER) ? boardErr(`CERTIFIED_BOARD_${label}_INVALID:${String(v)}`) : ok(Number(n));
+};
+/** og getCertifiedBoardStackKey with its chain / contract address validation. */
+export const boardStackKey = (j: BoardStack): Result<string, BoardRegistryError> => {
+  const chainId = Number(j.chainId);
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) return boardErr(`CERTIFIED_BOARD_STACK_CHAIN_INVALID:${String(j.chainId)}`);
+  const depository = ethAddress(j.depositoryAddress);
+  if (depository === null) return boardErr(`CERTIFIED_BOARD_STACK_DEPOSITORY_INVALID:${String(j.depositoryAddress ?? "")}`);
+  const provider = ethAddress(j.entityProviderAddress);
+  if (provider === null) return boardErr(`CERTIFIED_BOARD_STACK_ENTITY_PROVIDER_INVALID:${String(j.entityProviderAddress ?? "")}`);
+  return ok(certifiedBoardStackKey({ chainId, depositoryAddress: depository, entityProviderAddress: provider }));
+};
+/** og getCertifiedBoardEntityKey. */
+export const boardEntityKey = (stackKey: string, entityId: string): Result<string, BoardRegistryError> =>
+  chain(boardWord(stackKey, "STACK_KEY"), (s) => map(boardWord(entityId, "ENTITY_ID"), (e) => keccak256Hex(abiEncode([A.b32(BOARD_KEY_DOMAIN), A.b32(s), A.b32(e)]))));
+export const emptyBoardRegistry = (j: BoardStack): Result<CertifiedBoardRegistryState, BoardRegistryError> =>
+  map(boardStackKey(j), (stackKey) => ({ stackKey, boardRegistryRoot: EMPTY_CERTIFIED_BOARD_ROOT, finalizedJHeight: 0, finalizedJBlockHash: ZERO_WORD, eventHistoryRoot: ZERO_WORD }));
+const sameBoardRecord = (a: CertifiedBoardRecord, b: CertifiedBoardRecord): boolean =>
+  a.stackKey === b.stackKey && a.entityId === b.entityId && a.boardHash === b.boardHash && a.boardEpoch === b.boardEpoch && a.previousBoardHash === b.previousBoardHash && a.previousBoardValidUntil === b.previousBoardValidUntil
+  && a.activatedAtJHeight === b.activatedAtJHeight && a.logIndex === b.logIndex && a.blockHash === b.blockHash && a.transactionHash === b.transactionHash && a.source === b.source;
+/** og hashCertifiedBoardRecord. */
+export const hashBoardRecord = (r: CertifiedBoardRecord): Result<string, BoardRegistryError> =>
+  chain(all({ stack: boardWord(r.stackKey, "STACK_KEY"), entity: boardWord(r.entityId, "ENTITY_ID"), board: boardWord(r.boardHash, "HASH"), prev: boardWord(r.previousBoardHash, "PREVIOUS_HASH"),
+    until: boardSeconds(r.previousBoardValidUntil, "PREVIOUS_VALID_UNTIL"), height: boardJHeight(r.activatedAtJHeight), block: boardWord(r.blockHash, "BLOCK_HASH"), tx: boardWord(r.transactionHash, "TRANSACTION_HASH") }), (w) =>
+    ok(keccak256Hex(abiEncode([A.b32(BOARD_RECORD_DOMAIN), A.b32(w.stack), A.b32(w.entity), A.b32(w.board), A.uint(BigInt(r.boardEpoch)), A.b32(w.prev), A.uint(BigInt(w.until)), A.uint(BigInt(w.height)),
+      A.uint(BigInt(r.logIndex)), A.b32(w.block), A.b32(w.tx), A.uint(BOARD_SOURCE_CODE[r.source])]))));
+/** og hashCertifiedBoardNode. */
+export const hashBoardNode = (n: CertifiedBoardNode): Result<string, BoardRegistryError> => {
+  if (n.version !== 1) return boardErr(`CERTIFIED_BOARD_NODE_VERSION_INVALID:${String(n.version)}`);
+  if (n.type === "leaf") return chain(boardWord(n.key, "NODE_KEY"), (key) => chain(boardEntityKey(n.record.stackKey, n.record.entityId), (want) => key !== want ? boardErr(`CERTIFIED_BOARD_NODE_KEY_MISMATCH:${key}:${want}`)
+    : map(hashBoardRecord(n.record), (rh) => keccak256Hex(abiEncode([A.b32(BOARD_LEAF_DOMAIN), A.uint(1n), A.b32(key), A.b32(rh)])))));
+  if (!Number.isInteger(n.bit) || n.bit < 0 || n.bit > 255) return boardErr(`CERTIFIED_BOARD_BRANCH_BIT_INVALID:${String(n.bit)}`);
+  return chain(boardWord(n.left, "BRANCH_LEFT"), (left) => chain(boardWord(n.right, "BRANCH_RIGHT"), (right) => left === right ? boardErr(`CERTIFIED_BOARD_BRANCH_UNARY:${left}`)
+    : ok(keccak256Hex(abiEncode([A.b32(BOARD_BRANCH_DOMAIN), A.uint(1n), A.uint(BigInt(n.bit)), A.b32(left), A.b32(right)])))));
+};
+const readBoardNode = (nodes: BoardNodes, hash: string): Result<CertifiedBoardNode, BoardRegistryError> => chain(boardWord(hash, "NODE_HASH"), (h) => {
+  const node = nodes.get(h);
+  return node === undefined ? boardErr(`CERTIFIED_BOARD_NODE_MISSING:${h}`) : chain(hashBoardNode(node), (actual) => (actual !== h ? boardErr(`CERTIFIED_BOARD_NODE_CORRUPT:${h}:${actual}`) : ok(node)));
+});
+const keyBit = (key: string, bit: number): 0 | 1 => ((Number.parseInt(key.slice(2 + (bit >> 3) * 2, 4 + (bit >> 3) * 2), 16) >> (7 - (bit % 8))) & 1) as 0 | 1;
+type BoardBranch = Extract<CertifiedBoardNode, { readonly type: "branch" }>;
+type BoardLeaf = Extract<CertifiedBoardNode, { readonly type: "leaf" }>;
+type BoardPath = readonly { readonly hash: string; readonly node: BoardBranch; readonly direction: 0 | 1 }[];
+const walkToLeaf = (nodes: BoardNodes, root: string, key: string): Result<{ readonly path: BoardPath; readonly hash: string; readonly leaf: BoardLeaf }, BoardRegistryError> => chain(boardWord(root, "ROOT"), (start) => {
+  const path: { hash: string; node: BoardBranch; direction: 0 | 1 }[] = [], seen = new Set<string>();
+  let hash = start, previousBit = -1;
+  for (;;) {
+    if (seen.has(hash)) return boardErr(`CERTIFIED_BOARD_NODE_CYCLE:${hash}`);
+    if (seen.size > 256) return boardErr("CERTIFIED_BOARD_PROOF_OVERSIZED");
+    seen.add(hash);
+    const read = readBoardNode(nodes, hash);
+    if (!read.ok) return read;
+    const node = read.value;
+    if (node.type === "leaf") return ok({ path, hash, leaf: node });
+    if (node.bit <= previousBit) return boardErr(`CERTIFIED_BOARD_BRANCH_ORDER_INVALID:${previousBit}:${node.bit}`);
+    previousBit = node.bit;
+    const direction = keyBit(key, node.bit);
+    path.push({ hash, node, direction });
+    hash = direction === 0 ? node.left : node.right;
+  }
+});
+/** og lookupCertifiedBoardRecord: a divergent terminal leaf is an authenticated absence. */
+export const lookupBoardRecord = (nodes: BoardNodes, root: string, stackKey: string, entityId: string): Result<CertifiedBoardRecord | null, BoardRegistryError> => chain(boardWord(root, "ROOT"), (r) =>
+  r === EMPTY_CERTIFIED_BOARD_ROOT ? ok(null) : chain(boardEntityKey(stackKey, entityId), (key) => map(walkToLeaf(nodes, r, key), ({ leaf }) => (leaf.key === key ? leaf.record : null))));
+type BoardPut = { readonly root: string; readonly newNodes: BoardNodes };
+const putBoardNode = (fresh: Map<string, CertifiedBoardNode>, n: CertifiedBoardNode): Result<string, BoardRegistryError> => map(hashBoardNode(n), (h) => { fresh.set(h, n); return h; });
+const rebuildAncestors = (fresh: Map<string, CertifiedBoardNode>, path: BoardPath, child: string): Result<string, BoardRegistryError> =>
+  foldResult([...path].reverse(), child, (hash, e) => putBoardNode(fresh, { ...e.node, left: e.direction === 0 ? hash : e.node.left, right: e.direction === 1 ? hash : e.node.right }));
+/** og putCertifiedBoardRecord: insert or replace one leaf, returning only the new nodes. */
+export const putBoardRecord = (nodes: BoardNodes, root: string, record: CertifiedBoardRecord): Result<BoardPut, BoardRegistryError> => chain(boardEntityKey(record.stackKey, record.entityId), (key) => {
+  const fresh = new Map<string, CertifiedBoardNode>();
+  return chain(putBoardNode(fresh, { version: 1, type: "leaf", key, record }), (leafHash): Result<BoardPut, BoardRegistryError> => {
+    if (root === EMPTY_CERTIFIED_BOARD_ROOT) return ok({ root: leafHash, newNodes: fresh });
+    return chain(walkToLeaf(nodes, root, key), (walked): Result<BoardPut, BoardRegistryError> => {
+      if (walked.leaf.key === key) return sameBoardRecord(walked.leaf.record, record) ? ok({ root, newNodes: new Map() }) : map(rebuildAncestors(fresh, walked.path, leafHash), (r) => ({ root: r, newNodes: fresh }));
+      let bit = -1;
+      for (let b = 0; b < 256; b += 1) if (keyBit(key, b) !== keyBit(walked.leaf.key, b)) { bit = b; break; }
+      if (bit < 0) return boardErr(`CERTIFIED_BOARD_KEY_COLLISION:${key}`);
+      const at = walked.path.findIndex((e) => e.node.bit >= bit), cut = at < 0 ? walked.path.length : at;
+      const subtree = cut < walked.path.length ? (walked.path[cut]?.hash ?? walked.hash) : walked.hash, mine = keyBit(key, bit);
+      return chain(putBoardNode(fresh, { version: 1, type: "branch", bit, left: mine === 0 ? leafHash : subtree, right: mine === 1 ? leafHash : subtree }), (branch) =>
+        map(rebuildAncestors(fresh, walked.path.slice(0, cut), branch), (r) => ({ root: r, newNodes: fresh })));
+    });
+  });
+});
+type BoardEvent = Extract<JEvent, { readonly type: CertifiedBoardSource }>;
+export const isBoardEvent = (e: JEvent): e is BoardEvent => e.type === "FoundationBootstrapped" || e.type === "EntityRegistered" || e.type === "BoardActivated";
+type RecordFields = { readonly entityId: unknown; readonly boardHash: unknown; readonly boardEpoch?: number | undefined; readonly previousBoardHash?: unknown; readonly previousBoardValidUntil?: unknown; readonly source: CertifiedBoardSource };
+/** og makeRecord, field validation in og's literal order. */
+const makeBoardRecord = (stackKey: string, jHeight: number, blockHash: string, transactionHash: string, logIndex: number, f: RecordFields): Result<CertifiedBoardRecord, BoardRegistryError> =>
+  chain(all({ stackKey: boardWord(stackKey, "STACK_KEY"), entityId: boardWord(f.entityId, "ENTITY_ID"), boardHash: boardWord(f.boardHash, "HASH") }), (w) => {
+    const epoch = Number(f.boardEpoch ?? 0);
+    if (!Number.isSafeInteger(epoch) || epoch < 0) return boardErr(`CERTIFIED_BOARD_EPOCH_INVALID:${String(f.boardEpoch)}`);
+    return chain(boardWord(f.previousBoardHash ?? ZERO_WORD, "PREVIOUS_HASH"), (previousBoardHash) => chain(boardSeconds(f.previousBoardValidUntil ?? 0, "PREVIOUS_VALID_UNTIL"), (previousBoardValidUntil) =>
+      chain(boardJHeight(jHeight), (activatedAtJHeight): Result<CertifiedBoardRecord, BoardRegistryError> => {
+        if (!Number.isSafeInteger(logIndex) || logIndex < 0 || logIndex > 0xffff_ffff) return boardErr(`CERTIFIED_BOARD_LOG_INDEX_INVALID:${String(logIndex)}`);
+        return chain(boardWord(blockHash, "BLOCK_HASH"), (b) => map(boardWord(transactionHash, "TRANSACTION_HASH"), (t): CertifiedBoardRecord =>
+          ({ ...w, boardEpoch: epoch, previousBoardHash, previousBoardValidUntil, activatedAtJHeight, logIndex, blockHash: b, transactionHash: t, source: f.source })));
+      })));
+  });
+export type BoardRegistryStep = { readonly state: CertifiedBoardRegistryState; readonly newNodes: BoardNodes };
+/** og applyCertifiedBoardRegistryEvent: FoundationBootstrapped, EntityRegistered and BoardActivated advance the registry; any other event leaves it. */
+export const applyBoardRegistryEvent = (current: CertifiedBoardRegistryState | undefined, nodes: BoardNodes, j: BoardStack, e: JEvent): Result<BoardRegistryStep, BoardRegistryError> =>
+  chain(boardStackKey(j), (stackKey) => chain(current === undefined ? emptyBoardRegistry(j) : ok(current), (state): Result<BoardRegistryStep, BoardRegistryError> => {
+    if (state.stackKey !== stackKey) return boardErr(`CERTIFIED_BOARD_STACK_MISMATCH:${state.stackKey}:${stackKey}`);
+    const unchanged: BoardRegistryStep = { state, newNodes: new Map() };
+    if (!isBoardEvent(e)) return ok(unchanged);
+    const meta = e.meta ?? {};
+    return chain(boardJHeight(meta.blockNumber), (jHeight) => chain(boardWord(meta.blockHash, "BLOCK_HASH"), (blockHash) => chain(boardWord(meta.transactionHash, "TRANSACTION_HASH"), (transactionHash) => {
+      const logIndex = Number(meta.logIndex), make = (f: RecordFields) => makeBoardRecord(stackKey, jHeight, blockHash, transactionHash, logIndex, f);
+      const recordOf = (): Result<CertifiedBoardRecord, BoardRegistryError> => {
+        if (e.type === "FoundationBootstrapped") {
+          const deployment = j.entityProviderDeploymentBlock;
+          return deployment !== undefined && Number(deployment) !== jHeight ? boardErr(`CERTIFIED_BOARD_BOOTSTRAP_HEIGHT_MISMATCH:expected=${String(deployment)}:actual=${jHeight}`)
+            : make({ entityId: FOUNDATION_ENTITY_ID, boardHash: e.boardHash, source: "FoundationBootstrapped" });
+        }
+        return chain(lookupBoardRecord(nodes, state.boardRegistryRoot, stackKey, FOUNDATION_ENTITY_ID), (foundation) => foundation === null ? boardErr(`CERTIFIED_BOARD_STACK_NOT_BOOTSTRAPPED:${stackKey}`)
+          : chain(boardWord(e.entityId, "ENTITY_ID"), (entityId): Result<CertifiedBoardRecord, BoardRegistryError> => {
+            if (e.type === "EntityRegistered") {
+              return e.entityNumber <= 0n || e.entityNumber > UINT256_MAX || BigInt(entityId) !== e.entityNumber ? boardErr(`CERTIFIED_BOARD_ENTITY_NUMBER_MISMATCH:${entityId}:${e.entityNumber.toString()}`)
+                : make({ entityId, boardHash: e.boardHash, source: "EntityRegistered" });
+            }
+            return chain(lookupBoardRecord(nodes, state.boardRegistryRoot, stackKey, entityId), (previous) => previous === null ? boardErr(`CERTIFIED_BOARD_ACTIVATION_BEFORE_REGISTRATION:${entityId}`)
+              : make({ entityId, boardHash: e.newBoardHash, boardEpoch: previous.activatedAtJHeight === jHeight && previous.logIndex === logIndex ? previous.boardEpoch : previous.boardEpoch + 1,
+                previousBoardHash: e.previousBoardHash, previousBoardValidUntil: e.previousBoardValidUntil, source: "BoardActivated" }));
+          }));
+      };
+      return chain(recordOf(), (record) => chain(lookupBoardRecord(nodes, state.boardRegistryRoot, stackKey, record.entityId), (existing): Result<BoardRegistryStep, BoardRegistryError> => {
+        if (record.source === "BoardActivated") {
+          if (existing === null) return boardErr(`CERTIFIED_BOARD_ACTIVATION_BEFORE_REGISTRATION:${record.entityId}`);
+          const order = existing.activatedAtJHeight === record.activatedAtJHeight ? existing.logIndex - record.logIndex : existing.activatedAtJHeight - record.activatedAtJHeight;
+          if (order > 0) return boardErr(`CERTIFIED_BOARD_ACTIVATION_STALE:${record.entityId}:${record.activatedAtJHeight}`);
+          if (order === 0) return sameBoardRecord(existing, record) ? ok(unchanged) : boardErr(`CERTIFIED_BOARD_ACTIVE_CONFLICT:${record.entityId}:${record.activatedAtJHeight}`);
+          if (record.previousBoardHash !== existing.boardHash) return boardErr(`CERTIFIED_BOARD_PREVIOUS_HASH_MISMATCH:${record.entityId}:expected=${existing.boardHash}:received=${record.previousBoardHash}`);
+          if (record.previousBoardValidUntil <= 0) return boardErr(`CERTIFIED_BOARD_PREVIOUS_EXPIRY_INVALID:${record.entityId}`);
+        } else if (existing !== null) return sameBoardRecord(existing, record) ? ok(unchanged) : boardErr(`CERTIFIED_BOARD_REGISTRATION_CONFLICT:${record.entityId}`);
+        return map(putBoardRecord(nodes, state.boardRegistryRoot, record), (put) => ({ state: { ...state, boardRegistryRoot: put.root }, newNodes: put.newNodes }));
+      }));
+    })));
+  }));
+/** og advanceCertifiedBoardFinality. */
+export const advanceBoardFinality = (current: CertifiedBoardRegistryState | undefined, j: BoardStack, finalizedJHeight: number, finalizedJBlockHash: string, eventHistoryRoot: string): Result<CertifiedBoardRegistryState, BoardRegistryError> =>
+  chain(current === undefined ? emptyBoardRegistry(j) : ok(current), (state) => chain(boardStackKey(j), (stackKey): Result<CertifiedBoardRegistryState, BoardRegistryError> => {
+    if (state.stackKey !== stackKey) return boardErr(`CERTIFIED_BOARD_STACK_MISMATCH:${state.stackKey}:${stackKey}`);
+    if (!Number.isSafeInteger(finalizedJHeight) || finalizedJHeight < state.finalizedJHeight) return boardErr(`CERTIFIED_BOARD_FINALITY_REWIND:${state.finalizedJHeight}:${String(finalizedJHeight)}`);
+    return chain(boardWord(finalizedJBlockHash, "FINALIZED_BLOCK_HASH"), (block) => map(boardWord(eventHistoryRoot, "EVENT_HISTORY_ROOT"), (history) => ({ ...state, finalizedJHeight, finalizedJBlockHash: block, eventHistoryRoot: history })));
+  }));
+/** og createCertifiedBoardProof: root-to-leaf path (a divergent leaf proves absence). */
+export const boardProof = (nodes: BoardNodes, state: CertifiedBoardRegistryState, entityId: string): Result<CertifiedBoardProof, BoardRegistryError> => chain(boardWord(entityId, "ENTITY_ID"), (id) =>
+  state.boardRegistryRoot === EMPTY_CERTIFIED_BOARD_ROOT ? ok({ version: 1 as const, stackKey: state.stackKey, entityId: id, nodes: [] })
+    : chain(boardEntityKey(state.stackKey, entityId), (key) => map(walkToLeaf(nodes, state.boardRegistryRoot, key), (w) => ({ version: 1 as const, stackKey: state.stackKey, entityId: id, nodes: [...w.path.map((e) => e.node), w.leaf] }))));
+/** og verifyCertifiedBoardProof. */
+export const verifyBoardProof = (root: string, proof: CertifiedBoardProof): Result<CertifiedBoardRecord | null, BoardRegistryError> => {
+  if (proof.version !== 1) return boardErr(`CERTIFIED_BOARD_PROOF_VERSION_INVALID:${String(proof.version)}`);
+  return chain(boardWord(root, "ROOT"), (r) => chain(boardEntityKey(proof.stackKey, proof.entityId), (key): Result<CertifiedBoardRecord | null, BoardRegistryError> => {
+    if (r === EMPTY_CERTIFIED_BOARD_ROOT) return proof.nodes.length !== 0 ? boardErr("CERTIFIED_BOARD_PROOF_TRAILING_NODES") : ok(null);
+    if (proof.nodes.length < 1 || proof.nodes.length > 257) return boardErr("CERTIFIED_BOARD_PROOF_LENGTH_INVALID");
+    let expected = r, previousBit = -1;
+    for (const [i, node] of proof.nodes.entries()) {
+      const h = hashBoardNode(node);
+      if (!h.ok) return h;
+      if (h.value !== expected) return boardErr(`CERTIFIED_BOARD_PROOF_LINK_INVALID:${i}`);
+      if (node.type === "leaf") return i !== proof.nodes.length - 1 ? boardErr("CERTIFIED_BOARD_PROOF_TRAILING_NODES") : ok(node.key === key ? node.record : null);
+      if (node.bit <= previousBit) return boardErr(`CERTIFIED_BOARD_BRANCH_ORDER_INVALID:${previousBit}:${node.bit}`);
+      previousBit = node.bit;
+      expected = keyBit(key, node.bit) === 0 ? node.left : node.right;
+    }
+    return boardErr("CERTIFIED_BOARD_PROOF_TERMINAL_LEAF_MISSING");
+  }));
+};
+/** og collectReachableCertifiedBoardNodes: every node under the given roots (a missing or corrupt node refuses). */
+export const reachableBoardNodes = (nodes: BoardNodes, roots: Iterable<string>): Result<BoardNodes, BoardRegistryError> => chain(traverse([...new Set(roots)], (r) => boardWord(r, "ROOT")), (rs) => {
+  const reachable = new Map<string, CertifiedBoardNode>(), pending = [...new Set(rs)].filter((r) => r !== EMPTY_CERTIFIED_BOARD_ROOT);
+  while (pending.length > 0) {
+    const hash = pending.pop() as string;
+    if (reachable.has(hash)) continue;
+    const read = readBoardNode(nodes, hash);
+    if (!read.ok) return read;
+    reachable.set(hash, read.value);
+    if (read.value.type === "branch") pending.push(read.value.left, read.value.right);
+  }
+  return ok(reachable);
+});
+/** The Entity's J stack as og config.jurisdiction; absent without a JurisdictionConfig (og: no jurisdiction). */
+const entityBoardStack = (state: EntityState): BoardStack | undefined => (state.jurisdictionConfig === undefined ? undefined
+  : { chainId: state.jurisdiction.chainId, depositoryAddress: state.jurisdiction.depositoryAddress, entityProviderAddress: state.jurisdictionConfig.entityProviderAddress, ...opt("entityProviderDeploymentBlock", state.jurisdictionConfig.entityProviderDeploymentBlock) });
+/** og EntityState.certifiedBoardState (committed). */
+export const entityBoardRegistry = (state: EntityState): CertifiedBoardRegistryState | undefined => state.committed["certifiedBoardState"] as CertifiedBoardRegistryState | undefined;
+const registryInvariant = (r: Result<unknown, BoardRegistryError>): EntityError => ({ _tag: "entity_invariant", reason: r.ok ? "" : r.error.code });
+const fromRegistry = <T>(r: Result<T, BoardRegistryError>): Result<T, EntityError> => (r.ok ? r : err(registryInvariant(r)));
+/** og resolveObserverCertifiedBoardRecord: the record the observing Entity's own certified registry holds for `entityId`. */
+export const observerBoardRecord = (state: EntityState, entityId: string): Result<CertifiedBoardRecord | null, EntityError> => {
+  const j = entityBoardStack(state), registry = entityBoardRegistry(state);
+  if (j === undefined || registry === undefined) return ok(null);
+  return fromRegistry(chain(boardStackKey(j), (stackKey) => registry.stackKey !== stackKey ? boardErr(`CERTIFIED_BOARD_STACK_MISMATCH:${registry.stackKey}:${stackKey}`)
+    : lookupBoardRecord(state.boardNodes ?? new Map(), registry.boardRegistryRoot, stackKey, entityId)));
+};
+/** og resolveSigningCertifiedBoardHash with one candidate state: the stack, its committed registry and a record for the Entity are all required. */
+export const signingBoardHash = (state: EntityState, entityId: string): Result<string, EntityError> => fromRegistry(chain(boardWord(entityId, "ENTITY_ID"), (id) => {
+  const j = entityBoardStack(state), registry = entityBoardRegistry(state);
+  if (j === undefined) return boardErr(`CERTIFIED_BOARD_SIGNING_STACK_MISSING:${id}`);
+  return chain(boardStackKey(j), (stackKey) => registry === undefined ? boardErr(`CERTIFIED_BOARD_SIGNING_ROOT_MISSING:${id}:${stackKey}`)
+    : chain(lookupBoardRecord(state.boardNodes ?? new Map(), registry.boardRegistryRoot, stackKey, id), (record) => record === null ? boardErr(`CERTIFIED_BOARD_SIGNING_MEMBERSHIP_MISSING:${id}:${stackKey}`) : ok(record.boardHash)));
+}));
+export type BoardJEventStep = { readonly state: EntityState; readonly events: readonly FrameEvent[] };
+/**
+ * og applyCertifiedBoardJEvent (entity/tx/j-events-board.ts) for one finalized board event: the committed registry advances, its new nodes join
+ * the Entity's node store and the frame records og's status message.
+ */
+export const applyBoardJEvent = (state: EntityState, event: JEvent, blockNumber: number): Result<BoardJEventStep, EntityError> => {
+  if (!isBoardEvent(event)) return invariant(`J_EVENT_BOARD_ROUTE_MISMATCH:${event.type}`);
+  const j = entityBoardStack(state);
+  if (j === undefined) return invariant("CERTIFIED_BOARD_ENTITY_JURISDICTION_MISSING");
+  const nodes = state.boardNodes ?? new Map<string, CertifiedBoardNode>();
+  return chain(fromRegistry(applyBoardRegistryEvent(entityBoardRegistry(state), nodes, j, event)), (applied): Result<BoardJEventStep, EntityError> => {
+    const next: EntityState = { ...state, committed: { ...state.committed, certifiedBoardState: { ...applied.state } }, boardNodes: applied.newNodes.size === 0 ? nodes : new Map([...nodes, ...applied.newNodes]) };
+    const events: readonly FrameEvent[] = [status(`🔐 BOARD AUTHORITY: ${event.type} | Block ${blockNumber}`)];
+    const pending = epActionState(next).pending;
+    if (event.type !== "BoardActivated" || lower(event.entityId) !== lower(state.id) || pending === undefined) return ok({ state: next, events });
+    // og: a pending EntityProvider action signed under an older board epoch expires at the activation
+    return chain(observerBoardRecord(next, next.id), (record): Result<BoardJEventStep, EntityError> => {
+      if (record === null) return invariant(`ENTITY_PROVIDER_ACTION_CERTIFIED_BOARD_MISSING:${next.id}`);
+      const epoch = BigInt(record.boardEpoch);
+      if (pending.boardEpoch > epoch) return invariant(`ENTITY_PROVIDER_ACTION_PENDING_BOARD_EPOCH_AHEAD:${pending.boardEpoch}:${epoch}`);
+      if (pending.boardEpoch === epoch) return ok({ state: next, events });
+      const { pending: _expired, ...kept } = epActionState(next);
+      return ok({ state: putEpActionState(next, kept), events: [...events, status("🛑 Pending EntityProvider action expired at board activation")] });
+    });
+  });
+};
+
+// ---- og entity/entity-provider-action.ts, entity/tx/handlers/entity-provider-action.ts, entity/tx/j-events-entity-provider-action.ts,
+// ---- hanko/onchain-domain.ts (ENTITY_TRANSFER / RELEASE_CONTROL_SHARES / CANCEL_ENTITY_PROVIDER_ACTION payloads)
+export type EntityProviderActionPayload =
+  | { readonly kind: "entityTransferTokens"; readonly transfer: { readonly to: string; readonly tokenId: bigint; readonly amount: bigint } }
+  | { readonly kind: "releaseControlShares"; readonly release: { readonly recipientAddress: string; readonly controlAmount: bigint; readonly dividendAmount: bigint; readonly purpose: string } }
+  | { readonly kind: "cancelPendingAction"; readonly cancel: { readonly cancelledActionHash: string; readonly cancelledActionKind: 0 | 1 } };
+/** og EntityProviderActionIntent: the board-signed action the leader submits to EntityProvider; `actionHash` is its Hanko payload hash. */
+export type EntityProviderActionIntent = {
+  readonly version: 1; readonly entityId: string; readonly entityNumber: bigint; readonly chainId: bigint; readonly entityProviderAddress: string; readonly boardEpoch: bigint;
+  readonly actionNonce: bigint; readonly generation: number; readonly createdAt: number; readonly payload: EntityProviderActionPayload; readonly actionHash: string;
+};
+/** og EntityState.entityProviderActionState (committed): one action lane per Entity, `pending` until its J receipt or a board activation. */
+export type EntityProviderActionState = { readonly version: 1; readonly confirmedNonce: bigint; readonly generation: number; readonly pending?: EntityProviderActionIntent | undefined };
+const EP_ACTION_EMPTY: EntityProviderActionState = { version: 1, confirmedNonce: 0n, generation: 0 };
+const epActionState = (state: EntityState): EntityProviderActionState => (state.committed["entityProviderActionState"] as EntityProviderActionState | undefined) ?? EP_ACTION_EMPTY;
+const putEpActionState = (state: EntityState, s: EntityProviderActionState): EntityState => ({ ...state, committed: { ...state.committed, entityProviderActionState: s as unknown as Binary } });
+const packedLabel = (label: string): Packed => ({ _tag: "bytes", value: bytesToHex(utf8(label)) });
+const u256 = (value: bigint): Packed => ({ _tag: "uint256", value });
+/** og recomputeEntityProviderActionHash: keccak(abi.encodePacked(label, chainId, entityProvider, entityNumber, boardEpoch, ...action, nonce)). */
+export const entityProviderActionHash = (intent: Omit<EntityProviderActionIntent, "actionHash">): string => {
+  const head = [u256(intent.chainId), { _tag: "address", value: intent.entityProviderAddress } as Packed, u256(intent.entityNumber), u256(intent.boardEpoch)];
+  const p = intent.payload;
+  const parts: readonly Packed[] = p.kind === "entityTransferTokens"
+    ? [packedLabel("ENTITY_TRANSFER"), ...head, { _tag: "address", value: p.transfer.to }, u256(p.transfer.tokenId), u256(p.transfer.amount), u256(intent.actionNonce)]
+    : p.kind === "releaseControlShares"
+      ? [packedLabel("RELEASE_CONTROL_SHARES"), ...head, { _tag: "address", value: p.release.recipientAddress }, u256(p.release.controlAmount), u256(p.release.dividendAmount), { _tag: "bytes32", value: keccak256Hex(utf8(p.release.purpose)) }, u256(intent.actionNonce)]
+      : [packedLabel("CANCEL_ENTITY_PROVIDER_ACTION"), ...head, u256(intent.actionNonce), { _tag: "bytes32", value: p.cancel.cancelledActionHash }, { _tag: "bytes", value: `0x${p.cancel.cancelledActionKind.toString(16).padStart(2, "0")}` }];
+  return keccak256Hex(encodePacked(parts)).toLowerCase();
+};
+const EP_MAX_UINT = (1n << 256n) - 1n, EP_ZERO_ADDRESS = `0x${"00".repeat(20)}`;
+const epFail = (reason: string): Result<never, EntityError> => invariant(reason);
+const epAddress = (value: unknown, label: string): Result<string, EntityError> => {
+  const raw = String(value ?? "").trim(), a = ethAddress(raw);
+  return a === null || a === EP_ZERO_ADDRESS ? epFail(`ENTITY_PROVIDER_ACTION_${label}_INVALID:${raw || "missing"}`) : ok(a);
+};
+const epUint = (value: unknown, label: string, allowZero = true): Result<bigint, EntityError> =>
+  typeof value !== "bigint" || value < 0n || (!allowZero && value === 0n) ? epFail(`ENTITY_PROVIDER_ACTION_${label}_INVALID:${String(value)}`) : ok(value);
+type EpDomain = { readonly name: string; readonly chainId: bigint; readonly entityProviderAddress: string; readonly depositoryAddress: string };
+/** og resolveActionDomain; the rewrite's Entity carries the J replica's name and stack in its own config (og re-reads them from the named J replica). */
+const epDomain = (state: EntityState): Result<EpDomain, EntityError> => {
+  const j = state.jurisdictionConfig, name = (j?.name ?? "").trim();
+  if (j === undefined || name === "") return epFail("ENTITY_PROVIDER_ACTION_JURISDICTION_MISSING");
+  const chainId = BigInt(state.jurisdiction.chainId);
+  if (chainId <= 0n) return epFail(`ENTITY_PROVIDER_ACTION_CHAIN_ID_INVALID:${chainId}`);
+  const provider = ethAddress(j.entityProviderAddress), depository = ethAddress(state.jurisdiction.depositoryAddress);
+  if (provider === null || provider === EP_ZERO_ADDRESS) return epFail("INVALID_ENTITY_PROVIDER_ADDRESS");
+  if (depository === null || depository === EP_ZERO_ADDRESS) return epFail("INVALID_DEPOSITORY_ADDRESS");
+  return ok({ name, chainId, entityProviderAddress: provider, depositoryAddress: depository });
+};
+const epCurrent = (state: EntityState): Result<EntityProviderActionState, EntityError> => {
+  const c = epActionState(state);
+  return c.version !== 1 || typeof c.confirmedNonce !== "bigint" || c.confirmedNonce < 0n || c.confirmedNonce > EP_MAX_UINT || !Number.isSafeInteger(c.generation) || c.generation < 0
+    ? epFail("ENTITY_PROVIDER_ACTION_STATE_INVALID") : ok(c);
+};
+const epEntityNumber = (entityId: string): Result<bigint, EntityError> => {
+  if (!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(entityId.trim())) return epFail(`ENTITY_PROVIDER_ACTION_ENTITY_ID_INVALID:${entityId}`);
+  const n = BigInt(entityId.trim());
+  return n <= 0n || n > EP_MAX_UINT ? epFail(`ENTITY_PROVIDER_ACTION_ENTITY_NUMBER_INVALID:${entityId}`) : ok(n);
+};
+const epBoardEpoch = (state: EntityState): Result<bigint, EntityError> =>
+  chain(observerBoardRecord(state, state.id), (record) => (record === null ? epFail(`ENTITY_PROVIDER_ACTION_BOARD_AUTHORITY_MISSING:${state.id}`) : ok(BigInt(record.boardEpoch))));
+type EpActionTx = Extract<EntityTx, { readonly type: "entityProviderTransfer" | "entityProviderReleaseControlShares" }>;
+const epPayload = (tx: EpActionTx): Result<EntityProviderActionPayload, EntityError> => {
+  if (tx.type === "entityProviderTransfer") {
+    return chain(epAddress(tx.data.to, "RECIPIENT"), (to) => chain(epUint(tx.data.tokenId, "TOKEN_ID"), (tokenId) => map(epUint(tx.data.amount, "AMOUNT", false), (amount): EntityProviderActionPayload => ({ kind: "entityTransferTokens", transfer: { to, tokenId, amount } }))));
+  }
+  const d = tx.data;
+  return chain(epUint(d.controlAmount, "CONTROL_AMOUNT"), (controlAmount) => chain(epUint(d.dividendAmount, "DIVIDEND_AMOUNT"), (dividendAmount): Result<EntityProviderActionPayload, EntityError> => {
+    if (controlAmount === 0n && dividendAmount === 0n) return epFail("ENTITY_PROVIDER_ACTION_RELEASE_AMOUNT_EMPTY");
+    if (typeof d.purpose !== "string") return epFail("ENTITY_PROVIDER_ACTION_PURPOSE_INVALID:not-string");
+    const size = utf8(d.purpose).byteLength;
+    if (size > 1_024) return epFail(`ENTITY_PROVIDER_ACTION_PURPOSE_OVERSIZED:${size}:1024`);
+    return map(epAddress(d.recipientAddress, "RECIPIENT"), (recipientAddress) => ({ kind: "releaseControlShares", release: { recipientAddress, controlAmount, dividendAmount, purpose: d.purpose } }));
+  }));
+};
+/** The frame effects of one EntityProvider action tx: the pending intent, its J submission and its board-signed hash. */
+const epIssue = (state: EntityState, replicas: Replicas, domain: EpDomain, current: EntityProviderActionState, intent: EntityProviderActionIntent, signer: string, message: string, context: string, timestamp: bigint): Draft => {
+  const jTx: Binary = { type: intent.payload.kind === "entityTransferTokens" ? "entityProviderTransfer" : intent.payload.kind === "releaseControlShares" ? "entityProviderReleaseControlShares" : "entityProviderCancelAction", entityId: state.id, data: { intent, signerId: signer }, timestamp: Number(timestamp) } as unknown as Binary;
+  return {
+    state: putEpActionState(state, { version: 1, confirmedNonce: current.confirmedNonce, generation: intent.generation, pending: intent }), accountReplicas: replicas, outputs: [], events: [status(message)],
+    jOutputs: [{ jurisdictionName: domain.name, jTxs: [jTx] }], hashes: [{ hash: intent.actionHash, type: "entityProviderAction", context }],
+  };
+};
+/** og handleEntityProviderTransfer / handleEntityProviderReleaseControlShares (handleAction). */
+const entityProviderAction = (state: EntityState, replicas: Replicas, tx: EpActionTx, timestamp: bigint): Result<Draft, EntityError> =>
+  chain(epDomain(state), (domain) => chain(epCurrent(state), (current): Result<Draft, EntityError> => {
+    if (current.pending !== undefined) return epFail(`ENTITY_PROVIDER_ACTION_PENDING:${current.pending.actionNonce}:${current.pending.actionHash}`);
+    if (current.confirmedNonce === EP_MAX_UINT) return epFail("ENTITY_PROVIDER_ACTION_NONCE_EXHAUSTED");
+    if (current.generation >= Number.MAX_SAFE_INTEGER) return epFail("ENTITY_PROVIDER_ACTION_GENERATION_EXHAUSTED");
+    const signer = leaderStateOf(state).activeValidatorId;
+    if (signer === "") return epFail("ENTITY_PROVIDER_ACTION_SUBMITTER_MISSING");
+    return chain(epEntityNumber(state.id), (entityNumber) => chain(epBoardEpoch(state), (boardEpoch) => map(epPayload(tx), (payload) => {
+      const unsigned = { version: 1 as const, entityId: lower(state.id), entityNumber, chainId: domain.chainId, entityProviderAddress: domain.entityProviderAddress, boardEpoch, actionNonce: current.confirmedNonce + 1n, generation: current.generation + 1, createdAt: Number(timestamp), payload };
+      const intent: EntityProviderActionIntent = { ...unsigned, actionHash: entityProviderActionHash(unsigned) };
+      return epIssue(state, replicas, domain, current, intent, signer, `📤 EntityProvider ${payload.kind} → hashesToSign [nonce=${intent.actionNonce}]`,
+        `entityProviderAction:${state.id.slice(-4)}:${payload.kind}:nonce:${intent.actionNonce}`, timestamp);
+    })));
+  }));
+/** og assertEntityProviderActionIntent over a stored intent: its envelope must still be this Entity's stack and epoch, and its hash must recompute. */
+const epIntentValid = (intent: EntityProviderActionIntent, domain: EpDomain, entityId: string, boardEpoch: bigint): Result<void, EntityError> => {
+  const envelope = intent.version === 1 && intent.entityNumber > 0n && lower(intent.entityId) === `0x${intent.entityNumber.toString(16).padStart(64, "0")}` && lower(intent.entityId) === lower(entityId)
+    && intent.chainId === domain.chainId && lower(intent.entityProviderAddress) === domain.entityProviderAddress && intent.boardEpoch === boardEpoch && intent.actionNonce > 0n
+    && Number.isSafeInteger(intent.generation) && intent.generation > 0 && Number.isSafeInteger(intent.createdAt) && intent.createdAt >= 0 && WORD32.test(lower(intent.actionHash));
+  if (!envelope) return epFail("ENTITY_PROVIDER_ACTION_INTENT_INVALID");
+  const recomputed = entityProviderActionHash(intent);
+  return recomputed === lower(intent.actionHash) ? ok(undefined) : epFail(`ENTITY_PROVIDER_ACTION_HASH_MISMATCH:${intent.actionHash}:${recomputed}`);
+};
+/** og handleEntityProviderCancelAction: a cancel intent at the same nonce, naming the pending executable action. */
+const entityProviderCancel = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx, { readonly type: "entityProviderCancelAction" }>, timestamp: bigint): Result<Draft, EntityError> =>
+  chain(epDomain(state), (domain) => chain(epCurrent(state), (current) => chain(epBoardEpoch(state), (boardEpoch): Result<Draft, EntityError> => {
+    const pending = current.pending;
+    if (pending === undefined) return epFail("ENTITY_PROVIDER_ACTION_CANCEL_PENDING_MISSING");
+    return chain(epIntentValid(pending, domain, state.id, boardEpoch), (): Result<Draft, EntityError> => {
+      if (pending.payload.kind === "cancelPendingAction") return epFail(`ENTITY_PROVIDER_ACTION_CANCEL_ALREADY_PENDING:${pending.actionHash}`);
+      const requested = String(tx.data.actionHash ?? "").trim().toLowerCase();
+      if (requested !== lower(pending.actionHash)) return epFail(`ENTITY_PROVIDER_ACTION_CANCEL_TARGET_MISMATCH:${requested || "missing"}:${pending.actionHash}`);
+      if (pending.actionNonce !== current.confirmedNonce + 1n) return epFail(`ENTITY_PROVIDER_ACTION_PENDING_NONCE_CORRUPT:${pending.actionNonce}:${current.confirmedNonce + 1n}`);
+      if (current.generation >= Number.MAX_SAFE_INTEGER) return epFail("ENTITY_PROVIDER_ACTION_GENERATION_EXHAUSTED");
+      const signer = leaderStateOf(state).activeValidatorId;
+      if (signer === "") return epFail("ENTITY_PROVIDER_ACTION_SUBMITTER_MISSING");
+      return map(epEntityNumber(state.id), (entityNumber) => {
+        const unsigned = {
+          version: 1 as const, entityId: lower(state.id), entityNumber, chainId: domain.chainId, entityProviderAddress: domain.entityProviderAddress, boardEpoch, actionNonce: pending.actionNonce, generation: current.generation + 1, createdAt: Number(timestamp),
+          payload: { kind: "cancelPendingAction" as const, cancel: { cancelledActionHash: lower(pending.actionHash), cancelledActionKind: pending.payload.kind === "entityTransferTokens" ? 0 as const : 1 as const } },
+        };
+        const intent: EntityProviderActionIntent = { ...unsigned, actionHash: entityProviderActionHash(unsigned) };
+        return epIssue(state, replicas, domain, current, intent, signer, `🛑 EntityProvider cancel → hashesToSign [nonce=${intent.actionNonce}]`, `entityProviderAction:${state.id.slice(-4)}:cancel:nonce:${intent.actionNonce}`, timestamp);
+      });
+    });
+  })));
+/** og executableIdentity: the action a receipt must name (a cancel intent names the action it cancels). */
+const epExecutable = (p: EntityProviderActionIntent): { readonly actionHash: string; readonly actionKind: 0 | 1 } => (p.payload.kind === "cancelPendingAction"
+  ? { actionHash: lower(p.payload.cancel.cancelledActionHash), actionKind: p.payload.cancel.cancelledActionKind }
+  : { actionHash: lower(p.actionHash), actionKind: p.payload.kind === "entityTransferTokens" ? 0 : 1 });
+/**
+ * og applyEntityProviderActionExecuted / applyEntityProviderActionCancelled: a finalized EntityProvider receipt confirms the next nonce and
+ * clears the pending intent, which it must match when one is pending.
+ */
+export const applyEntityProviderActionJEvent = (state: EntityState, event: JEvent, blockNumber: number): Result<BoardJEventStep, EntityError> => {
+  if (event.type !== "EntityProviderActionExecuted" && event.type !== "EntityProviderActionCancelled") return invariant(`J_EVENT_ENTITY_PROVIDER_ACTION_ROUTE_MISMATCH:${event.type}`);
+  const executed = event.type === "EntityProviderActionExecuted", tag = executed ? "ACTION" : "CANCEL";
+  const word = (v: unknown, code: string): Result<string, EntityError> => { const s = String(v ?? "").trim().toLowerCase(); return WORD32.test(s) ? ok(s) : epFail(`${code}:${s || "missing"}`); };
+  return chain(word(event.entityId, `ENTITY_PROVIDER_${tag}_EVENT_ENTITY_INVALID`), (entity): Result<BoardJEventStep, EntityError> => {
+    if (entity !== lower(state.id)) return epFail(`ENTITY_PROVIDER_${tag}_EVENT_ENTITY_MISMATCH:${entity}:${state.id}`);
+    const kind = executed ? event.actionKind : event.cancelledActionKind;
+    if (kind !== 0 && kind !== 1) return epFail(`ENTITY_PROVIDER_${tag}_EVENT_KIND_INVALID:${String(kind)}`);
+    const nonce = event.actionNonce;
+    const read = executed ? word(event.actionHash, "ENTITY_PROVIDER_ACTION_EVENT_HASH_INVALID")
+      : (nonce < 1n || nonce > EP_MAX_UINT ? epFail(`ENTITY_PROVIDER_ACTION_EVENT_NONCE_INVALID:${nonce}`) : word(event.cancelledActionHash, "ENTITY_PROVIDER_CANCEL_EVENT_ACTION_HASH_INVALID"));
+    return chain(read, (hash) => chain(executed ? ok("") : word(event.cancelHash, "ENTITY_PROVIDER_CANCEL_EVENT_HASH_INVALID"), (cancelHash): Result<BoardJEventStep, EntityError> => {
+      if (nonce < 1n || nonce > EP_MAX_UINT) return epFail(`ENTITY_PROVIDER_ACTION_EVENT_NONCE_INVALID:${nonce}`);
+      const current = epActionState(state);
+      if (current.version !== 1 || current.confirmedNonce < 0n || current.confirmedNonce >= EP_MAX_UINT || !Number.isSafeInteger(current.generation) || current.generation < 0) return epFail("ENTITY_PROVIDER_ACTION_STATE_CORRUPT");
+      const expected = current.confirmedNonce + 1n;
+      if (nonce !== expected) return epFail(`ENTITY_PROVIDER_${tag}_EVENT_NONCE_MISMATCH:${nonce}:${expected}`);
+      const pending = current.pending;
+      if (pending !== undefined) {
+        const x = epExecutable(pending), cancelMatches = executed || pending.payload.kind !== "cancelPendingAction" || lower(pending.actionHash) === cancelHash;
+        if (pending.actionNonce !== nonce || x.actionHash !== hash || x.actionKind !== kind || !cancelMatches) {
+          return epFail(executed ? `ENTITY_PROVIDER_ACTION_RECEIPT_MISMATCH:expected=${pending.actionNonce}:${x.actionHash}:${x.actionKind}:received=${nonce}:${hash}:${kind}`
+            : `ENTITY_PROVIDER_CANCEL_RECEIPT_MISMATCH:expected=${pending.actionNonce}:${x.actionHash}:${x.actionKind}:${pending.payload.kind === "cancelPendingAction" ? pending.actionHash : "external-cancel"}:received=${nonce}:${hash}:${kind}:${cancelHash}`);
+        }
+      }
+      return ok({
+        state: putEpActionState(state, { version: 1, confirmedNonce: nonce, generation: current.generation }),
+        events: [status(executed ? `✅ EntityProvider action finalized (nonce ${nonce}) | Block ${blockNumber}` : `🛑 EntityProvider action cancelled (nonce ${nonce}) | Block ${blockNumber}`)],
+      });
+    }));
+  });
+};
+// ---- og entity/tx/handlers/control-board-proposal.ts + hanko/onchain-domain.ts encodeBoardProposalHankoPayload
+const BOARD_PROPOSAL_DOMAIN = keccak256Hex(utf8("XLN_ENTITY_PROVIDER_BOARD_PROPOSAL_V1"));
+/** og hashBoardProposalHankoPayload: keccak(abi.encode(domain, chainId, entityProvider, entityId, boardEpoch, newBoardHash, authority, actionNonce)). */
+export const boardProposalHash = (i: { readonly chainId: bigint; readonly entityProviderAddress: string; readonly boardEpoch: bigint; readonly entityId: string; readonly newBoardHash: string; readonly authority: number; readonly actionNonce: bigint }): string =>
+  keccak256Hex(abiEncode([A.b32(BOARD_PROPOSAL_DOMAIN), A.uint(i.chainId), A.address(i.entityProviderAddress), A.b32(i.entityId), A.uint(i.boardEpoch), A.b32(i.newBoardHash), A.uint(BigInt(i.authority)), A.uint(i.actionNonce)])).toLowerCase();
+/** og toEntityId (protocol/identity): a 32-byte hex id, lowercased by the caller. */
+const cbEntityId = (value: unknown): Result<string, EntityError> =>
+  typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value) ? ok(value.toLowerCase()) : epFail(`FINTECH-SAFETY: Invalid EntityId format: ${String(value)}`);
+const cbRecord = (state: EntityState, entityId: string, missing: string): Result<CertifiedBoardRecord, EntityError> =>
+  chain(observerBoardRecord(state, entityId), (record) => (record === null ? epFail(`${missing}:${entityId}`) : ok(record)));
+type ControlProposalTx = Extract<EntityTx, { readonly type: "entityProviderProposeControlBoard" }>;
+/**
+ * og handleEntityProviderProposeControlBoard: this Entity, a CONTROL shareholder of `targetEntityId`, signs a board proposal (with the verified
+ * written consents of other shareholders) for EntityProvider; the proposal hash is a frame-signed hash and the proposal a J output.
+ */
+const proposeControlBoard = (state: EntityState, replicas: Replicas, tx: ControlProposalTx, ctx: FoldContext): Result<Draft, EntityError> => {
+  const j = state.jurisdictionConfig, name = (j?.name ?? "").trim();
+  if (j === undefined || name === "") return epFail("CONTROL_BOARD_PROPOSAL_JURISDICTION_MISSING");
+  const chainId = BigInt(state.jurisdiction.chainId);
+  if (chainId <= 0n) return epFail(`CONTROL_BOARD_PROPOSAL_CHAIN_ID_INVALID:${chainId}`);
+  const provider = ethAddress(j.entityProviderAddress);
+  if (provider === null || provider === EP_ZERO_ADDRESS) return epFail("INVALID_ENTITY_PROVIDER_ADDRESS");
+  const d = tx.data;
+  return chain(cbEntityId(d.targetEntityId), (target) => chain(cbEntityId(state.id), (shareholder): Result<Draft, EntityError> => {
+    if (typeof d.newBoardHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(d.newBoardHash)) return epFail(`PROTOCOL_BOARD_HASH_INVALID:${String(d.newBoardHash)}`);
+    const newBoardHash = d.newBoardHash.toLowerCase(), nonce = d.actionNonce;
+    if (typeof nonce !== "bigint" || nonce <= 0n || nonce > EP_MAX_UINT) return epFail(`CONTROL_BOARD_PROPOSAL_NONCE_INVALID:${String(nonce)}`);
+    return chain(cbRecord(state, target, "CONTROL_BOARD_PROPOSAL_TARGET_AUTHORITY_MISSING"), (targetBoard) => chain(cbRecord(state, shareholder, "CONTROL_BOARD_PROPOSAL_SHAREHOLDER_AUTHORITY_MISSING"), (): Result<Draft, EntityError> => {
+      const proposalHash = boardProposalHash({ chainId, entityProviderAddress: provider, boardEpoch: BigInt(targetBoard.boardEpoch), entityId: target, newBoardHash, authority: 1, actionNonce: nonce });
+      const supplied = d.supporterVotes ?? [];
+      if (supplied.length >= 256) return epFail(`CONTROL_BOARD_PROPOSAL_SUPPORTERS_OVERSIZED:${supplied.length}`);
+      // og verifyControlSupporterVotes (8 Del. C. § 228 written consent): each supporter Hanko is checked against its certified current board
+      const votes = foldResult<readonly { readonly entityId: string; readonly hankoSignature?: string }[], { readonly entityId: string; readonly hankoSignature: string }, EntityError>(supplied, [], (acc, vote) =>
+        chain(cbEntityId(vote.entityId), (supporter) => {
+          if (supporter === shareholder || acc.some((v) => v.entityId === supporter)) return epFail(`CONTROL_BOARD_PROPOSAL_SUPPORTER_DUPLICATE:${supporter}`);
+          return chain(cbRecord(state, supporter, "CONTROL_BOARD_PROPOSAL_SUPPORTER_AUTHORITY_MISSING"), (record) =>
+            ctx.verify(proposalHash, vote.hankoSignature, supporter as EntityId, { allowPreviousBoard: false, registeredBoardHash: record.boardHash })
+              ? ok([...acc, { entityId: supporter, hankoSignature: vote.hankoSignature }]) : epFail(`CONTROL_BOARD_PROPOSAL_SUPPORTER_HANKO_INVALID:${supporter}`));
+        }));
+      return chain(votes, (verified): Result<Draft, EntityError> => {
+        const signer = leaderStateOf(state).activeValidatorId;
+        if (signer === "") return epFail("CONTROL_BOARD_PROPOSAL_SUBMITTER_MISSING");
+        const supporterVotes = [...verified, { entityId: shareholder }].sort((a, b) => asc(a.entityId, b.entityId));
+        const jTx = { type: "entityProviderProposeControlBoard", entityId: shareholder, data: { targetEntityId: target, newBoardHash, boardEpoch: BigInt(targetBoard.boardEpoch), actionNonce: nonce, proposalHash, supporterVotes, signerId: signer }, timestamp: Number(ctx.timestamp) } as unknown as Binary;
+        return ok({
+          state, accountReplicas: replicas, outputs: [], events: [status(`🗳️ CONTROL vote ${shareholder.slice(-4)} → ${target.slice(-4)}`)],
+          jOutputs: [{ jurisdictionName: name, jTxs: [jTx] }], hashes: [{ hash: proposalHash, type: "entityProviderAction", context: `controlBoard:${target.slice(-4)}:nonce:${nonce}` }],
+        });
+      });
+    }));
+  }));
+};
+/** og handleEntityProviderActivateBoard: the permissionless activation call for a certified target once its proposal delay has passed. */
+const activateBoard = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx, { readonly type: "entityProviderActivateBoard" }>, timestamp: bigint): Result<Draft, EntityError> => {
+  const name = (state.jurisdictionConfig?.name ?? "").trim();
+  if (name === "") return epFail("CONTROL_BOARD_ACTIVATION_JURISDICTION_MISSING");
+  return chain(cbEntityId(tx.data.targetEntityId), (target) => chain(cbRecord(state, target, "CONTROL_BOARD_ACTIVATION_TARGET_MISSING"), (): Result<Draft, EntityError> => {
+    const signer = leaderStateOf(state).activeValidatorId;
+    if (signer === "") return epFail("CONTROL_BOARD_ACTIVATION_SUBMITTER_MISSING");
+    const jTx = { type: "entityProviderActivateBoard", entityId: state.id, data: { targetEntityId: target, signerId: signer }, timestamp: Number(timestamp) } as unknown as Binary;
+    return ok({ state, accountReplicas: replicas, outputs: [], events: [status(`🔐 Activate board ${target.slice(-4)}`)], jOutputs: [{ jurisdictionName: name, jTxs: [jTx] }] });
+  }));
+};
+/** og canonicalBoardHash: the quorum's board (validator addresses, shares, the board's delays). */
+export const quorumBoardHash = (q: Authority): string => match(q, { teaching: () => configBoardHash(q), board: ({ board }) => boardHashOf(board).toLowerCase() });
+/** og encodeQuorumEntityId: the Entity id as a 32-byte word. */
+const quorumEntityWord = (entityId: string): Result<string, EntityError> => {
+  const s = entityId.trim();
+  if (!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(s) || BigInt(s) >= 1n << 256n) return invariant(`BUILD_QUORUM_HANKO_INVALID_ENTITY_ID: entityId=${entityId}`);
+  return ok(`0x${BigInt(s).toString(16).padStart(64, "0")}`);
+};
+/**
+ * og assertQuorumBoardBinding / assertEntityConfigBoardAuthority: the committed board must be the Entity's lazy id (id == board hash) or,
+ * for any other Entity, the board its own certified registry holds. Proposers and validators run it before signing any manifest.
+ */
+export const assertBoardAuthority = (state: EntityState): Result<void, EntityError> => chain(quorumEntityWord(state.id), (word): Result<void, EntityError> => {
+  const supplied = quorumBoardHash(state.quorum);
+  if (supplied === word) return ok(undefined);
+  if (state.jurisdictionConfig === undefined) return invariant(`BUILD_QUORUM_HANKO_BOARD_UNAVAILABLE: entityId=${state.id}`);
+  return chain(signingBoardHash(state, state.id), (authoritative) => supplied === authoritative ? ok(undefined)
+    : invariant(`BUILD_QUORUM_HANKO_BOARD_MISMATCH: entityId=${state.id} authoritative=${authoritative} supplied=${supplied}`));
+});
 // ---- og entity/command (command-codec.ts, index.ts), auth/authorization.ts, tx/processing/proposals.ts, system/basic.ts propose/vote ----
 /** og applyEntityTxsInOrder authorization lanes: top-level frame txs, a signed command's individual txs, an approved proposal's collective txs. */
 type TxLane = "top" | "command" | "collective";
@@ -5349,12 +5883,17 @@ const laneRefusal = (tx: EntityTx, lane: TxLane): EntityError | undefined => {
 };
 /** og plain Errors (openAccount, lending, governance invariants) refuse the whole input; a reject disposition evicts only the outermost tx. */
 const fatalTx = (tx: EntityTx, e: EntityError): boolean => tx.type === "openAccount" || e._tag === "lending_entity" || e._tag === "swap_request_account_missing" || e._tag === "entity_invariant";
+/** The accumulated tx hashesToSign and jOutputs of two drafts (absent while empty). */
+const frameEffects = (a: Draft, b: Draft): Pick<Draft, "hashes" | "jOutputs"> => {
+  const hashes = [...(a.hashes ?? []), ...(b.hashes ?? [])], jOutputs = [...(a.jOutputs ?? []), ...(b.jOutputs ?? [])];
+  return { ...(hashes.length === 0 ? {} : { hashes }), ...(jOutputs.length === 0 ? {} : { jOutputs }) };
+};
 /** og applyEntityTxsInOrder for a nested lane: every tx in order, atomically; a fatal child makes the whole outer tx fatal. */
 const foldNested = (state: EntityState, replicas: Replicas, txs: readonly EntityTx[], ctx: FoldContext, lane: TxLane): Result<Draft, EntityError> =>
   foldResult<Draft, EntityTx, EntityError>(txs, { state, accountReplicas: replicas, outputs: [], events: [] }, (acc, tx) => {
     const r = foldTx(acc.state, acc.accountReplicas, tx, ctx, lane);
     if (!r.ok) return fatalTx(tx, r.error) && r.error._tag !== "entity_invariant" ? invariant(`${tx.type}:${r.error._tag}`) : r;
-    return ok({ ...r.value, outputs: [...acc.outputs, ...r.value.outputs], events: [...(acc.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])] });
+    return ok({ ...r.value, outputs: [...acc.outputs, ...r.value.outputs], events: [...(acc.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc, r.value) });
   });
 const WORD32 = /^0x[0-9a-f]{64}$/, EOA = /^0x[0-9a-f]{40}$/;
 const COMMAND_DOMAIN = "xln:entity-command:binary", PROPOSAL_ACTION_DOMAIN = "xln:entity-proposal-action:v1";
@@ -5373,14 +5912,13 @@ export const configBoardHash = (q: Authority): string => {
   const members = [...membersOf(q)];
   return boardHashOf({ votingThreshold: Number(thresholdOf(q)), entityIds: members.map(([a]) => addressAsId(a)), votingPowers: members.map(([, m]) => Number(m.shares)), boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 }).toLowerCase();
 };
-/**
- * og resolveEntityCommandBoard: a lazy Entity (id == its config board hash) is at epoch 0; any other Entity needs its certified board record.
- * The rewrite carries no certified board registry, so such an Entity refuses like og with an empty registry.
- */
+/** og resolveEntityCommandBoard: a lazy Entity (id == its config board hash) is at epoch 0; any other Entity takes the epoch of its certified board record, which must be its config board. */
 const commandBoard = (state: EntityState): Result<CommandBoard, EntityError> => {
   const members = [...membersOf(state.quorum)].map(([a, m]): BoardMember => ({ signerId: signerId(a), signer: signerId(a), share: m.shares }));
   const boardHash = configBoardHash(state.quorum), entity = signerId(state.id);
-  return entity === boardHash ? ok({ boardHash, boardEpoch: 0, members }) : invariant(`ENTITY_COMMAND_CERTIFIED_BOARD_REQUIRED:${entity}`);
+  if (entity === boardHash) return ok({ boardHash, boardEpoch: 0, members });
+  return chain(observerBoardRecord(state, entity), (record): Result<CommandBoard, EntityError> => record === null ? invariant(`ENTITY_COMMAND_CERTIFIED_BOARD_REQUIRED:${entity}`)
+    : record.boardHash !== boardHash ? invariant(`ENTITY_COMMAND_CERTIFIED_BOARD_CONFIG_MISMATCH:${record.boardHash}:${boardHash}`) : ok({ boardHash, boardEpoch: record.boardEpoch, members }));
 };
 const consensusHash = (value: unknown): Result<string, EntityError> => chain(binaryBody(value), (b) => map(encodeConsensus(b), (bytes) => bytesToHex(keccak_256(bytes))));
 /** og hashEntityCommandTxs. */
@@ -6347,7 +6885,7 @@ const materializeSettlements = (d: Draft, ctx: FoldContext): Result<Draft, Entit
     if (!built.ok) return built;
     const admitted = admitAt(child, [built.value.tx], self, { timestamp: ctx.timestamp, jHeight: entityJHeight(draft.state) }, pendingVerify(ctx.verify, self));
     if (!admitted.ok || admitted.value.mempool.length !== child.mempool.length + 1) return invariant(`SETTLEMENT_DEFERRED_HANKO_NOT_ADMITTED:${peer}`);
-    draft = { ...draft, ...putChild({ ...draft.state, ...withDeferred(draft.state, mapDelete(deferredOf(draft.state), peer)) }, draft.accountReplicas, peer as EntityId, admitted.value), signing: [...(draft.signing ?? []), ...built.value.hashes], touched: [...(draft.touched ?? []), peer as EntityId] };
+    draft = { ...draft, ...putChild({ ...draft.state, ...withDeferred(draft.state, mapDelete(deferredOf(draft.state), peer)) }, draft.accountReplicas, peer as EntityId, admitted.value), hashes: [...(draft.hashes ?? []), ...built.value.hashes], touched: [...(draft.touched ?? []), peer as EntityId] };
   }
   return ok(draft);
 };
@@ -6425,6 +6963,11 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     chat: (x) => ok(typeof x.data.message === "string" && x.data.message.length > 0 && x.data.message.length <= 1000 ? { ...skip, events: [{ type: "text", validatorId: lower(x.data.from), message: x.data.message }] } : skip),
     chatMessage: (x) => ok(say(skip, x.data.message)),
     entityCommand: (x) => foldCommand(state, replicas, x.data, ctx),
+    entityProviderTransfer: (x) => entityProviderAction(state, replicas, x, ctx.timestamp),
+    entityProviderReleaseControlShares: (x) => entityProviderAction(state, replicas, x, ctx.timestamp),
+    entityProviderCancelAction: (x) => entityProviderCancel(state, replicas, x, ctx.timestamp),
+    entityProviderProposeControlBoard: (x) => proposeControlBoard(state, replicas, x, ctx),
+    entityProviderActivateBoard: (x) => activateBoard(state, replicas, x, ctx.timestamp),
     propose: (x) => foldPropose(state, replicas, x.data, ctx),
     vote: (x) => foldVote(state, replicas, x.data, ctx),
     // og admin.ts handleRequestCollateralEntityTx: a missing Account is a no-op; otherwise queue request_collateral and wake validators[0]
@@ -6471,8 +7014,9 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const next = htlcPaymentStep(p, state.paybook ?? EMPTY_PAYBOOK, Number(ctx.timestamp));
       return map(enqueue(p.nextHopEntityId as EntityId, [next.lock], []), (d) => ({ ...d, state: { ...d.state, paybook: next.paybook } }));
     }),
-    accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => {
-      const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp };
+    // og input-phases.ts: the sender's record in this Entity's certified registry is the Account's counterpartyCertifiedBoard
+    accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => chain(observerBoardRecord(state, x.data.fromEntityId), (record) => {
+      const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp, ...(record === null ? {} : { counterpartyBoard: { boardHash: record.boardHash, activatedAtJHeight: record.activatedAtJHeight, logIndex: record.logIndex } }) };
       const apply = (at: Folded): Result<Draft, EntityError> => withChild(at.accountReplicas, peer, (child) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)));
       const held: Folded = { state, accountReplicas: replicas };
       // og committedFrames: our own frame commits when the peer's ACK for it lands; the peer's frame commits when we sign it (answerFrame).
@@ -6482,7 +7026,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
         ack: () => chain(apply(held), (d) => chain(htlcFollowups(d, peer, ownCommitted(d), undefined, ctx), (h) => committedSettleFollowups(h, peer, ownCommitted(d), undefined))),
         // og routes the standalone peer dispute witness through the same accountInput lane; an unknown Account has no genesis for it (og ACCOUNT_GENESIS_FRAME_REQUIRED).
         dispute: () => apply(held),
-        // og board-hanko-refresh.ts: the Entity supplies counterpartyCertifiedBoard; the rewrite has no certified board registry, so the Account refuses it (certified_board_missing)
+        // og board-hanko-refresh.ts: checked against the sender's certified board (certified_board_missing without a record)
         board_hanko_refresh: () => apply(held),
         ack_frame: (i) => match(origin, {
           local: (): Result<Draft, EntityError> => err({ _tag: "from_not_converted" }),
@@ -6495,7 +7039,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
           }),
         }),
       });
-    }),
+    })),
   });
 };
 export type FoldedTxs = { readonly draft: Draft; readonly included: readonly EntityTx[]; readonly evicted: readonly EntityTx[] };
@@ -6509,7 +7053,7 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   const primed = [...replicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
   return chain(normalizeGovernance(state), (normalized) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
     const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
-    if (r.ok) return ok({ ...acc, included: [...acc.included, tx], draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs], events: [...(acc.draft.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.draft.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])] } });
+    if (r.ok) return ok({ ...acc, included: [...acc.included, tx], draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs], events: [...(acc.draft.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.draft.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc.draft, r.value) } });
     return fatalTx(tx, r.error) ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
@@ -6518,7 +7062,7 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
       // Accounts that received follow-up work (a gateway's forwarded leg) join after the directly touched ones.
       const followups = [...settled.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
       const order = [...new Set([...primed, ...(settled.touched ?? []), ...followups])];
-      return ok({ ...folded, draft: { ...proposeAccounts(settled, order, ctx).draft, ...opt("signing", settled.signing) } });
+      return ok({ ...folded, draft: { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) } });
     });
   }));
 };
@@ -6598,8 +7142,8 @@ const messageHashes = (peer: EntityId, m: AccountPeerInput): readonly HashToSign
   });
 };
 /** og buildEntityHashesToSign: the frame hash first, then the secondary hashes sorted, a duplicate is fatal. */
-const hashesToSignOf = (entityId: EntityId, height: bigint, frameHash: string, outputs: readonly EntityOutput[], signing: readonly HashToSign[] = []): Result<readonly HashToSign[], EntityError> => {
-  const secondary = [...signing, ...outputs.flatMap((o) => ("tx" in o ? messageHashes(o.to, o.tx.data) : []))];
+const hashesToSignOf = (entityId: EntityId, height: bigint, frameHash: string, outputs: readonly EntityOutput[], txHashes: readonly HashToSign[] = []): Result<readonly HashToSign[], EntityError> => {
+  const secondary = [...txHashes, ...outputs.flatMap((o) => ("tx" in o ? messageHashes(o.to, o.tx.data) : []))];
   const hashes = [frameHash, ...secondary.map((h) => h.hash)];
   if (new Set(hashes).size !== hashes.length) return err({ _tag: "secondary_hash_duplicate" });
   return ok([{ hash: frameHash, type: "entityFrame", context: `entity:${entityId.slice(-4)}:frame:${height}` }, ...[...secondary].sort((a, b) => asc(a.hash, b.hash))]);
@@ -6616,7 +7160,7 @@ const buildFrame = (r: EntityEnv, leader: FrameLeader, leaderState: LeaderState,
       entityContext: { version: 1, proposerReplicaId: `${draft.state.id}:${signer}`, entityId: draft.state.id, proposerSignerId: signer, parentFrameHash: parent, height: heightNo, gossipProfiles: infra.gossipProfiles, peerAssertions: infra.peerAssertions, htlc: { version: 1, entries: infra.entries as unknown as readonly Binary[], originated: infra.originated as unknown as readonly Binary[] } },
     };
     return chain(hashEntityFrame({ ...body, hashesToSign: [] }), (frameHash) =>
-      map(hashesToSignOf(draft.state.id, height, frameHash, draft.outputs, draft.signing), (hashesToSign): EntityCandidate => ({ frame: { ...body, hashesToSign }, signatures: new Map(), draft })));
+      map(hashesToSignOf(draft.state.id, height, frameHash, draft.outputs, draft.hashes), (hashesToSign): EntityCandidate => ({ frame: { ...body, hashesToSign }, signatures: new Map(), draft })));
   })));
 };
 const frameKey = (tx: EntityTx): string => encodeEntityTx(tx);
@@ -6672,7 +7216,7 @@ const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: Entity
   return chain(htlcFrameTxs(txs) ? inboundHtlcEntries({ ...inbound, online: onlineObserver(ctx.htlc).online }, txs) : ok([]), (entries) =>
   chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries } }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
     const pool = withoutTxs(queued.mempool, [...prepared.refused.keys(), ...evicted]);
-    return chain(buildFrame(queued, leader, leaderState, timestamp, included, draft, infra), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+    return chain(buildFrame(queued, leader, leaderState, timestamp, included, draft, infra), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx, candidate.draft.state), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
       const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[self, own]]) };
       if (isSingleSigner(queued.state.quorum)) return installFrame(proposed, frameHash, proposed.signatures, false);
       const others = [...membersOf(queued.state.quorum).keys()].filter((v) => signerId(v) !== self);
@@ -6744,7 +7288,7 @@ const signProposal = (r: OpenEntity, frame: EntityFrame, bundles: Precommits, ct
   return chain(hashEntityFrame(frame), (frameHash): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
     if (frame.height === r.head.height) return frameHash === r.head.prevFrameHash ? ok(done<OpenEntity | LockedEntity, EntityOutput>(r)) : err({ _tag: "proposal_conflict" });
     if (frame.height !== r.head.height + 1n) return err({ _tag: "proposal_wait" });
-    return chain(preauthenticate(r, frame, bundles, ctx), () => chain(notSuperseded(r, frame), () => chain(replayFrame(r, frame, frameHash, ctx), (candidate) => chain(signManifest(candidate.frame.hashesToSign, r.signerId, ctx), (own) =>
+    return chain(preauthenticate(r, frame, bundles, ctx), () => chain(notSuperseded(r, frame), () => chain(replayFrame(r, frame, frameHash, ctx), (candidate) => chain(signManifest(candidate.frame.hashesToSign, r.signerId, ctx, candidate.draft.state), (own) =>
       chain(normalizeBundles(r.state.quorum, bundles), (sigs): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
         if ([...sigs].some(([id, s]) => !bundleValid(r.state.quorum, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
         const self = signerId(r.signerId), mine = sigs.get(self);
