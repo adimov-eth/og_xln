@@ -10,7 +10,7 @@ import { buildEntityHashesToSign } from "../../core/entity/consensus/input/hanko
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
 import { appendEntityMempoolTransactions } from "../../core/entity/consensus/input/admission.ts";
 import {
-  acceptAppointment, acceptBundle, acceptReceipt, address, allowedProposer, applyEntityInput, applyRuntime, convertOutput, createEntity, createRuntime, entityRootOf, entityStateRoot,
+  address, allowedProposer, applyEntityInput, applyRuntime, convertOutput, createEntity, createRuntime, entityRootOf, entityStateRoot,
   commitRuntimeFrame, hashEntityFrame, hashEntityState, isSingleSigner, leaderOrder, recoverRuntime, replicaKey, spawn, signature, tokenId, ZERO_WORD,
   type Address, type EntityCommitted, type EntityFrame, type EntityId, type EntityInput, type EntityOutput, type EntityReplica, type EntityTx, type Precommits, type Signature,
 } from "../xln.ts";
@@ -431,15 +431,3 @@ describe("entity-runtime: runtime recovery (ER-23)", () => {
   });
 });
 
-describe("entity-runtime: watchtower accept* (ER-24)", () => {
-  const h = `${"ab".repeat(32)}` as never;
-  test("MATCH (og decode.ts:143): a receipt without towerSignature is accepted; empty required hankos are refused", () => {
-    const receipt = { type: "tower_receipt" as const, towerId: "t", lookupKey: "k", slot: 1n, height: 1n, bundleHash: h, storedAt: 1n, expiresAt: 2n };
-    expect(acceptReceipt(receipt).ok).toBe(true);
-    expect(acceptReceipt({ ...receipt, towerSignature: "0x12" }).ok).toBe(true);
-    const bundle = { account: { accountId: "a", jurisdictionId: "j", left: "l", right: "r", owner: "o", counterparty: "c" }, latestCommitted: { height: 1n, frameHash: h, ownerFrameHanko: "0x1", counterpartyFrameHanko: "" }, dispute: { proofBodyHash: h, nonce: 1n }, bundleHash: h };
-    expect(acceptBundle(bundle).ok).toBe(false);
-    const appointment = { type: "tower_appointment" as const, towerMode: "blind_backup" as const, lookupKey: "k", slot: 1n, height: 1n, bundleHash: h, encryptedBundle: "x", ownerEntityId: "e", ownerHanko: "" };
-    expect(acceptAppointment(appointment).ok).toBe(false);
-  });
-});

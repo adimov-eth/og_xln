@@ -488,3 +488,16 @@ describe("entity-cross-j: inbound HTLC MATCH vs og (materialize-context.ts, comm
     expect(accepted).toBeGreaterThan(200);
   });
 });
+
+describe("entity-cross-j: Account outputs above the Account (og committed-input.ts)", () => {
+  test("MATCH: a committed request_collateral is consumed as og's runtime event on both Entities, never refused; the request lands in both Account replicas", () => {
+    const rt = network(), tk = unwrap(tokenId("1"));
+    const req: EntityTx = { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: tk, amount: 50n, feeAmount: 1n, policyVersion: 1 } } as EntityTx;
+    const done = quiet(rt, [inputOf(ALICE, [req], NOW + 500n)]);
+    const a = replicaOf(done, ALICE).accountReplicas.get(BOB)!, b = replicaOf(done, BOB).accountReplicas.get(ALICE)!;
+    expect(a.head.height).toBe(b.head.height);
+    expect(a.head.height).toBeGreaterThan(replicaOf(rt, ALICE).accountReplicas.get(BOB)!.head.height);
+    expect([...a.state.requested.keys()]).toEqual([tk]);
+    expect(stableJson([...a.state.requested, ...a.state.requestFees])).toBe(stableJson([...b.state.requested, ...b.state.requestFees]));
+  });
+});

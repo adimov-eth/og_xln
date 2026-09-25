@@ -4222,7 +4222,12 @@ export type EntityTx =
   | { readonly type: "requestCollateral"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number } }
   | { readonly type: "profile-update"; readonly data: { readonly profile: ProfileUpdate } }
   | { readonly type: "htlcPayment"; readonly data: HtlcPaymentData }
+  | SwapRequestEntityTx
   | LendingEntityTx;
+/** og types/entity-tx.ts placeSwapOffer / proposeCancelSwap (payments/swap-requests.ts): one swap Account tx on the hub Account. */
+export type SwapRequestEntityTx =
+  | { readonly type: "placeSwapOffer"; readonly data: { readonly counterpartyEntityId: EntityId; readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint; readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: 0 | 1 | 2 | undefined } }
+  | { readonly type: "proposeCancelSwap"; readonly data: { readonly counterpartyEntityId: EntityId; readonly offerId: string } };
 /** og types/entity-tx.ts lendingOffer/Borrow/Repay/ClosePosition: each queues one Account lending tx on the hub Account. */
 export type LendingEntityTx =
   | { readonly type: "lendingOffer"; readonly data: { readonly positionId: string; readonly hubEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly interestBps: number } }
@@ -4266,7 +4271,7 @@ export type EntityContext = { readonly verify: Verify; readonly verifyMember: Me
 export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large">;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
-  | Tagged<"account_exists" | "no_such_account" | "create_ack_required" | "account_envelope", { target: EntityId }>
+  | Tagged<"account_exists" | "no_such_account" | "create_ack_required" | "account_envelope" | "swap_request_account_missing", { target: EntityId }>
   | Tagged<"self_account" | "wrong_entity" | "bad_quorum" | "bad_jurisdiction" | "from_not_converted" | "not_l0" | "mempool_full" | "sign_failed" | "payment_route" | "secondary_hash_duplicate">
   | Tagged<"frame_timestamp_invalid" | "frame_timestamp_regression", { timestamp: bigint }>
   | Tagged<"lending_entity", { reason: string }>
@@ -4565,6 +4570,7 @@ const binaryBody = (value: unknown): Result<Binary, BinaryError> => {
 };
 /** og wire: token ids are numbers inside entity tx data. */
 const wireData = (tx: EntityTx): unknown => {
+  if (tx.type === "placeSwapOffer") return { ...tx.data, giveTokenId: Number(tx.data.giveTokenId), wantTokenId: Number(tx.data.wantTokenId) };
   if (tx.type === "requestCollateral") return { ...tx.data, tokenId: Number(tx.data.tokenId), ...(tx.data.feeTokenId === undefined ? {} : { feeTokenId: Number(tx.data.feeTokenId) }) };
   return tx.type !== "accountInput" && "tokenId" in tx.data && tx.data.tokenId !== undefined ? { ...tx.data, tokenId: Number(tx.data.tokenId) } : tx.data;
 };
@@ -4805,7 +4811,7 @@ type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
   extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId,
-  requestCollateral: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self,
+  requestCollateral: (x) => x.data.counterpartyEntityId, placeSwapOffer: (x) => x.data.counterpartyEntityId, proposeCancelSwap: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
   htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId,
@@ -4814,8 +4820,11 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
 const putChild = (state: EntityState, replicas: Replicas, peer: EntityId, child: AccountReplica): Folded => ({ state: { ...state, accounts: mapSet(state.accounts, peer, child.state.account) }, accountReplicas: mapSet(replicas, peer, child) });
 const withChild = (replicas: Replicas, target: EntityId, f: (child: AccountReplica) => Result<Draft, EntityError>): Result<Draft, EntityError> => { const child = replicas.get(target); return child === undefined ? err({ _tag: "no_such_account", target }) : f(child); };
-/** Account outputs the Entity consumes: the gateway forward, HTLC failures and preimages (htlcFollowups, from the committed frames), and og's collateral-request runtime event. */
-const ENTITY_CONSUMED_EFFECTS: ReadonlySet<Effect["_tag"]> = new Set(["direct_payment_forward", "htlc_error", "forward_secret", "request_collateral_committed"]);
+/**
+ * Account outputs the Entity consumes: the gateway forward, HTLC failures and preimages (htlcFollowups, from the committed frames), og's
+ * collateral-request runtime event, and the swap cancel outcomes og hands to the hub book (an Entity without an order book ignores them).
+ */
+const ENTITY_CONSUMED_EFFECTS: ReadonlySet<Effect["_tag"]> = new Set(["direct_payment_forward", "htlc_error", "forward_secret", "request_collateral_committed", "swap_cancel_requested", "swap_cancelled"]);
 const routed = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Draft, EntityError> => chain(applied, (a) =>
   chain(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: (e) => (ENTITY_CONSUMED_EFFECTS.has(e.effect._tag) ? ok([]) : err({ _tag: "not_l0" })), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
     (messages) => {
@@ -5503,6 +5512,13 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const { counterpartyEntityId: to, tokenId, amount, feeTokenId, feeAmount, policyVersion } = x.data;
       return replicas.has(to) ? enqueue(to, [{ type: "request_collateral", tokenId, amount, ...opt("feeTokenId", feeTokenId), feeAmount, policyVersion }], [wake(state, ctx.timestamp)]) : ok(skip);
     },
+    // og payments/swap-requests.ts: a missing Account halts (SWAP_REQUEST_ACCOUNT_MISSING, the whole input); otherwise queue the swap Account tx and wake validators[0]
+    placeSwapOffer: (x) => {
+      const { counterpartyEntityId: to, offerId, giveTokenId, giveTokenDecimals, giveAmount, wantTokenId, wantTokenDecimals, wantAmount, maxFee, minNetReceive, priceTicks, timeInForce } = x.data;
+      const offer: AccountTx = { type: "swap_offer", offerId, giveTokenId, giveTokenDecimals, giveAmount, wantTokenId, wantTokenDecimals, wantAmount, maxFee, minNetReceive, ...opt("priceTicks", priceTicks), ...opt("timeInForce", timeInForce) };
+      return replicas.has(to) ? enqueue(to, [offer], [wake(state, ctx.timestamp)]) : err({ _tag: "swap_request_account_missing", target: to });
+    },
+    proposeCancelSwap: (x) => (replicas.has(x.data.counterpartyEntityId) ? enqueue(x.data.counterpartyEntityId, [{ type: "swap_cancel_request", offerId: x.data.offerId }], [wake(state, ctx.timestamp)]) : err({ _tag: "swap_request_account_missing", target: x.data.counterpartyEntityId })),
     "profile-update": (x) => map(profileUpdate(state, x.data.profile), (profile) => ({ ...skip, state: { ...state, committed: { ...state.committed, profile } } })),
     htlcPayment: (x) => chain(validatePreparedHtlcPayment(originView(state, replicas, ctx.timestamp), x, ctx.htlc ?? EMPTY_HTLC_INFRA), (p) => {
       const next = htlcPaymentStep(p, state.paybook ?? EMPTY_PAYBOOK, Number(ctx.timestamp));
@@ -5547,7 +5563,7 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   return chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state, accountReplicas: replicas, outputs: [] }, included: [], evicted: [] }, (acc, tx) => {
     const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
     if (r.ok) return ok({ ...acc, draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs] }, included: [...acc.included, tx] });
-    return tx.type === "openAccount" || r.error._tag === "lending_entity" ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
+    return tx.type === "openAccount" || r.error._tag === "lending_entity" || r.error._tag === "swap_request_account_missing" ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
     // Accounts that received follow-up work (a gateway's forwarded leg) join after the directly touched ones.
@@ -6427,18 +6443,731 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
   receipt: (i) => ok(step({ ...host, outbox: host.outbox.filter((e) => e.id !== i.id) })),
 });
 
-export type TowerReceiptV1 = { readonly type: "tower_receipt"; readonly towerId: string; readonly lookupKey: string; readonly slot: bigint; readonly height: bigint; readonly bundleHash: Hash; readonly storedAt: bigint; readonly expiresAt: bigint; readonly towerSignature?: string | undefined };
-export type AccountRecoveryBundleV1 = {
-  readonly account: { readonly accountId: string; readonly jurisdictionId: string; readonly left: string; readonly right: string; readonly owner: string; readonly counterparty: string };
-  readonly latestCommitted: { readonly height: bigint; readonly frameHash: Hash; readonly ownerFrameHanko: string; readonly counterpartyFrameHanko: string };
-  readonly dispute: { readonly proofBodyHash: Hash; readonly nonce: bigint }; readonly bundleHash: Hash;
+// ---- watchtower: og storage/recovery/bundle/{types,crypto}.ts, watchtower/http.ts verifyTowerAppointment, watchtower/store/{appointments,decode,db}.ts ----
+// The HTTP body reader, LevelDB, the store-wide quotas (maxLookupKeys, maxTotalStoredBytes), push, sweep and the on-chain action are I/O:
+// the stored lookup document is threaded as a value, and the tower's clock and key are inputs.
+export type TowerModeV1 = "blind_backup" | "delayed_last_resort";
+export type EncryptedRuntimeRecoveryBundleV1 = {
+  readonly version: 1; readonly kind?: "snapshot" | "journal_tail" | undefined; readonly runtimeId: string; readonly lookupKey: string; readonly height: number; readonly createdAt: number;
+  readonly bundleHash: string; readonly baseRuntimeHeight?: number | undefined; readonly baseCheckpointHash?: string | undefined; readonly iv: string; readonly ciphertext: string; readonly compression?: "gzip" | undefined;
 };
-export type TowerMode = "blind_backup" | "delayed_last_resort";
-export type LastResortPayload = { readonly triggerHint: string; readonly encryptedRemedy: string; readonly actionKind: "counter_dispute_only"; readonly appointmentSequence: bigint; readonly proofNonce: bigint; readonly proofBodyHash: Hash; readonly responseMode: "last_resort"; readonly lastResortWindowSeconds: bigint; readonly safetyMarginSeconds: bigint; readonly maxFeeToken?: TokenId | undefined; readonly feeBudget?: bigint | undefined };
-export type TowerAppointmentV1 = { readonly type: "tower_appointment"; readonly towerMode: TowerMode; readonly lookupKey: string; readonly slot: bigint; readonly height: bigint; readonly bundleHash: Hash; readonly encryptedBundle: string; readonly ownerEntityId: string; readonly ownerHanko: string; readonly lastResortPayload?: LastResortPayload | undefined };
-/** og watchtower decode `text()`: a required string is non-empty after trim. */
-const whenSigned = <X>(x: X, ...hankos: readonly string[]): Result<X, HostError> => (hankos.every((h) => h.trim().length > 0) ? ok(x) : err({ _tag: "unsigned" }));
-/** og decodeReceipt: `towerSignature` is optional; when present it is non-empty text. */
-export const acceptReceipt = (r: TowerReceiptV1): Result<TowerReceiptV1, HostError> => whenSigned(r, r.towerId, r.lookupKey, r.bundleHash, ...(r.towerSignature === undefined ? [] : [r.towerSignature]));
-export const acceptBundle = (b: AccountRecoveryBundleV1): Result<AccountRecoveryBundleV1, HostError> => whenSigned(b, b.latestCommitted.ownerFrameHanko, b.latestCommitted.counterpartyFrameHanko);
-export const acceptAppointment = (a: TowerAppointmentV1): Result<TowerAppointmentV1, HostError> => whenSigned(a, a.ownerHanko);
+export type TowerLastResortWatchV1 = { readonly rpcUrl: string; readonly chainId: number; readonly depositoryAddress: string; readonly watchedEntityId: string; readonly counterentity: string };
+export type TowerLastResortPayloadV1 = {
+  readonly triggerHint: string; readonly watch: TowerLastResortWatchV1; readonly encryptedRemedy: string; readonly actionKind: "counter_dispute_only"; readonly appointmentSequence: number; readonly proofNonce: number;
+  readonly proofBodyHash: string; readonly responseMode: "last_resort"; readonly lastResortWindowSeconds: number; readonly maxFeeToken?: string | undefined; readonly feeBudget?: string | undefined;
+};
+export type TowerAppointmentOwnerProofV1 = { readonly runtimeId: string; readonly signedAt: number; readonly signature: string };
+export type TowerAppointmentV1 = {
+  readonly type: "tower_appointment"; readonly version: 1; readonly towerMode?: TowerModeV1 | undefined; readonly lookupKey: string; readonly slot?: number | undefined;
+  readonly bundle: EncryptedRuntimeRecoveryBundleV1; readonly lastResortPayload?: TowerLastResortPayloadV1 | undefined; readonly ownerProof: TowerAppointmentOwnerProofV1;
+};
+export type TowerReceiptV1 = {
+  readonly type: "tower_receipt"; readonly version: 1; readonly towerId: string; readonly lookupKey: string; readonly runtimeId: string; readonly height: number; readonly bundleHash: string;
+  readonly towerMode?: TowerModeV1 | undefined; readonly slot?: number | undefined; readonly storedAt?: number | undefined; readonly receivedAt: number; readonly expiresAt?: number | undefined;
+  readonly sequence: number; readonly retainedSlots: number; readonly storedBytes?: number | undefined; readonly maxStoredBytes?: number | undefined; readonly quotaOk?: boolean | undefined;
+  readonly appointmentSequence?: number | null | undefined; readonly towerSignature?: string | undefined;
+};
+export type TowerStoredBundle = {
+  readonly slot: number; readonly towerMode: TowerModeV1; readonly bundle: EncryptedRuntimeRecoveryBundleV1; readonly ownerSignedAt: number; readonly encryptedEnvelopeHash: string;
+  readonly lastResortPayloadDigest: string; readonly lastResortPayload?: TowerLastResortPayloadV1 | undefined;
+};
+/** og StoredLookupDoc: one lookup key's receipts (newest first) and retained bundles. */
+export type TowerLookupDoc = { readonly lookupKey: string; readonly runtimeId: string; readonly updatedAt: number; readonly receipts: readonly TowerReceiptV1[]; readonly bundles: readonly TowerStoredBundle[] };
+/** og WatchtowerStoreContext minus I/O: `now` is the one `context.now()` reading for this write, `towerPrivateKey` og's `signer`. */
+export type TowerStoreConfig = { readonly towerId: string; readonly towerPrivateKey: Uint8Array; readonly maxBundlesPerLookupKey: number; readonly maxStoredBytesPerLookupKey: number; readonly receiptTtlMs: number; readonly now: number };
+/** `code` is og's thrown message. */
+export type TowerError = Tagged<"tower", { code: string }>;
+type Rec = { readonly [k: string]: unknown };
+const towerErr = (code: string): Result<never, TowerError> => err({ _tag: "tower", code });
+/** Sequential guards: the first failing code, as og's first throw. */
+const towerChecks = (...checks: readonly (() => string | undefined)[]): Result<void, TowerError> => {
+  for (const check of checks) { const code = check(); if (code !== undefined) return towerErr(code); }
+  return ok(undefined);
+};
+/** og requireBoundaryRecord. */
+const plainRecord = (v: unknown): v is Rec => {
+  if (!v || typeof v !== "object" || Array.isArray(v) || v instanceof Map) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+};
+/** og requireExactBoundaryKeys. */
+const exactKeys = (r: Rec, required: readonly string[], optional: readonly string[], code: string): string | undefined => {
+  const allowed = new Set([...required, ...optional]), missing = required.filter((k) => !Object.hasOwn(r, k)), extra = Object.keys(r).filter((k) => !allowed.has(k));
+  return missing.length > 0 || extra.length > 0 ? `${code}:missing=${missing.join(",") || "none"}:extra=${extra.join(",") || "none"}` : undefined;
+};
+const recordShape = (v: unknown, code: string, required: readonly string[], optional: readonly string[], fieldsCode: string): string | undefined =>
+  !plainRecord(v) ? code : exactKeys(v, required, optional, fieldsCode);
+const jsText = (v: unknown): string => String(v || "");
+const jsInt = (v: unknown): number => Math.max(0, Math.floor(Number(v || 0)));
+/** og normalizeTowerModeV1. */
+export const normalizeTowerMode = (mode: unknown): Result<TowerModeV1, TowerError> => {
+  const raw = jsText(mode).trim();
+  return !raw || raw === "blind_backup" ? ok("blind_backup") : raw === "delayed_last_resort" ? ok("delayed_last_resort") : towerErr(`TOWER_MODE_INVALID:${raw}`);
+};
+const towerHashText = (text: string): string => keccak256Hex(utf8(text));
+/** og computeEncryptedRuntimeRecoveryEnvelopeHash: keccak of the tagged-JSON envelope. */
+export const towerEnvelopeHash = (bundle: EncryptedRuntimeRecoveryBundleV1): string => towerHashText(stableJson(bundle));
+/** og computeTowerLastResortPayloadDigest: ZeroHash when absent. */
+export const towerPayloadDigest = (payload: TowerLastResortPayloadV1 | null | undefined): string => (payload ? towerHashText(stableJson(payload)) : ZERO_WORD);
+/** og buildTowerAppointmentOwnerMessage. */
+export const towerAppointmentOwnerMessage = (runtimeId: string, towerMode: TowerModeV1, lookupKey: string, slot: number, bundle: EncryptedRuntimeRecoveryBundleV1, signedAt: number, payload?: TowerLastResortPayloadV1 | null): string =>
+  `xln:tower:appointment:v1|${runtimeId.toLowerCase()}|${towerMode}|${lookupKey}|${jsInt(slot)}|${towerEnvelopeHash(bundle)}|${jsInt(signedAt)}|${towerPayloadDigest(payload)}`;
+/** og appointments.ts buildReceiptMessage. */
+export const towerReceiptMessage = (r: TowerReceiptV1): string =>
+  `xln:watchtower:receipt:v1|${r.towerId}|${r.lookupKey}|${r.runtimeId}|${r.height}|${r.bundleHash}|${jsInt(r.sequence)}|${jsInt(r.slot)}|${String(r.towerMode || "blind_backup")}|${jsInt(r.storedBytes)}|${jsInt(r.maxStoredBytes)}|${jsInt(r.expiresAt)}`;
+const eip191Digest = (message: string): Uint8Array => { const body = utf8(message); return keccak256(concat([utf8(`\x19Ethereum Signed Message:\n${body.length}`), body])); };
+/** ethers Wallet.signMessage: EIP-191, RFC 6979 low-s, v = 27 + parity. */
+export const signPersonalMessage = (message: string, privateKey: Uint8Array): string => {
+  const s = signRaw(eip191Digest(message), privateKey);
+  return joinHex([s.r.toString(16).padStart(64, "0"), s.s.toString(16).padStart(64, "0"), (27 + s.recovery).toString(16)]);
+};
+/** ethers verifyMessage (Signature.from: 64-byte EIP-2098 or 65-byte with v 0/1/27/28/EIP-155): the lowercase signer, or undefined where ethers throws. */
+export const recoverPersonalMessage = (message: string, signature: string): string | undefined => {
+  const bytes = /^0x([0-9a-fA-F]{2})*$/.test(signature) ? hexToBytes(signature) : undefined;
+  if (bytes === undefined || (bytes.length !== 64 && bytes.length !== 65)) return undefined;
+  const s = bytes.slice(32, 64), v = bytes.length === 64 ? ((s[0] ?? 0) & 0x80 ? 28 : 27) : bytes[64] ?? 0;
+  if (bytes.length === 64) s[0] = (s[0] ?? 0) & 0x7f;
+  const parity = v === 0 || v === 27 ? 0 : v === 1 || v === 28 ? 1 : v >= 35 ? (v & 1 ? 0 : 1) : undefined;
+  if (parity === undefined) return undefined;
+  const pub = recoverPublicKey(eip191Digest(message), bytes.slice(0, 32), s, parity);
+  return pub === null ? undefined : addressOf(pub).toLowerCase();
+};
+const ibanChecksum = (address: string): string => {
+  const letters = (c: string): string => (/[0-9]/.test(c) ? c : String(c.charCodeAt(0) - 55));
+  let expanded = [...`${address.toUpperCase().substring(4)}${address.toUpperCase().substring(0, 2)}00`].map(letters).join("");
+  while (expanded.length >= 15) { const block = expanded.substring(0, 15); expanded = String(parseInt(block, 10) % 97) + expanded.substring(block.length); }
+  return String(98 - (parseInt(expanded, 10) % 97)).padStart(2, "0");
+};
+/** ethers isAddress: hex with optional 0x (mixed case must checksum), or a direct-mode ICAP. */
+export const isEthersAddress = (value: string): boolean => {
+  if (/^(0x)?[0-9a-fA-F]{40}$/.test(value)) { const a = value.startsWith("0x") ? value : `0x${value}`; return !/([A-F].*[a-f])|([a-f].*[A-F])/.test(a) || checksum(a) === a; }
+  return /^XE[0-9]{2}[0-9A-Za-z]{30,31}$/.test(value) && value.substring(2, 4) === ibanChecksum(value);
+};
+const TOWER_BYTES32 = /^0x[0-9a-f]{64}$/;
+const towerLookupKey = (v: unknown): Result<string, TowerError> => { const k = jsText(v).trim().toLowerCase(); return TOWER_BYTES32.test(k) ? ok(k) : towerErr(`TOWER_LOOKUP_KEY_INVALID: ${String(v)}`); };
+const bytes32Code = (v: unknown, label: string): string | undefined => (TOWER_BYTES32.test(jsText(v).trim().toLowerCase()) ? undefined : `TOWER_${label}_INVALID: ${String(v)}`);
+const hexBytesCode = (v: unknown, label: string): string | undefined => (/^0x([0-9a-f]{2})*$/.test(jsText(v).trim().toLowerCase()) ? undefined : `TOWER_${label}_INVALID`);
+const nonNegative = (v: unknown): number | undefined => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined; };
+const nonNegativeCode = (v: unknown, label: string): string | undefined => (nonNegative(v) === undefined ? `TOWER_${label}_INVALID` : undefined);
+const positiveCode = (v: unknown, label: string): string | undefined => { const n = nonNegative(v); return n === undefined ? `TOWER_${label}_INVALID` : n <= 0 ? `TOWER_${label}_INVALID` : undefined; };
+const BUNDLE_FIELDS = ["version", "runtimeId", "lookupKey", "height", "createdAt", "bundleHash", "iv", "ciphertext"] as const, BUNDLE_OPTIONAL = ["kind", "baseRuntimeHeight", "baseCheckpointHash", "compression"] as const;
+/** og http.ts decodeTowerAppointmentEnvelope: exact fields before any signed value is read. */
+const towerEnvelopeCode = (a: Rec): string | undefined => {
+  const payload = a["lastResortPayload"];
+  const found = [
+    () => exactKeys(a, ["type", "version", "lookupKey", "bundle", "ownerProof"], ["towerMode", "slot", "lastResortPayload"], "TOWER_APPOINTMENT_FIELDS_INVALID"),
+    () => (a["type"] !== "tower_appointment" || a["version"] !== 1 ? "TOWER_APPOINTMENT_INVALID" : undefined),
+    () => recordShape(a["bundle"], "TOWER_BUNDLE_INVALID", BUNDLE_FIELDS, BUNDLE_OPTIONAL, "TOWER_BUNDLE_FIELDS_INVALID"),
+    () => recordShape(a["ownerProof"], "TOWER_APPOINTMENT_OWNER_PROOF_INVALID", ["runtimeId", "signedAt", "signature"], [], "TOWER_APPOINTMENT_OWNER_PROOF_FIELDS_INVALID"),
+    () => payload === undefined ? undefined : recordShape(payload, "TOWER_LAST_RESORT_PAYLOAD_INVALID",
+      ["triggerHint", "watch", "encryptedRemedy", "actionKind", "appointmentSequence", "proofNonce", "proofBodyHash", "responseMode", "lastResortWindowSeconds"], ["maxFeeToken", "feeBudget"], "TOWER_LAST_RESORT_PAYLOAD_FIELDS_INVALID"),
+    () => payload === undefined ? undefined : recordShape((payload as Rec)["watch"], "TOWER_LAST_RESORT_PAYLOAD_WATCH_MISSING", ["rpcUrl", "chainId", "depositoryAddress", "watchedEntityId", "counterentity"], [], "TOWER_LAST_RESORT_PAYLOAD_WATCH_FIELDS_INVALID"),
+  ].map((f) => f()).find((c) => c !== undefined);
+  return found;
+};
+/** og http.ts verifyEncryptedBundleShape. */
+const towerBundleShapeCode = (b: Rec): string | undefined => {
+  if (b["version"] !== 1) return "TOWER_BUNDLE_VERSION_UNSUPPORTED";
+  if (!jsText(b["runtimeId"]).trim()) return "TOWER_BUNDLE_RUNTIME_ID_REQUIRED";
+  const key = towerLookupKey(b["lookupKey"]);
+  if (!key.ok) return key.error.code;
+  const first = [nonNegativeCode(b["height"], "BUNDLE_HEIGHT"), nonNegativeCode(b["createdAt"], "BUNDLE_CREATED_AT"), bytes32Code(b["bundleHash"], "BUNDLE_HASH"), hexBytesCode(b["iv"], "BUNDLE_IV"), hexBytesCode(b["ciphertext"], "BUNDLE_CIPHERTEXT")].find((c) => c !== undefined);
+  if (first !== undefined) return first;
+  if (jsText(b["ciphertext"]).trim().length <= 2) return "TOWER_BUNDLE_CIPHERTEXT_EMPTY";
+  return b["compression"] !== undefined && b["compression"] !== "gzip" ? `TOWER_BUNDLE_COMPRESSION_UNSUPPORTED: ${String(b["compression"])}` : undefined;
+};
+/** og assertEncryptedLastResortPayload: `encryptedRemedy` is a tagged-JSON `tower_encrypted_payload` v1 record. */
+const encryptedRemedyCode = (payload: Rec | undefined): string | undefined => {
+  const raw = jsText(payload?.["encryptedRemedy"]).trim();
+  if (!raw) return "TOWER_LAST_RESORT_PAYLOAD_REMEDY_MISSING";
+  const parsed = parseTaggedJson(raw);
+  return parsed.ok && plainRecord(parsed.value) && parsed.value["type"] === "tower_encrypted_payload" && parsed.value["version"] === 1 && parsed.value["alg"] === "watch-seed-aes-256-gcm"
+    && typeof parsed.value["iv"] === "string" && typeof parsed.value["ciphertext"] === "string" ? undefined : "TOWER_LAST_RESORT_PAYLOAD_REMEDY_NOT_ENCRYPTED";
+};
+/** og http.ts verifyLastResortPayload + verifyLastResortWatch. */
+const lastResortPayloadCode = (p: Rec | undefined): string | undefined => {
+  if (!p) return "TOWER_LAST_RESORT_PAYLOAD_MISSING";
+  if (p["actionKind"] !== "counter_dispute_only") return "TOWER_LAST_RESORT_PAYLOAD_ACTION_KIND_UNSUPPORTED";
+  if (p["responseMode"] !== "last_resort") return "TOWER_LAST_RESORT_PAYLOAD_RESPONSE_MODE_UNSUPPORTED";
+  const w = p["watch"];
+  if (!w || typeof w !== "object") return "TOWER_LAST_RESORT_PAYLOAD_WATCH_MISSING";
+  const watch = w as Rec, rpcUrl = jsText(watch["rpcUrl"]).trim(), hint = jsText(p["triggerHint"]).trim();
+  const found = [
+    () => (!rpcUrl || rpcUrl.length > 512 || !/^https?:\/\//i.test(rpcUrl) ? "TOWER_LAST_RESORT_PAYLOAD_WATCH_RPC_INVALID" : undefined),
+    () => positiveCode(watch["chainId"], "LAST_RESORT_PAYLOAD_WATCH_CHAIN_ID"),
+    () => (isEthersAddress(jsText(watch["depositoryAddress"])) ? undefined : "TOWER_LAST_RESORT_PAYLOAD_WATCH_DEPOSITORY_INVALID"),
+    () => bytes32Code(watch["watchedEntityId"], "LAST_RESORT_PAYLOAD_WATCH_ENTITY"),
+    () => bytes32Code(watch["counterentity"], "LAST_RESORT_PAYLOAD_WATCH_COUNTERENTITY"),
+    () => (!hint || hint.length > 256 ? "TOWER_LAST_RESORT_PAYLOAD_TRIGGER_HINT_INVALID" : undefined),
+    () => positiveCode(p["appointmentSequence"], "LAST_RESORT_PAYLOAD_APPOINTMENT_SEQUENCE"),
+    () => positiveCode(p["proofNonce"], "LAST_RESORT_PAYLOAD_PROOF_NONCE"),
+    () => bytes32Code(p["proofBodyHash"], "LAST_RESORT_PAYLOAD_PROOF_BODY_HASH"),
+    () => positiveCode(p["lastResortWindowSeconds"], "LAST_RESORT_PAYLOAD_LAST_RESORT_WINDOW"),
+    () => encryptedRemedyCode(p),
+  ];
+  for (const f of found) { const c = f(); if (c !== undefined) return c; }
+  return undefined;
+};
+export const TOWER_APPOINTMENT_MAX_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
+/**
+ * og http.ts verifyTowerAppointment: exact envelope, bundle shape, lookup/runtime binding, owner clock within 24h of the tower clock `nowMs`,
+ * mode/payload rules, and the owner's EIP-191 signature recovering `ownerProof.runtimeId`. Returns og's normalized appointment.
+ */
+export const verifyTowerAppointment = (input: unknown, nowMs: number): Result<TowerAppointmentV1, TowerError> => {
+  if (!plainRecord(input)) return towerErr("TOWER_APPOINTMENT_INVALID");
+  const envelope = towerEnvelopeCode(input);
+  if (envelope !== undefined) return towerErr(envelope);
+  const a = input as unknown as TowerAppointmentV1, bundle = input["bundle"] as Rec, proof = input["ownerProof"] as Rec, payload = input["lastResortPayload"] as Rec | undefined;
+  const shape = towerBundleShapeCode(bundle);
+  if (shape !== undefined) return towerErr(shape);
+  return chain(towerLookupKey(a.lookupKey), (lookupKey) => {
+    if (bundle["lookupKey"] !== lookupKey) return towerErr("TOWER_APPOINTMENT_LOOKUP_MISMATCH");
+    const runtimeId = jsText(proof["runtimeId"]).trim().toLowerCase();
+    if (!runtimeId || runtimeId !== jsText(bundle["runtimeId"]).trim().toLowerCase()) return towerErr("TOWER_APPOINTMENT_RUNTIME_ID_MISMATCH");
+    const signedAt = Math.max(0, Math.floor(Number(proof["signedAt"] || 0)));
+    if (!Number.isSafeInteger(signedAt) || signedAt <= 0) return towerErr("TOWER_APPOINTMENT_SIGNED_AT_INVALID");
+    if (Math.abs(nowMs - signedAt) > TOWER_APPOINTMENT_MAX_CLOCK_SKEW_MS) return towerErr("TOWER_APPOINTMENT_STALE");
+    const slot = Math.max(0, Math.floor(Number(input["slot"] ?? 0)));
+    return chain(normalizeTowerMode(input["towerMode"]), (towerMode) => {
+      if (towerMode === "blind_backup" && payload) return towerErr("TOWER_BACKUP_LAST_RESORT_PAYLOAD_FORBIDDEN");
+      const payloadCode = towerMode === "delayed_last_resort" ? lastResortPayloadCode(payload) : undefined;
+      if (payloadCode !== undefined) return towerErr(payloadCode);
+      const message = towerAppointmentOwnerMessage(runtimeId, towerMode, lookupKey, slot, a.bundle, signedAt, a.lastResortPayload);
+      const recovered = recoverPersonalMessage(message, jsText(proof["signature"]));
+      if (recovered === undefined) return towerErr("TOWER_APPOINTMENT_SIGNATURE_UNREADABLE");
+      if (recovered !== runtimeId) return towerErr(`TOWER_APPOINTMENT_SIGNATURE_INVALID: recovered=${recovered} expected=${runtimeId}`);
+      return ok({
+        ...a, towerMode, lookupKey, slot, ownerProof: { ...a.ownerProof, runtimeId, signedAt, signature: jsText(proof["signature"]) },
+        bundle: { ...a.bundle, runtimeId, lookupKey, height: jsInt(bundle["height"]), createdAt: jsInt(bundle["createdAt"]) },
+      });
+    });
+  });
+};
+export const emptyTowerLookupDoc = (lookupKey: string): TowerLookupDoc => ({ lookupKey, runtimeId: "", updatedAt: 0, receipts: [], bundles: [] });
+/** og computeStoredLookupBytes: UTF-8 bytes of the tagged-JSON document. */
+export const towerLookupBytes = (doc: TowerLookupDoc): number => utf8(stableJson(doc)).length;
+const bundleKind = (b: EncryptedRuntimeRecoveryBundleV1): string => b.kind ?? "snapshot";
+/** og sortStoredBundles: height, then createdAt, then slot, all descending (stable). */
+const sortTowerBundles = (bundles: readonly TowerStoredBundle[]): readonly TowerStoredBundle[] =>
+  [...bundles].sort((l, r) => (r.bundle.height !== l.bundle.height ? r.bundle.height - l.bundle.height : r.bundle.createdAt !== l.bundle.createdAt ? r.bundle.createdAt - l.bundle.createdAt : r.slot - l.slot));
+/** og retainAppointmentBundles: a blind backup pins the newest snapshot and the newest tail before the cut. */
+const retainTowerBundles = (bundles: readonly TowerStoredBundle[], towerMode: TowerModeV1, limit: number): readonly TowerStoredBundle[] => {
+  const pins = towerMode !== "blind_backup" ? [] : [bundles.find((e) => e.towerMode === "blind_backup" && e.bundle.kind !== "journal_tail"), bundles.find((e) => e.towerMode === "blind_backup" && e.bundle.kind === "journal_tail")];
+  const pinned = pins.filter((e, i): e is TowerStoredBundle => e !== undefined && pins.indexOf(e) === i);
+  return [...pinned, ...bundles.filter((e) => !pinned.includes(e))].slice(0, limit);
+};
+/** og store validateAppointmentMode. */
+const towerStoreModeCode = (a: TowerAppointmentV1, towerMode: TowerModeV1): string | undefined => {
+  if (towerMode === "blind_backup" && a.lastResortPayload) return "TOWER_BACKUP_LAST_RESORT_PAYLOAD_FORBIDDEN";
+  if (towerMode === "delayed_last_resort" && !a.lastResortPayload) return "TOWER_LAST_RESORT_PAYLOAD_MISSING";
+  return towerMode === "delayed_last_resort" ? encryptedRemedyCode(a.lastResortPayload as Rec | undefined) : undefined;
+};
+/**
+ * og appointments.ts prepareAppointment: per (slot, mode, kind) the newest owner signature wins; an older `signedAt` is TOWER_APPOINTMENT_STALE,
+ * the same `signedAt` over different envelope or payload bytes is TOWER_APPOINTMENT_REPLAY_MISMATCH. The tower signs the receipt (EIP-191).
+ */
+const prepareTowerAppointment = (cfg: TowerStoreConfig, a: TowerAppointmentV1, existing: TowerLookupDoc): Result<TowerLookupDoc, TowerError> =>
+  chain(towerLookupKey(a.lookupKey), (lookupKey) => chain(normalizeTowerMode(a.towerMode), (towerMode) => {
+    const slot = Math.max(0, Math.floor(Number(a.slot ?? 0)));
+    const runtimeId = jsText(a.bundle.runtimeId).trim().toLowerCase();
+    const sequence = Math.max(0, ...existing.receipts.map((r) => r.sequence || 0)) + 1, ownerSignedAt = jsInt(a.ownerProof.signedAt);
+    const lastResortPayloadDigest = towerPayloadDigest(a.lastResortPayload), encryptedEnvelopeHash = towerEnvelopeHash(a.bundle);
+    const sameSlot = (e: TowerStoredBundle): boolean => e.slot === slot && e.towerMode === towerMode && bundleKind(e.bundle) === bundleKind(a.bundle);
+    const latest = existing.bundles.filter(sameSlot).reduce<TowerStoredBundle | undefined>((l, e) => (!l || e.ownerSignedAt > l.ownerSignedAt ? e : l), undefined);
+    return chain(towerChecks(
+      () => towerStoreModeCode(a, towerMode),
+      () => (existing.runtimeId && existing.runtimeId !== runtimeId ? `TOWER_LOOKUP_RUNTIME_ID_MISMATCH:${existing.runtimeId}:${runtimeId}` : undefined),
+      () => (latest && latest.ownerSignedAt > ownerSignedAt ? "TOWER_APPOINTMENT_STALE" : undefined),
+      () => (latest && latest.ownerSignedAt === ownerSignedAt && (latest.encryptedEnvelopeHash !== encryptedEnvelopeHash || latest.lastResortPayloadDigest !== lastResortPayloadDigest) ? "TOWER_APPOINTMENT_REPLAY_MISMATCH" : undefined),
+    ), () => {
+      const candidate: TowerStoredBundle = { slot, towerMode, bundle: a.bundle, ownerSignedAt, encryptedEnvelopeHash, lastResortPayloadDigest, ...opt("lastResortPayload", a.lastResortPayload || undefined) };
+      const bundles = retainTowerBundles(sortTowerBundles([candidate, ...existing.bundles.filter((e) => !sameSlot(e))]), towerMode, cfg.maxBundlesPerLookupKey);
+      const draft: TowerLookupDoc = { lookupKey, runtimeId, updatedAt: cfg.now, receipts: existing.receipts, bundles };
+      const storedBytes = towerLookupBytes(draft);
+      if (storedBytes > cfg.maxStoredBytesPerLookupKey) return towerErr(`TOWER_QUOTA_EXCEEDED: bytes=${storedBytes} max=${cfg.maxStoredBytesPerLookupKey}`);
+      const seq = Number(a.lastResortPayload?.appointmentSequence);
+      const unsigned: TowerReceiptV1 = {
+        type: "tower_receipt", version: 1, towerId: cfg.towerId, lookupKey, runtimeId, height: jsInt(a.bundle.height), bundleHash: a.bundle.bundleHash, towerMode, slot,
+        storedAt: cfg.now, receivedAt: cfg.now, expiresAt: cfg.now + cfg.receiptTtlMs, sequence, retainedSlots: bundles.length, storedBytes, maxStoredBytes: cfg.maxStoredBytesPerLookupKey, quotaOk: true,
+        appointmentSequence: Number.isFinite(seq) ? jsInt(a.lastResortPayload?.appointmentSequence) : null,
+      };
+      const receipt: TowerReceiptV1 = { ...unsigned, towerSignature: signPersonalMessage(towerReceiptMessage(unsigned), cfg.towerPrivateKey) };
+      return ok({ ...draft, receipts: [receipt, ...existing.receipts].slice(0, cfg.maxBundlesPerLookupKey) });
+    });
+  }));
+export type TowerWrite = { readonly doc: TowerLookupDoc; readonly receipt: TowerReceiptV1 };
+/** og writeLookup's per-lookup quota on the final signed document (the store-wide quotas are the host's). */
+const sealTowerWrite = (cfg: TowerStoreConfig, doc: TowerLookupDoc): Result<TowerWrite, TowerError> => {
+  const bytes = towerLookupBytes(doc), receipt = doc.receipts[0];
+  if (bytes > cfg.maxStoredBytesPerLookupKey) return towerErr(`TOWER_QUOTA_EXCEEDED: bytes=${bytes} max=${cfg.maxStoredBytesPerLookupKey}`);
+  return receipt === undefined ? towerErr("TOWER_RECEIPT_MISSING") : ok({ doc, receipt });
+};
+/** og store upsertAppointment over the stored lookup document (`existing` undefined when the key is new). */
+export const upsertTowerAppointment = (cfg: TowerStoreConfig, a: TowerAppointmentV1, existing?: TowerLookupDoc): Result<TowerWrite, TowerError> =>
+  chain(towerLookupKey(a.lookupKey), (key) => chain(prepareTowerAppointment(cfg, a, existing ?? emptyTowerLookupDoc(key)), (doc) => sealTowerWrite(cfg, doc)));
+/** og upsertRecoveryArchive: one owner-signed snapshot and its tail, written as one document or not at all. */
+export const upsertTowerRecoveryArchive = (cfg: TowerStoreConfig, pair: readonly [TowerAppointmentV1, TowerAppointmentV1], existing?: TowerLookupDoc): Result<TowerWrite, TowerError> => {
+  const [snapshot, tail] = pair;
+  const modes = pair.map((x) => normalizeTowerMode(x.towerMode));
+  const bad = modes.find((m) => !m.ok);
+  if (bad !== undefined && !bad.ok) return bad;
+  if (modes.some((m) => m.ok && m.value !== "blind_backup") || snapshot.bundle.kind !== "snapshot" || tail.bundle.kind !== "journal_tail" || snapshot.lookupKey !== tail.lookupKey || snapshot.bundle.runtimeId !== tail.bundle.runtimeId
+    || Math.max(0, Math.floor(Number(snapshot.slot ?? 0))) !== Math.max(0, Math.floor(Number(tail.slot ?? 0))) || snapshot.ownerProof.signedAt !== tail.ownerProof.signedAt
+    || tail.bundle.baseRuntimeHeight !== snapshot.bundle.height || tail.bundle.height <= snapshot.bundle.height) return towerErr("TOWER_ARCHIVE_PAIR_INVALID");
+  return chain(towerLookupKey(snapshot.lookupKey), (key) => chain(foldResult(pair, existing ?? emptyTowerLookupDoc(key), (doc, a) => prepareTowerAppointment(cfg, a, doc)), (doc) =>
+    pair.every((a) => doc.bundles.some((e) => e.encryptedEnvelopeHash === towerEnvelopeHash(a.bundle))) ? sealTowerWrite(cfg, doc) : towerErr("TOWER_ARCHIVE_PAIR_NOT_RETAINED")));
+};
+/** Client check of og's receipt signature (og signs in prepareAppointment and ships no verifier): the tower address the receipt message recovers to. */
+export const verifyTowerReceiptSignature = (receipt: TowerReceiptV1, towerAddress: string): Result<TowerReceiptV1, TowerError> => {
+  if (receipt.towerSignature === undefined) return towerErr("TOWER_RECEIPT_SIGNATURE_MISSING");
+  const { towerSignature, ...unsigned } = receipt;
+  return recoverPersonalMessage(towerReceiptMessage(unsigned as TowerReceiptV1), towerSignature) === towerAddress.toLowerCase() ? ok(receipt) : towerErr("TOWER_RECEIPT_SIGNATURE_INVALID");
+};
+/** og deserializeTaggedJson: JSON with BigInt/Map/Set/Buffer/Date/TypedArray envelopes revived. */
+const parseTaggedJson = (raw: string): Result<unknown, TowerError> => {
+  try {
+    return ok(JSON.parse(raw, (_k, v: unknown) => {
+      if (!plainRecord(v) || typeof v["__xlnType"] !== "string") return v;
+      const x = v["value"];
+      switch (v["__xlnType"]) {
+        case "BigInt": return typeof x === "string" ? BigInt(x) : v;
+        case "Map": return Array.isArray(x) ? new Map(x as [unknown, unknown][]) : v;
+        case "Set": return Array.isArray(x) ? new Set(x) : v;
+        case "Buffer": return Array.isArray(x) ? Uint8Array.from(x as number[]) : v;
+        case "Date": return typeof x === "string" ? new Date(x) : v;
+        case "TypedArray": return typeof v["kind"] === "string" && typeof x === "string" ? new Uint8Array(0) : v;
+        default: return v;
+      }
+    }));
+  } catch { return towerErr("TOWER_JSON_INVALID"); }
+};
+const safeIntCode = (v: unknown, code: string): string | undefined => (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0 ? code : undefined);
+const optionalSafeIntCode = (v: unknown, code: string): string | undefined => (v === undefined || v === null ? undefined : safeIntCode(v, code));
+const textCode = (v: unknown, code: string): string | undefined => (typeof v !== "string" || v.trim().length === 0 ? code : undefined);
+const firstCode = (checks: readonly (() => string | undefined)[]): string | undefined => { for (const c of checks) { const code = c(); if (code !== undefined) return code; } return undefined; };
+/** og decode.ts decodeReceipt: a stored receipt bound to its lookup key and runtime; `towerSignature` is optional but non-empty when present. */
+export const decodeTowerReceipt = (value: unknown, lookupKey: string, runtimeId: string): Result<TowerReceiptV1, TowerError> => {
+  if (!plainRecord(value)) return towerErr("TOWER_STORED_RECEIPT_INVALID");
+  const r = value;
+  const code = firstCode([
+    () => exactKeys(r, ["type", "version", "towerId", "lookupKey", "runtimeId", "height", "bundleHash", "receivedAt", "sequence", "retainedSlots"],
+      ["towerMode", "slot", "storedAt", "expiresAt", "storedBytes", "maxStoredBytes", "quotaOk", "appointmentSequence", "towerSignature"], "TOWER_STORED_RECEIPT_FIELDS_INVALID"),
+    () => (r["type"] !== "tower_receipt" || r["version"] !== 1 ? "TOWER_STORED_RECEIPT_VERSION_INVALID" : undefined),
+    () => textCode(r["lookupKey"], "TOWER_STORED_RECEIPT_LOOKUP_INVALID") ?? (r["lookupKey"] !== lookupKey ? "TOWER_STORED_RECEIPT_LOOKUP_MISMATCH" : undefined),
+    () => textCode(r["runtimeId"], "TOWER_STORED_RECEIPT_RUNTIME_INVALID") ?? ((r["runtimeId"] as string).toLowerCase() !== runtimeId ? "TOWER_STORED_RECEIPT_RUNTIME_MISMATCH" : undefined),
+    () => textCode(r["towerId"], "TOWER_STORED_RECEIPT_TOWER_INVALID"),
+    () => textCode(r["bundleHash"], "TOWER_STORED_RECEIPT_HASH_INVALID"),
+    ...(["height", "receivedAt", "sequence", "retainedSlots"] as const).map((f) => () => safeIntCode(r[f], `TOWER_STORED_RECEIPT_${f.toUpperCase()}_INVALID`)),
+    ...(["slot", "storedAt", "expiresAt", "storedBytes", "maxStoredBytes", "appointmentSequence"] as const).map((f) => () => optionalSafeIntCode(r[f], `TOWER_STORED_RECEIPT_${f.toUpperCase()}_INVALID`)),
+    () => { if (r["towerMode"] === undefined) return undefined; const m = normalizeTowerMode(r["towerMode"]); return m.ok ? undefined : m.error.code; },
+    () => (r["quotaOk"] !== undefined && typeof r["quotaOk"] !== "boolean" ? "TOWER_STORED_RECEIPT_QUOTA_INVALID" : undefined),
+    () => (r["towerSignature"] !== undefined ? textCode(r["towerSignature"], "TOWER_STORED_RECEIPT_SIGNATURE_INVALID") : undefined),
+  ]);
+  return code === undefined ? ok(value as unknown as TowerReceiptV1) : towerErr(code);
+};
+/** og decode.ts decodeBundle. */
+export const decodeTowerBundle = (value: unknown, lookupKey: string, runtimeId: string): Result<EncryptedRuntimeRecoveryBundleV1, TowerError> => {
+  if (!plainRecord(value)) return towerErr("TOWER_STORED_BUNDLE_INVALID");
+  const b = value;
+  const code = firstCode([
+    () => exactKeys(b, BUNDLE_FIELDS, BUNDLE_OPTIONAL, "TOWER_STORED_BUNDLE_FIELDS_INVALID"),
+    () => (b["version"] !== 1 ? "TOWER_STORED_BUNDLE_VERSION_INVALID" : undefined),
+    () => (b["kind"] !== undefined && b["kind"] !== "snapshot" && b["kind"] !== "journal_tail" ? "TOWER_STORED_BUNDLE_KIND_INVALID" : undefined),
+    () => textCode(b["lookupKey"], "TOWER_STORED_BUNDLE_LOOKUP_INVALID") ?? (b["lookupKey"] !== lookupKey ? "TOWER_STORED_BUNDLE_LOOKUP_MISMATCH" : undefined),
+    () => textCode(b["runtimeId"], "TOWER_STORED_BUNDLE_RUNTIME_INVALID") ?? ((b["runtimeId"] as string).toLowerCase() !== runtimeId ? "TOWER_STORED_BUNDLE_RUNTIME_MISMATCH" : undefined),
+    () => safeIntCode(b["height"], "TOWER_STORED_BUNDLE_HEIGHT_INVALID"),
+    () => safeIntCode(b["createdAt"], "TOWER_STORED_BUNDLE_CREATED_AT_INVALID"),
+    () => optionalSafeIntCode(b["baseRuntimeHeight"], "TOWER_STORED_BUNDLE_BASE_HEIGHT_INVALID"),
+    () => textCode(b["bundleHash"], "TOWER_STORED_BUNDLE_HASH_INVALID"),
+    () => textCode(b["iv"], "TOWER_STORED_BUNDLE_IV_INVALID"),
+    () => textCode(b["ciphertext"], "TOWER_STORED_BUNDLE_CIPHERTEXT_INVALID"),
+    () => (b["compression"] !== undefined && b["compression"] !== "gzip" ? "TOWER_STORED_BUNDLE_COMPRESSION_INVALID" : undefined),
+  ]);
+  return code === undefined ? ok(value as unknown as EncryptedRuntimeRecoveryBundleV1) : towerErr(code);
+};
+/** og decode.ts decodeStoredLookupDoc: a persisted lookup document, every receipt and bundle bound to its key and runtime. */
+export const decodeTowerLookupDoc = (raw: string, expectedLookupKey?: string): Result<TowerLookupDoc, TowerError> => chain(parseTaggedJson(raw), (value) => {
+  if (!plainRecord(value)) return towerErr("TOWER_STORED_LOOKUP_INVALID");
+  const d = value;
+  const fields = exactKeys(d, ["lookupKey", "runtimeId", "updatedAt", "receipts", "bundles"], [], "TOWER_STORED_LOOKUP_FIELDS_INVALID");
+  if (fields !== undefined) return towerErr(fields);
+  const keyCode = textCode(d["lookupKey"], "TOWER_STORED_LOOKUP_KEY_INVALID");
+  if (keyCode !== undefined) return towerErr(keyCode);
+  const lookupKey = (d["lookupKey"] as string).toLowerCase();
+  if (!TOWER_BYTES32.test(lookupKey)) return towerErr("TOWER_STORED_LOOKUP_KEY_INVALID");
+  if (expectedLookupKey && lookupKey !== expectedLookupKey) return towerErr("TOWER_STORED_LOOKUP_KEY_MISMATCH");
+  const runtimeCode = textCode(d["runtimeId"], "TOWER_STORED_RUNTIME_INVALID");
+  if (runtimeCode !== undefined) return towerErr(runtimeCode);
+  const runtimeId = (d["runtimeId"] as string).toLowerCase();
+  const code = firstCode([
+    () => (/^0x[0-9a-f]{40}$/.test(runtimeId) ? undefined : "TOWER_STORED_RUNTIME_INVALID"),
+    () => safeIntCode(d["updatedAt"], "TOWER_STORED_UPDATED_AT_INVALID"),
+    () => (Array.isArray(d["receipts"]) ? undefined : "TOWER_STORED_RECEIPTS_INVALID"),
+    () => (Array.isArray(d["bundles"]) ? undefined : "TOWER_STORED_BUNDLES_INVALID"),
+  ]);
+  if (code !== undefined) return towerErr(code);
+  return chain(traverse(d["receipts"] as readonly unknown[], (r) => decodeTowerReceipt(r, lookupKey, runtimeId)), (receipts) =>
+    map(traverse(d["bundles"] as readonly unknown[], (v): Result<TowerStoredBundle, TowerError> => {
+      if (!plainRecord(v)) return towerErr("TOWER_STORED_BUNDLE_ENTRY_INVALID");
+      const e = v, entryFields = exactKeys(e, ["slot", "towerMode", "bundle", "ownerSignedAt", "encryptedEnvelopeHash", "lastResortPayloadDigest"], ["lastResortPayload"], "TOWER_STORED_BUNDLE_ENTRY_FIELDS_INVALID");
+      if (entryFields !== undefined) return towerErr(entryFields);
+      const slotCode = safeIntCode(e["slot"], "TOWER_STORED_BUNDLE_SLOT_INVALID");
+      if (slotCode !== undefined) return towerErr(slotCode);
+      return chain(normalizeTowerMode(e["towerMode"]), (towerMode) => chain(decodeTowerBundle(e["bundle"], lookupKey, runtimeId), (bundle) => {
+        const c = firstCode([
+          () => safeIntCode(e["ownerSignedAt"], "TOWER_STORED_OWNER_SIGNED_AT_INVALID"),
+          () => textCode(e["encryptedEnvelopeHash"], "TOWER_STORED_ENCRYPTED_ENVELOPE_HASH_INVALID") ?? (TOWER_BYTES32.test((e["encryptedEnvelopeHash"] as string).toLowerCase()) ? undefined : "TOWER_STORED_ENCRYPTED_ENVELOPE_HASH_INVALID"),
+          () => textCode(e["lastResortPayloadDigest"], "TOWER_STORED_LAST_RESORT_DIGEST_INVALID"),
+          () => (e["lastResortPayload"] !== undefined && !plainRecord(e["lastResortPayload"]) ? "TOWER_STORED_LAST_RESORT_PAYLOAD_INVALID" : undefined),
+        ]);
+        return c !== undefined ? towerErr(c) : ok({
+          slot: e["slot"] as number, towerMode, bundle, ownerSignedAt: e["ownerSignedAt"] as number, encryptedEnvelopeHash: (e["encryptedEnvelopeHash"] as string).toLowerCase(),
+          lastResortPayloadDigest: e["lastResortPayloadDigest"] as string, ...opt("lastResortPayload", e["lastResortPayload"] as TowerLastResortPayloadV1 | undefined),
+        });
+      }));
+    }), (bundles) => ({ lookupKey, runtimeId, updatedAt: d["updatedAt"] as number, receipts, bundles })));
+});
+
+// ---- orderbook: og orderbook/core.ts (price-page limit order book), orderbook/pages/{page,key}.ts, orderbook/commitment.ts ----
+// og keeps liquidity in two Patricia trees of 16-slot FIFO price pages; the rewrite keeps each side as its pages in key-byte order
+// (price, then page sequence) and seals the same radix-16 root. og throws on a broken invariant; here every such case is a `book` refusal.
+export type BookSide = 0 | 1;
+export type BookEntry = { readonly orderId: string; readonly ownerId: string; readonly qtyLots: bigint; readonly seq: number };
+export type BookPage = { readonly headSlot: number; readonly nextSlot: number; readonly liveCount: number; readonly totalQtyLots: bigint; readonly slots: readonly (BookEntry | null)[] };
+export type BookPageKey = { readonly priceTicks: bigint; readonly pageSequence: number };
+export type BookPageRow = { readonly key: BookPageKey; readonly page: BookPage };
+/** og BookOrderState: the RAM locator of a resting order (never committed). */
+export type BookOrder = BookEntry & { readonly side: BookSide; readonly priceTicks: bigint; readonly pageSequence: number; readonly pageSlot: number };
+export type BookParams = { readonly bucketWidthTicks: bigint; readonly maxOrders: number; readonly stpPolicy: 0 | 1 };
+export type Book = {
+  readonly params: BookParams; readonly orders: ReadonlyMap<string, BookOrder>; readonly bidPages: readonly BookPageRow[]; readonly askPages: readonly BookPageRow[];
+  readonly nextSeq: number; readonly tradeCount: number; readonly tradeQtySum: bigint; readonly lastTradePriceTicks: bigint; readonly lastAcceptedUsdAskPriceTicks: bigint; readonly eventHash: bigint;
+};
+export type BookTif = 0 | 1 | 2;
+export type OrderCmd =
+  | { readonly kind: 0; readonly ownerId: string; readonly orderId: string; readonly side: BookSide; readonly tif: BookTif; readonly postOnly: boolean; readonly priceTicks: bigint; readonly qtyLots: bigint }
+  | { readonly kind: 1; readonly ownerId: string; readonly orderId: string }
+  | { readonly kind: 2; readonly ownerId: string; readonly orderId: string; readonly newPriceTicks: bigint | null; readonly qtyDeltaLots: bigint };
+export type BookEvent =
+  | { readonly type: "ACK"; readonly orderId: string; readonly ownerId: string }
+  | { readonly type: "REJECT"; readonly orderId: string; readonly ownerId: string; readonly reason: string; readonly blockingOrderId?: string | undefined }
+  | { readonly type: "TRADE"; readonly price: bigint; readonly qty: bigint; readonly makerOwnerId: string; readonly takerOwnerId: string; readonly makerOrderId: string; readonly takerOrderId: string; readonly makerQtyBefore: bigint; readonly takerQtyTotal: bigint }
+  | { readonly type: "REDUCED"; readonly orderId: string; readonly ownerId: string; readonly delta: bigint; readonly remain: bigint }
+  | { readonly type: "CANCELED"; readonly orderId: string; readonly ownerId: string };
+export type MakerDisposition = "eligible" | "suspended" | "cancel";
+export type BookOptions = {
+  readonly suspendedOrderIds?: ReadonlySet<string> | undefined;
+  /** Consulted lazily, once per maker per command (og cacheMakerDisposition). */
+  readonly makerDisposition?: ((maker: BookOrder) => MakerDisposition) | undefined;
+  readonly executionPriceTicksForMatch?: ((maker: bigint, taker: bigint, side: BookSide) => bigint) | undefined;
+  readonly executionQtyMultipleAtPrice?: ((priceTicks: bigint) => bigint) | undefined;
+};
+export type BookError = Tagged<"book", { code: string }>;
+export type BookStep = { readonly state: Book; readonly events: readonly BookEvent[] };
+export const BOOK_PAGE_CAPACITY = 16;
+export const MAX_ORDERBOOK_QTY_LOTS = 10n ** 24n;
+const bookErr = (code: string): Result<never, BookError> => err({ _tag: "book", code });
+const unsignedBytes = (v: bigint): Uint8Array => { const h = v.toString(16); return hexToBytes(h.length % 2 === 0 ? h : `0${h}`); };
+/** og encodeBookPricePrefix / encodeBookPricePageKey: length-prefixed minimal price, then the uint16 page. */
+const bookPriceKeyBytes = (k: BookPageKey): Uint8Array => { const price = unsignedBytes(k.priceTicks); return concat([Uint8Array.of(price.length), price, u16(k.pageSequence)]); };
+const u16Framed = (b: Uint8Array): Uint8Array => concat([u16(b.length), b]);
+const bookEntryBytes = (e: BookEntry | null): Uint8Array =>
+  e === null ? Uint8Array.of(0) : concat([Uint8Array.of(1), u16Framed(utf8(e.orderId)), u16Framed(utf8(e.ownerId)), u16Framed(unsignedBytes(e.qtyLots)), u16Framed(unsignedBytes(BigInt(e.seq)))]);
+/** og pageHash: the integrity digest of the page's slot layout. */
+const bookPageDigest = (p: BookPage): Uint8Array =>
+  sha256(concat([u16(p.headSlot), u16(p.nextSlot), u16(p.liveCount), u16Framed(unsignedBytes(p.totalQtyLots)), ...p.slots.map(bookEntryBytes)]));
+/** og BookPricePageTree.rootHash(): radix-16 Patricia over key bytes, leaf value = page digest; empty is the zero word. */
+export const bookPagesRoot = (rows: readonly BookPageRow[]): string =>
+  sealRadix(rows.map((r) => { const key = bookPriceKeyBytes(r.key); return { nibbles: nibblesOf(key), key, digest: bookPageDigest(r.page) }; }));
+/** og computeBookCommitmentHash: integrity checksum of the length-framed params, both page roots and the trade/event counters. */
+export const bookCommitmentHash = (b: Book): string => {
+  const parts = ["xln.orderbook.book", String(b.params.bucketWidthTicks), String(b.params.maxOrders), String(b.params.stpPolicy), bookPagesRoot(b.bidPages), bookPagesRoot(b.askPages),
+    String(b.nextSeq), String(b.tradeCount), String(b.tradeQtySum), String(b.lastTradePriceTicks), String(b.lastAcceptedUsdAskPriceTicks), String(b.eventHash)].map(utf8);
+  return bytesToHex(sha256(concat(parts.flatMap((p) => [u32(p.length), p]))).slice(0, 16));
+};
+/** og createBook. */
+export const createBook = (params: BookParams): Result<Book, BookError> => {
+  if (params.bucketWidthTicks <= 0n) return bookErr("bucketWidthTicks must be positive");
+  if (!Number.isFinite(params.maxOrders) || params.maxOrders <= 0) return bookErr("maxOrders must be positive");
+  if (params.stpPolicy !== 0 && params.stpPolicy !== 1) return bookErr("unsupported stpPolicy");
+  return ok({ params: { ...params, maxOrders: Math.max(1, Math.floor(params.maxOrders)) }, orders: new Map(), bidPages: [], askPages: [], nextSeq: 1, tradeCount: 0, tradeQtySum: 0n, lastTradePriceTicks: 0n, lastAcceptedUsdAskPriceTicks: 0n, eventHash: 0n });
+};
+/** The working copy of one command (og forkBookState overlay). */
+type BookWork = { -readonly [K in keyof Book]: Book[K] } & { orders: Map<string, BookOrder>; bidPages: BookPageRow[]; askPages: BookPageRow[] };
+const forkBook = (b: Book): BookWork => ({ ...b, orders: new Map(b.orders), bidPages: [...b.bidPages], askPages: [...b.askPages] });
+const sideRows = (w: Book, side: BookSide): readonly BookPageRow[] => (side === 0 ? w.bidPages : w.askPages);
+const keyOrder = (a: BookPageKey, b: BookPageKey): number => (a.priceTicks !== b.priceTicks ? (a.priceTicks < b.priceTicks ? -1 : 1) : a.pageSequence - b.pageSequence);
+/** og tree.updated / tree.removed (`page` undefined): one row, key order kept. */
+const setPage = (w: BookWork, side: BookSide, key: BookPageKey, page: BookPage | undefined): void => {
+  const rows = side === 0 ? w.bidPages : w.askPages;
+  let lo = 0, hi = rows.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (keyOrder((rows[mid] as BookPageRow).key, key) < 0) lo = mid + 1; else hi = mid; }
+  const hit = lo < rows.length && keyOrder((rows[lo] as BookPageRow).key, key) === 0;
+  if (page === undefined) { if (hit) rows.splice(lo, 1); } else rows.splice(lo, hit ? 1 : 0, { key, page });
+};
+const getPage = (w: Book, side: BookSide, key: BookPageKey): BookPage | undefined => sideRows(w, side).find((r) => keyOrder(r.key, key) === 0)?.page;
+/** og orderedPages: asks ascending; bids by descending price, FIFO page sequence within a price. */
+const orderedPages = (rows: readonly BookPageRow[], side: BookSide): readonly BookPageRow[] => {
+  if (side === 1) return rows;
+  const byPrice: BookPageRow[][] = [];
+  for (const r of rows) { const last = byPrice[byPrice.length - 1]; if (last !== undefined && last[0]?.key.priceTicks === r.key.priceTicks) last.push(r); else byPrice.push([r]); }
+  return byPrice.reverse().flat();
+};
+const pageOrder = (side: BookSide, row: BookPageRow, slot: number): BookOrder | null => {
+  const e = row.page.slots[slot];
+  return e ? { ...e, side, priceTicks: row.key.priceTicks, pageSequence: row.key.pageSequence, pageSlot: slot } : null;
+};
+const pageOrders = (side: BookSide, row: BookPageRow): readonly BookOrder[] => {
+  const out: BookOrder[] = [];
+  for (let slot = row.page.headSlot; slot < row.page.nextSlot; slot++) { const o = pageOrder(side, row, slot); if (o) out.push(o); }
+  return out;
+};
+const cachedDisposition = (opts: BookOptions): BookOptions => {
+  const classify = opts.makerDisposition;
+  if (!classify) return opts;
+  const verdicts = new Map<string, MakerDisposition>();
+  return { ...opts, makerDisposition: (maker) => { const hit = verdicts.get(maker.orderId); if (hit) return hit; const v = classify(maker); verdicts.set(maker.orderId, v); return v; } };
+};
+/** og findBestOrder: the top of `side` (with suspensions/dispositions, the first eligible maker in price-time order). */
+const findBestOrder = (w: Book, side: BookSide, opts: BookOptions): BookOrder | null => {
+  const rows = sideRows(w, side);
+  if (!opts.suspendedOrderIds && !opts.makerDisposition) {
+    const extreme = side === 0 ? rows[rows.length - 1] : rows[0], first = extreme && rows.find((r) => r.key.priceTicks === extreme.key.priceTicks);
+    return first ? pageOrders(side, first)[0] ?? null : null;
+  }
+  for (const row of orderedPages(rows, side)) for (const o of pageOrders(side, row)) {
+    if (opts.suspendedOrderIds?.has(o.orderId)) continue;
+    if ((opts.makerDisposition?.(o) ?? "eligible") === "eligible") return o;
+  }
+  return null;
+};
+const bookCrosses = (side: BookSide, taker: bigint, maker: bigint): boolean => (side === 0 ? maker <= taker : maker >= taker);
+const PRIME = 0x1_0000_01n;
+/** og bumpHash: the rolling event hash (JS int32 mixing kept bit-exact). */
+const bumpHash = (w: BookWork, tag: number, a: number | bigint, b: number | bigint): void => {
+  const a32 = Number(BigInt(a) & 0xffff_ffffn), b32 = Number(BigInt(b) & 0xffff_ffffn);
+  w.eventHash = (w.eventHash * PRIME + BigInt(((tag * 2_654_435_761) >>> 0) ^ a32 ^ (b32 << 7))) & 0x1f_ffff_ffff_ffffn;
+};
+/** og requireEntry. */
+const bookEntryCode = (e: BookEntry): string | undefined => {
+  const ob = utf8(e.orderId).length, wb = utf8(e.ownerId).length;
+  if (ob === 0 || ob > 323) return `BOOK_PAGE_ORDER_ID_BYTES_INVALID:${ob}`;
+  if (wb === 0 || wb > 66) return `BOOK_PAGE_OWNER_ID_BYTES_INVALID:${wb}`;
+  if (e.qtyLots <= 0n || e.qtyLots > MAX_ORDERBOOK_QTY_LOTS) return "BOOK_PAGE_ORDER_QTY_INVALID";
+  return !Number.isSafeInteger(e.seq) || e.seq < 0 ? "BOOK_PAGE_ORDER_SEQ_INVALID" : undefined;
+};
+const EMPTY_BOOK_PAGE: BookPage = { headSlot: 0, nextSlot: 0, liveCount: 0, totalQtyLots: 0n, slots: Array<BookEntry | null>(BOOK_PAGE_CAPACITY).fill(null) };
+/** og addOrder + appendBookPricePageOrder: FIFO append to the price's tail page, opening the next page sequence when it is full. */
+const addBookOrder = (w: BookWork, o: Omit<BookOrder, "pageSequence" | "pageSlot">): string | undefined => {
+  const entry: BookEntry = { orderId: o.orderId, ownerId: o.ownerId, qtyLots: o.qtyLots, seq: o.seq };
+  const bad = bookEntryCode(entry);
+  if (bad !== undefined) return bad;
+  if (o.priceTicks <= 0n) return `BOOK_PAGE_PRICE_INVALID:${o.priceTicks}`;
+  const rows = sideRows(w, o.side);
+  let tail: BookPageRow | undefined;
+  for (const r of rows) if (r.key.priceTicks === o.priceTicks) tail = r;
+  const sequence = tail?.page.nextSlot === BOOK_PAGE_CAPACITY ? (tail?.key.pageSequence ?? 0) + 1 : tail?.key.pageSequence ?? 0;
+  if (sequence > 0xffff) return "BOOK_PAGE_SEQUENCE_EXHAUSTED";
+  const page = tail?.key.pageSequence === sequence ? tail.page : EMPTY_BOOK_PAGE, slot = page.nextSlot, slots = [...page.slots];
+  slots[slot] = entry;
+  setPage(w, o.side, { priceTicks: o.priceTicks, pageSequence: sequence }, { headSlot: page.liveCount === 0 ? slot : page.headSlot, nextSlot: slot + 1, liveCount: page.liveCount + 1, totalQtyLots: page.totalQtyLots + entry.qtyLots, slots });
+  w.orders.set(o.orderId, { ...o, pageSequence: sequence, pageSlot: slot });
+  return undefined;
+};
+/** og removeOrder + removeBookPricePageOrder. */
+const removeBookOrder = (w: BookWork, orderId: string): BookOrder | null => {
+  const o = w.orders.get(orderId);
+  if (!o) return null;
+  const key = { priceTicks: o.priceTicks, pageSequence: o.pageSequence }, page = getPage(w, o.side, key);
+  if (!page) return null;
+  const slots = [...page.slots], entry = slots[o.pageSlot];
+  if (!entry) return null;
+  slots[o.pageSlot] = null;
+  const liveCount = page.liveCount - 1;
+  let head = page.headSlot;
+  if (o.pageSlot === page.headSlot) { head = o.pageSlot + 1; while (head < slots.length && slots[head] === null) head++; }
+  setPage(w, o.side, key, liveCount === 0 ? undefined : { ...page, headSlot: head, liveCount, totalQtyLots: page.totalQtyLots - entry.qtyLots, slots });
+  w.orders.delete(orderId);
+  return o;
+};
+/** og reduceOrder + reduceBookPricePageOrder. */
+const reduceBookOrder = (w: BookWork, o: BookOrder, qtyLots: bigint): string | undefined => {
+  if (qtyLots <= 0n || qtyLots > MAX_ORDERBOOK_QTY_LOTS) return "BOOK_PAGE_ORDER_QTY_INVALID";
+  const key = { priceTicks: o.priceTicks, pageSequence: o.pageSequence }, page = getPage(w, o.side, key), entry = page?.slots[o.pageSlot];
+  if (!page || !entry || entry.orderId !== o.orderId) return "BOOK_PAGE_LOCATION_MISMATCH";
+  if (qtyLots >= entry.qtyLots) return "BOOK_PAGE_REDUCTION_INVALID";
+  const slots = [...page.slots];
+  slots[o.pageSlot] = { ...entry, qtyLots };
+  setPage(w, o.side, key, { ...page, totalQtyLots: page.totalQtyLots - entry.qtyLots + qtyLots, slots });
+  const indexed = w.orders.get(o.orderId);
+  if (!indexed) return `BOOK_ORDER_INDEX_MISSING:${o.orderId}`;
+  w.orders.set(o.orderId, { ...indexed, qtyLots });
+  return undefined;
+};
+type BookTaker = { readonly side: BookSide; readonly ownerId: string; readonly orderId: string; readonly priceTicks: bigint; readonly qtyLots: bigint };
+type Matched = { readonly remaining: bigint; readonly blockingOrderId?: string | undefined };
+/** og matchPricePages: walk the opposite side in price-time order over the pre-match snapshot, publishing each touched page once. */
+const matchBook = (w: BookWork, taker: BookTaker, events: BookEvent[], opts: BookOptions): Result<Matched, BookError> => {
+  let remaining = taker.qtyLots;
+  const makerSide: BookSide = taker.side === 0 ? 1 : 0;
+  for (const row of orderedPages([...sideRows(w, makerSide)], makerSide)) {
+    if (remaining <= 0n || !bookCrosses(taker.side, taker.priceTicks, row.key.priceTicks)) break;
+    const src = row.page, slots = [...src.slots];
+    let live = src.liveCount, total = src.totalQtyLots, stop = false, changed = false;
+    const publish = (): void => {
+      if (!changed) return;
+      let head = src.headSlot;
+      while (head < slots.length && slots[head] === null) head++;
+      setPage(w, makerSide, row.key, live === 0 ? undefined : { ...src, headSlot: head, liveCount: live, totalQtyLots: total, slots });
+    };
+    for (let slot = src.headSlot; slot < src.nextSlot && remaining > 0n; slot++) {
+      const entry = slots[slot];
+      if (!entry) continue;
+      const maker: BookOrder = { ...entry, side: makerSide, priceTicks: row.key.priceTicks, pageSequence: row.key.pageSequence, pageSlot: slot };
+      if (opts.suspendedOrderIds?.has(maker.orderId)) continue;
+      const disposition = opts.makerDisposition?.(maker) ?? "eligible";
+      if (disposition === "suspended") continue;
+      if (disposition === "cancel") {
+        slots[slot] = null; live -= 1; total -= maker.qtyLots; w.orders.delete(maker.orderId); bumpHash(w, 5, maker.priceTicks, 0); changed = true;
+        continue;
+      }
+      if (maker.ownerId === taker.ownerId && w.params.stpPolicy === 1) {
+        publish();
+        events.push({ type: "REJECT", orderId: taker.orderId, ownerId: taker.ownerId, reason: "STP cancel taker", blockingOrderId: maker.orderId });
+        return ok({ remaining, blockingOrderId: maker.orderId });
+      }
+      const price = opts.executionPriceTicksForMatch?.(maker.priceTicks, taker.priceTicks, taker.side) ?? maker.priceTicks;
+      if (price <= 0n) return bookErr("BOOK_EXECUTION_PRICE_INVALID");
+      const multiple = opts.executionQtyMultipleAtPrice?.(price) ?? 1n;
+      if (multiple <= 0n) return bookErr("BOOK_EXECUTION_QTY_MULTIPLE_INVALID");
+      const qty = ((maker.qtyLots < remaining ? maker.qtyLots : remaining) / multiple) * multiple;
+      if (qty <= 0n) { stop = true; break; }
+      w.tradeCount += 1; w.tradeQtySum += qty; w.lastTradePriceTicks = price;
+      bumpHash(w, 3, price, qty);
+      events.push({ type: "TRADE", price, qty, makerOwnerId: maker.ownerId, takerOwnerId: taker.ownerId, makerOrderId: maker.orderId, takerOrderId: taker.orderId, makerQtyBefore: maker.qtyLots, takerQtyTotal: taker.qtyLots });
+      remaining -= qty; total -= qty; changed = true;
+      if (qty === maker.qtyLots) { slots[slot] = null; live -= 1; w.orders.delete(maker.orderId); continue; }
+      const next = maker.qtyLots - qty, indexed = w.orders.get(maker.orderId);
+      slots[slot] = { ...entry, qtyLots: next };
+      if (!indexed) return bookErr(`BOOK_ORDER_INDEX_MISSING:${maker.orderId}`);
+      w.orders.set(maker.orderId, { ...indexed, qtyLots: next });
+      events.push({ type: "REDUCED", orderId: maker.orderId, ownerId: maker.ownerId, delta: -qty, remain: next });
+      stop = true;
+      break;
+    }
+    publish();
+    if (stop) break;
+  }
+  return ok({ remaining });
+};
+/** og applyCommand: place (GTC/IOC/FOK, post-only, STP) or cancel; replace is refused. A refusal event leaves the book unchanged. */
+export const applyBookCommand = (book: Book, cmd: OrderCmd, options: BookOptions = {}): Result<BookStep, BookError> => {
+  const reject = (reason: string): Result<BookStep, BookError> => ok({ state: book, events: [{ type: "REJECT", orderId: cmd.orderId, ownerId: cmd.ownerId, reason }] });
+  if (cmd.kind === 2) return reject("replace unsupported");
+  const w = forkBook(book);
+  if (cmd.kind === 1) {
+    const existing = w.orders.get(cmd.orderId);
+    if (!existing) return reject("not found");
+    if (existing.ownerId !== cmd.ownerId) return reject("not owner");
+    if (removeBookOrder(w, cmd.orderId) === null) return bookErr("BOOK_PAGE_LOCATION_MISMATCH");
+    bumpHash(w, 5, existing.priceTicks, 0);
+    return ok({ state: w, events: [{ type: "CANCELED", orderId: cmd.orderId, ownerId: cmd.ownerId }] });
+  }
+  const { ownerId, orderId, side, tif, postOnly, priceTicks, qtyLots } = cmd, opts = cachedDisposition(options);
+  if (qtyLots <= 0n || qtyLots > MAX_ORDERBOOK_QTY_LOTS) return reject("qty out of range");
+  if (priceTicks <= 0n) return reject("price must be positive");
+  if (w.orders.has(orderId)) return reject("duplicate orderId");
+  const opposite = postOnly ? findBestOrder(w, side === 0 ? 1 : 0, opts) : null;
+  if (postOnly && opposite && bookCrosses(side, priceTicks, opposite.priceTicks)) return reject("postOnly would cross");
+  const events: BookEvent[] = [];
+  return chain(matchBook(w, { side, ownerId, orderId, priceTicks, qtyLots }, events, opts), (matched): Result<BookStep, BookError> => {
+    if (tif === 2 && matched.remaining > 0n) return reject("FOK cannot fill entirely");
+    if (matched.remaining > 0n && matched.blockingOrderId === undefined && tif === 0) {
+      if (w.orders.size >= w.params.maxOrders) return bookErr("Out of order slots");
+      const multiple = options.executionQtyMultipleAtPrice?.(priceTicks) ?? 1n;
+      if (multiple <= 0n) return bookErr("BOOK_EXECUTION_QTY_MULTIPLE_INVALID");
+      const resting = (matched.remaining / multiple) * multiple;
+      if (resting > 0n) {
+        const bad = addBookOrder(w, { orderId, ownerId, side, priceTicks, qtyLots: resting, seq: w.nextSeq });
+        if (bad !== undefined) return bookErr(bad);
+        w.nextSeq += 1;
+        events.push({ type: "ACK", orderId, ownerId });
+        bumpHash(w, 1, priceTicks, resting);
+      }
+    } else if (matched.remaining === qtyLots && events.length === 0) events.push({ type: "REJECT", orderId, ownerId, reason: "no fill" });
+    return ok({ state: w, events });
+  });
+};
+export type ResumedBook = BookStep & { readonly takerOrderId: string };
+/** og resumeCrossedBook: when the eligible tops cross, the younger resting order takes against the older side. */
+export const resumeCrossedBook = (book: Book, options: BookOptions = {}): Result<ResumedBook | null, BookError> => {
+  const w = forkBook(book), opts = cachedDisposition(options);
+  const bid = findBestOrder(w, 0, opts), ask = findBestOrder(w, 1, opts);
+  if (!bid || !ask || bid.priceTicks < ask.priceTicks) return ok(null);
+  if (bid.seq === ask.seq) return bookErr(`BOOK_CORRUPTION: crossed top orders share seq ${bid.seq}`);
+  const taker = bid.seq > ask.seq ? bid : ask, events: BookEvent[] = [];
+  return chain(matchBook(w, taker, events, opts), (matched): Result<ResumedBook | null, BookError> => {
+    if (matched.blockingOrderId !== undefined) { removeBookOrder(w, taker.orderId); bumpHash(w, 5, taker.priceTicks, 0); }
+    else if (matched.remaining === 0n) removeBookOrder(w, taker.orderId);
+    else if (matched.remaining < taker.qtyLots) { const bad = reduceBookOrder(w, taker, matched.remaining); if (bad !== undefined) return bookErr(bad); }
+    return events.length === 0 ? ok(null) : ok({ state: w, events, takerOrderId: taker.orderId });
+  });
+};
+/** og materializeCommittedRemainder: rest a committed remainder at the book's next sequence. */
+export const materializeCommittedRemainder = (book: Book, o: Pick<BookOrder, "orderId" | "ownerId" | "side" | "priceTicks" | "qtyLots">): Result<Book, BookError> => {
+  if (o.qtyLots <= 0n || o.qtyLots > MAX_ORDERBOOK_QTY_LOTS) return bookErr("BOOK_REMAINDER_QTY_INVALID");
+  if (o.priceTicks <= 0n) return bookErr("BOOK_REMAINDER_PRICE_INVALID");
+  if (book.orders.has(o.orderId)) return bookErr("BOOK_REMAINDER_DUPLICATE");
+  if (book.orders.size >= book.params.maxOrders) return bookErr("Out of order slots");
+  const w = forkBook(book), bad = addBookOrder(w, { ...o, seq: w.nextSeq });
+  if (bad !== undefined) return bookErr(bad);
+  w.nextSeq += 1;
+  bumpHash(w, 1, o.priceTicks, o.qtyLots);
+  return ok(w);
+};
+/** og reduceBookOrderQuantity: committed cross-j fill progress. */
+export const reduceBookOrderQuantity = (book: Book, orderId: string, nextQtyLots: bigint): Result<Book, BookError> => {
+  const current = book.orders.get(orderId);
+  if (!current) return bookErr(`BOOK_ORDER_INDEX_MISSING:${orderId}`);
+  if (nextQtyLots <= 0n || nextQtyLots >= current.qtyLots) return bookErr(`BOOK_ORDER_REDUCTION_INVALID:${orderId}`);
+  const w = forkBook(book), bad = reduceBookOrder(w, current, nextQtyLots);
+  return bad === undefined ? ok(w) : bookErr(bad);
+};
+/** og recordAcceptedUsdAskPrice. */
+export const recordAcceptedUsdAskPrice = (book: Book, priceTicks: bigint): Result<Book, BookError> => {
+  if (priceTicks <= 0n) return bookErr("BOOK_USD_ASK_PRICE_INVALID");
+  if (book.lastAcceptedUsdAskPriceTicks === priceTicks) return ok(book);
+  const w = forkBook(book);
+  w.lastAcceptedUsdAskPriceTicks = priceTicks;
+  bumpHash(w, 4, priceTicks, 0);
+  return ok(w);
+};
+export const bestBid = (b: Book): bigint | null => { const top = b.bidPages[b.bidPages.length - 1]; return top ? top.key.priceTicks : null; };
+export const bestAsk = (b: Book): bigint | null => b.askPages[0]?.key.priceTicks ?? null;
+/** og getBookOrders: resting orders by sequence. */
+export const bookOrders = (b: Book): readonly BookOrder[] => [...b.orders.values()].sort((l, r) => l.seq - r.seq);
+export type BookLevel = { readonly priceTicks: bigint; readonly qtyLots: bigint; readonly ownerIds: readonly string[]; readonly orderIds: readonly string[] };
+/** og getBookSideLevels: aggregated price levels in priority order. */
+export const bookSideLevels = (b: Book, side: BookSide, depth = 10): readonly BookLevel[] => {
+  const levels: { priceTicks: bigint; qtyLots: bigint; ownerIds: string[]; orderIds: string[] }[] = [];
+  for (const row of orderedPages(sideRows(b, side), side)) {
+    let level = levels[levels.length - 1];
+    if (!level || level.priceTicks !== row.key.priceTicks) {
+      if (levels.length >= depth) break;
+      level = { priceTicks: row.key.priceTicks, qtyLots: 0n, ownerIds: [], orderIds: [] };
+      levels.push(level);
+    }
+    for (const o of pageOrders(side, row)) { level.qtyLots += o.qtyLots; if (!level.ownerIds.includes(o.ownerId)) level.ownerIds.push(o.ownerId); level.orderIds.push(o.orderId); }
+  }
+  return levels;
+};
+/** og bookOrdersOutsidePriceRange: orders priced below `min` or above `max` (asks/bids, low tail first then high tail per side). */
+export const bookOrdersOutsidePriceRange = (b: Book, min: bigint, max: bigint): Result<readonly BookOrder[], BookError> => {
+  if (min <= 0n || max < min) return bookErr("BOOK_PRICE_RANGE_INVALID");
+  return ok(([0, 1] as const).flatMap((side) => {
+    const rows = sideRows(b, side), low: BookOrder[] = [], high: BookOrder[] = [];
+    for (const r of rows) { if (r.key.priceTicks >= min) break; low.push(...pageOrders(side, r)); }
+    for (const r of orderedPages(rows, 0)) { if (r.key.priceTicks <= max) break; high.push(...pageOrders(side, r)); }
+    return [...low, ...high];
+  }));
+};
