@@ -12,6 +12,8 @@ import { handleSwapCancelRequest } from "../../core/account/tx/handlers/swap/lif
 import { beginAccountTransition, accountTransitionView, commitAccountTransition, discardAccountTransition } from "../../core/account/state/candidate-overlay.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import { ethers } from "ethers";
+import { handleHtlcLock } from "../../core/account/tx/handlers/htlc/lock.ts";
+import { assertOpaqueHtlcCiphertext, hashOpaqueHtlcCiphertext } from "../../core/protocol/htlc/multi-recipient.ts";
 import {
   buildHashLadderProof,
   revealHashLadder,
@@ -45,6 +47,7 @@ import {
   genesisAccount,
   genesisAccountBody,
   holds,
+  htlcEnvelopeHash,
   type AccountBody,
   type CrossRoute,
 } from "../xln.ts";
@@ -388,5 +391,62 @@ describe("cross-j: account txs through the og transition overlay", () => {
     expect(await ls.step(closeTx(route, "source", seed, 40_000), false)).toBe(true);
     expect(holds(ls.body(), tk, payerIsLeft)).toBe(0n);
     expect(ls.body().offers.size).toBe(0);
+  });
+});
+
+// ---------- htlc_lock envelope (og handlers/htlc/lock.ts, protocol/htlc/multi-recipient.ts) ----------
+const b64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64");
+const randomEnvelope = (r: Rand): unknown => {
+  const n = pick(r, [0, 1, 20, 47, 48, 49, 64, 100, 257]);
+  const bytes = Uint8Array.from({ length: n }, () => Math.floor(r() * 256));
+  const ct = b64(bytes);
+  switch (Math.floor(r() * 12)) {
+    case 0: return { version: "xln:htlc-opaque:aes-gcm", ciphertext: ct.replace(/=+$/, "") };
+    case 1: return { version: "xln:htlc-opaque:v0", ciphertext: ct };
+    case 2: return { version: "xln:htlc-opaque:aes-gcm", ciphertext: ct, extra: 1 };
+    case 3: return { ciphertext: ct };
+    case 4: return { version: "xln:htlc-opaque:aes-gcm", ciphertext: ` ${ct}` };
+    case 5: return { version: "xln:htlc-opaque:aes-gcm", ciphertext: ct.length > 2 && ct.endsWith("=") ? ct.slice(0, -2) + "B=" : ct.replace(/.$/, "_") };
+    case 6: return [ct];
+    case 7: return null;
+    case 8: return { version: "xln:htlc-opaque:aes-gcm", ciphertext: ct.replace(/\+/g, "-") };
+    default: return { ciphertext: ct, version: "xln:htlc-opaque:aes-gcm" };
+  }
+};
+
+describe("cross-j: htlc_lock envelope and envelopeHash", () => {
+  test("MATCH: envelope validation and envelopeHash agree with og assertOpaqueHtlcCiphertext/hashOpaqueHtlcCiphertext on 600 random envelopes", () => {
+    const r = rng(77);
+    let valid = 0;
+    for (let i = 0; i < 600; i++) {
+      const env = randomEnvelope(r);
+      const og = ogTry(() => hashOpaqueHtlcCiphertext(assertOpaqueHtlcCiphertext(env)));
+      const rw = htlcEnvelopeHash(env);
+      expect(rw !== null).toBe(og.ok);
+      if (og.ok) { expect(rw).toBe(og.value); valid++; }
+    }
+    expect(valid).toBeGreaterThan(100);
+  });
+
+  test("MATCH: 200 random htlc_lock txs with envelopes give the same accept/reject and Account root (envelopeHash committed on the lock)", async () => {
+    const r = rng(78);
+    let accepted = 0;
+    for (let n = 0; n < 20; n++) {
+      const start = openAccount(10n ** 6n);
+      const og = ogHarness(start);
+      let body = start;
+      for (let i = 0; i < 10; i++) {
+        const secret = hex(r, 32), byLeft = r() < 0.5, env = r() < 0.2 ? undefined : randomEnvelope(r);
+        const hashlock = ethers.keccak256(secret);
+        const tx: any = { type: "htlc_lock", lockId: hashlock, hashlock, timelock: 10n ** 15n, revealBeforeHeight: 50n, amount: BigInt(1 + Math.floor(r() * 1000)), tokenId: "1", ...(env === undefined ? {} : { envelope: env }) };
+        const ogTx = toOg(tx);
+        ogTx.data.revealBeforeHeight = 50;
+        const o = await og.run((acc) => handleHtlcLock(acc, ogTx, byLeft, { committedTimestamp: 7, enforcementTimestamp: 7, enforcementJHeight: 3 }));
+        const rw = applyAccountBody(body, tx, { byLeft, nowMs: 7n, jHeight: 3n, accountHeight: 1n }) as any;
+        expect(rw.ok).toBe(o.ok);
+        if (rw.ok) { body = rw.value.state; accepted++; expect(unwrapR(committed(body) as never as { ok: true; value: { root: string } }).root).toBe(o.root!); }
+      }
+    }
+    expect(accepted).toBeGreaterThan(40);
   });
 });

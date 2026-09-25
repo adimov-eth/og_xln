@@ -1323,7 +1323,7 @@ export const checkEnvelope = (id: AccountId, terms: AccountTerms, e: AccountEnve
 export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" | "claim_entity" | "claim_conflict" | "claim_proof">;
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
-  | Tagged<"settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
+  | Tagged<"settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_envelope" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
   | Tagged<"settlement", { reason: string }>
   | Tagged<"swap", { reason: string }>
@@ -1337,7 +1337,41 @@ export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor:
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
 export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }>;
 const MAX_ROWS = 128;
-export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly encryptedPackage?: string | undefined };
+export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly envelopeHash?: string | undefined };
+/** og protocol/htlc/multi-recipient.ts OpaqueHtlcCiphertext: exactly {version, ciphertext}, canonical padded base64 of ephemeralKey(32) || AES-GCM body || tag(16). */
+export type HtlcEnvelope = { readonly version: "xln:htlc-opaque:aes-gcm"; readonly ciphertext: string };
+const HTLC_ENVELOPE_VERSION = "xln:htlc-opaque:aes-gcm";
+const MAX_HTLC_BINARY_LAYER_BYTES = Math.floor(((100_000_000 - 1_000_000) * 3) / 4);
+const MAX_HTLC_PACKED_BYTES = 32 + MAX_HTLC_BINARY_LAYER_BYTES + 16;
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+/** og serialization/base64.ts decodeBase64Bytes: padded RFC 4648 only; any non-canonical spelling is refused. */
+export const decodeBase64 = (text: string): Uint8Array | null => {
+  if (text.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(text)) return null;
+  const out: number[] = [];
+  let acc = 0, bits = 0;
+  for (const ch of text.replace(/=+$/, "")) {
+    acc = ((acc << 6) | B64.indexOf(ch)) & 0xffff; bits += 6;
+    if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 0xff); }
+  }
+  const bytes = Uint8Array.from(out);
+  return encodeBase64(bytes) === text ? bytes : null;
+};
+export const encodeBase64 = (bytes: Uint8Array): string => {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i] ?? 0, b = bytes[i + 1], c = bytes[i + 2], n = (a << 16) | ((b ?? 0) << 8) | (c ?? 0);
+    s += (B64[(n >> 18) & 63] ?? "") + (B64[(n >> 12) & 63] ?? "") + (b === undefined ? "=" : B64[(n >> 6) & 63] ?? "") + (c === undefined ? "=" : B64[n & 63] ?? "");
+  }
+  return s;
+};
+/** og assertOpaqueHtlcCiphertext + hashOpaqueHtlcCiphertext: the committed envelopeHash is sha256 of the decoded packed bytes. */
+export const htlcEnvelopeHash = (v: unknown): string | null => {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const rec = v as Record<string, unknown>, keys = Object.keys(rec), ct = rec["ciphertext"];
+  if (keys.length !== 2 || !keys.includes("ciphertext") || !keys.includes("version") || rec["version"] !== HTLC_ENVELOPE_VERSION || typeof ct !== "string" || ct.length === 0 || ct.length > Math.ceil(MAX_HTLC_PACKED_BYTES / 3) * 4) return null;
+  const packed = decodeBase64(ct);
+  return packed === null || packed.length < 48 || packed.length > MAX_HTLC_PACKED_BYTES ? null : bytesToHex(sha256(packed));
+};
 /** og types/account.ts SwapOffer (same-jurisdiction): quantized amounts, canonical price and the maker's signed fee authority. */
 export type SwapOffer = {
   readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
@@ -1396,7 +1430,7 @@ export type AccountTx =
   | { readonly type: "add_delta"; readonly tokenId: TokenId }
   | { readonly type: "set_credit_limit"; readonly tokenId: TokenId; readonly limit: bigint }
   | { readonly type: "payment"; readonly tokenId: TokenId; readonly amount: bigint; readonly route?: readonly string[] | undefined; readonly description?: string | undefined; readonly fromEntityId?: string | undefined; readonly toEntityId?: string | undefined; readonly deliveryMode?: "direct" | "trusted" | undefined; readonly trustedGatewayEntityId?: string | undefined }
-  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly encryptedPackage?: string | undefined }
+  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly envelope?: HtlcEnvelope | undefined }
   | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "secret"; readonly secret: string }
   | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "error"; readonly reason?: string | undefined }
   | ({ readonly type: "swap_offer" } & SwapOfferTerms)
@@ -1492,10 +1526,10 @@ const claimFrame = (tx: TxOf<"j_event_claim">): Result<{ readonly version: "xln:
   chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash, events }) => ({ version: "xln:account-j-event-claim-frame:v1", jHeight: Number(jHeight), jBlockHash, eventsHash, events }))));
 const claimRowOf = (tx: TxOf<"j_event_claim">, onLeft: boolean): Result<ClaimRow, ClaimError> =>
   chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash }) => ({ onLeft, jHeight, jBlockHash, eventsHash }))));
-/** og types/account.ts HtlcLock as committed: numeric token/height/timestamp fields; the rewrite-only encryptedPackage is kept only when present (og commits envelopeHash of its onion instead). */
+/** og types/account.ts HtlcLock as committed: numeric token/height/timestamp fields, and envelopeHash only when the lock carried an encrypted envelope. */
 const ogLockRow = (l: HtlcLock): Record<string, unknown> => {
-  const { encryptedPackage, ...rest } = l;
-  return { ...rest, revealBeforeHeight: Number(l.revealBeforeHeight), tokenId: Number(l.tokenId), createdHeight: Number(l.createdHeight), createdTimestamp: Number(l.createdTimestamp), ...(encryptedPackage === undefined ? {} : { encryptedPackage }) };
+  const { envelopeHash, ...rest } = l;
+  return { ...rest, revealBeforeHeight: Number(l.revealBeforeHeight), tokenId: Number(l.tokenId), createdHeight: Number(l.createdHeight), createdTimestamp: Number(l.createdTimestamp), ...(envelopeHash === undefined ? {} : { envelopeHash }) };
 };
 const sameEvidence = (x: ClaimRow, y: ClaimRow): boolean => x.jBlockHash === y.jBlockHash && x.eventsHash === y.eventsHash;
 const pruneThrough = (rows: readonly ClaimRow[], height: bigint): readonly ClaimRow[] | undefined => { const kept = rows.filter((r) => r.jHeight > height); return kept.length === 0 ? undefined : kept; };
@@ -2159,11 +2193,14 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
     if (ctx.nowMs >= x.timelock || x.revealBeforeHeight <= ctx.jHeight) return err({ _tag: "htlc_expired" });
     if (x.amount < 1n || x.amount > MAX_PAYMENT_AMOUNT) return err({ _tag: "non_positive_payment" });
     if (a.locks.size >= MAX_ACCOUNT_HTLC_LOCKS) return err({ _tag: "htlc_lock_capacity" });
+    // og lock.ts: an envelope must be an opaque encrypted layer; the Account commits only its hash.
+    const envelopeHash = x.envelope === undefined ? undefined : htlcEnvelopeHash(x.envelope);
+    if (envelopeHash === null) return err({ _tag: "htlc_envelope" });
     const totals = sideTotals(a, x.tokenId), held = ctx.byLeft ? totals.leftHold : totals.rightHold;
     return chain(ensureRoom(a, x.tokenId, x.amount, ctx.byLeft), () => chain(representable(a, getDelta(a.account, x.tokenId), { senderIsLeft: ctx.byLeft, amount: x.amount }), () =>
       held + x.amount > MAX_PAYMENT_AMOUNT ? err({ _tag: "hold_overflow" }) : ok(step({ ...a, locks: mapSet(a.locks, x.lockId, {
         lockId: x.lockId, hashlock: x.hashlock, timelock: x.timelock, revealBeforeHeight: x.revealBeforeHeight, amount: x.amount, tokenId: x.tokenId,
-        senderIsLeft: ctx.byLeft, createdHeight: floor0(ctx.accountHeight - 1n), createdTimestamp: ctx.nowMs, encryptedPackage: x.encryptedPackage,
+        senderIsLeft: ctx.byLeft, createdHeight: floor0(ctx.accountHeight - 1n), createdTimestamp: ctx.nowMs, ...opt("envelopeHash", envelopeHash),
       }) }))));
   },
   htlc_resolve: (x) => {
