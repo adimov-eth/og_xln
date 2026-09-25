@@ -6069,3 +6069,347 @@ export const decodeTowerLookupDoc = (raw: string, expectedLookupKey?: string): R
       }));
     }), (bundles) => ({ lookupKey, runtimeId, updatedAt: d["updatedAt"] as number, receipts, bundles })));
 });
+
+// ---- orderbook: og orderbook/core.ts (price-page limit order book), orderbook/pages/{page,key}.ts, orderbook/commitment.ts ----
+// og keeps liquidity in two Patricia trees of 16-slot FIFO price pages; the rewrite keeps each side as its pages in key-byte order
+// (price, then page sequence) and seals the same radix-16 root. og throws on a broken invariant; here every such case is a `book` refusal.
+export type BookSide = 0 | 1;
+export type BookEntry = { readonly orderId: string; readonly ownerId: string; readonly qtyLots: bigint; readonly seq: number };
+export type BookPage = { readonly headSlot: number; readonly nextSlot: number; readonly liveCount: number; readonly totalQtyLots: bigint; readonly slots: readonly (BookEntry | null)[] };
+export type BookPageKey = { readonly priceTicks: bigint; readonly pageSequence: number };
+export type BookPageRow = { readonly key: BookPageKey; readonly page: BookPage };
+/** og BookOrderState: the RAM locator of a resting order (never committed). */
+export type BookOrder = BookEntry & { readonly side: BookSide; readonly priceTicks: bigint; readonly pageSequence: number; readonly pageSlot: number };
+export type BookParams = { readonly bucketWidthTicks: bigint; readonly maxOrders: number; readonly stpPolicy: 0 | 1 };
+export type Book = {
+  readonly params: BookParams; readonly orders: ReadonlyMap<string, BookOrder>; readonly bidPages: readonly BookPageRow[]; readonly askPages: readonly BookPageRow[];
+  readonly nextSeq: number; readonly tradeCount: number; readonly tradeQtySum: bigint; readonly lastTradePriceTicks: bigint; readonly lastAcceptedUsdAskPriceTicks: bigint; readonly eventHash: bigint;
+};
+export type BookTif = 0 | 1 | 2;
+export type OrderCmd =
+  | { readonly kind: 0; readonly ownerId: string; readonly orderId: string; readonly side: BookSide; readonly tif: BookTif; readonly postOnly: boolean; readonly priceTicks: bigint; readonly qtyLots: bigint }
+  | { readonly kind: 1; readonly ownerId: string; readonly orderId: string }
+  | { readonly kind: 2; readonly ownerId: string; readonly orderId: string; readonly newPriceTicks: bigint | null; readonly qtyDeltaLots: bigint };
+export type BookEvent =
+  | { readonly type: "ACK"; readonly orderId: string; readonly ownerId: string }
+  | { readonly type: "REJECT"; readonly orderId: string; readonly ownerId: string; readonly reason: string; readonly blockingOrderId?: string | undefined }
+  | { readonly type: "TRADE"; readonly price: bigint; readonly qty: bigint; readonly makerOwnerId: string; readonly takerOwnerId: string; readonly makerOrderId: string; readonly takerOrderId: string; readonly makerQtyBefore: bigint; readonly takerQtyTotal: bigint }
+  | { readonly type: "REDUCED"; readonly orderId: string; readonly ownerId: string; readonly delta: bigint; readonly remain: bigint }
+  | { readonly type: "CANCELED"; readonly orderId: string; readonly ownerId: string };
+export type MakerDisposition = "eligible" | "suspended" | "cancel";
+export type BookOptions = {
+  readonly suspendedOrderIds?: ReadonlySet<string> | undefined;
+  /** Consulted lazily, once per maker per command (og cacheMakerDisposition). */
+  readonly makerDisposition?: ((maker: BookOrder) => MakerDisposition) | undefined;
+  readonly executionPriceTicksForMatch?: ((maker: bigint, taker: bigint, side: BookSide) => bigint) | undefined;
+  readonly executionQtyMultipleAtPrice?: ((priceTicks: bigint) => bigint) | undefined;
+};
+export type BookError = Tagged<"book", { code: string }>;
+export type BookStep = { readonly state: Book; readonly events: readonly BookEvent[] };
+export const BOOK_PAGE_CAPACITY = 16;
+export const MAX_ORDERBOOK_QTY_LOTS = 10n ** 24n;
+const bookErr = (code: string): Result<never, BookError> => err({ _tag: "book", code });
+const unsignedBytes = (v: bigint): Uint8Array => { const h = v.toString(16); return hexToBytes(h.length % 2 === 0 ? h : `0${h}`); };
+/** og encodeBookPricePrefix / encodeBookPricePageKey: length-prefixed minimal price, then the uint16 page. */
+const bookPriceKeyBytes = (k: BookPageKey): Uint8Array => { const price = unsignedBytes(k.priceTicks); return concat([Uint8Array.of(price.length), price, u16(k.pageSequence)]); };
+const u16Framed = (b: Uint8Array): Uint8Array => concat([u16(b.length), b]);
+const bookEntryBytes = (e: BookEntry | null): Uint8Array =>
+  e === null ? Uint8Array.of(0) : concat([Uint8Array.of(1), u16Framed(utf8(e.orderId)), u16Framed(utf8(e.ownerId)), u16Framed(unsignedBytes(e.qtyLots)), u16Framed(unsignedBytes(BigInt(e.seq)))]);
+/** og pageHash: the integrity digest of the page's slot layout. */
+const bookPageDigest = (p: BookPage): Uint8Array =>
+  sha256(concat([u16(p.headSlot), u16(p.nextSlot), u16(p.liveCount), u16Framed(unsignedBytes(p.totalQtyLots)), ...p.slots.map(bookEntryBytes)]));
+/** og BookPricePageTree.rootHash(): radix-16 Patricia over key bytes, leaf value = page digest; empty is the zero word. */
+export const bookPagesRoot = (rows: readonly BookPageRow[]): string =>
+  sealRadix(rows.map((r) => { const key = bookPriceKeyBytes(r.key); return { nibbles: nibblesOf(key), key, digest: bookPageDigest(r.page) }; }));
+/** og computeBookCommitmentHash: integrity checksum of the length-framed params, both page roots and the trade/event counters. */
+export const bookCommitmentHash = (b: Book): string => {
+  const parts = ["xln.orderbook.book", String(b.params.bucketWidthTicks), String(b.params.maxOrders), String(b.params.stpPolicy), bookPagesRoot(b.bidPages), bookPagesRoot(b.askPages),
+    String(b.nextSeq), String(b.tradeCount), String(b.tradeQtySum), String(b.lastTradePriceTicks), String(b.lastAcceptedUsdAskPriceTicks), String(b.eventHash)].map(utf8);
+  return bytesToHex(sha256(concat(parts.flatMap((p) => [u32(p.length), p]))).slice(0, 16));
+};
+/** og createBook. */
+export const createBook = (params: BookParams): Result<Book, BookError> => {
+  if (params.bucketWidthTicks <= 0n) return bookErr("bucketWidthTicks must be positive");
+  if (!Number.isFinite(params.maxOrders) || params.maxOrders <= 0) return bookErr("maxOrders must be positive");
+  if (params.stpPolicy !== 0 && params.stpPolicy !== 1) return bookErr("unsupported stpPolicy");
+  return ok({ params: { ...params, maxOrders: Math.max(1, Math.floor(params.maxOrders)) }, orders: new Map(), bidPages: [], askPages: [], nextSeq: 1, tradeCount: 0, tradeQtySum: 0n, lastTradePriceTicks: 0n, lastAcceptedUsdAskPriceTicks: 0n, eventHash: 0n });
+};
+/** The working copy of one command (og forkBookState overlay). */
+type BookWork = { -readonly [K in keyof Book]: Book[K] } & { orders: Map<string, BookOrder>; bidPages: BookPageRow[]; askPages: BookPageRow[] };
+const forkBook = (b: Book): BookWork => ({ ...b, orders: new Map(b.orders), bidPages: [...b.bidPages], askPages: [...b.askPages] });
+const sideRows = (w: Book, side: BookSide): readonly BookPageRow[] => (side === 0 ? w.bidPages : w.askPages);
+const keyOrder = (a: BookPageKey, b: BookPageKey): number => (a.priceTicks !== b.priceTicks ? (a.priceTicks < b.priceTicks ? -1 : 1) : a.pageSequence - b.pageSequence);
+/** og tree.updated / tree.removed (`page` undefined): one row, key order kept. */
+const setPage = (w: BookWork, side: BookSide, key: BookPageKey, page: BookPage | undefined): void => {
+  const rows = side === 0 ? w.bidPages : w.askPages;
+  let lo = 0, hi = rows.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (keyOrder((rows[mid] as BookPageRow).key, key) < 0) lo = mid + 1; else hi = mid; }
+  const hit = lo < rows.length && keyOrder((rows[lo] as BookPageRow).key, key) === 0;
+  if (page === undefined) { if (hit) rows.splice(lo, 1); } else rows.splice(lo, hit ? 1 : 0, { key, page });
+};
+const getPage = (w: Book, side: BookSide, key: BookPageKey): BookPage | undefined => sideRows(w, side).find((r) => keyOrder(r.key, key) === 0)?.page;
+/** og orderedPages: asks ascending; bids by descending price, FIFO page sequence within a price. */
+const orderedPages = (rows: readonly BookPageRow[], side: BookSide): readonly BookPageRow[] => {
+  if (side === 1) return rows;
+  const byPrice: BookPageRow[][] = [];
+  for (const r of rows) { const last = byPrice[byPrice.length - 1]; if (last !== undefined && last[0]?.key.priceTicks === r.key.priceTicks) last.push(r); else byPrice.push([r]); }
+  return byPrice.reverse().flat();
+};
+const pageOrder = (side: BookSide, row: BookPageRow, slot: number): BookOrder | null => {
+  const e = row.page.slots[slot];
+  return e ? { ...e, side, priceTicks: row.key.priceTicks, pageSequence: row.key.pageSequence, pageSlot: slot } : null;
+};
+const pageOrders = (side: BookSide, row: BookPageRow): readonly BookOrder[] => {
+  const out: BookOrder[] = [];
+  for (let slot = row.page.headSlot; slot < row.page.nextSlot; slot++) { const o = pageOrder(side, row, slot); if (o) out.push(o); }
+  return out;
+};
+const cachedDisposition = (opts: BookOptions): BookOptions => {
+  const classify = opts.makerDisposition;
+  if (!classify) return opts;
+  const verdicts = new Map<string, MakerDisposition>();
+  return { ...opts, makerDisposition: (maker) => { const hit = verdicts.get(maker.orderId); if (hit) return hit; const v = classify(maker); verdicts.set(maker.orderId, v); return v; } };
+};
+/** og findBestOrder: the top of `side` (with suspensions/dispositions, the first eligible maker in price-time order). */
+const findBestOrder = (w: Book, side: BookSide, opts: BookOptions): BookOrder | null => {
+  const rows = sideRows(w, side);
+  if (!opts.suspendedOrderIds && !opts.makerDisposition) {
+    const extreme = side === 0 ? rows[rows.length - 1] : rows[0], first = extreme && rows.find((r) => r.key.priceTicks === extreme.key.priceTicks);
+    return first ? pageOrders(side, first)[0] ?? null : null;
+  }
+  for (const row of orderedPages(rows, side)) for (const o of pageOrders(side, row)) {
+    if (opts.suspendedOrderIds?.has(o.orderId)) continue;
+    if ((opts.makerDisposition?.(o) ?? "eligible") === "eligible") return o;
+  }
+  return null;
+};
+const bookCrosses = (side: BookSide, taker: bigint, maker: bigint): boolean => (side === 0 ? maker <= taker : maker >= taker);
+const PRIME = 0x1_0000_01n;
+/** og bumpHash: the rolling event hash (JS int32 mixing kept bit-exact). */
+const bumpHash = (w: BookWork, tag: number, a: number | bigint, b: number | bigint): void => {
+  const a32 = Number(BigInt(a) & 0xffff_ffffn), b32 = Number(BigInt(b) & 0xffff_ffffn);
+  w.eventHash = (w.eventHash * PRIME + BigInt(((tag * 2_654_435_761) >>> 0) ^ a32 ^ (b32 << 7))) & 0x1f_ffff_ffff_ffffn;
+};
+/** og requireEntry. */
+const bookEntryCode = (e: BookEntry): string | undefined => {
+  const ob = utf8(e.orderId).length, wb = utf8(e.ownerId).length;
+  if (ob === 0 || ob > 323) return `BOOK_PAGE_ORDER_ID_BYTES_INVALID:${ob}`;
+  if (wb === 0 || wb > 66) return `BOOK_PAGE_OWNER_ID_BYTES_INVALID:${wb}`;
+  if (e.qtyLots <= 0n || e.qtyLots > MAX_ORDERBOOK_QTY_LOTS) return "BOOK_PAGE_ORDER_QTY_INVALID";
+  return !Number.isSafeInteger(e.seq) || e.seq < 0 ? "BOOK_PAGE_ORDER_SEQ_INVALID" : undefined;
+};
+const EMPTY_BOOK_PAGE: BookPage = { headSlot: 0, nextSlot: 0, liveCount: 0, totalQtyLots: 0n, slots: Array<BookEntry | null>(BOOK_PAGE_CAPACITY).fill(null) };
+/** og addOrder + appendBookPricePageOrder: FIFO append to the price's tail page, opening the next page sequence when it is full. */
+const addBookOrder = (w: BookWork, o: Omit<BookOrder, "pageSequence" | "pageSlot">): string | undefined => {
+  const entry: BookEntry = { orderId: o.orderId, ownerId: o.ownerId, qtyLots: o.qtyLots, seq: o.seq };
+  const bad = bookEntryCode(entry);
+  if (bad !== undefined) return bad;
+  if (o.priceTicks <= 0n) return `BOOK_PAGE_PRICE_INVALID:${o.priceTicks}`;
+  const rows = sideRows(w, o.side);
+  let tail: BookPageRow | undefined;
+  for (const r of rows) if (r.key.priceTicks === o.priceTicks) tail = r;
+  const sequence = tail?.page.nextSlot === BOOK_PAGE_CAPACITY ? (tail?.key.pageSequence ?? 0) + 1 : tail?.key.pageSequence ?? 0;
+  if (sequence > 0xffff) return "BOOK_PAGE_SEQUENCE_EXHAUSTED";
+  const page = tail?.key.pageSequence === sequence ? tail.page : EMPTY_BOOK_PAGE, slot = page.nextSlot, slots = [...page.slots];
+  slots[slot] = entry;
+  setPage(w, o.side, { priceTicks: o.priceTicks, pageSequence: sequence }, { headSlot: page.liveCount === 0 ? slot : page.headSlot, nextSlot: slot + 1, liveCount: page.liveCount + 1, totalQtyLots: page.totalQtyLots + entry.qtyLots, slots });
+  w.orders.set(o.orderId, { ...o, pageSequence: sequence, pageSlot: slot });
+  return undefined;
+};
+/** og removeOrder + removeBookPricePageOrder. */
+const removeBookOrder = (w: BookWork, orderId: string): BookOrder | null => {
+  const o = w.orders.get(orderId);
+  if (!o) return null;
+  const key = { priceTicks: o.priceTicks, pageSequence: o.pageSequence }, page = getPage(w, o.side, key);
+  if (!page) return null;
+  const slots = [...page.slots], entry = slots[o.pageSlot];
+  if (!entry) return null;
+  slots[o.pageSlot] = null;
+  const liveCount = page.liveCount - 1;
+  let head = page.headSlot;
+  if (o.pageSlot === page.headSlot) { head = o.pageSlot + 1; while (head < slots.length && slots[head] === null) head++; }
+  setPage(w, o.side, key, liveCount === 0 ? undefined : { ...page, headSlot: head, liveCount, totalQtyLots: page.totalQtyLots - entry.qtyLots, slots });
+  w.orders.delete(orderId);
+  return o;
+};
+/** og reduceOrder + reduceBookPricePageOrder. */
+const reduceBookOrder = (w: BookWork, o: BookOrder, qtyLots: bigint): string | undefined => {
+  if (qtyLots <= 0n || qtyLots > MAX_ORDERBOOK_QTY_LOTS) return "BOOK_PAGE_ORDER_QTY_INVALID";
+  const key = { priceTicks: o.priceTicks, pageSequence: o.pageSequence }, page = getPage(w, o.side, key), entry = page?.slots[o.pageSlot];
+  if (!page || !entry || entry.orderId !== o.orderId) return "BOOK_PAGE_LOCATION_MISMATCH";
+  if (qtyLots >= entry.qtyLots) return "BOOK_PAGE_REDUCTION_INVALID";
+  const slots = [...page.slots];
+  slots[o.pageSlot] = { ...entry, qtyLots };
+  setPage(w, o.side, key, { ...page, totalQtyLots: page.totalQtyLots - entry.qtyLots + qtyLots, slots });
+  const indexed = w.orders.get(o.orderId);
+  if (!indexed) return `BOOK_ORDER_INDEX_MISSING:${o.orderId}`;
+  w.orders.set(o.orderId, { ...indexed, qtyLots });
+  return undefined;
+};
+type BookTaker = { readonly side: BookSide; readonly ownerId: string; readonly orderId: string; readonly priceTicks: bigint; readonly qtyLots: bigint };
+type Matched = { readonly remaining: bigint; readonly blockingOrderId?: string | undefined };
+/** og matchPricePages: walk the opposite side in price-time order over the pre-match snapshot, publishing each touched page once. */
+const matchBook = (w: BookWork, taker: BookTaker, events: BookEvent[], opts: BookOptions): Result<Matched, BookError> => {
+  let remaining = taker.qtyLots;
+  const makerSide: BookSide = taker.side === 0 ? 1 : 0;
+  for (const row of orderedPages([...sideRows(w, makerSide)], makerSide)) {
+    if (remaining <= 0n || !bookCrosses(taker.side, taker.priceTicks, row.key.priceTicks)) break;
+    const src = row.page, slots = [...src.slots];
+    let live = src.liveCount, total = src.totalQtyLots, stop = false, changed = false;
+    const publish = (): void => {
+      if (!changed) return;
+      let head = src.headSlot;
+      while (head < slots.length && slots[head] === null) head++;
+      setPage(w, makerSide, row.key, live === 0 ? undefined : { ...src, headSlot: head, liveCount: live, totalQtyLots: total, slots });
+    };
+    for (let slot = src.headSlot; slot < src.nextSlot && remaining > 0n; slot++) {
+      const entry = slots[slot];
+      if (!entry) continue;
+      const maker: BookOrder = { ...entry, side: makerSide, priceTicks: row.key.priceTicks, pageSequence: row.key.pageSequence, pageSlot: slot };
+      if (opts.suspendedOrderIds?.has(maker.orderId)) continue;
+      const disposition = opts.makerDisposition?.(maker) ?? "eligible";
+      if (disposition === "suspended") continue;
+      if (disposition === "cancel") {
+        slots[slot] = null; live -= 1; total -= maker.qtyLots; w.orders.delete(maker.orderId); bumpHash(w, 5, maker.priceTicks, 0); changed = true;
+        continue;
+      }
+      if (maker.ownerId === taker.ownerId && w.params.stpPolicy === 1) {
+        publish();
+        events.push({ type: "REJECT", orderId: taker.orderId, ownerId: taker.ownerId, reason: "STP cancel taker", blockingOrderId: maker.orderId });
+        return ok({ remaining, blockingOrderId: maker.orderId });
+      }
+      const price = opts.executionPriceTicksForMatch?.(maker.priceTicks, taker.priceTicks, taker.side) ?? maker.priceTicks;
+      if (price <= 0n) return bookErr("BOOK_EXECUTION_PRICE_INVALID");
+      const multiple = opts.executionQtyMultipleAtPrice?.(price) ?? 1n;
+      if (multiple <= 0n) return bookErr("BOOK_EXECUTION_QTY_MULTIPLE_INVALID");
+      const qty = ((maker.qtyLots < remaining ? maker.qtyLots : remaining) / multiple) * multiple;
+      if (qty <= 0n) { stop = true; break; }
+      w.tradeCount += 1; w.tradeQtySum += qty; w.lastTradePriceTicks = price;
+      bumpHash(w, 3, price, qty);
+      events.push({ type: "TRADE", price, qty, makerOwnerId: maker.ownerId, takerOwnerId: taker.ownerId, makerOrderId: maker.orderId, takerOrderId: taker.orderId, makerQtyBefore: maker.qtyLots, takerQtyTotal: taker.qtyLots });
+      remaining -= qty; total -= qty; changed = true;
+      if (qty === maker.qtyLots) { slots[slot] = null; live -= 1; w.orders.delete(maker.orderId); continue; }
+      const next = maker.qtyLots - qty, indexed = w.orders.get(maker.orderId);
+      slots[slot] = { ...entry, qtyLots: next };
+      if (!indexed) return bookErr(`BOOK_ORDER_INDEX_MISSING:${maker.orderId}`);
+      w.orders.set(maker.orderId, { ...indexed, qtyLots: next });
+      events.push({ type: "REDUCED", orderId: maker.orderId, ownerId: maker.ownerId, delta: -qty, remain: next });
+      stop = true;
+      break;
+    }
+    publish();
+    if (stop) break;
+  }
+  return ok({ remaining });
+};
+/** og applyCommand: place (GTC/IOC/FOK, post-only, STP) or cancel; replace is refused. A refusal event leaves the book unchanged. */
+export const applyBookCommand = (book: Book, cmd: OrderCmd, options: BookOptions = {}): Result<BookStep, BookError> => {
+  const reject = (reason: string): Result<BookStep, BookError> => ok({ state: book, events: [{ type: "REJECT", orderId: cmd.orderId, ownerId: cmd.ownerId, reason }] });
+  if (cmd.kind === 2) return reject("replace unsupported");
+  const w = forkBook(book);
+  if (cmd.kind === 1) {
+    const existing = w.orders.get(cmd.orderId);
+    if (!existing) return reject("not found");
+    if (existing.ownerId !== cmd.ownerId) return reject("not owner");
+    if (removeBookOrder(w, cmd.orderId) === null) return bookErr("BOOK_PAGE_LOCATION_MISMATCH");
+    bumpHash(w, 5, existing.priceTicks, 0);
+    return ok({ state: w, events: [{ type: "CANCELED", orderId: cmd.orderId, ownerId: cmd.ownerId }] });
+  }
+  const { ownerId, orderId, side, tif, postOnly, priceTicks, qtyLots } = cmd, opts = cachedDisposition(options);
+  if (qtyLots <= 0n || qtyLots > MAX_ORDERBOOK_QTY_LOTS) return reject("qty out of range");
+  if (priceTicks <= 0n) return reject("price must be positive");
+  if (w.orders.has(orderId)) return reject("duplicate orderId");
+  const opposite = postOnly ? findBestOrder(w, side === 0 ? 1 : 0, opts) : null;
+  if (postOnly && opposite && bookCrosses(side, priceTicks, opposite.priceTicks)) return reject("postOnly would cross");
+  const events: BookEvent[] = [];
+  return chain(matchBook(w, { side, ownerId, orderId, priceTicks, qtyLots }, events, opts), (matched): Result<BookStep, BookError> => {
+    if (tif === 2 && matched.remaining > 0n) return reject("FOK cannot fill entirely");
+    if (matched.remaining > 0n && matched.blockingOrderId === undefined && tif === 0) {
+      if (w.orders.size >= w.params.maxOrders) return bookErr("Out of order slots");
+      const multiple = options.executionQtyMultipleAtPrice?.(priceTicks) ?? 1n;
+      if (multiple <= 0n) return bookErr("BOOK_EXECUTION_QTY_MULTIPLE_INVALID");
+      const resting = (matched.remaining / multiple) * multiple;
+      if (resting > 0n) {
+        const bad = addBookOrder(w, { orderId, ownerId, side, priceTicks, qtyLots: resting, seq: w.nextSeq });
+        if (bad !== undefined) return bookErr(bad);
+        w.nextSeq += 1;
+        events.push({ type: "ACK", orderId, ownerId });
+        bumpHash(w, 1, priceTicks, resting);
+      }
+    } else if (matched.remaining === qtyLots && events.length === 0) events.push({ type: "REJECT", orderId, ownerId, reason: "no fill" });
+    return ok({ state: w, events });
+  });
+};
+export type ResumedBook = BookStep & { readonly takerOrderId: string };
+/** og resumeCrossedBook: when the eligible tops cross, the younger resting order takes against the older side. */
+export const resumeCrossedBook = (book: Book, options: BookOptions = {}): Result<ResumedBook | null, BookError> => {
+  const w = forkBook(book), opts = cachedDisposition(options);
+  const bid = findBestOrder(w, 0, opts), ask = findBestOrder(w, 1, opts);
+  if (!bid || !ask || bid.priceTicks < ask.priceTicks) return ok(null);
+  if (bid.seq === ask.seq) return bookErr(`BOOK_CORRUPTION: crossed top orders share seq ${bid.seq}`);
+  const taker = bid.seq > ask.seq ? bid : ask, events: BookEvent[] = [];
+  return chain(matchBook(w, taker, events, opts), (matched): Result<ResumedBook | null, BookError> => {
+    if (matched.blockingOrderId !== undefined) { removeBookOrder(w, taker.orderId); bumpHash(w, 5, taker.priceTicks, 0); }
+    else if (matched.remaining === 0n) removeBookOrder(w, taker.orderId);
+    else if (matched.remaining < taker.qtyLots) { const bad = reduceBookOrder(w, taker, matched.remaining); if (bad !== undefined) return bookErr(bad); }
+    return events.length === 0 ? ok(null) : ok({ state: w, events, takerOrderId: taker.orderId });
+  });
+};
+/** og materializeCommittedRemainder: rest a committed remainder at the book's next sequence. */
+export const materializeCommittedRemainder = (book: Book, o: Pick<BookOrder, "orderId" | "ownerId" | "side" | "priceTicks" | "qtyLots">): Result<Book, BookError> => {
+  if (o.qtyLots <= 0n || o.qtyLots > MAX_ORDERBOOK_QTY_LOTS) return bookErr("BOOK_REMAINDER_QTY_INVALID");
+  if (o.priceTicks <= 0n) return bookErr("BOOK_REMAINDER_PRICE_INVALID");
+  if (book.orders.has(o.orderId)) return bookErr("BOOK_REMAINDER_DUPLICATE");
+  if (book.orders.size >= book.params.maxOrders) return bookErr("Out of order slots");
+  const w = forkBook(book), bad = addBookOrder(w, { ...o, seq: w.nextSeq });
+  if (bad !== undefined) return bookErr(bad);
+  w.nextSeq += 1;
+  bumpHash(w, 1, o.priceTicks, o.qtyLots);
+  return ok(w);
+};
+/** og reduceBookOrderQuantity: committed cross-j fill progress. */
+export const reduceBookOrderQuantity = (book: Book, orderId: string, nextQtyLots: bigint): Result<Book, BookError> => {
+  const current = book.orders.get(orderId);
+  if (!current) return bookErr(`BOOK_ORDER_INDEX_MISSING:${orderId}`);
+  if (nextQtyLots <= 0n || nextQtyLots >= current.qtyLots) return bookErr(`BOOK_ORDER_REDUCTION_INVALID:${orderId}`);
+  const w = forkBook(book), bad = reduceBookOrder(w, current, nextQtyLots);
+  return bad === undefined ? ok(w) : bookErr(bad);
+};
+/** og recordAcceptedUsdAskPrice. */
+export const recordAcceptedUsdAskPrice = (book: Book, priceTicks: bigint): Result<Book, BookError> => {
+  if (priceTicks <= 0n) return bookErr("BOOK_USD_ASK_PRICE_INVALID");
+  if (book.lastAcceptedUsdAskPriceTicks === priceTicks) return ok(book);
+  const w = forkBook(book);
+  w.lastAcceptedUsdAskPriceTicks = priceTicks;
+  bumpHash(w, 4, priceTicks, 0);
+  return ok(w);
+};
+export const bestBid = (b: Book): bigint | null => { const top = b.bidPages[b.bidPages.length - 1]; return top ? top.key.priceTicks : null; };
+export const bestAsk = (b: Book): bigint | null => b.askPages[0]?.key.priceTicks ?? null;
+/** og getBookOrders: resting orders by sequence. */
+export const bookOrders = (b: Book): readonly BookOrder[] => [...b.orders.values()].sort((l, r) => l.seq - r.seq);
+export type BookLevel = { readonly priceTicks: bigint; readonly qtyLots: bigint; readonly ownerIds: readonly string[]; readonly orderIds: readonly string[] };
+/** og getBookSideLevels: aggregated price levels in priority order. */
+export const bookSideLevels = (b: Book, side: BookSide, depth = 10): readonly BookLevel[] => {
+  const levels: { priceTicks: bigint; qtyLots: bigint; ownerIds: string[]; orderIds: string[] }[] = [];
+  for (const row of orderedPages(sideRows(b, side), side)) {
+    let level = levels[levels.length - 1];
+    if (!level || level.priceTicks !== row.key.priceTicks) {
+      if (levels.length >= depth) break;
+      level = { priceTicks: row.key.priceTicks, qtyLots: 0n, ownerIds: [], orderIds: [] };
+      levels.push(level);
+    }
+    for (const o of pageOrders(side, row)) { level.qtyLots += o.qtyLots; if (!level.ownerIds.includes(o.ownerId)) level.ownerIds.push(o.ownerId); level.orderIds.push(o.orderId); }
+  }
+  return levels;
+};
+/** og bookOrdersOutsidePriceRange: orders priced below `min` or above `max` (asks/bids, low tail first then high tail per side). */
+export const bookOrdersOutsidePriceRange = (b: Book, min: bigint, max: bigint): Result<readonly BookOrder[], BookError> => {
+  if (min <= 0n || max < min) return bookErr("BOOK_PRICE_RANGE_INVALID");
+  return ok(([0, 1] as const).flatMap((side) => {
+    const rows = sideRows(b, side), low: BookOrder[] = [], high: BookOrder[] = [];
+    for (const r of rows) { if (r.key.priceTicks >= min) break; low.push(...pageOrders(side, r)); }
+    for (const r of orderedPages(rows, 0)) { if (r.key.priceTicks <= max) break; high.push(...pageOrders(side, r)); }
+    return [...low, ...high];
+  }));
+};

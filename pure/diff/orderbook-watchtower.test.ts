@@ -10,11 +10,14 @@ import { createWatchtowerStore } from "../../core/watchtower/store/index.ts";
 import { handleTowerAppointment } from "../../core/watchtower/http.ts";
 import { buildTowerAppointmentOwnerMessage, computeEncryptedRuntimeRecoveryEnvelopeHash, computeTowerLastResortPayloadDigest } from "../../core/storage/recovery/bundle/crypto.ts";
 import { serializeTaggedJson } from "../../core/protocol/serialization/index.ts";
+import * as ogBook from "../../core/orderbook/core.ts";
+import { computeBookCommitmentHash } from "../../core/orderbook/commitment.ts";
 import { handleCancelSwapRequest, handlePlaceSwapOfferRequest } from "../../core/entity/tx/handlers/payments/swap-requests.ts";
 import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, unwrap, unwrapErr, verifiers } from "../xln_run.ts";
 import {
   decodeTowerLookupDoc, hexToBytes, isEthersAddress, recoverPersonalMessage, signPersonalMessage, towerEnvelopeHash, towerPayloadDigest, upsertTowerAppointment, upsertTowerRecoveryArchive,
   verifyTowerAppointment, verifyTowerReceiptSignature, applyEntityInput, admitAt, createEntity, tokenId, type EntityTx, type WireAccountTx,
+  applyBookCommand, bestAsk, bestBid, bookCommitmentHash, bookOrders, bookOrdersOutsidePriceRange, bookSideLevels, createBook, map, materializeCommittedRemainder, recordAcceptedUsdAskPrice, reduceBookOrderQuantity, resumeCrossedBook,
   type TowerAppointmentV1, type TowerLookupDoc, type TowerStoreConfig, type TowerWrite, type Result, type TowerError,
 } from "../xln.ts";
 
@@ -254,5 +257,89 @@ describe("orderbook-watchtower: entity swap requests (og payments/swap-requests.
     expect(() => handlePlaceSwapOfferRequest(ogState([]), { type: "placeSwapOffer", data: { counterpartyEntityId: CAROL } } as never, { mutableFrameState: true } as never)).toThrow("SWAP_REQUEST_ACCOUNT_MISSING");
     expect(() => handleCancelSwapRequest(ogState([]), { type: "proposeCancelSwap", data: { counterpartyEntityId: CAROL, offerId: "x" } } as never, { mutableFrameState: true } as never)).toThrow("SWAP_REQUEST_ACCOUNT_MISSING");
     expect(unwrapErr(applyEntityInput(opened(), { kind: "txs", timestamp: NOW + 1n, txs: [{ type: "proposeCancelSwap", data: { counterpartyEntityId: CAROL, offerId: "x" } }] }, ctx))).toEqual({ _tag: "swap_request_account_missing", target: CAROL });
+  });
+});
+
+describe("orderbook-watchtower: price-page order book (og orderbook/core.ts, commitment.ts)", () => {
+  const owners = ["alice", "bob", "carol", "dave"];
+  type Out = { state: any; events: unknown } | null;
+  /** One random command stream through og and the rewrite: same events (or the same refusal) and the same book commitment after every step. */
+  const stream = (seed: number, steps: number, params: { maxOrders: number; stpPolicy: 0 | 1 }, withOptions: boolean) => {
+    const rand = prng(seed), ri = (n: number) => Math.floor(rand() * n);
+    let og = ogBook.createBook({ bucketWidthTicks: 1n, ...params });
+    let rw = unwrap(createBook({ bucketWidthTicks: 1n, ...params }));
+    const kinds = new Set<string>();
+    for (let i = 0; i < steps; i++) {
+      const live = ogBook.getBookOrders(og), pick = live[ri(Math.max(1, live.length))];
+      const suspended = withOptions && ri(4) === 0 ? new Set(live.filter(() => ri(3) === 0).map((o) => o.orderId)) : undefined;
+      const cancelSalt = ri(7), multiple = BigInt(1 + ri(3));
+      const options = withOptions ? {
+        ...(suspended ? { suspendedOrderIds: suspended } : {}),
+        ...(ri(3) === 0 ? { makerDisposition: (m: { orderId: string }) => { const h = [...m.orderId].reduce((a, c) => a + c.charCodeAt(0), cancelSalt); return h % 5 === 0 ? "cancel" as const : h % 5 === 1 ? "suspended" as const : "eligible" as const; } } : {}),
+        ...(ri(3) === 0 ? { executionPriceTicksForMatch: (maker: bigint, taker: bigint) => (maker + taker) / 2n } : {}),
+        ...(ri(3) === 0 ? { executionQtyMultipleAtPrice: () => multiple } : {}),
+      } : {};
+      const roll = ri(20);
+      let ogOut: Out | Error, rwOut: Result<Out, unknown>;
+      const run = (f: () => Out): Out | Error => { try { return f(); } catch (e) { return e as Error; } };
+      if (roll < 13 || live.length === 0) {
+        const cmd = { kind: 0 as const, ownerId: owners[ri(4)] as string, orderId: ri(15) === 0 && pick ? pick.orderId : `o${seed}-${i}`, side: ri(2) as 0 | 1, tif: [0, 0, 0, 1, 2][ri(5)] as 0 | 1 | 2, postOnly: ri(6) === 0, priceTicks: BigInt(ri(25) === 0 ? 0 : 95 + ri(11)), qtyLots: BigInt(ri(30) === 0 ? 0 : 1 + ri(12)) };
+        ogOut = run(() => ogBook.applyCommand(og, cmd, options as never)); rwOut = applyBookCommand(rw, cmd, options as never); kinds.add("place");
+      } else if (roll < 16) {
+        const cmd = { kind: 1 as const, ownerId: ri(5) === 0 ? "mallory" : pick?.ownerId ?? "x", orderId: ri(8) === 0 ? "missing" : pick?.orderId ?? "x" };
+        ogOut = run(() => ogBook.applyCommand(og, cmd)); rwOut = applyBookCommand(rw, cmd); kinds.add("cancel");
+      } else if (roll === 16) {
+        const cmd = { kind: 2 as const, ownerId: "alice", orderId: "x", newPriceTicks: null, qtyDeltaLots: 1n };
+        ogOut = run(() => ogBook.applyCommand(og, cmd)); rwOut = applyBookCommand(rw, cmd);
+      } else if (roll === 17) {
+        // a committed remainder may cross the book; the resume pass then settles it
+        const o = { orderId: `r${seed}-${i}`, ownerId: owners[ri(4)] as string, side: ri(2) as 0 | 1, priceTicks: BigInt(95 + ri(11)), qtyLots: BigInt(1 + ri(9)) };
+        ogOut = run(() => ({ state: ogBook.materializeCommittedRemainder(og, o), events: [] })); rwOut = map(materializeCommittedRemainder(rw, o), (state) => ({ state, events: [] })); kinds.add("remainder");
+      } else if (roll === 18) {
+        ogOut = run(() => ogBook.resumeCrossedBook(og, options as never)); rwOut = resumeCrossedBook(rw, options as never); kinds.add("resume");
+      } else if (pick && ri(2) === 0) {
+        const next = BigInt(ri(Number(pick.qtyLots) + 1));
+        ogOut = run(() => ({ state: ogBook.reduceBookOrderQuantity(og, pick.orderId, next), events: [] })); rwOut = map(reduceBookOrderQuantity(rw, pick.orderId, next), (state) => ({ state, events: [] }));
+      } else {
+        const price = BigInt(ri(4) === 0 ? 0 : 90 + ri(20));
+        ogOut = run(() => ({ state: ogBook.recordAcceptedUsdAskPrice(og, price), events: [] })); rwOut = map(recordAcceptedUsdAskPrice(rw, price), (state) => ({ state, events: [] }));
+      }
+      if (ogOut instanceof Error) { expect([i, rwOut.ok, ogOut.message]).toEqual([i, false, rwOut.ok ? "" : (rwOut.error as { code: string }).code]); kinds.add("error"); continue; }
+      expect([i, rwOut.ok]).toEqual([i, true]);
+      if (!rwOut.ok) continue;
+      if (ogOut === null || rwOut.value === null) { expect([i, rwOut.value]).toEqual([i, ogOut]); continue; }
+      expect([i, rwOut.value.events]).toEqual([i, ogOut.events]);
+      og = ogOut.state; rw = rwOut.value.state;
+      expect([i, bookCommitmentHash(rw)]).toEqual([i, computeBookCommitmentHash(og)]);
+      expect(bookOrders(rw)).toEqual(ogBook.getBookOrders(og));
+      for (const side of [0, 1] as const) expect(bookSideLevels(rw, side, 6)).toEqual(ogBook.getBookSideLevels(og, side, 6));
+      expect([bestBid(rw), bestAsk(rw)]).toEqual([ogBook.getBestBid(og), ogBook.getBestAsk(og)]);
+      expect(unwrap(bookOrdersOutsidePriceRange(rw, 98n, 102n))).toEqual([...ogBook.bookOrdersOutsidePriceRange(og, 98n, 102n)]);
+    }
+    return kinds;
+  };
+  test("MATCH: 6 random streams of 400 commands (GTC/IOC/FOK, post-only, STP, dispositions, cancels, remainders, resume, reductions): same events and book commitment", () => {
+    const kinds = new Set<string>();
+    for (const [seed, params, opts] of [[1, { maxOrders: 1000, stpPolicy: 1 }, false], [2, { maxOrders: 1000, stpPolicy: 0 }, false], [3, { maxOrders: 12, stpPolicy: 1 }, false], [4, { maxOrders: 1000, stpPolicy: 1 }, true], [5, { maxOrders: 1000, stpPolicy: 0 }, true], [6, { maxOrders: 40, stpPolicy: 1 }, true]] as const)
+      for (const k of stream(seed, 400, params, opts)) kinds.add(k);
+    expect([...kinds].sort()).toEqual(["cancel", "error", "place", "remainder", "resume"]);
+  });
+  test("MATCH: deep FIFO pages (> 16 orders at one price) and the empty book root", () => {
+    const og0 = ogBook.createBook({ bucketWidthTicks: 1n, maxOrders: 500, stpPolicy: 1 });
+    expect(bookCommitmentHash(unwrap(createBook({ bucketWidthTicks: 1n, maxOrders: 500, stpPolicy: 1 })))).toBe(computeBookCommitmentHash(og0));
+    let og = og0, rw = unwrap(createBook({ bucketWidthTicks: 1n, maxOrders: 500, stpPolicy: 1 }));
+    for (let i = 0; i < 70; i++) {
+      const cmd = { kind: 0 as const, ownerId: `m${i % 3}`, orderId: `d${i}`, side: 1 as const, tif: 0 as const, postOnly: false, priceTicks: BigInt(100 + (i % 2)), qtyLots: BigInt(1 + (i % 5)) };
+      const o = ogBook.applyCommand(og, cmd), r = unwrap(applyBookCommand(rw, cmd));
+      og = o.state; rw = r.state;
+      expect(bookCommitmentHash(rw)).toBe(computeBookCommitmentHash(og));
+    }
+    for (const [i, qty] of [[0, 17n], [1, 60n], [2, 3n]] as const) {
+      const cmd = { kind: 0 as const, ownerId: "taker", orderId: `t${i}`, side: 0 as const, tif: 1 as const, postOnly: false, priceTicks: 101n, qtyLots: qty };
+      const o = ogBook.applyCommand(og, cmd), r = unwrap(applyBookCommand(rw, cmd));
+      expect(r.events).toEqual(o.events);
+      og = o.state; rw = r.state;
+      expect(bookCommitmentHash(rw)).toBe(computeBookCommitmentHash(og));
+    }
   });
 });
