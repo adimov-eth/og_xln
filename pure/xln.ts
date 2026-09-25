@@ -437,10 +437,10 @@ export const accountStateCommitment = (state: CommittedAccountState): Result<str
 
 export type WireTx = { readonly type: string; readonly data: unknown };
 export type AccountFrameInputs = { readonly height: number; readonly timestamp: number; readonly jHeight: number; readonly prevFrameHash: string; readonly accountStateRoot: string; readonly accountTxs: readonly WireTx[] };
-export type FrameHashError = CanonicalValueError | Tagged<"tx_unported", { type: string }> | Tagged<"policy_version"> | ClaimError;
+export type FrameHashError = CanonicalValueError | Tagged<"tx_unported", { type: string }> | Tagged<"policy_version" | "settle_witness_shape"> | ClaimError;
 const fieldOf = (data: unknown, name: string): unknown => (data !== null && typeof data === "object" && Object.hasOwn(data, name) ? (data as Record<string, unknown>)[name] : undefined);
 const withoutHankoWitness = (tx: WireTx): WireTx => {
-  if (tx.type !== "settle_transition" || String(fieldOf(tx.data, "kind")) !== "hanko" || tx.data === null || typeof tx.data !== "object") return tx;
+  if (tx.type !== "settle_transition" || fieldOf(tx.data, "kind") !== "hanko" || tx.data === null || typeof tx.data !== "object") return tx;
   const { settlementHanko: _settlementHanko, ...rest } = tx.data as Record<string, unknown>;
   const post = rest.postProof;
   if (post === null || typeof post !== "object" || Array.isArray(post)) return { type: tx.type, data: rest };
@@ -449,6 +449,8 @@ const withoutHankoWitness = (tx: WireTx): WireTx => {
 };
 const projectionRefusal = (tx: WireTx): Result<void, FrameHashError> => {
   if (tx.type === "rebalance_policy") { const v = fieldOf(tx.data, "policyVersion"); if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) return err({ _tag: "policy_version" }); }
+  // og accountTxWithoutPostCommitHankos (witness-projection.ts:53) dereferences `data.kind` and, for kind hanko, `data.postProof.hanko`.
+  if (tx.type === "settle_transition" && (tx.data === null || tx.data === undefined || (fieldOf(tx.data, "kind") === "hanko" && (fieldOf(tx.data, "postProof") ?? null) === null))) return err({ _tag: "settle_witness_shape" });
   return ok(undefined);
 };
 export const ownWire = (tx: { readonly type: string }): WireTx => { const { type, ...data } = tx; return { type, data }; };
@@ -577,8 +579,10 @@ export const encodeAccountSettledData = (settled: readonly AccountSettlement[]):
 
 
 type Word = string;
+/** og computeAccountKey (contract-codec.ts:6): two bytes32 words, ordered and packed lowercase. */
 export const encodeAccountKey = ({ e1, e2 }: { readonly e1: Word; readonly e2: Word }): { readonly lesserThenGreater: string; readonly greaterThenLesser: string } => {
-  const [lesser, greater] = BigInt(e1) < BigInt(e2) ? [e1, e2] : [e2, e1];
+  const [a, b] = [e1, e2].map((e) => { if (!/^0[xX][0-9a-fA-F]{64}$/.test(e)) throw new Error(`account key entity is not bytes32: ${e}`); return e.toLowerCase(); }) as [string, string];
+  const [lesser, greater] = a < b ? [a, b] : [b, a];
   return { lesserThenGreater: joinHex([lesser, greater]), greaterThenLesser: joinHex([greater, lesser]) };
 };
 type ProofBodyText = { readonly watchSeed: Word; readonly leftResponseSeconds: number; readonly rightResponseSeconds: number; readonly offdeltas: readonly string[]; readonly tokenIds: readonly string[]; readonly transformers: readonly { readonly transformerAddress: string; readonly encodedBatch: string; readonly allowances: readonly { readonly deltaIndex: string; readonly rightAllowance: string; readonly leftAllowance: string }[] }[] };

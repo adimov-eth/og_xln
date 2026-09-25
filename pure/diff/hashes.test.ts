@@ -133,10 +133,15 @@ describe("account frame hash", () => {
     expect(() => computeFrameHash({ ...f, stateHash: "" } as any)).toThrow();
     expect(accountFrameHash(f)).toEqual({ ok: false, error: { _tag: "policy_version" } });
   });
-  test("DIVERGES (malformed input): settle_transition kind=hanko without postProof: og throws TypeError, rewrite hashes", () => {
-    const f = { height: 1, timestamp: 1, jHeight: 1, prevFrameHash: W("00"), accountStateRoot: W("00"), accountTxs: [{ type: "settle_transition", data: { kind: "hanko", settlementHanko: "0x01" } }] };
-    expect(() => computeFrameHash({ ...f, stateHash: "" } as any)).toThrow();
-    expect(accountFrameHash(f).ok).toBe(true);
+  test("MATCH (malformed input): settle_transition with null data, or kind=hanko without postProof, is refused by both; other malformed shapes hash identically", () => {
+    const frame = (data: unknown) => ({ height: 1, timestamp: 1, jHeight: 1, prevFrameHash: W("00"), accountStateRoot: W("00"), accountTxs: [{ type: "settle_transition", data }] });
+    const og = (data: unknown) => { try { return computeFrameHash({ ...frame(data), stateHash: "" } as any); } catch { return "REJECT"; } };
+    const rw = (data: unknown) => { const r = accountFrameHash(frame(data)); return r.ok ? r.value : "REJECT"; };
+    for (const data of [null, { kind: "hanko", settlementHanko: "0x01" }, { kind: "hanko", postProof: null }, { kind: "hanko", postProof: "x", settlementHanko: "0x01" }, { kind: "hanko", postProof: [1] }, { kind: "hanko", postProof: { hanko: "0x02", nonce: 1 } }, { kind: "propose", settlementHanko: "0x01" }, { kind: new String("hanko"), settlementHanko: "0x01" }, "x", 5]) {
+      expect(rw(data)).toBe(og(data));
+    }
+    expect(rw(null)).toBe("REJECT");
+    expect(rw({ kind: "hanko" })).toBe("REJECT");
   });
 });
 
@@ -353,10 +358,12 @@ describe("dispute / cooperative-update hanko digests", () => {
         .toBe(createDisputeProofHashWithNonce({ leftEntity: l, rightEntity: r, watchSeed: seed } as any, pbh, domain, nonce, prop));
     }
   });
-  test("DIVERGES (cosmetic): encodeAccountKey preserves input hex case, og computeAccountKey (solidityPacked) returns lowercase", () => {
-    const k = encodeAccountKey({ e1: W("AA"), e2: W("bb") }).lesserThenGreater;
-    expect(k).toBe(`0x${"AA".repeat(32)}${"bb".repeat(32)}`);
-    expect(computeAccountKey(W("AA"), W("bb"))).toBe(k.toLowerCase());
+  test("MATCH: encodeAccountKey == og computeAccountKey (lowercase packed, mixed-case input); non-bytes32 input refused by both", () => {
+    for (const [x, y] of [[W("AA"), W("bb")], [W("bb"), W("AA")], [W("00"), W("fF")], [W("Cd"), W("cD")], [`0X${"aa".repeat(32)}`, W("bb")]] as const) expect(encodeAccountKey({ e1: x, e2: y }).lesserThenGreater).toBe(computeAccountKey(x, y));
+    for (const bad of ["0x1234", `0x${"aa".repeat(31)}`, "12"]) {
+      expect(() => computeAccountKey(bad, W("bb"))).toThrow();
+      expect(() => encodeAccountKey({ e1: bad, e2: W("bb") })).toThrow();
+    }
   });
   test("MATCH: encodeCooperativeUpdateHash (SignedAmount diffs) == og createSettlementHashWithNonce on 100 random diff lists incl. ±(2^256-1); beyond that both refuse", () => {
     for (let i = 0; i < 100; i++) {
