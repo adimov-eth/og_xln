@@ -93,7 +93,7 @@ export const EntityTransition = {
 export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "swap_offer", "swap_cancel_request", "swap_resolve", "settle_transition",
   "j_event_claim", "cross_pull_lock", "cross_pull_close", "request_collateral", "rebalance_refund",
   "rebalance_policy", "lending_fund", "lending_borrow_request", "lending_repay", "lending_credit", "lending_close_request", "lending_close_payout"] as const;
-export const LendingTxNames = ["lending_fund", "lending_borrow_request", "lending_repay", "lending_close_request"] as const;
+export const LendingTxNames = ["lendingOffer", "lendingBorrow", "lendingRepay", "lendingClosePosition"] as const;
 export const EntityTxNames = ["directPayment", "placeSwapOffer", "htlcPayment", "prepareCrossJurisdictionSwap", "registerCrossJurisdictionSwap"] as const;
 export const AccountInputKinds = ["dispute", "board_hanko_refresh"] as const;
 export const EntityInputKinds = ["leaderTimeoutVote"] as const;
@@ -2598,7 +2598,14 @@ export type EntityTx =
   | { readonly type: "accountInput"; readonly data: AccountPeerInput }
   | { readonly type: "extendCredit"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint } }
   | { readonly type: "directPayment"; readonly data: { readonly targetEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly route: readonly EntityId[]; readonly description?: string | undefined; readonly deliveryMode: "direct" | "trusted"; readonly trustedGatewayEntityId?: EntityId | undefined } }
-  | { readonly type: "proposeAccount"; readonly data: { readonly counterpartyEntityId: EntityId; readonly frameHanko?: Hanko | undefined; readonly disputeHanko?: DisputeHanko | undefined } & FrameClock };
+  | { readonly type: "proposeAccount"; readonly data: { readonly counterpartyEntityId: EntityId; readonly frameHanko?: Hanko | undefined; readonly disputeHanko?: DisputeHanko | undefined } & FrameClock }
+  | LendingEntityTx;
+/** og types/entity-tx.ts lendingOffer/Borrow/Repay/ClosePosition: each queues one Account lending tx on the hub Account. */
+export type LendingEntityTx =
+  | { readonly type: "lendingOffer"; readonly data: { readonly positionId: string; readonly hubEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly interestBps: number } }
+  | { readonly type: "lendingBorrow"; readonly data: { readonly requestId: string; readonly hubEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly maxInterestBps?: number | undefined } }
+  | { readonly type: "lendingRepay"; readonly data: { readonly hubEntityId: string; readonly loanId: string; readonly tokenId: TokenId; readonly amount: bigint } }
+  | { readonly type: "lendingClosePosition"; readonly data: { readonly hubEntityId: string; readonly positionId: string } };
 export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute"; readonly context: string };
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
@@ -2633,6 +2640,7 @@ export type EntityError =
   | Tagged<"account_exists" | "no_such_account" | "create_ack_required" | "account_envelope", { target: EntityId }>
   | Tagged<"self_account" | "wrong_entity" | "bad_quorum" | "bad_jurisdiction" | "from_not_converted" | "not_l0" | "mempool_full" | "sign_failed" | "payment_route" | "secondary_hash_duplicate">
   | Tagged<"frame_timestamp_invalid" | "frame_timestamp_regression", { timestamp: bigint }>
+  | Tagged<"lending_entity", { reason: string }>
   | Tagged<"proposal_digest" | "proposal_parent" | "proposal_leader" | "proposal_hash" | "proposal_manifest" | "proposal_signature" | "proposal_conflict" | "proposal_wait" | "local_manifest_mismatch" | "local_precommit_conflict">
   | Tagged<"precommit_frame_mismatch" | "precommit_not_active" | "precommit_signer_equivocation" | "commit_conflict" | "commit_wait">
   | Tagged<"unknown_member" | "duplicate_member" | "not_proposer" | "invalid_signature" | "wrong_replica", { address: string }>;
@@ -2985,6 +2993,8 @@ type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
   extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId, proposeAccount: (x) => x.data.counterpartyEntityId,
+  lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
+  lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -3022,7 +3032,30 @@ const inboundChild = (state: EntityState, replicas: Replicas, from: EntityId, m:
     map(genesisReplica(id, { domain: m.domain, watchSeed: m.watchSeed ?? "", disputeConfig: m.disputeConfig }), (opened) => putChild(state, replicas, from, opened)));
 };
 const UINT256_MAX = (1n << 256n) - 1n;
-const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldContext): Result<Draft, EntityError> => {
+/**
+ * og payments/lending.ts: validate the hub Account, intent id, amount, term and interest, then queue one Account lending tx on the hub
+ * Account with this entity (lowercased) as the actor, plus the processing wake to `validators[0]`. Every refusal is a plain Error in og.
+ */
+const lendingEntityErr = (reason: string): Result<never, EntityError> => err({ _tag: "lending_entity", reason });
+const entityLending = (state: EntityState, replicas: Replicas, tx: LendingEntityTx, queue: (hub: EntityId, accountTx: AccountTx) => Result<Draft, EntityError>): Result<Draft, EntityError> => {
+  const hub = lower(tx.data.hubEntityId), self = lower(state.id), key = [...replicas.keys()].find((k) => lower(k) === hub);
+  const child = key === undefined ? undefined : replicas.get(key);
+  if (hub === "" || key === undefined || child === undefined) return lendingEntityErr("LENDING_HUB_ACCOUNT_MISSING");
+  const intent = (value: string, prefix: "lend" | "borrow" | "loan"): Result<string, EntityError> => { const id = lower(value); return LENDING_INTENT.test(id) && id.startsWith(`${prefix}-`) ? ok(id) : lendingEntityErr("LENDING_INTENT_ID_INVALID"); };
+  const positive = (amount: bigint, context: string): Result<void, EntityError> => (amount <= 0n ? lendingEntityErr(`${context}_AMOUNT_MUST_BE_POSITIVE`) : ok(undefined));
+  const term = (v: string): Result<string, EntityError> => (LENDING_TERMS.has(v) ? ok(v) : lendingEntityErr("LENDING_INVALID_TERM"));
+  const bps = (v: number): Result<number, EntityError> => (interestOk(v) ? ok(Math.floor(Number(v))) : lendingEntityErr("LENDING_INVALID_INTEREST_BPS"));
+  switch (tx.type) {
+    case "lendingOffer": { const x = tx.data; return chain(intent(x.positionId, "lend"), (positionId) => chain(positive(x.amount, "LENDING_FUND"), () => chain(term(x.termId), (termId) => chain(bps(x.interestBps), (interestBps) =>
+      !child.state.account.deltas.has(x.tokenId) ? lendingEntityErr("LENDING_TOKEN_NOT_ENABLED") : queue(key, { type: "lending_fund", positionId, hubEntityId: hub, lenderEntityId: self, tokenId: x.tokenId, amount: x.amount, termId, interestBps }))))); }
+    case "lendingBorrow": { const x = tx.data; return chain(intent(x.requestId, "borrow"), (requestId) => chain(positive(x.amount, "LENDING_BORROW"), () => chain(term(x.termId), (termId) => chain(bps(x.maxInterestBps ?? 10_000), (maxInterestBps) =>
+      queue(key, { type: "lending_borrow_request", requestId, hubEntityId: hub, borrowerEntityId: self, tokenId: x.tokenId, amount: x.amount, termId, maxInterestBps }))))); }
+    case "lendingRepay": { const x = tx.data; return chain(intent(x.loanId, "loan"), (loanId) => chain(positive(x.amount, "LENDING_REPAY"), () =>
+      queue(key, { type: "lending_repay", loanId, hubEntityId: hub, borrowerEntityId: self, tokenId: x.tokenId, amount: x.amount }))); }
+    case "lendingClosePosition": return chain(intent(tx.data.positionId, "lend"), (positionId) => queue(key, { type: "lending_close_request", positionId, hubEntityId: hub, lenderEntityId: self }));
+  }
+};
+const foldTx =(state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldContext): Result<Draft, EntityError> => {
   const origin = originOf(tx, state.id), peer = peerOf(tx, state.id), owed = replicas.get(peer);
   if (owed !== undefined && owesCreateAck(owed) && !isCreateAck(tx, origin)) return err({ _tag: "create_ack_required", target: peer });
   const enqueue = (target: EntityId, accountTxs: readonly AccountTx[], outputs: readonly EntityOutput[]): Result<Draft, EntityError> =>
@@ -3038,6 +3071,10 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       if (deliveryMode !== "direct" || trustedGatewayEntityId !== undefined || route.length !== 2) return err({ _tag: "payment_route" });
       return replicas.has(targetEntityId) ? enqueue(targetEntityId, [{ type: "payment", tokenId, amount }], [wake(state, ctx.timestamp)]) : err({ _tag: "no_such_account", target: targetEntityId });
     },
+    lendingOffer: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
+    lendingBorrow: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
+    lendingRepay: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
+    lendingClosePosition: (x) => entityLending(state, replicas, x, (hub, accountTx) => enqueue(hub, [accountTx], [wake(state, ctx.timestamp)])),
     proposeAccount: (x) => withChild(replicas, x.data.counterpartyEntityId, (child) => chain(partyOf(replicaId(child), state.id), (party) =>
       routed(state, replicas, x.data.counterpartyEntityId, propose(child, { kind: "propose", frameHanko: x.data.frameHanko, disputeHanko: x.data.disputeHanko, timestamp: x.data.timestamp, jHeight: x.data.jHeight }, { verify: ctx.verify, party })))),
     accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => {
@@ -3059,14 +3096,14 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
 export type FoldedTxs = { readonly draft: Draft; readonly included: readonly EntityTx[]; readonly evicted: readonly EntityTx[] };
 /**
  * og buildEntityProposalEvictingRejected: a refused tx is evicted and the rest still fold. An openAccount refusal is a plain
- * Error in og (not a reject disposition), so it refuses the whole input; so does a frame whose every tx was refused.
+ * Error in og (not a reject disposition), so it refuses the whole input, as does an og lending entity-tx refusal; so does a frame whose every tx was refused.
  */
 export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly EntityTx[], ctx: FoldContext): Result<FoldedTxs, EntityError> => {
   type Acc = FoldedTxs & { readonly first?: EntityError | undefined };
   return chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state, accountReplicas: replicas, outputs: [] }, included: [], evicted: [] }, (acc, tx) => {
     const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
     if (r.ok) return ok({ ...acc, draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs] }, included: [...acc.included, tx] });
-    return tx.type === "openAccount" ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
+    return tx.type === "openAccount" || r.error._tag === "lending_entity" ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => (folded.included.length === 0 && first !== undefined ? err(first) : ok(folded)));
 };
 const EMPTY_COLLECTION = { radix: 16, leafCount: 0, root: ZERO_WORD } as const;
@@ -3335,15 +3372,6 @@ export const applyRuntime = (rt: Runtime, inputs: readonly RuntimeInput[], verif
 };
 
 
-export type OfferStatus = "open" | "matched" | "cancelled" | "closed";
-export type LoanStatus = "active" | "repaid" | "defaulted" | "cancelled";
-export type LendingOffer = { readonly id: string; readonly lenderAccountId: string; readonly assetId: TokenId; readonly principal: bigint; readonly termSeconds: bigint; readonly annualRatePpm: bigint; readonly status: OfferStatus };
-export type LoanPosition = { readonly id: string; readonly borrowerAccountId: string; readonly lenderAccountId?: string | undefined; readonly hubEntityId: string; readonly assetId: TokenId; readonly principal: bigint; readonly interestDue: bigint; readonly openedAt: bigint; readonly maturesAt: bigint; readonly status: LoanStatus };
-export type LendingPool = { readonly assetId: TokenId; readonly jurisdictionId: string; readonly availablePrincipal: bigint; readonly lentPrincipal: bigint; readonly borrowedPrincipal: bigint; readonly accruedInterest: bigint; readonly offers: ReadonlyMap<string, LendingOffer>; readonly loans: ReadonlyMap<string, LoanPosition> };
-export type LendingTx =
-  | { readonly type: "lending_fund"; readonly id: string; readonly lenderAccountId: string; readonly principal: bigint; readonly termSeconds: bigint; readonly annualRatePpm: bigint }
-  | { readonly type: "lending_borrow_request"; readonly offerId: string; readonly loanId: string; readonly borrowerAccountId: string; readonly hubEntityId: string }
-  | { readonly type: "lending_repay"; readonly loanId: string } | { readonly type: "lending_close_request"; readonly id: string };
 export type JOp =
   | { readonly type: "r2r"; readonly toEntity: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
   | { readonly type: "r2c"; readonly counterparty: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
@@ -3363,9 +3391,9 @@ export type HostCtx = { readonly timestamp: bigint; readonly jHeight: bigint; re
 export type HostEffect = Effect | Tagged<"start_dispute", { start: DisputeStart }> | Tagged<"send", { message: AccountPeerInput }>;
 export type OutboxEntry = { readonly id: Hash; readonly effect: HostEffect };
 export type HostTx =
-  | { readonly layer: "account"; readonly tx: WireAccountTx } | { readonly layer: "frame"; readonly input: AccountInput } | { readonly layer: "pool"; readonly tx: LendingTx } | { readonly layer: "j"; readonly tx: JOp }
+  | { readonly layer: "account"; readonly tx: WireAccountTx } | { readonly layer: "frame"; readonly input: AccountInput } | { readonly layer: "j"; readonly tx: JOp }
   | { readonly layer: "ladder"; readonly tx: LadderTx } | { readonly layer: "entity"; readonly tx: EntityRouteTx } | { readonly layer: "input"; readonly input: HostInput } | { readonly layer: "receipt"; readonly id: Hash };
-export type Host = { readonly self: EntityId; readonly account: AccountReplica; readonly pool: LendingPool; readonly j: JState; readonly ladder: ReadonlyMap<string, RatioRecord>; readonly height: bigint; readonly frameHash: RuntimeFrameHash; readonly outbox: readonly OutboxEntry[] };
+export type Host = { readonly self: EntityId; readonly account: AccountReplica; readonly j: JState; readonly ladder: ReadonlyMap<string, RatioRecord>; readonly height: bigint; readonly frameHash: RuntimeFrameHash; readonly outbox: readonly OutboxEntry[] };
 export type Stamped = { readonly tx: HostTx; readonly ctx: HostCtx };
 export type RuntimeFrameRecord = { readonly protocolVersion: number; readonly height: bigint; readonly timestamp: bigint; readonly previousFrameHash: RuntimeFrameHash; readonly previousHostRoot: HostRoot; readonly inputRefs: readonly Stamped[]; readonly postHostRoot: HostRoot; readonly outboxRefs: readonly Hash[] };
 export type RecoverFrame = { readonly record: RuntimeFrameRecord; readonly inputs: readonly Stamped[] };
@@ -3373,9 +3401,8 @@ export type Commit = { readonly frame: RecoverFrame; readonly host: Host; readon
 export type HostError = BodyError | Tagged<"unsigned" | "chain" | "root" | "version" | "reserve" | "status" | "recipient"> | Tagged<"candidate", { cause: AccountReplicaError }>;
 export type HostStep = Step<Host, HostEffect>;
 export const PROTOCOL_VERSION = 2;
-export const emptyPool = (assetId: TokenId, jurisdictionId: string): LendingPool => ({ assetId, jurisdictionId, availablePrincipal: 0n, lentPrincipal: 0n, borrowedPrincipal: 0n, accruedInterest: 0n, offers: new Map(), loans: new Map() });
-export const genesisHost = (self: EntityId, account: AccountReplica, pool: LendingPool): Result<Host, AccountReplicaError> =>
-  map(partyOf(replicaId(account), self), () => ({ self, account, pool, j: { reserves: new Map(), escrow: new Map() }, ladder: new Map(), height: 0n, frameHash: ZERO_HASH as RuntimeFrameHash, outbox: [] }));
+export const genesisHost = (self: EntityId, account: AccountReplica): Result<Host, AccountReplicaError> =>
+  map(partyOf(replicaId(account), self), () => ({ self, account, j: { reserves: new Map(), escrow: new Map() }, ladder: new Map(), height: 0n, frameHash: ZERO_HASH as RuntimeFrameHash, outbox: [] }));
 type Balances<K> = ReadonlyMap<K, ReadonlyMap<TokenId, bigint>>;
 const shiftBalance = <K>(outer: Balances<K>, key: K, tk: TokenId, delta: bigint): Result<Balances<K>, HostError> => {
   const row = outer.get(key) ?? new Map<TokenId, bigint>();
@@ -3395,35 +3422,6 @@ export const applyJ = (j: JState, op: JOp, self: EntityId): Result<JState, HostE
     c2r: (x) => via(escrow(x.counterparty, x.tokenId, -x.amount), reserve(self, x.tokenId, x.amount)),
     et2r: (x) => via(reserve(self, x.internalTokenId, x.amount)),
     r2et: (x) => via(reserve(self, x.tokenId, -x.amount)),
-  });
-};
-const closeLoan = (pool: LendingPool, loan: LoanPosition, status: LoanStatus): LendingPool => ({
-  ...pool, availablePrincipal: pool.availablePrincipal + loan.principal, lentPrincipal: pool.lentPrincipal - loan.principal, borrowedPrincipal: pool.borrowedPrincipal - loan.principal, loans: mapSet(pool.loans, loan.id, { ...loan, status }),
-});
-export const applyLending = (pool: LendingPool, tx: LendingTx, ctx: HostCtx): Result<LendingPool, HostError> => {
-  const nowS = ctx.timestamp / 1000n;
-  return matchBy("type", tx, {
-    lending_fund: (x) => {
-      if (x.principal <= 0n || x.termSeconds <= 0n || x.annualRatePpm < 0n) return err({ _tag: "non_positive_payment" });
-      if (pool.offers.has(x.id)) return err({ _tag: "duplicate" });
-      const offer: LendingOffer = { id: x.id, lenderAccountId: x.lenderAccountId, assetId: pool.assetId, principal: x.principal, termSeconds: x.termSeconds, annualRatePpm: x.annualRatePpm, status: "open" };
-      return ok({ ...pool, availablePrincipal: pool.availablePrincipal + x.principal, offers: mapSet(pool.offers, x.id, offer) });
-    },
-    lending_borrow_request: (x) => {
-      const open = pool.offers.get(x.offerId);
-      if (open === undefined || open.status !== "open") return err({ _tag: "missing" });
-      if (pool.loans.has(x.loanId)) return err({ _tag: "duplicate" });
-      if (pool.availablePrincipal < open.principal) return err({ _tag: "insufficient_capacity", available: pool.availablePrincipal, requested: open.principal });
-      const loan: LoanPosition = { id: x.loanId, borrowerAccountId: x.borrowerAccountId, lenderAccountId: open.lenderAccountId, hubEntityId: x.hubEntityId, assetId: pool.assetId, principal: open.principal, interestDue: 0n, openedAt: nowS, maturesAt: nowS + open.termSeconds, status: "active" };
-      return ok({ ...pool, availablePrincipal: pool.availablePrincipal - open.principal, lentPrincipal: pool.lentPrincipal + open.principal, borrowedPrincipal: pool.borrowedPrincipal + open.principal, offers: mapSet(pool.offers, open.id, { ...open, status: "matched" }), loans: mapSet(pool.loans, loan.id, loan) });
-    },
-    lending_repay: (x) => { const loan = pool.loans.get(x.loanId); return loan === undefined || loan.status !== "active" ? err({ _tag: "missing" }) : ok(closeLoan(pool, loan, "repaid")); },
-    lending_close_request: (x) => {
-      const open = pool.offers.get(x.id);
-      if (open !== undefined && open.status === "open") return ok({ ...pool, availablePrincipal: pool.availablePrincipal - open.principal, offers: mapSet(pool.offers, open.id, { ...open, status: "cancelled" }) });
-      const loan = pool.loans.get(x.id);
-      return loan === undefined || loan.status !== "active" ? err({ _tag: "status" }) : ok(closeLoan(pool, loan, "cancelled"));
-    },
   });
 };
 const ladderKey = (tx: LadderTx): string => `${tx.revealer}|${tx.counter}|${tx.ladderHash}|${tx.targetRole ? "t" : "s"}`;
@@ -3446,7 +3444,6 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
     const delivery: Delivery = ctx.from === undefined ? { _tag: "local" } : { _tag: "received", from: ctx.from }, door: DoorContext = { verify, self: host.self, now: ctx.timestamp };
     return accountStep(host, disputeUnsafe(host.account, applyDelivered(host.account, i.input, delivery, door), door));
   },
-  pool: (i) => map(applyLending(host.pool, i.tx, ctx), (pool) => step({ ...host, pool })),
   j: (i) => map(applyJ(host.j, i.tx, host.self), (j) => step({ ...host, j })),
   ladder: (i) => { const key = ladderKey(i.tx); return map(revealSlot(host.ladder.get(key), i.tx), (slot) => step({ ...host, ladder: mapSet(host.ladder, key, slot) })); },
   entity: (i) => chain(routeEntity(i.tx, host.self, replicaId(host.account)), (routed) => admitTx(host, routed, ctx, verify)),
@@ -3462,7 +3459,7 @@ const disputeRecord = (a: AccountReplica): DisputeRecord | undefined => match(a,
   open: () => undefined, proposed: () => undefined, received: () => undefined,
   preparing: ({ evidence, unready }) => ({ phase: "preparing", evidence, unready }), disputed: ({ evidence, start, active }) => ({ phase: "disputed", evidence, ...opt("start", start), ...opt("active", active) }),
 });
-export const hostRoot = (h: Host): HostRoot => keccakUtf8(canon({ account: accountSnapshot(h.account.state), dispute: disputeRecord(h.account), pool: h.pool, j: h.j, ladder: h.ladder, outbox: h.outbox.map((e) => e.id) })) as HostRoot;
+export const hostRoot = (h: Host): HostRoot => keccakUtf8(canon({ account: accountSnapshot(h.account.state), dispute: disputeRecord(h.account), j: h.j, ladder: h.ladder, outbox: h.outbox.map((e) => e.id) })) as HostRoot;
 export const hashFrame = (record: RuntimeFrameRecord): RuntimeFrameHash => keccakUtf8(canon(record)) as RuntimeFrameHash;
 const foldStamped = strictFold<Host, Stamped, Verify, HostEffect, AccountReplicaError | HostError>((h, stamped, verify) => applyHost(h, stamped.tx, stamped.ctx, verify));
 const outputId = (height: bigint, ordinal: number, effect: HostEffect): Hash => keccakUtf8(canon({ height, ordinal, effect }));

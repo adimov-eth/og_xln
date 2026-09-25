@@ -10,7 +10,7 @@ import { buildEntityHashesToSign } from "../../core/entity/consensus/input/hanko
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
 import { appendEntityMempoolTransactions } from "../../core/entity/consensus/input/admission.ts";
 import {
-  acceptAppointment, acceptBundle, acceptReceipt, address, emptyPool, genesisHost, recover, allowedProposer, applyEntityInput, applyRuntime, convertOutput, createEntity, createRuntime, entityRootOf, entityStateRoot,
+  acceptAppointment, acceptBundle, acceptReceipt, address, genesisHost, recover, allowedProposer, applyEntityInput, applyRuntime, convertOutput, createEntity, createRuntime, entityRootOf, entityStateRoot,
   hashEntityFrame, hashEntityState, isSingleSigner, replicaKey, spawn, signature, tokenId, ZERO_WORD,
   type Address, type EntityCommitted, type EntityFrame, type EntityId, type EntityInput, type EntityOutput, type EntityReplica, type EntityTx, type Precommits, type Signature,
 } from "../xln.ts";
@@ -412,7 +412,7 @@ describe("entity-runtime: entity tx fold (ER-7, ER-12, ER-13, ER-14)", () => {
 
 describe("entity-runtime: host recovery (ER-23)", () => {
   test("MATCH (og outbox-payload.ts ordered rows): recover binds the persisted outbox positionally; a reordered outbox is refused", () => {
-    const host = unwrap(genesisHost(ALICE, genesisAB(), emptyPool(TOKEN, "j")));
+    const host = unwrap(genesisHost(ALICE, genesisAB()));
     const e = (n: number) => ({ id: `${n.toString(16).padStart(2, "0").repeat(32)}` as never, effect: { _tag: "send", message: {} } as never });
     const graph = { ...host, outbox: [e(1), e(2)] };
     expect(unwrap(recover(graph, [], [e(1), e(2)], verifiers.verify)).pending).toEqual([e(1), e(2)]);
