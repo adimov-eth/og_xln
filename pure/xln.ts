@@ -2742,6 +2742,19 @@ const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_tr
     }));
   });
 };
+/** og buildSettlementHankoDraft / prepareSettlementExecution targets: compiled diffs, the settlement hash at `nonce`, and the post-settlement N+1 dispute proof. */
+export type SettlementTargets = { readonly diffs: readonly WorkspaceDiff[]; readonly forgive: readonly number[]; readonly settlementHash: string; readonly postProof: { readonly proofBodyHash: string; readonly disputeHash: string; readonly nonce: number; readonly proposerIsLeft: boolean } };
+export const settlementTargets = (a: AccountBody, w: SettlementWorkspace, nonce: number, proposerIsLeft: boolean): Result<SettlementTargets, BodyError> =>
+  chain(compileOps(w.ops, w.lastModifiedByLeft), ({ diffs, forgive }) => chain(settlementHashOf(a, diffs, forgive, nonce), (settlementHash) => chain(projectedProofHash(a, diffs, forgive), (proofBodyHash) =>
+    map(chain(mapErr(committedView(a), uncommitted), (view) => mapErr(accountDisputeHash(view, proofBodyHash, nonce + 1, proposerIsLeft), (e): BodyError => ({ _tag: "settlement", reason: e._tag }))),
+      (disputeHash) => ({ diffs, forgive, settlementHash, postProof: { proofBodyHash, disputeHash, nonce: nonce + 1, proposerIsLeft } })))));
+/** og assertCanonicalSettlementWorkspace: the stored hash is a 32-byte word equal to the recomputed body hash (returned lowercase). */
+export const canonicalWorkspaceHash = (a: AccountBody, w: SettlementWorkspace): Result<string, BodyError> => {
+  if (typeof w.workspaceHash !== "string" || !WORKSPACE_HASH.test(w.workspaceHash)) return settleErr("SETTLEMENT_WORKSPACE_HASH_INVALID");
+  return chain(workspaceHashOf(a.account.id, w), (h) => (h.toLowerCase() !== w.workspaceHash.toLowerCase() ? settleErr(`SETTLEMENT_WORKSPACE_HASH_CORRUPTION:${w.workspaceHash.toLowerCase()}:${h.toLowerCase()}`) : ok(h.toLowerCase())));
+};
+/** og getNextSettlementNonce (getMinimumSafeSettlementNonce): the first proof nonce both sides may still sign. */
+export const nextSettlementNonce = (r: Pick<AccountReplica, "state" | "dispute">): number => Math.max(r.state.jNonce + 1, proofNonceFloor(r.dispute));
 const unsignedWorkspace = (w: SettlementWorkspace): boolean => (w.status === "draft" || w.status === "awaiting_counterparty") && w.compiledDiffs === undefined && w.compiledForgiveTokenIds === undefined && !signedWorkspace(w) && w.nonceAtSign === undefined;
 const settleTransition = (a: AccountBody, x: TxOf<"settle_transition">, ctx: FoldCtx): BodyStep => {
   if (x.kind === "upsert") return upsertWorkspace(a, x, ctx);
@@ -4309,7 +4322,15 @@ export type EntityTx =
   | { readonly type: "vote"; readonly data: { readonly proposalId: string; readonly voter: string; readonly choice: "yes" | "no"; readonly comment?: string | undefined } }
   | { readonly type: "htlcPayment"; readonly data: HtlcPaymentData }
   | SwapRequestEntityTx
-  | LendingEntityTx;
+  | LendingEntityTx
+  | SettleEntityTx;
+/** og types/entity-tx.ts settlement workspace operations (payments/settle.ts). */
+export type SettleEntityTx =
+  | { readonly type: "settle_propose"; readonly data: { readonly counterpartyEntityId: EntityId; readonly ops: readonly SettlementOp[]; readonly executorIsLeft?: boolean | undefined; readonly memo?: string | undefined; readonly continuation?: SettlementContinuationPlan | undefined } }
+  | { readonly type: "settle_update"; readonly data: { readonly counterpartyEntityId: EntityId; readonly ops: readonly SettlementOp[]; readonly executorIsLeft?: boolean | undefined; readonly memo?: string | undefined } }
+  | { readonly type: "settle_approve"; readonly data: { readonly counterpartyEntityId: EntityId; readonly workspaceHash: string } }
+  | { readonly type: "settle_execute"; readonly data: { readonly counterpartyEntityId: EntityId; readonly disableC2RShortcut?: boolean | undefined } }
+  | { readonly type: "settle_reject"; readonly data: { readonly counterpartyEntityId: EntityId; readonly reason?: string | undefined } };
 /** og types/entity-tx.ts placeSwapOffer / proposeCancelSwap (payments/swap-requests.ts): one swap Account tx on the hub Account. */
 export type SwapRequestEntityTx =
   | { readonly type: "placeSwapOffer"; readonly data: { readonly counterpartyEntityId: EntityId; readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint; readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: 0 | 1 | 2 | undefined } }
@@ -4339,7 +4360,7 @@ export type LendingEntityTx =
   | { readonly type: "lendingClosePosition"; readonly data: { readonly hubEntityId: string; readonly positionId: string } };
 /** og ProfileUpdateTx & { entityId }. */
 export type ProfileUpdate = { readonly entityId: string; readonly name?: string | undefined; readonly entityKind?: string | null | undefined; readonly sectors?: readonly string[] | undefined; readonly avatar?: string | undefined; readonly bio?: string | undefined; readonly website?: string | undefined };
-export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute"; readonly context: string };
+export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "settlement"; readonly context: string };
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
   readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[]; readonly leader: FrameLeader;
@@ -4360,7 +4381,8 @@ export type EntityPhase = "open" | "proposed" | "locked";
 export type EntityEvent = EntityInput["kind"];
 export type Folded = { readonly state: EntityState; readonly accountReplicas: ReadonlyMap<EntityId, AccountReplica> };
 /** `events`: og frame events the folded txs emitted (og addMessage / addTextMessage), in order. */
-export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readonly events?: readonly FrameEvent[] | undefined; readonly touched?: readonly EntityId[] | undefined };
+/** `signing`: secondary manifest hashes the folded txs requested beyond the Account messages (og collectedHashes, e.g. settlement Hankos). */
+export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readonly events?: readonly FrameEvent[] | undefined; readonly touched?: readonly EntityId[] | undefined; readonly signing?: readonly HashToSign[] | undefined };
 /** og replica `leaderVotes` (one collection key at a time) and `pendingLeaderCertificate`. */
 type LeaderLane = { readonly leaderVotes?: ReadonlyMap<string, LeaderVote> | undefined; readonly pendingLeaderCertificate?: LeaderCertificate | undefined };
 type EntityEnv = Folded & LeaderLane & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
@@ -4934,6 +4956,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
   htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId,
+  settle_propose: (x) => x.data.counterpartyEntityId, settle_update: (x) => x.data.counterpartyEntityId, settle_approve: (x) => x.data.counterpartyEntityId, settle_execute: (x) => x.data.counterpartyEntityId, settle_reject: (x) => x.data.counterpartyEntityId,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -5202,7 +5225,7 @@ const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext)
     const next = routed(draft.state, draft.accountReplicas, peer, propose(child, input as Propose, { verify: pendingVerify(ctx.verify, self), party: party.value }));
     if (!next.ok) continue;
     if (plan.value._tag === "frame") frames += 1;
-    draft = { ...next.value, outputs: [...draft.outputs, ...next.value.outputs] };
+    draft = { ...draft, state: next.value.state, accountReplicas: next.value.accountReplicas, outputs: [...draft.outputs, ...next.value.outputs] };
   }
   // og sends one final Account input per Account: an ACK already riding on that Account's new frame is not sent again.
   const carried = new Set(draft.outputs.flatMap((o) => ("tx" in o && o.tx.data.kind === "ack_frame" && o.tx.data.ack !== null ? [`${o.to}|${canon(o.tx.data.ack)}`] : [])));
@@ -5244,15 +5267,20 @@ const fillHankos = (d: Draft, frame: EntityFrame, signatures: Precommits): Resul
   if (table.size === 0) return ok(d);
   const f = (h: Hanko): Hanko => table.get(h) ?? h, fd = (x: DisputeHanko | undefined): DisputeHanko | undefined => (x === undefined ? undefined : { ...x, hanko: f(x.hanko) });
   const fa = (a: AccountAck): AccountAck => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) });
+  // og attaches the settlement / post-proof quorum Hankos to our settle_transition hanko intent and the workspace it signs
+  const ft = (tx: WireAccountTx): WireAccountTx => (tx.type === "settle_transition" && tx.kind === "hanko" ? { ...tx, ...opt("settlementHanko", tx.settlementHanko === undefined ? undefined : f(tx.settlementHanko)), postProof: { ...tx.postProof, ...opt("hanko", tx.postProof.hanko === undefined ? undefined : f(tx.postProof.hanko)) } } : tx);
+  const fh = (h: string | undefined): string | undefined => (h === undefined ? undefined : f(h));
+  const fb = (b: AccountBody): AccountBody => { const w = b.settlement, p = w?.postSettlementDisputeProof; return w === undefined ? b : { ...b, settlement: { ...w, leftHanko: fh(w.leftHanko), rightHanko: fh(w.rightHanko), ...(p === undefined ? {} : { postSettlementDisputeProof: { ...p, leftHanko: fh(p.leftHanko), rightHanko: fh(p.rightHanko) } }) } }; };
+  const ff = (frame: AccountFrame): AccountFrame => ({ ...frame, txs: frame.txs.map(ft) });
   const replica = (c: AccountReplica): AccountReplica => {
     const head: AccountHead = c.head._tag === "installed" ? { ...c.head, certificate: { ...c.head.certificate, left: f(c.head.certificate.left), right: f(c.head.certificate.right) } } : c.head;
     const dispute: DisputeWitnesses = { ...c.dispute, ...opt("current", fd(c.dispute.current)) };
-    const base = { ...c, head, dispute, ...(c.acknowledged === undefined ? {} : { acknowledged: fa(c.acknowledged) }) };
-    return "candidate" in c ? ({ ...base, candidate: new Candidate(c.candidate.frame, f(c.candidate.frameHanko), c.candidate.frameProof, c.candidate.draft, c.candidate.floor) } as AccountReplica) : (base as AccountReplica);
+    const base = { ...c, head, dispute, state: fb(c.state), mempool: c.mempool.map(ft), ...(c.acknowledged === undefined ? {} : { acknowledged: fa(c.acknowledged) }) };
+    return "candidate" in c ? ({ ...base, candidate: new Candidate(ff(c.candidate.frame), f(c.candidate.frameHanko), c.candidate.frameProof, { ...c.candidate.draft, state: fb(c.candidate.draft.state) }, c.candidate.floor) } as AccountReplica) : (base as AccountReplica);
   };
   const message = (m: AccountPeerInput): AccountPeerInput => matchBy("kind", m, {
     ack: (a): AccountPeerInput => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
-    ack_frame: (a): AccountPeerInput => ({ ...a, ack: a.ack === null ? null : fa(a.ack), frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
+    ack_frame: (a): AccountPeerInput => ({ ...a, frame: ff(a.frame), ack: a.ack === null ? null : fa(a.ack), frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
     dispute: (a): AccountPeerInput => ({ ...a, disputeHanko: { ...a.disputeHanko, hanko: f(a.disputeHanko.hanko) } }),
     board_hanko_refresh: (a): AccountPeerInput => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
   });
@@ -6052,6 +6080,303 @@ const queueReturned = (d: Draft, target: AccountTxTarget): Draft => {
   const admitted = admitAt(child, [target.tx], d.state.id, L0_CLOCK);
   return admitted.ok ? { ...putChild(d.state, d.accountReplicas, peer, admitted.value), outputs: d.outputs } : d;
 };
+// ---- og entity/tx/handlers/payments/settle.ts: settle_propose / update / approve / execute / reject, deferred approvals, committed auto-approval, continuations ----
+/** og hasPendingSettlementTransition: a settle_transition queued in the mempool or inside our pending frame. */
+const settlePending = (c: AccountReplica): boolean => c.mempool.some((tx) => tx.type === "settle_transition") || (c._tag === "proposed" && c.candidate.frame.txs.some((tx) => tx.type === "settle_transition"));
+const bodyReason = (e: BodyError): string => (e._tag === "settlement" ? e.reason : e._tag);
+const bodyInvariant = <X,>(r: Result<X, BodyError>): Result<X, EntityError> => mapErr(r, (e): EntityError => ({ _tag: "entity_invariant", reason: bodyReason(e) }));
+const settleSay = (d: Draft, message: string): Draft => ({ ...d, events: [...(d.events ?? []), status(message)] });
+/** og EntityState.deferredAccountProposals / settlementContinuations: live maps in `committed`; the root commits them as entity collections (entityRootOf). */
+const liveMap = <V,>(v: Binary | undefined): ReadonlyMap<string, V> => (v instanceof Map ? (v as ReadonlyMap<string, V>) : new Map());
+const deferredOf = (state: EntityState): ReadonlyMap<string, string> => liveMap(state.committed["deferredAccountProposals"]);
+const withDeferred = (state: EntityState, m: ReadonlyMap<string, string>): EntityState => ({ ...state, committed: { ...state.committed, deferredAccountProposals: m as unknown as Binary } });
+/** og deferredAccountProposals.set with the conflicting-hash guard. */
+const deferApproval = (state: EntityState, peer: string, hash: string, code: string): Result<EntityState, EntityError> => {
+  const existing = deferredOf(state).get(peer);
+  return existing !== undefined && existing !== hash ? invariant(`${code}:${existing}:${hash}`) : ok(withDeferred(state, mapSet(deferredOf(state), peer, hash)));
+};
+export type SettlementContinuationAction =
+  | { readonly type: "r2r"; readonly toEntityId: string; readonly tokenId: number; readonly amount: bigint }
+  | { readonly type: "r2e"; readonly receivingEntity: string; readonly tokenId: number; readonly amount: bigint }
+  | { readonly type: "r2c"; readonly counterpartyId: string; readonly receivingEntityId?: string | undefined; readonly tokenId: number; readonly amount: bigint };
+export type SettlementContinuationPlan = { readonly actions: readonly SettlementContinuationAction[]; readonly broadcast: boolean };
+type PendingContinuation = SettlementContinuationPlan & { readonly workspaceHash: string };
+const continuationsOf = (state: EntityState): ReadonlyMap<string, PendingContinuation> => liveMap(state.committed["settlementContinuations"]);
+const withContinuations = (state: EntityState, m: ReadonlyMap<string, PendingContinuation>): EntityState => ({ ...state, committed: { ...state.committed, settlementContinuations: m as unknown as Binary } });
+/** og assertSettlementContinuation: at most one action, a boolean broadcast, a safe token id, a positive amount, lowercase bytes32 entities. */
+const continuationIssue = (c: SettlementContinuationPlan): string | undefined => {
+  if (!Array.isArray(c.actions)) return "SETTLEMENT_CONTINUATION_ACTIONS_INVALID";
+  if (c.actions.length > 1) return `SETTLEMENT_CONTINUATION_ACTION_LIMIT_EXCEEDED:${c.actions.length}`;
+  if (typeof c.broadcast !== "boolean") return "SETTLEMENT_CONTINUATION_BROADCAST_INVALID";
+  for (const [i, a] of c.actions.entries()) {
+    if (!Number.isSafeInteger(a.tokenId) || a.tokenId < 0) return `SETTLEMENT_CONTINUATION_TOKEN_INVALID:${i}`;
+    if (typeof a.amount !== "bigint" || a.amount <= 0n) return `SETTLEMENT_CONTINUATION_AMOUNT_INVALID:${i}`;
+    const ids = a.type === "r2r" ? [a.toEntityId] : a.type === "r2e" ? [a.receivingEntity] : [a.counterpartyId, ...(a.receivingEntityId ? [a.receivingEntityId] : [])];
+    if (ids.some((id) => !ENTITY_WORD.test(id))) return `SETTLEMENT_CONTINUATION_ENTITY_INVALID:${i}`;
+  }
+  return undefined;
+};
+type SettleTarget = { readonly child: AccountReplica; readonly iAmLeft: boolean };
+const settleChild = (d: Draft, peer: EntityId): SettleTarget | undefined => { const child = d.accountReplicas.get(peer); return child === undefined ? undefined : { child, iAmLeft: isLeft(d.state.id, replicaId(child)) }; };
+/** og compileOps on the proposer path: a refusal is a plain Error (the whole input). */
+const opsCheck = (ops: readonly SettlementOp[], isLeftSide: boolean): Result<void, EntityError> => bodyInvariant(map(compileOps(ops, isLeftSide), () => undefined));
+type SettleEnqueue = (d: Draft, peer: EntityId, tx: AccountTx) => Result<Draft, EntityError>;
+/** og handleSettlePropose: skip an existing workspace; otherwise queue a revision-1 upsert (the proposer executes by default) and pin an optional continuation. */
+const settlePropose = (d: Draft, x: Extract<EntityTx, { type: "settle_propose" }>["data"], queue: SettleEnqueue): Result<Draft, EntityError> => {
+  const peer = x.counterpartyEntityId, t = settleChild(d, peer);
+  if (t === undefined) return invariant(`No account with ${peer.slice(-4)}`);
+  if (t.child.state.settlement !== undefined) return ok(settleSay(d, `⏭️ Settlement propose skipped: workspace already exists (v${t.child.state.settlement.revision})`));
+  if (settlePending(t.child)) return invariant("SETTLEMENT_TRANSITION_ALREADY_PENDING");
+  return chain(opsCheck(x.ops, t.iAmLeft), () => {
+    const executorIsLeft = x.executorIsLeft ?? t.iAmLeft, c = x.continuation;
+    const pinned: Result<Draft, EntityError> = c === undefined ? ok(d) : (() => {
+      const issue = continuationIssue(c);
+      if (issue !== undefined) return invariant(issue);
+      if (executorIsLeft !== t.iAmLeft) return invariant("SETTLEMENT_CONTINUATION_REQUIRES_LOCAL_EXECUTOR");
+      if (continuationsOf(d.state).has(peer)) return invariant(`SETTLEMENT_CONTINUATION_ALREADY_PENDING:${peer}`);
+      return map(bodyInvariant(workspaceHashOf(t.child.state.account.id, { revision: 1, ops: x.ops, lastModifiedByLeft: t.iAmLeft, executorIsLeft, memo: x.memo })), (workspaceHash): Draft =>
+        ({ ...d, state: withContinuations(d.state, mapSet(continuationsOf(d.state), peer, { workspaceHash, actions: c.actions.map((a) => ({ ...a })), broadcast: c.broadcast })) }));
+    })();
+    return chain(pinned, (p) => map(queue(p, peer, { type: "settle_transition", kind: "upsert", revision: 1, ops: x.ops, executorIsLeft, ...opt("memo", x.memo) }), (q) => settleSay(q, "⚖️ Settlement proposal queued for bilateral Account consensus")));
+  });
+};
+/** og handleSettleUpdate: an unsigned workspace is replaced by an exact previous-hash revision+1 upsert. */
+const settleUpdate = (d: Draft, x: Extract<EntityTx, { type: "settle_update" }>["data"], queue: SettleEnqueue): Result<Draft, EntityError> => {
+  const peer = x.counterpartyEntityId, t = settleChild(d, peer), w = t?.child.state.settlement;
+  if (t === undefined) return invariant(`No account with ${peer.slice(-4)}`);
+  if (w === undefined) return invariant("No settlement workspace to update. Use settle_propose first.");
+  if (settlePending(t.child)) return invariant("SETTLEMENT_TRANSITION_ALREADY_PENDING");
+  if (w.leftHanko !== undefined || w.rightHanko !== undefined) return invariant("Cannot update after signing. Use settle_reject to start over.");
+  return chain(opsCheck(x.ops, t.iAmLeft), () => chain(bodyInvariant(canonicalWorkspaceHash(t.child.state, w)), (previousWorkspaceHash) => {
+    const revision = w.revision + 1, memo = x.memo !== undefined ? x.memo : w.memo;
+    return map(queue(d, peer, { type: "settle_transition", kind: "upsert", revision, previousWorkspaceHash, ops: x.ops, executorIsLeft: x.executorIsLeft ?? w.executorIsLeft, ...opt("memo", memo) }), (q) => settleSay(q, `⚖️ Settlement update v${revision} queued for bilateral Account consensus`));
+  }));
+};
+/** og handleSettleReject: an unsigned workspace is cleared by an exact Account-frame clear; no workspace is a silent no-op. */
+const settleReject = (d: Draft, x: Extract<EntityTx, { type: "settle_reject" }>["data"], queue: SettleEnqueue): Result<Draft, EntityError> => {
+  const peer = x.counterpartyEntityId, t = settleChild(d, peer), w = t?.child.state.settlement;
+  if (t === undefined) return invariant(`No account with ${peer.slice(-4)}`);
+  if (w === undefined) return ok(d);
+  if (settlePending(t.child)) return invariant("SETTLEMENT_TRANSITION_ALREADY_PENDING");
+  if (w.settlementHash || w.leftHanko || w.rightHanko || w.postSettlementDisputeProof) return invariant("SETTLEMENT_REJECT_SIGNED_FORBIDDEN");
+  return chain(bodyInvariant(canonicalWorkspaceHash(t.child.state, w)), (workspaceHash) =>
+    map(queue(d, peer, { type: "settle_transition", kind: "clear", revision: w.revision, workspaceHash }), (q) => settleSay(q, `❌ Settlement clear queued${x.reason ? `: ${x.reason}` : ""}`)));
+};
+/** og handleSettleApprove: the approval is deferred until the Account is idle (materializeDeferredSettlementApprovals signs it). */
+const settleApprove = (d: Draft, x: Extract<EntityTx, { type: "settle_approve" }>["data"]): Result<Draft, EntityError> => {
+  const peer = x.counterpartyEntityId, t = settleChild(d, peer), w = t?.child.state.settlement;
+  if (t === undefined) return invariant(`No account with ${peer.slice(-4)}`);
+  if (w === undefined) return invariant("No settlement workspace to approve.");
+  if (settlePending(t.child)) return invariant("SETTLEMENT_TRANSITION_ALREADY_PENDING");
+  if (w.status === "submitted") return ok(settleSay(d, "⏭️ settle_execute skipped: workspace already submitted"));
+  return chain(bodyInvariant(canonicalWorkspaceHash(t.child.state, w)), (hash) => x.workspaceHash !== hash ? invariant(`SETTLEMENT_APPROVAL_WORKSPACE_HASH_MISMATCH:${x.workspaceHash}:${hash}`)
+    : map(deferApproval(d.state, peer, hash, "SETTLEMENT_APPROVAL_ALREADY_DEFERRED"), (state) => settleSay({ ...d, state }, "⚖️ Settlement approval accepted; waiting for prior Account work")));
+};
+type OgSettlementDiff = { readonly tokenId: number; readonly leftDiff: bigint; readonly rightDiff: bigint; readonly collateralDiff: bigint; readonly ondeltaDiff: bigint };
+type OgSettlementRow = { readonly leftEntity: string; readonly rightEntity: string; readonly diffs: readonly OgSettlementDiff[]; readonly forgiveDebtsInTokenIds: readonly number[]; readonly sig: string; readonly nonce: number };
+type OgC2RRow = { readonly counterparty: string; readonly tokenId: number; readonly amount: bigint; readonly nonce: number; readonly sig: string };
+const ogBatchOps = (b: CommittedJBatch["batch"]): number => BATCH_FIELDS.reduce((n, f) => n + (b[f] ?? []).length, 0);
+/** og detectPureC2R: one negative-collateral diff that only pays the withdrawer's reserve. */
+const pureC2R = (diffs: readonly OgSettlementDiff[], forgive: readonly number[]): { readonly withdrawer: "left" | "right"; readonly tokenId: number; readonly amount: bigint } | undefined => {
+  const d = diffs[0];
+  if (diffs.length !== 1 || forgive.length > 0 || d === undefined || d.collateralDiff >= 0n) return undefined;
+  const amount = -d.collateralDiff;
+  if (d.leftDiff === amount && d.rightDiff === 0n && d.ondeltaDiff === -amount) return { withdrawer: "left", tokenId: d.tokenId, amount };
+  return d.leftDiff === 0n && d.rightDiff === amount && d.ondeltaDiff === 0n ? { withdrawer: "right", tokenId: d.tokenId, amount } : undefined;
+};
+/** og batchAddSettlement on the committed (og-shaped) jBatchState: exact retries are ignored, a conflict throws, a pure C2R the initiator withdraws is compressed into collateralToReserve. */
+const addSettlementRow = (jb: CommittedJBatch & { readonly status?: string }, row: OgSettlementRow, initiator: string, disableShortcut: boolean): Result<CommittedJBatch, EntityError> => {
+  const L = J_BATCH_LIMITS, n = (s: string): string => s.trim().toLowerCase(), tag = `${row.leftEntity.slice(-4)}:${row.rightEntity.slice(-4)}`, b = jb.batch;
+  if (row.diffs.length > L.maxSettlementDiffs) return invariant(`J_BATCH_LIMIT_EXCEEDED: settlement.diffs ${row.diffs.length}/${L.maxSettlementDiffs}`);
+  if (row.forgiveDebtsInTokenIds.length > L.maxSettlementForgivenessIds) return invariant(`J_BATCH_LIMIT_EXCEEDED: settlement.forgiveDebtsInTokenIds ${row.forgiveDebtsInTokenIds.length}/${L.maxSettlementForgivenessIds}`);
+  if (row.leftEntity >= row.rightEntity) return invariant(`Settlement entities must be ordered: ${row.leftEntity} >= ${row.rightEntity}`);
+  if ((row.diffs.length > 0 || row.forgiveDebtsInTokenIds.length > 0) && (!row.sig || row.sig === "0x")) return invariant(`Settlement ${row.leftEntity.slice(-4)}↔${row.rightEntity.slice(-4)} missing hanko signature`);
+  const settlements = (b["settlements"] ?? []) as readonly OgSettlementRow[], c2rs = (b["collateralToReserve"] ?? []) as readonly OgC2RRow[];
+  const existing = settlements.find((s) => n(s.leftEntity) === n(row.leftEntity) && n(s.rightEntity) === n(row.rightEntity));
+  if (existing !== undefined) {
+    const same = existing.diffs.length === row.diffs.length && existing.diffs.every((x, i) => { const y = row.diffs[i]; return y !== undefined && BigInt(x.tokenId) === BigInt(y.tokenId) && x.leftDiff === y.leftDiff && x.rightDiff === y.rightDiff && x.collateralDiff === y.collateralDiff && x.ondeltaDiff === y.ondeltaDiff; })
+      && existing.forgiveDebtsInTokenIds.length === row.forgiveDebtsInTokenIds.length && existing.forgiveDebtsInTokenIds.every((x, i) => row.forgiveDebtsInTokenIds[i] !== undefined && BigInt(x) === BigInt(row.forgiveDebtsInTokenIds[i]!))
+      && existing.sig.toLowerCase() === row.sig.toLowerCase() && BigInt(existing.nonce) === BigInt(row.nonce);
+    return same ? ok(jb) : invariant(`J_BATCH_SETTLEMENT_CONFLICT:${tag}`);
+  }
+  const c2r = pureC2R(row.diffs, row.forgiveDebtsInTokenIds), withdrawer = c2r === undefined ? undefined : c2r.withdrawer === "left" ? row.leftEntity : row.rightEntity;
+  const shortcutCounterparty = c2r === undefined ? undefined : c2r.withdrawer === "left" ? row.rightEntity : row.leftEntity;
+  const shortcut = c2r !== undefined && !!row.sig && !disableShortcut && (!initiator || n(initiator) === n(withdrawer!));
+  const owner = n(initiator || row.leftEntity), pairCounterparty = shortcut ? shortcutCounterparty : owner === n(row.leftEntity) ? row.rightEntity : owner === n(row.rightEntity) ? row.leftEntity : undefined;
+  const prior = pairCounterparty === undefined ? undefined : c2rs.find((op) => n(op.counterparty) === n(pairCounterparty));
+  if (prior !== undefined) return shortcut && BigInt(prior.tokenId) === BigInt(c2r!.tokenId) && prior.amount === c2r!.amount && BigInt(prior.nonce) === BigInt(row.nonce) && prior.sig.toLowerCase() === row.sig.toLowerCase() ? ok(jb) : invariant(`J_BATCH_SETTLEMENT_CONFLICT:${tag}`);
+  const accumulating = jb.status === "empty" ? { status: "accumulating" } : {};
+  if (shortcut) {
+    if (ogBatchOps(b) + 1 > L.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: collateralToReserve would exceed total ops ${ogBatchOps(b) + 1}/${L.maxTotalOps}`);
+    const op: OgC2RRow = { counterparty: shortcutCounterparty!, tokenId: c2r!.tokenId, amount: c2r!.amount, nonce: row.nonce, sig: row.sig };
+    return ok({ ...jb, ...accumulating, batch: { ...b, collateralToReserve: [...c2rs, op] as unknown as readonly Binary[] } });
+  }
+  if (settlements.length + 1 > L.maxSettlements) return invariant(`J_BATCH_LIMIT_EXCEEDED: settlements ${settlements.length + 1}/${L.maxSettlements}`);
+  if (ogBatchOps(b) + 1 > L.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: settlement would exceed total ops ${ogBatchOps(b) + 1}/${L.maxTotalOps}`);
+  return ok({ ...jb, ...accumulating, batch: { ...b, settlements: [...settlements, row] as unknown as readonly Binary[] } });
+};
+const sameDiff = (a: WorkspaceDiff, b: WorkspaceDiff): boolean => a.tokenId === b.tokenId && a.leftDiff === b.leftDiff && a.rightDiff === b.rightDiff && a.collateralDiff === b.collateralDiff && a.ondeltaDiff === b.ondeltaDiff;
+/** og prepareSettlementExecution: recompiled diffs equal the cached ones, the signed nonce and hash reproduce, both Hankos and the exact N+1 proof are present. */
+const prepareExecution = (state: EntityState, a: AccountBody, w: SettlementWorkspace): Result<SettlementTargets & { readonly nonce: number }, EntityError> => chain(bodyInvariant(compileOps(w.ops, w.lastModifiedByLeft)), ({ diffs }) => {
+  const cached = w.compiledDiffs;
+  if (cached !== undefined && diffs.length !== cached.length) return invariant(`Recompiled diffs length mismatch: ${diffs.length} vs ${cached.length}`);
+  const bad = cached === undefined ? -1 : diffs.findIndex((x, i) => !sameDiff(x, cached[i]!));
+  if (bad >= 0) return invariant(`Recompiled diff mismatch at index ${bad}`);
+  const nonce = w.nonceAtSign;
+  if (typeof nonce !== "number" || !Number.isSafeInteger(nonce) || nonce < 1) return invariant(`SETTLEMENT_SIGNED_NONCE_MISSING:${String(nonce)}`);
+  if (!w.settlementHash) return invariant("SETTLEMENT_SIGNED_HASH_MISSING");
+  if (state.jurisdiction.depositoryAddress === "" || !state.jurisdictionConfig?.entityProviderAddress) return invariant("SETTLEMENT_JURISDICTION_MISSING");
+  const p = w.postSettlementDisputeProof;
+  return chain(bodyInvariant(settlementTargets(a, w, nonce, p?.proposerIsLeft ?? w.lastModifiedByLeft)), (t) => {
+    if (t.settlementHash.toLowerCase() !== w.settlementHash!.toLowerCase()) return invariant(`SETTLEMENT_SIGNED_HASH_MISMATCH:${w.settlementHash}:${t.settlementHash}`);
+    if (w.status !== "ready_to_submit") return invariant(`SETTLEMENT_HANKOS_INCOMPLETE:${w.status}`);
+    if (p === undefined || p.nonce !== nonce + 1) return invariant(`POST_SETTLEMENT_PROOF_NONCE_MISMATCH:${String(p?.nonce)}:${nonce + 1}`);
+    if (p.proofBodyHash.toLowerCase() !== t.postProof.proofBodyHash.toLowerCase() || p.disputeHash.toLowerCase() !== t.postProof.disputeHash.toLowerCase()) return invariant("POST_SETTLEMENT_PROOF_HASH_MISMATCH");
+    if (!p.leftHanko || !p.rightHanko) return invariant("POST_SETTLEMENT_PROOF_HANKO_MISSING");
+    return ok({ ...t, nonce });
+  });
+});
+/** og handleSettleExecute: the executor verifies the counterparty's settlement Hanko and both N+1 Hankos, appends the settlement to the draft jBatch, and queues the Account submit. */
+const settleExecute = (d: Draft, x: Extract<EntityTx, { type: "settle_execute" }>["data"], verify: Verify, queue: SettleEnqueue): Result<Draft, EntityError> => {
+  const peer = x.counterpartyEntityId, t = settleChild(d, peer), w = t?.child.state.settlement, tag = peer.slice(-4);
+  if (t === undefined) return ok(settleSay(d, `⏭️ settle_execute skipped: no account with ${tag}`));
+  if (w === undefined) return ok(settleSay(d, `⏭️ settle_execute skipped: no workspace with ${tag}`));
+  // og rejectFailure: a reject disposition evicts only this tx
+  if (settlePending(t.child)) return err({ _tag: "entity_command", reason: "SETTLEMENT_TRANSITION_ALREADY_PENDING" });
+  return chain(bodyInvariant(canonicalWorkspaceHash(t.child.state, w)), (workspaceHash): Result<Draft, EntityError> => {
+    if (w.status === "submitted") return ok(settleSay(d, "⏭️ settle_execute skipped: settlement already submitted"));
+    if (w.executorIsLeft !== t.iAmLeft) return invariant(`SETTLEMENT_EXECUTOR_MISMATCH:expected=${w.executorIsLeft ? "left" : "right"}`);
+    const counterpartyHanko = t.iAmLeft ? w.rightHanko : w.leftHanko, { left, right } = t.child.state.account.id;
+    if (!counterpartyHanko) return ok(settleSay(d, "⏭️ settle_execute skipped: missing counterparty signature"));
+    return chain(prepareExecution(d.state, t.child.state, w), (p) => {
+      if (!verify(p.settlementHash, counterpartyHanko, peer)) return invariant("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
+      if (!verify(p.postProof.disputeHash, w.postSettlementDisputeProof!.leftHanko!, left as EntityId)) return invariant("POST_SETTLEMENT_LEFT_HANKO_INVALID");
+      if (!verify(p.postProof.disputeHash, w.postSettlementDisputeProof!.rightHanko!, right as EntityId)) return invariant("POST_SETTLEMENT_RIGHT_HANKO_INVALID");
+      const jb = (committedJBatch(d.state) ?? (initJBatch() as unknown as CommittedJBatch)) as CommittedJBatch & { readonly status?: string };
+      const seeded: Draft = { ...d, state: { ...d.state, committed: { ...d.state.committed, jBatchState: jb as unknown as Binary } } };
+      // og: a nonce-bound settlement never waits behind another on-chain batch
+      if (jb.sentBatch !== undefined) return ok(settleSay(seeded, "⏭️ settle_execute skipped: jBatch sentBatch pending"));
+      const row: OgSettlementRow = { leftEntity: t.iAmLeft ? d.state.id : peer, rightEntity: t.iAmLeft ? peer : d.state.id, diffs: p.diffs, forgiveDebtsInTokenIds: p.forgive, sig: counterpartyHanko, nonce: p.nonce };
+      return chain(addSettlementRow(jb, row, d.state.id, x.disableC2RShortcut ?? false), (next) => {
+        const batched: Draft = { ...seeded, state: { ...seeded.state, committed: { ...seeded.state.committed, jBatchState: next as unknown as Binary } } };
+        return map(queue(batched, peer, { type: "settle_transition", kind: "submit", revision: w.revision, workspaceHash }), (q) => settleSay(q, `✅ Settlement submission queued (${p.diffs.length} diffs) - use j_broadcast to commit`));
+      });
+    });
+  });
+};
+/** og canAutoApproveWorkspace: never for forgiveness or raw diffs; otherwise every compiled diff passes userAutoApprove. */
+export const canAutoApproveWorkspace = (w: Pick<SettlementWorkspace, "ops" | "lastModifiedByLeft">, iAmLeft: boolean): boolean => {
+  if (w.ops.some((op) => op.type === "forgive" || op.type === "rawDiff")) return false;
+  const compiled = compileOps(w.ops, w.lastModifiedByLeft);
+  if (!compiled.ok) return false;
+  return compiled.value.diffs.every((diff) => (iAmLeft ? diff.leftDiff : diff.rightDiff) >= 0n && (iAmLeft ? diff.ondeltaDiff : diff.collateralDiff - diff.ondeltaDiff) >= 0n);
+};
+/** og processCommittedSettlementTransitionFollowup: after a committed frame whose last transition is the peer's upsert / hanko, defer our own signature when the ops are safe (or ours). */
+const settleFollowups = (d: Draft, peer: EntityId, frames: readonly { readonly frame: AccountFrame; readonly proposerIsLeft: boolean }[]): Result<Draft, EntityError> =>
+  foldResult(frames, d, (acc, { frame, proposerIsLeft }) => foldResult(frame.txs.map((tx, i) => [tx, i] as const), acc, (cur, [tx, i]): Result<Draft, EntityError> => {
+    if (tx.type !== "settle_transition" || (tx.kind !== "upsert" && tx.kind !== "hanko")) return ok(cur);
+    if (frame.txs.slice(i + 1).some((later) => later.type === "settle_transition")) return ok(cur);
+    const child = cur.accountReplicas.get(peer), w = child?.state.settlement;
+    if (child === undefined || w === undefined) return invariant("SETTLEMENT_COMMITTED_WORKSPACE_MISSING");
+    return chain(bodyInvariant(canonicalWorkspaceHash(child.state, w)), (hash) => {
+      if (w.revision !== tx.revision) return invariant(`SETTLEMENT_COMMITTED_VERSION_MISMATCH:${w.revision}:${tx.revision}`);
+      const iAmLeft = isLeft(cur.state.id, replicaId(child));
+      if (proposerIsLeft === iAmLeft || (iAmLeft ? w.postSettlementDisputeProof?.leftHanko : w.postSettlementDisputeProof?.rightHanko) || settlePending(child)) return ok(cur);
+      if (w.lastModifiedByLeft !== iAmLeft && !canAutoApproveWorkspace(w, iAmLeft)) return ok(cur);
+      return map(deferApproval(cur.state, peer, hash, "SETTLEMENT_APPROVAL_ALREADY_DEFERRED"), (state) => ({ ...cur, state }));
+    });
+  }));
+/** og buildSettlementHankoDraft: our side's hanko transition at the pinned (or next safe) nonce; own Hankos are the manifest placeholders `installFrame` replaces. */
+const settlementHankoDraft = (child: AccountReplica, iAmLeft: boolean, peer: EntityId): Result<{ readonly tx: AccountTx; readonly hashes: readonly HashToSign[] }, EntityError> => {
+  const w = child.state.settlement;
+  if (w === undefined) return invariant("SETTLEMENT_WORKSPACE_MISSING");
+  return chain(bodyInvariant(canonicalWorkspaceHash(child.state, w)), (workspaceHash) => {
+    if (w.status === "submitted") return invariant("SETTLEMENT_HANKO_SUBMITTED_FORBIDDEN");
+    if (iAmLeft ? w.postSettlementDisputeProof?.leftHanko : w.postSettlementDisputeProof?.rightHanko) return invariant("SETTLEMENT_SIDE_HANKO_ALREADY_ATTACHED");
+    const nonce = w.nonceAtSign ?? nextSettlementNonce(child);
+    if (!Number.isSafeInteger(nonce) || nonce < 1) return invariant(`SETTLEMENT_SIGNED_NONCE_INVALID:${String(nonce)}`);
+    return chain(bodyInvariant(settlementTargets(child.state, w, nonce, w.lastModifiedByLeft)), (t) => {
+      if (w.settlementHash && w.settlementHash.toLowerCase() !== t.settlementHash.toLowerCase()) return invariant(`SETTLEMENT_SIGNED_HASH_MISMATCH:${w.settlementHash}:${t.settlementHash}`);
+      const pin = w.postSettlementDisputeProof;
+      if (pin !== undefined && (pin.nonce !== t.postProof.nonce || pin.proofBodyHash.toLowerCase() !== t.postProof.proofBodyHash.toLowerCase() || pin.disputeHash.toLowerCase() !== t.postProof.disputeHash.toLowerCase())) return invariant("POST_SETTLEMENT_PROOF_PIN_MISMATCH");
+      const executor = w.executorIsLeft === iAmLeft, tail = peer.slice(-8);
+      const tx: AccountTx = { type: "settle_transition", kind: "hanko", revision: w.revision, workspaceHash, settlementNonce: nonce, settlementHash: t.settlementHash, ...(executor ? {} : { settlementHanko: pendingHanko(t.settlementHash) }), postProof: { ...t.postProof, hanko: pendingHanko(t.postProof.disputeHash) } };
+      return ok({ tx, hashes: [...(executor ? [] : [{ hash: t.settlementHash, type: "settlement" as const, context: `settlement:${tail}:nonce:${nonce}` }]), { hash: t.postProof.disputeHash, type: "dispute", context: `settlement:${tail}:post-dispute:nonce:${t.postProof.nonce}` }] });
+    });
+  });
+};
+/**
+ * og drainPostOrderbookAccountWork before proposePendingAccountFrames: refreshStaleUncommittedSettlementHankos (a stale-nonce hanko intent is
+ * dropped and re-deferred), then materializeDeferredSettlementApprovals (each idle Account's deferred approval becomes its hanko transition).
+ */
+const materializeSettlements = (d: Draft, ctx: FoldContext): Result<Draft, EntityError> => {
+  const self = d.state.id;
+  let draft = d;
+  for (const peer of [...draft.accountReplicas.keys()].sort(asc)) {
+    const child = draft.accountReplicas.get(peer)!, w = child.state.settlement;
+    if (child.mempool.length === 0 || w === undefined || w.nonceAtSign !== undefined || child._tag === "proposed") continue;
+    const hash = canonicalWorkspaceHash(child.state, w);
+    if (!hash.ok) return invariant(bodyReason(hash.error));
+    const expected = nextSettlementNonce(child), stale = (tx: WireAccountTx): boolean => tx.type === "settle_transition" && tx.kind === "hanko" && tx.revision === w.revision && tx.workspaceHash.toLowerCase() === hash.value && tx.settlementNonce !== expected;
+    if (!child.mempool.some(stale)) continue;
+    const refreshed = deferApproval(draft.state, peer, hash.value, `SETTLEMENT_REFRESH_DEFERRED_CONFLICT:${peer}`);
+    if (!refreshed.ok) return refreshed;
+    draft = { ...draft, ...putChild(refreshed.value, draft.accountReplicas, peer, { ...child, mempool: child.mempool.filter((tx) => !stale(tx)) } as AccountReplica) };
+  }
+  const deferred = deferredOf(draft.state);
+  for (const [peer, approved] of [...deferred].sort(([a], [b]) => asc(a, b))) {
+    const child = draft.accountReplicas.get(peer as EntityId);
+    if (child === undefined) return invariant(`SETTLEMENT_DEFERRED_ACCOUNT_MISSING:${peer}`);
+    if (child._tag === "proposed" || settlePending(child)) continue;
+    const w = child.state.settlement, current = w === undefined ? undefined : canonicalWorkspaceHash(child.state, w);
+    if (current !== undefined && !current.ok) return invariant(bodyReason(current.error));
+    if (w === undefined || current?.value !== approved) {
+      draft = settleSay({ ...draft, state: withDeferred(draft.state, mapDelete(deferredOf(draft.state), peer)) }, "⚠️ Settlement approval expired because the workspace changed");
+      continue;
+    }
+    // og: once a peer Hanko pins the proof, ordinary txs are frozen and cannot drain; the counter-Hanko goes ahead of them
+    if (child.mempool.length > 0 && !(w.settlementHash || w.leftHanko || w.rightHanko || w.postSettlementDisputeProof)) continue;
+    const iAmLeft = isLeft(self, replicaId(child)), built = settlementHankoDraft(child, iAmLeft, peer as EntityId);
+    if (!built.ok) return built;
+    const admitted = admitAt(child, [built.value.tx], self, { timestamp: ctx.timestamp, jHeight: entityJHeight(draft.state) }, pendingVerify(ctx.verify, self));
+    if (!admitted.ok || admitted.value.mempool.length !== child.mempool.length + 1) return invariant(`SETTLEMENT_DEFERRED_HANKO_NOT_ADMITTED:${peer}`);
+    draft = { ...draft, ...putChild({ ...draft.state, ...withDeferred(draft.state, mapDelete(deferredOf(draft.state), peer)) }, draft.accountReplicas, peer as EntityId, admitted.value), signing: [...(draft.signing ?? []), ...built.value.hashes], touched: [...(draft.touched ?? []), peer as EntityId] };
+  }
+  return ok(draft);
+};
+/**
+ * og selectSettlementContinuation + materializeSettlementContinuation: at most one continuation per frame (lowest counterparty), waiting passively
+ * until its workspace is ready and the jBatch is idle; a missing / changed / submitted workspace discards it. The execute path runs settle_execute;
+ * og's follow-up r2r / r2e / r2c and j_broadcast are Entity txs the rewrite carries only on the Host J layer.
+ */
+const materializeContinuation = (d: Draft, ctx: FoldContext, queue: SettleEnqueue): Result<Draft, EntityError> => {
+  const entry = [...continuationsOf(d.state)].sort(([a], [b]) => asc(a, b))[0];
+  if (entry === undefined) return ok(d);
+  const [peer, c] = entry, child = d.accountReplicas.get(peer as EntityId);
+  if (child === undefined) return invariant(`SETTLEMENT_CONTINUATION_ACCOUNT_MISSING:${peer}`);
+  if (settlePending(child)) return ok(d);
+  const discard = (reason: string): Result<Draft, EntityError> => ok(settleSay({ ...d, state: withContinuations(d.state, mapDelete(continuationsOf(d.state), peer)) }, `Settlement continuation cleared: ${reason.replaceAll("_", " ")}`));
+  const w = child.state.settlement;
+  if (w === undefined) return discard("workspace_missing");
+  return chain(bodyInvariant(canonicalWorkspaceHash(child.state, w)), (hash) => {
+    if (hash !== c.workspaceHash) return discard("workspace_changed");
+    if (w.status === "submitted") return discard("already_submitted");
+    if (w.status !== "ready_to_submit") return ok(d);
+    if (w.executorIsLeft !== isLeft(d.state.id, replicaId(child))) return invariant(`SETTLEMENT_CONTINUATION_EXECUTOR_MISMATCH:${peer}`);
+    const jb = committedJBatch(d.state);
+    if (jb?.sentBatch !== undefined || (jb !== undefined && ogBatchOps(jb.batch) > 0)) return ok(d);
+    if (c.actions.length > 0 || c.broadcast) return invariant("SETTLEMENT_CONTINUATION_J_ACTIONS_NOT_PORTED");
+    return map(settleExecute(d, { counterpartyEntityId: peer as EntityId }, ctx.verify, queue), (x) => ({ ...x, state: withContinuations(x.state, mapDelete(continuationsOf(x.state), peer)) }));
+  });
+};
+const settleQueue = (ctx: FoldContext): SettleEnqueue => (d, peer, tx) => withChild(d.accountReplicas, peer, (child) => map(admitAt(child, [tx], d.state.id, L0_CLOCK, ctx.verify), (admitted) => ({ ...d, ...putChild(d.state, d.accountReplicas, peer, admitted) })));
+/** The committed frames of one accountInput (our frame the peer ACKed, the peer's frame we installed) with their proposer side. */
+const committedSettleFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: AccountFrame | undefined): Result<Draft, EntityError> => {
+  const child = d.accountReplicas.get(peer);
+  if (child === undefined || (own === undefined && received === undefined)) return ok(d);
+  const mine = isLeft(d.state.id, replicaId(child));
+  return settleFollowups(d, peer, [...(own === undefined ? [] : [{ frame: own, proposerIsLeft: mine }]), ...(received === undefined ? [] : [{ frame: received, proposerIsLeft: !mine }])]);
+};
 const htlcFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: { readonly frame: AccountFrame; readonly from: EntityId; readonly to: EntityId; readonly domain: Domain } | undefined, ctx: FoldContext): Result<Draft, EntityError> => {
   const frames: CommittedHtlcFrame[] = [...(own === undefined ? [] : [{ frame: own, viaNewFrame: false }]), ...(received === undefined ? [] : [{ frame: received.frame, viaNewFrame: true }])];
   if (!frames.some(({ frame }) => frame.txs.some((tx) => tx.type === "htlc_lock" || tx.type === "htlc_resolve"))) return ok(d);
@@ -6130,6 +6455,11 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const put = putChild(state, replicas, to, updated);
       return requests.length === 0 ? ok({ ...put, outputs: [] }) : map(admitAt(updated, requests, state.id, L0_CLOCK, ctx.verify), (admitted) => ({ ...putChild(state, replicas, to, admitted), outputs: [wake(state, ctx.timestamp)] }));
     },
+    settle_propose: (x) => settlePropose(skip, x.data, settleQueue(ctx)),
+    settle_update: (x) => settleUpdate(skip, x.data, settleQueue(ctx)),
+    settle_approve: (x) => settleApprove(skip, x.data),
+    settle_execute: (x) => settleExecute(skip, x.data, ctx.verify, settleQueue(ctx)),
+    settle_reject: (x) => settleReject(skip, x.data, settleQueue(ctx)),
     htlcPayment: (x) => chain(validatePreparedHtlcPayment(originView(state, replicas, ctx.timestamp), x, ctx.htlc ?? EMPTY_HTLC_INFRA), (p) => {
       const next = htlcPaymentStep(p, state.paybook ?? EMPTY_PAYBOOK, Number(ctx.timestamp));
       return map(enqueue(p.nextHopEntityId as EntityId, [next.lock], []), (d) => ({ ...d, state: { ...d.state, paybook: next.paybook } }));
@@ -6142,7 +6472,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const before = replicas.get(peer), pendingOwn = before !== undefined && before._tag === "proposed" ? before.candidate.frame : undefined;
       const ownCommitted = (d: Draft): AccountFrame | undefined => { const after = d.accountReplicas.get(peer); return pendingOwn !== undefined && after !== undefined && after.head.height >= pendingOwn.height ? pendingOwn : undefined; };
       return matchBy("kind", x.data, {
-        ack: () => chain(apply(held), (d) => htlcFollowups(d, peer, ownCommitted(d), undefined, ctx)),
+        ack: () => chain(apply(held), (d) => chain(htlcFollowups(d, peer, ownCommitted(d), undefined, ctx), (h) => committedSettleFollowups(h, peer, ownCommitted(d), undefined))),
         // og routes the standalone peer dispute witness through the same accountInput lane; an unknown Account has no genesis for it (og ACCOUNT_GENESIS_FRAME_REQUIRED).
         dispute: () => apply(held),
         // og board-hanko-refresh.ts: the Entity supplies counterpartyCertifiedBoard; the rewrite has no certified board registry, so the Account refuses it (certified_board_missing)
@@ -6153,7 +6483,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
             const pending = d.accountReplicas.get(from), frame = pending !== undefined && pending._tag === "received" ? pending.candidate.frame : undefined;
             return chain(answerFrame(d, from, ctx), (answered) => {
               const after = answered.accountReplicas.get(from), installed = frame !== undefined && after !== undefined && after.head.height >= frame.height;
-              return htlcFollowups(answered, from, ownCommitted(answered), installed ? { frame, from: i.fromEntityId, to: i.toEntityId, domain: i.domain } : undefined, ctx);
+              return chain(htlcFollowups(answered, from, ownCommitted(answered), installed ? { frame, from: i.fromEntityId, to: i.toEntityId, domain: i.domain } : undefined, ctx), (h) => committedSettleFollowups(h, from, ownCommitted(answered), installed ? frame : undefined));
             });
           }),
         }),
@@ -6176,10 +6506,13 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
     return fatalTx(tx, r.error) ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
-    // Accounts that received follow-up work (a gateway's forwarded leg) join after the directly touched ones.
-    const followups = [...folded.draft.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
-    const order = [...new Set([...primed, ...(folded.draft.touched ?? []), ...followups])];
-    return ok({ ...folded, draft: proposeAccounts(folded.draft, order, ctx).draft });
+    // og materializeSettlementContinuation, then drainPostOrderbookAccountWork's settlement approvals, before proposePendingAccountFrames.
+    return chain(chain(materializeContinuation(folded.draft, ctx, settleQueue(ctx)), (d) => materializeSettlements(d, ctx)), (settled) => {
+      // Accounts that received follow-up work (a gateway's forwarded leg) join after the directly touched ones.
+      const followups = [...settled.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
+      const order = [...new Set([...primed, ...(settled.touched ?? []), ...followups])];
+      return ok({ ...folded, draft: { ...proposeAccounts(settled, order, ctx).draft, ...opt("signing", settled.signing) } });
+    });
   }));
 };
 const EMPTY_COLLECTION = { radix: 16, leafCount: 0, root: ZERO_WORD } as const;
@@ -6222,10 +6555,15 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
     ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
   })));
 };
+/** og projectEntityConsensusState: deferredAccountProposals / settlementContinuations are committed as entity collections when present. */
+const settleCollections = (committed: EntityCommitted): Result<EntityCommitted, EntityError> => foldResult(["deferredAccountProposals", "settlementContinuations"] as const, committed, (c, field): Result<EntityCommitted, EntityError> => {
+  const live = c[field];
+  return live instanceof Map ? map(entityCollectionCommitment(live as ReadonlyMap<string, Binary>), (commitment): EntityCommitted => ({ ...c, [field]: commitment as unknown as Binary })) : ok(c);
+});
 /** og computeCanonicalEntityConsensusStateHash over the draft: entityId, height, timestamp, config, accounts and every committed section. */
 export const entityRootOf = (state: EntityState, replicas: Replicas): Result<string, EntityError> =>
   chain(frameNumber(state.height), (height) => chain(frameNumber(state.timestamp), (timestamp) => chain(traverse([...replicas], ([peer, child]) => installedAccount(state.id, peer, child)),
-    (accounts) => chain(state.paybook === undefined ? ok(state.committed) : map(paybookSection(state.paybook), (paybook): EntityCommitted => ({ ...state.committed, paybook })),
+    (accounts) => chain(chain(settleCollections(state.committed), (base) => state.paybook === undefined ? ok(base) : map(paybookSection(state.paybook), (paybook): EntityCommitted => ({ ...base, paybook }))),
       (committed) => entityStateRoot({ config: rootConfig(state), accounts, entityId: state.id, height, timestamp, committed, leaderState: state.leaderState })))));
 /** og computeEntityFrameAuthorityRoot(buildEntityFrameAuthority(state)): config + normalizeAuthorityLeader(leaderState). */
 const authorityRoot = (state: EntityState): Result<string, EntityRootError> => {
@@ -6253,8 +6591,8 @@ const messageHashes = (peer: EntityId, m: AccountPeerInput): readonly HashToSign
   });
 };
 /** og buildEntityHashesToSign: the frame hash first, then the secondary hashes sorted, a duplicate is fatal. */
-const hashesToSignOf = (entityId: EntityId, height: bigint, frameHash: string, outputs: readonly EntityOutput[]): Result<readonly HashToSign[], EntityError> => {
-  const secondary = outputs.flatMap((o) => ("tx" in o ? messageHashes(o.to, o.tx.data) : []));
+const hashesToSignOf = (entityId: EntityId, height: bigint, frameHash: string, outputs: readonly EntityOutput[], signing: readonly HashToSign[] = []): Result<readonly HashToSign[], EntityError> => {
+  const secondary = [...signing, ...outputs.flatMap((o) => ("tx" in o ? messageHashes(o.to, o.tx.data) : []))];
   const hashes = [frameHash, ...secondary.map((h) => h.hash)];
   if (new Set(hashes).size !== hashes.length) return err({ _tag: "secondary_hash_duplicate" });
   return ok([{ hash: frameHash, type: "entityFrame", context: `entity:${entityId.slice(-4)}:frame:${height}` }, ...[...secondary].sort((a, b) => asc(a.hash, b.hash))]);
@@ -6271,7 +6609,7 @@ const buildFrame = (r: EntityEnv, leader: FrameLeader, leaderState: LeaderState,
       entityContext: { version: 1, proposerReplicaId: `${draft.state.id}:${signer}`, entityId: draft.state.id, proposerSignerId: signer, parentFrameHash: parent, height: heightNo, gossipProfiles: infra.gossipProfiles, peerAssertions: infra.peerAssertions, htlc: { version: 1, entries: infra.entries as unknown as readonly Binary[], originated: infra.originated as unknown as readonly Binary[] } },
     };
     return chain(hashEntityFrame({ ...body, hashesToSign: [] }), (frameHash) =>
-      map(hashesToSignOf(draft.state.id, height, frameHash, draft.outputs), (hashesToSign): EntityCandidate => ({ frame: { ...body, hashesToSign }, signatures: new Map(), draft })));
+      map(hashesToSignOf(draft.state.id, height, frameHash, draft.outputs, draft.signing), (hashesToSign): EntityCandidate => ({ frame: { ...body, hashesToSign }, signatures: new Map(), draft })));
   })));
 };
 const frameKey = (tx: EntityTx): string => encodeEntityTx(tx);

@@ -163,3 +163,145 @@ describe("settle-jsubmit: the J submit lifecycle (og entity/tx/handlers/j-batch/
     expect(mint.effects).toEqual([{ _tag: "j_submit", jTx: { type: "mint", entityId: ALICE, data: { entityId: ALICE, tokenId: 1, amount: 7n }, timestamp: 9 } }]);
   });
 });
+
+// ---- og entity/tx/handlers/payments/settle.ts: the settle_* Entity txs on top of the Account settle_transition workspace ----
+import { handleSettleApprove, handleSettleExecute, handleSettlePropose, handleSettleReject, handleSettleUpdate, canAutoApproveWorkspace as ogCanAutoApprove } from "../../core/entity/tx/handlers/payments/settle.ts";
+import { entityCollectionCommitment as ogCollectionCommitment } from "../../core/entity/state/persistent-collection-map.ts";
+import { batchAddSettlement, initJBatch as ogInitJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
+import {
+  applyEntityInput, createEntity, foldTxs, isLeft, mapSet, ownWire, wireOf, workspaceHashOf, zeroDelta, tokenId, canAutoApproveWorkspace, entityCollectionCommitment,
+  type AccountReplica, type EntityTx, type OpenEntity, type SettlementOp, type SettlementWorkspace, type WireAccountTx,
+} from "../xln.ts";
+import { CAROL, NOW, TERMS, aliceAddr, verifiers } from "../xln_run.ts";
+
+const T1 = unwrap(tokenId("1"));
+/** ALICE (1-of-1) with a committed Account to BOB whose token 1 row holds collateral. */
+const settleBase = (): OpenEntity => {
+  const created = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]) }));
+  const open = unwrap(applyEntityInput(created, { kind: "txs", timestamp: NOW, txs: [{ type: "openAccount", data: { targetEntityId: BOB, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig } } as EntityTx] }, { ...verifiers, self: ALICE, signerId: aliceAddr })).replica;
+  if (open._tag !== "open") throw new Error(open._tag);
+  const child = open.accountReplicas.get(BOB)!;
+  const aliceLeft = isLeft(ALICE, child.state.account.id);
+  const account = { ...child.state.account, deltas: new Map([[T1, { ...zeroDelta(T1), collateral: 1_000n, ondelta: aliceLeft ? 600n : 400n }]]) };
+  // an idle Account (og: no pendingFrame): drop the opening proposal so the workspace sits on the base the next frame builds on
+  const funded = { _tag: "open", head: child.head, dispute: child.dispute, mempool: [], state: { ...child.state, account } } as AccountReplica;
+  return { ...open, accountReplicas: mapSet(open.accountReplicas, BOB, funded), state: { ...open.state, accounts: mapSet(open.state.accounts, BOB, account) } };
+};
+const SETTLE_BASE = settleBase();
+const ACCOUNT_ID = SETTLE_BASE.accountReplicas.get(BOB)!.state.account.id;
+const randomOps = (): SettlementOp[] => Array.from({ length: ri(4) }, (): SettlementOp => {
+  const tk = pick([1, 1, 2, 70_000]), amount = pick([0n, 1n, 5n, 50n]);
+  switch (ri(6)) {
+    case 0: return { type: "forgive", tokenId: tk };
+    case 1: return { type: "rawDiff", tokenId: tk, leftDiff: pick([-5n, 0n, 5n]), rightDiff: pick([-5n, 0n, 5n]), collateralDiff: pick([0n, 5n, -5n]), ondeltaDiff: pick([0n, 5n]) };
+    default: return { type: pick(["r2c", "c2r", "r2r"] as const), tokenId: tk, amount };
+  }
+});
+type WsKind = "none" | "unsigned" | "signed" | "submitted" | "corrupt";
+const workspaceOf = (kind: WsKind, ops: readonly SettlementOp[], byLeft: boolean, executorIsLeft: boolean, memo: string | undefined): SettlementWorkspace | undefined => {
+  if (kind === "none") return undefined;
+  const body = { ops, lastModifiedByLeft: byLeft, status: kind === "submitted" ? "submitted" as const : "awaiting_counterparty" as const, revision: 1 + ri(3), createdAt: 1, lastUpdatedAt: 2, executorIsLeft, ...(memo === undefined ? {} : { memo }) };
+  const workspaceHash = kind === "corrupt" ? W("ab") : unwrap(workspaceHashOf(ACCOUNT_ID, body) as any) as string;
+  return { ...body, workspaceHash, ...(kind === "signed" ? { leftHanko: "0x11", settlementHash: W("cd") } : {}) };
+};
+const ogAccountOf = (w: SettlementWorkspace | undefined, pending: boolean): any => ({
+  state: { leftEntity: ACCOUNT_ID.left, rightEntity: ACCOUNT_ID.right, ...(w === undefined ? {} : { settlementWorkspace: structuredClone(w) }) },
+  mempool: pending ? [{ type: "settle_transition", data: { kind: "clear", revision: 1, workspaceHash: W("01") } }] : [],
+});
+const codeOf = (m: string): string => m.split(":")[0]!;
+
+describe("settle-jsubmit: settle_propose / update / approve / reject (og payments/settle.ts)", () => {
+  test("MATCH: 400 random settle_* txs against random workspaces -- same fatal refusal, same queued Account settle_transition, same status events and deferred approval as og", async () => {
+    const counts = { refused: 0, queued: 0, skipped: 0, admission: 0, deferred: 0, materialize: 0 };
+    for (let n = 0; n < 400; n++) {
+      const kind = pick<WsKind>(["none", "unsigned", "unsigned", "signed", "submitted", "corrupt"]), wsOps = kind === "none" ? [] : [{ type: "r2c" as const, tokenId: 1, amount: BigInt(1 + ri(9)) }];
+      const w = workspaceOf(kind, wsOps, rng() < 0.5, rng() < 0.5, pick([undefined, "memo"])), pending = rng() < 0.15;
+      const peer = rng() < 0.08 ? CAROL : BOB, ops = randomOps(), memo = pick([undefined, "m2"]), exec = pick([undefined, true, false]);
+      const txKind = pick(["settle_propose", "settle_update", "settle_approve", "settle_reject"] as const);
+      const hash = w === undefined ? W("02") : pick([w.workspaceHash, w.workspaceHash, W("03"), w.workspaceHash.toUpperCase().replace("0X", "0x")]);
+      const data: any = txKind === "settle_approve" ? { counterpartyEntityId: peer, workspaceHash: hash }
+        : txKind === "settle_reject" ? { counterpartyEntityId: peer, ...(rng() < 0.5 ? { reason: "no" } : {}) }
+        : { counterpartyEntityId: peer, ops, ...(memo === undefined ? {} : { memo }), ...(exec === undefined ? {} : { executorIsLeft: exec }) };
+      const tx = { type: txKind, data } as EntityTx;
+      const child = SETTLE_BASE.accountReplicas.get(BOB)!;
+      const pendingTx: WireAccountTx[] = pending ? [{ type: "settle_transition", kind: "clear", revision: 1, workspaceHash: W("01") } as any] : [];
+      const replicas = mapSet(SETTLE_BASE.accountReplicas, BOB, { ...child, mempool: pendingTx, state: { ...child.state, settlement: w } } as AccountReplica);
+      const og: any = { entityId: ALICE, accounts: new Map([[BOB, ogAccountOf(w, pending)]]) };
+      const handler = { settle_propose: handleSettlePropose, settle_update: handleSettleUpdate, settle_approve: handleSettleApprove, settle_reject: handleSettleReject }[txKind] as any;
+      let ogOut: any, ogErr: string | undefined;
+      try { ogOut = await handler(og, { type: txKind, data: structuredClone(data) }, {}, true); } catch (e) { ogErr = (e as Error).message; }
+      const rw = foldTxs(SETTLE_BASE.state, replicas, [tx], { verify: hankoVerify, timestamp: NOW + 1n });
+      if (ogErr !== undefined) {
+        expect(rw.ok).toBe(false);
+        if (!rw.ok) expect(codeOf((rw.error as any).reason ?? rw.error._tag)).toBe(codeOf(ogErr));
+        counts.refused++;
+        continue;
+      }
+      const ogDeferred = og.deferredAccountProposals === undefined ? [] : [...og.deferredAccountProposals.entries()];
+      if (!rw.ok && rw.error._tag !== "entity_invariant") {
+        // og admits the Account tx into the mempool and refuses it at the Account frame; the rewrite's admitAt trial-folds it and evicts the
+        // only tx of the input (admission timing, ER-15)
+        expect(ogOut.accountTxs.length).toBe(1);
+        counts.admission++;
+        continue;
+      }
+      if (!rw.ok) {
+        // The handler passed, but og's frame then runs drainPostOrderbookAccountWork, which the rewrite's foldTxs runs too:
+        // refreshStaleUncommittedSettlementHankos asserts every queued Account's workspace canonical (the corrupt fixture throws), and
+        // materializeDeferredSettlementApprovals -> buildSettlementHankoDraft throws `SETTLEMENT_SIGNED_HASH_MISMATCH:<stored>:<recomputed>`
+        // for the signed fixture's fake pinned hash.
+        const reason = (rw.error as any).reason as string;
+        if (kind === "corrupt") {
+          expect(pending).toBe(true);
+          expect(reason).toStartWith(`SETTLEMENT_WORKSPACE_HASH_CORRUPTION:${w!.workspaceHash}:`);
+        } else {
+          expect(ogDeferred.length).toBe(1);
+          expect(kind).toBe("signed");
+          expect(reason).toStartWith(`SETTLEMENT_SIGNED_HASH_MISMATCH:${w!.settlementHash}:`);
+        }
+        counts.materialize++;
+        continue;
+      }
+      const folded = unwrap(rw as any) as any;
+      if (folded.evicted.length > 0) {
+        // og admits the upsert into the mempool and refuses it at the Account frame; the rewrite's admitAt trial-folds it (admission timing, ER-15)
+        expect(ogOut.accountTxs.length).toBe(1);
+        counts.admission++;
+        continue;
+      }
+      const d = folded.draft, after = d.accountReplicas.get(BOB)!;
+      const queued = [...after.mempool, ...(after._tag === "proposed" ? after.candidate.frame.txs : [])].filter((t: any) => t.type === "settle_transition" && !pendingTx.includes(t));
+      expect(d.events).toEqual(readEntityFrameEvents(og) as never);
+      const rwDeferred = d.state.committed.deferredAccountProposals;
+      if (ogDeferred.length > 0 && (rwDeferred === undefined || rwDeferred.size === 0)) {
+        // the idle Account's deferred approval was materialized in the same frame: exactly one own hanko transition for og's approved workspace
+        expect(ogOut.accountTxs).toEqual([]);
+        expect(queued.length).toBe(1);
+        expect(queued[0]).toMatchObject({ kind: "hanko", revision: w!.revision, workspaceHash: ogDeferred[0]![1] });
+        counts.materialize++;
+        continue;
+      }
+      expect(queued.map((t: any) => ownWire(wireOf(t)))).toEqual(ogOut.accountTxs.map((a: any) => a.tx));
+      expect(rwDeferred === undefined ? [] : [...rwDeferred]).toEqual(ogDeferred);
+      if (ogDeferred.length > 0) { counts.deferred++; expect(unwrap(entityCollectionCommitment(rwDeferred) as any)).toEqual(ogCollectionCommitment(og.deferredAccountProposals) as never); }
+      if (ogOut.accountTxs.length > 0) counts.queued++; else counts.skipped++;
+    }
+    expect(counts.refused).toBeGreaterThan(100);
+    expect(counts.queued).toBeGreaterThan(20);
+    expect(counts.skipped).toBeGreaterThan(5);
+    expect(counts.deferred + counts.materialize).toBeGreaterThan(3);
+    expect(counts.admission).toBeLessThan(counts.queued);
+  }, 60_000);
+
+  test("MATCH: 300 random workspaces auto-approve exactly when og canAutoApproveWorkspace does (no forgiveness / rawDiff; own reserve and collateral share never shrink)", () => {
+    let yes = 0;
+    for (let n = 0; n < 300; n++) {
+      const ops = randomOps().filter((op) => op.tokenId !== 70_000), byLeft = rng() < 0.5, iAmLeft = rng() < 0.5;
+      let ogRes: boolean;
+      try { ogRes = ogCanAutoApprove({ ops, lastModifiedByLeft: byLeft } as any, iAmLeft); } catch { ogRes = false; }
+      expect(canAutoApproveWorkspace({ ops, lastModifiedByLeft: byLeft }, iAmLeft)).toBe(ogRes);
+      if (ogRes) yes++;
+    }
+    expect(yes).toBeGreaterThan(20);
+  });
+});
