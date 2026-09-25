@@ -81,6 +81,7 @@ export const AccountTransition = {
   freeze: { open: ["preparing", "disputed"], proposed: ["preparing", "disputed"], received: ["preparing", "disputed"], preparing: ["preparing", "disputed"], disputed: ["disputed"] },
   dispute: { open: ["open"], proposed: ["proposed"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
   resume: { preparing: ["open"] },
+  external_finality: { open: ["disputed"], proposed: ["disputed"], received: ["disputed"], preparing: ["disputed"], disputed: ["disputed"] },
 } as const;
 export const EntityTransition = {
   txs: { open: ["open", "proposed"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
@@ -2047,7 +2048,22 @@ export type AccountInput =
   | ({ readonly kind: "ack" } & AccountAck & AccountEnvelope)
   | ({ readonly kind: "ack_frame"; readonly ack: AccountAck | null; readonly frame: AccountFrame; readonly frameHanko: Hanko; readonly disputeHanko?: DisputeHanko | undefined } & AccountEnvelope)
   /** og `kind: 'dispute'`: a standalone peer dispute-Hanko witness, sequenced by its proof nonce rather than a frame height. */
-  | ({ readonly kind: "dispute"; readonly disputeHanko: DisputeHanko } & AccountEnvelope);
+  | ({ readonly kind: "dispute"; readonly disputeHanko: DisputeHanko } & AccountEnvelope)
+  /** og AccountFinality: an authenticated Depository dispute event routed by the owning Entity; applied unilaterally, never ACKed. */
+  | ({ readonly kind: "external_finality"; readonly finality: AccountFinality } & AccountEnvelope);
+/** og types/account.ts AccountFinality['finality']. */
+export type DisputeStartedFinality = {
+  readonly kind: "dispute_started"; readonly starterEntityId: string; readonly initialProofbodyHash: string; readonly initialNonce: number; readonly initialProposerIsLeft: boolean;
+  readonly disputeTimeout: number; readonly disputeStartTimestamp: number; readonly leftResponseSeconds: number; readonly rightResponseSeconds: number; readonly jNonce: number;
+  readonly starterInitialArguments: string; readonly starterCounterArguments: string; readonly starterCounterProofCommitment: string; readonly observedBlockNumber: number; readonly batchNonce?: number | undefined;
+};
+export type AccountFinality = DisputeStartedFinality | { readonly kind: "dispute_finalized"; readonly finalizedJNonce: number; readonly finalizedTokenIds: readonly number[] };
+/** og AccountReplica.activeDispute as applyAccountDisputeStarted writes it (field order is og's). */
+export type ActiveDispute = {
+  readonly startedByLeft: boolean; readonly initialProofbodyHash: string; readonly initialNonce: number; readonly initialProposerIsLeft: boolean; readonly disputeTimeout: number; readonly disputeStartTimestamp: number;
+  readonly jNonce: number; readonly starterInitialArguments: string; readonly starterCounterArguments: string; readonly starterCounterProofCommitment: string; readonly observedOnChain: true; readonly observedBlockNumber: number;
+  readonly batchNonce?: number | undefined; readonly finalizeQueued: false;
+};
 export type AccountMessage = Extract<AccountInput, { readonly kind: "ack" | "ack_frame" }>;
 /** Every peer-originated input (og routes `dispute` through the same Entity accountInput lane). */
 export type AccountPeerInput = Extract<AccountInput, { readonly kind: "ack" | "ack_frame" | "dispute" }>;
@@ -2069,7 +2085,8 @@ export interface ReceivedAccount extends Tagged<"received", Held & { disputeHank
 /** og `dispute_preparing` keeps deferred J claims and dispute evidence queued (dispute/policy.ts); `disputed` keeps nothing. */
 export interface PreparingAccount extends Tagged<"preparing", Frozen & { mempool: readonly WireAccountTx[]; unready: StartRefusal }> {}
 /** og admits local txs into a disputed Account's mempool too (local-tx-admission.ts has no status gate); nothing ever proposes them. */
-export interface DisputedAccount extends Tagged<"disputed", Frozen & { mempool: readonly WireAccountTx[]; start: DisputeStart }> {}
+/** `start`: our own dispute start, when we froze with a complete witness. `active`: og activeDispute, the on-chain dispute observed through external finality. */
+export interface DisputedAccount extends Tagged<"disputed", Frozen & { mempool: readonly WireAccountTx[]; start?: DisputeStart | undefined; active?: ActiveDispute | undefined }> {}
 export type FrozenAccount = PreparingAccount | DisputedAccount;
 export type AccountReplica = OpenAccount | ProposedAccount | ReceivedAccount | FrozenAccount;
 export const certifies = (verify: Verify, digest: string, hanko: Hanko, entity: EntityId): Result<void, Tagged<"invalid_hanko", { entity: EntityId }>> => guard(verify(digest, hanko, entity), { _tag: "invalid_hanko", entity });
@@ -2091,6 +2108,7 @@ export interface RejectedAfterAck extends Tagged<"rejected_after_ack", { cause: 
 export type AccountReplicaError =
   | BodyError | DisputeError | EnvelopeError | DisputeRequired | RejectedAfterAck
   | Tagged<"proposal_selection", { reason: "empty" | "too_large" | "not_in_mempool" }>
+  | Tagged<"finality", { reason: "initial_nonce" | "j_nonce" | "observed_block" | "timeout" | "clock_mismatch" | "finalized_nonce" | "token_id" }>
   | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch" | "frame_hash_mismatch" | "state_root_mismatch" | "ack_unmatched" | "not_preparing">
   | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }> | DeadlineViolation["error"]
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
@@ -2454,6 +2472,40 @@ export const ack = accountVerb("ack", { open: ackOpen, proposed: ackProposed, re
 export const ackFrame = accountVerb("ack_frame", { open: ackFrameOpen, proposed: ackFrameProposed, received: ackFrameReceived, preparing: dropFrozen, disputed: dropFrozen });
 export const freezeAccount = accountVerb("freeze", { open: disputeLive, proposed: disputeLive, received: disputeLive, preparing: disputePreparing, disputed: disputeDisputed });
 export const dispute = accountVerb("dispute", { open: peerWitness, proposed: peerWitness, received: peerWitness, preparing: dropFrozen, disputed: dropFrozen });
+const finalityErr = (reason: Of<AccountReplicaError, "finality">["reason"]): Result<never, AccountReplicaError> => err({ _tag: "finality", reason });
+const safeNonce = (n: number): boolean => Number.isSafeInteger(n) && n >= 0;
+/** og j-finality.ts applyAccountDisputeStarted: validate nonces and the dispute clock, freeze keeping evidence, record activeDispute, raise jNonce. */
+const disputeStarted = (r: AccountReplica, f: DisputeStartedFinality): Verb<DisputedAccount> => {
+  if (!safeNonce(f.initialNonce)) return finalityErr("initial_nonce");
+  if (!safeNonce(f.jNonce)) return finalityErr("j_nonce");
+  if (!safeNonce(f.observedBlockNumber)) return finalityErr("observed_block");
+  if (!Number.isSafeInteger(f.disputeTimeout) || !Number.isSafeInteger(f.disputeStartTimestamp) || f.disputeStartTimestamp <= 0 || f.disputeTimeout < f.disputeStartTimestamp) return finalityErr("timeout");
+  const clock = r.state.terms.disputeConfig;
+  if (f.leftResponseSeconds !== clock.leftResponseSeconds || f.rightResponseSeconds !== clock.rightResponseSeconds || f.disputeTimeout !== f.disputeStartTimestamp + f.leftResponseSeconds + f.rightResponseSeconds) return finalityErr("clock_mismatch");
+  const id = replicaId(r), starter = f.starterEntityId.toLowerCase();
+  const active: ActiveDispute = {
+    startedByLeft: starter === id.left.toLowerCase(), initialProofbodyHash: f.initialProofbodyHash, initialNonce: f.initialNonce, initialProposerIsLeft: f.initialProposerIsLeft,
+    disputeTimeout: f.disputeTimeout, disputeStartTimestamp: f.disputeStartTimestamp, jNonce: f.jNonce, starterInitialArguments: f.starterInitialArguments, starterCounterArguments: f.starterCounterArguments,
+    starterCounterProofCommitment: f.starterCounterProofCommitment, observedOnChain: true, observedBlockNumber: f.observedBlockNumber, ...opt("batchNonce", f.batchNonce), finalizeQueued: false,
+  };
+  // og sets status 'disputed' before freezeAccountForDispute(account, true): deferred claims are dropped, dispute evidence (queued or in our pending frame) is kept.
+  const { head, dispute: witnesses, acknowledged } = r, evidence = r._tag === "preparing" || r._tag === "disputed" ? r.evidence : undefined, start = r._tag === "disputed" ? r.start : undefined;
+  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state: { ...r.state, jNonce: Math.max(r.state.jNonce, f.jNonce) }, head, dispute: witnesses, acknowledged, evidence, mempool: retainedThroughFreeze(r, isDisputeEvidence), ...opt("start", start), active }));
+};
+/** og j-finality.ts applyAccountDisputeFinality: the winning proof's nonce becomes jNonce; off-chain economics, holds and encumbrances are retired; the peer witness tuple is dropped. */
+const disputeFinalized = (r: AccountReplica, f: Extract<AccountFinality, { kind: "dispute_finalized" }>): Verb<DisputedAccount> => {
+  if (!safeNonce(f.finalizedJNonce)) return finalityErr("finalized_nonce");
+  if (!f.finalizedTokenIds.every((t) => Number.isSafeInteger(t) && t >= 0)) return finalityErr("token_id");
+  const finalized = new Set(f.finalizedTokenIds.map((t) => String(t)));
+  const deltas = new Map([...r.state.account.deltas].map(([tk, d]): readonly [TokenId, Delta] => [tk, { ...d, ...(finalized.has(String(tk)) ? { collateral: 0n, ondelta: 0n } : {}), offdelta: 0n }]));
+  const state: AccountBody = { ...r.state, settlement: undefined, jNonce: f.finalizedJNonce, account: { ...r.state.account, deltas }, locks: new Map(), offers: new Map() };
+  const { current, nextProofNonce } = r.dispute, evidence = r._tag === "preparing" || r._tag === "disputed" ? r.evidence : undefined, start = r._tag === "disputed" ? r.start : undefined;
+  const witnesses: DisputeWitnesses = { ...opt("current", current), nextProofNonce: nextProofNonce <= f.finalizedJNonce ? f.finalizedJNonce + 1 : nextProofNonce };
+  return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state, head: r.head, dispute: witnesses, acknowledged: r.acknowledged, evidence, mempool: [], ...opt("start", start) }));
+};
+export const applyFinality = (r: AccountReplica, input: AccountInputFor<"external_finality">): Verb<DisputedAccount> =>
+  input.finality.kind === "dispute_started" ? disputeStarted(r, input.finality) : disputeFinalized(r, input.finality);
+export const externalFinality = accountVerb("external_finality", { open: applyFinality, proposed: applyFinality, received: applyFinality, preparing: applyFinality, disputed: applyFinality });
 export const resume = accountVerb("resume", { open: { _tag: "not_preparing" }, proposed: { _tag: "not_preparing" }, received: { _tag: "not_preparing" }, preparing: resumePreparing, disputed: frozenError("disputed") });
 
 
@@ -2491,6 +2543,7 @@ const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountCont
 export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => chain(accountContext(r, ctx), (c) => matchBy("kind", input, {
   propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c), resume: (i) => resume(r, i, c),
   dispute: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => dispute(r, i, { ...c, from: sender })),
+  external_finality: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), () => externalFinality(r, i, c)),
   ack: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ack(r, i, { ...c, delivery: sender === c.party.self ? { _tag: "local" } : { _tag: "received", from: sender } })),
   ack_frame: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => ackFrame(r, i, { ...c, now: ctx.now, finalizedJHeight: ctx.finalizedJHeight ?? r.state.finalizedJHeight, from: sender })),
 }));
@@ -2498,6 +2551,7 @@ export const applyDelivered = (r: AccountReplica, input: AccountInput, delivery:
   chain(matchBy("kind", input, {
     propose: (): Result<void, AccountReplicaError> => localOnly(delivery),
     freeze: (): Result<void, AccountReplicaError> => localOnly(delivery), resume: (): Result<void, AccountReplicaError> => localOnly(delivery),
+    external_finality: (): Result<void, AccountReplicaError> => localOnly(delivery),
     dispute: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
     ack: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
     ack_frame: (m): Result<void, AccountReplicaError> => deliveredBy(m, ctx.self, delivery),
@@ -3051,7 +3105,7 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
   return chain(linked, (link): Result<EntityRootAccount, EntityError> => chain(mapErr(committedView(body), (): EntityError => ({ _tag: "account_envelope", target: peer })), (state): Result<EntityRootAccount, EntityError> => ok({
     fromEntity: self, toEntity: peer, status, currentHeight: link.height, nextProofNonce: child.dispute.nextProofNonce, currentFrameHash: link.frame,
     pendingWithdrawals: ZERO_WORD, policyRoot: ZERO_WORD, submittedAtByTokenRoot: ZERO_WORD, state,
-    committed: { ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute) },
+    committed: { ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active) : {}) },
     ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
   })));
 };
@@ -3403,10 +3457,10 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
 
   receipt: (i) => ok(step({ ...host, outbox: host.outbox.filter((e) => e.id !== i.id) })),
 });
-type DisputeRecord = { readonly phase: "preparing"; readonly evidence: FrameEvidence | undefined; readonly unready: StartRefusal } | { readonly phase: "disputed"; readonly evidence: FrameEvidence | undefined; readonly start: DisputeStart };
+type DisputeRecord = { readonly phase: "preparing"; readonly evidence: FrameEvidence | undefined; readonly unready: StartRefusal } | { readonly phase: "disputed"; readonly evidence: FrameEvidence | undefined; readonly start?: DisputeStart | undefined; readonly active?: ActiveDispute | undefined };
 const disputeRecord = (a: AccountReplica): DisputeRecord | undefined => match(a, {
   open: () => undefined, proposed: () => undefined, received: () => undefined,
-  preparing: ({ evidence, unready }) => ({ phase: "preparing", evidence, unready }), disputed: ({ evidence, start }) => ({ phase: "disputed", evidence, start }),
+  preparing: ({ evidence, unready }) => ({ phase: "preparing", evidence, unready }), disputed: ({ evidence, start, active }) => ({ phase: "disputed", evidence, ...opt("start", start), ...opt("active", active) }),
 });
 export const hostRoot = (h: Host): HostRoot => keccakUtf8(canon({ account: accountSnapshot(h.account.state), dispute: disputeRecord(h.account), pool: h.pool, j: h.j, ladder: h.ladder, outbox: h.outbox.map((e) => e.id) })) as HostRoot;
 export const hashFrame = (record: RuntimeFrameRecord): RuntimeFrameHash => keccakUtf8(canon(record)) as RuntimeFrameHash;

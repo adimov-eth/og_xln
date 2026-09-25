@@ -25,6 +25,8 @@ import { handleJEventClaim } from "../../core/account/tx/handlers/j-events/claim
 import { prepareAccountJClaimTx } from "../../core/account/j-claims/j-claim-transition.ts";
 import { createAccountJClaimSession } from "../../core/account/j-claims/j-claim-session.ts";
 import { createEmptyAccountJClaimAccumulator } from "../../core/account/j-claims/j-claim-accumulator.ts";
+import { applyAccountDisputeStarted, applyAccountDisputeFinality } from "../../core/account/settlement/j-finality.ts";
+import { computeAccountStateRoot } from "../../core/account/commitment/state-root.ts";
 import {
   accountId,
   accountTerms,
@@ -47,6 +49,7 @@ import {
   setCreditLimit,
   zeroDelta,
   MAX_FILL,
+  applyAccountInput,
   genesisReplica,
   genesisWitnesses,
   previewAccountProposal,
@@ -1020,5 +1023,75 @@ describe("account-tx: settlement + j_event_claim", () => {
     // og equivocation: a held proof at the same nonce with a different body refuses.
     const clash = { hanko: "0x09", hash: word("73"), proofBodyHash: word("74"), proofNonce: 2, proposerIsLeft: true };
     expect(promoteSettled({ nextProofNonce: 3, current: clash }, first, second, false)).toMatchObject({ ok: false, error: { _tag: "dispute_hanko" } });
+  });
+});
+
+describe("account-tx: external finality (og settlement/j-finality.ts)", () => {
+  const DEPO = `0x${"ab".repeat(20)}`;
+  const raw = { domain: { chainId: 1, depositoryAddress: DEPO }, watchSeed: word("44"), disputeConfig: { leftResponseSeconds: 1, rightResponseSeconds: 1 } };
+  const pair = () => unwrap(accountId(unwrap(entityId(A) as any), unwrap(entityId(B) as any)) as any) as any;
+  const env = { fromEntityId: A, toEntityId: B, domain: raw.domain, disputeConfig: raw.disputeConfig };
+  const door = { verify: () => true, self: A as any, now: 10n };
+  const started = (over: Record<string, unknown> = {}) => ({ kind: "dispute_started", starterEntityId: B, initialProofbodyHash: word("5a"), initialNonce: 2, initialProposerIsLeft: false, disputeTimeout: 1_002, disputeStartTimestamp: 1_000,
+    leftResponseSeconds: 1, rightResponseSeconds: 1, jNonce: 3, starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: word("00"), observedBlockNumber: 9, batchNonce: 4, ...over });
+  const cp = { hanko: "0x0c", hash: word("7c"), proofBodyHash: word("7d"), proofNonce: 2, proposerIsLeft: false }, cur = { hanko: "0x0a", hash: word("7a"), proofBodyHash: word("7b"), proofNonce: 1, proposerIsLeft: true };
+  /** A body with offdelta, collateral (finalized via a J claim at nonce 1) and an open HTLC lock, so every og reconcile branch is exercised. */
+  const seeded = () => {
+    let { body, ctx } = open();
+    body = unwrap(apply(body, { type: "payment", tokenId: "1", amount: 3n }, ctx)).state;
+    for (const byLeft of [true, false]) body = unwrap(apply(body, { type: "j_event_claim", jHeight: 4n, jBlockHash: word("04"), observedAt: 1n, events: [{ left: A, right: B, nonce: 1n, tokens: [{ tokenId: 1n, leftReserve: 0n, rightReserve: 0n, collateral: 9n, ondelta: 2n }] }] }, { ...ctx, byLeft })).state;
+    body = unwrap(apply(body, rwLock(secretOf(9)), ctx)).state;
+    return body;
+  };
+  const ogSide = (body: AccountBody) => {
+    const h = ogHarness(body);
+    Object.assign(h.replica(), { currentDisputeProofHanko: cur.hanko, currentDisputeHash: cur.hash, currentDisputeProofBodyHash: cur.proofBodyHash, currentDisputeProofNonce: cur.proofNonce, currentDisputeProofProposerIsLeft: cur.proposerIsLeft,
+      counterpartyDisputeProofHanko: cp.hanko, counterpartyDisputeHash: cp.hash, counterpartyDisputeProofBodyHash: cp.proofBodyHash, counterpartyDisputeProofNonce: cp.proofNonce, counterpartyDisputeProofProposerIsLeft: cp.proposerIsLeft,
+      mempool: [{ type: "set_credit_limit", data: { tokenId: 1, amount: 5n } }, { type: "settle_transition", data: { kind: "clear", revision: 1, workspaceHash: word("61") } }] });
+    h.replica().proofHeader.nextProofNonce = 3;
+    return h;
+  };
+  const rwSide = (body: AccountBody) => ({ ...unwrap(genesisReplica(pair(), raw as any) as any) as any, state: body, dispute: { nextProofNonce: 3, current: cur, counterparty: cp },
+    mempool: [{ type: "set_credit_limit", tokenId: "1", limit: 5n }, { type: "settle_transition", kind: "clear", revision: 1, workspaceHash: word("61") }] });
+
+  test("MATCH (AC-11): dispute_started freezes, records og's activeDispute, raises jNonce; bad nonces/clock refuse in both", async () => {
+    const body = seeded();
+    for (const bad of [{ initialNonce: -1 }, { jNonce: 1.5 }, { observedBlockNumber: -2 }, { disputeStartTimestamp: 0 }, { disputeTimeout: 999 }, { disputeTimeout: 1_003 }, { leftResponseSeconds: 2, disputeTimeout: 1_003 }]) {
+      const og = ogSide(body);
+      expect(() => applyAccountDisputeStarted(og.replica(), started(bad) as any)).toThrow();
+      expect(applyAccountInput(rwSide(body), { kind: "external_finality", ...env, finality: started(bad) } as any, door).ok).toBe(false);
+    }
+    const og = ogSide(body);
+    applyAccountDisputeStarted(og.replica(), started() as any);
+    const o = { root: computeAccountStateRoot(og.replica().state) };
+    const r: any = unwrap(applyAccountInput(rwSide(body), { kind: "external_finality", ...env, finality: started() } as any, door) as any).replica;
+    const ogr: any = og.replica();
+    expect([r._tag, ogr.status]).toEqual(["disputed", "disputed"]);
+    expect(r.active).toEqual(ogr.activeDispute);
+    expect(Object.keys(r.active)).toEqual(Object.keys(ogr.activeDispute));
+    expect(r.state.jNonce).toBe(ogr.state.jNonce);
+    expect(unwrap(committed(r.state) as any).root).toBe(o.root);
+    expect(r.mempool.length).toBe(ogr.mempool.length);
+    // A lower on-chain jNonce never lowers ours (og Math.max).
+    const low: any = unwrap(applyAccountInput(r, { kind: "external_finality", ...env, finality: started({ jNonce: 0 }) } as any, door) as any).replica;
+    expect(low.state.jNonce).toBe(3);
+  });
+
+  test("MATCH (AC-11): dispute_finalized sets jNonce, zeroes off-chain economics and finalized rows, clears encumbrances, the mempool and the peer witness", async () => {
+    const body = seeded();
+    for (const tokens of [[1], [0, 1], []]) {
+      const og = ogSide(body);
+      applyAccountDisputeFinality(og.replica(), 6, tokens);
+      const o = { root: computeAccountStateRoot(og.replica().state) };
+      const r: any = unwrap(applyAccountInput(rwSide(body), { kind: "external_finality", ...env, finality: { kind: "dispute_finalized", finalizedJNonce: 6, finalizedTokenIds: tokens } } as any, door) as any).replica;
+      const ogr: any = og.replica();
+      expect([r._tag, ogr.status]).toEqual(["disputed", "disputed"]);
+      expect(unwrap(committed(r.state) as any).root).toBe(o.root);
+      expect([r.state.jNonce, r.dispute.nextProofNonce, r.mempool.length]).toEqual([ogr.state.jNonce, ogr.proofHeader.nextProofNonce, ogr.mempool.length]);
+      expect(r.dispute.counterparty).toBeUndefined();
+      expect(ogr.counterpartyDisputeProofHanko).toBeUndefined();
+      expect(r.dispute.current).toEqual({ hanko: ogr.currentDisputeProofHanko, hash: ogr.currentDisputeHash, proofBodyHash: ogr.currentDisputeProofBodyHash, proofNonce: ogr.currentDisputeProofNonce, proposerIsLeft: ogr.currentDisputeProofProposerIsLeft });
+      expect(r.active).toBeUndefined();
+    }
   });
 });

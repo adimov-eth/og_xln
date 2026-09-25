@@ -17,7 +17,7 @@ import { computeCanonicalEntityConsensusStateHash, computeEntityAccountValueHash
 import { PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
 import { replaceLocalDisputeDraft, storeCounterpartyDisputeHanko } from "../../core/account/consensus/dispute/hanko.ts";
-import { ALICE, BOB, ackInput, genesisAB, hankoVerify, offerOf, proposeInput, NOW } from "../xln_run.ts";
+import { ALICE, BOB, ackInput, envelopeAB, genesisAB, hankoVerify, offerOf, proposeInput, NOW } from "../xln_run.ts";
 import { createAccountJClaimRecord, EMPTY_ACCOUNT_J_CLAIM_ROOT } from "../../core/account/j-claims/j-claim-codec.ts";
 import { applyAccountJClaimInsert, createEmptyAccountJClaimAccumulator } from "../../core/account/j-claims/j-claim-accumulator.ts";
 import { createAccountJClaimProof } from "../../core/account/j-claims/j-claim-proof.ts";
@@ -677,7 +677,7 @@ describe("entity account leaf, runtime side (H7)", () => {
     const acked = run(received, ackInput(received, BOB), BOB);
     const alice: any = run(proposed, acked.outputs.find((o: any) => o.kind === "ack"), ALICE).replica, bob: any = acked.replica;
     const leafRoot = (self: any, peer: any, child: any) => unwrap(entityStateRoot({ config: CONFIG, accounts: [unwrap(installedAccount(self, peer, child) as any)] }));
-    const ogRoot = (self: string, peer: string, child: any) => {
+    const ogRoot = (self: string, peer: string, child: any, patch: Record<string, unknown> = {}) => {
       const view: any = unwrap(committedView(child.state) as any), localIsLeft = self === view.leftEntity;
       const ogRep: any = ogReplica(self, peer, { state: toOgState(view), currentHeight: Number(child.head.height), proofHeader: { fromEntity: self, toEntity: peer, nextProofNonce: child.dispute.nextProofNonce },
         currentFrame: { stateHash: child.head._tag === "genesis" ? "" : child.head.prevFrameHash } });
@@ -685,6 +685,7 @@ describe("entity account leaf, runtime side (H7)", () => {
       const cur = child.dispute.current, cp = child.dispute.counterparty;
       if (cur) replaceLocalDisputeDraft(ogRep, { hash: cur.hash, nonce: cur.proofNonce, proofBodyHash: cur.proofBodyHash, proposerIsLeft: cur.proposerIsLeft });
       if (cp) storeCounterpartyDisputeHanko(ogRep, { hanko: cp.hanko, nonce: cp.proofNonce, hash: cp.hash, proofBodyHash: cp.proofBodyHash, proposerIsLeft: cp.proposerIsLeft });
+      Object.assign(ogRep, patch);
       return computeCanonicalEntityConsensusStateHash({ config: CONFIG, accounts: ogAccounts(self, [[peer, ogRep]]), paybook: { entries: new Map(), feesEarned: 0n } } as any);
     };
     expect(leafRoot(ALICE, BOB, genesisAB())).toBe(ogRoot(ALICE, BOB, genesisAB()));
@@ -692,6 +693,13 @@ describe("entity account leaf, runtime side (H7)", () => {
     expect(leafRoot(ALICE, BOB, alice)).toBe(ogRoot(ALICE, BOB, alice));
     expect(leafRoot(BOB, ALICE, bob)).toBe(ogRoot(BOB, ALICE, bob));
     expect(leafRoot(ALICE, BOB, alice)).not.toBe(leafRoot(ALICE, BOB, { ...alice, dispute: { nextProofNonce: alice.dispute.nextProofNonce } }));
+    // og applyAccountDisputeStarted: the disputed replica commits status and the activeDispute record in the leaf.
+    const finality = { kind: "dispute_started", starterEntityId: BOB, initialProofbodyHash: W("5a"), initialNonce: 1, initialProposerIsLeft: true, disputeTimeout: 1_000 + 86_400 + 3_600, disputeStartTimestamp: 1_000,
+      leftResponseSeconds: 86_400, rightResponseSeconds: 3_600, jNonce: 0, starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: W("00"), observedBlockNumber: 7 };
+    const disputed: any = run(alice, { kind: "external_finality", ...envelopeAB(BOB), finality }, ALICE).replica;
+    expect(disputed._tag).toBe("disputed");
+    expect(leafRoot(ALICE, BOB, disputed)).toBe(ogRoot(ALICE, BOB, disputed, { status: "disputed", activeDispute: disputed.active }));
+    expect(leafRoot(ALICE, BOB, disputed)).not.toBe(ogRoot(ALICE, BOB, disputed, { status: "disputed" }));
   });
 });
 
