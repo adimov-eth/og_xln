@@ -4255,7 +4255,19 @@ export type EntityState = {
   readonly leaderState?: LeaderState | undefined;
   /** og EntityState.paybook: absent until the first HTLC entry; the root then commits it instead of `committed.paybook`. */
   readonly paybook?: Paybook | undefined;
+  /** og EntityState.orderbookExt: present only on a hub that ran initOrderbookExt; the root commits it through orderbookSection. */
+  readonly orderbookExt?: OrderbookExt | undefined;
 };
+/** og orderbook/types.ts SpreadDistribution / HubProfile / SwapPairDimensions. */
+export type SpreadDistribution = { readonly makerBps: number; readonly takerBps: number; readonly hubBps: number; readonly makerReferrerBps: number; readonly takerReferrerBps: number };
+export type HubProfile = { readonly entityId: string; readonly name: string; readonly spreadDistribution: SpreadDistribution; readonly referenceTokenId: number; readonly usdQuoteAuthorityEntityId: string; readonly minTradeSize: bigint; readonly supportedPairs: readonly string[] };
+export type PairDimensions = { readonly baseTokenDecimals: number; readonly quoteTokenDecimals: number };
+/** og OrderbookExtState without `orderPairs`, which og derives from `books` and never commits. `referrals` is never written by og. */
+export type OrderbookExt = { readonly books: ReadonlyMap<string, Book>; readonly pairDimensions: ReadonlyMap<string, PairDimensions>; readonly referrals: ReadonlyMap<string, Binary>; readonly hubProfile: HubProfile };
+/** og state-root.ts projectOrderbookConsensusState: each book by its commitment hash, then pairDimensions, hubProfile and referrals. */
+export const orderbookSection = (x: OrderbookExt): Binary => ({
+  books: new Map([...x.books].map(([pairId, book]) => [pairId, bookCommitmentHash(book)])), pairDimensions: new Map(x.pairDimensions), hubProfile: x.hubProfile, referrals: new Map(x.referrals),
+}) as unknown as Binary;
 /** og EntityLeaderTimeoutVoteBody (leader/index.ts buildEntityLeaderVoteBody). */
 export type LeaderVoteBody = { readonly entityId: string; readonly targetHeight: number; readonly previousFrameHash: string; readonly fromView: number; readonly toView: number; readonly previousLeaderId: string; readonly nextLeaderId: string };
 /** og vote.preparedFrame: the voter's exact locked frame with every precommit bundle it holds (og collectedSigs). */
@@ -4291,6 +4303,8 @@ export type EntityTx =
   | { readonly type: "htlcPayment"; readonly data: HtlcPaymentData }
   /** og proposeAccountsNow (handlers/account/propose-accounts-now.ts): the active leader asks its Entity to re-send the retained proposals it still owes these peers. */
   | { readonly type: "proposeAccountsNow"; readonly data: { readonly version: number; readonly proposerSignerId: string; readonly counterparties: readonly string[] } }
+  /** og initOrderbookExt (system/basic.ts): make this Entity a matcher with an empty book set. */
+  | { readonly type: "initOrderbookExt"; readonly data: { readonly name: string; readonly spreadDistribution: SpreadDistribution; readonly referenceTokenId: number; readonly usdQuoteAuthorityEntityId: string; readonly minTradeSize: bigint; readonly supportedPairs: readonly string[] } }
   | SwapRequestEntityTx
   | LendingEntityTx;
 /** og types/entity-tx.ts placeSwapOffer / proposeCancelSwap (payments/swap-requests.ts): one swap Account tx on the hub Account. */
@@ -4381,6 +4395,7 @@ export const encodeEntityState = (s: EntityState): string => canon({
   quorum: match(s.quorum, { teaching: (q) => ({ threshold: q.threshold, members: q.members }), board: (q) => ({ board: encodeBoardHash({ board: q.board }), entityId: q.entityId }) }),
   jurisdiction: s.jurisdiction, accounts: new Map([...s.accounts].map(([peer, a]) => [peer, hashAccountState(a)])),
   height: s.height, timestamp: s.timestamp, jurisdictionConfig: s.jurisdictionConfig, committed: s.committed, leaderState: s.leaderState, paybook: s.paybook,
+  orderbookExt: s.orderbookExt === undefined ? undefined : orderbookSection(s.orderbookExt),
 } satisfies Record<keyof EntityState, unknown>);
 export const hashEntityState = (s: EntityState): EntityStateHash => keccakUtf8(encodeEntityState(s)) as EntityStateHash;
 const HEX_EXT = 0x48;
@@ -4916,7 +4931,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   requestCollateral: (x) => x.data.counterpartyEntityId, placeSwapOffer: (x) => x.data.counterpartyEntityId, proposeCancelSwap: (x) => x.data.counterpartyEntityId, setRebalancePolicy: (x) => x.data.counterpartyEntityId, setHubConfig: () => self, prepareDispute: (x) => x.data.counterpartyEntityId, disputeStart: (x) => x.data.counterpartyEntityId, chat: () => self, chatMessage: () => self, "profile-update": () => self, entityCommand: () => self, propose: () => self, vote: () => self,
   lendingOffer: (x) => lower(x.data.hubEntityId) as EntityId, lendingBorrow: (x) => lower(x.data.hubEntityId) as EntityId,
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
-  htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId, proposeAccountsNow: () => self,
+  htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId, proposeAccountsNow: () => self, initOrderbookExt: () => self,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -4942,6 +4957,20 @@ const forwardPayment = (d: Draft, f: Of<Effect, "direct_payment_forward">): Resu
   return map(admitAt(child, [leg], self, L0_CLOCK), (admitted) => ({ ...putChild(d.state, d.accountReplicas, next, admitted), outputs: d.outputs }));
 };
 const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
+/**
+ * og handleInitOrderbookExtEntityTx: an existing extension and a spread that does not sum to 10000 bps are silent no-ops;
+ * a USD quote authority that is not a lowercase 32-byte id halts (ORDERBOOK_USD_QUOTE_AUTHORITY_INVALID).
+ */
+const initOrderbookExt = (state: EntityState, d: Extract<EntityTx, { readonly type: "initOrderbookExt" }>["data"]): Result<OrderbookExt | undefined, EntityError> => {
+  if (state.orderbookExt !== undefined) return ok(state.orderbookExt);
+  const s = d.spreadDistribution;
+  if (s.makerBps + s.takerBps + s.hubBps + s.makerReferrerBps + s.takerReferrerBps !== 10_000) return ok(undefined);
+  const usdQuoteAuthorityEntityId = String(d.usdQuoteAuthorityEntityId || "").toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(usdQuoteAuthorityEntityId)) return invariant(`ORDERBOOK_USD_QUOTE_AUTHORITY_INVALID:${usdQuoteAuthorityEntityId}`);
+  return ok({ books: new Map(), pairDimensions: new Map(), referrals: new Map(), hubProfile: {
+    entityId: state.id, name: d.name, spreadDistribution: s, referenceTokenId: d.referenceTokenId, usdQuoteAuthorityEntityId, minTradeSize: d.minTradeSize, supportedPairs: [...d.supportedPairs],
+  } });
+};
 /** og assertProposeAccountsNowMatchesState: the marker's signer is the active leader, version 1, 1..1000 lowercase ids of at most 256 chars, strictly ascending. Plain Errors: the whole input is refused. */
 export const MAX_PROPOSE_ACCOUNTS_NOW_COUNTERPARTIES = 1_000;
 const proposeAccountsNowOk = (state: EntityState, d: Extract<EntityTx, { readonly type: "proposeAccountsNow" }>["data"]): Result<void, EntityError> => {
@@ -6108,6 +6137,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const child = replicas.get(peer as EntityId), sent = child === undefined ? undefined : pendingAccountInput(child, state.id);
       return sent === undefined ? [] : [{ to: peer as EntityId, tx: { type: "accountInput", data: sent } }];
     }) })),
+    initOrderbookExt: (x) => map(initOrderbookExt(state, x.data), (orderbookExt): Draft => (orderbookExt === state.orderbookExt ? skip : { ...skip, state: { ...state, orderbookExt } })),
     proposeCancelSwap: (x) => (replicas.has(x.data.counterpartyEntityId) ? enqueue(x.data.counterpartyEntityId, [{ type: "swap_cancel_request", offerId: x.data.offerId }], [wake(state, ctx.timestamp)]) : err({ _tag: "swap_request_account_missing", target: x.data.counterpartyEntityId })),
     "profile-update": (x) => map(profileUpdate(state, x.data.profile), (profile) => ({ ...skip, state: { ...state, committed: { ...state.committed, profile } } })),
     // og handleSetHubConfigEntityTx: commit the config, mark the profile a hub, then queue the fee terms on every Account's tokens (ids and tokens ascending) and wake
@@ -6227,7 +6257,8 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
 /** og computeCanonicalEntityConsensusStateHash over the draft: entityId, height, timestamp, config, accounts and every committed section. */
 export const entityRootOf = (state: EntityState, replicas: Replicas): Result<string, EntityError> =>
   chain(frameNumber(state.height), (height) => chain(frameNumber(state.timestamp), (timestamp) => chain(traverse([...replicas], ([peer, child]) => installedAccount(state.id, peer, child)),
-    (accounts) => chain(state.paybook === undefined ? ok(state.committed) : map(paybookSection(state.paybook), (paybook): EntityCommitted => ({ ...state.committed, paybook })),
+    (accounts) => chain(map(state.paybook === undefined ? ok(state.committed) : map(paybookSection(state.paybook), (paybook): EntityCommitted => ({ ...state.committed, paybook })),
+      (c): EntityCommitted => (state.orderbookExt === undefined ? c : { ...c, orderbookExt: orderbookSection(state.orderbookExt) })),
       (committed) => entityStateRoot({ config: rootConfig(state), accounts, entityId: state.id, height, timestamp, committed, leaderState: state.leaderState })))));
 /** og computeEntityFrameAuthorityRoot(buildEntityFrameAuthority(state)): config + normalizeAuthorityLeader(leaderState). */
 const authorityRoot = (state: EntityState): Result<string, EntityRootError> => {
