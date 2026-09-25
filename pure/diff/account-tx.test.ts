@@ -11,6 +11,7 @@ import { handleSwapResolve } from "../../core/account/tx/handlers/swap/resolve/i
 import { handleRequestCollateral } from "../../core/account/tx/handlers/rebalance/request-collateral.ts";
 import { handleRebalanceRefund } from "../../core/account/tx/handlers/rebalance/refund.ts";
 import { handleRebalancePolicy } from "../../core/account/tx/handlers/rebalance/policy.ts";
+import { handleLendingAccountTx } from "../../core/account/tx/handlers/balance/lending.ts";
 import { handleSwapOffer } from "../../core/account/tx/handlers/swap/offer/index.ts";
 import { deriveExactSwapFillRatio, exactFillRatioToUint16 } from "../../core/orderbook/swap-execution.ts";
 import { handleSettleTransition, getSignedSettlementWorkspaceTxError } from "../../core/account/tx/handlers/settlement/transition.ts";
@@ -452,6 +453,68 @@ describe("account-tx: rebalance (og request_collateral / rebalance_refund / reba
       }
     }
     expect(accepted).toBeGreaterThan(150);
+  });
+});
+
+// ---------- Account-level lending ----------
+describe("account-tx: lending (og handlers/balance/lending.ts)", () => {
+  const lendingLockstep = (start: AccountBody) => {
+    const og = ogHarness(start);
+    let body = start;
+    const step = async (tx: any, byLeft: boolean): Promise<boolean> => {
+      const ogTx = toOgTx(tx);
+      if (typeof ogTx.data.tokenId === "string") ogTx.data.tokenId = Number(ogTx.data.tokenId);
+      const o = await og.run((acc) => handleLendingAccountTx(acc, ogTx, byLeft));
+      const r = apply(body, tx, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n });
+      if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${r.ok ? "ok" : JSON.stringify(r.error)} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
+      if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
+      return r.ok;
+    };
+    return { step, body: () => body };
+  };
+  const hex16 = (i: number) => i.toString(16).padStart(16, "0");
+
+  test("MATCH: roles, intent ids, replay guard, owned-balance funding, credit grant — og and rewrite agree and commit the same lendingIntents root", async () => {
+    let { body, ctx } = open();
+    body = unwrap(apply(body, { type: "payment", tokenId: "1", amount: 15n }, { ...ctx, byLeft: false })).state; // left now owns 15 on token 1
+    const ls = lendingLockstep(body);
+    const fund = (patch: Record<string, unknown> = {}) => ({ type: "lending_fund", positionId: `lend-${hex16(1)}`, hubEntityId: B, lenderEntityId: A, tokenId: "1", amount: 10n, termId: "1d", interestBps: 50, ...patch });
+    const cases: [any, boolean, boolean][] = [
+      [fund({ positionId: "lend-xyz" }), true, false], [fund({ lenderEntityId: B, hubEntityId: A }), true, false], [fund({ hubEntityId: A }), true, false], [fund({ termId: "2d" }), true, false],
+      [fund({ interestBps: 10_001 }), true, false], [fund({ amount: 16n }), true, false], [fund({ tokenId: "0", amount: 1n }), true, false], [fund(), true, true], [fund(), true, false],
+      [{ type: "lending_borrow_request", requestId: `borrow-${hex16(2)}`, hubEntityId: A, borrowerEntityId: B, tokenId: "1", amount: 5n, termId: "1h", maxInterestBps: 100 }, false, true],
+      [{ type: "lending_credit", action: "grant", loanId: `loan-${hex16(3)}`, hubEntityId: A, borrowerEntityId: B, tokenId: "1", creditLimit: 30n }, true, true],
+      [{ type: "lending_credit", action: "grant", loanId: `loan-${hex16(3)}`, hubEntityId: A, borrowerEntityId: B, tokenId: "1", creditLimit: 8n }, true, false],
+      [{ type: "lending_repay", loanId: `loan-${hex16(3)}`, hubEntityId: A, borrowerEntityId: B, tokenId: "1", amount: 3n }, false, true],
+      [{ type: "lending_close_request", positionId: `lend-${hex16(1)}`, hubEntityId: B, lenderEntityId: A }, true, true],
+      [{ type: "lending_close_payout", positionId: `lend-${hex16(1)}`, hubEntityId: B, lenderEntityId: A, tokenId: "1", amount: 12n }, false, true],
+      [{ type: "lending_close_payout", positionId: `lend-${hex16(1)}`, hubEntityId: B, lenderEntityId: A, tokenId: "1", amount: 1n }, false, false],
+    ];
+    for (const [i, [tx, byLeft, want]] of cases.entries()) expect([i, await ls.step(tx, byLeft)]).toEqual([i, want]);
+    expect(ls.body().lendingIntents.size).toBe(6);
+  });
+
+  test("MATCH: 50 random Account-level lending sequences keep og and rewrite roots equal", async () => {
+    let accepted = 0;
+    for (let n = 0; n < 50; n++) {
+      let { body, ctx } = open();
+      body = unwrap(apply(body, { type: "payment", tokenId: "1", amount: 12n }, { ...ctx, byLeft: ri(2) === 0 })).state;
+      const ls = lendingLockstep(body);
+      for (let i = 0; i < 10; i++) {
+        const byLeft = ri(2) === 0, me = byLeft ? A : B, peer = byLeft ? B : A, actor = ri(8) === 0 ? peer : me, other = ri(8) === 0 ? me : peer;
+        const id = (p: string) => (ri(10) === 0 ? `${p}-zz` : `${p}-${hex16(ri(3))}`), amount = BigInt(ri(14)), tokenId = pick3(["0", "1"]);
+        const tx = pick3([
+          { type: "lending_fund", positionId: id("lend"), hubEntityId: other, lenderEntityId: actor, tokenId, amount, termId: pick3(["1h", "1d", "1m", "1y"]), interestBps: pick3([0, 99, 10_000, 10_001]) },
+          { type: "lending_borrow_request", requestId: id("borrow"), hubEntityId: other, borrowerEntityId: actor, tokenId, amount, termId: "1m", maxInterestBps: 5 },
+          { type: "lending_repay", loanId: id("loan"), hubEntityId: other, borrowerEntityId: actor, tokenId, amount },
+          { type: "lending_credit", action: pick3(["grant", "revoke"]), loanId: id("loan"), hubEntityId: actor, borrowerEntityId: other, tokenId, creditLimit: BigInt(ri(40)) - 1n },
+          { type: "lending_close_request", positionId: id("lend"), hubEntityId: other, lenderEntityId: actor },
+          { type: "lending_close_payout", positionId: id("lend"), hubEntityId: actor, lenderEntityId: other, tokenId, amount },
+        ]);
+        if (await ls.step(tx, byLeft)) accepted++;
+      }
+    }
+    expect(accepted).toBeGreaterThan(100);
   });
 });
 

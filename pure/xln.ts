@@ -85,7 +85,7 @@ export const EntityTransition = { txs: { open: ["proposed"] }, precommit: { prop
 
 export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "swap_offer", "swap_cancel_request", "swap_resolve", "settle_transition",
   "j_event_claim", "cross_pull_lock", "cross_pull_close", "deposit_to_custody", "withdraw_from_custody", "hub_custody_debit", "request_collateral", "rebalance_refund",
-  "rebalance_policy", "subcontract_propose", "subcontract_approve", "subcontract_reject", "subcontract_resolve_propose", "subcontract_resolve_approve"] as const;
+  "rebalance_policy", "lending_fund", "lending_borrow_request", "lending_repay", "lending_credit", "lending_close_request", "lending_close_payout", "subcontract_propose", "subcontract_approve", "subcontract_reject", "subcontract_resolve_propose", "subcontract_resolve_approve"] as const;
 export const LendingTxNames = ["lending_fund", "lending_borrow_request", "lending_repay", "lending_close_request"] as const;
 export const EntityTxNames = ["directPayment", "placeSwapOffer", "htlcPayment", "prepareCrossJurisdictionSwap", "registerCrossJurisdictionSwap"] as const;
 export const AccountInputKinds = ["dispute", "board_hanko_refresh"] as const;
@@ -1019,6 +1019,7 @@ export type BodyError =
   | Tagged<"settlement", { reason: string }>
   | Tagged<"swap", { reason: string }>
   | Tagged<"rebalance", { reason: string }>
+  | Tagged<"lending", { reason: string }>
   | Tagged<"unchosen", { hole: Hole }>;
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
 export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
@@ -1046,6 +1047,8 @@ export type SwapResolveTerms = {
 /** og types/finance/rebalance.ts: one side's committed fee terms, the bilateral register, and a prepaid request_collateral's fee state. */
 export type RebalanceFeeSnapshot = { readonly policyVersion: number; readonly baseFee: bigint; readonly liquidityFeeBps: bigint; readonly gasFee: bigint; readonly updatedAt: number };
 export type BilateralFeePolicy = { readonly left?: RebalanceFeeSnapshot; readonly right?: RebalanceFeeSnapshot };
+/** og types/account.ts AccountLendingIntentKind: the committed replay guard of each Account-level lending intent. */
+export type LendingIntentKind = "fund" | "borrow" | "repay" | "credit-grant" | "credit-revoke" | "close-request" | "close-payout";
 export type RefundReason = "policy_mismatch" | "timeout" | "fee_too_low" | "manual";
 export type RebalanceRequestFeeState = {
   readonly requestId: string; readonly feeTokenId: number; readonly feePaidUpfront: bigint; readonly requestedAmount: bigint; readonly policyVersion: number; readonly requestedAt: number; readonly requestedByLeft: boolean;
@@ -1077,7 +1080,8 @@ export type SettlementWorkspace = {
 export type AccountBody = {
   readonly account: AccountState; readonly terms: AccountTerms; readonly hub: HubSide; readonly custody: ReadonlyMap<TokenId, bigint>; readonly locks: ReadonlyMap<string, HtlcLock>;
   readonly offers: ReadonlyMap<string, SwapOffer>; readonly clauses: ReadonlyMap<ClauseId, ClauseState>; readonly debits: readonly CustodyDebit[];
-  readonly requested: ReadonlyMap<TokenId, bigint>; readonly requestFees: ReadonlyMap<TokenId, RebalanceRequestFeeState>; readonly feePolicies: ReadonlyMap<TokenId, BilateralFeePolicy>; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly jNonce: number;
+  readonly requested: ReadonlyMap<TokenId, bigint>; readonly requestFees: ReadonlyMap<TokenId, RebalanceRequestFeeState>; readonly feePolicies: ReadonlyMap<TokenId, BilateralFeePolicy>;
+  readonly lendingIntents: ReadonlyMap<string, LendingIntentKind>; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly jNonce: number;
   readonly settlement?: SettlementWorkspace | undefined;
 };
 export type AccountStep<E extends Effect = Effect> = Step<AccountBody, E>;
@@ -1098,6 +1102,12 @@ export type AccountTx =
   | { readonly type: "request_collateral"; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number }
   | { readonly type: "rebalance_refund"; readonly requestId: string; readonly requestTokenId: TokenId; readonly amount: bigint; readonly reason: RefundReason }
   | { readonly type: "rebalance_policy"; readonly tokenId: TokenId; readonly policyVersion: number; readonly baseFee: bigint; readonly liquidityFeeBps: bigint; readonly gasFee: bigint }
+  | { readonly type: "lending_fund"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly interestBps: number }
+  | { readonly type: "lending_borrow_request"; readonly requestId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly maxInterestBps: number }
+  | { readonly type: "lending_repay"; readonly loanId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly amount: bigint }
+  | { readonly type: "lending_credit"; readonly action: "grant" | "revoke"; readonly loanId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly creditLimit: bigint }
+  | { readonly type: "lending_close_request"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string }
+  | { readonly type: "lending_close_payout"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string; readonly tokenId: TokenId; readonly amount: bigint }
   | { readonly type: "subcontract_propose"; readonly id: string; readonly clause: ClauseBody }
   | { readonly type: "subcontract_approve"; readonly id: string }
   | { readonly type: "subcontract_reject"; readonly id: string }
@@ -1124,6 +1134,8 @@ export const AccountKinds = {
   settle_transition: kind("bilateral", false, false),
   deposit_to_custody: kind("bilateral", false, false), withdraw_from_custody: kind("bilateral", false, false), hub_custody_debit: kind("hub", false, false),
   request_collateral: kind("bilateral", false, false), rebalance_refund: kind("bilateral", false, false), rebalance_policy: kind("bilateral", false, false),
+  lending_fund: kind("bilateral", false, false), lending_borrow_request: kind("bilateral", false, false), lending_repay: kind("bilateral", false, false), lending_credit: kind("bilateral", false, false),
+  lending_close_request: kind("bilateral", false, false), lending_close_payout: kind("bilateral", false, false),
   subcontract_propose: kind("bilateral", false, false), subcontract_approve: kind("bilateral", false, false), subcontract_reject: kind("bilateral", false, false),
   subcontract_resolve_propose: kind("bilateral", false, false), subcontract_resolve_approve: kind("bilateral", false, false), cross_pull_lock: kind("unchosen", false, false), cross_pull_close: kind("unchosen", false, false),
   j_event_claim: kind("bilateral", false, false),
@@ -1131,7 +1143,7 @@ export const AccountKinds = {
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
 export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret"> : never;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
-export const genesisAccountBody = (account: AccountState, terms: AccountTerms, hub: HubSide = null): AccountBody => ({ account, terms, hub, custody: new Map(), locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), clauses: new Map(), debits: [], finalizedJHeight: 0n, jNonce: 0 });
+export const genesisAccountBody = (account: AccountState, terms: AccountTerms, hub: HubSide = null): AccountBody => ({ account, terms, hub, custody: new Map(), locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), clauses: new Map(), debits: [], finalizedJHeight: 0n, jNonce: 0 });
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
 const authorized = (tx: WireAccountTx, hub: HubSide, byLeft: boolean): Result<void, BodyError> =>
   arm(AccountKinds, tx.type).author !== "hub" || (hub !== null && byLeft === (hub === "left")) ? ok(undefined) : err({ _tag: "not_hub" });
@@ -1648,6 +1660,56 @@ const rebalancePolicy = (a: AccountBody, x: TxOf<"rebalance_policy">, ctx: FoldC
   const next: RebalanceFeeSnapshot = { policyVersion: x.policyVersion, baseFee: x.baseFee, liquidityFeeBps: x.liquidityFeeBps, gasFee: x.gasFee, updatedAt: ts };
   return ok(step({ ...a, feePolicies: mapSet(a.feePolicies, x.tokenId, { ...held, ...(ctx.byLeft ? { left: next } : { right: next }) }) }));
 };
+// ---- Account-level lending: og handlers/balance/lending.ts ----
+const lendingErr = (reason: string): Result<never, BodyError> => err({ _tag: "lending", reason });
+const LENDING_ENTITY = /^0x[0-9a-f]{64}$/, LENDING_INTENT = /^(?:lend|borrow|loan)-[0-9a-f]{16}$/;
+const lower = (v: unknown): string => String(v || "").trim().toLowerCase();
+type AccountLendingTx = TxOf<"lending_fund" | "lending_borrow_request" | "lending_repay" | "lending_credit" | "lending_close_request" | "lending_close_payout">;
+/** og deriveDelta outOwnCredit: the proposer's own credit line it has not drawn yet. */
+const ownCreditLeft = (d: Delta, isLeft: boolean): bigint => {
+  const t = d.ondelta + d.offdelta;
+  return isLeft ? floor0(d.leftCreditLimit - floor0(-t)) : floor0(d.rightCreditLimit - floor0(t - d.collateral));
+};
+/** og requireIntentId, requireRole (the claimed actor is the frame proposer) and requireCounterparty. */
+const lendingParties = (a: AccountBody, byLeft: boolean, id: string, prefix: "lend" | "borrow" | "loan", actor: string, counterparty: string): Result<void, BodyError> => {
+  const intent = lower(id);
+  if (!LENDING_INTENT.test(intent) || !intent.startsWith(`${prefix}-`)) return lendingErr("LENDING_INTENT_ID_INVALID");
+  const claimed = lower(actor), left = lower(a.account.id.left), right = lower(a.account.id.right), proposer = byLeft ? left : right;
+  if (!LENDING_ENTITY.test(claimed)) return lendingErr("LENDING_ROLE_INVALID");
+  if (claimed !== proposer) return lendingErr("LENDING_ROLE_NOT_PROPOSER");
+  return lower(counterparty) !== (proposer === left ? right : left) ? lendingErr("LENDING_COUNTERPARTY_INVALID") : ok(undefined);
+};
+const LENDING_TERMS: ReadonlySet<unknown> = new Set(["1h", "1d", "1m"]);
+const interestOk = (v: unknown): boolean => { const n = Math.floor(Number(v)); return Number.isFinite(n) && n >= 0 && n <= 10_000; };
+const lending = (a: AccountBody, x: AccountLendingTx, ctx: FoldCtx): BodyStep => {
+  const record = (b: AccountBody, key: string, kind: LendingIntentKind): BodyStep => (b.lendingIntents.has(key) ? lendingErr("LENDING_INTENT_REPLAY") : ok(step({ ...b, lendingIntents: mapSet(b.lendingIntents, key, kind) })));
+  const unused = (key: string): Result<void, BodyError> => (a.lendingIntents.has(key) ? lendingErr("LENDING_INTENT_REPLAY") : ok(undefined));
+  const pay = (tk: TokenId, amount: bigint, key: string, kind: LendingIntentKind): BodyStep => chain(unused(key), () => chain(spend(a, tk, amount, ctx.byLeft), (b) => record(b, key, kind)));
+  const positive = (v: bigint): Result<void, BodyError> => (v <= 0n ? lendingErr("LENDING_AMOUNT_MUST_BE_POSITIVE") : ok(undefined));
+  switch (x.type) {
+    case "lending_fund": return chain(lendingParties(a, ctx.byLeft, x.positionId, "lend", x.lenderEntityId, x.hubEntityId), () => chain(positive(x.amount), (): BodyStep => {
+      if (!LENDING_TERMS.has(x.termId)) return lendingErr("LENDING_INVALID_TERM");
+      if (!interestOk(x.interestBps)) return lendingErr("LENDING_INVALID_INTEREST_BPS");
+      const key = `fund:${lower(x.positionId)}`;
+      return chain(unused(key), () => {
+        // Only owned funds may fund the pool: unused own credit does not count (outCapacity already excludes holds and allowances).
+        const d = a.account.deltas.get(x.tokenId);
+        if (d === undefined || x.amount + ownCreditLeft(d, ctx.byLeft) > outCapacity(d, ctx.byLeft, holds(a, x.tokenId, ctx.byLeft))) return lendingErr("LENDING_FUND_OWNED_BALANCE_INSUFFICIENT");
+        return pay(x.tokenId, x.amount, key, "fund");
+      });
+    }));
+    case "lending_borrow_request": return chain(lendingParties(a, ctx.byLeft, x.requestId, "borrow", x.borrowerEntityId, x.hubEntityId), () => chain(positive(x.amount), (): BodyStep =>
+      !LENDING_TERMS.has(x.termId) ? lendingErr("LENDING_INVALID_TERM") : !interestOk(x.maxInterestBps) ? lendingErr("LENDING_INVALID_INTEREST_BPS") : record(a, `borrow:${lower(x.requestId)}`, "borrow")));
+    case "lending_repay": return chain(lendingParties(a, ctx.byLeft, x.loanId, "loan", x.borrowerEntityId, x.hubEntityId), () => chain(positive(x.amount), () => pay(x.tokenId, x.amount, `repay:${lower(x.loanId)}`, "repay")));
+    case "lending_credit": return chain(lendingParties(a, ctx.byLeft, x.loanId, "loan", x.hubEntityId, x.borrowerEntityId), (): BodyStep => {
+      if (x.creditLimit < 0n) return lendingErr("LENDING_CREDIT_LIMIT_NEGATIVE");
+      return chain(updateDelta(a.account, x.tokenId, (d) => setCreditLimit(d, x.creditLimit, ctx.byLeft)), (s) =>
+        record(putState(a, s), `${x.action === "grant" ? "grant" : "revoke"}:${lower(x.loanId)}`, x.action === "grant" ? "credit-grant" : "credit-revoke"));
+    });
+    case "lending_close_request": return chain(lendingParties(a, ctx.byLeft, x.positionId, "lend", x.lenderEntityId, x.hubEntityId), () => record(a, `close:${lower(x.positionId)}`, "close-request"));
+    case "lending_close_payout": return chain(lendingParties(a, ctx.byLeft, x.positionId, "lend", x.hubEntityId, x.lenderEntityId), () => chain(positive(x.amount), () => pay(x.tokenId, x.amount, `payout:${lower(x.positionId)}`, "close-payout")));
+  }
+};
 type Arms = { readonly [K in AccountTx["type"]]: (tx: WireTxOf<K>) => BodyStep<EffectOf<K>> };
 const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Effect> => matchBy<"type", WireAccountTx, BodyStep<Effect>>("type", tx, {
 
@@ -1698,6 +1760,8 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
   request_collateral: (x) => requestCollateral(a, x, ctx),
   rebalance_refund: (x) => rebalanceRefund(a, x, ctx),
   rebalance_policy: (x) => rebalancePolicy(a, x, ctx),
+  lending_fund: (x) => lending(a, x, ctx), lending_borrow_request: (x) => lending(a, x, ctx), lending_repay: (x) => lending(a, x, ctx),
+  lending_credit: (x) => lending(a, x, ctx), lending_close_request: (x) => lending(a, x, ctx), lending_close_payout: (x) => lending(a, x, ctx),
   subcontract_propose: (x) => {
     if ([...a.clauses.values()].filter(isPending).length >= MAX_PENDING) return err({ _tag: "pending_full" });
     if (a.clauses.has(x.id)) return err({ _tag: "duplicate" });
@@ -1724,6 +1788,7 @@ const one = (x: { readonly tokenId: TokenId }): readonly string[] => [x.tokenId]
 const namedTokens = (tx: WireAccountTx): readonly string[] => matchBy("type", tx, {
   add_delta: one, set_credit_limit: one, payment: one, htlc_lock: one, htlc_resolve: none, swap_offer: (x) => [x.giveTokenId, x.wantTokenId], swap_cancel_request: none, swap_resolve: (x) => (x.feeTokenId === undefined ? [] : [x.feeTokenId]),
   deposit_to_custody: one, withdraw_from_custody: one, hub_custody_debit: one, request_collateral: (x) => (x.feeTokenId === undefined ? [x.tokenId] : [x.tokenId, x.feeTokenId]), rebalance_refund: (x) => [x.requestTokenId], rebalance_policy: one,
+  lending_fund: one, lending_borrow_request: one, lending_repay: one, lending_credit: one, lending_close_request: none, lending_close_payout: one,
   subcontract_propose: none, subcontract_approve: none, subcontract_reject: none, subcontract_resolve_propose: (x) => x.effects.map((e) => e.tokenId), subcontract_resolve_approve: none,
   cross_pull_lock: none, cross_pull_close: none, j_event_claim: (x) => x.events.flatMap((row) => row.tokens.map((tk) => tk.tokenId.toString())), settle_transition: none,
 });
@@ -1737,7 +1802,7 @@ export const applyAccountBody: Layer<AccountBody, WireAccountTx, FoldCtx, Effect
   return chain(authorized(tx, a.hub, ctx.byLeft), () => chain(applyArm(a, tx, ctx), (next) => (next.state.account.deltas.size > MAX_ROWS ? err({ _tag: "too_many_rows" }) : commits(a, tx, next))));
 };
 export const accountSnapshot = (a: AccountBody): Required<Omit<AccountBody, "account">> & { readonly state: Hash } =>
-  ({ state: hashAccountState(a.account), terms: a.terms, hub: a.hub, custody: a.custody, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, clauses: a.clauses, debits: a.debits, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
+  ({ state: hashAccountState(a.account), terms: a.terms, hub: a.hub, custody: a.custody, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, clauses: a.clauses, debits: a.debits, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
 
 
 export type ViewError = CommitmentError | Tagged<"token_id", { tokenId: TokenId }> | ClaimError;
@@ -1827,7 +1892,8 @@ const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
   if (height < 0n || height > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "bad_j_claims" });
   const keys = [...b.account.deltas.keys(), ...b.requested.keys(), ...b.requestFees.keys(), ...b.feePolicies.keys()];
   return chain(traverse(keys, tokenNumber), () => chain(all({ left: pendingOn(b, true), right: pendingOn(b, false) }), ({ left, right }) => {
-    const { terms } = b, hubRows = new Map<string, unknown>();
+    // og lendingIntents first; the rewrite-only custody/debit/hub rows share this committed map (EXTRA, see findings AT-22).
+    const { terms } = b, hubRows = new Map<string, unknown>(b.lendingIntents);
     for (const [tk, amount] of b.custody) hubRows.set(`custody:${tk}`, amount);
     b.debits.forEach((debit, i) => hubRows.set(`debit:${i}`, debit));
     if (b.hub !== null) hubRows.set("hub", b.hub);
