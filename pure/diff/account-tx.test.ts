@@ -285,6 +285,34 @@ describe("account-tx: htlc", () => {
   });
 });
 
+describe("account-tx: htlc committed state", () => {
+  test("MATCH: 40 random lock/resolve sequences through the og overlay give the same Account root (committed HtlcLock shape, holds, offdelta)", async () => {
+    let accepted = 0;
+    for (let n = 0; n < 40; n++) {
+      const { body: start } = open(null, 100n);
+      const og = ogHarness(start);
+      let body = start;
+      for (let i = 0; i < 10; i++) {
+        const byLeft = ri(2) === 0, ts = 1 + ri(20), jh = ri(8), live = [...body.locks.values()];
+        const secret = secretOf(1 + ri(6));
+        const target = live.length === 0 ? undefined : pick3(live);
+        const preimage = target === undefined ? secret : secretOf(1 + [0, 1, 2, 3, 4, 5].find((k) => rwHash(secretOf(1 + k)) === target.hashlock)!);
+        const tx: any = target === undefined || ri(2) === 0
+          ? rwLock(secret, { amount: BigInt(1 + ri(30)), tokenId: pick3(["0", "1"]), timelock: BigInt(5 + ri(30)), revealBeforeHeight: BigInt(1 + ri(9)) })
+          : ri(2) === 0 ? { type: "htlc_resolve", lockId: target.lockId, outcome: "secret", secret: ri(4) === 0 ? secret : preimage }
+          : { type: "htlc_resolve", lockId: target.lockId, outcome: "error", ...(ri(2) === 0 ? { reason: "timeout" } : {}) };
+        const ogTx = { type: tx.type, data: { ...wireOf(tx) } } as any;
+        delete ogTx.data.type;
+        const o = await og.run((acc) => tx.type === "htlc_lock" ? handleHtlcLock(acc, ogTx, byLeft, ogClock(ts, jh)) : handleHtlcResolve(acc.state, ogTx, byLeft, jh, ts));
+        const r = apply(body, tx, { byLeft, nowMs: BigInt(ts), jHeight: BigInt(jh), accountHeight: 1n });
+        expect(r.ok).toBe(o.ok);
+        if (r.ok) { body = r.value.state; accepted++; expect(unwrap(committed(body) as any).root).toBe(o.root); }
+      }
+    }
+    expect(accepted).toBeGreaterThan(100);
+  });
+});
+
 // ---------- swaps ----------
 const rwOffer = (offerId: string, give: number, giveAmount: bigint, want: number, wantAmount: bigint, patch: Record<string, unknown> = {}) =>
   ({ type: "swap_offer", offerId, giveTokenId: String(give), giveTokenDecimals: 18, giveAmount, wantTokenId: String(want), wantTokenDecimals: 18, wantAmount, maxFee: 0n, minNetReceive: wantAmount, ...patch });

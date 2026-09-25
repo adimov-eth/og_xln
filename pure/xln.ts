@@ -1214,6 +1214,11 @@ const claimFrame = (tx: TxOf<"j_event_claim">): Result<{ readonly version: "xln:
   chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash, events }) => ({ version: "xln:account-j-event-claim-frame:v1", jHeight: Number(jHeight), jBlockHash, eventsHash, events }))));
 const claimRowOf = (tx: TxOf<"j_event_claim">, onLeft: boolean): Result<ClaimRow, ClaimError> =>
   chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash }) => ({ onLeft, jHeight, jBlockHash, eventsHash }))));
+/** og types/account.ts HtlcLock as committed: numeric token/height/timestamp fields; the rewrite-only encryptedPackage is kept only when present (og commits envelopeHash of its onion instead). */
+const ogLockRow = (l: HtlcLock): Record<string, unknown> => {
+  const { encryptedPackage, ...rest } = l;
+  return { ...rest, revealBeforeHeight: Number(l.revealBeforeHeight), tokenId: Number(l.tokenId), createdHeight: Number(l.createdHeight), createdTimestamp: Number(l.createdTimestamp), ...(encryptedPackage === undefined ? {} : { encryptedPackage }) };
+};
 const sameEvidence = (x: ClaimRow, y: ClaimRow): boolean => x.jBlockHash === y.jBlockHash && x.eventsHash === y.eventsHash;
 const pruneThrough = (rows: readonly ClaimRow[], height: bigint): readonly ClaimRow[] | undefined => { const kept = rows.filter((r) => r.jHeight > height); return kept.length === 0 ? undefined : kept; };
 /** og j-events/finality.ts: every AccountSettled names this pair, nonces never regress below jNonce, and each token row takes the chain's collateral/ondelta. */
@@ -1906,7 +1911,7 @@ const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
     return ok({
       domain: terms.domain, leftEntity: b.account.id.left, rightEntity: b.account.id.right, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig,
       jNonce: b.jNonce, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
-      deltas: committedDeltas(b), locks: b.locks, pulls: new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map([...b.clauses].map(([id, s]) => [id, clauseRow(id, s)])), lendingIntents: hubRows,
+      deltas: committedDeltas(b), locks: new Map([...b.locks].map(([id, l]) => [id, ogLockRow(l)])), pulls: new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map([...b.clauses].map(([id, s]) => [id, clauseRow(id, s)])), lendingIntents: hubRows,
       requestedRebalance: byToken(b.requested), requestedRebalanceFeeState: byToken(b.requestFees), rebalanceFeePolicies: byToken(b.feePolicies), settlementWorkspace: b.settlement,
     });
   }));
