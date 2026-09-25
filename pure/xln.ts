@@ -85,7 +85,7 @@ export const EntityTransition = { txs: { open: ["proposed"] }, precommit: { prop
 
 export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "swap_offer", "swap_cancel_request", "swap_resolve", "settle_transition",
   "j_event_claim", "cross_pull_lock", "cross_pull_close", "deposit_to_custody", "withdraw_from_custody", "hub_custody_debit", "request_collateral", "rebalance_refund",
-  "rebalance_policy", "lending_fund", "lending_borrow_request", "lending_repay", "lending_credit", "lending_close_request", "lending_close_payout", "subcontract_propose", "subcontract_approve", "subcontract_reject", "subcontract_resolve_propose", "subcontract_resolve_approve"] as const;
+  "rebalance_policy", "lending_fund", "lending_borrow_request", "lending_repay", "lending_credit", "lending_close_request", "lending_close_payout"] as const;
 export const LendingTxNames = ["lending_fund", "lending_borrow_request", "lending_repay", "lending_close_request"] as const;
 export const EntityTxNames = ["directPayment", "placeSwapOffer", "htlcPayment", "prepareCrossJurisdictionSwap", "registerCrossJurisdictionSwap"] as const;
 export const AccountInputKinds = ["dispute", "board_hanko_refresh"] as const;
@@ -951,7 +951,7 @@ export const chargeSettlement = (
 /** Left pays negative, right pays positive. Zero stays zero. A negative amount is refused. */
 export const offdeltaChange = (payerIsLeft: boolean, amount: bigint): Result<bigint, AccountError> =>
   amount < 0n ? err({ _tag: "negative_transfer" }) : ok(payerIsLeft ? -amount : amount);
-/** Unchecked move: releases of prior holds (htlc resolve, swap give, subcontract effects). */
+/** Unchecked move: releases of prior holds (htlc resolve, swap give). */
 export const shift = (d: Delta, by: bigint): Delta => ({ ...d, offdelta: d.offdelta + by });
 /** Checked move: `offdeltaChange` picks the sign; holds reduce room. */
 export const move = (d: Delta, by: bigint, held: bigint): Result<Delta, AccountError> => {
@@ -1014,7 +1014,7 @@ export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" 
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
   | Tagged<"above_custody", { have: bigint; requested: bigint }>
-  | Tagged<"not_hub" | "settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "pending_full" | "not_counterparty" | "bad_allowance" | "index" | "too_many_rows">
+  | Tagged<"not_hub" | "settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
   | Tagged<"settlement", { reason: string }>
   | Tagged<"swap", { reason: string }>
@@ -1027,7 +1027,7 @@ export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor:
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
 export type HubSide = "left" | "right" | null;
 export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }>;
-const MAX_PENDING = 16, MAX_ROWS = 128;
+const MAX_ROWS = 128;
 export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly encryptedPackage?: string | undefined };
 /** og types/account.ts SwapOffer (same-jurisdiction): quantized amounts, canonical price and the maker's signed fee authority. */
 export type SwapOffer = {
@@ -1055,13 +1055,6 @@ export type RebalanceRequestFeeState = {
   readonly requestId: string; readonly feeTokenId: number; readonly feePaidUpfront: bigint; readonly requestedAmount: bigint; readonly policyVersion: number; readonly requestedAt: number; readonly requestedByLeft: boolean;
   readonly refund?: { readonly reason: RefundReason; readonly refundedAmount: bigint };
 };
-export type Allowance = { readonly deltaIndex: number; readonly leftAllowance: bigint; readonly rightAllowance: bigint };
-export type ClauseBody = { readonly transformerAddress: string; readonly encodedBatch: string; readonly allowances: readonly Allowance[]; readonly initcode: string; readonly codeHash: Hash; readonly solcMeta: string; readonly sourceHash: Hash; readonly expiresAt?: bigint | undefined };
-export type Clause = ClauseBody & { readonly proposerIsLeft: boolean };
-export type ClauseId = string;
-export type DeltaEffect = { readonly tokenId: TokenId; readonly offdelta: bigint };
-export type Resolution = { readonly args: string; readonly effects: readonly DeltaEffect[]; readonly proposerIsLeft: boolean };
-export type ClauseState = Tagged<"pending" | "live", { clause: Clause }> | Tagged<"resolving", { clause: Clause; resolution: Resolution }>;
 export type CustodyDebit = { readonly tokenId: TokenId; readonly amount: bigint; readonly reason: string; readonly referenceId?: string | undefined };
 export type JClaimProof = { readonly version: 1; readonly nodes: readonly [] };
 export type ClaimRow = { readonly onLeft: boolean; readonly jHeight: bigint; readonly jBlockHash: string; readonly eventsHash: string };
@@ -1080,7 +1073,7 @@ export type SettlementWorkspace = {
 };
 export type AccountBody = {
   readonly account: AccountState; readonly terms: AccountTerms; readonly hub: HubSide; readonly custody: ReadonlyMap<TokenId, bigint>; readonly locks: ReadonlyMap<string, HtlcLock>;
-  readonly offers: ReadonlyMap<string, SwapOffer>; readonly clauses: ReadonlyMap<ClauseId, ClauseState>; readonly debits: readonly CustodyDebit[];
+  readonly offers: ReadonlyMap<string, SwapOffer>; readonly debits: readonly CustodyDebit[];
   readonly requested: ReadonlyMap<TokenId, bigint>; readonly requestFees: ReadonlyMap<TokenId, RebalanceRequestFeeState>; readonly feePolicies: ReadonlyMap<TokenId, BilateralFeePolicy>;
   readonly lendingIntents: ReadonlyMap<string, LendingIntentKind>; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly jNonce: number;
   readonly settlement?: SettlementWorkspace | undefined;
@@ -1109,11 +1102,6 @@ export type AccountTx =
   | { readonly type: "lending_credit"; readonly action: "grant" | "revoke"; readonly loanId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly creditLimit: bigint }
   | { readonly type: "lending_close_request"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string }
   | { readonly type: "lending_close_payout"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "subcontract_propose"; readonly id: string; readonly clause: ClauseBody }
-  | { readonly type: "subcontract_approve"; readonly id: string }
-  | { readonly type: "subcontract_reject"; readonly id: string }
-  | { readonly type: "subcontract_resolve_approve"; readonly id: string }
-  | { readonly type: "subcontract_resolve_propose"; readonly id: string; readonly args: string; readonly effects: readonly DeltaEffect[] }
   | { readonly type: "cross_pull_lock" }
   | { readonly type: "cross_pull_close"; readonly orderId: string; readonly amount: bigint; readonly ratio: number; readonly proofRatio: number; readonly leg: bigint; readonly binaryHash: Hash; readonly hubAuthored: boolean }
   | { readonly type: "j_event_claim"; readonly jHeight: bigint; readonly jBlockHash: Hash; readonly events: readonly AccountSettlement[]; readonly observedAt: bigint; readonly leftProof?: JClaimProof | undefined; readonly rightProof?: JClaimProof | undefined }
@@ -1143,14 +1131,13 @@ export const AccountKinds = {
   request_collateral: kind("bilateral", false, false), rebalance_refund: kind("bilateral", false, false), rebalance_policy: kind("bilateral", false, false),
   lending_fund: kind("bilateral", false, false), lending_borrow_request: kind("bilateral", false, false), lending_repay: kind("bilateral", false, false), lending_credit: kind("bilateral", false, false),
   lending_close_request: kind("bilateral", false, false), lending_close_payout: kind("bilateral", false, false),
-  subcontract_propose: kind("bilateral", false, false), subcontract_approve: kind("bilateral", false, false), subcontract_reject: kind("bilateral", false, false),
-  subcontract_resolve_propose: kind("bilateral", false, false), subcontract_resolve_approve: kind("bilateral", false, false), cross_pull_lock: kind("unchosen", false, false), cross_pull_close: kind("unchosen", false, false),
+  cross_pull_lock: kind("unchosen", false, false), cross_pull_close: kind("unchosen", false, false),
   j_event_claim: kind("bilateral", false, false),
 } as const satisfies Kinds<AccountTx["type"], KindRow>;
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
 export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret"> : never;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
-export const genesisAccountBody = (account: AccountState, terms: AccountTerms, hub: HubSide = null): AccountBody => ({ account, terms, hub, custody: new Map(), locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), clauses: new Map(), debits: [], finalizedJHeight: 0n, jNonce: 0 });
+export const genesisAccountBody = (account: AccountState, terms: AccountTerms, hub: HubSide = null): AccountBody => ({ account, terms, hub, custody: new Map(), locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), debits: [], finalizedJHeight: 0n, jNonce: 0 });
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
 const authorized = (tx: WireAccountTx, hub: HubSide, byLeft: boolean): Result<void, BodyError> =>
   arm(AccountKinds, tx.type).author !== "hub" || (hub !== null && byLeft === (hub === "left")) ? ok(undefined) : err({ _tag: "not_hub" });
@@ -1182,16 +1169,6 @@ const fromCustody = (a: AccountBody, tk: TokenId, amount: bigint): Result<void, 
   return chain(positive(amount), () => guard(amount <= have, { _tag: "above_custody", have, requested: amount }));
 };
 const MISSING: Result<never, BodyError> = err({ _tag: "missing" });
-const isPending = (s: ClauseState): boolean => match(s, { pending: () => true, live: () => false, resolving: () => false });
-const byCounterparty = <X>(x: X, proposerIsLeft: boolean, byLeft: boolean): Result<X, BodyError> => (byLeft === proposerIsLeft ? err({ _tag: "not_counterparty" }) : ok(x));
-const pendingOf = (a: AccountBody, id: ClauseId, byLeft: boolean): Result<Clause, BodyError> => {
-  const s = a.clauses.get(id);
-  return s === undefined ? MISSING : match<ClauseState, Result<Clause, BodyError>>(s, { pending: ({ clause }) => byCounterparty(clause, clause.proposerIsLeft, byLeft), live: () => MISSING, resolving: () => MISSING });
-};
-const resolutionOf = (a: AccountBody, id: ClauseId, byLeft: boolean): Result<Resolution, BodyError> => {
-  const s = a.clauses.get(id);
-  return s === undefined ? MISSING : match<ClauseState, Result<Resolution, BodyError>>(s, { pending: () => MISSING, live: () => MISSING, resolving: ({ resolution }) => byCounterparty(resolution, resolution.proposerIsLeft, byLeft) });
-};
 const sameAccount = (row: AccountSettlement, id: AccountId): boolean => row.left === id.left && row.right === id.right;
 const CLAIM_UINT64 = (1n << 64n) - 1n;
 const claimHeight = (h: bigint): Result<bigint, ClaimError> => (h >= 1n && h <= CLAIM_UINT64 && h <= BigInt(Number.MAX_SAFE_INTEGER) ? ok(h) : err({ _tag: "claim_height" }));
@@ -1795,23 +1772,6 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
   rebalance_policy: (x) => rebalancePolicy(a, x, ctx),
   lending_fund: (x) => lending(a, x, ctx), lending_borrow_request: (x) => lending(a, x, ctx), lending_repay: (x) => lending(a, x, ctx),
   lending_credit: (x) => lending(a, x, ctx), lending_close_request: (x) => lending(a, x, ctx), lending_close_payout: (x) => lending(a, x, ctx),
-  subcontract_propose: (x) => {
-    if ([...a.clauses.values()].filter(isPending).length >= MAX_PENDING) return err({ _tag: "pending_full" });
-    if (a.clauses.has(x.id)) return err({ _tag: "duplicate" });
-    if (!x.clause.allowances.every((r) => r.deltaIndex >= 0 && r.leftAllowance >= 0n && r.rightAllowance >= 0n)) return err({ _tag: "bad_allowance" });
-    return ok(step({ ...a, clauses: mapSet(a.clauses, x.id, { _tag: "pending", clause: { ...x.clause, proposerIsLeft: ctx.byLeft } }) }));
-  },
-  subcontract_approve: (x) => chain(pendingOf(a, x.id, ctx.byLeft), (clause) => {
-    const order = tokenOrder(a);
-    return clause.allowances.some((r) => order[r.deltaIndex] === undefined) ? err({ _tag: "index" }) : ok(step({ ...a, clauses: mapSet(a.clauses, x.id, { _tag: "live", clause }) }));
-  }),
-  subcontract_reject: (x) => map(pendingOf(a, x.id, ctx.byLeft), () => step({ ...a, clauses: mapDelete(a.clauses, x.id) })),
-  subcontract_resolve_propose: (x) => {
-    const s = a.clauses.get(x.id), clause = s === undefined ? undefined : heldClause(s);
-    return clause === undefined ? MISSING : ok(step({ ...a, clauses: mapSet(a.clauses, x.id, { _tag: "resolving", clause, resolution: { args: x.args, effects: x.effects, proposerIsLeft: ctx.byLeft } }) }));
-  },
-  subcontract_resolve_approve: (x) => map(resolutionOf(a, x.id, ctx.byLeft), (r) =>
-    step({ ...putState(a, r.effects.reduce((s, e) => setDelta(s, shift(getDelta(s, e.tokenId), e.offdelta)), a.account)), clauses: mapDelete(a.clauses, x.id) })),
   cross_pull_lock: () => err({ _tag: "unchosen", hole: "cross_open" }),
   cross_pull_close: () => err({ _tag: "unchosen", hole: "cross_open" }),
   j_event_claim: (x) => claimJ(a, x, ctx),
@@ -1822,7 +1782,6 @@ const namedTokens = (tx: WireAccountTx): readonly string[] => matchBy("type", tx
   add_delta: one, set_credit_limit: one, payment: one, htlc_lock: one, htlc_resolve: none, swap_offer: (x) => [x.giveTokenId, x.wantTokenId], swap_cancel_request: none, swap_resolve: (x) => (x.feeTokenId === undefined ? [] : [x.feeTokenId]),
   deposit_to_custody: one, withdraw_from_custody: one, hub_custody_debit: one, request_collateral: (x) => (x.feeTokenId === undefined ? [x.tokenId] : [x.tokenId, x.feeTokenId]), rebalance_refund: (x) => [x.requestTokenId], rebalance_policy: one,
   lending_fund: one, lending_borrow_request: one, lending_repay: one, lending_credit: one, lending_close_request: none, lending_close_payout: one,
-  subcontract_propose: none, subcontract_approve: none, subcontract_reject: none, subcontract_resolve_propose: (x) => x.effects.map((e) => e.tokenId), subcontract_resolve_approve: none,
   cross_pull_lock: none, cross_pull_close: none, j_event_claim: (x) => x.events.flatMap((row) => row.tokens.map((tk) => tk.tokenId.toString())), settle_transition: none,
 });
 const commits = (before: AccountBody, tx: WireAccountTx, next: AccountStep): BodyStep<Effect> =>
@@ -1835,7 +1794,7 @@ export const applyAccountBody: Layer<AccountBody, WireAccountTx, FoldCtx, Effect
   return chain(authorized(tx, a.hub, ctx.byLeft), () => chain(applyArm(a, tx, ctx), (next) => (next.state.account.deltas.size > MAX_ROWS ? err({ _tag: "too_many_rows" }) : commits(a, tx, next))));
 };
 export const accountSnapshot = (a: AccountBody): Required<Omit<AccountBody, "account">> & { readonly state: Hash } =>
-  ({ state: hashAccountState(a.account), terms: a.terms, hub: a.hub, custody: a.custody, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, clauses: a.clauses, debits: a.debits, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
+  ({ state: hashAccountState(a.account), terms: a.terms, hub: a.hub, custody: a.custody, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, debits: a.debits, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
 
 
 export type ViewError = CommitmentError | Tagged<"token_id", { tokenId: TokenId }> | ClaimError;
@@ -1844,7 +1803,6 @@ export type Uncommitted = Tagged<"uncommitted", { reason: UncommittedReason }>;
 export const uncommitted = (reason: UncommittedReason): Uncommitted => ({ _tag: "uncommitted", reason });
 export const tokenNumber = (id: TokenId): Result<number, ViewError> => (tokenId(id).ok ? ok(Number(id)) : err({ _tag: "token_id", tokenId: id }));
 export const tokenOrder = (b: AccountBody): readonly TokenId[] => [...b.account.deltas.keys()].sort((x, y) => Number(x) - Number(y));
-export const heldClause = (s: ClauseState): Clause | undefined => match<ClauseState, Clause | undefined>(s, { pending: () => undefined, live: ({ clause }) => clause, resolving: ({ clause }) => clause });
 const EMPTY_J_CLAIMS: JClaimAccumulator = { version: 1, root: EMPTY_J_ROOT, count: 0n };
 const CLAIM_ACCOUNT = keccak256Hex(utf8("xln.account-j-claim.account.v1")), CLAIM_KEY = keccak256Hex(utf8("xln.account-j-claim.key.v1")), CLAIM_RECORD = keccak256Hex(utf8("xln.account-j-claim.record.v1")), CLAIM_LEAF = keccak256Hex(utf8("xln.account-j-claim.leaf.v1")), CLAIM_BRANCH = keccak256Hex(utf8("xln.account-j-claim.branch.v1"));
 type ClaimNode = Tagged<"leaf", { key: string; record: string }> | Tagged<"branch", { bit: number; left: ClaimNode; right: ClaimNode }>;
@@ -1899,13 +1857,6 @@ const totalsOn = (b: AccountBody, counted: (id: TokenId) => boolean): ReadonlyMa
     if (d.leftDiff < 0n) holdOn(id, true, -d.leftDiff);
     if (d.rightDiff < 0n) holdOn(id, false, -d.rightDiff);
   }
-  let order: readonly TokenId[] | undefined;
-  for (const s of b.clauses.values()) for (const r of heldClause(s)?.allowances ?? []) {
-    order ??= tokenOrder(b);
-    const id = order[r.deltaIndex];
-    if (id === undefined || !counted(id)) continue;
-    const tot = on(id); tot.leftAllowance += r.leftAllowance; tot.rightAllowance += r.rightAllowance;
-  }
   return totals;
 };
 export const sideTotals = (b: AccountBody, tk: TokenId): SideTotals => totalsOn(b, (id) => id === tk).get(tk) ?? NO_TOTALS;
@@ -1917,9 +1868,6 @@ const committedDeltas = (b: AccountBody): ReadonlyMap<number, CommittedDelta> =>
     return [d.tokenId, { tokenId: Number(d.tokenId), collateral: d.collateral, ondelta: d.ondelta, offdelta: d.offdelta, leftCreditLimit: d.leftCreditLimit, rightCreditLimit: d.rightCreditLimit, leftAllowance: s.leftAllowance, rightAllowance: s.rightAllowance, leftHold: s.leftHold, rightHold: s.rightHold }];
   }));
 };
-const clauseRow = (id: ClauseId, s: ClauseState): unknown => match(s, {
-  pending: ({ clause }) => ({ stage: "pending", clause }), live: ({ clause }) => ({ stage: "live", clause, resolve: undefined }), resolving: ({ clause, resolution }) => ({ stage: "live", clause, resolve: { id, ...resolution } }),
-});
 const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
   const height = b.finalizedJHeight;
   if (height < 0n || height > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "bad_j_claims" });
@@ -1933,7 +1881,7 @@ const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
     return ok({
       domain: terms.domain, leftEntity: b.account.id.left, rightEntity: b.account.id.right, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig,
       jNonce: b.jNonce, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
-      deltas: committedDeltas(b), locks: new Map([...b.locks].map(([id, l]) => [id, ogLockRow(l)])), pulls: new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map([...b.clauses].map(([id, s]) => [id, clauseRow(id, s)])), lendingIntents: hubRows,
+      deltas: committedDeltas(b), locks: new Map([...b.locks].map(([id, l]) => [id, ogLockRow(l)])), pulls: new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map(), lendingIntents: hubRows,
       requestedRebalance: byToken(b.requested), requestedRebalanceFeeState: byToken(b.requestFees), rebalanceFeePolicies: byToken(b.feePolicies), settlementWorkspace: b.settlement,
     });
   }));
