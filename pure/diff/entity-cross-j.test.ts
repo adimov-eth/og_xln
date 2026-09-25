@@ -306,3 +306,185 @@ describe("entity-cross-j: Entity htlcPayment origination (og payment-admission.t
     expect(stableJson(replayed.outbox)).toBe(stableJson(step.outbox));
   });
 });
+
+// ---- Inbound HTLC: og entity/paybook/materialize-context.ts, tx/handlers/account/committed-{htlc,frame}-followups.ts ----
+import * as ogMaterialize from "../../core/entity/paybook/materialize-context.ts";
+import * as ogHtlcFollow from "../../core/entity/tx/handlers/account/committed-htlc-followups.ts";
+import * as ogFrameFollow from "../../core/entity/tx/handlers/account/committed-frame-followups.ts";
+import { hashHtlcSecret, inboundHtlcEntries, paybookFollowups, type AccountTxTarget, type CommittedHtlcFrame, type PaybookEntry, type PreparedHtlcEntry } from "../xln.ts";
+
+describe("entity-cross-j: inbound HTLC (og materialize-context.ts + committed HTLC followups)", () => {
+  const profiles = (): Binary[] => [
+    profile(ALICE, []), profile(BOB, [{ counterpartyId: ALICE, domain: JUR, tokenCapacities: caps(1000n, 0n) }, { counterpartyId: CAROL, domain: JUR, tokenCapacities: caps(0n, 1000n) }], { routingFeePPM: 5000, baseFee: 1n }), profile(CAROL, []),
+  ];
+  const secret = "0x" + "42".repeat(32);
+  const paymentTx = (amount = 100n) => withDeterministicHtlcTestSecret({ type: "htlcPayment", data: { targetEntityId: CAROL, tokenId: 1, amount, maxSenderDebit: 200n, route: [ALICE, BOB, CAROL], deliveryMode: "instant", description: "invoice 9" } } as never, secret) as unknown as EntityTx;
+  const infraFor = (tx: EntityTx, online: (id: string) => boolean = () => true) => {
+    const txHash = ogAdmission.hashRawHtlcPaymentTx(tx as never);
+    return { ...verifiers, htlcInfra: (id: EntityId) => ({ profiles: profiles(), online, encryptionPrivateKey: ENTITY_KEYS.get(id)!.priv, ...(id === ALICE ? { secretFor: (h: string) => (h === txHash ? secret : undefined) } : {}) }) };
+  };
+  const deltaOf = (rt: Runtime, id: EntityId, peer: EntityId) => replicaOf(rt, id).accountReplicas.get(peer)!.state.account.deltas.get(unwrap(tokenId("1")))!;
+
+  test("MATCH: a routed payment Alice -> Bob -> Carol settles end to end: Carol pays out, Bob earns the fee, every paybook entry terminates", () => {
+    const tx = paymentTx(), ctx = infraFor(tx);
+    const done = quiet(network(), [inputOf(ALICE, [tx], NOW + 1000n)], ctx);
+    const og = ogAdmission; void og;
+    for (const id of [ALICE, BOB, CAROL]) expect([...(replicaOf(done, id).state.paybook?.entries ?? new Map()).keys()]).toEqual([]);
+    const lock = unwrap(htlcPaymentTxHash(tx as never));
+    expect(lock.length).toBe(66);
+    // og quote: Alice locks the sender amount og's route quote asks for; Bob forwards 100 and keeps the difference as its fee.
+    const quote = ogQuote.quoteHtlcPaymentRouteWithIndex(ogQuote.buildRoutingProfileIndex(profiles() as never), [ALICE, BOB, CAROL], 1, 100n) as { senderLockAmount: bigint };
+    expect(quote.senderLockAmount).toBeGreaterThan(100n);
+    expect(replicaOf(done, BOB).state.paybook?.feesEarned).toBe(quote.senderLockAmount - 100n);
+    expect(deltaOf(done, ALICE, BOB).offdelta + deltaOf(done, ALICE, BOB).ondelta).toBe(isLeft(ALICE, replicaId(replicaOf(done, ALICE).accountReplicas.get(BOB)!)) ? -quote.senderLockAmount : quote.senderLockAmount);
+    expect(deltaOf(done, BOB, CAROL).offdelta + deltaOf(done, BOB, CAROL).ondelta).toBe(isLeft(BOB, replicaId(replicaOf(done, BOB).accountReplicas.get(CAROL)!)) ? -100n : 100n);
+    for (const id of [ALICE, BOB, CAROL]) for (const c of replicaOf(done, id).accountReplicas.values()) expect(c.state.locks.size).toBe(0);
+  });
+
+  test("MATCH: Bob refuses to forward to an offline next hop; the error flows back and Alice's originated payment terminates with balances untouched", () => {
+    const tx = paymentTx(), ctx = infraFor(tx, (id) => id !== CAROL);
+    const done = quiet(network(), [inputOf(ALICE, [tx], NOW + 1000n)], ctx);
+    for (const id of [ALICE, BOB, CAROL]) expect([...(replicaOf(done, id).state.paybook?.entries ?? new Map()).keys()]).toEqual([]);
+    expect(deltaOf(done, ALICE, BOB).offdelta).toBe(0n);
+    expect(replicaOf(done, BOB).state.paybook?.feesEarned ?? 0n).toBe(0n);
+    for (const id of [ALICE, BOB, CAROL]) for (const c of replicaOf(done, id).accountReplicas.values()) expect(c.state.locks.size).toBe(0);
+  });
+});
+import { htlcEnvelopeHash } from "../xln.ts";
+
+/** Key-sorted JSON (Maps as sorted entry lists, bigints tagged) so og's and the rewrite's object key order never matters. */
+const sortedJson = (v: unknown): string => JSON.stringify(v, function (_k, x) {
+  if (typeof x === "bigint") return `${x}n`;
+  if (x instanceof Map) return [...x].sort(([a], [b]) => (String(a) < String(b) ? -1 : 1));
+  if (x !== null && typeof x === "object" && !Array.isArray(x)) return Object.fromEntries(Object.keys(x).filter((k) => x[k] !== undefined).sort().map((k) => [k, x[k]]));
+  return x;
+});
+const ogAccountTx = (t: any) => t.type === "htlc_resolve"
+  ? { type: "htlc_resolve", data: t.outcome === "secret" ? { lockId: t.lockId, outcome: "secret", secret: t.secret } : { lockId: t.lockId, outcome: "error", ...(t.reason === undefined ? {} : { reason: t.reason }) } }
+  : { type: "htlc_lock", data: { lockId: t.lockId, hashlock: t.hashlock, timelock: t.timelock, revealBeforeHeight: Number(t.revealBeforeHeight), amount: t.amount, tokenId: Number(t.tokenId), ...(t.envelope === undefined ? {} : { envelope: t.envelope }) } };
+
+describe("entity-cross-j: inbound HTLC MATCH vs og (materialize-context.ts, committed-htlc-followups.ts, committed-frame-followups.ts)", () => {
+  const profiles = (): Binary[] => [
+    profile(ALICE, []), profile(BOB, [{ counterpartyId: ALICE, domain: JUR, tokenCapacities: caps(1000n, 0n) }, { counterpartyId: CAROL, domain: JUR, tokenCapacities: caps(0n, 1000n) }], { routingFeePPM: 5000, baseFee: 1n }), profile(CAROL, []),
+  ];
+
+  test("MATCH: materializeHtlcPreparedInfraContext entries on 240 mutated inbound locks (AEAD, onion, next hop, liveness, capacity, fee policy, deadlines, keys, duplicates)", async () => {
+    const secret = "0x" + "24".repeat(32);
+    const tx = withDeterministicHtlcTestSecret({ type: "htlcPayment", data: { targetEntityId: CAROL, tokenId: 1, amount: 100n, maxSenderDebit: 200n, route: [ALICE, BOB, CAROL], deliveryMode: "instant" } } as never, secret) as unknown as EntityTx;
+    const txHash = ogAdmission.hashRawHtlcPaymentTx(tx as never);
+    const ctx = { ...verifiers, htlcInfra: (id: EntityId) => (id === ALICE ? { profiles: profiles(), secretFor: (h: string) => (h === txHash ? secret : undefined), online: () => true } : undefined) };
+    const base = network(), step = unwrap(applyRuntime(base, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], NOW + 1000n)] }, ctx as never));
+    const out = step.outbox.find((o) => "tx" in o && o.to === BOB && o.tx.data.kind === "ack_frame") as { tx: { data: any } };
+    const msg = out.tx.data, bob = replicaOf(step.runtime, BOB), lock0 = msg.frame.txs.find((t: any) => t.type === "htlc_lock");
+    expect(lock0?.envelope).toBeDefined();
+    const r = rng(33), outcomes = new Map<string, number>();
+    for (let i = 0; i < 240; i++) {
+      const k = int(r, 15);
+      let lock = { ...lock0 };
+      if (k === 1) { const c = lock.envelope.ciphertext as string, at = 10 + int(r, c.length - 20); lock = { ...lock, envelope: { ...lock.envelope, ciphertext: c.slice(0, at) + (c[at] === "A" ? "B" : "A") + c.slice(at + 1) } }; }
+      if (k === 2) lock = { ...lock, amount: lock.amount + 1n };
+      if (k === 3) lock = { ...lock, timelock: lock.timelock - 1n };
+      if (k === 4) lock = { ...lock, lockId: hex(r, 32) };
+      if (k === 5) { const { envelope: _e, ...bare } = lock; lock = bare; }
+      const frame = { ...msg.frame, txs: msg.frame.txs.map((t: any) => (t.type === "htlc_lock" ? lock : t)) };
+      const m = { ...msg, frame };
+      const ts = k === 6 ? Number(lock0.timelock) - 30_000 + int(r, 20_000) : Number(NOW) + 2000;
+      const jHeight = k === 7 ? Number(lock0.revealBeforeHeight) - int(r, 6) : 0;
+      const hub = k === 8 ? { routingFeePPM: pick(r, [1, 20_000, 999_999]), baseFee: pick(r, [0n, 1n, 3n, 50n]) } : undefined;
+      const known = new Set(k === 10 ? [ALICE, BOB] : [ALICE, BOB, CAROL]), up = (id: string) => known.has(id) && !(k === 9 && id === CAROL);
+      let replicas = bob.accountReplicas;
+      if (k === 11) replicas = new Map([...replicas].filter(([p]) => p !== CAROL));
+      if (k === 14) { const c = replicas.get(CAROL)!, tk = unwrap(tokenId("1")), d = c.state.account.deltas.get(tk)!; replicas = new Map(replicas).set(CAROL, { ...c, state: { ...c.state, account: { ...c.state.account, deltas: new Map(c.state.account.deltas).set(tk, { ...d, leftCreditLimit: BigInt(int(r, 120)), rightCreditLimit: BigInt(int(r, 120)) }) } } } as AccountReplica); }
+      const priv = k === 12 ? ENTITY_KEYS.get(CAROL)!.priv : ENTITY_KEYS.get(BOB)!.priv;
+      const rwTx = { type: "accountInput", data: m } as EntityTx, txs = k === 13 ? [rwTx, rwTx] : [rwTx];
+      const committed = { ...bob.state.committed, ...(jHeight > 0 ? { lastFinalizedJHeight: jHeight } : {}), ...(hub === undefined ? {} : { hubRebalanceConfig: hub as unknown as Binary }) };
+      const rw = inboundHtlcEntries({ state: { ...bob.state, committed }, replicas, timestamp: ts, publicKey: ENTITY_KEYS.get(BOB)!.pub, privateKey: priv, online: up } as never, txs);
+      const child = bob.accountReplicas.get(ALICE)!;
+      const ogTx = { type: "accountInput", data: { kind: "ack_frame", fromEntityId: m.fromEntityId, toEntityId: m.toEntityId, domain: m.domain, proposal: { frame: { height: Number(frame.height), stateHash: frame.stateHash, timestamp: Number(frame.timestamp), accountTxs: frame.txs.map((t: any) => (t.type === "htlc_lock" ? ogAccountTx(t) : unwrap(wireTx(t, replicaId(child), isLeft(ALICE, replicaId(child)))))) } } } };
+      const ogState = {
+        entityId: BOB, timestamp: ts, lastFinalizedJHeight: jHeight, entityEncryptionPublicKey: ENTITY_KEYS.get(BOB)!.pub, config: { validators: [bobAddr], shares: { [bobAddr]: 1n }, threshold: 1n },
+        ...(hub === undefined ? {} : { hubRebalanceConfig: hub }), paybook: { entries: new Map(), feesEarned: 0n }, accounts: new Map([...replicas].map(([p, c]) => [p, ogAccount(c)])),
+      };
+      const og = await ogTryAsync(async () => (await ogMaterialize.materializeHtlcPreparedInfraContext({
+        state: ogState as never, proposalTxs: (k === 13 ? [ogTx, ogTx] : [ogTx]) as never, entityEncryptionPublicKey: ENTITY_KEYS.get(BOB)!.pub, entityEncryptionPrivateKey: priv, isEntityOnline: up,
+        profiles: [], parentFrameHash: "0x" + "00".repeat(32), height: 2, resolveRoute: async () => { throw new Error("no route"); },
+      })).entries);
+      expect(`${i}:${k}:${rw.ok}`).toBe(`${i}:${k}:${og.ok}`);
+      if (og.ok && rw.ok) {
+        expect(sortedJson(rw.value)).toBe(sortedJson(og.value));
+        for (const e of rw.value as readonly PreparedHtlcEntry[]) outcomes.set(e.outcome.kind === "reject" ? e.outcome.reason : e.outcome.kind, (outcomes.get(e.outcome.kind === "reject" ? e.outcome.reason : e.outcome.kind) ?? 0) + 1);
+      }
+    }
+    // every og outcome class is exercised
+    for (const kind of ["forward", "decrypt_failed", "next_hop_account_missing", "next_hop_offline", "insufficient_capacity", "fee_below_policy", "deadline_unsafe"]) expect(`${kind}:${(outcomes.get(kind) ?? 0) > 0}`).toBe(`${kind}:true`);
+  });
+
+  test("MATCH: committed resolve / lock / timeout / secret followups on 400 random paybooks and committed frames (paybook, fees, returned Account txs)", async () => {
+    const r = rng(47), toBob = (id: string) => ({ from: id, to: BOB, domain: JUR });
+    const env = (n: number): HtlcEnvelope => unwrap(encryptOpaqueHtlc(bytes(r, 40 + n), ENTITY_KEYS.get(BOB)!.pub, hex(r, 32), keyPair(r).priv));
+    let accepted = 0;
+    for (let i = 0; i < 400; i++) {
+      const secrets = Array.from({ length: 4 }, () => hex(r, 32)), locks = secrets.map((s) => hashHtlcSecret(s)!);
+      const peer = pick(r, [ALICE, CAROL]), ts = 1_000_000 + int(r, 1000), fees0 = BigInt(int(r, 10));
+      const entries0 = new Map<string, PaybookEntry>();
+      for (let j = 0; j < 4; j++) {
+        if (r() < 0.4) continue;
+        entries0.set(locks[j]!, {
+          hashlock: locks[j]!, tokenId: 1, amount: BigInt(1 + int(r, 1000)), createdTimestamp: 5, ...(r() < 0.4 ? { originated: true as const } : {}), ...(r() < 0.6 ? { inboundEntity: pick(r, [ALICE, CAROL]) } : {}),
+          ...(r() < 0.6 ? { outboundEntity: pick(r, [ALICE, CAROL]) } : {}), ...(r() < 0.4 ? { pendingFee: BigInt(int(r, 5)) } : {}), ...(r() < 0.15 ? { secret: secrets[j] } : {}), ...(r() < 0.3 ? { description: "d" } : {}),
+        });
+      }
+      const resolveTx = (j: number) => r() < 0.55
+        ? { type: "htlc_resolve", lockId: locks[j]!, outcome: "secret", secret: r() < 0.04 ? hex(r, 32) : secrets[j]! }
+        : { type: "htlc_resolve", lockId: locks[j]!, outcome: "error", ...(r() < 0.7 ? { reason: pick(r, ["timeout", "downstream_error", "x"]) } : {}) };
+      const entries: PreparedHtlcEntry[] = [];
+      const frameOf = (viaNewFrame: boolean, height: number): CommittedHtlcFrame => {
+        const stateHash = hex(r, 32), txs: any[] = [];
+        for (let n = 1 + int(r, 3); n > 0; n--) {
+          const j = int(r, 4);
+          if (!viaNewFrame || r() < 0.5) { txs.push(resolveTx(j)); continue; }
+          const amount = BigInt(10 + int(r, 500)), envelope = env(int(r, 30));
+          const lock = { type: "htlc_lock", lockId: locks[j]!, hashlock: locks[j]!, timelock: 10n ** 12n + BigInt(int(r, 1e6)), revealBeforeHeight: BigInt(100 + int(r, 50)), amount, tokenId: "1", envelope };
+          txs.push(lock);
+          if (r() < 0.05) continue;
+          const bindingAmount = r() < 0.05 ? amount + 1n : amount;
+          const outcome = pick(r, ["forward", "final", "reject"]) === "forward"
+            ? { kind: "forward", nextHopEntityId: pick(r, [ALICE, CAROL]), forwardAmount: amount - BigInt(int(r, 5)), innerEnvelope: env(3) }
+            : r() < 0.5 ? { kind: "final", secret: secrets[j]!, ...(r() < 0.5 ? { description: "note" } : {}), ...(r() < 0.5 ? { startedAtMs: 7 } : {}) }
+              : { kind: "reject", reason: pick(r, ["decrypt_failed", "next_hop_offline", "fee_below_policy"]) };
+          entries.push({ binding: { fromEntityId: peer, toEntityId: BOB, domain: { chainId: JUR.chainId, depositoryAddress: JUR.depositoryAddress.toLowerCase() }, accountFrameHash: stateHash, accountHeight: height, envelopeHash: htlcEnvelopeHash(envelope)!, hashlock: locks[j]!, tokenId: 1, amount: bindingAmount, timelock: lock.timelock, revealBeforeHeight: Number(lock.revealBeforeHeight) }, outcome } as PreparedHtlcEntry);
+        }
+        return { frame: { height: BigInt(height), stateHash, txs: txs as never }, viaNewFrame };
+      };
+      const frames = [...(r() < 0.5 ? [frameOf(false, 3)] : []), ...(r() < 0.75 ? [frameOf(true, 4)] : [])];
+      const received = frames.some((f) => f.viaNewFrame) ? toBob(peer) : undefined;
+      const rw = paybookFollowups({ paybook: { entries: entries0, feesEarned: fees0 }, queue: [] }, peer, frames, received as never, entries, ts);
+      // og committed-input.ts driver: per committed frame the frame followups then each tx's lock followup; then timeouts; then the peer frame's secrets
+      const og = await ogTryAsync(async () => {
+        const program = createBookIntentProgram(), slot = program.openSlot();
+        const newState: any = { entityId: BOB, timestamp: ts, config: {}, paybook: { entries: new Map([...entries0].map(([h, e]) => [h, { ...e }])), feesEarned: fees0 }, accounts: new Map() };
+        const accountTxs: any[] = [], candidateEffects: any[] = [], consumed = new Set<string>(), byBinding = new Map(entries.map((e) => [`${e.binding.accountFrameHash}:${e.binding.hashlock}`, e]));
+        const fctx: any = { env: {}, state: newState, newState, input: { fromEntityId: peer, toEntityId: BOB, domain: JUR }, account: {}, outputs: [], accountTxs, candidateEffects, bookIntentSlot: slot, infraContext: {}, preparedHtlcEntriesByBinding: byBinding, consumedPreparedHtlcBindings: consumed };
+        for (const { frame, viaNewFrame } of frames) {
+          const ogFrame = { height: Number(frame.height), stateHash: frame.stateHash, timestamp: ts, accountTxs: frame.txs.map(ogAccountTx) };
+          ogFrameFollow.applyCommittedAccountFrameFollowups(newState, peer, ogFrame as never, true, accountTxs, {} as never, candidateEffects, slot);
+          for (const t of ogFrame.accountTxs) await ogHtlcFollow.applyCommittedHtlcLockFollowup(fctx, t as never, ogFrame as never, true, viaNewFrame);
+        }
+        const timed = frames.flatMap(({ frame }) => (frame.txs as any[]).filter((t) => t.type === "htlc_resolve" && t.outcome === "error").map((t) => t.lockId));
+        const revealed = frames.flatMap(({ frame, viaNewFrame }) => (viaNewFrame ? (frame.txs as any[]).filter((t) => t.type === "htlc_resolve" && t.outcome === "secret").map((t) => ({ secret: t.secret, hashlock: t.lockId })) : []));
+        ogHtlcFollow.applyHtlcTimeoutFollowups(fctx, timed);
+        ogHtlcFollow.applyHtlcSecretFollowups(fctx, revealed);
+        applyBookIntentProgram(newState, program);
+        return { entries: newState.paybook.entries, feesEarned: newState.paybook.feesEarned, accountTxs };
+      });
+      // og applies an Account-level resolve before the Entity sees it: a mismatched preimage never commits, so both sides must refuse it
+      expect(`${i}:${rw.ok}`).toBe(`${i}:${og.ok}`);
+      if (!og.ok || !rw.ok) continue;
+      accepted++;
+      const value = rw.value;
+      expect(sortedJson({ entries: value.paybook.entries, feesEarned: value.paybook.feesEarned })).toBe(sortedJson({ entries: og.value.entries, feesEarned: og.value.feesEarned }));
+      expect(sortedJson(value.queue.map((q: AccountTxTarget) => ({ accountId: q.accountId, tx: ogAccountTx(q.tx) })))).toBe(sortedJson(og.value.accountTxs));
+    }
+    expect(accepted).toBeGreaterThan(200);
+  });
+});
