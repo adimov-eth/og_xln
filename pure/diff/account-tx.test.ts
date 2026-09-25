@@ -50,6 +50,8 @@ import {
   zeroDelta,
   MAX_FILL,
   applyAccountInput,
+  frameStateHash,
+  planAccountProposal,
   genesisReplica,
   genesisWitnesses,
   previewAccountProposal,
@@ -974,8 +976,20 @@ describe("account-tx: settlement + j_event_claim", () => {
     const o2 = await og2.run(right, false, 5, settleOgCtx);
     expect(o2.error).toMatch(/SETTLEMENT_HANKO_NONCE_MISMATCH/);
     const held = { hanko: "0x01", hash: word("71"), proofBodyHash: word("72"), proofNonce: 3, proposerIsLeft: true };
-    expect(previewAccountProposal(replicaOn(upserted, r.mempool, { nextProofNonce: 4, current: held }), B as any, clock, () => true))
-      .toMatchObject({ ok: false, error: { _tag: "proposal_halt", cause: { reason: "SETTLEMENT_HANKO_NONCE_MISMATCH" } } });
+    // og proposalFailureDisposition (isRefreshableStaleSettlementHanko): an account-basis stale nonce for the unsigned workspace is `retry`, so the hanko stays queued instead of halting.
+    const [, supplied, required] = /SETTLEMENT_HANKO_NONCE_MISMATCH:(\d+):(\d+):j=/.exec(o2.error ?? "") ?? [];
+    const stalePlan: any = unwrap(planAccountProposal(replicaOn(upserted, r.mempool, { nextProofNonce: 4, current: held }), B as any, clock, () => true) as any);
+    expect(stalePlan).toMatchObject({ _tag: "idle", refused: { _tag: "settlement", reason: "SETTLEMENT_HANKO_NONCE_MISMATCH", nonce: { supplied: Number(supplied), required: Number(required), basis: "account" } } });
+    expect(stalePlan.deferred).toEqual(r.mempool);
+    // og classifyIncomingValidationFailure: the same stale hanko received in a peer frame is ACCOUNT_INPUT_FRAME_STALE_SETTLEMENT_HANKO (a plain refusal), unless the frame carries it twice.
+    const recv = replicaOn(upserted, [], { nextProofNonce: 4, current: held });
+    const received = (txs: readonly any[]) => {
+      const bare = { height: recv.head.height + 1n, timestamp: 5n, jHeight: 0n, prevFrameHash: recv.head.prevFrameHash, accountStateRoot: word("ab"), txs };
+      const frame = { ...bare, stateHash: unwrap(frameStateHash(bare as any, pairId(), false) as any) };
+      return applyAccountInput(recv, { kind: "ack_frame", fromEntityId: B, toEntityId: A, ...rawTerms, ack: null, frame, frameHanko: "0x01" } as any, { verify: () => true, self: A as any, now: 5n } as any);
+    };
+    expect(received(r.mempool)).toMatchObject({ ok: false, error: { _tag: "stale_settlement_hanko", cause: { reason: "SETTLEMENT_HANKO_NONCE_MISMATCH" } } });
+    expect(received([...r.mempool, ...r.mempool])).toMatchObject({ ok: false, error: { _tag: "dispute_required", cause: { reason: "SETTLEMENT_HANKO_NONCE_MISMATCH" } } });
   });
 
   test("MATCH (AT-10c): the frame finalizing the signed nonce promotes both N+1 hankos and bumps nextProofNonce like og activatePostSettlementProof", async () => {
@@ -997,6 +1011,7 @@ describe("account-tx: settlement + j_event_claim", () => {
     // The on-chain AccountSettled row for r2c(5): find the ondelta og's finalized proof body accepts, then require the rewrite to agree.
     let rows: any[] = [];
     let ok = false;
+    const beforeClaims = og.replica();
     for (const ondelta of [0n, 5n, -5n]) {
       rows = [{ tokenId: 1, collateral: 5n, ondelta, nonce: 1 }];
       const before = og.replica();
@@ -1023,6 +1038,17 @@ describe("account-tx: settlement + j_event_claim", () => {
     // og equivocation: a held proof at the same nonce with a different body refuses.
     const clash = { hanko: "0x09", hash: word("73"), proofBodyHash: word("74"), proofNonce: 2, proposerIsLeft: true };
     expect(promoteSettled({ nextProofNonce: 3, current: clash }, first, second, false)).toMatchObject({ ok: false, error: { _tag: "dispute_hanko" } });
+    // One frame finalizing the signed nonce and then a later one: og runs activatePostSettlementProof per claim, so the first promotes and bumps nextProofNonce and the second finds the workspace cleared.
+    og.reset(beforeClaims);
+    const later = [{ ...rows[0], nonce: 2 }];
+    for (const [h, rs, byLeft] of [[10, rows, true], [11, later, true], [10, rows, false], [11, later, false]] as const) expect((await ogClaimRun(ogClaim(h, word(h === 10 ? "0a" : "0b"), rs), byLeft)).error ?? "ok").toBe("ok");
+    const og2: any = og.replica();
+    const pending = unwrap(apply(first, rwClaim(11, word("0b"), later), { byLeft: true, nowMs: 5n, jHeight: 0n, accountHeight: 2n })).state;
+    const both = unwrap(apply(unwrap(apply(pending, rwClaim(10, word("0a"), rows), { byLeft: false, nowMs: 6n, jHeight: 11n, accountHeight: 3n })).state, rwClaim(11, word("0b"), later), { byLeft: false, nowMs: 6n, jHeight: 11n, accountHeight: 3n })).state;
+    expect(both.jNonce).toBe(og2.state.jNonce);
+    const w2: any = unwrap(promoteSettled(genesisWitnesses(), pending, both, true, [1, 2]) as any);
+    expect(w2.current).toEqual({ hanko: og2.currentDisputeProofHanko, hash: og2.currentDisputeHash, proofBodyHash: og2.currentDisputeProofBodyHash, proofNonce: og2.currentDisputeProofNonce, proposerIsLeft: og2.currentDisputeProofProposerIsLeft });
+    expect(w2.nextProofNonce).toBe(og2.proofHeader.nextProofNonce);
   });
 });
 

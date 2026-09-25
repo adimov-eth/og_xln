@@ -206,7 +206,7 @@ const dynamic = (v: Abi): boolean => match(v, { uint: () => false, int: () => fa
 const padRight = (b: Uint8Array): Uint8Array => { const n = Math.ceil(b.length / 32) * 32; if (n === b.length) return b; const out = new Uint8Array(n); out.set(b); return out; };
 const encodeValue = (v: Abi): string => match(v, {
   uint: (x) => nobleHex(wordOf(x.value)), int: (x) => nobleHex(wordOfSigned(x.value)), bool: (x) => nobleHex(wordOf(x.value ? 1n : 0n)), address: (x) => nobleHex(addressWord(x.value)),
-  bytes32: (x) => (bytes32(x.value), hexBody(x.value)),
+  bytes32: (x) => (bytes32(x.value), hexBody(x.value).toLowerCase()),
   bytes: (x) => { const b = hexToBytes(x.value); return nobleHex(wordOf(BigInt(b.length))) + nobleHex(padRight(b)); },
   array: (x) => nobleHex(wordOf(BigInt(x.value.length))) + encodeSequence(x.value), tuple: (x) => encodeSequence(x.value),
 });
@@ -530,19 +530,50 @@ export const J_EVENT_SIGNATURES = {
   AccountSettled: "AccountSettled((bytes32,bytes32,(uint256,uint256,uint256,uint256,(int256,uint256))[],uint256)[])",
   DisputeStarted: "DisputeStarted(bytes32,bytes32,uint256,bool,bytes32,bytes32,bytes,bytes,bytes32,uint256,uint256,uint32,uint32)",
   DisputeFinalized: "DisputeFinalized(bytes32,bytes32,uint256,bytes32,bytes32)",
+  SecretRevealed: "SecretRevealed(bytes32,bytes32,bytes32)",
+  CounterDisputeRegistered: "CounterDisputeRegistered(bytes32,bytes32,uint256,bool,bytes32)",
+  HashLadderRevealRegistered: "HashLadderRevealRegistered(bytes32,bytes32,bytes32,uint16,bytes32,bytes32[4],bool,uint256)",
+  DebtCreated: "DebtCreated(bytes32,bytes32,uint256,(uint256,uint256),uint256)",
+  DebtEnforced: "DebtEnforced(bytes32,bytes32,uint256,uint256,(uint256,uint256),uint256)",
+  DebtForgiven: "DebtForgiven(bytes32,bytes32,uint256,(uint256,uint256),uint256)",
+  FoundationBootstrapped: "FoundationBootstrapped(address,bytes32,uint256,uint256)",
+  EntityRegistered: "EntityRegistered(bytes32,uint256,bytes32)",
+  BoardActivated: "BoardActivated(bytes32,bytes32,bytes32,uint256)",
+  EntityProviderActionExecuted: "EntityProviderActionExecuted(bytes32,uint256,bytes32,uint8)",
+  EntityProviderActionCancelled: "EntityProviderActionCancelled(bytes32,uint256,bytes32,uint8,bytes32)",
 } as const;
 export type JEventName = keyof typeof J_EVENT_SIGNATURES;
 const eventTopics = Object.fromEntries(Object.entries(J_EVENT_SIGNATURES).map(([n, s]) => [n, keccak256Hex(utf8(s))])) as Readonly<Record<JEventName, string>>;
 export const jEventTopic = (n: JEventName): string => eventTopics[n];
-export type TokenSettlement = { readonly tokenId: bigint; readonly leftReserve: bigint; readonly rightReserve: bigint; readonly collateral: bigint; readonly ondelta: bigint };
-export type AccountSettlement = { readonly left: string; readonly right: string; readonly tokens: readonly TokenSettlement[]; readonly nonce: bigint };
+/** og JEventMetadata (types/jurisdiction-events.ts): the EVM log position; a token row's `eventIndex` orders the rows one AccountSettled log expands into for one Entity. */
+export type JEventMeta = { readonly blockNumber?: number | undefined; readonly blockHash?: string | undefined; readonly transactionHash?: string | undefined; readonly logIndex?: number | undefined };
+export type TokenSettlement = { readonly tokenId: bigint; readonly leftReserve: bigint; readonly rightReserve: bigint; readonly collateral: bigint; readonly ondelta: bigint; readonly eventIndex?: number | undefined };
+export type AccountSettlement = { readonly left: string; readonly right: string; readonly tokens: readonly TokenSettlement[]; readonly nonce: bigint; readonly meta?: JEventMeta | undefined };
+/** og DisputeFinalizationEvidence: the reducer sidecar decoded from the finalizing transaction's calldata. */
+export type DisputeFinalizationEvidence = {
+  readonly sender: string; readonly counterentity: string; readonly initialNonce: bigint; readonly finalNonce: bigint; readonly initialProofbodyHash: string; readonly finalProofbodyHash: string;
+  readonly proposerIsLeft: boolean; readonly leftArguments: string; readonly rightArguments: string; readonly startedByLeft: boolean; readonly sig: string;
+};
 export type JEventClaimBody =
   | { readonly type: "HankoBatchProcessed"; readonly entityId: string; readonly batchHash: string; readonly nonce: bigint }
   | { readonly type: "ReserveUpdated"; readonly entity: string; readonly tokenId: bigint; readonly newBalance: bigint }
   | { readonly type: "AccountSettled"; readonly settled: readonly AccountSettlement[] }
-  | { readonly type: "DisputeStarted"; readonly sender: string; readonly counterentity: string; readonly nonce: bigint; readonly proposerIsLeft: boolean; readonly proofbodyHash: string; readonly watchSeed: string; readonly starterInitialArguments: string; readonly starterCounterArguments: string; readonly starterCounterProofCommitment: string; readonly disputeTimeout: bigint; readonly disputeStartTimestamp: bigint; readonly leftResponseSeconds: bigint; readonly rightResponseSeconds: bigint }
-  | { readonly type: "DisputeFinalized"; readonly sender: string; readonly counterentity: string; readonly nonce: bigint; readonly finalProofbodyHash: string; readonly finalizationEvidenceHash: string };
-export type ChainLog = { readonly topics: readonly string[]; readonly data: string };
+  | { readonly type: "DisputeStarted"; readonly sender: string; readonly counterentity: string; readonly nonce: bigint; readonly proposerIsLeft: boolean; readonly proofbodyHash: string; readonly watchSeed: string; readonly starterInitialArguments: string; readonly starterCounterArguments: string; readonly starterCounterProofCommitment: string; readonly disputeTimeout: bigint; readonly disputeStartTimestamp: bigint; readonly leftResponseSeconds: bigint; readonly rightResponseSeconds: bigint; readonly initialProofbody?: ProofBody | undefined; readonly batchNonce?: number | undefined }
+  | { readonly type: "DisputeFinalized"; readonly sender: string; readonly counterentity: string; readonly nonce: bigint; readonly finalProofbodyHash: string; readonly finalizationEvidenceHash: string; readonly finalProofbody?: ProofBody | undefined; readonly initialProofbodyHash?: string | undefined; readonly evidence?: DisputeFinalizationEvidence | undefined; readonly batchNonce?: number | undefined }
+  | { readonly type: "SecretRevealed"; readonly hashlock: string; readonly revealer: string; readonly secret: string }
+  | { readonly type: "CounterDisputeRegistered"; readonly sender: string; readonly counterentity: string; readonly nonce: bigint; readonly proposerIsLeft: boolean; readonly proofbodyHash: string; readonly counterProofbody?: ProofBody | undefined }
+  | { readonly type: "HashLadderRevealRegistered"; readonly entity: string; readonly counterpartyEntity: string; readonly ladderHash: string; readonly fillRatio: number; readonly fullSecret: string; readonly reveals: readonly [string, string, string, string]; readonly targetRole: boolean; readonly revealedAt: bigint }
+  | { readonly type: "DebtCreated"; readonly debtor: string; readonly creditor: string; readonly tokenId: bigint; readonly amount: bigint; readonly debtIndex: bigint }
+  | { readonly type: "DebtEnforced"; readonly debtor: string; readonly creditor: string; readonly tokenId: bigint; readonly amountPaid: bigint; readonly remainingAmount: bigint; readonly newDebtIndex: bigint }
+  | { readonly type: "DebtForgiven"; readonly debtor: string; readonly creditor: string; readonly tokenId: bigint; readonly amountForgiven: bigint; readonly debtIndex: bigint }
+  | { readonly type: "FoundationBootstrapped"; readonly recipient: string; readonly boardHash: string; readonly controlTokenId: bigint; readonly dividendTokenId: bigint }
+  | { readonly type: "EntityRegistered"; readonly entityId: string; readonly entityNumber: bigint; readonly boardHash: string }
+  | { readonly type: "BoardActivated"; readonly entityId: string; readonly previousBoardHash: string; readonly newBoardHash: string; readonly previousBoardValidUntil: bigint }
+  | { readonly type: "EntityProviderActionExecuted"; readonly entityId: string; readonly actionNonce: bigint; readonly actionHash: string; readonly actionKind: 0 | 1 }
+  | { readonly type: "EntityProviderActionCancelled"; readonly entityId: string; readonly actionNonce: bigint; readonly cancelledActionHash: string; readonly cancelledActionKind: 0 | 1; readonly cancelHash: string };
+/** A decoded canonical log with its chain coordinates when the transport supplied them. */
+export type JEvent = JEventClaimBody & { readonly meta?: JEventMeta | undefined };
+export type ChainLog = { readonly topics: readonly string[]; readonly data: string } & JEventMeta;
 const wordHex = (topic: string): string => `0x${hexBody(topic).toLowerCase().padStart(64, "0")}`;
 const signedWord = (n: bigint): bigint => (n >= 1n << 255n ? n - (1n << 256n) : n);
 const topicsOf = (log: ChainLog, n: number, name: string): readonly string[] => {
@@ -563,37 +594,609 @@ const readSettled = (buf: Uint8Array): readonly AccountSettlement[] => {
     return { left: wordHex(bytesToHex(abiTupleBytes(buf, row, 0))), right: wordHex(bytesToHex(abiTupleBytes(buf, row, 32))), tokens, nonce: abiWord(buf, row, 96) };
   });
 };
+const SAFE_INT = BigInt(Number.MAX_SAFE_INTEGER);
+/** og event-normalizers.ts: a normalizer returning null makes og ingress (rawEventToJEvents) throw J_EVENT_CANONICAL_PAYLOAD_INVALID. */
+const invalidPayload = (name: JEventName): never => { throw new Error(`J_EVENT_CANONICAL_PAYLOAD_INVALID:${name}`); };
+/** og normalizeInt: a safe integer (the ABI word is unsigned). */
+const safeWord = (name: JEventName, n: bigint, min = 0n): bigint => (n >= min && n <= SAFE_INT ? n : invalidPayload(name));
+/** ethers AddressCoder: toBeHex(word, 20) refuses a word wider than 20 bytes. */
+const addressFromWord = (n: bigint): string => { if (n >> 160n !== 0n) throw new Error("address word exceeds 20 bytes"); return `0x${n.toString(16).padStart(40, "0")}`; };
 const readOne = (log: ChainLog): JEventClaimBody | undefined => {
   const topic = log.topics[0]?.toLowerCase(), buf = hexToBytes(log.data), head = abiRoot();
   const is = (n: JEventName): boolean => topic === jEventTopic(n).toLowerCase();
+  // ethers coders: uintN masks the word to N bits, bool is any non-zero word.
+  const w = (i: number): bigint => abiWord(buf, head, 32 * i), h = (i: number): string => wordHex(bytesToHex(abiTupleBytes(buf, head, 32 * i))), flag = (i: number): boolean => w(i) !== 0n;
+  const topics = (name: JEventName, n: number): readonly string[] => topicsOf(log, n, name).map(wordHex);
   if (topic === undefined) return undefined;
-  if (is("HankoBatchProcessed")) { const [entityId, batchHash] = topicsOf(log, 2, "HankoBatchProcessed"); return { type: "HankoBatchProcessed", entityId: wordHex(entityId ?? ""), batchHash: wordHex(batchHash ?? ""), nonce: wordAt(buf, 0) }; }
-  if (is("ReserveUpdated")) { const [entity, token] = topicsOf(log, 2, "ReserveUpdated"); return { type: "ReserveUpdated", entity: wordHex(entity ?? ""), tokenId: BigInt(token ?? "0"), newBalance: wordAt(buf, 0) }; }
+  if (is("HankoBatchProcessed")) { const [entityId = "", batchHash = ""] = topics("HankoBatchProcessed", 2); return { type: "HankoBatchProcessed", entityId, batchHash, nonce: safeWord("HankoBatchProcessed", w(0), 1n) }; }
+  if (is("ReserveUpdated")) { const [entity = "", token = "0x0"] = topics("ReserveUpdated", 2); return { type: "ReserveUpdated", entity, tokenId: safeWord("ReserveUpdated", BigInt(token)), newBalance: w(0) }; }
   if (is("AccountSettled")) return { type: "AccountSettled", settled: readSettled(buf) };
   if (is("DisputeStarted")) {
-    const [sender, counterentity, nonce] = topicsOf(log, 3, "DisputeStarted");
-    const timeout = abiWord(buf, head, 192), start = abiWord(buf, head, 224), left = abiWord(buf, head, 256), right = abiWord(buf, head, 288), SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+    const [sender = "", counterentity = "", nonce = "0x0"] = topics("DisputeStarted", 3);
+    const timeout = w(6), start = w(7), left = w(8) & 0xffff_ffffn, right = w(9) & 0xffff_ffffn;
     // og j-event-payloads.ts assertRawEventSpecificFields: a positive safe-integer clock whose timeout is exactly start + both response windows.
-    if (timeout <= 0n || timeout > SAFE || start <= 0n || start > SAFE || timeout < start || left > 0xffff_ffffn || right > 0xffff_ffffn || timeout !== start + left + right) throw new Error(`J_EVENT_DISPUTE_CLOCK_INVALID:${start}:${timeout}:${left}:${right}`);
+    if (timeout <= 0n || timeout > SAFE_INT || start <= 0n || start > SAFE_INT || timeout < start || timeout !== start + left + right) throw new Error(`J_EVENT_DISPUTE_CLOCK_INVALID:${start}:${timeout}:${left}:${right}`);
     return {
-      type: "DisputeStarted", sender: wordHex(sender ?? ""), counterentity: wordHex(counterentity ?? ""), nonce: BigInt(nonce ?? "0"), proposerIsLeft: abiWord(buf, head, 0) === 1n,
-      proofbodyHash: wordHex(bytesToHex(abiTupleBytes(buf, head, 32))), watchSeed: wordHex(bytesToHex(abiTupleBytes(buf, head, 64))),
+      type: "DisputeStarted", sender, counterentity, nonce: BigInt(nonce), proposerIsLeft: flag(0), proofbodyHash: h(1), watchSeed: h(2),
       starterInitialArguments: bytesToHex(abiBytes(buf, abiLengthRef(buf, head, 96))), starterCounterArguments: bytesToHex(abiBytes(buf, abiLengthRef(buf, head, 128))),
-      starterCounterProofCommitment: wordHex(bytesToHex(abiTupleBytes(buf, head, 160))), disputeTimeout: abiWord(buf, head, 192), disputeStartTimestamp: abiWord(buf, head, 224),
-      leftResponseSeconds: abiWord(buf, head, 256), rightResponseSeconds: abiWord(buf, head, 288),
+      starterCounterProofCommitment: h(5), disputeTimeout: timeout, disputeStartTimestamp: start, leftResponseSeconds: left, rightResponseSeconds: right,
     };
   }
   if (is("DisputeFinalized")) {
-    const [sender, counterentity, nonce] = topicsOf(log, 3, "DisputeFinalized");
-    return { type: "DisputeFinalized", sender: wordHex(sender ?? ""), counterentity: wordHex(counterentity ?? ""), nonce: BigInt(nonce ?? "0"), finalProofbodyHash: wordHex(bytesToHex(buf.subarray(0, 32))), finalizationEvidenceHash: wordHex(bytesToHex(buf.subarray(32, 64))) };
+    const [sender = "", counterentity = "", nonce = "0x0"] = topics("DisputeFinalized", 3);
+    return { type: "DisputeFinalized", sender, counterentity, nonce: BigInt(nonce), finalProofbodyHash: h(0), finalizationEvidenceHash: h(1) };
+  }
+  if (is("SecretRevealed")) { const [hashlock = "", revealer = ""] = topics("SecretRevealed", 2); return { type: "SecretRevealed", hashlock, revealer, secret: h(0) }; }
+  if (is("CounterDisputeRegistered")) {
+    const [sender = "", counterentity = "", nonce = "0x0"] = topics("CounterDisputeRegistered", 3);
+    return { type: "CounterDisputeRegistered", sender, counterentity, nonce: safeWord("CounterDisputeRegistered", BigInt(nonce)), proposerIsLeft: flag(0), proofbodyHash: h(1) };
+  }
+  if (is("HashLadderRevealRegistered")) {
+    const [entity = "", counterpartyEntity = ""] = topics("HashLadderRevealRegistered", 2), fillRatio = w(1) & 0xffffn;
+    // og hashLadderRevealRegistered: a non-zero uint16 ratio and a positive safe-integer reveal time.
+    if (fillRatio === 0n) return invalidPayload("HashLadderRevealRegistered");
+    return { type: "HashLadderRevealRegistered", entity, counterpartyEntity, ladderHash: h(0), fillRatio: Number(fillRatio), fullSecret: h(2), reveals: [h(3), h(4), h(5), h(6)], targetRole: flag(7), revealedAt: safeWord("HashLadderRevealRegistered", w(8), 1n) };
+  }
+  if (is("DebtCreated")) {
+    const [debtor = "", creditor = "", token = "0x0"] = topics("DebtCreated", 3);
+    return { type: "DebtCreated", debtor, creditor, tokenId: safeWord("DebtCreated", BigInt(token)), amount: (w(0) << 256n) + w(1), debtIndex: safeWord("DebtCreated", w(2)) };
+  }
+  if (is("DebtEnforced")) {
+    const [debtor = "", creditor = "", token = "0x0"] = topics("DebtEnforced", 3);
+    return { type: "DebtEnforced", debtor, creditor, tokenId: safeWord("DebtEnforced", BigInt(token)), amountPaid: w(0), remainingAmount: (w(1) << 256n) + w(2), newDebtIndex: safeWord("DebtEnforced", w(3)) };
+  }
+  if (is("DebtForgiven")) {
+    const [debtor = "", creditor = "", token = "0x0"] = topics("DebtForgiven", 3);
+    return { type: "DebtForgiven", debtor, creditor, tokenId: safeWord("DebtForgiven", BigInt(token)), amountForgiven: (w(0) << 256n) + w(1), debtIndex: safeWord("DebtForgiven", w(2)) };
+  }
+  if (is("FoundationBootstrapped")) {
+    const [recipient = "0x0", boardHash = ""] = topics("FoundationBootstrapped", 2);
+    return { type: "FoundationBootstrapped", recipient: addressFromWord(BigInt(recipient)), boardHash, controlTokenId: w(0), dividendTokenId: w(1) };
+  }
+  if (is("EntityRegistered")) { const [entityId = "", entityNumber = "0x0"] = topics("EntityRegistered", 2); return { type: "EntityRegistered", entityId, entityNumber: BigInt(entityNumber), boardHash: h(0) }; }
+  if (is("BoardActivated")) {
+    const [entityId = ""] = topics("BoardActivated", 1), until = w(2);
+    // og boardActivated: the previous board keeps an exclusive, non-zero validity boundary.
+    return until > 0n ? { type: "BoardActivated", entityId, previousBoardHash: h(0), newBoardHash: h(1), previousBoardValidUntil: until } : invalidPayload("BoardActivated");
+  }
+  const actionKind = (name: JEventName, n: bigint): 0 | 1 => { const k = n & 0xffn; return k === 0n ? 0 : k === 1n ? 1 : invalidPayload(name); };
+  if (is("EntityProviderActionExecuted")) {
+    const [entityId = "", actionNonce = "0x0", actionHash = ""] = topics("EntityProviderActionExecuted", 3), nonce = BigInt(actionNonce);
+    return nonce >= 1n ? { type: "EntityProviderActionExecuted", entityId, actionNonce: nonce, actionHash, actionKind: actionKind("EntityProviderActionExecuted", w(0)) } : invalidPayload("EntityProviderActionExecuted");
+  }
+  if (is("EntityProviderActionCancelled")) {
+    const [entityId = "", actionNonce = "0x0", cancelledActionHash = ""] = topics("EntityProviderActionCancelled", 3), nonce = BigInt(actionNonce);
+    return nonce >= 1n ? { type: "EntityProviderActionCancelled", entityId, actionNonce: nonce, cancelledActionHash, cancelledActionKind: actionKind("EntityProviderActionCancelled", w(0)), cancelHash: h(1) } : invalidPayload("EntityProviderActionCancelled");
   }
   return undefined;
 };
-export const readJEvents = (logs: readonly ChainLog[]): readonly JEventClaimBody[] => logs.flatMap((l) => { const r = readOne(l); return r === undefined ? [] : [r]; });
+const logMeta = (l: ChainLog): JEventMeta | undefined => {
+  const meta: JEventMeta = { ...opt("blockNumber", l.blockNumber), ...opt("blockHash", l.blockHash), ...opt("transactionHash", l.transactionHash), ...opt("logIndex", l.logIndex) };
+  return Object.keys(meta).length === 0 ? undefined : meta;
+};
+/** og decodeJEventLog + event-normalizers.ts for the Depository and EntityProvider consensus events; an unknown topic is ignored, a malformed canonical payload throws. */
+export const readJEvents = (logs: readonly ChainLog[]): readonly JEvent[] => logs.flatMap((l): JEvent[] => { const r = readOne(l); if (r === undefined) return []; const meta = logMeta(l); return [meta === undefined ? r : { ...r, meta }]; });
 export const readJEventVector = (inputs: { readonly logs: readonly ChainLog[] }): unknown => JSON.parse(JSON.stringify(readJEvents(inputs.logs), (_k, v: unknown) => (typeof v === "bigint" ? v.toString() : v)));
 export const encodeAccountSettledData = (settled: readonly AccountSettlement[]): string => abiEncodeHex([arr(settled, (r) =>
   t([A.b32(r.left), A.b32(r.right), arr(r.tokens, (x) => t([A.uint(x.tokenId), A.uint(x.leftReserve), A.uint(x.rightReserve), A.uint(x.collateral), int512Abi(x.ondelta)])), A.uint(r.nonce)]))]);
 
+/** A schema-driven ABI reader (ethers semantics: uint words as-is, bool any non-zero word, address refuses high bits, a pointer or length past the buffer throws). */
+type AbiType = "uint" | "u8" | "u16" | "u32" | "int" | "bool" | "address" | "b32" | "bytes" | { readonly array: AbiType } | { readonly tuple: readonly AbiType[] };
+type AbiValue = bigint | boolean | string | readonly AbiValue[];
+const abiDyn = (ty: AbiType): boolean => (typeof ty === "string" ? ty === "bytes" : "array" in ty ? true : ty.tuple.some(abiDyn));
+const abiHead = (ty: AbiType): number => (typeof ty !== "string" && "tuple" in ty && !abiDyn(ty) ? ty.tuple.reduce((n, c) => n + abiHead(c), 0) : 32);
+const NARROW = { u8: 8n, u16: 16n, u32: 32n } as const;
+const abiSig = (ty: AbiType): string => (typeof ty === "string" ? (ty === "b32" ? "bytes32" : ty === "uint" ? "uint256" : ty === "int" ? "int256" : ty === "u8" || ty === "u16" || ty === "u32" ? `uint${NARROW[ty]}` : ty) : "array" in ty ? `${abiSig(ty.array)}[]` : `(${ty.tuple.map(abiSig).join(",")})`);
+const abiRead = (buf: Uint8Array, at: number): bigint => { if (!Number.isSafeInteger(at) || at < 0 || at + 32 > buf.length) throw new Error("ABI_DECODE_OVERRUN"); return wordAt(buf, at); };
+const abiDecodeAt = (buf: Uint8Array, ty: AbiType, at: number): AbiValue => {
+  if (ty === "uint") return abiRead(buf, at);
+  if (ty === "u8" || ty === "u16" || ty === "u32") return abiRead(buf, at) & ((1n << NARROW[ty]) - 1n);
+  if (ty === "int") return signedWord(abiRead(buf, at));
+  if (ty === "bool") return abiRead(buf, at) !== 0n;
+  if (ty === "address") return addressFromWord(abiRead(buf, at));
+  if (ty === "b32") { abiRead(buf, at); return bytesToHex(buf.subarray(at, at + 32)); }
+  if (ty === "bytes") { const n = abiRead(buf, at); if (n > BigInt(buf.length - at - 32)) throw new Error("ABI_DECODE_OVERRUN"); return bytesToHex(buf.subarray(at + 32, at + 32 + Number(n))); }
+  if ("array" in ty) { const n = abiRead(buf, at); if (n * 32n > BigInt(buf.length - at - 32)) throw new Error("ABI_DECODE_OVERRUN"); return abiSequence(buf, Array.from({ length: Number(n) }, () => ty.array), at + 32); }
+  return abiSequence(buf, ty.tuple, at);
+};
+const abiSequence = (buf: Uint8Array, tys: readonly AbiType[], base: number): readonly AbiValue[] => {
+  let off = base;
+  return tys.map((ty) => { const v = abiDyn(ty) ? abiDecodeAt(buf, ty, base + Number(abiRead(buf, off))) : abiDecodeAt(buf, ty, off); off += abiHead(ty); return v; });
+};
+const S_PROOF: AbiType = { tuple: ["b32", "u32", "u32", { array: { tuple: ["int", "uint"] } }, { array: "uint" }, { array: { tuple: ["address", "bytes", { array: { tuple: ["uint", "uint", "uint"] } }] } }] };
+const S_SIGNED: AbiType = { tuple: ["bool", "uint"] };
+const S_FINAL: AbiType = { tuple: ["b32", "uint", "uint", "bool", "b32", S_PROOF, "bytes", "bytes", "bytes", "bool", "bool"] };
+const S_BATCH: AbiType = { tuple: [
+  { array: { tuple: ["b32", "uint", "uint"] } }, { array: { tuple: ["uint", "b32", { array: { tuple: ["b32", "uint"] } }] } }, { array: { tuple: ["b32", "uint", "uint", "uint", "bytes"] } },
+  { array: { tuple: ["b32", "b32", { array: { tuple: ["uint", S_SIGNED, S_SIGNED, S_SIGNED, S_SIGNED] } }, { array: "uint" }, "bytes", "uint"] } },
+  { array: { tuple: ["b32", "uint", "bool", "b32", S_PROOF, "b32", "bytes", "bytes", "bytes", "b32"] } }, { array: { tuple: ["b32", "uint", "b32", "uint", "bool", S_PROOF, "bytes"] } }, { array: S_FINAL },
+  { array: { tuple: ["b32", "address", "uint", "u8", "uint", "uint"] } }, { array: { tuple: ["b32", "uint", "uint"] } }, { array: { tuple: ["address", "b32"] } },
+  { array: { tuple: ["b32", "bool", "b32", "b32", { tuple: ["u16", "b32", "b32", "b32", "b32", "b32"] }] } },
+] };
+type Row = readonly AbiValue[];
+const rows = (v: AbiValue): readonly Row[] => v as readonly Row[];
+const big = (v: AbiValue | undefined): bigint => v as bigint, str = (v: AbiValue | undefined): string => v as string, yes = (v: AbiValue | undefined): boolean => v as boolean;
+/** og validateJBatch `integer`: token ids, nonces, windows and ratios are safe integers. */
+const int = (v: AbiValue | undefined): bigint => { const n = big(v); if (n > SAFE_INT) throw new Error("J_BATCH_ABI_RESULT_INTEGER"); return n; };
+/** og decodeSignedAmount: a negative zero is not a SignedAmount. */
+const signedOf = (v: AbiValue | undefined): bigint => { const [neg, mag] = v as Row; if (neg === true && mag === 0n) throw new Error("ABI_MONEY_NEGATIVE_ZERO"); return neg === true ? -big(mag) : big(mag); };
+const proofOf_ = (v: AbiValue | undefined): ProofBody => {
+  const [watchSeed, l, r, offdeltas, tokenIds, transformers] = v as Row;
+  return {
+    watchSeed: str(watchSeed), leftResponseSeconds: int(l), rightResponseSeconds: int(r), offdeltas: rows(offdeltas ?? []).map(([hi, lo]) => (big(hi) << 256n) + big(lo)), tokenIds: (tokenIds as readonly bigint[]),
+    transformers: rows(transformers ?? []).map(([a, e, al]) => ({ transformerAddress: str(a), encodedBatch: str(e), allowances: rows(al ?? []).map(([d, ra, la]) => ({ deltaIndex: big(d), rightAllowance: big(ra), leftAllowance: big(la) })) })),
+  };
+};
+const finalOf = (v: Row): DisputeFinalization => {
+  const [counterentity, initialNonce, finalNonce, proposerIsLeft, initialProofbodyHash, finalProofbody, starterArguments, otherArguments, sig, startedByLeft, cooperative] = v;
+  return { counterentity: str(counterentity), initialNonce: int(initialNonce), finalNonce: int(finalNonce), proposerIsLeft: yes(proposerIsLeft), initialProofbodyHash: str(initialProofbodyHash), finalProofbody: proofOf_(finalProofbody), starterArguments: str(starterArguments), otherArguments: str(otherArguments), sig: str(sig), startedByLeft: yes(startedByLeft), cooperative: yes(cooperative) };
+};
+/** og decodeJBatch: the Depository Types.Batch tuple, SignedAmount diffs and Int512 offdeltas decoded to integers. */
+export const decodeBatch = (encoded: string): Batch => {
+  const [r2r, r2c, c2r, settlements, starts, counters, finals, e2r, r2e, reveals, ladders] = abiSequence(hexToBytes(encoded), [S_BATCH], 0)[0] as Row;
+  return {
+    reserveToReserve: rows(r2r ?? []).map(([e, tk, n]) => ({ receivingEntity: str(e), tokenId: int(tk), amount: big(n) })),
+    reserveToCollateral: rows(r2c ?? []).map(([tk, e, pairs]) => ({ tokenId: int(tk), receivingEntity: str(e), pairs: rows(pairs ?? []).map(([p, n]) => ({ entity: str(p), amount: big(n) })) })),
+    collateralToReserve: rows(c2r ?? []).map(([c, tk, n, nonce, sig]) => ({ counterparty: str(c), tokenId: int(tk), amount: big(n), nonce: int(nonce), sig: str(sig) })),
+    settlements: rows(settlements ?? []).map(([l, r, diffs, forgive, sig, nonce]) => ({
+      leftEntity: str(l), rightEntity: str(r), diffs: rows(diffs ?? []).map(([tk, ld, rd, cd, od]) => ({ tokenId: int(tk), leftDiff: signedOf(ld), rightDiff: signedOf(rd), collateralDiff: signedOf(cd), ondeltaDiff: signedOf(od) })),
+      forgiveDebtsInTokenIds: (forgive as readonly AbiValue[]).map(int), sig: str(sig), nonce: int(nonce),
+    })),
+    disputeStarts: rows(starts ?? []).map(([c, nonce, left, hash, body, seed, sig, ia, ca, commit]) => ({ counterentity: str(c), nonce: int(nonce), proposerIsLeft: yes(left), proofbodyHash: str(hash), initialProofbody: proofOf_(body), watchSeed: str(seed), sig: str(sig), starterInitialArguments: str(ia), starterCounterArguments: str(ca), starterCounterProofCommitment: str(commit) })),
+    counterDisputes: rows(counters ?? []).map(([c, initialNonce, initialHash, counterNonce, left, body, sig]) => ({ counterentity: str(c), initialNonce: int(initialNonce), initialProofbodyHash: str(initialHash), counterNonce: int(counterNonce), proposerIsLeft: yes(left), counterProofbody: proofOf_(body), sig: str(sig) })),
+    disputeFinalizations: rows(finals ?? []).map(finalOf),
+    externalTokenToReserve: rows(e2r ?? []).map(([e, a, x, ty, tk, n]) => ({ entity: str(e), contractAddress: str(a), externalTokenId: big(x), tokenType: int(ty), internalTokenId: int(tk), amount: big(n) })),
+    reserveToExternalToken: rows(r2e ?? []).map(([e, tk, n]) => ({ receivingEntity: str(e), tokenId: int(tk), amount: big(n) })),
+    revealSecrets: rows(reveals ?? []).map(([a, s]) => ({ transformer: str(a), secret: str(s) })),
+    hashLadderRegistrations: rows(ladders ?? []).map(([c, role, full, partial, wit]) => {
+      const [fillRatio, fullSecret, r0, r1, r2, r3] = wit as Row;
+      return { counterpartyEntity: str(c), targetRole: yes(role), fullHash: str(full), partialRoot: str(partial), witness: { fillRatio: int(fillRatio), fullSecret: str(fullSecret), reveals: [str(r0), str(r1), str(r2), str(r3)] as const } };
+    }),
+  };
+};
+const selectorOf = (sig: string): string => keccak256Hex(utf8(sig)).slice(0, 10);
+const PROCESS_BATCH = ["bytes", "bytes", "uint"] as const, WATCHTOWER_COUNTER: readonly AbiType[] = ["b32", S_FINAL, "uint", "uint", "bytes"];
+export const PROCESS_BATCH_SELECTOR = selectorOf("processBatch(bytes,bytes,uint256)");
+export const WATCHTOWER_COUNTER_DISPUTE_SELECTOR = selectorOf(`watchtowerCounterDispute(${WATCHTOWER_COUNTER.map(abiSig).join(",")})`);
+type DisputeCall = Tagged<"batch", { batch: Batch }> | Tagged<"watchtower", { proof: DisputeFinalization }>;
+/** og depositoryTransactionInterface.parseTransaction over the two dispute-carrying Depository calls. */
+const disputeCall = (calldata: string, code: string): DisputeCall => {
+  const selector = calldata.slice(0, 10).toLowerCase(), args = hexToBytes(`0x${calldata.slice(10)}`);
+  try {
+    if (selector === PROCESS_BATCH_SELECTOR) {
+      const encoded = str(abiSequence(args, PROCESS_BATCH, 0)[0]);
+      if (encoded === "0x") throw new Error(`${code}_BATCH_CALLDATA_MISSING`);
+      return { _tag: "batch", batch: decodeBatch(encoded) };
+    }
+    if (selector === WATCHTOWER_COUNTER_DISPUTE_SELECTOR) return { _tag: "watchtower", proof: finalOf(abiSequence(args, WATCHTOWER_COUNTER, 0)[1] as Row) };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    throw new Error(message.startsWith(code) ? message : `${code}_CALLDATA_DECODE_FAILED:${message}`);
+  }
+  throw new Error(`${code}_CALLDATA_DECODE_FAILED:${code}_CALLDATA_UNKNOWN`);
+};
+export type DisputeProofEvidence = {
+  readonly eventName: "DisputeStarted" | "CounterDisputeRegistered" | "DisputeFinalized"; readonly counterentity: string; readonly nonce: bigint; readonly proposerIsLeft: boolean; readonly proofbodyHash: string;
+  readonly initialNonce?: bigint | undefined; readonly initialProofbodyHash?: string | undefined; readonly proofbody: ProofBody;
+};
+/** og decodeDisputeProofBodyEvidenceCalldata: every signed ProofBody a dispute transaction carries (a start keeps its declared hash, the others are recomputed). */
+export const disputeProofEvidence = (calldata: string): readonly DisputeProofEvidence[] => {
+  const call = disputeCall(calldata, "J_DISPUTE_PROOFBODY");
+  const finalized = (f: DisputeFinalization): DisputeProofEvidence => ({ eventName: "DisputeFinalized", counterentity: f.counterentity.toLowerCase(), nonce: f.finalNonce, proposerIsLeft: f.proposerIsLeft, proofbodyHash: proofBodyHash(f.finalProofbody), initialNonce: f.initialNonce, initialProofbodyHash: f.initialProofbodyHash.toLowerCase(), proofbody: f.finalProofbody });
+  return match(call, {
+    batch: ({ batch }): readonly DisputeProofEvidence[] => [
+      ...batch.disputeStarts.map((s): DisputeProofEvidence => ({ eventName: "DisputeStarted", counterentity: s.counterentity.toLowerCase(), nonce: s.nonce, proposerIsLeft: s.proposerIsLeft, proofbodyHash: s.proofbodyHash.toLowerCase(), proofbody: s.initialProofbody })),
+      ...batch.counterDisputes.map((c): DisputeProofEvidence => ({ eventName: "CounterDisputeRegistered", counterentity: c.counterentity.toLowerCase(), nonce: c.counterNonce, proposerIsLeft: c.proposerIsLeft, proofbodyHash: proofBodyHash(c.counterProofbody), proofbody: c.counterProofbody })),
+      ...batch.disputeFinalizations.map(finalized),
+    ],
+    watchtower: ({ proof }): readonly DisputeProofEvidence[] => { const f = finalized(proof); return [{ ...f, eventName: "CounterDisputeRegistered" }, f]; },
+  });
+};
+export type TxFinalizationEvidence = Omit<DisputeFinalizationEvidence, "sender" | "finalProofbodyHash">;
+/** og decodeDisputeFinalizationEvidenceCalldata. */
+export const finalizationEvidence = (calldata: string): readonly TxFinalizationEvidence[] => {
+  const one = (f: DisputeFinalization): TxFinalizationEvidence => ({
+    counterentity: f.counterentity.toLowerCase(), initialNonce: f.initialNonce, finalNonce: f.finalNonce, initialProofbodyHash: f.initialProofbodyHash.toLowerCase(), proposerIsLeft: f.proposerIsLeft,
+    leftArguments: (f.startedByLeft ? f.starterArguments : f.otherArguments).toLowerCase(), rightArguments: (f.startedByLeft ? f.otherArguments : f.starterArguments).toLowerCase(), startedByLeft: f.startedByLeft, sig: f.sig.toLowerCase(),
+  });
+  return match(disputeCall(calldata, "J_DISPUTE_FINALIZATION"), { batch: ({ batch }) => batch.disputeFinalizations.map(one), watchtower: ({ proof }) => [one(proof)] });
+};
+/** og hashFinalizationEvidence: the commitment DisputeFinalized logs as finalizationEvidenceHash. */
+export const finalizationEvidenceHash = (c: TxFinalizationEvidence): string => {
+  const starter = c.startedByLeft ? c.leftArguments : c.rightArguments, other = c.startedByLeft ? c.rightArguments : c.leftArguments, k = (h: string): string => keccak256Hex(hexToBytes(h));
+  return keccak256Hex(abiEncode([A.b32(c.initialProofbodyHash), A.uint(c.finalNonce), A.bool(c.proposerIsLeft), A.bool(c.startedByLeft), A.b32(k(starter)), A.b32(k(other)), A.b32(k(c.sig))]));
+};
+/** og decodeCanonicalContractEvent: a dispute event takes its ProofBody (and a finalization its reducer evidence) from the emitting transaction's calldata; missing evidence throws. */
+export const withDisputeCalldata = (event: JEvent, calldata: string): JEvent => {
+  if (event.type !== "DisputeStarted" && event.type !== "CounterDisputeRegistered" && event.type !== "DisputeFinalized") return event;
+  const counter = event.counterentity.toLowerCase(), declared = (event.type === "DisputeFinalized" ? event.finalProofbodyHash : event.proofbodyHash).toLowerCase();
+  const found = disputeProofEvidence(calldata).find((c) => c.eventName === event.type && c.counterentity === counter && (event.type === "DisputeFinalized" ? c.initialNonce : c.nonce) === event.nonce
+    && c.proofbodyHash.toLowerCase() === declared && (event.type === "DisputeFinalized" || c.proposerIsLeft === event.proposerIsLeft));
+  if (found === undefined) throw new Error(`J_DISPUTE_PROOFBODY_EVIDENCE_NOT_FOUND:${event.type}:${event.nonce}`);
+  if (event.type === "DisputeStarted") return { ...event, initialProofbody: found.proofbody };
+  if (event.type === "CounterDisputeRegistered") return { ...event, counterProofbody: found.proofbody };
+  const candidates = finalizationEvidence(calldata), tx = event.meta?.transactionHash?.toLowerCase() ?? "";
+  if (candidates.length === 0) throw new Error(`J_DISPUTE_FINALIZATION_EVIDENCE_EMPTY:${tx}`);
+  const matched = candidates.find((c) => c.counterentity === counter && c.initialNonce === event.nonce && finalizationEvidenceHash(c) === event.finalizationEvidenceHash.toLowerCase());
+  if (matched === undefined) throw new Error(`J_DISPUTE_FINALIZATION_EVIDENCE_NOT_FOUND:${tx}`);
+  return { ...event, finalProofbody: found.proofbody, initialProofbodyHash: matched.initialProofbodyHash, evidence: { sender: event.sender.toLowerCase(), ...matched, finalProofbodyHash: event.finalProofbodyHash.toLowerCase() } };
+};
+
+// ---- og entity j-events (core/entity/tx/j-events*.ts, j-events-observations/*): what one Entity derives from finalized J events ----
+/** og event-observation.ts enrichDisputeBatchNonces: a dispute event takes the HankoBatchProcessed nonce its sender's batch logged in the same transaction. */
+export const withBatchNonces = (events: readonly JEvent[]): readonly JEvent[] => {
+  const nonces = new Map<string, bigint>();
+  for (const e of events) if (e.type === "HankoBatchProcessed" && (e.meta?.transactionHash ?? "") !== "" && e.entityId !== "") nonces.set(`${(e.meta?.transactionHash ?? "").toLowerCase()}:${e.entityId.toLowerCase()}`, e.nonce);
+  return events.map((e): JEvent => {
+    if (e.type !== "DisputeStarted" && e.type !== "DisputeFinalized") return e;
+    const n = nonces.get(`${(e.meta?.transactionHash ?? "").toLowerCase()}:${e.sender.toLowerCase()}`);
+    return n === undefined ? e : { ...e, batchNonce: Number(n) };
+  });
+};
+/** og j-event-payloads.ts expandAccountSettled + withTransportMetadata: one AccountSettled per (settlement naming the Entity, token); eventIndex only when the log yields several. */
+export const entityJEvents = (events: readonly JEvent[], entity: string): readonly JEvent[] => events.flatMap((e): JEvent[] => {
+  if (e.type !== "AccountSettled") return [e];
+  const me = entity.toLowerCase(), rows = e.settled.filter((s) => s.left.toLowerCase() === me || s.right.toLowerCase() === me).flatMap((s) => s.tokens.map((t) => ({ s, t })));
+  if (rows.length === 0) throw new Error("J_EVENT_CANONICAL_PAYLOAD_EMPTY:AccountSettled");
+  return rows.map(({ s, t }, i): JEvent => ({ type: "AccountSettled", settled: [{ left: s.left, right: s.right, nonce: s.nonce, tokens: [{ ...t, ...(rows.length > 1 ? { eventIndex: i } : {}) }], ...opt("meta", e.meta) }], ...opt("meta", e.meta) }));
+});
+/** og types/finance/debt.ts DebtEntry (an open debt; retired entries leave the ledger). */
+export type DebtEntry = {
+  readonly debtId: string; readonly tokenId: number; readonly debtor: string; readonly creditor: string; readonly counterparty: string; readonly direction: "out" | "in";
+  readonly createdAmount: bigint; readonly paidAmount: bigint; readonly remainingAmount: bigint; readonly createdDebtIndex: number; readonly currentDebtIndex: number; readonly status: "open";
+  readonly createdAtBlock: number; readonly createdTxHash: string; readonly lastUpdatedBlock: number; readonly lastUpdatedTxHash: string; readonly lastEventType: "DebtCreated" | "DebtEnforced";
+};
+type DebtBook = ReadonlyMap<number, ReadonlyMap<string, DebtEntry>>;
+/** og EntityState outDebtsByToken / inDebtsByToken. */
+export type DebtLedger = { readonly out: DebtBook; readonly in: DebtBook };
+export const EMPTY_DEBTS: DebtLedger = { out: new Map(), in: new Map() };
+export type JObserveError = Tagged<"j_observe", { reason: string }>;
+const observeErr = (reason: string): Result<never, JObserveError> => err({ _tag: "j_observe", reason });
+const debtSide = (me: string, debtor: string, creditor: string): "out" | "in" | undefined => (me === debtor.toLowerCase() ? "out" : me === creditor.toLowerCase() ? "in" : undefined);
+const putDebt = (l: DebtLedger, d: DebtEntry): DebtLedger => ({ ...l, [d.direction]: mapSet(l[d.direction], d.tokenId, mapSet(l[d.direction].get(d.tokenId) ?? new Map<string, DebtEntry>(), d.debtId, d)) });
+const retireDebt = (l: DebtLedger, d: DebtEntry): DebtLedger => {
+  const bucket = mapDelete(l[d.direction].get(d.tokenId) ?? new Map<string, DebtEntry>(), d.debtId);
+  return { ...l, [d.direction]: bucket.size === 0 ? mapDelete(l[d.direction], d.tokenId) : mapSet(l[d.direction], d.tokenId, bucket) };
+};
+/** og debt.ts findEarliestOutstandingDebt: the open debt of this pair at `preferred` index, else the oldest by (created index, block, id). */
+const earliestDebt = (l: DebtLedger, dir: "out" | "in", tokenId: number, debtor: string, creditor: string, preferred?: number): DebtEntry | undefined => {
+  const open = [...(l[dir].get(tokenId)?.values() ?? [])].filter((d) => d.status === "open" && d.debtor.toLowerCase() === debtor.toLowerCase() && d.creditor.toLowerCase() === creditor.toLowerCase());
+  if (preferred !== undefined) return open.find((d) => d.currentDebtIndex === preferred);
+  return [...open].sort((x, y) => x.createdDebtIndex - y.createdDebtIndex || x.createdAtBlock - y.createdAtBlock || stableText(x.debtId, y.debtId))[0];
+};
+/** og j-events-observations/debt.ts applyDebtCreated / applyDebtEnforced / applyDebtForgiven for the observing Entity. */
+export const applyDebtEvent = (l: DebtLedger, entity: string, e: Extract<JEvent, { readonly type: "DebtCreated" }> | Extract<JEvent, { readonly type: "DebtEnforced" }> | Extract<JEvent, { readonly type: "DebtForgiven" }>): Result<DebtLedger, JObserveError> => {
+  const me = entity.toLowerCase(), tokenId = Number(e.tokenId), block = e.meta?.blockNumber ?? 0, txHash = e.meta?.transactionHash ?? "";
+  if (e.type === "DebtCreated") {
+    if (e.amount <= 0n) return observeErr("DEBT_CREATED_AMOUNT_INVALID");
+    const index = Number(e.debtIndex), debtId = `${e.debtor.toLowerCase()}:${tokenId}:${index}:${block}:${txHash.toLowerCase()}`, dir = debtSide(me, e.debtor, e.creditor);
+    if (dir === undefined) return ok(l);
+    const held = l[dir].get(tokenId)?.get(debtId);
+    if (held !== undefined) return held.lastEventType === "DebtCreated" && held.createdAmount === e.amount && held.remainingAmount === e.amount && held.paidAmount === 0n ? ok(l) : observeErr("DEBT_CREATED_ID_CONFLICT");
+    return ok(putDebt(l, { debtId, tokenId, debtor: e.debtor, creditor: e.creditor, counterparty: dir === "out" ? e.creditor : e.debtor, direction: dir, createdAmount: e.amount, paidAmount: 0n, remainingAmount: e.amount,
+      createdDebtIndex: index, currentDebtIndex: index, status: "open", createdAtBlock: block, createdTxHash: txHash, lastUpdatedBlock: block, lastUpdatedTxHash: txHash, lastEventType: "DebtCreated" }));
+  }
+  const dir = debtSide(me, e.debtor, e.creditor);
+  if (dir === undefined) return ok(l);
+  if (e.type === "DebtForgiven") {
+    const d = earliestDebt(l, dir, tokenId, e.debtor, e.creditor, Number(e.debtIndex));
+    if (d === undefined) return observeErr("DEBT_LEDGER_DIVERGENCE:DebtForgiven");
+    return e.amountForgiven !== d.remainingAmount ? observeErr("DEBT_FORGIVEN_AMOUNT_MISMATCH") : ok(retireDebt(l, d));
+  }
+  const d = earliestDebt(l, dir, tokenId, e.debtor, e.creditor);
+  if (d === undefined) return observeErr("DEBT_LEDGER_DIVERGENCE:DebtEnforced");
+  if (e.amountPaid <= 0n || e.remainingAmount < 0n || e.amountPaid + e.remainingAmount !== d.remainingAmount) return observeErr("DEBT_ENFORCED_AMOUNT_MISMATCH");
+  if (Number(e.newDebtIndex) !== (e.remainingAmount === 0n ? d.currentDebtIndex + 1 : d.currentDebtIndex)) return observeErr("DEBT_ENFORCED_INDEX_MISMATCH");
+  if (e.remainingAmount === 0n) return ok(retireDebt(l, d));
+  return ok(putDebt(l, { ...d, paidAmount: d.paidAmount + e.amountPaid, remainingAmount: e.remainingAmount, currentDebtIndex: Number(e.newDebtIndex), lastUpdatedBlock: block, lastUpdatedTxHash: txHash, lastEventType: "DebtEnforced" }));
+};
+/** The Entity-side view og's J handlers read: reserves, the debt ledger, and which counterparties hold an active Account (og AccountReplica.status). */
+export type JObserver = { readonly entityId: string; readonly reserves: ReadonlyMap<number, bigint>; readonly debts: DebtLedger; readonly accounts: ReadonlyMap<string, { readonly active: boolean }> };
+export type JClaimOp = { readonly accountId: string; readonly tx: TxOf<"j_event_claim"> };
+export type JObservation = { readonly observer: JObserver; readonly claims: readonly JClaimOp[] };
+export type JBlock = { readonly blockNumber: number; readonly events: readonly JEvent[] };
+const settledRow = (row: AccountSettlement): Result<SettledEvent, JObserveError> => {
+  const token = row.tokens[0];
+  return token === undefined ? observeErr("J_EVENT_CANONICAL_PAYLOAD_INVALID:AccountSettled") : mapErr(settledEvent(row, token), () => ({ _tag: "j_observe", reason: "J_EVENT_CANONICAL_PAYLOAD_INVALID:AccountSettled" }));
+};
+/** og j-events-account.ts mergeJEventClaimOps: one claim per (account, jHeight, block) at its first position, events in canonical order, claims ordered by account, height, block. */
+export const mergeClaimOps = (ops: readonly JClaimOp[]): Result<readonly JClaimOp[], JObserveError> => {
+  const merged: JClaimOp[] = [], at = new Map<string, number>();
+  for (const op of ops) {
+    const key = `${op.accountId.toLowerCase()}:${op.tx.jHeight}:${op.tx.jBlockHash.toLowerCase()}`, i = at.get(key), target = i === undefined ? undefined : merged[i];
+    if (i === undefined || target === undefined) { at.set(key, merged.length); merged.push(op); continue; }
+    merged[i] = { ...target, tx: { ...target.tx, events: [...target.tx.events, ...op.tx.events] } };
+  }
+  return map(traverse(merged, (op) => chain(traverse(op.tx.events.flatMap((row) => row.tokens.map((t) => ({ ...row, tokens: [t] }))), (row) => map(settledRow(row), (event) => ({ row, event }))), (rows): Result<JClaimOp, JObserveError> => {
+    const sorted = [...rows].sort((x, y) => compareSettled(x.event, y.event)), keys = sorted.map((r) => settledKey(r.event));
+    return new Set(keys).size !== keys.length ? observeErr("ACCOUNT_J_CLAIM_EVENT_DUPLICATE") : ok({ ...op, tx: { ...op.tx, events: sorted.map((r) => r.row) } });
+  })), (claims) => [...claims].sort((x, y) => stableText(x.accountId, y.accountId) || Number(x.tx.jHeight - y.tx.jHeight) || stableText(x.tx.jBlockHash, y.tx.jBlockHash)));
+};
+/** og applyJRangeBlocks over the reserve, settlement and debt handlers (j-events-observations/index.ts, j-events-account-settled.ts): own reserves and debts update; an AccountSettled with an active Account queues a j_event_claim for Account consensus. */
+export const observeJBlocks = (o: JObserver, blocks: readonly JBlock[]): Result<JObservation, JObserveError> => {
+  const me = o.entityId.toLowerCase();
+  return chain(foldResult(blocks.flatMap((b) => b.events.map((e) => ({ b, e }))), { observer: o, claims: [] as readonly JClaimOp[] }, (acc, { b, e }): Result<JObservation, JObserveError> => {
+    const s = acc.observer;
+    if (e.type === "ReserveUpdated") return ok(e.entity.toLowerCase() === me ? { ...acc, observer: { ...s, reserves: mapSet(s.reserves, Number(e.tokenId), e.newBalance) } } : acc);
+    if (e.type === "DebtCreated" || e.type === "DebtEnforced" || e.type === "DebtForgiven") return map(applyDebtEvent(s.debts, o.entityId, e), (debts) => ({ ...acc, observer: { ...s, debts } }));
+    if (e.type !== "AccountSettled") return ok(acc);
+    return foldResult(e.settled.flatMap((row) => row.tokens.map((t) => ({ row, t }))), acc, (a, { row, t }): Result<JObservation, JObserveError> => {
+      const isLeft = row.left.toLowerCase() === me, isRight = row.right.toLowerCase() === me;
+      if (!isLeft && !isRight) return ok(a);
+      const counterparty = isLeft ? row.right : row.left, reserves = mapSet(a.observer.reserves, Number(t.tokenId), isLeft ? t.leftReserve : t.rightReserve), observer = { ...a.observer, reserves };
+      const account = observer.accounts.get(counterparty);
+      if (account === undefined || !account.active) return ok({ ...a, observer });
+      const jHeight = BigInt(row.meta?.blockNumber ?? e.meta?.blockNumber ?? b.blockNumber), meta = row.meta ?? e.meta;
+      const claim: TxOf<"j_event_claim"> = { type: "j_event_claim", jHeight, jBlockHash: (meta?.blockHash ?? "") as Hash, events: [{ ...row, tokens: [t], ...opt("meta", meta) }], observedAt: jHeight };
+      return ok({ observer, claims: [...a.claims, { accountId: counterparty, tx: claim }] });
+    });
+  }), (seen) => map(mergeClaimOps(seen.claims), (claims) => ({ observer: seen.observer, claims })));
+};
+const SAFE_UINT = BigInt(Number.MAX_SAFE_INTEGER);
+const boundaryUint = (n: bigint, code: string): Result<number, JObserveError> => (n >= 0n && n <= SAFE_UINT ? ok(Number(n)) : observeErr(code));
+/** og requireFrozenAccountProofBody: the calldata ProofBody hashes to the logged hash and is the Account's frozen proof body. */
+const frozenProofBody = (body: ProofBody | undefined, logged: string, frozenHash: string): Result<ProofBody, JObserveError> => {
+  const want = logged.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(want)) return observeErr("J_EVENT_DISPUTE_FINAL_PROOFBODY_HASH_INVALID");
+  if (body === undefined) return observeErr("J_EVENT_DISPUTE_FINAL_PROOFBODY_INVALID");
+  if (proofBodyHash(body).toLowerCase() !== want) return observeErr("J_EVENT_DISPUTE_FINAL_PROOFBODY_HASH_MISMATCH");
+  return frozenHash.toLowerCase() !== want ? observeErr("DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH") : ok(body);
+};
+/** og applyStartedDisputeAccountInput: the Account's dispute_started finality (jNonce = the logged nonce). */
+export const disputeStartedInput = (e: Extract<JEvent, { readonly type: "DisputeStarted" }> & { readonly batchNonce?: number | undefined }, observedBlockNumber: number, frozenHash: string): Result<DisputeStartedFinality, JObserveError> =>
+  chain(frozenProofBody(e.initialProofbody, e.proofbodyHash, frozenHash), () => chain(boundaryUint(e.nonce, "J_EVENT_DISPUTE_NONCE_INVALID"), (initialNonce) => chain(boundaryUint(e.leftResponseSeconds, "J_EVENT_DISPUTE_LEFT_RESPONSE_SECONDS_INVALID"), (left) =>
+    map(boundaryUint(e.rightResponseSeconds, "J_EVENT_DISPUTE_RIGHT_RESPONSE_SECONDS_INVALID"), (right): DisputeStartedFinality => ({
+      kind: "dispute_started", starterEntityId: e.sender.toLowerCase(), initialProofbodyHash: e.proofbodyHash, initialNonce, initialProposerIsLeft: e.proposerIsLeft, disputeTimeout: Number(e.disputeTimeout), disputeStartTimestamp: Number(e.disputeStartTimestamp),
+      leftResponseSeconds: left, rightResponseSeconds: right, jNonce: initialNonce, starterInitialArguments: e.starterInitialArguments || "0x", starterCounterArguments: e.starterCounterArguments || "0x", starterCounterProofCommitment: e.starterCounterProofCommitment,
+      observedBlockNumber, ...opt("batchNonce", e.batchNonce),
+    })))));
+/** The Account dispute context og's resolveFinalizationEvidence reads (activeDispute and its selected counter-proof, when one was registered). */
+export type FinalizingDispute = { readonly jNonce: number; readonly initialProposerIsLeft?: boolean | undefined; readonly selectedCounter?: { readonly nonce: number; readonly proposerIsLeft: boolean; readonly proofbodyHash: string } | undefined };
+/** og applyDisputeFinalizedJEvent + resolveFinalizationEvidence: finalizedJNonce from the reducer evidence (an exact unsigned initial unilateral, or no evidence on the initial body, spends one more nonce); tokenIds from the finalized body. */
+export const disputeFinalizedInput = (e: Extract<JEvent, { readonly type: "DisputeFinalized" }>, d: FinalizingDispute, frozenHash: string): Result<Extract<AccountFinality, { kind: "dispute_finalized" }>, JObserveError> =>
+  chain(frozenProofBody(e.finalProofbody, e.finalProofbodyHash, frozenHash), (body) => chain(boundaryUint(e.nonce, "J_EVENT_DISPUTE_INITIAL_NONCE_INVALID"), (initialNonce) => {
+    const final = e.finalProofbodyHash.trim().toLowerCase(), initialHash = (e.initialProofbodyHash ?? "").toLowerCase(), sender = e.sender.toLowerCase(), counter = e.counterentity.toLowerCase();
+    const ev = e.evidence !== undefined && e.evidence.sender.toLowerCase() === sender && e.evidence.counterentity.toLowerCase() === counter && e.evidence.initialNonce === e.nonce
+      && e.evidence.initialProofbodyHash.toLowerCase() === initialHash && e.evidence.finalProofbodyHash.toLowerCase() === final ? e.evidence : undefined;
+    const onInitial = final === initialHash, bump = (n: number): Result<number, JObserveError> => (n >= Number.MAX_SAFE_INTEGER ? observeErr("J_EVENT_DISPUTE_FINAL_NONCE_OVERFLOW") : ok(n + 1));
+    const eventNonce: Result<number, JObserveError> = ev === undefined ? (onInitial ? bump(initialNonce) : ok(initialNonce)) : chain(boundaryUint(ev.finalNonce, "J_EVENT_DISPUTE_FINAL_NONCE_INVALID"), (finalNonce) => {
+      const sel = d.selectedCounter, selected = sel !== undefined && sel.nonce === finalNonce && sel.proposerIsLeft === ev.proposerIsLeft && sel.proofbodyHash.toLowerCase() === final;
+      const unsigned = ev.sig.toLowerCase() === "" || ev.sig.toLowerCase() === "0x";
+      return unsigned && !selected && finalNonce === initialNonce && ev.proposerIsLeft === d.initialProposerIsLeft && onInitial ? bump(initialNonce) : ok(finalNonce);
+    });
+    return map(eventNonce, (n) => ({ kind: "dispute_finalized", finalizedJNonce: Math.max(d.jNonce, n), finalizedTokenIds: body.tokenIds.map(Number) }));
+  }));
+
+// ---- og jBatchState (core/jurisdiction/machine/batch/{index,reserve-simulation}.ts, entity/tx/handlers/j-batch/*, j-events-batch.ts) ----
+export type SentJBatch = {
+  readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly firstSubmittedAt: number; readonly lastSubmittedAt: number; readonly submitAttempts: number;
+  readonly terminalFailure?: { readonly message: string; readonly failedAt: number } | undefined;
+};
+/** og JBatchState: the editable draft, the one in-flight sent batch, recovered work that broadcasts first, and the last chain-observed entity nonce. */
+export type JBatchState = {
+  readonly batch: Batch; readonly jurisdiction: null; readonly lastBroadcast: number; readonly broadcastCount: number; readonly failedAttempts: number; readonly status: "empty" | "accumulating" | "sent" | "failed";
+  readonly sentBatch?: SentJBatch | undefined; readonly recoveryBatches?: readonly Batch[] | undefined; readonly autoBroadcastDraft?: boolean | undefined; readonly entityNonce?: number | undefined;
+};
+export const initJBatch = (): JBatchState => ({ batch: emptyBatch(), jurisdiction: null, lastBroadcast: 0, broadcastCount: 0, failedAttempts: 0, status: "empty" });
+export const J_BATCH_LIMITS = { maxTotalOps: 50, maxSettlements: 32, maxSettlementDiffs: 32, maxSettlementForgivenessIds: 32, maxDisputeStarts: 8, maxCounterDisputes: 8, maxDisputeFinalizations: 1, maxReserveToCollateralPairs: 64, maxReserveToCollateralPairsTotal: 256, maxSecretReveals: 32, maxHashLadderRegistrations: 32 } as const;
+export const batchOpCount = (b: Batch): number => BATCH_FIELDS.reduce((n, f) => n + b[f].length, 0);
+const batchEmpty = (b: Batch): boolean => batchOpCount(b) === 0;
+export const hasJBatchWork = (s: JBatchState): boolean => (s.recoveryBatches ?? []).some((b) => !batchEmpty(b)) || !batchEmpty(s.batch);
+export type JBatchError = Tagged<"j_batch", { reason: string }>;
+const batchErr = (reason: string): Result<never, JBatchError> => err({ _tag: "j_batch", reason });
+const pairCount = (b: Batch): number => b.reserveToCollateral.reduce((n, op) => n + op.pairs.length, 0);
+/** og getJBatchContractLimitIssue. */
+export const jBatchLimitIssue = (b: Batch): string | undefined => {
+  const L = J_BATCH_LIMITS, over = ([name, n, max]: readonly [string, number, number]): string | undefined => (n > max ? `${name} ${n}/${max}` : undefined);
+  const first = [["total ops", batchOpCount(b), L.maxTotalOps], ["settlements", b.settlements.length, L.maxSettlements], ["disputeStarts", b.disputeStarts.length, L.maxDisputeStarts], ["counterDisputes", b.counterDisputes.length, L.maxCounterDisputes],
+    ["disputeFinalizations", b.disputeFinalizations.length, L.maxDisputeFinalizations], ["revealSecrets", b.revealSecrets.length, L.maxSecretReveals], ["hashLadderRegistrations", b.hashLadderRegistrations.length, L.maxHashLadderRegistrations]] as const;
+  for (const row of first) { const issue = over(row); if (issue !== undefined) return issue; }
+  for (const [i, op] of b.reserveToCollateral.entries()) {
+    if (op.tokenId <= 0n || op.tokenId > SAFE_UINT) return `reserveToCollateral[${i}].tokenId must be a positive safe integer`;
+    if (op.pairs.length === 0) return `reserveToCollateral[${i}].pairs must not be empty`;
+    if (op.pairs.some((p) => p.amount <= 0n)) return `reserveToCollateral[${i}].pairs amounts must be positive`;
+    if (op.pairs.length > L.maxReserveToCollateralPairs) return `reserveToCollateral[${i}].pairs ${op.pairs.length}/${L.maxReserveToCollateralPairs}`;
+  }
+  if (pairCount(b) > L.maxReserveToCollateralPairsTotal) return `reserveToCollateral.pairs total ${pairCount(b)}/${L.maxReserveToCollateralPairsTotal}`;
+  for (const [i, s] of b.settlements.entries()) {
+    if (s.diffs.length > L.maxSettlementDiffs) return `settlements[${i}].diffs ${s.diffs.length}/${L.maxSettlementDiffs}`;
+    if (s.forgiveDebtsInTokenIds.length > L.maxSettlementForgivenessIds) return `settlements[${i}].forgiveDebtsInTokenIds ${s.forgiveDebtsInTokenIds.length}/${L.maxSettlementForgivenessIds}`;
+  }
+  return undefined;
+};
+export type ReserveOpType = "reserveToReserve" | "settlement" | "reserveToCollateral" | "reserveToExternalToken";
+/** og DraftBatchReserveIssue: the op whose outflow reverts the whole batch on chain. */
+export type ReserveIssue = {
+  readonly tokenId: number; readonly opType: ReserveOpType; readonly opIndex: number; readonly failureMode: "batchRevert"; readonly requiredAmount: bigint;
+  readonly availableAfterDebt: bigint; readonly debtClaimPaid: bigint; readonly remainingDebtAfterSweep: bigint; readonly unrepaidDeficit: bigint;
+};
+export type ReserveSimulation = { readonly issues: readonly ReserveIssue[]; readonly reservesByToken: ReadonlyMap<number, bigint>; readonly outgoingDebtByToken: ReadonlyMap<number, bigint>; readonly deficitByToken: ReadonlyMap<number, bigint> };
+/** og getOpenOutgoingDebtTotals: the open outgoing debt per token. */
+export const openOutgoingDebtTotals = (book: DebtBook): ReadonlyMap<number, bigint> =>
+  new Map([...book].flatMap(([tk, bucket]) => { const total = [...bucket.values()].reduce((n, d) => (d.status === "open" ? n + d.remainingAmount : n), 0n); return total > 0n ? [[tk, total] as const] : []; }));
+type DebtSweep = { readonly availableAfterDebt: bigint; readonly debtClaimPaid: bigint; readonly remainingDebtAfterSweep: bigint };
+/** og simulateDraftBatchReserveAvailability: Depository._processBatch for the initiator's own reserves: FIFO debt sweeps before every outflow, the implicit flash deficit a debt-free initiator may open, and a revert unless every deficit is repaid. */
+export const simulateBatchReserves = (entity: string, reserves: ReadonlyMap<number, bigint>, batch: Batch, outgoingDebt: ReadonlyMap<number, bigint>): ReserveSimulation => {
+  const me = entity.toLowerCase(), res = new Map(reserves), debt = new Map(outgoingDebt), deficit = new Map<number, bigint>(), issues: ReserveIssue[] = [];
+  const origins = new Map<number, DebtSweep & { readonly opType: ReserveOpType; readonly opIndex: number; readonly requiredAmount: bigint }>();
+  const read = (m: ReadonlyMap<number, bigint>, t: number): bigint => m.get(t) ?? 0n;
+  const write = (m: Map<number, bigint>, t: number, a: bigint): void => { if (a === 0n) m.delete(t); else m.set(t, a); };
+  const credit = (t: number, a: bigint): void => {
+    if (a <= 0n) return;
+    const owed = read(deficit, t), repaid = a < owed ? a : owed;
+    write(deficit, t, owed - repaid);
+    if (a - repaid > 0n) write(res, t, read(res, t) + (a - repaid));
+  };
+  const debit = (t: number, a: bigint, remainingDebt: bigint): "spent" | "deficit" | "rejected" => {
+    const reserve = read(res, t);
+    if (reserve >= a) { write(res, t, reserve - a); return "spent"; }
+    if (remainingDebt !== 0n) return "rejected";
+    write(deficit, t, read(deficit, t) + (a - reserve)); write(res, t, 0n);
+    return "deficit";
+  };
+  const sweep = (t: number): DebtSweep => {
+    const reserve = read(res, t), owed = read(debt, t), paid = reserve < owed ? reserve : owed;
+    write(res, t, reserve - paid); write(debt, t, owed - paid);
+    return { availableAfterDebt: reserve - paid, debtClaimPaid: paid, remainingDebtAfterSweep: owed - paid };
+  };
+  const origin = (t: number, s: DebtSweep, opType: ReserveOpType, opIndex: number, requiredAmount: bigint): void => { if (!origins.has(t)) origins.set(t, { ...s, opType, opIndex, requiredAmount }); };
+  const revert = (s: DebtSweep, tokenId: number, opType: ReserveOpType, opIndex: number, requiredAmount: bigint, unrepaidDeficit: bigint): void => { issues.push({ tokenId, opType, opIndex, failureMode: "batchRevert", requiredAmount, ...s, unrepaidDeficit }); };
+  const spend = (t: number, a: bigint, opType: ReserveOpType, i: number): boolean => {
+    const s = sweep(t), outcome = debit(t, a, s.remainingDebtAfterSweep);
+    if (outcome === "rejected") { revert(s, t, opType, i, a, 0n); return false; }
+    if (outcome === "deficit") origin(t, s, opType, i, a);
+    return true;
+  };
+  for (const op of batch.externalTokenToReserve) if ((op.entity === "" ? me : op.entity.toLowerCase()) === me) credit(Number(op.internalTokenId), op.amount);
+  for (const [i, op] of batch.reserveToReserve.entries()) if (spend(Number(op.tokenId), op.amount, "reserveToReserve", i) && op.receivingEntity.toLowerCase() === me) credit(Number(op.tokenId), op.amount);
+  for (const op of batch.collateralToReserve) credit(Number(op.tokenId), op.amount);
+  const own = (s: Settlement, d: SettlementDiff): bigint => (s.leftEntity.toLowerCase() === me ? d.leftDiff : s.rightEntity.toLowerCase() === me ? d.rightDiff : 0n);
+  const sweeps = new Map<number, DebtSweep>();
+  for (const s of batch.settlements) for (const d of s.diffs) {
+    if (own(s, d) >= 0n) continue;
+    const t = Number(d.tokenId), swept = sweep(t), prior = sweeps.get(t);
+    sweeps.set(t, { availableAfterDebt: swept.availableAfterDebt, debtClaimPaid: (prior?.debtClaimPaid ?? 0n) + swept.debtClaimPaid, remainingDebtAfterSweep: swept.remainingDebtAfterSweep });
+  }
+  for (const [i, s] of batch.settlements.entries()) {
+    if (s.leftEntity.toLowerCase() !== me && s.rightEntity.toLowerCase() !== me) continue;
+    const blocked = s.diffs.find((d) => { const o = own(s, d), t = Number(d.tokenId), have = read(res, t) > read(debt, t) ? read(res, t) - read(debt, t) : 0n; return o < 0n && have < -o && read(debt, t) !== 0n; });
+    if (blocked !== undefined) {
+      const t = Number(blocked.tokenId), have = read(res, t) > read(debt, t) ? read(res, t) - read(debt, t) : 0n;
+      revert({ availableAfterDebt: have, debtClaimPaid: sweeps.get(t)?.debtClaimPaid ?? 0n, remainingDebtAfterSweep: read(debt, t) }, t, "settlement", i, -own(s, blocked), 0n);
+      continue;
+    }
+    for (const d of s.diffs) {
+      const o = own(s, d), t = Number(d.tokenId);
+      if (o >= 0n) { credit(t, o); continue; }
+      const snap: DebtSweep = { availableAfterDebt: read(res, t), debtClaimPaid: sweeps.get(t)?.debtClaimPaid ?? 0n, remainingDebtAfterSweep: read(debt, t) };
+      if (debit(t, -o, snap.remainingDebtAfterSweep) === "deficit") origin(t, snap, "settlement", i, -o);
+    }
+  }
+  for (const [i, op] of batch.reserveToCollateral.entries()) spend(Number(op.tokenId), op.pairs.reduce((n, p) => n + p.amount, 0n), "reserveToCollateral", i);
+  for (const [i, op] of batch.reserveToExternalToken.entries()) spend(Number(op.tokenId), op.amount, "reserveToExternalToken", i);
+  const open = [...deficit].find(([, d]) => d !== 0n);
+  if (open !== undefined) {
+    const o = origins.get(open[0]);
+    if (o === undefined) throw new Error(`DRAFT_BATCH_DEFICIT_WITHOUT_ORIGIN:${open[0]}`);
+    const { opType, opIndex, requiredAmount, ...s } = o;
+    revert(s, open[0], opType, opIndex, requiredAmount, open[1]);
+  }
+  return issues.length > 0 ? { issues, reservesByToken: new Map(reserves), outgoingDebtByToken: new Map(outgoingDebt), deficitByToken: new Map() } : { issues, reservesByToken: res, outgoingDebtByToken: debt, deficitByToken: deficit };
+};
+export type ReserveCandidate =
+  | { readonly type: "reserveToReserve"; readonly receivingEntity: string; readonly tokenId: number; readonly amount: bigint }
+  | { readonly type: "reserveToCollateral"; readonly receivingEntity: string; readonly counterparty: string; readonly tokenId: number; readonly amount: bigint }
+  | { readonly type: "reserveToExternalToken"; readonly receivingEntity: string; readonly tokenId: number; readonly amount: bigint };
+/** og j-batch-reserve-admission.ts appendCandidate: an R2C joins the (receivingEntity, tokenId) entry, adding to or opening its pair. */
+const appendCandidate = (b: Batch, c: ReserveCandidate): { readonly batch: Batch; readonly index: number } => {
+  if (c.type !== "reserveToCollateral") return { batch: { ...b, [c.type]: [...b[c.type], { receivingEntity: c.receivingEntity, tokenId: BigInt(c.tokenId), amount: c.amount }] }, index: b[c.type].length };
+  const at = b.reserveToCollateral.findIndex((op) => op.receivingEntity === c.receivingEntity && op.tokenId === BigInt(c.tokenId));
+  if (at < 0) return { batch: { ...b, reserveToCollateral: [...b.reserveToCollateral, { tokenId: BigInt(c.tokenId), receivingEntity: c.receivingEntity, pairs: [{ entity: c.counterparty, amount: c.amount }] }] }, index: b.reserveToCollateral.length };
+  const op = b.reserveToCollateral[at]!, has = op.pairs.some((p) => p.entity === c.counterparty);
+  const pairs = has ? op.pairs.map((p) => (p.entity === c.counterparty ? { ...p, amount: p.amount + c.amount } : p)) : [...op.pairs, { entity: c.counterparty, amount: c.amount }];
+  return { batch: { ...b, reserveToCollateral: b.reserveToCollateral.map((x, i) => (i === at ? { ...x, pairs } : x)) }, index: at };
+};
+/** The Entity-side view og's j-batch handlers read. */
+export type JEntity = { readonly entityId: string; readonly reserves: ReadonlyMap<number, bigint>; readonly debts: DebtLedger; readonly jBatch?: JBatchState | undefined; readonly accounts: ReadonlySet<string> };
+/** og getReserveCandidateIssue: simulate the draft with the candidate appended; the candidate's own issue, else the draft's first. */
+export const reserveCandidateIssue = (e: JEntity, c: ReserveCandidate): ReserveIssue | undefined => {
+  const { batch, index } = appendCandidate(e.jBatch?.batch ?? emptyBatch(), c), sim = simulateBatchReserves(e.entityId, e.reserves, batch, openOutgoingDebtTotals(e.debts.out));
+  return sim.issues.find((i) => i.opType === c.type && i.opIndex === index) ?? sim.issues[0];
+};
+const accumulating = (s: JBatchState, batch: Batch): JBatchState => ({ ...s, batch, status: s.status === "empty" ? "accumulating" : s.status });
+const batchRoom = (b: Batch, op: string): Result<void, JBatchError> => guard(batchOpCount(b) + 1 <= J_BATCH_LIMITS.maxTotalOps, { _tag: "j_batch", reason: `J_BATCH_LIMIT_EXCEEDED: ${op}` });
+/** og batchAddReserveToReserve / batchAddReserveToExternal / batchAddExternalTokenToReserve: one appended op within the 50-op contract limit. */
+const addOp = <F extends "reserveToReserve" | "reserveToExternalToken" | "externalTokenToReserve">(s: JBatchState, field: F, op: Batch[F][number], label: string): Result<JBatchState, JBatchError> =>
+  map(batchRoom(s.batch, label), () => accumulating(s, { ...s.batch, [field]: [...s.batch[field], op] }));
+/** og batchAddReserveToCollateral: aggregate into the (receivingEntity, tokenId) entry within the pair limits. */
+export const addReserveToCollateral = (s: JBatchState, entity: string, counterparty: string, tokenId: number, amount: bigint): Result<JBatchState, JBatchError> => {
+  if (amount <= 0n) return batchErr("R2C_AMOUNT_MUST_BE_POSITIVE");
+  if (!Number.isSafeInteger(tokenId) || tokenId <= 0) return batchErr("R2C_TOKEN_ID_INVALID");
+  if (entity === "" || counterparty === "" || entity === counterparty) return batchErr("R2C_ACCOUNT_PARTIES_INVALID");
+  const existing = s.batch.reserveToCollateral.find((op) => op.receivingEntity === entity && op.tokenId === BigInt(tokenId)), total = pairCount(s.batch);
+  if (existing !== undefined && existing.pairs.some((p) => p.entity === counterparty)) return ok(accumulating(s, appendCandidate(s.batch, { type: "reserveToCollateral", receivingEntity: entity, counterparty, tokenId, amount }).batch));
+  if (existing === undefined && batchOpCount(s.batch) + 1 > J_BATCH_LIMITS.maxTotalOps) return batchErr("J_BATCH_LIMIT_EXCEEDED: reserveToCollateral");
+  if (total + 1 > J_BATCH_LIMITS.maxReserveToCollateralPairsTotal) return batchErr("J_BATCH_LIMIT_EXCEEDED: reserveToCollateral.pairs total");
+  if (existing !== undefined && existing.pairs.length + 1 > J_BATCH_LIMITS.maxReserveToCollateralPairs) return batchErr("J_BATCH_LIMIT_EXCEEDED: reserveToCollateral.pairs");
+  return ok(accumulating(s, appendCandidate(s.batch, { type: "reserveToCollateral", receivingEntity: entity, counterparty, tokenId, amount }).batch));
+};
+/** `note`: og's addMessage text when the handler refuses without throwing (r2c leaves the Entity unchanged). */
+export type JQueued = { readonly jBatch: JBatchState; readonly note?: string | undefined };
+const insufficient = (issue: ReserveIssue, amount: bigint, tokenId: number): string => `Insufficient spendable reserve: have ${issue.availableAfterDebt}, need ${amount} token ${tokenId}`;
+/** og handleR2R: debt-aware reserve admission, then queue (reserves move only when the batch's J events finalize). */
+export const queueR2R = (e: JEntity, to: string, tokenId: number, amount: bigint): Result<JBatchState, JBatchError> => {
+  const issue = reserveCandidateIssue(e, { type: "reserveToReserve", receivingEntity: to, tokenId, amount });
+  return issue !== undefined ? batchErr(insufficient(issue, amount, tokenId)) : addOp(e.jBatch ?? initJBatch(), "reserveToReserve", { receivingEntity: to, tokenId: BigInt(tokenId), amount }, "reserveToReserve");
+};
+/** og handleR2E. */
+export const queueR2E = (e: JEntity, receivingEntity: string, tokenId: number, amount: bigint): Result<JBatchState, JBatchError> => {
+  const issue = reserveCandidateIssue(e, { type: "reserveToExternalToken", receivingEntity, tokenId, amount });
+  return issue !== undefined ? batchErr(insufficient(issue, amount, tokenId)) : addOp(e.jBatch ?? initJBatch(), "reserveToExternalToken", { receivingEntity, tokenId: BigInt(tokenId), amount }, "reserveToExternalToken");
+};
+/** og handleE2R: a non-zero token contract and a positive amount, credited to this Entity when the batch executes. */
+export const queueE2R = (e: JEntity, x: { readonly contractAddress: string; readonly amount: bigint; readonly tokenType?: number | undefined; readonly externalTokenId?: bigint | undefined; readonly internalTokenId?: number | undefined }): Result<JBatchState, JBatchError> => {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(x.contractAddress) || /^0x0{40}$/.test(x.contractAddress)) return batchErr(`Invalid external token contract: ${x.contractAddress}`);
+  if (x.amount <= 0n) return batchErr("External → Reserve amount must be positive");
+  return addOp(e.jBatch ?? initJBatch(), "externalTokenToReserve", { entity: e.entityId, contractAddress: x.contractAddress, externalTokenId: x.externalTokenId ?? 0n, tokenType: BigInt(x.tokenType ?? 0), internalTokenId: BigInt(x.internalTokenId ?? 0), amount: x.amount }, "externalTokenToReserve");
+};
+/** og handleR2C (no rebalance quote): admission, debt-aware reserve and local-account checks refuse with a note and leave the draft unchanged. */
+export const queueR2C = (e: JEntity, counterparty: string, tokenId: number, amount: bigint, receivingEntityId?: string): Result<JQueued, JBatchError> => {
+  const receiving = (receivingEntityId ?? e.entityId).trim().toLowerCase(), local = receiving === e.entityId.trim().toLowerCase(), unchanged = e.jBatch ?? initJBatch();
+  if (amount <= 0n || !Number.isSafeInteger(tokenId) || tokenId <= 0) return ok({ jBatch: unchanged, note: "Collateral deposit requires a positive amount and registered tokenId" });
+  if (receiving === "" || receiving === counterparty.toLowerCase()) return ok({ jBatch: unchanged, note: "Collateral deposit requires two distinct non-empty entities" });
+  const issue = reserveCandidateIssue(e, { type: "reserveToCollateral", receivingEntity: receiving, counterparty, tokenId, amount });
+  if (issue !== undefined) return ok({ jBatch: unchanged, note: `Insufficient spendable reserve for collateral deposit: have ${issue.availableAfterDebt}, need ${amount} token ${tokenId}` });
+  if (local && !e.accounts.has(counterparty)) return ok({ jBatch: unchanged, note: "Cannot deposit collateral: no account" });
+  return map(addReserveToCollateral(unchanged, receiving, counterparty, tokenId, amount), (jBatch) => ({ jBatch }));
+};
+/** og takeBroadcastBatch: dispute work broadcasts first (one finalization at a time; registrations with starts); everything else waits in the remainder. */
+export const takeBroadcastBatch = (b: Batch): { readonly selected: Batch; readonly remainder: Batch; readonly disputePriority: boolean } => {
+  if (b.disputeStarts.length === 0 && b.counterDisputes.length === 0 && b.disputeFinalizations.length === 0) return { selected: b, remainder: emptyBatch(), disputePriority: false };
+  const base = { disputeStarts: b.disputeStarts, counterDisputes: b.counterDisputes, revealSecrets: b.revealSecrets };
+  if (b.hashLadderRegistrations.length > 0) return { selected: { ...emptyBatch(), ...base, hashLadderRegistrations: b.hashLadderRegistrations }, remainder: { ...b, disputeStarts: [], counterDisputes: [], hashLadderRegistrations: [], revealSecrets: [] }, disputePriority: true };
+  return { selected: { ...emptyBatch(), ...base, disputeFinalizations: b.disputeFinalizations.slice(0, 1) }, remainder: { ...b, disputeStarts: [], counterDisputes: [], disputeFinalizations: b.disputeFinalizations.slice(1), revealSecrets: [] }, disputePriority: true };
+};
+/** og JTx `batch` (types/jurisdiction-runtime.ts) as j_broadcast emits it, before the quorum Hanko is attached. */
+export type JBatchTx = { readonly type: "batch"; readonly entityId: string; readonly data: { readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly batchGeneration: number; readonly batchSize: number; readonly signerId: string }; readonly timestamp: number };
+/** og HashToSign of type "jBatch" (the Entity quorum signs the batch hash for Hanko). */
+export type JBatchHashToSign = { readonly hash: string; readonly type: "jBatch"; readonly context: string };
+export type Broadcast = { readonly jBatch: JBatchState; readonly jTx?: JBatchTx | undefined; readonly hashToSign?: JBatchHashToSign | undefined; readonly note?: string | undefined };
+/** og handleJBroadcast: refuse while a batch is in flight; skip an empty draft; seal the next batch (recovery first) at entityNonce + 1, park the rest, and hand its batch hash to the quorum. */
+export const jBroadcast = (s: JBatchState | undefined, ctx: { readonly entityId: string; readonly chainId: number; readonly depository: string; readonly signerId: string; readonly timestamp: number }): Result<Broadcast, JBatchError> => {
+  if (s === undefined) return batchErr("No jBatchState found for j_broadcast");
+  if (s.sentBatch !== undefined) return batchErr(`Cannot broadcast: sentBatch pending nonce=${s.sentBatch.entityNonce} attempts=${s.sentBatch.submitAttempts}`);
+  if (!hasJBatchWork(s)) return ok({ jBatch: s, note: "j_broadcast skipped: jBatch is empty" });
+  if (ctx.chainId === 0) return ok({ jBatch: s, note: "Missing chainId" });
+  if (ctx.signerId === "") return ok({ jBatch: s, note: "No signerId available" });
+  const recovery = s.recoveryBatches?.[0], fromRecovery = recovery !== undefined && !batchEmpty(recovery), { selected, remainder } = takeBroadcastBatch(fromRecovery ? recovery : s.batch);
+  if (!domainOf({ chainId: ctx.chainId, depositoryAddress: ctx.depository }).ok || /^0x0{40}$/.test(ctx.depository)) return batchErr(`INVALID_HANKO_DOMAIN:${ctx.chainId}:${ctx.depository}`);
+  const limit = jBatchLimitIssue(selected);
+  if (limit !== undefined) return batchErr(`J_BATCH_LIMIT_EXCEEDED: j_broadcast: ${limit}`);
+  const nonce = (s.entityNonce ?? 0) + 1, encodedBatch = encodeBatch(selected), batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(nonce) }), generation = s.broadcastCount + 1;
+  const queue = fromRecovery ? (batchEmpty(remainder) ? (s.recoveryBatches ?? []).slice(1) : [remainder, ...(s.recoveryBatches ?? []).slice(1)]) : s.recoveryBatches;
+  const { recoveryBatches: _r, autoBroadcastDraft: _a, ...rest } = s;
+  const parked: JBatchState = { ...rest, batch: fromRecovery ? s.batch : remainder, ...(queue === undefined || queue.length === 0 ? {} : { recoveryBatches: queue }) };
+  const jBatch: JBatchState = { ...parked, ...(hasJBatchWork(parked) ? { autoBroadcastDraft: true } : {}), sentBatch: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, firstSubmittedAt: ctx.timestamp, lastSubmittedAt: 0, submitAttempts: 0 }, broadcastCount: generation, lastBroadcast: ctx.timestamp, status: "sent" };
+  return ok({ jBatch, jTx: { type: "batch", entityId: ctx.entityId, data: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, batchGeneration: generation, batchSize: batchOpCount(selected), signerId: ctx.signerId }, timestamp: ctx.timestamp },
+    hashToSign: { hash: batchHash, type: "jBatch", context: `jBatch:${ctx.entityId.slice(-4)}:nonce:${nonce}` } });
+};
+/** og j-events-batch.ts applyHankoBatchProcessedEvent: the chain nonce is authoritative; the exact pending (nonce, hash) finalizes, a different hash at or past it quarantines the pending batch.
+ *  `autoBroadcast`: og finalizePendingBatch queues a follow-up j_broadcast when the sealed batch parked work behind it. */
+export type BatchProcessed = { readonly jBatch: JBatchState | undefined; readonly autoBroadcast: boolean };
+export const applyHankoBatchProcessed = (s: JBatchState | undefined, entity: string, e: Extract<JEvent, { readonly type: "HankoBatchProcessed" }>, timestamp: number): Result<BatchProcessed, JBatchError> => {
+  if (e.entityId.toLowerCase() !== entity.toLowerCase()) return ok({ jBatch: s, autoBroadcast: false });
+  const hash = e.batchHash.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(hash)) return batchErr("J_BATCH_EVENT_BATCH_HASH_INVALID");
+  if (e.nonce < 1n || e.nonce > SAFE_UINT) return batchErr("J_BATCH_EVENT_NONCE_INVALID");
+  const cur = s ?? initJBatch(), nonce = Number(e.nonce), synced = Math.max(cur.entityNonce ?? 0, nonce), sent = cur.sentBatch;
+  if (sent !== undefined && sent.entityNonce === nonce && sent.batchHash.toLowerCase() === hash) {
+    const { sentBatch: _s, ...rest } = cur;
+    const jBatch: JBatchState = { ...rest, status: hasJBatchWork(cur) ? "accumulating" : "empty", entityNonce: synced };
+    return ok({ jBatch, autoBroadcast: jBatch.autoBroadcastDraft === true && hasJBatchWork(jBatch) });
+  }
+  if (sent === undefined || nonce < sent.entityNonce) return ok({ jBatch: { ...cur, entityNonce: synced }, autoBroadcast: false });
+  return ok({ autoBroadcast: false, jBatch: { ...cur, entityNonce: synced, status: "failed", sentBatch: { ...sent, terminalFailure: { message: `J_BATCH_NONCE_CONSUMED_BY_DIFFERENT_HASH:${hash}:pending=${sent.batchHash.toLowerCase()}:pendingNonce=${sent.entityNonce}:finalizedNonce=${nonce}`, failedAt: timestamp } } } });
+};
 
 type Word = string;
 /** og computeAccountKey (contract-codec.ts:6): two bytes32 words, ordered and packed lowercase. */
@@ -1411,11 +2014,13 @@ export const checkEnvelope = (id: AccountId, terms: AccountTerms, e: AccountEnve
 
 
 export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" | "claim_entity" | "claim_conflict" | "claim_proof">;
+/** og SettlementHankoNonceRejection: `account` = the derived minimum safe nonce, `workspace` = the nonce pinned at first signature. */
+export type SettlementNonceMismatch = { readonly supplied: number; readonly required: number; readonly basis: "account" | "workspace" };
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
   | Tagged<"settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_envelope" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
-  | Tagged<"settlement", { reason: string }>
+  | Tagged<"settlement", { reason: string; nonce?: SettlementNonceMismatch | undefined }>
   | Tagged<"swap", { reason: string }>
   | Tagged<"rebalance", { reason: string }>
   | Tagged<"lending", { reason: string }>
@@ -1503,7 +2108,10 @@ export type RebalanceRequestFeeState = {
   readonly requestId: string; readonly feeTokenId: number; readonly feePaidUpfront: bigint; readonly requestedAmount: bigint; readonly policyVersion: number; readonly requestedAt: number; readonly requestedByLeft: boolean;
   readonly refund?: { readonly reason: RefundReason; readonly refundedAmount: bigint };
 };
-export type JClaimProof = { readonly version: 1; readonly nodes: readonly [] };
+/** og types/finance/account-j-claims.ts AccountJClaimRecord / AccountJClaimNode / AccountJClaimProof (root-to-terminal-leaf path; empty for the EMPTY root). */
+export type JClaimRecord = { readonly version: 1; readonly accountKey: string; readonly side: "left" | "right"; readonly jHeight: number; readonly jBlockHash: string; readonly eventsHash: string };
+export type JClaimNode = { readonly version: 1; readonly type: "leaf"; readonly key: string; readonly record: JClaimRecord } | { readonly version: 1; readonly type: "branch"; readonly bit: number; readonly left: string; readonly right: string };
+export type JClaimProof = { readonly version: 1; readonly nodes: readonly JClaimNode[] };
 export type ClaimRow = { readonly onLeft: boolean; readonly jHeight: bigint; readonly jBlockHash: string; readonly eventsHash: string };
 /** og types/account.ts SettlementOp / SettlementWorkspace, field for field: the workspace (minus Hankos) is committed in the Account root. */
 export type SettlementOp =
@@ -1616,19 +2224,37 @@ const sameAccount = (row: AccountSettlement, id: AccountId): boolean => row.left
 const CLAIM_UINT64 = (1n << 64n) - 1n;
 const claimHeight = (h: bigint): Result<bigint, ClaimError> => (h >= 1n && h <= CLAIM_UINT64 && h <= BigInt(Number.MAX_SAFE_INTEGER) ? ok(h) : err({ _tag: "claim_height" }));
 const claimBlock = (h: string): Result<string, ClaimError> => (WORD.test(h) ? ok(h.toLowerCase()) : err({ _tag: "claim_block" }));
-type SettledEvent = { readonly type: "AccountSettled"; readonly data: { readonly leftEntity: string; readonly rightEntity: string; readonly tokenId: number; readonly leftReserve: string; readonly rightReserve: string; readonly collateral: string; readonly ondelta: string; readonly nonce: number } };
-const settledEvent = (row: AccountSettlement, token: TokenSettlement): Result<{ readonly key: string; readonly event: SettledEvent }, ClaimError> => {
+type SettledData = { readonly leftEntity: string; readonly rightEntity: string; readonly tokenId: number; readonly leftReserve: string; readonly rightReserve: string; readonly collateral: string; readonly ondelta: string; readonly nonce: number };
+/** og JurisdictionEvent AccountSettled with normalizeMetadata's EVM position (hashes kept as given; the key lowercases them). */
+type SettledEvent = { readonly blockNumber?: number; readonly blockHash?: string; readonly transactionHash?: string; readonly logIndex?: number; readonly eventIndex?: number; readonly type: "AccountSettled"; readonly data: SettledData };
+const settledPayload = (d: SettledData): string => ["AccountSettled", d.leftEntity, d.rightEntity, d.tokenId, d.leftReserve, d.rightReserve, d.collateral, d.ondelta, d.nonce].join(":");
+/** og event-normalization.ts canonicalJurisdictionEventKey. */
+const settledKey = (e: SettledEvent): string => JSON.stringify([e.blockNumber ?? null, e.blockHash?.toLowerCase() ?? null, e.transactionHash?.toLowerCase() ?? null, e.logIndex ?? null, e.eventIndex ?? null, settledPayload(e.data)]);
+const optIndex = (x: number | undefined, y: number | undefined): number => (x !== undefined && y !== undefined ? x - y : x !== undefined ? -1 : y !== undefined ? 1 : 0);
+const stableText = (x: string, y: string): number => (x < y ? -1 : x > y ? 1 : 0);
+/** og compareCanonicalJurisdictionEvents: EVM execution order first; the payload only orders synthetic ties. */
+const compareSettled = (x: SettledEvent, y: SettledEvent): number =>
+  optIndex(x.blockNumber, y.blockNumber) || optIndex(x.logIndex, y.logIndex) || optIndex(x.eventIndex, y.eventIndex) || stableText(x.transactionHash?.toLowerCase() ?? "", y.transactionHash?.toLowerCase() ?? "") || stableText(settledPayload(x.data), settledPayload(y.data));
+/** og normalizeMetadata: integer block/log/event positions (log/event non-negative) and non-blank hashes. */
+const settledMeta = (m: JEventMeta | undefined, eventIndex: number | undefined): Omit<SettledEvent, "type" | "data"> => ({
+  ...(m?.blockNumber !== undefined && Number.isInteger(m.blockNumber) ? { blockNumber: m.blockNumber } : {}),
+  ...(typeof m?.blockHash === "string" && m.blockHash.trim() !== "" ? { blockHash: m.blockHash } : {}),
+  ...(typeof m?.transactionHash === "string" && m.transactionHash.trim() !== "" ? { transactionHash: m.transactionHash } : {}),
+  ...(m?.logIndex !== undefined && Number.isInteger(m.logIndex) && m.logIndex >= 0 ? { logIndex: m.logIndex } : {}),
+  ...(eventIndex !== undefined && Number.isInteger(eventIndex) && eventIndex >= 0 ? { eventIndex } : {}),
+});
+const settledEvent = (row: AccountSettlement, token: TokenSettlement): Result<SettledEvent, ClaimError> => {
   if (row.nonce < 0n || row.nonce > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "claim_events" });
   const data = { leftEntity: row.left.toLowerCase(), rightEntity: row.right.toLowerCase(), tokenId: Number(token.tokenId), leftReserve: token.leftReserve.toString(), rightReserve: token.rightReserve.toString(), collateral: token.collateral.toString(), ondelta: token.ondelta.toString(), nonce: Number(row.nonce) };
-  const key = JSON.stringify([null, null, null, null, null, ["AccountSettled", data.leftEntity, data.rightEntity, data.tokenId, data.leftReserve, data.rightReserve, data.collateral, data.ondelta, data.nonce].join(":")]);
-  return ok({ key, event: { type: "AccountSettled", data } });
+  return ok({ ...settledMeta(row.meta, token.eventIndex), type: "AccountSettled", data });
 };
+/** og j-claim-transition.ts canonicalEvents + canonicalJurisdictionEventsHash: sorted, duplicate-free, keccak of the key list. */
 const claimEvidence = (events: readonly AccountSettlement[]): Result<{ readonly eventsHash: string; readonly events: readonly SettledEvent[] }, ClaimError> => {
   const rows = events.flatMap((row) => row.tokens.map((token) => ({ row, token })));
   if (rows.length === 0) return err({ _tag: "claim_events" });
   return chain(traverse(rows, ({ row, token }) => settledEvent(row, token)), (built) => {
-    const sorted = sortedBy(built, (s) => s.key);
-    return sorted.some((s, i) => i > 0 && s.key === sorted[i - 1]?.key) ? err({ _tag: "claim_events" }) : ok({ eventsHash: keccak256Hex(utf8(JSON.stringify(sorted.map((s) => s.key)))), events: sorted.map((s) => s.event) });
+    const sorted = [...built].sort(compareSettled), keys = sorted.map(settledKey);
+    return new Set(keys).size !== keys.length ? err({ _tag: "claim_events" }) : ok({ eventsHash: keccak256Hex(utf8(JSON.stringify(keys))), events: sorted });
   });
 };
 const claimFrame = (tx: TxOf<"j_event_claim">): Result<{ readonly version: "xln:account-j-event-claim-frame:v1"; readonly jHeight: number; readonly jBlockHash: string; readonly eventsHash: string; readonly events: readonly SettledEvent[] }, ClaimError> =>
@@ -1657,16 +2283,22 @@ const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[]): Resul
       return ok(clearSubmittedAt(requested > increase ? { ...settled, requested: mapSet(settled.requested, tk, requested - increase) } : { ...settled, requested: mapDelete(settled.requested, tk), requestFees: mapDelete(settled.requestFees, tk) }, tk));
     })), (b) => map(activateWorkspace(b, jNonce), (c) => ({ ...c, jNonce }))));
 };
-/** og j-claim-transition.ts: conflict on either side refuses; stale prunes; the first side waits; the peer's matching record at any pending height finalizes. */
-const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (own) => {
-  const held = a.claimRows ?? [], peer: ClaimRow = { ...own, onLeft: !own.onLeft };
+type ClaimCursor = { readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint };
+type ClaimStep = { readonly claimRows: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly finalizes: boolean };
+/** og j-claim-transition.ts applyAccountJClaimTransition on the pending rows: conflict on either side refuses; stale prunes; the first side waits; the peer's matching record at any pending height finalizes. */
+const claimStep = (c: ClaimCursor, own: ClaimRow): Result<ClaimStep, ClaimError> => {
+  const held = c.claimRows ?? [], peer: ClaimRow = { ...own, onLeft: !own.onLeft };
   const member = (r: ClaimRow): ClaimRow | undefined => held.find((h) => h.onLeft === r.onLeft && h.jHeight === r.jHeight);
   const ownHeld = member(own), peerHeld = member(peer);
   if ((ownHeld !== undefined && !sameEvidence(ownHeld, own)) || (peerHeld !== undefined && !sameEvidence(peerHeld, peer))) return err({ _tag: "claim_conflict" });
-  if (own.jHeight <= a.finalizedJHeight) return ok(step({ ...a, claimRows: pruneThrough(held, a.finalizedJHeight) }));
-  if (peerHeld === undefined) return ok(step(ownHeld !== undefined ? a : { ...a, claimRows: [...held, own] }));
-  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events), (b) => step({ ...b, claimRows: pruneThrough(held, own.jHeight), finalizedJHeight: own.jHeight })));
-});
+  if (own.jHeight <= c.finalizedJHeight) return ok({ claimRows: pruneThrough(held, c.finalizedJHeight), finalizedJHeight: c.finalizedJHeight, finalizes: false });
+  if (peerHeld === undefined) return ok({ claimRows: ownHeld !== undefined ? c.claimRows : [...held, own], finalizedJHeight: c.finalizedJHeight, finalizes: false });
+  return ok({ claimRows: pruneThrough(held, own.jHeight), finalizedJHeight: own.jHeight, finalizes: true });
+};
+const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (own) => chain(claimStep(a, own), (s) => {
+  if (!s.finalizes) return ok(step(s.claimRows === a.claimRows ? a : { ...a, claimRows: s.claimRows }));
+  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events), (b) => step({ ...b, claimRows: s.claimRows, finalizedJHeight: s.finalizedJHeight })));
+}));
 const settleErr = (reason: string): Result<never, BodyError> => err({ _tag: "settlement", reason });
 const settlementToken = (t: unknown): t is number => typeof t === "number" && Number.isSafeInteger(t) && t >= 0 && t <= 65_535;
 const MAX_SETTLEMENT_DIFFS = 32;
@@ -1799,7 +2431,7 @@ const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_tr
     if (!Number.isSafeInteger(nonce) || nonce < 1) return settleErr("SETTLEMENT_HANKO_NONCE_INVALID");
     const floor = Math.max(a.jNonce + 1, auth.proofNonceFloor);
     if (floor >= Number.MAX_SAFE_INTEGER) return settleErr("SETTLEMENT_NONCE_EXHAUSTED");
-    if (nonce !== (w.nonceAtSign ?? floor)) return settleErr("SETTLEMENT_HANKO_NONCE_MISMATCH");
+    if (nonce !== (w.nonceAtSign ?? floor)) return err({ _tag: "settlement", reason: "SETTLEMENT_HANKO_NONCE_MISMATCH", nonce: { supplied: nonce, required: w.nonceAtSign ?? floor, basis: w.nonceAtSign === undefined ? "account" : "workspace" } });
     return chain(compileOps(w.ops, w.lastModifiedByLeft), ({ diffs, forgive }) => chain(settlementHashOf(a, diffs, forgive, nonce), (settlementHash) => {
       if (typeof x.settlementHash !== "string" || !WORKSPACE_HASH.test(x.settlementHash)) return settleErr("SETTLEMENT_HANKO_HASH_INVALID");
       if (x.settlementHash.toLowerCase() !== settlementHash.toLowerCase()) return settleErr("SETTLEMENT_HANKO_HASH_MISMATCH");
@@ -2384,43 +3016,56 @@ export const tokenNumber = (id: TokenId): Result<number, ViewError> => (tokenId(
 export const tokenOrder = (b: AccountBody): readonly TokenId[] => [...b.account.deltas.keys()].sort((x, y) => Number(x) - Number(y));
 const EMPTY_J_CLAIMS: JClaimAccumulator = { version: 1, root: EMPTY_J_ROOT, count: 0n };
 const CLAIM_ACCOUNT = keccak256Hex(utf8("xln.account-j-claim.account.v1")), CLAIM_KEY = keccak256Hex(utf8("xln.account-j-claim.key.v1")), CLAIM_RECORD = keccak256Hex(utf8("xln.account-j-claim.record.v1")), CLAIM_LEAF = keccak256Hex(utf8("xln.account-j-claim.leaf.v1")), CLAIM_BRANCH = keccak256Hex(utf8("xln.account-j-claim.branch.v1"));
-type ClaimNode = Tagged<"leaf", { key: string; record: string }> | Tagged<"branch", { bit: number; left: ClaimNode; right: ClaimNode }>;
+type ClaimLeaf = { readonly key: string; readonly record: string; readonly rec: JClaimRecord };
+type ClaimNode = Tagged<"leaf", ClaimLeaf> | Tagged<"branch", { bit: number; left: ClaimNode; right: ClaimNode }>;
 const claimBit = (key: string, index: number): 0 | 1 => ((Number.parseInt(key.slice(2 + (index >> 3) * 2, 4 + (index >> 3) * 2), 16) >> (7 - (index & 7))) & 1) === 0 ? 0 : 1;
 const claimAccountKey = (domain: Domain, left: string, right: string): string => keccak256Hex(abiEncode([A.b32(CLAIM_ACCOUNT), A.uint(BigInt(domain.chainId)), A.address(domain.depositoryAddress), A.b32(left), A.b32(right)]));
-const claimLeaf = (accountKey: string, row: ClaimRow): { readonly key: string; readonly record: string } => {
+const claimLeaf = (accountKey: string, row: ClaimRow): ClaimLeaf => {
   const side = row.onLeft ? 0n : 1n;
-  return { key: keccak256Hex(abiEncode([A.b32(CLAIM_KEY), A.b32(accountKey), A.uint(side), A.uint(row.jHeight)])), record: keccak256Hex(abiEncode([A.b32(CLAIM_RECORD), A.b32(accountKey), A.uint(side), A.uint(row.jHeight), A.b32(row.jBlockHash), A.b32(row.eventsHash)])) };
+  return {
+    key: keccak256Hex(abiEncode([A.b32(CLAIM_KEY), A.b32(accountKey), A.uint(side), A.uint(row.jHeight)])), record: keccak256Hex(abiEncode([A.b32(CLAIM_RECORD), A.b32(accountKey), A.uint(side), A.uint(row.jHeight), A.b32(row.jBlockHash), A.b32(row.eventsHash)])),
+    rec: { version: 1, accountKey: accountKey.toLowerCase(), side: row.onLeft ? "left" : "right", jHeight: Number(row.jHeight), jBlockHash: row.jBlockHash, eventsHash: row.eventsHash },
+  };
 };
 const claimNodeHash = (node: ClaimNode): string => match(node, {
   leaf: ({ key, record }) => keccak256Hex(abiEncode([A.b32(CLAIM_LEAF), A.uint(1n), A.b32(key), A.b32(record)])),
   branch: ({ bit, left, right }) => keccak256Hex(abiEncode([A.b32(CLAIM_BRANCH), A.uint(1n), A.uint(BigInt(bit)), A.b32(claimNodeHash(left)), A.b32(claimNodeHash(right))])),
 });
 const claimTerminal = (node: ClaimNode, key: string): Of<ClaimNode, "leaf"> => match(node, { leaf: (leaf) => leaf, branch: (b) => claimTerminal(claimBit(key, b.bit) === 0 ? b.left : b.right, key) });
-const claimPlace = (diff: number, key: string, leaf: Of<ClaimNode, "leaf">, other: ClaimNode): ClaimNode => {
-  const fresh: ClaimNode = { _tag: "leaf", key: leaf.key, record: leaf.record };
-  return { _tag: "branch", bit: diff, left: claimBit(key, diff) === 0 ? fresh : other, right: claimBit(key, diff) === 1 ? fresh : other };
-};
+const claimPlace = (diff: number, key: string, leaf: Of<ClaimNode, "leaf">, other: ClaimNode): ClaimNode =>
+  ({ _tag: "branch", bit: diff, left: claimBit(key, diff) === 0 ? leaf : other, right: claimBit(key, diff) === 1 ? leaf : other });
 const claimInsertAt = (node: ClaimNode, key: string, leaf: Of<ClaimNode, "leaf">, diff: number): ClaimNode => match(node, {
   leaf: () => claimPlace(diff, key, leaf, node),
   branch: (b) => (b.bit >= diff ? claimPlace(diff, key, leaf, node) : { ...b, ...(claimBit(key, b.bit) === 0 ? { left: claimInsertAt(b.left, key, leaf, diff) } : { right: claimInsertAt(b.right, key, leaf, diff) }) }),
 });
-const insertClaim = (node: ClaimNode, leaf: { readonly key: string; readonly record: string }): Result<ClaimNode, ClaimError> => {
+const insertClaim = (node: ClaimNode, leaf: ClaimLeaf): Result<ClaimNode, ClaimError> => {
   const term = claimTerminal(node, leaf.key);
   if (term.key === leaf.key) return term.record === leaf.record ? ok(node) : err({ _tag: "claim_conflict" });
   let diff = -1;
   for (let i = 0; i < 256; i++) if (claimBit(leaf.key, i) !== claimBit(term.key, i)) { diff = i; break; }
-  return diff < 0 ? err({ _tag: "claim_conflict" }) : ok(claimInsertAt(node, leaf.key, { _tag: "leaf", key: leaf.key, record: leaf.record }, diff));
+  return diff < 0 ? err({ _tag: "claim_conflict" }) : ok(claimInsertAt(node, leaf.key, { _tag: "leaf", ...leaf }, diff));
 };
-const claimAccumulator = (accountKey: string, rows: readonly ClaimRow[]): Result<JClaimAccumulator, ClaimError> => map(foldResult<ClaimNode | undefined, ClaimRow, ClaimError>(rows, undefined, (node, row) => {
+/** og's crit-bit Patricia trie is canonical in its key set, so any insertion order rebuilds the committed node structure. */
+const claimTree = (accountKey: string, rows: readonly ClaimRow[]): Result<ClaimNode | undefined, ClaimError> => foldResult<ClaimNode | undefined, ClaimRow, ClaimError>(rows, undefined, (node, row) => {
   const leaf = claimLeaf(accountKey, row);
-  return node === undefined ? ok({ _tag: "leaf", key: leaf.key, record: leaf.record }) : insertClaim(node, leaf);
-}), (node) => (node === undefined ? EMPTY_J_CLAIMS : { version: 1, root: claimNodeHash(node), count: BigInt(rows.length) }));
+  return node === undefined ? ok({ _tag: "leaf", ...leaf }) : insertClaim(node, leaf);
+});
+const claimAccumulator = (accountKey: string, rows: readonly ClaimRow[]): Result<JClaimAccumulator, ClaimError> =>
+  map(claimTree(accountKey, rows), (node) => (node === undefined ? EMPTY_J_CLAIMS : { version: 1, root: claimNodeHash(node), count: BigInt(rows.length) }));
+/** og j-claim-proof.ts createAccountJClaimProof: every node from the root down the key's bit path to the terminal leaf. */
+const claimPath = (node: ClaimNode, key: string): readonly JClaimNode[] => match(node, {
+  leaf: ({ key: k, rec }): readonly JClaimNode[] => [{ version: 1, type: "leaf", key: k, record: rec }],
+  branch: ({ bit, left, right }): readonly JClaimNode[] => [{ version: 1, type: "branch", bit, left: claimNodeHash(left), right: claimNodeHash(right) }, ...claimPath(claimBit(key, bit) === 0 ? left : right, key)],
+});
+const claimKeyOf = (b: Pick<AccountBody, "account" | "terms">): Result<string, ViewError> => {
+  const { left, right } = b.account.id;
+  if (!WORD.test(left) || !WORD.test(right)) return err({ _tag: "claim_entity" });
+  return map(domainOf(b.terms.domain), (domain) => claimAccountKey(domain, left.toLowerCase(), right.toLowerCase()));
+};
 const pendingOn = (b: AccountBody, onLeft: boolean): Result<JClaimAccumulator, ViewError> => {
   const rows = (b.claimRows ?? []).filter((r) => r.onLeft === onLeft);
   if (rows.length === 0) return ok(EMPTY_J_CLAIMS);
-  const { left, right } = b.account.id;
-  if (!WORD.test(left) || !WORD.test(right)) return err({ _tag: "claim_entity" });
-  return chain(domainOf(b.terms.domain), (domain) => claimAccumulator(claimAccountKey(domain, left.toLowerCase(), right.toLowerCase()), rows));
+  return chain(claimKeyOf(b), (accountKey) => claimAccumulator(accountKey, rows));
 };
 export type SideTotals = { readonly leftHold: bigint; readonly rightHold: bigint; readonly leftAllowance: bigint; readonly rightAllowance: bigint };
 const NO_TOTALS: SideTotals = { leftHold: 0n, rightHold: 0n, leftAllowance: 0n, rightAllowance: 0n };
@@ -2587,10 +3232,11 @@ export const settleLocal = (plan: DisputePlan, given: DisputeHanko | undefined, 
   none: (): Result<Settled, DisputeError> => (given === undefined ? ok({ carried: undefined, witnesses }) : err(refuseDispute("unexpected"))),
 });
 /** og finality.ts activatePostSettlementProof, replica side: the frame whose J claim finalizes the signed settlement nonce promotes both N+1 hankos
- * into the dispute witnesses (an equal nonce must be the same proof) and moves the proof cursor past everything spent. */
-export const promoteSettled = (w: DisputeWitnesses, pre: AccountBody, post: AccountBody, localIsLeft: boolean): Result<DisputeWitnesses, DisputeError> => {
-  const ws = pre.settlement, p = ws?.postSettlementDisputeProof, signed = ws?.nonceAtSign;
-  if (ws === undefined || !signedWorkspace(ws) || p === undefined || signed === undefined || pre.jNonce >= signed || post.jNonce !== signed || p.leftHanko === undefined || p.rightHanko === undefined) return ok(w);
+ * into the dispute witnesses (an equal nonce must be the same proof) and moves the proof cursor past everything spent.
+ * `finalized` lists each finalizing claim's reached nonce in frame order: the first to reach the signed nonce decides, even when a later claim of the same frame finalizes past it. */
+export const promoteSettled = (w: DisputeWitnesses, pre: AccountBody, post: AccountBody, localIsLeft: boolean, finalized: readonly number[] = post.jNonce !== pre.jNonce ? [post.jNonce] : []): Result<DisputeWitnesses, DisputeError> => {
+  const ws = pre.settlement, p = ws?.postSettlementDisputeProof, signed = ws?.nonceAtSign, reached = signed === undefined ? undefined : finalized.find((n) => n >= signed);
+  if (ws === undefined || !signedWorkspace(ws) || p === undefined || signed === undefined || pre.jNonce >= signed || reached !== signed || p.leftHanko === undefined || p.rightHanko === undefined) return ok(w);
   const side = (held: DisputeHanko | undefined, hanko: string): Result<DisputeHanko | undefined, DisputeError> => {
     const n = held?.proofNonce ?? 0;
     if (n > p.nonce) return ok(held);
@@ -2635,13 +3281,32 @@ export type FrameClock = { readonly timestamp: bigint; readonly jHeight: bigint 
 export type FoldAt = FrameClock & { readonly height: bigint };
 export type AccountFrame = FoldAt & { readonly prevFrameHash: string; readonly txs: readonly WireAccountTx[]; readonly accountStateRoot: string; readonly stateHash: string };
 const EMPTY_CLAIM_PROOF: JClaimProof = { version: 1, nodes: [] };
-// Empty proofs only. A second claim needs the branch witness; that frame is refused.
-const stampClaims = (txs: readonly WireAccountTx[], rows: readonly ClaimRow[] | undefined): Result<readonly WireAccountTx[], ClaimError> => {
-  const claims = txs.filter((tx) => tx.type === "j_event_claim");
-  if (claims.length === 0) return ok(txs);
-  if (claims.length > 1 || (rows?.length ?? 0) > 0) return err({ _tag: "claim_proof" });
-  return ok(txs.map((tx) => (tx.type === "j_event_claim" ? { ...tx, leftProof: EMPTY_CLAIM_PROOF, rightProof: EMPTY_CLAIM_PROOF } : tx)));
+/** `finalized`: the settled nonce each finalizing claim reaches, in frame order (og collectSettledEvents: max of jNonce and the claim's nonces). */
+export type StampedClaims = { readonly txs: readonly WireAccountTx[]; readonly finalized: readonly number[] };
+const claimProofOn = (accountKey: () => Result<string, ClaimError>, rows: readonly ClaimRow[], record: ClaimRow): Result<JClaimProof, ClaimError> =>
+  rows.length === 0 ? ok(EMPTY_CLAIM_PROOF) : chain(accountKey(), (k) => map(claimTree(k, rows), (node): JClaimProof => (node === undefined ? EMPTY_CLAIM_PROOF : { version: 1, nodes: claimPath(node, claimLeaf(k, record).key) })));
+type StampAcc = { readonly cursor: ClaimCursor; readonly jNonce: number; readonly txs: readonly WireAccountTx[]; readonly finalized: readonly number[] };
+/** og proposal/transactions.ts prepareAccountJClaimTx inside the fold: each claim carries both side witnesses against the pending tries as the frame's earlier claims left them. */
+const stampClaims = (txs: readonly WireAccountTx[], b: AccountBody, byLeft: boolean): Result<StampedClaims, ClaimError> => {
+  const accountKey = (): Result<string, ClaimError> => mapErr(claimKeyOf(b), (): ClaimError => ({ _tag: "claim_entity" }));
+  return map(foldResult<StampAcc, WireAccountTx, ClaimError>(txs, { cursor: b, jNonce: b.jNonce, txs: [], finalized: [] }, (acc, tx) => {
+    if (tx.type !== "j_event_claim") return ok({ ...acc, txs: [...acc.txs, tx] });
+    return chain(claimRowOf(tx, byLeft), (own) => {
+      const held = acc.cursor.claimRows ?? [], side = (onLeft: boolean): Result<JClaimProof, ClaimError> => claimProofOn(accountKey, held.filter((r) => r.onLeft === onLeft), { ...own, onLeft });
+      return chain(side(true), (leftProof) => chain(side(false), (rightProof) => chain(claimStep(acc.cursor, own), (s) => map(claimEvidence(tx.events), ({ events }): StampAcc => {
+        const reached = s.finalizes ? Math.max(acc.jNonce, ...events.map((e) => e.data.nonce)) : acc.jNonce;
+        return { cursor: s, jNonce: reached, txs: [...acc.txs, { ...tx, leftProof, rightProof }], finalized: s.finalizes ? [...acc.finalized, reached] : acc.finalized };
+      }))));
+    });
+  }), ({ txs: stamped, finalized }) => ({ txs: stamped, finalized }));
 };
+const lowerHexDeep = (v: unknown): unknown =>
+  typeof v === "string" ? (/^0x/i.test(v.trim()) ? v.trim().toLowerCase() : v) : Array.isArray(v) ? v.map(lowerHexDeep) : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, lowerHexDeep(x)])) : v;
+/** og verifyAccountJClaimProof: a root admits exactly one valid path per key, so a received witness verifies iff it is the regenerated one. */
+const claimProofsMatch = (given: readonly WireAccountTx[], stamped: readonly WireAccountTx[]): boolean => given.every((tx, i) => {
+  const s = stamped[i];
+  return tx.type !== "j_event_claim" || (s?.type === "j_event_claim" && tx.leftProof !== undefined && tx.rightProof !== undefined && canon(lowerHexDeep(tx.leftProof)) === canon(s.leftProof) && canon(lowerHexDeep(tx.rightProof)) === canon(s.rightProof));
+});
 const claimWire = (tx: TxOf<"j_event_claim">): Result<WireTx, ClaimError> => {
   const { leftProof, rightProof } = tx;
   if (leftProof === undefined || rightProof === undefined) return err({ _tag: "claim_proof" });
@@ -2763,7 +3428,7 @@ export type AccountReplicaError =
   | Tagged<"finality", { reason: "initial_nonce" | "j_nonce" | "observed_block" | "timeout" | "clock_mismatch" | "finalized_nonce" | "token_id" }>
   | Tagged<"board_hanko_refresh", { reason: BoardRefreshRefusal }>
   | Tagged<"already_proposed" | "empty_mempool" | "not_proposed" | "height_mismatch" | "hash_mismatch" | "frame_hash_mismatch" | "state_root_mismatch" | "ack_unmatched" | "not_preparing">
-  | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }> | DeadlineViolation["error"]
+  | Tagged<"frame_structure", { field: "timestamp" | "jHeight" | "txs" | "accountStateRoot" | "future_timestamp" }> | DeadlineViolation["error"] | Tagged<"stale_settlement_hanko", { cause: Of<BodyError, "settlement"> }>
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
   | Tagged<"bad_account", { reason: "entity_id" | "same_entity" | TermsError["_tag"] }>
   | Tagged<"ack_conflict", { field: "frameHash" | "frameHanko" | "disputeHanko" | "height" }>
@@ -2788,12 +3453,22 @@ export type ProposalPlan = Tagged<"frame", { preview: Preview }> | Tagged<"idle"
 const PROPOSAL_HALTS: readonly WireAccountTx["type"][] = ["settle_transition", "swap_resolve", "cross_pull_lock", "cross_pull_close"];
 const DEFERRED_REFUSALS: readonly string[] = ["htlc_lock_capacity", "settlement_frozen"];
 const deferredRefusal = (e: BodyError): boolean => DEFERRED_REFUSALS.includes(e._tag);
+/** A settle hanko refused only for an `account`-basis nonce against an unsigned workspace it targets exactly (og isRefreshableStaleSettlementHanko / isRefreshableStaleIncomingSettlementHanko). */
+const staleHankoNonce = (s: AccountBody, tx: WireAccountTx, e: BodyError): SettlementNonceMismatch | undefined => {
+  const ws = s.settlement, n = e._tag === "settlement" ? e.nonce : undefined;
+  if (tx.type !== "settle_transition" || tx.kind !== "hanko" || n === undefined || n.basis !== "account" || ws === undefined || ws.nonceAtSign !== undefined) return undefined;
+  return tx.revision === ws.revision && typeof tx.workspaceHash === "string" && tx.workspaceHash.toLowerCase() === ws.workspaceHash.toLowerCase() && n.supplied === tx.settlementNonce ? n : undefined;
+};
+/** og getMinimumSafeSettlementNonce (== getNextSettlementNonce) on the committed replica. */
+const minimumSafeNonce = (s: AccountBody, w: DisputeWitnesses): number => Math.max(s.jNonce + 1, proofNonceFloor(w));
 type Refusals = ProposalFold["refused"];
-const proposalRefusals = (mempool: readonly WireAccountTx[], refused: Refusals): Result<readonly WireAccountTx[], AccountReplicaError> => {
+/** `retry`: og proposalFailureDisposition's extra `retry` cases beyond the capacity/freeze refusals. */
+const proposalRefusals = (mempool: readonly WireAccountTx[], refused: Refusals, retry: (tx: WireAccountTx, e: BodyError) => boolean = () => false): Result<readonly WireAccountTx[], AccountReplicaError> => {
   const txAt = (i: number): WireAccountTx => mempool[i] ?? assertNever(i as never);
-  const halted = refused.find(({ index, error }) => !deferredRefusal(error) && PROPOSAL_HALTS.includes(txAt(index).type));
+  const retried = (index: number, error: BodyError): boolean => deferredRefusal(error) || retry(txAt(index), error);
+  const halted = refused.find(({ index, error }) => !retried(index, error) && PROPOSAL_HALTS.includes(txAt(index).type));
   if (halted !== undefined) return err({ _tag: "proposal_halt", txType: txAt(halted.index).type, cause: halted.error });
-  return ok(refused.flatMap(({ index, error }) => (deferredRefusal(error) ? [txAt(index)] : [])));
+  return ok(refused.flatMap(({ index, error }) => (retried(index, error) ? [txAt(index)] : [])));
 };
 /** `verify` present: settle_transition hankos fold with og's settlement context (verifyHanko + minimum safe nonce); absent, they refuse as context-missing. */
 /** og tx-multiset.ts removeCommittedTxsFromMempool: drop each removed tx once, by exact bytes, keeping mempool order. */
@@ -2817,11 +3492,12 @@ const planWindow = (r: OpenAccount, window: readonly WireAccountTx[], party: Par
   // og admission.ts: a lagging proposer never mints a frame behind the committed watermark.
   const clock: FrameClock = { ...entityClock, timestamp: entityClock.timestamp > r.head.timestamp ? entityClock.timestamp : r.head.timestamp };
   const height = r.head.height + 1n, floor = proofNonceFloor(r.dispute), folded = proposalFold(r.state, window, foldCtx({ height, ...clock }, party.left, verify === undefined ? undefined : { verify, proofNonceFloor: floor })), firstRefusal = folded.refused[0];
-  return chain(map(proposalRefusals(window, folded.refused), (retried) => withoutAccountTxs(r.mempool, withoutAccountTxs(window, retried))), (deferred) => {
+  const required = minimumSafeNonce(r.state, r.dispute), stale = (tx: WireAccountTx, e: BodyError): boolean => { const n = staleHankoNonce(r.state, tx, e); return n !== undefined && n.required === required && n.supplied !== required; };
+  return chain(map(proposalRefusals(window, folded.refused, stale), (retried) => withoutAccountTxs(r.mempool, withoutAccountTxs(window, retried))), (deferred) => {
     if (folded.included.length === 0 && firstRefusal !== undefined) return ok({ _tag: "idle", refused: firstRefusal.error, deferred });
-    return chain(commit(folded.state), ({ view, root }) => chain(stampClaims(folded.included, r.state.claimRows), (txs) => {
+    return chain(commit(folded.state), ({ view, root }) => chain(stampClaims(folded.included, r.state, party.left), ({ txs, finalized }) => {
       const unhashed = { height, timestamp: clock.timestamp, jHeight: clock.jHeight, prevFrameHash: r.head.prevFrameHash, txs, accountStateRoot: root };
-      return chain(frameStateHash(unhashed, replicaId(r), party.left), (stateHash) => chain(localProof(view), (frameProof) => chain(promoteSettled(r.dispute, r.state, folded.state, party.left), (witnesses) => map(proposalPlan(view, frameProof, witnesses, party.left), (dispute): ProposalPlan =>
+      return chain(frameStateHash(unhashed, replicaId(r), party.left), (stateHash) => chain(localProof(view), (frameProof) => chain(promoteSettled(r.dispute, r.state, folded.state, party.left, finalized), (witnesses) => map(proposalPlan(view, frameProof, witnesses, party.left), (dispute): ProposalPlan =>
         ({ _tag: "frame", preview: { frame: { ...unhashed, stateHash }, draft: { state: folded.state, effects: folded.effects }, frameProof, dispute, deferred, witnesses, floor } })))));
     }));
   });
@@ -2850,9 +3526,10 @@ type Verb<R extends AccountReplica> = Result<AccountApply<R>, AccountReplicaErro
 const reopen = (r: AccountReplica, next: { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute?: DisputeWitnesses | undefined }): OpenAccount =>
   ({ _tag: "open", state: next.state, head: next.head, mempool: next.mempool, acknowledged: next.acknowledged ?? r.acknowledged, dispute: next.dispute ?? r.dispute, ...envMeta(r) });
 const effectsOut = (effects: readonly Effect[]): readonly AccountOutput[] => effects.map((effect) => ({ kind: "effect", effect }));
-type Replayed = { readonly draft: FrameFold; readonly view: CommittedAccountState };
+type Replayed = { readonly draft: FrameFold; readonly view: CommittedAccountState; readonly finalized: readonly number[] };
 const replay = (s: AccountBody, f: AccountFrame, byLeft: boolean, settlement: SettlementCtx): Result<Replayed, AccountReplicaError> =>
-  chain(foldFrame(s, f, byLeft, settlement), (draft) => chain(commit(draft.state), ({ view, root }) => (root === f.accountStateRoot ? ok({ draft, view }) : err({ _tag: "state_root_mismatch" }))));
+  chain(foldFrame(s, f, byLeft, settlement), (draft) => chain(stampClaims(f.txs, s, byLeft), (stamped): Result<Replayed, AccountReplicaError> => !claimProofsMatch(f.txs, stamped.txs) ? err({ _tag: "claim_proof" }) :
+    chain(commit(draft.state), ({ view, root }) => (root === f.accountStateRoot ? ok({ draft, view, finalized: stamped.finalized }) : err({ _tag: "state_root_mismatch" })))));
 const frameStructure = (f: AccountFrame): Result<void, AccountReplicaError> => {
   const field = f.timestamp < 0n ? "timestamp" : f.jHeight < 0n ? "jHeight" : f.txs.length > ACCOUNT_MEMPOOL_SIZE ? "txs" : !BYTES32.test(f.accountStateRoot) ? "accountStateRoot" : null;
   return field === null ? ok(undefined) : err({ _tag: "frame_structure", field });
@@ -3040,8 +3717,13 @@ const receipt = <R extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAc
 const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify): Verb<ReceivedAccount> => {
   const { frame } = input, onLeft = other(party.left), floor = proofNonceFloor(cur.dispute);
   const evidence = (cause: AccountReplicaError): AccountReplicaError => ({ _tag: "dispute_required", cause, frame, frameHanko: input.frameHanko });
-  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor }), evidence), ({ draft, view }) => chain(localProof(view), (frameProof) =>
-    chain(mapErr(promoteSettled(cur.dispute, cur.state, draft.state, party.left), evidence), (witnesses) =>
+  // og consensus/index.ts classifyIncomingValidationFailure: a stale account-basis hanko for the one unsigned workspace is a plain refusal, not dispute evidence.
+  const required = minimumSafeNonce(cur.state, cur.dispute), replayed = (cause: AccountReplicaError): AccountReplicaError => {
+    const stale = cause._tag === "settlement" ? frame.txs.filter((tx) => { const n = staleHankoNonce(cur.state, tx, cause); return n !== undefined && n.supplied < n.required && n.required === required; }) : [];
+    return cause._tag === "settlement" && stale.length === 1 ? { _tag: "stale_settlement_hanko", cause } : evidence(cause);
+  };
+  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor }), replayed), ({ draft, view, finalized }) => chain(localProof(view), (frameProof) =>
+    chain(mapErr(promoteSettled(cur.dispute, cur.state, draft.state, party.left, finalized), evidence), (witnesses) =>
       map(mapErr(requireDispute(frameProof, witnesses, validated), evidence), () => done<ReceivedAccount, AccountOutput>({ ...cur, _tag: "received", candidate: new Candidate(frame, input.frameHanko, frameProof, draft, floor), disputeHanko: validated, dispute: witnesses }))))));
 };
 const proposalOnOpen = (r: OpenAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ReceivedAccount> =>
@@ -4915,13 +5597,16 @@ export const recoverRuntime = (checkpoint: Runtime, frames: readonly StorageFram
 };
 
 
+/** og entity j-batch txs (r2r / r2c / r2e / e2r queue into jBatchState; j_broadcast seals it) and the finalized J events that move reserves (entity-runtime ER-16). */
 export type JOp =
   | { readonly type: "r2r"; readonly toEntity: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "r2c"; readonly counterparty: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "c2r"; readonly counterparty: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
+  | { readonly type: "r2c"; readonly counterparty: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly receivingEntity?: EntityId | undefined }
   | { readonly type: "et2r"; readonly tokenAddress: string; readonly amount: bigint; readonly internalTokenId: TokenId }
-  | { readonly type: "r2et"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint };
-export type JState = { readonly reserves: ReadonlyMap<EntityId, ReadonlyMap<TokenId, bigint>>; readonly escrow: ReadonlyMap<string, ReadonlyMap<TokenId, bigint>> };
+  | { readonly type: "r2et"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint }
+  | { readonly type: "j_broadcast"; readonly chainId: number; readonly depository: string; readonly signerId: string }
+  | { readonly type: "j_event"; readonly blockNumber: number; readonly event: JEvent };
+/** og EntityState reserves / outDebtsByToken / inDebtsByToken / jBatchState: reserves change only through finalized J events. */
+export type JState = { readonly reserves: ReadonlyMap<number, bigint>; readonly debts: DebtLedger; readonly jBatch?: JBatchState | undefined };
 export type LadderTx = { readonly type: "ladder_reveal"; readonly revealer: EntityId; readonly counter: EntityId; readonly ladderHash: Hash; readonly targetRole: boolean; readonly fillRatio: number; readonly revealedAt: bigint };
 export type EntityRouteTx =
   | { readonly type: "directPayment"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly description?: string | undefined; readonly invoiceId?: string | undefined }
@@ -4938,29 +5623,23 @@ export type HostTx =
   | { readonly layer: "ladder"; readonly tx: LadderTx } | { readonly layer: "entity"; readonly tx: EntityRouteTx } | { readonly layer: "input"; readonly input: HostInput } | { readonly layer: "receipt"; readonly id: Hash };
 export type Host = { readonly self: EntityId; readonly account: AccountReplica; readonly j: JState; readonly ladder: ReadonlyMap<string, RatioRecord>; readonly height: bigint; readonly frameHash: RuntimeFrameHash; readonly outbox: readonly OutboxEntry[] };
 export type Stamped = { readonly tx: HostTx; readonly ctx: HostCtx };
-export type HostError = BodyError | Tagged<"unsigned" | "chain" | "root" | "version" | "reserve" | "status" | "recipient"> | Tagged<"candidate", { cause: AccountReplicaError }>;
+export type HostError = BodyError | Tagged<"unsigned" | "chain" | "root" | "version" | "reserve" | "status" | "recipient"> | Tagged<"candidate", { cause: AccountReplicaError }> | JBatchError | JObserveError;
 export type HostStep = Step<Host, HostEffect>;
 export const genesisHost = (self: EntityId, account: AccountReplica): Result<Host, AccountReplicaError> =>
-  map(partyOf(replicaId(account), self), () => ({ self, account, j: { reserves: new Map(), escrow: new Map() }, ladder: new Map(), height: 0n, frameHash: ZERO_HASH as RuntimeFrameHash, outbox: [] }));
-type Balances<K> = ReadonlyMap<K, ReadonlyMap<TokenId, bigint>>;
-const shiftBalance = <K>(outer: Balances<K>, key: K, tk: TokenId, delta: bigint): Result<Balances<K>, HostError> => {
-  const row = outer.get(key) ?? new Map<TokenId, bigint>();
-  if ((row.get(tk) ?? 0n) + delta < 0n) return err({ _tag: "reserve" });
-  const inner = bump(row, tk, delta);
-  return ok(inner.size === 0 ? mapDelete(outer, key) : mapSet(outer, key, inner));
-};
-const escrowKey = (entity: EntityId, counterparty: EntityId): string => `${entity}|${counterparty}`;
-export const applyJ = (j: JState, op: JOp, self: EntityId): Result<JState, HostError> => {
-  if (op.amount <= 0n) return err({ _tag: "non_positive_payment" });
-  const reserve = (key: EntityId, tk: TokenId, by: bigint) => (s: JState): Result<JState, HostError> => map(shiftBalance(s.reserves, key, tk, by), (reserves) => ({ ...s, reserves }));
-  const escrow = (counterparty: EntityId, tk: TokenId, by: bigint) => (s: JState): Result<JState, HostError> => map(shiftBalance(s.escrow, escrowKey(self, counterparty), tk, by), (escrow) => ({ ...s, escrow }));
-  const via = (...steps: readonly ((s: JState) => Result<JState, HostError>)[]): Result<JState, HostError> => foldResult(steps, j, (s, f) => f(s));
+  map(partyOf(replicaId(account), self), () => ({ self, account, j: { reserves: new Map(), debts: EMPTY_DEBTS }, ladder: new Map(), height: 0n, frameHash: ZERO_HASH as RuntimeFrameHash, outbox: [] }));
+const jEntityOf = (j: JState, self: EntityId, peer: string): JEntity => ({ entityId: self, reserves: j.reserves, debts: j.debts, jBatch: j.jBatch, accounts: new Set([peer]) });
+/** og handleR2R / handleR2C / handleR2E / handleE2R / handleJBroadcast and the Entity's reserve, debt and HankoBatchProcessed J-event handlers, for the Host's one Account. */
+export const applyJ = (j: JState, op: JOp, self: EntityId, peer: string, ctx: HostCtx): Result<JState, HostError> => {
+  const e = jEntityOf(j, self, peer), queued = (r: Result<JBatchState, JBatchError>): Result<JState, HostError> => map(r, (jBatch) => ({ ...j, jBatch }));
   return matchBy("type", op, {
-    r2r: (x) => via(reserve(self, x.tokenId, -x.amount), reserve(x.toEntity, x.tokenId, x.amount)),
-    r2c: (x) => via(reserve(self, x.tokenId, -x.amount), escrow(x.counterparty, x.tokenId, x.amount)),
-    c2r: (x) => via(escrow(x.counterparty, x.tokenId, -x.amount), reserve(self, x.tokenId, x.amount)),
-    et2r: (x) => via(reserve(self, x.internalTokenId, x.amount)),
-    r2et: (x) => via(reserve(self, x.tokenId, -x.amount)),
+    r2r: (x) => queued(queueR2R(e, x.toEntity, Number(x.tokenId), x.amount)),
+    r2c: (x) => map(queueR2C(e, x.counterparty, Number(x.tokenId), x.amount, x.receivingEntity), (q) => (q.note === undefined ? { ...j, jBatch: q.jBatch } : j)),
+    r2et: (x) => queued(queueR2E(e, x.recipient, Number(x.tokenId), x.amount)),
+    et2r: (x) => queued(queueE2R(e, { contractAddress: x.tokenAddress, amount: x.amount, internalTokenId: Number(x.internalTokenId) })),
+    j_broadcast: (x) => map(jBroadcast(j.jBatch, { entityId: self, chainId: x.chainId, depository: x.depository, signerId: x.signerId, timestamp: Number(ctx.timestamp) }), (b) => ({ ...j, jBatch: b.jBatch })),
+    j_event: (x) => x.event.type === "HankoBatchProcessed"
+      ? map(applyHankoBatchProcessed(j.jBatch, self, x.event, Number(ctx.timestamp)), (b) => ({ ...j, jBatch: b.jBatch }))
+      : map(observeJBlocks({ entityId: self, reserves: j.reserves, debts: j.debts, accounts: new Map() }, [{ blockNumber: x.blockNumber, events: [x.event] }]), (o) => ({ ...j, reserves: o.observer.reserves, debts: o.observer.debts })),
   });
 };
 const ladderKey = (tx: LadderTx): string => `${tx.revealer}|${tx.counter}|${tx.ladderHash}|${tx.targetRole ? "t" : "s"}`;
@@ -4983,7 +5662,7 @@ export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify):
     const delivery: Delivery = ctx.from === undefined ? { _tag: "local" } : { _tag: "received", from: ctx.from }, door: DoorContext = { verify, self: host.self, now: ctx.timestamp };
     return accountStep(host, disputeUnsafe(host.account, applyDelivered(host.account, i.input, delivery, door), door));
   },
-  j: (i) => map(applyJ(host.j, i.tx, host.self), (j) => step({ ...host, j })),
+  j: (i) => chain(partyOf(replicaId(host.account), host.self), (party) => map(applyJ(host.j, i.tx, host.self, party.peer, ctx), (j) => step({ ...host, j }))),
   ladder: (i) => { const key = ladderKey(i.tx); return map(revealSlot(host.ladder.get(key), i.tx), (slot) => step({ ...host, ladder: mapSet(host.ladder, key, slot) })); },
   entity: (i) => chain(routeEntity(i.tx, host.self, replicaId(host.account)), (routed) => admitTx(host, routed, ctx, verify)),
   input: (i) => matchBy("kind", i.input, {
