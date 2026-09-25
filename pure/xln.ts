@@ -5226,6 +5226,225 @@ const profileUpdate = (state: EntityState, p: ProfileUpdate): Result<Binary, Ent
     avatar: typeof p.avatar === "string" ? p.avatar : text("avatar"), bio: typeof p.bio === "string" ? p.bio : text("bio"), website: typeof p.website === "string" ? p.website : text("website"),
   });
 };
+// ---- og jurisdiction/machine/board-registry/index.ts: the certified-board registry (one Patricia trie of board records per J stack) ----
+export type CertifiedBoardSource = "FoundationBootstrapped" | "EntityRegistered" | "BoardActivated";
+/** og CertifiedBoardRegistryState: the only board authority Entity consensus commits (EntityState.certifiedBoardState). */
+export type CertifiedBoardRegistryState = { readonly stackKey: string; readonly boardRegistryRoot: string; readonly finalizedJHeight: number; readonly finalizedJBlockHash: string; readonly eventHistoryRoot: string };
+export type CertifiedBoardRecord = {
+  readonly stackKey: string; readonly entityId: string; readonly boardHash: string; readonly boardEpoch: number; readonly previousBoardHash: string; readonly previousBoardValidUntil: number;
+  readonly activatedAtJHeight: number; readonly logIndex: number; readonly blockHash: string; readonly transactionHash: string; readonly source: CertifiedBoardSource;
+};
+export type CertifiedBoardNode = { readonly version: 1; readonly type: "leaf"; readonly key: string; readonly record: CertifiedBoardRecord } | { readonly version: 1; readonly type: "branch"; readonly bit: number; readonly left: string; readonly right: string };
+/** og infrastructure.certifiedBoardNodes: immutable content-addressed nodes, never part of the Entity root. */
+export type BoardNodes = ReadonlyMap<string, CertifiedBoardNode>;
+export type CertifiedBoardProof = { readonly version: 1; readonly stackKey: string; readonly entityId: string; readonly nodes: readonly CertifiedBoardNode[] };
+/** og config.jurisdiction fields the registry reads. */
+export type BoardStack = { readonly chainId: unknown; readonly depositoryAddress: unknown; readonly entityProviderAddress: unknown; readonly entityProviderDeploymentBlock?: number | undefined };
+/** og throws `CODE:detail`; `code` is the og message. */
+export type BoardRegistryError = Tagged<"board_registry", { readonly code: string }>;
+const boardErr = (code: string): Result<never, BoardRegistryError> => err({ _tag: "board_registry", code });
+const boardDomain = (label: string): string => keccak256Hex(utf8(label));
+const BOARD_KEY_DOMAIN = boardDomain("xln.certified-board.key.v1"), BOARD_RECORD_DOMAIN = boardDomain("xln.certified-board.record.v1");
+const BOARD_LEAF_DOMAIN = boardDomain("xln.certified-board.leaf.v1"), BOARD_BRANCH_DOMAIN = boardDomain("xln.certified-board.branch.v1");
+export const EMPTY_CERTIFIED_BOARD_ROOT = boardDomain("xln.certified-board.empty.v1");
+export const FOUNDATION_ENTITY_ID = `0x${"00".repeat(31)}01`;
+const BOARD_SOURCE_CODE: Readonly<Record<CertifiedBoardSource, bigint>> = { FoundationBootstrapped: 1n, EntityRegistered: 2n, BoardActivated: 3n };
+/** og ethers.getAddress: optional 0x, 40 hex, a mixed-case address must carry its EIP-55 checksum. */
+const ethAddress = (v: unknown): string | null => {
+  const s = String(v ?? ""), a = /^[0-9a-fA-F]{40}$/.test(s) ? `0x${s}` : s;
+  return /^0x[0-9a-fA-F]{40}$/.test(a) && checksumValid(a) ? a.toLowerCase() : null;
+};
+const boardWord = (v: unknown, label: string): Result<string, BoardRegistryError> => {
+  const s = String(v ?? "").trim().toLowerCase();
+  return /^0x[0-9a-f]{64}$/.test(s) ? ok(s) : boardErr(`CERTIFIED_BOARD_${label}_INVALID:${s || "missing"}`);
+};
+const boardJHeight = (v: unknown): Result<number, BoardRegistryError> => { const h = Number(v); return Number.isSafeInteger(h) && h >= 1 ? ok(h) : boardErr(`CERTIFIED_BOARD_J_HEIGHT_INVALID:${String(v)}`); };
+const boardSeconds = (v: unknown, label: string): Result<number, BoardRegistryError> => {
+  let n: bigint;
+  try { n = BigInt(String(v)); } catch { return boardErr(`CERTIFIED_BOARD_${label}_INVALID:${String(v)}`); }
+  return n < 0n || n > BigInt(Number.MAX_SAFE_INTEGER) ? boardErr(`CERTIFIED_BOARD_${label}_INVALID:${String(v)}`) : ok(Number(n));
+};
+/** og getCertifiedBoardStackKey with its chain / contract address validation. */
+export const boardStackKey = (j: BoardStack): Result<string, BoardRegistryError> => {
+  const chainId = Number(j.chainId);
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) return boardErr(`CERTIFIED_BOARD_STACK_CHAIN_INVALID:${String(j.chainId)}`);
+  const depository = ethAddress(j.depositoryAddress);
+  if (depository === null) return boardErr(`CERTIFIED_BOARD_STACK_DEPOSITORY_INVALID:${String(j.depositoryAddress ?? "")}`);
+  const provider = ethAddress(j.entityProviderAddress);
+  if (provider === null) return boardErr(`CERTIFIED_BOARD_STACK_ENTITY_PROVIDER_INVALID:${String(j.entityProviderAddress ?? "")}`);
+  return ok(certifiedBoardStackKey({ chainId, depositoryAddress: depository, entityProviderAddress: provider }));
+};
+/** og getCertifiedBoardEntityKey. */
+export const boardEntityKey = (stackKey: string, entityId: string): Result<string, BoardRegistryError> =>
+  chain(boardWord(stackKey, "STACK_KEY"), (s) => map(boardWord(entityId, "ENTITY_ID"), (e) => keccak256Hex(abiEncode([A.b32(BOARD_KEY_DOMAIN), A.b32(s), A.b32(e)]))));
+export const emptyBoardRegistry = (j: BoardStack): Result<CertifiedBoardRegistryState, BoardRegistryError> =>
+  map(boardStackKey(j), (stackKey) => ({ stackKey, boardRegistryRoot: EMPTY_CERTIFIED_BOARD_ROOT, finalizedJHeight: 0, finalizedJBlockHash: ZERO_WORD, eventHistoryRoot: ZERO_WORD }));
+const sameBoardRecord = (a: CertifiedBoardRecord, b: CertifiedBoardRecord): boolean =>
+  a.stackKey === b.stackKey && a.entityId === b.entityId && a.boardHash === b.boardHash && a.boardEpoch === b.boardEpoch && a.previousBoardHash === b.previousBoardHash && a.previousBoardValidUntil === b.previousBoardValidUntil
+  && a.activatedAtJHeight === b.activatedAtJHeight && a.logIndex === b.logIndex && a.blockHash === b.blockHash && a.transactionHash === b.transactionHash && a.source === b.source;
+/** og hashCertifiedBoardRecord. */
+export const hashBoardRecord = (r: CertifiedBoardRecord): Result<string, BoardRegistryError> =>
+  chain(all({ stack: boardWord(r.stackKey, "STACK_KEY"), entity: boardWord(r.entityId, "ENTITY_ID"), board: boardWord(r.boardHash, "HASH"), prev: boardWord(r.previousBoardHash, "PREVIOUS_HASH"),
+    until: boardSeconds(r.previousBoardValidUntil, "PREVIOUS_VALID_UNTIL"), height: boardJHeight(r.activatedAtJHeight), block: boardWord(r.blockHash, "BLOCK_HASH"), tx: boardWord(r.transactionHash, "TRANSACTION_HASH") }), (w) =>
+    ok(keccak256Hex(abiEncode([A.b32(BOARD_RECORD_DOMAIN), A.b32(w.stack), A.b32(w.entity), A.b32(w.board), A.uint(BigInt(r.boardEpoch)), A.b32(w.prev), A.uint(BigInt(w.until)), A.uint(BigInt(w.height)),
+      A.uint(BigInt(r.logIndex)), A.b32(w.block), A.b32(w.tx), A.uint(BOARD_SOURCE_CODE[r.source])]))));
+/** og hashCertifiedBoardNode. */
+export const hashBoardNode = (n: CertifiedBoardNode): Result<string, BoardRegistryError> => {
+  if (n.version !== 1) return boardErr(`CERTIFIED_BOARD_NODE_VERSION_INVALID:${String(n.version)}`);
+  if (n.type === "leaf") return chain(boardWord(n.key, "NODE_KEY"), (key) => chain(boardEntityKey(n.record.stackKey, n.record.entityId), (want) => key !== want ? boardErr(`CERTIFIED_BOARD_NODE_KEY_MISMATCH:${key}:${want}`)
+    : map(hashBoardRecord(n.record), (rh) => keccak256Hex(abiEncode([A.b32(BOARD_LEAF_DOMAIN), A.uint(1n), A.b32(key), A.b32(rh)])))));
+  if (!Number.isInteger(n.bit) || n.bit < 0 || n.bit > 255) return boardErr(`CERTIFIED_BOARD_BRANCH_BIT_INVALID:${String(n.bit)}`);
+  return chain(boardWord(n.left, "BRANCH_LEFT"), (left) => chain(boardWord(n.right, "BRANCH_RIGHT"), (right) => left === right ? boardErr(`CERTIFIED_BOARD_BRANCH_UNARY:${left}`)
+    : ok(keccak256Hex(abiEncode([A.b32(BOARD_BRANCH_DOMAIN), A.uint(1n), A.uint(BigInt(n.bit)), A.b32(left), A.b32(right)])))));
+};
+const readBoardNode = (nodes: BoardNodes, hash: string): Result<CertifiedBoardNode, BoardRegistryError> => chain(boardWord(hash, "NODE_HASH"), (h) => {
+  const node = nodes.get(h);
+  return node === undefined ? boardErr(`CERTIFIED_BOARD_NODE_MISSING:${h}`) : chain(hashBoardNode(node), (actual) => (actual !== h ? boardErr(`CERTIFIED_BOARD_NODE_CORRUPT:${h}:${actual}`) : ok(node)));
+});
+const keyBit = (key: string, bit: number): 0 | 1 => ((Number.parseInt(key.slice(2 + (bit >> 3) * 2, 4 + (bit >> 3) * 2), 16) >> (7 - (bit % 8))) & 1) as 0 | 1;
+type BoardBranch = Extract<CertifiedBoardNode, { readonly type: "branch" }>;
+type BoardLeaf = Extract<CertifiedBoardNode, { readonly type: "leaf" }>;
+type BoardPath = readonly { readonly hash: string; readonly node: BoardBranch; readonly direction: 0 | 1 }[];
+const walkToLeaf = (nodes: BoardNodes, root: string, key: string): Result<{ readonly path: BoardPath; readonly hash: string; readonly leaf: BoardLeaf }, BoardRegistryError> => chain(boardWord(root, "ROOT"), (start) => {
+  const path: { hash: string; node: BoardBranch; direction: 0 | 1 }[] = [], seen = new Set<string>();
+  let hash = start, previousBit = -1;
+  for (;;) {
+    if (seen.has(hash)) return boardErr(`CERTIFIED_BOARD_NODE_CYCLE:${hash}`);
+    if (seen.size > 256) return boardErr("CERTIFIED_BOARD_PROOF_OVERSIZED");
+    seen.add(hash);
+    const read = readBoardNode(nodes, hash);
+    if (!read.ok) return read;
+    const node = read.value;
+    if (node.type === "leaf") return ok({ path, hash, leaf: node });
+    if (node.bit <= previousBit) return boardErr(`CERTIFIED_BOARD_BRANCH_ORDER_INVALID:${previousBit}:${node.bit}`);
+    previousBit = node.bit;
+    const direction = keyBit(key, node.bit);
+    path.push({ hash, node, direction });
+    hash = direction === 0 ? node.left : node.right;
+  }
+});
+/** og lookupCertifiedBoardRecord: a divergent terminal leaf is an authenticated absence. */
+export const lookupBoardRecord = (nodes: BoardNodes, root: string, stackKey: string, entityId: string): Result<CertifiedBoardRecord | null, BoardRegistryError> => chain(boardWord(root, "ROOT"), (r) =>
+  r === EMPTY_CERTIFIED_BOARD_ROOT ? ok(null) : chain(boardEntityKey(stackKey, entityId), (key) => map(walkToLeaf(nodes, r, key), ({ leaf }) => (leaf.key === key ? leaf.record : null))));
+type BoardPut = { readonly root: string; readonly newNodes: BoardNodes };
+const putBoardNode = (fresh: Map<string, CertifiedBoardNode>, n: CertifiedBoardNode): Result<string, BoardRegistryError> => map(hashBoardNode(n), (h) => { fresh.set(h, n); return h; });
+const rebuildAncestors = (fresh: Map<string, CertifiedBoardNode>, path: BoardPath, child: string): Result<string, BoardRegistryError> =>
+  foldResult([...path].reverse(), child, (hash, e) => putBoardNode(fresh, { ...e.node, left: e.direction === 0 ? hash : e.node.left, right: e.direction === 1 ? hash : e.node.right }));
+/** og putCertifiedBoardRecord: insert or replace one leaf, returning only the new nodes. */
+export const putBoardRecord = (nodes: BoardNodes, root: string, record: CertifiedBoardRecord): Result<BoardPut, BoardRegistryError> => chain(boardEntityKey(record.stackKey, record.entityId), (key) => {
+  const fresh = new Map<string, CertifiedBoardNode>();
+  return chain(putBoardNode(fresh, { version: 1, type: "leaf", key, record }), (leafHash): Result<BoardPut, BoardRegistryError> => {
+    if (root === EMPTY_CERTIFIED_BOARD_ROOT) return ok({ root: leafHash, newNodes: fresh });
+    return chain(walkToLeaf(nodes, root, key), (walked): Result<BoardPut, BoardRegistryError> => {
+      if (walked.leaf.key === key) return sameBoardRecord(walked.leaf.record, record) ? ok({ root, newNodes: new Map() }) : map(rebuildAncestors(fresh, walked.path, leafHash), (r) => ({ root: r, newNodes: fresh }));
+      let bit = -1;
+      for (let b = 0; b < 256; b += 1) if (keyBit(key, b) !== keyBit(walked.leaf.key, b)) { bit = b; break; }
+      if (bit < 0) return boardErr(`CERTIFIED_BOARD_KEY_COLLISION:${key}`);
+      const at = walked.path.findIndex((e) => e.node.bit >= bit), cut = at < 0 ? walked.path.length : at;
+      const subtree = cut < walked.path.length ? (walked.path[cut]?.hash ?? walked.hash) : walked.hash, mine = keyBit(key, bit);
+      return chain(putBoardNode(fresh, { version: 1, type: "branch", bit, left: mine === 0 ? leafHash : subtree, right: mine === 1 ? leafHash : subtree }), (branch) =>
+        map(rebuildAncestors(fresh, walked.path.slice(0, cut), branch), (r) => ({ root: r, newNodes: fresh })));
+    });
+  });
+});
+type BoardEvent = Extract<JEvent, { readonly type: CertifiedBoardSource }>;
+export const isBoardEvent = (e: JEvent): e is BoardEvent => e.type === "FoundationBootstrapped" || e.type === "EntityRegistered" || e.type === "BoardActivated";
+type RecordFields = { readonly entityId: unknown; readonly boardHash: unknown; readonly boardEpoch?: number | undefined; readonly previousBoardHash?: unknown; readonly previousBoardValidUntil?: unknown; readonly source: CertifiedBoardSource };
+/** og makeRecord, field validation in og's literal order. */
+const makeBoardRecord = (stackKey: string, jHeight: number, blockHash: string, transactionHash: string, logIndex: number, f: RecordFields): Result<CertifiedBoardRecord, BoardRegistryError> =>
+  chain(all({ stackKey: boardWord(stackKey, "STACK_KEY"), entityId: boardWord(f.entityId, "ENTITY_ID"), boardHash: boardWord(f.boardHash, "HASH") }), (w) => {
+    const epoch = Number(f.boardEpoch ?? 0);
+    if (!Number.isSafeInteger(epoch) || epoch < 0) return boardErr(`CERTIFIED_BOARD_EPOCH_INVALID:${String(f.boardEpoch)}`);
+    return chain(boardWord(f.previousBoardHash ?? ZERO_WORD, "PREVIOUS_HASH"), (previousBoardHash) => chain(boardSeconds(f.previousBoardValidUntil ?? 0, "PREVIOUS_VALID_UNTIL"), (previousBoardValidUntil) =>
+      chain(boardJHeight(jHeight), (activatedAtJHeight): Result<CertifiedBoardRecord, BoardRegistryError> => {
+        if (!Number.isSafeInteger(logIndex) || logIndex < 0 || logIndex > 0xffff_ffff) return boardErr(`CERTIFIED_BOARD_LOG_INDEX_INVALID:${String(logIndex)}`);
+        return chain(boardWord(blockHash, "BLOCK_HASH"), (b) => map(boardWord(transactionHash, "TRANSACTION_HASH"), (t): CertifiedBoardRecord =>
+          ({ ...w, boardEpoch: epoch, previousBoardHash, previousBoardValidUntil, activatedAtJHeight, logIndex, blockHash: b, transactionHash: t, source: f.source })));
+      })));
+  });
+export type BoardRegistryStep = { readonly state: CertifiedBoardRegistryState; readonly newNodes: BoardNodes };
+/** og applyCertifiedBoardRegistryEvent: FoundationBootstrapped, EntityRegistered and BoardActivated advance the registry; any other event leaves it. */
+export const applyBoardRegistryEvent = (current: CertifiedBoardRegistryState | undefined, nodes: BoardNodes, j: BoardStack, e: JEvent): Result<BoardRegistryStep, BoardRegistryError> =>
+  chain(boardStackKey(j), (stackKey) => chain(current === undefined ? emptyBoardRegistry(j) : ok(current), (state): Result<BoardRegistryStep, BoardRegistryError> => {
+    if (state.stackKey !== stackKey) return boardErr(`CERTIFIED_BOARD_STACK_MISMATCH:${state.stackKey}:${stackKey}`);
+    const unchanged: BoardRegistryStep = { state, newNodes: new Map() };
+    if (!isBoardEvent(e)) return ok(unchanged);
+    const meta = e.meta ?? {};
+    return chain(boardJHeight(meta.blockNumber), (jHeight) => chain(boardWord(meta.blockHash, "BLOCK_HASH"), (blockHash) => chain(boardWord(meta.transactionHash, "TRANSACTION_HASH"), (transactionHash) => {
+      const logIndex = Number(meta.logIndex), make = (f: RecordFields) => makeBoardRecord(stackKey, jHeight, blockHash, transactionHash, logIndex, f);
+      const recordOf = (): Result<CertifiedBoardRecord, BoardRegistryError> => {
+        if (e.type === "FoundationBootstrapped") {
+          const deployment = j.entityProviderDeploymentBlock;
+          return deployment !== undefined && Number(deployment) !== jHeight ? boardErr(`CERTIFIED_BOARD_BOOTSTRAP_HEIGHT_MISMATCH:expected=${String(deployment)}:actual=${jHeight}`)
+            : make({ entityId: FOUNDATION_ENTITY_ID, boardHash: e.boardHash, source: "FoundationBootstrapped" });
+        }
+        return chain(lookupBoardRecord(nodes, state.boardRegistryRoot, stackKey, FOUNDATION_ENTITY_ID), (foundation) => foundation === null ? boardErr(`CERTIFIED_BOARD_STACK_NOT_BOOTSTRAPPED:${stackKey}`)
+          : chain(boardWord(e.entityId, "ENTITY_ID"), (entityId): Result<CertifiedBoardRecord, BoardRegistryError> => {
+            if (e.type === "EntityRegistered") {
+              return e.entityNumber <= 0n || e.entityNumber > UINT256_MAX || BigInt(entityId) !== e.entityNumber ? boardErr(`CERTIFIED_BOARD_ENTITY_NUMBER_MISMATCH:${entityId}:${e.entityNumber.toString()}`)
+                : make({ entityId, boardHash: e.boardHash, source: "EntityRegistered" });
+            }
+            return chain(lookupBoardRecord(nodes, state.boardRegistryRoot, stackKey, entityId), (previous) => previous === null ? boardErr(`CERTIFIED_BOARD_ACTIVATION_BEFORE_REGISTRATION:${entityId}`)
+              : make({ entityId, boardHash: e.newBoardHash, boardEpoch: previous.activatedAtJHeight === jHeight && previous.logIndex === logIndex ? previous.boardEpoch : previous.boardEpoch + 1,
+                previousBoardHash: e.previousBoardHash, previousBoardValidUntil: e.previousBoardValidUntil, source: "BoardActivated" }));
+          }));
+      };
+      return chain(recordOf(), (record) => chain(lookupBoardRecord(nodes, state.boardRegistryRoot, stackKey, record.entityId), (existing): Result<BoardRegistryStep, BoardRegistryError> => {
+        if (record.source === "BoardActivated") {
+          if (existing === null) return boardErr(`CERTIFIED_BOARD_ACTIVATION_BEFORE_REGISTRATION:${record.entityId}`);
+          const order = existing.activatedAtJHeight === record.activatedAtJHeight ? existing.logIndex - record.logIndex : existing.activatedAtJHeight - record.activatedAtJHeight;
+          if (order > 0) return boardErr(`CERTIFIED_BOARD_ACTIVATION_STALE:${record.entityId}:${record.activatedAtJHeight}`);
+          if (order === 0) return sameBoardRecord(existing, record) ? ok(unchanged) : boardErr(`CERTIFIED_BOARD_ACTIVE_CONFLICT:${record.entityId}:${record.activatedAtJHeight}`);
+          if (record.previousBoardHash !== existing.boardHash) return boardErr(`CERTIFIED_BOARD_PREVIOUS_HASH_MISMATCH:${record.entityId}:expected=${existing.boardHash}:received=${record.previousBoardHash}`);
+          if (record.previousBoardValidUntil <= 0) return boardErr(`CERTIFIED_BOARD_PREVIOUS_EXPIRY_INVALID:${record.entityId}`);
+        } else if (existing !== null) return sameBoardRecord(existing, record) ? ok(unchanged) : boardErr(`CERTIFIED_BOARD_REGISTRATION_CONFLICT:${record.entityId}`);
+        return map(putBoardRecord(nodes, state.boardRegistryRoot, record), (put) => ({ state: { ...state, boardRegistryRoot: put.root }, newNodes: put.newNodes }));
+      }));
+    })));
+  }));
+/** og advanceCertifiedBoardFinality. */
+export const advanceBoardFinality = (current: CertifiedBoardRegistryState | undefined, j: BoardStack, finalizedJHeight: number, finalizedJBlockHash: string, eventHistoryRoot: string): Result<CertifiedBoardRegistryState, BoardRegistryError> =>
+  chain(current === undefined ? emptyBoardRegistry(j) : ok(current), (state) => chain(boardStackKey(j), (stackKey): Result<CertifiedBoardRegistryState, BoardRegistryError> => {
+    if (state.stackKey !== stackKey) return boardErr(`CERTIFIED_BOARD_STACK_MISMATCH:${state.stackKey}:${stackKey}`);
+    if (!Number.isSafeInteger(finalizedJHeight) || finalizedJHeight < state.finalizedJHeight) return boardErr(`CERTIFIED_BOARD_FINALITY_REWIND:${state.finalizedJHeight}:${String(finalizedJHeight)}`);
+    return chain(boardWord(finalizedJBlockHash, "FINALIZED_BLOCK_HASH"), (block) => map(boardWord(eventHistoryRoot, "EVENT_HISTORY_ROOT"), (history) => ({ ...state, finalizedJHeight, finalizedJBlockHash: block, eventHistoryRoot: history })));
+  }));
+/** og createCertifiedBoardProof: root-to-leaf path (a divergent leaf proves absence). */
+export const boardProof = (nodes: BoardNodes, state: CertifiedBoardRegistryState, entityId: string): Result<CertifiedBoardProof, BoardRegistryError> => chain(boardWord(entityId, "ENTITY_ID"), (id) =>
+  state.boardRegistryRoot === EMPTY_CERTIFIED_BOARD_ROOT ? ok({ version: 1 as const, stackKey: state.stackKey, entityId: id, nodes: [] })
+    : chain(boardEntityKey(state.stackKey, entityId), (key) => map(walkToLeaf(nodes, state.boardRegistryRoot, key), (w) => ({ version: 1 as const, stackKey: state.stackKey, entityId: id, nodes: [...w.path.map((e) => e.node), w.leaf] }))));
+/** og verifyCertifiedBoardProof. */
+export const verifyBoardProof = (root: string, proof: CertifiedBoardProof): Result<CertifiedBoardRecord | null, BoardRegistryError> => {
+  if (proof.version !== 1) return boardErr(`CERTIFIED_BOARD_PROOF_VERSION_INVALID:${String(proof.version)}`);
+  return chain(boardWord(root, "ROOT"), (r) => chain(boardEntityKey(proof.stackKey, proof.entityId), (key): Result<CertifiedBoardRecord | null, BoardRegistryError> => {
+    if (r === EMPTY_CERTIFIED_BOARD_ROOT) return proof.nodes.length !== 0 ? boardErr("CERTIFIED_BOARD_PROOF_TRAILING_NODES") : ok(null);
+    if (proof.nodes.length < 1 || proof.nodes.length > 257) return boardErr("CERTIFIED_BOARD_PROOF_LENGTH_INVALID");
+    let expected = r, previousBit = -1;
+    for (const [i, node] of proof.nodes.entries()) {
+      const h = hashBoardNode(node);
+      if (!h.ok) return h;
+      if (h.value !== expected) return boardErr(`CERTIFIED_BOARD_PROOF_LINK_INVALID:${i}`);
+      if (node.type === "leaf") return i !== proof.nodes.length - 1 ? boardErr("CERTIFIED_BOARD_PROOF_TRAILING_NODES") : ok(node.key === key ? node.record : null);
+      if (node.bit <= previousBit) return boardErr(`CERTIFIED_BOARD_BRANCH_ORDER_INVALID:${previousBit}:${node.bit}`);
+      previousBit = node.bit;
+      expected = keyBit(key, node.bit) === 0 ? node.left : node.right;
+    }
+    return boardErr("CERTIFIED_BOARD_PROOF_TERMINAL_LEAF_MISSING");
+  }));
+};
+/** og collectReachableCertifiedBoardNodes: every node under the given roots (a missing or corrupt node refuses). */
+export const reachableBoardNodes = (nodes: BoardNodes, roots: Iterable<string>): Result<BoardNodes, BoardRegistryError> => chain(traverse([...new Set(roots)], (r) => boardWord(r, "ROOT")), (rs) => {
+  const reachable = new Map<string, CertifiedBoardNode>(), pending = [...new Set(rs)].filter((r) => r !== EMPTY_CERTIFIED_BOARD_ROOT);
+  while (pending.length > 0) {
+    const hash = pending.pop() as string;
+    if (reachable.has(hash)) continue;
+    const read = readBoardNode(nodes, hash);
+    if (!read.ok) return read;
+    reachable.set(hash, read.value);
+    if (read.value.type === "branch") pending.push(read.value.left, read.value.right);
+  }
+  return ok(reachable);
+});
 // ---- og entity/command (command-codec.ts, index.ts), auth/authorization.ts, tx/processing/proposals.ts, system/basic.ts propose/vote ----
 /** og applyEntityTxsInOrder authorization lanes: top-level frame txs, a signed command's individual txs, an approved proposal's collective txs. */
 type TxLane = "top" | "command" | "collective";
