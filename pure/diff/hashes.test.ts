@@ -167,15 +167,18 @@ describe("account state commitment", () => {
       expect(unwrap(accountStateCommitment(s))).toBe(computeAccountStateRoot(toOgState(s)));
     }
   });
-  test("DIVERGES: og binds settlementWorkspace (minus hankos) into the 'commitments' section; rewrite has no such field, so any account with a workspace hashes differently", () => {
-    const s = randState();
-    const workspace = { version: 1, status: "awaiting_counterparty", diffs: [{ tokenId: 1, leftDiff: -5n, rightDiff: 0n, collateralDiff: 5n, ondeltaDiff: -5n }], nonce: 3, leftHanko: "0xaa", rightHanko: "0xbb" };
-    const withWs = computeAccountStateRoot(toOgState(s, { settlementWorkspace: workspace }));
-    const without = computeAccountStateRoot(toOgState(s));
-    expect(withWs).not.toBe(without);
-    expect(unwrap(accountStateCommitment(s))).toBe(without);
-    // hanko bytes are excluded on og side
-    expect(computeAccountStateRoot(toOgState(s, { settlementWorkspace: { ...workspace, leftHanko: "0xff" } }))).toBe(withWs);
+  test("MATCH (H5): og binds settlementWorkspace (minus hankos, incl. post-proof hankos) into the 'commitments' section; so does the rewrite", () => {
+    for (let i = 0; i < 50; i++) {
+      const s = randState();
+      const workspace: any = { workspaceHash: W("61"), ops: [{ type: "r2c", tokenId: 1 + ri(5), amount: BigInt(1 + ri(99)) }], lastModifiedByLeft: rng() < 0.5, status: pick(["awaiting_counterparty", "ready_to_submit", "submitted"]), revision: 1 + ri(4), createdAt: ri(99), lastUpdatedAt: ri(99), executorIsLeft: rng() < 0.5,
+        ...(rng() < 0.5 ? { memo: "m" } : {}), ...(rng() < 0.5 ? { settlementHash: W("62"), nonceAtSign: 3, leftHanko: "0xaa", rightHanko: "0xbb", postSettlementDisputeProof: { disputeHash: W("63"), proofBodyHash: W("64"), nonce: 4, proposerIsLeft: true, leftHanko: "0xcc" } } : {}) };
+      const withWs = computeAccountStateRoot(toOgState(s, { settlementWorkspace: workspace }));
+      expect(withWs).not.toBe(computeAccountStateRoot(toOgState(s)));
+      expect(unwrap(accountStateCommitment({ ...s, settlementWorkspace: workspace }))).toBe(withWs);
+      const rehankoed = { ...workspace, leftHanko: "0xff", ...(workspace.postSettlementDisputeProof ? { postSettlementDisputeProof: { ...workspace.postSettlementDisputeProof, rightHanko: "0xdd" } } : {}) };
+      expect(computeAccountStateRoot(toOgState(s, { settlementWorkspace: rehankoed }))).toBe(withWs);
+      expect(unwrap(accountStateCommitment({ ...s, settlementWorkspace: rehankoed }))).toBe(withWs);
+    }
   });
   test("MATCH: mixed-case depository with a bad EIP-55 checksum is refused by both; all-uppercase accepted by both", () => {
     const s = randState();

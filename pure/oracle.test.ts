@@ -305,28 +305,23 @@ describe("oracle", () => {
     expect(filled.offers.has("S")).toBe(false);
   });
 
-  test("a hanko settlement keeps the money and commits the settlement hash", () => {
+  test("a settlement workspace keeps the money, holds its outflow and commits the workspace", () => {
     const { body } = open();
+    const ctx = { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n };
     const before = unwrap(committed(body)).root;
-    const tx = {
-      type: "settle_transition" as const,
-      kind: "hanko" as const,
-      revision: 1,
-      workspaceHash: word("61"),
-      settlementNonce: 2,
-      settlementHash: word("62"),
-      settlementHanko: "0xfirst-quorum",
-      postProof: { nonce: 3, proposerIsLeft: true, proofBodyHash: word("63"), disputeHash: word("64"), hanko: "0xfirst-proof-quorum" },
-    };
-    const applied = unwrap(applyAccountBody(body, tx, { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n })).state;
+    const tx = { type: "settle_transition" as const, kind: "upsert" as const, revision: 1, ops: [{ type: "r2r" as const, tokenId: 0, amount: 2n }], executorIsLeft: true };
+    const applied = unwrap(applyAccountBody(body, tx, ctx)).state;
     expect(getDelta(applied.account, "0").offdelta).toBe(getDelta(body.account, "0").offdelta);
-    expect(applied.settlement?.settlementHash).toBe(word("62"));
+    expect(applied.settlement?.status).toBe("awaiting_counterparty");
     const root = unwrap(committed(applied)).root;
     expect(root).not.toBe(before);
-    const otherWitness = unwrap(applyAccountBody(body, { ...tx, settlementHanko: "0xsecond-quorum", postProof: { ...tx.postProof, hanko: "0xsecond-proof-quorum" } }, { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n })).state;
-    expect(unwrap(committed(otherWitness)).root).toBe(root);
-    const otherTarget = unwrap(applyAccountBody(body, { ...tx, settlementHash: word("65") }, { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n })).state;
+    const otherTarget = unwrap(applyAccountBody(body, { ...tx, ops: [{ type: "r2r" as const, tokenId: 0, amount: 1n }] }, ctx)).state;
     expect(unwrap(committed(otherTarget)).root).not.toBe(root);
+    const hash = applied.settlement?.workspaceHash ?? "";
+    const cleared = unwrap(applyAccountBody(applied, { type: "settle_transition", kind: "clear", revision: 1, workspaceHash: hash }, { ...ctx, byLeft: false })).state;
+    expect(unwrap(committed(cleared)).root).toBe(before);
+    const hanko = { type: "settle_transition" as const, kind: "hanko" as const, revision: 1, workspaceHash: hash, settlementNonce: 1, settlementHash: word("62"), settlementHanko: "0x01", postProof: { nonce: 2, proposerIsLeft: true, proofBodyHash: word("63"), disputeHash: word("64"), hanko: "0x02" } };
+    expect(applyAccountBody(applied, hanko, ctx).ok).toBe(false);
     expect(unwrap(accountFrameHash({ ...accountFixture(), accountTxs: [{ type: tx.type, data: tx }] })).length).toBeGreaterThan(0);
   });
 

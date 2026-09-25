@@ -331,6 +331,7 @@ export type CommittedAccountState = {
   readonly jNonce: number; readonly lastFinalizedJHeight: number; readonly leftPendingJClaims: JClaimAccumulator; readonly rightPendingJClaims: JClaimAccumulator;
   readonly deltas: ReadonlyMap<number, CommittedDelta>; readonly locks: CommittedMap; readonly pulls: CommittedMap; readonly swapOffers: CommittedMap; readonly subcontracts: CommittedMap;
   readonly lendingIntents: CommittedMap; readonly requestedRebalance: CommittedMap; readonly requestedRebalanceFeeState: CommittedMap; readonly rebalanceFeePolicies: CommittedMap;
+  readonly settlementWorkspace?: SettlementWorkspace | undefined;
 };
 export type CommitmentError = CanonicalValueError | Tagged<"bad_domain" | "bad_j_claims" | "bad_key" | "key_prefix_collision" | "nested_collection" | "leaf_too_large">;
 const u16 = (n: number): Uint8Array => Uint8Array.of((n >> 8) & 0xff, n & 0xff);
@@ -409,7 +410,7 @@ export const preparedRoot = ({ state, domain, left, right, maps }: PreparedCommi
   return flatDigest("account.state", [
     ["identity", { chainId: domain.chainId, depositoryAddress: domain.depositoryAddress, leftEntity: state.leftEntity.toLowerCase(), rightEntity: state.rightEntity.toLowerCase(), watchSeed: state.watchSeed.toLowerCase() }],
     ["financial", { deltasRoot: root("deltas"), jNonce: state.jNonce, disputeConfig: state.disputeConfig }],
-    ["commitments", { locksRoot: root("locks"), pullsRoot: root("pulls"), swapOffersRoot: root("swapOffers"), subcontractsRoot: root("subcontracts"), lendingIntentsRoot: root("lendingIntents") }],
+    ["commitments", { locksRoot: root("locks"), pullsRoot: root("pulls"), swapOffersRoot: root("swapOffers"), subcontractsRoot: root("subcontracts"), lendingIntentsRoot: root("lendingIntents"), settlementWorkspace: workspaceWithoutHankos(state.settlementWorkspace) }],
     ["jurisdiction", { lastFinalizedJHeight: state.lastFinalizedJHeight, leftPendingJClaims: left, rightPendingJClaims: right }],
     ["rebalance", { requestedRebalanceRoot: root("requestedRebalance"), requestedRebalanceFeeStateRoot: root("requestedRebalanceFeeState"), rebalanceFeePoliciesRoot: root("rebalanceFeePolicies") }],
   ]);
@@ -1013,10 +1014,13 @@ export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" 
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
   | Tagged<"above_custody", { have: bigint; requested: bigint }>
-  | Tagged<"not_hub" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "quote_expired" | "quote_mismatch" | "no_policy" | "policy_bound" | "no_quote" | "duplicate" | "missing" | "not_maker" | "expired_offer" | "below_min_fill" | "before_deadline" | "preimage" | "pending_full" | "not_counterparty" | "bad_allowance" | "index" | "too_many_rows">
+  | Tagged<"not_hub" | "settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "quote_expired" | "quote_mismatch" | "no_policy" | "policy_bound" | "no_quote" | "duplicate" | "missing" | "not_maker" | "expired_offer" | "below_min_fill" | "before_deadline" | "preimage" | "pending_full" | "not_counterparty" | "bad_allowance" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
+  | Tagged<"settlement", { reason: string }>
   | Tagged<"unchosen", { hole: Hole }>;
-export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint };
+/** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
+export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
+export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
 export type HubSide = "left" | "right" | null;
 export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }> | Tagged<"queue_r2c", { tokenId: TokenId; amount: bigint }>;
 const QUOTE_WINDOW_MS = 300_000n, MAX_PENDING = 16, MAX_ROWS = 128;
@@ -1034,11 +1038,24 @@ export type ClauseState = Tagged<"pending" | "live", { clause: Clause }> | Tagge
 export type CustodyDebit = { readonly tokenId: TokenId; readonly amount: bigint; readonly reason: string; readonly referenceId?: string | undefined };
 export type JClaimProof = { readonly version: 1; readonly nodes: readonly [] };
 export type ClaimRow = { readonly onLeft: boolean; readonly jHeight: bigint; readonly jBlockHash: string; readonly eventsHash: string };
+/** og types/account.ts SettlementOp / SettlementWorkspace, field for field: the workspace (minus Hankos) is committed in the Account root. */
+export type SettlementOp =
+  | { readonly type: "r2c" | "c2r" | "r2r"; readonly tokenId: number; readonly amount: bigint }
+  | { readonly type: "forgive"; readonly tokenId: number }
+  | { readonly type: "rawDiff"; readonly tokenId: number; readonly leftDiff: bigint; readonly rightDiff: bigint; readonly collateralDiff: bigint; readonly ondeltaDiff: bigint };
+export type WorkspaceDiff = { readonly tokenId: number; readonly leftDiff: bigint; readonly rightDiff: bigint; readonly collateralDiff: bigint; readonly ondeltaDiff: bigint };
+export type PostSettlementProof = { readonly leftHanko?: string | undefined; readonly rightHanko?: string | undefined; readonly disputeHash: string; readonly proofBodyHash: string; readonly nonce: number; readonly proposerIsLeft: boolean };
+export type SettlementWorkspace = {
+  readonly workspaceHash: string; readonly ops: readonly SettlementOp[]; readonly compiledDiffs?: readonly WorkspaceDiff[] | undefined; readonly compiledForgiveTokenIds?: readonly number[] | undefined;
+  readonly leftHanko?: string | undefined; readonly rightHanko?: string | undefined; readonly settlementHash?: string | undefined; readonly lastModifiedByLeft: boolean;
+  readonly status: "draft" | "awaiting_counterparty" | "ready_to_submit" | "submitted"; readonly memo?: string | undefined; readonly revision: number; readonly createdAt: number; readonly lastUpdatedAt: number;
+  readonly executorIsLeft: boolean; readonly nonceAtSign?: number | undefined; readonly postSettlementDisputeProof?: PostSettlementProof | undefined;
+};
 export type AccountBody = {
   readonly account: AccountState; readonly terms: AccountTerms; readonly hub: HubSide; readonly custody: ReadonlyMap<TokenId, bigint>; readonly locks: ReadonlyMap<string, HtlcLock>;
   readonly offers: ReadonlyMap<string, SwapOffer>; readonly policy: ReadonlyMap<TokenId, RebalancePolicy>; readonly clauses: ReadonlyMap<ClauseId, ClauseState>; readonly debits: readonly CustodyDebit[];
   readonly quote?: RebalanceQuote | undefined; readonly request?: { readonly tokenId: TokenId; readonly targetAmount: bigint } | undefined; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly jNonce: number;
-  readonly settlement?: { readonly revision: number; readonly workspaceHash: string; readonly settlementHash: string } | undefined;
+  readonly settlement?: SettlementWorkspace | undefined;
 };
 export type AccountStep<E extends Effect = Effect> = Step<AccountBody, E>;
 type BodyStep<E extends Effect = never> = Result<AccountStep<E>, BodyError>;
@@ -1069,7 +1086,9 @@ export type AccountTx =
   | { readonly type: "cross_pull_lock" }
   | { readonly type: "cross_pull_close"; readonly orderId: string; readonly amount: bigint; readonly ratio: number; readonly proofRatio: number; readonly leg: bigint; readonly binaryHash: Hash; readonly hubAuthored: boolean }
   | { readonly type: "j_event_claim"; readonly jHeight: bigint; readonly jBlockHash: Hash; readonly events: readonly AccountSettlement[]; readonly observedAt: bigint; readonly leftProof?: JClaimProof | undefined; readonly rightProof?: JClaimProof | undefined }
-  | { readonly type: "settle_transition"; readonly kind: "hanko"; readonly revision: number; readonly workspaceHash: string; readonly settlementNonce: number; readonly settlementHash: string; readonly settlementHanko: string; readonly postProof: { readonly nonce: number; readonly proposerIsLeft: boolean; readonly proofBodyHash: string; readonly disputeHash: string; readonly hanko: string } };
+  | { readonly type: "settle_transition"; readonly kind: "upsert"; readonly revision: number; readonly previousWorkspaceHash?: string | undefined; readonly ops: readonly SettlementOp[]; readonly executorIsLeft: boolean; readonly memo?: string | undefined }
+  | { readonly type: "settle_transition"; readonly kind: "submit" | "clear"; readonly revision: number; readonly workspaceHash: string }
+  | { readonly type: "settle_transition"; readonly kind: "hanko"; readonly revision: number; readonly workspaceHash: string; readonly settlementNonce: number; readonly settlementHash: string; readonly settlementHanko?: string | undefined; readonly postProof: { readonly nonce: number; readonly proposerIsLeft: boolean; readonly proofBodyHash: string; readonly disputeHash: string; readonly hanko?: string | undefined } };
 export type TxOf<K extends AccountTx["type"]> = Extract<AccountTx, { readonly type: K }>;
 type DepositWire = { readonly type: "deposit_collateral"; readonly tokenId: TokenId; readonly amount: bigint; readonly rebalanceQuoteId?: bigint | undefined; readonly rebalanceFeeTokenId?: TokenId | undefined; readonly rebalanceFeeAmount?: bigint | undefined; readonly fee?: undefined };
 export type WireAccountTx = AccountTx | DepositWire;
@@ -1180,14 +1199,14 @@ const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[]): Resul
   const left = a.account.id.left.toLowerCase(), right = a.account.id.right.toLowerCase();
   return chain(foldResult(events, a.jNonce, (prev, e): Result<number, BodyError> =>
     e.data.leftEntity !== left || e.data.rightEntity !== right ? err({ _tag: "settled_pair" }) : e.data.nonce < prev ? err({ _tag: "settled_nonce" }) : ok(e.data.nonce)), (jNonce) =>
-    map(foldResult(events, a, (b, e): Result<AccountBody, BodyError> => chain(mapErr(tokenId(String(e.data.tokenId)), (): BodyError => ({ _tag: "index" })), (tk) => {
+    chain(foldResult(events, a, (b, e): Result<AccountBody, BodyError> => chain(mapErr(tokenId(String(e.data.tokenId)), (): BodyError => ({ _tag: "index" })), (tk) => {
       const fresh = !b.account.deltas.has(tk);
       if (fresh && (e.data.tokenId === 0 || b.account.deltas.size + 1 > MAX_ROWS)) return err(e.data.tokenId === 0 ? { _tag: "index" } : { _tag: "too_many_rows" });
       const was = getDelta(b.account, tk), now = settle(was, BigInt(e.data.collateral), BigInt(e.data.ondelta)), increase = floor0(now.collateral - was.collateral);
       const settled = putState(b, setDelta(b.account, now)), requested = b.request?.tokenId === tk ? b.request.targetAmount : 0n;
       if (requested <= 0n || increase <= 0n) return ok(settled);
       return ok(requested > increase ? { ...settled, request: { tokenId: tk, targetAmount: requested - increase } } : { ...settled, request: undefined, quote: settled.quote?.tokenId === tk ? undefined : settled.quote });
-    })), (b) => ({ ...b, jNonce })));
+    })), (b) => map(activateWorkspace(b, jNonce), (c) => ({ ...c, jNonce }))));
 };
 /** og j-claim-transition.ts: conflict on either side refuses; stale prunes; the first side waits; the peer's matching record at any pending height finalizes. */
 const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (own) => {
@@ -1199,6 +1218,203 @@ const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodySt
   if (peerHeld === undefined) return ok(step(ownHeld !== undefined ? a : { ...a, claimRows: [...held, own] }));
   return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events), (b) => step({ ...b, claimRows: pruneThrough(held, own.jHeight), finalizedJHeight: own.jHeight })));
 });
+const settleErr = (reason: string): Result<never, BodyError> => err({ _tag: "settlement", reason });
+const settlementToken = (t: unknown): t is number => typeof t === "number" && Number.isSafeInteger(t) && t >= 0 && t <= 65_535;
+const MAX_SETTLEMENT_DIFFS = 32;
+type MutableDiff = { -readonly [K in keyof WorkspaceDiff]: WorkspaceDiff[K] };
+/** og protocol/settlement/operations.ts compileOps: ops merge per token in first-seen order; every diff conserves and fits SignedAmount. */
+export const compileOps = (ops: readonly SettlementOp[], proposerIsLeft: boolean): Result<{ readonly diffs: readonly WorkspaceDiff[]; readonly forgive: readonly number[] }, BodyError> => {
+  const diffs = new Map<number, MutableDiff>(), forgive: number[] = [];
+  for (const op of ops) {
+    if (!settlementToken(op.tokenId)) return settleErr("SETTLEMENT_TOKEN_INVALID");
+    if (op.type === "forgive") { if (forgive.includes(op.tokenId)) return settleErr("SETTLEMENT_DUPLICATE_FORGIVENESS_TOKEN"); forgive.push(op.tokenId); continue; }
+    if (!["rawDiff", "r2c", "c2r", "r2r"].includes(op.type)) return settleErr("SETTLEMENT_UNKNOWN_OP_TYPE");
+    const d = diffs.get(op.tokenId) ?? { tokenId: op.tokenId, leftDiff: 0n, rightDiff: 0n, collateralDiff: 0n, ondeltaDiff: 0n };
+    diffs.set(op.tokenId, d);
+    if (op.type === "rawDiff") { d.leftDiff += op.leftDiff; d.rightDiff += op.rightDiff; d.collateralDiff += op.collateralDiff; d.ondeltaDiff += op.ondeltaDiff; continue; }
+    const n = op.amount;
+    if (op.type === "r2c") { if (proposerIsLeft) { d.leftDiff -= n; d.collateralDiff += n; d.ondeltaDiff += n; } else { d.rightDiff -= n; d.collateralDiff += n; } }
+    else if (op.type === "c2r") { d.collateralDiff -= n; if (proposerIsLeft) { d.leftDiff += n; d.ondeltaDiff -= n; } else d.rightDiff += n; }
+    else if (proposerIsLeft) { d.leftDiff -= n; d.rightDiff += n; } else { d.rightDiff -= n; d.leftDiff += n; }
+  }
+  const out = [...diffs.values()];
+  const wide = (v: bigint): boolean => v < -MAX_PAYMENT_AMOUNT || v > MAX_PAYMENT_AMOUNT;
+  if (out.some((d) => wide(d.leftDiff) || wide(d.rightDiff) || wide(d.collateralDiff) || wide(d.ondeltaDiff))) return settleErr("SETTLEMENT_SIGNED_AMOUNT_RANGE");
+  if (out.some((d) => d.leftDiff + d.rightDiff + d.collateralDiff !== 0n)) return settleErr("SETTLEMENT_INVARIANT_VIOLATION");
+  if (out.length > MAX_SETTLEMENT_DIFFS) return settleErr("SETTLEMENT_DIFF_LIMIT_EXCEEDED");
+  return forgive.length > MAX_SETTLEMENT_DIFFS ? settleErr("SETTLEMENT_FORGIVENESS_LIMIT_EXCEEDED") : ok({ diffs: out, forgive });
+};
+const checkOps = (ops: readonly SettlementOp[]): Result<void, BodyError> => {
+  if (!Array.isArray(ops) || ops.length === 0) return settleErr("SETTLEMENT_WORKSPACE_OPS_EMPTY");
+  for (const op of ops) {
+    if (!settlementToken(op.tokenId)) return settleErr("SETTLEMENT_TOKEN_INVALID");
+    if (op.type === "r2c" || op.type === "c2r" || op.type === "r2r") { if (typeof op.amount !== "bigint" || op.amount <= 0n) return settleErr("SETTLEMENT_WORKSPACE_AMOUNT_INVALID"); continue; }
+    if (op.type === "rawDiff") { if ([op.leftDiff, op.rightDiff, op.collateralDiff, op.ondeltaDiff].some((v) => typeof v !== "bigint")) return settleErr("SETTLEMENT_WORKSPACE_RAW_DIFF_INVALID"); continue; }
+    if (op.type !== "forgive") return settleErr("SETTLEMENT_WORKSPACE_OP_INVALID");
+  }
+  return ok(undefined);
+};
+const WORKSPACE_LEAF_KEY = keccak256(utf8("xln.settlement.workspace.body"));
+/** og transition.ts createSettlementWorkspaceHash: the one-leaf keccak radix root of the canonical body under `xln.settlement.workspace.body`. */
+export const workspaceHashOf = (id: AccountId, w: Pick<SettlementWorkspace, "revision" | "ops" | "lastModifiedByLeft" | "executorIsLeft" | "memo">): Result<string, BodyError> => map(
+  mapErr(encodeCanonicalValue({ domain: "xln:settlement-workspace:v1", leftEntity: id.left.toLowerCase(), rightEntity: id.right.toLowerCase(), revision: w.revision, ops: w.ops, lastModifiedByLeft: w.lastModifiedByLeft, executorIsLeft: w.executorIsLeft, memo: w.memo }), (): BodyError => ({ _tag: "settlement", reason: "SETTLEMENT_WORKSPACE_ENCODING" })),
+  (enc) => keccak256Hex(concat([LEAF, WORKSPACE_LEAF_KEY, enc])));
+/** og witness-projection.ts: the committed workspace keeps every decision and target, never the Hanko bytes. */
+export const workspaceWithoutHankos = (w: SettlementWorkspace | undefined): unknown => {
+  if (w === undefined) return undefined;
+  const { leftHanko: _l, rightHanko: _r, postSettlementDisputeProof: post, ...rest } = w;
+  if (post === undefined) return rest;
+  const { leftHanko: _pl, rightHanko: _pr, ...postRest } = post;
+  return { ...rest, postSettlementDisputeProof: postRest };
+};
+const signedWorkspace = (w: SettlementWorkspace): boolean => w.settlementHash !== undefined || w.leftHanko !== undefined || w.rightHanko !== undefined || w.postSettlementDisputeProof !== undefined;
+const workspaceDiffs = (w: SettlementWorkspace): readonly WorkspaceDiff[] => unwrapOr(map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs), () => []);
+/** og transition.ts:640 getSignedSettlementWorkspaceTxError: a signed workspace freezes the Account except j claims and settlement hanko/submit. */
+const settlementFreeze = (a: AccountBody, tx: WireAccountTx): Result<void, BodyError> => {
+  const w = a.settlement;
+  if (w === undefined || !signedWorkspace(w) || tx.type === "j_event_claim" || (tx.type === "settle_transition" && (tx.kind === "hanko" || tx.kind === "submit"))) return ok(undefined);
+  return err({ _tag: "settlement_frozen" });
+};
+/** og planWorkspaceHoldAdd: a negative side diff is a hold on an existing row, checked against capacity unless it funds collateral from reserve. */
+const workspaceRoom = (a: AccountBody, diffs: readonly WorkspaceDiff[]): Result<void, BodyError> => foldResult(diffs, undefined as void, (_, diff): Result<void, BodyError> => {
+  if (diff.leftDiff >= 0n && diff.rightDiff >= 0n) return ok(undefined);
+  const tk = String(diff.tokenId) as TokenId, d = a.account.deltas.get(tk);
+  if (d === undefined) return settleErr("SETTLEMENT_HOLD_DELTA_MISSING");
+  const t = sideTotals(a, tk);
+  return chain(chargeSettlement(d, diff, { left: holds(a, tk, true), right: holds(a, tk, false) }), (plan) =>
+    t.leftHold + plan.left > MAX_PAYMENT_AMOUNT || t.rightHold + plan.right > MAX_PAYMENT_AMOUNT ? settleErr("HOLD_ADD_OVERFLOW") : ok(undefined));
+});
+const WORKSPACE_HASH = /^0x[0-9a-fA-F]{64}$/;
+const currentWorkspace = (a: AccountBody, revision: number, hash: string): Result<SettlementWorkspace, BodyError> => {
+  if (!Number.isSafeInteger(revision) || revision < 1) return settleErr("SETTLEMENT_WORKSPACE_VERSION_INVALID");
+  const w = a.settlement;
+  if (w === undefined) return settleErr("SETTLEMENT_WORKSPACE_MISSING");
+  if (typeof hash !== "string" || !WORKSPACE_HASH.test(hash)) return settleErr("SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID");
+  if (w.revision !== revision) return settleErr("SETTLEMENT_WORKSPACE_VERSION_MISMATCH");
+  return w.workspaceHash.toLowerCase() !== hash.toLowerCase() ? settleErr("SETTLEMENT_WORKSPACE_TARGET_HASH_MISMATCH") : ok(w);
+};
+const upsertWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_transition"; kind: "upsert" }>, ctx: FoldCtx): BodyStep => {
+  if (!Number.isSafeInteger(x.revision) || x.revision < 1) return settleErr("SETTLEMENT_WORKSPACE_VERSION_INVALID");
+  return chain(checkOps(x.ops), () => typeof x.executorIsLeft !== "boolean" ? settleErr("SETTLEMENT_WORKSPACE_EXECUTOR_INVALID") : chain(compileOps(x.ops, ctx.byLeft), ({ diffs }) => {
+    const cur = a.settlement, prev = x.previousWorkspaceHash;
+    const linked: Result<void, BodyError> = x.revision === 1
+      ? (cur !== undefined ? settleErr("SETTLEMENT_WORKSPACE_ALREADY_EXISTS") : prev !== undefined ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_UNEXPECTED") : ok(undefined))
+      : cur === undefined ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_MISSING")
+      : cur.leftHanko !== undefined || cur.rightHanko !== undefined ? settleErr("SETTLEMENT_WORKSPACE_SIGNED_UPDATE_FORBIDDEN")
+      : cur.revision + 1 !== x.revision ? settleErr("SETTLEMENT_WORKSPACE_NON_CONTIGUOUS_VERSION")
+      : prev === undefined || !WORKSPACE_HASH.test(prev) ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_INVALID")
+      : cur.workspaceHash.toLowerCase() !== prev.toLowerCase() ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_MISMATCH") : ok(undefined);
+    const now = Number(ctx.nowMs);
+    const body = { ops: x.ops.map((op) => ({ ...op })), lastModifiedByLeft: ctx.byLeft, status: "awaiting_counterparty" as const, memo: x.memo, revision: x.revision, createdAt: cur?.createdAt ?? now, lastUpdatedAt: now, executorIsLeft: x.executorIsLeft };
+    return chain(linked, () => chain(workspaceHashOf(a.account.id, body), (workspaceHash) => map(workspaceRoom({ ...a, settlement: undefined }, diffs), () => step({ ...a, settlement: { workspaceHash, ...body } }))));
+  }));
+};
+/** og settlement-projection.ts: the post-settlement rows the dispute proof at nonce N+1 commits to. */
+const projectedProofHash = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[]): Result<string, BodyError> =>
+  chain(mapErr(committedView(a), uncommitted), (view) => {
+    const rows = new Map(view.deltas);
+    const row = (tokenId: number): Result<CommittedDelta, BodyError> => {
+      const held = rows.get(tokenId);
+      if (held !== undefined) return ok(held);
+      if (tokenId === 0) return settleErr("TOKEN_ID_INVALID");
+      if (rows.size + 1 > MAX_ROWS) return settleErr("ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED");
+      const fresh: CommittedDelta = { tokenId, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n, leftAllowance: 0n, rightAllowance: 0n, leftHold: 0n, rightHold: 0n };
+      rows.set(tokenId, fresh);
+      return ok(fresh);
+    };
+    return chain(foldResult(diffs, undefined as void, (_, diff) => chain(row(diff.tokenId), (d): Result<void, BodyError> => {
+      const collateral = d.collateral + diff.collateralDiff, ondelta = d.ondelta + diff.ondeltaDiff;
+      if (collateral < 0n || collateral > MAX_PAYMENT_AMOUNT) return settleErr("SETTLEMENT_PROJECTED_COLLATERAL_RANGE");
+      if (ondelta < INT512_MIN || ondelta > INT512_MAX) return settleErr("SETTLEMENT_PROJECTED_ONDELTA_RANGE");
+      rows.set(diff.tokenId, { ...d, collateral, ondelta });
+      return ok(undefined);
+    })), () => chain(traverse(forgive, row), () => map(mapErr(accountProofBody({ ...view, deltas: rows }), (e): BodyError => ({ _tag: "settlement", reason: e._tag })), proofBodyHash)));
+  });
+const settlementHashOf = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[], nonce: number): Result<string, BodyError> => {
+  const { domain } = a.terms, { left, right } = a.account.id;
+  if (/^0x0{40}$/i.test(domain.depositoryAddress) || !WORD.test(left) || !WORD.test(right)) return settleErr("SETTLEMENT_HASH_DOMAIN");
+  const text = (v: bigint): string => v.toString();
+  try {
+    return ok(encodeCooperativeUpdateHash({ messageType: 0, chainId: domain.chainId, contractAddress: domain.depositoryAddress, accountKey: joinHex([left, right]), nonce: String(nonce),
+      diffs: diffs.map((d) => ({ tokenId: String(d.tokenId), leftDiff: text(d.leftDiff), rightDiff: text(d.rightDiff), collateralDiff: text(d.collateralDiff), ondeltaDiff: text(d.ondeltaDiff) })), forgiveDebtsInTokenIds: forgive.map(String) }));
+  } catch { return settleErr("SETTLEMENT_HASH_ENCODING"); }
+};
+const exactHanko = (h: string | undefined): h is string => typeof h === "string" && h !== "0x" && /^0x(?:[0-9a-fA-F]{2})*$/.test(h);
+/** og transition.ts prepare/verify/commitSettlementHanko: exact workspace, exact nonce, recomputed targets, both authorities, then one write. */
+const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_transition"; kind: "hanko" }>, ctx: FoldCtx): BodyStep => {
+  const auth = ctx.settlement;
+  if (auth === undefined) return settleErr("SETTLEMENT_HANKO_CONTEXT_MISSING");
+  return chain(currentWorkspace(a, x.revision, x.workspaceHash), (w) => {
+    if (w.status === "submitted") return settleErr("SETTLEMENT_HANKO_SUBMITTED_FORBIDDEN");
+    const nonce = x.settlementNonce;
+    if (!Number.isSafeInteger(nonce) || nonce < 1) return settleErr("SETTLEMENT_HANKO_NONCE_INVALID");
+    const floor = Math.max(a.jNonce + 1, auth.proofNonceFloor);
+    if (floor >= Number.MAX_SAFE_INTEGER) return settleErr("SETTLEMENT_NONCE_EXHAUSTED");
+    if (nonce !== (w.nonceAtSign ?? floor)) return settleErr("SETTLEMENT_HANKO_NONCE_MISMATCH");
+    return chain(compileOps(w.ops, w.lastModifiedByLeft), ({ diffs, forgive }) => chain(settlementHashOf(a, diffs, forgive, nonce), (settlementHash) => {
+      if (typeof x.settlementHash !== "string" || !WORKSPACE_HASH.test(x.settlementHash)) return settleErr("SETTLEMENT_HANKO_HASH_INVALID");
+      if (x.settlementHash.toLowerCase() !== settlementHash.toLowerCase()) return settleErr("SETTLEMENT_HANKO_HASH_MISMATCH");
+      if (w.settlementHash !== undefined && w.settlementHash.toLowerCase() !== settlementHash.toLowerCase()) return settleErr("SETTLEMENT_HANKO_PINNED_HASH_MISMATCH");
+      const post = x.postProof, postNonce = post.nonce;
+      if (!Number.isSafeInteger(postNonce) || postNonce < 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_INVALID");
+      if (postNonce !== nonce + 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_MISMATCH");
+      return chain(projectedProofHash(a, diffs, forgive), (bodyHash) => {
+        if (post.proofBodyHash.toLowerCase() !== bodyHash.toLowerCase()) return settleErr("POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH");
+        return chain(chain(mapErr(committedView(a), uncommitted), (view) => mapErr(accountDisputeHash(view, bodyHash, postNonce, post.proposerIsLeft), (e): BodyError => ({ _tag: "settlement", reason: e._tag }))), (disputeHash) => {
+          if (post.disputeHash.toLowerCase() !== disputeHash.toLowerCase()) return settleErr("POST_SETTLEMENT_DISPUTE_HASH_MISMATCH");
+          const pinned = w.postSettlementDisputeProof;
+          if (pinned !== undefined && (pinned.nonce !== postNonce || pinned.proofBodyHash.toLowerCase() !== bodyHash.toLowerCase() || pinned.disputeHash.toLowerCase() !== disputeHash.toLowerCase() || pinned.proposerIsLeft !== post.proposerIsLeft)) return settleErr("POST_SETTLEMENT_PROOF_PIN_MISMATCH");
+          const source = (ctx.byLeft ? a.account.id.left : a.account.id.right) as EntityId;
+          if (!exactHanko(post.hanko)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
+          if (!auth.verify(disputeHash, post.hanko, source)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_INVALID");
+          const executor = w.executorIsLeft === ctx.byLeft, settlementHanko = x.settlementHanko;
+          if (executor && settlementHanko !== undefined) return settleErr("SETTLEMENT_EXECUTOR_HANKO_FORBIDDEN");
+          if (!executor && !exactHanko(settlementHanko)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_MISSING");
+          if (!executor && settlementHanko !== undefined && !auth.verify(settlementHash, settlementHanko, source)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
+          const pinnedOwn = ctx.byLeft ? pinned?.leftHanko : pinned?.rightHanko, ownSettlement = ctx.byLeft ? w.leftHanko : w.rightHanko;
+          if (pinnedOwn !== undefined && pinnedOwn.toLowerCase() !== post.hanko.toLowerCase()) return settleErr("POST_SETTLEMENT_PROOF_EQUIVOCATION");
+          if (settlementHanko !== undefined && ownSettlement !== undefined && ownSettlement.toLowerCase() !== settlementHanko.toLowerCase()) return settleErr("SETTLEMENT_HANKO_EQUIVOCATION");
+          const proof: PostSettlementProof = { disputeHash, proofBodyHash: bodyHash, nonce: postNonce, proposerIsLeft: post.proposerIsLeft, leftHanko: ctx.byLeft ? post.hanko : pinned?.leftHanko, rightHanko: ctx.byLeft ? pinned?.rightHanko : post.hanko };
+          const leftHanko = ctx.byLeft && settlementHanko !== undefined ? settlementHanko : w.leftHanko, rightHanko = !ctx.byLeft && settlementHanko !== undefined ? settlementHanko : w.rightHanko;
+          const ready = (w.executorIsLeft ? rightHanko : leftHanko) !== undefined && proof.leftHanko !== undefined && proof.rightHanko !== undefined;
+          return ok(step({ ...a, settlement: { ...w, compiledDiffs: diffs, compiledForgiveTokenIds: forgive, nonceAtSign: nonce, settlementHash, postSettlementDisputeProof: proof, leftHanko, rightHanko, status: ready ? "ready_to_submit" : "awaiting_counterparty", lastUpdatedAt: Number(ctx.nowMs) } }));
+        });
+      });
+    }));
+  });
+};
+const unsignedWorkspace = (w: SettlementWorkspace): boolean => (w.status === "draft" || w.status === "awaiting_counterparty") && w.compiledDiffs === undefined && w.compiledForgiveTokenIds === undefined && !signedWorkspace(w) && w.nonceAtSign === undefined;
+const settleTransition = (a: AccountBody, x: TxOf<"settle_transition">, ctx: FoldCtx): BodyStep => {
+  if (x.kind === "upsert") return upsertWorkspace(a, x, ctx);
+  if (x.kind === "hanko") return hankoWorkspace(a, x, ctx);
+  return chain(currentWorkspace(a, x.revision, x.workspaceHash), (w): BodyStep => {
+    if (x.kind === "submit") {
+      if (w.status === "submitted") return settleErr("SETTLEMENT_WORKSPACE_ALREADY_SUBMITTED");
+      if (ctx.byLeft !== w.executorIsLeft) return settleErr("SETTLEMENT_SUBMIT_EXECUTOR_MISMATCH");
+      if ((ctx.byLeft ? w.rightHanko : w.leftHanko) === undefined) return settleErr("SETTLEMENT_SUBMIT_COUNTERPARTY_HANKO_MISSING");
+      if (w.status !== "ready_to_submit" || w.postSettlementDisputeProof?.leftHanko === undefined || w.postSettlementDisputeProof.rightHanko === undefined) return settleErr("SETTLEMENT_SUBMIT_POST_PROOF_INCOMPLETE");
+      return ok(step({ ...a, settlement: { ...w, status: "submitted", lastUpdatedAt: Number(ctx.nowMs) } }));
+    }
+    if (w.status === "submitted") return settleErr("SETTLEMENT_CLEAR_SUBMITTED_FORBIDDEN");
+    return unsignedWorkspace(w) ? ok(step({ ...a, settlement: undefined })) : settleErr("SETTLEMENT_CLEAR_SIGNED_FORBIDDEN");
+  });
+};
+/** og finality.ts activatePostSettlementProof, body side: an unsigned workspace clears; a signed one clears once its nonce is final, after its N+1 proof checks out. */
+const activateWorkspace = (b: AccountBody, finalizedNonce: number): Result<AccountBody, BodyError> => {
+  const w = b.settlement;
+  if (w === undefined) return ok(b);
+  if (!signedWorkspace(w)) return ok({ ...b, settlement: undefined });
+  const signed = w.nonceAtSign;
+  if (signed === undefined || !Number.isSafeInteger(signed) || signed < 1) return settleErr("SETTLEMENT_SIGNED_NONCE_MISSING");
+  if (finalizedNonce < signed) return ok(b);
+  if (finalizedNonce > signed) return ok({ ...b, settlement: undefined });
+  const p = w.postSettlementDisputeProof;
+  if (p === undefined) return settleErr("POST_SETTLEMENT_PROOF_MISSING");
+  if (p.nonce !== signed + 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_MISMATCH");
+  if (p.leftHanko === undefined || p.rightHanko === undefined || p.leftHanko === "" || p.rightHanko === "") return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
+  if (p.disputeHash === "" || p.proofBodyHash === "") return settleErr("POST_SETTLEMENT_DISPUTE_HASH_MISSING");
+  return chain(projectedProofHash(b, [], []), (h) => h.toLowerCase() !== p.proofBodyHash.toLowerCase() ? settleErr("POST_SETTLEMENT_FINALIZED_PROOF_BODY_MISMATCH") : ok({ ...b, settlement: undefined }));
+};
 type Arms = { readonly [K in AccountTx["type"]]: (tx: WireTxOf<K>) => BodyStep<EffectOf<K>> };
 const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Effect> => matchBy<"type", WireAccountTx, BodyStep<Effect>>("type", tx, {
 
@@ -1314,7 +1530,7 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
   cross_pull_lock: () => err({ _tag: "unchosen", hole: "cross_open" }),
   cross_pull_close: () => err({ _tag: "unchosen", hole: "cross_open" }),
   j_event_claim: (x) => claimJ(a, x, ctx),
-  settle_transition: (x) => ok(step({ ...a, settlement: { revision: x.revision, workspaceHash: x.workspaceHash, settlementHash: x.settlementHash.toLowerCase() } })),
+  settle_transition: (x) => settleTransition(a, x, ctx),
 } satisfies Arms);
 const one = (x: { readonly tokenId: TokenId }): readonly string[] => [x.tokenId], none = (): readonly string[] => [];
 const namedTokens = (tx: WireAccountTx): readonly string[] => matchBy("type", tx, {
@@ -1326,6 +1542,8 @@ const namedTokens = (tx: WireAccountTx): readonly string[] => matchBy("type", tx
 const commits = (before: AccountBody, tx: WireAccountTx, next: AccountStep): BodyStep<Effect> =>
   chain(mapErr(prepareStep(before, next.state), uncommitted), () => map(mapErr(isL0Tx(tx) ? ok(undefined) : txRefusal(wireOf(tx)), uncommitted), () => next));
 export const applyAccountBody: Layer<AccountBody, WireAccountTx, FoldCtx, Effect, BodyError> = (a, tx, ctx) => {
+  const frozen = settlementFreeze(a, tx);
+  if (!frozen.ok) return frozen;
   const unfit = namedTokens(tx).find((n) => !tokenId(n).ok);
   if (unfit !== undefined) return err({ _tag: "token_id", tokenId: unfit });
   return chain(authorized(tx, a.hub, ctx.byLeft), () => chain(applyArm(a, tx, ctx), (next) => (next.state.account.deltas.size > MAX_ROWS ? err({ _tag: "too_many_rows" }) : commits(a, tx, next))));
@@ -1389,6 +1607,12 @@ const totalsOn = (b: AccountBody, counted: (id: TokenId) => boolean): ReadonlyMa
   const holdOn = (id: TokenId, onLeft: boolean, n: bigint): void => { const s = on(id); if (onLeft) s.leftHold += n; else s.rightHold += n; };
   for (const l of b.locks.values()) if (counted(l.tokenId)) holdOn(l.tokenId, l.senderIsLeft, l.amount);
   for (const o of b.offers.values()) if (counted(o.giveTokenId)) holdOn(o.giveTokenId, o.makerIsLeft, o.giveAmount);
+  if (b.settlement !== undefined && b.settlement.status !== "submitted") for (const d of workspaceDiffs(b.settlement)) {
+    const id = String(d.tokenId) as TokenId;
+    if (!counted(id)) continue;
+    if (d.leftDiff < 0n) holdOn(id, true, -d.leftDiff);
+    if (d.rightDiff < 0n) holdOn(id, false, -d.rightDiff);
+  }
   let order: readonly TokenId[] | undefined;
   for (const s of b.clauses.values()) for (const r of heldClause(s)?.allowances ?? []) {
     order ??= tokenOrder(b);
@@ -1419,13 +1643,12 @@ const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
     for (const [tk, amount] of b.custody) hubRows.set(`custody:${tk}`, amount);
     b.debits.forEach((debit, i) => hubRows.set(`debit:${i}`, debit));
     if (b.hub !== null) hubRows.set("hub", b.hub);
-    if (b.settlement !== undefined) hubRows.set("settlement", b.settlement.settlementHash);
     return ok({
       domain: terms.domain, leftEntity: b.account.id.left, rightEntity: b.account.id.right, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig,
       jNonce: b.jNonce, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
       deltas: committedDeltas(b), locks: b.locks, pulls: new Map(), swapOffers: b.offers, subcontracts: new Map([...b.clauses].map(([id, s]) => [id, clauseRow(id, s)])), lendingIntents: hubRows,
       requestedRebalance: byToken(b.request === undefined ? [] : [[b.request.tokenId, b.request.targetAmount] as const]),
-      requestedRebalanceFeeState: byToken(b.quote === undefined ? [] : [[b.quote.tokenId, b.quote] as const]), rebalanceFeePolicies: byToken(b.policy),
+      requestedRebalanceFeeState: byToken(b.quote === undefined ? [] : [[b.quote.tokenId, b.quote] as const]), rebalanceFeePolicies: byToken(b.policy), settlementWorkspace: b.settlement,
     });
   }));
 };

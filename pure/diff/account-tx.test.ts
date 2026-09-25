@@ -9,7 +9,9 @@ import { handleHtlcResolve } from "../../core/account/tx/handlers/htlc/resolve.t
 import { handleSwapCancelRequest } from "../../core/account/tx/handlers/swap/lifecycle/cancel.ts";
 import { handleSwapResolve } from "../../core/account/tx/handlers/swap/resolve/index.ts";
 import { validateSwapOfferAdmission } from "../../core/account/tx/handlers/swap/offer/admission.ts";
-import { handleSettleTransition } from "../../core/account/tx/handlers/settlement/transition.ts";
+import { handleSettleTransition, getSignedSettlementWorkspaceTxError } from "../../core/account/tx/handlers/settlement/transition.ts";
+import { beginAccountTransition, accountTransitionView, commitAccountTransition, discardAccountTransition } from "../../core/account/state/candidate-overlay.ts";
+import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import { hashHtlcSecret } from "../../core/protocol/htlc/utils.ts";
 import { createDefaultDelta } from "../../core/account/state/delta.ts";
 import { handleJEventClaim } from "../../core/account/tx/handlers/j-events/claim.ts";
@@ -360,18 +362,172 @@ describe("account-tx: swap", () => {
 
 // ---------- settlement / j-events ----------
 describe("account-tx: settlement + j_event_claim", () => {
-  test("DIVERGES: settle_transition(hanko) with no workspace — og rejects, rewrite accepts and commits settlementHash", async () => {
-    const tx = {
-      type: "settle_transition",
-      data: { kind: "hanko", revision: 1, workspaceHash: word("61"), settlementNonce: 2, settlementHash: word("62"), settlementHanko: "0x01", postProof: { nonce: 3, proposerIsLeft: true, proofBodyHash: word("63"), disputeHash: word("64"), hanko: "0x02" } },
-    } as any;
-    const r = await handleSettleTransition(ogAccount(ogState()), tx, true, 1, {} as any);
-    expect(r.ok).toBe(false);
+  const PA = (ns: string, m: ReadonlyMap<any, any> = new Map()) => PersistentAccountStateMap.fromEntries(ns as any, m);
+  /** og side: a persistent og replica seeded from the rewrite's committed view, driven through the real transition overlay. */
+  const ogSettleHarness = (body: AccountBody) => {
+    const v: any = unwrap(committed(body) as any).view;
+    const state: any = { domain: v.domain, leftEntity: v.leftEntity, rightEntity: v.rightEntity, watchSeed: v.watchSeed, disputeConfig: v.disputeConfig, jNonce: v.jNonce, lastFinalizedJHeight: v.lastFinalizedJHeight,
+      leftPendingJClaims: v.leftPendingJClaims, rightPendingJClaims: v.rightPendingJClaims,
+      ...Object.fromEntries(["deltas", "locks", "pulls", "swapOffers", "subcontracts", "lendingIntents", "requestedRebalance", "requestedRebalanceFeeState", "rebalanceFeePolicies"].map((n) => [n, PA(n, v[n])])) };
+    let replica: any = { state, status: "active", currentHeight: 1, proofHeader: { fromEntity: A, toEntity: B, nextProofNonce: 1 }, currentFrame: { stateHash: "" }, pendingWithdrawals: PA("pendingWithdrawals"),
+      shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted") } }, mempool: [] };
+    const run = async (tx: any, byLeft: boolean, ts: number, context: any = {}): Promise<{ ok: boolean; root?: string; error?: string }> => {
+      const overlay = beginAccountTransition(replica);
+      const r: any = await handleSettleTransition(accountTransitionView(overlay), tx, byLeft, ts, context);
+      if (!r.ok) { discardAccountTransition(overlay); return { ok: false, error: r.rejection?.message }; }
+      const c = commitAccountTransition(overlay, "diff");
+      replica = c.account;
+      return { ok: true, root: c.accountStateRoot };
+    };
+    return { run, workspace: () => replica.state.settlementWorkspace, replica: () => replica };
+  };
+  type Step = { tx: any; byLeft: boolean; ts: number };
+  /** Runs the same settle_transition sequence through og and the rewrite; accept/reject and the full Account root must agree at every step. */
+  const lockstep = async (steps: readonly Step[], start = open().body): Promise<{ body: AccountBody; og: ReturnType<typeof ogSettleHarness>; accepted: number }> => {
+    const og = ogSettleHarness(start);
+    let body = start, accepted = 0;
+    for (const { tx, byLeft, ts } of steps) {
+      const o = await og.run(tx, byLeft, ts);
+      const r = apply(body, { type: "settle_transition", ...tx.data }, { byLeft, nowMs: BigInt(ts), jHeight: 0n, accountHeight: 1n });
+      if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${JSON.stringify(r.ok ? "ok" : r.error)} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
+      if (r.ok) {
+        body = r.value.state;
+        accepted++;
+        expect(unwrap(committed(body) as any).root).toBe(o.root);
+        expect(body.settlement?.workspaceHash).toBe(og.workspace()?.workspaceHash);
+      }
+    }
+    return { body, og, accepted };
+  };
+  const upsert = (revision: number, ops: any[], executorIsLeft = true, previousWorkspaceHash?: string, memo?: string) =>
+    ({ type: "settle_transition", data: { kind: "upsert", revision, ops, executorIsLeft, ...(previousWorkspaceHash !== undefined ? { previousWorkspaceHash } : {}), ...(memo !== undefined ? { memo } : {}) } });
+  const target = (kind: "submit" | "clear", revision: number, workspaceHash: string) => ({ type: "settle_transition", data: { kind, revision, workspaceHash } });
+
+  test("MATCH: hanko/submit/clear with no workspace are refused by both (SETTLEMENT_WORKSPACE_MISSING)", async () => {
+    const hanko = { type: "settle_transition", data: { kind: "hanko", revision: 1, workspaceHash: word("61"), settlementNonce: 2, settlementHash: word("62"), settlementHanko: "0x01", postProof: { nonce: 3, proposerIsLeft: true, proofBodyHash: word("63"), disputeHash: word("64"), hanko: "0x02" } } };
+    const r = await handleSettleTransition(ogAccount(ogState()), hanko as any, true, 1, {} as any);
     expect(JSON.stringify((r as any).rejection)).toContain("SETTLEMENT_WORKSPACE_MISSING");
+    const { body } = open();
+    expect(apply(body, { type: "settle_transition", ...hanko.data }, { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n, settlement: { verify: () => true, proofNonceFloor: 1 } })).toMatchObject({ ok: false, error: { reason: "SETTLEMENT_WORKSPACE_MISSING" } });
+    const { accepted } = await lockstep([{ tx: target("submit", 1, word("61")), byLeft: true, ts: 1 }, { tx: target("clear", 1, word("61")), byLeft: false, ts: 1 }]);
+    expect(accepted).toBe(0);
+  });
+
+  test("MATCH (H5): upsert commits the workspace (hash, holds) into the og Account root; revision chain, previous hash, clear and capacity agree", async () => {
+    const ops = [{ type: "r2c", tokenId: 1, amount: 5n }, { type: "c2r", tokenId: 0, amount: 2n }];
+    const first = await lockstep([{ tx: upsert(1, ops, true, undefined, "m"), byLeft: true, ts: 7 }]);
+    expect(first.accepted).toBe(1);
+    const h1 = first.og.workspace().workspaceHash;
+    expect(holds(first.body, "1" as any, true)).toBe(5n);
+    const { body, accepted } = await lockstep([
+      { tx: upsert(1, ops, true, undefined, "m"), byLeft: true, ts: 7 },
+      { tx: upsert(1, ops), byLeft: false, ts: 8 }, // already exists
+      { tx: upsert(3, ops, false, h1), byLeft: false, ts: 8 }, // non-contiguous
+      { tx: upsert(2, ops, false, word("99")), byLeft: false, ts: 8 }, // previous hash mismatch
+      { tx: upsert(2, ops, false), byLeft: false, ts: 8 }, // previous hash missing
+      { tx: upsert(2, [{ type: "r2r", tokenId: 1, amount: 21n }], false, h1), byLeft: false, ts: 8 }, // beyond capacity
+      { tx: upsert(2, [{ type: "r2r", tokenId: 1, amount: 20n }], false, h1), byLeft: false, ts: 9 }, // exactly capacity after the old hold is released
+      { tx: target("submit", 2, word("00")), byLeft: false, ts: 9 },
+      { tx: target("clear", 1, h1), byLeft: false, ts: 9 }, // stale revision
+    ]);
+    expect(accepted).toBe(2);
+    expect(holds(body, "1" as any, false)).toBe(20n);
+    const cleared = await lockstep([{ tx: upsert(1, ops, true, undefined, "m"), byLeft: true, ts: 7 }, { tx: target("clear", 1, h1), byLeft: false, ts: 9 }, { tx: upsert(1, [{ type: "forgive", tokenId: 3 }]), byLeft: true, ts: 10 }]);
+    expect(cleared.accepted).toBe(3);
+    expect(holds(cleared.body, "1" as any, true)).toBe(0n);
+  });
+
+  test("MATCH: malformed ops (empty, zero amount, bad token, duplicate forgive, non-conserving rawDiff, >32 diffs, missing row hold) are refused by both", async () => {
+    const bad: any[][] = [[], [{ type: "r2c", tokenId: 1, amount: 0n }], [{ type: "r2c", tokenId: 70000, amount: 1n }], [{ type: "forgive", tokenId: 1 }, { type: "forgive", tokenId: 1 }],
+      [{ type: "rawDiff", tokenId: 1, leftDiff: 1n, rightDiff: 0n, collateralDiff: 0n, ondeltaDiff: 0n }], Array.from({ length: 33 }, (_, i) => ({ type: "r2r", tokenId: 100 + i, amount: 1n })),
+      [{ type: "r2r", tokenId: 9, amount: 1n }], [{ type: "swap", tokenId: 1, amount: 1n }]];
+    for (const ops of bad) expect((await lockstep([{ tx: upsert(1, ops), byLeft: true, ts: 1 }])).accepted).toBe(0);
+    expect((await lockstep([{ tx: upsert(1, [{ type: "c2r", tokenId: 9, amount: 1n }, { type: "rawDiff", tokenId: 1, leftDiff: 0n, rightDiff: 0n, collateralDiff: 0n, ondeltaDiff: 3n }]), byLeft: true, ts: 1 }])).accepted).toBe(1);
+  });
+
+  test("MATCH: 60 random settle_transition sequences (upsert/clear/submit, both sides, random ops) keep og and rewrite roots equal", async () => {
+    const op = (): any => {
+      const tokenId = pick3([0, 1, 2]), kind = pick3(["r2c", "c2r", "r2r", "forgive", "rawDiff"]);
+      if (kind === "forgive") return { type: kind, tokenId };
+      if (kind === "rawDiff") { const x = BigInt(ri(9)) - 4n, y = BigInt(ri(9)) - 4n; return { type: kind, tokenId, leftDiff: x, rightDiff: y, collateralDiff: -x - y, ondeltaDiff: BigInt(ri(5)) - 2n }; }
+      return { type: kind, tokenId, amount: BigInt(ri(24)) };
+    };
+    for (let n = 0; n < 60; n++) {
+      const og = ogSettleHarness(open().body);
+      let body = open().body;
+      for (let i = 0; i < 8; i++) {
+        const cur = og.workspace(), kind = pick3(["upsert", "upsert", "clear", "submit"]), byLeft = ri(2) === 0, ts = 1 + i;
+        const revision = (cur?.revision ?? 0) + (ri(5) === 0 ? ri(3) - 1 : 1);
+        const tx = kind === "upsert"
+          ? upsert(revision, Array.from({ length: 1 + ri(3) }, op), ri(2) === 0, revision > 1 ? (ri(6) === 0 ? word("77") : cur?.workspaceHash) : undefined, ri(3) === 0 ? "memo" : undefined)
+          : target(kind, cur?.revision ?? 1, ri(6) === 0 ? word("78") : cur?.workspaceHash ?? word("79"));
+        const o = await og.run(tx, byLeft, ts);
+        const r = apply(body, { type: "settle_transition", ...tx.data }, { byLeft, nowMs: BigInt(ts), jHeight: 0n, accountHeight: 1n });
+        expect(r.ok).toBe(o.ok);
+        if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
+      }
+    }
+  });
+
+  test("MATCH (conditional on H1/H2 proof hashes): hanko attach — og-derived settlement/proof/dispute hashes are accepted by both and give equal roots, ready_to_submit, submit", async () => {
+    const ogCtx: any = { jReplicas: jurisdictions.jReplicas, resolveSettlementBoardAuthority: async () => undefined, verifyHanko: async (_h: string, _m: string, entityId: string) => ({ valid: true, entityId }) };
+    const rwCtx = (byLeft: boolean): FoldCtx => ({ byLeft, nowMs: 5n, jHeight: 0n, accountHeight: 1n, settlement: { verify: () => true, proofNonceFloor: 1 } });
+    const ops = [{ type: "r2c", tokenId: 1, amount: 5n }];
+    const og = ogSettleHarness(open().body);
+    expect((await og.run(upsert(1, ops, true), true, 1)).ok).toBe(true);
+    let body = unwrap(apply(open().body, { type: "settle_transition", ...upsert(1, ops, true).data }, { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n })).state;
+    const hash = og.workspace().workspaceHash;
+    // og reports the expected values in its rejection: learn them one check at a time.
+    const draft = { settlementNonce: 1, settlementHash: word("00"), postProof: { nonce: 2, proposerIsLeft: true, proofBodyHash: word("00"), disputeHash: word("00"), hanko: "0x01" } };
+    const probe = async (byLeft: boolean, settlementHanko: string | undefined) => {
+      const tx: any = { type: "settle_transition", data: { kind: "hanko", revision: 1, workspaceHash: hash, ...draft, postProof: { ...draft.postProof }, ...(settlementHanko ? { settlementHanko } : {}) } };
+      for (let i = 0; i < 4; i++) {
+        const overlay = beginAccountTransition((og as any).replica());
+        const r: any = await handleSettleTransition(accountTransitionView(overlay), tx, byLeft, 5, ogCtx);
+        discardAccountTransition(overlay);
+        const m = /(SETTLEMENT_HANKO_HASH_MISMATCH|POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH|POST_SETTLEMENT_DISPUTE_HASH_MISMATCH):0x[0-9a-f]+:(0x[0-9a-fA-F]+)/.exec(r.rejection?.message ?? "");
+        if (m === null) break;
+        if (m[1] === "SETTLEMENT_HANKO_HASH_MISMATCH") tx.data.settlementHash = m[2]; else if (m[1] === "POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH") tx.data.postProof.proofBodyHash = m[2]; else tx.data.postProof.disputeHash = m[2];
+      }
+      draft.settlementHash = tx.data.settlementHash; draft.postProof = tx.data.postProof;
+      return tx;
+    };
+    const sides: [boolean, string | undefined][] = [[false, "0xbb"], [true, undefined]];
+    // Until H2 (SignedAmount settlement diffs) lands, the rewrite settlement digest differs and it refuses with a hash mismatch; after it lands the full lockstep below runs.
+    let rewriteAgrees = true;
+    for (const [byLeft, settlementHanko] of sides) {
+      const tx = await probe(byLeft, settlementHanko);
+      if (byLeft) tx.data.postProof.hanko = "0x02";
+      const o = await og.run(tx, byLeft, 5, ogCtx);
+      expect(o.error ?? "ok").toBe("ok");
+      const r = apply(body, { type: "settle_transition", ...tx.data }, rwCtx(byLeft));
+      if (!r.ok) { rewriteAgrees = false; expect(JSON.stringify(r.error)).toMatch(/POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH|POST_SETTLEMENT_DISPUTE_HASH_MISMATCH|SETTLEMENT_HANKO_HASH_MISMATCH/); break; }
+      body = r.value.state;
+      expect(unwrap(committed(body) as any).root).toBe(o.root);
+    }
+    if (rewriteAgrees) {
+      expect(body.settlement?.status).toBe("ready_to_submit");
+      const upd = await og.run(upsert(2, ops, true, hash), true, 6, ogCtx);
+      expect(upd.ok).toBe(false);
+      expect(apply(body, { type: "settle_transition", ...upsert(2, ops, true, hash).data }, rwCtx(true)).ok).toBe(false);
+      const sub = await og.run(target("submit", 1, hash), true, 7, ogCtx);
+      const r = apply(body, { type: "settle_transition", ...target("submit", 1, hash).data }, rwCtx(true));
+      expect(sub.ok).toBe(true);
+      expect(unwrap(committed(unwrap(r).state) as any).root).toBe(sub.root);
+    }
+  });
+
+  test("MATCH: a signed workspace freezes every tx but j_event_claim and settle hanko/submit in both", () => {
     const { body, ctx } = open();
-    const applied = apply(body, { type: "settle_transition", ...tx.data }, ctx);
-    expect(applied.ok).toBe(true);
-    expect((applied as any).value.state.settlement.settlementHash).toBe(word("62"));
+    const signed: any = { workspaceHash: word("61"), ops: [{ type: "r2r", tokenId: 1, amount: 1n }], lastModifiedByLeft: true, status: "awaiting_counterparty", revision: 1, createdAt: 1, lastUpdatedAt: 1, executorIsLeft: true, settlementHash: word("62"), nonceAtSign: 1 };
+    const account: any = { state: { settlementWorkspace: signed } };
+    const txs: any[] = [{ type: "direct_payment", data: {} }, { type: "set_credit_limit", data: {} }, { type: "j_event_claim", data: {} }, { type: "settle_transition", data: { kind: "hanko" } }, { type: "settle_transition", data: { kind: "submit" } }, { type: "settle_transition", data: { kind: "clear" } }, { type: "settle_transition", data: { kind: "upsert" } }];
+    const rwTxs: any[] = [{ type: "direct_payment", tokenId: "0", amount: 1n, route: [] }, { type: "set_credit_limit", tokenId: "0", limit: 1n }, undefined, undefined, undefined, { type: "settle_transition", kind: "clear", revision: 1, workspaceHash: word("61") }, { type: "settle_transition", kind: "upsert", revision: 2, ops: [], executorIsLeft: true }];
+    txs.forEach((tx, i) => {
+      const frozen = getSignedSettlementWorkspaceTxError(account, tx) !== undefined;
+      expect(frozen).toBe(!["j_event_claim", "hanko", "submit"].includes(tx.data.kind ?? tx.type));
+      if (rwTxs[i] !== undefined) expect(apply({ ...body, settlement: signed }, rwTxs[i], ctx)).toMatchObject({ ok: false, error: { _tag: "settlement_frozen" } });
+    });
   });
 
   const DEP = `0x${"ab".repeat(20)}`;
