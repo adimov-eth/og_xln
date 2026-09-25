@@ -986,7 +986,9 @@ export type BodyError =
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
 export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
-export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }>;
+export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }>
+  /** og directPaymentForward: the trusted gateway's one committed forward of an incoming first leg to the final recipient. */
+  | Tagged<"payment_forward", { tokenId: TokenId; amount: bigint; route: readonly string[]; description?: string | undefined; trustedGatewayEntityId: string }>;
 const MAX_ROWS = 128;
 export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly encryptedPackage?: string | undefined };
 /** og types/account.ts SwapOffer (same-jurisdiction): quantized amounts, canonical price and the maker's signed fee authority. */
@@ -1078,7 +1080,7 @@ type Author = "bilateral" | "unchosen";
 export type KindRow = { readonly author: Author; readonly l0: boolean; readonly repeatable: boolean; readonly effects: readonly Effect["_tag"][] };
 const kind = <R extends KindRow>(author: Author, l0: boolean, repeatable: boolean, effects: readonly Effect["_tag"][] = []): R => ({ author, l0, repeatable, effects }) as R;
 export const AccountKinds = {
-  add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true),
+  add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true, ["payment_forward"]),
   htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret"]),
   swap_offer: kind("bilateral", false, false), swap_cancel_request: kind("bilateral", false, false), swap_resolve: kind("bilateral", false, false),
   settle_transition: kind("bilateral", false, false),
@@ -1089,7 +1091,7 @@ export const AccountKinds = {
   j_event_claim: kind("bilateral", false, false),
 } as const satisfies Kinds<AccountTx["type"], KindRow>;
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
-export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret"> : never;
+export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret"> : K extends "payment" ? Of<Effect, "payment_forward"> : never;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
 export const genesisAccountBody = (account: AccountState, terms: AccountTerms): AccountBody => ({ account, terms, locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), finalizedJHeight: 0n, jNonce: 0 });
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
@@ -1666,12 +1668,16 @@ const paymentRoute = (a: AccountBody, x: TxOf<"payment">, byLeft: boolean): Resu
   const final = String(route[1] || "").toLowerCase();
   return to === g && route.length === 2 && is(route[0], to) && final !== "" && final !== g && final !== from ? ok(undefined) : bad("TRUSTED_ROUTE");
 };
+/** og buildPaymentForward: a validated trusted first leg (route [gateway, final]) is forwarded by the gateway once committed; the owning Entity acts only when it is route[0]. */
+const paymentForward = (x: TxOf<"payment">): readonly Of<Effect, "payment_forward">[] =>
+  x.deliveryMode === "trusted" && x.trustedGatewayEntityId !== undefined && x.route !== undefined && x.route.length > 1
+    ? [{ _tag: "payment_forward", tokenId: x.tokenId, amount: x.amount, route: [...x.route], ...opt("description", x.description === "" ? undefined : x.description), trustedGatewayEntityId: x.trustedGatewayEntityId }] : [];
 type Arms = { readonly [K in AccountTx["type"]]: (tx: WireTxOf<K>) => BodyStep<EffectOf<K>> };
 const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Effect> => matchBy<"type", WireAccountTx, BodyStep<Effect>>("type", tx, {
 
   add_delta: (x) => ok(step(a.account.deltas.has(x.tokenId) ? a : putState(a, setDelta(a.account, zeroDelta(x.tokenId))))),
   set_credit_limit: (x) => map(updateDelta(a.account, x.tokenId, (d) => setCreditLimit(d, x.limit, ctx.byLeft)), (s) => step(putState(a, s))),
-  payment: (x) => chain(paymentRoute(a, x, ctx.byLeft), () => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b))),
+  payment: (x) => chain(paymentRoute(a, x, ctx.byLeft), () => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step(b, paymentForward(x)))),
   htlc_lock: (x) => {
     // og handlers/htlc/lock.ts:32-52,71-81,95-116 in order: identity, expiry, amount, 32-lock cap, capacity, int512 range, uint256 hold.
     if (x.lockId !== x.hashlock) return err({ _tag: "lock_id" });
@@ -3242,8 +3248,19 @@ const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accou
 const putChild = (state: EntityState, replicas: Replicas, peer: EntityId, child: AccountReplica): Folded => ({ state: { ...state, accounts: mapSet(state.accounts, peer, child.state.account) }, accountReplicas: mapSet(replicas, peer, child) });
 const withChild = (replicas: Replicas, target: EntityId, f: (child: AccountReplica) => Result<Draft, EntityError>): Result<Draft, EntityError> => { const child = replicas.get(target); return child === undefined ? err({ _tag: "no_such_account", target }) : f(child); };
 const routed = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Draft, EntityError> => chain(applied, (a) =>
-  map(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: () => err({ _tag: "not_l0" }), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
-    (messages) => ({ ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((data): EntityOutput => ({ to: target, tx: { type: "accountInput", data } })) })));
+  chain(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: (e) => (e.effect._tag === "payment_forward" ? ok([]) : err({ _tag: "not_l0" })), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
+    (messages) => {
+      const base: Draft = { ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((data): EntityOutput => ({ to: target, tx: { type: "accountInput", data } })) };
+      const forwards = a.outputs.flatMap((o) => (o.kind === "effect" && o.effect._tag === "payment_forward" && sameHex(o.effect.route[0], state.id) ? [o.effect] : []));
+      return foldResult<Draft, Of<Effect, "payment_forward">, EntityError>(forwards, base, forwardPayment);
+    }));
+/** og applyDirectPaymentForwardFollowups: the gateway queues the next leg on its Account with route[1] (a missing Account refuses the input). */
+const forwardPayment = (d: Draft, f: Of<Effect, "payment_forward">): Result<Draft, EntityError> => {
+  const self = d.state.id, next = f.route[1] as EntityId | undefined, child = next === undefined ? undefined : d.accountReplicas.get(next);
+  if (next === undefined || child === undefined) return err({ _tag: "no_such_account", target: (next ?? "") as EntityId });
+  const leg: AccountTx = { type: "payment", tokenId: f.tokenId, amount: f.amount, route: f.route.slice(1), description: f.description || "Forwarded payment", fromEntityId: self, toEntityId: next, deliveryMode: "trusted", trustedGatewayEntityId: f.trustedGatewayEntityId };
+  return map(admitAt(child, [leg], self, L0_CLOCK), (admitted) => ({ ...putChild(d.state, d.accountReplicas, next, admitted), outputs: d.outputs }));
+};
 const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
 /** og DEFAULT_ACCOUNT_TOKEN_IDS (account/config/defaults.ts). */
 const DEFAULT_ACCOUNT_TOKEN_IDS = ["1", "3", "2"] as const;
@@ -3394,11 +3411,16 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     openAccount: (x) => openChild(state, replicas, x),
     extendCredit: (x) => (replicas.has(x.data.counterpartyEntityId) ? enqueue(x.data.counterpartyEntityId, [{ type: "set_credit_limit", tokenId: x.data.tokenId, limit: x.data.amount }], [wake(state, ctx.timestamp)]) : ok(skip)),
     directPayment: (x) => {
-      const { route, targetEntityId, amount, deliveryMode, trustedGatewayEntityId, tokenId } = x.data;
+      const { route, targetEntityId, amount, deliveryMode, trustedGatewayEntityId, tokenId, description } = x.data;
       if (route.length === 0 || route.length > 100 || route[0] !== state.id || route[route.length - 1] !== targetEntityId) return err({ _tag: "payment_route" });
+      if (deliveryMode !== "direct" && deliveryMode !== "trusted") return err({ _tag: "payment_route" });
       if (amount < 1n || amount > UINT256_MAX) return ok(skip);
-      if (deliveryMode !== "direct" || trustedGatewayEntityId !== undefined || route.length !== 2) return err({ _tag: "payment_route" });
-      return replicas.has(targetEntityId) ? enqueue(targetEntityId, [{ type: "payment", tokenId, amount }], [wake(state, ctx.timestamp)]) : err({ _tag: "no_such_account", target: targetEntityId });
+      // og requireTrustedPaymentGateway: exactly [source, gateway, target] with the declared gateway distinct from both ends
+      if (deliveryMode === "trusted" ? route.length !== 3 || route[1] !== trustedGatewayEntityId || route[1] === route[0] || route[1] === targetEntityId : trustedGatewayEntityId !== undefined || route.length !== 2) return err({ _tag: "payment_route" });
+      const next = route[1] as EntityId;
+      // og buildNextHopPayment: the first leg carries the remaining route, the default description and the delivery mode
+      const leg: AccountTx = { type: "payment", tokenId, amount, route: route.slice(1), description: description || `Payment to ${targetEntityId}`, fromEntityId: state.id, toEntityId: next, deliveryMode, ...opt("trustedGatewayEntityId", trustedGatewayEntityId) };
+      return replicas.has(next) ? enqueue(next, [leg], [wake(state, ctx.timestamp)]) : err({ _tag: "no_such_account", target: next });
     },
     // og system/basic.ts: chat messages live in the frame-local message log, which the state root does not commit (an invalid chat message is a silent no-op)
     chat: () => ok(skip),
@@ -3442,7 +3464,9 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
     return tx.type === "openAccount" ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
-    const order = [...new Set([...primed, ...folded.included.map((tx) => peerOf(tx, state.id))])];
+    // Accounts that received follow-up work (a gateway's forwarded leg) join after the directly touched ones.
+    const followups = [...folded.draft.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
+    const order = [...new Set([...primed, ...folded.included.map((tx) => peerOf(tx, state.id)), ...followups])];
     return ok({ ...folded, draft: proposeAccounts(folded.draft, order, ctx).draft });
   });
 };
@@ -3938,7 +3962,7 @@ export const hostRoot = (h: Host): HostRoot => keccakUtf8(canon({ account: accou
 export const hashFrame = (record: RuntimeFrameRecord): RuntimeFrameHash => keccakUtf8(canon(record)) as RuntimeFrameHash;
 const foldStamped = strictFold<Host, Stamped, Verify, HostEffect, AccountReplicaError | HostError>((h, stamped, verify) => applyHost(h, stamped.tx, stamped.ctx, verify));
 const outputId = (height: bigint, ordinal: number, effect: HostEffect): Hash => keccakUtf8(canon({ height, ordinal, effect }));
-const messageOf = (e: HostEffect): AccountPeerInput | null => match(e, { send: (x) => x.message, forward_secret: () => null, start_dispute: () => null });
+const messageOf = (e: HostEffect): AccountPeerInput | null => match(e, { send: (x) => x.message, forward_secret: () => null, payment_forward: () => null, start_dispute: () => null });
 /** An ACK already riding on an ack_frame in the same batch is not sent again on its own. */
 const carriedOnce = (effects: readonly HostEffect[]): readonly HostEffect[] => {
   const carried = new Set(effects.flatMap((e) => { const m = messageOf(e); return m === null ? [] : matchBy("kind", m, { ack: () => [], ack_frame: (f) => (f.ack === null ? [] : [canon(f.ack)]), dispute: () => [], board_hanko_refresh: () => [] }); }));

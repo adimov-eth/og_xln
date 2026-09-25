@@ -7,11 +7,13 @@ import { buildEntityFrameAuthority, computeEntityFrameAuthorityRoot } from "../.
 import {
   address, admit, applyAccountInput, certifiedBy, tokenId, type AccountReplica, type BoardRefresh, type BoardRefreshRefusal, type CertifiedBoard, type DoorContext, type EntityId, type HankoAuthority, type ProposedAccount, type Verify,
   entityId, applyEntityInput, buildLeaderCertificate, quorumHanko, type Hash, createEntity, hashEntityFrame, hashLeaderVote, leaderOrder, leaderStateOf, leaderTimeoutMs, leaderVoteBody, localTimeoutVote, nextFailoverLeader,
+  applyRuntime, convertOutput, createRuntime, isLeft, replicaId, replicaKey, spawn, wireTx, type Runtime, type RuntimeInput,
   type Address, type EntityFrame, type EntityFrameHash, type EntityInput, type EntityOutput, type EntityReplica, type EntityState, type EntityTx, type LeaderCertificate, type LeaderState, type LeaderVote,
 } from "../xln.ts";
-import { ALICE, BOB, NOW, TERMS, ackInput, aliceAddr, bobAddr, carolAddr, crypto, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, ackInput, aliceAddr, bobAddr, carolAddr, crypto, envelopeAB, genesisAB, hankoVerify, offerOf, partyIn, proposeInput, unwrap, verifiers } from "../xln_run.ts";
 import { handleBoardHankoRefresh } from "../../core/account/consensus/incoming/board-hanko-refresh.ts";
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
+import { handleDirectPaymentEntityTx } from "../../core/entity/tx/handlers/payments/direct-payment.ts";
 import { handleProfileUpdateEntityTx } from "../../core/entity/tx/handlers/system/basic.ts";
 import { handleRequestCollateralEntityTx } from "../../core/entity/tx/handlers/account/lifecycle/admin.ts";
 import { buildQuorumHanko, getEntityConfigBoardHash } from "../../core/hanko/signing.ts";
@@ -294,5 +296,57 @@ describe("entity-consensus-2: entity txs chat, chatMessage, requestCollateral, p
     const f = held.frame;
     const ogTxs = [...list.map((t) => ({ type: t.type, data: t.data })), { type: "requestCollateral", data: { counterpartyEntityId: BOB, tokenId: 1, amount: 5n, feeTokenId: 2, feeAmount: 1n, policyVersion: 1 } }];
     expect(unwrap(hashEntityFrame(f))).toBe(createEntityFrameHashFromStateRoot("genesis", 1, Number(NOW), ogTxs as never, [], ENTITY, f.stateRoot, f.authorityRoot, f.entityContext as never));
+  });
+});
+
+describe("entity-consensus-2: trusted gateway payments (ER-15)", () => {
+  // three single-signer Entities on one runtime; every output is delivered until the network is quiet
+  const party = (id: EntityId, signer: Address) => unwrap(createEntity({ id, jurisdiction: JUR, threshold: 1n, members: new Map([[signer, { shares: 1n }]]) }));
+  const signers = new Map<EntityId, Address>([[ALICE, A], [BOB, B], [CAROL, C]]);
+  const quiet = (start: Runtime, first: RuntimeInput[]): Runtime => {
+    let rt = start, clock = NOW;
+    const queue = [...first];
+    for (let n = 0; queue.length > 0; n++) {
+      if (n > 200) throw new Error("no quiescence");
+      const input = queue.shift() as RuntimeInput;
+      const out = applyRuntime(rt, [input], verifiers);
+      if (out.rejected.length > 0) throw new Error(JSON.stringify(out.rejected, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
+      rt = out.runtime;
+      clock += 1n;
+      for (const o of out.outbox) {
+        if ("input" in o && o.input.kind === "txs" && o.input.txs.length === 0 && o.to === input.entityId) continue; // og processingTrigger wake: this loop drains anyway
+        queue.push(unwrap(convertOutput(rt, o, input.entityId, clock)));
+      }
+    }
+    return rt;
+  };
+  const create = (id: EntityId, txs: EntityTx[], timestamp = NOW): RuntimeInput => ({ kind: "create", entityId: id, signerId: signers.get(id) as Address, input: { kind: "txs", timestamp, txs } });
+  const open = (to: EntityId, creditAmount?: bigint): EntityTx => ({ type: "openAccount", data: { targetEntityId: to, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig, ...(creditAmount === undefined ? {} : { creditAmount, tokenId: unwrap(tokenId("1")) }) } } as EntityTx);
+  const offdelta = (rt: Runtime, self: EntityId, peer: EntityId): bigint | undefined => rt.entities.get(replicaKey(self, signers.get(self) as Address))?.accountReplicas.get(peer)?.state.account.deltas.get(unwrap(tokenId("1")))?.offdelta;
+  test("MATCH (og direct-payment.ts requireTrustedPaymentGateway + applyDirectPaymentForwardFollowups): Alice pays Carol through gateway Bob; Bob forwards the committed first leg once", async () => {
+    let rt = spawn(spawn(spawn(createRuntime(), party(ALICE, A)), party(BOB, B)), party(CAROL, C));
+    rt = quiet(rt, [create(BOB, [open(ALICE, 100n), open(CAROL)])]);
+    rt = quiet(rt, [create(CAROL, [{ type: "extendCredit", data: { counterpartyEntityId: BOB, tokenId: unwrap(tokenId("1")), amount: 100n } }], NOW + 100n)]);
+    const pay = (route: readonly EntityId[], gateway?: EntityId, deliveryMode: "direct" | "trusted" = "trusted"): EntityTx =>
+      ({ type: "directPayment", data: { targetEntityId: CAROL, tokenId: unwrap(tokenId("1")), amount: 10n, route, deliveryMode, ...(gateway === undefined ? {} : { trustedGatewayEntityId: gateway }) } });
+    // og TRUSTED_PAYMENT_GATEWAY_INVALID: the declared gateway must be route[1] of an exact 3-hop route
+    for (const bad of [pay([ALICE, BOB, CAROL], CAROL), pay([ALICE, BOB, CAROL]), pay([ALICE, CAROL], BOB), pay([ALICE, BOB, CAROL], BOB, "direct")]) {
+      expect(applyRuntime(rt, [create(ALICE, [bad], NOW + 200n)], verifiers).rejected.length).toBe(1);
+    }
+    // the first leg Alice proposes is og's buildNextHopPayment account tx, byte for byte on the wire
+    const first = applyRuntime(rt, [create(ALICE, [pay([ALICE, BOB, CAROL], BOB)], NOW + 300n)], verifiers).outbox.find((o) => "tx" in o && o.tx.data.kind === "ack_frame");
+    if (first === undefined || !("tx" in first) || first.tx.data.kind !== "ack_frame") throw new Error("no first leg");
+    const aliceAccount = rt.entities.get(replicaKey(ALICE, A))?.accountReplicas.get(BOB) as AccountReplica;
+    const wire = unwrap(wireTx(first.tx.data.frame.txs[0] as never, replicaId(aliceAccount), isLeft(ALICE, replicaId(aliceAccount))));
+    const og = await handleDirectPaymentEntityTx({} as never, { entityId: ALICE, accounts: new Map([[BOB, {}]]), config: { validators: [A] } } as never,
+      { type: "directPayment", data: { targetEntityId: CAROL, tokenId: 1, amount: 10n, route: [ALICE, BOB, CAROL], deliveryMode: "trusted", trustedGatewayEntityId: BOB } } as never, [], true);
+    expect(wire).toEqual(og.accountTxs?.[0]?.tx as never);
+    rt = quiet(rt, [create(ALICE, [pay([ALICE, BOB, CAROL], BOB)], NOW + 300n)]);
+    const aliceBob = offdelta(rt, ALICE, BOB), bobCarol = offdelta(rt, BOB, CAROL);
+    expect(aliceBob === 10n || aliceBob === -10n).toBe(true);
+    expect(bobCarol === 10n || bobCarol === -10n).toBe(true);
+    expect(offdelta(rt, BOB, ALICE)).toBe(aliceBob);
+    expect(offdelta(rt, CAROL, BOB)).toBe(bobCarol);
+    expect(rt.entities.get(replicaKey(BOB, B))?.accountReplicas.get(CAROL)?._tag).toBe("open");
   });
 });
