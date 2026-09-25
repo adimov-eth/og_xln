@@ -1906,17 +1906,22 @@ export const genesisReplica = (id: AccountId, terms: AccountTerms, hub: HubSide 
   return map(mapErr(accountTerms(terms), (e): AccountReplicaError => ({ _tag: "bad_account", reason: e._tag })), (normalized): OpenAccount =>
     ({ _tag: "open", state: genesisAccountBody(genesisAccount(id), normalized, hub), head: genesisAccountHead(), mempool: [], dispute: genesisWitnesses() }));
 };
-type Queued = { readonly replica: OpenAccount; readonly queued: readonly WireAccountTx[] };
+export type LiveAccount = OpenAccount | ProposedAccount | ReceivedAccount;
+type Queued = { readonly replica: LiveAccount; readonly queued: readonly WireAccountTx[] };
+/** og local-tx-admission.ts: dedupe against mempool + own pending frame; the limit counts both (mempool.ts). A received frame is committed in og, so it pends nothing. */
+const queueOn = <R extends LiveAccount>(r: R, pending: readonly WireAccountTx[], txs: readonly WireAccountTx[]): Result<Queued, AccountReplicaError> => {
+  const queued = unqueued(txs, [...r.mempool, ...pending]);
+  return r.mempool.length + pending.length + queued.length > ACCOUNT_MEMPOOL_SIZE ? err({ _tag: "mempool_full", limit: ACCOUNT_MEMPOOL_SIZE }) : ok({ replica: { ...r, mempool: [...r.mempool, ...queued] }, queued });
+};
 const enqueue = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<Queued, AccountReplicaError> => match(r, {
-  open: (o) => {
-    const queued = unqueued(txs, o.mempool);
-    return o.mempool.length + queued.length > ACCOUNT_MEMPOOL_SIZE ? err({ _tag: "mempool_full", limit: ACCOUNT_MEMPOOL_SIZE }) : ok({ replica: { ...o, mempool: [...o.mempool, ...queued] }, queued });
-  },
-  proposed: () => err({ _tag: "already_proposed" }), received: () => err({ _tag: "already_proposed" }), preparing: () => err(frozenError("preparing")), disputed: () => err(frozenError("disputed")),
+  open: (o) => queueOn(o, [], txs), proposed: (p) => queueOn(p, p.candidate.frame.txs, txs), received: (h) => queueOn(h, [], txs),
+  preparing: () => err(frozenError("preparing")), disputed: () => err(frozenError("disputed")),
 });
-export const admit = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<OpenAccount, AccountReplicaError> => map(enqueue(r, txs), (q) => q.replica);
-export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, clock: FrameClock): Result<OpenAccount, AccountReplicaError> => chain(partyOf(replicaId(r), self), () =>
-  chain(enqueue(r, txs), ({ replica: open, queued }) => map(admissionFold(open.mempool, queued.length, open.state, self, { height: open.head.height + 1n, ...clock }), () => open)));
+/** The state and height the next proposal builds on: a held candidate is about to commit. */
+const nextBase = (r: LiveAccount): { readonly state: AccountBody; readonly height: bigint } => (r._tag === "open" ? { state: r.state, height: r.head.height } : { state: r.candidate.draft.state, height: r.candidate.frame.height });
+export const admit = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<LiveAccount, AccountReplicaError> => map(enqueue(r, txs), (q) => q.replica);
+export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, clock: FrameClock): Result<LiveAccount, AccountReplicaError> => chain(partyOf(replicaId(r), self), () =>
+  chain(enqueue(r, txs), ({ replica, queued }) => { const base = nextBase(replica); return map(admissionFold(replica.mempool, queued.length, base.state, self, { height: base.height + 1n, ...clock }), () => replica); }));
 const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party }));
 export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => chain(accountContext(r, ctx), (c) => matchBy("kind", input, {
   propose: (i) => propose(r, i, c), dispute: (i) => dispute(r, i, c),

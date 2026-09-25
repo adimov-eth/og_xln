@@ -198,17 +198,38 @@ describe("account-consensus: driven scenarios", () => {
     expect([p.head.height, q.head.height]).toEqual([1n, 1n]);
   });
 
-  test("DIVERGES: local tx admission while a proposal awaits ACK — og queues it, rewrite refuses already_proposed", () => {
+  test("MATCH: local tx admission while a proposal awaits ACK — queued, deduped against mempool + pending frame, kept through the commit", () => {
     const ctx = ogCtx("diff-admit-pending");
     const a = ogAccount();
     a.pendingFrame = ogFrame(a, { accountTxs: [scl(1, 1n)] });
-    const res = applyAccountEnqueue(a, { kind: "enqueue", txs: [scl(2, 5n)] }, ctx.jClaimNodeStore);
+    const res = applyAccountEnqueue(a, { kind: "enqueue", txs: [scl(2, 5n), scl(1, 1n), scl(2, 5n)] }, ctx.jClaimNodeStore);
     expect(res.ok).toBe(true);
     expect(a.mempool.length).toBe(1);
 
     const proposed = proposeFrom(genesisAB(), ALICE, [TX]).replica;
     expect(proposed._tag).toBe("proposed");
-    expect(unwrapErr(admit(proposed, [TX2]))._tag).toBe("already_proposed");
+    const queued = unwrap(admit(proposed, [TX2, TX, TX2]));
+    expect(queued._tag).toBe("proposed");
+    expect(queued.mempool).toEqual([TX2]);
+    // The queued tx survives the ACK commit and is proposable next.
+    const received = step(genesisAB(), offerOf(proposed as never, ALICE), BOB).replica;
+    const ack = step(received, ackInput(received, BOB), BOB).outputs.find((o) => o.kind === "ack") as AccountInput;
+    const committed = step(queued, ack, ALICE).replica;
+    expect([committed._tag, committed.head.height, committed.mempool]).toEqual(["open", 1n, [TX2]]);
+  });
+
+  test("MATCH: the mempool limit counts pending-frame txs (og mempool.ts outstanding = mempool + pendingFrame)", () => {
+    const ctx = ogCtx("diff-admit-pending-limit");
+    const many = (n: number) => Array.from({ length: n }, (_, i) => scl(2, BigInt(i + 1)));
+    const manyW = (n: number) => Array.from({ length: n }, (_, i) => ({ type: "set_credit_limit", tokenId: "1", limit: BigInt(i + 1) }) as WireAccountTx);
+    const proposed = proposeFrom(genesisAB(), ALICE, [TX]).replica;
+    for (const n of [ACCOUNT_MEMPOOL_SIZE - 1, ACCOUNT_MEMPOOL_SIZE]) {
+      const a = ogAccount();
+      a.pendingFrame = ogFrame(a, { accountTxs: [scl(1, 1n)] });
+      let og = true;
+      try { applyAccountEnqueue(a, { kind: "enqueue", txs: many(n) }, ctx.jClaimNodeStore); } catch { og = false; }
+      expect(admit(proposed, manyW(n)).ok).toBe(og);
+    }
   });
 
   test("MATCH: proposer clock below the last committed frame — both clamp to max(entityTs, lastFrame.timestamp)", () => {
@@ -381,7 +402,8 @@ describe("account-consensus: driven scenarios", () => {
     expect(causeOf(e)).toEqual({ _tag: "dispute_hanko", reason: "required" });
   });
 
-  test("DIVERGES: mempool overflow — og THROWS ACCOUNT_MEMPOOL_LIMIT_EXCEEDED (untyped), rewrite returns typed mempool_full", () => {
+  // og throws ACCOUNT_MEMPOOL_LIMIT_EXCEEDED, the rewrite returns typed mempool_full: same whole-batch refusal, nothing admitted.
+  test("MATCH: mempool overflow refuses the whole batch on both sides (og throw = rewrite mempool_full)", () => {
     const ctx = ogCtx("diff-mempool-limit");
     const a = ogAccount();
     const many = Array.from({ length: ACCOUNT_MEMPOOL_SIZE + 1 }, (_, i) => scl(1, BigInt(i + 1)));
