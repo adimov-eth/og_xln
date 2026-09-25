@@ -18,8 +18,6 @@ import {
   chargeSettlement,
   committed,
   localProof,
-  applyEntityInput,
-  createEntity,
   entityFrameHash,
   hashEntityFrame,
   entityId,
@@ -459,18 +457,20 @@ describe("oracle", () => {
       watchSeed: word("44"),
       disputeConfig: { leftResponseSeconds: 1, rightResponseSeconds: 1 },
     }));
-    const created = unwrap(createEntity({ id: self, jurisdiction: terms.domain, threshold: 1n, members: new Map([[signer, { shares: 1n }]]) }));
-    const proposed = unwrap(applyEntityInput(created, { kind: "txs", timestamp: 5n, txs: [{ type: "openAccount", target: peer, terms }] }, {
-      verify: () => true, verifyMember: () => true, self, signerId: signer,
+    const second = unwrap(address(`0x${"02".repeat(20)}`));
+    const created = unwrap(createEntity({ id: self, jurisdiction: terms.domain, threshold: 2n, members: new Map([[signer, { shares: 1n }], [second, { shares: 1n }]]) }));
+    const open = { targetEntityId: peer, accountDomain: terms.domain, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig };
+    const proposed = unwrap(applyEntityInput(created, { kind: "txs", timestamp: 5n, txs: [{ type: "openAccount", data: open }] }, {
+      verify: () => true, verifyMember: () => true, sign: () => signature("ab"), self, signerId: signer,
     }));
     if (proposed.replica._tag !== "proposed") throw new Error(proposed.replica._tag);
     const frame = proposed.replica.frame;
     const [tx] = frame.txs;
     if (tx === undefined || tx.type !== "openAccount") throw new Error("open");
-    const wordHash = (value: string): string => value.startsWith("0x") ? value.toLowerCase() : `0x${value.toLowerCase()}`;
+    expect(frame.prevFrameHash).toBe("genesis");
     const fields = (stateRoot: string, events: typeof frame.events) => ({
-      prevFrameHash: wordHash(frame.prevFrameHash), height: Number(frame.height), timestamp: Number(frame.timestamp),
-      txs: [{ type: tx.type, data: { target: tx.target, terms: tx.terms } }], events, entityId: frame.entityContext.entityId,
+      prevFrameHash: frame.prevFrameHash, height: Number(frame.height), timestamp: Number(frame.timestamp),
+      txs: [{ type: tx.type, data: open }], events, entityId: frame.entityContext.entityId,
       stateRoot, authorityRoot: frame.authorityRoot, entityContext: frame.entityContext,
     });
     const hashed = unwrap(hashEntityFrame(frame));
@@ -541,23 +541,30 @@ describe("oracle", () => {
     };
     const entity = unwrap(createEntity({ id: self, jurisdiction: terms.domain, board }));
     const proposer = allowedProposer(entity.state.quorum);
-    const proposed = unwrap(applyEntityInput(entity, { kind: "txs", timestamp: 1n, txs: [{ type: "openAccount", target: peer, terms }] }, {
-      self, signerId: proposer, verify: () => true, verifyMember: () => false,
-    }));
-    if (proposed.replica._tag !== "proposed") throw new Error(proposed.replica._tag);
-    const frameHash = unwrap(hashEntityFrame(proposed.replica.frame));
-    const raw = (index: number) => {
+    expect(proposer.toLowerCase()).toBe(signers[0]?.toLowerCase());
+    const raw = (index: number, digest: string) => {
       const key = keys[index];
       if (key === undefined) throw new Error("key");
-      const signed = signRaw(hexToBytes(frameHash), hexToBytes(key));
+      const signed = signRaw(hexToBytes(digest), hexToBytes(key));
       return unwrap(signature(bytesToHex(concat([wordOf(signed.r), wordOf(signed.s), Uint8Array.of(signed.recovery + 27)])).slice(2)));
     };
-    const one = unwrap(applyEntityInput(proposed.replica, { kind: "precommit", signature: raw(0) }, {
-      self, signerId: signers[0] ?? proposer, verify: () => true, verifyMember: () => false,
+    const sign = (digest: string, who: string) => ({ ok: true as const, value: raw(signers.findIndex((s) => s.toLowerCase() === who.toLowerCase()), digest) });
+    const open = { targetEntityId: peer, accountDomain: terms.domain, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig };
+    const proposed = unwrap(applyEntityInput(entity, { kind: "txs", timestamp: 1n, txs: [{ type: "openAccount", data: open }] }, {
+      self, signerId: proposer, verify: () => true, verifyMember: () => false, sign,
     }));
-    expect(one.replica._tag).toBe("proposed");
-    const two = unwrap(applyEntityInput(one.replica, { kind: "precommit", signature: raw(1) }, {
-      self, signerId: signers[1] ?? proposer, verify: () => true, verifyMember: () => false,
+    if (proposed.replica._tag !== "proposed") throw new Error(proposed.replica._tag);
+    const frame = proposed.replica.frame;
+    const frameHash = unwrap(hashEntityFrame(frame));
+    // the proposer's own manifest signature is one of two needed: the frame stays proposed
+    expect(proposed.replica.signatures.get(proposer.toLowerCase())).toEqual([raw(0, frameHash)]);
+    const precommit = (index: number) => ({ kind: "precommit" as const, height: frame.height, frameHash, signatures: new Map([[(signers[index] ?? "").toLowerCase(), frame.hashesToSign.map((h) => raw(index, h.hash))]]) });
+    const bad = applyEntityInput(proposed.replica, { ...precommit(1), signatures: new Map([[(signers[1] ?? "").toLowerCase(), [raw(2, frameHash)]]]) }, {
+      self, signerId: proposer, verify: () => true, verifyMember: () => false, sign,
+    });
+    expect(bad.ok).toBe(false);
+    const two = unwrap(applyEntityInput(proposed.replica, precommit(1), {
+      self, signerId: proposer, verify: () => true, verifyMember: () => false, sign,
     }));
     expect(two.replica._tag).toBe("open");
     expect(two.replica.state.accounts.size).toBe(1);

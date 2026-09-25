@@ -80,7 +80,11 @@ export const AccountTransition = {
   ack_frame: { open: ["open", "received"], proposed: ["open", "proposed", "received"], received: ["received"], preparing: ["preparing"], disputed: ["disputed"] },
   dispute: { open: ["preparing", "disputed"], proposed: ["preparing", "disputed"], received: ["preparing", "disputed"], preparing: ["preparing", "disputed"], disputed: ["disputed"] },
 } as const;
-export const EntityTransition = { txs: { open: ["proposed"] }, precommit: { proposed: ["open", "proposed"] } } as const;
+export const EntityTransition = {
+  txs: { open: ["open", "proposed"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
+  proposal: { open: ["open", "locked"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
+  precommit: { open: ["open"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
+} as const;
 
 
 export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "htlc_timeout", "swap_offer", "swap_cancel", "swap_resolve", "settle_transition",
@@ -1942,52 +1946,78 @@ export const restoreAccount = (r: AccountReplica, self: EntityId, verify: Verify
 export type Head = { readonly height: bigint; readonly prevFrameHash: EntityFrameHash };
 export const genesisHead = (): Head => ({ height: 0n, prevFrameHash: ZERO_HASH as EntityFrameHash });
 export type MemberVerify = (h: Hash, sig: Signature, addr: Address) => boolean;
+/** The replica's own signer key (og `signAccountFrame(env, signerId, hash)`), one signature per manifest entry. */
+export type MemberSign = (h: Hash, addr: Address) => Result<Signature, unknown>;
 type Members = ReadonlyMap<Address, { readonly shares: bigint }>;
 type TeachingQuorum = { readonly threshold: bigint; readonly members: Members };
 type BoardQuorum = { readonly board: Board; readonly entityId: string };
 export type Authority = Tagged<"teaching", TeachingQuorum> | Tagged<"board", BoardQuorum>;
+/** `proposer` is og's CEO leader: `validators[0]` in stored (positional) order (og leader/index.ts getEntityLeaderOrder). */
 export type Quorum = Authority & { readonly proposer: Address };
-export type EntityState = { readonly id: EntityId; readonly quorum: Quorum; readonly jurisdiction: Domain; readonly accounts: ReadonlyMap<EntityId, AccountState> };
-export type EntityTx = { readonly target: EntityId } & (
-  | { readonly type: "openAccount"; readonly terms: AccountTerms } | { readonly type: "addDelta"; readonly tokenId: TokenId }
-  | { readonly type: "extendCredit"; readonly tokenId: TokenId; readonly limit: bigint } | { readonly type: "pay"; readonly tokenId: TokenId; readonly amount: bigint }
-  | ({ readonly type: "proposeAccount"; readonly frameHanko?: Hanko | undefined; readonly disputeHanko?: DisputeHanko | undefined } & FrameClock)
-  | { readonly type: "accountInput"; readonly input: AccountMessage });
-export type EntityOrigin = Delivery;
-export type EntityFrame = Head & {
-  readonly timestamp: bigint; readonly origin: EntityOrigin; readonly txs: readonly EntityTx[]; readonly stateHash: EntityStateHash;
-  readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string; readonly entityContext: EntityInfraContext;
+/** og `config.jurisdiction` beyond the account Domain; committed inside the root's config section when present. */
+export type JurisdictionConfig = {
+  readonly entityProviderAddress: string; readonly registrationBlock?: number | undefined; readonly entityProviderDeploymentBlock?: number | undefined; readonly blockTimeMs?: number | undefined;
+  readonly rebalancePolicyUsd?: { readonly r2cRequestSoftLimit: bigint; readonly hardLimit: bigint; readonly maxFee: bigint } | undefined;
 };
-export type OutputTx = Extract<EntityTx, { readonly type: "openAccount" | "accountInput" }>;
-export type EntityOutput = { readonly to: EntityId; readonly tx: OutputTx };
-export type EntityInput = { readonly kind: "txs"; readonly timestamp: bigint; readonly txs: readonly EntityTx[] } | { readonly kind: "precommit"; readonly signature: Signature };
-export type EntityPhase = "open" | "proposed";
+/** og EntityState root fields the rewrite carries without interpreting (nonces, reserves, profile, crontabState, ...), by og field name; collection fields in committed radix form. */
+export type EntityCommitted = { readonly [field: string]: Binary };
+export type EntityState = {
+  readonly id: EntityId; readonly quorum: Quorum; readonly jurisdiction: Domain; readonly accounts: ReadonlyMap<EntityId, AccountState>;
+  readonly height: bigint; readonly timestamp: bigint; readonly jurisdictionConfig?: JurisdictionConfig | undefined; readonly committed: EntityCommitted;
+};
+/** og `core/types/entity-tx.ts` wire shape `{type, data}`. `proposeAccount` is rewrite-only: og proposes Account frames itself and builds their Hanko from the quorum's precommits. */
+export type EntityTx =
+  | { readonly type: "openAccount"; readonly data: { readonly targetEntityId: EntityId; readonly disputeConfig: DisputeConfig; readonly accountDomain: Domain; readonly watchSeed: string; readonly creditAmount?: bigint | undefined; readonly tokenId?: TokenId | undefined } }
+  | { readonly type: "accountInput"; readonly data: AccountMessage }
+  | { readonly type: "extendCredit"; readonly data: { readonly counterpartyEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint } }
+  | { readonly type: "directPayment"; readonly data: { readonly targetEntityId: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly route: readonly EntityId[]; readonly description?: string | undefined; readonly deliveryMode: "direct" | "trusted"; readonly trustedGatewayEntityId?: EntityId | undefined } }
+  | { readonly type: "proposeAccount"; readonly data: { readonly counterpartyEntityId: EntityId; readonly frameHanko?: Hanko | undefined; readonly disputeHanko?: DisputeHanko | undefined } & FrameClock };
+export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute"; readonly context: string };
+export type EntityFrame = Head & {
+  readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
+  readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[];
+};
+/** og `hashPrecommits`/`collectedSigs`: lowercase signer id to one signature per `hashesToSign` entry. */
+export type Precommits = ReadonlyMap<string, readonly Signature[]>;
+export type OutputTx = Extract<EntityTx, { readonly type: "accountInput" }>;
+/** An Account message for a peer entity's leader, or an og consensus input for one validator replica of this entity. */
+export type EntityOutput = { readonly to: EntityId; readonly tx: OutputTx } | { readonly to: EntityId; readonly signerId: Address; readonly input: EntityInput };
+/** og EntityInput lanes: `entityTxs`, `proposedFrame` (+`collectedSigs`), `hashPrecommitFrame` + `hashPrecommits`. */
+export type EntityInput =
+  | { readonly kind: "txs"; readonly timestamp: bigint; readonly txs: readonly EntityTx[] }
+  | { readonly kind: "proposal"; readonly frame: EntityFrame; readonly signatures: Precommits }
+  | { readonly kind: "precommit"; readonly height: bigint; readonly frameHash: EntityFrameHash; readonly signatures: Precommits };
+export type EntityPhase = "open" | "proposed" | "locked";
 export type EntityEvent = EntityInput["kind"];
 export type Folded = { readonly state: EntityState; readonly accountReplicas: ReadonlyMap<EntityId, AccountReplica> };
 export type Draft = Folded & { readonly outputs: readonly EntityOutput[] };
-type EntityEnv = Folded & { readonly head: Head; readonly mempool: readonly EntityTx[] };
+type EntityEnv = Folded & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
+type EntityCandidate = { readonly frame: EntityFrame; readonly signatures: Precommits; readonly draft: Draft };
 export interface OpenEntity extends Tagged<"open", EntityEnv> {}
-export interface ProposedEntity extends Tagged<"proposed", EntityEnv & { frame: EntityFrame; signatures: ReadonlyMap<Address, Signature>; draft: Draft }> {}
-export type EntityReplica = OpenEntity | ProposedEntity;
-export type EntityContext = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly self: EntityId; readonly signerId: Address; readonly from?: EntityId | undefined };
+/** og `proposal`: this replica proposed `frame` and collects precommits. */
+export interface ProposedEntity extends Tagged<"proposed", EntityEnv & EntityCandidate> {}
+/** og `lockedFrame`: this validator replayed and signed `frame`. */
+export interface LockedEntity extends Tagged<"locked", EntityEnv & EntityCandidate> {}
+export type EntityReplica = OpenEntity | ProposedEntity | LockedEntity;
+export type EntityContext = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign; readonly self: EntityId; readonly signerId: Address; readonly from?: EntityId | undefined };
 export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }>;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
   | Tagged<"account_exists" | "no_such_account" | "create_ack_required" | "account_envelope", { target: EntityId }>
-  | Tagged<"empty_input" | "self_account" | "bad_quorum" | "bad_jurisdiction" | "from_not_converted" | "not_l0"> | Tagged<"frame_timestamp_invalid", { timestamp: bigint }>
-  | Tagged<"unknown_member" | "not_proposer" | "invalid_signature", { address: Address }>;
+  | Tagged<"self_account" | "wrong_entity" | "bad_quorum" | "bad_jurisdiction" | "from_not_converted" | "not_l0" | "mempool_full" | "sign_failed" | "payment_route" | "secondary_hash_duplicate">
+  | Tagged<"frame_timestamp_invalid" | "frame_timestamp_regression", { timestamp: bigint }>
+  | Tagged<"proposal_digest" | "proposal_parent" | "proposal_leader" | "proposal_hash" | "proposal_manifest" | "proposal_signature" | "proposal_conflict" | "proposal_wait" | "local_manifest_mismatch" | "local_precommit_conflict">
+  | Tagged<"precommit_frame_mismatch" | "precommit_not_active" | "precommit_signer_equivocation" | "commit_conflict" | "commit_wait">
+  | Tagged<"unknown_member" | "duplicate_member" | "not_proposer" | "invalid_signature" | "wrong_replica", { address: string }>;
 export type EntityGrammar = { readonly table: typeof EntityTransition; readonly replica: EntityReplica; readonly input: EntityInput; readonly ctx: { readonly [E in EntityEvent]: EntityContext }; readonly output: EntityOutput; readonly error: EntityError };
 export type NextEntityPhase<S extends EntityPhase, E extends EntityEvent> = Next<EntityGrammar, S, E>;
 type EntityApply<R extends EntityReplica = EntityReplica> = Apply<R, EntityOutput>;
-export const encodeEntityTx = (tx: EntityTx): string => matchBy("type", tx, {
-  openAccount: (x) => `o|${x.target}|${canon(x.terms)}`, addDelta: (x) => `d|${x.target}|${x.tokenId}`, extendCredit: (x) => `e|${x.target}|${x.tokenId}|${x.limit}`, pay: (x) => `p|${x.target}|${x.tokenId}|${x.amount}`,
-  proposeAccount: (x) => `q|${x.target}|${canon({ timestamp: x.timestamp, jHeight: x.jHeight, frameHanko: x.frameHanko, disputeHanko: x.disputeHanko })}`,
-  accountInput: (x) => `i|${x.target}|${matchBy("kind", x.input, { ack: (a) => `a|${canon(a)}`, ack_frame: (f) => `f|${canon(f)}` })}`,
-});
+export const encodeEntityTx = (tx: EntityTx): string => `${tx.type}|${canon(tx.data)}`;
 export const encodeEntityState = (s: EntityState): string => canon({
   id: s.id,
   quorum: match(s.quorum, { teaching: (q) => ({ threshold: q.threshold, members: q.members }), board: (q) => ({ board: encodeBoardHash({ board: q.board }), entityId: q.entityId }) }),
   jurisdiction: s.jurisdiction, accounts: new Map([...s.accounts].map(([peer, a]) => [peer, hashAccountState(a)])),
+  height: s.height, timestamp: s.timestamp, jurisdictionConfig: s.jurisdictionConfig, committed: s.committed,
 } satisfies Record<keyof EntityState, unknown>);
 export const hashEntityState = (s: EntityState): EntityStateHash => keccakUtf8(encodeEntityState(s)) as EntityStateHash;
 const HEX_EXT = 0x48;
@@ -2008,8 +2038,13 @@ const binaryPack = new Packr({ mapsAsObjects: false, moreTypes: true });
 export type Binary =
   | null | boolean | number | bigint | string
   | readonly Binary[]
+  | ReadonlyMap<Binary, Binary>
   | { readonly [key: string]: Binary };
 export type BinaryError = Tagged<"binary">;
+const compareBytes = (left: Uint8Array, right: Uint8Array): number => {
+  for (let i = 0; i < Math.min(left.length, right.length); i++) if (left[i] !== right[i]) return (left[i] ?? 0) - (right[i] ?? 0);
+  return left.length - right.length;
+};
 const packedHex = (value: string): HexPack | string =>
   value.length >= 34 && value.startsWith("0x") && value.length % 2 === 0 && /^0x[0-9a-f]+$/.test(value) ? new HexPack(value) : value;
 const walkBinary = (value: Binary): Result<Binary | HexPack, BinaryError> => {
@@ -2023,6 +2058,18 @@ const walkBinary = (value: Binary): Result<Binary | HexPack, BinaryError> => {
       items.push(walked.value);
     }
     return ok(items as Binary);
+  }
+  if (value instanceof Map) {
+    /** og canonicalize: entries ordered by the packed bytes of the key, then of the value. */
+    const rows: { readonly key: Binary | HexPack; readonly value: Binary | HexPack; readonly bytes: Uint8Array }[] = [];
+    for (const [key, item] of value as ReadonlyMap<Binary, Binary>) {
+      const k = walkBinary(key), v = walkBinary(item);
+      if (!k.ok) return k;
+      if (!v.ok) return v;
+      rows.push({ key: k.value, value: v.value, bytes: packBinary(k.value) });
+    }
+    rows.sort((a, b) => compareBytes(a.bytes, b.bytes) || compareBytes(packBinary(a.value), packBinary(b.value)));
+    return ok(new Map(rows.map((r) => [r.key, r.value])) as unknown as Binary);
   }
   if (typeof value !== "object") return err({ _tag: "binary" });
   const out = Object.create(null) as Record<string, Binary | HexPack>;
@@ -2043,11 +2090,13 @@ const encodeBinary = (value: Binary): Result<Uint8Array, BinaryError> => map(wal
 });
 const encodeConsensus = (value: Binary): Result<Uint8Array, BinaryError> => map(walkBinary(value), packBinary);
 const integrity = (bytes: Uint8Array): string => bytesToHex(sha256(bytes));
+export type EntityRootJurisdiction = { readonly chainId?: number | undefined; readonly depositoryAddress: string } & JurisdictionConfig;
 export type EntityRootConfig = {
   readonly mode: "proposer-based" | "gossip-based";
   readonly threshold: bigint;
   readonly validators: readonly string[];
   readonly shares: Readonly<Record<string, bigint>>;
+  readonly jurisdiction?: EntityRootJurisdiction | undefined;
 };
 export type EntityRootAccount = {
   readonly fromEntity: string;
@@ -2075,8 +2124,17 @@ const consensusConfig = (config: EntityRootConfig): Result<Binary, Tagged<"bad_c
     if (id.length === 0 || Object.hasOwn(shares, id)) return err({ _tag: "bad_config" });
     shares[id] = share;
   }
-  const validators = config.validators.map(signerId);
-  return validators.some((id) => id.length === 0) ? err({ _tag: "bad_config" }) : ok({ mode: config.mode, threshold: config.threshold, validators, shares });
+  const validators = config.validators.map(signerId), j = config.jurisdiction;
+  if (validators.some((id) => id.length === 0)) return err({ _tag: "bad_config" });
+  if (j === undefined) return ok({ mode: config.mode, threshold: config.threshold, validators, shares });
+  const depositoryAddress = j.depositoryAddress.trim().toLowerCase(), entityProviderAddress = j.entityProviderAddress.trim().toLowerCase();
+  if (depositoryAddress === "" || entityProviderAddress === "") return err({ _tag: "bad_config" });
+  const policy = j.rebalancePolicyUsd;
+  return ok({ mode: config.mode, threshold: config.threshold, validators, shares, jurisdiction: {
+    ...opt("chainId", j.chainId), depositoryAddress, entityProviderAddress, ...opt("registrationBlock", j.registrationBlock),
+    ...opt("entityProviderDeploymentBlock", j.entityProviderDeploymentBlock), ...opt("blockTimeMs", j.blockTimeMs),
+    ...(policy === undefined ? {} : { rebalancePolicyUsd: { r2cRequestSoftLimit: policy.r2cRequestSoftLimit, hardLimit: policy.hardLimit, maxFee: policy.maxFee } }),
+  } });
 };
 const accountKey = (id: string): Result<Uint8Array, Tagged<"account_key">> => {
   const norm = signerId(id);
@@ -2095,15 +2153,31 @@ const accountLeaf = (account: EntityRootAccount): Result<readonly [Uint8Array, U
   }), (encoded) => ok([key, sha256(concat([ACCOUNT_LEAF, encoded]))] as const))));
 };
 const sectionDigest = (value: Binary): Result<string, BinaryError> => map(encodeConsensus(value), integrity);
-export const entityStateRoot = (input: { readonly config: EntityRootConfig; readonly accounts: readonly EntityRootAccount[] }): Result<string, EntityRootError> =>
+/** og ENTITY_STATE_ROOT_FIELDS (state-root.ts:50). Every present field is one root section. */
+export const ENTITY_STATE_ROOT_FIELDS = ["entityId", "height", "timestamp", "nonces", "entityCommandNonces", "proposals", "config", "leaderState", "reserves", "accounts", "externalWallet",
+  "deferredAccountProposals", "settlementContinuations", "lastFinalizedJHeight", "jHistoryFinality", "certifiedBoardState", "crontabState", "jBatchState", "entityProviderActionState",
+  "entityEncryptionPublicKey", "profile", "paybook", "outDebtsByToken", "inDebtsByToken", "orderbookExt", "swapTradingPairs", "crossJurisdictionSwaps", "crossJurisdictionAuthorizations",
+  "crossJurisdictionBookAdmissions", "hubRebalanceConfig", "lending"] as const;
+/** Derived by the rewrite itself; never taken from `committed`. `leaderState` stays absent: no view change (og leader failover). */
+const DERIVED_ROOT_FIELDS: ReadonlySet<string> = new Set(["entityId", "height", "timestamp", "config", "accounts", "leaderState"]);
+export type EntityRootInput = {
+  readonly config: EntityRootConfig; readonly accounts: readonly EntityRootAccount[];
+  readonly entityId?: string | undefined; readonly height?: number | undefined; readonly timestamp?: number | undefined; readonly committed?: EntityCommitted | undefined;
+};
+export const entityStateRoot = (input: EntityRootInput): Result<string, EntityRootError> =>
   chain(consensusConfig(input.config), (config) => chain(traverse(input.accounts, accountLeaf), (leaves): Result<string, EntityRootError> => {
     const seen = new Set<string>();
     for (const [key] of leaves) { const id = bytesToHex(key); if (seen.has(id)) return err({ _tag: "duplicate_account" }); seen.add(id); }
     const root = sealRadix(leaves.map(([key, digest]) => ({ nibbles: nibblesOf(key), key, digest })));
+    const committed = Object.entries(input.committed ?? {}).filter(([field]) => (ENTITY_STATE_ROOT_FIELDS as readonly string[]).includes(field) && !DERIVED_ROOT_FIELDS.has(field));
     const sections: readonly (readonly [string, Binary])[] = [
       ["accounts", { domain: "xln.entity.accounts.radix-merkle:binary", radix: 16, hashAlgorithm: "integrity", leafCount: leaves.length, root }],
       ["config", config],
-      ["paybook", EMPTY_ENTITY_PAYBOOK],
+      ...(committed.some(([field]) => field === "paybook") ? [] : [["paybook", EMPTY_ENTITY_PAYBOOK] as const]),
+      ...(input.entityId === undefined ? [] : [["entityId", input.entityId] as const]),
+      ...(input.height === undefined ? [] : [["height", input.height] as const]),
+      ...(input.timestamp === undefined ? [] : [["timestamp", input.timestamp] as const]),
+      ...committed,
     ];
     return chain(traverse([...sections].sort(([left], [right]) => asc(left, right)), ([field, value]) => map(sectionDigest(value), (digest) => ({ field, digest }))),
       (committed) => map(encodeConsensus({ domain: "xln.entity.consensus-state.sections:binary", sections: committed }), (bytes) => bytesToHex(keccak_256(bytes))));
@@ -2161,7 +2235,8 @@ export const entityFrameHash = (input: EntityFrameHashInput): Result<string, Bin
   return header.ok ? ok(bytesToHex(keccak_256(header.value))) : header;
 };
 
-const frameWord = (value: string): string => value.startsWith("0x") ? value.toLowerCase() : `0x${value.toLowerCase()}`;
+/** og getPrevFrameHash: height 0 links to the literal "genesis". */
+const frameWord = (value: string): string => value === "genesis" ? value : value.startsWith("0x") ? value.toLowerCase() : `0x${value.toLowerCase()}`;
 const frameNumber = (value: bigint): Result<number, EntityFrameHashError> =>
   value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER) ? ok(Number(value)) : err({ _tag: "frame_clock", value });
 const binaryBody = (value: unknown): Result<Binary, BinaryError> => {
@@ -2180,106 +2255,171 @@ const binaryBody = (value: unknown): Result<Binary, BinaryError> => {
   }
   return ok(out);
 };
-const entityFrameTx = (tx: EntityTx): Result<EntityFrameTx, BinaryError> => map(binaryBody(matchBy("type", tx, {
-  openAccount: (x) => ({ target: x.target, terms: x.terms }), addDelta: (x) => ({ target: x.target, tokenId: x.tokenId }),
-  extendCredit: (x) => ({ target: x.target, tokenId: x.tokenId, limit: x.limit }), pay: (x) => ({ target: x.target, tokenId: x.tokenId, amount: x.amount }),
-  proposeAccount: (x) => ({ target: x.target, timestamp: x.timestamp, jHeight: x.jHeight, ...opt("frameHanko", x.frameHanko), ...opt("disputeHanko", x.disputeHanko) }),
-  accountInput: (x) => ({ target: x.target, input: x.input }),
-})), (data) => ({ type: tx.type, data }));
+/** og wire: token ids are numbers inside entity tx data. */
+const wireData = (tx: EntityTx): unknown => (tx.type !== "accountInput" && "tokenId" in tx.data && tx.data.tokenId !== undefined ? { ...tx.data, tokenId: Number(tx.data.tokenId) } : tx.data);
+const entityFrameTx = (tx: EntityTx): Result<EntityFrameTx, BinaryError> => map(binaryBody(wireData(tx)), (data) => ({ type: tx.type, data }));
 export const hashEntityFrame = (f: EntityFrame): Result<EntityFrameHash, EntityFrameHashError> =>
   chain(frameNumber(f.height), (height) => chain(frameNumber(f.timestamp), (timestamp) => chain(traverse(f.txs, entityFrameTx), (txs) => map(entityFrameHash({
     prevFrameHash: frameWord(f.prevFrameHash), height, timestamp, txs, events: f.events, entityId: f.entityContext.entityId,
     stateRoot: f.stateRoot, authorityRoot: f.authorityRoot, entityContext: f.entityContext,
   }), (digest) => digest as EntityFrameHash))));
+/** og getEntityLeaderState without a view change: the CEO `validators[0]`. */
 export const allowedProposer = (q: Quorum): Address => q.proposer;
 const boardMembers = (board: Board): Members => new Map(board.entityIds.map((id, i) => [checksum(`0x${id.slice(-40)}`) as Address, { shares: BigInt(board.votingPowers[i] ?? 0) }]));
 const membersOf = (a: Authority): Members => match(a, { teaching: (x) => x.members, board: (b) => boardMembers(b.board) });
 const thresholdOf = (a: Authority): bigint => match(a, { teaching: (x) => x.threshold, board: (b) => BigInt(b.board.votingThreshold) });
+/** og normalizes every signer id with trim + lowercase (replica-validation.ts, certificates.ts). */
+const memberId = (a: Authority, id: string): Address | undefined => [...membersOf(a).keys()].find((m) => signerId(m) === signerId(id));
+const sharesOf = (a: Authority, id: string): bigint => { const m = memberId(a, id); return m === undefined ? 0n : membersOf(a).get(m)?.shares ?? 0n; };
+/** og isSingleSignerBoard: exactly one validator whose share alone reaches the threshold. */
+export const isSingleSigner = (a: Authority): boolean => { const [only, ...rest] = membersOf(a).keys(); return only !== undefined && rest.length === 0 && sharesOf(a, only) >= thresholdOf(a); };
 const boardShaped = (a: Authority): boolean => match(a, {
   teaching: () => true,
   board: ({ board, entityId }) => WORD.test(entityId) && Number.isSafeInteger(board.votingThreshold) && board.entityIds.length === board.votingPowers.length
     && board.entityIds.every((id) => WORD.test(id) && isAddressId(id)) && board.votingPowers.every(Number.isSafeInteger) && boardMembers(board).size === board.entityIds.length,
 });
+const UINT16 = 0xffffn;
+/** og validateConsensusConfig: unique (case-insensitive) validators, uint16 threshold and shares, 1 <= threshold <= total power. */
 const admitQuorum = (a: Authority): Result<Quorum, EntityError> => {
   if (!boardShaped(a)) return err({ _tag: "bad_quorum" });
-  const members = membersOf(a), shares = [...members.values()].map((m) => m.shares), threshold = thresholdOf(a), proposer = [...members.keys()].sort(asc)[0];
-  if (proposer === undefined || threshold < 1n || shares.some((n) => n < 1n) || threshold > shares.reduce((sum, n) => sum + n, 0n)) return err({ _tag: "bad_quorum" });
+  const members = membersOf(a), ids = [...members.keys()].map(signerId), shares = [...members.values()].map((m) => m.shares), threshold = thresholdOf(a), [proposer] = members.keys();
+  if (proposer === undefined || ids.some((id) => id.length === 0) || new Set(ids).size !== ids.length || threshold < 1n || threshold > UINT16
+    || shares.some((n) => n < 1n || n > UINT16) || threshold > shares.reduce((sum, n) => sum + n, 0n)) return err({ _tag: "bad_quorum" });
   return ok({ ...a, proposer });
 };
-const openEntity = (state: EntityState, head: Head, accountReplicas: ReadonlyMap<EntityId, AccountReplica>): OpenEntity => ({ _tag: "open", state, head, mempool: [], accountReplicas });
-type EntitySeed = { readonly id: EntityId; readonly jurisdiction: Domain } & (TeachingQuorum | { readonly board: Board & { readonly entityId: string } });
+const openEntity = (signer: Address, state: EntityState, head: Head, mempool: readonly EntityTx[], accountReplicas: ReadonlyMap<EntityId, AccountReplica>): OpenEntity =>
+  ({ _tag: "open", signerId: signer, state, head, mempool, accountReplicas });
+type EntitySeed = {
+  readonly id: EntityId; readonly jurisdiction: Domain; readonly signerId?: Address | undefined; readonly timestamp?: bigint | undefined;
+  readonly jurisdictionConfig?: JurisdictionConfig | undefined; readonly committed?: EntityCommitted | undefined;
+} & (TeachingQuorum | { readonly board: Board & { readonly entityId: string } });
+/** One validator replica (og `eReplicas` key `entityId:signerId`); `signerId` defaults to the proposer. */
 export const createEntity = (p: EntitySeed): Result<OpenEntity, EntityError> => {
   const authority: Authority = "board" in p ? (({ entityId, ...board }) => ({ _tag: "board", board, entityId }))(p.board) : { _tag: "teaching", threshold: p.threshold, members: p.members };
-  return chain(admitQuorum(authority), (quorum) => map(mapErr(domainOf(p.jurisdiction), (): EntityError => ({ _tag: "bad_jurisdiction" })), (jurisdiction) => openEntity({ id: p.id, quorum, jurisdiction, accounts: new Map() }, genesisHead(), new Map())));
+  return chain(admitQuorum(authority), (quorum) => chain(mapErr(domainOf(p.jurisdiction), (): EntityError => ({ _tag: "bad_jurisdiction" })), (jurisdiction): Result<OpenEntity, EntityError> => {
+    const signer = p.signerId === undefined ? quorum.proposer : memberId(quorum, p.signerId);
+    if (signer === undefined) return err({ _tag: "unknown_member", address: p.signerId ?? "" });
+    const state: EntityState = { id: p.id, quorum, jurisdiction, accounts: new Map(), height: 0n, timestamp: p.timestamp ?? 0n, ...opt("jurisdictionConfig", p.jurisdictionConfig), committed: p.committed ?? {} };
+    return ok(openEntity(signer, state, genesisHead(), [], new Map()));
+  }));
 };
-const signedByMember = (q: Quorum, frameHash: Hash, sig: Signature, ctx: EntityContext): boolean =>
-  match(q, { teaching: () => ctx.verifyMember(frameHash, sig, ctx.signerId), board: () => sameHex(recoverRawSigner(frameHash, sig) ?? undefined, ctx.signerId) });
-const installs = (q: Quorum, frameHash: Hash, sigs: ReadonlyMap<Address, Signature>): boolean => match(q, {
-  teaching: (x) => [...sigs.keys()].reduce((n, addr) => n + (x.members.get(addr)?.shares ?? 0n), 0n) >= x.threshold,
-  board: ({ board, entityId }) => boardVotingPower(board, sigs) >= board.votingThreshold
-    && unwrapOr(map(verifyHankoLocal(encodeBoardHanko({ ...board, entityId }, sigs), frameHash, { encodedBoard: encodeBoardBytes(board), entityId }), (v) => v.valid), () => false),
-});
-const parseOrigin = (txs: readonly EntityTx[], ctx: EntityContext): Result<EntityOrigin, EntityError> => {
-  if (ctx.from === undefined) return ok({ _tag: "local" });
-  const [tx] = txs;
-  if (ctx.from === ctx.self || txs.length !== 1 || tx === undefined || tx.target !== ctx.from) return err({ _tag: "from_not_converted" });
-  const emitted = matchBy("type", tx, { openAccount: () => true, accountInput: () => true, addDelta: () => false, extendCredit: () => false, pay: () => false, proposeAccount: () => false });
-  return emitted ? ok({ _tag: "received", from: ctx.from }) : err({ _tag: "from_not_converted" });
+const memberSigned = (q: Quorum, h: string, sig: Signature, addr: Address, ctx: EntityContext): boolean =>
+  match(q, { teaching: () => ctx.verifyMember(h as Hash, sig, addr), board: () => sameHex(recoverRawSigner(h, sig) ?? undefined, addr) });
+/** og calculateQuorumPower over normalized signer ids. */
+const quorumPower = (q: Quorum, sigs: Precommits): bigint => [...sigs.keys()].reduce((n, id) => n + sharesOf(q, id), 0n);
+/** og normalizePrecommitBundles: trim+lowercase keys, validators only, no duplicate after normalization. */
+const normalizeBundles = (q: Quorum, bundles: Precommits): Result<Precommits, EntityError> =>
+  foldResult(bundles, new Map<string, readonly Signature[]>() as Precommits, (acc, [raw, sigs]): Result<Precommits, EntityError> => {
+    const id = signerId(raw);
+    if (memberId(q, id) === undefined) return err({ _tag: "unknown_member", address: raw });
+    return acc.has(id) ? err({ _tag: "duplicate_member", address: raw }) : ok(mapSet(acc, id, sigs));
+  });
+/** og verifyHashPrecommitSignatures: one valid signature per manifest entry, in order. */
+const bundleValid = (q: Quorum, hashes: readonly HashToSign[], id: string, sigs: readonly Signature[], ctx: EntityContext): boolean => {
+  const addr = memberId(q, id);
+  return addr !== undefined && hashes.length > 0 && sigs.length === hashes.length && hashes.every((h, i) => { const sig = sigs[i]; return sig !== undefined && memberSigned(q, h.hash, sig, addr, ctx); });
 };
-const owesCreateAck = (child: AccountReplica): boolean => match(child, { open: () => false, proposed: () => false, received: () => true, preparing: () => false, disputed: () => false });
-const isCreateAck = (tx: EntityTx, origin: EntityOrigin): boolean => matchBy("type", tx, {
-  accountInput: (x) => match(origin, { local: () => matchBy("kind", x.input, { ack: () => true, ack_frame: () => false }), received: () => false }),
-  openAccount: () => false, addDelta: () => false, extendCredit: () => false, pay: () => false, proposeAccount: () => false,
-});
-const parseCreateAcks = (txs: readonly EntityTx[], replicas: ReadonlyMap<EntityId, AccountReplica>, origin: EntityOrigin): Result<void, EntityError> => {
-  const skipped = [...replicas].find(([peer, child]) => { if (!owesCreateAck(child)) return false; const first = txs.find((tx) => tx.target === peer); return first !== undefined && !isCreateAck(first, origin); });
-  return skipped === undefined ? ok(undefined) : err({ _tag: "create_ack_required", target: skipped[0] });
-};
+const signManifest = (hashes: readonly HashToSign[], signer: Address, ctx: EntityContext): Result<readonly Signature[], EntityError> =>
+  traverse(hashes, (h) => mapErr(ctx.sign(h.hash as Hash, signer), (): EntityError => ({ _tag: "sign_failed" })));
+const sameSigs = (a: readonly Signature[], b: readonly Signature[]): boolean => a.length === b.length && a.every((sig, i) => sig === b[i]);
 
-type FoldContext = { readonly verify: Verify; readonly origin: EntityOrigin; readonly timestamp: bigint };
+type FoldContext = { readonly verify: Verify; readonly timestamp: bigint };
 type Replicas = ReadonlyMap<EntityId, AccountReplica>;
+/** Who the tx is about: og routes accountInput by its envelope, the rest by an explicit counterparty. */
+const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
+  openAccount: (x) => x.data.targetEntityId, accountInput: (x) => (namesEntity(x.data.fromEntityId, self) ? x.data.toEntityId : x.data.fromEntityId),
+  extendCredit: (x) => x.data.counterpartyEntityId, directPayment: (x) => x.data.route[1] ?? x.data.targetEntityId, proposeAccount: (x) => x.data.counterpartyEntityId,
+});
+/** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
+const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
+const owesCreateAck = (child: AccountReplica): boolean => match(child, { open: () => false, proposed: () => false, received: () => true, preparing: () => false, disputed: () => false });
+const isCreateAck = (tx: EntityTx, origin: Delivery): boolean => tx.type === "accountInput" && origin._tag === "local" && tx.data.kind === "ack";
 const putChild = (state: EntityState, replicas: Replicas, peer: EntityId, child: AccountReplica): Folded => ({ state: { ...state, accounts: mapSet(state.accounts, peer, child.state.account) }, accountReplicas: mapSet(replicas, peer, child) });
 const withChild = (replicas: Replicas, target: EntityId, f: (child: AccountReplica) => Result<Draft, EntityError>): Result<Draft, EntityError> => { const child = replicas.get(target); return child === undefined ? err({ _tag: "no_such_account", target }) : f(child); };
 const routed = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Draft, EntityError> => chain(applied, (a) =>
   map(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: () => err({ _tag: "not_l0" }), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
-    (messages) => ({ ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((input): EntityOutput => ({ to: target, tx: { type: "accountInput", target: state.id, input } })) })));
+    (messages) => ({ ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((data): EntityOutput => ({ to: target, tx: { type: "accountInput", data } })) })));
 const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
-const openChild = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx, { type: "openAccount" }>, outputs: readonly EntityOutput[]): Result<Draft, EntityError> => {
-  const id = accountId(state.id, tx.target);
+/** og DEFAULT_ACCOUNT_TOKEN_IDS (account/config/defaults.ts). */
+const DEFAULT_ACCOUNT_TOKEN_IDS = ["1", "3", "2"] as const;
+/** og processingTrigger / direct-payment wake: an empty input to `validators[0]`. */
+const wake = (state: EntityState, timestamp: bigint): EntityOutput => ({ to: state.id, signerId: state.quorum.proposer, input: { kind: "txs", timestamp, txs: [] } });
+const sameDomain = (a: Domain, b: Domain): boolean => a.chainId === b.chainId && sameHex(a.depositoryAddress, b.depositoryAddress);
+/** og handleOpenAccountEntityTx: no output (the peer learns from the first Account frame); seeds add_delta for tokenId + defaults and an optional credit line. */
+const openChild = (state: EntityState, replicas: Replicas, tx: Extract<EntityTx, { type: "openAccount" }>): Result<Draft, EntityError> => {
+  const { targetEntityId: target, accountDomain, watchSeed, disputeConfig, creditAmount, tokenId } = tx.data;
+  const id = accountId(state.id, target);
   if (!id.ok) return err({ _tag: "self_account" });
-  return chain(genesisReplica(id.value, tx.terms), (opened): Result<Draft, EntityError> => {
-  if (canon(opened.state.terms.domain) !== canon(state.jurisdiction)) return err({ _tag: "domain_mismatch" });
-  const existing = replicas.get(tx.target);
-  if (existing === undefined) return ok({ ...putChild(state, replicas, tx.target, opened), outputs });
-  return canon(existing.state.terms) === canon(opened.state.terms) ? ok({ state, accountReplicas: replicas, outputs: [] }) : err({ _tag: "account_exists", target: tx.target });
-});
+  return chain(genesisReplica(id.value, { domain: accountDomain, watchSeed, disputeConfig }), (opened): Result<Draft, EntityError> => {
+    if (!sameDomain(opened.state.terms.domain, state.jurisdiction)) return err({ _tag: "domain_mismatch" });
+    if (replicas.has(target)) return err({ _tag: "account_exists", target });
+    const credit = tokenId ?? "1", tokens = [...new Set([credit, ...DEFAULT_ACCOUNT_TOKEN_IDS])].filter((t) => Number(t) > 0) as TokenId[];
+    const seeded: readonly AccountTx[] = [...tokens.map((t): AccountTx => ({ type: "add_delta", tokenId: t })), ...(creditAmount !== undefined && creditAmount > 0n ? [{ type: "set_credit_limit", tokenId: credit as TokenId, limit: creditAmount } as AccountTx] : [])];
+    return map(admitAt(opened, seeded, state.id, L0_CLOCK), (admitted) => ({ ...putChild(state, replicas, target, admitted), outputs: [] }));
+  });
 };
+/** og createInboundAccountState: an unknown peer's first proposal (height 1) opens the Account from its envelope. */
+const inboundChild = (state: EntityState, replicas: Replicas, from: EntityId, m: Extract<AccountMessage, { kind: "ack_frame" }>): Result<Folded, EntityError> => {
+  if (m.frame.height !== 1n || m.watchSeed === undefined) return err({ _tag: "no_such_account", target: from });
+  if (!sameDomain(m.domain, state.jurisdiction)) return err({ _tag: "domain_mismatch" });
+  return chain(mapErr(accountId(state.id, from), (): EntityError => ({ _tag: "self_account" })), (id) =>
+    map(genesisReplica(id, { domain: m.domain, watchSeed: m.watchSeed ?? "", disputeConfig: m.disputeConfig }), (opened) => putChild(state, replicas, from, opened)));
+};
+const UINT256_MAX = (1n << 256n) - 1n;
 const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldContext): Result<Draft, EntityError> => {
-  const delta = (accountTx: AccountTx): Result<Draft, EntityError> => withChild(replicas, tx.target, (child) => map(admitAt(child, [accountTx], state.id, L0_CLOCK), (admitted) => ({ ...putChild(state, replicas, tx.target, admitted), outputs: [] })));
+  const origin = originOf(tx, state.id), peer = peerOf(tx, state.id), owed = replicas.get(peer);
+  if (owed !== undefined && owesCreateAck(owed) && !isCreateAck(tx, origin)) return err({ _tag: "create_ack_required", target: peer });
+  const enqueue = (target: EntityId, accountTxs: readonly AccountTx[], outputs: readonly EntityOutput[]): Result<Draft, EntityError> =>
+    withChild(replicas, target, (child) => map(admitAt(child, accountTxs, state.id, L0_CLOCK), (admitted) => ({ ...putChild(state, replicas, target, admitted), outputs })));
+  const skip: Draft = { state, accountReplicas: replicas, outputs: [] };
   return matchBy("type", tx, {
-    openAccount: (x) => x.target === state.id ? err({ _tag: "self_account" })
-      : match(ctx.origin, { local: () => openChild(state, replicas, x, [{ to: x.target, tx: { type: "openAccount", target: state.id, terms: x.terms } }]), received: () => openChild(state, replicas, x, []) }),
-    addDelta: (x) => delta({ type: "add_delta", tokenId: x.tokenId }),
-    extendCredit: (x) => delta({ type: "set_credit_limit", tokenId: x.tokenId, limit: x.limit }),
-    pay: (x) => delta({ type: "payment", tokenId: x.tokenId, amount: x.amount }),
-    proposeAccount: (x) => withChild(replicas, x.target, (child) => chain(partyOf(replicaId(child), state.id), (party) =>
-      routed(state, replicas, x.target, propose(child, { kind: "propose", frameHanko: x.frameHanko, disputeHanko: x.disputeHanko, timestamp: x.timestamp, jHeight: x.jHeight }, { verify: ctx.verify, party })))),
-    accountInput: (x) => chain(deliveredBy(x.input, state.id, ctx.origin), () => {
+    openAccount: (x) => openChild(state, replicas, x),
+    extendCredit: (x) => (replicas.has(x.data.counterpartyEntityId) ? enqueue(x.data.counterpartyEntityId, [{ type: "set_credit_limit", tokenId: x.data.tokenId, limit: x.data.amount }], [wake(state, ctx.timestamp)]) : ok(skip)),
+    directPayment: (x) => {
+      const { route, targetEntityId, amount, deliveryMode, trustedGatewayEntityId, tokenId } = x.data;
+      if (route.length === 0 || route.length > 100 || route[0] !== state.id || route[route.length - 1] !== targetEntityId) return err({ _tag: "payment_route" });
+      if (amount < 1n || amount > UINT256_MAX) return ok(skip);
+      if (deliveryMode !== "direct" || trustedGatewayEntityId !== undefined || route.length !== 2) return err({ _tag: "payment_route" });
+      return replicas.has(targetEntityId) ? enqueue(targetEntityId, [{ type: "payment", tokenId, amount }], [wake(state, ctx.timestamp)]) : err({ _tag: "no_such_account", target: targetEntityId });
+    },
+    proposeAccount: (x) => withChild(replicas, x.data.counterpartyEntityId, (child) => chain(partyOf(replicaId(child), state.id), (party) =>
+      routed(state, replicas, x.data.counterpartyEntityId, propose(child, { kind: "propose", frameHanko: x.data.frameHanko, disputeHanko: x.data.disputeHanko, timestamp: x.data.timestamp, jHeight: x.data.jHeight }, { verify: ctx.verify, party })))),
+    accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => {
       const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp };
-      const apply = (input: AccountMessage): Result<Draft, EntityError> => withChild(replicas, x.target, (child) => routed(state, replicas, x.target, disputeUnsafe(child, applyAccountInput(child, input, door), door)));
-      return matchBy("kind", x.input, {
-        ack: (i) => apply(i),
-        ack_frame: (i) => match(ctx.origin, { local: (): Result<Draft, EntityError> => err({ _tag: "from_not_converted" }), received: () => (i.frame.txs.every(isL0Tx) ? apply(i) : err({ _tag: "not_l0" })) }),
+      const apply = (at: Folded): Result<Draft, EntityError> => withChild(at.accountReplicas, peer, (child) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)));
+      const held: Folded = { state, accountReplicas: replicas };
+      return matchBy("kind", x.data, {
+        ack: () => apply(held),
+        ack_frame: (i) => match(origin, {
+          local: (): Result<Draft, EntityError> => err({ _tag: "from_not_converted" }),
+          received: ({ from }) => (!i.frame.txs.every(isL0Tx) ? err({ _tag: "not_l0" }) : replicas.has(from) ? apply(held) : chain(inboundChild(state, replicas, from, i), apply)),
+        }),
       });
     }),
   });
 };
-export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly EntityTx[], ctx: FoldContext): Result<Draft, EntityError> =>
-  map(strictFold<Folded, EntityTx, FoldContext, EntityOutput, EntityError>((pair, tx, c) => map(foldTx(pair.state, pair.accountReplicas, tx, c), (d) => step({ state: d.state, accountReplicas: d.accountReplicas }, d.outputs)))({ state, accountReplicas: replicas }, txs, ctx),
-    ({ state: end, effects }) => ({ ...end, outputs: effects }));
-const rootConfig = (quorum: Quorum): EntityRootConfig => {
-  const members = [...membersOf(quorum)].map(([id, member]) => [signerId(id), member.shares] as const).sort(([left], [right]) => asc(left, right));
-  return { mode: "proposer-based", threshold: thresholdOf(quorum), validators: members.map(([id]) => id), shares: Object.fromEntries(members) };
+export type FoldedTxs = { readonly draft: Draft; readonly included: readonly EntityTx[]; readonly evicted: readonly EntityTx[] };
+/**
+ * og buildEntityProposalEvictingRejected: a refused tx is evicted and the rest still fold. An openAccount refusal is a plain
+ * Error in og (not a reject disposition), so it refuses the whole input; so does a frame whose every tx was refused.
+ */
+export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly EntityTx[], ctx: FoldContext): Result<FoldedTxs, EntityError> => {
+  type Acc = FoldedTxs & { readonly first?: EntityError | undefined };
+  return chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state, accountReplicas: replicas, outputs: [] }, included: [], evicted: [] }, (acc, tx) => {
+    const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
+    if (r.ok) return ok({ ...acc, draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs] }, included: [...acc.included, tx] });
+    return tx.type === "openAccount" ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
+  }), ({ first, ...folded }) => (folded.included.length === 0 && first !== undefined ? err(first) : ok(folded)));
+};
+const EMPTY_COLLECTION = { radix: 16, leafCount: 0, root: ZERO_WORD } as const;
+/** og applyEntityFrame `state.crontabState ??= initCrontab()`: the hubRebalance task at the 1s cadence, no hooks. */
+const DEFAULT_CRONTAB: Binary = { tasks: new Map([["hubRebalance", { method: "hubRebalance", intervalMs: 1000, lastRun: 0, enabled: true, params: {} }]]), hooks: EMPTY_COLLECTION };
+const rootConfig = (state: EntityState): EntityRootConfig => {
+  const members = [...membersOf(state.quorum)].map(([id, member]) => [signerId(id), member.shares] as const), j = state.jurisdictionConfig;
+  return {
+    mode: "proposer-based", threshold: thresholdOf(state.quorum), validators: members.map(([id]) => id), shares: Object.fromEntries(members),
+    ...(j === undefined ? {} : { jurisdiction: { chainId: state.jurisdiction.chainId, depositoryAddress: state.jurisdiction.depositoryAddress, ...j } }),
+  };
 };
 /** Empty rebalance shadow only. A policy, quote, or request has no radix root here. */
 const installedAccount = (self: EntityId, peer: EntityId, child: AccountReplica): Result<EntityRootAccount, EntityError> => {
@@ -2292,76 +2432,226 @@ const installedAccount = (self: EntityId, peer: EntityId, child: AccountReplica)
     pendingWithdrawals: ZERO_WORD, policyRoot: ZERO_WORD, submittedAtByTokenRoot: ZERO_WORD, state,
   })));
 };
-const draftRoot = (self: EntityId, quorum: Quorum, replicas: Replicas): Result<string, EntityError> =>
-  chain(traverse([...replicas], ([peer, child]) => installedAccount(self, peer, child)), (accounts) => entityStateRoot({ config: rootConfig(quorum), accounts }));
-const authorityRoot = (quorum: Quorum): Result<string, EntityRootError> => {
-  const config = rootConfig(quorum), leader = config.validators[0];
+/** og computeCanonicalEntityConsensusStateHash over the draft: entityId, height, timestamp, config, accounts and every committed section. */
+export const entityRootOf = (state: EntityState, replicas: Replicas): Result<string, EntityError> =>
+  chain(frameNumber(state.height), (height) => chain(frameNumber(state.timestamp), (timestamp) => chain(traverse([...replicas], ([peer, child]) => installedAccount(state.id, peer, child)),
+    (accounts) => entityStateRoot({ config: rootConfig(state), accounts, entityId: state.id, height, timestamp, committed: state.committed }))));
+const authorityRoot = (state: EntityState): Result<string, EntityRootError> => {
+  const config = rootConfig(state), leader = config.validators[0];
   if (leader === undefined || leader.length === 0) return err({ _tag: "bad_config" });
   return chain(consensusConfig(config), (normalized) => map(encodeConsensus({
     domain: "xln.entity.frame-authority:binary",
     authority: { config: normalized, leaderState: { activeValidatorId: leader, view: 0, changedAtHeight: 0 } },
   }), (bytes) => bytesToHex(keccak_256(bytes))));
 };
-const proposedFrame = (head: Head, timestamp: bigint, origin: EntityOrigin, txs: readonly EntityTx[], draft: Draft, signer: Address): Result<EntityFrame, EntityError> => {
-  const height = head.height + 1n;
-  return chain(frameNumber(height), (heightNo) => chain(frameNumber(timestamp), () => chain(draftRoot(draft.state.id, draft.state.quorum, draft.accountReplicas), (stateRoot) =>
-    chain(authorityRoot(draft.state.quorum), (root) => ok({
-      height, prevFrameHash: head.prevFrameHash, timestamp, origin, txs, stateHash: hashEntityState(draft.state), events: [], stateRoot, authorityRoot: root,
-      entityContext: {
-        version: 1, proposerReplicaId: `${draft.state.id}:${signer}`, entityId: draft.state.id, proposerSignerId: signer,
-        parentFrameHash: frameWord(head.prevFrameHash), height: heightNo, gossipProfiles: [], peerAssertions: [],
-        htlc: { version: 1, entries: [], originated: [] },
-      },
-    })))));
-};
-export const applyTxsOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<ProposedEntity>, EntityError> => chain(parseOrigin(input.txs, ctx), (origin) => {
-  if (input.txs.length === 0) return err({ _tag: "empty_input" });
-  if (ctx.signerId !== allowedProposer(r.state.quorum)) return err({ _tag: "not_proposer", address: ctx.signerId });
-
-  if (input.timestamp < 0n || input.timestamp > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "frame_timestamp_invalid", timestamp: input.timestamp });
-  return chain(parseCreateAcks(input.txs, r.accountReplicas, origin), () => chain(foldTxs(r.state, r.accountReplicas, input.txs, { verify: ctx.verify, origin, timestamp: input.timestamp }), (draft) =>
-    map(proposedFrame(r.head, input.timestamp, origin, input.txs, draft, ctx.signerId), (frame) => done<ProposedEntity, EntityOutput>({ ...r, _tag: "proposed", mempool: [], signatures: new Map(), draft, frame }))));
-});
-export const applyPrecommitProposed = (r: ProposedEntity, input: Extract<EntityInput, { kind: "precommit" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
-  if (ctx.from !== undefined) return err({ _tag: "from_not_converted" });
-  const quorum = r.state.quorum;
-  return chain(hashEntityFrame(r.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
-    if (!membersOf(quorum).has(ctx.signerId)) return err({ _tag: "unknown_member", address: ctx.signerId });
-    if (!signedByMember(quorum, frameHash, input.signature, ctx)) return err({ _tag: "invalid_signature", address: ctx.signerId });
-    const signatures = mapSet(r.signatures, ctx.signerId, input.signature);
-    return ok(installs(quorum, frameHash, signatures)
-      ? done<OpenEntity | ProposedEntity, EntityOutput>(openEntity(r.draft.state, { height: r.frame.height, prevFrameHash: frameHash }, r.draft.accountReplicas), r.draft.outputs)
-      : done({ ...r, signatures }));
+/** og account/consensus hashesToSign: the Account frames and dispute proofs this frame signs for, as secondary manifest entries. */
+const messageHashes = (peer: EntityId, m: AccountMessage): readonly HashToSign[] => {
+  const tail = peer.slice(-8);
+  const acked = (a: AccountAck): readonly HashToSign[] => [
+    { hash: a.frameHash, type: "accountFrame", context: `account:${tail}:ack:${a.height}` },
+    ...(a.disputeHanko === undefined ? [] : [{ hash: a.disputeHanko.hash, type: "dispute", context: `account:${tail}:ack-dispute` } as const]),
+  ];
+  return matchBy("kind", m, {
+    ack: (a) => acked(a),
+    ack_frame: (f) => [...(f.ack === null ? [] : acked(f.ack)), { hash: f.frame.stateHash, type: "accountFrame", context: `account:${tail}:frame:${f.frame.height}` },
+      ...(f.disputeHanko === undefined ? [] : [{ hash: f.disputeHanko.hash, type: "dispute", context: `account:${tail}:dispute` } as const])],
   });
 };
+/** og buildEntityHashesToSign: the frame hash first, then the secondary hashes sorted, a duplicate is fatal. */
+const hashesToSignOf = (entityId: EntityId, height: bigint, frameHash: string, outputs: readonly EntityOutput[]): Result<readonly HashToSign[], EntityError> => {
+  const secondary = outputs.flatMap((o) => ("tx" in o ? messageHashes(o.to, o.tx.data) : []));
+  const hashes = [frameHash, ...secondary.map((h) => h.hash)];
+  if (new Set(hashes).size !== hashes.length) return err({ _tag: "secondary_hash_duplicate" });
+  return ok([{ hash: frameHash, type: "entityFrame", context: `entity:${entityId.slice(-4)}:frame:${height}` }, ...[...secondary].sort((a, b) => asc(a.hash, b.hash))]);
+};
+const GENESIS_PARENT = "genesis";
+/** og certifyEntityProposal: the proposal state takes height+1 and the frame timestamp, then state root, authority root, frame hash, manifest. */
+const buildFrame = (r: EntityEnv, proposer: Address, timestamp: bigint, txs: readonly EntityTx[], folded: Draft): Result<EntityCandidate, EntityError> => {
+  const height = r.head.height + 1n, parent = r.head.height === 0n ? GENESIS_PARENT : frameWord(r.head.prevFrameHash), signer = signerId(proposer);
+  const committed: EntityCommitted = "crontabState" in folded.state.committed ? folded.state.committed : { ...folded.state.committed, crontabState: DEFAULT_CRONTAB };
+  const draft: Draft = { ...folded, state: { ...folded.state, height, timestamp, committed } };
+  return chain(frameNumber(height), (heightNo) => chain(entityRootOf(draft.state, draft.accountReplicas), (stateRoot) => chain(authorityRoot(draft.state), (root) => {
+    const body = {
+      height, prevFrameHash: parent as EntityFrameHash, timestamp, txs, events: [], stateRoot, authorityRoot: root,
+      entityContext: { version: 1, proposerReplicaId: `${draft.state.id}:${signer}`, entityId: draft.state.id, proposerSignerId: signer, parentFrameHash: parent, height: heightNo, gossipProfiles: [], peerAssertions: [], htlc: { version: 1, entries: [], originated: [] } },
+    };
+    return chain(hashEntityFrame({ ...body, hashesToSign: [] }), (frameHash) =>
+      map(hashesToSignOf(draft.state.id, height, frameHash, draft.outputs), (hashesToSign): EntityCandidate => ({ frame: { ...body, hashesToSign }, signatures: new Map(), draft })));
+  })));
+};
+const frameKey = (tx: EntityTx): string => encodeEntityTx(tx);
+/** og removeCommittedTxsFromMempool: drop one mempool entry per committed (or evicted) tx. */
+const withoutTxs = (mempool: readonly EntityTx[], gone: readonly EntityTx[]): readonly EntityTx[] => {
+  const left = new Map<string, number>();
+  for (const tx of gone) left.set(frameKey(tx), (left.get(frameKey(tx)) ?? 0) + 1);
+  return mempool.filter((tx) => { const k = frameKey(tx), n = left.get(k) ?? 0; if (n === 0) return true; left.set(k, n - 1); return false; });
+};
+const ENTITY_MEMPOOL_SIZE = 10_000;
+/** og appendEntityMempoolTransactions: exact Account-input retries collapse, every other tx keeps order and multiplicity. */
+const appendMempool = (mempool: readonly EntityTx[], admitted: readonly EntityTx[]): readonly EntityTx[] => {
+  const accountKey = (tx: EntityTx): string | undefined => (tx.type === "accountInput" ? frameKey(tx) : undefined);
+  return [...mempool, ...firstBy(admitted, accountKey, mempool.flatMap((tx) => { const k = accountKey(tx); return k === undefined ? [] : [k]; }))];
+};
+/** og finalizeCommitNotification: install the candidate, emit its Account outputs, optionally broadcast the certified frame to the other validators. */
+const installFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean): EntityApply<OpenEntity> => {
+  const others = broadcast ? [...membersOf(r.draft.state.quorum).keys()].filter((v) => signerId(v) !== signerId(r.signerId)) : [];
+  return done(openEntity(r.signerId, r.draft.state, { height: r.frame.height, prevFrameHash: frameHash }, withoutTxs(r.mempool, r.frame.txs), r.draft.accountReplicas),
+    [...r.draft.outputs, ...others.map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "proposal", frame: r.frame, signatures } }))]);
+};
+/** og admitEntityTransactions + startEntityProposalIfReady: queue, forward a non-leader mempool to the leader, or propose from the mempool. */
+const admitTxs = <R extends EntityReplica>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<R, EntityError> => {
+  if (input.timestamp < 0n || input.timestamp > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "frame_timestamp_invalid", timestamp: input.timestamp });
+  const from = ctx.from;
+  if (from !== undefined && (from === ctx.self || !input.txs.every((tx) => tx.type === "accountInput" && namesEntity(tx.data.fromEntityId, from) && namesEntity(tx.data.toEntityId, ctx.self)))) return err({ _tag: "from_not_converted" });
+  if (input.txs.length > ENTITY_MEMPOOL_SIZE || r.mempool.length + input.txs.length > ENTITY_MEMPOOL_SIZE) return err({ _tag: "mempool_full" });
+  return ok({ ...r, mempool: appendMempool(r.mempool, input.txs) });
+};
+const forwarded = (r: EntityEnv, timestamp: bigint): readonly EntityOutput[] =>
+  signerId(r.signerId) === signerId(r.state.quorum.proposer) || r.mempool.length === 0 ? [] : [{ to: r.state.id, signerId: r.state.quorum.proposer, input: { kind: "txs", timestamp, txs: r.mempool } }];
+export const applyTxsOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => chain(admitTxs(r, input, ctx), (queued): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+  if (signerId(queued.signerId) !== signerId(queued.state.quorum.proposer) || queued.mempool.length === 0) return ok(done(queued, forwarded(queued, input.timestamp)));
+  /** og resolveEntityProposalTimestamp: never behind the committed clock. */
+  const timestamp = input.timestamp > queued.state.timestamp ? input.timestamp : queued.state.timestamp;
+  return chain(foldTxs(queued.state, queued.accountReplicas, queued.mempool, { verify: ctx.verify, timestamp }), ({ draft, included, evicted }) => {
+    const pool = withoutTxs(queued.mempool, evicted);
+    return chain(buildFrame(queued, queued.signerId, timestamp, included, draft), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+      const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[signerId(queued.signerId), own]]) };
+      if (isSingleSigner(queued.state.quorum)) return ok(installFrame(proposed, frameHash, proposed.signatures, false));
+      const others = [...membersOf(queued.state.quorum).keys()].filter((v) => signerId(v) !== signerId(queued.signerId));
+      return ok(done<OpenEntity | ProposedEntity, EntityOutput>(proposed, others.map((v): EntityOutput => ({ to: queued.state.id, signerId: v, input: { kind: "proposal", frame: candidate.frame, signatures: proposed.signatures } }))));
+    })));
+  });
+});
+/** og runs handleHashPrecommits on every input: a held frame whose collected signatures already reach quorum installs now. */
+const heldQuorum = <R extends ProposedEntity | LockedEntity>(r: R, before: readonly EntityOutput[]): Result<EntityApply<OpenEntity | R>, EntityError> =>
+  quorumPower(r.state.quorum, r.signatures) < thresholdOf(r.state.quorum) ? ok(done<OpenEntity | R, EntityOutput>(r, before))
+    : map(hashEntityFrame(r.frame), (frameHash) => { const c = installFrame(r, frameHash, r.signatures, true); return done<OpenEntity | R, EntityOutput>(c.replica, [...before, ...c.outputs]); });
+const queueOnly = <R extends ProposedEntity | LockedEntity>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> =>
+  chain(admitTxs(r, input, ctx), (queued) => heldQuorum(queued, forwarded(queued, input.timestamp)));
+/** og preauthenticateEntityProposal: canonical digests, parent, leader, recomputed hash, manifest head, the proposer's frame signature. */
+const DIGEST = /^0x[0-9a-f]{64}$/;
+const preauthenticate = (r: EntityEnv, frame: EntityFrame, signatures: Precommits, ctx: EntityContext): Result<EntityFrameHash, EntityError> => chain(hashEntityFrame(frame), (frameHash): Result<EntityFrameHash, EntityError> => {
+  if (!DIGEST.test(frame.stateRoot) || !DIGEST.test(frame.authorityRoot)) return err({ _tag: "proposal_digest" });
+  if (frame.prevFrameHash !== (r.head.height === 0n ? GENESIS_PARENT : frameWord(r.head.prevFrameHash))) return err({ _tag: "proposal_parent" });
+  const proposer = frame.entityContext.proposerSignerId;
+  if (signerId(proposer) !== signerId(r.state.quorum.proposer) || frame.entityContext.entityId !== r.state.id) return err({ _tag: "proposal_leader" });
+  const head = frame.hashesToSign[0];
+  if (head === undefined || head.hash !== frameHash || head.type !== "entityFrame" || head.context !== `entity:${r.state.id.slice(-4)}:frame:${frame.height}`) return err({ _tag: "proposal_manifest" });
+  const own = [...signatures].filter(([id]) => signerId(id) === signerId(proposer)), sig = own.length === 1 ? own[0]?.[1][0] : undefined, addr = memberId(r.state.quorum, proposer);
+  return sig === undefined || addr === undefined || !memberSigned(r.state.quorum, frameHash, sig, addr, ctx) ? err({ _tag: "proposal_signature" }) : ok(frameHash);
+});
+/** og replayProposedEntityFrame: a validator folds the frame's txs itself; any difference in the manifest refuses the proposal. */
+const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHash, ctx: EntityContext): Result<EntityCandidate, EntityError> => {
+  if (frame.timestamp < r.state.timestamp) return err({ _tag: "frame_timestamp_regression", timestamp: frame.timestamp });
+  return chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp }), ({ draft, evicted }) => {
+    if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
+    return chain(buildFrame(r, r.state.quorum.proposer, frame.timestamp, frame.txs, draft), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
+      local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame })));
+  });
+};
+const heldFrame = (r: EntityReplica): (EntityEnv & EntityCandidate) | undefined => match(r, { open: () => undefined, proposed: (p): (EntityEnv & EntityCandidate) | undefined => p, locked: (l): (EntityEnv & EntityCandidate) | undefined => l });
+/** og handleCommitNotification: a frame carrying a quorum certificate installs (after replay unless already locked on it). */
+const commitNotification = <R extends EntityReplica>(r: R, frame: EntityFrame, bundles: Precommits, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> | undefined => {
+  if (bundles.size === 0) return undefined;
+  const normalized = normalizeBundles(r.state.quorum, bundles);
+  if (normalized.ok && quorumPower(r.state.quorum, normalized.value) < thresholdOf(r.state.quorum)) return undefined;
+  if (!DIGEST.test(frame.stateRoot) || !DIGEST.test(frame.authorityRoot)) return err({ _tag: "proposal_digest" });
+  if (frame.height > r.head.height + 1n) return err({ _tag: "commit_wait" });
+  if (frame.height < r.head.height) return ok(done<OpenEntity | R, EntityOutput>(r));
+  return chain(hashEntityFrame(frame), (frameHash): Result<EntityApply<OpenEntity | R>, EntityError> => {
+    if (frame.height === r.head.height) return frameHash === r.head.prevFrameHash ? ok(done<OpenEntity | R, EntityOutput>(r)) : err({ _tag: "commit_conflict" });
+    return chain(preauthenticate(r, frame, bundles, ctx), () => chain(normalized, (sigs): Result<EntityApply<OpenEntity | R>, EntityError> => {
+      if ([...sigs].some(([id, s]) => !bundleValid(r.state.quorum, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
+      const held = heldFrame(r);
+      if (held !== undefined) return unwrapOr(hashEntityFrame(held.frame), () => "") === frameHash ? ok(installFrame(held, frameHash, sigs, false)) : err({ _tag: "commit_conflict" });
+      return map(replayFrame(r, frame, frameHash, ctx), (candidate) => installFrame({ ...r, ...candidate }, frameHash, sigs, false));
+    }));
+  });
+};
+/** og handleProposedFramePrecommit then handleHashPrecommits: replay, sign the manifest, lock, send the precommit to every other validator; commit when the lock already holds a quorum. */
+const signProposal = (r: OpenEntity, frame: EntityFrame, bundles: Precommits, ctx: EntityContext): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
+  if (frame.height < r.head.height) return ok(done<OpenEntity | LockedEntity, EntityOutput>(r));
+  return chain(hashEntityFrame(frame), (frameHash): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
+    if (frame.height === r.head.height) return frameHash === r.head.prevFrameHash ? ok(done<OpenEntity | LockedEntity, EntityOutput>(r)) : err({ _tag: "proposal_conflict" });
+    if (frame.height !== r.head.height + 1n) return err({ _tag: "proposal_wait" });
+    return chain(preauthenticate(r, frame, bundles, ctx), () => chain(replayFrame(r, frame, frameHash, ctx), (candidate) => chain(signManifest(candidate.frame.hashesToSign, r.signerId, ctx), (own) =>
+      chain(normalizeBundles(r.state.quorum, bundles), (sigs): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
+        if ([...sigs].some(([id, s]) => !bundleValid(r.state.quorum, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
+        const self = signerId(r.signerId), mine = sigs.get(self);
+        if (mine !== undefined && !sameSigs(mine, own)) return err({ _tag: "local_precommit_conflict" });
+        const locked: LockedEntity = { ...r, _tag: "locked", ...candidate, signatures: mapSet(sigs, self, own) };
+        const precommits = [...membersOf(r.state.quorum).keys()].filter((v) => signerId(v) !== self)
+          .map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "precommit", height: frame.height, frameHash, signatures: new Map([[self, own]]) } }));
+        if (quorumPower(r.state.quorum, locked.signatures) < thresholdOf(r.state.quorum)) return ok(done<OpenEntity | LockedEntity, EntityOutput>(locked, precommits));
+        const committed = installFrame(locked, frameHash, locked.signatures, true);
+        return ok(done<OpenEntity | LockedEntity, EntityOutput>(committed.replica, [...precommits, ...committed.outputs]));
+      }))));
+  });
+};
+/** og respondToActiveDuplicate: the same proposal again re-sends this validator's precommit. */
+const resendPrecommit = (r: LockedEntity, frame: EntityFrame): Result<EntityApply<LockedEntity>, EntityError> => chain(hashEntityFrame(r.frame), (held) => chain(hashEntityFrame(frame), (frameHash): Result<EntityApply<LockedEntity>, EntityError> => {
+  if (frame.height < r.head.height || (frame.height === r.head.height && frameHash === r.head.prevFrameHash)) return ok(done(r));
+  if (frameHash !== held) return frame.height > r.frame.height ? err({ _tag: "proposal_wait" }) : err({ _tag: "proposal_conflict" });
+  const self = signerId(r.signerId), own = r.signatures.get(self) ?? [];
+  return ok(done(r, [...membersOf(r.state.quorum).keys()].filter((v) => signerId(v) !== self)
+    .map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "precommit", height: frame.height, frameHash, signatures: new Map([[self, own]]) } }))));
+}));
+type ProposalInput = Extract<EntityInput, { kind: "proposal" }>;
+const proposalOpen = (r: OpenEntity, input: ProposalInput, ctx: EntityContext): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> =>
+  commitNotification(r, input.frame, input.signatures, ctx) ?? signProposal(r, input.frame, input.signatures, ctx);
+const proposalLocked = (r: LockedEntity, input: ProposalInput, ctx: EntityContext): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> =>
+  commitNotification(r, input.frame, input.signatures, ctx) ?? resendPrecommit(r, input.frame);
+const proposalProposed = (r: ProposedEntity, input: ProposalInput, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> =>
+  commitNotification(r, input.frame, input.signatures, ctx) ?? chain(hashEntityFrame(r.frame), (held) => chain(hashEntityFrame(input.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> =>
+    input.frame.height < r.head.height || (input.frame.height === r.head.height && frameHash === r.head.prevFrameHash) || frameHash === held ? heldQuorum(r, [])
+      : input.frame.height > r.frame.height ? err({ _tag: "proposal_wait" }) : err({ _tag: "proposal_conflict" })));
+/** og handleHashPrecommits: verify each signer's bundle against the held manifest, refuse equivocation, commit and broadcast at quorum. */
+export const applyPrecommitHeld = <R extends ProposedEntity | LockedEntity>(r: R, input: Extract<EntityInput, { kind: "precommit" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> =>
+  chain(hashEntityFrame(r.frame), (frameHash) => {
+    if (input.signatures.size > 0 && (input.height !== r.frame.height || !sameHex(input.frameHash, frameHash))) return err({ _tag: "precommit_frame_mismatch" });
+    return chain(normalizeBundles(r.state.quorum, input.signatures), (incoming) => chain(foldResult(incoming, r.signatures, (held, [id, sigs]): Result<Precommits, EntityError> => {
+      if (!bundleValid(r.state.quorum, r.frame.hashesToSign, id, sigs, ctx)) return err({ _tag: "invalid_signature", address: id });
+      const existing = held.get(id);
+      return existing !== undefined && !sameSigs(existing, sigs) ? err({ _tag: "precommit_signer_equivocation" }) : ok(mapSet(held, id, sigs));
+    }), (signatures) => heldQuorum<R>({ ...r, signatures }, [])));
+  });
+/** og: no active frame; a precommit for a height already committed is a no-op so reliable ingress can terminalize it. */
+const precommitOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "precommit" }>): Result<EntityApply<OpenEntity>, EntityError> =>
+  input.signatures.size === 0 || r.head.height > input.height ? ok(done(r)) : err({ _tag: "precommit_not_active" });
 const entityVerb = grammar<EntityGrammar>(EntityTransition);
-const applyTxs = entityVerb("txs", { open: applyTxsOpen, proposed: { _tag: "already_proposed" } });
-const applyPrecommit = entityVerb("precommit", { open: { _tag: "not_proposed" }, proposed: applyPrecommitProposed });
-export const applyEntityInput = (r: EntityReplica, input: EntityInput, ctx: EntityContext): Result<EntityApply, EntityError> =>
-  ctx.self !== r.state.id ? err({ _tag: "self_account" }) : matchBy("kind", input, { txs: (i) => applyTxs(r, i, ctx), precommit: (i) => applyPrecommit(r, i, ctx) });
+const applyTxs = entityVerb("txs", { open: applyTxsOpen, proposed: (r: ProposedEntity, i, c) => queueOnly(r, i, c), locked: (r: LockedEntity, i, c) => queueOnly(r, i, c) });
+const applyProposal = entityVerb("proposal", { open: proposalOpen, proposed: proposalProposed, locked: proposalLocked });
+const applyPrecommit = entityVerb("precommit", { open: precommitOpen, proposed: (r: ProposedEntity, i, c) => applyPrecommitHeld(r, i, c), locked: (r: LockedEntity, i, c) => applyPrecommitHeld(r, i, c) });
+/** One input to one validator replica (og applyEntityInput); `ctx.signerId` must name this replica. */
+export const applyEntityInput = (r: EntityReplica, input: EntityInput, ctx: EntityContext): Result<EntityApply, EntityError> => {
+  if (ctx.self !== r.state.id) return err({ _tag: "wrong_entity" });
+  if (signerId(ctx.signerId) !== signerId(r.signerId)) return err({ _tag: "wrong_replica", address: ctx.signerId });
+  return matchBy("kind", input, { txs: (i) => applyTxs(r, i, ctx), proposal: (i) => applyProposal(r, i, ctx), precommit: (i) => applyPrecommit(r, i, ctx) });
+};
 
-export type Runtime = { readonly entities: ReadonlyMap<EntityId, EntityReplica> };
+/** og `eReplicas`: one replica per `entityId:signerId` (signer lowercased). */
+export type Runtime = { readonly entities: ReadonlyMap<string, EntityReplica> };
 type RuntimeBase = { readonly entityId: EntityId; readonly signerId: Address; readonly input: EntityInput };
 export type RuntimeInput = (RuntimeBase & { readonly kind: "create" }) | (RuntimeBase & { readonly kind: "receive"; readonly from: EntityId });
 export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }>;
-export type Verifiers = { readonly verify: Verify; readonly verifyMember: MemberVerify };
+export type Verifiers = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign };
+export const replicaKey = (entity: EntityId, signer: string): string => `${entity}:${signerId(signer)}`;
 export const createRuntime = (): Runtime => ({ entities: new Map() });
-export const spawn = (rt: Runtime, r: EntityReplica): Runtime => ({ entities: mapSet(rt.entities, r.state.id, r) });
+export const spawn = (rt: Runtime, r: EntityReplica): Runtime => ({ entities: mapSet(rt.entities, replicaKey(r.state.id, r.signerId), r) });
+/** og resolveEntityProposerId: an Account message goes to the receiver's leader `validators[0]`; a consensus input to the named validator. */
 export const convertOutput = (rt: Runtime, item: EntityOutput, from: EntityId, timestamp: bigint): Result<RuntimeInput, RuntimeError> => {
-  const receiver = rt.entities.get(item.to);
+  if ("input" in item) return ok({ kind: "create", entityId: item.to, signerId: item.signerId, input: item.input });
+  const receiver = [...rt.entities.values()].find((r) => r.state.id === item.to);
   return receiver === undefined ? err({ _tag: "no_such_entity", id: item.to }) : ok({ kind: "receive", entityId: item.to, from, signerId: allowedProposer(receiver.state.quorum), input: { kind: "txs", timestamp, txs: [item.tx] } });
 };
 export const applyRuntime = (rt: Runtime, inputs: readonly RuntimeInput[], verifiers: Verifiers): { runtime: Runtime; outbox: readonly EntityOutput[]; rejected: readonly RuntimeError[] } => {
   type Out = { readonly outputs: readonly EntityOutput[]; readonly rejected: readonly RuntimeError[] };
-
-  const refused = (error: RuntimeError, stop: boolean): StoreStep<EntityId, EntityReplica, Out> => ({ writes: [], out: { outputs: [], rejected: [error] }, stop });
-  const { store, outs } = foldStore(rt.entities, inputs, (read, input): StoreStep<EntityId, EntityReplica, Out> => {
-    const r = read(input.entityId);
-    if (r === undefined) return refused({ _tag: "no_such_entity", id: input.entityId }, false);
+  const refused = (error: RuntimeError): StoreStep<string, EntityReplica, Out> => ({ writes: [], out: { outputs: [], rejected: [error] }, stop: false });
+  const { store, outs } = foldStore(rt.entities, inputs, (read, input): StoreStep<string, EntityReplica, Out> => {
+    const key = replicaKey(input.entityId, input.signerId), r = read(key);
+    if (r === undefined) return refused({ _tag: "no_such_entity", id: input.entityId });
     const applied = applyEntityInput(r, input.input, { self: input.entityId, signerId: input.signerId, ...verifiers, from: matchBy("kind", input, { create: () => undefined, receive: (i) => i.from }) });
-
-    if (!applied.ok) return refused(applied.error, applied.error._tag === "halt_runtime");
-    return { writes: [[input.entityId, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [] }, stop: false };
+    return applied.ok ? { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [] }, stop: false } : refused(applied.error);
   });
   return { runtime: { entities: store }, outbox: outs.flatMap((o) => o.outputs), rejected: outs.flatMap((o) => o.rejected) };
 };
@@ -2524,13 +2814,13 @@ export const recover = (graph: Host, frames: readonly RecoverFrame[], outbox: re
       if (r.previousFrameHash !== host.frameHash || r.height !== host.height + 1n || r.previousHostRoot !== root || canon(frame.inputs) !== canon(r.inputRefs)) return err({ _tag: "chain" });
       return chain(advance(host, root, frame.inputs, r.timestamp, verify), (next) => (hashFrame(next.record) === hashFrame(r) && canon(next.record.outboxRefs) === canon(r.outboxRefs) ? ok({ host: next.host, root: r.postHostRoot, effects: [...effects, ...next.created] }) : err({ _tag: "root" })));
     }), ({ host, effects }) => {
-      const byId = (entries: readonly OutboxEntry[]): string => canon(sortedBy(entries, (e) => e.id));
-      return byId(outbox) !== byId(host.outbox) ? err({ _tag: "chain" }) : ok({ host, pending: host.outbox, effects });
+      /** og outbox-payload.ts: rows are ordered `(height, index)`; order is part of the digest, never a multiset. */
+      return canon(outbox) !== canon(host.outbox) ? err({ _tag: "chain" }) : ok({ host, pending: host.outbox, effects });
     });
   });
 };
 
-export type TowerReceiptV1 = { readonly type: "tower_receipt"; readonly towerId: string; readonly lookupKey: string; readonly slot: bigint; readonly height: bigint; readonly bundleHash: Hash; readonly storedAt: bigint; readonly expiresAt: bigint; readonly towerSignature: string };
+export type TowerReceiptV1 = { readonly type: "tower_receipt"; readonly towerId: string; readonly lookupKey: string; readonly slot: bigint; readonly height: bigint; readonly bundleHash: Hash; readonly storedAt: bigint; readonly expiresAt: bigint; readonly towerSignature?: string | undefined };
 export type AccountRecoveryBundleV1 = {
   readonly account: { readonly accountId: string; readonly jurisdictionId: string; readonly left: string; readonly right: string; readonly owner: string; readonly counterparty: string };
   readonly latestCommitted: { readonly height: bigint; readonly frameHash: Hash; readonly ownerFrameHanko: string; readonly counterpartyFrameHanko: string };
@@ -2539,7 +2829,9 @@ export type AccountRecoveryBundleV1 = {
 export type TowerMode = "blind_backup" | "delayed_last_resort";
 export type LastResortPayload = { readonly triggerHint: string; readonly encryptedRemedy: string; readonly actionKind: "counter_dispute_only"; readonly appointmentSequence: bigint; readonly proofNonce: bigint; readonly proofBodyHash: Hash; readonly responseMode: "last_resort"; readonly lastResortWindowSeconds: bigint; readonly safetyMarginSeconds: bigint; readonly maxFeeToken?: TokenId | undefined; readonly feeBudget?: bigint | undefined };
 export type TowerAppointmentV1 = { readonly type: "tower_appointment"; readonly towerMode: TowerMode; readonly lookupKey: string; readonly slot: bigint; readonly height: bigint; readonly bundleHash: Hash; readonly encryptedBundle: string; readonly ownerEntityId: string; readonly ownerHanko: string; readonly lastResortPayload?: LastResortPayload | undefined };
-const whenSigned = <X>(x: X, ...hankos: readonly string[]): Result<X, HostError> => (hankos.every((h) => h.length > 0) ? ok(x) : err({ _tag: "unsigned" }));
-export const acceptReceipt = (r: TowerReceiptV1): Result<TowerReceiptV1, HostError> => whenSigned(r, r.towerSignature);
+/** og watchtower decode `text()`: a required string is non-empty after trim. */
+const whenSigned = <X>(x: X, ...hankos: readonly string[]): Result<X, HostError> => (hankos.every((h) => h.trim().length > 0) ? ok(x) : err({ _tag: "unsigned" }));
+/** og decodeReceipt: `towerSignature` is optional; when present it is non-empty text. */
+export const acceptReceipt = (r: TowerReceiptV1): Result<TowerReceiptV1, HostError> => whenSigned(r, r.towerId, r.lookupKey, r.bundleHash, ...(r.towerSignature === undefined ? [] : [r.towerSignature]));
 export const acceptBundle = (b: AccountRecoveryBundleV1): Result<AccountRecoveryBundleV1, HostError> => whenSigned(b, b.latestCommitted.ownerFrameHanko, b.latestCommitted.counterpartyFrameHanko);
 export const acceptAppointment = (a: TowerAppointmentV1): Result<TowerAppointmentV1, HostError> => whenSigned(a, a.ownerHanko);
