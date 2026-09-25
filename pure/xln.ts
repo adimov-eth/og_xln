@@ -2984,14 +2984,34 @@ const rootConfig = (state: EntityState): EntityRootConfig => {
     ...(j === undefined ? {} : { jurisdiction: { chainId: state.jurisdiction.chainId, depositoryAddress: state.jurisdiction.depositoryAddress, ...j } }),
   };
 };
-/** Rebalance requests, fee state and fee policies are committed Account state (og requestedRebalance*, rebalanceFeePolicies); the local shadow is not part of the body. */
-const installedAccount = (self: EntityId, peer: EntityId, child: AccountReplica): Result<EntityRootAccount, EntityError> => {
+/** og AccountReplica dispute fields (dispute/hanko.ts replaceLocalDisputeDraft, storeCounterpartyDisputeHanko): our unsigned draft tuple, the peer's full witness. */
+const disputeLeafFields = (w: DisputeWitnesses): Partial<Record<EntityLeafOptional, unknown>> => ({
+  ...(w.current === undefined ? {} : { currentDisputeHash: w.current.hash, currentDisputeProofBodyHash: w.current.proofBodyHash, currentDisputeProofNonce: w.current.proofNonce, currentDisputeProofProposerIsLeft: w.current.proposerIsLeft }),
+  ...(w.counterparty === undefined ? {} : { counterpartyDisputeProofHanko: w.counterparty.hanko, counterpartyDisputeHash: w.counterparty.hash, counterpartyDisputeProofBodyHash: w.counterparty.proofBodyHash, counterpartyDisputeProofNonce: w.counterparty.proofNonce, counterpartyDisputeProofProposerIsLeft: w.counterparty.proposerIsLeft }),
+});
+/** og witness-projection.ts counterpartySettlementHankos: the peer's settlement and post-proof Hankos, when any. */
+const peerSettlementHankos = (w: SettlementWorkspace | undefined, localIsLeft: boolean): unknown => {
+  if (w === undefined) return undefined;
+  const settlementHanko = localIsLeft ? w.rightHanko : w.leftHanko, postProofHanko = localIsLeft ? w.postSettlementDisputeProof?.rightHanko : w.postSettlementDisputeProof?.leftHanko;
+  return settlementHanko === undefined && postProofHanko === undefined ? undefined : { ...opt("settlementHanko", settlementHanko), ...opt("postProofHanko", postProofHanko) };
+};
+/**
+ * og projectAccountConsensusState for one Account replica. og's genesis replica carries `currentFrame.stateHash = ""` (open-account.ts, inbound-account.ts), so H=0 commits the empty frame hash.
+ * `counterpartyFrameHanko` is the peer's Hanko on the committed head (ack-commit.ts, index.ts). Rebalance requests, fee state and fee policies are committed Account state; the local shadow is not part of the body.
+ */
+export const installedAccount = (self: EntityId, peer: EntityId, child: AccountReplica): Result<EntityRootAccount, EntityError> => {
   const body = child.state;
   const status: EntityRootAccount["status"] = match(child, { open: () => "active", proposed: () => "active", received: () => "active", preparing: () => "dispute_preparing", disputed: () => "disputed" });
-  const linked: Result<{ readonly height: number; readonly frame: string }, EntityFrameHashError> = match(child.head, { genesis: () => ok({ height: 0, frame: "" }), installed: (head) => map(frameNumber(head.height), (height) => ({ height, frame: head.prevFrameHash })) });
+  const localIsLeft = isLeft(self, replicaId(child));
+  const linked: Result<{ readonly height: number; readonly frame: string; readonly peerHanko?: string | undefined }, EntityFrameHashError> = match(child.head, {
+    genesis: () => ok({ height: 0, frame: "" }),
+    installed: (head) => map(frameNumber(head.height), (height) => ({ height, frame: head.prevFrameHash, peerHanko: at(head.certificate.right, head.certificate.left, localIsLeft) })),
+  });
   return chain(linked, (link): Result<EntityRootAccount, EntityError> => chain(mapErr(committedView(body), (): EntityError => ({ _tag: "account_envelope", target: peer })), (state): Result<EntityRootAccount, EntityError> => ok({
     fromEntity: self, toEntity: peer, status, currentHeight: link.height, nextProofNonce: child.dispute.nextProofNonce, currentFrameHash: link.frame,
     pendingWithdrawals: ZERO_WORD, policyRoot: ZERO_WORD, submittedAtByTokenRoot: ZERO_WORD, state,
+    committed: { ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute) },
+    ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
   })));
 };
 /** og computeCanonicalEntityConsensusStateHash over the draft: entityId, height, timestamp, config, accounts and every committed section. */

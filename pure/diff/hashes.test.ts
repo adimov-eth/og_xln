@@ -16,13 +16,15 @@ import { lazySingleSignerEntityId, recoverShortHankoEntityId } from "../../core/
 import { computeCanonicalEntityConsensusStateHash, computeEntityAccountValueHash } from "../../core/entity/consensus/state-root.ts";
 import { PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
+import { replaceLocalDisputeDraft, storeCounterpartyDisputeHanko } from "../../core/account/consensus/dispute/hanko.ts";
+import { ALICE, BOB, ackInput, genesisAB, hankoVerify, offerOf, proposeInput, NOW } from "../xln_run.ts";
 import { createAccountJClaimRecord, EMPTY_ACCOUNT_J_CLAIM_ROOT } from "../../core/account/j-claims/j-claim-codec.ts";
 import { applyAccountJClaimInsert, createEmptyAccountJClaimAccumulator } from "../../core/account/j-claims/j-claim-accumulator.ts";
 import { createAccountJClaimProof } from "../../core/account/j-claims/j-claim-proof.ts";
 import { canonicalJurisdictionEventsHash } from "../../core/jurisdiction/machine/event-observation.ts";
 import { canon, encodeCanonicalValue, flatDigest, mapRoot, bytesToHex, accountFrameHash, accountStateCommitment, EMPTY_J_ROOT, type CommittedAccountState,
   J_EVENT_SIGNATURES, jEventTopic, readJEvents, encodeAccountSettledData, encodeBatch, emptyBatch, encodeBatchHash, DEPOSITORY_BATCH_HANKO_DOMAIN, encodeProofBodyBytes, proofBodyHash, encodeDisputeProofHash, encodeCooperativeUpdateHash, encodeDisputeHash, encodeAccountKey,
-  encodeLazyEntityId, encodeHanko65, encodeHankoEnvelope, packSignatures, verifyAccountHanko, verifyHankoLocal, encodeBoardBytes, entityStateRoot, entityFrameHash, keccak256Hex, accountId as rwAccountId, entityId as rwEntityId, accountTerms, admit, genesisReplica, previewAccountProposal, applyAccountBody, committed, hexToBytes, signRaw, wordOf, concat, addressOf, type Batch, type ProofBody } from "../xln.ts";
+  encodeLazyEntityId, encodeHanko65, encodeHankoEnvelope, packSignatures, verifyAccountHanko, verifyHankoLocal, encodeBoardBytes, entityStateRoot, entityFrameHash, keccak256Hex, accountId as rwAccountId, entityId as rwEntityId, accountTerms, admit, genesisReplica, applyAccountInput, installedAccount, committedView, previewAccountProposal, applyAccountBody, committed, hexToBytes, signRaw, wordOf, concat, addressOf, type Batch, type ProofBody } from "../xln.ts";
 
 // seeded PRNG (mulberry32)
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -661,6 +663,35 @@ describe("entity state root", () => {
       compared++;
     }
     expect(compared).toBeGreaterThan(50);
+  });
+});
+
+describe("entity account leaf, runtime side (H7)", () => {
+  test("MATCH: installedAccount fills og's committed replica fields -- genesis commits og's empty currentFrame.stateHash; after a round the peer frame Hanko, our dispute draft and the peer dispute witness are committed as og replaceLocalDisputeDraft/storeCounterpartyDisputeHanko store them", () => {
+    const door = (self: any) => ({ verify: hankoVerify, self, now: NOW });
+    const run = (r: any, input: any, self: any) => { const out = applyAccountInput(r, input, door(self)); if (!out.ok) throw new Error(JSON.stringify(out.error, (_k, v) => (typeof v === "bigint" ? `${v}` : v))); return out.value; };
+    const tx = { type: "set_credit_limit", tokenId: "0", limit: 7n } as any;
+    const opened = unwrap(admit(genesisAB(), [tx]));
+    const proposed: any = run(opened, proposeInput(opened, ALICE), ALICE).replica;
+    const received: any = run(genesisAB(), offerOf(proposed, ALICE), BOB).replica;
+    const acked = run(received, ackInput(received, BOB), BOB);
+    const alice: any = run(proposed, acked.outputs.find((o: any) => o.kind === "ack"), ALICE).replica, bob: any = acked.replica;
+    const leafRoot = (self: any, peer: any, child: any) => unwrap(entityStateRoot({ config: CONFIG, accounts: [unwrap(installedAccount(self, peer, child) as any)] }));
+    const ogRoot = (self: string, peer: string, child: any) => {
+      const view: any = unwrap(committedView(child.state) as any), localIsLeft = self === view.leftEntity;
+      const ogRep: any = ogReplica(self, peer, { state: toOgState(view), currentHeight: Number(child.head.height), proofHeader: { fromEntity: self, toEntity: peer, nextProofNonce: child.dispute.nextProofNonce },
+        currentFrame: { stateHash: child.head._tag === "genesis" ? "" : child.head.prevFrameHash } });
+      if (child.head._tag === "installed") ogRep.counterpartyFrameHanko = localIsLeft ? child.head.certificate.right : child.head.certificate.left;
+      const cur = child.dispute.current, cp = child.dispute.counterparty;
+      if (cur) replaceLocalDisputeDraft(ogRep, { hash: cur.hash, nonce: cur.proofNonce, proofBodyHash: cur.proofBodyHash, proposerIsLeft: cur.proposerIsLeft });
+      if (cp) storeCounterpartyDisputeHanko(ogRep, { hanko: cp.hanko, nonce: cp.proofNonce, hash: cp.hash, proofBodyHash: cp.proofBodyHash, proposerIsLeft: cp.proposerIsLeft });
+      return computeCanonicalEntityConsensusStateHash({ config: CONFIG, accounts: ogAccounts(self, [[peer, ogRep]]), paybook: { entries: new Map(), feesEarned: 0n } } as any);
+    };
+    expect(leafRoot(ALICE, BOB, genesisAB())).toBe(ogRoot(ALICE, BOB, genesisAB()));
+    expect([alice.head.height, alice.dispute.current !== undefined, alice.dispute.counterparty !== undefined, bob.dispute.counterparty !== undefined]).toEqual([1n, true, true, true]);
+    expect(leafRoot(ALICE, BOB, alice)).toBe(ogRoot(ALICE, BOB, alice));
+    expect(leafRoot(BOB, ALICE, bob)).toBe(ogRoot(BOB, ALICE, bob));
+    expect(leafRoot(ALICE, BOB, alice)).not.toBe(leafRoot(ALICE, BOB, { ...alice, dispute: { nextProofNonce: alice.dispute.nextProofNonce } }));
   });
 });
 
