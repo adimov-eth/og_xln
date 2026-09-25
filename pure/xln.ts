@@ -1868,12 +1868,15 @@ const duplicateOfHead = <R extends AccountReplica>(r: R, head: InstalledHead, in
     const priorAck: Result<void, AccountReplicaError> = ack === null ? ok(undefined)
       : height <= 1n || ack.height !== height - 1n ? err(conflict("height"))
       : chain(receivedDispute(r, ack.disputeHanko, ctx.from, ctx.verify), () => predecessorAck(r, ack, ctx.from, ctx.verify));
-    return map(priorAck, () => {
+    return chain(priorAck, () => {
       const sent = r.acknowledged;
-      if (sent !== undefined && sent.height === height) return done<R, AccountOutput>(r, [{ kind: "ack", ...sentBy(r, ctx.party), ...sent }]);
-      const current = r.dispute.current;
-      const rebuilt: AccountAck = { height, frameHash: head.prevFrameHash, frameHanko: certified.own, ...opt("disputeHanko", current !== undefined && current.proofNonce > 0 ? current : undefined) };
-      return done<R, AccountOutput>({ ...r, acknowledged: rebuilt }, [{ kind: "ack", ...sentBy(r, ctx.party), ...rebuilt }]);
+      if (sent !== undefined && sent.height === height) return ok(done<R, AccountOutput>(r, [{ kind: "ack", ...sentBy(r, ctx.party), ...sent }]));
+      // og replay.ts reusableCertifiedAckHanko: only a witness above the finalized jNonce is reusable.
+      return map(asProof(committedView(r.state)), ({ jNonce }) => {
+        const current = r.dispute.current;
+        const rebuilt: AccountAck = { height, frameHash: head.prevFrameHash, frameHanko: certified.own, ...opt("disputeHanko", current !== undefined && current.proofNonce > jNonce ? current : undefined) };
+        return done<R, AccountOutput>({ ...r, acknowledged: rebuilt }, [{ kind: "ack", ...sentBy(r, ctx.party), ...rebuilt }]);
+      });
     });
   });
 };
