@@ -90,7 +90,7 @@ export const EntityTransition = {
 
 
 export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc_lock", "htlc_resolve", "swap_offer", "swap_cancel_request", "swap_resolve", "settle_transition",
-  "j_event_claim", "cross_pull_lock", "cross_pull_close", "deposit_to_custody", "withdraw_from_custody", "hub_custody_debit", "request_collateral", "rebalance_refund",
+  "j_event_claim", "cross_pull_lock", "cross_pull_close", "request_collateral", "rebalance_refund",
   "rebalance_policy", "lending_fund", "lending_borrow_request", "lending_repay", "lending_credit", "lending_close_request", "lending_close_payout"] as const;
 export const LendingTxNames = ["lending_fund", "lending_borrow_request", "lending_repay", "lending_close_request"] as const;
 export const EntityTxNames = ["directPayment", "placeSwapOffer", "htlcPayment", "prepareCrossJurisdictionSwap", "registerCrossJurisdictionSwap"] as const;
@@ -972,8 +972,7 @@ export const checkEnvelope = (id: AccountId, terms: AccountTerms, e: AccountEnve
 export type ClaimError = Tagged<"claim_height" | "claim_events" | "claim_block" | "claim_entity" | "claim_conflict" | "claim_proof">;
 export type BodyError =
   | AccountError | RatioError | Uncommitted | ClaimError
-  | Tagged<"above_custody", { have: bigint; requested: bigint }>
-  | Tagged<"not_hub" | "settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
+  | Tagged<"settlement_frozen" | "settled_pair" | "settled_nonce" | "lock_id" | "htlc_expired" | "htlc_lock_capacity" | "hold_overflow" | "offdelta_range" | "duplicate" | "missing" | "not_maker" | "before_deadline" | "preimage" | "not_counterparty" | "index" | "too_many_rows">
   | Tagged<"token_id", { tokenId: string }>
   | Tagged<"settlement", { reason: string }>
   | Tagged<"swap", { reason: string }>
@@ -984,7 +983,6 @@ export type BodyError =
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
 export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
-export type HubSide = "left" | "right" | null;
 export type Effect = Tagged<"forward_secret", { hashlock: string; secret: string }>;
 const MAX_ROWS = 128;
 export type HtlcLock = { readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly senderIsLeft: boolean; readonly createdHeight: bigint; readonly createdTimestamp: bigint; readonly encryptedPackage?: string | undefined };
@@ -1014,7 +1012,6 @@ export type RebalanceRequestFeeState = {
   readonly requestId: string; readonly feeTokenId: number; readonly feePaidUpfront: bigint; readonly requestedAmount: bigint; readonly policyVersion: number; readonly requestedAt: number; readonly requestedByLeft: boolean;
   readonly refund?: { readonly reason: RefundReason; readonly refundedAmount: bigint };
 };
-export type CustodyDebit = { readonly tokenId: TokenId; readonly amount: bigint; readonly reason: string; readonly referenceId?: string | undefined };
 export type JClaimProof = { readonly version: 1; readonly nodes: readonly [] };
 export type ClaimRow = { readonly onLeft: boolean; readonly jHeight: bigint; readonly jBlockHash: string; readonly eventsHash: string };
 /** og types/account.ts SettlementOp / SettlementWorkspace, field for field: the workspace (minus Hankos) is committed in the Account root. */
@@ -1031,8 +1028,7 @@ export type SettlementWorkspace = {
   readonly executorIsLeft: boolean; readonly nonceAtSign?: number | undefined; readonly postSettlementDisputeProof?: PostSettlementProof | undefined;
 };
 export type AccountBody = {
-  readonly account: AccountState; readonly terms: AccountTerms; readonly hub: HubSide; readonly custody: ReadonlyMap<TokenId, bigint>; readonly locks: ReadonlyMap<string, HtlcLock>;
-  readonly offers: ReadonlyMap<string, SwapOffer>; readonly debits: readonly CustodyDebit[];
+  readonly account: AccountState; readonly terms: AccountTerms; readonly locks: ReadonlyMap<string, HtlcLock>; readonly offers: ReadonlyMap<string, SwapOffer>;
   readonly requested: ReadonlyMap<TokenId, bigint>; readonly requestFees: ReadonlyMap<TokenId, RebalanceRequestFeeState>; readonly feePolicies: ReadonlyMap<TokenId, BilateralFeePolicy>;
   readonly lendingIntents: ReadonlyMap<string, LendingIntentKind>; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly jNonce: number;
   readonly settlement?: SettlementWorkspace | undefined;
@@ -1049,9 +1045,6 @@ export type AccountTx =
   | ({ readonly type: "swap_offer" } & SwapOfferTerms)
   | { readonly type: "swap_cancel_request"; readonly offerId: string }
   | ({ readonly type: "swap_resolve" } & SwapResolveTerms)
-  | { readonly type: "deposit_to_custody"; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "withdraw_from_custody"; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "hub_custody_debit"; readonly tokenId: TokenId; readonly amount: bigint; readonly reason: string; readonly referenceId?: string | undefined }
   | { readonly type: "request_collateral"; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number }
   | { readonly type: "rebalance_refund"; readonly requestId: string; readonly requestTokenId: TokenId; readonly amount: bigint; readonly reason: RefundReason }
   | { readonly type: "rebalance_policy"; readonly tokenId: TokenId; readonly policyVersion: number; readonly baseFee: bigint; readonly liquidityFeeBps: bigint; readonly gasFee: bigint }
@@ -1078,7 +1071,7 @@ export const wireOf = (tx: WireAccountTx): { readonly type: string } => {
   if (tx.type === "htlc_lock") out["revealBeforeHeight"] = Number(tx.revealBeforeHeight);
   return out as { readonly type: string };
 };
-type Author = "bilateral" | "hub" | "unchosen";
+type Author = "bilateral" | "unchosen";
 export type KindRow = { readonly author: Author; readonly l0: boolean; readonly repeatable: boolean; readonly effects: readonly Effect["_tag"][] };
 const kind = <R extends KindRow>(author: Author, l0: boolean, repeatable: boolean, effects: readonly Effect["_tag"][] = []): R => ({ author, l0, repeatable, effects }) as R;
 export const AccountKinds = {
@@ -1086,7 +1079,6 @@ export const AccountKinds = {
   htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret"]),
   swap_offer: kind("bilateral", false, false), swap_cancel_request: kind("bilateral", false, false), swap_resolve: kind("bilateral", false, false),
   settle_transition: kind("bilateral", false, false),
-  deposit_to_custody: kind("bilateral", false, false), withdraw_from_custody: kind("bilateral", false, false), hub_custody_debit: kind("hub", false, false),
   request_collateral: kind("bilateral", false, false), rebalance_refund: kind("bilateral", false, false), rebalance_policy: kind("bilateral", false, false),
   lending_fund: kind("bilateral", false, false), lending_borrow_request: kind("bilateral", false, false), lending_repay: kind("bilateral", false, false), lending_credit: kind("bilateral", false, false),
   lending_close_request: kind("bilateral", false, false), lending_close_payout: kind("bilateral", false, false),
@@ -1096,10 +1088,8 @@ export const AccountKinds = {
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
 export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret"> : never;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
-export const genesisAccountBody = (account: AccountState, terms: AccountTerms, hub: HubSide = null): AccountBody => ({ account, terms, hub, custody: new Map(), locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), debits: [], finalizedJHeight: 0n, jNonce: 0 });
+export const genesisAccountBody = (account: AccountState, terms: AccountTerms): AccountBody => ({ account, terms, locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), finalizedJHeight: 0n, jNonce: 0 });
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
-const authorized = (tx: WireAccountTx, hub: HubSide, byLeft: boolean): Result<void, BodyError> =>
-  arm(AccountKinds, tx.type).author !== "hub" || (hub !== null && byLeft === (hub === "left")) ? ok(undefined) : err({ _tag: "not_hub" });
 export const holds = (a: AccountBody, tk: TokenId, byLeft: boolean): bigint => { const s = sideTotals(a, tk); return at(s.leftHold + s.leftAllowance, s.rightHold + s.rightAllowance, byLeft); };
 const ensureRoom = (a: AccountBody, tk: TokenId, amount: bigint, byLeft: boolean): Result<void, BodyError> => {
   const available = outCapacity(getDelta(a.account, tk), byLeft, holds(a, tk, byLeft));
@@ -1120,12 +1110,6 @@ const representable = (a: AccountBody, d: Delta, added?: { readonly senderIsLeft
   for (const l of a.locks.values()) if (l.tokenId === d.tokenId) include(l.senderIsLeft, l.amount);
   if (added !== undefined) include(added.senderIsLeft, added.amount);
   return guard(lower >= INT512_MIN && upper <= INT512_MAX, { _tag: "offdelta_range" });
-};
-const shifted = (a: AccountBody, tk: TokenId, by: bigint): AccountBody => putState(a, setDelta(a.account, shift(getDelta(a.account, tk), by)));
-const custodyOf = (a: AccountBody, tk: TokenId): bigint => a.custody.get(tk) ?? 0n;
-const fromCustody = (a: AccountBody, tk: TokenId, amount: bigint): Result<void, BodyError> => {
-  const have = custodyOf(a, tk);
-  return chain(positive(amount), () => guard(amount <= have, { _tag: "above_custody", have, requested: amount }));
 };
 const MISSING: Result<never, BodyError> = err({ _tag: "missing" });
 const sameAccount = (row: AccountSettlement, id: AccountId): boolean => row.left === id.left && row.right === id.right;
@@ -1723,9 +1707,6 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
     return offer === undefined ? MISSING : ctx.byLeft !== offer.makerIsLeft ? err({ _tag: "not_maker" }) : ok(step(a));
   },
   swap_resolve: (x) => swapResolve(a, x, ctx),
-  deposit_to_custody: (x) => map(spend(a, x.tokenId, x.amount, ctx.byLeft), (b) => step({ ...b, custody: bump(b.custody, x.tokenId, x.amount) })),
-  withdraw_from_custody: (x) => chain(fromCustody(a, x.tokenId, x.amount), () => map(offdeltaChange(ctx.byLeft, x.amount), (by) => step({ ...shifted(a, x.tokenId, -by), custody: bump(a.custody, x.tokenId, -x.amount) }))),
-  hub_custody_debit: (x) => map(fromCustody(a, x.tokenId, x.amount), () => step({ ...a, custody: bump(a.custody, x.tokenId, -x.amount), debits: [...a.debits, { tokenId: x.tokenId, amount: x.amount, reason: x.reason, referenceId: x.referenceId }] })),
   request_collateral: (x) => requestCollateral(a, x, ctx),
   rebalance_refund: (x) => rebalanceRefund(a, x, ctx),
   rebalance_policy: (x) => rebalancePolicy(a, x, ctx),
@@ -1739,7 +1720,7 @@ const applyArm = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx): BodyStep<Eff
 const one = (x: { readonly tokenId: TokenId }): readonly string[] => [x.tokenId], none = (): readonly string[] => [];
 const namedTokens = (tx: WireAccountTx): readonly string[] => matchBy("type", tx, {
   add_delta: one, set_credit_limit: one, payment: one, htlc_lock: one, htlc_resolve: none, swap_offer: (x) => [x.giveTokenId, x.wantTokenId], swap_cancel_request: none, swap_resolve: (x) => (x.feeTokenId === undefined ? [] : [x.feeTokenId]),
-  deposit_to_custody: one, withdraw_from_custody: one, hub_custody_debit: one, request_collateral: (x) => (x.feeTokenId === undefined ? [x.tokenId] : [x.tokenId, x.feeTokenId]), rebalance_refund: (x) => [x.requestTokenId], rebalance_policy: one,
+  request_collateral: (x) => (x.feeTokenId === undefined ? [x.tokenId] : [x.tokenId, x.feeTokenId]), rebalance_refund: (x) => [x.requestTokenId], rebalance_policy: one,
   lending_fund: one, lending_borrow_request: one, lending_repay: one, lending_credit: one, lending_close_request: none, lending_close_payout: one,
   cross_pull_lock: none, cross_pull_close: none, j_event_claim: (x) => x.events.flatMap((row) => row.tokens.map((tk) => tk.tokenId.toString())), settle_transition: none,
 });
@@ -1750,10 +1731,10 @@ export const applyAccountBody: Layer<AccountBody, WireAccountTx, FoldCtx, Effect
   if (!frozen.ok) return frozen;
   const unfit = namedTokens(tx).find((n) => !tokenId(n).ok);
   if (unfit !== undefined) return err({ _tag: "token_id", tokenId: unfit });
-  return chain(authorized(tx, a.hub, ctx.byLeft), () => chain(applyArm(a, tx, ctx), (next) => (next.state.account.deltas.size > MAX_ROWS ? err({ _tag: "too_many_rows" }) : commits(a, tx, next))));
+  return chain(applyArm(a, tx, ctx), (next) => (next.state.account.deltas.size > MAX_ROWS ? err({ _tag: "too_many_rows" }) : commits(a, tx, next)));
 };
 export const accountSnapshot = (a: AccountBody): Required<Omit<AccountBody, "account">> & { readonly state: Hash } =>
-  ({ state: hashAccountState(a.account), terms: a.terms, hub: a.hub, custody: a.custody, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, debits: a.debits, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
+  ({ state: hashAccountState(a.account), terms: a.terms, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight });
 
 
 export type ViewError = CommitmentError | Tagged<"token_id", { tokenId: TokenId }> | ClaimError;
@@ -1832,15 +1813,11 @@ const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
   if (height < 0n || height > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "bad_j_claims" });
   const keys = [...b.account.deltas.keys(), ...b.requested.keys(), ...b.requestFees.keys(), ...b.feePolicies.keys()];
   return chain(traverse(keys, tokenNumber), () => chain(all({ left: pendingOn(b, true), right: pendingOn(b, false) }), ({ left, right }) => {
-    // og lendingIntents first; the rewrite-only custody/debit/hub rows share this committed map (EXTRA, see findings AT-22).
-    const { terms } = b, hubRows = new Map<string, unknown>(b.lendingIntents);
-    for (const [tk, amount] of b.custody) hubRows.set(`custody:${tk}`, amount);
-    b.debits.forEach((debit, i) => hubRows.set(`debit:${i}`, debit));
-    if (b.hub !== null) hubRows.set("hub", b.hub);
+    const { terms } = b;
     return ok({
       domain: terms.domain, leftEntity: b.account.id.left, rightEntity: b.account.id.right, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig,
       jNonce: b.jNonce, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
-      deltas: committedDeltas(b), locks: new Map([...b.locks].map(([id, l]) => [id, ogLockRow(l)])), pulls: new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map(), lendingIntents: hubRows,
+      deltas: committedDeltas(b), locks: new Map([...b.locks].map(([id, l]) => [id, ogLockRow(l)])), pulls: new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map(), lendingIntents: b.lendingIntents,
       requestedRebalance: byToken(b.requested), requestedRebalanceFeeState: byToken(b.requestFees), rebalanceFeePolicies: byToken(b.feePolicies), settlementWorkspace: b.settlement,
     });
   }));
@@ -2443,11 +2420,11 @@ export const admissionFold = (mempool: readonly WireAccountTx[], added: number, 
   return first === undefined ? ok(undefined) : err(first.error);
 });
 const ENTITY_WORD = /^0x[0-9a-f]{64}$/;
-export const genesisReplica = (id: AccountId, terms: AccountTerms, hub: HubSide = null): Result<OpenAccount, AccountReplicaError> => {
+export const genesisReplica = (id: AccountId, terms: AccountTerms): Result<OpenAccount, AccountReplicaError> => {
   if (!ENTITY_WORD.test(id.left) || !ENTITY_WORD.test(id.right)) return err({ _tag: "bad_account", reason: "entity_id" });
   if (id.left === id.right) return err({ _tag: "bad_account", reason: "same_entity" });
   return map(mapErr(accountTerms(terms), (e): AccountReplicaError => ({ _tag: "bad_account", reason: e._tag })), (normalized): OpenAccount =>
-    ({ _tag: "open", state: genesisAccountBody(genesisAccount(id), normalized, hub), head: genesisAccountHead(), mempool: [], dispute: genesisWitnesses() }));
+    ({ _tag: "open", state: genesisAccountBody(genesisAccount(id), normalized), head: genesisAccountHead(), mempool: [], dispute: genesisWitnesses() }));
 };
 export type LiveAccount = OpenAccount | ProposedAccount | ReceivedAccount;
 type Queued = { readonly replica: LiveAccount; readonly queued: readonly WireAccountTx[] };

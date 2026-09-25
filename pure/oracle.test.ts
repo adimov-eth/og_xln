@@ -293,7 +293,7 @@ describe("oracle", () => {
   });
 
   test("a filled swap moves give and want by their two signs", () => {
-    const { body, ctx } = open("left");
+    const { body, ctx } = open();
     const offered = unwrap(applyAccountBody(body, {
       type: "swap_offer", offerId: "S", giveTokenId: "0", giveTokenDecimals: 0, giveAmount: 6n, wantTokenId: "1", wantTokenDecimals: 0, wantAmount: 3n, maxFee: 0n, minNetReceive: 3n,
     }, ctx)).state;
@@ -568,7 +568,7 @@ describe("oracle", () => {
   });
 });
 
-const open = (hub: "left" | "right" | null = null): { body: AccountBody; ctx: FoldCtx } => {
+const open = (): { body: AccountBody; ctx: FoldCtx } => {
   const alice = unwrap(entityId(word("11")));
   const bob = unwrap(entityId(word("22")));
   const terms = unwrap(accountTerms({
@@ -577,7 +577,7 @@ const open = (hub: "left" | "right" | null = null): { body: AccountBody; ctx: Fo
     disputeConfig: { leftResponseSeconds: 1, rightResponseSeconds: 1 },
   }));
   const ctx: FoldCtx = { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n };
-  let body = genesisAccountBody(genesisAccount(unwrap(accountId(alice, bob))), terms, hub);
+  let body = genesisAccountBody(genesisAccount(unwrap(accountId(alice, bob))), terms);
   for (const tokenId of ["0", "1"] as const) {
     body = unwrap(applyAccountBody(body, { type: "set_credit_limit", tokenId, limit: 20n }, ctx)).state;
     body = unwrap(applyAccountBody(body, { type: "set_credit_limit", tokenId, limit: 20n }, { ...ctx, byLeft: false })).state;

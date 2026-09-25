@@ -9,7 +9,7 @@ import {
 } from "./xln.ts";
 import type {
   AccountEnvelope, AccountFrame, AccountGrammar, AccountId, AccountInput, AccountInputFor, AccountMessage, AccountOutput, AccountPhase, AccountReplica, AccountReplicaError, AccountTerms, Address, At, Board, DisputeHanko,
-  DisputePlan, EntityFrame, EntityGrammar, EntityId, EntityPhase, EntityReplica, FrameClock, Hanko, HankoClaimInput, Hash, HubSide, OpenAccount, Party, ProposedAccount, RawSig, Result, Signature, Verify,
+  DisputePlan, EntityFrame, EntityGrammar, EntityId, EntityPhase, EntityReplica, FrameClock, Hanko, HankoClaimInput, Hash, OpenAccount, Party, ProposedAccount, RawSig, Result, Signature, Verify,
 } from "./xln.ts";
 
 
@@ -108,7 +108,7 @@ export const envelopeAB = (from: EntityId): AccountEnvelope => {
   const id = pairAB(), { domain, disputeConfig, watchSeed } = TERMS;
   return { fromEntityId: from, toEntityId: from === id.left ? id.right : id.left, domain, disputeConfig, watchSeed };
 };
-export const genesisAB = (hub: HubSide = null): OpenAccount => unwrap(genesisReplica(pairAB(), TERMS, hub));
+export const genesisAB = (): OpenAccount => unwrap(genesisReplica(pairAB(), TERMS));
 
 
 const memo = <X>(compute: (key: string) => X) => { const held = new Map<string, X>(); return (key: string): X => { const c = held.get(key); if (c !== undefined) return c; const x = compute(key); held.set(key, x); return x; }; };
@@ -146,14 +146,14 @@ export const _ackPlan = ackPlan;
 export type { AccountInput };
 
 
-export const consumerExample = (): { readonly ok: true; readonly offdelta: string; readonly custody: string; readonly collateral: string; readonly ondelta: string } | { readonly ok: false } => {
+export const consumerExample = (): { readonly ok: true; readonly offdelta: string; readonly collateral: string; readonly ondelta: string } | { readonly ok: false } => {
   const alice = unwrap(entityId("alice")), bob = unwrap(entityId("bob")), token = unwrap(tokenId("0"));
   const state = unwrap(updateDelta(genesisAccount(unwrap(accountId(alice, bob))), token, (d) => setCreditLimit(d, 100n, false)));
 
   const terms: AccountTerms = { domain: { chainId: 31337, depositoryAddress: `0x${"5f".repeat(20)}` }, watchSeed: `0x${"33".repeat(32)}`, disputeConfig: { leftResponseSeconds: 86400, rightResponseSeconds: 3600 } };
-  const stepped = applyAccountBody(genesisAccountBody(state, terms), { type: "deposit_to_custody", tokenId: token, amount: 25n }, { byLeft: true, nowMs: 1_000n, jHeight: 0n, accountHeight: 1n });
+  const stepped = applyAccountBody(genesisAccountBody(state, terms), { type: "payment", tokenId: token, amount: 25n }, { byLeft: true, nowMs: 1_000n, jHeight: 0n, accountHeight: 1n });
   if (!stepped.ok) return { ok: false };
   const row = getDelta(stepped.value.state.account, token);
-  return { ok: true, offdelta: row.offdelta.toString(), custody: (stepped.value.state.custody.get(token) ?? 0n).toString(), collateral: row.collateral.toString(), ondelta: row.ondelta.toString() };
+  return { ok: true, offdelta: row.offdelta.toString(), collateral: row.collateral.toString(), ondelta: row.ondelta.toString() };
 };
 if (import.meta.main) { const out = consumerExample(); console.log(JSON.stringify(out)); if (!out.ok) process.exit(1); }

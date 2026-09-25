@@ -13,6 +13,7 @@ import { handleRebalanceRefund } from "../../core/account/tx/handlers/rebalance/
 import { handleRebalancePolicy } from "../../core/account/tx/handlers/rebalance/policy.ts";
 import { handleLendingAccountTx } from "../../core/account/tx/handlers/balance/lending.ts";
 import { computeFrameHash } from "../../core/account/consensus/frame/hash.ts";
+import { applyAccountTxMutation } from "../../core/account/tx/mutation.ts";
 import { handleSwapOffer } from "../../core/account/tx/handlers/swap/offer/index.ts";
 import { deriveExactSwapFillRatio, exactFillRatioToUint16 } from "../../core/orderbook/swap-execution.ts";
 import { handleSettleTransition, getSignedSettlementWorkspaceTxError } from "../../core/account/tx/handlers/settlement/transition.ts";
@@ -29,6 +30,7 @@ import {
   accountTerms,
   accountFrameHash,
   applyAccountBody,
+  AccountKinds,
   committed,
   ownWire,
   wireOf,
@@ -76,14 +78,14 @@ const ogState = (deltas: Array<ReturnType<typeof ogDelta>> = []) => ({
 });
 const ogAccount = (state: ReturnType<typeof ogState>) => ({ proofHeader: { fromEntity: A, toEntity: B }, state, currentHeight: 1 }) as any;
 
-const open = (hub: "left" | "right" | null = null, credit = 20n): { body: AccountBody; ctx: FoldCtx } => {
+const open = (_hub: null = null, credit = 20n): { body: AccountBody; ctx: FoldCtx } => {
   const terms = unwrap(accountTerms({
     domain: { chainId: 1, depositoryAddress: `0x${"ab".repeat(20)}` },
     watchSeed: word("44"),
     disputeConfig: { leftResponseSeconds: 1, rightResponseSeconds: 1 },
   }) as any) as any;
   const ctx: FoldCtx = { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n };
-  let body = genesisAccountBody(genesisAccount(unwrap(accountId(unwrap(entityId(A) as any), unwrap(entityId(B) as any)) as any)), terms, hub);
+  let body = genesisAccountBody(genesisAccount(unwrap(accountId(unwrap(entityId(A) as any), unwrap(entityId(B) as any)) as any)), terms);
   for (const tokenId of ["0", "1"] as const) {
     body = unwrap(applyAccountBody(body, { type: "set_credit_limit", tokenId, limit: credit }, ctx) as any as R<any, any>).state;
     body = unwrap(applyAccountBody(body, { type: "set_credit_limit", tokenId, limit: credit }, { ...ctx, byLeft: false }) as any as R<any, any>).state;
@@ -291,7 +293,7 @@ describe("account-tx: htlc", () => {
     const s = ogState([ogDelta(1, { leftCreditLimit: 1000n })]);
     for (let i = 0; i < 32; i++) s.locks.put(`x${i}`, { tokenId: 2, amount: 1n, senderIsLeft: true });
     expect((await handleHtlcLock(ogAccount(s), ogLockTx({ amount: 1n }), true, ogClock())).ok).toBe(false);
-    let { body, ctx } = open("left", 1000n);
+    let { body, ctx } = open(null, 1000n);
     for (let i = 0; i < 32; i++) body = unwrap(apply(body, rwLock(secretOf(100 + i), { amount: 1n }), ctx)).state;
     const r = apply(body, rwLock(secretOf(200), { amount: 1n }), ctx);
     expect(r.ok).toBe(false);
@@ -587,6 +589,21 @@ describe("account-tx: lending (og handlers/balance/lending.ts)", () => {
 });
 
 // ---------- wire form ----------
+describe("account-tx: og kind catalog", () => {
+  test("MATCH: the rewrite-only custody kinds are gone — og refuses them as ACCOUNT_TX_TYPE_UNSUPPORTED and the rewrite has no arm, so a hub/custody account hashes like og", async () => {
+    for (const type of ["deposit_to_custody", "withdraw_from_custody", "hub_custody_debit"]) {
+      const og = ogAccount(ogState([ogDelta(1, { leftCreditLimit: 20n })]));
+      await expect(applyAccountTxMutation(og, { type, data: { tokenId: 1, amount: 1n } } as any, true, 1, 0, false, undefined, undefined, undefined, [])).rejects.toThrow(`ACCOUNT_TX_TYPE_UNSUPPORTED:${type}`);
+      expect(Object.hasOwn(AccountKinds, type)).toBe(false);
+      const { body, ctx } = open();
+      expect(() => applyAccountBody(body, { type, tokenId: "1", amount: 1n } as any, ctx)).toThrow();
+    }
+    // lendingIntents is og's map alone: no custody/debit/hub rows are committed.
+    const { body } = open();
+    expect([...(unwrap(committed(body) as any) as any).view.lendingIntents.keys()]).toEqual([]);
+  });
+});
+
 describe("account-tx: wire form of the ported kinds", () => {
   test("MATCH: rewrite wireOf/ownWire of swap, rebalance, lending, settlement and htlc kinds is og's AccountTx, so og computeFrameHash equals accountFrameHash", () => {
     const L = `lend-${"0".repeat(15)}1`;
