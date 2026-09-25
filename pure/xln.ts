@@ -99,10 +99,10 @@ export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc
   "j_event_claim", "cross_pull_lock", "cross_pull_close", "request_collateral", "rebalance_refund",
   "rebalance_policy", "lending_fund", "lending_borrow_request", "lending_repay", "lending_credit", "lending_close_request", "lending_close_payout"] as const;
 export const LendingTxNames = ["lendingOffer", "lendingBorrow", "lendingRepay", "lendingClosePosition"] as const;
-export const EntityTxNames = ["directPayment", "placeSwapOffer", "htlcPayment", "prepareCrossJurisdictionSwap", "registerCrossJurisdictionSwap"] as const;
+export const EntityTxNames = ["directPayment", "placeSwapOffer", "prepareCrossJurisdictionSwap", "registerCrossJurisdictionSwap"] as const;
 export const AccountInputKinds = ["dispute", "board_hanko_refresh"] as const;
 export const EntityInputKinds = ["leaderTimeoutVote"] as const;
-export const HoleNames = ["cross_open", "reveal_before_height", "quote_last_ms", "onion"] as const;
+export const HoleNames = ["cross_open", "reveal_before_height", "quote_last_ms"] as const;
 export type Hole = (typeof HoleNames)[number];
 
 
@@ -6366,7 +6366,6 @@ export type LadderTx = { readonly type: "ladder_reveal"; readonly revealer: Enti
 export type EntityRouteTx =
   | { readonly type: "directPayment"; readonly recipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly description?: string | undefined; readonly invoiceId?: string | undefined }
   | ({ readonly type: "placeSwapOffer" } & SwapOfferTerms)
-  | { readonly type: "htlcPayment"; readonly route: readonly EntityId[]; readonly finalRecipient: EntityId; readonly tokenId: TokenId; readonly amount: bigint; readonly description?: string | undefined }
   | { readonly type: "prepareCrossJurisdictionSwap" }
   | { readonly type: "registerCrossJurisdictionSwap" };
 export type HostInput = { readonly kind: "dispute" };
@@ -6409,7 +6408,8 @@ const routeEntity = (tx: EntityRouteTx, self: EntityId, id: AccountId): Result<A
     return !party.ok || x.recipient !== party.value.peer ? err({ _tag: "recipient" }) : ok({ type: "payment", tokenId: x.tokenId, amount: x.amount });
   },
   placeSwapOffer: ({ type: _, ...offer }) => ok({ type: "swap_offer", ...offer }),
-  htlcPayment: () => err({ _tag: "unchosen", hole: "onion" }), prepareCrossJurisdictionSwap: () => err({ _tag: "unchosen", hole: "cross_open" }), registerCrossJurisdictionSwap: () => err({ _tag: "unchosen", hole: "cross_open" }),
+  // og htlcPayment is an Entity tx with its own onion, paybook and prepared frame context (see foldTx `htlcPayment`), never a one-Account Host route.
+  prepareCrossJurisdictionSwap: () => err({ _tag: "unchosen", hole: "cross_open" }), registerCrossJurisdictionSwap: () => err({ _tag: "unchosen", hole: "cross_open" }),
 });
 export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify): Result<HostStep, AccountReplicaError | HostError> => matchBy("layer", tx, {
   account: (i) => admitTx(host, i.tx, ctx, verify),
