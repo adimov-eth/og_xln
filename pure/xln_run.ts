@@ -128,7 +128,7 @@ export const disputeFor = (plan: DisputePlan, entity: EntityId): DisputeHanko | 
 type ProposeInput = AccountInputFor<"propose">;
 type AckInput = AccountInputFor<"ack">;
 type AckFrameInput = AccountInputFor<"ack_frame">;
-export const proposeInput = (r: AccountReplica, self: EntityId, clock: FrameClock = CLOCK): ProposeInput => match(unwrap(planAccountProposal(r, self, clock)), {
+export const proposeInput = (r: AccountReplica, self: EntityId, clock: FrameClock = CLOCK): ProposeInput => match(unwrap(planAccountProposal(r, self, clock, hankoVerify)), {
   frame: ({ preview }): ProposeInput => ({ kind: "propose", frameHanko: signAccountFrame(preview.frame, self), ...opt("disputeHanko", disputeFor(preview.dispute, self)), ...clock }),
   idle: (): ProposeInput => ({ kind: "propose", ...clock }),
 });

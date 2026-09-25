@@ -47,6 +47,10 @@ import {
   setCreditLimit,
   zeroDelta,
   MAX_FILL,
+  genesisReplica,
+  genesisWitnesses,
+  previewAccountProposal,
+  promoteSettled,
   type AccountBody,
   type FoldCtx,
 } from "../xln.ts";
@@ -113,7 +117,7 @@ const ogHarness = (body: AccountBody) => {
     replica = c.account;
     return { ok: true, root: c.accountStateRoot };
   };
-  return { run, replica: () => replica };
+  return { run, replica: () => replica, reset: (r: any) => { replica = r; } };
 };
 
 // ---------- balance ----------
@@ -632,7 +636,7 @@ describe("account-tx: wire form of the ported kinds", () => {
 describe("account-tx: settlement + j_event_claim", () => {
   const ogSettleHarness = (body: AccountBody) => {
     const h = ogHarness(body);
-    return { run: (tx: any, byLeft: boolean, ts: number, context: any = {}) => h.run((acc) => handleSettleTransition(acc, tx, byLeft, ts, context)), workspace: () => h.replica().state.settlementWorkspace, replica: h.replica };
+    return { run: (tx: any, byLeft: boolean, ts: number, context: any = {}) => h.run((acc) => handleSettleTransition(acc, tx, byLeft, ts, context)), raw: h.run, reset: h.reset, workspace: () => h.replica().state.settlementWorkspace, replica: h.replica };
   };
   type Step = { tx: any; byLeft: boolean; ts: number };
   /** Runs the same settle_transition sequence through og and the rewrite; accept/reject and the full Account root must agree at every step. */
@@ -915,5 +919,106 @@ describe("account-tx: settlement + j_event_claim", () => {
         same(og, body);
       }
     }
+  });
+
+  // ---- consensus wiring: FoldCtx.settlement and og activatePostSettlementProof's replica-level promotion ----
+  const settleOgCtx: any = { jReplicas: jurisdictions.jReplicas, resolveSettlementBoardAuthority: async () => undefined, verifyHanko: async (_h: string, _m: string, entityId: string) => ({ valid: true, entityId }) };
+  const settleOps = [{ type: "r2c", tokenId: 1, amount: 5n }];
+  const rawTerms = { domain: { chainId: 1, depositoryAddress: DEP }, watchSeed: word("44"), disputeConfig: { leftResponseSeconds: 1, rightResponseSeconds: 1 } };
+  const pairId = () => unwrap(accountId(unwrap(entityId(A) as any), unwrap(entityId(B) as any)) as any) as any;
+  /** og-accepted hanko txs (right = non-executor with a settlement hanko, then left = executor) learned from og's own mismatch messages. */
+  const ogHankos = async () => {
+    const og = ogSettleHarness(open().body);
+    expect((await og.run(upsert(1, settleOps, true), true, 1)).ok).toBe(true);
+    const upserted = unwrap(apply(open().body, { type: "settle_transition", ...upsert(1, settleOps, true).data }, { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n })).state;
+    const hash = og.workspace().workspaceHash;
+    const draft = { settlementNonce: 1, settlementHash: word("00"), postProof: { nonce: 2, proposerIsLeft: true, proofBodyHash: word("00"), disputeHash: word("00"), hanko: "0x01" } };
+    const probe = async (byLeft: boolean, settlementHanko: string | undefined) => {
+      const tx: any = { type: "settle_transition", data: { kind: "hanko", revision: 1, workspaceHash: hash, ...draft, postProof: { ...draft.postProof }, ...(settlementHanko ? { settlementHanko } : {}) } };
+      for (let i = 0; i < 4; i++) {
+        const overlay = beginAccountTransition((og as any).replica());
+        const r: any = await handleSettleTransition(accountTransitionView(overlay), tx, byLeft, 5, settleOgCtx);
+        discardAccountTransition(overlay);
+        const m = /(SETTLEMENT_HANKO_HASH_MISMATCH|POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH|POST_SETTLEMENT_DISPUTE_HASH_MISMATCH):0x[0-9a-f]+:(0x[0-9a-fA-F]+)/.exec(r.rejection?.message ?? "");
+        if (m === null) break;
+        if (m[1] === "SETTLEMENT_HANKO_HASH_MISMATCH") tx.data.settlementHash = m[2]; else if (m[1] === "POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH") tx.data.postProof.proofBodyHash = m[2]; else tx.data.postProof.disputeHash = m[2];
+      }
+      draft.settlementHash = tx.data.settlementHash; draft.postProof = tx.data.postProof;
+      return tx;
+    };
+    const right = await probe(false, "0xbb");
+    const left = await probe(true, undefined);
+    left.data.postProof.hanko = "0x02";
+    return { og, upserted, right, left };
+  };
+  const replicaOn = (state: AccountBody, mempool: readonly any[], dispute = genesisWitnesses()) => ({ ...unwrap(genesisReplica(pairId(), rawTerms as any) as any) as any, state, mempool, dispute });
+
+  test("MATCH (AT-10b): consensus folds an in-frame settle hanko with og's settlement context (verifyHanko + minimum safe nonce), not CONTEXT_MISSING", async () => {
+    const { og, upserted, right } = await ogHankos();
+    const o = await og.run(right, false, 5, settleOgCtx);
+    expect(o.error ?? "ok").toBe("ok");
+    const r = replicaOn(upserted, [{ type: "settle_transition", ...right.data }]);
+    const clock = { timestamp: 5n, jHeight: 0n };
+    const preview: any = unwrap(previewAccountProposal(r, B as any, clock, () => true) as any);
+    expect(preview.frame.txs.length).toBe(1);
+    expect(unwrap(committed(preview.draft.state) as any).root).toBe(o.root);
+    // Without a verifier (no consensus context) the rewrite still refuses; the Account consensus path always supplies one.
+    expect(previewAccountProposal(r, B as any, clock)).toMatchObject({ ok: false, error: { _tag: "proposal_halt", cause: { reason: "SETTLEMENT_HANKO_CONTEXT_MISSING" } } });
+    // og getMinimumSafeSettlementNonce: a signed dispute proof at nonce 3 raises the floor to 4 on both sides.
+    const og2 = ogSettleHarness(open().body);
+    expect((await og2.run(upsert(1, settleOps, true), true, 1)).ok).toBe(true);
+    og2.replica().currentDisputeProofNonce = 3;
+    const o2 = await og2.run(right, false, 5, settleOgCtx);
+    expect(o2.error).toMatch(/SETTLEMENT_HANKO_NONCE_MISMATCH/);
+    const held = { hanko: "0x01", hash: word("71"), proofBodyHash: word("72"), proofNonce: 3, proposerIsLeft: true };
+    expect(previewAccountProposal(replicaOn(upserted, r.mempool, { nextProofNonce: 4, current: held }), B as any, clock, () => true))
+      .toMatchObject({ ok: false, error: { _tag: "proposal_halt", cause: { reason: "SETTLEMENT_HANKO_NONCE_MISMATCH" } } });
+  });
+
+  test("MATCH (AT-10c): the frame finalizing the signed nonce promotes both N+1 hankos and bumps nextProofNonce like og activatePostSettlementProof", async () => {
+    const { og, upserted, right, left } = await ogHankos();
+    let body = upserted;
+    for (const [tx, byLeft] of [[right, false], [left, true]] as const) {
+      expect((await og.run(tx, byLeft, 5, settleOgCtx)).error ?? "ok").toBe("ok");
+      body = unwrap(apply(body, { type: "settle_transition", ...tx.data }, { byLeft, nowMs: 5n, jHeight: 0n, accountHeight: 1n, settlement: { verify: () => true, proofNonceFloor: 1 } })).state;
+    }
+    expect(body.settlement?.status).toBe("ready_to_submit");
+    const store = new Map<string, any>();
+    const ogClaimRun = (tx: any, byLeft: boolean) => og.raw((acc: any) => {
+      const session = createAccountJClaimSession({ get: (h: string) => store.get(h) } as any);
+      const prepared = prepareAccountJClaimTx(acc.state, tx, { chainId: 1, depositoryAddress: DEP }, session);
+      const r = handleJEventClaim(acc, prepared as any, byLeft, 1, A, [], jurisdictions, session);
+      if (r.ok) for (const { hash, node } of session.changes()?.newNodes ?? []) store.set(hash, node);
+      return r;
+    });
+    // The on-chain AccountSettled row for r2c(5): find the ondelta og's finalized proof body accepts, then require the rewrite to agree.
+    let rows: any[] = [];
+    let ok = false;
+    for (const ondelta of [0n, 5n, -5n]) {
+      rows = [{ tokenId: 1, collateral: 5n, ondelta, nonce: 1 }];
+      const before = og.replica();
+      expect((await ogClaimRun(ogClaim(10, word("0a"), rows), true)).error ?? "ok").toBe("ok");
+      const fin = await ogClaimRun(ogClaim(10, word("0a"), rows), false);
+      if (fin.ok) { ok = true; break; }
+      expect(fin.error).toMatch(/POST_SETTLEMENT_FINALIZED_PROOF_BODY_MISMATCH/);
+      og.reset(before);
+    }
+    expect(ok).toBe(true);
+    const ogr: any = og.replica();
+    const first = unwrap(apply(body, rwClaim(10, word("0a"), rows), { byLeft: true, nowMs: 5n, jHeight: 0n, accountHeight: 2n })).state;
+    const second = unwrap(apply(first, rwClaim(10, word("0a"), rows), { byLeft: false, nowMs: 6n, jHeight: 10n, accountHeight: 3n })).state;
+    expect(second.settlement).toBeUndefined();
+    expect(ogr.state.settlementWorkspace).toBeUndefined();
+    expect(second.jNonce).toBe(ogr.state.jNonce);
+    // og local side = proofHeader.fromEntity = A (left): current carries the left post-proof hanko, counterparty the right one.
+    const w: any = unwrap(promoteSettled(genesisWitnesses(), first, second, true) as any);
+    expect(w.current).toEqual({ hanko: ogr.currentDisputeProofHanko, hash: ogr.currentDisputeHash, proofBodyHash: ogr.currentDisputeProofBodyHash, proofNonce: ogr.currentDisputeProofNonce, proposerIsLeft: ogr.currentDisputeProofProposerIsLeft });
+    expect(w.counterparty).toEqual({ hanko: ogr.counterpartyDisputeProofHanko, hash: ogr.counterpartyDisputeHash, proofBodyHash: ogr.counterpartyDisputeProofBodyHash, proofNonce: ogr.counterpartyDisputeProofNonce, proposerIsLeft: ogr.counterpartyDisputeProofProposerIsLeft });
+    expect(w.nextProofNonce).toBe(ogr.proofHeader.nextProofNonce);
+    // Not the finalizing claim (first side only): no promotion, as og only promotes inside activatePostSettlementProof.
+    expect(unwrap(promoteSettled(genesisWitnesses(), body, first, true) as any)).toEqual(genesisWitnesses());
+    // og equivocation: a held proof at the same nonce with a different body refuses.
+    const clash = { hanko: "0x09", hash: word("73"), proofBodyHash: word("74"), proofNonce: 2, proposerIsLeft: true };
+    expect(promoteSettled({ nextProofNonce: 3, current: clash }, first, second, false)).toMatchObject({ ok: false, error: { _tag: "dispute_hanko" } });
   });
 });
