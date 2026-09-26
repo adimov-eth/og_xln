@@ -6708,6 +6708,9 @@ const rebalanceRefund = (a: AccountBody, x: TxOf<"rebalance_refund">, ctx: FoldC
   const settle = total === fees.feePaidUpfront ? fully : partly;
   return map(spend(a, feeToken, x.amount, ctx.byLeft), (paid) => step(settle(paid)));
 };
+const samePolicyTerms = (current: RebalanceFeeSnapshot | undefined, x: TxOf<"rebalance_policy">): boolean =>
+  current !== undefined && current.baseFee === x.baseFee
+  && current.liquidityFeeBps === x.liquidityFeeBps && current.gasFee === x.gasFee;
 /** Where a published version stands against the side's current one. */
 const policyStanding = (current: RebalanceFeeSnapshot | undefined, version: number): "stale" | "current" | "newer" => {
   if (current === undefined || version > current.policyVersion) return "newer";
@@ -6736,8 +6739,6 @@ const rebalancePolicy = (a: AccountBody, x: TxOf<"rebalance_policy">, ctx: FoldC
   if (!a.account.deltas.has(x.tokenId)) return rebalanceErr("REBALANCE_POLICY_NO_DELTA");
   const held = a.feePolicies.get(x.tokenId);
   const current = at(held?.left, held?.right, ctx.byLeft);
-  const sameTerms = current !== undefined && current.baseFee === x.baseFee
-    && current.liquidityFeeBps === x.liquidityFeeBps && current.gasFee === x.gasFee;
   const next: RebalanceFeeSnapshot = {
     policyVersion: x.policyVersion, baseFee: x.baseFee, liquidityFeeBps: x.liquidityFeeBps, gasFee: x.gasFee,
     updatedAt: ts,
@@ -6745,7 +6746,7 @@ const rebalancePolicy = (a: AccountBody, x: TxOf<"rebalance_policy">, ctx: FoldC
   const published = { ...held, ...(ctx.byLeft ? { left: next } : { right: next }) };
   switch (policyStanding(current, x.policyVersion)) {
     case "stale": return ok(step(a));
-    case "current": return sameTerms ? ok(step(a)) : rebalanceErr("REBALANCE_POLICY_EQUIVOCATION");
+    case "current": return samePolicyTerms(current, x) ? ok(step(a)) : rebalanceErr("REBALANCE_POLICY_EQUIVOCATION");
     case "newer": return ok(step({ ...a, feePolicies: mapSet(a.feePolicies, x.tokenId, published) }));
   }
 };
@@ -7858,335 +7859,569 @@ const crossPullCloseFailure = (a: AccountBody, x: PullCloseTx, ctx: FoldCtx): Ac
   const released: AccountBody = { ...a, pulls: mapDelete(pullsOf(a), x.pullId) };
   return firstFailure(draftThrow(a, pull.tokenId), offdeltaText(released, moved));
 };
-/** og j-claim-transition.ts + j-events/finality.ts: malformed evidence and finality violations throw; only a same-height conflict is a rejection. */
-const claimFailure = (a: AccountBody, x: TxOf<"j_event_claim">, ctx: FoldCtx, e: BodyError, self: string | undefined): AccountTxFailure => {
-  const events = claimEvidence(x.events);
-  if (!events.ok) {
-    const rows = x.events.flatMap((row) => row.tokens.map((token) => ({ row, token }))), built = traverse(rows, ({ row, token }) => settledEvent(row, token));
-    return threwTx(rows.length > 0 && built.ok ? "ACCOUNT_J_CLAIM_EVENT_DUPLICATE" : "ACCOUNT_J_CLAIM_EVENTS_INVALID");
+// ---- og failure text: J-event claims ----
+/** The evidence failed although every row builds an event, so og saw a duplicate rather than a malformed row. */
+const duplicateClaimEvents = (x: TxOf<"j_event_claim">): boolean => {
+  const rows = x.events.flatMap((row) => row.tokens.map((token) => ({ row, token })));
+  return rows.length > 0 && traverse(rows, ({ row, token }) => settledEvent(row, token)).ok;
+};
+/** og names the side whose retained claim at this height carries different evidence: left if it does, else right. */
+const claimConflictText = (a: AccountBody, x: TxOf<"j_event_claim">, byLeft: boolean): string => {
+  const own = claimRowOf(x, byLeft);
+  const differs = (h: ClaimRow): boolean =>
+    own.ok && h.onLeft && h.jHeight === own.value.jHeight && !sameEvidence(h, { ...own.value, onLeft: true });
+  const side = (a.claimRows ?? []).some(differs) ? "left" : "right";
+  return `ACCOUNT_J_CLAIM_${side.toUpperCase()}_CONFLICT:${side}:${Number(x.jHeight)}`;
+};
+/** The first settled nonce that runs backwards, from the Account's jNonce through the events in order. */
+const nonceRegressionText = (jNonce: number, events: readonly SettledEvent[]): string | undefined => {
+  const previous = [jNonce, ...events.map((ev) => ev.data.nonce)];
+  const steps = events.map((ev, i) => [previous[i] ?? jNonce, ev.data.nonce] as const);
+  const back = steps.find(([previous, next]) => next < previous);
+  return back === undefined ? undefined : `ACCOUNT_SETTLED_NONCE_REGRESSION:${back[0]}:${back[1]}`;
+};
+/** og settled-nonce finality against a signed workspace: which proof piece is missing or off, naming the peer. */
+const claimSettlementText = (a: AccountBody, reason: string, self: string | undefined): string => {
+  const w = a.settlement, signed = w?.nonceAtSign;
+  const { left, right } = a.account.id;
+  const peer = self === undefined ? "" : lower(self) === lower(left) ? right : left;
+  switch (reason) {
+    case "SETTLEMENT_SIGNED_NONCE_MISSING": return `SETTLEMENT_SIGNED_NONCE_MISSING:${String(signed)}`;
+    case "POST_SETTLEMENT_PROOF_MISSING": case "POST_SETTLEMENT_PROOF_HANKO_MISSING":
+    case "POST_SETTLEMENT_DISPUTE_HASH_MISSING": return `${reason}:${peer}`;
+    case "POST_SETTLEMENT_PROOF_NONCE_MISMATCH":
+      return `POST_SETTLEMENT_PROOF_NONCE_MISMATCH:${w?.postSettlementDisputeProof?.nonce}:${(signed ?? 0) + 1}`;
+    default: return reason;
+  }
+};
+/**
+ * og j-claim-transition.ts + j-events/finality.ts: malformed evidence and finality violations throw; only a same-height
+ * conflict is a rejection.
+ */
+const claimFailure = (
+  a: AccountBody, x: TxOf<"j_event_claim">, ctx: FoldCtx, e: BodyError, self: string | undefined,
+): AccountTxFailure => {
+  const evidence = claimEvidence(x.events);
+  if (!evidence.ok) {
+    return threwTx(duplicateClaimEvents(x) ? "ACCOUNT_J_CLAIM_EVENT_DUPLICATE" : "ACCOUNT_J_CLAIM_EVENTS_INVALID");
   }
   if (!claimHeight(x.jHeight).ok) return threwTx(`ACCOUNT_J_CLAIM_HEIGHT_INVALID:${String(x.jHeight)}`);
-  if (!claimBlock(x.jBlockHash).ok) { const v = typeof x.jBlockHash === "string" ? x.jBlockHash.trim().toLowerCase() : ""; return threwTx(`ACCOUNT_J_CLAIM_BLOCK_HASH_INVALID:${v || "missing"}`); }
-  if (e._tag === "claim_conflict") {
-    const own = claimRowOf(x, ctx.byLeft), held = a.claimRows ?? [];
-    const leftConflict = own.ok && held.some((h) => h.onLeft && h.jHeight === own.value.jHeight && !sameEvidence(h, { ...own.value, onLeft: true }));
-    const side = leftConflict ? "left" : "right";
-    return refusedTx(`ACCOUNT_J_CLAIM_${side.toUpperCase()}_CONFLICT:${side}:${Number(x.jHeight)}`);
+  if (!claimBlock(x.jBlockHash).ok) {
+    const hash = typeof x.jBlockHash === "string" ? x.jBlockHash.trim().toLowerCase() : "";
+    return threwTx(`ACCOUNT_J_CLAIM_BLOCK_HASH_INVALID:${hash || "missing"}`);
   }
-  const accLeft = a.account.id.left.toLowerCase(), accRight = a.account.id.right.toLowerCase();
-  if (e._tag === "settled_pair") {
-    const bad = events.value.events.find((ev) => ev.data.leftEntity !== accLeft || ev.data.rightEntity !== accRight);
-    return threwTx(`ACCOUNT_SETTLED_PAIR_MISMATCH:${bad?.data.leftEntity}:${bad?.data.rightEntity}:${accLeft}:${accRight}`);
-  }
-  if (e._tag === "settled_nonce") {
-    let prev = a.jNonce;
-    for (const ev of events.value.events) { if (ev.data.nonce < prev) return threwTx(`ACCOUNT_SETTLED_NONCE_REGRESSION:${prev}:${ev.data.nonce}`); prev = ev.data.nonce; }
-  }
-  if (e._tag === "settlement") {
-    const w = a.settlement, cp = self === undefined ? "" : lower(self) === lower(a.account.id.left) ? a.account.id.right : a.account.id.left, signed = w?.nonceAtSign;
-    switch (e.reason) {
-      case "SETTLEMENT_SIGNED_NONCE_MISSING": return threwTx(`SETTLEMENT_SIGNED_NONCE_MISSING:${String(signed)}`);
-      case "POST_SETTLEMENT_PROOF_MISSING": case "POST_SETTLEMENT_PROOF_HANKO_MISSING": case "POST_SETTLEMENT_DISPUTE_HASH_MISSING": return threwTx(`${e.reason}:${cp}`);
-      case "POST_SETTLEMENT_PROOF_NONCE_MISMATCH": return threwTx(`POST_SETTLEMENT_PROOF_NONCE_MISMATCH:${w?.postSettlementDisputeProof?.nonce}:${(signed ?? 0) + 1}`);
-      default: return threwTx(e.reason);
+  const { events } = evidence.value;
+  const left = a.account.id.left.toLowerCase(), right = a.account.id.right.toLowerCase();
+  switch (e._tag) {
+    case "claim_conflict": return refusedTx(claimConflictText(a, x, ctx.byLeft));
+    case "settled_pair": {
+      const bad = events.find((ev) => ev.data.leftEntity !== left || ev.data.rightEntity !== right);
+      return threwTx(`ACCOUNT_SETTLED_PAIR_MISMATCH:${bad?.data.leftEntity}:${bad?.data.rightEntity}:${left}:${right}`);
     }
+    case "settled_nonce": return threwTx(nonceRegressionText(a.jNonce, events) ?? bodyErrorCode(e));
+    case "settlement": return threwTx(claimSettlementText(a, e.reason, self));
+    default: return threwTx(bodyErrorCode(e));
   }
-  return threwTx(bodyErrorCode(e));
 };
-type MutableDiff = { -readonly [K in keyof WorkspaceDiff]: WorkspaceDiff[K] };
-/** og compileOps (protocol/settlement/operations.ts) messages in og's order: per op token, forgiveness, op type; then per diff range and conservation; then the caps. */
+
+// ---- og failure text: settlement workspace ----
+const SETTLEMENT_OP_TYPES: readonly unknown[] = ["forgive", "rawDiff", "r2c", "c2r", "r2r"];
+const DIFF_FIELDS = ["leftDiff", "rightDiff", "collateralDiff", "ondeltaDiff"] as const;
+/** og compileOps' first pass over one op: its token, a repeated forgiveness, then its type. */
+const opCompileText = (
+  ops: readonly SettlementOp[], context: string,
+) => (op: SettlementOp, i: number): string | undefined => {
+  if (!settlementToken(op.tokenId)) return `SETTLEMENT_TOKEN_INVALID:${context}=${i}:${String(op.tokenId)}`;
+  const forgivenBefore = ops.slice(0, i).some((o) => o.type === "forgive" && o.tokenId === op.tokenId);
+  const repeated = op.type === "forgive" && forgivenBefore;
+  if (repeated) return `SETTLEMENT_DUPLICATE_FORGIVENESS_TOKEN:${op.tokenId}`;
+  if (SETTLEMENT_OP_TYPES.includes(op.type)) return undefined;
+  const unknown = op as { readonly type?: unknown; readonly tokenId?: unknown };
+  const named = `type=${String(unknown.type ?? "unknown")} tokenId=${String(unknown.tokenId ?? "unknown")}`;
+  return `SETTLEMENT_UNKNOWN_OP_TYPE: ${named}`;
+};
+/** og's per-token sums as its text walk builds them: raw diffs as given, each amount op as it compiles on its own. */
+const textDiffs = (ops: readonly SettlementOp[], proposerIsLeft: boolean): readonly WorkspaceDiff[] => {
+  const alone = (op: SettlementOp): DiffParts => op.type === "rawDiff"
+    ? op
+    : unwrapOr(map(compileOps([op], proposerIsLeft), (c) => c.diffs[0] ?? noDiff), () => noDiff);
+  const sums = ops.filter((op) => op.type !== "forgive").reduce((m, op) => {
+    const held = m.get(op.tokenId) ?? { tokenId: op.tokenId, ...noDiff };
+    return mapSet(m, op.tokenId, addDiff(held, alone(op)));
+  }, new Map<number, WorkspaceDiff>() as ReadonlyMap<number, WorkspaceDiff>);
+  return [...sums.values()];
+};
+/** og's per-diff checks: each field within SignedAmount, then conservation. */
+const diffRangeText = (d: WorkspaceDiff): string | undefined => {
+  const wide = DIFF_FIELDS.find((f) => d[f] < -MAX_PAYMENT_AMOUNT || d[f] > MAX_PAYMENT_AMOUNT);
+  if (wide !== undefined) return `SETTLEMENT_SIGNED_AMOUNT_RANGE:${wide}:token=${d.tokenId}`;
+  const sum = d.leftDiff + d.rightDiff + d.collateralDiff;
+  if (sum === 0n) return undefined;
+  const terms = `leftDiff(${d.leftDiff}) + rightDiff(${d.rightDiff}) + collateralDiff(${d.collateralDiff})`;
+  return `SETTLEMENT_INVARIANT_VIOLATION: ${terms} = ${sum} !== 0 for tokenId ${d.tokenId}`;
+};
+/** og compileOps (protocol/settlement/operations.ts) messages in og's order: per op, then per diff, then the caps. */
 const compileOpsText = (ops: readonly SettlementOp[], proposerIsLeft: boolean, context: string): string | null => {
-  for (const [i, op] of ops.entries()) {
-    if (!settlementToken(op.tokenId)) return `SETTLEMENT_TOKEN_INVALID:${context}=${i}:${String(op.tokenId)}`;
-    if (op.type === "forgive" && ops.slice(0, i).some((o) => o.type === "forgive" && o.tokenId === op.tokenId)) return `SETTLEMENT_DUPLICATE_FORGIVENESS_TOKEN:${op.tokenId}`;
-    if (!["forgive", "rawDiff", "r2c", "c2r", "r2r"].includes(op.type)) { const u = op as { readonly type?: unknown; readonly tokenId?: unknown }; return `SETTLEMENT_UNKNOWN_OP_TYPE: type=${String(u.type ?? "unknown")} tokenId=${String(u.tokenId ?? "unknown")}`; }
-  }
+  const opText = ops.map(opCompileText(ops, context)).find((t) => t !== undefined);
+  if (opText !== undefined) return opText;
   const compiled = compileOps(ops, proposerIsLeft);
   if (compiled.ok) return null;
-  const diffs = new Map<number, MutableDiff>();
-  for (const op of ops) {
-    if (op.type === "forgive") continue;
-    const d = diffs.get(op.tokenId) ?? { tokenId: op.tokenId, leftDiff: 0n, rightDiff: 0n, collateralDiff: 0n, ondeltaDiff: 0n };
-    diffs.set(op.tokenId, d);
-    const one = unwrapOr(map(compileOps([op], proposerIsLeft), (c) => c.diffs[0]), () => undefined);
-    if (op.type === "rawDiff") { d.leftDiff += op.leftDiff; d.rightDiff += op.rightDiff; d.collateralDiff += op.collateralDiff; d.ondeltaDiff += op.ondeltaDiff; }
-    else if (one !== undefined) { d.leftDiff += one.leftDiff; d.rightDiff += one.rightDiff; d.collateralDiff += one.collateralDiff; d.ondeltaDiff += one.ondeltaDiff; }
-  }
-  const wide = (v: bigint): boolean => v < -MAX_PAYMENT_AMOUNT || v > MAX_PAYMENT_AMOUNT;
-  for (const d of diffs.values()) {
-    for (const f of ["leftDiff", "rightDiff", "collateralDiff", "ondeltaDiff"] as const) if (wide(d[f])) return `SETTLEMENT_SIGNED_AMOUNT_RANGE:${f}:token=${d.tokenId}`;
-    const sum = d.leftDiff + d.rightDiff + d.collateralDiff;
-    if (sum !== 0n) return `SETTLEMENT_INVARIANT_VIOLATION: leftDiff(${d.leftDiff}) + rightDiff(${d.rightDiff}) + collateralDiff(${d.collateralDiff}) = ${sum} !== 0 for tokenId ${d.tokenId}`;
-  }
+  const diffs = textDiffs(ops, proposerIsLeft);
+  const rangeText = diffs.map(diffRangeText).find((t) => t !== undefined);
+  if (rangeText !== undefined) return rangeText;
   const forgive = ops.filter((o) => o.type === "forgive").length;
-  if (diffs.size > MAX_SETTLEMENT_DIFFS) return `SETTLEMENT_DIFF_LIMIT_EXCEEDED:${diffs.size}:${MAX_SETTLEMENT_DIFFS}`;
-  return forgive > MAX_SETTLEMENT_DIFFS ? `SETTLEMENT_FORGIVENESS_LIMIT_EXCEEDED:${forgive}:${MAX_SETTLEMENT_DIFFS}` : bodyErrorCode(compiled.error);
+  if (diffs.length > MAX_SETTLEMENT_DIFFS) {
+    return `SETTLEMENT_DIFF_LIMIT_EXCEEDED:${diffs.length}:${MAX_SETTLEMENT_DIFFS}`;
+  }
+  if (forgive > MAX_SETTLEMENT_DIFFS) return `SETTLEMENT_FORGIVENESS_LIMIT_EXCEEDED:${forgive}:${MAX_SETTLEMENT_DIFFS}`;
+  return bodyErrorCode(compiled.error);
 };
+type ProjectedRow = Readonly<{ collateral: bigint; ondelta: bigint }>;
 /** og projectSettlementDeltaOverrides: the new-row cap and the projected collateral/ondelta ranges. */
 const projectionText = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[]): string | null => {
-  const projected = new Map<number, { collateral: bigint; ondelta: bigint }>();
-  const get = (tk: number): { collateral: bigint; ondelta: bigint } | string => {
-    const held = projected.get(tk);
-    if (held !== undefined) return held;
-    const row = a.account.deltas.get(tokenKey(tk));
-    if (row === undefined) {
-      const fresh = [...projected.keys()].filter((k) => !a.account.deltas.has(tokenKey(k))).length, n = a.account.deltas.size + fresh + 1;
-      if (n > MAX_ROWS) return `ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED:insert:${n}:${MAX_ROWS}`;
-    }
-    const v = { collateral: row?.collateral ?? 0n, ondelta: row?.ondelta ?? 0n };
-    projected.set(tk, v);
-    return v;
+  const deltas = a.account.deltas;
+  // A row enters the projection the first time a diff or forgiveness names it; each new one counts against the cap.
+  const rowOf = (m: ReadonlyMap<number, ProjectedRow>, tk: number): Result<ProjectedRow, string> => {
+    const held = m.get(tk);
+    if (held !== undefined) return ok(held);
+    const row = deltas.get(tokenKey(tk));
+    const rows = deltas.size + [...m.keys()].filter((k) => !deltas.has(tokenKey(k))).length + 1;
+    if (row === undefined && rows > MAX_ROWS) return err(`ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED:insert:${rows}:${MAX_ROWS}`);
+    return ok({ collateral: row?.collateral ?? 0n, ondelta: row?.ondelta ?? 0n });
   };
-  for (const d of diffs) {
-    const v = get(d.tokenId);
-    if (typeof v === "string") return v;
-    v.collateral += d.collateralDiff; v.ondelta += d.ondeltaDiff;
-    if (v.collateral < 0n || v.collateral > MAX_PAYMENT_AMOUNT) return `SETTLEMENT_PROJECTED_COLLATERAL_RANGE:token=${d.tokenId}`;
-    if (v.ondelta < INT512_MIN || v.ondelta > INT512_MAX) return `SETTLEMENT_PROJECTED_ONDELTA_RANGE:token=${d.tokenId}`;
-  }
-  for (const tk of forgive) { const v = get(tk); if (typeof v === "string") return v; }
-  return null;
+  const applyDiff = (m: ReadonlyMap<number, ProjectedRow>, d: WorkspaceDiff) => chain(rowOf(m, d.tokenId), (v) => {
+    const next = { collateral: v.collateral + d.collateralDiff, ondelta: v.ondelta + d.ondeltaDiff };
+    if (next.collateral < 0n || next.collateral > MAX_PAYMENT_AMOUNT) {
+      return err(`SETTLEMENT_PROJECTED_COLLATERAL_RANGE:token=${d.tokenId}`);
+    }
+    if (next.ondelta < INT512_MIN || next.ondelta > INT512_MAX) {
+      return err(`SETTLEMENT_PROJECTED_ONDELTA_RANGE:token=${d.tokenId}`);
+    }
+    return ok(mapSet(m, d.tokenId, next));
+  });
+  const touch = (m: ReadonlyMap<number, ProjectedRow>, tk: number) => map(rowOf(m, tk), (v) => mapSet(m, tk, v));
+  const start: ReadonlyMap<number, ProjectedRow> = new Map();
+  const projected = chain(foldResult(diffs, start, applyDiff), (m) => foldResult(forgive, m, touch));
+  return projected.ok ? null : projected.error;
 };
 /** og assertCurrentWorkspace: version, presence, the requested hash's shape, then revision and hash equality. */
 const currentWorkspaceText = (a: AccountBody, revision: number, hash: string): string | null => {
-  if (!Number.isSafeInteger(revision) || revision < 1) return `SETTLEMENT_WORKSPACE_VERSION_INVALID:${String(revision)}`;
+  if (!Number.isSafeInteger(revision) || revision < 1) {
+    return `SETTLEMENT_WORKSPACE_VERSION_INVALID:${String(revision)}`;
+  }
   const w = a.settlement;
   if (w === undefined) return "SETTLEMENT_WORKSPACE_MISSING";
-  if (typeof hash !== "string" || !WORKSPACE_HASH.test(hash)) return `SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID:${String(hash)}`;
+  if (typeof hash !== "string" || !WORKSPACE_HASH.test(hash)) {
+    return `SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID:${String(hash)}`;
+  }
   if (w.revision !== revision) return `SETTLEMENT_WORKSPACE_VERSION_MISMATCH:${w.revision}:${revision}`;
-  return w.workspaceHash.toLowerCase() !== hash.toLowerCase() ? `SETTLEMENT_WORKSPACE_TARGET_HASH_MISMATCH:${w.workspaceHash.toLowerCase()}:${hash.toLowerCase()}` : null;
+  const held = w.workspaceHash.toLowerCase(), asked = hash.toLowerCase();
+  return held === asked ? null : `SETTLEMENT_WORKSPACE_TARGET_HASH_MISMATCH:${held}:${asked}`;
+};
+/** og's text for one upsert op's shape refusal, carrying the op's index. */
+const workspaceOpText = (op: SettlementOp, i: number): string | undefined => {
+  const issue = opShapeIssue(op);
+  switch (issue) {
+    case undefined: return undefined;
+    case "SETTLEMENT_TOKEN_INVALID": return `${issue}:workspace-op=${i}:${String(op.tokenId)}`;
+    case "SETTLEMENT_WORKSPACE_OP_INVALID":
+      return `${issue}:index=${i}:type=${String((op as { readonly type?: unknown }).type)}`;
+    default: return `${issue}:index=${i}`;
+  }
+};
+/** og's wording of a workspace link refusal, with the revisions or hashes it compared. */
+const workspaceLinkText = (cur: SettlementWorkspace | undefined, x: UpsertTx): string | undefined => {
+  const link = workspaceLink(cur, x);
+  if (link.ok) return undefined;
+  const code = bodyErrorCode(link.error), prev = x.previousWorkspaceHash;
+  switch (code) {
+    case "SETTLEMENT_WORKSPACE_NON_CONTIGUOUS_VERSION": return `${code}:${cur?.revision}:${x.revision}`;
+    case "SETTLEMENT_WORKSPACE_PREVIOUS_HASH_INVALID": return `${code}:${String(prev ?? "")}`;
+    case "SETTLEMENT_WORKSPACE_PREVIOUS_HASH_MISMATCH":
+      return `${code}:${cur?.workspaceHash.toLowerCase()}:${prev?.toLowerCase()}`;
+    default: return code;
+  }
+};
+/**
+ * og planWorkspaceHoldRelease(previous) then planWorkspaceHoldAdd(next): each side's new hold is checked with the
+ * previous workspace's holds released. A diff that funds collateral from the same side needs no capacity.
+ */
+const workspaceHoldText = (base: AccountBody, diff: WorkspaceDiff): string | undefined => {
+  const l = diff.leftDiff < 0n ? -diff.leftDiff : 0n, r = diff.rightDiff < 0n ? -diff.rightDiff : 0n;
+  if (l === 0n && r === 0n) return undefined;
+  const tk = tokenKey(diff.tokenId);
+  const funds = (sideDiff: bigint): boolean => sideDiff < 0n && diff.collateralDiff > 0n;
+  const short = (side: string): string => `SETTLEMENT_HOLD_CAPACITY:${side}:token=${diff.tokenId}`;
+  switch (true) {
+    case !base.account.deltas.has(tk): return `SETTLEMENT_HOLD_DELTA_MISSING:add:token=${diff.tokenId}`;
+    case !funds(diff.leftDiff) && l > ogOutCapacity(base, tk, true): return short("left");
+    case !funds(diff.rightDiff) && r > ogOutCapacity(base, tk, false): return short("right");
+    default: return (holdOverflowText(base, tk, true, l)() ?? holdOverflowText(base, tk, false, r)())?.message;
+  }
+};
+/** og upsert: revision, op shapes, executor, compilation, the workspace link, then the holds it adds. */
+const upsertText = (a: AccountBody, x: UpsertTx, ctx: FoldCtx, e: BodyError): string => {
+  if (!Number.isSafeInteger(x.revision) || x.revision < 1) {
+    return `SETTLEMENT_WORKSPACE_VERSION_INVALID:${String(x.revision)}`;
+  }
+  if (!Array.isArray(x.ops) || x.ops.length === 0) return "SETTLEMENT_WORKSPACE_OPS_EMPTY";
+  const shape = x.ops.map(workspaceOpText).find((t) => t !== undefined);
+  if (shape !== undefined) return shape;
+  if (typeof x.executorIsLeft !== "boolean") return "SETTLEMENT_WORKSPACE_EXECUTOR_INVALID";
+  const base: AccountBody = { ...a, settlement: undefined };
+  const diffs = unwrapOr(map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs), () => []);
+  return compileOpsText(x.ops, ctx.byLeft, "op")
+    ?? workspaceLinkText(a.settlement, x)
+    ?? diffs.map((d) => workspaceHoldText(base, d)).find((t) => t !== undefined)
+    ?? bodyErrorCode(e);
+};
+/** og hanko nonce: a positive nonce, below exhaustion, pinned once signed or else exactly the next proof nonce. */
+const hankoNonceText = (
+  a: AccountBody, ws: SettlementWorkspace, nonce: number, proofFloor: number, w: DisputeWitnesses | undefined,
+): string | undefined => {
+  if (!Number.isSafeInteger(nonce) || nonce < 1) return `SETTLEMENT_HANKO_NONCE_INVALID:${String(nonce)}`;
+  const floor = Math.max(a.jNonce + 1, proofFloor);
+  if (floor >= Number.MAX_SAFE_INTEGER) return `SETTLEMENT_NONCE_EXHAUSTED:${floor}`;
+  if (ws.nonceAtSign !== undefined) {
+    return ws.nonceAtSign === nonce ? undefined : `SETTLEMENT_HANKO_NONCE_MISMATCH:${ws.nonceAtSign}:${nonce}`;
+  }
+  if (nonce === floor) return undefined;
+  const cursors = `j=${a.jNonce}:next=${w?.nextProofNonce ?? 0}:local=${w?.current?.proofNonce ?? 0}`
+    + `:peer=${w?.counterparty?.proofNonce ?? 0}`;
+  return `SETTLEMENT_HANKO_NONCE_MISMATCH:${nonce}:${floor}:${cursors}`;
+};
+/** og hanko hash: the settlement hash at this nonce, as supplied and as pinned by an earlier signature. */
+const hankoHashText = (a: AccountBody, x: HankoTx, ws: SettlementWorkspace, c: Compiled): string | undefined => {
+  const expected = settlementHashOf(a, c.diffs, c.forgive, x.settlementNonce);
+  if (!expected.ok) return bodyErrorCode(expected.error);
+  const hash = expected.value;
+  if (typeof x.settlementHash !== "string" || !WORKSPACE_HASH.test(x.settlementHash)) {
+    return `SETTLEMENT_HANKO_HASH_INVALID:${String(x.settlementHash)}`;
+  }
+  if (x.settlementHash.toLowerCase() !== hash.toLowerCase()) {
+    return `SETTLEMENT_HANKO_HASH_MISMATCH:${x.settlementHash.toLowerCase()}:${hash}`;
+  }
+  const pinned = ws.settlementHash;
+  return pinned === undefined || pinned.toLowerCase() === hash.toLowerCase()
+    ? undefined
+    : `SETTLEMENT_HANKO_PINNED_HASH_MISMATCH:${pinned}:${hash}`;
+};
+/** og post-settlement proof: the next nonce, the projected rows, then the body and dispute hashes it commits. */
+const postProofText = (a: AccountBody, x: HankoTx, s: SettlementCtx, c: Compiled): string | undefined => {
+  const proof = x.postProof, nonce = proof.nonce;
+  if (!Number.isSafeInteger(nonce) || nonce < 1) return `POST_SETTLEMENT_PROOF_NONCE_INVALID:${String(nonce)}`;
+  if (nonce !== x.settlementNonce + 1) return `POST_SETTLEMENT_PROOF_NONCE_MISMATCH:${nonce}:${x.settlementNonce + 1}`;
+  const projected = projectionText(a, c.diffs, c.forgive);
+  if (projected !== null) return projected;
+  const bodyHash = projectedProofHash(a, c.diffs, c.forgive, s.deltaTransformer);
+  if (!bodyHash.ok) return bodyErrorCode(bodyHash.error);
+  if (proof.proofBodyHash.toLowerCase() !== bodyHash.value.toLowerCase()) {
+    return `POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH:${proof.proofBodyHash}:${bodyHash.value}`;
+  }
+  const disputeHash = chain(mapErr(committedView(a), uncommitted), (view) => mapErr(
+    accountDisputeHash(view, bodyHash.value, nonce, proof.proposerIsLeft),
+    (e): BodyError => ({ _tag: "settlement", reason: e._tag }),
+  ));
+  if (!disputeHash.ok) return bodyErrorCode(disputeHash.error);
+  return proof.disputeHash.toLowerCase() === disputeHash.value.toLowerCase()
+    ? undefined
+    : `POST_SETTLEMENT_DISPUTE_HASH_MISMATCH:${proof.disputeHash}:${disputeHash.value}`;
+};
+/** og hanko: context, the current unsubmitted workspace, nonce, compilation, hashes, then the post-settlement proof. */
+const hankoText = (a: AccountBody, x: HankoTx, ctx: FoldCtx, e: BodyError, w: DisputeWitnesses | undefined): string => {
+  const current = currentWorkspaceText(a, x.revision, x.workspaceHash), ws = a.settlement;
+  if (ctx.settlement === undefined) return "SETTLEMENT_HANKO_CONTEXT_MISSING";
+  if (current !== null || ws === undefined) return current ?? "SETTLEMENT_WORKSPACE_MISSING";
+  if (ws.status === "submitted") return "SETTLEMENT_HANKO_SUBMITTED_FORBIDDEN";
+  const nonce = hankoNonceText(a, ws, x.settlementNonce, ctx.settlement.proofNonceFloor, w);
+  if (nonce !== undefined) return nonce;
+  const compiled = compileOps(ws.ops, ws.lastModifiedByLeft);
+  if (!compiled.ok) return compileOpsText(ws.ops, ws.lastModifiedByLeft, "op") ?? bodyErrorCode(compiled.error);
+  return hankoHashText(a, x, ws, compiled.value)
+    ?? postProofText(a, x, ctx.settlement, compiled.value)
+    ?? bodyErrorCode(e);
 };
 /** og handleSettleTransition: every failure is caught into a rejection carrying the thrown message. */
-const settleFailure = (a: AccountBody, x: TxOf<"settle_transition">, ctx: FoldCtx, e: BodyError, w?: DisputeWitnesses): AccountTxFailure => {
-  const text = ((): string => {
-    if (x.kind === "upsert") {
-      if (!Number.isSafeInteger(x.revision) || x.revision < 1) return `SETTLEMENT_WORKSPACE_VERSION_INVALID:${String(x.revision)}`;
-      if (!Array.isArray(x.ops) || x.ops.length === 0) return "SETTLEMENT_WORKSPACE_OPS_EMPTY";
-      for (const [i, op] of x.ops.entries()) {
-        if (!settlementToken(op.tokenId)) return `SETTLEMENT_TOKEN_INVALID:workspace-op=${i}:${String(op.tokenId)}`;
-        if (op.type === "r2c" || op.type === "c2r" || op.type === "r2r") { if (typeof op.amount !== "bigint" || op.amount <= 0n) return `SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=${i}`; continue; }
-        if (op.type === "rawDiff") { if ([op.leftDiff, op.rightDiff, op.collateralDiff, op.ondeltaDiff].some((v) => typeof v !== "bigint")) return `SETTLEMENT_WORKSPACE_RAW_DIFF_INVALID:index=${i}`; continue; }
-        if (op.type !== "forgive") return `SETTLEMENT_WORKSPACE_OP_INVALID:index=${i}:type=${String((op as { readonly type?: unknown }).type)}`;
-      }
-      if (typeof x.executorIsLeft !== "boolean") return "SETTLEMENT_WORKSPACE_EXECUTOR_INVALID";
-      const compiled = compileOpsText(x.ops, ctx.byLeft, "op");
-      if (compiled !== null) return compiled;
-      const cur = a.settlement, prev = x.previousWorkspaceHash;
-      if (x.revision === 1) { if (cur !== undefined) return "SETTLEMENT_WORKSPACE_ALREADY_EXISTS"; if (prev !== undefined) return "SETTLEMENT_WORKSPACE_PREVIOUS_HASH_UNEXPECTED"; }
-      else {
-        if (cur === undefined) return "SETTLEMENT_WORKSPACE_PREVIOUS_MISSING";
-        if (cur.leftHanko !== undefined || cur.rightHanko !== undefined) return "SETTLEMENT_WORKSPACE_SIGNED_UPDATE_FORBIDDEN";
-        if (cur.revision + 1 !== x.revision) return `SETTLEMENT_WORKSPACE_NON_CONTIGUOUS_VERSION:${cur.revision}:${x.revision}`;
-        if (prev === undefined || !WORKSPACE_HASH.test(prev)) return `SETTLEMENT_WORKSPACE_PREVIOUS_HASH_INVALID:${String(prev ?? "")}`;
-        if (cur.workspaceHash.toLowerCase() !== prev.toLowerCase()) return `SETTLEMENT_WORKSPACE_PREVIOUS_HASH_MISMATCH:${cur.workspaceHash.toLowerCase()}:${prev.toLowerCase()}`;
-      }
-      // og planWorkspaceHoldRelease(previous) then planWorkspaceHoldAdd(next): holds are checked with the previous workspace's released.
-      const base: AccountBody = { ...a, settlement: undefined };
-      for (const diff of unwrapOr(map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs), () => [])) {
-        const l = diff.leftDiff < 0n ? -diff.leftDiff : 0n, r = diff.rightDiff < 0n ? -diff.rightDiff : 0n;
-        if (l === 0n && r === 0n) continue;
-        const tk = tokenKey(diff.tokenId);
-        if (!base.account.deltas.has(tk)) return `SETTLEMENT_HOLD_DELTA_MISSING:add:token=${diff.tokenId}`;
-        if (!(diff.leftDiff < 0n && diff.collateralDiff > 0n) && l > ogOutCapacity(base, tk, true)) return `SETTLEMENT_HOLD_CAPACITY:left:token=${diff.tokenId}`;
-        if (!(diff.rightDiff < 0n && diff.collateralDiff > 0n) && r > ogOutCapacity(base, tk, false)) return `SETTLEMENT_HOLD_CAPACITY:right:token=${diff.tokenId}`;
-        const hold = checked(holdOverflowText(base, tk, true, l)()) ?? checked(holdOverflowText(base, tk, false, r)());
-        if (hold !== null) return hold.message;
-      }
-      return bodyErrorCode(e);
-    }
-    const current = currentWorkspaceText(a, x.revision, x.workspaceHash), ws = a.settlement;
-    if (x.kind !== "hanko") return current ?? bodyErrorCode(e);
-    if (ctx.settlement === undefined) return "SETTLEMENT_HANKO_CONTEXT_MISSING";
-    if (current !== null || ws === undefined) return current ?? "SETTLEMENT_WORKSPACE_MISSING";
-    if (ws.status === "submitted") return "SETTLEMENT_HANKO_SUBMITTED_FORBIDDEN";
-    const nonce = x.settlementNonce;
-    if (!Number.isSafeInteger(nonce) || nonce < 1) return `SETTLEMENT_HANKO_NONCE_INVALID:${String(nonce)}`;
-    const floor = Math.max(a.jNonce + 1, ctx.settlement.proofNonceFloor);
-    if (floor >= Number.MAX_SAFE_INTEGER) return `SETTLEMENT_NONCE_EXHAUSTED:${floor}`;
-    if (ws.nonceAtSign !== undefined && ws.nonceAtSign !== nonce) return `SETTLEMENT_HANKO_NONCE_MISMATCH:${ws.nonceAtSign}:${nonce}`;
-    if (ws.nonceAtSign === undefined && nonce !== floor)
-      return `SETTLEMENT_HANKO_NONCE_MISMATCH:${nonce}:${floor}:j=${a.jNonce}:next=${w?.nextProofNonce ?? 0}:local=${w?.current?.proofNonce ?? 0}:peer=${w?.counterparty?.proofNonce ?? 0}`;
-    const compiled = compileOps(ws.ops, ws.lastModifiedByLeft);
-    if (!compiled.ok) return compileOpsText(ws.ops, ws.lastModifiedByLeft, "op") ?? bodyErrorCode(compiled.error);
-    const expected = settlementHashOf(a, compiled.value.diffs, compiled.value.forgive, nonce);
-    if (!expected.ok) return bodyErrorCode(expected.error);
-    if (typeof x.settlementHash !== "string" || !WORKSPACE_HASH.test(x.settlementHash)) return `SETTLEMENT_HANKO_HASH_INVALID:${String(x.settlementHash)}`;
-    if (x.settlementHash.toLowerCase() !== expected.value.toLowerCase()) return `SETTLEMENT_HANKO_HASH_MISMATCH:${x.settlementHash.toLowerCase()}:${expected.value}`;
-    if (ws.settlementHash !== undefined && ws.settlementHash.toLowerCase() !== expected.value.toLowerCase()) return `SETTLEMENT_HANKO_PINNED_HASH_MISMATCH:${ws.settlementHash}:${expected.value}`;
-    const postNonce = x.postProof.nonce;
-    if (!Number.isSafeInteger(postNonce) || postNonce < 1) return `POST_SETTLEMENT_PROOF_NONCE_INVALID:${String(postNonce)}`;
-    if (postNonce !== nonce + 1) return `POST_SETTLEMENT_PROOF_NONCE_MISMATCH:${postNonce}:${nonce + 1}`;
-    const projected = projectionText(a, compiled.value.diffs, compiled.value.forgive);
-    if (projected !== null) return projected;
-    const bodyHash = projectedProofHash(a, compiled.value.diffs, compiled.value.forgive, ctx.settlement.deltaTransformer);
-    if (!bodyHash.ok) return bodyErrorCode(bodyHash.error);
-    if (x.postProof.proofBodyHash.toLowerCase() !== bodyHash.value.toLowerCase()) return `POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH:${x.postProof.proofBodyHash}:${bodyHash.value}`;
-    const disputeHash = chain(mapErr(committedView(a), uncommitted), (view) => mapErr(accountDisputeHash(view, bodyHash.value, postNonce, x.postProof.proposerIsLeft), (err): BodyError => ({ _tag: "settlement", reason: err._tag })));
-    if (!disputeHash.ok) return bodyErrorCode(disputeHash.error);
-    if (x.postProof.disputeHash.toLowerCase() !== disputeHash.value.toLowerCase()) return `POST_SETTLEMENT_DISPUTE_HASH_MISMATCH:${x.postProof.disputeHash}:${disputeHash.value}`;
-    return bodyErrorCode(e);
-  })();
-  return refusedTx(text);
+const settleFailure = (
+  a: AccountBody, x: TxOf<"settle_transition">, ctx: FoldCtx, e: BodyError, w?: DisputeWitnesses,
+): AccountTxFailure => {
+  switch (x.kind) {
+    case "upsert": return refusedTx(upsertText(a, x, ctx, e));
+    case "hanko": return refusedTx(hankoText(a, x, ctx, e, w));
+    default: return refusedTx(currentWorkspaceText(a, x.revision, x.workspaceHash) ?? bodyErrorCode(e));
+  }
 };
 /** A BodyError as a bare og-style code, for refusals whose og text carries no further detail. */
 const bodyErrorCode = (e: BodyError): string => {
   switch (e._tag) {
-    case "settlement": case "swap": case "rebalance": case "lending": case "payment_route": case "cross_j": return e.reason;
+    case "settlement": case "swap": case "rebalance": case "lending": case "payment_route": case "cross_j":
+      return e.reason;
     case "uncommitted": return `ACCOUNT_STATE_UNCOMMITTABLE:${e.reason._tag}`;
     case "too_many_rows": return `ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED:insert:${MAX_ROWS + 1}:${MAX_ROWS}`;
     default: return e._tag;
   }
 };
-/**
- * og's failure for `tx` refused by this body with `e` under `ctx` (og byLeft = the frame proposer's side): og's handler checks walked in og's
- * order, rendered with og's message text. `self` is the local Entity (og proofHeader.fromEntity); `witnesses` are the dispute nonce cursors og
- * names in an account-basis settlement nonce mismatch.
- */
-export const accountTxFailure = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx, e: BodyError, self?: string, witnesses?: DisputeWitnesses): AccountTxFailure => {
-  if (e._tag === "settlement_frozen") return refusedTx(`SETTLEMENT_SIGNED_ACCOUNT_FROZEN:${ogTxType(tx)}`);
-  const found = ((): AccountTxFailure | null => {
-    switch (tx.type) {
-      case "add_delta": { const d = deltaDraftError(a, tx.tokenId); return d === null ? null : refusedTx(d); }
-      case "set_credit_limit": return creditLimitFailure(a, tx.tokenId, tx.limit);
-      case "payment": return paymentFailure(a, tx, ctx.byLeft);
-      case "htlc_lock": return firstFailure(
-        () => (tx.lockId !== tx.hashlock ? refusedTx(`Lock ID must equal hashlock (${tx.lockId} != ${tx.hashlock})`) : null),
-        () => (a.locks.has(tx.lockId) ? refusedTx(`Lock ${tx.lockId} already exists`) : null),
-        () => (ctx.nowMs >= tx.timelock ? refusedTx(`Timelock ${tx.timelock} already expired (timestamp)`) : null),
-        () => (tx.revealBeforeHeight <= ctx.jHeight ? refusedTx(`revealBeforeHeight ${tx.revealBeforeHeight} already passed (current J height: ${ctx.jHeight})`) : null),
-        () => (tx.amount < 1n || tx.amount > MAX_PAYMENT_AMOUNT ? refusedTx(`Invalid amount: ${tx.amount} (min 1, max ${U256})`) : null),
-        () => (a.locks.size >= MAX_ACCOUNT_HTLC_LOCKS ? refusedTx(`Too many active HTLC locks: max ${MAX_ACCOUNT_HTLC_LOCKS}`) : null),
-        draftThrow(a, tx.tokenId),
-        () => { const bad = tx.envelope === undefined ? null : envelopeError(tx.envelope); return bad === null ? null : threwTx(bad); },
-        () => { const available = ogOutCapacity(a, tx.tokenId, ctx.byLeft); return tx.amount > available ? refusedTx(`Insufficient capacity: need ${tx.amount}, available ${available}`) : null; },
-        offdeltaText(a, getDelta(a.account, tx.tokenId), { senderIsLeft: ctx.byLeft, amount: tx.amount }),
-        holdOverflowText(a, tx.tokenId, ctx.byLeft, tx.amount));
-      case "htlc_resolve": {
-        const lock = a.locks.get(tx.lockId);
-        if (lock === undefined) return refusedTx(`Lock ${tx.lockId} not found`);
-        if (!a.account.deltas.has(lock.tokenId)) return refusedTx(`Delta ${Number(lock.tokenId)} not found`);
-        const expired = htlcExpired(lock, ctx);
-        if (tx.outcome === "error") {
-          if (ctx.byLeft === lock.senderIsLeft && !expired) return refusedTx("Only beneficiary can release an active HTLC; payer can cancel only after expiry");
-          return tx.reason === "timeout" && !expired ? refusedTx("Lock not expired yet") : null;
-        }
-        if (expired) return refusedTx(`Lock expired: timestamp=${ctx.nowMs}/${lock.timelock} jHeight=${ctx.jHeight}/${lock.revealBeforeHeight}`);
-        const computed = hashHtlcSecret(tx.secret);
-        if (computed === null) return refusedTx(`Invalid secret: HTLC secret must be 32-byte hex (got ${tx.secret.length} chars)`);
-        if (computed !== lock.hashlock) return refusedTx(`Hash mismatch: expected ${lock.hashlock.slice(0, 8)}..., got ${computed.slice(0, 8)}...`);
-        return checked(offdeltaText(a, shift(getDelta(a.account, lock.tokenId), lock.senderIsLeft ? -lock.amount : lock.amount), undefined, lock.lockId)());
-      }
-      case "swap_offer": return swapOfferFailure(a, tx, ctx);
-      case "swap_cancel_request": {
-        const offer = a.offers.get(tx.offerId);
-        return offer === undefined ? refusedTx(`Offer ${tx.offerId} not found`) : ctx.byLeft !== offer.makerIsLeft ? refusedTx("Only maker can cancel swap offer") : null;
-      }
-      case "swap_resolve": return swapResolveFailure(a, tx, ctx);
-      case "request_collateral": {
-        const feeToken = tx.feeTokenId ?? tx.tokenId;
-        return firstFailure(
-          () => (tx.amount <= 0n ? refusedTx("request_collateral: amount must be > 0") : null),
-          () => (tx.feeAmount < 0n ? refusedTx("request_collateral: feeAmount must be >= 0") : null),
-          () => (!Number.isFinite(tx.policyVersion) || tx.policyVersion < 1 ? refusedTx(`request_collateral: invalid policyVersion ${tx.policyVersion}`) : null),
-          () => (!a.account.deltas.has(tx.tokenId) ? refusedTx(`request_collateral: no delta for token ${Number(tx.tokenId)}`) : null),
-          () => ((a.requested.get(tx.tokenId) ?? 0n) > 0n ? refusedTx("") : null),
-          () => (tx.feeAmount <= 0n ? refusedTx("request_collateral: feeAmount must produce effectiveFee > 0") : null),
-          () => (!a.account.deltas.has(feeToken) ? refusedTx(`request_collateral: no delta for fee token ${Number(feeToken)}`) : null),
-          () => (feeToken === tx.tokenId && tx.amount <= tx.feeAmount ? refusedTx("") : null),
-          () => { const cap = ogOutCapacity(a, feeToken, ctx.byLeft); return tx.feeAmount > cap ? refusedTx(`request_collateral: insufficient fee capacity in token ${Number(feeToken)} (${cap} < ${tx.feeAmount})`) : null; },
-          offdeltaText(a, shift(getDelta(a.account, feeToken), ctx.byLeft ? -tx.feeAmount : tx.feeAmount)));
-      }
-      case "rebalance_refund": {
-        const fees = a.requestFees.get(tx.requestTokenId), refunded = fees?.refund?.refundedAmount ?? 0n, outstanding = (fees?.feePaidUpfront ?? 0n) - refunded, feeToken = tokenKey(fees?.feeTokenId ?? 0);
-        return firstFailure(
-          () => (!tx.requestId || tx.amount <= 0n ? refusedTx("rebalance_refund: requestId and positive amount required") : null),
-          () => (fees === undefined || (a.requested.get(tx.requestTokenId) ?? 0n) <= 0n || fees.requestId !== tx.requestId ? refusedTx(`rebalance_refund: pending request not found (${tx.requestId})`) : null),
-          () => (ctx.byLeft === fees?.requestedByLeft ? refusedTx("rebalance_refund: requester cannot refund itself") : null),
-          () => (fees?.refund !== undefined && fees.refund.reason !== tx.reason ? refusedTx("rebalance_refund: reason conflicts with partial refund") : null),
-          () => (outstanding <= 0n ? threwTx(`REBALANCE_REFUND_STATE_CORRUPT:${tx.requestId}`) : null),
-          () => (tx.amount > outstanding ? refusedTx(`rebalance_refund: amount ${tx.amount} exceeds outstanding ${outstanding}`) : null),
-          () => (!a.account.deltas.has(feeToken) ? refusedTx(`rebalance_refund: fee token ${fees?.feeTokenId} missing`) : null),
-          () => { const cap = ogOutCapacity(a, feeToken, ctx.byLeft); return tx.amount > cap ? refusedTx(`rebalance_refund: insufficient capacity (${cap} < ${tx.amount})`) : null; },
-          offdeltaText(a, shift(getDelta(a.account, feeToken), ctx.byLeft ? -tx.amount : tx.amount)));
-      }
-      case "rebalance_policy": {
-        const token = Number(tx.tokenId), ts = Number(ctx.nowMs), side = ctx.byLeft ? "left" : "right", held = a.feePolicies.get(tx.tokenId), current = ctx.byLeft ? held?.left : held?.right;
-        return firstFailure(
-          () => (!Number.isSafeInteger(token) || token <= 0 || token > 65_535 ? refusedTx(`rebalance_policy: invalid tokenId ${token}`) : null),
-          () => (!Number.isSafeInteger(tx.policyVersion) || tx.policyVersion <= 0 ? refusedTx(`rebalance_policy: invalid policyVersion ${tx.policyVersion}`) : null),
-          () => (typeof tx.baseFee !== "bigint" || typeof tx.liquidityFeeBps !== "bigint" || typeof tx.gasFee !== "bigint" ? refusedTx(`rebalance_policy: invalid fee types for token ${token}`) : null),
-          () => (!Number.isSafeInteger(ts) || ts <= 0 ? refusedTx(`rebalance_policy: invalid committed timestamp ${ts}`) : null),
-          () => (tx.baseFee < 0n || tx.liquidityFeeBps < 0n || tx.liquidityFeeBps > 10_000n || tx.gasFee < 0n ? refusedTx(`rebalance_policy: invalid fee terms for token ${token}`) : null),
-          () => (!a.account.deltas.has(tx.tokenId) ? refusedTx(`rebalance_policy: no delta for token ${token}`) : null),
-          () => (current !== undefined && tx.policyVersion === current.policyVersion && !(current.baseFee === tx.baseFee && current.liquidityFeeBps === tx.liquidityFeeBps && current.gasFee === tx.gasFee)
-            ? refusedTx(`REBALANCE_POLICY_EQUIVOCATION: side=${side} token=${token} version=${tx.policyVersion}`) : null));
-      }
-      case "lending_fund": case "lending_borrow_request": case "lending_repay": case "lending_credit": case "lending_close_request": case "lending_close_payout": return lendingFailure(a, tx, ctx);
-      case "cross_pull_lock": {
-        const text = pullAdmissionText(a, tx);
-        return text !== null ? refusedTx(text) : firstFailure(draftThrow(a, tx.tokenId), holdOverflowText(a, tx.tokenId, tx.amount < 0n, absBig(tx.amount)));
-      }
-      case "cross_pull_close": return crossPullCloseFailure(a, tx, ctx);
-      case "j_event_claim": return claimFailure(a, tx, ctx, e, self);
-      case "settle_transition": return settleFailure(a, tx, ctx, e, witnesses);
+
+// ---- og failure text: HTLCs, swap cancel, rebalance ----
+const htlcLockFailure = (a: AccountBody, x: TxOf<"htlc_lock">, ctx: FoldCtx): AccountTxFailure | null => firstFailure(
+  () => refuse(x.lockId !== x.hashlock, `Lock ID must equal hashlock (${x.lockId} != ${x.hashlock})`),
+  () => refuse(a.locks.has(x.lockId), `Lock ${x.lockId} already exists`),
+  () => refuse(ctx.nowMs >= x.timelock, `Timelock ${x.timelock} already expired (timestamp)`),
+  () => refuse(x.revealBeforeHeight <= ctx.jHeight,
+    `revealBeforeHeight ${x.revealBeforeHeight} already passed (current J height: ${ctx.jHeight})`),
+  () => refuse(!inPaymentRange(x.amount), `Invalid amount: ${x.amount} (min 1, max ${U256})`),
+  () => refuse(a.locks.size >= MAX_ACCOUNT_HTLC_LOCKS, `Too many active HTLC locks: max ${MAX_ACCOUNT_HTLC_LOCKS}`),
+  draftThrow(a, x.tokenId),
+  () => {
+    const bad = x.envelope === undefined ? null : envelopeError(x.envelope);
+    return bad === null ? null : threwTx(bad);
+  },
+  capacityCheck(a, x.tokenId, ctx.byLeft, x.amount, (n) => `Insufficient capacity: need ${x.amount}, available ${n}`),
+  offdeltaText(a, getDelta(a.account, x.tokenId), { senderIsLeft: ctx.byLeft, amount: x.amount }),
+  holdOverflowText(a, x.tokenId, ctx.byLeft, x.amount),
+);
+const htlcResolveFailure = (a: AccountBody, x: TxOf<"htlc_resolve">, ctx: FoldCtx): AccountTxFailure | null => {
+  const lock = a.locks.get(x.lockId);
+  if (lock === undefined) return refusedTx(`Lock ${x.lockId} not found`);
+  if (!a.account.deltas.has(lock.tokenId)) return refusedTx(`Delta ${Number(lock.tokenId)} not found`);
+  const expired = htlcExpired(lock, ctx);
+  if (x.outcome === "error") {
+    if (ctx.byLeft === lock.senderIsLeft && !expired) {
+      return refusedTx("Only beneficiary can release an active HTLC; payer can cancel only after expiry");
     }
-  })();
-  // An early-accept branch (og's immutable-request or fee-consuming skip) renders as "": the refusal lies past og's handler, in the rewrite's commit step.
-  if (found !== null && found.message !== "") return found;
-  return e._tag === "uncommitted" || e._tag === "too_many_rows" ? threwTx(bodyErrorCode(e)) : refusedTx(bodyErrorCode(e));
+    return refuse(x.reason === "timeout" && !expired, "Lock not expired yet");
+  }
+  if (expired) {
+    const when = `timestamp=${ctx.nowMs}/${lock.timelock} jHeight=${ctx.jHeight}/${lock.revealBeforeHeight}`;
+    return refusedTx(`Lock expired: ${when}`);
+  }
+  const computed = hashHtlcSecret(x.secret);
+  if (computed === null) {
+    return refusedTx(`Invalid secret: HTLC secret must be 32-byte hex (got ${x.secret.length} chars)`);
+  }
+  if (computed !== lock.hashlock) {
+    return refusedTx(`Hash mismatch: expected ${lock.hashlock.slice(0, 8)}..., got ${computed.slice(0, 8)}...`);
+  }
+  const paid = shift(getDelta(a.account, lock.tokenId), lock.senderIsLeft ? -lock.amount : lock.amount);
+  return checked(offdeltaText(a, paid, undefined, lock.lockId)());
 };
-export const accountSnapshot = (a: AccountBody): Required<Omit<AccountBody, "account">> & { readonly state: Hash } =>
-  ({ state: hashAccountState(a.account), terms: a.terms, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight, pulls: a.pulls, submittedAt: a.submittedAt });
+const swapCancelFailure = (a: AccountBody, x: TxOf<"swap_cancel_request">, ctx: FoldCtx): AccountTxFailure | null => {
+  const offer = a.offers.get(x.offerId);
+  if (offer === undefined) return refusedTx(`Offer ${x.offerId} not found`);
+  return refuse(ctx.byLeft !== offer.makerIsLeft, "Only maker can cancel swap offer");
+};
+/** og accepts here without applying anything; the rewrite's refusal lies past og's handler. */
+const acceptedByOg: AccountTxFailure = refusedTx("");
+const collateralFailure = (a: AccountBody, x: TxOf<"request_collateral">, ctx: FoldCtx): AccountTxFailure | null => {
+  const feeToken = x.feeTokenId ?? x.tokenId;
+  return firstFailure(
+    () => refuse(x.amount <= 0n, "request_collateral: amount must be > 0"),
+    () => refuse(x.feeAmount < 0n, "request_collateral: feeAmount must be >= 0"),
+    () => refuse(!Number.isFinite(x.policyVersion) || x.policyVersion < 1,
+      `request_collateral: invalid policyVersion ${x.policyVersion}`),
+    () => refuse(!a.account.deltas.has(x.tokenId), `request_collateral: no delta for token ${Number(x.tokenId)}`),
+    () => ((a.requested.get(x.tokenId) ?? 0n) > 0n ? acceptedByOg : null),
+    () => refuse(x.feeAmount <= 0n, "request_collateral: feeAmount must produce effectiveFee > 0"),
+    () => refuse(!a.account.deltas.has(feeToken), `request_collateral: no delta for fee token ${Number(feeToken)}`),
+    () => (requestNetAmount(x) <= 0n ? acceptedByOg : null),
+    capacityCheck(a, feeToken, ctx.byLeft, x.feeAmount,
+      (n) => `request_collateral: insufficient fee capacity in token ${Number(feeToken)} (${n} < ${x.feeAmount})`),
+    paidRowText(a, feeToken, ctx.byLeft, x.feeAmount),
+  );
+};
+const refundFailure = (a: AccountBody, x: TxOf<"rebalance_refund">, ctx: FoldCtx): AccountTxFailure | null => {
+  if (!x.requestId || x.amount <= 0n) return refusedTx("rebalance_refund: requestId and positive amount required");
+  const fees = a.requestFees.get(x.requestTokenId);
+  const open = (a.requested.get(x.requestTokenId) ?? 0n) > 0n;
+  if (fees === undefined || !open || fees.requestId !== x.requestId) {
+    return refusedTx(`rebalance_refund: pending request not found (${x.requestId})`);
+  }
+  const outstanding = fees.feePaidUpfront - (fees.refund?.refundedAmount ?? 0n);
+  const feeToken = tokenKey(fees.feeTokenId);
+  return firstFailure(
+    () => refuse(ctx.byLeft === fees.requestedByLeft, "rebalance_refund: requester cannot refund itself"),
+    () => refuse(fees.refund !== undefined && fees.refund.reason !== x.reason,
+      "rebalance_refund: reason conflicts with partial refund"),
+    () => raise(outstanding <= 0n, `REBALANCE_REFUND_STATE_CORRUPT:${x.requestId}`),
+    () => refuse(x.amount > outstanding, `rebalance_refund: amount ${x.amount} exceeds outstanding ${outstanding}`),
+    () => refuse(!a.account.deltas.has(feeToken), `rebalance_refund: fee token ${fees.feeTokenId} missing`),
+    capacityCheck(a, feeToken, ctx.byLeft, x.amount,
+      (n) => `rebalance_refund: insufficient capacity (${n} < ${x.amount})`),
+    paidRowText(a, feeToken, ctx.byLeft, x.amount),
+  );
+};
+const policyTermsText = (issue: string, x: TxOf<"rebalance_policy">, ts: number): string => {
+  const token = Number(x.tokenId);
+  switch (issue) {
+    case "REBALANCE_POLICY_TOKEN": return `rebalance_policy: invalid tokenId ${token}`;
+    case "REBALANCE_POLICY_VERSION": return `rebalance_policy: invalid policyVersion ${x.policyVersion}`;
+    case "REBALANCE_POLICY_FEE_TYPES": return `rebalance_policy: invalid fee types for token ${token}`;
+    case "REBALANCE_POLICY_TIMESTAMP": return `rebalance_policy: invalid committed timestamp ${ts}`;
+    default: return `rebalance_policy: invalid fee terms for token ${token}`;
+  }
+};
+const policyFailure = (a: AccountBody, x: TxOf<"rebalance_policy">, ctx: FoldCtx): AccountTxFailure | null => {
+  const ts = Number(ctx.nowMs), token = Number(x.tokenId);
+  const issue = policyTermsIssue(x, ts);
+  if (issue !== undefined) return refusedTx(policyTermsText(issue, x, ts));
+  if (!a.account.deltas.has(x.tokenId)) return refusedTx(`rebalance_policy: no delta for token ${token}`);
+  const held = a.feePolicies.get(x.tokenId);
+  const current = at(held?.left, held?.right, ctx.byLeft);
+  const equivocates = policyStanding(current, x.policyVersion) === "current" && !samePolicyTerms(current, x);
+  const text = `REBALANCE_POLICY_EQUIVOCATION: side=${sideName(ctx.byLeft)} token=${token} version=${x.policyVersion}`;
+  return refuse(equivocates, text);
+};
 
+// ---- og failure text: the whole tx ----
+/** og's handler checks for `tx`, walked in og's order; null when og's handler would not refuse it. */
+const ogHandlerFailure = (
+  a: AccountBody, tx: WireAccountTx, ctx: FoldCtx, e: BodyError, self?: string, witnesses?: DisputeWitnesses,
+): AccountTxFailure | null => {
+  switch (tx.type) {
+    case "add_delta": return refuseIssue(deltaDraftError(a, tx.tokenId) ?? undefined);
+    case "set_credit_limit": return creditLimitFailure(a, tx.tokenId, tx.limit);
+    case "payment": return paymentFailure(a, tx, ctx.byLeft);
+    case "htlc_lock": return htlcLockFailure(a, tx, ctx);
+    case "htlc_resolve": return htlcResolveFailure(a, tx, ctx);
+    case "swap_offer": return swapOfferFailure(a, tx, ctx);
+    case "swap_cancel_request": return swapCancelFailure(a, tx, ctx);
+    case "swap_resolve": return swapResolveFailure(a, tx, ctx);
+    case "request_collateral": return collateralFailure(a, tx, ctx);
+    case "rebalance_refund": return refundFailure(a, tx, ctx);
+    case "rebalance_policy": return policyFailure(a, tx, ctx);
+    case "lending_fund": case "lending_borrow_request": case "lending_repay":
+    case "lending_credit": case "lending_close_request": case "lending_close_payout": return lendingFailure(a, tx, ctx);
+    case "cross_pull_lock": {
+      const text = pullAdmissionText(a, tx);
+      if (text !== null) return refusedTx(text);
+      const payerIsLeft = tx.amount < 0n;
+      return firstFailure(draftThrow(a, tx.tokenId), holdOverflowText(a, tx.tokenId, payerIsLeft, absBig(tx.amount)));
+    }
+    case "cross_pull_close": return crossPullCloseFailure(a, tx, ctx);
+    case "j_event_claim": return claimFailure(a, tx, ctx, e, self);
+    case "settle_transition": return settleFailure(a, tx, ctx, e, witnesses);
+  }
+};
+/**
+ * og's failure for `tx` refused by this body with `e` under `ctx` (og byLeft = the frame proposer's side): og's
+ * handler checks walked in og's order, rendered with og's message text. `self` is the local Entity (og
+ * proofHeader.fromEntity); `witnesses` are the dispute nonce cursors og names in an account-basis settlement nonce
+ * mismatch.
+ */
+export const accountTxFailure = (
+  a: AccountBody, tx: WireAccountTx, ctx: FoldCtx, e: BodyError, self?: string, witnesses?: DisputeWitnesses,
+): AccountTxFailure => {
+  if (e._tag === "settlement_frozen") return refusedTx(`SETTLEMENT_SIGNED_ACCOUNT_FROZEN:${ogTxType(tx)}`);
+  const found = ogHandlerFailure(a, tx, ctx, e, self, witnesses);
+  // og's early accepts render as "": the refusal lies past og's handler, in the rewrite's commit step.
+  if (found !== null && found.message !== "") return found;
+  const code = bodyErrorCode(e);
+  return e._tag === "uncommitted" || e._tag === "too_many_rows" ? threwTx(code) : refusedTx(code);
+};
+export const accountSnapshot = (a: AccountBody): Required<Omit<AccountBody, "account">> & { readonly state: Hash } => ({
+  state: hashAccountState(a.account), terms: a.terms, locks: a.locks, offers: a.offers, requested: a.requested,
+  requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, claimRows: a.claimRows,
+  jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight, pulls: a.pulls,
+  submittedAt: a.submittedAt,
+});
 
+// ---- committed view: og's CommittedAccountState of a body, its pending J-claim tries, and the commitment root ----
 export type ViewError = CommitmentError | Tagged<"token_id", { tokenId: TokenId }> | ClaimError;
 export type UncommittedReason = ViewError | FrameHashError | Tagged<"unsafe_number">;
 export type Uncommitted = Tagged<"uncommitted", { reason: UncommittedReason }>;
 export const uncommitted = (reason: UncommittedReason): Uncommitted => ({ _tag: "uncommitted", reason });
-export const tokenNumber = (id: TokenId): Result<number, ViewError> => (tokenId(id).ok ? ok(Number(id)) : err({ _tag: "token_id", tokenId: id }));
-export const tokenOrder = (b: AccountBody): readonly TokenId[] => [...b.account.deltas.keys()].sort((x, y) => Number(x) - Number(y));
+export const tokenNumber = (id: TokenId): Result<number, ViewError> =>
+  tokenId(id).ok ? ok(Number(id)) : err({ _tag: "token_id", tokenId: id });
+export const tokenOrder = (b: AccountBody): readonly TokenId[] =>
+  [...b.account.deltas.keys()].toSorted((x, y) => Number(x) - Number(y));
+
+// Each side's pending J-claims commit as og's crit-bit Patricia trie: leaves keyed by (account, side, jHeight),
+// branches splitting on the first bit where two keys differ.
 const EMPTY_J_CLAIMS: JClaimAccumulator = { version: 1, root: EMPTY_J_ROOT, count: 0n };
-const CLAIM_ACCOUNT = keccak256Hex(utf8("xln.account-j-claim.account.v1")), CLAIM_KEY = keccak256Hex(utf8("xln.account-j-claim.key.v1")), CLAIM_RECORD = keccak256Hex(utf8("xln.account-j-claim.record.v1")), CLAIM_LEAF = keccak256Hex(utf8("xln.account-j-claim.leaf.v1")), CLAIM_BRANCH = keccak256Hex(utf8("xln.account-j-claim.branch.v1"));
+const claimTag = (name: string): string => keccak256Hex(utf8(`xln.account-j-claim.${name}.v1`));
+const CLAIM_ACCOUNT = claimTag("account"), CLAIM_KEY = claimTag("key"), CLAIM_RECORD = claimTag("record");
+const CLAIM_LEAF = claimTag("leaf"), CLAIM_BRANCH = claimTag("branch");
 type ClaimLeaf = { readonly key: string; readonly record: string; readonly rec: JClaimRecord };
 type ClaimNode = Tagged<"leaf", ClaimLeaf> | Tagged<"branch", { bit: number; left: ClaimNode; right: ClaimNode }>;
-const claimBit = (key: string, index: number): 0 | 1 => ((Number.parseInt(key.slice(2 + (index >> 3) * 2, 4 + (index >> 3) * 2), 16) >> (7 - (index & 7))) & 1) === 0 ? 0 : 1;
-const claimAccountKey = (domain: Domain, left: string, right: string): string => keccak256Hex(abiEncode([A.b32(CLAIM_ACCOUNT), A.uint(BigInt(domain.chainId)), A.address(domain.depositoryAddress), A.b32(left), A.b32(right)]));
+/** Bit `index` of a 32-byte hex key, the first byte's most significant bit first. */
+const claimBit = (key: string, index: number): 0 | 1 => {
+  const offset = 2 + (index >> 3) * 2;
+  const byte = Number.parseInt(key.slice(offset, offset + 2), 16);
+  return ((byte >> (7 - (index & 7))) & 1) === 0 ? 0 : 1;
+};
+const KEY_BITS = Array.from({ length: 256 }, (_, i) => i);
+const claimAccountKey = (domain: Domain, left: string, right: string): string => keccak256Hex(abiEncode([
+  A.b32(CLAIM_ACCOUNT), A.uint(BigInt(domain.chainId)), A.address(domain.depositoryAddress), A.b32(left), A.b32(right),
+]));
 const claimLeaf = (accountKey: string, row: ClaimRow): ClaimLeaf => {
   const side = row.onLeft ? 0n : 1n;
+  const slot = [A.b32(accountKey), A.uint(side), A.uint(row.jHeight)];
   return {
-    key: keccak256Hex(abiEncode([A.b32(CLAIM_KEY), A.b32(accountKey), A.uint(side), A.uint(row.jHeight)])), record: keccak256Hex(abiEncode([A.b32(CLAIM_RECORD), A.b32(accountKey), A.uint(side), A.uint(row.jHeight), A.b32(row.jBlockHash), A.b32(row.eventsHash)])),
-    rec: { version: 1, accountKey: accountKey.toLowerCase(), side: row.onLeft ? "left" : "right", jHeight: Number(row.jHeight), jBlockHash: row.jBlockHash, eventsHash: row.eventsHash },
+    key: keccak256Hex(abiEncode([A.b32(CLAIM_KEY), ...slot])),
+    record: keccak256Hex(abiEncode([A.b32(CLAIM_RECORD), ...slot, A.b32(row.jBlockHash), A.b32(row.eventsHash)])),
+    rec: {
+      version: 1, accountKey: accountKey.toLowerCase(), side: row.onLeft ? "left" : "right",
+      jHeight: Number(row.jHeight), jBlockHash: row.jBlockHash, eventsHash: row.eventsHash,
+    },
   };
 };
 const claimNodeHash = (node: ClaimNode): string => match(node, {
   leaf: ({ key, record }) => keccak256Hex(abiEncode([A.b32(CLAIM_LEAF), A.uint(1n), A.b32(key), A.b32(record)])),
-  branch: ({ bit, left, right }) => keccak256Hex(abiEncode([A.b32(CLAIM_BRANCH), A.uint(1n), A.uint(BigInt(bit)), A.b32(claimNodeHash(left)), A.b32(claimNodeHash(right))])),
+  branch: ({ bit, left, right }) => keccak256Hex(abiEncode([
+    A.b32(CLAIM_BRANCH), A.uint(1n), A.uint(BigInt(bit)), A.b32(claimNodeHash(left)), A.b32(claimNodeHash(right)),
+  ])),
 });
-const claimTerminal = (node: ClaimNode, key: string): Of<ClaimNode, "leaf"> => match(node, { leaf: (leaf) => leaf, branch: (b) => claimTerminal(claimBit(key, b.bit) === 0 ? b.left : b.right, key) });
-const claimPlace = (diff: number, key: string, leaf: Of<ClaimNode, "leaf">, other: ClaimNode): ClaimNode =>
-  ({ _tag: "branch", bit: diff, left: claimBit(key, diff) === 0 ? leaf : other, right: claimBit(key, diff) === 1 ? leaf : other });
-const claimInsertAt = (node: ClaimNode, key: string, leaf: Of<ClaimNode, "leaf">, diff: number): ClaimNode => match(node, {
+/** The leaf a key's bit path ends at. */
+const claimTerminal = (node: ClaimNode, key: string): Of<ClaimNode, "leaf"> => match(node, {
+  leaf: (leaf) => leaf,
+  branch: (b) => claimTerminal(claimBit(key, b.bit) === 0 ? b.left : b.right, key),
+});
+/** A new branch at `diff`, the leaf on its key's side and the existing subtree on the other. */
+const claimPlace = (diff: number, key: string, leaf: Of<ClaimNode, "leaf">, other: ClaimNode): ClaimNode => {
+  const leftward = claimBit(key, diff) === 0;
+  return { _tag: "branch", bit: diff, left: leftward ? leaf : other, right: leftward ? other : leaf };
+};
+/** Descend while branches split before `diff`, then place the leaf. */
+const claimInsertAt = (
+  node: ClaimNode, key: string, leaf: Of<ClaimNode, "leaf">, diff: number,
+): ClaimNode => match(node, {
   leaf: () => claimPlace(diff, key, leaf, node),
-  branch: (b) => (b.bit >= diff ? claimPlace(diff, key, leaf, node) : { ...b, ...(claimBit(key, b.bit) === 0 ? { left: claimInsertAt(b.left, key, leaf, diff) } : { right: claimInsertAt(b.right, key, leaf, diff) }) }),
+  branch: (b) => {
+    if (b.bit >= diff) return claimPlace(diff, key, leaf, node);
+    return claimBit(key, b.bit) === 0
+      ? { ...b, left: claimInsertAt(b.left, key, leaf, diff) }
+      : { ...b, right: claimInsertAt(b.right, key, leaf, diff) };
+  },
 });
+/** The same key with the same record is already there; the same key with another record is a conflict. */
 const insertClaim = (node: ClaimNode, leaf: ClaimLeaf): Result<ClaimNode, ClaimError> => {
   const term = claimTerminal(node, leaf.key);
   if (term.key === leaf.key) return term.record === leaf.record ? ok(node) : err({ _tag: "claim_conflict" });
-  let diff = -1;
-  for (let i = 0; i < 256; i++) if (claimBit(leaf.key, i) !== claimBit(term.key, i)) { diff = i; break; }
-  return diff < 0 ? err({ _tag: "claim_conflict" }) : ok(claimInsertAt(node, leaf.key, { _tag: "leaf", ...leaf }, diff));
+  const diff = KEY_BITS.findIndex((i) => claimBit(leaf.key, i) !== claimBit(term.key, i));
+  if (diff < 0) return err({ _tag: "claim_conflict" });
+  return ok(claimInsertAt(node, leaf.key, { _tag: "leaf", ...leaf }, diff));
 };
-/** og's crit-bit Patricia trie is canonical in its key set, so any insertion order rebuilds the committed node structure. */
-const claimTree = (accountKey: string, rows: readonly ClaimRow[]): Result<ClaimNode | undefined, ClaimError> => foldResult<ClaimNode | undefined, ClaimRow, ClaimError>(rows, undefined, (node, row) => {
-  const leaf = claimLeaf(accountKey, row);
-  return node === undefined ? ok({ _tag: "leaf", ...leaf }) : insertClaim(node, leaf);
-});
+/**
+ * og's crit-bit Patricia trie is canonical in its key set, so any insertion order rebuilds the committed node
+ * structure.
+ */
+const claimTree = (accountKey: string, rows: readonly ClaimRow[]): Result<ClaimNode | undefined, ClaimError> =>
+  foldResult<ClaimNode | undefined, ClaimRow, ClaimError>(rows, undefined, (node, row) => {
+    const leaf = claimLeaf(accountKey, row);
+    return node === undefined ? ok({ _tag: "leaf", ...leaf }) : insertClaim(node, leaf);
+  });
 const claimAccumulator = (accountKey: string, rows: readonly ClaimRow[]): Result<JClaimAccumulator, ClaimError> =>
-  map(claimTree(accountKey, rows), (node) => (node === undefined ? EMPTY_J_CLAIMS : { version: 1, root: claimNodeHash(node), count: BigInt(rows.length) }));
-/** og j-claim-proof.ts createAccountJClaimProof: every node from the root down the key's bit path to the terminal leaf. */
+  map(claimTree(accountKey, rows), (node) =>
+    node === undefined ? EMPTY_J_CLAIMS : { version: 1, root: claimNodeHash(node), count: BigInt(rows.length) });
+/**
+ * og j-claim-proof.ts createAccountJClaimProof: every node from the root down the key's bit path to the terminal leaf.
+ */
 const claimPath = (node: ClaimNode, key: string): readonly JClaimNode[] => match(node, {
   leaf: ({ key: k, rec }): readonly JClaimNode[] => [{ version: 1, type: "leaf", key: k, record: rec }],
-  branch: ({ bit, left, right }): readonly JClaimNode[] => [{ version: 1, type: "branch", bit, left: claimNodeHash(left), right: claimNodeHash(right) }, ...claimPath(claimBit(key, bit) === 0 ? left : right, key)],
+  branch: ({ bit, left, right }): readonly JClaimNode[] => [
+    { version: 1, type: "branch", bit, left: claimNodeHash(left), right: claimNodeHash(right) },
+    ...claimPath(claimBit(key, bit) === 0 ? left : right, key),
+  ],
 });
 const claimKeyOf = (b: Pick<AccountBody, "account" | "terms">): Result<string, ViewError> => {
   const { left, right } = b.account.id;
@@ -8198,57 +8433,108 @@ const pendingOn = (b: AccountBody, onLeft: boolean): Result<JClaimAccumulator, V
   if (rows.length === 0) return ok(EMPTY_J_CLAIMS);
   return chain(claimKeyOf(b), (accountKey) => claimAccumulator(accountKey, rows));
 };
-export type SideTotals = { readonly leftHold: bigint; readonly rightHold: bigint; readonly leftAllowance: bigint; readonly rightAllowance: bigint };
-const NO_TOTALS: SideTotals = { leftHold: 0n, rightHold: 0n, leftAllowance: 0n, rightAllowance: 0n };
-const totalsOn = (b: AccountBody, counted: (id: TokenId) => boolean): ReadonlyMap<TokenId, SideTotals> => {
-  const totals = new Map<TokenId, { -readonly [K in keyof SideTotals]: bigint }>();
-  const on = (id: TokenId) => { const held = totals.get(id); if (held !== undefined) return held; const fresh = { ...NO_TOTALS }; totals.set(id, fresh); return fresh; };
-  const holdOn = (id: TokenId, onLeft: boolean, n: bigint): void => { const s = on(id); if (onLeft) s.leftHold += n; else s.rightHold += n; };
-  for (const l of b.locks.values()) if (counted(l.tokenId)) holdOn(l.tokenId, l.senderIsLeft, l.amount);
-  // og commit.ts: a cross-j offer adds no hold (its source pull already owns the lock); a pull holds |amount| on the payer side.
-  for (const o of b.offers.values()) if (o.crossJurisdiction === undefined && counted(o.giveTokenId)) holdOn(o.giveTokenId, o.makerIsLeft, o.giveAmount);
-  for (const p of b.pulls?.values() ?? []) { const id = String(p.tokenId) as TokenId; if (counted(id)) holdOn(id, p.amount < 0n, p.amount < 0n ? -p.amount : p.amount); }
-  if (b.settlement !== undefined && b.settlement.status !== "submitted") for (const d of workspaceDiffs(b.settlement)) {
-    const id = String(d.tokenId) as TokenId;
-    if (!counted(id)) continue;
-    if (d.leftDiff < 0n) holdOn(id, true, -d.leftDiff);
-    if (d.rightDiff < 0n) holdOn(id, false, -d.rightDiff);
-  }
-  return totals;
+
+// Holds: what each side has committed but not yet paid, per token. Allowances are always zero here.
+export type SideTotals = {
+  readonly leftHold: bigint; readonly rightHold: bigint;
+  readonly leftAllowance: bigint; readonly rightAllowance: bigint;
 };
-export const sideTotals = (b: AccountBody, tk: TokenId): SideTotals => totalsOn(b, (id) => id === tk).get(tk) ?? NO_TOTALS;
-const byToken = <V>(rows: Iterable<readonly [TokenId, V]>): ReadonlyMap<number, V> => new Map([...rows].map(([id, v]) => [Number(id), v]));
+const NO_TOTALS: SideTotals = { leftHold: 0n, rightHold: 0n, leftAllowance: 0n, rightAllowance: 0n };
+type Hold = Readonly<{ tokenId: TokenId; onLeft: boolean; amount: bigint }>;
+/** An unsubmitted workspace holds each side's outgoing diff until it lands. */
+const workspaceHolds = (w: SettlementWorkspace | undefined): readonly Hold[] => {
+  if (w === undefined || w.status === "submitted") return [];
+  return workspaceDiffs(w).flatMap((d): readonly Hold[] => {
+    const tokenId = String(d.tokenId) as TokenId;
+    return [
+      ...(d.leftDiff < 0n ? [{ tokenId, onLeft: true, amount: -d.leftDiff }] : []),
+      ...(d.rightDiff < 0n ? [{ tokenId, onLeft: false, amount: -d.rightDiff }] : []),
+    ];
+  });
+};
+/** Every hold on the Account: HTLC locks, same-j offers' give, pulls' payer side, and the workspace's outflows. */
+const accountHolds = (b: AccountBody): readonly Hold[] => [
+  ...[...b.locks.values()].map((l) => ({ tokenId: l.tokenId, onLeft: l.senderIsLeft, amount: l.amount })),
+  // og commit.ts: a cross-j offer adds no hold (its source pull already owns the lock); a pull holds |amount| on
+  // the payer side.
+  ...[...b.offers.values()].filter((o) => o.crossJurisdiction === undefined)
+    .map((o) => ({ tokenId: o.giveTokenId, onLeft: o.makerIsLeft, amount: o.giveAmount })),
+  ...[...(b.pulls?.values() ?? [])]
+    .map((p) => ({ tokenId: String(p.tokenId) as TokenId, onLeft: p.amount < 0n, amount: absBig(p.amount) })),
+  ...workspaceHolds(b.settlement),
+];
+const addHold = (s: SideTotals, h: Hold): SideTotals =>
+  h.onLeft ? { ...s, leftHold: s.leftHold + h.amount } : { ...s, rightHold: s.rightHold + h.amount };
+const totalsOn = (b: AccountBody, counted: (id: TokenId) => boolean): ReadonlyMap<TokenId, SideTotals> =>
+  accountHolds(b).filter((h) => counted(h.tokenId)).reduce(
+    (m, h) => mapSet(m, h.tokenId, addHold(m.get(h.tokenId) ?? NO_TOTALS, h)),
+    new Map() as ReadonlyMap<TokenId, SideTotals>,
+  );
+export const sideTotals = (b: AccountBody, tk: TokenId): SideTotals =>
+  totalsOn(b, (id) => id === tk).get(tk) ?? NO_TOTALS;
+const byToken = <V>(rows: Iterable<readonly [TokenId, V]>): ReadonlyMap<number, V> =>
+  new Map([...rows].map(([id, v]) => [Number(id), v]));
 const committedDeltas = (b: AccountBody): ReadonlyMap<number, CommittedDelta> => {
   const totals = totalsOn(b, () => true);
   return byToken([...b.account.deltas.values()].map((d): readonly [TokenId, CommittedDelta] => {
     const s = totals.get(d.tokenId) ?? NO_TOTALS;
-    return [d.tokenId, { tokenId: Number(d.tokenId), collateral: d.collateral, ondelta: d.ondelta, offdelta: d.offdelta, leftCreditLimit: d.leftCreditLimit, rightCreditLimit: d.rightCreditLimit, leftAllowance: s.leftAllowance, rightAllowance: s.rightAllowance, leftHold: s.leftHold, rightHold: s.rightHold }];
+    return [d.tokenId, {
+      tokenId: Number(d.tokenId), collateral: d.collateral, ondelta: d.ondelta, offdelta: d.offdelta,
+      leftCreditLimit: d.leftCreditLimit, rightCreditLimit: d.rightCreditLimit,
+      leftAllowance: s.leftAllowance, rightAllowance: s.rightAllowance, leftHold: s.leftHold, rightHold: s.rightHold,
+    }];
   }));
 };
+/** og's CommittedAccountState: every token key valid, the finalized height safe, both claim tries built. */
 const project = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
   const height = b.finalizedJHeight;
   if (height < 0n || height > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "bad_j_claims" });
   const keys = [...b.account.deltas.keys(), ...b.requested.keys(), ...b.requestFees.keys(), ...b.feePolicies.keys()];
-  return chain(traverse(keys, tokenNumber), () => chain(all({ left: pendingOn(b, true), right: pendingOn(b, false) }), ({ left, right }) => {
+  const pending = (): Result<{ left: JClaimAccumulator; right: JClaimAccumulator }, ViewError> =>
+    all({ left: pendingOn(b, true), right: pendingOn(b, false) });
+  return chain(traverse(keys, tokenNumber), () => map(pending(), ({ left, right }) => {
     const { terms } = b;
-    return ok({
-      domain: terms.domain, leftEntity: b.account.id.left, rightEntity: b.account.id.right, watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig,
+    const swapOffers = [...b.offers].map(([id, o]) =>
+      [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }] as const);
+    return {
+      domain: terms.domain, leftEntity: b.account.id.left, rightEntity: b.account.id.right,
+      watchSeed: terms.watchSeed, disputeConfig: terms.disputeConfig,
       jNonce: b.jNonce, lastFinalizedJHeight: Number(height), leftPendingJClaims: left, rightPendingJClaims: right,
-      deltas: committedDeltas(b), locks: new Map([...b.locks].map(([id, l]) => [id, ogLockRow(l)])), pulls: b.pulls ?? new Map(), swapOffers: new Map([...b.offers].map(([id, o]) => [id, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }])), subcontracts: new Map(), lendingIntents: b.lendingIntents,
-      requestedRebalance: byToken(b.requested), requestedRebalanceFeeState: byToken(b.requestFees), rebalanceFeePolicies: byToken(b.feePolicies), settlementWorkspace: b.settlement,
-    });
+      deltas: committedDeltas(b), locks: new Map([...b.locks].map(([id, l]) => [id, ogLockRow(l)])),
+      pulls: b.pulls ?? new Map(), swapOffers: new Map(swapOffers), subcontracts: new Map(),
+      lendingIntents: b.lendingIntents, requestedRebalance: byToken(b.requested),
+      requestedRebalanceFeeState: byToken(b.requestFees), rebalanceFeePolicies: byToken(b.feePolicies),
+      settlementWorkspace: b.settlement,
+    };
   }));
 };
+// Projection and preparation are pure but costly, so each body's view is computed once and the bodies whose
+// commitment was already prepared are remembered; preparing a successor then only hashes what changed.
 const views = new WeakMap<AccountBody, Result<CommittedAccountState, ViewError>>();
 const preparedBodies = new WeakSet<AccountBody>();
-export const committedView = (b: AccountBody): Result<CommittedAccountState, ViewError> => { const held = views.get(b); if (held !== undefined) return held; const v = project(b); views.set(b, v); return v; };
-export const prepareCommitment = (b: AccountBody): Result<PreparedCommitment, ViewError> => chain(committedView(b), (v) => map(prepareState(v), (p) => { preparedBodies.add(b); return p; }));
-export const prepareStep = (before: AccountBody, after: AccountBody): Result<void, ViewError> => chain(committedView(after), (next) => {
-  const was = preparedBodies.has(before) ? committedView(before) : undefined;
-  return map(was?.ok === true ? prepareChanges(was.value, next) : map(prepareState(next), () => undefined), () => { preparedBodies.add(after); });
-});
+export const committedView = (b: AccountBody): Result<CommittedAccountState, ViewError> => {
+  const held = views.get(b);
+  if (held !== undefined) return held;
+  const view = project(b);
+  views.set(b, view);
+  return view;
+};
+export const prepareCommitment = (b: AccountBody): Result<PreparedCommitment, ViewError> =>
+  chain(committedView(b), (v) => map(prepareState(v), (p) => {
+    preparedBodies.add(b);
+    return p;
+  }));
+export const prepareStep = (before: AccountBody, after: AccountBody): Result<void, ViewError> =>
+  chain(committedView(after), (next) => {
+    const was = preparedBodies.has(before) ? committedView(before) : undefined;
+    const prepared = was?.ok === true ? prepareChanges(was.value, next) : map(prepareState(next), () => undefined);
+    return map(prepared, () => {
+      preparedBodies.add(after);
+    });
+  });
 export type Committed = { readonly view: CommittedAccountState; readonly root: string };
-export const committed = (b: AccountBody): Result<Committed, ViewError> => chain(prepareCommitment(b), (p) => map(preparedRoot(p), (root) => ({ view: p.state, root })));
+export const committed = (b: AccountBody): Result<Committed, ViewError> =>
+  chain(prepareCommitment(b), (p) => map(preparedRoot(p), (root) => ({ view: p.state, root })));
 export const committedRoot = (b: AccountBody): Result<string, ViewError> => map(committed(b), (c) => c.root);
 
 
