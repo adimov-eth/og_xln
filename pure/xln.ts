@@ -4670,7 +4670,7 @@ export type LendingEntityTx =
   | { readonly type: "lendingClosePosition"; readonly data: { readonly hubEntityId: string; readonly positionId: string } };
 /** og ProfileUpdateTx & { entityId }. */
 export type ProfileUpdate = { readonly entityId: string; readonly name?: string | undefined; readonly entityKind?: string | null | undefined; readonly sectors?: readonly string[] | undefined; readonly avatar?: string | undefined; readonly bio?: string | undefined; readonly website?: string | undefined };
-export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "settlement" | "entityProviderAction" | "jBatch"; readonly context: string };
+export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "profile" | "settlement" | "entityProviderAction" | "jBatch"; readonly context: string };
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
   readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[]; readonly leader: FrameLeader;
@@ -7960,6 +7960,20 @@ export const inboundHtlcEntries = (v: HtlcInboundView, txs: readonly EntityTx[])
     return ok(out);
   });
 };
+/**
+ * og requireEntityEncryptionPrivateKey + assertEntityEncryptionKeypair (start.ts startInboundLayerPriming, replay.ts assertHtlcPreparedInfraContext):
+ * every proposal and every replayed frame needs this validator's Entity key, and it must derive the committed public key, whatever the frame's txs.
+ * Plain Errors in og, so the whole input fails. An Entity with no committed public key never exists in og (registration always provisions one).
+ */
+const entityKeypair = (state: EntityState, ctx: EntityContext): Result<void, EntityError> => {
+  const publicKey = state.committed["entityEncryptionPublicKey"];
+  if (publicKey === undefined) return ok(undefined);
+  const privateKey = ctx.htlc?.encryptionPrivateKey;
+  if (privateKey === undefined || privateKey === "") return invariant(`ENTITY_ENCRYPTION_PRIVATE_KEY_UNAVAILABLE:entity=${state.id}`);
+  const checked = chain(x25519KeyBytes(String(publicKey), "HTLC_ENTITY_ENCRYPTION_PUBLIC_KEY_INVALID"), (pub) => chain(x25519KeyBytes(privateKey, "HTLC_ENTITY_ENCRYPTION_PRIVATE_KEY_INVALID"),
+    (priv): Result<void, OnionError> => (bytesToHex(x25519.getPublicKey(priv)) === bytesToHex(pub) ? ok(undefined) : onionErr("HTLC_ENTITY_ENCRYPTION_KEYPAIR_MISMATCH"))));
+  return checked.ok ? ok(undefined) : invariant(checked.error.code);
+};
 const htlcFrameTxs = (txs: readonly EntityTx[]): boolean => txs.some((tx) => tx.type === "htlcPayment" || (tx.type === "accountInput" && tx.data.kind === "ack_frame" && tx.data.frame.txs.some((a) => a.type === "htlc_lock" && a.envelope !== undefined)));
 /** og entityEncryptionPrivateKey (registration/entity-creation/crypto.ts): HKDF-SHA256(seed, salt=entityId, "xln:entity-encryption:v1"). */
 export const entityEncryptionPrivateKey = (seed: string, entity: string): string => bytesToHex(hkdf(sha256, hexToBytes(seed), utf8(lower(entity)), utf8("xln:entity-encryption:v1"), 32)).toLowerCase();
@@ -9450,6 +9464,9 @@ const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: Entity
   const view = proposalLeader(queued).view, self = signerId(queued.signerId), pending = queued.pendingLeaderCertificate;
   const leader: FrameLeader = { proposerSignerId: self, view, ...opt("certificate", pending) };
   const leaderState: LeaderState = { activeValidatorId: self, view, changedAtHeight: pending !== undefined ? Number(queued.head.height) + 1 : queued.state.leaderState?.changedAtHeight ?? 0 };
+  // og startInboundLayerPriming reads requireEntityEncryptionPrivateKey for every proposal, before any materialization
+  const keypair = entityKeypair(queued.state, ctx);
+  if (!keypair.ok) return keypair;
   // og materializeEntityInfraContext: the proposer prepares every htlcPayment before the fold; a payment it cannot prepare is evicted like any refused tx.
   // og selectCrossJCommitPhaseTxs: cross-j setup never shares a frame with an Account transition; the deferred txs stay queued.
   const phase = selectCommitPhaseTxs(queued.mempool);
@@ -9494,12 +9511,12 @@ const preauthenticate = (r: EntityEnv, frame: EntityFrame, signatures: Precommit
 const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHash, ctx: EntityContext): Result<EntityCandidate, EntityError> => {
   if (frame.timestamp < r.state.timestamp) return err({ _tag: "frame_timestamp_regression", timestamp: frame.timestamp });
   // og assertHtlcPreparedInfraContext: validators check the committed origins against public facts, never recreating proposer entropy.
-  return chain(frameInfraOf(frame), (infra) => chain(assertInboundEntries(r, frame, infra, ctx), () => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
+  return chain(frameInfraOf(frame), (infra) => chain(entityKeypair(r.state, ctx), () => chain(assertInboundEntries(r, frame, infra, ctx), () => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
     chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction) }), ({ draft, evicted }) => {
       if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
       return chain(buildFrame(r, frame.leader, committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
         local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame })));
-    }))));
+    })))));
 };
 /** og assertHtlcPreparedInfraContext (inbound half): a validator decrypts the frame's inbound locks itself, taking liveness only from the peer assertions. */
 const assertInboundEntries = (r: EntityEnv, frame: EntityFrame, infra: HtlcFrameInfra, ctx: EntityContext): Result<void, EntityError> => {

@@ -175,6 +175,11 @@ const JUR = TERMS.domain;
 const ENTITY_KEYS = new Map([ALICE, BOB, CAROL].map((id, i) => { const priv = new Uint8Array(32).fill(i + 7); return [id, { priv: "0x" + Buffer.from(priv).toString("hex"), pub: "0x" + Buffer.from(x25519.getPublicKey(priv)).toString("hex") }] as const; }));
 const SIGNERS = new Map<EntityId, Address>([[ALICE, aliceAddr], [BOB, bobAddr], [CAROL, carolAddr]]);
 const entityOf = (id: EntityId) => unwrap(createEntity({ id, jurisdiction: JUR, threshold: 1n, members: new Map([[SIGNERS.get(id)!, { shares: 1n }]]), committed: { entityEncryptionPublicKey: ENTITY_KEYS.get(id)!.pub } }));
+/** og requireEntityEncryptionPrivateKey + assertEntityEncryptionKeypair run on every proposal and replay: every validator holds its Entity's key. */
+const withKeys = (ctx: any): typeof verifiers => ({ ...ctx, htlcInfra: (id: EntityId) => {
+  const given = ctx.htlcInfra?.(id), key = ENTITY_KEYS.get(id)?.priv;
+  return given?.encryptionPrivateKey !== undefined || key === undefined ? given : { profiles: [], ...given, encryptionPrivateKey: key };
+} });
 const inputOf = (id: EntityId, txs: EntityTx[], timestamp: bigint): RoutedEntityInput => ({ entityId: id, signerId: SIGNERS.get(id)!, input: { kind: "txs", timestamp, txs } });
 const quiet = (start: Runtime, first: RoutedEntityInput[], ctx: object = verifiers): Runtime => {
   let rt = start, clock = NOW;
@@ -182,7 +187,7 @@ const quiet = (start: Runtime, first: RoutedEntityInput[], ctx: object = verifie
   for (let n = 0; queue.length > 0; n++) {
     if (n > 200) throw new Error("no quiescence");
     const input = queue.shift() as RoutedEntityInput;
-    const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, ctx as typeof verifiers));
+    const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, withKeys(ctx)));
     if (out.rejected.length > 0) throw new Error(JSON.stringify(out.rejected, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
     rt = out.runtime; clock += 1n;
     for (const o of out.outbox) {
@@ -289,7 +294,7 @@ describe("entity-cross-j: Entity htlcPayment origination (og payment-admission.t
     const tx = withDeterministicHtlcTestSecret({ type: "htlcPayment", data: { targetEntityId: CAROL, tokenId: 1, amount: 100n, maxSenderDebit: 200n, route: [ALICE, BOB, CAROL], deliveryMode: "instant", description: "invoice 7" } } as never, secret) as unknown as EntityTx;
     const txHash = ogAdmission.hashRawHtlcPaymentTx(tx as never);
     const ctx = { ...verifiers, htlcInfra: (id: EntityId) => (id === ALICE ? { profiles, secretFor: (h: string) => (h === txHash ? secret : undefined), online: () => true } : undefined) };
-    const step = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], BigInt(ts))] }, ctx as never));
+    const step = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], BigInt(ts))] }, withKeys(ctx) as never));
     expect(step.rejected.length).toBe(0);
     const after = replicaOf(step.runtime, ALICE);
     const og = await ogAdmission.materializeOriginatedHtlcPayments({ state: ogStateOf(alice, ts) as never, proposalTxs: [tx as never], profiles: profiles as never, height: 1, resolveRoute: async () => [] });
@@ -306,7 +311,7 @@ describe("entity-cross-j: Entity htlcPayment origination (og payment-admission.t
     // the committed Entity frame carries exactly og's prepared origin; replaying the same input reproduces the same outbox
     const committed = [...step.runtime.entities.values()].length;
     expect(committed).toBe(3);
-    const replayed = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], BigInt(ts))] }, ctx as never));
+    const replayed = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], BigInt(ts))] }, withKeys(ctx) as never));
     expect(stableJson(replayed.outbox)).toBe(stableJson(step.outbox));
   });
 });
@@ -377,7 +382,7 @@ describe("entity-cross-j: inbound HTLC MATCH vs og (materialize-context.ts, comm
     const tx = withDeterministicHtlcTestSecret({ type: "htlcPayment", data: { targetEntityId: CAROL, tokenId: 1, amount: 100n, maxSenderDebit: 200n, route: [ALICE, BOB, CAROL], deliveryMode: "instant" } } as never, secret) as unknown as EntityTx;
     const txHash = ogAdmission.hashRawHtlcPaymentTx(tx as never);
     const ctx = { ...verifiers, htlcInfra: (id: EntityId) => (id === ALICE ? { profiles: profiles(), secretFor: (h: string) => (h === txHash ? secret : undefined), online: () => true } : undefined) };
-    const base = network(), step = unwrap(applyRuntime(base, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], NOW + 1000n)] }, ctx as never));
+    const base = network(), step = unwrap(applyRuntime(base, { runtimeTxs: [], entityInputs: [inputOf(ALICE, [tx], NOW + 1000n)] }, withKeys(ctx) as never));
     const out = step.outbox.find((o) => "tx" in o && o.to === BOB && o.tx.data.kind === "ack_frame") as { tx: { data: any } };
     const msg = out.tx.data, bob = replicaOf(step.runtime, BOB), lock0 = msg.frame.txs.find((t: any) => t.type === "htlc_lock");
     expect(lock0?.envelope).toBeDefined();
@@ -522,8 +527,9 @@ describe("entity-cross-j: inbound HTLC on a 2-of-2 hub (og assertHtlcPreparedInf
     const hub = (signer: Address) => unwrap(createEntity({ id: HUB, jurisdiction: JUR, threshold: 2n, members: new Map([[bobAddr, { shares: 1n }], [carolAddr, { shares: 1n }]]), signerId: signer, committed: { entityEncryptionPublicKey: hubKey.pub } }));
     const hubInput = (txs: EntityTx[], timestamp: bigint): RoutedEntityInput => ({ entityId: HUB, signerId: bobAddr, input: { kind: "txs", timestamp, txs } });
     let rt = spawn(spawn(spawn(spawn(createRuntime(), entityOf(ALICE)), hub(bobAddr)), hub(carolAddr)), entityOf(CAROL));
-    rt = quiet(rt, [hubInput([open(ALICE, 1000n), open(CAROL)], NOW)]);
-    rt = quiet(rt, [inputOf(CAROL, [{ type: "extendCredit", data: { counterpartyEntityId: HUB, tokenId: unwrap(tokenId("1")), amount: 1000n } }], NOW + 100n)]);
+    const hubOnly = { ...verifiers, htlcInfra: (id: EntityId) => (id === HUB ? { profiles: [], encryptionPrivateKey: hubKey.priv } : undefined) };
+    rt = quiet(rt, [hubInput([open(ALICE, 1000n), open(CAROL)], NOW)], hubOnly);
+    rt = quiet(rt, [inputOf(CAROL, [{ type: "extendCredit", data: { counterpartyEntityId: HUB, tokenId: unwrap(tokenId("1")), amount: 1000n } }], NOW + 100n)], hubOnly);
     const secret = "0x" + "31".repeat(32);
     const tx = withDeterministicHtlcTestSecret({ type: "htlcPayment", data: { targetEntityId: CAROL, tokenId: 1, amount: 100n, maxSenderDebit: 200n, route: [ALICE, HUB, CAROL], deliveryMode: "instant" } } as never, secret) as unknown as EntityTx;
     const txHash = ogAdmission.hashRawHtlcPaymentTx(tx as never);
@@ -541,6 +547,6 @@ describe("entity-cross-j: inbound HTLC on a 2-of-2 hub (og assertHtlcPreparedInf
     expect(hubs[0]!.head.height).toBe(hubs[1]!.head.height);
     // a hub replica without the Entity key cannot materialize or replay inbound entries: og requireEntityEncryptionPrivateKey halts it
     const blind = { ...ctx, htlcInfra: (id: EntityId) => (id === HUB ? { profiles, online: () => true } : ctx.htlcInfra(id)) };
-    expect(() => quiet(rt, [inputOf(ALICE, [tx], NOW + 1000n)], blind)).toThrow("HTLC_ENTITY_ENCRYPTION_PRIVATE_KEY_INVALID");
+    expect(() => quiet(rt, [inputOf(ALICE, [tx], NOW + 1000n)], blind)).toThrow(`ENTITY_ENCRYPTION_PRIVATE_KEY_UNAVAILABLE:entity=${HUB}`);
   });
 });
