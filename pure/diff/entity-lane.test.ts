@@ -6,7 +6,7 @@ import { buildNetworkGraph as ogBuildGraph } from "../../core/pathfinding/graph.
 import { PathFinder } from "../../core/pathfinding/pathfinding.ts";
 import * as ogAdmission from "../../core/entity/paybook/payment-admission.ts";
 import { withDeterministicHtlcTestSecret } from "../../core/protocol/htlc/test-secret-capability.ts";
-import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, unwrap, verifiers, withTestJurisdiction } from "../xln_run.ts";
 import {
   applyRuntime, convertOutput, createEntity, createRuntime, findPaths, isLeft, materializeOriginated, replicaId, replicaKey, spawn, stableJson, tokenId,
   type Address, type Binary, type EntityId, type EntityReplica, type EntityTx, type RoutedEntityInput, type Runtime,
@@ -95,7 +95,7 @@ const quiet = (start: Runtime, first: RoutedEntityInput[], ctx: object = verifie
 };
 const open = (to: EntityId, creditAmount?: bigint): EntityTx => ({ type: "openAccount", data: { targetEntityId: to, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig, ...(creditAmount === undefined ? {} : { creditAmount, tokenId: unwrap(tokenId("1")) }) } } as EntityTx);
 const network = (): Runtime => {
-  let rt = spawn(spawn(spawn(createRuntime(), entityOf(ALICE)), entityOf(BOB)), entityOf(CAROL));
+  let rt = spawn(spawn(spawn(withTestJurisdiction(createRuntime()), entityOf(ALICE)), entityOf(BOB)), entityOf(CAROL));
   rt = quiet(rt, [inputOf(BOB, [open(ALICE, 1000n), open(CAROL)], NOW)]);
   return quiet(rt, [inputOf(CAROL, [{ type: "extendCredit", data: { counterpartyEntityId: BOB, tokenId: unwrap(tokenId("1")), amount: 1000n } }], NOW + 100n)]);
 };

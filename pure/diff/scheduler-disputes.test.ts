@@ -264,7 +264,7 @@ describe("scheduler-disputes: disputeFinalize (og dispute/finalize.ts, finalize-
         ...(jb === "sent" ? { sentBatch: { batch: { ...ogInitJBatch().batch, disputeFinalizations: rng() < 0.5 ? [{ counterentity: BOB }] : [] }, entityNonce: 9 } } : {}) };
       const tx: EntityTx = { type: "disputeFinalize", data: { counterpartyEntityId: BOB, ...(rng() < 0.6 ? { description: pick(["", "auto-finalize-after-timeout"]) } : {}), ...(rng() < 0.5 ? { useOnchainRegistry: true } : {}) } };
       const state = entity([aliceAddr], withJ, jBatch === undefined ? {} : { jBatchState: jBatch });
-      const rw = foldTxs(state, kind === "missing" ? new Map() : new Map([[BOB, rwChild]]), [tx], { verify: hankoVerify, timestamp: BigInt(now) });
+      const rw = foldTxs(state, kind === "missing" ? new Map() : new Map([[BOB, rwChild]]), [tx], { verify: hankoVerify, timestamp: BigInt(now), jReplicas: ogJ.jReplicas as never });
       const ogState: any = { entityId: ALICE, timestamp: now, config: ogConfig(state, withJ), accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries(kind === "missing" ? [] : [[BOB, ogAcc]], ALICE, () => ZERO_WORD as never)),
         paybook: { entries: new Map(), feesEarned: 0n }, crontabState: ogInitCrontab(), ...(jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) };
       let og: any, ogErr: string | undefined;
@@ -360,8 +360,8 @@ describe("scheduler-disputes: J7 Entity-side dispute effects (og entity/tx/j-eve
       if (msgs.some((m) => m.startsWith("↻"))) synced++;
     }
     expect([removedAny > 50, broadcasts > 10, synced > 5]).toEqual([true, true, true]);
-    // og applyKnownHtlcSecret for secrets in the starter's arguments is not ported: a named invariant
-    expect(disputeStartedEffects(entity([aliceAddr]), { sender: BOB, counterentity: ALICE, proofbodyHash: h1, disputeTimeout: 1, starterInitialArguments: "0xabcd" }, 0)).toEqual({ ok: false, error: { _tag: "entity_invariant", reason: "DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED" } });
+    // og applyKnownHtlcSecret for the starter's secrets runs in the Entity's DisputeStarted handler (disputes-final.test.ts); this J-batch part accepts any arguments
+    expect(disputeStartedEffects(entity([aliceAddr]), { sender: BOB, counterentity: ALICE, proofbodyHash: h1, disputeTimeout: 1, starterInitialArguments: "0xabcd" }, 0).ok).toBe(true);
   });
   test("MATCH: 200 random DisputeStarted / DisputeFinalized J events through the Host's J-event path -- og's J batch retirement, nonce sync and queueLocalJBatchBroadcast on the Host's jBatchState", () => {
     const host0: any = unwrap(genesisHost(ALICE, genesisAB()) as any);

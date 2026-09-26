@@ -10,6 +10,7 @@ import {
 import type {
   AccountEnvelope, AccountFrame, AccountGrammar, AccountId, AccountInput, AccountInputFor, AccountMessage, AccountOutput, AccountPhase, AccountReplica, AccountReplicaError, AccountTerms, Address, At, Board, DisputeHanko,
   DisputePlan, EntityFrame, EntityGrammar, EntityId, EntityPhase, EntityReplica, FrameClock, Hanko, HankoClaimInput, Hash, OpenAccount, Party, ProposedAccount, RawSig, Result, Signature, Verify, WireAccountTx,
+  DeltaTransformerRef, JReplica, Runtime,
 } from "./xln.ts";
 
 
@@ -109,6 +110,11 @@ export const TERMS: AccountTerms = {
   disputeConfig: { leftResponseSeconds: 86400, rightResponseSeconds: 3600 },
 };
 export const JURISDICTION = TERMS.domain;
+/** The durable jurisdiction stack of TERMS.domain: og requireAccountDeltaTransformerAddress reads it for every Account proof body with clauses. */
+export const TEST_CONTRACTS = { depository: TERMS.domain.depositoryAddress, entityProvider: `0x${"55".repeat(20)}`, account: `0x${"66".repeat(20)}`, deltaTransformer: `0x${"77".repeat(20)}` } as const;
+export const TEST_DT: DeltaTransformerRef = ok(TEST_CONTRACTS.deltaTransformer);
+export const TEST_JREPLICA: JReplica = { name: "test", blockNumber: 0n, stateRoot: null, mempool: [], blockDelayMs: 0, lastBlockTimestamp: 0, position: { x: 0, y: 0, z: 0 }, chainId: TERMS.domain.chainId, contracts: TEST_CONTRACTS };
+export const withTestJurisdiction = (rt: Runtime): Runtime => ({ ...rt, jReplicas: new Map([...rt.jReplicas, ["test", TEST_JREPLICA]]) });
 export const partyIn = (r: AccountReplica, self: EntityId): Party => unwrap(partyOf(replicaId(r), self));
 const pairAB = (): AccountId => unwrap(accountId(ALICE, BOB));
 export const envelopeAB = (from: EntityId): AccountEnvelope => {
