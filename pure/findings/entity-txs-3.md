@@ -37,7 +37,7 @@ Scope: the REMAINING entity-tx items in `entity-consensus-2.md` and `entity-runt
 | scheduledWake | PORTED | scheduler-disputes.md #1-#4 |
 | proposeAccountsNow | BLOCKED | the rewrite does not keep og's pendingAccountInput bytes |
 | entityProviderActivateBoard, entityProviderCancelAction, entityProviderProposeControlBoard, entityProviderReleaseControlShares, entityProviderTransfer | FIXED | see boards.md EP-1..EP-5 |
-| boardHandover | REMAINING | needs a j_event entity tx and consensus frame config (boards.md BH-1) |
+| boardHandover | FIXED | entity-j.md EJ-3 (j_event entity tx) and EJ-6 (frame config) |
 | settle_propose, settle_update, settle_approve, settle_execute, settle_reject | BLOCKED | og entity settlement orchestration (core/entity/tx/handlers/payments/settle.ts: settlement workspace, co-signing, jBatch settle rows) |
 | processHtlcTimeouts | PORTED | scheduler-disputes.md #4 |
 | resolveHtlcLock | BLOCKED | owned by the htlc agent (paybook lock lifecycle) |
