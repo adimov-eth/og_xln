@@ -9496,9 +9496,11 @@ export type Runtime = {
   readonly adapterFrontiers: ReadonlyMap<string, AdapterFrontier>; readonly encryptionSeeds: ReadonlyMap<string, string>; readonly frameHash: string;
   /** og infrastructure.certifiedRegistrationEvidence: receipt-proven EntityProvider registrations, keyed `stackKey:entityId`. */
   readonly registrationEvidence: ReadonlyMap<string, RegistrationEvidence>;
+  /** og infrastructure.numberedRegistrationIntents: durable numbered-registration intents (pending / completed / quarantined), keyed by intentId. */
+  readonly numberedRegistrationIntents: ReadonlyMap<string, RuntimeData>;
 };
 /** A whole-frame refusal carries og's error code (og throws out of the Runtime reducer, so nothing of the frame applies). */
-export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }> | Tagged<"runtime_frame" | "runtime_tx" | "runtime_tx_unsupported", { code: string }>;
+export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }> | Tagged<"runtime_frame" | "runtime_tx", { code: string }>;
 export type Verifiers = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign };
 /** og capability markers: `local` holds the exact RuntimeTx (and proposeAccountsNow EntityTx) objects this process authorized (og's Symbol tags); replay trusts the WAL. */
 export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; readonly local?: ReadonlySet<RuntimeTx | EntityTx> | undefined;
@@ -9513,7 +9515,7 @@ export const bareJReplica = (name: string): JReplica => ({ name, blockNumber: 0n
 export const createRuntime = (jurisdictions: Iterable<string | JReplica> = [], runtimeId?: string): Runtime => ({
   entities: new Map(), height: 0n, timestamp: 0n, jReplicas: new Map([...jurisdictions].map((j): [string, JReplica] => (typeof j === "string" ? [j, bareJReplica(j)] : [j.name, j]))),
   ...opt("runtimeId", runtimeId), pendingJImports: new Map(), pendingCommittedJOutbox: [], replicaLocal: new Map(), adapterFrontiers: new Map(), encryptionSeeds: new Map(), frameHash: ZERO_FRAME_HASH,
-  registrationEvidence: new Map(),
+  registrationEvidence: new Map(), numberedRegistrationIntents: new Map(),
 });
 export const spawn = (rt: Runtime, r: EntityReplica): Runtime => ({ ...rt, entities: mapSet(rt.entities, replicaKey(r.state.id, r.signerId), r) });
 /** og resolveEntityProposerId: an Account message goes to the receiver's active leader (the CEO `validators[0]` until a view change); a consensus input to the named validator. */
@@ -9668,7 +9670,9 @@ const boardValidatorId = (v: string): Result<string, RuntimeError> => {
   return txErr("BOARD_VALIDATOR_ADDRESS_REQUIRED");
 };
 /** og factory.ts encodeBoard -> hashBoard: the lazy Entity id of a board config (validators positional, shares as uint16 powers, zero delays). */
-export const lazyBoardEntityId = (config: EntityRootConfig): Result<string, RuntimeError> => {
+export const lazyBoardEntityId = (config: EntityRootConfig): Result<string, RuntimeError> => map(lazyBoardEncoding(config), (encoded) => keccak256Hex(hexToBytes(encoded)));
+/** og factory.ts encodeBoard: abi.encode(Board) of a board config. */
+export const lazyBoardEncoding = (config: EntityRootConfig): Result<string, RuntimeError> => {
   if (config.validators.length === 0) return txErr("BOARD_EMPTY");
   const seen = new Set<string>();
   for (const v of config.validators) { const id = lower(v); if (id === "" || seen.has(id)) return txErr("BOARD_VALIDATOR_DUPLICATE_OR_EMPTY"); seen.add(id); }
@@ -9689,7 +9693,7 @@ export const lazyBoardEntityId = (config: EntityRootConfig): Result<string, Runt
     if (config.threshold <= 0n) return txErr("BOARD_THRESHOLD_NOT_POSITIVE");
     if (config.threshold > 0xffffn) return txErr("BOARD_THRESHOLD_OUT_OF_RANGE");
     if (config.threshold > powers.reduce((t, p) => t + BigInt(p), 0n)) return txErr("BOARD_THRESHOLD_EXCEEDS_POWER");
-    return ok(boardHashOf({ votingThreshold: Number(config.threshold), entityIds: ids, votingPowers: powers, boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 }));
+    return ok(encodeBoardBytes({ votingThreshold: Number(config.threshold), entityIds: ids, votingPowers: powers, boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 }));
   });
 };
 const quorumOf = (config: ImportConfig): Result<Authority, RuntimeError> => {
@@ -11121,6 +11125,241 @@ const recordAuthenticatedJAuthority = (rt: Runtime, e: RegistrationEvidence): Re
     return chain(registrationClaimHash(existing), (held) => chain(registrationClaimHash(e), (incoming) => (held !== incoming ? txErr(`J_AUTHORITY_EVIDENCE_CONFLICT:${key}:${held}:${incoming}`) : ok(rt))));
   }));
 
+// ---- og runtime/registration/numbered-registration-{codec,intent}.ts + ethers v6 Transaction.from: durable numbered-registration intents ----
+/**
+ * An EVM transaction as ethers Transaction.from reads it: `hash` / `from` are null for an unsigned transaction; `from` is ethers' lazy sender
+ * recovery, so an unrecoverable signature is an error only when the sender is asked for.
+ */
+export type EvmTx = { readonly type: 0 | 1 | 2; readonly hash: string | null; readonly from: Result<string, string> | null; readonly chainId: bigint; readonly nonce: number; readonly to: string | null; readonly value: bigint; readonly data: string };
+type EvmRlp = Uint8Array | readonly EvmRlp[];
+/** ethers decodeRlp: length prefixes are taken as given (no canonical-form check), a child may not overrun its list, nothing may trail. */
+const evmRlpDecode = (data: Uint8Array): EvmRlp | null => {
+  const int = (at: number, n: number): number => { let r = 0; for (let i = 0; i < n; i++) r = r * 256 + (data[at + i] ?? 0); return r; };
+  const decode = (offset: number): { readonly item: EvmRlp; readonly consumed: number } | null => {
+    const b = data[offset] ?? 0, fits = (end: number): boolean => end <= data.length;
+    const children = (start: number, length: number): { readonly item: EvmRlp; readonly consumed: number } | null => {
+      const items: EvmRlp[] = [];
+      for (let at = start; at < offset + 1 + length;) { const d = decode(at); if (d === null) return null; items.push(d.item); at += d.consumed; if (at > offset + 1 + length) return null; }
+      return { item: items, consumed: 1 + length };
+    };
+    if (b >= 0xf8) { const ll = b - 0xf7; if (!fits(offset + 1 + ll)) return null; const n = int(offset + 1, ll); return fits(offset + 1 + ll + n) ? children(offset + 1 + ll, ll + n) : null; }
+    if (b >= 0xc0) { const n = b - 0xc0; return fits(offset + 1 + n) ? children(offset + 1, n) : null; }
+    if (b >= 0xb8) { const ll = b - 0xb7; if (!fits(offset + 1 + ll)) return null; const n = int(offset + 1, ll); return fits(offset + 1 + ll + n) ? { item: data.slice(offset + 1 + ll, offset + 1 + ll + n), consumed: 1 + ll + n } : null; }
+    if (b >= 0x80) { const n = b - 0x80; return fits(offset + 1 + n) ? { item: data.slice(offset + 1, offset + 1 + n), consumed: 1 + n } : null; }
+    return { item: data.slice(offset, offset + 1), consumed: 1 };
+  };
+  if (data.length === 0) return null;
+  const d = decode(0);
+  return d === null || d.consumed !== data.length ? null : d.item;
+};
+const EVM_MAX_UINT = (1n << 256n) - 1n, SECP_N = secp256k1.CURVE.n;
+/** ethers toBeArray: the minimal big-endian bytes (0 is empty). */
+const evmBytes = (n: bigint): Uint8Array => (n === 0n ? new Uint8Array(0) : magnitude(n));
+const bytesItem = (x: EvmRlp | undefined, label: string): Result<Uint8Array, string> => (x instanceof Uint8Array ? ok(x) : err(`invalid ${label}`));
+/** ethers handleUint: any byte string up to 2^256 - 1 (leading zeros are accepted). */
+const evmUint = (x: EvmRlp | undefined, label: string): Result<bigint, string> => chain(bytesItem(x, label), (b) => {
+  const n = b.length === 0 ? 0n : BigInt(bytesToHex(b));
+  return n > EVM_MAX_UINT ? err(`value exceeds uint size: ${label}`) : ok(n);
+});
+/** ethers handleNumber: a safe integer. */
+const evmNumber = (x: EvmRlp | undefined, label: string): Result<number, string> => chain(evmUint(x, label), (n) => (n > BigInt(Number.MAX_SAFE_INTEGER) ? err(`overflow: ${label}`) : ok(Number(n))));
+/** ethers handleAddress: empty is contract creation, anything else must be 20 bytes. */
+const evmTo = (x: EvmRlp | undefined): Result<Uint8Array | null, string> => chain(bytesItem(x, "to"), (b) => (b.length === 0 ? ok(null) : b.length === 20 ? ok(b) : err("invalid address")));
+/** ethers accessListify on decoded fields: [address(20), [slot(32)...]] rows, re-encoded as read. */
+const evmAccessList = (x: EvmRlp | undefined): Result<EvmRlp, string> => {
+  if (!Array.isArray(x)) return err("invalid access list");
+  for (const row of x as readonly EvmRlp[]) {
+    if (!Array.isArray(row) || row.length !== 2) return err("invalid slot set");
+    const [addr, keys] = row as readonly EvmRlp[];
+    if (!(addr instanceof Uint8Array) || addr.length !== 20 || !Array.isArray(keys)) return err("invalid address-slot set");
+    if ((keys as readonly EvmRlp[]).some((k) => !(k instanceof Uint8Array) || k.length !== 32)) return err("invalid slot");
+  }
+  return ok(x);
+};
+/** ethers zeroPadValue(_, 32) then Signature.from: r / s are at most 32 bytes. */
+const evmSigWord = (x: EvmRlp | undefined, label: string): Result<bigint, string> => chain(bytesItem(x, label), (b) => (b.length > 32 ? err(`invalid ${label}`) : ok(b.length === 0 ? 0n : BigInt(bytesToHex(b)))));
+type EvmSig = { readonly r: bigint; readonly s: bigint; readonly yParity: number };
+/** ethers Transaction.hash (keccak of the re-serialized signed form) and .from (recovery over the unsigned hash; a high s recovers the same key). */
+type EvmSigned = { readonly hash: string | null; readonly from: Result<string, string> | null };
+const evmSigned = (sig: EvmSig, unsigned: Uint8Array, signed: (sig: EvmSig) => Result<Uint8Array, string>): Result<EvmSigned, string> =>
+  map(signed(sig), (serialized) => {
+    const key = sig.r === 0n || sig.r >= SECP_N || sig.s === 0n || sig.s >= SECP_N ? null : recoverPublicKey(keccak_256(unsigned), wordOf(sig.r), wordOf(sig.s), sig.yParity);
+    return { hash: bytesToHex(keccak_256(serialized)), from: key === null ? err("invalid signature") : ok(addressOf(key).toLowerCase()) };
+  });
+/**
+ * ethers v6 Transaction.from(raw) for a legacy (pre-EIP-155 or EIP-155), EIP-2930 (type 1) or EIP-1559 (type 2) transaction: RLP-decode the fields,
+ * derive the chain id from a legacy v, hash the re-serialized signed form, recover the sender. Blob (3) and set-code (4) transactions are refused.
+ */
+export const parseEvmTx = (raw: string): Result<EvmTx, string> => {
+  if (!/^0x([0-9a-fA-F]{2})+$/.test(raw)) return err("invalid BytesLike value");
+  const payload = hexToBytes(raw), first = payload[0] ?? 0;
+  const rlpOf = (items: readonly EvmRlp[]): Uint8Array => rlp(items as Rlp);
+  if (first >= 0x7f) {
+    const fields = evmRlpDecode(payload);
+    if (!Array.isArray(fields) || (fields.length !== 9 && fields.length !== 6)) return err("invalid field count for legacy transaction");
+    const f = fields as readonly EvmRlp[];
+    return chain(evmNumber(f[0], "nonce"), (nonce) => chain(evmUint(f[1], "gasPrice"), (gasPrice) => chain(evmUint(f[2], "gasLimit"), (gasLimit) => chain(evmTo(f[3]), (to) =>
+      chain(evmUint(f[4], "value"), (value) => chain(bytesItem(f[5], "data"), (data) => {
+        const body = [evmBytes(BigInt(nonce)), evmBytes(gasPrice), evmBytes(gasLimit), to ?? new Uint8Array(0), evmBytes(value), data];
+        const tx = (chainId: bigint, signed: EvmSigned): EvmTx => ({ type: 0, ...signed, chainId, nonce, to: to === null ? null : bytesToHex(to), value, data: bytesToHex(data) });
+        if (f.length === 6) return ok(tx(0n, { hash: null, from: null }));
+        return chain(evmUint(f[6], "v"), (v) => chain(evmUint(f[7], "r"), (r) => chain(evmUint(f[8], "s"), (s) => {
+          if (r === 0n && s === 0n) return ok(tx(v, { hash: null, from: null }));
+          const derived = (v - 35n) / 2n, chainId = derived < 0n ? 0n : derived;
+          if (chainId === 0n && v !== 27n && v !== 28n) return err("non-canonical legacy v");
+          return chain(evmSigWord(f[7], "r"), (rw) => chain(evmSigWord(f[8], "s"), (sw) => {
+            const yParity = v === 27n ? 0 : v === 28n ? 1 : v % 2n === 1n ? 0 : 1;
+            const unsigned = rlpOf(chainId === 0n ? body : [...body, evmBytes(chainId), new Uint8Array(0), new Uint8Array(0)]);
+            const vOut = chainId === 0n ? 27n + BigInt(yParity) : chainId * 2n + 35n + BigInt(yParity);
+            return map(evmSigned({ r: rw, s: sw, yParity }, unsigned, (sig) => ok(rlpOf([...body, evmBytes(vOut), evmBytes(sig.r), evmBytes(sig.s)]))), (signed) => tx(chainId, signed));
+          }));
+        })));
+      }))))));
+  }
+  if (first !== 1 && first !== 2) return err("unsupported transaction type");
+  const typed = first as 1 | 2, fields = evmRlpDecode(payload.subarray(1)), plain = typed === 1 ? 8 : 9;
+  if (!Array.isArray(fields) || (fields.length !== plain && fields.length !== plain + 3)) return err(`invalid field count for transaction type: ${typed}`);
+  const f = fields as readonly EvmRlp[], o = typed === 2 ? 1 : 0;
+  return chain(evmUint(f[0], "chainId"), (chainId) => chain(evmNumber(f[1], "nonce"), (nonce) => chain(evmUint(f[2], typed === 2 ? "maxPriorityFeePerGas" : "gasPrice"), (fee0) =>
+    chain(typed === 2 ? evmUint(f[3], "maxFeePerGas") : ok(0n), (fee1) => chain(evmUint(f[3 + o], "gasLimit"), (gasLimit) => chain(evmTo(f[4 + o]), (to) => chain(evmUint(f[5 + o], "value"), (value) =>
+      chain(bytesItem(f[6 + o], "data"), (data) => chain(evmAccessList(f[7 + o]), (accessList) => {
+        const body: EvmRlp[] = [evmBytes(chainId), evmBytes(BigInt(nonce)), evmBytes(fee0), ...(typed === 2 ? [evmBytes(fee1)] : []), evmBytes(gasLimit), to ?? new Uint8Array(0), evmBytes(value), data, accessList];
+        const tx = (signed: EvmSigned): EvmTx => ({ type: typed, ...signed, chainId, nonce, to: to === null ? null : bytesToHex(to), value, data: bytesToHex(data) });
+        const envelope = (items: readonly EvmRlp[]): Uint8Array => concat([Uint8Array.of(typed), rlpOf(items)]);
+        if (f.length === plain) return ok(tx({ hash: null, from: null }));
+        return chain(evmNumber(f[plain], "yParity"), (yParity) => {
+          if (yParity !== 0 && yParity !== 1) return err("invalid yParity");
+          return chain(evmSigWord(f[plain + 1], "r"), (r) => chain(evmSigWord(f[plain + 2], "s"), (s) =>
+            // ethers inferTypes refuses an EIP-1559 fee cap below its priority fee, and Signature.s a word with its top bit set, when the signed form is serialized.
+            map(evmSigned({ r, s, yParity }, envelope(body), (sig) => (typed === 2 && fee1 < fee0 ? err("priorityFee cannot be more than maxFee") : sig.s >> 255n !== 0n ? err("non-canonical s; use ._s")
+              : ok(envelope([...body, evmBytes(BigInt(sig.yParity)), evmBytes(sig.r), evmBytes(sig.s)])))), tx)));
+        });
+      })))))))));
+};
+const REGISTER_NUMBERED_ENTITIES_BATCH_SELECTOR = nobleHex(keccak_256(utf8("registerNumberedEntitiesBatch(bytes[])")).slice(0, 4));
+/** og encodeNumberedRegistrationCalldata: EntityProvider.registerNumberedEntitiesBatch(bytes[] encodedBoards), lowercased. */
+export const numberedRegistrationCalldata = (encodedBoards: readonly string[]): string =>
+  `0x${REGISTER_NUMBERED_ENTITIES_BATCH_SELECTOR}${hexBody(abiEncodeHex([A.array(encodedBoards.map((b) => A.bytes(b)))]))}`.toLowerCase();
+const MAX_NUMBERED_REGISTRATION_ENTITIES = 128;
+type Loose = { readonly [field: string]: unknown };
+const looseRecord = (v: unknown): Loose => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : {});
+/** og numberedRegistrationBytes32. */
+const numberedBytes32 = (v: unknown, label: string): Result<string, RuntimeError> => { const s = String(v || "").toLowerCase(); return /^0x[0-9a-f]{64}$/.test(s) ? ok(s) : txErr(`NUMBERED_REGISTRATION_${label}_INVALID`); };
+/** og codec `address`: ethers.getAddress, lowercased. */
+const numberedAddress = (v: unknown, label: string): Result<string, RuntimeError> => { const a = ethAddress(v); return a === null ? txErr(`NUMBERED_REGISTRATION_${label}_INVALID:${String(v)}`) : ok(a); };
+const boardStack = (j: unknown): Result<string, RuntimeError> => { const x = looseRecord(j); return mapErr(boardStackKey({ chainId: x["chainId"] as number, depositoryAddress: x["depositoryAddress"] as string, entityProviderAddress: x["entityProviderAddress"] as string }), (e): RuntimeError => ({ _tag: "runtime_tx", code: e.code })); };
+/** og assertNumberedRegistrationRequest. */
+const numberedRegistrationRequestValid = (rt: Runtime, request: Loose): Result<void, RuntimeError> => {
+  if (request["version"] !== 1) return txErr("NUMBERED_REGISTRATION_INTENT_VERSION_INVALID");
+  return chain(numberedBytes32(request["intentId"], "INTENT_ID"), (intentId) => {
+    if (request["intentId"] !== intentId) return txErr("NUMBERED_REGISTRATION_INTENT_ID_NON_CANONICAL");
+    return chain(numberedBytes32(request["stackKey"], "STACK_KEY"), (stackKey) => {
+      if (request["stackKey"] !== stackKey) return txErr("NUMBERED_REGISTRATION_STACK_KEY_NON_CANONICAL");
+      return chain(numberedAddress(request["payerSignerId"], "PAYER"), () => chain(numberedAddress(request["entityProviderAddress"], "ENTITY_PROVIDER"), (): Result<void, RuntimeError> => {
+        let committed = false;
+        for (const r of rt.jReplicas.values()) { const k = jReplicaStackKey(r); if (!k.ok) return k; if (k.value === stackKey) { committed = true; break; } }
+        if (!committed) return txErr("NUMBERED_REGISTRATION_COMMITTED_STACK_MISSING");
+        const entities = Array.isArray(request["entities"]) ? (request["entities"] as readonly unknown[]) : [];
+        if (entities.length === 0) return txErr("NUMBERED_REGISTRATION_INTENT_EMPTY");
+        if (entities.length > MAX_NUMBERED_REGISTRATION_ENTITIES) return txErr(`NUMBERED_REGISTRATION_ENTITY_LIMIT_EXCEEDED:${entities.length}`);
+        for (const [index, raw] of entities.entries()) { const r = numberedEntityValid(request, looseRecord(raw), index); if (!r.ok) return r; }
+        return ok(undefined);
+      }));
+    });
+  });
+};
+const numberedEntityValid = (request: Loose, entity: Loose, index: number): Result<void, RuntimeError> => {
+  const name = entity["name"], config = looseRecord(entity["config"]), jurisdiction = config["jurisdiction"];
+  if (!name || (typeof name === "string" && name.length > 256)) return txErr(`NUMBERED_REGISTRATION_NAME_INVALID:${index}`);
+  if (!jurisdiction) return txErr(`NUMBERED_REGISTRATION_STACK_MISSING:${index}`);
+  return chain(boardStack(jurisdiction), (stack) => {
+    if (stack !== request["stackKey"]) return txErr(`NUMBERED_REGISTRATION_STACK_MISMATCH:${index}`);
+    return chain(numberedAddress(looseRecord(jurisdiction)["entityProviderAddress"], "CONFIG_ENTITY_PROVIDER"), (provider) => {
+      if (provider !== request["entityProviderAddress"]) return txErr(`NUMBERED_REGISTRATION_ENTITY_PROVIDER_MISMATCH:${index}`);
+      return chain(numberedBytes32(entity["boardHash"], "BOARD_HASH"), (expectedBoard) => {
+        const encoded = entity["encodedBoard"];
+        if (typeof encoded !== "string" || !/^0x(?:[0-9a-f]{2})+$/.test(encoded)) return txErr(`NUMBERED_REGISTRATION_ENCODED_BOARD_INVALID:${index}`);
+        const validators = Array.isArray(config["validators"]) ? (config["validators"] as readonly unknown[]).map(String) : [];
+        return chain(lazyBoardEncoding({ mode: "proposer-based", validators, shares: looseRecord(config["shares"]) as EntityRootConfig["shares"], threshold: config["threshold"] as bigint }), (board): Result<void, RuntimeError> => {
+          if (board.toLowerCase() !== encoded) return txErr(`NUMBERED_REGISTRATION_ENCODED_BOARD_MISMATCH:${index}`);
+          if (keccak256Hex(hexToBytes(encoded)) !== expectedBoard) return txErr(`NUMBERED_REGISTRATION_BOARD_HASH_MISMATCH:${index}`);
+          const seed = entity["entitySeed"], position = entity["position"];
+          if (entity["localSignerId"] !== null) {
+            const local = numberedAddress(entity["localSignerId"], "LOCAL_SIGNER");
+            if (!local.ok) return local;
+            if (!validators.some((v) => v.toLowerCase() === local.value)) return txErr(`NUMBERED_REGISTRATION_LOCAL_SIGNER_NOT_ON_BOARD:${index}`);
+            // og canonicalEntitySeed(seed) !== seed: only a lowercase 0x-prefixed 64-byte hex seed is its own canonical form.
+            if (typeof seed !== "string" || !/^0x[0-9a-f]{128}$/.test(seed)) return txErr(`NUMBERED_REGISTRATION_ENTITY_SEED_NON_CANONICAL:${index}`);
+          } else if (seed !== null) return txErr(`NUMBERED_REGISTRATION_PAYER_ONLY_SEED_FORBIDDEN:${index}`);
+          if (position) { const p = looseRecord(position); if (![p["x"], p["y"], p["z"]].every(Number.isFinite)) return txErr(`NUMBERED_REGISTRATION_POSITION_INVALID:${index}`); }
+          return ok(undefined);
+        });
+      });
+    });
+  });
+};
+/** og computeNumberedRegistrationRequestHash. */
+export const numberedRegistrationRequestHash = (request: unknown): Result<string, RuntimeError> => authHash({ domain: "xln.numbered-registration.intent.v1", request });
+/** og parseNumberedRegistrationIntentTransaction: the durable raw transaction is exactly the payer's registerNumberedEntitiesBatch call. */
+const numberedRegistrationTx = (pending: Loose): Result<EvmTx, RuntimeError> => {
+  const raw = pending["rawTransaction"], request = looseRecord(pending["request"]);
+  if (typeof raw !== "string" || !/^0x[0-9a-f]+$/i.test(raw) || raw.length > 524_290) return txErr("NUMBERED_REGISTRATION_RAW_TX_INVALID");
+  return chain(mapErr(parseEvmTx(raw), (reason): RuntimeError => ({ _tag: "runtime_tx", code: `NUMBERED_REGISTRATION_RAW_TX_INVALID:${reason}` })), (tx) => {
+    if (!tx.hash) return txErr("NUMBERED_REGISTRATION_TX_HASH_MISMATCH");
+    return chain(numberedBytes32(pending["transactionHash"], "TX_HASH"), (txHash) => {
+      if (tx.hash !== txHash) return txErr("NUMBERED_REGISTRATION_TX_HASH_MISMATCH");
+      if (tx.from !== null && !tx.from.ok) return txErr(`NUMBERED_REGISTRATION_RAW_TX_INVALID:${tx.from.error}`);
+      if (tx.from === null || tx.from.value !== request["payerSignerId"]) return txErr("NUMBERED_REGISTRATION_TX_SIGNER_MISMATCH");
+      // The request check proved this chain id a positive safe integer (its certified stack key).
+      const entities = request["entities"] as readonly unknown[], chainId = Number(looseRecord(looseRecord(looseRecord(entities[0])["config"])["jurisdiction"])["chainId"]);
+      if (tx.chainId !== BigInt(chainId) || tx.to !== request["entityProviderAddress"]) return txErr("NUMBERED_REGISTRATION_TX_DOMAIN_MISMATCH");
+      if (tx.value !== 0n || tx.data !== numberedRegistrationCalldata(entities.map((e) => String(looseRecord(e)["encodedBoard"])))) return txErr("NUMBERED_REGISTRATION_TX_CALLDATA_MISMATCH");
+      return tx.nonce !== pending["transactionNonce"] ? txErr("NUMBERED_REGISTRATION_TX_NONCE_MISMATCH") : ok(tx);
+    });
+  });
+};
+/** og applyNumberedRegistrationIntent: a validated pending intent is stored once; the same payload again is a no-op, a different one is refused. */
+const recordNumberedRegistrationIntent = (rt: Runtime, pending: RuntimeData): Result<Runtime, RuntimeError> => {
+  const request = looseRecord(pending["request"]);
+  return chain(numberedRegistrationRequestValid(rt, request), () => chain(numberedRegistrationRequestHash(request), (hash) => {
+    if (hash !== pending["requestHash"]) return txErr("NUMBERED_REGISTRATION_REQUEST_HASH_MISMATCH");
+    return chain(numberedRegistrationTx(pending), (): Result<Runtime, RuntimeError> => {
+      const intentId = String(request["intentId"]), existing = rt.numberedRegistrationIntents.get(intentId);
+      if (existing === undefined) return ok({ ...rt, numberedRegistrationIntents: mapSet(rt.numberedRegistrationIntents, intentId, pending) });
+      if (existing["requestHash"] !== pending["requestHash"]) return txErr("NUMBERED_REGISTRATION_INTENT_PAYLOAD_CONFLICT");
+      return existing["status"] === "pending" && existing["transactionHash"] !== pending["transactionHash"] ? txErr("NUMBERED_REGISTRATION_INTENT_TX_CONFLICT") : ok(rt);
+    });
+  }));
+};
+/** og applyNumberedRegistrationResolution: quarantine, or complete once every result has certified evidence and every local replica exists on the planned board. */
+const resolveNumberedRegistrationIntent = (rt: Runtime, resolution: RuntimeData): Result<Runtime, RuntimeError> =>
+  chain(numberedBytes32(resolution["intentId"], "INTENT_ID"), (intentId): Result<Runtime, RuntimeError> => {
+    const pending = rt.numberedRegistrationIntents.get(intentId);
+    if (pending === undefined || pending["status"] !== "pending") {
+      if (pending?.["status"] === "completed" && resolution["kind"] === "completed" && pending["requestHash"] === resolution["requestHash"]) return ok(rt);
+      return txErr("NUMBERED_REGISTRATION_PENDING_INTENT_MISSING");
+    }
+    if (pending["requestHash"] !== resolution["requestHash"] || pending["transactionHash"] !== resolution["transactionHash"]) return txErr("NUMBERED_REGISTRATION_RESOLUTION_IDENTITY_MISMATCH");
+    const request = looseRecord(pending["request"]), key = String(request["intentId"]);
+    if (resolution["kind"] === "quarantined") return ok({ ...rt, numberedRegistrationIntents: mapSet(rt.numberedRegistrationIntents, key, { ...pending, status: "quarantined", reason: resolution["reason"] as Binary }) });
+    const results = Array.isArray(resolution["results"]) ? (resolution["results"] as readonly unknown[]) : [], planned = request["entities"] as readonly unknown[];
+    if (results.length !== planned.length) return txErr("NUMBERED_REGISTRATION_RESULT_COUNT_MISMATCH");
+    for (const [index, raw] of results.entries()) {
+      const result = looseRecord(raw), plan = looseRecord(planned[index]), local = plan["localSignerId"], entityId = result["entityId"];
+      const evidenceKey = registrationEvidenceKey(request["stackKey"], entityId);
+      if (!evidenceKey.ok) return evidenceKey;
+      const evidence = rt.registrationEvidence.get(evidenceKey.value);
+      const replica = local !== null ? [...rt.entities.values()].find((r) => r.state.id.toLowerCase() === entityId && r.signerId.toLowerCase() === local) : undefined;
+      if (evidence === undefined) return txErr(`NUMBERED_REGISTRATION_COMPLETION_INCOMPLETE:${String(entityId)}`);
+      const evidenceHash = registrationEvidenceHash(evidence);
+      if (!evidenceHash.ok) return evidenceHash;
+      if (evidenceHash.value !== result["evidenceHash"] || (local !== null && replica === undefined)) return txErr(`NUMBERED_REGISTRATION_COMPLETION_INCOMPLETE:${String(entityId)}`);
+      if (replica !== undefined && configBoardHash(replica.state.quorum) !== plan["boardHash"]) return txErr(`NUMBERED_REGISTRATION_COMPLETION_BOARD_MISMATCH:${String(entityId)}`);
+    }
+    const { kind: _kind, ...completed } = resolution;
+    return ok({ ...rt, numberedRegistrationIntents: mapSet(rt.numberedRegistrationIntents, key, { status: "completed", ...completed }) });
+  });
+
 /** og applyRuntimeTx. */
 export const applyRuntimeTxStep = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<TxStep, RuntimeError> => chain(runtimeTxAuthorized(tx, ctx), (): Result<TxStep, RuntimeError> => {
   const state = (r: Result<Runtime, RuntimeError>): Result<TxStep, RuntimeError> => map(r, noJ);
@@ -11134,12 +11373,14 @@ export const applyRuntimeTxStep = (rt: Runtime, tx: RuntimeTx, ctx: Pick<Runtime
     case "observeJRange": return state(observeJRange(rt, tx.data));
     case "rewindJHistory": return state(rewindJHistory(rt, tx.data));
     case "recordAuthenticatedJAuthority": return state(recordAuthenticatedJAuthority(rt, tx.data));
+    case "recordNumberedRegistrationIntent": return state(recordNumberedRegistrationIntent(rt, tx.data));
+    case "resolveNumberedRegistrationIntent": return state(resolveNumberedRegistrationIntent(rt, tx.data));
     case "retryJSubmit": return retryJSubmit(rt, tx.data);
     case "recordJSubmitResult": return state(recordJSubmitResult(rt, tx.data));
     case "retryEntityProviderAction": return retryEntityProviderAction(rt, tx.data);
     case "recordEntityProviderActionSubmitResult": return state(recordEpActionResult(rt, tx.data));
     case "recordGovernanceJSubmitResult": return state(recordGovernanceResult(rt, tx.data));
-    default: return err({ _tag: "runtime_tx_unsupported", code: tx.type });
+    default: { const exhaustive: never = tx; return txErr(`RUNTIME_TX_UNKNOWN: ${(exhaustive as { readonly type?: string }).type ?? "unknown"}`); }
   }
 });
 /** og applyRuntimeTx, the Runtime state half (the J outputs of a retry are in applyRuntimeTxStep). */
@@ -11282,7 +11523,7 @@ const jReplicaSnapshot = (r: JReplica): Binary => binaryOf({
 const durableInfrastructure = (rt: Runtime): { readonly [key: string]: Binary } | undefined => {
   const rows: [string, unknown, number][] = [
     ["runtimeAdapterCommandFrontiers", rt.adapterFrontiers, rt.adapterFrontiers.size], ["pendingCommittedJOutbox", rt.pendingCommittedJOutbox, rt.pendingCommittedJOutbox.length],
-    ["pendingJurisdictionImports", rt.pendingJImports, rt.pendingJImports.size], ["certifiedRegistrationEvidence", rt.registrationEvidence, rt.registrationEvidence.size],
+    ["pendingJurisdictionImports", rt.pendingJImports, rt.pendingJImports.size], ["numberedRegistrationIntents", rt.numberedRegistrationIntents, rt.numberedRegistrationIntents.size], ["certifiedRegistrationEvidence", rt.registrationEvidence, rt.registrationEvidence.size],
     ["entityEncryptionSeeds", rt.encryptionSeeds, rt.encryptionSeeds.size],
   ];
   const kept = rows.filter(([, , size]) => size > 0);

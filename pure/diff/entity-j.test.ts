@@ -17,6 +17,18 @@ import { encodeJBatch as ogEncodeJBatch } from "../../core/jurisdiction/machine/
 import { readEntityFrameEvents } from "../../core/entity/frame-events.ts";
 import { EntityAccountCandidateMap } from "../../core/entity/state/persistent-account-map.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
+import { ethers } from "ethers";
+import { applyRuntimeTx as ogApplyRuntimeTx } from "../../core/runtime/tx/tx-handlers.ts";
+import { buildNumberedRegistrationRequest, computeNumberedRegistrationRequestHash, encodeNumberedRegistrationCalldata } from "../../core/runtime/registration/numbered-registration-codec.ts";
+import { buildCertifiedRegistrationEvidence, computeRegistrationEvidenceHash } from "../../core/jurisdiction/machine/registration-evidence/index.ts";
+import { computeCanonicalReceiptsRoot, createCanonicalReceiptProofs } from "../../core/jurisdiction/machine/receipt-codec/index.ts";
+import { deriveSignerKeySync, registerSignerKey } from "../../core/account/crypto.ts";
+import { createEmptyEnv } from "../../core/runtime/composition.ts";
+import { buildReplayVerifiableRuntimePostStateView } from "../../core/storage/wal/snapshot.ts";
+import { computeRuntimePostStateComponentDigests } from "../../core/storage/hashes.ts";
+import { EntityProvider__factory } from "../../jurisdictions/typechain-types/index.ts";
+import { applyRuntimeTx, createRuntime, numberedRegistrationCalldata, parseEvmTx, runtimeComponentDigests, runtimeView, stableJson, type JReplica, type Runtime, type RuntimeTx } from "../xln.ts";
+import { bobAddr } from "../xln_run.ts";
 
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const rng = prng(0xe7_1a);
@@ -144,5 +156,244 @@ describe("entity-j: Entity-level J-batch txs on the committed jBatchState (og en
       if (!f.ok || !ogR.ok) { expect((f as any).error.reason).toBe((ogR as any).code); continue; }
       expect((f.value.draft.events ?? []).map((e) => e.message)).toEqual(messages(ogR.value.newState));
     }
+  });
+});
+
+// ---- RJ-9: og runtime/registration/numbered-registration-{codec,intent}.ts over ethers Transaction.from ----
+const nrng = prng(0x9e_91);
+const nri = (n: number) => Math.floor(nrng() * n);
+const npick = <X,>(xs: readonly X[]): X => xs[nri(xs.length)] as X;
+const nhex = (bytes: number): string => `0x${Array.from({ length: bytes * 2 }, () => "0123456789abcdef"[nri(16)]).join("")}`;
+const SECP_N = BigInt("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+const wallets = [1, 2, 3].map((i) => new ethers.Wallet(`0x${String(i).padStart(2, "0").repeat(32)}`));
+/** A random signed transaction of type 0 (EIP-155 or pre-155), 1 or 2, serialized by ethers. */
+const signedTx = (over: { to?: string; data?: string; chainId?: bigint; nonce?: number; value?: bigint; type?: number; wallet?: ethers.Wallet } = {}): string => {
+  const type = over.type ?? npick([0, 0, 1, 2, 2]), chainId = over.chainId ?? npick([31337n, 1n, 0n, 8453n]);
+  const fees = type === 2 ? { maxPriorityFeePerGas: BigInt(nri(3)) * 1_000_000_000n, maxFeePerGas: 3_000_000_000n + BigInt(nri(1000)) } : { gasPrice: BigInt(nri(4)) * 1_000_000_000n };
+  const tx = ethers.Transaction.from({
+    type, chainId: type === 0 ? chainId : chainId === 0n ? 1n : chainId, nonce: over.nonce ?? npick([0, 1, 127, 128, 70_000]), gasLimit: 21_000n + BigInt(nri(500_000)),
+    to: over.to ?? npick([EP, nhex(20), TOKEN_CONTRACT]), value: over.value ?? npick([0n, 0n, 1n, 10n ** 18n]), data: over.data ?? npick(["0x", nhex(1), nhex(4 + nri(60))]),
+    ...fees, ...(type !== 0 && nri(3) === 0 ? { accessList: [{ address: nhex(20), storageKeys: Array.from({ length: nri(3) }, () => nhex(32)) }] } : {}),
+  });
+  tx.signature = (over.wallet ?? npick(wallets)).signingKey.sign(tx.unsignedHash);
+  return tx.serialized;
+};
+/** One structural mutation of a serialized transaction, at the RLP-field level or on the raw bytes. */
+const mutateTx = (raw: string): string => { try { return mutateFields(raw); } catch { const b = ethers.getBytes(raw).slice(); b[nri(b.length)] ^= 1 << nri(8); return ethers.hexlify(b); } };
+const mutateFields = (raw: string): string => {
+  const bytes = ethers.getBytes(raw), typed = bytes[0]! < 0x7f, prefix = typed ? ethers.hexlify(bytes.slice(0, 1)) : "0x";
+  let decoded: unknown;
+  try { decoded = ethers.decodeRlp(typed ? bytes.slice(1) : bytes); } catch { decoded = null; }
+  if (!Array.isArray(decoded) || decoded.length < 6 || decoded.some((f) => typeof f !== "string" && !Array.isArray(f))) { const b = new Uint8Array(bytes); b[nri(b.length)] ^= 1 << nri(8); return ethers.hexlify(b); }
+  const fields = decoded as any[], sig = fields.length - 3;
+  const encode = (fs: unknown[]): string => ethers.concat([prefix, ethers.encodeRlp(fs as never)]);
+  const big = (h: string): bigint => (h === "0x" ? 0n : BigInt(h)), be = (n: bigint): string => (n === 0n ? "0x" : ethers.toBeHex(n));
+  const set = (i: number, v: unknown): string => { const fs = [...fields]; fs[i] = v; return encode(fs); };
+  switch (nri(17)) {
+    case 0: { const b = new Uint8Array(bytes); b[nri(b.length)] ^= 1 << nri(8); return ethers.hexlify(b); }
+    case 1: return ethers.hexlify(bytes.slice(0, Math.max(1, bytes.length - 1 - nri(4))));
+    case 2: return ethers.concat([raw, npick(["0x00", "0x80", "0xc0"])]);
+    case 3: { const i = nri(typed ? 7 : 5); return set(i, ethers.concat(["0x00", fields[i]])); }
+    case 4: return typed ? set(sig, npick(["0x02", "0x00", "0x01", "0x"])) : set(6, be(npick([0n, 1n, 27n, 28n, 29n, 35n, 36n, big(fields[6]) + 2n, big(fields[6]) - 2n])));
+    case 5: return set(sig + 1, "0x");
+    case 6: return set(sig + 2, "0x");
+    case 7: { const s = SECP_N - big(fields[sig + 2]), v = typed ? (fields[sig] === "0x" ? "0x01" : "0x") : be(big(fields[6]) ^ 1n); const fs = [...fields]; fs[sig] = v; fs[sig + 2] = be(s); return encode(fs); }
+    case 8: return set(sig + 2, be(big(fields[sig + 2]) | (1n << 255n)));
+    case 9: return set(sig + 1, be(npick([SECP_N, SECP_N + 1n, 1n << 256n])));
+    case 10: { const i = typed ? (bytes[0] === 2 ? 5 : 4) : 3; return set(i, npick(["0x", nhex(19), nhex(21)])); }
+    case 11: { const i = typed ? (bytes[0] === 2 ? 7 : 6) : 5; return set(i, [fields[i]]); }
+    case 12: return encode(nri(2) === 0 ? [...fields, "0x"] : fields.slice(0, -1));
+    case 13: return encode(fields.slice(0, sig));
+    case 14: if (typed) { const i = bytes[0] === 2 ? 8 : 7; return set(i, npick([[[nhex(20), [nhex(31)]]], [[nhex(19), []]], [[nhex(20), [], "0x"]], [nhex(20)], [[nhex(20), nhex(32)]]])); } return set(0, fields[0]);
+    case 15: if (bytes[0] === 2) { const fs = [...fields]; fs[2] = be(big(fields[3]) + 1n); return encode(fs); } return raw;
+    default: return ethers.concat([npick(["0x05", "0x7f", "0x00", "0x01", "0x02"]), bytes.slice(1)]);
+  }
+};
+const ethersView = (raw: string): unknown => {
+  try {
+    const t = ethers.Transaction.from(raw), hash = t.hash;
+    let from: string | null;
+    try { from = t.from?.toLowerCase() ?? null; } catch { from = "ERR"; }
+    return { type: t.type, hash, from, chainId: t.chainId, nonce: t.nonce, to: t.to?.toLowerCase() ?? null, value: t.value, data: t.data.toLowerCase() };
+  } catch { return "REFUSED"; }
+};
+const rewriteView = (raw: string): unknown => {
+  const r = parseEvmTx(raw);
+  if (!r.ok) return "REFUSED";
+  const t = r.value;
+  return { type: t.type, hash: t.hash, from: t.from === null ? null : t.from.ok ? t.from.value : "ERR", chainId: t.chainId, nonce: t.nonce, to: t.to, value: t.value, data: t.data };
+};
+
+describe("entity-j RJ-9: signed EVM transaction parser (ethers v6 Transaction.from)", () => {
+  test("MATCH (randomized): legacy EIP-155 / pre-155, EIP-2930 and EIP-1559 transactions and their mutations -- same refusal, hash, sender, chain, nonce, to, value, data", () => {
+    let accepted = 0, refused = 0, mutated = 0;
+    for (let i = 0; i < 1500; i++) {
+      let raw = signedTx();
+      for (let m = nri(3); m > 0; m--) { raw = mutateTx(raw); mutated++; }
+      // Blob (3) and set-code (4) transactions are outside the port (the registration intent is always a type 0/1/2 call).
+      if ([3, 4].includes(ethers.getBytes(raw)[0]!)) continue;
+      const og = ethersView(raw);
+      expect(rewriteView(raw)).toEqual(og as never);
+      if (og === "REFUSED") refused++; else accepted++;
+    }
+    expect(accepted).toBeGreaterThan(400);
+    expect(refused).toBeGreaterThan(200);
+    expect(mutated).toBeGreaterThan(1000);
+  });
+  test("MATCH: registerNumberedEntitiesBatch(bytes[]) calldata is og encodeNumberedRegistrationCalldata", () => {
+    const iface = EntityProvider__factory.createInterface();
+    for (let i = 0; i < 40; i++) {
+      const boards = Array.from({ length: 1 + nri(4) }, () => nhex(1 + nri(300)));
+      expect(numberedRegistrationCalldata(boards)).toBe(iface.encodeFunctionData("registerNumberedEntitiesBatch", [boards]).toLowerCase());
+    }
+  });
+});
+
+describe("entity-j RJ-9: durable numbered-registration intents (og numbered-registration-intent.ts)", () => {
+  const iface = EntityProvider__factory.createInterface();
+  const NDEP = "0x5fbdb2315678afecb367f032d93f642f64180aa3", CHAIN = 31337, SEED = `0x${"5e".repeat(64)}`;
+  const word = (n: number): string => `0x${n.toString(16).padStart(64, "0")}`;
+  const clone = <T,>(v: T): T => {
+    if (v === null || typeof v !== "object") return v;
+    if (v instanceof Uint8Array) return new Uint8Array(v) as T;
+    if (v instanceof Map) return new Map([...v].map(([k, x]) => [clone(k), clone(x)])) as T;
+    if (Array.isArray(v)) return v.map(clone) as T;
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clone(x)])) as T;
+  };
+  const code = (e: unknown): string => String((e as Error).message).split(":")[0] ?? "";
+  const runOg = async (env: any, tx: unknown): Promise<string | null> => { try { await ogApplyRuntimeTx(env, clone(tx) as never, { isReplay: true }); return null; } catch (e) { return code(e); } };
+  const rwCode = (r: { readonly ok: boolean; readonly error?: unknown }): string | null => (r.ok ? null : String((r.error as { code?: string; _tag: string }).code ?? (r.error as { _tag: string })._tag).split(":")[0] ?? "");
+  /** Runtime tx on both sides: the same decision (a raw-tx parse refusal is og's ethers message, compared as a refusal) and the same intent store. */
+  const both = async (env: any, rt: Runtime, tx: unknown): Promise<{ rt: Runtime; og: string | null }> => {
+    const og = await runOg(env, tx);
+    const rw = applyRuntimeTx(rt, tx as RuntimeTx, { replay: true });
+    const rc = rwCode(rw);
+    // og's own crash on a malformed field (an ethers parse error, a TypeError on a null seed) is compared as a refusal.
+    if (og !== null && !/^[A-Z0-9_]+$/.test(og)) expect(rc).not.toBeNull();
+    else expect(rc).toBe(og);
+    const next = rw.ok ? rw.value : rt;
+    const held = env.infrastructure.numberedRegistrationIntents as Map<string, unknown> | undefined;
+    expect(stableJson([...next.numberedRegistrationIntents])).toBe(stableJson([...(held ?? new Map())]));
+    // The durable post-state view commits the intent store exactly as og does.
+    const ogOnly = { state: { jReplicas: env.state.jReplicas, eReplicas: new Map(), timestamp: 0, height: 0 }, infrastructure: held !== undefined && held.size > 0 ? { numberedRegistrationIntents: held } : {}, runtimeId: env.runtimeId };
+    const rwOnly = { ...createRuntime([...next.jReplicas.values()], next.runtimeId), numberedRegistrationIntents: next.numberedRegistrationIntents };
+    expect(unwrap(runtimeComponentDigests(runtimeView(rwOnly)))).toEqual(computeRuntimePostStateComponentDigests(buildReplayVerifiableRuntimePostStateView(ogOnly as never)) as never);
+    return { rt: next, og };
+  };
+
+  test("MATCH (randomized): record / repeat / conflict / quarantine / complete intents with certified evidence and imported replicas -- same decisions and the same durable store", async () => {
+    const tally = { recorded: 0, refused: 0, completed: 0, quarantined: 0 };
+    const refusals = new Set<string>();
+    for (let run = 0; run < 40; run++) {
+      const seed = `entity-j-numbered-${run}`, env = createEmptyEnv(seed) as any;
+      registerSignerKey(env, env.runtimeId, deriveSignerKeySync(seed, "1"));
+      const replica = { name: "Local", blockNumber: 7n, stateRoot: null, mempool: [], blockDelayMs: 300, lastBlockTimestamp: 0, position: { x: 0, y: 50, z: 0 }, chainId: CHAIN, contracts: { depository: NDEP, entityProvider: EP }, watcherConfirmationDepth: 0, entityProviderDeploymentBlock: 1 };
+      env.state.jReplicas.set("Local", replica);
+      let rt: Runtime = createRuntime([clone(replica) as unknown as JReplica], env.runtimeId);
+      const jurisdiction = { name: "Local", chainId: CHAIN, depositoryAddress: NDEP, entityProviderAddress: EP };
+      const payer = npick(wallets), local = aliceAddr.toLowerCase();
+      const definitions = Array.from({ length: 1 + nri(3) }, (_, i) => {
+        const validators = npick([[aliceAddr, bobAddr], [aliceAddr], [bobAddr, aliceAddr], [bobAddr]]);
+        const owned = validators.includes(aliceAddr) && nri(4) > 0;
+        return { name: `numbered-${run}-${i}`, validators, threshold: BigInt(1 + nri(validators.length)), ...(owned ? { localSignerId: aliceAddr, entitySeed: SEED } : { localSignerId: null, entitySeed: null }) };
+      });
+      const request: any = buildNumberedRegistrationRequest(env, { ...(nri(2) === 0 ? { intentId: nhex(32) } : {}), jurisdiction, payerSignerId: payer.address, entities: definitions as never });
+      const sign = (req: any, over: Parameters<typeof signedTx>[0] = {}): { raw: string; hash: string; nonce: number } => {
+        const nonce = over.nonce ?? nri(20), raw = signedTx({ to: EP, data: encodeNumberedRegistrationCalldata(req), chainId: BigInt(CHAIN), value: 0n, wallet: payer, nonce, ...over });
+        return { raw, hash: ethers.keccak256(raw), nonce };
+      };
+      const pendingOf = (req: any, over: Parameters<typeof signedTx>[0] = {}): any => { const t = sign(req, over); return { status: "pending", request: req, requestHash: (() => { try { return computeNumberedRegistrationRequestHash(req); } catch { return nhex(32); } })(), rawTransaction: t.raw, transactionHash: t.hash, transactionNonce: t.nonce }; };
+      let pending = pendingOf(request);
+      // One defect in the intent: the request, its hash, or the signed transaction.
+      const defect = nri(34);
+      if (defect === 0) pending = { ...pending, requestHash: nhex(32) };
+      else if (defect === 1) pending = { ...pending, transactionHash: nhex(32) };
+      else if (defect === 2) pending = { ...pending, transactionNonce: pending.transactionNonce + 1 };
+      else if (defect === 3) pending = { ...pendingOf(request, { to: nhex(20) }) };
+      else if (defect === 4) pending = { ...pendingOf(request, { wallet: wallets.find((w) => w !== payer) }) };
+      else if (defect === 5) pending = { ...pendingOf(request, { data: nhex(40) }) };
+      else if (defect === 6) pending = { ...pendingOf(request, { chainId: npick([1n, 0n]), type: 0 }) };
+      else if (defect === 7) pending = { ...pendingOf(request, { value: 1n }) };
+      else if (defect === 8) pending = { ...pending, rawTransaction: npick(["0xzz", `${pending.rawTransaction}0`, "0x", `0x${"00".repeat(262_200)}`]) };
+      else if (defect === 9) pending = { ...pending, rawTransaction: mutateTx(pending.rawTransaction) };
+      else {
+        // Request defects are re-hashed and re-signed, so the request check itself refuses them.
+        const req = clone(request);
+        const e = req.entities[nri(req.entities.length)];
+        if (defect === 10) req.version = 2;
+        else if (defect === 11) req.stackKey = nhex(32);
+        else if (defect === 12) req.intentId = req.intentId.toUpperCase().replace("0X", "0x");
+        else if (defect === 13) e.name = npick(["", "x".repeat(257)]);
+        else if (defect === 14) e.encodedBoard = `${e.encodedBoard}00`;
+        else if (defect === 15) e.boardHash = nhex(32);
+        else if (defect === 16) { e.localSignerId = e.localSignerId === null ? local : null; }
+        else if (defect === 17) e.entitySeed = e.localSignerId === null ? SEED : SEED.toUpperCase().replace("0X", "0x");
+        else if (defect === 18) e.position = { x: 1, y: Number.NaN, z: 0 };
+        else if (defect === 19) req.payerSignerId = npick([payer.address, "0x12"]);
+        else if (defect === 20) req.entities = [];
+        else if (defect === 21) e.config.jurisdiction = { ...e.config.jurisdiction, depositoryAddress: nhex(20) };
+        pending = pendingOf(req);
+      }
+      let step = await both(env, rt, { type: "recordNumberedRegistrationIntent", data: pending });
+      rt = step.rt;
+      if (step.og !== null) { tally.refused++; refusals.add(step.og); continue; }
+      tally.recorded++;
+      // A repeat is a no-op; another transaction for the same intent, or another payload under its id, is refused.
+      const repeat = nri(4);
+      if (repeat === 0) rt = (await both(env, rt, { type: "recordNumberedRegistrationIntent", data: clone(pending) })).rt;
+      else if (repeat === 1) { const again = pendingOf(pending.request, { nonce: pending.transactionNonce + 1 }); refusals.add(String((await both(env, rt, { type: "recordNumberedRegistrationIntent", data: again })).og)); }
+      else if (repeat === 2) {
+        const req = clone(pending.request);
+        req.entities[0].name = `${req.entities[0].name}-renamed`;
+        refusals.add(String((await both(env, rt, { type: "recordNumberedRegistrationIntent", data: pendingOf(req) })).og));
+      }
+      const identity = { intentId: pending.request.intentId, requestHash: pending.requestHash, transactionHash: pending.transactionHash };
+      if (nri(4) === 0) {
+        const tweak = nri(5);
+        const res = { kind: "quarantined", ...identity, ...(tweak === 0 ? { transactionHash: nhex(32) } : tweak === 1 ? { intentId: nhex(32) } : {}), reason: "mined_revert:status=0" };
+        step = await both(env, rt, { type: "resolveNumberedRegistrationIntent", data: res });
+        rt = step.rt;
+        if (step.og === null) tally.quarantined++; else refusals.add(step.og);
+        continue;
+      }
+      // Registration: certified evidence for each board, then the local validator's replica import.
+      const results: any[] = [];
+      for (const [i, planned] of pending.request.entities.entries()) {
+        const entityNumber = 2 + i, entityId = word(entityNumber), height = 5 + i, blockHash = word(height * 7 + 1);
+        const registered = nri(12) === 0 ? nhex(32) : planned.boardHash;
+        const encoded = iface.encodeEventLog(iface.getEvent("EntityRegistered"), [entityId, BigInt(entityNumber), registered]);
+        const receipt = { transactionHash: pending.transactionHash, transactionIndex: 0, blockNumber: height, blockHash, type: 2, status: 1, cumulativeGasUsed: 21_000, logsBloom: `0x${"00".repeat(256)}`,
+          logs: [{ address: EP, topics: encoded.topics, data: encoded.data, blockNumber: height, blockHash, transactionHash: pending.transactionHash, transactionIndex: 0, logIndex: 0 }] };
+        const root = await computeCanonicalReceiptsRoot([receipt] as never), proof = (await createCanonicalReceiptProofs([receipt] as never, root)).get(0) as object;
+        const log = { address: EP, topics: encoded.topics.map((t) => t.toLowerCase()), data: encoded.data.toLowerCase(), blockNumber: height, blockHash, transactionHash: pending.transactionHash, transactionIndex: 0, logIndex: 0, index: 0, receiptProof: { ...proof, receiptLogIndex: 0 } };
+        const evidence = buildCertifiedRegistrationEvidence(env, replica as never, "EntityRegistered", log as never, { observedThroughHeight: height, observedTipBlockHash: blockHash, observedHeadHeight: height, confirmationDepth: 0 });
+        if (nri(10) > 0) {
+          const tx = { type: "recordAuthenticatedJAuthority", data: evidence };
+          expect(await runOg(env, tx)).toBeNull();
+          rt = unwrap(applyRuntimeTx(rt, tx as unknown as RuntimeTx, { replay: true }));
+        }
+        if (planned.localSignerId !== null && nri(8) > 0) {
+          const tx = { type: "importReplica", entityId, signerId: aliceAddr, data: { config: planned.config, isProposer: planned.config.validators[0].toLowerCase() === local, entitySeed: SEED } };
+          const og = await runOg(env, tx), rw = applyRuntimeTx(rt, tx as unknown as RuntimeTx, { replay: true });
+          expect(rwCode(rw)).toBe(og);
+          if (rw.ok) rt = rw.value;
+        }
+        const tweak = nri(16);
+        results.push({ entityNumber, entityId: tweak === 0 ? entityId.toUpperCase().replace("0X", "0x") : entityId, registrationBlock: height, evidenceHash: tweak === 1 ? nhex(32) : computeRegistrationEvidenceHash(evidence) });
+      }
+      const tweak = nri(10);
+      const res = { kind: "completed", ...identity, ...(tweak === 0 ? { requestHash: nhex(32) } : {}), results: tweak === 1 ? results.slice(1) : results };
+      step = await both(env, rt, { type: "resolveNumberedRegistrationIntent", data: res });
+      rt = step.rt;
+      if (step.og !== null) { refusals.add(step.og); continue; }
+      tally.completed++;
+      // A completed intent: the same completion again is a no-op; a quarantine no longer finds a pending intent.
+      rt = (await both(env, rt, { type: "resolveNumberedRegistrationIntent", data: clone(res) })).rt;
+      refusals.add(String((await both(env, rt, { type: "resolveNumberedRegistrationIntent", data: { kind: "quarantined", ...identity, reason: "late" } })).og));
+    }
+    expect(tally.recorded).toBeGreaterThan(6);
+    expect(tally.refused).toBeGreaterThan(6);
+    expect(tally.completed).toBeGreaterThan(2);
+    expect(refusals.size).toBeGreaterThan(8);
   });
 });
