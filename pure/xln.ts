@@ -15887,322 +15887,1064 @@ const replicaJHistory = (rt: Runtime, key: string, r: EntityReplica): ValidatorJ
 };
 // ---- og runtime/delivery/topology/entity-routing.ts + frame/cross-j/atomic-admission.ts: atomic admission of paired cross-j Account legs ----
 /** A (checksum-valid) address as lowercase 0x text, else ''. */
-export const normalizeRuntimeId = (v: unknown): string => {
-  const t = typeof v === "string" ? v.trim() : "";
-  return t && isAddressText(t) ? `0x${(t.startsWith("0x") ? t.slice(2) : t).toLowerCase()}` : "";
+export const normalizeRuntimeId = (value: unknown): string => {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || !isAddressText(text)) return "";
+  const hex = text.startsWith("0x") ? text.slice(2) : text;
+  return `0x${hex.toLowerCase()}`;
 };
 type PullLockTx = Extract<AccountTx, { readonly type: "cross_pull_lock" }>;
 type PullCloseTx = Extract<AccountTx, { readonly type: "cross_pull_close" }>;
 type CrossPhase = AtomicCrossPair["phase"];
 type Leg = "source" | "target";
+type FrameAck = { readonly height: bigint; readonly frameHash: string };
 /** The state an admission reads: the Runtime's replicas and clock. */
-export type CrossAdmissionView = { readonly entities: ReadonlyMap<string, EntityReplica>; readonly timestamp: bigint };
-const entityKey = (v: unknown): string => String(v || "").toLowerCase();
+export type CrossAdmissionView = {
+  readonly entities: ReadonlyMap<string, EntityReplica>;
+  readonly timestamp: bigint;
+};
+const lowercased = (value: unknown): string => String(value || "").toLowerCase();
 const sole = <X>(xs: readonly X[]): X | undefined => (xs.length === 1 ? xs[0] : undefined);
-const groupBy = <K, V>(entries: readonly (readonly [K, V])[]): ReadonlyMap<K, readonly V[]> =>
-  new Map([...new Set(entries.map(([k]) => k))].map((k) => [k, entries.flatMap(([j, v]) => (j === k ? [v] : []))] as const));
-const routedAccountInputs = (i: RoutedEntityInput): readonly AccountPeerInput[] =>
-  (i.input.kind === "txs" ? effectiveTxs(i.input.txs) : []).flatMap((tx) => (tx.type === "accountInput" ? [tx.data] : []));
-const accountProposal = (a: AccountPeerInput): AccountFrame | undefined => (a.kind === "ack_frame" ? a.frame : undefined);
-const accountAck = (a: AccountPeerInput): { readonly height: bigint; readonly frameHash: string } | undefined => (a.kind === "ack" ? a : a.kind === "ack_frame" ? a.ack ?? undefined : undefined);
-const admissionKey = (orderId: unknown, routeHash: unknown): string => `${String(orderId || "").trim()}\u0000${lower(routeHash)}`;
-const bindingKey = (p: PullLockTx): string => admissionKey(p.crossJurisdiction.orderId, p.crossJurisdiction.routeHash);
-const admissionOrigin = (i: RoutedEntityInput): string => (i.from ? `remote:${normalizeRuntimeId(i.from) || "missing"}` : "local");
-const sameSourceFrame = (a: RoutedEntityInput, b: RoutedEntityInput): boolean =>
-  a.sourceRuntimeFrame === undefined || b.sourceRuntimeFrame === undefined || (a.sourceRuntimeFrame.height === b.sourceRuntimeFrame.height && a.sourceRuntimeFrame.timestamp === b.sourceRuntimeFrame.timestamp);
-const distinctSiblings = (inputs: readonly RoutedEntityInput[], l: number, r: number): boolean => entityKey(inputs[l]?.entityId) !== entityKey(inputs[r]?.entityId);
-const pairStart = (p: PotentialCrossPair): number => Math.min(p.sourceInputIndex, p.targetInputIndex);
-const crossPullsOf = (txs: readonly AccountTx[], leg: Leg): readonly PullLockTx[] => txs.filter((tx): tx is PullLockTx => tx.type === "cross_pull_lock" && tx.crossJurisdiction?.leg === leg);
+const groupByKey = <K, V>(entries: readonly (readonly [K, V])[]): ReadonlyMap<K, readonly V[]> => {
+  const empty: ReadonlyMap<K, readonly V[]> = new Map();
+  return entries.reduce(
+    (groups, [key, value]) => mapSet(groups, key, [...(groups.get(key) ?? []), value]),
+    empty,
+  );
+};
+/** The Account inputs an Entity input carries, those nested in a runtimeOutput included. */
+const accountInputsOf = (routed: RoutedEntityInput): readonly AccountPeerInput[] => {
+  if (routed.input.kind !== "txs") return [];
+  return effectiveTxs(routed.input.txs).flatMap((tx) =>
+    tx.type === "accountInput" ? [tx.data] : [],
+  );
+};
+const proposedFrameOf = (input: AccountPeerInput): AccountFrame | undefined =>
+  input.kind === "ack_frame" ? input.frame : undefined;
+const acknowledgedFrameOf = (input: AccountPeerInput): FrameAck | undefined => {
+  if (input.kind === "ack") return input;
+  if (input.kind === "ack_frame") return input.ack ?? undefined;
+  return undefined;
+};
+const routeBindingKey = (orderId: unknown, routeHash: unknown): string =>
+  `${String(orderId || "").trim()}\u0000${lower(routeHash)}`;
+const pullRouteKey = (pull: PullLockTx): string =>
+  routeBindingKey(pull.crossJurisdiction.orderId, pull.crossJurisdiction.routeHash);
+/** `local`, or the transporting Runtime of a remote input. */
+const admissionOrigin = (routed: RoutedEntityInput): string => {
+  if (!routed.from) return "local";
+  return `remote:${normalizeRuntimeId(routed.from) || "missing"}`;
+};
+/** Two inputs share a source frame unless both name one and the two differ. */
+const shareSourceFrame = (a: RoutedEntityInput, b: RoutedEntityInput): boolean => {
+  const left = a.sourceRuntimeFrame;
+  const right = b.sourceRuntimeFrame;
+  if (left === undefined || right === undefined) return true;
+  return left.height === right.height && left.timestamp === right.timestamp;
+};
+const targetDistinctEntities = (
+  a: RoutedEntityInput | undefined,
+  b: RoutedEntityInput | undefined,
+): boolean => lowercased(a?.entityId) !== lowercased(b?.entityId);
+const pairStart = (pair: PotentialCrossPair): number =>
+  Math.min(pair.sourceInputIndex, pair.targetInputIndex);
+const ascending = (a: number, b: number): number => a - b;
+const crossPullsOf = (txs: readonly AccountTx[], leg: Leg): readonly PullLockTx[] =>
+  txs.filter(
+    (tx): tx is PullLockTx => tx.type === "cross_pull_lock" && tx.crossJurisdiction?.leg === leg,
+  );
+const closedPullId = (close: PullCloseTx, leg: Leg): string =>
+  leg === "source" ? close.proof.sourcePullId : close.proof.targetPullId;
 const crossClosesOf = (txs: readonly AccountTx[], leg: Leg): readonly PullCloseTx[] =>
-  txs.filter((tx): tx is PullCloseTx => tx.type === "cross_pull_close" && tx.pullId === (leg === "source" ? tx.proof.sourcePullId : tx.proof.targetPullId));
-const crossCloseKey = ({ proof: p, binary }: PullCloseTx): string => stableJson({
-  operation: "close", orderId: p.orderId, routeHash: entityKey(p.routeHash), sourcePullId: p.sourcePullId, targetPullId: p.targetPullId, fillRatio: p.fillRatio,
-  cumulativeSourceAmount: p.cumulativeSourceAmount, cumulativeTargetAmount: p.cumulativeTargetAmount, binaryHash: entityKey(p.binaryHash), closeMode: p.closeMode, binary,
-});
+  txs.filter(
+    (tx): tx is PullCloseTx =>
+      tx.type === "cross_pull_close" && tx.pullId === closedPullId(tx, leg),
+  );
+const crossCloseKey = ({ proof, binary }: PullCloseTx): string =>
+  stableJson({
+    operation: "close",
+    orderId: proof.orderId,
+    routeHash: lowercased(proof.routeHash),
+    sourcePullId: proof.sourcePullId,
+    targetPullId: proof.targetPullId,
+    fillRatio: proof.fillRatio,
+    cumulativeSourceAmount: proof.cumulativeSourceAmount,
+    cumulativeTargetAmount: proof.cumulativeTargetAmount,
+    binaryHash: lowercased(proof.binaryHash),
+    closeMode: proof.closeMode,
+    binary,
+  });
 type CandidateFrame = Pick<AccountFrame, "height" | "stateHash" | "txs">;
-/** Unique route keys, and a source pull needs its swap offer in the same frame. */
-const siblingResolved = (frame: CandidateFrame, leg: Leg): boolean => {
-  const bindings = crossPullsOf(frame.txs, leg).map((p) => p.crossJurisdiction);
-  return bindings.length > 0 && unique(bindings.map((b) => admissionKey(b.orderId, b.routeHash))) && (leg === "target" || bindings.every((b) =>
-    frame.txs.some((tx) => tx.type === "swap_offer" && tx.crossJurisdiction?.orderId === b.orderId && entityKey(tx.crossJurisdiction?.routeHash) === entityKey(b.routeHash))));
+const offersSwapFor = (tx: AccountTx, binding: CrossPullBinding): boolean =>
+  tx.type === "swap_offer" &&
+  tx.crossJurisdiction?.orderId === binding.orderId &&
+  lowercased(tx.crossJurisdiction?.routeHash) === lowercased(binding.routeHash);
+/**
+ * A proposal's pulls on one leg name distinct routes, and each source pull carries its swap offer
+ * in the same frame.
+ */
+const pullsResolveSibling = (frame: CandidateFrame, leg: Leg): boolean => {
+  const bindings = crossPullsOf(frame.txs, leg).map((pull) => pull.crossJurisdiction);
+  if (bindings.length === 0) return false;
+  if (!unique(bindings.map((binding) => routeBindingKey(binding.orderId, binding.routeHash)))) {
+    return false;
+  }
+  if (leg === "target") return true;
+  return bindings.every((binding) => frame.txs.some((tx) => offersSwapFor(tx, binding)));
 };
+/**
+ * One Account frame carrying cross-j pulls or closes, as a leg that must pair with a sibling leg.
+ */
 type CrossCandidate = {
-  readonly inputIndex: number; readonly pairKey: string; readonly originKey: string; readonly phase: CrossPhase; readonly accountInput: AccountPeerInput;
-  readonly frame: { readonly height: bigint; readonly stateHash: string }; readonly sourcePulls: readonly PullLockTx[]; readonly targetPulls: readonly PullLockTx[];
-  readonly sourceCloses: readonly PullCloseTx[]; readonly targetCloses: readonly PullCloseTx[]; readonly alreadyCommitted: boolean; readonly invalidReasons: readonly string[];
+  readonly inputIndex: number;
+  readonly pairKey: string;
+  readonly originKey: string;
+  readonly phase: CrossPhase;
+  readonly accountInput: AccountPeerInput;
+  readonly frame: { readonly height: bigint; readonly stateHash: string };
+  readonly sourcePulls: readonly PullLockTx[];
+  readonly targetPulls: readonly PullLockTx[];
+  readonly sourceCloses: readonly PullCloseTx[];
+  readonly targetCloses: readonly PullCloseTx[];
+  /** A committed candidate is an exact replay of the replica's head, not a leg. */
+  readonly commitment: "pending" | "committed";
+  readonly invalidReasons: readonly string[];
 };
-const frameCandidate = (input: RoutedEntityInput, inputIndex: number, accountInput: AccountPeerInput, phase: CrossPhase, frame: CandidateFrame, alreadyCommitted: boolean): readonly CrossCandidate[] => {
-  const [sourcePulls, targetPulls] = (["source", "target"] as const).map((leg) => crossPullsOf(frame.txs, leg)) as [readonly PullLockTx[], readonly PullLockTx[]];
-  const [sourceCloses, targetCloses] = (["source", "target"] as const).map((leg) => crossClosesOf(frame.txs, leg)) as [readonly PullCloseTx[], readonly PullCloseTx[]];
-  const routeKeys = [...[...sourcePulls, ...targetPulls].map((p) => `open\u0000${bindingKey(p)}`), ...[...sourceCloses, ...targetCloses].map(crossCloseKey)];
-  const invalidReasons = [
-    ...(unique(routeKeys) ? [] : ["duplicate-route-key"]),
-    ...([["source", sourcePulls], ["target", targetPulls]] as const).flatMap(([leg, pulls]) => (phase === "proposal" && pulls.length > 0 && !siblingResolved(frame, leg) ? [`${leg}-sibling-unresolved`] : [])),
+type CandidateSource = {
+  readonly input: RoutedEntityInput;
+  readonly inputIndex: number;
+  readonly accountInput: AccountPeerInput;
+  readonly phase: CrossPhase;
+  readonly frame: CandidateFrame;
+  readonly commitment: CrossCandidate["commitment"];
+};
+/** The frame as a cross-j candidate, when it carries any pull or close. */
+const frameCandidate = (source: CandidateSource): readonly CrossCandidate[] => {
+  const { frame, phase } = source;
+  const sourcePulls = crossPullsOf(frame.txs, "source");
+  const targetPulls = crossPullsOf(frame.txs, "target");
+  const sourceCloses = crossClosesOf(frame.txs, "source");
+  const targetCloses = crossClosesOf(frame.txs, "target");
+  const openKeys = [...sourcePulls, ...targetPulls].map(
+    (pull) => `open\u0000${pullRouteKey(pull)}`,
+  );
+  const closeKeys = [...sourceCloses, ...targetCloses].map(crossCloseKey);
+  const routeKeys = [...openKeys, ...closeKeys];
+  if (routeKeys.length === 0) return [];
+  const duplicateReasons = unique(routeKeys) ? [] : ["duplicate-route-key"];
+  const unresolvedLegs = (["source", "target"] as const).filter(
+    (leg) =>
+      phase === "proposal" &&
+      crossPullsOf(frame.txs, leg).length > 0 &&
+      !pullsResolveSibling(frame, leg),
+  );
+  return [
+    {
+      inputIndex: source.inputIndex,
+      pairKey: `${phase}\u0000${sortedBy(routeKeys, (key) => key).join("\u0001")}`,
+      originKey: admissionOrigin(source.input),
+      phase,
+      accountInput: source.accountInput,
+      frame,
+      sourcePulls,
+      targetPulls,
+      sourceCloses,
+      targetCloses,
+      commitment: source.commitment,
+      invalidReasons: [
+        ...duplicateReasons,
+        ...unresolvedLegs.map((leg) => `${leg}-sibling-unresolved`),
+      ],
+    },
   ];
-  return routeKeys.length === 0 ? [] : [{
-    inputIndex, pairKey: `${phase}\u0000${sortedBy(routeKeys, (k) => k).join("\u0001")}`, originKey: admissionOrigin(input), phase, accountInput, frame,
-    sourcePulls, targetPulls, sourceCloses, targetCloses, alreadyCommitted, invalidReasons,
-  }];
 };
-const proposalCandidate = (input: RoutedEntityInput, inputIndex: number, accountInput: AccountPeerInput): readonly CrossCandidate[] => {
-  const frame = accountProposal(accountInput);
-  return frame === undefined ? [] : frameCandidate(input, inputIndex, accountInput, "proposal", frame, false);
+const proposalCandidate = (
+  input: RoutedEntityInput,
+  inputIndex: number,
+  accountInput: AccountPeerInput,
+): readonly CrossCandidate[] => {
+  const frame = proposedFrameOf(accountInput);
+  if (frame === undefined) return [];
+  return frameCandidate({
+    input,
+    inputIndex,
+    accountInput,
+    phase: "proposal",
+    frame,
+    commitment: "pending",
+  });
 };
-const pairedPullsMatch = (sources: readonly PullLockTx[], targets: readonly PullLockTx[]): boolean => sources.length === targets.length && sources.every((s) => {
-  const t = sole(targets.filter((x) => bindingKey(x) === bindingKey(s))), route = s.crossJurisdictionRoute;
-  return t !== undefined && route !== undefined && t.crossJurisdictionRoute !== undefined && stableJson(route) === stableJson(t.crossJurisdictionRoute)
-    && s.crossJurisdiction.leg === "source" && t.crossJurisdiction.leg === "target" && s.pullId === route.sourcePull?.pullId && t.pullId === route.targetPull?.pullId
-    && entityKey(s.fullHash) === entityKey(t.fullHash) && entityKey(s.partialRoot) === entityKey(t.partialRoot);
-});
-const pairedClosesMatch = (sources: readonly PullCloseTx[], targets: readonly PullCloseTx[]): boolean => sources.length === targets.length && sources.every((s) => {
-  const t = sole(targets.filter((x) => crossCloseKey(x) === crossCloseKey(s)));
-  return t !== undefined && s.pullId === s.proof.sourcePullId && t.pullId === t.proof.targetPullId;
-});
-const framesPair = (l: CrossCandidate, r: CrossCandidate): boolean =>
-  l.invalidReasons.length === 0 && r.invalidReasons.length === 0 && l.phase === r.phase && l.pairKey === r.pairKey && l.originKey === r.originKey
-  && pairedPullsMatch(l.sourcePulls, r.targetPulls) && pairedPullsMatch(r.sourcePulls, l.targetPulls) && pairedClosesMatch(l.sourceCloses, r.targetCloses) && pairedClosesMatch(r.sourceCloses, l.targetCloses);
-export type PotentialCrossPair = { readonly pairKey: string; readonly sourceInputIndex: number; readonly targetInputIndex: number };
-/** A lone 2-input ACK cohort (one marker, one source frame) pairs its two ACK-carrying inputs by the marker. */
+/**
+ * The one target pull on the source pull's route carries the identical route, the route's own pull
+ * ids and the same hash ladder.
+ */
+const pullPairsWith = (source: PullLockTx, targets: readonly PullLockTx[]): boolean => {
+  const target = sole(
+    targets.filter((candidate) => pullRouteKey(candidate) === pullRouteKey(source)),
+  );
+  const route = source.crossJurisdictionRoute;
+  if (target === undefined || route === undefined || target.crossJurisdictionRoute === undefined) {
+    return false;
+  }
+  const sameRoute = stableJson(route) === stableJson(target.crossJurisdictionRoute);
+  const legsInPlace =
+    source.crossJurisdiction.leg === "source" && target.crossJurisdiction.leg === "target";
+  const routePullIds =
+    source.pullId === route.sourcePull?.pullId && target.pullId === route.targetPull?.pullId;
+  const sameLadder =
+    lowercased(source.fullHash) === lowercased(target.fullHash) &&
+    lowercased(source.partialRoot) === lowercased(target.partialRoot);
+  return sameRoute && legsInPlace && routePullIds && sameLadder;
+};
+const pullsPairUp = (sources: readonly PullLockTx[], targets: readonly PullLockTx[]): boolean =>
+  sources.length === targets.length && sources.every((source) => pullPairsWith(source, targets));
+/** The one target close with the source close's key closes the proof's target pull. */
+const closePairsWith = (source: PullCloseTx, targets: readonly PullCloseTx[]): boolean => {
+  const target = sole(
+    targets.filter((candidate) => crossCloseKey(candidate) === crossCloseKey(source)),
+  );
+  return (
+    target !== undefined &&
+    source.pullId === source.proof.sourcePullId &&
+    target.pullId === target.proof.targetPullId
+  );
+};
+const closesPairUp = (sources: readonly PullCloseTx[], targets: readonly PullCloseTx[]): boolean =>
+  sources.length === targets.length && sources.every((source) => closePairsWith(source, targets));
+/**
+ * Two valid candidates of one phase, route set and origin whose pulls and closes mirror each other.
+ */
+const candidatesPair = (left: CrossCandidate, right: CrossCandidate): boolean => {
+  const bothValid = left.invalidReasons.length === 0 && right.invalidReasons.length === 0;
+  const sameCohort =
+    left.phase === right.phase &&
+    left.pairKey === right.pairKey &&
+    left.originKey === right.originKey;
+  if (!bothValid || !sameCohort) return false;
+  return (
+    pullsPairUp(left.sourcePulls, right.targetPulls) &&
+    pullsPairUp(right.sourcePulls, left.targetPulls) &&
+    closesPairUp(left.sourceCloses, right.targetCloses) &&
+    closesPairUp(right.sourceCloses, left.targetCloses)
+  );
+};
+export type PotentialCrossPair = {
+  readonly pairKey: string;
+  readonly sourceInputIndex: number;
+  readonly targetInputIndex: number;
+};
+const carriesAck = (input: RoutedEntityInput): boolean =>
+  accountInputsOf(input).some((accountInput) => acknowledgedFrameOf(accountInput) !== undefined);
+/** A lone two-input ACK cohort (one marker, one source frame) pairs its two ACK-carrying inputs. */
 const markedAckPair = (inputs: readonly RoutedEntityInput[]): readonly PotentialCrossPair[] => {
-  const [first] = inputs, cohort = first?.atomicCrossJurisdictionPair;
-  if (first === undefined || inputs.length !== 2 || cohort?.phase !== "ack"
-    || !inputs.every((i) => i.atomicCrossJurisdictionPair?.phase === "ack" && i.atomicCrossJurisdictionPair.pairKey === cohort.pairKey && sameSourceFrame(first, i))) return [];
-  const [s, t, ...more] = inputs.flatMap((i, index) => (routedAccountInputs(i).some((a) => accountAck(a) !== undefined) ? [index] : []));
-  return s !== undefined && t !== undefined && more.length === 0 && distinctSiblings(inputs, s, t) ? [{ pairKey: cohort.pairKey, sourceInputIndex: s, targetInputIndex: t }] : [];
+  const [first] = inputs;
+  const marker = first?.atomicCrossJurisdictionPair;
+  if (first === undefined || inputs.length !== 2 || marker?.phase !== "ack") return [];
+  const oneCohort = inputs.every(
+    (input) =>
+      input.atomicCrossJurisdictionPair?.phase === "ack" &&
+      input.atomicCrossJurisdictionPair.pairKey === marker.pairKey &&
+      shareSourceFrame(first, input),
+  );
+  if (!oneCohort) return [];
+  const [sourceIndex, targetIndex] = inputs.flatMap((input, index) =>
+    carriesAck(input) ? [index] : [],
+  );
+  if (sourceIndex === undefined || targetIndex === undefined) return [];
+  if (!targetDistinctEntities(inputs[sourceIndex], inputs[targetIndex])) return [];
+  return [
+    { pairKey: marker.pairKey, sourceInputIndex: sourceIndex, targetInputIndex: targetIndex },
+  ];
 };
-/** Each proposal leg pairs with exactly one later sibling leg of the same Runtime and origin, same source frame first (then, when allowed, across frames). */
-export const potentialCrossPairs = (inputs: readonly RoutedEntityInput[], options: { readonly allowDifferentSourceRuntimeFrames?: boolean } = {}): readonly PotentialCrossPair[] => {
-  const candidates = inputs.flatMap((input, index) => routedAccountInputs(input).flatMap((a) => proposalCandidate(input, index, a)));
-  type Scan = { readonly pairs: readonly PotentialCrossPair[]; readonly paired: ReadonlySet<number> };
-  const { pairs } = [true, false].reduce<Scan>((scan, sameFrame) => candidates.reduce<Scan>((s, left, leftIndex) => {
-    const li = inputs[left.inputIndex] as RoutedEntityInput;
-    const right = s.paired.has(left.inputIndex) ? undefined : sole(candidates.filter((right, rightIndex) => {
-      const ri = inputs[right.inputIndex] as RoutedEntityInput;
-      return rightIndex > leftIndex && right.inputIndex !== left.inputIndex && !s.paired.has(right.inputIndex) && distinctSiblings(inputs, left.inputIndex, right.inputIndex)
-        && normalizeRuntimeId(ri.runtimeId) === normalizeRuntimeId(li.runtimeId) && (sameSourceFrame(ri, li) || (!sameFrame && options.allowDifferentSourceRuntimeFrames === true))
-        && admissionOrigin(ri) === admissionOrigin(li) && framesPair(left, right);
-    }));
-    return right === undefined ? s
-      : { pairs: [...s.pairs, { pairKey: left.pairKey, sourceInputIndex: left.inputIndex, targetInputIndex: right.inputIndex }], paired: new Set([...s.paired, left.inputIndex, right.inputIndex]) };
-  }, scan), { pairs: [], paired: new Set() });
+type SourceFramePolicy = "same-source-frame" | "any-source-frame";
+type PairScan = {
+  readonly pairs: readonly PotentialCrossPair[];
+  readonly paired: ReadonlySet<number>;
+};
+/**
+ * Each proposal leg pairs with exactly one later sibling leg of the same Runtime and origin, same
+ * source frame first (then, when allowed, across frames).
+ */
+export const potentialCrossPairs = (
+  inputs: readonly RoutedEntityInput[],
+  options: { readonly allowDifferentSourceRuntimeFrames?: boolean } = {},
+): readonly PotentialCrossPair[] => {
+  const candidates = inputs.flatMap((input, index) =>
+    accountInputsOf(input).flatMap((accountInput) => proposalCandidate(input, index, accountInput)),
+  );
+  const isSiblingLeg = (
+    left: CrossCandidate,
+    right: CrossCandidate,
+    policy: SourceFramePolicy,
+  ): boolean => {
+    const leftInput = inputs[left.inputIndex] as RoutedEntityInput;
+    const rightInput = inputs[right.inputIndex] as RoutedEntityInput;
+    const framesAllowed = policy === "any-source-frame" || shareSourceFrame(rightInput, leftInput);
+    return (
+      right.inputIndex !== left.inputIndex &&
+      targetDistinctEntities(leftInput, rightInput) &&
+      normalizeRuntimeId(rightInput.runtimeId) === normalizeRuntimeId(leftInput.runtimeId) &&
+      framesAllowed &&
+      admissionOrigin(rightInput) === admissionOrigin(leftInput) &&
+      candidatesPair(left, right)
+    );
+  };
+  const pairWithLaterSibling =
+    (policy: SourceFramePolicy) =>
+    (scan: PairScan, left: CrossCandidate, leftIndex: number): PairScan => {
+      if (scan.paired.has(left.inputIndex)) return scan;
+      const laterSiblings = candidates.filter(
+        (right, rightIndex) =>
+          rightIndex > leftIndex &&
+          !scan.paired.has(right.inputIndex) &&
+          isSiblingLeg(left, right, policy),
+      );
+      const right = sole(laterSiblings);
+      if (right === undefined) return scan;
+      return {
+        pairs: [
+          ...scan.pairs,
+          {
+            pairKey: left.pairKey,
+            sourceInputIndex: left.inputIndex,
+            targetInputIndex: right.inputIndex,
+          },
+        ],
+        paired: new Set([...scan.paired, left.inputIndex, right.inputIndex]),
+      };
+    };
+  // a second pass pairs a leg whose rival siblings were paired away in the first
+  const secondPass: SourceFramePolicy =
+    options.allowDifferentSourceRuntimeFrames === true ? "any-source-frame" : "same-source-frame";
+  const passes: readonly SourceFramePolicy[] = ["same-source-frame", secondPass];
+  const unpaired: PairScan = { pairs: [], paired: new Set() };
+  const { pairs } = passes.reduce(
+    (scan, policy) => candidates.reduce(pairWithLaterSibling(policy), scan),
+    unpaired,
+  );
   return pairs.length > 0 ? pairs : markedAckPair(inputs);
 };
-const withMarkers = (inputs: readonly RoutedEntityInput[], pairs: readonly (PotentialCrossPair & { readonly phase: CrossPhase })[]): readonly RoutedEntityInput[] => {
-  const markers = new Map(pairs.flatMap((p) => [p.sourceInputIndex, p.targetInputIndex].map((i) => [i, { phase: p.phase, pairKey: p.pairKey }] as const)));
-  return inputs.map((input, index) => { const m = markers.get(index); return m === undefined ? input : { ...input, atomicCrossJurisdictionPair: m }; });
+type MarkedPair = PotentialCrossPair & { readonly phase: CrossPhase };
+const withPairMarkers = (
+  inputs: readonly RoutedEntityInput[],
+  pairs: readonly MarkedPair[],
+): readonly RoutedEntityInput[] => {
+  const markerByIndex = new Map(
+    pairs.flatMap((pair) =>
+      [pair.sourceInputIndex, pair.targetInputIndex].map(
+        (index) => [index, { phase: pair.phase, pairKey: pair.pairKey }] as const,
+      ),
+    ),
+  );
+  return inputs.map((input, index) => {
+    const marker = markerByIndex.get(index);
+    return marker === undefined ? input : { ...input, atomicCrossJurisdictionPair: marker };
+  });
 };
-/** An unmarked transported pair is isolated as one proposal cohort before the Entity merge (local loopback stays unmarked). */
-export const markPotentialCrossPairs = (inputs: readonly RoutedEntityInput[]): readonly RoutedEntityInput[] => withMarkers(inputs, potentialCrossPairs(inputs)
-  .filter((p) => [p.sourceInputIndex, p.targetInputIndex].every((i) => { const x = inputs[i]; return x !== undefined && !x.atomicCrossJurisdictionPair && !!x.sourceRuntimeFrame; }))
-  .map((p) => ({ ...p, phase: "proposal" as const })));
-export type CrossFrameExpectation = { readonly entityId: string; readonly signerId: string; readonly counterpartyEntityId: string; readonly height: bigint; readonly stateHash: string };
-export type CrossPair = PotentialCrossPair & { readonly phase: CrossPhase; readonly sourceAccountFrame: CrossFrameExpectation; readonly targetAccountFrame: CrossFrameExpectation };
-export type CrossRejectedLeg = { readonly inputIndex: number; readonly accountInput: AccountPeerInput; readonly reason: "unpaired" | "multiple-candidates-per-input" | "candidate-invalid" | "pair-match-failed" | "atomic-group-invalid"; readonly detail: readonly string[] };
-export type CrossPairSelection = { readonly inputs: readonly RoutedEntityInput[]; readonly pairs: readonly CrossPair[]; readonly rejectedLegs: readonly CrossRejectedLeg[] };
-type ReplicaFinder = (entity: unknown, signer: unknown) => EntityReplica | undefined;
-/** The first replica per lowercase `entity:signer`. */
+/**
+ * An unmarked transported pair is isolated as one proposal cohort before the Entity merge (local
+ * loopback stays unmarked).
+ */
+export const markPotentialCrossPairs = (
+  inputs: readonly RoutedEntityInput[],
+): readonly RoutedEntityInput[] => {
+  const isUnmarkedTransported = (index: number): boolean => {
+    const input = inputs[index];
+    return input !== undefined && !input.atomicCrossJurisdictionPair && !!input.sourceRuntimeFrame;
+  };
+  const transportedPairs = potentialCrossPairs(inputs).filter(
+    (pair) =>
+      isUnmarkedTransported(pair.sourceInputIndex) && isUnmarkedTransported(pair.targetInputIndex),
+  );
+  const proposalPairs = transportedPairs.map((pair) => ({ ...pair, phase: "proposal" as const }));
+  return withPairMarkers(inputs, proposalPairs);
+};
+export type CrossFrameExpectation = {
+  readonly entityId: string;
+  readonly signerId: string;
+  readonly counterpartyEntityId: string;
+  readonly height: bigint;
+  readonly stateHash: string;
+};
+export type CrossPair = MarkedPair & {
+  readonly sourceAccountFrame: CrossFrameExpectation;
+  readonly targetAccountFrame: CrossFrameExpectation;
+};
+export type CrossRejectedLeg = {
+  readonly inputIndex: number;
+  readonly accountInput: AccountPeerInput;
+  readonly reason:
+    | "unpaired"
+    | "multiple-candidates-per-input"
+    | "candidate-invalid"
+    | "pair-match-failed"
+    | "atomic-group-invalid";
+  readonly detail: readonly string[];
+};
+export type CrossPairSelection = {
+  readonly inputs: readonly RoutedEntityInput[];
+  readonly pairs: readonly CrossPair[];
+  readonly rejectedLegs: readonly CrossRejectedLeg[];
+};
+type ReplicaFinder = (entityId: unknown, signerId: unknown) => EntityReplica | undefined;
+/** Finds the first replica per lowercase `entity:signer`. */
 const replicaFinder = (view: CrossAdmissionView): ReplicaFinder => {
-  const keyOf = (entity: unknown, signer: unknown): string => `${entityKey(entity)}:${entityKey(signer)}`;
-  const byKey = new Map(firstBy(view.entities.values(), (r) => keyOf(r.state.id, r.signerId)).map((r) => [keyOf(r.state.id, r.signerId), r] as const));
-  return (entity, signer) => byKey.get(keyOf(entity, signer));
+  const keyOf = (entityId: unknown, signerId: unknown): string =>
+    `${lowercased(entityId)}:${lowercased(signerId)}`;
+  const replicaKeyOf = (replica: EntityReplica): string =>
+    keyOf(replica.state.id, replica.signerId);
+  const firstReplicas = firstBy(view.entities.values(), replicaKeyOf);
+  const byKey = new Map(firstReplicas.map((replica) => [replicaKeyOf(replica), replica] as const));
+  return (entityId, signerId) => byKey.get(keyOf(entityId, signerId));
 };
-const replicaAccount = (r: EntityReplica | undefined, peer: string): AccountReplica | undefined => [...(r?.accountReplicas ?? [])].find(([id]) => entityKey(id) === entityKey(peer))?.[1];
-const headMatches = (a: AccountReplica, height: bigint, hash: string): boolean => a.head.height === height && entityKey(a.head.prevFrameHash) === entityKey(hash);
-/** A hub's ACK names its pending proposal, or replays the committed head (which keeps its cross-j txs). */
-const ackCandidate = (r: EntityReplica, input: RoutedEntityInput, inputIndex: number, accountInput: AccountPeerInput): readonly CrossCandidate[] => {
-  const ack = accountAck(accountInput), account = replicaAccount(r, accountInput.fromEntityId);
+const accountWith = (
+  replica: EntityReplica | undefined,
+  peerEntityId: string,
+): AccountReplica | undefined => {
+  const entry = [...(replica?.accountReplicas ?? [])].find(
+    ([id]) => lowercased(id) === lowercased(peerEntityId),
+  );
+  return entry?.[1];
+};
+/** The Account's committed head is the frame of this height and hash. */
+const headIsFrame = (account: AccountReplica, height: bigint, stateHash: string): boolean =>
+  account.head.height === height &&
+  lowercased(account.head.prevFrameHash) === lowercased(stateHash);
+/**
+ * A hub's ACK names its pending proposal, or replays the committed head (which keeps its cross-j
+ * txs).
+ */
+const ackCandidate = (
+  replica: EntityReplica,
+  input: RoutedEntityInput,
+  inputIndex: number,
+  accountInput: AccountPeerInput,
+): readonly CrossCandidate[] => {
+  const ack = acknowledgedFrameOf(accountInput);
+  const account = accountWith(replica, accountInput.fromEntityId);
   if (ack === undefined || account === undefined) return [];
-  const pending = account._tag === "proposed" ? account.candidate.frame : undefined, head = account.head;
-  return pending !== undefined && pending.height === ack.height && entityKey(pending.stateHash) === entityKey(ack.frameHash) ? frameCandidate(input, inputIndex, accountInput, "ack", pending, false)
-    : head._tag === "installed" && headMatches(account, ack.height, ack.frameHash) ? frameCandidate(input, inputIndex, accountInput, "ack", { height: head.height, stateHash: head.prevFrameHash, txs: head.crossTxs ?? [] }, true)
-    : [];
+  const source = { input, inputIndex, accountInput, phase: "ack" as const };
+  const pending = account._tag === "proposed" ? account.candidate.frame : undefined;
+  const acksPending =
+    pending !== undefined &&
+    pending.height === ack.height &&
+    lowercased(pending.stateHash) === lowercased(ack.frameHash);
+  if (acksPending) return frameCandidate({ ...source, frame: pending, commitment: "pending" });
+  const head = account.head;
+  if (head._tag !== "installed" || !headIsFrame(account, ack.height, ack.frameHash)) return [];
+  const committedFrame = {
+    height: head.height,
+    stateHash: head.prevFrameHash,
+    txs: head.crossTxs ?? [],
+  };
+  return frameCandidate({ ...source, frame: committedFrame, commitment: "committed" });
+};
+/** The proposal candidate, marked committed when the replica's head already is its frame. */
+const withProposalCommitment = (
+  replica: EntityReplica,
+  candidate: CrossCandidate,
+): CrossCandidate => {
+  const account = accountWith(replica, candidate.accountInput.fromEntityId);
+  const committed =
+    account !== undefined &&
+    headIsFrame(account, candidate.frame.height, candidate.frame.stateHash);
+  return { ...candidate, commitment: committed ? "committed" : "pending" };
+};
+const isHub = (replica: EntityReplica): boolean => {
+  const profile = (replica.state.committed["profile"] ?? {}) as { readonly [key: string]: unknown };
+  return profile["isHub"] === true;
 };
 /** A hub reads ACK legs against its pending frame; any other Entity reads proposal legs. */
-const collectCrossCandidates = (find: ReplicaFinder, inputs: readonly RoutedEntityInput[]): readonly CrossCandidate[] => inputs.flatMap((input, index) => {
-  const r = find(input.entityId, input.signerId);
-  const hub = r !== undefined && ((r.state.committed["profile"] ?? {}) as { readonly [k: string]: unknown })["isHub"] === true;
-  return r === undefined ? [] : routedAccountInputs(input).flatMap((a) => (hub ? ackCandidate(r, input, index, a) : proposalCandidate(input, index, a).map((c) => {
-    const account = replicaAccount(r, a.fromEntityId);
-    return { ...c, alreadyCommitted: account !== undefined && headMatches(account, c.frame.height, c.frame.stateHash) };
-  })));
-});
+const collectCrossCandidates = (
+  find: ReplicaFinder,
+  inputs: readonly RoutedEntityInput[],
+): readonly CrossCandidate[] =>
+  inputs.flatMap((input, inputIndex) => {
+    const replica = find(input.entityId, input.signerId);
+    if (replica === undefined) return [];
+    const accountInputs = accountInputsOf(input);
+    if (isHub(replica)) {
+      return accountInputs.flatMap((accountInput) =>
+        ackCandidate(replica, input, inputIndex, accountInput),
+      );
+    }
+    return accountInputs
+      .flatMap((accountInput) => proposalCandidate(input, inputIndex, accountInput))
+      .map((candidate) => withProposalCommitment(replica, candidate));
+  });
 const cohortKey = (input: RoutedEntityInput, phase: CrossPhase, pairKey: string): string =>
-  JSON.stringify([phase, pairKey, admissionOrigin(input), input.sourceRuntimeFrame?.height ?? null, input.sourceRuntimeFrame?.timestamp ?? null]);
-type Ladder = { readonly byFull: ReadonlyMap<string, string>; readonly byPartial: ReadonlyMap<string, string> };
-type LadderClaim = readonly [routeHash: string, full: string, partial: string];
+  JSON.stringify([
+    phase,
+    pairKey,
+    admissionOrigin(input),
+    input.sourceRuntimeFrame?.height ?? null,
+    input.sourceRuntimeFrame?.timestamp ?? null,
+  ]);
+/** Which route owns each full hash and each partial root. */
+type Ladder = {
+  readonly byFull: ReadonlyMap<string, string>;
+  readonly byPartial: ReadonlyMap<string, string>;
+};
+type LadderClaim = {
+  readonly routeHash: string;
+  readonly fullHash: string;
+  readonly partialRoot: string;
+};
+const claimRoot = (
+  owners: ReadonlyMap<string, string>,
+  claim: LadderClaim,
+  root: "fullHash" | "partialRoot",
+): Result<ReadonlyMap<string, string>, string> => {
+  const owner = owners.get(claim[root]);
+  if (owner && owner !== claim.routeHash) {
+    return err(`opening-shared-hash-material:${owner}/${claim.routeHash}:${root}`);
+  }
+  return ok(mapSet(owners, claim[root], claim.routeHash));
+};
 /** A root already owned by another route refuses the claim, which then records nothing. */
-const claimLadder = (l: Ladder, [routeHash, full, partial]: LadderClaim): Result<Ladder, string> => {
-  const free = (owners: ReadonlyMap<string, string>, root: string, what: string): Result<void, string> => {
-    const owner = owners.get(root);
-    return guard(!owner || owner === routeHash, `opening-shared-hash-material:${owner}/${routeHash}:${what}`);
-  };
-  return map(checks(free(l.byFull, full, "fullHash"), free(l.byPartial, partial, "partialRoot")), () => ({ byFull: mapSet(l.byFull, full, routeHash), byPartial: mapSet(l.byPartial, partial, routeHash) }));
+const claimLadder = (ladder: Ladder, claim: LadderClaim): Result<Ladder, string> => {
+  const byFull = claimRoot(ladder.byFull, claim, "fullHash");
+  const byPartial = claimRoot(ladder.byPartial, claim, "partialRoot");
+  if (!byFull.ok) return byFull;
+  if (!byPartial.ok) return byPartial;
+  return ok({ byFull: byFull.value, byPartial: byPartial.value });
 };
-/** The ladders claimed by every live Account pull, retained swap and authorization. */
-const ladderOwners = (view: CrossAdmissionView): Ladder => [...view.entities.values()].flatMap((r): readonly LadderClaim[] => [
-  ...[...r.accountReplicas.values()].flatMap((a) => [...(a.state.pulls?.values() ?? [])].flatMap((pull): readonly LadderClaim[] => {
-    const routeHash = lower(pull.crossJurisdiction?.routeHash);
-    return routeHash ? [[routeHash, lower(pull.fullHash), lower(pull.partialRoot)]] : [];
-  })),
-  ...[...(r.state.crossJurisdictionSwaps?.values() ?? []), ...(r.state.crossJurisdictionAuthorizations?.values() ?? [])].flatMap((route) =>
-    [route.sourcePull, route.targetPull].flatMap((pull): readonly LadderClaim[] => {
-      const full = lower(pull?.fullHash), partial = lower(pull?.partialRoot);
-      return pull !== undefined && full && partial ? [[lower(route.routeHash), full, partial]] : [];
-    })),
-]).reduce((l, claim) => unwrapOr(claimLadder(l, claim), () => l), { byFull: new Map(), byPartial: new Map() } as Ladder);
-/** Every opening pull names its order and route; one route keeps one ladder; no ladder is shared with another live route. */
-const sharedHashFailure = (view: CrossAdmissionView, group: readonly CrossCandidate[]): Result<unknown, string> =>
-  foldResult(group.flatMap((c) => [...c.sourcePulls, ...c.targetPulls]), { ladder: ladderOwners(view), byRoute: new Map() as ReadonlyMap<string, LadderClaim> }, (s, pull) => {
-    const orderId = String(pull.crossJurisdiction?.orderId || "").trim(), claim = [lower(pull.crossJurisdiction?.routeHash), lower(pull.fullHash), lower(pull.partialRoot)] as const;
-    const [routeHash] = claim, seen = s.byRoute.get(routeHash);
-    return !orderId ? err("opening-order-id-missing") : !routeHash ? err(`opening-route-hash-missing:${orderId}`)
-      : seen !== undefined ? (seen[1] === claim[1] && seen[2] === claim[2] ? ok(s) : err(`opening-intra-route-hash-divergent:${routeHash}`))
-      : map(claimLadder(s.ladder, claim), (ladder) => ({ ladder, byRoute: mapSet(s.byRoute, routeHash, claim) }));
-  });
-type Sided = readonly [CrossCandidate, RoutedEntityInput];
-/** One target pull per source pull; both siblings hold the identical `intent` authorization; exact participants; a valid prepared route. */
-const authorizeSourcePull = (view: CrossAdmissionView, find: ReplicaFinder, [source, si]: Sided, [target, ti]: Sided) => (pull: PullLockTx): Result<unknown, string> => {
-  const binding = pull.crossJurisdiction, route = pull.crossJurisdictionRoute;
-  if (!binding || !route) return err("opening-route-missing");
-  if (target.targetPulls.filter((t) => bindingKey(t) === bindingKey(pull)).length !== 1) return err(`opening-target-pull-mismatch:${binding.orderId}`);
-  const sr = find(si.entityId, si.signerId), tr = find(ti.entityId, ti.signerId), routeHash = entityKey(route.routeHash);
-  if (sr === undefined || tr === undefined) return err("opening-replica-unresolved");
-  if (!routeHash) return err("opening-route-hash-missing");
-  const sa = sr.state.crossJurisdictionAuthorizations?.get(route.orderId), ta = tr.state.crossJurisdictionAuthorizations?.get(route.orderId);
-  if (sa === undefined || ta === undefined) return err("opening-authorization-absent");
-  const participants = [[si.entityId, route.source.entityId], [si.signerId, route.sourceSignerId], [source.accountInput.fromEntityId, route.source.counterpartyEntityId],
-    [ti.entityId, route.target.counterpartyEntityId], [ti.signerId, route.targetSignerId], [target.accountInput.fromEntityId, route.target.entityId]] as const;
-  return chain(checks(
-    guard(sa.status === "intent" && ta.status === "intent", `opening-authorization-status:${sa.status}/${ta.status}`),
-    guard(!(sa.sourcePull || sa.targetPull || ta.sourcePull || ta.targetPull), "opening-authorization-already-pulled"),
-    guard(entityKey(sa.routeHash) === routeHash && entityKey(ta.routeHash) === routeHash, "opening-authorization-route-hash-mismatch"),
-    guard(stableJson(sa) === stableJson(ta), "opening-authorization-divergent"),
-    guard(participants.every(([a, b]) => entityKey(a) === entityKey(b)), "opening-route-participant-mismatch"),
-  ), () => mapErr(validatePreparedCrossRoute(crossView(sr.state, sr.accountReplicas, sr.state.timestamp > view.timestamp ? sr.state.timestamp : view.timestamp), { ...route, status: "target_prepared" }),
-    (e) => `opening-prepared-route-rejected:${runtimeErrorText(e)}`));
-};
-/** An opening proposal cohort is exactly two legs, unique ladders, and every source pull authorized in both orientations. */
-const openingFailure = (view: CrossAdmissionView, find: ReplicaFinder, group: readonly CrossCandidate[], inputs: readonly RoutedEntityInput[]): Result<unknown, string> => {
-  if (group[0]?.phase !== "proposal" || !group.some((c) => c.sourcePulls.length > 0 || c.targetPulls.length > 0)) return ok(undefined);
-  const [left, right] = group as readonly [CrossCandidate, CrossCandidate];
-  return group.length !== 2 ? err(`opening-cohort-size:${group.length}`) : chain(sharedHashFailure(view, group), () => traverse([[left, right], [right, left]] as const, ([source, target]) => {
-    const si = inputs[source.inputIndex], ti = inputs[target.inputIndex];
-    return si === undefined || ti === undefined ? err("opening-input-missing") : traverse(source.sourcePulls, authorizeSourcePull(view, find, [source, si], [target, ti]));
-  }));
-};
-/** Drop the rejected Account legs (nested runtimeOutput legs included) and the cohort marker; an input left with nothing is dropped. */
-const stripAccountLegs = (input: RoutedEntityInput, rejected: ReadonlySet<AccountPeerInput>): readonly RoutedEntityInput[] => {
-  const { atomicCrossJurisdictionPair: _marker, ...rest } = input;
-  if (input.input.kind !== "txs") return [rest];
-  const kept = (txs: readonly EntityTx[]): readonly EntityTx[] => txs.filter((t) => t.type !== "accountInput" || !rejected.has(t.data));
-  const txs = input.input.txs.flatMap((tx): readonly EntityTx[] => {
-    if (tx.type !== "runtimeOutput") return kept([tx]);
-    const nested = kept(tx.data.entityTxs);
-    return nested.length === tx.data.entityTxs.length ? [tx] : nested.length > 0 ? [{ ...tx, data: { ...tx.data, entityTxs: nested } }] : [];
-  });
-  return txs.length === 0 ? [] : [{ ...rest, input: { ...input.input, txs } }];
-};
-/** The Account legs an input loses: its cross-j candidates, or all its Account inputs when none is a candidate. */
-const legInputs = (candidates: readonly CrossCandidate[], inputs: readonly RoutedEntityInput[], inputIndex: number): readonly AccountPeerInput[] => {
-  const matched = candidates.filter((c) => c.inputIndex === inputIndex), input = inputs[inputIndex];
-  return matched.length > 0 ? matched.map((c) => c.accountInput) : input === undefined ? [] : routedAccountInputs(input);
-};
-/** Each surviving input with its original index; an input with no rejected leg is kept untouched. */
-const removeRejectedLegs = (inputs: readonly RoutedEntityInput[], legs: readonly Pick<CrossRejectedLeg, "inputIndex" | "accountInput">[]): readonly (readonly [number, RoutedEntityInput])[] =>
-  inputs.flatMap((input, index) => {
-    const rejected = new Set(legs.flatMap((l) => (l.inputIndex === index ? [l.accountInput] : [])));
-    return (rejected.size === 0 ? [input] : stripAccountLegs(input, rejected)).map((kept) => [index, kept] as const);
-  });
-const withoutCrossLegs = (view: CrossAdmissionView, input: RoutedEntityInput): RoutedEntityInput | undefined =>
-  removeRejectedLegs([input], legInputs(collectCrossCandidates(replicaFinder(view), [input]), [input], 0).map((accountInput) => ({ inputIndex: 0, accountInput })))[0]?.[1];
-/**
- * Every uncommitted cross-j Account leg must belong to an exact two-leg cohort (same phase, route set, origin and source frame; sibling Entities;
- * paired pulls and closes; an authorized opening). Every other leg is stripped with its reason; a marked cohort that did not survive loses both legs.
- */
-export const matchedCrossPairs = (view: CrossAdmissionView, inputs: readonly RoutedEntityInput[]): CrossPairSelection => {
-  const find = replicaFinder(view), candidates = collectCrossCandidates(find, inputs);
-  const atomicGroups = groupBy(inputs.flatMap((input, index) => { const m = input.atomicCrossJurisdictionPair; return m === undefined ? [] : [[cohortKey(input, m.phase, m.pairKey), index] as const]; }));
-  if (candidates.length === 0 && atomicGroups.size === 0) return { inputs: [...inputs], pairs: [], rejectedLegs: [] };
-  // an exact replay of a committed frame is not a leg; one input carries exactly one leg
-  const uncommitted = candidates.filter((c) => !c.alreadyCommitted), legIndexes = uncommitted.map((c) => c.inputIndex);
-  const multi = new Set(legIndexes.filter((i) => legIndexes.indexOf(i) !== legIndexes.lastIndexOf(i)));
-  const invalidDetails = groupBy(uncommitted.flatMap((c) => c.invalidReasons.map((r) => [c.inputIndex, r] as const)));
-  /** Sibling Entities, one source frame, paired frames and an authorized opening. */
-  const pairCohort = (group: readonly CrossCandidate[]): Result<CrossPair, string> => {
-    const [source, target] = sortWith(group, (a, b) => a.inputIndex - b.inputIndex) as [CrossCandidate, CrossCandidate];
-    const si = inputs[source.inputIndex] as RoutedEntityInput, ti = inputs[target.inputIndex] as RoutedEntityInput;
-    const expect = (input: RoutedEntityInput, c: CrossCandidate): CrossFrameExpectation =>
-      ({ entityId: input.entityId, signerId: input.signerId, counterpartyEntityId: c.accountInput.fromEntityId, height: c.frame.height, stateHash: c.frame.stateHash });
-    return chain(chain(checks(
-      guard(distinctSiblings(inputs, source.inputIndex, target.inputIndex), "legs-target-same-entity"),
-      guard(sameSourceFrame(si, ti), "legs-source-frame-differs"),
-      guard(framesPair(source, target), "legs-frames-do-not-pair"),
-    ), () => openingFailure(view, find, group, inputs)), () => ok({
-      pairKey: source.pairKey, phase: source.phase, sourceInputIndex: source.inputIndex, targetInputIndex: target.inputIndex, sourceAccountFrame: expect(si, source), targetAccountFrame: expect(ti, target),
-    }));
-  };
-  // a failed cohort marks its inputs invalid for every later cohort
-  type Matching = { readonly pairs: readonly CrossPair[]; readonly failures: ReadonlyMap<number, readonly string[]> };
-  const { pairs, failures } = [...groupBy(uncommitted.map((c) => [cohortKey(inputs[c.inputIndex] as RoutedEntityInput, c.phase, c.pairKey), c] as const)).values()].reduce<Matching>((m, group) => {
-    const indexes = [...new Set(group.map((c) => c.inputIndex))];
-    const verdict = group.length !== 2 ? err(`cohort-size:${group.length}`) : indexes.length !== 2 ? err("cohort-legs-share-one-input")
-      : indexes.some((i) => multi.has(i) || invalidDetails.has(i) || m.failures.has(i)) ? err("cohort-leg-already-invalid") : pairCohort(group);
-    return verdict.ok ? { ...m, pairs: [...m.pairs, verdict.value] } : { ...m, failures: indexes.reduce((f, i) => mapSet(f, i, [...(f.get(i) ?? []), verdict.error]), m.failures) };
-  }, { pairs: [], failures: new Map() });
-  const paired = new Set(pairs.flatMap((p) => [p.sourceInputIndex, p.targetInputIndex])), committed = new Set(candidates.filter((c) => c.alreadyCommitted).map((c) => c.inputIndex));
-  // a marked cohort survives only as an exact pair or an exact committed replay
-  const atomicInvalid = new Set([...atomicGroups.values()].flatMap((group) =>
-    group.length === 2 && (group.every((i) => committed.has(i)) || pairs.some((p) => group.includes(p.sourceInputIndex) && group.includes(p.targetInputIndex))) ? [] : group));
-  const invalid = (i: number): boolean => multi.has(i) || invalidDetails.has(i) || failures.has(i);
-  const rejected = sortWith(new Set([...legIndexes.filter((i) => invalid(i) || !paired.has(i)), ...atomicInvalid]), (a, b) => a - b);
-  const reasonOf = (i: number): CrossRejectedLeg["reason"] =>
-    multi.has(i) ? "multiple-candidates-per-input" : invalidDetails.has(i) ? "candidate-invalid" : failures.has(i) ? "pair-match-failed" : atomicInvalid.has(i) ? "atomic-group-invalid" : "unpaired";
-  const rejectedLegs = rejected.flatMap((inputIndex) => legInputs(candidates, inputs, inputIndex).map((accountInput): CrossRejectedLeg => {
-    const reason = reasonOf(inputIndex);
-    return { inputIndex, accountInput, reason, detail: (reason === "pair-match-failed" ? failures.get(inputIndex) : invalidDetails.get(inputIndex)) ?? [] };
-  }));
-  const retained = removeRejectedLegs(inputs, rejectedLegs), remapped = new Map(retained.map(([old], next) => [old, next] as const));
-  return {
-    inputs: retained.map(([, input]) => input), rejectedLegs,
-    pairs: pairs.flatMap((p) => {
-      const s = remapped.get(p.sourceInputIndex), t = remapped.get(p.targetInputIndex);
-      return rejected.includes(p.sourceInputIndex) || rejected.includes(p.targetInputIndex) || s === undefined || t === undefined ? [] : [{ ...p, sourceInputIndex: s, targetInputIndex: t }];
+const accountPullClaims = (replica: EntityReplica): readonly LadderClaim[] =>
+  [...replica.accountReplicas.values()]
+    .flatMap((account) => [...(account.state.pulls?.values() ?? [])])
+    .flatMap((pull) => {
+      const routeHash = lower(pull.crossJurisdiction?.routeHash);
+      if (!routeHash) return [];
+      return [{ routeHash, fullHash: lower(pull.fullHash), partialRoot: lower(pull.partialRoot) }];
+    });
+const routeClaims = (replica: EntityReplica): readonly LadderClaim[] => {
+  const swaps = [...(replica.state.crossJurisdictionSwaps?.values() ?? [])];
+  const authorizations = [...(replica.state.crossJurisdictionAuthorizations?.values() ?? [])];
+  return [...swaps, ...authorizations].flatMap((route) =>
+    [route.sourcePull, route.targetPull].flatMap((pull) => {
+      const fullHash = lower(pull?.fullHash);
+      const partialRoot = lower(pull?.partialRoot);
+      if (pull === undefined || !fullHash || !partialRoot) return [];
+      return [{ routeHash: lower(route.routeHash), fullHash, partialRoot }];
     }),
+  );
+};
+/**
+ * The ladders claimed by every live Account pull, retained swap and authorization; the first claim
+ * of a root wins.
+ */
+const liveLadder = (view: CrossAdmissionView): Ladder => {
+  const claims = [...view.entities.values()].flatMap((replica) => [
+    ...accountPullClaims(replica),
+    ...routeClaims(replica),
+  ]);
+  const empty: Ladder = { byFull: new Map(), byPartial: new Map() };
+  return claims.reduce(
+    (ladder, claim) => unwrapOr(claimLadder(ladder, claim), () => ladder),
+    empty,
+  );
+};
+type OpeningClaims = {
+  readonly ladder: Ladder;
+  readonly byRoute: ReadonlyMap<string, LadderClaim>;
+};
+const claimOpeningPull = (
+  claims: OpeningClaims,
+  pull: PullLockTx,
+): Result<OpeningClaims, string> => {
+  const orderId = String(pull.crossJurisdiction?.orderId || "").trim();
+  const claim = {
+    routeHash: lower(pull.crossJurisdiction?.routeHash),
+    fullHash: lower(pull.fullHash),
+    partialRoot: lower(pull.partialRoot),
   };
+  if (!orderId) return err("opening-order-id-missing");
+  if (!claim.routeHash) return err(`opening-route-hash-missing:${orderId}`);
+  const earlier = claims.byRoute.get(claim.routeHash);
+  if (earlier !== undefined) {
+    const sameLadder =
+      earlier.fullHash === claim.fullHash && earlier.partialRoot === claim.partialRoot;
+    return sameLadder ? ok(claims) : err(`opening-intra-route-hash-divergent:${claim.routeHash}`);
+  }
+  return map(claimLadder(claims.ladder, claim), (ladder) => ({
+    ladder,
+    byRoute: mapSet(claims.byRoute, claim.routeHash, claim),
+  }));
 };
-/** A transport retry of one proposal cohort (identical legs, only the source frame advanced) keeps only its latest delivery, both legs together. */
-const coalesceProposalRetries = (inputs: readonly RoutedEntityInput[]): readonly RoutedEntityInput[] => {
-  type Delivery = { readonly indexes: readonly number[]; readonly height: number; readonly timestamp: number };
-  type Coalesced = { readonly winners: ReadonlyMap<string, Delivery>; readonly dropped: readonly number[] };
-  const { dropped } = potentialCrossPairs(inputs).reduce<Coalesced>((s, pair) => {
-    const indexes = [pair.sourceInputIndex, pair.targetInputIndex], legs = indexes.map((i) => inputs[i] as RoutedEntityInput), frame = legs[0]?.sourceRuntimeFrame;
-    if (frame === undefined || !legs.every((leg) => leg.atomicCrossJurisdictionPair?.phase === "proposal" && leg.atomicCrossJurisdictionPair.pairKey === pair.pairKey)) return s;
-    const key = canon(sortedBy(legs.map((leg) => { const { sourceRuntimeFrame: _retry, ...exact } = leg; return canon(exact); }), (k) => k));
-    const delivery = { indexes, height: frame.height, timestamp: frame.timestamp }, winner = s.winners.get(key);
-    return winner === undefined ? { ...s, winners: mapSet(s.winners, key, delivery) }
-      : (delivery.height - winner.height || delivery.timestamp - winner.timestamp) > 0 ? { winners: mapSet(s.winners, key, delivery), dropped: [...s.dropped, ...winner.indexes] }
-      : { ...s, dropped: [...s.dropped, ...delivery.indexes] };
-  }, { winners: new Map(), dropped: [] });
-  return inputs.filter((_, i) => !dropped.includes(i));
+/**
+ * Every opening pull names its order and route; one route keeps one ladder; no ladder is shared
+ * with another live route.
+ */
+const claimOpeningLadders = (
+  view: CrossAdmissionView,
+  legs: readonly CohortLeg[],
+): Result<unknown, string> => {
+  const pulls = legs.flatMap(({ candidate }) => [
+    ...candidate.sourcePulls,
+    ...candidate.targetPulls,
+  ]);
+  const start: OpeningClaims = { ladder: liveLadder(view), byRoute: new Map() };
+  return foldResult(pulls, start, claimOpeningPull);
 };
-/** Each admitted pair becomes two adjacent marked inputs (in first-leg order) ahead of every other input. */
-const groupPairsFirst = (view: CrossAdmissionView, selection: CrossPairSelection): Result<CrossPairSelection, RuntimeError> => {
-  const legs = sortWith(selection.pairs, (a, b) => pairStart(a) - pairStart(b)).flatMap((p) => sortWith([p.sourceInputIndex, p.targetInputIndex], (a, b) => a - b));
+/** A cohort leg: the candidate and the Entity input it came from. */
+type CohortLeg = { readonly candidate: CrossCandidate; readonly input: RoutedEntityInput };
+const participantsMatchRoute = (
+  source: CohortLeg,
+  target: CohortLeg,
+  route: CrossRoute,
+): boolean => {
+  const named = [
+    [source.input.entityId, route.source.entityId],
+    [source.input.signerId, route.sourceSignerId],
+    [source.candidate.accountInput.fromEntityId, route.source.counterpartyEntityId],
+    [target.input.entityId, route.target.counterpartyEntityId],
+    [target.input.signerId, route.targetSignerId],
+    [target.candidate.accountInput.fromEntityId, route.target.entityId],
+  ] as const;
+  return named.every(([actual, expected]) => lowercased(actual) === lowercased(expected));
+};
+const validatePreparedOpening = (
+  view: CrossAdmissionView,
+  replica: EntityReplica,
+  route: CrossRoute,
+): Result<unknown, string> => {
+  const clock = replica.state.timestamp > view.timestamp ? replica.state.timestamp : view.timestamp;
+  const crossState = crossView(replica.state, replica.accountReplicas, clock);
+  const prepared = validatePreparedCrossRoute(crossState, { ...route, status: "target_prepared" });
+  return mapErr(prepared, (e) => `opening-prepared-route-rejected:${runtimeErrorText(e)}`);
+};
+type AdmissionContext = {
+  readonly view: CrossAdmissionView;
+  readonly find: ReplicaFinder;
+  readonly inputs: readonly RoutedEntityInput[];
+};
+/**
+ * One target pull per source pull; both siblings hold the identical `intent` authorization; exact
+ * participants; a valid prepared route.
+ */
+const authorizeSourcePull =
+  ({ view, find }: AdmissionContext, source: CohortLeg, target: CohortLeg) =>
+  (pull: PullLockTx): Result<unknown, string> => {
+    const binding = pull.crossJurisdiction;
+    const route = pull.crossJurisdictionRoute;
+    if (!binding || !route) return err("opening-route-missing");
+    const targetPulls = target.candidate.targetPulls.filter(
+      (targetPull) => pullRouteKey(targetPull) === pullRouteKey(pull),
+    );
+    if (targetPulls.length !== 1) return err(`opening-target-pull-mismatch:${binding.orderId}`);
+    const sourceReplica = find(source.input.entityId, source.input.signerId);
+    const targetReplica = find(target.input.entityId, target.input.signerId);
+    if (sourceReplica === undefined || targetReplica === undefined) {
+      return err("opening-replica-unresolved");
+    }
+    const routeHash = lowercased(route.routeHash);
+    if (!routeHash) return err("opening-route-hash-missing");
+    const sourceAuthorization = sourceReplica.state.crossJurisdictionAuthorizations?.get(
+      route.orderId,
+    );
+    const targetAuthorization = targetReplica.state.crossJurisdictionAuthorizations?.get(
+      route.orderId,
+    );
+    if (sourceAuthorization === undefined || targetAuthorization === undefined) {
+      return err("opening-authorization-absent");
+    }
+    const authorizations = [sourceAuthorization, targetAuthorization];
+    const authorized = checks(
+      guard(
+        authorizations.every((a) => a.status === "intent"),
+        `opening-authorization-status:${sourceAuthorization.status}/${targetAuthorization.status}`,
+      ),
+      guard(
+        !authorizations.some((a) => a.sourcePull || a.targetPull),
+        "opening-authorization-already-pulled",
+      ),
+      guard(
+        authorizations.every((a) => lowercased(a.routeHash) === routeHash),
+        "opening-authorization-route-hash-mismatch",
+      ),
+      guard(
+        stableJson(sourceAuthorization) === stableJson(targetAuthorization),
+        "opening-authorization-divergent",
+      ),
+      guard(participantsMatchRoute(source, target, route), "opening-route-participant-mismatch"),
+    );
+    return chain(authorized, () => validatePreparedOpening(view, sourceReplica, route));
+  };
+const opensRoutes = (leg: CohortLeg): boolean =>
+  leg.candidate.sourcePulls.length > 0 || leg.candidate.targetPulls.length > 0;
+/**
+ * An opening proposal cohort claims unique ladders and has every source pull authorized in both
+ * orientations.
+ */
+const authorizeOpening = (
+  context: AdmissionContext,
+  source: CohortLeg,
+  target: CohortLeg,
+): Result<unknown, string> => {
+  const legs = [source, target];
+  if (source.candidate.phase !== "proposal" || !legs.some(opensRoutes)) return ok(undefined);
+  const orientations = [
+    [source, target],
+    [target, source],
+  ] as const;
+  const authorizeOrientation = ([from, to]: readonly [CohortLeg, CohortLeg]): Result<
+    unknown,
+    string
+  > => traverse(from.candidate.sourcePulls, authorizeSourcePull(context, from, to));
+  return chain(claimOpeningLadders(context.view, legs), () =>
+    traverse(orientations, authorizeOrientation),
+  );
+};
+const frameExpectation = ({ candidate, input }: CohortLeg): CrossFrameExpectation => ({
+  entityId: input.entityId,
+  signerId: input.signerId,
+  counterpartyEntityId: candidate.accountInput.fromEntityId,
+  height: candidate.frame.height,
+  stateHash: candidate.frame.stateHash,
+});
+/** Sibling Entities, one source frame, paired frames and an authorized opening. */
+const pairCohort = (
+  context: AdmissionContext,
+  group: readonly CrossCandidate[],
+): Result<CrossPair, string> => {
+  const [source, target] = sortWith(group, (a, b) => a.inputIndex - b.inputIndex).map(
+    (candidate): CohortLeg => ({
+      candidate,
+      input: context.inputs[candidate.inputIndex] as RoutedEntityInput,
+    }),
+  ) as [CohortLeg, CohortLeg];
+  const legsPair = checks(
+    guard(targetDistinctEntities(source.input, target.input), "legs-target-same-entity"),
+    guard(shareSourceFrame(source.input, target.input), "legs-source-frame-differs"),
+    guard(candidatesPair(source.candidate, target.candidate), "legs-frames-do-not-pair"),
+  );
+  const authorized = chain(legsPair, () => authorizeOpening(context, source, target));
+  return map(authorized, () => ({
+    pairKey: source.candidate.pairKey,
+    phase: source.candidate.phase,
+    sourceInputIndex: source.candidate.inputIndex,
+    targetInputIndex: target.candidate.inputIndex,
+    sourceAccountFrame: frameExpectation(source),
+    targetAccountFrame: frameExpectation(target),
+  }));
+};
+const isRejectedLeg = (tx: EntityTx, rejected: ReadonlySet<AccountPeerInput>): boolean =>
+  tx.type === "accountInput" && rejected.has(tx.data);
+/**
+ * The tx without its rejected Account legs: a runtimeOutput keeps its other nested txs, or vanishes
+ * with none left.
+ */
+const withoutRejectedLegs = (
+  tx: EntityTx,
+  rejected: ReadonlySet<AccountPeerInput>,
+): readonly EntityTx[] => {
+  if (tx.type !== "runtimeOutput") return isRejectedLeg(tx, rejected) ? [] : [tx];
+  const nested = tx.data.entityTxs.filter((nestedTx) => !isRejectedLeg(nestedTx, rejected));
+  if (nested.length === tx.data.entityTxs.length) return [tx];
+  if (nested.length === 0) return [];
+  return [{ ...tx, data: { ...tx.data, entityTxs: nested } }];
+};
+/** Drop the rejected Account legs and the cohort marker; an input left with nothing is dropped. */
+const stripAccountLegs = (
+  input: RoutedEntityInput,
+  rejected: ReadonlySet<AccountPeerInput>,
+): readonly RoutedEntityInput[] => {
+  const { atomicCrossJurisdictionPair: _marker, ...unmarked } = input;
+  if (input.input.kind !== "txs") return [unmarked];
+  const txs = input.input.txs.flatMap((tx) => withoutRejectedLegs(tx, rejected));
+  if (txs.length === 0) return [];
+  return [{ ...unmarked, input: { ...input.input, txs } }];
+};
+/**
+ * The Account legs an input loses: its cross-j candidates, or all its Account inputs when none is a
+ * candidate.
+ */
+const legsToStrip = (
+  candidates: readonly CrossCandidate[],
+  input: RoutedEntityInput | undefined,
+  inputIndex: number,
+): readonly AccountPeerInput[] => {
+  const matched = candidates.filter((candidate) => candidate.inputIndex === inputIndex);
+  if (matched.length > 0) return matched.map((candidate) => candidate.accountInput);
+  return input === undefined ? [] : accountInputsOf(input);
+};
+type StrippedLeg = Pick<CrossRejectedLeg, "inputIndex" | "accountInput">;
+/**
+ * Each surviving input with its original index; an input with no rejected leg is kept untouched.
+ */
+const removeRejectedLegs = (
+  inputs: readonly RoutedEntityInput[],
+  legs: readonly StrippedLeg[],
+): readonly (readonly [number, RoutedEntityInput])[] =>
+  inputs.flatMap((input, index) => {
+    const rejected = new Set(
+      legs.flatMap((leg) => (leg.inputIndex === index ? [leg.accountInput] : [])),
+    );
+    const survivors = rejected.size === 0 ? [input] : stripAccountLegs(input, rejected);
+    return survivors.map((survivor) => [index, survivor] as const);
+  });
+/** The input without its cross-j Account legs, or undefined when nothing else is left. */
+const withoutCrossLegs = (
+  view: CrossAdmissionView,
+  input: RoutedEntityInput,
+): RoutedEntityInput | undefined => {
+  const candidates = collectCrossCandidates(replicaFinder(view), [input]);
+  const legs = legsToStrip(candidates, input, 0).map((accountInput) => ({
+    inputIndex: 0,
+    accountInput,
+  }));
+  const [survivor] = removeRejectedLegs([input], legs);
+  return survivor?.[1];
+};
+type CohortMatching = {
+  readonly pairs: readonly CrossPair[];
+  readonly failures: ReadonlyMap<number, readonly string[]>;
+};
+/**
+ * Every uncommitted cross-j Account leg must belong to an exact two-leg cohort (same phase, route
+ * set, origin and source frame; sibling Entities; paired pulls and closes; an authorized opening).
+ * Every other leg is stripped with its reason; a marked cohort that did not survive loses both
+ * legs.
+ */
+export const matchedCrossPairs = (
+  view: CrossAdmissionView,
+  inputs: readonly RoutedEntityInput[],
+): CrossPairSelection => {
+  const context: AdmissionContext = { view, find: replicaFinder(view), inputs };
+  const candidates = collectCrossCandidates(context.find, inputs);
+  const markedCohorts = groupByKey(
+    inputs.flatMap((input, index) => {
+      const marker = input.atomicCrossJurisdictionPair;
+      return marker === undefined
+        ? []
+        : [[cohortKey(input, marker.phase, marker.pairKey), index] as const];
+    }),
+  );
+  if (candidates.length === 0 && markedCohorts.size === 0) {
+    return { inputs: [...inputs], pairs: [], rejectedLegs: [] };
+  }
+  const pending = candidates.filter((candidate) => candidate.commitment === "pending");
+  const legIndexes = pending.map((candidate) => candidate.inputIndex);
+  // one input carries exactly one leg
+  const multiLegInputs = new Set(
+    legIndexes.filter((index) => legIndexes.indexOf(index) !== legIndexes.lastIndexOf(index)),
+  );
+  const invalidDetails = groupByKey(
+    pending.flatMap((candidate) =>
+      candidate.invalidReasons.map((reason) => [candidate.inputIndex, reason] as const),
+    ),
+  );
+  const cohorts = groupByKey(
+    pending.map((candidate) => {
+      const input = inputs[candidate.inputIndex] as RoutedEntityInput;
+      return [cohortKey(input, candidate.phase, candidate.pairKey), candidate] as const;
+    }),
+  );
+  const cohortVerdict = (
+    group: readonly CrossCandidate[],
+    indexes: readonly number[],
+    failures: CohortMatching["failures"],
+  ): Result<CrossPair, string> => {
+    if (group.length !== 2) return err(`cohort-size:${group.length}`);
+    if (indexes.length !== 2) return err("cohort-legs-share-one-input");
+    // a failed cohort marks its inputs invalid for every later cohort
+    const legAlreadyInvalid = indexes.some(
+      (index) => multiLegInputs.has(index) || invalidDetails.has(index) || failures.has(index),
+    );
+    if (legAlreadyInvalid) return err("cohort-leg-already-invalid");
+    return pairCohort(context, group);
+  };
+  const matchCohort = (
+    matching: CohortMatching,
+    group: readonly CrossCandidate[],
+  ): CohortMatching => {
+    const indexes = [...new Set(group.map((candidate) => candidate.inputIndex))];
+    const verdict = cohortVerdict(group, indexes, matching.failures);
+    if (verdict.ok) return { ...matching, pairs: [...matching.pairs, verdict.value] };
+    const failures = indexes.reduce(
+      (all, index) => mapSet(all, index, [...(all.get(index) ?? []), verdict.error]),
+      matching.failures,
+    );
+    return { ...matching, failures };
+  };
+  const unmatched: CohortMatching = { pairs: [], failures: new Map() };
+  const { pairs, failures } = [...cohorts.values()].reduce(matchCohort, unmatched);
+  const pairedInputs = new Set(
+    pairs.flatMap((pair) => [pair.sourceInputIndex, pair.targetInputIndex]),
+  );
+  const committedInputs = new Set(
+    candidates.flatMap((candidate) =>
+      candidate.commitment === "committed" ? [candidate.inputIndex] : [],
+    ),
+  );
+  // a marked cohort survives only as an exact pair or an exact committed replay
+  const markedCohortSurvives = (indexes: readonly number[]): boolean => {
+    if (indexes.length !== 2) return false;
+    const replayed = indexes.every((index) => committedInputs.has(index));
+    const paired = pairs.some(
+      (pair) => indexes.includes(pair.sourceInputIndex) && indexes.includes(pair.targetInputIndex),
+    );
+    return replayed || paired;
+  };
+  const brokenMarkedInputs = new Set(
+    [...markedCohorts.values()].filter((indexes) => !markedCohortSurvives(indexes)).flat(),
+  );
+  const unpairedLegs = legIndexes.filter((index) => !pairedInputs.has(index));
+  const rejectedInputs = sortWith(new Set([...unpairedLegs, ...brokenMarkedInputs]), ascending);
+  const rejectionReason = (index: number): CrossRejectedLeg["reason"] => {
+    if (multiLegInputs.has(index)) return "multiple-candidates-per-input";
+    if (invalidDetails.has(index)) return "candidate-invalid";
+    if (failures.has(index)) return "pair-match-failed";
+    if (brokenMarkedInputs.has(index)) return "atomic-group-invalid";
+    return "unpaired";
+  };
+  const rejectedLegs = rejectedInputs.flatMap((inputIndex) => {
+    const reason = rejectionReason(inputIndex);
+    const detail =
+      (reason === "pair-match-failed"
+        ? failures.get(inputIndex)
+        : invalidDetails.get(inputIndex)) ?? [];
+    return legsToStrip(candidates, inputs[inputIndex], inputIndex).map(
+      (accountInput): CrossRejectedLeg => ({ inputIndex, accountInput, reason, detail }),
+    );
+  });
+  const retained = removeRejectedLegs(inputs, rejectedLegs);
+  const newIndexOf = new Map(retained.map(([oldIndex], newIndex) => [oldIndex, newIndex] as const));
+  const survivingPairs = pairs.flatMap((pair) => {
+    const sourceInputIndex = newIndexOf.get(pair.sourceInputIndex);
+    const targetInputIndex = newIndexOf.get(pair.targetInputIndex);
+    const legRejected =
+      rejectedInputs.includes(pair.sourceInputIndex) ||
+      rejectedInputs.includes(pair.targetInputIndex);
+    if (legRejected || sourceInputIndex === undefined || targetInputIndex === undefined) return [];
+    return [{ ...pair, sourceInputIndex, targetInputIndex }];
+  });
+  return { inputs: retained.map(([, input]) => input), pairs: survivingPairs, rejectedLegs };
+};
+type CohortDelivery = {
+  readonly indexes: readonly number[];
+  readonly height: number;
+  readonly timestamp: number;
+};
+type RetryCoalescing = {
+  readonly latest: ReadonlyMap<string, CohortDelivery>;
+  readonly dropped: readonly number[];
+};
+/**
+ * A proposal cohort's delivery, keyed by its legs without their source frame so a transport retry
+ * shares the key.
+ */
+const proposalDelivery = (
+  inputs: readonly RoutedEntityInput[],
+  pair: PotentialCrossPair,
+): readonly (readonly [string, CohortDelivery])[] => {
+  const indexes = [pair.sourceInputIndex, pair.targetInputIndex];
+  const legs = indexes.map((index) => inputs[index] as RoutedEntityInput);
+  const frame = legs[0]?.sourceRuntimeFrame;
+  const markedAsThisPair = legs.every(
+    (leg) =>
+      leg.atomicCrossJurisdictionPair?.phase === "proposal" &&
+      leg.atomicCrossJurisdictionPair.pairKey === pair.pairKey,
+  );
+  if (frame === undefined || !markedAsThisPair) return [];
+  const legKeys = legs.map((leg) => {
+    const { sourceRuntimeFrame: _retry, ...exact } = leg;
+    return canon(exact);
+  });
+  const retryKey = canon(sortedBy(legKeys, (key) => key));
+  return [[retryKey, { indexes, height: frame.height, timestamp: frame.timestamp }]];
+};
+const isLaterDelivery = (a: CohortDelivery, b: CohortDelivery): boolean =>
+  a.height === b.height ? a.timestamp > b.timestamp : a.height > b.height;
+const keepLatestDelivery = (
+  coalescing: RetryCoalescing,
+  [key, delivery]: readonly [string, CohortDelivery],
+): RetryCoalescing => {
+  const latest = coalescing.latest.get(key);
+  if (latest === undefined) {
+    return { ...coalescing, latest: mapSet(coalescing.latest, key, delivery) };
+  }
+  if (isLaterDelivery(delivery, latest)) {
+    return {
+      latest: mapSet(coalescing.latest, key, delivery),
+      dropped: [...coalescing.dropped, ...latest.indexes],
+    };
+  }
+  return { ...coalescing, dropped: [...coalescing.dropped, ...delivery.indexes] };
+};
+/**
+ * A transport retry of one proposal cohort (identical legs, only the source frame advanced) keeps
+ * only its latest delivery, both legs together.
+ */
+const coalesceProposalRetries = (
+  inputs: readonly RoutedEntityInput[],
+): readonly RoutedEntityInput[] => {
+  const deliveries = potentialCrossPairs(inputs).flatMap((pair) => proposalDelivery(inputs, pair));
+  const start: RetryCoalescing = { latest: new Map(), dropped: [] };
+  const { dropped } = deliveries.reduce(keepLatestDelivery, start);
+  return inputs.filter((_, index) => !dropped.includes(index));
+};
+/**
+ * Each admitted pair becomes two adjacent marked inputs (in first-leg order) ahead of every other
+ * input.
+ */
+const groupPairsFirst = (
+  view: CrossAdmissionView,
+  selection: CrossPairSelection,
+): Result<CrossPairSelection, RuntimeError> => {
   if (selection.pairs.length === 0) return ok(selection);
-  if (!unique(legs.map(String))) return frameErr("RUNTIME_CROSS_J_ACCOUNT_PAIR_INPUT_OVERLAP");
-  const grouped = matchedCrossPairs(view, [...legs.map((i) => selection.inputs[i] as RoutedEntityInput), ...selection.inputs.filter((_, i) => !legs.includes(i))]);
-  return grouped.rejectedLegs.length > 0 || grouped.pairs.length !== selection.pairs.length ? frameErr("RUNTIME_CROSS_J_ACCOUNT_PAIR_GROUPING_DIVERGED") : ok({ ...grouped, inputs: withMarkers(grouped.inputs, grouped.pairs) });
+  const pairsInOrder = sortWith(selection.pairs, (a, b) => pairStart(a) - pairStart(b));
+  const legIndexes = pairsInOrder.flatMap((pair) =>
+    sortWith([pair.sourceInputIndex, pair.targetInputIndex], ascending),
+  );
+  if (!unique(legIndexes.map(String))) {
+    return frameErr("RUNTIME_CROSS_J_ACCOUNT_PAIR_INPUT_OVERLAP");
+  }
+  const pairLegs = legIndexes.map((index) => selection.inputs[index] as RoutedEntityInput);
+  const otherInputs = selection.inputs.filter((_, index) => !legIndexes.includes(index));
+  const regrouped = matchedCrossPairs(view, [...pairLegs, ...otherInputs]);
+  const diverged =
+    regrouped.rejectedLegs.length > 0 || regrouped.pairs.length !== selection.pairs.length;
+  if (diverged) return frameErr("RUNTIME_CROSS_J_ACCOUNT_PAIR_GROUPING_DIVERGED");
+  return ok({ ...regrouped, inputs: withPairMarkers(regrouped.inputs, regrouped.pairs) });
 };
-/** Coalesce retries, strip every unmatched cross-j leg (a replay refuses the frame instead), then order each pair as two adjacent marked inputs. */
-export const admitAtomicCrossPairs = (view: CrossAdmissionView, inputs: readonly RoutedEntityInput[], isReplay: boolean): Result<{ readonly inputs: readonly RoutedEntityInput[]; readonly pairs: readonly CrossPair[] }, RuntimeError> => {
+type AdmittedCrossPairs = {
+  readonly inputs: readonly RoutedEntityInput[];
+  readonly pairs: readonly CrossPair[];
+};
+/**
+ * Coalesce retries, strip every unmatched cross-j leg (a replay refuses the frame instead), then
+ * order each pair as two adjacent marked inputs.
+ */
+export const admitAtomicCrossPairs = (
+  view: CrossAdmissionView,
+  inputs: readonly RoutedEntityInput[],
+  isReplay: boolean,
+): Result<AdmittedCrossPairs, RuntimeError> => {
   const initial = matchedCrossPairs(view, coalesceProposalRetries(inputs));
-  if (initial.rejectedLegs.length > 0 && isReplay) return frameErr("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_INVALID");
-  const retained = initial.rejectedLegs.length > 0 ? matchedCrossPairs(view, initial.inputs) : initial;
-  return chain(groupPairsFirst(view, retained), (selection) => (selection.rejectedLegs.length > 0 ? frameErr("RUNTIME_CROSS_J_ACCOUNT_PAIR_SELECTION_UNSTABLE") : ok({ inputs: selection.inputs, pairs: selection.pairs })));
+  const stripped = initial.rejectedLegs.length > 0;
+  if (stripped && isReplay) return frameErr("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_INVALID");
+  const retained = stripped ? matchedCrossPairs(view, initial.inputs) : initial;
+  return chain(groupPairsFirst(view, retained), (selection) => {
+    if (selection.rejectedLegs.length > 0) {
+      return frameErr("RUNTIME_CROSS_J_ACCOUNT_PAIR_SELECTION_UNSTABLE");
+    }
+    return ok({ inputs: selection.inputs, pairs: selection.pairs });
+  });
 };
-const atomicPairInputsMatch = (a: RoutedEntityInput, b: RoutedEntityInput | undefined): b is RoutedEntityInput => {
-  const l = a.atomicCrossJurisdictionPair, r = b?.atomicCrossJurisdictionPair;
-  return l !== undefined && r !== undefined && b !== undefined && l.phase === r.phase && l.pairKey === r.pairKey && entityKey(a.entityId) !== entityKey(b.entityId);
+/** The next input is this one's pair partner: the same marker on another Entity. */
+const atomicPairInputsMatch = (
+  input: RoutedEntityInput,
+  next: RoutedEntityInput | undefined,
+): next is RoutedEntityInput => {
+  const marker = input.atomicCrossJurisdictionPair;
+  const nextMarker = next?.atomicCrossJurisdictionPair;
+  if (next === undefined || marker === undefined || nextMarker === undefined) return false;
+  return (
+    marker.phase === nextMarker.phase &&
+    marker.pairKey === nextMarker.pairKey &&
+    lowercased(input.entityId) !== lowercased(next.entityId)
+  );
 };
 type CommittedAccountFrame = {
   readonly counterpartyEntityId: string;
@@ -16214,46 +16956,45 @@ const committedFrame = (
   height: bigint,
   stateHash: unknown,
 ): CommittedAccountFrame => ({
-  counterpartyEntityId: entityKey(input.fromEntityId),
+  counterpartyEntityId: lowercased(input.fromEntityId),
   height,
-  stateHash: entityKey(stateHash),
+  stateHash: lowercased(stateHash),
 });
 const proposedFrames = (input: AccountPeerInput): readonly CommittedAccountFrame[] => {
-  const frame = accountProposal(input);
+  const frame = proposedFrameOf(input);
   return frame === undefined ? [] : [committedFrame(input, frame.height, frame.stateHash)];
 };
 const ackedFrames = (input: AccountPeerInput): readonly CommittedAccountFrame[] => {
-  const ack = accountAck(input);
+  const ack = acknowledgedFrameOf(input);
   return ack === undefined ? [] : [committedFrame(input, ack.height, ack.frameHash)];
 };
 /** The one Account frame (proposal) or ACK a marked leg must commit. */
 const expectedAtomicFrame = (leg: RoutedEntityInput): CommittedAccountFrame | undefined => {
   const framesOf =
     leg.atomicCrossJurisdictionPair?.phase === "proposal" ? proposedFrames : ackedFrames;
-  return sole(routedAccountInputs(leg).flatMap(framesOf));
+  return sole(accountInputsOf(leg).flatMap(framesOf));
 };
 /** A proposal built directly on the ACKed frame commits that ACK with it. */
-const proposalFollowsAck = (
-  proposal: AccountFrame,
-  ack: { readonly height: bigint; readonly frameHash: string },
-): boolean =>
+const proposalFollowsAck = (proposal: AccountFrame, ack: FrameAck): boolean =>
   proposal.height === ack.height + 1n &&
-  entityKey(proposal.prevFrameHash) === entityKey(ack.frameHash);
-/** The ACKed and proposed Account frames of an input that the replica's committed heads now hold. */
+  lowercased(proposal.prevFrameHash) === lowercased(ack.frameHash);
+/**
+ * The ACKed and proposed Account frames of an input that the replica's committed heads now hold.
+ */
 const committedAccountFrames = (
   leg: RoutedEntityInput,
   replica: EntityReplica,
 ): readonly CommittedAccountFrame[] =>
-  routedAccountInputs(leg).flatMap((input) => {
-    const proposal = accountProposal(input);
-    const ack = accountAck(input);
-    const account = replicaAccount(replica, input.fromEntityId);
+  accountInputsOf(leg).flatMap((input) => {
+    const proposal = proposedFrameOf(input);
+    const ack = acknowledgedFrameOf(input);
+    const account = accountWith(replica, input.fromEntityId);
     if (account === undefined) return [];
     const proposalCommitted =
-      proposal !== undefined && headMatches(account, proposal.height, proposal.stateHash);
+      proposal !== undefined && headIsFrame(account, proposal.height, proposal.stateHash);
     const ackCommitted =
       ack !== undefined &&
-      (headMatches(account, ack.height, ack.frameHash) ||
+      (headIsFrame(account, ack.height, ack.frameHash) ||
         (proposalCommitted && proposalFollowsAck(proposal, ack)));
     return [
       ...(ackCommitted ? ackedFrames(input) : []),
@@ -16270,21 +17011,64 @@ const committedExpectedAccountFrame = (leg: RoutedEntityInput, replica: EntityRe
   if (expected === undefined) return false;
   return committedAccountFrames(leg, replica).some((frame) => sameAccountFrame(frame, expected));
 };
-/** The one outbox output carrying `e`'s Entity ACK of its expected Account frame to the counterparty. */
-const ackOutputIndexes = (outbox: readonly EntityOutput[], e: CrossFrameExpectation): readonly number[] => outbox.flatMap((o, index) => {
-  const txs = entityKey(o.to) !== entityKey(e.counterpartyEntityId) ? [] : "tx" in o ? [o.tx as EntityTx] : o.input.kind === "txs" ? effectiveTxs(o.input.txs) : [];
-  return txs.some((tx) => {
-    const ack = tx.type === "accountInput" ? accountAck(tx.data) : undefined;
-    return tx.type === "accountInput" && ack !== undefined && entityKey(tx.data.fromEntityId) === entityKey(e.entityId) && entityKey(tx.data.toEntityId) === entityKey(e.counterpartyEntityId)
-      && ack.height === e.height && entityKey(ack.frameHash) === e.stateHash.toLowerCase();
-  }) ? [index] : [];
-});
-/** Each committed proposal pair's two ACKs (exactly one output each, distinct) carry the pair's ACK marker. */
-export const markCommittedAckOutputs = (outbox: readonly EntityOutput[], pairs: readonly CrossPair[]): Result<readonly EntityOutput[], RuntimeError> =>
-  map(foldResult(pairs.filter((p) => p.phase === "proposal"), new Map() as ReadonlyMap<number, string>, (marks, pair) => {
-    const [s, t] = [pair.sourceAccountFrame, pair.targetAccountFrame].map((e) => sole(ackOutputIndexes(outbox, e)));
-    return s === undefined || t === undefined || s === t ? frameErr(`RUNTIME_CROSS_J_ATOMIC_ACK_OUTPUTS_INVALID:${pair.pairKey}`) : ok(mapSet(mapSet(marks, s, pair.pairKey), t, pair.pairKey));
-  }), (marks) => outbox.map((o, i) => { const pairKey = marks.get(i); return pairKey === undefined ? o : { ...o, atomicCrossJurisdictionPair: { phase: "ack" as const, pairKey } }; }));
+const outputTxs = (output: EntityOutput): readonly EntityTx[] => {
+  if ("tx" in output) return [output.tx as EntityTx];
+  return output.input.kind === "txs" ? effectiveTxs(output.input.txs) : [];
+};
+/** The Account input is the Entity's ACK of its expected frame, sent to the counterparty. */
+const acksExpectedFrame = (input: AccountPeerInput, expected: CrossFrameExpectation): boolean => {
+  const ack = acknowledgedFrameOf(input);
+  return (
+    ack !== undefined &&
+    lowercased(input.fromEntityId) === lowercased(expected.entityId) &&
+    lowercased(input.toEntityId) === lowercased(expected.counterpartyEntityId) &&
+    ack.height === expected.height &&
+    lowercased(ack.frameHash) === expected.stateHash.toLowerCase()
+  );
+};
+const carriesExpectedAck = (output: EntityOutput, expected: CrossFrameExpectation): boolean => {
+  if (lowercased(output.to) !== lowercased(expected.counterpartyEntityId)) return false;
+  return outputTxs(output).some(
+    (tx) => tx.type === "accountInput" && acksExpectedFrame(tx.data, expected),
+  );
+};
+const ackOutputIndexes = (
+  outbox: readonly EntityOutput[],
+  expected: CrossFrameExpectation,
+): readonly number[] =>
+  outbox.flatMap((output, index) => (carriesExpectedAck(output, expected) ? [index] : []));
+type AckMarks = ReadonlyMap<number, string>;
+/** Each leg's ACK leaves in exactly one output, and the two legs' outputs differ. */
+const markPairAcks = (
+  outbox: readonly EntityOutput[],
+  marks: AckMarks,
+  pair: CrossPair,
+): Result<AckMarks, RuntimeError> => {
+  const sourceAck = sole(ackOutputIndexes(outbox, pair.sourceAccountFrame));
+  const targetAck = sole(ackOutputIndexes(outbox, pair.targetAccountFrame));
+  if (sourceAck === undefined || targetAck === undefined || sourceAck === targetAck) {
+    return frameErr(`RUNTIME_CROSS_J_ATOMIC_ACK_OUTPUTS_INVALID:${pair.pairKey}`);
+  }
+  return ok(mapSet(mapSet(marks, sourceAck, pair.pairKey), targetAck, pair.pairKey));
+};
+/** Each committed proposal pair's two ACKs carry the pair's ACK marker. */
+export const markCommittedAckOutputs = (
+  outbox: readonly EntityOutput[],
+  pairs: readonly CrossPair[],
+): Result<readonly EntityOutput[], RuntimeError> => {
+  const proposalPairs = pairs.filter((pair) => pair.phase === "proposal");
+  const unmarked: AckMarks = new Map();
+  const marks = foldResult(proposalPairs, unmarked, (marked, pair) =>
+    markPairAcks(outbox, marked, pair),
+  );
+  return map(marks, (pairKeyByOutput) =>
+    outbox.map((output, index) => {
+      const pairKey = pairKeyByOutput.get(index);
+      if (pairKey === undefined) return output;
+      return { ...output, atomicCrossJurisdictionPair: { phase: "ack" as const, pairKey } };
+    }),
+  );
+};
 // ---- og runtime/mempool/entity-inputs.ts applyMergedEntityInputs + admit/entity-input-output.ts: the R -> E -> A cascade of one Runtime frame ----
 type BatchOut = { readonly key?: string | undefined; readonly rejected: readonly RuntimeError[]; readonly applied: readonly RoutedEntityInput[]; readonly committed: boolean; readonly progressed?: string | undefined; readonly effects?: readonly [string, CommitEffects] | undefined };
 /** A local cross-j command (a certified runtimeOutput to a replica of this Runtime) or a local Account-work poke. */
