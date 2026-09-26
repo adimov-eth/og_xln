@@ -212,7 +212,7 @@ const codeOf = (m: string): string => m.split(":")[0]!;
 
 describe("settle-jsubmit: settle_propose / update / approve / reject (og payments/settle.ts)", () => {
   test("MATCH: 400 random settle_* txs against random workspaces -- same fatal refusal, same queued Account settle_transition, same status events and deferred approval as og", async () => {
-    const counts = { refused: 0, queued: 0, skipped: 0, admission: 0, deferred: 0, materialize: 0 };
+    const counts = { refused: 0, queued: 0, skipped: 0, admission: 0, deferred: 0, materialize: 0, halted: 0 };
     for (let n = 0; n < 400; n++) {
       const kind = pick<WsKind>(["none", "unsigned", "unsigned", "signed", "submitted", "corrupt"]), wsOps = kind === "none" ? [] : [{ type: "r2c" as const, tokenId: 1, amount: BigInt(1 + ri(9)) }];
       const w = workspaceOf(kind, wsOps, rng() < 0.5, rng() < 0.5, pick([undefined, "memo"])), pending = rng() < 0.15;
@@ -238,6 +238,14 @@ describe("settle-jsubmit: settle_propose / update / approve / reject (og payment
         continue;
       }
       const ogDeferred = og.deferredAccountProposals === undefined ? [] : [...og.deferredAccountProposals.entries()];
+      if (!rw.ok && rw.error._tag === "proposal_halt") {
+        // og queues the settle_transition (or its deferred approval, or already holds one) and the same frame's proposal throws
+        // throwCriticalProposalFailure's SETTLEMENT_TRANSITION_PROPOSAL_FAILED; the fixture's Hankos are not real, so a hanko also fails there
+        expect(rw.error.message).toStartWith(`SETTLEMENT_TRANSITION_PROPOSAL_FAILED:`);
+        expect(ogOut.accountTxs.length + ogDeferred.length + og.accounts.get(BOB).mempool.length).toBeGreaterThan(0);
+        counts.halted++;
+        continue;
+      }
       if (!rw.ok && rw.error._tag !== "entity_invariant") {
         // og admits the Account tx into the mempool and refuses it at the Account frame; the rewrite's admitAt trial-folds it and evicts the
         // only tx of the input (admission timing, ER-15)
@@ -332,6 +340,11 @@ describe("settle-jsubmit: settle_execute gates (og payments/settle.ts handleSett
         continue;
       }
       expect(ogOut.accountTxs).toEqual([]);
+      if (!rw.ok && rw.error._tag === "proposal_halt") {
+        // og's frame then proposes the queued clear, and throwCriticalProposalFailure throws SETTLEMENT_TRANSITION_PROPOSAL_FAILED:clear:<reason>
+        expect([pending, rw.error.message.startsWith("SETTLEMENT_TRANSITION_PROPOSAL_FAILED:clear:")]).toEqual([true, true]);
+        continue;
+      }
       if (!rw.ok) {
         // og's frame then asserts the queued Account's workspace canonical (refreshStaleUncommittedSettlementHankos), as foldTxs does
         expect(kind === "corrupt" && pending).toBe(true);

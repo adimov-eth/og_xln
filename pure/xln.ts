@@ -2647,13 +2647,8 @@ export const hashHtlcSecret = (secret: string): string | null => (/^0x[0-9a-fA-F
 export const htlcExpired = (l: Pick<HtlcLock, "timelock" | "revealBeforeHeight">, ctx: Pick<FoldCtx, "nowMs" | "jHeight">): boolean => ctx.jHeight > l.revealBeforeHeight || ctx.nowMs >= l.timelock;
 export const MAX_ACCOUNT_HTLC_LOCKS = 32;
 /** og delta-utils.ts getOffdeltaRepresentationError: offdelta plus every live lock movement, each alone, stays in int512. */
-const representable = (a: AccountBody, d: Delta, added?: { readonly senderIsLeft: boolean; readonly amount: bigint }): Result<void, BodyError> => {
-  let lower = d.offdelta, upper = d.offdelta;
-  const include = (senderIsLeft: boolean, amount: bigint): void => { if (senderIsLeft) lower -= amount; else upper += amount; };
-  for (const l of a.locks.values()) if (l.tokenId === d.tokenId) include(l.senderIsLeft, l.amount);
-  if (added !== undefined) include(added.senderIsLeft, added.amount);
-  return guard(lower >= INT512_MIN && upper <= INT512_MAX, { _tag: "offdelta_range" });
-};
+const representable = (a: AccountBody, d: Delta, added?: { readonly senderIsLeft: boolean; readonly amount: bigint }): Result<void, BodyError> =>
+  guard(offdeltaOutside(a, d, added) === null, { _tag: "offdelta_range" });
 const MISSING: Result<never, BodyError> = err({ _tag: "missing" });
 const sameAccount = (row: AccountSettlement, id: AccountId): boolean => row.left === id.left && row.right === id.right;
 const CLAIM_UINT64 = (1n << 64n) - 1n;
@@ -3599,6 +3594,549 @@ export const frameTxMessages = (s: AccountBody, f: AccountFrame, byLeft: boolean
   }
   return out;
 };
+// ---- og per-tx failure text: the rejection (or thrown Error) message og's handler produces for a tx this body refuses ----
+/**
+ * og ApplyAccountTxResult rejection / thrown Error of one Account tx: og's own message text, and whether og's handler throws (a thrown
+ * handler error aborts the whole Entity input; a rejection becomes `Frame application failed: <message>` dispute evidence on replay).
+ */
+export type AccountTxFailure = { readonly thrown: boolean; readonly message: string };
+const refusedTx = (message: string): AccountTxFailure => ({ thrown: false, message });
+const threwTx = (message: string): AccountTxFailure => ({ thrown: true, message });
+type FailureCheck = () => AccountTxFailure | null | undefined;
+const firstFailure = (...checks: readonly FailureCheck[]): AccountTxFailure | null => { for (const c of checks) { const f = c(); if (f) return f; } return null; };
+const checked = (f: AccountTxFailure | null | undefined): AccountTxFailure | null => f ?? null;
+const U256 = MAX_PAYMENT_AMOUNT.toString();
+const ogTxType = (tx: WireAccountTx): string => (tx.type === "payment" ? "direct_payment" : tx.type);
+const tokenKey = (tk: TokenId | number): TokenId => String(Number(tk)) as TokenId;
+/** og createDeltaDraft (delta-utils.ts): a bad token id or a new row past MAX_ACCOUNT_TOKEN_ROWS is an AccountDeltaError. */
+const deltaDraftError = (a: AccountBody, tk: TokenId | number): string | null => {
+  const n = Number(tk);
+  if (!Number.isSafeInteger(n) || n < 0 || n > 65_535) return `ACCOUNT_DELTA_TOKEN_INVALID:${String(n)}`;
+  return a.account.deltas.has(tokenKey(n)) || a.account.deltas.size + 1 <= MAX_ROWS ? null : `ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED:insert:${a.account.deltas.size + 1}:${MAX_ROWS}`;
+};
+const draftThrow = (a: AccountBody, tk: TokenId | number): FailureCheck => () => { const e = deltaDraftError(a, tk); return e === null ? null : threwTx(e); };
+/** og deriveDelta(delta, isLeft).outCapacity over the committed row (holds and allowances included). */
+const ogOutCapacity = (a: AccountBody, tk: TokenId | number, isLeft: boolean): bigint => outCapacity(getDelta(a.account, tokenKey(tk)), isLeft, holds(a, tokenKey(tk), isLeft));
+/** og getOffdeltaRepresentationError: the first int512 bound the row's offdelta plus every live lock movement crosses, or null. */
+const offdeltaOutside = (a: AccountBody, d: Delta, added?: { readonly senderIsLeft: boolean; readonly amount: bigint }, removedLockId?: string): bigint | null => {
+  let lower = d.offdelta, upper = d.offdelta;
+  const include = (senderIsLeft: boolean, amount: bigint): void => { if (senderIsLeft) lower -= amount; else upper += amount; };
+  for (const [id, l] of a.locks) if (l.tokenId === d.tokenId && id !== removedLockId) include(l.senderIsLeft, l.amount);
+  if (added !== undefined) include(added.senderIsLeft, added.amount);
+  return lower < INT512_MIN ? lower : upper > INT512_MAX ? upper : null;
+};
+const offdeltaText = (a: AccountBody, d: Delta, added?: { readonly senderIsLeft: boolean; readonly amount: bigint }, removedLockId?: string): FailureCheck => () => {
+  const out = offdeltaOutside(a, d, added, removedLockId);
+  return out === null ? null : refusedTx(`Offdelta outside int512: ${out}`);
+};
+const holdOverflowText = (a: AccountBody, tk: TokenId | number, isLeft: boolean, amount: bigint): FailureCheck => () => {
+  const t = sideTotals(a, tokenKey(tk)), cur = isLeft ? t.leftHold : t.rightHold;
+  return cur + amount > MAX_PAYMENT_AMOUNT ? refusedTx(`HOLD_ADD_OVERFLOW:${isLeft ? "left" : "right"} hold=${cur} amount=${amount}`) : null;
+};
+/** og assertOpaqueHtlcCiphertext (thrown from handleHtlcLock's encryptedHtlcLayer): shape, then canonical base64, then the packed size. */
+const envelopeError = (v: unknown): string | null => {
+  const shape = (): string => {
+    if (v === null) return "null";
+    if (Array.isArray(v)) return "array";
+    if (typeof v !== "object") return typeof v;
+    const rec = v as Record<string, unknown>, ct = rec["ciphertext"];
+    return [`keys=${Object.keys(rec).sort().join(",")}`, `version=${typeof rec["version"]}:${String(rec["version"] ?? "").slice(0, 40)}`, `ciphertext=${typeof ct}:${typeof ct === "string" ? ct.length : -1}`].join(":");
+  };
+  if (!v || typeof v !== "object" || Array.isArray(v)) return `HTLC_OPAQUE_CIPHERTEXT_INVALID:${shape()}`;
+  const rec = v as Record<string, unknown>, keys = Object.keys(rec), ct = rec["ciphertext"];
+  if (keys.length !== 2 || !keys.includes("ciphertext") || !keys.includes("version") || rec["version"] !== HTLC_ENVELOPE_VERSION || typeof ct !== "string" || ct.length === 0 || ct.length > Math.ceil(MAX_HTLC_PACKED_BYTES / 3) * 4)
+    return `HTLC_OPAQUE_CIPHERTEXT_INVALID:${shape()}`;
+  const packed = decodeBase64(ct);
+  if (packed === null) return "HTLC_OPAQUE_CIPHERTEXT_BASE64_INVALID";
+  return packed.length < 48 || packed.length > MAX_HTLC_PACKED_BYTES ? "HTLC_OPAQUE_CIPHERTEXT_SIZE_INVALID" : null;
+};
+/** og handleDirectPayment: envelope, direction, route, the payer's capacity, then the int512 range. */
+const paymentFailure = (a: AccountBody, x: TxOf<"payment">, byLeft: boolean): AccountTxFailure | null => {
+  const from = byLeft ? a.account.id.left : a.account.id.right, route = x.route ?? [byLeft ? a.account.id.right : a.account.id.left];
+  const routed = paymentRoute(a, x, byLeft);
+  if (!routed.ok) {
+    const e = routed.error, reason = e._tag === "payment_route" ? e.reason : e._tag;
+    switch (reason) {
+      case "non_positive_payment": return refusedTx(`Invalid payment amount: ${x.amount} (min 1, max ${U256})`);
+      case "ROUTE_LENGTH": return refusedTx(`Route too long: ${route.length} hops (max ${MAX_ROUTE_HOPS})`);
+      case "DELIVERY_MODE": return refusedTx("Payment delivery mode must be direct or trusted");
+      case "DIRECT_WITH_GATEWAY": return refusedTx("Direct payment forbids a trusted gateway");
+      case "TRUSTED_WITHOUT_GATEWAY": return refusedTx("Trusted payment requires one declared gateway");
+      case "DIRECTION": return refusedTx("FATAL: Payment direction must match the frame proposer");
+      case "DIRECT_ROUTE": return refusedTx("Direct payment route must contain only the bilateral recipient");
+      case "GATEWAY_FINAL_LEG": return refusedTx("Trusted gateway final leg must contain only the recipient");
+      default: return refusedTx("Trusted payment must be source → declared gateway → recipient");
+    }
+  }
+  return firstFailure(draftThrow(a, x.tokenId), () => {
+    const available = ogOutCapacity(a, x.tokenId, byLeft);
+    return x.amount > available ? refusedTx(`Insufficient capacity for sender ${from.slice(-4)}: need ${x.amount}, available ${available}`) : null;
+  }, offdeltaText(a, shift(getDelta(a.account, x.tokenId), byLeft ? -x.amount : x.amount)));
+};
+/** og handleSetCreditLimit: sign, uint256 ceiling, then the (caught) delta-row errors. */
+const creditLimitFailure = (a: AccountBody, tk: TokenId, limit: bigint): AccountTxFailure | null => firstFailure(
+  () => (limit < 0n ? refusedTx(`Credit limit cannot be negative: ${limit}`) : null),
+  () => (limit > MAX_CREDIT_LIMIT ? refusedTx(`Credit limit exceeds maximum: ${limit} > ${U256}`) : null),
+  () => { const e = deltaDraftError(a, tk); return e === null ? null : refusedTx(e); });
+/** og handlers/swap/offer: admission (limits, shape, proposer, market), quantization, cross-j binding, net-authority requantization, the give row, capacity, hold. */
+const swapOfferFailure = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx): AccountTxFailure | null => {
+  const route = x.crossJurisdiction, offers = [...a.offers.values()], sameJ = offers.filter((o) => o.crossJurisdiction === undefined).length;
+  const { left, right } = a.account.id, proposer = (ctx.byLeft ? left : right).toLowerCase();
+  const makerIsLeft = route === undefined ? ctx.byLeft : route.makerEntityId.toLowerCase() === left.toLowerCase();
+  const admission = firstFailure(
+    () => (x.offerId.includes(":") ? refusedTx(`Invalid offerId: colons not allowed (got ${x.offerId})`) : null),
+    () => (a.offers.has(x.offerId) ? refusedTx(`Offer ${x.offerId} already exists`) : null),
+    () => (a.offers.size >= MAX_ACCOUNT_SWAP_OFFERS ? refusedTx(`Too many open swap offers: max ${MAX_ACCOUNT_SWAP_OFFERS}`) : null),
+    () => (route === undefined && sameJ >= MAX_ACCOUNT_SAME_J_SWAP_OFFERS ? refusedTx(`Too many open same-j swap offers: max ${MAX_ACCOUNT_SAME_J_SWAP_OFFERS}`) : null),
+    () => (route !== undefined && offers.length - sameJ >= MAX_ACCOUNT_CROSS_J_SWAP_OFFERS ? refusedTx(`Too many open cross-j swap offers: max ${MAX_ACCOUNT_CROSS_J_SWAP_OFFERS}`) : null),
+    () => (!decimalsOk(x.giveTokenDecimals) || !decimalsOk(x.wantTokenDecimals) ? refusedTx(`Invalid token decimals: give=${String(x.giveTokenDecimals)} want=${String(x.wantTokenDecimals)}`) : null),
+    () => (x.giveAmount < 1n || x.giveAmount > MAX_PAYMENT_AMOUNT ? refusedTx(`Invalid giveAmount: ${x.giveAmount} (min 1, max ${U256})`) : null),
+    () => (x.wantAmount < 1n || x.wantAmount > MAX_PAYMENT_AMOUNT ? refusedTx(`Invalid wantAmount: ${x.wantAmount} (min 1, max ${U256})`) : null),
+    () => (x.maxFee >= x.wantAmount || x.minNetReceive <= 0n ? refusedTx("SWAP_NET_AUTH_INITIAL_TERMS_INVALID") : null),
+    () => { const e = netAuthError(x, 0n, 0n, 0n, false); return e === undefined ? null : refusedTx(e); },
+    () => (route !== undefined && (x.maxFee !== 0n || x.minNetReceive !== x.wantAmount) ? refusedTx("CROSS_J_SWAP_NET_AUTH_INVALID") : null),
+    () => (route === undefined && x.giveTokenId === x.wantTokenId ? refusedTx(`Cannot swap same token: ${Number(x.giveTokenId)}`) : null),
+    () => (route !== undefined && (route.status !== "resting" || !route.sourcePull || !route.targetPull) ? refusedTx("Cross-j swap must be prepared before entering the book") : null),
+    () => (x.timeInForce !== undefined && ![0, 1, 2].includes(x.timeInForce) ? refusedTx(`Invalid timeInForce: ${String(x.timeInForce)}`) : null),
+    () => (route !== undefined && (route.makerEntityId.toLowerCase() !== (makerIsLeft ? left : right).toLowerCase() || ![route.makerEntityId, route.source.counterpartyEntityId].some((e) => e.toLowerCase() === proposer))
+      ? refusedTx("Cross-j swap proposer must be the maker or source hub") : null),
+    () => {
+      const key = offerMarketKey(x);
+      if (!key.ok) return threwTx(key.error._tag === "cross_j" ? key.error.reason : key.error._tag);
+      const count = offers.filter((o) => o.makerIsLeft === makerIsLeft && unwrapOr(offerMarketKey(o), () => "") === key.value).length;
+      return count >= MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET ? refusedTx(`Too many open swap offers for ${key.value} on ${makerIsLeft ? "left" : "right"} side: max ${MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET}`) : null;
+    });
+  if (admission !== null) return admission;
+  const bounds = (give: bigint, want: bigint): AccountTxFailure | null => firstFailure(
+    () => (give < 1n || give > MAX_PAYMENT_AMOUNT ? refusedTx(`Quantized giveAmount out of bounds: ${give} (min 1, max ${U256})`) : null),
+    () => (want < 1n || want > MAX_PAYMENT_AMOUNT ? refusedTx(`Quantized wantAmount out of bounds: ${want} (min 1, max ${U256})`) : null));
+  const commitChecks = (give: bigint, want: bigint): AccountTxFailure | null => firstFailure(
+    () => { const r = requantizeAuth(x, give, want); return r.ok ? null : refusedTx(r.error._tag === "swap" ? r.error.reason : r.error._tag); },
+    draftThrow(a, x.giveTokenId),
+    () => { if (route !== undefined) return null; const available = ogOutCapacity(a, x.giveTokenId, makerIsLeft); return give > available ? refusedTx(`Insufficient capacity: need ${give}, available ${available}`) : null; },
+    () => (route !== undefined ? null : holdOverflowText(a, x.giveTokenId, makerIsLeft, give)()));
+  if (route === undefined) {
+    const d = swapDims(x), base = d.side === 1 ? x.giveAmount : x.wantAmount, quote = d.side === 1 ? x.wantAmount : x.giveAmount, lot = lotScale(d.bd);
+    if (base < lot) return refusedTx(`Order too small for lot size (${lot} base units)`);
+    const prepared = preparedPrice(d, base, quote);
+    if (prepared === undefined) return refusedTx("Invalid price ratio or order too small after canonical quantization");
+    const input = x.priceTicks;
+    if (input !== undefined && input <= 0n) return refusedTx(`Invalid explicit priceTicks: ${input}`);
+    const drift = input === undefined ? 0n : input > prepared ? input - prepared : prepared - input;
+    if (drift > 1n) return refusedTx(`Price mismatch after deterministic quantization: expected ${prepared}, got ${input} (drift ${drift} > step 1)`);
+    const priceTicks = input ?? prepared, qb = (base / lot) * lot, qq = quoteAt(d.bd, d.qd, qb, priceTicks);
+    const give = d.side === 1 ? qb : qq, want = d.side === 1 ? qq : qb;
+    return bounds(give, want) ?? commitChecks(give, want);
+  }
+  const m = crossMarket(route);
+  if (!m.ok) return threwTx(m.error.reason);
+  const side = m.value.sourceIsBase ? 1 : 0, base = side === 1 ? x.giveAmount : x.wantAmount, quote = side === 1 ? x.wantAmount : x.giveAmount;
+  const d: SwapDims = side === 1 ? { side, bd: x.giveTokenDecimals, qd: x.wantTokenDecimals } : { side, bd: x.wantTokenDecimals, qd: x.giveTokenDecimals }, lot = lotScale(d.bd);
+  if (base < lot) return refusedTx(`Order too small for lot size (${lot} base units)`);
+  if (base % lot !== 0n) return refusedTx(`Cross-j base amount must align to lot size (${lot} base units)`);
+  if (priceTicksOf(d, base, quote) <= 0n) return refusedTx("Invalid cross-j price ratio or order too small after canonical quantization");
+  const quantized = firstFailure(() => bounds(x.giveAmount, x.wantAmount),
+    () => (x.giveAmount !== BigInt(route.source.amount) ? refusedTx(`Cross-j source amount changed by quantization: route=${route.source.amount} offer=${x.giveAmount}`) : null),
+    () => (x.wantAmount !== BigInt(route.target.amount) ? refusedTx(`Cross-j target amount changed by quantization: route=${route.target.amount} offer=${x.wantAmount}`) : null));
+  if (quantized !== null) return quantized;
+  const canonical = canonicalCrossRoute(route);
+  if (!canonical.ok) return threwTx(crossRouteErrorText(route, canonical.error.reason));
+  const sp = route.sourcePull, paired = sp === undefined ? undefined : a.pulls?.get(sp.pullId);
+  if (sp === undefined || paired === undefined) return refusedTx("Cross-j swap offer requires paired source pull lock");
+  if (paired.tokenId !== sp.tokenId || paired.tokenId !== Number(x.giveTokenId) || paired.amount !== sp.signedAmount
+    || (paired.fullHash || "").toLowerCase() !== sp.fullHash.toLowerCase() || (paired.partialRoot || "").toLowerCase() !== sp.partialRoot.toLowerCase()) return refusedTx("Cross-j swap offer source pull mismatch");
+  const b = paired.crossJurisdiction;
+  if (!b || b.leg !== "source" || b.orderId !== canonical.value.orderId || (b.routeHash || "").toLowerCase() !== (canonical.value.routeHash || "").toLowerCase()) return refusedTx("Cross-j source pull binding mismatch");
+  return commitChecks(x.giveAmount, x.wantAmount);
+};
+/** og handlers/swap/resolve: canonical offer, execution fill, fee authority, economics, bounds, the two rows, counterparty capacity, int512, remainder. */
+const swapResolveFailure = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): AccountTxFailure | null => {
+  const offer = a.offers.get(x.offerId);
+  if (offer === undefined) return refusedTx(`Offer ${x.offerId} not found`);
+  if (offer.crossJurisdiction !== undefined) return refusedTx("Cross-jurisdiction offers settle through requestCrossJurisdictionClear/cross_pull_close");
+  if ((x.restingGiveAmount !== undefined && x.restingGiveAmount !== offer.giveAmount) || (x.restingWantAmount !== undefined && x.restingWantAmount !== offer.wantAmount)
+    || (x.restingQuantizedGive !== undefined && x.restingQuantizedGive !== offer.quantizedGive) || (x.restingQuantizedWant !== undefined && x.restingQuantizedWant !== offer.quantizedWant)
+    || (x.restingPriceTicks !== undefined && x.restingPriceTicks !== offer.priceTicks)) return refusedTx("Resting swap terms mismatch live offer");
+  if (ctx.byLeft === offer.makerIsLeft) return refusedTx("Only counterparty can resolve swap");
+  if (!Number.isInteger(x.fillRatio) || x.fillRatio < 0 || x.fillRatio > MAX_FILL) return refusedTx(`Invalid fillRatio: ${x.fillRatio}`);
+  const provided = x.executionGiveAmount !== undefined || x.executionWantAmount !== undefined;
+  if (provided && (x.executionGiveAmount === undefined || x.executionWantAmount === undefined)) return refusedTx("executionGiveAmount and executionWantAmount must both be provided");
+  if (x.fillRatio > 0 && !provided) return refusedTx("executionGiveAmount and executionWantAmount required for non-zero fills");
+  const qG = offer.quantizedGive, qW = offer.quantizedWant, limitGive = (qG * BigInt(x.fillRatio)) / BigInt(MAX_FILL);
+  const fG = x.executionGiveAmount ?? limitGive, fW = x.executionWantAmount ?? ceilDiv(limitGive * qW, qG);
+  const canonical = provided ? fillRatioOf(exactFillRatio(qG, fG)) : x.fillRatio;
+  const n = x.fillNumerator, dd = x.fillDenominator;
+  if (n !== undefined || dd !== undefined) {
+    if (n === undefined || dd === undefined) return refusedTx("fillNumerator and fillDenominator must both be provided");
+    if (dd <= 0n || n < 0n || n > dd) return refusedTx(`Exact fill ratio out of range: ${n}/${dd}`);
+    if (n * qG !== fG * dd) return refusedTx(`Exact fill ratio mismatch: ${n}/${dd} != ${fG}/${qG}`);
+  }
+  const fee = x.feeAmount ?? 0n, feeToken = x.feeTokenId ?? offer.wantTokenId, hasFill = fG > 0n || fW > 0n;
+  const economics = firstFailure(
+    () => (fee < 0n ? refusedTx("Swap taker fee must be >= 0") : null),
+    () => (fee > 0n && fG <= 0n ? refusedTx("Swap taker fee requires a non-zero fill") : null),
+    () => (fee > 0n && feeToken !== offer.wantTokenId ? refusedTx(`Swap taker fee token mismatch: expected ${Number(offer.wantTokenId)}, got ${Number(feeToken)}`) : null),
+    () => (fee >= fW && fW > 0n ? refusedTx(`Swap taker fee ${fee} exceeds or equals filled receive amount ${fW}`) : null),
+    () => { const e = netAuthError(offer, fG, fW, fee, x.cancelRemainder); return e === undefined ? null : refusedTx(e); },
+    () => (provided && hasFill && (fG <= 0n || fW <= 0n) ? refusedTx("Execution amounts must both be positive for a fill") : null),
+    () => (provided && x.fillRatio !== canonical ? refusedTx(`fillRatio ${x.fillRatio} does not match canonical execution ratio ${canonical}`) : null),
+    () => (provided && hasFill && fG > qG ? refusedTx(`Execution give amount ${fG} exceeds offer limit ${qG}`) : null),
+    () => (provided && hasFill && fW * qG < fG * qW
+      ? refusedTx(`Execution violates maker limit price: offer=${x.offerId} makerIsLeft=${offer.makerIsLeft} effectiveGive=${qG} effectiveWant=${qW} filledGive=${fG} filledWant=${fW} lhs=${fW * qG} rhs=${fG * qW}`) : null),
+    () => (canonical > 0 && (fG < 1n || fG > MAX_PAYMENT_AMOUNT) ? refusedTx(`Filled give amount out of bounds: ${fG} (min 1, max ${U256})`) : null),
+    () => (canonical > 0 && (fW < 1n || fW > MAX_PAYMENT_AMOUNT) ? refusedTx(`Filled want amount out of bounds: ${fW} (min 1, max ${U256})`) : null),
+    draftThrow(a, offer.giveTokenId), draftThrow(a, offer.wantTokenId),
+    () => { if (fW <= 0n) return null; const cap = ogOutCapacity(a, offer.wantTokenId, !offer.makerIsLeft); return fW > cap ? refusedTx(`Counterparty insufficient capacity on token ${Number(offer.wantTokenId)}: needs ${fW}, has ${cap}`) : null; });
+  if (economics !== null) return economics;
+  const byMaker = (v: bigint): bigint => (offer.makerIsLeft ? -v : v);
+  const giveRow = shift(getDelta(a.account, offer.giveTokenId), fG > 0n ? byMaker(fG) : 0n);
+  const wantRow = shift(getDelta(a.account, offer.wantTokenId), (fG > 0n ? -byMaker(fW) : 0n) + (fee > 0n ? byMaker(fee) : 0n));
+  return firstFailure(offdeltaText(a, giveRow), offdeltaText(a, wantRow), () => {
+    if (x.cancelRemainder || x.fillRatio === 0 || canonical === MAX_FILL) return null;
+    const d = swapDims(offer), next = requantizeRemaining(d, d.side === 1 ? qG - fG : qW - fW, offer.priceTicks);
+    if (next === undefined) return null;
+    if (qG - fG - next.give < 0n) return refusedTx(`Swap remainder exceeds held give: remaining=${qG - fG} required=${next.give}`);
+    const r = requantizeAuth(offer, next.give, next.want);
+    return r.ok ? null : refusedTx(r.error._tag === "swap" ? r.error.reason : r.error._tag);
+  });
+};
+const LENDING_ROLES = { lending_fund: "lender", lending_borrow_request: "borrower", lending_repay: "borrower", lending_credit: "hub", lending_close_request: "lender", lending_close_payout: "hub" } as const;
+/** og handleLendingAccountTx: intent id, role, counterparty, amount, terms, replay guard (all thrown), then the direct payment or credit-limit handler. */
+const lendingFailure = (a: AccountBody, x: AccountLendingTx, ctx: FoldCtx): AccountTxFailure | null => {
+  const [intentId, prefix, actor, counterparty] = matchBy<"type", AccountLendingTx, readonly [string, "lend" | "borrow" | "loan", string, string]>("type", x, {
+    lending_fund: (t) => [t.positionId, "lend", t.lenderEntityId, t.hubEntityId] as const, lending_borrow_request: (t) => [t.requestId, "borrow", t.borrowerEntityId, t.hubEntityId] as const,
+    lending_repay: (t) => [t.loanId, "loan", t.borrowerEntityId, t.hubEntityId] as const, lending_credit: (t) => [t.loanId, "loan", t.hubEntityId, t.borrowerEntityId] as const,
+    lending_close_request: (t) => [t.positionId, "lend", t.lenderEntityId, t.hubEntityId] as const, lending_close_payout: (t) => [t.positionId, "lend", t.hubEntityId, t.lenderEntityId] as const,
+  });
+  const role = LENDING_ROLES[x.type].toUpperCase(), left = lower(a.account.id.left), right = lower(a.account.id.right), proposer = ctx.byLeft ? left : right, claimed = lower(actor);
+  const replay = (key: string): FailureCheck => () => (a.lendingIntents.has(key) ? threwTx(`LENDING_INTENT_REPLAY:${key}`) : null);
+  const amount = (v: bigint, label: string): FailureCheck => () => (v <= 0n ? threwTx(`${label}_AMOUNT_MUST_BE_POSITIVE`) : null);
+  const term = (v: unknown): FailureCheck => () => (LENDING_TERMS.has(v) ? null : threwTx(`LENDING_INVALID_TERM: ${String(v)}`));
+  const bps = (v: unknown): FailureCheck => () => (interestOk(v) ? null : threwTx(`LENDING_INVALID_INTEREST_BPS: ${String(v)}`));
+  const pay = (tk: TokenId, v: bigint, payer: string, recipient: string): FailureCheck => () =>
+    paymentFailure(a, { type: "payment", tokenId: tk, amount: v, route: [recipient], fromEntityId: payer, toEntityId: recipient, deliveryMode: "direct", description: `xln:${x.type}` }, ctx.byLeft);
+  const parties = firstFailure(
+    () => { const id = lower(intentId); return !LENDING_INTENT.test(id) || !id.startsWith(`${prefix}-`) ? threwTx(`LENDING_INTENT_ID_INVALID:${intentId}`) : null; },
+    () => (!LENDING_ENTITY.test(claimed) ? threwTx(`LENDING_${role}_INVALID:${actor}`) : null),
+    () => (claimed !== proposer ? threwTx(`LENDING_${role}_NOT_PROPOSER: claimed=${claimed} proposer=${proposer}`) : null),
+    () => { const expected = claimed === left ? right : left; return lower(counterparty) !== expected ? threwTx(`LENDING_COUNTERPARTY_INVALID: expected=${expected} got=${lower(counterparty)}`) : null; });
+  if (parties !== null) return parties;
+  switch (x.type) {
+    case "lending_fund": return firstFailure(amount(x.amount, "LENDING_FUND"), term(x.termId), bps(x.interestBps), replay(`fund:${lower(x.positionId)}`), () => {
+      const d = a.account.deltas.get(x.tokenId);
+      return d === undefined || x.amount + ownCreditLeft(d, ctx.byLeft) > outCapacity(d, ctx.byLeft, holds(a, x.tokenId, ctx.byLeft)) ? refusedTx("LENDING_FUND_OWNED_BALANCE_INSUFFICIENT") : null;
+    }, pay(x.tokenId, x.amount, x.lenderEntityId, x.hubEntityId));
+    case "lending_borrow_request": return firstFailure(amount(x.amount, "LENDING_BORROW"), term(x.termId), bps(x.maxInterestBps), replay(`borrow:${lower(x.requestId)}`));
+    case "lending_repay": return firstFailure(amount(x.amount, "LENDING_REPAY"), replay(`repay:${lower(x.loanId)}`), pay(x.tokenId, x.amount, x.borrowerEntityId, x.hubEntityId));
+    case "lending_credit": return firstFailure(() => (x.creditLimit < 0n ? threwTx(`LENDING_CREDIT_LIMIT_NEGATIVE:${x.creditLimit}`) : null), () => creditLimitFailure(a, x.tokenId, x.creditLimit),
+      replay(`${x.action === "grant" ? "grant" : "revoke"}:${lower(x.loanId)}`));
+    case "lending_close_request": return checked(replay(`close:${lower(x.positionId)}`)());
+    case "lending_close_payout": return firstFailure(amount(x.amount, "LENDING_CLOSE_PAYOUT"), replay(`payout:${lower(x.positionId)}`), pay(x.tokenId, x.amount, x.hubEntityId, x.lenderEntityId));
+  }
+};
+/** og validateCrossPullCloseEvidence + handleCrossPullClose. */
+const crossPullCloseFailure = (a: AccountBody, x: TxOf<"cross_pull_close">, ctx: FoldCtx): AccountTxFailure | null => {
+  const pull = a.pulls?.get(x.pullId);
+  if (pull === undefined) return refusedTx(`Cross-j close pull missing: ${x.pullId.slice(0, 8)}...`);
+  const binding = pull.crossJurisdiction, { proof, binary } = x;
+  if (!binding) return refusedTx("Cross-j close requires pull binding");
+  if (!Number.isSafeInteger(proof.fillRatio) || proof.fillRatio < 0 || proof.fillRatio > MAX_FILL) return refusedTx(`Cross-j close proof ratio out of uint16 range: ${proof.fillRatio}`);
+  if (proof.closeMode !== "full" && proof.closeMode !== "partial_cancel_remainder" && proof.closeMode !== "pure_cancel") return refusedTx(`Cross-j close mode invalid: ${String(proof.closeMode)}`);
+  const mismatch = (detail: string): AccountTxFailure => refusedTx(`Cross-j close proof mismatch: ${detail}`);
+  if (proof.orderId !== binding.orderId) return mismatch(`order ${proof.orderId} != ${binding.orderId}`);
+  if ((proof.routeHash || "").toLowerCase() !== (binding.routeHash || "").toLowerCase()) return mismatch(`routeHash ${proof.routeHash} != ${binding.routeHash}`);
+  const expectedPullId = binding.leg === "source" ? proof.sourcePullId : proof.targetPullId;
+  if (expectedPullId !== pull.pullId) return mismatch(`${binding.leg} pull ${expectedPullId} != ${pull.pullId}`);
+  const total = absBig(pull.amount), expected = proof.fillRatio >= MAX_FILL ? total : (total * BigInt(proof.fillRatio)) / BigInt(MAX_FILL), legAmount = binding.leg === "source" ? proof.cumulativeSourceAmount : proof.cumulativeTargetAmount;
+  if (legAmount !== expected) return mismatch(`${binding.leg} amount ${legAmount} != chain-proportional ${expected}`);
+  const h = crossCloseBinaryHash(binary);
+  // og ethers.keccak256 throws on a non-hex binary before any comparison.
+  if (!h.ok) return threwTx(h.error.reason);
+  if (h.value.toLowerCase() !== String(proof.binaryHash).toLowerCase()) return refusedTx("Cross-j close binary hash mismatch");
+  const decoded = verifyHashLadderBinary({ fullHash: pull.fullHash, partialRoot: pull.partialRoot }, binary);
+  if (!decoded.ok) return refusedTx(`Invalid cross-j close binary: ${decoded.error.reason}`);
+  if (decoded.value.fillRatio !== proof.fillRatio) return refusedTx(`Cross-j close ratio mismatch: binary ${decoded.value.fillRatio} != proof ${proof.fillRatio}`);
+  const beneficiaryIsLeft = pull.amount > 0n, hubIsLeft = binding.leg === "source" ? beneficiaryIsLeft : !beneficiaryIsLeft;
+  if (ctx.byLeft !== hubIsLeft) return refusedTx(`Only the ${binding.leg} Hub can close cross-j pull`);
+  const released: AccountBody = { ...a, pulls: mapDelete(a.pulls ?? new Map<string, PullRow>(), x.pullId) }, tk = tokenKey(pull.tokenId);
+  return firstFailure(draftThrow(a, pull.tokenId), offdeltaText(released, legAmount > 0n ? shift(getDelta(a.account, tk), beneficiaryIsLeft ? legAmount : -legAmount) : getDelta(a.account, tk)));
+};
+/** og j-claim-transition.ts + j-events/finality.ts: malformed evidence and finality violations throw; only a same-height conflict is a rejection. */
+const claimFailure = (a: AccountBody, x: TxOf<"j_event_claim">, ctx: FoldCtx, e: BodyError, self: string | undefined): AccountTxFailure => {
+  const events = claimEvidence(x.events);
+  if (!events.ok) {
+    const rows = x.events.flatMap((row) => row.tokens.map((token) => ({ row, token }))), built = traverse(rows, ({ row, token }) => settledEvent(row, token));
+    return threwTx(rows.length > 0 && built.ok ? "ACCOUNT_J_CLAIM_EVENT_DUPLICATE" : "ACCOUNT_J_CLAIM_EVENTS_INVALID");
+  }
+  if (!claimHeight(x.jHeight).ok) return threwTx(`ACCOUNT_J_CLAIM_HEIGHT_INVALID:${String(x.jHeight)}`);
+  if (!claimBlock(x.jBlockHash).ok) { const v = typeof x.jBlockHash === "string" ? x.jBlockHash.trim().toLowerCase() : ""; return threwTx(`ACCOUNT_J_CLAIM_BLOCK_HASH_INVALID:${v || "missing"}`); }
+  if (e._tag === "claim_conflict") {
+    const own = claimRowOf(x, ctx.byLeft), held = a.claimRows ?? [];
+    const leftConflict = own.ok && held.some((h) => h.onLeft && h.jHeight === own.value.jHeight && !sameEvidence(h, { ...own.value, onLeft: true }));
+    const side = leftConflict ? "left" : "right";
+    return refusedTx(`ACCOUNT_J_CLAIM_${side.toUpperCase()}_CONFLICT:${side}:${Number(x.jHeight)}`);
+  }
+  const accLeft = a.account.id.left.toLowerCase(), accRight = a.account.id.right.toLowerCase();
+  if (e._tag === "settled_pair") {
+    const bad = events.value.events.find((ev) => ev.data.leftEntity !== accLeft || ev.data.rightEntity !== accRight);
+    return threwTx(`ACCOUNT_SETTLED_PAIR_MISMATCH:${bad?.data.leftEntity}:${bad?.data.rightEntity}:${accLeft}:${accRight}`);
+  }
+  if (e._tag === "settled_nonce") {
+    let prev = a.jNonce;
+    for (const ev of events.value.events) { if (ev.data.nonce < prev) return threwTx(`ACCOUNT_SETTLED_NONCE_REGRESSION:${prev}:${ev.data.nonce}`); prev = ev.data.nonce; }
+  }
+  if (e._tag === "settlement") {
+    const w = a.settlement, cp = self === undefined ? "" : lower(self) === lower(a.account.id.left) ? a.account.id.right : a.account.id.left, signed = w?.nonceAtSign;
+    switch (e.reason) {
+      case "SETTLEMENT_SIGNED_NONCE_MISSING": return threwTx(`SETTLEMENT_SIGNED_NONCE_MISSING:${String(signed)}`);
+      case "POST_SETTLEMENT_PROOF_MISSING": case "POST_SETTLEMENT_PROOF_HANKO_MISSING": case "POST_SETTLEMENT_DISPUTE_HASH_MISSING": return threwTx(`${e.reason}:${cp}`);
+      case "POST_SETTLEMENT_PROOF_NONCE_MISMATCH": return threwTx(`POST_SETTLEMENT_PROOF_NONCE_MISMATCH:${w?.postSettlementDisputeProof?.nonce}:${(signed ?? 0) + 1}`);
+      default: return threwTx(e.reason);
+    }
+  }
+  return threwTx(bodyErrorCode(e));
+};
+/** og compileOps (protocol/settlement/operations.ts) messages in og's order: per op token, forgiveness, op type; then per diff range and conservation; then the caps. */
+const compileOpsText = (ops: readonly SettlementOp[], proposerIsLeft: boolean, context: string): string | null => {
+  for (const [i, op] of ops.entries()) {
+    if (!settlementToken(op.tokenId)) return `SETTLEMENT_TOKEN_INVALID:${context}=${i}:${String(op.tokenId)}`;
+    if (op.type === "forgive" && ops.slice(0, i).some((o) => o.type === "forgive" && o.tokenId === op.tokenId)) return `SETTLEMENT_DUPLICATE_FORGIVENESS_TOKEN:${op.tokenId}`;
+    if (!["forgive", "rawDiff", "r2c", "c2r", "r2r"].includes(op.type)) { const u = op as { readonly type?: unknown; readonly tokenId?: unknown }; return `SETTLEMENT_UNKNOWN_OP_TYPE: type=${String(u.type ?? "unknown")} tokenId=${String(u.tokenId ?? "unknown")}`; }
+  }
+  const compiled = compileOps(ops, proposerIsLeft);
+  if (compiled.ok) return null;
+  const diffs = new Map<number, MutableDiff>();
+  for (const op of ops) {
+    if (op.type === "forgive") continue;
+    const d = diffs.get(op.tokenId) ?? { tokenId: op.tokenId, leftDiff: 0n, rightDiff: 0n, collateralDiff: 0n, ondeltaDiff: 0n };
+    diffs.set(op.tokenId, d);
+    const one = unwrapOr(map(compileOps([op], proposerIsLeft), (c) => c.diffs[0]), () => undefined);
+    if (op.type === "rawDiff") { d.leftDiff += op.leftDiff; d.rightDiff += op.rightDiff; d.collateralDiff += op.collateralDiff; d.ondeltaDiff += op.ondeltaDiff; }
+    else if (one !== undefined) { d.leftDiff += one.leftDiff; d.rightDiff += one.rightDiff; d.collateralDiff += one.collateralDiff; d.ondeltaDiff += one.ondeltaDiff; }
+  }
+  const wide = (v: bigint): boolean => v < -MAX_PAYMENT_AMOUNT || v > MAX_PAYMENT_AMOUNT;
+  for (const d of diffs.values()) {
+    for (const f of ["leftDiff", "rightDiff", "collateralDiff", "ondeltaDiff"] as const) if (wide(d[f])) return `SETTLEMENT_SIGNED_AMOUNT_RANGE:${f}:token=${d.tokenId}`;
+    const sum = d.leftDiff + d.rightDiff + d.collateralDiff;
+    if (sum !== 0n) return `SETTLEMENT_INVARIANT_VIOLATION: leftDiff(${d.leftDiff}) + rightDiff(${d.rightDiff}) + collateralDiff(${d.collateralDiff}) = ${sum} !== 0 for tokenId ${d.tokenId}`;
+  }
+  const forgive = ops.filter((o) => o.type === "forgive").length;
+  if (diffs.size > MAX_SETTLEMENT_DIFFS) return `SETTLEMENT_DIFF_LIMIT_EXCEEDED:${diffs.size}:${MAX_SETTLEMENT_DIFFS}`;
+  return forgive > MAX_SETTLEMENT_DIFFS ? `SETTLEMENT_FORGIVENESS_LIMIT_EXCEEDED:${forgive}:${MAX_SETTLEMENT_DIFFS}` : bodyErrorCode(compiled.error);
+};
+/** og projectSettlementDeltaOverrides: the new-row cap and the projected collateral/ondelta ranges. */
+const projectionText = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[]): string | null => {
+  const projected = new Map<number, { collateral: bigint; ondelta: bigint }>();
+  const get = (tk: number): { collateral: bigint; ondelta: bigint } | string => {
+    const held = projected.get(tk);
+    if (held !== undefined) return held;
+    const row = a.account.deltas.get(tokenKey(tk));
+    if (row === undefined) {
+      const fresh = [...projected.keys()].filter((k) => !a.account.deltas.has(tokenKey(k))).length, n = a.account.deltas.size + fresh + 1;
+      if (n > MAX_ROWS) return `ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED:insert:${n}:${MAX_ROWS}`;
+    }
+    const v = { collateral: row?.collateral ?? 0n, ondelta: row?.ondelta ?? 0n };
+    projected.set(tk, v);
+    return v;
+  };
+  for (const d of diffs) {
+    const v = get(d.tokenId);
+    if (typeof v === "string") return v;
+    v.collateral += d.collateralDiff; v.ondelta += d.ondeltaDiff;
+    if (v.collateral < 0n || v.collateral > MAX_PAYMENT_AMOUNT) return `SETTLEMENT_PROJECTED_COLLATERAL_RANGE:token=${d.tokenId}`;
+    if (v.ondelta < INT512_MIN || v.ondelta > INT512_MAX) return `SETTLEMENT_PROJECTED_ONDELTA_RANGE:token=${d.tokenId}`;
+  }
+  for (const tk of forgive) { const v = get(tk); if (typeof v === "string") return v; }
+  return null;
+};
+/** og assertCurrentWorkspace: version, presence, the requested hash's shape, then revision and hash equality. */
+const currentWorkspaceText = (a: AccountBody, revision: number, hash: string): string | null => {
+  if (!Number.isSafeInteger(revision) || revision < 1) return `SETTLEMENT_WORKSPACE_VERSION_INVALID:${String(revision)}`;
+  const w = a.settlement;
+  if (w === undefined) return "SETTLEMENT_WORKSPACE_MISSING";
+  if (typeof hash !== "string" || !WORKSPACE_HASH.test(hash)) return `SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID:${String(hash)}`;
+  if (w.revision !== revision) return `SETTLEMENT_WORKSPACE_VERSION_MISMATCH:${w.revision}:${revision}`;
+  return w.workspaceHash.toLowerCase() !== hash.toLowerCase() ? `SETTLEMENT_WORKSPACE_TARGET_HASH_MISMATCH:${w.workspaceHash.toLowerCase()}:${hash.toLowerCase()}` : null;
+};
+/** og handleSettleTransition: every failure is caught into a rejection carrying the thrown message. */
+const settleFailure = (a: AccountBody, x: TxOf<"settle_transition">, ctx: FoldCtx, e: BodyError, w?: DisputeWitnesses): AccountTxFailure => {
+  const text = ((): string => {
+    if (x.kind === "upsert") {
+      if (!Number.isSafeInteger(x.revision) || x.revision < 1) return `SETTLEMENT_WORKSPACE_VERSION_INVALID:${String(x.revision)}`;
+      if (!Array.isArray(x.ops) || x.ops.length === 0) return "SETTLEMENT_WORKSPACE_OPS_EMPTY";
+      for (const [i, op] of x.ops.entries()) {
+        if (!settlementToken(op.tokenId)) return `SETTLEMENT_TOKEN_INVALID:workspace-op=${i}:${String(op.tokenId)}`;
+        if (op.type === "r2c" || op.type === "c2r" || op.type === "r2r") { if (typeof op.amount !== "bigint" || op.amount <= 0n) return `SETTLEMENT_WORKSPACE_AMOUNT_INVALID:index=${i}`; continue; }
+        if (op.type === "rawDiff") { if ([op.leftDiff, op.rightDiff, op.collateralDiff, op.ondeltaDiff].some((v) => typeof v !== "bigint")) return `SETTLEMENT_WORKSPACE_RAW_DIFF_INVALID:index=${i}`; continue; }
+        if (op.type !== "forgive") return `SETTLEMENT_WORKSPACE_OP_INVALID:index=${i}:type=${String((op as { readonly type?: unknown }).type)}`;
+      }
+      if (typeof x.executorIsLeft !== "boolean") return "SETTLEMENT_WORKSPACE_EXECUTOR_INVALID";
+      const compiled = compileOpsText(x.ops, ctx.byLeft, "op");
+      if (compiled !== null) return compiled;
+      const cur = a.settlement, prev = x.previousWorkspaceHash;
+      if (x.revision === 1) { if (cur !== undefined) return "SETTLEMENT_WORKSPACE_ALREADY_EXISTS"; if (prev !== undefined) return "SETTLEMENT_WORKSPACE_PREVIOUS_HASH_UNEXPECTED"; }
+      else {
+        if (cur === undefined) return "SETTLEMENT_WORKSPACE_PREVIOUS_MISSING";
+        if (cur.leftHanko !== undefined || cur.rightHanko !== undefined) return "SETTLEMENT_WORKSPACE_SIGNED_UPDATE_FORBIDDEN";
+        if (cur.revision + 1 !== x.revision) return `SETTLEMENT_WORKSPACE_NON_CONTIGUOUS_VERSION:${cur.revision}:${x.revision}`;
+        if (prev === undefined || !WORKSPACE_HASH.test(prev)) return `SETTLEMENT_WORKSPACE_PREVIOUS_HASH_INVALID:${String(prev ?? "")}`;
+        if (cur.workspaceHash.toLowerCase() !== prev.toLowerCase()) return `SETTLEMENT_WORKSPACE_PREVIOUS_HASH_MISMATCH:${cur.workspaceHash.toLowerCase()}:${prev.toLowerCase()}`;
+      }
+      // og planWorkspaceHoldRelease(previous) then planWorkspaceHoldAdd(next): holds are checked with the previous workspace's released.
+      const base: AccountBody = { ...a, settlement: undefined };
+      for (const diff of unwrapOr(map(compileOps(x.ops, ctx.byLeft), (c) => c.diffs), () => [])) {
+        const l = diff.leftDiff < 0n ? -diff.leftDiff : 0n, r = diff.rightDiff < 0n ? -diff.rightDiff : 0n;
+        if (l === 0n && r === 0n) continue;
+        const tk = tokenKey(diff.tokenId);
+        if (!base.account.deltas.has(tk)) return `SETTLEMENT_HOLD_DELTA_MISSING:add:token=${diff.tokenId}`;
+        if (!(diff.leftDiff < 0n && diff.collateralDiff > 0n) && l > ogOutCapacity(base, tk, true)) return `SETTLEMENT_HOLD_CAPACITY:left:token=${diff.tokenId}`;
+        if (!(diff.rightDiff < 0n && diff.collateralDiff > 0n) && r > ogOutCapacity(base, tk, false)) return `SETTLEMENT_HOLD_CAPACITY:right:token=${diff.tokenId}`;
+        const hold = checked(holdOverflowText(base, tk, true, l)()) ?? checked(holdOverflowText(base, tk, false, r)());
+        if (hold !== null) return hold.message;
+      }
+      return bodyErrorCode(e);
+    }
+    const current = currentWorkspaceText(a, x.revision, x.workspaceHash), ws = a.settlement;
+    if (x.kind !== "hanko") return current ?? bodyErrorCode(e);
+    if (ctx.settlement === undefined) return "SETTLEMENT_HANKO_CONTEXT_MISSING";
+    if (current !== null || ws === undefined) return current ?? "SETTLEMENT_WORKSPACE_MISSING";
+    if (ws.status === "submitted") return "SETTLEMENT_HANKO_SUBMITTED_FORBIDDEN";
+    const nonce = x.settlementNonce;
+    if (!Number.isSafeInteger(nonce) || nonce < 1) return `SETTLEMENT_HANKO_NONCE_INVALID:${String(nonce)}`;
+    const floor = Math.max(a.jNonce + 1, ctx.settlement.proofNonceFloor);
+    if (floor >= Number.MAX_SAFE_INTEGER) return `SETTLEMENT_NONCE_EXHAUSTED:${floor}`;
+    if (ws.nonceAtSign !== undefined && ws.nonceAtSign !== nonce) return `SETTLEMENT_HANKO_NONCE_MISMATCH:${ws.nonceAtSign}:${nonce}`;
+    if (ws.nonceAtSign === undefined && nonce !== floor)
+      return `SETTLEMENT_HANKO_NONCE_MISMATCH:${nonce}:${floor}:j=${a.jNonce}:next=${w?.nextProofNonce ?? 0}:local=${w?.current?.proofNonce ?? 0}:peer=${w?.counterparty?.proofNonce ?? 0}`;
+    const compiled = compileOps(ws.ops, ws.lastModifiedByLeft);
+    if (!compiled.ok) return compileOpsText(ws.ops, ws.lastModifiedByLeft, "op") ?? bodyErrorCode(compiled.error);
+    const expected = settlementHashOf(a, compiled.value.diffs, compiled.value.forgive, nonce);
+    if (!expected.ok) return bodyErrorCode(expected.error);
+    if (typeof x.settlementHash !== "string" || !WORKSPACE_HASH.test(x.settlementHash)) return `SETTLEMENT_HANKO_HASH_INVALID:${String(x.settlementHash)}`;
+    if (x.settlementHash.toLowerCase() !== expected.value.toLowerCase()) return `SETTLEMENT_HANKO_HASH_MISMATCH:${x.settlementHash.toLowerCase()}:${expected.value}`;
+    if (ws.settlementHash !== undefined && ws.settlementHash.toLowerCase() !== expected.value.toLowerCase()) return `SETTLEMENT_HANKO_PINNED_HASH_MISMATCH:${ws.settlementHash}:${expected.value}`;
+    const postNonce = x.postProof.nonce;
+    if (!Number.isSafeInteger(postNonce) || postNonce < 1) return `POST_SETTLEMENT_PROOF_NONCE_INVALID:${String(postNonce)}`;
+    if (postNonce !== nonce + 1) return `POST_SETTLEMENT_PROOF_NONCE_MISMATCH:${postNonce}:${nonce + 1}`;
+    const projected = projectionText(a, compiled.value.diffs, compiled.value.forgive);
+    if (projected !== null) return projected;
+    const bodyHash = projectedProofHash(a, compiled.value.diffs, compiled.value.forgive, ctx.settlement.deltaTransformer);
+    if (!bodyHash.ok) return bodyErrorCode(bodyHash.error);
+    if (x.postProof.proofBodyHash.toLowerCase() !== bodyHash.value.toLowerCase()) return `POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH:${x.postProof.proofBodyHash}:${bodyHash.value}`;
+    const disputeHash = chain(mapErr(committedView(a), uncommitted), (view) => mapErr(accountDisputeHash(view, bodyHash.value, postNonce, x.postProof.proposerIsLeft), (err): BodyError => ({ _tag: "settlement", reason: err._tag })));
+    if (!disputeHash.ok) return bodyErrorCode(disputeHash.error);
+    if (x.postProof.disputeHash.toLowerCase() !== disputeHash.value.toLowerCase()) return `POST_SETTLEMENT_DISPUTE_HASH_MISMATCH:${x.postProof.disputeHash}:${disputeHash.value}`;
+    return bodyErrorCode(e);
+  })();
+  return refusedTx(text);
+};
+/** A BodyError as a bare og-style code, for refusals whose og text carries no further detail. */
+const bodyErrorCode = (e: BodyError): string => {
+  switch (e._tag) {
+    case "settlement": case "swap": case "rebalance": case "lending": case "payment_route": case "cross_j": return e.reason;
+    case "uncommitted": return `ACCOUNT_STATE_UNCOMMITTABLE:${e.reason._tag}`;
+    case "too_many_rows": return `ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED:insert:${MAX_ROWS + 1}:${MAX_ROWS}`;
+    default: return e._tag;
+  }
+};
+/**
+ * og's failure for `tx` refused by this body with `e` under `ctx` (og byLeft = the frame proposer's side): og's handler checks walked in og's
+ * order, rendered with og's message text. `self` is the local Entity (og proofHeader.fromEntity); `witnesses` are the dispute nonce cursors og
+ * names in an account-basis settlement nonce mismatch.
+ */
+export const accountTxFailure = (a: AccountBody, tx: WireAccountTx, ctx: FoldCtx, e: BodyError, self?: string, witnesses?: DisputeWitnesses): AccountTxFailure => {
+  if (e._tag === "settlement_frozen") return refusedTx(`SETTLEMENT_SIGNED_ACCOUNT_FROZEN:${ogTxType(tx)}`);
+  const found = ((): AccountTxFailure | null => {
+    switch (tx.type) {
+      case "add_delta": { const d = deltaDraftError(a, tx.tokenId); return d === null ? null : refusedTx(d); }
+      case "set_credit_limit": return creditLimitFailure(a, tx.tokenId, tx.limit);
+      case "payment": return paymentFailure(a, tx, ctx.byLeft);
+      case "htlc_lock": return firstFailure(
+        () => (tx.lockId !== tx.hashlock ? refusedTx(`Lock ID must equal hashlock (${tx.lockId} != ${tx.hashlock})`) : null),
+        () => (a.locks.has(tx.lockId) ? refusedTx(`Lock ${tx.lockId} already exists`) : null),
+        () => (ctx.nowMs >= tx.timelock ? refusedTx(`Timelock ${tx.timelock} already expired (timestamp)`) : null),
+        () => (tx.revealBeforeHeight <= ctx.jHeight ? refusedTx(`revealBeforeHeight ${tx.revealBeforeHeight} already passed (current J height: ${ctx.jHeight})`) : null),
+        () => (tx.amount < 1n || tx.amount > MAX_PAYMENT_AMOUNT ? refusedTx(`Invalid amount: ${tx.amount} (min 1, max ${U256})`) : null),
+        () => (a.locks.size >= MAX_ACCOUNT_HTLC_LOCKS ? refusedTx(`Too many active HTLC locks: max ${MAX_ACCOUNT_HTLC_LOCKS}`) : null),
+        draftThrow(a, tx.tokenId),
+        () => { const bad = tx.envelope === undefined ? null : envelopeError(tx.envelope); return bad === null ? null : threwTx(bad); },
+        () => { const available = ogOutCapacity(a, tx.tokenId, ctx.byLeft); return tx.amount > available ? refusedTx(`Insufficient capacity: need ${tx.amount}, available ${available}`) : null; },
+        offdeltaText(a, getDelta(a.account, tx.tokenId), { senderIsLeft: ctx.byLeft, amount: tx.amount }),
+        holdOverflowText(a, tx.tokenId, ctx.byLeft, tx.amount));
+      case "htlc_resolve": {
+        const lock = a.locks.get(tx.lockId);
+        if (lock === undefined) return refusedTx(`Lock ${tx.lockId} not found`);
+        if (!a.account.deltas.has(lock.tokenId)) return refusedTx(`Delta ${Number(lock.tokenId)} not found`);
+        const expired = htlcExpired(lock, ctx);
+        if (tx.outcome === "error") {
+          if (ctx.byLeft === lock.senderIsLeft && !expired) return refusedTx("Only beneficiary can release an active HTLC; payer can cancel only after expiry");
+          return tx.reason === "timeout" && !expired ? refusedTx("Lock not expired yet") : null;
+        }
+        if (expired) return refusedTx(`Lock expired: timestamp=${ctx.nowMs}/${lock.timelock} jHeight=${ctx.jHeight}/${lock.revealBeforeHeight}`);
+        const computed = hashHtlcSecret(tx.secret);
+        if (computed === null) return refusedTx(`Invalid secret: HTLC secret must be 32-byte hex (got ${tx.secret.length} chars)`);
+        if (computed !== lock.hashlock) return refusedTx(`Hash mismatch: expected ${lock.hashlock.slice(0, 8)}..., got ${computed.slice(0, 8)}...`);
+        return checked(offdeltaText(a, shift(getDelta(a.account, lock.tokenId), lock.senderIsLeft ? -lock.amount : lock.amount), undefined, lock.lockId)());
+      }
+      case "swap_offer": return swapOfferFailure(a, tx, ctx);
+      case "swap_cancel_request": {
+        const offer = a.offers.get(tx.offerId);
+        return offer === undefined ? refusedTx(`Offer ${tx.offerId} not found`) : ctx.byLeft !== offer.makerIsLeft ? refusedTx("Only maker can cancel swap offer") : null;
+      }
+      case "swap_resolve": return swapResolveFailure(a, tx, ctx);
+      case "request_collateral": {
+        const feeToken = tx.feeTokenId ?? tx.tokenId;
+        return firstFailure(
+          () => (tx.amount <= 0n ? refusedTx("request_collateral: amount must be > 0") : null),
+          () => (tx.feeAmount < 0n ? refusedTx("request_collateral: feeAmount must be >= 0") : null),
+          () => (!Number.isFinite(tx.policyVersion) || tx.policyVersion < 1 ? refusedTx(`request_collateral: invalid policyVersion ${tx.policyVersion}`) : null),
+          () => (!a.account.deltas.has(tx.tokenId) ? refusedTx(`request_collateral: no delta for token ${Number(tx.tokenId)}`) : null),
+          () => ((a.requested.get(tx.tokenId) ?? 0n) > 0n ? refusedTx("") : null),
+          () => (tx.feeAmount <= 0n ? refusedTx("request_collateral: feeAmount must produce effectiveFee > 0") : null),
+          () => (!a.account.deltas.has(feeToken) ? refusedTx(`request_collateral: no delta for fee token ${Number(feeToken)}`) : null),
+          () => (feeToken === tx.tokenId && tx.amount <= tx.feeAmount ? refusedTx("") : null),
+          () => { const cap = ogOutCapacity(a, feeToken, ctx.byLeft); return tx.feeAmount > cap ? refusedTx(`request_collateral: insufficient fee capacity in token ${Number(feeToken)} (${cap} < ${tx.feeAmount})`) : null; },
+          offdeltaText(a, shift(getDelta(a.account, feeToken), ctx.byLeft ? -tx.feeAmount : tx.feeAmount)));
+      }
+      case "rebalance_refund": {
+        const fees = a.requestFees.get(tx.requestTokenId), refunded = fees?.refund?.refundedAmount ?? 0n, outstanding = (fees?.feePaidUpfront ?? 0n) - refunded, feeToken = tokenKey(fees?.feeTokenId ?? 0);
+        return firstFailure(
+          () => (!tx.requestId || tx.amount <= 0n ? refusedTx("rebalance_refund: requestId and positive amount required") : null),
+          () => (fees === undefined || (a.requested.get(tx.requestTokenId) ?? 0n) <= 0n || fees.requestId !== tx.requestId ? refusedTx(`rebalance_refund: pending request not found (${tx.requestId})`) : null),
+          () => (ctx.byLeft === fees?.requestedByLeft ? refusedTx("rebalance_refund: requester cannot refund itself") : null),
+          () => (fees?.refund !== undefined && fees.refund.reason !== tx.reason ? refusedTx("rebalance_refund: reason conflicts with partial refund") : null),
+          () => (outstanding <= 0n ? threwTx(`REBALANCE_REFUND_STATE_CORRUPT:${tx.requestId}`) : null),
+          () => (tx.amount > outstanding ? refusedTx(`rebalance_refund: amount ${tx.amount} exceeds outstanding ${outstanding}`) : null),
+          () => (!a.account.deltas.has(feeToken) ? refusedTx(`rebalance_refund: fee token ${fees?.feeTokenId} missing`) : null),
+          () => { const cap = ogOutCapacity(a, feeToken, ctx.byLeft); return tx.amount > cap ? refusedTx(`rebalance_refund: insufficient capacity (${cap} < ${tx.amount})`) : null; },
+          offdeltaText(a, shift(getDelta(a.account, feeToken), ctx.byLeft ? -tx.amount : tx.amount)));
+      }
+      case "rebalance_policy": {
+        const token = Number(tx.tokenId), ts = Number(ctx.nowMs), side = ctx.byLeft ? "left" : "right", held = a.feePolicies.get(tx.tokenId), current = ctx.byLeft ? held?.left : held?.right;
+        return firstFailure(
+          () => (!Number.isSafeInteger(token) || token <= 0 || token > 65_535 ? refusedTx(`rebalance_policy: invalid tokenId ${token}`) : null),
+          () => (!Number.isSafeInteger(tx.policyVersion) || tx.policyVersion <= 0 ? refusedTx(`rebalance_policy: invalid policyVersion ${tx.policyVersion}`) : null),
+          () => (typeof tx.baseFee !== "bigint" || typeof tx.liquidityFeeBps !== "bigint" || typeof tx.gasFee !== "bigint" ? refusedTx(`rebalance_policy: invalid fee types for token ${token}`) : null),
+          () => (!Number.isSafeInteger(ts) || ts <= 0 ? refusedTx(`rebalance_policy: invalid committed timestamp ${ts}`) : null),
+          () => (tx.baseFee < 0n || tx.liquidityFeeBps < 0n || tx.liquidityFeeBps > 10_000n || tx.gasFee < 0n ? refusedTx(`rebalance_policy: invalid fee terms for token ${token}`) : null),
+          () => (!a.account.deltas.has(tx.tokenId) ? refusedTx(`rebalance_policy: no delta for token ${token}`) : null),
+          () => (current !== undefined && tx.policyVersion === current.policyVersion && !(current.baseFee === tx.baseFee && current.liquidityFeeBps === tx.liquidityFeeBps && current.gasFee === tx.gasFee)
+            ? refusedTx(`REBALANCE_POLICY_EQUIVOCATION: side=${side} token=${token} version=${tx.policyVersion}`) : null));
+      }
+      case "lending_fund": case "lending_borrow_request": case "lending_repay": case "lending_credit": case "lending_close_request": case "lending_close_payout": return lendingFailure(a, tx, ctx);
+      case "cross_pull_lock": {
+        const text = pullAdmissionText(a, tx);
+        return text !== null ? refusedTx(text) : firstFailure(draftThrow(a, tx.tokenId), holdOverflowText(a, tx.tokenId, tx.amount < 0n, absBig(tx.amount)));
+      }
+      case "cross_pull_close": return crossPullCloseFailure(a, tx, ctx);
+      case "j_event_claim": return claimFailure(a, tx, ctx, e, self);
+      case "settle_transition": return settleFailure(a, tx, ctx, e, witnesses);
+    }
+  })();
+  // An early-accept branch (og's immutable-request or fee-consuming skip) renders as "": the refusal lies past og's handler, in the rewrite's commit step.
+  if (found !== null && found.message !== "") return found;
+  return e._tag === "uncommitted" || e._tag === "too_many_rows" ? threwTx(bodyErrorCode(e)) : refusedTx(bodyErrorCode(e));
+};
 export const accountSnapshot = (a: AccountBody): Required<Omit<AccountBody, "account">> & { readonly state: Hash } =>
   ({ state: hashAccountState(a.account), terms: a.terms, locks: a.locks, offers: a.offers, requested: a.requested, requestFees: a.requestFees, feePolicies: a.feePolicies, lendingIntents: a.lendingIntents, claimRows: a.claimRows, jNonce: a.jNonce, settlement: a.settlement, finalizedJHeight: a.finalizedJHeight, pulls: a.pulls, submittedAt: a.submittedAt });
 
@@ -4166,7 +4704,7 @@ export type AccountReplicaError =
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
   | Tagged<"bad_account", { reason: "entity_id" | "same_entity" | TermsError["_tag"] }>
   | Tagged<"ack_conflict", { field: "frameHash" | "frameHanko" | "disputeHanko" | "height" }>
-  | Tagged<"halt_runtime", { reason: "state_hash_after_verify" }> | Tagged<"proposal_halt", { txType: WireAccountTx["type"]; cause: BodyError }> | Tagged<"mempool_full", { limit: number }> | Tagged<"admission_policy", { reason: "policy_version" }> | Tagged<"frozen", { phase: FrozenAccount["_tag"] }>;
+  | Tagged<"halt_runtime", { reason: "state_hash_after_verify" }> | Tagged<"proposal_halt", { txType: WireAccountTx["type"]; cause: BodyError; message: string }> | Tagged<"account_tx_thrown", { message: string }> | Tagged<"mempool_full", { limit: number }> | Tagged<"admission_policy", { reason: "policy_version" }> | Tagged<"frozen", { phase: FrozenAccount["_tag"] }>;
 export const evidenceOf = (e: AccountReplicaError): FrameEvidence | null => {
 
   if (e._tag !== "dispute_required") return null;
@@ -4190,8 +4728,17 @@ const frozenError = (phase: FrozenAccount["_tag"]): AccountReplicaError => ({ _t
 /** `deferred`: the mempool after proposing: unselected txs plus refused txs that stay queued for retry (og proposal/transactions.ts `retry`); every other refused or included tx leaves it. */
 export type Preview = { readonly frame: AccountFrame; readonly draft: FrameFold; readonly frameProof: LocalProof; readonly dispute: DisputePlan; readonly deferred: readonly WireAccountTx[]; readonly witnesses: DisputeWitnesses; readonly floor: number };
 export type ProposalPlan = Tagged<"frame", { preview: Preview }> | Tagged<"idle", { refused: AccountReplicaError; deferred: readonly WireAccountTx[] }>;
-// og proposal/transactions.ts: a refused matcher/settlement-owned tx halts; capacity and signed-settlement-freeze refusals are retried.
-const PROPOSAL_HALTS: readonly WireAccountTx["type"][] = ["settle_transition", "swap_resolve", "cross_pull_lock", "cross_pull_close"];
+/** og proposal/transactions.ts throwCriticalProposalFailure: a refused matcher/settlement/cross-j-owned tx halts with og's text; others are dropped. */
+const proposalHaltText = (tx: WireAccountTx, reason: string): string | null => {
+  switch (tx.type) {
+    case "settle_transition": return `SETTLEMENT_TRANSITION_PROPOSAL_FAILED:${tx.kind}:${reason}`;
+    case "swap_resolve": return `SWAP_RESOLVE_PROPOSAL_FAILED: offer=${tx.offerId} error=${reason}`;
+    case "cross_pull_lock": return `CROSS_J_PULL_LOCK_PROPOSAL_FAILED: pull=${tx.pullId} order=${String(tx.crossJurisdiction.orderId)} error=${reason}`;
+    case "swap_offer": return tx.crossJurisdiction === undefined ? null : `CROSS_J_SWAP_OFFER_PROPOSAL_FAILED: offer=${tx.offerId} error=${reason}`;
+    case "cross_pull_close": return `CROSS_J_PULL_CLOSE_PROPOSAL_FAILED: pull=${tx.pullId} error=${reason}`;
+    default: return null;
+  }
+};
 const DEFERRED_REFUSALS: readonly string[] = ["htlc_lock_capacity", "settlement_frozen"];
 const deferredRefusal = (e: BodyError): boolean => DEFERRED_REFUSALS.includes(e._tag);
 /** A settle hanko refused only for an `account`-basis nonce against an unsigned workspace it targets exactly (og isRefreshableStaleSettlementHanko / isRefreshableStaleIncomingSettlementHanko). */
@@ -4203,12 +4750,19 @@ const staleHankoNonce = (s: AccountBody, tx: WireAccountTx, e: BodyError): Settl
 /** og getMinimumSafeSettlementNonce (== getNextSettlementNonce) on the committed replica. */
 const minimumSafeNonce = (s: AccountBody, w: DisputeWitnesses): number => Math.max(s.jNonce + 1, proofNonceFloor(w));
 type Refusals = ProposalFold["refused"];
-/** `retry`: og proposalFailureDisposition's extra `retry` cases beyond the capacity/freeze refusals. */
-const proposalRefusals = (mempool: readonly WireAccountTx[], refused: Refusals, retry: (tx: WireAccountTx, e: BodyError) => boolean = () => false): Result<readonly WireAccountTx[], AccountReplicaError> => {
+/**
+ * `retry`: og proposalFailureDisposition's extra `retry` cases beyond the capacity/freeze refusals. `failure`: og's text for the refused tx at
+ * an index; in window order the first thrown handler (og applyProposalTransaction rethrows) or non-retried critical refusal halts the proposal.
+ */
+const proposalRefusals = (mempool: readonly WireAccountTx[], refused: Refusals, retry: (tx: WireAccountTx, e: BodyError) => boolean = () => false, failure: (index: number, e: BodyError) => AccountTxFailure = (_, e) => refusedTx(e._tag)): Result<readonly WireAccountTx[], AccountReplicaError> => {
   const txAt = (i: number): WireAccountTx => mempool[i] ?? assertNever(i as never);
   const retried = (index: number, error: BodyError): boolean => deferredRefusal(error) || retry(txAt(index), error);
-  const halted = refused.find(({ index, error }) => !retried(index, error) && PROPOSAL_HALTS.includes(txAt(index).type));
-  if (halted !== undefined) return err({ _tag: "proposal_halt", txType: txAt(halted.index).type, cause: halted.error });
+  for (const { index, error } of refused) {
+    const f = failure(index, error), tx = txAt(index);
+    if (f.thrown) return err({ _tag: "account_tx_thrown", message: f.message });
+    const halt = retried(index, error) ? null : proposalHaltText(tx, f.message);
+    if (halt !== null) return err({ _tag: "proposal_halt", txType: tx.type, cause: error, message: halt });
+  }
   return ok(refused.flatMap(({ index, error }) => (retried(index, error) ? [txAt(index)] : [])));
 };
 /** `verify` present: settle_transition hankos fold with og's settlement context (verifyHanko + minimum safe nonce); absent, they refuse as context-missing. */
@@ -4229,12 +4783,15 @@ export const planOpen = (r: OpenAccount, party: Party, entityClock: FrameClock, 
   if (r.mempool.length === 0) return err({ _tag: "empty_mempool" });
   return chain(proposalWindow(r.mempool, selected), (window) => planWindow(r, window, party, entityClock, verify, dt));
 };
+/** The lenient proposal body just before window[index] (refused txs skipped, as og's per-tx transition discard does). */
+const lenientBefore = (s: AccountBody, window: readonly WireAccountTx[], index: number, ctx: FoldCtx): AccountBody => proposalFold(s, window.slice(0, index), ctx).state;
 const planWindow = (r: OpenAccount, window: readonly WireAccountTx[], party: Party, entityClock: FrameClock, verify: Verify | undefined, dt: DeltaTransformerRef | undefined): Result<ProposalPlan, AccountReplicaError> => {
   // og admission.ts: a lagging proposer never mints a frame behind the committed watermark.
   const clock: FrameClock = { ...entityClock, timestamp: entityClock.timestamp > r.head.timestamp ? entityClock.timestamp : r.head.timestamp };
-  const height = r.head.height + 1n, floor = proofNonceFloor(r.dispute), folded = proposalFold(r.state, window, foldCtx({ height, ...clock }, party.left, verify === undefined ? undefined : { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt) })), firstRefusal = folded.refused[0];
+  const height = r.head.height + 1n, floor = proofNonceFloor(r.dispute), ctx = foldCtx({ height, ...clock }, party.left, verify === undefined ? undefined : { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt) }), folded = proposalFold(r.state, window, ctx), firstRefusal = folded.refused[0];
   const required = minimumSafeNonce(r.state, r.dispute), stale = (tx: WireAccountTx, e: BodyError): boolean => { const n = staleHankoNonce(r.state, tx, e); return n !== undefined && n.required === required && n.supplied !== required; };
-  return chain(map(proposalRefusals(window, folded.refused, stale), (retried) => withoutAccountTxs(r.mempool, withoutAccountTxs(window, retried))), (deferred) => {
+  const failure = (index: number, e: BodyError): AccountTxFailure => { const w = lenientBefore(r.state, window, index, ctx); return accountTxFailure(w, window[index] ?? assertNever(index as never), ctx, e, party.self, r.dispute); };
+  return chain(map(proposalRefusals(window, folded.refused, stale, failure), (retried) => withoutAccountTxs(r.mempool, withoutAccountTxs(window, retried))), (deferred) => {
     if (folded.included.length === 0 && firstRefusal !== undefined) return ok({ _tag: "idle", refused: firstRefusal.error, deferred });
     return chain(commit(folded.state), ({ view, root }) => chain(stampClaims(folded.included, r.state, party.left), ({ txs, finalized }) => {
       const unhashed = { height, timestamp: clock.timestamp, jHeight: clock.jHeight, prevFrameHash: r.head.prevFrameHash, txs, accountStateRoot: root };
@@ -4271,6 +4828,37 @@ type Replayed = { readonly draft: FrameFold; readonly view: CommittedAccountStat
 const replay = (s: AccountBody, f: AccountFrame, byLeft: boolean, settlement: SettlementCtx): Result<Replayed, AccountReplicaError> =>
   chain(foldFrame(s, f, byLeft, settlement), (draft) => chain(stampClaims(f.txs, s, byLeft), (stamped): Result<Replayed, AccountReplicaError> => !claimProofsMatch(f.txs, stamped.txs) ? err({ _tag: "claim_proof" }) :
     chain(commit(draft.state), ({ view, root }) => (root === f.accountStateRoot ? ok({ draft, view, finalized: stamped.finalized }) : err({ _tag: "state_root_mismatch" })))));
+/**
+ * og inspectAccountJClaimProof's throw for a received witness `given` against the canonical one `want` over the same root (both already
+ * well-shaped by the frame profile): the first node that differs breaks the hash link at its index; a proper prefix misses the terminal leaf;
+ * nodes past the leaf (or any node under an empty root) trail.
+ */
+const claimProofText = (given: JClaimProof | undefined, want: JClaimProof | undefined): string | null => {
+  if (given === undefined) return "ACCOUNT_J_CLAIM_PROOF_REQUIRED";
+  if (want === undefined || canon(lowerHexDeep(given)) === canon(want)) return null;
+  if (want.nodes.length === 0) return "ACCOUNT_J_CLAIM_PROOF_TRAILING_NODES";
+  if (given.nodes.length < 1) return "ACCOUNT_J_CLAIM_PROOF_LENGTH_INVALID";
+  const differs = given.nodes.findIndex((n, i) => i >= want.nodes.length || canon(lowerHexDeep(n)) !== canon(want.nodes[i]));
+  if (differs < 0) return "ACCOUNT_J_CLAIM_PROOF_TERMINAL_LEAF_MISSING";
+  return differs >= want.nodes.length ? "ACCOUNT_J_CLAIM_PROOF_TRAILING_NODES" : `ACCOUNT_J_CLAIM_PROOF_LINK_INVALID:${differs}`;
+};
+/**
+ * og replayIncomingFrameOnClone's first failing tx, walked in frame order with og's text: a claim whose witnesses differ from the accumulator's
+ * throws (og validateAccountJEventClaimAdmission verifies left, then right), else the first refused or thrown handler.
+ */
+const frameFailure = (s: AccountBody, f: AccountFrame, byLeft: boolean, settlement: SettlementCtx, self: EntityId, w: DisputeWitnesses): AccountTxFailure | null => {
+  const ctx = foldCtx(f, byLeft, settlement), stamped = stampClaims(f.txs, s, byLeft);
+  let body = s;
+  for (const [i, tx] of f.txs.entries()) {
+    const want = stamped.ok ? stamped.value.txs[i] : undefined;
+    const proof = tx.type === "j_event_claim" && want?.type === "j_event_claim" ? claimProofText(tx.leftProof, want.leftProof) ?? claimProofText(tx.rightProof, want.rightProof) : null;
+    if (proof !== null) return threwTx(proof);
+    const next = applyAccountBody(body, tx, ctx);
+    if (!next.ok) return accountTxFailure(body, tx, ctx, next.error, self, w);
+    body = next.value.state;
+  }
+  return null;
+};
 const frameStructure = (f: AccountFrame): Result<void, AccountReplicaError> => {
   const field = f.timestamp < 0n ? "timestamp" : f.jHeight < 0n ? "jHeight" : f.txs.length > ACCOUNT_MEMPOOL_SIZE ? "txs" : !BYTES32.test(f.accountStateRoot) ? "accountStateRoot" : null;
   return field === null ? ok(undefined) : err({ _tag: "frame_structure", field });
@@ -4475,11 +5063,15 @@ const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validat
   const { frame } = input, onLeft = other(party.left), floor = proofNonceFloor(cur.dispute);
   const evidence = (cause: AccountReplicaError, reason?: string): AccountReplicaError => ({ _tag: "dispute_required", cause, frame, frameHanko: input.frameHanko, ...opt("reason", reason ?? (cause._tag === "state_root_mismatch" ? "Bilateral account state root mismatch" : undefined)) });
   // og consensus/index.ts classifyIncomingValidationFailure: a stale account-basis hanko for the one unsigned workspace is a plain refusal, not dispute evidence.
+  const settlement: SettlementCtx = { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt), ...opt("registeredBoardHash", registeredBoardHash) };
+  // og replayIncomingFrameOnClone: a refused tx is dispute evidence `Frame application failed: <og text>`; a thrown handler aborts the input.
   const required = minimumSafeNonce(cur.state, cur.dispute), replayed = (cause: AccountReplicaError): AccountReplicaError => {
     const stale = cause._tag === "settlement" ? frame.txs.filter((tx) => { const n = staleHankoNonce(cur.state, tx, cause); return n !== undefined && n.supplied < n.required && n.required === required; }) : [];
-    return cause._tag === "settlement" && stale.length === 1 ? { _tag: "stale_settlement_hanko", cause } : evidence(cause);
+    if (cause._tag === "settlement" && stale.length === 1) return { _tag: "stale_settlement_hanko", cause };
+    const failure = cause._tag === "state_root_mismatch" ? null : frameFailure(cur.state, frame, onLeft, settlement, party.self, cur.dispute);
+    return failure === null ? evidence(cause) : failure.thrown ? { _tag: "account_tx_thrown", message: failure.message } : evidence(cause, `Frame application failed: ${failure.message}`);
   };
-  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt), ...opt("registeredBoardHash", registeredBoardHash) }), replayed), ({ draft, view, finalized }) => chain(localProof(view, dt), (frameProof) =>
+  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, settlement), replayed), ({ draft, view, finalized }) => chain(localProof(view, dt), (frameProof) =>
     chain(mapErr(promoteSettled(cur.dispute, cur.state, draft.state, party.left, finalized), evidence), (witnesses) =>
       map(mapErr(requireDispute(frameProof, witnesses, validated), (e) => evidence(e, disputeRequirementText(e, frameProof, witnesses, validated))), () => done<ReceivedAccount, AccountOutput>({ ...cur, _tag: "received", candidate: new Candidate(frame, input.frameHanko, frameProof, draft, floor), disputeHanko: validated, dispute: witnesses }))))));
 };
@@ -6834,8 +7426,8 @@ const unsafeEvidenceSecrets = (s: AccountBody, e: FrameEvidence): readonly { rea
 };
 /**
  * og AccountInputDisputeRequired.reason: the deadline scan's text for a secret-window violation, else og's replay failureMessage where the
- * rewrite reproduces it (the state root mismatch, the dispute Hanko requirement). og's per-tx `Frame application failed: ...` texts have no
- * rewrite counterpart, so those causes carry their tag.
+ * rewrite reproduces it (the state root mismatch, the dispute Hanko requirement, og's per-tx `Frame application failed: <handler text>` from
+ * accountTxFailure). Only a cause with no og replay text (none is known) falls back to its tag.
  */
 const unsafeReason = (e: FrameEvidence, timestamp: bigint): string => e.cause._tag === "frame_deadline" && e.cause.reason === "secret_window"
   ? `HTLC_SECRET_ENFORCEMENT_WINDOW_TOO_SHORT: lock=${e.cause.lockId} reserve=${HTLC_ENFORCEMENT_RESERVE_MS}ms localTimestamp=${timestamp}` : e.reason ?? `ACCOUNT_FRAME_DISPUTE_REQUIRED:${e.cause._tag}`;
@@ -7959,12 +8551,14 @@ const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext)
     if (cohort.value === null) continue;
     const selected = cohort.value;
     const dt = accountDt(ctx, child), plan = planAccountProposal(child, self, clock, ctx.verify, selected, dt), party = partyOf(replicaId(child), self);
+    if (!plan.ok && accountThrew(plan.error)) return plan;
     if (!plan.ok || !party.ok) continue;
     const input: AccountInput = match(plan.value, {
       frame: ({ preview }): AccountInput => ({ kind: "propose", frameHanko: pendingHanko(preview.frame.stateHash), ...opt("disputeHanko", pendingDispute(preview.dispute)), ...opt("selected", selected), ...clock }),
       idle: (): AccountInput => ({ kind: "propose", ...opt("selected", selected), ...clock }),
     });
     const next = routed(draft.state, draft.accountReplicas, peer, propose(child, input as Propose, { verify: pendingVerify(ctx.verify, self), party: party.value, deltaTransformer: dt }));
+    if (!next.ok && accountThrew(next.error)) return next;
     if (!next.ok) continue;
     if (plan.value._tag === "frame") frames += 1;
     draft = { ...draft, ...next.value, outputs: [...draft.outputs, ...next.value.outputs], events: [...(draft.events ?? []), ...(next.value.events ?? [])], runtimeEvents: [...(draft.runtimeEvents ?? []), ...(next.value.runtimeEvents ?? [])] };
@@ -8614,7 +9208,9 @@ const laneRefusal = (tx: EntityTx, lane: TxLane): EntityError | undefined => {
   return undefined;
 };
 /** og plain Errors (openAccount, lending, governance invariants) refuse the whole input; a reject disposition evicts only the outermost tx. */
-const fatalTx = (tx: EntityTx, e: EntityError): boolean => tx.type === "openAccount" || e._tag === "lending_entity" || e._tag === "swap_request_account_missing" || e._tag === "entity_invariant";
+const fatalTx = (tx: EntityTx, e: EntityError): boolean => tx.type === "openAccount" || e._tag === "lending_entity" || e._tag === "swap_request_account_missing" || e._tag === "entity_invariant" || accountThrew(e);
+/** og's thrown Account handler Error or critical proposal failure (proposal/transactions.ts throwCriticalProposalFailure): it aborts the whole Entity input. */
+const accountThrew = (e: EntityError): boolean => e._tag === "account_tx_thrown" || e._tag === "proposal_halt" || (e._tag === "rejected_after_ack" && accountThrew(e.cause));
 /** The accumulated tx hashesToSign and jOutputs of two drafts (absent while empty). */
 const frameEffects = (a: Draft, b: Draft): Pick<Draft, "hashes" | "jOutputs"> => {
   const hashes = [...(a.hashes ?? []), ...(b.hashes ?? [])], jOutputs = [...(a.jOutputs ?? []), ...(b.jOutputs ?? [])];

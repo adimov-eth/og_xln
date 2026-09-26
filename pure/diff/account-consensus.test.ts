@@ -233,14 +233,19 @@ describe("account-consensus: driven scenarios", () => {
   test("MATCH: proposal disposition — a failed matcher-owned swap_resolve halts, an ordinary failed tx is removed, the rest are proposed", async () => {
     const pctx = { runtimeTimestamp: 1_000, quietLogs: true, jReplicas: new Map(), jClaimNodeStore: new Map(), verifyHanko: async () => ({ valid: true, entityId: null }), resolveSettlementBoardAuthority: async () => undefined } as unknown as AccountConsensusContext;
     const validate = (txs: OgTx[]) => validateProposalTransactions({ consensusContext: pctx, account: makeAccount(L, R), proposalWindow: txs, frameTimestamp: 1_000, frameJHeight: 0, jClaimNodeStore: new Map() });
-    await expect(validate([{ type: "swap_resolve", data: { offerId: "missing", fillRatio: 1, cancelRemainder: true } } as unknown as OgTx])).rejects.toThrow("SWAP_RESOLVE_PROPOSAL_FAILED");
+    const ogHalt = await validate([{ type: "swap_resolve", data: { offerId: "missing", fillRatio: 1, cancelRemainder: true } } as unknown as OgTx]).then(() => "og accepted", (e: Error) => e.message);
+    expect(ogHalt).toStartWith("SWAP_RESOLVE_PROPOSAL_FAILED");
+    // og applyProposalTransaction rethrows a handler Error: the whole proposal (and Entity input) aborts with og's text
+    const ogThrown = await validate([scl(1, 5n), { type: "htlc_lock", data: { lockId: W("5a"), hashlock: W("5a"), timelock: 10n ** 15n, revealBeforeHeight: 50, amount: 1n, tokenId: 1, envelope: { version: 9, ciphertext: "x" } } } as unknown as OgTx]).then(() => "og accepted", (e: Error) => e.message);
     const bad = { type: "add_delta", data: { tokenId: 1 << 30 } } as unknown as OgTx;
     const og = await validate([scl(1, 5n), bad, scl(2, 5n)]);
     expect([og.validTxs.length, og.txsToRemove.length, og.deferredTxCount]).toEqual([2, 1, 0]);
     // rewrite
     const resolve = { type: "swap_resolve", offerId: "missing", fillRatio: 1, cancelRemainder: true } as WireAccountTx;
     const halted = unwrap(admit(genesisAB(), [resolve]));
-    expect(unwrapErr(applyAccountInput(halted, { kind: "propose", ...CLOCK }, DOOR(ALICE)))).toMatchObject({ _tag: "proposal_halt", txType: "swap_resolve" });
+    expect(unwrapErr(applyAccountInput(halted, { kind: "propose", ...CLOCK }, DOOR(ALICE)))).toMatchObject({ _tag: "proposal_halt", txType: "swap_resolve", message: ogHalt });
+    const lock = { type: "htlc_lock", lockId: W("5a"), hashlock: W("5a"), timelock: 10n ** 15n, revealBeforeHeight: 50n, amount: 1n, tokenId: "1", envelope: { version: 9, ciphertext: "x" } } as unknown as WireAccountTx;
+    expect(unwrapErr(applyAccountInput(unwrap(admit(genesisAB(), [{ ...TX, tokenId: "1" } as WireAccountTx, lock])), { kind: "propose", ...CLOCK }, DOOR(ALICE)))).toEqual({ _tag: "account_tx_thrown", message: ogThrown });
     const overdraw = { type: "payment", tokenId: "0", amount: 10n ** 30n } as WireAccountTx;
     const proposed = proposeFrom(genesisAB(), ALICE, [TX, overdraw, { ...TX2, tokenId: "1" } as WireAccountTx]).replica;
     if (proposed._tag !== "proposed") throw new Error(proposed._tag);
@@ -496,6 +501,27 @@ describe("account-consensus: driven scenarios", () => {
     expect((e as { reason?: string }).reason).toBe(!res.ok && res.disposition === "dispute" ? res.disputeRequired.reason : "og accepted");
     const frozen = unwrap(disputeUnsafe(r, applyAccountInput(r, input, DOOR(self)), DOOR(self))).replica._tag;
     expect(["preparing", "disputed"]).toContain(frozen);
+  });
+
+  test("MATCH: authenticated frame whose replay refuses a tx -> dispute reason `Frame application failed: <og handler text>` (og consensus/index.ts replayIncomingFrameOnClone)", async () => {
+    const lock = W("5c"), cases: Array<[OgTx, WireAccountTx]> = [
+      [{ type: "htlc_resolve", data: { lockId: lock, outcome: "secret", secret: W("01") } } as OgTx, { type: "htlc_resolve", lockId: lock, outcome: "secret", secret: W("01") } as WireAccountTx],
+      [{ type: "swap_cancel_request", data: { offerId: "nope" } } as OgTx, { type: "swap_cancel_request", offerId: "nope" } as WireAccountTx],
+      [{ type: "direct_payment", data: { tokenId: 1, amount: 5n, route: [L], fromEntityId: R, toEntityId: L, deliveryMode: "direct" } } as OgTx, { type: "payment", tokenId: "1", amount: 5n, route: [leftOf()], fromEntityId: rightOf(), toEntityId: leftOf(), deliveryMode: "direct" } as WireAccountTx],
+    ];
+    for (const [ogTx, tx] of cases) {
+      const ctx = ogCtx("diff-frame-application");
+      const a = ogAccount(L, R);
+      const res = await ogApply(ctx, a, { kind: "ack_frame", ...ogEnvelope(a), proposal: { frame: ogFrame(a, { accountTxs: [ogTx] }), frameHanko: `0x${"66".repeat(65)}` } } as OgInput);
+      const ogReason = !res.ok && res.disposition === "dispute" ? res.disputeRequired.reason : `og ${res.ok ? "accepted" : res.disposition}`;
+      expect(ogReason).toStartWith("Frame application failed: ");
+      const r = genesisAB(), from = rightOf(), self = leftOf();
+      const e = unwrapErr(applyAccountInput(r, ackFrameOf(r, from, peerFrame(r, from, { txs: [tx] })), DOOR(self)));
+      expect(e._tag).toBe("dispute_required");
+      // og's texts name og's fixture ids (L/R); the rewrite's frame names ALICE/BOB
+      const ids = (x: string | undefined) => String(x).replace(/sender [0-9a-fA-F]{4}:/, "sender ****:");
+      expect(ids((e as { reason?: string }).reason)).toBe(ids(ogReason));
+    }
   });
 
   test("MATCH: authenticated frame that changes the proof but carries no peer dispute Hanko -> dispute on both", async () => {

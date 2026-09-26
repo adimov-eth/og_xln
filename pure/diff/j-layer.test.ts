@@ -306,15 +306,20 @@ describe("multi-claim Account frames (og prepareAccountJClaimTx / verifyAccountJ
         expect(computeFrameHash(ogFrame as any)).toBe(frame.stateHash);
         // A received witness that is not the regenerated path refuses the frame, as og verifyAccountJClaimProof throws on it.
         const first: any = frame.txs[0];
-        if (first !== undefined && first.leftProof.nodes.length > 0 && tampered < 5) {
-          tampered++;
-          const bad = { ...frame, txs: frame.txs.map((tx, i) => (i === 0 ? { ...tx, leftProof: { version: 1, nodes: [] } } : tx)) } as AccountFrame;
+        if (first !== undefined && first.leftProof.nodes.length > 0 && tampered < 12) {
+          // og inspectAccountJClaimProof: empty (LENGTH_INVALID), a broken link, a proper prefix (TERMINAL_LEAF_MISSING), a node past the leaf
+          const nodes: any[] = first.leftProof.nodes, other: any = { version: 1, type: "branch", bit: 7, left: W("01"), right: W("02") };
+          const forged = [[], [other, ...nodes.slice(1)], nodes.slice(0, -1), [...nodes, other], [...nodes.slice(0, -1), other]][tampered++ % 5]!;
+          const badProof = { version: 1, nodes: forged };
+          const bad = { ...frame, txs: frame.txs.map((tx, i) => (i === 0 ? { ...tx, leftProof: badProof } : tx)) } as AccountFrame;
           const signed = { ...bad, stateHash: unwrap(frameStateHash(bad, replicaId(opened), byLeft)) };
           const offer = { ...offerOf(proposed, proposer), frame: signed, frameHanko: signAccountFrame(signed, proposer) };
-          expect(stepIn(reps.get(peer)!, offer as AccountInput, peer)).toMatchObject({ ok: false, error: { _tag: "dispute_required", cause: { _tag: "claim_proof" } } });
           const p = prepared[0].data;
           const record = createAccountJClaimRecord({ ...TERMS.domain, leftEntity: PARTY_LEFT, rightEntity: PARTY_RIGHT } as any, "left", { jHeight: p.jHeight, jBlockHash: p.jBlockHash, eventsHash: canonicalJurisdictionEventsHash(p.events) } as any);
-          expect(() => verifyAccountJClaimProof(leftRootBefore, record, { version: 1, nodes: [] })).toThrow();
+          let ogThrown = "og accepted";
+          try { verifyAccountJClaimProof(leftRootBefore, record, badProof); } catch (e) { ogThrown = (e as Error).message; }
+          // og's thrown Error aborts the whole input (og replayIncomingFrameOnClone does not catch it): same text
+          expect(stepIn(reps.get(peer)!, offer as AccountInput, peer)).toEqual({ ok: false, error: { _tag: "account_tx_thrown", message: ogThrown } });
         }
         const received = unwrap(stepIn(reps.get(peer)!, offerOf(proposed, proposer), peer)).replica;
         const acked = unwrap(stepIn(received, ackInput(received, peer), peer));
