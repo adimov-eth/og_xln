@@ -9723,7 +9723,9 @@ export type JSubmitState = SubmitJournal & { readonly jurisdictionName: string; 
 /** og EntityProviderActionSubmitState. */
 export type EntityProviderActionSubmitState = SubmitJournal & { readonly jurisdictionName: string; readonly actionHash: string; readonly actionNonce: bigint; readonly generation: number };
 /** og EntityReplica validator-local fields the Runtime owns (never in the Entity root): J submit ledgers, quorum Hanko witnesses, J history. */
+export type ReplicaPosition = { readonly x: number; readonly y: number; readonly z: number; readonly jurisdiction?: string | undefined };
 export type ReplicaLocal = {
+  readonly position?: ReplicaPosition | undefined;
   readonly jSubmitState?: JSubmitState | undefined; readonly entityProviderActionSubmitState?: EntityProviderActionSubmitState | undefined;
   readonly hankoWitness?: ReadonlyMap<string, HankoWitness> | undefined; readonly jHistory?: ValidatorJHistory | undefined;
 };
@@ -9987,6 +9989,25 @@ const importReplica = (rt: Runtime, tx: Extract<RuntimeTx, { type: "importReplic
   const key = `${entity}:${signer}`, existing = [...rt.entities].find(([k]) => lower(k) === key);
   return chain(requireBoundJurisdiction(rt, entity, config), (j) => importBoundReplica(rt, tx, entity, signer, key, existing, j));
 };
+/** og getSwapPairOrientation: a liquid reference stable (USDC 1, USDT 3) quotes; otherwise the lower id is the base. */
+const swapPairOrientation = (a: number, b: number): { readonly baseTokenId: number; readonly quoteTokenId: number; readonly pairId: string } => {
+  const left = Math.min(a, b), right = Math.max(a, b), pairId = `${left}/${right}`, liquid = (t: number): boolean => t === 1 || t === 3;
+  return liquid(a) && !liquid(b) ? { baseTokenId: b, quoteTokenId: a, pairId } : !liquid(a) && liquid(b) ? { baseTokenId: a, quoteTokenId: b, pairId } : { baseTokenId: left, quoteTokenId: right, pairId };
+};
+/** og buildDefaultEntitySwapPairs(getTokenIdsForJurisdiction(j)): USDC/WETH/USDT everywhere, plus TRX/SUN on a Tron stack; WETH/USDC first, then by quote, then base. */
+export const defaultEntitySwapPairs = (name: string | undefined, chainId: number | undefined): readonly { readonly baseTokenId: number; readonly quoteTokenId: number; readonly pairId: string }[] => {
+  const n = String(name ?? "").trim().toLowerCase(), tron = n.includes("tron") || n === "rpc2" || (n.length === 0 && chainId === 31338);
+  const tokens = tron ? [1, 2, 3, 4, 5] : [1, 2, 3], seen = new Set<string>(), pairs: { baseTokenId: number; quoteTokenId: number; pairId: string }[] = [];
+  for (let i = 0; i < tokens.length; i++) for (let j = i + 1; j < tokens.length; j++) {
+    const o = swapPairOrientation(tokens[i] as number, tokens[j] as number), k = `${o.baseTokenId}/${o.quoteTokenId}`;
+    if (!seen.has(k)) { seen.add(k); pairs.push(o); }
+  }
+  const primary = "2/1", key = (p: { readonly baseTokenId: number; readonly quoteTokenId: number }): string => `${p.baseTokenId}/${p.quoteTokenId}`;
+  return pairs.sort((a, b) => (key(a) === primary ? -1 : key(b) === primary ? 1 : a.quoteTokenId - b.quoteTokenId || a.baseTokenId - b.baseTokenId));
+};
+/** og buildGenesisReplica `replica.position`: validator-local, its jurisdiction defaulting to the active one or 'default'. */
+const withPosition = (rt: Runtime, key: string, position: ReplicaPosition | undefined, active: string | undefined): Runtime =>
+  position === undefined ? rt : withLocal(rt, key, { position: { ...position, jurisdiction: position.jurisdiction || active || "default" } });
 const importBoundReplica = (rt: Runtime, tx: Extract<RuntimeTx, { type: "importReplica" }>, entity: string, signer: string, key: string, existing: readonly [string, EntityReplica] | undefined, j: ImportJurisdiction): Result<Runtime, RuntimeError> => {
   const { config, isProposer, entitySeed } = tx.data;
   const domain: Domain = { chainId: j.chainId ?? 0, depositoryAddress: j.depositoryAddress ?? "" }, jurisdictionConfig = jurisdictionConfigOf(j);
@@ -10024,10 +10045,17 @@ const importBoundReplica = (rt: Runtime, tx: Extract<RuntimeTx, { type: "importR
         if (replica.head.height > 0n || siblings.some((r) => r.head.height > 0n)) return map(sameAuthority(replica), () => finish(replica, oldKey === key ? undefined : oldKey));
         return ok(finish(at(replica, { ...replica.state, quorum, jurisdiction: domain, jurisdictionConfig }, replica.mempool), oldKey === key ? undefined : oldKey));
       }
-      if (certified !== undefined) return map(sameAuthority(certified), () => finish(at(certified, certified.state, [])));
+      // og buildCheckpointReplica: any sibling makes this a checkpoint import; its position defaults to the bound jurisdiction name.
+      if (certified !== undefined) return map(sameAuthority(certified), () => { const p = tx.data.position; const rt2 = finish(at(certified, certified.state, [])); return p === undefined ? rt2 : withLocal(rt2, key, { position: { ...p, ...(p.jurisdiction || jurisdictionConfig.name ? { jurisdiction: p.jurisdiction || jurisdictionConfig.name } : {}) } }); });
       // og importReplica genesis: lastFinalizedJHeight starts at the EntityProvider registration base (getJHistoryRegistrationBaseHeight).
-      const committed: EntityCommitted = { entityEncryptionPublicKey: publicKey, lastFinalizedJHeight: jHistoryRegistrationBase(jurisdictionConfig) };
-      return map(mapErr(createEntity({ id: entity as EntityId, jurisdiction: domain, threshold: config.threshold, members: (authority as Extract<Authority, { _tag: "teaching" }>).members, signerId: signer as Address, timestamp: rt.timestamp, jurisdictionConfig, committed }), (e): RuntimeError => e), (r) => finish(r));
+      // og buildGenesisReplica also commits the default profile, the crontab and the jurisdiction's default swap pairs.
+      const name = typeof tx.data.profileName === "string" && tx.data.profileName.trim().length > 0 ? tx.data.profileName.trim() : `Entity ${entity.slice(-4)}`;
+      const committed: EntityCommitted = {
+        nonces: new Map(), proposals: new Map(), reserves: new Map(), deferredAccountProposals: new Map(), entityEncryptionPublicKey: publicKey, lastFinalizedJHeight: jHistoryRegistrationBase(jurisdictionConfig),
+        profile: { name, isHub: false, avatar: "", bio: "", website: "" }, crontabState: DEFAULT_CRONTAB, swapTradingPairs: defaultEntitySwapPairs(jurisdictionConfig.name, domain.chainId) as unknown as Binary,
+      };
+      return map(mapErr(createEntity({ id: entity as EntityId, jurisdiction: domain, threshold: config.threshold, members: (authority as Extract<Authority, { _tag: "teaching" }>).members, signerId: signer as Address, timestamp: rt.timestamp, jurisdictionConfig, committed }), (e): RuntimeError => e),
+        (r) => withPosition(finish({ ...r, state: { ...r.state, crossJurisdictionBookAdmissions: new Map() } }), key, tx.data.position, rt.activeJurisdiction));
     }));
   });
 };
