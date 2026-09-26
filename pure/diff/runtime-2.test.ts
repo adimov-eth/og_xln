@@ -366,7 +366,8 @@ describe("runtime-2: importReplica board authority (og runtime/tx/tx-handlers.ts
       ({ type: "importReplica", entityId: patch.entityId ?? id, signerId: patch.signerId ?? aliceAddr, data: { config, isProposer: patch.isProposer ?? true, entitySeed: patch.entitySeed ?? SEED } });
     const code = (t: RuntimeTx, at: Runtime = rt): string | null => rwCode(applyRuntimeTx(at, t, {}));
     expect(code(tx({ entityId: "" }))).toBe("IMPORT_REPLICA_INVALID_ID");
-    expect(code(tx({}), createRuntime())).toBe("ENTITY_JURISDICTION_RESOLVE_FAILED");
+    // og requireRuntimeJurisdictionConfigByName: no J replica of that name (runtime-j.test.ts runs this against og).
+    expect(code(tx({}), createRuntime())).toBe("ENTITY_JURISDICTION_UNAVAILABLE");
     expect(code(tx({ signerId: carolAddr }))).toBe("IMPORT_REPLICA_SIGNER_NOT_ON_BOARD");
     expect(code(tx({ isProposer: false }))).toBe("IMPORT_REPLICA_PROPOSER_FLAG_INVALID");
     expect(code(tx({ signerId: bobAddr }))).toBe("IMPORT_REPLICA_PROPOSER_FLAG_INVALID");
