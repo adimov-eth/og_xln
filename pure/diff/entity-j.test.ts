@@ -126,7 +126,8 @@ describe("entity-j: Entity-level J-batch txs on the committed jBatchState (og en
           expect(myTx).toEqual(ogTx);
           if (myTx.type === "batch") expect(myTx.data.encodedBatch).toBe(ogEncodeJBatch(ogTx.data.batch));
         }
-        expect(d.hashes ?? []).toEqual(ogOut.hashesToSign ?? []);
+        // og's handler call has no frame: og applyEntityFrame appends the 'profile' hash after the txs (consensus-final.test.ts)
+        expect((d.hashes ?? []).filter((h) => h.type !== "profile")).toEqual(ogOut.hashesToSign ?? []);
         // Account latches the abort / clear release (og applyEntityAccountEnvelopeUpdate setRebalanceSubmittedAt)
         const ogSubmitted = [...ogOut.newState.accounts.get(BOB).shadow.rebalance.submittedAtByToken.keys()].sort();
         expect([...(d.accountReplicas.get(BOB)!.state.submittedAt ?? new Map()).keys()].sort()).toEqual(ogSubmitted);
@@ -239,8 +240,6 @@ describe("entity-j RJ-9: signed EVM transaction parser (ethers v6 Transaction.fr
     for (let i = 0; i < 1500; i++) {
       let raw = signedTx();
       for (let m = nri(3); m > 0; m--) { raw = mutateTx(raw); mutated++; }
-      // Blob (3) and set-code (4) transactions are outside the port (the registration intent is always a type 0/1/2 call).
-      if ([3, 4].includes(ethers.getBytes(raw)[0]!)) continue;
       const og = ethersView(raw);
       expect(rewriteView(raw)).toEqual(og as never);
       if (og === "REFUSED") refused++; else accepted++;
@@ -524,6 +523,11 @@ const handoverCase = (variant: string): { board: any; activationFor: (oldHash: s
   const shares: Record<string, bigint> = Object.fromEntries(validators.map((v) => [v, BigInt(1 + jri(3))]));
   const total = Object.values(shares).reduce((a, b) => a + b, 0n);
   let board: any = { mode: "proposer-based", threshold: BigInt(1 + jri(Number(total))), validators, shares };
+  // EJ-R5: a nested Entity validator (og toBoardEntityId of a 32-byte id); og encodeBoard requires the proposer (validators[0]) to be an EOA
+  if (variant === "nested" || variant === "nestedFirst") {
+    const nested = jword().toLowerCase(), eoa = pool[jri(3)]!, vs = variant === "nested" ? [eoa, nested] : [nested, eoa];
+    board = { mode: "proposer-based", threshold: BigInt(1 + jri(2)), validators: vs, shares: { [eoa]: 1n, [nested]: 1n } };
+  }
   if (variant === "upper") { const up = ethers.getAddress(validators[0]!), { [validators[0]!]: s, ...rest } = shares; board = { ...board, validators: [up, ...validators.slice(1)], shares: { ...rest, [up]: s } }; }
   if (variant === "shareUpper") { const { [validators[0]!]: s, ...rest } = shares; board = { ...board, shares: { ...rest, [validators[0]!.toUpperCase().replace("0X", "0x")]: s } }; }
   if (variant === "gossip") board = { ...board, mode: "gossip-based" };
@@ -546,9 +550,9 @@ const handoverCase = (variant: string): { board: any; activationFor: (oldHash: s
 
 describe("entity-j RJ-10: boardHandover (og board-handover.ts, frame config derived inside consensus)", () => {
   test("MATCH (randomized): certified BoardActivated handovers and their defects -- same frame authority verdict, handler verdict, new board, leader and certified registry", async () => {
-    const variants = ["ok", "ok", "chain2", "bobFirst", "badPrev", "hashMismatch", "noActivation", "upper", "shareUpper", "gossip", "threshold0", "thresholdHigh", "dup", "outsider", "noShares", "shapeAlone", "shapeReversed", "twice", "unregistered", "wrongRegistration"];
+    const variants = ["ok", "ok", "chain2", "bobFirst", "badPrev", "hashMismatch", "noActivation", "upper", "shareUpper", "gossip", "threshold0", "thresholdHigh", "dup", "outsider", "noShares", "shapeAlone", "shapeReversed", "twice", "unregistered", "wrongRegistration", "nested", "nestedFirst"];
     const seen = new Map<string, number>();
-    for (let run = 0; run < 60; run++) {
+    for (let run = 0; run < 66; run++) {
       const variant = variants[run % variants.length]!;
       let state = unwrap(createEntity({ id: NUM, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: { name: "j", entityProviderAddress: EP }, committed: { reserves: new Map([[1, 10n]]) as never } })).state;
       const replicas: ReadonlyMap<EntityId, AccountReplica> = new Map();
@@ -589,6 +593,6 @@ describe("entity-j RJ-10: boardHandover (og board-handover.ts, frame config deri
       expect(s.committed["certifiedBoardState"]).toEqual(next.certifiedBoardState);
       expect(Number(s.committed["lastFinalizedJHeight"])).toBe(next.lastFinalizedJHeight);
     }
-    for (const k of ["ok:ok", "chain2:ok", "bobFirst:ok", "badPrev:refused", "hashMismatch:refused", "noActivation:refused", "upper:refused", "gossip:refused", "threshold0:refused", "shapeAlone:refused", "twice:refused", "unregistered:refused", "wrongRegistration:refused"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
+    for (const k of ["ok:ok", "chain2:ok", "bobFirst:ok", "badPrev:refused", "hashMismatch:refused", "noActivation:refused", "upper:refused", "gossip:refused", "threshold0:refused", "shapeAlone:refused", "twice:refused", "unregistered:refused", "wrongRegistration:refused", "nested:ok", "nestedFirst:refused"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
   }, 120_000);
 });

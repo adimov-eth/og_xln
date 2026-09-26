@@ -72,13 +72,18 @@ const ENTITY_KEYS = new Map([ALICE, BOB, CAROL].map((id, i) => { const priv = ne
 const SIGNERS = new Map<EntityId, Address>([[ALICE, aliceAddr], [BOB, bobAddr], [CAROL, carolAddr]]);
 const entityOf = (id: EntityId) => unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[SIGNERS.get(id)!, { shares: 1n }]]), committed: { entityEncryptionPublicKey: ENTITY_KEYS.get(id)!.pub } }));
 const inputOf = (id: EntityId, txs: EntityTx[], timestamp: bigint): RoutedEntityInput => ({ entityId: id, signerId: SIGNERS.get(id)!, input: { kind: "txs", timestamp, txs } });
+/** og requireEntityEncryptionPrivateKey + assertEntityEncryptionKeypair run on every proposal and replay: every validator holds its Entity's key. */
+const withKeys = (ctx: any): typeof verifiers => ({ ...ctx, htlcInfra: (id: EntityId) => {
+  const given = ctx.htlcInfra?.(id), key = ENTITY_KEYS.get(id)?.priv;
+  return given?.encryptionPrivateKey !== undefined || key === undefined ? given : { profiles: [], ...given, encryptionPrivateKey: key };
+} });
 const quiet = (start: Runtime, first: RoutedEntityInput[], ctx: object = verifiers): Runtime => {
   let rt = start, clock = NOW;
   const queue = [...first];
   for (let n = 0; queue.length > 0; n++) {
     if (n > 200) throw new Error("no quiescence");
     const input = queue.shift() as RoutedEntityInput;
-    const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, ctx as typeof verifiers));
+    const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, withKeys(ctx)));
     if (out.rejected.length > 0) throw new Error(JSON.stringify(out.rejected, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
     rt = out.runtime; clock += 1n;
     for (const o of out.outbox) {
@@ -407,7 +412,7 @@ describe("entity-lane: certified Entity -> Entity lane (og consensus/output/publ
       sourceDisputeConfig: TERMS.disputeConfig, targetDisputeConfig: CLOCK60, status: "intent", createdAt: t0, updatedAt: t0, expiresAt: t0 + 3_600_000,
       sourceSignerId: aliceAddr.toLowerCase(), sourceHubSignerId: bobAddr.toLowerCase(), targetHubSignerId: SIGNER[H2]!, targetSignerId: SIGNER[U2]!,
     };
-    const ctx = { ...verifiers, runtimeSeed: RUNTIME_SEED } as typeof verifiers;
+    const ctx = { ...verifiers, runtimeSeed: RUNTIME_SEED, htlcInfra: (id: EntityId) => ({ profiles: [], encryptionPrivateKey: ENTITY_KEYS.get(id)?.priv }) } as typeof verifiers;
     const apply = (inputs: RoutedEntityInput[]) => { const s = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: inputs }, ctx)); expect(s.rejected).toEqual([]); return s; };
 
     // 1. ALICE authorizes as the source user; the committed frame publishes one runtimeOutput to BOB's signer

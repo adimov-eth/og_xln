@@ -290,7 +290,8 @@ describe("settle-jsubmit: settle_propose / update / approve / reject (og payment
     expect(counts.queued).toBeGreaterThan(20);
     expect(counts.skipped).toBeGreaterThan(5);
     expect(counts.deferred + counts.materialize).toBeGreaterThan(3);
-    expect(counts.admission).toBeLessThan(counts.queued);
+    // SJ-17: admission timing matches og (book-admission.md): an upsert og queues is queued here too, never evicted at enqueue
+    expect(counts.admission).toBe(0);
   }, 60_000);
 
   test("MATCH: 300 random workspaces auto-approve exactly when og canAutoApproveWorkspace does (no forgiveness / rawDiff; own reserve and collateral share never shrink)", () => {

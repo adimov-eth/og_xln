@@ -2124,7 +2124,8 @@ export type BodyError =
   | CrossError
   | Tagged<"unchosen", { hole: Hole }>;
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
-export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number; readonly deltaTransformer?: DeltaTransformerRef | undefined };
+/** `registeredBoardHash`: og resolveSettlementBoardAuthority -- the source's certified board (the receiver's counterpartyCertifiedBoard); absent, the Verify resolves it. */
+export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number; readonly deltaTransformer?: DeltaTransformerRef | undefined; readonly registeredBoardHash?: string | undefined };
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
 /**
  * Account outputs to the parent Entity (og apply-result outcomes and AccountOutput candidate effects), perspective-free:
@@ -2882,11 +2883,12 @@ const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_tr
           if (pinned !== undefined && (pinned.nonce !== postNonce || pinned.proofBodyHash.toLowerCase() !== bodyHash.toLowerCase() || pinned.disputeHash.toLowerCase() !== disputeHash.toLowerCase() || pinned.proposerIsLeft !== post.proposerIsLeft)) return settleErr("POST_SETTLEMENT_PROOF_PIN_MISMATCH");
           const source = (ctx.byLeft ? a.account.id.left : a.account.id.right) as EntityId;
           if (!exactHanko(post.hanko)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
-          if (!auth.verify(disputeHash, post.hanko, source)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_INVALID");
+          // og verifySettlementHankoHankos: the post-settlement proof admits the previous board's grace (Account.sol:1063); the cooperative settlement Hanko is current-board only (Account.sol:894)
+          if (!auth.verify(disputeHash, post.hanko, source, { ...opt("registeredBoardHash", auth.registeredBoardHash), allowPreviousBoard: true })) return settleErr("POST_SETTLEMENT_PROOF_HANKO_INVALID");
           const executor = w.executorIsLeft === ctx.byLeft, settlementHanko = x.settlementHanko;
           if (executor && settlementHanko !== undefined) return settleErr("SETTLEMENT_EXECUTOR_HANKO_FORBIDDEN");
           if (!executor && !exactHanko(settlementHanko)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_MISSING");
-          if (!executor && settlementHanko !== undefined && !auth.verify(settlementHash, settlementHanko, source)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
+          if (!executor && settlementHanko !== undefined && !auth.verify(settlementHash, settlementHanko, source, { ...opt("registeredBoardHash", auth.registeredBoardHash), allowPreviousBoard: false })) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
           const pinnedOwn = ctx.byLeft ? pinned?.leftHanko : pinned?.rightHanko, ownSettlement = ctx.byLeft ? w.leftHanko : w.rightHanko;
           if (pinnedOwn !== undefined && pinnedOwn.toLowerCase() !== post.hanko.toLowerCase()) return settleErr("POST_SETTLEMENT_PROOF_EQUIVOCATION");
           if (settlementHanko !== undefined && ownSettlement !== undefined && ownSettlement.toLowerCase() !== settlementHanko.toLowerCase()) return settleErr("SETTLEMENT_HANKO_EQUIVOCATION");
@@ -4324,7 +4326,7 @@ const receipt = <R extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAc
     () => mapErr(incomingDeadline(r.state, frame, byLeft, ctx), (v): AccountReplicaError => (v.dispute ? { _tag: "dispute_required", cause: v.error, frame, frameHanko: input.frameHanko } : v.error)));
   return gates.ok ? { _tag: "continue", validated: validated.value } : answered(gates);
 };
-const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify, dt?: DeltaTransformerRef): Verb<ReceivedAccount> => {
+const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify, dt?: DeltaTransformerRef, registeredBoardHash?: string): Verb<ReceivedAccount> => {
   const { frame } = input, onLeft = other(party.left), floor = proofNonceFloor(cur.dispute);
   const evidence = (cause: AccountReplicaError): AccountReplicaError => ({ _tag: "dispute_required", cause, frame, frameHanko: input.frameHanko });
   // og consensus/index.ts classifyIncomingValidationFailure: a stale account-basis hanko for the one unsigned workspace is a plain refusal, not dispute evidence.
@@ -4332,15 +4334,15 @@ const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validat
     const stale = cause._tag === "settlement" ? frame.txs.filter((tx) => { const n = staleHankoNonce(cur.state, tx, cause); return n !== undefined && n.supplied < n.required && n.required === required; }) : [];
     return cause._tag === "settlement" && stale.length === 1 ? { _tag: "stale_settlement_hanko", cause } : evidence(cause);
   };
-  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt) }), replayed), ({ draft, view, finalized }) => chain(localProof(view, dt), (frameProof) =>
+  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt), ...opt("registeredBoardHash", registeredBoardHash) }), replayed), ({ draft, view, finalized }) => chain(localProof(view, dt), (frameProof) =>
     chain(mapErr(promoteSettled(cur.dispute, cur.state, draft.state, party.left, finalized), evidence), (witnesses) =>
       map(mapErr(requireDispute(frameProof, witnesses, validated), evidence), () => done<ReceivedAccount, AccountOutput>({ ...cur, _tag: "received", candidate: new Candidate(frame, input.frameHanko, frameProof, draft, floor), disputeHanko: validated, dispute: witnesses }))))));
 };
 const proposalOnOpen = (r: OpenAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ReceivedAccount> =>
-  match(receipt(r, input, ctx), { answered: ({ result }): Verb<OpenAccount | ReceivedAccount> => result, continue: ({ validated }): Verb<OpenAccount | ReceivedAccount> => admitPeerFrame(r, input, ctx.party, validated, ctx.verify, ctx.deltaTransformer) });
+  match(receipt(r, input, ctx), { answered: ({ result }): Verb<OpenAccount | ReceivedAccount> => result, continue: ({ validated }): Verb<OpenAccount | ReceivedAccount> => admitPeerFrame(r, input, ctx.party, validated, ctx.verify, ctx.deltaTransformer, ctx.counterpartyBoard?.boardHash) });
 const proposalOnProposed = (r: ProposedAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => match(receipt(r, input, ctx), {
   answered: ({ result }): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => result,
-  continue: ({ validated }): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => (ctx.party.left ? ok(done(r)) : admitPeerFrame(restore(r), input, ctx.party, validated, ctx.verify, ctx.deltaTransformer)),
+  continue: ({ validated }): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => (ctx.party.left ? ok(done(r)) : admitPeerFrame(restore(r), input, ctx.party, validated, ctx.verify, ctx.deltaTransformer, ctx.counterpartyBoard?.boardHash)),
 });
 const proposalOnReceived = (r: ReceivedAccount, input: AckFrame, ctx: InboundAccountContext): Verb<ReceivedAccount> => match(receipt(r, input, ctx), {
   answered: ({ result }): Verb<ReceivedAccount> => result,
@@ -4768,7 +4770,7 @@ export type LendingEntityTx =
   | { readonly type: "lendingClosePosition"; readonly data: { readonly hubEntityId: string; readonly positionId: string } };
 /** og ProfileUpdateTx & { entityId }. */
 export type ProfileUpdate = { readonly entityId: string; readonly name?: string | undefined; readonly entityKind?: string | null | undefined; readonly sectors?: readonly string[] | undefined; readonly avatar?: string | undefined; readonly bio?: string | undefined; readonly website?: string | undefined };
-export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "settlement" | "entityProviderAction" | "jBatch"; readonly context: string };
+export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "profile" | "settlement" | "entityProviderAction" | "jBatch"; readonly context: string };
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
   readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[]; readonly leader: FrameLeader;
@@ -4811,7 +4813,7 @@ export type EntityContext = { readonly verify: Verify; readonly verifyMember: Me
   readonly activeJurisdiction?: string | undefined;
   /** og env.jReplicas: the durable jurisdiction stacks Account proofs resolve their DeltaTransformer from (never committed). */
   readonly jReplicas?: ReadonlyMap<string, JReplica> | undefined };
-export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large">;
+export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large"> | Tagged<"frame_tx", { readonly code: string }>;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
   | Tagged<"account_exists" | "no_such_account" | "create_ack_required" | "account_envelope" | "swap_request_account_missing", { target: EntityId }>
@@ -5054,9 +5056,34 @@ const accountInputCommitment = (value: Binary): Result<{ readonly domain: string
   preimage.set(mark, 0); preimage.set(body.value, mark.byteLength);
   return ok({ domain, inputDigest: integrity(preimage) });
 };
-const entityTxForHash = (tx: EntityFrameTx): Result<{ readonly type: string; readonly data: unknown }, BinaryError> =>
-  tx.type === "accountInput" ? map(accountInputCommitment(tx.data), (data) => ({ type: tx.type, data })) : ok(tx);
-const entityTxDigest = (txs: readonly EntityFrameTx[]): Result<{ readonly digest: string; readonly bytes: number }, BinaryError> => {
+/** og canonicalJEventDataForFrameHash: a J range commits as its canonical projection (version tag, lowercased text, integer heights, canonical events). */
+const jEventDataForHash = (value: Binary): Result<Binary, EntityFrameHashError> => {
+  const data = (value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Uint8Array) && !(value instanceof Map) ? value : {}) as { readonly [k: string]: unknown };
+  const rec = (v: unknown): { readonly [k: string]: unknown } => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as { readonly [k: string]: unknown }) : {});
+  const toInt = (v: unknown): number => { const n = Number(v ?? 0); return Number.isFinite(n) ? Math.floor(n) : 0; };
+  const text = (v: unknown): string => String(v ?? "").toLowerCase();
+  if (!Array.isArray(data["blocks"]) || data["rangeHash"] === undefined) return err({ _tag: "frame_tx", code: "ENTITY_FRAME_J_EVENT_RANGE_REQUIRED" });
+  const blocks: Binary[] = [];
+  for (const raw of data["blocks"] as readonly unknown[]) {
+    const block = rec(raw), rawEvents = Array.isArray(block["events"]) ? block["events"] : [];
+    const events = canonicalJEvents(rawEvents);
+    if (!events.ok) return err({ _tag: "frame_tx", code: (events.error as { code?: string }).code ?? events.error._tag });
+    blocks.push({
+      blockNumber: toInt(block["blockNumber"]), blockHash: text(block["blockHash"]), eventsHash: text(block["eventsHash"]),
+      events: events.value.map((e) => ({ blockNumber: e.blockNumber ?? null, blockHash: e.blockHash?.toLowerCase() ?? null, transactionHash: e.transactionHash?.toLowerCase() ?? null, logIndex: e.logIndex ?? null, eventIndex: e.eventIndex ?? null, type: e.type, data: e.data })) as unknown as Binary,
+      disputeFinalizationEvidenceHash: text(block["disputeFinalizationEvidenceHash"]),
+    });
+  }
+  return mapErr(binaryBody({
+    version: "xln:j-event-range-frame:v1", from: text(data["from"]), jurisdictionRef: String(data["jurisdictionRef"] ?? "").trim().toLowerCase(), baseHeight: toInt(data["baseHeight"]),
+    scannedThroughHeight: toInt(data["scannedThroughHeight"]), tipBlockHash: text(data["tipBlockHash"]), eventHistoryRoot: text(data["eventHistoryRoot"]), rangeHash: text(data["rangeHash"]),
+    blocks, signature: text(data["signature"]), observedAt: toInt(data["observedAt"]),
+  }), (): EntityFrameHashError => ({ _tag: "binary" }));
+};
+const entityTxForHash = (tx: EntityFrameTx): Result<{ readonly type: string; readonly data: unknown }, EntityFrameHashError> =>
+  tx.type === "accountInput" ? map(accountInputCommitment(tx.data), (data) => ({ type: tx.type, data }))
+    : tx.type === "j_event" ? map(jEventDataForHash(tx.data), (data) => ({ type: tx.type, data })) : ok(tx);
+const entityTxDigest = (txs: readonly EntityFrameTx[]): Result<{ readonly digest: string; readonly bytes: number }, EntityFrameHashError> => {
   const encoded: Uint8Array[] = [];
   for (const tx of txs) {
     const hashed = entityTxForHash(tx);
@@ -8276,7 +8303,7 @@ type CommandBoard = { readonly boardHash: string; readonly boardEpoch: number; r
 /** og hashBoard(encodeBoard(config)): the config's positional validators as zero-padded EOAs, uint16 powers, no delays. */
 export const configBoardHash = (q: Authority): string => {
   const members = [...membersOf(q)];
-  return boardHashOf({ votingThreshold: Number(thresholdOf(q)), entityIds: members.map(([a]) => addressAsId(a)), votingPowers: members.map(([, m]) => Number(m.shares)), boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 }).toLowerCase();
+  return boardHashOf({ votingThreshold: Number(thresholdOf(q)), entityIds: members.map(([a]) => (/^0x[0-9a-f]{64}$/i.test(a) ? lower(a) : addressAsId(a))), votingPowers: members.map(([, m]) => Number(m.shares)), boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 }).toLowerCase();
 };
 /** og resolveEntityCommandBoard: a lazy Entity (id == its config board hash) is at epoch 0; any other Entity takes the epoch of its certified board record, which must be its config board. */
 const commandBoard = (state: EntityState): Result<CommandBoard, EntityError> => {
@@ -8872,6 +8899,20 @@ export const inboundHtlcEntries = (v: HtlcInboundView, txs: readonly EntityTx[])
     }
     return ok(out);
   });
+};
+/**
+ * og requireEntityEncryptionPrivateKey + assertEntityEncryptionKeypair (start.ts startInboundLayerPriming, replay.ts assertHtlcPreparedInfraContext):
+ * every proposal and every replayed frame needs this validator's Entity key, and it must derive the committed public key, whatever the frame's txs.
+ * Plain Errors in og, so the whole input fails. An Entity with no committed public key never exists in og (registration always provisions one).
+ */
+const entityKeypair = (state: EntityState, ctx: EntityContext): Result<void, EntityError> => {
+  const publicKey = state.committed["entityEncryptionPublicKey"];
+  if (publicKey === undefined) return ok(undefined);
+  const privateKey = ctx.htlc?.encryptionPrivateKey;
+  if (privateKey === undefined || privateKey === "") return invariant(`ENTITY_ENCRYPTION_PRIVATE_KEY_UNAVAILABLE:entity=${state.id}`);
+  const checked = chain(x25519KeyBytes(String(publicKey), "HTLC_ENTITY_ENCRYPTION_PUBLIC_KEY_INVALID"), (pub) => chain(x25519KeyBytes(privateKey, "HTLC_ENTITY_ENCRYPTION_PRIVATE_KEY_INVALID"),
+    (priv): Result<void, OnionError> => (bytesToHex(x25519.getPublicKey(priv)) === bytesToHex(pub) ? ok(undefined) : onionErr("HTLC_ENTITY_ENCRYPTION_KEYPAIR_MISMATCH"))));
+  return checked.ok ? ok(undefined) : invariant(checked.error.code);
 };
 const htlcFrameTxs = (txs: readonly EntityTx[]): boolean => txs.some((tx) => tx.type === "htlcPayment" || (tx.type === "accountInput" && tx.data.kind === "ack_frame" && tx.data.frame.txs.some((a) => a.type === "htlc_lock" && a.envelope !== undefined)));
 /** og entityEncryptionPrivateKey (registration/entity-creation/crypto.ts): HKDF-SHA256(seed, salt=entityId, "xln:entity-encryption:v1"). */
@@ -10183,18 +10224,21 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   type Acc = FoldedTxs & { readonly first?: EntityError | undefined };
   // og proposePendingAccountFrames worklist: Accounts proposable before the frame (sorted), then the Accounts the included txs touched, in order.
   const primed = [...replicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
-  // og assertScheduledWakeFrameOrder (prepareEntityFrameWorkingSet): a plain Error for the whole frame
+  // og assertEntityFrameTxByteBudget + assertEntityFrameJRangeBudget, then assertScheduledWakeFrameOrder (prepareEntityFrameWorkingSet): plain Errors for the whole frame
+  const budgets = frameBudgets(txs);
+  if (!budgets.ok) return budgets;
   const misordered = wakeOrderIssue(txs);
   if (misordered !== undefined) return err(misordered);
   // og getBoardHandoverFrameConfig over the normalized pre-frame state: the authority a [j_event, boardHandover] frame is certified under
-  return chain(normalizeGovernance(state), (normalized) => chain(handoverFrameConfig(normalized, txs), (handover) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
+  return chain(normalizeGovernance(state), (normalized) => chain(handoverFrameConfig(normalized, txs), (handover) => chain(selfAuthorityTransitionFrame(normalized, txs), (authorityOnly) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
     const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, handover === null ? ctx : { ...ctx, boardHandover: handover });
     if (r.ok) return ok({ ...acc, included: [...acc.included, tx], draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs], events: [...(acc.draft.events ?? []), ...(r.value.events ?? [])], runtimeEvents: [...(acc.draft.runtimeEvents ?? []), ...(r.value.runtimeEvents ?? [])], touched: [...(acc.draft.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc.draft, r.value), swaps: joinSwapEvents(acc.draft.swaps, r.value.swaps) } });
     return fatalTx(tx, r.error) ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
-    // og finishAuthorityTransitionOnly: a board handover frame primes no Account work and runs no post-tx phases
-    if (handover !== null) return ok(folded);
+    // og finishAuthorityTransitionOnly (a handover, or a J range certifying the config board): after the settlement continuation, no Account
+    // work and no post-tx phases; the current profile is re-certified even when its bytes did not change
+    if (authorityOnly) return chain(materializeContinuation(folded.draft, ctx, settleQueue(ctx)), (d) => map(profileHashToSign(state, replicas, d, true), (draft) => ({ ...folded, draft })));
     // og materializeSettlementContinuation, then drainPostOrderbookAccountWork's settlement approvals, before proposePendingAccountFrames.
     // og applyPostEntityTxPhases: cancels + orderbook matching, then drainPostOrderbookAccountWork.
     return chain(chain(chain(materializeContinuation(folded.draft, ctx, settleQueue(ctx)), (d) => bookPhase(d, ctx.timestamp)), (d) => materializeSettlements(d, ctx)), (settled) => {
@@ -10202,10 +10246,84 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
       const followups = [...settled.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
       const order = [...new Set([...primed, ...(settled.touched ?? []), ...followups])];
       // og refreshChangedAccountCommitments: after the Account proposals, a changed certified frame re-arms its board Hanko refresh
-      return map(rearmBoardRefreshes(replicas, { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) }, Number(ctx.timestamp)), (draft) => ({ ...folded, draft }));
+      return chain(rearmBoardRefreshes(replicas, { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) }, Number(ctx.timestamp)), (draft) => chain(profileHashToSign(state, replicas, draft, false), (withProfile) => ok({ ...folded, draft: withProfile })));
     });
-  })));
+  }))));
 };
+// ---- og entity/profile/profile-descriptor.ts: the public profile descriptor; its hash is a 'profile' secondary hash to sign ----
+/** og MAX_ENTITY_PROFILE_DESCRIPTOR_BYTES: LIMITS.MAX_PROFILE_BYTES (1 MiB) minus the fixed route-envelope overhead og measures once. */
+const MAX_PROFILE_DESCRIPTOR_BYTES = 960_602;
+type ProfileCap = { readonly inCapacity: bigint; readonly outCapacity: bigint };
+type RankedCap = { readonly tokenId: string; readonly capacity: ProfileCap; readonly liquidity: bigint };
+type ProfileRow = { readonly counterpartyId: string; readonly domain: Domain; readonly tokenCapacities: Readonly<Record<string, ProfileCap>> };
+/** og floorProfileCapacity: advertised capacities are floored to 1000 (no per-payment leak). */
+const floorProfileCap = (v: bigint): bigint => (v <= 0n ? 0n : v - (v % 1000n));
+const compareTokenText = (l: string, r: string): number => { const a = Number(l), b = Number(r); return Number.isSafeInteger(a) && Number.isSafeInteger(b) && a !== b ? a - b : asc(l, r); };
+/** og rankedLiquidProfileCapacities: deriveDelta from our side, floored, liquid tokens by liquidity desc, at most 16. */
+const rankedCaps = (self: EntityId, child: AccountReplica): readonly RankedCap[] => {
+  const body = child.state, me = isLeft(self, replicaId(child));
+  return [...body.account.deltas].map(([tk, d]): RankedCap => {
+    const out = outCapacity(d, me, holds(body, tk, me)), inn = outCapacity(d, !me, holds(body, tk, !me));
+    return { tokenId: String(tk), capacity: { inCapacity: floorProfileCap(inn), outCapacity: floorProfileCap(out) }, liquidity: inn + out };
+  }).filter((c) => c.liquidity > 0n).sort((l, r) => (l.liquidity === r.liquidity ? compareTokenText(l.tokenId, r.tokenId) : l.liquidity > r.liquidity ? -1 : 1)).slice(0, 16);
+};
+/** og buildEntityProfileDescriptor then computeEntityProfileDescriptorHash. Only pinned Accounts are advertised, at most 100, then extra capacities up to the byte budget. */
+export const entityProfileHash = (state: EntityState, replicas: Replicas): Result<string, EntityError> => {
+  let rows: ProfileRow[] = [], pub: string[] = [], extras: (RankedCap & { readonly counterpartyId: string })[] = [];
+  for (const [peer, child] of replicas) {
+    if (child.publicPinned !== true) continue;
+    const ranked = rankedCaps(state.id, child), [first] = ranked;
+    if (first === undefined) continue;
+    extras.push(...ranked.slice(1).map((c) => ({ counterpartyId: peer, ...c })));
+    rows.push({ counterpartyId: peer, domain: child.state.terms.domain, tokenCapacities: { [first.tokenId]: first.capacity } });
+    if (first.capacity.inCapacity > 0n) pub.push(peer);
+  }
+  if (rows.length > 100) {
+    const liquidity = (r: ProfileRow): bigint => Object.values(r.tokenCapacities).reduce((n, c) => n + c.inCapacity + c.outCapacity, 0n);
+    rows = [...rows].sort((l, r) => { const a = liquidity(l), b = liquidity(r); return a !== b ? (a > b ? -1 : 1) : asc(l.counterpartyId, r.counterpartyId); }).slice(0, 100);
+    const advertised = new Set(rows.map((r) => r.counterpartyId));
+    pub = pub.filter((id) => advertised.has(id)); extras = extras.filter((e) => advertised.has(e.counterpartyId));
+  }
+  rows.sort((l, r) => asc(l.counterpartyId, r.counterpartyId)); pub.sort(asc);
+  extras.sort((l, r) => (l.liquidity === r.liquidity ? asc(l.counterpartyId, r.counterpartyId) || compareTokenText(l.tokenId, r.tokenId) : l.liquidity > r.liquidity ? -1 : 1));
+  const profile = (state.committed["profile"] ?? {}) as { readonly [k: string]: unknown }, hub = state.committed["hubRebalanceConfig"] as { readonly [k: string]: unknown } | undefined;
+  const isHub = profile["isHub"] === true, j = rootConfig(state).jurisdiction, jName = String(j?.name || "").trim(), sectors = profile["sectors"] as readonly unknown[] | undefined;
+  const text = (v: unknown): string => (v === undefined ? "" : String(v));
+  const base = {
+    entityId: lower(state.id), entityEncryptionPublicKey: text(state.committed["entityEncryptionPublicKey"]), name: String(profile["name"] || "").trim(),
+    avatar: text(profile["avatar"]), bio: text(profile["bio"]), website: text(profile["website"]), publicAccounts: pub, accounts: rows,
+    metadata: {
+      isHub, ...(profile["entityKind"] ? { entityKind: profile["entityKind"] } : {}), ...(sectors?.length ? { sectors: [...sectors] } : {}),
+      routingFeePPM: hub?.["routingFeePPM"] ?? 1, baseFee: hub?.["baseFee"] ?? 0n, ...(hub?.["swapTakerFeeBps"] !== undefined ? { swapTakerFeeBps: hub["swapTakerFeeBps"] } : {}),
+      ...(j === undefined || jName === "" ? {} : { jurisdiction: { name: jName, ...(j.chainId !== undefined ? { chainId: j.chainId } : {}), ...(j.entityProviderAddress ? { entityProviderAddress: lower(j.entityProviderAddress) } : {}), ...(j.depositoryAddress ? { depositoryAddress: lower(j.depositoryAddress) } : {}) } }),
+      ...(isHub && hub !== undefined ? {
+        ...(hub["hubName"] ? { hubName: hub["hubName"] } : {}), policyVersion: hub["policyVersion"], ...(hub["rebalanceBaseFee"] !== undefined ? { rebalanceBaseFee: String(hub["rebalanceBaseFee"]) } : {}),
+        rebalanceLiquidityFeeBps: String(hub["rebalanceLiquidityFeeBps"]), rebalanceGasFee: String(hub["rebalanceGasFee"] ?? 0n), rebalanceTimeoutMs: hub["rebalanceTimeoutMs"] ?? 10 * 60 * 1000,
+      } : {}),
+    },
+  };
+  const withExtras = (count: number): Binary => {
+    const byPeer = new Map(base.accounts.map((a) => [a.counterpartyId, { ...a, tokenCapacities: { ...a.tokenCapacities } as Record<string, ProfileCap> }]));
+    for (const e of extras.slice(0, count)) { const row = byPeer.get(e.counterpartyId); if (row !== undefined) row.tokenCapacities[e.tokenId] = e.capacity; }
+    return { ...base, accounts: [...byPeer.values()].map((a) => ({ ...a, tokenCapacities: Object.fromEntries(Object.entries(a.tokenCapacities).sort(([l], [r]) => compareTokenText(l, r))) })) } as unknown as Binary;
+  };
+  const size = (d: Binary): Result<number, EntityError> => map(encodeConsensus(d), (b) => b.byteLength);
+  const full = withExtras(extras.length);
+  return chain(size(full), (fullBytes) => fullBytes <= MAX_PROFILE_DESCRIPTOR_BYTES ? bytesKeccak(full) : chain(size(base as unknown as Binary), (baseBytes) => {
+    if (baseBytes > MAX_PROFILE_DESCRIPTOR_BYTES) return invariant(`ENTITY_PROFILE_REQUIRED_CAPACITY_BUDGET_EXCEEDED:${baseBytes}:${MAX_PROFILE_DESCRIPTOR_BYTES}`);
+    let low = 0, high = extras.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2), bytes = size(withExtras(mid));
+      if (!bytes.ok) return bytes;
+      if (bytes.value <= MAX_PROFILE_DESCRIPTOR_BYTES) low = mid; else high = mid - 1;
+    }
+    return bytesKeccak(withExtras(low));
+  }));
+};
+/** og appendFinalProfileHash / finishAuthorityTransitionOnly: a changed descriptor (always at genesis, always on an authority transition) is re-certified. */
+const profileHashToSign = (before: EntityState, beforeReplicas: Replicas, after: Draft, always: boolean): Result<Draft, EntityError> =>
+  chain(entityProfileHash(after.state, after.accountReplicas), (hash) => chain(always || before.height === 0n ? ok(null) : map(entityProfileHash(before, beforeReplicas), (h): string | null => h), (previous) =>
+    ok(previous === hash ? after : { ...after, hashes: [...(after.hashes ?? []), { hash, type: "profile" as const, context: `profile:${hash}` }] })));
 const EMPTY_COLLECTION = { radix: 16, leafCount: 0, root: ZERO_WORD } as const;
 /** og applyEntityFrame `state.crontabState ??= initCrontab()`: the hubRebalance task at the 1s cadence, no hooks. */
 const DEFAULT_CRONTAB: Binary = { tasks: new Map([["hubRebalance", { method: "hubRebalance", intervalMs: 1000, lastRun: 0, enabled: true, params: {} }]]), hooks: EMPTY_COLLECTION };
@@ -10328,7 +10446,7 @@ const appendMempool = (mempool: readonly EntityTx[], admitted: readonly EntityTx
   return [...mempool, ...firstBy(admitted, accountKey, mempool.flatMap((tx) => { const k = accountKey(tx); return k === undefined ? [] : [k]; }))];
 };
 /** og finalizeCommitNotification: install the candidate, emit its Account outputs, optionally broadcast the certified frame to the other validators. */
-const installFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean): Result<EntityApply<OpenEntity>, EntityError> =>
+const installFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean | Quorum): Result<EntityApply<OpenEntity>, EntityError> =>
   chain(secondaryHankos(r.draft, r.frame, signatures), (byHash) => chain(fillHankos(r.draft, byHash), (draft) => chain(commitEffects(r, frameHash, byHash, draft), (committed) => map(publishFrame(r, frameHash, signatures, broadcast, draft), (a) => ({ ...a, committed })))));
 /** og isWitnessHashType + requireDraftWitness over one frame's fresh witnesses: this height's Hanko for the hash, of the expected type. */
 const draftWitness = (witnesses: ReadonlyMap<string, Omit<HankoWitness, "createdAt">>, hash: unknown, type: HankoWitness["type"], height: number, existing: unknown): Result<Hanko, EntityError> => {
@@ -10371,8 +10489,10 @@ const commitEffects = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHas
   const relay = r.frame.leader.relayCertificate, emitter = relay !== undefined && relay.preparedFrameHash === frameHash ? relay.nextLeaderId : r.frame.leader.proposerSignerId;
   return map(attachJHankos(draft.jOutputs ?? [], new Map(witnesses), height), (jOutputs) => ({ height, witnesses, jOutputs: lower(emitter) === lower(r.signerId) ? jOutputs : [] }));
 };
-const publishFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean, draft: Draft): Result<EntityApply<OpenEntity>, EntityError> => {
-  const others = broadcast ? [...membersOf(draft.state.quorum).keys()].filter((v) => signerId(v) !== signerId(r.signerId)) : [];
+const publishFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean | Quorum, draft: Draft): Result<EntityApply<OpenEntity>, EntityError> => {
+  // og finalizeCommitNotification broadcastValidators: the committed (post-frame) board unless a handover names the retired one
+  const board = broadcast === true ? draft.state.quorum : broadcast === false ? undefined : broadcast;
+  const others = board === undefined ? [] : [...membersOf(board).keys()].filter((v) => signerId(v) !== signerId(r.signerId));
   // og finalizeCommitNotification: votes reset; a relay certificate for exactly this frame stays pending.
   const relay = r.frame.leader.relayCertificate, pending = relay !== undefined && relay.preparedFrameHash === frameHash ? relay : undefined;
   const opened: OpenEntity = { ...openEntity(r.signerId, draft.state, { height: r.frame.height, prevFrameHash: frameHash }, withoutTxs(r.mempool, r.frame.txs), draft.accountReplicas), leaderVotes: new Map(), ...opt("pendingLeaderCertificate", pending) };
@@ -10394,24 +10514,34 @@ const admitTxs = <R extends EntityReplica>(r: R, input: Extract<EntityInput, { k
     return txs.every((tx) => tx.type === "accountInput") ? ok({ ...r, mempool: appended }) : map(prioritizeWake(appended), (mempool) => ({ ...r, mempool }));
   });
 };
-/** og admission: a replica that is not the proposal leader forwards its mempool to that leader. */
-const forwarded = (r: EntityEnv, timestamp: bigint): readonly EntityOutput[] => {
-  const leader = proposalLeader(r).activeValidatorId, to = memberId(r.state.quorum, leader);
-  return isProposalLeader(r) || r.mempool.length === 0 || to === undefined ? [] : [{ to: r.state.id, signerId: to, input: { kind: "txs", timestamp, txs: r.mempool } }];
-};
+/** og admission (forwardValidatorMempool over the authority replica): a replica that is not the proposal leader forwards its mempool to that leader. */
+const forwarded = (r: EntityEnv, timestamp: bigint): Result<readonly EntityOutput[], EntityError> => map(authorityReplica(r, r.mempool), (a) => {
+  const leader = proposalLeader(a).activeValidatorId, to = memberId(a.state.quorum, leader);
+  return isProposalLeader(a) || r.mempool.length === 0 || to === undefined ? [] : [{ to: r.state.id, signerId: to, input: { kind: "txs", timestamp, txs: r.mempool } }];
+});
 /** og shouldStartProposal: a certified view change (without a prepared frame to relay) proposes even an empty frame. */
 const certifiedTransition = (r: EntityEnv): boolean => { const c = r.pendingLeaderCertificate; return c !== undefined && c.targetHeight === Number(r.head.height) + 1 && c.preparedFrameHash === undefined; };
 /** og startEntityProposalIfReady + certifyEntityProposal: fold the mempool, commit the proposal leader's view, self-sign, commit alone or broadcast. */
-const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
-  if (!isProposalLeader(queued) || (queued.mempool.length === 0 && !certifiedTransition(queued) && !hasProposableAccount(queued))) return ok(done(queued, forwarded(queued, runtimeTimestamp)));
+const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => chain(authorityReplica(queued, queued.mempool), (authority) => {
+  if (!isProposalLeader(authority)) return map(forwarded(queued, runtimeTimestamp), (out) => done<OpenEntity | ProposedEntity, EntityOutput>(queued, out));
+  return chain(selectProposable(queued.state, queued.mempool), (selection) => {
+    // og shouldStartProposal: selected txs, or a certified board with queued Account work or a certified leader transition
+    if (selection.txs.length === 0 && !(selection.currentAuthorityReady && (hasProposableAccount(queued) || certifiedTransition(queued)))) return ok(done<OpenEntity | ProposedEntity, EntityOutput>(queued));
+    return proposeSelected(queued, authority, selection.txs, runtimeTimestamp, ctx);
+  });
+});
+const proposeSelected = (queued: OpenEntity, authority: OpenEntity, selected: readonly EntityTx[], runtimeTimestamp: bigint, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
   /** og resolveEntityProposalTimestamp: never behind the committed clock. */
   const timestamp = runtimeTimestamp > queued.state.timestamp ? runtimeTimestamp : queued.state.timestamp;
-  const view = proposalLeader(queued).view, self = signerId(queued.signerId), pending = queued.pendingLeaderCertificate;
+  // og getReplicaProposalLeader(authorityReplica): the view the proposer claims; buildProposalState: a handover frame installs its own leader
+  const view = proposalLeader(authority).view, self = signerId(queued.signerId), pending = queued.pendingLeaderCertificate;
   const leader: FrameLeader = { proposerSignerId: self, view, ...opt("certificate", pending) };
-  const leaderState: LeaderState = { activeValidatorId: self, view, changedAtHeight: pending !== undefined ? Number(queued.head.height) + 1 : queued.state.leaderState?.changedAtHeight ?? 0 };
+  const ordinary: LeaderState = { activeValidatorId: self, view, changedAtHeight: pending !== undefined ? Number(queued.head.height) + 1 : queued.state.leaderState?.changedAtHeight ?? 0 };
+  // og startInboundLayerPriming reads requireEntityEncryptionPrivateKey for every proposal, before any materialization
+  const keypair = entityKeypair(queued.state, ctx);
+  if (!keypair.ok) return keypair;
   // og materializeEntityInfraContext: the proposer prepares every htlcPayment before the fold; a payment it cannot prepare is evicted like any refused tx.
-  // og selectCrossJCommitPhaseTxs: cross-j setup never shares a frame with an Account transition; the deferred txs stay queued.
-  const phase = selectCommitPhaseTxs(queued.mempool);
+  const phase = selected;
   const prepared = phase.some((tx) => tx.type === "htlcPayment") ? materializeOriginated(originView(queued.state, queued.accountReplicas, timestamp), ctx.htlc?.profiles ?? [], phase, ctx.htlc ?? { profiles: [] }) : { originated: [], refused: new Map<EntityTx, EntityError>() };
   const txs = phase.filter((tx) => !prepared.refused.has(tx)), [firstRefusal] = prepared.refused.values();
   if (txs.length === 0 && firstRefusal !== undefined) return err(firstRefusal);
@@ -10420,45 +10550,57 @@ const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: Entity
   return chain(htlcFrameTxs(txs) ? inboundHtlcEntries({ ...inbound, online: onlineObserver(ctx.htlc).online }, txs) : ok([]), (entries) =>
   chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("jReplicas", ctx.jReplicas), ...opt("runtimeSeed", ctx.runtimeSeed) }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
     const pool = withoutTxs(queued.mempool, [...prepared.refused.keys(), ...evicted]);
-    return chain(buildFrame(queued, leader, leaderState, timestamp, included, draft, infra), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx, candidate.draft.state), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+    return chain(handoverLeaderState(queued.state, included), (handoverLeader) => chain(buildFrame(queued, leader, handoverLeader ?? ordinary, timestamp, included, draft, infra), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx, candidate.draft.state), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
       const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[self, own]]) };
-      if (isSingleSigner(queued.state.quorum)) return installFrame(proposed, frameHash, proposed.signatures, false);
-      const others = [...membersOf(queued.state.quorum).keys()].filter((v) => signerId(v) !== self);
+      // og: a single-signer (authority) board commits alone; a handover also delivers the certified transition to the retired board
+      if (isSingleSigner(authority.state.quorum)) return installFrame(proposed, frameHash, proposed.signatures, handoverLeader !== null ? queued.state.quorum : false);
+      // og: a handover proposal goes to the new board, any other proposal to the committed one
+      const board = included.some((tx) => tx.type === "boardHandover") ? candidate.draft.state.quorum : queued.state.quorum;
+      const others = [...membersOf(board).keys()].filter((v) => signerId(v) !== self);
       return ok(done<OpenEntity | ProposedEntity, EntityOutput>(proposed, others.map((v): EntityOutput => ({ to: queued.state.id, signerId: v, input: { kind: "proposal", frame: candidate.frame, signatures: proposed.signatures } }))));
-    })));
+    }))));
   })));
 };
 export const applyTxsOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> =>
   chain(admitTxs(r, input, ctx), (queued) => startProposal(queued, input.timestamp, ctx));
 /** og runs handleHashPrecommits on every input: a held frame whose collected signatures already reach quorum installs now. */
 const heldQuorum = <R extends ProposedEntity | LockedEntity>(r: R, before: readonly EntityOutput[]): Result<EntityApply<OpenEntity | R>, EntityError> =>
-  quorumPower(r.state.quorum, r.signatures) < thresholdOf(r.state.quorum) ? ok(done<OpenEntity | R, EntityOutput>(r, before))
+  quorumPower(r.draft.state.quorum, r.signatures) < thresholdOf(r.draft.state.quorum) ? ok(done<OpenEntity | R, EntityOutput>(r, before))
     : chain(hashEntityFrame(r.frame), (frameHash) => map(installFrame(r, frameHash, r.signatures, true), (c): EntityApply<OpenEntity | R> => ({ ...c, outputs: [...before, ...c.outputs] })));
 const queueOnly = <R extends ProposedEntity | LockedEntity>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> =>
-  chain(admitTxs(r, input, ctx), (queued) => heldQuorum(queued, forwarded(queued, input.timestamp)));
+  chain(admitTxs(r, input, ctx), (queued) => chain(forwarded(queued, input.timestamp), (out) => heldQuorum(queued, out)));
 /** og preauthenticateEntityProposal: canonical digests, parent, leader, recomputed hash, manifest head, the proposer's frame signature. */
 const DIGEST = /^0x[0-9a-f]{64}$/;
 const preauthenticate = (r: EntityEnv, frame: EntityFrame, signatures: Precommits, ctx: EntityContext): Result<EntityFrameHash, EntityError> => chain(hashEntityFrame(frame), (frameHash): Result<EntityFrameHash, EntityError> => {
   if (!DIGEST.test(frame.stateRoot) || !DIGEST.test(frame.authorityRoot)) return err({ _tag: "proposal_digest" });
   if (frame.prevFrameHash !== parentOf(r.head)) return err({ _tag: "proposal_parent" });
-  // og validateProposedFrameLeader: the leader certificate (or the committed leader and view) and any relay certificate.
+  // og: one frame may not both activate a counterparty's board and carry that counterparty's Account row
+  if (counterpartyBoardActivationConflict(r.state.id, frame.txs) !== null) return invariant("PROPOSAL_COUNTERPARTY_BOARD_ACTIVATION_MIXED");
+  // og validateProposedFrameLeader: a handover frame is proposed by the new board's first validator at view 0 with no certificate, under that board;
+  // otherwise the leader certificate (or the committed leader and view) and any relay certificate.
   const proposer = frame.leader.proposerSignerId;
-  if (!verifyLeaderCertificate(r, frame.leader, ctx) || !verifyRelayCertificate(r, frame, frameHash, ctx) || frame.entityContext.entityId !== r.state.id) return err({ _tag: "proposal_leader" });
-  const head = frame.hashesToSign[0];
-  if (head === undefined || head.hash !== frameHash || head.type !== "entityFrame" || head.context !== `entity:${r.state.id.slice(-4)}:frame:${frame.height}`) return err({ _tag: "proposal_manifest" });
-  const own = [...signatures].filter(([id]) => signerId(id) === signerId(proposer)), sig = own.length === 1 ? own[0]?.[1][0] : undefined, addr = memberId(r.state.quorum, proposer);
-  return sig === undefined || addr === undefined || !memberSigned(r.state.quorum, frameHash, sig, addr, ctx) ? err({ _tag: "proposal_signature" }) : ok(frameHash);
+  return chain(handoverFrameConfig(r.state, frame.txs), (handover) => {
+    if (handover !== null && (handover.validators[0] === undefined || frame.leader.view !== 0 || frame.leader.certificate !== undefined || frame.leader.relayCertificate !== undefined || signerId(proposer) !== signerId(handover.validators[0]))) return err({ _tag: "proposal_leader" });
+    return chain(handover === null ? ok(r.state) : withBoardAuthority(r.state, handover, Number(frame.height)), (authority): Result<EntityFrameHash, EntityError> => {
+      const at = { state: authority, head: r.head };
+      if (!verifyLeaderCertificate(at, frame.leader, ctx) || !verifyRelayCertificate(at, frame, frameHash, ctx) || frame.entityContext.entityId !== r.state.id) return err({ _tag: "proposal_leader" });
+      const head = frame.hashesToSign[0];
+      if (head === undefined || head.hash !== frameHash || head.type !== "entityFrame" || head.context !== `entity:${r.state.id.slice(-4)}:frame:${frame.height}`) return err({ _tag: "proposal_manifest" });
+      const own = [...signatures].filter(([id]) => signerId(id) === signerId(proposer)), sig = own.length === 1 ? own[0]?.[1][0] : undefined, addr = memberId(authority.quorum, proposer);
+      return sig === undefined || addr === undefined || !memberSigned(authority.quorum, frameHash, sig, addr, ctx) ? err({ _tag: "proposal_signature" }) : ok(frameHash);
+    });
+  });
 });
 /** og replayProposedEntityFrame: a validator folds the frame's txs itself; any difference in the manifest refuses the proposal. */
 const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHash, ctx: EntityContext): Result<EntityCandidate, EntityError> => {
   if (frame.timestamp < r.state.timestamp) return err({ _tag: "frame_timestamp_regression", timestamp: frame.timestamp });
   // og assertHtlcPreparedInfraContext: validators check the committed origins against public facts, never recreating proposer entropy.
-  return chain(frameInfraOf(frame), (infra) => chain(assertInboundEntries(r, frame, infra, ctx), () => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
+  return chain(frameInfraOf(frame), (infra) => chain(entityKeypair(r.state, ctx), () => chain(assertInboundEntries(r, frame, infra, ctx), () => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
     chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("jReplicas", ctx.jReplicas), ...opt("runtimeSeed", ctx.runtimeSeed) }), ({ draft, evicted }) => {
       if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
-      return chain(buildFrame(r, frame.leader, committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
-        local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame })));
-    }))));
+      return chain(handoverLeaderState(r.state, frame.txs), (handoverLeader) => chain(buildFrame(r, frame.leader, handoverLeader ?? committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
+        local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame }))));
+    })))));
 };
 /** og assertHtlcPreparedInfraContext (inbound half): a validator decrypts the frame's inbound locks itself, taking liveness only from the peer assertions. */
 const assertInboundEntries = (r: EntityEnv, frame: EntityFrame, infra: HtlcFrameInfra, ctx: EntityContext): Result<void, EntityError> => {
@@ -10471,15 +10613,16 @@ const heldFrame = (r: EntityReplica): (EntityEnv & EntityCandidate) | undefined 
 /** og handleCommitNotification: a frame carrying a quorum certificate installs (after replay unless already locked on it). */
 const commitNotification = <R extends EntityReplica>(r: R, frame: EntityFrame, bundles: Precommits, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> | undefined => {
   if (bundles.size === 0) return undefined;
-  const normalized = normalizeBundles(r.state.quorum, bundles);
-  if (normalized.ok && quorumPower(r.state.quorum, normalized.value) < thresholdOf(r.state.quorum)) return undefined;
+  const fq = frameQuorum(r.state, frame.txs), q = fq.ok ? fq.value : r.state.quorum;
+  const normalized = chain(fq, () => normalizeBundles(q, bundles));
+  if (normalized.ok && quorumPower(q, normalized.value) < thresholdOf(q)) return undefined;
   if (!DIGEST.test(frame.stateRoot) || !DIGEST.test(frame.authorityRoot)) return err({ _tag: "proposal_digest" });
   if (frame.height > r.head.height + 1n) return err({ _tag: "commit_wait" });
   if (frame.height < r.head.height) return ok(done<OpenEntity | R, EntityOutput>(r));
   return chain(hashEntityFrame(frame), (frameHash): Result<EntityApply<OpenEntity | R>, EntityError> => {
     if (frame.height === r.head.height) return frameHash === r.head.prevFrameHash ? ok(done<OpenEntity | R, EntityOutput>(r)) : err({ _tag: "commit_conflict" });
     return chain(preauthenticate(r, frame, bundles, ctx), () => chain(normalized, (sigs): Result<EntityApply<OpenEntity | R>, EntityError> => {
-      if ([...sigs].some(([id, s]) => !bundleValid(r.state.quorum, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
+      if ([...sigs].some(([id, s]) => !bundleValid(q, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
       const held = heldFrame(r);
       if (held !== undefined) return unwrapOr(hashEntityFrame(held.frame), () => "") === frameHash ? installFrame(held, frameHash, sigs, false) : err({ _tag: "commit_conflict" });
       return chain(replayFrame(r, frame, frameHash, ctx), (candidate) => installFrame({ ...r, ...candidate }, frameHash, sigs, false));
@@ -10493,14 +10636,15 @@ const signProposal = (r: OpenEntity, frame: EntityFrame, bundles: Precommits, ct
     if (frame.height === r.head.height) return frameHash === r.head.prevFrameHash ? ok(done<OpenEntity | LockedEntity, EntityOutput>(r)) : err({ _tag: "proposal_conflict" });
     if (frame.height !== r.head.height + 1n) return err({ _tag: "proposal_wait" });
     return chain(preauthenticate(r, frame, bundles, ctx), () => chain(notSuperseded(r, frame), () => chain(replayFrame(r, frame, frameHash, ctx), (candidate) => chain(signManifest(candidate.frame.hashesToSign, r.signerId, ctx, candidate.draft.state), (own) =>
-      chain(normalizeBundles(r.state.quorum, bundles), (sigs): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
-        if ([...sigs].some(([id, s]) => !bundleValid(r.state.quorum, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
+      chain(normalizeBundles(candidate.draft.state.quorum, bundles), (sigs): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
+        const q = candidate.draft.state.quorum;
+        if ([...sigs].some(([id, s]) => !bundleValid(q, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
         const self = signerId(r.signerId), mine = sigs.get(self);
         if (mine !== undefined && !sameSigs(mine, own)) return err({ _tag: "local_precommit_conflict" });
         const locked: LockedEntity = { ...r, _tag: "locked", ...candidate, signatures: mapSet(sigs, self, own) };
-        const precommits = [...membersOf(r.state.quorum).keys()].filter((v) => signerId(v) !== self)
+        const precommits = [...membersOf(q).keys()].filter((v) => signerId(v) !== self)
           .map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "precommit", height: frame.height, frameHash, signatures: new Map([[self, own]]) } }));
-        if (quorumPower(r.state.quorum, locked.signatures) < thresholdOf(r.state.quorum)) return ok(done<OpenEntity | LockedEntity, EntityOutput>(locked, precommits));
+        if (quorumPower(q, locked.signatures) < thresholdOf(q)) return ok(done<OpenEntity | LockedEntity, EntityOutput>(locked, precommits));
         return map(installFrame(locked, frameHash, locked.signatures, true), (committed): EntityApply<OpenEntity | LockedEntity> => ({ ...committed, outputs: [...precommits, ...committed.outputs] }));
       })))));
   });
@@ -10518,7 +10662,7 @@ const resendPrecommit = (r: LockedEntity, frame: EntityFrame): Result<EntityAppl
   if (frame.height < r.head.height || (frame.height === r.head.height && frameHash === r.head.prevFrameHash)) return ok(done(r));
   if (frameHash !== held) return frame.height > r.frame.height ? err({ _tag: "proposal_wait" }) : err({ _tag: "proposal_conflict" });
   const self = signerId(r.signerId), own = r.signatures.get(self) ?? [];
-  return ok(done(r, [...membersOf(r.state.quorum).keys()].filter((v) => signerId(v) !== self)
+  return ok(done(r, [...membersOf(r.draft.state.quorum).keys()].filter((v) => signerId(v) !== self)
     .map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "precommit", height: frame.height, frameHash, signatures: new Map([[self, own]]) } }))));
 }));
 type ProposalInput = Extract<EntityInput, { kind: "proposal" }>;
@@ -10534,8 +10678,8 @@ const proposalProposed = (r: ProposedEntity, input: ProposalInput, ctx: EntityCo
 export const applyPrecommitHeld = <R extends ProposedEntity | LockedEntity>(r: R, input: Extract<EntityInput, { kind: "precommit" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> =>
   chain(hashEntityFrame(r.frame), (frameHash) => {
     if (input.signatures.size > 0 && (input.height !== r.frame.height || !sameHex(input.frameHash, frameHash))) return err({ _tag: "precommit_frame_mismatch" });
-    return chain(normalizeBundles(r.state.quorum, input.signatures), (incoming) => chain(foldResult(incoming, r.signatures, (held, [id, sigs]): Result<Precommits, EntityError> => {
-      if (!bundleValid(r.state.quorum, r.frame.hashesToSign, id, sigs, ctx)) return err({ _tag: "invalid_signature", address: id });
+    return chain(normalizeBundles(r.draft.state.quorum, input.signatures), (incoming) => chain(foldResult(incoming, r.signatures, (held, [id, sigs]): Result<Precommits, EntityError> => {
+      if (!bundleValid(r.draft.state.quorum, r.frame.hashesToSign, id, sigs, ctx)) return err({ _tag: "invalid_signature", address: id });
       const existing = held.get(id);
       return existing !== undefined && !sameSigs(existing, sigs) ? err({ _tag: "precommit_signer_equivocation" }) : ok(mapSet(held, id, sigs));
     }), (signatures) => heldQuorum<R>({ ...r, signatures }, [])));
@@ -12884,7 +13028,7 @@ export const handoverFrameConfig = (state: EntityState, txs: readonly EntityTx[]
 };
 /**
  * og handleBoardHandoverEntityTx: the frame-authorized config replaces the board once the Entity's certified registry holds its own
- * BoardActivated record for exactly that board; the new CEO leads from view 0. Validators must be EOAs here (nested Entity validators are not ported).
+ * BoardActivated record for exactly that board; the new CEO leads from view 0. A validator is an EOA or a nested Entity id (og toBoardEntityId).
  */
 const entityBoardHandover = (d: Draft, board: unknown, authorized: HandoverConfig | undefined): Result<Draft, EntityError> => {
   const state = d.state, config = consensusConfigIssue(board, "BOARD_HANDOVER_CONFIG");
@@ -12897,19 +13041,183 @@ const entityBoardHandover = (d: Draft, board: unknown, authorized: HandoverConfi
     const previous = configBoardHash(state.quorum).toLowerCase();
     return chain(handoverBoardHash(c), (next) => chain(handoverBoardHash(authorized), (auth) => {
       if (auth !== next || record.boardHash !== next) return invariant(`BOARD_HANDOVER_CERTIFIED_AUTHORITY_MISMATCH:previous=${record.previousBoardHash}:${previous}:certified=${record.boardHash}:authorized=${auth}:next=${next}`);
-      const members = new Map<Address, { readonly shares: bigint }>();
-      for (const v of c.validators) {
-        const a = address(v), share = Object.entries(c.shares).find(([k]) => lower(k) === lower(v))?.[1];
-        if (!a.ok || share === undefined) return invariant(`BOARD_HANDOVER_ENTITY_VALIDATOR_NOT_PORTED:${v}`);
-        members.set(a.value, { shares: share });
-      }
-      const active = c.validators[0];
-      if (active === undefined) return invariant("BOARD_HANDOVER_VALIDATOR_MISSING");
-      return chain(admitQuorum({ _tag: "teaching", threshold: c.threshold, members }), (quorum) =>
-        ok({ ...d, state: { ...state, quorum, leaderState: { activeValidatorId: active, view: 0, changedAtHeight: Number(state.height) + 1 } }, touched: [] }));
+      return map(withBoardAuthority(state, c, Number(state.height) + 1), (next) => ({ ...d, state: next, touched: [] }));
     }));
   });
 };
+// ---- og entity/consensus/authority/board-handover.ts + proposal/policy.ts: the consensus side of a board handover ----
+/** og withBoardAuthority's board: the config's validators (an EOA, or a nested Entity id as og toBoardEntityId keeps it) with their shares. */
+const quorumOfConfig = (c: HandoverConfig): Result<Quorum, EntityError> => {
+  const members = new Map<Address, { readonly shares: bigint }>();
+  for (const v of c.validators) {
+    const share = Object.entries(c.shares).find(([k]) => lower(k) === lower(v))?.[1], nested = /^0x[0-9a-f]{64}$/i.test(v), a = nested ? ok(lower(v) as Address) : address(v);
+    if (!a.ok || share === undefined) return invariant(`BOARD_HANDOVER_VALIDATOR_INVALID:${v}`);
+    members.set(a.value, { shares: share });
+  }
+  return admitQuorum({ _tag: "teaching", threshold: c.threshold, members });
+};
+/** og withBoardAuthority: the state under the handed-over board, its first validator leading from view 0. */
+const withBoardAuthority = (state: EntityState, c: HandoverConfig, changedAtHeight: number): Result<EntityState, EntityError> => {
+  const active = c.validators[0];
+  if (active === undefined) return invariant("BOARD_HANDOVER_VALIDATOR_MISSING");
+  return map(quorumOfConfig(c), (quorum) => ({ ...state, quorum, leaderState: { activeValidatorId: active, view: 0, changedAtHeight } }));
+};
+/** og getPendingBoardHandoverConfig: uncommitted local coordination; one queued handover names the board that assembles the transition. */
+const pendingHandoverConfig = (state: EntityState, txs: readonly EntityTx[]): Result<HandoverConfig | null, EntityError> => {
+  const handovers = txs.filter((tx): tx is Extract<EntityTx, { type: "boardHandover" }> => tx.type === "boardHandover");
+  const [only] = handovers;
+  if (only === undefined) return ok(null);
+  return handovers.length !== 1 ? invariant(`BOARD_HANDOVER_COUNT_INVALID:${handovers.length}`) : canonicalHandoverConfig(only.data.board);
+};
+/** og `pendingConfig ? { ...replica, state: withBoardAuthority(replica.state, pendingConfig) } : replica` (admission and proposal selection). */
+const authorityReplica = <R extends EntityEnv>(r: R, txs: readonly EntityTx[]): Result<R, EntityError> =>
+  chain(pendingHandoverConfig(r.state, txs), (c) => (c === null ? ok(r) : map(withBoardAuthority(r.state, c, Number(r.state.height) + 1), (state) => ({ ...r, state }))));
+/** og getEntityFrameConsensusConfig: the board a frame's signatures are counted under. */
+const frameQuorum = (state: EntityState, txs: readonly EntityTx[]): Result<Quorum, EntityError> =>
+  chain(handoverFrameConfig(state, txs), (c) => (c === null ? ok(state.quorum) : quorumOfConfig(c)));
+/** og getBoardHandoverLeaderState. */
+const handoverLeaderState = (state: EntityState, txs: readonly EntityTx[]): Result<LeaderState | null, EntityError> =>
+  chain(handoverFrameConfig(state, txs), (c) => {
+    if (c === null) return ok(null);
+    const active = c.validators[0];
+    return active === undefined ? invariant("BOARD_HANDOVER_VALIDATOR_MISSING") : ok({ activeValidatorId: active, view: 0, changedAtHeight: Number(state.height) + 1 });
+  });
+type JEventTx = Extract<EntityTx, { type: "j_event" }>;
+const jRangeEvents = (tx: JEventTx): readonly JRec[] => {
+  const blocks = Array.isArray(tx.data["blocks"]) ? (tx.data["blocks"] as readonly unknown[]) : [];
+  return blocks.flatMap((b) => { const events = recOf(b)?.["events"]; return Array.isArray(events) ? (events as readonly unknown[]) : []; }).map((e) => recOf(e) ?? {});
+};
+/** og getSelfAuthorityTargetFromJRange: the last board this range registers, activates or (for the Foundation) bootstraps for the Entity. */
+const selfAuthorityTarget = (tx: JEventTx, entityId: string): string | null => {
+  const me = lower(entityId);
+  let target: string | null = null;
+  for (const e of jRangeEvents(tx)) {
+    const d = recOf(e["data"]) ?? {};
+    if (e["type"] === "FoundationBootstrapped" && me === FOUNDATION_ENTITY_ID) target = lower(d["boardHash"]);
+    else if ((e["type"] === "EntityRegistered" || e["type"] === "BoardActivated") && lower(d["entityId"]) === me) target = lower(e["type"] === "EntityRegistered" ? d["boardHash"] : d["newBoardHash"]);
+  }
+  return target;
+};
+/** og nestedEntityTxs. */
+const nestedEntityTxs = (tx: EntityTx): readonly EntityTx[] => (tx.type === "runtimeOutput" ? tx.data.entityTxs : tx.type === "entityCommand" ? tx.data.txs : []);
+/** og collectCounterpartyBoardActivations. */
+const counterpartyActivations = (txs: readonly EntityTx[], me: string, into: Set<string>): Set<string> => {
+  for (const tx of txs) {
+    if (tx.type !== "j_event") { counterpartyActivations(nestedEntityTxs(tx), me, into); continue; }
+    for (const e of jRangeEvents(tx)) { if (e["type"] !== "BoardActivated") continue; const target = lower((recOf(e["data"]) ?? {})["entityId"]); if (target !== me) into.add(target); }
+  }
+  return into;
+};
+/** og findConflictingAccountInput. */
+const conflictingAccountInput = (tx: EntityTx, activated: ReadonlySet<string>): string | null => {
+  if (tx.type === "accountInput") { const from = lower(tx.data.fromEntityId); return activated.has(from) ? from : null; }
+  for (const nested of nestedEntityTxs(tx)) { const c = conflictingAccountInput(nested, activated); if (c !== null) return c; }
+  return null;
+};
+/** og findCounterpartyBoardActivationConflict: one frame may not both activate a counterparty's board and carry that counterparty's Account row. */
+export const counterpartyBoardActivationConflict = (entityId: string, txs: readonly EntityTx[]): string | null => {
+  const activated = counterpartyActivations(txs, lower(entityId), new Set());
+  if (activated.size === 0) return null;
+  for (const tx of txs) { const c = conflictingAccountInput(tx, activated); if (c !== null) return c; }
+  return null;
+};
+/** og withoutCounterpartyBoardActivationConflicts: the certified range keeps priority, the counterparty's rows wait for the next frame. */
+export const withoutCounterpartyBoardActivationConflicts = (entityId: string, txs: readonly EntityTx[]): readonly EntityTx[] => {
+  const activated = counterpartyActivations(txs, lower(entityId), new Set());
+  return activated.size === 0 ? txs : txs.filter((tx) => conflictingAccountInput(tx, activated) === null);
+};
+/** og getEntityFrameJRangeBudgetError over several ranges: valid spans, then their canonical frame payload within 10 MiB. */
+const jRangePayloadBytes = (ranges: readonly JEventTx[]): Result<number, EntityError> => {
+  for (const r of ranges) {
+    const base = Number(r.data["baseHeight"]), scanned = Number(r.data["scannedThroughHeight"]);
+    if (!Number.isSafeInteger(base) || base < 0) return invariant(`J_RANGE_FRAME_BASE_HEIGHT_INVALID:${String(r.data["baseHeight"])}`);
+    if (!Number.isSafeInteger(scanned) || scanned <= base) return invariant(`J_RANGE_FRAME_SCANNED_HEIGHT_INVALID:${String(r.data["scannedThroughHeight"])}`);
+  }
+  const bytes = authConsensusBytes({ domain: J_RANGE_FRAME_PAYLOAD_DOMAIN, version: 1, ranges: ranges.map((r) => r.data) });
+  return bytes.ok ? ok(bytes.value.length) : invariant("CANONICAL_ENCODING_INVALID");
+};
+const frameJRangeIssue = (ranges: readonly JEventTx[]): Result<string | null, EntityError> =>
+  map(jRangePayloadBytes(ranges), (n) => (n > MAX_ENTITY_FRAME_J_RANGE_BYTES ? `J_RANGE_FRAME_BYTE_LIMIT_EXCEEDED:${n}:${MAX_ENTITY_FRAME_J_RANGE_BYTES}` : null));
+/** og selectEntityTxsWithinJRangeBudget: an ordered prefix; once a range overflows the budget the whole suffix waits, a range that can never fit halts. */
+export const jRangeBudgetPrefix = (txs: readonly EntityTx[]): Result<readonly EntityTx[], EntityError> => {
+  const selected: EntityTx[] = [], ranges: JEventTx[] = [];
+  for (const tx of txs) {
+    if (tx.type !== "j_event") { selected.push(tx); continue; }
+    const alone = frameJRangeIssue([tx]);
+    if (!alone.ok) return alone;
+    if (alone.value !== null) return invariant(`J_RANGE_SINGLE_RANGE_UNPROPOSABLE:${alone.value}`);
+    const all = frameJRangeIssue([...ranges, tx]);
+    if (!all.ok) return all;
+    if (all.value !== null) break;
+    selected.push(tx); ranges.push(tx);
+  }
+  return ok(selected);
+};
+/** og MAX_ENTITY_FRAME_TXS and MAX_ENTITY_FRAME_TX_BYTES (half of LIMITS.MAX_FRAME_SIZE_BYTES): each tx costs a 4-byte length prefix plus its canonical frame-hash bytes. */
+export const MAX_ENTITY_FRAME_TXS = 10_000, MAX_ENTITY_FRAME_TX_BYTES = Math.floor(100_000_000 / 2);
+const frameTxBytes = (txs: readonly EntityTx[]): Result<readonly number[], EntityError> =>
+  traverse(txs, (tx) => chain(entityFrameTx(tx), (ftx) => chain(entityTxForHash(ftx), (hashed) => map(encodeBinary(hashed as Binary), (b) => 4 + b.byteLength))));
+/** og selectEntityFrameTxByteBudgetWithMeter: at most MAX_ENTITY_FRAME_TXS, then the longest prefix within the byte budget; a head tx over it halts. */
+export const frameTxBudgetPrefix = (all: readonly EntityTx[]): Result<readonly EntityTx[], EntityError> => {
+  const txs = all.length > MAX_ENTITY_FRAME_TXS ? all.slice(0, MAX_ENTITY_FRAME_TXS) : all;
+  return chain(frameTxBytes(txs), (sizes) => {
+    let total = 0, count = 0;
+    for (const n of sizes) { if (total + n > MAX_ENTITY_FRAME_TX_BYTES) break; total += n; count += 1; }
+    if (count === txs.length) return ok(txs);
+    return count === 0 ? invariant(`ENTITY_FRAME_HEAD_TX_BYTE_LIMIT_EXCEEDED:${sizes[0] ?? 0}:${MAX_ENTITY_FRAME_TX_BYTES}`) : ok(txs.slice(0, count));
+  });
+};
+/** og assertEntityFrameTxByteBudget + assertEntityFrameJRangeBudget at the head of applyEntityFrame. */
+const frameBudgets = (txs: readonly EntityTx[]): Result<void, EntityError> =>
+  chain(frameTxBytes(txs), (sizes) => {
+    const n = sizes.reduce((t, s) => t + s, 0);
+    if (n > MAX_ENTITY_FRAME_TX_BYTES) return invariant(`ENTITY_FRAME_TX_BYTE_LIMIT_EXCEEDED:${n}:${MAX_ENTITY_FRAME_TX_BYTES}`);
+    return chain(frameJRangeIssue(txs.filter((tx): tx is JEventTx => tx.type === "j_event")), (issue) => (issue === null ? ok(undefined) : invariant(issue)));
+  });
+const budgeted = (txs: readonly EntityTx[]): Result<readonly EntityTx[], EntityError> => chain(jRangeBudgetPrefix(txs), frameTxBudgetPrefix);
+export type ProposableSelection = { readonly txs: readonly EntityTx[]; readonly currentAuthorityReady: boolean };
+/** og currentAuthorityReady: a lazy Entity (id = its config board), or a certified self record for exactly the config board. */
+const currentAuthorityReady = (state: EntityState): Result<boolean, EntityError> => {
+  const configHash = quorumBoardHash(state.quorum);
+  return configHash === lower(state.id) ? ok(true) : map(observerBoardRecord(state, lower(state.id)), (record) => record?.boardHash === configHash);
+};
+/**
+ * og selectProposableEntityTxs: only txs whose authority prerequisites are committed. A self board range isolates itself (with its one
+ * handover when it moves off the config board); a handover waits for its activation; an uncertified board proposes nothing; otherwise
+ * counterparty board activations and cross-j setup keep priority, then the J-range and frame byte budgets cut the prefix.
+ */
+export const selectProposable = (state: EntityState, mempool: readonly EntityTx[]): Result<ProposableSelection, EntityError> =>
+  chain(currentAuthorityReady(state), (ready): Result<ProposableSelection, EntityError> => {
+    const configHash = quorumBoardHash(state.quorum), me = lower(state.id);
+    const selfRanges = mempool.filter((tx): tx is JEventTx => tx.type === "j_event").map((tx) => ({ tx, target: selfAuthorityTarget(tx, me) })).filter((e) => e.target !== null);
+    const handovers = mempool.filter((tx) => tx.type === "boardHandover");
+    const latest = selfRanges[selfRanges.length - 1];
+    if (latest !== undefined) {
+      if (latest.target !== configHash) {
+        const [handover] = handovers;
+        if (handovers.length !== 1 || handover === undefined) return ok({ txs: [], currentAuthorityReady: ready });
+        const transition = [latest.tx, handover];
+        return map(handoverFrameConfig(state, transition), () => ({ txs: transition, currentAuthorityReady: true }));
+      }
+      return map(budgeted(selfRanges.map((e) => e.tx)), (txs) => ({ txs, currentAuthorityReady: ready }));
+    }
+    if (handovers.length > 1) return invariant(`BOARD_HANDOVER_COUNT_INVALID:${handovers.length}`);
+    if (handovers.length === 1 || !ready) return ok({ txs: [], currentAuthorityReady: ready });
+    return map(budgeted(selectCommitPhaseTxs(withoutCounterpartyBoardActivationConflicts(me, mempool))), (txs) => ({ txs, currentAuthorityReady: true }));
+  });
+/** og isSelfBoardAuthorityTransitionFrame: a handover frame, or a pure J-range frame that certifies the (not yet certified) config board. */
+export const selfAuthorityTransitionFrame = (state: EntityState, txs: readonly EntityTx[]): Result<boolean, EntityError> =>
+  chain(handoverFrameConfig(state, txs), (c): Result<boolean, EntityError> => {
+    if (c !== null) return ok(true);
+    if (txs.length === 0 || txs.some((tx) => tx.type !== "j_event")) return ok(false);
+    const configHash = quorumBoardHash(state.quorum);
+    if (configHash === lower(state.id)) return ok(false);
+    return chain(observerBoardRecord(state, state.id), (record) => {
+      if (record?.boardHash === configHash) return ok(false);
+      const targets = (txs as readonly JEventTx[]).map((tx) => selfAuthorityTarget(tx, state.id)).filter((t): t is string => t !== null);
+      return ok(targets[targets.length - 1] === configHash);
+    });
+  });
 /** og entity/auth/signer-wallet.ts on the committed externalWallet {balances, allowances}: owner -> token (or token:spender) -> row. */
 type WalletBook = ReadonlyMap<string, ReadonlyMap<string, Binary>>;
 const NATIVE_EXTERNAL_TOKEN = `0x${"00".repeat(20)}`;
@@ -13222,7 +13530,7 @@ const recordAuthenticatedJAuthority = (rt: Runtime, e: RegistrationEvidence): Re
  * An EVM transaction as ethers Transaction.from reads it: `hash` / `from` are null for an unsigned transaction; `from` is ethers' lazy sender
  * recovery, so an unrecoverable signature is an error only when the sender is asked for.
  */
-export type EvmTx = { readonly type: 0 | 1 | 2; readonly hash: string | null; readonly from: Result<string, string> | null; readonly chainId: bigint; readonly nonce: number; readonly to: string | null; readonly value: bigint; readonly data: string };
+export type EvmTx = { readonly type: 0 | 1 | 2 | 3 | 4; readonly hash: string | null; readonly from: Result<string, string> | null; readonly chainId: bigint; readonly nonce: number; readonly to: string | null; readonly value: bigint; readonly data: string };
 type EvmRlp = Uint8Array | readonly EvmRlp[];
 /** ethers decodeRlp: length prefixes are taken as given (no canonical-form check), a child may not overrun its list, nothing may trail. */
 const evmRlpDecode = (data: Uint8Array): EvmRlp | null => {
@@ -13271,6 +13579,30 @@ const evmAccessList = (x: EvmRlp | undefined): Result<EvmRlp, string> => {
 /** ethers zeroPadValue(_, 32) then Signature.from: r / s are at most 32 bytes. */
 const evmSigWord = (x: EvmRlp | undefined, label: string): Result<bigint, string> => chain(bytesItem(x, label), (b) => (b.length > 32 ? err(`invalid ${label}`) : ok(b.length === 0 ? 0n : BigInt(bytesToHex(b)))));
 type EvmSig = { readonly r: bigint; readonly s: bigint; readonly yParity: number };
+/** ethers _parseEip4844 sidecar: the network format [tx, blobs, commitments, proofs] or EIP-7594 [tx, 1, blobs, commitments, cellProofs]; each blob's versioned hash is recomputed from its commitment (getVersionedHash). */
+const EVM_CELL_COUNT = 128;
+const evmBlobSidecar = (fields: EvmRlp | null): Result<{ readonly fields: EvmRlp | null; readonly hashes: readonly Uint8Array[] | null }, string> => {
+  if (!Array.isArray(fields) || !Array.isArray(fields[0]) || (fields.length !== 4 && fields.length !== 5)) return ok({ fields, hashes: null });
+  const f = fields as readonly EvmRlp[], seven = f.length === 5;
+  if (seven) { const version = f[1]; if (!(version instanceof Uint8Array) || version.length === 0 || BigInt(bytesToHex(version)) !== 1n) return err("unsupported EIP-7594 network format version"); }
+  const [blobs, commits, proofs] = seven ? [f[2], f[3], f[4]] : [f[1], f[2], f[3]];
+  if (!Array.isArray(blobs) || !Array.isArray(commits) || !Array.isArray(proofs)) return err("invalid network format");
+  if (blobs.length !== commits.length || blobs.length * (seven ? EVM_CELL_COUNT : 1) !== proofs.length) return err("invalid network format: length mismatch");
+  // ethers hexlify(blob.data / commitment / proof) and concat(cell proofs): every part is a byte string
+  if (![...blobs, ...commits, ...proofs].every((x) => x instanceof Uint8Array)) return err("invalid BytesLike value");
+  return ok({ fields: f[0] ?? null, hashes: (commits as readonly Uint8Array[]).map((c) => { const h = sha256(c); h[0] = 1; return h; }) });
+};
+/** ethers handleAuthorizationList then authorizationify: [chainId, address(20), nonce, yParity(0|1), r, s (unchecked: ethers encodes ._s)] rows, re-encoded minimal (formatAuthorizationList). */
+const evmAuthorizationList = (x: EvmRlp | undefined): Result<EvmRlp, string> => {
+  if (!Array.isArray(x)) return err("authorizationList: invalid array");
+  return traverse(x as readonly EvmRlp[], (auth): Result<EvmRlp, string> => {
+    if (!Array.isArray(auth) || auth.length !== 6) return err("invalid authorization");
+    const a = auth as readonly EvmRlp[];
+    return chain(bytesItem(a[1], "address"), (address) => (address.length !== 20 ? err("invalid address") : chain(evmUint(a[2], "nonce"), (nonce) => chain(evmUint(a[0], "chainId"), (chainId) =>
+      chain(evmNumber(a[3], "yParity"), (yParity) => (yParity !== 0 && yParity !== 1 ? err("invalid yParity") : chain(evmSigWord(a[4], "r"), (r) => chain(evmSigWord(a[5], "s"), (sw) =>
+        ok([evmBytes(chainId), address, evmBytes(nonce), evmBytes(BigInt(yParity)), evmBytes(r), evmBytes(sw)] as EvmRlp)))))))));
+  });
+};
 /** ethers Transaction.hash (keccak of the re-serialized signed form) and .from (recovery over the unsigned hash; a high s recovers the same key). */
 type EvmSigned = { readonly hash: string | null; readonly from: Result<string, string> | null };
 const evmSigned = (sig: EvmSig, unsigned: Uint8Array, signed: (sig: EvmSig) => Result<Uint8Array, string>): Result<EvmSigned, string> =>
@@ -13280,7 +13612,7 @@ const evmSigned = (sig: EvmSig, unsigned: Uint8Array, signed: (sig: EvmSig) => R
   });
 /**
  * ethers v6 Transaction.from(raw) for a legacy (pre-EIP-155 or EIP-155), EIP-2930 (type 1) or EIP-1559 (type 2) transaction: RLP-decode the fields,
- * derive the chain id from a legacy v, hash the re-serialized signed form, recover the sender. Blob (3) and set-code (4) transactions are refused.
+ * derive the chain id from a legacy v, hash the re-serialized signed form, recover the sender. Blob (3, with or without its network sidecar) and set-code (4) transactions too.
  */
 export const parseEvmTx = (raw: string): Result<EvmTx, string> => {
   if (!/^0x([0-9a-fA-F]{2})+$/.test(raw)) return err("invalid BytesLike value");
@@ -13308,14 +13640,25 @@ export const parseEvmTx = (raw: string): Result<EvmTx, string> => {
         })));
       }))))));
   }
-  if (first !== 1 && first !== 2) return err("unsupported transaction type");
-  const typed = first as 1 | 2, fields = evmRlpDecode(payload.subarray(1)), plain = typed === 1 ? 8 : 9;
+  if (first < 1 || first > 4) return err("unsupported transaction type");
+  const typed = first as 1 | 2 | 3 | 4, plain = typed === 1 ? 8 : typed === 2 ? 9 : typed === 3 ? 11 : 10, unwrapped = typed === 3 ? evmBlobSidecar(evmRlpDecode(payload.subarray(1))) : ok({ fields: evmRlpDecode(payload.subarray(1)), hashes: null });
+  if (!unwrapped.ok) return unwrapped;
+  const { fields, hashes: sidecarHashes } = unwrapped.value;
   if (!Array.isArray(fields) || (fields.length !== plain && fields.length !== plain + 3)) return err(`invalid field count for transaction type: ${typed}`);
-  const f = fields as readonly EvmRlp[], o = typed === 2 ? 1 : 0;
-  return chain(evmUint(f[0], "chainId"), (chainId) => chain(evmNumber(f[1], "nonce"), (nonce) => chain(evmUint(f[2], typed === 2 ? "maxPriorityFeePerGas" : "gasPrice"), (fee0) =>
-    chain(typed === 2 ? evmUint(f[3], "maxFeePerGas") : ok(0n), (fee1) => chain(evmUint(f[3 + o], "gasLimit"), (gasLimit) => chain(evmTo(f[4 + o]), (to) => chain(evmUint(f[5 + o], "value"), (value) =>
+  const f = fields as readonly EvmRlp[], o = typed >= 2 ? 1 : 0;
+  // ethers _parseEip4844: maxFeePerBlobGas, a non-null to, and 32-byte versioned hashes; _parseEip7702: the authorization list
+  const blob = typed !== 3 ? ok([] as EvmRlp[]) : chain(evmUint(f[9], "maxFeePerBlobGas"), (maxFeePerBlobGas): Result<EvmRlp[], string> => {
+    const hashes = f[10];
+    if (!Array.isArray(hashes) || (hashes as readonly EvmRlp[]).some((h) => !(h instanceof Uint8Array) || h.length !== 32)) return err("invalid blobVersionedHashes");
+    const t = f[5];
+    return t instanceof Uint8Array && t.length === 0 ? err("invalid address for transaction type: 3") : ok([evmBytes(maxFeePerBlobGas), sidecarHashes ?? hashes]);
+  });
+  const extra = typed === 4 ? map(evmAuthorizationList(f[9]), (auths): EvmRlp[] => [auths]) : blob;
+  if (!extra.ok) return extra;
+  return chain(evmUint(f[0], "chainId"), (chainId) => chain(evmNumber(f[1], "nonce"), (nonce) => chain(evmUint(f[2], typed >= 2 ? "maxPriorityFeePerGas" : "gasPrice"), (fee0) =>
+    chain(typed >= 2 ? evmUint(f[3], "maxFeePerGas") : ok(0n), (fee1) => chain(evmUint(f[3 + o], "gasLimit"), (gasLimit) => chain(evmTo(f[4 + o]), (to) => chain(evmUint(f[5 + o], "value"), (value) =>
       chain(bytesItem(f[6 + o], "data"), (data) => chain(evmAccessList(f[7 + o]), (accessList) => {
-        const body: EvmRlp[] = [evmBytes(chainId), evmBytes(BigInt(nonce)), evmBytes(fee0), ...(typed === 2 ? [evmBytes(fee1)] : []), evmBytes(gasLimit), to ?? new Uint8Array(0), evmBytes(value), data, accessList];
+        const body: EvmRlp[] = [evmBytes(chainId), evmBytes(BigInt(nonce)), evmBytes(fee0), ...(typed >= 2 ? [evmBytes(fee1)] : []), evmBytes(gasLimit), to ?? new Uint8Array(0), evmBytes(value), data, accessList, ...extra.value];
         const tx = (signed: EvmSigned): EvmTx => ({ type: typed, ...signed, chainId, nonce, to: to === null ? null : bytesToHex(to), value, data: bytesToHex(data) });
         const envelope = (items: readonly EvmRlp[]): Uint8Array => concat([Uint8Array.of(typed), rlpOf(items)]);
         if (f.length === plain) return ok(tx({ hash: null, from: null }));
@@ -13323,7 +13666,7 @@ export const parseEvmTx = (raw: string): Result<EvmTx, string> => {
           if (yParity !== 0 && yParity !== 1) return err("invalid yParity");
           return chain(evmSigWord(f[plain + 1], "r"), (r) => chain(evmSigWord(f[plain + 2], "s"), (s) =>
             // ethers inferTypes refuses an EIP-1559 fee cap below its priority fee, and Signature.s a word with its top bit set, when the signed form is serialized.
-            map(evmSigned({ r, s, yParity }, envelope(body), (sig) => (typed === 2 && fee1 < fee0 ? err("priorityFee cannot be more than maxFee") : sig.s >> 255n !== 0n ? err("non-canonical s; use ._s")
+            map(evmSigned({ r, s, yParity }, envelope(body), (sig) => (typed >= 2 && fee1 < fee0 ? err("priorityFee cannot be more than maxFee") : sig.s >> 255n !== 0n ? err("non-canonical s; use ._s")
               : ok(envelope([...body, evmBytes(BigInt(sig.yParity)), evmBytes(sig.r), evmBytes(sig.s)])))), tx)));
         });
       })))))))));
@@ -14530,6 +14873,8 @@ export type SwapOfferEvent = SwapRef & {
   readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: 0 | 1 | 2 | undefined;
   /** og SwapOfferEvent.crossJurisdiction: a cross-j order the book owner admitted (book-order.ts buildCommittedCrossJurisdictionOfferEvent). */
   readonly crossJurisdiction?: CrossRoute | undefined;
+  /** og same-j-swap-output.ts: the Account output is the commitment evidence for a same-j offer (orderbook-admission.ts skips the committed-state re-read). */
+  readonly accountOutputVerified?: true | undefined;
 };
 /** og CommittedAccountEffects swapOffersCreated / swapOffersCancelled / swapCancelRequests, collected over one Entity frame. */
 export type SwapEvents = { readonly created: readonly SwapOfferEvent[]; readonly cancelled: readonly SwapRef[]; readonly cancelRequests: readonly SwapRef[] };
@@ -14540,7 +14885,7 @@ const tif = (t: number | undefined): 0 | 1 | 2 | undefined => (t === 0 || t === 
 export const swapOfferEvent = (accountId: string, e: Of<Effect, "swap_offer_upsert">): SwapOfferEvent => ({
   offerId: e.offer.offerId, accountId, makerIsLeft: e.offer.makerIsLeft, fromEntity: e.left, toEntity: e.right, createdHeight: e.offer.createdHeight,
   giveTokenId: Number(e.offer.giveTokenId), giveTokenDecimals: e.offer.giveTokenDecimals, giveAmount: e.offer.giveAmount, wantTokenId: Number(e.offer.wantTokenId), wantTokenDecimals: e.offer.wantTokenDecimals, wantAmount: e.offer.wantAmount,
-  maxFee: e.offer.maxFee, minNetReceive: e.offer.minNetReceive, priceTicks: e.offer.priceTicks, ...opt("timeInForce", tif(e.offer.timeInForce)),
+  maxFee: e.offer.maxFee, minNetReceive: e.offer.minNetReceive, priceTicks: e.offer.priceTicks, ...opt("timeInForce", tif(e.offer.timeInForce)), accountOutputVerified: true,
 });
 /** The matcher's view of one hub Account (og hubState.accounts row): status, committed offers, and the resolves already queued (mempool + our pending frame). */
 export type HubAccount = { readonly active: boolean; readonly left: string; readonly right: string; readonly offers: ReadonlyMap<string, SwapOffer>; readonly queued: readonly WireAccountTx[];

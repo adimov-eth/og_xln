@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { x25519 } from "@noble/curves/ed25519";
 import { getEntityLeaderOrder, getEntityLeaderState } from "../../core/entity/consensus/leader/index.ts";
 import { calculateQuorumPower, isSingleSignerBoard } from "../../core/entity/consensus/replica-validation.ts";
 import { validateConsensusConfig } from "../../core/entity/consensus/config-validation.ts";
@@ -7,6 +8,7 @@ import { PersistentEntityAccountMap } from "../../core/entity/state/persistent-a
 import { PersistentEntityCollectionMap } from "../../core/entity/state/persistent-collection-map.ts";
 import { initCrontab } from "../../core/entity/scheduler/index.ts";
 import { buildEntityHashesToSign } from "../../core/entity/consensus/input/hanko-witness.ts";
+import { computeEntityProfileHash } from "../../core/entity/profile/profile-descriptor.ts";
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
 import { appendEntityMempoolTransactions } from "../../core/entity/consensus/input/admission.ts";
 import {
@@ -109,11 +111,13 @@ describe("entity-runtime: authority root (ER-2, H16)", () => {
 const EMPTY = { radix: 16 as const, leafCount: 0, root: ZERO_WORD };
 const JCONF = { entityProviderAddress: `0x${"EE".repeat(20)}`, registrationBlock: 7, blockTimeMs: 1000 };
 const ogJurisdiction = { name: "local", address: "http://127.0.0.1:8545", chainId: JUR.chainId, depositoryAddress: JUR.depositoryAddress, ...JCONF };
+/** A real X25519 Entity keypair: og checks the validator's private key against the committed public key on every proposal. */
+const KEY_PRIV = `0x${"12".repeat(32)}`, KEY_PUB = `0x${Buffer.from(x25519.getPublicKey(Buffer.from("12".repeat(32), "hex"))).toString("hex")}`;
 const committedPair = (i: number): { og: Record<string, unknown>; rw: EntityCommitted } => {
   const nonces = new Map(Array.from({ length: ri(3) }, (_, j) => [`0x${(j + 1).toString(16).padStart(40, "0")}`, ri(9)] as const));
   const reserves = new Map(Array.from({ length: ri(3) }, (_, j) => [j + 1, BigInt(ri(1e9)) * 10n ** 12n] as const));
   const profile = { name: `Entity ${i}`, isHub: rng() < 0.5, avatar: "", bio: "", website: "" };
-  const shared = { nonces, proposals: new Map(), reserves, lastFinalizedJHeight: ri(100), profile, entityEncryptionPublicKey: `0x${"12".repeat(32)}`, swapTradingPairs: [{ pairId: "1/2", baseTokenId: 1, quoteTokenId: 2 }] };
+  const shared = { nonces, proposals: new Map(), reserves, lastFinalizedJHeight: ri(100), profile, entityEncryptionPublicKey: KEY_PUB, swapTradingPairs: [{ pairId: "1/2", baseTokenId: 1, quoteTokenId: 2 }] };
   const feesEarned = BigInt(ri(50));
   return {
     og: { ...shared, paybook: { entries: PersistentEntityCollectionMap.empty("paybookHashlock"), feesEarned }, crontabState: initCrontab(), deferredAccountProposals: PersistentEntityCollectionMap.empty(), crossJurisdictionBookAdmissions: PersistentEntityCollectionMap.empty() },
@@ -158,9 +162,9 @@ describe("entity-runtime: entity state root commits every og field (H6)", () => 
   test("MATCH: a proposed frame's stateRoot is og's root of the proposal state (height+1, frame timestamp, og crontab default) and its hash is og's frame hash", () => {
     const { og, rw } = committedPair(99);
     const { crontabState: _c, ...rwNoCron } = rw, { crontabState: _o, ...ogNoCron } = og;
-    const r = unwrap(createEntity({ id: lazyId([[A, 1n], [B, 1n]], 2n), jurisdiction: JUR, threshold: 2n, members: new Map([[A, { shares: 1n }], [B, { shares: 1n }]]), committed: rwNoCron, timestamp: 50n, jurisdictionConfig: JCONF }));
+    const r = unwrap(createEntity({ id: lazyId([[A, 1n], [B, 1n]], 2n), jurisdiction: JUR, threshold: 2n, members: new Map([[A, { shares: 1n }], [B, { shares: 1n }]]), committed: rwNoCron, timestamp: 50n, jurisdictionConfig: { ...JCONF, name: ogJurisdiction.name } }));
     const credit: EntityTx = { type: "extendCredit", data: { counterpartyEntityId: CAROL, tokenId: unwrap(tokenId("1")), amount: 5n } }; // no account: og no-op
-    const p = unwrap(applyEntityInput(r, txs([credit], 40n), ctx(A)));
+    const p = unwrap(applyEntityInput(r, txs([credit], 40n), { ...ctx(A), htlc: { profiles: [], encryptionPrivateKey: KEY_PRIV } }));
     const frame = held(p.replica);
     expect(frame.timestamp).toBe(50n); // og resolveEntityProposalTimestamp = max(runtime, committed)
     const ogState = { ...ogEntityState({ ...r, state: { ...r.state, height: 1n, timestamp: 50n } }, { ...ogNoCron, crontabState: initCrontab() }, ogJurisdiction), leaderState: { activeValidatorId: A.toLowerCase(), view: 0, changedAtHeight: 0 } }; // og proposal state records the proposer's leaderState
@@ -168,7 +172,9 @@ describe("entity-runtime: entity state root commits every og field (H6)", () => 
     const ogTxs = [{ type: "extendCredit", data: { counterpartyEntityId: CAROL, tokenId: 1, amount: 5n } }];
     const ogHash = createEntityFrameHashFromStateRoot("genesis", 1, 50, ogTxs as never, [], r.state.id, frame.stateRoot, frame.authorityRoot, frame.entityContext as never);
     expect(unwrap(hashEntityFrame(frame))).toBe(ogHash);
-    expect(frame.hashesToSign).toEqual(buildEntityHashesToSign(r.state.id, 1, ogHash));
+    // og appendFinalProfileHash: the genesis frame always signs the profile descriptor hash
+    const profile = computeEntityProfileHash(ogState as never);
+    expect(frame.hashesToSign).toEqual(buildEntityHashesToSign(r.state.id, 1, ogHash, [{ hash: profile, type: "profile", context: `profile:${profile}` }]));
   });
 });
 
