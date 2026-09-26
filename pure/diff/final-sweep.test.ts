@@ -6,6 +6,10 @@ import { applyAccountTxMutation } from "../../core/account/tx/mutation.ts";
 import { handleSettleTransition } from "../../core/account/tx/handlers/settlement/transition.ts";
 import { beginAccountTransition, accountTransitionView, commitAccountTransition, discardAccountTransition } from "../../core/account/state/candidate-overlay.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
+import { resolveObserverCertifiedAccountCounterpartyProposer as ogCertifiedProposer } from "../../core/entity/account/account-counterparty-route.ts";
+import { decodeBuffer as ogDecodeBuffer } from "../../core/storage/codec/codec.ts";
+import { applyRuntime, convertOutput, createRuntime, lazyBoardEntityId, runtimeOutputRows, type EntityOutput, type EntityTx, type Runtime, type RoutedEntityInput, type RuntimeTx } from "../xln.ts";
+import { TERMS, aliceAddr, bobAddr, verifiers } from "../xln_run.ts";
 import {
   accountId,
   accountTerms,
@@ -254,5 +258,47 @@ describe("final-sweep: og per-tx failure text for every Account tx handler", () 
     expect((await L.step(hanko({ settlementNonce: 3 }), true, 5, 0, ogCtx, settlement)).message).toBe("SETTLEMENT_HANKO_NONCE_MISMATCH:1:3");
     expect((await L.step({ type: "add_delta", tokenId: "9" }, true)).message).toBe("SETTLEMENT_SIGNED_ACCOUNT_FROZEN:add_delta");
     expect((await L.step({ type: "payment", tokenId: "1", amount: 1n, route: [RIGHT], fromEntityId: LEFT, toEntityId: RIGHT, deliveryMode: "direct" }, true)).message).toBe("SETTLEMENT_SIGNED_ACCOUNT_FROZEN:direct_payment");
+  });
+});
+
+// ---------- runtime-final RF-18: the signer an Account message's outbox row binds (og delivery/entity-output-signer.ts) ----------
+
+describe("final-sweep: RF-18 outbox signer (og resolveEntityOutputSignerId)", () => {
+  test("MATCH: an Account message to an Entity with no local replica binds og's certified counterparty proposer (the frame Hanko's first member); without a Hanko og falls to the gossip route, and with neither refuses SIGNER_RESOLUTION_FAILED", () => {
+    const J = "local", cfg = (a: string) => ({ mode: "proposer-based" as const, threshold: 1n, validators: [a], shares: { [a]: 1n }, jurisdiction: { name: J, chainId: TERMS.domain.chainId, depositoryAddress: TERMS.domain.depositoryAddress, entityProviderAddress: "0x" + "e1".repeat(20) } });
+    const A = unwrapR(lazyBoardEntityId(cfg(aliceAddr)) as never) as string, B = unwrapR(lazyBoardEntityId(cfg(bobAddr)) as never) as string;
+    const imp = (id: string, signer: string): RuntimeTx => ({ type: "importReplica", entityId: id, signerId: signer, data: { config: cfg(signer), isProposer: true, entitySeed: "0x" + "5e".repeat(64) } }) as never;
+    let now = 1_700_000_000_000n;
+    let rt: Runtime = unwrapR(applyRuntime(createRuntime([J]), { runtimeTxs: [imp(A, aliceAddr), imp(B, bobAddr)], entityInputs: [], timestamp: now }, verifiers) as never as { ok: true; value: { runtime: Runtime } }).runtime;
+    const sent: EntityOutput[] = [];
+    let inputs: RoutedEntityInput[] = [{ entityId: A as never, signerId: aliceAddr, input: { kind: "txs", timestamp: now, txs: [{ type: "openAccount", data: { targetEntityId: B, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig } } as EntityTx] } }];
+    for (let round = 0; inputs.length > 0 && round < 20; round++) {
+      now += 1n;
+      const step = unwrapR(applyRuntime(rt, { runtimeTxs: [], entityInputs: inputs.map((i) => (i.input.kind === "txs" ? { ...i, input: { ...i.input, timestamp: now } } : i)) }, verifiers) as never) as { runtime: Runtime; outbox: readonly EntityOutput[] };
+      rt = step.runtime;
+      sent.push(...step.outbox);
+      inputs = step.outbox.map((o) => unwrapR(convertOutput(rt, o, ("tx" in o ? (o.tx.data as { fromEntityId: string }).fromEntityId : o.to) as never, now) as never));
+    }
+    const alice = [...rt.entities.values()].find((r) => r.state.id === A)!, account = alice.accountReplicas.get(B as never)!;
+    expect(account.head._tag).toBe("installed");
+    const head = account.head as Extract<typeof account.head, { _tag: "installed" }>, localIsLeft = A.toLowerCase() < B.toLowerCase();
+    const peerHanko = localIsLeft ? head.certificate.right : head.certificate.left;
+    const toB = sent.find((o) => "tx" in o && o.to === B)!;
+    // BOB leaves this Runtime: only ALICE's certified Account evidence can name BOB's proposer
+    const remote: Runtime = { ...rt, entities: new Map([...rt.entities].filter(([, r]) => r.state.id !== B)) };
+    const ogAccount = (hanko: string | undefined) => ({ counterpartyFrameHanko: hanko, state: { leftEntity: localIsLeft ? A : B, rightEntity: localIsLeft ? B : A }, currentFrame: { stateHash: head.prevFrameHash } });
+    const ogSigner = ogCertifiedProposer({} as never, {} as never, ogAccount(peerHanko) as never, B);
+    expect(ogSigner).toBe(bobAddr.toLowerCase());
+    const signerOf = (r: Runtime, routes?: { verifiedProfileSigner: (e: string) => string | undefined }): unknown => {
+      const rows = runtimeOutputRows(r, [toB], routes);
+      return rows.ok ? (ogDecodeBuffer(Buffer.from(rows.value[0]!)) as { signerId?: string }).signerId : (rows.error as { code: string }).code.split(":")[0];
+    };
+    expect(signerOf(remote)).toBe(ogSigner);
+    // no frame Hanko: og returns no certified route, then the verified gossip profile, else SIGNER_RESOLUTION_FAILED
+    expect(ogCertifiedProposer({} as never, {} as never, ogAccount(undefined) as never, B)).toBeNull();
+    const bare = { ...alice, accountReplicas: new Map([...alice.accountReplicas].map(([k, a]) => [k, k === B ? { ...a, head: { ...head, certificate: { ...head.certificate, left: localIsLeft ? head.certificate.left : "", right: localIsLeft ? "" : head.certificate.right } } } : a])) };
+    const uncertified: Runtime = { ...remote, entities: new Map([...remote.entities].map(([k, r]) => [k, r.state.id === A ? bare : r])) } as Runtime;
+    expect(signerOf(uncertified)).toBe("SIGNER_RESOLUTION_FAILED");
+    expect(signerOf(uncertified, { verifiedProfileSigner: (e) => (e === B.toLowerCase() ? "0x" + "cd".repeat(20) : undefined) })).toBe("0x" + "cd".repeat(20));
   });
 });

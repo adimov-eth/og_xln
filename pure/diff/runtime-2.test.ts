@@ -386,11 +386,13 @@ describe("runtime-2: importReplica board authority (og runtime/tx/tx-handlers.ts
 
 describe("runtime-2: WAL frame commit and recover (og storage write + read/verify.ts + replay)", () => {
   test("MATCH: a committed WAL row chains from og ZERO_FRAME_HASH and its frameHash / canonicalStateHash recompute under og's functions; tampering is refused", () => {
+    // og resolveEntityProposerId: BOB has no local replica and no certified Account route yet, so its verified gossip profile names the signer
+    const ctx = { ...verifiers, routes: { verifiedProfileSigner: (e: string) => (e === BOB.toLowerCase() ? bobAddr.toLowerCase() : undefined) } };
     const config = importConfigOf([aliceAddr], { [aliceAddr]: 1n }, 1n);
     const id = unwrap(lazyBoardEntityId(config)) as EntityId;
     const importTx: RuntimeTx = { type: "importReplica", entityId: id, signerId: aliceAddr, data: { config, isProposer: true, entitySeed: SEED } };
     const start = createRuntime([JUR_NAME]);
-    const first = unwrap(commitRuntimeFrame(start, { runtimeTxs: [importTx], entityInputs: [], timestamp: NOW }, verifiers));
+    const first = unwrap(commitRuntimeFrame(start, { runtimeTxs: [importTx], entityInputs: [], timestamp: NOW }, ctx));
     if (first === null) throw new Error("no frame");
     expect(first.frame.prevFrameHash).toBe(ZERO_FRAME_HASH);
     expect(first.frame.height).toBe(1);
@@ -398,14 +400,16 @@ describe("runtime-2: WAL frame commit and recover (og storage write + read/verif
     expect(computeStorageFrameHash(rest as never)).toBe(frameHash ?? "");
     expect(computeCanonicalRuntimeStateHash(first.frame.height, first.frame.timestamp, (first.frame.canonicalEntityHashes ?? []) as never)).toBe(first.frame.canonicalStateHash ?? "");
     // A frame that did no work writes no row (og advanceAppliedRuntimeFrame).
-    expect(unwrap(commitRuntimeFrame(first.runtime, { runtimeTxs: [], entityInputs: [] }, verifiers))).toBeNull();
-    const second = unwrap(commitRuntimeFrame(first.runtime, { runtimeTxs: [], entityInputs: [{ entityId: id, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW + 1n, txs: [openTo(BOB)] } }] }, verifiers));
+    expect(unwrap(commitRuntimeFrame(first.runtime, { runtimeTxs: [], entityInputs: [] }, ctx))).toBeNull();
+    const second = unwrap(commitRuntimeFrame(first.runtime, { runtimeTxs: [], entityInputs: [{ entityId: id, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW + 1n, txs: [openTo(BOB)] } }] }, ctx));
     if (second === null) throw new Error("no frame");
+    // og SIGNER_RESOLUTION_FAILED: no local replica, no certified route, no gossip profile
+    expect(String(rwCode(commitRuntimeFrame(first.runtime, { runtimeTxs: [], entityInputs: [{ entityId: id, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW + 1n, txs: [openTo(BOB)] } }] }, verifiers)))).toStartWith("SIGNER_RESOLUTION_FAILED");
     expect(second.frame.prevFrameHash).toBe(frameHash ?? "");
 
     const frames = [first.frame, second.frame], inputs = [first.applied, second.applied], outbox = [...first.outbox, ...second.outbox];
-    expect(unwrap(recoverRuntime(start, frames, inputs, outbox, verifiers)).runtime.frameHash).toBe(second.frame.frameHash ?? "");
-    const refuse = (f: readonly StorageFrame[], i = inputs): string | null => rwCode(recoverRuntime(start, f, i, outbox, verifiers));
+    expect(unwrap(recoverRuntime(start, frames, inputs, outbox, ctx)).runtime.frameHash).toBe(second.frame.frameHash ?? "");
+    const refuse = (f: readonly StorageFrame[], i = inputs): string | null => rwCode(recoverRuntime(start, f, i, outbox, ctx));
     expect(refuse([second.frame], [second.applied])).toBe("STORAGE_VERIFY_FRAME_HEIGHT_MISMATCH");
     expect(refuse([first.frame, { ...second.frame, prevFrameHash: hex(32) }])).toBe("STORAGE_VERIFY_FRAME_CHAIN_BROKEN");
     expect(refuse([first.frame, { ...second.frame, canonicalStateHash: hex(32) }])).toBe("STORAGE_VERIFY_CANONICAL_HASH_MISMATCH");

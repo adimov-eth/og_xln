@@ -12099,7 +12099,11 @@ export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; re
   /** og EntityRuntimeContext gossip + liveness + proposer entropy, per Entity (the HTLC proposer infrastructure). */
   readonly htlcInfra?: ((entityId: EntityId) => HtlcProposerInfra | undefined) | undefined;
   /** og env.runtimeSeed: the process's private seed; a source hub's default proposer derives cross-j hash-ladder seeds from it. */
-  readonly runtimeSeed?: string | undefined };
+  readonly runtimeSeed?: string | undefined;
+  /** og env.infrastructure transport view (verified gossip profile routes), read when binding an outbox row's signer; never committed. */
+  readonly routes?: RuntimeRoutes | undefined };
+/** og infrastructure.verifiedProfileRoutes: an Entity's verified gossip profile `runtimeSignerId`. */
+export type RuntimeRoutes = { readonly verifiedProfileSigner: (entityId: string) => string | undefined };
 export const ZERO_FRAME_HASH = `0x${"00".repeat(32)}`;
 export const replicaKey = (entity: EntityId, signer: string): string => `${entity}:${signerId(signer)}`;
 /** og buildJurisdictionImportAdapterConfig's bare replica: a name alone is an unconfigured J replica at block 0. */
@@ -16596,27 +16600,45 @@ const inputBinary = (input: EntityInput): Result<{ readonly [k: string]: Binary 
   jPrefixAttestations: (i): Result<{ readonly [k: string]: Binary }, RuntimeError> => ok({ jPrefixAttestations: jpBinary(i.attestations) }),
 });
 /**
- * og resolveEntityProposerId for an Account message: the receiving Entity's local replica that is its active leader, else its first local replica.
- * og first tries the certified Account counterparty route and falls back to verified gossip routes; the rewrite models neither, so a receiver
- * without a local replica binds no signer.
+ * og resolveObserverCertifiedAccountCounterpartyProposer: the counterparty's frame Hanko on the source Account's committed frame, verified with
+ * the observer's certified board registry as board authority, names its proposer as the target claim's first member. Any Hanko refusal (og
+ * HankoValidationError, e.g. after a board rotation) yields no route.
  */
-const outputSigner = (rt: Runtime, to: EntityId): string | undefined => {
+const certifiedCounterpartySigner = (rt: Runtime, from: string, to: EntityId): string | undefined => {
+  const source = [...rt.entities.values()].find((r) => lower(r.state.id) === lower(from));
+  const account = source === undefined ? undefined : [...source.accountReplicas].find(([id]) => lower(id) === lower(to))?.[1];
+  if (source === undefined || account === undefined || account.head._tag !== "installed") return undefined;
+  const head = account.head, hanko = at(head.certificate.right, head.certificate.left, isLeft(source.state.id, replicaId(account)));
+  if (!hanko) return undefined;
+  const checked = checkAccountHanko(hanko, head.prevFrameHash, to, (entityId, boardHash) => { const rec = observerBoardRecord(source.state, entityId); return rec.ok && rec.value !== null && rec.value.boardHash === boardHash; });
+  const first = checked.ok ? checked.value.firstMember.toLowerCase() : "";
+  return /^0x0{24}[0-9a-f]{40}$/.test(first) ? `0x${first.slice(-40)}` : undefined;
+};
+/**
+ * og resolveEntityOutputSignerId for an Account message: the certified Account counterparty route first, then og resolveEntityProposerId: the
+ * receiver's local active leader, else its first local replica, else the verified gossip profile's runtime signer (`routes`). None resolves:
+ * og SIGNER_RESOLUTION_FAILED.
+ */
+const outputSigner = (rt: Runtime, o: Extract<EntityOutput, { readonly tx: EntityTx }>, routes?: RuntimeRoutes): Result<string, RuntimeError> => {
+  const to = o.to, from = o.tx.type === "accountInput" ? o.tx.data.fromEntityId : undefined;
+  const certified = from === undefined ? undefined : certifiedCounterpartySigner(rt, from, to);
+  if (certified !== undefined) return ok(certified);
   const local = [...rt.entities.values()].filter((r) => lower(r.state.id) === lower(to));
-  const chosen = local.find(isActiveLeader) ?? local[0];
-  return chosen === undefined ? undefined : lower(chosen.signerId);
+  const chosen = local.find(isActiveLeader) ?? local[0], gossip = routes?.verifiedProfileSigner(lower(to));
+  const signer = chosen !== undefined ? lower(chosen.signerId) : gossip === undefined ? undefined : lower(gossip);
+  return signer === undefined ? frameErr(`SIGNER_RESOLUTION_FAILED: Entity output ${from ?? "unknown"}->${to} entityId=${to}`) : ok(signer);
 };
 /** og RoutedEntityInput as prepareRuntimeOutputRows encodes it: destination, bound signer, the input's wire lane, the cohort marker. */
-const outputBinary = (rt: Runtime, o: EntityOutput): Result<Binary, RuntimeError> => {
+const outputBinary = (rt: Runtime, o: EntityOutput, routes?: RuntimeRoutes): Result<Binary, RuntimeError> => {
   const marker = o.atomicCrossJurisdictionPair === undefined ? {} : { atomicCrossJurisdictionPair: binaryOf(o.atomicCrossJurisdictionPair) };
   if ("input" in o) return map(inputBinary(o.input), (lane): Binary => ({ entityId: o.to, signerId: lower(o.signerId), ...lane, ...marker }));
-  const signer = outputSigner(rt, o.to);
-  return map(entityFrameTx(o.tx), (tx): Binary => ({ entityId: o.to, ...(signer === undefined ? {} : { signerId: signer }), entityTxs: [tx as unknown as Binary], ...marker }));
+  return chain(outputSigner(rt, o, routes), (signer) => map(entityFrameTx(o.tx), (tx): Binary => ({ entityId: o.to, signerId: signer, entityTxs: [tx as unknown as Binary], ...marker })));
 };
 /** og prepareRuntimeOutputRows: one encodeBuffer row per outbox output, in order. */
-export const runtimeOutputRows = (rt: Runtime, outbox: readonly EntityOutput[]): Result<readonly Uint8Array[], RuntimeError> => traverse(outbox, (o) => chain(outputBinary(rt, o), encodeBinary));
-const sealFrame = (rt: Runtime, step: RuntimeStep): Result<RuntimeFrameCommit, RuntimeError> => {
+export const runtimeOutputRows = (rt: Runtime, outbox: readonly EntityOutput[], routes?: RuntimeRoutes): Result<readonly Uint8Array[], RuntimeError> => traverse(outbox, (o) => chain(outputBinary(rt, o, routes), encodeBinary));
+const sealFrame = (rt: Runtime, step: RuntimeStep, routes?: RuntimeRoutes): Result<RuntimeFrameCommit, RuntimeError> => {
   const after = step.runtime;
-  return chain(frameNumber(after.height), (height) => chain(frameNumber(after.timestamp), (timestamp) => chain(runtimeOutputRows(after, step.outbox), (rows) => chain(runtimeOutputsDigest(rows), (outputsDigest) =>
+  return chain(frameNumber(after.height), (height) => chain(frameNumber(after.timestamp), (timestamp) => chain(runtimeOutputRows(after, step.outbox, routes), (rows) => chain(runtimeOutputsDigest(rows), (outputsDigest) =>
     chain(replicaMetaRows(after), (metaRows) => chain(replicaMetaDigest(metaRows), (metaDigest) => chain(runtimeComponentDigests(runtimeView(after)), (components) =>
       chain(storagePostStateHash({ height, timestamp, replicaMetaDigest: metaDigest, runtimeComponentDigests: components, runtimeOutputCount: rows.length, runtimeOutputsDigest: outputsDigest }), (postStateHash) =>
         chain(canonicalEntityHashes(after), (entityHashes) => {
@@ -16634,14 +16656,14 @@ const sealFrame = (rt: Runtime, step: RuntimeStep): Result<RuntimeFrameCommit, R
  * canonical state hash, post-state oracle, ordered outbox digest). A frame that did no work writes no row.
  */
 export const commitRuntimeFrame = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx): Result<RuntimeFrameCommit | null, RuntimeError> =>
-  chain(applyRuntime(rt, input, ctx), (step) => (step.advanced ? sealFrame(rt, step) : ok(null)));
+  chain(applyRuntime(rt, input, ctx), (step) => (step.advanced ? sealFrame(rt, step, ctx.routes) : ok(null)));
 export type RuntimeRecovery = { readonly runtime: Runtime; readonly outbox: readonly EntityOutput[] };
 /**
  * og verifyStorageTailIntegrity + replay: every row continues the chain (height+1, prevFrameHash), its canonical state hash recomputes from its own
  * coordinates, and its frame hash recomputes; replaying its applied input (with replay capabilities) must reproduce the row byte-for-byte.
  * The recovered outbox is every replayed frame's ordered outputs (nothing is terminal without a receipt) and must equal the persisted rows positionally.
  */
-export const recoverRuntime = (checkpoint: Runtime, frames: readonly StorageFrame[], inputs: readonly RuntimeInput[], outbox: readonly EntityOutput[], ctx: Verifiers): Result<RuntimeRecovery, RuntimeError> => {
+export const recoverRuntime = (checkpoint: Runtime, frames: readonly StorageFrame[], inputs: readonly RuntimeInput[], outbox: readonly EntityOutput[], ctx: Verifiers & Pick<RuntimeCtx, "routes">): Result<RuntimeRecovery, RuntimeError> => {
   if (frames.length !== inputs.length) return frameErr("STORAGE_VERIFY_FRAME_INPUT_MISSING");
   type Replayed = { readonly runtime: Runtime; readonly outbox: readonly EntityOutput[] };
   return chain(foldResult(frames.map((f, i) => [f, inputs[i] as RuntimeInput] as const), { runtime: checkpoint, outbox: [] } as Replayed, ({ runtime, outbox: pending }, [frame, input]): Result<Replayed, RuntimeError> => {
