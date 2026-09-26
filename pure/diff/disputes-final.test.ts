@@ -48,6 +48,8 @@ import { CAROL, keyOf, signLazyAccountHanko } from "../xln_run.ts";
 import { proofBodyHasPulls as ogProofBodyHasPulls } from "../../core/entity/tx/handlers/dispute/start-admission.ts";
 import { BATCH_ABI } from "../../core/protocol/dispute/proof-body.ts";
 import { proofBodyHasPulls } from "../xln.ts";
+import { applyAccountDisputeFinality as ogApplyAccountDisputeFinality } from "../../core/account/settlement/j-finality.ts";
+import { applyFinality } from "../xln.ts";
 
 let seed = 29;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -871,5 +873,32 @@ describe("disputes-final: canonical DeltaBatch decoding (og handlers/dispute/sta
       bump(kinds, og.ok ? `ok:${og.value}` : og.reason.replace(/^DISPUTE_CANONICAL_DELTA_BATCH_INVALID:\d+:/, "").replace(/ \(.*/, ""));
     }
     expectKinds(kinds, ["ok:true", "ok:false", "data out-of-bounds", "insufficient data length", "overflow", "invalid BytesLike value", "deferred error during ABI decoding triggered accessing property \"pull\"", "deferred error during ABI decoding triggered accessing index 0"]);
+  });
+});
+
+// ---- og account/settlement/j-finality.ts applyAccountDisputeFinality: the Account mempool on DisputeFinalized ----
+describe("disputes-final: the Account mempool on DisputeFinalized (og account/settlement/j-finality.ts applyAccountDisputeFinality)", () => {
+  test("MATCH: 400 random live / preparing / disputed Accounts with mixed mempools and pending frames (settle_transition, j_event_claim, swap_resolve, evidence-bearing cross_pull_close, payments) -- og drops settle_transition then freezes as disputed, so both leave the same (empty) mempool, jNonce and nextProofNonce", () => {
+    const r = xrng(0x3e3f), kinds = new Map<string, number>();
+    const txOf = (): { type: string; data: Record<string, unknown> } => xpick(r, [
+      { type: "settle_transition", data: {} }, { type: "j_event_claim", data: {} }, { type: "swap_resolve", data: { offerId: "o" } },
+      { type: "cross_pull_close", data: { binary: "0x01", proof: { p: 1 } } }, { type: "cross_pull_close", data: { binary: "0x01" } }, { type: "direct_payment", data: { amount: 1n } },
+    ]);
+    for (let i = 0; i < 400; i++) {
+      const status = xpick(r, ["active", "dispute_preparing", "disputed"] as const), mempool = Array.from({ length: xint(r, 6) }, txOf), pending = Array.from({ length: xint(r, 3) }, txOf);
+      const jNonce = xint(r, 6), finalizedJNonce = xint(r, 9), nextProofNonce = 1 + xint(r, 9);
+      const og = ogBobAccount("open", xint(r, 2) === 0 ? { jNonce } : undefined);
+      og.status = status; og.mempool = structuredClone(mempool); og.state.jNonce = jNonce; og.proofHeader.nextProofNonce = nextProofNonce;
+      if (pending.length > 0) og.pendingFrame = { height: 1, accountTxs: structuredClone(pending) };
+      const removed = ogApplyAccountDisputeFinality(og, finalizedJNonce, []).removedSettlementTxs;
+      const base = genesisAB(), tag = status === "active" ? "open" : status === "dispute_preparing" ? "preparing" : "disputed";
+      const rwIn = { ...base, _tag: tag, state: { ...base.state, jNonce }, dispute: { ...base.dispute, nextProofNonce }, mempool: mempool as never } as unknown as AccountReplica;
+      const rw = unwrap(applyFinality(rwIn, { kind: "external_finality", finality: { kind: "dispute_finalized", finalizedJNonce, finalizedTokenIds: [] } } as never)).replica;
+      const rwRemoved = mempool.filter((t) => t.type === "settle_transition").length;
+      expect(`${i}:${JSON.stringify([rw.mempool, rw.state.jNonce, rw.dispute.nextProofNonce, rwRemoved], (_k, v) => (typeof v === "bigint" ? `${v}n` : v))}`)
+        .toBe(`${i}:${JSON.stringify([og.mempool, og.state.jNonce, og.proofHeader.nextProofNonce, removed], (_k, v) => (typeof v === "bigint" ? `${v}n` : v))}`);
+      bump(kinds, `${status}:${mempool.length > 0 ? "mempool" : "empty"}:${removed > 0 ? "settle" : "none"}`);
+    }
+    expectKinds(kinds, ["active:mempool:settle", "dispute_preparing:mempool:settle", "disputed:mempool:settle", "dispute_preparing:mempool:none"]);
   });
 });
