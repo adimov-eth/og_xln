@@ -971,8 +971,10 @@ export const disputeFinalizedInput = (e: Extract<JEvent, { readonly type: "Dispu
 // ---- og jBatchState (core/jurisdiction/machine/batch/{index,reserve-simulation}.ts, entity/tx/handlers/j-batch/*, j-events-batch.ts) ----
 export type SentJBatch = {
   readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly firstSubmittedAt: number; readonly lastSubmittedAt: number; readonly submitAttempts: number;
-  readonly terminalFailure?: { readonly message: string; readonly failedAt: number } | undefined; readonly feeOverrides?: { readonly gasBumpBps: number } | undefined;
+  readonly terminalFailure?: { readonly message: string; readonly failedAt: number } | undefined; readonly feeOverrides?: FeeOverrides | undefined;
 };
+/** og JTx batch `feeOverrides` (types/jurisdiction-runtime.ts). */
+export type FeeOverrides = { readonly gasBumpBps?: number | undefined; readonly maxFeePerGasWei?: string | undefined; readonly maxPriorityFeePerGasWei?: string | undefined };
 /** og JBatchState: the editable draft, the one in-flight sent batch, recovered work that broadcasts first, and the last chain-observed entity nonce. */
 export type JBatchState = {
   readonly batch: Batch; readonly jurisdiction: null; readonly lastBroadcast: number; readonly broadcastCount: number; readonly failedAttempts: number; readonly status: "empty" | "accumulating" | "sent" | "failed";
@@ -1136,7 +1138,7 @@ export const queueR2E = (e: JEntity, receivingEntity: string, tokenId: number, a
 };
 /** og handleE2R: a non-zero token contract and a positive amount, credited to this Entity when the batch executes. */
 export const queueE2R = (e: JEntity, x: { readonly contractAddress: string; readonly amount: bigint; readonly tokenType?: number | undefined; readonly externalTokenId?: bigint | undefined; readonly internalTokenId?: number | undefined }): Result<JBatchState, JBatchError> => {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(x.contractAddress) || /^0x0{40}$/.test(x.contractAddress)) return batchErr(`Invalid external token contract: ${x.contractAddress}`);
+  if (usableAddress(x.contractAddress) === null) return batchErr(`Invalid external token contract: ${x.contractAddress}`);
   if (x.amount <= 0n) return batchErr("External → Reserve amount must be positive");
   return addOp(e.jBatch ?? initJBatch(), "externalTokenToReserve", { entity: e.entityId, contractAddress: x.contractAddress, externalTokenId: x.externalTokenId ?? 0n, tokenType: BigInt(x.tokenType ?? 0), internalTokenId: BigInt(x.internalTokenId ?? 0), amount: x.amount }, "externalTokenToReserve");
 };
@@ -1165,12 +1167,12 @@ export const takeBroadcastBatch = (b: Batch): { readonly selected: Batch; readon
   return { selected: { ...emptyBatch(), ...base, disputeFinalizations: b.disputeFinalizations.slice(0, 1) }, remainder: { ...b, disputeStarts: [], counterDisputes: [], disputeFinalizations: b.disputeFinalizations.slice(1), revealSecrets: [] }, disputePriority: true };
 };
 /** og JTx `batch` (types/jurisdiction-runtime.ts) as j_broadcast emits it, before the quorum Hanko is attached. */
-export type JBatchTx = { readonly type: "batch"; readonly entityId: string; readonly data: { readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly batchGeneration: number; readonly batchSize: number; readonly signerId: string; readonly feeOverrides?: { readonly gasBumpBps: number } | undefined }; readonly timestamp: number };
+export type JBatchTx = { readonly type: "batch"; readonly entityId: string; readonly data: { readonly batch: Batch; readonly batchHash: string; readonly encodedBatch: string; readonly entityNonce: number; readonly batchGeneration: number; readonly batchSize: number; readonly signerId: string; readonly feeOverrides?: FeeOverrides | undefined }; readonly timestamp: number };
 /** og HashToSign of type "jBatch" (the Entity quorum signs the batch hash for Hanko). */
 export type JBatchHashToSign = { readonly hash: string; readonly type: "jBatch"; readonly context: string };
 export type Broadcast = { readonly jBatch: JBatchState; readonly jTx?: JBatchTx | undefined; readonly hashToSign?: JBatchHashToSign | undefined; readonly note?: string | undefined };
 /** og handleJBroadcast: refuse while a batch is in flight; skip an empty draft; seal the next batch (recovery first) at entityNonce + 1, park the rest, and hand its batch hash to the quorum. */
-export const jBroadcast = (s: JBatchState | undefined, ctx: { readonly entityId: string; readonly chainId: number; readonly depository: string; readonly signerId: string; readonly timestamp: number }): Result<Broadcast, JBatchError> => {
+export const jBroadcast = (s: JBatchState | undefined, ctx: { readonly entityId: string; readonly chainId: number; readonly depository: string; readonly signerId: string; readonly timestamp: number; readonly feeOverrides?: FeeOverrides | undefined }): Result<Broadcast, JBatchError> => {
   if (s === undefined) return batchErr("No jBatchState found for j_broadcast");
   if (s.sentBatch !== undefined) return batchErr(`Cannot broadcast: sentBatch pending nonce=${s.sentBatch.entityNonce} attempts=${s.sentBatch.submitAttempts}`);
   if (!hasJBatchWork(s)) return ok({ jBatch: s, note: "j_broadcast skipped: jBatch is empty" });
@@ -1180,12 +1182,15 @@ export const jBroadcast = (s: JBatchState | undefined, ctx: { readonly entityId:
   if (!domainOf({ chainId: ctx.chainId, depositoryAddress: ctx.depository }).ok || /^0x0{40}$/.test(ctx.depository)) return batchErr(`INVALID_HANKO_DOMAIN:${ctx.chainId}:${ctx.depository}`);
   const limit = jBatchLimitIssue(selected);
   if (limit !== undefined) return batchErr(`J_BATCH_LIMIT_EXCEEDED: j_broadcast: ${limit}`);
-  const nonce = (s.entityNonce ?? 0) + 1, encodedBatch = encodeBatch(selected), batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(nonce) }), generation = s.broadcastCount + 1;
+  const encoded = encodeJBatch(selected);
+  if (!encoded.ok) return encoded;
+  const nonce = (s.entityNonce ?? 0) + 1, encodedBatch = encoded.value, batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(nonce) }), generation = s.broadcastCount + 1;
+  const fee = ctx.feeOverrides === undefined ? {} : { feeOverrides: { ...ctx.feeOverrides } };
   const queue = fromRecovery ? (batchEmpty(remainder) ? (s.recoveryBatches ?? []).slice(1) : [remainder, ...(s.recoveryBatches ?? []).slice(1)]) : s.recoveryBatches;
   const { recoveryBatches: _r, autoBroadcastDraft: _a, ...rest } = s;
   const parked: JBatchState = { ...rest, batch: fromRecovery ? s.batch : remainder, ...(queue === undefined || queue.length === 0 ? {} : { recoveryBatches: queue }) };
-  const jBatch: JBatchState = { ...parked, ...(hasJBatchWork(parked) ? { autoBroadcastDraft: true } : {}), sentBatch: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, firstSubmittedAt: ctx.timestamp, lastSubmittedAt: 0, submitAttempts: 0 }, broadcastCount: generation, lastBroadcast: ctx.timestamp, status: "sent" };
-  return ok({ jBatch, jTx: { type: "batch", entityId: ctx.entityId, data: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, batchGeneration: generation, batchSize: batchOpCount(selected), signerId: ctx.signerId }, timestamp: ctx.timestamp },
+  const jBatch: JBatchState = { ...parked, ...(hasJBatchWork(parked) ? { autoBroadcastDraft: true } : {}), sentBatch: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, firstSubmittedAt: ctx.timestamp, lastSubmittedAt: 0, submitAttempts: 0, ...fee }, broadcastCount: generation, lastBroadcast: ctx.timestamp, status: "sent" };
+  return ok({ jBatch, jTx: { type: "batch", entityId: ctx.entityId, data: { batch: selected, batchHash, encodedBatch, entityNonce: nonce, batchGeneration: generation, ...fee, batchSize: batchOpCount(selected), signerId: ctx.signerId }, timestamp: ctx.timestamp },
     hashToSign: { hash: batchHash, type: "jBatch", context: `jBatch:${ctx.entityId.slice(-4)}:nonce:${nonce}` } });
 };
 /** og j-events-batch.ts applyHankoBatchProcessedEvent: the chain nonce is authoritative; the exact pending (nonce, hash) finalizes, a different hash at or past it quarantines the pending batch.
@@ -1215,13 +1220,15 @@ export const jRebroadcast = (s: JBatchState | undefined, ctx: { readonly entityI
   if (ctx.signerId === "") return batchErr("❌ No signerId available for j_rebroadcast");
   const bump = gasBump(ctx.gasBumpBps);
   if (ctx.chainId === 0) return ok({ jBatch: s, note: "❌ Missing chainId for j_rebroadcast" });
-  if (!domainOf({ chainId: ctx.chainId, depositoryAddress: ctx.depository }).ok || /^0x0{40}$/.test(ctx.depository)) return ok({ jBatch: s, note: `❌ Jurisdiction unavailable for j_rebroadcast: depository ${ctx.depository}` });
+  if (!domainOf({ chainId: ctx.chainId, depositoryAddress: ctx.depository }).ok || /^0x0{40}$/.test(ctx.depository)) return ok({ jBatch: s, note: "❌ Jurisdiction unavailable for j_rebroadcast: INVALID_DEPOSITORY_ADDRESS" });
   const generation = s.broadcastCount + 1;
   if (batchEmpty(sent.batch)) {
     const { sentBatch: _s, ...rest } = s;
     return ok({ jBatch: { ...rest, status: batchEmpty(s.batch) ? "empty" : "accumulating" }, note: `🧹 j_rebroadcast cleared empty stale sentBatch nonce=${sent.entityNonce}` });
   }
-  const encodedBatch = encodeBatch(sent.batch), batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(sent.entityNonce) }), fee = bump === undefined ? {} : { feeOverrides: { gasBumpBps: bump } };
+  const encoded = encodeJBatch(sent.batch);
+  if (!encoded.ok) return encoded;
+  const encodedBatch = encoded.value, batchHash = encodeBatchHash({ chainId: ctx.chainId, depository: ctx.depository, encodedBatch, nonce: String(sent.entityNonce) }), fee = bump === undefined ? {} : { feeOverrides: { gasBumpBps: bump } };
   const jBatch: JBatchState = { ...s, sentBatch: { ...sent, batchHash, encodedBatch, ...fee }, lastBroadcast: ctx.timestamp, broadcastCount: generation, status: "sent" };
   return ok({ jBatch, note: `📤 Rebroadcast intent queued nonce=${sent.entityNonce}${bump === undefined ? "" : ` bump=${bump}bps`}`,
     jTx: { type: "batch", entityId: ctx.entityId, data: { batch: sent.batch, batchHash, encodedBatch, entityNonce: sent.entityNonce, batchGeneration: generation, batchSize: batchOpCount(sent.batch), signerId: ctx.signerId, ...fee }, timestamp: ctx.timestamp },
@@ -4605,7 +4612,19 @@ export type EntityTx =
   | { readonly type: "initOrderbookExt"; readonly data: { readonly name: string; readonly spreadDistribution: SpreadDistribution; readonly referenceTokenId: number; readonly usdQuoteAuthorityEntityId: string; readonly minTradeSize: bigint; readonly supportedPairs: readonly string[] } }
   | SwapRequestEntityTx
   | LendingEntityTx
-  | SettleEntityTx;
+  | SettleEntityTx
+  | JBatchEntityTx;
+/** og types/entity-tx.ts J-batch txs (entity/tx/handlers/j-batch): queue reserve ops into the committed jBatchState, seal / resend / abort / clear it, the direct admin mint. */
+export type JBatchEntityTx =
+  | { readonly type: "r2r"; readonly data: { readonly toEntityId: string; readonly tokenId: number; readonly amount: bigint } }
+  | { readonly type: "r2e"; readonly data: { readonly receivingEntity: string; readonly tokenId: number; readonly amount: bigint } }
+  | { readonly type: "r2c"; readonly data: { readonly counterpartyId: string; readonly receivingEntityId?: string | undefined; readonly tokenId: number; readonly amount: bigint; readonly rebalanceQuoteId?: number | undefined; readonly rebalanceFeeTokenId?: number | undefined; readonly rebalanceFeeAmount?: bigint | undefined } }
+  | { readonly type: "e2r"; readonly data: { readonly contractAddress: string; readonly tokenType?: number | undefined; readonly externalTokenId?: bigint | undefined; readonly internalTokenId?: number | undefined; readonly amount: bigint } }
+  | { readonly type: "j_broadcast"; readonly data: { readonly hankoSignature?: string | undefined; readonly feeOverrides?: FeeOverrides | undefined } }
+  | { readonly type: "j_rebroadcast"; readonly data: { readonly gasBumpBps?: number | undefined } }
+  | { readonly type: "j_abort_sent_batch"; readonly data: { readonly reason?: string | undefined; readonly requeueToCurrent?: boolean | undefined } }
+  | { readonly type: "j_clear_batch"; readonly data: { readonly reason?: string | undefined } }
+  | { readonly type: "mintReserves"; readonly data: { readonly tokenId: number; readonly amount: bigint } };
 /** og types/entity-tx.ts settlement workspace operations (payments/settle.ts). */
 export type SettleEntityTx =
   | { readonly type: "settle_propose"; readonly data: { readonly counterpartyEntityId: EntityId; readonly ops: readonly SettlementOp[]; readonly executorIsLeft?: boolean | undefined; readonly memo?: string | undefined; readonly continuation?: SettlementContinuationPlan | undefined } }
@@ -4643,7 +4662,7 @@ export type LendingEntityTx =
   | { readonly type: "lendingClosePosition"; readonly data: { readonly hubEntityId: string; readonly positionId: string } };
 /** og ProfileUpdateTx & { entityId }. */
 export type ProfileUpdate = { readonly entityId: string; readonly name?: string | undefined; readonly entityKind?: string | null | undefined; readonly sectors?: readonly string[] | undefined; readonly avatar?: string | undefined; readonly bio?: string | undefined; readonly website?: string | undefined };
-export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "settlement" | "entityProviderAction"; readonly context: string };
+export type HashToSign = { readonly hash: string; readonly type: "entityFrame" | "accountFrame" | "dispute" | "settlement" | "entityProviderAction" | "jBatch"; readonly context: string };
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
   readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[]; readonly leader: FrameLeader;
@@ -5262,6 +5281,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   settle_propose: (x) => x.data.counterpartyEntityId, settle_update: (x) => x.data.counterpartyEntityId, settle_approve: (x) => x.data.counterpartyEntityId, settle_execute: (x) => x.data.counterpartyEntityId, settle_reject: (x) => x.data.counterpartyEntityId,
   prepareCrossJurisdictionSwap: () => self, materializeCrossJurisdictionSwap: () => self, registerCrossJurisdictionSwap: () => self,
   admitCrossJurisdictionBookOrder: () => self, removeCrossJurisdictionBookOrder: () => self, crossJurisdictionBookOrderRemoved: () => self, crossJurisdictionFillNotice: () => self, requestCrossJurisdictionClear: () => self, runtimeOutput: () => self, proposeAccountsNow: () => self, initOrderbookExt: () => self,
+  r2r: () => self, r2e: () => self, r2c: () => self, e2r: () => self, j_broadcast: () => self, j_rebroadcast: () => self, j_abort_sent_batch: () => self, j_clear_batch: () => self, mintReserves: () => self,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -6203,18 +6223,189 @@ export const executeCrontab = (state: EntityState, replicas: Replicas, now: numb
 });
 /**
  * og handleScheduledWakeEntityTx: validate the wake against the frame state, run the crontab at the frame timestamp, then apply its self-directed
- * collective txs in the same frame (og approvedEntityTxs). og's entity j_broadcast and orderbookSweepCrossJurisdiction are not Entity txs here.
+ * collective txs in the same frame (og approvedEntityTxs), j_broadcast and j_abort_sent_batch included. orderbookSweepCrossJurisdiction is the cross-j owner's.
  */
 const foldWake = (state: EntityState, replicas: Replicas, w: Extract<EntityTx, { type: "scheduledWake" }>["data"], ctx: FoldContext): Result<Draft, EntityError> =>
   chain(checkWake(state, w, Number(ctx.timestamp)), () => chain(executeCrontab(state, replicas, Number(ctx.timestamp)), (run): Result<Draft, EntityError> => {
-    const approved = run.outputs.flatMap((o) => o.txs), missing = approved.find((tx) => tx.type === "j_broadcast" || tx.type === "j_abort_sent_batch" || tx.type === "orderbookSweepCrossJurisdiction");
-    if (missing !== undefined) return invariant(`${missing.type === "j_broadcast" ? "J_BROADCAST" : missing.type === "j_abort_sent_batch" ? "J_ABORT_SENT_BATCH" : "ORDERBOOK_SWEEP_CROSS_J"}_ENTITY_TX_NOT_PORTED`);
+    const approved = run.outputs.flatMap((o) => o.txs);
+    if (approved.some((tx) => tx.type === "orderbookSweepCrossJurisdiction")) return invariant("ORDERBOOK_SWEEP_CROSS_J_ENTITY_TX_NOT_PORTED");
     // og returns the crontab's outputs to other Entities and its hashesToSign beside the approved self txs
     const own = (d: Draft): Draft => { const hashes = [...run.hashes, ...(d.hashes ?? [])]; return { ...d, outputs: [...run.sent, ...d.outputs], ...(hashes.length === 0 ? {} : { hashes }) }; };
     // og applyLocalAccountEffects: the wake's returned Account txs (a lending_overdue revoke) are admitted before its approved self txs
     const queued = run.accountTxs.reduce(queueReturned, { state: run.state, accountReplicas: run.accountReplicas, outputs: [] } as Draft);
     return map(approved.length === 0 ? ok(queued) : foldNested(queued.state, queued.accountReplicas, approved as readonly EntityTx[], ctx, "collective"), own);
   }));
+// ---- og entity/tx/handlers/j-batch/{r2r,r2e,e2r,r2c,j-broadcast,j-rebroadcast,j-abort-sent-batch,j-clear-batch,mint-reserves}.ts: the Entity J-batch txs on the committed (og-shaped) jBatchState ----
+type OgRow = { readonly [field: string]: unknown };
+type OgBatchRows = { readonly [field: string]: readonly Binary[] };
+const bigOf = (v: unknown): bigint => (typeof v === "bigint" ? v : BigInt(v as number | string));
+/** og ProofBodyStruct (Int512 offdeltas as {high, low}, numeric response seconds) or a rewrite ProofBody, as the ABI reads it. */
+const proofBodyOfOg = (p: OgRow): ProofBody => ({
+  watchSeed: String(p["watchSeed"]), leftResponseSeconds: bigOf(p["leftResponseSeconds"]), rightResponseSeconds: bigOf(p["rightResponseSeconds"]),
+  offdeltas: (p["offdeltas"] as readonly unknown[]).map((v) => (typeof v === "object" && v !== null ? bigOf((v as OgRow)["high"]) * (1n << 256n) + bigOf((v as OgRow)["low"]) : bigOf(v))),
+  tokenIds: (p["tokenIds"] as readonly unknown[]).map(bigOf),
+  transformers: (p["transformers"] as readonly OgRow[]).map((c) => ({ transformerAddress: String(c["transformerAddress"]), encodedBatch: String(c["encodedBatch"]),
+    allowances: (c["allowances"] as readonly OgRow[]).map((a) => ({ deltaIndex: bigOf(a["deltaIndex"]), rightAllowance: bigOf(a["rightAllowance"]), leftAllowance: bigOf(a["leftAllowance"]) })) })),
+});
+/** The ABI view of a committed og JBatch (og encodeJBatch's input): numbers widen to uint256, og Int512 offdeltas join. Idempotent on a rewrite Batch. */
+export const batchOfOg = (b: OgBatchRows | Batch): Batch => {
+  const rows = (f: string): readonly OgRow[] => ((b as unknown as OgBatchRows)[f] ?? []) as readonly OgRow[], s = (v: unknown): string => String(v);
+  return {
+    reserveToReserve: rows("reserveToReserve").map((r) => ({ receivingEntity: s(r["receivingEntity"]), tokenId: bigOf(r["tokenId"]), amount: bigOf(r["amount"]) })),
+    reserveToCollateral: rows("reserveToCollateral").map((r) => ({ tokenId: bigOf(r["tokenId"]), receivingEntity: s(r["receivingEntity"]), pairs: (r["pairs"] as readonly OgRow[]).map((p) => ({ entity: s(p["entity"]), amount: bigOf(p["amount"]) })) })),
+    collateralToReserve: rows("collateralToReserve").map((r) => ({ counterparty: s(r["counterparty"]), tokenId: bigOf(r["tokenId"]), amount: bigOf(r["amount"]), nonce: bigOf(r["nonce"]), sig: s(r["sig"]) })),
+    settlements: rows("settlements").map((r) => ({ leftEntity: s(r["leftEntity"]), rightEntity: s(r["rightEntity"]),
+      diffs: (r["diffs"] as readonly OgRow[]).map((d) => ({ tokenId: bigOf(d["tokenId"]), leftDiff: bigOf(d["leftDiff"]), rightDiff: bigOf(d["rightDiff"]), collateralDiff: bigOf(d["collateralDiff"]), ondeltaDiff: bigOf(d["ondeltaDiff"]) })),
+      forgiveDebtsInTokenIds: (r["forgiveDebtsInTokenIds"] as readonly unknown[]).map(bigOf), sig: s(r["sig"]), nonce: bigOf(r["nonce"]) })),
+    disputeStarts: rows("disputeStarts").map((r) => ({ counterentity: s(r["counterentity"]), nonce: bigOf(r["nonce"]), proposerIsLeft: r["proposerIsLeft"] === true, proofbodyHash: s(r["proofbodyHash"]), initialProofbody: proofBodyOfOg(r["initialProofbody"] as OgRow),
+      watchSeed: s(r["watchSeed"]), sig: s(r["sig"]), starterInitialArguments: s(r["starterInitialArguments"]), starterCounterArguments: s(r["starterCounterArguments"]), starterCounterProofCommitment: s(r["starterCounterProofCommitment"]) })),
+    counterDisputes: rows("counterDisputes").map((r) => ({ counterentity: s(r["counterentity"]), initialNonce: bigOf(r["initialNonce"]), initialProofbodyHash: s(r["initialProofbodyHash"]), counterNonce: bigOf(r["counterNonce"]), proposerIsLeft: r["proposerIsLeft"] === true, counterProofbody: proofBodyOfOg(r["counterProofbody"] as OgRow), sig: s(r["sig"]) })),
+    disputeFinalizations: rows("disputeFinalizations").map((r) => ({ counterentity: s(r["counterentity"]), initialNonce: bigOf(r["initialNonce"]), finalNonce: bigOf(r["finalNonce"]), proposerIsLeft: r["proposerIsLeft"] === true, initialProofbodyHash: s(r["initialProofbodyHash"]),
+      finalProofbody: proofBodyOfOg(r["finalProofbody"] as OgRow), starterArguments: s(r["starterArguments"]), otherArguments: s(r["otherArguments"]), sig: s(r["sig"]), startedByLeft: r["startedByLeft"] === true, cooperative: r["cooperative"] === true })),
+    externalTokenToReserve: rows("externalTokenToReserve").map((r) => ({ entity: s(r["entity"]), contractAddress: s(r["contractAddress"]), externalTokenId: bigOf(r["externalTokenId"]), tokenType: bigOf(r["tokenType"]), internalTokenId: bigOf(r["internalTokenId"]), amount: bigOf(r["amount"]) })),
+    reserveToExternalToken: rows("reserveToExternalToken").map((r) => ({ receivingEntity: s(r["receivingEntity"]), tokenId: bigOf(r["tokenId"]), amount: bigOf(r["amount"]) })),
+    revealSecrets: rows("revealSecrets").map((r) => ({ transformer: s(r["transformer"]), secret: s(r["secret"]) })),
+    hashLadderRegistrations: rows("hashLadderRegistrations").map((r) => {
+      const w = r["witness"] as OgRow, [a, b2, c, d] = (w["reveals"] as readonly unknown[]).map(s);
+      return { counterpartyEntity: s(r["counterpartyEntity"]), targetRole: r["targetRole"] === true, fullHash: s(r["fullHash"]), partialRoot: s(r["partialRoot"]), witness: { fillRatio: bigOf(w["fillRatio"]), fullSecret: s(w["fullSecret"]), reveals: [a ?? "", b2 ?? "", c ?? "", d ?? ""] as const } };
+    }),
+  };
+};
+/** og J_BATCH_CONTRACT_LIMITS.maxEncodedBatchBytes (encodeJBatch). */
+const MAX_ENCODED_BATCH_BYTES = 256 * 1024;
+/** og encodeJBatch: the ABI bytes of the batch, refused past the contract's encoded-size limit. */
+export const encodeJBatch = (b: OgBatchRows | Batch): Result<string, JBatchError> => {
+  const encoded = encodeBatch(batchOfOg(b)), size = (encoded.length - 2) / 2;
+  return size > MAX_ENCODED_BATCH_BYTES ? batchErr(`J_BATCH_ENCODED_BYTES_EXCEEDED:${size}/${MAX_ENCODED_BATCH_BYTES}`) : ok(encoded);
+};
+/** The committed jBatchState as the shared J-batch functions read it (every field they touch is shape-agnostic over og's numeric rows). */
+const entityJBatch = (state: EntityState): JBatchState | undefined => state.committed["jBatchState"] as unknown as JBatchState | undefined;
+const withEntityJBatch = (state: EntityState, jb: JBatchState | undefined): EntityState => (jb === undefined ? state : { ...state, committed: { ...state.committed, jBatchState: jb as unknown as Binary } });
+/** og EntityState outDebtsByToken / inDebtsByToken as the reserve simulation reads them. */
+const committedDebts = (state: EntityState): DebtLedger => {
+  const book = (v: Binary | undefined): DebtBook => (v instanceof Map ? (v as unknown as DebtBook) : new Map());
+  return { out: book(state.committed["outDebtsByToken"]), in: book(state.committed["inDebtsByToken"]) };
+};
+/** og getReserveCandidateIssue over the Entity's committed reserves, outgoing debts and draft batch. */
+const entityReserveIssue = (state: EntityState, replicas: Replicas, c: ReserveCandidate): ReserveIssue | undefined => {
+  const jb = entityJBatch(state);
+  return reserveCandidateIssue({ entityId: state.id, reserves: committedReserves(state), debts: committedDebts(state), accounts: new Set(replicas.keys()), jBatch: jb === undefined ? undefined : { ...jb, batch: batchOfOg(jb.batch) } }, c);
+};
+/** og batchAddReserveToReserve / batchAddReserveToExternal / batchAddExternalTokenToReserve: one appended og row within the 50-op contract limit. */
+const appendOgRow = (jb: JBatchState, field: "reserveToReserve" | "reserveToExternalToken" | "externalTokenToReserve", row: OgRow): Result<JBatchState, EntityError> => {
+  const next = batchOpCount(jb.batch) + 1;
+  if (next > J_BATCH_LIMITS.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: ${field} would exceed total ops ${next}/${J_BATCH_LIMITS.maxTotalOps}`);
+  return ok({ ...jb, batch: { ...jb.batch, [field]: [...jb.batch[field], row] }, status: jb.status === "empty" ? "accumulating" : jb.status });
+};
+const jSay = (d: Draft, ...messages: readonly string[]): Draft => ({ ...d, events: [...(d.events ?? []), ...messages.map(status)] });
+const jQueued = (d: Draft, jb: JBatchState, message: string): Draft => jSay({ ...d, state: withEntityJBatch(d.state, jb) }, message);
+/** og getJurisdictionConfigName: the rewrite's Entity names its J replica in its own config (og re-reads the stack from that replica). */
+const jurisdictionNameOf = (state: EntityState): string => (state.jurisdictionConfig?.name ?? "").trim();
+type EntityJTx<T extends string> = Extract<EntityTx, { readonly type: T }>["data"];
+/** og handleR2R / handleR2E: debt-aware reserve admission (a plain Error), then one appended row. */
+const entityR2R = (d: Draft, x: EntityJTx<"r2r">): Result<Draft, EntityError> => {
+  const issue = entityReserveIssue(d.state, d.accountReplicas, { type: "reserveToReserve", receivingEntity: x.toEntityId, tokenId: x.tokenId, amount: x.amount });
+  if (issue !== undefined) return invariant(`❌ Insufficient spendable reserve: have ${issue.availableAfterDebt}, need ${x.amount} token ${x.tokenId}`);
+  return map(appendOgRow(entityJBatch(d.state) ?? initJBatch(), "reserveToReserve", { receivingEntity: x.toEntityId, tokenId: x.tokenId, amount: x.amount }),
+    (jb) => jQueued(d, jb, `📦 Queued R→R: ${x.amount} token ${x.tokenId} to ${x.toEntityId.slice(-4)} (use jBroadcast to commit)`));
+};
+const entityR2E = (d: Draft, x: EntityJTx<"r2e">): Result<Draft, EntityError> => {
+  const issue = entityReserveIssue(d.state, d.accountReplicas, { type: "reserveToExternalToken", receivingEntity: x.receivingEntity, tokenId: x.tokenId, amount: x.amount });
+  if (issue !== undefined) return invariant(`❌ Insufficient spendable reserve: have ${issue.availableAfterDebt}, need ${x.amount} token ${x.tokenId}`);
+  return map(appendOgRow(entityJBatch(d.state) ?? initJBatch(), "reserveToExternalToken", { receivingEntity: x.receivingEntity, tokenId: x.tokenId, amount: x.amount }),
+    (jb) => jQueued(d, jb, `📦 Queued R→E: ${x.amount} token ${x.tokenId} to ${x.receivingEntity.slice(-8)} (use jBroadcast to commit)`));
+};
+/** og handleE2R: a checksum-valid non-zero token contract (ethers.isAddress) and a positive amount, credited to this Entity when the batch executes. */
+const entityE2R = (d: Draft, x: EntityJTx<"e2r">): Result<Draft, EntityError> => {
+  if (usableAddress(x.contractAddress) === null) return invariant(`❌ Invalid external token contract: ${x.contractAddress}`);
+  if (x.amount <= 0n) return invariant("❌ External → Reserve amount must be positive");
+  const row: OgRow = { entity: d.state.id, contractAddress: x.contractAddress, externalTokenId: typeof x.externalTokenId === "bigint" ? x.externalTokenId : 0n,
+    tokenType: typeof x.tokenType === "number" ? x.tokenType : 0, internalTokenId: typeof x.internalTokenId === "number" ? x.internalTokenId : 0, amount: x.amount };
+  return map(appendOgRow(entityJBatch(d.state) ?? initJBatch(), "externalTokenToReserve", row), (jb) => jQueued(d, jb, `📦 Queued E→R: ${x.amount} via ${x.contractAddress.slice(0, 10)}... (use j_broadcast to commit)`));
+};
+/**
+ * og handleR2C: admission, debt-aware reserve and local-account refusals are status messages; a deposit carrying `rebalanceQuoteId` needs the
+ * Account's accepted `shadow.rebalance.activeQuote`, which og consensus never writes (r2c.ts collectRebalanceFee), so it is refused the same way.
+ */
+const entityR2C = (d: Draft, x: EntityJTx<"r2c">): Result<Draft, EntityError> => {
+  const self = d.state.id.trim().toLowerCase(), receiving = String(x.receivingEntityId || d.state.id || "").trim().toLowerCase(), local = receiving === self;
+  if (x.amount <= 0n || !Number.isSafeInteger(x.tokenId) || x.tokenId <= 0) return ok(jSay(d, "❌ Collateral deposit requires a positive amount and registered tokenId"));
+  if (!receiving || receiving === x.counterpartyId.toLowerCase()) return ok(jSay(d, "❌ Collateral deposit requires two distinct non-empty entities"));
+  const issue = entityReserveIssue(d.state, d.accountReplicas, { type: "reserveToCollateral", receivingEntity: receiving, counterparty: x.counterpartyId, tokenId: x.tokenId, amount: x.amount });
+  if (issue !== undefined) return ok(jSay(d, `❌ Insufficient spendable reserve for collateral deposit: have ${issue.availableAfterDebt}, need ${x.amount} token ${x.tokenId}`));
+  if (local && !d.accountReplicas.has(x.counterpartyId as EntityId)) return ok(jSay(d, `❌ Cannot deposit collateral: no account with ${x.counterpartyId.slice(-4)}`));
+  if (x.rebalanceQuoteId !== undefined) return ok(jSay(d, local ? `❌ Rebalance fee: no active quote for ${x.counterpartyId.slice(-4)}` : "❌ Rebalance fee unsupported for remote reserve → account deposits"));
+  return map(addCommittedR2C((entityJBatch(d.state) ?? initJBatch()) as unknown as OgJBatchState, receiving, x.counterpartyId, x.tokenId, x.amount),
+    (jb) => jQueued(d, jb as unknown as JBatchState, `📦 Queued R→C: ${x.amount} token ${x.tokenId} to ${receiving.slice(-4)}↔${x.counterpartyId.slice(-4)} (use j_broadcast to commit)`));
+};
+const jOutput = (d: Draft, name: string, jTx: unknown, hash?: JBatchHashToSign): Draft =>
+  ({ ...d, jOutputs: [...(d.jOutputs ?? []), { jurisdictionName: name, jTxs: [jTx as Binary] }], ...(hash === undefined ? {} : { hashes: [...(d.hashes ?? []), hash] }) });
+/**
+ * og handleJBroadcast: a missing jBatchState or an in-flight sentBatch is a plain Error; an empty draft, a missing jurisdiction, chain id or
+ * leader is a status message; unusable contract addresses, a contract-limit or encoded-size overflow are plain Errors. The sealed batch goes out
+ * as og's `batch` JTx with the quorum's jBatch hash to sign. og's flush of deferred hash-ladder reveals (flushDeferredHashLadderReveals) is the
+ * cross-j owner's: the rewrite's consensus never parks a reveal on a route, so a parked one is refused rather than silently kept.
+ */
+const entityJBroadcast = (d: Draft, x: EntityJTx<"j_broadcast">, timestamp: bigint): Result<Draft, EntityError> => {
+  const jb = entityJBatch(d.state);
+  if (jb === undefined) return invariant("❌ No jBatchState found for j_broadcast");
+  if (jb.sentBatch === undefined && [...(d.state.crossJurisdictionSwaps?.values() ?? [])].some((r) => r.pendingSourceRegistryReveal !== undefined || r.pendingTargetRegistryReveal !== undefined)) return invariant("J_BROADCAST_REVEAL_FLUSH_CROSS_J_OWNED");
+  if (jb.sentBatch !== undefined) return invariant(`❌ Cannot broadcast: sentBatch pending nonce=${jb.sentBatch.entityNonce} attempts=${jb.sentBatch.submitAttempts}`);
+  if (!hasJBatchWork(jb)) return ok(jSay(d, "ℹ️ j_broadcast skipped: jBatch is empty"));
+  const name = jurisdictionNameOf(d.state);
+  if (name === "") return ok(jSay(d, "❌ No jurisdiction configured for this entity"));
+  if (d.state.jurisdiction.chainId === 0) return ok(jSay(d, "❌ Missing chainId"));
+  const signer = leaderStateOf(d.state).activeValidatorId;
+  if (signer === "") return ok(jSay(d, "❌ No signerId available"));
+  if (usableAddress(d.state.jurisdiction.depositoryAddress) === null) return invariant("INVALID_DEPOSITORY_ADDRESS");
+  if (usableAddress(d.state.jurisdictionConfig?.entityProviderAddress) === null) return invariant("INVALID_ENTITY_PROVIDER_ADDRESS");
+  const sealed = jBroadcast(jb, { entityId: d.state.id, chainId: d.state.jurisdiction.chainId, depository: d.state.jurisdiction.depositoryAddress, signerId: signer, timestamp: Number(timestamp), feeOverrides: x.feeOverrides });
+  if (!sealed.ok) return invariant(sealed.error.reason);
+  const b = sealed.value, jTx = b.jTx!, first = jb.recoveryBatches?.[0], priority = takeBroadcastBatch(first !== undefined && batchOpCount(first) > 0 ? first : jb.batch).disputePriority;
+  const said = jSay({ ...d, state: withEntityJBatch(d.state, b.jBatch) }, `📤 Batch (${jTx.data.batchSize} ops) → hashesToSign [nonce=${jTx.data.entityNonce}]`, ...(priority ? ["⚖️ Dispute operations broadcast before ordinary queued operations"] : []));
+  return ok(jOutput(said, name, jTx, b.hashToSign));
+};
+/** og handleJRebroadcast: resend the stored sentBatch at its own nonce (the jurisdiction name is checked before the chain); refusals as in the shared jRebroadcast. */
+const entityJRebroadcast = (d: Draft, x: EntityJTx<"j_rebroadcast">, timestamp: bigint): Result<Draft, EntityError> => {
+  const jb = entityJBatch(d.state), sent = jb?.sentBatch, name = jurisdictionNameOf(d.state), signer = leaderStateOf(d.state).activeValidatorId;
+  if (sent !== undefined && sent.terminalFailure === undefined && signer !== "" && name === "") return ok(jSay(d, "❌ No jurisdiction configured for j_rebroadcast"));
+  const r = jRebroadcast(jb, { entityId: d.state.id, chainId: d.state.jurisdiction.chainId, depository: d.state.jurisdiction.depositoryAddress, signerId: signer, timestamp: Number(timestamp), gasBumpBps: x.gasBumpBps });
+  if (!r.ok) return invariant(r.error.reason);
+  const next = jSay(jb === undefined ? d : { ...d, state: withEntityJBatch(d.state, r.value.jBatch) }, ...(r.value.note === undefined ? [] : [r.value.note]));
+  return ok(r.value.jTx === undefined ? next : jOutput(next, name, r.value.jTx, r.value.hashToSign));
+};
+/** og releaseR2CSubmittedLatches / clear's submitted-marker reset and releaseFinalizeLatches on the Entity's Accounts. */
+const releaseEntityLatches = (d: Draft, release: JLatchRelease): Draft => {
+  let replicas = d.accountReplicas;
+  for (const { accountId, tokenId } of release.submitted) {
+    const c = replicas.get(accountId as EntityId);
+    if (c !== undefined) replicas = mapSet(replicas, accountId as EntityId, { ...c, state: setRebalanceSubmittedAt(c.state, tokenId, undefined) } as AccountReplica);
+  }
+  let folded: Folded = { state: d.state, accountReplicas: replicas };
+  for (const peer of release.finalizers) {
+    const c = folded.accountReplicas.get(peer as EntityId);
+    if (c !== undefined && c._tag === "disputed" && c.active !== undefined) folded = latchFinalize(folded, peer, c, c.active, false);
+  }
+  return { ...d, ...folded };
+};
+/** og handleJAbortSentBatch: requeue (default) drops finalizations and stale C2Rs by the Account's jNonce and parks the rest first; drop releases the R2C markers. */
+const entityJAbort = (d: Draft, x: EntityJTx<"j_abort_sent_batch">): Draft => {
+  const jb = entityJBatch(d.state), r = jAbortSentBatch(jb, x, (peer) => (d.accountReplicas.get(peer as EntityId) ?? d.accountReplicas.get(lower(peer) as EntityId))?.state.jNonce ?? 0);
+  return jSay(releaseEntityLatches(jb?.sentBatch === undefined ? d : { ...d, state: withEntityJBatch(d.state, r.jBatch) }, r.release), r.note);
+};
+/** og handleJClearBatch: drop every batch, reset every Account's submitted markers, release the dropped finalize latches. */
+const entityJClear = (d: Draft, x: EntityJTx<"j_clear_batch">): Draft => {
+  const jb = entityJBatch(d.state), submitted = new Map([...d.accountReplicas].map(([peer, c]) => [peer as string, [...(c.state.submittedAt ?? new Map<number, number>()).keys()]] as const));
+  const r = jClearBatch(jb, x, jb === undefined ? new Map() : submitted);
+  return jSay(releaseEntityLatches(jb === undefined ? d : { ...d, state: withEntityJBatch(d.state, r.jBatch) }, r.release), r.note);
+};
+/** og handleMintReserves: the direct admin `mint` JTx to the Entity's J replica (outside the batch). */
+const entityMint = (d: Draft, x: EntityJTx<"mintReserves">, timestamp: bigint): Draft => {
+  const name = jurisdictionNameOf(d.state);
+  if (name === "") return jSay(d, "❌ Jurisdiction unavailable for mint: entity jurisdiction is not configured");
+  const m = mintReservesTx(d.state.id, x.tokenId, x.amount, Number(timestamp));
+  return jOutput(jSay(d, m.note), name, m.jTx);
+};
 // ---- og entity/tx/j-events.ts J7 Entity-side dispute effects and tx/dispute-finalize-guards.ts: J batch retirement, nonce sync, the dispute-deadline hook ----
 type BatchRows = { readonly [field: string]: readonly Binary[] };
 type BatchRow = { readonly counterentity?: unknown; readonly initialProofbodyHash?: unknown; readonly targetRole?: unknown; readonly counterpartyEntity?: unknown };
@@ -8053,8 +8244,8 @@ const materializeSettlements = (d: Draft, ctx: FoldContext): Result<Draft, Entit
 };
 /**
  * og selectSettlementContinuation + materializeSettlementContinuation: at most one continuation per frame (lowest counterparty), waiting passively
- * until its workspace is ready and the jBatch is idle; a missing / changed / submitted workspace discards it. The execute path runs settle_execute;
- * og's follow-up r2r / r2e / r2c and j_broadcast are Entity txs the rewrite carries only on the Host J layer.
+ * until its workspace is ready and the jBatch is idle; a missing / changed / submitted workspace discards it. The execute path runs settle_execute,
+ * then og's follow-up r2r / r2e / r2c and j_broadcast Entity txs, and drops the continuation only when all of them succeeded.
  */
 const materializeContinuation = (d: Draft, ctx: FoldContext, queue: SettleEnqueue): Result<Draft, EntityError> => {
   const entry = [...continuationsOf(d.state)].sort(([a], [b]) => asc(a, b))[0];
@@ -8072,8 +8263,16 @@ const materializeContinuation = (d: Draft, ctx: FoldContext, queue: SettleEnqueu
     if (w.executorIsLeft !== isLeft(d.state.id, replicaId(child))) return invariant(`SETTLEMENT_CONTINUATION_EXECUTOR_MISMATCH:${peer}`);
     const jb = committedJBatch(d.state);
     if (jb?.sentBatch !== undefined || (jb !== undefined && ogBatchOps(jb.batch) > 0)) return ok(d);
-    if (c.actions.length > 0 || c.broadcast) return invariant("SETTLEMENT_CONTINUATION_J_ACTIONS_NOT_PORTED");
-    return map(settleExecute(d, { counterpartyEntityId: peer as EntityId }, ctx.verify, queue), (x) => ({ ...x, state: withContinuations(x.state, mapDelete(continuationsOf(x.state), peer)) }));
+    // og continuationActionToTx: settle_execute (no C2R shortcut when actions follow), the r2r / r2e / r2c follow-ups, then j_broadcast, all as one collective run
+    const follow: readonly EntityTx[] = [...c.actions.map((a): EntityTx => a.type === "r2r" ? { type: "r2r", data: { toEntityId: a.toEntityId, tokenId: a.tokenId, amount: a.amount } }
+      : a.type === "r2e" ? { type: "r2e", data: { receivingEntity: a.receivingEntity, tokenId: a.tokenId, amount: a.amount } }
+      : { type: "r2c", data: { counterpartyId: a.counterpartyId, ...(a.receivingEntityId ? { receivingEntityId: a.receivingEntityId } : {}), tokenId: a.tokenId, amount: a.amount } }), ...(c.broadcast ? [{ type: "j_broadcast", data: {} } satisfies EntityTx] : [])];
+    return chain(settleExecute(d, { counterpartyEntityId: peer as EntityId, ...(c.actions.length > 0 ? { disableC2RShortcut: true } : {}) }, ctx.verify, queue), (x) => {
+      const done = (y: Draft): Draft => ({ ...y, state: withContinuations(y.state, mapDelete(continuationsOf(y.state), peer)) });
+      if (follow.length === 0) return ok(done(x));
+      return map(foldNested(x.state, x.accountReplicas, follow, ctx, "collective"), (y) => done({ ...y, outputs: [...x.outputs, ...y.outputs], events: [...(x.events ?? []), ...(y.events ?? [])], runtimeEvents: [...(x.runtimeEvents ?? []), ...(y.runtimeEvents ?? [])],
+        touched: [...(x.touched ?? []), ...(y.touched ?? [])], ...frameEffects(x, y), swaps: joinSwapEvents(x.swaps, y.swaps) }));
+    });
   });
 };
 const settleQueue = (ctx: FoldContext): SettleEnqueue => (d, peer, tx) => withChild(d.accountReplicas, peer, (child) => map(admitAt(child, [tx], d.state.id, L0_CLOCK, ctx.verify), (admitted) => ({ ...d, ...putChild(d.state, d.accountReplicas, peer, admitted) })));
@@ -8612,6 +8811,10 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     crossJurisdictionFillNotice: (x) => map(crossFillNotice(bookHostOf(state, replicas, ctx.timestamp), x.data), (s) => hostDraft(skip, s, ctx.timestamp)),
     // og clear.ts handleRequestCrossJurisdictionClearEntityTx (the ladder reveal / clear materialization) is not ported yet
     requestCrossJurisdictionClear: (x) => invariant(`CROSS_J_CLEAR_UNPORTED:${x.data.orderId}`),
+    // og entity/tx/handlers/j-batch on the committed jBatchState
+    r2r: (x) => entityR2R(skip, x.data), r2e: (x) => entityR2E(skip, x.data), e2r: (x) => entityE2R(skip, x.data), r2c: (x) => entityR2C(skip, x.data),
+    j_broadcast: (x) => entityJBroadcast(skip, x.data, ctx.timestamp), j_rebroadcast: (x) => entityJRebroadcast(skip, x.data, ctx.timestamp),
+    j_abort_sent_batch: (x) => ok(entityJAbort(skip, x.data)), j_clear_batch: (x) => ok(entityJClear(skip, x.data)), mintReserves: (x) => ok(entityMint(skip, x.data, ctx.timestamp)),
     runtimeOutput: (x) => {
       if (x.data.protocol !== "cross-j") return invariant(`RUNTIME_OUTPUT_PROTOCOL_INVALID:${String(x.data.protocol)}`);
       const refused = runtimeOutputAuthError(state, x.data);
