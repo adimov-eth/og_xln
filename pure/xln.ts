@@ -5345,7 +5345,9 @@ const proposeAccountsNowOk = (state: EntityState, d: Extract<EntityTx, { readonl
 const entityAcceptsPeerTx = (tx: WireAccountTx): boolean => isL0Tx(tx) || tx.type === "htlc_lock" || tx.type === "htlc_resolve" || tx.type === "request_collateral"
   || tx.type === "swap_offer" || tx.type === "swap_cancel_request" || tx.type === "swap_resolve" || tx.type === "cross_pull_lock" || tx.type === "cross_pull_close"
   // og lending: the hub's committed lending followup (committed-lending-followup.ts) consumes them
-  || tx.type === "lending_fund" || tx.type === "lending_borrow_request" || tx.type === "lending_repay" || tx.type === "lending_credit" || tx.type === "lending_close_request" || tx.type === "lending_close_payout";
+  || tx.type === "lending_fund" || tx.type === "lending_borrow_request" || tx.type === "lending_repay" || tx.type === "lending_credit" || tx.type === "lending_close_request" || tx.type === "lending_close_payout"
+  // og queueInitialHubPolicies: a hub proposes its per-token rebalance_policy on an inbound Account right after genesis
+  || tx.type === "rebalance_policy";
 /** og DEFAULT_ACCOUNT_TOKEN_IDS (account/config/defaults.ts). */
 const DEFAULT_ACCOUNT_TOKEN_IDS = ["1", "3", "2"] as const;
 /** og TOKEN_REGISTRY decimals (account/utils.ts over DEFAULT_TOKENS + TRON_ONLY_DEFAULT_TOKENS): USDC, WETH, USDT, TRX, SUN. */
@@ -8218,11 +8220,12 @@ const swapOutputId = (e: SwapOutputEffect): string => (e._tag === "swap_offer_up
  * og applySuccessfulAccountInput after the Account machine, for the committed frames of one accountInput (our frame the peer ACKed, then the peer's
  * frame we signed). applyCommittedFrameTransactions goes frame by frame: applyCommittedAccountFrameFollowups (each tx's lending followup and HTLC
  * resolve), then per tx the settlement auto-approval, the cross-j followup, the receiver's HTLC lock followup and the swap output (the next same-j
- * output in signed tx order, or the committed cross-j offer). Then applyCommittedHtlcFollowups: direct-payment forwards, timeouts, preimages.
+ * output in signed tx order, or the committed cross-j offer). Then queueInitialHubPolicies (a hub's new inbound Account), applyCommittedHtlcFollowups
+ * (direct-payment forwards, timeouts, preimages) and scheduleCommittedAccountWork (the hub-rebalance-kick hook).
  * The returned Account txs are admitted after all of them, one at a time and in that order (og applyLocalAccountEffects), and each Account that
  * admits one joins the frame's worklist in that order.
  */
-export const committedFollowups = (d0: Draft, peer: EntityId, own: AccountFrame | undefined, received: ReceivedCommit | undefined, effects: readonly Effect[], ctx: FoldContext): Result<Draft, EntityError> => {
+export const committedFollowups = (d0: Draft, peer: EntityId, own: AccountFrame | undefined, received: ReceivedCommit | undefined, effects: readonly Effect[], ctx: FoldContext, createdAccount = false): Result<Draft, EntityError> => {
   const self = d0.state.id, child0 = d0.accountReplicas.get(peer), mine = child0 !== undefined && isLeft(self, replicaId(child0)), now = Number(ctx.timestamp);
   const frames: readonly { readonly frame: AccountFrame; readonly viaNewFrame: boolean }[] = [...(own === undefined ? [] : [{ frame: own, viaNewFrame: false }]), ...(received === undefined ? [] : [{ frame: received.frame, viaNewFrame: true }])];
   const forwards = effects.flatMap((e) => (e._tag === "direct_payment_forward" && sameHex(e.route[0], self) ? [e] : []));
@@ -8279,6 +8282,15 @@ export const committedFollowups = (d0: Draft, peer: EntityId, own: AccountFrame 
     }
   }
   if (cursor !== swapOutputs.length) return invariant(`ACCOUNT_SWAP_OUTPUT_UNCONSUMED:${swapOutputs.length - cursor}`);
+  // og queueInitialHubPolicies: a hub's new inbound Account gets its fee terms for each token its genesis frame adds, ascending
+  if (createdAccount) {
+    const genesis = received !== undefined && received.frame.height === 1n ? received.frame : undefined, hub = hubConfigOf(d.state);
+    if (genesis === undefined) return invariant(`ACCOUNT_GENESIS_COMMIT_REQUIRED:${peer}`);
+    const tokens = hub === undefined ? [] : [...new Set(genesis.txs.flatMap((tx) => (tx.type === "add_delta" ? [Number(tx.tokenId)] : [])))].sort((a, b) => a - b);
+    const policies = traverse(tokens, (t) => hubPolicyTx(hub as HubConfig, String(t) as TokenId));
+    if (!policies.ok) return policies;
+    targets = [...targets, ...policies.value.map((tx) => ({ accountId: peer, tx }))];
+  }
   // og applyCommittedHtlcFollowups: the direct-payment forwards, then the timed-out locks, then the peer frame's preimages
   for (const f of forwards) {
     const leg = forwardLeg(d, f);
@@ -8293,6 +8305,18 @@ export const committedFollowups = (d0: Draft, peer: EntityId, own: AccountFrame 
   }
   if (flow.paybook !== paybook0) d = { ...d, state: { ...d.state, paybook: flow.paybook } };
   if ((flow.runtimeEvents ?? []).length > 0) d = { ...d, runtimeEvents: [...(d.runtimeEvents ?? []), ...(flow.runtimeEvents ?? [])] };
+  // og scheduleCommittedAccountWork: on a hub, an Account with rebalance work kicks the hubRebalance task, unless it already ran this tick
+  const child = d.accountReplicas.get(peer);
+  if (hubConfigOf(d.state) !== undefined && child !== undefined) {
+    const work = hasRebalanceWork(self, child);
+    if (!work.ok) return work;
+    if (work.value) {
+      const crontab = crontabOf(d.state);
+      if (!crontab.ok) return crontab;
+      const task = crontab.value.tasks.get("hubRebalance");
+      if (task === undefined || task.lastRun < now) d = { ...d, state: withCrontab(d.state, scheduleHook(crontab.value, { id: "hub-rebalance-kick", triggerAt: now, type: "hub_rebalance_kick", data: { reason: "account_frame_committed", counterpartyId: peer } })) };
+    }
+  }
   const touched: EntityId[] = [peer];
   for (const t of targets) {
     const id = t.accountId.toLowerCase() as EntityId, before = d.accountReplicas.get(id)?.mempool.length;
@@ -8883,7 +8907,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
             const pending = d.accountReplicas.get(from), frame = pending !== undefined && pending._tag === "received" ? pending.candidate.frame : undefined;
             return chain(answerFrame(d, from, ctx), ({ draft: answered, effects: signed }) => {
               const after = answered.accountReplicas.get(from), installed = frame !== undefined && after !== undefined && after.head.height >= frame.height;
-              return committedFollowups(answered, from, ownCommitted(answered), installed ? { frame, from: i.fromEntityId, to: i.toEntityId, domain: i.domain } : undefined, [...own, ...signed], ctx);
+              return committedFollowups(answered, from, ownCommitted(answered), installed ? { frame, from: i.fromEntityId, to: i.toEntityId, domain: i.domain } : undefined, [...own, ...signed], ctx, !replicas.has(from));
             });
           }),
         }),
