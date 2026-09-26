@@ -5,9 +5,15 @@
 import { describe, expect, test } from "bun:test";
 import {
   accountId, createEntity, crontabTaskHasPendingWork, executeCrontab, genesisReplica, initCrontab, rebalanceAccountIds, tokenId, withCrontab, crontabOf, ZERO_WORD,
-  type AccountReplica, type Binary, type Crontab, type EntityError, type EntityId, type EntityState, type SettlementWorkspace,
+  applyBoardJEvent, counterpartyProposer, rearmBoardRefreshes, entityId, quorumBoardHash, quorumHanko, scheduleHook,
+  type AccountReplica, type Crontab, type DisputeHanko, type EntityError, type EntityId, type EntityState, type Hash, type JEvent, type RefreshMigration, type ScheduledHook, type SettlementWorkspace,
 } from "../xln.ts";
-import { ALICE, BOB, CAROL, TERMS, aliceAddr, bobAddr, unwrap } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, TERMS, aliceAddr, bobAddr, carolAddr, crypto, keyOf, signLazyAccountHanko, unwrap } from "../xln_run.ts";
+import { applyCertifiedBoardJEvent } from "../../core/entity/tx/j-events-board.ts";
+import { readEntityFrameEventMessages } from "../../core/entity/frame-events.ts";
+import { scheduleChangedAccountBoardHankoRefreshes } from "../../core/entity/scheduler/board-hanko-refresh-hook.ts";
+import { captureAccountBoardHankoRefreshEvidence } from "../../core/entity/tx/state-effects/board-rotation-hanko-refresh.ts";
+import { applyCertifiedBoardRegistryEvent } from "../../core/jurisdiction/machine/board-registry/index.ts";
 import { executeCrontab as ogExecuteCrontab, crontabTaskHasPendingWork as ogHasPendingWork } from "../../core/entity/scheduler/index.ts";
 import { getRebalanceAccountIds } from "../../core/entity/consensus/account/work-index.ts";
 import { initJBatch as ogInitJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
@@ -117,5 +123,179 @@ describe("rebalance-refresh: hub rebalance (og scheduler/rebalance.ts hubRebalan
     const seen = Object.fromEntries([...counts].map(([k, v]) => [k, v > 3]));
     expect(seen).toMatchObject({ settle_propose: true, settle_execute: true, j_broadcast: true, j_abort_sent_batch: true, r2c: true, "halt:REBALANCE_REQUEST_FEE_STATE_MISSING": true, "halt:HUB_REBALANCE_TOKENLESS_RAW_OVERRIDE_FORBIDDEN": true });
     expect(counts.has("halt:J_BATCH_LIMIT_EXCEEDED")).toBe(true);
+  }, 120_000);
+});
+
+// ---- board Hanko refresh: og processBoardHankoRefreshHook, applyCertifiedBoardJEvent's BoardActivated tail, scheduleChangedAccountBoardHankoRefreshes ----
+const word = (n: bigint | number): string => `0x${BigInt(n).toString(16).padStart(64, "0")}`;
+const rword = (): string => `0x${Array.from({ length: 64 }, () => "0123456789abcdef"[ri(16)]).join("")}`;
+const RJ = { name: "j", chainId: 31337, depositoryAddress: "0x5fbdb2315678afecb367f032d93f642f64180aa3", entityProviderAddress: "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512" };
+const RDOMAIN = { chainId: RJ.chainId, depositoryAddress: RJ.depositoryAddress };
+const RJCONF = { entityProviderAddress: RJ.entityProviderAddress };
+const meta = (block: number, log: number) => ({ blockNumber: block, blockHash: word(30 + block), transactionHash: word(4000 + block * 8 + log), logIndex: log });
+const toOgEvent = (e: JEvent): any => {
+  const { meta: m, type, ...data } = e as any;
+  const text = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v]));
+  return { type, blockNumber: m.blockNumber, blockHash: m.blockHash, transactionHash: m.transactionHash, logIndex: m.logIndex, data: text };
+};
+const S = unwrap(entityId(word(80))), T = unwrap(entityId(word(81))), UE = unwrap(entityId(word(82)));
+const filler = (n: number): EntityId => unwrap(entityId(word(300 + n)));
+const one = new Map([[bobAddr, { shares: 1n }]]), three = new Map([aliceAddr, bobAddr, carolAddr].map((a) => [a, { shares: 1n }] as const));
+const uAuthority = { _tag: "teaching" as const, threshold: 2n, members: three };
+const BOARDS = new Map<string, string>([[S, quorumBoardHash({ _tag: "teaching", threshold: 1n, members: one })], [T, word(777)], [UE, quorumBoardHash(uAuthority)]]);
+const REGISTRY_EVENTS: readonly JEvent[] = [
+  { type: "FoundationBootstrapped", recipient: "0x" + "11".repeat(20), boardHash: word(900), controlTokenId: 1n, dividendTokenId: 2n, meta: meta(2, 0) },
+  ...[S, T, UE].map((id, i): JEvent => ({ type: "EntityRegistered", entityId: id, entityNumber: BigInt(id), boardHash: BOARDS.get(id) as string, meta: meta(3, i) })),
+];
+const observeAs = (id: EntityId, threshold: bigint, members: ReadonlyMap<string, { shares: bigint }>) => {
+  let state = unwrap(createEntity({ id, jurisdiction: RDOMAIN, threshold, members: members as never, jurisdictionConfig: RJCONF })).state, ogRegistry: any;
+  const ogNodes = new Map<string, any>();
+  for (const e of REGISTRY_EVENTS) {
+    state = unwrap(applyBoardJEvent(state, e, e.meta?.blockNumber ?? 0)).state;
+    const og = applyCertifiedBoardRegistryEvent(ogRegistry, ogNodes, RJ as any, toOgEvent(e));
+    ogRegistry = og.state;
+    for (const [h, n] of og.newNodes) ogNodes.set(h, n);
+  }
+  return { state, ogRegistry, ogNodes };
+};
+const observed = observeAs(S, 1n, one);
+const uState = observeAs(UE, 2n, three).state;
+const uHanko = (digest: string, signers: readonly string[]): string => unwrap(quorumHanko(uState, digest, new Map(signers.map((a) => [a, unwrap(crypto.sign(digest as Hash, a))] as const))));
+
+type Side = DisputeHanko;
+type BoardSpec = { readonly peer: EntityId; readonly height: number; readonly frameHash: string; readonly own: string; readonly peerHanko: string; readonly current?: Side | undefined; readonly counterparty?: Side | undefined; readonly marker?: RefreshMigration | undefined };
+const rwBoardAccount = (s: BoardSpec): AccountReplica => {
+  const base = unwrap(genesisReplica(unwrap(accountId(S, s.peer)), TERMS)), selfLeft = S < s.peer;
+  const head = s.height === 0 ? base.head : { _tag: "installed" as const, height: BigInt(s.height), prevFrameHash: s.frameHash, timestamp: 1n, certificate: { parent: word(1), left: selfLeft ? s.own : s.peerHanko, right: selfLeft ? s.peerHanko : s.own } };
+  return { ...base, head, dispute: { nextProofNonce: 0, ...(s.current === undefined ? {} : { current: s.current }), ...(s.counterparty === undefined ? {} : { counterparty: s.counterparty }) }, ...(s.marker === undefined ? {} : { refreshMigration: { ...s.marker } }) } as AccountReplica;
+};
+const ogSide = (prefix: "current" | "counterparty", d: Side | undefined): any => (d === undefined ? {} : {
+  [`${prefix}DisputeProofHanko`]: d.hanko, [`${prefix}DisputeHash`]: d.hash, [`${prefix}DisputeProofBodyHash`]: d.proofBodyHash, [`${prefix}DisputeProofNonce`]: d.proofNonce, [`${prefix}DisputeProofProposerIsLeft`]: d.proposerIsLeft,
+});
+const ogBoardAccount = (s: BoardSpec): any => ({
+  state: { leftEntity: S < s.peer ? S : s.peer, rightEntity: S < s.peer ? s.peer : S, domain: { ...TERMS.domain }, watchSeed: TERMS.watchSeed, disputeConfig: { ...TERMS.disputeConfig }, jNonce: 0, deltas: PA("deltas"), locks: PA("locks"), swapOffers: PA("swapOffers"), pulls: PA("pulls"), requestedRebalance: PA("requestedRebalance"), requestedRebalanceFeeState: PA("requestedRebalanceFeeState"), rebalanceFeePolicies: PA("rebalanceFeePolicies") }, pendingWithdrawals: PA("pendingWithdrawals"), shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted") } },
+  status: "active", mempool: [], currentHeight: s.height, currentFrame: { height: s.height, stateHash: s.height === 0 ? "" : s.frameHash }, proofHeader: { fromEntity: S, toEntity: s.peer, nextProofNonce: 1 },
+  ...(s.height === 0 ? {} : { currentFrameHanko: s.own, counterpartyFrameHanko: s.peerHanko }), ...ogSide("current", s.current), ...ogSide("counterparty", s.counterparty),
+  ...(s.marker === undefined ? {} : { boardHankoRefreshMigration: { ...s.marker } }),
+});
+const peerHankoFor = (peer: EntityId, frameHash: string): string =>
+  frameHash.length !== 66 ? pick([signLazyAccountHanko(word(9), keyOf(ALICE), peer), ""]) : peer === UE ? pick([uHanko(frameHash, [aliceAddr, carolAddr]), uHanko(frameHash, [bobAddr, carolAddr]), uHanko(frameHash, [carolAddr, bobAddr]), uHanko(word(5), [aliceAddr, bobAddr]), ""])
+    : pick([signLazyAccountHanko(frameHash, keyOf(ALICE), peer), signLazyAccountHanko(frameHash, keyOf(ALICE), peer), ""]);
+const randomSide = (): Side => ({ hanko: `0xd1${rword().slice(2)}`, hash: rword(), proofBodyHash: rword(), proofNonce: ri(5), proposerIsLeft: rng() < 0.5 });
+const randomDispute = (): { current?: Side; counterparty?: Side } => {
+  const x = randomSide(), r = rng();
+  if (r < 0.45) return {};
+  if (r < 0.7) return { current: x, counterparty: { ...x, hanko: `0xd2${rword().slice(2)}` } };
+  return pick([{ current: x }, { counterparty: x }, { current: x, counterparty: { ...x, proofNonce: x.proofNonce + 1 } }, { current: x, counterparty: { ...x, proposerIsLeft: !x.proposerIsLeft } },
+    { current: { ...x, hash: "0x12" }, counterparty: { ...x, hash: "0x12" } }, { current: { ...x, proofNonce: -1 }, counterparty: { ...x, proofNonce: -1 } }, { current: { ...x, hanko: "" }, counterparty: x }]);
+};
+const randomMarker = (a: { jHeight: number; logIndex: number }, height: number, frameHash: string): RefreshMigration | undefined => {
+  const at = { activationJHeight: a.jHeight, activationLogIndex: a.logIndex }, r = rng();
+  if (r < 0.5) return { ...at, reason: "pending" };
+  if (r < 0.6) return undefined;
+  if (r < 0.7) return { ...at, reason: "issued", issuedFrameHeight: height, issuedFrameHash: frameHash };
+  if (r < 0.8) return { ...at, reason: "issued", issuedFrameHeight: height - 1, issuedFrameHash: frameHash };
+  if (r < 0.9) return { ...at, reason: pick(["output-route-unavailable", "bilateral-frame-uncertified", "bilateral-dispute-uncertified"] as const) };
+  return { activationJHeight: a.jHeight + pick([-1, 1]), activationLogIndex: a.logIndex, reason: "pending" };
+};
+const ownFor = (height: number, frameHash: string): string => `0x0e${height.toString(16).padStart(4, "0")}${frameHash.slice(2)}`;
+const randomSpec = (peer: EntityId, a: { jHeight: number; logIndex: number }, allowUnsigned = true): BoardSpec => {
+  const height = pick([0, 1, 1, 2, 5]), frameHash = rng() < 0.06 ? "0x1234" : rword();
+  return { peer, height, frameHash, own: allowUnsigned && rng() < 0.05 ? "" : ownFor(height, frameHash), peerHanko: peerHankoFor(peer, frameHash), ...randomDispute(), marker: randomMarker(a, height, frameHash) };
+};
+const ogBoardState = (specs: readonly BoardSpec[], now: number, hooks: readonly ScheduledHook[]): any => ({
+  entityId: S, height: 1, timestamp: now, config: { ...ogConfigOf([bobAddr]), jurisdiction: RJ }, certifiedBoardState: observed.ogRegistry,
+  accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries(specs.map((s) => [s.peer, ogBoardAccount(s)]), S, () => ZERO_WORD as never)),
+  crontabState: { tasks: new Map(), hooks: new Map(hooks.map((h) => [h.id, structuredClone(h)])) }, paybook: { entries: new Map(), feesEarned: 0n }, reserves: new Map(),
+});
+const rwBoardState = (hooks: readonly ScheduledHook[]): EntityState => withCrontab(observed.state, { tasks: new Map(), hooks: new Map(hooks.map((h) => [h.id, h])) } as Crontab);
+const sortedHooks = (hooks: ReadonlyMap<string, unknown>): unknown[] => [...hooks.values()].map((h) => JSON.parse(JSON.stringify(h))).sort((x, y) => (x.id < y.id ? -1 : 1));
+const ogError = (f: () => unknown): string | undefined => { try { f(); return undefined; } catch (e) { return (e as Error).message; } };
+
+describe("rebalance-refresh: board Hanko refresh (og board-rotation-hanko-refresh.ts, board-hanko-refresh-hook.ts, j-events-board.ts)", () => {
+  test("MATCH: 150 random board_hanko_refresh hooks (cursor, markers, frame / dispute certification, peer Hankos under the certified board, >32 Accounts) -- og's outputs and proposer, hashesToSign, markers and hooks", async () => {
+    const seen = new Map<string, number>(), bump = (k: string) => seen.set(k, (seen.get(k) ?? 0) + 1);
+    for (let i = 0; i < 150; i++) {
+      const a = { jHeight: 5 + ri(3), logIndex: ri(3) }, now = 2_000_000 + ri(1000);
+      const peers: EntityId[] = [T, UE, ...Array.from({ length: rng() < 0.25 ? 34 : ri(3) }, (_, n) => filler(n))];
+      const specs = peers.map((p) => randomSpec(p, a)).map((s) => (peers.length > 32 && rng() < 0.8 ? { ...s, marker: { activationJHeight: a.jHeight, activationLogIndex: a.logIndex, reason: "pending" as const } } : s));
+      const hook: ScheduledHook = { id: "board-hanko-refresh", triggerAt: now - ri(2), type: "board_hanko_refresh", data: { activationJHeight: a.jHeight, activationLogIndex: a.logIndex, afterCounterpartyId: pick(["", "", "", T, UE, filler(0)]) } };
+      const og = ogBoardState(specs, now, [hook]);
+      const env: any = { quietRuntimeLogs: true, state: { timestamp: now }, infrastructure: { certifiedBoardNodes: new Map(observed.ogNodes) } };
+      const ctx = { manualBroadcastInInput: false, bookIntentSlot: createBookIntentProgram().openSlot(), hashesToSign: [] as unknown[], accountChanges: new Set<string>(), candidateEffects: [], accountTxs: [] };
+      let ogOut: any[] = [], ogErr: string | undefined;
+      try { ogOut = await ogExecuteCrontab(env, { entityId: S, state: og } as never, og.crontabState, ctx as never); } catch (e) { ogErr = (e as Error).message; }
+      const replicas = new Map(specs.map((s) => [s.peer, rwBoardAccount(s)]));
+      const state = rwBoardState([hook]), rw = executeCrontab(state, replicas, now);
+      expect(rw.ok ? "ok" : reasonOf(rw.error)).toBe(ogErr ?? "ok");
+      if (!rw.ok) continue;
+      const run = rw.value;
+      expect(run.outputs).toEqual([]);
+      const mine = run.sent.map((o) => {
+        const d = o.tx.data as any, route = unwrap(counterpartyProposer(state, replicas.get(o.to as EntityId) as AccountReplica, o.to as EntityId));
+        expect(typeof d.frameHanko).toBe("string");
+        return { entityId: o.to, signerId: route, entityTxs: [{ type: o.tx.type, data: { kind: d.kind, fromEntityId: d.fromEntityId, toEntityId: d.toEntityId, domain: d.domain, disputeConfig: d.disputeConfig,
+          boardHankoRefresh: { height: Number(d.height), frameHash: d.frameHash, boardActivationJHeight: d.boardActivationJHeight, boardActivationLogIndex: d.boardActivationLogIndex,
+            ...(d.disputeHanko === undefined ? {} : { disputeHanko: { hash: d.disputeHanko.hash, proofBodyHash: d.disputeHanko.proofBodyHash, proofNonce: d.disputeHanko.proofNonce, proposerIsLeft: d.disputeHanko.proposerIsLeft } }) } } }] };
+      });
+      expect(mine).toEqual(ogOut);
+      expect(run.hashes).toEqual(ctx.hashesToSign as never);
+      for (const s of specs) expect(run.accountReplicas.get(s.peer)?.refreshMigration).toEqual(og.accounts.get(s.peer).boardHankoRefreshMigration);
+      const hooks = sortedHooks(unwrap(crontabOf(run.state)).hooks);
+      expect(hooks).toEqual(sortedHooks(og.crontabState.hooks) as never);
+      for (const s of specs) { const m = run.accountReplicas.get(s.peer)?.refreshMigration; if (m !== undefined && m !== s.marker) bump(m.reason); }
+      for (const o of ogOut) { bump(`signer:${o.signerId}`); if (o.entityTxs[0].data.boardHankoRefresh.disputeHanko !== undefined) bump("disputeHanko"); }
+      for (const h of hooks as any[]) bump(h.data.afterCounterpartyId === "" ? "retry" : "hasMore");
+    }
+    for (const k of ["issued", "output-route-unavailable", "bilateral-frame-uncertified", "certified-frame-invalid", "bilateral-dispute-uncertified", "certified-dispute-invalid", "disputeHanko", "retry", "hasMore", `signer:${aliceAddr.toLowerCase()}`]) expect([k, (seen.get(k) ?? 0) > 0]).toEqual([k, true]);
+  }, 120_000);
+
+  test("MATCH: 120 random BoardActivated events (our own, a peer's, an unrelated Entity's) -- og's markers, refresh and 24h counterparty hooks, messages", () => {
+    const seen = new Map<string, number>(), bump = (k: string) => seen.set(k, (seen.get(k) ?? 0) + 1);
+    for (let i = 0; i < 120; i++) {
+      const target = pick([S, S, S, UE, T]), block = 5 + ri(4), log = ri(3), now = 3_000_000 + ri(1000), old = { jHeight: 4, logIndex: 0 };
+      const specs = rng() < 0.15 ? [] : [T, UE, ...Array.from({ length: ri(3) }, (_, n) => filler(n))].filter(() => rng() < 0.85).map((p) => randomSpec(p, old));
+      const hooks: ScheduledHook[] = rng() < 0.4 ? [{ id: "board-hanko-refresh", triggerAt: now + 5, type: "board_hanko_refresh", data: { activationJHeight: 4, activationLogIndex: 0, afterCounterpartyId: "" } }] : [];
+      const event: JEvent = { type: "BoardActivated", entityId: target, previousBoardHash: BOARDS.get(target) as string, newBoardHash: word(5000 + i), previousBoardValidUntil: 1_800_000_000n, meta: meta(block, log) };
+      const og = ogBoardState(specs, now, hooks);
+      const env: any = { quietRuntimeLogs: true, infrastructure: { certifiedBoardNodes: new Map(observed.ogNodes) } };
+      const ogErr = ogError(() => applyCertifiedBoardJEvent({ newState: og, event: toOgEvent(event), env, blockNumber: block, dirtyAccounts: new Set() } as never));
+      const rw = applyBoardJEvent(rwBoardState(hooks), event, block, new Map(specs.map((s) => [s.peer, rwBoardAccount(s)])), BigInt(now));
+      expect(rw.ok ? "ok" : reasonOf(rw.error)).toBe(ogErr ?? "ok");
+      if (!rw.ok) continue;
+      expect(rw.value.events.map((e) => e.message)).toEqual(readEntityFrameEventMessages(og));
+      for (const s of specs) expect(rw.value.accountReplicas.get(s.peer)?.refreshMigration).toEqual(og.accounts.get(s.peer).boardHankoRefreshMigration);
+      const after = sortedHooks(unwrap(crontabOf(rw.value.state)).hooks);
+      expect(after).toEqual(sortedHooks(og.crontabState.hooks) as never);
+      bump(target === S ? (after.length === 0 ? "local:cancelled" : "local:armed") : after.length > hooks.length ? "peer:deadline" : "peer:none");
+    }
+    for (const k of ["local:cancelled", "local:armed", "peer:deadline", "peer:none"]) expect([k, (seen.get(k) ?? 0) > 0]).toEqual([k, true]);
+  });
+
+  test("MATCH: 300 random Entity frame ends (frame advance, peer Hanko, dispute witness and marker changes) -- og scheduleChangedAccountBoardHankoRefreshes re-arms the same hook", () => {
+    const seen = new Map<string, number>(), bump = (k: string) => seen.set(k, (seen.get(k) ?? 0) + 1);
+    for (let i = 0; i < 300; i++) {
+      const a = { jHeight: 5 + ri(2), logIndex: ri(2) }, now = 4_000_000 + ri(1000);
+      const before = [T, UE, filler(0), filler(1)].map((p) => randomSpec(p, a, false));
+      const after = before.flatMap((s): BoardSpec[] => {
+        if (rng() < 0.1) return [];
+        let n: BoardSpec = s;
+        if (rng() < 0.15) { const height = s.height + 1, frameHash = rword(); n = { ...n, height, frameHash, own: ownFor(height, frameHash), peerHanko: peerHankoFor(s.peer, frameHash) }; }
+        if (rng() < 0.08) n = { ...n, peerHanko: rng() < 0.5 ? "" : peerHankoFor(s.peer, n.frameHash) };
+        if (rng() < 0.1) { const { current: _c, counterparty: _p, ...rest } = n; n = { ...rest, ...randomDispute() }; }
+        if (rng() < 0.3) n = { ...n, marker: randomMarker(a, n.height, n.frameHash) };
+        return [n];
+      });
+      const beforeOg = { accounts: new Map(before.map((s) => [s.peer, ogBoardAccount(s)])) };
+      const evidence = captureAccountBoardHankoRefreshEvidence(beforeOg as never, new Set(before.map((s) => s.peer)));
+      const og: any = { accounts: new Map(after.map((s) => [s.peer, ogBoardAccount(s)])), crontabState: { tasks: new Map(), hooks: new Map() }, timestamp: now };
+      scheduleChangedAccountBoardHankoRefreshes(og, evidence, new Set(after.map((s) => s.peer)));
+      const d = { state: rwBoardState([]), accountReplicas: new Map(after.map((s) => [s.peer, rwBoardAccount(s)])) };
+      const rw = unwrap(rearmBoardRefreshes(new Map(before.map((s) => [s.peer, rwBoardAccount(s)])), d, now));
+      const hooks = sortedHooks(unwrap(crontabOf(rw.state)).hooks);
+      expect(hooks).toEqual(sortedHooks(og.crontabState.hooks) as never);
+      bump(hooks.length === 0 ? "quiet" : "rearmed");
+    }
+    expect([(seen.get("quiet") ?? 0) > 20, (seen.get("rearmed") ?? 0) > 20]).toEqual([true, true]);
   }, 120_000);
 });

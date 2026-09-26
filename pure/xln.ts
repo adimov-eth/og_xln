@@ -1447,7 +1447,7 @@ const recoverAccountSigners = (digest: Uint8Array, packed: Uint8Array): Result<r
     return signers.includes(signer) ? hankoRefuse("duplicate_signer") : ok([...signers, signer]);
   });
 };
-type ResolvedClaim = { readonly entityId: string; readonly boardHash: string; readonly threshold: bigint; readonly votingPower: bigint; readonly referenced: readonly number[]; readonly used: readonly number[] };
+type ResolvedClaim = { readonly entityId: string; readonly boardHash: string; readonly threshold: bigint; readonly votingPower: bigint; readonly referenced: readonly number[]; readonly used: readonly number[]; readonly firstMember: string };
 const resolveAccountClaim = (h: HankoBytes, signerIds: readonly string[], claimIndex: number): Result<ResolvedClaim, AccountHankoError> => {
   const claim = h.claims[claimIndex];
   if (claim === undefined) return hankoRefuse("claim_shape");
@@ -1470,7 +1470,7 @@ const resolveAccountClaim = (h: HankoBytes, signerIds: readonly string[], claimI
   }
   if (!unique(ids)) return hankoRefuse("duplicate_member");
   if (claim.threshold > claim.weights.reduce((sum, w) => sum + w, 0n)) return hankoRefuse("threshold_power");
-  return ok({ entityId: claim.entityId, boardHash: boardOf(claim.threshold, ids, powers, claim), threshold: claim.threshold, votingPower, referenced, used: indexes });
+  return ok({ entityId: claim.entityId, boardHash: boardOf(claim.threshold, ids, powers, claim), threshold: claim.threshold, votingPower, referenced, used: indexes, firstMember: ids[0] ?? "" });
 };
 const accountReachability = (pc: number, sc: number, claims: readonly ResolvedClaim[]): Result<void, AccountHankoError> => {
   const reachable = new Set<number>([claims.length - 1]);
@@ -1483,6 +1483,11 @@ const accountReachability = (pc: number, sc: number, claims: readonly ResolvedCl
 };
 /** og verifyCanonicalHanko. An empty expected entity is og's absent `expectedTargetEntityId`: the last claim is the target and only self-hashed boards authorize. */
 export const verifyAccountHanko = (hanko: string, digest: string, expectedEntityId: string, registeredBoardHash?: string): Result<AccountHankoVerdict, AccountHankoError> => {
+  const target = expectedEntityId === "" ? undefined : bytes32Of(expectedEntityId), registered = registeredBoardHash?.trim().toLowerCase();
+  return map(checkAccountHanko(hanko, digest, expectedEntityId, (entityId, boardHash) => entityId === target && boardHash === registered), ({ entityId, signers }) => ({ entityId, signers }));
+};
+/** og verifyCanonicalHanko with og's `validateBoardAuthority` callback for every claim whose board is not self-hashed; also yields the target claim's first member. */
+export const checkAccountHanko = (hanko: string, digest: string, expectedEntityId: string, authorize: (entityId: string, boardHash: string) => boolean): Result<AccountHankoVerdict & { readonly firstMember: string }, AccountHankoError> => {
   const target = expectedEntityId === "" ? undefined : bytes32Of(expectedEntityId);
   if (target === null) return hankoRefuse("expected_entity");
   if (!/^0[xX][0-9a-fA-F]{64}$/.test(digest)) return hankoRefuse("digest");
@@ -1504,10 +1509,9 @@ export const verifyAccountHanko = (hanko: string, digest: string, expectedEntity
     if (env.placeholders.some((p) => signerIds.includes(p))) return hankoRefuse("placeholder_signer");
     return chain(traverse(env.claims, (_, i) => resolveAccountClaim(env, signerIds, i)), (claims) => {
       if (claims.some((c) => c.votingPower < c.threshold)) return hankoRefuse("quorum");
-      const registered = registeredBoardHash?.trim().toLowerCase(), last = claims[claims.length - 1];
-      const authorized = (c: ResolvedClaim): boolean => c.entityId === c.boardHash || (c.entityId === target && c.boardHash === registered);
+      const last = claims[claims.length - 1], authorized = (c: ResolvedClaim): boolean => c.entityId === c.boardHash || authorize(c.entityId, c.boardHash);
       return chain(accountReachability(env.placeholders.length, signerIds.length, claims), () =>
-        !claims.every(authorized) ? hankoRefuse("authority") : last === undefined || (target !== undefined && last.entityId !== target) ? hankoRefuse("target") : ok({ entityId: last.entityId, signers }));
+        !claims.every(authorized) ? hankoRefuse("authority") : last === undefined || (target !== undefined && last.entityId !== target) ? hankoRefuse("target") : ok({ entityId: last.entityId, signers, firstMember: last.firstMember }));
     });
   });
 };
@@ -3867,9 +3871,18 @@ export type SentProposal = { readonly ack: AccountAck | null; readonly disputeHa
 /** og RebalancePolicy (types/finance/rebalance.ts): the Entity's private per-token automation policy on one Account. */
 export type RebalancePolicy = { readonly r2cRequestSoftLimit: bigint; readonly hardLimit: bigint; readonly maxAcceptableFee: bigint };
 /** `rebalancePolicy`: og replica shadow.rebalance.policy, outside the Account state root, committed as the Entity leaf's policyRoot. */
-type AccountEnv = { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute: DisputeWitnesses; readonly boardRefresh?: BoardRefresh | undefined; readonly publicPinned?: true | undefined; readonly rebalancePolicy?: ReadonlyMap<number, RebalancePolicy> | undefined };
+type AccountEnv = { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute: DisputeWitnesses; readonly boardRefresh?: BoardRefresh | undefined; readonly publicPinned?: true | undefined; readonly rebalancePolicy?: ReadonlyMap<number, RebalancePolicy> | undefined;
+  /** og boardHankoRefreshMigration: our own board-rotation refresh marker for this Account (committed in the Entity leaf). */
+  readonly refreshMigration?: RefreshMigration | undefined };
 /** Entity-side Account envelope fields every phase keeps (og counterpartyBoardHankoRefresh, publicPinned, shadow.rebalance.policy). */
-const envMeta = (r: Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy">): Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy"> => ({ ...opt("boardRefresh", r.boardRefresh), ...opt("publicPinned", r.publicPinned), ...opt("rebalancePolicy", r.rebalancePolicy) });
+const envMeta = (r: Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy" | "refreshMigration">): Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy" | "refreshMigration"> =>
+  ({ ...opt("boardRefresh", r.boardRefresh), ...opt("publicPinned", r.publicPinned), ...opt("rebalancePolicy", r.rebalancePolicy), ...opt("refreshMigration", r.refreshMigration) });
+/** og AccountBoardHankoRefreshMigration: the activation our refresh belongs to and its outcome (`issued` records the re-Hanko'd frame). */
+export type RefreshMigration = {
+  readonly activationJHeight: number; readonly activationLogIndex: number;
+  readonly reason: "pending" | "issued" | "output-route-unavailable" | "bilateral-frame-uncertified" | "certified-frame-invalid" | "account-identity-invalid" | "bilateral-dispute-uncertified" | "certified-dispute-invalid";
+  readonly issuedFrameHeight?: number | undefined; readonly issuedFrameHash?: string | undefined;
+};
 type Held = AccountEnv & { readonly candidate: Candidate };
 type Frozen = Omit<AccountEnv, "mempool"> & { readonly evidence?: FrameEvidence | undefined };
 export interface OpenAccount extends Tagged<"open", AccountEnv> {}
@@ -5771,10 +5784,149 @@ export type WakeTx = EntityTx | { readonly type: "j_broadcast"; readonly data: {
   | { readonly type: "j_abort_sent_batch"; readonly data: { readonly reason: string; readonly requeueToCurrent: boolean } };
 /** og processDueHooks outputs: each is an EntityInput to this Entity's validators[0]. */
 export type WakeOutput = { readonly signerId: string; readonly txs: readonly WakeTx[] };
-/** og DueHookPlan plus the state the due hooks rewrite (re-armed hooks, finalizeQueued latches, paybook entries, the kicked task). */
+/**
+ * og DueHookPlan plus the state the due hooks rewrite (re-armed hooks, finalizeQueued latches, paybook entries, the kicked task). `sent`: og's
+ * outputs to other Entities (the board Hanko refreshes); `hashes`: og context.hashesToSign.
+ */
 type HookRun = Folded & {
   readonly crontab: Crontab; readonly outputs: readonly WakeOutput[]; readonly timeouts: readonly { readonly accountId: string; readonly lockId: string }[];
   readonly prepare: ReadonlyMap<string, string>; readonly finalize: readonly string[]; readonly broadcast: boolean;
+  readonly sent: readonly EntityOutput[]; readonly hashes: readonly HashToSign[];
+};
+// ---- og entity/tx/state-effects/board-rotation-hanko-refresh.ts, scheduler/board-hanko-refresh-hook.ts, tx/j-events-board.ts (BoardActivated),
+// ---- entity/account/account-counterparty-route.ts: our board rotation re-Hankos every certified Account frame for the peer ----
+export const BOARD_HANKO_REFRESH_HOOK_ID = "board-hanko-refresh";
+export const BOARD_HANKO_REFRESH_RETRY_MS = 60_000;
+export const MAX_BOARD_HANKO_REFRESHES_PER_FRAME = 32;
+export const COUNTERPARTY_BOARD_HANKO_REFRESH_DEADLINE_MS = 24 * 60 * 60 * 1_000;
+type Activation = { readonly jHeight: number; readonly logIndex: number };
+const isWord = (v: string): boolean => /^0x[0-9a-f]{64}$/.test(v.toLowerCase());
+/** og accountNeedsBoardHankoRefreshForActivation: this activation's marker, not yet issued for the current frame. */
+export const needsBoardRefresh = (c: AccountReplica, a: Activation): boolean => {
+  const m = c.refreshMigration, cur = currentFrameOf(c);
+  if (m === undefined || m.activationJHeight !== a.jHeight || m.activationLogIndex !== a.logIndex) return false;
+  return m.reason !== "issued" || m.issuedFrameHeight !== Number(cur.height) || (m.issuedFrameHash ?? "").toLowerCase() !== cur.hash.toLowerCase();
+};
+const withMarker = (c: AccountReplica, marker: RefreshMigration | undefined): AccountReplica => {
+  const { refreshMigration: _m, ...rest } = c;
+  return (marker === undefined ? rest : { ...rest, refreshMigration: marker }) as AccountReplica;
+};
+/** The frame Hankos: ours (og currentFrameHanko) and the peer's (og counterpartyFrameHanko) on the committed head. */
+const headHankos = (c: AccountReplica, self: EntityId): { readonly own: Hanko; readonly peer: Hanko } | undefined => {
+  const party = partyOf(replicaId(c), self);
+  return c.head._tag !== "installed" || !party.ok ? undefined : certifiedBy(c.head.certificate, party.value);
+};
+/**
+ * og resolveObserverCertifiedAccountCounterpartyProposer: verify the peer's frame Hanko on our committed frame against the observer's certified
+ * board records (every claim that is not self-hashed) and route to the target claim's first member. A Hanko refusal is og's retryable
+ * HankoValidationError (no route); a malformed frame hash or a registry fault is a plain Error.
+ */
+export const counterpartyProposer = (state: EntityState, c: AccountReplica, peer: EntityId): Result<string | null, EntityError> => {
+  const hankos = headHankos(c, state.id);
+  if (hankos === undefined || !hankos.peer) return ok(null);
+  const frameHash = lower(currentFrameOf(c).hash);
+  if (!isWord(frameHash)) return invariant(`ACCOUNT_COUNTERPARTY_ROUTE_FRAME_HASH_INVALID:${frameHash || "missing"}`);
+  const faults: EntityError[] = [];
+  const verdict = checkAccountHanko(hankos.peer, frameHash, peer, (entityId, boardHash) => {
+    const record = observerBoardRecord(state, entityId);
+    if (!record.ok) { faults.push(record.error); return false; }
+    return record.value !== null && lower(record.value.boardHash) === lower(boardHash);
+  });
+  if (faults[0] !== undefined) return err(faults[0]);
+  const first = verdict.ok ? lower(verdict.value.firstMember) : "";
+  return ok(/^0x0{24}[0-9a-f]{40}$/.test(first) ? `0x${first.slice(-40)}` : null);
+};
+type RefreshDraft = { readonly output?: EntityOutput | undefined; readonly hashes: readonly HashToSign[]; readonly marker: RefreshMigration | undefined };
+/** og buildAccountHankoRefreshDraft: a certified frame (and exact bilateral dispute proof) becomes the refresh AccountInput and its Hankos, else a marker reason. */
+const refreshDraft = (state: EntityState, peer: EntityId, c: AccountReplica, a: Activation): Result<RefreshDraft, EntityError> => {
+  const cur = currentFrameOf(c), marker = (reason: RefreshMigration["reason"], issued?: { readonly height: number; readonly frameHash: string }): RefreshMigration =>
+    ({ activationJHeight: a.jHeight, activationLogIndex: a.logIndex, reason, ...(issued === undefined ? {} : { issuedFrameHeight: issued.height, issuedFrameHash: issued.frameHash }) });
+  if (cur.height < 1n) return ok({ hashes: [], marker: undefined });
+  const hankos = headHankos(c, state.id), frameHash = cur.hash.toLowerCase();
+  if (hankos === undefined || !hankos.own || !hankos.peer) return ok({ hashes: [], marker: marker("bilateral-frame-uncertified") });
+  if (!isWord(frameHash)) return ok({ hashes: [], marker: marker("certified-frame-invalid") });
+  // og exactBilateralDisputeHanko: any dispute evidence must be one certified tuple on both sides
+  const own = c.dispute.current, theirs = c.dispute.counterparty;
+  const dispute = own === undefined && theirs === undefined ? undefined
+    : own === undefined || theirs === undefined || !own.hanko || !theirs.hanko || !own.hash || !own.proofBodyHash || lower(own.hash) !== lower(theirs.hash) || lower(own.proofBodyHash) !== lower(theirs.proofBodyHash)
+      || own.proofNonce !== theirs.proofNonce || own.proposerIsLeft !== theirs.proposerIsLeft || typeof own.proposerIsLeft !== "boolean" ? ("bilateral-dispute-uncertified" as const)
+      : !isWord(own.hash) || !isWord(own.proofBodyHash) || !Number.isSafeInteger(own.proofNonce) || own.proofNonce < 0 ? ("certified-dispute-invalid" as const)
+        : { hash: lower(own.hash), proofBodyHash: lower(own.proofBodyHash), proofNonce: own.proofNonce, proposerIsLeft: own.proposerIsLeft };
+  if (typeof dispute === "string") return ok({ hashes: [], marker: marker(dispute) });
+  return map(counterpartyProposer(state, c, peer), (route): RefreshDraft => {
+    if (route === null) return { hashes: [], marker: marker("output-route-unavailable") };
+    const context = `board-hanko-refresh:${a.jHeight}:${a.logIndex}:${peer}`, { domain, disputeConfig } = c.state.terms;
+    const data: AccountPeerInput = {
+      kind: "board_hanko_refresh", fromEntityId: state.id, toEntityId: peer, domain, disputeConfig, height: cur.height, frameHash, frameHanko: pendingHanko(frameHash),
+      boardActivationJHeight: a.jHeight, boardActivationLogIndex: a.logIndex, ...opt("disputeHanko", dispute === undefined ? undefined : { ...dispute, hanko: pendingHanko(dispute.hash) }),
+    };
+    return {
+      output: { to: peer, tx: { type: "accountInput", data } },
+      hashes: [{ hash: frameHash, type: "accountFrame", context: `${context}:frame` }, ...(dispute === undefined ? [] : [{ hash: dispute.hash, type: "dispute", context: `${context}:dispute` } as const])],
+      marker: marker("issued", { height: Number(cur.height), frameHash }),
+    };
+  });
+};
+/**
+ * og processBoardHankoRefreshHook: at most MAX_BOARD_HANKO_REFRESHES_PER_FRAME Accounts still needing this activation's refresh, after the cursor
+ * in id order, each re-marked; the hook re-arms now for the next batch, or in BOARD_HANKO_REFRESH_RETRY_MS while a route is unavailable.
+ */
+const boardRefreshHook = (run: HookRun, hook: Extract<ScheduledHook, { type: "board_hanko_refresh" }>, now: number): Result<HookRun, EntityError> => {
+  const a: Activation = { jHeight: hook.data.activationJHeight, logIndex: hook.data.activationLogIndex }, after = lower(hook.data.afterCounterpartyId);
+  const pending = [...run.accountReplicas].map(([peer, c]) => [lower(peer), peer, c] as const).filter(([id, , c]) => id > after && needsBoardRefresh(c, a)).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
+  const batch = pending.slice(0, MAX_BOARD_HANKO_REFRESHES_PER_FRAME);
+  return map(traverse(batch, ([, peer, c]) => map(refreshDraft(run.state, peer, c, a), (draft) => ({ peer, c, draft }))), (drafts): HookRun => {
+    const replicas = drafts.reduce((m, { peer, c, draft }) => mapSet(m, peer, withMarker(c, draft.marker)), run.accountReplicas);
+    const hasMore = pending.length > batch.length, retry = drafts.some(({ draft }) => draft.marker?.reason === "output-route-unavailable"), next = batch[batch.length - 1]?.[0] ?? after;
+    const crontab = !hasMore && !retry ? run.crontab : scheduleHook(run.crontab, { id: BOARD_HANKO_REFRESH_HOOK_ID, triggerAt: hasMore ? now : now + BOARD_HANKO_REFRESH_RETRY_MS, type: "board_hanko_refresh",
+      data: { activationJHeight: a.jHeight, activationLogIndex: a.logIndex, afterCounterpartyId: hasMore ? next : "" } });
+    return { ...run, accountReplicas: replicas, crontab, sent: [...run.sent, ...drafts.flatMap(({ draft }) => (draft.output === undefined ? [] : [draft.output]))], hashes: [...run.hashes, ...drafts.flatMap(({ draft }) => draft.hashes)] };
+  });
+};
+/** og boardHankoRefreshEvidence without our own Hankos, which og attaches only after the frame certifies (never inside one frame). */
+const refreshEvidence = (c: AccountReplica, self: EntityId): string => {
+  const cur = currentFrameOf(c), w = c.dispute;
+  return stableJson([String(cur.height), cur.hash, headHankos(c, self)?.peer ?? null, w.counterparty?.hanko ?? null, w.current?.hash ?? null, w.counterparty?.hash ?? null, w.current?.proofBodyHash ?? null,
+    w.counterparty?.proofBodyHash ?? null, w.current?.proofNonce ?? null, w.counterparty?.proofNonce ?? null, w.current?.proposerIsLeft ?? null, w.counterparty?.proposerIsLeft ?? null]);
+};
+/**
+ * og scheduleChangedAccountBoardHankoRefreshes (end of the Entity frame): an Account whose certified frame evidence changed and still needs its
+ * marker's refresh re-arms the refresh hook now, for the latest such activation. A marker-only change never re-arms.
+ */
+export const rearmBoardRefreshes = <D extends Folded>(before: Replicas, d: D, now: number): Result<D, EntityError> => {
+  const due = [...d.accountReplicas].flatMap(([peer, c]): Activation[] => {
+    const m = c.refreshMigration, prev = before.get(peer), a = m === undefined ? undefined : { jHeight: m.activationJHeight, logIndex: m.activationLogIndex };
+    return a === undefined || (prev !== undefined && refreshEvidence(prev, d.state.id) === refreshEvidence(c, d.state.id)) || !needsBoardRefresh(c, a) ? [] : [a];
+  });
+  const latest = due.reduce<Activation | undefined>((best, a) => (best === undefined || a.jHeight > best.jHeight || (a.jHeight === best.jHeight && a.logIndex > best.logIndex) ? a : best), undefined);
+  return latest === undefined ? ok(d) : map(crontabOf(d.state), (c) => ({ ...d, state: withCrontab(d.state, scheduleHook(c, { id: BOARD_HANKO_REFRESH_HOOK_ID, triggerAt: now, type: "board_hanko_refresh",
+    data: { activationJHeight: latest.jHeight, activationLogIndex: latest.logIndex, afterCounterpartyId: "" } })) }));
+};
+/**
+ * og applyCertifiedBoardJEvent's BoardActivated tail (markBoardRotationHankoRefreshesPending): our own activation marks every certified Account
+ * `pending` (clearing a genesis Account's marker) and arms the refresh hook now (cancels it with nothing to refresh); a peer's activation arms
+ * its 24h counterparty deadline hook.
+ */
+const boardActivation = (step: BoardJEventStep, replicas: Replicas, event: Extract<JEvent, { type: "BoardActivated" }>, blockNumber: number, now: number): Result<BoardJEventStep & { readonly accountReplicas: Replicas }, EntityError> => {
+  const state = step.state, jHeight = Number(event.meta?.blockNumber ?? blockNumber), logIndex = Number(event.meta?.logIndex);
+  if (!Number.isSafeInteger(jHeight) || jHeight < 1) return invariant(`BOARD_HANKO_REFRESH_ACTIVATION_HEIGHT_INVALID:${String(event.meta?.blockNumber ?? blockNumber)}`);
+  if (!Number.isSafeInteger(logIndex) || logIndex < 0) return invariant(`BOARD_HANKO_REFRESH_ACTIVATION_LOG_INDEX_INVALID:${String(event.meta?.logIndex)}`);
+  const activated = lower(event.entityId);
+  return chain(crontabOf(state), (crontab) => {
+    if (activated !== lower(state.id)) {
+      const child = replicas.get(activated as EntityId);
+      if (child === undefined || currentFrameOf(child).height < 1n) return ok({ ...step, accountReplicas: replicas });
+      const hook: ScheduledHook = { id: `counterparty-board-hanko-refresh:${activated}:${jHeight}:${logIndex}`, triggerAt: now + COUNTERPARTY_BOARD_HANKO_REFRESH_DEADLINE_MS, type: "counterparty_board_hanko_refresh_deadline",
+        data: { accountId: activated, activationJHeight: jHeight, activationLogIndex: logIndex } };
+      return ok({ state: withCrontab(state, scheduleHook(crontab, hook)), events: [...step.events, status(`⏳ Awaiting current-board Account Hanko refresh from ${activated.slice(-4)} within 24h`)], accountReplicas: replicas });
+    }
+    const marked = [...replicas].flatMap(([peer, c]): [EntityId, AccountReplica][] => (currentFrameOf(c).height >= 1n ? [[peer, withMarker(c, { activationJHeight: jHeight, activationLogIndex: logIndex, reason: "pending" })]]
+      : c.refreshMigration !== undefined ? [[peer, withMarker(c, undefined)]] : []));
+    const accountReplicas = marked.reduce((m, [peer, c]) => mapSet(m, peer, c), replicas);
+    const next = marked.length === 0 ? cancelHook(crontab, BOARD_HANKO_REFRESH_HOOK_ID)
+      : scheduleHook(crontab, { id: BOARD_HANKO_REFRESH_HOOK_ID, triggerAt: now, type: "board_hanko_refresh", data: { activationJHeight: jHeight, activationLogIndex: logIndex, afterCounterpartyId: "" } });
+    return ok({ ...step, state: next === crontab ? state : withCrontab(state, next), accountReplicas });
+  });
 };
 const retryDeadline = (run: HookRun, hook: Extract<ScheduledHook, { type: "dispute_deadline" }>, ms: number, now: number): HookRun =>
   ({ ...run, crontab: scheduleHook(run.crontab, { id: hook.id, triggerAt: now + ms, type: "dispute_deadline", data: { accountId: hook.data.accountId } }) });
@@ -5809,7 +5961,7 @@ const secretAckTimeout = (run: HookRun, hook: Extract<DerivedDeadline, { type: "
   if (queued + run.prepare.size >= J_BATCH_LIMITS.maxDisputeStarts && !run.prepare.has(cp)) return ok(withPaybook(run, { ...paybook, entries: mapSet(paybook.entries, hashlock, { ...route, secretAckDeadlineAt: now + HTLC_SECRET_ACK_TIMEOUT_MS }) }));
   return ok({ ...run, prepare: mapSet(run.prepare, cp, "auto-prepare-dispute-after-secret-ack-timeout") });
 };
-/** og processDueHook. og's board_hanko_refresh hook needs the certified-board registry, which the rewrite does not carry. */
+/** og processDueHook. */
 const dueHook = (run: HookRun, hook: DueHook, now: number, first: string): Result<HookRun, EntityError> => {
   switch (hook.type) {
     case "htlc_timeout": return ok(run.accountReplicas.get(hook.data.accountId as EntityId)?.state.locks.has(hook.data.lockId) ? { ...run, timeouts: [...run.timeouts, hook.data] } : run);
@@ -5817,7 +5969,7 @@ const dueHook = (run: HookRun, hook: DueHook, now: number, first: string): Resul
     case "htlc_secret_ack_timeout": return secretAckTimeout(run, hook, now);
     case "settlement_window": case "watchdog": return ok(run);
     case "hub_rebalance_kick": { const task = run.crontab.tasks.get("hubRebalance"); return ok(task === undefined ? run : { ...run, crontab: { ...run.crontab, tasks: mapSet(run.crontab.tasks, "hubRebalance", { ...task, lastRun: 0 }) } }); }
-    case "board_hanko_refresh": return invariant("SCHEDULED_BOARD_HANKO_REFRESH_NOT_PORTED");
+    case "board_hanko_refresh": return boardRefreshHook(run, hook, now);
     case "counterparty_board_hanko_refresh_deadline": {
       const child = run.accountReplicas.get(hook.data.accountId as EntityId);
       if (child === undefined || currentFrameOf(child).height < 1n) return ok(run);
@@ -5974,7 +6126,8 @@ export const hubRebalance = (d: Folded, now: number, runtimeNow: number, manualB
     });
   });
 };
-export type CrontabRun = Folded & { readonly outputs: readonly WakeOutput[] };
+/** `outputs`: og outputs to this Entity (its collective continuations); `sent`: og outputs to other Entities; `hashes`: og context.hashesToSign. */
+export type CrontabRun = Folded & { readonly outputs: readonly WakeOutput[]; readonly sent: readonly EntityOutput[]; readonly hashes: readonly HashToSign[] };
 /**
  * og executeCrontab at the Entity's timestamp `now`: every due hook (the derived per-payment deadlines and the stored hooks, which are removed
  * as they fire) in (triggerAt, id) order, then the due periodic hubRebalance task (og hubRebalanceHandler, a no-op without a hub config).
@@ -5983,13 +6136,13 @@ export type CrontabRun = Folded & { readonly outputs: readonly WakeOutput[] };
 export const executeCrontab = (state: EntityState, replicas: Replicas, now: number, manualBroadcast = false, runtimeNow = now): Result<CrontabRun, EntityError> => chain(crontabOf(state), (crontab) => {
   const stored = [...crontab.hooks.values()].filter((h) => h.triggerAt <= now), due: readonly DueHook[] = [...derivedDeadlines(state, replicas, now), ...stored].sort(compareDeadlines);
   const first = signerId([...membersOf(state.quorum).keys()][0] ?? "");
-  const start: HookRun = { state, accountReplicas: replicas, crontab: stored.reduce((c, h) => cancelHook(c, h.id), crontab), outputs: [], timeouts: [], prepare: new Map(), finalize: [], broadcast: false };
+  const start: HookRun = { state, accountReplicas: replicas, crontab: stored.reduce((c, h) => cancelHook(c, h.id), crontab), outputs: [], timeouts: [], prepare: new Map(), finalize: [], broadcast: false, sent: [], hashes: [] };
   return chain(foldResult<HookRun, DueHook, EntityError>(due, start, (run, hook) => dueHook(run, hook, now, first)), (run): Result<CrontabRun, EntityError> => {
     const outputs = due.length === 0 ? [] : batchedHookOutputs(run, first, manualBroadcast), task = run.crontab.tasks.get("hubRebalance");
-    if (task === undefined || !task.enabled || now - task.lastRun < task.intervalMs) return ok({ state: withCrontab(run.state, run.crontab), accountReplicas: run.accountReplicas, outputs });
+    if (task === undefined || !task.enabled || now - task.lastRun < task.intervalMs) return ok({ state: withCrontab(run.state, run.crontab), accountReplicas: run.accountReplicas, outputs, sent: run.sent, hashes: run.hashes });
     return map(hubRebalance(run, now, runtimeNow, manualBroadcast), (reb): CrontabRun => {
       const crontabAfter: Crontab = { ...run.crontab, tasks: mapSet(run.crontab.tasks, "hubRebalance", { ...task, lastRun: now }) };
-      return { state: withCrontab(reb.state, crontabAfter), accountReplicas: reb.accountReplicas, outputs: [...outputs, ...reb.outputs] };
+      return { state: withCrontab(reb.state, crontabAfter), accountReplicas: reb.accountReplicas, outputs: [...outputs, ...reb.outputs], sent: run.sent, hashes: run.hashes };
     });
   });
 });
@@ -6001,7 +6154,9 @@ const foldWake = (state: EntityState, replicas: Replicas, w: Extract<EntityTx, {
   chain(checkWake(state, w, Number(ctx.timestamp)), () => chain(executeCrontab(state, replicas, Number(ctx.timestamp)), (run): Result<Draft, EntityError> => {
     const approved = run.outputs.flatMap((o) => o.txs), missing = approved.find((tx) => tx.type === "j_broadcast" || tx.type === "j_abort_sent_batch" || tx.type === "orderbookSweepCrossJurisdiction");
     if (missing !== undefined) return invariant(`${missing.type === "j_broadcast" ? "J_BROADCAST" : missing.type === "j_abort_sent_batch" ? "J_ABORT_SENT_BATCH" : "ORDERBOOK_SWEEP_CROSS_J"}_ENTITY_TX_NOT_PORTED`);
-    return approved.length === 0 ? ok({ state: run.state, accountReplicas: run.accountReplicas, outputs: [] }) : foldNested(run.state, run.accountReplicas, approved as readonly EntityTx[], ctx, "collective");
+    // og returns the crontab's outputs to other Entities and its hashesToSign beside the approved self txs
+    const own = (d: Draft): Draft => { const hashes = [...run.hashes, ...(d.hashes ?? [])]; return { ...d, outputs: [...run.sent, ...d.outputs], ...(hashes.length === 0 ? {} : { hashes }) }; };
+    return map(approved.length === 0 ? ok({ state: run.state, accountReplicas: run.accountReplicas, outputs: [] }) : foldNested(run.state, run.accountReplicas, approved as readonly EntityTx[], ctx, "collective"), own);
   }));
 // ---- og entity/tx/j-events.ts J7 Entity-side dispute effects and tx/dispute-finalize-guards.ts: J batch retirement, nonce sync, the dispute-deadline hook ----
 type BatchRows = { readonly [field: string]: readonly Binary[] };
@@ -6483,9 +6638,12 @@ export const signingBoardHash = (state: EntityState, entityId: string): Result<s
 export type BoardJEventStep = { readonly state: EntityState; readonly events: readonly FrameEvent[] };
 /**
  * og applyCertifiedBoardJEvent (entity/tx/j-events-board.ts) for one finalized board event: the committed registry advances, its new nodes join
- * the Entity's node store and the frame records og's status message.
+ * the Entity's node store and the frame records og's status message; a BoardActivated then takes og's board Hanko refresh effects (boardActivation)
+ * on the Entity's Accounts at the frame time `now`.
  */
-export const applyBoardJEvent = (state: EntityState, event: JEvent, blockNumber: number): Result<BoardJEventStep, EntityError> => {
+export const applyBoardJEvent = (state: EntityState, event: JEvent, blockNumber: number, replicas: Replicas = new Map(), now: bigint = state.timestamp): Result<BoardJEventStep & { readonly accountReplicas: Replicas }, EntityError> =>
+  chain(boardRegistryStep(state, event, blockNumber), (step) => (event.type === "BoardActivated" ? boardActivation(step, replicas, event, blockNumber, Number(now)) : ok({ ...step, accountReplicas: replicas })));
+const boardRegistryStep = (state: EntityState, event: JEvent, blockNumber: number): Result<BoardJEventStep, EntityError> => {
   if (!isBoardEvent(event)) return invariant(`J_EVENT_BOARD_ROUTE_MISMATCH:${event.type}`);
   const j = entityBoardStack(state);
   if (j === undefined) return invariant("CERTIFIED_BOARD_ENTITY_JURISDICTION_MISSING");
@@ -8449,7 +8607,8 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
       // Accounts that received follow-up work (a gateway's forwarded leg, a matcher resolve) join after the directly touched ones.
       const followups = [...settled.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
       const order = [...new Set([...primed, ...(settled.touched ?? []), ...followups])];
-      return ok({ ...folded, draft: { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) } });
+      // og refreshChangedAccountCommitments: after the Account proposals, a changed certified frame re-arms its board Hanko refresh
+      return map(rearmBoardRefreshes(replicas, { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) }, Number(ctx.timestamp)), (draft) => ({ ...folded, draft }));
     });
   }));
 };
@@ -8489,7 +8648,7 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
   return chain(linked, (link): Result<EntityRootAccount, EntityError> => chain(mapErr(committedView(body), (): EntityError => ({ _tag: "account_envelope", target: peer })), (state): Result<EntityRootAccount, EntityError> => ok({
     fromEntity: self, toEntity: peer, status, currentHeight: link.height, nextProofNonce: child.dispute.nextProofNonce, currentFrameHash: link.frame,
     pendingWithdrawals: ZERO_WORD, policyRoot: unwrapOr(mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>()), () => ZERO_WORD), submittedAtByTokenRoot: unwrapOr(submittedAtRoot(body), () => ZERO_WORD), state,
-    committed: { ...opt("publicPinned", child.publicPinned), ...opt("counterpartyBoardHankoRefresh", child.boardRefresh), ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active ?? child.queued) : {}), ...(child._tag === "preparing" ? opt("disputePrepare", child.prepare) : {}) },
+    committed: { ...opt("publicPinned", child.publicPinned), ...opt("boardHankoRefreshMigration", child.refreshMigration), ...opt("counterpartyBoardHankoRefresh", child.boardRefresh), ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active ?? child.queued) : {}), ...(child._tag === "preparing" ? opt("disputePrepare", child.prepare) : {}) },
     ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
   })));
 };
