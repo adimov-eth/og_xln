@@ -12,6 +12,7 @@ import { applyEntityProviderActionCancelled, applyEntityProviderActionExecuted }
 import { applyCertifiedBoardJEvent } from "../../core/entity/tx/j-events-board.ts";
 import { readEntityFrameEventMessages } from "../../core/entity/frame-events.ts";
 import { buildEntityHashesToSign } from "../../core/entity/consensus/input/hanko-witness.ts";
+import { computeEntityProfileHash } from "../../core/entity/profile/profile-descriptor.ts";
 import { resolveEntityCommandBoard } from "../../core/entity/command/index.ts";
 import { computeCanonicalEntityConsensusStateHash, computeEntityAccountValueHash } from "../../core/entity/consensus/state-root.ts";
 import { PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
@@ -311,7 +312,8 @@ describe("EntityProvider actions (og entity/tx/handlers/entity-provider-action.t
         seen.set(verdict, (seen.get(verdict) ?? 0) + 1);
         if (!mine.ok || !ogR.ok || mine.state === undefined) continue;
         if (ogR.value?.hashesToSign !== undefined) {
-          expect(mine.hashes).toEqual(ogR.value.hashesToSign);
+          // og's handler call has no frame: og applyEntityFrame appends the 'profile' hash after the txs (consensus-final.test.ts)
+          expect(((mine.hashes ?? []) as { type: string }[]).filter((h) => h.type !== "profile")).toEqual(ogR.value.hashesToSign);
           expect(mine.jOutputs).toEqual(ogR.value.jOutputs);
         }
         expect(mine.messages).toEqual(readEntityFrameEventMessages(ogS));
@@ -356,8 +358,10 @@ describe("EntityProvider actions (og entity/tx/handlers/entity-provider-action.t
     if (p._tag !== "proposed") throw new Error("phase");
     const action = (p.draft.state.committed["entityProviderActionState"] as any).pending;
     const frameHash = unwrap(hashEntityFrame(p.frame));
-    expect(p.frame.hashesToSign).toEqual(buildEntityHashesToSign(id, 1, frameHash, [{ hash: action.actionHash, type: "entityProviderAction", context: `entityProviderAction:${id.slice(-4)}:entityTransferTokens:nonce:1` }]));
-    expect(p.frame.hashesToSign.length).toBe(2);
+    // og appendFinalProfileHash: the genesis frame also signs the profile descriptor hash (og's genesis profile is all empty text)
+    const profile = computeEntityProfileHash({ entityId: id, entityEncryptionPublicKey: "", profile: { name: "", isHub: false, avatar: "", bio: "", website: "" }, accounts: new Map(), config: { jurisdiction: { ...OG_J, ...EP_J } } } as never);
+    expect(p.frame.hashesToSign).toEqual(buildEntityHashesToSign(id, 1, frameHash, [{ hash: action.actionHash, type: "entityProviderAction", context: `entityProviderAction:${id.slice(-4)}:entityTransferTokens:nonce:1` }, { hash: profile, type: "profile", context: `profile:${profile}` }]));
+    expect(p.frame.hashesToSign.length).toBe(3);
   });
 });
 
@@ -397,7 +401,8 @@ describe("CONTROL board proposal and activation (og entity/tx/handlers/control-b
       seen.add(`${tx.type}:${ogR.ok ? "ok" : ogR.code.split(":")[0]}`);
       if (!f.ok || !ogR.ok) continue;
       expect(f.value.draft.jOutputs).toEqual(ogR.value.jOutputs);
-      expect(f.value.draft.hashes).toEqual(ogR.value.hashesToSign);
+      // og's handler call has no frame: og applyEntityFrame appends the 'profile' hash after the txs (consensus-final.test.ts)
+      expect((f.value.draft.hashes ?? []).filter((h) => h.type !== "profile")).toEqual(ogR.value.hashesToSign ?? []);
       expect((f.value.draft.events ?? []).map((e) => e.message)).toEqual(readEntityFrameEventMessages(ogS));
       seen.add(`consents:${(ogR.value.jOutputs[0].jTxs[0].data.supporterVotes ?? []).length}`);
     }

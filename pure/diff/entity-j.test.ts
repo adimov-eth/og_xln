@@ -126,7 +126,8 @@ describe("entity-j: Entity-level J-batch txs on the committed jBatchState (og en
           expect(myTx).toEqual(ogTx);
           if (myTx.type === "batch") expect(myTx.data.encodedBatch).toBe(ogEncodeJBatch(ogTx.data.batch));
         }
-        expect(d.hashes ?? []).toEqual(ogOut.hashesToSign ?? []);
+        // og's handler call has no frame: og applyEntityFrame appends the 'profile' hash after the txs (consensus-final.test.ts)
+        expect((d.hashes ?? []).filter((h) => h.type !== "profile")).toEqual(ogOut.hashesToSign ?? []);
         // Account latches the abort / clear release (og applyEntityAccountEnvelopeUpdate setRebalanceSubmittedAt)
         const ogSubmitted = [...ogOut.newState.accounts.get(BOB).shadow.rebalance.submittedAtByToken.keys()].sort();
         expect([...(d.accountReplicas.get(BOB)!.state.submittedAt ?? new Map()).keys()].sort()).toEqual(ogSubmitted);

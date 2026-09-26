@@ -8,6 +8,7 @@ import { PersistentEntityAccountMap } from "../../core/entity/state/persistent-a
 import { PersistentEntityCollectionMap } from "../../core/entity/state/persistent-collection-map.ts";
 import { initCrontab } from "../../core/entity/scheduler/index.ts";
 import { buildEntityHashesToSign } from "../../core/entity/consensus/input/hanko-witness.ts";
+import { computeEntityProfileHash } from "../../core/entity/profile/profile-descriptor.ts";
 import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
 import { appendEntityMempoolTransactions } from "../../core/entity/consensus/input/admission.ts";
 import {
@@ -161,7 +162,7 @@ describe("entity-runtime: entity state root commits every og field (H6)", () => 
   test("MATCH: a proposed frame's stateRoot is og's root of the proposal state (height+1, frame timestamp, og crontab default) and its hash is og's frame hash", () => {
     const { og, rw } = committedPair(99);
     const { crontabState: _c, ...rwNoCron } = rw, { crontabState: _o, ...ogNoCron } = og;
-    const r = unwrap(createEntity({ id: lazyId([[A, 1n], [B, 1n]], 2n), jurisdiction: JUR, threshold: 2n, members: new Map([[A, { shares: 1n }], [B, { shares: 1n }]]), committed: rwNoCron, timestamp: 50n, jurisdictionConfig: JCONF }));
+    const r = unwrap(createEntity({ id: lazyId([[A, 1n], [B, 1n]], 2n), jurisdiction: JUR, threshold: 2n, members: new Map([[A, { shares: 1n }], [B, { shares: 1n }]]), committed: rwNoCron, timestamp: 50n, jurisdictionConfig: { ...JCONF, name: ogJurisdiction.name } }));
     const credit: EntityTx = { type: "extendCredit", data: { counterpartyEntityId: CAROL, tokenId: unwrap(tokenId("1")), amount: 5n } }; // no account: og no-op
     const p = unwrap(applyEntityInput(r, txs([credit], 40n), { ...ctx(A), htlc: { profiles: [], encryptionPrivateKey: KEY_PRIV } }));
     const frame = held(p.replica);
@@ -171,7 +172,9 @@ describe("entity-runtime: entity state root commits every og field (H6)", () => 
     const ogTxs = [{ type: "extendCredit", data: { counterpartyEntityId: CAROL, tokenId: 1, amount: 5n } }];
     const ogHash = createEntityFrameHashFromStateRoot("genesis", 1, 50, ogTxs as never, [], r.state.id, frame.stateRoot, frame.authorityRoot, frame.entityContext as never);
     expect(unwrap(hashEntityFrame(frame))).toBe(ogHash);
-    expect(frame.hashesToSign).toEqual(buildEntityHashesToSign(r.state.id, 1, ogHash));
+    // og appendFinalProfileHash: the genesis frame always signs the profile descriptor hash
+    const profile = computeEntityProfileHash(ogState as never);
+    expect(frame.hashesToSign).toEqual(buildEntityHashesToSign(r.state.id, 1, ogHash, [{ hash: profile, type: "profile", context: `profile:${profile}` }]));
   });
 });
 

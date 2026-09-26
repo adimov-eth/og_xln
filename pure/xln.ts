@@ -9249,7 +9249,8 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
     // og finishAuthorityTransitionOnly: a board handover frame primes no Account work and runs no post-tx phases
-    if (handover !== null) return ok(folded);
+    // og finishAuthorityTransitionOnly re-certifies the current profile even when its bytes did not change
+    if (handover !== null) return map(profileHashToSign(state, replicas, folded.draft, true), (draft) => ({ ...folded, draft }));
     // og materializeSettlementContinuation, then drainPostOrderbookAccountWork's settlement approvals, before proposePendingAccountFrames.
     // og applyPostEntityTxPhases: cancels + orderbook matching, then drainPostOrderbookAccountWork.
     return chain(chain(chain(materializeContinuation(folded.draft, ctx, settleQueue(ctx)), (d) => bookPhase(d, ctx.timestamp)), (d) => materializeSettlements(d, ctx)), (settled) => {
@@ -9257,10 +9258,84 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
       const followups = [...settled.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
       const order = [...new Set([...primed, ...(settled.touched ?? []), ...followups])];
       // og refreshChangedAccountCommitments: after the Account proposals, a changed certified frame re-arms its board Hanko refresh
-      return map(rearmBoardRefreshes(replicas, { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) }, Number(ctx.timestamp)), (draft) => ({ ...folded, draft }));
+      return chain(rearmBoardRefreshes(replicas, { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) }, Number(ctx.timestamp)), (draft) => chain(profileHashToSign(state, replicas, draft, false), (withProfile) => ok({ ...folded, draft: withProfile })));
     });
   })));
 };
+// ---- og entity/profile/profile-descriptor.ts: the public profile descriptor; its hash is a 'profile' secondary hash to sign ----
+/** og MAX_ENTITY_PROFILE_DESCRIPTOR_BYTES: LIMITS.MAX_PROFILE_BYTES (1 MiB) minus the fixed route-envelope overhead og measures once. */
+const MAX_PROFILE_DESCRIPTOR_BYTES = 960_602;
+type ProfileCap = { readonly inCapacity: bigint; readonly outCapacity: bigint };
+type RankedCap = { readonly tokenId: string; readonly capacity: ProfileCap; readonly liquidity: bigint };
+type ProfileRow = { readonly counterpartyId: string; readonly domain: Domain; readonly tokenCapacities: Readonly<Record<string, ProfileCap>> };
+/** og floorProfileCapacity: advertised capacities are floored to 1000 (no per-payment leak). */
+const floorProfileCap = (v: bigint): bigint => (v <= 0n ? 0n : v - (v % 1000n));
+const compareTokenText = (l: string, r: string): number => { const a = Number(l), b = Number(r); return Number.isSafeInteger(a) && Number.isSafeInteger(b) && a !== b ? a - b : asc(l, r); };
+/** og rankedLiquidProfileCapacities: deriveDelta from our side, floored, liquid tokens by liquidity desc, at most 16. */
+const rankedCaps = (self: EntityId, child: AccountReplica): readonly RankedCap[] => {
+  const body = child.state, me = isLeft(self, replicaId(child));
+  return [...body.account.deltas].map(([tk, d]): RankedCap => {
+    const out = outCapacity(d, me, holds(body, tk, me)), inn = outCapacity(d, !me, holds(body, tk, !me));
+    return { tokenId: String(tk), capacity: { inCapacity: floorProfileCap(inn), outCapacity: floorProfileCap(out) }, liquidity: inn + out };
+  }).filter((c) => c.liquidity > 0n).sort((l, r) => (l.liquidity === r.liquidity ? compareTokenText(l.tokenId, r.tokenId) : l.liquidity > r.liquidity ? -1 : 1)).slice(0, 16);
+};
+/** og buildEntityProfileDescriptor then computeEntityProfileDescriptorHash. Only pinned Accounts are advertised, at most 100, then extra capacities up to the byte budget. */
+export const entityProfileHash = (state: EntityState, replicas: Replicas): Result<string, EntityError> => {
+  let rows: ProfileRow[] = [], pub: string[] = [], extras: (RankedCap & { readonly counterpartyId: string })[] = [];
+  for (const [peer, child] of replicas) {
+    if (child.publicPinned !== true) continue;
+    const ranked = rankedCaps(state.id, child), [first] = ranked;
+    if (first === undefined) continue;
+    extras.push(...ranked.slice(1).map((c) => ({ counterpartyId: peer, ...c })));
+    rows.push({ counterpartyId: peer, domain: child.state.terms.domain, tokenCapacities: { [first.tokenId]: first.capacity } });
+    if (first.capacity.inCapacity > 0n) pub.push(peer);
+  }
+  if (rows.length > 100) {
+    const liquidity = (r: ProfileRow): bigint => Object.values(r.tokenCapacities).reduce((n, c) => n + c.inCapacity + c.outCapacity, 0n);
+    rows = [...rows].sort((l, r) => { const a = liquidity(l), b = liquidity(r); return a !== b ? (a > b ? -1 : 1) : asc(l.counterpartyId, r.counterpartyId); }).slice(0, 100);
+    const advertised = new Set(rows.map((r) => r.counterpartyId));
+    pub = pub.filter((id) => advertised.has(id)); extras = extras.filter((e) => advertised.has(e.counterpartyId));
+  }
+  rows.sort((l, r) => asc(l.counterpartyId, r.counterpartyId)); pub.sort(asc);
+  extras.sort((l, r) => (l.liquidity === r.liquidity ? asc(l.counterpartyId, r.counterpartyId) || compareTokenText(l.tokenId, r.tokenId) : l.liquidity > r.liquidity ? -1 : 1));
+  const profile = (state.committed["profile"] ?? {}) as { readonly [k: string]: unknown }, hub = state.committed["hubRebalanceConfig"] as { readonly [k: string]: unknown } | undefined;
+  const isHub = profile["isHub"] === true, j = rootConfig(state).jurisdiction, jName = String(j?.name || "").trim(), sectors = profile["sectors"] as readonly unknown[] | undefined;
+  const text = (v: unknown): string => (v === undefined ? "" : String(v));
+  const base = {
+    entityId: lower(state.id), entityEncryptionPublicKey: text(state.committed["entityEncryptionPublicKey"]), name: String(profile["name"] || "").trim(),
+    avatar: text(profile["avatar"]), bio: text(profile["bio"]), website: text(profile["website"]), publicAccounts: pub, accounts: rows,
+    metadata: {
+      isHub, ...(profile["entityKind"] ? { entityKind: profile["entityKind"] } : {}), ...(sectors?.length ? { sectors: [...sectors] } : {}),
+      routingFeePPM: hub?.["routingFeePPM"] ?? 1, baseFee: hub?.["baseFee"] ?? 0n, ...(hub?.["swapTakerFeeBps"] !== undefined ? { swapTakerFeeBps: hub["swapTakerFeeBps"] } : {}),
+      ...(j === undefined || jName === "" ? {} : { jurisdiction: { name: jName, ...(j.chainId !== undefined ? { chainId: j.chainId } : {}), ...(j.entityProviderAddress ? { entityProviderAddress: lower(j.entityProviderAddress) } : {}), ...(j.depositoryAddress ? { depositoryAddress: lower(j.depositoryAddress) } : {}) } }),
+      ...(isHub && hub !== undefined ? {
+        ...(hub["hubName"] ? { hubName: hub["hubName"] } : {}), policyVersion: hub["policyVersion"], ...(hub["rebalanceBaseFee"] !== undefined ? { rebalanceBaseFee: String(hub["rebalanceBaseFee"]) } : {}),
+        rebalanceLiquidityFeeBps: String(hub["rebalanceLiquidityFeeBps"]), rebalanceGasFee: String(hub["rebalanceGasFee"] ?? 0n), rebalanceTimeoutMs: hub["rebalanceTimeoutMs"] ?? 10 * 60 * 1000,
+      } : {}),
+    },
+  };
+  const withExtras = (count: number): Binary => {
+    const byPeer = new Map(base.accounts.map((a) => [a.counterpartyId, { ...a, tokenCapacities: { ...a.tokenCapacities } as Record<string, ProfileCap> }]));
+    for (const e of extras.slice(0, count)) { const row = byPeer.get(e.counterpartyId); if (row !== undefined) row.tokenCapacities[e.tokenId] = e.capacity; }
+    return { ...base, accounts: [...byPeer.values()].map((a) => ({ ...a, tokenCapacities: Object.fromEntries(Object.entries(a.tokenCapacities).sort(([l], [r]) => compareTokenText(l, r))) })) } as unknown as Binary;
+  };
+  const size = (d: Binary): Result<number, EntityError> => map(encodeConsensus(d), (b) => b.byteLength);
+  const full = withExtras(extras.length);
+  return chain(size(full), (fullBytes) => fullBytes <= MAX_PROFILE_DESCRIPTOR_BYTES ? bytesKeccak(full) : chain(size(base as unknown as Binary), (baseBytes) => {
+    if (baseBytes > MAX_PROFILE_DESCRIPTOR_BYTES) return invariant(`ENTITY_PROFILE_REQUIRED_CAPACITY_BUDGET_EXCEEDED:${baseBytes}:${MAX_PROFILE_DESCRIPTOR_BYTES}`);
+    let low = 0, high = extras.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2), bytes = size(withExtras(mid));
+      if (!bytes.ok) return bytes;
+      if (bytes.value <= MAX_PROFILE_DESCRIPTOR_BYTES) low = mid; else high = mid - 1;
+    }
+    return bytesKeccak(withExtras(low));
+  }));
+};
+/** og appendFinalProfileHash / finishAuthorityTransitionOnly: a changed descriptor (always at genesis, always on an authority transition) is re-certified. */
+const profileHashToSign = (before: EntityState, beforeReplicas: Replicas, after: Draft, always: boolean): Result<Draft, EntityError> =>
+  chain(entityProfileHash(after.state, after.accountReplicas), (hash) => chain(always || before.height === 0n ? ok(null) : map(entityProfileHash(before, beforeReplicas), (h): string | null => h), (previous) =>
+    ok(previous === hash ? after : { ...after, hashes: [...(after.hashes ?? []), { hash, type: "profile" as const, context: `profile:${hash}` }] })));
 const EMPTY_COLLECTION = { radix: 16, leafCount: 0, root: ZERO_WORD } as const;
 /** og applyEntityFrame `state.crontabState ??= initCrontab()`: the hubRebalance task at the 1s cadence, no hooks. */
 const DEFAULT_CRONTAB: Binary = { tasks: new Map([["hubRebalance", { method: "hubRebalance", intervalMs: 1000, lastRun: 0, enabled: true, params: {} }]]), hooks: EMPTY_COLLECTION };
