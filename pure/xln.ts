@@ -2124,7 +2124,8 @@ export type BodyError =
   | CrossError
   | Tagged<"unchosen", { hole: Hole }>;
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
-export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
+/** `registeredBoardHash`: og resolveSettlementBoardAuthority -- the source's certified board (the receiver's counterpartyCertifiedBoard); absent, the Verify resolves it. */
+export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number; readonly registeredBoardHash?: string | undefined };
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
 /**
  * Account outputs to the parent Entity (og apply-result outcomes and AccountOutput candidate effects), perspective-free:
@@ -2882,11 +2883,12 @@ const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_tr
           if (pinned !== undefined && (pinned.nonce !== postNonce || pinned.proofBodyHash.toLowerCase() !== bodyHash.toLowerCase() || pinned.disputeHash.toLowerCase() !== disputeHash.toLowerCase() || pinned.proposerIsLeft !== post.proposerIsLeft)) return settleErr("POST_SETTLEMENT_PROOF_PIN_MISMATCH");
           const source = (ctx.byLeft ? a.account.id.left : a.account.id.right) as EntityId;
           if (!exactHanko(post.hanko)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
-          if (!auth.verify(disputeHash, post.hanko, source)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_INVALID");
+          // og verifySettlementHankoHankos: the post-settlement proof admits the previous board's grace (Account.sol:1063); the cooperative settlement Hanko is current-board only (Account.sol:894)
+          if (!auth.verify(disputeHash, post.hanko, source, { ...opt("registeredBoardHash", auth.registeredBoardHash), allowPreviousBoard: true })) return settleErr("POST_SETTLEMENT_PROOF_HANKO_INVALID");
           const executor = w.executorIsLeft === ctx.byLeft, settlementHanko = x.settlementHanko;
           if (executor && settlementHanko !== undefined) return settleErr("SETTLEMENT_EXECUTOR_HANKO_FORBIDDEN");
           if (!executor && !exactHanko(settlementHanko)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_MISSING");
-          if (!executor && settlementHanko !== undefined && !auth.verify(settlementHash, settlementHanko, source)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
+          if (!executor && settlementHanko !== undefined && !auth.verify(settlementHash, settlementHanko, source, { ...opt("registeredBoardHash", auth.registeredBoardHash), allowPreviousBoard: false })) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
           const pinnedOwn = ctx.byLeft ? pinned?.leftHanko : pinned?.rightHanko, ownSettlement = ctx.byLeft ? w.leftHanko : w.rightHanko;
           if (pinnedOwn !== undefined && pinnedOwn.toLowerCase() !== post.hanko.toLowerCase()) return settleErr("POST_SETTLEMENT_PROOF_EQUIVOCATION");
           if (settlementHanko !== undefined && ownSettlement !== undefined && ownSettlement.toLowerCase() !== settlementHanko.toLowerCase()) return settleErr("SETTLEMENT_HANKO_EQUIVOCATION");
@@ -4231,7 +4233,7 @@ const receipt = <R extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAc
     () => mapErr(incomingDeadline(r.state, frame, byLeft, ctx), (v): AccountReplicaError => (v.dispute ? { _tag: "dispute_required", cause: v.error, frame, frameHanko: input.frameHanko } : v.error)));
   return gates.ok ? { _tag: "continue", validated: validated.value } : answered(gates);
 };
-const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify): Verb<ReceivedAccount> => {
+const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify, registeredBoardHash?: string): Verb<ReceivedAccount> => {
   const { frame } = input, onLeft = other(party.left), floor = proofNonceFloor(cur.dispute);
   const evidence = (cause: AccountReplicaError): AccountReplicaError => ({ _tag: "dispute_required", cause, frame, frameHanko: input.frameHanko });
   // og consensus/index.ts classifyIncomingValidationFailure: a stale account-basis hanko for the one unsigned workspace is a plain refusal, not dispute evidence.
@@ -4239,15 +4241,15 @@ const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validat
     const stale = cause._tag === "settlement" ? frame.txs.filter((tx) => { const n = staleHankoNonce(cur.state, tx, cause); return n !== undefined && n.supplied < n.required && n.required === required; }) : [];
     return cause._tag === "settlement" && stale.length === 1 ? { _tag: "stale_settlement_hanko", cause } : evidence(cause);
   };
-  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor }), replayed), ({ draft, view, finalized }) => chain(localProof(view), (frameProof) =>
+  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor, ...opt("registeredBoardHash", registeredBoardHash) }), replayed), ({ draft, view, finalized }) => chain(localProof(view), (frameProof) =>
     chain(mapErr(promoteSettled(cur.dispute, cur.state, draft.state, party.left, finalized), evidence), (witnesses) =>
       map(mapErr(requireDispute(frameProof, witnesses, validated), evidence), () => done<ReceivedAccount, AccountOutput>({ ...cur, _tag: "received", candidate: new Candidate(frame, input.frameHanko, frameProof, draft, floor), disputeHanko: validated, dispute: witnesses }))))));
 };
 const proposalOnOpen = (r: OpenAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ReceivedAccount> =>
-  match(receipt(r, input, ctx), { answered: ({ result }): Verb<OpenAccount | ReceivedAccount> => result, continue: ({ validated }): Verb<OpenAccount | ReceivedAccount> => admitPeerFrame(r, input, ctx.party, validated, ctx.verify) });
+  match(receipt(r, input, ctx), { answered: ({ result }): Verb<OpenAccount | ReceivedAccount> => result, continue: ({ validated }): Verb<OpenAccount | ReceivedAccount> => admitPeerFrame(r, input, ctx.party, validated, ctx.verify, ctx.counterpartyBoard?.boardHash) });
 const proposalOnProposed = (r: ProposedAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => match(receipt(r, input, ctx), {
   answered: ({ result }): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => result,
-  continue: ({ validated }): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => (ctx.party.left ? ok(done(r)) : admitPeerFrame(restore(r), input, ctx.party, validated, ctx.verify)),
+  continue: ({ validated }): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => (ctx.party.left ? ok(done(r)) : admitPeerFrame(restore(r), input, ctx.party, validated, ctx.verify, ctx.counterpartyBoard?.boardHash)),
 });
 const proposalOnReceived = (r: ReceivedAccount, input: AckFrame, ctx: InboundAccountContext): Verb<ReceivedAccount> => match(receipt(r, input, ctx), {
   answered: ({ result }): Verb<ReceivedAccount> => result,
