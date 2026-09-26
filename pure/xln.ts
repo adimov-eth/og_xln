@@ -4581,229 +4581,460 @@ export const htlcEnvelopeHash = (v: unknown): string | null => {
   return bytesToHex(sha256(packed));
 };
 // ---- og HTLC onion: protocol/htlc/{multi-recipient,utils}.ts, codec/{binary,onion,envelope}.ts, pathfinding/{htlc-quote,fees}.ts, payments/delivery.ts ----
+// A multi-hop payment carries an onion: one sealed layer per hop, each readable only by that hop's entity key and
+// bound to the lock it arrived on. A hop learns its next hop and forward amount; the last learns the secret.
 export type OnionError = Tagged<"onion", { code: string }>;
 const onionErr = (code: string): Result<never, OnionError> => err({ _tag: "onion", code });
-const onionTry = <T>(code: string, f: () => T): Result<T, OnionError> => { try { return ok(f()); } catch { return onionErr(code); } };
+const onionTry = <T>(code: string, f: () => T): Result<T, OnionError> => {
+  try {
+    return ok(f());
+  } catch {
+    return onionErr(code);
+  }
+};
+
+// ---- sealing: X25519 key agreement, HKDF-SHA256, AES-256-GCM ----
+const AUTHENTICATION_FAILED = "HTLC_CIPHERTEXT_AUTHENTICATION_FAILED";
 /** og multi-recipient.ts keyBytes: trimmed, optional 0x, 64 hex digits, never all zero. */
 const x25519KeyBytes = (value: string, code: string): Result<Uint8Array, OnionError> => {
-  const t = String(value || "").trim(), body = (t.startsWith("0x") ? t.slice(2) : t).toLowerCase();
+  const t = String(value || "").trim();
+  const body = (t.startsWith("0x") ? t.slice(2) : t).toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(body)) return onionErr(code);
   const bytes = hexToBytes(body);
   return bytes.every((b) => b === 0) ? onionErr(code) : ok(bytes);
 };
 const onionContext = (contextHash: string): Result<Uint8Array, OnionError> => {
   const n = String(contextHash || "").trim().toLowerCase();
-  return /^0x[0-9a-f]{64}$/.test(n) ? ok(utf8(`${HTLC_ENVELOPE_VERSION}:${n}`)) : onionErr("HTLC_ENCRYPTION_CONTEXT_HASH_INVALID");
+  if (!/^0x[0-9a-f]{64}$/.test(n)) return onionErr("HTLC_ENCRYPTION_CONTEXT_HASH_INVALID");
+  return ok(utf8(`${HTLC_ENVELOPE_VERSION}:${n}`));
 };
-const onionAeadKey = (shared: Uint8Array, context: Uint8Array): Result<Uint8Array, OnionError> =>
-  shared.every((b) => b === 0) ? onionErr("HTLC_X25519_LOW_ORDER_SHARED_SECRET") : ok(hkdf(sha256, shared, sha256(utf8(`${HTLC_ENVELOPE_VERSION}:hkdf-salt`)), context, 32));
-const onionNonce = (ephemeral: Uint8Array, recipient: Uint8Array, context: Uint8Array): Uint8Array => sha256(concat([ephemeral, recipient, context])).slice(0, 12);
+const onionAeadKey = (shared: Uint8Array, context: Uint8Array): Result<Uint8Array, OnionError> => {
+  if (shared.every((b) => b === 0)) return onionErr("HTLC_X25519_LOW_ORDER_SHARED_SECRET");
+  const salt = sha256(utf8(`${HTLC_ENVELOPE_VERSION}:hkdf-salt`));
+  return ok(hkdf(sha256, shared, salt, context, 32));
+};
+const onionNonce = (ephemeral: Uint8Array, recipient: Uint8Array, context: Uint8Array): Uint8Array =>
+  sha256(concat([ephemeral, recipient, context])).slice(0, 12);
 const opaqueEnvelope = (ciphertext: string): Result<HtlcEnvelope, OnionError> => {
   const envelope: HtlcEnvelope = { version: HTLC_ENVELOPE_VERSION, ciphertext };
   return htlcEnvelopeHash(envelope) === null ? onionErr("HTLC_OPAQUE_CIPHERTEXT_INVALID") : ok(envelope);
 };
-/** og encryptOpaqueHtlcBytes: ephemeral X25519 to the recipient, HKDF-SHA256 key, AES-256-GCM with the context as AAD; packed ephemeralKey || body || tag. */
-export const encryptOpaqueHtlc = (plaintext: Uint8Array, recipientPublicKey: string, contextHash: string, ephemeralPrivateKey: string): Result<HtlcEnvelope, OnionError> => {
+const envelopeBytes = (envelope: HtlcEnvelope): Uint8Array | null =>
+  (htlcEnvelopeHash(envelope) === null ? null : decodeBase64(envelope.ciphertext));
+/** og encryptOpaqueHtlcBytes: an ephemeral key agreed with the recipient; packed ephemeralKey ‖ body ‖ tag. */
+export const encryptOpaqueHtlc = (
+  plaintext: Uint8Array, recipientPublicKey: string, contextHash: string, ephemeralPrivateKey: string,
+): Result<HtlcEnvelope, OnionError> => {
   if (plaintext.length > MAX_HTLC_BINARY_LAYER_BYTES) return onionErr("HTLC_ENCRYPTION_PLAINTEXT_TOO_LARGE");
-  return chain(x25519KeyBytes(recipientPublicKey, "HTLC_ENTITY_ENCRYPTION_PUBLIC_KEY_INVALID"), (recipient) => chain(x25519KeyBytes(ephemeralPrivateKey, "HTLC_EPHEMERAL_PRIVATE_KEY_INVALID"), (secret) =>
-    chain(onionTry("HTLC_X25519_FAILED", () => ({ pub: x25519.getPublicKey(secret), shared: x25519.getSharedSecret(secret, recipient) })), ({ pub, shared }) => chain(onionContext(contextHash), (context) =>
-      chain(onionAeadKey(shared, context), (key) => opaqueEnvelope(encodeBase64(concat([pub, gcm(key, onionNonce(pub, recipient, context), context).encrypt(plaintext)]))))))));
+  const keys = all({
+    recipient: x25519KeyBytes(recipientPublicKey, "HTLC_ENTITY_ENCRYPTION_PUBLIC_KEY_INVALID"),
+    secret: x25519KeyBytes(ephemeralPrivateKey, "HTLC_EPHEMERAL_PRIVATE_KEY_INVALID"),
+  });
+  return chain(keys, ({ recipient, secret }) => {
+    const exchange = onionTry("HTLC_X25519_FAILED", () => ({
+      ephemeral: x25519.getPublicKey(secret), shared: x25519.getSharedSecret(secret, recipient),
+    }));
+    return chain(exchange, ({ ephemeral, shared }) =>
+      chain(onionContext(contextHash), (context) =>
+        chain(onionAeadKey(shared, context), (key) => {
+          const body = gcm(key, onionNonce(ephemeral, recipient, context), context).encrypt(plaintext);
+          return opaqueEnvelope(encodeBase64(concat([ephemeral, body])));
+        })));
+  });
 };
-/** og decryptOpaqueHtlcBytes: the keypair must match; any AEAD or X25519 failure is HTLC_CIPHERTEXT_AUTHENTICATION_FAILED. */
-export const decryptOpaqueHtlc = (envelope: HtlcEnvelope, entityPublicKey: string, entityPrivateKey: string, contextHash: string): Result<Uint8Array, OnionError> => {
-  const packed = htlcEnvelopeHash(envelope) === null ? null : decodeBase64(envelope.ciphertext);
+/** Any X25519 or low-order failure reads as an authentication failure, so a bad ciphertext reveals nothing more. */
+const openingKey = (priv: Uint8Array, ephemeral: Uint8Array, context: Uint8Array): Result<Uint8Array, OnionError> => {
+  const shared = onionTry(AUTHENTICATION_FAILED, () => x25519.getSharedSecret(priv, ephemeral));
+  const key = chain(shared, (s) => onionAeadKey(s, context));
+  return mapErr(key, (): OnionError => ({ _tag: "onion", code: AUTHENTICATION_FAILED }));
+};
+/** og decryptOpaqueHtlcBytes: the entity keypair must match, and the body must authenticate under the context. */
+export const decryptOpaqueHtlc = (
+  envelope: HtlcEnvelope, entityPublicKey: string, entityPrivateKey: string, contextHash: string,
+): Result<Uint8Array, OnionError> => {
+  const packed = envelopeBytes(envelope);
   if (packed === null) return onionErr("HTLC_OPAQUE_CIPHERTEXT_INVALID");
-  const ephemeral = packed.slice(0, 32), body = packed.slice(32);
-  return chain(x25519KeyBytes(entityPublicKey, "HTLC_ENTITY_ENCRYPTION_PUBLIC_KEY_INVALID"), (pub) => chain(x25519KeyBytes(entityPrivateKey, "HTLC_ENTITY_ENCRYPTION_PRIVATE_KEY_INVALID"), (priv) => {
-    if (bytesToHex(x25519.getPublicKey(priv)) !== bytesToHex(pub)) return onionErr("HTLC_ENTITY_ENCRYPTION_KEYPAIR_MISMATCH");
-    return chain(onionContext(contextHash), (context) => chain(mapErr(chain(onionTry("", () => x25519.getSharedSecret(priv, ephemeral)), (shared) => onionAeadKey(shared, context)), () => ({ _tag: "onion", code: "HTLC_CIPHERTEXT_AUTHENTICATION_FAILED" }) as OnionError),
-      (key) => chain(onionTry("HTLC_CIPHERTEXT_AUTHENTICATION_FAILED", () => gcm(key, onionNonce(ephemeral, pub, context), context).decrypt(body)),
-        (plain) => (plain.length > MAX_HTLC_BINARY_LAYER_BYTES ? onionErr("HTLC_DECRYPTED_PLAINTEXT_TOO_LARGE") : ok(plain)))));
-  }));
+  const ephemeral = packed.slice(0, 32);
+  const body = packed.slice(32);
+  const keys = all({
+    pub: x25519KeyBytes(entityPublicKey, "HTLC_ENTITY_ENCRYPTION_PUBLIC_KEY_INVALID"),
+    priv: x25519KeyBytes(entityPrivateKey, "HTLC_ENTITY_ENCRYPTION_PRIVATE_KEY_INVALID"),
+  });
+  return chain(keys, ({ pub, priv }) => {
+    const keypairMatches = bytesToHex(x25519.getPublicKey(priv)) === bytesToHex(pub);
+    if (!keypairMatches) return onionErr("HTLC_ENTITY_ENCRYPTION_KEYPAIR_MISMATCH");
+    return chain(onionContext(contextHash), (context) =>
+      chain(openingKey(priv, ephemeral, context), (key) => {
+        const cipher = gcm(key, onionNonce(ephemeral, pub, context), context);
+        const opened = onionTry(AUTHENTICATION_FAILED, () => cipher.decrypt(body));
+        return chain(opened, (plain) =>
+          (plain.length > MAX_HTLC_BINARY_LAYER_BYTES ? onionErr("HTLC_DECRYPTED_PLAINTEXT_TOO_LARGE") : ok(plain)));
+      }));
+  });
 };
+
+// ---- layer codec: og codec/{binary,onion}.ts ----
+// A layer is magic `XLON`, version 2, then kind 1 (final: secret, flags, optional note and start time) or kind 2
+// (forward: next hop, amount, and the next layer's packed ciphertext framed as `XLMR`, version 1).
 /** og codec/onion.ts DecodedOnionLayer. */
-export type OnionLayer =
-  | { readonly finalRecipient: true; readonly secret: string; readonly description?: string | undefined; readonly startedAtMs?: number | undefined }
-  | { readonly nextHop: string; readonly innerEnvelope: HtlcEnvelope; readonly forwardAmount: string };
-const ONION_MAGIC = Uint8Array.of(0x58, 0x4c, 0x4f, 0x4e), CIPHERTEXT_MAGIC = Uint8Array.of(0x58, 0x4c, 0x4d, 0x52);
-const beBytes = (value: bigint, width: number): Uint8Array => { const out = new Uint8Array(width); for (let i = width - 1, r = value; i >= 0; i--, r >>= 8n) out[i] = Number(r & 0xffn); return out; };
+export type FinalLayer = Readonly<{
+  finalRecipient: true; secret: string; description?: string | undefined; startedAtMs?: number | undefined;
+}>;
+export type ForwardLayer = Readonly<{ nextHop: string; innerEnvelope: HtlcEnvelope; forwardAmount: string }>;
+export type OnionLayer = FinalLayer | ForwardLayer;
+const ONION_MAGIC = Uint8Array.of(0x58, 0x4c, 0x4f, 0x4e);
+const CIPHERTEXT_MAGIC = Uint8Array.of(0x58, 0x4c, 0x4d, 0x52);
+const ONION_VERSION = 2;
+const LAYER_FINAL = 1;
+const LAYER_FORWARD = 2;
+const FLAG_DESCRIPTION = 1;
+const FLAG_STARTED_AT = 2;
+const beBytes = (value: bigint, width: number): Uint8Array =>
+  Uint8Array.from({ length: width }, (_, i) => Number((value >> BigInt(8 * (width - 1 - i))) & 0xffn));
 const beValue = (bytes: Uint8Array): bigint => bytes.reduce((n, b) => (n << 8n) | BigInt(b), 0n);
-/** og BinaryWriter: big-endian widths, u16-prefixed utf8 text, u32-prefixed bytes, a running size limit. */
+/** og BinaryWriter: every part must encode, and the whole stays within the layer limit. */
 const onionWrite = (parts: readonly (Uint8Array | null)[], code: string): Result<Uint8Array, OnionError> => {
-  if (parts.some((p) => p === null)) return onionErr(code);
-  const out = concat(parts as readonly Uint8Array[]);
+  const encoded = parts.flatMap((p) => (p === null ? [] : [p]));
+  if (encoded.length !== parts.length) return onionErr(code);
+  const out = concat(encoded);
   return out.length > MAX_HTLC_BINARY_LAYER_BYTES ? onionErr(code) : ok(out);
 };
-const u16Text = (s: string): Uint8Array | null => { const b = utf8(s); return b.length > 0xffff ? null : concat([beBytes(BigInt(b.length), 2), b]); };
-const u32Sized = (b: Uint8Array): Uint8Array | null => (b.length > 0xffffffff ? null : concat([beBytes(BigInt(b.length), 4), b]));
-const exactHex = (value: string, width: number): Uint8Array | null => { const t = String(value || "").trim(); return /^0x(?:[0-9a-f]{2})*$/i.test(t) && t.length === 2 + width * 2 ? hexToBytes(t) : null; };
-export const encodeOnionLayer = (layer: OnionLayer): Result<Uint8Array, OnionError> => {
-  const code = "HTLC_ONION_LAYER_TOO_LARGE", head = concat([ONION_MAGIC, Uint8Array.of(2)]);
-  if ("finalRecipient" in layer) {
-    const secret = exactHex(layer.secret, 32);
-    if (secret === null) return onionErr("HTLC_ONION_FINAL_SECRET_INVALID");
-    const { description: note, startedAtMs: at } = layer;
-    if (at !== undefined && (!Number.isSafeInteger(at) || at <= 0)) return onionErr("HTLC_ONION_STARTED_AT_INVALID");
-    return onionWrite([head, Uint8Array.of(1), secret, Uint8Array.of((note !== undefined ? 1 : 0) | (at !== undefined ? 2 : 0)), note === undefined ? new Uint8Array() : u16Text(note), at === undefined ? new Uint8Array() : beBytes(BigInt(at), 8)], code);
-  }
+const u16Text = (s: string): Uint8Array | null => {
+  const b = utf8(s);
+  return b.length > 0xffff ? null : concat([beBytes(BigInt(b.length), 2), b]);
+};
+const u32Sized = (b: Uint8Array): Uint8Array | null =>
+  (b.length > 0xffffffff ? null : concat([beBytes(BigInt(b.length), 4), b]));
+const exactHex = (value: string, width: number): Uint8Array | null => {
+  const t = String(value || "").trim();
+  return /^0x(?:[0-9a-f]{2})*$/i.test(t) && t.length === 2 + width * 2 ? hexToBytes(t) : null;
+};
+const LAYER_TOO_LARGE = "HTLC_ONION_LAYER_TOO_LARGE";
+const layerHead = concat([ONION_MAGIC, Uint8Array.of(ONION_VERSION)]);
+const encodeFinalLayer = (layer: FinalLayer): Result<Uint8Array, OnionError> => {
+  const secret = exactHex(layer.secret, 32);
+  if (secret === null) return onionErr("HTLC_ONION_FINAL_SECRET_INVALID");
+  const { description: note, startedAtMs: at } = layer;
+  if (at !== undefined && (!Number.isSafeInteger(at) || at <= 0)) return onionErr("HTLC_ONION_STARTED_AT_INVALID");
+  const flags = (note !== undefined ? FLAG_DESCRIPTION : 0) | (at !== undefined ? FLAG_STARTED_AT : 0);
+  return onionWrite([
+    layerHead, Uint8Array.of(LAYER_FINAL), secret, Uint8Array.of(flags),
+    note === undefined ? new Uint8Array() : u16Text(note),
+    at === undefined ? new Uint8Array() : beBytes(BigInt(at), 8),
+  ], LAYER_TOO_LARGE);
+};
+const encodeForwardLayer = (layer: ForwardLayer): Result<Uint8Array, OnionError> => {
   const amount = onionTry("HTLC_ONION_FORWARD_AMOUNT_INVALID", () => BigInt(layer.forwardAmount));
-  if (!amount.ok || amount.value <= 0n || amount.value > UINT256_MAX) return onionErr("HTLC_ONION_FORWARD_AMOUNT_INVALID");
-  const packed = htlcEnvelopeHash(layer.innerEnvelope) === null ? null : decodeBase64(layer.innerEnvelope.ciphertext);
+  const inRange = amount.ok && amount.value > 0n && amount.value <= UINT256_MAX;
+  if (!amount.ok || !inRange) return onionErr("HTLC_ONION_FORWARD_AMOUNT_INVALID");
+  const packed = envelopeBytes(layer.innerEnvelope);
   if (packed === null) return onionErr("HTLC_OPAQUE_CIPHERTEXT_INVALID");
-  const inner = u32Sized(packed);
-  return chain(onionWrite([CIPHERTEXT_MAGIC, Uint8Array.of(1), inner], "HTLC_CIPHERTEXT_BINARY_TOO_LARGE"), (ct) => onionWrite([head, Uint8Array.of(2), u16Text(layer.nextHop), beBytes(amount.value, 32), u32Sized(ct)], code));
+  const framed = onionWrite([CIPHERTEXT_MAGIC, Uint8Array.of(1), u32Sized(packed)], "HTLC_CIPHERTEXT_BINARY_TOO_LARGE");
+  return chain(framed, (inner) => onionWrite([
+    layerHead, Uint8Array.of(LAYER_FORWARD), u16Text(layer.nextHop), beBytes(amount.value, 32), u32Sized(inner),
+  ], LAYER_TOO_LARGE));
 };
-/** og BinaryReader: every read is bounded, and the whole input must be consumed. */
-const onionReader = (input: Uint8Array) => {
-  let at = 0;
-  const raw = (n: number): Uint8Array | null => (n > MAX_HTLC_BINARY_LAYER_BYTES || at + n > input.length ? null : input.slice(at, (at += n)));
-  const num = (n: number): number | null => { const b = raw(n); return b === null ? null : Number(beValue(b)); };
-  return { raw, num, done: () => at === input.length, sized: (): Uint8Array | null => { const n = num(4); return n === null ? null : raw(n); } };
+export const encodeOnionLayer = (layer: OnionLayer): Result<Uint8Array, OnionError> =>
+  ("finalRecipient" in layer ? encodeFinalLayer(layer) : encodeForwardLayer(layer));
+/** og BinaryReader: every read is bounded; a read yields its value and where the next one starts. */
+type Read<T> = Readonly<{ value: T; next: number }> | null;
+const readBytes = (input: Uint8Array, at: number, n: number): Read<Uint8Array> =>
+  (n > MAX_HTLC_BINARY_LAYER_BYTES || at + n > input.length ? null : { value: input.slice(at, at + n), next: at + n });
+const readUint = (input: Uint8Array, at: number, n: number): Read<number> => {
+  const b = readBytes(input, at, n);
+  return b === null ? null : { value: Number(beValue(b.value)), next: b.next };
 };
-const fatalUtf8 = (b: Uint8Array): string | null => { try { return new TextDecoder("utf-8", { fatal: true }).decode(b); } catch { return null; } };
+const readSized = (input: Uint8Array, at: number): Read<Uint8Array> => {
+  const n = readUint(input, at, 4);
+  return n === null ? null : readBytes(input, n.next, n.value);
+};
+const fatalUtf8 = (b: Uint8Array): string | null => {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(b);
+  } catch {
+    return null;
+  }
+};
+const readText = (input: Uint8Array, at: number): Read<string> => {
+  const n = readUint(input, at, 2);
+  const b = n === null ? null : readBytes(input, n.next, n.value);
+  const text = b === null ? null : fatalUtf8(b.value);
+  return b === null || text === null ? null : { value: text, next: b.next };
+};
+const startsWith = (bytes: Uint8Array, magic: Uint8Array): boolean =>
+  bytes.length >= magic.length && magic.every((b, i) => bytes[i] === b);
 const decodeOpaqueCiphertext = (bytes: Uint8Array): Result<HtlcEnvelope, OnionError> => {
-  const r = onionReader(bytes), magic = r.raw(4);
-  if (bytes.length > MAX_HTLC_BINARY_LAYER_BYTES || magic === null || magic.some((b, i) => b !== CIPHERTEXT_MAGIC[i]) || r.num(1) !== 1) return onionErr("HTLC_CIPHERTEXT_BINARY_INVALID");
-  const body = r.sized();
-  return body === null || !r.done() ? onionErr("HTLC_CIPHERTEXT_BINARY_INVALID") : opaqueEnvelope(encodeBase64(body));
+  const invalid = onionErr("HTLC_CIPHERTEXT_BINARY_INVALID");
+  const version = startsWith(bytes, CIPHERTEXT_MAGIC) ? readUint(bytes, 4, 1) : null;
+  if (bytes.length > MAX_HTLC_BINARY_LAYER_BYTES || version === null || version.value !== 1) return invalid;
+  const body = readSized(bytes, version.next);
+  return body === null || body.next !== bytes.length ? invalid : opaqueEnvelope(encodeBase64(body.value));
+};
+const LAYER_INVALID = onionErr("HTLC_ONION_LAYER_INVALID");
+const decodeFinalLayer = (bytes: Uint8Array, at: number): Result<OnionLayer, OnionError> => {
+  const secret = readBytes(bytes, at, 32);
+  const flags = secret === null ? null : readUint(bytes, secret.next, 1);
+  const knownFlags = FLAG_DESCRIPTION | FLAG_STARTED_AT;
+  if (secret === null || flags === null || (flags.value & ~knownFlags) !== 0) return LAYER_INVALID;
+  const description = (flags.value & FLAG_DESCRIPTION) !== 0
+    ? readText(bytes, flags.next)
+    : { value: undefined, next: flags.next };
+  if (description === null) return LAYER_INVALID;
+  const started = (flags.value & FLAG_STARTED_AT) !== 0
+    ? readBytes(bytes, description.next, 8)
+    : { value: undefined, next: description.next };
+  if (started === null || started.next !== bytes.length) return LAYER_INVALID;
+  const startedAt = started.value === undefined ? undefined : beValue(started.value);
+  if (startedAt !== undefined && startedAt > BigInt(Number.MAX_SAFE_INTEGER)) return LAYER_INVALID;
+  return ok({
+    finalRecipient: true, secret: bytesToHex(secret.value),
+    ...opt("description", description.value),
+    ...opt("startedAtMs", startedAt === undefined ? undefined : Number(startedAt)),
+  });
+};
+const decodeForwardLayer = (bytes: Uint8Array, at: number): Result<OnionLayer, OnionError> => {
+  const nextHop = readText(bytes, at);
+  const amount = nextHop === null ? null : readBytes(bytes, nextHop.next, 32);
+  const inner = amount === null ? null : readSized(bytes, amount.next);
+  if (nextHop === null || amount === null || inner === null || beValue(amount.value) <= 0n) return LAYER_INVALID;
+  return chain(decodeOpaqueCiphertext(inner.value), (innerEnvelope) => {
+    if (inner.next !== bytes.length) return LAYER_INVALID;
+    return ok({ nextHop: nextHop.value, innerEnvelope, forwardAmount: beValue(amount.value).toString() });
+  });
 };
 export const decodeOnionLayer = (bytes: Uint8Array): Result<OnionLayer, OnionError> => {
-  const bad = onionErr("HTLC_ONION_LAYER_INVALID"), r = onionReader(bytes), magic = r.raw(4);
-  if (bytes.length > MAX_HTLC_BINARY_LAYER_BYTES || magic === null || magic.some((b, i) => b !== ONION_MAGIC[i])) return bad;
-  const version = r.num(1);
-  if (version !== 2) return version === null ? bad : onionErr("HTLC_ONION_LAYER_VERSION_INVALID");
-  const kind = r.num(1), text = (): string | null => { const n = r.num(2), b = n === null ? null : r.raw(n); return b === null ? null : fatalUtf8(b); };
-  if (kind === 1) {
-    const secret = r.raw(32), flags = r.num(1);
-    if (secret === null || flags === null || (flags & ~3) !== 0) return bad;
-    const description = (flags & 1) !== 0 ? text() : undefined, started = (flags & 2) !== 0 ? r.raw(8) : undefined;
-    if (description === null || started === null || (started !== undefined && beValue(started) > BigInt(Number.MAX_SAFE_INTEGER)) || !r.done()) return bad;
-    return ok({ finalRecipient: true, secret: bytesToHex(secret), ...opt("description", description), ...opt("startedAtMs", started === undefined ? undefined : Number(beValue(started))) });
+  if (bytes.length > MAX_HTLC_BINARY_LAYER_BYTES || !startsWith(bytes, ONION_MAGIC)) return LAYER_INVALID;
+  const version = readUint(bytes, 4, 1);
+  if (version === null) return LAYER_INVALID;
+  if (version.value !== ONION_VERSION) return onionErr("HTLC_ONION_LAYER_VERSION_INVALID");
+  switch (readUint(bytes, 5, 1)?.value) {
+    case LAYER_FINAL: return decodeFinalLayer(bytes, 6);
+    case LAYER_FORWARD: return decodeForwardLayer(bytes, 6);
+    default: return LAYER_INVALID;
   }
-  if (kind !== 2) return bad;
-  const nextHop = text(), amount = r.raw(32), inner = nextHop === null || amount === null ? null : r.sized();
-  if (nextHop === null || amount === null || inner === null || beValue(amount) <= 0n) return bad;
-  return chain(decodeOpaqueCiphertext(inner), (innerEnvelope) => (r.done() ? ok({ nextHop, innerEnvelope, forwardAmount: beValue(amount).toString() }) : bad));
 };
-/** og HTLC constants (config/constants.ts) and payments/delivery.ts. */
-export const HTLC_TIMELOCK_DELTA_MS = 10_000, HTLC_REVEAL_DELTA_BLOCKS = 3, HTLC_MIN_FORWARD_TIMELOCK_MS = 20_000, HTLC_MAX_HOPS = 100;
-const ASYNC_PAYMENT_EXPIRY_MS = 24 * 60 * 60 * 1000, ASYNC_PAYMENT_EXPIRY_BLOCKS = Math.ceil(ASYNC_PAYMENT_EXPIRY_MS / 5_000);
+
+// ---- deadlines: og config/constants.ts, payments/delivery.ts ----
+// The source's lock gets the whole window; each forward shortens the timelock by one delta and reveals one step
+// of blocks earlier, so every hop can still claim upstream after its downstream reveals.
+export const HTLC_TIMELOCK_DELTA_MS = 10_000;
+export const HTLC_REVEAL_DELTA_BLOCKS = 3;
+export const HTLC_MIN_FORWARD_TIMELOCK_MS = 20_000;
+export const HTLC_MAX_HOPS = 100;
+const INSTANT_PAYMENT_EXPIRY_MS = 120_000;
+const INSTANT_PAYMENT_EXPIRY_BLOCKS = 50;
+const ASYNC_PAYMENT_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const ASYNC_PAYMENT_EXPIRY_BLOCKS = Math.ceil(ASYNC_PAYMENT_EXPIRY_MS / 5_000);
 export type ConditionalMode = "instant" | "async";
-/** og resolvePaymentDeadlineWindow (callers validate their inputs with toJHeight / toUnixMs): the source's full window; each forward then applies one delta. */
-export const paymentDeadlineWindow = (mode: ConditionalMode, jHeight: number, timestamp: number, totalHops: number): Result<{ readonly baseTimelock: bigint; readonly baseHeight: number }, OnionError> => {
-  const min = totalHops * HTLC_TIMELOCK_DELTA_MS + HTLC_MIN_FORWARD_TIMELOCK_MS, height = jHeight + (mode === "async" ? ASYNC_PAYMENT_EXPIRY_BLOCKS : 50);
-  if (!Number.isSafeInteger(height) || height < 0) return onionErr("PROTOCOL_J_HEIGHT_INVALID");
-  return ok({ baseTimelock: BigInt(timestamp + Math.max(mode === "async" ? ASYNC_PAYMENT_EXPIRY_MS : 120_000, min)), baseHeight: height });
+type DeadlineWindow = Readonly<{ baseTimelock: bigint; baseHeight: number }>;
+/** og resolvePaymentDeadlineWindow (callers validate their inputs with toJHeight / toUnixMs). */
+export const paymentDeadlineWindow = (
+  mode: ConditionalMode, jHeight: number, timestamp: number, totalHops: number,
+): Result<DeadlineWindow, OnionError> => {
+  const isAsync = mode === "async";
+  const baseHeight = jHeight + (isAsync ? ASYNC_PAYMENT_EXPIRY_BLOCKS : INSTANT_PAYMENT_EXPIRY_BLOCKS);
+  if (!Number.isSafeInteger(baseHeight) || baseHeight < 0) return onionErr("PROTOCOL_J_HEIGHT_INVALID");
+  const minimum = totalHops * HTLC_TIMELOCK_DELTA_MS + HTLC_MIN_FORWARD_TIMELOCK_MS;
+  const expiry = Math.max(isAsync ? ASYNC_PAYMENT_EXPIRY_MS : INSTANT_PAYMENT_EXPIRY_MS, minimum);
+  return ok({ baseTimelock: BigInt(timestamp + expiry), baseHeight });
 };
 /** og calculateHopTimelock / calculateHopRevealHeight. */
-export const hopTimelock = (base: bigint, hopIndex: number): bigint => base - BigInt(hopIndex) * BigInt(HTLC_TIMELOCK_DELTA_MS);
-export const hopRevealHeight = (baseHeight: number, hopIndex: number, totalHops: number): number => baseHeight + (totalHops - hopIndex) * HTLC_REVEAL_DELTA_BLOCKS;
+export const hopTimelock = (base: bigint, hopIndex: number): bigint =>
+  base - BigInt(hopIndex) * BigInt(HTLC_TIMELOCK_DELTA_MS);
+export const hopRevealHeight = (baseHeight: number, hopIndex: number, totalHops: number): number =>
+  baseHeight + (totalHops - hopIndex) * HTLC_REVEAL_DELTA_BLOCKS;
+
+// ---- building the onion: og createOnionEnvelopes ----
 /** og computeHtlcEnvelopeContextHash: the fixed binary AAD binding one layer to its lock. */
-export type HtlcEnvelopeContext = { readonly fromEntityId: string; readonly toEntityId: string; readonly domain: Domain; readonly hashlock: string; readonly tokenId: number; readonly amount: bigint; readonly timelock: bigint; readonly revealBeforeHeight: number };
+export type HtlcEnvelopeContext = Readonly<{
+  fromEntityId: string; toEntityId: string; domain: Domain; hashlock: string; tokenId: number;
+  amount: bigint; timelock: bigint; revealBeforeHeight: number;
+}>;
 export const htlcEnvelopeContextHash = (c: HtlcEnvelopeContext): Result<string, OnionError> => {
   const hex = (value: string, width: number, code: string): Result<Uint8Array, OnionError> => {
     const body = /^0[xX]/.test(value) ? value.slice(2) : value;
     return body.length === width * 2 && /^[0-9a-fA-F]*$/.test(body) ? ok(hexToBytes(body)) : onionErr(code);
   };
-  const u64 = (v: number, code: string): Result<Uint8Array, OnionError> => (Number.isSafeInteger(v) && v >= 0 ? ok(beBytes(BigInt(v), 8)) : onionErr(code));
-  const u256 = (v: bigint, code: string): Result<Uint8Array, OnionError> => (v >= 0n && v <= UINT256_MAX ? ok(beBytes(v, 32)) : onionErr(code));
-  return map(traverse([
-    hex(c.fromEntityId.toLowerCase(), 32, "HTLC_CONTEXT_FROM_INVALID"), hex(c.toEntityId.toLowerCase(), 32, "HTLC_CONTEXT_TO_INVALID"), u64(c.domain.chainId, "HTLC_CONTEXT_CHAIN_INVALID"),
-    hex(c.domain.depositoryAddress.toLowerCase(), 20, "HTLC_CONTEXT_DEPOSITORY_INVALID"), hex(c.hashlock.toLowerCase(), 32, "HTLC_CONTEXT_HASHLOCK_INVALID"), u64(c.tokenId, "HTLC_CONTEXT_TOKEN_INVALID"),
-    u256(c.amount, "HTLC_CONTEXT_AMOUNT_INVALID"), u256(c.timelock, "HTLC_CONTEXT_TIMELOCK_INVALID"), u64(c.revealBeforeHeight, "HTLC_CONTEXT_REVEAL_INVALID"),
-  ], (r) => r), (parts) => keccak256Hex(concat([utf8("xln:htlc-envelope-context:binary"), ...parts])));
+  const u64 = (v: number, code: string): Result<Uint8Array, OnionError> =>
+    (Number.isSafeInteger(v) && v >= 0 ? ok(beBytes(BigInt(v), 8)) : onionErr(code));
+  const u256 = (v: bigint, code: string): Result<Uint8Array, OnionError> =>
+    (v >= 0n && v <= UINT256_MAX ? ok(beBytes(v, 32)) : onionErr(code));
+  const fields = [
+    hex(c.fromEntityId.toLowerCase(), 32, "HTLC_CONTEXT_FROM_INVALID"),
+    hex(c.toEntityId.toLowerCase(), 32, "HTLC_CONTEXT_TO_INVALID"),
+    u64(c.domain.chainId, "HTLC_CONTEXT_CHAIN_INVALID"),
+    hex(c.domain.depositoryAddress.toLowerCase(), 20, "HTLC_CONTEXT_DEPOSITORY_INVALID"),
+    hex(c.hashlock.toLowerCase(), 32, "HTLC_CONTEXT_HASHLOCK_INVALID"),
+    u64(c.tokenId, "HTLC_CONTEXT_TOKEN_INVALID"),
+    u256(c.amount, "HTLC_CONTEXT_AMOUNT_INVALID"),
+    u256(c.timelock, "HTLC_CONTEXT_TIMELOCK_INVALID"),
+    u64(c.revealBeforeHeight, "HTLC_CONTEXT_REVEAL_INVALID"),
+  ];
+  const tag = utf8("xln:htlc-envelope-context:binary");
+  return map(traverse(fields, (r) => r), (parts) => keccak256Hex(concat([tag, ...parts])));
 };
 /** og createOnionEnvelopes' lock binding: the source's first-hop lock. */
-export type HtlcEnvelopeBinding = { readonly hashlock: string; readonly tokenId: number; readonly senderLockAmount: bigint; readonly timelock: bigint; readonly revealBeforeHeight: number };
+export type HtlcEnvelopeBinding = Readonly<{
+  hashlock: string; tokenId: number; senderLockAmount: bigint; timelock: bigint; revealBeforeHeight: number;
+}>;
 /** og route loop rule: unique entities, or a self route with at least two unique intermediates not the source. */
 const routeLoopFree = (route: readonly string[]): boolean => {
+  if (route[0] !== route[route.length - 1]) return new Set(route).size === route.length;
   const inner = route.slice(1, -1);
-  return route[0] === route[route.length - 1] ? inner.length >= 2 && new Set(route).size === route.length - 1 && new Set(inner).size === inner.length : new Set(route).size === route.length;
+  return inner.length >= 2 && new Set(route).size === route.length - 1 && new Set(inner).size === inner.length;
 };
 /**
- * og createOnionEnvelopes: the final layer carries the secret (plus note and start time), each earlier hop wraps {nextHop, innerEnvelope, forwardAmount};
- * layer i is encrypted to route[i] under the context of the lock route[i-1] -> route[i] and the proposer's ephemeral key `ephemeralAt(i)`.
+ * og createOnionEnvelopes: the final layer carries the secret (plus note and start time); each earlier hop wraps
+ * {nextHop, innerEnvelope, forwardAmount}. Layer i is sealed to route[i] under the context of the lock
+ * route[i-1] → route[i], with the proposer's ephemeral key `ephemeralAt(i)`.
  */
 export const createOnionEnvelopes = (
-  route: readonly string[], secret: string, keys: ReadonlyMap<string, string>, domains: readonly Domain[], forwards: ReadonlyMap<string, bigint>,
-  description: string | undefined, startedAtMs: number | undefined, binding: HtlcEnvelopeBinding, ephemeralAt: (hopIndex: number) => string,
+  route: readonly string[], secret: string, keys: ReadonlyMap<string, string>, domains: readonly Domain[],
+  forwards: ReadonlyMap<string, bigint>, description: string | undefined, startedAtMs: number | undefined,
+  binding: HtlcEnvelopeBinding, ephemeralAt: (hopIndex: number) => string,
 ): Result<HtlcEnvelope, OnionError> => {
-  if (route.length < 2 || route.length - 1 > HTLC_MAX_HOPS || !routeLoopFree(route)) return onionErr("HTLC_ONION_ROUTE_INVALID");
+  const routable = route.length >= 2 && route.length - 1 <= HTLC_MAX_HOPS && routeLoopFree(route);
+  if (!routable) return onionErr("HTLC_ONION_ROUTE_INVALID");
   if (domains.length !== route.length - 1) return onionErr("HTLC_ACCOUNT_DOMAIN_COUNT_MISMATCH");
   const contextAt = (i: number): Result<string, OnionError> => {
     const inbound = i === 1 ? binding.senderLockAmount : forwards.get(route[i - 1] ?? "");
-    if (inbound === undefined) return onionErr("HTLC_ONION_INBOUND_AMOUNT_MISSING");
-    return htlcEnvelopeContextHash({ fromEntityId: route[i - 1] ?? "", toEntityId: route[i] ?? "", domain: domains[i - 1] as Domain, hashlock: binding.hashlock, tokenId: binding.tokenId, amount: inbound,
-      timelock: binding.timelock - BigInt(i - 1) * BigInt(HTLC_TIMELOCK_DELTA_MS), revealBeforeHeight: binding.revealBeforeHeight - (i - 1) * HTLC_REVEAL_DELTA_BLOCKS });
+    const domain = domains[i - 1];
+    if (inbound === undefined || domain === undefined) return onionErr("HTLC_ONION_INBOUND_AMOUNT_MISSING");
+    return htlcEnvelopeContextHash({
+      fromEntityId: route[i - 1] ?? "", toEntityId: route[i] ?? "", domain,
+      hashlock: binding.hashlock, tokenId: binding.tokenId, amount: inbound,
+      timelock: hopTimelock(binding.timelock, i - 1),
+      revealBeforeHeight: binding.revealBeforeHeight - (i - 1) * HTLC_REVEAL_DELTA_BLOCKS,
+    });
   };
   const sealAt = (i: number, layer: OnionLayer): Result<HtlcEnvelope, OnionError> => {
     const key = keys.get(route[i] ?? "");
-    return key === undefined || key === "" ? onionErr("HTLC_ONION_KEY_MISSING") : chain(encodeOnionLayer(layer), (bytes) => chain(contextAt(i), (context) => encryptOpaqueHtlc(bytes, key, context, ephemeralAt(i))));
+    if (key === undefined || key === "") return onionErr("HTLC_ONION_KEY_MISSING");
+    return chain(encodeOnionLayer(layer), (bytes) =>
+      chain(contextAt(i), (context) => encryptOpaqueHtlc(bytes, key, context, ephemeralAt(i))));
+  };
+  const wrapAt = (inner: HtlcEnvelope, i: number): Result<HtlcEnvelope, OnionError> => {
+    const forward = forwards.get(route[i] ?? "");
+    if (forward === undefined) return onionErr("HTLC_ONION_FORWARD_AMOUNT_MISSING");
+    return sealAt(i, { nextHop: route[i + 1] ?? "", innerEnvelope: inner, forwardAmount: forward.toString() });
   };
   const last = route.length - 1;
-  const final = sealAt(last, { finalRecipient: true, secret, ...(description ? { description } : {}), ...opt("startedAtMs", startedAtMs) });
-  return chain(final, (sealed) => foldResult(Array.from({ length: last - 1 }, (_, k) => last - 1 - k), sealed, (inner, i) => {
-    const forward = forwards.get(route[i] ?? "");
-    return forward === undefined ? onionErr("HTLC_ONION_FORWARD_AMOUNT_MISSING") : sealAt(i, { nextHop: route[i + 1] ?? "", innerEnvelope: inner, forwardAmount: forward.toString() });
-  }));
+  const finalLayer: FinalLayer = {
+    finalRecipient: true, secret, ...opt("description", description || undefined), ...opt("startedAtMs", startedAtMs),
+  };
+  const intermediariesInward = Array.from({ length: last - 1 }, (_, k) => last - 1 - k);
+  return chain(sealAt(last, finalLayer), (sealed) => foldResult(intermediariesInward, sealed, wrapAt));
 };
+
+// ---- quoting: og pathfinding/{htlc-quote,fees}.ts ----
+// Walking back from the recipient, each intermediary must receive enough that, after its fee, it forwards what the
+// next hop needs. The fee is its base plus a ppm rate that rises with how much of its lane is already used.
 /** og gossip Profile fields the HTLC router reads (pathfinding/htlc-quote.ts RoutingProfile). */
-export type RoutingAccount = { readonly counterpartyId: string; readonly domain: Domain; readonly tokenCapacities: ReadonlyMap<number, { readonly inCapacity: bigint; readonly outCapacity: bigint }> };
-export type RoutingProfile = { readonly entityId: string; readonly accounts: readonly RoutingAccount[]; readonly entityEncryptionPublicKey: string; readonly metadata: { readonly routingFeePPM?: number | undefined; readonly baseFee?: bigint | undefined } };
+type TokenCapacity = Readonly<{ inCapacity: bigint; outCapacity: bigint }>;
+export type RoutingAccount = Readonly<{
+  counterpartyId: string; domain: Domain; tokenCapacities: ReadonlyMap<number, TokenCapacity>;
+}>;
+export type RoutingProfile = Readonly<{
+  entityId: string; accounts: readonly RoutingAccount[]; entityEncryptionPublicKey: string;
+  metadata: Readonly<{ routingFeePPM?: number | undefined; baseFee?: bigint | undefined }>;
+}>;
 /** og buildRoutingProfileIndex + lookupUniqueRoutingProfile: exactly one Profile per (lowercased) entity. */
 export type RoutingIndex = ReadonlyMap<string, readonly RoutingProfile[]>;
-export const routingIndex = (profiles: readonly RoutingProfile[]): RoutingIndex => {
-  const index = new Map<string, RoutingProfile[]>();
-  for (const p of profiles) { const id = p.entityId.toLowerCase(); index.set(id, [...(index.get(id) ?? []), p]); }
-  return index;
-};
+export const routingIndex = (profiles: readonly RoutingProfile[]): RoutingIndex =>
+  Map.groupBy(profiles, (p) => p.entityId.toLowerCase());
 export const uniqueProfile = (index: RoutingIndex, entity: string): Result<RoutingProfile, OnionError> => {
-  const id = entity.toLowerCase(), found = index.get(id) ?? [];
-  return found.length === 1 ? ok(found[0] as RoutingProfile) : onionErr(`HTLC_PAYMENT_PROFILE_MATCH_COUNT:${id}:${found.length}`);
+  const id = entity.toLowerCase();
+  const found = index.get(id) ?? [];
+  const [only] = found;
+  const matchCount = `HTLC_PAYMENT_PROFILE_MATCH_COUNT:${id}:${found.length}`;
+  if (found.length !== 1 || only === undefined) return onionErr(matchCount);
+  return ok(only);
 };
 const MAX_ROUTING_FEE_PPM = 999_999;
-/** og pathfinding/fees.ts sanitizeFeePPM / calculateDirectionalFeePPM: +50% at most, in 5% utilization buckets. */
-const sanitizeFeePpm = (raw: unknown, fallback = 1): number => { const n = Number(raw); if (!Number.isFinite(n)) return fallback; const v = Math.floor(n); return v < 0 ? 0 : v > MAX_ROUTING_FEE_PPM ? MAX_ROUTING_FEE_PPM : v; };
-export const directionalFeePpm = (basePpm: number, outCapacity: bigint, inCapacity: bigint): number => {
-  const base = sanitizeFeePpm(basePpm, 1), out = outCapacity < 0n ? 0n : outCapacity, inn = inCapacity < 0n ? 0n : inCapacity, sum = out + inn;
-  if (sum <= 0n) return base;
-  const util = ((((sum - out) * 1_000_000n) / sum > 500_000n ? 500_000n : ((sum - out) * 1_000_000n) / sum) / 50_000n) * 50_000n;
-  return Math.min(MAX_ROUTING_FEE_PPM, Math.max(0, Math.floor(Number(BigInt(base) + (BigInt(base) * util) / 1_000_000n))));
+/** og sanitizeFeePPM: a whole ppm in [0, 999999]. */
+const sanitizeFeePpm = (raw: unknown, fallback = 1): number => {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const v = Math.floor(n);
+  return v < 0 ? 0 : Math.min(v, MAX_ROUTING_FEE_PPM);
 };
-/** og calculateHtlcForwardAmount: amountIn - (baseFee + floor(amountIn * ppm / 1e6)); the fee must stay below the amount. */
+/** og calculateDirectionalFeePPM: the base rate raised by the lane's used share, capped at 50%, in 5% buckets. */
+export const directionalFeePpm = (basePpm: number, outCapacity: bigint, inCapacity: bigint): number => {
+  const basePpmClean = sanitizeFeePpm(basePpm, 1);
+  const base = BigInt(basePpmClean);
+  const out = floor0(outCapacity);
+  const total = out + floor0(inCapacity);
+  if (total <= 0n) return basePpmClean;
+  const usedPpm = ((total - out) * 1_000_000n) / total;
+  const bucketed = ((usedPpm > 500_000n ? 500_000n : usedPpm) / 50_000n) * 50_000n;
+  const raised = base + (base * bucketed) / 1_000_000n;
+  return Math.min(MAX_ROUTING_FEE_PPM, Math.max(0, Math.floor(Number(raised))));
+};
+const wholePpm = (ppm: number): number => (Number.isFinite(ppm) && ppm >= 0 ? Math.floor(ppm) : 0);
+/** og calculateHtlcForwardAmount: amountIn − (baseFee + ⌊amountIn·ppm/1e6⌋); the fee must stay below it. */
 const htlcForward = (amountIn: bigint, ppm: number, baseFee: bigint): Result<bigint, OnionError> => {
   if (amountIn <= 0n) return onionErr("HTLC_AMOUNT_NOT_POSITIVE");
-  const fee = baseFee + (amountIn * BigInt(Number.isFinite(ppm) && ppm >= 0 ? Math.floor(ppm) : 0)) / 1_000_000n;
+  const fee = baseFee + (amountIn * BigInt(wholePpm(ppm))) / 1_000_000n;
   return fee >= amountIn ? onionErr("HTLC_FEE_EXCEEDS_AMOUNT") : ok(amountIn - fee);
 };
-/** og calculateRequiredInboundForDesiredForward: the least inbound whose forward covers `desired` (doubling, then bisection). */
+/** og calculateRequiredInboundForDesiredForward: the least inbound whose forward covers `desired`. */
 export const requiredInbound = (desired: bigint, feePpm: number, baseFee: bigint): Result<bigint, OnionError> => {
   if (desired <= 0n) return onionErr("HTLC_AMOUNT_NOT_POSITIVE");
-  const ppm = Number.isFinite(feePpm) && feePpm >= 0 ? Math.floor(feePpm) : 0;
+  const ppm = wholePpm(feePpm);
   if (ppm === 0 && baseFee === 0n) return ok(desired);
   const covers = (x: bigint): Result<boolean, OnionError> => map(htlcForward(x, ppm, baseFee), (out) => out >= desired);
-  let low = desired + baseFee, high = low;
-  for (;;) { const c = covers(high); if (!c.ok) return c; if (c.value) break; high *= 2n; }
-  while (low < high) { const mid = (low + high) / 2n, c = covers(mid); if (!c.ok) return c; if (c.value) high = mid; else low = mid + 1n; }
-  return ok(low);
+  // Double until the inbound covers, then bisect down to the least one that does.
+  const growFrom = (high: bigint): Result<bigint, OnionError> =>
+    chain(covers(high), (enough) => (enough ? ok(high) : growFrom(high * 2n)));
+  const bisect = (low: bigint, high: bigint): Result<bigint, OnionError> => {
+    if (low >= high) return ok(low);
+    const mid = (low + high) / 2n;
+    return chain(covers(mid), (enough) => (enough ? bisect(low, mid) : bisect(mid + 1n, high)));
+  };
+  const least = desired + baseFee;
+  return chain(growFrom(least), (high) => bisect(least, high));
 };
-/** og quoteHtlcPaymentRouteWithIndex: walk back from the recipient; each intermediary charges its directional fee over its lane to the next hop. */
-export const quoteHtlcRoute = (index: RoutingIndex, route: readonly string[], tokenId: number, recipientAmount: bigint): Result<{ readonly senderLockAmount: bigint; readonly hopForwardAmounts: ReadonlyMap<string, bigint> }, OnionError> => {
-  const lane = (from: string, to: string): Result<{ readonly out: bigint; readonly in: bigint }, OnionError> => chain(uniqueProfile(index, from), (own) => {
-    const row = own.accounts.find((a) => a.counterpartyId.toLowerCase() === to), cap = row?.tokenCapacities.get(tokenId);
-    if (row !== undefined) return cap === undefined ? onionErr(`HTLC_PAYMENT_PROFILE_TOKEN_NOT_ADVERTISED:${from}:${to}:${tokenId}`) : ok({ out: cap.outCapacity, in: cap.inCapacity });
+type LaneCapacity = Readonly<{ out: bigint; in: bigint }>;
+/** The hop's capacity toward `to`: from its own Profile, else mirrored from the peer's. */
+const laneCapacity = (
+  index: RoutingIndex, tokenId: number, from: string, to: string,
+): Result<LaneCapacity, OnionError> => {
+  const notAdvertised = onionErr(`HTLC_PAYMENT_PROFILE_TOKEN_NOT_ADVERTISED:${from}:${to}:${tokenId}`);
+  return chain(uniqueProfile(index, from), (own) => {
+    const row = own.accounts.find((a) => a.counterpartyId.toLowerCase() === to);
+    if (row !== undefined) {
+      const cap = row.tokenCapacities.get(tokenId);
+      return cap === undefined ? notAdvertised : ok({ out: cap.outCapacity, in: cap.inCapacity });
+    }
     return chain(uniqueProfile(index, to), (peer) => {
-      const mirror = peer.accounts.find((a) => a.counterpartyId.toLowerCase() === from), m = mirror?.tokenCapacities.get(tokenId);
-      return mirror === undefined ? onionErr(`HTLC_PAYMENT_PROFILE_ACCOUNT_MISSING:${from}:${to}`) : m === undefined ? onionErr(`HTLC_PAYMENT_PROFILE_TOKEN_NOT_ADVERTISED:${from}:${to}:${tokenId}`) : ok({ out: m.inCapacity, in: m.outCapacity });
+      const mirror = peer.accounts.find((a) => a.counterpartyId.toLowerCase() === from);
+      if (mirror === undefined) return onionErr(`HTLC_PAYMENT_PROFILE_ACCOUNT_MISSING:${from}:${to}`);
+      const cap = mirror.tokenCapacities.get(tokenId);
+      return cap === undefined ? notAdvertised : ok({ out: cap.inCapacity, in: cap.outCapacity });
     });
   });
-  return map(foldResult(Array.from({ length: Math.max(0, route.length - 2) }, (_, k) => route.length - 2 - k), { inbound: recipientAmount, forwards: new Map<string, bigint>() as ReadonlyMap<string, bigint> }, (acc, i) => {
-    const hop = route[i] ?? "", next = route[i + 1] ?? "";
-    return chain(uniqueProfile(index, hop), (profile) => chain(lane(hop, next), (cap) => {
-      const baseFee = profile.metadata.baseFee ?? 0n;
-      return map(requiredInbound(acc.inbound, directionalFeePpm(sanitizeFeePpm(profile.metadata.routingFeePPM ?? 1, 1), cap.out, cap.in), baseFee < 0n ? 0n : baseFee), (inbound) => ({ inbound, forwards: mapSet(acc.forwards, hop, acc.inbound) }));
-    }));
-  }), (q) => ({ senderLockAmount: q.inbound, hopForwardAmounts: q.forwards }));
+};
+export type RouteQuote = Readonly<{ senderLockAmount: bigint; hopForwardAmounts: ReadonlyMap<string, bigint> }>;
+type QuoteWalk = Readonly<{ inbound: bigint; forwards: ReadonlyMap<string, bigint> }>;
+/** og quoteHtlcPaymentRouteWithIndex. */
+export const quoteHtlcRoute = (
+  index: RoutingIndex, route: readonly string[], tokenId: number, recipientAmount: bigint,
+): Result<RouteQuote, OnionError> => {
+  const chargeHop = (walk: QuoteWalk, i: number): Result<QuoteWalk, OnionError> => {
+    const hop = route[i] ?? "";
+    const next = route[i + 1] ?? "";
+    const quoted = all({ profile: uniqueProfile(index, hop), lane: laneCapacity(index, tokenId, hop, next) });
+    return chain(quoted, ({ profile, lane }) => {
+      const ppm = directionalFeePpm(sanitizeFeePpm(profile.metadata.routingFeePPM ?? 1, 1), lane.out, lane.in);
+      const baseFee = floor0(profile.metadata.baseFee ?? 0n);
+      const forwards = mapSet(walk.forwards, hop, walk.inbound);
+      return map(requiredInbound(walk.inbound, ppm, baseFee), (inbound) => ({ inbound, forwards }));
+    });
+  };
+  const intermediariesInward = Array.from({ length: Math.max(0, route.length - 2) }, (_, k) => route.length - 2 - k);
+  const start: QuoteWalk = { inbound: recipientAmount, forwards: new Map() };
+  const walked = foldResult(intermediariesInward, start, chargeHop);
+  return map(walked, (q) => ({ senderLockAmount: q.inbound, hopForwardAmounts: q.forwards }));
 };
 // ---- og pathfinding/{graph,pathfinding,capacity}.ts: the gossip network graph and the Dijkstra route finder behind htlcPayment route discovery ----
 export type AccountEdge = { readonly from: string; readonly to: string; readonly tokenId: number; readonly capacity: bigint; readonly baseFee: bigint; readonly feePPM: number; readonly disabled: boolean };
