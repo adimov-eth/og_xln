@@ -284,9 +284,10 @@ import { readEntityFrameEvents } from "../../core/entity/frame-events.ts";
 import { ensureEntityCollectionCandidate, getEntityCollectionValueForWrite } from "../../core/entity/state/persistent-collection-map.ts";
 import { crossJurisdictionBookQtyLots } from "../../core/orderbook/cross-j/quantity.ts";
 import { assertRuntimeOutputAuthorization } from "../../core/entity/auth/authorization.ts";
+import { handleCrossJurisdictionBookOrderRemovedEntityTx as ogRemovedAck } from "../../core/entity/tx/handlers/cross-j/book-removal-ack.ts";
 import { routeRemoteCrossJurisdictionBookCancels as ogProcessRoute } from "../../core/entity/tx/handlers/account/orderbook/cancels.ts";
 import {
-  admitBookOrder, bookFillToState, committedCrossOfferEvent, createEntity, crossFillNotice, orderbookFill, removeCrossBookOrder, routeRemoteCancels, runtimeOutputAuthError,
+  admitBookOrder, bookFillToState, bookOrderRemoved, committedCrossOfferEvent, createEntity, crossFillNotice, orderbookFill, removeCrossBookOrder, routeRemoteCancels, runtimeOutputAuthError,
   type Address, type BookHost, type BookHostStep, type CrossFillInstruction, type CrossProgress, type EntityState, type EntityTx,
 } from "../xln.ts";
 import { TERMS } from "../xln_run.ts";
@@ -468,6 +469,27 @@ describe("cross-book: book lifecycle Entity txs", () => {
       bump(kinds, og.ok ? `ok:${(og.value.outputs as unknown[]).length}:${String((og.value.messages as string[]).at(-1)).includes("applied")}` : kindOf(og));
     }
     for (const k of ["ok:0:true", "ok:1:true", "ok:0:false", "CROSS_J_FILL_ROUTE_MISSING"]) expect([k, (kinds.get(k) ?? 0) > 0, [...kinds].join(",")]).toEqual([k, true, [...kinds].join(",")]);
+  });
+
+  test("MATCH: crossJurisdictionBookOrderRemoved at the source hub on 300 random acks (carried progress ahead or behind, terminal mirror, missing offer, hash drift, wrong hub): same state, clear request and halts as og", async () => {
+    const r = rng(0x4e3d), kinds = new Map<string, number>();
+    for (let i = 0; i < 300; i++) {
+      const w = worldOf(r, i, int(r, 15) === 0 ? H2 : H1, "local"), route = w.route;
+      if (int(r, 6) > 0) {
+        const offer = { offerId: route.orderId, giveTokenId: "1", giveTokenDecimals: 6, giveAmount: 1n, wantTokenId: "2", wantTokenDecimals: 18, wantAmount: 1n, maxFee: 0n, minNetReceive: 1n, priceTicks: 1n, makerIsLeft: true, createdHeight: 1, quantizedGive: 1n, quantizedWant: 1n, ...(int(r, 8) > 0 ? { crossJurisdiction: route } : {}) } as unknown as SwapOffer;
+        w.og.accounts = new Map([[U1, { status: "active", state: { swapOffers: new Map([[route.orderId, offer]]) } }]]);
+        (w as { rw: BookHost }).rw = { ...w.rw, accounts: new Map([[U1, { active: true, left: U1, right: H1, offers: new Map([[route.orderId, offer]]), queued: [] }]]) };
+      }
+      const k = int(r, 6), ahead = k === 0 ? applyCrossFill(route, { fillSeq: Math.floor(Number(route.fillSeq ?? 0)) + 1, cumulativeFillRatio: 65_000, fillNumerator: 65_000n, fillDenominator: 65_535n }, T0 - 20) : undefined;
+      const carried: CrossRoute = ahead?.ok ? { ...ahead.value, status: "partially_filled" } : k === 1 ? { ...route, routeHash: "0x" + "ee".repeat(32) } : route;
+      const data = { orderId: route.orderId, sourceEntityId: route.source.entityId, sourceAccountId: int(r, 12) === 0 ? U2 : U1, route: carried, removedAt: T0 - 5, ...(int(r, 3) === 0 ? { reason: "cancel_request" } : {}) };
+      let og: Out<Snap>;
+      try { const res = await ogRemovedAck(ogEnv, w.og, { type: "crossJurisdictionBookOrderRemoved", data } as never, MUT); og = { ok: true, value: ogSnap(res.newState, res.outputs, []) }; } catch (e) { og = { ok: false, message: (e as Error).message }; }
+      const res = bookOrderRemoved(w.rw, data), rw: Out<Snap> = res.ok ? { ok: true, value: stepSnap(res.value) } : rwRun(res);
+      same(`removed ${i}`, og.ok ? og : { ok: false, message: og.message.split(" ")[0]! }, rw.ok ? rw : { ok: false, message: rw.message.split(" ")[0]! });
+      bump(kinds, og.ok ? `ok:${(og.value.outputs as unknown[]).length}` : og.message.split(":")[0]!);
+    }
+    for (const k of ["ok:0", "ok:1", "CROSS_J_BOOK_REMOVAL_ACK_SOURCE_STATE_MISSING", "CROSS_J_BOOK_REMOVAL_ACK_SOURCE_HUB_REQUIRED"]) expect([k, (kinds.get(k) ?? 0) > 0, [...kinds].join(",")]).toEqual([k, true, [...kinds].join(",")]);
   });
 
   test("MATCH: routeRemoteCrossJurisdictionBookCancels on 300 random source hubs (sibling book owner, local book, no mirror, plain offers, wrong hub): same local cancels, removal requests, resolving admissions and halts as og", () => {
