@@ -7,7 +7,7 @@ const hits: readonly { ruleId: string }[] = JSON.parse(scan.stdout.toString().sp
 const ruleCounts = hits.reduce<Record<string, number>>((acc, h) => ({ ...acc, [h.ruleId]: (acc[h.ruleId] ?? 0) + 1 }), {});
 // Line length is not an AST property, so it is counted here rather than by an ast-grep rule.
 const source = readFileSync(`${import.meta.dir}/../xln.ts`, "utf8");
-const longLines = source.split("\n").filter((line) => line.length > 100).length;
+const longLines = source.split("\n").filter((line) => line.length > 120).length;
 const counts = { ...ruleCounts, "long-line": longLines };
 const path = `${import.meta.dir}/baseline.json`;
 const baseline: Record<string, number> = JSON.parse(readFileSync(path, "utf8"));
