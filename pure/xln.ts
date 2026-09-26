@@ -6036,12 +6036,12 @@ type LendingRun = { readonly book: LendingBook | undefined; readonly accountTxs:
  * og applyCommittedLendingFollowup for every tx of the committed frames of one Account input: on a hub (profile.isHub), a lending tx naming this
  * hub moves the committed `lending` book (fund opens a pool, borrow opens a loan and grants the credit line, the grant activates it, repay closes
  * it and revokes the line, the revoke repays the pool, close request / payout close the pool). The returned Account txs are admitted afterwards
- * (og applyLocalAccountEffects). Every og refusal is a plain Error, so it refuses the whole input.
+ * (og applyLocalAccountEffects). Every og refusal is a plain Error, so it refuses the whole input. `timestamp` is the Entity frame time (og state.timestamp).
  */
-export const lendingFollowups = (state: EntityState, replicas: Replicas, peerRaw: string, frames: readonly LendingFrame[], queued: readonly AccountTxTarget[] = []): Result<LendingFollowup, EntityError> => {
+export const lendingFollowups = (state: EntityState, replicas: Replicas, peerRaw: string, frames: readonly LendingFrame[], timestamp: bigint, queued: readonly AccountTxTarget[] = []): Result<LendingFollowup, EntityError> => {
   if (((state.committed["profile"] ?? {}) as { readonly [k: string]: unknown })["isHub"] !== true) return ok({ state, accountTxs: queued });
   const hub = lowerText(state.id), cp = lowerText(peerRaw), child = replicas.get(cp as EntityId), before = lendingBook(state);
-  const steps = frames.flatMap(({ frame, proposer }) => frame.txs.map((tx) => ({ tx, proposer: lowerText(proposer), now: Math.max(Math.floor(Number(frame.timestamp)), Math.floor(Number(state.timestamp))) })));
+  const steps = frames.flatMap(({ frame, proposer }) => frame.txs.map((tx) => ({ tx, proposer: lowerText(proposer), now: Math.max(Math.floor(Number(frame.timestamp)), Math.floor(Number(timestamp))) })));
   return map(foldResult(steps, { book: before, accountTxs: queued }, (run: LendingRun, { tx, proposer, now }): Result<LendingRun, EntityError> => {
     if (!("hubEntityId" in tx) || lowerText(tx.hubEntityId) !== hub) return ok(run);
     if (child === undefined) return invariant(`LENDING_ACCOUNT_MISSING:${peerRaw}`);
@@ -8184,8 +8184,8 @@ const committedSettleFollowups = (d: Draft, peer: EntityId, own: AccountFrame | 
   return settleFollowups(d, peer, [...(own === undefined ? [] : [{ frame: own, proposerIsLeft: mine }]), ...(received === undefined ? [] : [{ frame: received, proposerIsLeft: !mine }])]);
 };
 /** og applyCommittedAccountFrameFollowups, lending half: our frame the peer ACKed, then the peer's frame we signed; the returned Account txs are admitted after. */
-const committedLendingFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: AccountFrame | undefined): Result<Draft, EntityError> =>
-  own === undefined && received === undefined ? ok(d) : map(lendingFollowups(d.state, d.accountReplicas, peer, [...(own === undefined ? [] : [{ frame: own, proposer: d.state.id }]), ...(received === undefined ? [] : [{ frame: received, proposer: peer }])]),
+const committedLendingFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: AccountFrame | undefined, ctx: FoldContext): Result<Draft, EntityError> =>
+  own === undefined && received === undefined ? ok(d) : map(lendingFollowups(d.state, d.accountReplicas, peer, [...(own === undefined ? [] : [{ frame: own, proposer: d.state.id }]), ...(received === undefined ? [] : [{ frame: received, proposer: peer }])], ctx.timestamp),
     (r) => r.accountTxs.reduce(queueReturned, r.state === d.state ? d : { ...d, state: r.state }));
 const htlcFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: { readonly frame: AccountFrame; readonly from: EntityId; readonly to: EntityId; readonly domain: Domain } | undefined, ctx: FoldContext): Result<Draft, EntityError> => {
   const frames: CommittedHtlcFrame[] = [...(own === undefined ? [] : [{ frame: own, viaNewFrame: false }]), ...(received === undefined ? [] : [{ frame: received.frame, viaNewFrame: true }])];
@@ -8736,7 +8736,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const before = replicas.get(peer), pendingOwn = before !== undefined && before._tag === "proposed" ? before.candidate.frame : undefined;
       const ownCommitted = (d: Draft): AccountFrame | undefined => { const after = d.accountReplicas.get(peer); return pendingOwn !== undefined && after !== undefined && after.head.height >= pendingOwn.height ? pendingOwn : undefined; };
       return matchBy("kind", x.data, {
-        ack: () => chain(apply(held), (d) => chain(committedLendingFollowups(d, peer, ownCommitted(d), undefined), (l) => chain(htlcFollowups(l, peer, ownCommitted(d), undefined, ctx), (h) => committedSettleFollowups(h, peer, ownCommitted(d), undefined)))),
+        ack: () => chain(apply(held), (d) => chain(committedLendingFollowups(d, peer, ownCommitted(d), undefined, ctx), (l) => chain(htlcFollowups(l, peer, ownCommitted(d), undefined, ctx), (h) => committedSettleFollowups(h, peer, ownCommitted(d), undefined)))),
         // og routes the standalone peer dispute witness through the same accountInput lane; an unknown Account has no genesis for it (og ACCOUNT_GENESIS_FRAME_REQUIRED).
         dispute: () => apply(held),
         // og board-hanko-refresh.ts: checked against the sender's certified board (certified_board_missing without a record)
@@ -8747,7 +8747,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
             const pending = d.accountReplicas.get(from), frame = pending !== undefined && pending._tag === "received" ? pending.candidate.frame : undefined;
             return chain(answerFrame(d, from, ctx), (answered) => {
               const after = answered.accountReplicas.get(from), installed = frame !== undefined && after !== undefined && after.head.height >= frame.height;
-              return chain(committedLendingFollowups(answered, from, ownCommitted(answered), installed ? frame : undefined), (l) =>
+              return chain(committedLendingFollowups(answered, from, ownCommitted(answered), installed ? frame : undefined, ctx), (l) =>
                 chain(htlcFollowups(l, from, ownCommitted(answered), installed ? { frame, from: i.fromEntityId, to: i.toEntityId, domain: i.domain } : undefined, ctx), (h) => committedSettleFollowups(h, from, ownCommitted(answered), installed ? frame : undefined)));
             });
           }),

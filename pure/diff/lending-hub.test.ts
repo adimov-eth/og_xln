@@ -121,8 +121,7 @@ describe("lending-hub: committed lending followup (og committed-lending-followup
       const withAccount = rng() < 0.95;
       const replicas = new Map(withAccount ? [[peer, rwReplica(hub, peer, rows, mempool)]] : []);
       const state0 = unwrap(createEntity({ id: hub, jurisdiction: JUR, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), committed: { ...(isHub ? { profile: { isHub: true } } : {}), ...(book === undefined ? {} : { lending: cloneBook(book) }) } } as never)).state;
-      const state: EntityState = { ...state0, timestamp: BigInt(ts) };
-      const rw = lendingFollowups(state, replicas as never, peer, frames);
+      const rw = lendingFollowups(state0, replicas as never, peer, frames, BigInt(ts));
       const og: any = { entityId: hub, timestamp: ts, profile: isHub ? { isHub: true } : undefined, accounts: new Map(withAccount ? [[peer, ogReplica(hub, peer, rows, mempool)]] : []), ...(book === undefined ? {} : { lending: cloneBook(book) }) };
       const accountTxs: any[] = [];
       let refused: string | undefined;
@@ -194,10 +193,12 @@ describe("lending-hub: end-to-end lending lifecycle through the Runtime", () => 
     const positionId = `lend-${hex16(0xa1)}`;
     run(ALICE, { type: "lendingOffer", data: { positionId, hubEntityId: BOB, tokenId: T, amount: 500n, termId: "1h", interestBps: 100 } } as EntityTx);
     expect(book().pools.get(positionId)).toMatchObject({ positionId, lenderEntityId: ALICE, tokenId: 1, principalAmount: 500n, availableAmount: 500n, borrowedAmount: 0n, termMs: LENDING_TERM_MS["1h"], status: "open" });
-    const creditBefore = credit(BOB, CAROL), requestId = `borrow-${hex16(0xb2)}`;
+    const creditBefore = credit(BOB, CAROL), borrowAt = now, requestId = `borrow-${hex16(0xb2)}`;
     run(CAROL, { type: "lendingBorrow", data: { requestId, hubEntityId: BOB, tokenId: T, amount: 200n, termId: "1h", maxInterestBps: 500 } } as EntityTx);
     const [loan] = [...book().loans.values()];
     if (loan === undefined) throw new Error("no loan");
+    // og now = max(Account frame time, the hub Entity frame time): Carol frames the borrow at +1, the hub commits it in its own frame at +2
+    expect(loan.openedAt).toBe(Number(borrowAt + 2n));
     expect(loan.loanId).toBe(buildLendingLoanId({ hubEntityId: BOB, borrowerEntityId: CAROL, tokenId: 1, amount: 200n, termId: "1h", openedAt: loan.openedAt, requestId }));
     expect(loan).toMatchObject({ status: "active", principalAmount: 200n, interestAmount: computeLendingInterest(200n, 100), repaymentAmount: 202n, dueAt: loan.openedAt + LENDING_TERM_MS["1h"], positionId });
     expect(book().pools.get(positionId)).toMatchObject({ availableAmount: 300n, borrowedAmount: 200n });
