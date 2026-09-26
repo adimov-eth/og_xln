@@ -1,9 +1,9 @@
 {
-  "long-line": 5945,
-  "no-assign-member": 110,
+  "long-line": 5712,
+  "no-assign-member": 108,
   "no-class": 2,
-  "no-let": 112,
-  "no-loop": 263,
-  "no-mutating-call": 361,
+  "no-let": 110,
+  "no-loop": 259,
+  "no-mutating-call": 360,
   "no-throw": 30
 }
