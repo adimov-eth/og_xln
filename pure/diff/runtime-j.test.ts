@@ -7,8 +7,10 @@ import { computeRuntimePostStateComponentDigests } from "../../core/storage/hash
 import { encodeBoard, hashBoard } from "../../core/entity/factory.ts";
 import { buildJSubmitAttemptId, registerPendingCommittedJOutbox, splitJOutboxForDurableSubmit } from "../../core/runtime/j-submit/j-submit-state.ts";
 import { assertProposeAccountsNowTxAuthorized } from "../../core/runtime/mempool/propose-accounts-now.ts";
+import { buildEntityProviderActionAttemptId } from "../../core/runtime/registration/entity-provider-action-submit-state.ts";
+import { classifyRuntimeJBatchFailure } from "../../core/protocol/errors/failure-taxonomy.ts";
 import {
-  applyRuntime, applyRuntimeTx, createEntity, createRuntime, initJBatch, jSubmitAttemptId, jurisdictionImportRequestHash, replicaKey, runtimeComponentDigests, runtimeView, stableJson,
+  applyRuntime, applyRuntimeTx, classifyJBatchFailure, createEntity, createRuntime, epActionAttemptId, initJBatch, jSubmitAttemptId, jurisdictionImportRequestHash, registerPendingJOutbox, replicaKey, runtimeComponentDigests, runtimeView, splitJOutbox, stableJson,
   type Binary, type EntityId, type EntityReplica, type EntityTx, type ImportConfig, type JInput, type Runtime, type RuntimeTx,
 } from "../xln.ts";
 import { ALICE, TERMS, aliceAddr, bobAddr, unwrap, verifiers } from "../xln_run.ts";
@@ -359,5 +361,77 @@ describe("runtime-j: proposeAccountsNow ingress (og propose-accounts-now.ts)", (
     }
     expect(refused).toBeGreaterThan(30);
     expect(admitted).toBeGreaterThan(30);
+  });
+});
+
+// ---- og j-submit-state.ts splitJOutboxForDurableSubmit / registerPendingCommittedJOutbox, governance-submit-state.ts, failure-taxonomy.ts ----
+describe("runtime-j: durable J outbox split and pending register (og j-submit-state.ts / governance-submit-state.ts)", () => {
+  test("MATCH (randomized): batches, governance proposals and maintenance jTxs split and register identically, across frames", () => {
+    let durable = 0, retried = 0, refused = 0;
+    for (let run = 0; run < 30; run++) {
+      const env = ogEnv();
+      let pending: readonly JInput[] = [];
+      const seen: Record<string, unknown>[] = [];
+      for (let step = 0; step < 10; step++) {
+        const jOutbox = Array.from({ length: 1 + ri(2) }, () => ({ jurisdictionName: pick(["Local", "Local", "Other"]), jTxs: Array.from({ length: 1 + ri(2) }, (): Record<string, unknown> => {
+          const roll = rng(), entityId = pick([ALICE.toLowerCase(), hex(32)]), signerId = pick([aliceAddr.toLowerCase(), aliceAddr.toLowerCase(), bobAddr.toLowerCase(), bobAddr.toLowerCase(), ""]), timestamp = pick([1_700_000_000_000, 1_700_000_060_000]);
+          if (roll < 0.1 && seen.length > 0) { const again = treeClone(pick(seen)); if (rng() < 0.3) (again["data"] as Record<string, unknown>)["encodedBatch"] = "0xdead"; return again; }
+          if (roll < 0.25) return { type: pick(["mint", "debtEnforcement", "entityProviderActivateBoard"]), entityId, data: { signerId }, timestamp };
+          if (roll < 0.45) {
+            const data: Record<string, unknown> = { targetEntityId: entityId, newBoardHash: hex(32), boardEpoch: 1n, actionNonce: BigInt(1 + ri(3)), proposalHash: pick([hex(32), hex(32), hex(32), "0x12"]), supporterVotes: [], signerId };
+            const tx: Record<string, unknown> = { type: "entityProviderProposeControlBoard", entityId, data, timestamp };
+            if (rng() < 0.1) data["runtimeSubmitAttempt"] = { attemptId: hex(32), attemptNumber: 1, attemptedAt: timestamp, eligibleAt: timestamp };
+            return tx;
+          }
+          const batchHash = hex(32), entityNonce = 1 + ri(3), batchGeneration = pick([1, 2, 1, 2, 0]);
+          const data: Record<string, unknown> = { batch: initJBatch().batch, batchHash, encodedBatch: "0x1234", entityNonce, batchGeneration, hankoSignature: "0xab", batchSize: 0, signerId };
+          if (rng() < 0.6) {
+            const attemptNumber = 1 + ri(2), id = jSubmitAttemptId({ jurisdictionName: "Local", entityId, signerId, entityNonce, batchGeneration, batchHash, attemptNumber });
+            data["runtimeSubmitAttempt"] = { attemptId: id.ok && rng() < 0.95 ? id.value : hex(32), attemptNumber, attemptedAt: timestamp, batchGeneration: rng() < 0.95 ? batchGeneration : batchGeneration + 1 };
+          }
+          const tx = { type: "batch", entityId, data, timestamp };
+          seen.push(tx);
+          return tx;
+        }) }));
+        let ogOut: { maintenance: unknown[]; durable: unknown[]; retries: unknown[] } | null = null, ogErr: string | null = null;
+        const before = treeClone(env.infrastructure);
+        try {
+          const split = splitJOutboxForDurableSubmit(treeClone(jOutbox) as never);
+          registerPendingCommittedJOutbox(env as never, split.durable);
+          ogOut = split;
+        } catch (e) { ogErr = ogCode(e); env.infrastructure = before; }
+        const rw = splitJOutbox(jOutbox as unknown as JInput[]);
+        const reg = rw.ok ? registerPendingJOutbox(pending, rw.value.durable) : rw;
+        expect(reg.ok ? null : rwCode(reg)).toBe(ogErr);
+        if (!rw.ok || !reg.ok || ogOut === null) { refused++; continue; }
+        pending = reg.value;
+        durable += rw.value.durable.length; retried += rw.value.retries.length;
+        expect(stableJson(rw.value.maintenance)).toBe(stableJson(ogOut.maintenance));
+        expect(stableJson(rw.value.durable)).toBe(stableJson(ogOut.durable));
+        expect(stableJson(rw.value.retries)).toBe(stableJson(ogOut.retries));
+        expect(stableJson(pending)).toBe(stableJson(env.infrastructure["pendingCommittedJOutbox"] ?? []));
+      }
+    }
+    expect(durable).toBeGreaterThan(20);
+    expect(retried).toBeGreaterThan(20);
+    expect(refused).toBeGreaterThan(20);
+  });
+
+  test("MATCH: the EntityProvider action attempt id is og buildEntityProviderActionAttemptId", () => {
+    for (let i = 0; i < 200; i++) {
+      const id = { jurisdictionName: pick(["Local", " local ", ""]), entityId: pick([hex(32), ""]), signerId: pick([addr(), ""]), actionHash: pick([hex(32), hex(32).toUpperCase().replace("0X", "0x"), "0x12", ""]), actionNonce: pick([1n, 5n, 0n, 1n << 256n]), generation: pick([1, 2, 0, 1.5]), attemptNumber: pick([1, 7, 0]) };
+      let og: string | null = null, ogErr: string | null = null;
+      try { og = buildEntityProviderActionAttemptId(id); } catch (e) { ogErr = ogCode(e); }
+      const rw = epActionAttemptId(id);
+      expect(rwCode(rw)).toBe(ogErr);
+      if (rw.ok) expect(rw.value).toBe(og ?? "");
+    }
+  });
+
+  test("MATCH: J batch failure classification is og classifyRuntimeJBatchFailure", () => {
+    const codes = ["J_SUBMIT_TRANSIENT", "J_SUBMIT_FATAL", "j_submit_fatal", " J_SUBMIT_TRANSIENT ", "RPC", "", "NONCE_TOO_LOW", "E1"];
+    for (const code of codes) for (const message of [undefined, "", "nonce too low", "rpc down"]) {
+      expect(stableJson(classifyJBatchFailure(code, message))).toBe(stableJson(classifyRuntimeJBatchFailure(code, message)));
+    }
   });
 });

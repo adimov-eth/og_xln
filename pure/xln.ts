@@ -8911,7 +8911,7 @@ const canonicalPendingAttempt = (jurisdictionName: string, jTx: JTxRow): Result<
 };
 const attemptFingerprint = (jurisdictionName: string, jTx: Binary): string => stableJson({ jurisdictionName, jTx });
 /** og registerPendingCommittedJOutbox: canonical attempts only, one per attempt id, an exact repeat dropped, a different payload refused. */
-const registerPendingJOutbox = (pending: readonly JInput[], additions: readonly JInput[]): Result<readonly JInput[], RuntimeError> => {
+export const registerPendingJOutbox = (pending: readonly JInput[], additions: readonly JInput[]): Result<readonly JInput[], RuntimeError> => {
   if (additions.length === 0) return ok(pending);
   const known = new Map<string, string>();
   for (const input of pending) for (const jTx of input.jTxs) {
