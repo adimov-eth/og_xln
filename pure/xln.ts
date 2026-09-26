@@ -5319,7 +5319,9 @@ const proposeAccountsNowOk = (state: EntityState, d: Extract<EntityTx, { readonl
 };
 /** Peer Account txs an Entity takes into a received frame: L0 plus the HTLC lock/resolve pair and the collateral request. */
 const entityAcceptsPeerTx = (tx: WireAccountTx): boolean => isL0Tx(tx) || tx.type === "htlc_lock" || tx.type === "htlc_resolve" || tx.type === "request_collateral"
-  || tx.type === "swap_offer" || tx.type === "swap_cancel_request" || tx.type === "swap_resolve";
+  || tx.type === "swap_offer" || tx.type === "swap_cancel_request" || tx.type === "swap_resolve"
+  // og lending: the hub's committed lending followup (committed-lending-followup.ts) consumes them
+  || tx.type === "lending_fund" || tx.type === "lending_borrow_request" || tx.type === "lending_repay" || tx.type === "lending_credit" || tx.type === "lending_close_request" || tx.type === "lending_close_payout";
 /** og DEFAULT_ACCOUNT_TOKEN_IDS (account/config/defaults.ts). */
 const DEFAULT_ACCOUNT_TOKEN_IDS = ["1", "3", "2"] as const;
 /** og TOKEN_REGISTRY decimals (account/utils.ts over DEFAULT_TOKENS + TRON_ONLY_DEFAULT_TOKENS): USDC, WETH, USDT, TRX, SUN. */
@@ -5719,9 +5721,12 @@ export type DerivedDeadline =
   | { readonly id: string; readonly triggerAt: number; readonly type: "htlc_secret_ack_timeout"; readonly data: { readonly hashlock: string; readonly counterpartyEntityId: string } }
   | { readonly id: string; readonly triggerAt: number; readonly type: "lending_overdue"; readonly data: { readonly loanId: string } };
 /** og LendingState (types/finance/lending.ts): the hub's committed `lending` book of pools and loans. */
-type LendingPool = { readonly positionId: string; readonly tokenId: number; readonly borrowedAmount: bigint; readonly availableAmount: bigint; readonly updatedAt: number };
-type LendingLoan = { readonly loanId: string; readonly positionId: string; readonly borrowerEntityId: string; readonly tokenId: number; readonly principalAmount: bigint; readonly dueAt: number; readonly status: string; readonly updatedAt: number };
-type LendingBook = { readonly pools: ReadonlyMap<string, LendingPool>; readonly loans: ReadonlyMap<string, LendingLoan> };
+export type LendingPool = { readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string; readonly tokenId: number; readonly principalAmount: bigint; readonly availableAmount: bigint; readonly borrowedAmount: bigint;
+  readonly interestBps: number; readonly termId: string; readonly termMs: number; readonly createdAt: number; readonly updatedAt: number; readonly status: "open" | "closing" | "closed" };
+export type LendingLoan = { readonly requestId: string; readonly loanId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly lenderEntityId: string; readonly positionId: string; readonly tokenId: number;
+  readonly principalAmount: bigint; readonly interestAmount: bigint; readonly repaymentAmount: bigint; readonly repaidAmount: bigint; readonly interestBps: number; readonly termId: string; readonly termMs: number;
+  readonly openedAt: number; readonly dueAt: number; readonly updatedAt: number; readonly status: "opening" | "active" | "closing" | "repaid" | "defaulted" };
+export type LendingBook = { readonly pools: ReadonlyMap<string, LendingPool>; readonly loans: ReadonlyMap<string, LendingLoan> };
 const lendingBook = (state: EntityState): LendingBook | undefined => {
   const raw = state.committed["lending"] as Partial<LendingBook> | undefined;
   return raw?.pools instanceof Map && raw.loans instanceof Map ? (raw as LendingBook) : undefined;
@@ -6007,7 +6012,110 @@ const lendingOverdue = (run: HookRun, loanId: string, now: number): HookRun => {
     creditLimit: current > loan.principalAmount ? current - loan.principalAmount : 0n } };
   return { ...run, state: { ...run.state, committed: { ...run.state.committed, lending: lending as unknown as Binary } }, accountTxs: [...run.accountTxs, revoke] };
 };
-const dueHook = (run: HookRun, hook: DueHook, now: number, first: string): Result<HookRun, EntityError> => {
+// ---- og tx/handlers/account/committed-lending-followup.ts + committed-lending-close.ts + extensions/lending.ts: the hub's lending book producer ----
+/** og LENDING_TERM_MS. */
+const LENDING_TERM_MS: { readonly [term: string]: number } = { "1h": 3_600_000, "1d": 86_400_000, "1m": 2_592_000_000 };
+/** og computeLendingInterest: a positive rate on a positive principal never rounds to zero. */
+export const lendingInterest = (principal: bigint, bps: number): bigint => {
+  if (principal <= 0n || bps <= 0) return 0n;
+  const raw = (principal * BigInt(bps)) / 10_000n;
+  return raw === 0n ? 1n : raw;
+};
+/** og buildLendingLoanId: `loan-` and 16 hex chars of keccak256 over the `|`-joined request facts. */
+export const lendingLoanId = (i: { readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: number; readonly amount: bigint; readonly termId: string; readonly openedAt: number; readonly requestId?: string | undefined }): string =>
+  `loan-${keccak256Hex(utf8(["loan", i.hubEntityId.toLowerCase(), i.borrowerEntityId.toLowerCase(), i.tokenId, i.amount.toString(), i.termId, i.openedAt, i.requestId ?? ""].map(String).join("|"))).slice(2, 18)}`;
+/** og selectBestLendingPool: the cheapest open pool of the token and term that covers the amount, then the oldest, then the position id. */
+const bestLendingPool = (book: LendingBook, tokenId: number, amount: bigint, termId: string, maxInterestBps: number): LendingPool | undefined =>
+  [...book.pools.values()].filter((p) => p.status === "open" && p.tokenId === tokenId && p.termId === termId && p.availableAmount >= amount && p.interestBps <= maxInterestBps)
+    .sort((a, b) => a.interestBps - b.interestBps || a.createdAt - b.createdAt || stableText(a.positionId, b.positionId))[0];
+/** One committed Account frame and its proposer, as og applyCommittedAccountFrameFollowups sees it. */
+export type LendingFrame = { readonly frame: Pick<AccountFrame, "timestamp" | "txs">; readonly proposer: string };
+export type LendingFollowup = { readonly state: EntityState; readonly accountTxs: readonly AccountTxTarget[] };
+type LendingRun = { readonly book: LendingBook | undefined; readonly accountTxs: readonly AccountTxTarget[] };
+/**
+ * og applyCommittedLendingFollowup for every tx of the committed frames of one Account input: on a hub (profile.isHub), a lending tx naming this
+ * hub moves the committed `lending` book (fund opens a pool, borrow opens a loan and grants the credit line, the grant activates it, repay closes
+ * it and revokes the line, the revoke repays the pool, close request / payout close the pool). The returned Account txs are admitted afterwards
+ * (og applyLocalAccountEffects). Every og refusal is a plain Error, so it refuses the whole input.
+ */
+export const lendingFollowups = (state: EntityState, replicas: Replicas, peerRaw: string, frames: readonly LendingFrame[], queued: readonly AccountTxTarget[] = []): Result<LendingFollowup, EntityError> => {
+  if (((state.committed["profile"] ?? {}) as { readonly [k: string]: unknown })["isHub"] !== true) return ok({ state, accountTxs: queued });
+  const hub = lowerText(state.id), cp = lowerText(peerRaw), child = replicas.get(cp as EntityId), before = lendingBook(state);
+  const steps = frames.flatMap(({ frame, proposer }) => frame.txs.map((tx) => ({ tx, proposer: lowerText(proposer), now: Math.max(Math.floor(Number(frame.timestamp)), Math.floor(Number(state.timestamp))) })));
+  return map(foldResult(steps, { book: before, accountTxs: queued }, (run: LendingRun, { tx, proposer, now }): Result<LendingRun, EntityError> => {
+    if (!("hubEntityId" in tx) || lowerText(tx.hubEntityId) !== hub) return ok(run);
+    if (child === undefined) return invariant(`LENDING_ACCOUNT_MISSING:${peerRaw}`);
+    // og ensureLendingState: the first lending tx naming this hub creates the (committed) book
+    const book: LendingBook = run.book ?? { pools: new Map(), loans: new Map() };
+    const put = (b: LendingBook, out?: AccountTxTarget): Result<LendingRun, EntityError> => ok({ book: b, accountTxs: out === undefined ? run.accountTxs : [...run.accountTxs, out] });
+    const pool = (p: LendingPool): LendingBook => ({ ...book, pools: mapSet(book.pools, p.positionId, p) });
+    const loans = (l: LendingLoan): LendingBook => ({ ...book, loans: mapSet(book.loans, l.loanId, l) });
+    const credit = (tk: TokenId): bigint => projectedHubCredit(child, state.id, cp, run.accountTxs, tk);
+    switch (tx.type) {
+      case "lending_fund": {
+        if (proposer !== lowerText(tx.lenderEntityId) || proposer !== cp) return invariant(`LENDING_FUND_PROPOSER_MISMATCH:${tx.positionId}`);
+        if (book.pools.has(tx.positionId)) return invariant(`LENDING_POSITION_ALREADY_EXISTS:${tx.positionId}`);
+        return put(pool({ positionId: tx.positionId, hubEntityId: hub, lenderEntityId: proposer, tokenId: Number(tx.tokenId), principalAmount: tx.amount, availableAmount: tx.amount, borrowedAmount: 0n,
+          interestBps: tx.interestBps, termId: tx.termId, termMs: LENDING_TERM_MS[tx.termId] as number, createdAt: now, updatedAt: now, status: "open" }));
+      }
+      case "lending_borrow_request": {
+        if (proposer !== lowerText(tx.borrowerEntityId) || proposer !== cp) return invariant(`LENDING_BORROW_PROPOSER_MISMATCH:${tx.requestId}`);
+        const tk = Number(tx.tokenId), p = bestLendingPool(book, tk, tx.amount, tx.termId, tx.maxInterestBps);
+        if (p === undefined) return invariant(`LENDING_LIQUIDITY_UNAVAILABLE:${tx.requestId}`);
+        const loanId = lendingLoanId({ hubEntityId: hub, borrowerEntityId: proposer, tokenId: tk, amount: tx.amount, termId: tx.termId, openedAt: now, requestId: tx.requestId });
+        if (book.loans.has(loanId)) return invariant(`LENDING_LOAN_ALREADY_EXISTS:${loanId}`);
+        const interestAmount = lendingInterest(tx.amount, p.interestBps), drawn = pool({ ...p, availableAmount: p.availableAmount - tx.amount, borrowedAmount: p.borrowedAmount + tx.amount, updatedAt: now });
+        const loan: LendingLoan = { requestId: tx.requestId, loanId, hubEntityId: hub, borrowerEntityId: proposer, lenderEntityId: p.lenderEntityId, positionId: p.positionId, tokenId: tk, principalAmount: tx.amount, interestAmount,
+          repaymentAmount: tx.amount + interestAmount, repaidAmount: 0n, interestBps: p.interestBps, termId: p.termId, termMs: p.termMs, openedAt: now, dueAt: now + p.termMs, updatedAt: now, status: "opening" };
+        return put({ ...drawn, loans: mapSet(drawn.loans, loanId, loan) }, { accountId: proposer, tx: { type: "lending_credit", action: "grant", loanId, hubEntityId: hub, borrowerEntityId: proposer, tokenId: tx.tokenId, creditLimit: credit(tx.tokenId) + tx.amount } });
+      }
+      case "lending_credit": {
+        if (proposer !== hub) return invariant(`LENDING_CREDIT_PROPOSER_MISMATCH:${tx.loanId}`);
+        const loan = book.loans.get(tx.loanId);
+        if (loan === undefined) return invariant(`LENDING_CREDIT_LOAN_MISSING:${tx.loanId}`);
+        if (tx.action === "grant") return loan.status !== "opening" ? invariant(`LENDING_GRANT_STATUS_INVALID:${loan.loanId}:${loan.status}`) : put(loans({ ...loan, status: "active", updatedAt: now }));
+        // og: the overdue settlement already released the pool at the derived deadline; this revoke only lands the credit-line reduction
+        if (loan.status === "defaulted") return put(loans({ ...loan, updatedAt: now }));
+        if (loan.status !== "closing") return invariant(`LENDING_REVOKE_STATUS_INVALID:${loan.loanId}:${loan.status}`);
+        const p = book.pools.get(loan.positionId);
+        if (p === undefined) return invariant(`LENDING_POOL_MISSING_FOR_LOAN:${loan.loanId}`);
+        if (p.borrowedAmount < loan.principalAmount) return invariant(`LENDING_POOL_BORROWED_UNDERFLOW:${p.positionId}`);
+        const repaid = loans({ ...loan, repaidAmount: loan.repaymentAmount, status: "repaid", updatedAt: now });
+        return put({ ...repaid, pools: mapSet(repaid.pools, p.positionId, { ...p, borrowedAmount: p.borrowedAmount - loan.principalAmount, availableAmount: p.availableAmount + loan.repaymentAmount, updatedAt: now }) });
+      }
+      case "lending_repay": {
+        if (proposer !== lowerText(tx.borrowerEntityId) || proposer !== cp) return invariant(`LENDING_REPAY_PROPOSER_MISMATCH:${tx.loanId}`);
+        const loan = book.loans.get(tx.loanId);
+        if (loan === undefined || loan.status !== "active") return invariant(`LENDING_REPAY_LOAN_NOT_ACTIVE:${tx.loanId}`);
+        if (loan.borrowerEntityId !== proposer || loan.tokenId !== Number(tx.tokenId) || tx.amount !== loan.repaymentAmount - loan.repaidAmount) return invariant(`LENDING_REPAYMENT_MISMATCH:${tx.loanId}`);
+        const tk = String(loan.tokenId) as TokenId, current = credit(tk);
+        return put(loans({ ...loan, status: "closing", updatedAt: now }),
+          { accountId: proposer, tx: { type: "lending_credit", action: "revoke", loanId: loan.loanId, hubEntityId: hub, borrowerEntityId: proposer, tokenId: tk, creditLimit: current > loan.principalAmount ? current - loan.principalAmount : 0n } });
+      }
+      case "lending_close_request": {
+        if (proposer !== lowerText(tx.lenderEntityId) || proposer !== cp) return invariant(`LENDING_CLOSE_PROPOSER_MISMATCH:${tx.positionId}`);
+        const p = book.pools.get(tx.positionId);
+        if (p === undefined || p.status !== "open" || p.lenderEntityId !== proposer) return invariant(`LENDING_CLOSE_POSITION_NOT_OPEN:${tx.positionId}`);
+        if (p.borrowedAmount !== 0n) return invariant(`LENDING_CLOSE_ACTIVE_LOANS:${p.positionId}`);
+        if (p.availableAmount === 0n) return put(pool({ ...p, status: "closed", updatedAt: now }));
+        // og getAccountOutCapacity: the hub's outCapacity on the token, 0 without the delta
+        const tk = String(p.tokenId) as TokenId, d = child.state.account.deltas.get(tk), hubIsLeft = lowerText(child.state.account.id.left) === hub;
+        const payout = d === undefined ? 0n : outCapacity(d, hubIsLeft, holds(child.state, tk, hubIsLeft));
+        if (payout < p.availableAmount) return invariant(`LENDING_CLOSE_PAYOUT_CAPACITY: available=${payout} required=${p.availableAmount}`);
+        return put(pool({ ...p, status: "closing", updatedAt: now }), { accountId: proposer, tx: { type: "lending_close_payout", positionId: p.positionId, hubEntityId: hub, lenderEntityId: proposer, tokenId: tk, amount: p.availableAmount } });
+      }
+      case "lending_close_payout": {
+        if (proposer !== hub) return invariant(`LENDING_PAYOUT_PROPOSER_MISMATCH:${tx.positionId}`);
+        const p = book.pools.get(tx.positionId);
+        if (p === undefined || p.status !== "closing") return invariant(`LENDING_PAYOUT_POSITION_NOT_CLOSING:${tx.positionId}`);
+        if (p.lenderEntityId !== lowerText(tx.lenderEntityId) || p.tokenId !== Number(tx.tokenId) || p.availableAmount !== tx.amount) return invariant(`LENDING_PAYOUT_MISMATCH:${tx.positionId}`);
+        return put(pool({ ...p, availableAmount: 0n, status: "closed", updatedAt: now }));
+      }
+      default: return ok(run);
+    }
+  }), (run): LendingFollowup => ({ state: run.book === before ? state : { ...state, committed: { ...state.committed, lending: run.book as unknown as Binary } }, accountTxs: run.accountTxs }));
+};
+const dueHook =(run: HookRun, hook: DueHook, now: number, first: string): Result<HookRun, EntityError> => {
   switch (hook.type) {
     case "htlc_timeout": return ok(run.accountReplicas.get(hook.data.accountId as EntityId)?.state.locks.has(hook.data.lockId) ? { ...run, timeouts: [...run.timeouts, hook.data] } : run);
     case "dispute_deadline": return ok(disputeDeadline(run, hook, now));
@@ -8070,6 +8178,10 @@ const committedSettleFollowups = (d: Draft, peer: EntityId, own: AccountFrame | 
   const mine = isLeft(d.state.id, replicaId(child));
   return settleFollowups(d, peer, [...(own === undefined ? [] : [{ frame: own, proposerIsLeft: mine }]), ...(received === undefined ? [] : [{ frame: received, proposerIsLeft: !mine }])]);
 };
+/** og applyCommittedAccountFrameFollowups, lending half: our frame the peer ACKed, then the peer's frame we signed; the returned Account txs are admitted after. */
+const committedLendingFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: AccountFrame | undefined): Result<Draft, EntityError> =>
+  own === undefined && received === undefined ? ok(d) : map(lendingFollowups(d.state, d.accountReplicas, peer, [...(own === undefined ? [] : [{ frame: own, proposer: d.state.id }]), ...(received === undefined ? [] : [{ frame: received, proposer: peer }])]),
+    (r) => r.accountTxs.reduce(queueReturned, r.state === d.state ? d : { ...d, state: r.state }));
 const htlcFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: { readonly frame: AccountFrame; readonly from: EntityId; readonly to: EntityId; readonly domain: Domain } | undefined, ctx: FoldContext): Result<Draft, EntityError> => {
   const frames: CommittedHtlcFrame[] = [...(own === undefined ? [] : [{ frame: own, viaNewFrame: false }]), ...(received === undefined ? [] : [{ frame: received.frame, viaNewFrame: true }])];
   if (!frames.some(({ frame }) => frame.txs.some((tx) => tx.type === "htlc_lock" || tx.type === "htlc_resolve"))) return ok(d);
@@ -8619,7 +8731,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const before = replicas.get(peer), pendingOwn = before !== undefined && before._tag === "proposed" ? before.candidate.frame : undefined;
       const ownCommitted = (d: Draft): AccountFrame | undefined => { const after = d.accountReplicas.get(peer); return pendingOwn !== undefined && after !== undefined && after.head.height >= pendingOwn.height ? pendingOwn : undefined; };
       return matchBy("kind", x.data, {
-        ack: () => chain(apply(held), (d) => chain(htlcFollowups(d, peer, ownCommitted(d), undefined, ctx), (h) => committedSettleFollowups(h, peer, ownCommitted(d), undefined))),
+        ack: () => chain(apply(held), (d) => chain(committedLendingFollowups(d, peer, ownCommitted(d), undefined), (l) => chain(htlcFollowups(l, peer, ownCommitted(d), undefined, ctx), (h) => committedSettleFollowups(h, peer, ownCommitted(d), undefined)))),
         // og routes the standalone peer dispute witness through the same accountInput lane; an unknown Account has no genesis for it (og ACCOUNT_GENESIS_FRAME_REQUIRED).
         dispute: () => apply(held),
         // og board-hanko-refresh.ts: checked against the sender's certified board (certified_board_missing without a record)
@@ -8630,7 +8742,8 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
             const pending = d.accountReplicas.get(from), frame = pending !== undefined && pending._tag === "received" ? pending.candidate.frame : undefined;
             return chain(answerFrame(d, from, ctx), (answered) => {
               const after = answered.accountReplicas.get(from), installed = frame !== undefined && after !== undefined && after.head.height >= frame.height;
-              return chain(htlcFollowups(answered, from, ownCommitted(answered), installed ? { frame, from: i.fromEntityId, to: i.toEntityId, domain: i.domain } : undefined, ctx), (h) => committedSettleFollowups(h, from, ownCommitted(answered), installed ? frame : undefined));
+              return chain(committedLendingFollowups(answered, from, ownCommitted(answered), installed ? frame : undefined), (l) =>
+                chain(htlcFollowups(l, from, ownCommitted(answered), installed ? { frame, from: i.fromEntityId, to: i.toEntityId, domain: i.domain } : undefined, ctx), (h) => committedSettleFollowups(h, from, ownCommitted(answered), installed ? frame : undefined)));
             });
           }),
         }),
