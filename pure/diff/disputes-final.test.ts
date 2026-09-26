@@ -31,6 +31,8 @@ import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../..
 import { EMPTY_J_HISTORY_ROOT as OG_EMPTY_ROOT, foldJHistoryRoot as ogFoldRoot, canonicalJEventRangeHash, buildJEventRangeDigest } from "../../core/jurisdiction/machine/history-consensus/index.ts";
 import { applyJEvent as ogApplyJEvent } from "../../core/entity/tx/j-events.ts";
 import { handleUnsafeAccountFrame as ogHandleUnsafeAccountFrame } from "../../core/entity/tx/handlers/account/dispute-input.ts";
+import { handleJAbortSentBatch as ogJAbort } from "../../core/entity/tx/handlers/j-batch/j-abort-sent-batch.ts";
+import { handleJClearBatch as ogJClear } from "../../core/entity/tx/handlers/j-batch/j-clear-batch.ts";
 import { HTLC_ENFORCEMENT_RESERVE_MS as OG_RESERVE_MS } from "../../core/account/consensus/dispute/deadline-policy.ts";
 import { createDisputeProofHashWithNonce } from "../../core/protocol/dispute/proof-builder.ts";
 import { getEntityAccountForWrite } from "../../core/entity/state/persistent-account-map.ts";
@@ -568,4 +570,41 @@ describe("disputes-final: unsafe Account frames on the Entity (og entity/tx/hand
     }
     expectKinds(kinds, ["ok", "resolve", "latched", "HTLC_DISPUTE_EVIDENCE_LOCK_MISSING", "PAYBOOK_SECRET_CONFLICT", "PAYBOOK_ENTITY_CONFLICT", "⚠️ Rejected uncommitted account genesis", "⚠️ Unsafe account frame rejected; dispute start", "⚠️ Unsafe account frame rejected; dispute prep", "⚔️ Dispute started"]);
   }, 120_000);
+});
+
+// ---- og j-abort-sent-batch.ts / j-clear-batch.ts releaseFinalizeLatches: settle-jsubmit SJ-19 ----
+describe("disputes-final: finalize latches on j_abort_sent_batch / j_clear_batch (og entity/tx/handlers/j-batch)", () => {
+  test("MATCH: 200 random aborts and clears over a disputed BOB Account whose disputeFinalize is queued (finalizations for BOB in any case / another peer, draft / sent / recovery batches, requeue / drop) -- same finalizeQueued latch, messages and J batch as og", async () => {
+    const r = xrng(0x5319), kinds = new Map<string, number>();
+    const nowSec = Math.floor(T0 / 1000);
+    for (let i = 0; i < 200; i++) {
+      const latched = r() < 0.8, active = { startedByLeft: true, initialProofbodyHash: Z32, initialNonce: 1, initialProposerIsLeft: true, disputeTimeout: nowSec - 10, disputeStartTimestamp: nowSec - 100, jNonce: 1,
+        starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: Z32, observedOnChain: true, observedBlockNumber: 1, finalizeQueued: latched };
+      const fin = () => ({ counterentity: xpick(r, [BOB.toLowerCase(), BOB.toUpperCase().replace("0X", "0x"), W("0c")]), initialNonce: 1, finalNonce: 1, initialProofbodyHash: Z32, finalProofbodyHash: Z32, finalProofbody: undefined, sig: "0x", leftArguments: "0x", rightArguments: "0x", cooperative: false, finalizationEvidenceHash: Z32 });
+      const rows = (n: number) => ({ ...ogInitJBatch().batch, disputeFinalizations: Array.from({ length: n }, fin) });
+      const shape = xpick(r, ["none", "draft", "sent", "sent", "recovery"] as const);
+      const jBatch = shape === "none" ? undefined : { ...ogInitJBatch(), entityNonce: 3, batch: rows(shape === "draft" ? 1 + xint(r, 2) : xint(r, 2)),
+        ...(shape === "sent" || shape === "recovery" ? { sentBatch: { batch: rows(xint(r, 3)), entityNonce: 3, batchHash: Z32, encodedBatch: "0x", firstSubmittedAt: 1, lastSubmittedAt: 1, submitAttempts: 1 }, status: "sent" } : {}),
+        ...(shape === "recovery" ? { recoveryBatches: [rows(1 + xint(r, 2))] } : {}) };
+      const tx: EntityTx = xint(r, 2) === 0 ? { type: "j_clear_batch", data: { ...(r() < 0.5 ? { reason: "manual" } : {}) } } as EntityTx
+        : { type: "j_abort_sent_batch", data: { ...(r() < 0.7 ? { requeueToCurrent: r() < 0.5 } : {}), ...(r() < 0.5 ? { reason: "stuck" } : {}) } } as EntityTx;
+      const rw = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: { name: "j", entityProviderAddress: JEP }, committed: (jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) as never })).state;
+      const rwBob = { ...genesisAB(), _tag: "disputed", mempool: [], active } as unknown as AccountReplica;
+      const f = foldTx(rw, new Map([[BOB, rwBob]]), tx, { verify: verifiers.verify, timestamp: BigInt(T0), jReplicas: JREPLICAS as never });
+      const og: any = { entityId: ALICE, timestamp: T0, height: 0, config: { mode: "proposer-based", threshold: 1n, validators: [ALICE_SIGNERX], shares: { [ALICE_SIGNERX]: 1n }, jurisdiction: OG_JX },
+        accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries([[BOB, ogBobAccount("disputed", active)]], ALICE, () => Z32 as never)), ...(jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) };
+      const env = { quietRuntimeLogs: true, state: { jReplicas: JREPLICAS } } as never;
+      let ogOut: Out<any>;
+      try { ogOut = { ok: true, value: tx.type === "j_clear_batch" ? await ogJClear(og, tx as never, env, true) : await ogJAbort(og, tx as never, env, true) }; } catch (e) { ogOut = { ok: false, message: String((e as Error).message) }; }
+      expect([i, f.ok ? "ok" : (f.error as any).reason]).toEqual([i, ogOut.ok ? "ok" : ogOut.message]);
+      if (!f.ok || !ogOut.ok) continue;
+      const next = ogOut.value.newState, after: any = f.value.accountReplicas.get(BOB);
+      expect([i, (f.value.events ?? []).map((e) => e.message)]).toEqual([i, readEntityFrameEvents(next).map((e: any) => e.message)]);
+      expect([i, f.value.state.committed["jBatchState"]]).toEqual([i, next.jBatchState]);
+      const ogLatch = next.accounts.get(BOB).activeDispute.finalizeQueued;
+      expect([i, after.active.finalizeQueued]).toEqual([i, ogLatch]);
+      bump(kinds, `${tx.type}:${latched && !ogLatch ? "released" : ogLatch ? "kept" : "unlatched"}`);
+    }
+    expectKinds(kinds, ["j_clear_batch:released", "j_clear_batch:kept", "j_abort_sent_batch:released", "j_abort_sent_batch:kept"]);
+  }, 60_000);
 });
