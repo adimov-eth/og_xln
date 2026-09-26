@@ -2124,6 +2124,8 @@ export type Effect =
   | Tagged<"htlc_error", { lockId: string; hashlock: string; tokenId: number; amount: bigint; reason?: string }>
   | Tagged<"swap_cancel_requested", { offerId: string }>
   | Tagged<"swap_cancelled", { offerId: string; makerId: string }>
+  /** og same-j-swap-output.ts swapOfferUpsert: the committed same-j offer as the transition left it, with the Account's left/right entities. */
+  | Tagged<"swap_offer_upsert", { offer: SwapOffer; left: string; right: string }>
   | Tagged<"request_collateral_committed", { tokenId: number; requestedAmount: bigint; prepaidFee: bigint; requestedAt: number }>
   | Tagged<"direct_payment_forward", { tokenId: number; amount: bigint; route: readonly string[]; description?: string; trustedGatewayEntityId: string }>;
 const MAX_ROWS = 128;
@@ -2517,6 +2519,8 @@ export type SwapResolveTerms = {
   readonly offerId: string; readonly fillRatio: number; readonly cancelRemainder: boolean; readonly fillNumerator?: bigint | undefined; readonly fillDenominator?: bigint | undefined;
   readonly feeTokenId?: TokenId | undefined; readonly feeAmount?: bigint | undefined; readonly executionGiveAmount?: bigint | undefined; readonly executionWantAmount?: bigint | undefined;
   readonly restingPriceTicks?: bigint | undefined; readonly restingGiveAmount?: bigint | undefined; readonly restingWantAmount?: bigint | undefined; readonly restingQuantizedGive?: bigint | undefined; readonly restingQuantizedWant?: bigint | undefined;
+  /** og matcher annotations: signed into the frame, never read by the Account transition. */
+  readonly comment?: string | undefined; readonly restingGiveTokenId?: TokenId | undefined; readonly restingWantTokenId?: TokenId | undefined;
 };
 /** og types/finance/rebalance.ts: one side's committed fee terms, the bilateral register, and a prepaid request_collateral's fee state. */
 export type RebalanceFeeSnapshot = { readonly policyVersion: number; readonly baseFee: bigint; readonly liquidityFeeBps: bigint; readonly gasFee: bigint; readonly updatedAt: number };
@@ -2590,7 +2594,7 @@ export type AccountTx =
 export type TxOf<K extends AccountTx["type"]> = Extract<AccountTx, { readonly type: K }>;
 export type WireAccountTx = AccountTx;
 type WireTxOf<K extends AccountTx["type"]> = Extract<WireAccountTx, { readonly type: K }>;
-const OG_TOKEN_FIELDS = ["tokenId", "giveTokenId", "wantTokenId", "feeTokenId", "requestTokenId"] as const;
+const OG_TOKEN_FIELDS = ["tokenId", "giveTokenId", "wantTokenId", "feeTokenId", "requestTokenId", "restingGiveTokenId", "restingWantTokenId"] as const;
 /** og wire AccountTx fields: token ids (and htlc revealBeforeHeight) are JS numbers, never the rewrite's decimal strings. */
 export const wireOf = (tx: WireAccountTx): { readonly type: string } => {
   const out: Record<string, unknown> = { ...tx };
@@ -2604,7 +2608,7 @@ const kind = <R extends KindRow>(author: Author, l0: boolean, repeatable: boolea
 export const AccountKinds = {
   add_delta: kind("bilateral", true, false), set_credit_limit: kind("bilateral", true, false), payment: kind("bilateral", true, true, ["direct_payment_forward"]),
   htlc_lock: kind("bilateral", false, false), htlc_resolve: kind("bilateral", false, false, ["forward_secret", "htlc_error"]),
-  swap_offer: kind("bilateral", false, false), swap_cancel_request: kind("bilateral", false, false, ["swap_cancel_requested"]), swap_resolve: kind("bilateral", false, false, ["swap_cancelled"]),
+  swap_offer: kind("bilateral", false, false, ["swap_offer_upsert"]), swap_cancel_request: kind("bilateral", false, false, ["swap_cancel_requested"]), swap_resolve: kind("bilateral", false, false, ["swap_cancelled", "swap_offer_upsert"]),
   settle_transition: kind("bilateral", false, false),
   request_collateral: kind("bilateral", false, false, ["request_collateral_committed"]), rebalance_refund: kind("bilateral", false, false), rebalance_policy: kind("bilateral", false, false),
   lending_fund: kind("bilateral", false, false), lending_borrow_request: kind("bilateral", false, false), lending_repay: kind("bilateral", false, false), lending_credit: kind("bilateral", false, false),
@@ -2614,7 +2618,7 @@ export const AccountKinds = {
 } as const satisfies Kinds<AccountTx["type"], KindRow>;
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
 export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret" | "htlc_error"> : K extends "swap_cancel_request" ? Of<Effect, "swap_cancel_requested">
-  : K extends "swap_resolve" ? Of<Effect, "swap_cancelled"> : K extends "request_collateral" ? Of<Effect, "request_collateral_committed"> : K extends "payment" ? Of<Effect, "direct_payment_forward"> : never;
+  : K extends "swap_offer" ? Of<Effect, "swap_offer_upsert"> : K extends "swap_resolve" ? Of<Effect, "swap_cancelled" | "swap_offer_upsert"> : K extends "request_collateral" ? Of<Effect, "request_collateral_committed"> : K extends "payment" ? Of<Effect, "direct_payment_forward"> : never;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
 export const genesisAccountBody = (account: AccountState, terms: AccountTerms): AccountBody => ({ account, terms, locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), finalizedJHeight: 0n, jNonce: 0 });
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
@@ -3005,7 +3009,7 @@ const decimalsOk = (d: number): boolean => Number.isSafeInteger(d) && d >= 0 && 
 /** og swap-limits.ts accountSwapMarketKey: same-j offers by token direction, cross-j offers by canonical venue and side. */
 const offerMarketKey = (o: { readonly giveTokenId: TokenId; readonly wantTokenId: TokenId; readonly crossJurisdiction?: CrossRoute | undefined }): Result<string, BodyError> =>
   o.crossJurisdiction === undefined ? ok(`same:${Number(o.giveTokenId)}>${Number(o.wantTokenId)}`) : map(noteErr(crossMarket(o.crossJurisdiction)), (m) => `${m.venueId}:${m.sourceIsBase ? "base>quote" : "quote>base"}`);
-const swapOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx): BodyStep => {
+const swapOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx): BodyStep<Of<Effect, "swap_offer_upsert">> => {
   const route = x.crossJurisdiction;
   if (x.offerId.includes(":")) return swapErr("SWAP_OFFER_ID_COLON");
   if (a.offers.has(x.offerId)) return err({ _tag: "duplicate" });
@@ -3057,7 +3061,7 @@ const crossJOffer = (a: AccountBody, x: TxOf<"swap_offer">, route: CrossRoute, c
   });
 });
 /** og same-j quantization and commit: canonical price, lot-quantized amounts, capacity, and the maker's give hold. */
-const sameJOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx, makerIsLeft: boolean): BodyStep => {
+const sameJOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx, makerIsLeft: boolean): BodyStep<Of<Effect, "swap_offer_upsert">> => {
   const d = swapDims(x), base = d.side === 1 ? x.giveAmount : x.wantAmount, quote = d.side === 1 ? x.wantAmount : x.giveAmount, lot = lotScale(d.bd);
   if (base < lot) return swapErr("SWAP_ORDER_BELOW_LOT");
   const prepared = preparedPrice(d, base, quote);
@@ -3068,7 +3072,7 @@ const sameJOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx, makerIs
   const priceTicks = input ?? prepared, qb = (base / lot) * lot, qq = quoteAt(d.bd, d.qd, qb, priceTicks);
   const give = d.side === 1 ? qb : qq, want = d.side === 1 ? qq : qb;
   if (give < 1n || give > MAX_PAYMENT_AMOUNT || want < 1n || want > MAX_PAYMENT_AMOUNT) return swapErr("SWAP_QUANTIZED_AMOUNT_INVALID");
-  return chain(requantizeAuth(x, give, want), (auth) => chain(ensureRoom(a, x.giveTokenId, give, makerIsLeft), (): BodyStep => {
+  return chain(requantizeAuth(x, give, want), (auth) => chain(ensureRoom(a, x.giveTokenId, give, makerIsLeft), (): BodyStep<Of<Effect, "swap_offer_upsert">> => {
     const totals = sideTotals(a, x.giveTokenId);
     if ((makerIsLeft ? totals.leftHold : totals.rightHold) + give > MAX_PAYMENT_AMOUNT) return err({ _tag: "hold_overflow" });
     const offer: SwapOffer = {
@@ -3077,9 +3081,11 @@ const sameJOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx, makerIs
       // og mutation.ts passes the frame's jHeight as the swap handlers' currentHeight.
       createdHeight: Number(ctx.jHeight), quantizedGive: give, quantizedWant: want,
     };
-    return ok(step({ ...a, offers: mapSet(a.offers, x.offerId, offer) }));
+    return ok(step({ ...a, offers: mapSet(a.offers, x.offerId, offer) }, [upserted(a, offer)]));
   }));
 };
+/** og collectSameJurisdictionSwapOutputs: a same-j offer that survives its transition is reported as the committed snapshot. */
+const upserted = (a: AccountBody, offer: SwapOffer): Of<Effect, "swap_offer_upsert"> => ({ _tag: "swap_offer_upsert", offer, left: a.account.id.left, right: a.account.id.right });
 /** og orderbook/swap-execution.ts deriveExactSwapFillRatio + exactFillRatioToUint16. */
 const exactFillRatio = (qG: bigint, fG: bigint): { readonly n: bigint; readonly d: bigint } => {
   if (qG <= 0n || fG <= 0n) return { n: 0n, d: 1n };
@@ -3097,7 +3103,7 @@ const fillRatioOf = (r: { readonly n: bigint; readonly d: bigint }): number => {
   return c;
 };
 /** og swap/resolve: canonical offer, explicit execution at or above the maker's limit, fee authority, counterparty capacity, requantized remainder. */
-const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): BodyStep<Of<Effect, "swap_cancelled">> => {
+const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): BodyStep<Of<Effect, "swap_cancelled" | "swap_offer_upsert">> => {
   const offer = a.offers.get(x.offerId);
   if (offer === undefined) return MISSING;
   if (offer.crossJurisdiction !== undefined) return swapErr("SWAP_RESOLVE_CROSS_J");
@@ -3135,7 +3141,7 @@ const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): Bod
   return chain(fW > 0n ? chain(ensureRoom(a, offer.wantTokenId, fW, !offer.makerIsLeft), () => ok(undefined)) : ok(undefined), () => {
     const giveRow = shift(getDelta(a.account, offer.giveTokenId), fG > 0n ? byMaker(fG) : 0n);
     const wantRow = shift(getDelta(a.account, offer.wantTokenId), (fG > 0n ? -byMaker(fW) : 0n) + (fee > 0n ? byMaker(fee) : 0n));
-    return chain(representable(a, giveRow), () => chain(representable(a, wantRow), (): BodyStep<Of<Effect, "swap_cancelled">> => {
+    return chain(representable(a, giveRow), () => chain(representable(a, wantRow), (): BodyStep<Of<Effect, "swap_cancelled" | "swap_offer_upsert">> => {
       const moved = putState(closed, setDelta(setDelta(a.account, giveRow), wantRow));
       // og remainder.ts closeSwapOffer: every removal of the resting offer reports swap_cancelled with the maker's entity.
       const removed = ok(step(moved, [{ _tag: "swap_cancelled" as const, offerId: offer.offerId, makerId: offer.makerIsLeft ? a.account.id.left : a.account.id.right }]));
@@ -3143,7 +3149,10 @@ const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): Bod
       const d = swapDims(offer), remaining = d.side === 1 ? qG - fG : qW - fW, next = requantizeRemaining(d, remaining, offer.priceTicks);
       if (next === undefined) return removed;
       if (qG - fG - next.give < 0n) return swapErr("SWAP_REMAINDER_EXCEEDS_HOLD");
-      return map(requantizeAuth(offer, next.give, next.want), (na) => step({ ...moved, offers: mapSet(moved.offers, offer.offerId, { ...offer, giveAmount: next.give, wantAmount: next.want, maxFee: na.maxFee, minNetReceive: na.minNetReceive, quantizedGive: next.give, quantizedWant: next.want }) }));
+      return map(requantizeAuth(offer, next.give, next.want), (na) => {
+        const rest: SwapOffer = { ...offer, giveAmount: next.give, wantAmount: next.want, maxFee: na.maxFee, minNetReceive: na.minNetReceive, quantizedGive: next.give, quantizedWant: next.want };
+        return step<AccountBody, Of<Effect, "swap_cancelled" | "swap_offer_upsert">>({ ...moved, offers: mapSet(moved.offers, offer.offerId, rest) }, [upserted(a, rest)]);
+      });
     }));
   });
 };
@@ -3849,8 +3858,10 @@ export type AccountEvent = AccountInput["kind"];
 export class Candidate {
   protected declare readonly established: true;
   /** `floor`: the settlement proof-nonce floor the frame's txs folded under (og reads the pre-frame replica cursors). */
-  constructor(readonly frame: AccountFrame, readonly frameHanko: Hanko, readonly frameProof: LocalProof, readonly draft: FrameFold, readonly floor: number) {}
+  /** `sent`: what og keeps as `pendingAccountInput` beside its own proposal: the bundled ACK and the dispute Hanko the ack_frame carried. */
+  constructor(readonly frame: AccountFrame, readonly frameHanko: Hanko, readonly frameProof: LocalProof, readonly draft: FrameFold, readonly floor: number, readonly sent?: SentProposal) {}
 }
+export type SentProposal = { readonly ack: AccountAck | null; readonly disputeHanko?: DisputeHanko | undefined };
 /** og RebalancePolicy (types/finance/rebalance.ts): the Entity's private per-token automation policy on one Account. */
 export type RebalancePolicy = { readonly r2cRequestSoftLimit: bigint; readonly hardLimit: bigint; readonly maxAcceptableFee: bigint };
 /** `rebalancePolicy`: og replica shadow.rebalance.policy, outside the Account state root, committed as the Entity leaf's policyRoot. */
@@ -3909,7 +3920,7 @@ export type AccountReplicaError =
   | Tagged<"invalid_hanko", { entity: EntityId }> | Tagged<"unknown_signer", { entity: EntityId }>
   | Tagged<"bad_account", { reason: "entity_id" | "same_entity" | TermsError["_tag"] }>
   | Tagged<"ack_conflict", { field: "frameHash" | "frameHanko" | "disputeHanko" | "height" }>
-  | Tagged<"halt_runtime", { reason: "state_hash_after_verify" }> | Tagged<"proposal_halt", { txType: WireAccountTx["type"]; cause: BodyError }> | Tagged<"mempool_full", { limit: number }> | Tagged<"frozen", { phase: FrozenAccount["_tag"] }>;
+  | Tagged<"halt_runtime", { reason: "state_hash_after_verify" }> | Tagged<"proposal_halt", { txType: WireAccountTx["type"]; cause: BodyError }> | Tagged<"mempool_full", { limit: number }> | Tagged<"admission_policy", { reason: "policy_version" }> | Tagged<"frozen", { phase: FrozenAccount["_tag"] }>;
 export const evidenceOf = (e: AccountReplicaError): FrameEvidence | null => {
 
   if (e._tag !== "dispute_required") return null;
@@ -3917,6 +3928,13 @@ export const evidenceOf = (e: AccountReplicaError): FrameEvidence | null => {
   return { cause, frame, frameHanko };
 };
 export const replicaId = (r: AccountReplica): AccountId => r.state.account.id;
+/** og AccountReplica.pendingAccountInput: the exact ack_frame our own unanswered proposal went out as; only a proposed Account holds one (og drops it on commit, rollback and freeze). */
+export const pendingAccountInput = (r: AccountReplica, self: EntityId): Extract<AccountMessage, { readonly kind: "ack_frame" }> | undefined => {
+  const party = partyOf(replicaId(r), self);
+  if (r._tag !== "proposed" || r.candidate.sent === undefined || !party.ok) return undefined;
+  const { frame, frameHanko, sent } = r.candidate;
+  return { kind: "ack_frame", ...sentBy(r, party.value), ack: sent.ack, frame, frameHanko, ...opt("disputeHanko", sent.disputeHanko) };
+};
 export const sentBy = (r: AccountReplica, party: Party): AccountEnvelope => envelopeOf(r.state.terms, party);
 export const ackOf = (m: Extract<AccountInput, { readonly kind: "ack" }>): AccountAck => ({ height: m.height, frameHash: m.frameHash, frameHanko: m.frameHanko, ...opt("disputeHanko", m.disputeHanko) });
 export const lifecycleKey = (tx: WireAccountTx): string | undefined => (arm(AccountKinds, tx.type).repeatable ? undefined : canon(wireOf(tx)));
@@ -4063,7 +4081,7 @@ export const proposeOpen = (r: OpenAccount, input: Propose, ctx: AccountContext)
     if (frameHanko === undefined) return err({ _tag: "invalid_hanko", entity: ctx.party.self });
 
     return chain(checks(frameStructure(frame), certifies(ctx.verify, frame.stateHash, frameHanko, ctx.party.self)), () => map(settleLocal(dispute, input.disputeHanko, promoted, ctx.party.self, ctx.verify), ({ carried, witnesses }) => {
-      const proposed: ProposedAccount = { ...r, _tag: "proposed", mempool: deferred, candidate: new Candidate(frame, frameHanko, frameProof, draft, floor), dispute: witnesses };
+      const proposed: ProposedAccount = { ...r, _tag: "proposed", mempool: deferred, candidate: new Candidate(frame, frameHanko, frameProof, draft, floor, { ack: residentAck(r), ...opt("disputeHanko", carried) }), dispute: witnesses };
       return done<OpenAccount | ProposedAccount, AccountOutput>(proposed, [{ kind: "ack_frame", ...sentBy(r, ctx.party), ack: residentAck(r), frame, frameHanko, ...opt("disputeHanko", carried) }]);
     }));
   },
@@ -4135,7 +4153,7 @@ export const ackProposed = (r: ProposedAccount, input: Ack, ctx: AckContext): Ve
   local: () => match(ownAck(r, input, ctx), {
     answered: ({ result }): Verb<OpenAccount | ProposedAccount> => result,
     continue: (): Verb<OpenAccount | ProposedAccount> => input.disputeHanko === undefined
-      ? ok(done({ ...r, candidate: new Candidate(r.candidate.frame, input.frameHanko, r.candidate.frameProof, r.candidate.draft, r.candidate.floor) }))
+      ? ok(done({ ...r, candidate: new Candidate(r.candidate.frame, input.frameHanko, r.candidate.frameProof, r.candidate.draft, r.candidate.floor, r.candidate.sent) }))
       : err(refuseDispute("unexpected")),
   }),
   received: ({ from }) => {
@@ -4217,7 +4235,7 @@ export const restoreCandidate = (held: ProposedAccount | ReceivedAccount, party:
   const { frame, frameHanko } = held.candidate, byLeft = proposerIsLeft(held, party);
   return chain(acceptFrame(frame, replicaId(held), byLeft), () =>
     chain(certifies(verify, frame.stateHash, frameHanko, at(party.self, party.peer, byLeft === party.left), { allowPreviousBoard: true }), () =>
-      chain(replay(held.state, frame, byLeft, { verify, proofNonceFloor: held.candidate.floor }), ({ draft, view }) => map(localProof(view), (frameProof) => new Candidate(frame, frameHanko, frameProof, draft, held.candidate.floor)))));
+      chain(replay(held.state, frame, byLeft, { verify, proofNonceFloor: held.candidate.floor }), ({ draft, view }) => map(localProof(view), (frameProof) => new Candidate(frame, frameHanko, frameProof, draft, held.candidate.floor, held.candidate.sent)))));
 };
 export const dropFrozen = <R extends FrozenAccount>(r: R): Verb<R> => ok(done(r));
 // og freezeAccountForDispute: J claims survive while preparation can still return to active; matcher evidence survives preparation only.
@@ -4372,10 +4390,6 @@ export const externalFinality = accountVerb("external_finality", { open: applyFi
 export const resume = accountVerb("resume", { open: { _tag: "not_preparing" }, proposed: { _tag: "not_preparing" }, received: { _tag: "not_preparing" }, preparing: resumePreparing, disputed: frozenError("disputed") });
 
 
-export const admissionFold = (mempool: readonly WireAccountTx[], added: number, s: AccountBody, self: EntityId, at: FoldAt, settlement?: SettlementCtx): Result<void, AccountReplicaError> => chain(partyOf(s.account.id, self), (party) => {
-  const first = proposalFold(s, mempool, foldCtx(at, party.left, settlement)).refused.find((x) => x.index >= mempool.length - added);
-  return first === undefined ? ok(undefined) : err(first.error);
-});
 const ENTITY_WORD = /^0x[0-9a-f]{64}$/;
 export const genesisReplica = (id: AccountId, terms: AccountTerms): Result<OpenAccount, AccountReplicaError> => {
   if (!ENTITY_WORD.test(id.left) || !ENTITY_WORD.test(id.right)) return err({ _tag: "bad_account", reason: "entity_id" });
@@ -4386,22 +4400,50 @@ export const genesisReplica = (id: AccountId, terms: AccountTerms): Result<OpenA
 export type LiveAccount = OpenAccount | ProposedAccount | ReceivedAccount;
 type Queued<R extends AccountReplica = AccountReplica> = { readonly replica: R; readonly queued: readonly WireAccountTx[] };
 /** og local-tx-admission.ts: dedupe against mempool + own pending frame; the limit counts both (mempool.ts). A received frame is committed in og, so it pends nothing. og has no status gate: a frozen Account queues too. */
-const queueOn = <R extends AccountReplica>(r: R, pending: readonly WireAccountTx[], txs: readonly WireAccountTx[]): Result<Queued<R>, AccountReplicaError> => {
-  const queued = unqueued(txs, [...r.mempool, ...pending]);
+/** og planAccountJClaimLocalAdmission: a claim at or below the finalized height, or already held on our own side or queued with the same evidence, is a duplicate; a different record at that height (either side, or queued) is a row conflict. `onLeft` undefined: the caller did not name its side, so no held record counts as our own. */
+const claimAdmission = (s: AccountBody, queued: readonly WireAccountTx[], tx: TxOf<"j_event_claim">, onLeft: boolean | undefined): Result<"admit" | "duplicate" | "conflict", AccountReplicaError> => chain(mapErr(claimRowOf(tx, onLeft ?? true), (e): AccountReplicaError => e), (own) => {
+  if (own.jHeight <= s.finalizedJHeight) return ok("duplicate");
+  for (const side of [true, false]) {
+    const held = (s.claimRows ?? []).find((h) => h.onLeft === side && h.jHeight === own.jHeight);
+    if (held === undefined) continue;
+    if (!sameEvidence(held, own)) return ok("conflict");
+    if (side === onLeft) return ok("duplicate");
+  }
+  for (const q of queued) {
+    if (q.type !== "j_event_claim" || q.jHeight !== tx.jHeight) continue;
+    const other = claimRowOf(q, true);
+    return ok(other.ok && sameEvidence(other.value, own) ? "duplicate" : "conflict");
+  }
+  return ok("admit");
+});
+/** og assertAccountTxsAdmissible: a rebalance_policy policyVersion outside 0..=MAX_SAFE_INTEGER refuses the whole batch before any mempool write. */
+const admissible = (txs: readonly WireAccountTx[]): Result<void, AccountReplicaError> =>
+  guard(txs.every((tx) => tx.type !== "rebalance_policy" || (Number.isSafeInteger(tx.policyVersion) && tx.policyVersion >= 0)), { _tag: "admission_policy", reason: "policy_version" });
+const queueOn = <R extends AccountReplica>(r: R, pending: readonly WireAccountTx[], txs: readonly WireAccountTx[], onLeft: boolean | undefined): Result<Queued<R>, AccountReplicaError> => chain(admissible(txs), () => {
+  const held = [...r.mempool, ...pending], taken = new Set(held.flatMap((tx) => lifecycleKey(tx) ?? [])), queued: WireAccountTx[] = [];
+  for (const tx of txs) {
+    const key = lifecycleKey(tx);
+    if (key !== undefined && taken.has(key)) continue;
+    if (tx.type === "j_event_claim") {
+      const plan = claimAdmission(r.state, [...held, ...queued], tx, onLeft);
+      if (!plan.ok) return plan;
+      if (plan.value !== "admit") continue;
+    }
+    if (key !== undefined) taken.add(key);
+    queued.push(tx);
+  }
   return r.mempool.length + pending.length + queued.length > ACCOUNT_MEMPOOL_SIZE ? err({ _tag: "mempool_full", limit: ACCOUNT_MEMPOOL_SIZE }) : ok({ replica: { ...r, mempool: [...r.mempool, ...queued] }, queued });
-};
-const enqueue = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<Queued, AccountReplicaError> => match(r, {
-  open: (o) => queueOn<AccountReplica>(o, [], txs), proposed: (p) => queueOn<AccountReplica>(p, p.candidate.frame.txs, txs), received: (h) => queueOn<AccountReplica>(h, [], txs),
-  preparing: (f) => queueOn<AccountReplica>(f, [], txs), disputed: (f) => queueOn<AccountReplica>(f, [], txs),
+});
+const enqueue = (r: AccountReplica, txs: readonly WireAccountTx[], onLeft?: boolean): Result<Queued, AccountReplicaError> => match(r, {
+  open: (o) => queueOn<AccountReplica>(o, [], txs, onLeft), proposed: (p) => queueOn<AccountReplica>(p, p.candidate.frame.txs, txs, onLeft), received: (h) => queueOn<AccountReplica>(h, [], txs, onLeft),
+  preparing: (f) => queueOn<AccountReplica>(f, [], txs, onLeft), disputed: (f) => queueOn<AccountReplica>(f, [], txs, onLeft),
 });
 const isLive = (r: AccountReplica): r is LiveAccount => r._tag === "open" || r._tag === "proposed" || r._tag === "received";
-/** The state and height the next proposal builds on: a held candidate is about to commit. */
-const nextBase = (r: LiveAccount): { readonly state: AccountBody; readonly height: bigint } => (r._tag === "open" ? { state: r.state, height: r.head.height } : { state: r.candidate.draft.state, height: r.candidate.frame.height });
-/** og applyAccountEnqueue: the Account-level lane admits in every status. */
-export const admit = (r: AccountReplica, txs: readonly WireAccountTx[]): Result<AccountReplica, AccountReplicaError> => map(enqueue(r, txs), (q) => q.replica);
-/** Entity-owned admission. og tx-effects.ts shouldSuppressReturnedAccountTx: a frozen Account silently takes no new work. */
-export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, clock: FrameClock, verify?: Verify): Result<AccountReplica, AccountReplicaError> => chain(partyOf(replicaId(r), self), () => !isLive(r) ? ok(r)
-  : chain(enqueue(r, txs), ({ replica, queued }): Result<AccountReplica, AccountReplicaError> => { if (!isLive(replica)) return ok(replica); const base = nextBase(replica); return map(admissionFold(replica.mempool, queued.length, base.state, self, { height: base.height + 1n, ...clock }, verify === undefined ? undefined : settlementOf(replica.dispute, verify)), () => replica); }));
+/** og applyAccountEnqueue: the Account-level lane admits in every status. It never runs a tx body: validation happens when the tx is proposed (og proposal/transactions.ts). `self` names our side for the j-claim duplicate rule. */
+export const admit = (r: AccountReplica, txs: readonly WireAccountTx[], self?: EntityId): Result<AccountReplica, AccountReplicaError> =>
+  chain(self === undefined ? ok(undefined) : map(partyOf(replicaId(r), self), (p) => p.left), (onLeft) => map(enqueue(r, txs, onLeft), (q) => q.replica));
+/** Entity-owned admission (og tx-effects.ts applyLocalAccountEffects → applyAccountEnqueue). og shouldSuppressReturnedAccountTx: a frozen Account silently takes no new work. `clock`/`verify` are kept for callers; og admission reads neither. */
+export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, _clock?: FrameClock, _verify?: Verify): Result<AccountReplica, AccountReplicaError> => !isLive(r) ? map(partyOf(replicaId(r), self), () => r) : admit(r, txs, self);
 const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party, ...opt("counterpartyBoard", ctx.counterpartyBoard) }));
 export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => chain(accountContext(r, ctx), (c) => matchBy("kind", input, {
   propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c), resume: (i) => resume(r, i, c),
@@ -4469,7 +4511,19 @@ export type EntityState = {
   /** og crossJurisdictionSwaps / crossJurisdictionAuthorizations: absent until the first cross-j setup; the root then commits each as a text-keyed collection. */
   readonly crossJurisdictionSwaps?: ReadonlyMap<string, CrossRoute> | undefined;
   readonly crossJurisdictionAuthorizations?: ReadonlyMap<string, CrossRoute> | undefined;
+  /** og EntityState.orderbookExt: present only on a hub that ran initOrderbookExt; the root commits it through orderbookSection. */
+  readonly orderbookExt?: OrderbookExt | undefined;
 };
+/** og orderbook/types.ts SpreadDistribution / HubProfile / SwapPairDimensions. */
+export type SpreadDistribution = { readonly makerBps: number; readonly takerBps: number; readonly hubBps: number; readonly makerReferrerBps: number; readonly takerReferrerBps: number };
+export type HubProfile = { readonly entityId: string; readonly name: string; readonly spreadDistribution: SpreadDistribution; readonly referenceTokenId: number; readonly usdQuoteAuthorityEntityId: string; readonly minTradeSize: bigint; readonly supportedPairs: readonly string[] };
+export type PairDimensions = { readonly baseTokenDecimals: number; readonly quoteTokenDecimals: number };
+/** og OrderbookExtState without `orderPairs`, which og derives from `books` and never commits. `referrals` is never written by og. */
+export type OrderbookExt = { readonly books: ReadonlyMap<string, Book>; readonly pairDimensions: ReadonlyMap<string, PairDimensions>; readonly referrals: ReadonlyMap<string, Binary>; readonly hubProfile: HubProfile };
+/** og state-root.ts projectOrderbookConsensusState: each book by its commitment hash, then pairDimensions, hubProfile and referrals. */
+export const orderbookSection = (x: OrderbookExt): Binary => ({
+  books: new Map([...x.books].map(([pairId, book]) => [pairId, bookCommitmentHash(book)])), pairDimensions: new Map(x.pairDimensions), hubProfile: x.hubProfile, referrals: new Map(x.referrals),
+}) as unknown as Binary;
 /** og EntityLeaderTimeoutVoteBody (leader/index.ts buildEntityLeaderVoteBody). */
 export type LeaderVoteBody = { readonly entityId: string; readonly targetHeight: number; readonly previousFrameHash: string; readonly fromView: number; readonly toView: number; readonly previousLeaderId: string; readonly nextLeaderId: string };
 /** og vote.preparedFrame: the voter's exact locked frame with every precommit bundle it holds (og collectedSigs). */
@@ -4516,6 +4570,10 @@ export type EntityTx =
   | { readonly type: "registerCrossJurisdictionSwap"; readonly data: { readonly route: CrossRoute } }
   /** og certified Entity->Entity command lane: a committed source frame's cross-j commands, wrapped by its emitter (consensus/output/publication.ts). */
   | { readonly type: "runtimeOutput"; readonly data: RuntimeOutputData }
+  /** og proposeAccountsNow (handlers/account/propose-accounts-now.ts): the active leader asks its Entity to re-send the retained proposals it still owes these peers. */
+  | { readonly type: "proposeAccountsNow"; readonly data: { readonly version: number; readonly proposerSignerId: string; readonly counterparties: readonly string[] } }
+  /** og initOrderbookExt (system/basic.ts): make this Entity a matcher with an empty book set. */
+  | { readonly type: "initOrderbookExt"; readonly data: { readonly name: string; readonly spreadDistribution: SpreadDistribution; readonly referenceTokenId: number; readonly usdQuoteAuthorityEntityId: string; readonly minTradeSize: bigint; readonly supportedPairs: readonly string[] } }
   | SwapRequestEntityTx
   | LendingEntityTx
   | SettleEntityTx;
@@ -4578,7 +4636,7 @@ export type EntityEvent = EntityInput["kind"];
 export type Folded = { readonly state: EntityState; readonly accountReplicas: ReadonlyMap<EntityId, AccountReplica> };
 /** `events`: og frame events the folded txs emitted (og addMessage / addTextMessage), in order. */
 /** `hashes` / `jOutputs`: og EntityTxReducerResult hashesToSign (settlement Hankos, EntityProvider actions) and jOutputs of the folded txs, in order. */
-export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readonly events?: readonly FrameEvent[] | undefined; readonly touched?: readonly EntityId[] | undefined; readonly hashes?: readonly HashToSign[] | undefined; readonly jOutputs?: readonly JInput[] | undefined };
+export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readonly events?: readonly FrameEvent[] | undefined; readonly touched?: readonly EntityId[] | undefined; readonly hashes?: readonly HashToSign[] | undefined; readonly jOutputs?: readonly JInput[] | undefined; readonly swaps?: SwapEvents | undefined };
 /** og replica `leaderVotes` (one collection key at a time) and `pendingLeaderCertificate`. */
 type LeaderLane = { readonly leaderVotes?: ReadonlyMap<string, LeaderVote> | undefined; readonly pendingLeaderCertificate?: LeaderCertificate | undefined };
 type EntityEnv = Folded & LeaderLane & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
@@ -4621,6 +4679,7 @@ export const encodeEntityState = (s: EntityState): string => canon({
   jurisdiction: s.jurisdiction, accounts: new Map([...s.accounts].map(([peer, a]) => [peer, hashAccountState(a)])),
   height: s.height, timestamp: s.timestamp, jurisdictionConfig: s.jurisdictionConfig, committed: s.committed, leaderState: s.leaderState, paybook: s.paybook, boardNodes: s.boardNodes,
   crossJurisdictionSwaps: s.crossJurisdictionSwaps, crossJurisdictionAuthorizations: s.crossJurisdictionAuthorizations,
+  orderbookExt: s.orderbookExt === undefined ? undefined : orderbookSection(s.orderbookExt),
 } satisfies Record<keyof EntityState, unknown>);
 export const hashEntityState = (s: EntityState): EntityStateHash => keccakUtf8(encodeEntityState(s)) as EntityStateHash;
 const HEX_EXT = 0x48;
@@ -5160,7 +5219,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   lendingRepay: (x) => lower(x.data.hubEntityId) as EntityId, lendingClosePosition: (x) => lower(x.data.hubEntityId) as EntityId,
   htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId,
   settle_propose: (x) => x.data.counterpartyEntityId, settle_update: (x) => x.data.counterpartyEntityId, settle_approve: (x) => x.data.counterpartyEntityId, settle_execute: (x) => x.data.counterpartyEntityId, settle_reject: (x) => x.data.counterpartyEntityId,
-  prepareCrossJurisdictionSwap: () => self, materializeCrossJurisdictionSwap: () => self, registerCrossJurisdictionSwap: () => self, runtimeOutput: () => self,
+  prepareCrossJurisdictionSwap: () => self, materializeCrossJurisdictionSwap: () => self, registerCrossJurisdictionSwap: () => self, runtimeOutput: () => self, proposeAccountsNow: () => self, initOrderbookExt: () => self,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
 const originOf = (tx: EntityTx, self: EntityId): Delivery => (tx.type === "accountInput" && !namesEntity(tx.data.fromEntityId, self) ? { _tag: "received", from: tx.data.fromEntityId } : { _tag: "local" });
@@ -5170,13 +5229,22 @@ const withChild = (replicas: Replicas, target: EntityId, f: (child: AccountRepli
  * Account outputs the Entity consumes: the gateway forward, HTLC failures and preimages (htlcFollowups, from the committed frames), og's
  * collateral-request runtime event, and the swap cancel outcomes og hands to the hub book (an Entity without an order book ignores them).
  */
-const ENTITY_CONSUMED_EFFECTS: ReadonlySet<Effect["_tag"]> = new Set(["direct_payment_forward", "htlc_error", "forward_secret", "request_collateral_committed", "swap_cancel_requested", "swap_cancelled"]);
+const ENTITY_CONSUMED_EFFECTS: ReadonlySet<Effect["_tag"]> = new Set(["direct_payment_forward", "htlc_error", "forward_secret", "request_collateral_committed", "swap_cancel_requested", "swap_cancelled", "swap_offer_upsert"]);
+/** og committed-input.ts applySameJurisdictionSwapOutput: the committed frames' swap outputs, keyed by this Account, for the frame's book phase. */
+const swapEventsOf = (accountId: EntityId, outputs: readonly AccountOutput[]): SwapEvents | undefined => {
+  const effects = outputs.flatMap((o) => (o.kind === "effect" ? [o.effect] : []));
+  const created = effects.flatMap((e) => (e._tag === "swap_offer_upsert" ? [swapOfferEvent(accountId, e)] : []));
+  const cancelled = effects.flatMap((e) => (e._tag === "swap_cancelled" ? [{ offerId: e.offerId, accountId }] : []));
+  const cancelRequests = effects.flatMap((e) => (e._tag === "swap_cancel_requested" ? [{ offerId: e.offerId, accountId }] : []));
+  return created.length + cancelled.length + cancelRequests.length === 0 ? undefined : { created, cancelled, cancelRequests };
+};
 const routed = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Draft, EntityError> => chain(applied, (a) =>
   chain(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: (e) => (ENTITY_CONSUMED_EFFECTS.has(e.effect._tag) ? ok([]) : err({ _tag: "not_l0" })), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
     (messages) => {
       const base: Draft = { ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((data): EntityOutput => ({ to: target, tx: { type: "accountInput", data } })) };
       const forwards = a.outputs.flatMap((o) => (o.kind === "effect" && o.effect._tag === "direct_payment_forward" && sameHex(o.effect.route[0], state.id) ? [o.effect] : []));
-      return foldResult<Draft, Of<Effect, "direct_payment_forward">, EntityError>(forwards, base, forwardPayment);
+      const swaps = swapEventsOf(target, a.outputs);
+      return map(foldResult<Draft, Of<Effect, "direct_payment_forward">, EntityError>(forwards, base, forwardPayment), (d) => (swaps === undefined ? d : { ...d, swaps }));
     }));
 /** og applyDirectPaymentForwardFollowups: the gateway queues the next leg on its Account with route[1] (a missing Account refuses the input). */
 const forwardPayment = (d: Draft, f: Of<Effect, "direct_payment_forward">): Result<Draft, EntityError> => {
@@ -5186,8 +5254,36 @@ const forwardPayment = (d: Draft, f: Of<Effect, "direct_payment_forward">): Resu
   return map(admitAt(child, [leg], self, L0_CLOCK), (admitted) => ({ ...putChild(d.state, d.accountReplicas, next, admitted), outputs: d.outputs }));
 };
 const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
+/**
+ * og handleInitOrderbookExtEntityTx: an existing extension and a spread that does not sum to 10000 bps are silent no-ops;
+ * a USD quote authority that is not a lowercase 32-byte id halts (ORDERBOOK_USD_QUOTE_AUTHORITY_INVALID).
+ */
+const initOrderbookExt = (state: EntityState, d: Extract<EntityTx, { readonly type: "initOrderbookExt" }>["data"]): Result<OrderbookExt | undefined, EntityError> => {
+  if (state.orderbookExt !== undefined) return ok(state.orderbookExt);
+  const s = d.spreadDistribution;
+  if (s.makerBps + s.takerBps + s.hubBps + s.makerReferrerBps + s.takerReferrerBps !== 10_000) return ok(undefined);
+  const usdQuoteAuthorityEntityId = String(d.usdQuoteAuthorityEntityId || "").toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(usdQuoteAuthorityEntityId)) return invariant(`ORDERBOOK_USD_QUOTE_AUTHORITY_INVALID:${usdQuoteAuthorityEntityId}`);
+  return ok({ books: new Map(), pairDimensions: new Map(), referrals: new Map(), hubProfile: {
+    entityId: state.id, name: d.name, spreadDistribution: s, referenceTokenId: d.referenceTokenId, usdQuoteAuthorityEntityId, minTradeSize: d.minTradeSize, supportedPairs: [...d.supportedPairs],
+  } });
+};
+/** og assertProposeAccountsNowMatchesState: the marker's signer is the active leader, version 1, 1..1000 lowercase ids of at most 256 chars, strictly ascending. Plain Errors: the whole input is refused. */
+export const MAX_PROPOSE_ACCOUNTS_NOW_COUNTERPARTIES = 1_000;
+const proposeAccountsNowOk = (state: EntityState, d: Extract<EntityTx, { readonly type: "proposeAccountsNow" }>["data"]): Result<void, EntityError> => {
+  if (typeof d.proposerSignerId !== "string" || leaderStateOf(state).activeValidatorId.toLowerCase() !== d.proposerSignerId.toLowerCase()) return invariant("PROPOSE_ACCOUNTS_NOW_PROPOSER_MISMATCH");
+  const cps = d.counterparties;
+  if (d.version !== 1 || !Array.isArray(cps) || cps.length === 0 || cps.length > MAX_PROPOSE_ACCOUNTS_NOW_COUNTERPARTIES) return invariant(`PROPOSE_ACCOUNTS_NOW_INVALID_PAYLOAD:${Array.isArray(cps) ? cps.length : "not-array"}`);
+  for (const [i, cp] of cps.entries()) {
+    if (typeof cp !== "string" || cp.length === 0 || cp.length > 256 || cp !== cp.toLowerCase()) return invariant(`PROPOSE_ACCOUNTS_NOW_COUNTERPARTY_INVALID:${String(cp)}`);
+    const prev = cps[i - 1];
+    if (prev !== undefined && asc(prev, cp) >= 0) return invariant(`PROPOSE_ACCOUNTS_NOW_ORDER_INVALID:${prev}:${cp}`);
+  }
+  return ok(undefined);
+};
 /** Peer Account txs an Entity takes into a received frame: L0 plus the HTLC lock/resolve pair and the collateral request. */
-const entityAcceptsPeerTx = (tx: WireAccountTx): boolean => isL0Tx(tx) || tx.type === "htlc_lock" || tx.type === "htlc_resolve" || tx.type === "request_collateral";
+const entityAcceptsPeerTx = (tx: WireAccountTx): boolean => isL0Tx(tx) || tx.type === "htlc_lock" || tx.type === "htlc_resolve" || tx.type === "request_collateral"
+  || tx.type === "swap_offer" || tx.type === "swap_cancel_request" || tx.type === "swap_resolve";
 /** og DEFAULT_ACCOUNT_TOKEN_IDS (account/config/defaults.ts). */
 const DEFAULT_ACCOUNT_TOKEN_IDS = ["1", "3", "2"] as const;
 /** og TOKEN_REGISTRY decimals (account/utils.ts over DEFAULT_TOKENS + TRON_ONLY_DEFAULT_TOKENS): USDC, WETH, USDT, TRX, SUN. */
@@ -5409,7 +5505,7 @@ const answerFrame = (d: Draft, peer: EntityId, ctx: FoldContext): Result<Draft, 
   if (child === undefined || child._tag !== "received") return ok(d);
   return chain(partyOf(replicaId(child), self), (party) => chain(previewAck(child, self), (p) => {
     const ack: AccountInput = { kind: "ack", ...sentBy(child, party), height: p.height, frameHash: p.frameHash, frameHanko: pendingHanko(p.frameHash), ...opt("disputeHanko", pendingDispute(p.dispute)) };
-    return map(routed(d.state, d.accountReplicas, peer, applyAccountInput(child, ack, { verify: pendingVerify(ctx.verify, self), self, now: ctx.timestamp })), (acked) => ({ ...acked, outputs: [...d.outputs, ...acked.outputs] }));
+    return map(routed(d.state, d.accountReplicas, peer, applyAccountInput(child, ack, { verify: pendingVerify(ctx.verify, self), self, now: ctx.timestamp })), (acked) => ({ ...acked, outputs: [...d.outputs, ...acked.outputs], swaps: joinSwapEvents(d.swaps, acked.swaps) }));
   }));
 };
 const entityJHeight = (state: EntityState): bigint => { const h = state.committed["lastFinalizedJHeight"]; return typeof h === "number" && Number.isSafeInteger(h) && h >= 0 ? BigInt(h) : 0n; };
@@ -5473,6 +5569,7 @@ const fillHankos = (d: Draft, frame: EntityFrame, signatures: Precommits): Resul
   if (table.size === 0) return ok(d);
   const f = (h: Hanko): Hanko => table.get(h) ?? h, fd = (x: DisputeHanko | undefined): DisputeHanko | undefined => (x === undefined ? undefined : { ...x, hanko: f(x.hanko) });
   const fa = (a: AccountAck): AccountAck => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) });
+  const sentHankos = (x: SentProposal | undefined): SentProposal | undefined => (x === undefined ? undefined : { ack: x.ack === null ? null : fa(x.ack), ...opt("disputeHanko", fd(x.disputeHanko)) });
   // og attaches the settlement / post-proof quorum Hankos to our settle_transition hanko intent and the workspace it signs
   const ft = (tx: WireAccountTx): WireAccountTx => (tx.type === "settle_transition" && tx.kind === "hanko" ? { ...tx, ...opt("settlementHanko", tx.settlementHanko === undefined ? undefined : f(tx.settlementHanko)), postProof: { ...tx.postProof, ...opt("hanko", tx.postProof.hanko === undefined ? undefined : f(tx.postProof.hanko)) } } : tx);
   const fh = (h: string | undefined): string | undefined => (h === undefined ? undefined : f(h));
@@ -5482,7 +5579,7 @@ const fillHankos = (d: Draft, frame: EntityFrame, signatures: Precommits): Resul
     const head: AccountHead = c.head._tag === "installed" ? { ...c.head, certificate: { ...c.head.certificate, left: f(c.head.certificate.left), right: f(c.head.certificate.right) } } : c.head;
     const dispute: DisputeWitnesses = { ...c.dispute, ...opt("current", fd(c.dispute.current)) };
     const base = { ...c, head, dispute, state: fb(c.state), mempool: c.mempool.map(ft), ...(c.acknowledged === undefined ? {} : { acknowledged: fa(c.acknowledged) }) };
-    return "candidate" in c ? ({ ...base, candidate: new Candidate(ff(c.candidate.frame), f(c.candidate.frameHanko), c.candidate.frameProof, { ...c.candidate.draft, state: fb(c.candidate.draft.state) }, c.candidate.floor) } as AccountReplica) : (base as AccountReplica);
+    return "candidate" in c ? ({ ...base, candidate: new Candidate(ff(c.candidate.frame), f(c.candidate.frameHanko), c.candidate.frameProof, { ...c.candidate.draft, state: fb(c.candidate.draft.state) }, c.candidate.floor, sentHankos(c.candidate.sent)) } as AccountReplica) : (base as AccountReplica);
   };
   const message = (m: AccountPeerInput): AccountPeerInput => matchBy("kind", m, {
     ack: (a): AccountPeerInput => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
@@ -6077,7 +6174,7 @@ const foldNested = (state: EntityState, replicas: Replicas, txs: readonly Entity
   foldResult<Draft, EntityTx, EntityError>(txs, { state, accountReplicas: replicas, outputs: [], events: [] }, (acc, tx) => {
     const r = foldTx(acc.state, acc.accountReplicas, tx, ctx, lane);
     if (!r.ok) return fatalTx(tx, r.error) && r.error._tag !== "entity_invariant" ? invariant(`${tx.type}:${r.error._tag}`) : r;
-    return ok({ ...r.value, outputs: [...acc.outputs, ...r.value.outputs], events: [...(acc.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc, r.value) });
+    return ok({ ...r.value, outputs: [...acc.outputs, ...r.value.outputs], events: [...(acc.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc, r.value), swaps: joinSwapEvents(acc.swaps, r.value.swaps) });
   });
 const WORD32 = /^0x[0-9a-f]{64}$/, EOA = /^0x[0-9a-f]{40}$/;
 const COMMAND_DOMAIN = "xln:entity-command:binary", PROPOSAL_ACTION_DOMAIN = "xln:entity-proposal-action:v1";
@@ -6813,7 +6910,7 @@ const queueReturned = (d: Draft, target: AccountTxTarget): Draft => {
   const peer = target.accountId.toLowerCase() as EntityId, child = d.accountReplicas.get(peer);
   if (child === undefined) return d;
   const admitted = admitAt(child, [target.tx], d.state.id, L0_CLOCK);
-  return admitted.ok ? { ...putChild(d.state, d.accountReplicas, peer, admitted.value), outputs: d.outputs } : d;
+  return admitted.ok ? { ...d, ...putChild(d.state, d.accountReplicas, peer, admitted.value) } : d;
 };
 // ---- og entity/tx/handlers/payments/settle.ts: settle_propose / update / approve / execute / reject, deferred approvals, committed auto-approval, continuations ----
 /** og hasPendingSettlementTransition: a settle_transition queued in the mempool or inside our pending frame. */
@@ -7523,6 +7620,12 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
       const offer: AccountTx = { type: "swap_offer", offerId, giveTokenId, giveTokenDecimals, giveAmount, wantTokenId, wantTokenDecimals, wantAmount, maxFee, minNetReceive, ...opt("priceTicks", priceTicks), ...opt("timeInForce", timeInForce) };
       return replicas.has(to) ? enqueue(to, [offer], [wake(state, ctx.timestamp)]) : err({ _tag: "swap_request_account_missing", target: to });
     },
+    proposeAccountsNow: (x) => map(proposeAccountsNowOk(state, x.data), () => ({ ...skip, outputs: x.data.counterparties.flatMap((peer): EntityOutput[] => {
+      // og re-emits the retained bytes unchanged; a peer with no Account or no unanswered proposal is owed nothing
+      const child = replicas.get(peer as EntityId), sent = child === undefined ? undefined : pendingAccountInput(child, state.id);
+      return sent === undefined ? [] : [{ to: peer as EntityId, tx: { type: "accountInput", data: sent } }];
+    }) })),
+    initOrderbookExt: (x) => map(initOrderbookExt(state, x.data), (orderbookExt): Draft => (orderbookExt === state.orderbookExt ? skip : { ...skip, state: { ...state, orderbookExt } })),
     proposeCancelSwap: (x) => (replicas.has(x.data.counterpartyEntityId) ? enqueue(x.data.counterpartyEntityId, [{ type: "swap_cancel_request", offerId: x.data.offerId }], [wake(state, ctx.timestamp)]) : err({ _tag: "swap_request_account_missing", target: x.data.counterpartyEntityId })),
     "profile-update": (x) => map(profileUpdate(state, x.data.profile), (profile) => ({ ...skip, state: { ...state, committed: { ...state.committed, profile } } })),
     // og handleSetHubConfigEntityTx: commit the config, mark the profile a hub, then queue the fee terms on every Account's tokens (ids and tokens ascending) and wake
@@ -7593,6 +7696,61 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     })),
   });
 };
+/** og swapTakerFeeBps as the matcher reads it: a finite number floored into 0..10000, else 0. */
+const takerFeeBpsOf = (raw: unknown): number => { const n = Number(raw); return Number.isFinite(n) ? Math.max(0, Math.min(10_000, Math.floor(n))) : 0; };
+/** The matcher's view of this Entity: og status 'active' is a live Account; queued work is the mempool plus our pending frame. */
+export const hubView = (state: EntityState, replicas: Replicas, ext: OrderbookExt): Hub => ({
+  id: state.id, ext, takerFeeBps: takerFeeBpsOf(hubConfigOf(state)?.swapTakerFeeBps),
+  accounts: new Map([...replicas].map(([peer, c]): [string, HubAccount] => [peer, {
+    active: isLive(c), left: c.state.account.id.left, right: c.state.account.id.right, offers: c.state.offers, queued: c._tag === "proposed" ? [...c.mempool, ...c.candidate.frame.txs] : c.mempool,
+  }])),
+});
+/** og replaceOrderbookPair for each final book: an existing pair keeps its place, a new pair is appended. */
+const withBooks = (ext: OrderbookExt, books: ReadonlyMap<string, Book>): OrderbookExt => (books.size === 0 ? ext : { ...ext, books: new Map([...ext.books, ...books]) });
+/**
+ * og applyPostEntityTxPhases book work, after every Entity tx and before Account proposals, on a hub that owns an order book:
+ * committed offer removals leave the book, maker cancel requests queue their zero-fill resolve, then the frame's committed offers are matched.
+ * Matcher resolves are admitted as one batch per Account (og admitOrderbookAccountTxBatch); a short admission halts.
+ */
+const bookPhase = (d: Draft): Result<Draft, EntityError> => {
+  const ext0 = d.state.orderbookExt, swaps = d.swaps;
+  if (ext0 === undefined || swaps === undefined) return ok(d);
+  return chain(applyCommittedSwapCancels(ext0, swaps.cancelled), ({ ext: ext1, resumePairIds }) => chain(processOrderbookCancels(hubView(d.state, d.accountReplicas, ext1), swaps.cancelRequests), (cancels): Result<Draft, EntityError> => {
+    let at: Folded = { state: d.state, accountReplicas: d.accountReplicas };
+    for (const { accountId, tx } of cancels.accountTxs) {
+      const child = at.accountReplicas.get(accountId as EntityId), admitted = child === undefined ? undefined : admit(child, [tx], at.state.id);
+      if (admitted !== undefined && admitted.ok) at = putChild(at.state, at.accountReplicas, accountId as EntityId, admitted.value);
+    }
+    const ext2 = withBooks(ext1, cancels.books), done = (ext: OrderbookExt, f: Folded): Draft => ({ ...d, state: { ...f.state, orderbookExt: ext }, accountReplicas: f.accountReplicas });
+    if (swaps.created.length === 0 && resumePairIds.length === 0) return ok(done(ext2, at));
+    const hub = hubView(at.state, at.accountReplicas, ext2);
+    return chain(offersForMatching(hub, swaps.created), (offers) => chain(processOrderbookSwaps(hub, offers, resumePairIds), (match): Result<Draft, EntityError> => {
+      const verified = new Set(offers.map((o) => `${o.accountId}:${o.offerId}`)), batches = new Map<string, AccountTx[]>();
+      for (const { accountId, tx } of match.accountTxs) {
+        const visible = hub.accounts.get(accountId);
+        if (tx.type === "swap_resolve") {
+          if (visible?.offers.get(tx.offerId)?.crossJurisdiction !== undefined) continue;
+          if (!visible?.offers.has(tx.offerId) && !verified.has(`${accountId}:${tx.offerId}`)) return invariant(`ORDERBOOK_SWAP_OWNER_NOT_LOCAL: account=${accountId} offer=${tx.offerId} entity=${at.state.id}`);
+        }
+        if (visible === undefined) return invariant(`ORDERBOOK_ACCOUNT_TX_ACCOUNT_MISSING: account=${accountId} entity=${at.state.id} tx=${tx.type}`);
+        batches.set(accountId, [...(batches.get(accountId) ?? []), tx]);
+      }
+      for (const [accountId, txs] of batches) {
+        const child = at.accountReplicas.get(accountId as EntityId);
+        if (child === undefined) return invariant(`ORDERBOOK_ACCOUNT_TX_ACCOUNT_MISSING: account=${accountId} entity=${at.state.id} tx=${txs[0]?.type ?? ""}`);
+        const queued = chain(partyOf(replicaId(child), at.state.id), (p) => enqueue(child, txs, p.left)), admitted = queued.ok ? queued.value.queued.length : 0;
+        if (!queued.ok || admitted !== txs.length) return invariant(`ORDERBOOK_ACCOUNT_TX_ADMISSION_FAILED: account=${child.state.account.id.left}:${child.state.account.id.right} expected=${txs.length} admitted=${admitted}`);
+        at = putChild(at.state, at.accountReplicas, accountId as EntityId, queued.value.replica);
+      }
+      // og commitOrderbookMatchResult: a pair's trade counter never moves backwards
+      for (const [pairId, book] of match.books) {
+        const previous = ext2.books.get(pairId)?.tradeCount ?? 0;
+        if (book.tradeCount < previous) return invariant(`ORDERBOOK_TRADE_COUNT_REGRESSION:pair=${pairId}:previous=${previous}:next=${book.tradeCount}`);
+      }
+      return ok(done({ ...withBooks(ext2, match.books), pairDimensions: match.pairDimensions }, at));
+    }));
+  }));
+};
 export type FoldedTxs = { readonly draft: Draft; readonly included: readonly EntityTx[]; readonly evicted: readonly EntityTx[] };
 /**
  * og buildEntityProposalEvictingRejected: a refused tx is evicted and the rest still fold. An openAccount refusal is a plain
@@ -7604,13 +7762,14 @@ export const foldTxs = (state: EntityState, replicas: Replicas, txs: readonly En
   const primed = [...replicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
   return chain(normalizeGovernance(state), (normalized) => chain(foldResult<Acc, EntityTx, EntityError>(txs, { draft: { state: normalized, accountReplicas: replicas, outputs: [], events: [], touched: [] }, included: [], evicted: [] }, (acc, tx) => {
     const r = foldTx(acc.draft.state, acc.draft.accountReplicas, tx, ctx);
-    if (r.ok) return ok({ ...acc, included: [...acc.included, tx], draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs], events: [...(acc.draft.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.draft.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc.draft, r.value) } });
+    if (r.ok) return ok({ ...acc, included: [...acc.included, tx], draft: { ...r.value, outputs: [...acc.draft.outputs, ...r.value.outputs], events: [...(acc.draft.events ?? []), ...(r.value.events ?? [])], touched: [...(acc.draft.touched ?? []), ...(r.value.touched ?? [peerOf(tx, state.id)])], ...frameEffects(acc.draft, r.value), swaps: joinSwapEvents(acc.draft.swaps, r.value.swaps) } });
     return fatalTx(tx, r.error) ? r : ok({ ...acc, evicted: [...acc.evicted, tx], first: acc.first ?? r.error });
   }), ({ first, ...folded }) => {
     if (folded.included.length === 0 && first !== undefined) return err(first);
     // og materializeSettlementContinuation, then drainPostOrderbookAccountWork's settlement approvals, before proposePendingAccountFrames.
-    return chain(chain(materializeContinuation(folded.draft, ctx, settleQueue(ctx)), (d) => materializeSettlements(d, ctx)), (settled) => {
-      // Accounts that received follow-up work (a gateway's forwarded leg) join after the directly touched ones.
+    // og applyPostEntityTxPhases: cancels + orderbook matching, then drainPostOrderbookAccountWork.
+    return chain(chain(chain(materializeContinuation(folded.draft, ctx, settleQueue(ctx)), bookPhase), (d) => materializeSettlements(d, ctx)), (settled) => {
+      // Accounts that received follow-up work (a gateway's forwarded leg, a matcher resolve) join after the directly touched ones.
       const followups = [...settled.accountReplicas].filter(([, c]) => proposableChild(c)).map(([peer]) => peer).sort(asc);
       const order = [...new Set([...primed, ...(settled.touched ?? []), ...followups])];
       return ok({ ...folded, draft: { ...proposeAccounts(settled, order, ctx).draft, ...opt("hashes", settled.hashes), ...opt("jOutputs", settled.jOutputs) } });
@@ -7665,7 +7824,7 @@ const settleCollections = (committed: EntityCommitted): Result<EntityCommitted, 
 /** og computeCanonicalEntityConsensusStateHash over the draft: entityId, height, timestamp, config, accounts and every committed section. */
 export const entityRootOf = (state: EntityState, replicas: Replicas): Result<string, EntityError> =>
   chain(frameNumber(state.height), (height) => chain(frameNumber(state.timestamp), (timestamp) => chain(traverse([...replicas], ([peer, child]) => installedAccount(state.id, peer, child)),
-    (accounts) => chain(chain(chain(settleCollections(state.committed), (base) => state.paybook === undefined ? ok(base) : map(paybookSection(state.paybook), (paybook): EntityCommitted => ({ ...base, paybook }))), (withPaybook) => crossSections(withPaybook, state)),
+    (accounts) => chain(chain(chain(settleCollections(state.committed), (base) => state.paybook === undefined ? ok(base) : map(paybookSection(state.paybook), (paybook): EntityCommitted => ({ ...base, paybook }))), (withPaybook) => map(crossSections(withPaybook, state), (c): EntityCommitted => (state.orderbookExt === undefined ? c : { ...c, orderbookExt: orderbookSection(state.orderbookExt) }))),
       (committed) => entityStateRoot({ config: rootConfig(state), accounts, entityId: state.id, height, timestamp, committed, leaderState: state.leaderState })))));
 /** og state-root.ts: crossJurisdictionSwaps / crossJurisdictionAuthorizations commit as text-keyed collections once they exist. */
 const crossSections = (committed: EntityCommitted, state: EntityState): Result<EntityCommitted, EntityError> => {
@@ -9278,4 +9437,490 @@ export const bookOrdersOutsidePriceRange = (b: Book, min: bigint, max: bigint): 
     for (const r of orderedPages(rows, 0)) { if (r.key.priceTicks <= max) break; high.push(...pageOrders(side, r)); }
     return [...low, ...high];
   }));
+};
+// ---- hub order book inside entity consensus: og entity/tx/handlers/account/orderbook/{index,queue,cancels,helpers,same/*}.ts, orderbook/cross-j/orderbook.ts
+// applyCommittedSwapCancelsToOrderbook, account/utils.ts pair policy. Same-jurisdiction only: og's cross-j book pass, cancel routing and risk caps are not ported.
+// og throws halts from deep inside the pass; here every halt is an `entity_invariant` with og's message, returned through the pass. ----
+export type SwapRef = { readonly offerId: string; readonly accountId: string };
+/** og SwapOfferEvent for a committed same-j offer (committed-input.ts buildSameJurisdictionSwapOfferEvent); og marks it accountOutputVerified. */
+export type SwapOfferEvent = SwapRef & {
+  readonly makerIsLeft: boolean; readonly fromEntity: string; readonly toEntity: string; readonly createdHeight: number;
+  readonly giveTokenId: number; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: number; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
+  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks: bigint; readonly timeInForce?: 0 | 1 | 2 | undefined;
+};
+/** og CommittedAccountEffects swapOffersCreated / swapOffersCancelled / swapCancelRequests, collected over one Entity frame. */
+export type SwapEvents = { readonly created: readonly SwapOfferEvent[]; readonly cancelled: readonly SwapRef[]; readonly cancelRequests: readonly SwapRef[] };
+export const joinSwapEvents = (a: SwapEvents | undefined, b: SwapEvents | undefined): SwapEvents | undefined =>
+  a === undefined ? b : b === undefined ? a : { created: [...a.created, ...b.created], cancelled: [...a.cancelled, ...b.cancelled], cancelRequests: [...a.cancelRequests, ...b.cancelRequests] };
+const tif = (t: number | undefined): 0 | 1 | 2 | undefined => (t === 0 || t === 1 || t === 2 ? t : undefined);
+/** og buildSameJurisdictionSwapOfferEvent from the Account's swapOfferUpsert snapshot. */
+export const swapOfferEvent = (accountId: string, e: Of<Effect, "swap_offer_upsert">): SwapOfferEvent => ({
+  offerId: e.offer.offerId, accountId, makerIsLeft: e.offer.makerIsLeft, fromEntity: e.left, toEntity: e.right, createdHeight: e.offer.createdHeight,
+  giveTokenId: Number(e.offer.giveTokenId), giveTokenDecimals: e.offer.giveTokenDecimals, giveAmount: e.offer.giveAmount, wantTokenId: Number(e.offer.wantTokenId), wantTokenDecimals: e.offer.wantTokenDecimals, wantAmount: e.offer.wantAmount,
+  maxFee: e.offer.maxFee, minNetReceive: e.offer.minNetReceive, priceTicks: e.offer.priceTicks, ...opt("timeInForce", tif(e.offer.timeInForce)),
+});
+/** The matcher's view of one hub Account (og hubState.accounts row): status, committed offers, and the resolves already queued (mempool + our pending frame). */
+export type HubAccount = { readonly active: boolean; readonly left: string; readonly right: string; readonly offers: ReadonlyMap<string, SwapOffer>; readonly queued: readonly WireAccountTx[] };
+export type Hub = { readonly id: string; readonly ext: OrderbookExt; readonly accounts: ReadonlyMap<string, HubAccount>; readonly takerFeeBps: number };
+export type BookTx = { readonly accountId: string; readonly tx: AccountTx };
+/** og MatchResult (same-j): Account txs in queue order, the final book of every touched pair in first-touch order, and the committed pair dimensions. */
+export type BookMatch = { readonly accountTxs: readonly BookTx[]; readonly books: ReadonlyMap<string, Book>; readonly pairDimensions: ReadonlyMap<string, PairDimensions> };
+/** og NormalizedOrderbookOffer (same-j). */
+type BookOffer = SwapRef & {
+  readonly makerIsLeft: boolean; readonly fromEntity: string; readonly toEntity: string; readonly createdHeight: number;
+  readonly giveTokenId: number; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: number; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
+  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks: bigint; readonly timeInForce: 0 | 1 | 2;
+};
+const halt = (message: string): Result<never, EntityError> => err({ _tag: "entity_invariant", reason: message });
+const haltMessage = (e: EntityError): string => (e._tag === "entity_invariant" ? e.reason : e._tag);
+const swapKeyOf = (accountId: string, offerId: string): string => `${accountId}:${offerId}`;
+/** og parseNamespacedOrderId: the account id is everything before the last colon. */
+const parseOrderId = (orderId: string, code: string): Result<SwapRef, EntityError> => {
+  const i = orderId.lastIndexOf(":");
+  return i <= 0 || i === orderId.length - 1 ? halt(`${code}: order=${orderId}`) : ok({ accountId: orderId.slice(0, i), offerId: orderId.slice(i + 1) });
+};
+const dimsOf = (give: number, want: number, giveDecimals: number, wantDecimals: number): SwapDims => {
+  const side = swapSide(give, want);
+  return side === 1 ? { side, bd: giveDecimals, qd: wantDecimals } : { side, bd: wantDecimals, qd: giveDecimals };
+};
+/** og normalizeSwapOfferForOrderbook: a missing price is recomputed from the amounts; a non-positive one halts. */
+const normalizeOffer = (o: Omit<BookOffer, "priceTicks" | "timeInForce" | "accountId"> & { readonly priceTicks?: bigint | undefined; readonly timeInForce?: number | undefined }, accountId: string): Result<BookOffer, EntityError> => {
+  const d = dimsOf(o.giveTokenId, o.wantTokenId, o.giveTokenDecimals, o.wantTokenDecimals);
+  const priceTicks = o.priceTicks !== undefined && o.priceTicks > 0n ? o.priceTicks : priceTicksOf(d, d.side === 1 ? o.giveAmount : o.wantAmount, d.side === 1 ? o.wantAmount : o.giveAmount);
+  if (priceTicks <= 0n) return halt(`ORDERBOOK_NORMALIZE_INVALID_PRICE: offer=${o.offerId}`);
+  return ok({
+    offerId: o.offerId, accountId, makerIsLeft: o.makerIsLeft, fromEntity: o.fromEntity, toEntity: o.toEntity, createdHeight: o.createdHeight,
+    giveTokenId: o.giveTokenId, giveTokenDecimals: o.giveTokenDecimals, giveAmount: o.giveAmount, wantTokenId: o.wantTokenId, wantTokenDecimals: o.wantTokenDecimals, wantAmount: o.wantAmount,
+    maxFee: o.maxFee, minNetReceive: o.minNetReceive, priceTicks, timeInForce: tif(o.timeInForce) ?? 0,
+  });
+};
+/** og account/utils.ts SWAP_PAIR_POLICY_BY_BASE_QUOTE: book bucket width and MM mid price per base/quote. */
+type PairPolicy = { readonly bucket: number; readonly mid: bigint };
+const PAIR_POLICIES: ReadonlyMap<string, PairPolicy> = new Map([
+  ["2/1", { bucket: 10_000, mid: 25_000_000n }], ["2/3", { bucket: 10_000, mid: 25_000_000n }], ["1/3", { bucket: 10_000, mid: 10_000n }],
+  ["4/1", { bucket: 100, mid: 1_200n }], ["4/3", { bucket: 100, mid: 1_200n }], ["5/1", { bucket: 10, mid: 200n }], ["5/3", { bucket: 10, mid: 200n }],
+]);
+const DEFAULT_PAIR_POLICY: PairPolicy = { bucket: 10_000, mid: 10_000n };
+/** og getSwapPairOrientation: a reference stable is the quote; the book is keyed by the numerically ordered pair. */
+const canonicalPairOf = (a: number, b: number): { readonly base: number; readonly quote: number; readonly pairId: string } => {
+  const lo = Math.min(a, b), hi = Math.max(a, b), al = REFERENCE_STABLES.has(a), bl = REFERENCE_STABLES.has(b);
+  const [base, quote] = al && !bl ? [b, a] : !al && bl ? [a, b] : [lo, hi];
+  return { base, quote, pairId: `${lo}/${hi}` };
+};
+/** og hasSwapPairPolicyForDimensions: the static policy is authority only when both signed decimals match the built-in tokens. */
+const pairPolicyOf = (base: number, quote: number, bd: number, qd: number): { readonly policy: PairPolicy; readonly explicit: boolean } => {
+  const policy = PAIR_POLICIES.get(`${base}/${quote}`);
+  const explicit = policy !== undefined && TOKEN_DECIMALS.get(base) === bd && TOKEN_DECIMALS.get(quote) === qd;
+  return explicit ? { policy, explicit } : { policy: DEFAULT_PAIR_POLICY, explicit };
+};
+const MAX_ORDERBOOK_ORDERS_PER_PAIR = 10_000, PRICE_REJECT_BPS = 3_000n;
+/** og resolvePairBandReference. */
+const bandAnchor = (p: { readonly policy: PairPolicy; readonly explicit: boolean }, bid: bigint | null, ask: bigint | null): bigint | null =>
+  bid !== null && ask !== null ? (bid + ask) / 2n : bid !== null ? bid : ask !== null ? ask : p.explicit ? p.policy.mid : null;
+/** og deriveSameOrderbookPriceBandBounds: +/-30% around the anchor. */
+const bandBounds = (anchor: bigint): Result<{ readonly min: bigint; readonly max: bigint }, EntityError> => {
+  if (anchor <= 0n) return halt("ORDERBOOK_PRICE_BAND_ANCHOR_INVALID");
+  const offset = (anchor * PRICE_REJECT_BPS) / 10_000n;
+  return ok({ min: anchor - offset, max: anchor + offset });
+};
+type Materialized = {
+  readonly offer: BookOffer; readonly bookKey: string; readonly bd: number; readonly qd: number; readonly side: BookSide; readonly priceTicks: bigint; readonly qtyLots: bigint;
+  readonly makerId: string; readonly orderId: string; readonly pair: { readonly policy: PairPolicy; readonly explicit: boolean };
+};
+type Prepared = Materialized & { readonly book: Book; readonly bestBid: bigint | null; readonly bestAsk: bigint | null };
+/** og deriveSameOrderbookMaterialization: direction, amounts, minimum trade size, lot and exact-quote alignment, then the order's bounds. */
+const materialization = (o: BookOffer, minTradeSize: bigint): Result<Tagged<"ok", { m: Materialized }> | Tagged<"reject", { reason: string }>, EntityError> => {
+  const { base, quote, pairId } = canonicalPairOf(o.giveTokenId, o.wantTokenId), side = swapSide(o.giveTokenId, o.wantTokenId);
+  const amounts = o.giveTokenId === base && o.wantTokenId === quote ? { b: o.giveAmount, q: o.wantAmount } : o.giveTokenId === quote && o.wantTokenId === base ? { b: o.wantAmount, q: o.giveAmount } : undefined;
+  const reject = (reason: string) => ok({ _tag: "reject" as const, reason });
+  if (amounts === undefined) return reject("invalid-direction");
+  const d = dimsOf(o.giveTokenId, o.wantTokenId, o.giveTokenDecimals, o.wantTokenDecimals), pair = pairPolicyOf(base, quote, d.bd, d.qd), lot = lotScale(d.bd);
+  if (amounts.b <= 0n || amounts.q <= 0n) return reject("zero-amount");
+  if (minTradeSize > 0n && amounts.q < minTradeSize) return reject(`below-minTradeSize:${amounts.q}`);
+  if (amounts.b % lot !== 0n) return reject(`lot-misaligned:${amounts.b}`);
+  if (o.priceTicks <= 0n) return halt("SWAP_EXACT_QUOTE_PRICE_INVALID");
+  const qtyLots = amounts.b / lot, multiple = exactQuoteLots(d.bd, d.qd, o.priceTicks);
+  if (qtyLots % multiple !== 0n) return reject(`quote-lot-misaligned:${qtyLots}:${multiple}`);
+  if (qtyLots === 0n || qtyLots > MAX_ORDERBOOK_QTY_LOTS) return reject(`invalid-order:${qtyLots}:${o.priceTicks}`);
+  return ok({ _tag: "ok", m: { offer: o, bookKey: pairId, bd: d.bd, qd: d.qd, side, priceTicks: o.priceTicks, qtyLots, makerId: o.makerIsLeft ? o.fromEntity : o.toEntity, orderId: swapKeyOf(o.accountId, o.offerId), pair } });
+};
+/** One og same-j pass: the hot book cache, queued resolves, suspended makers and committed dimensions. Local to processOrderbookSwaps. */
+type Pass = {
+  readonly hub: Hub; readonly accountTxs: BookTx[]; readonly queued: Set<string>; readonly suspended: Set<string>; readonly meta: Map<string, BookOffer>; readonly swept: Set<string>;
+  readonly cache: Map<string, Book>; readonly updates: Map<string, Book>; readonly dims: Map<string, PairDimensions>;
+};
+const newPass = (hub: Hub): Pass => ({ hub, accountTxs: [], queued: new Set(), suspended: new Set(), meta: new Map(), swept: new Set(), cache: new Map(), updates: new Map(), dims: new Map(hub.ext.pairDimensions) });
+/** og hasQueuedSwapResolveForEntityState. */
+const hasQueuedResolve = (pass: Pick<Pass, "hub" | "queued">, accountId: string, offerId: string): boolean =>
+  pass.queued.has(swapKeyOf(accountId, offerId)) || (pass.hub.accounts.get(accountId)?.queued ?? []).some((tx) => tx.type === "swap_resolve" && tx.offerId === offerId);
+/** og queueUniqueSwapResolveForEntityState. */
+const queueUniqueResolve = (pass: Pick<Pass, "hub" | "queued" | "accountTxs">, accountId: string, data: SwapResolveTerms): boolean => {
+  if (hasQueuedResolve(pass, accountId, data.offerId)) return false;
+  pass.queued.add(swapKeyOf(accountId, data.offerId));
+  pass.accountTxs.push({ accountId, tx: { type: "swap_resolve", ...data } });
+  return true;
+};
+const cancelTerms = (offerId: string, comment: string): SwapResolveTerms => ({ offerId, fillRatio: 0, cancelRemainder: true, comment });
+/** og queueSameSwapResolve: the resolving row never trades again in this pass, even when an identical resolve was already queued. */
+const queueSame = (pass: Pass, accountId: string, data: SwapResolveTerms): boolean => {
+  const queued = queueUniqueResolve(pass, accountId, data);
+  pass.suspended.add(swapKeyOf(accountId, data.offerId));
+  return queued;
+};
+/** og buildLiveSameOfferMeta: the committed Account offer behind a book row; a cross-j or missing offer has none. */
+const liveMeta = (pass: Pass, orderId: string): Result<BookOffer | null, EntityError> => chain(parseOrderId(orderId, "ORDERBOOK_MALFORMED_BOOK_ORDER"), ({ accountId, offerId }) => {
+  const account = pass.hub.accounts.get(accountId), o = account?.offers.get(offerId);
+  if (account === undefined || o === undefined || o.crossJurisdiction !== undefined) return ok(null);
+  return normalizeOffer({ offerId, makerIsLeft: o.makerIsLeft, fromEntity: account.left, toEntity: account.right, createdHeight: o.createdHeight, giveTokenId: Number(o.giveTokenId), giveTokenDecimals: o.giveTokenDecimals,
+    giveAmount: o.giveAmount, wantTokenId: Number(o.wantTokenId), wantTokenDecimals: o.wantTokenDecimals, wantAmount: o.wantAmount, maxFee: o.maxFee, minNetReceive: o.minNetReceive, priceTicks: o.priceTicks, timeInForce: o.timeInForce }, accountId);
+});
+/** og classifySameBookMaker: an inactive Account cancels, a resolving row is suspended, and the row must equal its committed offer. */
+const classifyMaker = (pass: Pass, pairId: string, order: BookOrder): Result<MakerDisposition, EntityError> => chain(parseOrderId(order.orderId, "ORDERBOOK_MALFORMED_BOOK_ORDER"), ({ accountId }) => {
+  const account = pass.hub.accounts.get(accountId);
+  if (account === undefined) return halt(`ORDERBOOK_SAME_SNAPSHOT_MISSING: pair=${pairId} order=${order.orderId}`);
+  if (!account.active) return ok("cancel");
+  const cached = pass.meta.get(order.orderId);
+  return chain(cached === undefined ? liveMeta(pass, order.orderId) : ok(cached), (meta): Result<MakerDisposition, EntityError> => {
+    if (meta === null) return halt(`ORDERBOOK_SAME_SNAPSHOT_MISSING: pair=${pairId} order=${order.orderId}`);
+    if (hasQueuedResolve(pass, meta.accountId, meta.offerId)) return ok("suspended");
+    pass.meta.set(order.orderId, meta);
+    const d = dimsOf(meta.giveTokenId, meta.wantTokenId, meta.giveTokenDecimals, meta.wantTokenDecimals), baseAmount = d.side === 1 ? meta.giveAmount : meta.wantAmount;
+    const owner = meta.makerIsLeft ? meta.fromEntity : meta.toEntity, qtyLots = baseAmount / lotScale(d.bd);
+    if (order.side !== d.side || order.priceTicks !== meta.priceTicks || order.ownerId !== owner || order.qtyLots !== qtyLots)
+      return halt(`ORDERBOOK_CACHE_MISMATCH: pair=${pairId} order=${order.orderId} storedOwner=${order.ownerId} canonicalOwner=${owner} storedSide=${order.side} canonicalSide=${d.side} `
+        + `storedPrice=${order.priceTicks} canonicalPrice=${meta.priceTicks} storedQtyLots=${order.qtyLots} canonicalQtyLots=${qtyLots}`);
+    return ok("eligible");
+  });
+});
+/** og applyCommand options for a same-j pair; a halt raised while classifying a maker is kept and surfaces after the command. */
+const bookOptions = (pass: Pass, pairId: string, bd: number, qd: number): { readonly options: BookOptions; readonly fault: () => EntityError | undefined } => {
+  let fault: EntityError | undefined;
+  return {
+    fault: () => fault,
+    options: {
+      suspendedOrderIds: pass.suspended,
+      makerDisposition: (maker) => { if (fault !== undefined) return "suspended"; const r = classifyMaker(pass, pairId, maker); if (!r.ok) { fault = r.error; return "suspended"; } return r.value; },
+      executionQtyMultipleAtPrice: (price) => exactQuoteLots(bd, qd, price),
+    },
+  };
+};
+/** og containSamePairFailure (live mode): a failed pair command halts the frame. */
+const pairFailure = (pairId: string, accountId: string, offerId: string, message: string): Result<never, EntityError> =>
+  halt(`ORDERBOOK_PAIR_COMMAND_FAILED: pair=${pairId} account=${accountId} offer=${offerId} error=${message}`);
+/** og sweepSamePairOutOfBandOffers: once per pair and pass, every resting row outside the anchor band leaves the book. */
+const sweepPair = (pass: Pass, pairId: string, pair: Materialized["pair"], book: Book): Result<Book, EntityError> => {
+  const anchor = bandAnchor(pair, bestBid(book), bestAsk(book));
+  if (anchor === null) return ok(book);
+  return chain(bandBounds(anchor), ({ min, max }) => chain(mapErr(bookOrdersOutsidePriceRange(book, min, max), (e) => ({ _tag: "entity_invariant", reason: e.code }) as EntityError), (outside) => {
+    let next = book, removed = 0;
+    for (const order of outside) {
+      const d = classifyMaker(pass, pairId, order);
+      if (!d.ok) return d;
+      if (d.value === "suspended") continue;
+      const live = d.value === "eligible" ? liveMeta(pass, order.orderId) : ok(null);
+      if (!live.ok) return live;
+      removed += 1;
+      const cancelled = applyBookCommand(next, { kind: 1, ownerId: order.ownerId, orderId: order.orderId });
+      if (!cancelled.ok) return halt(cancelled.error.code);
+      next = cancelled.value.state;
+      if (live.value !== null) queueSame(pass, live.value.accountId, cancelTerms(live.value.offerId, `outside-anchor-band:${order.priceTicks}`));
+    }
+    return ok(removed === 0 ? book : next);
+  }));
+};
+/** og materializeSameOffer: a resolving offer is skipped; a malformed one or one against the pair's committed dimensions is cancelled. */
+const materializeSame = (pass: Pass, o: BookOffer, minTradeSize: bigint): Result<Materialized | null, EntityError> => {
+  if (hasQueuedResolve(pass, o.accountId, o.offerId)) return ok(null);
+  return map(materialization(o, minTradeSize), (r) => {
+    if (r._tag === "reject") { queueSame(pass, o.accountId, cancelTerms(o.offerId, r.reason)); return null; }
+    const committed = pass.dims.get(r.m.bookKey);
+    if (committed !== undefined && (committed.baseTokenDecimals !== r.m.bd || committed.quoteTokenDecimals !== r.m.qd)) { queueSame(pass, o.accountId, cancelTerms(o.offerId, "pair-decimals-mismatch")); return null; }
+    return r.m;
+  });
+};
+/** og prepareSameOffer: the pair's hot book (or a fresh one), its one sweep, then the price band. */
+const prepareSame = (pass: Pass, m: Materialized): Result<Prepared | null, EntityError> => {
+  const cached = pass.cache.get(m.bookKey), committed = cached === undefined ? pass.hub.ext.books.get(m.bookKey) : undefined;
+  if (committed !== undefined) pass.cache.set(m.bookKey, committed);
+  const held = cached ?? committed;
+  const fresh: Result<Book, EntityError> = held !== undefined ? ok(held)
+    : mapErr(createBook({ bucketWidthTicks: BigInt(Math.max(1, m.pair.policy.bucket)), maxOrders: MAX_ORDERBOOK_ORDERS_PER_PAIR, stpPolicy: 1 }), (e) => ({ _tag: "entity_invariant", reason: e.code }) as EntityError);
+  return chain(fresh, (start) => chain(pass.swept.has(m.bookKey) ? ok(start) : (pass.swept.add(m.bookKey), sweepPair(pass, m.bookKey, m.pair, start)), (book) => {
+    if (book !== start) { pass.cache.set(m.bookKey, book); pass.updates.set(m.bookKey, book); }
+    const bid = bestBid(book), ask = bestAsk(book), anchor = bandAnchor(m.pair, bid, ask);
+    return chain(anchor === null ? ok(undefined) : bandBounds(anchor), (bounds): Result<Prepared | null, EntityError> => {
+      if (bounds !== undefined && (m.priceTicks < bounds.min || m.priceTicks > bounds.max)) { queueSame(pass, m.offer.accountId, cancelTerms(m.offer.offerId, `outside-anchor-band:${m.priceTicks}`)); return ok(null); }
+      pass.meta.set(m.orderId, { ...m.offer, priceTicks: m.priceTicks });
+      return ok({ ...m, book, bestBid: bid, bestAsk: ask });
+    });
+  }));
+};
+/** og keepIdenticalRestingOrder: an offer already resting unchanged stays; a changed one halts. */
+const keepResting = (pass: Pass, p: Prepared): Result<boolean, EntityError> => {
+  const existing = p.book.orders.get(p.orderId);
+  if (existing === undefined) return ok(false);
+  if (existing.ownerId !== p.makerId || existing.side !== p.side || existing.qtyLots !== p.qtyLots || existing.priceTicks !== p.priceTicks) return halt(`ORDERBOOK_CACHE_MISMATCH: pair=${p.bookKey} order=${p.orderId}`);
+  pass.cache.set(p.bookKey, p.book);
+  return ok(true);
+};
+/** og applySameOfferCommand: place the offer; a full book cancels it, any other refusal halts. */
+const placeSame = (pass: Pass, p: Prepared): Result<BookStep | null, EntityError> => {
+  const { options, fault } = bookOptions(pass, p.bookKey, p.bd, p.qd);
+  const r = applyBookCommand(p.book, { kind: 0, ownerId: p.makerId, orderId: p.orderId, side: p.side, tif: p.offer.timeInForce, postOnly: false, priceTicks: p.priceTicks, qtyLots: p.qtyLots }, options);
+  const f = fault();
+  if (f !== undefined) return pairFailure(p.bookKey, p.offer.accountId, p.offer.offerId, haltMessage(f));
+  if (r.ok) return ok(r.value);
+  if (r.error.code !== "Out of order slots") return pairFailure(p.bookKey, p.offer.accountId, p.offer.offerId, r.error.code);
+  queueSame(pass, p.offer.accountId, cancelTerms(p.offer.offerId, `book-full:${p.book.params.maxOrders}`));
+  return ok(null);
+};
+/** og resumeCrossedSameBook. */
+const resumeSame = (pass: Pass, p: Prepared): Result<ResumedBook | null, EntityError> => {
+  const { options, fault } = bookOptions(pass, p.bookKey, p.bd, p.qd);
+  const r = resumeCrossedBook(p.book, options), f = fault();
+  if (f !== undefined) return pairFailure(p.bookKey, p.offer.accountId, p.offer.offerId, haltMessage(f));
+  return r.ok ? ok(r.value) : pairFailure(p.bookKey, p.offer.accountId, p.offer.offerId, r.error.code);
+};
+/** og SwapNetAuthorizationError (a fee-authority refusal of one fill) versus a halt. */
+type FillFault = Tagged<"auth"> | Tagged<"halt", { message: string }>;
+const AUTH: FillFault = { _tag: "auth" };
+const fillHalt = (message: string): Result<never, FillFault> => err({ _tag: "halt", message });
+const fromEntityError = <T,>(r: Result<T, EntityError>): Result<T, FillFault> => mapErr(r, (e): FillFault => ({ _tag: "halt", message: haltMessage(e) }));
+type ExecOffer = { readonly giveTokenId: number; readonly giveTokenDecimals: number; readonly wantTokenId: number; readonly wantTokenDecimals: number; readonly giveAmount: bigint; readonly wantAmount: bigint; readonly quantizedGive: bigint; readonly quantizedWant: bigint; readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks: bigint };
+type RestingTerms = { readonly giveTokenId: number; readonly giveTokenDecimals: number; readonly wantTokenId: number; readonly wantTokenDecimals: number; readonly giveAmount: bigint; readonly wantAmount: bigint; readonly maxFee: bigint; readonly minNetReceive: bigint };
+/** og materializeCanonicalRestingOffer: the resting row's original lots at its resting price, as give/want. */
+const canonicalResting = (r: RestingTerms, priceTicks: bigint, qtyLots: bigint): Omit<ExecOffer, "maxFee" | "minNetReceive"> => {
+  const d = dimsOf(r.giveTokenId, r.wantTokenId, r.giveTokenDecimals, r.wantTokenDecimals), base = qtyLots <= 0n ? 0n : qtyLots * lotScale(d.bd), quote = quoteAt(d.bd, d.qd, base, priceTicks);
+  const [give, want] = d.side === 1 ? [base, quote] : [quote, base];
+  return { giveTokenId: r.giveTokenId, giveTokenDecimals: r.giveTokenDecimals, wantTokenId: r.wantTokenId, wantTokenDecimals: r.wantTokenDecimals, giveAmount: give, wantAmount: want, quantizedGive: give, quantizedWant: want, priceTicks };
+};
+/** og deriveSwapFillPolicyFee: the hub's taker fee, bounded by the same pro-rata authority as the maker's signed limit. */
+const policyFee = (o: { readonly giveAmount: bigint; readonly wantAmount: bigint }, fG: bigint, fW: bigint, bps: number, closes: boolean): Result<bigint, FillFault> => {
+  if (o.wantAmount <= 0n || !Number.isSafeInteger(bps) || bps < 0 || bps > 10_000) return err(AUTH);
+  const maxFee = (o.wantAmount * BigInt(bps)) / 10_000n, policy = { maxFee, minNetReceive: o.wantAmount - maxFee };
+  if (policy.maxFee >= o.wantAmount || policy.minNetReceive <= 0n || offerAuthError({ giveAmount: 1n, wantAmount: o.wantAmount, ...policy }) !== undefined) return err(AUTH);
+  const authorized = { ...o, ...policy };
+  if (offerAuthError(authorized) !== undefined || fG < 0n || fG > o.giveAmount || fW < 0n) return err(AUTH);
+  let num = fG, den = o.giveAmount;
+  if (closes) { const capped = fW < o.wantAmount ? fW : o.wantAmount; if (capped * den > num * o.wantAmount) { num = capped; den = o.wantAmount; } }
+  return ok((policy.maxFee * num) / den);
+};
+type SameFill = { filledLots: bigint; readonly originalLots: bigint; weightedCost: bigint };
+/** og aggregateSameTradeFills: per order, maker then taker, in trade order. */
+const aggregateFills = (trades: readonly Extract<BookEvent, { type: "TRADE" }>[]): ReadonlyMap<string, SameFill> => {
+  const fills = new Map<string, SameFill>();
+  for (const t of trades) for (const [orderId, original] of [[t.makerOrderId, t.makerQtyBefore], [t.takerOrderId, t.takerQtyTotal]] as const) {
+    const e = fills.get(orderId);
+    if (e === undefined) fills.set(orderId, { filledLots: t.qty, originalLots: original, weightedCost: t.price * t.qty });
+    else { e.filledLots += t.qty; e.weightedCost += t.price * t.qty; }
+  }
+  return fills;
+};
+/** og buildSameFillResolvePlan: the exact execution of one fill as a swap_resolve, authorized against the executing offer. */
+const fillResolve = (pass: Pass, p: Prepared, book: Book, ref: SwapRef, orderId: string, fill: SameFill, account: HubAccount, comment: string | undefined): Result<SwapResolveTerms, FillFault> => {
+  const { filledLots, originalLots, weightedCost } = fill, taker = orderId === p.orderId;
+  if (filledLots <= 0n || weightedCost <= 0n) return fillHalt(`ORDERBOOK_FILL_LOOKUP_FAILED: invalid fill aggregate weightedCost=${weightedCost} filledLots=${filledLots}`);
+  if (!taker && weightedCost % filledLots !== 0n) return fillHalt(`ORDERBOOK_FILL_LOOKUP_FAILED: non-integral resting price weightedCost=${weightedCost} filledLots=${filledLots}`);
+  const restingPrice = weightedCost / filledLots;
+  const exec: Result<ExecOffer, FillFault> = (() => {
+    if (taker) return ok({ ...p.offer, quantizedGive: p.offer.giveAmount, quantizedWant: p.offer.wantAmount });
+    const meta = pass.meta.get(orderId), stored = account.offers.get(ref.offerId);
+    const resting: RestingTerms | undefined = meta ?? (stored === undefined ? undefined : { ...stored, giveTokenId: Number(stored.giveTokenId), wantTokenId: Number(stored.wantTokenId) });
+    if (resting === undefined) return fillHalt(`ORDERBOOK_FILL_SOURCE_MISSING: order=${orderId} pair=${p.bookKey} account=${ref.accountId} offer=${ref.offerId}`);
+    const canonical = canonicalResting(resting, restingPrice, originalLots), auth = requantizeAuth(resting, canonical.giveAmount, canonical.wantAmount);
+    return auth.ok ? ok({ ...canonical, ...auth.value }) : err(AUTH);
+  })();
+  return chain(exec, (o) => {
+    const d = dimsOf(o.giveTokenId, o.wantTokenId, o.giveTokenDecimals, o.wantTokenDecimals), lot = lotScale(d.bd);
+    const execBase = filledLots * lot, execQuote = quoteAt(d.bd, d.qd, lot, weightedCost), cancelRemainder = !book.orders.has(orderId);
+    // og buildSwapResolveDataFromOrderbookFill
+    const eG = d.side === 0 ? execQuote : execBase, eW = d.side === 0 ? execBase : execQuote, executed = eG > 0n && eW > 0n;
+    const exact = executed ? exactFillRatio(o.quantizedGive, eG) : { n: 0n, d: 1n };
+    const base: SwapResolveTerms = {
+      offerId: ref.offerId, restingGiveTokenId: String(o.giveTokenId) as TokenId, restingWantTokenId: String(o.wantTokenId) as TokenId, fillRatio: Math.min(fillRatioOf(exact), MAX_FILL), fillNumerator: exact.n, fillDenominator: exact.d, cancelRemainder,
+      ...(executed ? { executionGiveAmount: eG, executionWantAmount: eW } : {}), restingPriceTicks: o.priceTicks, restingGiveAmount: o.giveAmount, restingWantAmount: o.wantAmount, restingQuantizedGive: o.quantizedGive, restingQuantizedWant: o.quantizedWant,
+      ...(taker && comment ? { comment } : {}),
+    };
+    return chain(taker ? policyFee(o, executed ? eG : 0n, executed ? eW : 0n, pass.hub.takerFeeBps, cancelRemainder) : ok(0n), (fee): Result<SwapResolveTerms, FillFault> => {
+      const data: SwapResolveTerms = fee > 0n ? { ...base, feeTokenId: String(o.wantTokenId) as TokenId, feeAmount: fee } : base;
+      return netAuthError(o, data.executionGiveAmount ?? 0n, data.executionWantAmount ?? 0n, data.feeAmount ?? 0n, cancelRemainder) === undefined ? ok(data) : err(AUTH);
+    });
+  });
+};
+/** og isAuthorizedUsdReferenceAsk: only the hub's USD quote authority, selling a volatile base for the reference token, moves the USD reference. */
+const usdReferenceAsk = (profile: HubProfile, p: Prepared): boolean =>
+  p.side === 1 && p.offer.giveTokenId !== profile.referenceTokenId && p.offer.wantTokenId === profile.referenceTokenId && p.makerId.toLowerCase() === profile.usdQuoteAuthorityEntityId.toLowerCase();
+/** og processSameCommandEvents: an unfilled reject cancels the offer; fills are all authorized before any is queued. Returns the book to commit. */
+const commandEvents = (pass: Pass, p: Prepared, result: BookStep): Result<Book, FillFault> => {
+  const rejects = result.events.flatMap((e) => (e.type === "REJECT" && e.orderId === p.orderId ? [e] : []));
+  const trades = result.events.flatMap((e) => (e.type === "TRADE" ? [e] : []));
+  const stp = rejects.find((e) => e.reason === "STP cancel taker"), comment = stp === undefined ? undefined : `STP:${String(stp.blockingOrderId || "")}`;
+  if (rejects.length > 0 && trades.length === 0) {
+    const reasons = rejects.map((e) => e.reason).filter(Boolean).join(", ");
+    queueSame(pass, p.offer.accountId, cancelTerms(p.offer.offerId, comment ?? `post-only-reject:${reasons || "unknown"}`));
+    return ok(result.state);
+  }
+  const recorded = usdReferenceAsk(pass.hub.ext.hubProfile, p) ? mapErr(recordAcceptedUsdAskPrice(result.state, p.priceTicks), (e): FillFault => ({ _tag: "halt", message: e.code })) : ok(result.state);
+  return chain(recorded, (book) => {
+    const plans: { readonly accountId: string; readonly data: SwapResolveTerms }[] = [];
+    for (const [orderId, fill] of aggregateFills(trades)) {
+      const ref = fromEntityError(parseOrderId(orderId, "ORDERBOOK_FILL_LOOKUP_FAILED"));
+      if (!ref.ok) return ref;
+      if (hasQueuedResolve(pass, ref.value.accountId, ref.value.offerId)) return fillHalt(`ORDERBOOK_TRADE_PARTICIPANT_ALREADY_RESOLVING: account=${ref.value.accountId} offer=${ref.value.offerId}`);
+      const account = pass.hub.accounts.get(ref.value.accountId);
+      if (account === undefined) return fillHalt(`ORDERBOOK_ACCOUNT_LOOKUP_FAILED: offer=${ref.value.offerId} accountId=${ref.value.accountId}`);
+      const plan = fillResolve(pass, p, book, ref.value, orderId, fill, account, comment);
+      if (!plan.ok) return plan;
+      plans.push({ accountId: ref.value.accountId, data: plan.value });
+    }
+    for (const plan of plans) queueSame(pass, plan.accountId, plan.data);
+    return ok(book);
+  });
+};
+/** og commitSameCommandResult: a fee-authority refusal cancels the taker instead; anything else halts the pair. */
+const commitSame = (pass: Pass, p: Prepared, result: BookStep): Result<void, EntityError> => {
+  const r = commandEvents(pass, p, result);
+  if (!r.ok) {
+    if (r.error._tag === "auth") { queueSame(pass, p.offer.accountId, cancelTerms(p.offer.offerId, "fee-authorization-exceeded")); return ok(undefined); }
+    return pairFailure(p.bookKey, p.offer.accountId, p.offer.offerId, r.error.message);
+  }
+  pass.dims.set(p.bookKey, { baseTokenDecimals: p.bd, quoteTokenDecimals: p.qd });
+  pass.cache.set(p.bookKey, r.value);
+  pass.updates.set(p.bookKey, r.value);
+  return ok(undefined);
+};
+/** og prepareCrossedRestingTaker: the younger crossed row must still be its committed offer, unchanged. */
+const crossedTaker = (pass: Pass, trigger: Prepared, takerOrderId: string, minTradeSize: bigint): Result<Prepared, EntityError> => chain(liveMeta(pass, takerOrderId), (live) => {
+  if (live === null) return halt(`ORDERBOOK_SAME_SNAPSHOT_MISSING: pair=${trigger.bookKey} order=${takerOrderId}`);
+  return chain(materializeSame(pass, live, minTradeSize), (m) => chain(m === null ? ok(null) : prepareSame(pass, m), (p) =>
+    chain(p === null ? ok(false) : keepResting(pass, p), (kept): Result<Prepared, EntityError> => (p === null || !kept ? halt(`ORDERBOOK_CACHE_MISMATCH: pair=${trigger.bookKey} order=${takerOrderId}`) : ok(p)))));
+});
+/** og drainCrossedSameBook: settle crossed resting rows until the book no longer crosses, bounded by its order count. */
+const drainSame = (pass: Pass, seed: Prepared, minTradeSize: bigint): Result<void, EntityError> => {
+  let current = seed;
+  const limit = seed.book.orders.size;
+  for (let resumedCount = 0; ; resumedCount += 1) {
+    const resumed = resumeSame(pass, current);
+    if (!resumed.ok) return resumed;
+    if (resumed.value === null) return ok(undefined);
+    if (resumedCount >= limit) return halt(`ORDERBOOK_SAME_DRAIN_NON_TERMINATING: pair=${seed.bookKey} limit=${limit}`);
+    const taker = crossedTaker(pass, current, resumed.value.takerOrderId, minTradeSize);
+    if (!taker.ok) return taker;
+    const committed = commitSame(pass, taker.value, resumed.value);
+    if (!committed.ok) return committed;
+    const next = pass.cache.get(seed.bookKey);
+    if (next === undefined) return halt(`ORDERBOOK_CACHE_MISMATCH: pair=${seed.bookKey} missing-after-resume`);
+    current = { ...current, book: next };
+  }
+};
+/** og findSamePairResumeSeed: the first eligible resting row, by sequence, that is still its committed offer. */
+const resumeSeed = (pass: Pass, pairId: string, minTradeSize: bigint): Result<Prepared | null, EntityError> => {
+  const book = pass.cache.get(pairId) ?? pass.hub.ext.books.get(pairId);
+  if (book === undefined) return ok(null);
+  for (const order of bookOrders(book)) {
+    const d = classifyMaker(pass, pairId, order);
+    if (!d.ok) return d;
+    if (d.value !== "eligible") continue;
+    const live = liveMeta(pass, order.orderId);
+    if (!live.ok) return live;
+    if (live.value === null) continue;
+    const m = materializeSame(pass, live.value, minTradeSize);
+    if (!m.ok) return m;
+    const p = m.value === null ? ok(null) : prepareSame(pass, m.value);
+    if (!p.ok) return p;
+    if (p.value === null) continue;
+    const kept = keepResting(pass, p.value);
+    if (!kept.ok) return kept;
+    if (kept.value) return ok(p.value);
+  }
+  return ok(null);
+};
+/** og processSameOrderbookOffer. */
+const processSameOffer = (pass: Pass, o: BookOffer, minTradeSize: bigint): Result<void, EntityError> =>
+  chain(materializeSame(pass, o, minTradeSize), (m) => chain(m === null ? ok(null) : prepareSame(pass, m), (p) => {
+    if (p === null) return ok(undefined);
+    return chain(keepResting(pass, p), (kept) => (kept ? drainSame(pass, p, minTradeSize) : chain(placeSame(pass, p), (step) => (step === null ? ok(undefined) : commitSame(pass, p, step)))));
+  }));
+const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+/**
+ * og processOrderbookSwaps (same-j pass): offers by (createdHeight, accountId, offerId), then each touched pair's crossed resting rows in pair order.
+ * The committed offers come from Account outputs (og accountOutputVerified), so no second committed-state check runs here.
+ */
+export const processOrderbookSwaps = (hub: Hub, offers: readonly BookOfferInput[], resumePairIds: readonly string[] = []): Result<BookMatch, EntityError> => {
+  const pass = newPass(hub), minTradeSize = hub.ext.hubProfile.minTradeSize;
+  const sorted = [...offers].sort((l, r) => l.createdHeight - r.createdHeight || compareText(l.accountId, r.accountId) || compareText(l.offerId, r.offerId));
+  for (const o of sorted) {
+    const done = processSameOffer(pass, o, minTradeSize);
+    if (!done.ok) return done;
+  }
+  for (const pairId of [...new Set(resumePairIds)].sort()) {
+    if (pairId.startsWith("cross:")) continue;
+    const seed = resumeSeed(pass, pairId, minTradeSize);
+    if (!seed.ok) return seed;
+    if (seed.value === null) continue;
+    const drained = drainSame(pass, seed.value, minTradeSize);
+    if (!drained.ok) return drained;
+  }
+  return ok({ accountTxs: pass.accountTxs, books: pass.updates, pairDimensions: pass.dims });
+};
+export type BookOfferInput = BookOffer;
+/**
+ * og collectOffersForMatching + admitOrderbookOfferForMatching (same-j): each committed offer once, keyed by the counterparty Account; a hub's own
+ * maker offer is never listed in its own book; an inactive Account's offer is skipped; a missing Account halts.
+ */
+export const offersForMatching = (hub: Hub, created: readonly SwapOfferEvent[]): Result<readonly BookOffer[], EntityError> => {
+  const self = hub.id.toLowerCase();
+  return chain(traverse(created, (e) => normalizeOffer(e, e.fromEntity.toLowerCase() === self ? e.toEntity.toLowerCase() : e.fromEntity.toLowerCase())), (enriched) => {
+    const seen = new Set<string>(), admitted: BookOffer[] = [];
+    for (const o of enriched) {
+      const key = swapKeyOf(o.accountId, o.offerId);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if ((o.makerIsLeft ? o.fromEntity : o.toEntity) === self) continue;
+      const account = hub.accounts.get(o.accountId.toLowerCase());
+      if (account === undefined) return halt(`ORDERBOOK_ACCOUNT_OUTPUT_ACCOUNT_MISSING: account=${o.accountId} offer=${o.offerId}`);
+      if (account.active) admitted.push(o);
+    }
+    return ok(admitted);
+  });
+};
+/** og getOrderbookPairsForOrder over the derived order-pair index: every pair whose book holds the row, in pair order. */
+const pairsHolding = (books: ReadonlyMap<string, Book>, orderId: string): readonly string[] => [...books].filter(([, b]) => b.orders.has(orderId)).map(([pairId]) => pairId).sort();
+/** og applyCommittedSwapCancelsToOrderbook: a committed offer removal takes its row off the book; returns the touched pairs, sorted. */
+export const applyCommittedSwapCancels = (ext: OrderbookExt, cancels: readonly SwapRef[]): Result<{ readonly ext: OrderbookExt; readonly resumePairIds: readonly string[] }, EntityError> => {
+  let books = ext.books;
+  const touched = new Set<string>();
+  for (const { accountId, offerId } of cancels) {
+    const orderId = swapKeyOf(accountId, offerId), pairs = pairsHolding(books, orderId);
+    if (pairs.length > 1) return halt(`ORDERBOOK_DUPLICATE_BOOK_ORDER: order=${orderId} matches=${pairs.length}`);
+    const pairId = pairs[0], book = pairId === undefined ? undefined : books.get(pairId), order = book?.orders.get(orderId);
+    if (pairId === undefined || book === undefined || order === undefined) continue;
+    const r = applyBookCommand(book, { kind: 1, ownerId: order.ownerId, orderId });
+    if (!r.ok) return halt(r.error.code);
+    books = mapSet(books, pairId, r.value.state);
+    touched.add(pairId);
+  }
+  return ok({ ext: books === ext.books ? ext : { ...ext, books }, resumePairIds: [...touched].sort() });
+};
+/** og processOrderbookCancels (same-j): take the row off its book and queue the zero-fill cancel resolve; a cross-j offer's clear is not ported. */
+export const processOrderbookCancels = (hub: Hub, cancels: readonly SwapRef[]): Result<{ readonly accountTxs: readonly BookTx[]; readonly books: ReadonlyMap<string, Book> }, EntityError> => {
+  const q = { hub, queued: new Set<string>(), accountTxs: [] as BookTx[] }, working = new Map<string, Book>();
+  for (const { offerId, accountId } of cancels) {
+    const account = hub.accounts.get(accountId);
+    if (account === undefined || !account.offers.has(offerId)) continue;
+    const orderId = swapKeyOf(accountId, offerId);
+    const matching = pairsHolding(hub.ext.books, orderId).flatMap((pairId) => {
+      const book = working.get(pairId) ?? hub.ext.books.get(pairId), order = book?.orders.get(orderId);
+      return book === undefined || order === undefined ? [] : [{ pairId, book, ownerId: order.ownerId }];
+    });
+    if (matching.length > 1) return halt(`ORDERBOOK_DUPLICATE_BOOK_ORDER: order=${orderId} matches=${matching.length}`);
+    for (const { pairId, book, ownerId } of matching) {
+      const r = applyBookCommand(book, { kind: 1, ownerId, orderId });
+      if (!r.ok) return halt(r.error.code);
+      working.set(pairId, r.value.state);
+    }
+    if (account.offers.get(offerId)?.crossJurisdiction !== undefined) continue;
+    queueUniqueResolve(q, accountId, cancelTerms(offerId, "cancel_request"));
+  }
+  return ok({ accountTxs: q.accountTxs, books: working });
 };
