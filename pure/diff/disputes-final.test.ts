@@ -37,7 +37,8 @@ import { handleCrossJurisdictionSalvageEntityTx as ogSalvage } from "../../core/
 import { handleResolveHtlcLockEntityTx as ogResolveHtlcLock } from "../../core/entity/tx/handlers/htlc/direct.ts";
 import { handleCrossJurisdictionForceSiblingDisputeEntityTx as ogForceSibling } from "../../core/entity/tx/handlers/cross-j/force-sibling-dispute.ts";
 import { handlePrepareDispute as ogPrepareDispute } from "../../core/entity/tx/handlers/dispute/index.ts";
-import { installedAccount } from "../xln.ts";
+import { crossRouteHash, installedAccount, prepareFrozen } from "../xln.ts";
+import { handleCrossJurisdictionBookOrderRemovedEntityTx as ogBookOrderRemoved } from "../../core/entity/tx/handlers/cross-j/book-removal-ack.ts";
 import { HTLC_ENFORCEMENT_RESERVE_MS as OG_RESERVE_MS } from "../../core/account/consensus/dispute/deadline-policy.ts";
 import { createDisputeProofHashWithNonce } from "../../core/protocol/dispute/proof-builder.ts";
 import { getEntityAccountForWrite } from "../../core/entity/state/persistent-account-map.ts";
@@ -718,5 +719,43 @@ describe("disputes-final: prepareDispute cross-j recovery / crossJurisdictionFor
       for (const m of msgs) bump(kinds, String(m).slice(0, 24));
     }
     expectKinds(kinds, ["prepareDispute:ok", "crossJurisdictionForceSiblingDispute:ok", "recovery:pulls", "⏳ Dispute prepared vs", "❌ Missing counterparty d", "crossJurisdictionForceSiblingDispute:CROSS_J_SIBLING_DISPUTE_OBSERVED_LEG_INVALID", "crossJurisdictionForceSiblingDispute:CROSS_J_SIBLING_DISPUTE_ROUTE_MISSING", "crossJurisdictionForceSiblingDispute:DISPUTE_START_CROSS_J_ROUTE_INACTIVE"]);
+  }, 120_000);
+});
+
+// ---- og cross-j/book-removal-ack.ts: the dispute branch (cross-book row 18) ----
+describe("disputes-final: crossJurisdictionBookOrderRemoved while a dispute waits on the removal (og entity/tx/handlers/cross-j/book-removal-ack.ts)", () => {
+  test("MATCH: 200 random removal ACKs at the source hub for a dispute-preparing BOB Account (this / other / no pending removal ids, cooldown elapsed or not, terminal or live route, hash drift, wrong hub) -- same verdict, messages, disputePrepare, Account status and J batch as og", async () => {
+    const r = xrng(0xb00c), kinds = new Map<string, number>();
+    for (let i = 0; i < 200; i++) {
+      const c = jCase(r, i, xpick(r, [H1, H1, H1, U1]));
+      // jCase swaps entity ids after hashing: re-hash the acknowledged route on both sides
+      const picked = xpick(r, c.routes), route = { ...picked, routeHash: unwrapOk(crossRouteHash(picked)) }, others = [`X${i}a`, `X${i}b`].filter(() => r() < 0.4);
+      c.rw = { ...c.rw, crossJurisdictionSwaps: new Map([...(c.rw.crossJurisdictionSwaps ?? new Map())].map(([k, v]) => [k, k === route.orderId ? route : v] as const)) as never };
+      c.og.crossJurisdictionSwaps.set(route.orderId, ogCrossIndex.cloneCrossJurisdictionRoute(structuredClone(route) as never));
+      const pending = xint(r, 6) === 0 ? others : [...others, route.orderId].sort();
+      const prepare = { startedAt: T0 - 100, readyAfter: T0 + xpick(r, [-10, 0, 0, 5_000]), reason: "r", startIntent: { description: xpick(r, ["", "why"]) }, ...(pending.length > 0 ? { pendingOrderbookRemovalIds: pending } : {}) };
+      const preparing = xint(r, 8) > 0;
+      const rwBob = preparing ? prepareFrozen(genesisAB(), prepare as never, { _tag: "not_attempted" }) : genesisAB();
+      const ogBob = ogBobAccount("open", undefined);
+      if (preparing) Object.assign(ogBob, { status: "dispute_preparing", disputePrepare: structuredClone(prepare) });
+      const og: any = { ...c.og, accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries([[BOB, ogBob]], ALICE, () => Z32 as never)) };
+      const carried = xint(r, 10) === 0 ? { ...route, routeHash: word(r) } : route;
+      const tx = { type: "crossJurisdictionBookOrderRemoved", data: { orderId: route.orderId, sourceEntityId: route.source.entityId, sourceAccountId: BOB, route: carried, removedAt: T0, reason: xpick(r, ["", "cancel_request"]) } } as EntityTx;
+      const f = foldTx(c.rw, new Map([[BOB, rwBob]]), tx, { verify: verifiers.verify, timestamp: BigInt(T0), jReplicas: JREPLICAS as never }, "runtime");
+      const env = { quietRuntimeLogs: true, state: { jReplicas: JREPLICAS } } as never;
+      let ogOut: Out<any>;
+      try { ogOut = { ok: true, value: await ogBookOrderRemoved(env, og, tx as never, { mutableFrameState: true } as never) }; } catch (e) { ogOut = { ok: false, message: String((e as Error).message) }; }
+      expect([i, f.ok ? "ok" : (f.error as any).reason]).toEqual([i, ogOut.ok ? "ok" : ogOut.message]);
+      bump(kinds, ogOut.ok ? "ok" : ogOut.message.split(":")[0]!);
+      if (!f.ok || !ogOut.ok) continue;
+      const d = f.value, next = ogOut.value.newState, msgs = readEntityFrameEvents(next).map((e: any) => e.message);
+      expect([i, (d.events ?? []).map((e) => e.message)]).toEqual([i, msgs]);
+      expect([i, d.state.committed["jBatchState"] ?? null]).toEqual([i, next.jBatchState ?? null]);
+      const ogAfter = next.accounts.get(BOB), after = d.accountReplicas.get(BOB)!;
+      expect([i, after._tag === "open" ? "active" : after._tag === "preparing" ? "dispute_preparing" : after._tag]).toEqual([i, ogAfter.status]);
+      expect([i, unwrap(installedAccount(ALICE, BOB, after)).committed?.["disputePrepare"] ?? null]).toEqual([i, ogAfter.disputePrepare ?? null]);
+      for (const m of msgs) bump(kinds, String(m).slice(0, 24));
+    }
+    expectKinds(kinds, ["ok", "🌉 Cross-j dispute book", "❌ Missing counterparty d", "CROSS_J_BOOK_REMOVAL_ACK_SOURCE_HUB_REQUIRED", "CROSS_J_ROUTE_HASH_MISMATCH", "CROSS_J_BOOK_REMOVAL_ACK_SOURCE_STATE_MISSING"]);
   }, 120_000);
 });
