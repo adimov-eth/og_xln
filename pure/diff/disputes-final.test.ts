@@ -2,12 +2,16 @@
 // "MATCH:" tests run og live on the same inputs and assert the same accept / reject, state and bytes.
 import { describe, expect, test } from "bun:test";
 import {
-  accountProofBody, committedView, deltaTransformerFor, proofBodyHash, tokenId,
-  type AccountBody, type HtlcLock, type JReplica, type PullRow, type SwapOffer, type TokenId,
+  accountProofBody, committedView, deltaTransformerFor, disputeArguments, knownDisputeSecrets, proofBodyHash, starterSecrets, tokenId,
+  type AccountBody, type HtlcLock, type JReplica, type Paybook, type PaybookEntry, type PullRow, type SwapOffer, type TokenId, type WireAccountTx,
 } from "../xln.ts";
 import { TERMS, TEST_CONTRACTS, genesisAB, unwrap } from "../xln_run.ts";
 import { buildAccountProofBody } from "../../core/protocol/dispute/proof-builder.ts";
 import { requireAccountDeltaTransformerAddress } from "../../core/account/consensus/helpers.ts";
+import { buildDisputeArgumentsFromState } from "../../core/protocol/dispute/arguments.ts";
+import { collectKnownDisputeSecretsForState } from "../../core/entity/dispute-arguments.ts";
+import { decodeDisputeStarterInitialSecrets } from "../../core/entity/tx/j-events-htlc/index.ts";
+import { ethers } from "ethers";
 
 let seed = 29;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -102,5 +106,56 @@ describe("disputes-final: Account ProofBody transformers (og protocol/dispute/pr
       expect([i, rw.ok ? rw.value : rw.error]).toEqual([i, og.ok ? og.value : og.reason]);
     }
     for (const k of ["ok", "ACCOUNT_PROOF_JURISDICTION_NOT_FOUND", "ACCOUNT_PROOF_JURISDICTION_AMBIGUOUS", "JURISDICTION_DURABLE_STACK_DELTA_TRANSFORMER_MISSING"]) expect([k, seen.has(k)]).toEqual([k, true]);
+  });
+});
+
+describe("disputes-final: dispute arguments (og protocol/dispute/arguments.ts, entity/dispute-arguments.ts, j-events-htlc decodeDisputeStarterInitialSecrets)", () => {
+  const secretOf = (): { secret: string; hashlock: string } => { const secret = hex32(); return { secret, hashlock: ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["bytes32"], [secret])).toLowerCase() }; };
+  test("MATCH: 500 random frozen Accounts with swap_resolve evidence and paybook secrets -- the same known secrets and left/right arguments as og", () => {
+    let withArgs = 0, withSecrets = 0;
+    for (let i = 0; i < 500; i++) {
+      const base = randomBody(), tokens = [...base.account.deltas.keys()], small = (): bigint => 1n + big(64);
+      if (tokens.length === 0) continue;
+      const known = Array.from({ length: ri(4) }, secretOf), peer = pick(["0xpeer", "0xother"]);
+      // keep the proof valid: every item names a present token, a valid timelock and a small amount
+      const locks = new Map([...base.locks].map(([k, l]) => [k, { ...l, tokenId: pick(tokens), timelock: 1_700_000_000_000n, amount: small(), ...(rng() < 0.4 && known.length > 0 ? { hashlock: pick(known).hashlock } : {}) }] as const));
+      const offers = new Map([...base.offers].map(([k, o]) => [k, { ...o, giveTokenId: pick(tokens), wantTokenId: pick(tokens), giveAmount: small(), wantAmount: small() }] as const));
+      const pulls = new Map([...(base.pulls ?? [])].map(([k, q]) => [k, { ...q, tokenId: Number(pick(tokens)), amount: rng() < 0.5 ? small() : -small() }] as const));
+      const body: AccountBody = { ...base, locks, offers, pulls };
+      const og = ogThrows(() => buildAccountProofBody(ogReplicaOf(body), DT));
+      if (!og.ok) continue;
+      const entries = new Map<string, PaybookEntry>([...known, secretOf()].map((k) => [k.hashlock, { hashlock: rng() < 0.9 ? k.hashlock : hex32(), secret: rng() < 0.9 ? k.secret : hex32(), createdTimestamp: 1,
+        ...(rng() < 0.5 ? { inboundEntity: pick(["0xpeer", "0xother", "0xPEER"]) } : { outboundEntity: pick(["0xpeer", "0xother"]) }) }] as const));
+      const paybook: Paybook = { entries, feesEarned: 0n };
+      const offerIds = [...body.offers.keys()], side = pick(["left", "right", "none"] as const);
+      const evidence: WireAccountTx[] = Array.from({ length: ri(6) }, () => ({ type: "swap_resolve", offerId: rng() < 0.8 && offerIds.length > 0 ? pick(offerIds) : "zz", fillRatio: pick([0, 1, 777, 65535, 65536, 1.5, -1, ri(65536)]), cancelRemainder: false }) as WireAccountTx);
+      const ogAccount = { ...ogReplicaOf(body), mempool: evidence.map((tx) => ({ type: tx.type, data: { ...tx, type: undefined } })) };
+      const ogSecrets = collectKnownDisputeSecretsForState(ogAccount, { paybook: { entries } } as never, peer);
+      const view = unwrap(committedView(body)), rwSecrets = knownDisputeSecrets(view, paybook, peer);
+      expect([i, rwSecrets]).toEqual([i, ogSecrets]);
+      const ogArgs = buildDisputeArgumentsFromState(ogAccount, { secretsSide: side }, ogSecrets);
+      const rw = unwrap(disputeArguments(view, evidence, side, rwSecrets));
+      expect([i, rw.left, rw.right]).toEqual([i, ogArgs.leftArguments, ogArgs.rightArguments]);
+      if (rw.left !== "0x" || rw.right !== "0x") withArgs += 1;
+      if (ogSecrets.length > 0) withSecrets += 1;
+      const starter = rw.left !== "0x" ? rw.left : rw.right;
+      const mutated = starter === "0x" ? starter : pick([starter, starter.slice(0, starter.length - 2 * ri(80) - 2), `${starter.slice(0, 2 + 2 * ri((starter.length - 2) / 2))}ff${starter.slice(4 + 2 * ri(1))}`.slice(0, starter.length), `${starter}00`, starter.toUpperCase().replace("0X", "0x")]);
+      expect([i, starterSecrets(mutated)]).toEqual([i, decodeDisputeStarterInitialSecrets(mutated)]);
+    }
+    expect(withArgs).toBeGreaterThan(30);
+    expect(withSecrets).toBeGreaterThan(10);
+  }, 60_000);
+  test("MATCH: decodeDisputeStarterInitialSecrets on 800 random / corrupted argument blobs", () => {
+    const enc = ethers.AbiCoder.defaultAbiCoder();
+    for (let i = 0; i < 800; i++) {
+      const clause = enc.encode(["tuple(uint16[] fillRatios, bytes32[] secrets)"], [{ fillRatios: Array.from({ length: ri(3) }, () => ri(65536)), secrets: Array.from({ length: ri(4) }, hex32) }]);
+      let blob = enc.encode(["bytes[]"], [[pick([clause, "0x", clause]), ...(rng() < 0.3 ? [clause] : [])]]);
+      const bytes = ethers.getBytes(blob);
+      for (let k = ri(3); k > 0; k--) { const at = ri(bytes.length); bytes[at] = pick([0, 0xff, ri(256)]); }
+      blob = rng() < 0.3 ? ethers.hexlify(bytes) : blob;
+      if (rng() < 0.1) blob = blob.slice(0, 2 + 2 * ri((blob.length - 2) / 2));
+      if (rng() < 0.05) blob = pick(["", "0x", "zz", "0x0", undefined as never]);
+      expect([i, starterSecrets(blob)]).toEqual([i, decodeDisputeStarterInitialSecrets(blob)]);
+    }
   });
 });

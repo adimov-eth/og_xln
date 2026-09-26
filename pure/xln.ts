@@ -5650,6 +5650,128 @@ export const sanitizeDisputeArgument = (value: unknown): string => {
   if ((value.length - 2) / 2 > 64 * 1024) return "0x";
   return decodesAsBytesArray(hexToBytes(value)) ? value : "0x";
 };
+// ---- og protocol/dispute/arguments.ts, entity/dispute-arguments.ts: positional DeltaTransformer arguments and the frozen Account's known secrets ----
+/** og DisputeArgumentPlan: runtime ids of the positional evidence (payments by lockId, same-j swaps by offerId, pulls by pullId). */
+export type DisputeArgumentPlan = { readonly paymentHashlocks: readonly string[]; readonly leftSwapOfferIds: readonly string[]; readonly rightSwapOfferIds: readonly string[]; readonly leftPullIds: readonly string[]; readonly rightPullIds: readonly string[] };
+/** og buildCurrentDisputeArgumentPlan: a left-made offer is the right side's to fill; cross-j offers carry no fill ratio. */
+export const disputeArgumentPlan = (s: CommittedAccountState): DisputeArgumentPlan => {
+  const swaps = byTextKey<SwapOffer>(s.swapOffers).filter(([, o]) => !o.crossJurisdiction), pulls = byTextKey<PullRow>(s.pulls);
+  return {
+    paymentHashlocks: byTextKey<ProofLockRow>(s.locks).map(([, l]) => String(l.hashlock)),
+    leftSwapOfferIds: swaps.filter(([, o]) => !o.makerIsLeft).map(([id]) => id), rightSwapOfferIds: swaps.filter(([, o]) => o.makerIsLeft).map(([id]) => id),
+    leftPullIds: pulls.filter(([, p]) => p.amount >= 0n).map(([id]) => id), rightPullIds: pulls.filter(([, p]) => p.amount < 0n).map(([id]) => id),
+  };
+};
+export type DisputeArgumentSide = "left" | "right" | "none";
+const clampArgumentRatio = (v: number): number => (!Number.isFinite(v) || v <= 0 ? 0 : v >= 0xffff ? 0xffff : Math.floor(v));
+const deltaTransformerArgs = (ratios: readonly number[], secrets: readonly string[]): string => abiEncodeHex([t([arr(ratios, (r) => A.uint(BigInt(clampArgumentRatio(r)))), arr(secrets, A.b32)])]);
+/**
+ * og buildDisputeArgumentsFromState: fill ratios from the first valid swap_resolve per planned offer (the Account's in-flight frame, then its mempool),
+ * secrets on one side, one `(uint16[] fillRatios, bytes32[] secrets)` per payment/swap clause (a swap clause gets its own positional slice),
+ * wrapped as `bytes[]` only when the side has evidence, then og sanitizeOptionalDisputeArgument.
+ */
+export const disputeArguments = (s: CommittedAccountState, evidence: readonly WireAccountTx[], side: DisputeArgumentSide, secrets: readonly string[]): Result<{ readonly left: string; readonly right: string }, ProofError> => chain(proofBatches(s), (batches) => {
+  const plan = disputeArgumentPlan(s), planned = new Set([...plan.leftSwapOfferIds, ...plan.rightSwapOfferIds]), ratios = new Map<string, number>();
+  for (const tx of evidence) {
+    if (tx.type !== "swap_resolve" || !planned.has(tx.offerId) || ratios.has(tx.offerId)) continue;
+    if (!Number.isSafeInteger(tx.fillRatio) || tx.fillRatio <= 0 || tx.fillRatio > 0xffff) continue;
+    ratios.set(tx.offerId, tx.fillRatio);
+  }
+  const leftRatios = plan.leftSwapOfferIds.map((id) => ratios.get(id) ?? 0), rightRatios = plan.rightSwapOfferIds.map((id) => ratios.get(id) ?? 0);
+  const leftSecrets = side === "left" ? [...secrets] : [], rightSecrets = side === "right" ? [...secrets] : [];
+  let li = 0, ri = 0;
+  const clauses = batches.filter((b) => b.payments.length > 0 || b.swaps.length > 0).map((b) => {
+    const lc = b.swaps.filter((w) => !w.ownerIsLeft).length, rc = b.swaps.length - lc;
+    const l = b.payments.length > 0 ? leftRatios : leftRatios.slice(li, li + lc), r = b.payments.length > 0 ? rightRatios : rightRatios.slice(ri, ri + rc);
+    li += lc; ri += rc;
+    return { left: deltaTransformerArgs(l, leftSecrets), right: deltaTransformerArgs(r, rightSecrets) };
+  });
+  const wrap = (xs: readonly string[]): Result<string, ProofError> => (xs.length < 1 || xs.length > MAX_PROOF_TRANSFORMERS ? proofErr(`DISPUTE_ARGUMENT_CANONICAL_CLAUSE_COUNT_INVALID:${xs.length}`) : ok(abiEncodeHex([arr(xs, A.bytes)])));
+  const has = (rs: readonly number[], ss: readonly string[]): boolean => rs.some((r) => r > 0) || ss.length > 0;
+  return chain(has(leftRatios, leftSecrets) ? wrap(clauses.map((c) => c.left)) : ok("0x"), (left) =>
+    map(has(rightRatios, rightSecrets) ? wrap(clauses.map((c) => c.right)) : ok("0x"), (right) => ({ left: sanitizeDisputeArgument(left), right: sanitizeDisputeArgument(right) })));
+});
+/**
+ * og collectKnownDisputeSecretsForState: the paybook preimages of exactly the frozen Account's hashlocks (in transformer order), for routes whose
+ * inbound or outbound hop is this counterparty, each opening its hashlock, each once.
+ */
+export const knownDisputeSecrets = (s: CommittedAccountState, paybook: Paybook | undefined, counterparty: string): readonly string[] => {
+  const plan = disputeArgumentPlan(s);
+  if (paybook === undefined || paybook.entries.size === 0 || plan.paymentHashlocks.length === 0) return [];
+  const seen = new Set<string>(), out: string[] = [];
+  for (const raw of plan.paymentHashlocks) {
+    const hashlock = raw.toLowerCase(), route = paybook.entries.get(hashlock);
+    if (route === undefined || route.hashlock.toLowerCase() !== hashlock) continue;
+    if (!route.secret || !HEX32.test(route.secret)) continue;
+    if (route.inboundEntity !== counterparty && route.outboundEntity !== counterparty) continue;
+    if (keccak256Hex(abiEncode([A.b32(route.secret)])).toLowerCase() !== hashlock || seen.has(route.secret)) continue;
+    seen.add(route.secret);
+    out.push(route.secret);
+  }
+  return out;
+};
+/** An ethers v6 Reader over one root buffer: padded reads, safe-integer indices, and the root's 1024x read budget. */
+type EthersReader = { readonly buf: Uint8Array; readonly base: number; off: number; readonly budget: { read: number; readonly limit: number } };
+const ethersRoot = (buf: Uint8Array): EthersReader => ({ buf, base: 0, off: 0, budget: { read: 0, limit: 1024 * buf.length } });
+const ethersSub = (r: EthersReader, offset: number): EthersReader => ({ buf: r.buf, base: r.base + r.off + offset, off: 0, budget: r.budget });
+const ethersLength = (r: EthersReader): number => Math.max(0, r.buf.length - r.base);
+const ethersBytes = (r: EthersReader, length: number): number | "overrun" => {
+  const aligned = Math.ceil(length / 32) * 32;
+  if (r.off + aligned > ethersLength(r)) return "overrun";
+  r.budget.read += length;
+  if (r.budget.read > r.budget.limit) return "overrun";
+  const at = r.base + r.off;
+  r.off += aligned;
+  return at;
+};
+const ethersIndex = (r: EthersReader): number | "overrun" | "numeric" => { const at = ethersBytes(r, 32); if (at === "overrun") return at; const v = wordAt(r.buf, at); return v > BigInt(Number.MAX_SAFE_INTEGER) ? "numeric" : Number(v); };
+/** ethers `decode(["bytes[]"])` read as og's decodeStringArray does: any fault (swallowed or thrown) is no array. */
+const ethersBytesArray = (buf: Uint8Array): readonly Uint8Array[] | undefined => {
+  const top = ethersRoot(buf), topBase = ethersSub(top, 0), at = ethersIndex(top);
+  if (typeof at !== "number") return undefined;
+  const a = ethersSub(topBase, at), count = ethersIndex(a);
+  if (typeof count !== "number" || count * 32 > ethersLength(a)) return undefined;
+  const base = ethersSub(a, 0), out: Uint8Array[] = [];
+  for (let i = 0; i < count; i++) {
+    const off = ethersIndex(a);
+    if (typeof off !== "number") return undefined;
+    const e = ethersSub(base, off), n = ethersIndex(e);
+    if (typeof n !== "number") return undefined;
+    const from = ethersBytes(e, n);
+    if (from === "overrun") return undefined;
+    out.push(buf.subarray(from, from + n));
+  }
+  return out;
+};
+/** ethers `decode(["tuple(uint16[] fillRatios, bytes32[] secrets)"])[0].secrets`: a non-overrun fault in fillRatios is a stored error that secrets never touch. */
+const ethersArgSecrets = (buf: Uint8Array): readonly string[] | undefined => {
+  const top = ethersRoot(buf), topBase = ethersSub(top, 0), at = ethersIndex(top);
+  if (typeof at !== "number") return undefined;
+  const tuple = ethersSub(topBase, at), tupleBase = ethersSub(tuple, 0);
+  const words = (off: number): readonly string[] | "overrun" | "numeric" => {
+    const a = ethersSub(tupleBase, off), count = ethersIndex(a);
+    if (typeof count !== "number") return count;
+    if (count * 32 > ethersLength(a)) return "overrun";
+    const base = ethersSub(a, 0), out: string[] = [];
+    for (let i = 0; i < count; i++) { const w = ethersBytes(base, 32); if (w === "overrun") return w; out.push(bytesToHex(buf.subarray(w, w + 32))); }
+    return out;
+  };
+  const ratiosAt = ethersIndex(tuple);
+  if (typeof ratiosAt !== "number") return undefined;
+  if (words(ratiosAt) === "overrun") return undefined;
+  const secretsAt = ethersIndex(tuple);
+  if (typeof secretsAt !== "number") return undefined;
+  const secrets = words(secretsAt);
+  return typeof secrets === "string" ? undefined : secrets;
+};
+/** og decodeDisputeStarterInitialSecrets: the first (DeltaTransformer) clause's secrets of the starter's arguments, lowercased, once each; malformed evidence is none. */
+export const starterSecrets = (raw: unknown): readonly string[] => {
+  const value = String(raw || "0x");
+  if (value === "0x") return [];
+  const buf = /^0x(?:[0-9a-fA-F]{2})*$/i.test(value) ? parseHex(value) : null, first = buf === null ? undefined : ethersBytesArray(buf)?.[0];
+  if (first === undefined || first.length === 0) return [];
+  return [...new Set((ethersArgSecrets(first) ?? []).map((x) => x.toLowerCase()))];
+};
 /**
  * og handleDisputeStart: admission (jBatchState seeded, account status, readiness, an already queued start), evidence (og loadStartProof /
  * resolveStartNonce / verifyStartHanko through the rewrite's startOf), then the DisputeStart row in the draft batch and the Account disputed with
@@ -5683,9 +5805,11 @@ const startDispute = (d: Draft, peer: EntityId, intent: StartIntent & { readonly
   const s = start.value, rows = jb.batch["disputeStarts"] ?? [], total = BATCH_FIELDS.reduce((n, f) => n + (jb.batch[f] ?? []).length, 0);
   if (rows.length >= J_BATCH_LIMITS.maxDisputeStarts) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeStarts ${rows.length + 1}/${J_BATCH_LIMITS.maxDisputeStarts}`);
   if (total + 1 > J_BATCH_LIMITS.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeStart would exceed total ops ${total + 1}/${J_BATCH_LIMITS.maxTotalOps}`);
-  const initialProofbody = ogProofBody(s.initialProofbody), nonce = Number(s.nonce);
-  // og buildStarterArguments: a non-empty override replaces the starter side's built arguments ("0x" without locks/swaps), then is sanitized
-  const starterInitialArguments = sanitizeDisputeArgument(intent.starterInitialArguments ? intent.starterInitialArguments : "0x");
+  const initialProofbody = ogProofBody(s.initialProofbody), nonce = Number(s.nonce), starterIsLeft = sameHex(child.state.account.id.left, d.state.id);
+  // og buildStarterArguments: a non-empty override replaces the starter side's built arguments (with its known secrets), then is sanitized
+  const built = builtDisputeArguments(child, peer, d.state.paybook, starterIsLeft ? "left" : "right");
+  if (!built.ok) return built;
+  const starterInitialArguments = sanitizeDisputeArgument(intent.starterInitialArguments && intent.starterInitialArguments !== "0x" ? intent.starterInitialArguments : starterIsLeft ? built.value.left : built.value.right);
   const row: Binary = { counterentity: peer, nonce, proposerIsLeft: s.proposerIsLeft, proofbodyHash: s.proofbodyHash, initialProofbody, watchSeed: String(s.initialProofbody.watchSeed), sig: s.sig,
     starterInitialArguments, starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD };
   const queued: QueuedDispute = { startedByLeft: sameHex(d.state.id, child.state.account.id.left), initialProofbodyHash: s.proofbodyHash, initialNonce: nonce, initialProposerIsLeft: s.proposerIsLeft, disputeTimeout: 0, jNonce,
@@ -5694,6 +5818,10 @@ const startDispute = (d: Draft, peer: EntityId, intent: StartIntent & { readonly
   const disputed: Draft = { ...admitted, ...putChild({ ...admitted.state, committed: { ...admitted.state.committed, jBatchState } }, admitted.accountReplicas, peer, startPrepared(child, s, queued)) };
   return ok(say(disputed, `⚔️ Dispute started vs ${tag} ${intent.description ? `(${intent.description})` : ""} - account frozen, use jBroadcast to commit`));
 };
+/** og buildDisputeArgumentsForCurrentState over the frozen Account (its retained swap_resolve evidence and the Entity's paybook secrets). */
+const builtDisputeArguments = (child: AccountReplica, peer: string, paybook: Paybook | undefined, side: DisputeArgumentSide): Result<{ readonly left: string; readonly right: string }, EntityError> =>
+  chain(mapErr(committedView(child.state), (): EntityError => ({ _tag: "entity_invariant", reason: "DISPUTE_START_EVIDENCE_INVALID" })), (view) =>
+    mapErr(disputeArguments(view, child.mempool, side, knownDisputeSecrets(view, paybook, peer)), (e): EntityError => ({ _tag: "entity_invariant", reason: e._tag === "transformer" ? e.code : `DISPUTE_START_EVIDENCE_INVALID:${e._tag}` })));
 /**
  * og removeDisputedAccountOrdersFromBook / removeOrderbookRowForDispute: every resting order of the frozen Account leaves this Entity's book
  * (og removeBookOrderById: a same-j order under `${peer}:${offerId}`, a cross-j order this Entity owns the book of under `${source}:${offerId}`),
@@ -5794,8 +5922,12 @@ const finalizeDispute = (d: Draft, x: FinalizeIntent, ctx: FoldContext): Result<
     if (!sameHex(w.hash, expected.value)) return invariant(`DISPUTE_COUNTER_FINALIZE_HASH_MISMATCH:${peer}:${w.hash}:${expected.value}`);
   }
   const commitment = counter === undefined ? ZERO_WORD : keccak256Hex(abiEncode([A.uint(BigInt(finalNonce)), A.bool(proposerIsLeft), A.b32(finalHash.toLowerCase())]));
-  const starterArguments = counter === undefined ? active.starterInitialArguments : sameHex(commitment, active.starterCounterProofCommitment) ? active.starterCounterArguments : "0x", otherArguments = "0x";
-  const argsIssue = disputeArgumentsIssue(starterArguments, "disputeFinalize.starterArguments");
+  // og buildFinalProofPayload: the non-starter submits its own side's arguments (with its known secrets); the starter's side is precommitted
+  const built = callerIsStarter ? ok({ left: "0x", right: "0x" }) : builtDisputeArguments(child, peer, d.state.paybook, selfLeft ? "left" : "right");
+  if (!built.ok) return built;
+  const starterArguments = counter === undefined ? active.starterInitialArguments : sameHex(commitment, active.starterCounterProofCommitment) ? active.starterCounterArguments : "0x";
+  const otherArguments = callerIsStarter ? "0x" : active.startedByLeft ? built.value.right : built.value.left;
+  const argsIssue = disputeArgumentsIssue(starterArguments, "disputeFinalize.starterArguments") ?? disputeArgumentsIssue(otherArguments, "disputeFinalize.otherArguments");
   if (argsIssue !== undefined) return invariant(argsIssue);
   // og resolveFinalizeSubmitNotBefore (no pulls in the rewrite's proofs): the non-starter may accept the starter's own state at once; the starter and any selected counter-proof wait for T
   const timeoutSec = Number(active.disputeTimeout || 0), nowSec = Math.floor(Number(ctx.timestamp) / 1000), selected = active.selectedCounterNonce !== undefined;
