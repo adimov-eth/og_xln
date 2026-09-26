@@ -3837,6 +3837,20 @@ export const disputeRequirement = (expectedBody: string | undefined, previousBod
   }
   return (!sameHex(expectedBody, previousBody) || (previousNonce ?? 0) <= jNonce) && received === undefined ? "required" : undefined;
 };
+/** og getDisputeHankoRequirementError's text for a requireDispute refusal (og's failureMessage for an unsafe frame); undefined for any other refusal. */
+export const disputeRequirementText = (e: DisputeError, proof: LocalProof, witnesses: DisputeWitnesses, received: DisputeHanko | undefined): string | undefined => {
+  if (e._tag !== "dispute_hanko") return undefined;
+  const n = received?.proofNonce, prev = witnesses.counterparty?.proofNonce;
+  switch (e.reason) {
+    case "unexpected": return "DISPUTE_HANKO_UNEXPECTED_WITHOUT_LOCAL_PROOF";
+    case "nonce_finalized": return `DISPUTE_HANKO_NONCE_ALREADY_FINALIZED: received=${n} jNonce=${proof.jNonce}`;
+    case "nonce_regression": return `DISPUTE_HANKO_NONCE_REGRESSION: received=${n} previous=${prev}`;
+    case "nonce_reuse": return `DISPUTE_HANKO_NONCE_REUSE: nonce=${n}`;
+    case "body_mismatch": return `DISPUTE_HANKO_PROOFBODY_MISMATCH: expected=${proof.bodyHash} received=${received?.proofBodyHash}`;
+    case "required": return `DISPUTE_HANKO_REQUIRED: proofBodyHash=${proof.bodyHash} jNonce=${proof.jNonce}`;
+    default: return undefined;
+  }
+};
 export const requireDispute = (proof: LocalProof, witnesses: DisputeWitnesses, received: DisputeHanko | undefined): Result<void, DisputeError> => {
   const { counterparty } = witnesses, reason = disputeRequirement(proof.bodyHash, counterparty?.proofBodyHash, counterparty?.proofNonce, proof.jNonce, received);
   return reason === undefined ? ok(undefined) : err(refuseDispute(reason));
@@ -3917,7 +3931,10 @@ export type InstalledHead = Of<AccountHead, "installed">;
 export const genesisAccountHead = (): AccountHead => ({ _tag: "genesis", height: 0n, prevFrameHash: GENESIS_LINK, timestamp: 0n });
 export type AccountAck = { readonly height: bigint; readonly frameHash: string; readonly frameHanko: Hanko; readonly disputeHanko?: DisputeHanko | undefined };
 export const certifiedBy = (c: HeadCertificate, party: Party): { readonly own: Hanko; readonly peer: Hanko } => ({ own: at(c.left, c.right, party.left), peer: at(c.left, c.right, other(party.left)) });
-export type FrameEvidence = { readonly cause: AccountReplicaError; readonly frame: AccountFrame; readonly frameHanko: Hanko };
+/** An unsafe peer frame: the refusal, the signed frame and its Hanko, and og's failureMessage text for the refusal when the rewrite reproduces it. */
+export type FrameEvidence = { readonly cause: AccountReplicaError; readonly frame: AccountFrame; readonly frameHanko: Hanko; readonly reason?: string | undefined };
+/** og account.shadow.rejectedFrameEvidence as the Entity root commits it (state-root.ts): the dispute reason, the frame's stateHash and its Hanko. */
+export type RejectedFrame = { readonly reason: string; readonly frameHash: string; readonly frameHanko: Hanko };
 export type AccountInput =
   /** `selected`: og `selectedMempoolTxs`, a sub-multiset of the mempool proposed instead of the whole mempool. */
   | ({ readonly kind: "propose"; readonly frameHanko?: Hanko | undefined; readonly disputeHanko?: DisputeHanko | undefined; readonly selected?: readonly WireAccountTx[] | undefined } & FrameClock)
@@ -3967,10 +3984,12 @@ export type RebalancePolicy = { readonly r2cRequestSoftLimit: bigint; readonly h
 /** `rebalancePolicy`: og replica shadow.rebalance.policy, outside the Account state root, committed as the Entity leaf's policyRoot. */
 type AccountEnv = { readonly state: AccountBody; readonly head: AccountHead; readonly mempool: readonly WireAccountTx[]; readonly acknowledged?: AccountAck | undefined; readonly dispute: DisputeWitnesses; readonly boardRefresh?: BoardRefresh | undefined; readonly publicPinned?: true | undefined; readonly rebalancePolicy?: ReadonlyMap<number, RebalancePolicy> | undefined;
   /** og boardHankoRefreshMigration: our own board-rotation refresh marker for this Account (committed in the Entity leaf). */
-  readonly refreshMigration?: RefreshMigration | undefined };
+  readonly refreshMigration?: RefreshMigration | undefined;
+  /** og shadow.rejectedFrameEvidence: the last unsafe peer frame the Entity disputed (committed in the Entity leaf; og never clears it). */
+  readonly rejectedFrame?: RejectedFrame | undefined };
 /** Entity-side Account envelope fields every phase keeps (og counterpartyBoardHankoRefresh, publicPinned, shadow.rebalance.policy). */
-const envMeta = (r: Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy" | "refreshMigration">): Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy" | "refreshMigration"> =>
-  ({ ...opt("boardRefresh", r.boardRefresh), ...opt("publicPinned", r.publicPinned), ...opt("rebalancePolicy", r.rebalancePolicy), ...opt("refreshMigration", r.refreshMigration) });
+const envMeta = (r: Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy" | "refreshMigration" | "rejectedFrame">): Pick<AccountEnv, "boardRefresh" | "publicPinned" | "rebalancePolicy" | "refreshMigration" | "rejectedFrame"> =>
+  ({ ...opt("boardRefresh", r.boardRefresh), ...opt("publicPinned", r.publicPinned), ...opt("rebalancePolicy", r.rebalancePolicy), ...opt("refreshMigration", r.refreshMigration), ...opt("rejectedFrame", r.rejectedFrame) });
 /** og AccountBoardHankoRefreshMigration: the activation our refresh belongs to and its outcome (`issued` records the re-Hanko'd frame). */
 export type RefreshMigration = {
   readonly activationJHeight: number; readonly activationLogIndex: number;
@@ -4041,8 +4060,8 @@ export type AccountReplicaError =
 export const evidenceOf = (e: AccountReplicaError): FrameEvidence | null => {
 
   if (e._tag !== "dispute_required") return null;
-  const { cause, frame, frameHanko } = e;
-  return { cause, frame, frameHanko };
+  const { cause, frame, frameHanko, reason } = e;
+  return { cause, frame, frameHanko, ...opt("reason", reason) };
 };
 export const replicaId = (r: AccountReplica): AccountId => r.state.account.id;
 /** og AccountReplica.pendingAccountInput: the exact ack_frame our own unanswered proposal went out as; only a proposed Account holds one (og drops it on commit, rollback and freeze). */
@@ -4328,7 +4347,7 @@ const receipt = <R extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAc
 };
 const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify, dt?: DeltaTransformerRef, registeredBoardHash?: string): Verb<ReceivedAccount> => {
   const { frame } = input, onLeft = other(party.left), floor = proofNonceFloor(cur.dispute);
-  const evidence = (cause: AccountReplicaError): AccountReplicaError => ({ _tag: "dispute_required", cause, frame, frameHanko: input.frameHanko });
+  const evidence = (cause: AccountReplicaError, reason?: string): AccountReplicaError => ({ _tag: "dispute_required", cause, frame, frameHanko: input.frameHanko, ...opt("reason", reason ?? (cause._tag === "state_root_mismatch" ? "Bilateral account state root mismatch" : undefined)) });
   // og consensus/index.ts classifyIncomingValidationFailure: a stale account-basis hanko for the one unsigned workspace is a plain refusal, not dispute evidence.
   const required = minimumSafeNonce(cur.state, cur.dispute), replayed = (cause: AccountReplicaError): AccountReplicaError => {
     const stale = cause._tag === "settlement" ? frame.txs.filter((tx) => { const n = staleHankoNonce(cur.state, tx, cause); return n !== undefined && n.supplied < n.required && n.required === required; }) : [];
@@ -4336,7 +4355,7 @@ const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validat
   };
   return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt), ...opt("registeredBoardHash", registeredBoardHash) }), replayed), ({ draft, view, finalized }) => chain(localProof(view, dt), (frameProof) =>
     chain(mapErr(promoteSettled(cur.dispute, cur.state, draft.state, party.left, finalized), evidence), (witnesses) =>
-      map(mapErr(requireDispute(frameProof, witnesses, validated), evidence), () => done<ReceivedAccount, AccountOutput>({ ...cur, _tag: "received", candidate: new Candidate(frame, input.frameHanko, frameProof, draft, floor), disputeHanko: validated, dispute: witnesses }))))));
+      map(mapErr(requireDispute(frameProof, witnesses, validated), (e) => evidence(e, disputeRequirementText(e, frameProof, witnesses, validated))), () => done<ReceivedAccount, AccountOutput>({ ...cur, _tag: "received", candidate: new Candidate(frame, input.frameHanko, frameProof, draft, floor), disputeHanko: validated, dispute: witnesses }))))));
 };
 const proposalOnOpen = (r: OpenAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ReceivedAccount> =>
   match(receipt(r, input, ctx), { answered: ({ result }): Verb<OpenAccount | ReceivedAccount> => result, continue: ({ validated }): Verb<OpenAccount | ReceivedAccount> => admitPeerFrame(r, input, ctx.party, validated, ctx.verify, ctx.deltaTransformer, ctx.counterpartyBoard?.boardHash) });
@@ -6646,9 +6665,13 @@ const unsafeEvidenceSecrets = (s: AccountBody, e: FrameEvidence): readonly { rea
   const resolve = e.frame.txs.find((t) => t.type === "htlc_resolve" && t.lockId === cause.lockId && t.outcome === "secret" && hashlock !== undefined && hashHtlcSecret(t.secret) === hashlock);
   return hashlock !== undefined && resolve !== undefined && resolve.type === "htlc_resolve" && resolve.outcome === "secret" ? [{ hashlock, secret: resolve.secret }] : [];
 };
-/** og AccountInputDisputeRequired.reason: the deadline scan's text for a secret-window violation; og's replay failure texts have no rewrite counterpart, so other causes carry their tag. */
+/**
+ * og AccountInputDisputeRequired.reason: the deadline scan's text for a secret-window violation, else og's replay failureMessage where the
+ * rewrite reproduces it (the state root mismatch, the dispute Hanko requirement). og's per-tx `Frame application failed: ...` texts have no
+ * rewrite counterpart, so those causes carry their tag.
+ */
 const unsafeReason = (e: FrameEvidence, timestamp: bigint): string => e.cause._tag === "frame_deadline" && e.cause.reason === "secret_window"
-  ? `HTLC_SECRET_ENFORCEMENT_WINDOW_TOO_SHORT: lock=${e.cause.lockId} reserve=${HTLC_ENFORCEMENT_RESERVE_MS}ms localTimestamp=${timestamp}` : `ACCOUNT_FRAME_DISPUTE_REQUIRED:${e.cause._tag}`;
+  ? `HTLC_SECRET_ENFORCEMENT_WINDOW_TOO_SHORT: lock=${e.cause.lockId} reserve=${HTLC_ENFORCEMENT_RESERVE_MS}ms localTimestamp=${timestamp}` : e.reason ?? `ACCOUNT_FRAME_DISPUTE_REQUIRED:${e.cause._tag}`;
 /**
  * og dispute-input.ts handleUnsafeAccountFrame (input-phases finishDisputedAccountInput): an Account input og answers with disposition 'dispute'.
  * A just-created inbound Account is dropped with og's message. Otherwise the frame evidence is kept, each evidence secret is persisted
@@ -6680,9 +6703,12 @@ export const unsafeAccountFrame = (held: Folded, at: Folded, peer: EntityId, err
   return chain(persisted, ({ paybook, resolves }) => {
     const base: Draft = { ...putChild(secrets.length === 0 ? at.state : { ...at.state, paybook }, at.accountReplicas, peer, child), outputs: [] };
     const startsBefore = committedJBatch(base.state)?.batch["disputeStarts"]?.length ?? 0;
-    return map(prepareDispute(base, { counterpartyEntityId: peer, description: unsafeReason(evidence, ctx.timestamp) }, ctx), (prepared) => {
+    const reason = unsafeReason(evidence, ctx.timestamp), rejectedFrame: RejectedFrame = { reason, frameHash: evidence.frame.stateHash, frameHanko: evidence.frameHanko };
+    return map(prepareDispute(base, { counterpartyEntityId: peer, description: reason }, ctx), (prepared) => {
       const jb = committedJBatch(prepared.state), started = jb !== undefined && (jb.batch["disputeStarts"]?.length ?? 0) > startsBefore, frozen = prepared.accountReplicas.get(peer);
-      const kept = frozen !== undefined && (frozen._tag === "preparing" || frozen._tag === "disputed") ? { ...prepared, ...putChild(prepared.state, prepared.accountReplicas, peer, { ...frozen, evidence }) } : prepared;
+      // og handleUnsafeAccountFrame: shadow.rejectedFrameEvidence on the Account, whatever its phase; the frozen replica also keeps the evidence
+      const recorded: AccountReplica | undefined = frozen === undefined ? undefined : frozen._tag === "preparing" || frozen._tag === "disputed" ? { ...frozen, evidence, rejectedFrame } : { ...frozen, rejectedFrame };
+      const kept = recorded !== undefined ? { ...prepared, ...putChild(prepared.state, prepared.accountReplicas, peer, recorded) } : prepared;
       const latched: Draft = started ? { ...kept, state: { ...kept.state, committed: { ...kept.state.committed, jBatchState: { ...jb, autoBroadcastDraft: true } as unknown as Binary } } } : kept;
       const said = say(latched, started ? "⚠️ Unsafe account frame rejected; dispute start queued" : "⚠️ Unsafe account frame rejected; dispute preparation awaits Hanko");
       const signer = rootConfig(said.state).validators[0];
@@ -10403,7 +10429,7 @@ export const installedAccount = (self: EntityId, peer: EntityId, child: AccountR
     fromEntity: self, toEntity: peer, status, currentHeight: link.height, nextProofNonce: child.dispute.nextProofNonce, currentFrameHash: link.frame,
     pendingWithdrawals: ZERO_WORD, policyRoot: unwrapOr(mapRoot(child.rebalancePolicy ?? new Map<number, RebalancePolicy>()), () => ZERO_WORD), submittedAtByTokenRoot: unwrapOr(submittedAtRoot(body), () => ZERO_WORD), state,
     committed: { ...opt("publicPinned", child.publicPinned), ...opt("boardHankoRefreshMigration", child.refreshMigration), ...opt("counterpartyBoardHankoRefresh", child.boardRefresh), ...opt("counterpartyFrameHanko", link.peerHanko), ...disputeLeafFields(child.dispute), ...(child._tag === "disputed" ? opt("activeDispute", child.active ?? child.queued) : {}), ...(child._tag === "preparing" ? opt("disputePrepare", child.prepare) : {}) },
-    ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)),
+    ...opt("counterpartySettlementHankos", peerSettlementHankos(body.settlement, localIsLeft)), ...opt("rejectedFrameEvidence", child.rejectedFrame),
   })));
 };
 /** og projectEntityConsensusState: deferredAccountProposals / settlementContinuations are committed as entity collections when present. */

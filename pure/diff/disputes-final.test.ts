@@ -50,6 +50,8 @@ import { BATCH_ABI } from "../../core/protocol/dispute/proof-body.ts";
 import { proofBodyHasPulls } from "../xln.ts";
 import { applyAccountDisputeFinality as ogApplyAccountDisputeFinality } from "../../core/account/settlement/j-finality.ts";
 import { applyFinality } from "../xln.ts";
+import { getDisputeHankoRequirementError as ogDisputeHankoRequirement } from "../../core/account/consensus/dispute/hanko.ts";
+import { disputeRequirement, disputeRequirementText } from "../xln.ts";
 
 let seed = 29;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -522,7 +524,8 @@ describe("disputes-final: unsafe Account frames on the Entity (og entity/tx/hand
       if (windowCause) txs.push({ type: "htlc_resolve", lockId: hashes[target], outcome: "secret", secret: secrets[target] });
       const cause: any = windowCause ? { _tag: "frame_deadline", reason: "secret_window", lockId: hashes[target] } : { _tag: "state_root_mismatch" };
       const frame: any = { height: 2n, timestamp: BigInt(T0), jHeight: 1n, txs, prevFrameHash: Z32, stateHash: word(r), accountStateRoot: Z32 };
-      const error: any = { _tag: "dispute_required", cause, frame, frameHanko: "0xab" };
+      // admitPeerFrame carries og's failureMessage for a replay refusal it reproduces (the state root mismatch)
+      const error: any = { _tag: "dispute_required", cause, frame, frameHanko: "0xab", ...(windowCause ? {} : { reason: "Bilateral account state root mismatch" }) };
       // the paybook route of the violating lock
       const h = hashes[target]!, pk = xint(r, 7), entries = new Map<string, PaybookEntry>();
       if (pk === 1 || pk === 2) entries.set(h, { hashlock: h, createdTimestamp: 1, inboundEntity: xpick(r, [CAROL, CAROL, BOB]), ...(r() < 0.5 ? { pendingFee: 2n } : {}) } as PaybookEntry);
@@ -555,12 +558,12 @@ describe("disputes-final: unsafe Account frames on the Entity (og entity/tx/hand
         paybook: { entries: new Map([...entries].map(([k, v]) => [k, { ...v }])), feesEarned: 0n }, ...(jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) };
       const account = created ? ogBob : getEntityAccountForWrite(og.accounts, BOB)!;
       const firstSecret = windowCause ? txs.find((t) => t.type === "htlc_resolve" && hashHtlcSecret(t.secret) === h)?.secret : undefined;
-      const reason = windowCause ? `HTLC_SECRET_ENFORCEMENT_WINDOW_TOO_SHORT: lock=${h} reserve=${OG_RESERVE_MS}ms localTimestamp=${T0}` : "ACCOUNT_FRAME_DISPUTE_REQUIRED:state_root_mismatch";
+      const reason = windowCause ? `HTLC_SECRET_ENFORCEMENT_WINDOW_TOO_SHORT: lock=${h} reserve=${OG_RESERVE_MS}ms localTimestamp=${T0}` : "Bilateral account state root mismatch";
       const effects: any = { outputs: [], accountTxs: [], swapOffersCreated: [], swapCancelRequests: [], swapOffersCancelled: [], candidateEffects: [], hashesToSign: [] };
       let ogOut: Out<any>;
       try {
         ogOut = { ok: true, value: await ogHandleUnsafeAccountFrame({ env: { quietRuntimeLogs: true, state: { jReplicas: JREPLICAS } } as never, state: og, input: {} as never, account, counterpartyId: BOB, createdAccount: created,
-          dispute: { reason, evidenceSecrets: firstSecret === undefined ? [] : [{ hashlock: h, secret: firstSecret }], signedFrame: { frame: { height: 2 } as never, frameHanko: "0xab" } }, effects, bookIntentSlot: slot as never }) };
+          dispute: { reason, evidenceSecrets: firstSecret === undefined ? [] : [{ hashlock: h, secret: firstSecret }], signedFrame: { frame: { height: 2, stateHash: frame.stateHash } as never, frameHanko: "0xab" } }, effects, bookIntentSlot: slot as never }) };
       } catch (e) { ogOut = { ok: false, message: String((e as Error).message) }; }
       const f = out!;
       expect([i, f.ok ? "ok" : (f.error as any).reason]).toEqual([i, ogOut.ok ? "ok" : ogOut.message]);
@@ -573,6 +576,10 @@ describe("disputes-final: unsafe Account frames on the Entity (og entity/tx/hand
       const ogAfter = next.accounts.get(BOB), after: any = d.accountReplicas.get(BOB);
       expect([i, after?._tag === "open" ? "active" : after?._tag === "preparing" ? "dispute_preparing" : after?._tag]).toEqual([i, ogAfter?.status]);
       if (!created) expect([i, after?.evidence !== undefined]).toEqual([i, account.shadow?.rejectedFrameEvidence !== undefined]);
+      // og entity/consensus/state-root.ts commits shadow.rejectedFrameEvidence as { reason, frameHash, frameHanko } in the Account leaf
+      const ogShadow = ogAfter?.shadow?.rejectedFrameEvidence, ogCommitted = ogShadow === undefined ? undefined : { reason: ogShadow.reason, frameHash: ogShadow.frame.stateHash, frameHanko: ogShadow.frameHanko };
+      expect([i, after === undefined ? undefined : (unwrap(installedAccount(ALICE, BOB, after)) as any).rejectedFrameEvidence]).toEqual([i, ogCommitted]);
+      if (ogCommitted !== undefined) bump(kinds, `committed:${ogCommitted.reason.slice(0, 20)}`);
       expect([i, d.outputs.map((o: any) => [o.to, o.input?.txs?.map((t: any) => t.type).join(",")])]).toEqual([i, ogOut.value.outputs.map((o: any) => [o.entityId, o.entityTxs.map((t: any) => t.type).join(",")])]);
       const rwResolves = (d.accountReplicas.get(CAROL)?.mempool ?? []).filter((t: any) => t.type === "htlc_resolve").map((t: any) => [t.lockId, t.secret]);
       expect([i, rwResolves]).toEqual([i, effects.accountTxs.filter((t: any) => String(t.accountId).toLowerCase() === CAROL.toLowerCase()).map((t: any) => [t.tx.data.lockId, t.tx.data.secret])]);
@@ -580,7 +587,7 @@ describe("disputes-final: unsafe Account frames on the Entity (og entity/tx/hand
       if (rwResolves.length > 0) bump(kinds, "resolve");
       if (next.jBatchState?.autoBroadcastDraft) bump(kinds, "latched");
     }
-    expectKinds(kinds, ["ok", "resolve", "latched", "HTLC_DISPUTE_EVIDENCE_LOCK_MISSING", "PAYBOOK_SECRET_CONFLICT", "PAYBOOK_ENTITY_CONFLICT", "⚠️ Rejected uncommitted account genesis", "⚠️ Unsafe account frame rejected; dispute start", "⚠️ Unsafe account frame rejected; dispute prep", "⚔️ Dispute started"]);
+    expectKinds(kinds, ["ok", "resolve", "latched", "committed:HTLC_SECRET_ENFORCEM", "committed:Bilateral account ", "HTLC_DISPUTE_EVIDENCE_LOCK_MISSING", "PAYBOOK_SECRET_CONFLICT", "PAYBOOK_ENTITY_CONFLICT", "⚠️ Rejected uncommitted account genesis", "⚠️ Unsafe account frame rejected; dispute start", "⚠️ Unsafe account frame rejected; dispute prep", "⚔️ Dispute started"]);
   }, 120_000);
 });
 
@@ -900,5 +907,23 @@ describe("disputes-final: the Account mempool on DisputeFinalized (og account/se
       bump(kinds, `${status}:${mempool.length > 0 ? "mempool" : "empty"}:${removed > 0 ? "settle" : "none"}`);
     }
     expectKinds(kinds, ["active:mempool:settle", "dispute_preparing:mempool:settle", "disputed:mempool:settle", "dispute_preparing:mempool:none"]);
+  });
+});
+
+// ---- og account/consensus/dispute/hanko.ts getDisputeHankoRequirementError: the unsafe-frame dispute reason ----
+describe("disputes-final: the unsafe-frame dispute reason for a dispute Hanko refusal (og consensus/index.ts classifyIncomingValidationFailure + dispute/hanko.ts)", () => {
+  test("MATCH: 1500 random local proofs, stored counterparty witnesses, jNonces and received dispute Hankos -- the same verdict and og's exact DISPUTE_HANKO_* failure text", () => {
+    const r = xrng(0x4a2d), kinds = new Map<string, number>(), hashes = [W("a1"), W("b2"), W("c3"), W("A1").toUpperCase().replace("0X", "0x")];
+    for (let i = 0; i < 1500; i++) {
+      const expected = xint(r, 12) === 0 ? undefined : xpick(r, hashes), jNonce = xint(r, 5);
+      const prev = xint(r, 3) === 0 ? undefined : { proofNonce: xint(r, 7), proofBodyHash: xpick(r, hashes) };
+      const received = xint(r, 3) === 0 ? undefined : { hanko: "0x01", hash: Z32, proofNonce: xint(r, 8), proofBodyHash: xpick(r, hashes), proposerIsLeft: xint(r, 2) === 0 };
+      const og = ogDisputeHankoRequirement(expected, prev?.proofBodyHash, prev?.proofNonce, jNonce, received === undefined ? undefined : { nonce: received.proofNonce, proofBodyHash: received.proofBodyHash } as never);
+      const reason = disputeRequirement(expected, prev?.proofBodyHash, prev?.proofNonce, jNonce, received);
+      const text = reason === undefined ? undefined : disputeRequirementText({ _tag: "dispute_hanko", reason }, { _tag: "complete", body: {} as never, bodyHash: expected ?? "", jNonce }, { nextProofNonce: 1, ...(prev === undefined ? {} : { counterparty: { hanko: "0x02", hash: Z32, proposerIsLeft: true, ...prev } }) }, received);
+      expect(`${i}:${text}`).toBe(`${i}:${og}`);
+      bump(kinds, String(og).replace(/:.*/, ""));
+    }
+    expectKinds(kinds, ["undefined", "DISPUTE_HANKO_UNEXPECTED_WITHOUT_LOCAL_PROOF", "DISPUTE_HANKO_NONCE_ALREADY_FINALIZED", "DISPUTE_HANKO_NONCE_REGRESSION", "DISPUTE_HANKO_NONCE_REUSE", "DISPUTE_HANKO_PROOFBODY_MISMATCH", "DISPUTE_HANKO_REQUIRED"]);
   });
 });

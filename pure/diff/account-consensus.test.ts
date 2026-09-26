@@ -474,6 +474,8 @@ describe("account-consensus: driven scenarios", () => {
     const e = unwrapErr(applyAccountInput(r, input, DOOR(self)));
     expect(e._tag).toBe("dispute_required");
     expect(causeOf(e)._tag).toBe("state_root_mismatch");
+    // og's failureMessage is the dispute reason the Entity records (disputes-final)
+    expect((e as { reason?: string }).reason).toBe(!res.ok && res.disposition === "dispute" ? res.disputeRequired.reason : "og accepted");
     const frozen = unwrap(disputeUnsafe(r, applyAccountInput(r, input, DOOR(self)), DOOR(self))).replica._tag;
     expect(["preparing", "disputed"]).toContain(frozen);
   });
@@ -492,6 +494,9 @@ describe("account-consensus: driven scenarios", () => {
     const e = unwrapErr(applyAccountInput(genesisAB(), stripped, DOOR(left)));
     expect(e._tag).toBe("dispute_required");
     expect(causeOf(e)).toEqual({ _tag: "dispute_hanko", reason: "required" });
+    // same og text shape: DISPUTE_HANKO_REQUIRED over the local proof body hash and jNonce (the bodies differ: og replays an empty frame)
+    const shape = (x: string | undefined) => String(x).replace(/0x[0-9a-f]{64}/, "<hash>");
+    expect(shape((e as { reason?: string }).reason)).toBe(shape(!res.ok && res.disposition === "dispute" ? res.disputeRequired.reason : "og accepted"));
   });
 
   // og throws ACCOUNT_MEMPOOL_LIMIT_EXCEEDED, the rewrite returns typed mempool_full: same whole-batch refusal, nothing admitted.
