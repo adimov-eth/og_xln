@@ -27,10 +27,10 @@ Tests: `pure/diff/hashes.test.ts`. Run it from `pure/` with `bun test diff/hashe
 
 - **DisputeStarted clock (og `j-event-payloads.ts` `assertRawEventSpecificFields`):** `readJEvents` now refuses a DisputeStarted log unless timeout and start are positive safe integers and timeout = start + left + right. MATCH vs live og `rawEventToJEvents`.
 
-## Remaining outside this area's reach
+## Formerly outside this area's reach (statuses updated in final-sweep.md)
 
-- og ingress decodes many more Depository events (`DebtCreated`, `DebtEnforced`, `DebtForgiven`, `CounterDisputeRegistered`, `HashLadderRevealRegistered`, EntityProvider actions, ...) through `rawEventToJEvents` + `normalizeJurisdictionEvent`; `readJEvents` knows five. og's DisputeStarted event also carries the initial ProofBody recovered from batch calldata. This needs og's whole j-event ingress/normalization subsystem.
-- `walkBinary` still treats a Map/Set/Date/typed array (outside the `Binary` type) as a plain object; og's binary codec encodes them natively.
+- FIXED: `readJEvents` decodes all 16 Depository / EntityProvider log events of og `rawEventToJEvents` + `normalizeJurisdictionEvent` (the watcher-made ExternalWallet events are read too). DisputeStarted's `initialProofbody` is not in the log. og's adapter recovers it from the batch calldata (RPC I/O), and the rewrite's JEvent takes it as the same optional field. MATCH: j-layer.test.ts, entity-j.test.ts, disputes-final.test.ts and runtime-final.test.ts run og `rawEventToJEvents` live.
+- FIXED for every reachable value: `walkBinary` encodes Map (og key-byte order) and Uint8Array like og's codec. A Set or Date is outside the rewrite's `Binary` type, so no typed payload can carry one (unreachable, not a divergence).
 
 ## Golden hashes hardcoded in `pure/oracle.test.ts`
 

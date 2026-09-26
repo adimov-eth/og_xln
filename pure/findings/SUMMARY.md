@@ -4,7 +4,9 @@ Baseline: og = adimov-eth/og_xln @ 566c850 (2026-09-23). Note the rewrite's docs
 (2026-09-04), which is not in this repo; some encoding differences (Int512, SignedAmount) may be upstream
 changes after that pin. Everything below is against the og code as it is in this repo today.
 
-Verdict: NOT 100% equivalent. 127 differential tests (pure/diff + oracle) pass; each DIVERGES test asserts
+Current verdict: see final-sweep.md (the final audit). The verdict below is the first-wave baseline and is superseded.
+
+First-wave verdict: NOT 100% equivalent. 127 differential tests (pure/diff + oracle) pass; each DIVERGES test asserts
 the observed difference by running og code and xln.ts on the same input.
 
 ## Critical (money, consensus or hash mismatch)

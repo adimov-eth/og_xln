@@ -36,6 +36,8 @@ Where og was easy to call on its own (leader order, quorum power, single-signer 
 
 ## Declared holes / unchosen (rewrite)
 
+**Superseded (final-sweep.md):** every hole below is ported and `HoleNames`, `Hole`, `unchosen` and the `unchosen` author are deleted from xln.ts. The list is the first-wave snapshot.
+
 `HoleNames` (xln.ts:90):
 - `cross_open`: account `cross_pull_lock/close` (1277-1278, and marked `unchosen` author at 1100); entity `prepareCrossJurisdictionSwap`/`registerCrossJurisdictionSwap` (2473).
 - `leader_timeout_vote`: host input `leaderTimeoutVote` (2487).
@@ -47,6 +49,8 @@ Where og was easy to call on its own (leader order, quorum power, single-signer 
 Other gaps that are not declared as holes: every og entity tx without a constructor (below). (The proposedFrame/validator replay path ER-6 and mempool ER-10 are now FIXED.)
 
 ## Entity tx coverage (og `core/types/entity-tx.ts`, enumerated with ast-grep `property_signature name=type`)
+
+**Superseded (final-sweep.md):** the rewrite `EntityTx` union now carries all 63 og EntityTx kinds, and `RuntimeTx` carries all 16 og RuntimeTx kinds, each with a handler. The DIVERGES / MISSING lists below are the first-wave snapshot; each ER row above carries its current status.
 
 Rewrite entity txs (`EntityTx` 1951 + `EntityRouteTx` 2387):
 - `openAccount`: DIVERGES (ER-12, 13, 14).
