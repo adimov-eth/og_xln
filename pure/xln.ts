@@ -4962,7 +4962,9 @@ export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readon
 type LeaderLane = { readonly leaderVotes?: ReadonlyMap<string, LeaderVote> | undefined; readonly pendingLeaderCertificate?: LeaderCertificate | undefined };
 /** og replica `jPrefixRound`: this validator's J-prefix round for the next Entity height (validator-private, persisted in replica meta). */
 type JPrefixLane = { readonly jPrefixRound?: JPrefixRound | undefined };
-type EntityEnv = Folded & LeaderLane & JPrefixLane & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
+/** og replica `certifiedFrameHead`: the committed frame's certified link as og projectCertifiedEntityFrameLinkIdentity (absent before the first commit). */
+type CertifiedLane = { readonly certifiedFrameHead?: Binary | undefined };
+type EntityEnv = Folded & LeaderLane & JPrefixLane & CertifiedLane & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
 type EntityCandidate = { readonly frame: EntityFrame; readonly signatures: Precommits; readonly draft: Draft };
 export interface OpenEntity extends Tagged<"open", EntityEnv> {}
 /** og `proposal`: this replica proposed `frame` and collects precommits. */
@@ -10835,19 +10837,38 @@ const commitEffects = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHas
   const relay = r.frame.leader.relayCertificate, emitter = relay !== undefined && relay.preparedFrameHash === frameHash ? relay.nextLeaderId : r.frame.leader.proposerSignerId;
   return map(attachJHankos(draft.jOutputs ?? [], new Map(witnesses), height), (jOutputs) => ({ height, witnesses, jOutputs: lower(emitter) === lower(r.signerId) ? jOutputs : [], runtimeEvents: draft.runtimeEvents ?? [] }));
 };
-const publishFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean | Quorum, draft: Draft): Result<EntityApply<OpenEntity>, EntityError> => {
+/**
+ * og buildCertifiedEntityFrameLink + projectCertifiedEntityFrameLinkIdentity: the frame's manifest head, the first signature of each signer,
+ * the entity-frame Hanko over the post-frame board (og installCommittedState `hankos[0]`), the leader and the post-frame authority.
+ */
+const certifiedLink = (frame: EntityFrame, frameHash: EntityFrameHash, signatures: Precommits, state: EntityState): Result<Binary, EntityError> => {
+  const head = frame.hashesToSign[0];
+  if (head === undefined || head.type !== "entityFrame" || head.hash !== frameHash) return invariant(`ENTITY_CERTIFIED_LINK_FRAME_MANIFEST_INVALID:${frame.height}:${frameHash}`);
+  if (signatures.size === 0) return invariant(`ENTITY_CERTIFIED_LINK_SIGNATURES_MISSING:${frame.height}:${frameHash}`);
+  const first = new Map([...signatures].flatMap(([id, bundle]) => { const s = bundle[0]; return s === undefined ? [] : [[id, s] as const]; }));
+  const missing = [...signatures.keys()].find((id) => !first.has(id));
+  if (missing !== undefined) return invariant(`ENTITY_CERTIFIED_LINK_FRAME_SIGNATURE_MISSING:${frame.height}:${missing}`);
+  const config = rootConfig(state), active = signerId(state.leaderState?.activeValidatorId ?? config.validators[0] ?? "");
+  if (active.length === 0) return invariant("ENTITY_FRAME_AUTHORITY_LEADER_MISSING");
+  return chain(quorumHanko(state, frameHash, first), (hanko) => map(leaderBinary(frame.leader, false), (leader): Binary => ({
+    frameHash: lower(frameHash), parentFrameHash: frame.prevFrameHash, stateRoot: lower(frame.stateRoot), authorityRoot: lower(frame.authorityRoot), leader,
+    hashesToSign: [{ hash: head.hash, type: head.type, context: head.context }], collectedSigs: precommitsBinary(new Map([...first].map(([id, s]) => [id, [s]]))), hankos: [hanko],
+    postAuthority: { config: binaryOf(config), leaderState: { activeValidatorId: active, view: state.leaderState?.view ?? 0, changedAtHeight: state.leaderState?.changedAtHeight ?? 0 } },
+  })));
+};
+const publishFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean | Quorum, draft: Draft): Result<EntityApply<OpenEntity>, EntityError> => chain(certifiedLink(r.frame, frameHash, signatures, draft.state), (link) => {
   // og finalizeCommitNotification broadcastValidators: the committed (post-frame) board unless a handover names the retired one
   const board = broadcast === true ? draft.state.quorum : broadcast === false ? undefined : broadcast;
   const others = board === undefined ? [] : [...membersOf(board).keys()].filter((v) => signerId(v) !== signerId(r.signerId));
   // og finalizeCommitNotification: votes reset; a relay certificate for exactly this frame stays pending.
   const relay = r.frame.leader.relayCertificate, pending = relay !== undefined && relay.preparedFrameHash === frameHash ? relay : undefined;
-  const opened: OpenEntity = { ...openEntity(r.signerId, draft.state, { height: r.frame.height, prevFrameHash: frameHash }, withoutTxs(r.mempool, r.frame.txs), draft.accountReplicas), leaderVotes: new Map(), ...opt("pendingLeaderCertificate", pending),
+  const opened: OpenEntity = { ...openEntity(r.signerId, draft.state, { height: r.frame.height, prevFrameHash: frameHash }, withoutTxs(r.mempool, r.frame.txs), draft.accountReplicas), certifiedFrameHead: link, leaderVotes: new Map(), ...opt("pendingLeaderCertificate", pending),
     // og clearCommittedJPrefixRound: a round for a height this frame committed is done
     ...opt("jPrefixRound", r.jPrefixRound !== undefined && r.jPrefixRound.targetEntityHeight > Number(r.frame.height) ? r.jPrefixRound : undefined) };
   // og finalizeCommitNotification emitter: the relay certificate's next leader for exactly this frame, else the frame's proposer.
   const emitter = pending !== undefined ? pending.nextLeaderId : r.frame.leader.proposerSignerId;
   return ok(done(opened, [...publishCommitted(draft.outputs, r.signerId, emitter), ...others.map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "proposal", frame: r.frame, signatures } }))]));
-};
+});
 /** og admitEntityTransactions + startEntityProposalIfReady: queue, forward a non-leader mempool to the leader, or propose from the mempool. */
 const admitTxs = <R extends EntityReplica>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<R, EntityError> => {
   if (input.timestamp < 0n || input.timestamp > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "frame_timestamp_invalid", timestamp: input.timestamp });
@@ -11298,7 +11319,7 @@ const certify = (r: EntityReplica, vote: LeaderVote, votes: ReadonlyMap<string, 
   return chain(lock === undefined ? ok(false) : preparedQuorum(q, lock.frame, lock.signatures, ctx), (lockQuorum) => chain(selectPrepared(r, cert, ctx), (prepared): Result<EntityReplica, EntityError> => {
     if (prepared === null) {
       if (lockQuorum) return err(rejected);
-      return ok(lock === undefined ? { ...base, pendingLeaderCertificate: cert } : { ...openEntity(lock.signerId, lock.state, lock.head, lock.mempool, lock.accountReplicas), leaderVotes: votes, pendingLeaderCertificate: cert, ...opt("jPrefixRound", lock.jPrefixRound) });
+      return ok(lock === undefined ? { ...base, pendingLeaderCertificate: cert } : { ...openEntity(lock.signerId, lock.state, lock.head, lock.mempool, lock.accountReplicas), leaderVotes: votes, pendingLeaderCertificate: cert, ...opt("jPrefixRound", lock.jPrefixRound), ...opt("certifiedFrameHead", lock.certifiedFrameHead) });
     }
     return chain(hashEntityFrame(prepared.frame), (hash): Result<EntityReplica, EntityError> => {
       const lockHash = lock === undefined ? undefined : unwrapOr(hashEntityFrame(lock.frame), () => "");
@@ -11307,7 +11328,7 @@ const certify = (r: EntityReplica, vote: LeaderVote, votes: ReadonlyMap<string, 
       if (r._tag === "proposed") return ok({ ...base, pendingLeaderCertificate: pending });
       if (lock !== undefined && lockHash === hash) return ok({ ...lock, leaderVotes: votes, pendingLeaderCertificate: pending, frame, signatures: prepared.signatures });
       return chain(preparedJPrefix(r, prepared.frame, ctx), () => map(replayFrame(r, prepared.frame, hash as EntityFrameHash, ctx), (candidate): EntityReplica =>
-        ({ ...openEntity(r.signerId, r.state, r.head, r.mempool, r.accountReplicas), ...candidate, _tag: "locked", frame, signatures: prepared.signatures, leaderVotes: votes, pendingLeaderCertificate: pending, ...opt("jPrefixRound", r.jPrefixRound) })));
+        ({ ...openEntity(r.signerId, r.state, r.head, r.mempool, r.accountReplicas), ...candidate, _tag: "locked", frame, signatures: prepared.signatures, leaderVotes: votes, pendingLeaderCertificate: pending, ...opt("jPrefixRound", r.jPrefixRound), ...opt("certifiedFrameHead", r.certifiedFrameHead) })));
     });
   }));
 };
@@ -15913,20 +15934,23 @@ export const canonicalEntityHashes = (rt: Runtime): Result<readonly StorageFrame
   map(traverse(certifiedHeads(rt), (r) => map(entityRootOf(r.state, r.accountReplicas), (hash) => ({ entityId: lower(r.state.id), hash, cellCount: 1 }))), sortedEntityHashes);
 const KEY_LIVE_REPLICA_META = 0x26;
 /**
- * og buildStorageLiveReplicaMetaCommitment rows: the replica's identity, Entity head, leader votes, pending leader certificate, J-prefix round
- * and J submit states. The rewrite keeps no certified lineage link, so og's `certifiedFrameHeadDigest` is absent.
+ * og buildStorageLiveReplicaMetaCommitment rows: the replica's identity, Entity head, certified-link digest, leader votes (prepared frames on og's
+ * EntityFrame wire), pending leader certificate, J-prefix round and J submit states.
  */
 export const replicaMetaRows = (rt: Runtime): Result<readonly { readonly key: Uint8Array; readonly value: Uint8Array }[], RuntimeError> =>
   traverse([...rt.entities], ([key, r]) => {
     const entity = lower(r.state.id), signer = signerId(r.signerId);
     const rowKey = concat([Uint8Array.of(KEY_LIVE_REPLICA_META), hexToBytes(entity), new Uint8Array(12), hexToBytes(signer)]);
-    return chain(frameNumber(r.state.height), (height) => chain(frameNumber(r.state.timestamp), (timestamp) => map(encodeBinary({
+    const votes = r.leaderVotes === undefined ? ok(undefined) : map(traverse([...r.leaderVotes], ([k, v]) => map(voteBinary(v), (b) => [k, b] as const)), (rows): Binary => new Map(rows));
+    const cert = r.pendingLeaderCertificate === undefined ? ok(undefined) : certificateBinary(r.pendingLeaderCertificate);
+    const headDigest = r.certifiedFrameHead === undefined ? ok(undefined) : map(encodeBinary(r.certifiedFrameHead), integrity);
+    return chain(frameNumber(r.state.height), (height) => chain(frameNumber(r.state.timestamp), (timestamp) => chain(votes, (leaderVotes) => chain(cert, (pendingLeaderCertificate) => chain(headDigest, (certifiedFrameHeadDigest) => map(encodeBinary({
       replicaKey: key.toLowerCase(), entityId: entity, signerId: signer, isProposer: signerId(r.state.quorum.proposer) === signer,
       entityHead: { entityId: entity, height, timestamp, frameHash: r.head.height === 0n ? "" : frameWord(r.head.prevFrameHash) },
-      ...opt("leaderVotes", r.leaderVotes === undefined ? undefined : binaryOf(r.leaderVotes)), ...opt("pendingLeaderCertificate", r.pendingLeaderCertificate === undefined ? undefined : binaryOf(r.pendingLeaderCertificate)),
+      ...opt("certifiedFrameHeadDigest", certifiedFrameHeadDigest), ...opt("leaderVotes", leaderVotes), ...opt("pendingLeaderCertificate", pendingLeaderCertificate),
       ...opt("jPrefixRound", r.jPrefixRound === undefined ? undefined : binaryOf(r.jPrefixRound)),
       ...opt("jSubmitState", binaryOf(rt.replicaLocal.get(key)?.jSubmitState)), ...opt("entityProviderActionSubmitState", binaryOf(rt.replicaLocal.get(key)?.entityProviderActionSubmitState)),
-    }), (value) => ({ key: rowKey, value }))));
+    }), (value) => ({ key: rowKey, value })))))));
   });
 /** og buildCanonicalJReplicaSnapshot + buildDurableJReplicaSnapshot: fixed field set (no token registry), wall-clock marker zeroed, state root as bytes. */
 const jReplicaSnapshot = (r: JReplica): Binary => binaryOf({

@@ -34,6 +34,12 @@ import { selectPotentialCrossJAccountInputPairs as ogPotentialPairs, selectMatch
 import { markPotentialAtomicCrossJInputPairs as ogMarkPotential, admitAtomicCrossJAccountInputs as ogAdmitAtomic } from "../../core/runtime/frame/cross-j/atomic-admission.ts";
 import { markCommittedAtomicCrossJAckOutputs as ogMarkAckOutputs } from "../../core/runtime/frame/cross-j/evidence.ts";
 import { buildStorageLiveReplicaMetaCommitment as ogReplicaMeta } from "../../core/storage/replica/replicas.ts";
+import { buildCertifiedEntityFrameLink as ogCertifiedLink } from "../../core/entity/consensus/frame/lineage.ts";
+import { buildEntityFrameAuthority as ogFrameAuthority, computeEntityFrameAuthorityRoot as ogFrameAuthorityRoot } from "../../core/entity/consensus/state-root.ts";
+import { buildQuorumHanko as ogQuorumHanko } from "../../core/hanko/signing.ts";
+import { buildEntityLeaderVoteBody as ogVoteBody, buildPreparedFrameEvidence as ogPreparedEvidence } from "../../core/entity/consensus/leader/index.ts";
+import { applyEntityInput as applyEntityInputRw, localTimeoutVote, quorumBoardHash, type EntityInput } from "../xln.ts";
+import { crypto } from "../xln_run.ts";
 import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "../../core/jurisdiction/machine/events/event-normalization.ts";
 import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
 import { verifyAccountSignature as ogVerifyAccountSignature, registerSignerKey } from "../../core/account/crypto.ts";
@@ -1024,5 +1030,124 @@ describe("runtime-final: live replica-meta rows (og storage/replica/replicas.ts)
       expect(unwrap(replicaMetaDigest(rows))).toBe(want.digest);
     }
     expect(withFields).toBeGreaterThan(200);
+  });
+});
+
+// ---- og frame/lineage.ts buildCertifiedEntityFrameLink + storage/replica/replicas.ts: certifiedFrameHeadDigest and og-wire leader votes in replica meta ----
+describe("runtime-final: certified frame head and og-wire leader votes in replica meta (og frame/lineage.ts, leader/index.ts, storage/replica/replicas.ts)", () => {
+  const sig0x = (s: string): string => (s.startsWith("0x") ? s : `0x${s}`);
+  type Members = readonly (readonly [Address, bigint])[];
+  const lazyEntity = (members: Members, threshold: bigint): EntityId => unwrap(rwEntityId(quorumBoardHash({ _tag: "teaching", threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])) })));
+  const validator = (members: Members, threshold: bigint, signer: Address): EntityReplica =>
+    unwrap(createEntity({ id: lazyEntity(members, threshold), jurisdiction: TERMS.domain, threshold, members: new Map(members.map(([a, s]) => [a, { shares: s }])), signerId: signer }));
+  const ogConfig = (s: EntityState) => {
+    const q = s.quorum as unknown as { threshold: bigint; members: ReadonlyMap<string, { shares: bigint }> }, m = [...q.members];
+    return { mode: "proposer-based" as const, threshold: q.threshold, validators: m.map(([a]) => a.toLowerCase()), shares: Object.fromEntries(m.map(([a, x]) => [a.toLowerCase(), x.shares])) };
+  };
+  /** Deliver every Entity input until quiet, remembering each proposed frame by hash. */
+  const drive = (reps: Map<string, EntityReplica>, queue: [string, EntityInput][], seen: Map<string, EntityFrame>): void => {
+    for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+      const [s, input] = next, r = reps.get(s);
+      if (r === undefined) continue;
+      const applied = applyEntityInputRw(r, input, { ...verifiers, self: r.state.id, signerId: s as Address });
+      // a precommit that arrives after its frame committed is refused and changes nothing
+      if (!applied.ok && applied.error._tag === "precommit_not_active") continue;
+      const out = unwrap(applied);
+      reps.set(s, out.replica);
+      for (const o of out.outputs) if ("input" in o) {
+        if (o.input.kind === "proposal") seen.set(unwrap(hashEntityFrame(o.input.frame)), o.input.frame);
+        queue.push([o.signerId.toLowerCase(), o.input]);
+      }
+    }
+  };
+  /** og's EntityFrame for a rewrite frame: og wire txs, numeric height/timestamp, og leader, `collectedSigs` signed afresh per manifest entry. */
+  const ogFrameOf = (f: EntityFrame, hash: string, signers: readonly string[], all: boolean) => ({
+    height: Number(f.height), parentFrameHash: f.prevFrameHash, stateRoot: f.stateRoot, authorityRoot: f.authorityRoot, timestamp: Number(f.timestamp), entityContext: f.entityContext,
+    txs: f.txs.map(wireEntityTx), events: f.events, hash, leader: { proposerSignerId: f.leader.proposerSignerId, view: f.leader.view }, hashesToSign: f.hashesToSign.map((h) => ({ ...h })),
+    collectedSigs: new Map(signers.map((s) => [s, (all ? f.hashesToSign : f.hashesToSign.slice(0, 1)).map((h) => sig0x(unwrap(crypto.sign(h.hash as never, s as Address))))])),
+  });
+  const ogBase = (r: EntityReplica) => ({
+    entityId: r.state.id, signerId: r.signerId.toLowerCase(), isProposer: String(r.state.quorum.proposer).toLowerCase() === r.signerId.toLowerCase(),
+    state: { entityId: r.state.id, height: Number(r.state.height), timestamp: Number(r.state.timestamp), prevFrameHash: r.head.height === 0n ? "" : r.head.prevFrameHash },
+  });
+  const rowsOf = (rt: Runtime, ogReplicas: Map<string, unknown>) => {
+    const want = ogReplicaMeta({ state: { eReplicas: ogReplicas } } as never), rows = unwrap(replicaMetaRows(rt));
+    const hex = (b: Uint8Array): string => Buffer.from(b).toString("hex");
+    return { got: rows.map((row) => [hex(row.key), hex(row.value)]), want: want.entries.map((row) => [hex(row.key), hex(row.value)]), digest: unwrap(replicaMetaDigest(rows)), wantDigest: want.digest };
+  };
+  test("MATCH (randomized): 40 validator sets committing 1-3 frames -- each committed replica's row carries og's certifiedFrameHeadDigest (og buildCertifiedEntityFrameLink over og-rebuilt frame, Hanko and post authority)", async () => {
+    seed = 157;
+    let linked = 0;
+    for (let n = 0; n < 40; n++) {
+      const pool = [aliceAddr, bobAddr, carolAddr] as Address[], size = 2 + ri(2);
+      const members: Members = pool.slice(0, size).map((a) => [a, BigInt(1 + ri(2))] as const);
+      const total = members.reduce((t, [, s]) => t + s, 0n), threshold = 1n + BigInt(ri(Number(total)));
+      const reps = new Map(members.map(([a]) => [a.toLowerCase(), validator(members, threshold, a)] as const)), seen = new Map<string, EntityFrame>();
+      const ceo = String((reps.values().next().value as EntityReplica).state.quorum.proposer).toLowerCase();
+      for (let k = 1, frames = 1 + ri(3); k <= frames; k++)
+        drive(reps, [[ceo, { kind: "txs", timestamp: NOW + BigInt(k), txs: Array.from({ length: 1 + ri(2) }, (_, i) => ({ type: "chat", data: { from: ceo, message: `m${n}.${k}.${i}` } }) as EntityTx) }]], seen);
+      let rt = createRuntime();
+      const ogReplicas = new Map<string, unknown>();
+      for (const r of reps.values()) {
+        rt = spawn(rt, r);
+        const key = [...rt.entities.keys()].find((k) => rt.entities.get(k) === r) as string;
+        const base = { ...ogBase(r), ...(r.leaderVotes === undefined ? {} : { leaderVotes: new Map() }) };
+        if (r.head.height === 0n) { ogReplicas.set(key, base); continue; }
+        const hash = r.head.prevFrameHash, f = seen.get(hash);
+        if (f === undefined) throw new Error("frame not seen");
+        const config = ogConfig(r.state), post = { entityId: r.state.id, height: Number(f.height), prevFrameHash: hash, config, ...(r.state.leaderState === undefined ? {} : { leaderState: r.state.leaderState }) };
+        const authority = ogFrameAuthority(post as never);
+        expect(ogFrameAuthorityRoot(authority)).toBe(f.authorityRoot);
+        expect(ogEntityFrameHash(f.prevFrameHash, Number(f.height), Number(f.timestamp), f.txs.map(wireEntityTx) as never, f.events as never, r.state.id, f.stateRoot, f.authorityRoot, f.entityContext as never)).toBe(hash);
+        // the signer set is the replica's own collected set; every signature is re-signed here
+        const signers = [...((r as unknown as { certifiedFrameHead: { collectedSigs: Map<string, unknown> } }).certifiedFrameHead.collectedSigs.keys())];
+        const frame = ogFrameOf(f, hash, signers, true);
+        const hanko = await ogQuorumHanko({} as never, r.state.id, hash, signers.map((s) => ({ signerId: s, signature: (frame.collectedSigs.get(s) as string[])[0] as string })), config);
+        const link = ogCertifiedLink(r.state.id, { ...frame, hankos: [hanko] } as never, post as never, { stateRoot: f.stateRoot, authority });
+        ogReplicas.set(key, { ...base, certifiedFrameHead: link });
+        linked += 1;
+      }
+      const { got, want, digest, wantDigest } = rowsOf(rt, ogReplicas);
+      expect([n, got]).toEqual([n, want]);
+      expect(digest).toBe(wantDigest);
+    }
+    expect(linked).toBeGreaterThan(60);
+  });
+  test("MATCH: a 3-of-3 frame locked at B and C, A silent -- B's and C's timeout votes carry the prepared frame; the leaderVotes rows equal og's (og buildPreparedFrameEvidence on the EntityFrame wire)", () => {
+    const members: Members = [[aliceAddr as Address, 1n], [bobAddr as Address, 1n], [carolAddr as Address, 1n]];
+    const [a, b, c] = members.map(([s]) => s.toLowerCase()) as [string, string, string];
+    const reps = new Map(members.map(([s]) => [s.toLowerCase(), validator(members, 3n, s)] as const)), seen = new Map<string, EntityFrame>();
+    // A proposes; its proposal reaches B and C, their precommits never reach A
+    const ceo = unwrap(applyEntityInputRw(reps.get(a) as EntityReplica, { kind: "txs", timestamp: NOW, txs: [{ type: "chat", data: { from: a, message: "held" } } as EntityTx] }, { ...verifiers, self: (reps.get(a) as EntityReplica).state.id, signerId: a as Address }));
+    reps.set(a, ceo.replica);
+    const proposals = ceo.outputs.flatMap((o) => ("input" in o && o.input.kind === "proposal" ? [[o.signerId.toLowerCase(), o.input] as [string, EntityInput]] : []));
+    expect(proposals.length).toBe(2);
+    for (const [s, input] of proposals) { const r = reps.get(s) as EntityReplica; reps.set(s, unwrap(applyEntityInputRw(r, input, { ...verifiers, self: r.state.id, signerId: s as Address })).replica); }
+    expect([reps.get(b)?._tag, reps.get(c)?._tag]).toEqual(["locked", "locked"]);
+    const at = NOW + 10_000n, quiet = new Map([...reps].filter(([k]) => k !== a));
+    for (const s of [b, c]) {
+      const vote = localTimeoutVote(quiet.get(s) as EntityReplica, at);
+      if (vote === undefined) throw new Error("no vote");
+      drive(quiet, [[s, vote]], seen);
+    }
+    const genesis = reps.get(a) as EntityReplica, view = { entityId: genesis.state.id, height: 0, prevFrameHash: "genesis", config: ogConfig(genesis.state) };
+    let rt = createRuntime(), prepared = 0;
+    const ogReplicas = new Map<string, unknown>();
+    for (const [s, r0] of [...reps].map(([s, r]) => [s, quiet.get(s) ?? r] as const)) {
+      rt = spawn(rt, r0);
+      const key = [...rt.entities.keys()].find((k) => rt.entities.get(k) === r0) as string;
+      const votes = r0.leaderVotes === undefined ? undefined : new Map([...r0.leaderVotes].map(([voter, v]) => {
+        const pf = v.preparedFrame;
+        const evidence = pf === undefined ? undefined : ogPreparedEvidence(ogFrameOf(pf.frame, unwrap(hashEntityFrame(pf.frame)), [...pf.signatures.keys()], true) as never);
+        if (evidence !== undefined) prepared += 1;
+        return [voter, { ...ogVoteBody(view as never), voterId: v.voterId, signature: sig0x(v.signature), ...(evidence === undefined ? {} : { preparedFrame: evidence }) }] as const;
+      }));
+      ogReplicas.set(key, { ...ogBase(r0), ...(votes === undefined ? {} : { leaderVotes: votes }) });
+      expect(s).toBe(r0.signerId.toLowerCase());
+    }
+    const { got, want, digest, wantDigest } = rowsOf(rt, ogReplicas);
+    expect(got).toEqual(want);
+    expect(digest).toBe(wantDigest);
+    expect(prepared).toBe(4);
   });
 });
