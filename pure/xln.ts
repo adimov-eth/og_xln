@@ -12525,9 +12525,19 @@ const frozenJBody = (child: AccountReplica, raw: unknown, logged: unknown, peer:
   if (computed !== hash) return halt(`J_EVENT_DISPUTE_FINAL_PROOFBODY_HASH_MISMATCH:${peer}:${hash}:${computed}`);
   return chain(currentProofOf(child, ctx), (current) => (current.bodyHash.toLowerCase() !== hash ? halt(`DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH:${context}:${peer}:${hash}:${current.bodyHash}`) : ok(body)));
 };
-/** og applyEntityAccountEnvelopeUpdate(applyDisputeStarted | applyDisputeFinality): the Account's unilateral external finality (og's plain Error texts). */
+/**
+ * og applyEntityAccountEnvelopeUpdate(applyDisputeStarted | applyDisputeFinality): the Account's unilateral external finality (og's plain Error
+ * texts). og's applyAccountDisputeFinality refuses nothing: an unsafe finalized nonce or token id halts upstream in applyDisputeFinalizedJEvent
+ * (J_EVENT_DISPUTE_FINAL_NONCE_* / J_EVENT_DISPUTE_FINAL_TOKEN_ID_INVALID), which disputeFinalizedJEvent checks first, so those Account refusals
+ * carry og's upstream text for the same fault. Any other refusal is unreachable here: the envelope is the Account's own terms (og
+ * createAccountDisputeFinalityInput) and every replica tag takes external_finality.
+ */
 const childFinality = (d: Draft, peer: string, child: AccountReplica, finality: AccountFinality, ctx: FoldContext): Result<Draft, EntityError> => {
   const fail = (e: AccountReplicaError): EntityError => {
+    if (e._tag === "finality" && finality.kind === "dispute_finalized") {
+      const bad = finality.finalizedTokenIds.findIndex((t) => !Number.isSafeInteger(t) || t < 0);
+      return { _tag: "entity_invariant", reason: e.reason === "token_id" && bad >= 0 ? `J_EVENT_DISPUTE_FINAL_TOKEN_ID_INVALID:${peer}:${bad}:${String(finality.finalizedTokenIds[bad])}` : `J_EVENT_DISPUTE_FINAL_NONCE_INVALID:${String(finality.finalizedJNonce)}` };
+    }
     if (e._tag !== "finality" || finality.kind !== "dispute_started") return { _tag: "entity_invariant", reason: `ACCOUNT_EXTERNAL_FINALITY_REFUSED:${e._tag}${"reason" in e ? `:${String(e.reason)}` : ""}` };
     const f = finality, c = child.state.terms.disputeConfig;
     const reason = e.reason === "initial_nonce" ? `ACCOUNT_DISPUTE_INITIAL_NONCE_INVALID:${f.initialNonce}` : e.reason === "j_nonce" ? `ACCOUNT_DISPUTE_J_NONCE_INVALID:${f.jNonce}` : e.reason === "observed_block" ? `ACCOUNT_DISPUTE_OBSERVED_BLOCK_INVALID:${f.observedBlockNumber}`
