@@ -1,8 +1,8 @@
 {
-  "no-assign-member": 173,
+  "no-assign-member": 172,
   "no-class": 2,
   "no-let": 148,
-  "no-loop": 360,
-  "no-mutating-call": 482,
+  "no-loop": 335,
+  "no-mutating-call": 444,
   "no-throw": 33
 }
