@@ -29,6 +29,11 @@ import { computeRuntimePostStateComponentDigests } from "../../core/storage/hash
 import { EntityProvider__factory } from "../../jurisdictions/typechain-types/index.ts";
 import { applyRuntimeTx, createRuntime, numberedRegistrationCalldata, parseEvmTx, runtimeComponentDigests, runtimeView, stableJson, type JReplica, type Runtime, type RuntimeTx } from "../xln.ts";
 import { bobAddr } from "../xln_run.ts";
+import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "../../core/jurisdiction/machine/events/event-normalization.ts";
+import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
+import { EMPTY_J_HISTORY_ROOT as OG_EMPTY_ROOT, foldJHistoryRoot as ogFoldRoot, canonicalJEventRangeHash, buildJEventRangeDigest } from "../../core/jurisdiction/machine/history-consensus/index.ts";
+import { applyJEvent as ogApplyJEvent } from "../../core/entity/tx/j-events.ts";
+import { anvilKey, signDigestHex } from "../xln_run.ts";
 
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const rng = prng(0xe7_1a);
@@ -396,4 +401,89 @@ describe("entity-j RJ-9: durable numbered-registration intents (og numbered-regi
     expect(tally.completed).toBeGreaterThan(2);
     expect(refusals.size).toBeGreaterThan(8);
   });
+});
+
+// ---- og entity/tx/j-events.ts applyJEvent: the Entity-certified J range ----
+const jrng = prng(0x1e_7e);
+const jri = (n: number) => Math.floor(jrng() * n);
+const jpick = <X,>(xs: readonly X[]): X => xs[jri(xs.length)] as X;
+const jword = (): string => `0x${Array.from({ length: 64 }, () => "0123456789abcdef"[jri(16)]).join("")}`;
+const JREF = getJEventJurisdictionRef(OG_J);
+const ALICE_SIGNER = aliceAddr.toLowerCase();
+/** A raw watcher event touching ALICE (or not), given the Entity's pending sent batch for HankoBatchProcessed. */
+const rawJEvent = (sent: any): { type: string; data: Record<string, unknown> } => {
+  const r = jrng(), tokenId = jpick([1, 2]), pair = jpick([[ALICE, BOB], [BOB, ALICE], [BOB, OTHER]]) as [string, string];
+  if (r < 0.22) return { type: "ReserveUpdated", data: { entity: jpick([ALICE, ALICE, BOB]), tokenId, newBalance: String(jri(900)) } };
+  if (r < 0.37) return { type: "DebtCreated", data: { debtor: pair[0], creditor: pair[1], tokenId, amount: String(jpick([1, 7, 40, 0])), debtIndex: jri(2) } };
+  if (r < 0.45) return { type: "DebtEnforced", data: { debtor: pair[0], creditor: pair[1], tokenId, amountPaid: String(jri(9)), remainingAmount: String(jri(9)), newDebtIndex: jri(3) } };
+  if (r < 0.5) return { type: "DebtForgiven", data: { debtor: pair[0], creditor: pair[1], tokenId, amountForgiven: String(1 + jri(9)), debtIndex: jri(2) } };
+  if (r < 0.72) return { type: "AccountSettled", data: { leftEntity: pair[0], rightEntity: pair[1], tokenId, leftReserve: String(jri(500)), rightReserve: String(jri(500)), collateral: String(jri(300) * 10 ** 6), ondelta: String(jri(50) - 20), nonce: 1 + jri(4) } };
+  return { type: "HankoBatchProcessed", data: { entityId: jpick([ALICE, ALICE, OTHER]), batchHash: sent && jrng() < 0.7 ? sent.batchHash : jword(), nonce: sent ? jpick([sent.entityNonce, sent.entityNonce, sent.entityNonce + 1, Math.max(1, sent.entityNonce - 1)]) : 1 + jri(3) } };
+};
+/** ALICE's proposer-signed range over (base, scanned] from og's own canonicalisation, hashing and signing inputs; `defect` breaks one envelope field. */
+const signedRange = (ogSt: any, finalized: number, sent: any, defect: string): Record<string, unknown> => {
+  const stale = defect === "stale", baseHeight = stale ? Math.max(0, finalized - 2) : defect === "ahead" ? finalized + 1 : finalized;
+  const scannedThroughHeight = stale ? Math.max(1, finalized) : baseHeight + 1 + jri(4);
+  const heights = [...new Set(Array.from({ length: jri(3) }, () => baseHeight + 1 + jri(scannedThroughHeight - baseHeight)))].sort((a, b) => a - b);
+  const blocks = heights.map((blockNumber) => {
+    const blockHash = jword();
+    const events = Array.from({ length: 1 + jri(3) }, (_, logIndex) => normalizeJurisdictionEvent({ ...rawJEvent(sent), blockNumber, blockHash, transactionHash: jword(), logIndex })!).sort(compareCanonicalJurisdictionEvents);
+    return { blockNumber, blockHash, eventsHash: canonicalJurisdictionEventsHash(events), events };
+  });
+  const tipBlockHash = jword(), jurisdictionRef = defect === "jurisdiction" ? "other-j" : JREF;
+  const prefix = blocks.filter((b) => b.blockNumber > Number(ogSt.lastFinalizedJHeight ?? 0));
+  const eventHistoryRoot = defect === "root" ? jword() : ogFoldRoot(ogSt.jHistoryFinality?.eventHistoryRoot ?? OG_EMPTY_ROOT, prefix.map((b) => ({ jurisdictionRef, jHeight: b.blockNumber, jBlockHash: b.blockHash, eventsHash: b.eventsHash })));
+  const rangeHash = canonicalJEventRangeHash(jurisdictionRef, blocks), from = defect === "from" ? bobAddr.toLowerCase() : ALICE_SIGNER;
+  const digest = buildJEventRangeDigest({ entityId: ALICE, jurisdictionRef, signerId: from, baseHeight, scannedThroughHeight, tipBlockHash, eventHistoryRoot, rangeHash });
+  const signature = signDigestHex(digest, anvilKey(defect === "signature" ? 1 : 2));
+  return { from, jurisdictionRef, baseHeight, scannedThroughHeight, observedAt: defect === "observed" ? scannedThroughHeight + 1 : scannedThroughHeight, tipBlockHash, blocks,
+    eventHistoryRoot, rangeHash: defect === "rangeHash" ? jword() : rangeHash, signature };
+};
+
+describe("entity-j: Entity-level j_event (og entity/tx/j-events.ts applyJEvent)", () => {
+  test("MATCH (randomized): signed ranges of reserve / debt / AccountSettled / HankoBatchProcessed events and envelope defects -- same verdict, reserves, debts, jBatchState, certified J head, board finality, messages, dirty Accounts and follow-up outputs", async () => {
+    const seen = new Map<string, number>();
+    for (let run = 0; run < 25; run++) {
+      let state = aliceEntity(new Map([[1, BigInt(jri(200))], [2, BigInt(jri(60))]]));
+      let replicas: ReadonlyMap<EntityId, AccountReplica> = new Map([[BOB, genesisAB() as AccountReplica]]);
+      let t = 1_000;
+      if (jrng() < 0.6) state = unwrap(foldTxs(state, replicas, [{ type: "r2r", data: { toEntityId: OTHER, tokenId: 1, amount: 5n } }, { type: "j_broadcast", data: {} }], { verify: verifiers.verify, timestamp: BigInt(t) })).draft.state;
+      let carry: any = { height: 0, lastFinalizedJHeight: 0, outDebtsByToken: new Map(), inDebtsByToken: new Map() };
+      for (let step = 0; step < 8; step++) {
+        t += 1 + jri(9);
+        const og: any = { ...ogState(state, replicas, t), ...structuredClone(carry) };
+        const finalized = Number(state.committed["lastFinalizedJHeight"] ?? 0), sent = (state.committed["jBatchState"] as any)?.sentBatch;
+        const defect = jrng() < 0.7 ? "" : jpick(["stale", "ahead", "jurisdiction", "root", "from", "signature", "observed", "rangeHash"]);
+        const data = signedRange(og, finalized, sent, defect);
+        const before = 0;
+        const ogR = await ogRun(() => ogApplyJEvent(og, data as any, { quietRuntimeLogs: true } as any, {} as any, [], true));
+        const f = foldTxs(state, replicas, [{ type: "j_event", data: data as never }], { verify: verifiers.verify, timestamp: BigInt(t) });
+        const key = `${defect || "clean"}:${ogR.ok ? "ok" : "refused"}`;
+        seen.set(key, (seen.get(key) ?? 0) + 1);
+        if (!ogR.ok) seen.set(ogR.code.split(":")[0]!, (seen.get(ogR.code.split(":")[0]!) ?? 0) + 1);
+        expect([defect, f.ok, f.ok ? "" : (f.error as any).reason]).toEqual([defect, ogR.ok, ogR.ok ? "" : ogR.code]);
+        if (!ogR.ok || !f.ok) { expect(f.ok ? "" : (f.error as any).reason).toBe(ogR.ok ? "" : ogR.code); continue; }
+        const d = f.value.draft, out = ogR.value, next = out.newState, c = d.state.committed;
+        expect((d.events ?? []).map((e) => e.message)).toEqual(messages(next).slice(before));
+        for (const m of messages(next)) for (const k of ["RESERVE", "DEBT:", "DEBT PAID", "DEBT FORGIVEN", "OBSERVED", "jBatch finalized", "quarantined"]) if (m.includes(k)) seen.set(k, (seen.get(k) ?? 0) + 1);
+        expect(c["reserves"]).toEqual(next.reserves);
+        expect(Number(c["lastFinalizedJHeight"] ?? 0)).toBe(Number(next.lastFinalizedJHeight ?? 0));
+        expect(c["jHistoryFinality"]).toEqual(next.jHistoryFinality);
+        expect(c["certifiedBoardState"]).toEqual(next.certifiedBoardState);
+        expect(c["jBatchState"]).toEqual(next.jBatchState);
+        expect(c["outDebtsByToken"] ?? new Map()).toEqual(next.outDebtsByToken);
+        expect(c["inDebtsByToken"] ?? new Map()).toEqual(next.inDebtsByToken);
+        expect([...(d.touched ?? [])].sort()).toEqual([...out.dirtyAccounts].sort());
+        // the Accounts' own frame proposals are the Entity frame's later step in og; the j_event outputs are the self j_broadcast follow-ups
+        const selfOutputs = d.outputs.filter((o: any) => o.input !== undefined).map((o: any) => ({ entityId: o.to, signerId: String(o.signerId).toLowerCase(), types: o.input.txs.map((x: any) => x.type) }));
+        expect(selfOutputs).toEqual(out.outputs.map((o: any) => ({ entityId: o.entityId, signerId: String(o.signerId).toLowerCase(), types: o.entityTxs.map((x: any) => x.type) })));
+        state = d.state;
+        replicas = d.accountReplicas;
+        carry = { height: 0, lastFinalizedJHeight: next.lastFinalizedJHeight, jHistoryFinality: next.jHistoryFinality, certifiedBoardState: next.certifiedBoardState, outDebtsByToken: next.outDebtsByToken, inDebtsByToken: next.inDebtsByToken };
+      }
+    }
+    for (const k of ["clean:ok", "stale:ok", "ahead:refused", "jurisdiction:refused", "root:refused", "from:refused", "signature:refused", "rangeHash:refused"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
+    for (const k of ["RESERVE", "DEBT:", "DEBT PAID", "DEBT FORGIVEN", "OBSERVED", "jBatch finalized", "quarantined"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
+    for (const k of ["DEBT_LEDGER_DIVERGENCE", "DEBT_CREATED_AMOUNT_INVALID"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
+  }, 120_000);
 });
