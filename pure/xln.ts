@@ -4714,6 +4714,8 @@ const walkBinary = (value: Binary): Result<Binary | HexPack, BinaryError> => {
   // og binary-codec.ts canonicalize: no non-finite, unsafe-integer or negative-zero numbers.
   if (typeof value === "number") return !Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)) || Object.is(value, -0) ? err({ _tag: "binary" }) : ok(value);
   if (typeof value === "string") return ok(packedHex(value));
+  // og packs raw bytes (a BrowserVM state root) as msgpackr's typed-array extension, unlike hex text.
+  if ((value as unknown) instanceof Uint8Array) return ok(value);
   if (Array.isArray(value)) {
     const items: (Binary | HexPack)[] = [];
     for (const item of value) {
@@ -8151,7 +8153,39 @@ export type JInput = { readonly jurisdictionName: string; readonly jTxs: readonl
 /** og RoutedEntityInput: an EntityInput addressed to one validator replica; `from` is the source Runtime (absent for local work). */
 export type RoutedEntityInput = { readonly entityId: EntityId; readonly signerId: string; readonly input: EntityInput; readonly from?: string | undefined };
 /** og ConsensusConfig as carried by importReplica. */
-export type ImportConfig = EntityRootConfig & { readonly jurisdiction?: (EntityRootJurisdiction & { readonly name?: string | undefined }) | undefined };
+export type ImportConfig = EntityRootConfig & { readonly jurisdiction?: ImportJurisdiction | undefined };
+/** og JurisdictionConfig as supplied to importReplica: `address` is og's J endpoint label (an RPC URL or `jreplica://name`). */
+export type ImportJurisdiction = Partial<EntityRootJurisdiction> & { readonly name?: string | undefined; readonly address?: string | undefined };
+/** og jurisdiction-runtime.ts JTokenInfo: one JReplica.tokenRegistry row. */
+export type JTokenInfo = { readonly symbol: string; readonly name: string; readonly address: string; readonly decimals: number; readonly tokenId: number; readonly tokenType: number; readonly externalTokenId: bigint };
+export type JContracts = { readonly depository?: string | undefined; readonly entityProvider?: string | undefined; readonly account?: string | undefined; readonly deltaTransformer?: string | undefined };
+export type FullJContracts = { readonly depository: string; readonly entityProvider: string; readonly account: string; readonly deltaTransformer: string };
+/**
+ * og JReplica (types/jurisdiction-runtime.ts). `stateRoot` is the 32-byte BrowserVM root as 0x hex (og holds the bytes; the post-state view
+ * packs them as bytes), null for RPC stacks. `mempool` carries og JTx values uninterpreted.
+ */
+export type JReplica = {
+  readonly name: string; readonly blockNumber: bigint; readonly stateRoot: string | null; readonly mempool: readonly Binary[]; readonly blockDelayMs: number;
+  readonly blockTimeMs?: number | undefined; readonly lastBlockTimestamp: number; readonly blockReady?: boolean | undefined;
+  readonly rpcs?: readonly string[] | undefined; readonly chainId?: number | undefined; readonly watcherConfirmationDepth?: number | undefined;
+  readonly watcherReceiptCommitment?: "tron-rpc-attested" | undefined; readonly tokenRegistry?: readonly JTokenInfo[] | undefined;
+  readonly position: { readonly x: number; readonly y: number; readonly z: number }; readonly entityProviderDeploymentBlock?: number | undefined; readonly contracts?: JContracts | undefined;
+};
+export type RpcPolicy = "single" | "failover" | { readonly mode: "quorum"; readonly min: number };
+/** og runtime/types.ts JurisdictionImportRequest (the importJ payload). */
+export type JurisdictionImportRequest = {
+  readonly name: string; readonly chainId: number; readonly ticker: string; readonly rpcs: readonly string[]; readonly entityProviderDeploymentBlock?: number | undefined;
+  readonly blockTimeMs?: number | undefined; readonly startAtCurrentBlock?: boolean | undefined; readonly rpcPolicy?: RpcPolicy | undefined; readonly contracts?: JContracts | undefined;
+  readonly tokens?: readonly { readonly symbol: string; readonly decimals: number; readonly initialSupply?: bigint | undefined }[] | undefined;
+};
+/** og runtime/types.ts JurisdictionImportResult (the completeImportJ payload). */
+export type JurisdictionImportResult = {
+  readonly importId: string; readonly requestHash: string; readonly name: string; readonly chainId: number; readonly ticker: string; readonly rpcs: readonly string[];
+  readonly blockTimeMs?: number | undefined; readonly blockNumber: string; readonly stateRoot: string | null; readonly watcherConfirmationDepth: number;
+  readonly watcherReceiptCommitment?: "tron-rpc-attested" | undefined; readonly tokenRegistry: readonly JTokenInfo[]; readonly entityProviderDeploymentBlock: number;
+  readonly contracts: FullJContracts; readonly browserVMState?: { readonly [field: string]: Binary } | undefined;
+};
+export type PendingJurisdictionImport = { readonly importId: string; readonly requestHash: string; readonly request: JurisdictionImportRequest };
 type RuntimeData = { readonly [field: string]: Binary };
 /** og runtime/types.ts RuntimeTx: every kind with og's field names. */
 export type RuntimeTx =
@@ -8169,8 +8203,8 @@ export type RuntimeTx =
   | { readonly type: "retryEntityProviderAction"; readonly data: RuntimeData }
   | { readonly type: "recordEntityProviderActionSubmitResult"; readonly data: RuntimeData }
   | { readonly type: "recordGovernanceJSubmitResult"; readonly data: RuntimeData }
-  | { readonly type: "importJ"; readonly data: RuntimeData }
-  | { readonly type: "completeImportJ"; readonly data: RuntimeData };
+  | { readonly type: "importJ"; readonly data: JurisdictionImportRequest }
+  | { readonly type: "completeImportJ"; readonly data: JurisdictionImportResult };
 export type RuntimeTxType = RuntimeTx["type"];
 /** og RuntimeInput: runtime txs first, then entity inputs, then J inputs (queued to the J mempool). `timestamp` is the ingress seed. */
 export type RuntimeInput = { readonly runtimeTxs: readonly RuntimeTx[]; readonly entityInputs: readonly RoutedEntityInput[]; readonly jInputs?: readonly JInput[] | undefined; readonly timestamp?: bigint | undefined };
@@ -8178,10 +8212,13 @@ export type RuntimeInput = { readonly runtimeTxs: readonly RuntimeTx[]; readonly
 export type AdapterFrontier = { readonly lastContiguousSequence: number; readonly lastInputHash: string; readonly lastCommandId: string; readonly observedHeight: number; readonly expiresAtMs: number | null };
 /**
  * og RuntimeReplica: `entities` is `eReplicas` (one replica per `entityId:signerId`, signer lowercased); `height`/`timestamp` are RuntimeState;
- * `jurisdictions` names the J replicas; `adapterFrontiers` and `encryptionSeeds` are og infrastructure maps; `frameHash` is the WAL head.
+ * `jReplicas` is og state.jReplicas (insertion-ordered); `activeJurisdiction` / `runtimeId` / `browserVMState` are og RuntimeReplica fields;
+ * `adapterFrontiers`, `encryptionSeeds` and `pendingJImports` are og infrastructure maps; `frameHash` is the WAL head.
  */
 export type Runtime = {
-  readonly entities: ReadonlyMap<string, EntityReplica>; readonly height: bigint; readonly timestamp: bigint; readonly jurisdictions: ReadonlySet<string>;
+  readonly entities: ReadonlyMap<string, EntityReplica>; readonly height: bigint; readonly timestamp: bigint; readonly jReplicas: ReadonlyMap<string, JReplica>;
+  readonly activeJurisdiction?: string | undefined; readonly runtimeId?: string | undefined; readonly browserVMState?: { readonly [field: string]: Binary } | undefined;
+  readonly pendingJImports: ReadonlyMap<string, PendingJurisdictionImport>;
   readonly adapterFrontiers: ReadonlyMap<string, AdapterFrontier>; readonly encryptionSeeds: ReadonlyMap<string, string>; readonly frameHash: string;
 };
 /** A whole-frame refusal carries og's error code (og throws out of the Runtime reducer, so nothing of the frame applies). */
@@ -8195,8 +8232,12 @@ export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; re
   readonly runtimeSeed?: string | undefined };
 export const ZERO_FRAME_HASH = `0x${"00".repeat(32)}`;
 export const replicaKey = (entity: EntityId, signer: string): string => `${entity}:${signerId(signer)}`;
-export const createRuntime = (jurisdictions: Iterable<string> = []): Runtime =>
-  ({ entities: new Map(), height: 0n, timestamp: 0n, jurisdictions: new Set(jurisdictions), adapterFrontiers: new Map(), encryptionSeeds: new Map(), frameHash: ZERO_FRAME_HASH });
+/** og buildJurisdictionImportAdapterConfig's bare replica: a name alone is an unconfigured J replica at block 0. */
+export const bareJReplica = (name: string): JReplica => ({ name, blockNumber: 0n, stateRoot: null, mempool: [], blockDelayMs: 300, lastBlockTimestamp: 0, position: { x: 0, y: 50, z: 0 } });
+export const createRuntime = (jurisdictions: Iterable<string | JReplica> = [], runtimeId?: string): Runtime => ({
+  entities: new Map(), height: 0n, timestamp: 0n, jReplicas: new Map([...jurisdictions].map((j): [string, JReplica] => (typeof j === "string" ? [j, bareJReplica(j)] : [j.name, j]))),
+  ...opt("runtimeId", runtimeId), pendingJImports: new Map(), adapterFrontiers: new Map(), encryptionSeeds: new Map(), frameHash: ZERO_FRAME_HASH,
+});
 export const spawn = (rt: Runtime, r: EntityReplica): Runtime => ({ ...rt, entities: mapSet(rt.entities, replicaKey(r.state.id, r.signerId), r) });
 /** og resolveEntityProposerId: an Account message goes to the receiver's active leader (the CEO `validators[0]` until a view change); a consensus input to the named validator. */
 export const convertOutput = (rt: Runtime, item: EntityOutput, from: EntityId, timestamp: bigint): Result<RoutedEntityInput, RuntimeError> => {
@@ -8219,7 +8260,7 @@ export const validateRuntimeInput = (rt: Runtime, input: RuntimeInput): Result<r
     let total = 0;
     const perJ = new Map<string, number>();
     for (const j of jInputs) {
-      if (!rt.jurisdictions.has(j.jurisdictionName)) return frameErr("RUNTIME_J_UNKNOWN_JURISDICTION");
+      if (!rt.jReplicas.has(j.jurisdictionName)) return frameErr("RUNTIME_J_UNKNOWN_JURISDICTION");
       total += j.jTxs.length;
       if (total > MAX_RUNTIME_J_TXS) return frameErr("RUNTIME_J_TXS_MAX");
       const n = (perJ.get(j.jurisdictionName) ?? 0) + j.jTxs.length;
@@ -8374,7 +8415,6 @@ export const lazyBoardEntityId = (config: EntityRootConfig): Result<string, Runt
     return ok(boardHashOf({ votingThreshold: Number(config.threshold), entityIds: ids, votingPowers: powers, boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 }));
   });
 };
-const sameJurisdictionStack = (a: Domain, b: Domain): boolean => a.chainId === b.chainId && lower(a.depositoryAddress) === lower(b.depositoryAddress);
 const quorumOf = (config: ImportConfig): Result<Authority, RuntimeError> => {
   const members = new Map<Address, { readonly shares: bigint }>();
   for (const v of config.validators) {
@@ -8390,16 +8430,15 @@ const quorumOf = (config: ImportConfig): Result<Authority, RuntimeError> => {
  * against siblings and the retained seed, then reuse / checkpoint-import / create the genesis replica.
  */
 const importReplica = (rt: Runtime, tx: Extract<RuntimeTx, { type: "importReplica" }>): Result<Runtime, RuntimeError> => {
-  const entity = lower(tx.entityId), signer = lower(tx.signerId), { config, isProposer, entitySeed } = tx.data;
+  const entity = lower(tx.entityId), signer = lower(tx.signerId), { config } = tx.data;
   if (entity === "" || signer === "") return txErr("IMPORT_REPLICA_INVALID_ID");
   const key = `${entity}:${signer}`, existing = [...rt.entities].find(([k]) => lower(k) === key);
-  const j = config.jurisdiction;
-  if (j === undefined || (j.name ?? "") === "") return txErr("ENTITY_JURISDICTION_MISSING");
-  if (!rt.jurisdictions.has(j.name ?? "")) return txErr("ENTITY_JURISDICTION_RESOLVE_FAILED");
-  if (j.depositoryAddress === "" || j.entityProviderAddress === "" || j.chainId === undefined || j.chainId === 0) return txErr("ENTITY_JURISDICTION_INCOMPLETE");
-  const domain: Domain = { chainId: j.chainId, depositoryAddress: j.depositoryAddress };
+  return chain(requireBoundJurisdiction(rt, entity, config), (j) => importBoundReplica(rt, tx, entity, signer, key, existing, j));
+};
+const importBoundReplica = (rt: Runtime, tx: Extract<RuntimeTx, { type: "importReplica" }>, entity: string, signer: string, key: string, existing: readonly [string, EntityReplica] | undefined, j: ImportJurisdiction): Result<Runtime, RuntimeError> => {
+  const { config, isProposer, entitySeed } = tx.data;
+  const domain: Domain = { chainId: j.chainId ?? 0, depositoryAddress: j.depositoryAddress ?? "" }, jurisdictionConfig = jurisdictionConfigOf(j);
   const siblings = [...rt.entities.values()].filter((r) => lower(r.state.id) === entity);
-  if (siblings.some((r) => !sameJurisdictionStack(r.state.jurisdiction, domain))) return txErr("ENTITY_JURISDICTION_CONFLICT");
   const boardIndex = config.validators.findIndex((v) => lower(v) === signer);
   if (boardIndex < 0) return txErr("IMPORT_REPLICA_SIGNER_NOT_ON_BOARD");
   if (isProposer !== (boardIndex === 0)) return txErr("IMPORT_REPLICA_PROPOSER_FLAG_INVALID");
@@ -8424,20 +8463,283 @@ const importReplica = (rt: Runtime, tx: Extract<RuntimeTx, { type: "importReplic
         const [oldKey, replica] = existing;
         // A certified Entity keeps its state: re-import changes validator-local routing only (og reuseExistingReplica).
         if (replica.head.height > 0n || siblings.some((r) => r.head.height > 0n)) return map(sameAuthority(replica), () => finish(replica, oldKey === key ? undefined : oldKey));
-        return ok(finish(at(replica, { ...replica.state, quorum, jurisdiction: domain }, replica.mempool), oldKey === key ? undefined : oldKey));
+        return ok(finish(at(replica, { ...replica.state, quorum, jurisdiction: domain, jurisdictionConfig }, replica.mempool), oldKey === key ? undefined : oldKey));
       }
       if (certified !== undefined) return map(sameAuthority(certified), () => finish(at(certified, certified.state, [])));
       const committed: EntityCommitted = { entityEncryptionPublicKey: publicKey };
-      return map(mapErr(createEntity({ id: entity as EntityId, jurisdiction: domain, threshold: config.threshold, members: (authority as Extract<Authority, { _tag: "teaching" }>).members, signerId: signer as Address, timestamp: rt.timestamp, committed }), (e): RuntimeError => e), (r) => finish(r));
+      return map(mapErr(createEntity({ id: entity as EntityId, jurisdiction: domain, threshold: config.threshold, members: (authority as Extract<Authority, { _tag: "teaching" }>).members, signerId: signer as Address, timestamp: rt.timestamp, jurisdictionConfig, committed }), (e): RuntimeError => e), (r) => finish(r));
     }));
   });
 };
-/** og applyRuntimeTx. The J watcher / J history, J submit, registration evidence, EntityProvider action, governance and J import subsystems are not in the rewrite. */
+// ---- og runtime/j-submit/jurisdiction-import(-request).ts: the J import registry ----
+const ZERO_ADDRESS = `0x${"00".repeat(20)}`;
+/** og normalizeJurisdictionImportAddress: ethers.getAddress, lowercased, never the zero address. */
+const importAddress = (value: unknown, label: string): Result<string, RuntimeError> => {
+  const a = ethAddress(value);
+  if (a === null) return txErr(`IMPORT_J_${label}_ADDRESS_INVALID:${String(value ?? "")}`);
+  return a === ZERO_ADDRESS ? txErr(`IMPORT_J_${label}_ADDRESS_ZERO`) : ok(a);
+};
+/** og normalizeJurisdictionImportContracts: all four stack contracts, each a checksummed non-zero address. */
+const importContracts = (c: JContracts | undefined, required: boolean): Result<FullJContracts | undefined, RuntimeError> => {
+  if (!c) return required ? txErr("IMPORT_J_RPC_CONTRACTS_REQUIRED") : ok(undefined);
+  const missing = (["depository", "entityProvider", "account", "deltaTransformer"] as const).filter((k) => !c[k]);
+  if (missing.length > 0) return txErr(`IMPORT_J_CONTRACTS_INCOMPLETE:${missing.join(",")}`);
+  return chain(importAddress(c.depository, "DEPOSITORY"), (depository) => chain(importAddress(c.entityProvider, "ENTITY_PROVIDER"), (entityProvider) =>
+    chain(importAddress(c.account, "ACCOUNT"), (account) => map(importAddress(c.deltaTransformer, "DELTA_TRANSFORMER"), (deltaTransformer) => ({ depository, entityProvider, account, deltaTransformer })))));
+};
+const requireContracts = (c: JContracts | undefined): Result<FullJContracts, RuntimeError> => map(importContracts(c, true), (x) => x as FullJContracts);
+const parseUrl = (s: string): URL | null => { try { return new URL(s); } catch { return null; } };
+/** og normalizeJurisdictionImportRequest: one http(s) RPC (or none for BrowserVM), full contracts + deployment block for RPC stacks, no custom tokens. */
+export const normalizeJurisdictionImportRequest = (raw: JurisdictionImportRequest): Result<JurisdictionImportRequest, RuntimeError> => {
+  const name = String(raw.name ?? "").trim(), ticker = String(raw.ticker ?? "").trim().toUpperCase(), chainId = Number(raw.chainId);
+  if (!name || name.length > 128) return txErr("IMPORT_J_NAME_INVALID");
+  if (!ticker || ticker.length > 16) return txErr("IMPORT_J_TICKER_INVALID");
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) return txErr(`IMPORT_J_CHAIN_ID_INVALID:${String(raw.chainId)}`);
+  if (!Array.isArray(raw.rpcs)) return txErr("IMPORT_J_RPCS_INVALID");
+  const rpcs: string[] = [];
+  for (const [index, value] of (raw.rpcs as readonly unknown[]).entries()) {
+    const rpc = String(value ?? "").trim(), url = rpc === "" ? null : parseUrl(rpc);
+    if (url === null) return txErr(`IMPORT_J_RPC_INVALID:${index}`);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return txErr(`IMPORT_J_RPC_PROTOCOL_INVALID:${index}:${url.protocol}`);
+    rpcs.push(url.toString());
+  }
+  if (new Set(rpcs).size !== rpcs.length) return txErr("IMPORT_J_RPC_DUPLICATED");
+  if (rpcs.length > 8) return txErr(`IMPORT_J_RPC_LIMIT_EXCEEDED:${rpcs.length}`);
+  const isBrowserVM = rpcs.length === 0;
+  return chain(importContracts(raw.contracts, !isBrowserVM), (contracts): Result<JurisdictionImportRequest, RuntimeError> => {
+    const deployment = Number(raw.entityProviderDeploymentBlock);
+    if (!isBrowserVM && raw.entityProviderDeploymentBlock === undefined) return txErr("IMPORT_J_ENTITY_PROVIDER_DEPLOYMENT_BLOCK_REQUIRED");
+    if (raw.entityProviderDeploymentBlock !== undefined && (!Number.isSafeInteger(deployment) || deployment < 1)) return txErr(`IMPORT_J_ENTITY_PROVIDER_DEPLOYMENT_BLOCK_INVALID:${String(raw.entityProviderDeploymentBlock)}`);
+    if (isBrowserVM && raw.entityProviderDeploymentBlock !== undefined) return txErr("IMPORT_J_BROWSERVM_DEPLOYMENT_BLOCK_UNEXPECTED");
+    if ((raw.tokens?.length ?? 0) > 0) return txErr("IMPORT_J_CUSTOM_TOKENS_UNSUPPORTED");
+    if (raw.blockTimeMs !== undefined && (!Number.isSafeInteger(raw.blockTimeMs) || raw.blockTimeMs <= 0)) return txErr(`IMPORT_J_BLOCK_TIME_INVALID:${String(raw.blockTimeMs)}`);
+    if (raw.startAtCurrentBlock !== undefined && typeof raw.startAtCurrentBlock !== "boolean") return txErr("IMPORT_J_START_AT_CURRENT_BLOCK_INVALID");
+    const policy = raw.rpcPolicy as unknown;
+    if (policy !== undefined) {
+      if (policy === "failover") return txErr("IMPORT_J_RPC_POLICY_UNSUPPORTED:failover");
+      const q = typeof policy === "object" && policy !== null ? (policy as { readonly mode?: unknown; readonly min?: unknown }) : null;
+      if (q !== null && q.mode === "quorum" && Number.isSafeInteger(q.min) && (q.min as number) > 0 && (q.min as number) <= rpcs.length) return txErr("IMPORT_J_RPC_POLICY_UNSUPPORTED:quorum");
+      if (policy !== "single") return txErr("IMPORT_J_RPC_POLICY_INVALID");
+      if (rpcs.length !== 1) return txErr(`IMPORT_J_RPC_POLICY_SINGLE_REQUIRES_ONE_RPC:${rpcs.length}`);
+    }
+    if (rpcs.length > 1) return txErr(`IMPORT_J_MULTIPLE_RPCS_UNSUPPORTED:${rpcs.length}`);
+    return ok({
+      name, chainId, ticker, rpcs, ...(isBrowserVM ? {} : { entityProviderDeploymentBlock: deployment }), ...opt("blockTimeMs", raw.blockTimeMs),
+      ...opt("startAtCurrentBlock", raw.startAtCurrentBlock), ...opt("rpcPolicy", raw.rpcPolicy), ...opt("contracts", contracts),
+    });
+  });
+};
+/** og buildJurisdictionImportRequestHash: keccak256(safeStringify({domain, request: normalized})). */
+export const jurisdictionImportRequestHash = (request: JurisdictionImportRequest): Result<string, RuntimeError> =>
+  map(normalizeJurisdictionImportRequest(request), (normalized) => `0x${keccakUtf8(stableJson({ domain: "xln/jurisdiction-import/v1", request: normalized }))}`);
+const jNameKey = (name: string): string => name.trim().toLowerCase();
+const findJReplica = (rt: Runtime, name: string): readonly [string, JReplica] | undefined => [...rt.jReplicas].find(([k]) => jNameKey(k) === jNameKey(name));
+/** og assertReplicaMatchesRequest: an existing J replica must be the same chain, deployment block and (when given) contract stack. */
+const jReplicaMatchesRequest = (replica: JReplica, request: Pick<JurisdictionImportRequest, "name" | "chainId" | "entityProviderDeploymentBlock" | "contracts">): Result<void, RuntimeError> => {
+  if (Number(replica.chainId) !== request.chainId) return txErr(`IMPORT_J_EXISTING_CHAIN_CONFLICT:${request.name}`);
+  if (request.entityProviderDeploymentBlock !== undefined && Number(replica.entityProviderDeploymentBlock) !== request.entityProviderDeploymentBlock) return txErr(`IMPORT_J_EXISTING_DEPLOYMENT_BLOCK_CONFLICT:${request.name}`);
+  if (!request.contracts) return ok(undefined);
+  const c = replica.contracts;
+  const held = { ...(c?.depository ? { depository: c.depository } : {}), ...(c?.entityProvider ? { entityProvider: c.entityProvider } : {}), ...(c?.account ? { account: c.account } : {}), ...(c?.deltaTransformer ? { deltaTransformer: c.deltaTransformer } : {}) };
+  return chain(requireContracts(held), (existing) => (stableJson(existing) === stableJson(request.contracts) ? ok(undefined) : txErr(`IMPORT_J_EXISTING_CONTRACTS_CONFLICT:${request.name}`)));
+};
+/** og applyImportJurisdictionIntent: at most one BrowserVM stack; an existing replica must match; one pending intent per name, keyed by its request hash. */
+const importJ = (rt: Runtime, raw: JurisdictionImportRequest): Result<Runtime, RuntimeError> => chain(normalizeJurisdictionImportRequest(raw), (request) => {
+  if (request.rpcs.length === 0) {
+    const replica = [...rt.jReplicas].find(([n, r]) => jNameKey(n) !== jNameKey(request.name) && Array.isArray(r.rpcs) && r.rpcs.length === 0);
+    const intent = [...rt.pendingJImports.values()].find((i) => jNameKey(i.request.name) !== jNameKey(request.name) && i.request.rpcs.length === 0);
+    if (replica !== undefined || intent !== undefined) return txErr(`IMPORT_J_MULTIPLE_BROWSERVM_UNSUPPORTED:${request.name}:${replica?.[0] ?? intent?.request.name ?? "unknown"}`);
+  }
+  const existing = findJReplica(rt, request.name);
+  if (existing !== undefined) return map(jReplicaMatchesRequest(existing[1], request), () => rt);
+  return chain(jurisdictionImportRequestHash(request), (requestHash): Result<Runtime, RuntimeError> => {
+    for (const pending of rt.pendingJImports.values()) {
+      if (jNameKey(pending.request.name) !== jNameKey(request.name)) continue;
+      return pending.importId === requestHash && pending.requestHash === requestHash ? ok(rt) : txErr(`IMPORT_J_PENDING_CONFLICT:${request.name}`);
+    }
+    return ok({ ...rt, pendingJImports: mapSet(rt.pendingJImports, requestHash, { importId: requestHash, requestHash, request }) });
+  });
+});
+/** og validateImportResult: the result answers its pending intent exactly; tokens are unique, well-formed, address-normalized and sorted by id. */
+const validateImportResult = (pending: PendingJurisdictionImport, raw: JurisdictionImportResult): Result<JurisdictionImportResult, RuntimeError> => {
+  const request = pending.request, id = pending.importId;
+  if (raw.importId !== pending.importId || raw.requestHash !== pending.requestHash || raw.name !== request.name || raw.chainId !== request.chainId || raw.ticker !== request.ticker
+    || stableJson(raw.rpcs) !== stableJson(request.rpcs) || raw.blockTimeMs !== request.blockTimeMs) return txErr(`IMPORT_J_RESULT_INTENT_MISMATCH:${id}`);
+  return chain(requireContracts(raw.contracts), (contracts): Result<JurisdictionImportResult, RuntimeError> => {
+    if (request.contracts && stableJson(contracts) !== stableJson(request.contracts)) return txErr(`IMPORT_J_RESULT_CONTRACTS_MISMATCH:${id}`);
+    if (!/^(0|[1-9][0-9]*)$/.test(String(raw.blockNumber))) return txErr(`IMPORT_J_RESULT_BLOCK_NUMBER_INVALID:${raw.blockNumber}`);
+    const isBrowserVM = request.rpcs.length === 0;
+    if (raw.watcherReceiptCommitment !== undefined && (raw.watcherReceiptCommitment !== "tron-rpc-attested" || isBrowserVM || raw.watcherConfirmationDepth !== 0)) return txErr("IMPORT_J_RESULT_RECEIPT_COMMITMENT_INVALID");
+    if (isBrowserVM) {
+      if (!raw.stateRoot || !/^0x[0-9a-fA-F]{64}$/.test(raw.stateRoot)) return txErr("IMPORT_J_RESULT_STATE_ROOT_INVALID");
+      if (!raw.browserVMState) return txErr("IMPORT_J_RESULT_BROWSERVM_STATE_MISSING");
+    } else if (raw.stateRoot !== null || raw.browserVMState !== undefined) return txErr("IMPORT_J_RESULT_RPC_STATE_INVALID");
+    for (const [label, value, minimum] of [["WATCHER_CONFIRMATION_DEPTH", raw.watcherConfirmationDepth, 0], ["ENTITY_PROVIDER_DEPLOYMENT_BLOCK", raw.entityProviderDeploymentBlock, 1]] as const)
+      if (!Number.isSafeInteger(value) || value < minimum) return txErr(`IMPORT_J_RESULT_${label}_INVALID:${String(value)}`);
+    const ids = new Set<number>(), addresses = new Set<string>(), tokens: JTokenInfo[] = [];
+    for (const [index, token] of raw.tokenRegistry.entries()) {
+      const prefix = `IMPORT_J_RESULT_TOKEN_${index}`;
+      if (!Number.isSafeInteger(token.tokenId) || token.tokenId < 1 || ids.has(token.tokenId)) return txErr(`${prefix}_ID_INVALID:${String(token.tokenId)}`);
+      if (![0, 1, 2].includes(token.tokenType)) return txErr(`${prefix}_TYPE_INVALID:${String(token.tokenType)}`);
+      if (!Number.isSafeInteger(token.decimals) || token.decimals < 0 || token.decimals > 255) return txErr(`${prefix}_DECIMALS_INVALID:${String(token.decimals)}`);
+      const a = importAddress(token.address, `${prefix}_ADDRESS`);
+      if (!a.ok) return a;
+      if (addresses.has(a.value)) return txErr(`${prefix}_ADDRESS_DUPLICATE:${a.value}`);
+      if (typeof token.symbol !== "string" || typeof token.name !== "string" || token.externalTokenId < 0n) return txErr(`${prefix}_METADATA_INVALID`);
+      ids.add(token.tokenId); addresses.add(a.value); tokens.push({ ...token, address: a.value });
+    }
+    return ok({ ...raw, tokenRegistry: tokens.sort((l, r) => l.tokenId - r.tokenId), contracts });
+  });
+};
+/** og assertReplicaMatchesResult. */
+const jReplicaMatchesResult = (replica: JReplica, result: JurisdictionImportResult): Result<void, RuntimeError> => chain(jReplicaMatchesRequest(replica, result), () =>
+  replica.blockNumber.toString() !== result.blockNumber || Number(replica.watcherConfirmationDepth) !== result.watcherConfirmationDepth || replica.watcherReceiptCommitment !== result.watcherReceiptCommitment
+    || Number(replica.entityProviderDeploymentBlock) !== result.entityProviderDeploymentBlock || stableJson(replica.tokenRegistry) !== stableJson(result.tokenRegistry)
+    ? txErr(`IMPORT_J_RESULT_EXISTING_REPLICA_CONFLICT:${result.name}`) : ok(undefined));
+/** og applyCompleteImportJurisdiction: install the prepared J replica (unless it exists and matches), drop the intent, default the active jurisdiction. */
+const completeImportJ = (rt: Runtime, raw: JurisdictionImportResult): Result<Runtime, RuntimeError> => {
+  const existing = findJReplica(rt, String(raw.name ?? "")), pending = rt.pendingJImports.get(raw.importId);
+  if (pending === undefined) return existing !== undefined ? map(jReplicaMatchesResult(existing[1], raw), () => rt) : txErr(`IMPORT_J_RESULT_STALE:${raw.importId}`);
+  return chain(validateImportResult(pending, raw), (result): Result<Runtime, RuntimeError> => {
+    let jReplicas = rt.jReplicas;
+    if (existing !== undefined) {
+      const matched = jReplicaMatchesResult(existing[1], result);
+      if (!matched.ok) return matched;
+    } else {
+      for (const [name, replica] of rt.jReplicas) {
+        if (Number(replica.chainId) !== result.chainId || !replica.contracts?.depository) continue;
+        const depository = importAddress(replica.contracts.depository, "EXISTING_DEPOSITORY");
+        if (!depository.ok) return depository;
+        if (depository.value === result.contracts.depository) return txErr(`IMPORT_J_WATCHER_IDENTITY_CONFLICT:${result.name}:${name}:${result.chainId}:${result.contracts.depository}`);
+      }
+      jReplicas = mapSet(rt.jReplicas, result.name, {
+        name: result.name, blockNumber: BigInt(result.blockNumber), stateRoot: result.stateRoot ? result.stateRoot.toLowerCase() : null, mempool: [], blockDelayMs: 300,
+        ...(result.blockTimeMs ? { blockTimeMs: result.blockTimeMs } : {}), lastBlockTimestamp: Number(rt.timestamp), position: { x: 0, y: 50, z: 0 },
+        entityProviderDeploymentBlock: result.entityProviderDeploymentBlock, contracts: result.contracts, rpcs: [...result.rpcs], chainId: result.chainId,
+        watcherConfirmationDepth: result.watcherConfirmationDepth, ...(result.watcherReceiptCommitment ? { watcherReceiptCommitment: result.watcherReceiptCommitment } : {}), tokenRegistry: result.tokenRegistry,
+      });
+    }
+    return ok({ ...rt, jReplicas, ...(result.browserVMState ? { browserVMState: result.browserVMState } : {}), pendingJImports: mapDelete(rt.pendingJImports, result.importId), activeJurisdiction: rt.activeJurisdiction || result.name });
+  });
+};
+
+// ---- og jurisdiction/adapter/watcher/observe/watcher-replica.ts + watcher-cursor.ts ----
+const label = (v: unknown): string => String(v || "").trim().toLowerCase();
+const watcherChainIdOf = (r: JReplica | undefined): number | null => { const c = Number(r?.chainId); return Number.isFinite(c) && c > 0 ? Math.floor(c) : null; };
+/** og findWatcherJurisdictionReplica: by depository and/or chain id (ambiguity refused), else the active replica, else the first. */
+const findWatcherJReplica = (rt: Runtime, depositoryAddress?: string, chainId?: number): Result<readonly [string, JReplica] | null, RuntimeError> => {
+  const entries = [...rt.jReplicas];
+  if (entries.length === 0) return ok(null);
+  const depository = label(depositoryAddress), wanted = typeof chainId === "number" && Number.isFinite(chainId) && chainId > 0 ? Math.floor(chainId) : null;
+  if (depository || wanted !== null) {
+    const exact = entries.filter(([, r]) => (!depository || label(r.contracts?.depository) === depository) && (wanted === null || watcherChainIdOf(r) === wanted));
+    if (exact.length > 1) return txErr(`J_WATCHER_JURISDICTION_AMBIGUOUS:${wanted ?? "any"}:${depository || "any"}`);
+    return ok(exact[0] ?? null);
+  }
+  const active = rt.activeJurisdiction ? rt.jReplicas.get(rt.activeJurisdiction) : undefined;
+  return ok(active !== undefined && rt.activeJurisdiction !== undefined ? [rt.activeJurisdiction, active] : (entries[0] ?? null));
+};
+const requireWatcherJReplica = (rt: Runtime, depositoryAddress: string | undefined, chainId: number | undefined, context: string): Result<readonly [string, JReplica], RuntimeError> =>
+  chain(findWatcherJReplica(rt, depositoryAddress, chainId), (found) => {
+    if (found !== null) return ok(found);
+    const available = [...rt.jReplicas.values()].map((r) => `${r.name || "unnamed"}/${String(r.chainId ?? "missing")}/${label(r.contracts?.depository) || "missing"}`).join(",");
+    return txErr(`J_WATCHER_JURISDICTION_NOT_FOUND:${context}:chain=${String(chainId ?? "any")}:depository=${label(depositoryAddress) || "any"}:available=${available || "none"}`);
+  });
+/** og applyWatcherJurisdictionCursor: the committed watcher cursor only moves forward. */
+const advanceJWatcherCursor = (rt: Runtime, data: Extract<RuntimeTx, { type: "advanceJWatcherCursor" }>["data"]): Result<Runtime, RuntimeError> => {
+  if (!Number.isSafeInteger(data.blockNumber) || data.blockNumber < 0) return txErr(`J_WATCHER_CURSOR_INVALID:${String(data.blockNumber)}`);
+  return map(requireWatcherJReplica(rt, data.depositoryAddress, data.chainId, "cursor-apply"), ([key, replica]) =>
+    (replica.blockNumber >= BigInt(data.blockNumber) ? rt : { ...rt, jReplicas: mapSet(rt.jReplicas, key, { ...replica, blockNumber: BigInt(data.blockNumber) }) }));
+};
+
+// ---- og jurisdiction/machine/jurisdiction-runtime/index.ts: requireBoundEntityConfig ----
+/** og isUsableContractAddress / firstUsableContractAddress: the first value that is a valid non-zero address, as given. */
+const usableAddress = (...values: readonly unknown[]): string | null => {
+  for (const v of values) if (typeof v === "string") { const a = ethAddress(v); if (a !== null && a !== ZERO_ADDRESS) return v; }
+  return null;
+};
+const STACK_REF = /^stack:(?:\d+:)?0x[0-9a-fA-F]{40}$/;
+const stackChainId = (v: unknown): number | null => { const n = Number(v); return Number.isSafeInteger(n) && n > 0 ? n : null; };
+const jNameOf = (v: unknown): string => (typeof v === "string" ? v.trim().toLowerCase() : "");
+/** og getJReplicaByName: the exact key, else the first replica whose name matches case-insensitively. */
+const jReplicaByName = (rt: Runtime, name: unknown): JReplica | undefined => {
+  const n = jNameOf(name);
+  if (!n) return undefined;
+  return rt.jReplicas.get(name as string) ?? [...rt.jReplicas.values()].find((r) => jNameOf(r.name) === n);
+};
+const jReplicaByRef = (rt: Runtime, ref: string): JReplica | undefined =>
+  [...rt.jReplicas.values()].find((r) => stackIdOf({ depositoryAddress: usableAddress(r.contracts?.depository) ?? "", chainId: r.chainId }) === ref.trim().toLowerCase());
+/** og resolveRuntimeJurisdictionConfig: complete a jurisdiction config from the named (else active, else first) J replica; replica contracts win. */
+const resolveRuntimeJurisdiction = (rt: Runtime, current: ImportJurisdiction | undefined): ImportJurisdiction | undefined => {
+  const active = rt.activeJurisdiction ? rt.jReplicas.get(rt.activeJurisdiction) : undefined;
+  const replica = jReplicaByName(rt, current?.name) ?? active ?? [...rt.jReplicas.values()][0];
+  const depositoryAddress = usableAddress(replica?.contracts?.depository, current?.depositoryAddress);
+  const entityProviderAddress = usableAddress(replica?.contracts?.entityProvider, current?.entityProviderAddress);
+  const rawChain = replica?.chainId !== undefined ? replica.chainId : current?.chainId;
+  const chainId = typeof rawChain === "bigint" ? Number(rawChain) : typeof rawChain === "number" && Number.isFinite(rawChain) ? rawChain : undefined;
+  const deployment = replica?.entityProviderDeploymentBlock !== undefined ? replica.entityProviderDeploymentBlock : current?.entityProviderDeploymentBlock;
+  const currentName = current?.name?.trim() || undefined, currentAddress = current?.address?.trim() || undefined, replicaAddress = replica?.rpcs?.[0]?.trim() || undefined;
+  const name = currentName !== undefined ? currentName : replica?.name !== undefined ? replica.name : rt.activeJurisdiction;
+  const address = currentAddress ?? replicaAddress ?? (name ? `jreplica://${name}` : undefined);
+  if (!name || !address || !depositoryAddress || !entityProviderAddress) return current;
+  return { ...current, name, address, entityProviderAddress, depositoryAddress, ...opt("chainId", chainId), ...opt("entityProviderDeploymentBlock", deployment) };
+};
+/** og requireRuntimeJurisdictionConfigByName: the J replica must exist (by name or stack ref) and resolve to a complete stack of the same name. */
+const requireJurisdictionByName = (rt: Runtime, name: string, current: ImportJurisdiction | undefined): Result<ImportJurisdiction, RuntimeError> => {
+  const configured = String(name || current?.name || "").trim();
+  if (!configured) return txErr("ENTITY_JURISDICTION_MISSING");
+  const isRef = STACK_REF.test(configured), replica = isRef ? jReplicaByRef(rt, configured) : jReplicaByName(rt, configured);
+  if (replica === undefined) return txErr(`ENTITY_JURISDICTION_UNAVAILABLE: ${configured}`);
+  const replicaName = replica.name || configured;
+  const chainId = current?.chainId !== undefined ? current.chainId : replica.chainId;
+  const candidate: ImportJurisdiction = {
+    name: replicaName, address: current?.address || replica.rpcs?.[0] || `jreplica://${replicaName}`,
+    entityProviderAddress: current?.entityProviderAddress || replica.contracts?.entityProvider || "", depositoryAddress: current?.depositoryAddress || replica.contracts?.depository || "",
+    ...opt("chainId", chainId), ...opt("blockTimeMs", current?.blockTimeMs), ...opt("registrationBlock", current?.registrationBlock),
+    ...opt("entityProviderDeploymentBlock", current?.entityProviderDeploymentBlock !== undefined ? current.entityProviderDeploymentBlock : replica.entityProviderDeploymentBlock),
+    ...(current?.rebalancePolicyUsd ? { rebalancePolicyUsd: current.rebalancePolicyUsd } : {}),
+  };
+  const resolved = resolveRuntimeJurisdiction(rt, candidate);
+  const same = resolved !== undefined && (isRef ? stackIdOf(resolved) === configured.toLowerCase() : jNameOf(resolved.name) === jNameOf(configured));
+  if (resolved === undefined || !same) return txErr(`ENTITY_JURISDICTION_RESOLVE_FAILED: ${configured}`);
+  if (!resolved.depositoryAddress || !resolved.entityProviderAddress || !resolved.chainId) return txErr(`ENTITY_JURISDICTION_INCOMPLETE: ${configured}`);
+  return ok(resolved);
+};
+/** og readStrictJurisdictionStackId: chain id and a usable depository, else nothing. */
+const strictStackId = (chainId: unknown, depository: unknown): string => {
+  const c = stackChainId(chainId), d = usableAddress(depository);
+  return c === null || d === null ? "" : stackIdOf({ depositoryAddress: d, chainId: c });
+};
+/** og requireBoundEntityConfig: resolve the config's jurisdiction against the J replicas and refuse a stack other than the one sibling replicas are bound to. */
+const requireBoundJurisdiction = (rt: Runtime, entity: string, config: ImportConfig): Result<ImportJurisdiction, RuntimeError> => {
+  const merged = resolveRuntimeJurisdiction(rt, config.jurisdiction) ?? config.jurisdiction;
+  const name = typeof merged?.name === "string" ? merged.name.trim() : "";
+  if (!name) return txErr(`ENTITY_JURISDICTION_MISSING: entity=${entity}`);
+  return chain(requireJurisdictionByName(rt, name, merged), (bound) => {
+    const incoming = strictStackId(bound.chainId, bound.depositoryAddress);
+    for (const r of rt.entities.values()) {
+      if (lower(r.state.id) !== entity || !(r.state.jurisdictionConfig?.name ?? "").trim()) continue;
+      const held = strictStackId(r.state.jurisdiction.chainId, r.state.jurisdiction.depositoryAddress);
+      if (!held || !incoming || held !== incoming) return txErr(`ENTITY_JURISDICTION_CONFLICT: entity=${entity}`);
+    }
+    return ok(bound);
+  });
+};
+/** og ConsensusConfig.jurisdiction beyond the account Domain, as the Entity state carries it. */
+const jurisdictionConfigOf = (j: ImportJurisdiction): JurisdictionConfig => ({
+  ...opt("name", j.name), entityProviderAddress: j.entityProviderAddress ?? "", ...opt("registrationBlock", j.registrationBlock),
+  ...opt("entityProviderDeploymentBlock", j.entityProviderDeploymentBlock), ...opt("blockTimeMs", j.blockTimeMs), ...opt("rebalancePolicyUsd", j.rebalancePolicyUsd),
+});
+
+/** og applyRuntimeTx. */
 export const applyRuntimeTx = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<Runtime, RuntimeError> => chain(runtimeTxAuthorized(tx, ctx), (): Result<Runtime, RuntimeError> => {
   switch (tx.type) {
     case "checkpointBarrier": return ok(rt);
     case "recordRuntimeAdapterCommand": return adapterCommand(rt, tx.data);
     case "importReplica": return importReplica(rt, tx);
+    case "importJ": return importJ(rt, tx.data);
+    case "completeImportJ": return completeImportJ(rt, tx.data);
+    case "advanceJWatcherCursor": return advanceJWatcherCursor(rt, tx.data);
     default: return err({ _tag: "runtime_tx_unsupported", code: tx.type });
   }
 });
@@ -8521,7 +8823,7 @@ export const runtimeOutputsDigest = (rows: readonly Uint8Array[]): Result<string
 
 /** Rewrite values as og binary payload: optional fields the rewrite leaves `undefined` are absent (og builders spread them in only when set). */
 const binaryOf = (v: unknown): Binary => {
-  if (v === null || typeof v !== "object") return v as Binary;
+  if (v === null || typeof v !== "object" || v instanceof Uint8Array) return v as Binary;
   if (Array.isArray(v)) return v.map(binaryOf);
   if (v instanceof Map) return new Map([...v].map(([k, x]) => [binaryOf(k), binaryOf(x)]));
   return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [k, binaryOf(x)]));
@@ -8546,11 +8848,28 @@ const replicaMetaRows = (rt: Runtime): Result<readonly { readonly key: Uint8Arra
       entityHead: { entityId: entity, height, timestamp, frameHash: r.head.height === 0n ? "" : frameWord(r.head.prevFrameHash) },
     }), (value) => ({ key: rowKey, value }))));
   });
-/** The Runtime components the rewrite holds (og buildReplayVerifiableRuntimePostStateView: infrastructure + J replicas). */
-const runtimeView = (rt: Runtime): { readonly [key: string]: Binary } => ({
-  infrastructure: binaryOf({ runtimeAdapterCommandFrontiers: rt.adapterFrontiers, entityEncryptionSeeds: rt.encryptionSeeds }),
-  jReplicas: [...rt.jurisdictions].sort(asc),
+/** og buildCanonicalJReplicaSnapshot + buildDurableJReplicaSnapshot: fixed field set (no token registry), wall-clock marker zeroed, state root as bytes. */
+const jReplicaSnapshot = (r: JReplica): Binary => binaryOf({
+  name: r.name, blockNumber: r.blockNumber, stateRoot: r.stateRoot === null ? null : (hexToBytes(r.stateRoot) as unknown as Binary), mempool: r.mempool, blockDelayMs: r.blockDelayMs,
+  blockTimeMs: r.blockTimeMs, lastBlockTimestamp: 0, blockReady: r.blockReady, watcherConfirmationDepth: r.watcherConfirmationDepth, watcherReceiptCommitment: r.watcherReceiptCommitment,
+  rpcs: r.rpcs, chainId: r.chainId, position: r.position, entityProviderDeploymentBlock: r.entityProviderDeploymentBlock,
+  contracts: r.contracts === undefined ? undefined : Object.fromEntries(Object.entries(r.contracts).filter(([, v]) => Boolean(v))),
 });
+/** og buildDurableRuntimeStateSnapshot: only non-empty durable maps; absent when none. */
+const durableInfrastructure = (rt: Runtime): { readonly [key: string]: Binary } | undefined => {
+  const rows: [string, ReadonlyMap<string, unknown>][] = [["runtimeAdapterCommandFrontiers", rt.adapterFrontiers], ["pendingJurisdictionImports", rt.pendingJImports], ["entityEncryptionSeeds", rt.encryptionSeeds]];
+  const kept = rows.filter(([, m]) => m.size > 0);
+  return kept.length === 0 ? undefined : Object.fromEntries(kept.map(([k, m]) => [k, binaryOf(m)]));
+};
+/** og buildReplayVerifiableRuntimePostStateView: runtimeId, BrowserVM header (no trie), durable infrastructure, J replicas in insertion order. */
+export const runtimeView = (rt: Runtime): { readonly [key: string]: Binary } => {
+  const infrastructure = durableInfrastructure(rt);
+  const vm = rt.browserVMState === undefined ? undefined : Object.fromEntries(Object.entries(rt.browserVMState).filter(([k]) => k !== "trieData"));
+  return {
+    ...(rt.runtimeId ? { runtimeId: rt.runtimeId } : {}), ...(vm !== undefined ? { browserVMState: binaryOf(vm) } : {}), ...opt("infrastructure", infrastructure),
+    jReplicas: [...rt.jReplicas].map(([k, r]) => [k, jReplicaSnapshot(r)]),
+  };
+};
 export type RuntimeFrameCommit = { readonly runtime: Runtime; readonly frame: StorageFrame; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly rejected: readonly RuntimeError[] };
 const outputRows = (outbox: readonly EntityOutput[]): Result<readonly Uint8Array[], RuntimeError> => traverse(outbox, (o) => encodeBinary(binaryOf(o)));
 const sealFrame = (rt: Runtime, step: RuntimeStep): Result<RuntimeFrameCommit, RuntimeError> => {
