@@ -16204,22 +16204,72 @@ const atomicPairInputsMatch = (a: RoutedEntityInput, b: RoutedEntityInput | unde
   const l = a.atomicCrossJurisdictionPair, r = b?.atomicCrossJurisdictionPair;
   return l !== undefined && r !== undefined && b !== undefined && l.phase === r.phase && l.pairKey === r.pairKey && entityKey(a.entityId) !== entityKey(b.entityId);
 };
-type CommittedAccountFrame = { readonly counterpartyEntityId: string; readonly height: bigint; readonly stateHash: string };
-const committedFrame = (a: AccountPeerInput, height: bigint, hash: unknown): CommittedAccountFrame => ({ counterpartyEntityId: entityKey(a.fromEntityId), height, stateHash: entityKey(hash) });
-/** The one Account frame (proposal) or ACK a marked leg must commit. */
-const expectedAtomicFrame = (input: RoutedEntityInput): CommittedAccountFrame | undefined => sole(routedAccountInputs(input).flatMap((a): readonly CommittedAccountFrame[] => {
-  const f = input.atomicCrossJurisdictionPair?.phase === "proposal" ? accountProposal(a) : undefined, ack = input.atomicCrossJurisdictionPair?.phase === "proposal" ? undefined : accountAck(a);
-  return f !== undefined ? [committedFrame(a, f.height, f.stateHash)] : ack !== undefined ? [committedFrame(a, ack.height, ack.frameHash)] : [];
-}));
-/** The ACKed and proposed Account frames of an input that the replica's committed heads now hold. */
-const committedAccountFrames = (input: RoutedEntityInput, r: EntityReplica): readonly CommittedAccountFrame[] => routedAccountInputs(input).flatMap((a): readonly CommittedAccountFrame[] => {
-  const proposal = accountProposal(a), ack = accountAck(a), account = proposal === undefined && ack === undefined ? undefined : replicaAccount(r, a.fromEntityId);
-  if (account === undefined) return [];
-  const proposalCommitted = proposal !== undefined && headMatches(account, proposal.height, proposal.stateHash);
-  const ackCommitted = ack !== undefined && (headMatches(account, ack.height, ack.frameHash)
-    || (proposalCommitted && proposal.height === ack.height + 1n && entityKey(proposal.prevFrameHash) === entityKey(ack.frameHash)));
-  return [...(ackCommitted ? [committedFrame(a, ack.height, ack.frameHash)] : []), ...(proposalCommitted ? [committedFrame(a, proposal.height, proposal.stateHash)] : [])];
+type CommittedAccountFrame = {
+  readonly counterpartyEntityId: string;
+  readonly height: bigint;
+  readonly stateHash: string;
+};
+const committedFrame = (
+  input: AccountPeerInput,
+  height: bigint,
+  stateHash: unknown,
+): CommittedAccountFrame => ({
+  counterpartyEntityId: entityKey(input.fromEntityId),
+  height,
+  stateHash: entityKey(stateHash),
 });
+const proposedFrames = (input: AccountPeerInput): readonly CommittedAccountFrame[] => {
+  const frame = accountProposal(input);
+  return frame === undefined ? [] : [committedFrame(input, frame.height, frame.stateHash)];
+};
+const ackedFrames = (input: AccountPeerInput): readonly CommittedAccountFrame[] => {
+  const ack = accountAck(input);
+  return ack === undefined ? [] : [committedFrame(input, ack.height, ack.frameHash)];
+};
+/** The one Account frame (proposal) or ACK a marked leg must commit. */
+const expectedAtomicFrame = (leg: RoutedEntityInput): CommittedAccountFrame | undefined => {
+  const framesOf =
+    leg.atomicCrossJurisdictionPair?.phase === "proposal" ? proposedFrames : ackedFrames;
+  return sole(routedAccountInputs(leg).flatMap(framesOf));
+};
+/** A proposal built directly on the ACKed frame commits that ACK with it. */
+const proposalFollowsAck = (
+  proposal: AccountFrame,
+  ack: { readonly height: bigint; readonly frameHash: string },
+): boolean =>
+  proposal.height === ack.height + 1n &&
+  entityKey(proposal.prevFrameHash) === entityKey(ack.frameHash);
+/** The ACKed and proposed Account frames of an input that the replica's committed heads now hold. */
+const committedAccountFrames = (
+  leg: RoutedEntityInput,
+  replica: EntityReplica,
+): readonly CommittedAccountFrame[] =>
+  routedAccountInputs(leg).flatMap((input) => {
+    const proposal = accountProposal(input);
+    const ack = accountAck(input);
+    const account = replicaAccount(replica, input.fromEntityId);
+    if (account === undefined) return [];
+    const proposalCommitted =
+      proposal !== undefined && headMatches(account, proposal.height, proposal.stateHash);
+    const ackCommitted =
+      ack !== undefined &&
+      (headMatches(account, ack.height, ack.frameHash) ||
+        (proposalCommitted && proposalFollowsAck(proposal, ack)));
+    return [
+      ...(ackCommitted ? ackedFrames(input) : []),
+      ...(proposalCommitted ? proposedFrames(input) : []),
+    ];
+  });
+const sameAccountFrame = (a: CommittedAccountFrame, b: CommittedAccountFrame): boolean =>
+  a.counterpartyEntityId === b.counterpartyEntityId &&
+  a.height === b.height &&
+  a.stateHash === b.stateHash;
+/** Whether the replica's committed heads now hold the Account frame a marked leg must commit. */
+const committedExpectedAccountFrame = (leg: RoutedEntityInput, replica: EntityReplica): boolean => {
+  const expected = expectedAtomicFrame(leg);
+  if (expected === undefined) return false;
+  return committedAccountFrames(leg, replica).some((frame) => sameAccountFrame(frame, expected));
+};
 /** The one outbox output carrying `e`'s Entity ACK of its expected Account frame to the counterparty. */
 const ackOutputIndexes = (outbox: readonly EntityOutput[], e: CrossFrameExpectation): readonly number[] => outbox.flatMap((o, index) => {
   const txs = entityKey(o.to) !== entityKey(e.counterpartyEntityId) ? [] : "tx" in o ? [o.tx as EntityTx] : o.input.kind === "txs" ? effectiveTxs(o.input.txs) : [];
@@ -16264,12 +16314,45 @@ type InputBatch = {
 };
 type Staged = { readonly key: string; readonly outputs: readonly EntityOutput[]; readonly committed: boolean };
 const rejectOut = (b: InputBatch, e: RuntimeError): InputBatch => ({ ...b, outs: [...b.outs, { rejected: [e], applied: [], committed: false }] });
+type StageOptions = {
+  readonly lane?: EntityContext["lane"] | undefined;
+  readonly recordApplied: boolean;
+  readonly requiredTx?: EntityTx | undefined;
+};
+/** Whether a commit came from local Account work, which must not poke Account work again. */
+type CommitCause = "input" | "account-work";
+type PairRefusal = "CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED" | "CROSS_J_ACCOUNT_PAIR_PROTOCOL_REJECTED";
+/** A pair's legs so far: all committed their expected frames, one missed its frame, or one was refused. */
+type PairRun =
+  | { readonly _tag: "framed"; readonly batch: InputBatch; readonly staged: readonly Staged[] }
+  | { readonly _tag: "unframed"; readonly batch: InputBatch; readonly staged: readonly Staged[] }
+  | { readonly _tag: "refused"; readonly code: PairRefusal };
+const topLevelAccountInputs = (leg: RoutedEntityInput): readonly EntityTx[] =>
+  leg.input.kind === "txs" ? leg.input.txs.filter((tx) => tx.type === "accountInput") : [];
+type PairLegContext = { readonly leg: RoutedEntityInput; readonly replay: boolean };
+/**
+ * An admission refusal leaves the pair NOT_COMMITTED; any other refusal of a transported leg is PROTOCOL_REJECTED.
+ * An invariant, a thrown handler, an unroutable or local leg, or any replay refuses the whole frame.
+ */
+const pairLegRefusal = (
+  error: RuntimeError,
+  { leg, replay }: PairLegContext,
+): Result<PairRefusal, RuntimeError> => {
+  if (INGRESS_REJECTIONS.has(error._tag)) return ok("CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED");
+  const transported = String(leg.from ?? "").trim() !== "";
+  const broken =
+    error._tag === "entity_invariant" ||
+    error._tag === "no_such_entity" ||
+    accountThrew(error as EntityError);
+  if (broken || !transported || replay) return frameErr(runtimeErrorText(error));
+  return ok("CROSS_J_ACCOUNT_PAIR_PROTOCOL_REJECTED");
+};
 /**
  * Each merged input applies in order; a plain `txs` input only fills its mempool (touched replicas propose once, in first-touch order, before a pair
  * and at the end). After each input, cross-j commands to local replicas and local Account work drain in this frame; other outputs leave in the outbox.
  */
 const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], timestamp: bigint, ctx: RuntimeCtx): Result<InputBatch, RuntimeError> => {
-  const stage = (b: InputBatch, routed: RoutedEntityInput, lane: EntityContext["lane"], record: boolean, required?: EntityTx): Result<readonly [InputBatch, Staged], RuntimeError> => {
+  const stage = (b: InputBatch, routed: RoutedEntityInput, { lane, recordApplied, requiredTx }: StageOptions): Result<readonly [InputBatch, Staged], RuntimeError> => {
     const key = replicaKey(routed.entityId, routed.signerId), r = b.store.get(key);
     if (r === undefined) return err({ _tag: "no_such_entity", id: routed.entityId });
     const stamped: RoutedEntityInput = routed.input.kind === "txs" || routed.input.kind === "jPrefixAttestations" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
@@ -16277,10 +16360,10 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
     const boardAuthority: BoardAuthority = (source) => settlementBoardAuthority([...b.store.values()].filter((x) => lower(x.state.id) === lower(source)).map((x) => x.state), source);
     return map(applyEntityInput(r, stamped.input, {
       self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, rt, routed.entityId), ...opt("activeJurisdiction", rt.activeJurisdiction),
-      ...opt("jHistory", replicaJHistory({ ...rt, entities: b.store }, key, r)), siblings, boardAuthority, ...opt("lane", lane), ...opt("required", required), jReplicas: rt.jReplicas,
+      ...opt("jHistory", replicaJHistory({ ...rt, entities: b.store }, key, r)), siblings, boardAuthority, ...opt("lane", lane), ...opt("required", requiredTx), jReplicas: rt.jReplicas,
     }), ({ replica, outputs, committed: effects }) => {
       const committed = replica.head.height > r.head.height, progressed = consensusProgressed(r, replica, stamped.input, rt.replicaLocal.get(key));
-      const out: BatchOut = { key, rejected: [], applied: record ? [stamped] : [], committed, progressed: progressed ? key : undefined, ...(effects === undefined ? {} : { effects: [key, effects] as const }) };
+      const out: BatchOut = { key, rejected: [], applied: recordApplied ? [stamped] : [], committed, progressed: progressed ? key : undefined, ...(effects === undefined ? {} : { effects: [key, effects] as const }) };
       return [{ ...b, store: mapSet(b.store, key, replica), outs: [...b.outs, out] }, { key, outputs, committed }] as const;
     });
   };
@@ -16298,13 +16381,13 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
         : ok({ ...s, commands: s.commands.some((c) => commandKey(c) === key) ? s.commands.map((c) => (commandKey(c) === key ? { ...c, entityTxs: [...c.entityTxs, ...d.entityTxs] } : c)) : [...s.commands, command] });
     }), ({ outbox, commands }) => ({ ...b, outbox, queue: [...b.queue, ...commands] }));
   // a commit not itself caused by Account work pokes every local active validator with ready Account work, once
-  const collect = (b: InputBatch, staged: Staged, causedByAccountWork: boolean): Result<InputBatch, RuntimeError> => map(route(b, staged.outputs), (routed) => !staged.committed || causedByAccountWork ? routed : {
+  const collect = (b: InputBatch, staged: Staged, cause: CommitCause): Result<InputBatch, RuntimeError> => map(route(b, staged.outputs), (routed) => !staged.committed || cause === "account-work" ? routed : {
     ...routed, queue: [...routed.queue, ...readyAccountWorkTargets(routed.store.values())
       .filter((t) => !routed.queue.some((c) => c.kind === "account-work" && c.targetEntityId === t.entityId && c.targetSignerId === t.signerId))
       .map((t): CrossCommand => ({ kind: "account-work", sourceEntityId: t.entityId, targetEntityId: t.entityId, targetSignerId: t.signerId }))],
   });
   const settle = (b: InputBatch, staged: Result<readonly [InputBatch, Staged], RuntimeError>): Result<InputBatch, RuntimeError> =>
-    staged.ok ? collect(staged.value[0], staged.value[1], false) : ok(rejectOut(b, staged.error));
+    staged.ok ? collect(staged.value[0], staged.value[1], "input") : ok(rejectOut(b, staged.error));
   // each local command must commit; cycles and runaway cascades refuse the frame
   const drain = (b: InputBatch, round = 1, seen: ReadonlySet<string> = new Set()): Result<InputBatch, RuntimeError> => {
     const [command, ...queue] = b.queue, localEvents = b.localEvents + 1, replicas = b.store.size;
@@ -16315,50 +16398,113 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
     if (r === undefined) return frameErr(`RUNTIME_CROSS_J_LOCAL_REPLICA_NOT_FOUND:${command.targetEntityId}:${command.targetSignerId}`);
     const txs: readonly EntityTx[] = command.kind === "account-work" ? []
       : [{ type: "runtimeOutput", data: { protocol: "cross-j", sourceEntityId: command.sourceEntityId, sourceSignerId: command.sourceSignerId, targetEntityId: command.targetEntityId, entityTxs: command.entityTxs } }];
-    const staged = stage({ ...b, queue, localEvents }, { entityId: r.state.id, signerId: r.signerId, input: { kind: "txs", timestamp, txs } }, command.kind === "entity-txs" ? "cross-j" : "account-work", false);
+    const staged = stage({ ...b, queue, localEvents }, { entityId: r.state.id, signerId: r.signerId, input: { kind: "txs", timestamp, txs } }, { lane: command.kind === "entity-txs" ? "cross-j" : "account-work", recordApplied: false });
     return !staged.ok ? frameErr(`RUNTIME_CROSS_J_LOCAL_EVENT_NOT_COMMITTED:entity=${command.targetEntityId}:round=${round}:outcome=rejected:detail=${runtimeErrorText(staged.error)}`)
-      : chain(collect(staged.value[0], staged.value[1], command.kind === "account-work"), (next) => drain(next, round + 1, fingerprint === undefined ? seen : new Set([...seen, fingerprint])));
+      : chain(collect(staged.value[0], staged.value[1], command.kind === "account-work" ? "account-work" : "input"), (next) => drain(next, round + 1, fingerprint === undefined ? seen : new Set([...seen, fingerprint])));
   };
   // each touched replica proposes once from its mempool
   const flush = (b: InputBatch): Result<InputBatch, RuntimeError> => foldResult<InputBatch, { readonly entityId: EntityId; readonly signerId: string }, RuntimeError>(b.deferred.values(), { ...b, deferred: new Map() }, (s, { entityId, signerId }) =>
-    chain(settle(s, stage(s, { entityId, signerId, input: { kind: "txs", timestamp, txs: [] } }, undefined, false)), (next) => drain(next)));
+    chain(settle(s, stage(s, { entityId, signerId, input: { kind: "txs", timestamp, txs: [] } }, { recordApplied: false })), (next) => drain(next)));
   // a `txs` input carries no consensus evidence
   const single = (b: InputBatch, routed: RoutedEntityInput): Result<InputBatch, RuntimeError> => {
-    const deferrable = routed.input.kind === "txs", staged = stage(b, routed, deferrable ? "defer" : undefined, true);
+    const deferrable = routed.input.kind === "txs", staged = stage(b, routed, { lane: deferrable ? "defer" : undefined, recordApplied: true });
     if (!staged.ok) return ok(rejectOut(b, staged.error));
     const [next, { key, committed }] = staged.value;
     const deferred = committed ? mapDelete(next.deferred, key) : deferrable ? mapSet(next.deferred, key, { entityId: routed.entityId, signerId: routed.signerId }) : next.deferred;
-    return collect({ ...next, deferred }, staged.value[1], false);
+    return collect({ ...next, deferred }, staged.value[1], "input");
   };
-  // both legs propose now with their one accountInput required and must commit their expected Account frames; otherwise both are discarded, the pair
-  // is rejected (by its first leg's position) and the rest of each input applies without its Account legs
-  const applyPair = (b: InputBatch, pair: readonly [RoutedEntityInput, RoutedEntityInput], index: number): Result<InputBatch, RuntimeError> => {
-    const required = pair.map((leg) => (leg.input.kind === "txs" ? leg.input.txs.filter((tx) => tx.type === "accountInput") : [])), bad = required.findIndex((txs) => txs.length !== 1);
-    if (bad >= 0) return frameErr(`RUNTIME_CROSS_J_ATOMIC_ACCOUNT_INPUT_COUNT_INVALID:${pair[bad]?.entityId}:${required[bad]?.length}`);
-    type Run = { readonly batch: InputBatch; readonly staged: readonly Staged[]; readonly framed: boolean; readonly halt?: string };
-    const run = foldResult<Run, RoutedEntityInput, RuntimeError>(pair, { batch: b, staged: [], framed: true }, (s, leg, k) => {
-      const one = s.halt === undefined ? stage(s.batch, leg, undefined, true, required[k]?.[0]) : undefined;
-      if (one === undefined) return ok(s);
-      if (!one.ok) {
-        // an admission refusal leaves the pair NOT_COMMITTED; another refusal of a remote (transported) leg rejects it as PROTOCOL_REJECTED;
-        // an invariant, a thrown handler, an unroutable or local leg, or any replay refuses the frame
-        const e = one.error, remote = String(leg.from ?? "").trim() !== "";
-        return INGRESS_REJECTIONS.has(e._tag) ? ok({ ...s, halt: "CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED" })
-          : e._tag === "entity_invariant" || e._tag === "no_such_entity" || accountThrew(e as EntityError) || !remote || ctx.replay === true ? frameErr(runtimeErrorText(e))
-          : ok({ ...s, halt: "CROSS_J_ACCOUNT_PAIR_PROTOCOL_REJECTED" });
-      }
-      const [batch, staged] = one.value, expected = expectedAtomicFrame(leg), r = batch.store.get(staged.key);
-      const framed = staged.committed && expected !== undefined && r !== undefined
-        && committedAccountFrames(leg, r).some((f) => f.counterpartyEntityId === expected.counterpartyEntityId && f.height === expected.height && f.stateHash === expected.stateHash);
-      return ok({ batch, staged: [...s.staged, staged], framed: s.framed && framed });
+  // A pair commits both expected Account frames or neither: on any failure both staged legs are discarded,
+  // the pair is rejected at its first leg's position and each leg re-applies without its Account legs.
+  const applyPair = (
+    before: InputBatch,
+    pair: readonly [RoutedEntityInput, RoutedEntityInput],
+    pairIndex: number,
+  ): Result<InputBatch, RuntimeError> => {
+    const accountInputs = pair.map(topLevelAccountInputs);
+    const miscounted = accountInputs.findIndex((txs) => txs.length !== 1);
+    if (miscounted >= 0) {
+      const entityId = pair[miscounted]?.entityId;
+      const count = accountInputs[miscounted]?.length;
+      return frameErr(`RUNTIME_CROSS_J_ATOMIC_ACCOUNT_INPUT_COUNT_INVALID:${entityId}:${count}`);
+    }
+    const start: PairRun = { _tag: "framed", batch: before, staged: [] };
+    const run = foldResult<PairRun, RoutedEntityInput, RuntimeError>(
+      pair,
+      start,
+      (current, leg, legIndex) => stagePairLeg(current, leg, accountInputs[legIndex]?.[0]),
+    );
+    return chain(run, (finished) => finishPair(before, pair, pairIndex, finished));
+  };
+  const stagePairLeg = (
+    run: PairRun,
+    leg: RoutedEntityInput,
+    requiredTx: EntityTx | undefined,
+  ): Result<PairRun, RuntimeError> => {
+    if (run._tag === "refused") return ok(run);
+    const staged = stage(run.batch, leg, { recordApplied: true, requiredTx });
+    if (!staged.ok) {
+      const refusal = pairLegRefusal(staged.error, { leg, replay: ctx.replay === true });
+      return map(refusal, (code): PairRun => ({ _tag: "refused", code }));
+    }
+    const [batch, stagedLeg] = staged.value;
+    const replica = batch.store.get(stagedLeg.key);
+    const legFramed =
+      stagedLeg.committed && replica !== undefined && committedExpectedAccountFrame(leg, replica);
+    const allFramed = run._tag === "framed" && legFramed;
+    return ok({
+      _tag: allFramed ? "framed" : "unframed",
+      batch,
+      staged: [...run.staged, stagedLeg],
     });
-    return chain(run, (s) => s.halt === undefined && s.framed
-      ? map(foldResult<InputBatch, Staged, RuntimeError>(s.staged, s.batch, (acc, one) => collect(acc, one, false)), (acc) => ({ ...acc, committedPairs: new Set([...acc.committedPairs, index]) }))
-      : ctx.replay === true ? frameErr("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED")
-      : foldResult<InputBatch, RoutedEntityInput, RuntimeError>(pair, { ...b, rejectedPairs: new Set([...b.rejectedPairs, index]) }, (acc, leg) => {
-        const rejected = rejectOut(acc, { _tag: "runtime_frame", code: s.halt ?? "CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED" }), retained = withoutCrossLegs({ entities: acc.store, timestamp: rt.timestamp }, leg);
-        return retained === undefined ? ok(rejected) : settle(rejected, stage(rejected, retained, undefined, true));
-      }));
+  };
+  const finishPair = (
+    before: InputBatch,
+    pair: readonly RoutedEntityInput[],
+    pairIndex: number,
+    run: PairRun,
+  ): Result<InputBatch, RuntimeError> => {
+    if (run._tag === "framed") return commitPair(run.batch, run.staged, pairIndex);
+    if (ctx.replay === true) return frameErr("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED");
+    const code = run._tag === "refused" ? run.code : "CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED";
+    return rollBackPair(before, pair, pairIndex, code);
+  };
+  const commitPair = (
+    batch: InputBatch,
+    stagedLegs: readonly Staged[],
+    pairIndex: number,
+  ): Result<InputBatch, RuntimeError> => {
+    const collected = foldResult(stagedLegs, batch, (current, stagedLeg) =>
+      collect(current, stagedLeg, "input"),
+    );
+    return map(collected, (after) => ({
+      ...after,
+      committedPairs: new Set([...after.committedPairs, pairIndex]),
+    }));
+  };
+  const rollBackPair = (
+    before: InputBatch,
+    pair: readonly RoutedEntityInput[],
+    pairIndex: number,
+    code: PairRefusal,
+  ): Result<InputBatch, RuntimeError> => {
+    const pairRejected: InputBatch = {
+      ...before,
+      rejectedPairs: new Set([...before.rejectedPairs, pairIndex]),
+    };
+    return foldResult(pair, pairRejected, (batch, leg) =>
+      reapplyWithoutCrossLegs(batch, leg, code),
+    );
+  };
+  const reapplyWithoutCrossLegs = (
+    batch: InputBatch,
+    leg: RoutedEntityInput,
+    code: PairRefusal,
+  ): Result<InputBatch, RuntimeError> => {
+    const rejected = rejectOut(batch, { _tag: "runtime_frame", code });
+    const remainder = withoutCrossLegs({ entities: rejected.store, timestamp: rt.timestamp }, leg);
+    if (remainder === undefined) return ok(rejected);
+    const staged = stage(rejected, remainder, { recordApplied: true });
+    return settle(rejected, staged);
   };
   // a marked pair is two adjacent inputs; it sees every earlier admission already framed
   type Unit = { readonly index: number; readonly legs: readonly [RoutedEntityInput] | readonly [RoutedEntityInput, RoutedEntityInput] };
