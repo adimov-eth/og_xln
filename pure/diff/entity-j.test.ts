@@ -422,6 +422,12 @@ const rawJEvent = (sent: any): { type: string; data: Record<string, unknown> } =
   if (r < 0.45) return { type: "DebtEnforced", data: { debtor: pair[0], creditor: pair[1], tokenId, amountPaid: String(jri(9)), remainingAmount: String(jri(9)), newDebtIndex: jri(3) } };
   if (r < 0.5) return { type: "DebtForgiven", data: { debtor: pair[0], creditor: pair[1], tokenId, amountForgiven: String(1 + jri(9)), debtIndex: jri(2) } };
   if (r < 0.72) return { type: "AccountSettled", data: { leftEntity: pair[0], rightEntity: pair[1], tokenId, leftReserve: String(jri(500)), rightReserve: String(jri(500)), collateral: String(jri(300) * 10 ** 6), ondelta: String(jri(50) - 20), nonce: 1 + jri(4) } };
+  if (r > 0.86) {
+    const base = { entityId: jpick([ALICE, ALICE, BOB]), owner: jpick([ALICE_SIGNER, ALICE_SIGNER, ALICE_SIGNER, bobAddr.toLowerCase()]) }, token = jpick([TOKEN_CONTRACT.toLowerCase(), TOKEN_CONTRACT.toLowerCase(), EP]);
+    if (jrng() < 0.45) return { type: "ExternalWalletSnapshot", data: { ...base, ...(jrng() < 0.5 ? { nativeBalance: String(jri(1e6)) } : {}), tokenBalances: [{ tokenAddress: token, ...(jrng() < 0.5 ? { tokenId: 1 } : {}), balance: String(jri(500)) }], allowances: jrng() < 0.6 ? [{ tokenAddress: token, spender: DEP, allowance: String(jri(99)) }] : [] } };
+    const r2 = jrng();
+    return { type: "ExternalWalletDelta", data: { ...base, tokenAddress: token, ...(jrng() < 0.3 ? { tokenId: 2 } : {}), ...(r2 < 0.7 ? { balanceDelta: String(jri(60) - 30) } : {}), ...(r2 > 0.4 ? { spender: jpick([DEP, EP]), allowance: String(jri(50)) } : {}) } };
+  }
   return { type: "HankoBatchProcessed", data: { entityId: jpick([ALICE, ALICE, OTHER]), batchHash: sent && jrng() < 0.7 ? sent.batchHash : jword(), nonce: sent ? jpick([sent.entityNonce, sent.entityNonce, sent.entityNonce + 1, Math.max(1, sent.entityNonce - 1)]) : 1 + jri(3) } };
 };
 /** ALICE's proposer-signed range over (base, scanned] from og's own canonicalisation, hashing and signing inputs; `defect` breaks one envelope field. */
@@ -447,7 +453,7 @@ const signedRange = (ogSt: any, finalized: number, sent: any, defect: string): R
 describe("entity-j: Entity-level j_event (og entity/tx/j-events.ts applyJEvent)", () => {
   test("MATCH (randomized): signed ranges of reserve / debt / AccountSettled / HankoBatchProcessed events and envelope defects -- same verdict, reserves, debts, jBatchState, certified J head, board finality, messages, dirty Accounts and follow-up outputs", async () => {
     const seen = new Map<string, number>();
-    for (let run = 0; run < 25; run++) {
+    for (let run = 0; run < 45; run++) {
       let state = aliceEntity(new Map([[1, BigInt(jri(200))], [2, BigInt(jri(60))]]));
       let replicas: ReadonlyMap<EntityId, AccountReplica> = new Map([[BOB, genesisAB() as AccountReplica]]);
       let t = 1_000;
@@ -464,12 +470,12 @@ describe("entity-j: Entity-level j_event (og entity/tx/j-events.ts applyJEvent)"
         const f = foldTxs(state, replicas, [{ type: "j_event", data: data as never }], { verify: verifiers.verify, timestamp: BigInt(t) });
         const key = `${defect || "clean"}:${ogR.ok ? "ok" : "refused"}`;
         seen.set(key, (seen.get(key) ?? 0) + 1);
-        if (!ogR.ok) seen.set(ogR.code.split(":")[0]!, (seen.get(ogR.code.split(":")[0]!) ?? 0) + 1);
+        if (!ogR.ok) seen.set(ogR.code.split(/[: ]/)[0]!, (seen.get(ogR.code.split(/[: ]/)[0]!) ?? 0) + 1);
         expect([defect, f.ok, f.ok ? "" : (f.error as any).reason]).toEqual([defect, ogR.ok, ogR.ok ? "" : ogR.code]);
         if (!ogR.ok || !f.ok) { expect(f.ok ? "" : (f.error as any).reason).toBe(ogR.ok ? "" : ogR.code); continue; }
         const d = f.value.draft, out = ogR.value, next = out.newState, c = d.state.committed;
         expect((d.events ?? []).map((e) => e.message)).toEqual(messages(next).slice(before));
-        for (const m of messages(next)) for (const k of ["RESERVE", "DEBT:", "DEBT PAID", "DEBT FORGIVEN", "OBSERVED", "jBatch finalized", "quarantined"]) if (m.includes(k)) seen.set(k, (seen.get(k) ?? 0) + 1);
+        for (const m of messages(next)) for (const k of ["RESERVE", "DEBT:", "DEBT PAID", "DEBT FORGIVEN", "OBSERVED", "jBatch finalized", "quarantined", "snapshot | Block", "delta | Block"]) if (m.includes(k)) seen.set(k, (seen.get(k) ?? 0) + 1);
         expect(c["reserves"]).toEqual(next.reserves);
         expect(Number(c["lastFinalizedJHeight"] ?? 0)).toBe(Number(next.lastFinalizedJHeight ?? 0));
         expect(c["jHistoryFinality"]).toEqual(next.jHistoryFinality);
@@ -477,18 +483,19 @@ describe("entity-j: Entity-level j_event (og entity/tx/j-events.ts applyJEvent)"
         expect(c["jBatchState"]).toEqual(next.jBatchState);
         expect(c["outDebtsByToken"] ?? new Map()).toEqual(next.outDebtsByToken);
         expect(c["inDebtsByToken"] ?? new Map()).toEqual(next.inDebtsByToken);
+        expect(c["externalWallet"]).toEqual(next.externalWallet);
         expect([...(d.touched ?? [])].sort()).toEqual([...out.dirtyAccounts].sort());
         // the Accounts' own frame proposals are the Entity frame's later step in og; the j_event outputs are the self j_broadcast follow-ups
         const selfOutputs = d.outputs.filter((o: any) => o.input !== undefined).map((o: any) => ({ entityId: o.to, signerId: String(o.signerId).toLowerCase(), types: o.input.txs.map((x: any) => x.type) }));
         expect(selfOutputs).toEqual(out.outputs.map((o: any) => ({ entityId: o.entityId, signerId: String(o.signerId).toLowerCase(), types: o.entityTxs.map((x: any) => x.type) })));
         state = d.state;
         replicas = d.accountReplicas;
-        carry = { height: 0, lastFinalizedJHeight: next.lastFinalizedJHeight, jHistoryFinality: next.jHistoryFinality, certifiedBoardState: next.certifiedBoardState, outDebtsByToken: next.outDebtsByToken, inDebtsByToken: next.inDebtsByToken };
+        carry = { height: 0, lastFinalizedJHeight: next.lastFinalizedJHeight, jHistoryFinality: next.jHistoryFinality, certifiedBoardState: next.certifiedBoardState, outDebtsByToken: next.outDebtsByToken, inDebtsByToken: next.inDebtsByToken, ...(next.externalWallet ? { externalWallet: next.externalWallet } : {}) };
       }
     }
     for (const k of ["clean:ok", "stale:ok", "ahead:refused", "jurisdiction:refused", "root:refused", "from:refused", "signature:refused", "rangeHash:refused"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
-    for (const k of ["RESERVE", "DEBT:", "DEBT PAID", "DEBT FORGIVEN", "OBSERVED", "jBatch finalized", "quarantined"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
-    for (const k of ["DEBT_LEDGER_DIVERGENCE", "DEBT_CREATED_AMOUNT_INVALID"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
+    for (const k of ["RESERVE", "DEBT:", "DEBT PAID", "DEBT FORGIVEN", "OBSERVED", "jBatch finalized", "quarantined", "snapshot | Block", "delta | Block"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
+    for (const k of ["DEBT_LEDGER_DIVERGENCE", "DEBT_CREATED_AMOUNT_INVALID", "EXTERNAL_WALLET_BASELINE_MISSING", "EXTERNAL_WALLET_OWNER_NOT_SIGNER"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
   }, 120_000);
 });
 

@@ -11090,7 +11090,7 @@ const batchProcessedJEvent = (step: JEventStep, e: Extract<JEvent, { readonly ty
     return ok({ ...step, draft: jSay({ ...draft, outputs: [...draft.outputs, ...outputs] }, `✅ jBatch finalized (nonce ${nonce}) | Block ${blockNumber}`) });
   });
 };
-/** og applyFinalizedJEvent: one canonical event's Entity handler. Dispute, HTLC-secret, hash-ladder and external-wallet events are not ported. */
+/** og applyFinalizedJEvent: one canonical event's Entity handler. Dispute, HTLC-secret and hash-ladder events are not ported. */
 const finalizedJEvent = (step: JEventStep, e: WireJEvent, ctx: FoldContext): Result<JEventStep, EntityError> => {
   const blockNumber = e.blockNumber ?? 0, txHash = e.transactionHash || "unknown", d = e.data, state = step.draft.state, typed = typedJEvent(e);
   const said = (s: EntityState, ...messages: readonly string[]): JEventStep => ({ ...step, draft: jSay({ ...step.draft, state: s }, ...messages) });
@@ -11112,6 +11112,7 @@ const finalizedJEvent = (step: JEventStep, e: WireJEvent, ctx: FoldContext): Res
             : `🩶 DEBT FORGIVEN: ${rawUnits(tokenId, d["amountForgiven"])} between ${tail(d["debtor"])} and ${tail(d["creditor"])} | Block ${blockNumber} · debt #${String(d["debtIndex"])}`));
       });
     }
+    case "ExternalWalletSnapshot": case "ExternalWalletDelta": return externalWalletJEvent(step, e, blockNumber, txHash);
     case "AccountSettled": return settledJEvent(step, e, blockNumber);
     case "HankoBatchProcessed": return batchProcessedJEvent(step, typed as Extract<JEvent, { readonly type: "HankoBatchProcessed" }>, blockNumber, ctx.timestamp);
     case "EntityProviderActionExecuted": case "EntityProviderActionCancelled":
@@ -11279,6 +11280,67 @@ const entityBoardHandover = (d: Draft, board: unknown, authorized: HandoverConfi
       return chain(admitQuorum({ _tag: "teaching", threshold: c.threshold, members }), (quorum) =>
         ok({ ...d, state: { ...state, quorum, leaderState: { activeValidatorId: active, view: 0, changedAtHeight: Number(state.height) + 1 } }, touched: [] }));
     }));
+  });
+};
+/** og entity/auth/signer-wallet.ts on the committed externalWallet {balances, allowances}: owner -> token (or token:spender) -> row. */
+type WalletBook = ReadonlyMap<string, ReadonlyMap<string, Binary>>;
+const NATIVE_EXTERNAL_TOKEN = `0x${"00".repeat(20)}`;
+const walletAddress = (v: unknown, label: string): Result<string, EntityError> => { const s = String(v || "").trim().toLowerCase(); return /^0x[0-9a-f]{40}$/.test(s) ? ok(s) : invariant(`j_event rejected: invalid external wallet ${label}`); };
+const walletTokenId = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined);
+/** og applyExternalWalletJEvent: a signer-Entity validator's on-chain wallet snapshot (baseline) or delta (on an existing baseline row). */
+const externalWalletJEvent = (step: JEventStep, e: WireJEvent, blockNumber: number, txHash: string): Result<JEventStep, EntityError> => {
+  const state = step.draft.state, d = e.data;
+  if (lower(d["entityId"]) !== lower(state.id)) return ok(step);
+  return chain(walletAddress(d["owner"], "owner"), (owner): Result<JEventStep, EntityError> => {
+    if (![...membersOf(state.quorum).keys()].some((v) => lower(v) === owner)) return invariant(`EXTERNAL_WALLET_OWNER_NOT_SIGNER entity=${String(state.id).slice(0, 12)} owner=${owner}`);
+    const held = recOf(state.committed["externalWallet"]), book = (k: string): WalletBook => { const v = held?.[k]; return v instanceof Map ? (v as WalletBook) : new Map(); };
+    const balances = book("balances"), allowances = book("allowances"), jHeight = Number(e.blockNumber ?? blockNumber);
+    if (!Number.isSafeInteger(jHeight) || jHeight < 0) return invariant("PROTOCOL_J_HEIGHT_INVALID");
+    const own = new Map(balances.get(owner) ?? []), ownAllowed = new Map(allowances.get(owner) ?? []);
+    const done = (nextBalances: WalletBook, nextAllowances: WalletBook, kind: string): JEventStep => {
+      const changed = nextBalances !== balances || nextAllowances !== allowances, wallet: Binary = { balances: nextBalances, allowances: nextAllowances } as unknown as Binary;
+      const next = changed ? { ...state, committed: { ...state.committed, externalWallet: wallet } } : state;
+      return { ...step, draft: jSay({ ...step.draft, state: next }, `💼 EXTERNAL: ${owner.slice(0, 10)} ${kind} | Block ${blockNumber} | Tx ${txHash.slice(0, 10)}...`) };
+    };
+    if (e.type === "ExternalWalletSnapshot") {
+      if (d["nativeBalance"] !== undefined) own.set(NATIVE_EXTERNAL_TOKEN, { tokenAddress: NATIVE_EXTERNAL_TOKEN, tokenId: 0, balance: BigInt(String(d["nativeBalance"])), jHeight, transactionHash: txHash } as unknown as Binary);
+      for (const raw of (Array.isArray(d["tokenBalances"]) ? d["tokenBalances"] : []) as readonly unknown[]) {
+        const entry = recOf(raw) ?? {}, token = walletAddress(entry["tokenAddress"], "tokenAddress");
+        if (!token.ok) return token;
+        const tokenId = walletTokenId(entry["tokenId"]);
+        own.set(token.value, { tokenAddress: token.value, ...(tokenId !== undefined ? { tokenId } : {}), balance: BigInt(String(entry["balance"])), jHeight, transactionHash: txHash } as unknown as Binary);
+      }
+      for (const raw of (Array.isArray(d["allowances"]) ? d["allowances"] : []) as readonly unknown[]) {
+        const entry = recOf(raw) ?? {}, token = walletAddress(entry["tokenAddress"], "tokenAddress");
+        if (!token.ok) return token;
+        const spender = walletAddress(entry["spender"], "spender");
+        if (!spender.ok) return spender;
+        ownAllowed.set(`${token.value}:${spender.value}`, { tokenAddress: token.value, spender: spender.value, allowance: BigInt(String(entry["allowance"])), jHeight, transactionHash: txHash } as unknown as Binary);
+      }
+      return ok(done(mapSet(balances, owner, own), mapSet(allowances, owner, ownAllowed), "snapshot"));
+    }
+    return chain(walletAddress(d["tokenAddress"], "tokenAddress"), (token): Result<JEventStep, EntityError> => {
+      const entity = String(d["entityId"]).slice(0, 12);
+      let nextBalances = balances, nextAllowances = allowances;
+      if (d["balanceDelta"] !== undefined) {
+        const current = balances.get(owner)?.get(token) as { readonly tokenId?: number; readonly balance: bigint } | undefined;
+        if (current === undefined) return invariant(`EXTERNAL_WALLET_BASELINE_MISSING:balance entity=${entity} owner=${owner} token=${token}`);
+        const balance = current.balance + BigInt(String(d["balanceDelta"]));
+        if (balance < 0n) return invariant(`EXTERNAL_WALLET_BALANCE_UNDERFLOW entity=${entity} owner=${owner} token=${token}`);
+        const tokenId = walletTokenId(d["tokenId"]) ?? current.tokenId;
+        own.set(token, { tokenAddress: token, ...(tokenId !== undefined ? { tokenId } : {}), balance, jHeight, transactionHash: txHash } as unknown as Binary);
+        nextBalances = mapSet(balances, owner, own);
+      }
+      if (d["allowance"] !== undefined || d["spender"] !== undefined) {
+        const spender = walletAddress(d["spender"], "spender");
+        if (!spender.ok) return spender;
+        const current = allowances.get(owner)?.get(`${token}:${spender.value}`) as { readonly allowance: bigint } | undefined;
+        if (current === undefined) return invariant(`EXTERNAL_WALLET_BASELINE_MISSING:allowance entity=${entity} owner=${owner} token=${token} spender=${spender.value}`);
+        ownAllowed.set(`${token}:${spender.value}`, { tokenAddress: token, spender: spender.value, allowance: d["allowance"] !== undefined ? BigInt(String(d["allowance"])) : current.allowance, jHeight, transactionHash: txHash } as unknown as Binary);
+        nextAllowances = mapSet(allowances, owner, ownAllowed);
+      }
+      return ok(done(nextBalances, nextAllowances, "delta"));
+    });
   });
 };
 // ---- og jurisdiction/machine/registration-evidence, receipt-codec verifyCanonicalReceiptProof (@ethereumjs/mpt 10 + @ethereumjs/rlp 10) ----
