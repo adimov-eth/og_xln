@@ -27,6 +27,7 @@ import { assertFrameJPrefix as ogAssertFrameJPrefix, buildCertifiedJPrefixTx as 
 import { getJEventRangeValidationError as ogRangeValidationError, pruneFinalizedValidatorJHistory as ogPruneJHistory } from "../../core/jurisdiction/machine/local-history/index.ts";
 import { createEntityFrameHashFromStateRoot as ogEntityFrameHash } from "../../core/entity/consensus/frame.ts";
 import { mergeEntityInputs as ogMergeEntityInputs } from "../../core/entity/consensus/input/merge.ts";
+import { getEntityMempoolAdmissionError as ogMempoolAdmission } from "../../core/entity/consensus/replica-validation.ts";
 import { selectCrossJOpeningAccountProposalTxs as ogOpeningSelection } from "../../core/entity/transition/cross-j-proposer-materialization.ts";
 import { collectReadyLocalAccountWorkTargets as ogReadyAccountWork } from "../../core/runtime/admit/entity-input-output.ts";
 import { isProposalDeferrableEntityInput as ogDeferrable } from "../../core/entity/consensus/input/consensus.ts";
@@ -861,18 +862,20 @@ const crossWorld = () => {
   const ogFrame = (f: ReturnType<typeof frameOf>) => ({ height: Number(f.height), stateHash: f.stateHash, prevFrameHash: f.prevFrameHash, accountTxs: f.txs.map(ogAccountTx) });
   const ogIn = (i: RwIn) => { const { input, ...rest } = i; return { ...rest, entityTxs: input.txs.map(ogTx) }; };
   /** Replicas of every input's (Entity, signer): hub or not, heads and pending frames from the frame pool, authorizations, live pulls. */
-  const runtime = (ins: readonly RwIn[]) => {
+  const runtime = (ins: readonly RwIn[], committedHeads = false) => {
     const rw = new Map<string, unknown>(), ogReplicas = new Map<string, unknown>();
     const auth = (o: string) => ({ ...route(o, ""), sourcePull: undefined, targetPull: undefined });
     const shared = new Map(ORDERS.map((o) => [o, auth(o)]));
     for (const i of ins) {
       const key = `${i.entityId}:${i.signerId}`;
       if (rw.has(key) || rng() < 0.08) continue;
-      const hub = rng() < 0.35, rwAccounts = new Map<string, unknown>(), ogAccounts = new Map<string, unknown>();
+      const hub = rng() < 0.35 || committedHeads, rwAccounts = new Map<string, unknown>(), ogAccounts = new Map<string, unknown>();
       for (const peer of PEERS) {
-        const head = rng() < 0.3 && frames.length > 0 ? pick(frames) : undefined, pending = rng() < 0.5 && frames.length > 0 ? pick(frames) : undefined;
+        // `committedHeads`: every Account head is a frame of the batch and nothing is pending, so ACK legs replay already-committed frames
+        const acked = committedHeads ? frames.find((f) => ins.some((x) => x.entityId === i.entityId && x.input.txs.some((t) => t.type === "accountInput" && (t["data"] as Record<string, unknown>)["kind"] === "ack" && (t["data"] as Record<string, unknown>)["fromEntityId"] === peer && (t["data"] as Record<string, unknown>)["frameHash"] === f.stateHash))) : undefined;
+        const head = acked ?? ((rng() < 0.3 || committedHeads) && frames.length > 0 ? pick(frames) : undefined), pending = rng() < 0.5 && !committedHeads && frames.length > 0 ? pick(frames) : undefined;
         const pulls = new Map(rng() < 0.2 ? [["p", { crossJurisdiction: { routeHash: pick([RH.o1, RH.o2, "0x" + "cc".repeat(32)]) }, fullHash: pick([FH.o1, FH.o2]), partialRoot: pick([PR.o1, PR.o2]) }]] : []);
-        rwAccounts.set(peer, { _tag: pending ? "proposed" : "open", head: head ? { _tag: "installed", height: head.height, prevFrameHash: head.stateHash } : { _tag: "genesis", height: 0n, prevFrameHash: "genesis" }, ...(pending ? { candidate: { frame: pending } } : {}), state: { pulls } });
+        rwAccounts.set(peer, { _tag: pending ? "proposed" : "open", head: head ? { _tag: "installed", height: head.height, prevFrameHash: head.stateHash, ...(head.txs.some((t: RwTx) => t.type === "cross_pull_lock" || t.type === "cross_pull_close") ? { crossTxs: head.txs.filter((t: RwTx) => t.type === "cross_pull_lock" || t.type === "cross_pull_close") } : {}) } :{ _tag: "genesis", height: 0n, prevFrameHash: "genesis" }, ...(pending ? { candidate: { frame: pending } } : {}), state: { pulls } });
         ogAccounts.set(peer, { currentFrame: head ? ogFrame(head) : { height: 0, stateHash: "", prevFrameHash: "", accountTxs: [] }, ...(pending ? { pendingFrame: ogFrame(pending) } : {}), state: { pulls } });
       }
       const auths = new Map(ORDERS.flatMap((o) => { const r = rng(); return r < 0.3 ? [] : r < 0.8 ? [[o, shared.get(o)]] : r < 0.9 ? [[o, { ...auth(o), status: "resting" }]] : [[o, { ...auth(o), memo: "divergent" }]]; }) as [string, unknown][]);
@@ -930,6 +933,20 @@ describe("runtime-final: atomic cross-j Account pair admission (og entity-routin
     }
     expect(pairs).toBeGreaterThan(40);
     expect([...reasons.keys()].sort()).toEqual(["atomic-group-invalid", "candidate-invalid", "multiple-candidates-per-input", "pair-match-failed"]);
+    // og buildCrossJAckFrameCandidate over currentFrame.accountTxs: an exact replay of an already-committed ACK is a committed candidate only
+    // when that committed frame holds a cross-j pull or close (the head keeps them as crossTxs)
+    let replays = 0;
+    for (let n = 0; n < 600; n++) {
+      w.reset();
+      const isAck = (i: { input: { txs: readonly Record<string, unknown>[] } }) => i.input.txs.some((t) => t["type"] === "accountInput" && (t["data"] as Record<string, unknown>)["kind"] === "ack");
+      const ins = w.inputs().map((i) => (isAck(i) ? { ...i, atomicCrossJurisdictionPair: { phase: "ack" as const, pairKey: "k" } } : i)), ogs = ins.map(w.ogIn), env = w.runtime(ins, true);
+      const want = ogMatchedPairs(env.og, ogs as never), got = matchedCrossPairs(env.rw, ins as never);
+      const legView = (l: { inputIndex: number; reason: string; detail: readonly string[] }) => ({ inputIndex: l.inputIndex, reason: l.reason, detail: l.detail });
+      expect([n, got.pairs.map((p) => crossPairView(p as never)), got.rejectedLegs.map((l) => legView(l as never)), got.inputs.map((i) => crossInputView(i as never))])
+        .toEqual([n, want.pairs.map((p) => crossPairView(p as never)), want.rejectedLegs.map((l) => legView(l as never)), want.inputs.map((i) => crossInputView(i as never))]);
+      replays += want.inputs.filter((i) => i.atomicCrossJurisdictionPair !== undefined).length;
+    }
+    expect(replays).toBeGreaterThan(20);
   });
   test("MATCH (randomized): 500 merged batches -- og admitAtomicCrossJAccountInputs (retry coalescing, stripped legs, pairs grouped first and marked; replay refuses)", () => {
     seed = 139;
@@ -965,6 +982,17 @@ describe("runtime-final: atomic cross-j Account pair admission (og entity-routin
     expect(step.rejected.map((e) => rwCode({ ok: false, error: e }))).toEqual(["CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED", "CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED"]);
     expect(step.applied.entityInputs.map((i) => [i.entityId, i.input.kind === "txs" ? i.input.txs.map((tx) => tx.type) : [], i.atomicCrossJurisdictionPair ?? null])).toEqual([[ALICE, ["chat"], null], [BOB, ["chat"], null]]);
     expect(rwCode(applyRuntime(rt, { runtimeTxs: [], entityInputs: pair }, { ...verifiers, replay: true }))).toBe("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED");
+    // og prepareEntityInputIngress: a leg over the Entity mempool limit is a `rejected` outcome (ENTITY_MEMPOOL_ADMISSION_REJECTED), not a thrown
+    // ingress error, so a remote or local pair is NOT_COMMITTED (never PROTOCOL_REJECTED)
+    const bobKey = [...rt.entities.keys()].find((k) => rt.entities.get(k)!.state.id === BOB)!, bobR = rt.entities.get(bobKey)!;
+    const fullMempool = Array.from({ length: 10_000 }, (_, i) => ({ type: "chat", data: { from: bobAddr.toLowerCase(), message: `q${i}` } })) as never[];
+    expect(ogMempoolAdmission({ mempool: fullMempool } as never, { entityId: BOB, signerId: bobAddr, entityTxs: [{}, {}] } as never)).toStartWith("entity mempool admission overflow");
+    const full = { ...rt, entities: new Map([...rt.entities, [bobKey, { ...bobR, mempool: fullMempool }]]) } as typeof rt;
+    const remotePair = pair.map((l) => ({ ...l, from: "runtime-carol" }));
+    for (const legs of [pair, remotePair]) {
+      const fullStep = unwrap(applyRuntime(full, { runtimeTxs: [], entityInputs: legs }, verifiers));
+      expect(fullStep.rejected.map((e) => rwCode({ ok: false, error: e }))).toContain("CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED");
+    }
     // a lone leg is no cohort: its Account leg is stripped before Account consensus (og CROSS_J_ACCOUNT_PAIR_STRUCTURAL_MISMATCH), a replay refuses the frame
     const lone = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [pair[0] as RoutedEntityInput] }, verifiers));
     expect(lone.applied.entityInputs.map((i) => [i.entityId, i.input.kind === "txs" ? i.input.txs.map((tx) => tx.type) : []])).toEqual([[ALICE, ["chat"]]]);

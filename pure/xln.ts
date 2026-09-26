@@ -4571,7 +4571,12 @@ export type Hanko = string;
 export const GENESIS_LINK = "genesis";
 export type HeadCertificate = { readonly parent: string; readonly left: Hanko; readonly right: Hanko };
 /** `timestamp` is the last committed frame's clock (og `currentFrame.timestamp`, 0 at genesis). */
-export type AccountHead = Tagged<"genesis", { height: 0n; prevFrameHash: typeof GENESIS_LINK; timestamp: 0n }> | Tagged<"installed", { height: bigint; prevFrameHash: string; timestamp: bigint; certificate: HeadCertificate }>;
+export type AccountHead = Tagged<"genesis", { height: 0n; prevFrameHash: typeof GENESIS_LINK; timestamp: 0n }> | Tagged<"installed", { height: bigint; prevFrameHash: string; timestamp: bigint; certificate: HeadCertificate; crossTxs?: readonly WireAccountTx[] | undefined }>;
+/** og currentFrame.accountTxs as og buildCrossJAckFrameCandidate reads them: the committed frame's cross-j pull locks and closes (absent when none). */
+const committedCrossTxs = (txs: readonly WireAccountTx[]): readonly WireAccountTx[] | undefined => {
+  const kept = txs.filter((tx) => tx.type === "cross_pull_lock" || tx.type === "cross_pull_close");
+  return kept.length === 0 ? undefined : kept;
+};
 export type InstalledHead = Of<AccountHead, "installed">;
 export const genesisAccountHead = (): AccountHead => ({ _tag: "genesis", height: 0n, prevFrameHash: GENESIS_LINK, timestamp: 0n });
 export type AccountAck = { readonly height: bigint; readonly frameHash: string; readonly frameHanko: Hanko; readonly disputeHanko?: DisputeHanko | undefined };
@@ -4905,7 +4910,7 @@ type SignedPair = { readonly left: Hanko; readonly right: Hanko };
 const signedBy = (party: Party, ours: Hanko, theirs: Hanko): SignedPair => ({ left: at(ours, theirs, party.left), right: at(ours, theirs, other(party.left)) });
 const install = (r: ProposedAccount | ReceivedAccount, signed: SignedPair, after: { readonly dispute: DisputeWitnesses; readonly acknowledged?: AccountAck | undefined }): Step<OpenAccount, Effect> => {
   const { frame, draft } = r.candidate;
-  return step(reopen(r, { state: draft.state, head: { _tag: "installed", height: frame.height, prevFrameHash: frame.stateHash, timestamp: frame.timestamp, certificate: { parent: frame.prevFrameHash, ...signed } }, mempool: r.mempool, acknowledged: after.acknowledged, dispute: after.dispute }), draft.effects);
+  return step(reopen(r, { state: draft.state, head: { _tag: "installed", height: frame.height, prevFrameHash: frame.stateHash, timestamp: frame.timestamp, certificate: { parent: frame.prevFrameHash, ...signed }, ...opt("crossTxs", committedCrossTxs(frame.txs)) }, mempool: r.mempool, acknowledged: after.acknowledged, dispute: after.dispute }), draft.effects);
 };
 const residentAck = (r: OpenAccount): AccountAck | null => (r.acknowledged !== undefined && r.acknowledged.height === r.head.height ? r.acknowledged : null);
 export const proposeOpen = (r: OpenAccount, input: Propose, ctx: AccountContext): Verb<OpenAccount | ProposedAccount> => chain(planOpen(r, ctx.party, { timestamp: input.timestamp, jHeight: input.jHeight }, ctx.verify, input.selected, ctx.deltaTransformer), (planned) => match(planned, {
@@ -15841,7 +15846,8 @@ const crossCloseKey = (tx: PullCloseTx): string => stableJson({
   binaryHash: String(tx.proof.binaryHash || "").toLowerCase(), closeMode: tx.proof.closeMode, binary: tx.binary,
 });
 /** og sourceAdmissionCandidate / targetProposalCandidate: whether the frame resolves its sibling binding (unique route keys; a source pull needs its swap offer). */
-const siblingResolved = (frame: AccountFrame, leg: "source" | "target"): boolean => {
+type CandidateFrame = Pick<AccountFrame, "height" | "stateHash" | "txs">;
+const siblingResolved = (frame: CandidateFrame, leg: "source" | "target"): boolean => {
   const pulls = crossPullsOf(frame.txs, leg), bindings = pulls.map((p) => p.crossJurisdiction), keys = bindings.map((b) => admissionKey(b.orderId, b.routeHash));
   if (pulls.length === 0 || new Set(keys).size !== keys.length) return false;
   return leg === "target" || bindings.every((b) => frame.txs.some((tx) => tx.type === "swap_offer" && tx.crossJurisdiction?.orderId === b.orderId && String(tx.crossJurisdiction?.routeHash || "").toLowerCase() === String(b.routeHash || "").toLowerCase()));
@@ -15852,7 +15858,7 @@ type CrossCandidate = {
   readonly sourceCloses: readonly PullCloseTx[]; readonly targetCloses: readonly PullCloseTx[]; readonly alreadyCommitted: boolean; readonly valid: boolean; readonly invalidReasons: readonly string[];
 };
 /** og buildCrossJProposalFrameCandidate / buildCrossJAckFrameCandidate over one Account frame: null when it carries no cross-j pull or close. */
-const frameCandidate = (input: RoutedEntityInput, inputIndex: number, accountInput: AccountPeerInput, phase: CrossPhase, frame: AccountFrame, alreadyCommitted: boolean): CrossCandidate | null => {
+const frameCandidate = (input: RoutedEntityInput, inputIndex: number, accountInput: AccountPeerInput, phase: CrossPhase, frame: CandidateFrame, alreadyCommitted: boolean): CrossCandidate | null => {
   const sourcePulls = crossPullsOf(frame.txs, "source"), targetPulls = crossPullsOf(frame.txs, "target"), sourceCloses = crossClosesOf(frame.txs, "source"), targetCloses = crossClosesOf(frame.txs, "target");
   if (sourcePulls.length + targetPulls.length + sourceCloses.length + targetCloses.length === 0) return null;
   const routeKeys = [...[...sourcePulls, ...targetPulls].map((p) => `open\u0000${admissionKey(p.crossJurisdiction.orderId, p.crossJurisdiction.routeHash)}`), ...[...sourceCloses, ...targetCloses].map(crossCloseKey)];
@@ -15949,16 +15955,17 @@ const replicaAccount = (r: EntityReplica | undefined, peer: string): AccountRepl
 /** og currentFrame {height, stateHash}: the rewrite's committed head. */
 const headMatches = (a: AccountReplica, height: bigint, hash: string): boolean => a.head.height === height && String(a.head.prevFrameHash || "").toLowerCase() === String(hash || "").toLowerCase();
 /**
- * og buildCrossJAckFrameCandidate on a receiving hub: the ACK must name our pending proposal (or the committed frame). The rewrite keeps only the
- * committed head, not the committed frame's txs, so an exact replay of an already-committed ACK counts as committed only when it carries its ACK cohort marker.
+ * og buildCrossJAckFrameCandidate on a receiving hub: the ACK must name our pending proposal, or the committed frame (an exact replay of an
+ * already-committed ACK), whose cross-j pulls and closes the committed head keeps (og currentFrame.accountTxs).
  */
 const ackCandidate = (r: EntityReplica | undefined, input: RoutedEntityInput, inputIndex: number, accountInput: AccountPeerInput): CrossCandidate | null => {
   const ack = accountAck(accountInput), account = replicaAccount(r, accountInput.fromEntityId);
   if (ack === undefined || account === undefined) return null;
   const pending = account._tag === "proposed" ? account.candidate.frame : undefined;
   if (pending !== undefined && pending.height === ack.height && String(pending.stateHash || "").toLowerCase() === String(ack.frameHash || "").toLowerCase()) return frameCandidate(input, inputIndex, accountInput, "ack", pending, false);
-  if (!headMatches(account, ack.height, ack.frameHash) || input.atomicCrossJurisdictionPair?.phase !== "ack") return null;
-  return { inputIndex, pairKey: "", originKey: admissionOrigin(input), phase: "ack", accountInput, frame: { height: ack.height, stateHash: ack.frameHash }, sourcePulls: [], targetPulls: [], sourceCloses: [], targetCloses: [], alreadyCommitted: true, valid: true, invalidReasons: [] };
+  const head = account.head;
+  if (head._tag !== "installed" || !headMatches(account, ack.height, ack.frameHash)) return null;
+  return frameCandidate(input, inputIndex, accountInput, "ack", { height: head.height, stateHash: head.prevFrameHash, txs: head.crossTxs ?? [] }, true);
 };
 /** og collectCrossJAdmissionCandidates: a hub reads ACK legs against its pending frame; any other Entity reads proposal legs (already committed by head). */
 const collectCrossCandidates = (find: ReturnType<typeof replicaFinder>, inputs: readonly RoutedEntityInput[]): readonly CrossCandidate[] => inputs.flatMap((input, index) => {
@@ -16362,12 +16369,18 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
     const before = pair.map((leg) => { const key = replicaKey(leg.entityId, leg.signerId); return [key, store.get(key)] as const; }), outsBefore = outs.length;
     const discard = (): void => { for (const [key, r] of before) { if (r === undefined) store.delete(key); else store.set(key, r); } outs.length = outsBefore; };
     const staged: Staged[] = [];
-    let committedBoth = true;
+    let committedBoth = true, code = "CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED";
     for (const [k, leg] of pair.entries()) {
       const one = stage(leg, undefined, true, required[k]);
       if (!one.ok) {
-        if (one.error._tag === "entity_invariant") { discard(); return frameErr(runtimeErrorText(one.error)); }
+        // og prepareEntityInputIngress: a mempool-admission or ill-formed input is a `rejected` outcome, so the pair is NOT_COMMITTED.
+        // og atomicPairProtocolRejection: a thrown malformed-ingress refusal of a remote leg (og isRemoteIngress: a transport `from`) rejects the
+        // pair as PROTOCOL_REJECTED; an invariant, a thrown handler, an unroutable leg, a local leg or any replay rethrows and refuses the frame.
+        const e = one.error, remote = String(leg.from ?? "").trim() !== "";
+        if (INGRESS_REJECTIONS.has(e._tag)) { committedBoth = false; break; }
+        if (e._tag === "entity_invariant" || e._tag === "no_such_entity" || accountThrew(e as EntityError) || !remote || ctx.replay === true) { discard(); return frameErr(runtimeErrorText(e)); }
         committedBoth = false;
+        code = "CROSS_J_ACCOUNT_PAIR_PROTOCOL_REJECTED";
         break;
       }
       staged.push(one.value);
@@ -16383,7 +16396,7 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
     if (ctx.replay === true) return frameErr("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED");
     rejectedPairs.add(index);
     for (const leg of pair) {
-      outs.push({ rejected: [{ _tag: "runtime_frame", code: "CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED" }], applied: [], committed: false });
+      outs.push({ rejected: [{ _tag: "runtime_frame", code }], applied: [], committed: false });
       const retained = removeLegsByIndex({ entities: store, timestamp: rt.timestamp }, [leg], new Set([0]))[0];
       if (retained === undefined) continue;
       const one = stage(retained, undefined, true);
@@ -16421,6 +16434,8 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
   if (!flushed.ok) return flushed;
   return ok({ store, outs, outbox, rejectedPairs, committedPairs });
 };
+/** The rewrite's `txs` admission refusals that og prepareEntityInputIngress returns as a `rejected` outcome (not a thrown ingress error). */
+const INGRESS_REJECTIONS: ReadonlySet<string> = new Set(["mempool_full", "frame_timestamp_invalid", "from_not_converted"]);
 const runtimeErrorText = (e: RuntimeError | EntityError): string => ("code" in e && typeof e.code === "string" ? e.code : "reason" in e && typeof e.reason === "string" ? e.reason : e._tag);
 export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx): Result<RuntimeStep, RuntimeError> => chain(validateRuntimeInput(rt, input), (jOutbox) => {
   const forged = forgedIngress(input, ctx);
