@@ -14468,14 +14468,19 @@ const certifiedHeads = (rt: Runtime): readonly EntityReplica[] => {
 export const canonicalEntityHashes = (rt: Runtime): Result<readonly StorageFrameEntityHash[], RuntimeError> =>
   map(traverse(certifiedHeads(rt), (r) => map(entityRootOf(r.state, r.accountReplicas), (hash) => ({ entityId: lower(r.state.id), hash, cellCount: 1 }))), sortedEntityHashes);
 const KEY_LIVE_REPLICA_META = 0x26;
-/** og buildStorageLiveReplicaMetaCommitment row for the fields the rewrite replica carries (no certified lineage link, leader votes or J submit state). */
-const replicaMetaRows = (rt: Runtime): Result<readonly { readonly key: Uint8Array; readonly value: Uint8Array }[], RuntimeError> =>
+/**
+ * og buildStorageLiveReplicaMetaCommitment rows: the replica's identity, Entity head, leader votes, pending leader certificate, J-prefix round
+ * and J submit states. The rewrite keeps no certified lineage link, so og's `certifiedFrameHeadDigest` is absent.
+ */
+export const replicaMetaRows = (rt: Runtime): Result<readonly { readonly key: Uint8Array; readonly value: Uint8Array }[], RuntimeError> =>
   traverse([...rt.entities], ([key, r]) => {
     const entity = lower(r.state.id), signer = signerId(r.signerId);
     const rowKey = concat([Uint8Array.of(KEY_LIVE_REPLICA_META), hexToBytes(entity), new Uint8Array(12), hexToBytes(signer)]);
     return chain(frameNumber(r.state.height), (height) => chain(frameNumber(r.state.timestamp), (timestamp) => map(encodeBinary({
       replicaKey: key.toLowerCase(), entityId: entity, signerId: signer, isProposer: signerId(r.state.quorum.proposer) === signer,
       entityHead: { entityId: entity, height, timestamp, frameHash: r.head.height === 0n ? "" : frameWord(r.head.prevFrameHash) },
+      ...opt("leaderVotes", r.leaderVotes === undefined ? undefined : binaryOf(r.leaderVotes)), ...opt("pendingLeaderCertificate", r.pendingLeaderCertificate === undefined ? undefined : binaryOf(r.pendingLeaderCertificate)),
+      ...opt("jPrefixRound", r.jPrefixRound === undefined ? undefined : binaryOf(r.jPrefixRound)),
       ...opt("jSubmitState", binaryOf(rt.replicaLocal.get(key)?.jSubmitState)), ...opt("entityProviderActionSubmitState", binaryOf(rt.replicaLocal.get(key)?.entityProviderActionSubmitState)),
     }), (value) => ({ key: rowKey, value }))));
   });

@@ -33,13 +33,14 @@ import { isProposalDeferrableEntityInput as ogDeferrable } from "../../core/enti
 import { selectPotentialCrossJAccountInputPairs as ogPotentialPairs, selectMatchedCrossJAccountInputPairs as ogMatchedPairs } from "../../core/runtime/delivery/topology/entity-routing.ts";
 import { markPotentialAtomicCrossJInputPairs as ogMarkPotential, admitAtomicCrossJAccountInputs as ogAdmitAtomic } from "../../core/runtime/frame/cross-j/atomic-admission.ts";
 import { markCommittedAtomicCrossJAckOutputs as ogMarkAckOutputs } from "../../core/runtime/frame/cross-j/evidence.ts";
+import { buildStorageLiveReplicaMetaCommitment as ogReplicaMeta } from "../../core/storage/replica/replicas.ts";
 import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "../../core/jurisdiction/machine/events/event-normalization.ts";
 import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
 import { verifyAccountSignature as ogVerifyAccountSignature, registerSignerKey } from "../../core/account/crypto.ts";
 import { FailureDispositionError } from "../../core/protocol/errors/failure-taxonomy.ts";
 import { entityRequiresJPrefixCertificate, buildLocalJPrefixAttestation, buildCertifiedJPrefixTx, mergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation, assertFrameJPrefix, jPrefixAttestationHash, jPrefixVerify, jEventRangeLocalHistoryError,
   type JPrefixAttestation, type JPrefixCrypto, type JPrefixFailure, type JPrefixRound, type JPrefixView, type ValidatorJHistory, type ValidatorJBlock, type EntityState,
-  hashEntityFrame, wireEntityTx, mergeEntityInputs, canon, crossOpeningSelection, readyAccountWorkTargets, potentialCrossPairs, markPotentialCrossPairs, matchedCrossPairs, admitAtomicCrossPairs, markCommittedAckOutputs, type EntityFrame, type EntityOutput } from "../xln.ts";
+  hashEntityFrame, wireEntityTx, mergeEntityInputs, canon, crossOpeningSelection, readyAccountWorkTargets, potentialCrossPairs, markPotentialCrossPairs, matchedCrossPairs, admitAtomicCrossPairs, markCommittedAckOutputs, replicaMetaRows, replicaMetaDigest, type EntityFrame, type EntityOutput } from "../xln.ts";
 import { anvilKey, signDigestHex, carolAddr } from "../xln_run.ts";
 
 let seed = 71;
@@ -991,3 +992,37 @@ describe("runtime-final: atomic cross-j Account pair admission (og entity-routin
   });
 });
 
+// ---- og storage/replica/replicas.ts buildStorageLiveReplicaMetaCommitment: the per-replica rows of the Runtime replica-meta digest ----
+describe("runtime-final: live replica-meta rows (og storage/replica/replicas.ts)", () => {
+  test("MATCH (randomized): 300 Runtimes -- rows (key and exact value bytes, leader votes, pending leader certificate and J-prefix round included) and digest equal og buildStorageLiveReplicaMetaCommitment", () => {
+    seed = 151;
+    const addrs = [aliceAddr, bobAddr, carolAddr].map((a) => a.toLowerCase()), word = (): string => "0x" + Array.from({ length: 32 }, () => ri(256).toString(16).padStart(2, "0")).join("");
+    const body = (entity: string) => ({ entityId: entity.toLowerCase(), targetHeight: 1 + ri(5), previousFrameHash: word(), fromView: ri(3), toView: 1 + ri(3), previousLeaderId: pick(addrs), nextLeaderId: pick(addrs) });
+    let withFields = 0;
+    for (let n = 0; n < 300; n++) {
+      let rt = createRuntime();
+      const ogReplicas = new Map<string, unknown>();
+      for (const entity of [ALICE, BOB, CAROL].filter(() => rng() < 0.7)) for (const signer of [aliceAddr, bobAddr].filter(() => rng() < 0.6)) {
+        const e = unwrap(createEntity({ id: entity, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr as Address, { shares: 1n }], [bobAddr as Address, { shares: 1n }]]), signerId: signer as Address }));
+        const height = ri(4), timestamp = ri(1_000_000), frameHash = word();
+        const leaderVotes = rng() < 0.3 ? undefined : new Map(Array.from({ length: ri(3) }, () => { const voter = pick(addrs); return [voter, { ...body(entity), voterId: voter, signature: "0x" + "5a".repeat(65) }] as const; }));
+        const pendingLeaderCertificate = rng() < 0.6 ? undefined : { ...body(entity), votes: new Map([[pick(addrs), "0x" + "6b".repeat(65)]]), ...(rng() < 0.5 ? { preparedFrameHash: word() } : {}) };
+        const jPrefixRound = rng() < 0.6 ? undefined : { targetEntityHeight: height + 1, parentFrameHash: frameHash, jurisdictionRef: "0x" + "7c".repeat(20), baseHeight: ri(9),
+          attestations: new Map([[pick(addrs), { version: 1, entityId: entity.toLowerCase(), targetEntityHeight: height + 1, jurisdictionRef: "0x" + "7c".repeat(20), baseHeight: 1, scannedThroughHeight: 2 + ri(3), tipBlockHash: word(), eventHistoryRoot: word(), signature: "0x" + "8d".repeat(65) }]]) };
+        const r = { ...e, head: { height: BigInt(height), prevFrameHash: frameHash }, state: { ...e.state, height: BigInt(height), timestamp: BigInt(timestamp) },
+          ...(leaderVotes === undefined ? {} : { leaderVotes }), ...(pendingLeaderCertificate === undefined ? {} : { pendingLeaderCertificate }), ...(jPrefixRound === undefined ? {} : { jPrefixRound }) } as unknown as EntityReplica;
+        rt = spawn(rt, r);
+        const key = [...rt.entities.keys()].find((k) => rt.entities.get(k) === r) as string;
+        ogReplicas.set(key, { entityId: entity, signerId: signer, isProposer: String(r.state.quorum.proposer).toLowerCase() === signer.toLowerCase(),
+          state: { entityId: entity, height, timestamp, prevFrameHash: height === 0 ? "" : frameHash }, ...(leaderVotes === undefined ? {} : { leaderVotes }),
+          ...(pendingLeaderCertificate === undefined ? {} : { pendingLeaderCertificate }), ...(jPrefixRound === undefined ? {} : { jPrefixRound }) });
+        if (leaderVotes !== undefined || pendingLeaderCertificate !== undefined || jPrefixRound !== undefined) withFields += 1;
+      }
+      const want = ogReplicaMeta({ state: { eReplicas: ogReplicas } } as never), rows = unwrap(replicaMetaRows(rt));
+      const hex = (b: Uint8Array): string => Buffer.from(b).toString("hex");
+      expect([n, rows.map((row) => [hex(row.key), hex(row.value)])]).toEqual([n, want.entries.map((row) => [hex(row.key), hex(row.value)])]);
+      expect(unwrap(replicaMetaDigest(rows))).toBe(want.digest);
+    }
+    expect(withFields).toBeGreaterThan(200);
+  });
+});
