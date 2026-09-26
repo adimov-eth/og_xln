@@ -36,7 +36,7 @@ import { handleJClearBatch as ogJClear } from "../../core/entity/tx/handlers/j-b
 import { handleCrossJurisdictionSalvageEntityTx as ogSalvage } from "../../core/entity/tx/handlers/cross-j/salvage.ts";
 import { handleResolveHtlcLockEntityTx as ogResolveHtlcLock } from "../../core/entity/tx/handlers/htlc/direct.ts";
 import { handleCrossJurisdictionForceSiblingDisputeEntityTx as ogForceSibling } from "../../core/entity/tx/handlers/cross-j/force-sibling-dispute.ts";
-import { handlePrepareDispute as ogPrepareDispute } from "../../core/entity/tx/handlers/dispute/index.ts";
+import { handlePrepareDispute as ogPrepareDispute, handleDisputeStart as ogDisputeStart } from "../../core/entity/tx/handlers/dispute/index.ts";
 import { crossRouteHash, installedAccount, prepareFrozen } from "../xln.ts";
 import { handleCrossJurisdictionBookOrderRemovedEntityTx as ogBookOrderRemoved } from "../../core/entity/tx/handlers/cross-j/book-removal-ack.ts";
 import { HTLC_ENFORCEMENT_RESERVE_MS as OG_RESERVE_MS } from "../../core/account/consensus/dispute/deadline-policy.ts";
@@ -757,5 +757,45 @@ describe("disputes-final: crossJurisdictionBookOrderRemoved while a dispute wait
       for (const m of msgs) bump(kinds, String(m).slice(0, 24));
     }
     expectKinds(kinds, ["ok", "🌉 Cross-j dispute book", "❌ Missing counterparty d", "CROSS_J_BOOK_REMOVAL_ACK_SOURCE_HUB_REQUIRED", "CROSS_J_ROUTE_HASH_MISMATCH", "CROSS_J_BOOK_REMOVAL_ACK_SOURCE_STATE_MISSING"]);
+  }, 120_000);
+});
+
+// ---- og handlers/dispute/start.ts with a real counterparty dispute Hanko and argument overrides (entity-consensus-2 row 33) ----
+describe("disputes-final: disputeStart with argument overrides (og entity/tx/handlers/dispute/start.ts)", () => {
+  test("MATCH: 200 random disputeStart txs on a dispute-preparing BOB Account with BOB's real dispute Hanko (starter argument overrides valid / empty / malformed, counter-argument override, stale nonce, wrong body, draft / sent / full J batch) -- same verdict, messages, J batch row, Account status and queued dispute as og", async () => {
+    const r = xrng(0x57a7), kinds = new Map<string, number>();
+    const view = unwrap(committedView(genesisAB().state)), good: string = (unwrap(localProof(view, { ok: true, value: DT })) as any).bodyHash;
+    for (let i = 0; i < 200; i++) {
+      const nonce = xpick(r, [1, 2, 3]), pl = r() < 0.5, body = xint(r, 8) === 0 ? word(r) : good, hash = unwrap(accountDisputeHash(view, body, nonce, pl));
+      const hanko = xint(r, 10) === 0 ? signLazyAccountHanko(word(r), keyOf(BOB), BOB) : signLazyAccountHanko(hash, keyOf(BOB), BOB);
+      const jNonce = xpick(r, [0, 0, 1, 3]);
+      const prepare = { startedAt: T0 - 100, readyAfter: T0 - 1, reason: "r", startIntent: { description: "d" } };
+      const rwBob = prepareFrozen({ ...genesisAB(), state: { ...genesisAB().state, jNonce }, dispute: { nextProofNonce: 1, counterparty: { hanko, hash, proofBodyHash: body, proofNonce: nonce, proposerIsLeft: pl } } } as never, prepare as never, { _tag: "not_attempted" });
+      const ogBob = ogBobAccount("open", undefined);
+      ogBob.state.jNonce = jNonce;
+      Object.assign(ogBob, { status: "dispute_preparing", disputePrepare: structuredClone(prepare), counterpartyDisputeProofHanko: hanko, counterpartyDisputeHash: hash, counterpartyDisputeProofBodyHash: body, counterpartyDisputeProofNonce: nonce, counterpartyDisputeProofProposerIsLeft: pl });
+      const jb = xpick(r, [undefined, "draft", "sent", "full"] as const);
+      const jBatch = jb === undefined ? undefined : { ...ogInitJBatch(), batch: { ...ogInitJBatch().batch, disputeStarts: jb === "full" ? Array.from({ length: 8 }, (_, n) => ({ counterentity: W(String(10 + n)) })) : [] },
+        ...(jb === "sent" ? { sentBatch: { batch: ogInitJBatch().batch, entityNonce: 4, batchHash: Z32 } } : {}) };
+      const rw = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: { name: "j", entityProviderAddress: JEP }, committed: (jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) as never })).state;
+      const og: any = { entityId: ALICE, timestamp: T0, height: 0, config: { mode: "proposer-based", threshold: 1n, validators: [ALICE_SIGNERX], shares: { [ALICE_SIGNERX]: 1n }, jurisdiction: OG_JX },
+        accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries([[BOB, ogBob]], ALICE, () => Z32 as never)), paybook: { entries: new Map(), feesEarned: 0n }, ...(jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) };
+      const override = xpick(r, [undefined, undefined, "0x", "0x1234", "0xabcdef00", "0xzz", "12"]);
+      const tx = { type: "disputeStart", data: { counterpartyEntityId: BOB, ...(override === undefined ? {} : { starterInitialArguments: override }), ...(xint(r, 10) === 0 ? { starterCounterArguments: "0x" } : {}), ...(r() < 0.5 ? { description: "why" } : {}) } } as EntityTx;
+      const f = foldTx(rw, new Map([[BOB, rwBob]]), tx, { verify: verifiers.verify, timestamp: BigInt(T0), jReplicas: JREPLICAS as never });
+      let ogOut: Out<any>;
+      try { ogOut = { ok: true, value: await ogDisputeStart(og, tx as never, { quietRuntimeLogs: true, state: { jReplicas: JREPLICAS } } as never, [], true) }; } catch (e) { ogOut = { ok: false, message: String((e as Error).message) }; }
+      expect([i, f.ok ? "ok" : (f.error as any).reason]).toEqual([i, ogOut.ok ? "ok" : ogOut.message]);
+      bump(kinds, ogOut.ok ? "ok" : ogOut.message.split(":")[0]!);
+      if (!f.ok || !ogOut.ok) continue;
+      const d = f.value, next = ogOut.value.newState, msgs = readEntityFrameEvents(next).map((e: any) => e.message);
+      expect([i, (d.events ?? []).map((e) => e.message)]).toEqual([i, msgs]);
+      expect([i, d.state.committed["jBatchState"] ?? null]).toEqual([i, next.jBatchState ?? null]);
+      const ogAfter = next.accounts.get(BOB), after: any = d.accountReplicas.get(BOB)!;
+      expect([i, after._tag === "preparing" ? "dispute_preparing" : after._tag]).toEqual([i, ogAfter.status]);
+      expect([i, after.queued ?? null]).toEqual([i, ogAfter.activeDispute ?? null]);
+      for (const m of msgs) bump(kinds, String(m).slice(0, 24));
+    }
+    expectKinds(kinds, ["ok", "⚔️ Dispute started vs", "ℹ️ disputeStart queued t", "❌ Stale dispute proof no", "❌ Counterparty dispute p", "J_BATCH_LIMIT_EXCEEDED", "DISPUTE_INCREMENTED_ARGUMENT_OVERRIDE_UNSUPPORTED", "DISPUTE_START_PROOFBODY_HASH_MISMATCH"]);
   }, 120_000);
 });
