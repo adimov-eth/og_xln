@@ -4685,7 +4685,9 @@ export interface LockedEntity extends Tagged<"locked", EntityEnv & EntityCandida
 export type EntityReplica = OpenEntity | ProposedEntity | LockedEntity;
 export type EntityContext = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign; readonly self: EntityId; readonly signerId: Address; readonly from?: EntityId | undefined; readonly htlc?: HtlcProposerInfra | undefined;
   /** og env.runtimeSeed: the default proposer derives cross-j hash-ladder seeds from it (never committed). */
-  readonly runtimeSeed?: string | undefined };
+  readonly runtimeSeed?: string | undefined;
+  /** og EntityRuntimeContext.activeJurisdiction: the Runtime's active J name (never committed; the Htlc* event jurisdictionId fallback). */
+  readonly activeJurisdiction?: string | undefined };
 export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large">;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
@@ -5252,7 +5254,8 @@ export const localTimeoutVote = (r: EntityReplica, timestamp: bigint): EntityInp
   return { kind: "leaderTimeoutVote", timestamp, local: true, vote: { ...leaderVoteBody(r.state, r.head), voterId: signerId(r.signerId), signature: "", ...opt("preparedFrame", lock) } };
 };
 
-type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined };
+/** `activeJurisdiction`: og EntityRuntimeContext.activeJurisdiction (the Runtime's first imported J), the Htlc* jurisdictionId fallback. */
+type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined };
 type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 /** Who the tx is about: og routes accountInput by its envelope, the rest by an explicit counterparty. */
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
@@ -7794,7 +7797,7 @@ const htlcEventFields = (a: { readonly entityId: string; readonly fromEntity?: s
   ...(a.amount !== undefined ? { amount: a.amount.toString() } : {}), ...(a.tokenId !== undefined ? { tokenId: a.tokenId } : {}), ...(a.jurisdictionId ? { jurisdictionId: a.jurisdictionId } : {}), ...(a.description ? { description: a.description } : {}),
 });
 /** og jurisdictionIdFor / getJurisdictionId: the Entity's jurisdiction name, trimmed. */
-const htlcJurisdictionId = (state: EntityState): string => String(state.jurisdictionConfig?.name || "").trim();
+const htlcJurisdictionId = (state: EntityState, active?: string): string => String(state.jurisdictionConfig?.name || active || "").trim();
 /** og buildHtlcReceivedTimingFields / buildHtlcFinalizedTimingFields. */
 const receivedTiming = (startedAtMs: number | undefined, receivedAtMs: number): { readonly [k: string]: number } => (!startedAtMs ? { receivedAtMs } : { startedAtMs, receivedAtMs, elapsedMs: Math.max(1, receivedAtMs - startedAtMs) });
 const finalizedTiming = (startedAtMs: number | undefined, finalizedAtMs: number): { readonly [k: string]: number } => {
@@ -8224,7 +8227,7 @@ export const committedFollowups = (d0: Draft, peer: EntityId, own: AccountFrame 
   const frames: readonly { readonly frame: AccountFrame; readonly viaNewFrame: boolean }[] = [...(own === undefined ? [] : [{ frame: own, viaNewFrame: false }]), ...(received === undefined ? [] : [{ frame: received.frame, viaNewFrame: true }])];
   const forwards = effects.flatMap((e) => (e._tag === "direct_payment_forward" && sameHex(e.route[0], self) ? [e] : []));
   const swapOutputs = effects.flatMap((e): SwapOutputEffect[] => (e._tag === "swap_offer_upsert" || e._tag === "swap_cancelled" || e._tag === "swap_cancel_requested" ? [e] : []));
-  const byKey = new Map((ctx.htlc?.entries ?? []).map((e) => [preparedHtlcKey(e.binding), e])), consumed = new Set<string>(), jid = htlcJurisdictionId(d0.state), paybook0 = d0.state.paybook ?? EMPTY_PAYBOOK;
+  const byKey = new Map((ctx.htlc?.entries ?? []).map((e) => [preparedHtlcKey(e.binding), e])), consumed = new Set<string>(), jid = htlcJurisdictionId(d0.state, ctx.activeJurisdiction), paybook0 = d0.state.paybook ?? EMPTY_PAYBOOK;
   let d = d0, targets: readonly AccountTxTarget[] = [], flow: PaybookFlow = { paybook: paybook0, queue: [] }, cross: CommittedCrossStep | undefined, crontab0: Crontab | undefined, cursor = 0;
   let created: readonly SwapOfferEvent[] = [], cancelled: readonly SwapRef[] = [], cancelRequests: readonly SwapRef[] = [];
   for (const c of frames) {
@@ -9221,7 +9224,7 @@ const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: Entity
   // og materializeHtlcPreparedInfraContext: the proposer decrypts every inbound onion layer against the pre-frame state; validators replay the same bytes.
   const inbound = { state: queued.state, replicas: queued.accountReplicas, timestamp: Number(timestamp), publicKey: String(queued.state.committed["entityEncryptionPublicKey"] ?? ""), privateKey: ctx.htlc?.encryptionPrivateKey };
   return chain(htlcFrameTxs(txs) ? inboundHtlcEntries({ ...inbound, online: onlineObserver(ctx.htlc).online }, txs) : ok([]), (entries) =>
-  chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries } }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
+  chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction) }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
     const pool = withoutTxs(queued.mempool, [...prepared.refused.keys(), ...evicted]);
     return chain(buildFrame(queued, leader, leaderState, timestamp, included, draft, infra), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx, candidate.draft.state), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
       const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[self, own]]) };
@@ -9257,7 +9260,7 @@ const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHas
   if (frame.timestamp < r.state.timestamp) return err({ _tag: "frame_timestamp_regression", timestamp: frame.timestamp });
   // og assertHtlcPreparedInfraContext: validators check the committed origins against public facts, never recreating proposer entropy.
   return chain(frameInfraOf(frame), (infra) => chain(assertInboundEntries(r, frame, infra, ctx), () => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
-    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra }), ({ draft, evicted }) => {
+    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction) }), ({ draft, evicted }) => {
       if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
       return chain(buildFrame(r, frame.leader, committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
         local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame })));
@@ -11209,7 +11212,7 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
       const key = replicaKey(routed.entityId, routed.signerId), r = read(key);
       if (r === undefined) return refused({ _tag: "no_such_entity", id: routed.entityId });
       const stamped: RoutedEntityInput = routed.input.kind === "txs" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
-      const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, afterTxs, routed.entityId) });
+      const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, afterTxs, routed.entityId), ...opt("activeJurisdiction", afterTxs.activeJurisdiction) });
       if (!applied.ok) return refused(applied.error);
       const effects = applied.value.committed;
       return { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [], applied: [stamped], committed: applied.value.replica.head.height > r.head.height, ...(effects === undefined ? {} : { effects: [key, effects] as const }) }, stop: false };

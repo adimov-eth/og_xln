@@ -153,14 +153,15 @@ describe("followup-order: committed-frame followups of one accountInput (og comm
       // ---- the rewrite ----
       const replicas = new Map<EntityId, AccountReplica>([[peer, rwAccount(self, peer, rows.get(peer) as Row, offers)], [other, rwAccount(self, other, rows.get(other) as Row, new Map())]]);
       const created = unwrap(createEntity({ id: self, jurisdiction: JUR, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), committed: { ...(isHub ? { profile: { isHub: true } } : {}), ...(book === undefined ? {} : { lending: structuredClone(book) as never }) } } as never)).state;
-      const state0 = { ...created, accounts: new Map([...replicas].map(([p, c]) => [p, c.state.account])), paybook: { entries: new Map([...entries0].map(([h, e]) => [h, { ...e }])), feesEarned: 0n } };
+      const jName = pick([undefined, "", "  ", " Arrakis "]), active = pick([undefined, "", "local", " eth-main "]);
+      const state0 = { ...created, ...(jName === undefined ? {} : { jurisdictionConfig: { ...(created.jurisdictionConfig ?? {}), name: jName } }), accounts: new Map([...replicas].map(([p, c]) => [p, c.state.account])), paybook: { entries: new Map([...entries0].map(([h, e]) => [h, { ...e }])), feesEarned: 0n } };
       const d0 = { state: state0, accountReplicas: replicas, outputs: [] } as unknown as Draft;
-      const rw = committedFollowups(d0, peer, own, received === undefined ? undefined : { frame: received, from: peer, to: self, domain: JUR }, effects, { verify: (() => true) as never, timestamp: BigInt(ts), htlc: { ...EMPTY_HTLC_INFRA, entries: prepared } });
+      const rw = committedFollowups(d0, peer, own, received === undefined ? undefined : { frame: received, from: peer, to: self, domain: JUR }, effects, { verify: (() => true) as never, timestamp: BigInt(ts), htlc: { ...EMPTY_HTLC_INFRA, entries: prepared }, ...(active === undefined ? {} : { activeJurisdiction: active }) });
       // ---- og: applySuccessfulAccountInput on the same committed frames and Account outputs ----
       const ogFrame = (f: AccountFrame) => ({ height: Number(f.height), timestamp: Number(f.timestamp), stateHash: f.stateHash, accountTxs: f.txs.map((t) => ogTx(t, self, peer)) });
       const selfIsLeft = self < peer, committedFrames = [...(own ? [{ frame: ogFrame(own), proposerIsLeft: selfIsLeft, committedViaNewFrame: false }] : []), ...(received ? [{ frame: ogFrame(received), proposerIsLeft: !selfIsLeft, committedViaNewFrame: true }] : [])];
       const program = createBookIntentProgram(), slot = program.openSlot();
-      const ogState: any = { entityId: self, timestamp: ts, config: {}, messages: [], ...(isHub ? { profile: { isHub: true } } : {}), ...(book === undefined ? {} : { lending: structuredClone(book) }),
+      const ogState: any = { entityId: self, timestamp: ts, config: jName === undefined ? {} : { jurisdiction: { name: jName } }, messages: [], ...(isHub ? { profile: { isHub: true } } : {}), ...(book === undefined ? {} : { lending: structuredClone(book) }),
         paybook: { entries: new Map([...entries0].map(([h, e]) => [h, { ...e }])), feesEarned: 0n }, accounts: new Map([[peer, ogAccount(self, peer, rows.get(peer) as Row, offers)], [other, ogAccount(self, other, rows.get(other) as Row, new Map())]]) };
       const effectsOg: any = { outputs: [], accountTxs: [], swapOffersCreated: [], swapCancelRequests: [], swapOffersCancelled: [], candidateEffects: [], hashesToSign: [] };
       const input = { kind: "ack_frame", fromEntityId: peer, toEntityId: self, domain: JUR, ...(own ? { ack: { height: 3 } } : {}), ...(received ? { proposal: { frame: ogFrame(received) } } : {}) };
@@ -170,7 +171,7 @@ describe("followup-order: committed-frame followups of one accountInput (og comm
       let refused: string | undefined;
       try {
         await applySuccessfulAccountInput({
-          env: { info: () => {} } as never, state: ogState, input: input as never, account: ogState.accounts.get(peer), counterpartyId: peer, createdAccount: false,
+          env: { info: () => {}, ...(active === undefined ? {} : { activeJurisdiction: active }) } as never, state: ogState, input: input as never, account: ogState.accounts.get(peer), counterpartyId: peer, createdAccount: false,
           result: { events: [], committedFrames, candidateEffects: ogOutputs, timedOutHashlocks, revealedSecrets } as never, effects: effectsOg,
           options: { bookIntentSlot: slot, infraContext: {}, preparedHtlcEntriesByBinding: byBinding, storageChanges: [] } as never, checkpointProfile: () => {},
         });
@@ -200,7 +201,9 @@ describe("followup-order: committed-frame followups of one accountInput (og comm
       if (new Set(ogTargets.map((t) => t.tx.type)).size > 1) bump("mixed-targets");
       if (effectsOg.swapOffersCreated.some((e: any) => e.crossJurisdiction) && effectsOg.swapOffersCreated.some((e: any) => !e.crossJurisdiction)) bump("mixed-created");
       for (const t of ogTargets) bump(t.tx.type);
+      for (const e of effectsOg.candidateEffects) if (e.kind === "runtimeEvent" && e.data.jurisdictionId !== undefined) bump(`jid:${e.data.jurisdictionId}`);
     }
     for (const k of ["accepted", "both-frames-with-targets", "mixed-targets", "mixed-created", "lending_credit", "htlc_resolve", "htlc_lock", "direct_payment"]) expect([k, (seen.get(k) ?? 0) > 3]).toEqual([k, true]);
+    for (const k of ["jid:Arrakis", "jid:local", "jid:eth-main"]) expect([k, (seen.get(k) ?? 0) > 0]).toEqual([k, true]);
   }, 120_000);
 });
