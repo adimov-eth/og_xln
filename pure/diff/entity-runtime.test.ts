@@ -162,12 +162,14 @@ describe("entity-runtime: entity state root commits every og field (H6)", () => 
   test("MATCH: a proposed frame's stateRoot is og's root of the proposal state (height+1, frame timestamp, og crontab default) and its hash is og's frame hash", () => {
     const { og, rw } = committedPair(99);
     const { crontabState: _c, ...rwNoCron } = rw, { crontabState: _o, ...ogNoCron } = og;
-    const r = unwrap(createEntity({ id: lazyId([[A, 1n], [B, 1n]], 2n), jurisdiction: JUR, threshold: 2n, members: new Map([[A, { shares: 1n }], [B, { shares: 1n }]]), committed: rwNoCron, timestamp: 50n, jurisdictionConfig: { ...JCONF, name: ogJurisdiction.name } }));
+    // og assertFrameJPrefix: every frame of a registered Entity needs a J-prefix certificate (runtime-final.test.ts), so this frame is an unregistered Entity's
+    const { registrationBlock: _registered, ...unregistered } = JCONF, { registrationBlock: _ogRegistered, ...ogUnregistered } = ogJurisdiction;
+    const r = unwrap(createEntity({ id: lazyId([[A, 1n], [B, 1n]], 2n), jurisdiction: JUR, threshold: 2n, members: new Map([[A, { shares: 1n }], [B, { shares: 1n }]]), committed: rwNoCron, timestamp: 50n, jurisdictionConfig: { ...unregistered, name: ogJurisdiction.name } }));
     const credit: EntityTx = { type: "extendCredit", data: { counterpartyEntityId: CAROL, tokenId: unwrap(tokenId("1")), amount: 5n } }; // no account: og no-op
     const p = unwrap(applyEntityInput(r, txs([credit], 40n), { ...ctx(A), htlc: { profiles: [], encryptionPrivateKey: KEY_PRIV } }));
     const frame = held(p.replica);
     expect(frame.timestamp).toBe(50n); // og resolveEntityProposalTimestamp = max(runtime, committed)
-    const ogState = { ...ogEntityState({ ...r, state: { ...r.state, height: 1n, timestamp: 50n } }, { ...ogNoCron, crontabState: initCrontab() }, ogJurisdiction), leaderState: { activeValidatorId: A.toLowerCase(), view: 0, changedAtHeight: 0 } }; // og proposal state records the proposer's leaderState
+    const ogState = { ...ogEntityState({ ...r, state: { ...r.state, height: 1n, timestamp: 50n } }, { ...ogNoCron, crontabState: initCrontab() }, ogUnregistered), leaderState: { activeValidatorId: A.toLowerCase(), view: 0, changedAtHeight: 0 } }; // og proposal state records the proposer's leaderState
     expect(frame.stateRoot).toBe(computeCanonicalEntityConsensusStateHash(ogState));
     const ogTxs = [{ type: "extendCredit", data: { counterpartyEntityId: CAROL, tokenId: 1, amount: 5n } }];
     const ogHash = createEntityFrameHashFromStateRoot("genesis", 1, 50, ogTxs as never, [], r.state.id, frame.stateRoot, frame.authorityRoot, frame.entityContext as never);

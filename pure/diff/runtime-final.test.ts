@@ -23,14 +23,16 @@ import { createDueScheduledWakeInputs, assertScheduledWakeTxAuthorized } from ".
 import { EntityAccountCandidateMap, PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
 import { initJBatch as ogInitJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
 import { assertFrameJPrefix as ogAssertFrameJPrefix, buildCertifiedJPrefixTx as ogBuildCertifiedJPrefixTx, buildLocalJPrefixAttestation as ogBuildLocalJPrefixAttestation, hashJPrefixAttestation as ogHashJPrefixAttestation,
-  mergeJPrefixAttestations as ogMergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation as ogVerifyOutOfRound } from "../../core/jurisdiction/machine/history/j-prefix-consensus.ts";
-import { getJEventRangeValidationError as ogRangeValidationError } from "../../core/jurisdiction/machine/local-history/index.ts";
+  mergeJPrefixAttestations as ogMergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation as ogVerifyOutOfRound, buildJPrefixCertificate as ogBuildJPrefixCertificate } from "../../core/jurisdiction/machine/history/j-prefix-consensus.ts";
+import { getJEventRangeValidationError as ogRangeValidationError, pruneFinalizedValidatorJHistory as ogPruneJHistory } from "../../core/jurisdiction/machine/local-history/index.ts";
+import { createEntityFrameHashFromStateRoot as ogEntityFrameHash } from "../../core/entity/consensus/frame.ts";
 import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "../../core/jurisdiction/machine/events/event-normalization.ts";
 import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
 import { verifyAccountSignature as ogVerifyAccountSignature, registerSignerKey } from "../../core/account/crypto.ts";
 import { FailureDispositionError } from "../../core/protocol/errors/failure-taxonomy.ts";
-import { buildLocalJPrefixAttestation, buildCertifiedJPrefixTx, mergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation, assertFrameJPrefix, jPrefixAttestationHash, jPrefixVerify, jEventRangeLocalHistoryError,
-  type JPrefixAttestation, type JPrefixCrypto, type JPrefixFailure, type JPrefixRound, type JPrefixView, type ValidatorJHistory, type ValidatorJBlock, type EntityState } from "../xln.ts";
+import { entityRequiresJPrefixCertificate, buildLocalJPrefixAttestation, buildCertifiedJPrefixTx, mergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation, assertFrameJPrefix, jPrefixAttestationHash, jPrefixVerify, jEventRangeLocalHistoryError,
+  type JPrefixAttestation, type JPrefixCrypto, type JPrefixFailure, type JPrefixRound, type JPrefixView, type ValidatorJHistory, type ValidatorJBlock, type EntityState,
+  hashEntityFrame, wireEntityTx, type EntityFrame, type EntityOutput } from "../xln.ts";
 import { anvilKey, signDigestHex, carolAddr } from "../xln_run.ts";
 
 let seed = 71;
@@ -366,6 +368,7 @@ describe("runtime-final: the per-frame J prefix (og jurisdiction/machine/history
   // og signs with the validators' registered keys: the same keys the rewrite signs with, so signatures match byte for byte (RFC 6979)
   for (const [v, k] of KEYS) registerSignerKey(ogEnv, v as string, Buffer.from((k as string).slice(2), "hex"));
   const word = (): string => `0x${Array.from({ length: 64 }, () => "0123456789abcdef"[ri(16)]).join("")}`;
+  const SEED_J = `0x${"6b".repeat(64)}`;
   type Outcome = { ok: true; value: unknown } | { ok: false; disposition: string; message: string };
   const ogDo = (f: () => unknown): Outcome => {
     try { return { ok: true, value: f() }; } catch (e) {
@@ -376,20 +379,23 @@ describe("runtime-final: the per-frame J prefix (og jurisdiction/machine/history
   const rwDo = (r: { ok: boolean; value?: unknown; error?: JPrefixFailure }): Outcome => (r.ok ? { ok: true, value: r.value } : { ok: false, disposition: (r.error as JPrefixFailure).disposition, message: (r.error as JPrefixFailure).message });
   const shape = (o: Outcome): unknown => (o.ok ? "ok" : { disposition: o.disposition, message: o.message });
   const unsigned = (a: any): any => (a === null || a === undefined ? a : JSON.parse(JSON.stringify(a)));
-  type Fx = { view: JPrefixView; og: any; histories: Map<string, ValidatorJHistory>; L: number; H: number; parent: string };
+  type Fx = { view: JPrefixView; og: any; histories: Map<string, ValidatorJHistory>; L: number; H: number; parent: string; id: EntityId; created: EntityReplica };
   /** A random Entity (shares, threshold, certified anchor or registration base, height) and each validator's own J history over one shared chain, with gaps, lag and forks. */
-  const fixture = (): Fx => {
+  const fixture = (lazy = false): Fx => {
     const shares = V.map(() => BigInt(1 + ri(3))), total = shares.reduce((a, b) => a + b, 0n), threshold = BigInt(1 + ri(Number(total)));
-    const L = 2 + ri(4), finality = rng() < 0.7, H = ri(3), prev = word(), registered = rng() < 0.3;
+    const L = 2 + ri(4), finality = rng() < 0.7, H = lazy ? 0 : ri(3), prev = word(), registered = rng() < 0.3;
+    // a lazy Entity (id = its board hash) is its own certified authority, so it proposes from genesis
+    const ID = lazy ? unwrap(lazyBoardEntityId({ mode: "proposer-based", threshold, validators: [aliceAddr, bobAddr, carolAddr], shares: { [aliceAddr]: shares[0], [bobAddr]: shares[1], [carolAddr]: shares[2] } } as never)) as EntityId : ALICE;
     const chainHash = new Map<number, string>(); for (let h = 0; h <= L + 8; h++) chainHash.set(h, word());
     const eventHeights = new Set(Array.from({ length: ri(4) }, () => L + 1 + ri(8)));
     const balance = new Map([...eventHeights].map((h) => [h, String(ri(900))]));
     const anchor = finality ? { jurisdictionRef: JREF, baseHeight: L - 1, finalizedThroughHeight: L, tipBlockHash: chainHash.get(L), eventHistoryRoot: word(), proposerSignerId: V[0], proposerSignature: "0x", entityHeight: H } : undefined;
     const jc = { name: "j", entityProviderAddress: EP, ...(finality ? {} : { entityProviderDeploymentBlock: L + 1 }), ...(registered ? { registrationBlock: 1 } : {}) };
     const members = new Map([aliceAddr, bobAddr, carolAddr].map((a, i) => [a, { shares: shares[i] as bigint }] as const));
-    const created = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold, members: members as never, jurisdictionConfig: jc as never, committed: { lastFinalizedJHeight: L, ...(anchor ? { jHistoryFinality: anchor } : {}) } as never }));
+    const created = unwrap(createEntity({ id: ID, jurisdiction: TERMS.domain, threshold, members: members as never, jurisdictionConfig: jc as never,
+      committed: { lastFinalizedJHeight: L, ...(anchor ? { jHistoryFinality: anchor } : {}), ...(lazy ? { entityEncryptionPublicKey: entityEncryptionPublicKey(SEED_J, ID) } : {}) } as never }));
     const view: JPrefixView = { state: { ...created.state, height: BigInt(H) } as EntityState, head: { height: BigInt(H), prevFrameHash: prev as never } };
-    const og = { entityId: ALICE, height: H, prevFrameHash: prev, lastFinalizedJHeight: L, ...(anchor ? { jHistoryFinality: anchor } : {}),
+    const og = { entityId: ID, height: H, prevFrameHash: prev, lastFinalizedJHeight: L, ...(anchor ? { jHistoryFinality: anchor } : {}),
       config: { mode: "proposer-based", threshold, validators: [...V], shares: Object.fromEntries(V.map((v, i) => [v, shares[i]])), jurisdiction: { ...OG_J, ...(finality ? {} : { entityProviderDeploymentBlock: L + 1 }), ...(registered ? { registrationBlock: 1 } : {}) } } };
     const histories = new Map<string, ValidatorJHistory>();
     for (const v of V) {
@@ -400,7 +406,7 @@ describe("runtime-final: the per-frame J prefix (og jurisdiction/machine/history
       for (let h = L; h <= scanned; h++) if (h === scanned || (h === L && finality) || rng() < 0.9) blockHashes.set(h, hashAt(h));
       for (const h of eventHeights) {
         if (h > scanned || rng() < 0.1) continue;
-        const events = [normalizeJurisdictionEvent({ type: "ReserveUpdated", data: { entity: ALICE, tokenId: 1, newBalance: balance.get(h) }, blockNumber: h, blockHash: hashAt(h), transactionHash: `0x${String(h).padStart(64, "0")}`, logIndex: 0 } as never)!].sort(compareCanonicalJurisdictionEvents);
+        const events = [normalizeJurisdictionEvent({ type: "ReserveUpdated", data: { entity: ID, tokenId: 1, newBalance: balance.get(h) }, blockNumber: h, blockHash: hashAt(h), transactionHash: `0x${String(h).padStart(64, "0")}`, logIndex: 0 } as never)!].sort(compareCanonicalJurisdictionEvents);
         eventBlocks.set(h, { jurisdictionRef: JREF, jHeight: h, jBlockHash: hashAt(h), eventsHash: canonicalJurisdictionEventsHash(events as never), events });
         blockHashes.set(h, hashAt(h));
       }
@@ -408,7 +414,7 @@ describe("runtime-final: the per-frame J prefix (og jurisdiction/machine/history
       while (contiguous < scanned && blockHashes.has(contiguous + 1)) contiguous++;
       histories.set(v, { jurisdictionRef: JREF, scannedThroughHeight: scanned, contiguousThroughHeight: contiguous, tipBlockHash: hashAt(scanned), eventBlocks, blockHashes });
     }
-    return { view, og, histories, L, H, parent: H === 0 ? "genesis" : prev };
+    return { view, og, histories, L, H, parent: H === 0 ? "genesis" : prev, id: ID, created };
   };
   const ogReplica = (fx: Fx, signer: string, round?: unknown): any => ({ signerId: signer, state: fx.og, jHistory: fx.histories.get(signer), ...(round ? { jPrefixRound: round } : {}) });
   /** Every validator's rewrite-built, really signed attestation (null or refused ones left out). */
@@ -523,4 +529,94 @@ describe("runtime-final: the per-frame J prefix (og jurisdiction/machine/history
     for (const k of ["ok", "reject:J_PREFIX_CERTIFICATE_MISSING", "reject:J_PREFIX_FRAME_ROUND_MISMATCH"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
     expect(seen.size).toBeGreaterThan(5);
   }, 300_000);
+  test("MATCH (randomized): 40 validator Runtimes run the J prefix through Entity consensus -- the committed frame's certificate, certified j_event and frame hash equal og's, every commit prunes the local history like og", () => {
+    const allowed = new Set(["J_PREFIX_INVALID", "J_PREFIX_LOCAL_HISTORY_BEHIND", "J_PREFIX_STRONGER_LOCAL_CERTIFICATE", "J_PREFIX_REQUIRED_LOCAL_EVENT", "PROPOSAL_J_RANGE_MISMATCH", "PROPOSAL_J_PREFIX_HISTORY_WAIT", "COMMIT_J_PREFIX_HISTORY_WAIT", "COMMIT_J_RANGE_MISMATCH", "J_PREFIX_FUTURE_HEIGHT", "J_PREFIX_ROUND_FROZEN", "J_PREFIX_ATTESTATION_REJECTED"]);
+    const plain = (v: unknown): unknown => (v === undefined ? v : JSON.parse(JSON.stringify(v, (_k, x) => (x instanceof Map ? [...x] : typeof x === "bigint" ? x.toString() : x))));
+    let committedRuns = 0, ranged = 0, uncertified = 0;
+    const seenCodes = new Map<string, number>();
+    for (let run = 0; run < 40; run++) {
+      const fx = fixture(true), id = fx.id;
+      const signers = [aliceAddr, bobAddr, carolAddr] as Address[];
+      let rt: Runtime = { ...signers.reduce((acc, s) => spawn(acc, { ...fx.created, signerId: s } as EntityReplica), createRuntime()), encryptionSeeds: new Map([[id, SEED_J]]),
+        replicaLocal: new Map(signers.flatMap((s) => { const h = fx.histories.get(s.toLowerCase()); return h === undefined ? [] : [[replicaKey(id, s), { jHistory: h }] as const]; })) } as Runtime;
+      const queue: RoutedEntityInput[] = [{ entityId: id, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW, txs: [{ type: "chat", data: { from: aliceAddr.toLowerCase(), message: "j" } } as EntityTx] } }];
+      const frames = new Map<string, EntityFrame>();
+      for (let n = 0; queue.length > 0 && n < 80; n++) {
+        const input = queue.shift() as RoutedEntityInput;
+        const step = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [input] }, verifiers));
+        for (const e of step.rejected) {
+          const code = e._tag === "j_prefix" ? (e as { code: string }).code : e._tag;
+          seenCodes.set(code, (seenCodes.get(code) ?? 0) + 1);
+          if (e._tag === "j_prefix") expect([run, code, (e as { message: string }).message, allowed.has(code)]).toEqual([run, code, (e as { message: string }).message, true]);
+        }
+        rt = step.runtime;
+        for (const o of step.outbox as readonly EntityOutput[]) {
+          if (!("input" in o) || o.to !== id) continue;
+          if (o.input.kind === "proposal") frames.set(unwrap(hashEntityFrame(o.input.frame)), o.input.frame);
+          queue.push(unwrap(convertOutput(rt, o, id, NOW)));
+        }
+      }
+      const heads = signers.map((s) => rt.entities.get(replicaKey(id, s)) as EntityReplica);
+      const committedHeads = heads.filter((r) => r.head.height >= 1n);
+      if (committedHeads.length === 0) continue;
+      committedRuns++;
+      for (const r of committedHeads) {
+        // this replica's committed chain, newest first (every committed frame was broadcast as a commit notification)
+        const chain: EntityFrame[] = [];
+        for (let hash = r.head.prevFrameHash as string; hash !== "genesis";) { const f = frames.get(hash); if (f === undefined) throw new Error(`run ${run}: frame ${hash} missing`); chain.push(f); hash = f.prevFrameHash; }
+        expect(chain.length).toBe(Number(r.head.height));
+        for (const frame of chain) {
+          const cert = frame.jPrefixCertificate, range = frame.txs.find((tx) => tx.type === "j_event");
+          // og createEntityFrameHashFromStateRoot: the certificate is in the frame hash
+          expect(unwrap(hashEntityFrame(frame))).toBe(ogEntityFrameHash(frame.prevFrameHash, Number(frame.height), Number(frame.timestamp), frame.txs.map(wireEntityTx) as never, frame.events as never, id, frame.stateRoot, frame.authorityRoot, frame.entityContext as never, cert as never));
+          if (frame.height !== 1n) continue;
+          // og assertFrameJPrefix: without a certificate (an unregistered Entity whose validators see no pending J event) no range is certified
+          if (cert === undefined) { uncertified++; expect(range).toBeUndefined(); expect(entityRequiresJPrefixCertificate(fx.view.state)).toBe(false); continue; }
+          // og's frame 1 and ours: the certificate is og buildJPrefixCertificate over its heads, the range og buildCertifiedJPrefixTx
+          expect(plain(cert)).toEqual(plain(ogBuildJPrefixCertificate({ ...fx.og, height: 0 } as never, cert.attestations as never)));
+          if (cert.selected.scannedThroughHeight > fx.L) {
+            ranged++;
+            expect(plain(range)).toEqual(plain(ogBuildCertifiedJPrefixTx(ogEnv, { ...ogReplica(fx, V[0] as string), state: { ...fx.og, height: 0 } }, cert as never, V[0] as string)));
+          } else expect(range).toBeUndefined();
+        }
+        // the committed finality is the highest certified prefix; og finalizeCommitNotification prunes the local history to it at every commit
+        const finalized = Number(r.state.committed["lastFinalizedJHeight"] || 0), before = fx.histories.get(r.signerId.toLowerCase());
+        expect(finalized).toBe(Math.max(fx.L, ...chain.map((f) => f.jPrefixCertificate?.selected.scannedThroughHeight ?? 0)));
+        if (before !== undefined) expect(plain(rt.replicaLocal.get(replicaKey(id, r.signerId))?.jHistory)).toEqual(plain(ogPruneJHistory(before as never, finalized)));
+      }
+    }
+    expect(committedRuns).toBeGreaterThan(10);
+    expect(ranged).toBeGreaterThan(3);
+    expect(uncertified).toBeLessThan(committedRuns);
+    expect([...seenCodes.keys()].filter((k) => allowed.has(k) && k !== "precommit_not_active").length).toBeGreaterThan(3);
+  }, 300_000);
+});
+
+// ---- og runtime/tx/tx-handlers.ts rewindJHistoryRuntimeTx: a precommit cannot be revoked ----
+describe("runtime-final: rewindJHistory against a locked frame (og tx-handlers.ts J_HISTORY_SIGNED_LOCK_REORG)", () => {
+  test("MATCH (randomized): 200 rewinds -- og refuses exactly a height inside the range this validator's locked frame signed", async () => {
+    const E = ALICE.toLowerCase(), A = aliceAddr.toLowerCase(), EP = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
+    const REF = `stack:${TERMS.domain.chainId}:${TERMS.domain.depositoryAddress.toLowerCase()}`;
+    const hex32 = (): string => `0x${Array.from({ length: 64 }, () => "0123456789abcdef"[ri(16)]).join("")}`;
+    const base0 = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), signerId: aliceAddr,
+      jurisdictionConfig: { name: "Local", entityProviderAddress: EP, entityProviderDeploymentBlock: 0 }, committed: { lastFinalizedJHeight: 0 } }));
+    const key = replicaKey(ALICE, aliceAddr), seen = new Map<string, number>();
+    for (let run = 0; run < 200; run++) {
+      const base = ri(4), scanned = base + 1 + ri(6), top = scanned + 2, locked = rng() < 0.8, tip = hex32();
+      const history = { jurisdictionRef: REF, scannedThroughHeight: top, contiguousThroughHeight: top, tipBlockHash: tip, eventBlocks: new Map(), blockHashes: new Map([[top, tip]]) };
+      const range = { type: "j_event", data: { baseHeight: base, scannedThroughHeight: scanned } };
+      const env = ogEnv();
+      env.state.eReplicas.set(`${E}:${A}`, { entityId: E, signerId: A, jHistory: treeClone(history),
+        state: { entityId: E, config: { jurisdiction: { name: "Local", chainId: TERMS.domain.chainId, depositoryAddress: TERMS.domain.depositoryAddress, entityProviderAddress: EP, entityProviderDeploymentBlock: 0 } }, lastFinalizedJHeight: 0 },
+        ...(locked ? { lockedFrame: { height: 1, hash: hex32(), txs: [treeClone(range)] } } : {}) });
+      const replica = (locked ? { ...base0, _tag: "locked", frame: { height: 1n, prevFrameHash: "genesis", txs: [range] }, signatures: new Map(), draft: {} } : base0) as EntityReplica;
+      const rt: Runtime = { ...createRuntime(), entities: new Map([[key, replica]]), replicaLocal: new Map([[key, { jHistory: history as never }]]) };
+      const tx = { type: "rewindJHistory", data: { entityId: E, signerId: A, jurisdictionRef: REF, conflictingHeight: 1 + ri(top + 1), conflictingBlockHash: hex32() } };
+      const og = await runOg(env, tx), rw = rwCode(applyRuntimeTx(rt, tx as unknown as RuntimeTx, { replay: true }));
+      expect([run, rw]).toEqual([run, og]);
+      seen.set(String(og), (seen.get(String(og)) ?? 0) + 1);
+    }
+    expect(seen.get("J_HISTORY_SIGNED_LOCK_REORG") ?? 0).toBeGreaterThan(30);
+    expect(seen.get("null") ?? 0).toBeGreaterThan(30);
+  });
 });

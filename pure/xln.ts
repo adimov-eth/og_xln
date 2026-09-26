@@ -92,6 +92,7 @@ export const EntityTransition = {
   proposal: { open: ["open", "locked"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
   precommit: { open: ["open"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
   leaderTimeoutVote: { open: ["open", "proposed", "locked"], proposed: ["open", "proposed"], locked: ["open", "proposed", "locked"] },
+  jPrefixAttestations: { open: ["open", "proposed"], proposed: ["open", "proposed"], locked: ["open", "locked"] },
 } as const;
 
 
@@ -101,7 +102,7 @@ export const AccountTxNames = ["add_delta", "set_credit_limit", "payment", "htlc
 export const LendingTxNames = ["lendingOffer", "lendingBorrow", "lendingRepay", "lendingClosePosition"] as const;
 export const EntityTxNames = ["directPayment", "placeSwapOffer"] as const;
 export const AccountInputKinds = ["dispute", "board_hanko_refresh"] as const;
-export const EntityInputKinds = ["leaderTimeoutVote"] as const;
+export const EntityInputKinds = ["leaderTimeoutVote", "jPrefixAttestations"] as const;
 export const HoleNames = ["reveal_before_height", "quote_last_ms"] as const;
 export type Hole = (typeof HoleNames)[number];
 
@@ -4813,6 +4814,8 @@ export type HashToSign = { readonly hash: string; readonly type: "entityFrame" |
 export type EntityFrame = Head & {
   readonly timestamp: bigint; readonly txs: readonly EntityTx[]; readonly events: readonly Binary[]; readonly stateRoot: string; readonly authorityRoot: string;
   readonly entityContext: EntityInfraContext; readonly hashesToSign: readonly HashToSign[]; readonly leader: FrameLeader;
+  /** og frame.jPrefixCertificate: the round certificate this frame's J prefix (and any j_event) is judged by; in the frame hash. */
+  readonly jPrefixCertificate?: JPrefixCertificate | undefined;
 };
 /** og `hashPrecommits`/`collectedSigs`: lowercase signer id to one signature per `hashesToSign` entry. */
 export type Precommits = ReadonlyMap<string, readonly Signature[]>;
@@ -4825,7 +4828,9 @@ export type EntityInput =
   | { readonly kind: "proposal"; readonly frame: EntityFrame; readonly signatures: Precommits }
   | { readonly kind: "precommit"; readonly height: bigint; readonly frameHash: EntityFrameHash; readonly signatures: Precommits }
   /** og `leaderTimeoutVote` lane. `local` is og's process-local marker: the scheduler's unsigned intent for this replica's own signer, never set on an output. */
-  | { readonly kind: "leaderTimeoutVote"; readonly timestamp: bigint; readonly vote: LeaderVote; readonly local?: boolean | undefined };
+  | { readonly kind: "leaderTimeoutVote"; readonly timestamp: bigint; readonly vote: LeaderVote; readonly local?: boolean | undefined }
+  /** og `jPrefixAttestations` lane: validators' signed J-prefix heads (one per input after merge); the Runtime stamps its frame clock. */
+  | { readonly kind: "jPrefixAttestations"; readonly attestations: ReadonlyMap<string, JPrefixAttestation>; readonly timestamp?: bigint | undefined };
 export type EntityPhase = "open" | "proposed" | "locked";
 export type EntityEvent = EntityInput["kind"];
 export type Folded = { readonly state: EntityState; readonly accountReplicas: ReadonlyMap<EntityId, AccountReplica> };
@@ -4837,7 +4842,9 @@ export type EntityRuntimeEvent = { readonly eventName: string; readonly data: { 
 export type Draft = Folded & { readonly outputs: readonly EntityOutput[]; readonly events?: readonly FrameEvent[] | undefined; readonly touched?: readonly EntityId[] | undefined; readonly hashes?: readonly HashToSign[] | undefined; readonly jOutputs?: readonly JInput[] | undefined; readonly swaps?: SwapEvents | undefined; readonly runtimeEvents?: readonly EntityRuntimeEvent[] | undefined };
 /** og replica `leaderVotes` (one collection key at a time) and `pendingLeaderCertificate`. */
 type LeaderLane = { readonly leaderVotes?: ReadonlyMap<string, LeaderVote> | undefined; readonly pendingLeaderCertificate?: LeaderCertificate | undefined };
-type EntityEnv = Folded & LeaderLane & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
+/** og replica `jPrefixRound`: this validator's J-prefix round for the next Entity height (validator-private, persisted in replica meta). */
+type JPrefixLane = { readonly jPrefixRound?: JPrefixRound | undefined };
+type EntityEnv = Folded & LeaderLane & JPrefixLane & { readonly signerId: Address; readonly head: Head; readonly mempool: readonly EntityTx[] };
 type EntityCandidate = { readonly frame: EntityFrame; readonly signatures: Precommits; readonly draft: Draft };
 export interface OpenEntity extends Tagged<"open", EntityEnv> {}
 /** og `proposal`: this replica proposed `frame` and collects precommits. */
@@ -4849,7 +4856,9 @@ export type EntityContext = { readonly verify: Verify; readonly verifyMember: Me
   /** og env.runtimeSeed: the default proposer derives cross-j hash-ladder seeds from it (never committed). */
   readonly runtimeSeed?: string | undefined;
   /** og EntityRuntimeContext.activeJurisdiction: the Runtime's active J name (never committed; the Htlc* event jurisdictionId fallback). */
-  readonly activeJurisdiction?: string | undefined };
+  readonly activeJurisdiction?: string | undefined;
+  /** og replica.jHistory: this validator's local J history (Runtime replica-local, never committed), pruned to the committed finality. */
+  readonly jHistory?: ValidatorJHistory | undefined };
 export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large"> | Tagged<"frame_tx", { readonly code: string }>;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
@@ -4868,7 +4877,9 @@ export type EntityError =
   | Tagged<"htlc_payment", { code: string }>
   /** og MalformedEntityFrameInputError from a cross-j setup handler: a reject disposition, the outermost tx is evicted. */
   | Tagged<"cross_j_entity", { reason: string }>
-  | Tagged<"unknown_member" | "duplicate_member" | "not_proposer" | "invalid_signature" | "wrong_replica", { address: string }>;
+  | Tagged<"unknown_member" | "duplicate_member" | "not_proposer" | "invalid_signature" | "wrong_replica", { address: string }>
+  /** og J-prefix outcomes: an input reject/defer reason code, or a thrown failure's code, message and disposition. */
+  | Tagged<"j_prefix", { code: string; message: string; disposition: "reject" | "retry" | "halt" | "defer" }>;
 export type EntityGrammar = { readonly table: typeof EntityTransition; readonly replica: EntityReplica; readonly input: EntityInput; readonly ctx: { readonly [E in EntityEvent]: EntityContext }; readonly output: EntityOutput; readonly error: EntityError };
 export type NextEntityPhase<S extends EntityPhase, E extends EntityEvent> = Next<EntityGrammar, S, E>;
 /** og HankoWitnessEntry: the quorum Hanko of one secondary `hashesToSign` entry, kept validator-locally for crash-safe external writes. */
@@ -5213,8 +5224,11 @@ const entityFrameTx =(tx: EntityTx): Result<EntityFrameTx, BinaryError> => map(b
 export const hashEntityFrame = (f: EntityFrame): Result<EntityFrameHash, EntityFrameHashError> =>
   chain(frameNumber(f.height), (height) => chain(frameNumber(f.timestamp), (timestamp) => chain(traverse(f.txs, entityFrameTx), (txs) => map(entityFrameHash({
     prevFrameHash: frameWord(f.prevFrameHash), height, timestamp, txs, events: f.events, entityId: f.entityContext.entityId,
-    stateRoot: f.stateRoot, authorityRoot: f.authorityRoot, entityContext: f.entityContext,
+    stateRoot: f.stateRoot, authorityRoot: f.authorityRoot, entityContext: f.entityContext, ...(f.jPrefixCertificate === undefined ? {} : { jPrefixCertificate: jpBinary(f.jPrefixCertificate) }),
   }), (digest) => digest as EntityFrameHash))));
+/** A J-prefix value as og's binary codec sees it (Maps kept, undefined fields absent). */
+const jpBinary = (v: unknown): Binary => v instanceof Map ? new Map([...v].map(([k, x]) => [k as Binary, jpBinary(x)])) : Array.isArray(v) ? v.map(jpBinary)
+  : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [k, jpBinary(x)])) : (v as Binary);
 /** og getEntityLeaderState without a view change: the CEO `validators[0]`. */
 export const allowedProposer = (q: Quorum): Address => q.proposer;
 const boardMembers = (board: Board): Members => new Map(board.entityIds.map((id, i) => [checksum(`0x${id.slice(-40)}`) as Address, { shares: BigInt(board.votingPowers[i] ?? 0) }]));
@@ -5323,6 +5337,7 @@ const frameBinary = (f: EntityFrame, signatures: Precommits | undefined, evidenc
   chain(hashEntityFrame(f), (hash) => chain(traverse(f.txs, entityFrameTx), (txs) => chain(frameNumber(f.height), (height) => chain(frameNumber(f.timestamp), (timestamp) => map(leaderBinary(f.leader, evidence), (leader): Binary => ({
     height, parentFrameHash: f.prevFrameHash, stateRoot: f.stateRoot, authorityRoot: f.authorityRoot, timestamp, entityContext: f.entityContext as unknown as Binary, txs: txs as unknown as Binary, events: f.events,
     hash, leader, hashesToSign: f.hashesToSign as unknown as Binary, ...(signatures === undefined ? {} : { collectedSigs: precommitsBinary(signatures) }),
+    ...(f.jPrefixCertificate === undefined ? {} : { jPrefixCertificate: jpBinary(f.jPrefixCertificate) }),
   }))))));
 const voteBinary = (v: LeaderVote): Result<Binary, EntityError> =>
   map(v.preparedFrame === undefined ? ok(undefined) : frameBinary(v.preparedFrame.frame, v.preparedFrame.signatures, true), (preparedFrame): Binary =>
@@ -5426,17 +5441,17 @@ export const proposalLeader = (r: EntityEnv): LeaderState => {
 const isProposalLeader = (r: EntityEnv): boolean => proposalLeader(r).activeValidatorId === signerId(r.signerId);
 export const isActiveLeader = (r: EntityReplica): boolean => leaderStateOf(r.state).activeValidatorId === signerId(r.signerId);
 /** og hasEntityLeaderWork (without J-prefix rounds): queued txs, a frame in flight, a pending certificate or queued Account work. */
-export const hasLeaderWork = (r: EntityReplica): boolean => r.mempool.length > 0 || r._tag !== "open" || r.pendingLeaderCertificate !== undefined || hasProposableAccount(r);
+export const hasLeaderWork = (r: EntityReplica, jHistory?: ValidatorJHistory): boolean => r.mempool.length > 0 || r._tag !== "open" || r.pendingLeaderCertificate !== undefined || jPrefixLeaderWork(r, jHistory) || hasProposableAccount(r);
 /** og nextReplicaDeadline (non-leader branch): when this validator's timeout vote falls due, given its last consensus progress. */
-export const leaderTimeoutDue = (r: EntityReplica, lastProgressAt: bigint): bigint | undefined => {
-  if (isActiveLeader(r) || !hasLeaderWork(r)) return undefined;
+export const leaderTimeoutDue = (r: EntityReplica, lastProgressAt: bigint, jHistory?: ValidatorJHistory): bigint | undefined => {
+  if (isActiveLeader(r) || !hasLeaderWork(r, jHistory)) return undefined;
   const body = leaderVoteBody(r.state, r.head), mine = r.leaderVotes?.get(signerId(r.signerId));
   if (mine !== undefined && canon(voteFields(mine)) === canon(voteFields(body))) return undefined;
   return lastProgressAt + BigInt(leaderTimeoutMs(body.toView));
 };
 /** og createDueScheduledWakeInputs (non-leader branch): the local unsigned vote carrying this replica's lock as prepared evidence. */
-export const localTimeoutVote = (r: EntityReplica, timestamp: bigint): EntityInput | undefined => {
-  if (isActiveLeader(r) || !hasLeaderWork(r)) return undefined;
+export const localTimeoutVote = (r: EntityReplica, timestamp: bigint, jHistory?: ValidatorJHistory): EntityInput | undefined => {
+  if (isActiveLeader(r) || !hasLeaderWork(r, jHistory)) return undefined;
   const lock = r._tag === "locked" ? { frame: r.frame, signatures: r.signatures } : undefined;
   return { kind: "leaderTimeoutVote", timestamp, local: true, vote: { ...leaderVoteBody(r.state, r.head), voterId: signerId(r.signerId), signature: "", ...opt("preparedFrame", lock) } };
 };
@@ -9601,7 +9616,7 @@ const hashesToSignOf = (entityId: EntityId, height: bigint, frameHash: string, o
 };
 const GENESIS_PARENT = "genesis";
 /** og certifyEntityProposal: the proposal state takes height+1 and the frame timestamp, then state root, authority root, frame hash, manifest. */
-const buildFrame = (r: EntityEnv, leader: FrameLeader, leaderState: LeaderState, timestamp: bigint, txs: readonly EntityTx[], folded: Draft, infra: HtlcFrameInfra = EMPTY_HTLC_INFRA): Result<EntityCandidate, EntityError> => {
+const buildFrame = (r: EntityEnv, leader: FrameLeader, leaderState: LeaderState, timestamp: bigint, txs: readonly EntityTx[], folded: Draft, infra: HtlcFrameInfra = EMPTY_HTLC_INFRA, jPrefixCertificate?: JPrefixCertificate): Result<EntityCandidate, EntityError> => {
   const height = r.head.height + 1n, parent = parentOf(r.head), signer = signerId(leader.proposerSignerId);
   const committed: EntityCommitted = "crontabState" in folded.state.committed ? folded.state.committed : { ...folded.state.committed, crontabState: DEFAULT_CRONTAB };
   const draft: Draft = { ...folded, state: { ...folded.state, height, timestamp, committed, leaderState } };
@@ -9609,6 +9624,7 @@ const buildFrame = (r: EntityEnv, leader: FrameLeader, leaderState: LeaderState,
     const body = {
       height, prevFrameHash: parent as EntityFrameHash, timestamp, txs, events: (folded.events ?? []).map((e): Binary => ({ ...e })), stateRoot, authorityRoot: root, leader,
       entityContext: { version: 1, proposerReplicaId: `${draft.state.id}:${signer}`, entityId: draft.state.id, proposerSignerId: signer, parentFrameHash: parent, height: heightNo, gossipProfiles: infra.gossipProfiles, peerAssertions: infra.peerAssertions, htlc: { version: 1, entries: infra.entries as unknown as readonly Binary[], originated: infra.originated as unknown as readonly Binary[] } },
+      ...opt("jPrefixCertificate", jPrefixCertificate),
     };
     return chain(hashEntityFrame({ ...body, hashesToSign: [] }), (frameHash) =>
       map(hashesToSignOf(draft.state.id, height, frameHash, draft.outputs, draft.hashes), (hashesToSign): EntityCandidate => ({ frame: { ...body, hashesToSign }, signatures: new Map(), draft })));
@@ -9677,7 +9693,9 @@ const publishFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash
   const others = board === undefined ? [] : [...membersOf(board).keys()].filter((v) => signerId(v) !== signerId(r.signerId));
   // og finalizeCommitNotification: votes reset; a relay certificate for exactly this frame stays pending.
   const relay = r.frame.leader.relayCertificate, pending = relay !== undefined && relay.preparedFrameHash === frameHash ? relay : undefined;
-  const opened: OpenEntity = { ...openEntity(r.signerId, draft.state, { height: r.frame.height, prevFrameHash: frameHash }, withoutTxs(r.mempool, r.frame.txs), draft.accountReplicas), leaderVotes: new Map(), ...opt("pendingLeaderCertificate", pending) };
+  const opened: OpenEntity = { ...openEntity(r.signerId, draft.state, { height: r.frame.height, prevFrameHash: frameHash }, withoutTxs(r.mempool, r.frame.txs), draft.accountReplicas), leaderVotes: new Map(), ...opt("pendingLeaderCertificate", pending),
+    // og clearCommittedJPrefixRound: a round for a height this frame committed is done
+    ...opt("jPrefixRound", r.jPrefixRound !== undefined && r.jPrefixRound.targetEntityHeight > Number(r.frame.height) ? r.jPrefixRound : undefined) };
   // og finalizeCommitNotification emitter: the relay certificate's next leader for exactly this frame, else the frame's proposer.
   const emitter = pending !== undefined ? pending.nextLeaderId : r.frame.leader.proposerSignerId;
   return ok(done(opened, [...publishCommitted(draft.outputs, r.signerId, emitter), ...others.map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "proposal", frame: r.frame, signatures } }))]));
@@ -9704,15 +9722,22 @@ const forwarded = (r: EntityEnv, timestamp: bigint): Result<readonly EntityOutpu
 /** og shouldStartProposal: a certified view change (without a prepared frame to relay) proposes even an empty frame. */
 const certifiedTransition = (r: EntityEnv): boolean => { const c = r.pendingLeaderCertificate; return c !== undefined && c.targetHeight === Number(r.head.height) + 1 && c.preparedFrameHash === undefined; };
 /** og startEntityProposalIfReady + certifyEntityProposal: fold the mempool, commit the proposal leader's view, self-sign, commit alone or broadcast. */
-const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => chain(authorityReplica(queued, queued.mempool), (authority) => {
-  if (!isProposalLeader(authority)) return map(forwarded(queued, runtimeTimestamp), (out) => done<OpenEntity | ProposedEntity, EntityOutput>(queued, out));
-  return chain(selectProposable(queued.state, queued.mempool), (selection) => {
-    // og shouldStartProposal: selected txs, or a certified board with queued Account work or a certified leader transition
-    if (selection.txs.length === 0 && !(selection.currentAuthorityReady && (hasProposableAccount(queued) || certifiedTransition(queued)))) return ok(done<OpenEntity | ProposedEntity, EntityOutput>(queued));
-    return proposeSelected(queued, authority, selection.txs, runtimeTimestamp, ctx);
-  });
-});
-const proposeSelected = (queued: OpenEntity, authority: OpenEntity, selected: readonly EntityTx[], runtimeTimestamp: bigint, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+/** og: after admission (with its mempool forward), a J-prefix input or local consensus work first signs this validator's head (ensureLocalJPrefixAttestation). */
+const startProposal = (admitted: OpenEntity, runtimeTimestamp: bigint, ctx: EntityContext, force = false): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> =>
+  chain(force || admitted.mempool.length > 0 || hasProposableAccount(admitted) ? ensureLocalJPrefix(admitted, ctx, force) : ok({ replica: admitted, outputs: [], signed: false }), ({ replica: queued, outputs: votes }) =>
+  chain(authorityReplica(queued, queued.mempool), (authority) => {
+    if (!isProposalLeader(authority)) return map(forwarded(queued, runtimeTimestamp), (out) => done<OpenEntity | ProposedEntity, EntityOutput>(queued, [...out, ...votes]));
+    // og selectEntityProposal: the J-prefix certificate and certified range first, no selection while a required certificate is missing
+    return chain(jPrefixSelection(queued, authority, ctx), ({ replica: selecting, certificate, blocked, frozen }) => chain(blocked ? ok<ProposableSelection>({ txs: [], currentAuthorityReady: false }) : selectProposable(selecting.state, selecting.mempool), (selection) => {
+      // og: a frozen-base roll proposes exactly an empty frame
+      const txs = frozen ? [] : selection.txs;
+      // og shouldStartProposal: selected txs, a frozen-base roll, or a certified board with queued Account work or a certified leader transition
+      if (txs.length === 0 && !frozen && !(selection.currentAuthorityReady && (hasProposableAccount(selecting) || certifiedTransition(selecting)))) return ok(done<OpenEntity | ProposedEntity, EntityOutput>(selecting, votes));
+      return chain(assertProposalPrefix(selecting, txs, certificate, ctx), () =>
+        map(proposeSelected(selecting, authority, txs, runtimeTimestamp, ctx, certificate ?? undefined), (a) => ({ ...a, outputs: [...votes, ...a.outputs] })));
+    }));
+  }));
+const proposeSelected = (queued: OpenEntity, authority: OpenEntity, selected: readonly EntityTx[], runtimeTimestamp: bigint, ctx: EntityContext, jPrefixCertificate?: JPrefixCertificate): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
   /** og resolveEntityProposalTimestamp: never behind the committed clock. */
   const timestamp = runtimeTimestamp > queued.state.timestamp ? runtimeTimestamp : queued.state.timestamp;
   // og getReplicaProposalLeader(authorityReplica): the view the proposer claims; buildProposalState: a handover frame installs its own leader
@@ -9732,7 +9757,7 @@ const proposeSelected = (queued: OpenEntity, authority: OpenEntity, selected: re
   return chain(htlcFrameTxs(txs) ? inboundHtlcEntries({ ...inbound, online: onlineObserver(ctx.htlc).online }, txs) : ok([]), (entries) =>
   chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction) }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
     const pool = withoutTxs(queued.mempool, [...prepared.refused.keys(), ...evicted]);
-    return chain(handoverLeaderState(queued.state, included), (handoverLeader) => chain(buildFrame(queued, leader, handoverLeader ?? ordinary, timestamp, included, draft, infra), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx, candidate.draft.state), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
+    return chain(handoverLeaderState(queued.state, included), (handoverLeader) => chain(buildFrame(queued, leader, handoverLeader ?? ordinary, timestamp, included, draft, infra, jPrefixCertificate), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx, candidate.draft.state), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
       const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[self, own]]) };
       // og: a single-signer (authority) board commits alone; a handover also delivers the certified transition to the retired board
       if (isSingleSigner(authority.state.quorum)) return installFrame(proposed, frameHash, proposed.signatures, handoverLeader !== null ? queued.state.quorum : false);
@@ -9743,6 +9768,170 @@ const proposeSelected = (queued: OpenEntity, authority: OpenEntity, selected: re
     }))));
   })));
 };
+// ---- og entity/consensus/j-prefix/{prefix-round, prefix-input, prefix-validation}.ts + proposal/selection.ts: the J prefix inside Entity consensus ----
+const jpView = (r: EntityEnv): JPrefixView => ({ state: r.state, head: r.head });
+/** og verifyAccountSignature / signAccountFrame for this replica: it signs only as its own validator. */
+const jpCrypto = (r: EntityEnv, ctx: EntityContext): JPrefixCrypto => ({
+  verify: jPrefixVerify,
+  sign: (id, digest) => (nText(id) === signerId(r.signerId) ? map(ctx.sign(digest as Hash, r.signerId), (s) => ogSig(s)) : err(`J_PREFIX_SIGNER_NOT_LOCAL:${id}`)),
+});
+const jpError = (f: JPrefixFailure): EntityError => ({ _tag: "j_prefix", code: f.code, message: f.message, disposition: f.disposition });
+const jpE = <T>(r: JP<T>): Result<T, EntityError> => mapErr(r, jpError);
+/** og rejectEntityConsensusInput / deferEntityConsensusInput with its reason code. */
+const jpInput = (code: string, disposition: "reject" | "defer" = "reject", message: string = code): EntityError => ({ _tag: "j_prefix", code, message, disposition });
+const errText = (e: EntityError): string => (e._tag === "entity_invariant" ? e.reason : e._tag);
+/** og MAX_VALIDATORS (replica-validation hasWellFormedJPrefixAttestations). */
+const MAX_J_PREFIX_ATTESTATIONS = 100;
+type Attested<R> = { readonly replica: R; readonly outputs: readonly EntityOutput[]; readonly signed: boolean };
+const jpSend = (r: EntityEnv, board: Quorum, me: string, attestation: JPrefixAttestation): readonly EntityOutput[] =>
+  [...membersOf(board).keys()].filter((v) => signerId(v) !== me).map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "jPrefixAttestations", attestations: new Map([[me, attestation]]) } }));
+/**
+ * og ensureLocalJPrefixAttestation: an open replica with no current-round head signs its validator-local prefix for the next Entity height
+ * (under a pending handover's board) and sends it to the other validators; a history behind the certified base retries the input.
+ */
+const ensureLocalJPrefix = (r: OpenEntity, ctx: EntityContext, force: boolean): Result<Attested<OpenEntity>, EntityError> => {
+  const none: Attested<OpenEntity> = { replica: r, outputs: [], signed: false }, h = ctx.jHistory, finalized = jpFinalized(jpView(r));
+  return chain(pendingHandoverConfig(r.state, r.mempool), (pending) => chain(jpE(hasCurrentRoundJPrefixAttestation(jpView(r), r.signerId, r.jPrefixRound, h)), (current): Result<Attested<OpenEntity>, EntityError> => {
+    if (pending === null && current) return ok(none);
+    if (!force && !entityRequiresJPrefixCertificate(r.state) && !hasPendingLocalJEvent(jpView(r), h)) return ok(none);
+    if (h === undefined) return ok(none);
+    if (h.scannedThroughHeight < finalized) return err(jpError({ disposition: "retry", code: "J_PREFIX_LOCAL_HISTORY_BEHIND", message: `J_PREFIX_LOCAL_HISTORY_BEHIND:${h.scannedThroughHeight}:${finalized}` }));
+    return chain(jpE(localJPrefixAttestableHeight(jpView(r), h)), (height) => height === null ? ok(none) : chain(authorityReplica(r, r.mempool), (auth) =>
+      chain(jpE(buildLocalJPrefixAttestation(jpView(auth), r.signerId, h, jpCrypto(r, ctx))), (attestation): Result<Attested<OpenEntity>, EntityError> => {
+        if (attestation === null) return invariant(`J_PREFIX_LOCAL_ATTESTATION_MISSING:${r.state.id}:${h.scannedThroughHeight}`);
+        const me = signerId(r.signerId), existing = pending === null ? r.jPrefixRound : undefined;
+        const voted = existing !== undefined && existing.targetEntityHeight === Number(r.state.height) + 1 && existing.baseHeight === finalized && existing.attestations.has(me);
+        return map(jpE(mergeJPrefixAttestations(jpView(auth), voted ? undefined : existing, new Map([[me, attestation]]), jpCrypto(r, ctx))), (round) =>
+          ({ replica: { ...r, jPrefixRound: round }, outputs: jpSend(r, auth.state.quorum, me, attestation), signed: true }));
+      })));
+  }));
+};
+type JPrefixSelection<R> = { readonly replica: R; readonly certificate: JPrefixCertificate | null; readonly blocked: boolean; readonly frozen: boolean };
+/**
+ * og selectEntityProposal's J half (a proposal leader only): the round's certificate under the pending handover's board, a certified range above
+ * the finalized height first in the mempool (replacing every other j_event), no selection without a required certificate, and the frozen-base roll.
+ */
+const jPrefixSelection = <R extends EntityEnv>(r: R, authority: EntityEnv, ctx: EntityContext): Result<JPrefixSelection<R>, EntityError> => {
+  const round = r.jPrefixRound;
+  return chain(round === undefined ? ok(null) : jpE(buildJPrefixCertificate(jpView(authority), round.attestations)), (certificate) => {
+    const certified = (): Result<R, EntityError> => {
+      if (certificate === null || round === undefined) return ok(r);
+      const withCertificate: R = { ...r, jPrefixRound: { ...round, certificate } };
+      if (certificate.selected.scannedThroughHeight <= jpFinalized(jpView(r))) return ok(withCertificate);
+      return chain(jpE(buildCertifiedJPrefixTx(jpView(authority), ctx.jHistory, certificate, proposalLeader(authority).activeValidatorId, jpCrypto(r, ctx))), (range) =>
+        map(prioritizeWake([range, ...r.mempool.filter((tx) => tx.type !== "j_event")]), (mempool): R => ({ ...withCertificate, mempool })));
+    };
+    return chain(certified(), (replica) => {
+      const blocked = certificate === null && (entityRequiresJPrefixCertificate(authority.state) || hasPendingLocalJEvent(jpView(r), ctx.jHistory));
+      return map(jpE(isFrozenBaseJPrefixRollAuthorized(jpView(replica), replica.signerId, replica.jPrefixRound, ctx.jHistory, certificate)), (frozen) => ({ replica, certificate, blocked, frozen }));
+    });
+  });
+};
+/** og selection on a replica holding a frame: the leader still installs the round's certificate and certified range, it proposes nothing. */
+const heldSelection = <R extends ProposedEntity | LockedEntity>(a: EntityApply<OpenEntity | R>, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> => {
+  const r = a.replica;
+  if (r._tag === "open") return ok(a);
+  return chain(authorityReplica(r, r.mempool), (authority) => !isProposalLeader(authority) ? ok(a) : map(jPrefixSelection(r as R, authority, ctx), (s) => ({ ...a, replica: s.replica })));
+};
+/** og getReplicaJRangeValidationError: the J-range budget, then every range against this validator's history under the frame's authority (a message, or null). */
+const replicaJRangeError = (r: EntityEnv, txs: readonly EntityTx[], ctx: EntityContext): Result<string | null, EntityError> => {
+  const ranges = txs.filter((tx): tx is JEventTx => tx.type === "j_event");
+  const budget = frameJRangeIssue(ranges);
+  if (!budget.ok) return ok(errText(budget.error));
+  if (budget.value !== null) return ok(budget.value);
+  const config = handoverFrameConfig(r.state, txs);
+  if (!config.ok) return ok(errText(config.error));
+  const authority = config.value === null ? ok(r.state) : withBoardAuthority(r.state, config.value, Number(r.state.height) + 1);
+  if (!authority.ok) return ok(errText(authority.error));
+  for (const tx of ranges) {
+    const issue = jpE(jEventRangeLocalHistoryError(authority.value, ctx.jHistory, tx.data as JRec));
+    if (!issue.ok || issue.value !== null) return issue;
+  }
+  return ok(null);
+};
+const jpFrame = (frame: EntityFrame): JPrefixFrame => ({ height: Number(frame.height), parentFrameHash: frame.prevFrameHash, proposerSignerId: frame.leader.proposerSignerId, txs: frame.txs, jPrefixCertificate: frame.jPrefixCertificate });
+/** og getFrameJPrefixValidationError: assertFrameJPrefix under the frame's handover board (whose round is retired), as a failure or null. */
+const frameJPrefixFailure = (r: EntityEnv, frame: EntityFrame, ctx: EntityContext): Result<JPrefixFailure | null, EntityError> => {
+  const config = handoverFrameConfig(r.state, frame.txs);
+  const authority = !config.ok ? config : config.value === null ? ok({ state: r.state, round: r.jPrefixRound }) : map(withBoardAuthority(r.state, config.value, Number(frame.height)), (state) => ({ state, round: undefined }));
+  if (!authority.ok) return ok({ disposition: "reject", code: "J_PREFIX_INVALID", message: errText(authority.error) });
+  const checked = assertFrameJPrefix({ state: authority.value.state, head: r.head }, r.signerId, authority.value.round, ctx.jHistory, jpFrame(frame), jpCrypto(r, ctx));
+  return checked.ok ? ok(null) : checked.error.disposition === "halt" ? err(jpError(checked.error)) : ok(checked.error);
+};
+/**
+ * og validateProposalViewAndJRange (lane PROPOSAL) / validateCatchUpJRange (lane COMMIT): a range unlike this validator's history rejects; a history
+ * behind the certificate defers; any other prefix failure rejects, except that catch-up applies a frame its newer local prefix only outruns.
+ */
+const jPrefixFrameChecks = (r: EntityEnv, frame: EntityFrame, ctx: EntityContext, lane: "PROPOSAL" | "COMMIT"): Result<void, EntityError> =>
+  chain(replicaJRangeError(r, frame.txs, ctx), (rangeError) => rangeError !== null ? err(jpInput(`${lane}_J_RANGE_MISMATCH`, "reject", rangeError)) : chain(frameJPrefixFailure(r, frame, ctx), (failure): Result<void, EntityError> => {
+    if (failure === null) return ok(undefined);
+    if (failure.code === "J_PREFIX_LOCAL_HISTORY_BEHIND") return err(jpInput(`${lane}_J_PREFIX_HISTORY_WAIT`, "defer", failure.message));
+    return lane === "COMMIT" && failure.disposition === "retry" ? ok(undefined) : err(jpInput(`${lane}_J_RANGE_MISMATCH`, "reject", failure.message));
+  }));
+/** og replayPreparedFrameForRelay's J checks: the prepared frame's ranges and prefix, both fatal to the input. */
+const preparedJPrefix = (r: EntityEnv, frame: EntityFrame, ctx: EntityContext): Result<void, EntityError> =>
+  chain(replicaJRangeError(r, frame.txs, ctx), (rangeError) => rangeError !== null ? invariant(`ENTITY_PREPARED_J_RANGE_MISMATCH:${rangeError}`) : jpE(assertFrameJPrefix(jpView(r), r.signerId, r.jPrefixRound, ctx.jHistory, jpFrame(frame), jpCrypto(r, ctx))));
+/** og assertProposalPrefix: the proposer's own ranges against its committed history, then assertFrameJPrefix under the frame's board. */
+const assertProposalPrefix = (r: OpenEntity, txs: readonly EntityTx[], certificate: JPrefixCertificate | null, ctx: EntityContext): Result<void, EntityError> =>
+  chain(replicaJRangeError(r, txs, ctx), (rangeError) => rangeError !== null ? invariant(`ENTITY_PROPOSER_J_RANGE_INVALID:${rangeError}`) :
+    chain(handoverFrameConfig(r.state, txs), (config) => chain(config === null ? ok(r.state) : withBoardAuthority(r.state, config, Number(r.state.height) + 1), (state) =>
+      chain(authorityReplica(r, r.mempool), (pending) => jpE(assertFrameJPrefix({ state, head: r.head }, r.signerId, r.jPrefixRound, ctx.jHistory,
+        { height: Number(r.head.height) + 1, parentFrameHash: parentOf(r.head), proposerSignerId: signerId(pending.signerId), txs, jPrefixCertificate: certificate }, jpCrypto(r, ctx)))))));
+type JPrefixInput = Extract<EntityInput, { kind: "jPrefixAttestations" }>;
+/**
+ * og handleJPrefixAttestations, then the rest of applyEntityInput: one target height per input; an out-of-round vote is authenticated against the
+ * board (a future one defers, a stale one is a no-op unless due local J work re-signs); a current one merges into the round (a changed round is
+ * frozen while a frame is held) and this validator's own vote is re-sent when new. The input then continues as an empty `txs` input would.
+ */
+const jPrefixAttestationsInput = (r: EntityReplica, input: JPrefixInput, ctx: EntityContext): Result<EntityApply, EntityError> => {
+  const incoming = input.attestations, timestamp = input.timestamp ?? r.state.timestamp, rejected = jpInput("J_PREFIX_ATTESTATION_REJECTED");
+  if (!(incoming instanceof Map) || incoming.size === 0 || incoming.size > MAX_J_PREFIX_ATTESTATIONS) return err(jpInput("J_PREFIX_ATTESTATION_INVALID"));
+  const continued = (next: EntityReplica, before: readonly EntityOutput[]): Result<EntityApply, EntityError> => {
+    const flow: Result<EntityApply, EntityError> = next._tag === "open" ? startProposal(next, timestamp, ctx, true)
+      : chain(forwarded(next, timestamp), (out) => chain(heldQuorum(next, out), (a) => heldSelection(a, ctx)));
+    return map(flow, (a) => ({ ...a, outputs: [...before, ...a.outputs] }));
+  };
+  return chain(authorityReplica(r, r.mempool), (auth) => {
+    const v = jpView(auth), crypto = jpCrypto(r, ctx);
+    const dispositions = new Set<string>();
+    for (const a of incoming.values()) { const d = jPrefixTemporalDisposition(v, a); if (!d.ok) return err(rejected); dispositions.add(d.value); }
+    const [disposition] = dispositions;
+    if (dispositions.size !== 1 || disposition === undefined) return err(rejected);
+    if (disposition !== "current") {
+      for (const [raw, a] of incoming) { const verified = verifyOutOfRoundJPrefixAttestation(v, a, [auth.state.quorum], crypto); if (!verified.ok || nText(raw) !== verified.value.validatorId) return err(rejected); }
+      if (disposition === "future") return err(jpInput("J_PREFIX_FUTURE_HEIGHT", "defer"));
+      if (r._tag !== "open") return ok(done(r));
+      return chain(jpE(hasDueLocalJPrefixAdvance(jpView(r), ctx.jHistory)), (due) => !due ? ok(done<EntityReplica, EntityOutput>(r)) : chain(ensureLocalJPrefix(r, ctx, false), (s) => (s.signed ? continued(s.replica, s.outputs) : ok(done<EntityReplica, EntityOutput>(r)))));
+    }
+    const prior = r.jPrefixRound, merged = mergeJPrefixAttestations(v, auth === r ? prior : undefined, incoming, crypto);
+    if (!merged.ok) return err(rejected);
+    const changed = !consensusEqual(prior?.attestations ?? new Map(), merged.value.attestations);
+    if (changed && r._tag !== "open") return err(jpInput("J_PREFIX_ROUND_FROZEN"));
+    const me = signerId(r.signerId), mine = [...incoming].filter(([id]) => nText(id) === me), previous = prior?.attestations.get(me);
+    const resend = mine.flatMap(([, a]) => (previous !== undefined && consensusEqual(previous, a) ? [] : jpSend(r, auth.state.quorum, me, a as JPrefixAttestation)));
+    return continued({ ...r, jPrefixRound: merged.value }, resend);
+  });
+};
+/**
+ * og finalizeCommitNotification tail: pruneReplicaFinalizedJHistory, then advanceLocalJPrefixRoundAfterCommit (the committed round was cleared by
+ * publishFrame): due J work re-signs for the next height, and the leader holding a certificate above the finalized height wakes itself.
+ */
+const afterCommit = (a: EntityApply, ctx: EntityContext): Result<EntityApply, EntityError> => {
+  const r = a.replica;
+  if (r._tag !== "open") return ok(a);
+  return chain(jpE(pruneFinalizedJHistory(ctx.jHistory, jpFinalized(jpView(r)))), (h) => chain(jpE(hasDueLocalJPrefixAdvance(jpView(r), h)), (due) => !due ? ok(a) :
+    map(ensureLocalJPrefix(r, { ...ctx, jHistory: h }, false), (s): EntityApply => {
+      const c = s.replica.jPrefixRound?.certificate;
+      const wake = s.signed && isActiveLeader(s.replica) && c !== undefined && c.selected.scannedThroughHeight > jpFinalized(jpView(s.replica));
+      return { ...a, replica: s.replica, outputs: [...a.outputs, ...s.outputs, ...(wake ? [{ to: r.state.id, signerId: r.signerId, input: { kind: "txs", timestamp: r.state.timestamp, txs: [] } } as EntityOutput] : [])] };
+    })));
+};
+/** og hasEntityLeaderWork's J terms: a round certificate above the finalized height, or an authorized frozen-base roll. */
+const jPrefixLeaderWork = (r: EntityReplica, h: ValidatorJHistory | undefined): boolean => {
+  const c = r.jPrefixRound?.certificate;
+  if (c !== undefined && c.selected.scannedThroughHeight > jpFinalized(jpView(r))) return true;
+  return unwrapOr(isFrozenBaseJPrefixRollAuthorized(jpView(r), r.signerId, r.jPrefixRound, h, c), () => false);
+};
 export const applyTxsOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> =>
   chain(admitTxs(r, input, ctx), (queued) => startProposal(queued, input.timestamp, ctx));
 /** og runs handleHashPrecommits on every input: a held frame whose collected signatures already reach quorum installs now. */
@@ -9750,7 +9939,7 @@ const heldQuorum = <R extends ProposedEntity | LockedEntity>(r: R, before: reado
   quorumPower(r.draft.state.quorum, r.signatures) < thresholdOf(r.draft.state.quorum) ? ok(done<OpenEntity | R, EntityOutput>(r, before))
     : chain(hashEntityFrame(r.frame), (frameHash) => map(installFrame(r, frameHash, r.signatures, true), (c): EntityApply<OpenEntity | R> => ({ ...c, outputs: [...before, ...c.outputs] })));
 const queueOnly = <R extends ProposedEntity | LockedEntity>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> =>
-  chain(admitTxs(r, input, ctx), (queued) => chain(forwarded(queued, input.timestamp), (out) => heldQuorum(queued, out)));
+  chain(admitTxs(r, input, ctx), (queued) => chain(forwarded(queued, input.timestamp), (out) => chain(heldQuorum(queued, out), (a) => heldSelection(a, ctx))));
 /** og preauthenticateEntityProposal: canonical digests, parent, leader, recomputed hash, manifest head, the proposer's frame signature. */
 const DIGEST = /^0x[0-9a-f]{64}$/;
 const preauthenticate = (r: EntityEnv, frame: EntityFrame, signatures: Precommits, ctx: EntityContext): Result<EntityFrameHash, EntityError> => chain(hashEntityFrame(frame), (frameHash): Result<EntityFrameHash, EntityError> => {
@@ -9780,7 +9969,7 @@ const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHas
   return chain(frameInfraOf(frame), (infra) => chain(entityKeypair(r.state, ctx), () => chain(assertInboundEntries(r, frame, infra, ctx), () => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
     chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction) }), ({ draft, evicted }) => {
       if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
-      return chain(handoverLeaderState(r.state, frame.txs), (handoverLeader) => chain(buildFrame(r, frame.leader, handoverLeader ?? committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
+      return chain(handoverLeaderState(r.state, frame.txs), (handoverLeader) => chain(buildFrame(r, frame.leader, handoverLeader ?? committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra, frame.jPrefixCertificate), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
         local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame }))));
     })))));
 };
@@ -9807,7 +9996,7 @@ const commitNotification = <R extends EntityReplica>(r: R, frame: EntityFrame, b
       if ([...sigs].some(([id, s]) => !bundleValid(q, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
       const held = heldFrame(r);
       if (held !== undefined) return unwrapOr(hashEntityFrame(held.frame), () => "") === frameHash ? installFrame(held, frameHash, sigs, false) : err({ _tag: "commit_conflict" });
-      return chain(replayFrame(r, frame, frameHash, ctx), (candidate) => installFrame({ ...r, ...candidate }, frameHash, sigs, false));
+      return chain(jPrefixFrameChecks(r, frame, ctx, "COMMIT"), () => chain(replayFrame(r, frame, frameHash, ctx), (candidate) => installFrame({ ...r, ...candidate }, frameHash, sigs, false)));
     }));
   });
 };
@@ -9817,7 +10006,7 @@ const signProposal = (r: OpenEntity, frame: EntityFrame, bundles: Precommits, ct
   return chain(hashEntityFrame(frame), (frameHash): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
     if (frame.height === r.head.height) return frameHash === r.head.prevFrameHash ? ok(done<OpenEntity | LockedEntity, EntityOutput>(r)) : err({ _tag: "proposal_conflict" });
     if (frame.height !== r.head.height + 1n) return err({ _tag: "proposal_wait" });
-    return chain(preauthenticate(r, frame, bundles, ctx), () => chain(notSuperseded(r, frame), () => chain(replayFrame(r, frame, frameHash, ctx), (candidate) => chain(signManifest(candidate.frame.hashesToSign, r.signerId, ctx, candidate.draft.state), (own) =>
+    return chain(preauthenticate(r, frame, bundles, ctx), () => chain(notSuperseded(r, frame), () => chain(jPrefixFrameChecks(r, frame, ctx, "PROPOSAL"), () => chain(replayFrame(r, frame, frameHash, ctx), (candidate) => chain(signManifest(candidate.frame.hashesToSign, r.signerId, ctx, candidate.draft.state), (own) =>
       chain(normalizeBundles(candidate.draft.state.quorum, bundles), (sigs): Result<EntityApply<OpenEntity | LockedEntity>, EntityError> => {
         const q = candidate.draft.state.quorum;
         if ([...sigs].some(([id, s]) => !bundleValid(q, frame.hashesToSign, id, s, ctx))) return err({ _tag: "invalid_signature", address: "" });
@@ -9828,7 +10017,7 @@ const signProposal = (r: OpenEntity, frame: EntityFrame, bundles: Precommits, ct
           .map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "precommit", height: frame.height, frameHash, signatures: new Map([[self, own]]) } }));
         if (quorumPower(q, locked.signatures) < thresholdOf(q)) return ok(done<OpenEntity | LockedEntity, EntityOutput>(locked, precommits));
         return map(installFrame(locked, frameHash, locked.signatures, true), (committed): EntityApply<OpenEntity | LockedEntity> => ({ ...committed, outputs: [...precommits, ...committed.outputs] }));
-      })))));
+      }))))));
   });
 };
 /** og validateProposalViewAndJRange: a view this validator already voted past (or holds a certificate for) supersedes the proposal. */
@@ -9900,7 +10089,7 @@ const certify = (r: EntityReplica, vote: LeaderVote, votes: ReadonlyMap<string, 
   return chain(lock === undefined ? ok(false) : preparedQuorum(q, lock.frame, lock.signatures, ctx), (lockQuorum) => chain(selectPrepared(r, cert, ctx), (prepared): Result<EntityReplica, EntityError> => {
     if (prepared === null) {
       if (lockQuorum) return err(rejected);
-      return ok(lock === undefined ? { ...base, pendingLeaderCertificate: cert } : { ...openEntity(lock.signerId, lock.state, lock.head, lock.mempool, lock.accountReplicas), leaderVotes: votes, pendingLeaderCertificate: cert });
+      return ok(lock === undefined ? { ...base, pendingLeaderCertificate: cert } : { ...openEntity(lock.signerId, lock.state, lock.head, lock.mempool, lock.accountReplicas), leaderVotes: votes, pendingLeaderCertificate: cert, ...opt("jPrefixRound", lock.jPrefixRound) });
     }
     return chain(hashEntityFrame(prepared.frame), (hash): Result<EntityReplica, EntityError> => {
       const lockHash = lock === undefined ? undefined : unwrapOr(hashEntityFrame(lock.frame), () => "");
@@ -9908,8 +10097,8 @@ const certify = (r: EntityReplica, vote: LeaderVote, votes: ReadonlyMap<string, 
       const pending: LeaderCertificate = { ...cert, preparedFrameHash: hash }, frame: EntityFrame = { ...prepared.frame, leader: { ...prepared.frame.leader, relayCertificate: pending } };
       if (r._tag === "proposed") return ok({ ...base, pendingLeaderCertificate: pending });
       if (lock !== undefined && lockHash === hash) return ok({ ...lock, leaderVotes: votes, pendingLeaderCertificate: pending, frame, signatures: prepared.signatures });
-      return map(replayFrame(r, prepared.frame, hash as EntityFrameHash, ctx), (candidate): EntityReplica =>
-        ({ ...openEntity(r.signerId, r.state, r.head, r.mempool, r.accountReplicas), ...candidate, _tag: "locked", frame, signatures: prepared.signatures, leaderVotes: votes, pendingLeaderCertificate: pending }));
+      return chain(preparedJPrefix(r, prepared.frame, ctx), () => map(replayFrame(r, prepared.frame, hash as EntityFrameHash, ctx), (candidate): EntityReplica =>
+        ({ ...openEntity(r.signerId, r.state, r.head, r.mempool, r.accountReplicas), ...candidate, _tag: "locked", frame, signatures: prepared.signatures, leaderVotes: votes, pendingLeaderCertificate: pending, ...opt("jPrefixRound", r.jPrefixRound) })));
     });
   }));
 };
@@ -9943,11 +10132,17 @@ const applyLeaderVote = entityVerb("leaderTimeoutVote", {
   open: (r: OpenEntity, i, c) => leaderVote(r, i, c), locked: (r: LockedEntity, i, c) => leaderVote(r, i, c),
   proposed: (r: ProposedEntity, i, c) => leaderVote(r, i, c) as Result<EntityApply<OpenEntity | ProposedEntity>, EntityError>,
 });
-/** One input to one validator replica (og applyEntityInput); `ctx.signerId` must name this replica. */
+const applyJPrefix = entityVerb("jPrefixAttestations", {
+  open: (r: OpenEntity, i, c) => jPrefixAttestationsInput(r, i, c) as Result<EntityApply<OpenEntity | ProposedEntity>, EntityError>,
+  proposed: (r: ProposedEntity, i, c) => jPrefixAttestationsInput(r, i, c) as Result<EntityApply<OpenEntity | ProposedEntity>, EntityError>,
+  locked: (r: LockedEntity, i, c) => jPrefixAttestationsInput(r, i, c) as Result<EntityApply<OpenEntity | LockedEntity>, EntityError>,
+});
+/** One input to one validator replica (og applyEntityInput); `ctx.signerId` must name this replica. A commit runs og's post-commit J-prefix hook. */
 export const applyEntityInput = (r: EntityReplica, input: EntityInput, ctx: EntityContext): Result<EntityApply, EntityError> => {
   if (ctx.self !== r.state.id) return err({ _tag: "wrong_entity" });
   if (signerId(ctx.signerId) !== signerId(r.signerId)) return err({ _tag: "wrong_replica", address: ctx.signerId });
-  return matchBy("kind", input, { txs: (i) => applyTxs(r, i, ctx), proposal: (i) => applyProposal(r, i, ctx), precommit: (i) => applyPrecommit(r, i, ctx), leaderTimeoutVote: (i) => applyLeaderVote(r, i, ctx) });
+  const applied: Result<EntityApply, EntityError> = matchBy("kind", input, { txs: (i) => applyTxs(r, i, ctx), proposal: (i) => applyProposal(r, i, ctx), precommit: (i) => applyPrecommit(r, i, ctx), leaderTimeoutVote: (i) => applyLeaderVote(r, i, ctx), jPrefixAttestations: (i) => applyJPrefix(r, i, ctx) });
+  return chain(applied, (a) => (a.replica.head.height > r.head.height ? afterCommit(a, ctx) : ok(a)));
 };
 
 /** og runtime/types.ts JInput: one deterministic child-machine input for a J replica; the rewrite carries the J txs uninterpreted (J area). */
@@ -10126,16 +10321,28 @@ export const runtimeTxAuthorized = (tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay
 };
 const inputFingerprint = (tx: EntityTx): string => encodeEntityTx(tx);
 const frameIdOf = (frame: EntityFrame): string => { const h = hashEntityFrame(frame); return h.ok ? h.value : canon(frame); };
-type Lane = { readonly entityId: EntityId; readonly signerId: string; readonly from?: string | undefined; readonly timestamp: bigint; readonly txs?: readonly EntityTx[] | undefined; readonly proposal?: Extract<EntityInput, { kind: "proposal" }> | undefined; readonly precommit?: Extract<EntityInput, { kind: "precommit" }> | undefined; readonly vote?: VoteInput | undefined };
+type Lane = { readonly entityId: EntityId; readonly signerId: string; readonly from?: string | undefined; readonly timestamp: bigint; readonly txs?: readonly EntityTx[] | undefined; readonly proposal?: Extract<EntityInput, { kind: "proposal" }> | undefined; readonly precommit?: Extract<EntityInput, { kind: "precommit" }> | undefined; readonly vote?: VoteInput | undefined; readonly jPrefix?: JPrefixInput | undefined };
 const laneOf = (i: RoutedEntityInput): Lane => matchBy("kind", i.input, {
   txs: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.timestamp, txs: x.txs }),
   proposal: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.frame.timestamp, proposal: x }),
   precommit: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: 0n, precommit: x }),
   leaderTimeoutVote: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.timestamp, vote: x }),
+  jPrefixAttestations: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.timestamp ?? 0n, jPrefix: x }),
 });
 /** og entityInputMergeKey (without runtimeOutput / cross-j / J-prefix lanes, which the rewrite does not carry); each timeout vote is its own lane. */
-const mergeKey = (l: Lane): string => {
+const mergeKey = (l: Lane): Result<string, RuntimeError> => {
   const base = `${lower(l.entityId)}:${lower(l.signerId)}`;
+  if (l.jPrefix !== undefined) {
+    // og: one signed head per J-prefix input, keyed by its signer, target height and unsigned body hash
+    const [entry, ...rest] = l.jPrefix.attestations;
+    if (entry === undefined) return frameErr("ENTITY_INPUT_J_PREFIX_MISSING");
+    if (rest.length > 0) return frameErr("ENTITY_INPUT_J_PREFIX_MUST_BE_SPLIT");
+    const [raw, a] = entry, { signature: _signature, ...unsigned } = a;
+    return ok(`${base}:j-prefix:${raw.toLowerCase()}:${a.targetEntityHeight}:${unwrapOr(jPrefixAttestationHash(unsigned), () => canon(unsigned))}`);
+  }
+  return ok(laneKey(l, base));
+};
+const laneKey = (l: Lane, base: string): string => {
   if (l.vote !== undefined) return `${base}:leader:${l.vote.vote.targetHeight}:${lower(l.vote.vote.voterId)}:${unwrapOr(hashLeaderVote(l.vote.vote), () => canon(l.vote?.vote))}`;
   if (l.precommit !== undefined) return `${base}:precommit:${l.precommit.height}:${lower(l.precommit.frameHash)}`;
   return l.txs !== undefined && l.txs.length > 0 ? `${base}:tx-origin:${lower(l.from)}` : base;
@@ -10167,10 +10374,13 @@ const dedupAccountInputs = (txs: readonly EntityTx[]): readonly EntityTx[] => fi
 export const mergeEntityInputs = (inputs: readonly RoutedEntityInput[]): Result<readonly RoutedEntityInput[], RuntimeError> => {
   const merged = new Map<string, Lane>(), conflicts: Lane[] = [];
   for (const input of inputs) {
-    const lane = laneOf(input), key = mergeKey(lane), existing = merged.get(key);
+    const lane = laneOf(input), laneMergeKey = mergeKey(lane);
+    if (!laneMergeKey.ok) return laneMergeKey;
+    const key = laneMergeKey.value, existing = merged.get(key);
     if (existing === undefined) { merged.set(key, lane); continue; }
     if (existing.proposal !== undefined && lane.proposal !== undefined && (frameIdOf(existing.proposal.frame) !== frameIdOf(lane.proposal.frame) || existing.proposal.frame.height !== lane.proposal.frame.height)) { conflicts.push(lane); continue; }
     if ((lane.vote !== undefined || existing.vote !== undefined) && canon(lane.vote?.vote) !== canon(existing.vote?.vote)) return frameErr(`ENTITY_LEADER_VOTE_EQUIVOCATION:${lane.vote?.vote.voterId ?? "missing"}`);
+    if ((lane.jPrefix !== undefined || existing.jPrefix !== undefined) && canon(lane.jPrefix?.attestations) !== canon(existing.jPrefix?.attestations)) return frameErr("ENTITY_INPUT_J_PREFIX_EQUIVOCATION");
     let next: Lane = existing;
     if (lane.txs !== undefined && !exactReplay(existing, lane)) next = { ...next, txs: [...(existing.txs ?? []), ...lane.txs] };
     if (lane.precommit !== undefined && existing.precommit !== undefined) {
@@ -10182,7 +10392,7 @@ export const mergeEntityInputs = (inputs: readonly RoutedEntityInput[]): Result<
     merged.set(key, next);
   }
   return ok([...merged.values(), ...conflicts].map((l): RoutedEntityInput => {
-    const input: EntityInput = l.vote ?? l.proposal ?? l.precommit ?? { kind: "txs", timestamp: l.timestamp, txs: dedupAccountInputs(l.txs ?? []) };
+    const input: EntityInput = l.vote ?? l.jPrefix ?? l.proposal ?? l.precommit ?? { kind: "txs", timestamp: l.timestamp, txs: dedupAccountInputs(l.txs ?? []) };
     return { entityId: l.entityId, signerId: l.signerId, input, ...opt("from", l.from) };
   }));
 };
@@ -11451,17 +11661,18 @@ const observeJRange = (rt: Runtime, d: Extract<RuntimeTx, { type: "observeJRange
     return map(recordJHistory(history, observation, replica.state), (jHistory) => withLocal(rt, key, { jHistory }));
   });
 };
-/**
- * og rewindJHistoryRuntimeTx. og also refuses a rewind into a range its locked frame signed (J_HISTORY_SIGNED_LOCK_REORG); the rewrite's Entity
- * frames carry no j_event range tx, so no locked frame can have signed one.
- */
+/** og rewindJHistoryRuntimeTx: never below the certified anchor, never into a range this validator's locked frame signed (a precommit cannot be revoked). */
 const rewindJHistory = (rt: Runtime, d: Extract<RuntimeTx, { type: "rewindJHistory" }>["data"]): Result<Runtime, RuntimeError> => {
   const entityId = String(d.entityId || "").trim().toLowerCase(), signerId = String(d.signerId || "").trim().toLowerCase(), match = replicaByKeyCI(rt, entityId, signerId);
   if (match === undefined) return txErr(`J_HISTORY_LOCAL_REPLICA_MISSING:${entityId}:${signerId}`);
   const [key, replica] = match, history = localOf(rt, key).jHistory;
   if (nText(history?.jurisdictionRef) !== nText(d.jurisdictionRef)) return txErr(`J_HISTORY_REWIND_JURISDICTION_MISMATCH:${entityId}:${signerId}`);
-  return chain(certifiedJAnchor(replica.state), (anchor) => anchor && d.conflictingHeight <= anchor.height ? txErr(`J_HISTORY_FINALIZED_REORG:${d.conflictingHeight}`)
-    : map(rewindJHistoryTo(replica.state, history), (jHistory) => withLocal(rt, key, { jHistory })));
+  return chain(certifiedJAnchor(replica.state), (anchor) => {
+    if (anchor && d.conflictingHeight <= anchor.height) return txErr(`J_HISTORY_FINALIZED_REORG:${d.conflictingHeight}`);
+    const signed = replica._tag === "locked" && replica.frame.txs.some((tx) => tx.type === "j_event" && d.conflictingHeight > Number(tx.data["baseHeight"]) && d.conflictingHeight <= Number(tx.data["scannedThroughHeight"]));
+    if (signed && replica._tag === "locked") return txErr(`J_HISTORY_SIGNED_LOCK_REORG:entity=${entityId}:signer=${signerId}:frameHeight=${replica.frame.height}:frameHash=${unwrapOr(hashEntityFrame(replica.frame), () => "")}:jHeight=${d.conflictingHeight}`);
+    return map(rewindJHistoryTo(replica.state, history), (jHistory) => withLocal(rt, key, { jHistory }));
+  });
 };
 
 // ---- og entity/tx/j-events.ts applyJEvent over jurisdiction/machine/{range-budget, j-event-range-validation, history-consensus, local-history}: the Entity-certified J range ----
@@ -13130,7 +13341,7 @@ const resolveNumberedRegistrationIntent = (rt: Runtime, resolution: RuntimeData)
 /** og scheduled-wake.ts nextReplicaDeadline: the leader's earliest wake, or a validator's leader-timeout deadline from its last consensus progress. */
 const replicaDeadline = (r: EntityReplica, local: ReplicaLocal | undefined): number | undefined => {
   if (isActiveLeader(r)) return nextWakeAt(r);
-  const due = leaderTimeoutDue(r, BigInt(local?.lastConsensusProgressAt ?? Number(r.state.timestamp)));
+  const due = leaderTimeoutDue(r, BigInt(local?.lastConsensusProgressAt ?? Number(r.state.timestamp)), local?.jHistory);
   return due === undefined ? undefined : Number(due);
 };
 /** og isBatchEmpty over the committed sent batch. */
@@ -13155,7 +13366,7 @@ export const runtimeWake = (rt: Runtime, now: number, queued: RuntimeInput = { r
   const at = BigInt(now);
   const entityInputs = due.flatMap(({ key, r }): RoutedEntityInput[] => {
     if (busy.has(key)) return [];
-    const input = isActiveLeader(r) ? localScheduledWake(r, at) : localTimeoutVote(r, at);
+    const input = isActiveLeader(r) ? localScheduledWake(r, at) : localTimeoutVote(r, at, rt.replicaLocal.get(key)?.jHistory);
     return input === undefined ? [] : [{ entityId: r.state.id, signerId: r.signerId, input }];
   });
   // og collectDueJSubmitRuntimeTxs: the active leader's sealed batch, once per retry window, unless an abort, a retry or a committed attempt is pending
@@ -13214,7 +13425,9 @@ const consensusProgressed = (before: EntityReplica, after: EntityReplica, input:
   after.head.height > before.head.height
   || (input.kind === "proposal" && after._tag === "locked" && (before._tag !== "locked" || before.frame !== after.frame))
   || (input.kind === "leaderTimeoutVote" && (input.local === true || (after.pendingLeaderCertificate !== undefined && after.pendingLeaderCertificate !== before.pendingLeaderCertificate)))
-  || (input.kind === "txs" && local?.lastConsensusProgressAt === undefined && !isProposalLeader(before) && after.mempool.length > before.mempool.length);
+  || (input.kind === "txs" && local?.lastConsensusProgressAt === undefined && !isProposalLeader(before) && after.mempool.length > before.mempool.length)
+  // og ensureLocalJPrefixAttestation / handleJPrefixAttestations: a new or merged head in this validator's J-prefix round
+  || (after.jPrefixRound !== undefined && after.jPrefixRound !== before.jPrefixRound && !consensusEqual(after.jPrefixRound.attestations, before.jPrefixRound?.attestations ?? new Map()));
 /** og applyRuntimeTx. */
 export const applyRuntimeTxStep = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<TxStep, RuntimeError> => chain(runtimeTxAuthorized(tx, ctx), (): Result<TxStep, RuntimeError> => {
   const state = (r: Result<Runtime, RuntimeError>): Result<TxStep, RuntimeError> => map(r, noJ);
@@ -13257,6 +13470,11 @@ const runtimeHtlcInfra = (ctx: RuntimeCtx, rt: Runtime, entityId: EntityId): Htl
   const given = ctx.htlcInfra?.(entityId), seed = rt.encryptionSeeds.get(entityId);
   return given?.encryptionPrivateKey !== undefined || seed === undefined ? given : { profiles: [], ...given, encryptionPrivateKey: entityEncryptionPrivateKey(seed, entityId) };
 };
+/** og replica.jHistory as the Entity reads it: pruned to the committed finality (og prunes at every commit; a failed prune fails that commit). */
+const replicaJHistory = (rt: Runtime, key: string, r: EntityReplica): ValidatorJHistory | undefined => {
+  const h = rt.replicaLocal.get(key)?.jHistory;
+  return unwrapOr(pruneFinalizedJHistory(h, Number(r.state.committed["lastFinalizedJHeight"] || 0)), () => h);
+};
 export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx): Result<RuntimeStep, RuntimeError> => chain(validateRuntimeInput(rt, input), (jOutbox) => {
   const forged = forgedIngress(input, ctx);
   if (forged !== undefined) return frameErr(forged);
@@ -13270,8 +13488,8 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
     const { store, outs } = foldStore(afterTxs.entities, merged, (read, routed): StoreStep<string, EntityReplica, Out> => {
       const key = replicaKey(routed.entityId, routed.signerId), r = read(key);
       if (r === undefined) return refused({ _tag: "no_such_entity", id: routed.entityId });
-      const stamped: RoutedEntityInput = routed.input.kind === "txs" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
-      const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, afterTxs, routed.entityId), ...opt("activeJurisdiction", afterTxs.activeJurisdiction) });
+      const stamped: RoutedEntityInput = routed.input.kind === "txs" || routed.input.kind === "jPrefixAttestations" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
+      const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, afterTxs, routed.entityId), ...opt("activeJurisdiction", afterTxs.activeJurisdiction), ...opt("jHistory", replicaJHistory(afterTxs, key, r)) });
       if (!applied.ok) return refused(applied.error);
       const effects = applied.value.committed, progressed = consensusProgressed(r, applied.value.replica, stamped.input, afterTxs.replicaLocal.get(key));
       return { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [], applied: [stamped], committed: applied.value.replica.head.height > r.head.height, progressed: progressed ? key : undefined, ...(effects === undefined ? {} : { effects: [key, effects] as const }) }, stop: false };
@@ -13280,6 +13498,11 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
     // og attachCommitProofsAndOutputs: each committed frame's witnesses (stamped with the Runtime clock), pruned to what stays reachable.
     let replicaLocal = afterTxs.replicaLocal;
     for (const key of outs.flatMap((o) => (o.progressed === undefined ? [] : [o.progressed]))) replicaLocal = mapSet(replicaLocal, key, { ...(replicaLocal.get(key) ?? {}), lastConsensusProgressAt: Number(timestamp) });
+    // og pruneReplicaFinalizedJHistory at each commit: the validator-local J history drops what the Entity certified
+    for (const key of new Set(outs.flatMap((o) => (o.committed ? o.applied.map((i) => replicaKey(i.entityId, i.signerId)) : [])))) {
+      const current = replicaLocal.get(key), replica = store.get(key);
+      if (current?.jHistory !== undefined && replica !== undefined) replicaLocal = mapSet(replicaLocal, key, { ...current, jHistory: replicaJHistory({ ...afterTxs, replicaLocal }, key, replica) });
+    }
     for (const [key, effects] of outs.flatMap((o) => (o.effects === undefined ? [] : [o.effects]))) {
       const current = replicaLocal.get(key) ?? {}, witness = new Map(current.hankoWitness ?? []), state = store.get(key)?.state;
       for (const [hash, w] of effects.witnesses) witness.set(hash, { ...w, createdAt: Number(timestamp) });
