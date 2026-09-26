@@ -165,7 +165,7 @@ import { handleHtlcPayment } from "../../core/entity/tx/handlers/htlc/payment.ts
 import { createBookIntentProgram, applyBookIntentProgram } from "../../core/entity/books/book-intents.ts";
 import { validateHtlcPreparedInfraContext } from "../../core/entity/paybook/prepared-context-validation.ts";
 import { entityCollectionCommitment as ogCollection } from "../../core/entity/state/persistent-collection-map.ts";
-import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, unwrap, verifiers, withTestJurisdiction } from "../xln_run.ts";
 import {
   applyRuntime, assertOriginated, convertOutput, createEntity, createRuntime, entityCollectionCommitment, holds, htlcPaymentTxHash, isLeft, materializeOriginated, preparedOriginOf, replicaId, replicaKey, spawn, tokenId,
   validatePreparedHtlcPayment, wireTx, type AccountReplica, type Address, type Binary, type EntityId, type EntityReplica, type EntityTx, type HtlcFrameInfra, type PreparedOriginated, type RoutedEntityInput, type Runtime,
@@ -195,7 +195,7 @@ const quiet = (start: Runtime, first: RoutedEntityInput[], ctx: object = verifie
 const open = (to: EntityId, creditAmount?: bigint): EntityTx => ({ type: "openAccount", data: { targetEntityId: to, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig, ...(creditAmount === undefined ? {} : { creditAmount, tokenId: unwrap(tokenId("1")) }) } } as EntityTx);
 /** Alice -- Bob -- Carol: Bob opens both Accounts and extends Alice 1000 of credit; Carol extends Bob 1000. */
 const network = (): Runtime => {
-  let rt = spawn(spawn(spawn(createRuntime(), entityOf(ALICE)), entityOf(BOB)), entityOf(CAROL));
+  let rt = spawn(spawn(spawn(withTestJurisdiction(createRuntime()), entityOf(ALICE)), entityOf(BOB)), entityOf(CAROL));
   rt = quiet(rt, [inputOf(BOB, [open(ALICE, 1000n), open(CAROL)], NOW)]);
   return quiet(rt, [inputOf(CAROL, [{ type: "extendCredit", data: { counterpartyEntityId: BOB, tokenId: unwrap(tokenId("1")), amount: 1000n } }], NOW + 100n)]);
 };
@@ -521,7 +521,7 @@ describe("entity-cross-j: inbound HTLC on a 2-of-2 hub (og assertHtlcPreparedInf
     const hubKey = (() => { const priv = new Uint8Array(32).fill(29); return { priv: "0x" + Buffer.from(priv).toString("hex"), pub: "0x" + Buffer.from(x25519.getPublicKey(priv)).toString("hex") }; })();
     const hub = (signer: Address) => unwrap(createEntity({ id: HUB, jurisdiction: JUR, threshold: 2n, members: new Map([[bobAddr, { shares: 1n }], [carolAddr, { shares: 1n }]]), signerId: signer, committed: { entityEncryptionPublicKey: hubKey.pub } }));
     const hubInput = (txs: EntityTx[], timestamp: bigint): RoutedEntityInput => ({ entityId: HUB, signerId: bobAddr, input: { kind: "txs", timestamp, txs } });
-    let rt = spawn(spawn(spawn(spawn(createRuntime(), entityOf(ALICE)), hub(bobAddr)), hub(carolAddr)), entityOf(CAROL));
+    let rt = spawn(spawn(spawn(spawn(withTestJurisdiction(createRuntime()), entityOf(ALICE)), hub(bobAddr)), hub(carolAddr)), entityOf(CAROL));
     rt = quiet(rt, [hubInput([open(ALICE, 1000n), open(CAROL)], NOW)]);
     rt = quiet(rt, [inputOf(CAROL, [{ type: "extendCredit", data: { counterpartyEntityId: HUB, tokenId: unwrap(tokenId("1")), amount: 1000n } }], NOW + 100n)]);
     const secret = "0x" + "31".repeat(32);

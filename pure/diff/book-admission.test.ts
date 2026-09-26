@@ -29,7 +29,7 @@ import type { AccountReplica as OgReplica, AccountTx as OgTx } from "../../core/
 import {
   admit, admitAt, applyBookCommand, applyCommittedSwapCancels, applyEntityInput, applyRuntime, bookCommitmentHash, bookOrders, convertOutput, createBook, createEntity, createRuntime, entityRootOf, offersForMatching, pendingAccountInput,
   processOrderbookCancels, processOrderbookSwaps, tradesMatched, foldTxs, replicaId, replicaKey, spawn, tokenId, wireOf, wireTx, type EntityInput, type EntityOutput, type EntityReplica, type AccountReplica, type Book, type BookTx, type Hub, type HubAccount, type OrderbookExt, type PairDimensions, type SwapOffer, type SwapOfferEvent, type SwapRef, type EntityId, type EntityTx, type WireAccountTx } from "../xln.ts";
-import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, genesisAB, partyIn, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, genesisAB, partyIn, unwrap, verifiers, withTestJurisdiction } from "../xln_run.ts";
 
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const rng = prng(0xb00c_ad);
@@ -400,7 +400,7 @@ describe("book-admission: hub order book inside entity consensus", () => {
   const entityOf = (id: EntityId, signer: typeof aliceAddr) => unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[signer, { shares: 1n }]]) }));
   const signers = new Map<EntityId, typeof aliceAddr>([[ALICE, aliceAddr], [BOB, bobAddr], [CAROL, carolAddr]]);
   const world = () => {
-    let rt = spawn(spawn(spawn(createRuntime(), entityOf(ALICE, aliceAddr)), entityOf(BOB, bobAddr)), entityOf(CAROL, carolAddr));
+    let rt = spawn(spawn(spawn(withTestJurisdiction(createRuntime()), entityOf(ALICE, aliceAddr)), entityOf(BOB, bobAddr)), entityOf(CAROL, carolAddr));
     let now = NOW;
     const log: { target: EntityId; before: EntityReplica; input: EntityInput }[] = [];
     const send = (entityId: EntityId, txs: readonly EntityTx[]) => {
@@ -454,7 +454,7 @@ describe("book-admission: hub order book inside entity consensus", () => {
     expect([traded.tradeCount, bookOrders(traded).length]).toEqual([1, 0]);
     // og commitOrderbookMatchResult: the hub frame that matched carries one SwapMatched runtime event with the new trade count (replayed through foldTxs)
     const matching = log.filter((e) => e.target === CAROL && e.input.kind === "txs" && (e.before.state.orderbookExt?.books.get("1/2")?.tradeCount ?? 0) === 0).map((e) => {
-      const input = e.input as Extract<EntityInput, { kind: "txs" }>, r = foldTxs(e.before.state, e.before.accountReplicas, [...e.before.mempool, ...input.txs], { verify: verifiers.verify, timestamp: input.timestamp });
+      const input = e.input as Extract<EntityInput, { kind: "txs" }>, r = foldTxs(e.before.state, e.before.accountReplicas, [...e.before.mempool, ...input.txs], { verify: verifiers.verify, timestamp: input.timestamp, jReplicas: withTestJurisdiction(createRuntime()).jReplicas });
       return r.ok ? (r.value.draft.runtimeEvents ?? []).filter((x) => x.eventName === "SwapMatched") : [];
     }).filter((x) => x.length > 0);
     expect(matching).toEqual([[{ eventName: "SwapMatched", data: { entityId: CAROL, count: 1 } }]]);

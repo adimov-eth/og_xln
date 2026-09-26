@@ -2124,7 +2124,7 @@ export type BodyError =
   | CrossError
   | Tagged<"unchosen", { hole: Hole }>;
 /** `settlement` is the replica's settlement authority: its Hanko verifier and the dispute-proof nonce floor (max of nextProofNonce, current+1, counterparty+1). og passes both through AccountConsensusContext. */
-export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number };
+export type SettlementCtx = { readonly verify: Verify; readonly proofNonceFloor: number; readonly deltaTransformer?: DeltaTransformerRef | undefined };
 export type FoldCtx = { readonly byLeft: boolean; readonly nowMs: bigint; readonly jHeight: bigint; readonly accountHeight: bigint; readonly settlement?: SettlementCtx | undefined };
 /**
  * Account outputs to the parent Entity (og apply-result outcomes and AccountOutput candidate effects), perspective-free:
@@ -2704,7 +2704,7 @@ const ogLockRow = (l: HtlcLock): Record<string, unknown> => {
 const sameEvidence = (x: ClaimRow, y: ClaimRow): boolean => x.jBlockHash === y.jBlockHash && x.eventsHash === y.eventsHash;
 const pruneThrough = (rows: readonly ClaimRow[], height: bigint): readonly ClaimRow[] | undefined => { const kept = rows.filter((r) => r.jHeight > height); return kept.length === 0 ? undefined : kept; };
 /** og j-events/finality.ts: every AccountSettled names this pair, nonces never regress below jNonce, and each token row takes the chain's collateral/ondelta. */
-const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[]): Result<AccountBody, BodyError> => {
+const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[], dt?: DeltaTransformerRef): Result<AccountBody, BodyError> => {
   const left = a.account.id.left.toLowerCase(), right = a.account.id.right.toLowerCase();
   return chain(foldResult(events, a.jNonce, (prev, e): Result<number, BodyError> =>
     e.data.leftEntity !== left || e.data.rightEntity !== right ? err({ _tag: "settled_pair" }) : e.data.nonce < prev ? err({ _tag: "settled_nonce" }) : ok(e.data.nonce)), (jNonce) =>
@@ -2716,7 +2716,7 @@ const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[]): Resul
       if (requested <= 0n || increase <= 0n) return ok(settled);
       // og finality.ts: a collateral increase against a pending request also clears the shadow submission marker.
       return ok(clearSubmittedAt(requested > increase ? { ...settled, requested: mapSet(settled.requested, tk, requested - increase) } : { ...settled, requested: mapDelete(settled.requested, tk), requestFees: mapDelete(settled.requestFees, tk) }, tk));
-    })), (b) => map(activateWorkspace(b, jNonce), (c) => ({ ...c, jNonce }))));
+    })), (b) => map(activateWorkspace(b, jNonce, dt), (c) => ({ ...c, jNonce }))));
 };
 type ClaimCursor = { readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint };
 type ClaimStep = { readonly claimRows: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly finalizes: boolean };
@@ -2732,7 +2732,7 @@ const claimStep = (c: ClaimCursor, own: ClaimRow): Result<ClaimStep, ClaimError>
 };
 const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep => chain(claimRowOf(tx, ctx.byLeft), (own) => chain(claimStep(a, own), (s) => {
   if (!s.finalizes) return ok(step(s.claimRows === a.claimRows ? a : { ...a, claimRows: s.claimRows }));
-  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events), (b) => step({ ...b, claimRows: s.claimRows, finalizedJHeight: s.finalizedJHeight })));
+  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events, ctx.settlement?.deltaTransformer), (b) => step({ ...b, claimRows: s.claimRows, finalizedJHeight: s.finalizedJHeight })));
 }));
 const settleErr = (reason: string): Result<never, BodyError> => err({ _tag: "settlement", reason });
 const settlementToken = (t: unknown): t is number => typeof t === "number" && Number.isSafeInteger(t) && t >= 0 && t <= 65_535;
@@ -2826,7 +2826,7 @@ const upsertWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_t
   }));
 };
 /** og settlement-projection.ts: the post-settlement rows the dispute proof at nonce N+1 commits to. */
-const projectedProofHash = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[]): Result<string, BodyError> =>
+const projectedProofHash = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[], dt?: DeltaTransformerRef): Result<string, BodyError> =>
   chain(mapErr(committedView(a), uncommitted), (view) => {
     const rows = new Map(view.deltas);
     const row = (tokenId: number): Result<CommittedDelta, BodyError> => {
@@ -2844,7 +2844,7 @@ const projectedProofHash = (a: AccountBody, diffs: readonly WorkspaceDiff[], for
       if (ondelta < INT512_MIN || ondelta > INT512_MAX) return settleErr("SETTLEMENT_PROJECTED_ONDELTA_RANGE");
       rows.set(diff.tokenId, { ...d, collateral, ondelta });
       return ok(undefined);
-    })), () => chain(traverse(forgive, row), () => map(mapErr(accountProofBody({ ...view, deltas: rows }), (e): BodyError => ({ _tag: "settlement", reason: e._tag })), proofBodyHash)));
+    })), () => chain(traverse(forgive, row), () => map(mapErr(accountProofBody({ ...view, deltas: rows }, dt), (e): BodyError => ({ _tag: "settlement", reason: e._tag === "transformer" ? e.code : e._tag })), proofBodyHash)));
   });
 const settlementHashOf = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[], nonce: number): Result<string, BodyError> => {
   const { domain } = a.terms, { left, right } = a.account.id;
@@ -2874,7 +2874,7 @@ const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_tr
       const post = x.postProof, postNonce = post.nonce;
       if (!Number.isSafeInteger(postNonce) || postNonce < 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_INVALID");
       if (postNonce !== nonce + 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_MISMATCH");
-      return chain(projectedProofHash(a, diffs, forgive), (bodyHash) => {
+      return chain(projectedProofHash(a, diffs, forgive, auth.deltaTransformer), (bodyHash) => {
         if (post.proofBodyHash.toLowerCase() !== bodyHash.toLowerCase()) return settleErr("POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH");
         return chain(chain(mapErr(committedView(a), uncommitted), (view) => mapErr(accountDisputeHash(view, bodyHash, postNonce, post.proposerIsLeft), (e): BodyError => ({ _tag: "settlement", reason: e._tag }))), (disputeHash) => {
           if (post.disputeHash.toLowerCase() !== disputeHash.toLowerCase()) return settleErr("POST_SETTLEMENT_DISPUTE_HASH_MISMATCH");
@@ -2901,8 +2901,8 @@ const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_tr
 };
 /** og buildSettlementHankoDraft / prepareSettlementExecution targets: compiled diffs, the settlement hash at `nonce`, and the post-settlement N+1 dispute proof. */
 export type SettlementTargets = { readonly diffs: readonly WorkspaceDiff[]; readonly forgive: readonly number[]; readonly settlementHash: string; readonly postProof: { readonly proofBodyHash: string; readonly disputeHash: string; readonly nonce: number; readonly proposerIsLeft: boolean } };
-export const settlementTargets = (a: AccountBody, w: SettlementWorkspace, nonce: number, proposerIsLeft: boolean): Result<SettlementTargets, BodyError> =>
-  chain(compileOps(w.ops, w.lastModifiedByLeft), ({ diffs, forgive }) => chain(settlementHashOf(a, diffs, forgive, nonce), (settlementHash) => chain(projectedProofHash(a, diffs, forgive), (proofBodyHash) =>
+export const settlementTargets = (a: AccountBody, w: SettlementWorkspace, nonce: number, proposerIsLeft: boolean, dt?: DeltaTransformerRef): Result<SettlementTargets, BodyError> =>
+  chain(compileOps(w.ops, w.lastModifiedByLeft), ({ diffs, forgive }) => chain(settlementHashOf(a, diffs, forgive, nonce), (settlementHash) => chain(projectedProofHash(a, diffs, forgive, dt), (proofBodyHash) =>
     map(chain(mapErr(committedView(a), uncommitted), (view) => mapErr(accountDisputeHash(view, proofBodyHash, nonce + 1, proposerIsLeft), (e): BodyError => ({ _tag: "settlement", reason: e._tag }))),
       (disputeHash) => ({ diffs, forgive, settlementHash, postProof: { proofBodyHash, disputeHash, nonce: nonce + 1, proposerIsLeft } })))));
 /** og assertCanonicalSettlementWorkspace: the stored hash is a 32-byte word equal to the recomputed body hash (returned lowercase). */
@@ -2929,7 +2929,7 @@ const settleTransition = (a: AccountBody, x: TxOf<"settle_transition">, ctx: Fol
   });
 };
 /** og finality.ts activatePostSettlementProof, body side: an unsigned workspace clears; a signed one clears once its nonce is final, after its N+1 proof checks out. */
-const activateWorkspace = (b: AccountBody, finalizedNonce: number): Result<AccountBody, BodyError> => {
+const activateWorkspace = (b: AccountBody, finalizedNonce: number, dt?: DeltaTransformerRef): Result<AccountBody, BodyError> => {
   const w = b.settlement;
   if (w === undefined) return ok(b);
   if (!signedWorkspace(w)) return ok({ ...b, settlement: undefined });
@@ -2942,7 +2942,7 @@ const activateWorkspace = (b: AccountBody, finalizedNonce: number): Result<Accou
   if (p.nonce !== signed + 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_MISMATCH");
   if (p.leftHanko === undefined || p.rightHanko === undefined || p.leftHanko === "" || p.rightHanko === "") return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
   if (p.disputeHash === "" || p.proofBodyHash === "") return settleErr("POST_SETTLEMENT_DISPUTE_HASH_MISSING");
-  return chain(projectedProofHash(b, [], []), (h) => h.toLowerCase() !== p.proofBodyHash.toLowerCase() ? settleErr("POST_SETTLEMENT_FINALIZED_PROOF_BODY_MISMATCH") : ok({ ...b, settlement: undefined }));
+  return chain(projectedProofHash(b, [], [], dt), (h) => h.toLowerCase() !== p.proofBodyHash.toLowerCase() ? settleErr("POST_SETTLEMENT_FINALIZED_PROOF_BODY_MISMATCH") : ok({ ...b, settlement: undefined }));
 };
 // ---- swaps: og handlers/swap/{offer,resolve}, account/swap/swap-net-authorization.ts, orderbook/types.ts quantization ----
 const swapErr = (reason: string): Result<never, BodyError> => err({ _tag: "swap", reason });
@@ -3607,11 +3607,93 @@ export const committed = (b: AccountBody): Result<Committed, ViewError> => chain
 export const committedRoot = (b: AccountBody): Result<string, ViewError> => map(committed(b), (c) => c.root);
 
 
-export type ProofError = Tagged<"transformers_unported" | "bad_watch_seed" | "bad_dispute_config" | "offdelta_beyond_money" | "final_delta_overflow" | "final_delta_int256_min" | "too_many_tokens" | "bad_domain" | "bad_entity" | "bad_nonce" | "bad_hash">;
+export type ProofError = Tagged<"bad_watch_seed" | "bad_dispute_config" | "offdelta_beyond_money" | "final_delta_overflow" | "final_delta_int256_min" | "too_many_tokens" | "bad_domain" | "bad_entity" | "bad_nonce" | "bad_hash"> | Tagged<"transformer", { code: string }>;
 const MAX_MONEY = 1n << 200n, MAX_PROOF_TOKENS = 128;
 const inInt256 = (n: bigint): boolean => n >= INT256_MIN && n <= INT256_MAX;
-export const accountProofBody = (s: CommittedAccountState): Result<ProofBody, ProofError> => {
-  if ([s.locks, s.pulls, s.swapOffers, s.subcontracts].some((m) => m.size > 0)) return err({ _tag: "transformers_unported" });
+// ---- og protocol/dispute/proof-builder.ts buildCanonicalProofBatches: the DeltaTransformer clauses of locks, swaps and pulls ----
+export type ProofPayment = { readonly deltaIndex: number; readonly amount: bigint; readonly revealedUntilTimestamp: bigint; readonly hash: string };
+export type ProofSwap = { readonly ownerIsLeft: boolean; readonly addDeltaIndex: number; readonly addAmount: bigint; readonly subDeltaIndex: number; readonly subAmount: bigint };
+export type ProofPull = { readonly deltaIndex: number; readonly amount: bigint; readonly claimedRatio: number; readonly fullHash: string; readonly partialRoot: string; readonly targetRole: boolean };
+export type ProofBatch = { readonly payments: readonly ProofPayment[]; readonly swaps: readonly ProofSwap[]; readonly pulls: readonly ProofPull[] };
+const deltaBatchAbi = (b: ProofBatch): Abi => t([
+  arr(b.payments, (p) => t([A.uint(BigInt(p.deltaIndex)), signedAmountAbi(p.amount), A.uint(p.revealedUntilTimestamp), A.b32(p.hash)])),
+  arr(b.swaps, (s) => t([A.bool(s.ownerIsLeft), A.uint(BigInt(s.addDeltaIndex)), A.uint(s.addAmount), A.uint(BigInt(s.subDeltaIndex)), A.uint(s.subAmount)])),
+  arr(b.pulls, (p) => t([A.uint(BigInt(p.deltaIndex)), signedAmountAbi(p.amount), A.uint(BigInt(p.claimedRatio)), A.b32(p.fullHash), A.b32(p.partialRoot), A.bool(p.targetRole)])),
+]);
+export const encodeDeltaBatch = (b: ProofBatch): string => abiEncodeHex([deltaBatchAbi(b)]);
+/** og storageAtomBytes: 1 + msgpackr({kind:'atom', value}) of the batch hex. Every clause is static, so the ABI is 7 head words plus 5/5/7 words per item. */
+const MAX_PROOF_ATOM_BYTES = 10_000;
+const batchAtomBytes = (b: ProofBatch): number => {
+  const len = 2 + 2 * 32 * (7 + 5 * b.payments.length + 5 * b.swaps.length + 7 * b.pulls.length);
+  return len + 21 + (len < 32 ? 1 : len < 256 ? 2 : len < 65536 ? 3 : 5);
+};
+const transferChange = (senderIsLeft: boolean, amount: bigint): bigint => (senderIsLeft ? -amount : amount);
+/** og buildTransformerAllowances: per deltaIndex, positive movements authorize left and negative ones right. */
+export const batchAllowances = (b: ProofBatch): readonly JAllowance[] => {
+  const by = new Map<number, { readonly left: bigint; readonly right: bigint }>();
+  const add = (i: number, d: bigint): void => { if (d === 0n) return; const e = by.get(i) ?? { left: 0n, right: 0n }; by.set(i, d > 0n ? { ...e, left: e.left + d } : { ...e, right: e.right - d }); };
+  for (const p of b.payments) add(p.deltaIndex, p.amount);
+  for (const s of b.swaps) { add(s.addDeltaIndex, transferChange(s.ownerIsLeft, s.addAmount)); add(s.subDeltaIndex, transferChange(!s.ownerIsLeft, s.subAmount)); }
+  for (const p of b.pulls) add(p.deltaIndex, p.amount);
+  return [...by].sort(([x], [y]) => x - y).map(([i, a]) => ({ deltaIndex: BigInt(i), rightAllowance: a.right, leftAllowance: a.left }));
+};
+const batchFits = (b: ProofBatch): boolean => batchAllowances(b).every((a) => a.leftAllowance <= UINT256_MAX && a.rightAllowance <= UINT256_MAX) && batchAtomBytes(b) < MAX_PROOF_ATOM_BYTES;
+const proofErr = (code: string): Result<never, ProofError> => err({ _tag: "transformer", code });
+/** og chunkProofItems: greedy in canonical order; one item that alone does not fit refuses the proof (its index counts this kind's batches only). */
+const chunkProof = <X>(items: readonly X[], make: (xs: readonly X[]) => ProofBatch): Result<readonly ProofBatch[], ProofError> => {
+  const out: ProofBatch[] = [];
+  let chunk: readonly X[] = [];
+  for (const item of items) {
+    if (batchFits(make([...chunk, item]))) { chunk = [...chunk, item]; continue; }
+    if (chunk.length > 0) out.push(make(chunk));
+    chunk = [item];
+    if (!batchFits(make(chunk))) return proofErr(`ACCOUNT_DISPUTE_PROOF_ATOM_BYTES_EXCEEDED:transformer=${out.length}:${batchAtomBytes(make(chunk))}/${MAX_PROOF_ATOM_BYTES}`);
+  }
+  return ok(chunk.length > 0 ? [...out, make(chunk)] : out);
+};
+type ProofLockRow = { readonly hashlock: string; readonly timelock: bigint; readonly amount: bigint; readonly tokenId: number; readonly senderIsLeft: boolean };
+const byTextKey = <V>(m: CommittedMap): readonly (readonly [string, V])[] => ([...m] as [string, V][]).sort(([x], [y]) => asc(String(x), String(y)));
+/** og buildCanonicalProofBatches: payments (locks by lockId), then same-jurisdiction swaps (by offerId), then pulls (by pullId). */
+export const proofBatches = (s: CommittedAccountState): Result<readonly ProofBatch[], ProofError> => {
+  const index = new Map([...s.deltas.values()].sort((x, y) => x.tokenId - y.tokenId).map((r, i) => [r.tokenId, i] as const));
+  const at = (tokenId: number, code: string): Result<number, ProofError> => { const i = index.get(tokenId); return i === undefined ? proofErr(code) : ok(i); };
+  const payments = traverse(byTextKey<ProofLockRow>(s.locks), ([id, l]): Result<ProofPayment, ProofError> => {
+    const seconds = (l.timelock - 1n) / 1000n;
+    if (seconds <= 0n || seconds > BigInt(Number.MAX_SAFE_INTEGER)) return proofErr(`HTLC_LOCK_INVALID_TIMELOCK:${id}`);
+    return map(at(l.tokenId, `PROOF_BODY_LOCK_TOKEN_MISSING:${id}:${l.tokenId}`), (deltaIndex) => ({ deltaIndex, amount: transferChange(l.senderIsLeft, l.amount), revealedUntilTimestamp: seconds, hash: l.hashlock }));
+  });
+  const swaps = traverse(byTextKey<SwapOffer>(s.swapOffers).filter(([, o]) => !o.crossJurisdiction), ([id, o]): Result<ProofSwap, ProofError> => {
+    const code = `PROOF_BODY_SWAP_TOKEN_MISSING:${id}:give=${o.giveTokenId}:want=${o.wantTokenId}`;
+    return chain(at(Number(o.giveTokenId), code), (addDeltaIndex) => map(at(Number(o.wantTokenId), code), (subDeltaIndex) => ({ ownerIsLeft: o.makerIsLeft, addDeltaIndex, addAmount: o.giveAmount, subDeltaIndex, subAmount: o.wantAmount })));
+  });
+  const pulls = traverse(byTextKey<PullRow>(s.pulls), ([id, p]): Result<ProofPull, ProofError> => map(at(p.tokenId, `PROOF_BODY_PULL_TOKEN_MISSING:${id}:${p.tokenId}`), (deltaIndex) => ({
+    deltaIndex, amount: p.amount, claimedRatio: Math.max(0, Math.min(0xffff, Math.floor(Number(p.claimedRatio ?? 0)))), fullHash: p.fullHash, partialRoot: p.partialRoot, targetRole: p.crossJurisdiction?.leg === "target",
+  })));
+  return chain(chain(payments, (ps) => chunkProof(ps, (payments) => ({ payments, swaps: [], pulls: [] }))), (a) => chain(chain(swaps, (ss) => chunkProof(ss, (swaps) => ({ payments: [], swaps, pulls: [] }))), (b) =>
+    map(chain(pulls, (qs) => chunkProof(qs, (pulls) => ({ payments: [], swaps: [], pulls }))), (c) => [...a, ...b, ...c])));
+};
+/**
+ * og requireAccountDeltaTransformerAddress: the one durable jurisdiction whose chainId and first usable Depository are the Account's domain;
+ * its stack must name all four contracts. Names, active-J defaults and peer payloads are never proof authority.
+ */
+export type DeltaTransformerRef = Result<string, string>;
+export const deltaTransformerFor = (jReplicas: ReadonlyMap<string, JReplica> | undefined, domain: Domain): DeltaTransformerRef => {
+  const depository = domain.depositoryAddress.toLowerCase(), found: string[] = [];
+  for (const r of jReplicas?.values() ?? []) {
+    if (Number(r.chainId) !== domain.chainId || usableAddress(r.contracts?.depository)?.toLowerCase() !== depository) continue;
+    if (!Number.isSafeInteger(Number(r.chainId)) || Number(r.chainId) <= 0) return err("JURISDICTION_DURABLE_STACK_CHAIN_ID_MISSING");
+    for (const [name, v] of [["DEPOSITORY", r.contracts?.depository], ["ENTITY_PROVIDER", r.contracts?.entityProvider], ["ACCOUNT", r.contracts?.account], ["DELTA_TRANSFORMER", r.contracts?.deltaTransformer]] as const)
+      if (usableAddress(v) === null) return err(`JURISDICTION_DURABLE_STACK_${name}_MISSING`);
+    found.push(String(r.contracts?.deltaTransformer).toLowerCase());
+  }
+  return found.length === 1 && found[0] !== undefined ? ok(found[0]) : err(`ACCOUNT_PROOF_JURISDICTION_${found.length === 0 ? "NOT_FOUND" : "AMBIGUOUS"}:${domain.chainId}:${depository}`);
+};
+const MAX_PROOF_TRANSFORMERS = 32, MAX_PROOF_BODY_BYTES = 176 * 1024;
+/**
+ * og buildAccountProofBody. The DeltaTransformer is read only when the Account has clauses to sign; og resolves it for every body,
+ * but an Account without locks, swaps or pulls signs the same body either way, so only an unresolved stack that would be read refuses.
+ */
+export const accountProofBody = (s: CommittedAccountState, deltaTransformer?: DeltaTransformerRef): Result<ProofBody, ProofError> => {
   if (!WORD.test(s.watchSeed)) return err({ _tag: "bad_watch_seed" });
   const { leftResponseSeconds: left, rightResponseSeconds: right } = s.disputeConfig;
   const uint32 = (n: number): boolean => Number.isInteger(n) && n >= 0 && n <= 0xffff_ffff;
@@ -3625,7 +3707,19 @@ export const accountProofBody = (s: CommittedAccountState): Result<ProofBody, Pr
     if (final === INT256_MIN) return err({ _tag: "final_delta_int256_min" });
   }
   if (rows.length > MAX_PROOF_TOKENS) return err({ _tag: "too_many_tokens" });
-  return ok({ watchSeed: s.watchSeed.toLowerCase(), leftResponseSeconds: BigInt(left), rightResponseSeconds: BigInt(right), offdeltas: rows.map((r) => r.offdelta), tokenIds: rows.map((r) => BigInt(r.tokenId)), transformers: [] });
+  const clauses = (batches: readonly ProofBatch[]): Result<readonly TransformerClause[], ProofError> => {
+    if (batches.length === 0) return ok([]);
+    const dt = deltaTransformer ?? err(`ACCOUNT_PROOF_JURISDICTION_NOT_FOUND:${s.domain.chainId}:${s.domain.depositoryAddress.toLowerCase()}`);
+    if (!dt.ok) return proofErr(dt.error);
+    if (usableAddress(dt.value) === null) return proofErr("MISSING_DELTA_TRANSFORMER_ADDRESS");
+    return ok(batches.map((b): TransformerClause => ({ transformerAddress: dt.value, encodedBatch: encodeDeltaBatch(b), allowances: batchAllowances(b) })));
+  };
+  return chain(chain(proofBatches(s), clauses), (transformers): Result<ProofBody, ProofError> => {
+    const body: ProofBody = { watchSeed: s.watchSeed.toLowerCase(), leftResponseSeconds: BigInt(left), rightResponseSeconds: BigInt(right), offdeltas: rows.map((r) => r.offdelta), tokenIds: rows.map((r) => BigInt(r.tokenId)), transformers };
+    if (transformers.length > MAX_PROOF_TRANSFORMERS) return proofErr(`J_DISPUTE_PROOFBODY_TRANSFORMER_LIMIT:account.signing:${transformers.length}`);
+    const size = (encodeProofBodyBytes(body).length - 2) / 2;
+    return size > MAX_PROOF_BODY_BYTES ? proofErr(`J_DISPUTE_PROOFBODY_BYTES_EXCEEDED:account.signing:${size}/${MAX_PROOF_BODY_BYTES}`) : ok(body);
+  });
 };
 export const proofBodyHash = (b: ProofBody): string => keccak256Hex(hexToBytes(encodeProofBodyBytes(b)));
 const BYTES32 = /^0[xX][0-9a-fA-F]{64}$/;
@@ -3656,21 +3750,12 @@ const asProof = <X>(r: Result<X, ProofError | ViewError>): Result<X, DisputeErro
 /** og securityContext.verifyHanko authority: `allowPreviousBoard` admits the immediately previous board within its grace window (ACK and replay paths only, never a fresh proposal); `registeredBoardHash` pins the certified board. */
 export type HankoAuthority = { readonly allowPreviousBoard: boolean; readonly registeredBoardHash?: string | undefined };
 export type Verify = (digest: string, hanko: string, entity: EntityId, authority?: HankoAuthority) => boolean;
-export type Omission = Tagged<"locks" | "pulls" | "swapOffers" | "subcontracts", { count: number }>;
-export type Omitted = readonly [Omission, ...Omission[]];
-export type LocalProof = Tagged<"complete", { body: ProofBody; bodyHash: string; jNonce: number }> | Tagged<"partial", { bodyHash: string; jNonce: number; omitted: Omitted }>;
+export type LocalProof = Tagged<"complete", { body: ProofBody; bodyHash: string; jNonce: number }>;
 export type CompleteProof = Of<LocalProof, "complete">;
-const ENCUMBRANCES = ["locks", "pulls", "swapOffers", "subcontracts"] as const;
-const proofOf = (view: CommittedAccountState): Result<LocalProof, ProofError> => {
-  const [first, ...rest] = ENCUMBRANCES.flatMap((_tag): Omission[] => (view[_tag].size > 0 ? [{ _tag, count: view[_tag].size }] : []));
-  const none = new Map<number | string, unknown>();
-  return map(accountProofBody(first === undefined ? view : { ...view, locks: none, pulls: none, swapOffers: none, subcontracts: none }), (body): LocalProof => {
-    const bodyHash = proofBodyHash(body), { jNonce } = view;
-    return first === undefined ? { _tag: "complete", body, bodyHash, jNonce } : { _tag: "partial", bodyHash, jNonce, omitted: [first, ...rest] };
-  });
-};
-export const localProof = (view: CommittedAccountState): Result<LocalProof, DisputeError> => asProof(proofOf(view));
-export type StartRefusal = Tagged<"no_witness" | "body_mismatch" | "nonce_stale" | "hash_mismatch" | "hanko_invalid" | "not_attempted"> | Tagged<"omits", { omitted: Omitted }> | Tagged<"proof", { error: ProofError | ViewError }>;
+const proofOf = (view: CommittedAccountState, dt?: DeltaTransformerRef): Result<LocalProof, ProofError> =>
+  map(accountProofBody(view, dt), (body): LocalProof => ({ _tag: "complete", body, bodyHash: proofBodyHash(body), jNonce: view.jNonce }));
+export const localProof = (view: CommittedAccountState, dt?: DeltaTransformerRef): Result<LocalProof, DisputeError> => asProof(proofOf(view, dt));
+export type StartRefusal = Tagged<"no_witness" | "body_mismatch" | "nonce_stale" | "hash_mismatch" | "hanko_invalid" | "not_attempted"> | Tagged<"proof", { error: ProofError | ViewError }>;
 export const disputeStart = (view: CommittedAccountState, proof: CompleteProof, w: DisputeHanko, peer: EntityId, verify: Verify): Result<DisputeStart, StartRefusal> => {
   if (!sameHex(proof.bodyHash, w.proofBodyHash)) return err({ _tag: "body_mismatch" });
   if (w.proofNonce <= 0 || w.proofNonce <= proof.jNonce) return err({ _tag: "nonce_stale" });
@@ -3680,13 +3765,11 @@ export const disputeStart = (view: CommittedAccountState, proof: CompleteProof, 
       starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD,
     }));
 };
-export const startOf = (body: AccountBody, witnesses: DisputeWitnesses, peer: EntityId, verify: Verify): Result<DisputeStart, StartRefusal> => {
+export const startOf = (body: AccountBody, witnesses: DisputeWitnesses, peer: EntityId, verify: Verify, dt?: DeltaTransformerRef): Result<DisputeStart, StartRefusal> => {
   const w = witnesses.counterparty;
   if (w === undefined) return err({ _tag: "no_witness" });
   const asRefusal = <X>(r: Result<X, ProofError | ViewError>): Result<X, StartRefusal> => mapErr(r, (error): StartRefusal => ({ _tag: "proof", error }));
-  return chain(asRefusal(committedView(body)), (view) => chain(asRefusal(proofOf(view)), (proof) => match(proof, {
-    partial: ({ omitted }): Result<DisputeStart, StartRefusal> => err({ _tag: "omits", omitted }), complete: (c): Result<DisputeStart, StartRefusal> => disputeStart(view, c, w, peer, verify),
-  })));
+  return chain(asRefusal(committedView(body)), (view) => chain(asRefusal(proofOf(view, dt)), (proof) => disputeStart(view, proof, w, peer, verify)));
 };
 const draftPlan = (view: CommittedAccountState, bodyHash: string, nonce: number, proposerIsLeftFlag: boolean): Result<DisputePlan, DisputeError> =>
   map(asProof(accountDisputeHash(view, bodyHash, nonce, proposerIsLeftFlag)), (h) => ({ _tag: "sign", draft: { hash: h, proofBodyHash: bodyHash, proofNonce: nonce, proposerIsLeft: proposerIsLeftFlag } }));
@@ -3916,8 +3999,9 @@ export type CertifiedBoard = { readonly boardHash: string; readonly activatedAtJ
 /** og AccountReplica.counterpartyBoardHankoRefresh: the last board activation the peer re-Hanko'd our committed frame under. */
 export type BoardRefresh = { readonly activationJHeight: number; readonly activationLogIndex: number; readonly frameHeight: number; readonly frameHash: string };
 /** `finalizedJHeight`: the owning Entity's finalized J height (og securityContext); defaults to the Account's own. `counterpartyBoard`: og counterpartyCertifiedBoard. */
-export type DoorContext = { readonly verify: Verify; readonly self: EntityId; readonly now: bigint; readonly finalizedJHeight?: bigint | undefined; readonly counterpartyBoard?: CertifiedBoard | undefined };
-export type AccountContext = { readonly verify: Verify; readonly party: Party; readonly counterpartyBoard?: CertifiedBoard | undefined };
+/** `deltaTransformer`: og requireAccountDeltaTransformerAddress over the Runtime's jReplicas for this Account's domain (never committed). */
+export type DoorContext = { readonly verify: Verify; readonly self: EntityId; readonly now: bigint; readonly finalizedJHeight?: bigint | undefined; readonly counterpartyBoard?: CertifiedBoard | undefined; readonly deltaTransformer?: DeltaTransformerRef | undefined };
+export type AccountContext = { readonly verify: Verify; readonly party: Party; readonly counterpartyBoard?: CertifiedBoard | undefined; readonly deltaTransformer?: DeltaTransformerRef | undefined };
 /** og verifyHanko authority for a peer Hanko: the certified board when known, and whether its predecessor's grace window applies. */
 const peerAuthority = (ctx: AccountContext, allowPreviousBoard: boolean): HankoAuthority => ({ ...opt("registeredBoardHash", ctx.counterpartyBoard?.boardHash), allowPreviousBoard });
 export type AckContext = AccountContext & { readonly delivery: Delivery };
@@ -4001,26 +4085,26 @@ export const proposalWindow = (mempool: readonly WireAccountTx[], selected?: rea
   if (source.length > ACCOUNT_MEMPOOL_SIZE) return err({ _tag: "proposal_selection", reason: "too_large" });
   return selected !== undefined && withoutAccountTxs(mempool, selected).length !== mempool.length - selected.length ? err({ _tag: "proposal_selection", reason: "not_in_mempool" }) : ok(source);
 };
-export const planOpen = (r: OpenAccount, party: Party, entityClock: FrameClock, verify?: Verify, selected?: readonly WireAccountTx[]): Result<ProposalPlan, AccountReplicaError> => {
+export const planOpen = (r: OpenAccount, party: Party, entityClock: FrameClock, verify?: Verify, selected?: readonly WireAccountTx[], dt?: DeltaTransformerRef): Result<ProposalPlan, AccountReplicaError> => {
   if (r.mempool.length === 0) return err({ _tag: "empty_mempool" });
-  return chain(proposalWindow(r.mempool, selected), (window) => planWindow(r, window, party, entityClock, verify));
+  return chain(proposalWindow(r.mempool, selected), (window) => planWindow(r, window, party, entityClock, verify, dt));
 };
-const planWindow = (r: OpenAccount, window: readonly WireAccountTx[], party: Party, entityClock: FrameClock, verify: Verify | undefined): Result<ProposalPlan, AccountReplicaError> => {
+const planWindow = (r: OpenAccount, window: readonly WireAccountTx[], party: Party, entityClock: FrameClock, verify: Verify | undefined, dt: DeltaTransformerRef | undefined): Result<ProposalPlan, AccountReplicaError> => {
   // og admission.ts: a lagging proposer never mints a frame behind the committed watermark.
   const clock: FrameClock = { ...entityClock, timestamp: entityClock.timestamp > r.head.timestamp ? entityClock.timestamp : r.head.timestamp };
-  const height = r.head.height + 1n, floor = proofNonceFloor(r.dispute), folded = proposalFold(r.state, window, foldCtx({ height, ...clock }, party.left, verify === undefined ? undefined : { verify, proofNonceFloor: floor })), firstRefusal = folded.refused[0];
+  const height = r.head.height + 1n, floor = proofNonceFloor(r.dispute), folded = proposalFold(r.state, window, foldCtx({ height, ...clock }, party.left, verify === undefined ? undefined : { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt) })), firstRefusal = folded.refused[0];
   const required = minimumSafeNonce(r.state, r.dispute), stale = (tx: WireAccountTx, e: BodyError): boolean => { const n = staleHankoNonce(r.state, tx, e); return n !== undefined && n.required === required && n.supplied !== required; };
   return chain(map(proposalRefusals(window, folded.refused, stale), (retried) => withoutAccountTxs(r.mempool, withoutAccountTxs(window, retried))), (deferred) => {
     if (folded.included.length === 0 && firstRefusal !== undefined) return ok({ _tag: "idle", refused: firstRefusal.error, deferred });
     return chain(commit(folded.state), ({ view, root }) => chain(stampClaims(folded.included, r.state, party.left), ({ txs, finalized }) => {
       const unhashed = { height, timestamp: clock.timestamp, jHeight: clock.jHeight, prevFrameHash: r.head.prevFrameHash, txs, accountStateRoot: root };
-      return chain(frameStateHash(unhashed, replicaId(r), party.left), (stateHash) => chain(localProof(view), (frameProof) => chain(promoteSettled(r.dispute, r.state, folded.state, party.left, finalized), (witnesses) => map(proposalPlan(view, frameProof, witnesses, party.left), (dispute): ProposalPlan =>
+      return chain(frameStateHash(unhashed, replicaId(r), party.left), (stateHash) => chain(localProof(view, dt), (frameProof) => chain(promoteSettled(r.dispute, r.state, folded.state, party.left, finalized), (witnesses) => map(proposalPlan(view, frameProof, witnesses, party.left), (dispute): ProposalPlan =>
         ({ _tag: "frame", preview: { frame: { ...unhashed, stateHash }, draft: { state: folded.state, effects: folded.effects }, frameProof, dispute, deferred, witnesses, floor } })))));
     }));
   });
 };
-export const planAccountProposal = (r: AccountReplica, self: EntityId, clock: FrameClock, verify?: Verify, selected?: readonly WireAccountTx[]): Result<ProposalPlan, AccountReplicaError> => chain(partyOf(replicaId(r), self), (party) => match(r, {
-  open: (o) => planOpen(o, party, clock, verify, selected), proposed: () => err({ _tag: "already_proposed" }), received: () => err({ _tag: "already_proposed" }), preparing: () => err(frozenError("preparing")), disputed: () => err(frozenError("disputed")),
+export const planAccountProposal = (r: AccountReplica, self: EntityId, clock: FrameClock, verify?: Verify, selected?: readonly WireAccountTx[], dt?: DeltaTransformerRef): Result<ProposalPlan, AccountReplicaError> => chain(partyOf(replicaId(r), self), (party) => match(r, {
+  open: (o) => planOpen(o, party, clock, verify, selected, dt), proposed: () => err({ _tag: "already_proposed" }), received: () => err({ _tag: "already_proposed" }), preparing: () => err(frozenError("preparing")), disputed: () => err(frozenError("disputed")),
 }));
 const previewOf = (planned: Result<ProposalPlan, AccountReplicaError>): Result<Preview, AccountReplicaError> => chain(planned, (p) => match(p, { frame: ({ preview }): Result<Preview, AccountReplicaError> => ok(preview), idle: ({ refused }): Result<Preview, AccountReplicaError> => err(refused) }));
 export const previewOpen = (r: OpenAccount, self: EntityId, clock: FrameClock, verify?: Verify): Result<Preview, AccountReplicaError> => previewOf(planAccountProposal(r, self, clock, verify));
@@ -4096,7 +4180,7 @@ const install = (r: ProposedAccount | ReceivedAccount, signed: SignedPair, after
   return step(reopen(r, { state: draft.state, head: { _tag: "installed", height: frame.height, prevFrameHash: frame.stateHash, timestamp: frame.timestamp, certificate: { parent: frame.prevFrameHash, ...signed } }, mempool: r.mempool, acknowledged: after.acknowledged, dispute: after.dispute }), draft.effects);
 };
 const residentAck = (r: OpenAccount): AccountAck | null => (r.acknowledged !== undefined && r.acknowledged.height === r.head.height ? r.acknowledged : null);
-export const proposeOpen = (r: OpenAccount, input: Propose, ctx: AccountContext): Verb<OpenAccount | ProposedAccount> => chain(planOpen(r, ctx.party, { timestamp: input.timestamp, jHeight: input.jHeight }, ctx.verify, input.selected), (planned) => match(planned, {
+export const proposeOpen = (r: OpenAccount, input: Propose, ctx: AccountContext): Verb<OpenAccount | ProposedAccount> => chain(planOpen(r, ctx.party, { timestamp: input.timestamp, jHeight: input.jHeight }, ctx.verify, input.selected, ctx.deltaTransformer), (planned) => match(planned, {
   idle: ({ refused, deferred }): Verb<OpenAccount | ProposedAccount> => (input.frameHanko === undefined && input.disputeHanko === undefined ? ok(done({ ...r, mempool: deferred })) : err(refused)),
   frame: ({ preview: { frame, draft, frameProof, dispute, deferred, witnesses: promoted, floor } }): Verb<OpenAccount | ProposedAccount> => {
     const frameHanko = input.frameHanko;
@@ -4231,7 +4315,7 @@ const receipt = <R extends AccountReplica>(r: R, input: AckFrame, ctx: InboundAc
     () => mapErr(incomingDeadline(r.state, frame, byLeft, ctx), (v): AccountReplicaError => (v.dispute ? { _tag: "dispute_required", cause: v.error, frame, frameHanko: input.frameHanko } : v.error)));
   return gates.ok ? { _tag: "continue", validated: validated.value } : answered(gates);
 };
-const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify): Verb<ReceivedAccount> => {
+const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validated: DisputeHanko | undefined, verify: Verify, dt?: DeltaTransformerRef): Verb<ReceivedAccount> => {
   const { frame } = input, onLeft = other(party.left), floor = proofNonceFloor(cur.dispute);
   const evidence = (cause: AccountReplicaError): AccountReplicaError => ({ _tag: "dispute_required", cause, frame, frameHanko: input.frameHanko });
   // og consensus/index.ts classifyIncomingValidationFailure: a stale account-basis hanko for the one unsigned workspace is a plain refusal, not dispute evidence.
@@ -4239,25 +4323,25 @@ const admitPeerFrame = (cur: OpenAccount, input: AckFrame, party: Party, validat
     const stale = cause._tag === "settlement" ? frame.txs.filter((tx) => { const n = staleHankoNonce(cur.state, tx, cause); return n !== undefined && n.supplied < n.required && n.required === required; }) : [];
     return cause._tag === "settlement" && stale.length === 1 ? { _tag: "stale_settlement_hanko", cause } : evidence(cause);
   };
-  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor }), replayed), ({ draft, view, finalized }) => chain(localProof(view), (frameProof) =>
+  return chain(acceptFrame(frame, replicaId(cur), onLeft), () => chain(mapErr(replay(cur.state, frame, onLeft, { verify, proofNonceFloor: floor, ...opt("deltaTransformer", dt) }), replayed), ({ draft, view, finalized }) => chain(localProof(view, dt), (frameProof) =>
     chain(mapErr(promoteSettled(cur.dispute, cur.state, draft.state, party.left, finalized), evidence), (witnesses) =>
       map(mapErr(requireDispute(frameProof, witnesses, validated), evidence), () => done<ReceivedAccount, AccountOutput>({ ...cur, _tag: "received", candidate: new Candidate(frame, input.frameHanko, frameProof, draft, floor), disputeHanko: validated, dispute: witnesses }))))));
 };
 const proposalOnOpen = (r: OpenAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ReceivedAccount> =>
-  match(receipt(r, input, ctx), { answered: ({ result }): Verb<OpenAccount | ReceivedAccount> => result, continue: ({ validated }): Verb<OpenAccount | ReceivedAccount> => admitPeerFrame(r, input, ctx.party, validated, ctx.verify) });
+  match(receipt(r, input, ctx), { answered: ({ result }): Verb<OpenAccount | ReceivedAccount> => result, continue: ({ validated }): Verb<OpenAccount | ReceivedAccount> => admitPeerFrame(r, input, ctx.party, validated, ctx.verify, ctx.deltaTransformer) });
 const proposalOnProposed = (r: ProposedAccount, input: AckFrame, ctx: InboundAccountContext): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => match(receipt(r, input, ctx), {
   answered: ({ result }): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => result,
-  continue: ({ validated }): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => (ctx.party.left ? ok(done(r)) : admitPeerFrame(restore(r), input, ctx.party, validated, ctx.verify)),
+  continue: ({ validated }): Verb<OpenAccount | ProposedAccount | ReceivedAccount> => (ctx.party.left ? ok(done(r)) : admitPeerFrame(restore(r), input, ctx.party, validated, ctx.verify, ctx.deltaTransformer)),
 });
 const proposalOnReceived = (r: ReceivedAccount, input: AckFrame, ctx: InboundAccountContext): Verb<ReceivedAccount> => match(receipt(r, input, ctx), {
   answered: ({ result }): Verb<ReceivedAccount> => result,
   continue: (): Verb<ReceivedAccount> => (sameHex(input.frame.stateHash, r.candidate.frame.stateHash) ? ok(done(r)) : err({ _tag: "already_proposed" })),
 });
-export const restoreCandidate = (held: ProposedAccount | ReceivedAccount, party: Party, verify: Verify): Result<Candidate, AccountReplicaError> => {
+export const restoreCandidate = (held: ProposedAccount | ReceivedAccount, party: Party, verify: Verify, dt?: DeltaTransformerRef): Result<Candidate, AccountReplicaError> => {
   const { frame, frameHanko } = held.candidate, byLeft = proposerIsLeft(held, party);
   return chain(acceptFrame(frame, replicaId(held), byLeft), () =>
     chain(certifies(verify, frame.stateHash, frameHanko, at(party.self, party.peer, byLeft === party.left), { allowPreviousBoard: true }), () =>
-      chain(replay(held.state, frame, byLeft, { verify, proofNonceFloor: held.candidate.floor }), ({ draft, view }) => map(localProof(view), (frameProof) => new Candidate(frame, frameHanko, frameProof, draft, held.candidate.floor, held.candidate.sent)))));
+      chain(replay(held.state, frame, byLeft, { verify, proofNonceFloor: held.candidate.floor, ...opt("deltaTransformer", dt) }), ({ draft, view }) => map(localProof(view, dt), (frameProof) => new Candidate(frame, frameHanko, frameProof, draft, held.candidate.floor, held.candidate.sent)))));
 };
 export const dropFrozen = <R extends FrozenAccount>(r: R): Verb<R> => ok(done(r));
 // og freezeAccountForDispute: J claims survive while preparation can still return to active; matcher evidence survives preparation only.
@@ -4269,7 +4353,7 @@ const retainedThroughFreeze = (r: AccountReplica, keep: (tx: WireAccountTx) => b
 };
 const freeze = (r: AccountReplica, evidence: FrameEvidence | undefined, ctx: AccountContext): Verb<PreparingAccount | DisputedAccount> => {
   const { state, head, dispute: witnesses, acknowledged } = r, frozen = { state, head, dispute: witnesses, acknowledged, evidence, ...envMeta(r) };
-  const start = startOf(state, witnesses, ctx.party.peer, ctx.verify);
+  const start = startOf(state, witnesses, ctx.party.peer, ctx.verify, ctx.deltaTransformer);
   if (!start.ok) return ok(done<PreparingAccount, AccountOutput>({ _tag: "preparing", ...frozen, mempool: retainedThroughFreeze(r, (tx) => isDeferredClaim(tx) || isDisputeEvidence(tx)), unready: start.error }));
   return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", ...frozen, mempool: [], start: start.value }, [{ kind: "start_dispute", start: start.value }]));
 };
@@ -4466,7 +4550,7 @@ export const admit = (r: AccountReplica, txs: readonly WireAccountTx[], self?: E
   chain(self === undefined ? ok(undefined) : map(partyOf(replicaId(r), self), (p) => p.left), (onLeft) => map(enqueue(r, txs, onLeft), (q) => q.replica));
 /** Entity-owned admission (og tx-effects.ts applyLocalAccountEffects → applyAccountEnqueue). og shouldSuppressReturnedAccountTx: a frozen Account silently takes no new work. `clock`/`verify` are kept for callers; og admission reads neither. */
 export const admitAt = (r: AccountReplica, txs: readonly WireAccountTx[], self: EntityId, _clock?: FrameClock, _verify?: Verify): Result<AccountReplica, AccountReplicaError> => !isLive(r) ? map(partyOf(replicaId(r), self), () => r) : admit(r, txs, self);
-const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party, ...opt("counterpartyBoard", ctx.counterpartyBoard) }));
+const accountContext = (r: AccountReplica, ctx: DoorContext): Result<AccountContext, AccountReplicaError> => map(partyOf(replicaId(r), ctx.self), (party) => ({ verify: ctx.verify, party, ...opt("counterpartyBoard", ctx.counterpartyBoard), ...opt("deltaTransformer", ctx.deltaTransformer) }));
 export const applyAccountInput = (r: AccountReplica, input: AccountInput, ctx: DoorContext): Result<AccountApply, AccountReplicaError> => chain(accountContext(r, ctx), (c) => matchBy("kind", input, {
   propose: (i) => propose(r, i, c), freeze: (i) => freezeAccount(r, i, c), resume: (i) => resume(r, i, c),
   dispute: (i) => chain(checkEnvelope(replicaId(r), r.state.terms, i), (sender) => dispute(r, i, { ...c, from: sender })),
@@ -4492,8 +4576,8 @@ export const disputeUnsafe = (r: AccountReplica, applied: Result<AccountApply, A
   if (evidence === null) return applied;
   return map(applyAccountInput(after?.committed.replica ?? r, { kind: "freeze", evidence }, ctx), (d) => ({ replica: d.replica, outputs: [...(after?.committed.outputs ?? []), ...d.outputs] }));
 };
-export const restoreAccount = (r: AccountReplica, self: EntityId, verify: Verify): Result<AccountReplica, AccountReplicaError> => chain(partyOf(replicaId(r), self), (party) => {
-  const restored = <R extends ProposedAccount | ReceivedAccount>(held: R): Result<AccountReplica, AccountReplicaError> => map(restoreCandidate(held, party, verify), (candidate) => ({ ...held, candidate }));
+export const restoreAccount = (r: AccountReplica, self: EntityId, verify: Verify, dt?: DeltaTransformerRef): Result<AccountReplica, AccountReplicaError> => chain(partyOf(replicaId(r), self), (party) => {
+  const restored = <R extends ProposedAccount | ReceivedAccount>(held: R): Result<AccountReplica, AccountReplicaError> => map(restoreCandidate(held, party, verify, dt), (candidate) => ({ ...held, candidate }));
   const kept = (x: AccountReplica): Result<AccountReplica, AccountReplicaError> => ok(x);
   return match(r, { open: kept, proposed: restored, received: restored, preparing: kept, disputed: kept });
 });
@@ -4710,7 +4794,9 @@ export type EntityContext = { readonly verify: Verify; readonly verifyMember: Me
   /** og env.runtimeSeed: the default proposer derives cross-j hash-ladder seeds from it (never committed). */
   readonly runtimeSeed?: string | undefined;
   /** og EntityRuntimeContext.activeJurisdiction: the Runtime's active J name (never committed; the Htlc* event jurisdictionId fallback). */
-  readonly activeJurisdiction?: string | undefined };
+  readonly activeJurisdiction?: string | undefined;
+  /** og env.jReplicas: the durable jurisdiction stacks Account proofs resolve their DeltaTransformer from (never committed). */
+  readonly jReplicas?: ReadonlyMap<string, JReplica> | undefined };
 export type EntityFrameHashError = BinaryError | Tagged<"frame_clock", { readonly value: bigint }> | Tagged<"frame_root", { readonly value: string }> | Tagged<"frame_too_large">;
 export type EntityError =
   | AccountReplicaError | EntityRootError | EntityFrameHashError
@@ -5278,7 +5364,9 @@ export const localTimeoutVote = (r: EntityReplica, timestamp: bigint): EntityInp
 };
 
 /** `activeJurisdiction`: og EntityRuntimeContext.activeJurisdiction (the Runtime's first imported J), the Htlc* jurisdictionId fallback. */
-type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined; readonly boardHandover?: HandoverConfig | undefined };
+type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined; readonly boardHandover?: HandoverConfig | undefined; readonly jReplicas?: ReadonlyMap<string, JReplica> | undefined };
+/** og requireAccountDeltaTransformerAddress(env, account.state) for one of this Entity's Accounts. */
+const accountDt = (ctx: { readonly jReplicas?: ReadonlyMap<string, JReplica> | undefined }, child: AccountReplica): DeltaTransformerRef => deltaTransformerFor(ctx.jReplicas, child.state.terms.domain);
 type Replicas = ReadonlyMap<EntityId, AccountReplica>;
 /** Who the tx is about: og routes accountInput by its envelope, the rest by an explicit counterparty. */
 const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
@@ -5582,15 +5670,13 @@ const startDispute = (d: Draft, peer: EntityId, intent: StartIntent & { readonly
   if (issues.length > 0) return ok(say(admitted, `⏳ disputeStart blocked until evidence is stable for ${tag}: ${issues.join("; ")}`));
   if (queuedDisputeStart(jb, peer)) return ok(say(admitted, `ℹ️ disputeStart already queued for ${tag} (awaiting batch lifecycle)`));
   const w = child.dispute.counterparty, jNonce = child.state.jNonce, signed = w?.proofNonce ?? 0;
-  const start = startOf(child.state, child.dispute, peer, ctx.verify);
+  const start = startOf(child.state, child.dispute, peer, ctx.verify, accountDt(ctx, child));
   if (!start.ok) {
     switch (start.error._tag) {
       case "no_witness": return ok(say(admitted, "❌ Missing counterparty dispute hanko - cannot start dispute"));
       case "nonce_stale": return ok(say(admitted, `❌ Stale dispute proof nonce ${signed} (on-chain=${jNonce}) - reopen required`));
       case "hanko_invalid": return ok(say(admitted, `❌ Counterparty dispute proof invalid for current account snapshot; nonce=${signed} onChain=${jNonce} source=counterpartyHanko`));
       case "hash_mismatch": return invariant(`DISPUTE_STORED_HASH_MISMATCH:${peer}`);
-      // og builds the full ProofBody with locks, swaps and pulls (and their starter arguments); the rewrite's proof omits them
-      case "omits": return invariant("DISPUTE_START_PROOF_OMITS_NOT_PORTED");
       default: return invariant("DISPUTE_START_EVIDENCE_INVALID");
     }
   }
@@ -5683,7 +5769,7 @@ const finalizeDispute = (d: Draft, x: FinalizeIntent, ctx: FoldContext): Result<
   const disputed = child as DisputedAccount;
   if (queuedDisputeOp(jb, peer, "disputeFinalizations")) return ok(say({ ...admitted, ...latchFinalize(admitted, peer, disputed, active, true) }, `ℹ️ disputeFinalize already present in batch lifecycle for ${tag}`));
   const proofOrErr = chain(mapErr(committedView(child.state), (): EntityError => ({ _tag: "entity_invariant", reason: `DISPUTE_FINALIZE_PROOFBODY_INVALID: entity=${d.state.id} counterparty=${peer} source=current` })),
-    (view) => map(mapErr(localProof(view), (): EntityError => ({ _tag: "entity_invariant", reason: `DISPUTE_FINALIZE_PROOFBODY_INVALID: entity=${d.state.id} counterparty=${peer} source=current` })), (proof) => ({ view, proof })));
+    (view) => map(mapErr(localProof(view, accountDt(ctx, child)), (): EntityError => ({ _tag: "entity_invariant", reason: `DISPUTE_FINALIZE_PROOFBODY_INVALID: entity=${d.state.id} counterparty=${peer} source=current` })), (proof) => ({ view, proof })));
   if (!proofOrErr.ok) return proofOrErr;
   const { view, proof } = proofOrErr.value;
   const selfLeft = sameHex(child.state.account.id.left, d.state.id), callerIsStarter = selfLeft === active.startedByLeft, w = child.dispute.counterparty;
@@ -5698,8 +5784,6 @@ const finalizeDispute = (d: Draft, x: FinalizeIntent, ctx: FoldContext): Result<
   }
   const finalNonce = counter?.nonce ?? active.initialNonce, proposerIsLeft = counter?.proposerIsLeft ?? active.initialProposerIsLeft;
   if (finalNonce <= 0) return ok(say(admitted, `❌ Invalid dispute finalNonce=${finalNonce} — must be > 0`));
-  // og builds the full ProofBody (DeltaTransformer clauses for locks, swaps and pulls, with their arguments); the rewrite's proof omits them
-  if (proof._tag === "partial") return invariant("DISPUTE_FINALIZE_PROOF_OMITS_NOT_PORTED");
   const finalHash = counter?.hash ?? active.initialProofbodyHash;
   if (!sameHex(proof.bodyHash, finalHash)) return invariant(`DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH:finalize:${peer}:${finalHash}:${proof.bodyHash}`);
   // og verifyCounterProofIdentity: the peer's stored dispute hash must be the counter-proof's hash under the Entity's own depository domain
@@ -6667,7 +6751,7 @@ const answerFrame = (d: Draft, peer: EntityId, ctx: FoldContext): Result<Routed,
   if (child === undefined || child._tag !== "received") return ok({ draft: d, effects: [] });
   return chain(partyOf(replicaId(child), self), (party) => chain(previewAck(child, self), (p) => {
     const ack: AccountInput = { kind: "ack", ...sentBy(child, party), height: p.height, frameHash: p.frameHash, frameHanko: pendingHanko(p.frameHash), ...opt("disputeHanko", pendingDispute(p.dispute)) };
-    return map(routedRaw(d.state, d.accountReplicas, peer, applyAccountInput(child, ack, { verify: pendingVerify(ctx.verify, self), self, now: ctx.timestamp })), ({ draft: acked, effects }) => ({
+    return map(routedRaw(d.state, d.accountReplicas, peer, applyAccountInput(child, ack, { verify: pendingVerify(ctx.verify, self), self, now: ctx.timestamp, deltaTransformer: accountDt(ctx, child) })), ({ draft: acked, effects }) => ({
       draft: { ...acked, outputs: [...d.outputs, ...acked.outputs], runtimeEvents: [...(d.runtimeEvents ?? []), ...(acked.runtimeEvents ?? [])], ...opt("swaps", d.swaps) }, effects,
     }));
   }));
@@ -6680,13 +6764,13 @@ const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext)
   for (const peer of order) {
     const child = draft.accountReplicas.get(peer);
     if (!proposableChild(child)) continue;
-    const plan = planAccountProposal(child, self, clock, ctx.verify), party = partyOf(replicaId(child), self);
+    const dt = accountDt(ctx, child), plan = planAccountProposal(child, self, clock, ctx.verify, undefined, dt), party = partyOf(replicaId(child), self);
     if (!plan.ok || !party.ok) continue;
     const input: AccountInput = match(plan.value, {
       frame: ({ preview }): AccountInput => ({ kind: "propose", frameHanko: pendingHanko(preview.frame.stateHash), ...opt("disputeHanko", pendingDispute(preview.dispute)), ...clock }),
       idle: (): AccountInput => ({ kind: "propose", ...clock }),
     });
-    const next = routed(draft.state, draft.accountReplicas, peer, propose(child, input as Propose, { verify: pendingVerify(ctx.verify, self), party: party.value }));
+    const next = routed(draft.state, draft.accountReplicas, peer, propose(child, input as Propose, { verify: pendingVerify(ctx.verify, self), party: party.value, deltaTransformer: dt }));
     if (!next.ok) continue;
     if (plan.value._tag === "frame") frames += 1;
     draft = { ...draft, ...next.value, outputs: [...draft.outputs, ...next.value.outputs], events: [...(draft.events ?? []), ...(next.value.events ?? [])], runtimeEvents: [...(draft.runtimeEvents ?? []), ...(next.value.runtimeEvents ?? [])] };
@@ -8253,7 +8337,7 @@ export const addSettlementRow = (jb: CommittedJBatch & { readonly status?: strin
 };
 const sameDiff = (a: WorkspaceDiff, b: WorkspaceDiff): boolean => a.tokenId === b.tokenId && a.leftDiff === b.leftDiff && a.rightDiff === b.rightDiff && a.collateralDiff === b.collateralDiff && a.ondeltaDiff === b.ondeltaDiff;
 /** og prepareSettlementExecution: recompiled diffs equal the cached ones, the signed nonce and hash reproduce, both Hankos and the exact N+1 proof are present. */
-const prepareExecution = (state: EntityState, a: AccountBody, w: SettlementWorkspace): Result<SettlementTargets & { readonly nonce: number }, EntityError> => chain(bodyInvariant(compileOps(w.ops, w.lastModifiedByLeft)), ({ diffs }) => {
+const prepareExecution = (state: EntityState, a: AccountBody, w: SettlementWorkspace, dt?: DeltaTransformerRef): Result<SettlementTargets & { readonly nonce: number }, EntityError> => chain(bodyInvariant(compileOps(w.ops, w.lastModifiedByLeft)), ({ diffs }) => {
   const cached = w.compiledDiffs;
   if (cached !== undefined && diffs.length !== cached.length) return invariant(`Recompiled diffs length mismatch: ${diffs.length} vs ${cached.length}`);
   const bad = cached === undefined ? -1 : diffs.findIndex((x, i) => !sameDiff(x, cached[i]!));
@@ -8263,7 +8347,7 @@ const prepareExecution = (state: EntityState, a: AccountBody, w: SettlementWorks
   if (!w.settlementHash) return invariant("SETTLEMENT_SIGNED_HASH_MISSING");
   if (state.jurisdiction.depositoryAddress === "" || !state.jurisdictionConfig?.entityProviderAddress) return invariant("SETTLEMENT_JURISDICTION_MISSING");
   const p = w.postSettlementDisputeProof;
-  return chain(bodyInvariant(settlementTargets(a, w, nonce, p?.proposerIsLeft ?? w.lastModifiedByLeft)), (t) => {
+  return chain(bodyInvariant(settlementTargets(a, w, nonce, p?.proposerIsLeft ?? w.lastModifiedByLeft, dt)), (t) => {
     if (t.settlementHash.toLowerCase() !== w.settlementHash!.toLowerCase()) return invariant(`SETTLEMENT_SIGNED_HASH_MISMATCH:${w.settlementHash}:${t.settlementHash}`);
     if (w.status !== "ready_to_submit") return invariant(`SETTLEMENT_HANKOS_INCOMPLETE:${w.status}`);
     if (p === undefined || p.nonce !== nonce + 1) return invariant(`POST_SETTLEMENT_PROOF_NONCE_MISMATCH:${String(p?.nonce)}:${nonce + 1}`);
@@ -8273,7 +8357,7 @@ const prepareExecution = (state: EntityState, a: AccountBody, w: SettlementWorks
   });
 });
 /** og handleSettleExecute: the executor verifies the counterparty's settlement Hanko and both N+1 Hankos, appends the settlement to the draft jBatch, and queues the Account submit. */
-const settleExecute = (d: Draft, x: Extract<EntityTx, { type: "settle_execute" }>["data"], verify: Verify, queue: SettleEnqueue): Result<Draft, EntityError> => {
+const settleExecute = (d: Draft, x: Extract<EntityTx, { type: "settle_execute" }>["data"], verify: Verify, queue: SettleEnqueue, jReplicas?: ReadonlyMap<string, JReplica>): Result<Draft, EntityError> => {
   const peer = x.counterpartyEntityId, t = settleChild(d, peer), w = t?.child.state.settlement, tag = peer.slice(-4);
   if (t === undefined) return ok(settleSay(d, `⏭️ settle_execute skipped: no account with ${tag}`));
   if (w === undefined) return ok(settleSay(d, `⏭️ settle_execute skipped: no workspace with ${tag}`));
@@ -8284,7 +8368,7 @@ const settleExecute = (d: Draft, x: Extract<EntityTx, { type: "settle_execute" }
     if (w.executorIsLeft !== t.iAmLeft) return invariant(`SETTLEMENT_EXECUTOR_MISMATCH:expected=${w.executorIsLeft ? "left" : "right"}`);
     const counterpartyHanko = t.iAmLeft ? w.rightHanko : w.leftHanko, { left, right } = t.child.state.account.id;
     if (!counterpartyHanko) return ok(settleSay(d, "⏭️ settle_execute skipped: missing counterparty signature"));
-    return chain(prepareExecution(d.state, t.child.state, w), (p) => {
+    return chain(prepareExecution(d.state, t.child.state, w, accountDt({ jReplicas }, t.child)), (p) => {
       if (!verify(p.settlementHash, counterpartyHanko, peer)) return invariant("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
       if (!verify(p.postProof.disputeHash, w.postSettlementDisputeProof!.leftHanko!, left as EntityId)) return invariant("POST_SETTLEMENT_LEFT_HANKO_INVALID");
       if (!verify(p.postProof.disputeHash, w.postSettlementDisputeProof!.rightHanko!, right as EntityId)) return invariant("POST_SETTLEMENT_RIGHT_HANKO_INVALID");
@@ -8323,7 +8407,7 @@ const settleFollowups = (d: Draft, peer: EntityId, frames: readonly { readonly f
     });
   }));
 /** og buildSettlementHankoDraft: our side's hanko transition at the pinned (or next safe) nonce; own Hankos are the manifest placeholders `installFrame` replaces. */
-const settlementHankoDraft = (child: AccountReplica, iAmLeft: boolean, peer: EntityId): Result<{ readonly tx: AccountTx; readonly hashes: readonly HashToSign[] }, EntityError> => {
+const settlementHankoDraft = (child: AccountReplica, iAmLeft: boolean, peer: EntityId, dt?: DeltaTransformerRef): Result<{ readonly tx: AccountTx; readonly hashes: readonly HashToSign[] }, EntityError> => {
   const w = child.state.settlement;
   if (w === undefined) return invariant("SETTLEMENT_WORKSPACE_MISSING");
   return chain(bodyInvariant(canonicalWorkspaceHash(child.state, w)), (workspaceHash) => {
@@ -8331,7 +8415,7 @@ const settlementHankoDraft = (child: AccountReplica, iAmLeft: boolean, peer: Ent
     if (iAmLeft ? w.postSettlementDisputeProof?.leftHanko : w.postSettlementDisputeProof?.rightHanko) return invariant("SETTLEMENT_SIDE_HANKO_ALREADY_ATTACHED");
     const nonce = w.nonceAtSign ?? nextSettlementNonce(child);
     if (!Number.isSafeInteger(nonce) || nonce < 1) return invariant(`SETTLEMENT_SIGNED_NONCE_INVALID:${String(nonce)}`);
-    return chain(bodyInvariant(settlementTargets(child.state, w, nonce, w.lastModifiedByLeft)), (t) => {
+    return chain(bodyInvariant(settlementTargets(child.state, w, nonce, w.lastModifiedByLeft, dt)), (t) => {
       if (w.settlementHash && w.settlementHash.toLowerCase() !== t.settlementHash.toLowerCase()) return invariant(`SETTLEMENT_SIGNED_HASH_MISMATCH:${w.settlementHash}:${t.settlementHash}`);
       const pin = w.postSettlementDisputeProof;
       if (pin !== undefined && (pin.nonce !== t.postProof.nonce || pin.proofBodyHash.toLowerCase() !== t.postProof.proofBodyHash.toLowerCase() || pin.disputeHash.toLowerCase() !== t.postProof.disputeHash.toLowerCase())) return invariant("POST_SETTLEMENT_PROOF_PIN_MISMATCH");
@@ -8372,7 +8456,7 @@ const materializeSettlements = (d: Draft, ctx: FoldContext): Result<Draft, Entit
     }
     // og: once a peer Hanko pins the proof, ordinary txs are frozen and cannot drain; the counter-Hanko goes ahead of them
     if (child.mempool.length > 0 && !(w.settlementHash || w.leftHanko || w.rightHanko || w.postSettlementDisputeProof)) continue;
-    const iAmLeft = isLeft(self, replicaId(child)), built = settlementHankoDraft(child, iAmLeft, peer as EntityId);
+    const iAmLeft = isLeft(self, replicaId(child)), built = settlementHankoDraft(child, iAmLeft, peer as EntityId, accountDt(ctx, child));
     if (!built.ok) return built;
     const admitted = admitAt(child, [built.value.tx], self, { timestamp: ctx.timestamp, jHeight: entityJHeight(draft.state) }, pendingVerify(ctx.verify, self));
     if (!admitted.ok || admitted.value.mempool.length !== child.mempool.length + 1) return invariant(`SETTLEMENT_DEFERRED_HANKO_NOT_ADMITTED:${peer}`);
@@ -8405,7 +8489,7 @@ const materializeContinuation = (d: Draft, ctx: FoldContext, queue: SettleEnqueu
     const follow: readonly EntityTx[] = [...c.actions.map((a): EntityTx => a.type === "r2r" ? { type: "r2r", data: { toEntityId: a.toEntityId, tokenId: a.tokenId, amount: a.amount } }
       : a.type === "r2e" ? { type: "r2e", data: { receivingEntity: a.receivingEntity, tokenId: a.tokenId, amount: a.amount } }
       : { type: "r2c", data: { counterpartyId: a.counterpartyId, ...(a.receivingEntityId ? { receivingEntityId: a.receivingEntityId } : {}), tokenId: a.tokenId, amount: a.amount } }), ...(c.broadcast ? [{ type: "j_broadcast", data: {} } satisfies EntityTx] : [])];
-    return chain(settleExecute(d, { counterpartyEntityId: peer as EntityId, ...(c.actions.length > 0 ? { disableC2RShortcut: true } : {}) }, ctx.verify, queue), (x) => {
+    return chain(settleExecute(d, { counterpartyEntityId: peer as EntityId, ...(c.actions.length > 0 ? { disableC2RShortcut: true } : {}) }, ctx.verify, queue, ctx.jReplicas), (x) => {
       const done = (y: Draft): Draft => ({ ...y, state: withContinuations(y.state, mapDelete(continuationsOf(y.state), peer)) });
       if (follow.length === 0) return ok(done(x));
       return map(foldNested(x.state, x.accountReplicas, follow, ctx, "collective"), (y) => done({ ...y, outputs: [...x.outputs, ...y.outputs], events: [...(x.events ?? []), ...(y.events ?? [])], runtimeEvents: [...(x.runtimeEvents ?? []), ...(y.runtimeEvents ?? [])],
@@ -9060,7 +9144,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     settle_propose: (x) => settlePropose(skip, x.data, settleQueue(ctx)),
     settle_update: (x) => settleUpdate(skip, x.data, settleQueue(ctx)),
     settle_approve: (x) => settleApprove(skip, x.data),
-    settle_execute: (x) => settleExecute(skip, x.data, ctx.verify, settleQueue(ctx)),
+    settle_execute: (x) => settleExecute(skip, x.data, ctx.verify, settleQueue(ctx), ctx.jReplicas),
     settle_reject: (x) => settleReject(skip, x.data, settleQueue(ctx)),
     // og cross-j setup handlers (setup.ts) and the certified runtimeOutput lane (consensus/frame/application.ts applyRuntimeOutput)
     prepareCrossJurisdictionSwap: (x) => map(crossPrepare(crossView(state, replicas, ctx.timestamp), x.data.route), (s) => crossDraft(state, replicas, s, ctx.timestamp)),
@@ -9096,7 +9180,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     }),
     // og input-phases.ts: the sender's record in this Entity's certified registry is the Account's counterpartyCertifiedBoard
     accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => chain(observerBoardRecord(state, x.data.fromEntityId), (record) => {
-      const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp, ...(record === null ? {} : { counterpartyBoard: { boardHash: record.boardHash, activatedAtJHeight: record.activatedAtJHeight, logIndex: record.logIndex } }) };
+      const at = replicas.get(peer), door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp, ...(record === null ? {} : { counterpartyBoard: { boardHash: record.boardHash, activatedAtJHeight: record.activatedAtJHeight, logIndex: record.logIndex } }), ...(at === undefined ? {} : { deltaTransformer: accountDt(ctx, at) }) };
       const applyRaw = (at: Folded): Result<Routed, EntityError> => { const child = at.accountReplicas.get(peer); return child === undefined ? err({ _tag: "no_such_account", target: peer }) : routedRaw(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)); };
       const apply = (at: Folded): Result<Draft, EntityError> => withChild(at.accountReplicas, peer, (child) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)));
       const held: Folded = { state, accountReplicas: replicas };
@@ -9459,7 +9543,7 @@ const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: Entity
   // og materializeHtlcPreparedInfraContext: the proposer decrypts every inbound onion layer against the pre-frame state; validators replay the same bytes.
   const inbound = { state: queued.state, replicas: queued.accountReplicas, timestamp: Number(timestamp), publicKey: String(queued.state.committed["entityEncryptionPublicKey"] ?? ""), privateKey: ctx.htlc?.encryptionPrivateKey };
   return chain(htlcFrameTxs(txs) ? inboundHtlcEntries({ ...inbound, online: onlineObserver(ctx.htlc).online }, txs) : ok([]), (entries) =>
-  chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction) }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
+  chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("jReplicas", ctx.jReplicas) }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
     const pool = withoutTxs(queued.mempool, [...prepared.refused.keys(), ...evicted]);
     return chain(buildFrame(queued, leader, leaderState, timestamp, included, draft, infra), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx, candidate.draft.state), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
       const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[self, own]]) };
@@ -9495,7 +9579,7 @@ const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHas
   if (frame.timestamp < r.state.timestamp) return err({ _tag: "frame_timestamp_regression", timestamp: frame.timestamp });
   // og assertHtlcPreparedInfraContext: validators check the committed origins against public facts, never recreating proposer entropy.
   return chain(frameInfraOf(frame), (infra) => chain(assertInboundEntries(r, frame, infra, ctx), () => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
-    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction) }), ({ draft, evicted }) => {
+    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("jReplicas", ctx.jReplicas) }), ({ draft, evicted }) => {
       if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
       return chain(buildFrame(r, frame.leader, committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
         local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame })));
@@ -12143,7 +12227,7 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
       const key = replicaKey(routed.entityId, routed.signerId), r = read(key);
       if (r === undefined) return refused({ _tag: "no_such_entity", id: routed.entityId });
       const stamped: RoutedEntityInput = routed.input.kind === "txs" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
-      const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, afterTxs, routed.entityId), ...opt("activeJurisdiction", afterTxs.activeJurisdiction) });
+      const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, afterTxs, routed.entityId), ...opt("activeJurisdiction", afterTxs.activeJurisdiction), jReplicas: afterTxs.jReplicas });
       if (!applied.ok) return refused(applied.error);
       const effects = applied.value.committed;
       return { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [], applied: [stamped], committed: applied.value.replica.head.height > r.head.height, ...(effects === undefined ? {} : { effects: [key, effects] as const }) }, stop: false };
@@ -12336,7 +12420,8 @@ export type OutboxEntry = { readonly id: Hash; readonly effect: HostEffect };
 export type HostTx =
   | { readonly layer: "account"; readonly tx: WireAccountTx } | { readonly layer: "frame"; readonly input: AccountInput } | { readonly layer: "j"; readonly tx: JOp }
   | { readonly layer: "ladder"; readonly tx: LadderTx } | { readonly layer: "entity"; readonly tx: EntityRouteTx } | { readonly layer: "input"; readonly input: HostInput } | { readonly layer: "receipt"; readonly id: Hash };
-export type Host = { readonly self: EntityId; readonly account: AccountReplica; readonly j: JState; readonly ladder: ReadonlyMap<string, RatioRecord>; readonly height: bigint; readonly frameHash: RuntimeFrameHash; readonly outbox: readonly OutboxEntry[] };
+/** `deltaTransformer`: og requireAccountDeltaTransformerAddress for the Host's Account (its Runtime's durable jurisdiction stack; never committed). */
+export type Host = { readonly self: EntityId; readonly account: AccountReplica; readonly j: JState; readonly ladder: ReadonlyMap<string, RatioRecord>; readonly height: bigint; readonly frameHash: RuntimeFrameHash; readonly outbox: readonly OutboxEntry[]; readonly deltaTransformer?: DeltaTransformerRef | undefined };
 export type Stamped = { readonly tx: HostTx; readonly ctx: HostCtx };
 export type HostError = BodyError | Tagged<"unsigned" | "chain" | "root" | "version" | "reserve" | "status" | "recipient"> | Tagged<"candidate", { cause: AccountReplicaError }> | JBatchError | JObserveError;
 export type HostStep = Step<Host, HostEffect>;
@@ -12396,7 +12481,7 @@ const disputeFinalityOf = (host: Host, op: JOp, peer: EntityId): Result<AccountF
   const e = op.event, self = host.self.toLowerCase(), counterparty = e.sender.toLowerCase() === self ? e.counterentity.toLowerCase() : e.sender.toLowerCase();
   if (counterparty !== peer.toLowerCase()) return ok(undefined);
   const body = host.account.state, frozen = chain(mapErr(committedView(body), (): JObserveError => ({ _tag: "j_observe", reason: "DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH" })), (view) =>
-    map(mapErr(localProof(view), (): JObserveError => ({ _tag: "j_observe", reason: "DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH" })), (p) => p.bodyHash));
+    map(mapErr(localProof(view, host.deltaTransformer), (): JObserveError => ({ _tag: "j_observe", reason: "DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH" })), (p) => p.bodyHash));
   return chain(frozen, (frozenHash): Result<AccountFinality, HostError> => {
     if (e.type === "DisputeStarted") return disputeStartedInput(e, op.blockNumber, frozenHash);
     const active = host.account._tag === "disputed" ? host.account.active : undefined;
@@ -12406,19 +12491,19 @@ const disputeFinalityOf = (host: Host, op: JOp, peer: EntityId): Result<AccountF
 export const applyHost = (host: Host, tx: HostTx, ctx: HostCtx, verify: Verify): Result<HostStep, AccountReplicaError | HostError> => matchBy("layer", tx, {
   account: (i) => admitTx(host, i.tx, ctx, verify),
   frame: (i) => {
-    const delivery: Delivery = ctx.from === undefined ? { _tag: "local" } : { _tag: "received", from: ctx.from }, door: DoorContext = { verify, self: host.self, now: ctx.timestamp };
+    const delivery: Delivery = ctx.from === undefined ? { _tag: "local" } : { _tag: "received", from: ctx.from }, door: DoorContext = { verify, self: host.self, now: ctx.timestamp, ...opt("deltaTransformer", host.deltaTransformer) };
     return accountStep(host, disputeUnsafe(host.account, applyDelivered(host.account, i.input, delivery, door), door));
   },
   j: (i) => chain(partyOf(replicaId(host.account), host.self), (party) => chain(applyJ(host.j, i.tx, host.self, party.peer, ctx, host.account.state), ({ j, effects, release }) => {
     const moved: Host = { ...host, j, account: releaseLatches(host.account, party.peer, release) };
     return chain(disputeFinalityOf(host, i.tx, party.peer), (finality): Result<HostStep, AccountReplicaError | HostError> => (finality === undefined || i.tx.type !== "j_event" || (i.tx.event.type !== "DisputeStarted" && i.tx.event.type !== "DisputeFinalized") ? ok(step(moved, effects))
-      : chain(map(accountStep(moved, applyAccountInput(host.account, { kind: "external_finality", ...envelopeOf(host.account.state.terms, party), finality }, { verify, self: host.self, now: ctx.timestamp })), (s) => step(s.state, [...effects, ...s.effects])),
+      : chain(map(accountStep(moved, applyAccountInput(host.account, { kind: "external_finality", ...envelopeOf(host.account.state.terms, party), finality }, { verify, self: host.self, now: ctx.timestamp, ...opt("deltaTransformer", host.deltaTransformer) })), (s) => step(s.state, [...effects, ...s.effects])),
         (s) => map(hostDisputeJBatch(s.state.j, host.self, (i.tx as Extract<JOp, { readonly type: "j_event" }>).event as Extract<JEvent, { readonly type: "DisputeStarted" | "DisputeFinalized" }>), (b) => step({ ...s.state, j: b.j }, [...s.effects, ...b.effects])))));
   })),
   ladder: (i) => { const key = ladderKey(i.tx); return map(revealSlot(host.ladder.get(key), i.tx), (slot) => step({ ...host, ladder: mapSet(host.ladder, key, slot) })); },
   entity: (i) => chain(routeEntity(i.tx, host.self, replicaId(host.account)), (routed) => admitTx(host, routed, ctx, verify)),
   input: (i) => matchBy("kind", i.input, {
-    dispute: () => accountStep(host, applyAccountInput(host.account, { kind: "freeze" }, { verify, self: host.self, now: ctx.timestamp })),
+    dispute: () => accountStep(host, applyAccountInput(host.account, { kind: "freeze" }, { verify, self: host.self, now: ctx.timestamp, ...opt("deltaTransformer", host.deltaTransformer) })),
   }),
 
   receipt: (i) => ok(step({ ...host, outbox: host.outbox.filter((e) => e.id !== i.id) })),
