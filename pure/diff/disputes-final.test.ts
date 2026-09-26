@@ -37,7 +37,8 @@ import { handleCrossJurisdictionSalvageEntityTx as ogSalvage } from "../../core/
 import { handleResolveHtlcLockEntityTx as ogResolveHtlcLock } from "../../core/entity/tx/handlers/htlc/direct.ts";
 import { handleCrossJurisdictionForceSiblingDisputeEntityTx as ogForceSibling } from "../../core/entity/tx/handlers/cross-j/force-sibling-dispute.ts";
 import { handlePrepareDispute as ogPrepareDispute, handleDisputeStart as ogDisputeStart } from "../../core/entity/tx/handlers/dispute/index.ts";
-import { crossRouteHash, installedAccount, prepareFrozen } from "../xln.ts";
+import { crossRouteHash, installedAccount, prepareFrozen, runtimeOutputAuthError } from "../xln.ts";
+import { assertRuntimeOutputAuthorization } from "../../core/entity/auth/authorization.ts";
 import { handleCrossJurisdictionBookOrderRemovedEntityTx as ogBookOrderRemoved } from "../../core/entity/tx/handlers/cross-j/book-removal-ack.ts";
 import { HTLC_ENFORCEMENT_RESERVE_MS as OG_RESERVE_MS } from "../../core/account/consensus/dispute/deadline-policy.ts";
 import { createDisputeProofHashWithNonce } from "../../core/protocol/dispute/proof-builder.ts";
@@ -798,4 +799,35 @@ describe("disputes-final: disputeStart with argument overrides (og entity/tx/han
     }
     expectKinds(kinds, ["ok", "⚔️ Dispute started vs", "ℹ️ disputeStart queued t", "❌ Stale dispute proof no", "❌ Counterparty dispute p", "J_BATCH_LIMIT_EXCEEDED", "DISPUTE_INCREMENTED_ARGUMENT_OVERRIDE_UNSUPPORTED", "DISPUTE_START_PROOFBODY_HASH_MISMATCH"]);
   }, 120_000);
+});
+
+// ---- og auth/authorization.ts assertRuntimeCrossJRecoveryAuthority (entity-lane row 32) ----
+describe("disputes-final: cross-j recovery runtimeOutput authority (og entity/auth/authorization.ts assertRuntimeCrossJRecoveryAuthority)", () => {
+  test("MATCH: assertRuntimeOutputAuthorization on 800 random salvage / cross-j resolveHtlcLock / cross-j disputeStart / force-sibling envelopes (stored or missing route, every source and target role, wrong counterparties, extra data, terminal routes, signers) -- same accept or refusal text as og", () => {
+    const r = xrng(0xa7c0), kinds = new Map<string, number>(), ids = [U1, H1, H2, U2, W("09")];
+    for (let i = 0; i < 800; i++) {
+      const route = recoveryRoute(r, i), target = xpick(r, [U1, H1, H2, U2]), source = xint(r, 6) === 0 ? target : xpick(r, ids);
+      const signer = xint(r, 10) < 8 ? (XSIG[source] ?? "0x" + "55".repeat(20)) : xpick(r, ["0x" + "55".repeat(20), ""]);
+      const rid = xint(r, 10) === 0 ? "C-missing" : route.orderId, anyId = () => xpick(r, [...ids, route.source.entityId, route.source.counterpartyEntityId, route.target.entityId, route.target.counterpartyEntityId]);
+      const txOf = (): EntityTx => {
+        switch (xint(r, 4)) {
+          case 0: return { type: "crossJurisdictionSalvage", data: { routeId: rid, binary: "0x", fillRatio: 1, sourceEntityId: xint(r, 4) === 0 ? anyId() : route.source.entityId, sourceCounterpartyEntityId: xint(r, 4) === 0 ? anyId() : route.source.counterpartyEntityId } } as EntityTx;
+          case 1: return { type: "resolveHtlcLock", data: { counterpartyEntityId: xint(r, 4) === 0 ? anyId() : route.target.entityId, lockId: Z32, secret: Z32, ...(xint(r, 6) > 0 ? { crossJurisdictionRouteId: rid } : {}) } } as EntityTx;
+          case 2: return { type: "disputeStart", data: { counterpartyEntityId: xint(r, 4) === 0 ? anyId() : route.source.counterpartyEntityId, ...(xint(r, 6) > 0 ? { crossJurisdictionRouteId: rid } : {}), ...(xint(r, 8) === 0 ? { description: "x" } : {}) } } as EntityTx;
+          default: return { type: "crossJurisdictionForceSiblingDispute", data: { routeId: rid, observedCounterpartyEntityId: anyId() } } as EntityTx;
+        }
+      };
+      const txs = xint(r, 8) === 0 ? [txOf(), txOf()] : [txOf()];
+      const stored = xint(r, 5) > 0 ? new Map([[route.orderId, route]]) : undefined, validators = [XSIG[target]!];
+      const swaps = ensureEntityCollectionCandidate(undefined, ogCrossIndex.cloneCrossJurisdictionRoute as never) as Map<string, unknown>;
+      for (const [k, v] of stored ?? []) swaps.set(k, ogCrossIndex.cloneCrossJurisdictionRoute(structuredClone(v) as never));
+      const ogState = { entityId: target, config: { mode: "proposer-based", threshold: 1n, validators, shares: { [validators[0]!]: 1n } }, ...(stored ? { crossJurisdictionSwaps: swaps } : {}) };
+      const rwState = { id: target, quorum: unwrap(createEntity({ id: target, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[validators[0] as never, { shares: 1n }]]) })).state.quorum, ...(stored ? { crossJurisdictionSwaps: stored } : {}) } as unknown as EntityState;
+      const data = { protocol: "cross-j" as const, sourceEntityId: source, sourceSignerId: signer, targetEntityId: target, entityTxs: txs };
+      const og = (() => { try { assertRuntimeOutputAuthorization(source, signer, target, txs as never, ogState as never); return null; } catch (e) { return (e as Error).message; } })();
+      expect(`${i}:${runtimeOutputAuthError(rwState, data as never)}`).toBe(`${i}:${og}`);
+      bump(kinds, `${txs[0]!.type}:${og === null ? "ok" : og.replace(/:.*/, "")}`);
+    }
+    expectKinds(kinds, ["crossJurisdictionSalvage:ok", "resolveHtlcLock:ok", "disputeStart:ok", "crossJurisdictionSalvage:RUNTIME_OUTPUT_SALVAGE_SOURCE_ENTITY_MISMATCH", "crossJurisdictionSalvage:RUNTIME_OUTPUT_SALVAGE_SOURCE_COUNTERPARTY_MISMATCH", "crossJurisdictionSalvage:RUNTIME_OUTPUT_SALVAGE_TARGET_INVALID", "resolveHtlcLock:RUNTIME_OUTPUT_SEMANTIC_TARGET_MISMATCH", "disputeStart:RUNTIME_OUTPUT_CROSS_J_DISPUTE_ROUTE_INACTIVE", "disputeStart:RUNTIME_OUTPUT_CROSS_J_DISPUTE_DATA_FORBIDDEN", "disputeStart:RUNTIME_OUTPUT_CROSS_J_DISPUTE_COUNTERPARTY_MISMATCH", "crossJurisdictionForceSiblingDispute:RUNTIME_OUTPUT_NON_SIBLING_FORBIDDEN"]);
+  });
 });
