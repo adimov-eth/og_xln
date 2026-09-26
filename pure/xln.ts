@@ -5277,30 +5277,38 @@ const withChild = (replicas: Replicas, target: EntityId, f: (child: AccountRepli
  */
 const ENTITY_CONSUMED_EFFECTS: ReadonlySet<Effect["_tag"]> = new Set(["direct_payment_forward", "htlc_error", "forward_secret", "request_collateral_committed", "swap_cancel_requested", "swap_cancelled", "swap_offer_upsert"]);
 /** og committed-input.ts applySameJurisdictionSwapOutput: the committed frames' swap outputs, keyed by this Account, for the frame's book phase. */
-const swapEventsOf = (accountId: EntityId, outputs: readonly AccountOutput[]): SwapEvents | undefined => {
-  const effects = outputs.flatMap((o) => (o.kind === "effect" ? [o.effect] : []));
+const swapEventsOf = (accountId: EntityId, effects: readonly Effect[]): SwapEvents | undefined => {
   const created = effects.flatMap((e) => (e._tag === "swap_offer_upsert" ? [swapOfferEvent(accountId, e)] : []));
   const cancelled = effects.flatMap((e) => (e._tag === "swap_cancelled" ? [{ offerId: e.offerId, accountId }] : []));
   const cancelRequests = effects.flatMap((e) => (e._tag === "swap_cancel_requested" ? [{ offerId: e.offerId, accountId }] : []));
   return created.length + cancelled.length + cancelRequests.length === 0 ? undefined : { created, cancelled, cancelRequests };
 };
-const routed = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Draft, EntityError> => chain(applied, (a) =>
+/** An applied Account input before its committed-frame followups: the Entity draft and the Account's consumed effects, in commit order. */
+type Routed = { readonly draft: Draft; readonly effects: readonly Effect[] };
+const routedRaw = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Routed, EntityError> => chain(applied, (a) =>
   chain(traverse(a.outputs, (o): Result<readonly AccountMessage[], EntityError> => matchBy("kind", o, { effect: (e) => (ENTITY_CONSUMED_EFFECTS.has(e.effect._tag) ? ok([]) : err({ _tag: "not_l0" })), ack: (m) => ok([m]), ack_frame: (m) => ok([m]), start_dispute: () => ok([]) })),
     (messages) => {
       // og applyCollateralRequest (account/tx/mutation.ts): the committed request's runtime event, from this Entity's side of the Account
       const runtimeEvents = a.outputs.flatMap((o): EntityRuntimeEvent[] => (o.kind === "effect" && o.effect._tag === "request_collateral_committed" ? [{ eventName: "request_collateral_committed", data: {
         entityId: state.id, accountId: target, tokenId: o.effect.tokenId, requestedAmount: o.effect.requestedAmount.toString(), prepaidFee: o.effect.prepaidFee.toString(), requestedAt: o.effect.requestedAt } }] : []));
       const base: Draft = { ...putChild(state, replicas, target, a.replica), outputs: messages.flat().map((data): EntityOutput => ({ to: target, tx: { type: "accountInput", data } })), ...(runtimeEvents.length === 0 ? {} : { runtimeEvents }) };
-      const forwards = a.outputs.flatMap((o) => (o.kind === "effect" && o.effect._tag === "direct_payment_forward" && sameHex(o.effect.route[0], state.id) ? [o.effect] : []));
-      const swaps = swapEventsOf(target, a.outputs);
-      return map(foldResult<Draft, Of<Effect, "direct_payment_forward">, EntityError>(forwards, base, forwardPayment), (d) => (swaps === undefined ? d : { ...d, swaps }));
+      return ok({ draft: base, effects: a.outputs.flatMap((o) => (o.kind === "effect" ? [o.effect] : [])) });
     }));
-/** og applyDirectPaymentForwardFollowups: the gateway queues the next leg on its Account with route[1] (a missing Account refuses the input). */
+const routed = (state: EntityState, replicas: Replicas, target: EntityId, applied: Result<AccountApply, AccountReplicaError>): Result<Draft, EntityError> => chain(routedRaw(state, replicas, target, applied), ({ draft, effects }) => {
+  const forwards = effects.flatMap((e) => (e._tag === "direct_payment_forward" && sameHex(e.route[0], state.id) ? [e] : []));
+  const swaps = swapEventsOf(target, effects);
+  return map(foldResult<Draft, Of<Effect, "direct_payment_forward">, EntityError>(forwards, draft, forwardPayment), (d) => (swaps === undefined ? d : { ...d, swaps }));
+});
+/** og applyDirectPaymentForwardFollowups: the gateway's next leg on its Account with route[1] (a missing Account refuses the input). */
+const forwardLeg = (d: Folded, f: Of<Effect, "direct_payment_forward">): Result<AccountTxTarget, EntityError> => {
+  const next = f.route[1] as EntityId | undefined;
+  if (next === undefined || !d.accountReplicas.has(next)) return err({ _tag: "no_such_account", target: (next ?? "") as EntityId });
+  return ok({ accountId: next, tx: { type: "payment", tokenId: String(f.tokenId) as TokenId, amount: f.amount, route: f.route.slice(1), description: f.description || "Forwarded payment", fromEntityId: d.state.id, toEntityId: next, deliveryMode: "trusted", trustedGatewayEntityId: f.trustedGatewayEntityId } });
+};
 const forwardPayment = (d: Draft, f: Of<Effect, "direct_payment_forward">): Result<Draft, EntityError> => {
   const self = d.state.id, next = f.route[1] as EntityId | undefined, child = next === undefined ? undefined : d.accountReplicas.get(next);
   if (next === undefined || child === undefined) return err({ _tag: "no_such_account", target: (next ?? "") as EntityId });
-  const leg: AccountTx = { type: "payment", tokenId: String(f.tokenId) as TokenId, amount: f.amount, route: f.route.slice(1), description: f.description || "Forwarded payment", fromEntityId: self, toEntityId: next, deliveryMode: "trusted", trustedGatewayEntityId: f.trustedGatewayEntityId };
-  return map(admitAt(child, [leg], self, L0_CLOCK), (admitted) => ({ ...putChild(d.state, d.accountReplicas, next, admitted), outputs: d.outputs }));
+  return chain(forwardLeg(d, f), ({ tx: leg }) => map(admitAt(child, [leg], self, L0_CLOCK), (admitted) => ({ ...putChild(d.state, d.accountReplicas, next, admitted), outputs: d.outputs })));
 };
 const L0_CLOCK = { timestamp: 0n, jHeight: 0n } as const;
 /**
@@ -6455,12 +6463,14 @@ const pendingDispute = (plan: DisputePlan): DisputeHanko | undefined => match(pl
 const proposableChild = (c: AccountReplica | undefined): c is OpenAccount => c !== undefined && c._tag === "open" && c.mempool.length > 0;
 const hasProposableAccount = (r: Folded): boolean => [...r.accountReplicas.values()].some(proposableChild);
 /** og commits a received Account frame and answers it in the same Entity frame (the forced ACK response), signed through the manifest. */
-const answerFrame = (d: Draft, peer: EntityId, ctx: FoldContext): Result<Draft, EntityError> => {
+const answerFrame = (d: Draft, peer: EntityId, ctx: FoldContext): Result<Routed, EntityError> => {
   const child = d.accountReplicas.get(peer), self = d.state.id;
-  if (child === undefined || child._tag !== "received") return ok(d);
+  if (child === undefined || child._tag !== "received") return ok({ draft: d, effects: [] });
   return chain(partyOf(replicaId(child), self), (party) => chain(previewAck(child, self), (p) => {
     const ack: AccountInput = { kind: "ack", ...sentBy(child, party), height: p.height, frameHash: p.frameHash, frameHanko: pendingHanko(p.frameHash), ...opt("disputeHanko", pendingDispute(p.dispute)) };
-    return map(routed(d.state, d.accountReplicas, peer, applyAccountInput(child, ack, { verify: pendingVerify(ctx.verify, self), self, now: ctx.timestamp })), (acked) => ({ ...acked, outputs: [...d.outputs, ...acked.outputs], swaps: joinSwapEvents(d.swaps, acked.swaps) }));
+    return map(routedRaw(d.state, d.accountReplicas, peer, applyAccountInput(child, ack, { verify: pendingVerify(ctx.verify, self), self, now: ctx.timestamp })), ({ draft: acked, effects }) => ({
+      draft: { ...acked, outputs: [...d.outputs, ...acked.outputs], runtimeEvents: [...(d.runtimeEvents ?? []), ...(acked.runtimeEvents ?? [])], ...opt("swaps", d.swaps) }, effects,
+    }));
   }));
 };
 const entityJHeight = (state: EntityState): bigint => { const h = state.committed["lastFinalizedJHeight"]; return typeof h === "number" && Number.isSafeInteger(h) && h >= 0 ? BigInt(h) : 0n; };
@@ -7887,15 +7897,18 @@ export type CommittedHtlcFrame = { readonly frame: Pick<AccountFrame, "height" |
  */
 export const paybookFollowups = (f: PaybookFlow, peer: string, frames: readonly CommittedHtlcFrame[], received: Omit<InboundLockFacts, "frame"> | undefined, entries: readonly PreparedHtlcEntry[], timestamp: number, self = "", jurisdictionId = ""): Result<PaybookFlow, EntityError> => {
   const byKey = new Map(entries.map((e) => [preparedHtlcKey(e.binding), e])), consumed = new Set<string>();
-  return map(foldResult(frames, f, (acc, { frame, viaNewFrame }) =>
-    chain(foldResult(frame.txs, acc, (a, tx) => (tx.type === "htlc_resolve" ? resolveFollowup(a, peer, tx, self, timestamp, jurisdictionId) : ok(a))), (resolved) =>
-      !viaNewFrame || received === undefined ? ok(resolved)
-        : foldResult(frame.txs, resolved, (a, tx) => (tx.type === "htlc_lock" && tx.envelope !== undefined ? lockFollowup(a, { ...received, frame }, tx, byKey, consumed, timestamp, self) : ok(a))))),
-  (followed) => {
-    const timedOut = frames.flatMap(({ frame }) => frame.txs.flatMap((tx) => (tx.type === "htlc_resolve" && tx.outcome === "error" ? [tx.lockId.toLowerCase()] : [])));
-    const secrets = frames.flatMap(({ frame, viaNewFrame }) => (viaNewFrame ? frame.txs.flatMap((tx) => (tx.type === "htlc_resolve" && tx.outcome === "secret" ? [{ hashlock: tx.lockId.toLowerCase(), secret: tx.secret }] : [])) : []));
-    return secrets.reduce((a, s) => secretFollowup(a, s.hashlock, s.secret, timestamp, self, jurisdictionId), timedOut.reduce((a, h) => timeoutFollowup(a, h, self), followed));
-  });
+  return map(foldResult(frames, f, (acc, c) => paybookFrameFollowups(acc, peer, c, received, byKey, consumed, timestamp, self, jurisdictionId)), (followed) => paybookTailFollowups(followed, frames, timestamp, self, jurisdictionId));
+};
+/** One committed frame of paybookFollowups: its resolve followups, then (receiver only) its lock followups. */
+const paybookFrameFollowups = (f: PaybookFlow, peer: string, { frame, viaNewFrame }: CommittedHtlcFrame, received: Omit<InboundLockFacts, "frame"> | undefined, byKey: ReadonlyMap<string, PreparedHtlcEntry>, consumed: Set<string>, timestamp: number, self: string, jurisdictionId: string): Result<PaybookFlow, EntityError> =>
+  chain(foldResult(frame.txs, f, (a, tx) => (tx.type === "htlc_resolve" ? resolveFollowup(a, peer, tx, self, timestamp, jurisdictionId) : ok(a))), (resolved) =>
+    !viaNewFrame || received === undefined ? ok(resolved)
+      : foldResult(frame.txs, resolved, (a, tx) => (tx.type === "htlc_lock" && tx.envelope !== undefined ? lockFollowup(a, { ...received, frame }, tx, byKey, consumed, timestamp, self) : ok(a))));
+/** og applyHtlcTimeoutFollowups then applyHtlcSecretFollowups, after every committed frame: the timed-out locks, then the peer frame's preimages. */
+const paybookTailFollowups = (f: PaybookFlow, frames: readonly CommittedHtlcFrame[], timestamp: number, self: string, jurisdictionId: string): PaybookFlow => {
+  const timedOut = frames.flatMap(({ frame }) => frame.txs.flatMap((tx) => (tx.type === "htlc_resolve" && tx.outcome === "error" ? [tx.lockId.toLowerCase()] : [])));
+  const secrets = frames.flatMap(({ frame, viaNewFrame }) => (viaNewFrame ? frame.txs.flatMap((tx) => (tx.type === "htlc_resolve" && tx.outcome === "secret" ? [{ hashlock: tx.lockId.toLowerCase(), secret: tx.secret }] : [])) : []));
+  return secrets.reduce((a, s) => secretFollowup(a, s.hashlock, s.secret, timestamp, self, jurisdictionId), timedOut.reduce((a, h) => timeoutFollowup(a, h, self), f));
 };
 /** og applyLocalAccountEffects: each returned Account tx is admitted alone; a missing, frozen or refusing Account drops it silently. */
 const queueReturned = (d: Draft, target: AccountTxTarget): Draft => {
@@ -8194,48 +8207,97 @@ const materializeContinuation = (d: Draft, ctx: FoldContext, queue: SettleEnqueu
   });
 };
 const settleQueue = (ctx: FoldContext): SettleEnqueue => (d, peer, tx) => withChild(d.accountReplicas, peer, (child) => map(admitAt(child, [tx], d.state.id, L0_CLOCK, ctx.verify), (admitted) => ({ ...d, ...putChild(d.state, d.accountReplicas, peer, admitted) })));
-/** The committed frames of one accountInput (our frame the peer ACKed, the peer's frame we installed) with their proposer side. */
-const committedSettleFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: AccountFrame | undefined): Result<Draft, EntityError> => {
-  const child = d.accountReplicas.get(peer);
-  if (child === undefined || (own === undefined && received === undefined)) return ok(d);
-  const mine = isLeft(d.state.id, replicaId(child));
-  return settleFollowups(d, peer, [...(own === undefined ? [] : [{ frame: own, proposerIsLeft: mine }]), ...(received === undefined ? [] : [{ frame: received, proposerIsLeft: !mine }])]);
-};
-/** og applyCommittedAccountFrameFollowups, lending half: our frame the peer ACKed, then the peer's frame we signed; the returned Account txs are admitted after. */
-const committedLendingFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: AccountFrame | undefined, ctx: FoldContext): Result<Draft, EntityError> =>
-  own === undefined && received === undefined ? ok(d) : map(lendingFollowups(d.state, d.accountReplicas, peer, [...(own === undefined ? [] : [{ frame: own, proposer: d.state.id }]), ...(received === undefined ? [] : [{ frame: received, proposer: peer }])], ctx.timestamp),
-    (r) => r.accountTxs.reduce(queueReturned, r.state === d.state ? d : { ...d, state: r.state }));
+/** A peer frame this Entity just signed, with the Account envelope its receiver HTLC lock followups check the prepared entries against. */
+export type ReceivedCommit = { readonly frame: AccountFrame; readonly from: EntityId; readonly to: EntityId; readonly domain: Domain };
+type SwapOutputEffect = Of<Effect, "swap_offer_upsert" | "swap_cancelled" | "swap_cancel_requested">;
+const swapOutputId = (e: SwapOutputEffect): string => (e._tag === "swap_offer_upsert" ? e.offer.offerId : e.offerId);
 /**
- * og applyCommittedFrameTransactions' cross-j half: each committed cross_pull_lock / cross_pull_close through applyCommittedCrossJurisdictionAccountTxFollowup
- * (at its frame's timestamp), and a committed cross-j swap_offer as the frame's created offer (applyCommittedCrossJurisdictionSwapFollowup).
+ * og applySuccessfulAccountInput after the Account machine, for the committed frames of one accountInput (our frame the peer ACKed, then the peer's
+ * frame we signed). applyCommittedFrameTransactions goes frame by frame: applyCommittedAccountFrameFollowups (each tx's lending followup and HTLC
+ * resolve), then per tx the settlement auto-approval, the cross-j followup, the receiver's HTLC lock followup and the swap output (the next same-j
+ * output in signed tx order, or the committed cross-j offer). Then applyCommittedHtlcFollowups: direct-payment forwards, timeouts, preimages.
+ * The returned Account txs are admitted after all of them, one at a time and in that order (og applyLocalAccountEffects), and each Account that
+ * admits one joins the frame's worklist in that order.
  */
-const crossFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: AccountFrame | undefined, timestamp: bigint): Result<Draft, EntityError> => {
-  const frames = [...(own === undefined ? [] : [own]), ...(received === undefined ? [] : [received])];
-  if (!frames.some((f) => f.txs.some((tx) => tx.type === "cross_pull_lock" || tx.type === "cross_pull_close" || (tx.type === "swap_offer" && tx.crossJurisdiction !== undefined)))) return ok(d);
-  return chain(crontabOf(d.state), (crontab) => {
-    const start: CommittedCrossStep = { host: { ...bookHostOf(d.state, d.accountReplicas, timestamp), auths: d.state.crossJurisdictionAuthorizations, crontab }, outputs: [], messages: [], created: [], handled: false };
-    const child = d.accountReplicas.get(peer);
-    return map(foldResult<CommittedCrossStep, readonly [WireAccountTx, bigint], EntityError>(frames.flatMap((f) => f.txs.map((tx) => [tx, f.timestamp] as const)), start, (s, [tx, at]) => {
-      if (tx.type === "swap_offer") {
-        const offer = tx.crossJurisdiction === undefined || child === undefined ? undefined : child.state.offers.get(tx.offerId);
-        return ok(offer === undefined || child === undefined ? s : { ...s, created: [...s.created, { offerId: tx.offerId, accountId: peer, makerIsLeft: offer.makerIsLeft, fromEntity: child.state.account.id.left, toEntity: child.state.account.id.right,
+export const committedFollowups = (d0: Draft, peer: EntityId, own: AccountFrame | undefined, received: ReceivedCommit | undefined, effects: readonly Effect[], ctx: FoldContext): Result<Draft, EntityError> => {
+  const self = d0.state.id, child0 = d0.accountReplicas.get(peer), mine = child0 !== undefined && isLeft(self, replicaId(child0)), now = Number(ctx.timestamp);
+  const frames: readonly { readonly frame: AccountFrame; readonly viaNewFrame: boolean }[] = [...(own === undefined ? [] : [{ frame: own, viaNewFrame: false }]), ...(received === undefined ? [] : [{ frame: received.frame, viaNewFrame: true }])];
+  const forwards = effects.flatMap((e) => (e._tag === "direct_payment_forward" && sameHex(e.route[0], self) ? [e] : []));
+  const swapOutputs = effects.flatMap((e): SwapOutputEffect[] => (e._tag === "swap_offer_upsert" || e._tag === "swap_cancelled" || e._tag === "swap_cancel_requested" ? [e] : []));
+  const byKey = new Map((ctx.htlc?.entries ?? []).map((e) => [preparedHtlcKey(e.binding), e])), consumed = new Set<string>(), jid = htlcJurisdictionId(d0.state), paybook0 = d0.state.paybook ?? EMPTY_PAYBOOK;
+  let d = d0, targets: readonly AccountTxTarget[] = [], flow: PaybookFlow = { paybook: paybook0, queue: [] }, cross: CommittedCrossStep | undefined, crontab0: Crontab | undefined, cursor = 0;
+  let created: readonly SwapOfferEvent[] = [], cancelled: readonly SwapRef[] = [], cancelRequests: readonly SwapRef[] = [];
+  for (const c of frames) {
+    const lent = lendingFollowups(d.state, d.accountReplicas, peer, [{ frame: c.frame, proposer: c.viaNewFrame ? peer : self }], ctx.timestamp, targets);
+    if (!lent.ok) return lent;
+    if (lent.value.state !== d.state) d = { ...d, state: lent.value.state };
+    targets = lent.value.accountTxs;
+    if (c.frame.txs.some((tx) => tx.type === "htlc_lock" || tx.type === "htlc_resolve")) {
+      const paid = paybookFrameFollowups({ ...flow, queue: [] }, peer, c, received, byKey, consumed, now, self, jid);
+      if (!paid.ok) return paid;
+      flow = paid.value;
+      targets = [...targets, ...flow.queue];
+    }
+    for (const tx of c.frame.txs) {
+      if (tx.type === "cross_pull_lock" || tx.type === "cross_pull_close") {
+        if (cross === undefined) {
+          const crontab = crontabOf(d.state);
+          if (!crontab.ok) return crontab;
+          crontab0 = crontab.value;
+          cross = { host: { ...bookHostOf(d.state, d.accountReplicas, ctx.timestamp), auths: d.state.crossJurisdictionAuthorizations, crontab: crontab.value }, outputs: [], messages: [], created: [], handled: false };
+        }
+        const n = committedCrossFollowup(cross.host, peer, tx, Number(c.frame.timestamp));
+        if (!n.ok) return n;
+        cross = { ...n.value, outputs: [...cross.outputs, ...n.value.outputs], messages: [...cross.messages, ...n.value.messages], created: [] };
+        created = [...created, ...n.value.created];
+      } else if (tx.type === "swap_offer" && tx.crossJurisdiction !== undefined) {
+        // og applyCommittedCrossJurisdictionSwapFollowup: buildCommittedSwapOfferEvent from the committed offer
+        const child = d.accountReplicas.get(peer), offer = child?.state.offers.get(tx.offerId);
+        if (child !== undefined && offer !== undefined) created = [...created, { offerId: tx.offerId, accountId: peer, makerIsLeft: offer.makerIsLeft, fromEntity: child.state.account.id.left, toEntity: child.state.account.id.right,
           createdHeight: offer.createdHeight, giveTokenId: Number(offer.giveTokenId), giveTokenDecimals: offer.giveTokenDecimals, giveAmount: offer.giveAmount, wantTokenId: Number(offer.wantTokenId), wantTokenDecimals: offer.wantTokenDecimals,
-          wantAmount: offer.wantAmount, maxFee: offer.maxFee, minNetReceive: offer.minNetReceive, priceTicks: offer.priceTicks, ...opt("timeInForce", tif(offer.timeInForce)), ...opt("crossJurisdiction", offer.crossJurisdiction) }] });
+          wantAmount: offer.wantAmount, maxFee: offer.maxFee, minNetReceive: offer.minNetReceive, priceTicks: offer.priceTicks, ...opt("timeInForce", tif(offer.timeInForce)), ...opt("crossJurisdiction", offer.crossJurisdiction) }];
+      } else if (tx.type === "swap_offer" || tx.type === "swap_resolve" || tx.type === "swap_cancel_request") {
+        // og consumeSameJurisdictionSwapOutput: the Account's next swap output belongs to this tx
+        const e = swapOutputs[cursor], kinds: readonly SwapOutputEffect["_tag"][] = tx.type === "swap_offer" ? ["swap_offer_upsert"] : tx.type === "swap_resolve" ? ["swap_offer_upsert", "swap_cancelled"] : ["swap_cancel_requested"];
+        if (e === undefined) return invariant(`ACCOUNT_SWAP_OUTPUT_MISSING:${tx.offerId}`);
+        if (!kinds.includes(e._tag)) return invariant(`ACCOUNT_SWAP_OUTPUT_KIND_MISMATCH:${tx.offerId}:${e._tag}`);
+        if (swapOutputId(e) !== tx.offerId) return invariant(`ACCOUNT_SWAP_OUTPUT_ID_MISMATCH:${tx.offerId}:${swapOutputId(e)}`);
+        cursor += 1;
+        const ref: SwapRef = { offerId: tx.offerId, accountId: peer };
+        if (e._tag === "swap_offer_upsert") created = [...created, swapOfferEvent(peer, e)];
+        else if (e._tag === "swap_cancelled") cancelled = [...cancelled, ref];
+        else cancelRequests = [...cancelRequests, ref];
       }
-      return map(committedCrossFollowup(s.host, peer, tx, Number(at)), (n) => ({ ...n, outputs: [...s.outputs, ...n.outputs], messages: [...s.messages, ...n.messages], created: [...s.created, ...n.created] }));
-    }), (s) => {
-      const state: EntityState = { ...(s.host.crontab === undefined || s.host.crontab === crontab ? d.state : withCrontab(d.state, s.host.crontab)), ...opt("crossJurisdictionAuthorizations", s.host.auths) };
-      return hostDraft({ ...d, state }, { host: s.host, outputs: s.outputs, messages: s.messages, created: s.created }, timestamp);
-    });
-  });
-};
-const htlcFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: { readonly frame: AccountFrame; readonly from: EntityId; readonly to: EntityId; readonly domain: Domain } | undefined, ctx: FoldContext): Result<Draft, EntityError> => {
-  const frames: CommittedHtlcFrame[] = [...(own === undefined ? [] : [{ frame: own, viaNewFrame: false }]), ...(received === undefined ? [] : [{ frame: received.frame, viaNewFrame: true }])];
-  if (!frames.some(({ frame }) => frame.txs.some((tx) => tx.type === "htlc_lock" || tx.type === "htlc_resolve"))) return ok(d);
-  return map(paybookFollowups({ paybook: d.state.paybook ?? EMPTY_PAYBOOK, queue: [] }, peer, frames, received, ctx.htlc?.entries ?? [], Number(ctx.timestamp), d.state.id, htlcJurisdictionId(d.state)), ({ paybook, queue, runtimeEvents }) => {
-    const withEvents: Draft = runtimeEvents === undefined || runtimeEvents.length === 0 ? d : { ...d, runtimeEvents: [...(d.runtimeEvents ?? []), ...runtimeEvents] };
-    return queue.reduce(queueReturned, paybook === (d.state.paybook ?? EMPTY_PAYBOOK) ? withEvents : { ...withEvents, state: { ...withEvents.state, paybook } });
-  });
+    }
+    if (child0 !== undefined) {
+      const settled = settleFollowups(d, peer, [{ frame: c.frame, proposerIsLeft: c.viaNewFrame ? !mine : mine }]);
+      if (!settled.ok) return settled;
+      d = settled.value;
+    }
+  }
+  if (cursor !== swapOutputs.length) return invariant(`ACCOUNT_SWAP_OUTPUT_UNCONSUMED:${swapOutputs.length - cursor}`);
+  // og applyCommittedHtlcFollowups: the direct-payment forwards, then the timed-out locks, then the peer frame's preimages
+  for (const f of forwards) {
+    const leg = forwardLeg(d, f);
+    if (!leg.ok) return leg;
+    targets = [...targets, leg.value];
+  }
+  flow = paybookTailFollowups({ ...flow, queue: [] }, frames, now, self, jid);
+  targets = [...targets, ...flow.queue];
+  if (cross !== undefined) {
+    const s = cross, state: EntityState = { ...(s.host.crontab === undefined || s.host.crontab === crontab0 ? d.state : withCrontab(d.state, s.host.crontab)), ...opt("crossJurisdictionAuthorizations", s.host.auths) };
+    d = hostDraft({ ...d, state }, { host: s.host, outputs: s.outputs, messages: s.messages, created: [] }, ctx.timestamp);
+  }
+  if (flow.paybook !== paybook0) d = { ...d, state: { ...d.state, paybook: flow.paybook } };
+  if ((flow.runtimeEvents ?? []).length > 0) d = { ...d, runtimeEvents: [...(d.runtimeEvents ?? []), ...(flow.runtimeEvents ?? [])] };
+  const touched: EntityId[] = [peer];
+  for (const t of targets) {
+    const id = t.accountId.toLowerCase() as EntityId, before = d.accountReplicas.get(id)?.mempool.length;
+    d = queueReturned(d, t);
+    if (before !== undefined && d.accountReplicas.get(id)?.mempool.length !== before) touched.push(id);
+  }
+  const swaps: SwapEvents | undefined = created.length + cancelled.length + cancelRequests.length === 0 ? undefined : { created, cancelled, cancelRequests };
+  return ok({ ...d, touched, ...opt("swaps", joinSwapEvents(d.swaps, swaps)) });
 };
 const originView = (state: EntityState, replicas: Replicas, timestamp: bigint): HtlcOriginView => ({
   id: state.id, timestamp: Number(timestamp), jHeight: Number(entityJHeight(state)), encryptionKey: String(state.committed["entityEncryptionPublicKey"] ?? ""), paybook: state.paybook ?? EMPTY_PAYBOOK, replicas,
@@ -8800,25 +8862,25 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     // og input-phases.ts: the sender's record in this Entity's certified registry is the Account's counterpartyCertifiedBoard
     accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => chain(observerBoardRecord(state, x.data.fromEntityId), (record) => {
       const door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp, ...(record === null ? {} : { counterpartyBoard: { boardHash: record.boardHash, activatedAtJHeight: record.activatedAtJHeight, logIndex: record.logIndex } }) };
+      const applyRaw = (at: Folded): Result<Routed, EntityError> => { const child = at.accountReplicas.get(peer); return child === undefined ? err({ _tag: "no_such_account", target: peer }) : routedRaw(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)); };
       const apply = (at: Folded): Result<Draft, EntityError> => withChild(at.accountReplicas, peer, (child) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)));
       const held: Folded = { state, accountReplicas: replicas };
       // og committedFrames: our own frame commits when the peer's ACK for it lands; the peer's frame commits when we sign it (answerFrame).
       const before = replicas.get(peer), pendingOwn = before !== undefined && before._tag === "proposed" ? before.candidate.frame : undefined;
       const ownCommitted = (d: Draft): AccountFrame | undefined => { const after = d.accountReplicas.get(peer); return pendingOwn !== undefined && after !== undefined && after.head.height >= pendingOwn.height ? pendingOwn : undefined; };
       return matchBy("kind", x.data, {
-        ack: () => chain(apply(held), (d) => chain(committedLendingFollowups(d, peer, ownCommitted(d), undefined, ctx), (l) => chain(htlcFollowups(l, peer, ownCommitted(d), undefined, ctx), (h) => chain(crossFollowups(h, peer, ownCommitted(d), undefined, ctx.timestamp), (c) => committedSettleFollowups(c, peer, ownCommitted(d), undefined))))),
+        ack: () => chain(applyRaw(held), ({ draft, effects }) => committedFollowups(draft, peer, ownCommitted(draft), undefined, effects, ctx)),
         // og routes the standalone peer dispute witness through the same accountInput lane; an unknown Account has no genesis for it (og ACCOUNT_GENESIS_FRAME_REQUIRED).
         dispute: () => apply(held),
         // og board-hanko-refresh.ts: checked against the sender's certified board (certified_board_missing without a record)
         board_hanko_refresh: () => apply(held),
         ack_frame: (i) => match(origin, {
           local: (): Result<Draft, EntityError> => err({ _tag: "from_not_converted" }),
-          received: ({ from }) => chain(!i.frame.txs.every(entityAcceptsPeerTx) ? err({ _tag: "not_l0" }) : replicas.has(from) ? apply(held) : chain(inboundChild(state, replicas, from, i), apply), (d) => {
+          received: ({ from }) => chain(!i.frame.txs.every(entityAcceptsPeerTx) ? err({ _tag: "not_l0" }) : replicas.has(from) ? applyRaw(held) : chain(inboundChild(state, replicas, from, i), applyRaw), ({ draft: d, effects: own }) => {
             const pending = d.accountReplicas.get(from), frame = pending !== undefined && pending._tag === "received" ? pending.candidate.frame : undefined;
-            return chain(answerFrame(d, from, ctx), (answered) => {
+            return chain(answerFrame(d, from, ctx), ({ draft: answered, effects: signed }) => {
               const after = answered.accountReplicas.get(from), installed = frame !== undefined && after !== undefined && after.head.height >= frame.height;
-              return chain(committedLendingFollowups(answered, from, ownCommitted(answered), installed ? frame : undefined, ctx), (l) =>
-                chain(htlcFollowups(l, from, ownCommitted(answered), installed ? { frame, from: i.fromEntityId, to: i.toEntityId, domain: i.domain } : undefined, ctx), (h) => chain(crossFollowups(h, from, ownCommitted(answered), installed ? frame : undefined, ctx.timestamp), (c) => committedSettleFollowups(c, from, ownCommitted(answered), installed ? frame : undefined))));
+              return committedFollowups(answered, from, ownCommitted(answered), installed ? { frame, from: i.fromEntityId, to: i.toEntityId, domain: i.domain } : undefined, [...own, ...signed], ctx);
             });
           }),
         }),
