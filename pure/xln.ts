@@ -3943,6 +3943,8 @@ export type ActiveDispute = {
   readonly batchNonce?: number | undefined; readonly finalizeQueued: boolean;
   /** og CounterDisputeRegistered: the counter-proof Solidity selected, which disputeFinalize must execute. */
   readonly selectedCounterNonce?: number | undefined; readonly selectedCounterProofbodyHash?: string | undefined; readonly selectedCounterProposerIsLeft?: boolean | undefined;
+  /** og activeDispute.crossJurisdictionRecovery: the Target user's (non-starter) recovery latched from disputePrepare at DisputeStarted. */
+  readonly crossJurisdictionRecovery?: CrossRecovery | undefined;
 };
 export type AccountMessage = Extract<AccountInput, { readonly kind: "ack" | "ack_frame" }>;
 /** Every peer-originated input (og routes `dispute` through the same Entity accountInput lane). */
@@ -3982,7 +3984,14 @@ export interface ReceivedAccount extends Tagged<"received", Held & { disputeHank
 /** `prepare`: og disputePrepare, set when the Entity's prepareDispute froze the Account (committed in the Entity leaf). */
 export interface PreparingAccount extends Tagged<"preparing", Frozen & { mempool: readonly WireAccountTx[]; unready: StartRefusal; prepare?: DisputePrepare | undefined }> {}
 /** og AccountReplica.disputePrepare (dispute/index.ts markAccountDisputePreparing). */
-export type DisputePrepare = { readonly startedAt: number; readonly readyAfter: number; readonly reason: string; readonly startIntent: { readonly description: string; readonly crossJurisdictionRouteId?: string | undefined; readonly starterInitialArguments?: string | undefined } };
+export type DisputePrepare = {
+  readonly startedAt: number; readonly readyAfter: number; readonly reason: string;
+  /** og pendingOrderbookRemovalIds: cross-Entity book rows that must confirm removal before disputeStart (sorted). */
+  readonly pendingOrderbookRemovalIds?: readonly string[] | undefined;
+  /** og crossJurisdictionRecovery: retained across prepare → DisputeStarted so j-finality can latch it. */
+  readonly crossJurisdictionRecovery?: CrossRecovery | undefined;
+  readonly startIntent: { readonly description: string; readonly crossJurisdictionRouteId?: string | undefined; readonly starterInitialArguments?: string | undefined };
+};
 /** og activeDispute as handleDisputeStart (dispute/start.ts queueDisputeStart) writes it before the DisputeStarted event is observed. */
 export type QueuedDispute = {
   readonly startedByLeft: boolean; readonly initialProofbodyHash: string; readonly initialNonce: number; readonly initialProposerIsLeft: boolean; readonly disputeTimeout: 0; readonly jNonce: number;
@@ -4473,7 +4482,8 @@ const disputeStarted = (r: AccountReplica, f: DisputeStartedFinality): Verb<Disp
   const active: ActiveDispute = {
     startedByLeft: starter === id.left.toLowerCase(), initialProofbodyHash: f.initialProofbodyHash, initialNonce: f.initialNonce, initialProposerIsLeft: f.initialProposerIsLeft,
     disputeTimeout: f.disputeTimeout, disputeStartTimestamp: f.disputeStartTimestamp, jNonce: f.jNonce, starterInitialArguments: f.starterInitialArguments, starterCounterArguments: f.starterCounterArguments,
-    starterCounterProofCommitment: f.starterCounterProofCommitment, observedOnChain: true, observedBlockNumber: f.observedBlockNumber, ...opt("batchNonce", f.batchNonce), finalizeQueued: false,
+    starterCounterProofCommitment: f.starterCounterProofCommitment, observedOnChain: true, observedBlockNumber: f.observedBlockNumber, ...opt("batchNonce", f.batchNonce),
+    ...opt("crossJurisdictionRecovery", r._tag === "preparing" ? r.prepare?.crossJurisdictionRecovery : undefined), finalizeQueued: false,
   };
   // og sets status 'disputed' before freezeAccountForDispute(account, true): deferred claims are dropped, dispute evidence (queued or in our pending frame) is kept.
   const { head, dispute: witnesses, acknowledged } = r, evidence = r._tag === "preparing" || r._tag === "disputed" ? r.evidence : undefined, start = r._tag === "disputed" ? r.start : undefined;
@@ -4485,7 +4495,7 @@ const disputeFinalized = (r: AccountReplica, f: Extract<AccountFinality, { kind:
   if (!f.finalizedTokenIds.every((t) => Number.isSafeInteger(t) && t >= 0)) return finalityErr("token_id");
   const finalized = new Set(f.finalizedTokenIds.map((t) => String(t)));
   const deltas = new Map([...r.state.account.deltas].map(([tk, d]): readonly [TokenId, Delta] => [tk, { ...d, ...(finalized.has(String(tk)) ? { collateral: 0n, ondelta: 0n } : {}), offdelta: 0n }]));
-  const state: AccountBody = { ...r.state, settlement: undefined, jNonce: f.finalizedJNonce, account: { ...r.state.account, deltas }, locks: new Map(), offers: new Map() };
+  const state: AccountBody = { ...r.state, settlement: undefined, jNonce: f.finalizedJNonce, account: { ...r.state.account, deltas }, locks: new Map(), offers: new Map(), ...(r.state.pulls !== undefined && r.state.pulls.size > 0 ? { pulls: new Map() } : {}) };
   const { current, nextProofNonce } = r.dispute, evidence = r._tag === "preparing" || r._tag === "disputed" ? r.evidence : undefined, start = r._tag === "disputed" ? r.start : undefined;
   const witnesses: DisputeWitnesses = { ...opt("current", current), nextProofNonce: nextProofNonce <= f.finalizedJNonce ? f.finalizedJNonce + 1 : nextProofNonce };
   return ok(done<DisputedAccount, AccountOutput>({ _tag: "disputed", state, head: r.head, dispute: witnesses, acknowledged: r.acknowledged, evidence, mempool: [], ...opt("start", start), ...envMeta(r) }));
@@ -5601,7 +5611,11 @@ export const ogProofBody = (b: ProofBody): Binary => ({
   transformers: b.transformers.map((c) => ({ transformerAddress: c.transformerAddress, encodedBatch: c.encodedBatch, allowances: c.allowances.map((a) => ({ deltaIndex: a.deltaIndex, rightAllowance: a.rightAllowance, leftAllowance: a.leftAllowance })) })),
 });
 /** og collectDisputeEvidenceReadinessIssues (without orderbook removals, which the rewrite does not queue). */
-const disputeIssues = (child: AccountReplica, now: number): readonly string[] => { const readyAfter = child._tag === "preparing" ? child.prepare?.readyAfter ?? 0 : 0; return readyAfter > now ? [`cooldown:${readyAfter - now}ms`] : []; };
+/** og collectDisputeEvidenceReadinessIssues: the cooldown, then the cross-Entity book removals still unconfirmed. */
+const disputeIssues = (child: AccountReplica, now: number): readonly string[] => {
+  const prepare = child._tag === "preparing" ? child.prepare : undefined, readyAfter = prepare?.readyAfter ?? 0, removals = prepare?.pendingOrderbookRemovalIds?.length ?? 0;
+  return [...(readyAfter > now ? [`cooldown:${readyAfter - now}ms`] : []), ...(removals > 0 ? [`orderbookRemovals:${removals}`] : [])];
+};
 type StartIntent = DisputePrepare["startIntent"];
 /**
  * Whether ethers v6 `AbiCoder.defaultAbiCoder().decode(["bytes[]"], bytes)` returns rather than throws: strict (padded) reads, the array-count
@@ -5784,7 +5798,8 @@ export const starterSecrets = (raw: unknown): readonly string[] => {
 const startDispute = (d: Draft, peer: EntityId, intent: StartIntent & { readonly starterCounterArguments?: string | undefined }, ctx: FoldContext): Result<Draft, EntityError> => {
   const say = (x: Draft, message: string): Draft => ({ ...x, events: [...(x.events ?? []), status(message)] }), tag = peer.slice(-4);
   if (intent.starterCounterArguments !== undefined) return invariant("DISPUTE_INCREMENTED_ARGUMENT_OVERRIDE_UNSUPPORTED");
-  if (intent.crossJurisdictionRouteId) return invariant(`DISPUTE_START_CROSS_J_ROUTE_MISSING:${intent.crossJurisdictionRouteId}`);
+  const routeIssue = crossDisputeRouteIssue(d.state, peer, intent.crossJurisdictionRouteId);
+  if (routeIssue !== undefined) return halt(routeIssue);
   const jb = committedJBatch(d.state) ?? (initJBatch() as unknown as CommittedJBatch);
   const seeded: Draft = { ...d, state: { ...d.state, committed: { ...d.state.committed, jBatchState: jb as unknown as Binary } } };
   const admitted = jb.sentBatch === undefined ? seeded : say(seeded, `ℹ️ disputeStart queued to current batch while sentBatch nonce=${jb.sentBatch.entityNonce} is still pending`);
@@ -5795,18 +5810,37 @@ const startDispute = (d: Draft, peer: EntityId, intent: StartIntent & { readonly
   const issues = disputeIssues(child, Number(ctx.timestamp));
   if (issues.length > 0) return ok(say(admitted, `⏳ disputeStart blocked until evidence is stable for ${tag}: ${issues.join("; ")}`));
   if (queuedDisputeStart(jb, peer)) return ok(say(admitted, `ℹ️ disputeStart already queued for ${tag} (awaiting batch lifecycle)`));
-  const w = child.dispute.counterparty, jNonce = child.state.jNonce, signed = w?.proofNonce ?? 0;
-  const start = startOf(child.state, child.dispute, peer, ctx.verify, accountDt(ctx, child));
+  const w = child.dispute.counterparty, jNonce = child.state.jNonce, signed = w?.proofNonce ?? 0, dt = accountDt(ctx, child);
+  const start = startOf(child.state, child.dispute, peer, ctx.verify, dt);
+  // og loadStartProof: the revealed body (built under the Account's DeltaTransformer) must hash to the stored proofBodyHash
+  const revealed = (): Result<LocalProof, EntityError> => chain(mapErr(committedView(child.state), (): EntityError => ({ _tag: "entity_invariant", reason: "DISPUTE_START_EVIDENCE_INVALID" })),
+    (view) => mapErr(localProof(view, dt), (e): EntityError => ({ _tag: "entity_invariant", reason: e._tag === "dispute_proof" && e.error._tag === "transformer" ? e.error.code : "DISPUTE_START_EVIDENCE_INVALID" })));
+  // og assertCrossJurisdictionDisputeProofHasPulls (after loadStartProof, before the nonce): a route-bound start must carry a canonical Pull
+  const routePulls = (body: Pick<ProofBody, "transformers">): Result<void, EntityError> => {
+    const routeId = intent.crossJurisdictionRouteId;
+    if (!routeId) return ok(undefined);
+    if (!dt.ok) return halt(dt.error);
+    return chain(proofBodyHasPulls(body, dt.value), (has) => (has ? ok(undefined) : halt(`DISPUTE_START_CROSS_J_PROOF_PULLS_MISSING:${routeId}`)));
+  };
   if (!start.ok) {
     switch (start.error._tag) {
       case "no_witness": return ok(say(admitted, "❌ Missing counterparty dispute hanko - cannot start dispute"));
-      case "nonce_stale": return ok(say(admitted, `❌ Stale dispute proof nonce ${signed} (on-chain=${jNonce}) - reopen required`));
-      case "hanko_invalid": return ok(say(admitted, `❌ Counterparty dispute proof invalid for current account snapshot; nonce=${signed} onChain=${jNonce} source=counterpartyHanko`));
-      case "hash_mismatch": return invariant(`DISPUTE_STORED_HASH_MISMATCH:${peer}`);
+      case "body_mismatch": return chain(revealed(), (p) => halt(`DISPUTE_START_PROOFBODY_HASH_MISMATCH:${peer}:${w?.proofBodyHash ?? ""}:${p.bodyHash}`));
+      case "nonce_stale": return chain(revealed(), (p) => map(routePulls(p.body), () => say(admitted, `❌ Stale dispute proof nonce ${signed} (on-chain=${jNonce}) - reopen required`)));
+      case "hanko_invalid": return chain(revealed(), (p) => map(routePulls(p.body), () => say(admitted, `❌ Counterparty dispute proof invalid for current account snapshot; nonce=${signed} onChain=${jNonce} source=counterpartyHanko`)));
+      case "hash_mismatch": return chain(revealed(), (p) => chain(routePulls(p.body), () => invariant(`DISPUTE_STORED_HASH_MISMATCH:${peer}`)));
+      case "proof": return start.error.error._tag === "transformer" ? halt(start.error.error.code) : invariant("DISPUTE_START_EVIDENCE_INVALID");
       default: return invariant("DISPUTE_START_EVIDENCE_INVALID");
     }
   }
-  const s = start.value, rows = jb.batch["disputeStarts"] ?? [], total = BATCH_FIELDS.reduce((n, f) => n + (jb.batch[f] ?? []).length, 0);
+  const s = start.value, pullsChecked = routePulls(s.initialProofbody);
+  if (!pullsChecked.ok) return pullsChecked;
+  const rows = jb.batch["disputeStarts"] ?? [], total = BATCH_FIELDS.reduce((n, f) => n + (jb.batch[f] ?? []).length, 0);
+  // og queueDisputeStart(requireAccountDeltaTransformerAddress(...)): the Account's DeltaTransformer is required for every start
+  if (!dt.ok) return halt(dt.error);
+  const hasPulls = proofBodyHasPulls(s.initialProofbody, dt.value);
+  if (!hasPulls.ok) return hasPulls;
+  if (hasPulls.value && total !== 0) return halt(`DISPUTE_START_PULL_BATCH_NOT_EMPTY:${total}`);
   if (rows.length >= J_BATCH_LIMITS.maxDisputeStarts) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeStarts ${rows.length + 1}/${J_BATCH_LIMITS.maxDisputeStarts}`);
   if (total + 1 > J_BATCH_LIMITS.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeStart would exceed total ops ${total + 1}/${J_BATCH_LIMITS.maxTotalOps}`);
   const initialProofbody = ogProofBody(s.initialProofbody), nonce = Number(s.nonce), starterIsLeft = sameHex(child.state.account.id.left, d.state.id);
@@ -5820,22 +5854,79 @@ const startDispute = (d: Draft, peer: EntityId, intent: StartIntent & { readonly
     starterInitialArguments, starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD, observedOnChain: false, finalizeQueued: false };
   const jBatchState = { ...jb, batch: { ...jb.batch, disputeStarts: [...rows, row] } } as unknown as Binary;
   const disputed: Draft = { ...admitted, ...putChild({ ...admitted.state, committed: { ...admitted.state.committed, jBatchState } }, admitted.accountReplicas, peer, startPrepared(child, s, queued)) };
-  return ok(say(disputed, `⚔️ Dispute started vs ${tag} ${intent.description ? `(${intent.description})` : ""} - account frozen, use jBroadcast to commit`));
+  const startedMessage = `⚔️ Dispute started vs ${tag} ${intent.description ? `(${intent.description})` : ""} - account frozen, use jBroadcast to commit`;
+  if (!hasPulls.value) return ok(say(disputed, startedMessage));
+  return map(pullDisputeRegistrations(cjOf(disputed, ctx.timestamp, ctx.runtimeSeed), peer, s.initialProofbody, dt.value), (cj) => say(cjInto(disputed, cj, ctx.timestamp), startedMessage));
 };
+/**
+ * og validateCrossJurisdictionDisputeRoute: a route-bound start names a stored route whose source or target leg (exactly one) is this Account,
+ * that is not terminal, and that carries both pull commitments.
+ */
+const crossDisputeRouteIssue = (state: EntityState, peer: string, routeId: string | undefined): string | undefined => {
+  if (!routeId) return undefined;
+  const route = state.crossJurisdictionSwaps?.get(routeId);
+  if (route === undefined || route.orderId !== routeId) return `DISPUTE_START_CROSS_J_ROUTE_MISSING:${routeId}`;
+  const self = lc(state.id), cp = lc(peer);
+  const pair = (a: string, b: string): boolean => (lc(a) === self && lc(b) === cp) || (lc(b) === self && lc(a) === cp);
+  if (pair(route.source.entityId, route.source.counterpartyEntityId) === pair(route.target.entityId, route.target.counterpartyEntityId)) return `DISPUTE_START_CROSS_J_ROUTE_ROLE_MISMATCH:${routeId}`;
+  if (isCrossTerminal(route.status)) return `DISPUTE_START_CROSS_J_ROUTE_INACTIVE:${routeId}:${route.status}`;
+  if (!route.sourcePull || !route.targetPull) return `DISPUTE_START_CROSS_J_PULLS_MISSING:${routeId}`;
+  return undefined;
+};
+/**
+ * og proofBodyHasPulls: does a canonical DeltaTransformer clause of the signed body carry a Pull (malformed canonical bytes halt, as Solidity's
+ * abi.decode reverts). og's halt text carries the ethers decode message; the rewrite carries its own decode code after the clause index.
+ */
+export const proofBodyHasPulls = (body: Pick<ProofBody, "transformers">, transformer: string): Result<boolean, EntityError> => {
+  if (!isAddressText(transformer)) return halt(`DISPUTE_DELTA_TRANSFORMER_ADDRESS_INVALID:${transformer}`);
+  const canonical = transformer.toLowerCase();
+  for (const [i, t] of body.transformers.entries()) {
+    if (String(t.transformerAddress).toLowerCase() !== canonical) continue;
+    const pulls = decodeBatchPulls(t.encodedBatch);
+    if (!pulls.ok) return halt(`DISPUTE_CANONICAL_DELTA_BATCH_INVALID:${i}:${pulls.error.reason}`);
+    if (pulls.value.length > 0) return ok(true);
+  }
+  return ok(false);
+};
+/**
+ * og queuePullDisputeRegistrations: flush this Account's stashed reveals, bundle every Source hub claim the signed body freezes into the start
+ * batch, latch autoBroadcastDraft and (without a sent batch) broadcast.
+ */
+const pullDisputeRegistrations = (cj: Cj, peer: string, body: Pick<ProofBody, "transformers">, transformer: string): Result<Cj, EntityError> =>
+  chain(flushDeferredReveals(cj.host, peer), ({ host }) => chain(sourceHubClaims(host, peer, body, transformer), ({ host: claimed, claims }): Result<Cj, EntityError> => {
+    let next = cjHost(cj, claimed);
+    for (const c of claims) {
+      if (c.result === "source-window-expired") return halt(`DISPUTE_START_SOURCE_CLAIM_WINDOW_IMPOSSIBLE:${c.routeId}`);
+      if (c.result === "already-queued") continue;
+      if (c.result === "deferred-batch-pending" && claimed.jb?.sentBatch === undefined) return halt(`DISPUTE_START_SOURCE_CLAIM_NOT_ATOMIC:${c.routeId}`);
+      next = cjSay(next, c.result === "queued" ? `🌉 Cross-j claim ${c.routeId}: source reveal bundled with dispute start` : `⏳ Cross-j claim ${c.routeId}: start/reveal held behind immutable jBatch`);
+    }
+    const jb = next.host.jb ?? (initJBatch() as unknown as CjJBatch), latched = cjHost(next, { ...next.host, jb: { ...jb, autoBroadcastDraft: true } });
+    if (jb.sentBatch !== undefined) return ok(latched);
+    const signerId = cj.host.validators[0];
+    return signerId ? ok({ ...latched, outputs: [...latched.outputs, { kind: "j_broadcast", signerId }] }) : halt("DISPUTE_START_CROSS_J_BROADCAST_SIGNER_MISSING");
+  }));
 /** og buildDisputeArgumentsForCurrentState over the frozen Account (its retained swap_resolve evidence and the Entity's paybook secrets). */
 const builtDisputeArguments = (child: AccountReplica, peer: string, paybook: Paybook | undefined, side: DisputeArgumentSide): Result<{ readonly left: string; readonly right: string }, EntityError> =>
   chain(mapErr(committedView(child.state), (): EntityError => ({ _tag: "entity_invariant", reason: "DISPUTE_START_EVIDENCE_INVALID" })), (view) =>
     mapErr(disputeArguments(view, child.mempool, side, knownDisputeSecrets(view, paybook, peer)), (e): EntityError => ({ _tag: "entity_invariant", reason: e._tag === "transformer" ? e.code : `DISPUTE_START_EVIDENCE_INVALID:${e._tag}` })));
 /**
- * og removeDisputedAccountOrdersFromBook / removeOrderbookRowForDispute: every resting order of the frozen Account leaves this Entity's book
- * (og removeBookOrderById: a same-j order under `${peer}:${offerId}`, a cross-j order this Entity owns the book of under `${source}:${offerId}`),
- * with og's count message. A cross-j order whose book another Entity owns needs og's removeCrossJurisdictionBookOrder Entity output, not ported.
+ * og removeDisputedAccountOrdersFromBook / removeOrderbookRowForDispute: every resting order of the frozen Account (in og's radix key order)
+ * leaves this Entity's book (og removeBookOrderById: a same-j order under `${peer}:${offerId}`, a cross-j order this Entity owns the book of under
+ * `${source}:${offerId}`); a cross-j order whose book another Entity owns becomes og's removeCrossJurisdictionBookOrder output to that owner.
  */
-const disputeBookRemoval = (d: Draft, peer: string, offers: ReadonlyMap<string, { readonly crossJurisdiction?: CrossRoute | undefined }>): Result<Draft, EntityError> => {
+const disputeBookRemoval = (d: Draft, peer: string, offers: ReadonlyMap<string, { readonly crossJurisdiction?: CrossRoute | undefined }>, timestamp: bigint): Result<{ readonly draft: Draft; readonly remote: readonly string[] }, EntityError> => {
   let books = d.state.orderbookExt?.books, removed = 0;
-  for (const [offerId, offer] of offers) {
+  const remote: string[] = [], outputs: EntityOutput[] = [];
+  for (const [offerId, offer] of [...offers].sort(([a], [b]) => radixOrder(a, b))) {
     const route = offer.crossJurisdiction, owner = route === undefined ? undefined : lower(route.bookOwnerEntityId || route.source.counterpartyEntityId || route.hubEntityId || "");
-    if (route !== undefined && owner !== lower(d.state.id)) return invariant("DISPUTE_PREPARE_CROSS_J_BOOK_REMOVAL_NOT_PORTED");
+    if (route !== undefined && owner !== lower(d.state.id)) {
+      const signerId = crossRouteSigner(route, owner ?? "");
+      if (!signerId) return halt(`DISPUTE_CROSS_J_BOOK_OWNER_SIGNER_MISSING: order=${offerId} owner=${owner} source=${route.source.entityId}`);
+      outputs.push(cjOutput(d.state, { kind: "cross", entityId: owner ?? "", signerId, txs: [{ type: "removeCrossJurisdictionBookOrder", data: { orderId: offerId, sourceEntityId: route.source.entityId, sourceAccountId: peer, route, reason: "account_dispute_prepare" } } as EntityTx] }, timestamp));
+      remote.push(offerId);
+      continue;
+    }
     if (books === undefined) continue;
     const orderId = swapKeyOf(route === undefined ? peer : lower(route.source.entityId), offerId), pairs = pairsHolding(books, orderId);
     if (pairs.length > 1) return halt(`ORDERBOOK_DUPLICATE_BOOK_ORDER: order=${orderId} matches=${pairs.length}`);
@@ -5846,12 +5937,13 @@ const disputeBookRemoval = (d: Draft, peer: string, offers: ReadonlyMap<string, 
     books = mapSet(books, pairId, r.value.state);
     removed += 1;
   }
-  const ext = d.state.orderbookExt;
-  if (removed === 0 || ext === undefined || books === undefined) return ok(d);
-  return ok({ ...d, state: { ...d.state, orderbookExt: { ...ext, books } }, events: [...(d.events ?? []), status(`⚔️ Dispute removed ${removed} local orderbook row(s), queued 0 remote row removal(s)`)] });
+  const ext = d.state.orderbookExt, withOutputs: Draft = { ...d, outputs: [...d.outputs, ...outputs] };
+  if (removed === 0 && remote.length === 0) return ok({ draft: withOutputs, remote });
+  const state = removed === 0 || ext === undefined || books === undefined ? d.state : { ...d.state, orderbookExt: { ...ext, books } };
+  return ok({ draft: { ...withOutputs, state, events: [...(d.events ?? []), status(`⚔️ Dispute removed ${removed} local orderbook row(s), queued ${remote.length} remote row removal(s)`)] }, remote });
 };
 /** og handlePrepareDispute: status messages for a missing / already disputed / still preparing Account; otherwise freeze into dispute_preparing and start once ready. */
-const prepareDispute = (d: Draft, x: Extract<EntityTx, { type: "prepareDispute" }>["data"], ctx: FoldContext): Result<Draft, EntityError> => {
+const prepareDispute = (d: Draft, x: Extract<EntityTx, { type: "prepareDispute" }>["data"], ctx: FoldContext, supplied: Readonly<Record<string, string>> = {}): Result<Draft, EntityError> => {
   const say = (y: Draft, message: string): Draft => ({ ...y, events: [...(y.events ?? []), status(message)] }), peer = x.counterpartyEntityId, tag = peer.slice(-4);
   const child = d.accountReplicas.get(peer), now = Number(ctx.timestamp), description = x.description ?? "prepare-dispute";
   if (child === undefined) return ok(say(d, `❌ No account with ${tag} - cannot prepare dispute`));
@@ -5861,15 +5953,46 @@ const prepareDispute = (d: Draft, x: Extract<EntityTx, { type: "prepareDispute" 
     const issues = disputeIssues(child, now);
     return issues.length === 0 ? startDispute(d, peer, intentOf(child.prepare), ctx) : ok(say(d, `⏳ Dispute preparation still pending for ${tag}: ${issues.join("; ")}`));
   }
-  // og removeDisputedAccountOrdersFromBook pulls the Account's resting orders out of the (local or cross-j) book first
-  return chain(disputeBookRemoval(d, peer, child.state.offers), (cleared) => {
-    const startIntent: StartIntent = { description, ...opt("crossJurisdictionRouteId", x.crossJurisdictionRouteId), ...opt("starterInitialArguments", x.starterInitialArguments) };
-    const prepare: DisputePrepare = { startedAt: now, readyAfter: now + Math.max(0, Math.floor(x.minCooldownMs ?? 0)), reason: description || "prepare-dispute", startIntent };
+  // og planCrossJurisdictionTargetRecovery, then removeDisputedAccountOrdersFromBook (local rows, remote removal requests)
+  const cj = cjOf(d, ctx.timestamp, ctx.runtimeSeed), account = cj.host.accounts.get(lc(peer));
+  if (account === undefined) return invariant(`PREPARE_DISPUTE_ACCOUNT_MISSING:${peer}`);
+  return chain(planTargetRecovery(cj.host, account, peer, supplied), (plan) => chain(disputeBookRemoval(d, peer, child.state.offers, ctx.timestamp), ({ draft: cleared, remote }) => {
+    const recovery = plan?.recovery, routeId = x.crossJurisdictionRouteId ?? plan?.representativeRouteId;
+    const startIntent: StartIntent = { description, ...opt("crossJurisdictionRouteId", routeId), ...(recovery === undefined ? opt("starterInitialArguments", x.starterInitialArguments) : {}) };
+    const prepare: DisputePrepare = { startedAt: now, readyAfter: now + Math.max(0, Math.floor(x.minCooldownMs ?? 0)), reason: description || "prepare-dispute",
+      ...(remote.length > 0 ? { pendingOrderbookRemovalIds: [...remote].sort() } : {}), ...opt("crossJurisdictionRecovery", recovery), startIntent };
     const frozen = prepareFrozen(child, prepare, { _tag: "not_attempted" }), issues = disputeIssues(frozen, now);
     const prepared = say({ ...cleared, ...putChild(cleared.state, cleared.accountReplicas, peer, frozen) }, issues.length > 0
       ? `⏳ Dispute prepared vs ${tag}; waiting for stable evidence: ${issues.join("; ")}` : `⏳ Dispute prepared vs ${tag}; evidence currently stable, queue disputeStart when ready`);
-    return issues.length > 0 ? ok(prepared) : startDispute(prepared, peer, startIntent, ctx);
-  });
+    if (issues.length > 0) return ok(prepared);
+    // og finishDisputePreparation: a recovery whose every source result is `0x` needs no target dispute; the Account returns to active
+    if (recovery !== undefined && recovery.requiredPullIds.every((id) => recovery.resultsByPullId[id] === "0x"))
+      return ok(say({ ...prepared, ...putChild(prepared.state, prepared.accountReplicas, peer, reopen(frozen, { state: frozen.state, head: frozen.head, mempool: frozen.mempool })) }, "🌉 Cross-j source finality required no target dispute"));
+    return startDispute(prepared, peer, startIntent, ctx);
+  }));
+};
+/** og draftPreparedDisputeStartIfReady: a preparing Account with no readiness issue starts with its retained start intent. */
+const draftPreparedStart = (d: Draft, peer: EntityId, ctx: FoldContext): Result<Draft, EntityError> => {
+  const child = d.accountReplicas.get(peer);
+  if (child === undefined || child._tag !== "preparing" || disputeIssues(child, Number(ctx.timestamp)).length > 0) return ok(d);
+  return startDispute(d, peer, child.prepare?.startIntent ?? { description: "prepare-dispute" }, ctx);
+};
+type BookRemovedData = Extract<EntityTx, { type: "crossJurisdictionBookOrderRemoved" }>["data"];
+/**
+ * og handleCrossJurisdictionBookOrderRemovedEntityTx's dispute branch: after the route checks, a preparing Account waiting on this removal confirms
+ * it (og confirmDisputeBookRemoval) and starts once ready. undefined: not a pending dispute removal, the book lifecycle handles the ACK.
+ */
+const disputeRemovalAck = (d: Draft, data: BookRemovedData, ctx: FoldContext): Result<Draft, EntityError> | undefined => {
+  const route = canonicalCrossRoute(data.route);
+  if (!route.ok) return undefined;
+  const id = route.value.orderId, current = d.state.crossJurisdictionSwaps?.get(id);
+  if (entityRef(d.state.id) !== entityRef(route.value.source.counterpartyEntityId) || current === undefined || entityRef(current.routeHash || "") !== entityRef(route.value.routeHash || "")) return undefined;
+  const child = d.accountReplicas.get(data.sourceAccountId as EntityId), pending = child?._tag === "preparing" ? child.prepare?.pendingOrderbookRemovalIds : undefined;
+  if (child?._tag !== "preparing" || child.prepare === undefined || pending === undefined || !pending.includes(id)) return undefined;
+  const rest = pending.filter((o) => o !== id), { pendingOrderbookRemovalIds: _drop, ...prepare } = child.prepare;
+  const confirmed: PreparingAccount = { ...child, prepare: rest.length > 0 ? { ...prepare, pendingOrderbookRemovalIds: rest } : prepare };
+  const next: Draft = { ...d, ...putChild(d.state, d.accountReplicas, data.sourceAccountId as EntityId, confirmed), events: [...(d.events ?? []), status(`🌉 Cross-j dispute book removal confirmed ${id}`)] };
+  return draftPreparedStart(next, data.sourceAccountId as EntityId, ctx);
 };
 // ---- og entity/tx/handlers/dispute/{finalize,finalize-admission,finalize-proof}.ts: disputeFinalize ----
 /** og AccountReplica.activeDispute: the observed on-chain dispute, or our queued start before DisputeStarted is observed. */
@@ -5883,10 +6006,9 @@ type FinalizeIntent = Extract<EntityTx, { type: "disputeFinalize" }>["data"];
 /**
  * og handleDisputeFinalize: admission (jBatchState seeded, an observed and not yet queued dispute, an already queued finalization latches
  * finalizeQueued), og selectFinalProof (a selected or newer counterparty proof, else the initial unilateral one, against the frozen proof body),
- * verifyCounterProofIdentity, buildFinalProofPayload (starter arguments by the counter-proof commitment), og's Account.sol timing gate, then the
- * DisputeFinalization row in the draft batch and the Account's finalizeQueued latch. og's throws are fatal (entity_invariant).
- * The rewrite's proofs never carry locks, swaps or pulls (they are refused below), so the non-starter's own arguments and the registry
- * secrets are og's empty values; a pending hash-ladder reveal flush needs og's entity j_broadcast, which is not ported here.
+ * the cross-j Target recovery readiness, verifyCounterProofIdentity, buildFinalProofPayload (starter arguments by the counter-proof commitment),
+ * the registry secrets (useOnchainRegistry), og's Account.sol timing gate (Pulls wait for T), the hash-ladder reveal deferral (flush, j_broadcast,
+ * deadline hook), then the revealSecret rows, the DisputeFinalization row and the Account's finalizeQueued latch. og's throws are fatal.
  */
 const finalizeDispute = (d: Draft, x: FinalizeIntent, ctx: FoldContext): Result<Draft, EntityError> => {
   const say = (y: Draft, message: string): Draft => ({ ...y, events: [...(y.events ?? []), status(message)] }), peer = x.counterpartyEntityId, tag = peer.slice(-4);
@@ -5918,6 +6040,39 @@ const finalizeDispute = (d: Draft, x: FinalizeIntent, ctx: FoldContext): Result<
   if (finalNonce <= 0) return ok(say(admitted, `❌ Invalid dispute finalNonce=${finalNonce} — must be > 0`));
   const finalHash = counter?.hash ?? active.initialProofbodyHash;
   if (!sameHex(proof.bodyHash, finalHash)) return invariant(`DISPUTE_FROZEN_ACCOUNT_STATE_MISMATCH:finalize:${peer}:${finalHash}:${proof.bodyHash}`);
+  // og selectedCrossJurisdictionRecoveryIsReady: refresh the latched Target recovery; missing source results before T wait (hook + message)
+  const readiness = recoveryReadiness(admitted, peer, disputed, active as ActiveDispute, ctx);
+  if (!readiness.ok) return readiness;
+  if (readiness.value.waiting) return ok(readiness.value.draft);
+  return finalizeReady(readiness.value.draft, x, ctx, { view, proof, counter, finalNonce, proposerIsLeft, finalHash, callerIsStarter, selfLeft });
+};
+type FinalCounter = { readonly nonce: number; readonly proposerIsLeft: boolean; readonly hash: string; readonly hanko: string };
+type FinalSelection = { readonly view: CommittedAccountState; readonly proof: CompleteProof; readonly counter: FinalCounter | undefined; readonly finalNonce: number; readonly proposerIsLeft: boolean; readonly finalHash: string; readonly callerIsStarter: boolean; readonly selfLeft: boolean };
+/** og selectedCrossJurisdictionRecoveryIsReady on the Draft: `waiting` when missing source results keep finalize back before T. */
+type Readiness = { readonly draft: Draft; readonly waiting: boolean };
+const recoveryReadiness = (d: Draft, peer: EntityId, child: DisputedAccount, active: ActiveDispute, ctx: FoldContext): Result<Readiness, EntityError> => {
+  const current = active.crossJurisdictionRecovery;
+  if (current === undefined) return ok({ draft: d, waiting: false });
+  const cj = cjOf(d, ctx.timestamp, ctx.runtimeSeed), account = cj.host.accounts.get(lc(peer));
+  if (account === undefined) return invariant(`DISPUTE_FINALIZE_ACTIVE_ACCOUNT_MISSING:${peer}`);
+  return chain(refreshTargetRecovery(cj.host, account, peer, current), (plan): Result<Readiness, EntityError> => {
+    const { crossJurisdictionRecovery: _old, ...rest } = active, nextActive: ActiveDispute = plan === null ? rest : { ...rest, crossJurisdictionRecovery: plan.recovery };
+    const updated: Draft = { ...d, ...putChild(d.state, d.accountReplicas, peer, { ...child, active: nextActive }) };
+    if (plan === null) return ok({ draft: updated, waiting: false });
+    const missing = plan.recovery.requiredPullIds.filter((id) => !Object.hasOwn(plan.recovery.resultsByPullId, id));
+    const timeoutSec = Number(active.disputeTimeout || 0), nowSec = Math.floor(Number(ctx.timestamp) / 1000);
+    if (missing.length === 0 || (timeoutSec > 0 && nowSec >= timeoutSec)) return ok({ draft: updated, waiting: false });
+    return map(scheduleDisputeDeadline(updated.state, peer, Number(ctx.timestamp) + 1000), (state) => ({ waiting: true,
+      draft: { ...updated, state, events: [...(updated.events ?? []), status(`⏳ disputeFinalize waiting for ${missing.length} cross-j source result(s) required by the selected proof (nowSec=${nowSec}, timeoutSec=${timeoutSec})`)] } }));
+  });
+};
+/** og isUsableContractAddress: a well-formed, non-zero address. */
+const usableContract = (a: string): boolean => /^0x[0-9a-fA-F]{40}$/.test(a) && !/^0x0{40}$/.test(a);
+/** og handleDisputeFinalize after the recovery readiness: identity, payload, registry, timing, reveal deferral, queue, latch. */
+const finalizeReady = (admitted: Draft, x: FinalizeIntent, ctx: FoldContext, sel: FinalSelection): Result<Draft, EntityError> => {
+  const say = (y: Draft, message: string): Draft => ({ ...y, events: [...(y.events ?? []), status(message)] }), peer = x.counterpartyEntityId, tag = peer.slice(-4);
+  const child = admitted.accountReplicas.get(peer) as DisputedAccount, active = activeOf(child) as ActiveDispute, w = child.dispute.counterparty;
+  const { view, proof, counter, finalNonce, proposerIsLeft, finalHash, callerIsStarter, selfLeft } = sel, d = admitted;
   // og verifyCounterProofIdentity: the peer's stored dispute hash must be the counter-proof's hash under the Entity's own depository domain
   if (counter !== undefined && w !== undefined) {
     if (d.state.jurisdictionConfig === undefined) return invariant("DISPUTE_COUNTER_FINALIZE_DEPOSITORY_MISSING");
@@ -5933,20 +6088,48 @@ const finalizeDispute = (d: Draft, x: FinalizeIntent, ctx: FoldContext): Result<
   const otherArguments = callerIsStarter ? "0x" : active.startedByLeft ? built.value.right : built.value.left;
   const argsIssue = disputeArgumentsIssue(starterArguments, "disputeFinalize.starterArguments") ?? disputeArgumentsIssue(otherArguments, "disputeFinalize.otherArguments");
   if (argsIssue !== undefined) return invariant(argsIssue);
-  // og resolveFinalizeSubmitNotBefore (no pulls in the rewrite's proofs): the non-starter may accept the starter's own state at once; the starter and any selected counter-proof wait for T
-  const timeoutSec = Number(active.disputeTimeout || 0), nowSec = Math.floor(Number(ctx.timestamp) / 1000), selected = active.selectedCounterNonce !== undefined;
-  const notBefore: number | null | undefined = timeoutSec > 0 && nowSec >= timeoutSec ? (callerIsStarter || selected ? timeoutSec : null) : selected ? undefined : !callerIsStarter ? null : undefined;
-  if (notBefore === undefined) return ok(say(admitted, selected ? `❌ selected counter-proof cannot finalize before timeout: nowSec=${nowSec}, timeoutSec=${timeoutSec}` : `❌ disputeFinalize too early: nowSec=${nowSec}, timeoutSec=${timeoutSec}, starter-unilateral`));
-  // og deferFinalizeForPendingReveals: never co-batch hash-ladder reveals with a finalization (the flush is an entity j_broadcast)
-  if ((jb.batch["hashLadderRegistrations"] ?? []).length > 0) return invariant("DISPUTE_FINALIZE_REVEAL_FLUSH_NOT_PORTED");
-  const rows = jb.batch["disputeFinalizations"] ?? [], total = BATCH_FIELDS.reduce((n, f) => n + (jb.batch[f] ?? []).length, 0);
-  if (rows.length >= J_BATCH_LIMITS.maxDisputeFinalizations) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeFinalizations ${rows.length + 1}/${J_BATCH_LIMITS.maxDisputeFinalizations}`);
-  if (total + 1 > J_BATCH_LIMITS.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeFinalize would exceed total ops ${total + 1}/${J_BATCH_LIMITS.maxTotalOps}`);
-  const row: Binary = { counterentity: peer, initialNonce: active.initialNonce, finalNonce, proposerIsLeft, initialProofbodyHash: active.initialProofbodyHash, finalProofbody: ogProofBody(proof.body),
-    starterArguments, otherArguments, sig: counter?.hanko ?? "0x", startedByLeft: active.startedByLeft, cooperative: false, ...(notBefore === null ? {} : { submitNotBeforeTimestamp: notBefore }) };
-  const jBatchState = { ...jb, batch: { ...jb.batch, disputeFinalizations: [...rows, row] } } as unknown as Binary;
-  const queued: Folded = latchFinalize({ state: { ...admitted.state, committed: { ...admitted.state.committed, jBatchState } }, accountReplicas: admitted.accountReplicas }, peer, disputed, active, true);
-  return ok(say({ ...admitted, ...queued }, `⚖️ Dispute finalized vs ${tag} ${x.description ? `(${x.description})` : ""} - use jBroadcast to commit`));
+  // og collectRegistryPublication: useOnchainRegistry publishes every known secret under the Account's DeltaTransformer
+  const dt = accountDt(ctx, child), secrets = x.useOnchainRegistry ? knownDisputeSecrets(view, d.state.paybook, peer) : [];
+  if (secrets.length > 0 && !dt.ok) return halt(dt.error);
+  const transformer = secrets.length > 0 && dt.ok ? dt.value : "";
+  if (secrets.length > 0 && !usableContract(transformer)) return halt("DISPUTE_FINALIZE_MISSING_DELTA_TRANSFORMER_ADDRESS");
+  // og resolveFinalizeSubmitNotBefore (Account.sol): a Pull counter-proof must be locked on-chain; Pulls and the starter wait for T; the non-starter may accept the starter's pull-free state at once
+  if (!dt.ok) return halt(dt.error);
+  const pulls = proofBodyHasPulls(proof.body, dt.value);
+  if (!pulls.ok) return pulls;
+  const hasPulls = pulls.value, timeoutSec = Number(active.disputeTimeout || 0), nowSec = Math.floor(Number(ctx.timestamp) / 1000), selected = active.selectedCounterNonce !== undefined;
+  if (hasPulls && counter !== undefined && !selected) return ok(say(d, "⏳ Pull counter-proof must be locked on-chain before finalization"));
+  const notBefore: number | null | undefined = timeoutSec > 0 && nowSec >= timeoutSec ? (hasPulls || callerIsStarter || selected ? timeoutSec : null) : selected ? undefined : !hasPulls && !callerIsStarter ? null : undefined;
+  if (notBefore === undefined) return ok(say(d, selected && !(timeoutSec > 0 && nowSec >= timeoutSec) ? `❌ selected counter-proof cannot finalize before timeout: nowSec=${nowSec}, timeoutSec=${timeoutSec}` : `❌ disputeFinalize too early: nowSec=${nowSec}, timeoutSec=${timeoutSec}${hasPulls ? ", pulls=yes" : ", starter-unilateral"}`));
+  // og deferFinalizeForPendingReveals: flush every stashed witness, then never co-batch hash-ladder reveals with a finalization
+  return chain(flushDeferredReveals(cjOf(d, ctx.timestamp, ctx.runtimeSeed).host, undefined), ({ host }): Result<Draft, EntityError> => {
+    const flushed = cjInto(d, { host, messages: [], outputs: [] }, ctx.timestamp), jb = committedJBatch(flushed.state) ?? (initJBatch() as unknown as CommittedJBatch);
+    const pending = (jb.batch["hashLadderRegistrations"] ?? []).length + countDeferredReveals(host);
+    if (pending > 0) {
+      const signer = rootConfig(flushed.state).validators[0], nowMs = Number(ctx.timestamp), timeoutMs = timeoutSec > 0 ? timeoutSec * 1000 : nowMs + 1000;
+      const broadcast: Draft = signer ? cjInto(flushed, { host, messages: [], outputs: [{ kind: "j_broadcast", signerId: signer }] }, ctx.timestamp) : flushed;
+      return map(scheduleDisputeDeadline(broadcast.state, peer, Math.min(nowMs + 1000, timeoutMs)), (state) => say({ ...broadcast, state }, `⏳ disputeFinalize deferred: ${pending} hashLadderReveal(s) must broadcast first`));
+    }
+    const rows = jb.batch["disputeFinalizations"] ?? [], total = BATCH_FIELDS.reduce((n, f) => n + (jb.batch[f] ?? []).length, 0);
+    if (rows.length >= J_BATCH_LIMITS.maxDisputeFinalizations) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeFinalizations ${rows.length + 1}/${J_BATCH_LIMITS.maxDisputeFinalizations}`);
+    if (total + 1 > J_BATCH_LIMITS.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: disputeFinalize would exceed total ops ${total + 1}/${J_BATCH_LIMITS.maxTotalOps}`);
+    // og batchAddRevealSecret per secret (exact duplicates skipped), then the finalization row
+    const reveals = foldResult<readonly Binary[], string, EntityError>(secrets, jb.batch["revealSecrets"] ?? [], (acc, secret) => {
+      if (acc.some((r) => (r as { readonly transformer?: unknown }).transformer === transformer && (r as { readonly secret?: unknown }).secret === secret)) return ok(acc);
+      const ops = BATCH_FIELDS.reduce((n, f) => n + (f === "revealSecrets" ? acc.length : (jb.batch[f] ?? []).length), 0) + 1;
+      if (ops > J_BATCH_LIMITS.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: revealSecret would exceed total ops ${ops}/${J_BATCH_LIMITS.maxTotalOps}`);
+      if (acc.length + 1 > J_BATCH_LIMITS.maxSecretReveals) return invariant(`J_BATCH_LIMIT_EXCEEDED: revealSecrets ${acc.length + 1}/${J_BATCH_LIMITS.maxSecretReveals}`);
+      return ok([...acc, { transformer, secret } as unknown as Binary]);
+    });
+    if (!reveals.ok) return reveals;
+    const row: Binary = { counterentity: peer, initialNonce: active.initialNonce, finalNonce, proposerIsLeft, initialProofbodyHash: active.initialProofbodyHash, finalProofbody: ogProofBody(proof.body),
+      starterArguments, otherArguments, sig: counter?.hanko ?? "0x", startedByLeft: active.startedByLeft, cooperative: false, ...(notBefore === null ? {} : { submitNotBeforeTimestamp: notBefore }) };
+    const accumulating = reveals.value.length > (jb.batch["revealSecrets"] ?? []).length && (jb as { readonly status?: string }).status === "empty" ? { status: "accumulating" } : {};
+    const jBatchState = { ...jb, ...accumulating, batch: { ...jb.batch, revealSecrets: reveals.value, disputeFinalizations: [...rows, row] } } as unknown as Binary;
+    const latest = flushed.accountReplicas.get(peer) as DisputedAccount, latestActive = activeOf(latest) as ActiveDispute;
+    const queued: Folded = latchFinalize({ state: { ...flushed.state, committed: { ...flushed.state.committed, jBatchState } }, accountReplicas: flushed.accountReplicas }, peer, latest, latestActive, true);
+    return ok(say({ ...flushed, ...queued }, `⚖️ Dispute finalized vs ${tag} ${x.description ? `(${x.description})` : ""} - use jBroadcast to commit`));
+  });
 };
 // ---- og entity/tx/j-events-htlc/index.ts: the hash-ladder reveal queue, Source hub claims, reveal ports, Target recovery, sibling dispute fanout ----
 type CjRows = { readonly [field: string]: readonly Binary[] };
@@ -6308,11 +6491,16 @@ const cjOf = (d: Draft, timestamp: bigint | number, runtimeSeed?: string): Cj =>
 /** Write a Cj back into the Draft: routes, jBatchState, messages (og addMessage), then outputs (self j_broadcast, cross-j runtimeOutput). */
 const cjInto = (d: Draft, cj: Cj, timestamp: bigint): Draft => {
   const h = cj.host, state: EntityState = { ...d.state, ...opt("crossJurisdictionSwaps", h.swaps), committed: h.jb === undefined ? d.state.committed : { ...d.state.committed, jBatchState: h.jb as unknown as Binary } };
-  const outputs = cj.outputs.map((o): EntityOutput => o.kind === "j_broadcast"
-    ? { to: state.id, signerId: o.signerId as Address, input: { kind: "txs", timestamp, txs: [{ type: "j_broadcast", data: {} }] } }
-    : { to: o.entityId as EntityId, signerId: o.signerId as Address, input: { kind: "txs", timestamp, txs: [{ type: "runtimeOutput", data: { protocol: "cross-j", sourceEntityId: lower(state.id), sourceSignerId: "", targetEntityId: o.entityId, entityTxs: o.txs } }] } });
-  return { ...d, state, outputs: [...d.outputs, ...outputs], events: [...(d.events ?? []), ...cj.messages.map(status)] };
+  return { ...d, state, outputs: [...d.outputs, ...cj.outputs.map((o) => cjOutput(state, o, timestamp))], events: [...(d.events ?? []), ...cj.messages.map(status)] };
 };
+/** One og helper output as an Entity output: a self j_broadcast, or a cross-j Entity output wrapped as a runtimeOutput command. */
+const cjOutput = (state: EntityState, o: CjOut, timestamp: bigint): EntityOutput => o.kind === "j_broadcast"
+  ? { to: state.id, signerId: o.signerId as Address, input: { kind: "txs", timestamp, txs: [{ type: "j_broadcast", data: {} }] } }
+  : { to: o.entityId as EntityId, signerId: o.signerId as Address, input: { kind: "txs", timestamp, txs: [{ type: "runtimeOutput", data: { protocol: "cross-j", sourceEntityId: lower(state.id), sourceSignerId: "", targetEntityId: o.entityId, entityTxs: o.txs } }] } };
+/** og `if (state.crontabState) scheduleHook(..., dispute-deadline:<peer>)`: replace the Account's dispute deadline hook when the Entity has a crontab. */
+const scheduleDisputeDeadline = (state: EntityState, peer: string, triggerAt: number): Result<EntityState, EntityError> =>
+  state.committed["crontabState"] === undefined ? ok(state)
+    : map(crontabOf(state), (c) => withCrontab(state, scheduleHook(c, { id: `dispute-deadline:${peer.toLowerCase()}`, triggerAt, type: "dispute_deadline", data: { accountId: peer } })));
 // ---- og entity/tx/handlers/cross-j/{salvage,force-sibling-dispute}.ts, htlc/direct.ts handleResolveHtlcLockEntityTx, paybook/lifecycle.ts ----
 type SalvageData = Extract<EntityTx, { type: "crossJurisdictionSalvage" }>["data"];
 /** og handleCrossJurisdictionSalvageEntityTx: the Target user re-registers the Source chain's verified hash-ladder reveal on its own chain. */
@@ -9776,7 +9964,7 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     // og cross-j book lifecycle handlers (book-order.ts, book-removal-ack.ts, fill.ts)
     admitCrossJurisdictionBookOrder: (x) => map(admitBookOrder(bookHostOf(state, replicas, ctx.timestamp), x.data), (s) => hostDraft(skip, s, ctx.timestamp)),
     removeCrossJurisdictionBookOrder: (x) => map(removeCrossBookOrder(bookHostOf(state, replicas, ctx.timestamp), x.data), (s) => hostDraft(skip, s, ctx.timestamp)),
-    crossJurisdictionBookOrderRemoved: (x) => map(bookOrderRemoved(bookHostOf(state, replicas, ctx.timestamp), x.data), (s) => hostDraft(skip, s, ctx.timestamp)),
+    crossJurisdictionBookOrderRemoved: (x) => disputeRemovalAck(skip, x.data, ctx) ?? map(bookOrderRemoved(bookHostOf(state, replicas, ctx.timestamp), x.data), (s) => hostDraft(skip, s, ctx.timestamp)),
     crossJurisdictionFillNotice: (x) => map(crossFillNotice(bookHostOf(state, replicas, ctx.timestamp), x.data), (s) => hostDraft(skip, s, ctx.timestamp)),
     // og clear.ts (clear request, proposer reveal), payments/pull.ts crossPullClose, sweep.ts: book-host steps whose Account work goes through applyLocalAccountEffects
     requestCrossJurisdictionClear: (x) => map(requestCrossClear(bookHostOf(state, replicas, ctx.timestamp), x.data), (s) => clearDraft(skip, s, ctx.timestamp)),

@@ -264,7 +264,7 @@ describe("scheduler-disputes: disputeFinalize (og dispute/finalize.ts, finalize-
         ...(jb === "sent" ? { sentBatch: { batch: { ...ogInitJBatch().batch, disputeFinalizations: rng() < 0.5 ? [{ counterentity: BOB }] : [] }, entityNonce: 9 } } : {}) };
       const tx: EntityTx = { type: "disputeFinalize", data: { counterpartyEntityId: BOB, ...(rng() < 0.6 ? { description: pick(["", "auto-finalize-after-timeout"]) } : {}), ...(rng() < 0.5 ? { useOnchainRegistry: true } : {}) } };
       const state = entity([aliceAddr], withJ, jBatch === undefined ? {} : { jBatchState: jBatch });
-      const rw = foldTxs(state, kind === "missing" ? new Map() : new Map([[BOB, rwChild]]), [tx], { verify: hankoVerify, timestamp: BigInt(now) });
+      const rw = foldTxs(state, kind === "missing" ? new Map() : new Map([[BOB, rwChild]]), [tx], { verify: hankoVerify, timestamp: BigInt(now), jReplicas: ogJ.jReplicas as never });
       const ogState: any = { entityId: ALICE, timestamp: now, config: ogConfig(state, withJ), accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries(kind === "missing" ? [] : [[BOB, ogAcc]], ALICE, () => ZERO_WORD as never)),
         paybook: { entries: new Map(), feesEarned: 0n }, crontabState: ogInitCrontab(), ...(jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) };
       let og: any, ogErr: string | undefined;
