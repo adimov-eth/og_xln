@@ -200,10 +200,9 @@ describe("followup-order: committed-frame followups of one accountInput (og comm
       // the worklist: the input's Account, then each Account a returned tx was admitted to, in admission order
       expect([...new Set(d.touched ?? [])]).toEqual([...new Set(marked)]);
       expect(sortedJson((d.runtimeEvents ?? []).map((e) => ({ eventName: e.eventName, data: e.data })))).toBe(sortedJson(effectsOg.candidateEffects.filter((e: any) => e.kind === "runtimeEvent").map((e: any) => ({ eventName: e.eventName, data: e.data }))));
-      // swap events in og's order (og's same-j `accountOutputVerified` marker is not carried by the rewrite's event)
-      const noMarker = (e: any) => { const { accountOutputVerified: _m, ...rest } = e; return rest; };
+      // swap events in og's order, including og's same-j `accountOutputVerified` marker (followup-order #11)
       expect(sortedJson({ created: d.swaps?.created ?? [], cancelled: d.swaps?.cancelled ?? [], cancelRequests: d.swaps?.cancelRequests ?? [] }))
-        .toBe(sortedJson({ created: effectsOg.swapOffersCreated.map(noMarker), cancelled: effectsOg.swapOffersCancelled, cancelRequests: effectsOg.swapCancelRequests }));
+        .toBe(sortedJson({ created: effectsOg.swapOffersCreated, cancelled: effectsOg.swapOffersCancelled, cancelRequests: effectsOg.swapCancelRequests }));
       expect(sortedJson(d.state.committed["lending"])).toBe(sortedJson(ogState.lending));
       expect(sortedJson(d.state.paybook)).toBe(sortedJson(ogState.paybook));
       // og scheduleCommittedAccountWork: the hub-rebalance-kick hook

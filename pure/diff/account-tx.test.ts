@@ -793,6 +793,45 @@ describe("account-tx: settlement + j_event_claim", () => {
     }
   });
 
+  test("MATCH (og verifySettlementHankoHankos, settle-jsubmit.md SJ-18): the post-settlement proof is checked under the source's certified board with the previous-board grace, the cooperative settlement Hanko under the current board only", async () => {
+    const board = word("5b");
+    for (const registered of [board, undefined]) {
+      const ogSeen: unknown[] = [], rwSeen: unknown[] = [];
+      const ogCtx: any = { jReplicas: jurisdictions.jReplicas, resolveSettlementBoardAuthority: async (_e: string, certified?: string) => certified,
+        verifyHanko: async (h: string, _m: string, entityId: string, authority: any) => { ogSeen.push([h, { ...authority }]); return { valid: true, entityId }; } };
+      const rwCtx = (byLeft: boolean): FoldCtx => ({ byLeft, nowMs: 5n, jHeight: 0n, accountHeight: 1n,
+        settlement: { verify: (_d, h, _e, authority) => { rwSeen.push([h, { ...authority }]); return true; }, proofNonceFloor: 1, ...(registered === undefined ? {} : { registeredBoardHash: registered }) } });
+      const ops = [{ type: "r2c", tokenId: 1, amount: 5n }];
+      const og = ogSettleHarness(open().body);
+      expect((await og.run(upsert(1, ops, true), true, 1)).ok).toBe(true);
+      let body = unwrap(apply(open().body, { type: "settle_transition", ...upsert(1, ops, true).data }, { byLeft: true, nowMs: 1n, jHeight: 0n, accountHeight: 1n })).state;
+      const hash = og.workspace().workspaceHash;
+      const draft = { settlementNonce: 1, settlementHash: word("00"), postProof: { nonce: 2, proposerIsLeft: true, proofBodyHash: word("00"), disputeHash: word("00"), hanko: "0x01" } };
+      for (const [byLeft, settlementHanko] of [[false, "0xbb"], [true, undefined]] as [boolean, string | undefined][]) {
+        const tx: any = { type: "settle_transition", data: { kind: "hanko", revision: 1, workspaceHash: hash, ...draft, postProof: { ...draft.postProof }, ...(settlementHanko ? { settlementHanko } : {}) } };
+        for (let i = 0; i < 4; i++) {
+          const overlay = beginAccountTransition((og as any).replica());
+          const r: any = await handleSettleTransition(accountTransitionView(overlay), tx, byLeft, 5, { ...ogCtx, verifyHanko: async (_h: string, _m: string, entityId: string) => ({ valid: true, entityId }) });
+          discardAccountTransition(overlay);
+          const m = /(SETTLEMENT_HANKO_HASH_MISMATCH|POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH|POST_SETTLEMENT_DISPUTE_HASH_MISMATCH):0x[0-9a-f]+:(0x[0-9a-fA-F]+)/.exec(r.rejection?.message ?? "");
+          if (m === null) break;
+          if (m[1] === "SETTLEMENT_HANKO_HASH_MISMATCH") tx.data.settlementHash = m[2]; else if (m[1] === "POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH") tx.data.postProof.proofBodyHash = m[2]; else tx.data.postProof.disputeHash = m[2];
+        }
+        draft.settlementHash = tx.data.settlementHash; draft.postProof = tx.data.postProof;
+        if (byLeft) tx.data.postProof.hanko = "0x02";
+        // og: the receiver passes counterpartyCertifiedBoard.boardHash (consensus/index.ts), the resolver returns it as the registered board
+        const overlay = beginAccountTransition((og as any).replica());
+        const o: any = await handleSettleTransition(accountTransitionView(overlay), tx, byLeft, 5, ogCtx, registered);
+        discardAccountTransition(overlay);
+        expect(o.ok).toBe(true);
+        await og.run(tx, byLeft, 5, { ...ogCtx, verifyHanko: async (_h: string, _m: string, entityId: string) => ({ valid: true, entityId }) });
+        body = unwrap(apply(body, { type: "settle_transition", ...tx.data }, rwCtx(byLeft))).state;
+      }
+      expect(rwSeen).toEqual(ogSeen);
+      expect(ogSeen.map((x: any) => x[1].allowPreviousBoard)).toEqual([true, false, true]);
+    }
+  });
+
   test("MATCH: a signed workspace freezes every tx but j_event_claim and settle hanko/submit in both", () => {
     const { body, ctx } = open();
     const signed: any = { workspaceHash: word("61"), ops: [{ type: "r2r", tokenId: 1, amount: 1n }], lastModifiedByLeft: true, status: "awaiting_counterparty", revision: 1, createdAt: 1, lastUpdatedAt: 1, executorIsLeft: true, settlementHash: word("62"), nonceAtSign: 1 };

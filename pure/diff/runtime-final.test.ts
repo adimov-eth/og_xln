@@ -18,7 +18,7 @@ import {
 import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, unwrap, verifiers, genesisAB, proposeInput, offerOf, ackInput, hankoVerify } from "../xln_run.ts";
 import { admit, applyAccountInput, type AccountReplica, type AccountInput, type OpenAccount, type WireAccountTx } from "../xln.ts";
 import { runPostFrameAutoRebalanceCheck } from "../../core/account/consensus/helpers.ts";
-import { runtimeWake, crontabOf, initCrontab, scheduleHook, withCrontab, ZERO_WORD, type Crontab, type EntityReplica, type ScheduledHook } from "../xln.ts";
+import { runtimeWake, entityEncryptionPublicKey, crontabOf, initCrontab, scheduleHook, withCrontab, ZERO_WORD, type Crontab, type EntityReplica, type ScheduledHook } from "../xln.ts";
 import { createDueScheduledWakeInputs, assertScheduledWakeTxAuthorized } from "../../core/runtime/mempool/scheduled-wake.ts";
 import { EntityAccountCandidateMap, PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
 import { initJBatch as ogInitJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
@@ -206,8 +206,10 @@ describe("runtime-final: RuntimeStep.events (og observability/env-events.ts publ
     // A 2-of-2 Entity: the proposer's frame publishes nothing until the quorum commits it; then the proposer and the validator each publish its events.
     const members = new Map<Address, { shares: bigint }>([[aliceAddr, { shares: 1n }], [bobAddr, { shares: 1n }]]);
     const id = unwrap(lazyBoardEntityId({ mode: "proposer-based", threshold: 2n, validators: [aliceAddr, bobAddr], shares: { [aliceAddr]: 1n, [bobAddr]: 1n } } as never)) as EntityId;
-    const replicaFor = (signerId: Address) => unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 2n, members, signerId, committed: { entityEncryptionPublicKey: `0x${"01".repeat(32)}` } }));
-    let rt = spawn(spawn(createRuntime(), replicaFor(aliceAddr)), replicaFor(bobAddr));
+    const SEED = `0x${"5a".repeat(64)}`;
+    const replicaFor = (signerId: Address) => unwrap(createEntity({ id, jurisdiction: TERMS.domain, threshold: 2n, members, signerId, committed: { entityEncryptionPublicKey: entityEncryptionPublicKey(SEED, id) } }));
+    // og: every proposal and replay checks the validator's Entity key pair (the Runtime derives it from the retained seed)
+    let rt: Runtime = { ...spawn(spawn(createRuntime(), replicaFor(aliceAddr)), replicaFor(bobAddr)), encryptionSeeds: new Map([[id, SEED]]) };
     const open = (to: EntityId): EntityTx => ({ type: "openAccount", data: { targetEntityId: to, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig } } as EntityTx);
     const queue: RoutedEntityInput[] = [{ entityId: id, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW, txs: [open(BOB), open(CAROL)] } }];
     const seen: { signer: string; commits: boolean; events: string[] }[] = [];
