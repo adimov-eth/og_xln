@@ -15886,7 +15886,7 @@ const replicaJHistory = (rt: Runtime, key: string, r: EntityReplica): ValidatorJ
   return unwrapOr(pruneFinalizedJHistory(h, Number(r.state.committed["lastFinalizedJHeight"] || 0)), () => h);
 };
 // ---- og runtime/delivery/topology/entity-routing.ts + frame/cross-j/atomic-admission.ts: atomic admission of paired cross-j Account legs ----
-/** og normalizeRuntimeId: a (checksum-valid) address as lowercase 0x text, else ''. */
+/** A (checksum-valid) address as lowercase 0x text, else ''. */
 export const normalizeRuntimeId = (v: unknown): string => {
   const t = typeof v === "string" ? v.trim() : "";
   return t && isAddressText(t) ? `0x${(t.startsWith("0x") ? t.slice(2) : t).toLowerCase()}` : "";
@@ -15895,10 +15895,9 @@ type PullLockTx = Extract<AccountTx, { readonly type: "cross_pull_lock" }>;
 type PullCloseTx = Extract<AccountTx, { readonly type: "cross_pull_close" }>;
 type CrossPhase = AtomicCrossPair["phase"];
 type Leg = "source" | "target";
-/** The state an admission reads: the Runtime's replicas and clock (og env.state.eReplicas / env.state.timestamp). */
+/** The state an admission reads: the Runtime's replicas and clock. */
 export type CrossAdmissionView = { readonly entities: ReadonlyMap<string, EntityReplica>; readonly timestamp: bigint };
 const entityKey = (v: unknown): string => String(v || "").toLowerCase();
-/** The only element of a one-element list. */
 const sole = <X>(xs: readonly X[]): X | undefined => (xs.length === 1 ? xs[0] : undefined);
 const groupBy = <K, V>(entries: readonly (readonly [K, V])[]): ReadonlyMap<K, readonly V[]> =>
   new Map([...new Set(entries.map(([k]) => k))].map((k) => [k, entries.flatMap(([j, v]) => (j === k ? [v] : []))] as const));
@@ -15921,7 +15920,7 @@ const crossCloseKey = ({ proof: p, binary }: PullCloseTx): string => stableJson(
   cumulativeSourceAmount: p.cumulativeSourceAmount, cumulativeTargetAmount: p.cumulativeTargetAmount, binaryHash: entityKey(p.binaryHash), closeMode: p.closeMode, binary,
 });
 type CandidateFrame = Pick<AccountFrame, "height" | "stateHash" | "txs">;
-/** og sourceAdmissionCandidate / targetProposalCandidate: unique route keys, and a source pull needs its swap offer in the same frame. */
+/** Unique route keys, and a source pull needs its swap offer in the same frame. */
 const siblingResolved = (frame: CandidateFrame, leg: Leg): boolean => {
   const bindings = crossPullsOf(frame.txs, leg).map((p) => p.crossJurisdiction);
   return bindings.length > 0 && unique(bindings.map((b) => admissionKey(b.orderId, b.routeHash))) && (leg === "target" || bindings.every((b) =>
@@ -15932,7 +15931,6 @@ type CrossCandidate = {
   readonly frame: { readonly height: bigint; readonly stateHash: string }; readonly sourcePulls: readonly PullLockTx[]; readonly targetPulls: readonly PullLockTx[];
   readonly sourceCloses: readonly PullCloseTx[]; readonly targetCloses: readonly PullCloseTx[]; readonly alreadyCommitted: boolean; readonly invalidReasons: readonly string[];
 };
-/** og buildCrossJProposalFrameCandidate / buildCrossJAckFrameCandidate: nothing when the frame carries no cross-j pull or close. */
 const frameCandidate = (input: RoutedEntityInput, inputIndex: number, accountInput: AccountPeerInput, phase: CrossPhase, frame: CandidateFrame, alreadyCommitted: boolean): readonly CrossCandidate[] => {
   const [sourcePulls, targetPulls] = (["source", "target"] as const).map((leg) => crossPullsOf(frame.txs, leg)) as [readonly PullLockTx[], readonly PullLockTx[]];
   const [sourceCloses, targetCloses] = (["source", "target"] as const).map((leg) => crossClosesOf(frame.txs, leg)) as [readonly PullCloseTx[], readonly PullCloseTx[]];
@@ -15972,10 +15970,7 @@ const markedAckPair = (inputs: readonly RoutedEntityInput[]): readonly Potential
   const [s, t, ...more] = inputs.flatMap((i, index) => (routedAccountInputs(i).some((a) => accountAck(a) !== undefined) ? [index] : []));
   return s !== undefined && t !== undefined && more.length === 0 && distinctSiblings(inputs, s, t) ? [{ pairKey: cohort.pairKey, sourceInputIndex: s, targetInputIndex: t }] : [];
 };
-/**
- * og selectPotentialCrossJAccountInputPairs (structural only): each proposal leg pairs with exactly one later sibling leg of the same Runtime,
- * origin and cohort, same source frame first (then, when allowed, across frames); failing that, a marked ACK cohort pairs by its marker.
- */
+/** Each proposal leg pairs with exactly one later sibling leg of the same Runtime and origin, same source frame first (then, when allowed, across frames). */
 export const potentialCrossPairs = (inputs: readonly RoutedEntityInput[], options: { readonly allowDifferentSourceRuntimeFrames?: boolean } = {}): readonly PotentialCrossPair[] => {
   const candidates = inputs.flatMap((input, index) => routedAccountInputs(input).flatMap((a) => proposalCandidate(input, index, a)));
   type Scan = { readonly pairs: readonly PotentialCrossPair[]; readonly paired: ReadonlySet<number> };
@@ -15992,12 +15987,11 @@ export const potentialCrossPairs = (inputs: readonly RoutedEntityInput[], option
   }, scan), { pairs: [], paired: new Set() });
   return pairs.length > 0 ? pairs : markedAckPair(inputs);
 };
-/** Both legs of each pair carry the pair's cohort marker. */
 const withMarkers = (inputs: readonly RoutedEntityInput[], pairs: readonly (PotentialCrossPair & { readonly phase: CrossPhase })[]): readonly RoutedEntityInput[] => {
   const markers = new Map(pairs.flatMap((p) => [p.sourceInputIndex, p.targetInputIndex].map((i) => [i, { phase: p.phase, pairKey: p.pairKey }] as const)));
   return inputs.map((input, index) => { const m = markers.get(index); return m === undefined ? input : { ...input, atomicCrossJurisdictionPair: m }; });
 };
-/** og markPotentialAtomicCrossJInputPairs: an unmarked transported pair is isolated as one proposal cohort before the Entity merge (local loopback stays unmarked). */
+/** An unmarked transported pair is isolated as one proposal cohort before the Entity merge (local loopback stays unmarked). */
 export const markPotentialCrossPairs = (inputs: readonly RoutedEntityInput[]): readonly RoutedEntityInput[] => withMarkers(inputs, potentialCrossPairs(inputs)
   .filter((p) => [p.sourceInputIndex, p.targetInputIndex].every((i) => { const x = inputs[i]; return x !== undefined && !x.atomicCrossJurisdictionPair && !!x.sourceRuntimeFrame; }))
   .map((p) => ({ ...p, phase: "proposal" as const })));
@@ -16006,19 +16000,15 @@ export type CrossPair = PotentialCrossPair & { readonly phase: CrossPhase; reado
 export type CrossRejectedLeg = { readonly inputIndex: number; readonly accountInput: AccountPeerInput; readonly reason: "unpaired" | "multiple-candidates-per-input" | "candidate-invalid" | "pair-match-failed" | "atomic-group-invalid"; readonly detail: readonly string[] };
 export type CrossPairSelection = { readonly inputs: readonly RoutedEntityInput[]; readonly pairs: readonly CrossPair[]; readonly rejectedLegs: readonly CrossRejectedLeg[] };
 type ReplicaFinder = (entity: unknown, signer: unknown) => EntityReplica | undefined;
-/** og findInputReplica (`entity:signer`, lowercase, first wins) and findReplicaAccount. */
+/** The first replica per lowercase `entity:signer`. */
 const replicaFinder = (view: CrossAdmissionView): ReplicaFinder => {
   const keyOf = (entity: unknown, signer: unknown): string => `${entityKey(entity)}:${entityKey(signer)}`;
   const byKey = new Map(firstBy(view.entities.values(), (r) => keyOf(r.state.id, r.signerId)).map((r) => [keyOf(r.state.id, r.signerId), r] as const));
   return (entity, signer) => byKey.get(keyOf(entity, signer));
 };
 const replicaAccount = (r: EntityReplica | undefined, peer: string): AccountReplica | undefined => [...(r?.accountReplicas ?? [])].find(([id]) => entityKey(id) === entityKey(peer))?.[1];
-/** og currentFrame {height, stateHash}: the rewrite's committed head. */
 const headMatches = (a: AccountReplica, height: bigint, hash: string): boolean => a.head.height === height && entityKey(a.head.prevFrameHash) === entityKey(hash);
-/**
- * og buildCrossJAckFrameCandidate on a receiving hub: the ACK must name our pending proposal, or the committed frame (an exact replay of an
- * already-committed ACK), whose cross-j pulls and closes the committed head keeps (og currentFrame.accountTxs).
- */
+/** A hub's ACK names its pending proposal, or replays the committed head (which keeps its cross-j txs). */
 const ackCandidate = (r: EntityReplica, input: RoutedEntityInput, inputIndex: number, accountInput: AccountPeerInput): readonly CrossCandidate[] => {
   const ack = accountAck(accountInput), account = replicaAccount(r, accountInput.fromEntityId);
   if (ack === undefined || account === undefined) return [];
@@ -16027,7 +16017,7 @@ const ackCandidate = (r: EntityReplica, input: RoutedEntityInput, inputIndex: nu
     : head._tag === "installed" && headMatches(account, ack.height, ack.frameHash) ? frameCandidate(input, inputIndex, accountInput, "ack", { height: head.height, stateHash: head.prevFrameHash, txs: head.crossTxs ?? [] }, true)
     : [];
 };
-/** og collectCrossJAdmissionCandidates: a hub reads ACK legs against its pending frame; any other Entity reads proposal legs (already committed by head). */
+/** A hub reads ACK legs against its pending frame; any other Entity reads proposal legs. */
 const collectCrossCandidates = (find: ReplicaFinder, inputs: readonly RoutedEntityInput[]): readonly CrossCandidate[] => inputs.flatMap((input, index) => {
   const r = find(input.entityId, input.signerId);
   const hub = r !== undefined && ((r.state.committed["profile"] ?? {}) as { readonly [k: string]: unknown })["isHub"] === true;
@@ -16038,10 +16028,9 @@ const collectCrossCandidates = (find: ReplicaFinder, inputs: readonly RoutedEnti
 });
 const cohortKey = (input: RoutedEntityInput, phase: CrossPhase, pairKey: string): string =>
   JSON.stringify([phase, pairKey, admissionOrigin(input), input.sourceRuntimeFrame?.height ?? null, input.sourceRuntimeFrame?.timestamp ?? null]);
-/** Hash-ladder roots by owning routeHash: one ladder per canonical routeHash, Runtime-wide. */
 type Ladder = { readonly byFull: ReadonlyMap<string, string>; readonly byPartial: ReadonlyMap<string, string> };
 type LadderClaim = readonly [routeHash: string, full: string, partial: string];
-/** og rememberHashLadderOwner: a root already owned by another route refuses the claim, which then records nothing. */
+/** A root already owned by another route refuses the claim, which then records nothing. */
 const claimLadder = (l: Ladder, [routeHash, full, partial]: LadderClaim): Result<Ladder, string> => {
   const free = (owners: ReadonlyMap<string, string>, root: string, what: string): Result<void, string> => {
     const owner = owners.get(root);
@@ -16049,7 +16038,7 @@ const claimLadder = (l: Ladder, [routeHash, full, partial]: LadderClaim): Result
   };
   return map(checks(free(l.byFull, full, "fullHash"), free(l.byPartial, partial, "partialRoot")), () => ({ byFull: mapSet(l.byFull, full, routeHash), byPartial: mapSet(l.byPartial, partial, routeHash) }));
 };
-/** og collectRuntimeHashLadderOwners: every live Account pull, retained swap and authorization. */
+/** The ladders claimed by every live Account pull, retained swap and authorization. */
 const ladderOwners = (view: CrossAdmissionView): Ladder => [...view.entities.values()].flatMap((r): readonly LadderClaim[] => [
   ...[...r.accountReplicas.values()].flatMap((a) => [...(a.state.pulls?.values() ?? [])].flatMap((pull): readonly LadderClaim[] => {
     const routeHash = lower(pull.crossJurisdiction?.routeHash);
@@ -16071,7 +16060,7 @@ const sharedHashFailure = (view: CrossAdmissionView, group: readonly CrossCandid
       : map(claimLadder(s.ladder, claim), (ladder) => ({ ladder, byRoute: mapSet(s.byRoute, routeHash, claim) }));
   });
 type Sided = readonly [CrossCandidate, RoutedEntityInput];
-/** og authorizeOpeningSourcePull: one target pull per source pull; both siblings hold the identical `intent` authorization; exact participants; a valid prepared route. */
+/** One target pull per source pull; both siblings hold the identical `intent` authorization; exact participants; a valid prepared route. */
 const authorizeSourcePull = (view: CrossAdmissionView, find: ReplicaFinder, [source, si]: Sided, [target, ti]: Sided) => (pull: PullLockTx): Result<unknown, string> => {
   const binding = pull.crossJurisdiction, route = pull.crossJurisdictionRoute;
   if (!binding || !route) return err("opening-route-missing");
@@ -16092,7 +16081,7 @@ const authorizeSourcePull = (view: CrossAdmissionView, find: ReplicaFinder, [sou
   ), () => mapErr(validatePreparedCrossRoute(crossView(sr.state, sr.accountReplicas, sr.state.timestamp > view.timestamp ? sr.state.timestamp : view.timestamp), { ...route, status: "target_prepared" }),
     (e) => `opening-prepared-route-rejected:${runtimeErrorText(e)}`));
 };
-/** og openingPairAuthorizationFailure: an opening proposal cohort is exactly two legs, unique ladders, and every source pull authorized in both orientations. */
+/** An opening proposal cohort is exactly two legs, unique ladders, and every source pull authorized in both orientations. */
 const openingFailure = (view: CrossAdmissionView, find: ReplicaFinder, group: readonly CrossCandidate[], inputs: readonly RoutedEntityInput[]): Result<unknown, string> => {
   if (group[0]?.phase !== "proposal" || !group.some((c) => c.sourcePulls.length > 0 || c.targetPulls.length > 0)) return ok(undefined);
   const [left, right] = group as readonly [CrossCandidate, CrossCandidate];
@@ -16101,7 +16090,7 @@ const openingFailure = (view: CrossAdmissionView, find: ReplicaFinder, group: re
     return si === undefined || ti === undefined ? err("opening-input-missing") : traverse(source.sourcePulls, authorizeSourcePull(view, find, [source, si], [target, ti]));
   }));
 };
-/** og stripRejectedAccountTxs: drop the rejected Account legs (nested runtimeOutput legs included) and the cohort marker; an input left with nothing is dropped. */
+/** Drop the rejected Account legs (nested runtimeOutput legs included) and the cohort marker; an input left with nothing is dropped. */
 const stripAccountLegs = (input: RoutedEntityInput, rejected: ReadonlySet<AccountPeerInput>): readonly RoutedEntityInput[] => {
   const { atomicCrossJurisdictionPair: _marker, ...rest } = input;
   if (input.input.kind !== "txs") return [rest];
@@ -16124,23 +16113,21 @@ const removeRejectedLegs = (inputs: readonly RoutedEntityInput[], legs: readonly
     const rejected = new Set(legs.flatMap((l) => (l.inputIndex === index ? [l.accountInput] : [])));
     return (rejected.size === 0 ? [input] : stripAccountLegs(input, rejected)).map((kept) => [index, kept] as const);
   });
-/** og removeRejectedCrossJAccountInputsByIndex for one input: it loses its cross-j Account legs. */
 const withoutCrossLegs = (view: CrossAdmissionView, input: RoutedEntityInput): RoutedEntityInput | undefined =>
   removeRejectedLegs([input], legInputs(collectCrossCandidates(replicaFinder(view), [input]), [input], 0).map((accountInput) => ({ inputIndex: 0, accountInput })))[0]?.[1];
 /**
- * og selectMatchedCrossJAccountInputPairs: every uncommitted cross-j Account leg must belong to an exact two-leg cohort (same phase, route set,
- * origin and source frame; sibling Entities; paired pulls and closes; an authorized opening). Every other leg is stripped from its input before
- * Account consensus, with its reason; a marked cohort that did not survive loses both legs.
+ * Every uncommitted cross-j Account leg must belong to an exact two-leg cohort (same phase, route set, origin and source frame; sibling Entities;
+ * paired pulls and closes; an authorized opening). Every other leg is stripped with its reason; a marked cohort that did not survive loses both legs.
  */
 export const matchedCrossPairs = (view: CrossAdmissionView, inputs: readonly RoutedEntityInput[]): CrossPairSelection => {
   const find = replicaFinder(view), candidates = collectCrossCandidates(find, inputs);
   const atomicGroups = groupBy(inputs.flatMap((input, index) => { const m = input.atomicCrossJurisdictionPair; return m === undefined ? [] : [[cohortKey(input, m.phase, m.pairKey), index] as const]; }));
   if (candidates.length === 0 && atomicGroups.size === 0) return { inputs: [...inputs], pairs: [], rejectedLegs: [] };
-  // og groupUncommittedCrossJCandidates: an exact replay of a committed frame is not a leg; one input carries exactly one leg
+  // an exact replay of a committed frame is not a leg; one input carries exactly one leg
   const uncommitted = candidates.filter((c) => !c.alreadyCommitted), legIndexes = uncommitted.map((c) => c.inputIndex);
   const multi = new Set(legIndexes.filter((i) => legIndexes.indexOf(i) !== legIndexes.lastIndexOf(i)));
   const invalidDetails = groupBy(uncommitted.flatMap((c) => c.invalidReasons.map((r) => [c.inputIndex, r] as const)));
-  /** og matchCrossJCandidateGroups: sibling Entities, one source frame, paired frames and an authorized opening. */
+  /** Sibling Entities, one source frame, paired frames and an authorized opening. */
   const pairCohort = (group: readonly CrossCandidate[]): Result<CrossPair, string> => {
     const [source, target] = sortWith(group, (a, b) => a.inputIndex - b.inputIndex) as [CrossCandidate, CrossCandidate];
     const si = inputs[source.inputIndex] as RoutedEntityInput, ti = inputs[target.inputIndex] as RoutedEntityInput;
@@ -16163,7 +16150,7 @@ export const matchedCrossPairs = (view: CrossAdmissionView, inputs: readonly Rou
     return verdict.ok ? { ...m, pairs: [...m.pairs, verdict.value] } : { ...m, failures: indexes.reduce((f, i) => mapSet(f, i, [...(f.get(i) ?? []), verdict.error]), m.failures) };
   }, { pairs: [], failures: new Map() });
   const paired = new Set(pairs.flatMap((p) => [p.sourceInputIndex, p.targetInputIndex])), committed = new Set(candidates.filter((c) => c.alreadyCommitted).map((c) => c.inputIndex));
-  // og findInvalidAtomicCrossJIndexes: a marked cohort survives only as an exact pair or an exact committed replay
+  // a marked cohort survives only as an exact pair or an exact committed replay
   const atomicInvalid = new Set([...atomicGroups.values()].flatMap((group) =>
     group.length === 2 && (group.every((i) => committed.has(i)) || pairs.some((p) => group.includes(p.sourceInputIndex) && group.includes(p.targetInputIndex))) ? [] : group));
   const invalid = (i: number): boolean => multi.has(i) || invalidDetails.has(i) || failures.has(i);
@@ -16183,10 +16170,7 @@ export const matchedCrossPairs = (view: CrossAdmissionView, inputs: readonly Rou
     }),
   };
 };
-/**
- * og coalesceExactAtomicProposalRetries: a transport retry of one signed proposal cohort (identical legs, only the source frame advanced) keeps
- * only its latest delivery; legs are never chosen independently.
- */
+/** A transport retry of one proposal cohort (identical legs, only the source frame advanced) keeps only its latest delivery, both legs together. */
 const coalesceProposalRetries = (inputs: readonly RoutedEntityInput[]): readonly RoutedEntityInput[] => {
   type Delivery = { readonly indexes: readonly number[]; readonly height: number; readonly timestamp: number };
   type Coalesced = { readonly winners: ReadonlyMap<string, Delivery>; readonly dropped: readonly number[] };
@@ -16201,7 +16185,7 @@ const coalesceProposalRetries = (inputs: readonly RoutedEntityInput[]): readonly
   }, { winners: new Map(), dropped: [] });
   return inputs.filter((_, i) => !dropped.includes(i));
 };
-/** og groupAtomicPairsFirst: each admitted pair becomes two adjacent marked inputs (in first-leg order) ahead of every other input. */
+/** Each admitted pair becomes two adjacent marked inputs (in first-leg order) ahead of every other input. */
 const groupPairsFirst = (view: CrossAdmissionView, selection: CrossPairSelection): Result<CrossPairSelection, RuntimeError> => {
   const legs = sortWith(selection.pairs, (a, b) => pairStart(a) - pairStart(b)).flatMap((p) => sortWith([p.sourceInputIndex, p.targetInputIndex], (a, b) => a - b));
   if (selection.pairs.length === 0) return ok(selection);
@@ -16209,29 +16193,25 @@ const groupPairsFirst = (view: CrossAdmissionView, selection: CrossPairSelection
   const grouped = matchedCrossPairs(view, [...legs.map((i) => selection.inputs[i] as RoutedEntityInput), ...selection.inputs.filter((_, i) => !legs.includes(i))]);
   return grouped.rejectedLegs.length > 0 || grouped.pairs.length !== selection.pairs.length ? frameErr("RUNTIME_CROSS_J_ACCOUNT_PAIR_GROUPING_DIVERGED") : ok({ ...grouped, inputs: withMarkers(grouped.inputs, grouped.pairs) });
 };
-/**
- * og admitAtomicCrossJAccountInputs: coalesce transport retries, strip every structurally unmatched cross-j leg (a replay refuses the frame
- * instead), then order each admitted pair as two adjacent marked inputs. og's security-incident telemetry for the stripped legs is not kept.
- */
+/** Coalesce retries, strip every unmatched cross-j leg (a replay refuses the frame instead), then order each pair as two adjacent marked inputs. */
 export const admitAtomicCrossPairs = (view: CrossAdmissionView, inputs: readonly RoutedEntityInput[], isReplay: boolean): Result<{ readonly inputs: readonly RoutedEntityInput[]; readonly pairs: readonly CrossPair[] }, RuntimeError> => {
   const initial = matchedCrossPairs(view, coalesceProposalRetries(inputs));
   if (initial.rejectedLegs.length > 0 && isReplay) return frameErr("RUNTIME_REPLAY_CROSS_J_ACCOUNT_PAIR_INVALID");
   const retained = initial.rejectedLegs.length > 0 ? matchedCrossPairs(view, initial.inputs) : initial;
   return chain(groupPairsFirst(view, retained), (selection) => (selection.rejectedLegs.length > 0 ? frameErr("RUNTIME_CROSS_J_ACCOUNT_PAIR_SELECTION_UNSTABLE") : ok({ inputs: selection.inputs, pairs: selection.pairs })));
 };
-/** og atomicPairInputsMatch: two adjacent legs of one marked cohort on distinct Entities. */
 const atomicPairInputsMatch = (a: RoutedEntityInput, b: RoutedEntityInput | undefined): b is RoutedEntityInput => {
   const l = a.atomicCrossJurisdictionPair, r = b?.atomicCrossJurisdictionPair;
   return l !== undefined && r !== undefined && b !== undefined && l.phase === r.phase && l.pairKey === r.pairKey && entityKey(a.entityId) !== entityKey(b.entityId);
 };
 type CommittedAccountFrame = { readonly counterpartyEntityId: string; readonly height: bigint; readonly stateHash: string };
 const committedFrame = (a: AccountPeerInput, height: bigint, hash: unknown): CommittedAccountFrame => ({ counterpartyEntityId: entityKey(a.fromEntityId), height, stateHash: entityKey(hash) });
-/** og expectedAtomicAccountFrame: the one Account frame (proposal) or ACK a marked leg must commit. */
+/** The one Account frame (proposal) or ACK a marked leg must commit. */
 const expectedAtomicFrame = (input: RoutedEntityInput): CommittedAccountFrame | undefined => sole(routedAccountInputs(input).flatMap((a): readonly CommittedAccountFrame[] => {
   const f = input.atomicCrossJurisdictionPair?.phase === "proposal" ? accountProposal(a) : undefined, ack = input.atomicCrossJurisdictionPair?.phase === "proposal" ? undefined : accountAck(a);
   return f !== undefined ? [committedFrame(a, f.height, f.stateHash)] : ack !== undefined ? [committedFrame(a, ack.height, ack.frameHash)] : [];
 }));
-/** og collectCommittedAccountFrames: the ACKed and proposed Account frames of an input that the replica's committed heads now hold. */
+/** The ACKed and proposed Account frames of an input that the replica's committed heads now hold. */
 const committedAccountFrames = (input: RoutedEntityInput, r: EntityReplica): readonly CommittedAccountFrame[] => routedAccountInputs(input).flatMap((a): readonly CommittedAccountFrame[] => {
   const proposal = accountProposal(a), ack = accountAck(a), account = proposal === undefined && ack === undefined ? undefined : replicaAccount(r, a.fromEntityId);
   if (account === undefined) return [];
@@ -16249,7 +16229,7 @@ const ackOutputIndexes = (outbox: readonly EntityOutput[], e: CrossFrameExpectat
       && ack.height === e.height && entityKey(ack.frameHash) === e.stateHash.toLowerCase();
   }) ? [index] : [];
 });
-/** og markCommittedAtomicCrossJAckOutputs: each committed proposal pair's two ACKs (exactly one output each, distinct) carry the pair's ACK marker. */
+/** Each committed proposal pair's two ACKs (exactly one output each, distinct) carry the pair's ACK marker. */
 export const markCommittedAckOutputs = (outbox: readonly EntityOutput[], pairs: readonly CrossPair[]): Result<readonly EntityOutput[], RuntimeError> =>
   map(foldResult(pairs.filter((p) => p.phase === "proposal"), new Map() as ReadonlyMap<number, string>, (marks, pair) => {
     const [s, t] = [pair.sourceAccountFrame, pair.targetAccountFrame].map((e) => sole(ackOutputIndexes(outbox, e)));
@@ -16257,26 +16237,26 @@ export const markCommittedAckOutputs = (outbox: readonly EntityOutput[], pairs: 
   }), (marks) => outbox.map((o, i) => { const pairKey = marks.get(i); return pairKey === undefined ? o : { ...o, atomicCrossJurisdictionPair: { phase: "ack" as const, pairKey } }; }));
 // ---- og runtime/mempool/entity-inputs.ts applyMergedEntityInputs + admit/entity-input-output.ts: the R -> E -> A cascade of one Runtime frame ----
 type BatchOut = { readonly key?: string | undefined; readonly rejected: readonly RuntimeError[]; readonly applied: readonly RoutedEntityInput[]; readonly committed: boolean; readonly progressed?: string | undefined; readonly effects?: readonly [string, CommitEffects] | undefined };
-/** og CrossJCommand: a local cross-j command (a certified runtimeOutput to a replica of this Runtime) or a local Account-work poke. */
+/** A local cross-j command (a certified runtimeOutput to a replica of this Runtime) or a local Account-work poke. */
 type CrossCommand =
   | { readonly kind: "entity-txs"; readonly sourceEntityId: string; readonly sourceSignerId: string; readonly targetEntityId: string; readonly targetSignerId: string; readonly entityTxs: readonly EntityTx[] }
   | { readonly kind: "account-work"; readonly sourceEntityId: string; readonly targetEntityId: string; readonly targetSignerId: string };
 type EntityTxsCommand = Extract<CrossCommand, { readonly kind: "entity-txs" }>;
 const commandKey = (c: EntityTxsCommand): string => `${c.kind}\0${c.sourceEntityId}\0${c.sourceSignerId}\0${c.targetEntityId}\0${c.targetSignerId}`;
 const workKey = (t: { readonly entityId: string; readonly signerId: string }): string => `${t.entityId}\0${t.signerId}`;
-/** og collectReadyLocalAccountWorkTargets: each active validator with ready Account work and no frame in flight, once, sorted by (Entity, signer). */
+/** Each active validator with ready Account work and no frame in flight, once, sorted by (Entity, signer). */
 export const readyAccountWorkTargets = (replicas: Iterable<EntityReplica>): readonly { readonly entityId: string; readonly signerId: string }[] => sortWith(firstBy([...replicas].flatMap((r) => {
   const entityId = lower(r.state.id), signerId = lower(r.signerId);
   return signerId === lower(leaderStateOf(r.state).activeValidatorId) && r._tag === "open" && hasProposableAccount(r) ? [{ entityId, signerId }] : [];
 }), workKey), (a, b) => workKey(a).localeCompare(workKey(b)));
-/** og isCrossJCommandEnvelope: exactly one cross-j runtimeOutput, no consensus lane. */
+/** Exactly one cross-j runtimeOutput, no consensus lane. */
 const crossCommandOf = (o: EntityOutput): readonly [Extract<EntityOutput, { readonly input: EntityInput }>, Extract<EntityTx, { readonly type: "runtimeOutput" }>["data"]] | undefined => {
   const tx = "input" in o && o.input.kind === "txs" && o.input.txs.length === 1 ? o.input.txs[0] : undefined;
   return "input" in o && tx?.type === "runtimeOutput" && tx.data.protocol === "cross-j" ? [o, tx.data] : undefined;
 };
 const localReplica = (store: ReadonlyMap<string, EntityReplica>, entity: string, signer: string): EntityReplica | undefined =>
   [...store.values()].find((r) => lower(r.state.id) === lower(entity) && lower(r.signerId) === lower(signer));
-/** The state one Runtime frame threads through its Entity inputs; `deferred` holds the replicas a `txs` input left to propose (og createDeferredProposalBatch). */
+/** The state one Runtime frame threads through its Entity inputs; `deferred` holds the replicas a `txs` input left to propose. */
 type InputBatch = {
   readonly store: ReadonlyMap<string, EntityReplica>; readonly outs: readonly BatchOut[]; readonly outbox: readonly EntityOutput[]; readonly queue: readonly CrossCommand[];
   readonly deferred: ReadonlyMap<string, { readonly entityId: EntityId; readonly signerId: string }>; readonly localEvents: number;
@@ -16285,10 +16265,8 @@ type InputBatch = {
 type Staged = { readonly key: string; readonly outputs: readonly EntityOutput[]; readonly committed: boolean };
 const rejectOut = (b: InputBatch, e: RuntimeError): InputBatch => ({ ...b, outs: [...b.outs, { rejected: [e], applied: [], committed: false }] });
 /**
- * og applyMergedEntityInputs: each merged input is admitted and applied in order; a plain `txs` input only fills its replica's mempool (the touched
- * replicas propose once at the end, in first-touch order). After every applied input the committed cross-j commands to local replicas and the local
- * Account work drain in this same frame (og drainImmediateCrossJurisdictionOutputs); every other output leaves in the outbox. `applied` records the
- * merged inputs only (og drops the flush and local-event inputs from appliedEntityInputs).
+ * Each merged input applies in order; a plain `txs` input only fills its mempool (touched replicas propose once, in first-touch order, before a pair
+ * and at the end). After each input, cross-j commands to local replicas and local Account work drain in this frame; other outputs leave in the outbox.
  */
 const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], timestamp: bigint, ctx: RuntimeCtx): Result<InputBatch, RuntimeError> => {
   const stage = (b: InputBatch, routed: RoutedEntityInput, lane: EntityContext["lane"], record: boolean, required?: EntityTx): Result<readonly [InputBatch, Staged], RuntimeError> => {
@@ -16306,7 +16284,7 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
       return [{ ...b, store: mapSet(b.store, key, replica), outs: [...b.outs, out] }, { key, outputs, committed }] as const;
     });
   };
-  // og routeCommittedEntityOutputs: a cross-j command to a local replica becomes a local command (coalesced inside this one Entity frame only)
+  // a cross-j command to a local replica becomes a local command (coalesced inside this one Entity frame only)
   const route = (b: InputBatch, outputs: readonly EntityOutput[]): Result<InputBatch, RuntimeError> =>
     map(foldResult(outputs, { outbox: b.outbox, commands: [] as readonly EntityTxsCommand[] }, (s, o) => {
       const envelope = crossCommandOf(o);
@@ -16319,7 +16297,7 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
         : d.entityTxs.length === 0 ? frameErr(`RUNTIME_CROSS_J_COMMAND_TXS_MISSING:${target}`)
         : ok({ ...s, commands: s.commands.some((c) => commandKey(c) === key) ? s.commands.map((c) => (commandKey(c) === key ? { ...c, entityTxs: [...c.entityTxs, ...d.entityTxs] } : c)) : [...s.commands, command] });
     }), ({ outbox, commands }) => ({ ...b, outbox, queue: [...b.queue, ...commands] }));
-  // og queueCommittedAccountWork: a commit not itself caused by Account work pokes every local active validator with ready Account work, once
+  // a commit not itself caused by Account work pokes every local active validator with ready Account work, once
   const collect = (b: InputBatch, staged: Staged, causedByAccountWork: boolean): Result<InputBatch, RuntimeError> => map(route(b, staged.outputs), (routed) => !staged.committed || causedByAccountWork ? routed : {
     ...routed, queue: [...routed.queue, ...readyAccountWorkTargets(routed.store.values())
       .filter((t) => !routed.queue.some((c) => c.kind === "account-work" && c.targetEntityId === t.entityId && c.targetSignerId === t.signerId))
@@ -16327,7 +16305,7 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
   });
   const settle = (b: InputBatch, staged: Result<readonly [InputBatch, Staged], RuntimeError>): Result<InputBatch, RuntimeError> =>
     staged.ok ? collect(staged.value[0], staged.value[1], false) : ok(rejectOut(b, staged.error));
-  // og drainImmediateCrossJurisdictionOutputs: each local command must commit; cycles and runaway cascades refuse the frame
+  // each local command must commit; cycles and runaway cascades refuse the frame
   const drain = (b: InputBatch, round = 1, seen: ReadonlySet<string> = new Set()): Result<InputBatch, RuntimeError> => {
     const [command, ...queue] = b.queue, localEvents = b.localEvents + 1, replicas = b.store.size;
     if (command === undefined) return ok(b);
@@ -16341,10 +16319,10 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
     return !staged.ok ? frameErr(`RUNTIME_CROSS_J_LOCAL_EVENT_NOT_COMMITTED:entity=${command.targetEntityId}:round=${round}:outcome=rejected:detail=${runtimeErrorText(staged.error)}`)
       : chain(collect(staged.value[0], staged.value[1], command.kind === "account-work"), (next) => drain(next, round + 1, fingerprint === undefined ? seen : new Set([...seen, fingerprint])));
   };
-  // og createDeferredProposalBatch.flush: each touched replica proposes once from its mempool
+  // each touched replica proposes once from its mempool
   const flush = (b: InputBatch): Result<InputBatch, RuntimeError> => foldResult<InputBatch, { readonly entityId: EntityId; readonly signerId: string }, RuntimeError>(b.deferred.values(), { ...b, deferred: new Map() }, (s, { entityId, signerId }) =>
     chain(settle(s, stage(s, { entityId, signerId, input: { kind: "txs", timestamp, txs: [] } }, undefined, false)), (next) => drain(next)));
-  // og isProposalDeferrableEntityInput: a `txs` input carries no consensus evidence
+  // a `txs` input carries no consensus evidence
   const single = (b: InputBatch, routed: RoutedEntityInput): Result<InputBatch, RuntimeError> => {
     const deferrable = routed.input.kind === "txs", staged = stage(b, routed, deferrable ? "defer" : undefined, true);
     if (!staged.ok) return ok(rejectOut(b, staged.error));
@@ -16352,10 +16330,8 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
     const deferred = committed ? mapDelete(next.deferred, key) : deferrable ? mapSet(next.deferred, key, { entityId: routed.entityId, signerId: routed.signerId }) : next.deferred;
     return collect({ ...next, deferred }, staged.value[1], false);
   };
-  /**
-   * og applyAtomicEntityInputPair: both legs propose now with their one accountInput required; both must commit their expected Account frame, or both
-   * are discarded (the pair is rejected, recorded by its first leg's position) and whatever else the two inputs carry is applied without the Account legs.
-   */
+  // both legs propose now with their one accountInput required and must commit their expected Account frames; otherwise both are discarded, the pair
+  // is rejected (by its first leg's position) and the rest of each input applies without its Account legs
   const applyPair = (b: InputBatch, pair: readonly [RoutedEntityInput, RoutedEntityInput], index: number): Result<InputBatch, RuntimeError> => {
     const required = pair.map((leg) => (leg.input.kind === "txs" ? leg.input.txs.filter((tx) => tx.type === "accountInput") : [])), bad = required.findIndex((txs) => txs.length !== 1);
     if (bad >= 0) return frameErr(`RUNTIME_CROSS_J_ATOMIC_ACCOUNT_INPUT_COUNT_INVALID:${pair[bad]?.entityId}:${required[bad]?.length}`);
@@ -16364,9 +16340,8 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
       const one = s.halt === undefined ? stage(s.batch, leg, undefined, true, required[k]?.[0]) : undefined;
       if (one === undefined) return ok(s);
       if (!one.ok) {
-        // og prepareEntityInputIngress: a mempool-admission or ill-formed input is a `rejected` outcome, so the pair is NOT_COMMITTED.
-        // og atomicPairProtocolRejection: a thrown malformed-ingress refusal of a remote leg (og isRemoteIngress: a transport `from`) rejects the
-        // pair as PROTOCOL_REJECTED; an invariant, a thrown handler, an unroutable leg, a local leg or any replay refuses the frame.
+        // an admission refusal leaves the pair NOT_COMMITTED; another refusal of a remote (transported) leg rejects it as PROTOCOL_REJECTED;
+        // an invariant, a thrown handler, an unroutable or local leg, or any replay refuses the frame
         const e = one.error, remote = String(leg.from ?? "").trim() !== "";
         return INGRESS_REJECTIONS.has(e._tag) ? ok({ ...s, halt: "CROSS_J_ACCOUNT_PAIR_NOT_COMMITTED" })
           : e._tag === "entity_invariant" || e._tag === "no_such_entity" || accountThrew(e as EntityError) || !remote || ctx.replay === true ? frameErr(runtimeErrorText(e))
@@ -16394,10 +16369,10 @@ const entityInputBatch = (rt: Runtime, merged: readonly RoutedEntityInput[], tim
   const init: InputBatch = { store: rt.entities, outs: [], outbox: [], queue: [], deferred: new Map(), localEvents: 0, rejectedPairs: new Set(), committedPairs: new Set() };
   return chain(foldResult(units, init, (b, { index, legs }) => chain(legs.length === 2 ? chain(flush(b), (f) => applyPair(f, legs, index)) : single(b, legs[0]), (next) => drain(next))), flush);
 };
-/** The rewrite's `txs` admission refusals that og prepareEntityInputIngress returns as a `rejected` outcome (not a thrown ingress error). */
+/** `txs` admission refusals that reject an input rather than fail its ingress. */
 const INGRESS_REJECTIONS: ReadonlySet<string> = new Set(["mempool_full", "frame_timestamp_invalid", "from_not_converted"]);
 const runtimeErrorText = (e: RuntimeError | EntityError): string => ("code" in e && typeof e.code === "string" ? e.code : "reason" in e && typeof e.reason === "string" ? e.reason : e._tag);
-/** og attachCommitProofsAndOutputs: consensus progress, the J history each commit certified (og pruneReplicaFinalizedJHistory), and each committed frame's witnesses (stamped with the Runtime clock) pruned to what stays reachable. */
+/** Consensus progress, the J history each commit certified, and each committed frame's witnesses (stamped with the Runtime clock) pruned to what stays reachable. */
 const commitLocal = (afterTxs: Runtime, store: ReadonlyMap<string, EntityReplica>, outs: readonly BatchOut[], timestamp: bigint): Runtime["replicaLocal"] => {
   const at = Number(timestamp);
   const progressed = outs.flatMap((o) => (o.progressed === undefined ? [] : [o.progressed]))
@@ -16419,15 +16394,15 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
   const timestamp = [input.timestamp ?? rt.timestamp, ...(input.timestamp === undefined ? seeds : [])].reduce((a, b) => (b > a ? b : a), rt.timestamp);
   type TxFold = { readonly runtime: Runtime; readonly jOutputs: readonly JInput[] };
   const txFold = foldResult(input.runtimeTxs, { runtime: { ...rt, timestamp }, jOutputs: [] } as TxFold, (at, tx) => map(applyRuntimeTxStep(at.runtime, tx, ctx), (s): TxFold => ({ runtime: s.runtime, jOutputs: [...at.jOutputs, ...s.jOutputs] })));
-  // og applyRuntimeInputPhases: transported cross-j cohorts are isolated before the merge, then admitted as exact pairs before any Entity input applies
+  // transported cross-j cohorts are isolated before the merge, then admitted as exact pairs before any Entity input applies
   return chain(txFold, ({ runtime: afterTxs, jOutputs: txJOutputs }) => chain(mergeEntityInputs(markPotentialCrossPairs(input.entityInputs), verifiedCommit(afterTxs.entities, ctx)), (mergedInputs) =>
     chain(admitAtomicCrossPairs(afterTxs, mergedInputs, ctx.replay === true), ({ inputs: merged, pairs }) => chain(entityInputBatch(afterTxs, merged, timestamp, ctx), ({ store, outs, outbox: batchOutbox, rejectedPairs, committedPairs }) => {
-      // og finalizeRuntimeInputApply: every admitted pair that was not rejected committed both expected Account frames; its two ACKs carry the pair marker
+      // every admitted pair that was not rejected committed both expected Account frames; its two ACKs carry the pair marker
       const accepted = pairs.filter((p) => !rejectedPairs.has(pairStart(p)));
       if (accepted.some((p) => !committedPairs.has(pairStart(p)))) return frameErr("RUNTIME_CROSS_J_ACCOUNT_PAIR_COMMIT_DIVERGED_FROM_ADMISSION");
       return chain(markCommittedAckOutputs(batchOutbox, accepted), (outbox) => {
         const applied = outs.flatMap((o) => o.applied), replicaLocal = commitLocal(afterTxs, store, outs, timestamp);
-        // og reducer + applyPreparedRuntimeFrame: ingress J inputs, RuntimeTx J outputs, then each emitter's committed Entity J outputs; split for durable submit.
+        // ingress J inputs, RuntimeTx J outputs, then each emitter's committed Entity J outputs; split for durable submit.
         const frameJ = [...jOutbox, ...txJOutputs, ...outs.flatMap((o) => o.effects?.[1].jOutputs ?? [])];
         const meaningful = applied.filter((i) => i.input.kind !== "txs" || i.input.txs.length > 0).length;
         const entityInputCount = outs.some((o) => o.committed) ? Math.max(meaningful, applied.length) : meaningful;
