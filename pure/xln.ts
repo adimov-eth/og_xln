@@ -5900,18 +5900,60 @@ const crossDisputeRouteIssue = (state: EntityState, peer: string, routeId: strin
   if (!route.sourcePull || !route.targetPull) return `DISPUTE_START_CROSS_J_PULLS_MISSING:${routeId}`;
   return undefined;
 };
+/** The ethers release og pins (package.json): its decode errors end with `version=`, which og's halt text carries. */
+const ETHERS_VERSION = "6.17.0";
+/** An ethers ABI decode failure: BUFFER_OVERRUN always propagates; any other error inside a dynamic slot is deferred into that slot (og Result). */
+type EthersFail = { readonly overrun: boolean; readonly message: string };
+const ethersFail = (overrun: boolean, short: string, details: readonly string[], code: string): Result<never, EthersFail> =>
+  err({ overrun, message: `${short} (${[...details, `code=${code}`, `version=${ETHERS_VERSION}`].join(", ")})` });
+/** ethers Reader.readBytes(32) on a sub-reader's own buffer: `data out-of-bounds` past its end. */
+const ethersWordText = (data: Uint8Array, at: number): Result<bigint, EthersFail> =>
+  at + 32 > data.length ? ethersFail(true, "data out-of-bounds", [`buffer=${bytesToHex(data)}`, `length=${data.length}`, `offset=${at + 32}`], "BUFFER_OVERRUN") : ok(BigInt(bytesToHex(data.subarray(at, at + 32))));
+/** ethers Reader.readIndex: getNumber refuses a word above MAX_SAFE_INTEGER with an INVALID_ARGUMENT `overflow`. */
+const ethersIndexText = (data: Uint8Array, at: number): Result<number, EthersFail> =>
+  chain(ethersWordText(data, at), (w) => (w > BigInt(Number.MAX_SAFE_INTEGER) ? ethersFail(false, "overflow", [`argument="value"`, `value=${w}`], "INVALID_ARGUMENT") : ok(Number(w))));
+/** ethers ArrayCoder.decode of a dynamic array of static `size`-word tuples: its count, the `insufficient data length` guard, then each word in order. */
+const ethersArrayText = (arr: Uint8Array, size: number): Result<number, EthersFail> => chain(ethersIndexText(arr, 0), (count) => {
+  if (count * 32 > arr.length) return ethersFail(true, "insufficient data length", [`buffer=${bytesToHex(arr)}`, `offset=${count * 32}`, `length=${arr.length}`], "BUFFER_OVERRUN");
+  const words = count * size;
+  for (let j = 0; j < words; j++) { const w = ethersWordText(arr, 32 + j * 32); if (!w.ok) return w; }
+  return ok(count);
+});
+/**
+ * og proofBodyHasPulls' `ABI_CODER.decode([DELTA_BATCH_PARAM], encodedBatch)[0].pull.length` (ethers 6.17.0), as the thrown message or the Pull
+ * count: the root offset is read outside any slot (both failures throw); the batch's own offsets are too, so an overflow there is deferred into
+ * result index 0; an array's count overflow is deferred into its slot, and throws only when the slot read is `pull`. Reads stay far below
+ * ethers' inflation bound (each array lies within the buffer), so that guard never fires.
+ */
+export const ethersBatchPulls = (encoded: unknown): Result<number, string> => {
+  if (typeof encoded !== "string" || encoded.length % 2 !== 0 || !/^0x[0-9a-f]*$/i.test(encoded))
+    return err(`invalid BytesLike value (argument="value", value=${encoded == null ? "null" : typeof encoded === "string" ? JSON.stringify(encoded) : String(encoded)}, code=INVALID_ARGUMENT, version=${ETHERS_VERSION})`);
+  const data = hexToBytes(`0x${encoded.slice(2)}`), deferred = (name: string): Result<never, string> => err(`deferred error during ABI decoding triggered accessing ${name}`);
+  const root = ethersIndexText(data, 0);
+  if (!root.ok) return err(root.error.message);
+  const batch = data.subarray(root.value), slots: Array<Result<number, EthersFail>> = [];
+  for (const [k, size] of [[0, 5], [1, 5], [2, 7]] as const) {
+    const off = ethersIndexText(batch, k * 32);
+    if (!off.ok) return off.error.overrun ? err(off.error.message) : deferred("index 0");
+    const arr = ethersArrayText(batch.subarray(off.value), size);
+    if (!arr.ok && arr.error.overrun) return err(arr.error.message);
+    slots.push(arr);
+  }
+  const pull = slots[2] as Result<number, EthersFail>;
+  return pull.ok ? ok(pull.value) : deferred(`property "pull"`);
+};
 /**
  * og proofBodyHasPulls: does a canonical DeltaTransformer clause of the signed body carry a Pull (malformed canonical bytes halt, as Solidity's
- * abi.decode reverts). og's halt text carries the ethers decode message; the rewrite carries its own decode code after the clause index.
+ * abi.decode reverts), halting with the clause index and og's ethers decode message.
  */
 export const proofBodyHasPulls = (body: Pick<ProofBody, "transformers">, transformer: string): Result<boolean, EntityError> => {
   if (!isAddressText(transformer)) return halt(`DISPUTE_DELTA_TRANSFORMER_ADDRESS_INVALID:${transformer}`);
   const canonical = transformer.toLowerCase();
   for (const [i, t] of body.transformers.entries()) {
     if (String(t.transformerAddress).toLowerCase() !== canonical) continue;
-    const pulls = decodeBatchPulls(t.encodedBatch);
-    if (!pulls.ok) return halt(`DISPUTE_CANONICAL_DELTA_BATCH_INVALID:${i}:${pulls.error.reason}`);
-    if (pulls.value.length > 0) return ok(true);
+    const pulls = ethersBatchPulls(t.encodedBatch);
+    if (!pulls.ok) return halt(`DISPUTE_CANONICAL_DELTA_BATCH_INVALID:${i}:${pulls.error}`);
+    if (pulls.value > 0) return ok(true);
   }
   return ok(false);
 };

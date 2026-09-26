@@ -45,6 +45,9 @@ import { createDisputeProofHashWithNonce } from "../../core/protocol/dispute/pro
 import { getEntityAccountForWrite } from "../../core/entity/state/persistent-account-map.ts";
 import { accountDisputeHash, accountId as rwAccountId, genesisReplica, unsafeAccountFrame } from "../xln.ts";
 import { CAROL, keyOf, signLazyAccountHanko } from "../xln_run.ts";
+import { proofBodyHasPulls as ogProofBodyHasPulls } from "../../core/entity/tx/handlers/dispute/start-admission.ts";
+import { BATCH_ABI } from "../../core/protocol/dispute/proof-body.ts";
+import { proofBodyHasPulls } from "../xln.ts";
 
 let seed = 29;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -829,5 +832,44 @@ describe("disputes-final: cross-j recovery runtimeOutput authority (og entity/au
       bump(kinds, `${txs[0]!.type}:${og === null ? "ok" : og.replace(/:.*/, "")}`);
     }
     expectKinds(kinds, ["crossJurisdictionSalvage:ok", "resolveHtlcLock:ok", "disputeStart:ok", "crossJurisdictionSalvage:RUNTIME_OUTPUT_SALVAGE_SOURCE_ENTITY_MISMATCH", "crossJurisdictionSalvage:RUNTIME_OUTPUT_SALVAGE_SOURCE_COUNTERPARTY_MISMATCH", "crossJurisdictionSalvage:RUNTIME_OUTPUT_SALVAGE_TARGET_INVALID", "resolveHtlcLock:RUNTIME_OUTPUT_SEMANTIC_TARGET_MISMATCH", "disputeStart:RUNTIME_OUTPUT_CROSS_J_DISPUTE_ROUTE_INACTIVE", "disputeStart:RUNTIME_OUTPUT_CROSS_J_DISPUTE_DATA_FORBIDDEN", "disputeStart:RUNTIME_OUTPUT_CROSS_J_DISPUTE_COUNTERPARTY_MISMATCH", "crossJurisdictionForceSiblingDispute:RUNTIME_OUTPUT_NON_SIBLING_FORBIDDEN"]);
+  });
+});
+
+// ---- og entity/tx/handlers/dispute/start-admission.ts proofBodyHasPulls (the ethers decode text in DISPUTE_CANONICAL_DELTA_BATCH_INVALID) ----
+describe("disputes-final: canonical DeltaBatch decoding (og handlers/dispute/start-admission.ts proofBodyHasPulls)", () => {
+  test("MATCH: proofBodyHasPulls on 1500 random ProofBodies (valid batches with and without pulls, truncated / overflowing / out-of-range offsets and counts, odd / non-hex / 0X bytes, foreign transformers) -- same verdict and the same DISPUTE_CANONICAL_DELTA_BATCH_INVALID ethers text as og", () => {
+    const r = xrng(0xba7c), kinds = new Map<string, number>(), other = "0x" + "77".repeat(20);
+    const payment = () => [BigInt(xint(r, 5)), [xint(r, 2) === 0, BigInt(xint(r, 1000))], BigInt(xint(r, 1000)), W(String(xint(r, 90) + 10))];
+    const swap = () => [xint(r, 2) === 0, BigInt(xint(r, 5)), BigInt(xint(r, 1000)), BigInt(xint(r, 5)), BigInt(xint(r, 1000))];
+    const pull = () => [BigInt(xint(r, 5)), [xint(r, 2) === 0, BigInt(xint(r, 1000))], xint(r, 65536), W(String(xint(r, 90) + 10)), W(String(xint(r, 90) + 10)), xint(r, 2) === 0];
+    const DBP = ethers.ParamType.from(BATCH_ABI as never), coder = ethers.AbiCoder.defaultAbiCoder();
+    const valid = () => coder.encode([DBP], [[Array.from({ length: xint(r, 3) }, payment), Array.from({ length: xint(r, 3) }, swap), Array.from({ length: xint(r, 3) }, pull)]]);
+    const setWord = (hex: string, at: number, v: bigint) => { const body = hex.slice(2), w = v.toString(16).padStart(64, "0").slice(-64); return `0x${body.slice(0, at * 64)}${w}${body.slice(at * 64 + 64)}`; };
+    const corrupt = (hex: string): unknown => {
+      const words = Math.floor((hex.length - 2) / 64);
+      switch (xint(r, 12)) {
+        case 0: return hex;
+        case 1: return hex.slice(0, 2 + 2 * xint(r, (hex.length - 2) / 2 + 1));
+        case 2: return setWord(hex, xint(r, Math.max(words, 1)), xpick(r, [2n ** 53n, 2n ** 53n - 1n, 2n ** 256n - 1n, BigInt(xint(r, 5000)), 32n * BigInt(xint(r, 20))]));
+        case 3: return setWord(hex, xpick(r, [1, 2, 3]), xpick(r, [2n ** 60n, 2n ** 256n - 1n, BigInt(xint(r, 800))]));
+        case 4: return setWord(hex, 0, xpick(r, [0n, 32n, 64n, 2n ** 53n, 2n ** 200n, BigInt(xint(r, 400))]));
+        case 5: return hex + "0";
+        case 6: return hex.slice(0, 10) + "zz" + hex.slice(12);
+        case 7: return "0X" + hex.slice(2).toUpperCase();
+        case 8: return xpick(r, ["0x", "0x00", "", "0x" + "00".repeat(31), "0x" + "00".repeat(31) + "20"]);
+        case 9: { const at = xint(r, Math.max(words, 1)); return setWord(hex, at, xpick(r, [2n ** 53n + 7n, 10n ** 30n, 2n ** 40n])); }
+        case 10: return hex + "00".repeat(32 * xint(r, 3));
+        default: return setWord(setWord(hex, xpick(r, [1, 2, 3, 4, 5, 6]), BigInt(xint(r, 20)) * 32n), xpick(r, [4, 5, 6, 7, 8]), BigInt(xint(r, 1 << 16)));
+      }
+    };
+    for (let i = 0; i < 1500; i++) {
+      const transformers = Array.from({ length: 1 + xint(r, 3) }, () => ({ transformerAddress: xint(r, 5) === 0 ? other : xint(r, 2) === 0 ? DT.toUpperCase().replace("0X", "0x") : DT, encodedBatch: corrupt(valid()) as string, allowances: [] }));
+      const body = { transformers } as never;
+      const og = ogThrows(() => ogProofBodyHasPulls(body, DT));
+      const rw = proofBodyHasPulls(body, DT);
+      expect(`${i}:${JSON.stringify(rw.ok ? { ok: true, value: rw.value } : { ok: false, reason: (rw.error as { reason: string }).reason })}`).toBe(`${i}:${JSON.stringify(og)}`);
+      bump(kinds, og.ok ? `ok:${og.value}` : og.reason.replace(/^DISPUTE_CANONICAL_DELTA_BATCH_INVALID:\d+:/, "").replace(/ \(.*/, ""));
+    }
+    expectKinds(kinds, ["ok:true", "ok:false", "data out-of-bounds", "insufficient data length", "overflow", "invalid BytesLike value", "deferred error during ABI decoding triggered accessing property \"pull\"", "deferred error during ABI decoding triggered accessing index 0"]);
   });
 });
