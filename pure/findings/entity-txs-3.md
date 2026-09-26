@@ -15,7 +15,7 @@ Scope: the REMAINING entity-tx items in `entity-consensus-2.md` and `entity-runt
 | T3-6 | setRebalancePolicy and checkAutoRebalance | lifecycle/admin.ts, auto-rebalance | FIXED | A missing Account is a no-op, and an invalid policy is a plain Error. Every skip gate is covered. Tested on 300 random Accounts |
 | J7 | DisputeStarted / DisputeFinalized J events reach the Account | core/entity/tx/j-events.ts | FIXED | Host `disputeFinalityOf` resolves the counterparty the og way and checks the frozen proof-body hash, then applies external_finality. Tested on 120 random events against og createAccountDispute*Input / applyAccountDispute* |
 | H7-c | Leaf disputePrepare, and a queued activeDispute (observedOnChain:false) | dispute/prepare.ts, dispute/start.ts | FIXED | tested in the 60-case prepare/start test |
-| T3-7 | prepareDispute / disputeStart | entity/tx/handlers/dispute | PARTIAL | Ported: cooldown readiness, the admission then evidence order, jBatchState.batch.disputeStarts rows, the batch limits, og status messages, and ogProofBody equal to og canonicalizeProofBodyStruct. Tested on 60 random calls. REMAINING: removing orderbook rows on prepare (the invariant is DISPUTE_PREPARE_ORDERBOOK_REMOVAL_NOT_PORTED). Also remaining: the starter-argument override (DISPUTE_START_ARGUMENT_OVERRIDE_NOT_PORTED), proofs carrying locks, swaps or pulls, and the cross-j route (DISPUTE_START_CROSS_J_ROUTE_MISSING). The live og test has no success-path fixture with a counterparty hanko, so success is checked through the rewrite and the og refusal classes |
+| T3-7 | prepareDispute / disputeStart | entity/tx/handlers/dispute | PARTIAL | Ported: cooldown readiness, the admission then evidence order, jBatchState.batch.disputeStarts rows, the batch limits, og status messages, and ogProofBody equal to og canonicalizeProofBodyStruct. Tested on 60 random calls. REMAINING: removing orderbook rows on prepare (the invariant is DISPUTE_PREPARE_ORDERBOOK_REMOVAL_NOT_PORTED). The starter-argument override is FIXED (og sanitizeOptionalDisputeArgument, scheduler-disputes.md #7; DISPUTE_START_ARGUMENT_OVERRIDE_NOT_PORTED removed). Also remaining: proofs carrying locks, swaps or pulls, and the cross-j route (DISPUTE_START_CROSS_J_ROUTE_MISSING). The live og test has no success-path fixture with a counterparty hanko, so success is checked through the rewrite and the og refusal classes |
 | T3-8 | J7 side effects | j-events.ts | REMAINING | The crontab dispute-deadline hook, the jBatch scrub, the counter-proof, and the HTLC / cross-j settlement on finality all need og's crontab and cross-j subsystems |
 | ER-4b | Quorum board binding (assertQuorumBoardBinding) | hanko/signing.ts | FIXED | Ported together with the certified-board registry; fixtures use og-valid lazy ids (see boards.md) |
 | AC-13b | certified-board registry, refresh producer | entity board rotation | REMAINING | The registry and receiving side are FIXED; the refresh producer (crontab hook) is REMAINING (see boards.md) |
@@ -33,13 +33,14 @@ Scope: the REMAINING entity-tx items in `entity-consensus-2.md` and `entity-runt
 | lendingOffer, lendingBorrow, lendingRepay, lendingClosePosition | PORTED | lending area |
 | placeSwapOffer, proposeCancelSwap | PORTED | orderbook area (og swap-requests.ts shape) |
 | htlcPayment | PORTED | cross-j / htlc area (merged from the lead branch) |
-| disputeFinalize | BLOCKED | og finalize-proof selection, the timing gates and the crontab hooks (core/entity/tx/handlers/dispute/finalize.ts, crontab) |
-| scheduledWake | BLOCKED | og executeCrontab scheduler (core/entity/crontab) |
+| disputeFinalize | PORTED | scheduler-disputes.md #5 (proofs with locks/swaps/pulls remain, #14) |
+| scheduledWake | PORTED | scheduler-disputes.md #1-#4 |
 | proposeAccountsNow | BLOCKED | the rewrite does not keep og's pendingAccountInput bytes |
 | entityProviderActivateBoard, entityProviderCancelAction, entityProviderProposeControlBoard, entityProviderReleaseControlShares, entityProviderTransfer | FIXED | see boards.md EP-1..EP-5 |
 | boardHandover | REMAINING | needs a j_event entity tx and consensus frame config (boards.md BH-1) |
 | settle_propose, settle_update, settle_approve, settle_execute, settle_reject | BLOCKED | og entity settlement orchestration (core/entity/tx/handlers/payments/settle.ts: settlement workspace, co-signing, jBatch settle rows) |
-| resolveHtlcLock, processHtlcTimeouts | BLOCKED | owned by the htlc agent (paybook lock lifecycle) |
+| processHtlcTimeouts | PORTED | scheduler-disputes.md #4 |
+| resolveHtlcLock | BLOCKED | owned by the htlc agent (paybook lock lifecycle) |
 | initOrderbookExt | BLOCKED | owned by the orderbook agent (orderbook extension state) |
 | runtimeOutput, crossPullClose, prepareCrossJurisdictionSwap, registerCrossJurisdictionSwap, admitCrossJurisdictionBookOrder, removeCrossJurisdictionBookOrder, crossJurisdictionBookOrderRemoved, crossJurisdictionFillNotice, crossJurisdictionForceSiblingDispute, crossJurisdictionSalvage, materializeCrossJurisdictionClear, materializeCrossJurisdictionSwap, orderbookSweepCrossJurisdiction, requestCrossJurisdictionClear | BLOCKED | owned by the cross-j agent (og cross-J route and book state) |
 | j_event, j_broadcast, r2r, r2c, r2e, e2r | HOST-ONLY | the rewrite handles these in the Host J layer (JOp / applyJ), not as entity txs |
