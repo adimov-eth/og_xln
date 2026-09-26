@@ -7757,11 +7757,16 @@ export type AccountTxTarget = { readonly accountId: string; readonly tx: Account
 /** `runtimeEvents`: og's Htlc* candidateEffects runtime events, in emission order. */
 export type PaybookFlow = { readonly paybook: Paybook; readonly queue: readonly AccountTxTarget[]; readonly runtimeEvents?: readonly EntityRuntimeEvent[] | undefined };
 const emitRuntime = (f: PaybookFlow, eventName: string, data: { readonly [k: string]: unknown }): PaybookFlow => ({ ...f, runtimeEvents: [...(f.runtimeEvents ?? []), { eventName, data }] });
-/** og protocol/htlc/events.ts common fields (og's jurisdictionId is the jurisdiction's name, which the rewrite's Entity config does not carry). */
-const htlcEventFields = (a: { readonly entityId: string; readonly fromEntity?: string | undefined; readonly toEntity?: string | undefined; readonly hashlock: string; readonly lockId?: string | undefined; readonly amount?: bigint | undefined; readonly tokenId?: number | undefined; readonly description?: string | undefined }): { readonly [k: string]: unknown } => ({
-  entityId: a.entityId, ...(a.fromEntity ? { fromEntity: a.fromEntity } : {}), ...(a.toEntity ? { toEntity: a.toEntity } : {}), hashlock: a.hashlock, ...(a.lockId ? { lockId: a.lockId } : {}),
-  ...(a.amount !== undefined ? { amount: a.amount.toString() } : {}), ...(a.tokenId !== undefined ? { tokenId: a.tokenId } : {}), ...(a.description ? { description: a.description } : {}),
+/**
+ * og protocol/htlc/events.ts buildHtlcReceivedEventPayload / buildHtlcFinalizedEventPayload common fields, in og's key order. og's jurisdictionId
+ * is `config.jurisdiction.name` (else the Runtime's activeJurisdiction), trimmed; an empty one is omitted.
+ */
+const htlcEventFields = (a: { readonly entityId: string; readonly fromEntity?: string | undefined; readonly toEntity?: string | undefined; readonly hashlock: string; readonly secret?: string | undefined; readonly lockId?: string | undefined; readonly amount?: bigint | undefined; readonly tokenId?: number | undefined; readonly jurisdictionId?: string | undefined; readonly description?: string | undefined }): { readonly [k: string]: unknown } => ({
+  entityId: a.entityId, ...(a.fromEntity ? { fromEntity: a.fromEntity } : {}), ...(a.toEntity ? { toEntity: a.toEntity } : {}), hashlock: a.hashlock, ...(a.secret ? { secret: a.secret } : {}), ...(a.lockId ? { lockId: a.lockId } : {}),
+  ...(a.amount !== undefined ? { amount: a.amount.toString() } : {}), ...(a.tokenId !== undefined ? { tokenId: a.tokenId } : {}), ...(a.jurisdictionId ? { jurisdictionId: a.jurisdictionId } : {}), ...(a.description ? { description: a.description } : {}),
 });
+/** og jurisdictionIdFor / getJurisdictionId: the Entity's jurisdiction name, trimmed. */
+const htlcJurisdictionId = (state: EntityState): string => String(state.jurisdictionConfig?.name || "").trim();
 /** og buildHtlcReceivedTimingFields / buildHtlcFinalizedTimingFields. */
 const receivedTiming = (startedAtMs: number | undefined, receivedAtMs: number): { readonly [k: string]: number } => (!startedAtMs ? { receivedAtMs } : { startedAtMs, receivedAtMs, elapsedMs: Math.max(1, receivedAtMs - startedAtMs) });
 const finalizedTiming = (startedAtMs: number | undefined, finalizedAtMs: number): { readonly [k: string]: number } => {
@@ -7775,7 +7780,7 @@ const pushTarget = (f: PaybookFlow, accountId: string, tx: AccountTx): PaybookFl
 const terminatePaybookEntry = (f: PaybookFlow, hashlock: string): PaybookFlow => (f.paybook.entries.has(hashlock) ? { ...f, paybook: { ...f.paybook, entries: mapDelete(f.paybook.entries, hashlock) } } : f);
 const hasInbound = (e: PaybookEntry): boolean => typeof e.inboundEntity === "string" && e.inboundEntity.length > 0;
 /** og applyCommittedHtlcResolveFollowup (both roles, per committed frame): a committed secret closes the route leg it resolves. */
-export const resolveFollowup = (f0: PaybookFlow, peer: string, tx: Extract<WireAccountTx, { type: "htlc_resolve" }>, self = "", timestamp = 0): Result<PaybookFlow, EntityError> => {
+export const resolveFollowup = (f0: PaybookFlow, peer: string, tx: Extract<WireAccountTx, { type: "htlc_resolve" }>, self = "", timestamp = 0, jurisdictionId = ""): Result<PaybookFlow, EntityError> => {
   if (tx.outcome !== "secret") return ok(f0);
   const hashlock = hashHtlcSecret(tx.secret);
   if (hashlock !== tx.lockId.toLowerCase()) return htlcReject(`PAYBOOK_RESOLVE_ID_MISMATCH:${tx.lockId}:${hashlock}`);
@@ -7785,12 +7790,12 @@ export const resolveFollowup = (f0: PaybookFlow, peer: string, tx: Extract<WireA
   const originatedOutbound = outbound && (route.originated === true || !hasInbound(route));
   const forwardedOutbound = outbound && hasInbound(route) && typeof route.outboundEntity === "string" && route.outboundEntity.length > 0 && route.originated !== true;
   if (!inbound && !originatedOutbound && !forwardedOutbound) return ok(f0);
-  const common = { lockId: tx.lockId, amount: route.amount, tokenId: route.tokenId, description: route.description };
+  const common = { lockId: tx.lockId, amount: route.amount, tokenId: route.tokenId, jurisdictionId, description: route.description };
   const received = inbound ? emitRuntime(f0, "HtlcReceived", { ...htlcEventFields({ ...common, entityId: self, fromEntity: peer, toEntity: self, hashlock }), ...receivedTiming(route.startedAtMs, timestamp) }) : f0;
   if (forwardedOutbound) return ok(received);
   // og emitOriginatedHtlcFinalized: only the committed outbound leg of an originated payment finalizes it
   const f = originatedOutbound && !(route.originated !== true && hasInbound(route)) && route.hashlock === tx.lockId
-    ? emitRuntime(received, "HtlcFinalized", { ...htlcEventFields({ ...common, entityId: self, fromEntity: self, toEntity: route.outboundEntity, hashlock: route.hashlock }), secret: tx.secret, ...finalizedTiming(route.startedAtMs, timestamp) }) : received;
+    ? emitRuntime(received, "HtlcFinalized", { ...htlcEventFields({ ...common, entityId: self, fromEntity: self, toEntity: route.outboundEntity, hashlock: route.hashlock, secret: tx.secret }), ...finalizedTiming(route.startedAtMs, timestamp) }) : received;
   if (route.originated === true && hasInbound(route)) {
     const settled: PaybookEntry = { ...route, ...(inbound ? { inboundSettled: true as const } : {}), ...(originatedOutbound ? { outboundSettled: true as const } : {}) };
     if (settled.inboundSettled !== true || settled.outboundSettled !== true) return ok(putPaybookEntry(f, settled));
@@ -7842,7 +7847,7 @@ export const timeoutFollowup = (f: PaybookFlow, hashlock: string, self = ""): Pa
   return terminatePaybookEntry(failed, hashlock);
 };
 /** og applyHtlcSecretFollowups: record the preimage once, earn the pending fee, pass the secret upstream and arm its ACK deadline, or end an originated payment. */
-export const secretFollowup = (f: PaybookFlow, hashlock: string, secret: string, timestamp: number, self = ""): PaybookFlow => {
+export const secretFollowup = (f: PaybookFlow, hashlock: string, secret: string, timestamp: number, self = "", jurisdictionId = ""): PaybookFlow => {
   const route = f.paybook.entries.get(hashlock);
   if (route === undefined || (route.secret !== undefined && route.secret !== "")) return f;
   const earns = route.pendingFee !== undefined && route.pendingFee !== 0n;
@@ -7853,7 +7858,7 @@ export const secretFollowup = (f: PaybookFlow, hashlock: string, secret: string,
     return pushTarget(putPaybookEntry(earned, armed), route.inboundEntity as string, { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret });
   }
   return emitRuntime(terminatePaybookEntry(putPaybookEntry(earned, learned), hashlock), "HtlcFinalized", {
-    ...htlcEventFields({ entityId: self, fromEntity: self, toEntity: route.outboundEntity, hashlock, lockId: hashlock, amount: route.amount, tokenId: route.tokenId, description: route.description }), secret, ...finalizedTiming(route.startedAtMs, timestamp),
+    ...htlcEventFields({ entityId: self, fromEntity: self, toEntity: route.outboundEntity, hashlock, secret, lockId: hashlock, amount: route.amount, tokenId: route.tokenId, jurisdictionId, description: route.description }), ...finalizedTiming(route.startedAtMs, timestamp),
   });
 };
 /** A committed Account frame as the HTLC followups see it: our own frame (ACKed by the peer) or the peer's frame we just signed. */
@@ -7862,16 +7867,16 @@ export type CommittedHtlcFrame = { readonly frame: Pick<AccountFrame, "height" |
  * og applyCommittedFrameTransactions + applyCommittedHtlcFollowups for one Account input: per committed frame the resolve followups then the
  * receiver-only lock followups; then every timed-out lock of the committed frames; then the preimages of the peer frame.
  */
-export const paybookFollowups = (f: PaybookFlow, peer: string, frames: readonly CommittedHtlcFrame[], received: Omit<InboundLockFacts, "frame"> | undefined, entries: readonly PreparedHtlcEntry[], timestamp: number, self = ""): Result<PaybookFlow, EntityError> => {
+export const paybookFollowups = (f: PaybookFlow, peer: string, frames: readonly CommittedHtlcFrame[], received: Omit<InboundLockFacts, "frame"> | undefined, entries: readonly PreparedHtlcEntry[], timestamp: number, self = "", jurisdictionId = ""): Result<PaybookFlow, EntityError> => {
   const byKey = new Map(entries.map((e) => [preparedHtlcKey(e.binding), e])), consumed = new Set<string>();
   return map(foldResult(frames, f, (acc, { frame, viaNewFrame }) =>
-    chain(foldResult(frame.txs, acc, (a, tx) => (tx.type === "htlc_resolve" ? resolveFollowup(a, peer, tx, self, timestamp) : ok(a))), (resolved) =>
+    chain(foldResult(frame.txs, acc, (a, tx) => (tx.type === "htlc_resolve" ? resolveFollowup(a, peer, tx, self, timestamp, jurisdictionId) : ok(a))), (resolved) =>
       !viaNewFrame || received === undefined ? ok(resolved)
         : foldResult(frame.txs, resolved, (a, tx) => (tx.type === "htlc_lock" && tx.envelope !== undefined ? lockFollowup(a, { ...received, frame }, tx, byKey, consumed, timestamp, self) : ok(a))))),
   (followed) => {
     const timedOut = frames.flatMap(({ frame }) => frame.txs.flatMap((tx) => (tx.type === "htlc_resolve" && tx.outcome === "error" ? [tx.lockId.toLowerCase()] : [])));
     const secrets = frames.flatMap(({ frame, viaNewFrame }) => (viaNewFrame ? frame.txs.flatMap((tx) => (tx.type === "htlc_resolve" && tx.outcome === "secret" ? [{ hashlock: tx.lockId.toLowerCase(), secret: tx.secret }] : [])) : []));
-    return secrets.reduce((a, s) => secretFollowup(a, s.hashlock, s.secret, timestamp, self), timedOut.reduce((a, h) => timeoutFollowup(a, h, self), followed));
+    return secrets.reduce((a, s) => secretFollowup(a, s.hashlock, s.secret, timestamp, self, jurisdictionId), timedOut.reduce((a, h) => timeoutFollowup(a, h, self), followed));
   });
 };
 /** og applyLocalAccountEffects: each returned Account tx is admitted alone; a missing, frozen or refusing Account drops it silently. */
@@ -8185,7 +8190,7 @@ const committedLendingFollowups = (d: Draft, peer: EntityId, own: AccountFrame |
 const htlcFollowups = (d: Draft, peer: EntityId, own: AccountFrame | undefined, received: { readonly frame: AccountFrame; readonly from: EntityId; readonly to: EntityId; readonly domain: Domain } | undefined, ctx: FoldContext): Result<Draft, EntityError> => {
   const frames: CommittedHtlcFrame[] = [...(own === undefined ? [] : [{ frame: own, viaNewFrame: false }]), ...(received === undefined ? [] : [{ frame: received.frame, viaNewFrame: true }])];
   if (!frames.some(({ frame }) => frame.txs.some((tx) => tx.type === "htlc_lock" || tx.type === "htlc_resolve"))) return ok(d);
-  return map(paybookFollowups({ paybook: d.state.paybook ?? EMPTY_PAYBOOK, queue: [] }, peer, frames, received, ctx.htlc?.entries ?? [], Number(ctx.timestamp), d.state.id), ({ paybook, queue, runtimeEvents }) => {
+  return map(paybookFollowups({ paybook: d.state.paybook ?? EMPTY_PAYBOOK, queue: [] }, peer, frames, received, ctx.htlc?.entries ?? [], Number(ctx.timestamp), d.state.id, htlcJurisdictionId(d.state)), ({ paybook, queue, runtimeEvents }) => {
     const withEvents: Draft = runtimeEvents === undefined || runtimeEvents.length === 0 ? d : { ...d, runtimeEvents: [...(d.runtimeEvents ?? []), ...runtimeEvents] };
     return queue.reduce(queueReturned, paybook === (d.state.paybook ?? EMPTY_PAYBOOK) ? withEvents : { ...withEvents, state: { ...withEvents.state, paybook } });
   });

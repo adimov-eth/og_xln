@@ -223,3 +223,31 @@ describe("lending-hub: end-to-end lending lifecycle through the Runtime", () => 
     expect([credit(BOB, CAROL), credit(BOB, CAROL, CAROL)]).toEqual([creditBefore, creditBefore]);
   }, 60_000);
 });
+
+// ---- Htlc* runtime events carry og's jurisdictionId (committed-frame-followups.ts jurisdictionIdFor, committed-htlc-followups.ts getJurisdictionId) ----
+describe("lending-hub: HtlcReceived / HtlcFinalized jurisdictionId (og protocol/htlc/events.ts)", () => {
+  test("MATCH: 400 random paybook routes resolved by a committed secret and revealed upstream -- og's events byte for byte (keys, order, jurisdictionId)", () => {
+    const json = (v: unknown): string => JSON.stringify(v, (_, x) => (typeof x === "bigint" ? `${x}n` : x));
+    const seen = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      const self = BOB, peer = pick([ALICE, CAROL]), other = peer === ALICE ? CAROL : ALICE, ts = 9_000_000 + ri(1000);
+      const secret = `0x${Array.from({ length: 64 }, () => "0123456789abcdef"[ri(16)]).join("")}`, hashlock = hashHtlcSecret(secret);
+      const name = pick(["", "  ", "Arrakis", " eth-mainnet "]);
+      const route: any = { hashlock, createdTimestamp: 1, ...(rng() < 0.5 ? { originated: true } : {}), ...(rng() < 0.6 ? { inboundEntity: pick([peer, other]) } : {}), ...(rng() < 0.8 ? { outboundEntity: pick([peer, other]) } : {}),
+        ...(rng() < 0.8 ? { amount: BigInt(1 + ri(1e6)), tokenId: pick([1, 3]) } : {}), ...(rng() < 0.5 ? { description: pick(["", "coffee"]) } : {}), ...(rng() < 0.6 ? { startedAtMs: ts - ri(5000) } : {}) };
+      const resolve = { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret } as const;
+      // og: the committed resolve on the Account with `peer`, then the preimage revealed by that peer's frame
+      const newState: any = { entityId: self, timestamp: ts, config: { jurisdiction: { name } }, paybook: { entries: new Map([[hashlock, { ...route }]]), feesEarned: 0n }, accounts: new Map() };
+      const program = createBookIntentProgram(), slot = program.openSlot(), accountTxs: any[] = [], candidateEffects: any[] = [];
+      applyCommittedAccountFrameFollowups(newState, peer, { height: 1, timestamp: ts, accountTxs: [{ type: "htlc_resolve", data: { lockId: hashlock, outcome: "secret", secret } }] } as never, true, accountTxs, {} as never, candidateEffects, slot);
+      applyHtlcSecretFollowups({ env: {}, state: newState, newState, outputs: [], accountTxs, candidateEffects, bookIntentSlot: slot } as never, [{ secret, hashlock }]);
+      applyBookIntentProgram(newState, program);
+      const jid = name.trim(), f0 = { paybook: { entries: new Map([[hashlock, route]]), feesEarned: 0n }, queue: [] };
+      const resolved = unwrap(resolveFollowup(f0 as never, peer, resolve as never, self, ts, jid));
+      const rw = secretFollowup(resolved, hashlock, secret, ts, self, jid);
+      expect(json(rw.runtimeEvents ?? [])).toBe(json(candidateEffects.map((e) => ({ eventName: e.eventName, data: e.data }))));
+      for (const e of candidateEffects) seen.add(`${e.eventName}:${"jurisdictionId" in e.data}`);
+    }
+    expect([...seen].sort()).toEqual(["HtlcFinalized:false", "HtlcFinalized:true", "HtlcReceived:false", "HtlcReceived:true"]);
+  });
+});
