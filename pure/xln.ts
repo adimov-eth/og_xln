@@ -83,6 +83,9 @@ export const whenDefined = <T, U, E>(v: T | undefined, f: (t: T) => Result<U, E>
 /** `every` over a refusable predicate: the first `false` or the first refusal ends it; later items are not asked. */
 export const everyResult = <X, E>(xs: Iterable<X>, pass: (x: X) => Result<boolean, E>): Result<boolean, E> =>
   foldResult(xs, true, (all, x) => (all ? pass(x) : ok(false)));
+/** `some` over a refusable predicate: the first `true` or the first refusal ends it; later items are not asked. */
+export const someResult = <X, E>(xs: Iterable<X>, pass: (x: X) => Result<boolean, E>): Result<boolean, E> =>
+  foldResult(xs, false, (any, x) => (any ? ok(true) : pass(x)));
 
 
 // ---- matching: exhaustive tables keyed by a discriminant ----
@@ -16414,9 +16417,20 @@ const refreshEvidence = (c: AccountReplica, self: EntityId): string => {
     ...both("proposerIsLeft"),
   ]);
 };
+/** og processDueHook's hub_rebalance_kick: the periodic rebalance runs at the next wake. */
+const kickRebalance = (run: HookRun): HookRun => {
+  const task = run.crontab.tasks.get("hubRebalance");
+  if (task === undefined) return run;
+  return {
+    ...run,
+    crontab: { ...run.crontab, tasks: mapSet(run.crontab.tasks, "hubRebalance", { ...task, lastRun: 0 }) },
+  };
+};
+/** Whether activation `x` is `y` or later on the J chain. */
+const atOrAfter = (x: Activation, y: Activation): boolean =>
+  x.jHeight > y.jHeight || (x.jHeight === y.jHeight && x.logIndex >= y.logIndex);
 /** The later of two activations on the J chain; a tie keeps the first. */
-const laterActivation = (x: Activation, y: Activation): Activation =>
-  (y.jHeight > x.jHeight || (y.jHeight === x.jHeight && y.logIndex > x.logIndex) ? y : x);
+const laterActivation = (x: Activation, y: Activation): Activation => (atOrAfter(x, y) ? x : y);
 /**
  * og scheduleChangedAccountBoardHankoRefreshes (end of the Entity frame): an Account whose certified frame evidence
  * changed and still needs its marker's refresh re-arms the refresh hook now, for the latest such activation. A
@@ -16695,188 +16709,569 @@ export const lendingInterest = (principal: bigint, bps: number): bigint => {
   const raw = (principal * BigInt(bps)) / 10_000n;
   return raw === 0n ? 1n : raw;
 };
+/** The facts a loan id commits to. */
+type LoanRequest = {
+  readonly hubEntityId: string;
+  readonly borrowerEntityId: string;
+  readonly tokenId: number;
+  readonly amount: bigint;
+  readonly termId: string;
+  readonly openedAt: number;
+  readonly requestId?: string | undefined;
+};
 /** og buildLendingLoanId: `loan-` and 16 hex chars of keccak256 over the `|`-joined request facts. */
-export const lendingLoanId = (i: { readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: number; readonly amount: bigint; readonly termId: string; readonly openedAt: number; readonly requestId?: string | undefined }): string =>
-  `loan-${keccak256Hex(utf8(["loan", i.hubEntityId.toLowerCase(), i.borrowerEntityId.toLowerCase(), i.tokenId, i.amount.toString(), i.termId, i.openedAt, i.requestId ?? ""].map(String).join("|"))).slice(2, 18)}`;
-/** og selectBestLendingPool: the cheapest open pool of the token and term that covers the amount, then the oldest, then the position id. */
-const bestLendingPool = (book: LendingBook, tokenId: number, amount: bigint, termId: string, maxInterestBps: number): LendingPool | undefined =>
-  [...book.pools.values()].filter((p) => p.status === "open" && p.tokenId === tokenId && p.termId === termId && p.availableAmount >= amount && p.interestBps <= maxInterestBps)
-    .sort((a, b) => a.interestBps - b.interestBps || a.createdAt - b.createdAt || asc(a.positionId, b.positionId))[0];
+export const lendingLoanId = (i: LoanRequest): string => {
+  const facts = [
+    "loan",
+    i.hubEntityId.toLowerCase(),
+    i.borrowerEntityId.toLowerCase(),
+    i.tokenId,
+    i.amount.toString(),
+    i.termId,
+    i.openedAt,
+    i.requestId ?? "",
+  ];
+  return `loan-${keccak256Hex(utf8(facts.map(String).join("|"))).slice(2, 18)}`;
+};
+/**
+ * og selectBestLendingPool: the cheapest open pool of the token and term that covers the amount, then the oldest, then
+ * the position id.
+ */
+const bestLendingPool = (
+  book: LendingBook,
+  tokenId: number,
+  amount: bigint,
+  termId: string,
+  maxInterestBps: number,
+): LendingPool | undefined =>
+  [...book.pools.values()]
+    .filter(
+      (p) =>
+        p.status === "open" &&
+        p.tokenId === tokenId &&
+        p.termId === termId &&
+        p.availableAmount >= amount &&
+        p.interestBps <= maxInterestBps,
+    )
+    .toSorted(
+      (a, b) => a.interestBps - b.interestBps || a.createdAt - b.createdAt || asc(a.positionId, b.positionId),
+    )[0];
+const EMPTY_LENDING_BOOK: LendingBook = { pools: new Map(), loans: new Map() };
+const withPool = (book: LendingBook, p: LendingPool): LendingBook => ({
+  ...book,
+  pools: mapSet(book.pools, p.positionId, p),
+});
+const withLoan = (book: LendingBook, l: LendingLoan): LendingBook => ({
+  ...book,
+  loans: mapSet(book.loans, l.loanId, l),
+});
+const withLendingBook = (state: EntityState, book: LendingBook): EntityState =>
+  ({ ...state, committed: { ...state.committed, lending: book as unknown as Binary } });
+/** og's `lending_credit` revoke: the borrower's credit line shrinks by the loan's principal, never below zero. */
+const creditRevoke = (loan: LendingLoan, hub: string, tokenId: TokenId, current: bigint): AccountTxTarget => ({
+  accountId: loan.borrowerEntityId,
+  tx: {
+    type: "lending_credit",
+    action: "revoke",
+    loanId: loan.loanId,
+    hubEntityId: hub,
+    borrowerEntityId: loan.borrowerEntityId,
+    tokenId,
+    creditLimit: current > loan.principalAmount ? current - loan.principalAmount : 0n,
+  },
+});
 /** One committed Account frame and its proposer, as og applyCommittedAccountFrameFollowups sees it. */
 export type LendingFrame = { readonly frame: Pick<AccountFrame, "timestamp" | "txs">; readonly proposer: string };
 export type LendingFollowup = { readonly state: EntityState; readonly accountTxs: readonly AccountTxTarget[] };
 type LendingRun = { readonly book: LendingBook | undefined; readonly accountTxs: readonly AccountTxTarget[] };
+/** What one committed lending tx sees: the hub, the peer's Account, the book so far, the tx's proposer and the time. */
+type LendingCtx = {
+  readonly hub: string;
+  readonly cp: string;
+  readonly child: AccountReplica;
+  readonly book: LendingBook;
+  readonly proposer: string;
+  readonly now: number;
+  /** og projectedHubCreditLimit for the peer, after the Account txs returned so far. */
+  readonly credit: (tk: TokenId) => bigint;
+};
+/** A lending tx's effect: the next book and, at most, one Account tx back to the peer. */
+type LendingMove = { readonly book: LendingBook; readonly out?: AccountTxTarget | undefined };
+/** og lending_fund: the lender opens a pool with its whole principal available. */
+const lendingFund = (x: LendingCtx, tx: TxOf<"lending_fund">): Result<LendingMove, EntityError> => {
+  if (x.proposer !== lowerText(tx.lenderEntityId) || x.proposer !== x.cp)
+    return invariant(`LENDING_FUND_PROPOSER_MISMATCH:${tx.positionId}`);
+  if (x.book.pools.has(tx.positionId)) return invariant(`LENDING_POSITION_ALREADY_EXISTS:${tx.positionId}`);
+  const pool: LendingPool = {
+    positionId: tx.positionId,
+    hubEntityId: x.hub,
+    lenderEntityId: x.proposer,
+    tokenId: Number(tx.tokenId),
+    principalAmount: tx.amount,
+    availableAmount: tx.amount,
+    borrowedAmount: 0n,
+    interestBps: tx.interestBps,
+    termId: tx.termId,
+    termMs: LENDING_TERM_MS[tx.termId] as number,
+    createdAt: x.now,
+    updatedAt: x.now,
+    status: "open",
+  };
+  return ok({ book: withPool(x.book, pool) });
+};
 /**
- * og applyCommittedLendingFollowup for every tx of the committed frames of one Account input: on a hub (profile.isHub), a lending tx naming this
- * hub moves the committed `lending` book (fund opens a pool, borrow opens a loan and grants the credit line, the grant activates it, repay closes
- * it and revokes the line, the revoke repays the pool, close request / payout close the pool). The returned Account txs are admitted afterwards
- * (og applyLocalAccountEffects). Every og refusal is a plain Error, so it refuses the whole input. `timestamp` is the Entity frame time (og state.timestamp).
+ * og lending_borrow_request: the cheapest covering pool lends, the loan opens and the borrower's credit line grows by
+ * the amount.
  */
-export const lendingFollowups = (state: EntityState, replicas: Replicas, peerRaw: string, frames: readonly LendingFrame[], timestamp: bigint, queued: readonly AccountTxTarget[] = []): Result<LendingFollowup, EntityError> => {
-  if (((state.committed["profile"] ?? {}) as { readonly [k: string]: unknown })["isHub"] !== true) return ok({ state, accountTxs: queued });
-  const hub = lowerText(state.id), cp = lowerText(peerRaw), child = replicas.get(cp as EntityId), before = lendingBook(state);
-  const steps = frames.flatMap(({ frame, proposer }) => frame.txs.map((tx) => ({ tx, proposer: lowerText(proposer), now: Math.max(Math.floor(Number(frame.timestamp)), Math.floor(Number(timestamp))) })));
-  return map(foldResult(steps, { book: before, accountTxs: queued }, (run: LendingRun, { tx, proposer, now }): Result<LendingRun, EntityError> => {
+const lendingBorrow = (x: LendingCtx, tx: TxOf<"lending_borrow_request">): Result<LendingMove, EntityError> => {
+  if (x.proposer !== lowerText(tx.borrowerEntityId) || x.proposer !== x.cp)
+    return invariant(`LENDING_BORROW_PROPOSER_MISMATCH:${tx.requestId}`);
+  const tk = Number(tx.tokenId);
+  const p = bestLendingPool(x.book, tk, tx.amount, tx.termId, tx.maxInterestBps);
+  if (p === undefined) return invariant(`LENDING_LIQUIDITY_UNAVAILABLE:${tx.requestId}`);
+  const request = {
+    hubEntityId: x.hub,
+    borrowerEntityId: x.proposer,
+    tokenId: tk,
+    amount: tx.amount,
+    termId: tx.termId,
+    openedAt: x.now,
+    requestId: tx.requestId,
+  };
+  const loanId = lendingLoanId(request);
+  if (x.book.loans.has(loanId)) return invariant(`LENDING_LOAN_ALREADY_EXISTS:${loanId}`);
+  const interestAmount = lendingInterest(tx.amount, p.interestBps);
+  const drawn: LendingPool = {
+    ...p,
+    availableAmount: p.availableAmount - tx.amount,
+    borrowedAmount: p.borrowedAmount + tx.amount,
+    updatedAt: x.now,
+  };
+  const loan: LendingLoan = {
+    requestId: tx.requestId,
+    loanId,
+    hubEntityId: x.hub,
+    borrowerEntityId: x.proposer,
+    lenderEntityId: p.lenderEntityId,
+    positionId: p.positionId,
+    tokenId: tk,
+    principalAmount: tx.amount,
+    interestAmount,
+    repaymentAmount: tx.amount + interestAmount,
+    repaidAmount: 0n,
+    interestBps: p.interestBps,
+    termId: p.termId,
+    termMs: p.termMs,
+    openedAt: x.now,
+    dueAt: x.now + p.termMs,
+    updatedAt: x.now,
+    status: "opening",
+  };
+  const grant: AccountTxTarget = {
+    accountId: x.proposer,
+    tx: {
+      type: "lending_credit",
+      action: "grant",
+      loanId,
+      hubEntityId: x.hub,
+      borrowerEntityId: x.proposer,
+      tokenId: tx.tokenId,
+      creditLimit: x.credit(tx.tokenId) + tx.amount,
+    },
+  };
+  return ok({ book: withLoan(withPool(x.book, drawn), loan), out: grant });
+};
+/** og lending_credit grant: the granted credit line activates an opening loan. */
+const lendingGrant = (x: LendingCtx, loan: LendingLoan): Result<LendingMove, EntityError> =>
+  (loan.status === "opening"
+    ? ok({ book: withLoan(x.book, { ...loan, status: "active", updatedAt: x.now }) })
+    : invariant(`LENDING_GRANT_STATUS_INVALID:${loan.loanId}:${loan.status}`));
+/** og lending_credit revoke: the revoked line repays a closing loan and returns principal plus interest to its pool. */
+const lendingRevoke = (x: LendingCtx, loan: LendingLoan): Result<LendingMove, EntityError> => {
+  // og: the overdue settlement already released the pool at the derived deadline; this revoke only lands the
+  // credit-line reduction
+  if (loan.status === "defaulted") return ok({ book: withLoan(x.book, { ...loan, updatedAt: x.now }) });
+  if (loan.status !== "closing") return invariant(`LENDING_REVOKE_STATUS_INVALID:${loan.loanId}:${loan.status}`);
+  const p = x.book.pools.get(loan.positionId);
+  if (p === undefined) return invariant(`LENDING_POOL_MISSING_FOR_LOAN:${loan.loanId}`);
+  if (p.borrowedAmount < loan.principalAmount) return invariant(`LENDING_POOL_BORROWED_UNDERFLOW:${p.positionId}`);
+  const repaid: LendingLoan = { ...loan, repaidAmount: loan.repaymentAmount, status: "repaid", updatedAt: x.now };
+  const released: LendingPool = {
+    ...p,
+    borrowedAmount: p.borrowedAmount - loan.principalAmount,
+    availableAmount: p.availableAmount + loan.repaymentAmount,
+    updatedAt: x.now,
+  };
+  return ok({ book: withPool(withLoan(x.book, repaid), released) });
+};
+/** og lending_credit: only the hub moves a loan's credit line, and only for a loan it holds. */
+const lendingCredit = (x: LendingCtx, tx: TxOf<"lending_credit">): Result<LendingMove, EntityError> => {
+  if (x.proposer !== x.hub) return invariant(`LENDING_CREDIT_PROPOSER_MISMATCH:${tx.loanId}`);
+  const loan = x.book.loans.get(tx.loanId);
+  if (loan === undefined) return invariant(`LENDING_CREDIT_LOAN_MISSING:${tx.loanId}`);
+  return tx.action === "grant" ? lendingGrant(x, loan) : lendingRevoke(x, loan);
+};
+/**
+ * og lending_repay: the borrower pays the exact outstanding amount; the loan starts closing and its credit line is
+ * revoked.
+ */
+const lendingRepay = (x: LendingCtx, tx: TxOf<"lending_repay">): Result<LendingMove, EntityError> => {
+  if (x.proposer !== lowerText(tx.borrowerEntityId) || x.proposer !== x.cp)
+    return invariant(`LENDING_REPAY_PROPOSER_MISMATCH:${tx.loanId}`);
+  const loan = x.book.loans.get(tx.loanId);
+  if (loan === undefined || loan.status !== "active") return invariant(`LENDING_REPAY_LOAN_NOT_ACTIVE:${tx.loanId}`);
+  const exact =
+    loan.borrowerEntityId === x.proposer &&
+    loan.tokenId === Number(tx.tokenId) &&
+    tx.amount === loan.repaymentAmount - loan.repaidAmount;
+  if (!exact) return invariant(`LENDING_REPAYMENT_MISMATCH:${tx.loanId}`);
+  const tk = String(loan.tokenId) as TokenId;
+  return ok({
+    book: withLoan(x.book, { ...loan, status: "closing", updatedAt: x.now }),
+    out: creditRevoke(loan, x.hub, tk, x.credit(tk)),
+  });
+};
+/** og getAccountOutCapacity: the hub's outCapacity on the token, 0 without the delta. */
+const hubOutCapacity = (child: AccountReplica, hub: string, tk: TokenId): bigint => {
+  const d = child.state.account.deltas.get(tk), hubIsLeft = lowerText(child.state.account.id.left) === hub;
+  return d === undefined ? 0n : outCapacity(d, hubIsLeft, holds(child.state, tk, hubIsLeft));
+};
+/**
+ * og lending_close_request: the lender closes an idle open pool; its available funds pay out through the Account, which
+ * must carry them.
+ */
+const lendingCloseRequest = (
+  x: LendingCtx,
+  tx: TxOf<"lending_close_request">,
+): Result<LendingMove, EntityError> => {
+  if (x.proposer !== lowerText(tx.lenderEntityId) || x.proposer !== x.cp)
+    return invariant(`LENDING_CLOSE_PROPOSER_MISMATCH:${tx.positionId}`);
+  const p = x.book.pools.get(tx.positionId);
+  if (p === undefined || p.status !== "open" || p.lenderEntityId !== x.proposer)
+    return invariant(`LENDING_CLOSE_POSITION_NOT_OPEN:${tx.positionId}`);
+  if (p.borrowedAmount !== 0n) return invariant(`LENDING_CLOSE_ACTIVE_LOANS:${p.positionId}`);
+  if (p.availableAmount === 0n) return ok({ book: withPool(x.book, { ...p, status: "closed", updatedAt: x.now }) });
+  const tk = String(p.tokenId) as TokenId;
+  const payout = hubOutCapacity(x.child, x.hub, tk);
+  if (payout < p.availableAmount)
+    return invariant(`LENDING_CLOSE_PAYOUT_CAPACITY: available=${payout} required=${p.availableAmount}`);
+  const pay: AccountTxTarget = {
+    accountId: x.proposer,
+    tx: {
+      type: "lending_close_payout",
+      positionId: p.positionId,
+      hubEntityId: x.hub,
+      lenderEntityId: x.proposer,
+      tokenId: tk,
+      amount: p.availableAmount,
+    },
+  };
+  return ok({ book: withPool(x.book, { ...p, status: "closing", updatedAt: x.now }), out: pay });
+};
+/** og lending_close_payout: the hub's payout of the whole available amount closes the pool. */
+const lendingClosePayout = (x: LendingCtx, tx: TxOf<"lending_close_payout">): Result<LendingMove, EntityError> => {
+  if (x.proposer !== x.hub) return invariant(`LENDING_PAYOUT_PROPOSER_MISMATCH:${tx.positionId}`);
+  const p = x.book.pools.get(tx.positionId);
+  if (p === undefined || p.status !== "closing")
+    return invariant(`LENDING_PAYOUT_POSITION_NOT_CLOSING:${tx.positionId}`);
+  const exact =
+    p.lenderEntityId === lowerText(tx.lenderEntityId) &&
+    p.tokenId === Number(tx.tokenId) &&
+    p.availableAmount === tx.amount;
+  if (!exact) return invariant(`LENDING_PAYOUT_MISMATCH:${tx.positionId}`);
+  return ok({ book: withPool(x.book, { ...p, availableAmount: 0n, status: "closed", updatedAt: x.now }) });
+};
+/** The lending tx's move on the book; `undefined` for a tx the lending book does not follow. */
+const lendingMove = (x: LendingCtx, tx: AccountTx): Result<LendingMove, EntityError> | undefined => {
+  switch (tx.type) {
+    case "lending_fund": return lendingFund(x, tx);
+    case "lending_borrow_request": return lendingBorrow(x, tx);
+    case "lending_credit": return lendingCredit(x, tx);
+    case "lending_repay": return lendingRepay(x, tx);
+    case "lending_close_request": return lendingCloseRequest(x, tx);
+    case "lending_close_payout": return lendingClosePayout(x, tx);
+    default: return undefined;
+  }
+};
+const isHubEntity = (state: EntityState): boolean =>
+  (state.committed["profile"] as { readonly isHub?: unknown } | undefined)?.isHub === true;
+/**
+ * og applyCommittedLendingFollowup for every tx of the committed frames of one Account input: on a hub
+ * (profile.isHub), a lending tx naming this hub moves the committed `lending` book (fund opens a pool, borrow opens a
+ * loan and grants the credit line, the grant activates it, repay closes it and revokes the line, the revoke repays the
+ * pool, close request / payout close the pool). The returned Account txs are admitted afterwards (og
+ * applyLocalAccountEffects). Every og refusal is a plain Error, so it refuses the whole input. `timestamp` is the
+ * Entity frame time (og state.timestamp).
+ */
+export const lendingFollowups = (
+  state: EntityState,
+  replicas: Replicas,
+  peerRaw: string,
+  frames: readonly LendingFrame[],
+  timestamp: bigint,
+  queued: readonly AccountTxTarget[] = [],
+): Result<LendingFollowup, EntityError> => {
+  if (!isHubEntity(state)) return ok({ state, accountTxs: queued });
+  const hub = lowerText(state.id);
+  const cp = lowerText(peerRaw);
+  const child = replicas.get(cp as EntityId);
+  const before = lendingBook(state);
+  const steps = frames.flatMap(({ frame, proposer }) => {
+    const now = Math.max(Math.floor(Number(frame.timestamp)), Math.floor(Number(timestamp)));
+    return frame.txs.map((tx) => ({ tx, proposer: lowerText(proposer), now }));
+  });
+  const follow = (run: LendingRun, { tx, proposer, now }: (typeof steps)[number]): Result<LendingRun, EntityError> => {
     if (!("hubEntityId" in tx) || lowerText(tx.hubEntityId) !== hub) return ok(run);
     if (child === undefined) return invariant(`LENDING_ACCOUNT_MISSING:${peerRaw}`);
     // og ensureLendingState: the first lending tx naming this hub creates the (committed) book
-    const book: LendingBook = run.book ?? { pools: new Map(), loans: new Map() };
-    const put = (b: LendingBook, out?: AccountTxTarget): Result<LendingRun, EntityError> => ok({ book: b, accountTxs: out === undefined ? run.accountTxs : [...run.accountTxs, out] });
-    const pool = (p: LendingPool): LendingBook => ({ ...book, pools: mapSet(book.pools, p.positionId, p) });
-    const loans = (l: LendingLoan): LendingBook => ({ ...book, loans: mapSet(book.loans, l.loanId, l) });
+    const book = run.book ?? EMPTY_LENDING_BOOK;
     const credit = (tk: TokenId): bigint => projectedHubCredit(child, state.id, cp, run.accountTxs, tk);
-    switch (tx.type) {
-      case "lending_fund": {
-        if (proposer !== lowerText(tx.lenderEntityId) || proposer !== cp) return invariant(`LENDING_FUND_PROPOSER_MISMATCH:${tx.positionId}`);
-        if (book.pools.has(tx.positionId)) return invariant(`LENDING_POSITION_ALREADY_EXISTS:${tx.positionId}`);
-        return put(pool({ positionId: tx.positionId, hubEntityId: hub, lenderEntityId: proposer, tokenId: Number(tx.tokenId), principalAmount: tx.amount, availableAmount: tx.amount, borrowedAmount: 0n,
-          interestBps: tx.interestBps, termId: tx.termId, termMs: LENDING_TERM_MS[tx.termId] as number, createdAt: now, updatedAt: now, status: "open" }));
-      }
-      case "lending_borrow_request": {
-        if (proposer !== lowerText(tx.borrowerEntityId) || proposer !== cp) return invariant(`LENDING_BORROW_PROPOSER_MISMATCH:${tx.requestId}`);
-        const tk = Number(tx.tokenId), p = bestLendingPool(book, tk, tx.amount, tx.termId, tx.maxInterestBps);
-        if (p === undefined) return invariant(`LENDING_LIQUIDITY_UNAVAILABLE:${tx.requestId}`);
-        const loanId = lendingLoanId({ hubEntityId: hub, borrowerEntityId: proposer, tokenId: tk, amount: tx.amount, termId: tx.termId, openedAt: now, requestId: tx.requestId });
-        if (book.loans.has(loanId)) return invariant(`LENDING_LOAN_ALREADY_EXISTS:${loanId}`);
-        const interestAmount = lendingInterest(tx.amount, p.interestBps), drawn = pool({ ...p, availableAmount: p.availableAmount - tx.amount, borrowedAmount: p.borrowedAmount + tx.amount, updatedAt: now });
-        const loan: LendingLoan = { requestId: tx.requestId, loanId, hubEntityId: hub, borrowerEntityId: proposer, lenderEntityId: p.lenderEntityId, positionId: p.positionId, tokenId: tk, principalAmount: tx.amount, interestAmount,
-          repaymentAmount: tx.amount + interestAmount, repaidAmount: 0n, interestBps: p.interestBps, termId: p.termId, termMs: p.termMs, openedAt: now, dueAt: now + p.termMs, updatedAt: now, status: "opening" };
-        return put({ ...drawn, loans: mapSet(drawn.loans, loanId, loan) }, { accountId: proposer, tx: { type: "lending_credit", action: "grant", loanId, hubEntityId: hub, borrowerEntityId: proposer, tokenId: tx.tokenId, creditLimit: credit(tx.tokenId) + tx.amount } });
-      }
-      case "lending_credit": {
-        if (proposer !== hub) return invariant(`LENDING_CREDIT_PROPOSER_MISMATCH:${tx.loanId}`);
-        const loan = book.loans.get(tx.loanId);
-        if (loan === undefined) return invariant(`LENDING_CREDIT_LOAN_MISSING:${tx.loanId}`);
-        if (tx.action === "grant") return loan.status !== "opening" ? invariant(`LENDING_GRANT_STATUS_INVALID:${loan.loanId}:${loan.status}`) : put(loans({ ...loan, status: "active", updatedAt: now }));
-        // og: the overdue settlement already released the pool at the derived deadline; this revoke only lands the credit-line reduction
-        if (loan.status === "defaulted") return put(loans({ ...loan, updatedAt: now }));
-        if (loan.status !== "closing") return invariant(`LENDING_REVOKE_STATUS_INVALID:${loan.loanId}:${loan.status}`);
-        const p = book.pools.get(loan.positionId);
-        if (p === undefined) return invariant(`LENDING_POOL_MISSING_FOR_LOAN:${loan.loanId}`);
-        if (p.borrowedAmount < loan.principalAmount) return invariant(`LENDING_POOL_BORROWED_UNDERFLOW:${p.positionId}`);
-        const repaid = loans({ ...loan, repaidAmount: loan.repaymentAmount, status: "repaid", updatedAt: now });
-        return put({ ...repaid, pools: mapSet(repaid.pools, p.positionId, { ...p, borrowedAmount: p.borrowedAmount - loan.principalAmount, availableAmount: p.availableAmount + loan.repaymentAmount, updatedAt: now }) });
-      }
-      case "lending_repay": {
-        if (proposer !== lowerText(tx.borrowerEntityId) || proposer !== cp) return invariant(`LENDING_REPAY_PROPOSER_MISMATCH:${tx.loanId}`);
-        const loan = book.loans.get(tx.loanId);
-        if (loan === undefined || loan.status !== "active") return invariant(`LENDING_REPAY_LOAN_NOT_ACTIVE:${tx.loanId}`);
-        if (loan.borrowerEntityId !== proposer || loan.tokenId !== Number(tx.tokenId) || tx.amount !== loan.repaymentAmount - loan.repaidAmount) return invariant(`LENDING_REPAYMENT_MISMATCH:${tx.loanId}`);
-        const tk = String(loan.tokenId) as TokenId, current = credit(tk);
-        return put(loans({ ...loan, status: "closing", updatedAt: now }),
-          { accountId: proposer, tx: { type: "lending_credit", action: "revoke", loanId: loan.loanId, hubEntityId: hub, borrowerEntityId: proposer, tokenId: tk, creditLimit: current > loan.principalAmount ? current - loan.principalAmount : 0n } });
-      }
-      case "lending_close_request": {
-        if (proposer !== lowerText(tx.lenderEntityId) || proposer !== cp) return invariant(`LENDING_CLOSE_PROPOSER_MISMATCH:${tx.positionId}`);
-        const p = book.pools.get(tx.positionId);
-        if (p === undefined || p.status !== "open" || p.lenderEntityId !== proposer) return invariant(`LENDING_CLOSE_POSITION_NOT_OPEN:${tx.positionId}`);
-        if (p.borrowedAmount !== 0n) return invariant(`LENDING_CLOSE_ACTIVE_LOANS:${p.positionId}`);
-        if (p.availableAmount === 0n) return put(pool({ ...p, status: "closed", updatedAt: now }));
-        // og getAccountOutCapacity: the hub's outCapacity on the token, 0 without the delta
-        const tk = String(p.tokenId) as TokenId, d = child.state.account.deltas.get(tk), hubIsLeft = lowerText(child.state.account.id.left) === hub;
-        const payout = d === undefined ? 0n : outCapacity(d, hubIsLeft, holds(child.state, tk, hubIsLeft));
-        if (payout < p.availableAmount) return invariant(`LENDING_CLOSE_PAYOUT_CAPACITY: available=${payout} required=${p.availableAmount}`);
-        return put(pool({ ...p, status: "closing", updatedAt: now }), { accountId: proposer, tx: { type: "lending_close_payout", positionId: p.positionId, hubEntityId: hub, lenderEntityId: proposer, tokenId: tk, amount: p.availableAmount } });
-      }
-      case "lending_close_payout": {
-        if (proposer !== hub) return invariant(`LENDING_PAYOUT_PROPOSER_MISMATCH:${tx.positionId}`);
-        const p = book.pools.get(tx.positionId);
-        if (p === undefined || p.status !== "closing") return invariant(`LENDING_PAYOUT_POSITION_NOT_CLOSING:${tx.positionId}`);
-        if (p.lenderEntityId !== lowerText(tx.lenderEntityId) || p.tokenId !== Number(tx.tokenId) || p.availableAmount !== tx.amount) return invariant(`LENDING_PAYOUT_MISMATCH:${tx.positionId}`);
-        return put(pool({ ...p, availableAmount: 0n, status: "closed", updatedAt: now }));
-      }
-      default: return ok(run);
-    }
-  }), (run): LendingFollowup => ({ state: run.book === before ? state : { ...state, committed: { ...state.committed, lending: run.book as unknown as Binary } }, accountTxs: run.accountTxs }));
+    const move = lendingMove({ hub, cp, child, book, proposer, now, credit }, tx);
+    if (move === undefined) return ok(run);
+    return map(move, ({ book: next, out }) => ({
+      book: next,
+      accountTxs: out === undefined ? run.accountTxs : [...run.accountTxs, out],
+    }));
+  };
+  return map(foldResult(steps, { book: before, accountTxs: queued }, follow), (run): LendingFollowup => ({
+    state: run.book === before || run.book === undefined ? state : withLendingBook(state, run.book),
+    accountTxs: run.accountTxs,
+  }));
+};
+type RefreshDeadline = Extract<ScheduledHook, { type: "counterparty_board_hanko_refresh_deadline" }>;
+/**
+ * og counterparty board Hanko refresh deadline: without the peer's refresh for this activation (or a later one), a
+ * certified Account not already in dispute prepares one.
+ */
+const refreshDeadlineExpired = (run: HookRun, hook: RefreshDeadline): HookRun => {
+  const h = hook.data, child = run.accountReplicas.get(h.accountId as EntityId);
+  if (child === undefined || currentFrameOf(child).height < 1n) return run;
+  const b = child.boardRefresh, refreshed = b !== undefined && atOrAfter(activationOf(b), activationOf(h));
+  const disputing = activeOf(child) !== undefined || (child._tag === "preparing" && child.prepare !== undefined);
+  if (refreshed || disputing) return run;
+  return { ...run, prepare: mapSet(run.prepare, h.accountId, "counterparty-board-hanko-refresh-deadline-expired") };
 };
 /** og processDueHook. */
 const dueHook = (run: HookRun, hook: DueHook, now: number, first: string): Result<HookRun, EntityError> => {
   switch (hook.type) {
-    case "htlc_timeout": return ok(run.accountReplicas.get(hook.data.accountId as EntityId)?.state.locks.has(hook.data.lockId) ? { ...run, timeouts: [...run.timeouts, hook.data] } : run);
-    case "dispute_deadline": return ok(disputeDeadline(run, hook, now));
-    case "htlc_secret_ack_timeout": return secretAckTimeout(run, hook, now);
-    case "settlement_window": case "watchdog": return ok(run);
-    case "hub_rebalance_kick": { const task = run.crontab.tasks.get("hubRebalance"); return ok(task === undefined ? run : { ...run, crontab: { ...run.crontab, tasks: mapSet(run.crontab.tasks, "hubRebalance", { ...task, lastRun: 0 }) } }); }
-    case "board_hanko_refresh": return boardRefreshHook(run, hook, now);
-    case "lending_overdue": return ok(lendingOverdue(run, hook.data.loanId, now));
-    case "counterparty_board_hanko_refresh_deadline": {
-      const child = run.accountReplicas.get(hook.data.accountId as EntityId);
-      if (child === undefined || currentFrameOf(child).height < 1n) return ok(run);
-      const b = child.boardRefresh, h = hook.data;
-      const current = b !== undefined && (b.activationJHeight > h.activationJHeight || (b.activationJHeight === h.activationJHeight && b.activationLogIndex >= h.activationLogIndex));
-      return ok(current || activeOf(child) !== undefined || (child._tag === "preparing" && child.prepare !== undefined) ? run : { ...run, prepare: mapSet(run.prepare, h.accountId, "counterparty-board-hanko-refresh-deadline-expired") });
+    case "htlc_timeout": {
+      const stands = run.accountReplicas.get(hook.data.accountId as EntityId)?.state.locks.has(hook.data.lockId);
+      return ok(stands ? { ...run, timeouts: [...run.timeouts, hook.data] } : run);
     }
-    case "cross_j_orderbook_sweep": return ok({ ...run, outputs: [...run.outputs, { signerId: first, txs: [{ type: "orderbookSweepCrossJurisdiction", data: { reason: String(hook.data.reason || "cross-j-orderbook-sweep") } }] }] });
+    case "dispute_deadline":
+      return ok(disputeDeadline(run, hook, now));
+    case "htlc_secret_ack_timeout":
+      return secretAckTimeout(run, hook, now);
+    case "settlement_window":
+    case "watchdog":
+      return ok(run);
+    case "hub_rebalance_kick":
+      return ok(kickRebalance(run));
+    case "board_hanko_refresh":
+      return boardRefreshHook(run, hook, now);
+    case "lending_overdue":
+      return ok(lendingOverdue(run, hook.data.loanId, now));
+    case "counterparty_board_hanko_refresh_deadline":
+      return ok(refreshDeadlineExpired(run, hook));
+    case "cross_j_orderbook_sweep": {
+      const sweep: WakeTx = {
+        type: "orderbookSweepCrossJurisdiction",
+        data: { reason: String(hook.data.reason || "cross-j-orderbook-sweep") },
+      };
+      return ok({ ...run, outputs: [...run.outputs, { signerId: first, txs: [sweep] }] });
+    }
   }
 };
-/** og appendBatchedHookOutputs: the HTLC timeouts, the dispute preparations, then the finalization with its j_broadcast (or a lone j_broadcast for a drafted one). */
-const batchedHookOutputs = (run: HookRun, first: string, manualBroadcast: boolean): readonly WakeOutput[] => [
-  ...run.outputs,
-  ...(run.timeouts.length > 0 ? [{ signerId: first, txs: [{ type: "processHtlcTimeouts", data: { expiredLocks: run.timeouts } }] } satisfies WakeOutput] : []),
-  ...(run.prepare.size > 0 ? [{ signerId: first, txs: [...run.prepare].map(([cp, description]): WakeTx => ({ type: "prepareDispute", data: { counterpartyEntityId: cp as EntityId, description } })) }] : []),
-  ...(run.finalize.length > 0
-    ? [{ signerId: first, txs: [...run.finalize.map((cp): WakeTx => ({ type: "disputeFinalize", data: { counterpartyEntityId: cp as EntityId, description: "auto-finalize-after-timeout", useOnchainRegistry: true } })), { type: "j_broadcast", data: {} } satisfies WakeTx] }]
-    : run.broadcast && !manualBroadcast ? [{ signerId: first, txs: [{ type: "j_broadcast", data: {} } satisfies WakeTx] }] : []),
-];
+/**
+ * og appendBatchedHookOutputs: the HTLC timeouts, the dispute preparations, then the finalization with its j_broadcast
+ * (or a lone j_broadcast for a drafted one).
+ */
+const batchedHookOutputs = (run: HookRun, first: string, manualBroadcast: boolean): readonly WakeOutput[] => {
+  const input = (txs: readonly WakeTx[]): readonly WakeOutput[] => (txs.length === 0 ? [] : [{ signerId: first, txs }]);
+  const broadcast: WakeTx = { type: "j_broadcast", data: {} };
+  const timeouts: readonly WakeTx[] =
+    run.timeouts.length === 0 ? [] : [{ type: "processHtlcTimeouts", data: { expiredLocks: run.timeouts } }];
+  const prepares = [...run.prepare].map(([cp, description]): WakeTx => ({
+    type: "prepareDispute",
+    data: { counterpartyEntityId: cp as EntityId, description },
+  }));
+  const finalizes = run.finalize.map((cp): WakeTx => ({
+    type: "disputeFinalize",
+    data: {
+      counterpartyEntityId: cp as EntityId,
+      description: "auto-finalize-after-timeout",
+      useOnchainRegistry: true,
+    },
+  }));
+  const closing =
+    finalizes.length > 0 ? [...finalizes, broadcast] : run.broadcast && !manualBroadcast ? [broadcast] : [];
+  return [...run.outputs, ...input(timeouts), ...input(prepares), ...input(closing)];
+};
 // ---- og entity/scheduler/rebalance.ts hubRebalanceHandler, entity/account/account-work-flags.ts ACCOUNT_WORK_REBALANCE ----
 export const HUB_PENDING_BROADCAST_STALE_MS = 120_000;
-const HUB_MAX_R2C_PER_TICK = 10, HUB_MAX_C2R_PER_TICK = 10;
+const HUB_MAX_R2C_PER_TICK = 10;
+const HUB_MAX_C2R_PER_TICK = 10;
+/** An Account token seen from one side: its collateral, the peer credit it uses and its own holds. */
+type ViewerDelta = { readonly outCollateral: bigint; readonly outPeerCredit: bigint; readonly outTotalHold: bigint };
 /** og deriveDelta from the viewer's side: outCollateral, outPeerCredit and outTotalHold (the viewer's own hold). */
-const viewerDelta = (a: AccountBody, d: Delta, viewerIsLeft: boolean): { readonly outCollateral: bigint; readonly outPeerCredit: bigint; readonly outTotalHold: bigint } => {
-  const total = d.ondelta + d.offdelta, collateral = floor0(d.collateral), t = sideTotals(a, d.tokenId);
-  return viewerIsLeft
-    ? { outCollateral: total > 0n ? (total > collateral ? collateral : total) : 0n, outPeerCredit: floor0(total - collateral), outTotalHold: t.leftHold }
-    : { outCollateral: total > 0n ? floor0(collateral - total) : collateral, outPeerCredit: floor0(-total), outTotalHold: t.rightHold };
+const viewerDelta = (a: AccountBody, d: Delta, viewerIsLeft: boolean): ViewerDelta => {
+  const total = d.ondelta + d.offdelta;
+  const collateral = floor0(d.collateral);
+  const t = sideTotals(a, d.tokenId);
+  if (!viewerIsLeft)
+    return {
+      outCollateral: total > 0n ? floor0(collateral - total) : collateral,
+      outPeerCredit: floor0(-total),
+      outTotalHold: t.rightHold,
+    };
+  const outCollateral = total <= 0n ? 0n : total > collateral ? collateral : total;
+  return { outCollateral, outPeerCredit: floor0(total - collateral), outTotalHold: t.leftHold };
 };
 /** og's Account token maps iterate in radix key order: ascending tokenId. */
-const byTokenAsc = <V,>(m: ReadonlyMap<TokenId, V>): readonly (readonly [TokenId, V])[] => [...m].sort(([a], [b]) => Number(a) - Number(b));
+const byTokenAsc = <V,>(m: ReadonlyMap<TokenId, V>): readonly (readonly [TokenId, V])[] =>
+  [...m].toSorted(([a], [b]) => Number(a) - Number(b));
 /** og `account.pendingFrame || hasPendingSettlementTransition(account)`. */
 const accountBusy = (c: AccountReplica): boolean => c._tag === "proposed" || settlePending(c);
-/** og's executable C→R workspace: ready, pure C→R, last touched and executed by the owner, and holding the peer's settlement Hanko. */
-const readyC2RWorkspace = (w: SettlementWorkspace, ownerIsLeft: boolean): boolean => w.status === "ready_to_submit" && w.lastModifiedByLeft === ownerIsLeft && w.executorIsLeft === ownerIsLeft
-  && w.ops.length > 0 && w.ops.every((op) => op.type === "c2r") && Boolean(ownerIsLeft ? w.rightHanko : w.leftHanko);
-/** og hasRebalanceWork: a positive request, an executable C→R workspace, or withdrawable collateral over the token's default soft limit. */
+/**
+ * og's executable C→R workspace: ready, pure C→R, last touched and executed by the owner, and holding the peer's
+ * settlement Hanko.
+ */
+const readyC2RWorkspace = (w: SettlementWorkspace, ownerIsLeft: boolean): boolean => {
+  const ownersMove =
+    w.status === "ready_to_submit" && w.lastModifiedByLeft === ownerIsLeft && w.executorIsLeft === ownerIsLeft;
+  const pureC2R = w.ops.length > 0 && w.ops.every((op) => op.type === "c2r");
+  return ownersMove && pureC2R && Boolean(ownerIsLeft ? w.rightHanko : w.leftHanko);
+};
+/** Collateral the owner may withdraw from one token: its free collateral over the token's default soft limit. */
+const withdrawable = (body: AccountBody, ownerIsLeft: boolean, tk: TokenId, d: Delta): Result<boolean, EntityError> => {
+  if ((body.requested.get(tk) ?? 0n) > 0n) return ok(false);
+  const v = viewerDelta(body, d, ownerIsLeft);
+  const available = v.outCollateral - v.outTotalHold;
+  return available <= 0n
+    ? ok(false)
+    : map(rebalanceDefaults(undefined, Number(tk)), (p) => available > p.r2cRequestSoftLimit);
+};
+/**
+ * og hasRebalanceWork: a positive request, an executable C→R workspace, or withdrawable collateral over the token's
+ * default soft limit.
+ */
 const hasRebalanceWork = (self: EntityId, c: AccountReplica): Result<boolean, EntityError> => {
   const body = c.state, ownerIsLeft = sameHex(body.account.id.left, self);
   if ([...body.requested.values()].some((n) => n > 0n)) return ok(true);
   if (accountBusy(c)) return ok(false);
   if (body.settlement !== undefined) return ok(readyC2RWorkspace(body.settlement, ownerIsLeft));
-  return foldResult(byTokenAsc(body.account.deltas), false as boolean, (found, [tk, d]) => {
-    if (found || (body.requested.get(tk) ?? 0n) > 0n) return ok(found);
-    const v = viewerDelta(body, d, ownerIsLeft), available = v.outCollateral - v.outTotalHold;
-    return available <= 0n ? ok(false) : map(rebalanceDefaults(undefined, Number(tk)), (p) => available > p.r2cRequestSoftLimit);
-  });
+  return someResult(byTokenAsc(body.account.deltas), ([tk, d]) => withdrawable(body, ownerIsLeft, tk, d));
 };
-/** og getRebalanceAccountIds (the ACCOUNT_WORK_REBALANCE index): the Accounts with rebalance work, in Account-map key order. */
-export const rebalanceAccountIds = (state: EntityState, replicas: Replicas): Result<readonly EntityId[], EntityError> =>
-  map(traverse([...replicas].sort(([a], [b]) => asc(a, b)), ([peer, c]) => map(hasRebalanceWork(state.id, c), (w): EntityId[] => (w ? [peer] : []))), (xs) => xs.flat());
+/**
+ * og getRebalanceAccountIds (the ACCOUNT_WORK_REBALANCE index): the Accounts with rebalance work, in Account-map key
+ * order.
+ */
+export const rebalanceAccountIds = (
+  state: EntityState,
+  replicas: Replicas,
+): Result<readonly EntityId[], EntityError> => {
+  const ordered = [...replicas].toSorted(([a], [b]) => asc(a, b));
+  const flagged = traverse(ordered, ([peer, c]) =>
+    map(hasRebalanceWork(state.id, c), (w): EntityId[] => (w ? [peer] : [])),
+  );
+  return map(flagged, (xs) => xs.flat());
+};
 /** og EntityState.reserves as committed (tokenId to amount). */
-const committedReserves = (state: EntityState): ReadonlyMap<number, bigint> => { const r = state.committed["reserves"]; return r instanceof Map ? (r as ReadonlyMap<number, bigint>) : new Map(); };
-type OgJBatchState = CommittedJBatch & { readonly status?: string; readonly lastBroadcast?: number; readonly sentBatch?: (NonNullable<CommittedJBatch["sentBatch"]> & { readonly lastSubmittedAt?: number }) | undefined };
-type OgR2CRow = { readonly tokenId: number; readonly receivingEntity: string; readonly pairs: readonly { readonly entity: string; readonly amount: bigint }[] };
-/** og batchAddReserveToCollateral on the committed (og-shaped) jBatchState: aggregate into the (receivingEntity, tokenId) entry within the contract limits. */
-export const addCommittedR2C = (jb: OgJBatchState, entity: string, counterparty: string, tokenId: number, amount: bigint): Result<OgJBatchState, EntityError> => {
+const committedReserves = (state: EntityState): ReadonlyMap<number, bigint> => {
+  const r = state.committed["reserves"];
+  return r instanceof Map ? (r as ReadonlyMap<number, bigint>) : new Map();
+};
+type OgSentBatch = NonNullable<CommittedJBatch["sentBatch"]> & { readonly lastSubmittedAt?: number };
+type OgJBatchState = CommittedJBatch & {
+  readonly status?: string;
+  readonly lastBroadcast?: number;
+  readonly sentBatch?: OgSentBatch | undefined;
+};
+type OgR2CRow = {
+  readonly tokenId: number;
+  readonly receivingEntity: string;
+  readonly pairs: readonly { readonly entity: string; readonly amount: bigint }[];
+};
+/**
+ * og batchAddReserveToCollateral's aggregation: top up the counterparty's pair, add a pair to the (receivingEntity,
+ * tokenId) entry, or open a new entry, each within the contract limits.
+ */
+const withR2CPair = (
+  batch: JBatchRows,
+  rows: readonly OgR2CRow[],
+  entity: string,
+  counterparty: string,
+  tokenId: number,
+  amount: bigint,
+): Result<readonly OgR2CRow[], EntityError> => {
+  const L = J_BATCH_LIMITS;
+  const total = rows.reduce((n, op) => n + op.pairs.length, 0);
+  const room = (name: string, cur: number, max: number): Result<void, EntityError> =>
+    cur + 1 > max ? invariant(`J_BATCH_LIMIT_EXCEEDED: ${name} ${cur + 1}/${max}`) : ok(undefined);
+  const at = rows.findIndex((op) => op.receivingEntity === entity && op.tokenId === tokenId);
+  const entry = rows[at];
+  const withEntry = (op: OgR2CRow): readonly OgR2CRow[] => rows.map((o, i) => (i === at ? op : o));
+  if (entry === undefined) {
+    const ops = ogBatchOps(batch) + 1;
+    if (ops > L.maxTotalOps)
+      return invariant(`J_BATCH_LIMIT_EXCEEDED: reserveToCollateral would exceed total ops ${ops}/${L.maxTotalOps}`);
+    const opened: OgR2CRow = { tokenId, receivingEntity: entity, pairs: [{ entity: counterparty, amount }] };
+    return map(room("reserveToCollateral.pairs total", total, L.maxReserveToCollateralPairsTotal), () => [
+      ...rows,
+      opened,
+    ]);
+  }
+  if (entry.pairs.some((p) => p.entity === counterparty)) {
+    const pairs = entry.pairs.map((p) => (p.entity === counterparty ? { ...p, amount: p.amount + amount } : p));
+    return ok(withEntry({ ...entry, pairs }));
+  }
+  const fits = checks(
+    room("reserveToCollateral.pairs total", total, L.maxReserveToCollateralPairsTotal),
+    room("reserveToCollateral.pairs", entry.pairs.length, L.maxReserveToCollateralPairs),
+  );
+  return map(fits, () => withEntry({ ...entry, pairs: [...entry.pairs, { entity: counterparty, amount }] }));
+};
+/**
+ * og batchAddReserveToCollateral on the committed (og-shaped) jBatchState: aggregate into the (receivingEntity,
+ * tokenId) entry within the contract limits.
+ */
+export const addCommittedR2C = (
+  jb: OgJBatchState, entity: string, counterparty: string, tokenId: number, amount: bigint,
+): Result<OgJBatchState, EntityError> => {
   if (amount <= 0n) return invariant("R2C_AMOUNT_MUST_BE_POSITIVE");
   if (!Number.isSafeInteger(tokenId) || tokenId <= 0) return invariant("R2C_TOKEN_ID_INVALID");
   if (!entity || !counterparty || entity === counterparty) return invariant("R2C_ACCOUNT_PARTIES_INVALID");
-  const L = J_BATCH_LIMITS, rows = (jb.batch["reserveToCollateral"] ?? []) as unknown as readonly OgR2CRow[], total = rows.reduce((n, op) => n + op.pairs.length, 0);
-  const at = rows.findIndex((op) => op.receivingEntity === entity && op.tokenId === tokenId), existing = rows[at];
-  const room = (name: string, cur: number, max: number): Result<void, EntityError> => (cur + 1 > max ? invariant(`J_BATCH_LIMIT_EXCEEDED: ${name} ${cur + 1}/${max}`) : ok(undefined));
-  const next: Result<readonly OgR2CRow[], EntityError> = existing !== undefined
-    ? existing.pairs.some((p) => p.entity === counterparty)
-      ? ok(rows.map((op, i) => (i === at ? { ...op, pairs: op.pairs.map((p) => (p.entity === counterparty ? { ...p, amount: p.amount + amount } : p)) } : op)))
-      : chain(room("reserveToCollateral.pairs total", total, L.maxReserveToCollateralPairsTotal), () => chain(room("reserveToCollateral.pairs", existing.pairs.length, L.maxReserveToCollateralPairs), () =>
-        ok(rows.map((op, i) => (i === at ? { ...op, pairs: [...op.pairs, { entity: counterparty, amount }] } : op)))))
-    : ogBatchOps(jb.batch) + 1 > L.maxTotalOps ? invariant(`J_BATCH_LIMIT_EXCEEDED: reserveToCollateral would exceed total ops ${ogBatchOps(jb.batch) + 1}/${L.maxTotalOps}`)
-      : map(room("reserveToCollateral.pairs total", total, L.maxReserveToCollateralPairsTotal), () => [...rows, { tokenId, receivingEntity: entity, pairs: [{ entity: counterparty, amount }] }]);
-  return map(next, (r2c) => ({ ...jb, batch: { ...jb.batch, reserveToCollateral: r2c as unknown as readonly Binary[] }, ...(jb.status === "empty" ? { status: "accumulating" } : {}) }));
+  const rows = (jb.batch["reserveToCollateral"] ?? []) as unknown as readonly OgR2CRow[];
+  return map(withR2CPair(jb.batch, rows, entity, counterparty, tokenId, amount), (r2c) => ({
+    ...jb,
+    batch: { ...jb.batch, reserveToCollateral: r2c as unknown as readonly Binary[] },
+    ...(jb.status === "empty" ? { status: "accumulating" } : {}),
+  }));
 };
-type R2CTarget = { readonly counterpartyId: EntityId; readonly tokenId: number; readonly amount: bigint; readonly requestedAt: number; readonly feePaidUpfront: bigint };
+/** A peer's funded-or-fundable R→C request: which token, how much, and what ranks it. */
+type R2CTarget = {
+  readonly counterpartyId: EntityId;
+  readonly tokenId: number;
+  readonly amount: bigint;
+  readonly requestedAt: number;
+  readonly feePaidUpfront: bigint;
+};
 const cmpDesc = (a: bigint, b: bigint): number => (a === b ? 0 : a > b ? -1 : 1);
-/** og validateR2CRequestPolicy + evaluateR2CRequest: a prepaid, unsubmitted, current-policy request, capped at the peer's uncollateralized credit. */
-const r2cTarget = (config: HubConfig, c: AccountReplica, peer: EntityId, tk: TokenId, requested: bigint): Result<R2CTarget | null, EntityError> => {
+/**
+ * og validateR2CRequestPolicy + evaluateR2CRequest: a prepaid, unsubmitted, current-policy request, capped at the
+ * peer's uncollateralized credit.
+ */
+const r2cTarget = (
+  config: HubConfig,
+  c: AccountReplica,
+  peer: EntityId,
+  tk: TokenId,
+  requested: bigint,
+): Result<R2CTarget | null, EntityError> => {
   if (requested <= 0n) return ok(null);
-  const body = c.state, fee = body.requestFees.get(tk), tokenId = Number(tk);
+  const body = c.state;
+  const fee = body.requestFees.get(tk);
+  const tokenId = Number(tk);
   if (fee === undefined) return invariant(`REBALANCE_REQUEST_FEE_STATE_MISSING:${peer}:${tokenId}`);
   if (fee.refund !== undefined || (body.submittedAt?.get(tokenId) ?? 0) > 0) return ok(null);
   const policyVersion = Number.isFinite(config.policyVersion) && config.policyVersion > 0 ? config.policyVersion : 1;
@@ -16886,108 +17281,269 @@ const r2cTarget = (config: HubConfig, c: AccountReplica, peer: EntityId, tk: Tok
     const d = body.account.deltas.get(tk);
     if (d === undefined) return ok(null);
     const uncollateralized = viewerDelta(body, d, sameHex(body.account.id.left, peer)).outPeerCredit;
-    return ok(uncollateralized <= 0n ? null : { counterpartyId: peer, tokenId, amount: requested > uncollateralized ? uncollateralized : requested, requestedAt: fee.requestedAt || 0, feePaidUpfront: fee.feePaidUpfront });
+    if (uncollateralized <= 0n) return ok(null);
+    const amount = requested > uncollateralized ? uncollateralized : requested;
+    return ok({
+      counterpartyId: peer,
+      tokenId,
+      amount,
+      requestedAt: fee.requestedAt || 0,
+      feePaidUpfront: fee.feePaidUpfront,
+    });
   });
 };
-type C2RWork = { readonly peer: EntityId; readonly executable: boolean; readonly plan?: { readonly ops: readonly SettlementOp[]; readonly total: bigint; readonly hubIsLeft: boolean } | undefined };
-/** og collectC2RAccountWork: skip a busy Account, execute a ready workspace, else withdraw every token's free collateral over the default soft limit. */
-const c2rWork = (self: EntityId, peer: EntityId, c: AccountReplica, canTouch: boolean): Result<C2RWork, EntityError> => {
-  const hubIsLeft = sameHex(c.state.account.id.left, self), w = c.state.settlement;
+type MatchingStrategy = "amount" | "fee" | "time";
+const strategyOf = (config: HubConfig): MatchingStrategy =>
+  (config.matchingStrategy === "time" || config.matchingStrategy === "fee" ? config.matchingStrategy : "amount");
+/** og's R→C ranking per matching strategy: the largest amount, the highest prepaid fee, or the oldest request first. */
+const r2cRank = (strategy: MatchingStrategy) => (a: R2CTarget, b: R2CTarget): number => {
+  switch (strategy) {
+    case "amount": return cmpDesc(a.amount, b.amount) || a.requestedAt - b.requestedAt;
+    case "fee": return cmpDesc(a.feePaidUpfront, b.feePaidUpfront) || cmpDesc(a.amount, b.amount);
+    case "time": return a.requestedAt - b.requestedAt || cmpDesc(a.amount, b.amount);
+  }
+};
+type R2CFunding = { readonly reserves: ReadonlyMap<number, bigint>; readonly funded: readonly R2CTarget[] };
+/**
+ * og collectR2CTargets: the ranked targets funded, at most HUB_MAX_R2C_PER_TICK of them, from the effective reserves;
+ * a target its token's reserves cannot fund at all is skipped.
+ */
+const fundTargets = (ranked: readonly R2CTarget[], reserves: ReadonlyMap<number, bigint>): readonly R2CTarget[] => {
+  const fund = (f: R2CFunding, t: R2CTarget): R2CFunding => {
+    const have = f.reserves.get(t.tokenId) ?? 0n, amount = t.amount > have ? have : t.amount;
+    if (f.funded.length >= HUB_MAX_R2C_PER_TICK || amount <= 0n) return f;
+    return { reserves: mapSet(f.reserves, t.tokenId, have - amount), funded: [...f.funded, { ...t, amount }] };
+  };
+  return ranked.reduce(fund, { reserves, funded: [] }).funded;
+};
+/** og's hashed submitted markers: each funded Account records its R→C request as submitted now. */
+const markSubmitted = (replicas: Replicas, targets: readonly R2CTarget[], now: number): Replicas =>
+  targets.reduce((m, t) => {
+    const c = m.get(t.counterpartyId) as AccountReplica;
+    return mapSet(m, t.counterpartyId, {
+      ...c,
+      state: setRebalanceSubmittedAt(c.state, t.tokenId, now),
+    } as AccountReplica);
+  }, replicas);
+type C2RPlan = { readonly ops: readonly SettlementOp[]; readonly total: bigint; readonly hubIsLeft: boolean };
+/** One Account's C→R work: whether its ready workspace executes, and the withdrawal it would propose. */
+type C2RWork = { readonly peer: EntityId; readonly executable: boolean; readonly plan?: C2RPlan | undefined };
+/**
+ * og collectC2RAccountWork: skip a busy Account, execute a ready workspace, else withdraw every token's free collateral
+ * over the default soft limit.
+ */
+const c2rWork = (
+  self: EntityId,
+  peer: EntityId,
+  c: AccountReplica,
+  canTouch: boolean,
+): Result<C2RWork, EntityError> => {
+  const hubIsLeft = sameHex(c.state.account.id.left, self);
+  const w = c.state.settlement;
   if (accountBusy(c)) return ok({ peer, executable: false });
   if (w !== undefined) return ok({ peer, executable: canTouch && readyC2RWorkspace(w, hubIsLeft) });
   const tokens = byTokenAsc(c.state.account.deltas).filter(([tk]) => (c.state.requested.get(tk) ?? 0n) <= 0n);
-  return map(traverse(tokens, ([tk, delta]) => map(rebalanceDefaults(undefined, Number(tk)), (p): readonly SettlementOp[] => {
-    const v = viewerDelta(c.state, delta, hubIsLeft), free = v.outCollateral > v.outTotalHold ? v.outCollateral - v.outTotalHold : 0n;
-    return free <= p.r2cRequestSoftLimit ? [] : [{ type: "c2r", tokenId: Number(tk), amount: free }];
-  })), (per) => {
-    const ops = per.flat(), total = ops.reduce((n, op) => n + (op.type === "c2r" ? op.amount : 0n), 0n);
+  const withdrawal = ([tk, delta]: readonly [TokenId, Delta]): Result<readonly SettlementOp[], EntityError> =>
+    map(rebalanceDefaults(undefined, Number(tk)), (p) => {
+      const v = viewerDelta(c.state, delta, hubIsLeft);
+      const free = floor0(v.outCollateral - v.outTotalHold);
+      return free <= p.r2cRequestSoftLimit ? [] : [{ type: "c2r", tokenId: Number(tk), amount: free }];
+    });
+  return map(traverse(tokens, withdrawal), (per) => {
+    const ops = per.flat();
+    const total = ops.reduce((n, op) => n + (op.type === "c2r" ? op.amount : 0n), 0n);
     return { peer, executable: false, ...(ops.length > 0 && total > 0n ? { plan: { ops, total, hubIsLeft } } : {}) };
   });
 };
+/**
+ * og's rebalance continuation: the largest C→R proposals, the ready C→R executions, then a broadcast when batch work
+ * was queued.
+ */
+const rebalanceTxs = (work: readonly C2RWork[], queuedR2C: boolean, mayBroadcast: boolean): readonly WakeTx[] => {
+  const plans = work
+    .flatMap((x) => (x.plan === undefined ? [] : [{ peer: x.peer, ...x.plan }]))
+    .toSorted((a, b) => cmpDesc(a.total, b.total))
+    .slice(0, HUB_MAX_C2R_PER_TICK);
+  const executable = work.filter((x) => x.executable).map((x) => x.peer).slice(0, HUB_MAX_C2R_PER_TICK);
+  const broadcast = (queuedR2C || executable.length > 0) && mayBroadcast;
+  return [
+    ...plans.map((p): WakeTx => ({
+      type: "settle_propose",
+      data: { counterpartyEntityId: p.peer, ops: p.ops, executorIsLeft: p.hubIsLeft, memo: "auto-c2r-rebalance" },
+    })),
+    ...executable.map((peer): WakeTx => ({ type: "settle_execute", data: { counterpartyEntityId: peer } })),
+    ...(broadcast ? [{ type: "j_broadcast", data: {} } satisfies WakeTx] : []),
+  ];
+};
+/** og rejects the tokenless raw overrides older hub configs carried. */
+const rawOverrides = (config: HubConfig): readonly string[] => {
+  const raw = config as unknown as { readonly [k: string]: unknown };
+  return ["rebalanceBaseFee", "c2rWithdrawSoftLimit", "rebalanceGasFee"].filter((k) => raw[k] !== undefined);
+};
 export type RebalanceRun = Folded & { readonly outputs: readonly WakeOutput[] };
 /**
- * og hubRebalanceHandler: a pending sent batch blocks R→C (a stale one only queues og's persisted j_abort_sent_batch); the funded R→C requests
- * join the draft batch with their submitted markers; over-collateralized Accounts propose C→R, ready C→R workspaces execute; batch work
- * broadcasts. All to the committed leader. `runtimeNow` is og's env.state.timestamp, the clock `sentBatch.lastSubmittedAt` is written with.
- * og's REB_STEP debug candidate effects are log-only diagnostics (no state, output or frame effect).
+ * og hubRebalanceHandler: a pending sent batch blocks R→C (a stale one only queues og's persisted j_abort_sent_batch);
+ * the funded R→C requests join the draft batch with their submitted markers; over-collateralized Accounts propose C→R,
+ * ready C→R workspaces execute; batch work broadcasts. All to the committed leader. `runtimeNow` is og's
+ * env.state.timestamp, the clock `sentBatch.lastSubmittedAt` is written with. og's REB_STEP debug candidate effects
+ * are log-only diagnostics (no state, output or frame effect).
  */
-export const hubRebalance = (d: Folded, now: number, runtimeNow: number, manualBroadcast: boolean): Result<RebalanceRun, EntityError> => {
+export const hubRebalance = (
+  d: Folded,
+  now: number,
+  runtimeNow: number,
+  manualBroadcast: boolean,
+): Result<RebalanceRun, EntityError> => {
   const config = hubConfigOf(d.state);
   if (config === undefined) return ok({ ...d, outputs: [] });
-  const raw = config as unknown as { readonly [k: string]: unknown }, forbidden = ["rebalanceBaseFee", "c2rWithdrawSoftLimit", "rebalanceGasFee"].filter((k) => raw[k] !== undefined);
+  const forbidden = rawOverrides(config);
   if (forbidden.length > 0) return invariant(`HUB_REBALANCE_TOKENLESS_RAW_OVERRIDE_FORBIDDEN:${forbidden.join(",")}`);
-  const self = d.state.id, leader = leaderStateOf(d.state).activeValidatorId, jb0 = (committedJBatch(d.state) ?? initJBatch()) as unknown as OgJBatchState;
-  const seeded: Folded = { ...d, state: { ...d.state, committed: { ...d.state.committed, jBatchState: jb0 as unknown as Binary } } }, sent = jb0.sentBatch;
-  if (sent !== undefined && runtimeNow - (sent.lastSubmittedAt || jb0.lastBroadcast || 0) > HUB_PENDING_BROADCAST_STALE_MS)
-    return ok({ ...seeded, outputs: [{ signerId: leader, txs: [{ type: "j_abort_sent_batch", data: { reason: "stale-hub-rebalance-latch", requeueToCurrent: true } }] }] });
-  const canTouch = sent === undefined, strategy = config.matchingStrategy === "time" || config.matchingStrategy === "fee" ? config.matchingStrategy : "amount";
-  const rank = (a: R2CTarget, b: R2CTarget): number => strategy === "amount" ? cmpDesc(a.amount, b.amount) || a.requestedAt - b.requestedAt
-    : strategy === "fee" ? cmpDesc(a.feePaidUpfront, b.feePaidUpfront) || cmpDesc(a.amount, b.amount) : a.requestedAt - b.requestedAt || cmpDesc(a.amount, b.amount);
+  const self = d.state.id;
+  const leader = leaderStateOf(d.state).activeValidatorId;
+  const jb0 = (committedJBatch(d.state) ?? initJBatch()) as unknown as OgJBatchState;
+  const sent = jb0.sentBatch;
+  const seeded: Folded = { ...d, state: withCommittedJBatch(d.state, jb0) };
+  if (
+    sent !== undefined &&
+    runtimeNow - (sent.lastSubmittedAt || jb0.lastBroadcast || 0) > HUB_PENDING_BROADCAST_STALE_MS
+  ) {
+    const abort: WakeTx = {
+      type: "j_abort_sent_batch",
+      data: { reason: "stale-hub-rebalance-latch", requeueToCurrent: true },
+    };
+    return ok({ ...seeded, outputs: [{ signerId: leader, txs: [abort] }] });
+  }
+  const canTouch = sent === undefined;
   return chain(rebalanceAccountIds(seeded.state, seeded.accountReplicas), (ids) => {
     const accounts = ids.map((peer) => [peer, seeded.accountReplicas.get(peer) as AccountReplica] as const);
-    return chain(traverse(accounts, ([peer, c]) => traverse(byTokenAsc(c.state.requested), ([tk, n]) => r2cTarget(config, c, peer, tk, n))), (evaluated) => {
-      // og collectR2CTargets: rank, then fund at most HUB_MAX_R2C_PER_TICK from the effective reserves; an unfunded target is skipped
-      const reserves = new Map(committedReserves(seeded.state)), funded: R2CTarget[] = [];
-      for (const t of evaluated.flat().flat().filter((x): x is R2CTarget => x !== null).sort(rank)) {
-        if (funded.length >= HUB_MAX_R2C_PER_TICK) break;
-        const have = reserves.get(t.tokenId) ?? 0n, amount = t.amount > have ? have : t.amount;
-        if (amount <= 0n) continue;
-        reserves.set(t.tokenId, have - amount);
-        funded.push({ ...t, amount });
-      }
-      const targets = canTouch ? funded : [];
-      // og queueR2CTargets: the whole draft or nothing (a contract limit rejects the frame), then the hashed submitted markers
-      return chain(foldResult(targets, jb0, (jb, t) => addCommittedR2C(jb, self, t.counterpartyId, t.tokenId, t.amount)), (jb) => {
-        const marked = targets.reduce((m, t) => { const c = m.get(t.counterpartyId) as AccountReplica; return mapSet(m, t.counterpartyId, { ...c, state: setRebalanceSubmittedAt(c.state, t.tokenId, now) } as AccountReplica); }, seeded.accountReplicas);
-        const state: EntityState = { ...seeded.state, committed: { ...seeded.state.committed, jBatchState: jb as unknown as Binary } };
-        return map(traverse(accounts, ([peer, c]) => c2rWork(self, peer, c, canTouch)), (work): RebalanceRun => {
-          const plans = work.flatMap((x) => (x.plan === undefined ? [] : [{ peer: x.peer, ...x.plan }])).sort((a, b) => cmpDesc(a.total, b.total)).slice(0, HUB_MAX_C2R_PER_TICK);
-          const executable = work.filter((x) => x.executable).map((x) => x.peer).slice(0, HUB_MAX_C2R_PER_TICK);
-          const broadcast = (targets.length > 0 || executable.length > 0) && canTouch && jb.sentBatch === undefined && !manualBroadcast;
-          const txs: readonly WakeTx[] = [
-            ...plans.map((p): WakeTx => ({ type: "settle_propose", data: { counterpartyEntityId: p.peer, ops: p.ops, executorIsLeft: p.hubIsLeft, memo: "auto-c2r-rebalance" } })),
-            ...executable.map((peer): WakeTx => ({ type: "settle_execute", data: { counterpartyEntityId: peer } })),
-            ...(broadcast ? [{ type: "j_broadcast", data: {} } satisfies WakeTx] : []),
-          ];
-          return { state, accountReplicas: marked, outputs: txs.length > 0 ? [{ signerId: leader, txs }] : [] };
-        });
+    const requests = traverse(accounts, ([peer, c]) =>
+      traverse(byTokenAsc(c.state.requested), ([tk, n]) => r2cTarget(config, c, peer, tk, n)),
+    );
+    return chain(requests, (perAccount) => {
+      const ranked = perAccount
+        .flat()
+        .flatMap((t) => (t === null ? [] : [t]))
+        .toSorted(r2cRank(strategyOf(config)));
+      const targets = canTouch ? fundTargets(ranked, committedReserves(seeded.state)) : [];
+      // og queueR2CTargets: the whole draft or nothing (a contract limit rejects the frame), then the hashed submitted
+      // markers
+      const drafted = foldResult(targets, jb0, (jb, t) =>
+        addCommittedR2C(jb, self, t.counterpartyId, t.tokenId, t.amount),
+      );
+      return chain(drafted, (jb) => {
+        const state = withCommittedJBatch(seeded.state, jb);
+        const accountReplicas = markSubmitted(seeded.accountReplicas, targets, now);
+        return map(
+          traverse(accounts, ([peer, c]) => c2rWork(self, peer, c, canTouch)),
+          (work): RebalanceRun => {
+            const txs = rebalanceTxs(
+              work,
+              targets.length > 0,
+              canTouch && jb.sentBatch === undefined && !manualBroadcast,
+            );
+            return { state, accountReplicas, outputs: txs.length > 0 ? [{ signerId: leader, txs }] : [] };
+          },
+        );
       });
     });
   });
 };
-/** `outputs`: og outputs to this Entity (its collective continuations); `sent`: og outputs to other Entities; `hashes`: og context.hashesToSign. */
-export type CrontabRun = Folded & { readonly outputs: readonly WakeOutput[]; readonly sent: readonly EntityOutput[]; readonly hashes: readonly HashToSign[]; readonly accountTxs: readonly AccountTxTarget[] };
 /**
- * og executeCrontab at the Entity's timestamp `now`: every due hook (the derived per-payment deadlines and the stored hooks, which are removed
- * as they fire) in (triggerAt, id) order, then the due periodic hubRebalance task (og hubRebalanceHandler, a no-op without a hub config).
- * `runtimeNow`: og's env.state.timestamp for the stale sent-batch check (defaults to `now`).
+ * `outputs`: og outputs to this Entity (its collective continuations); `sent`: og outputs to other Entities; `hashes`:
+ * og context.hashesToSign.
  */
-export const executeCrontab = (state: EntityState, replicas: Replicas, now: number, manualBroadcast = false, runtimeNow = now): Result<CrontabRun, EntityError> => chain(crontabOf(state), (crontab) => {
-  const stored = [...crontab.hooks.values()].filter((h) => h.triggerAt <= now), due: readonly DueHook[] = [...derivedDeadlines(state, replicas, now), ...stored].sort(compareDeadlines);
-  const first = signerId([...membersOf(state.quorum).keys()][0] ?? "");
-  const start: HookRun = { state, accountReplicas: replicas, crontab: stored.reduce((c, h) => cancelHook(c, h.id), crontab), outputs: [], timeouts: [], prepare: new Map(), finalize: [], broadcast: false, sent: [], hashes: [], accountTxs: [] };
-  return chain(foldResult<HookRun, DueHook, EntityError>(due, start, (run, hook) => dueHook(run, hook, now, first)), (run): Result<CrontabRun, EntityError> => {
-    const outputs = due.length === 0 ? [] : batchedHookOutputs(run, first, manualBroadcast), task = run.crontab.tasks.get("hubRebalance");
-    if (task === undefined || !task.enabled || now - task.lastRun < task.intervalMs) return ok({ state: withCrontab(run.state, run.crontab), accountReplicas: run.accountReplicas, outputs, sent: run.sent, hashes: run.hashes, accountTxs: run.accountTxs });
-    return map(hubRebalance(run, now, runtimeNow, manualBroadcast), (reb): CrontabRun => {
-      const crontabAfter: Crontab = { ...run.crontab, tasks: mapSet(run.crontab.tasks, "hubRebalance", { ...task, lastRun: now }) };
-      return { state: withCrontab(reb.state, crontabAfter), accountReplicas: reb.accountReplicas, outputs: [...outputs, ...reb.outputs], sent: run.sent, hashes: run.hashes, accountTxs: run.accountTxs };
+export type CrontabRun = Folded & {
+  readonly outputs: readonly WakeOutput[];
+  readonly sent: readonly EntityOutput[];
+  readonly hashes: readonly HashToSign[];
+  readonly accountTxs: readonly AccountTxTarget[];
+};
+/**
+ * og executeCrontab at the Entity's timestamp `now`: every due hook (the derived per-payment deadlines and the stored
+ * hooks, which are removed as they fire) in (triggerAt, id) order, then the due periodic hubRebalance task (og
+ * hubRebalanceHandler, a no-op without a hub config). `runtimeNow`: og's env.state.timestamp for the stale sent-batch
+ * check (defaults to `now`).
+ */
+export const executeCrontab = (
+  state: EntityState,
+  replicas: Replicas,
+  now: number,
+  manualBroadcast = false,
+  runtimeNow = now,
+): Result<CrontabRun, EntityError> =>
+  chain(crontabOf(state), (crontab) => {
+    const stored = [...crontab.hooks.values()].filter((h) => h.triggerAt <= now);
+    const due: readonly DueHook[] = [...derivedDeadlines(state, replicas, now), ...stored].toSorted(compareDeadlines);
+    const first = signerId([...membersOf(state.quorum).keys()][0] ?? "");
+    const start: HookRun = {
+      state,
+      accountReplicas: replicas,
+      crontab: stored.reduce((c, h) => cancelHook(c, h.id), crontab),
+      outputs: [],
+      timeouts: [],
+      prepare: new Map(),
+      finalize: [],
+      broadcast: false,
+      sent: [],
+      hashes: [],
+      accountTxs: [],
+    };
+    const hooked = foldResult<HookRun, DueHook, EntityError>(due, start, (run, hook) => dueHook(run, hook, now, first));
+    return chain(hooked, (run): Result<CrontabRun, EntityError> => {
+      const outputs = due.length === 0 ? [] : batchedHookOutputs(run, first, manualBroadcast);
+      const task = run.crontab.tasks.get("hubRebalance");
+      const { sent, hashes, accountTxs } = run;
+      const settled: CrontabRun = {
+        state: withCrontab(run.state, run.crontab),
+        accountReplicas: run.accountReplicas,
+        outputs,
+        sent,
+        hashes,
+        accountTxs,
+      };
+      if (task === undefined || !task.enabled || now - task.lastRun < task.intervalMs) return ok(settled);
+      return map(hubRebalance(run, now, runtimeNow, manualBroadcast), (reb): CrontabRun => {
+        const ran: Crontab = {
+          ...run.crontab,
+          tasks: mapSet(run.crontab.tasks, "hubRebalance", { ...task, lastRun: now }),
+        };
+        return {
+          ...settled,
+          state: withCrontab(reb.state, ran),
+          accountReplicas: reb.accountReplicas,
+          outputs: [...outputs, ...reb.outputs],
+        };
+      });
     });
   });
-});
+/** og returns the crontab's outputs to other Entities and its hashesToSign beside the approved self txs. */
+const withCrontabEffects = (d: Draft, run: CrontabRun): Draft => {
+  const hashes = [...run.hashes, ...(d.hashes ?? [])];
+  return { ...d, outputs: [...run.sent, ...d.outputs], ...(hashes.length === 0 ? {} : { hashes }) };
+};
 /**
- * og handleScheduledWakeEntityTx: validate the wake against the frame state, run the crontab at the frame timestamp, then apply its self-directed
- * collective txs in the same frame (og approvedEntityTxs), j_broadcast and j_abort_sent_batch included. orderbookSweepCrossJurisdiction is the cross-j owner's.
+ * og handleScheduledWakeEntityTx: validate the wake against the frame state, run the crontab at the frame timestamp,
+ * then apply its self-directed collective txs in the same frame (og approvedEntityTxs), j_broadcast and
+ * j_abort_sent_batch included. orderbookSweepCrossJurisdiction is the cross-j owner's.
  */
-const foldWake = (state: EntityState, replicas: Replicas, w: Extract<EntityTx, { type: "scheduledWake" }>["data"], ctx: FoldContext): Result<Draft, EntityError> =>
-  chain(checkWake(state, w, Number(ctx.timestamp)), () => chain(executeCrontab(state, replicas, Number(ctx.timestamp)), (run): Result<Draft, EntityError> => {
-    const approved = run.outputs.flatMap((o) => o.txs);
-    // og returns the crontab's outputs to other Entities and its hashesToSign beside the approved self txs
-    const own = (d: Draft): Draft => { const hashes = [...run.hashes, ...(d.hashes ?? [])]; return { ...d, outputs: [...run.sent, ...d.outputs], ...(hashes.length === 0 ? {} : { hashes }) }; };
-    // og applyLocalAccountEffects: the wake's returned Account txs (a lending_overdue revoke) are admitted before its approved self txs
-    const queued = run.accountTxs.reduce(queueReturned, { state: run.state, accountReplicas: run.accountReplicas, outputs: [] } as Draft);
-    return map(approved.length === 0 ? ok(queued) : foldNested(queued.state, queued.accountReplicas, approved as readonly EntityTx[], ctx, "collective"), own);
-  }));
+const foldWake = (state: EntityState, replicas: Replicas, w: WakeData, ctx: FoldContext): Result<Draft, EntityError> =>
+  chain(checkWake(state, w, Number(ctx.timestamp)), () =>
+    chain(executeCrontab(state, replicas, Number(ctx.timestamp)), (run) => {
+      const approved = run.outputs.flatMap((o) => o.txs) as readonly EntityTx[];
+      // og applyLocalAccountEffects: the wake's returned Account txs (a lending_overdue revoke) are admitted before its
+      // approved self txs
+      const queued = run.accountTxs.reduce(queueReturned, {
+        state: run.state,
+        accountReplicas: run.accountReplicas,
+        outputs: [],
+      } as Draft);
+      const applied =
+        approved.length === 0
+          ? ok(queued)
+          : foldNested(queued.state, queued.accountReplicas, approved, ctx, "collective");
+      return map(applied, (d) => withCrontabEffects(d, run));
+    }),
+  );
 // ---- og entity/tx/handlers/j-batch/{r2r,r2e,e2r,r2c,j-broadcast,j-rebroadcast,j-abort-sent-batch,j-clear-batch,mint-reserves}.ts: the Entity J-batch txs on the committed (og-shaped) jBatchState ----
 type OgRow = { readonly [field: string]: unknown };
 type OgBatchRows = { readonly [field: string]: readonly Binary[] };
