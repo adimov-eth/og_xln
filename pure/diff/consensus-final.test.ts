@@ -6,7 +6,15 @@ import { assertEntityEncryptionKeypair } from "../../core/protocol/htlc/multi-re
 import { requireEntityEncryptionPrivateKey } from "../../core/entity/auth/crypto.ts";
 import { computeEntityProfileHash } from "../../core/entity/profile/profile-descriptor.ts";
 import {
-  accountId as rwAccountId, applyEntityInput, createEntity, entityId, entityProfileHash, foldTxs, genesisReplica, parseEvmTx, quorumBoardHash,
+  findCounterpartyBoardActivationConflict as ogFindConflict, isSelfBoardAuthorityTransitionFrame as ogIsAuthorityFrame,
+  selectProposableEntityTxs as ogSelect, withoutCounterpartyBoardActivationConflicts as ogWithoutConflicts,
+} from "../../core/entity/consensus/proposal/policy.ts";
+import { selectEntityTxsWithinJRangeBudget as ogJRangeBudget } from "../../core/jurisdiction/machine/range-budget.ts";
+import { encodeBoard, hashBoard } from "../../core/entity/factory.ts";
+import { createEntityFrameHashFromStateRoot } from "../../core/entity/consensus/frame.ts";
+import {
+  accountId as rwAccountId, applyEntityInput, entityFrameHash, counterpartyBoardActivationConflict, createEntity, entityId, entityProfileHash, foldTxs, genesisReplica, jRangeBudgetPrefix,
+  parseEvmTx, quorumBoardHash, selectProposable, selfAuthorityTransitionFrame, withoutCounterpartyBoardActivationConflicts,
   type Address, type EntityId, type EntityInput, type EntityTx,
 } from "../xln.ts";
 import { TERMS, aliceAddr, unwrap, verifiers } from "../xln_run.ts";
@@ -187,4 +195,123 @@ describe("consensus-final: ethers v6 Transaction.from for blob (type 3) and set-
     expect(seen.sidecar).toBeGreaterThan(150);
     expect(seen.refused).toBeGreaterThan(300);
   }, 120_000);
+});
+
+describe("consensus-final: the proposal policy of og entity/consensus/proposal/policy.ts (entity-j.md EJ-R3)", () => {
+  const prng2 = prng(0x90_11c7);
+  const pri = (n: number) => Math.floor(prng2() * n);
+  const ppick = <X,>(xs: readonly X[]): X => xs[pri(xs.length)] as X;
+  const pword = (): string => "0x" + Array.from({ length: 64 }, () => "0123456789abcdef"[pri(16)]).join("");
+  const peers = [pword(), pword(), pword()];
+  const accountInput = (from: string): any => ({ type: "accountInput", data: { kind: "ack", fromEntityId: ppick([from, from.toUpperCase().replace("0X", "0x")]), toEntityId: pword() } });
+  const range = (events: readonly any[], pad = 0): any => ({ type: "j_event", data: { baseHeight: 0, scannedThroughHeight: 1, rangeHash: "0x" + "ab".repeat(32), blocks: [{ blockNumber: 1, events }], ...(pad > 0 ? { pad: "x".repeat(pad) } : {}) } });
+  const activated = (entityId: string, previousBoardHash = pword(), newBoardHash = pword()) => ({ type: "BoardActivated", data: { entityId, previousBoardHash, newBoardHash, previousBoardValidUntil: pri(8) === 0 ? "0" : "100" } });
+  const chat = (): any => ({ type: "chat", data: { from: aliceAddr.toLowerCase(), message: `m${pri(1000)}` } });
+  const indices = (all: readonly unknown[], picked: readonly unknown[]): number[] => picked.map((tx) => all.indexOf(tx));
+
+  test("MATCH (og findCounterpartyBoardActivationConflict + withoutCounterpartyBoardActivationConflicts): 400 random frames with nested runtimeOutput / entityCommand rows", () => {
+    let conflicts = 0;
+    for (let i = 0; i < 400; i++) {
+      const self = pword(), txs: any[] = [];
+      for (let k = 0, n = 1 + pri(6); k < n; k++) {
+        const kind = pri(6), who = ppick([...peers, self]);
+        const tx = kind === 0 ? range([activated(ppick([who, who.toUpperCase().replace("0X", "0x")])), { type: "ReserveUpdated", data: { entity: who } }]) : kind === 1 ? accountInput(who) : kind === 2 ? chat()
+          : kind === 3 ? { type: "runtimeOutput", data: { entityTxs: [accountInput(who), chat()] } } : kind === 4 ? { type: "entityCommand", data: { txs: [range([activated(who)]), chat()] } } : { type: "runtimeOutput", data: { entityTxs: [{ type: "entityCommand", data: { txs: [accountInput(who)] } }] } };
+        txs.push(tx);
+      }
+      const og = ogFindConflict(self, txs), mine = counterpartyBoardActivationConflict(self, txs as EntityTx[]);
+      expect([i, mine]).toEqual([i, og]);
+      if (og !== null) conflicts++;
+      expect(indices(txs, withoutCounterpartyBoardActivationConflicts(self, txs as EntityTx[]))).toEqual(indices(txs, ogWithoutConflicts(self, txs)));
+    }
+    expect(conflicts).toBeGreaterThan(50);
+  });
+
+  test("MATCH (og selectProposableEntityTxs + isSelfBoardAuthorityTransitionFrame): 300 random mempools of self board ranges, handovers, Account rows and plain txs, on lazy and uncertified Entities", async () => {
+    const seen = new Map<string, number>();
+    const signers = [aliceAddr, "0x70997970c51812dc3a010c7d01b50e0d17dc79c8", "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc"].map((a) => a.toLowerCase());
+    for (let i = 0; i < 300; i++) {
+      const members = new Map([[aliceAddr, { shares: 1n }]]), lazy = pri(3) > 0, board = quorumBoardHash({ _tag: "teaching", threshold: 1n, members });
+      const id = lazy ? board : pword();
+      const r = unwrap(createEntity({ id: unwrap(entityId(id)), jurisdiction: TERMS.domain, threshold: 1n, members }));
+      const size = 1 + pri(2), newBoard = { mode: "proposer-based", threshold: 1n + BigInt(pri(size)), validators: signers.slice(0, size), shares: {} as Record<string, bigint> };
+      for (const v of newBoard.validators) newBoard.shares[v] = 1n;
+      const newHash = hashBoard(encodeBoard(newBoard as never)).toLowerCase();
+      const mempool: any[] = [];
+      for (let k = 0, n = pri(6); k < n; k++) {
+        const kind = pri(9);
+        mempool.push(kind === 0 ? range([activated(id, ppick([board, pword()]), ppick([newHash, board, pword()]))]) : kind === 1 ? range([{ type: "EntityRegistered", data: { entityId: id, entityNumber: "7", boardHash: ppick([board, pword()]) } }])
+          : kind === 2 ? { type: "boardHandover", data: { board: ppick([newBoard, { ...newBoard, mode: "gossip-based" }]) } } : kind === 3 ? accountInput(ppick(peers)) : kind === 4 ? range([activated(ppick(peers))])
+          : kind === 5 ? ppick([range([], 0), { type: "j_event", data: { baseHeight: 0, scannedThroughHeight: 1, blocks: [] } }]) : chat());
+      }
+      const ogState = { entityId: id, height: 0, config: { mode: "proposer-based", threshold: 1n, validators: [aliceAddr.toLowerCase()], shares: { [aliceAddr.toLowerCase()]: 1n } } };
+      const env: any = { quietRuntimeLogs: true, infrastructure: {} };
+      let og: any;
+      try { og = await ogSelect(env, ogState as never, mempool as never); } catch (e) { og = { error: (e as Error).message }; }
+      const mine = selectProposable(r.state, mempool as EntityTx[]);
+      const view = (x: any) => ("error" in x ? x.error : { txs: indices(mempool, x.txs), ready: x.currentAuthorityReady });
+      expect([i, mine.ok ? view(mine.value) : ((mine.error as { reason?: string }).reason ?? (mine.error as { code?: string }).code)]).toEqual([i, view(og)]);
+      const key = "error" in og ? `error:${String(og.error).split(":")[0]}` : `${og.reason ?? "plain"}`;
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+      // og isSelfBoardAuthorityTransitionFrame over the same candidate frame
+      let ogAuth: any;
+      try { ogAuth = await ogIsAuthorityFrame(env, ogState as never, mempool as never); } catch (e) { ogAuth = (e as Error).message; }
+      const mineAuth = selfAuthorityTransitionFrame(r.state, mempool as EntityTx[]);
+      expect([i, mineAuth.ok ? mineAuth.value : (mineAuth.error as { reason?: string }).reason]).toEqual([i, ogAuth]);
+    }
+    for (const k of ["SELF_BOARD_HANDOVER_PRIORITY", "SELF_BOARD_CONFIG_HANDOVER_REQUIRED", "SELF_BOARD_ROTATION_PRIORITY", "SELF_BOARD_ACTIVATION_REQUIRED", "SELF_BOARD_CERTIFICATION_REQUIRED", "COUNTERPARTY_BOARD_ACTIVATION_PRIORITY", "plain"]) expect([k, (seen.get(k) ?? 0) > 0]).toEqual([k, true]);
+  });
+
+  test("MATCH (og selectEntityTxsWithinJRangeBudget): multi-MiB ranges -- the same prefix, the suffix waits, an unfittable range or bad span halts", () => {
+    const MiB = 1024 * 1024;
+    const cases: any[][] = [
+      [range([], 3 * MiB), chat(), range([], 4 * MiB), chat(), range([], 4 * MiB), chat(), range([], 1)],
+      [range([], 6 * MiB), range([], 6 * MiB), chat()],
+      [chat(), range([], 11 * MiB), chat()],
+      [range([], 1), { type: "j_event", data: { baseHeight: 5, scannedThroughHeight: 5, blocks: [] } }],
+      [{ type: "j_event", data: { baseHeight: -1, scannedThroughHeight: 5, blocks: [] } }],
+      [chat(), range([], 9 * MiB), chat(), chat()],
+    ];
+    for (const [i, txs] of cases.entries()) {
+      let og: any;
+      try { og = indices(txs, ogJRangeBudget(txs).txs); } catch (e) { og = (e as Error).message; }
+      const mine = jRangeBudgetPrefix(txs as EntityTx[]);
+      expect([i, mine.ok ? indices(txs, mine.value) : (mine.error as { reason?: string }).reason]).toEqual([i, og]);
+    }
+  });
+});
+
+describe("consensus-final: the j_event frame-hash projection of og entity/consensus/frame.ts (canonicalJEventDataForFrameHash)", () => {
+  test("MATCH (og createEntityFrameHashFromStateRoot): 400 random J ranges -- mixed-case text, fractional heights, extra keys, raw events, missing rangeHash / blocks -- commit og's projection or refuse with og's code", () => {
+    const g = prng(0x7e_4a54);
+    const gi = (n: number) => Math.floor(g() * n);
+    const gp = <X,>(xs: readonly X[]): X => xs[gi(xs.length)] as X;
+    const word = (): string => "0x" + Array.from({ length: 64 }, () => "0123456789abcdefABCDEF"[gi(22)]).join("");
+    const ctxOf = (id: string): any => ({ version: 1, proposerReplicaId: `${id}:${aliceAddr.toLowerCase()}`, entityId: id, proposerSignerId: aliceAddr.toLowerCase(), parentFrameHash: "genesis", height: 1, gossipProfiles: [], peerAssertions: [], htlc: { version: 1, entries: [], originated: [] } });
+    const ev = (): any => gp([
+      { type: "ReserveUpdated", data: { entity: word(), tokenId: gp([1, "2"]), newBalance: gp(["5", 7n, "0x10"]) }, blockNumber: gi(9), blockHash: word(), transactionHash: word(), logIndex: gi(4) },
+      { type: "EntityRegistered", data: { entityId: word(), entityNumber: "7", boardHash: word() } },
+      { type: "BoardActivated", data: { entityId: word(), previousBoardHash: word(), newBoardHash: word(), previousBoardValidUntil: gp(["100", "0"]) } },
+    ]);
+    let refused = 0;
+    for (let i = 0; i < 400; i++) {
+      const id = word().toLowerCase();
+      const data: any = {
+        from: gp([aliceAddr, aliceAddr.toLowerCase(), undefined]), jurisdictionRef: gp([" Anvil:31337 ", "x", undefined]), baseHeight: gp([0, 3, 2.7, "4"]), scannedThroughHeight: gp([5, 5.5, "9"]),
+        tipBlockHash: gp([word(), undefined]), eventHistoryRoot: word(), signature: gp([word(), undefined]), observedAt: gp([12, 12.9, undefined]),
+        blocks: gp([[{ blockNumber: gp([1, 1.5, "2"]), blockHash: word(), eventsHash: word(), events: Array.from({ length: gi(3) }, ev), disputeFinalizationEvidenceHash: gp([word(), undefined]), extra: 1 }], [], "nope", undefined]),
+        ...(gi(6) === 0 ? {} : { rangeHash: word() }), ...(gi(3) === 0 ? { extraKey: "dropped" } : {}),
+      };
+      const txs: any[] = [{ type: "chat", data: { from: aliceAddr.toLowerCase(), message: "m" } }, { type: "j_event", data }];
+      const root = "0x" + "11".repeat(32), auth = "0x" + "22".repeat(32);
+      let og: string;
+      try { og = createEntityFrameHashFromStateRoot("genesis", 1, 50, txs as never, [], id, root, auth, ctxOf(id) as never); } catch (e) { og = (e as Error).message.split(":")[0] as string; }
+      const mine = entityFrameHash({ prevFrameHash: "genesis", height: 1, timestamp: 50, txs, events: [], entityId: id, stateRoot: root, authorityRoot: auth, entityContext: ctxOf(id) });
+      const got = mine.ok ? mine.value : ((mine.error as { code?: string }).code ?? mine.error._tag).split(":")[0];
+      expect([i, got]).toEqual([i, og]);
+      if (!mine.ok) refused++;
+    }
+    expect(refused).toBeGreaterThan(40);
+    expect(refused).toBeLessThan(300);
+  });
 });

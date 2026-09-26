@@ -199,15 +199,17 @@ describe("ER-4b: quorum board binding (og assertQuorumBoardBinding)", () => {
     expect(reasonOf(quorumHanko(base.state, digest, sigs))).toBe(ogRefusal);
   });
 
-  test("MATCH: a numbered 1-of-1 Entity proposes only once its EntityRegistered is certified (og signProposalManifest)", () => {
+  test("MATCH: a numbered 1-of-1 Entity proposes only once its EntityRegistered is certified for its config board (og selectProposableEntityTxs SELF_BOARD_CERTIFICATION_REQUIRED)", () => {
     const id = unwrap(entityId(word(5))), members = new Map([[aliceAddr, { shares: 1n }]]);
     const base = unwrap(createEntity({ id, jurisdiction: DOMAIN, threshold: 1n, members, jurisdictionConfig: JCONF }));
     const chat: EntityTx = { type: "chat", data: { from: aliceAddr, message: "hi" } };
     const run = (r: typeof base) => applyEntityInput(r, { kind: "txs", timestamp: 10n, txs: [chat] }, { ...verifiers, self: id, signerId: aliceAddr });
-    expect(reasonOf(run(base))).toStartWith("CERTIFIED_BOARD_SIGNING_ROOT_MISSING");
+    // og: an uncertified board (no registry, or a registry certifying another board) selects nothing; the tx stays queued, no frame
+    const queuedOnly = (r: ReturnType<typeof run>) => (r.ok ? [r.value.replica._tag, r.value.replica.head.height, r.value.replica.mempool.length, r.value.outputs.length] : reasonOf(r));
+    expect(queuedOnly(run(base))).toEqual(["open", 0n, 1, 0]);
     const certified = run({ ...base, state: observe(base.state, [foundation, registered(id, quorumBoardHash({ _tag: "teaching", threshold: 1n, members }))]).state });
     expect(certified.ok && certified.value.replica.head.height).toBe(1n);
-    expect(reasonOf(run({ ...base, state: observe(base.state, [foundation, registered(id, word(4242))]).state }))).toStartWith("BUILD_QUORUM_HANKO_BOARD_MISMATCH");
+    expect(queuedOnly(run({ ...base, state: observe(base.state, [foundation, registered(id, word(4242))]).state }))).toEqual(["open", 0n, 1, 0]);
   });
 });
 
