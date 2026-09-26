@@ -1,8 +1,8 @@
 {
-  "long-line": 8972,
-  "no-assign-member": 155,
+  "long-line": 8837,
+  "no-assign-member": 154,
   "no-class": 2,
-  "no-let": 134,
+  "no-let": 133,
   "no-loop": 308,
   "no-mutating-call": 401,
   "no-throw": 33

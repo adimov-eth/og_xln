@@ -915,90 +915,322 @@ export const accountStateCommitment = (state: CommittedAccountState): Result<str
   chain(prepareState(state), preparedRoot);
 
 
+// ---- the Account frame hash ----
+
 export type WireTx = { readonly type: string; readonly data: unknown };
-export type AccountFrameInputs = { readonly height: number; readonly timestamp: number; readonly jHeight: number; readonly prevFrameHash: string; readonly accountStateRoot: string; readonly accountTxs: readonly WireTx[] };
-export type FrameHashError = CanonicalValueError | Tagged<"policy_version" | "settle_witness_shape"> | ClaimError;
-const fieldOf = (data: unknown, name: string): unknown => (data !== null && typeof data === "object" && Object.hasOwn(data, name) ? (data as Record<string, unknown>)[name] : undefined);
-const withoutHankoWitness = (tx: WireTx): WireTx => {
-  if (tx.type !== "settle_transition" || fieldOf(tx.data, "kind") !== "hanko" || tx.data === null || typeof tx.data !== "object") return tx;
-  const { settlementHanko: _settlementHanko, ...rest } = tx.data as Record<string, unknown>;
-  const post = rest.postProof;
-  if (post === null || typeof post !== "object" || Array.isArray(post)) return { type: tx.type, data: rest };
-  const { hanko: _hanko, ...postRest } = post as Record<string, unknown>;
-  return { type: tx.type, data: { ...rest, postProof: postRest } };
+export type AccountFrameInputs = {
+  readonly height: number;
+  readonly timestamp: number;
+  readonly jHeight: number;
+  readonly prevFrameHash: string;
+  readonly accountStateRoot: string;
+  readonly accountTxs: readonly WireTx[];
 };
+export type FrameHashError =
+  | CanonicalValueError
+  | Tagged<"policy_version" | "settle_witness_shape">
+  | ClaimError;
+type Fields = Record<string, unknown>;
+const isRecord = (v: unknown): v is Fields => v !== null && typeof v === "object";
+const fieldOf = (data: unknown, name: string): unknown =>
+  (isRecord(data) && Object.hasOwn(data, name) ? data[name] : undefined);
+/** Hankos are signed after the frame, so the frame hash is taken over the settlement without them. */
+const withoutHankoWitness = (tx: WireTx): WireTx => {
+  const hankoSettlement = tx.type === "settle_transition" && fieldOf(tx.data, "kind") === "hanko";
+  if (!hankoSettlement || !isRecord(tx.data)) return tx;
+  const { settlementHanko: _settlementHanko, ...rest } = tx.data;
+  const post = rest.postProof;
+  if (!isRecord(post) || Array.isArray(post)) return { type: tx.type, data: rest };
+  const { hanko: _hanko, ...postWithoutHanko } = post;
+  return { type: tx.type, data: { ...rest, postProof: postWithoutHanko } };
+};
+/**
+ * og refuses to hash these before it gets that far: a policy without a version, and a settlement
+ * og's witness projection (witness-projection.ts:53) would dereference as `data.postProof.hanko`.
+ */
 const projectionRefusal = (tx: WireTx): Result<void, FrameHashError> => {
-  if (tx.type === "rebalance_policy") { const v = fieldOf(tx.data, "policyVersion"); if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) return err({ _tag: "policy_version" }); }
-  // og accountTxWithoutPostCommitHankos (witness-projection.ts:53) dereferences `data.kind` and, for kind hanko, `data.postProof.hanko`.
-  if (tx.type === "settle_transition" && (tx.data === null || tx.data === undefined || (fieldOf(tx.data, "kind") === "hanko" && (fieldOf(tx.data, "postProof") ?? null) === null))) return err({ _tag: "settle_witness_shape" });
+  const version = fieldOf(tx.data, "policyVersion");
+  const badVersion = typeof version !== "number" || !Number.isSafeInteger(version) || version < 0;
+  if (tx.type === "rebalance_policy" && badVersion) return err({ _tag: "policy_version" });
+  const noData = tx.data === null || tx.data === undefined;
+  const hankoWithoutPost = fieldOf(tx.data, "kind") === "hanko" && (fieldOf(tx.data, "postProof") ?? null) === null;
+  if (tx.type === "settle_transition" && (noData || hankoWithoutPost)) return err({ _tag: "settle_witness_shape" });
   return ok(undefined);
 };
-export const ownWire = (tx: { readonly type: string }): WireTx => { const { type, ...data } = tx; return { type, data }; };
-export const txRefusal = (own: { readonly type: string }): Result<void, FrameHashError> => { const tx = ownWire(own); return chain(projectionRefusal(tx), () => map(encodeCanonicalValue(tx), () => undefined)); };
-export const accountFrameHash = (f: AccountFrameInputs): Result<string, FrameHashError> => chain(traverse(f.accountTxs, projectionRefusal), () => flatDigest("account.frame", [
-  ["transition", { height: f.height, timestamp: f.timestamp, jHeight: f.jHeight, prevFrameHash: f.prevFrameHash }],
-  ["transactions", f.accountTxs.map(withoutHankoWitness)],
-  ["accountStateRoot", f.accountStateRoot],
-]));
-export const encodeFrameHash = (f: Omit<AccountFrameInputs, "accountTxs"> & { readonly accountTxs: readonly { readonly type: string; readonly data: { readonly tokenId: number; readonly amount: string } }[] }): string =>
-  unwrapOr(accountFrameHash({ ...f, accountTxs: f.accountTxs.map((tx) => ({ type: tx.type, data: { tokenId: tx.data.tokenId, amount: BigInt(tx.data.amount) } })) }), (e) => { throw new Error(`frame hash cannot encode: ${e._tag}`); });
-
-
-export type JAllowance = { readonly deltaIndex: bigint; readonly rightAllowance: bigint; readonly leftAllowance: bigint };
-export type TransformerClause = { readonly transformerAddress: string; readonly encodedBatch: string; readonly allowances: readonly JAllowance[] };
-export type ProofBody = { readonly watchSeed: string; readonly leftResponseSeconds: bigint; readonly rightResponseSeconds: bigint; readonly offdeltas: readonly bigint[]; readonly tokenIds: readonly bigint[]; readonly transformers: readonly TransformerClause[] };
-export type SettlementDiff = { readonly tokenId: bigint; readonly leftDiff: bigint; readonly rightDiff: bigint; readonly collateralDiff: bigint; readonly ondeltaDiff: bigint };
-export type Settlement = { readonly leftEntity: string; readonly rightEntity: string; readonly diffs: readonly SettlementDiff[]; readonly forgiveDebtsInTokenIds: readonly bigint[]; readonly sig: string; readonly nonce: bigint };
-export type DisputeStart = { readonly counterentity: string; readonly nonce: bigint; readonly proposerIsLeft: boolean; readonly proofbodyHash: string; readonly initialProofbody: ProofBody; readonly watchSeed: string; readonly sig: string; readonly starterInitialArguments: string; readonly starterCounterArguments: string; readonly starterCounterProofCommitment: string };
-export type CounterDispute = { readonly counterentity: string; readonly initialNonce: bigint; readonly initialProofbodyHash: string; readonly counterNonce: bigint; readonly proposerIsLeft: boolean; readonly counterProofbody: ProofBody; readonly sig: string };
-export type DisputeFinalization = { readonly counterentity: string; readonly initialNonce: bigint; readonly finalNonce: bigint; readonly proposerIsLeft: boolean; readonly initialProofbodyHash: string; readonly finalProofbody: ProofBody; readonly starterArguments: string; readonly otherArguments: string; readonly sig: string; readonly startedByLeft: boolean; readonly cooperative: boolean };
-export type HashLadderWitness = { readonly fillRatio: bigint; readonly fullSecret: string; readonly reveals: readonly [string, string, string, string] };
-export type Batch = {
-  readonly reserveToReserve: readonly { readonly receivingEntity: string; readonly tokenId: bigint; readonly amount: bigint }[];
-  readonly reserveToCollateral: readonly { readonly tokenId: bigint; readonly receivingEntity: string; readonly pairs: readonly { readonly entity: string; readonly amount: bigint }[] }[];
-  readonly collateralToReserve: readonly { readonly counterparty: string; readonly tokenId: bigint; readonly amount: bigint; readonly nonce: bigint; readonly sig: string }[];
-  readonly settlements: readonly Settlement[]; readonly disputeStarts: readonly DisputeStart[]; readonly counterDisputes: readonly CounterDispute[]; readonly disputeFinalizations: readonly DisputeFinalization[];
-  readonly externalTokenToReserve: readonly { readonly entity: string; readonly contractAddress: string; readonly externalTokenId: bigint; readonly tokenType: bigint; readonly internalTokenId: bigint; readonly amount: bigint }[];
-  readonly reserveToExternalToken: readonly { readonly receivingEntity: string; readonly tokenId: bigint; readonly amount: bigint }[];
-  readonly revealSecrets: readonly { readonly transformer: string; readonly secret: string }[];
-  readonly hashLadderRegistrations: readonly { readonly counterpartyEntity: string; readonly targetRole: boolean; readonly fullHash: string; readonly partialRoot: string; readonly witness: HashLadderWitness }[];
+export const ownWire = (tx: { readonly type: string }): WireTx => {
+  const { type, ...data } = tx;
+  return { type, data };
 };
-export const BATCH_FIELDS = ["reserveToReserve", "reserveToCollateral", "collateralToReserve", "settlements", "disputeStarts", "counterDisputes", "disputeFinalizations", "externalTokenToReserve", "reserveToExternalToken", "revealSecrets", "hashLadderRegistrations"] as const;
-export const emptyBatch = (): Batch => Object.fromEntries(BATCH_FIELDS.map((f) => [f, []])) as unknown as Batch;
+export const txRefusal = (own: { readonly type: string }): Result<void, FrameHashError> => {
+  const tx = ownWire(own);
+  return chain(projectionRefusal(tx), () => map(encodeCanonicalValue(tx), () => undefined));
+};
+export const accountFrameHash = (f: AccountFrameInputs): Result<string, FrameHashError> => {
+  const transition = { height: f.height, timestamp: f.timestamp, jHeight: f.jHeight, prevFrameHash: f.prevFrameHash };
+  return chain(traverse(f.accountTxs, projectionRefusal), () => flatDigest("account.frame", [
+    ["transition", transition],
+    ["transactions", f.accountTxs.map(withoutHankoWitness)],
+    ["accountStateRoot", f.accountStateRoot],
+  ]));
+};
+type AmountTx = { readonly type: string; readonly data: { readonly tokenId: number; readonly amount: string } };
+export const encodeFrameHash = (
+  f: Omit<AccountFrameInputs, "accountTxs"> & { readonly accountTxs: readonly AmountTx[] },
+): string => {
+  const accountTxs = f.accountTxs.map((tx) =>
+    ({ type: tx.type, data: { tokenId: tx.data.tokenId, amount: BigInt(tx.data.amount) } }));
+  return unwrapOr(accountFrameHash({ ...f, accountTxs }), (e) => {
+    throw new Error(`frame hash cannot encode: ${e._tag}`);
+  });
+};
+
+
+// ---- Depository batch: the calldata an Entity submits to its jurisdiction ----
+
+export type JAllowance = {
+  readonly deltaIndex: bigint;
+  readonly rightAllowance: bigint;
+  readonly leftAllowance: bigint;
+};
+export type TransformerClause = {
+  readonly transformerAddress: string;
+  readonly encodedBatch: string;
+  readonly allowances: readonly JAllowance[];
+};
+export type ProofBody = {
+  readonly watchSeed: string;
+  readonly leftResponseSeconds: bigint;
+  readonly rightResponseSeconds: bigint;
+  readonly offdeltas: readonly bigint[];
+  readonly tokenIds: readonly bigint[];
+  readonly transformers: readonly TransformerClause[];
+};
+export type SettlementDiff = {
+  readonly tokenId: bigint;
+  readonly leftDiff: bigint;
+  readonly rightDiff: bigint;
+  readonly collateralDiff: bigint;
+  readonly ondeltaDiff: bigint;
+};
+export type Settlement = {
+  readonly leftEntity: string;
+  readonly rightEntity: string;
+  readonly diffs: readonly SettlementDiff[];
+  readonly forgiveDebtsInTokenIds: readonly bigint[];
+  readonly sig: string;
+  readonly nonce: bigint;
+};
+export type DisputeStart = {
+  readonly counterentity: string;
+  readonly nonce: bigint;
+  readonly proposerIsLeft: boolean;
+  readonly proofbodyHash: string;
+  readonly initialProofbody: ProofBody;
+  readonly watchSeed: string;
+  readonly sig: string;
+  readonly starterInitialArguments: string;
+  readonly starterCounterArguments: string;
+  readonly starterCounterProofCommitment: string;
+};
+export type CounterDispute = {
+  readonly counterentity: string;
+  readonly initialNonce: bigint;
+  readonly initialProofbodyHash: string;
+  readonly counterNonce: bigint;
+  readonly proposerIsLeft: boolean;
+  readonly counterProofbody: ProofBody;
+  readonly sig: string;
+};
+export type DisputeFinalization = {
+  readonly counterentity: string;
+  readonly initialNonce: bigint;
+  readonly finalNonce: bigint;
+  readonly proposerIsLeft: boolean;
+  readonly initialProofbodyHash: string;
+  readonly finalProofbody: ProofBody;
+  readonly starterArguments: string;
+  readonly otherArguments: string;
+  readonly sig: string;
+  readonly startedByLeft: boolean;
+  readonly cooperative: boolean;
+};
+export type HashLadderWitness = {
+  readonly fillRatio: bigint;
+  readonly fullSecret: string;
+  readonly reveals: readonly [string, string, string, string];
+};
+type ReserveTransfer = { readonly receivingEntity: string; readonly tokenId: bigint; readonly amount: bigint };
+type ReserveToCollateral = {
+  readonly tokenId: bigint;
+  readonly receivingEntity: string;
+  readonly pairs: readonly { readonly entity: string; readonly amount: bigint }[];
+};
+type CollateralToReserve = {
+  readonly counterparty: string;
+  readonly tokenId: bigint;
+  readonly amount: bigint;
+  readonly nonce: bigint;
+  readonly sig: string;
+};
+type ExternalTokenToReserve = {
+  readonly entity: string;
+  readonly contractAddress: string;
+  readonly externalTokenId: bigint;
+  readonly tokenType: bigint;
+  readonly internalTokenId: bigint;
+  readonly amount: bigint;
+};
+type RevealSecret = { readonly transformer: string; readonly secret: string };
+type HashLadderRegistration = {
+  readonly counterpartyEntity: string;
+  readonly targetRole: boolean;
+  readonly fullHash: string;
+  readonly partialRoot: string;
+  readonly witness: HashLadderWitness;
+};
+export type Batch = {
+  readonly reserveToReserve: readonly ReserveTransfer[];
+  readonly reserveToCollateral: readonly ReserveToCollateral[];
+  readonly collateralToReserve: readonly CollateralToReserve[];
+  readonly settlements: readonly Settlement[];
+  readonly disputeStarts: readonly DisputeStart[];
+  readonly counterDisputes: readonly CounterDispute[];
+  readonly disputeFinalizations: readonly DisputeFinalization[];
+  readonly externalTokenToReserve: readonly ExternalTokenToReserve[];
+  readonly reserveToExternalToken: readonly ReserveTransfer[];
+  readonly revealSecrets: readonly RevealSecret[];
+  readonly hashLadderRegistrations: readonly HashLadderRegistration[];
+};
+export const BATCH_FIELDS = [
+  "reserveToReserve", "reserveToCollateral", "collateralToReserve", "settlements",
+  "disputeStarts", "counterDisputes", "disputeFinalizations", "externalTokenToReserve",
+  "reserveToExternalToken", "revealSecrets", "hashLadderRegistrations",
+] as const;
+export const emptyBatch = (): Batch =>
+  Object.fromEntries(BATCH_FIELDS.map((f) => [f, []])) as unknown as Batch;
 const t = A.tuple;
-const allowanceAbi = (r: JAllowance): Abi => t([A.uint(r.deltaIndex), A.uint(r.rightAllowance), A.uint(r.leftAllowance)]);
-const transformerAbi = (c: TransformerClause): Abi => t([A.address(c.transformerAddress), A.bytes(c.encodedBatch), arr(c.allowances, allowanceAbi)]);
-/** Types.sol `Int512{int256 high; uint256 low}` (abi-money.ts encodeInt512): high is the arithmetic shift, so a value outside int512 fails the int256 word. */
+const allowanceAbi = (r: JAllowance): Abi =>
+  t([A.uint(r.deltaIndex), A.uint(r.rightAllowance), A.uint(r.leftAllowance)]);
+const transformerAbi = (c: TransformerClause): Abi =>
+  t([A.address(c.transformerAddress), A.bytes(c.encodedBatch), arr(c.allowances, allowanceAbi)]);
+/** Types.sol `Int512{int256 high; uint256 low}`: a value outside int512 fails the int256 word. */
 const int512Abi = (n: bigint): Abi => t([A.int(n >> 256n), A.uint(n & ((1n << 256n) - 1n))]);
-/** Types.sol `SignedAmount{bool negative; uint256 magnitude}` (encodeSignedAmount): ±(2^256-1), zero is never negative. */
+/** Types.sol `SignedAmount{bool negative; uint256 magnitude}`: zero is never negative. */
 const signedAmountAbi = (n: bigint): Abi => t([A.bool(n < 0n), A.uint(n < 0n ? -n : n)]);
-const proofBodyAbi = (b: ProofBody): Abi => t([A.b32(b.watchSeed), A.uint(b.leftResponseSeconds), A.uint(b.rightResponseSeconds), arr(b.offdeltas, int512Abi), arr(b.tokenIds, A.uint), arr(b.transformers, transformerAbi)]);
-const diffAbi = (d: SettlementDiff): Abi => t([A.uint(d.tokenId), signedAmountAbi(d.leftDiff), signedAmountAbi(d.rightDiff), signedAmountAbi(d.collateralDiff), signedAmountAbi(d.ondeltaDiff)]);
-const witnessAbi = (w: HashLadderWitness): Abi => t([A.uint(w.fillRatio), A.b32(w.fullSecret), ...w.reveals.map((r) => A.b32(r))]);
+const proofBodyAbi = (b: ProofBody): Abi => t([
+  A.b32(b.watchSeed),
+  A.uint(b.leftResponseSeconds),
+  A.uint(b.rightResponseSeconds),
+  arr(b.offdeltas, int512Abi),
+  arr(b.tokenIds, A.uint),
+  arr(b.transformers, transformerAbi),
+]);
+const diffAbi = (d: SettlementDiff): Abi => t([
+  A.uint(d.tokenId),
+  signedAmountAbi(d.leftDiff),
+  signedAmountAbi(d.rightDiff),
+  signedAmountAbi(d.collateralDiff),
+  signedAmountAbi(d.ondeltaDiff),
+]);
+const witnessAbi = (w: HashLadderWitness): Abi =>
+  t([A.uint(w.fillRatio), A.b32(w.fullSecret), ...w.reveals.map((r) => A.b32(r))]);
+const reserveTransferAbi = (r: ReserveTransfer): Abi =>
+  t([A.b32(r.receivingEntity), A.uint(r.tokenId), A.uint(r.amount)]);
+const reserveToCollateralAbi = (r: ReserveToCollateral): Abi => {
+  const pairs = arr(r.pairs, (p) => t([A.b32(p.entity), A.uint(p.amount)]));
+  return t([A.uint(r.tokenId), A.b32(r.receivingEntity), pairs]);
+};
+const collateralToReserveAbi = (r: CollateralToReserve): Abi =>
+  t([A.b32(r.counterparty), A.uint(r.tokenId), A.uint(r.amount), A.uint(r.nonce), A.bytes(r.sig)]);
+const settlementAbi = (r: Settlement): Abi => t([
+  A.b32(r.leftEntity),
+  A.b32(r.rightEntity),
+  arr(r.diffs, diffAbi),
+  arr(r.forgiveDebtsInTokenIds, A.uint),
+  A.bytes(r.sig),
+  A.uint(r.nonce),
+]);
+const disputeStartAbi = (r: DisputeStart): Abi => t([
+  A.b32(r.counterentity),
+  A.uint(r.nonce),
+  A.bool(r.proposerIsLeft),
+  A.b32(r.proofbodyHash),
+  proofBodyAbi(r.initialProofbody),
+  A.b32(r.watchSeed),
+  A.bytes(r.sig),
+  A.bytes(r.starterInitialArguments),
+  A.bytes(r.starterCounterArguments),
+  A.b32(r.starterCounterProofCommitment),
+]);
+const counterDisputeAbi = (r: CounterDispute): Abi => t([
+  A.b32(r.counterentity),
+  A.uint(r.initialNonce),
+  A.b32(r.initialProofbodyHash),
+  A.uint(r.counterNonce),
+  A.bool(r.proposerIsLeft),
+  proofBodyAbi(r.counterProofbody),
+  A.bytes(r.sig),
+]);
+const disputeFinalizationAbi = (r: DisputeFinalization): Abi => t([
+  A.b32(r.counterentity),
+  A.uint(r.initialNonce),
+  A.uint(r.finalNonce),
+  A.bool(r.proposerIsLeft),
+  A.b32(r.initialProofbodyHash),
+  proofBodyAbi(r.finalProofbody),
+  A.bytes(r.starterArguments),
+  A.bytes(r.otherArguments),
+  A.bytes(r.sig),
+  A.bool(r.startedByLeft),
+  A.bool(r.cooperative),
+]);
+const externalTokenToReserveAbi = (r: ExternalTokenToReserve): Abi => t([
+  A.b32(r.entity),
+  A.address(r.contractAddress),
+  A.uint(r.externalTokenId),
+  A.uint(r.tokenType),
+  A.uint(r.internalTokenId),
+  A.uint(r.amount),
+]);
+const revealSecretAbi = (r: RevealSecret): Abi => t([A.address(r.transformer), A.b32(r.secret)]);
+const hashLadderRegistrationAbi = (r: HashLadderRegistration): Abi => t([
+  A.b32(r.counterpartyEntity),
+  A.bool(r.targetRole),
+  A.b32(r.fullHash),
+  A.b32(r.partialRoot),
+  witnessAbi(r.witness),
+]);
 const batchAbi = (b: Batch): Abi => t([
-  arr(b.reserveToReserve, (r) => t([A.b32(r.receivingEntity), A.uint(r.tokenId), A.uint(r.amount)])),
-  arr(b.reserveToCollateral, (r) => t([A.uint(r.tokenId), A.b32(r.receivingEntity), arr(r.pairs, (p) => t([A.b32(p.entity), A.uint(p.amount)]))])),
-  arr(b.collateralToReserve, (r) => t([A.b32(r.counterparty), A.uint(r.tokenId), A.uint(r.amount), A.uint(r.nonce), A.bytes(r.sig)])),
-  arr(b.settlements, (r) => t([A.b32(r.leftEntity), A.b32(r.rightEntity), arr(r.diffs, diffAbi), arr(r.forgiveDebtsInTokenIds, A.uint), A.bytes(r.sig), A.uint(r.nonce)])),
-  arr(b.disputeStarts, (r) => t([A.b32(r.counterentity), A.uint(r.nonce), A.bool(r.proposerIsLeft), A.b32(r.proofbodyHash), proofBodyAbi(r.initialProofbody), A.b32(r.watchSeed), A.bytes(r.sig), A.bytes(r.starterInitialArguments), A.bytes(r.starterCounterArguments), A.b32(r.starterCounterProofCommitment)])),
-  arr(b.counterDisputes, (r) => t([A.b32(r.counterentity), A.uint(r.initialNonce), A.b32(r.initialProofbodyHash), A.uint(r.counterNonce), A.bool(r.proposerIsLeft), proofBodyAbi(r.counterProofbody), A.bytes(r.sig)])),
-  arr(b.disputeFinalizations, (r) => t([A.b32(r.counterentity), A.uint(r.initialNonce), A.uint(r.finalNonce), A.bool(r.proposerIsLeft), A.b32(r.initialProofbodyHash), proofBodyAbi(r.finalProofbody), A.bytes(r.starterArguments), A.bytes(r.otherArguments), A.bytes(r.sig), A.bool(r.startedByLeft), A.bool(r.cooperative)])),
-  arr(b.externalTokenToReserve, (r) => t([A.b32(r.entity), A.address(r.contractAddress), A.uint(r.externalTokenId), A.uint(r.tokenType), A.uint(r.internalTokenId), A.uint(r.amount)])),
-  arr(b.reserveToExternalToken, (r) => t([A.b32(r.receivingEntity), A.uint(r.tokenId), A.uint(r.amount)])),
-  arr(b.revealSecrets, (r) => t([A.address(r.transformer), A.b32(r.secret)])),
-  arr(b.hashLadderRegistrations, (r) => t([A.b32(r.counterpartyEntity), A.bool(r.targetRole), A.b32(r.fullHash), A.b32(r.partialRoot), witnessAbi(r.witness)])),
+  arr(b.reserveToReserve, reserveTransferAbi),
+  arr(b.reserveToCollateral, reserveToCollateralAbi),
+  arr(b.collateralToReserve, collateralToReserveAbi),
+  arr(b.settlements, settlementAbi),
+  arr(b.disputeStarts, disputeStartAbi),
+  arr(b.counterDisputes, counterDisputeAbi),
+  arr(b.disputeFinalizations, disputeFinalizationAbi),
+  arr(b.externalTokenToReserve, externalTokenToReserveAbi),
+  arr(b.reserveToExternalToken, reserveTransferAbi),
+  arr(b.revealSecrets, revealSecretAbi),
+  arr(b.hashLadderRegistrations, hashLadderRegistrationAbi),
 ]);
 export const encodeBatch = (b: Batch): string => abiEncodeHex([batchAbi(b)]);
 export const encodeProofBodyBytes = (b: ProofBody): string => abiEncodeHex([proofBodyAbi(b)]);
+
+
+// ---- J events: the Depository and EntityProvider logs an Entity reads back ----
+
 export const J_EVENT_SIGNATURES = {
   HankoBatchProcessed: "HankoBatchProcessed(bytes32,bytes32,uint256)",
   ReserveUpdated: "ReserveUpdated(bytes32,uint256,uint256)",
-  AccountSettled: "AccountSettled((bytes32,bytes32,(uint256,uint256,uint256,uint256,(int256,uint256))[],uint256)[])",
-  DisputeStarted: "DisputeStarted(bytes32,bytes32,uint256,bool,bytes32,bytes32,bytes,bytes,bytes32,uint256,uint256,uint32,uint32)",
+  AccountSettled:
+    "AccountSettled((bytes32,bytes32,(uint256,uint256,uint256,uint256,(int256,uint256))[],uint256)[])",
+  DisputeStarted:
+    "DisputeStarted(bytes32,bytes32,uint256,bool,bytes32,bytes32,bytes,bytes,bytes32,uint256,uint256,uint32,uint32)",
   DisputeFinalized: "DisputeFinalized(bytes32,bytes32,uint256,bytes32,bytes32)",
   SecretRevealed: "SecretRevealed(bytes32,bytes32,bytes32)",
   CounterDisputeRegistered: "CounterDisputeRegistered(bytes32,bytes32,uint256,bool,bytes32)",
-  HashLadderRevealRegistered: "HashLadderRevealRegistered(bytes32,bytes32,bytes32,uint16,bytes32,bytes32[4],bool,uint256)",
+  HashLadderRevealRegistered:
+    "HashLadderRevealRegistered(bytes32,bytes32,bytes32,uint16,bytes32,bytes32[4],bool,uint256)",
   DebtCreated: "DebtCreated(bytes32,bytes32,uint256,(uint256,uint256),uint256)",
   DebtEnforced: "DebtEnforced(bytes32,bytes32,uint256,uint256,(uint256,uint256),uint256)",
   DebtForgiven: "DebtForgiven(bytes32,bytes32,uint256,(uint256,uint256),uint256)",
@@ -1009,283 +1241,874 @@ export const J_EVENT_SIGNATURES = {
   EntityProviderActionCancelled: "EntityProviderActionCancelled(bytes32,uint256,bytes32,uint8,bytes32)",
 } as const;
 export type JEventName = keyof typeof J_EVENT_SIGNATURES;
-const eventTopics = Object.fromEntries(Object.entries(J_EVENT_SIGNATURES).map(([n, s]) => [n, keccak256Hex(utf8(s))])) as Readonly<Record<JEventName, string>>;
+const J_EVENT_NAMES = Object.keys(J_EVENT_SIGNATURES) as readonly JEventName[];
+const eventTopics = Object.fromEntries(J_EVENT_NAMES.map((n) =>
+  [n, keccak256Hex(utf8(J_EVENT_SIGNATURES[n]))])) as Readonly<Record<JEventName, string>>;
 export const jEventTopic = (n: JEventName): string => eventTopics[n];
-/** og JEventMetadata (types/jurisdiction-events.ts): the EVM log position; a token row's `eventIndex` orders the rows one AccountSettled log expands into for one Entity. */
-export type JEventMeta = { readonly blockNumber?: number | undefined; readonly blockHash?: string | undefined; readonly transactionHash?: string | undefined; readonly logIndex?: number | undefined };
-export type TokenSettlement = { readonly tokenId: bigint; readonly leftReserve: bigint; readonly rightReserve: bigint; readonly collateral: bigint; readonly ondelta: bigint; readonly eventIndex?: number | undefined };
-export type AccountSettlement = { readonly left: string; readonly right: string; readonly tokens: readonly TokenSettlement[]; readonly nonce: bigint; readonly meta?: JEventMeta | undefined };
-/** og DisputeFinalizationEvidence: the reducer sidecar decoded from the finalizing transaction's calldata. */
+const eventByTopic = new Map(J_EVENT_NAMES.map((n) => [jEventTopic(n).toLowerCase(), n] as const));
+/** og JEventMetadata: the EVM log position; a token row's `eventIndex` orders one log's rows. */
+export type JEventMeta = {
+  readonly blockNumber?: number | undefined;
+  readonly blockHash?: string | undefined;
+  readonly transactionHash?: string | undefined;
+  readonly logIndex?: number | undefined;
+};
+export type TokenSettlement = {
+  readonly tokenId: bigint;
+  readonly leftReserve: bigint;
+  readonly rightReserve: bigint;
+  readonly collateral: bigint;
+  readonly ondelta: bigint;
+  readonly eventIndex?: number | undefined;
+};
+export type AccountSettlement = {
+  readonly left: string;
+  readonly right: string;
+  readonly tokens: readonly TokenSettlement[];
+  readonly nonce: bigint;
+  readonly meta?: JEventMeta | undefined;
+};
+/** og DisputeFinalizationEvidence: the reducer sidecar decoded from the finalizing transaction. */
 export type DisputeFinalizationEvidence = {
-  readonly sender: string; readonly counterentity: string; readonly initialNonce: bigint; readonly finalNonce: bigint; readonly initialProofbodyHash: string; readonly finalProofbodyHash: string;
-  readonly proposerIsLeft: boolean; readonly leftArguments: string; readonly rightArguments: string; readonly startedByLeft: boolean; readonly sig: string;
+  readonly sender: string;
+  readonly counterentity: string;
+  readonly initialNonce: bigint;
+  readonly finalNonce: bigint;
+  readonly initialProofbodyHash: string;
+  readonly finalProofbodyHash: string;
+  readonly proposerIsLeft: boolean;
+  readonly leftArguments: string;
+  readonly rightArguments: string;
+  readonly startedByLeft: boolean;
+  readonly sig: string;
+};
+type HankoBatchProcessed = {
+  readonly type: "HankoBatchProcessed";
+  readonly entityId: string;
+  readonly batchHash: string;
+  readonly nonce: bigint;
+};
+type ReserveUpdated = {
+  readonly type: "ReserveUpdated";
+  readonly entity: string;
+  readonly tokenId: bigint;
+  readonly newBalance: bigint;
+};
+type AccountSettled = { readonly type: "AccountSettled"; readonly settled: readonly AccountSettlement[] };
+type DisputeStarted = {
+  readonly type: "DisputeStarted";
+  readonly sender: string;
+  readonly counterentity: string;
+  readonly nonce: bigint;
+  readonly proposerIsLeft: boolean;
+  readonly proofbodyHash: string;
+  readonly watchSeed: string;
+  readonly starterInitialArguments: string;
+  readonly starterCounterArguments: string;
+  readonly starterCounterProofCommitment: string;
+  readonly disputeTimeout: bigint;
+  readonly disputeStartTimestamp: bigint;
+  readonly leftResponseSeconds: bigint;
+  readonly rightResponseSeconds: bigint;
+  readonly initialProofbody?: ProofBody | undefined;
+  readonly batchNonce?: number | undefined;
+};
+type DisputeFinalized = {
+  readonly type: "DisputeFinalized";
+  readonly sender: string;
+  readonly counterentity: string;
+  readonly nonce: bigint;
+  readonly finalProofbodyHash: string;
+  readonly finalizationEvidenceHash: string;
+  readonly finalProofbody?: ProofBody | undefined;
+  readonly initialProofbodyHash?: string | undefined;
+  readonly evidence?: DisputeFinalizationEvidence | undefined;
+  readonly batchNonce?: number | undefined;
+};
+type SecretRevealed = {
+  readonly type: "SecretRevealed";
+  readonly hashlock: string;
+  readonly revealer: string;
+  readonly secret: string;
+};
+type CounterDisputeRegistered = {
+  readonly type: "CounterDisputeRegistered";
+  readonly sender: string;
+  readonly counterentity: string;
+  readonly nonce: bigint;
+  readonly proposerIsLeft: boolean;
+  readonly proofbodyHash: string;
+  readonly counterProofbody?: ProofBody | undefined;
+};
+type HashLadderRevealRegistered = {
+  readonly type: "HashLadderRevealRegistered";
+  readonly entity: string;
+  readonly counterpartyEntity: string;
+  readonly ladderHash: string;
+  readonly fillRatio: number;
+  readonly fullSecret: string;
+  readonly reveals: readonly [string, string, string, string];
+  readonly targetRole: boolean;
+  readonly revealedAt: bigint;
+};
+type DebtCreated = {
+  readonly type: "DebtCreated";
+  readonly debtor: string;
+  readonly creditor: string;
+  readonly tokenId: bigint;
+  readonly amount: bigint;
+  readonly debtIndex: bigint;
+};
+type DebtEnforced = {
+  readonly type: "DebtEnforced";
+  readonly debtor: string;
+  readonly creditor: string;
+  readonly tokenId: bigint;
+  readonly amountPaid: bigint;
+  readonly remainingAmount: bigint;
+  readonly newDebtIndex: bigint;
+};
+type DebtForgiven = {
+  readonly type: "DebtForgiven";
+  readonly debtor: string;
+  readonly creditor: string;
+  readonly tokenId: bigint;
+  readonly amountForgiven: bigint;
+  readonly debtIndex: bigint;
+};
+type FoundationBootstrapped = {
+  readonly type: "FoundationBootstrapped";
+  readonly recipient: string;
+  readonly boardHash: string;
+  readonly controlTokenId: bigint;
+  readonly dividendTokenId: bigint;
+};
+type EntityRegistered = {
+  readonly type: "EntityRegistered";
+  readonly entityId: string;
+  readonly entityNumber: bigint;
+  readonly boardHash: string;
+};
+type BoardActivated = {
+  readonly type: "BoardActivated";
+  readonly entityId: string;
+  readonly previousBoardHash: string;
+  readonly newBoardHash: string;
+  readonly previousBoardValidUntil: bigint;
+};
+type EntityProviderActionExecuted = {
+  readonly type: "EntityProviderActionExecuted";
+  readonly entityId: string;
+  readonly actionNonce: bigint;
+  readonly actionHash: string;
+  readonly actionKind: 0 | 1;
+};
+type EntityProviderActionCancelled = {
+  readonly type: "EntityProviderActionCancelled";
+  readonly entityId: string;
+  readonly actionNonce: bigint;
+  readonly cancelledActionHash: string;
+  readonly cancelledActionKind: 0 | 1;
+  readonly cancelHash: string;
 };
 export type JEventClaimBody =
-  | { readonly type: "HankoBatchProcessed"; readonly entityId: string; readonly batchHash: string; readonly nonce: bigint }
-  | { readonly type: "ReserveUpdated"; readonly entity: string; readonly tokenId: bigint; readonly newBalance: bigint }
-  | { readonly type: "AccountSettled"; readonly settled: readonly AccountSettlement[] }
-  | { readonly type: "DisputeStarted"; readonly sender: string; readonly counterentity: string; readonly nonce: bigint; readonly proposerIsLeft: boolean; readonly proofbodyHash: string; readonly watchSeed: string; readonly starterInitialArguments: string; readonly starterCounterArguments: string; readonly starterCounterProofCommitment: string; readonly disputeTimeout: bigint; readonly disputeStartTimestamp: bigint; readonly leftResponseSeconds: bigint; readonly rightResponseSeconds: bigint; readonly initialProofbody?: ProofBody | undefined; readonly batchNonce?: number | undefined }
-  | { readonly type: "DisputeFinalized"; readonly sender: string; readonly counterentity: string; readonly nonce: bigint; readonly finalProofbodyHash: string; readonly finalizationEvidenceHash: string; readonly finalProofbody?: ProofBody | undefined; readonly initialProofbodyHash?: string | undefined; readonly evidence?: DisputeFinalizationEvidence | undefined; readonly batchNonce?: number | undefined }
-  | { readonly type: "SecretRevealed"; readonly hashlock: string; readonly revealer: string; readonly secret: string }
-  | { readonly type: "CounterDisputeRegistered"; readonly sender: string; readonly counterentity: string; readonly nonce: bigint; readonly proposerIsLeft: boolean; readonly proofbodyHash: string; readonly counterProofbody?: ProofBody | undefined }
-  | { readonly type: "HashLadderRevealRegistered"; readonly entity: string; readonly counterpartyEntity: string; readonly ladderHash: string; readonly fillRatio: number; readonly fullSecret: string; readonly reveals: readonly [string, string, string, string]; readonly targetRole: boolean; readonly revealedAt: bigint }
-  | { readonly type: "DebtCreated"; readonly debtor: string; readonly creditor: string; readonly tokenId: bigint; readonly amount: bigint; readonly debtIndex: bigint }
-  | { readonly type: "DebtEnforced"; readonly debtor: string; readonly creditor: string; readonly tokenId: bigint; readonly amountPaid: bigint; readonly remainingAmount: bigint; readonly newDebtIndex: bigint }
-  | { readonly type: "DebtForgiven"; readonly debtor: string; readonly creditor: string; readonly tokenId: bigint; readonly amountForgiven: bigint; readonly debtIndex: bigint }
-  | { readonly type: "FoundationBootstrapped"; readonly recipient: string; readonly boardHash: string; readonly controlTokenId: bigint; readonly dividendTokenId: bigint }
-  | { readonly type: "EntityRegistered"; readonly entityId: string; readonly entityNumber: bigint; readonly boardHash: string }
-  | { readonly type: "BoardActivated"; readonly entityId: string; readonly previousBoardHash: string; readonly newBoardHash: string; readonly previousBoardValidUntil: bigint }
-  | { readonly type: "EntityProviderActionExecuted"; readonly entityId: string; readonly actionNonce: bigint; readonly actionHash: string; readonly actionKind: 0 | 1 }
-  | { readonly type: "EntityProviderActionCancelled"; readonly entityId: string; readonly actionNonce: bigint; readonly cancelledActionHash: string; readonly cancelledActionKind: 0 | 1; readonly cancelHash: string };
+  | HankoBatchProcessed
+  | ReserveUpdated
+  | AccountSettled
+  | DisputeStarted
+  | DisputeFinalized
+  | SecretRevealed
+  | CounterDisputeRegistered
+  | HashLadderRevealRegistered
+  | DebtCreated
+  | DebtEnforced
+  | DebtForgiven
+  | FoundationBootstrapped
+  | EntityRegistered
+  | BoardActivated
+  | EntityProviderActionExecuted
+  | EntityProviderActionCancelled;
 /** A decoded canonical log with its chain coordinates when the transport supplied them. */
 export type JEvent = JEventClaimBody & { readonly meta?: JEventMeta | undefined };
 export type ChainLog = { readonly topics: readonly string[]; readonly data: string } & JEventMeta;
 const wordHex = (topic: string): string => `0x${hexBody(topic).toLowerCase().padStart(64, "0")}`;
 const signedWord = (n: bigint): bigint => (n >= 1n << 255n ? n - (1n << 256n) : n);
-const topicsOf = (log: ChainLog, n: number, name: string): readonly string[] => {
-  const got = log.topics.slice(1, 1 + n);
-  if (got.length < n) throw new Error(`${name} log is missing an indexed topic`);
-  return got;
+const SAFE_INT = BigInt(Number.MAX_SAFE_INTEGER);
+/** og event-normalizers.ts: a normalizer returning null makes og ingress throw this. */
+const invalidPayload = (name: JEventName): never => {
+  throw new Error(`J_EVENT_CANONICAL_PAYLOAD_INVALID:${name}`);
+};
+/** ethers AddressCoder: toBeHex(word, 20) refuses a word wider than 20 bytes. */
+const addressFromWord = (n: bigint): string => {
+  if (n >> 160n !== 0n) throw new Error("address word exceeds 20 bytes");
+  return `0x${n.toString(16).padStart(40, "0")}`;
 };
 const readSettled = (buf: Uint8Array): readonly AccountSettlement[] => {
   if (buf.length < 64) return [];
-  const countOf = (h: AbiLength, stride: number): number => { const c = abiLengthWord(buf, h); if (!abiFits(buf, h, c, stride)) throw new Error("AccountSettled log count does not fit"); return Number(c); };
+  const countAt = (h: AbiLength, stride: number): number => {
+    const count = abiLengthWord(buf, h);
+    if (!abiFits(buf, h, count, stride)) throw new Error("AccountSettled log count does not fit");
+    return Number(count);
+  };
+  const tokenAt = (tokens: AbiLength, k: number): TokenSettlement => {
+    const at = abiInlineTuple(tokens, k, 192);
+    const word = (slot: number): bigint => abiWord(buf, at, slot);
+    const ondelta = (signedWord(word(128)) << 256n) + word(160);
+    return { tokenId: word(0), leftReserve: word(32), rightReserve: word(64), collateral: word(96), ondelta };
+  };
+  const rowAt = (rows: AbiLength, i: number): AccountSettlement => {
+    const row = abiTupleElement(buf, rows, i);
+    const tokensAt = abiLengthRef(buf, row, 64);
+    const tokens = Array.from({ length: countAt(tokensAt, 192) }, (_, k) => tokenAt(tokensAt, k));
+    const left = wordHex(bytesToHex(abiTupleBytes(buf, row, 0)));
+    const right = wordHex(bytesToHex(abiTupleBytes(buf, row, 32)));
+    return { left, right, tokens, nonce: abiWord(buf, row, 96) };
+  };
   const rows = abiLengthRef(buf, abiRoot(), 0);
-  return Array.from({ length: countOf(rows, 32) }, (_, i) => {
-    const row = abiTupleElement(buf, rows, i), tokensAt = abiLengthRef(buf, row, 64);
-    const tokens = Array.from({ length: countOf(tokensAt, 192) }, (_, k): TokenSettlement => {
-      const at = abiInlineTuple(tokensAt, k, 192);
-      return { tokenId: abiWord(buf, at, 0), leftReserve: abiWord(buf, at, 32), rightReserve: abiWord(buf, at, 64), collateral: abiWord(buf, at, 96), ondelta: (signedWord(abiWord(buf, at, 128)) << 256n) + abiWord(buf, at, 160) };
-    });
-    return { left: wordHex(bytesToHex(abiTupleBytes(buf, row, 0))), right: wordHex(bytesToHex(abiTupleBytes(buf, row, 32))), tokens, nonce: abiWord(buf, row, 96) };
-  });
+  return Array.from({ length: countAt(rows, 32) }, (_, i) => rowAt(rows, i));
 };
-const SAFE_INT = BigInt(Number.MAX_SAFE_INTEGER);
-/** og event-normalizers.ts: a normalizer returning null makes og ingress (rawEventToJEvents) throw J_EVENT_CANONICAL_PAYLOAD_INVALID. */
-const invalidPayload = (name: JEventName): never => { throw new Error(`J_EVENT_CANONICAL_PAYLOAD_INVALID:${name}`); };
-/** og normalizeInt: a safe integer (the ABI word is unsigned). */
-const safeWord = (name: JEventName, n: bigint, min = 0n): bigint => (n >= min && n <= SAFE_INT ? n : invalidPayload(name));
-/** ethers AddressCoder: toBeHex(word, 20) refuses a word wider than 20 bytes. */
-const addressFromWord = (n: bigint): string => { if (n >> 160n !== 0n) throw new Error("address word exceeds 20 bytes"); return `0x${n.toString(16).padStart(40, "0")}`; };
-const readOne = (log: ChainLog): JEventClaimBody | undefined => {
-  const topic = log.topics[0]?.toLowerCase(), buf = hexToBytes(log.data), head = abiRoot();
-  const is = (n: JEventName): boolean => topic === jEventTopic(n).toLowerCase();
-  // ethers coders: uintN masks the word to N bits, bool is any non-zero word.
-  const w = (i: number): bigint => abiWord(buf, head, 32 * i), h = (i: number): string => wordHex(bytesToHex(abiTupleBytes(buf, head, 32 * i))), flag = (i: number): boolean => w(i) !== 0n;
-  const topics = (name: JEventName, n: number): readonly string[] => topicsOf(log, n, name).map(wordHex);
-  if (topic === undefined) return undefined;
-  if (is("HankoBatchProcessed")) { const [entityId = "", batchHash = ""] = topics("HankoBatchProcessed", 2); return { type: "HankoBatchProcessed", entityId, batchHash, nonce: safeWord("HankoBatchProcessed", w(0), 1n) }; }
-  if (is("ReserveUpdated")) { const [entity = "", token = "0x0"] = topics("ReserveUpdated", 2); return { type: "ReserveUpdated", entity, tokenId: safeWord("ReserveUpdated", BigInt(token)), newBalance: w(0) }; }
-  if (is("AccountSettled")) return { type: "AccountSettled", settled: readSettled(buf) };
-  if (is("DisputeStarted")) {
-    const [sender = "", counterentity = "", nonce = "0x0"] = topics("DisputeStarted", 3);
-    const timeout = w(6), start = w(7), left = w(8) & 0xffff_ffffn, right = w(9) & 0xffff_ffffn;
-    // og j-event-payloads.ts assertRawEventSpecificFields: a positive safe-integer clock whose timeout is exactly start + both response windows.
-    if (timeout <= 0n || timeout > SAFE_INT || start <= 0n || start > SAFE_INT || timeout < start || timeout !== start + left + right) throw new Error(`J_EVENT_DISPUTE_CLOCK_INVALID:${start}:${timeout}:${left}:${right}`);
+
+/** One log's topics and data words, read the way ethers' coders read them. */
+type LogReader = {
+  /** The first `n` indexed topics after the signature topic; a missing one throws. */
+  readonly topics: (n: number) => readonly string[];
+  readonly word: (slot: number) => bigint;
+  readonly hash: (slot: number) => string;
+  /** ethers' bool coder: any non-zero word is true. */
+  readonly flag: (slot: number) => boolean;
+  /** The dynamic `bytes` whose offset sits in head slot `slot`. */
+  readonly bytes: (slot: number) => string;
+  /** og normalizeInt: a safe integer, at least `min`. */
+  readonly safe: (n: bigint, min?: bigint) => bigint;
+  readonly invalid: () => never;
+  readonly buf: Uint8Array;
+};
+const logReader = (log: ChainLog, name: JEventName, buf: Uint8Array): LogReader => {
+  const head = abiRoot();
+  const topics = (n: number): readonly string[] => {
+    const indexed = log.topics.slice(1, 1 + n);
+    if (indexed.length < n) throw new Error(`${name} log is missing an indexed topic`);
+    return indexed.map(wordHex);
+  };
+  const word = (slot: number): bigint => abiWord(buf, head, 32 * slot);
+  const hash = (slot: number): string => wordHex(bytesToHex(abiTupleBytes(buf, head, 32 * slot)));
+  const bytes = (slot: number): string => bytesToHex(abiBytes(buf, abiLengthRef(buf, head, 32 * slot)));
+  const safe = (n: bigint, min = 0n): bigint => (n >= min && n <= SAFE_INT ? n : invalidPayload(name));
+  const invalid = (): never => invalidPayload(name);
+  return { topics, word, hash, flag: (slot) => word(slot) !== 0n, bytes, safe, invalid, buf };
+};
+const UINT32_MASK = 0xffff_ffffn;
+/** og j-event-payloads.ts: a positive safe clock whose timeout is start plus both response windows. */
+const disputeClockValid = (start: bigint, timeout: bigint, left: bigint, right: bigint): boolean => {
+  const positiveSafe = (n: bigint): boolean => n > 0n && n <= SAFE_INT;
+  return positiveSafe(timeout) && positiveSafe(start) && timeout >= start && timeout === start + left + right;
+};
+/** The uint8 action kind of an EntityProvider action: 0 or 1. */
+const actionKindOf = (r: LogReader, slot: number): 0 | 1 => {
+  switch (r.word(slot) & 0xffn) {
+    case 0n: return 0;
+    case 1n: return 1;
+    default: return r.invalid();
+  }
+};
+type JEventReaders = { readonly [K in JEventName]: (r: LogReader) => Extract<JEventClaimBody, { type: K }> };
+const readers: JEventReaders = {
+  HankoBatchProcessed: (r) => {
+    const [entityId = "", batchHash = ""] = r.topics(2);
+    return { type: "HankoBatchProcessed", entityId, batchHash, nonce: r.safe(r.word(0), 1n) };
+  },
+  ReserveUpdated: (r) => {
+    const [entity = "", token = "0x0"] = r.topics(2);
+    return { type: "ReserveUpdated", entity, tokenId: r.safe(BigInt(token)), newBalance: r.word(0) };
+  },
+  AccountSettled: (r) => ({ type: "AccountSettled", settled: readSettled(r.buf) }),
+  DisputeStarted: (r) => {
+    const [sender = "", counterentity = "", nonce = "0x0"] = r.topics(3);
+    const timeout = r.word(6), start = r.word(7);
+    const left = r.word(8) & UINT32_MASK, right = r.word(9) & UINT32_MASK;
+    if (!disputeClockValid(start, timeout, left, right)) {
+      throw new Error(`J_EVENT_DISPUTE_CLOCK_INVALID:${start}:${timeout}:${left}:${right}`);
+    }
     return {
-      type: "DisputeStarted", sender, counterentity, nonce: BigInt(nonce), proposerIsLeft: flag(0), proofbodyHash: h(1), watchSeed: h(2),
-      starterInitialArguments: bytesToHex(abiBytes(buf, abiLengthRef(buf, head, 96))), starterCounterArguments: bytesToHex(abiBytes(buf, abiLengthRef(buf, head, 128))),
-      starterCounterProofCommitment: h(5), disputeTimeout: timeout, disputeStartTimestamp: start, leftResponseSeconds: left, rightResponseSeconds: right,
+      type: "DisputeStarted",
+      sender,
+      counterentity,
+      nonce: BigInt(nonce),
+      proposerIsLeft: r.flag(0),
+      proofbodyHash: r.hash(1),
+      watchSeed: r.hash(2),
+      starterInitialArguments: r.bytes(3),
+      starterCounterArguments: r.bytes(4),
+      starterCounterProofCommitment: r.hash(5),
+      disputeTimeout: timeout,
+      disputeStartTimestamp: start,
+      leftResponseSeconds: left,
+      rightResponseSeconds: right,
     };
-  }
-  if (is("DisputeFinalized")) {
-    const [sender = "", counterentity = "", nonce = "0x0"] = topics("DisputeFinalized", 3);
-    return { type: "DisputeFinalized", sender, counterentity, nonce: BigInt(nonce), finalProofbodyHash: h(0), finalizationEvidenceHash: h(1) };
-  }
-  if (is("SecretRevealed")) { const [hashlock = "", revealer = ""] = topics("SecretRevealed", 2); return { type: "SecretRevealed", hashlock, revealer, secret: h(0) }; }
-  if (is("CounterDisputeRegistered")) {
-    const [sender = "", counterentity = "", nonce = "0x0"] = topics("CounterDisputeRegistered", 3);
-    return { type: "CounterDisputeRegistered", sender, counterentity, nonce: safeWord("CounterDisputeRegistered", BigInt(nonce)), proposerIsLeft: flag(0), proofbodyHash: h(1) };
-  }
-  if (is("HashLadderRevealRegistered")) {
-    const [entity = "", counterpartyEntity = ""] = topics("HashLadderRevealRegistered", 2), fillRatio = w(1) & 0xffffn;
-    // og hashLadderRevealRegistered: a non-zero uint16 ratio and a positive safe-integer reveal time.
-    if (fillRatio === 0n) return invalidPayload("HashLadderRevealRegistered");
-    return { type: "HashLadderRevealRegistered", entity, counterpartyEntity, ladderHash: h(0), fillRatio: Number(fillRatio), fullSecret: h(2), reveals: [h(3), h(4), h(5), h(6)], targetRole: flag(7), revealedAt: safeWord("HashLadderRevealRegistered", w(8), 1n) };
-  }
-  if (is("DebtCreated")) {
-    const [debtor = "", creditor = "", token = "0x0"] = topics("DebtCreated", 3);
-    return { type: "DebtCreated", debtor, creditor, tokenId: safeWord("DebtCreated", BigInt(token)), amount: (w(0) << 256n) + w(1), debtIndex: safeWord("DebtCreated", w(2)) };
-  }
-  if (is("DebtEnforced")) {
-    const [debtor = "", creditor = "", token = "0x0"] = topics("DebtEnforced", 3);
-    return { type: "DebtEnforced", debtor, creditor, tokenId: safeWord("DebtEnforced", BigInt(token)), amountPaid: w(0), remainingAmount: (w(1) << 256n) + w(2), newDebtIndex: safeWord("DebtEnforced", w(3)) };
-  }
-  if (is("DebtForgiven")) {
-    const [debtor = "", creditor = "", token = "0x0"] = topics("DebtForgiven", 3);
-    return { type: "DebtForgiven", debtor, creditor, tokenId: safeWord("DebtForgiven", BigInt(token)), amountForgiven: (w(0) << 256n) + w(1), debtIndex: safeWord("DebtForgiven", w(2)) };
-  }
-  if (is("FoundationBootstrapped")) {
-    const [recipient = "0x0", boardHash = ""] = topics("FoundationBootstrapped", 2);
-    return { type: "FoundationBootstrapped", recipient: addressFromWord(BigInt(recipient)), boardHash, controlTokenId: w(0), dividendTokenId: w(1) };
-  }
-  if (is("EntityRegistered")) { const [entityId = "", entityNumber = "0x0"] = topics("EntityRegistered", 2); return { type: "EntityRegistered", entityId, entityNumber: BigInt(entityNumber), boardHash: h(0) }; }
-  if (is("BoardActivated")) {
-    const [entityId = ""] = topics("BoardActivated", 1), until = w(2);
+  },
+  DisputeFinalized: (r) => {
+    const [sender = "", counterentity = "", nonce = "0x0"] = r.topics(3);
+    return {
+      type: "DisputeFinalized",
+      sender,
+      counterentity,
+      nonce: BigInt(nonce),
+      finalProofbodyHash: r.hash(0),
+      finalizationEvidenceHash: r.hash(1),
+    };
+  },
+  SecretRevealed: (r) => {
+    const [hashlock = "", revealer = ""] = r.topics(2);
+    return { type: "SecretRevealed", hashlock, revealer, secret: r.hash(0) };
+  },
+  CounterDisputeRegistered: (r) => {
+    const [sender = "", counterentity = "", nonce = "0x0"] = r.topics(3);
+    return {
+      type: "CounterDisputeRegistered",
+      sender,
+      counterentity,
+      nonce: r.safe(BigInt(nonce)),
+      proposerIsLeft: r.flag(0),
+      proofbodyHash: r.hash(1),
+    };
+  },
+  HashLadderRevealRegistered: (r) => {
+    const [entity = "", counterpartyEntity = ""] = r.topics(2);
+    const fillRatio = r.word(1) & 0xffffn;
+    // og hashLadderRevealRegistered: a zero ratio reveals nothing.
+    if (fillRatio === 0n) return r.invalid();
+    return {
+      type: "HashLadderRevealRegistered",
+      entity,
+      counterpartyEntity,
+      ladderHash: r.hash(0),
+      fillRatio: Number(fillRatio),
+      fullSecret: r.hash(2),
+      reveals: [r.hash(3), r.hash(4), r.hash(5), r.hash(6)],
+      targetRole: r.flag(7),
+      revealedAt: r.safe(r.word(8), 1n),
+    };
+  },
+  DebtCreated: (r) => {
+    const [debtor = "", creditor = "", token = "0x0"] = r.topics(3);
+    const tokenId = r.safe(BigInt(token));
+    const amount = (r.word(0) << 256n) + r.word(1);
+    return { type: "DebtCreated", debtor, creditor, tokenId, amount, debtIndex: r.safe(r.word(2)) };
+  },
+  DebtEnforced: (r) => {
+    const [debtor = "", creditor = "", token = "0x0"] = r.topics(3);
+    return {
+      type: "DebtEnforced",
+      debtor,
+      creditor,
+      tokenId: r.safe(BigInt(token)),
+      amountPaid: r.word(0),
+      remainingAmount: (r.word(1) << 256n) + r.word(2),
+      newDebtIndex: r.safe(r.word(3)),
+    };
+  },
+  DebtForgiven: (r) => {
+    const [debtor = "", creditor = "", token = "0x0"] = r.topics(3);
+    return {
+      type: "DebtForgiven",
+      debtor,
+      creditor,
+      tokenId: r.safe(BigInt(token)),
+      amountForgiven: (r.word(0) << 256n) + r.word(1),
+      debtIndex: r.safe(r.word(2)),
+    };
+  },
+  FoundationBootstrapped: (r) => {
+    const [recipient = "0x0", boardHash = ""] = r.topics(2);
+    return {
+      type: "FoundationBootstrapped",
+      recipient: addressFromWord(BigInt(recipient)),
+      boardHash,
+      controlTokenId: r.word(0),
+      dividendTokenId: r.word(1),
+    };
+  },
+  EntityRegistered: (r) => {
+    const [entityId = "", entityNumber = "0x0"] = r.topics(2);
+    return { type: "EntityRegistered", entityId, entityNumber: BigInt(entityNumber), boardHash: r.hash(0) };
+  },
+  BoardActivated: (r) => {
+    const [entityId = ""] = r.topics(1);
+    const until = r.word(2);
     // og boardActivated: the previous board keeps an exclusive, non-zero validity boundary.
-    return until > 0n ? { type: "BoardActivated", entityId, previousBoardHash: h(0), newBoardHash: h(1), previousBoardValidUntil: until } : invalidPayload("BoardActivated");
-  }
-  const actionKind = (name: JEventName, n: bigint): 0 | 1 => { const k = n & 0xffn; return k === 0n ? 0 : k === 1n ? 1 : invalidPayload(name); };
-  if (is("EntityProviderActionExecuted")) {
-    const [entityId = "", actionNonce = "0x0", actionHash = ""] = topics("EntityProviderActionExecuted", 3), nonce = BigInt(actionNonce);
-    return nonce >= 1n ? { type: "EntityProviderActionExecuted", entityId, actionNonce: nonce, actionHash, actionKind: actionKind("EntityProviderActionExecuted", w(0)) } : invalidPayload("EntityProviderActionExecuted");
-  }
-  if (is("EntityProviderActionCancelled")) {
-    const [entityId = "", actionNonce = "0x0", cancelledActionHash = ""] = topics("EntityProviderActionCancelled", 3), nonce = BigInt(actionNonce);
-    return nonce >= 1n ? { type: "EntityProviderActionCancelled", entityId, actionNonce: nonce, cancelledActionHash, cancelledActionKind: actionKind("EntityProviderActionCancelled", w(0)), cancelHash: h(1) } : invalidPayload("EntityProviderActionCancelled");
-  }
-  return undefined;
+    if (until <= 0n) return r.invalid();
+    return {
+      type: "BoardActivated",
+      entityId,
+      previousBoardHash: r.hash(0),
+      newBoardHash: r.hash(1),
+      previousBoardValidUntil: until,
+    };
+  },
+  EntityProviderActionExecuted: (r) => {
+    const [entityId = "", actionNonce = "0x0", actionHash = ""] = r.topics(3);
+    const nonce = BigInt(actionNonce);
+    if (nonce < 1n) return r.invalid();
+    const actionKind = actionKindOf(r, 0);
+    return { type: "EntityProviderActionExecuted", entityId, actionNonce: nonce, actionHash, actionKind };
+  },
+  EntityProviderActionCancelled: (r) => {
+    const [entityId = "", actionNonce = "0x0", cancelledActionHash = ""] = r.topics(3);
+    const nonce = BigInt(actionNonce);
+    if (nonce < 1n) return r.invalid();
+    return {
+      type: "EntityProviderActionCancelled",
+      entityId,
+      actionNonce: nonce,
+      cancelledActionHash,
+      cancelledActionKind: actionKindOf(r, 0),
+      cancelHash: r.hash(1),
+    };
+  },
+};
+/** The data is decoded before the topic is looked at, so malformed data throws even for an unknown log. */
+const readOne = (log: ChainLog): JEventClaimBody | undefined => {
+  const buf = hexToBytes(log.data);
+  const topic = log.topics[0]?.toLowerCase();
+  const name = topic === undefined ? undefined : eventByTopic.get(topic);
+  return name === undefined ? undefined : readers[name](logReader(log, name, buf));
 };
 const logMeta = (l: ChainLog): JEventMeta | undefined => {
-  const meta: JEventMeta = { ...opt("blockNumber", l.blockNumber), ...opt("blockHash", l.blockHash), ...opt("transactionHash", l.transactionHash), ...opt("logIndex", l.logIndex) };
+  const meta: JEventMeta = {
+    ...opt("blockNumber", l.blockNumber),
+    ...opt("blockHash", l.blockHash),
+    ...opt("transactionHash", l.transactionHash),
+    ...opt("logIndex", l.logIndex),
+  };
   return Object.keys(meta).length === 0 ? undefined : meta;
 };
-/** og decodeJEventLog + event-normalizers.ts for the Depository and EntityProvider consensus events; an unknown topic is ignored, a malformed canonical payload throws. */
-export const readJEvents = (logs: readonly ChainLog[]): readonly JEvent[] => logs.flatMap((l): JEvent[] => { const r = readOne(l); if (r === undefined) return []; const meta = logMeta(l); return [meta === undefined ? r : { ...r, meta }]; });
-export const readJEventVector = (inputs: { readonly logs: readonly ChainLog[] }): unknown => JSON.parse(JSON.stringify(readJEvents(inputs.logs), (_k, v: unknown) => (typeof v === "bigint" ? v.toString() : v)));
-export const encodeAccountSettledData = (settled: readonly AccountSettlement[]): string => abiEncodeHex([arr(settled, (r) =>
-  t([A.b32(r.left), A.b32(r.right), arr(r.tokens, (x) => t([A.uint(x.tokenId), A.uint(x.leftReserve), A.uint(x.rightReserve), A.uint(x.collateral), int512Abi(x.ondelta)])), A.uint(r.nonce)]))]);
+/** og decodeJEventLog + event-normalizers.ts: an unknown topic is ignored, a malformed payload throws. */
+export const readJEvents = (logs: readonly ChainLog[]): readonly JEvent[] =>
+  logs.flatMap((log): JEvent[] => {
+    const body = readOne(log);
+    if (body === undefined) return [];
+    const meta = logMeta(log);
+    return [meta === undefined ? body : { ...body, meta }];
+  });
+export const readJEventVector = (inputs: { readonly logs: readonly ChainLog[] }): unknown => {
+  const bigintsAsText = (_k: string, v: unknown) => (typeof v === "bigint" ? v.toString() : v);
+  return JSON.parse(JSON.stringify(readJEvents(inputs.logs), bigintsAsText));
+};
+export const encodeAccountSettledData = (settled: readonly AccountSettlement[]): string => {
+  const tokenAbi = (x: TokenSettlement): Abi => t([
+    A.uint(x.tokenId),
+    A.uint(x.leftReserve),
+    A.uint(x.rightReserve),
+    A.uint(x.collateral),
+    int512Abi(x.ondelta),
+  ]);
+  const rowAbi = (r: AccountSettlement): Abi =>
+    t([A.b32(r.left), A.b32(r.right), arr(r.tokens, tokenAbi), A.uint(r.nonce)]);
+  return abiEncodeHex([arr(settled, rowAbi)]);
+};
 
-/** A schema-driven ABI reader (ethers semantics: uint words as-is, bool any non-zero word, address refuses high bits, a pointer or length past the buffer throws). */
-type AbiType = "uint" | "u8" | "u16" | "u32" | "int" | "bool" | "address" | "b32" | "bytes" | { readonly array: AbiType } | { readonly tuple: readonly AbiType[] };
+
+// ---- decoding Depository calldata by schema ----
+
+/** ethers semantics: uint words as-is, bool any non-zero word, address refuses high bits. */
+type AbiType =
+  | "uint" | "u8" | "u16" | "u32" | "int" | "bool" | "address" | "b32" | "bytes"
+  | { readonly array: AbiType }
+  | { readonly tuple: readonly AbiType[] };
 type AbiValue = bigint | boolean | string | readonly AbiValue[];
-const abiDyn = (ty: AbiType): boolean => (typeof ty === "string" ? ty === "bytes" : "array" in ty ? true : ty.tuple.some(abiDyn));
-const abiHead = (ty: AbiType): number => (typeof ty !== "string" && "tuple" in ty && !abiDyn(ty) ? ty.tuple.reduce((n, c) => n + abiHead(c), 0) : 32);
+const abiDyn = (ty: AbiType): boolean => {
+  if (typeof ty === "string") return ty === "bytes";
+  return "array" in ty ? true : ty.tuple.some(abiDyn);
+};
+/** A static tuple is laid out inline; everything else takes one head word. */
+const abiHead = (ty: AbiType): number => {
+  const staticTuple = typeof ty !== "string" && "tuple" in ty && !abiDyn(ty);
+  return staticTuple ? ty.tuple.reduce((n, c) => n + abiHead(c), 0) : 32;
+};
 const NARROW = { u8: 8n, u16: 16n, u32: 32n } as const;
-const abiSig = (ty: AbiType): string => (typeof ty === "string" ? (ty === "b32" ? "bytes32" : ty === "uint" ? "uint256" : ty === "int" ? "int256" : ty === "u8" || ty === "u16" || ty === "u32" ? `uint${NARROW[ty]}` : ty) : "array" in ty ? `${abiSig(ty.array)}[]` : `(${ty.tuple.map(abiSig).join(",")})`);
-const abiRead = (buf: Uint8Array, at: number): bigint => { if (!Number.isSafeInteger(at) || at < 0 || at + 32 > buf.length) throw new Error("ABI_DECODE_OVERRUN"); return wordAt(buf, at); };
+const abiSig = (ty: AbiType): string => {
+  if (typeof ty !== "string") return "array" in ty ? `${abiSig(ty.array)}[]` : `(${ty.tuple.map(abiSig).join(",")})`;
+  switch (ty) {
+    case "b32": return "bytes32";
+    case "uint": return "uint256";
+    case "int": return "int256";
+    case "u8": case "u16": case "u32": return `uint${NARROW[ty]}`;
+    default: return ty;
+  }
+};
+/** A pointer or length past the buffer throws, as ethers does. */
+const abiRead = (buf: Uint8Array, at: number): bigint => {
+  if (!Number.isSafeInteger(at) || at < 0 || at + 32 > buf.length) throw new Error("ABI_DECODE_OVERRUN");
+  return wordAt(buf, at);
+};
+/** The raw 32 bytes at `at`, bounds-checked like any word read. */
+const abiWordBytes = (buf: Uint8Array, at: number): Uint8Array => {
+  abiRead(buf, at);
+  return buf.subarray(at, at + 32);
+};
+const abiBytesAt = (buf: Uint8Array, at: number): string => {
+  const n = abiRead(buf, at);
+  if (n > BigInt(buf.length - at - 32)) throw new Error("ABI_DECODE_OVERRUN");
+  return bytesToHex(buf.subarray(at + 32, at + 32 + Number(n)));
+};
+const abiArrayAt = (buf: Uint8Array, item: AbiType, at: number): readonly AbiValue[] => {
+  const n = abiRead(buf, at);
+  if (n * 32n > BigInt(buf.length - at - 32)) throw new Error("ABI_DECODE_OVERRUN");
+  const base = at + 32;
+  return Array.from({ length: Number(n) }, (_, i) => abiSlot(buf, item, base, base + i * abiHead(item)));
+};
 const abiDecodeAt = (buf: Uint8Array, ty: AbiType, at: number): AbiValue => {
-  if (ty === "uint") return abiRead(buf, at);
-  if (ty === "u8" || ty === "u16" || ty === "u32") return abiRead(buf, at) & ((1n << NARROW[ty]) - 1n);
-  if (ty === "int") return signedWord(abiRead(buf, at));
-  if (ty === "bool") return abiRead(buf, at) !== 0n;
-  if (ty === "address") return addressFromWord(abiRead(buf, at));
-  if (ty === "b32") { abiRead(buf, at); return bytesToHex(buf.subarray(at, at + 32)); }
-  if (ty === "bytes") { const n = abiRead(buf, at); if (n > BigInt(buf.length - at - 32)) throw new Error("ABI_DECODE_OVERRUN"); return bytesToHex(buf.subarray(at + 32, at + 32 + Number(n))); }
-  if ("array" in ty) { const n = abiRead(buf, at); if (n * 32n > BigInt(buf.length - at - 32)) throw new Error("ABI_DECODE_OVERRUN"); return abiSequence(buf, Array.from({ length: Number(n) }, () => ty.array), at + 32); }
-  return abiSequence(buf, ty.tuple, at);
+  if (typeof ty !== "string") return "array" in ty ? abiArrayAt(buf, ty.array, at) : abiSequence(buf, ty.tuple, at);
+  switch (ty) {
+    case "uint": return abiRead(buf, at);
+    case "u8": case "u16": case "u32": return abiRead(buf, at) & ((1n << NARROW[ty]) - 1n);
+    case "int": return signedWord(abiRead(buf, at));
+    case "bool": return abiRead(buf, at) !== 0n;
+    case "address": return addressFromWord(abiRead(buf, at));
+    case "b32": return bytesToHex(abiWordBytes(buf, at));
+    case "bytes": return abiBytesAt(buf, at);
+  }
 };
+/** A dynamic value's head slot holds its offset from the start of the enclosing sequence. */
+const abiSlot = (buf: Uint8Array, ty: AbiType, base: number, slotAt: number): AbiValue =>
+  (abiDyn(ty) ? abiDecodeAt(buf, ty, base + Number(abiRead(buf, slotAt))) : abiDecodeAt(buf, ty, slotAt));
 const abiSequence = (buf: Uint8Array, tys: readonly AbiType[], base: number): readonly AbiValue[] => {
-  let off = base;
-  return tys.map((ty) => { const v = abiDyn(ty) ? abiDecodeAt(buf, ty, base + Number(abiRead(buf, off))) : abiDecodeAt(buf, ty, off); off += abiHead(ty); return v; });
+  const [, slots] = mapAccum(tys, base, (at, ty) => [at + abiHead(ty), at] as const);
+  return tys.map((ty, i) => abiSlot(buf, ty, base, slots[i] ?? base));
 };
-const S_PROOF: AbiType = { tuple: ["b32", "u32", "u32", { array: { tuple: ["int", "uint"] } }, { array: "uint" }, { array: { tuple: ["address", "bytes", { array: { tuple: ["uint", "uint", "uint"] } }] } }] };
+const S_PROOF: AbiType = { tuple: [
+  "b32", "u32", "u32",
+  { array: { tuple: ["int", "uint"] } },
+  { array: "uint" },
+  { array: { tuple: ["address", "bytes", { array: { tuple: ["uint", "uint", "uint"] } }] } },
+] };
 const S_SIGNED: AbiType = { tuple: ["bool", "uint"] };
-const S_FINAL: AbiType = { tuple: ["b32", "uint", "uint", "bool", "b32", S_PROOF, "bytes", "bytes", "bytes", "bool", "bool"] };
+const S_FINAL: AbiType = {
+  tuple: ["b32", "uint", "uint", "bool", "b32", S_PROOF, "bytes", "bytes", "bytes", "bool", "bool"],
+};
+const S_SETTLEMENT: AbiType = { tuple: [
+  "b32", "b32",
+  { array: { tuple: ["uint", S_SIGNED, S_SIGNED, S_SIGNED, S_SIGNED] } },
+  { array: "uint" },
+  "bytes", "uint",
+] };
 const S_BATCH: AbiType = { tuple: [
-  { array: { tuple: ["b32", "uint", "uint"] } }, { array: { tuple: ["uint", "b32", { array: { tuple: ["b32", "uint"] } }] } }, { array: { tuple: ["b32", "uint", "uint", "uint", "bytes"] } },
-  { array: { tuple: ["b32", "b32", { array: { tuple: ["uint", S_SIGNED, S_SIGNED, S_SIGNED, S_SIGNED] } }, { array: "uint" }, "bytes", "uint"] } },
-  { array: { tuple: ["b32", "uint", "bool", "b32", S_PROOF, "b32", "bytes", "bytes", "bytes", "b32"] } }, { array: { tuple: ["b32", "uint", "b32", "uint", "bool", S_PROOF, "bytes"] } }, { array: S_FINAL },
-  { array: { tuple: ["b32", "address", "uint", "u8", "uint", "uint"] } }, { array: { tuple: ["b32", "uint", "uint"] } }, { array: { tuple: ["address", "b32"] } },
+  { array: { tuple: ["b32", "uint", "uint"] } },
+  { array: { tuple: ["uint", "b32", { array: { tuple: ["b32", "uint"] } }] } },
+  { array: { tuple: ["b32", "uint", "uint", "uint", "bytes"] } },
+  { array: S_SETTLEMENT },
+  { array: { tuple: ["b32", "uint", "bool", "b32", S_PROOF, "b32", "bytes", "bytes", "bytes", "b32"] } },
+  { array: { tuple: ["b32", "uint", "b32", "uint", "bool", S_PROOF, "bytes"] } },
+  { array: S_FINAL },
+  { array: { tuple: ["b32", "address", "uint", "u8", "uint", "uint"] } },
+  { array: { tuple: ["b32", "uint", "uint"] } },
+  { array: { tuple: ["address", "b32"] } },
   { array: { tuple: ["b32", "bool", "b32", "b32", { tuple: ["u16", "b32", "b32", "b32", "b32", "b32"] }] } },
 ] };
 type Row = readonly AbiValue[];
-const rows = (v: AbiValue): readonly Row[] => v as readonly Row[];
-const big = (v: AbiValue | undefined): bigint => v as bigint, str = (v: AbiValue | undefined): string => v as string, yes = (v: AbiValue | undefined): boolean => v as boolean;
+const rows = (v: AbiValue | undefined): readonly Row[] => (v ?? []) as readonly Row[];
+const big = (v: AbiValue | undefined): bigint => v as bigint;
+const str = (v: AbiValue | undefined): string => v as string;
+const yes = (v: AbiValue | undefined): boolean => v as boolean;
 /** og validateJBatch `integer`: token ids, nonces, windows and ratios are safe integers. */
-const int = (v: AbiValue | undefined): bigint => { const n = big(v); if (n > SAFE_INT) throw new Error("J_BATCH_ABI_RESULT_INTEGER"); return n; };
+const int = (v: AbiValue | undefined): bigint => {
+  const n = big(v);
+  if (n > SAFE_INT) throw new Error("J_BATCH_ABI_RESULT_INTEGER");
+  return n;
+};
 /** og decodeSignedAmount: a negative zero is not a SignedAmount. */
-const signedOf = (v: AbiValue | undefined): bigint => { const [neg, mag] = v as Row; if (neg === true && mag === 0n) throw new Error("ABI_MONEY_NEGATIVE_ZERO"); return neg === true ? -big(mag) : big(mag); };
-const proofOf_ = (v: AbiValue | undefined): ProofBody => {
-  const [watchSeed, l, r, offdeltas, tokenIds, transformers] = v as Row;
+const signedOf = (v: AbiValue | undefined): bigint => {
+  const [negative, magnitude] = v as Row;
+  if (negative === true && magnitude === 0n) throw new Error("ABI_MONEY_NEGATIVE_ZERO");
+  return negative === true ? -big(magnitude) : big(magnitude);
+};
+const allowanceOf = ([d, ra, la]: Row): JAllowance =>
+  ({ deltaIndex: big(d), rightAllowance: big(ra), leftAllowance: big(la) });
+const transformerOf = ([a, e, al]: Row): TransformerClause =>
+  ({ transformerAddress: str(a), encodedBatch: str(e), allowances: rows(al).map(allowanceOf) });
+const decodedProofBody = (v: AbiValue | undefined): ProofBody => {
+  const [watchSeed, left, right, offdeltas, tokenIds, transformers] = v as Row;
   return {
-    watchSeed: str(watchSeed), leftResponseSeconds: int(l), rightResponseSeconds: int(r), offdeltas: rows(offdeltas ?? []).map(([hi, lo]) => (big(hi) << 256n) + big(lo)), tokenIds: (tokenIds as readonly bigint[]),
-    transformers: rows(transformers ?? []).map(([a, e, al]) => ({ transformerAddress: str(a), encodedBatch: str(e), allowances: rows(al ?? []).map(([d, ra, la]) => ({ deltaIndex: big(d), rightAllowance: big(ra), leftAllowance: big(la) })) })),
+    watchSeed: str(watchSeed),
+    leftResponseSeconds: int(left),
+    rightResponseSeconds: int(right),
+    offdeltas: rows(offdeltas).map(([hi, lo]) => (big(hi) << 256n) + big(lo)),
+    tokenIds: tokenIds as readonly bigint[],
+    transformers: rows(transformers).map(transformerOf),
   };
 };
 const finalOf = (v: Row): DisputeFinalization => {
-  const [counterentity, initialNonce, finalNonce, proposerIsLeft, initialProofbodyHash, finalProofbody, starterArguments, otherArguments, sig, startedByLeft, cooperative] = v;
-  return { counterentity: str(counterentity), initialNonce: int(initialNonce), finalNonce: int(finalNonce), proposerIsLeft: yes(proposerIsLeft), initialProofbodyHash: str(initialProofbodyHash), finalProofbody: proofOf_(finalProofbody), starterArguments: str(starterArguments), otherArguments: str(otherArguments), sig: str(sig), startedByLeft: yes(startedByLeft), cooperative: yes(cooperative) };
-};
-/** og decodeJBatch: the Depository Types.Batch tuple, SignedAmount diffs and Int512 offdeltas decoded to integers. */
-export const decodeBatch = (encoded: string): Batch => {
-  const [r2r, r2c, c2r, settlements, starts, counters, finals, e2r, r2e, reveals, ladders] = abiSequence(hexToBytes(encoded), [S_BATCH], 0)[0] as Row;
+  const [counterentity, initialNonce, finalNonce, proposerIsLeft, initialProofbodyHash] = v;
+  const [, , , , , finalProofbody, starterArguments, otherArguments, sig, startedByLeft, cooperative] = v;
   return {
-    reserveToReserve: rows(r2r ?? []).map(([e, tk, n]) => ({ receivingEntity: str(e), tokenId: int(tk), amount: big(n) })),
-    reserveToCollateral: rows(r2c ?? []).map(([tk, e, pairs]) => ({ tokenId: int(tk), receivingEntity: str(e), pairs: rows(pairs ?? []).map(([p, n]) => ({ entity: str(p), amount: big(n) })) })),
-    collateralToReserve: rows(c2r ?? []).map(([c, tk, n, nonce, sig]) => ({ counterparty: str(c), tokenId: int(tk), amount: big(n), nonce: int(nonce), sig: str(sig) })),
-    settlements: rows(settlements ?? []).map(([l, r, diffs, forgive, sig, nonce]) => ({
-      leftEntity: str(l), rightEntity: str(r), diffs: rows(diffs ?? []).map(([tk, ld, rd, cd, od]) => ({ tokenId: int(tk), leftDiff: signedOf(ld), rightDiff: signedOf(rd), collateralDiff: signedOf(cd), ondeltaDiff: signedOf(od) })),
-      forgiveDebtsInTokenIds: (forgive as readonly AbiValue[]).map(int), sig: str(sig), nonce: int(nonce),
-    })),
-    disputeStarts: rows(starts ?? []).map(([c, nonce, left, hash, body, seed, sig, ia, ca, commit]) => ({ counterentity: str(c), nonce: int(nonce), proposerIsLeft: yes(left), proofbodyHash: str(hash), initialProofbody: proofOf_(body), watchSeed: str(seed), sig: str(sig), starterInitialArguments: str(ia), starterCounterArguments: str(ca), starterCounterProofCommitment: str(commit) })),
-    counterDisputes: rows(counters ?? []).map(([c, initialNonce, initialHash, counterNonce, left, body, sig]) => ({ counterentity: str(c), initialNonce: int(initialNonce), initialProofbodyHash: str(initialHash), counterNonce: int(counterNonce), proposerIsLeft: yes(left), counterProofbody: proofOf_(body), sig: str(sig) })),
-    disputeFinalizations: rows(finals ?? []).map(finalOf),
-    externalTokenToReserve: rows(e2r ?? []).map(([e, a, x, ty, tk, n]) => ({ entity: str(e), contractAddress: str(a), externalTokenId: big(x), tokenType: int(ty), internalTokenId: int(tk), amount: big(n) })),
-    reserveToExternalToken: rows(r2e ?? []).map(([e, tk, n]) => ({ receivingEntity: str(e), tokenId: int(tk), amount: big(n) })),
-    revealSecrets: rows(reveals ?? []).map(([a, s]) => ({ transformer: str(a), secret: str(s) })),
-    hashLadderRegistrations: rows(ladders ?? []).map(([c, role, full, partial, wit]) => {
-      const [fillRatio, fullSecret, r0, r1, r2, r3] = wit as Row;
-      return { counterpartyEntity: str(c), targetRole: yes(role), fullHash: str(full), partialRoot: str(partial), witness: { fillRatio: int(fillRatio), fullSecret: str(fullSecret), reveals: [str(r0), str(r1), str(r2), str(r3)] as const } };
-    }),
+    counterentity: str(counterentity),
+    initialNonce: int(initialNonce),
+    finalNonce: int(finalNonce),
+    proposerIsLeft: yes(proposerIsLeft),
+    initialProofbodyHash: str(initialProofbodyHash),
+    finalProofbody: decodedProofBody(finalProofbody),
+    starterArguments: str(starterArguments),
+    otherArguments: str(otherArguments),
+    sig: str(sig),
+    startedByLeft: yes(startedByLeft),
+    cooperative: yes(cooperative),
+  };
+};
+const reserveTransferOf = ([e, tk, n]: Row): ReserveTransfer =>
+  ({ receivingEntity: str(e), tokenId: int(tk), amount: big(n) });
+const reserveToCollateralOf = ([tk, e, pairs]: Row): ReserveToCollateral => ({
+  tokenId: int(tk),
+  receivingEntity: str(e),
+  pairs: rows(pairs).map(([p, n]) => ({ entity: str(p), amount: big(n) })),
+});
+const collateralToReserveOf = ([c, tk, n, nonce, sig]: Row): CollateralToReserve =>
+  ({ counterparty: str(c), tokenId: int(tk), amount: big(n), nonce: int(nonce), sig: str(sig) });
+const diffOf = ([tk, ld, rd, cd, od]: Row): SettlementDiff => ({
+  tokenId: int(tk),
+  leftDiff: signedOf(ld),
+  rightDiff: signedOf(rd),
+  collateralDiff: signedOf(cd),
+  ondeltaDiff: signedOf(od),
+});
+const settlementOfRow = ([l, r, diffs, forgive, sig, nonce]: Row): Settlement => ({
+  leftEntity: str(l),
+  rightEntity: str(r),
+  diffs: rows(diffs).map(diffOf),
+  forgiveDebtsInTokenIds: (forgive as readonly AbiValue[]).map(int),
+  sig: str(sig),
+  nonce: int(nonce),
+});
+const disputeStartOf = ([c, nonce, left, hash, body, seed, sig, ia, ca, commit]: Row): DisputeStart => ({
+  counterentity: str(c),
+  nonce: int(nonce),
+  proposerIsLeft: yes(left),
+  proofbodyHash: str(hash),
+  initialProofbody: decodedProofBody(body),
+  watchSeed: str(seed),
+  sig: str(sig),
+  starterInitialArguments: str(ia),
+  starterCounterArguments: str(ca),
+  starterCounterProofCommitment: str(commit),
+});
+const counterDisputeOf = ([c, initialNonce, initialHash, counterNonce, left, body, sig]: Row): CounterDispute => ({
+  counterentity: str(c),
+  initialNonce: int(initialNonce),
+  initialProofbodyHash: str(initialHash),
+  counterNonce: int(counterNonce),
+  proposerIsLeft: yes(left),
+  counterProofbody: decodedProofBody(body),
+  sig: str(sig),
+});
+const externalTokenToReserveOf = ([e, a, x, ty, tk, n]: Row): ExternalTokenToReserve => ({
+  entity: str(e),
+  contractAddress: str(a),
+  externalTokenId: big(x),
+  tokenType: int(ty),
+  internalTokenId: int(tk),
+  amount: big(n),
+});
+const hashLadderRegistrationOf = ([c, role, full, partial, witness]: Row): HashLadderRegistration => {
+  const [fillRatio, fullSecret, r0, r1, r2, r3] = witness as Row;
+  const reveals = [str(r0), str(r1), str(r2), str(r3)] as const;
+  return {
+    counterpartyEntity: str(c),
+    targetRole: yes(role),
+    fullHash: str(full),
+    partialRoot: str(partial),
+    witness: { fillRatio: int(fillRatio), fullSecret: str(fullSecret), reveals },
+  };
+};
+/** og decodeJBatch: the Depository Types.Batch tuple, SignedAmounts and Int512s decoded to integers. */
+export const decodeBatch = (encoded: string): Batch => {
+  const [batch] = abiSequence(hexToBytes(encoded), [S_BATCH], 0);
+  const [r2r, r2c, c2r, settlements, starts, counters, finals, e2r, r2e, reveals, ladders] = batch as Row;
+  return {
+    reserveToReserve: rows(r2r).map(reserveTransferOf),
+    reserveToCollateral: rows(r2c).map(reserveToCollateralOf),
+    collateralToReserve: rows(c2r).map(collateralToReserveOf),
+    settlements: rows(settlements).map(settlementOfRow),
+    disputeStarts: rows(starts).map(disputeStartOf),
+    counterDisputes: rows(counters).map(counterDisputeOf),
+    disputeFinalizations: rows(finals).map(finalOf),
+    externalTokenToReserve: rows(e2r).map(externalTokenToReserveOf),
+    reserveToExternalToken: rows(r2e).map(reserveTransferOf),
+    revealSecrets: rows(reveals).map(([a, s]) => ({ transformer: str(a), secret: str(s) })),
+    hashLadderRegistrations: rows(ladders).map(hashLadderRegistrationOf),
   };
 };
 const selectorOf = (sig: string): string => keccak256Hex(utf8(sig)).slice(0, 10);
-const PROCESS_BATCH = ["bytes", "bytes", "uint"] as const, WATCHTOWER_COUNTER: readonly AbiType[] = ["b32", S_FINAL, "uint", "uint", "bytes"];
+const PROCESS_BATCH = ["bytes", "bytes", "uint"] as const;
+const WATCHTOWER_COUNTER: readonly AbiType[] = ["b32", S_FINAL, "uint", "uint", "bytes"];
 export const PROCESS_BATCH_SELECTOR = selectorOf("processBatch(bytes,bytes,uint256)");
-export const WATCHTOWER_COUNTER_DISPUTE_SELECTOR = selectorOf(`watchtowerCounterDispute(${WATCHTOWER_COUNTER.map(abiSig).join(",")})`);
+export const WATCHTOWER_COUNTER_DISPUTE_SELECTOR =
+  selectorOf(`watchtowerCounterDispute(${WATCHTOWER_COUNTER.map(abiSig).join(",")})`);
 type DisputeCall = Tagged<"batch", { batch: Batch }> | Tagged<"watchtower", { proof: DisputeFinalization }>;
-/** og depositoryTransactionInterface.parseTransaction over the two dispute-carrying Depository calls. */
-const disputeCall = (calldata: string, code: string): DisputeCall => {
-  const selector = calldata.slice(0, 10).toLowerCase(), args = hexToBytes(`0x${calldata.slice(10)}`);
-  try {
-    if (selector === PROCESS_BATCH_SELECTOR) {
+const decodeDisputeCall = (selector: string, args: Uint8Array, code: string): DisputeCall | undefined => {
+  switch (selector) {
+    case PROCESS_BATCH_SELECTOR: {
       const encoded = str(abiSequence(args, PROCESS_BATCH, 0)[0]);
       if (encoded === "0x") throw new Error(`${code}_BATCH_CALLDATA_MISSING`);
       return { _tag: "batch", batch: decodeBatch(encoded) };
     }
-    if (selector === WATCHTOWER_COUNTER_DISPUTE_SELECTOR) return { _tag: "watchtower", proof: finalOf(abiSequence(args, WATCHTOWER_COUNTER, 0)[1] as Row) };
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    throw new Error(message.startsWith(code) ? message : `${code}_CALLDATA_DECODE_FAILED:${message}`);
+    case WATCHTOWER_COUNTER_DISPUTE_SELECTOR:
+      return { _tag: "watchtower", proof: finalOf(abiSequence(args, WATCHTOWER_COUNTER, 0)[1] as Row) };
+    default:
+      return undefined;
   }
-  throw new Error(`${code}_CALLDATA_DECODE_FAILED:${code}_CALLDATA_UNKNOWN`);
+};
+/** og depositoryTransactionInterface.parseTransaction over the two dispute-carrying Depository calls. */
+const disputeCall = (calldata: string, code: string): DisputeCall => {
+  const selector = calldata.slice(0, 10).toLowerCase();
+  const args = hexToBytes(`0x${calldata.slice(10)}`);
+  const decoded = (() => {
+    try {
+      return decodeDisputeCall(selector, args, code);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      throw new Error(message.startsWith(code) ? message : `${code}_CALLDATA_DECODE_FAILED:${message}`);
+    }
+  })();
+  if (decoded === undefined) throw new Error(`${code}_CALLDATA_DECODE_FAILED:${code}_CALLDATA_UNKNOWN`);
+  return decoded;
 };
 export type DisputeProofEvidence = {
-  readonly eventName: "DisputeStarted" | "CounterDisputeRegistered" | "DisputeFinalized"; readonly counterentity: string; readonly nonce: bigint; readonly proposerIsLeft: boolean; readonly proofbodyHash: string;
-  readonly initialNonce?: bigint | undefined; readonly initialProofbodyHash?: string | undefined; readonly proofbody: ProofBody;
+  readonly eventName: "DisputeStarted" | "CounterDisputeRegistered" | "DisputeFinalized";
+  readonly counterentity: string;
+  readonly nonce: bigint;
+  readonly proposerIsLeft: boolean;
+  readonly proofbodyHash: string;
+  readonly initialNonce?: bigint | undefined;
+  readonly initialProofbodyHash?: string | undefined;
+  readonly proofbody: ProofBody;
 };
-/** og decodeDisputeProofBodyEvidenceCalldata: every signed ProofBody a dispute transaction carries (a start keeps its declared hash, the others are recomputed). */
-export const disputeProofEvidence = (calldata: string): readonly DisputeProofEvidence[] => {
-  const call = disputeCall(calldata, "J_DISPUTE_PROOFBODY");
-  const finalized = (f: DisputeFinalization): DisputeProofEvidence => ({ eventName: "DisputeFinalized", counterentity: f.counterentity.toLowerCase(), nonce: f.finalNonce, proposerIsLeft: f.proposerIsLeft, proofbodyHash: proofBodyHash(f.finalProofbody), initialNonce: f.initialNonce, initialProofbodyHash: f.initialProofbodyHash.toLowerCase(), proofbody: f.finalProofbody });
-  return match(call, {
+const startEvidence = (s: DisputeStart): DisputeProofEvidence => ({
+  eventName: "DisputeStarted",
+  counterentity: s.counterentity.toLowerCase(),
+  nonce: s.nonce,
+  proposerIsLeft: s.proposerIsLeft,
+  proofbodyHash: s.proofbodyHash.toLowerCase(),
+  proofbody: s.initialProofbody,
+});
+const counterEvidence = (c: CounterDispute): DisputeProofEvidence => ({
+  eventName: "CounterDisputeRegistered",
+  counterentity: c.counterentity.toLowerCase(),
+  nonce: c.counterNonce,
+  proposerIsLeft: c.proposerIsLeft,
+  proofbodyHash: proofBodyHash(c.counterProofbody),
+  proofbody: c.counterProofbody,
+});
+const finalizedEvidence = (f: DisputeFinalization): DisputeProofEvidence => ({
+  eventName: "DisputeFinalized",
+  counterentity: f.counterentity.toLowerCase(),
+  nonce: f.finalNonce,
+  proposerIsLeft: f.proposerIsLeft,
+  proofbodyHash: proofBodyHash(f.finalProofbody),
+  initialNonce: f.initialNonce,
+  initialProofbodyHash: f.initialProofbodyHash.toLowerCase(),
+  proofbody: f.finalProofbody,
+});
+/**
+ * og decodeDisputeProofBodyEvidenceCalldata: every signed ProofBody a dispute transaction carries.
+ * A start keeps its declared hash; the others are recomputed. A watchtower counter-dispute both
+ * registers the counter and finalizes.
+ */
+export const disputeProofEvidence = (calldata: string): readonly DisputeProofEvidence[] =>
+  match(disputeCall(calldata, "J_DISPUTE_PROOFBODY"), {
     batch: ({ batch }): readonly DisputeProofEvidence[] => [
-      ...batch.disputeStarts.map((s): DisputeProofEvidence => ({ eventName: "DisputeStarted", counterentity: s.counterentity.toLowerCase(), nonce: s.nonce, proposerIsLeft: s.proposerIsLeft, proofbodyHash: s.proofbodyHash.toLowerCase(), proofbody: s.initialProofbody })),
-      ...batch.counterDisputes.map((c): DisputeProofEvidence => ({ eventName: "CounterDisputeRegistered", counterentity: c.counterentity.toLowerCase(), nonce: c.counterNonce, proposerIsLeft: c.proposerIsLeft, proofbodyHash: proofBodyHash(c.counterProofbody), proofbody: c.counterProofbody })),
-      ...batch.disputeFinalizations.map(finalized),
+      ...batch.disputeStarts.map(startEvidence),
+      ...batch.counterDisputes.map(counterEvidence),
+      ...batch.disputeFinalizations.map(finalizedEvidence),
     ],
-    watchtower: ({ proof }): readonly DisputeProofEvidence[] => { const f = finalized(proof); return [{ ...f, eventName: "CounterDisputeRegistered" }, f]; },
+    watchtower: ({ proof }): readonly DisputeProofEvidence[] => {
+      const finalized = finalizedEvidence(proof);
+      return [{ ...finalized, eventName: "CounterDisputeRegistered" }, finalized];
+    },
   });
-};
 export type TxFinalizationEvidence = Omit<DisputeFinalizationEvidence, "sender" | "finalProofbodyHash">;
-/** og decodeDisputeFinalizationEvidenceCalldata. */
-export const finalizationEvidence = (calldata: string): readonly TxFinalizationEvidence[] => {
-  const one = (f: DisputeFinalization): TxFinalizationEvidence => ({
-    counterentity: f.counterentity.toLowerCase(), initialNonce: f.initialNonce, finalNonce: f.finalNonce, initialProofbodyHash: f.initialProofbodyHash.toLowerCase(), proposerIsLeft: f.proposerIsLeft,
-    leftArguments: (f.startedByLeft ? f.starterArguments : f.otherArguments).toLowerCase(), rightArguments: (f.startedByLeft ? f.otherArguments : f.starterArguments).toLowerCase(), startedByLeft: f.startedByLeft, sig: f.sig.toLowerCase(),
-  });
-  return match(disputeCall(calldata, "J_DISPUTE_FINALIZATION"), { batch: ({ batch }) => batch.disputeFinalizations.map(one), watchtower: ({ proof }) => [one(proof)] });
+const txEvidenceOf = (f: DisputeFinalization): TxFinalizationEvidence => {
+  const starter = f.starterArguments.toLowerCase(), other = f.otherArguments.toLowerCase();
+  return {
+    counterentity: f.counterentity.toLowerCase(),
+    initialNonce: f.initialNonce,
+    finalNonce: f.finalNonce,
+    initialProofbodyHash: f.initialProofbodyHash.toLowerCase(),
+    proposerIsLeft: f.proposerIsLeft,
+    leftArguments: f.startedByLeft ? starter : other,
+    rightArguments: f.startedByLeft ? other : starter,
+    startedByLeft: f.startedByLeft,
+    sig: f.sig.toLowerCase(),
+  };
 };
+/** og decodeDisputeFinalizationEvidenceCalldata. */
+export const finalizationEvidence = (calldata: string): readonly TxFinalizationEvidence[] =>
+  match(disputeCall(calldata, "J_DISPUTE_FINALIZATION"), {
+    batch: ({ batch }) => batch.disputeFinalizations.map(txEvidenceOf),
+    watchtower: ({ proof }) => [txEvidenceOf(proof)],
+  });
 /** og hashFinalizationEvidence: the commitment DisputeFinalized logs as finalizationEvidenceHash. */
 export const finalizationEvidenceHash = (c: TxFinalizationEvidence): string => {
-  const starter = c.startedByLeft ? c.leftArguments : c.rightArguments, other = c.startedByLeft ? c.rightArguments : c.leftArguments, k = (h: string): string => keccak256Hex(hexToBytes(h));
-  return keccak256Hex(abiEncode([A.b32(c.initialProofbodyHash), A.uint(c.finalNonce), A.bool(c.proposerIsLeft), A.bool(c.startedByLeft), A.b32(k(starter)), A.b32(k(other)), A.b32(k(c.sig))]));
+  const starter = c.startedByLeft ? c.leftArguments : c.rightArguments;
+  const other = c.startedByLeft ? c.rightArguments : c.leftArguments;
+  const hashOf = (h: string): string => keccak256Hex(hexToBytes(h));
+  return keccak256Hex(abiEncode([
+    A.b32(c.initialProofbodyHash),
+    A.uint(c.finalNonce),
+    A.bool(c.proposerIsLeft),
+    A.bool(c.startedByLeft),
+    A.b32(hashOf(starter)),
+    A.b32(hashOf(other)),
+    A.b32(hashOf(c.sig)),
+  ]));
 };
-/** og decodeCanonicalContractEvent: a dispute event takes its ProofBody (and a finalization its reducer evidence) from the emitting transaction's calldata; missing evidence throws. */
-export const withDisputeCalldata = (event: JEvent, calldata: string): JEvent => {
-  if (event.type !== "DisputeStarted" && event.type !== "CounterDisputeRegistered" && event.type !== "DisputeFinalized") return event;
-  const counter = event.counterentity.toLowerCase(), declared = (event.type === "DisputeFinalized" ? event.finalProofbodyHash : event.proofbodyHash).toLowerCase();
-  const found = disputeProofEvidence(calldata).find((c) => c.eventName === event.type && c.counterentity === counter && (event.type === "DisputeFinalized" ? c.initialNonce : c.nonce) === event.nonce
-    && c.proofbodyHash.toLowerCase() === declared && (event.type === "DisputeFinalized" || c.proposerIsLeft === event.proposerIsLeft));
+type DisputeEvent = DisputeStarted | CounterDisputeRegistered | DisputeFinalized;
+const isDisputeEvent = (e: JEvent): e is DisputeEvent & JEvent =>
+  e.type === "DisputeStarted" || e.type === "CounterDisputeRegistered" || e.type === "DisputeFinalized";
+/** The calldata's ProofBody this dispute event declares: same kind, counterparty, nonce and hash. */
+const declaredProofEvidence = (event: DisputeEvent, calldata: string): DisputeProofEvidence => {
+  const counter = event.counterentity.toLowerCase();
+  const finalized = event.type === "DisputeFinalized";
+  const declared = (finalized ? event.finalProofbodyHash : event.proofbodyHash).toLowerCase();
+  const declares = (c: DisputeProofEvidence): boolean =>
+    c.eventName === event.type
+    && c.counterentity === counter
+    && (finalized ? c.initialNonce : c.nonce) === event.nonce
+    && c.proofbodyHash.toLowerCase() === declared
+    && (finalized || c.proposerIsLeft === event.proposerIsLeft);
+  const found = disputeProofEvidence(calldata).find(declares);
   if (found === undefined) throw new Error(`J_DISPUTE_PROOFBODY_EVIDENCE_NOT_FOUND:${event.type}:${event.nonce}`);
-  if (event.type === "DisputeStarted") return { ...event, initialProofbody: found.proofbody };
-  if (event.type === "CounterDisputeRegistered") return { ...event, counterProofbody: found.proofbody };
-  const candidates = finalizationEvidence(calldata), tx = event.meta?.transactionHash?.toLowerCase() ?? "";
+  return found;
+};
+const withFinalizationEvidence = (
+  event: DisputeFinalized & JEvent, calldata: string, proofbody: ProofBody,
+): JEvent => {
+  const tx = event.meta?.transactionHash?.toLowerCase() ?? "";
+  const candidates = finalizationEvidence(calldata);
   if (candidates.length === 0) throw new Error(`J_DISPUTE_FINALIZATION_EVIDENCE_EMPTY:${tx}`);
-  const matched = candidates.find((c) => c.counterentity === counter && c.initialNonce === event.nonce && finalizationEvidenceHash(c) === event.finalizationEvidenceHash.toLowerCase());
+  const committed = (c: TxFinalizationEvidence): boolean =>
+    c.counterentity === event.counterentity.toLowerCase()
+    && c.initialNonce === event.nonce
+    && finalizationEvidenceHash(c) === event.finalizationEvidenceHash.toLowerCase();
+  const matched = candidates.find(committed);
   if (matched === undefined) throw new Error(`J_DISPUTE_FINALIZATION_EVIDENCE_NOT_FOUND:${tx}`);
-  return { ...event, finalProofbody: found.proofbody, initialProofbodyHash: matched.initialProofbodyHash, evidence: { sender: event.sender.toLowerCase(), ...matched, finalProofbodyHash: event.finalProofbodyHash.toLowerCase() } };
+  const evidence = {
+    sender: event.sender.toLowerCase(),
+    ...matched,
+    finalProofbodyHash: event.finalProofbodyHash.toLowerCase(),
+  };
+  return { ...event, finalProofbody: proofbody, initialProofbodyHash: matched.initialProofbodyHash, evidence };
+};
+/**
+ * og decodeCanonicalContractEvent: a dispute event takes its ProofBody (and a finalization its
+ * reducer evidence) from the emitting transaction's calldata; missing evidence throws.
+ */
+export const withDisputeCalldata = (event: JEvent, calldata: string): JEvent => {
+  if (!isDisputeEvent(event)) return event;
+  const { proofbody } = declaredProofEvidence(event, calldata);
+  switch (event.type) {
+    case "DisputeStarted": return { ...event, initialProofbody: proofbody };
+    case "CounterDisputeRegistered": return { ...event, counterProofbody: proofbody };
+    case "DisputeFinalized": return withFinalizationEvidence(event, calldata, proofbody);
+  }
 };
 
 // ---- og entity j-events (core/entity/tx/j-events*.ts, j-events-observations/*): what one Entity derives from finalized J events ----
