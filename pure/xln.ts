@@ -10329,7 +10329,17 @@ const laneOf = (i: RoutedEntityInput): Lane => matchBy("kind", i.input, {
   leaderTimeoutVote: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.timestamp, vote: x }),
   jPrefixAttestations: (x): Lane => ({ entityId: i.entityId, signerId: i.signerId, from: i.from, timestamp: x.timestamp ?? 0n, jPrefix: x }),
 });
-/** og entityInputMergeKey (without runtimeOutput / cross-j / J-prefix lanes, which the rewrite does not carry); each timeout vote is its own lane. */
+/** og getEffectiveEntityInputTxs: a runtimeOutput counts as its nested Entity txs. */
+const effectiveTxs = (txs: readonly EntityTx[]): readonly EntityTx[] => txs.flatMap((tx) => (tx.type === "runtimeOutput" ? tx.data.entityTxs : [tx]));
+/** og hasCrossJurisdictionSourcePullProposal: an Account proposal whose frame locks a source-leg cross pull (it consumes a target ACK of the same Runtime frame). */
+const sourcePullConsumer = (l: Lane): boolean => effectiveTxs(l.txs ?? []).some((tx) => tx.type === "accountInput" && tx.data.kind === "ack_frame"
+  && tx.data.frame.txs.some((a) => a.type === "cross_pull_lock" && a.crossJurisdiction.leg === "source"));
+const runtimeOutputOf = (l: Lane): EntityTx | undefined => l.txs?.find((tx) => tx.type === "runtimeOutput");
+/**
+ * og entityInputMergeKey: one authenticated runtimeOutput is its own envelope (keyed by its sender and exact tx); one J-prefix head per input;
+ * each timeout vote is its own lane; precommits by frame; tx envelopes by origin, a source-pull consumer apart. The rewrite's RoutedEntityInput
+ * carries no og runtimeId / sourceRuntimeFrame, so they key as absent.
+ */
 const mergeKey = (l: Lane): Result<string, RuntimeError> => {
   const base = `${lower(l.entityId)}:${lower(l.signerId)}`;
   if (l.jPrefix !== undefined) {
@@ -10340,12 +10350,55 @@ const mergeKey = (l: Lane): Result<string, RuntimeError> => {
     const [raw, a] = entry, { signature: _signature, ...unsigned } = a;
     return ok(`${base}:j-prefix:${raw.toLowerCase()}:${a.targetEntityHeight}:${unwrapOr(jPrefixAttestationHash(unsigned), () => canon(unsigned))}`);
   }
+  const output = runtimeOutputOf(l);
+  if (output !== undefined) return ok(`${base}:runtime-output:${lower(l.from)}:::${inputFingerprint(output)}`);
   return ok(laneKey(l, base));
 };
 const laneKey = (l: Lane, base: string): string => {
   if (l.vote !== undefined) return `${base}:leader:${l.vote.vote.targetHeight}:${lower(l.vote.vote.voterId)}:${unwrapOr(hashLeaderVote(l.vote.vote), () => canon(l.vote?.vote))}`;
   if (l.precommit !== undefined) return `${base}:precommit:${l.precommit.height}:${lower(l.precommit.frameHash)}`;
-  return l.txs !== undefined && l.txs.length > 0 ? `${base}:tx-origin:${lower(l.from)}` : base;
+  return l.txs !== undefined && l.txs.length > 0 ? `${base}:tx-origin:${lower(l.from)}${sourcePullConsumer(l) ? ":cross-j-source-consumer" : ""}` : base;
+};
+/** og mergeJEventTxs: one signed J observation (proposer, range, roots and signature) once per lane, first kept. */
+const mergeJEvents = (txs: readonly EntityTx[]): readonly EntityTx[] => firstBy(txs, (tx) => {
+  if (tx.type !== "j_event") return undefined;
+  const d = tx.data, t = (v: unknown): string => String(v || "").toLowerCase();
+  return canon({ from: t(d["from"]), jurisdictionRef: t(d["jurisdictionRef"]), baseHeight: d["baseHeight"] ?? null, scannedThroughHeight: d["scannedThroughHeight"] ?? null, tipBlockHash: t(d["tipBlockHash"]), eventHistoryRoot: t(d["eventHistoryRoot"]), rangeHash: t(d["rangeHash"]), signature: t(d["signature"]) });
+});
+/** og consensusInputOrder: a verified commit (0), then a timeout vote (1), then an unverified proposal (2), per Entity, signer and target height. */
+const consensusOrder = (i: RoutedEntityInput, verified: (i: RoutedEntityInput) => boolean): { readonly height: bigint; readonly priority: number } | null =>
+  i.input.kind === "proposal" ? { height: i.input.frame.height, priority: verified(i) ? 0 : 2 } : i.input.kind === "leaderTimeoutVote" ? { height: BigInt(i.input.vote.targetHeight), priority: 1 } : null;
+/** og prioritizeEntityConsensusInputs: reorder only the slots of one consensus race; unrelated inputs keep their exact positions. */
+export const prioritizeConsensusInputs = (inputs: readonly RoutedEntityInput[], verified: (i: RoutedEntityInput) => boolean = () => false): readonly RoutedEntityInput[] => {
+  const result = [...inputs], races = new Map<string, number[]>();
+  result.forEach((i, index) => { const o = consensusOrder(i, verified); if (o === null) return; const key = `${lower(i.entityId.trim())}:${lower(i.signerId.trim())}:${o.height}`; races.set(key, [...(races.get(key) ?? []), index]); });
+  for (const positions of races.values()) {
+    if (positions.length < 2) continue;
+    const ordered = positions.map((position, stable) => ({ input: result[position] as RoutedEntityInput, stable, priority: consensusOrder(result[position] as RoutedEntityInput, verified)?.priority ?? 3 }))
+      .sort((a, b) => a.priority - b.priority || a.stable - b.stable).map((e) => e.input);
+    positions.forEach((position, k) => { result[position] = ordered[k] as RoutedEntityInput; });
+  }
+  return result;
+};
+/**
+ * og hasVerifiedEntityCommitPrecertificate: a proposal input is a verified commit only when this replica already holds the same frame (body and
+ * leader) and manifest by replay, and the carried signatures verify over every hash with the committed board's quorum.
+ */
+export const verifiedCommit = (entities: ReadonlyMap<string, EntityReplica>, ctx: Pick<EntityContext, "verify" | "verifyMember">) => (i: RoutedEntityInput): boolean => {
+  if (i.input.kind !== "proposal") return false;
+  const r = entities.get(replicaKey(i.entityId, i.signerId)), held = r === undefined ? undefined : heldFrame(r), frame = i.input.frame;
+  if (r === undefined || held === undefined) return false;
+  const local = hashEntityFrame(held.frame), incoming = hashEntityFrame(frame), hashes = held.frame.hashesToSign;
+  if (!local.ok || !incoming.ok || local.value !== incoming.value || canon(held.frame.leader) !== canon(frame.leader) || hashes.length === 0 || canon(hashes) !== canon(frame.hashesToSign)) return false;
+  const q = r.state.quorum, seen = new Set<string>();
+  let power = 0n;
+  for (const [raw, sigs] of i.input.signatures) {
+    const id = signerId(raw), shares = sharesOf(q, id);
+    if (shares === 0n || seen.has(id) || sigs.length !== hashes.length || !bundleValid(q, hashes, id, sigs, ctx as EntityContext)) return false;
+    seen.add(id);
+    power += shares;
+  }
+  return power >= thresholdOf(q);
 };
 /** og mergePrecommitBundles: signer ids trimmed/lowercased; a second different bundle from one signer is equivocation. */
 const mergeBundles = (existing: Precommits, incoming: Precommits): Result<Precommits, RuntimeError> => {
@@ -10371,30 +10424,43 @@ const dedupAccountInputs = (txs: readonly EntityTx[]): readonly EntityTx[] => fi
  * og mergeEntityInputs: inputs for one replica lane collapse into one, in first-arrival order; a second different proposal for the lane
  * is kept as a conflict after every merged input; a precommit equivocation refuses the whole Runtime frame.
  */
-export const mergeEntityInputs = (inputs: readonly RoutedEntityInput[]): Result<readonly RoutedEntityInput[], RuntimeError> => {
+export const mergeEntityInputs = (inputs: readonly RoutedEntityInput[], verified: (i: RoutedEntityInput) => boolean = () => false): Result<readonly RoutedEntityInput[], RuntimeError> => {
   const merged = new Map<string, Lane>(), conflicts: Lane[] = [];
+  const routed = (l: Lane): RoutedEntityInput => ({ entityId: l.entityId, signerId: l.signerId, input: l.proposal ?? { kind: "txs", timestamp: l.timestamp, txs: [] }, ...opt("from", l.from) });
+  // og: a runtimeOutput envelope is an effect boundary; ordinary lanes never merge across it
+  let boundary = 0;
   for (const input of inputs) {
     const lane = laneOf(input), laneMergeKey = mergeKey(lane);
     if (!laneMergeKey.ok) return laneMergeKey;
-    const key = laneMergeKey.value, existing = merged.get(key);
+    const isOutput = runtimeOutputOf(lane) !== undefined, key = isOutput ? laneMergeKey.value : `${boundary}:${laneMergeKey.value}`;
+    if (isOutput && !merged.has(key)) boundary += 1;
+    const existing = merged.get(key);
     if (existing === undefined) { merged.set(key, lane); continue; }
     if (existing.proposal !== undefined && lane.proposal !== undefined && (frameIdOf(existing.proposal.frame) !== frameIdOf(lane.proposal.frame) || existing.proposal.frame.height !== lane.proposal.frame.height)) { conflicts.push(lane); continue; }
     if ((lane.vote !== undefined || existing.vote !== undefined) && canon(lane.vote?.vote) !== canon(existing.vote?.vote)) return frameErr(`ENTITY_LEADER_VOTE_EQUIVOCATION:${lane.vote?.vote.voterId ?? "missing"}`);
     if ((lane.jPrefix !== undefined || existing.jPrefix !== undefined) && canon(lane.jPrefix?.attestations) !== canon(existing.jPrefix?.attestations)) return frameErr("ENTITY_INPUT_J_PREFIX_EQUIVOCATION");
     let next: Lane = existing;
-    if (lane.txs !== undefined && !exactReplay(existing, lane)) next = { ...next, txs: [...(existing.txs ?? []), ...lane.txs] };
+    if (lane.txs !== undefined && !exactReplay(existing, lane)) next = { ...next, txs: mergeJEvents([...(existing.txs ?? []), ...lane.txs]) };
     if (lane.precommit !== undefined && existing.precommit !== undefined) {
       const bundles = mergeBundles(existing.precommit.signatures, lane.precommit.signatures);
       if (!bundles.ok) return bundles;
       next = { ...next, precommit: { ...existing.precommit, signatures: bundles.value } };
     }
-    if (lane.proposal !== undefined && existing.proposal === undefined) next = { ...next, proposal: lane.proposal };
+    // og: a verified commit replaces an unverified copy of the same frame
+    if (lane.proposal !== undefined && (existing.proposal === undefined || (verified(routed(lane)) && !verified(routed(existing))))) next = { ...next, proposal: lane.proposal };
     merged.set(key, next);
   }
-  return ok([...merged.values(), ...conflicts].map((l): RoutedEntityInput => {
-    const input: EntityInput = l.vote ?? l.jPrefix ?? l.proposal ?? l.precommit ?? { kind: "txs", timestamp: l.timestamp, txs: dedupAccountInputs(l.txs ?? []) };
-    return { entityId: l.entityId, signerId: l.signerId, input, ...opt("from", l.from) };
-  }));
+  const out: RoutedEntityInput[] = [];
+  for (const l of [...merged.values(), ...conflicts]) {
+    // og: exact Account replays and repeated J observations collapse, then the scheduled wake runs first (conflicting wakes refuse the frame)
+    const txs = l.txs === undefined || l.txs.length === 0 ? ok(l.txs ?? []) : mapErr(prioritizeWake(dedupAccountInputs(mergeJEvents(l.txs))), (): RuntimeError => ({ _tag: "runtime_frame", code: "SCHEDULED_WAKE_CONFLICTING_INPUTS" }) as RuntimeError);
+    if (!txs.ok) return txs;
+    const input: EntityInput = l.vote ?? l.jPrefix ?? l.proposal ?? l.precommit ?? { kind: "txs", timestamp: l.timestamp, txs: txs.value };
+    out.push({ entityId: l.entityId, signerId: l.signerId, input, ...opt("from", l.from) });
+  }
+  // og applyCausalEntityInputOrder: a source-pull consumer runs after the target ACK it consumes; then the consensus-race priority
+  const consumers = new Set(out.filter((i) => i.input.kind === "txs" && sourcePullConsumer({ entityId: i.entityId, signerId: i.signerId, timestamp: 0n, txs: i.input.txs })));
+  return ok(prioritizeConsensusInputs([...out.filter((i) => !consumers.has(i)), ...out.filter((i) => consumers.has(i))], verified));
 };
 
 // ---- og runtime/tx/tx-handlers.ts ----
@@ -13482,7 +13548,7 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
   const timestamp = [input.timestamp ?? rt.timestamp, ...(input.timestamp === undefined ? seeds : [])].reduce((a, b) => (b > a ? b : a), rt.timestamp);
   type TxFold = { readonly runtime: Runtime; readonly jOutputs: readonly JInput[] };
   const txFold = foldResult(input.runtimeTxs, { runtime: { ...rt, timestamp }, jOutputs: [] } as TxFold, (at, tx) => map(applyRuntimeTxStep(at.runtime, tx, ctx), (s): TxFold => ({ runtime: s.runtime, jOutputs: [...at.jOutputs, ...s.jOutputs] })));
-  return chain(txFold, ({ runtime: afterTxs, jOutputs: txJOutputs }) => chain(mergeEntityInputs(input.entityInputs), (merged) => {
+  return chain(txFold, ({ runtime: afterTxs, jOutputs: txJOutputs }) => chain(mergeEntityInputs(input.entityInputs, verifiedCommit(afterTxs.entities, ctx)), (merged) => {
     type Out = { readonly outputs: readonly EntityOutput[]; readonly rejected: readonly RuntimeError[]; readonly applied: readonly RoutedEntityInput[]; readonly committed: boolean; readonly progressed?: string | undefined; readonly effects?: readonly [string, CommitEffects] | undefined };
     const refused = (error: RuntimeError): StoreStep<string, EntityReplica, Out> => ({ writes: [], out: { outputs: [], rejected: [error], applied: [], committed: false }, stop: false });
     const { store, outs } = foldStore(afterTxs.entities, merged, (read, routed): StoreStep<string, EntityReplica, Out> => {

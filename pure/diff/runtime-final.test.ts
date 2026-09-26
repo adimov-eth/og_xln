@@ -26,13 +26,14 @@ import { assertFrameJPrefix as ogAssertFrameJPrefix, buildCertifiedJPrefixTx as 
   mergeJPrefixAttestations as ogMergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation as ogVerifyOutOfRound, buildJPrefixCertificate as ogBuildJPrefixCertificate } from "../../core/jurisdiction/machine/history/j-prefix-consensus.ts";
 import { getJEventRangeValidationError as ogRangeValidationError, pruneFinalizedValidatorJHistory as ogPruneJHistory } from "../../core/jurisdiction/machine/local-history/index.ts";
 import { createEntityFrameHashFromStateRoot as ogEntityFrameHash } from "../../core/entity/consensus/frame.ts";
+import { mergeEntityInputs as ogMergeEntityInputs } from "../../core/entity/consensus/input/merge.ts";
 import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "../../core/jurisdiction/machine/events/event-normalization.ts";
 import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
 import { verifyAccountSignature as ogVerifyAccountSignature, registerSignerKey } from "../../core/account/crypto.ts";
 import { FailureDispositionError } from "../../core/protocol/errors/failure-taxonomy.ts";
 import { entityRequiresJPrefixCertificate, buildLocalJPrefixAttestation, buildCertifiedJPrefixTx, mergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation, assertFrameJPrefix, jPrefixAttestationHash, jPrefixVerify, jEventRangeLocalHistoryError,
   type JPrefixAttestation, type JPrefixCrypto, type JPrefixFailure, type JPrefixRound, type JPrefixView, type ValidatorJHistory, type ValidatorJBlock, type EntityState,
-  hashEntityFrame, wireEntityTx, type EntityFrame, type EntityOutput } from "../xln.ts";
+  hashEntityFrame, wireEntityTx, mergeEntityInputs, canon, type EntityFrame, type EntityOutput } from "../xln.ts";
 import { anvilKey, signDigestHex, carolAddr } from "../xln_run.ts";
 
 let seed = 71;
@@ -618,5 +619,63 @@ describe("runtime-final: rewindJHistory against a locked frame (og tx-handlers.t
     }
     expect(seen.get("J_HISTORY_SIGNED_LOCK_REORG") ?? 0).toBeGreaterThan(30);
     expect(seen.get("null") ?? 0).toBeGreaterThan(30);
+  });
+});
+
+// ---- og entity/consensus/input/merge.ts: every Entity-input lane (R2-5b) ----
+describe("runtime-final: Entity-input lanes (og input/merge.ts mergeEntityInputs)", () => {
+  const E2 = [ALICE, BOB], S2 = [aliceAddr, bobAddr], ORIGINS = [undefined, "rt-a", "rt-b"];
+  const hex32 = (): string => `0x${Array.from({ length: 64 }, () => "0123456789abcdef"[ri(16)]).join("")}`;
+  const credit = (n: number): EntityTx => ({ type: "extendCredit", data: { counterpartyEntityId: CAROL, tokenId: "1", amount: BigInt(n) } } as EntityTx);
+  // drawn inside the test, from its own seed, so collecting this block never shifts the other tests' stream
+  let RANGES: readonly string[] = [], SIGS: readonly string[] = [];
+  const jEvent = (): EntityTx => ({ type: "j_event", data: { from: pick([aliceAddr, aliceAddr.toLowerCase()]), jurisdictionRef: "stack:1:0x00", baseHeight: 1, scannedThroughHeight: 2 + ri(2), tipBlockHash: RANGES[0], eventHistoryRoot: RANGES[1], rangeHash: pick(RANGES), signature: pick(SIGS), blocks: [ri(3)] } } as unknown as EntityTx);
+  const wake = (): EntityTx => ({ type: "scheduledWake", data: { entityId: ALICE, wakeAt: pick([5, 5, 5, 6]) } } as unknown as EntityTx);
+  const output = (): EntityTx => ({ type: "runtimeOutput", data: { protocol: "cross-j", sourceEntityId: BOB, sourceSignerId: bobAddr, targetEntityId: ALICE, entityTxs: [credit(ri(2))] } } as EntityTx);
+  const vote = (entityId: string): Record<string, unknown> => ({ entityId, targetHeight: 1 + ri(2), previousFrameHash: "genesis", fromView: 0, toView: 1, previousLeaderId: aliceAddr.toLowerCase(), nextLeaderId: bobAddr.toLowerCase(), voterId: pick([aliceAddr, bobAddr]).toLowerCase(), signature: pick(["0x01", "0x02"]) });
+  const frames = new Map<string, EntityFrame>();
+  const frameOf = (height: number, variant: number): EntityFrame => {
+    const key = `${height}:${variant}`;
+    if (!frames.has(key)) frames.set(key, { height: BigInt(height), prevFrameHash: "genesis", timestamp: BigInt(variant), txs: [], events: [], stateRoot: hex32(), authorityRoot: hex32(), entityContext: { entityId: ALICE }, hashesToSign: [], leader: { proposerSignerId: aliceAddr, view: 0 } } as unknown as EntityFrame);
+    return frames.get(key) as EntityFrame;
+  };
+  type Gen = { readonly rw: RoutedEntityInput; readonly og: Record<string, unknown> };
+  const gen = (): Gen => {
+    const entityId = pick(E2), signerId = pick(S2), from = pick(ORIGINS), base = { entityId, signerId, ...(from === undefined ? {} : { from }) }, k = ri(12);
+    if (k < 6) {
+      const txs = Array.from({ length: 1 + ri(3) }, () => pick([credit(ri(3)), jEvent(), jEvent(), wake(), output()]));
+      // og: a runtimeOutput travels alone in its envelope
+      const envelope = txs.some((tx) => tx.type === "runtimeOutput") ? [output()] : txs;
+      return { rw: { ...base, input: { kind: "txs", timestamp: NOW, txs: envelope } }, og: { ...base, entityTxs: envelope } };
+    }
+    if (k < 9) {
+      const v = vote(entityId);
+      return { rw: { ...base, input: { kind: "leaderTimeoutVote", timestamp: NOW, vote: v as never } }, og: { ...base, leaderTimeoutVote: v } };
+    }
+    const height = 1 + ri(2), variant = ri(2), frame = frameOf(height, variant);
+    return { rw: { ...base, input: { kind: "proposal", frame, signatures: new Map() } }, og: { ...base, proposedFrame: { hash: unwrap(hashEntityFrame(frame)), height } } };
+  };
+  const txSummary = (txs: readonly EntityTx[]): unknown => txs.map((tx) => tx.type === "extendCredit" ? `c${Number((tx.data as { amount: bigint }).amount)}` : tx.type === "j_event" ? `j${String((tx.data as Record<string, unknown>)["rangeHash"]).slice(2, 6)}${String((tx.data as Record<string, unknown>)["signature"]).slice(2, 6)}${String((tx.data as Record<string, unknown>)["scannedThroughHeight"])}${String((tx.data as Record<string, unknown>)["blocks"])}`
+    : tx.type === "scheduledWake" ? `w${String((tx.data as Record<string, unknown>)["wakeAt"])}` : `o${Number(((tx.data as { entityTxs: readonly { data: { amount: bigint } }[] }).entityTxs[0]?.data.amount) ?? -1)}`);
+  const sumRw = (i: RoutedEntityInput): unknown => ({ e: i.entityId.toLowerCase(), s: i.signerId.toLowerCase(), from: i.from ?? "",
+    body: i.input.kind === "proposal" ? unwrap(hashEntityFrame(i.input.frame)) : i.input.kind === "leaderTimeoutVote" ? `v${canon(i.input.vote)}` : i.input.kind === "txs" ? txSummary(i.input.txs) : i.input.kind });
+  const sumOg = (i: Record<string, unknown>): unknown => ({ e: String(i["entityId"]).toLowerCase(), s: String(i["signerId"]).toLowerCase(), from: i["from"] ?? "",
+    body: i["proposedFrame"] !== undefined ? (i["proposedFrame"] as { hash: string }).hash : i["leaderTimeoutVote"] !== undefined ? `v${canon(i["leaderTimeoutVote"])}` : txSummary((i["entityTxs"] as EntityTx[] | undefined) ?? []) });
+
+  test("MATCH (randomized): 600 batches with runtimeOutput envelopes, repeated J observations, scheduled wakes, timeout votes and proposals -- og's lanes, order and refusals", () => {
+    const seen = new Map<string, number>();
+    seed = Number(process.env["LANES_SEED"] ?? 26);
+    RANGES = [hex32(), hex32()]; SIGS = [hex32(), hex32()];
+    for (let n = 0; n < 600; n++) {
+      const gens = Array.from({ length: 1 + ri(8) }, gen);
+      let ogOut: Record<string, unknown>[] | undefined, ogErr: string | null = null;
+      try { ogOut = ogMergeEntityInputs(gens.map((g) => treeClone(g.og)) as never) as never; } catch (e) { ogErr = ogCode(e); }
+      const rw = mergeEntityInputs(gens.map((g) => g.rw));
+      expect([n, rwCode(rw)]).toEqual([n, ogErr]);
+      const key = ogErr ?? (gens.length > (ogOut?.length ?? 0) ? "merged" : "kept");
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+      if (rw.ok && ogOut !== undefined) expect([n, rw.value.map(sumRw)]).toEqual([n, ogOut.map(sumOg)]);
+    }
+    for (const k of ["merged", "kept", "SCHEDULED_WAKE_CONFLICTING_INPUTS", "ENTITY_LEADER_VOTE_EQUIVOCATION"]) expect([k, (seen.get(k) ?? 0) > 5]).toEqual([k, true]);
   });
 });
