@@ -17,7 +17,7 @@ import { commitBookOverlay } from "../../core/orderbook/book-overlay.ts";
 import {
   applyBookCommand, applyCrossFill, createBook, crossMarket, bookAdmissionError, bookAdmissionFailure, bookAdmissionKey, bookCommitmentHash, bookOrders, crossCancelInstruction, crossExecutionAmounts, crossExecutionPrice,
   crossFillInstruction, crossLegUsdMicros, crossLocalUsdCapError, crossMarketOffer, crossRemaining, entityCollectionCommitment, markAdmissionClosed, markAdmissionResolving, mergeBookAdmission,
-  prepareCrossRoute, processOrderbookCancels, processOrderbookSwaps, stableJson,
+  prepareCrossRoute, processOrderbookCancels, processOrderbookSwaps, stableJson, tradesMatched,
   type Binary, type Book, type BookAdmission, type BookAdmissions, type BookOfferInput, type CrossBookOffer, type CrossMarketOffer, type CrossRoute, type Domain, type EntityError, type EntityId, type Hub,
   type HubAccount, type OrderbookExt, type Result, type SwapOffer,
 } from "../xln.ts";
@@ -269,9 +269,15 @@ describe("cross-book: hub cross matcher", () => {
       if (!og.ok) { bump(`halt:${og.message.split(/[:=]/)[0]}`); continue; }
       for (const f of og.value.crossJurisdictionFills) bump(f.executionSourceAmount > 0n ? (f.cancelRemainder ? "fill-cancel" : "fill") : "cancel");
       if (og.value.bookUpdates.length > 0) bump("book-update");
+      // og commitOrderbookMatchResult: the frame's SwapMatched count is the sum of trade-count deltas over og's bookUpdates (cross pairs included)
+      const ogPrev = new Map<string, number>();
+      let ogMatched = 0;
+      for (const u of og.value.bookUpdates as any[]) { const prev = ogPrev.get(u.pairId) ?? ogExt.books.get(u.pairId)?.tradeCount ?? 0; ogMatched += u.book.tradeCount - prev; ogPrev.set(u.pairId, u.book.tradeCount); }
+      if (rw.ok) expect([s, "SwapMatched", unwrap(tradesMatched(rwExt, rw.value.books))]).toEqual([s, "SwapMatched", ogMatched]);
+      if (ogMatched > 0 && og.value.crossJurisdictionFills.length > 0) bump("swap-matched-cross");
       for (const [pairId, b] of rw.ok ? rw.value.books : []) expect(bookOrders(b).map((o) => [o.orderId, o.qtyLots])).toEqual(ogBook.getBookOrders(og.value.bookUpdates.find((u: any) => u.pairId === pairId)!.book).map((o: any) => [o.orderId, o.qtyLots]));
     }
-    for (const k of ["fill", "cancel", "book-update", "cancel-request", "halt:ORDERBOOK_LIVE_PROJECTION_REJECT"]) expect([k, (kinds.get(k) ?? 0) > 0, [...kinds].join(",")]).toEqual([k, true, [...kinds].join(",")]);
+    for (const k of ["fill", "cancel", "book-update", "cancel-request", "swap-matched-cross", "halt:ORDERBOOK_LIVE_PROJECTION_REJECT"]) expect([k, (kinds.get(k) ?? 0) > 0, [...kinds].join(",")]).toEqual([k, true, [...kinds].join(",")]);
   });
 });
 
