@@ -6,9 +6,10 @@ import { buildReplayVerifiableRuntimePostStateView } from "../../core/storage/wa
 import { computeRuntimePostStateComponentDigests } from "../../core/storage/hashes.ts";
 import { encodeBoard, hashBoard } from "../../core/entity/factory.ts";
 import { buildJSubmitAttemptId, registerPendingCommittedJOutbox, splitJOutboxForDurableSubmit } from "../../core/runtime/j-submit/j-submit-state.ts";
+import { assertProposeAccountsNowTxAuthorized } from "../../core/runtime/mempool/propose-accounts-now.ts";
 import {
   applyRuntime, applyRuntimeTx, createEntity, createRuntime, initJBatch, jSubmitAttemptId, jurisdictionImportRequestHash, replicaKey, runtimeComponentDigests, runtimeView, stableJson,
-  type Binary, type EntityId, type EntityReplica, type ImportConfig, type JInput, type Runtime, type RuntimeTx,
+  type Binary, type EntityId, type EntityReplica, type EntityTx, type ImportConfig, type JInput, type Runtime, type RuntimeTx,
 } from "../xln.ts";
 import { ALICE, TERMS, aliceAddr, bobAddr, unwrap, verifiers } from "../xln_run.ts";
 
@@ -334,5 +335,29 @@ describe("runtime-j: the J submit ledger (og j-submit-state.ts / j-submit-result
       expect(rwCode(rw)).toBe(ogErr);
       if (rw.ok) expect(rw.value).toBe(og ?? "");
     }
+  });
+});
+
+// ---- og runtime/mempool/propose-accounts-now.ts assertProposeAccountsNowTxAuthorized, run by og admission.ts for every EntityInput tx ----
+describe("runtime-j: proposeAccountsNow ingress (og propose-accounts-now.ts)", () => {
+  test("MATCH (randomized): an unmarked proposeAccountsNow outside replay refuses the whole Runtime frame; a local mark or replay admits it", () => {
+    const LOCAL = Symbol.for("xln.runtime.propose-accounts-now.local");
+    let refused = 0, admitted = 0;
+    for (let i = 0; i < 200; i++) {
+      const replay = rng() < 0.3;
+      const txs: EntityTx[] = Array.from({ length: 1 + ri(3) }, () => (rng() < 0.5
+        ? { type: "proposeAccountsNow", data: { version: 1, proposerSignerId: aliceAddr, counterparties: [hex(32)] } }
+        : { type: "chat", data: { from: aliceAddr, message: "hi" } }) as unknown as EntityTx);
+      const marked = txs.filter(() => rng() < 0.5);
+      for (const tx of marked) Object.defineProperty(tx, LOCAL, { value: true, enumerable: false });
+      let og: string | null = null;
+      try { for (const tx of txs) assertProposeAccountsNowTxAuthorized(tx as never, replay); } catch (e) { og = ogCode(e); }
+      const rw = applyRuntime(createRuntime(), { runtimeTxs: [], entityInputs: [{ entityId: ALICE, signerId: aliceAddr, input: { kind: "txs", timestamp: 1n, txs } }] }, { ...verifiers, replay, local: new Set(marked) });
+      const code = rw.ok ? null : rwCode(rw);
+      expect(code === "PROPOSE_ACCOUNTS_NOW_EXTERNAL_INGRESS_REJECTED" ? code : null).toBe(og);
+      if (og === null) admitted++; else refused++;
+    }
+    expect(refused).toBeGreaterThan(30);
+    expect(admitted).toBeGreaterThan(30);
   });
 });

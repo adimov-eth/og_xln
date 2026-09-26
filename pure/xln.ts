@@ -8307,8 +8307,8 @@ export type Runtime = {
 /** A whole-frame refusal carries og's error code (og throws out of the Runtime reducer, so nothing of the frame applies). */
 export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }> | Tagged<"runtime_frame" | "runtime_tx" | "runtime_tx_unsupported", { code: string }>;
 export type Verifiers = { readonly verify: Verify; readonly verifyMember: MemberVerify; readonly sign: MemberSign };
-/** og capability markers: `local` holds the exact RuntimeTx objects this process authorized (og's Symbol tags); replay trusts the WAL. */
-export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; readonly local?: ReadonlySet<RuntimeTx> | undefined;
+/** og capability markers: `local` holds the exact RuntimeTx (and proposeAccountsNow EntityTx) objects this process authorized (og's Symbol tags); replay trusts the WAL. */
+export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; readonly local?: ReadonlySet<RuntimeTx | EntityTx> | undefined;
   /** og EntityRuntimeContext gossip + liveness + proposer entropy, per Entity (the HTLC proposer infrastructure). */
   readonly htlcInfra?: ((entityId: EntityId) => HtlcProposerInfra | undefined) | undefined;
   /** og env.runtimeSeed: the process's private seed; a source hub's default proposer derives cross-j hash-ladder seeds from it. */
@@ -9330,7 +9330,11 @@ const runtimeHtlcInfra = (ctx: RuntimeCtx, rt: Runtime, entityId: EntityId): Htl
   const given = ctx.htlcInfra?.(entityId), seed = rt.encryptionSeeds.get(entityId);
   return given?.encryptionPrivateKey !== undefined || seed === undefined ? given : { profiles: [], ...given, encryptionPrivateKey: entityEncryptionPrivateKey(seed, entityId) };
 };
+/** og assertProposeAccountsNowTxAuthorized (mempool/propose-accounts-now.ts): outside replay, only this Runtime's own marked proposeAccountsNow enters. */
+const proposeAccountsNowForged = (input: RuntimeInput, ctx: RuntimeCtx): boolean =>
+  ctx.replay !== true && input.entityInputs.some((i) => i.input.kind === "txs" && i.input.txs.some((tx) => tx.type === "proposeAccountsNow" && ctx.local?.has(tx) !== true));
 export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx): Result<RuntimeStep, RuntimeError> => chain(validateRuntimeInput(rt, input), (jOutbox) => {
+  if (proposeAccountsNowForged(input, ctx)) return frameErr("PROPOSE_ACCOUNTS_NOW_EXTERNAL_INGRESS_REJECTED");
   const seeds = input.entityInputs.flatMap((i) => (i.input.kind === "txs" ? [i.input.timestamp] : []));
   const timestamp = [input.timestamp ?? rt.timestamp, ...(input.timestamp === undefined ? seeds : [])].reduce((a, b) => (b > a ? b : a), rt.timestamp);
   type TxFold = { readonly runtime: Runtime; readonly jOutputs: readonly JInput[] };
