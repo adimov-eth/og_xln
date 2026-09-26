@@ -1,0 +1,26 @@
+# scheduler-disputes: og crontab scheduler, scheduledWake, disputeFinalize, J7 dispute effects, runtime events
+
+Spec: og at 566c850. Tests: `pure/diff/scheduler-disputes.test.ts`. Every test is a MATCH that runs og live on randomized inputs.
+
+| # | Item | og source | Status |
+|---|------|-----------|--------|
+| 1 | Crontab state (hubRebalance task, stored hooks), scheduleHook/cancelHook, hooks projected into the Entity root as og's collection commitment | scheduler/index.ts, consensus/state-root.ts | FIXED |
+| 2 | Derived deadlines (htlc-timeout, htlc-secret-ack), due wake jobs, MAX jobs, next wake time | scheduler/derived-deadlines.ts, runtime/mempool/scheduled-wake.ts | FIXED |
+| 3 | scheduledWake validation (proposer, payload re-derivation with og's sorted-key JSON), unique-first-tx frame order, admission priority | scheduler/wake/scheduled-wake-validation.ts, consensus/input/merge.ts | FIXED |
+| 4 | executeCrontab: due-hook order, processHtlcTimeouts, the secret-ACK deadline dispute hook, the dispute-deadline hook against the J batch lifecycle (disputeFinalize and j_broadcast), re-arming, latches | scheduler/index.ts, due-hooks.ts, dispute-deadline-hook.ts | FIXED |
+| 5 | disputeFinalize: admission, selectFinalProof, counter-proof identity, starter arguments by commitment, timing gate, batch limits, finalizeQueued latch | dispute/finalize*.ts | FIXED |
+| 6 | J7 side effects: jBatch scrub on finality, counter-dispute scrub, recovery prepend, sentBatch finality ack, entity-nonce sync, dispute-deadline hook on DisputeStarted (exported as disputeStartedEffects / disputeFinalizedEffects) | tx/j-events.ts, dispute-finalize-guards.ts | FIXED (logic); wiring REMAINING because the rewrite has no Entity j_event lane (J-submit owner) |
+| 7 | disputeStart starter-argument override: og sanitizeOptionalDisputeArgument, including ethers bytes[] decode semantics, into the row and the queued dispute | dispute/start-evidence.ts | FIXED |
+| 8 | Runtime event channel: AccountOpening, HtlcInitiated/Received/ForwardAccepted/Finalized/Failed, request_collateral_committed | EntityCandidateEffect runtimeEvent emitters | FIXED |
+| 9 | localScheduledWake driven by the runtime tick | runtime/mempool/scheduled-wake.ts | REMAINING: built and exported, but the runtime tick loop belongs to the runtime owner |
+| 10 | hubRebalance task handler, and og's per-account rebalance pending-work flag | scheduler/hub-rebalance | REMAINING: named invariant CRONTAB_HUB_REBALANCE_NOT_PORTED; needs the hub rebalance / settle machinery (settle owner) |
+| 11 | board_hanko_refresh hook | scheduler due-hooks | REMAINING: invariant SCHEDULED_BOARD_HANKO_REFRESH_NOT_PORTED (certified-board registry owner) |
+| 12 | lending_overdue hook | scheduler due-hooks | REMAINING: there is no lending state in the rewrite |
+| 13 | Entity j_broadcast continuation and orderbookSweepCrossJurisdiction | due-hooks.ts | REMAINING: invariants J_BROADCAST_ENTITY_TX_NOT_PORTED and ORDERBOOK_SWEEP_CROSS_J_ENTITY_TX_NOT_PORTED (J-submit and cross-j owners) |
+| 14 | Proofs carrying locks/swaps/pulls, their built dispute arguments, and the hash-ladder reveal flush on finalize | proof-builder.ts, dispute-arguments.ts | REMAINING: the rewrite's ProofBody omits them; invariants DISPUTE_START_PROOF_OMITS_NOT_PORTED, DISPUTE_FINALIZE_PROOF_OMITS_NOT_PORTED, DISPUTE_FINALIZE_REVEAL_FLUSH_NOT_PORTED |
+| 15 | Secrets in on-chain starter arguments (applyKnownHtlcSecret), cross-j recovery, and source hub claims on finalize | tx/j-events.ts | REMAINING: invariant DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED; there is no j_event lane and no cross-j recovery state |
+| 16 | Orderbook-row removal in prepareDispute (evidence readiness) | dispute/prepare.ts | REMAINING: orderbook owner |
+| 17 | SwapMatched, account_settled_finalized_bilateral, JEventReceived runtime events | swap / settle / j-events | REMAINING: these belong to the orderbook, settle and J-submit owners |
+| 18 | The jurisdictionId field in Htlc* events | protocol/htlc/events.ts | REMAINING: the rewrite's Entity config does not carry the jurisdiction name |
+
+Note: `pure/diff/entity-cross-j.test.ts` (another area) gained a minimal edit. It passes `self` to paybookFollowups and compares runtimeEvents with og's candidateEffects.
