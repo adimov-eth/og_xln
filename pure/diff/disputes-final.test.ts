@@ -30,6 +30,12 @@ import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "
 import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
 import { EMPTY_J_HISTORY_ROOT as OG_EMPTY_ROOT, foldJHistoryRoot as ogFoldRoot, canonicalJEventRangeHash, buildJEventRangeDigest } from "../../core/jurisdiction/machine/history-consensus/index.ts";
 import { applyJEvent as ogApplyJEvent } from "../../core/entity/tx/j-events.ts";
+import { handleUnsafeAccountFrame as ogHandleUnsafeAccountFrame } from "../../core/entity/tx/handlers/account/dispute-input.ts";
+import { HTLC_ENFORCEMENT_RESERVE_MS as OG_RESERVE_MS } from "../../core/account/consensus/dispute/deadline-policy.ts";
+import { createDisputeProofHashWithNonce } from "../../core/protocol/dispute/proof-builder.ts";
+import { getEntityAccountForWrite } from "../../core/entity/state/persistent-account-map.ts";
+import { accountDisputeHash, accountId as rwAccountId, genesisReplica, unsafeAccountFrame } from "../xln.ts";
+import { CAROL, keyOf, signLazyAccountHanko } from "../xln_run.ts";
 
 let seed = 29;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -476,5 +482,90 @@ describe("disputes-final: DisputeStarted / CounterDisputeRegistered / DisputeFin
     expectKinds(kinds, ["DisputeStarted:ok", "DisputeFinalized:ok", "CounterDisputeRegistered:ok", "DisputeStarted:J_EVENT_DISPUTE_FINAL_PROOFBODY_HASH_MISMATCH", "DisputeFinalized:J_EVENT_DISPUTE_FINAL_PROOFBODY_HASH_MISMATCH",
       "DisputeStarted:ACCOUNT_DISPUTE_CLOCK_MISMATCH", "CounterDisputeRegistered:COUNTER_DISPUTE_ACTIVE_ACCOUNT_MISSING", "CounterDisputeRegistered:COUNTER_DISPUTE_NONCE_STALE",
       "⚔️ DISPUTE STA", "⚔️ DISPUTE vs", "✅ DISPUTE FINA", "🛡️ Counter-pr", "🔓 HTLC reveal", "🧹 Removed", "↻ Synced J bat"]);
+  }, 120_000);
+});
+
+// ---- og entity/tx/handlers/account/dispute-input.ts handleUnsafeAccountFrame: an Account input answered with disposition 'dispute' ----
+describe("disputes-final: unsafe Account frames on the Entity (og entity/tx/handlers/account/dispute-input.ts handleUnsafeAccountFrame)", () => {
+  test("MATCH: 200 random unsafe frames on ALICE's BOB Account (just-created Account, secret-window evidence over committed / frame-opened locks, paybook routes with inbound hops and conflicts, counterparty dispute Hankos, J batch in flight or full) -- same verdict, messages, paybook, J batch, Account status, kept frame evidence, outputs and upstream htlc_resolves as og", async () => {
+    const r = xrng(0x05af), kinds = new Map<string, number>();
+    const T1 = unwrap(tokenId("1")), aliceLeft = genesisAB().state.account.id.left === ALICE;
+    const carolBase = unwrap(genesisReplica(unwrap(rwAccountId(ALICE, CAROL)), TERMS)) as AccountReplica;
+    const payView = (p: any) => stableJson([...(p?.entries ?? new Map())].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]: [string, any]) => [k, { ...v, ...(v.inboundEntity ? { inboundEntity: String(v.inboundEntity).toLowerCase() } : {}), ...(v.outboundEntity ? { outboundEntity: String(v.outboundEntity).toLowerCase() } : {}) }]).concat([["fees", String(p?.feesEarned ?? 0n)]]));
+    const slot = { ...bookSlot, putPaybookEntry: (s: any, h: string, e: any) => { s.paybook.entries.set(h, e); } };
+    for (let i = 0; i < 200; i++) {
+      const created = xint(r, 12) === 0, windowCause = xint(r, 4) !== 0;
+      const secrets = Array.from({ length: 3 }, () => word(r)), hashes = secrets.map((x) => hashHtlcSecret(x)!);
+      const nLocks = windowCause ? 1 + xint(r, 2) : xint(r, 2) * (1 + xint(r, 2));
+      const lockSides = hashes.slice(0, nLocks).map(() => r() < 0.6 ? aliceLeft : !aliceLeft);
+      const rwLocks = new Map(hashes.slice(0, nLocks).map((h, k) => [h, { lockId: h, hashlock: h, timelock: 5_000n, revealBeforeHeight: 9n, amount: 7n, tokenId: T1, senderIsLeft: lockSides[k]!, createdHeight: 1n, createdTimestamp: 1n }] as const));
+      const ogLocks = hashes.slice(0, nLocks).map((h, k) => [h, { lockId: h, hashlock: h, timelock: 5_000n, revealBeforeHeight: 9, amount: 7n, tokenId: 1, senderIsLeft: lockSides[k]!, createdHeight: 1, createdTimestamp: 1 }] as const);
+      // the violating resolve: a committed lock, or one the frame itself opens (og: HTLC_DISPUTE_EVIDENCE_LOCK_MISSING)
+      const fresh = windowCause && xint(r, 6) === 0, target = fresh ? 2 : xint(r, nLocks);
+      const txs: any[] = [];
+      if (fresh) txs.push({ type: "htlc_lock", lockId: hashes[2], hashlock: hashes[2], timelock: 5_000n, revealBeforeHeight: 9n, amount: 7n, tokenId: T1 });
+      if (windowCause && r() < 0.3) txs.push({ type: "htlc_resolve", lockId: hashes[target], outcome: "secret", secret: word(r) });
+      if (windowCause) txs.push({ type: "htlc_resolve", lockId: hashes[target], outcome: "secret", secret: secrets[target] });
+      const cause: any = windowCause ? { _tag: "frame_deadline", reason: "secret_window", lockId: hashes[target] } : { _tag: "state_root_mismatch" };
+      const frame: any = { height: 2n, timestamp: BigInt(T0), jHeight: 1n, txs, prevFrameHash: Z32, stateHash: word(r), accountStateRoot: Z32 };
+      const error: any = { _tag: "dispute_required", cause, frame, frameHanko: "0xab" };
+      // the paybook route of the violating lock
+      const h = hashes[target]!, pk = xint(r, 7), entries = new Map<string, PaybookEntry>();
+      if (pk === 1 || pk === 2) entries.set(h, { hashlock: h, createdTimestamp: 1, inboundEntity: xpick(r, [CAROL, CAROL, BOB]), ...(r() < 0.5 ? { pendingFee: 2n } : {}) } as PaybookEntry);
+      if (pk === 3) entries.set(h, { hashlock: h, createdTimestamp: 1, secret: xpick(r, [secrets[target], word(r)]) } as PaybookEntry);
+      if (pk === 4) entries.set(h, { hashlock: h, createdTimestamp: 1, tokenId: xpick(r, [1, 2]), amount: xpick(r, [7n, 8n]) } as PaybookEntry);
+      if (pk === 5) entries.set(h, { hashlock: h, createdTimestamp: 1, outboundEntity: xpick(r, [BOB, CAROL]), inboundEntity: CAROL } as PaybookEntry);
+      const jb = xpick(r, [undefined, "draft", "draft", "sent", "full"] as const);
+      const jBatch = jb === undefined ? undefined : { ...ogInitJBatch(), batch: { ...ogInitJBatch().batch, disputeStarts: jb === "full" ? Array.from({ length: 8 }, (_, n) => ({ counterentity: W(String(10 + n)) })) : [] },
+        ...(jb === "sent" ? { sentBatch: { batch: ogInitJBatch().batch, entityNonce: 4, batchHash: Z32 } } : {}) };
+      let rw = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: { name: "j", entityProviderAddress: JEP }, committed: (jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) as never })).state;
+      if (entries.size > 0 || r() < 0.5) rw = { ...rw, paybook: { entries, feesEarned: 0n } };
+      // BOB's counterparty dispute Hanko over the committed proof body (a lock-free Account), so a start can queue
+      const bobState = { ...genesisAB().state, locks: rwLocks } as never as AccountReplica["state"];
+      const nonce = xpick(r, [1, 2]), pl = r() < 0.5, witnessed = nLocks === 0 && r() < 0.7;
+      const view = unwrap(committedView(bobState)), good: string = witnessed ? (unwrap(localProof(view, { ok: true, value: DT })) as any).bodyHash : Z32, hash = witnessed ? unwrap(accountDisputeHash(view, good, nonce, pl)) : Z32;
+      const witness = witnessed ? { hanko: signLazyAccountHanko(hash, keyOf(BOB), BOB), hash, proofBodyHash: good, proofNonce: nonce, proposerIsLeft: pl } : undefined;
+      const rwBob = { ...genesisAB(), state: bobState, dispute: { nextProofNonce: 1, ...(witness ? { counterparty: witness } : {}) } } as AccountReplica;
+      const at = { state: rw, accountReplicas: new Map([[BOB, rwBob], [CAROL, carolBase]]) }, held = created ? { state: rw, accountReplicas: new Map([[CAROL, carolBase]]) } : at;
+      const out = unsafeAccountFrame(held as never, at as never, BOB, error, created, { verify: verifiers.verify, timestamp: BigInt(T0), jReplicas: JREPLICAS as never } as never);
+      expect(out).toBeDefined();
+      // og
+      const ogBob = ogBobAccount("open", undefined);
+      ogBob.state.locks = PersistentAccountStateMap.fromEntries("locks" as never, ogLocks as never);
+      if (witness) {
+        expect(createDisputeProofHashWithNonce(ogBob.state, good, TERMS.domain, nonce, pl)).toBe(hash);
+        Object.assign(ogBob, { counterpartyDisputeProofHanko: witness.hanko, counterpartyDisputeHash: hash, counterpartyDisputeProofBodyHash: good, counterpartyDisputeProofNonce: nonce, counterpartyDisputeProofProposerIsLeft: pl });
+      }
+      const og: any = { entityId: ALICE, timestamp: T0, height: 0, lastFinalizedJHeight: 0, config: { mode: "proposer-based", threshold: 1n, validators: [ALICE_SIGNERX], shares: { [ALICE_SIGNERX]: 1n }, jurisdiction: OG_JX },
+        reserves: new Map(), accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries(created ? [] : [[BOB, ogBob]], ALICE, () => Z32 as never)),
+        paybook: { entries: new Map([...entries].map(([k, v]) => [k, { ...v }])), feesEarned: 0n }, ...(jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) };
+      const account = created ? ogBob : getEntityAccountForWrite(og.accounts, BOB)!;
+      const firstSecret = windowCause ? txs.find((t) => t.type === "htlc_resolve" && hashHtlcSecret(t.secret) === h)?.secret : undefined;
+      const reason = windowCause ? `HTLC_SECRET_ENFORCEMENT_WINDOW_TOO_SHORT: lock=${h} reserve=${OG_RESERVE_MS}ms localTimestamp=${T0}` : "ACCOUNT_FRAME_DISPUTE_REQUIRED:state_root_mismatch";
+      const effects: any = { outputs: [], accountTxs: [], swapOffersCreated: [], swapCancelRequests: [], swapOffersCancelled: [], candidateEffects: [], hashesToSign: [] };
+      let ogOut: Out<any>;
+      try {
+        ogOut = { ok: true, value: await ogHandleUnsafeAccountFrame({ env: { quietRuntimeLogs: true, state: { jReplicas: JREPLICAS } } as never, state: og, input: {} as never, account, counterpartyId: BOB, createdAccount: created,
+          dispute: { reason, evidenceSecrets: firstSecret === undefined ? [] : [{ hashlock: h, secret: firstSecret }], signedFrame: { frame: { height: 2 } as never, frameHanko: "0xab" } }, effects, bookIntentSlot: slot as never }) };
+      } catch (e) { ogOut = { ok: false, message: String((e as Error).message) }; }
+      const f = out!;
+      expect([i, f.ok ? "ok" : (f.error as any).reason]).toEqual([i, ogOut.ok ? "ok" : ogOut.message]);
+      bump(kinds, ogOut.ok ? "ok" : ogOut.message.split(":")[0]!);
+      if (!ogOut.ok || !f.ok) continue;
+      const d = f.value, next = ogOut.value.newState, msgs = readEntityFrameEvents(next).map((e: any) => e.message);
+      expect([i, (d.events ?? []).map((e) => e.message)]).toEqual([i, msgs]);
+      expect([i, d.state.committed["jBatchState"]]).toEqual([i, next.jBatchState]);
+      expect([i, payView(d.state.paybook ?? { entries: new Map(), feesEarned: 0n })]).toEqual([i, payView(next.paybook)]);
+      const ogAfter = next.accounts.get(BOB), after: any = d.accountReplicas.get(BOB);
+      expect([i, after?._tag === "open" ? "active" : after?._tag === "preparing" ? "dispute_preparing" : after?._tag]).toEqual([i, ogAfter?.status]);
+      if (!created) expect([i, after?.evidence !== undefined]).toEqual([i, account.shadow?.rejectedFrameEvidence !== undefined]);
+      expect([i, d.outputs.map((o: any) => [o.to, o.input?.txs?.map((t: any) => t.type).join(",")])]).toEqual([i, ogOut.value.outputs.map((o: any) => [o.entityId, o.entityTxs.map((t: any) => t.type).join(",")])]);
+      const rwResolves = (d.accountReplicas.get(CAROL)?.mempool ?? []).filter((t: any) => t.type === "htlc_resolve").map((t: any) => [t.lockId, t.secret]);
+      expect([i, rwResolves]).toEqual([i, effects.accountTxs.filter((t: any) => String(t.accountId).toLowerCase() === CAROL.toLowerCase()).map((t: any) => [t.tx.data.lockId, t.tx.data.secret])]);
+      for (const m of msgs) bump(kinds, String(m).slice(0, 60));
+      if (rwResolves.length > 0) bump(kinds, "resolve");
+      if (next.jBatchState?.autoBroadcastDraft) bump(kinds, "latched");
+    }
+    expectKinds(kinds, ["ok", "resolve", "latched", "HTLC_DISPUTE_EVIDENCE_LOCK_MISSING", "PAYBOOK_SECRET_CONFLICT", "PAYBOOK_ENTITY_CONFLICT", "⚠️ Rejected uncommitted account genesis", "⚠️ Unsafe account frame rejected; dispute start", "⚠️ Unsafe account frame rejected; dispute prep", "⚔️ Dispute started"]);
   }, 120_000);
 });

@@ -6568,6 +6568,62 @@ export const persistVerifiedPaymentSecret = (paybook: Paybook, selfIsLeft: boole
   const next: PaybookEntry = localSent ? { ...entry, secret, outboundEntity: counterparty } : { ...entry, secret, inboundEntity: counterparty };
   return ok({ ...paybook, entries: mapSet(paybook.entries, lock.hashlock, next) });
 };
+/** og deadline-policy.ts evidenceSecrets: the `secret_window` violation's preimage, from the first frame resolve that opens the lock (committed, else opened in the frame). */
+const unsafeEvidenceSecrets = (s: AccountBody, e: FrameEvidence): readonly { readonly hashlock: string; readonly secret: string }[] => {
+  const cause = e.cause;
+  if (cause._tag !== "frame_deadline" || cause.reason !== "secret_window") return [];
+  const opened = e.frame.txs.find((t) => t.type === "htlc_lock" && t.lockId === cause.lockId);
+  const hashlock = s.locks.get(cause.lockId)?.hashlock ?? (opened !== undefined && opened.type === "htlc_lock" ? opened.hashlock : undefined);
+  const resolve = e.frame.txs.find((t) => t.type === "htlc_resolve" && t.lockId === cause.lockId && t.outcome === "secret" && hashlock !== undefined && hashHtlcSecret(t.secret) === hashlock);
+  return hashlock !== undefined && resolve !== undefined && resolve.type === "htlc_resolve" && resolve.outcome === "secret" ? [{ hashlock, secret: resolve.secret }] : [];
+};
+/** og AccountInputDisputeRequired.reason: the deadline scan's text for a secret-window violation; og's replay failure texts have no rewrite counterpart, so other causes carry their tag. */
+const unsafeReason = (e: FrameEvidence, timestamp: bigint): string => e.cause._tag === "frame_deadline" && e.cause.reason === "secret_window"
+  ? `HTLC_SECRET_ENFORCEMENT_WINDOW_TOO_SHORT: lock=${e.cause.lockId} reserve=${HTLC_ENFORCEMENT_RESERVE_MS}ms localTimestamp=${timestamp}` : `ACCOUNT_FRAME_DISPUTE_REQUIRED:${e.cause._tag}`;
+/**
+ * og dispute-input.ts handleUnsafeAccountFrame (input-phases finishDisputedAccountInput): an Account input og answers with disposition 'dispute'.
+ * A just-created inbound Account is dropped with og's message. Otherwise the frame evidence is kept, each evidence secret is persisted
+ * (og persistVerifiedPaymentSecret) and, for a lock we sent with an inbound route, resolved upstream with its ACK deadline armed; then og
+ * handlePrepareDispute, the autoBroadcastDraft latch and a self j_broadcast when a start was queued and no batch is in flight.
+ * `undefined` when the refusal is not a dispute.
+ */
+export const unsafeAccountFrame = (held: Folded, at: Folded, peer: EntityId, error: AccountReplicaError, created: boolean, ctx: FoldContext): Result<Draft, EntityError> | undefined => {
+  const after = error._tag === "rejected_after_ack" ? error : undefined, evidence = evidenceOf(after?.cause ?? error);
+  if (evidence === null) return undefined;
+  const say = (x: Draft, message: string): Draft => ({ ...x, events: [...(x.events ?? []), status(message)] });
+  if (created) return ok(say({ ...held, outputs: [] }, `⚠️ Rejected uncommitted account genesis from ${peer.slice(-8)}`));
+  const live = at.accountReplicas.get(peer);
+  if (live === undefined) return err({ _tag: "no_such_account", target: peer });
+  const child = after?.committed.replica ?? live, timestamp = Number(ctx.timestamp), selfIsLeft = sameHex(child.state.account.id.left, at.state.id);
+  const secrets = unsafeEvidenceSecrets(child.state, evidence);
+  type Persisted = { readonly paybook: Paybook; readonly resolves: readonly AccountTxTarget[] };
+  const persisted = foldResult<Persisted, (typeof secrets)[number], EntityError>(secrets, { paybook: at.state.paybook ?? EMPTY_PAYBOOK, resolves: [] }, (acc, { hashlock, secret }) => {
+    const lock = [...child.state.locks.values()].find((l) => l.hashlock.toLowerCase() === hashlock.toLowerCase());
+    if (lock === undefined) return invariant(`HTLC_DISPUTE_EVIDENCE_LOCK_MISSING:${hashlock}`);
+    return map(persistVerifiedPaymentSecret(acc.paybook, selfIsLeft, peer, lock, secret, timestamp), (paybook): Persisted => {
+      const route = paybook.entries.get(lock.hashlock);
+      if (route === undefined || lock.senderIsLeft !== selfIsLeft || !hasInbound(route)) return { ...acc, paybook };
+      // og armPaymentSecretAckTimeout
+      const armed: PaybookEntry = { ...route, secretAckPending: true, secretAckStartedAt: timestamp, secretAckDeadlineAt: timestamp + HTLC_SECRET_ACK_TIMEOUT_MS };
+      return { paybook: { ...paybook, entries: mapSet(paybook.entries, lock.hashlock, armed) }, resolves: [...acc.resolves, { accountId: route.inboundEntity as EntityId, tx: { type: "htlc_resolve", lockId: hashlock, outcome: "secret", secret } }] };
+    });
+  });
+  return chain(persisted, ({ paybook, resolves }) => {
+    const base: Draft = { ...putChild(secrets.length === 0 ? at.state : { ...at.state, paybook }, at.accountReplicas, peer, child), outputs: [] };
+    const startsBefore = committedJBatch(base.state)?.batch["disputeStarts"]?.length ?? 0;
+    return map(prepareDispute(base, { counterpartyEntityId: peer, description: unsafeReason(evidence, ctx.timestamp) }, ctx), (prepared) => {
+      const jb = committedJBatch(prepared.state), started = jb !== undefined && (jb.batch["disputeStarts"]?.length ?? 0) > startsBefore, frozen = prepared.accountReplicas.get(peer);
+      const kept = frozen !== undefined && (frozen._tag === "preparing" || frozen._tag === "disputed") ? { ...prepared, ...putChild(prepared.state, prepared.accountReplicas, peer, { ...frozen, evidence }) } : prepared;
+      const latched: Draft = started ? { ...kept, state: { ...kept.state, committed: { ...kept.state.committed, jBatchState: { ...jb, autoBroadcastDraft: true } as unknown as Binary } } } : kept;
+      const said = say(latched, started ? "⚠️ Unsafe account frame rejected; dispute start queued" : "⚠️ Unsafe account frame rejected; dispute preparation awaits Hanko");
+      const signer = rootConfig(said.state).validators[0];
+      const broadcast: readonly EntityOutput[] = started && jb.sentBatch === undefined && signer !== undefined ? [{ to: said.state.id, signerId: signer as Address, input: { kind: "txs", timestamp: ctx.timestamp, txs: [{ type: "j_broadcast", data: {} }] } }] : [];
+      // og effects.accountTxs: admitted after the Entity tx, so a resolve on the just-frozen Account is suppressed
+      const queued = resolves.reduce(queueReturned, { ...said, outputs: [...said.outputs, ...broadcast] });
+      return resolves.length === 0 ? queued : { ...queued, touched: [...(queued.touched ?? []), ...resolves.map((t) => t.accountId as EntityId)] };
+    });
+  });
+};
 type ResolveHtlcData = Extract<EntityTx, { type: "resolveHtlcLock" }>["data"];
 /** og handleResolveHtlcLockEntityTx: a verified preimage for one of the Account's locks; persist it, queue the secret resolve, wake the proposer. */
 const resolveHtlcLockTx = (d: Draft, x: ResolveHtlcData, ctx: FoldContext): Result<Draft, EntityError> => {
@@ -9992,27 +10048,35 @@ export const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx
     // og input-phases.ts: the sender's record in this Entity's certified registry is the Account's counterpartyCertifiedBoard
     accountInput: (x) => chain(deliveredBy(x.data, state.id, origin), () => chain(observerBoardRecord(state, x.data.fromEntityId), (record) => {
       const at = replicas.get(peer), door: DoorContext = { verify: ctx.verify, self: state.id, now: ctx.timestamp, ...(record === null ? {} : { counterpartyBoard: { boardHash: record.boardHash, activatedAtJHeight: record.activatedAtJHeight, logIndex: record.logIndex } }), ...(at === undefined ? {} : { deltaTransformer: accountDt(ctx, at) }) };
-      const applyRaw = (at: Folded): Result<Routed, EntityError> => { const child = at.accountReplicas.get(peer); return child === undefined ? err({ _tag: "no_such_account", target: peer }) : routedRaw(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)); };
-      const apply = (at: Folded): Result<Draft, EntityError> => withChild(at.accountReplicas, peer, (child) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applyAccountInput(child, x.data, door), door)));
       const held: Folded = { state, accountReplicas: replicas };
+      // og finishDisputedAccountInput: a 'dispute' disposition ends the input in handleUnsafeAccountFrame (no committed followups)
+      const unsafeOr = (at: Folded, created: boolean, go: (child: AccountReplica, applied: Result<AccountApply, AccountReplicaError>) => Result<Draft, EntityError>): Result<Draft, EntityError> => {
+        const child = at.accountReplicas.get(peer);
+        if (child === undefined) return err({ _tag: "no_such_account", target: peer });
+        const applied = applyAccountInput(child, x.data, door);
+        return (applied.ok ? undefined : unsafeAccountFrame(held, at, peer, applied.error, created, ctx)) ?? go(child, applied);
+      };
+      const applyRaw = (at: Folded, then: (r: Routed) => Result<Draft, EntityError>, created = false): Result<Draft, EntityError> =>
+        unsafeOr(at, created, (child, applied) => chain(routedRaw(at.state, at.accountReplicas, peer, disputeUnsafe(child, applied, door)), then));
+      const apply = (at: Folded): Result<Draft, EntityError> => unsafeOr(at, false, (child, applied) => routed(at.state, at.accountReplicas, peer, disputeUnsafe(child, applied, door)));
       // og committedFrames: our own frame commits when the peer's ACK for it lands; the peer's frame commits when we sign it (answerFrame).
       const before = replicas.get(peer), pendingOwn = before !== undefined && before._tag === "proposed" ? before.candidate.frame : undefined;
       const ownCommitted = (d: Draft): AccountFrame | undefined => { const after = d.accountReplicas.get(peer); return pendingOwn !== undefined && after !== undefined && after.head.height >= pendingOwn.height ? pendingOwn : undefined; };
       return matchBy("kind", x.data, {
-        ack: () => chain(applyRaw(held), ({ draft, effects }) => committedFollowups(draft, peer, ownCommitted(draft), undefined, effects, ctx)),
+        ack: () => applyRaw(held, ({ draft, effects }) => committedFollowups(draft, peer, ownCommitted(draft), undefined, effects, ctx)),
         // og routes the standalone peer dispute witness through the same accountInput lane; an unknown Account has no genesis for it (og ACCOUNT_GENESIS_FRAME_REQUIRED).
         dispute: () => apply(held),
         // og board-hanko-refresh.ts: checked against the sender's certified board (certified_board_missing without a record)
         board_hanko_refresh: () => apply(held),
         ack_frame: (i) => match(origin, {
           local: (): Result<Draft, EntityError> => err({ _tag: "from_not_converted" }),
-          received: ({ from }) => chain(!i.frame.txs.every(entityAcceptsPeerTx) ? err({ _tag: "not_l0" }) : replicas.has(from) ? applyRaw(held) : chain(inboundChild(state, replicas, from, i), applyRaw), ({ draft: d, effects: own }) => {
+          received: ({ from }) => chain(!i.frame.txs.every(entityAcceptsPeerTx) ? err({ _tag: "not_l0" }) : replicas.has(from) ? ok(held) : inboundChild(state, replicas, from, i), (at) => applyRaw(at, ({ draft: d, effects: own }) => {
             const pending = d.accountReplicas.get(from), frame = pending !== undefined && pending._tag === "received" ? pending.candidate.frame : undefined;
             return chain(answerFrame(d, from, ctx), ({ draft: answered, effects: signed }) => {
               const after = answered.accountReplicas.get(from), installed = frame !== undefined && after !== undefined && after.head.height >= frame.height;
               return committedFollowups(answered, from, ownCommitted(answered), installed ? { frame, from: i.fromEntityId, to: i.toEntityId, domain: i.domain } : undefined, [...own, ...signed], ctx, !replicas.has(from));
             });
-          }),
+          }, !replicas.has(from))),
         }),
       });
     })),
