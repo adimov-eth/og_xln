@@ -19,6 +19,17 @@ import {
 import * as ogCrossIndex from "../../core/extensions/cross-j/index.ts";
 import { ensureEntityCollectionCandidate } from "../../core/entity/state/persistent-collection-map.ts";
 import { countDeferredHashLadderReveals, flushDeferredHashLadderReveals, queueHashLadderRevealRegistration } from "../../core/entity/tx/j-events-htlc/index.ts";
+import { createEntity, foldTx, hashHtlcSecret, pullLadderHash, initCrontab, scheduleHook, withCrontab, crontabOf, localProof, ogProofBody, type AccountReplica, type EntityState } from "../xln.ts";
+import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
+import { PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
+import { initJBatch as ogInitJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
+import { ALICE, BOB, aliceAddr, anvilKey, signDigestHex, verifiers } from "../xln_run.ts";
+import { readEntityFrameEvents } from "../../core/entity/frame-events.ts";
+import { EntityAccountCandidateMap } from "../../core/entity/state/persistent-account-map.ts";
+import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "../../core/jurisdiction/machine/events/event-normalization.ts";
+import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
+import { EMPTY_J_HISTORY_ROOT as OG_EMPTY_ROOT, foldJHistoryRoot as ogFoldRoot, canonicalJEventRangeHash, buildJEventRangeDigest } from "../../core/jurisdiction/machine/history-consensus/index.ts";
+import { applyJEvent as ogApplyJEvent } from "../../core/entity/tx/j-events.ts";
 
 let seed = 29;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -279,5 +290,191 @@ describe("disputes-final: the hash-ladder reveal queue (og j-events-htlc queueHa
       bump(kinds, og.ok ? `flushed:${Math.min(1, (og.value as { value: number }).value)}` : og.message.split(":")[0]!);
     }
     expectKinds(kinds, ["flushed:0", "flushed:1", "J_HASH_LADDER"]);
+  }, 120_000);
+});
+
+// ---- og entity/tx/j-events.ts applyJEvent: SecretRevealed (applyKnownHtlcSecret) and HashLadderRevealRegistered on ALICE's Entity ----
+const JEP = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512", OG_JX = { name: "j", chainId: TERMS.domain.chainId, depositoryAddress: TERMS.domain.depositoryAddress, entityProviderAddress: JEP };
+const JREFX = getJEventJurisdictionRef(OG_JX), ALICE_SIGNERX = aliceAddr.toLowerCase();
+const word = (r: Rand): string => "0x" + Array.from({ length: 64 }, () => "0123456789abcdef"[xint(r, 16)]).join("");
+/** ALICE's proposer-signed range with one block per event list, above the certified head (og's own canonicalisation and hashing). */
+const aliceRange = (r: Rand, og: any, eventLists: readonly (readonly { type: string; data: Record<string, unknown> }[])[]): Record<string, unknown> => {
+  const baseHeight = Number(og.lastFinalizedJHeight ?? 0), scannedThroughHeight = baseHeight + Math.max(1, eventLists.length);
+  const blocks = eventLists.map((raw, i) => {
+    const blockNumber = baseHeight + 1 + i, blockHash = word(r);
+    const events = raw.map((e, logIndex) => normalizeJurisdictionEvent({ ...e, blockNumber, blockHash, transactionHash: word(r), logIndex })!).sort(compareCanonicalJurisdictionEvents);
+    return { blockNumber, blockHash, eventsHash: canonicalJurisdictionEventsHash(events), events };
+  });
+  const tipBlockHash = word(r), eventHistoryRoot = ogFoldRoot(og.jHistoryFinality?.eventHistoryRoot ?? OG_EMPTY_ROOT, blocks.map((b) => ({ jurisdictionRef: JREFX, jHeight: b.blockNumber, jBlockHash: b.blockHash, eventsHash: b.eventsHash })));
+  const rangeHash = canonicalJEventRangeHash(JREFX, blocks);
+  const digest = buildJEventRangeDigest({ entityId: ALICE, jurisdictionRef: JREFX, signerId: ALICE_SIGNERX, baseHeight, scannedThroughHeight, tipBlockHash, eventHistoryRoot, rangeHash });
+  return { from: ALICE_SIGNERX, jurisdictionRef: JREFX, baseHeight, scannedThroughHeight, observedAt: scannedThroughHeight, tipBlockHash, blocks, eventHistoryRoot, rangeHash, signature: signDigestHex(digest, anvilKey(2)) };
+};
+/** Every string equal (case-insensitively) to a key of `m` becomes its value, deeply. */
+const swapIds = (v: any, m: Readonly<Record<string, string>>): any => typeof v === "string" ? (m[v.toLowerCase()] ?? v) : Array.isArray(v) ? v.map((x) => swapIds(x, m)) : v instanceof Map ? new Map([...v].map(([k, x]) => [k, swapIds(x, m)]))
+  : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, swapIds(x, m)])) : v;
+type JCase = { rw: EntityState; replicas: ReadonlyMap<EntityId, AccountReplica>; og: any; events: { type: string; data: Record<string, unknown> }[] };
+/** ALICE (in a random cross-j role) with random routes, a BOB Account holding inbound / outbound locks (live or disputed with a Target recovery), a paybook, and random SecretRevealed / HashLadderRevealRegistered events. */
+const jCase = (r: Rand, n: number): JCase => {
+  const role = xpick(r, [U1, H1, H2, U2]), ids: Record<string, string> = { [role.toLowerCase()]: ALICE, [XPEER[role]!.toLowerCase()]: BOB };
+  const raw = Array.from({ length: 1 + xint(r, 3) }, (_, k) => recoveryRoute(r, n * 10 + k)).map((c) => (xint(r, 3) === 0 ? { ...c, sourceRegistryRecord: { fillRatio: xpick(r, [100, 200]), revealedAt: 1_700_000_000 + xint(r, 3) } } : c))
+    .map((c) => (xint(r, 3) === 0 ? { ...c, targetRegistryRecord: { fillRatio: xpick(r, [100, 200]), revealedAt: 1_700_000_000 + xint(r, 3) } } : c));
+  const routes: CrossRoute[] = raw.map((c) => swapIds(c, ids));
+  let rw = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: { name: "j", entityProviderAddress: JEP } })).state;
+  const base = genesisAB(), left = base.state.account.id.left, aliceLeft = left.toLowerCase() === ALICE.toLowerCase();
+  const secrets = Array.from({ length: 3 }, () => word(r)), hashOf = (x: string) => hashHtlcSecret(x)!;
+  const locks = new Map<string, HtlcLock>();
+  for (const [i, sec] of secrets.entries()) {
+    if (xint(r, 3) === 0) continue;
+    const inbound = xint(r, 4) > 0, lockId = xint(r, 2) === 0 ? hashOf(sec) : `lock${n}_${i}`;
+    locks.set(lockId, { lockId, hashlock: hashOf(sec), timelock: 1_800_000_000_000n, revealBeforeHeight: 99n, amount: 5n, tokenId: tk(1), senderIsLeft: inbound ? !aliceLeft : aliceLeft, createdHeight: 1n, createdTimestamp: 1n });
+  }
+  const disputed = xint(r, 3) === 0;
+  const pullIds = routes.flatMap((c) => [c.targetPull?.pullId, c.sourcePull?.pullId]).filter((x): x is string => x !== undefined).filter(() => xint(r, 2) === 0);
+  const recovery = { requiredPullIds: pullIds, resultsByPullId: pullIds.length > 0 && xint(r, 3) === 0 ? { [pullIds[0]!]: "7" } : {} };
+  const active = { startedByLeft: true, initialProofbodyHash: Z32, initialNonce: 1, initialProposerIsLeft: true, disputeTimeout: 2_000_000_000, disputeStartTimestamp: 1_999_999_880, jNonce: 1, starterInitialArguments: "0x", starterCounterArguments: "0x",
+    starterCounterProofCommitment: Z32, observedOnChain: true as const, observedBlockNumber: 1, finalizeQueued: false, crossJurisdictionRecovery: recovery };
+  const replica: AccountReplica = disputed ? ({ ...base, _tag: "disputed", mempool: [], state: { ...base.state, locks }, active } as unknown as AccountReplica) : ({ ...base, state: { ...base.state, locks } } as AccountReplica);
+  const entries = new Map<string, PaybookEntry>();
+  for (const [i, sec] of secrets.entries()) {
+    const k = xint(r, 6), h = hashOf(sec);
+    if (k === 0) continue;
+    const relay = { routeId: `C${n}`, fillRatio: 100, sourceAmount: 1n, targetAmount: 2n, targetEntityId: W("0c"), targetCounterpartyEntityId: W("0d"), targetLockId: `tl${i}`, ...(xint(r, 5) > 0 ? { targetSignerId: "0x" + "ee".repeat(20) } : {}) };
+    entries.set(h, { hashlock: h, createdTimestamp: 1, ...(k === 1 ? { secret: sec } : {}), ...(k === 2 || k === 5 ? { inboundEntity: xint(r, 3) === 0 ? W("0e") : BOB, pendingFee: xpick(r, [0n, 3n]) } : {}), ...(k === 3 ? { crossJurisdictionRelay: relay as never } : {}), ...(k === 4 ? { originated: true as const, outboundEntity: BOB } : {}) });
+  }
+  const paybook: Paybook = { entries, feesEarned: BigInt(xint(r, 50)) };
+  rw = { ...rw, crossJurisdictionSwaps: new Map(routes.map((c) => [c.orderId, c] as const)) as never, paybook };
+  // og shells over the same data
+  const ogLocks = new Map([...locks].map(([k, l]) => [k, { ...l, tokenId: 1 }]));
+  const ogAccount: any = { status: disputed ? "disputed" : "active", state: { jNonce: 0, leftEntity: left, rightEntity: base.state.account.id.right, locks: ogLocks }, ...(disputed ? { activeDispute: structuredClone(active) } : {}) };
+  const accounts = new Map([[BOB as string, ogAccount]]);
+  const shell = Object.assign(Object.create(EntityAccountCandidateMap.prototype), { get: (id: string) => accounts.get(id), getForWrite: (id: string) => accounts.get(id), has: (id: string) => accounts.has(id), keys: () => accounts.keys(), entries: () => accounts.entries(), values: () => accounts.values(), [Symbol.iterator]: () => accounts.entries() });
+  const swaps = ensureEntityCollectionCandidate(undefined, ogCrossIndex.cloneCrossJurisdictionRoute as never) as Map<string, unknown>;
+  for (const c of routes) swaps.set(c.orderId, ogCrossIndex.cloneCrossJurisdictionRoute(structuredClone(c) as never));
+  const og: any = { entityId: ALICE, timestamp: T0, height: 0, lastFinalizedJHeight: 0, config: { mode: "proposer-based", threshold: 1n, validators: [ALICE_SIGNERX], shares: { [ALICE_SIGNERX]: 1n }, jurisdiction: OG_JX },
+    reserves: new Map(), outDebtsByToken: new Map(), inDebtsByToken: new Map(), accounts: shell, crossJurisdictionSwaps: swaps, paybook: { entries: new Map([...entries].map(([k, v]) => [k, structuredClone(v)])), feesEarned: paybook.feesEarned } };
+  // events: secrets (known, with and without locks / paybook routes, or unknown) and registry reveals of the routes' own pulls
+  const events: { type: string; data: Record<string, unknown> }[] = [];
+  for (let k = 0; k < 1 + xint(r, 4); k++) {
+    if (r() < 0.45) { const sec = xint(r, 5) === 0 ? word(r) : xpick(r, secrets); events.push({ type: "SecretRevealed", data: { hashlock: hashOf(sec), revealer: word(r), secret: sec } }); continue; }
+    const i = xint(r, routes.length), route = routes[i]!, pre = raw[i]!, targetRole = r() < 0.5, pull = (targetRole ? route.targetPull : route.sourcePull)!, leg = targetRole ? route.target : route.source;
+    const ratio = xpick(r, [100, 200, 65_535, 1 + xint(r, 65_534)]), seed = unwrapOk(crossPrivateSeed(RUNTIME_SEED, pre)), reveal = unwrapOk(crossPullReveal(ratio, seed)), dec = unwrapOk(decodeHashLadderBinary(reveal.binary)) as { fillRatio: number; fullSecret?: string; reveals?: readonly string[] };
+    const matching = xint(r, 5) > 0;
+    events.push({ type: "HashLadderRevealRegistered", data: { entity: matching ? leg.counterpartyEntityId.toLowerCase() : xpick(r, [ALICE, BOB, W("09")]), counterpartyEntity: matching ? leg.entityId.toLowerCase() : xpick(r, [ALICE, BOB]),
+      ladderHash: xint(r, 8) === 0 ? word(r) : pullLadderHash(pull), fillRatio: dec.fillRatio, fullSecret: dec.fullSecret ?? Z32, reveals: [...(dec.reveals ?? [Z32, Z32, Z32, Z32])], targetRole,
+      revealedAt: xpick(r, [1_700_000_000, 1_700_000_001, 1_700_000_005, 1_699_999_999]) } });
+  }
+  return { rw, replicas: new Map([[BOB, replica]]), og, events };
+};
+const bookSlot = { getPaybookEntry: (s: any, h: string) => s.paybook.entries.get(h), getPaybookEntryForWrite: (s: any, h: string) => s.paybook.entries.get(h), addPaybookFees: (s: any, amount: bigint) => { s.paybook.feesEarned += amount; } };
+const routeRegistryView = (routes: Iterable<[string, any]>) => [...routes].map(([k, v]) => [k, v.status, v.sourceRegistryFillRatio ?? null, v.targetRegistryFillRatio ?? null, v.sourceRegistryRecord ?? null, v.targetRegistryRecord ?? null]);
+const paybookView = (p: any) => ({ fees: String(p.feesEarned), entries: [...p.entries].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]: [string, any]) => [k, v.secret ?? null, v.pendingFee === undefined ? null : String(v.pendingFee)]) });
+
+describe("disputes-final: finalized J events on the Entity (og entity/tx/j-events.ts applyFinalizedJEvent SecretRevealed / HashLadderRevealRegistered)", () => {
+  test("MATCH: 150 random signed ranges of SecretRevealed and HashLadderRevealRegistered on ALICE (routes in every cross-j role, inbound / outbound locks, paybook routes with fees and cross-j relays, a disputed Account's Target recovery): same verdict, messages, paybook, routes' registry latches and records, recovery results, htlc_resolves and cross-j outputs as og", async () => {
+    const r = xrng(0x5ec7), kinds = new Map<string, number>();
+    for (let i = 0; i < 150; i++) {
+      const c = jCase(r, i), data = aliceRange(r, c.og, c.events.map((e) => [e]));
+      const resultsBefore = Object.keys(c.og.accounts.get(BOB).activeDispute?.crossJurisdictionRecovery?.resultsByPullId ?? {}).length;
+      let og: Out<any>;
+      try { og = { ok: true, value: await ogApplyJEvent(c.og, data as any, { quietRuntimeLogs: true } as any, {} as any, [], true, bookSlot as any) }; } catch (e) { og = { ok: false, message: String((e as Error).message) }; }
+      const bobBefore = c.replicas.get(BOB)!.mempool?.length ?? 0;
+      // the j_event alone (og applyJEvent), before the Entity frame's Account proposals
+      const f0 = foldTx(c.rw, c.replicas, { type: "j_event", data: data as never }, { verify: verifiers.verify, timestamp: BigInt(T0) }), f = f0.ok ? { ok: true as const, value: { draft: f0.value } } : f0;
+      expect([i, f.ok ? "ok" : (f.error as any).reason]).toEqual([i, og.ok ? "ok" : og.message]);
+      bump(kinds, og.ok ? "ok" : og.message.split(":")[0]!);
+      if (!og.ok || !f.ok) continue;
+      const d = f.value.draft, next = og.value.newState;
+      expect([i, (d.events ?? []).map((e) => e.message)]).toEqual([i, readEntityFrameEvents(next).map((e: any) => e.message)]);
+      expect([i, paybookView(d.state.paybook ?? { entries: new Map(), feesEarned: 0n })]).toEqual([i, paybookView(next.paybook)]);
+      expect([i, routeRegistryView((d.state.crossJurisdictionSwaps ?? new Map()) as Map<string, any>)]).toEqual([i, routeRegistryView(next.crossJurisdictionSwaps)]);
+      const rwActive: any = (d.accountReplicas.get(BOB) as any).active, ogActive = next.accounts.get(BOB).activeDispute;
+      expect([i, rwActive?.crossJurisdictionRecovery ?? null]).toEqual([i, ogActive?.crossJurisdictionRecovery ?? null]);
+      // og returns the htlc_resolves; applyLocalAccountEffects admits them only into a live Account
+      const ogResolves = og.value.accountTxs.filter((t: any) => t.tx.type === "htlc_resolve" && t.accountId === BOB && next.accounts.get(BOB).status === "active").map((t: any) => [t.tx.data.lockId, t.tx.data.secret]);
+      const rwResolves = (d.accountReplicas.get(BOB)!.mempool ?? []).slice(bobBefore).filter((t: any) => t.type === "htlc_resolve").map((t: any) => [t.lockId, t.secret]);
+      expect([i, rwResolves]).toEqual([i, ogResolves]);
+      const rwOut = d.outputs.flatMap((o: any) => o.input.txs.filter((t: any) => t.type === "runtimeOutput").map((t: any) => ({ entityId: o.to, signerId: String(o.signerId), txs: t.data.entityTxs })));
+      expect([i, stableJson(rwOut)]).toEqual([i, stableJson(og.value.outputs.map((o: any) => ({ entityId: o.entityId, signerId: o.signerId, txs: o.entityTxs })))]);
+      for (const m of readEntityFrameEvents(next).map((e: any) => String(e.message))) bump(kinds, m.slice(0, 18));
+      if (ogResolves.length > 0) bump(kinds, "resolves");
+      if (rwOut.some((o) => o.txs.some((t: any) => t.type === "resolveHtlcLock"))) bump(kinds, "relay");
+      if (Object.keys(ogActive?.crossJurisdictionRecovery?.resultsByPullId ?? {}).length > resultsBefore) bump(kinds, "recovery");
+    }
+    expectKinds(kinds, ["ok", "resolves", "relay", "recovery", "🔓 HTLC reveal", "🌉 Cross-j reveal", "CROSS_J_REGISTRY", "CROSS_J_ENTITY_OUTPUT_ROUTE_MISSING"]);
+  }, 120_000);
+});
+
+// ---- og applyJEvent: DisputeStarted / CounterDisputeRegistered / DisputeFinalized on ALICE's Entity with a real BOB Account ----
+const PA = (name: string) => PersistentAccountStateMap.empty(name as never);
+const ogBobAccount = (tag: "open" | "disputed", active: Record<string, unknown> | undefined): any => ({
+  state: { leftEntity: ALICE.toLowerCase(), rightEntity: BOB.toLowerCase(), domain: { ...TERMS.domain }, watchSeed: TERMS.watchSeed, disputeConfig: { ...TERMS.disputeConfig }, jNonce: 0,
+    deltas: PA("deltas"), locks: PA("locks"), swapOffers: PA("swapOffers"), pulls: PA("pulls"), requestedRebalance: PA("requestedRebalance"), requestedRebalanceFeeState: PA("requestedRebalanceFeeState"), rebalanceFeePolicies: PA("rebalanceFeePolicies") },
+  status: tag === "open" ? "active" : "disputed", mempool: [], currentHeight: 0, proofHeader: { fromEntity: ALICE.toLowerCase(), toEntity: BOB, nextProofNonce: 1 }, pendingWithdrawals: PA("pendingWithdrawals"),
+  shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted") } }, ...(active === undefined ? {} : { activeDispute: { ...active } }),
+});
+const JREPLICAS = new Map([["j", { chainId: TERMS.domain.chainId, contracts: { depository: TERMS.domain.depositoryAddress, entityProvider: TEST_CONTRACTS.entityProvider, account: TEST_CONTRACTS.account, deltaTransformer: DT } }]]);
+const sortedHooks = (m: ReadonlyMap<string, unknown> | undefined): unknown[] => [...(m ?? new Map())].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+const secretArgs = (secrets: readonly string[]): string => { const enc = ethers.AbiCoder.defaultAbiCoder(); return enc.encode(["bytes[]"], [[enc.encode(["tuple(uint16[] fillRatios, bytes32[] secrets)"], [{ fillRatios: [], secrets }])]]); };
+
+describe("disputes-final: DisputeStarted / CounterDisputeRegistered / DisputeFinalized on the Entity (og entity/tx/j-events.ts)", () => {
+  test("MATCH: 200 random signed dispute events on ALICE (starter / counterparty / third party, open / observed / queued BOB Account, frozen body and clock defects, starter secrets over paybook routes, counter-proof nonce rules, J batch retirement, crontab) -- same verdict, messages, J batch, activeDispute, jNonce, hooks, paybook and outputs as og", async () => {
+    const r = xrng(0xd15b), kinds = new Map<string, number>();
+    const good: string = (unwrap(localProof(unwrap(committedView(genesisAB().state)), { ok: true, value: DT })) as any).bodyHash;
+    const goodBody = ogProofBody((unwrap(localProof(unwrap(committedView(genesisAB().state)), { ok: true, value: DT })) as any).body);
+    const L = TERMS.disputeConfig.leftResponseSeconds, R = TERMS.disputeConfig.rightResponseSeconds, nowSec = Math.floor(T0 / 1000);
+    for (let i = 0; i < 200; i++) {
+      const kind = xpick(r, ["DisputeStarted", "DisputeStarted", "CounterDisputeRegistered", "DisputeFinalized", "DisputeFinalized"] as const);
+      const bobTag = xpick(r, ["none", "open", "observed", "observed", "queued"] as const);
+      const secrets = Array.from({ length: xint(r, 3) }, () => word(r));
+      const active = bobTag === "observed" ? { startedByLeft: r() < 0.5, initialProofbodyHash: good, initialNonce: xpick(r, [1, 2]), initialProposerIsLeft: r() < 0.5, disputeTimeout: nowSec + L + R - 10, disputeStartTimestamp: nowSec - 10, jNonce: 1,
+        starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: Z32, observedOnChain: true, observedBlockNumber: 1, finalizeQueued: false, ...(r() < 0.3 ? { selectedCounterNonce: 3, selectedCounterProofbodyHash: good, selectedCounterProposerIsLeft: r() < 0.5 } : {}) }
+        : bobTag === "queued" ? { startedByLeft: true, initialProofbodyHash: good, initialNonce: 1, initialProposerIsLeft: true, disputeTimeout: 0, jNonce: 1, starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: Z32, observedOnChain: false, finalizeQueued: false } : undefined;
+      const hashIn = xint(r, 10) === 0 ? word(r) : good, peerRow = (h: string) => ({ counterentity: xpick(r, [BOB.toLowerCase(), W("0c")]), proofbodyHash: h, initialProofbodyHash: h, counterNonce: xpick(r, [2, 3, 4]), proposerIsLeft: r() < 0.5, counterProofbody: goodBody });
+      const batch = { ...ogInitJBatch().batch, disputeStarts: Array.from({ length: xint(r, 3) }, () => peerRow(xpick(r, [good, Z32]))), counterDisputes: Array.from({ length: xint(r, 3) }, () => peerRow(xpick(r, [good, Z32]))),
+        disputeFinalizations: Array.from({ length: xint(r, 2) }, () => peerRow(good)) };
+      const jBatch = xint(r, 5) === 0 ? undefined : { ...ogInitJBatch(), batch, entityNonce: xpick(r, [0, 2, 5]), ...(xint(r, 4) === 0 ? { sentBatch: { batch: { ...ogInitJBatch().batch, disputeStarts: [peerRow(good)], counterDisputes: [peerRow(good)] }, entityNonce: 6, batchHash: Z32 } } : {}) };
+      const crontab = xint(r, 3) === 0 ? undefined : xint(r, 2) === 0 ? initCrontab() : scheduleHook(initCrontab(), { id: `dispute-deadline:${BOB.toLowerCase()}`, triggerAt: 9, type: "dispute_deadline", data: { accountId: BOB } });
+      const entries = new Map<string, PaybookEntry>(secrets.filter(() => r() < 0.7).map((sec) => { const h = hashHtlcSecret(sec)!; return [h, { hashlock: h, createdTimestamp: 1, inboundEntity: xpick(r, [BOB, W("0c")]), pendingFee: 2n }] as const; }));
+      let rw = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold: 1n, members: new Map([[aliceAddr, { shares: 1n }]]), jurisdictionConfig: { name: "j", entityProviderAddress: JEP }, committed: (jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) as never })).state;
+      if (crontab !== undefined) rw = withCrontab(rw, crontab);
+      rw = { ...rw, paybook: { entries, feesEarned: 0n } };
+      const base = genesisAB();
+      const rwBob = bobTag === "none" ? undefined : bobTag === "open" ? (base as AccountReplica) : ({ ...base, _tag: "disputed", mempool: [], ...(bobTag === "queued" ? { queued: active } : { active }) } as unknown as AccountReplica);
+      const ogAccounts = new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries(rwBob === undefined ? [] : [[BOB, ogBobAccount(bobTag === "open" ? "open" : "disputed", active)]], ALICE, () => Z32 as never));
+      const og: any = { entityId: ALICE, timestamp: T0, height: 0, lastFinalizedJHeight: 0, config: { mode: "proposer-based", threshold: 1n, validators: [ALICE_SIGNERX], shares: { [ALICE_SIGNERX]: 1n }, jurisdiction: OG_JX },
+        reserves: new Map(), outDebtsByToken: new Map(), inDebtsByToken: new Map(), accounts: ogAccounts, paybook: { entries: new Map([...entries].map(([k, v]) => [k, { ...v }])), feesEarned: 0n },
+        ...(crontab === undefined ? {} : { crontabState: { tasks: new Map([...crontab.tasks].map(([k, v]) => [k, { ...v }])), hooks: new Map(crontab.hooks) } }), ...(jBatch === undefined ? {} : { jBatchState: structuredClone(jBatch) }) };
+      const sender = xpick(r, [ALICE, BOB, BOB, W("0c")]), counterentity = sender === ALICE ? BOB : xpick(r, [ALICE, ALICE, BOB]);
+      // og's normalizer rejects disputeTimeout != start + L + R, so the clock defect is an Account-terms mismatch
+      const clockSkew = xint(r, 8) === 0 ? 1 : 0;
+      const batchNonce = xpick(r, [undefined, 3, 7]), bn = batchNonce === undefined ? {} : { batchNonce };
+      const data: Record<string, unknown> = kind === "DisputeStarted" ? {
+        sender, counterentity, nonce: String(xpick(r, [1, 2])), proposerIsLeft: r() < 0.5, proofbodyHash: hashIn, watchSeed: TERMS.watchSeed, starterInitialArguments: secrets.length > 0 && r() < 0.8 ? secretArgs(secrets) : "0x",
+        starterCounterArguments: "0x", starterCounterProofCommitment: Z32, initialProofbody: goodBody, disputeTimeout: nowSec - 5 + L + R + clockSkew, disputeStartTimestamp: nowSec - 5, leftResponseSeconds: L, rightResponseSeconds: R + clockSkew, ...bn,
+      } : kind === "CounterDisputeRegistered" ? { sender, counterentity, nonce: xpick(r, [1, 2, 3, 4]), proposerIsLeft: r() < 0.5, proofbodyHash: hashIn, counterProofbody: goodBody }
+        : { sender, counterentity, initialNonce: String(xpick(r, [1, 2])), initialProofbodyHash: xpick(r, [good, Z32]), finalProofbodyHash: hashIn, finalizationEvidenceHash: word(r), finalProofbody: goodBody, ...bn };
+      const range = aliceRange(r, og, [[{ type: kind, data }]]);
+      let ogOut: Out<any>;
+      try { ogOut = { ok: true, value: await ogApplyJEvent(og, range as any, { quietRuntimeLogs: true, state: { jReplicas: JREPLICAS } } as any, {} as any, [], true, bookSlot as any) }; } catch (e) { ogOut = { ok: false, message: String((e as Error).message) }; }
+      const f = foldTx(rw, rwBob === undefined ? new Map() : new Map([[BOB, rwBob]]), { type: "j_event", data: range as never }, { verify: verifiers.verify, timestamp: BigInt(T0), jReplicas: JREPLICAS as never });
+      expect([i, kind, f.ok ? "ok" : (f.error as any).reason]).toEqual([i, kind, ogOut.ok ? "ok" : ogOut.message]);
+      bump(kinds, `${kind}:${ogOut.ok ? "ok" : ogOut.message.split(":")[0]}`);
+      if (!ogOut.ok || !f.ok) continue;
+      const d = f.value, next = ogOut.value.newState, msgs = readEntityFrameEvents(next).map((e: any) => e.message);
+      expect([i, (d.events ?? []).map((e) => e.message)]).toEqual([i, msgs]);
+      expect([i, d.state.committed["jBatchState"] ?? null]).toEqual([i, next.jBatchState ?? null]);
+      const child: any = d.accountReplicas.get(BOB), ogBob = next.accounts.get(BOB);
+      expect([i, child?.active ?? child?.queued ?? null]).toEqual([i, ogBob?.activeDispute ?? null]);
+      expect([i, child?.state.jNonce ?? null]).toEqual([i, ogBob?.state.jNonce ?? null]);
+      expect([i, sortedHooks(crontab === undefined ? undefined : unwrap(crontabOf(d.state)).hooks)]).toEqual([i, sortedHooks(next.crontabState?.hooks)]);
+      expect([i, paybookView(d.state.paybook ?? { entries: new Map(), feesEarned: 0n })]).toEqual([i, paybookView(next.paybook)]);
+      const rwOut = d.outputs.map((o: any) => [o.to, o.input.txs.map((t: any) => t.type === "runtimeOutput" ? t.data.entityTxs.map((x: any) => x.type).join("+") : t.type).join(",")]);
+      expect([i, rwOut]).toEqual([i, ogOut.value.outputs.map((o: any) => [o.entityId, o.entityTxs.map((t: any) => t.type).join(o.entityId === ALICE ? "," : "+")])]);
+      for (const m of msgs) bump(kinds, String(m).slice(0, 14));
+    }
+    expectKinds(kinds, ["DisputeStarted:ok", "DisputeFinalized:ok", "CounterDisputeRegistered:ok", "DisputeStarted:J_EVENT_DISPUTE_FINAL_PROOFBODY_HASH_MISMATCH", "DisputeFinalized:J_EVENT_DISPUTE_FINAL_PROOFBODY_HASH_MISMATCH",
+      "DisputeStarted:ACCOUNT_DISPUTE_CLOCK_MISMATCH", "CounterDisputeRegistered:COUNTER_DISPUTE_ACTIVE_ACCOUNT_MISSING", "CounterDisputeRegistered:COUNTER_DISPUTE_NONCE_STALE",
+      "⚔️ DISPUTE STA", "⚔️ DISPUTE vs", "✅ DISPUTE FINA", "🛡️ Counter-pr", "🔓 HTLC reveal", "🧹 Removed", "↻ Synced J bat"]);
   }, 120_000);
 });

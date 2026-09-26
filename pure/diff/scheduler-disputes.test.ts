@@ -360,8 +360,8 @@ describe("scheduler-disputes: J7 Entity-side dispute effects (og entity/tx/j-eve
       if (msgs.some((m) => m.startsWith("↻"))) synced++;
     }
     expect([removedAny > 50, broadcasts > 10, synced > 5]).toEqual([true, true, true]);
-    // og applyKnownHtlcSecret for secrets in the starter's arguments is not ported: a named invariant
-    expect(disputeStartedEffects(entity([aliceAddr]), { sender: BOB, counterentity: ALICE, proofbodyHash: h1, disputeTimeout: 1, starterInitialArguments: "0xabcd" }, 0)).toEqual({ ok: false, error: { _tag: "entity_invariant", reason: "DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED" } });
+    // og applyKnownHtlcSecret for the starter's secrets runs in the Entity's DisputeStarted handler (disputes-final.test.ts); this J-batch part accepts any arguments
+    expect(disputeStartedEffects(entity([aliceAddr]), { sender: BOB, counterentity: ALICE, proofbodyHash: h1, disputeTimeout: 1, starterInitialArguments: "0xabcd" }, 0).ok).toBe(true);
   });
   test("MATCH: 200 random DisputeStarted / DisputeFinalized J events through the Host's J-event path -- og's J batch retirement, nonce sync and queueLocalJBatchBroadcast on the Host's jBatchState", () => {
     const host0: any = unwrap(genesisHost(ALICE, genesisAB()) as any);
