@@ -18285,237 +18285,630 @@ export const hostDisputeJBatch = (
 };
 // ---- Account Hankos through the Entity manifest: og accountInput response + proposePendingAccountFrames, hanko-witness.ts, hanko/signing.ts ----
 /**
- * og signs Account frames, ACKs and dispute proofs as secondary `hashesToSign` of the Entity frame and attaches the quorum Hanko only after the
- * frame certifies. While the frame folds, this Entity's own Hanko on digest `d` is the placeholder `pendingHanko(d)`; `installFrame` replaces it
- * with og's quorum Hanko. Own Hankos never enter the Entity state root (only the peer's do), so the placeholder never reaches a hash.
+ * og signs Account frames, ACKs and dispute proofs as secondary `hashesToSign` of the Entity frame and attaches the
+ * quorum Hanko only after the frame certifies. While the frame folds, this Entity's own Hanko on digest `d` is the
+ * placeholder `pendingHanko(d)`; `installFrame` replaces it with og's quorum Hanko. Own Hankos never enter the Entity
+ * state root (only the peer's do), so the placeholder never reaches a hash.
  */
 const pendingHanko = (digest: string): Hanko => `0xfe${hexBody(digest).toLowerCase()}`;
-const pendingVerify = (verify: Verify, self: EntityId): Verify => (d, h, e) => (h === pendingHanko(d) && sameHex(e, self)) || verify(d, h, e);
-const pendingDispute = (plan: DisputePlan): DisputeHanko | undefined => match(plan, { sign: ({ draft }): DisputeHanko | undefined => ({ ...draft, hanko: pendingHanko(draft.hash) }), resend: ({ disputeHanko }) => disputeHanko, none: () => undefined });
-/** og accountHasProposableMempool (without the settlement-freeze and HTLC-cap refinements): an active Account with no frame in flight and queued txs. */
-const proposableChild = (c: AccountReplica | undefined): c is OpenAccount => c !== undefined && c._tag === "open" && c.mempool.length > 0;
+const pendingVerify = (verify: Verify, self: EntityId): Verify => (d, h, e) =>
+  (h === pendingHanko(d) && sameHex(e, self)) || verify(d, h, e);
+/** The dispute Hanko an ACK or proposal carries: a pending one to sign, the one already signed, or none. */
+const pendingDispute = (plan: DisputePlan): DisputeHanko | undefined =>
+  match(plan, {
+    sign: ({ draft }): DisputeHanko | undefined => ({ ...draft, hanko: pendingHanko(draft.hash) }),
+    resend: ({ disputeHanko }) => disputeHanko,
+    none: () => undefined,
+  });
+/**
+ * og accountHasProposableMempool (without the settlement-freeze and HTLC-cap refinements): an active Account with no
+ * frame in flight and queued txs.
+ */
+const proposableChild = (c: AccountReplica | undefined): c is OpenAccount =>
+  c !== undefined && c._tag === "open" && c.mempool.length > 0;
 const hasProposableAccount = (r: Folded): boolean => [...r.accountReplicas.values()].some(proposableChild);
-/** og commits a received Account frame and answers it in the same Entity frame (the forced ACK response), signed through the manifest. */
+/**
+ * The Entity draft after an Account answer: the answer's state, both drafts' outputs and events, and the cross-j swaps
+ * kept.
+ */
+const afterAnswer = (d: Draft, acked: Draft): Draft => ({
+  ...acked,
+  outputs: [...d.outputs, ...acked.outputs],
+  events: [...(d.events ?? []), ...(acked.events ?? [])],
+  runtimeEvents: [...(d.runtimeEvents ?? []), ...(acked.runtimeEvents ?? [])],
+  ...opt("swaps", d.swaps),
+});
+/**
+ * og commits a received Account frame and answers it in the same Entity frame (the forced ACK response), signed through
+ * the manifest.
+ */
 const answerFrame = (d: Draft, peer: EntityId, ctx: FoldContext): Result<Routed, EntityError> => {
   const child = d.accountReplicas.get(peer), self = d.state.id;
   if (child === undefined || child._tag !== "received") return ok({ draft: d, effects: [] });
   return chain(partyOf(replicaId(child), self), (party) => chain(previewAck(child, self), (p) => {
-    const ack: AccountInput = { kind: "ack", ...sentBy(child, party), height: p.height, frameHash: p.frameHash, frameHanko: pendingHanko(p.frameHash), ...opt("disputeHanko", pendingDispute(p.dispute)) };
-    return map(routedRaw(d.state, d.accountReplicas, peer, applyAccountInput(child, ack, { verify: pendingVerify(ctx.verify, self), self, now: ctx.timestamp, autoRebalance: hubConfigOf(d.state) === undefined, deltaTransformer: accountDt(ctx, child) })), ({ draft: acked, effects }) => ({
-      draft: { ...acked, outputs: [...d.outputs, ...acked.outputs], events: [...(d.events ?? []), ...(acked.events ?? [])], runtimeEvents: [...(d.runtimeEvents ?? []), ...(acked.runtimeEvents ?? [])], ...opt("swaps", d.swaps) }, effects,
-    }));
+    const ack: AccountInput = {
+      kind: "ack",
+      ...sentBy(child, party),
+      height: p.height,
+      frameHash: p.frameHash,
+      frameHanko: pendingHanko(p.frameHash),
+      ...opt("disputeHanko", pendingDispute(p.dispute)),
+    };
+    const env = {
+      verify: pendingVerify(ctx.verify, self),
+      self,
+      now: ctx.timestamp,
+      autoRebalance: hubConfigOf(d.state) === undefined,
+      deltaTransformer: accountDt(ctx, child),
+    };
+    const answered = routedRaw(d.state, d.accountReplicas, peer, applyAccountInput(child, ack, env));
+    return map(answered, ({ draft: acked, effects }) => ({ draft: afterAnswer(d, acked), effects }));
   }));
 };
-const entityJHeight = (state: EntityState): bigint => { const h = state.committed["lastFinalizedJHeight"]; return typeof h === "number" && Number.isSafeInteger(h) && h >= 0 ? BigInt(h) : 0n; };
-// ---- og entity/transition/cross-j-proposer-materialization.ts: one exact two-Account opening cohort per sibling pair ----
+const entityJHeight = (state: EntityState): bigint => {
+  const h = state.committed["lastFinalizedJHeight"];
+  return typeof h === "number" && Number.isSafeInteger(h) && h >= 0 ? BigInt(h) : 0n;
+};
+// ---- og entity/transition/cross-j-proposer-materialization.ts: one exact opening cohort per sibling pair ----
 const openingText = (v: unknown): string => String(v ?? "").trim().toLowerCase();
-/** og CROSS_J_OPENING_COHORT_MAX_ORDERS: one order per atomic opening cohort (both proofs stay under their byte limit). */
+const byText = (a: string, b: string): number => a.localeCompare(b);
+/**
+ * og CROSS_J_OPENING_COHORT_MAX_ORDERS: one order per atomic opening cohort (both proofs stay under their byte limit).
+ */
 const CROSS_J_OPENING_COHORT_MAX_ORDERS = 1;
 type OpeningLeg = { readonly orderId: string; readonly route: CrossRoute };
 /** og crossJOpeningLegs: each cross_pull_lock carrying its binding and route, one per order, sorted by order id. */
 const crossOpeningLegs = (txs: readonly AccountTx[]): Result<readonly OpeningLeg[], EntityError> => {
-  const byOrder = new Map<string, OpeningLeg>();
-  for (const tx of txs) {
-    if (tx.type !== "cross_pull_lock" || !tx.crossJurisdiction || !tx.crossJurisdictionRoute) continue;
-    const orderId = openingText(tx.crossJurisdiction.orderId);
-    if (!orderId) return invariant("CROSS_J_OPENING_ORDER_ID_REQUIRED");
-    byOrder.set(orderId, { orderId, route: tx.crossJurisdictionRoute });
-  }
-  return ok([...byOrder.values()].sort((a, b) => a.orderId.localeCompare(b.orderId)));
+  const bound = txs.flatMap((tx) =>
+    tx.type === "cross_pull_lock" && tx.crossJurisdiction && tx.crossJurisdictionRoute
+      ? [{ orderId: openingText(tx.crossJurisdiction.orderId), route: tx.crossJurisdictionRoute }]
+      : [],
+  );
+  const legs = traverse(bound, (leg) => (leg.orderId ? ok(leg) : invariant("CROSS_J_OPENING_ORDER_ID_REQUIRED")));
+  return map(legs, (xs) =>
+    [...new Map(xs.map((leg) => [leg.orderId, leg] as const)).values()].toSorted((a, b) =>
+      byText(a.orderId, b.orderId),
+    ),
+  );
 };
 type SiblingAccount = { readonly entityId: string; readonly signerId: string; readonly accountId: string };
 /** og pairedCrossJSiblingAccount: the other jurisdiction's Account of this leg, by this Entity's role in the route. */
 const pairedSibling = (local: string, route: CrossRoute): Result<SiblingAccount, EntityError> => {
-  const me = openingText(local), t = openingText;
-  if (me === t(route.source.entityId)) return ok({ entityId: t(route.target.counterpartyEntityId), signerId: t(route.targetSignerId), accountId: t(route.target.entityId) });
-  if (me === t(route.source.counterpartyEntityId)) return ok({ entityId: t(route.target.entityId), signerId: t(route.targetHubSignerId), accountId: t(route.target.counterpartyEntityId) });
-  if (me === t(route.target.entityId)) return ok({ entityId: t(route.source.counterpartyEntityId), signerId: t(route.sourceHubSignerId), accountId: t(route.source.entityId) });
-  if (me === t(route.target.counterpartyEntityId)) return ok({ entityId: t(route.source.entityId), signerId: t(route.sourceSignerId), accountId: t(route.source.counterpartyEntityId) });
-  return invariant(`CROSS_J_OPENING_LOCAL_ROLE_INVALID:${route.orderId}:${me}`);
+  const t = openingText;
+  const sibling = (entityId: unknown, signerId: unknown, accountId: unknown): Result<SiblingAccount, EntityError> =>
+    ok({ entityId: t(entityId), signerId: t(signerId), accountId: t(accountId) });
+  switch (t(local)) {
+    case t(route.source.entityId):
+      return sibling(route.target.counterpartyEntityId, route.targetSignerId, route.target.entityId);
+    case t(route.source.counterpartyEntityId):
+      return sibling(route.target.entityId, route.targetHubSignerId, route.target.counterpartyEntityId);
+    case t(route.target.entityId):
+      return sibling(route.source.counterpartyEntityId, route.sourceHubSignerId, route.source.entityId);
+    case t(route.target.counterpartyEntityId):
+      return sibling(route.source.entityId, route.sourceSignerId, route.source.counterpartyEntityId);
+    default:
+      return invariant(`CROSS_J_OPENING_LOCAL_ROLE_INVALID:${route.orderId}:${t(local)}`);
+  }
 };
 /** og crossJOpeningOrderId: a cross pull lock or a cross swap offer names its order. */
 const openingOrderOf = (tx: AccountTx): Result<string | undefined, EntityError> => {
-  const binding = tx.type === "cross_pull_lock" ? tx.crossJurisdiction : tx.type === "swap_offer" ? tx.crossJurisdiction : undefined;
+  const binding = tx.type === "cross_pull_lock" || tx.type === "swap_offer" ? tx.crossJurisdiction : undefined;
   if (!binding) return ok(undefined);
   const orderId = openingText(binding.orderId);
   return orderId ? ok(orderId) : invariant("CROSS_J_OPENING_ORDER_ID_REQUIRED");
 };
-const selectOpeningTxs = (txs: readonly AccountTx[], orderIds: ReadonlySet<string>): Result<readonly AccountTx[], EntityError> =>
-  map(traverse(txs, (tx) => map(openingOrderOf(tx), (o) => (o !== undefined && orderIds.has(o) ? [tx] : []))), (xs) => xs.flat());
+const selectOpeningTxs = (
+  txs: readonly AccountTx[],
+  orderIds: ReadonlySet<string>,
+): Result<readonly AccountTx[], EntityError> =>
+  map(
+    traverse(txs, (tx) => map(openingOrderOf(tx), (o) => (o !== undefined && orderIds.has(o) ? [tx] : []))),
+    (xs) => xs.flat(),
+  );
+/** The local legs bound for one sibling Account, keyed by its identity. */
+type SiblingGroup = { readonly key: string; readonly sibling: SiblingAccount; readonly orderIds: ReadonlySet<string> };
+type BoundLeg = { readonly key: string; readonly sibling: SiblingAccount; readonly orderId: string };
+/** Our opening legs grouped by the sibling Account each pairs with, in key order. */
+const siblingGroups = (self: string, legs: readonly OpeningLeg[]): Result<readonly SiblingGroup[], EntityError> => {
+  const bind = (leg: OpeningLeg): Result<BoundLeg, EntityError> =>
+    chain(pairedSibling(self, leg.route), (sibling) => {
+      if (!sibling.entityId || !sibling.signerId || !sibling.accountId)
+        return invariant(`CROSS_J_OPENING_SIBLING_BINDING_REQUIRED:${leg.orderId}`);
+      return ok({ key: `${sibling.entityId}:${sibling.signerId}:${sibling.accountId}`, sibling, orderId: leg.orderId });
+    });
+  const group = ([key, members]: readonly [string, readonly BoundLeg[]]): SiblingGroup[] => {
+    const [first] = members;
+    return first === undefined
+      ? []
+      : [{ key, sibling: first.sibling, orderIds: new Set(members.map((m) => m.orderId)) }];
+  };
+  return map(traverse(legs, bind), (bound) =>
+    [...Map.groupBy(bound, (b) => b.key)].flatMap(group).toSorted((a, b) => byText(a.key, b.key)),
+  );
+};
+/** The sibling's legs that pair back with our Account: its reciprocal order ids. */
+const reciprocalOrders = (
+  siblingId: string,
+  legs: readonly OpeningLeg[],
+  self: string,
+  counterparty: string,
+): Result<ReadonlySet<string>, EntityError> => {
+  const back = (leg: OpeningLeg): Result<readonly string[], EntityError> =>
+    map(pairedSibling(siblingId, leg.route), (b) =>
+      b.entityId === openingText(self) && b.accountId === counterparty ? [leg.orderId] : [],
+    );
+  return map(traverse(legs, back), (ids) => new Set(ids.flat()));
+};
+/** A frozen sibling cohort: our side proposes exactly its orders, or waits. */
+const frozenCohort = (
+  mempool: readonly AccountTx[], reciprocal: ReadonlySet<string>, common: readonly string[],
+): Result<readonly AccountTx[] | undefined, EntityError> => {
+  if (reciprocal.size !== common.length) return ok(undefined);
+  return chain(selectOpeningTxs(mempool, new Set(common)), (selected) => (selected.length > ACCOUNT_MEMPOOL_SIZE
+    ? invariant(`CROSS_J_OPENING_RECIPROCAL_COHORT_TOO_LARGE:${selected.length}`)
+    : ok(selected)));
+};
+type CohortFit = { readonly chosen: readonly string[]; readonly done: boolean };
+/** og fitOpeningCohort: the first common order both Accounts can carry (one order per cohort). */
+const fittedCohort = (
+  mempool: readonly AccountTx[],
+  siblingMempool: readonly AccountTx[],
+  common: readonly string[],
+): Result<readonly AccountTx[] | undefined, EntityError> => {
+  const fit = (f: CohortFit, orderId: string): Result<CohortFit, EntityError> => {
+    if (f.done || f.chosen.length >= CROSS_J_OPENING_COHORT_MAX_ORDERS) return ok({ ...f, done: true });
+    const one = new Set([orderId]);
+    return chain(selectOpeningTxs(mempool, one), (mine) =>
+      map(selectOpeningTxs(siblingMempool, one), (theirs): CohortFit => {
+        if (mine.length === 0 || theirs.length === 0) return f;
+        if (mine.length > ACCOUNT_MEMPOOL_SIZE || theirs.length > ACCOUNT_MEMPOOL_SIZE) return { ...f, done: true };
+        return { ...f, chosen: [...f.chosen, orderId] };
+      }),
+    );
+  };
+  return chain(foldResult(common, { chosen: [], done: false }, fit), ({ chosen }) =>
+    chosen.length === 0 ? ok(undefined) : selectOpeningTxs(mempool, new Set(chosen)),
+  );
+};
+/** One sibling group's cohort; `undefined` when this sibling offers none. */
+const siblingCohort = (
+  state: EntityState, counterparty: string, mempool: readonly AccountTx[], siblings: SiblingReplicas, g: SiblingGroup,
+): Result<readonly AccountTx[] | undefined, EntityError> => {
+  const replica = siblings(g.sibling.entityId, g.sibling.signerId);
+  if (replica === undefined) return invariant(`CROSS_J_OPENING_SIBLING_REPLICA_MISSING:${g.key}`);
+  const account = [...replica.accountReplicas].find(([id]) => openingText(id) === g.sibling.accountId)?.[1];
+  if (account === undefined) return invariant(`CROSS_J_OPENING_SIBLING_ACCOUNT_MISSING:${g.key}`);
+  // og: only a pending OPENING freezes the cohort; an unrelated pending frame never hides queued opening legs
+  const pendingTxs = account._tag === "proposed" ? account.candidate.frame.txs : [];
+  const siblingMempool = "mempool" in account ? account.mempool : [];
+  return chain(crossOpeningLegs(pendingTxs), (pendingOpening) => {
+    const frozen = pendingOpening.length > 0;
+    return chain(crossOpeningLegs(frozen ? pendingTxs : siblingMempool), (siblingLegs) =>
+      chain(reciprocalOrders(replica.state.id, siblingLegs, state.id, counterparty), (reciprocal) => {
+        const common = [...g.orderIds].filter((o) => reciprocal.has(o)).toSorted(byText);
+        if (reciprocal.size === 0 || common.length === 0) return ok(undefined);
+        return frozen ? frozenCohort(mempool, reciprocal, common) : fittedCohort(mempool, siblingMempool, common);
+      }));
+  });
+};
 /**
- * og selectCrossJOpeningAccountProposalTxs: `undefined` for an ordinary proposal, `null` while the reciprocal leg is not available, else exactly
- * the cohort both siblings select (a frozen sibling cohort, or the first common order that fits both frames).
+ * og selectCrossJOpeningAccountProposalTxs: `undefined` for an ordinary proposal, `null` while the reciprocal leg is
+ * not available, else exactly the cohort both siblings select (a frozen sibling cohort, or the first common order that
+ * fits both frames).
  */
-export const crossOpeningSelection = (state: EntityState, peer: EntityId, mempool: readonly AccountTx[], siblings: SiblingReplicas): Result<readonly AccountTx[] | null | undefined, EntityError> =>
+export const crossOpeningSelection = (
+  state: EntityState,
+  peer: EntityId,
+  mempool: readonly AccountTx[],
+  siblings: SiblingReplicas,
+): Result<readonly AccountTx[] | null | undefined, EntityError> =>
   chain(crossOpeningLegs(mempool), (localLegs): Result<readonly AccountTx[] | null | undefined, EntityError> => {
     if (localLegs.length === 0) return ok(undefined);
-    const counterparty = openingText(peer), groups = new Map<string, { readonly sibling: SiblingAccount; readonly orderIds: Set<string> }>();
-    for (const leg of localLegs) {
-      const sibling = pairedSibling(state.id, leg.route);
-      if (!sibling.ok) return sibling;
-      if (!sibling.value.entityId || !sibling.value.signerId || !sibling.value.accountId) return invariant(`CROSS_J_OPENING_SIBLING_BINDING_REQUIRED:${leg.orderId}`);
-      const key = `${sibling.value.entityId}:${sibling.value.signerId}:${sibling.value.accountId}`, group = groups.get(key) ?? { sibling: sibling.value, orderIds: new Set<string>() };
-      group.orderIds.add(leg.orderId);
-      groups.set(key, group);
-    }
-    for (const [key, { sibling, orderIds }] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
-      const replica = siblings(sibling.entityId, sibling.signerId);
-      if (replica === undefined) return invariant(`CROSS_J_OPENING_SIBLING_REPLICA_MISSING:${key}`);
-      const account = [...replica.accountReplicas].find(([id]) => openingText(id) === sibling.accountId)?.[1];
-      if (account === undefined) return invariant(`CROSS_J_OPENING_SIBLING_ACCOUNT_MISSING:${key}`);
-      // og: only a pending OPENING freezes the cohort; an unrelated pending frame never hides queued opening legs
-      const pendingTxs = account._tag === "proposed" ? account.candidate.frame.txs : [];
-      const pendingOpening = crossOpeningLegs(pendingTxs);
-      if (!pendingOpening.ok) return pendingOpening;
-      const siblingMempool = "mempool" in account ? account.mempool : [], siblingTxs = pendingOpening.value.length > 0 ? pendingTxs : siblingMempool;
-      const siblingLegs = crossOpeningLegs(siblingTxs);
-      if (!siblingLegs.ok) return siblingLegs;
-      const reciprocal = new Set<string>();
-      for (const leg of siblingLegs.value) {
-        const back = pairedSibling(replica.state.id, leg.route);
-        if (!back.ok) return back;
-        if (back.value.entityId === openingText(state.id) && back.value.accountId === counterparty) reciprocal.add(leg.orderId);
-      }
-      if (reciprocal.size === 0) continue;
-      const common = [...orderIds].filter((o) => reciprocal.has(o)).sort((a, b) => a.localeCompare(b));
-      if (common.length === 0) continue;
-      if (pendingOpening.value.length > 0) {
-        if (reciprocal.size !== common.length) continue;
-        const selected = selectOpeningTxs(mempool, new Set(common));
-        if (!selected.ok) return selected;
-        return selected.value.length > ACCOUNT_MEMPOOL_SIZE ? invariant(`CROSS_J_OPENING_RECIPROCAL_COHORT_TOO_LARGE:${selected.value.length}`) : ok(selected.value);
-      }
-      // og fitOpeningCohort: the first common order both Accounts can carry (one order per cohort)
-      const chosen = new Set<string>();
-      for (const orderId of common) {
-        if (chosen.size >= CROSS_J_OPENING_COHORT_MAX_ORDERS) break;
-        const mine = selectOpeningTxs(mempool, new Set([orderId])), theirs = selectOpeningTxs(siblingMempool, new Set([orderId]));
-        if (!mine.ok) return mine;
-        if (!theirs.ok) return theirs;
-        if (mine.value.length === 0 || theirs.value.length === 0) continue;
-        if (mine.value.length > ACCOUNT_MEMPOOL_SIZE || theirs.value.length > ACCOUNT_MEMPOOL_SIZE) break;
-        chosen.add(orderId);
-      }
-      if (chosen.size > 0) return selectOpeningTxs(mempool, chosen);
-    }
-    return ok(null);
-  });
-/** og entityTxContainsCrossJSetup / entityTxContainsAccountTransition over a tx and its nested command / runtimeOutput txs. */
-const nestedFrameTxs = (tx: EntityTx): readonly EntityTx[] => (tx.type === "entityCommand" ? tx.data.txs : tx.type === "runtimeOutput" && tx.data.protocol === "cross-j" ? tx.data.entityTxs : [tx]);
-const crossSetupTx = (tx: EntityTx): boolean => nestedFrameTxs(tx).some((n) => n.type === "materializeCrossJurisdictionSwap" || n.type === "materializeCrossJurisdictionClear" || n.type === "registerCrossJurisdictionSwap");
-const accountTransitionTx = (tx: EntityTx): boolean => nestedFrameTxs(tx).some((n) => n.type === "accountInput" || n.type === "crossJurisdictionFillNotice");
-/**
- * og proposePendingAccountFrames: every proposable Account in worklist order proposes one frame at the Entity clock; a refused proposal is not a
- * frame. A cross-j opening proposes exactly its sibling cohort (og selectCrossJOpeningAccountProposalTxs) and waits while the reciprocal is missing.
- */
-const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext): Result<{ readonly draft: Draft; readonly frames: number }, EntityError> => {
-  const self = d.state.id, clock: FrameClock = { timestamp: ctx.timestamp, jHeight: entityJHeight(d.state) };
-  let draft = d, frames = 0;
-  for (const peer of order) {
-    const child = draft.accountReplicas.get(peer);
-    if (!proposableChild(child)) continue;
-    const cohort = ctx.siblings === undefined ? ok(undefined) : crossOpeningSelection(draft.state, peer, child.mempool, ctx.siblings);
-    if (!cohort.ok) return cohort;
-    if (cohort.value === null) continue;
-    const selected = cohort.value;
-    const dt = accountDt(ctx, child), plan = planAccountProposal(child, self, clock, ctx.verify, selected, dt, ctx.boardAuthority), party = partyOf(replicaId(child), self);
-    if (!plan.ok && accountThrew(plan.error)) return plan;
-    if (!plan.ok || !party.ok) continue;
-    const input: AccountInput = match(plan.value, {
-      frame: ({ preview }): AccountInput => ({ kind: "propose", frameHanko: pendingHanko(preview.frame.stateHash), ...opt("disputeHanko", pendingDispute(preview.dispute)), ...opt("selected", selected), ...clock }),
-      idle: (): AccountInput => ({ kind: "propose", ...opt("selected", selected), ...clock }),
+    const counterparty = openingText(peer);
+    return chain(siblingGroups(state.id, localLegs), (groups) => {
+      const first = (
+        found: readonly AccountTx[] | undefined,
+        g: SiblingGroup,
+      ): Result<readonly AccountTx[] | undefined, EntityError> =>
+        found !== undefined ? ok(found) : siblingCohort(state, counterparty, mempool, siblings, g);
+      return map(foldResult(groups, undefined as readonly AccountTx[] | undefined, first), (found) => found ?? null);
     });
-    const next = routed(draft.state, draft.accountReplicas, peer, propose(child, input as Propose, { verify: pendingVerify(ctx.verify, self), party: party.value, deltaTransformer: dt }));
-    if (!next.ok && accountThrew(next.error)) return next;
-    if (!next.ok) continue;
-    if (plan.value._tag === "frame") frames += 1;
-    draft = { ...draft, ...next.value, outputs: [...draft.outputs, ...next.value.outputs], events: [...(draft.events ?? []), ...(next.value.events ?? [])], runtimeEvents: [...(draft.runtimeEvents ?? []), ...(next.value.runtimeEvents ?? [])] };
-  }
-  // og sends one final Account input per Account: an ACK already riding on that Account's new frame is not sent again.
-  const carried = new Set(draft.outputs.flatMap((o) => ("tx" in o && o.tx.data.kind === "ack_frame" && o.tx.data.ack !== null ? [`${o.to}|${canon(o.tx.data.ack)}`] : [])));
-  return ok({ draft: { ...draft, outputs: draft.outputs.filter((o) => !("tx" in o && o.tx.data.kind === "ack" && carried.has(`${o.to}|${canon(ackOf(o.tx.data))}`))) }, frames });
+  });
+/**
+ * og entityTxContainsCrossJSetup / entityTxContainsAccountTransition over a tx and its nested command / runtimeOutput
+ * txs.
+ */
+const nestedFrameTxs = (tx: EntityTx): readonly EntityTx[] => {
+  if (tx.type === "entityCommand") return tx.data.txs;
+  return tx.type === "runtimeOutput" && tx.data.protocol === "cross-j" ? tx.data.entityTxs : [tx];
 };
-/** og buildQuorumHanko (single signer: encodeSingleSignerEntityHankos): canonical 0/1-recovery signatures by the named validators, signers then placeholders sorted by address. */
-export const quorumHanko = (state: EntityState, digest: string, sigs: ReadonlyMap<string, Signature>): Result<Hanko, EntityError> => {
-  const q = state.quorum, bad: EntityError = { _tag: "hanko_build" };
-  const validators = [...membersOf(q)].map(([addr, m]) => ({ key: signerId(addr), share: m.shares }));
-  const packed = new Map<string, RawSig>();
-  for (const [raw, sig] of sigs) {
-    const key = signerId(raw), v = validators.find((x) => x.key === key), bytes = parseHex(sig);
-    if (v === undefined || packed.has(key) || bytes === null || bytes.length !== 65) return err(bad);
-    const recovery = bytes[64] ?? 0, r = bytes.subarray(0, 32), s = bytes.subarray(32, 64);
-    if ((recovery !== 0 && recovery !== 1) || isZeroWord(s) || wordAt(s, 0) > HALF_ORDER || !sameHex(recoverRawSigner(digest, sig) ?? undefined, key)) return err(bad);
-    packed.set(key, { r, s, v: 27 + recovery });
-  }
-  if (validators.reduce((n, v) => n + (packed.has(v.key) ? v.share : 0n), 0n) < thresholdOf(q)) return err(bad);
-  const bound = assertBoardAuthority(state);
-  if (!bound.ok) return bound;
-  const entityWord = `0x${BigInt(state.id).toString(16).padStart(64, "0")}`, zero = { boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 };
-  if (isSingleSigner(q)) return ok(encodeHankoEnvelope({ placeholders: [], packedSignatures: packSignatures([...packed.values()]), memberSignatures: [], claims: [{ entityId: entityWord, entityIndexes: [0], weights: [1], threshold: 1, ...zero }] }));
-  const delays = match<Authority, typeof zero>(q, { teaching: () => zero, board: ({ board }) => ({ boardChangeDelay: board.boardChangeDelay, controlChangeDelay: board.controlChangeDelay, dividendChangeDelay: board.dividendChangeDelay }) });
-  const signing = validators.filter((v) => packed.has(v.key)).sort((a, b) => asc(a.key, b.key)), idle = validators.filter((v) => !packed.has(v.key)).sort((a, b) => asc(a.key, b.key));
-  const entityIndexes = validators.map((v) => { const i = signing.indexOf(v); return i < 0 ? idle.indexOf(v) : idle.length + i; });
-  return ok(encodeHankoEnvelope({
-    placeholders: idle.map((v) => `0x${hexBody(v.key).padStart(64, "0")}`), packedSignatures: packSignatures(signing.map((v) => packed.get(v.key) as RawSig)), memberSignatures: [],
-    claims: [{ entityId: entityWord, entityIndexes, weights: validators.map((v) => Number(v.share)), threshold: Number(thresholdOf(q)), ...delays }],
-  }));
+const CROSS_SETUP_TXS: ReadonlySet<string> =
+  new Set(["materializeCrossJurisdictionSwap", "materializeCrossJurisdictionClear", "registerCrossJurisdictionSwap"]);
+const crossSetupTx = (tx: EntityTx): boolean => nestedFrameTxs(tx).some((n) => CROSS_SETUP_TXS.has(n.type));
+const accountTransitionTx = (tx: EntityTx): boolean =>
+  nestedFrameTxs(tx).some((n) => n.type === "accountInput" || n.type === "crossJurisdictionFillNotice");
+type Proposing = { readonly draft: Draft; readonly frames: number };
+/** The propose input for a planned frame (with its pending Hankos) or an idle proposal, at the Entity clock. */
+const proposalInput = (
+  plan: ProposalPlan,
+  clock: FrameClock,
+  selected: readonly AccountTx[] | undefined,
+): AccountInput =>
+  match(plan, {
+    frame: ({ preview }): AccountInput => ({
+      kind: "propose",
+      frameHanko: pendingHanko(preview.frame.stateHash),
+      ...opt("disputeHanko", pendingDispute(preview.dispute)),
+      ...opt("selected", selected),
+      ...clock,
+    }),
+    idle: (): AccountInput => ({ kind: "propose", ...opt("selected", selected), ...clock }),
+  });
+/** The Entity draft after one Account proposal: the proposal's replicas and state, both drafts' outputs and events. */
+const afterProposal = (draft: Draft, next: Draft): Draft => ({
+  ...draft,
+  ...next,
+  outputs: [...draft.outputs, ...next.outputs],
+  events: [...(draft.events ?? []), ...(next.events ?? [])],
+  runtimeEvents: [...(draft.runtimeEvents ?? []), ...(next.runtimeEvents ?? [])],
+});
+/**
+ * One Account's proposal in og proposePendingAccountFrames: a refused proposal is skipped unless the Account machine
+ * threw.
+ */
+const proposeOne =
+  (ctx: FoldContext, clock: FrameClock) =>
+  (acc: Proposing, peer: EntityId): Result<Proposing, EntityError> => {
+    const { draft } = acc;
+    const self = draft.state.id;
+    const child = draft.accountReplicas.get(peer);
+    if (!proposableChild(child)) return ok(acc);
+    const cohort =
+      ctx.siblings === undefined
+        ? ok(undefined)
+        : crossOpeningSelection(draft.state, peer, child.mempool, ctx.siblings);
+    return chain(cohort, (selected): Result<Proposing, EntityError> => {
+      if (selected === null) return ok(acc);
+      const dt = accountDt(ctx, child);
+      const party = partyOf(replicaId(child), self);
+      const plan = planAccountProposal(child, self, clock, ctx.verify, selected, dt, ctx.boardAuthority);
+      if (!plan.ok) return accountThrew(plan.error) ? err(plan.error) : ok(acc);
+      if (!party.ok) return ok(acc);
+      const input = proposalInput(plan.value, clock, selected) as Propose;
+      const proposed = propose(child, input, {
+        verify: pendingVerify(ctx.verify, self),
+        party: party.value,
+        deltaTransformer: dt,
+      });
+      const next = routed(draft.state, draft.accountReplicas, peer, proposed);
+      if (!next.ok) return accountThrew(next.error) ? err(next.error) : ok(acc);
+      return ok({
+        draft: afterProposal(draft, next.value),
+        frames: acc.frames + (plan.value._tag === "frame" ? 1 : 0),
+      });
+    });
+  };
+/**
+ * og sends one final Account input per Account: an ACK already riding on that Account's new frame is not sent again.
+ */
+const withoutCarriedAcks = (outputs: readonly EntityOutput[]): readonly EntityOutput[] => {
+  const carried = new Set(
+    outputs.flatMap((o) =>
+      "tx" in o && o.tx.data.kind === "ack_frame" && o.tx.data.ack !== null ? [`${o.to}|${canon(o.tx.data.ack)}`] : [],
+    ),
+  );
+  return outputs.filter(
+    (o) => !("tx" in o && o.tx.data.kind === "ack" && carried.has(`${o.to}|${canon(ackOf(o.tx.data))}`)),
+  );
 };
-/** og attachHankoWitnessToOutputs/State: each secondary manifest entry's quorum Hanko replaces its placeholder in the Account replicas and outputs. */
+/**
+ * og proposePendingAccountFrames: every proposable Account in worklist order proposes one frame at the Entity clock; a
+ * refused proposal is not a frame. A cross-j opening proposes exactly its sibling cohort (og
+ * selectCrossJOpeningAccountProposalTxs) and waits while the reciprocal is missing.
+ */
+const proposeAccounts = (d: Draft, order: readonly EntityId[], ctx: FoldContext): Result<Proposing, EntityError> => {
+  const clock: FrameClock = { timestamp: ctx.timestamp, jHeight: entityJHeight(d.state) };
+  return map(foldResult(order, { draft: d, frames: 0 }, proposeOne(ctx, clock)), ({ draft, frames }) =>
+    ({ draft: { ...draft, outputs: withoutCarriedAcks(draft.outputs) }, frames }));
+};
+type Validator = { readonly key: string; readonly share: bigint };
+/**
+ * One validator's signature over the digest, packed: a known validator, once, canonical (0/1 recovery, low s) and
+ * recovering to it.
+ */
+const packSignature =
+  (validators: readonly Validator[], digest: string) =>
+  (
+    packed: ReadonlyMap<string, RawSig>,
+    [raw, sig]: readonly [string, Signature],
+  ): Result<ReadonlyMap<string, RawSig>, EntityError> => {
+    const bad: EntityError = { _tag: "hanko_build" };
+    const key = signerId(raw);
+    const bytes = parseHex(sig);
+    if (!validators.some((x) => x.key === key) || packed.has(key) || bytes === null || bytes.length !== 65)
+      return err(bad);
+    const recovery = bytes[64] ?? 0;
+    const r = bytes.subarray(0, 32);
+    const s = bytes.subarray(32, 64);
+    const canonical = (recovery === 0 || recovery === 1) && !isZeroWord(s) && wordAt(s, 0) <= HALF_ORDER;
+    if (!canonical || !sameHex(recoverRawSigner(digest, sig) ?? undefined, key)) return err(bad);
+    return ok(mapSet(packed, key, { r, s, v: 27 + recovery }));
+  };
+type HankoDelays = {
+  readonly boardChangeDelay: number;
+  readonly controlChangeDelay: number;
+  readonly dividendChangeDelay: number;
+};
+const NO_DELAYS: HankoDelays = { boardChangeDelay: 0, controlChangeDelay: 0, dividendChangeDelay: 0 };
+/**
+ * A board quorum's Hanko: signers after the idle members' placeholders, both sorted by address, one claim over the
+ * whole board.
+ */
+const boardQuorumHanko = (
+  q: Authority,
+  entityWord: string,
+  validators: readonly Validator[],
+  packed: ReadonlyMap<string, RawSig>,
+): Hanko => {
+  const delays = match<Authority, HankoDelays>(q, {
+    teaching: () => NO_DELAYS,
+    board: ({ board }) => ({
+      boardChangeDelay: board.boardChangeDelay,
+      controlChangeDelay: board.controlChangeDelay,
+      dividendChangeDelay: board.dividendChangeDelay,
+    }),
+  });
+  const byKey = (a: Validator, b: Validator): number => asc(a.key, b.key);
+  const signing = validators.filter((v) => packed.has(v.key)).toSorted(byKey);
+  const idle = validators.filter((v) => !packed.has(v.key)).toSorted(byKey);
+  const entityIndexes = validators.map((v) => {
+    const i = signing.indexOf(v);
+    return i < 0 ? idle.indexOf(v) : idle.length + i;
+  });
+  return encodeHankoEnvelope({
+    placeholders: idle.map((v) => `0x${hexBody(v.key).padStart(64, "0")}`),
+    packedSignatures: packSignatures(signing.map((v) => packed.get(v.key) as RawSig)),
+    memberSignatures: [],
+    claims: [
+      {
+        entityId: entityWord,
+        entityIndexes,
+        weights: validators.map((v) => Number(v.share)),
+        threshold: Number(thresholdOf(q)),
+        ...delays,
+      },
+    ],
+  });
+};
+/**
+ * og buildQuorumHanko (single signer: encodeSingleSignerEntityHankos): canonical 0/1-recovery signatures by the named
+ * validators, signers then placeholders sorted by address.
+ */
+export const quorumHanko = (
+  state: EntityState,
+  digest: string,
+  sigs: ReadonlyMap<string, Signature>,
+): Result<Hanko, EntityError> => {
+  const q = state.quorum;
+  const validators = [...membersOf(q)].map(([addr, m]): Validator => ({ key: signerId(addr), share: m.shares }));
+  return chain(
+    foldResult(sigs, new Map() as ReadonlyMap<string, RawSig>, packSignature(validators, digest)),
+    (packed) => {
+      const power = validators.reduce((n, v) => n + (packed.has(v.key) ? v.share : 0n), 0n);
+      if (power < thresholdOf(q)) return err({ _tag: "hanko_build" });
+      return chain(assertBoardAuthority(state), () => {
+        const entityWord = `0x${BigInt(state.id).toString(16).padStart(64, "0")}`;
+        if (!isSingleSigner(q)) return ok(boardQuorumHanko(q, entityWord, validators, packed));
+        const claim = { entityId: entityWord, entityIndexes: [0], weights: [1], threshold: 1, ...NO_DELAYS };
+        return ok(
+          encodeHankoEnvelope({
+            placeholders: [],
+            packedSignatures: packSignatures([...packed.values()]),
+            memberSignatures: [],
+            claims: [claim],
+          }),
+        );
+      });
+    },
+  );
+};
 /** The quorum Hanko of every secondary `hashesToSign` entry, by hash (og proof.hankos). */
-const secondaryHankos = (d: Draft, frame: EntityFrame, signatures: Precommits): Result<ReadonlyMap<string, Hanko>, EntityError> => {
-  const byHash = new Map<string, Hanko>();
-  for (const [i, h] of frame.hashesToSign.entries()) {
-    if (i === 0) continue;
-    const sigs = new Map([...signatures].flatMap(([id, bundle]) => { const s = bundle[i]; return s === undefined ? [] : [[id, s] as const]; }));
-    const built = quorumHanko(d.state, h.hash, sigs);
-    if (!built.ok) return built;
-    byHash.set(h.hash, built.value);
-  }
-  return ok(byHash);
+const secondaryHankos = (
+  d: Draft,
+  frame: EntityFrame,
+  signatures: Precommits,
+): Result<ReadonlyMap<string, Hanko>, EntityError> => {
+  const signed = (h: HashToSign, i: number): Result<readonly [string, Hanko], EntityError> => {
+    const sigs = new Map(
+      [...signatures].flatMap(([id, bundle]) => {
+        const s = bundle[i];
+        return s === undefined ? [] : [[id, s] as const];
+      }),
+    );
+    return map(quorumHanko(d.state, h.hash, sigs), (hanko) => [h.hash, hanko] as const);
+  };
+  return map(
+    traverse(frame.hashesToSign.slice(1), (h, i) => signed(h, i + 1)),
+    (pairs) => new Map(pairs),
+  );
 };
+/** A pending-Hanko substitution: the quorum Hanko for a placeholder, any other Hanko as it is. */
+type HankoFill = (h: Hanko) => Hanko;
+const fillMaybe = (fill: HankoFill, h: string | undefined): string | undefined => (h === undefined ? undefined : fill(h));
+const fillDispute = (fill: HankoFill, x: DisputeHanko | undefined): DisputeHanko | undefined =>
+  (x === undefined ? undefined : { ...x, hanko: fill(x.hanko) });
+const fillAck = (fill: HankoFill, a: AccountAck): AccountAck =>
+  ({ ...a, frameHanko: fill(a.frameHanko), ...opt("disputeHanko", fillDispute(fill, a.disputeHanko)) });
+const fillSent = (fill: HankoFill, x: SentProposal | undefined): SentProposal | undefined =>
+  x === undefined
+    ? undefined
+    : { ack: x.ack === null ? null : fillAck(fill, x.ack), ...opt("disputeHanko", fillDispute(fill, x.disputeHanko)) };
+/** og attaches the settlement / post-proof quorum Hankos to our settle_transition hanko intent. */
+const fillTx = (fill: HankoFill, tx: WireAccountTx): WireAccountTx => {
+  if (tx.type !== "settle_transition" || tx.kind !== "hanko") return tx;
+  const postProof = { ...tx.postProof, ...opt("hanko", fillMaybe(fill, tx.postProof.hanko)) };
+  return { ...tx, ...opt("settlementHanko", fillMaybe(fill, tx.settlementHanko)), postProof };
+};
+/** ... and to the settlement workspace it signs. */
+const fillBody = (fill: HankoFill, b: AccountBody): AccountBody => {
+  const w = b.settlement;
+  const p = w?.postSettlementDisputeProof;
+  if (w === undefined) return b;
+  const proof =
+    p === undefined
+      ? {}
+      : {
+          postSettlementDisputeProof: {
+            ...p,
+            leftHanko: fillMaybe(fill, p.leftHanko),
+            rightHanko: fillMaybe(fill, p.rightHanko),
+          },
+        };
+  return {
+    ...b,
+    settlement: { ...w, leftHanko: fillMaybe(fill, w.leftHanko), rightHanko: fillMaybe(fill, w.rightHanko), ...proof },
+  };
+};
+const fillFrame = (fill: HankoFill, frame: AccountFrame): AccountFrame => ({
+  ...frame,
+  txs: frame.txs.map((tx) => fillTx(fill, tx)),
+});
+const fillReplica = (fill: HankoFill, c: AccountReplica): AccountReplica => {
+  const head: AccountHead =
+    c.head._tag !== "installed"
+      ? c.head
+      : {
+          ...c.head,
+          certificate: {
+            ...c.head.certificate,
+            left: fill(c.head.certificate.left),
+            right: fill(c.head.certificate.right),
+          },
+        };
+  const dispute: DisputeWitnesses = { ...c.dispute, ...opt("current", fillDispute(fill, c.dispute.current)) };
+  const base = {
+    ...c,
+    head,
+    dispute,
+    state: fillBody(fill, c.state),
+    mempool: c.mempool.map((tx) => fillTx(fill, tx)),
+    ...(c.acknowledged === undefined ? {} : { acknowledged: fillAck(fill, c.acknowledged) }),
+  };
+  if (!("candidate" in c)) return base as AccountReplica;
+  const k = c.candidate;
+  const draft = { ...k.draft, state: fillBody(fill, k.draft.state) };
+  return {
+    ...base,
+    candidate: new Candidate(
+      fillFrame(fill, k.frame),
+      fill(k.frameHanko),
+      k.frameProof,
+      draft,
+      k.floor,
+      fillSent(fill, k.sent),
+    ),
+  } as AccountReplica;
+};
+const fillMessage = (fill: HankoFill, m: AccountPeerInput): AccountPeerInput =>
+  matchBy("kind", m, {
+    ack: (a): AccountPeerInput => ({
+      ...a,
+      frameHanko: fill(a.frameHanko),
+      ...opt("disputeHanko", fillDispute(fill, a.disputeHanko)),
+    }),
+    ack_frame: (a): AccountPeerInput => ({
+      ...a,
+      frame: fillFrame(fill, a.frame),
+      ack: a.ack === null ? null : fillAck(fill, a.ack),
+      frameHanko: fill(a.frameHanko),
+      ...opt("disputeHanko", fillDispute(fill, a.disputeHanko)),
+    }),
+    dispute: (a): AccountPeerInput => ({
+      ...a,
+      disputeHanko: { ...a.disputeHanko, hanko: fill(a.disputeHanko.hanko) },
+    }),
+    board_hanko_refresh: (a): AccountPeerInput => ({
+      ...a,
+      frameHanko: fill(a.frameHanko),
+      ...opt("disputeHanko", fillDispute(fill, a.disputeHanko)),
+    }),
+  });
+/**
+ * og attachHankoWitnessToOutputs/State: each secondary manifest entry's quorum Hanko replaces its placeholder in the
+ * Account replicas and outputs.
+ */
 const fillHankos = (d: Draft, byHash: ReadonlyMap<string, Hanko>): Result<Draft, EntityError> => {
   const table = new Map([...byHash].map(([hash, hanko]) => [pendingHanko(hash), hanko] as const));
   if (table.size === 0) return ok(d);
-  const f = (h: Hanko): Hanko => table.get(h) ?? h, fd = (x: DisputeHanko | undefined): DisputeHanko | undefined => (x === undefined ? undefined : { ...x, hanko: f(x.hanko) });
-  const fa = (a: AccountAck): AccountAck => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) });
-  const sentHankos = (x: SentProposal | undefined): SentProposal | undefined => (x === undefined ? undefined : { ack: x.ack === null ? null : fa(x.ack), ...opt("disputeHanko", fd(x.disputeHanko)) });
-  // og attaches the settlement / post-proof quorum Hankos to our settle_transition hanko intent and the workspace it signs
-  const ft = (tx: WireAccountTx): WireAccountTx => (tx.type === "settle_transition" && tx.kind === "hanko" ? { ...tx, ...opt("settlementHanko", tx.settlementHanko === undefined ? undefined : f(tx.settlementHanko)), postProof: { ...tx.postProof, ...opt("hanko", tx.postProof.hanko === undefined ? undefined : f(tx.postProof.hanko)) } } : tx);
-  const fh = (h: string | undefined): string | undefined => (h === undefined ? undefined : f(h));
-  const fb = (b: AccountBody): AccountBody => { const w = b.settlement, p = w?.postSettlementDisputeProof; return w === undefined ? b : { ...b, settlement: { ...w, leftHanko: fh(w.leftHanko), rightHanko: fh(w.rightHanko), ...(p === undefined ? {} : { postSettlementDisputeProof: { ...p, leftHanko: fh(p.leftHanko), rightHanko: fh(p.rightHanko) } }) } }; };
-  const ff = (frame: AccountFrame): AccountFrame => ({ ...frame, txs: frame.txs.map(ft) });
-  const replica = (c: AccountReplica): AccountReplica => {
-    const head: AccountHead = c.head._tag === "installed" ? { ...c.head, certificate: { ...c.head.certificate, left: f(c.head.certificate.left), right: f(c.head.certificate.right) } } : c.head;
-    const dispute: DisputeWitnesses = { ...c.dispute, ...opt("current", fd(c.dispute.current)) };
-    const base = { ...c, head, dispute, state: fb(c.state), mempool: c.mempool.map(ft), ...(c.acknowledged === undefined ? {} : { acknowledged: fa(c.acknowledged) }) };
-    return "candidate" in c ? ({ ...base, candidate: new Candidate(ff(c.candidate.frame), f(c.candidate.frameHanko), c.candidate.frameProof, { ...c.candidate.draft, state: fb(c.candidate.draft.state) }, c.candidate.floor, sentHankos(c.candidate.sent)) } as AccountReplica) : (base as AccountReplica);
-  };
-  const message = (m: AccountPeerInput): AccountPeerInput => matchBy("kind", m, {
-    ack: (a): AccountPeerInput => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
-    ack_frame: (a): AccountPeerInput => ({ ...a, frame: ff(a.frame), ack: a.ack === null ? null : fa(a.ack), frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
-    dispute: (a): AccountPeerInput => ({ ...a, disputeHanko: { ...a.disputeHanko, hanko: f(a.disputeHanko.hanko) } }),
-    board_hanko_refresh: (a): AccountPeerInput => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) }),
+  const fill: HankoFill = (h) => table.get(h) ?? h;
+  const outputs = d.outputs.map((o) =>
+    "tx" in o ? { to: o.to, tx: { type: "accountInput" as const, data: fillMessage(fill, o.tx.data) } } : o,
+  );
+  return ok({
+    ...d,
+    accountReplicas: new Map([...d.accountReplicas].map(([k, c]) => [k, fillReplica(fill, c)])),
+    outputs,
   });
-  return ok({ ...d, accountReplicas: new Map([...d.accountReplicas].map(([k, c]) => [k, replica(c)])), outputs: d.outputs.map((o) => ("tx" in o ? { to: o.to, tx: { type: "accountInput" as const, data: message(o.tx.data) } } : o)) });
 };
-const PROFILE_ENTITY_KINDS: ReadonlySet<string> = new Set(["company", "foundation", "government", "nonprofit", "person", "protocol"]);
-const PROFILE_ENTITY_SECTORS: ReadonlySet<string> = new Set(["commerce", "education", "energy", "finance", "healthcare", "infrastructure", "media", "professional-services", "public-sector", "real-estate", "technology"]);
-/** og system/basic.ts handleProfileUpdateEntityTx: the committed profile with og's defaults, kind and canonical sector rules; `isHub` is never taken from the update. */
+const PROFILE_ENTITY_KINDS: ReadonlySet<string> = new Set([
+  "company",
+  "foundation",
+  "government",
+  "nonprofit",
+  "person",
+  "protocol",
+]);
+const PROFILE_ENTITY_SECTORS: ReadonlySet<string> = new Set([
+  "commerce",
+  "education",
+  "energy",
+  "finance",
+  "healthcare",
+  "infrastructure",
+  "media",
+  "professional-services",
+  "public-sector",
+  "real-estate",
+  "technology",
+]);
+/** og's entityKind update: absent keeps the committed kind, `null` clears it. */
+const updatedKind = (next: string | null | undefined, prev: unknown): string | undefined => {
+  if (next === null) return undefined;
+  if (next !== undefined) return next;
+  return typeof prev === "string" ? prev : undefined;
+};
+/**
+ * og system/basic.ts handleProfileUpdateEntityTx: the committed profile with og's defaults, kind and canonical sector
+ * rules; `isHub` is never taken from the update.
+ */
 const profileUpdate = (state: EntityState, p: ProfileUpdate): Result<Binary, EntityError> => {
-  const bad = (reason: Of<EntityError, "profile_update">["reason"]): Result<never, EntityError> => err({ _tag: "profile_update", reason });
+  const bad = (reason: Of<EntityError, "profile_update">["reason"]): Result<never, EntityError> =>
+    err({ _tag: "profile_update", reason });
   if (p.entityId !== state.id) return bad("entity");
   const prev = (state.committed["profile"] ?? {}) as { readonly [k: string]: unknown };
-  const text = (k: string): string => { const v = prev[k]; return typeof v === "string" ? v : ""; };
-  const entityKind = p.entityKind === undefined ? (typeof prev["entityKind"] === "string" ? prev["entityKind"] : undefined) : p.entityKind === null ? undefined : p.entityKind;
+  const text = (k: string): string => {
+    const v = prev[k];
+    return typeof v === "string" ? v : "";
+  };
+  const entityKind = updatedKind(p.entityKind, prev["entityKind"]);
   if (entityKind !== undefined && !PROFILE_ENTITY_KINDS.has(entityKind)) return bad("entity_kind");
   const sectors = p.sectors ?? (Array.isArray(prev["sectors"]) ? (prev["sectors"] as readonly string[]) : []);
-  if (!Array.isArray(sectors) || sectors.length > 4 || sectors.some((s) => !PROFILE_ENTITY_SECTORS.has(s))) return bad("sectors_invalid");
-  const canonical = [...sectors].sort(asc);
-  if (new Set(sectors).size !== sectors.length || canonical.some((s, i) => s !== sectors[i])) return bad("sectors_noncanonical");
-  const rawName = p.name ?? prev["name"], name = typeof rawName === "string" && rawName.trim().length > 0 ? rawName.trim() : `Entity ${state.id.slice(-4)}`;
+  if (!Array.isArray(sectors) || sectors.length > 4 || sectors.some((s) => !PROFILE_ENTITY_SECTORS.has(s)))
+    return bad("sectors_invalid");
+  const canonical = sectors.toSorted(asc);
+  if (new Set(sectors).size !== sectors.length || canonical.some((s, i) => s !== sectors[i]))
+    return bad("sectors_noncanonical");
+  const rawName = p.name ?? prev["name"];
+  const name =
+    typeof rawName === "string" && rawName.trim().length > 0 ? rawName.trim() : `Entity ${state.id.slice(-4)}`;
   return ok({
-    name, ...(prev["isHub"] === undefined ? {} : { isHub: prev["isHub"] as Binary }), ...(entityKind ? { entityKind } : {}), ...(canonical.length > 0 ? { sectors: canonical } : {}),
-    avatar: typeof p.avatar === "string" ? p.avatar : text("avatar"), bio: typeof p.bio === "string" ? p.bio : text("bio"), website: typeof p.website === "string" ? p.website : text("website"),
+    name,
+    ...(prev["isHub"] === undefined ? {} : { isHub: prev["isHub"] as Binary }),
+    ...(entityKind ? { entityKind } : {}),
+    ...(canonical.length > 0 ? { sectors: canonical } : {}),
+    avatar: typeof p.avatar === "string" ? p.avatar : text("avatar"),
+    bio: typeof p.bio === "string" ? p.bio : text("bio"),
+    website: typeof p.website === "string" ? p.website : text("website"),
   });
 };
 // ---- og jurisdiction/machine/board-registry/index.ts: the certified-board registry (one Patricia trie of board records per J stack) ----
