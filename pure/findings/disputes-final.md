@@ -35,9 +35,19 @@ og (core/ + jurisdictions/ at 566c850) is the spec. The tests are in `pure/diff/
 - **`finalizedJEvent`.** Its default is now a halt, not `J_EVENT_<type>_ENTITY_HANDLER_NOT_PORTED`.
 - **`foldTx` is exported.** Tests use it to inspect one tx without the Entity frame's Account proposals.
 
-## Divergences found and not fixed (outside the rows above)
+## Follow-up divergences (after the merge of claude/project-thread-nkes8j, 52dde22)
 
-- **Unsafe-frame reason text.** og's `AccountInputDisputeRequired.reason` for a replay failure is the failing Account tx's free-form error text. It flows into the committed `disputePrepare.reason` and the start description. The rewrite reproduces og's text only for the secret-window violation; other causes carry `ACCOUNT_FRAME_DISPUTE_REQUIRED:<cause tag>`. Closing this needs og's replay error strings for every Account refusal.
-- **`rejectedFrameEvidence` in the root.** The rewrite keeps the frame evidence on the frozen replica, but `installedAccount` never commits it (`EntityRootAccount.rejectedFrameEvidence` is typed but not derived). That belongs to the hashes owner.
-- **Mempool on DisputeFinalized.** The rewrite's `disputeFinalized` Account finality empties the whole mempool; og removes only `settle_transition`. This is Account consensus scope.
-- **Refusal texts.** For `dispute_finalized`, Account finality refusals surface as the generic `ACCOUNT_EXTERNAL_FINALITY_REFUSED`, and the `DISPUTE_CANONICAL_DELTA_BATCH_INVALID` text differs from og's. No MATCH test in this area reaches either.
+- **Mempool on DisputeFinalized: not a divergence.** og `applyAccountDisputeFinality` filters out `settle_transition`, then sets status `disputed` and calls `freezeAccountForDispute(account, false)`. With that status and flag, the freeze keeps no deferred claims and no optional evidence, so og's mempool always ends empty, just like the rewrite's `disputeFinalized`. PROVED (29c34e8): 400 random live / preparing / disputed Accounts with mixed mempools and pending frames give the same mempool, jNonce and nextProofNonce.
+- **`DISPUTE_CANONICAL_DELTA_BATCH_INVALID`: FIXED (1191082).** `ethersBatchPulls` reproduces the ethers 6.17.0 decode of the DeltaBatch tuple as og runs it, including its error texts:
+  - `data out-of-bounds` and `insufficient data length`, with buffer / length / offset;
+  - `overflow` and `invalid BytesLike value`;
+  - the deferred-error texts for an overflow in the batch offsets (`index 0`) or in the pull slot (`property "pull"`).
+
+  A payment or swap count overflow stays deferred and unread, as in og. MATCH: 1500 random ProofBodies against og `proofBodyHasPulls`.
+- **`ACCOUNT_EXTERNAL_FINALITY_REFUSED`: FIXED (0b650a3).** og's Account layer refuses no `dispute_finalized`. An unsafe finalized nonce or token id halts upstream in og `applyDisputeFinalizedJEvent`, and `childFinality` now maps the Account refusal to that same upstream text (`J_EVENT_DISPUTE_FINAL_NONCE_INVALID` / `J_EVENT_DISPUTE_FINAL_TOKEN_ID_INVALID`). The generic fallback is unreachable: the envelope is the Account's own terms, and every tag takes `external_finality`. `disputeFinalizedJEvent` checks both conditions first, with og's text, so no input reaches the mapping and no MATCH test can.
+- **Unsafe-frame reason: FIXED where reproducible (d41537a).** `admitPeerFrame` now carries og's failureMessage on the evidence for these refusals:
+  - `Bilateral account state root mismatch`;
+  - every `getDisputeHankoRequirementError` text with og's values (`disputeRequirementText`).
+
+  MATCH: 1500 random requirement inputs against og. The account-consensus test also asserts og's root-mismatch text and the shape of its DISPUTE_HANKO_REQUIRED text. REMAINING: a per-tx replay failure. og's reason there is `Frame application failed: <og tx error>`, and the rewrite's typed `BodyError`s have no og strings, so those causes still carry `ACCOUNT_FRAME_DISPUTE_REQUIRED:<tag>`.
+- **`rejectedFrameEvidence` in the root: FIXED (d41537a).** og `handleUnsafeAccountFrame` sets `shadow.rejectedFrameEvidence` and never clears it. og commits it in the Account leaf as `{ reason, frameHash, frameHanko }`. The Account envelope now keeps `rejectedFrame` through every phase (via `envMeta`), and `installedAccount` commits it. MATCH: the unsafe-frame test compares the committed value with og's projection for both secret-window and root-mismatch reasons.
