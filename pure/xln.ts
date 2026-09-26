@@ -499,7 +499,7 @@ export type Batch = {
   readonly hashLadderRegistrations: readonly { readonly counterpartyEntity: string; readonly targetRole: boolean; readonly fullHash: string; readonly partialRoot: string; readonly witness: HashLadderWitness }[];
 };
 export const BATCH_FIELDS = ["reserveToReserve", "reserveToCollateral", "collateralToReserve", "settlements", "disputeStarts", "counterDisputes", "disputeFinalizations", "externalTokenToReserve", "reserveToExternalToken", "revealSecrets", "hashLadderRegistrations"] as const;
-export const emptyBatch = (): Batch => total(BATCH_FIELDS, [] as never) as Batch;
+export const emptyBatch = (): Batch => Object.fromEntries(BATCH_FIELDS.map((f) => [f, []])) as unknown as Batch;
 const t = A.tuple;
 const allowanceAbi = (r: JAllowance): Abi => t([A.uint(r.deltaIndex), A.uint(r.rightAllowance), A.uint(r.leftAllowance)]);
 const transformerAbi = (c: TransformerClause): Abi => t([A.address(c.transformerAddress), A.bytes(c.encodedBatch), arr(c.allowances, allowanceAbi)]);
@@ -4671,7 +4671,14 @@ export type EntityError =
   | Tagged<"unknown_member" | "duplicate_member" | "not_proposer" | "invalid_signature" | "wrong_replica", { address: string }>;
 export type EntityGrammar = { readonly table: typeof EntityTransition; readonly replica: EntityReplica; readonly input: EntityInput; readonly ctx: { readonly [E in EntityEvent]: EntityContext }; readonly output: EntityOutput; readonly error: EntityError };
 export type NextEntityPhase<S extends EntityPhase, E extends EntityEvent> = Next<EntityGrammar, S, E>;
-type EntityApply<R extends EntityReplica = EntityReplica> = Apply<R, EntityOutput>;
+/** og HankoWitnessEntry: the quorum Hanko of one secondary `hashesToSign` entry, kept validator-locally for crash-safe external writes. */
+export type HankoWitness = { readonly hanko: Hanko; readonly type: "accountFrame" | "dispute" | "profile" | "settlement" | "jBatch" | "entityProviderAction"; readonly entityHeight: number; readonly createdAt: number };
+/**
+ * og attachCommitProofsAndOutputs effects of one committed Entity frame: the witnesses of its secondary hashes (Runtime stamps `createdAt`), and
+ * the frame's jOutputs with their quorum Hankos attached, present only on the emitter replica (og `if (isEmitter) jOutbox.push(...)`).
+ */
+export type CommitEffects = { readonly height: number; readonly witnesses: readonly (readonly [string, Omit<HankoWitness, "createdAt">])[]; readonly jOutputs: readonly JInput[] };
+type EntityApply<R extends EntityReplica = EntityReplica> = Apply<R, EntityOutput> & { readonly committed?: CommitEffects | undefined };
 export const encodeEntityTx = (tx: EntityTx): string => `${tx.type}|${canon(tx.data)}`;
 export const encodeEntityState = (s: EntityState): string => canon({
   id: s.id,
@@ -5559,15 +5566,20 @@ export const quorumHanko = (state: EntityState, digest: string, sigs: ReadonlyMa
   }));
 };
 /** og attachHankoWitnessToOutputs/State: each secondary manifest entry's quorum Hanko replaces its placeholder in the Account replicas and outputs. */
-const fillHankos = (d: Draft, frame: EntityFrame, signatures: Precommits): Result<Draft, EntityError> => {
-  const table = new Map<string, Hanko>();
+/** The quorum Hanko of every secondary `hashesToSign` entry, by hash (og proof.hankos). */
+const secondaryHankos = (d: Draft, frame: EntityFrame, signatures: Precommits): Result<ReadonlyMap<string, Hanko>, EntityError> => {
+  const byHash = new Map<string, Hanko>();
   for (const [i, h] of frame.hashesToSign.entries()) {
     if (i === 0) continue;
     const sigs = new Map([...signatures].flatMap(([id, bundle]) => { const s = bundle[i]; return s === undefined ? [] : [[id, s] as const]; }));
     const built = quorumHanko(d.state, h.hash, sigs);
     if (!built.ok) return built;
-    table.set(pendingHanko(h.hash), built.value);
+    byHash.set(h.hash, built.value);
   }
+  return ok(byHash);
+};
+const fillHankos = (d: Draft, byHash: ReadonlyMap<string, Hanko>): Result<Draft, EntityError> => {
+  const table = new Map([...byHash].map(([hash, hanko]) => [pendingHanko(hash), hanko] as const));
   if (table.size === 0) return ok(d);
   const f = (h: Hanko): Hanko => table.get(h) ?? h, fd = (x: DisputeHanko | undefined): DisputeHanko | undefined => (x === undefined ? undefined : { ...x, hanko: f(x.hanko) });
   const fa = (a: AccountAck): AccountAck => ({ ...a, frameHanko: f(a.frameHanko), ...opt("disputeHanko", fd(a.disputeHanko)) });
@@ -7897,7 +7909,50 @@ const appendMempool = (mempool: readonly EntityTx[], admitted: readonly EntityTx
   return [...mempool, ...firstBy(admitted, accountKey, mempool.flatMap((tx) => { const k = accountKey(tx); return k === undefined ? [] : [k]; }))];
 };
 /** og finalizeCommitNotification: install the candidate, emit its Account outputs, optionally broadcast the certified frame to the other validators. */
-const installFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean): Result<EntityApply<OpenEntity>, EntityError> => chain(fillHankos(r.draft, r.frame, signatures), (draft) => {
+const installFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean): Result<EntityApply<OpenEntity>, EntityError> =>
+  chain(secondaryHankos(r.draft, r.frame, signatures), (byHash) => chain(fillHankos(r.draft, byHash), (draft) => chain(commitEffects(r, frameHash, byHash, draft), (committed) => map(publishFrame(r, frameHash, signatures, broadcast, draft), (a) => ({ ...a, committed })))));
+/** og isWitnessHashType + requireDraftWitness over one frame's fresh witnesses: this height's Hanko for the hash, of the expected type. */
+const draftWitness = (witnesses: ReadonlyMap<string, Omit<HankoWitness, "createdAt">>, hash: unknown, type: HankoWitness["type"], height: number, existing: unknown): Result<Hanko, EntityError> => {
+  const entry = witnesses.get(String(hash));
+  if (typeof existing === "string" && existing !== "") {
+    if (entry === undefined) return ok(existing);
+    if (entry.type !== type || entry.entityHeight > height) return invariant(`HANKO_WITNESS_BINDING_MISMATCH:hash=${String(hash)}`);
+    return entry.hanko === existing ? ok(existing) : invariant(`HANKO_WITNESS_VALUE_MISMATCH:hash=${String(hash)}:type=${type}`);
+  }
+  if (entry === undefined) return invariant(`HANKO_DRAFT_WITNESS_MISSING:hash=${String(hash)}:type=${type}:entityHeight=${height}`);
+  return entry.type !== type || entry.entityHeight !== height ? invariant(`HANKO_WITNESS_BINDING_MISMATCH:hash=${String(hash)}`) : ok(entry.hanko);
+};
+type JTxFields = { readonly [field: string]: Binary };
+/** og attachHankoWitnessToOutputs (J half): a batch gets its batch-hash Hanko, an EntityProvider action its action-hash Hanko, a control-board proposal its own supporter vote. */
+const attachJHankos = (jOutputs: readonly JInput[], witnesses: ReadonlyMap<string, Omit<HankoWitness, "createdAt">>, height: number): Result<readonly JInput[], EntityError> =>
+  traverse(jOutputs, (input) => map(traverse(input.jTxs, (raw): Result<Binary, EntityError> => {
+    const jTx = raw as { readonly type?: unknown; readonly entityId?: unknown; readonly data?: JTxFields };
+    const data = jTx.data ?? {};
+    if (jTx.type === "batch" && data["batchHash"]) return map(draftWitness(witnesses, data["batchHash"], "jBatch", height, data["hankoSignature"]), (hankoSignature) => ({ ...(raw as JTxFields), data: { ...data, hankoSignature } }));
+    if (jTx.type === "entityProviderTransfer" || jTx.type === "entityProviderReleaseControlShares" || jTx.type === "entityProviderCancelAction") {
+      const intent = data["intent"] as { readonly actionHash?: unknown } | undefined;
+      return map(draftWitness(witnesses, intent?.actionHash, "entityProviderAction", height, data["hankoSignature"]), (hankoSignature) => ({ ...(raw as JTxFields), data: { ...data, hankoSignature } }));
+    }
+    if (jTx.type === "entityProviderProposeControlBoard") {
+      const votes = (data["supporterVotes"] ?? []) as readonly { readonly entityId?: unknown; readonly hankoSignature?: unknown }[];
+      const own = votes.findIndex((v) => v.entityId === jTx.entityId);
+      if (own < 0 || votes[own]?.hankoSignature) return invariant(`CONTROL_BOARD_PROPOSAL_OWN_VOTE_INVALID:${String(jTx.entityId)}`);
+      return map(draftWitness(witnesses, data["proposalHash"], "entityProviderAction", height, undefined), (hankoSignature) =>
+        ({ ...(raw as JTxFields), data: { ...data, supporterVotes: votes.map((v, i) => (i === own ? { ...v, hankoSignature } : v)) as unknown as Binary } }));
+    }
+    return ok(raw);
+  }), (jTxs) => ({ jurisdictionName: input.jurisdictionName, jTxs })));
+/** og attachCommitProofsAndOutputs: witness every secondary hash of a witness type; the emitter (relay next leader, else proposer) carries the jOutputs. */
+const commitEffects = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, byHash: ReadonlyMap<string, Hanko>, draft: Draft): Result<CommitEffects, EntityError> => {
+  const height = Number(r.frame.height);
+  const witnesses = r.frame.hashesToSign.flatMap((h): (readonly [string, Omit<HankoWitness, "createdAt">])[] => {
+    const hanko = byHash.get(h.hash), type = h.type as string;
+    return hanko === undefined || type === "entityFrame" || type === "entityOutput" ? [] : [[h.hash, { hanko, type: type as HankoWitness["type"], entityHeight: height }]];
+  });
+  const relay = r.frame.leader.relayCertificate, emitter = relay !== undefined && relay.preparedFrameHash === frameHash ? relay.nextLeaderId : r.frame.leader.proposerSignerId;
+  return map(attachJHankos(draft.jOutputs ?? [], new Map(witnesses), height), (jOutputs) => ({ height, witnesses, jOutputs: lower(emitter) === lower(r.signerId) ? jOutputs : [] }));
+};
+const publishFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash, signatures: Precommits, broadcast: boolean, draft: Draft): Result<EntityApply<OpenEntity>, EntityError> => {
   const others = broadcast ? [...membersOf(draft.state.quorum).keys()].filter((v) => signerId(v) !== signerId(r.signerId)) : [];
   // og finalizeCommitNotification: votes reset; a relay certificate for exactly this frame stays pending.
   const relay = r.frame.leader.relayCertificate, pending = relay !== undefined && relay.preparedFrameHash === frameHash ? relay : undefined;
@@ -7905,7 +7960,7 @@ const installFrame = (r: EntityEnv & EntityCandidate, frameHash: EntityFrameHash
   // og finalizeCommitNotification emitter: the relay certificate's next leader for exactly this frame, else the frame's proposer.
   const emitter = pending !== undefined ? pending.nextLeaderId : r.frame.leader.proposerSignerId;
   return ok(done(opened, [...publishCommitted(draft.outputs, r.signerId, emitter), ...others.map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "proposal", frame: r.frame, signatures } }))]));
-});
+};
 /** og admitEntityTransactions + startEntityProposalIfReady: queue, forward a non-leader mempool to the leader, or propose from the mempool. */
 const admitTxs = <R extends EntityReplica>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<R, EntityError> => {
   if (input.timestamp < 0n || input.timestamp > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "frame_timestamp_invalid", timestamp: input.timestamp });
@@ -7957,7 +8012,7 @@ export const applyTxsOpen = (r: OpenEntity, input: Extract<EntityInput, { kind: 
 /** og runs handleHashPrecommits on every input: a held frame whose collected signatures already reach quorum installs now. */
 const heldQuorum = <R extends ProposedEntity | LockedEntity>(r: R, before: readonly EntityOutput[]): Result<EntityApply<OpenEntity | R>, EntityError> =>
   quorumPower(r.state.quorum, r.signatures) < thresholdOf(r.state.quorum) ? ok(done<OpenEntity | R, EntityOutput>(r, before))
-    : chain(hashEntityFrame(r.frame), (frameHash) => map(installFrame(r, frameHash, r.signatures, true), (c) => done<OpenEntity | R, EntityOutput>(c.replica, [...before, ...c.outputs])));
+    : chain(hashEntityFrame(r.frame), (frameHash) => map(installFrame(r, frameHash, r.signatures, true), (c): EntityApply<OpenEntity | R> => ({ ...c, outputs: [...before, ...c.outputs] })));
 const queueOnly = <R extends ProposedEntity | LockedEntity>(r: R, input: Extract<EntityInput, { kind: "txs" }>, ctx: EntityContext): Result<EntityApply<OpenEntity | R>, EntityError> =>
   chain(admitTxs(r, input, ctx), (queued) => heldQuorum(queued, forwarded(queued, input.timestamp)));
 /** og preauthenticateEntityProposal: canonical digests, parent, leader, recomputed hash, manifest head, the proposer's frame signature. */
@@ -8025,7 +8080,7 @@ const signProposal = (r: OpenEntity, frame: EntityFrame, bundles: Precommits, ct
         const precommits = [...membersOf(r.state.quorum).keys()].filter((v) => signerId(v) !== self)
           .map((v): EntityOutput => ({ to: r.state.id, signerId: v, input: { kind: "precommit", height: frame.height, frameHash, signatures: new Map([[self, own]]) } }));
         if (quorumPower(r.state.quorum, locked.signatures) < thresholdOf(r.state.quorum)) return ok(done<OpenEntity | LockedEntity, EntityOutput>(locked, precommits));
-        return map(installFrame(locked, frameHash, locked.signatures, true), (committed) => done<OpenEntity | LockedEntity, EntityOutput>(committed.replica, [...precommits, ...committed.outputs]));
+        return map(installFrame(locked, frameHash, locked.signatures, true), (committed): EntityApply<OpenEntity | LockedEntity> => ({ ...committed, outputs: [...precommits, ...committed.outputs] }));
       })))));
   });
 };
@@ -8130,7 +8185,7 @@ const leaderVote = (r: EntityReplica, input: VoteInput, ctx: EntityContext): Res
       proposed: (p): Result<EntityApply<EntityReplica>, EntityError> => heldQuorum(p, []),
       locked: (l): Result<EntityApply<EntityReplica>, EntityError> => relayPrepared(l) ?? heldQuorum(l, []),
     });
-    return map(after, (a) => done(a.replica, [...outputs, ...a.outputs]));
+    return map(after, (a): EntityApply<EntityReplica> => ({ ...a, outputs: [...outputs, ...a.outputs] }));
   })));
 const entityVerb = grammar<EntityGrammar>(EntityTransition);
 const applyTxs = entityVerb("txs", { open: applyTxsOpen, proposed: (r: ProposedEntity, i, c) => queueOnly(r, i, c), locked: (r: LockedEntity, i, c) => queueOnly(r, i, c) });
@@ -8186,6 +8241,30 @@ export type JurisdictionImportResult = {
   readonly contracts: FullJContracts; readonly browserVMState?: { readonly [field: string]: Binary } | undefined;
 };
 export type PendingJurisdictionImport = { readonly importId: string; readonly requestHash: string; readonly request: JurisdictionImportRequest };
+type SubmitResultTail = { readonly attemptId: string; readonly attemptNumber: number; readonly attemptedAt: number; readonly message?: string | undefined; readonly adapterFailure?: JAdapterFailure | undefined; readonly txHash?: string | undefined };
+/** og recordJSubmitResult / recordEntityProviderActionSubmitResult / recordGovernanceJSubmitResult payloads. */
+export type JSubmitResultData = SubmitResultTail & { readonly entityId: string; readonly signerId: string; readonly jurisdictionName: string; readonly batchHash: string; readonly entityNonce: number; readonly batchGeneration: number; readonly outcome: SubmitOutcome };
+export type EpActionResultData = SubmitResultTail & { readonly entityId: string; readonly signerId: string; readonly jurisdictionName: string; readonly actionHash: string; readonly actionNonce: bigint; readonly generation: number; readonly outcome: Exclude<SubmitOutcome, "eventBarrier"> };
+export type GovernanceResultData = SubmitResultTail & { readonly jurisdictionName: string; readonly entityId: string; readonly signerId: string; readonly proposalHash: string; readonly payloadHash: string; readonly outcome: SubmitOutcome };
+/** og JAdapterFailure / RuntimeFailureSignal. */
+export type JAdapterFailure = { readonly category: "transient" | "terminal"; readonly code: string; readonly message: string };
+export type RuntimeFailureSignal = { readonly category: "ExpectedEmpty" | "TransientRace" | "Contradiction"; readonly code: string; readonly message: string; readonly retryable: boolean; readonly fatal: boolean };
+export type SubmitFailure = { readonly message: string; readonly failedAt: number; readonly failure?: RuntimeFailureSignal | undefined; readonly adapterFailure?: JAdapterFailure | undefined };
+export type SubmitOutcome = "submitted" | "eventBarrier" | "transientFailure" | "terminalFailure" | "reconciled";
+type SubmitJournal = {
+  readonly submitAttempts: number; readonly lastSubmittedAt: number; readonly txHash?: string | undefined; readonly lastFailure?: SubmitFailure | undefined; readonly terminalFailure?: SubmitFailure | undefined;
+  readonly lastResultAttemptId?: string | undefined; readonly lastResultAt?: number | undefined; readonly lastResultOutcome?: SubmitOutcome | undefined; readonly lastResultFingerprint?: string | undefined;
+  readonly resultFingerprints?: { readonly [attemptId: string]: string } | undefined; readonly resultFingerprintOrder?: readonly string[] | undefined;
+};
+/** og EntityReplica.jSubmitState: this validator's attempts at submitting the sealed batch. */
+export type JSubmitState = SubmitJournal & { readonly jurisdictionName: string; readonly batchHash: string; readonly entityNonce: number; readonly batchGeneration: number };
+/** og EntityProviderActionSubmitState. */
+export type EntityProviderActionSubmitState = SubmitJournal & { readonly jurisdictionName: string; readonly actionHash: string; readonly actionNonce: bigint; readonly generation: number };
+/** og EntityReplica validator-local fields the Runtime owns (never in the Entity root): J submit ledgers, quorum Hanko witnesses, J history. */
+export type ReplicaLocal = {
+  readonly jSubmitState?: JSubmitState | undefined; readonly entityProviderActionSubmitState?: EntityProviderActionSubmitState | undefined;
+  readonly hankoWitness?: ReadonlyMap<string, HankoWitness> | undefined; readonly jHistory?: Binary | undefined;
+};
 type RuntimeData = { readonly [field: string]: Binary };
 /** og runtime/types.ts RuntimeTx: every kind with og's field names. */
 export type RuntimeTx =
@@ -8199,10 +8278,10 @@ export type RuntimeTx =
   | { readonly type: "advanceJWatcherCursor"; readonly data: { readonly depositoryAddress: string; readonly chainId: number; readonly blockNumber: number } }
   | { readonly type: "rewindJHistory"; readonly data: { readonly entityId: string; readonly signerId: string; readonly jurisdictionRef: string; readonly conflictingHeight: number; readonly conflictingBlockHash: string } }
   | { readonly type: "retryJSubmit"; readonly data: { readonly entityId: string; readonly signerId: string; readonly jurisdictionName: string; readonly batchHash: string; readonly entityNonce: number; readonly batchGeneration: number; readonly feeOverrides?: Binary | undefined } }
-  | { readonly type: "recordJSubmitResult"; readonly data: RuntimeData }
-  | { readonly type: "retryEntityProviderAction"; readonly data: RuntimeData }
-  | { readonly type: "recordEntityProviderActionSubmitResult"; readonly data: RuntimeData }
-  | { readonly type: "recordGovernanceJSubmitResult"; readonly data: RuntimeData }
+  | { readonly type: "recordJSubmitResult"; readonly data: JSubmitResultData }
+  | { readonly type: "retryEntityProviderAction"; readonly data: { readonly entityId: string; readonly signerId: string; readonly jurisdictionName: string; readonly actionHash: string; readonly actionNonce: bigint; readonly generation: number } }
+  | { readonly type: "recordEntityProviderActionSubmitResult"; readonly data: EpActionResultData }
+  | { readonly type: "recordGovernanceJSubmitResult"; readonly data: GovernanceResultData }
   | { readonly type: "importJ"; readonly data: JurisdictionImportRequest }
   | { readonly type: "completeImportJ"; readonly data: JurisdictionImportResult };
 export type RuntimeTxType = RuntimeTx["type"];
@@ -8219,6 +8298,10 @@ export type Runtime = {
   readonly entities: ReadonlyMap<string, EntityReplica>; readonly height: bigint; readonly timestamp: bigint; readonly jReplicas: ReadonlyMap<string, JReplica>;
   readonly activeJurisdiction?: string | undefined; readonly runtimeId?: string | undefined; readonly browserVMState?: { readonly [field: string]: Binary } | undefined;
   readonly pendingJImports: ReadonlyMap<string, PendingJurisdictionImport>;
+  /** og infrastructure.pendingCommittedJOutbox: durable J submit attempts awaiting their recorded result. */
+  readonly pendingCommittedJOutbox: readonly JInput[];
+  /** og per-EntityReplica local fields, keyed like `entities`. */
+  readonly replicaLocal: ReadonlyMap<string, ReplicaLocal>;
   readonly adapterFrontiers: ReadonlyMap<string, AdapterFrontier>; readonly encryptionSeeds: ReadonlyMap<string, string>; readonly frameHash: string;
 };
 /** A whole-frame refusal carries og's error code (og throws out of the Runtime reducer, so nothing of the frame applies). */
@@ -8236,7 +8319,7 @@ export const replicaKey = (entity: EntityId, signer: string): string => `${entit
 export const bareJReplica = (name: string): JReplica => ({ name, blockNumber: 0n, stateRoot: null, mempool: [], blockDelayMs: 300, lastBlockTimestamp: 0, position: { x: 0, y: 50, z: 0 } });
 export const createRuntime = (jurisdictions: Iterable<string | JReplica> = [], runtimeId?: string): Runtime => ({
   entities: new Map(), height: 0n, timestamp: 0n, jReplicas: new Map([...jurisdictions].map((j): [string, JReplica] => (typeof j === "string" ? [j, bareJReplica(j)] : [j.name, j]))),
-  ...opt("runtimeId", runtimeId), pendingJImports: new Map(), adapterFrontiers: new Map(), encryptionSeeds: new Map(), frameHash: ZERO_FRAME_HASH,
+  ...opt("runtimeId", runtimeId), pendingJImports: new Map(), pendingCommittedJOutbox: [], replicaLocal: new Map(), adapterFrontiers: new Map(), encryptionSeeds: new Map(), frameHash: ZERO_FRAME_HASH,
 });
 export const spawn = (rt: Runtime, r: EntityReplica): Runtime => ({ ...rt, entities: mapSet(rt.entities, replicaKey(r.state.id, r.signerId), r) });
 /** og resolveEntityProposerId: an Account message goes to the receiver's active leader (the CEO `validators[0]` until a view change); a consensus input to the named validator. */
@@ -8731,21 +8814,512 @@ const jurisdictionConfigOf = (j: ImportJurisdiction): JurisdictionConfig => ({
   ...opt("entityProviderDeploymentBlock", j.entityProviderDeploymentBlock), ...opt("blockTimeMs", j.blockTimeMs), ...opt("rebalancePolicyUsd", j.rebalancePolicyUsd),
 });
 
+// ---- og runtime/j-submit/j-submit-{state,result}.ts, registration/entity-provider-action-submit-{state,result}.ts, governance-submit-state.ts ----
+const ENTITY_J_SUBMIT_RETRY_MS = 60_000, SUBMIT_RESULT_FINGERPRINT_LIMIT = 256, SUBMIT_MAX_UINT256 = (1n << 256n) - 1n;
+/** og normalizeSubmitId. */
+const submitId = (v: unknown): string => String(v || "").trim().toLowerCase();
+type SubmitAttempt = { readonly attemptId: string; readonly attemptNumber: number; readonly attemptedAt: number; readonly batchGeneration?: number | undefined; readonly generation?: number | undefined; readonly eligibleAt?: number | undefined };
+type JTxRow = { readonly type: string; readonly entityId: string; readonly timestamp: number; readonly data: { readonly [field: string]: unknown; readonly runtimeSubmitAttempt?: SubmitAttempt | undefined } };
+const rowOf = (b: Binary): JTxRow => b as unknown as JTxRow;
+const binOf = (v: unknown): Binary => v as Binary;
+/** keccak256(utf8(safeStringify(v))), lowercase. */
+const stableHash = (v: unknown): string => `0x${keccakUtf8(stableJson(v))}`.toLowerCase();
+const isEpActionJTx = (t: string): boolean => t === "entityProviderTransfer" || t === "entityProviderReleaseControlShares" || t === "entityProviderCancelAction";
+const isGovernanceJTx = (t: string): boolean => t === "entityProviderProposeControlBoard";
+type JSubmitIdentity = { readonly jurisdictionName: string; readonly entityId: string; readonly signerId: string; readonly entityNonce: number; readonly batchGeneration: number; readonly batchHash: string };
+/** og buildJSubmitAttemptId: signer and jurisdiction scoped, generation separated. */
+export const jSubmitAttemptId = (i: JSubmitIdentity & { readonly attemptNumber: number }): Result<string, RuntimeError> => {
+  const jurisdictionName = submitId(i.jurisdictionName), entityId = submitId(i.entityId), signerId = submitId(i.signerId), batchHash = submitId(i.batchHash);
+  if (!jurisdictionName) return txErr("J_SUBMIT_ATTEMPT_JURISDICTION_MISSING");
+  if (!entityId) return txErr("J_SUBMIT_ATTEMPT_ENTITY_MISSING");
+  if (!signerId) return txErr("J_SUBMIT_ATTEMPT_SIGNER_MISSING");
+  if (!batchHash) return txErr("J_SUBMIT_ATTEMPT_BATCH_HASH_MISSING");
+  if (!Number.isSafeInteger(i.entityNonce) || i.entityNonce < 0) return txErr(`J_SUBMIT_ATTEMPT_ENTITY_NONCE_INVALID:${i.entityNonce}`);
+  if (!Number.isSafeInteger(i.batchGeneration) || i.batchGeneration <= 0) return txErr(`J_SUBMIT_ATTEMPT_BATCH_GENERATION_INVALID:${i.batchGeneration}`);
+  if (!Number.isSafeInteger(i.attemptNumber) || i.attemptNumber <= 0) return txErr(`J_SUBMIT_ATTEMPT_NUMBER_INVALID:${i.attemptNumber}`);
+  return ok(stableHash({ domain: "xln/j-submit-attempt/v1", jurisdictionName, entityId, signerId, entityNonce: i.entityNonce, batchGeneration: i.batchGeneration, batchHash, attemptNumber: i.attemptNumber }));
+};
+type EpIdentity = { readonly jurisdictionName: string; readonly entityId: string; readonly signerId: string; readonly actionHash: string; readonly actionNonce: bigint; readonly generation: number };
+/** og buildEntityProviderActionAttemptId. */
+export const epActionAttemptId = (i: EpIdentity & { readonly attemptNumber: number }): Result<string, RuntimeError> => {
+  const jurisdictionName = submitId(i.jurisdictionName), entityId = submitId(i.entityId), signerId = submitId(i.signerId), actionHash = submitId(i.actionHash);
+  if (!jurisdictionName) return txErr("ENTITY_PROVIDER_ACTION_ATTEMPT_JURISDICTION_MISSING");
+  if (!entityId) return txErr("ENTITY_PROVIDER_ACTION_ATTEMPT_ENTITY_MISSING");
+  if (!signerId) return txErr("ENTITY_PROVIDER_ACTION_ATTEMPT_SIGNER_MISSING");
+  if (!/^0x[0-9a-f]{64}$/.test(actionHash)) return txErr(`ENTITY_PROVIDER_ACTION_ATTEMPT_HASH_INVALID:${actionHash || "missing"}`);
+  if (i.actionNonce <= 0n || i.actionNonce > SUBMIT_MAX_UINT256) return txErr("ENTITY_PROVIDER_ACTION_ATTEMPT_NONCE_INVALID");
+  if (!Number.isSafeInteger(i.generation) || i.generation <= 0) return txErr(`ENTITY_PROVIDER_ACTION_ATTEMPT_GENERATION_INVALID:${i.generation}`);
+  if (!Number.isSafeInteger(i.attemptNumber) || i.attemptNumber <= 0) return txErr(`ENTITY_PROVIDER_ACTION_ATTEMPT_NUMBER_INVALID:${i.attemptNumber}`);
+  return ok(stableHash({ domain: "xln/entity-provider-action-submit-attempt/v1", jurisdictionName, entityId, signerId, actionHash, actionNonce: i.actionNonce, generation: i.generation, attemptNumber: i.attemptNumber }));
+};
+/** og requireCanonicalEntityProviderActionAttempt. */
+const canonicalEpAttempt = (jurisdictionName: string, jTx: JTxRow): Result<SubmitAttempt, RuntimeError> => {
+  const attempt = jTx.data.runtimeSubmitAttempt, intent = jTx.data["intent"] as EntityProviderActionIntent;
+  if (!attempt) return txErr("ENTITY_PROVIDER_ACTION_PENDING_ATTEMPT_METADATA_MISSING");
+  const expectedKind = jTx.type === "entityProviderTransfer" ? "entityTransferTokens" : jTx.type === "entityProviderReleaseControlShares" ? "releaseControlShares" : "cancelPendingAction";
+  if (intent.payload.kind !== expectedKind) return txErr(`ENTITY_PROVIDER_ACTION_JTX_KIND_MISMATCH:${jTx.type}:${intent.payload.kind}`);
+  if (submitId(jTx.entityId) !== submitId(intent.entityId) || intent.actionHash.toLowerCase() !== entityProviderActionHash(intent) || attempt.generation !== intent.generation || attempt.attemptedAt < 0 || !Number.isSafeInteger(attempt.attemptedAt))
+    return txErr("ENTITY_PROVIDER_ACTION_PENDING_ATTEMPT_INVALID");
+  return chain(epActionAttemptId({ jurisdictionName, entityId: jTx.entityId, signerId: String(jTx.data["signerId"] ?? ""), actionHash: intent.actionHash, actionNonce: intent.actionNonce, generation: intent.generation, attemptNumber: attempt.attemptNumber }),
+    (expected) => (attempt.attemptId === expected ? ok(attempt) : txErr(`ENTITY_PROVIDER_ACTION_PENDING_ATTEMPT_ID_MISMATCH:${attempt.attemptId}:${expected}`)));
+};
+/** og governancePayloadHash: the unsigned control-board proposal as submitted. */
+const governancePayloadHash = (jTx: JTxRow): string => {
+  const d = jTx.data;
+  return stableHash({ type: jTx.type, entityId: jTx.entityId, data: { targetEntityId: d["targetEntityId"], newBoardHash: d["newBoardHash"], boardEpoch: d["boardEpoch"], actionNonce: d["actionNonce"], proposalHash: d["proposalHash"], supporterVotes: d["supporterVotes"], signerId: d["signerId"] }, timestamp: jTx.timestamp });
+};
+type GovernanceIdentity = { readonly jurisdictionName: string; readonly entityId: string; readonly signerId: string; readonly proposalHash: string; readonly payloadHash: string };
+const governanceAttemptId = (i: GovernanceIdentity & { readonly attemptNumber: number }): Result<string, RuntimeError> => {
+  const n = { domain: "xln/governance-j-submit-attempt/v1", jurisdictionName: submitId(i.jurisdictionName), entityId: submitId(i.entityId), signerId: submitId(i.signerId), proposalHash: submitId(i.proposalHash), payloadHash: submitId(i.payloadHash), attemptNumber: i.attemptNumber };
+  if (!n.jurisdictionName) return txErr("GOVERNANCE_SUBMIT_JURISDICTION_MISSING");
+  if (!n.entityId) return txErr("GOVERNANCE_SUBMIT_ENTITY_MISSING");
+  if (!n.signerId) return txErr("GOVERNANCE_SUBMIT_SIGNER_MISSING");
+  if (!/^0x[0-9a-f]{64}$/.test(n.proposalHash)) return txErr("GOVERNANCE_SUBMIT_PROPOSAL_HASH_INVALID");
+  if (!/^0x[0-9a-f]{64}$/.test(n.payloadHash)) return txErr("GOVERNANCE_SUBMIT_PAYLOAD_HASH_INVALID");
+  if (!Number.isSafeInteger(n.attemptNumber) || n.attemptNumber <= 0) return txErr("GOVERNANCE_SUBMIT_ATTEMPT_NUMBER_INVALID");
+  return ok(stableHash(n));
+};
+const governanceIdentity = (jurisdictionName: string, jTx: JTxRow): Result<GovernanceIdentity, RuntimeError> => {
+  const signerId = submitId(jTx.data["signerId"]);
+  return signerId ? ok({ jurisdictionName, entityId: jTx.entityId, signerId, proposalHash: String(jTx.data["proposalHash"]), payloadHash: governancePayloadHash(jTx) }) : txErr("GOVERNANCE_SUBMIT_SIGNER_MISSING");
+};
+/** og requireCanonicalGovernanceAttempt. */
+const canonicalGovernanceAttempt = (jurisdictionName: string, jTx: JTxRow): Result<SubmitAttempt, RuntimeError> => {
+  const a = jTx.data.runtimeSubmitAttempt;
+  if (!a) return txErr("GOVERNANCE_SUBMIT_ATTEMPT_MISSING");
+  const eligibleAt = a.eligibleAt ?? Number.NaN;
+  if (!Number.isSafeInteger(a.attemptedAt) || a.attemptedAt < 0 || !Number.isSafeInteger(eligibleAt) || eligibleAt < a.attemptedAt) return txErr("GOVERNANCE_SUBMIT_ATTEMPT_TIME_INVALID");
+  return chain(governanceIdentity(jurisdictionName, jTx), (identity) => chain(governanceAttemptId({ ...identity, attemptNumber: a.attemptNumber }),
+    (expected) => (a.attemptId === expected ? ok(a) : txErr(`GOVERNANCE_SUBMIT_ATTEMPT_ID_MISMATCH:${a.attemptId}:${expected}`))));
+};
+/** og materializeInitialGovernanceAttempt: attempt one, eligible at the proposal's own timestamp. */
+const initialGovernanceAttempt = (jurisdictionName: string, jTx: JTxRow): Result<Binary, RuntimeError> => {
+  if (jTx.data.runtimeSubmitAttempt) return map(canonicalGovernanceAttempt(jurisdictionName, jTx), () => binOf(jTx));
+  return chain(governanceIdentity(jurisdictionName, jTx), (identity) => map(governanceAttemptId({ ...identity, attemptNumber: 1 }), (attemptId) =>
+    binOf({ ...jTx, data: { ...jTx.data, runtimeSubmitAttempt: { attemptId, attemptNumber: 1, attemptedAt: jTx.timestamp, eligibleAt: jTx.timestamp } } })));
+};
+/** og requireCanonicalPendingAttempt. */
+const canonicalPendingAttempt = (jurisdictionName: string, jTx: JTxRow): Result<SubmitAttempt, RuntimeError> => {
+  const attempt = jTx.type === "batch" || isEpActionJTx(jTx.type) || isGovernanceJTx(jTx.type) ? jTx.data?.runtimeSubmitAttempt : undefined;
+  if (!attempt) return txErr("J_SUBMIT_PENDING_ATTEMPT_METADATA_MISSING");
+  if (isEpActionJTx(jTx.type)) return canonicalEpAttempt(jurisdictionName, jTx);
+  if (isGovernanceJTx(jTx.type)) return canonicalGovernanceAttempt(jurisdictionName, jTx);
+  return chain(jSubmitAttemptId({ jurisdictionName, entityId: jTx.entityId, signerId: submitId(jTx.data["signerId"]), entityNonce: Number(jTx.data["entityNonce"]), batchGeneration: attempt.batchGeneration ?? Number.NaN, batchHash: String(jTx.data["batchHash"] || ""), attemptNumber: attempt.attemptNumber }), (expected) => {
+    if (jTx.data["batchGeneration"] !== attempt.batchGeneration) return txErr(`J_SUBMIT_PENDING_BATCH_GENERATION_MISMATCH:${String(jTx.data["batchGeneration"])}:${attempt.batchGeneration}`);
+    return attempt.attemptId === expected ? ok(attempt) : txErr(`J_SUBMIT_PENDING_ATTEMPT_ID_MISMATCH:${attempt.attemptId}:${expected}`);
+  });
+};
+const attemptFingerprint = (jurisdictionName: string, jTx: Binary): string => stableJson({ jurisdictionName, jTx });
+/** og registerPendingCommittedJOutbox: canonical attempts only, one per attempt id, an exact repeat dropped, a different payload refused. */
+const registerPendingJOutbox = (pending: readonly JInput[], additions: readonly JInput[]): Result<readonly JInput[], RuntimeError> => {
+  if (additions.length === 0) return ok(pending);
+  const known = new Map<string, string>();
+  for (const input of pending) for (const jTx of input.jTxs) {
+    const attempt = canonicalPendingAttempt(input.jurisdictionName, rowOf(jTx));
+    if (!attempt.ok) return attempt;
+    const fingerprint = attemptFingerprint(input.jurisdictionName, jTx), previous = known.get(attempt.value.attemptId);
+    if (previous !== undefined) return txErr(`${previous !== fingerprint ? "J_SUBMIT_PENDING_ATTEMPT_CONFLICT" : "J_SUBMIT_PENDING_ATTEMPT_DUPLICATED"}:${attempt.value.attemptId}`);
+    known.set(attempt.value.attemptId, fingerprint);
+  }
+  const accepted: JInput[] = [];
+  for (const input of additions) {
+    const jTxs: Binary[] = [];
+    for (const jTx of input.jTxs) {
+      const attempt = canonicalPendingAttempt(input.jurisdictionName, rowOf(jTx));
+      if (!attempt.ok) return attempt;
+      const fingerprint = attemptFingerprint(input.jurisdictionName, jTx), previous = known.get(attempt.value.attemptId);
+      if (previous !== undefined) { if (previous !== fingerprint) return txErr(`J_SUBMIT_PENDING_ATTEMPT_CONFLICT:${attempt.value.attemptId}`); continue; }
+      known.set(attempt.value.attemptId, fingerprint);
+      jTxs.push(jTx);
+    }
+    if (jTxs.length > 0) accepted.push({ jurisdictionName: input.jurisdictionName, jTxs });
+  }
+  return ok([...pending, ...accepted]);
+};
+export type JOutboxSplit = { readonly maintenance: readonly JInput[]; readonly durable: readonly JInput[]; readonly retries: readonly RuntimeTx[] };
+/**
+ * og splitJOutboxForDurableSubmit: governance proposals become durable attempt one; an EntityProvider action or batch with an attempt is durable,
+ * without one it becomes a local retry RuntimeTx for the next frame; mint / debt enforcement / board activation are maintenance.
+ */
+export const splitJOutbox = (jOutbox: readonly JInput[]): Result<JOutboxSplit, RuntimeError> => {
+  const maintenance: JInput[] = [], durable: JInput[] = [], retries: RuntimeTx[] = [];
+  for (const input of jOutbox) {
+    const keep: Binary[] = [], hold: Binary[] = [];
+    for (const raw of input.jTxs) {
+      const jTx = rowOf(raw);
+      if (isGovernanceJTx(jTx.type)) {
+        const materialized = initialGovernanceAttempt(input.jurisdictionName, jTx);
+        if (!materialized.ok) return materialized;
+        hold.push(materialized.value);
+      } else if (isEpActionJTx(jTx.type)) {
+        if (jTx.data.runtimeSubmitAttempt) {
+          const canonical = canonicalEpAttempt(input.jurisdictionName, jTx);
+          if (!canonical.ok) return canonical;
+          hold.push(raw);
+        } else {
+          const signer = submitId(jTx.data["signerId"]), intent = jTx.data["intent"] as EntityProviderActionIntent;
+          if (!signer) return txErr(`ENTITY_PROVIDER_ACTION_SUBMITTER_MISSING:${jTx.entityId}`);
+          if (!jTx.data["hankoSignature"]) return txErr(`ENTITY_PROVIDER_ACTION_CONSENSUS_HANKO_MISSING:${jTx.entityId}`);
+          retries.push({ type: "retryEntityProviderAction", data: { entityId: jTx.entityId, signerId: signer, jurisdictionName: input.jurisdictionName, actionHash: intent.actionHash, actionNonce: intent.actionNonce, generation: intent.generation } });
+        }
+      } else if (jTx.type === "mint" || jTx.type === "debtEnforcement" || jTx.type === "entityProviderActivateBoard") {
+        keep.push(raw);
+      } else if (jTx.data?.runtimeSubmitAttempt) {
+        hold.push(raw);
+      } else {
+        const signer = submitId(jTx.data?.["signerId"]), generation = Number(jTx.data?.["batchGeneration"]), fee = jTx.data?.["feeOverrides"] as { readonly [k: string]: Binary } | undefined;
+        if (!signer) return txErr(`J_SUBMIT_INTENT_SIGNER_MISSING:${jTx.entityId}`);
+        if (!Number.isSafeInteger(generation) || generation <= 0) return txErr(`J_SUBMIT_INTENT_BATCH_GENERATION_INVALID:${String(jTx.data["batchGeneration"])}`);
+        retries.push({ type: "retryJSubmit", data: { entityId: jTx.entityId, signerId: signer, jurisdictionName: input.jurisdictionName, batchHash: String(jTx.data["batchHash"] || ""), entityNonce: Number(jTx.data["entityNonce"]), batchGeneration: generation, ...(fee ? { feeOverrides: { ...fee } } : {}) } });
+      }
+    }
+    if (keep.length > 0) maintenance.push({ jurisdictionName: input.jurisdictionName, jTxs: keep });
+    if (hold.length > 0) durable.push({ jurisdictionName: input.jurisdictionName, jTxs: hold });
+  }
+  return ok({ maintenance, durable, retries });
+};
+type TxStep = { readonly runtime: Runtime; readonly jOutputs: readonly JInput[] };
+const noJ = (runtime: Runtime): TxStep => ({ runtime, jOutputs: [] });
+/** og findJSubmitReplica / findEntityProviderActionReplica: the replica of exactly this Entity and signer. */
+const findSubmitReplica = (rt: Runtime, entityId: unknown, signerId: unknown): readonly [string, EntityReplica] | undefined => {
+  const entity = submitId(entityId), signer = submitId(signerId);
+  return [...rt.entities].find(([, r]) => submitId(r.state.id) === entity && submitId(r.signerId) === signer);
+};
+const localOf = (rt: Runtime, key: string): ReplicaLocal => rt.replicaLocal.get(key) ?? {};
+const withLocal = (rt: Runtime, key: string, patch: ReplicaLocal): Runtime => ({ ...rt, replicaLocal: mapSet(rt.replicaLocal, key, { ...localOf(rt, key), ...patch }) });
+const jBatchOf = (state: EntityState): JBatchState | undefined => state.committed["jBatchState"] as JBatchState | undefined;
+const sentMatches = (sent: SentJBatch | undefined, batchHash: unknown, entityNonce: unknown): sent is SentJBatch =>
+  sent !== undefined && submitId(sent.batchHash) === submitId(batchHash) && Number(sent.entityNonce) === Number(entityNonce);
+/** og getMatchingJSubmitState. */
+const matchingJSubmitState = (state: EntityState, local: JSubmitState | undefined): JSubmitState | undefined => {
+  const jb = jBatchOf(state);
+  return local !== undefined && sentMatches(jb?.sentBatch, local.batchHash, local.entityNonce) && local.batchGeneration === jb?.broadcastCount ? local : undefined;
+};
+const journalOf = (p: SubmitJournal | undefined): Partial<SubmitJournal> => (p === undefined ? {} : {
+  ...opt("txHash", p.txHash || undefined), ...opt("lastFailure", p.lastFailure), ...opt("lastResultAttemptId", p.lastResultAttemptId || undefined), ...opt("lastResultAt", p.lastResultAt),
+  ...opt("lastResultOutcome", p.lastResultOutcome || undefined), ...opt("lastResultFingerprint", p.lastResultFingerprint || undefined),
+});
+/** og applyRetryJSubmitRuntimeTx: the active leader re-attempts its exact sealed batch at most once per retry window; stale hints are no-ops. */
+const retryJSubmit = (rt: Runtime, d: Extract<RuntimeTx, { type: "retryJSubmit" }>["data"]): Result<TxStep, RuntimeError> => {
+  const found = findSubmitReplica(rt, d.entityId, d.signerId);
+  if (found === undefined) return txErr(`J_SUBMIT_LOCAL_REPLICA_MISSING:${d.entityId}:${d.signerId}`);
+  const [key, r] = found, jb = jBatchOf(r.state), sent = jb?.sentBatch, local = localOf(rt, key), now = Number(rt.timestamp);
+  if (leaderStateOf(r.state).activeValidatorId !== submitId(r.signerId)) return txErr(`J_SUBMIT_NOT_ACTIVE_LEADER:${d.signerId}`);
+  if (!sentMatches(sent, d.batchHash, d.entityNonce) || d.batchGeneration !== jb?.broadcastCount || sent.terminalFailure) return ok(noJ(rt));
+  const entityId = lower(r.state.id), signer = lower(r.signerId), previous = matchingJSubmitState(r.state, local.jSubmitState);
+  const identity: JSubmitIdentity = { jurisdictionName: d.jurisdictionName, entityId, signerId: signer, batchHash: sent.batchHash, entityNonce: sent.entityNonce, batchGeneration: d.batchGeneration };
+  const pending = rt.pendingCommittedJOutbox.some((input) => input.jTxs.some((raw) => {
+    const t = rowOf(raw);
+    return t.type === "batch" && submitId(input.jurisdictionName) === submitId(identity.jurisdictionName) && submitId(t.entityId) === submitId(identity.entityId) && submitId(t.data["signerId"]) === submitId(identity.signerId)
+      && submitId(t.data["batchHash"]) === submitId(identity.batchHash) && Number(t.data["entityNonce"]) === Number(identity.entityNonce) && Number(t.data["batchGeneration"]) === Number(identity.batchGeneration);
+  }));
+  if (pending || previous?.terminalFailure || previous?.lastResultOutcome === "reconciled") return ok(noJ(rt));
+  if (previous && previous.lastResultOutcome !== "eventBarrier" && previous.submitAttempts > 0 && now < previous.lastSubmittedAt + ENTITY_J_SUBMIT_RETRY_MS) return ok(noJ(rt));
+  const witness = local.hankoWitness?.get(sent.batchHash);
+  if (witness === undefined || witness.type !== "jBatch") return txErr(`J_SUBMIT_HANKO_WITNESS_MISSING:${d.entityId}:${sent.batchHash}`);
+  const attemptNumber = (previous?.submitAttempts ?? 0) + 1;
+  return map(jSubmitAttemptId({ ...identity, attemptNumber }), (attemptId): TxStep => {
+    const recorded = local.jSubmitState;
+    const next: JSubmitState = {
+      jurisdictionName: d.jurisdictionName, batchHash: sent.batchHash, entityNonce: sent.entityNonce, batchGeneration: d.batchGeneration, submitAttempts: attemptNumber, lastSubmittedAt: now,
+      ...journalOf(previous), ...opt("resultFingerprints", recorded?.resultFingerprints), ...opt("resultFingerprintOrder", recorded?.resultFingerprintOrder),
+    };
+    const batchTx = {
+      type: "batch", entityId, data: {
+        batch: sent.batch, batchHash: sent.batchHash, encodedBatch: sent.encodedBatch, entityNonce: sent.entityNonce, batchGeneration: d.batchGeneration, hankoSignature: witness.hanko,
+        batchSize: batchOpCount(sent.batch), signerId: signer, ...(d.feeOverrides ? { feeOverrides: { ...(d.feeOverrides as object) } } : {}),
+        runtimeSubmitAttempt: { attemptId, attemptNumber, attemptedAt: now, batchGeneration: d.batchGeneration },
+      }, timestamp: now,
+    };
+    return { runtime: withLocal(rt, key, { jSubmitState: next }), jOutputs: [{ jurisdictionName: d.jurisdictionName, jTxs: [binOf(batchTx)] }] };
+  });
+};
+/** og normalizeRuntimeFailureCode + classifyRuntimeJBatchFailure. */
+const J_BATCH_FAILURE_CATEGORIES: { readonly [code: string]: RuntimeFailureSignal["category"] } = {
+  J_BATCH_EMPTY: "ExpectedEmpty", J_BATCH_SENT_PENDING: "TransientRace", J_BATCH_JURISDICTION_MISSING: "Contradiction", J_BATCH_JURISDICTION_UNAVAILABLE: "TransientRace",
+  J_BATCH_CHAIN_ID_MISSING: "Contradiction", J_BATCH_SIGNER_MISSING: "Contradiction", J_BATCH_LIMIT_EXCEEDED: "Contradiction", J_BATCH_CONSENSUS_HANKO_MISSING: "Contradiction",
+  J_SUBMIT_MISSING_JREPLICA: "TransientRace", J_SUBMIT_MISSING_JADAPTER: "TransientRace", J_SUBMIT_TRANSIENT: "TransientRace", J_SUBMIT_FATAL: "Contradiction",
+};
+const failureCode = (v: unknown): string => (String(v || "").trim().split(/[\s:]/)[0] || "UNKNOWN").replace(/[^A-Z0-9_]/gi, "_").toUpperCase();
+export const classifyJBatchFailure = (code: string, message?: string): RuntimeFailureSignal => {
+  const c = failureCode(code), category = J_BATCH_FAILURE_CATEGORIES[c] ?? "Contradiction";
+  return { category, code: c, message: String((message ?? c) || c).trim() || c, retryable: category === "TransientRace", fatal: category === "Contradiction" };
+};
+type ResultShape = SubmitResultTail & { readonly outcome: string };
+/** og assertValidAdapterFailure (both families, by code prefix). */
+const adapterFailureValid = (d: ResultShape, prefix: string): Result<void, RuntimeError> => {
+  const f = d.adapterFailure;
+  if (!f) return ok(undefined);
+  if (f.category !== "transient" && f.category !== "terminal") return txErr(`${prefix}_ADAPTER_FAILURE_CATEGORY_INVALID:${String(f.category)}`);
+  if (!String(f.code ?? "").trim()) return txErr(`${prefix}_ADAPTER_FAILURE_CODE_MISSING`);
+  if (!String(f.message ?? "").trim()) return txErr(`${prefix}_ADAPTER_FAILURE_MESSAGE_MISSING`);
+  if (f.message !== d.message) return txErr(`${prefix}_ADAPTER_FAILURE_MESSAGE_MISMATCH`);
+  const expected = f.category === "transient" ? "transientFailure" : "terminalFailure";
+  return d.outcome === expected ? ok(undefined) : txErr(`${prefix}_ADAPTER_FAILURE_OUTCOME_MISMATCH:${f.category}:${d.outcome}`);
+};
+/** og findRecordedResultFingerprint / findRecordedFingerprint: one fingerprint per attempt id across every replica journal. */
+const recordedFingerprint = (rt: Runtime, attemptId: string, pick: (l: ReplicaLocal) => SubmitJournal | undefined, prefix: string): Result<string | null, RuntimeError> => {
+  let found: string | null = null;
+  for (const key of rt.entities.keys()) {
+    const local = pick(localOf(rt, key));
+    if (local === undefined) continue;
+    const journal = Object.prototype.hasOwnProperty.call(local.resultFingerprints ?? {}, attemptId) ? local.resultFingerprints?.[attemptId] : undefined;
+    const last = local.lastResultAttemptId === attemptId ? local.lastResultFingerprint : undefined;
+    if (local.lastResultAttemptId === attemptId && !last) return txErr(`${prefix}_RESULT_FINGERPRINT_MISSING:${attemptId}`);
+    if (journal !== undefined && last !== undefined && journal !== last) return txErr(`${prefix}_RESULT_RECORDED_CONFLICT:${attemptId}`);
+    const fingerprint = journal ?? last;
+    if (fingerprint === undefined) continue;
+    if (found !== null && found !== fingerprint) return txErr(`${prefix}_RESULT_RECORDED_CONFLICT:${attemptId}`);
+    found = fingerprint;
+  }
+  return ok(found);
+};
+const dropPendingAttempt = (pending: readonly JInput[], match: (t: JTxRow) => boolean): readonly JInput[] =>
+  pending.flatMap((input) => { const jTxs = input.jTxs.filter((raw) => !match(rowOf(raw))); return jTxs.length > 0 ? [{ jurisdictionName: input.jurisdictionName, jTxs }] : []; });
+/** og buildBoundedResultJournal / buildResultJournal: the newest fingerprints plus every still-pending attempt of this replica, at most 256. */
+const boundedJournal = (local: SubmitJournal, attemptId: string, fingerprint: string, active: Set<string>, jSubmit: boolean): Result<Pick<SubmitJournal, "resultFingerprints" | "resultFingerprintOrder">, RuntimeError> => {
+  const existing = local.resultFingerprints ?? {}, order = local.resultFingerprintOrder ?? Object.keys(existing), prefix = jSubmit ? "J_SUBMIT" : "ENTITY_PROVIDER_ACTION";
+  if (jSubmit) {
+    const seen = new Set<string>();
+    for (const id of order) {
+      if (seen.has(id)) return txErr(`J_SUBMIT_RESULT_JOURNAL_ORDER_DUPLICATE:${id}`);
+      if (!Object.prototype.hasOwnProperty.call(existing, id)) return txErr(`J_SUBMIT_RESULT_JOURNAL_ORDER_UNKNOWN:${id}`);
+      seen.add(id);
+    }
+    if (seen.size !== Object.keys(existing).length) return txErr("J_SUBMIT_RESULT_JOURNAL_ORDER_INCOMPLETE");
+  } else {
+    if (new Set(order).size !== order.length) return txErr("ENTITY_PROVIDER_ACTION_RESULT_JOURNAL_ORDER_DUPLICATE");
+    if (order.some((id) => existing[id] === undefined) || order.length !== Object.keys(existing).length) return txErr("ENTITY_PROVIDER_ACTION_RESULT_JOURNAL_ORDER_INVALID");
+  }
+  const nextOrder = [...order.filter((id) => id !== attemptId), attemptId];
+  if (active.size > SUBMIT_RESULT_FINGERPRINT_LIMIT) return txErr(`${prefix}_ACTIVE_ATTEMPT_CAPACITY_EXCEEDED:${active.size}`);
+  const retained = new Set(active);
+  for (let i = nextOrder.length - 1; i >= 0 && retained.size < SUBMIT_RESULT_FINGERPRINT_LIMIT; i -= 1) if (nextOrder[i]) retained.add(nextOrder[i] as string);
+  const resultFingerprintOrder = nextOrder.filter((id) => retained.has(id)), all: { readonly [id: string]: string } = { ...existing, [attemptId]: fingerprint };
+  return ok({ resultFingerprintOrder, resultFingerprints: Object.fromEntries(resultFingerprintOrder.map((id) => [id, all[id] as string])) });
+};
+const activeAttempts = (rt: Runtime, r: EntityReplica, isFamily: (t: string) => boolean): Set<string> => new Set(rt.pendingCommittedJOutbox.flatMap((input) => input.jTxs.flatMap((raw) => {
+  const t = rowOf(raw);
+  return isFamily(t.type) && submitId(t.entityId) === submitId(r.state.id) && submitId(t.data["signerId"]) === submitId(r.signerId) && t.data.runtimeSubmitAttempt ? [t.data.runtimeSubmitAttempt.attemptId] : [];
+})));
+const withoutKeys = <T extends object>(o: T, keys: readonly string[]): T => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k))) as T;
+/** og applyRecordJSubmitResultRuntimeTx: validate, idempotent by fingerprint, retire a stale attempt, else journal the result for the live attempt. */
+const recordJSubmitResult = (rt: Runtime, d: JSubmitResultData): Result<Runtime, RuntimeError> => {
+  if (!submitId(d.entityId)) return txErr("J_SUBMIT_RESULT_ENTITY_MISSING");
+  if (!submitId(d.signerId)) return txErr("J_SUBMIT_RESULT_SIGNER_MISSING");
+  if (!String(d.jurisdictionName || "").trim()) return txErr("J_SUBMIT_RESULT_JURISDICTION_MISSING");
+  if (!submitId(d.batchHash)) return txErr("J_SUBMIT_RESULT_BATCH_HASH_MISSING");
+  if (!String(d.attemptId || "").trim()) return txErr("J_SUBMIT_RESULT_ATTEMPT_ID_MISSING");
+  if (!Number.isSafeInteger(d.entityNonce) || d.entityNonce < 0) return txErr(`J_SUBMIT_RESULT_ENTITY_NONCE_INVALID:${d.entityNonce}`);
+  if (!Number.isSafeInteger(d.batchGeneration) || d.batchGeneration <= 0) return txErr(`J_SUBMIT_RESULT_BATCH_GENERATION_INVALID:${d.batchGeneration}`);
+  if (!Number.isSafeInteger(d.attemptNumber) || d.attemptNumber <= 0) return txErr(`J_SUBMIT_RESULT_ATTEMPT_NUMBER_INVALID:${d.attemptNumber}`);
+  if (!Number.isSafeInteger(d.attemptedAt) || d.attemptedAt < 0) return txErr(`J_SUBMIT_RESULT_ATTEMPT_TIMESTAMP_INVALID:${d.attemptedAt}`);
+  return chain(jSubmitAttemptId(d), (expected): Result<Runtime, RuntimeError> => {
+    if (d.attemptId !== expected) return txErr(`J_SUBMIT_RESULT_ATTEMPT_ID_MISMATCH:${d.attemptId}:${expected}`);
+    if (!["submitted", "eventBarrier", "transientFailure", "terminalFailure", "reconciled"].includes(d.outcome)) return txErr(`J_SUBMIT_RESULT_OUTCOME_INVALID:${String(d.outcome)}`);
+    return chain(adapterFailureValid(d, "J_SUBMIT"), () => {
+      const fingerprint = stableJson(d), isAttempt = (t: JTxRow): boolean => t.type === "batch" && t.data?.runtimeSubmitAttempt?.attemptId === d.attemptId;
+      const matches = rt.pendingCommittedJOutbox.flatMap((input) => input.jTxs.filter((raw) => isAttempt(rowOf(raw))).map((raw) => ({ jurisdictionName: input.jurisdictionName, jTx: rowOf(raw) })));
+      if (matches.length > 1) return txErr(`J_SUBMIT_PENDING_ATTEMPT_DUPLICATED:${d.attemptId}`);
+      const pending = matches[0], a = pending?.jTx.data.runtimeSubmitAttempt;
+      if (pending !== undefined && !(a && submitId(pending.jTx.entityId) === submitId(d.entityId) && submitId(pending.jTx.data["signerId"]) === submitId(d.signerId) && pending.jurisdictionName === d.jurisdictionName
+        && submitId(pending.jTx.data["batchHash"]) === submitId(d.batchHash) && Number(pending.jTx.data["entityNonce"]) === Number(d.entityNonce) && Number(pending.jTx.data["batchGeneration"]) === d.batchGeneration
+        && a.attemptId === d.attemptId && a.attemptNumber === d.attemptNumber && a.attemptedAt === d.attemptedAt)) return txErr(`J_SUBMIT_RESULT_PENDING_CONFLICT:${d.attemptId}`);
+      return chain(recordedFingerprint(rt, d.attemptId, (l) => l.jSubmitState, "J_SUBMIT"), (recorded): Result<Runtime, RuntimeError> => {
+        if (recorded !== null) return recorded === fingerprint ? ok(rt) : txErr(`J_SUBMIT_RESULT_DUPLICATE_CONFLICT:${d.attemptId}`);
+        const found = findSubmitReplica(rt, d.entityId, d.signerId);
+        if (found === undefined) return txErr(`J_SUBMIT_LOCAL_REPLICA_MISSING:${d.entityId}:${d.signerId}`);
+        const [key, r] = found, local = localOf(rt, key).jSubmitState, jb = jBatchOf(r.state);
+        const matchesSent = sentMatches(jb?.sentBatch, d.batchHash, d.entityNonce) && jb?.broadcastCount === d.batchGeneration;
+        const matchesLocal = local !== undefined && submitId(local.batchHash) === submitId(d.batchHash) && local.entityNonce === d.entityNonce && local.batchGeneration === d.batchGeneration;
+        const retired = (): Runtime => (pending === undefined ? rt : { ...rt, pendingCommittedJOutbox: dropPendingAttempt(rt.pendingCommittedJOutbox, isAttempt) });
+        if (!matchesSent || (matchesLocal && d.attemptNumber < local.submitAttempts)) return ok(retired());
+        if (local === undefined || !matchesLocal || local.submitAttempts !== d.attemptNumber || local.lastSubmittedAt !== d.attemptedAt) return txErr(`J_SUBMIT_RESULT_ATTEMPT_MISMATCH:${d.attemptId}`);
+        if (pending === undefined) return txErr(`J_SUBMIT_PENDING_ATTEMPT_MISSING:${d.attemptId}`);
+        return map(boundedJournal(local, d.attemptId, fingerprint, activeAttempts(rt, r, (t) => t === "batch"), true), (journal) => {
+          const now = Number(rt.timestamp), base: JSubmitState = { ...local, lastResultAttemptId: d.attemptId, lastResultAt: now, lastResultOutcome: d.outcome, lastResultFingerprint: fingerprint, ...journal };
+          let next: JSubmitState = base;
+          if (d.outcome === "submitted") next = { ...withoutKeys(base, ["lastFailure"]), ...(d.txHash ? { txHash: d.txHash } : {}) };
+          else if (d.outcome === "eventBarrier") next = withoutKeys(base, ["lastFailure"]);
+          else if (d.outcome === "transientFailure" || d.outcome === "terminalFailure") {
+            const message = String(d.message || "unknown"), code = d.outcome === "transientFailure" ? "J_SUBMIT_TRANSIENT" : "J_SUBMIT_FATAL";
+            const failure: SubmitFailure = { message, failedAt: now, failure: classifyJBatchFailure(code, message), ...opt("adapterFailure", d.adapterFailure) };
+            next = { ...base, lastFailure: failure, ...(d.outcome === "terminalFailure" ? { terminalFailure: failure } : {}) };
+          }
+          return withLocal({ ...rt, pendingCommittedJOutbox: dropPendingAttempt(rt.pendingCommittedJOutbox, isAttempt) }, key, { jSubmitState: next });
+        });
+      });
+    });
+  });
+};
+/** og requireRuntimeJurisdictionConfigByName over the Entity's own committed jurisdiction. */
+const entityJurisdiction = (rt: Runtime, state: EntityState, missing: string): Result<ImportJurisdiction, RuntimeError> => {
+  const j = state.jurisdictionConfig, name = (j?.name ?? "").trim();
+  if (j === undefined || !name) return txErr(missing);
+  return requireJurisdictionByName(rt, name, {
+    name, chainId: state.jurisdiction.chainId, depositoryAddress: state.jurisdiction.depositoryAddress, entityProviderAddress: j.entityProviderAddress, ...opt("registrationBlock", j.registrationBlock),
+    ...opt("entityProviderDeploymentBlock", j.entityProviderDeploymentBlock), ...opt("blockTimeMs", j.blockTimeMs), ...opt("rebalancePolicyUsd", j.rebalancePolicyUsd),
+  });
+};
+/** og requireUsableContractAddress. */
+const usableOrFail = (label: string, v: unknown): Result<string, RuntimeError> => (usableAddress(v) === null ? txErr(`INVALID_${label.toUpperCase()}_ADDRESS`) : ok(String(v)));
+/** og requireTrustedPending: the committed pending intent, re-checked against the J replica's stack and the current certified board epoch. */
+const trustedEpPending = (rt: Runtime, r: EntityReplica): Result<{ readonly pending: EntityProviderActionIntent; readonly jurisdictionName: string }, RuntimeError> => {
+  const pending = epActionState(r.state).pending, entityId = lower(r.state.id);
+  if (pending === undefined) return txErr(`ENTITY_PROVIDER_ACTION_PENDING_MISSING:${entityId}`);
+  return chain(entityJurisdiction(rt, r.state, "ENTITY_PROVIDER_ACTION_JURISDICTION_MISSING"), (j) => {
+    const chainId = Number(j.chainId);
+    if (!Number.isSafeInteger(chainId) || chainId <= 0) return txErr(`ENTITY_PROVIDER_ACTION_CHAIN_ID_INVALID:${String(j.chainId)}`);
+    return chain(observerBoardRecord(r.state, entityId), (board): Result<{ readonly pending: EntityProviderActionIntent; readonly jurisdictionName: string }, RuntimeError> => {
+      if (board === null) return txErr(`ENTITY_PROVIDER_ACTION_CERTIFIED_BOARD_MISSING:${entityId}`);
+      if (pending.boardEpoch !== BigInt(board.boardEpoch)) return txErr(`ENTITY_PROVIDER_ACTION_PENDING_BOARD_EPOCH_STALE:${pending.boardEpoch.toString()}:${board.boardEpoch}`);
+      return chain(usableOrFail("entity_provider", j.entityProviderAddress), (provider) => chain(usableOrFail("depository", j.depositoryAddress), (depository) =>
+        map(epIntentValid(pending, { name: j.name ?? "", chainId: BigInt(chainId), entityProviderAddress: lower(provider), depositoryAddress: lower(depository) }, entityId, BigInt(board.boardEpoch)), () => ({ pending, jurisdictionName: j.name ?? "" }))));
+    });
+  });
+};
+/** og getMatchingEntityProviderActionSubmitState. */
+const matchingEpSubmitState = (state: EntityState, local: EntityProviderActionSubmitState | undefined): EntityProviderActionSubmitState | undefined => {
+  const pending = epActionState(state).pending;
+  return pending !== undefined && local !== undefined && submitId(local.actionHash) === submitId(pending.actionHash) && local.actionNonce === pending.actionNonce && local.generation === pending.generation ? local : undefined;
+};
+/** og applyRetryEntityProviderActionRuntimeTx: the active leader submits the committed pending action with its quorum Hanko, once per retry window. */
+const retryEntityProviderAction = (rt: Runtime, d: Extract<RuntimeTx, { type: "retryEntityProviderAction" }>["data"]): Result<TxStep, RuntimeError> => {
+  const found = findSubmitReplica(rt, d.entityId, d.signerId);
+  if (found === undefined) return txErr(`ENTITY_PROVIDER_ACTION_LOCAL_REPLICA_MISSING:${d.entityId}:${d.signerId}`);
+  const [key, r] = found, local = localOf(rt, key), now = Number(rt.timestamp);
+  if (leaderStateOf(r.state).activeValidatorId !== submitId(r.signerId)) return txErr(`ENTITY_PROVIDER_ACTION_NOT_ACTIVE_LEADER:${d.signerId}`);
+  return chain(trustedEpPending(rt, r), ({ pending, jurisdictionName }): Result<TxStep, RuntimeError> => {
+    if (submitId(jurisdictionName) !== submitId(d.jurisdictionName) || submitId(pending.actionHash) !== submitId(d.actionHash) || pending.actionNonce !== d.actionNonce || pending.generation !== d.generation)
+      return txErr(`ENTITY_PROVIDER_ACTION_COMMITTED_INTENT_MISMATCH:${d.entityId}`);
+    const entityId = lower(r.state.id), signer = lower(r.signerId);
+    const identity: EpIdentity = { jurisdictionName, entityId, signerId: signer, actionHash: pending.actionHash, actionNonce: pending.actionNonce, generation: pending.generation };
+    const held = rt.pendingCommittedJOutbox.some((input) => input.jTxs.some((raw) => {
+      const t = rowOf(raw), intent = t.data?.["intent"] as EntityProviderActionIntent | undefined;
+      return isEpActionJTx(t.type) && intent !== undefined && submitId(input.jurisdictionName) === submitId(identity.jurisdictionName) && submitId(t.entityId) === submitId(identity.entityId)
+        && submitId(t.data["signerId"]) === submitId(identity.signerId) && submitId(intent.actionHash) === submitId(identity.actionHash) && intent.actionNonce === identity.actionNonce && intent.generation === identity.generation;
+    }));
+    if (held) return ok(noJ(rt));
+    const previous = matchingEpSubmitState(r.state, local.entityProviderActionSubmitState);
+    if (previous?.terminalFailure) return ok(noJ(rt));
+    if (previous && previous.submitAttempts > 0 && now < previous.lastSubmittedAt + ENTITY_J_SUBMIT_RETRY_MS) return ok(noJ(rt));
+    const witness = local.hankoWitness?.get(pending.actionHash);
+    if (witness === undefined || witness.type !== "entityProviderAction") return txErr(`ENTITY_PROVIDER_ACTION_HANKO_WITNESS_MISSING:${entityId}:${pending.actionHash}`);
+    const attemptNumber = (previous?.submitAttempts ?? 0) + 1;
+    return map(epActionAttemptId({ ...identity, attemptNumber }), (attemptId): TxStep => {
+      const next: EntityProviderActionSubmitState = {
+        jurisdictionName, actionHash: pending.actionHash, actionNonce: pending.actionNonce, generation: pending.generation, submitAttempts: attemptNumber, lastSubmittedAt: now,
+        ...journalOf(previous), ...opt("terminalFailure", previous?.terminalFailure), ...opt("resultFingerprints", previous?.resultFingerprints), ...opt("resultFingerprintOrder", previous?.resultFingerprintOrder),
+      };
+      const type = pending.payload.kind === "entityTransferTokens" ? "entityProviderTransfer" : pending.payload.kind === "releaseControlShares" ? "entityProviderReleaseControlShares" : "entityProviderCancelAction";
+      const jTx = { type, entityId, data: { intent: pending, signerId: signer, hankoSignature: witness.hanko, runtimeSubmitAttempt: { attemptId, attemptNumber, attemptedAt: now, generation: pending.generation } }, timestamp: now };
+      return { runtime: withLocal(rt, key, { entityProviderActionSubmitState: next }), jOutputs: [{ jurisdictionName, jTxs: [binOf(jTx)] }] };
+    });
+  });
+};
+/** og applyRecordEntityProviderActionResultRuntimeTx. */
+const recordEpActionResult = (rt: Runtime, d: EpActionResultData): Result<Runtime, RuntimeError> => {
+  if (!submitId(d.entityId)) return txErr("ENTITY_PROVIDER_ACTION_RESULT_ENTITY_MISSING");
+  if (!submitId(d.signerId)) return txErr("ENTITY_PROVIDER_ACTION_RESULT_SIGNER_MISSING");
+  if (!submitId(d.jurisdictionName)) return txErr("ENTITY_PROVIDER_ACTION_RESULT_JURISDICTION_MISSING");
+  if (!/^0x[0-9a-f]{64}$/.test(submitId(d.actionHash))) return txErr("ENTITY_PROVIDER_ACTION_RESULT_HASH_INVALID");
+  if (d.actionNonce <= 0n || d.actionNonce > SUBMIT_MAX_UINT256) return txErr("ENTITY_PROVIDER_ACTION_RESULT_NONCE_INVALID");
+  if (!Number.isSafeInteger(d.generation) || d.generation <= 0) return txErr(`ENTITY_PROVIDER_ACTION_RESULT_GENERATION_INVALID:${d.generation}`);
+  if (!Number.isSafeInteger(d.attemptNumber) || d.attemptNumber <= 0) return txErr(`ENTITY_PROVIDER_ACTION_RESULT_ATTEMPT_NUMBER_INVALID:${d.attemptNumber}`);
+  if (!Number.isSafeInteger(d.attemptedAt) || d.attemptedAt < 0) return txErr(`ENTITY_PROVIDER_ACTION_RESULT_ATTEMPT_TIMESTAMP_INVALID:${d.attemptedAt}`);
+  if (!["submitted", "transientFailure", "terminalFailure", "reconciled"].includes(d.outcome)) return txErr(`ENTITY_PROVIDER_ACTION_RESULT_OUTCOME_INVALID:${String(d.outcome)}`);
+  return chain(epActionAttemptId(d), (expected): Result<Runtime, RuntimeError> => {
+    if (d.attemptId !== expected) return txErr(`ENTITY_PROVIDER_ACTION_RESULT_ATTEMPT_ID_MISMATCH:${d.attemptId}:${expected}`);
+    return chain(adapterFailureValid(d, "ENTITY_PROVIDER_ACTION"), () => {
+      const fingerprint = stableJson(d), isAttempt = (t: JTxRow): boolean => isEpActionJTx(t.type) && t.data?.runtimeSubmitAttempt?.attemptId === d.attemptId;
+      const matches = rt.pendingCommittedJOutbox.flatMap((input) => input.jTxs.filter((raw) => isAttempt(rowOf(raw))).map((raw) => ({ jurisdictionName: input.jurisdictionName, jTx: rowOf(raw) })));
+      if (matches.length > 1) return txErr(`ENTITY_PROVIDER_ACTION_PENDING_ATTEMPT_DUPLICATED:${d.attemptId}`);
+      const pending = matches[0], a = pending?.jTx.data.runtimeSubmitAttempt, intent = pending?.jTx.data["intent"] as EntityProviderActionIntent | undefined;
+      if (pending !== undefined && !(a && intent && submitId(pending.jurisdictionName) === submitId(d.jurisdictionName) && submitId(pending.jTx.entityId) === submitId(d.entityId) && submitId(pending.jTx.data["signerId"]) === submitId(d.signerId)
+        && submitId(intent.actionHash) === submitId(d.actionHash) && intent.actionNonce === d.actionNonce && intent.generation === d.generation && a.attemptId === d.attemptId && a.attemptNumber === d.attemptNumber && a.attemptedAt === d.attemptedAt))
+        return txErr(`ENTITY_PROVIDER_ACTION_RESULT_PENDING_CONFLICT:${d.attemptId}`);
+      return chain(recordedFingerprint(rt, d.attemptId, (l) => l.entityProviderActionSubmitState, "ENTITY_PROVIDER_ACTION"), (recorded): Result<Runtime, RuntimeError> => {
+        if (recorded !== null) return recorded === fingerprint ? ok(rt) : txErr(`ENTITY_PROVIDER_ACTION_RESULT_DUPLICATE_CONFLICT:${d.attemptId}`);
+        const found = findSubmitReplica(rt, d.entityId, d.signerId);
+        if (found === undefined) return txErr(`ENTITY_PROVIDER_ACTION_LOCAL_REPLICA_MISSING:${d.entityId}:${d.signerId}`);
+        const [key, r] = found, local = localOf(rt, key).entityProviderActionSubmitState, consensus = epActionState(r.state).pending;
+        const matchesConsensus = consensus !== undefined && submitId(consensus.actionHash) === submitId(d.actionHash) && consensus.actionNonce === d.actionNonce && consensus.generation === d.generation;
+        const matchesLocal = local !== undefined && submitId(local.actionHash) === submitId(d.actionHash) && local.actionNonce === d.actionNonce && local.generation === d.generation;
+        if (!matchesConsensus || (matchesLocal && d.attemptNumber < local.submitAttempts)) return ok(pending === undefined ? rt : { ...rt, pendingCommittedJOutbox: dropPendingAttempt(rt.pendingCommittedJOutbox, isAttempt) });
+        if (local === undefined || !matchesLocal || local.submitAttempts !== d.attemptNumber || local.lastSubmittedAt !== d.attemptedAt) return txErr(`ENTITY_PROVIDER_ACTION_RESULT_ATTEMPT_MISMATCH:${d.attemptId}`);
+        if (pending === undefined) return txErr(`ENTITY_PROVIDER_ACTION_PENDING_ATTEMPT_MISSING:${d.attemptId}`);
+        return map(boundedJournal(local, d.attemptId, fingerprint, activeAttempts(rt, r, isEpActionJTx), false), (journal) => {
+          const now = Number(rt.timestamp), base: EntityProviderActionSubmitState = { ...local, lastResultAttemptId: d.attemptId, lastResultAt: now, lastResultOutcome: d.outcome, lastResultFingerprint: fingerprint, ...journal };
+          let next: EntityProviderActionSubmitState;
+          if (d.outcome === "submitted" || d.outcome === "reconciled") next = { ...withoutKeys(base, ["lastFailure"]), ...(d.txHash ? { txHash: d.txHash } : {}) };
+          else {
+            const failure: SubmitFailure = { message: String(d.message ?? "unknown"), failedAt: now, ...opt("adapterFailure", d.adapterFailure) };
+            next = { ...base, lastFailure: failure, ...(d.outcome === "terminalFailure" ? { terminalFailure: failure } : {}) };
+          }
+          return withLocal({ ...rt, pendingCommittedJOutbox: dropPendingAttempt(rt.pendingCommittedJOutbox, isAttempt) }, key, { entityProviderActionSubmitState: next });
+        });
+      });
+    });
+  });
+};
+/** og applyGovernanceSubmitResultRuntimeTx: a transient failure re-arms the attempt one retry window later; any other outcome retires it. */
+const recordGovernanceResult = (rt: Runtime, d: GovernanceResultData): Result<Runtime, RuntimeError> => {
+  const isAttempt = (t: JTxRow): boolean => isGovernanceJTx(t.type) && t.data?.runtimeSubmitAttempt?.attemptId === d.attemptId;
+  const matches = rt.pendingCommittedJOutbox.flatMap((input) => input.jTxs.filter((raw) => isAttempt(rowOf(raw))).map((raw) => ({ jurisdictionName: input.jurisdictionName, jTx: rowOf(raw) })));
+  if (matches.length > 1) return txErr(`GOVERNANCE_SUBMIT_ATTEMPT_DUPLICATED:${d.attemptId}`);
+  const pending = matches[0];
+  if (pending === undefined) return txErr(`GOVERNANCE_SUBMIT_RESULT_ATTEMPT_MISSING:${d.attemptId}`);
+  return chain(canonicalGovernanceAttempt(pending.jurisdictionName, pending.jTx), (attempt) => chain(governanceIdentity(pending.jurisdictionName, pending.jTx), (identity): Result<Runtime, RuntimeError> => {
+    if (submitId(d.jurisdictionName) !== submitId(identity.jurisdictionName) || submitId(d.entityId) !== submitId(identity.entityId) || submitId(d.signerId) !== submitId(identity.signerId)
+      || submitId(d.proposalHash) !== submitId(identity.proposalHash) || submitId(d.payloadHash) !== submitId(identity.payloadHash) || d.attemptNumber !== attempt.attemptNumber || d.attemptedAt !== attempt.attemptedAt)
+      return txErr(`GOVERNANCE_SUBMIT_RESULT_IDENTITY_MISMATCH:${d.attemptId}`);
+    if (d.outcome !== "transientFailure") return ok({ ...rt, pendingCommittedJOutbox: dropPendingAttempt(rt.pendingCommittedJOutbox, isAttempt) });
+    const attemptNumber = attempt.attemptNumber + 1, now = Number(rt.timestamp);
+    if (!Number.isSafeInteger(attemptNumber)) return txErr("GOVERNANCE_SUBMIT_ATTEMPT_EXHAUSTED");
+    return map(governanceAttemptId({ ...identity, attemptNumber }), (attemptId) => ({
+      ...rt, pendingCommittedJOutbox: rt.pendingCommittedJOutbox.map((input) => ({ jurisdictionName: input.jurisdictionName, jTxs: input.jTxs.map((raw) => {
+        const t = rowOf(raw);
+        return isAttempt(t) ? binOf({ ...t, data: { ...t.data, runtimeSubmitAttempt: { attemptId, attemptNumber, attemptedAt: now, eligibleAt: now + ENTITY_J_SUBMIT_RETRY_MS } } }) : raw;
+      }) })),
+    }));
+  }));
+};
+/** og pruneHankoWitnessToReachableState: keep the sealed batch's and the pending EntityProvider action's witnesses and the newest profile one. */
+const pruneWitnesses = (witness: ReadonlyMap<string, HankoWitness>, state: EntityState): ReadonlyMap<string, HankoWitness> => {
+  const reachable = new Set<string>(), sent = jBatchOf(state)?.sentBatch?.batchHash, action = epActionState(state).pending?.actionHash;
+  if (sent) reachable.add(sent);
+  if (action) reachable.add(action);
+  const profile = [...witness].filter(([, w]) => w.type === "profile").sort(([lh, l], [rh, r]) => r.entityHeight - l.entityHeight || r.createdAt - l.createdAt || asc(lh, rh))[0];
+  if (profile !== undefined) reachable.add(profile[0]);
+  return new Map([...witness].filter(([h]) => reachable.has(h)));
+};
+
 /** og applyRuntimeTx. */
-export const applyRuntimeTx = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<Runtime, RuntimeError> => chain(runtimeTxAuthorized(tx, ctx), (): Result<Runtime, RuntimeError> => {
+export const applyRuntimeTxStep = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<TxStep, RuntimeError> => chain(runtimeTxAuthorized(tx, ctx), (): Result<TxStep, RuntimeError> => {
+  const state = (r: Result<Runtime, RuntimeError>): Result<TxStep, RuntimeError> => map(r, noJ);
   switch (tx.type) {
-    case "checkpointBarrier": return ok(rt);
-    case "recordRuntimeAdapterCommand": return adapterCommand(rt, tx.data);
-    case "importReplica": return importReplica(rt, tx);
-    case "importJ": return importJ(rt, tx.data);
-    case "completeImportJ": return completeImportJ(rt, tx.data);
-    case "advanceJWatcherCursor": return advanceJWatcherCursor(rt, tx.data);
+    case "checkpointBarrier": return ok(noJ(rt));
+    case "recordRuntimeAdapterCommand": return state(adapterCommand(rt, tx.data));
+    case "importReplica": return state(importReplica(rt, tx));
+    case "importJ": return state(importJ(rt, tx.data));
+    case "completeImportJ": return state(completeImportJ(rt, tx.data));
+    case "advanceJWatcherCursor": return state(advanceJWatcherCursor(rt, tx.data));
+    case "retryJSubmit": return retryJSubmit(rt, tx.data);
+    case "recordJSubmitResult": return state(recordJSubmitResult(rt, tx.data));
+    case "retryEntityProviderAction": return retryEntityProviderAction(rt, tx.data);
+    case "recordEntityProviderActionSubmitResult": return state(recordEpActionResult(rt, tx.data));
+    case "recordGovernanceJSubmitResult": return state(recordGovernanceResult(rt, tx.data));
     default: return err({ _tag: "runtime_tx_unsupported", code: tx.type });
   }
 });
+/** og applyRuntimeTx, the Runtime state half (the J outputs of a retry are in applyRuntimeTxStep). */
+export const applyRuntimeTx = (rt: Runtime, tx: RuntimeTx, ctx: Pick<RuntimeCtx, "replay" | "local">): Result<Runtime, RuntimeError> => map(applyRuntimeTxStep(rt, tx, ctx), (s) => s.runtime);
 
-/** One applied Runtime frame: `outbox` is positional (merged input order, then each input's outputs); `jOutbox` carries the ingress J inputs. */
-export type RuntimeStep = { readonly runtime: Runtime; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly rejected: readonly RuntimeError[]; readonly advanced: boolean };
+/**
+ * One applied Runtime frame: `outbox` is positional (merged input order, then each input's outputs); `jOutbox` is og's frame jOutbox (every pending
+ * committed J submit attempt, then the maintenance J txs); `queuedRetries` are og queuedJSubmitRetries, the local retry RuntimeTxs for the next frame.
+ */
+export type RuntimeStep = { readonly runtime: Runtime; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly queuedRetries: readonly RuntimeTx[]; readonly rejected: readonly RuntimeError[]; readonly advanced: boolean };
 /**
  * og createRuntimeInputReducer: validate shape/limits, apply every RuntimeTx in order (any failure refuses the whole frame), merge the entity inputs,
  * discard inputs whose replica is unknown (og drop policy for unroutable ingress), apply the rest, and advance the Runtime height only when the frame
@@ -8759,8 +9333,10 @@ const runtimeHtlcInfra = (ctx: RuntimeCtx, rt: Runtime, entityId: EntityId): Htl
 export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx): Result<RuntimeStep, RuntimeError> => chain(validateRuntimeInput(rt, input), (jOutbox) => {
   const seeds = input.entityInputs.flatMap((i) => (i.input.kind === "txs" ? [i.input.timestamp] : []));
   const timestamp = [input.timestamp ?? rt.timestamp, ...(input.timestamp === undefined ? seeds : [])].reduce((a, b) => (b > a ? b : a), rt.timestamp);
-  return chain(foldResult(input.runtimeTxs, { ...rt, timestamp }, (at, tx) => applyRuntimeTx(at, tx, ctx)), (afterTxs) => chain(mergeEntityInputs(input.entityInputs), (merged) => {
-    type Out = { readonly outputs: readonly EntityOutput[]; readonly rejected: readonly RuntimeError[]; readonly applied: readonly RoutedEntityInput[]; readonly committed: boolean };
+  type TxFold = { readonly runtime: Runtime; readonly jOutputs: readonly JInput[] };
+  const txFold = foldResult(input.runtimeTxs, { runtime: { ...rt, timestamp }, jOutputs: [] } as TxFold, (at, tx) => map(applyRuntimeTxStep(at.runtime, tx, ctx), (s): TxFold => ({ runtime: s.runtime, jOutputs: [...at.jOutputs, ...s.jOutputs] })));
+  return chain(txFold, ({ runtime: afterTxs, jOutputs: txJOutputs }) => chain(mergeEntityInputs(input.entityInputs), (merged) => {
+    type Out = { readonly outputs: readonly EntityOutput[]; readonly rejected: readonly RuntimeError[]; readonly applied: readonly RoutedEntityInput[]; readonly committed: boolean; readonly effects?: readonly [string, CommitEffects] | undefined };
     const refused = (error: RuntimeError): StoreStep<string, EntityReplica, Out> => ({ writes: [], out: { outputs: [], rejected: [error], applied: [], committed: false }, stop: false });
     const { store, outs } = foldStore(afterTxs.entities, merged, (read, routed): StoreStep<string, EntityReplica, Out> => {
       const key = replicaKey(routed.entityId, routed.signerId), r = read(key);
@@ -8768,15 +9344,27 @@ export const applyRuntime = (rt: Runtime, input: RuntimeInput, ctx: RuntimeCtx):
       const stamped: RoutedEntityInput = routed.input.kind === "txs" ? { ...routed, input: { ...routed.input, timestamp } } : routed;
       const applied = applyEntityInput(r, stamped.input, { self: routed.entityId, signerId: routed.signerId as Address, ...ctx, htlc: runtimeHtlcInfra(ctx, afterTxs, routed.entityId) });
       if (!applied.ok) return refused(applied.error);
-      return { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [], applied: [stamped], committed: applied.value.replica.head.height > r.head.height }, stop: false };
+      const effects = applied.value.committed;
+      return { writes: [[key, applied.value.replica]], out: { outputs: applied.value.outputs, rejected: [], applied: [stamped], committed: applied.value.replica.head.height > r.head.height, ...(effects === undefined ? {} : { effects: [key, effects] as const }) }, stop: false };
     });
     const applied = outs.flatMap((o) => o.applied), outbox = outs.flatMap((o) => o.outputs);
+    // og attachCommitProofsAndOutputs: each committed frame's witnesses (stamped with the Runtime clock), pruned to what stays reachable.
+    let replicaLocal = afterTxs.replicaLocal;
+    for (const [key, effects] of outs.flatMap((o) => (o.effects === undefined ? [] : [o.effects]))) {
+      const current = replicaLocal.get(key) ?? {}, witness = new Map(current.hankoWitness ?? []), state = store.get(key)?.state;
+      for (const [hash, w] of effects.witnesses) witness.set(hash, { ...w, createdAt: Number(timestamp) });
+      replicaLocal = mapSet(replicaLocal, key, { ...current, hankoWitness: state === undefined ? witness : pruneWitnesses(witness, state) });
+    }
+    // og reducer + applyPreparedRuntimeFrame: ingress J inputs, RuntimeTx J outputs, then each emitter's committed Entity J outputs; split for durable submit.
+    const frameJ = [...jOutbox, ...txJOutputs, ...outs.flatMap((o) => o.effects?.[1].jOutputs ?? [])];
     const meaningful = applied.filter((i) => i.input.kind !== "txs" || i.input.txs.length > 0).length;
     const entityInputCount = outs.some((o) => o.committed) ? Math.max(meaningful, applied.length) : meaningful;
-    const advanced = input.runtimeTxs.length > 0 || entityInputCount > 0 || outbox.length > 0 || jOutbox.length > 0;
-    const runtime: Runtime = { ...afterTxs, entities: store, height: advanced ? afterTxs.height + 1n : afterTxs.height };
-    const appliedInput: RuntimeInput = { runtimeTxs: input.runtimeTxs, entityInputs: applied, ...(jOutbox.length > 0 ? { jInputs: jOutbox } : {}) };
-    return ok({ runtime, applied: appliedInput, outbox, jOutbox, rejected: outs.flatMap((o) => o.rejected), advanced });
+    const advanced = input.runtimeTxs.length > 0 || entityInputCount > 0 || outbox.length > 0 || frameJ.length > 0;
+    return chain(splitJOutbox(frameJ), (split) => map(registerPendingJOutbox(afterTxs.pendingCommittedJOutbox, split.durable), (pendingCommittedJOutbox): RuntimeStep => {
+      const runtime: Runtime = { ...afterTxs, entities: store, replicaLocal, pendingCommittedJOutbox, height: advanced ? afterTxs.height + 1n : afterTxs.height };
+      const appliedInput: RuntimeInput = { runtimeTxs: input.runtimeTxs, entityInputs: applied, ...(jOutbox.length > 0 ? { jInputs: jOutbox } : {}) };
+      return { runtime, applied: appliedInput, outbox, jOutbox: [...pendingCommittedJOutbox, ...split.maintenance], queuedRetries: split.retries, rejected: outs.flatMap((o) => o.rejected), advanced };
+    }));
   }));
 });
 
@@ -8846,6 +9434,7 @@ const replicaMetaRows = (rt: Runtime): Result<readonly { readonly key: Uint8Arra
     return chain(frameNumber(r.state.height), (height) => chain(frameNumber(r.state.timestamp), (timestamp) => map(encodeBinary({
       replicaKey: key.toLowerCase(), entityId: entity, signerId: signer, isProposer: signerId(r.state.quorum.proposer) === signer,
       entityHead: { entityId: entity, height, timestamp, frameHash: r.head.height === 0n ? "" : frameWord(r.head.prevFrameHash) },
+      ...opt("jSubmitState", binaryOf(rt.replicaLocal.get(key)?.jSubmitState)), ...opt("entityProviderActionSubmitState", binaryOf(rt.replicaLocal.get(key)?.entityProviderActionSubmitState)),
     }), (value) => ({ key: rowKey, value }))));
   });
 /** og buildCanonicalJReplicaSnapshot + buildDurableJReplicaSnapshot: fixed field set (no token registry), wall-clock marker zeroed, state root as bytes. */
@@ -8857,8 +9446,11 @@ const jReplicaSnapshot = (r: JReplica): Binary => binaryOf({
 });
 /** og buildDurableRuntimeStateSnapshot: only non-empty durable maps; absent when none. */
 const durableInfrastructure = (rt: Runtime): { readonly [key: string]: Binary } | undefined => {
-  const rows: [string, ReadonlyMap<string, unknown>][] = [["runtimeAdapterCommandFrontiers", rt.adapterFrontiers], ["pendingJurisdictionImports", rt.pendingJImports], ["entityEncryptionSeeds", rt.encryptionSeeds]];
-  const kept = rows.filter(([, m]) => m.size > 0);
+  const rows: [string, unknown, number][] = [
+    ["runtimeAdapterCommandFrontiers", rt.adapterFrontiers, rt.adapterFrontiers.size], ["pendingCommittedJOutbox", rt.pendingCommittedJOutbox, rt.pendingCommittedJOutbox.length],
+    ["pendingJurisdictionImports", rt.pendingJImports, rt.pendingJImports.size], ["entityEncryptionSeeds", rt.encryptionSeeds, rt.encryptionSeeds.size],
+  ];
+  const kept = rows.filter(([, , size]) => size > 0);
   return kept.length === 0 ? undefined : Object.fromEntries(kept.map(([k, m]) => [k, binaryOf(m)]));
 };
 /** og buildReplayVerifiableRuntimePostStateView: runtimeId, BrowserVM header (no trie), durable infrastructure, J replicas in insertion order. */
@@ -8870,7 +9462,7 @@ export const runtimeView = (rt: Runtime): { readonly [key: string]: Binary } => 
     jReplicas: [...rt.jReplicas].map(([k, r]) => [k, jReplicaSnapshot(r)]),
   };
 };
-export type RuntimeFrameCommit = { readonly runtime: Runtime; readonly frame: StorageFrame; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly rejected: readonly RuntimeError[] };
+export type RuntimeFrameCommit = { readonly runtime: Runtime; readonly frame: StorageFrame; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly queuedRetries: readonly RuntimeTx[]; readonly rejected: readonly RuntimeError[] };
 const outputRows = (outbox: readonly EntityOutput[]): Result<readonly Uint8Array[], RuntimeError> => traverse(outbox, (o) => encodeBinary(binaryOf(o)));
 const sealFrame = (rt: Runtime, step: RuntimeStep): Result<RuntimeFrameCommit, RuntimeError> => {
   const after = step.runtime;
@@ -8884,7 +9476,7 @@ const sealFrame = (rt: Runtime, step: RuntimeStep): Result<RuntimeFrameCommit, R
             canonicalStateHash: canonicalRuntimeStateHash(height, timestamp, entityHashes), canonicalEntityHashes: entityHashes,
             runtimeInput: binaryOf(step.applied), runtimeOutputCount: rows.length, runtimeOutputsDigest: outputsDigest, touchedEntities: touched, touchedAccounts: [], touchedBookEntities: [],
           };
-          return map(storageFrameHash(body), (frameHash) => ({ runtime: { ...after, frameHash }, frame: { ...body, frameHash }, applied: step.applied, outbox: step.outbox, jOutbox: step.jOutbox, rejected: step.rejected }));
+          return map(storageFrameHash(body), (frameHash) => ({ runtime: { ...after, frameHash }, frame: { ...body, frameHash }, applied: step.applied, outbox: step.outbox, jOutbox: step.jOutbox, queuedRetries: step.queuedRetries, rejected: step.rejected }));
         })))))))));
 };
 /**
