@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   authorEntityTxs, buildCommand, certifiedBoardStackKey, checkCommand, configBoardHash, createEntity, entityId, entityTransactionAction, foldTxs, hashCommand, hashCommandTxs, hashEntityFrame,
   hashProposalAction, applyEntityInput, proposalId, tokenId, wireEntityTx, installedAccount, ZERO_WORD, genesisHost, applyHost, localProof, committedView, envelopeOf, prepareFrozen, ogProofBody, spawn, createRuntime, applyRuntime, convertOutput, replicaKey,
+  applyBookCommand, bookCommitmentHash, bookOrders, createBook, type Book,
   type AccountReplica, type Address, type EntityCommand, type EntityError, type EntityId, type EntityReplica, type EntityState, type EntityTx, type Hash, type ProposalAction,
 } from "../xln.ts";
 import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, crypto, genesisAB, hankoVerify, unwrap, verifiers } from "../xln_run.ts";
@@ -23,6 +24,9 @@ import { DEFAULT_ACCOUNT_TOKEN_IDS as OG_DEFAULT_TOKEN_IDS, resolveJurisdictionR
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import { EntityAccountCandidateMap, PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
 import { handleLendingBorrowEntityTx, handleLendingClosePositionEntityTx } from "../../core/entity/tx/handlers/payments/lending.ts";
+import * as ogBook from "../../core/orderbook/core.ts";
+import { computeBookCommitmentHash } from "../../core/orderbook/commitment.ts";
+import { rebuildOrderbookPairIndex } from "../../core/orderbook/order-index.ts";
 
 let seed = 3;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -492,6 +496,54 @@ describe("entity-txs-3: prepareDispute / disputeStart (og entity/tx/handlers/dis
       checked++;
     }
     expect([checked > 30, missingHanko > 3]).toEqual([true, true]);
+  }, 60_000);
+  test("MATCH: 40 random prepareDispute calls on an Account with resting orders: og removeDisputedAccountOrdersFromBook takes exactly its rows off the hub book, with og's count message", async () => {
+    const a = lazyEntity([[aliceAddr, 1n]], 1n);
+    const opened = unwrap(foldTxs(a.state, a.accountReplicas, [openTx()], { verify: hankoVerify, timestamp: NOW })).draft;
+    const openChild = { ...opened.accountReplicas.get(BOB)!, _tag: "open" } as AccountReplica;
+    const T = (n: number) => unwrap(tokenId(String(n)));
+    const hubProfile = { entityId: a.state.id, name: "hub", spreadDistribution: { makerBps: 0, takerBps: 10_000, hubBps: 0, makerReferrerBps: 0, takerReferrerBps: 0 }, referenceTokenId: 1, usdQuoteAuthorityEntityId: `0x${"99".repeat(32)}`, minTradeSize: 0n, supportedPairs: ["1/2"] };
+    let removedTotal = 0, untouched = 0;
+    for (let i = 0; i < 40; i++) {
+      const ts = 1_000_000 + ri(5_000), offerIds = Array.from({ length: ri(4) }, (_, k) => `o${i}-${k}`);
+      const offers = new Map(offerIds.map((offerId) => [offerId, { offerId, giveTokenId: T(2), giveTokenDecimals: 18, giveAmount: 10n ** 18n, wantTokenId: T(1), wantTokenDecimals: 6, wantAmount: 2_500n * 10n ** 6n, maxFee: 0n,
+        minNetReceive: 2_500n * 10n ** 6n, priceTicks: 25_000_000n, makerIsLeft: BOB.toLowerCase() === String(openChild.state.account.id.left).toLowerCase(), createdHeight: 1, quantizedGive: 10n ** 18n, quantizedWant: 2_500n * 10n ** 6n }]));
+      // the hub book: some of the Account's orders rest (others already filled), beside other owners' rows
+      const withExt = rng() < 0.85, rwBooks = new Map<string, Book>(), ogBooks = new Map<string, unknown>();
+      if (withExt) for (const pair of ["1/2", "1/3"].slice(0, 1 + ri(2))) {
+        const params = { bucketWidthTicks: 10_000n, maxOrders: 10_000, stpPolicy: 1 as const };
+        let og = ogBook.createBook(params), rw = unwrap(createBook(params));
+        const rows = [...offerIds.filter(() => rng() < 0.6).map((id) => [BOB, `${BOB}:${id}`]), ...Array.from({ length: ri(3) }, (_, k) => [CAROL, `${CAROL}:x${i}-${pair}-${k}`])];
+        for (const [ownerId, orderId] of rows) {
+          if (rwBooks.get("1/2")?.orders.has(orderId!) || (pair !== "1/2" && ri(2) === 0)) continue;
+          const cmd = { kind: 0 as const, ownerId: ownerId!, orderId: orderId!, side: ri(2) as 0 | 1, tif: 0 as const, postOnly: false, priceTicks: BigInt(95 + ri(10)) * 250_000n, qtyLots: BigInt(1 + ri(9)) };
+          og = ogBook.applyCommand(og, cmd).state; rw = unwrap(applyBookCommand(rw, cmd)).state;
+        }
+        rwBooks.set(pair, rw); ogBooks.set(pair, og);
+      }
+      const rwState: EntityState = withExt ? { ...opened.state, orderbookExt: { books: rwBooks, pairDimensions: new Map(), referrals: new Map(), hubProfile } } : opened.state;
+      const rwChild = { ...openChild, state: { ...openChild.state, offers } } as AccountReplica;
+      const tx: EntityTx = { type: "prepareDispute", data: { counterpartyEntityId: BOB, minCooldownMs: 60_000 } };
+      const rw = foldTxs(rwState, new Map([[BOB, rwChild]]), [tx], { verify: hankoVerify, timestamp: BigInt(ts) });
+      const ogAccount = ogAcc("active");
+      ogAccount.state.swapOffers = PersistentAccountStateMap.fromEntries("swapOffers", [...offers].map(([id, o]) => [id, { ...o, giveTokenId: 2, wantTokenId: 1 }]));
+      const ogS = ogEntity(a.state, ts, ogAccount);
+      if (withExt) { ogS.orderbookExt = { books: ogBooks, orderPairs: new Map(), pairDimensions: new Map(), referrals: new Map(), hubProfile }; rebuildOrderbookPairIndex(ogS.orderbookExt); }
+      const og = await run(() => handlePrepareDispute(ogS, wire(tx) as never, env, [], true));
+      if (!og.ok) { expect(rw.ok ? "ok" : reasonOf(rw.error)).toBe(og.reason); continue; }
+      const d = unwrap(rw).draft;
+      expect(d.events).toEqual(readEntityFrameEvents(og.state) as never);
+      const removed = (d.events ?? []).find((e) => e.message.startsWith("⚔️ Dispute removed"));
+      if (removed === undefined) untouched++; else removedTotal += Number(removed.message.split(" ")[3]);
+      if (!withExt) { expect(d.state.orderbookExt).toBeUndefined(); continue; }
+      expect([...d.state.orderbookExt!.books.keys()].sort()).toEqual([...og.state.orderbookExt.books.keys()].sort());
+      for (const [pairId, book] of d.state.orderbookExt!.books) {
+        expect([i, pairId, bookCommitmentHash(book)]).toEqual([i, pairId, computeBookCommitmentHash(og.state.orderbookExt.books.get(pairId))]);
+        expect(bookOrders(book).map((o) => o.orderId)).toEqual(ogBook.getBookOrders(og.state.orderbookExt.books.get(pairId)).map((o: any) => o.orderId));
+      }
+      expect(d.accountReplicas.get(BOB)?._tag).toBe("preparing");
+    }
+    expect([removedTotal > 10, untouched > 3]).toEqual([true, true]);
   }, 60_000);
   test("MATCH: ogProofBody equals og canonicalizeProofBodyStruct over random offdeltas, token ids and allowances", () => {
     for (let i = 0; i < 100; i++) {

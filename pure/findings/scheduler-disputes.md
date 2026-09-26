@@ -19,8 +19,8 @@ Spec: og at 566c850. Tests: `pure/diff/scheduler-disputes.test.ts`. Every test i
 | 13 | Entity j_broadcast continuation and orderbookSweepCrossJurisdiction | due-hooks.ts | REMAINING: invariants J_BROADCAST_ENTITY_TX_NOT_PORTED and ORDERBOOK_SWEEP_CROSS_J_ENTITY_TX_NOT_PORTED (J-submit and cross-j owners) |
 | 14 | Proofs carrying locks/swaps/pulls, their built dispute arguments, and the hash-ladder reveal flush on finalize | proof-builder.ts, dispute-arguments.ts | REMAINING: the rewrite's ProofBody omits them; invariants DISPUTE_START_PROOF_OMITS_NOT_PORTED, DISPUTE_FINALIZE_PROOF_OMITS_NOT_PORTED, DISPUTE_FINALIZE_REVEAL_FLUSH_NOT_PORTED |
 | 15 | Secrets in on-chain starter arguments (applyKnownHtlcSecret), cross-j recovery, and source hub claims on finalize | tx/j-events.ts | REMAINING: invariant DISPUTE_STARTED_SECRET_ARGUMENTS_NOT_PORTED; there is no j_event lane and no cross-j recovery state |
-| 16 | Orderbook-row removal in prepareDispute (evidence readiness) | dispute/prepare.ts | REMAINING: orderbook owner |
-| 17 | SwapMatched, account_settled_finalized_bilateral, JEventReceived runtime events | swap / settle / j-events | REMAINING: these belong to the orderbook, settle and J-submit owners |
+| 16 | Orderbook-row removal in prepareDispute (evidence readiness) | dispute/index.ts removeDisputedAccountOrdersFromBook | FIXED against HEAD's orderbookExt (entity-txs-3 MATCH, 40 random books); a cross-j order on another Entity's book remains (DISPUTE_PREPARE_CROSS_J_BOOK_REMOVAL_NOT_PORTED) |
+| 17 | SwapMatched, account_settled_finalized_bilateral, JEventReceived runtime events | swap / settle / j-events | SwapMatched FIXED (bookPhase, book-admission MATCH). account_settled_finalized_bilateral and JEventReceived REMAINING: the Entity has no J-event lane |
 | 18 | The jurisdictionId field in Htlc* events | protocol/htlc/events.ts | REMAINING: the rewrite's Entity config does not carry the jurisdiction name |
 
 Note: `pure/diff/entity-cross-j.test.ts` (another area) gained a minimal edit. It passes `self` to paybookFollowups and compares runtimeEvents with og's candidateEffects.

@@ -28,7 +28,7 @@ import type { AccountReplica as OgReplica, AccountTx as OgTx } from "../../core/
 // ---- rewrite ----
 import {
   admit, admitAt, applyBookCommand, applyCommittedSwapCancels, applyEntityInput, applyRuntime, bookCommitmentHash, bookOrders, convertOutput, createBook, createEntity, createRuntime, entityRootOf, offersForMatching, pendingAccountInput,
-  processOrderbookCancels, processOrderbookSwaps, replicaId, replicaKey, spawn, tokenId, wireOf, wireTx, type EntityInput, type EntityOutput, type AccountReplica, type Book, type BookTx, type Hub, type HubAccount, type OrderbookExt, type PairDimensions, type SwapOffer, type SwapOfferEvent, type SwapRef, type EntityId, type EntityTx, type WireAccountTx } from "../xln.ts";
+  processOrderbookCancels, processOrderbookSwaps, tradesMatched, foldTxs, replicaId, replicaKey, spawn, tokenId, wireOf, wireTx, type EntityInput, type EntityOutput, type EntityReplica, type AccountReplica, type Book, type BookTx, type Hub, type HubAccount, type OrderbookExt, type PairDimensions, type SwapOffer, type SwapOfferEvent, type SwapRef, type EntityId, type EntityTx, type WireAccountTx } from "../xln.ts";
 import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, carolAddr, genesisAB, partyIn, unwrap, verifiers } from "../xln_run.ts";
 
 const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -299,7 +299,7 @@ describe("book-admission: same-j hub matcher", () => {
 
   test("MATCH: 40 random hub streams (offers, fills, STP, bands, fees, dimensions, cancels, committed removals, resume): same resolves, books and pair dimensions", () => {
     const comments = new Map<string, number>();
-    let halts = 0, fills = 0, resumes = 0, cancelTxs = 0;
+    let halts = 0, fills = 0, resumes = 0, cancelTxs = 0, matchedTrades = 0;
     for (let s = 0; s < 40; s++) {
       const takerFeeBps = pick([0, 0, 5, 30, 10_000]);
       const hubProfile = { entityId: HUB, name: "hub", spreadDistribution: { makerBps: 0, takerBps: 10_000, hubBps: 0, makerReferrerBps: 0, takerReferrerBps: 0 }, referenceTokenId: 1, usdQuoteAuthorityEntityId: pick([...USERS, W("99")]), minTradeSize: pick([0n, 0n, 1_000n]), supportedPairs: [] };
@@ -367,6 +367,12 @@ describe("book-admission: same-j hub matcher", () => {
         sameTxs(`${tag}:match`, rwMatch.value.accountTxs, ogMatch.accountTxs);
         expect([tag, [...rwMatch.value.books.keys()]]).toEqual([tag, ogMatch.bookUpdates.map((b) => b.pairId)]);
         for (const { pairId, book } of ogMatch.bookUpdates) expect([tag, pairId, bookCommitmentHash(rwMatch.value.books.get(pairId)!)]).toEqual([tag, pairId, computeBookCommitmentHash(book)]);
+        // og commitOrderbookMatchResult (module-private, transcribed over og's own bookUpdates): the SwapMatched runtime event's count
+        const ogPrevious = new Map<string, number>();
+        let ogMatched = 0;
+        for (const { pairId, book } of ogMatch.bookUpdates) { const previous = ogPrevious.get(pairId) ?? ogExt.books.get(pairId)?.tradeCount ?? 0; ogMatched += book.tradeCount - previous; ogPrevious.set(pairId, book.tradeCount); }
+        expect([tag, unwrap(tradesMatched(rwExt, rwMatch.value.books))]).toEqual([tag, ogMatched]);
+        matchedTrades += ogMatched;
         rwExt = { ...rwExt, books: new Map([...rwExt.books, ...rwMatch.value.books]), pairDimensions: rwMatch.value.pairDimensions };
         for (const { pairId, book } of ogMatch.bookUpdates) ogExt.books.set(pairId, book);
         rebuildOrderbookPairIndex(ogExt);
@@ -381,6 +387,7 @@ describe("book-admission: same-j hub matcher", () => {
       }
     }
     expect(fills).toBeGreaterThan(50);
+    expect(matchedTrades).toBeGreaterThan(20);
     expect(cancelTxs).toBeGreaterThan(5);
     expect(resumes).toBeGreaterThan(5);
     for (const c of ["fill", "outside-anchor-band", "STP", "fee-authorization-exceeded", "quote-lot-misaligned", "pair-decimals-mismatch"]) expect([c, (comments.get(c) ?? 0) > 0]).toEqual([c, true]);
@@ -395,9 +402,11 @@ describe("book-admission: hub order book inside entity consensus", () => {
   const world = () => {
     let rt = spawn(spawn(spawn(createRuntime(), entityOf(ALICE, aliceAddr)), entityOf(BOB, bobAddr)), entityOf(CAROL, carolAddr));
     let now = NOW;
+    const log: { target: EntityId; before: EntityReplica; input: EntityInput }[] = [];
     const send = (entityId: EntityId, txs: readonly EntityTx[]) => {
       const queue: [EntityId, EntityOutput][] = [];
       const step = (target: EntityId, input: EntityInput) => {
+        log.push({ target, before: rt.entities.get(replicaKey(target, signers.get(target)!))!, input });
         const out = unwrap(applyRuntime(rt, { runtimeTxs: [], entityInputs: [{ entityId: target, signerId: signers.get(target)!, input }] }, verifiers));
         expect(out.rejected).toEqual([]);
         rt = out.runtime;
@@ -415,7 +424,7 @@ describe("book-admission: hub order book inside entity consensus", () => {
       }
     };
     const replica = (id: EntityId) => rt.entities.get(replicaKey(id, signers.get(id)!))!;
-    return { send, replica };
+    return { send, replica, log };
   };
   const open = (target: EntityId): EntityTx => ({ type: "openAccount", data: { targetEntityId: target, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig, creditAmount: 10n ** 30n, tokenId: T(2) } });
   const credit = (to: EntityId, token: number): EntityTx => ({ type: "extendCredit", data: { counterpartyEntityId: to, tokenId: T(token), amount: 10n ** 30n } });
@@ -425,7 +434,7 @@ describe("book-admission: hub order book inside entity consensus", () => {
       wantTokenId: T(sellWeth ? 1 : 2), wantTokenDecimals: sellWeth ? 6 : 18, wantAmount: sellWeth ? quote : base, maxFee: 0n, minNetReceive: sellWeth ? quote : base } };
   };
   test("MATCH (og applyPostEntityTxPhases): a maker rests, a crossing taker fills it, both resolves commit and the book empties; a cancel request removes a resting offer", () => {
-    const { send, replica } = world();
+    const { send, replica, log } = world();
     send(CAROL, [{ type: "initOrderbookExt", data: { name: "hub", spreadDistribution: { makerBps: 0, takerBps: 10_000, hubBps: 0, makerReferrerBps: 0, takerReferrerBps: 0 }, referenceTokenId: 1, usdQuoteAuthorityEntityId: W("99"), minTradeSize: 0n, supportedPairs: ["1/2"] } }]);
     send(ALICE, [open(CAROL)]);
     send(BOB, [open(CAROL)]);
@@ -443,6 +452,12 @@ describe("book-admission: hub order book inside entity consensus", () => {
     send(BOB, [offer("bid1", false, 2600n, 1n)]);
     const traded = replica(CAROL).state.orderbookExt!.books.get("1/2")!;
     expect([traded.tradeCount, bookOrders(traded).length]).toEqual([1, 0]);
+    // og commitOrderbookMatchResult: the hub frame that matched carries one SwapMatched runtime event with the new trade count (replayed through foldTxs)
+    const matching = log.filter((e) => e.target === CAROL && e.input.kind === "txs" && (e.before.state.orderbookExt?.books.get("1/2")?.tradeCount ?? 0) === 0).map((e) => {
+      const input = e.input as Extract<EntityInput, { kind: "txs" }>, r = foldTxs(e.before.state, e.before.accountReplicas, [...e.before.mempool, ...input.txs], { verify: verifiers.verify, timestamp: input.timestamp });
+      return r.ok ? (r.value.draft.runtimeEvents ?? []).filter((x) => x.eventName === "SwapMatched") : [];
+    }).filter((x) => x.length > 0);
+    expect(matching).toEqual([[{ eventName: "SwapMatched", data: { entityId: CAROL, count: 1 } }]]);
     for (const [who, peer] of [[ALICE, CAROL], [BOB, CAROL], [CAROL, ALICE], [CAROL, BOB]] as const) {
       const child = replica(who).accountReplicas.get(peer)!;
       expect([who, peer, child._tag, child.state.offers.size, child.mempool.length]).toEqual([who, peer, "open", 0, 0]);

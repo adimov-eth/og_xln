@@ -5534,6 +5534,30 @@ const startDispute = (d: Draft, peer: EntityId, intent: StartIntent & { readonly
   const disputed: Draft = { ...admitted, ...putChild({ ...admitted.state, committed: { ...admitted.state.committed, jBatchState } }, admitted.accountReplicas, peer, startPrepared(child, s, queued)) };
   return ok(say(disputed, `⚔️ Dispute started vs ${tag} ${intent.description ? `(${intent.description})` : ""} - account frozen, use jBroadcast to commit`));
 };
+/**
+ * og removeDisputedAccountOrdersFromBook / removeOrderbookRowForDispute: every resting order of the frozen Account leaves this Entity's book
+ * (og removeBookOrderById: a same-j order under `${peer}:${offerId}`, a cross-j order this Entity owns the book of under `${source}:${offerId}`),
+ * with og's count message. A cross-j order whose book another Entity owns needs og's removeCrossJurisdictionBookOrder Entity output, not ported.
+ */
+const disputeBookRemoval = (d: Draft, peer: string, offers: ReadonlyMap<string, { readonly crossJurisdiction?: CrossRoute | undefined }>): Result<Draft, EntityError> => {
+  let books = d.state.orderbookExt?.books, removed = 0;
+  for (const [offerId, offer] of offers) {
+    const route = offer.crossJurisdiction, owner = route === undefined ? undefined : lower(route.bookOwnerEntityId || route.source.counterpartyEntityId || route.hubEntityId || "");
+    if (route !== undefined && owner !== lower(d.state.id)) return invariant("DISPUTE_PREPARE_CROSS_J_BOOK_REMOVAL_NOT_PORTED");
+    if (books === undefined) continue;
+    const orderId = swapKeyOf(route === undefined ? peer : lower(route.source.entityId), offerId), pairs = pairsHolding(books, orderId);
+    if (pairs.length > 1) return halt(`ORDERBOOK_DUPLICATE_BOOK_ORDER: order=${orderId} matches=${pairs.length}`);
+    const pairId = pairs[0], book = pairId === undefined ? undefined : books.get(pairId), order = book?.orders.get(orderId);
+    if (pairId === undefined || book === undefined || order === undefined) continue;
+    const r = applyBookCommand(book, { kind: 1, ownerId: order.ownerId, orderId });
+    if (!r.ok) return halt(r.error.code);
+    books = mapSet(books, pairId, r.value.state);
+    removed += 1;
+  }
+  const ext = d.state.orderbookExt;
+  if (removed === 0 || ext === undefined || books === undefined) return ok(d);
+  return ok({ ...d, state: { ...d.state, orderbookExt: { ...ext, books } }, events: [...(d.events ?? []), status(`⚔️ Dispute removed ${removed} local orderbook row(s), queued 0 remote row removal(s)`)] });
+};
 /** og handlePrepareDispute: status messages for a missing / already disputed / still preparing Account; otherwise freeze into dispute_preparing and start once ready. */
 const prepareDispute = (d: Draft, x: Extract<EntityTx, { type: "prepareDispute" }>["data"], ctx: FoldContext): Result<Draft, EntityError> => {
   const say = (y: Draft, message: string): Draft => ({ ...y, events: [...(y.events ?? []), status(message)] }), peer = x.counterpartyEntityId, tag = peer.slice(-4);
@@ -5546,13 +5570,14 @@ const prepareDispute = (d: Draft, x: Extract<EntityTx, { type: "prepareDispute" 
     return issues.length === 0 ? startDispute(d, peer, intentOf(child.prepare), ctx) : ok(say(d, `⏳ Dispute preparation still pending for ${tag}: ${issues.join("; ")}`));
   }
   // og removeDisputedAccountOrdersFromBook pulls the Account's resting orders out of the (local or cross-j) book first
-  if (child.state.offers.size > 0) return invariant("DISPUTE_PREPARE_ORDERBOOK_REMOVAL_NOT_PORTED");
-  const startIntent: StartIntent = { description, ...opt("crossJurisdictionRouteId", x.crossJurisdictionRouteId), ...opt("starterInitialArguments", x.starterInitialArguments) };
-  const prepare: DisputePrepare = { startedAt: now, readyAfter: now + Math.max(0, Math.floor(x.minCooldownMs ?? 0)), reason: description || "prepare-dispute", startIntent };
-  const frozen = prepareFrozen(child, prepare, { _tag: "not_attempted" }), issues = disputeIssues(frozen, now);
-  const prepared = say({ ...d, ...putChild(d.state, d.accountReplicas, peer, frozen) }, issues.length > 0
-    ? `⏳ Dispute prepared vs ${tag}; waiting for stable evidence: ${issues.join("; ")}` : `⏳ Dispute prepared vs ${tag}; evidence currently stable, queue disputeStart when ready`);
-  return issues.length > 0 ? ok(prepared) : startDispute(prepared, peer, startIntent, ctx);
+  return chain(disputeBookRemoval(d, peer, child.state.offers), (cleared) => {
+    const startIntent: StartIntent = { description, ...opt("crossJurisdictionRouteId", x.crossJurisdictionRouteId), ...opt("starterInitialArguments", x.starterInitialArguments) };
+    const prepare: DisputePrepare = { startedAt: now, readyAfter: now + Math.max(0, Math.floor(x.minCooldownMs ?? 0)), reason: description || "prepare-dispute", startIntent };
+    const frozen = prepareFrozen(child, prepare, { _tag: "not_attempted" }), issues = disputeIssues(frozen, now);
+    const prepared = say({ ...cleared, ...putChild(cleared.state, cleared.accountReplicas, peer, frozen) }, issues.length > 0
+      ? `⏳ Dispute prepared vs ${tag}; waiting for stable evidence: ${issues.join("; ")}` : `⏳ Dispute prepared vs ${tag}; evidence currently stable, queue disputeStart when ready`);
+    return issues.length > 0 ? ok(prepared) : startDispute(prepared, peer, startIntent, ctx);
+  });
 };
 // ---- og entity/tx/handlers/dispute/{finalize,finalize-admission,finalize-proof}.ts: disputeFinalize ----
 /** og AccountReplica.activeDispute: the observed on-chain dispute, or our queued start before DisputeStarted is observed. */
@@ -8204,6 +8229,16 @@ export const hubView = (state: EntityState, replicas: Replicas, ext: OrderbookEx
 });
 /** og replaceOrderbookPair for each final book: an existing pair keeps its place, a new pair is appended. */
 const withBooks = (ext: OrderbookExt, books: ReadonlyMap<string, Book>): OrderbookExt => (books.size === 0 ? ext : { ...ext, books: new Map([...ext.books, ...books]) });
+/** og commitOrderbookMatchResult: a pair's trade counter never moves backwards; the new trades across the updated pairs are the frame's SwapMatched count. */
+export const tradesMatched = (ext: OrderbookExt, books: ReadonlyMap<string, Book>): Result<number, EntityError> => {
+  let matched = 0;
+  for (const [pairId, book] of books) {
+    const previous = ext.books.get(pairId)?.tradeCount ?? 0;
+    if (book.tradeCount < previous) return invariant(`ORDERBOOK_TRADE_COUNT_REGRESSION:pair=${pairId}:previous=${previous}:next=${book.tradeCount}`);
+    matched += book.tradeCount - previous;
+  }
+  return ok(matched);
+};
 /**
  * og applyPostEntityTxPhases book work, after every Entity tx and before Account proposals, on a hub that owns an order book:
  * committed offer removals leave the book, maker cancel requests queue their zero-fill resolve, then the frame's committed offers are matched.
@@ -8239,12 +8274,10 @@ const bookPhase = (d: Draft): Result<Draft, EntityError> => {
         if (!queued.ok || admitted !== txs.length) return invariant(`ORDERBOOK_ACCOUNT_TX_ADMISSION_FAILED: account=${child.state.account.id.left}:${child.state.account.id.right} expected=${txs.length} admitted=${admitted}`);
         at = putChild(at.state, at.accountReplicas, accountId as EntityId, queued.value.replica);
       }
-      // og commitOrderbookMatchResult: a pair's trade counter never moves backwards
-      for (const [pairId, book] of match.books) {
-        const previous = ext2.books.get(pairId)?.tradeCount ?? 0;
-        if (book.tradeCount < previous) return invariant(`ORDERBOOK_TRADE_COUNT_REGRESSION:pair=${pairId}:previous=${previous}:next=${book.tradeCount}`);
-      }
-      return ok(done({ ...withBooks(ext2, match.books), pairDimensions: match.pairDimensions }, at));
+      return map(tradesMatched(ext2, match.books), (matched) => {
+        const booked = done({ ...withBooks(ext2, match.books), pairDimensions: match.pairDimensions }, at);
+        return matched === 0 ? booked : { ...booked, runtimeEvents: [...(booked.runtimeEvents ?? []), { eventName: "SwapMatched", data: { entityId: at.state.id, count: matched } }] };
+      });
     }));
   }));
 };
