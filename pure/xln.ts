@@ -13163,6 +13163,8 @@ export type SwapOfferEvent = SwapRef & {
   readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: 0 | 1 | 2 | undefined;
   /** og SwapOfferEvent.crossJurisdiction: a cross-j order the book owner admitted (book-order.ts buildCommittedCrossJurisdictionOfferEvent). */
   readonly crossJurisdiction?: CrossRoute | undefined;
+  /** og same-j-swap-output.ts: the Account output is the commitment evidence for a same-j offer (orderbook-admission.ts skips the committed-state re-read). */
+  readonly accountOutputVerified?: true | undefined;
 };
 /** og CommittedAccountEffects swapOffersCreated / swapOffersCancelled / swapCancelRequests, collected over one Entity frame. */
 export type SwapEvents = { readonly created: readonly SwapOfferEvent[]; readonly cancelled: readonly SwapRef[]; readonly cancelRequests: readonly SwapRef[] };
@@ -13173,7 +13175,7 @@ const tif = (t: number | undefined): 0 | 1 | 2 | undefined => (t === 0 || t === 
 export const swapOfferEvent = (accountId: string, e: Of<Effect, "swap_offer_upsert">): SwapOfferEvent => ({
   offerId: e.offer.offerId, accountId, makerIsLeft: e.offer.makerIsLeft, fromEntity: e.left, toEntity: e.right, createdHeight: e.offer.createdHeight,
   giveTokenId: Number(e.offer.giveTokenId), giveTokenDecimals: e.offer.giveTokenDecimals, giveAmount: e.offer.giveAmount, wantTokenId: Number(e.offer.wantTokenId), wantTokenDecimals: e.offer.wantTokenDecimals, wantAmount: e.offer.wantAmount,
-  maxFee: e.offer.maxFee, minNetReceive: e.offer.minNetReceive, priceTicks: e.offer.priceTicks, ...opt("timeInForce", tif(e.offer.timeInForce)),
+  maxFee: e.offer.maxFee, minNetReceive: e.offer.minNetReceive, priceTicks: e.offer.priceTicks, ...opt("timeInForce", tif(e.offer.timeInForce)), accountOutputVerified: true,
 });
 /** The matcher's view of one hub Account (og hubState.accounts row): status, committed offers, and the resolves already queued (mempool + our pending frame). */
 export type HubAccount = { readonly active: boolean; readonly left: string; readonly right: string; readonly offers: ReadonlyMap<string, SwapOffer>; readonly queued: readonly WireAccountTx[];
