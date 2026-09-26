@@ -22,6 +22,16 @@ import { runtimeWake, entityEncryptionPublicKey, crontabOf, initCrontab, schedul
 import { createDueScheduledWakeInputs, assertScheduledWakeTxAuthorized } from "../../core/runtime/mempool/scheduled-wake.ts";
 import { EntityAccountCandidateMap, PersistentEntityAccountMap } from "../../core/entity/state/persistent-account-map.ts";
 import { initJBatch as ogInitJBatch } from "../../core/jurisdiction/machine/batch/index.ts";
+import { assertFrameJPrefix as ogAssertFrameJPrefix, buildCertifiedJPrefixTx as ogBuildCertifiedJPrefixTx, buildLocalJPrefixAttestation as ogBuildLocalJPrefixAttestation, hashJPrefixAttestation as ogHashJPrefixAttestation,
+  mergeJPrefixAttestations as ogMergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation as ogVerifyOutOfRound } from "../../core/jurisdiction/machine/history/j-prefix-consensus.ts";
+import { getJEventRangeValidationError as ogRangeValidationError } from "../../core/jurisdiction/machine/local-history/index.ts";
+import { normalizeJurisdictionEvent, compareCanonicalJurisdictionEvents } from "../../core/jurisdiction/machine/events/event-normalization.ts";
+import { canonicalJurisdictionEventsHash, getJEventJurisdictionRef } from "../../core/jurisdiction/machine/event-observation.ts";
+import { verifyAccountSignature as ogVerifyAccountSignature, registerSignerKey } from "../../core/account/crypto.ts";
+import { FailureDispositionError } from "../../core/protocol/errors/failure-taxonomy.ts";
+import { buildLocalJPrefixAttestation, buildCertifiedJPrefixTx, mergeJPrefixAttestations, verifyOutOfRoundJPrefixAttestation, assertFrameJPrefix, jPrefixAttestationHash, jPrefixVerify, jEventRangeLocalHistoryError,
+  type JPrefixAttestation, type JPrefixCrypto, type JPrefixFailure, type JPrefixRound, type JPrefixView, type ValidatorJHistory, type ValidatorJBlock, type EntityState } from "../xln.ts";
+import { anvilKey, signDigestHex, carolAddr } from "../xln_run.ts";
 
 let seed = 71;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -342,4 +352,175 @@ describe("runtime-final: the Runtime tick's due wakes and leader timeout votes (
     expect(step.rejected).toEqual([]);
     expect([...unwrap(crontabOf((step.runtime.entities.get(replicaKey(ALICE, aliceAddr)) as EntityReplica).state)).hooks.keys()]).not.toContain("hub-kick:0");
   });
+});
+
+// ---- og jurisdiction/machine/history/j-prefix-consensus.ts: the per-frame J prefix (attestations, rounds, certificates, the frame rule) ----
+describe("runtime-final: the per-frame J prefix (og jurisdiction/machine/history/j-prefix-consensus.ts, local-history getJEventRangeValidationError)", () => {
+  const EP = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
+  const OG_J = { name: "j", chainId: TERMS.domain.chainId, depositoryAddress: TERMS.domain.depositoryAddress, entityProviderAddress: EP };
+  const JREF = getJEventJurisdictionRef(OG_J);
+  const V = [aliceAddr, bobAddr, carolAddr].map((a) => a.toLowerCase());
+  const KEYS = new Map([[V[0], anvilKey(2)], [V[1], anvilKey(1)], [V[2], anvilKey(0)]]);
+  const crypto: JPrefixCrypto = { verify: jPrefixVerify, sign: (signer, digest) => ({ ok: true, value: signDigestHex(digest, KEYS.get(signer) as string) }) as never };
+  const ogEnv: any = { quietRuntimeLogs: true, runtimeSeed: `0x${"11".repeat(32)}` };
+  // og signs with the validators' registered keys: the same keys the rewrite signs with, so signatures match byte for byte (RFC 6979)
+  for (const [v, k] of KEYS) registerSignerKey(ogEnv, v as string, Buffer.from((k as string).slice(2), "hex"));
+  const word = (): string => `0x${Array.from({ length: 64 }, () => "0123456789abcdef"[ri(16)]).join("")}`;
+  type Outcome = { ok: true; value: unknown } | { ok: false; disposition: string; message: string };
+  const ogDo = (f: () => unknown): Outcome => {
+    try { return { ok: true, value: f() }; } catch (e) {
+      const m = String((e as Error).message);
+      return { ok: false, disposition: e instanceof FailureDispositionError ? e.disposition : /^J_HISTORY_(?:FINALITY|FINALIZED)_/.test(m) ? "halt" : "reject", message: m };
+    }
+  };
+  const rwDo = (r: { ok: boolean; value?: unknown; error?: JPrefixFailure }): Outcome => (r.ok ? { ok: true, value: r.value } : { ok: false, disposition: (r.error as JPrefixFailure).disposition, message: (r.error as JPrefixFailure).message });
+  const shape = (o: Outcome): unknown => (o.ok ? "ok" : { disposition: o.disposition, message: o.message });
+  const unsigned = (a: any): any => (a === null || a === undefined ? a : JSON.parse(JSON.stringify(a)));
+  type Fx = { view: JPrefixView; og: any; histories: Map<string, ValidatorJHistory>; L: number; H: number; parent: string };
+  /** A random Entity (shares, threshold, certified anchor or registration base, height) and each validator's own J history over one shared chain, with gaps, lag and forks. */
+  const fixture = (): Fx => {
+    const shares = V.map(() => BigInt(1 + ri(3))), total = shares.reduce((a, b) => a + b, 0n), threshold = BigInt(1 + ri(Number(total)));
+    const L = 2 + ri(4), finality = rng() < 0.7, H = ri(3), prev = word(), registered = rng() < 0.3;
+    const chainHash = new Map<number, string>(); for (let h = 0; h <= L + 8; h++) chainHash.set(h, word());
+    const eventHeights = new Set(Array.from({ length: ri(4) }, () => L + 1 + ri(8)));
+    const balance = new Map([...eventHeights].map((h) => [h, String(ri(900))]));
+    const anchor = finality ? { jurisdictionRef: JREF, baseHeight: L - 1, finalizedThroughHeight: L, tipBlockHash: chainHash.get(L), eventHistoryRoot: word(), proposerSignerId: V[0], proposerSignature: "0x", entityHeight: H } : undefined;
+    const jc = { name: "j", entityProviderAddress: EP, ...(finality ? {} : { entityProviderDeploymentBlock: L + 1 }), ...(registered ? { registrationBlock: 1 } : {}) };
+    const members = new Map([aliceAddr, bobAddr, carolAddr].map((a, i) => [a, { shares: shares[i] as bigint }] as const));
+    const created = unwrap(createEntity({ id: ALICE, jurisdiction: TERMS.domain, threshold, members: members as never, jurisdictionConfig: jc as never, committed: { lastFinalizedJHeight: L, ...(anchor ? { jHistoryFinality: anchor } : {}) } as never }));
+    const view: JPrefixView = { state: { ...created.state, height: BigInt(H) } as EntityState, head: { height: BigInt(H), prevFrameHash: prev as never } };
+    const og = { entityId: ALICE, height: H, prevFrameHash: prev, lastFinalizedJHeight: L, ...(anchor ? { jHistoryFinality: anchor } : {}),
+      config: { mode: "proposer-based", threshold, validators: [...V], shares: Object.fromEntries(V.map((v, i) => [v, shares[i]])), jurisdiction: { ...OG_J, ...(finality ? {} : { entityProviderDeploymentBlock: L + 1 }), ...(registered ? { registrationBlock: 1 } : {}) } } };
+    const histories = new Map<string, ValidatorJHistory>();
+    for (const v of V) {
+      if (rng() < 0.08) continue;
+      const scanned = L + ri(9), forkAt = rng() < 0.15 ? L + 1 + ri(8) : Infinity, forked = new Map<number, string>();
+      const hashAt = (h: number): string => { if (h < forkAt) return chainHash.get(h) as string; if (!forked.has(h)) forked.set(h, word()); return forked.get(h) as string; };
+      const blockHashes = new Map<number, string>(), eventBlocks = new Map<number, ValidatorJBlock>();
+      for (let h = L; h <= scanned; h++) if (h === scanned || (h === L && finality) || rng() < 0.9) blockHashes.set(h, hashAt(h));
+      for (const h of eventHeights) {
+        if (h > scanned || rng() < 0.1) continue;
+        const events = [normalizeJurisdictionEvent({ type: "ReserveUpdated", data: { entity: ALICE, tokenId: 1, newBalance: balance.get(h) }, blockNumber: h, blockHash: hashAt(h), transactionHash: `0x${String(h).padStart(64, "0")}`, logIndex: 0 } as never)!].sort(compareCanonicalJurisdictionEvents);
+        eventBlocks.set(h, { jurisdictionRef: JREF, jHeight: h, jBlockHash: hashAt(h), eventsHash: canonicalJurisdictionEventsHash(events as never), events });
+        blockHashes.set(h, hashAt(h));
+      }
+      let contiguous = L;
+      while (contiguous < scanned && blockHashes.has(contiguous + 1)) contiguous++;
+      histories.set(v, { jurisdictionRef: JREF, scannedThroughHeight: scanned, contiguousThroughHeight: contiguous, tipBlockHash: hashAt(scanned), eventBlocks, blockHashes });
+    }
+    return { view, og, histories, L, H, parent: H === 0 ? "genesis" : prev };
+  };
+  const ogReplica = (fx: Fx, signer: string, round?: unknown): any => ({ signerId: signer, state: fx.og, jHistory: fx.histories.get(signer), ...(round ? { jPrefixRound: round } : {}) });
+  /** Every validator's rewrite-built, really signed attestation (null or refused ones left out). */
+  const attestationsOf = (fx: Fx): Map<string, JPrefixAttestation> => new Map(V.flatMap((v) => { const a = buildLocalJPrefixAttestation(fx.view, v, fx.histories.get(v), crypto); return a.ok && a.value !== null ? [[v, a.value] as const] : []; }));
+  const tamper = (a: JPrefixAttestation): [string, JPrefixAttestation] => {
+    const k = ri(6);
+    if (k === 0) return [a.validatorId, { ...a, signature: `${a.signature.slice(0, -4)}${a.signature.slice(-4) === "0000" ? "1111" : "0000"}` }];
+    if (k === 1) return [a.validatorId, { ...a, targetEntityHeight: a.targetEntityHeight + 1 }];
+    if (k === 2) return [a.validatorId, { ...a, headers: a.headers.map((h, i) => (i === a.headers.length - 1 ? { ...h, jBlockHash: word() } : h)) }];
+    if (k === 3) return [V[(V.indexOf(a.validatorId) + 1) % 3] as string, a];
+    if (k === 4) return [a.validatorId, { ...a, baseHeight: a.baseHeight + 1 }];
+    return [a.validatorId, { ...a, parentFrameHash: word() }];
+  };
+
+  test("MATCH (randomized): 400 local attestations -- og buildLocalJPrefixAttestation (budgeted claim, headers, base claims, sparse gaps, lag, refusals) and hashJPrefixAttestation", () => {
+    const seen = new Map<string, number>();
+    for (let run = 0; run < 400; run++) {
+      const fx = fixture(), v = pick(V), clean = fx.histories.get(v), defect = clean === undefined ? 9 : ri(12);
+      // defects: a history behind the certified base, a reorg at the certified anchor, a missing base header before the first anchor
+      const h: ValidatorJHistory | undefined = clean === undefined || defect > 2 ? clean
+        : defect === 0 ? { ...clean, scannedThroughHeight: fx.L - 1, contiguousThroughHeight: fx.L - 1, tipBlockHash: word(), blockHashes: new Map([[fx.L - 1, word()]]), eventBlocks: new Map() }
+          : defect === 1 ? { ...clean, blockHashes: new Map([...clean.blockHashes].map(([k, x]) => [k, k === fx.L ? word() : x] as const)), ...(clean.scannedThroughHeight === fx.L ? { tipBlockHash: "" } : {}) }
+            : { ...clean, blockHashes: new Map([...clean.blockHashes].filter(([k]) => k !== fx.L || k === clean.scannedThroughHeight)) };
+      if (h !== undefined && h.tipBlockHash === "") continue;
+      const mine = rwDo(buildLocalJPrefixAttestation(fx.view, v, h, crypto) as never), og = ogDo(() => ogBuildLocalJPrefixAttestation(ogEnv, ogReplica(fx, v) as never, h as never));
+      expect(shape(mine)).toEqual(shape(og) as never);
+      if (mine.ok && og.ok) {
+        expect(unsigned(mine.value)).toEqual(unsigned(og.value));
+        if (og.value !== null) expect(unwrap(jPrefixAttestationHash(mine.value as never) as never)).toBe(ogHashJPrefixAttestation(unsigned(og.value)));
+      }
+      const k = !mine.ok ? `err:${mine.message.split(":")[0]}` : mine.value === null ? "null" : (mine.value as JPrefixAttestation).scannedThroughHeight > fx.L ? "range" : "base";
+      seen.set(k, (seen.get(k) ?? 0) + 1);
+    }
+    for (const k of ["range", "base", "null"]) expect(seen.get(k) ?? 0).toBeGreaterThan(10);
+    expect([...seen.keys()].filter((k) => k.startsWith("err:")).length).toBeGreaterThan(0);
+  }, 120_000);
+
+  test("MATCH (randomized): 300 rounds -- og mergeJPrefixAttestations (verification, equivocation, the highest weighted common prefix and its certificate) over honest and tampered votes", () => {
+    let certified = 0, refused = 0;
+    for (let run = 0; run < 300; run++) {
+      const fx = fixture(), honest = attestationsOf(fx);
+      const incoming = new Map([...honest].map(([k, a]) => (rng() < 0.12 ? tamper(a) : [k, a] as [string, JPrefixAttestation])));
+      const mine = rwDo(mergeJPrefixAttestations(fx.view, undefined, incoming, crypto) as never), og = ogDo(() => ogMergeJPrefixAttestations(ogEnv, fx.og, undefined, incoming as never));
+      expect(shape(mine)).toEqual(shape(og) as never);
+      if (!mine.ok || !og.ok) { refused++; continue; }
+      const m = mine.value as JPrefixRound, o = og.value as any;
+      expect([...m.attestations.keys()]).toEqual([...o.attestations.keys()]);
+      expect(JSON.parse(JSON.stringify(m.certificate?.selected ?? null))).toEqual(JSON.parse(JSON.stringify(o.certificate?.selected ?? null)));
+      expect([m.targetEntityHeight, m.parentFrameHash, m.jurisdictionRef, m.baseHeight]).toEqual([o.targetEntityHeight, o.parentFrameHash, o.jurisdictionRef, o.baseHeight]);
+      if (m.certificate !== undefined) certified++;
+      // a second, different vote from the same validator is equivocation; the same vote again is a no-op
+      const [first] = honest.values();
+      if (first !== undefined && m.attestations.has(first.validatorId)) {
+        const again = new Map([[first.validatorId, first]]);
+        expect(shape(rwDo(mergeJPrefixAttestations(fx.view, m, again, crypto) as never))).toEqual(shape(ogDo(() => ogMergeJPrefixAttestations(ogEnv, fx.og, o, again as never))) as never);
+      }
+    }
+    expect([certified > 60, refused > 20]).toEqual([true, true]);
+  }, 300_000);
+
+  test("MATCH (randomized): 200 out-of-round votes -- og verifyOutOfRoundJPrefixAttestation (stale and future targets, authority, envelope, signature)", () => {
+    const seen = new Set<string>();
+    for (let run = 0; run < 200; run++) {
+      const fx = fixture(), v = pick(V), shift = pick([-1, 1, 2]);
+      if (fx.H + shift < 0) continue;
+      const other: JPrefixView = { state: { ...fx.view.state, height: BigInt(fx.H + shift) }, head: { height: BigInt(fx.H + shift), prevFrameHash: word() as never } };
+      const built = buildLocalJPrefixAttestation(other, v, fx.histories.get(v), crypto);
+      if (!built.ok || built.value === null) continue;
+      const raw = rng() < 0.2 ? tamper(built.value)[1] : built.value;
+      const mine = rwDo(verifyOutOfRoundJPrefixAttestation(fx.view, raw, [fx.view.state.quorum], crypto) as never), og = ogDo(() => ogVerifyOutOfRound(ogEnv, fx.og, raw as never, [fx.og.config]));
+      expect(shape(mine)).toEqual(shape(og) as never);
+      seen.add(mine.ok ? "ok" : mine.message.split(":")[0] as string);
+    }
+    expect(seen.size).toBeGreaterThan(2);
+  }, 120_000);
+
+  test("MATCH (randomized): 300 frames -- og assertFrameJPrefix (certificate required, round, stronger local certificate, required local event, frozen base roll, range equals the certified prefix, proposer signature) and og getJEventRangeValidationError", () => {
+    const seen = new Map<string, number>();
+    for (let run = 0; run < 300; run++) {
+      const fx = fixture(), votes = attestationsOf(fx);
+      const rw = mergeJPrefixAttestations(fx.view, undefined, votes, crypto);
+      const ogRound = ogDo(() => ogMergeJPrefixAttestations(ogEnv, fx.og, undefined, votes as never));
+      if (!rw.ok || !ogRound.ok) continue;
+      const proposer = V[0] as string, certificate = rw.value.certificate;
+      let txs: EntityTx[] = [];
+      if (certificate !== undefined && certificate.selected.scannedThroughHeight > fx.L) {
+        const tx = buildCertifiedJPrefixTx(fx.view, fx.histories.get(proposer), certificate, proposer, crypto);
+        const ogTx = ogDo(() => ogBuildCertifiedJPrefixTx(ogEnv, ogReplica(fx, proposer) as never, certificate as never, proposer));
+        expect(shape(rwDo(tx as never))).toEqual(shape(ogTx) as never);
+        if (tx.ok && ogTx.ok) expect(unsigned(tx.value.data)).toEqual(unsigned((ogTx.value as any).data));
+        if (tx.ok) txs = [tx.value];
+      }
+      const variant = ri(8);
+      if (variant === 1) txs = [];
+      if (variant === 2) txs = [...txs, { type: "chat", data: { message: "x" } } as unknown as EntityTx];
+      if (variant === 3 && txs[0] !== undefined) txs = [{ ...txs[0], data: { ...(txs[0] as { data: Record<string, unknown> }).data, from: V[1] } } as EntityTx];
+      const frame = { height: variant === 4 ? fx.H + 2 : fx.H + 1, parentFrameHash: fx.parent, proposerSignerId: variant === 5 ? V[1] as string : proposer, txs, jPrefixCertificate: variant === 6 ? undefined : certificate };
+      const ogFrame = { height: frame.height, parentFrameHash: frame.parentFrameHash, leader: { proposerSignerId: frame.proposerSignerId, view: 0 }, txs, ...(frame.jPrefixCertificate ? { jPrefixCertificate: frame.jPrefixCertificate } : {}) };
+      const judge = pick(V), useRound = rng() < 0.7;
+      const mine = rwDo(assertFrameJPrefix(fx.view, judge, useRound ? rw.value : undefined, fx.histories.get(judge), frame, crypto) as never);
+      const og = ogDo(() => ogAssertFrameJPrefix(ogEnv, ogReplica(fx, judge, useRound ? ogRound.value : undefined), ogFrame as never));
+      expect(shape(mine)).toEqual(shape(og) as never);
+      const k = mine.ok ? "ok" : `${mine.disposition}:${mine.message.split(":")[0]}`;
+      seen.set(k, (seen.get(k) ?? 0) + 1);
+      // og getReplicaJRangeValidationError: each proposed range against the judge's own history
+      for (const tx of txs) {
+        if (tx.type !== "j_event") continue;
+        const r = jEventRangeLocalHistoryError(fx.view.state, fx.histories.get(judge), tx.data as never), o = ogDo(() => ogRangeValidationError(fx.og, fx.histories.get(judge) as never, tx.data as never, proposer, (s: string, d: string, sig: string) => ogVerifyAccountSignature(ogEnv, s, d, sig)));
+        expect(r.ok ? r.value : `halt:${(r.error as JPrefixFailure).message}`).toEqual((o.ok ? o.value : `halt:${o.message}`) as never);
+      }
+    }
+    for (const k of ["ok", "reject:J_PREFIX_CERTIFICATE_MISSING", "reject:J_PREFIX_FRAME_ROUND_MISMATCH"]) expect(seen.get(k) ?? 0).toBeGreaterThan(0);
+    expect(seen.size).toBeGreaterThan(5);
+  }, 300_000);
 });

@@ -11521,8 +11521,10 @@ export const jRangeDigest = (d: JRangeSigned): Result<string, string> => chain(j
     A.b32(jHistoryText("xln:j-history-range:v1")), A.b32(jHistoryText(d.entityId)), A.b32(jHistoryText(d.jurisdictionRef)), A.b32(jHistoryText(d.signerId)), A.uint(BigInt(base)), A.uint(BigInt(scanned)), A.b32(jHistoryText(d.tipBlockHash)), A.b32(root), A.b32(range),
   ]))));
 }));
-/** og normalizeStrictJEventBlock (J_RANGE codes): exact fields, a height above the previous block and within the scan, canonical events already in canonical order, both hashes as claimed. */
-const strictJBlock = (value: unknown, previous: number, scanned: number): Result<JRangeBlock, string> => {
+/** og normalizeStrictJEventBlock: exact fields, a height above the previous block and within the scan, canonical events already in canonical order, both hashes as claimed (codes under `prefix`, J_RANGE or J_PREFIX). */
+const strictJBlock = (value: unknown, previous: number, scanned: number, prefix = "J_RANGE"): Result<JRangeBlock, string> =>
+  mapErr(strictJRangeBlock(value, previous, scanned), (code) => (prefix !== "J_RANGE" && /^J_RANGE_(?:BLOCK_|EVENT_|EVENTS_HASH_|EVIDENCE_)/.test(code) ? `${prefix}${code.slice("J_RANGE".length)}` : code));
+const strictJRangeBlock = (value: unknown, previous: number, scanned: number): Result<JRangeBlock, string> => {
   const raw = boundaryRec(value);
   if (raw === null) return err("J_RANGE_BLOCK_INVALID");
   const fields = jExactKeys(raw, ["blockNumber", "blockHash", "eventsHash", "events"], ["disputeFinalizationEvidence", "disputeFinalizationEvidenceHash"], "J_RANGE_BLOCK_FIELDS_INVALID");
@@ -11746,6 +11748,531 @@ const entityJEvent = (d: Draft, data: JRec, ctx: FoldContext): Result<Draft, Ent
 /** og finalizedJHistoryRoot: the certified head's root, or the empty root before the first certified range. */
 const anchorRoot = (state: EntityState): string => { const a = certifiedJAnchor(state); return a.ok && a.value !== null ? a.value.eventHistoryRoot : EMPTY_J_HISTORY_ROOT; };
 const liveAccount = (c: AccountReplica): boolean => c._tag !== "preparing" && c._tag !== "disputed";
+// ---- og jurisdiction/machine/history/j-prefix-consensus.ts over local-history (claim builders) and range-budget.ts (proposable budget): the per-frame J prefix ----
+/** og JPrefixClaim: one exact validator-local J prefix body above the certified anchor. */
+export type JPrefixClaim = { readonly jurisdictionRef: string; readonly baseHeight: number; readonly scannedThroughHeight: number; readonly tipBlockHash: string; readonly eventHistoryRoot: string; readonly rangeHash: string; readonly blocks: readonly JRangeBlock[] };
+export type JPrefixHeader = { readonly jHeight: number; readonly jBlockHash: string };
+/** og JPrefixAttestation: one validator's signed head for one Entity height (its vote for the round). */
+export type JPrefixAttestation = JPrefixClaim & { readonly version: 1; readonly entityId: string; readonly targetEntityHeight: number; readonly parentFrameHash: string; readonly validatorId: string; readonly headers: readonly JPrefixHeader[]; readonly signature: string };
+/** og JPrefixCertificate: the weighted certificate selecting the highest exact prefix common to its signed heads. */
+export type JPrefixCertificate = { readonly version: 1; readonly entityId: string; readonly targetEntityHeight: number; readonly parentFrameHash: string; readonly jurisdictionRef: string; readonly baseHeight: number; readonly selected: JPrefixClaim; readonly attestations: ReadonlyMap<string, JPrefixAttestation> };
+/** og JPrefixRound: the validator-private collection for one Entity-height round. */
+export type JPrefixRound = { readonly targetEntityHeight: number; readonly parentFrameHash: string; readonly jurisdictionRef: string; readonly baseHeight: number; readonly attestations: ReadonlyMap<string, JPrefixAttestation>; readonly certificate?: JPrefixCertificate | undefined };
+/** og's J-prefix error dispositions: a plain Error rejects (code `J_PREFIX_INVALID`), retryFailure retries, certified-history corruption halts. */
+export type JPrefixFailure = { readonly disposition: "reject" | "retry" | "halt"; readonly code: string; readonly message: string };
+type JP<T> = Result<T, JPrefixFailure>;
+/** The committed Entity a J prefix is judged against: og's `state` (height, prevFrameHash, config under the round's authority). */
+export type JPrefixView = { readonly state: EntityState; readonly head: Head };
+/** og signer seams: verifyAccountSignature (an EOA recovers from a canonical compact signature) and signAccountFrame. */
+export type JPrefixCrypto = { readonly verify: (signerId: string, digest: string, signature: string) => boolean; readonly sign?: ((signerId: string, digest: string) => Result<string, unknown>) | undefined };
+/** og verifyAccountSignature for a J-prefix signer: a canonical compact signature recovering to the signer's EOA (any other signer id has no registered key). */
+export const jPrefixVerify = (signerId: string, digest: string, signature: string): boolean => witnessSigned(nText(digest), nText(signature), nText(signerId));
+const J_PREFIX_ATTESTATION_DOMAIN = "xln:j-prefix-attestation:v1";
+const J_HISTORY_CORRUPTION = /^J_HISTORY_(?:FINALITY|FINALIZED)_/;
+const jpFail = (message: string): JP<never> =>
+  err(J_HISTORY_CORRUPTION.test(message) ? { disposition: "halt", code: message.split(":")[0] ?? message, message } : { disposition: "reject", code: "J_PREFIX_INVALID", message });
+const jpRetry = (code: string, message: string = code): JP<never> => err({ disposition: "retry", code, message });
+const jpOf = <T>(r: Result<T, RuntimeError | string>): JP<T> => (r.ok ? r : jpFail(typeof r.error === "string" ? r.error : jCode(r.error)));
+const jpBytes = (v: unknown): JP<Uint8Array> => mapErr(authConsensusBytes(v), (): JPrefixFailure => ({ disposition: "reject", code: "J_PREFIX_INVALID", message: "CANONICAL_ENCODING_INVALID" }));
+const jpHash = (v: unknown): JP<string> => map(jpBytes(v), (b) => bytesToHex(keccak_256(b)));
+const jpHeight = (v: unknown, label: string): JP<number> => { const n = Number(v); return Number.isSafeInteger(n) && n >= 0 ? ok(n) : jpFail(`J_PREFIX_${label}_INVALID:${String(v)}`); };
+const jpWord = (v: unknown, label: string): JP<string> => { const s = nText(v); return WORD32.test(s) ? ok(s) : jpFail(`J_PREFIX_${label}_INVALID:${String(v)}`); };
+const jpFinalized = (v: JPrefixView): number => Number(v.state.committed["lastFinalizedJHeight"] || 0);
+const jpEntityHeight = (v: JPrefixView): number => Number(v.state.height);
+/** og currentParentFrameHash. */
+const jpParent = (v: JPrefixView): string => (v.state.height === 0n ? GENESIS_PARENT : parentOf(v.head));
+/** og state.config.validators / shares / threshold under the view's authority. */
+const jpValidators = (v: JPrefixView): readonly string[] => [...membersOf(v.state.quorum).keys()].map((a) => lower(a));
+/** og finalizedJHistoryRoot. */
+const jpFinalizedRoot = (v: JPrefixView): JP<string> => map(jpOf(certifiedJAnchor(v.state)), (a) => a?.eventHistoryRoot ?? EMPTY_J_HISTORY_ROOT);
+const jpIdentities = (ref: string, blocks: readonly JRangeBlock[]): readonly JHistoryIdentity[] => blocks.map(jBlockIdentity(ref));
+/** og normalizeClaimEnvelope: the claim's jurisdiction, heights, strict blocks (J_PREFIX codes), range hash, tip and root. */
+const jpClaimEnvelope = (expected: string, raw: JRec): JP<JPrefixClaim> => {
+  const jurisdictionRef = nText(raw["jurisdictionRef"]);
+  if (jurisdictionRef !== expected) return jpFail(`J_PREFIX_JURISDICTION_MISMATCH:${jurisdictionRef}:${expected}`);
+  return chain(jpHeight(raw["baseHeight"], "BASE_HEIGHT"), (baseHeight) => chain(jpHeight(raw["scannedThroughHeight"], "SCANNED_HEIGHT"), (scannedThroughHeight) => {
+    if (scannedThroughHeight < baseHeight) return jpFail("J_PREFIX_BEHIND_BASE");
+    const rawBlocks = raw["blocks"];
+    if (!Array.isArray(rawBlocks)) return jpFail("raw.blocks.map is not a function");
+    const blocks: JRangeBlock[] = [];
+    let prior = baseHeight;
+    for (const b of rawBlocks as readonly unknown[]) { const n = strictJBlock(b, prior, scannedThroughHeight, "J_PREFIX"); if (!n.ok) return jpFail(n.error); blocks.push(n.value); prior = n.value.blockNumber; }
+    return chain(jpOf(jRangeHash(jurisdictionRef, blocks)), (rangeHash) => chain(jpWord(raw["rangeHash"], "RANGE_HASH"), (claimed) => {
+      if (claimed !== rangeHash) return jpFail("J_PREFIX_RANGE_HASH_MISMATCH");
+      return chain(jpWord(raw["tipBlockHash"], "TIP_HASH"), (tipBlockHash) => map(jpWord(raw["eventHistoryRoot"], "HISTORY_ROOT"), (eventHistoryRoot): JPrefixClaim =>
+        ({ jurisdictionRef, baseHeight, scannedThroughHeight, tipBlockHash, eventHistoryRoot, rangeHash, blocks })));
+    }));
+  }));
+};
+/** og normalizeClaim: the envelope anchored at the Entity-certified head; a base-only claim must equal the certified base. */
+const jpClaim = (v: JPrefixView, raw: JRec): JP<JPrefixClaim> => chain(jpClaimEnvelope(jEventJurisdictionRef(v.state), raw), (claim) => {
+  const finalized = jpFinalized(v);
+  if (claim.baseHeight !== finalized) return jpFail(`J_PREFIX_BASE_HEIGHT_MISMATCH:${claim.baseHeight}:${finalized}`);
+  return chain(jpFinalizedRoot(v), (root) => chain(jpOf(foldJHistoryRoot(root, jpIdentities(claim.jurisdictionRef, claim.blocks))), (eventHistoryRoot): JP<JPrefixClaim> => {
+    if (claim.eventHistoryRoot !== eventHistoryRoot) return jpFail("J_PREFIX_HISTORY_ROOT_MISMATCH");
+    const anchored: JPrefixClaim = { ...claim, eventHistoryRoot };
+    if (claim.scannedThroughHeight !== claim.baseHeight) return ok(anchored);
+    if (recOf(v.state.committed["jHistoryFinality"]) === null) return jpFail("J_PREFIX_BASE_ATTESTATION_WITHOUT_CERTIFIED_ANCHOR");
+    return chain(jpCertifiedBase(v), (base) => (consensusEqual(anchored, base) ? ok(anchored) : jpFail("J_PREFIX_BASE_ATTESTATION_CONFLICT")));
+  }));
+});
+/** og attestationBody + hashJPrefixAttestation. */
+export const jPrefixAttestationHash = (a: Omit<JPrefixAttestation, "signature">): JP<string> => jpHash({
+  domain: J_PREFIX_ATTESTATION_DOMAIN, version: 1, entityId: nText(a.entityId), targetEntityHeight: a.targetEntityHeight, parentFrameHash: nText(a.parentFrameHash), validatorId: nText(a.validatorId),
+  jurisdictionRef: nText(a.jurisdictionRef), baseHeight: a.baseHeight, scannedThroughHeight: a.scannedThroughHeight, tipBlockHash: nText(a.tipBlockHash), eventHistoryRoot: nText(a.eventHistoryRoot), rangeHash: nText(a.rangeHash),
+  headers: a.headers.map((h) => ({ jHeight: h.jHeight, jBlockHash: nText(h.jBlockHash) })), blocks: a.blocks,
+});
+/** og entityRequiresJPrefixCertificate: a registered Entity (registrationBlock) or one with a certified anchor certifies a J prefix in every frame. */
+export const entityRequiresJPrefixCertificate = (state: EntityState): boolean =>
+  state.jurisdictionConfig?.registrationBlock !== undefined || Boolean(state.committed["jHistoryFinality"]);
+/** og buildCertifiedBaseClaim. */
+const jpCertifiedBase = (v: JPrefixView): JP<JPrefixClaim> => {
+  const baseHeight = jpFinalized(v), finality = recOf(v.state.committed["jHistoryFinality"]);
+  if (finality === null || finality["finalizedThroughHeight"] !== baseHeight) return jpFail(`J_PREFIX_CERTIFIED_BASE_MISSING:${baseHeight}`);
+  const jurisdictionRef = jEventJurisdictionRef(v.state);
+  if (nText(finality["jurisdictionRef"]) !== jurisdictionRef) return jpFail("J_PREFIX_CERTIFIED_BASE_JURISDICTION_MISMATCH");
+  return chain(jpWord(finality["tipBlockHash"], "CERTIFIED_BASE_TIP_HASH"), (tipBlockHash) => chain(jpWord(finality["eventHistoryRoot"], "CERTIFIED_BASE_HISTORY_ROOT"), (eventHistoryRoot) =>
+    map(jpOf(jRangeHash(jurisdictionRef, [])), (rangeHash): JPrefixClaim => ({ jurisdictionRef, baseHeight, scannedThroughHeight: baseHeight, tipBlockHash, eventHistoryRoot, rangeHash, blocks: [] }))));
+};
+/** og buildBaseClaim: the certified base, or (before the first anchor) this validator's own header at the registration base. */
+const jpBaseClaim = (v: JPrefixView, h: ValidatorJHistory): JP<JPrefixClaim> => {
+  if (recOf(v.state.committed["jHistoryFinality"]) !== null) return jpCertifiedBase(v);
+  const baseHeight = jpFinalized(v), tip = h.blockHashes.get(baseHeight);
+  if (!tip) return jpFail(`J_PREFIX_LOCAL_TIP_HASH_MISSING:${baseHeight}`);
+  const jurisdictionRef = jEventJurisdictionRef(v.state);
+  return chain(jpWord(tip, "TIP_HASH"), (tipBlockHash) => chain(jpFinalizedRoot(v), (eventHistoryRoot) =>
+    map(jpOf(jRangeHash(jurisdictionRef, [])), (rangeHash): JPrefixClaim => ({ jurisdictionRef, baseHeight, scannedThroughHeight: baseHeight, tipBlockHash, eventHistoryRoot, rangeHash, blocks: [] }))));
+};
+/** og getValidatorJContiguousThroughHeight. */
+const jpContiguous = (v: JPrefixView, h: ValidatorJHistory): JP<number> => chain(jpOf(certifiedJAnchor(v.state)), (anchor) => chain(jpOf(historyMatchesAnchor(anchor, h)), (): JP<number> => {
+  const base = jpFinalized(v);
+  if (h.scannedThroughHeight < base) return jpFail(`J_HISTORY_LOCAL_BEHIND_FINALIZED_ANCHOR:${h.scannedThroughHeight}:${base}`);
+  let height = Math.max(base, h.contiguousThroughHeight);
+  while (height < h.scannedThroughHeight && h.blockHashes.has(height + 1)) height += 1;
+  return ok(height);
+}));
+/** og getLocalJPrefixAttestableHeight: the highest head this validator proves without crossing a sparse gap. */
+export const localJPrefixAttestableHeight = (v: JPrefixView, h: ValidatorJHistory): JP<number | null> => map(jpContiguous(v, h), (contiguous) => {
+  const base = jpFinalized(v);
+  if (contiguous > base) return contiguous;
+  const sparse = [...h.eventBlocks.keys()].some((height) => height > base && height <= h.scannedThroughHeight);
+  return sparse || recOf(v.state.committed["jHistoryFinality"]) === null ? null : base;
+});
+/** og toWireBlock. */
+const jpWireBlock = (b: ValidatorJBlock): JRangeBlock => ({
+  blockNumber: b.jHeight, blockHash: b.jBlockHash, eventsHash: b.eventsHash, events: b.events as readonly WireJEvent[],
+  ...(b.disputeFinalizationEvidence?.length ? { disputeFinalizationEvidence: b.disputeFinalizationEvidence } : {}), ...(b.disputeFinalizationEvidenceHash ? { disputeFinalizationEvidenceHash: b.disputeFinalizationEvidenceHash } : {}),
+});
+/** og buildUnsignedJEventRangeAtHeight. */
+const jpUnsignedAt = (v: JPrefixView, h: ValidatorJHistory, height: number): JP<JPrefixClaim | null> => {
+  const baseHeight = jpFinalized(v);
+  if (!Number.isSafeInteger(height) || height <= baseHeight) return ok(null);
+  if (height > h.scannedThroughHeight) return jpRetry("J_PREFIX_LOCAL_HISTORY_BEHIND", `J_PREFIX_LOCAL_HISTORY_BEHIND:${h.scannedThroughHeight}:${height}`);
+  const tipBlockHash = h.blockHashes.get(height);
+  if (!tipBlockHash) return jpFail(`J_PREFIX_LOCAL_TIP_HASH_MISSING:${height}`);
+  const blocks = [...h.eventBlocks.values()].filter((b) => b.jHeight > baseHeight && b.jHeight <= height).sort((a, b) => a.jHeight - b.jHeight).map(jpWireBlock);
+  return chain(jpFinalizedRoot(v), (root) => chain(jpOf(foldJHistoryRoot(root, jpIdentities(h.jurisdictionRef, blocks))), (eventHistoryRoot) =>
+    map(jpOf(jRangeHash(h.jurisdictionRef, blocks)), (rangeHash): JPrefixClaim => ({ jurisdictionRef: h.jurisdictionRef, baseHeight, scannedThroughHeight: height, tipBlockHash, eventHistoryRoot, rangeHash, blocks }))));
+};
+/** og buildValidatorJPrefixHeaders. */
+const jpHeaders = (v: JPrefixView, h: ValidatorJHistory, height: number): JP<readonly JPrefixHeader[]> => {
+  const baseHeight = jpFinalized(v);
+  if (!Number.isSafeInteger(height) || height <= baseHeight) return ok([]);
+  if (height > h.scannedThroughHeight) return jpRetry("J_PREFIX_LOCAL_HISTORY_BEHIND", `J_PREFIX_LOCAL_HISTORY_BEHIND:${h.scannedThroughHeight}:${height}`);
+  const headers: JPrefixHeader[] = [];
+  for (let jHeight = baseHeight + 1; jHeight <= height; jHeight++) {
+    const jBlockHash = h.blockHashes.get(jHeight);
+    if (!jBlockHash) return jpFail(`J_PREFIX_LOCAL_HEADER_MISSING:${jHeight}`);
+    headers.push({ jHeight, jBlockHash });
+  }
+  return ok(headers);
+};
+const ZERO_ACCOUNT_SIGNATURE = `0x${"00".repeat(65)}`;
+/** og getJRangeClaimsProposableBudgetError: the largest signed frame payload any eligible proposer could produce for these claims. */
+const jpBudgetError = (claims: readonly JPrefixClaim[], proposers: readonly string[]): JP<string | null> => {
+  for (const c of claims) {
+    const base = Number(c.baseHeight), scanned = Number(c.scannedThroughHeight);
+    if (!Number.isSafeInteger(base) || base < 0) return jpFail(`J_RANGE_FRAME_BASE_HEIGHT_INVALID:${String(c.baseHeight)}`);
+    if (!Number.isSafeInteger(scanned) || scanned <= base) return jpFail(`J_RANGE_FRAME_SCANNED_HEIGHT_INVALID:${String(c.scannedThroughHeight)}`);
+  }
+  const [first] = proposers;
+  if (first === undefined) return jpFail("J_RANGE_FRAME_PROPOSER_SET_EMPTY");
+  const width = (s: string): number => { const b = authConsensusBytes(s.trim().toLowerCase()); return b.ok ? b.value.byteLength : 0; };
+  const longest = proposers.reduce((sel, c) => (width(c) > width(sel) ? c : sel), first).trim().toLowerCase();
+  return map(jpBytes({ domain: J_RANGE_FRAME_PAYLOAD_DOMAIN, version: 1, ranges: claims.map((c) => ({ from: longest, signature: ZERO_ACCOUNT_SIGNATURE, observedAt: c.scannedThroughHeight, jurisdictionRef: c.jurisdictionRef, baseHeight: c.baseHeight, scannedThroughHeight: c.scannedThroughHeight, tipBlockHash: c.tipBlockHash, eventHistoryRoot: c.eventHistoryRoot, rangeHash: c.rangeHash, blocks: c.blocks })) }),
+    (bytes) => (bytes.byteLength > MAX_ENTITY_FRAME_J_RANGE_BYTES ? `J_RANGE_FRAME_BYTE_LIMIT_EXCEEDED:${bytes.byteLength}:${MAX_ENTITY_FRAME_J_RANGE_BYTES}` : null));
+};
+/** og buildBudgetedLocalClaim: the highest exact local prefix that fits one Entity frame (binary search; a lone oversized block is terminal). */
+const jpBudgetedLocalClaim = (v: JPrefixView, h: ValidatorJHistory): JP<JPrefixClaim | null> => chain(localJPrefixAttestableHeight(v, h), (highest): JP<JPrefixClaim | null> => {
+  const base = jpFinalized(v), validators = jpValidators(v);
+  if (highest === null) return ok(null);
+  if (highest === base) return jpBaseClaim(v, h);
+  const claimAt = (height: number): JP<JPrefixClaim> => chain(jpUnsignedAt(v, h, height), (c) => (c === null ? jpFail(`J_PREFIX_BUDGET_CLAIM_MISSING:${height}`) : ok(c)));
+  const budget = (c: JPrefixClaim): JP<string | null> => jpBudgetError([c], validators);
+  return chain(claimAt(highest), (highestClaim) => chain(budget(highestClaim), (highestError): JP<JPrefixClaim | null> => {
+    if (highestError === null) return ok(highestClaim);
+    let lo = base + 1, hi = highest - 1, selected: JPrefixClaim | null = null;
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2), c = claimAt(mid);
+      if (!c.ok) return c;
+      const e = budget(c.value);
+      if (!e.ok) return e;
+      if (e.value !== null) hi = mid - 1; else { selected = c.value; lo = mid + 1; }
+    }
+    const failing = (selected?.scannedThroughHeight ?? base) + 1;
+    return chain(claimAt(failing), (failingClaim) => chain(budget(failingClaim), (error): JP<JPrefixClaim | null> => {
+      if (error === null) return jpFail(`J_PREFIX_BUDGET_SEARCH_NON_MONOTONIC:${failing}`);
+      const block = failingClaim.blocks.find((b) => b.blockNumber === failing);
+      const isolated: JP<string | null> = block === undefined ? ok(null)
+        : chain(jpOf(jRangeHash(failingClaim.jurisdictionRef, [block])), (rangeHash) => budget({ jurisdictionRef: failingClaim.jurisdictionRef, baseHeight: block.blockNumber - 1, scannedThroughHeight: block.blockNumber, tipBlockHash: block.blockHash, eventHistoryRoot: failingClaim.eventHistoryRoot, rangeHash, blocks: [block] }));
+      return chain(isolated, (isolatedError): JP<JPrefixClaim | null> => {
+        if (isolatedError?.startsWith("J_RANGE_FRAME_BYTE_LIMIT_EXCEEDED:")) return jpFail(`J_RANGE_SINGLE_BLOCK_UNPROPOSABLE:${failing}:${isolatedError}`);
+        return selected === null ? jpFail(`J_PREFIX_RANGE_UNPROPOSABLE:${failing}:${error}`) : ok(selected);
+      });
+    }));
+  }));
+});
+/** og normalizeAttestationClaimEvidence: the budget, exactly one ordered header per height, the tip and event blocks on those headers, a compact signature. */
+const jpEvidence = (raw: JRec, claim: JPrefixClaim, validators: readonly string[]): JP<{ readonly headers: readonly JPrefixHeader[]; readonly signature: string }> => {
+  const budget: JP<string | null> = claim.scannedThroughHeight > claim.baseHeight ? jpBudgetError([claim], validators) : ok(null);
+  return chain(budget, (budgetError): JP<{ readonly headers: readonly JPrefixHeader[]; readonly signature: string }> => {
+    if (budgetError !== null) return jpFail(`J_PREFIX_ATTESTATION_BUDGET_INVALID:${budgetError}`);
+    const expected = claim.scannedThroughHeight - claim.baseHeight, rawHeaders = raw["headers"];
+    if (!Array.isArray(rawHeaders) || rawHeaders.length !== expected) return jpFail(`J_PREFIX_HEADER_COUNT_MISMATCH:${String((rawHeaders as { readonly length?: unknown } | null | undefined)?.length ?? -1)}:${expected}`);
+    const headers: JPrefixHeader[] = [];
+    for (const [index, value] of (rawHeaders as readonly unknown[]).entries()) {
+      const header = recOf(value);
+      if (header === null) return jpFail(`Cannot read properties of ${value === null ? "null" : typeof value} (reading 'jHeight')`);
+      const jHeight = jpHeight(header["jHeight"], "HEADER_HEIGHT");
+      if (!jHeight.ok) return jHeight;
+      if (jHeight.value !== claim.baseHeight + index + 1) return jpFail(`J_PREFIX_HEADER_ORDER_MISMATCH:${jHeight.value}:${claim.baseHeight + index + 1}`);
+      const jBlockHash = jpWord(header["jBlockHash"], "HEADER_HASH");
+      if (!jBlockHash.ok) return jBlockHash;
+      headers.push({ jHeight: jHeight.value, jBlockHash: jBlockHash.value });
+    }
+    if (claim.scannedThroughHeight > claim.baseHeight && headers.at(-1)?.jBlockHash !== claim.tipBlockHash) return jpFail("J_PREFIX_TIP_HEADER_MISMATCH");
+    for (const block of claim.blocks) if (headers[block.blockNumber - claim.baseHeight - 1]?.jBlockHash !== block.blockHash) return jpFail(`J_PREFIX_EVENT_HEADER_MISMATCH:${block.blockNumber}`);
+    const signature = nText(raw["signature"]);
+    return /^0x[0-9a-f]{130}$/.test(signature) ? ok({ headers, signature }) : jpFail("J_PREFIX_SIGNATURE_INVALID");
+  });
+};
+/** og normalizeJPrefixAttestation: version, Entity, target height, parent, validator, the anchored claim and its evidence. */
+const jpAttestation = (v: JPrefixView, rawValue: unknown): JP<JPrefixAttestation> => {
+  const raw = recOf(rawValue) ?? {};
+  if (raw["version"] !== 1) return jpFail(`J_PREFIX_VERSION_UNSUPPORTED:${String(raw["version"])}`);
+  const entityId = nText(raw["entityId"]);
+  if (entityId !== nText(v.state.id)) return jpFail(`J_PREFIX_ENTITY_MISMATCH:${entityId}:${nText(v.state.id)}`);
+  return chain(jpHeight(raw["targetEntityHeight"], "TARGET_ENTITY_HEIGHT"), (targetEntityHeight) => {
+    if (targetEntityHeight !== jpEntityHeight(v) + 1) return jpFail(`J_PREFIX_TARGET_HEIGHT_MISMATCH:${targetEntityHeight}:${jpEntityHeight(v) + 1}`);
+    const parentFrameHash = nText(raw["parentFrameHash"]), expectedParent = nText(jpParent(v));
+    if (parentFrameHash !== expectedParent) return jpFail(`J_PREFIX_PARENT_MISMATCH:${parentFrameHash}:${expectedParent}`);
+    const validatorId = nText(raw["validatorId"]);
+    if (!validatorId) return jpFail("J_PREFIX_VALIDATOR_MISSING");
+    return chain(jpClaim(v, raw), (claim) => map(jpEvidence(raw, claim, jpValidators(v)), ({ headers, signature }): JPrefixAttestation =>
+      ({ version: 1, entityId, targetEntityHeight, parentFrameHash, validatorId, ...claim, headers, signature })));
+  });
+};
+/** og assertBoardSigner: exactly one validator and one positive share entry under this id. */
+const jpBoardSigner = (q: Quorum, validatorId: string): JP<void> => {
+  const members = [...membersOf(q)].filter(([a]) => nText(a) === validatorId);
+  if (members.length !== 1) return jpFail(`J_PREFIX_UNKNOWN_OR_DUPLICATE_VALIDATOR:${validatorId}`);
+  return (members[0]?.[1].shares ?? 0n) > 0n ? ok(undefined) : jpFail(`J_PREFIX_INVALID_VALIDATOR_SHARES:${validatorId}`);
+};
+/** og getJPrefixAttestationTemporalDisposition. */
+export const jPrefixTemporalDisposition = (v: JPrefixView, rawValue: unknown): JP<"stale" | "current" | "future"> => chain(jpHeight((recOf(rawValue) ?? {})["targetEntityHeight"], "TARGET_ENTITY_HEIGHT"), (target) => {
+  if (target < 1) return jpFail(`J_PREFIX_TARGET_ENTITY_HEIGHT_INVALID:${target}`);
+  const expected = jpEntityHeight(v) + 1;
+  return ok(target < expected ? "stale" : target > expected ? "future" : "current");
+});
+/** og verifyOutOfRoundJPrefixAttestation: a stale or early vote, authenticated (canonical body and signature) without reinterpreting it against the current head. */
+export const verifyOutOfRoundJPrefixAttestation = (v: JPrefixView, rawValue: unknown, authorities: readonly Quorum[], crypto: JPrefixCrypto): JP<JPrefixAttestation> => chain(jPrefixTemporalDisposition(v, rawValue), (disposition) => {
+  const raw = recOf(rawValue) ?? {};
+  if (disposition === "current") return jpFail("J_PREFIX_OUT_OF_ROUND_EXPECTED");
+  if (raw["version"] !== 1) return jpFail(`J_PREFIX_VERSION_UNSUPPORTED:${String(raw["version"])}`);
+  const entityId = nText(raw["entityId"]);
+  if (entityId !== nText(v.state.id)) return jpFail(`J_PREFIX_ENTITY_MISMATCH:${entityId}:${nText(v.state.id)}`);
+  return chain(jpHeight(raw["targetEntityHeight"], "TARGET_ENTITY_HEIGHT"), (targetEntityHeight) => {
+    const parentFrameHash = nText(raw["parentFrameHash"]);
+    const parent: JP<unknown> = targetEntityHeight === 1 ? (parentFrameHash === GENESIS_PARENT ? ok(undefined) : jpFail(`J_PREFIX_PARENT_MISMATCH:${parentFrameHash}:genesis`)) : jpWord(parentFrameHash, "PARENT_HASH");
+    return chain(parent, () => {
+      const validatorId = nText(raw["validatorId"]);
+      if (!validatorId) return jpFail("J_PREFIX_VALIDATOR_MISSING");
+      const authority = authorities.find((q) => { const m = [...membersOf(q)].filter(([a]) => nText(a) === validatorId); return m.length === 1 && (m[0]?.[1].shares ?? 0n) > 0n; });
+      if (authority === undefined && disposition !== "stale") return jpFail(`J_PREFIX_OUT_OF_ROUND_AUTHORITY_MISSING:${validatorId}`);
+      return chain(jpClaimEnvelope(jEventJurisdictionRef(v.state), raw), (claim) => chain(jpEvidence(raw, claim, authority === undefined ? [validatorId] : [...membersOf(authority).keys()].map((a) => lower(a))), ({ headers, signature }) => {
+        const attestation: JPrefixAttestation = { version: 1, entityId, targetEntityHeight, parentFrameHash, validatorId, ...claim, headers, signature };
+        return chain(jPrefixAttestationHash(attestation), (hash) => (crypto.verify(validatorId, hash, signature) ? ok(attestation) : jpFail(`J_PREFIX_SIGNATURE_REJECTED:${validatorId}`)));
+      }));
+    });
+  });
+});
+/** og verifyJPrefixAttestation: normalized, a board signer, its own signature. */
+const jpVerifyAttestation = (v: JPrefixView, raw: unknown, crypto: JPrefixCrypto): JP<JPrefixAttestation> => chain(jpAttestation(v, raw), (a) => chain(jpBoardSigner(v.state.quorum, a.validatorId), () =>
+  chain(jPrefixAttestationHash(a), (hash) => (crypto.verify(a.validatorId, hash, a.signature) ? ok(a) : jpFail(`J_PREFIX_SIGNATURE_REJECTED:${a.validatorId}`)))));
+/** og buildLocalJPrefixAttestation: this validator's signed head over its budgeted local claim (null while its headers are incomplete). */
+export const buildLocalJPrefixAttestation = (v: JPrefixView, signer: string, h: ValidatorJHistory | undefined, crypto: JPrefixCrypto): JP<JPrefixAttestation | null> => {
+  if (h === undefined) return ok(null);
+  const finalized = jpFinalized(v);
+  if (h.scannedThroughHeight < finalized) return jpRetry("J_PREFIX_LOCAL_HISTORY_BEHIND", `J_PREFIX_LOCAL_HISTORY_BEHIND:${h.scannedThroughHeight}:${finalized}`);
+  return chain(jpBudgetedLocalClaim(v, h), (claim): JP<JPrefixAttestation | null> => {
+    if (claim === null) return ok(null);
+    return chain(jpHeaders(v, h, claim.scannedThroughHeight), (headers) => {
+      const unsigned: Omit<JPrefixAttestation, "signature"> = { version: 1, entityId: nText(v.state.id), targetEntityHeight: jpEntityHeight(v) + 1, parentFrameHash: nText(jpParent(v)), validatorId: nText(signer), ...claim, headers };
+      return chain(jpBoardSigner(v.state.quorum, unsigned.validatorId), () => chain(jPrefixAttestationHash(unsigned), (hash) => {
+        if (crypto.sign === undefined) return jpFail(`CRYPTO_DETERMINISM_VIOLATION: signAccountFrame called without env.runtimeSeed for signer ${unsigned.validatorId}`);
+        return map(mapErr(crypto.sign(unsigned.validatorId, hash), (): JPrefixFailure => ({ disposition: "reject", code: "J_PREFIX_INVALID", message: `J_PREFIX_SIGN_FAILED:${unsigned.validatorId}` })), (signature): JPrefixAttestation => ({ ...unsigned, signature }));
+      }));
+    });
+  });
+};
+/** og localClaimAtHeight. */
+const jpLocalClaimAt = (v: JPrefixView, h: ValidatorJHistory | undefined, height: number): JP<JPrefixClaim> => {
+  if (h === undefined || h.scannedThroughHeight < height) return jpRetry("J_PREFIX_LOCAL_HISTORY_BEHIND", `J_PREFIX_LOCAL_HISTORY_BEHIND:${h?.scannedThroughHeight ?? 0}:${height}`);
+  return chain(jpUnsignedAt(v, h, height), (c) => (c === null ? jpBaseClaim(v, h) : ok(c)));
+};
+/** og claimKey. */
+const jpClaimKey = (c: JPrefixClaim): JP<string> => jpHash(c);
+const jpClaimOf = (a: JPrefixClaim): JPrefixClaim => ({ jurisdictionRef: a.jurisdictionRef, baseHeight: a.baseHeight, scannedThroughHeight: a.scannedThroughHeight, tipBlockHash: a.tipBlockHash, eventHistoryRoot: a.eventHistoryRoot, rangeHash: a.rangeHash, blocks: a.blocks });
+/** og hasCurrentRoundJPrefixAttestation: this validator's vote in the current round still equals its exact local claim at that height. */
+export const hasCurrentRoundJPrefixAttestation = (v: JPrefixView, signer: string, round: JPrefixRound | undefined, h: ValidatorJHistory | undefined): JP<boolean> => {
+  if (round === undefined) return ok(false);
+  if (round.targetEntityHeight !== jpEntityHeight(v) + 1 || nText(round.parentFrameHash) !== nText(jpParent(v)) || nText(round.jurisdictionRef) !== jEventJurisdictionRef(v.state) || round.baseHeight !== jpFinalized(v)) return ok(false);
+  const attestation = round.attestations.get(nText(signer));
+  if (attestation === undefined || h === undefined) return ok(false);
+  return chain(jpLocalClaimAt(v, h, attestation.scannedThroughHeight), (local) => chain(jpClaim(v, jpClaimOf(attestation) as unknown as JRec), (attested) =>
+    chain(jpClaimKey(local), (a) => map(jpClaimKey(attested), (b) => a === b))));
+};
+/** og clipAttestation: a signed head clipped to a lower height through its own headers. */
+const jpClip = (v: JPrefixView, a: JPrefixAttestation, height: number): JP<JPrefixClaim> => {
+  if (height < a.baseHeight || height > a.scannedThroughHeight) return jpFail(`J_PREFIX_CLIP_HEIGHT_INVALID:${height}`);
+  if (height === a.baseHeight) return jpCertifiedBase(v);
+  const tip = a.headers[height - a.baseHeight - 1];
+  if (tip === undefined || tip.jHeight !== height) return jpFail(`J_PREFIX_CLIP_HEADER_MISSING:${height}`);
+  const blocks = a.blocks.filter((b) => b.blockNumber <= height);
+  return chain(jpFinalizedRoot(v), (root) => chain(jpOf(foldJHistoryRoot(root, jpIdentities(a.jurisdictionRef, blocks))), (eventHistoryRoot) =>
+    map(jpOf(jRangeHash(a.jurisdictionRef, blocks)), (rangeHash): JPrefixClaim => ({ jurisdictionRef: a.jurisdictionRef, baseHeight: a.baseHeight, scannedThroughHeight: height, tipBlockHash: tip.jBlockHash, eventHistoryRoot, rangeHash, blocks }))));
+};
+/** og calculateJPrefixQuorumPower. */
+const jpQuorumPower = (q: Quorum, signers: readonly string[]): JP<bigint> => {
+  const seen = new Set<string>();
+  let total = 0n;
+  for (const raw of signers) {
+    const signer = nText(raw);
+    if (seen.has(signer)) return jpFail(`J_PREFIX_DUPLICATE_SIGNER:${raw}`);
+    seen.add(signer);
+    const board = jpBoardSigner(q, signer);
+    if (!board.ok) return board;
+    total += sharesOf(q, signer);
+  }
+  return ok(total);
+};
+/** og selectHighestWeightedCommonJPrefix: from the highest attested height down, the one clipped claim a quorum shares. */
+export const selectHighestWeightedCommonJPrefix = (v: JPrefixView, attestations: ReadonlyMap<string, unknown>): JP<{ readonly claim: JPrefixClaim; readonly signerIds: readonly string[] } | null> => {
+  if (attestations.size === 0) return ok(null);
+  const normalized = new Map<string, JPrefixAttestation>();
+  for (const [rawKey, rawAttestation] of attestations) {
+    const key = nText(rawKey), a = jpAttestation(v, rawAttestation);
+    if (!a.ok) return a;
+    if (key !== a.value.validatorId) return jpFail(`J_PREFIX_MAP_SIGNER_MISMATCH:${rawKey}`);
+    if (normalized.has(key)) return jpFail(`J_PREFIX_DUPLICATE_SIGNER:${rawKey}`);
+    const board = jpBoardSigner(v.state.quorum, key);
+    if (!board.ok) return board;
+    normalized.set(key, a.value);
+  }
+  const highest = Math.max(...[...normalized.values()].map((a) => a.scannedThroughHeight));
+  const floor = recOf(v.state.committed["jHistoryFinality"]) !== null ? jpFinalized(v) : jpFinalized(v) + 1;
+  const threshold = thresholdOf(v.state.quorum);
+  for (let height = highest; height >= floor; height--) {
+    const groups = new Map<string, { readonly claim: JPrefixClaim; readonly signerIds: string[] }>();
+    for (const [signer, a] of normalized) {
+      if (a.scannedThroughHeight < height) continue;
+      const claim = jpClip(v, a, height);
+      if (!claim.ok) return claim;
+      const key = jpClaimKey(claim.value);
+      if (!key.ok) return key;
+      const group = groups.get(key.value) ?? { claim: claim.value, signerIds: [] };
+      group.signerIds.push(signer);
+      groups.set(key.value, group);
+    }
+    const certified: { readonly claim: JPrefixClaim; readonly signerIds: string[] }[] = [];
+    for (const g of groups.values()) { const power = jpQuorumPower(v.state.quorum, g.signerIds); if (!power.ok) return power; if (power.value >= threshold) certified.push(g); }
+    if (certified.length > 1) return jpFail(`J_PREFIX_CONFLICTING_QUORUMS:${height}`);
+    const [one] = certified;
+    if (one !== undefined) return ok({ claim: one.claim, signerIds: [...one.signerIds].sort(asc) });
+  }
+  return ok(null);
+};
+/** og buildJPrefixCertificate. */
+export const buildJPrefixCertificate = (v: JPrefixView, attestations: ReadonlyMap<string, JPrefixAttestation>): JP<JPrefixCertificate | null> => map(selectHighestWeightedCommonJPrefix(v, attestations), (selection): JPrefixCertificate | null => selection === null ? null : ({
+  version: 1, entityId: nText(v.state.id), targetEntityHeight: jpEntityHeight(v) + 1, parentFrameHash: nText(jpParent(v)), jurisdictionRef: selection.claim.jurisdictionRef, baseHeight: selection.claim.baseHeight, selected: selection.claim,
+  attestations: new Map([...attestations].map(([k, a]) => [nText(k), a] as const).sort(([a], [b]) => asc(a, b))),
+}));
+/** og verifyJPrefixCertificate: every attestation verified, the rebuilt certificate selecting exactly this claim for exactly this round. */
+export const verifyJPrefixCertificate = (v: JPrefixView, rawValue: unknown, crypto: JPrefixCrypto): JP<JPrefixCertificate> => {
+  const cert = recOf(rawValue) ?? {};
+  if (cert["version"] !== 1) return jpFail("J_PREFIX_CERTIFICATE_VERSION_INVALID");
+  const rawAttestations = cert["attestations"];
+  if (!(rawAttestations instanceof Map)) return jpFail("J_PREFIX_CERTIFICATE_ATTESTATIONS_INVALID");
+  const verified = new Map<string, JPrefixAttestation>();
+  for (const [rawSigner, rawAttestation] of rawAttestations as ReadonlyMap<unknown, unknown>) {
+    const signer = nText(rawSigner);
+    if (verified.has(signer)) return jpFail(`J_PREFIX_DUPLICATE_SIGNER:${String(rawSigner)}`);
+    const a = jpVerifyAttestation(v, rawAttestation, crypto);
+    if (!a.ok) return a;
+    if (a.value.validatorId !== signer) return jpFail(`J_PREFIX_MAP_SIGNER_MISMATCH:${String(rawSigner)}`);
+    verified.set(signer, a.value);
+  }
+  return chain(buildJPrefixCertificate(v, verified), (rebuilt) => {
+    if (rebuilt === null) return jpFail("J_PREFIX_CERTIFICATE_QUORUM_MISSING");
+    return chain(jpClaim(v, recOf(cert["selected"]) ?? {}), (selected) => chain(jpClaimKey(rebuilt.selected), (a) => chain(jpClaimKey(selected), (b): JP<JPrefixCertificate> => {
+      if (a !== b) return jpFail("J_PREFIX_CERTIFICATE_NOT_HIGHEST_COMMON");
+      const { attestations: _rebuilt, ...expected } = rebuilt;
+      const received = { version: cert["version"], targetEntityHeight: cert["targetEntityHeight"], parentFrameHash: nText(cert["parentFrameHash"]), jurisdictionRef: nText(cert["jurisdictionRef"]), baseHeight: cert["baseHeight"], selected: rebuilt.selected, entityId: nText(cert["entityId"]) };
+      return consensusEqual(received, expected) ? ok({ ...rebuilt, attestations: verified }) : jpFail("J_PREFIX_CERTIFICATE_ROUND_MISMATCH");
+    })));
+  });
+};
+/** og mergeJPrefixAttestations: verified votes join the current round (a different second vote is equivocation); the round certifies when it can. */
+export const mergeJPrefixAttestations = (v: JPrefixView, current: JPrefixRound | undefined, incoming: ReadonlyMap<string, unknown>, crypto: JPrefixCrypto): JP<JPrefixRound> => {
+  const targetEntityHeight = jpEntityHeight(v) + 1, parentFrameHash = nText(jpParent(v)), jurisdictionRef = jEventJurisdictionRef(v.state), baseHeight = jpFinalized(v);
+  const expected = current !== undefined && current.targetEntityHeight === targetEntityHeight && nText(current.parentFrameHash) === parentFrameHash && nText(current.jurisdictionRef) === jurisdictionRef && current.baseHeight === baseHeight ? current : undefined;
+  const attestations = new Map<string, JPrefixAttestation>(expected?.attestations ?? []), seen = new Set<string>();
+  for (const [rawSigner, rawAttestation] of incoming) {
+    const signer = nText(rawSigner);
+    if (seen.has(signer)) return jpFail(`J_PREFIX_DUPLICATE_SIGNER:${rawSigner}`);
+    seen.add(signer);
+    const a = jpVerifyAttestation(v, rawAttestation, crypto);
+    if (!a.ok) return a;
+    if (a.value.validatorId !== signer) return jpFail(`J_PREFIX_MAP_SIGNER_MISMATCH:${rawSigner}`);
+    const previous = attestations.get(signer);
+    if (previous === undefined) { attestations.set(signer, a.value); continue; }
+    if (!consensusEqual(previous, a.value)) return jpFail(`J_PREFIX_ATTESTATION_EQUIVOCATION:${signer}`);
+  }
+  const sorted = new Map([...attestations].sort(([a], [b]) => asc(a, b)));
+  return map(buildJPrefixCertificate(v, sorted), (certificate): JPrefixRound => ({ targetEntityHeight, parentFrameHash, jurisdictionRef, baseHeight, attestations: sorted, ...(certificate === null ? {} : { certificate }) }));
+};
+/** og assertJPrefixCertificateMatchesLocalHistory. */
+const jpCertificateMatchesLocal = (v: JPrefixView, h: ValidatorJHistory | undefined, certificate: unknown, crypto: JPrefixCrypto): JP<JPrefixCertificate> => chain(verifyJPrefixCertificate(v, certificate, crypto), (verified) =>
+  chain(jpLocalClaimAt(v, h, verified.selected.scannedThroughHeight), (local) => chain(jpClaimKey(local), (a) => chain(jpClaimKey(verified.selected), (b): JP<JPrefixCertificate> => a === b ? ok(verified)
+    : jpFail(`J_PREFIX_LOCAL_PREFIX_MISMATCH:${verified.selected.scannedThroughHeight}:localRange=${local.rangeHash}:certRange=${verified.selected.rangeHash}:localTip=${local.tipBlockHash}:certTip=${verified.selected.tipBlockHash}`
+      + `:localBlocks=${local.blocks.length}:certBlocks=${verified.selected.blocks.length}:localBase=${local.baseHeight}:certBase=${verified.selected.baseHeight}:finalized=${jpFinalized(v)}:histScan=${h?.scannedThroughHeight ?? "none"}`)))));
+/** og buildCertifiedJPrefixTx: the proposer's signed j_event carrying exactly the certified prefix. */
+export const buildCertifiedJPrefixTx = (v: JPrefixView, h: ValidatorJHistory | undefined, certificate: JPrefixCertificate, proposerSignerId: string, crypto: JPrefixCrypto): JP<Extract<EntityTx, { type: "j_event" }>> =>
+  chain(jpCertificateMatchesLocal(v, h, certificate, crypto), (verified) => {
+    const from = nText(proposerSignerId), s = verified.selected;
+    return chain(jpOf(jRangeDigest({ entityId: nText(v.state.id), signerId: from, jurisdictionRef: s.jurisdictionRef, baseHeight: s.baseHeight, scannedThroughHeight: s.scannedThroughHeight, tipBlockHash: s.tipBlockHash, eventHistoryRoot: s.eventHistoryRoot, rangeHash: s.rangeHash })), (digest) => {
+      if (crypto.sign === undefined) return jpFail(`CRYPTO_DETERMINISM_VIOLATION: signAccountFrame called without env.runtimeSeed for signer ${from}`);
+      return map(mapErr(crypto.sign(from, digest), (): JPrefixFailure => ({ disposition: "reject", code: "J_PREFIX_INVALID", message: `J_PREFIX_SIGN_FAILED:${from}` })), (signature): Extract<EntityTx, { type: "j_event" }> =>
+        ({ type: "j_event", data: { from, signature, observedAt: s.scannedThroughHeight, jurisdictionRef: s.jurisdictionRef, baseHeight: s.baseHeight, scannedThroughHeight: s.scannedThroughHeight, tipBlockHash: s.tipBlockHash, eventHistoryRoot: s.eventHistoryRoot, rangeHash: s.rangeHash, blocks: s.blocks as unknown as Binary } }));
+    });
+  });
+/** og hasPendingLocalJEvent. */
+export const hasPendingLocalJEvent = (v: JPrefixView, h: ValidatorJHistory | undefined): boolean =>
+  h !== undefined && [...h.eventBlocks.keys()].some((height) => height > jpFinalized(v) && height <= h.scannedThroughHeight);
+/** og hasDueLocalJPrefixAdvance (hasAttestablePendingLocalJEvent): semantic J work already inside this validator's exact provable prefix. */
+export const hasDueLocalJPrefixAdvance = (v: JPrefixView, h: ValidatorJHistory | undefined): JP<boolean> => {
+  if (h === undefined) return ok(false);
+  return map(localJPrefixAttestableHeight(v, h), (height) => height !== null && [...h.eventBlocks.keys()].some((x) => x > jpFinalized(v) && x <= height));
+};
+/** og isFrozenBaseJPrefixRollAuthorized: a base-only certificate may roll one empty frame when this validator's own signed head is in it byte for byte. */
+export const isFrozenBaseJPrefixRollAuthorized = (v: JPrefixView, signer: string, round: JPrefixRound | undefined, h: ValidatorJHistory | undefined, certificate: JPrefixCertificate | null | undefined): JP<boolean> => {
+  if (certificate === null || certificate === undefined || certificate.selected.scannedThroughHeight !== certificate.baseHeight) return ok(false);
+  return map(hasDueLocalJPrefixAdvance(v, h), (due) => {
+    if (!due) return false;
+    const me = nText(signer), local = [...(round?.attestations ?? [])].find(([k]) => nText(k) === me)?.[1], certified = [...certificate.attestations].find(([k]) => nText(k) === me)?.[1];
+    return local !== undefined && certified !== undefined && consensusEqual(local, certified);
+  });
+};
+/** og reconcileJEventRangeWithFinalizedState over a frame's raw j_event data (J_RANGE codes; a jurisdiction conflict with the anchor is corruption). */
+const jpReconcile = (v: JPrefixView, data: JRec): JP<{ readonly baseHeight: number; readonly scannedThroughHeight: number; readonly tipBlockHash: string; readonly eventHistoryRoot: string; readonly blocks: readonly JRangeBlock[] } | null> => {
+  const base = Number(data["baseHeight"]), scanned = Number(data["scannedThroughHeight"]), finalized = jpFinalized(v);
+  if (!Number.isSafeInteger(base) || base < 0) return jpFail(`J_RANGE_BASE_HEIGHT_INVALID:${String(data["baseHeight"])}`);
+  if (!Number.isSafeInteger(scanned) || scanned <= base) return jpFail("J_RANGE_HEIGHT_INVALID");
+  if (scanned <= finalized) return ok(null);
+  if (base > finalized) return jpFail(`J_RANGE_BASE_HEIGHT_AHEAD:${base}:${finalized}`);
+  return chain(jpOf(certifiedJAnchor(v.state)), (anchor) => {
+    const ref = nText(data["jurisdictionRef"]);
+    if (anchor !== null && ref !== anchor.jurisdictionRef) return jpFail("J_HISTORY_FINALITY_JURISDICTION_CONFLICT");
+    const blocks = (Array.isArray(data["blocks"]) ? (data["blocks"] as readonly JRangeBlock[]) : []).filter((b) => Number(b.blockNumber) > finalized);
+    return chain(jpFinalizedRoot(v), (root) => chain(jpOf(foldJHistoryRoot(root, blocks.map((b) => ({ jurisdictionRef: ref, jHeight: Number(b.blockNumber), jBlockHash: nText(b.blockHash), eventsHash: nText(b.eventsHash), ...opt("disputeFinalizationEvidenceHash", b.disputeFinalizationEvidenceHash ? nText(b.disputeFinalizationEvidenceHash) : undefined) })))), (eventHistoryRoot) =>
+      eventHistoryRoot !== nText(data["eventHistoryRoot"]) ? jpFail("J_RANGE_HISTORY_ROOT_MISMATCH") : ok({ baseHeight: finalized, scannedThroughHeight: scanned, tipBlockHash: nText(data["tipBlockHash"]), eventHistoryRoot, blocks })));
+  });
+};
+/** The frame fields og assertFrameJPrefix reads. */
+export type JPrefixFrame = { readonly height: number; readonly parentFrameHash: string; readonly proposerSignerId: string; readonly txs: readonly EntityTx[]; readonly jPrefixCertificate?: JPrefixCertificate | null | undefined };
+/**
+ * og assertFrameJPrefix: every frame carrying a j_event carries the certificate its range equals, checked against this validator's own J history;
+ * a registered Entity certifies a prefix in every frame, and a stronger local certificate or a due local event retries the proposal.
+ */
+export const assertFrameJPrefix = (v: JPrefixView, signer: string, round: JPrefixRound | undefined, h: ValidatorJHistory | undefined, frame: JPrefixFrame, crypto: JPrefixCrypto): JP<void> => {
+  const ranges = frame.txs.filter((tx): tx is Extract<EntityTx, { type: "j_event" }> => tx.type === "j_event");
+  const locallyCertified: JP<JPrefixCertificate | null> = round === undefined ? ok(null) : buildJPrefixCertificate(v, round.attestations);
+  return chain(locallyCertified, (local): JP<void> => {
+    if (frame.jPrefixCertificate === undefined || frame.jPrefixCertificate === null) {
+      if (ranges.length > 0) return jpFail("J_PREFIX_CERTIFICATE_MISSING");
+      if (entityRequiresJPrefixCertificate(v.state)) return jpFail("J_PREFIX_CERTIFICATE_REQUIRED_FOR_REGISTERED_ENTITY");
+      if (local !== null) return jpRetry("J_PREFIX_STRONGER_LOCAL_CERTIFICATE");
+      return hasPendingLocalJEvent(v, h) ? jpRetry("J_PREFIX_REQUIRED_LOCAL_EVENT") : ok(undefined);
+    }
+    return chain(jpCertificateMatchesLocal(v, h, frame.jPrefixCertificate, crypto), (certificate): JP<void> => {
+      if (frame.height !== certificate.targetEntityHeight || nText(frame.parentFrameHash) !== certificate.parentFrameHash) return jpFail("J_PREFIX_FRAME_ROUND_MISMATCH");
+      const emptyBaseRoll = frame.txs.length === 0 && certificate.selected.scannedThroughHeight === certificate.baseHeight;
+      if (local !== null && local.selected.scannedThroughHeight > certificate.selected.scannedThroughHeight && !emptyBaseRoll) return jpRetry("J_PREFIX_STRONGER_LOCAL_CERTIFICATE");
+      if (certificate.selected.scannedThroughHeight === certificate.baseHeight) {
+        if (ranges.length !== 0) return jpFail(`J_PREFIX_RANGE_COUNT_INVALID:${ranges.length}`);
+        const frozen: JP<boolean> = frame.txs.length === 0 ? isFrozenBaseJPrefixRollAuthorized(v, signer, round, h, certificate) : ok(false);
+        return chain(frozen, (emptyFrozenRoll) => (hasPendingLocalJEvent(v, h) && !emptyFrozenRoll && !emptyBaseRoll ? jpRetry("J_PREFIX_REQUIRED_LOCAL_EVENT") : ok(undefined)));
+      }
+      const [only] = ranges;
+      if (ranges.length !== 1 || only === undefined) return jpFail(`J_PREFIX_RANGE_COUNT_INVALID:${ranges.length}`);
+      const range = only.data as JRec;
+      return chain(jpClaimEnvelope(jEventJurisdictionRef(v.state), range), (received) => chain(jpReconcile(v, range), (reconciled): JP<void> => {
+        if (reconciled === null) return jpFail("J_PREFIX_FRAME_RANGE_STALE");
+        return chain(jpOf(jRangeHash(received.jurisdictionRef, reconciled.blocks)), (rangeHash) => {
+          const current: JPrefixClaim = { jurisdictionRef: received.jurisdictionRef, baseHeight: reconciled.baseHeight, scannedThroughHeight: reconciled.scannedThroughHeight, tipBlockHash: reconciled.tipBlockHash, eventHistoryRoot: reconciled.eventHistoryRoot, rangeHash, blocks: reconciled.blocks };
+          return chain(jpClaimKey(current), (a) => chain(jpClaimKey(certificate.selected), (b): JP<void> => {
+            if (a !== b) return jpFail("J_PREFIX_FRAME_RANGE_MISMATCH");
+            const proposer = nText(frame.proposerSignerId);
+            if (nText(range["from"]) !== proposer) return jpFail("J_PREFIX_RANGE_PROPOSER_MISMATCH");
+            return chain(jpOf(jRangeDigest({ entityId: nText(v.state.id), signerId: proposer, jurisdictionRef: received.jurisdictionRef, baseHeight: received.baseHeight, scannedThroughHeight: received.scannedThroughHeight, tipBlockHash: received.tipBlockHash, eventHistoryRoot: received.eventHistoryRoot, rangeHash: received.rangeHash })),
+              (digest) => (crypto.verify(proposer, digest, String(range["signature"] ?? "")) ? ok(undefined) : jpFail("J_PREFIX_RANGE_SIGNATURE_REJECTED")));
+          }));
+        });
+      }));
+    });
+  });
+};
+/** og getJEventRangeValidationError: a proposed range must equal this validator's own J history block for block (null when it does). */
+export const jEventRangeLocalHistoryError = (state: EntityState, h: ValidatorJHistory | undefined, data: JRec): Result<string | null, JPrefixFailure> => chain(jpOf(certifiedJAnchor(state)), (anchor) => {
+  const range = jRangeEnvelope(state, data);
+  if (!range.ok) return ok(range.error);
+  const r = range.value;
+  if (anchor !== null && anchor.jurisdictionRef !== r.jurisdictionRef) return ok("J_RANGE_JURISDICTION_MISMATCH");
+  const reconciled = reconcileJRange(state, r);
+  if (!reconciled.ok) return J_HISTORY_CORRUPTION.test(reconciled.error) ? jpFail(reconciled.error) : ok(reconciled.error);
+  if (reconciled.value === null) return ok(null);
+  const suffixBase = reconciled.value.baseHeight;
+  if (h === undefined || nText(h.jurisdictionRef) !== r.jurisdictionRef) return ok("J_RANGE_LOCAL_HISTORY_MISSING");
+  const matched = historyMatchesAnchor(anchor, h);
+  if (!matched.ok) { const code = jCode(matched.error); return J_HISTORY_CORRUPTION.test(code) ? jpFail(code) : ok(code); }
+  if (h.scannedThroughHeight < r.scannedThroughHeight) return ok("J_RANGE_LOCAL_HISTORY_BEHIND");
+  const proposed = r.blocks.filter((b) => b.blockNumber > suffixBase);
+  const localBlocks = [...h.eventBlocks.values()].filter((b) => b.jHeight > suffixBase && b.jHeight <= r.scannedThroughHeight).sort((a, b) => a.jHeight - b.jHeight);
+  if (localBlocks.length !== proposed.length) return ok("J_RANGE_EVENT_BLOCK_COUNT_MISMATCH");
+  for (const [i, p] of proposed.entries()) {
+    const l = localBlocks[i];
+    if (l === undefined || p.blockNumber !== l.jHeight || blockIdentity({ jurisdictionRef: r.jurisdictionRef, jHeight: p.blockNumber, jBlockHash: p.blockHash, eventsHash: p.eventsHash, events: p.events, ...opt("disputeFinalizationEvidenceHash", p.disputeFinalizationEvidenceHash) }) !== blockIdentity(l)) return ok("J_RANGE_EVENT_BLOCK_MISMATCH");
+  }
+  const known = h.blockHashes.get(r.scannedThroughHeight);
+  if (!known) return ok("J_RANGE_LOCAL_TIP_UNKNOWN");
+  return ok(nText(known) !== r.tipBlockHash ? "J_RANGE_TIP_HASH_MISMATCH" : null);
+});
+/** og pruneFinalizedValidatorJHistory: drop what the Entity has certified (the frontier keeps the certified height). */
+export const pruneFinalizedJHistory = (h: ValidatorJHistory | undefined, finalized: number): Result<ValidatorJHistory | undefined, JPrefixFailure> => {
+  if (h === undefined) return ok(undefined);
+  if (!Number.isSafeInteger(finalized) || finalized < 0 || finalized > h.scannedThroughHeight) return jpFail(`J_HISTORY_LOCAL_PRUNE_HEIGHT_INVALID:${String(finalized)}:${h.scannedThroughHeight}`);
+  return ok({ ...h, contiguousThroughHeight: Math.max(h.contiguousThroughHeight, finalized), eventBlocks: new Map([...h.eventBlocks].filter(([x]) => x > finalized)), blockHashes: new Map([...h.blockHashes].filter(([x]) => x >= finalized)) });
+};
 // ---- og entity/consensus/authority/board-handover.ts + entity/tx/handlers/board-handover.ts: the on-chain BoardActivated handover ----
 /** og ConsensusConfig as boardHandover carries it (mode, threshold, validators, shares). */
 export type HandoverConfig = { readonly mode: string; readonly threshold: bigint; readonly validators: readonly string[]; readonly shares: { readonly [signer: string]: bigint } };
