@@ -8538,236 +8538,531 @@ export const committed = (b: AccountBody): Result<Committed, ViewError> =>
 export const committedRoot = (b: AccountBody): Result<string, ViewError> => map(committed(b), (c) => c.root);
 
 
-export type ProofError = Tagged<"bad_watch_seed" | "bad_dispute_config" | "offdelta_beyond_money" | "final_delta_overflow" | "final_delta_int256_min" | "too_many_tokens" | "bad_domain" | "bad_entity" | "bad_nonce" | "bad_hash"> | Tagged<"transformer", { code: string }>;
+export type ProofError =
+  | Tagged<"bad_watch_seed" | "bad_dispute_config" | "offdelta_beyond_money" | "final_delta_overflow">
+  | Tagged<"final_delta_int256_min" | "too_many_tokens" | "bad_domain" | "bad_entity" | "bad_nonce" | "bad_hash">
+  | Tagged<"transformer", { code: string }>;
 const MAX_MONEY = 1n << 200n, MAX_PROOF_TOKENS = 128;
 const inInt256 = (n: bigint): boolean => n >= INT256_MIN && n <= INT256_MAX;
-// ---- og protocol/dispute/proof-builder.ts buildCanonicalProofBatches: the DeltaTransformer clauses of locks, swaps and pulls ----
-export type ProofPayment = { readonly deltaIndex: number; readonly amount: bigint; readonly revealedUntilTimestamp: bigint; readonly hash: string };
-export type ProofSwap = { readonly ownerIsLeft: boolean; readonly addDeltaIndex: number; readonly addAmount: bigint; readonly subDeltaIndex: number; readonly subAmount: bigint };
-export type ProofPull = { readonly deltaIndex: number; readonly amount: bigint; readonly claimedRatio: number; readonly fullHash: string; readonly partialRoot: string; readonly targetRole: boolean };
-export type ProofBatch = { readonly payments: readonly ProofPayment[]; readonly swaps: readonly ProofSwap[]; readonly pulls: readonly ProofPull[] };
-const deltaBatchAbi = (b: ProofBatch): Abi => t([
-  arr(b.payments, (p) => t([A.uint(BigInt(p.deltaIndex)), signedAmountAbi(p.amount), A.uint(p.revealedUntilTimestamp), A.b32(p.hash)])),
-  arr(b.swaps, (s) => t([A.bool(s.ownerIsLeft), A.uint(BigInt(s.addDeltaIndex)), A.uint(s.addAmount), A.uint(BigInt(s.subDeltaIndex)), A.uint(s.subAmount)])),
-  arr(b.pulls, (p) => t([A.uint(BigInt(p.deltaIndex)), signedAmountAbi(p.amount), A.uint(BigInt(p.claimedRatio)), A.b32(p.fullHash), A.b32(p.partialRoot), A.bool(p.targetRole)])),
+// ---- og proof-builder.ts buildCanonicalProofBatches: the DeltaTransformer clauses of locks, swaps and pulls ----
+export type ProofPayment = {
+  readonly deltaIndex: number; readonly amount: bigint; readonly revealedUntilTimestamp: bigint; readonly hash: string;
+};
+export type ProofSwap = {
+  readonly ownerIsLeft: boolean;
+  readonly addDeltaIndex: number; readonly addAmount: bigint;
+  readonly subDeltaIndex: number; readonly subAmount: bigint;
+};
+export type ProofPull = {
+  readonly deltaIndex: number; readonly amount: bigint; readonly claimedRatio: number;
+  readonly fullHash: string; readonly partialRoot: string; readonly targetRole: boolean;
+};
+export type ProofBatch = {
+  readonly payments: readonly ProofPayment[];
+  readonly swaps: readonly ProofSwap[];
+  readonly pulls: readonly ProofPull[];
+};
+const paymentAbi = (p: ProofPayment): Abi =>
+  t([A.uint(BigInt(p.deltaIndex)), signedAmountAbi(p.amount), A.uint(p.revealedUntilTimestamp), A.b32(p.hash)]);
+const swapAbi = (s: ProofSwap): Abi => t([
+  A.bool(s.ownerIsLeft),
+  A.uint(BigInt(s.addDeltaIndex)), A.uint(s.addAmount),
+  A.uint(BigInt(s.subDeltaIndex)), A.uint(s.subAmount),
 ]);
+const pullAbi = (p: ProofPull): Abi => t([
+  A.uint(BigInt(p.deltaIndex)), signedAmountAbi(p.amount), A.uint(BigInt(p.claimedRatio)),
+  A.b32(p.fullHash), A.b32(p.partialRoot), A.bool(p.targetRole),
+]);
+const deltaBatchAbi = (b: ProofBatch): Abi =>
+  t([arr(b.payments, paymentAbi), arr(b.swaps, swapAbi), arr(b.pulls, pullAbi)]);
 export const encodeDeltaBatch = (b: ProofBatch): string => abiEncodeHex([deltaBatchAbi(b)]);
-/** og storageAtomBytes: 1 + msgpackr({kind:'atom', value}) of the batch hex. Every clause is static, so the ABI is 7 head words plus 5/5/7 words per item. */
+/**
+ * og storageAtomBytes: 1 + msgpackr({kind:'atom', value}) of the batch hex.
+ * Every clause is static, so the ABI is 7 head words plus 5/5/7 words per item.
+ */
 const MAX_PROOF_ATOM_BYTES = 10_000;
 const batchAtomBytes = (b: ProofBatch): number => {
   const len = 2 + 2 * 32 * (7 + 5 * b.payments.length + 5 * b.swaps.length + 7 * b.pulls.length);
-  return len + 21 + (len < 32 ? 1 : len < 256 ? 2 : len < 65536 ? 3 : 5);
+  const header = len < 32 ? 1 : len < 256 ? 2 : len < 65536 ? 3 : 5;
+  return len + 21 + header;
 };
 const transferChange = (senderIsLeft: boolean, amount: bigint): bigint => (senderIsLeft ? -amount : amount);
+/** One signed change a clause may make to one delta: positive moves toward left, negative toward right. */
+type Movement = readonly [deltaIndex: number, change: bigint];
+const batchMovements = (b: ProofBatch): readonly Movement[] => [
+  ...b.payments.map((p): Movement => [p.deltaIndex, p.amount]),
+  ...b.swaps.flatMap((s): readonly Movement[] => [
+    [s.addDeltaIndex, transferChange(s.ownerIsLeft, s.addAmount)],
+    [s.subDeltaIndex, transferChange(!s.ownerIsLeft, s.subAmount)],
+  ]),
+  ...b.pulls.map((p): Movement => [p.deltaIndex, p.amount]),
+];
+const deltaAllowance = (deltaIndex: number, moves: readonly Movement[]): JAllowance => ({
+  deltaIndex: BigInt(deltaIndex),
+  rightAllowance: moves.reduce((sum, [, change]) => (change < 0n ? sum - change : sum), 0n),
+  leftAllowance: moves.reduce((sum, [, change]) => (change > 0n ? sum + change : sum), 0n),
+});
 /** og buildTransformerAllowances: per deltaIndex, positive movements authorize left and negative ones right. */
 export const batchAllowances = (b: ProofBatch): readonly JAllowance[] => {
-  const by = new Map<number, { readonly left: bigint; readonly right: bigint }>();
-  const add = (i: number, d: bigint): void => { if (d === 0n) return; const e = by.get(i) ?? { left: 0n, right: 0n }; by.set(i, d > 0n ? { ...e, left: e.left + d } : { ...e, right: e.right - d }); };
-  for (const p of b.payments) add(p.deltaIndex, p.amount);
-  for (const s of b.swaps) { add(s.addDeltaIndex, transferChange(s.ownerIsLeft, s.addAmount)); add(s.subDeltaIndex, transferChange(!s.ownerIsLeft, s.subAmount)); }
-  for (const p of b.pulls) add(p.deltaIndex, p.amount);
-  return [...by].sort(([x], [y]) => x - y).map(([i, a]) => ({ deltaIndex: BigInt(i), rightAllowance: a.right, leftAllowance: a.left }));
+  const moving = batchMovements(b).filter(([, change]) => change !== 0n);
+  return [...Map.groupBy(moving, ([deltaIndex]) => deltaIndex)]
+    .toSorted(([x], [y]) => x - y)
+    .map(([deltaIndex, moves]) => deltaAllowance(deltaIndex, moves));
 };
-const batchFits = (b: ProofBatch): boolean => batchAllowances(b).every((a) => a.leftAllowance <= UINT256_MAX && a.rightAllowance <= UINT256_MAX) && batchAtomBytes(b) < MAX_PROOF_ATOM_BYTES;
-const proofErr = (code: string): Result<never, ProofError> => err({ _tag: "transformer", code });
-/** og chunkProofItems: greedy in canonical order; one item that alone does not fit refuses the proof (its index counts this kind's batches only). */
-const chunkProof = <X>(items: readonly X[], make: (xs: readonly X[]) => ProofBatch): Result<readonly ProofBatch[], ProofError> => {
-  const out: ProofBatch[] = [];
-  let chunk: readonly X[] = [];
-  for (const item of items) {
-    if (batchFits(make([...chunk, item]))) { chunk = [...chunk, item]; continue; }
-    if (chunk.length > 0) out.push(make(chunk));
-    chunk = [item];
-    if (!batchFits(make(chunk))) return proofErr(`ACCOUNT_DISPUTE_PROOF_ATOM_BYTES_EXCEEDED:transformer=${out.length}:${batchAtomBytes(make(chunk))}/${MAX_PROOF_ATOM_BYTES}`);
-  }
-  return ok(chunk.length > 0 ? [...out, make(chunk)] : out);
+const fitsUint256 = (a: JAllowance): boolean => a.leftAllowance <= UINT256_MAX && a.rightAllowance <= UINT256_MAX;
+const batchFits = (b: ProofBatch): boolean =>
+  batchAllowances(b).every(fitsUint256) && batchAtomBytes(b) < MAX_PROOF_ATOM_BYTES;
+const transformerError = (code: string): ProofError => ({ _tag: "transformer", code });
+const proofErr = (code: string): Result<never, ProofError> => err(transformerError(code));
+type Chunking<X> = { readonly done: readonly ProofBatch[]; readonly open: readonly X[] };
+/**
+ * og chunkProofItems: greedy in canonical order; one item that alone does not fit refuses the proof
+ * (its index counts this kind's batches only).
+ */
+const chunkProof = <X>(
+  items: readonly X[], make: (xs: readonly X[]) => ProofBatch,
+): Result<readonly ProofBatch[], ProofError> => {
+  const closed = ({ done, open }: Chunking<X>): readonly ProofBatch[] =>
+    (open.length > 0 ? [...done, make(open)] : done);
+  const place = (c: Chunking<X>, item: X): Result<Chunking<X>, ProofError> => {
+    const alone = make([item]);
+    switch (true) {
+      case batchFits(make([...c.open, item])): return ok({ ...c, open: [...c.open, item] });
+      case batchFits(alone): return ok({ done: closed(c), open: [item] });
+      default: return proofErr(
+        `ACCOUNT_DISPUTE_PROOF_ATOM_BYTES_EXCEEDED:transformer=${closed(c).length}:`
+        + `${batchAtomBytes(alone)}/${MAX_PROOF_ATOM_BYTES}`,
+      );
+    }
+  };
+  return map(foldResult<Chunking<X>, X, ProofError>(items, { done: [], open: [] }, place), closed);
 };
-type ProofLockRow = { readonly hashlock: string; readonly timelock: bigint; readonly amount: bigint; readonly tokenId: number; readonly senderIsLeft: boolean };
-const byTextKey = <V>(m: CommittedMap): readonly (readonly [string, V])[] => ([...m] as [string, V][]).sort(([x], [y]) => asc(String(x), String(y)));
-/** og buildCanonicalProofBatches: payments (locks by lockId), then same-jurisdiction swaps (by offerId), then pulls (by pullId). */
+type ProofLockRow = {
+  readonly hashlock: string; readonly timelock: bigint; readonly amount: bigint;
+  readonly tokenId: number; readonly senderIsLeft: boolean;
+};
+const byTextKey = <V>(m: CommittedMap): readonly (readonly [string, V])[] =>
+  ([...m] as [string, V][]).toSorted(([x], [y]) => asc(String(x), String(y)));
+/** Delta rows in token order: a row's position is its deltaIndex in every clause. */
+const tokenRows = (s: CommittedAccountState): readonly CommittedDelta[] =>
+  [...s.deltas.values()].toSorted((x, y) => x.tokenId - y.tokenId);
+const proofPayment = (deltaIndexOf: DeltaIndexOf) => ([id, l]: readonly [string, ProofLockRow]) => {
+  const seconds = (l.timelock - 1n) / 1000n;
+  return seconds <= 0n || seconds > BigInt(Number.MAX_SAFE_INTEGER)
+    ? proofErr(`HTLC_LOCK_INVALID_TIMELOCK:${id}`)
+    : map(deltaIndexOf(l.tokenId, `PROOF_BODY_LOCK_TOKEN_MISSING:${id}:${l.tokenId}`), (deltaIndex): ProofPayment => ({
+      deltaIndex, amount: transferChange(l.senderIsLeft, l.amount), revealedUntilTimestamp: seconds, hash: l.hashlock,
+    }));
+};
+const proofSwap = (deltaIndexOf: DeltaIndexOf) => ([id, o]: readonly [string, SwapOffer]) => {
+  const code = `PROOF_BODY_SWAP_TOKEN_MISSING:${id}:give=${o.giveTokenId}:want=${o.wantTokenId}`;
+  const legs = all({ add: deltaIndexOf(Number(o.giveTokenId), code), sub: deltaIndexOf(Number(o.wantTokenId), code) });
+  return map(legs, ({ add, sub }): ProofSwap => ({
+    ownerIsLeft: o.makerIsLeft,
+    addDeltaIndex: add, addAmount: o.giveAmount,
+    subDeltaIndex: sub, subAmount: o.wantAmount,
+  }));
+};
+const claimedRatioWord = (p: PullRow): number => Math.max(0, Math.min(0xffff, Math.floor(Number(p.claimedRatio ?? 0))));
+const proofPull = (deltaIndexOf: DeltaIndexOf) => ([id, p]: readonly [string, PullRow]) =>
+  map(deltaIndexOf(p.tokenId, `PROOF_BODY_PULL_TOKEN_MISSING:${id}:${p.tokenId}`), (deltaIndex): ProofPull => ({
+    deltaIndex, amount: p.amount, claimedRatio: claimedRatioWord(p),
+    fullHash: p.fullHash, partialRoot: p.partialRoot, targetRole: p.crossJurisdiction?.leg === "target",
+  }));
+type DeltaIndexOf = (tokenId: number, code: string) => Result<number, ProofError>;
+const deltaIndexing = (s: CommittedAccountState): DeltaIndexOf => {
+  const index = new Map(tokenRows(s).map((r, i) => [r.tokenId, i] as const));
+  return (tokenId, code) => {
+    const i = index.get(tokenId);
+    return i === undefined ? proofErr(code) : ok(i);
+  };
+};
+const EMPTY_BATCH: ProofBatch = { payments: [], swaps: [], pulls: [] };
+/** og buildCanonicalProofBatches: payments (locks by lockId), same-J swaps (by offerId), pulls (by pullId). */
 export const proofBatches = (s: CommittedAccountState): Result<readonly ProofBatch[], ProofError> => {
-  const index = new Map([...s.deltas.values()].sort((x, y) => x.tokenId - y.tokenId).map((r, i) => [r.tokenId, i] as const));
-  const at = (tokenId: number, code: string): Result<number, ProofError> => { const i = index.get(tokenId); return i === undefined ? proofErr(code) : ok(i); };
-  const payments = traverse(byTextKey<ProofLockRow>(s.locks), ([id, l]): Result<ProofPayment, ProofError> => {
-    const seconds = (l.timelock - 1n) / 1000n;
-    if (seconds <= 0n || seconds > BigInt(Number.MAX_SAFE_INTEGER)) return proofErr(`HTLC_LOCK_INVALID_TIMELOCK:${id}`);
-    return map(at(l.tokenId, `PROOF_BODY_LOCK_TOKEN_MISSING:${id}:${l.tokenId}`), (deltaIndex) => ({ deltaIndex, amount: transferChange(l.senderIsLeft, l.amount), revealedUntilTimestamp: seconds, hash: l.hashlock }));
+  const deltaIndexOf = deltaIndexing(s);
+  const sameJSwaps = byTextKey<SwapOffer>(s.swapOffers).filter(([, o]) => !o.crossJurisdiction);
+  const kinds = all({
+    payments: chain(traverse(byTextKey<ProofLockRow>(s.locks), proofPayment(deltaIndexOf)),
+      (items) => chunkProof(items, (payments) => ({ ...EMPTY_BATCH, payments }))),
+    swaps: chain(traverse(sameJSwaps, proofSwap(deltaIndexOf)),
+      (items) => chunkProof(items, (swaps) => ({ ...EMPTY_BATCH, swaps }))),
+    pulls: chain(traverse(byTextKey<PullRow>(s.pulls), proofPull(deltaIndexOf)),
+      (items) => chunkProof(items, (pulls) => ({ ...EMPTY_BATCH, pulls }))),
   });
-  const swaps = traverse(byTextKey<SwapOffer>(s.swapOffers).filter(([, o]) => !o.crossJurisdiction), ([id, o]): Result<ProofSwap, ProofError> => {
-    const code = `PROOF_BODY_SWAP_TOKEN_MISSING:${id}:give=${o.giveTokenId}:want=${o.wantTokenId}`;
-    return chain(at(Number(o.giveTokenId), code), (addDeltaIndex) => map(at(Number(o.wantTokenId), code), (subDeltaIndex) => ({ ownerIsLeft: o.makerIsLeft, addDeltaIndex, addAmount: o.giveAmount, subDeltaIndex, subAmount: o.wantAmount })));
-  });
-  const pulls = traverse(byTextKey<PullRow>(s.pulls), ([id, p]): Result<ProofPull, ProofError> => map(at(p.tokenId, `PROOF_BODY_PULL_TOKEN_MISSING:${id}:${p.tokenId}`), (deltaIndex) => ({
-    deltaIndex, amount: p.amount, claimedRatio: Math.max(0, Math.min(0xffff, Math.floor(Number(p.claimedRatio ?? 0)))), fullHash: p.fullHash, partialRoot: p.partialRoot, targetRole: p.crossJurisdiction?.leg === "target",
-  })));
-  return chain(chain(payments, (ps) => chunkProof(ps, (payments) => ({ payments, swaps: [], pulls: [] }))), (a) => chain(chain(swaps, (ss) => chunkProof(ss, (swaps) => ({ payments: [], swaps, pulls: [] }))), (b) =>
-    map(chain(pulls, (qs) => chunkProof(qs, (pulls) => ({ payments: [], swaps: [], pulls }))), (c) => [...a, ...b, ...c])));
+  return map(kinds, ({ payments, swaps, pulls }) => [...payments, ...swaps, ...pulls]);
 };
 /**
- * og requireAccountDeltaTransformerAddress: the one durable jurisdiction whose chainId and first usable Depository are the Account's domain;
- * its stack must name all four contracts. Names, active-J defaults and peer payloads are never proof authority.
+ * og requireAccountDeltaTransformerAddress: the one durable jurisdiction whose chainId and first usable Depository
+ * are the Account's domain; its stack must name all four contracts.
+ * Names, active-J defaults and peer payloads are never proof authority.
  */
 export type DeltaTransformerRef = Result<string, string>;
-export const deltaTransformerFor = (jReplicas: ReadonlyMap<string, JReplica> | undefined, domain: Domain): DeltaTransformerRef => {
-  const depository = domain.depositoryAddress.toLowerCase(), found: string[] = [];
-  for (const r of jReplicas?.values() ?? []) {
-    if (Number(r.chainId) !== domain.chainId || usableAddress(r.contracts?.depository)?.toLowerCase() !== depository) continue;
-    if (!Number.isSafeInteger(Number(r.chainId)) || Number(r.chainId) <= 0) return err("JURISDICTION_DURABLE_STACK_CHAIN_ID_MISSING");
-    for (const [name, v] of [["DEPOSITORY", r.contracts?.depository], ["ENTITY_PROVIDER", r.contracts?.entityProvider], ["ACCOUNT", r.contracts?.account], ["DELTA_TRANSFORMER", r.contracts?.deltaTransformer]] as const)
-      if (usableAddress(v) === null) return err(`JURISDICTION_DURABLE_STACK_${name}_MISSING`);
-    found.push(String(r.contracts?.deltaTransformer).toLowerCase());
-  }
-  return found.length === 1 && found[0] !== undefined ? ok(found[0]) : err(`ACCOUNT_PROOF_JURISDICTION_${found.length === 0 ? "NOT_FOUND" : "AMBIGUOUS"}:${domain.chainId}:${depository}`);
+const STACK_CONTRACTS = [
+  ["DEPOSITORY", "depository"], ["ENTITY_PROVIDER", "entityProvider"],
+  ["ACCOUNT", "account"], ["DELTA_TRANSFORMER", "deltaTransformer"],
+] as const;
+const servesDomain = (r: JReplica, domain: Domain): boolean =>
+  Number(r.chainId) === domain.chainId
+  && usableAddress(r.contracts?.depository)?.toLowerCase() === domain.depositoryAddress.toLowerCase();
+const stackTransformer = (r: JReplica): Result<string, string> => {
+  const chainId = Number(r.chainId);
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) return err("JURISDICTION_DURABLE_STACK_CHAIN_ID_MISSING");
+  const missing = STACK_CONTRACTS.find(([, key]) => usableAddress(r.contracts?.[key]) === null);
+  return missing === undefined
+    ? ok(String(r.contracts?.deltaTransformer).toLowerCase())
+    : err(`JURISDICTION_DURABLE_STACK_${missing[0]}_MISSING`);
+};
+const jurisdictionMiss = (domain: Domain, found: number): string =>
+  `ACCOUNT_PROOF_JURISDICTION_${found === 0 ? "NOT_FOUND" : "AMBIGUOUS"}`
+  + `:${domain.chainId}:${domain.depositoryAddress.toLowerCase()}`;
+export const deltaTransformerFor = (
+  jReplicas: ReadonlyMap<string, JReplica> | undefined, domain: Domain,
+): DeltaTransformerRef => {
+  const serving = [...jReplicas?.values() ?? []].filter((r) => servesDomain(r, domain));
+  return chain(traverse(serving, stackTransformer), (found) => {
+    const [only] = found;
+    return found.length === 1 && only !== undefined ? ok(only) : err(jurisdictionMiss(domain, found.length));
+  });
 };
 const MAX_PROOF_TRANSFORMERS = 32, MAX_PROOF_BODY_BYTES = 176 * 1024;
-/**
- * og buildAccountProofBody. The DeltaTransformer is read only when the Account has clauses to sign; og resolves it for every body,
- * but an Account without locks, swaps or pulls signs the same body either way, so only an unresolved stack that would be read refuses.
- */
-export const accountProofBody = (s: CommittedAccountState, deltaTransformer?: DeltaTransformerRef): Result<ProofBody, ProofError> => {
-  if (!WORD.test(s.watchSeed)) return err({ _tag: "bad_watch_seed" });
-  const { leftResponseSeconds: left, rightResponseSeconds: right } = s.disputeConfig;
-  const uint32 = (n: number): boolean => Number.isInteger(n) && n >= 0 && n <= 0xffff_ffff;
-  if (!uint32(left) || !uint32(right)) return err({ _tag: "bad_dispute_config" });
-  const rows = [...s.deltas.values()].sort((x, y) => x.tokenId - y.tokenId);
-  for (const r of rows) {
-    if (!inInt256(r.ondelta) || !inInt256(r.offdelta)) return err({ _tag: "final_delta_overflow" });
-    if (r.offdelta > MAX_MONEY || r.offdelta < -MAX_MONEY) return err({ _tag: "offdelta_beyond_money" });
-    const final = r.ondelta + r.offdelta;
-    if (!inInt256(final)) return err({ _tag: "final_delta_overflow" });
-    if (final === INT256_MIN) return err({ _tag: "final_delta_int256_min" });
+const isUint32 = (n: number): boolean => Number.isInteger(n) && n >= 0 && n <= 0xffff_ffff;
+const deltaRowIssue = (r: CommittedDelta): ProofError | undefined => {
+  const final = r.ondelta + r.offdelta;
+  switch (true) {
+    case !inInt256(r.ondelta) || !inInt256(r.offdelta): return { _tag: "final_delta_overflow" };
+    case r.offdelta > MAX_MONEY || r.offdelta < -MAX_MONEY: return { _tag: "offdelta_beyond_money" };
+    case !inInt256(final): return { _tag: "final_delta_overflow" };
+    case final === INT256_MIN: return { _tag: "final_delta_int256_min" };
+    default: return undefined;
   }
-  if (rows.length > MAX_PROOF_TOKENS) return err({ _tag: "too_many_tokens" });
-  const clauses = (batches: readonly ProofBatch[]): Result<readonly TransformerClause[], ProofError> => {
-    if (batches.length === 0) return ok([]);
-    const dt = deltaTransformer ?? err(`ACCOUNT_PROOF_JURISDICTION_NOT_FOUND:${s.domain.chainId}:${s.domain.depositoryAddress.toLowerCase()}`);
-    if (!dt.ok) return proofErr(dt.error);
-    if (usableAddress(dt.value) === null) return proofErr("MISSING_DELTA_TRANSFORMER_ADDRESS");
-    return ok(batches.map((b): TransformerClause => ({ transformerAddress: dt.value, encodedBatch: encodeDeltaBatch(b), allowances: batchAllowances(b) })));
-  };
-  return chain(chain(proofBatches(s), clauses), (transformers): Result<ProofBody, ProofError> => {
-    const body: ProofBody = { watchSeed: s.watchSeed.toLowerCase(), leftResponseSeconds: BigInt(left), rightResponseSeconds: BigInt(right), offdeltas: rows.map((r) => r.offdelta), tokenIds: rows.map((r) => BigInt(r.tokenId)), transformers };
-    if (transformers.length > MAX_PROOF_TRANSFORMERS) return proofErr(`J_DISPUTE_PROOFBODY_TRANSFORMER_LIMIT:account.signing:${transformers.length}`);
-    const size = (encodeProofBodyBytes(body).length - 2) / 2;
-    return size > MAX_PROOF_BODY_BYTES ? proofErr(`J_DISPUTE_PROOFBODY_BYTES_EXCEEDED:account.signing:${size}/${MAX_PROOF_BODY_BYTES}`) : ok(body);
-  });
+};
+/** Why the body's fixed part (seed, response windows, token rows) cannot be signed, if it cannot. */
+const proofHeaderIssue = (s: CommittedAccountState, rows: readonly CommittedDelta[]): ProofError | undefined => {
+  const { leftResponseSeconds: left, rightResponseSeconds: right } = s.disputeConfig;
+  const rowIssue = rows.map(deltaRowIssue).find((e) => e !== undefined);
+  switch (true) {
+    case !WORD.test(s.watchSeed): return { _tag: "bad_watch_seed" };
+    case !isUint32(left) || !isUint32(right): return { _tag: "bad_dispute_config" };
+    case rowIssue !== undefined: return rowIssue;
+    case rows.length > MAX_PROOF_TOKENS: return { _tag: "too_many_tokens" };
+    default: return undefined;
+  }
+};
+const signingTransformer = (
+  s: CommittedAccountState, ref: DeltaTransformerRef | undefined,
+): Result<string, ProofError> => {
+  const resolved = ref ?? err(jurisdictionMiss(s.domain, 0));
+  return chain(mapErr(resolved, transformerError), (address) =>
+    (usableAddress(address) === null ? proofErr("MISSING_DELTA_TRANSFORMER_ADDRESS") : ok(address)));
+};
+const proofClauses = (
+  s: CommittedAccountState, batches: readonly ProofBatch[], ref: DeltaTransformerRef | undefined,
+): Result<readonly TransformerClause[], ProofError> =>
+  (batches.length === 0 ? ok([]) : map(signingTransformer(s, ref), (transformerAddress) =>
+    batches.map((b): TransformerClause => ({
+      transformerAddress, encodedBatch: encodeDeltaBatch(b), allowances: batchAllowances(b),
+    }))));
+const proofBodyOf = (
+  s: CommittedAccountState, rows: readonly CommittedDelta[], transformers: readonly TransformerClause[],
+): ProofBody => ({
+  watchSeed: s.watchSeed.toLowerCase(),
+  leftResponseSeconds: BigInt(s.disputeConfig.leftResponseSeconds),
+  rightResponseSeconds: BigInt(s.disputeConfig.rightResponseSeconds),
+  offdeltas: rows.map((r) => r.offdelta),
+  tokenIds: rows.map((r) => BigInt(r.tokenId)),
+  transformers,
+});
+const boundedBody = (body: ProofBody): Result<ProofBody, ProofError> => {
+  const count = body.transformers.length;
+  if (count > MAX_PROOF_TRANSFORMERS) return proofErr(`J_DISPUTE_PROOFBODY_TRANSFORMER_LIMIT:account.signing:${count}`);
+  const size = (encodeProofBodyBytes(body).length - 2) / 2;
+  return size > MAX_PROOF_BODY_BYTES
+    ? proofErr(`J_DISPUTE_PROOFBODY_BYTES_EXCEEDED:account.signing:${size}/${MAX_PROOF_BODY_BYTES}`)
+    : ok(body);
+};
+/**
+ * og buildAccountProofBody. The DeltaTransformer is read only when the Account has clauses to sign; og resolves it for
+ * every body, but an Account without locks, swaps or pulls signs the same body either way, so only an unresolved stack
+ * that would be read refuses.
+ */
+export const accountProofBody = (
+  s: CommittedAccountState, deltaTransformer?: DeltaTransformerRef,
+): Result<ProofBody, ProofError> => {
+  const rows = tokenRows(s);
+  const issue = proofHeaderIssue(s, rows);
+  if (issue !== undefined) return err(issue);
+  const transformers = chain(proofBatches(s), (batches) => proofClauses(s, batches, deltaTransformer));
+  return chain(transformers, (clauses) => boundedBody(proofBodyOf(s, rows, clauses)));
 };
 export const proofBodyHash = (b: ProofBody): string => keccak256Hex(hexToBytes(encodeProofBodyBytes(b)));
 const BYTES32 = /^0[xX][0-9a-fA-F]{64}$/;
-export const accountDisputeHash = (s: CommittedAccountState, bodyHash: string, nonce: number, proposerIsLeftFlag: boolean): Result<string, ProofError> => {
+const disputeDomain = (s: CommittedAccountState): Result<Domain, ProofError> => {
   const domain = domainOf(s.domain);
-  if (!domain.ok || /^0x0{40}$/.test(domain.value.depositoryAddress)) return err({ _tag: "bad_domain" });
-  if (!BYTES32.test(s.leftEntity) || !BYTES32.test(s.rightEntity)) return err({ _tag: "bad_entity" });
-  if (!Number.isSafeInteger(nonce) || nonce < 0) return err({ _tag: "bad_nonce" });
-  if (!BYTES32.test(bodyHash)) return err({ _tag: "bad_hash" });
-  if (!BYTES32.test(s.watchSeed)) return err({ _tag: "bad_watch_seed" });
-  return ok(encodeDisputeProofHash({
-    messageType: 1, chainId: domain.value.chainId, contractAddress: domain.value.depositoryAddress, accountKey: encodeAccountKey({ e1: s.leftEntity.toLowerCase(), e2: s.rightEntity.toLowerCase() }).lesserThenGreater,
-    nonce: String(nonce), proposerIsLeft: proposerIsLeftFlag, proofbodyHash: bodyHash.toLowerCase(), watchSeed: s.watchSeed.toLowerCase(),
-  }));
+  return domain.ok && !/^0x0{40}$/.test(domain.value.depositoryAddress)
+    ? ok(domain.value)
+    : err({ _tag: "bad_domain" });
 };
-export type DisputeHanko = { readonly hanko: string; readonly hash: string; readonly proofBodyHash: string; readonly proofNonce: number; readonly proposerIsLeft: boolean };
+const disputeHashIssue = (s: CommittedAccountState, bodyHash: string, nonce: number): ProofError | undefined => {
+  switch (true) {
+    case !BYTES32.test(s.leftEntity) || !BYTES32.test(s.rightEntity): return { _tag: "bad_entity" };
+    case !Number.isSafeInteger(nonce) || nonce < 0: return { _tag: "bad_nonce" };
+    case !BYTES32.test(bodyHash): return { _tag: "bad_hash" };
+    case !BYTES32.test(s.watchSeed): return { _tag: "bad_watch_seed" };
+    default: return undefined;
+  }
+};
+export const accountDisputeHash = (
+  s: CommittedAccountState, bodyHash: string, nonce: number, proposerIsLeft: boolean,
+): Result<string, ProofError> => chain(disputeDomain(s), (domain) => {
+  const issue = disputeHashIssue(s, bodyHash, nonce);
+  if (issue !== undefined) return err(issue);
+  const accountKey = encodeAccountKey({ e1: s.leftEntity.toLowerCase(), e2: s.rightEntity.toLowerCase() });
+  return ok(encodeDisputeProofHash({
+    messageType: 1, chainId: domain.chainId, contractAddress: domain.depositoryAddress,
+    accountKey: accountKey.lesserThenGreater, nonce: String(nonce), proposerIsLeft,
+    proofbodyHash: bodyHash.toLowerCase(), watchSeed: s.watchSeed.toLowerCase(),
+  }));
+});
+export type DisputeHanko = {
+  readonly hanko: string; readonly hash: string; readonly proofBodyHash: string;
+  readonly proofNonce: number; readonly proposerIsLeft: boolean;
+};
 export type DisputeDraft = Omit<DisputeHanko, "hanko">;
-export type DisputeWitnesses = { readonly nextProofNonce: number; readonly current?: DisputeHanko | undefined; readonly counterparty?: DisputeHanko | undefined };
+export type DisputeWitnesses = {
+  readonly nextProofNonce: number;
+  readonly current?: DisputeHanko | undefined;
+  readonly counterparty?: DisputeHanko | undefined;
+};
 export const genesisWitnesses = (): DisputeWitnesses => ({ nextProofNonce: 1 });
-/** og operations.ts getMinimumSafeSettlementNonce, replica cursors: every locally known signed proof nonce is spent (the body adds jNonce + 1). */
-export const proofNonceFloor = (w: DisputeWitnesses): number => Math.max(w.nextProofNonce, (w.current?.proofNonce ?? 0) + 1, (w.counterparty?.proofNonce ?? 0) + 1);
-export const settlementOf = (w: DisputeWitnesses, verify: Verify): SettlementCtx => ({ verify, proofNonceFloor: proofNonceFloor(w) });
-export type DisputePlan = Tagged<"sign", { draft: DisputeDraft }> | Tagged<"resend", { disputeHanko: DisputeHanko }> | Tagged<"none">;
-export type DisputeReason = "hanko_missing" | "shape" | "hash_mismatch" | "hanko_invalid" | "unexpected" | "nonce_finalized" | "nonce_regression" | "nonce_reuse" | "body_mismatch" | "required" | "draft_mismatch";
-export type DisputeError = Tagged<"dispute_hanko", { reason: DisputeReason }> | Tagged<"dispute_proof", { error: ProofError | ViewError }>;
+/**
+ * og operations.ts getMinimumSafeSettlementNonce, replica cursors: every locally known signed proof nonce is spent
+ * (the body adds jNonce + 1).
+ */
+export const proofNonceFloor = (w: DisputeWitnesses): number =>
+  Math.max(w.nextProofNonce, (w.current?.proofNonce ?? 0) + 1, (w.counterparty?.proofNonce ?? 0) + 1);
+export const settlementOf = (w: DisputeWitnesses, verify: Verify): SettlementCtx =>
+  ({ verify, proofNonceFloor: proofNonceFloor(w) });
+export type DisputePlan =
+  | Tagged<"sign", { draft: DisputeDraft }>
+  | Tagged<"resend", { disputeHanko: DisputeHanko }>
+  | Tagged<"none">;
+export type DisputeReason =
+  | "hanko_missing" | "shape" | "hash_mismatch" | "hanko_invalid" | "unexpected" | "required" | "draft_mismatch"
+  | "nonce_finalized" | "nonce_regression" | "nonce_reuse" | "body_mismatch";
+export type DisputeError =
+  | Tagged<"dispute_hanko", { reason: DisputeReason }>
+  | Tagged<"dispute_proof", { error: ProofError | ViewError }>;
 const refuseDispute = (reason: DisputeReason): DisputeError => ({ _tag: "dispute_hanko", reason });
-const asProof = <X>(r: Result<X, ProofError | ViewError>): Result<X, DisputeError> => mapErr(r, (error): DisputeError => ({ _tag: "dispute_proof", error }));
-/** og securityContext.verifyHanko authority: `allowPreviousBoard` admits the immediately previous board within its grace window (ACK and replay paths only, never a fresh proposal); `registeredBoardHash` pins the certified board. */
-export type HankoAuthority = { readonly allowPreviousBoard: boolean; readonly registeredBoardHash?: string | undefined };
+const asProof = <X>(r: Result<X, ProofError | ViewError>): Result<X, DisputeError> =>
+  mapErr(r, (error): DisputeError => ({ _tag: "dispute_proof", error }));
+/**
+ * og securityContext.verifyHanko authority: `allowPreviousBoard` admits the immediately previous board within its grace
+ * window (ACK and replay paths only, never a fresh proposal); `registeredBoardHash` pins the certified board.
+ */
+export type HankoAuthority = {
+  readonly allowPreviousBoard: boolean; readonly registeredBoardHash?: string | undefined;
+};
 export type Verify = (digest: string, hanko: string, entity: EntityId, authority?: HankoAuthority) => boolean;
 export type LocalProof = Tagged<"complete", { body: ProofBody; bodyHash: string; jNonce: number }>;
 export type CompleteProof = Of<LocalProof, "complete">;
 const proofOf = (view: CommittedAccountState, dt?: DeltaTransformerRef): Result<LocalProof, ProofError> =>
-  map(accountProofBody(view, dt), (body): LocalProof => ({ _tag: "complete", body, bodyHash: proofBodyHash(body), jNonce: view.jNonce }));
-export const localProof = (view: CommittedAccountState, dt?: DeltaTransformerRef): Result<LocalProof, DisputeError> => asProof(proofOf(view, dt));
-export type StartRefusal = Tagged<"no_witness" | "body_mismatch" | "nonce_stale" | "hash_mismatch" | "hanko_invalid" | "not_attempted"> | Tagged<"proof", { error: ProofError | ViewError }>;
-export const disputeStart = (view: CommittedAccountState, proof: CompleteProof, w: DisputeHanko, peer: EntityId, verify: Verify): Result<DisputeStart, StartRefusal> => {
+  map(accountProofBody(view, dt), (body): LocalProof =>
+    ({ _tag: "complete", body, bodyHash: proofBodyHash(body), jNonce: view.jNonce }));
+export const localProof = (view: CommittedAccountState, dt?: DeltaTransformerRef): Result<LocalProof, DisputeError> =>
+  asProof(proofOf(view, dt));
+export type StartRefusal =
+  | Tagged<"no_witness" | "body_mismatch" | "nonce_stale" | "hash_mismatch" | "hanko_invalid" | "not_attempted">
+  | Tagged<"proof", { error: ProofError | ViewError }>;
+const asStartRefusal = <X>(r: Result<X, ProofError | ViewError>): Result<X, StartRefusal> =>
+  mapErr(r, (error): StartRefusal => ({ _tag: "proof", error }));
+const witnessedStart = (proof: CompleteProof, w: DisputeHanko, peer: EntityId): DisputeStart => ({
+  counterentity: peer, nonce: BigInt(w.proofNonce), proposerIsLeft: w.proposerIsLeft, proofbodyHash: w.proofBodyHash,
+  initialProofbody: proof.body, watchSeed: proof.body.watchSeed, sig: w.hanko,
+  starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD,
+});
+/** The counterparty's witness opens a dispute on our proof only if it signs this very body at a nonce past jNonce. */
+export const disputeStart = (
+  view: CommittedAccountState, proof: CompleteProof, w: DisputeHanko, peer: EntityId, verify: Verify,
+): Result<DisputeStart, StartRefusal> => {
   if (!sameHex(proof.bodyHash, w.proofBodyHash)) return err({ _tag: "body_mismatch" });
   if (w.proofNonce <= 0 || w.proofNonce <= proof.jNonce) return err({ _tag: "nonce_stale" });
-  return chain(mapErr(accountDisputeHash(view, w.proofBodyHash, w.proofNonce, w.proposerIsLeft), (error): StartRefusal => ({ _tag: "proof", error })), (h): Result<DisputeStart, StartRefusal> =>
-    !sameHex(h, w.hash) ? err({ _tag: "hash_mismatch" }) : !verify(h, w.hanko, peer) ? err({ _tag: "hanko_invalid" }) : ok({
-      counterentity: peer, nonce: BigInt(w.proofNonce), proposerIsLeft: w.proposerIsLeft, proofbodyHash: w.proofBodyHash, initialProofbody: proof.body, watchSeed: proof.body.watchSeed, sig: w.hanko,
-      starterInitialArguments: "0x", starterCounterArguments: "0x", starterCounterProofCommitment: ZERO_WORD,
-    }));
+  const hash = asStartRefusal(accountDisputeHash(view, w.proofBodyHash, w.proofNonce, w.proposerIsLeft));
+  return chain(hash, (h): Result<DisputeStart, StartRefusal> => {
+    switch (true) {
+      case !sameHex(h, w.hash): return err({ _tag: "hash_mismatch" });
+      case !verify(h, w.hanko, peer): return err({ _tag: "hanko_invalid" });
+      default: return ok(witnessedStart(proof, w, peer));
+    }
+  });
 };
-export const startOf = (body: AccountBody, witnesses: DisputeWitnesses, peer: EntityId, verify: Verify, dt?: DeltaTransformerRef): Result<DisputeStart, StartRefusal> => {
+export const startOf = (
+  body: AccountBody, witnesses: DisputeWitnesses, peer: EntityId, verify: Verify, dt?: DeltaTransformerRef,
+): Result<DisputeStart, StartRefusal> => {
   const w = witnesses.counterparty;
   if (w === undefined) return err({ _tag: "no_witness" });
-  const asRefusal = <X>(r: Result<X, ProofError | ViewError>): Result<X, StartRefusal> => mapErr(r, (error): StartRefusal => ({ _tag: "proof", error }));
-  return chain(asRefusal(committedView(body)), (view) => chain(asRefusal(proofOf(view, dt)), (proof) => disputeStart(view, proof, w, peer, verify)));
+  return chain(asStartRefusal(committedView(body)), (view) =>
+    chain(asStartRefusal(proofOf(view, dt)), (proof) => disputeStart(view, proof, w, peer, verify)));
 };
-const draftPlan = (view: CommittedAccountState, bodyHash: string, nonce: number, proposerIsLeftFlag: boolean): Result<DisputePlan, DisputeError> =>
-  map(asProof(accountDisputeHash(view, bodyHash, nonce, proposerIsLeftFlag)), (h) => ({ _tag: "sign", draft: { hash: h, proofBodyHash: bodyHash, proofNonce: nonce, proposerIsLeft: proposerIsLeftFlag } }));
-export const proposalPlan = (view: CommittedAccountState, proof: LocalProof, witnesses: DisputeWitnesses, proposerIsLeftFlag: boolean): Result<DisputePlan, DisputeError> => {
-  const { bodyHash, jNonce } = proof, { current } = witnesses;
-  if (!sameHex(bodyHash, current?.proofBodyHash) || (current?.proofNonce ?? 0) <= jNonce) return draftPlan(view, bodyHash, Math.max(witnesses.nextProofNonce, jNonce + 1), proposerIsLeftFlag);
-
-  return ok(current !== undefined && current.proposerIsLeft === proposerIsLeftFlag ? { _tag: "resend", disputeHanko: current } : { _tag: "none" });
-};
-type AckedFrame = { readonly candidate: { readonly draft: { readonly state: AccountBody }; readonly frameProof: LocalProof }; readonly dispute: DisputeWitnesses };
-export const ackPlan = (held: AckedFrame, proposerIsLeftFlag: boolean): Result<DisputePlan, DisputeError> => {
-  const { candidate: { draft, frameProof: { bodyHash, jNonce } }, dispute: witnesses } = held, { current } = witnesses;
-  const changed = !sameHex(bodyHash, current?.proofBodyHash) || current?.proposerIsLeft !== proposerIsLeftFlag || (current?.proofNonce ?? 0) <= jNonce;
-  if (!changed && current !== undefined) return ok({ _tag: "resend", disputeHanko: current });
-  return chain(asProof(committedView(draft.state)), (view) => draftPlan(view, bodyHash, Math.max(witnesses.nextProofNonce, jNonce + 1), proposerIsLeftFlag));
-};
-const sameDraft = (a: DisputeDraft, b: DisputeDraft): boolean => a.hash === b.hash && a.proofBodyHash === b.proofBodyHash && a.proofNonce === b.proofNonce && a.proposerIsLeft === b.proposerIsLeft;
-export type Settled = { readonly carried: DisputeHanko | undefined; readonly witnesses: DisputeWitnesses };
-export const settleLocal = (plan: DisputePlan, given: DisputeHanko | undefined, witnesses: DisputeWitnesses, self: EntityId, verify: Verify): Result<Settled, DisputeError> => match(plan, {
-  sign: ({ draft }): Result<Settled, DisputeError> => {
-    if (given === undefined) return err(refuseDispute("required"));
-    if (!sameDraft(given, draft)) return err(refuseDispute("draft_mismatch"));
-    if (!verify(draft.hash, given.hanko, self)) return err(refuseDispute("hanko_invalid"));
-    const signed: DisputeHanko = { ...draft, hanko: given.hanko };
-    return ok({ carried: signed, witnesses: { ...witnesses, current: signed, nextProofNonce: draft.proofNonce + 1 } });
-  },
-  resend: ({ disputeHanko }): Result<Settled, DisputeError> =>
-    given === undefined ? err(refuseDispute("required")) : given.hanko === disputeHanko.hanko && sameDraft(given, disputeHanko) ? ok({ carried: disputeHanko, witnesses }) : err(refuseDispute("draft_mismatch")),
-  none: (): Result<Settled, DisputeError> => (given === undefined ? ok({ carried: undefined, witnesses }) : err(refuseDispute("unexpected"))),
-});
-/** og finality.ts activatePostSettlementProof, replica side: the frame whose J claim finalizes the signed settlement nonce promotes both N+1 hankos
- * into the dispute witnesses (an equal nonce must be the same proof) and moves the proof cursor past everything spent.
- * `finalized` lists each finalizing claim's reached nonce in frame order: the first to reach the signed nonce decides, even when a later claim of the same frame finalizes past it. */
-export const promoteSettled = (w: DisputeWitnesses, pre: AccountBody, post: AccountBody, localIsLeft: boolean, finalized: readonly number[] = post.jNonce !== pre.jNonce ? [post.jNonce] : []): Result<DisputeWitnesses, DisputeError> => {
-  const ws = pre.settlement, p = ws?.postSettlementDisputeProof, signed = ws?.nonceAtSign, reached = signed === undefined ? undefined : finalized.find((n) => n >= signed);
-  if (ws === undefined || !signedWorkspace(ws) || p === undefined || signed === undefined || pre.jNonce >= signed || reached !== signed || p.leftHanko === undefined || p.rightHanko === undefined) return ok(w);
-  const side = (held: DisputeHanko | undefined, hanko: string): Result<DisputeHanko | undefined, DisputeError> => {
-    const n = held?.proofNonce ?? 0;
-    if (n > p.nonce) return ok(held);
-    if (n < p.nonce) return ok({ hanko, hash: p.disputeHash, proofBodyHash: p.proofBodyHash, proofNonce: p.nonce, proposerIsLeft: p.proposerIsLeft });
-    return held !== undefined && sameHex(held.proofBodyHash, p.proofBodyHash) && held.proposerIsLeft === p.proposerIsLeft && sameHex(held.hash, p.disputeHash) ? ok(held) : err(refuseDispute("nonce_reuse"));
-  };
-  const own = localIsLeft ? p.leftHanko : p.rightHanko, peer = localIsLeft ? p.rightHanko : p.leftHanko;
-  return chain(side(w.current, own), (current) => map(side(w.counterparty, peer), (counterparty): DisputeWitnesses => ({
-    ...opt("current", current), ...opt("counterparty", counterparty),
-    nextProofNonce: Math.max(w.nextProofNonce, p.nonce + 1, (current?.proofNonce ?? 0) + 1, (counterparty?.proofNonce ?? 0) + 1, signed + 1),
-  })));
-};
-export const validateCounterparty = (body: AccountBody, given: DisputeHanko, from: EntityId, verify: Verify, authority: HankoAuthority = { allowPreviousBoard: true }): Result<DisputeHanko, DisputeError> => {
-  if (given.hanko.length === 0) return err(refuseDispute("hanko_missing"));
-  const shaped = WORD.test(given.hash) && WORD.test(given.proofBodyHash) && Number.isSafeInteger(given.proofNonce) && given.proofNonce >= 0 && typeof given.proposerIsLeft === "boolean";
-  if (!shaped) return err(refuseDispute("shape"));
-  return chain(asProof(committedView(body)), (view) => chain(asProof(accountDisputeHash(view, given.proofBodyHash, given.proofNonce, given.proposerIsLeft)), (expected) =>
-    !sameHex(given.hash, expected) ? err(refuseDispute("hash_mismatch")) : !verify(expected, given.hanko, from, authority) ? err(refuseDispute("hanko_invalid")) : ok({ ...given, hash: expected })));
-};
-export const disputeRequirement = (expectedBody: string | undefined, previousBody: string | undefined, previousNonce: number | undefined, jNonce: number, received: { readonly proofNonce: number; readonly proofBodyHash: string } | undefined): DisputeReason | undefined => {
-  if (expectedBody === undefined) return received === undefined ? undefined : "unexpected";
-  if (received !== undefined) {
-    if (received.proofNonce <= jNonce) return "nonce_finalized";
-    if (previousNonce !== undefined && received.proofNonce < previousNonce) return "nonce_regression";
-    if (previousNonce !== undefined && received.proofNonce === previousNonce && previousBody !== undefined && !sameHex(received.proofBodyHash, previousBody)) return "nonce_reuse";
-    if (!sameHex(received.proofBodyHash, expectedBody)) return "body_mismatch";
+/** A held witness is stale once it signs another body or a nonce the jurisdiction already finalized. */
+const staleWitness = (held: DisputeHanko | undefined, proof: Pick<LocalProof, "bodyHash" | "jNonce">): boolean =>
+  !sameHex(proof.bodyHash, held?.proofBodyHash) || (held?.proofNonce ?? 0) <= proof.jNonce;
+const freshNonce = (w: DisputeWitnesses, jNonce: number): number => Math.max(w.nextProofNonce, jNonce + 1);
+const draftPlan = (
+  view: CommittedAccountState, bodyHash: string, proofNonce: number, proposerIsLeft: boolean,
+): Result<DisputePlan, DisputeError> =>
+  map(asProof(accountDisputeHash(view, bodyHash, proofNonce, proposerIsLeft)), (hash): DisputePlan =>
+    ({ _tag: "sign", draft: { hash, proofBodyHash: bodyHash, proofNonce, proposerIsLeft } }));
+export const proposalPlan = (
+  view: CommittedAccountState, proof: LocalProof, witnesses: DisputeWitnesses, proposerIsLeft: boolean,
+): Result<DisputePlan, DisputeError> => {
+  const { current } = witnesses;
+  if (staleWitness(current, proof)) {
+    return draftPlan(view, proof.bodyHash, freshNonce(witnesses, proof.jNonce), proposerIsLeft);
   }
-  return (!sameHex(expectedBody, previousBody) || (previousNonce ?? 0) <= jNonce) && received === undefined ? "required" : undefined;
+  return ok(current !== undefined && current.proposerIsLeft === proposerIsLeft
+    ? { _tag: "resend", disputeHanko: current }
+    : { _tag: "none" });
 };
-/** og getDisputeHankoRequirementError's text for a requireDispute refusal (og's failureMessage for an unsafe frame); undefined for any other refusal. */
-export const disputeRequirementText = (e: DisputeError, proof: LocalProof, witnesses: DisputeWitnesses, received: DisputeHanko | undefined): string | undefined => {
+type AckedFrame = {
+  readonly candidate: { readonly draft: { readonly state: AccountBody }; readonly frameProof: LocalProof };
+  readonly dispute: DisputeWitnesses;
+};
+export const ackPlan = (held: AckedFrame, proposerIsLeft: boolean): Result<DisputePlan, DisputeError> => {
+  const { candidate: { draft, frameProof }, dispute: witnesses } = held, { current } = witnesses;
+  const changed = staleWitness(current, frameProof) || current?.proposerIsLeft !== proposerIsLeft;
+  if (!changed && current !== undefined) return ok({ _tag: "resend", disputeHanko: current });
+  return chain(asProof(committedView(draft.state)), (view) =>
+    draftPlan(view, frameProof.bodyHash, freshNonce(witnesses, frameProof.jNonce), proposerIsLeft));
+};
+const sameDraft = (a: DisputeDraft, b: DisputeDraft): boolean =>
+  a.hash === b.hash && a.proofBodyHash === b.proofBodyHash
+  && a.proofNonce === b.proofNonce && a.proposerIsLeft === b.proposerIsLeft;
+export type Settled = { readonly carried: DisputeHanko | undefined; readonly witnesses: DisputeWitnesses };
+const requiredHanko = (given: DisputeHanko | undefined): Result<DisputeHanko, DisputeError> =>
+  (given === undefined ? err(refuseDispute("required")) : ok(given));
+/** Our own hanko on the frame must be exactly what the plan asked for: a fresh signature, the held one, or none. */
+export const settleLocal = (
+  plan: DisputePlan, given: DisputeHanko | undefined, witnesses: DisputeWitnesses, self: EntityId, verify: Verify,
+): Result<Settled, DisputeError> => match(plan, {
+  sign: ({ draft }) => chain(requiredHanko(given), (g): Result<Settled, DisputeError> => {
+    const signed: DisputeHanko = { ...draft, hanko: g.hanko };
+    switch (true) {
+      case !sameDraft(g, draft): return err(refuseDispute("draft_mismatch"));
+      case !verify(draft.hash, g.hanko, self): return err(refuseDispute("hanko_invalid"));
+      default: return ok({
+        carried: signed, witnesses: { ...witnesses, current: signed, nextProofNonce: draft.proofNonce + 1 },
+      });
+    }
+  }),
+  resend: ({ disputeHanko }) => chain(requiredHanko(given), (g): Result<Settled, DisputeError> =>
+    (g.hanko === disputeHanko.hanko && sameDraft(g, disputeHanko)
+      ? ok({ carried: disputeHanko, witnesses })
+      : err(refuseDispute("draft_mismatch")))),
+  none: (): Result<Settled, DisputeError> =>
+    (given === undefined ? ok({ carried: undefined, witnesses }) : err(refuseDispute("unexpected"))),
+});
+/** A signed post-settlement proof whose settlement this frame finalizes, with both hankos present. */
+type Promotion = {
+  readonly proof: PostSettlementProof; readonly left: string; readonly right: string; readonly signed: number;
+};
+const promotionOf = (pre: AccountBody, finalized: readonly number[]): Promotion | undefined => {
+  const ws = pre.settlement, proof = ws?.postSettlementDisputeProof, signed = ws?.nonceAtSign;
+  if (ws === undefined || !signedWorkspace(ws) || proof === undefined || signed === undefined) return undefined;
+  const { leftHanko: left, rightHanko: right } = proof;
+  const decides = pre.jNonce < signed && finalized.find((n) => n >= signed) === signed;
+  return decides && left !== undefined && right !== undefined ? { proof, left, right, signed } : undefined;
+};
+const samePostProof = (held: DisputeHanko, p: PostSettlementProof): boolean =>
+  sameHex(held.proofBodyHash, p.proofBodyHash) && held.proposerIsLeft === p.proposerIsLeft
+  && sameHex(held.hash, p.disputeHash);
+/** One side's witness after promotion: a newer proof stays, an older one yields, an equal nonce must be this proof. */
+const promotedWitness = (
+  p: PostSettlementProof, held: DisputeHanko | undefined, hanko: string,
+): Result<DisputeHanko | undefined, DisputeError> => {
+  const heldNonce = held?.proofNonce ?? 0;
+  switch (true) {
+    case heldNonce > p.nonce: return ok(held);
+    case heldNonce < p.nonce: return ok({
+      hanko, hash: p.disputeHash, proofBodyHash: p.proofBodyHash, proofNonce: p.nonce, proposerIsLeft: p.proposerIsLeft,
+    });
+    case held !== undefined && samePostProof(held, p): return ok(held);
+    default: return err(refuseDispute("nonce_reuse"));
+  }
+};
+/**
+ * og finality.ts activatePostSettlementProof, replica side: the frame whose J claim finalizes the signed settlement
+ * nonce promotes both N+1 hankos into the dispute witnesses (an equal nonce must be the same proof) and moves the proof
+ * cursor past everything spent. `finalized` lists each finalizing claim's reached nonce in frame order: the first to
+ * reach the signed nonce decides, even when a later claim of the same frame finalizes past it.
+ */
+export const promoteSettled = (
+  w: DisputeWitnesses, pre: AccountBody, post: AccountBody, localIsLeft: boolean,
+  finalized: readonly number[] = post.jNonce !== pre.jNonce ? [post.jNonce] : [],
+): Result<DisputeWitnesses, DisputeError> => {
+  const promotion = promotionOf(pre, finalized);
+  if (promotion === undefined) return ok(w);
+  const { proof, left, right, signed } = promotion;
+  const sides = all({
+    current: promotedWitness(proof, w.current, localIsLeft ? left : right),
+    counterparty: promotedWitness(proof, w.counterparty, localIsLeft ? right : left),
+  });
+  return map(sides, ({ current, counterparty }): DisputeWitnesses => {
+    const promoted = {
+      ...opt("current", current), ...opt("counterparty", counterparty), nextProofNonce: w.nextProofNonce,
+    };
+    return { ...promoted, nextProofNonce: Math.max(proofNonceFloor(promoted), proof.nonce + 1, signed + 1) };
+  });
+};
+const disputeHankoShaped = (given: DisputeHanko): boolean =>
+  WORD.test(given.hash) && WORD.test(given.proofBodyHash)
+  && Number.isSafeInteger(given.proofNonce) && given.proofNonce >= 0 && typeof given.proposerIsLeft === "boolean";
+export const validateCounterparty = (
+  body: AccountBody, given: DisputeHanko, from: EntityId, verify: Verify,
+  authority: HankoAuthority = { allowPreviousBoard: true },
+): Result<DisputeHanko, DisputeError> => {
+  if (given.hanko.length === 0) return err(refuseDispute("hanko_missing"));
+  if (!disputeHankoShaped(given)) return err(refuseDispute("shape"));
+  const expectedHash = chain(asProof(committedView(body)), (view) =>
+    asProof(accountDisputeHash(view, given.proofBodyHash, given.proofNonce, given.proposerIsLeft)));
+  return chain(expectedHash, (expected): Result<DisputeHanko, DisputeError> => {
+    switch (true) {
+      case !sameHex(given.hash, expected): return err(refuseDispute("hash_mismatch"));
+      case !verify(expected, given.hanko, from, authority): return err(refuseDispute("hanko_invalid"));
+      default: return ok({ ...given, hash: expected });
+    }
+  });
+};
+type ReceivedWitness = { readonly proofNonce: number; readonly proofBodyHash: string };
+const receivedIssue = (
+  received: ReceivedWitness, expectedBody: string,
+  previousBody: string | undefined, previousNonce: number | undefined, jNonce: number,
+): DisputeReason | undefined => {
+  switch (true) {
+    case received.proofNonce <= jNonce: return "nonce_finalized";
+    case previousNonce !== undefined && received.proofNonce < previousNonce: return "nonce_regression";
+    case received.proofNonce === previousNonce && previousBody !== undefined
+      && !sameHex(received.proofBodyHash, previousBody): return "nonce_reuse";
+    case !sameHex(received.proofBodyHash, expectedBody): return "body_mismatch";
+    default: return undefined;
+  }
+};
+/** Why the counterparty's witness is refused: it must be fresh for our body, and present once ours moved. */
+export const disputeRequirement = (
+  expectedBody: string | undefined, previousBody: string | undefined, previousNonce: number | undefined,
+  jNonce: number, received: ReceivedWitness | undefined,
+): DisputeReason | undefined => {
+  if (expectedBody === undefined) return received === undefined ? undefined : "unexpected";
+  if (received !== undefined) return receivedIssue(received, expectedBody, previousBody, previousNonce, jNonce);
+  return !sameHex(expectedBody, previousBody) || (previousNonce ?? 0) <= jNonce ? "required" : undefined;
+};
+/**
+ * og getDisputeHankoRequirementError's text for a requireDispute refusal (og's failureMessage for an unsafe frame);
+ * undefined for any other refusal.
+ */
+export const disputeRequirementText = (
+  e: DisputeError, proof: LocalProof, witnesses: DisputeWitnesses, received: DisputeHanko | undefined,
+): string | undefined => {
   if (e._tag !== "dispute_hanko") return undefined;
   const n = received?.proofNonce, prev = witnesses.counterparty?.proofNonce;
   switch (e.reason) {
@@ -8775,18 +9070,26 @@ export const disputeRequirementText = (e: DisputeError, proof: LocalProof, witne
     case "nonce_finalized": return `DISPUTE_HANKO_NONCE_ALREADY_FINALIZED: received=${n} jNonce=${proof.jNonce}`;
     case "nonce_regression": return `DISPUTE_HANKO_NONCE_REGRESSION: received=${n} previous=${prev}`;
     case "nonce_reuse": return `DISPUTE_HANKO_NONCE_REUSE: nonce=${n}`;
-    case "body_mismatch": return `DISPUTE_HANKO_PROOFBODY_MISMATCH: expected=${proof.bodyHash} received=${received?.proofBodyHash}`;
+    case "body_mismatch":
+      return `DISPUTE_HANKO_PROOFBODY_MISMATCH: expected=${proof.bodyHash} received=${received?.proofBodyHash}`;
     case "required": return `DISPUTE_HANKO_REQUIRED: proofBodyHash=${proof.bodyHash} jNonce=${proof.jNonce}`;
     default: return undefined;
   }
 };
-export const requireDispute = (proof: LocalProof, witnesses: DisputeWitnesses, received: DisputeHanko | undefined): Result<void, DisputeError> => {
-  const { counterparty } = witnesses, reason = disputeRequirement(proof.bodyHash, counterparty?.proofBodyHash, counterparty?.proofNonce, proof.jNonce, received);
+export const requireDispute = (
+  proof: LocalProof, witnesses: DisputeWitnesses, received: DisputeHanko | undefined,
+): Result<void, DisputeError> => {
+  const { counterparty } = witnesses;
+  const reason = disputeRequirement(
+    proof.bodyHash, counterparty?.proofBodyHash, counterparty?.proofNonce, proof.jNonce, received,
+  );
   return reason === undefined ? ok(undefined) : err(refuseDispute(reason));
 };
-export const storeCounterparty = (witnesses: DisputeWitnesses, validated: DisputeHanko | undefined): DisputeWitnesses => (validated === undefined ? witnesses : { ...witnesses, counterparty: validated });
-const evenHex = (h: unknown): boolean => { if (typeof h !== "string") return false; const b = hexBody(h); return b.length > 0 && b.length % 2 === 0; };
-export const disputeShapes = (carried: readonly (DisputeHanko | undefined)[]): Result<void, DisputeError> => guard(carried.every((d) => d === undefined || evenHex(d.hanko)), refuseDispute("shape"));
+export const storeCounterparty = (witnesses: DisputeWitnesses, validated: DisputeHanko | undefined): DisputeWitnesses =>
+  (validated === undefined ? witnesses : { ...witnesses, counterparty: validated });
+const evenHex = (h: unknown): boolean => typeof h === "string" && hexBody(h).length > 0 && hexBody(h).length % 2 === 0;
+export const disputeShapes = (carried: readonly (DisputeHanko | undefined)[]): Result<void, DisputeError> =>
+  guard(carried.every((d) => d === undefined || evenHex(d.hanko)), refuseDispute("shape"));
 
 
 export const ACCOUNT_NETWORK_ALLOWANCE_MS = 30_000n;
