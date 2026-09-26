@@ -35,6 +35,9 @@ import { handleJAbortSentBatch as ogJAbort } from "../../core/entity/tx/handlers
 import { handleJClearBatch as ogJClear } from "../../core/entity/tx/handlers/j-batch/j-clear-batch.ts";
 import { handleCrossJurisdictionSalvageEntityTx as ogSalvage } from "../../core/entity/tx/handlers/cross-j/salvage.ts";
 import { handleResolveHtlcLockEntityTx as ogResolveHtlcLock } from "../../core/entity/tx/handlers/htlc/direct.ts";
+import { handleCrossJurisdictionForceSiblingDisputeEntityTx as ogForceSibling } from "../../core/entity/tx/handlers/cross-j/force-sibling-dispute.ts";
+import { handlePrepareDispute as ogPrepareDispute } from "../../core/entity/tx/handlers/dispute/index.ts";
+import { installedAccount } from "../xln.ts";
 import { HTLC_ENFORCEMENT_RESERVE_MS as OG_RESERVE_MS } from "../../core/account/consensus/dispute/deadline-policy.ts";
 import { createDisputeProofHashWithNonce } from "../../core/protocol/dispute/proof-builder.ts";
 import { getEntityAccountForWrite } from "../../core/entity/state/persistent-account-map.ts";
@@ -325,8 +328,8 @@ const swapIds = (v: any, m: Readonly<Record<string, string>>): any => typeof v =
   : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, swapIds(x, m)])) : v;
 type JCase = { rw: EntityState; replicas: ReadonlyMap<EntityId, AccountReplica>; og: any; events: { type: string; data: Record<string, unknown> }[]; raw: CrossRoute[]; routes: CrossRoute[]; secrets: string[]; locks: ReadonlyMap<string, HtlcLock> };
 /** ALICE (in a random cross-j role) with random routes, a BOB Account holding inbound / outbound locks (live or disputed with a Target recovery), a paybook, and random SecretRevealed / HashLadderRevealRegistered events. */
-const jCase = (r: Rand, n: number): JCase => {
-  const role = xpick(r, [U1, H1, H2, U2]), ids: Record<string, string> = { [role.toLowerCase()]: ALICE, [XPEER[role]!.toLowerCase()]: BOB };
+const jCase = (r: Rand, n: number, forcedRole?: EntityId): JCase => {
+  const picked = xpick(r, [U1, H1, H2, U2]), role = forcedRole ?? picked, ids: Record<string, string> = { [role.toLowerCase()]: ALICE, [XPEER[role]!.toLowerCase()]: BOB };
   const raw = Array.from({ length: 1 + xint(r, 3) }, (_, k) => recoveryRoute(r, n * 10 + k)).map((c) => (xint(r, 3) === 0 ? { ...c, sourceRegistryRecord: { fillRatio: xpick(r, [100, 200]), revealedAt: 1_700_000_000 + xint(r, 3) } } : c))
     .map((c) => (xint(r, 3) === 0 ? { ...c, targetRegistryRecord: { fillRatio: xpick(r, [100, 200]), revealedAt: 1_700_000_000 + xint(r, 3) } } : c));
   const routes: CrossRoute[] = raw.map((c) => swapIds(c, ids));
@@ -672,5 +675,48 @@ describe("disputes-final: crossJurisdictionSalvage / resolveHtlcLock on the Enti
       }
     }
     expectKinds(kinds, ["ok", "queued", "HTLC_RESOLVE_ACCOUNT_MISSING", "HTLC_RESOLVE_LOCK_ID_INVALID", "HTLC_RESOLVE_SECRET_INVALID", "HTLC_RESOLVE_LOCK_MISSING", "HTLC_RESOLVE_HASHLOCK_MISMATCH", "PAYBOOK_"]);
+  }, 120_000);
+});
+
+// ---- og handlePrepareDispute's cross-j Target recovery plan and crossJurisdictionForceSiblingDispute on ALICE's Entity ----
+describe("disputes-final: prepareDispute cross-j recovery / crossJurisdictionForceSiblingDispute on the Entity (og handlers/dispute/index.ts, cross-j/force-sibling-dispute.ts)", () => {
+  test("MATCH: 250 random prepares and sibling-dispute fanouts over routes in every role, BOB Accounts holding the routes' Target / Source pulls (either sign) and stray pulls, terminal routes, observed peers on either leg -- same verdict, messages, Account status, disputePrepare (recovery, start intent), J batch and outputs as og", async () => {
+    const r = xrng(0x51b1), kinds = new Map<string, number>();
+    for (let i = 0; i < 250; i++) {
+      const sibling = xint(r, 2) === 0, c = jCase(r, i, sibling ? undefined : xpick(r, [U2, U2, U2, H1]));
+      const pulls = new Map<string, PullRow>();
+      for (const route of c.routes) for (const [pull, leg] of [[route.targetPull, "target"], [route.sourcePull, "source"]] as const) {
+        if (pull === undefined || xint(r, 3) === 0) continue;
+        pulls.set(pull.pullId, { pullId: pull.pullId, tokenId: leg === "target" ? 2 : 1, amount: xpick(r, [5n, -5n]), claimedRatio: 0, claimedAmount: 0n, fullHash: pull.fullHash, partialRoot: pull.partialRoot,
+          crossJurisdiction: { orderId: route.orderId, routeHash: word(r), leg }, createdHeight: 1, createdTimestamp: 1 } as PullRow);
+      }
+      if (xint(r, 4) === 0) { const id = `stray${i}`; pulls.set(id, { pullId: id, tokenId: 2, amount: 3n, claimedRatio: 0, claimedAmount: 0n, fullHash: word(r), partialRoot: word(r), crossJurisdiction: { orderId: "x", routeHash: word(r), leg: "target" }, createdHeight: 1, createdTimestamp: 1 } as PullRow); }
+      const base = genesisAB(), rwBob = { ...base, state: { ...base.state, pulls } } as AccountReplica;
+      const ogBob = ogBobAccount("open", undefined);
+      ogBob.state.pulls = PersistentAccountStateMap.fromEntries("pulls" as never, [...pulls].map(([k, v]) => [k, structuredClone(v)]) as never);
+      const og: any = { ...c.og, accounts: new EntityAccountCandidateMap(PersistentEntityAccountMap.fromEntries([[BOB, ogBob]], ALICE, () => Z32 as never)) };
+      const route = xpick(r, c.routes), routeId = xint(r, 10) === 0 ? "C-missing" : route.orderId;
+      const legs = [route.source.entityId, route.source.counterpartyEntityId, route.target.entityId, route.target.counterpartyEntityId].map((x) => x.toLowerCase());
+      const tx: EntityTx = sibling ? { type: "crossJurisdictionForceSiblingDispute", data: { routeId, observedCounterpartyEntityId: xpick(r, [...legs, ALICE, W("09")]) } } as EntityTx
+        : { type: "prepareDispute", data: { counterpartyEntityId: BOB, ...(r() < 0.5 ? { description: xpick(r, ["", "late"]) } : {}), ...(r() < 0.3 ? { minCooldownMs: xpick(r, [0, 5_000]) } : {}) } } as EntityTx;
+      const f = foldTx(c.rw, new Map([[BOB, rwBob]]), tx, { verify: verifiers.verify, timestamp: BigInt(T0), jReplicas: JREPLICAS as never }, "runtime");
+      const env = { quietRuntimeLogs: true, state: { jReplicas: JREPLICAS } } as never;
+      let ogOut: Out<any>;
+      try { ogOut = { ok: true, value: sibling ? await ogForceSibling(env, og, tx as never, [], true) : await ogPrepareDispute(og, tx as never, env, [], true) }; } catch (e) { ogOut = { ok: false, message: String((e as Error).message) }; }
+      expect([i, f.ok ? "ok" : (f.error as any).reason]).toEqual([i, ogOut.ok ? "ok" : ogOut.message]);
+      bump(kinds, `${tx.type}:${ogOut.ok ? "ok" : ogOut.message.split(":")[0]}`);
+      if (!f.ok || !ogOut.ok) continue;
+      const d = f.value, next = ogOut.value.newState, msgs = readEntityFrameEvents(next).map((e: any) => e.message);
+      expect([i, (d.events ?? []).map((e) => e.message)]).toEqual([i, msgs]);
+      expect([i, d.state.committed["jBatchState"] ?? null]).toEqual([i, next.jBatchState ?? null]);
+      const ogAfter = next.accounts.get(BOB), after = d.accountReplicas.get(BOB)!;
+      expect([i, after._tag === "open" ? "active" : after._tag === "preparing" ? "dispute_preparing" : after._tag]).toEqual([i, ogAfter.status]);
+      const prepare = unwrap(installedAccount(ALICE, BOB, after)).committed?.["disputePrepare"];
+      expect([i, prepare ?? null]).toEqual([i, ogAfter.disputePrepare ?? null]);
+      expect([i, d.outputs.map((o: any) => [o.to, o.input?.txs?.map((t: any) => t.type).join(",")])]).toEqual([i, ogOut.value.outputs.map((o: any) => [o.entityId, o.entityTxs.map((t: any) => t.type).join(",")])]);
+      if (ogAfter.disputePrepare?.crossJurisdictionRecovery) bump(kinds, `recovery:${ogAfter.disputePrepare.crossJurisdictionRecovery.requiredPullIds.length > 0 ? "pulls" : "empty"}`);
+      for (const m of msgs) bump(kinds, String(m).slice(0, 24));
+    }
+    expectKinds(kinds, ["prepareDispute:ok", "crossJurisdictionForceSiblingDispute:ok", "recovery:pulls", "⏳ Dispute prepared vs", "❌ Missing counterparty d", "crossJurisdictionForceSiblingDispute:CROSS_J_SIBLING_DISPUTE_OBSERVED_LEG_INVALID", "crossJurisdictionForceSiblingDispute:CROSS_J_SIBLING_DISPUTE_ROUTE_MISSING", "crossJurisdictionForceSiblingDispute:DISPUTE_START_CROSS_J_ROUTE_INACTIVE"]);
   }, 120_000);
 });
