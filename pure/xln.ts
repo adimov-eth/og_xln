@@ -1839,7 +1839,7 @@ const earliestDebt = (
   if (preferred !== undefined) return open.find((d) => d.currentDebtIndex === preferred);
   const oldestFirst = (x: DebtEntry, y: DebtEntry): number => x.createdDebtIndex - y.createdDebtIndex
     || x.createdAtBlock - y.createdAtBlock
-    || stableText(x.debtId, y.debtId);
+    || asc(x.debtId, y.debtId);
   return open.toSorted(oldestFirst)[0];
 };
 type DebtContext = { readonly dir: "out" | "in"; readonly block: number; readonly txHash: string };
@@ -1953,9 +1953,9 @@ export const mergeClaimOps = (ops: readonly JClaimOp[]): Result<readonly JClaimO
     const events = ops.filter((op) => claimKey(op) === claimKey(first)).flatMap((op) => op.tx.events);
     return { ...first, tx: { ...first.tx, events } };
   });
-  const byAccountHeightBlock = (x: JClaimOp, y: JClaimOp): number => stableText(x.accountId, y.accountId)
+  const byAccountHeightBlock = (x: JClaimOp, y: JClaimOp): number => asc(x.accountId, y.accountId)
     || Number(x.tx.jHeight - y.tx.jHeight)
-    || stableText(x.tx.jBlockHash, y.tx.jBlockHash);
+    || asc(x.tx.jBlockHash, y.tx.jBlockHash);
   return map(traverse(merged, canonicalClaim), (claims) => claims.toSorted(byAccountHeightBlock));
 };
 type SettledToken = { readonly row: AccountSettlement; readonly token: TokenSettlement };
@@ -5230,271 +5230,603 @@ export const findPaths = (
 
 
 // ---- account body: og types/account.ts ----
-/** og types/account.ts SwapOffer (same-jurisdiction): quantized amounts, canonical price and the maker's signed fee authority. */
-export type SwapOffer = {
-  readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
-  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks: bigint; readonly timeInForce?: number | undefined; readonly makerIsLeft: boolean; readonly createdHeight: number; readonly quantizedGive: bigint; readonly quantizedWant: bigint; readonly crossJurisdiction?: CrossRoute | undefined;
-};
-/** og types/account.ts PullCommitment: a cross-j pull's committed row; its |amount| is held on the loser (payer) side until cross_pull_close. */
-export type PullRow = {
-  readonly pullId: string; readonly tokenId: number; readonly amount: bigint; readonly claimedRatio: number; readonly claimedAmount: bigint; readonly fullHash: string; readonly partialRoot: string;
-  readonly crossJurisdiction: CrossPullBinding; readonly createdHeight: number; readonly createdTimestamp: number;
-};
+// Beyond the deltas, both sides commit to HTLC locks, swap offers, cross-J pulls, rebalance requests and fee
+// policies, lending replay guards, pending J claims and the settlement workspace. Together that is the body.
+/**
+ * og types/account.ts SwapOffer (same-jurisdiction): quantized amounts, canonical price and the maker's signed fee
+ * authority.
+ */
+export type SwapOffer = Readonly<{
+  offerId: string; giveTokenId: TokenId; giveTokenDecimals: number; giveAmount: bigint;
+  wantTokenId: TokenId; wantTokenDecimals: number; wantAmount: bigint;
+  maxFee: bigint; minNetReceive: bigint; priceTicks: bigint; timeInForce?: number | undefined;
+  makerIsLeft: boolean; createdHeight: number; quantizedGive: bigint; quantizedWant: bigint;
+  crossJurisdiction?: CrossRoute | undefined;
+}>;
+/**
+ * og types/account.ts PullCommitment: a cross-j pull's committed row; its |amount| is held on the payer side until
+ * cross_pull_close.
+ */
+export type PullRow = Readonly<{
+  pullId: string; tokenId: number; amount: bigint; claimedRatio: number; claimedAmount: bigint;
+  fullHash: string; partialRoot: string; crossJurisdiction: CrossPullBinding;
+  createdHeight: number; createdTimestamp: number;
+}>;
 /** og AccountTx swap_offer data (same-jurisdiction). */
-export type SwapOfferTerms = {
-  readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
-  readonly maxFee: bigint; readonly minNetReceive: bigint; readonly priceTicks?: bigint | undefined; readonly timeInForce?: number | undefined; readonly crossJurisdiction?: CrossRoute | undefined;
-};
+export type SwapOfferTerms = Readonly<{
+  offerId: string; giveTokenId: TokenId; giveTokenDecimals: number; giveAmount: bigint;
+  wantTokenId: TokenId; wantTokenDecimals: number; wantAmount: bigint;
+  maxFee: bigint; minNetReceive: bigint; priceTicks?: bigint | undefined; timeInForce?: number | undefined;
+  crossJurisdiction?: CrossRoute | undefined;
+}>;
 /** og AccountTx swap_resolve data. */
-export type SwapResolveTerms = {
-  readonly offerId: string; readonly fillRatio: number; readonly cancelRemainder: boolean; readonly fillNumerator?: bigint | undefined; readonly fillDenominator?: bigint | undefined;
-  readonly feeTokenId?: TokenId | undefined; readonly feeAmount?: bigint | undefined; readonly executionGiveAmount?: bigint | undefined; readonly executionWantAmount?: bigint | undefined;
-  readonly restingPriceTicks?: bigint | undefined; readonly restingGiveAmount?: bigint | undefined; readonly restingWantAmount?: bigint | undefined; readonly restingQuantizedGive?: bigint | undefined; readonly restingQuantizedWant?: bigint | undefined;
+export type SwapResolveTerms = Readonly<{
+  offerId: string; fillRatio: number; cancelRemainder: boolean;
+  fillNumerator?: bigint | undefined; fillDenominator?: bigint | undefined;
+  feeTokenId?: TokenId | undefined; feeAmount?: bigint | undefined;
+  executionGiveAmount?: bigint | undefined; executionWantAmount?: bigint | undefined;
+  restingPriceTicks?: bigint | undefined;
+  restingGiveAmount?: bigint | undefined; restingWantAmount?: bigint | undefined;
+  restingQuantizedGive?: bigint | undefined; restingQuantizedWant?: bigint | undefined;
   /** og matcher annotations: signed into the frame, never read by the Account transition. */
-  readonly comment?: string | undefined; readonly restingGiveTokenId?: TokenId | undefined; readonly restingWantTokenId?: TokenId | undefined;
-};
-/** og types/finance/rebalance.ts: one side's committed fee terms, the bilateral register, and a prepaid request_collateral's fee state. */
-export type RebalanceFeeSnapshot = { readonly policyVersion: number; readonly baseFee: bigint; readonly liquidityFeeBps: bigint; readonly gasFee: bigint; readonly updatedAt: number };
-export type BilateralFeePolicy = { readonly left?: RebalanceFeeSnapshot; readonly right?: RebalanceFeeSnapshot };
+  comment?: string | undefined; restingGiveTokenId?: TokenId | undefined; restingWantTokenId?: TokenId | undefined;
+}>;
+/**
+ * og types/finance/rebalance.ts: one side's committed fee terms, the bilateral register, and a prepaid request's fee
+ * state.
+ */
+export type RebalanceFeeSnapshot = Readonly<{
+  policyVersion: number; baseFee: bigint; liquidityFeeBps: bigint; gasFee: bigint; updatedAt: number;
+}>;
+export type BilateralFeePolicy = Readonly<{ left?: RebalanceFeeSnapshot; right?: RebalanceFeeSnapshot }>;
 /** og types/account.ts AccountLendingIntentKind: the committed replay guard of each Account-level lending intent. */
-export type LendingIntentKind = "fund" | "borrow" | "repay" | "credit-grant" | "credit-revoke" | "close-request" | "close-payout";
+export type LendingIntentKind =
+  | "fund" | "borrow" | "repay" | "credit-grant" | "credit-revoke" | "close-request" | "close-payout";
 export type RefundReason = "policy_mismatch" | "timeout" | "fee_too_low" | "manual";
-export type RebalanceRequestFeeState = {
-  readonly requestId: string; readonly feeTokenId: number; readonly feePaidUpfront: bigint; readonly requestedAmount: bigint; readonly policyVersion: number; readonly requestedAt: number; readonly requestedByLeft: boolean;
-  readonly refund?: { readonly reason: RefundReason; readonly refundedAmount: bigint };
-};
-/** og types/finance/account-j-claims.ts AccountJClaimRecord / AccountJClaimNode / AccountJClaimProof (root-to-terminal-leaf path; empty for the EMPTY root). */
-export type JClaimRecord = { readonly version: 1; readonly accountKey: string; readonly side: "left" | "right"; readonly jHeight: number; readonly jBlockHash: string; readonly eventsHash: string };
-export type JClaimNode = { readonly version: 1; readonly type: "leaf"; readonly key: string; readonly record: JClaimRecord } | { readonly version: 1; readonly type: "branch"; readonly bit: number; readonly left: string; readonly right: string };
-export type JClaimProof = { readonly version: 1; readonly nodes: readonly JClaimNode[] };
-export type ClaimRow = { readonly onLeft: boolean; readonly jHeight: bigint; readonly jBlockHash: string; readonly eventsHash: string };
-/** og types/account.ts SettlementOp / SettlementWorkspace, field for field: the workspace (minus Hankos) is committed in the Account root. */
+export type RebalanceRequestFeeState = Readonly<{
+  requestId: string; feeTokenId: number; feePaidUpfront: bigint; requestedAmount: bigint; policyVersion: number;
+  requestedAt: number; requestedByLeft: boolean;
+  refund?: Readonly<{ reason: RefundReason; refundedAmount: bigint }>;
+}>;
+/**
+ * og types/finance/account-j-claims.ts AccountJClaimRecord / Node / Proof (root-to-leaf path; empty for the EMPTY
+ * root).
+ */
+export type JClaimRecord = Readonly<{
+  version: 1; accountKey: string; side: "left" | "right"; jHeight: number; jBlockHash: string; eventsHash: string;
+}>;
+export type JClaimNode =
+  | Readonly<{ version: 1; type: "leaf"; key: string; record: JClaimRecord }>
+  | Readonly<{ version: 1; type: "branch"; bit: number; left: string; right: string }>;
+export type JClaimProof = Readonly<{ version: 1; nodes: readonly JClaimNode[] }>;
+export type ClaimRow = Readonly<{ onLeft: boolean; jHeight: bigint; jBlockHash: string; eventsHash: string }>;
+/**
+ * og types/account.ts SettlementOp / SettlementWorkspace, field for field: the workspace (minus Hankos) is committed in
+ * the Account root.
+ */
 export type SettlementOp =
-  | { readonly type: "r2c" | "c2r" | "r2r"; readonly tokenId: number; readonly amount: bigint }
-  | { readonly type: "forgive"; readonly tokenId: number }
-  | { readonly type: "rawDiff"; readonly tokenId: number; readonly leftDiff: bigint; readonly rightDiff: bigint; readonly collateralDiff: bigint; readonly ondeltaDiff: bigint };
-export type WorkspaceDiff = { readonly tokenId: number; readonly leftDiff: bigint; readonly rightDiff: bigint; readonly collateralDiff: bigint; readonly ondeltaDiff: bigint };
-export type PostSettlementProof = { readonly leftHanko?: string | undefined; readonly rightHanko?: string | undefined; readonly disputeHash: string; readonly proofBodyHash: string; readonly nonce: number; readonly proposerIsLeft: boolean };
-export type SettlementWorkspace = {
-  readonly workspaceHash: string; readonly ops: readonly SettlementOp[]; readonly compiledDiffs?: readonly WorkspaceDiff[] | undefined; readonly compiledForgiveTokenIds?: readonly number[] | undefined;
-  readonly leftHanko?: string | undefined; readonly rightHanko?: string | undefined; readonly settlementHash?: string | undefined; readonly lastModifiedByLeft: boolean;
-  readonly status: "draft" | "awaiting_counterparty" | "ready_to_submit" | "submitted"; readonly memo?: string | undefined; readonly revision: number; readonly createdAt: number; readonly lastUpdatedAt: number;
-  readonly executorIsLeft: boolean; readonly nonceAtSign?: number | undefined; readonly postSettlementDisputeProof?: PostSettlementProof | undefined;
-};
-export type AccountBody = {
-  readonly account: AccountState; readonly terms: AccountTerms; readonly locks: ReadonlyMap<string, HtlcLock>; readonly offers: ReadonlyMap<string, SwapOffer>;
-  readonly requested: ReadonlyMap<TokenId, bigint>; readonly requestFees: ReadonlyMap<TokenId, RebalanceRequestFeeState>; readonly feePolicies: ReadonlyMap<TokenId, BilateralFeePolicy>;
-  readonly lendingIntents: ReadonlyMap<string, LendingIntentKind>; readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly jNonce: number;
-  readonly settlement?: SettlementWorkspace | undefined; readonly pulls?: ReadonlyMap<string, PullRow> | undefined;
-  /** og replica shadow.rebalance.submittedAtByToken: local J-batch submission marker per token; outside the Account state root, committed in the Entity's account leaf. */
-  readonly submittedAt?: ReadonlyMap<number, number> | undefined;
-};
+  | Readonly<{ type: "r2c" | "c2r" | "r2r"; tokenId: number; amount: bigint }>
+  | Readonly<{ type: "forgive"; tokenId: number }>
+  | Readonly<{
+    type: "rawDiff"; tokenId: number; leftDiff: bigint; rightDiff: bigint; collateralDiff: bigint; ondeltaDiff: bigint;
+  }>;
+export type WorkspaceDiff = Readonly<{
+  tokenId: number; leftDiff: bigint; rightDiff: bigint; collateralDiff: bigint; ondeltaDiff: bigint;
+}>;
+export type PostSettlementProof = Readonly<{
+  leftHanko?: string | undefined; rightHanko?: string | undefined; disputeHash: string; proofBodyHash: string;
+  nonce: number; proposerIsLeft: boolean;
+}>;
+export type SettlementWorkspace = Readonly<{
+  workspaceHash: string; ops: readonly SettlementOp[];
+  compiledDiffs?: readonly WorkspaceDiff[] | undefined; compiledForgiveTokenIds?: readonly number[] | undefined;
+  leftHanko?: string | undefined; rightHanko?: string | undefined; settlementHash?: string | undefined;
+  lastModifiedByLeft: boolean; status: "draft" | "awaiting_counterparty" | "ready_to_submit" | "submitted";
+  memo?: string | undefined; revision: number; createdAt: number; lastUpdatedAt: number;
+  executorIsLeft: boolean; nonceAtSign?: number | undefined;
+  postSettlementDisputeProof?: PostSettlementProof | undefined;
+}>;
+export type AccountBody = Readonly<{
+  account: AccountState; terms: AccountTerms;
+  locks: ReadonlyMap<string, HtlcLock>; offers: ReadonlyMap<string, SwapOffer>;
+  requested: ReadonlyMap<TokenId, bigint>; requestFees: ReadonlyMap<TokenId, RebalanceRequestFeeState>;
+  feePolicies: ReadonlyMap<TokenId, BilateralFeePolicy>; lendingIntents: ReadonlyMap<string, LendingIntentKind>;
+  claimRows?: readonly ClaimRow[] | undefined; finalizedJHeight: bigint; jNonce: number;
+  settlement?: SettlementWorkspace | undefined; pulls?: ReadonlyMap<string, PullRow> | undefined;
+  /**
+   * og replica shadow.rebalance.submittedAtByToken: local J-batch submission marker per token; outside the Account
+   * state root, committed in the Entity's account leaf.
+   */
+  submittedAt?: ReadonlyMap<number, number> | undefined;
+}>;
 /** og envelope/entity-update.ts setRebalanceSubmittedAt: set, or (undefined) clear, one token's submission marker. */
-export const setRebalanceSubmittedAt = (a: AccountBody, tokenId: number, submittedAt: number | undefined): AccountBody =>
-  ({ ...a, submittedAt: submittedAt === undefined ? mapDelete(a.submittedAt ?? new Map<number, number>(), tokenId) : mapSet(a.submittedAt ?? new Map<number, number>(), tokenId, submittedAt) });
-const clearSubmittedAt = (a: AccountBody, tk: TokenId): AccountBody => (a.submittedAt?.has(Number(tk)) ? { ...a, submittedAt: mapDelete(a.submittedAt, Number(tk)) } : a);
+export const setRebalanceSubmittedAt = (
+  a: AccountBody, tokenId: number, submittedAt: number | undefined,
+): AccountBody => {
+  const markers = a.submittedAt ?? new Map<number, number>();
+  const next = submittedAt === undefined ? mapDelete(markers, tokenId) : mapSet(markers, tokenId, submittedAt);
+  return { ...a, submittedAt: next };
+};
+const clearSubmittedAt = (a: AccountBody, tk: TokenId): AccountBody =>
+  (a.submittedAt?.has(Number(tk)) ? { ...a, submittedAt: mapDelete(a.submittedAt, Number(tk)) } : a);
 /** og state-root.ts submittedAtByTokenRoot: the shadow map's root, as the Entity account leaf commits it. */
-export const submittedAtRoot = (a: AccountBody): Result<string, CommitmentError> => mapRoot(a.submittedAt ?? new Map<number, number>());
+export const submittedAtRoot = (a: AccountBody): Result<string, CommitmentError> =>
+  mapRoot(a.submittedAt ?? new Map<number, number>());
 export type AccountStep<E extends Effect = Effect> = Step<AccountBody, E>;
 type BodyStep<E extends Effect = never> = Result<AccountStep<E>, BodyError>;
+
+// ---- account transactions: og types/account.ts AccountTx ----
+type PaymentTx = Readonly<{
+  type: "payment"; tokenId: TokenId; amount: bigint; route?: readonly string[] | undefined;
+  description?: string | undefined; fromEntityId?: string | undefined; toEntityId?: string | undefined;
+  deliveryMode?: "direct" | "trusted" | undefined; trustedGatewayEntityId?: string | undefined;
+}>;
+type HtlcLockTx = Readonly<{
+  type: "htlc_lock"; lockId: string; hashlock: string; timelock: bigint; revealBeforeHeight: bigint;
+  amount: bigint; tokenId: TokenId; deliveryMode?: "instant" | "async" | undefined; envelope?: HtlcEnvelope | undefined;
+}>;
+type LendingTx =
+  | Readonly<{
+    type: "lending_fund"; positionId: string; hubEntityId: string; lenderEntityId: string; tokenId: TokenId;
+    amount: bigint; termId: string; interestBps: number;
+  }>
+  | Readonly<{
+    type: "lending_borrow_request"; requestId: string; hubEntityId: string; borrowerEntityId: string;
+    tokenId: TokenId; amount: bigint; termId: string; maxInterestBps: number;
+  }>
+  | Readonly<{
+    type: "lending_repay"; loanId: string; hubEntityId: string; borrowerEntityId: string;
+    tokenId: TokenId; amount: bigint;
+  }>
+  | Readonly<{
+    type: "lending_credit"; action: "grant" | "revoke"; loanId: string; hubEntityId: string;
+    borrowerEntityId: string; tokenId: TokenId; creditLimit: bigint;
+  }>
+  | Readonly<{ type: "lending_close_request"; positionId: string; hubEntityId: string; lenderEntityId: string }>
+  | Readonly<{
+    type: "lending_close_payout"; positionId: string; hubEntityId: string; lenderEntityId: string;
+    tokenId: TokenId; amount: bigint;
+  }>;
+type RebalanceTx =
+  | Readonly<{
+    type: "request_collateral"; tokenId: TokenId; amount: bigint; feeTokenId?: TokenId | undefined;
+    feeAmount: bigint; policyVersion: number;
+  }>
+  | Readonly<{
+    type: "rebalance_refund"; requestId: string; requestTokenId: TokenId; amount: bigint; reason: RefundReason;
+  }>
+  | Readonly<{
+    type: "rebalance_policy"; tokenId: TokenId; policyVersion: number; baseFee: bigint;
+    liquidityFeeBps: bigint; gasFee: bigint;
+  }>;
+type CrossPullTx =
+  | Readonly<{
+    type: "cross_pull_lock"; pullId: string; tokenId: TokenId; amount: bigint; fullHash: string; partialRoot: string;
+    crossJurisdiction: CrossPullBinding; crossJurisdictionRoute: CrossRoute;
+  }>
+  | Readonly<{ type: "cross_pull_close"; pullId: string; binary: string; proof: CrossCloseProof }>;
+type JEventClaimTx = Readonly<{
+  type: "j_event_claim"; jHeight: bigint; jBlockHash: Hash; events: readonly AccountSettlement[]; observedAt: bigint;
+  leftProof?: JClaimProof | undefined; rightProof?: JClaimProof | undefined;
+}>;
+type PostProofClaim = Readonly<{
+  nonce: number; proposerIsLeft: boolean; proofBodyHash: string; disputeHash: string; hanko?: string | undefined;
+}>;
+type SettleTransitionTx =
+  | Readonly<{
+    type: "settle_transition"; kind: "upsert"; revision: number; previousWorkspaceHash?: string | undefined;
+    ops: readonly SettlementOp[]; executorIsLeft: boolean; memo?: string | undefined;
+  }>
+  | Readonly<{ type: "settle_transition"; kind: "submit" | "clear"; revision: number; workspaceHash: string }>
+  | Readonly<{
+    type: "settle_transition"; kind: "hanko"; revision: number; workspaceHash: string; settlementNonce: number;
+    settlementHash: string; settlementHanko?: string | undefined; postProof: PostProofClaim;
+  }>;
 export type AccountTx =
-  | { readonly type: "add_delta"; readonly tokenId: TokenId }
-  | { readonly type: "set_credit_limit"; readonly tokenId: TokenId; readonly limit: bigint }
-  | { readonly type: "payment"; readonly tokenId: TokenId; readonly amount: bigint; readonly route?: readonly string[] | undefined; readonly description?: string | undefined; readonly fromEntityId?: string | undefined; readonly toEntityId?: string | undefined; readonly deliveryMode?: "direct" | "trusted" | undefined; readonly trustedGatewayEntityId?: string | undefined }
-  | { readonly type: "htlc_lock"; readonly lockId: string; readonly hashlock: string; readonly timelock: bigint; readonly revealBeforeHeight: bigint; readonly amount: bigint; readonly tokenId: TokenId; readonly deliveryMode?: "instant" | "async" | undefined; readonly envelope?: HtlcEnvelope | undefined }
-  | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "secret"; readonly secret: string }
-  | { readonly type: "htlc_resolve"; readonly lockId: string; readonly outcome: "error"; readonly reason?: string | undefined }
-  | ({ readonly type: "swap_offer" } & SwapOfferTerms)
-  | { readonly type: "swap_cancel_request"; readonly offerId: string }
-  | ({ readonly type: "swap_resolve" } & SwapResolveTerms)
-  | { readonly type: "request_collateral"; readonly tokenId: TokenId; readonly amount: bigint; readonly feeTokenId?: TokenId | undefined; readonly feeAmount: bigint; readonly policyVersion: number }
-  | { readonly type: "rebalance_refund"; readonly requestId: string; readonly requestTokenId: TokenId; readonly amount: bigint; readonly reason: RefundReason }
-  | { readonly type: "rebalance_policy"; readonly tokenId: TokenId; readonly policyVersion: number; readonly baseFee: bigint; readonly liquidityFeeBps: bigint; readonly gasFee: bigint }
-  | { readonly type: "lending_fund"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly interestBps: number }
-  | { readonly type: "lending_borrow_request"; readonly requestId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly termId: string; readonly maxInterestBps: number }
-  | { readonly type: "lending_repay"; readonly loanId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "lending_credit"; readonly action: "grant" | "revoke"; readonly loanId: string; readonly hubEntityId: string; readonly borrowerEntityId: string; readonly tokenId: TokenId; readonly creditLimit: bigint }
-  | { readonly type: "lending_close_request"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string }
-  | { readonly type: "lending_close_payout"; readonly positionId: string; readonly hubEntityId: string; readonly lenderEntityId: string; readonly tokenId: TokenId; readonly amount: bigint }
-  | { readonly type: "cross_pull_lock"; readonly pullId: string; readonly tokenId: TokenId; readonly amount: bigint; readonly fullHash: string; readonly partialRoot: string; readonly crossJurisdiction: CrossPullBinding; readonly crossJurisdictionRoute: CrossRoute }
-  | { readonly type: "cross_pull_close"; readonly pullId: string; readonly binary: string; readonly proof: CrossCloseProof }
-  | { readonly type: "j_event_claim"; readonly jHeight: bigint; readonly jBlockHash: Hash; readonly events: readonly AccountSettlement[]; readonly observedAt: bigint; readonly leftProof?: JClaimProof | undefined; readonly rightProof?: JClaimProof | undefined }
-  | { readonly type: "settle_transition"; readonly kind: "upsert"; readonly revision: number; readonly previousWorkspaceHash?: string | undefined; readonly ops: readonly SettlementOp[]; readonly executorIsLeft: boolean; readonly memo?: string | undefined }
-  | { readonly type: "settle_transition"; readonly kind: "submit" | "clear"; readonly revision: number; readonly workspaceHash: string }
-  | { readonly type: "settle_transition"; readonly kind: "hanko"; readonly revision: number; readonly workspaceHash: string; readonly settlementNonce: number; readonly settlementHash: string; readonly settlementHanko?: string | undefined; readonly postProof: { readonly nonce: number; readonly proposerIsLeft: boolean; readonly proofBodyHash: string; readonly disputeHash: string; readonly hanko?: string | undefined } };
+  | Readonly<{ type: "add_delta"; tokenId: TokenId }>
+  | Readonly<{ type: "set_credit_limit"; tokenId: TokenId; limit: bigint }>
+  | PaymentTx
+  | HtlcLockTx
+  | Readonly<{ type: "htlc_resolve"; lockId: string; outcome: "secret"; secret: string }>
+  | Readonly<{ type: "htlc_resolve"; lockId: string; outcome: "error"; reason?: string | undefined }>
+  | (Readonly<{ type: "swap_offer" }> & SwapOfferTerms)
+  | Readonly<{ type: "swap_cancel_request"; offerId: string }>
+  | (Readonly<{ type: "swap_resolve" }> & SwapResolveTerms)
+  | RebalanceTx
+  | LendingTx
+  | CrossPullTx
+  | JEventClaimTx
+  | SettleTransitionTx;
 export type TxOf<K extends AccountTx["type"]> = Extract<AccountTx, { readonly type: K }>;
 export type WireAccountTx = AccountTx;
 type WireTxOf<K extends AccountTx["type"]> = Extract<WireAccountTx, { readonly type: K }>;
-const OG_TOKEN_FIELDS = ["tokenId", "giveTokenId", "wantTokenId", "feeTokenId", "requestTokenId", "restingGiveTokenId", "restingWantTokenId"] as const;
-/** og wire AccountTx fields: token ids (and htlc revealBeforeHeight) are JS numbers, never the rewrite's decimal strings. */
+const OG_TOKEN_FIELDS = [
+  "tokenId", "giveTokenId", "wantTokenId", "feeTokenId", "requestTokenId", "restingGiveTokenId", "restingWantTokenId",
+] as const;
+/**
+ * og wire AccountTx fields: token ids (and htlc revealBeforeHeight) are JS numbers, never the rewrite's decimal
+ * strings.
+ */
 export const wireOf = (tx: WireAccountTx): { readonly type: string } => {
-  const out: Record<string, unknown> = { ...tx };
-  for (const k of OG_TOKEN_FIELDS) if (typeof out[k] === "string") out[k] = Number(out[k]);
-  if (tx.type === "htlc_lock") out["revealBeforeHeight"] = Number(tx.revealBeforeHeight);
-  return out as { readonly type: string };
+  const fields: Record<string, unknown> = { ...tx };
+  const numericTokens = OG_TOKEN_FIELDS.flatMap((k) =>
+    (typeof fields[k] === "string" ? [[k, Number(fields[k])] as const] : []));
+  const height = tx.type === "htlc_lock" ? { revealBeforeHeight: Number(tx.revealBeforeHeight) } : {};
+  return { ...fields, ...Object.fromEntries(numericTokens), ...height } as { readonly type: string };
 };
-export type KindRow = { readonly l0: boolean; readonly repeatable: boolean; readonly effects: readonly Effect["_tag"][] };
-const kind = <R extends KindRow>(l0: boolean, repeatable: boolean, effects: readonly Effect["_tag"][] = []): R => ({ l0, repeatable, effects }) as R;
+/** Per tx kind: whether it may ride in a level-0 frame, whether it may repeat, and which effects it can emit. */
+export type KindRow = Readonly<{ l0: boolean; repeatable: boolean; effects: readonly Effect["_tag"][] }>;
+const kind = <const T extends readonly Effect["_tag"][]>(l0: boolean, repeatable: boolean, ...effects: T) =>
+  ({ l0, repeatable, effects });
 export const AccountKinds = {
-  add_delta: kind(true, false), set_credit_limit: kind(true, false), payment: kind(true, true, ["direct_payment_forward"]),
-  htlc_lock: kind(false, false), htlc_resolve: kind(false, false, ["forward_secret", "htlc_error"]),
-  swap_offer: kind(false, false, ["swap_offer_upsert"]), swap_cancel_request: kind(false, false, ["swap_cancel_requested"]), swap_resolve: kind(false, false, ["swap_cancelled", "swap_offer_upsert"]),
+  add_delta: kind(true, false),
+  set_credit_limit: kind(true, false),
+  payment: kind(true, true, "direct_payment_forward"),
+  htlc_lock: kind(false, false),
+  htlc_resolve: kind(false, false, "forward_secret", "htlc_error"),
+  swap_offer: kind(false, false, "swap_offer_upsert"),
+  swap_cancel_request: kind(false, false, "swap_cancel_requested"),
+  swap_resolve: kind(false, false, "swap_cancelled", "swap_offer_upsert"),
   settle_transition: kind(false, false),
-  request_collateral: kind(false, false, ["request_collateral_committed"]), rebalance_refund: kind(false, false), rebalance_policy: kind(false, false),
-  lending_fund: kind(false, false), lending_borrow_request: kind(false, false), lending_repay: kind(false, false), lending_credit: kind(false, false),
-  lending_close_request: kind(false, false), lending_close_payout: kind(false, false),
-  cross_pull_lock: kind(false, false), cross_pull_close: kind(false, false),
-  j_event_claim: kind(false, false, ["account_settled_finalized_bilateral"]),
+  request_collateral: kind(false, false, "request_collateral_committed"),
+  rebalance_refund: kind(false, false),
+  rebalance_policy: kind(false, false),
+  lending_fund: kind(false, false),
+  lending_borrow_request: kind(false, false),
+  lending_repay: kind(false, false),
+  lending_credit: kind(false, false),
+  lending_close_request: kind(false, false),
+  lending_close_payout: kind(false, false),
+  cross_pull_lock: kind(false, false),
+  cross_pull_close: kind(false, false),
+  j_event_claim: kind(false, false, "account_settled_finalized_bilateral"),
 } as const satisfies Kinds<AccountTx["type"], KindRow>;
 export type L0Tx = TxOf<"add_delta" | "set_credit_limit" | "payment">;
-export type EffectOf<K extends AccountTx["type"]> = K extends "htlc_resolve" ? Of<Effect, "forward_secret" | "htlc_error"> : K extends "swap_cancel_request" ? Of<Effect, "swap_cancel_requested">
-  : K extends "swap_offer" ? Of<Effect, "swap_offer_upsert"> : K extends "swap_resolve" ? Of<Effect, "swap_cancelled" | "swap_offer_upsert"> : K extends "request_collateral" ? Of<Effect, "request_collateral_committed"> : K extends "j_event_claim" ? Of<Effect, "account_settled_finalized_bilateral"> : K extends "payment" ? Of<Effect, "direct_payment_forward"> : never;
+export type EffectOf<K extends AccountTx["type"]> = Of<Effect, (typeof AccountKinds)[K]["effects"][number]>;
 export const isL0Tx = (tx: WireAccountTx): tx is L0Tx => arm(AccountKinds, tx.type).l0;
-export const genesisAccountBody = (account: AccountState, terms: AccountTerms): AccountBody => ({ account, terms, locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(), feePolicies: new Map(), lendingIntents: new Map(), finalizedJHeight: 0n, jNonce: 0 });
+export const genesisAccountBody = (account: AccountState, terms: AccountTerms): AccountBody => ({
+  account, terms, locks: new Map(), offers: new Map(), requested: new Map(), requestFees: new Map(),
+  feePolicies: new Map(), lendingIntents: new Map(), finalizedJHeight: 0n, jNonce: 0,
+});
+
+// ---- spending room ----
 const putState = (a: AccountBody, account: AccountState): AccountBody => ({ ...a, account });
-export const holds = (a: AccountBody, tk: TokenId, byLeft: boolean): bigint => { const s = sideTotals(a, tk); return at(s.leftHold + s.leftAllowance, s.rightHold + s.rightAllowance, byLeft); };
+/** Everything a side has held back on a token: its lock holds plus its allowances. */
+export const holds = (a: AccountBody, tk: TokenId, byLeft: boolean): bigint => {
+  const s = sideTotals(a, tk);
+  return at(s.leftHold + s.leftAllowance, s.rightHold + s.rightAllowance, byLeft);
+};
 const ensureRoom = (a: AccountBody, tk: TokenId, amount: bigint, byLeft: boolean): Result<void, BodyError> => {
   const available = outCapacity(getDelta(a.account, tk), byLeft, holds(a, tk, byLeft));
   return amount > available ? err({ _tag: "insufficient_capacity", available, requested: amount }) : ok(undefined);
 };
 const positive = (amount: bigint): Result<void, BodyError> => guard(amount > 0n, { _tag: "non_positive_payment" });
 const spend = (a: AccountBody, tk: TokenId, amount: bigint, byLeft: boolean): Result<AccountBody, BodyError> =>
-  chain(positive(amount), () => chain(offdeltaChange(byLeft, amount), (by) => chain(move(getDelta(a.account, tk), by, holds(a, tk, byLeft)), (d) => map(representable(a, d), () => putState(a, setDelta(a.account, d))))));
-/** og protocol/htlc/utils.ts:73: keccak256 of the 32-byte secret (abi.encode(bytes32)); anything else is not a secret. */
-export const hashHtlcSecret = (secret: string): string | null => (/^0x[0-9a-fA-F]{64}$/.test(secret) ? keccak256Hex(hexToBytes(secret)) : null);
+  chain(positive(amount), () => chain(offdeltaChange(byLeft, amount), (by) => {
+    const moved = move(getDelta(a.account, tk), by, holds(a, tk, byLeft));
+    return chain(moved, (d) => map(representable(a, d), () => putState(a, setDelta(a.account, d))));
+  }));
+/**
+ * og protocol/htlc/utils.ts:73: keccak256 of the 32-byte secret (abi.encode(bytes32)); anything else is not a secret.
+ */
+export const hashHtlcSecret = (secret: string): string | null =>
+  (/^0x[0-9a-fA-F]{64}$/.test(secret) ? keccak256Hex(hexToBytes(secret)) : null);
 /** og htlc-deadline.ts: expired once jHeight passes revealBeforeHeight or the timestamp reaches timelock. */
-export const htlcExpired = (l: Pick<HtlcLock, "timelock" | "revealBeforeHeight">, ctx: Pick<FoldCtx, "nowMs" | "jHeight">): boolean => ctx.jHeight > l.revealBeforeHeight || ctx.nowMs >= l.timelock;
+export const htlcExpired = (
+  l: Pick<HtlcLock, "timelock" | "revealBeforeHeight">, ctx: Pick<FoldCtx, "nowMs" | "jHeight">,
+): boolean => ctx.jHeight > l.revealBeforeHeight || ctx.nowMs >= l.timelock;
 export const MAX_ACCOUNT_HTLC_LOCKS = 32;
-/** og delta-utils.ts getOffdeltaRepresentationError: offdelta plus every live lock movement, each alone, stays in int512. */
-const representable = (a: AccountBody, d: Delta, added?: { readonly senderIsLeft: boolean; readonly amount: bigint }): Result<void, BodyError> =>
+type LockMove = Readonly<{ senderIsLeft: boolean; amount: bigint }>;
+/**
+ * og delta-utils.ts getOffdeltaRepresentationError: offdelta plus every live lock movement, each alone, stays in
+ * int512.
+ */
+const representable = (a: AccountBody, d: Delta, added?: LockMove): Result<void, BodyError> =>
   guard(offdeltaOutside(a, d, added) === null, { _tag: "offdelta_range" });
 const MISSING: Result<never, BodyError> = err({ _tag: "missing" });
+
+// ---- J claims: og j-claim-transition.ts, j-events/{claim,finality}.ts ----
+// Each side claims the AccountSettled events it saw at a J height. A claim waits for the peer's matching claim;
+// when both agree, the events are final: each token row takes the chain's collateral and ondelta.
 const sameAccount = (row: AccountSettlement, id: AccountId): boolean => row.left === id.left && row.right === id.right;
 const CLAIM_UINT64 = (1n << 64n) - 1n;
-const claimHeight = (h: bigint): Result<bigint, ClaimError> => (h >= 1n && h <= CLAIM_UINT64 && h <= BigInt(Number.MAX_SAFE_INTEGER) ? ok(h) : err({ _tag: "claim_height" }));
-const claimBlock = (h: string): Result<string, ClaimError> => (WORD.test(h) ? ok(h.toLowerCase()) : err({ _tag: "claim_block" }));
-type SettledData = { readonly leftEntity: string; readonly rightEntity: string; readonly tokenId: number; readonly leftReserve: string; readonly rightReserve: string; readonly collateral: string; readonly ondelta: string; readonly nonce: number };
-/** og JurisdictionEvent AccountSettled with normalizeMetadata's EVM position (hashes kept as given; the key lowercases them). */
-type SettledEvent = { readonly blockNumber?: number; readonly blockHash?: string; readonly transactionHash?: string; readonly logIndex?: number; readonly eventIndex?: number; readonly type: "AccountSettled"; readonly data: SettledData };
-const settledPayload = (d: SettledData): string => ["AccountSettled", d.leftEntity, d.rightEntity, d.tokenId, d.leftReserve, d.rightReserve, d.collateral, d.ondelta, d.nonce].join(":");
+const claimHeight = (h: bigint): Result<bigint, ClaimError> =>
+  (h >= 1n && h <= CLAIM_UINT64 && h <= BigInt(Number.MAX_SAFE_INTEGER) ? ok(h) : err({ _tag: "claim_height" }));
+const claimBlock = (h: string): Result<string, ClaimError> =>
+  (WORD.test(h) ? ok(h.toLowerCase()) : err({ _tag: "claim_block" }));
+type SettledData = Readonly<{
+  leftEntity: string; rightEntity: string; tokenId: number; leftReserve: string; rightReserve: string;
+  collateral: string; ondelta: string; nonce: number;
+}>;
+/**
+ * og JurisdictionEvent AccountSettled with normalizeMetadata's EVM position (hashes kept as given; the key lowercases
+ * them).
+ */
+type SettledEvent = Readonly<{
+  blockNumber?: number; blockHash?: string; transactionHash?: string; logIndex?: number; eventIndex?: number;
+  type: "AccountSettled"; data: SettledData;
+}>;
+const settledPayload = (d: SettledData): string => [
+  "AccountSettled", d.leftEntity, d.rightEntity, d.tokenId,
+  d.leftReserve, d.rightReserve, d.collateral, d.ondelta, d.nonce,
+].join(":");
 /** og event-normalization.ts canonicalJurisdictionEventKey. */
-const settledKey = (e: SettledEvent): string => JSON.stringify([e.blockNumber ?? null, e.blockHash?.toLowerCase() ?? null, e.transactionHash?.toLowerCase() ?? null, e.logIndex ?? null, e.eventIndex ?? null, settledPayload(e.data)]);
-const optIndex = (x: number | undefined, y: number | undefined): number => (x !== undefined && y !== undefined ? x - y : x !== undefined ? -1 : y !== undefined ? 1 : 0);
-const stableText = (x: string, y: string): number => (x < y ? -1 : x > y ? 1 : 0);
+const settledKey = (e: SettledEvent): string => JSON.stringify([
+  e.blockNumber ?? null, e.blockHash?.toLowerCase() ?? null, e.transactionHash?.toLowerCase() ?? null,
+  e.logIndex ?? null, e.eventIndex ?? null, settledPayload(e.data),
+]);
+/** Present positions order by value; a present one sorts before an absent one. */
+const optIndex = (x: number | undefined, y: number | undefined): number => {
+  switch (true) {
+    case x !== undefined && y !== undefined: return x - y;
+    case x !== undefined: return -1;
+    case y !== undefined: return 1;
+    default: return 0;
+  }
+};
 /** og compareCanonicalJurisdictionEvents: EVM execution order first; the payload only orders synthetic ties. */
 const compareSettled = (x: SettledEvent, y: SettledEvent): number =>
-  optIndex(x.blockNumber, y.blockNumber) || optIndex(x.logIndex, y.logIndex) || optIndex(x.eventIndex, y.eventIndex) || stableText(x.transactionHash?.toLowerCase() ?? "", y.transactionHash?.toLowerCase() ?? "") || stableText(settledPayload(x.data), settledPayload(y.data));
+  optIndex(x.blockNumber, y.blockNumber) || optIndex(x.logIndex, y.logIndex) || optIndex(x.eventIndex, y.eventIndex)
+  || asc(x.transactionHash?.toLowerCase() ?? "", y.transactionHash?.toLowerCase() ?? "")
+  || asc(settledPayload(x.data), settledPayload(y.data));
+const isPosition = (n: number | undefined): n is number => n !== undefined && Number.isInteger(n) && n >= 0;
+const nonBlank = (s: string | undefined): s is string => typeof s === "string" && s.trim() !== "";
 /** og normalizeMetadata: integer block/log/event positions (log/event non-negative) and non-blank hashes. */
-const settledMeta = (m: JEventMeta | undefined, eventIndex: number | undefined): Omit<SettledEvent, "type" | "data"> => ({
-  ...(m?.blockNumber !== undefined && Number.isInteger(m.blockNumber) ? { blockNumber: m.blockNumber } : {}),
-  ...(typeof m?.blockHash === "string" && m.blockHash.trim() !== "" ? { blockHash: m.blockHash } : {}),
-  ...(typeof m?.transactionHash === "string" && m.transactionHash.trim() !== "" ? { transactionHash: m.transactionHash } : {}),
-  ...(m?.logIndex !== undefined && Number.isInteger(m.logIndex) && m.logIndex >= 0 ? { logIndex: m.logIndex } : {}),
-  ...(eventIndex !== undefined && Number.isInteger(eventIndex) && eventIndex >= 0 ? { eventIndex } : {}),
+const settledMeta = (
+  m: JEventMeta | undefined, eventIndex: number | undefined,
+): Omit<SettledEvent, "type" | "data"> => ({
+  ...opt("blockNumber", m?.blockNumber !== undefined && Number.isInteger(m.blockNumber) ? m.blockNumber : undefined),
+  ...opt("blockHash", nonBlank(m?.blockHash) ? m?.blockHash : undefined),
+  ...opt("transactionHash", nonBlank(m?.transactionHash) ? m?.transactionHash : undefined),
+  ...opt("logIndex", isPosition(m?.logIndex) ? m?.logIndex : undefined),
+  ...opt("eventIndex", isPosition(eventIndex) ? eventIndex : undefined),
 });
 const settledEvent = (row: AccountSettlement, token: TokenSettlement): Result<SettledEvent, ClaimError> => {
   if (row.nonce < 0n || row.nonce > BigInt(Number.MAX_SAFE_INTEGER)) return err({ _tag: "claim_events" });
-  const data = { leftEntity: row.left.toLowerCase(), rightEntity: row.right.toLowerCase(), tokenId: Number(token.tokenId), leftReserve: token.leftReserve.toString(), rightReserve: token.rightReserve.toString(), collateral: token.collateral.toString(), ondelta: token.ondelta.toString(), nonce: Number(row.nonce) };
+  const data = {
+    leftEntity: row.left.toLowerCase(), rightEntity: row.right.toLowerCase(), tokenId: Number(token.tokenId),
+    leftReserve: token.leftReserve.toString(), rightReserve: token.rightReserve.toString(),
+    collateral: token.collateral.toString(), ondelta: token.ondelta.toString(), nonce: Number(row.nonce),
+  };
   return ok({ ...settledMeta(row.meta, token.eventIndex), type: "AccountSettled", data });
 };
-/** og j-claim-transition.ts canonicalEvents + canonicalJurisdictionEventsHash: sorted, duplicate-free, keccak of the key list. */
-const claimEvidence = (events: readonly AccountSettlement[]): Result<{ readonly eventsHash: string; readonly events: readonly SettledEvent[] }, ClaimError> => {
+type ClaimEvidence = Readonly<{ eventsHash: string; events: readonly SettledEvent[] }>;
+/** og canonicalEvents + canonicalJurisdictionEventsHash: sorted, duplicate-free, keccak of the key list. */
+const claimEvidence = (events: readonly AccountSettlement[]): Result<ClaimEvidence, ClaimError> => {
   const rows = events.flatMap((row) => row.tokens.map((token) => ({ row, token })));
   if (rows.length === 0) return err({ _tag: "claim_events" });
   return chain(traverse(rows, ({ row, token }) => settledEvent(row, token)), (built) => {
-    const sorted = [...built].sort(compareSettled), keys = sorted.map(settledKey);
-    return new Set(keys).size !== keys.length ? err({ _tag: "claim_events" }) : ok({ eventsHash: keccak256Hex(utf8(JSON.stringify(keys))), events: sorted });
+    const sorted = built.toSorted(compareSettled);
+    const keys = sorted.map(settledKey);
+    if (new Set(keys).size !== keys.length) return err({ _tag: "claim_events" });
+    return ok({ eventsHash: keccak256Hex(utf8(JSON.stringify(keys))), events: sorted });
   });
 };
-const claimFrame = (tx: TxOf<"j_event_claim">): Result<{ readonly version: "xln:account-j-event-claim-frame:v1"; readonly jHeight: number; readonly jBlockHash: string; readonly eventsHash: string; readonly events: readonly SettledEvent[] }, ClaimError> =>
-  chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash, events }) => ({ version: "xln:account-j-event-claim-frame:v1", jHeight: Number(jHeight), jBlockHash, eventsHash, events }))));
+const claimParts = (tx: TxOf<"j_event_claim">) =>
+  all({ jHeight: claimHeight(tx.jHeight), jBlockHash: claimBlock(tx.jBlockHash), evidence: claimEvidence(tx.events) });
+type ClaimFrame = Readonly<{
+  version: "xln:account-j-event-claim-frame:v1"; jHeight: number; jBlockHash: string; eventsHash: string;
+  events: readonly SettledEvent[];
+}>;
+const claimFrame = (tx: TxOf<"j_event_claim">): Result<ClaimFrame, ClaimError> =>
+  map(claimParts(tx), ({ jHeight, jBlockHash, evidence }) => ({
+    version: "xln:account-j-event-claim-frame:v1", jHeight: Number(jHeight), jBlockHash,
+    eventsHash: evidence.eventsHash, events: evidence.events,
+  }));
 const claimRowOf = (tx: TxOf<"j_event_claim">, onLeft: boolean): Result<ClaimRow, ClaimError> =>
-  chain(claimHeight(tx.jHeight), (jHeight) => chain(claimBlock(tx.jBlockHash), (jBlockHash) => map(claimEvidence(tx.events), ({ eventsHash }) => ({ onLeft, jHeight, jBlockHash, eventsHash }))));
-/** og types/account.ts HtlcLock as committed: numeric token/height/timestamp fields, and envelopeHash only when the lock carried an encrypted envelope. */
+  map(claimParts(tx), ({ jHeight, jBlockHash, evidence }) =>
+    ({ onLeft, jHeight, jBlockHash, eventsHash: evidence.eventsHash }));
+/**
+ * og types/account.ts HtlcLock as committed: numeric token/height/timestamp fields, and envelopeHash only when the lock
+ * carried an envelope.
+ */
 const ogLockRow = (l: HtlcLock): Record<string, unknown> => {
   const { envelopeHash, ...rest } = l;
-  return { ...rest, revealBeforeHeight: Number(l.revealBeforeHeight), tokenId: Number(l.tokenId), createdHeight: Number(l.createdHeight), createdTimestamp: Number(l.createdTimestamp), ...(envelopeHash === undefined ? {} : { envelopeHash }) };
+  return {
+    ...rest, revealBeforeHeight: Number(l.revealBeforeHeight), tokenId: Number(l.tokenId),
+    createdHeight: Number(l.createdHeight), createdTimestamp: Number(l.createdTimestamp),
+    ...opt("envelopeHash", envelopeHash),
+  };
 };
-const sameEvidence = (x: ClaimRow, y: ClaimRow): boolean => x.jBlockHash === y.jBlockHash && x.eventsHash === y.eventsHash;
-const pruneThrough = (rows: readonly ClaimRow[], height: bigint): readonly ClaimRow[] | undefined => { const kept = rows.filter((r) => r.jHeight > height); return kept.length === 0 ? undefined : kept; };
-/** og j-events/finality.ts: every AccountSettled names this pair, nonces never regress below jNonce, and each token row takes the chain's collateral/ondelta. */
-const finalizeSettled = (a: AccountBody, events: readonly SettledEvent[], dt?: DeltaTransformerRef): Result<AccountBody, BodyError> => {
-  const left = a.account.id.left.toLowerCase(), right = a.account.id.right.toLowerCase();
-  return chain(foldResult(events, a.jNonce, (prev, e): Result<number, BodyError> =>
-    e.data.leftEntity !== left || e.data.rightEntity !== right ? err({ _tag: "settled_pair" }) : e.data.nonce < prev ? err({ _tag: "settled_nonce" }) : ok(e.data.nonce)), (jNonce) =>
-    chain(foldResult(events, a, (b, e): Result<AccountBody, BodyError> => chain(mapErr(tokenId(String(e.data.tokenId)), (): BodyError => ({ _tag: "index" })), (tk) => {
-      const fresh = !b.account.deltas.has(tk);
-      if (fresh && (e.data.tokenId === 0 || b.account.deltas.size + 1 > MAX_ROWS)) return err(e.data.tokenId === 0 ? { _tag: "index" } : { _tag: "too_many_rows" });
-      const was = getDelta(b.account, tk), now = settle(was, BigInt(e.data.collateral), BigInt(e.data.ondelta)), increase = floor0(now.collateral - was.collateral);
-      const settled = putState(b, setDelta(b.account, now)), requested = b.requested.get(tk) ?? 0n;
-      if (requested <= 0n || increase <= 0n) return ok(settled);
-      // og finality.ts: a collateral increase against a pending request also clears the shadow submission marker.
-      return ok(clearSubmittedAt(requested > increase ? { ...settled, requested: mapSet(settled.requested, tk, requested - increase) } : { ...settled, requested: mapDelete(settled.requested, tk), requestFees: mapDelete(settled.requestFees, tk) }, tk));
-    })), (b) => map(activateWorkspace(b, jNonce, dt), (c) => ({ ...c, jNonce }))));
+const sameEvidence = (x: ClaimRow, y: ClaimRow): boolean =>
+  x.jBlockHash === y.jBlockHash && x.eventsHash === y.eventsHash;
+const pruneThrough = (rows: readonly ClaimRow[], height: bigint): readonly ClaimRow[] | undefined => {
+  const kept = rows.filter((r) => r.jHeight > height);
+  return kept.length === 0 ? undefined : kept;
 };
-type ClaimCursor = { readonly claimRows?: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint };
-type ClaimStep = { readonly claimRows: readonly ClaimRow[] | undefined; readonly finalizedJHeight: bigint; readonly finalizes: boolean };
-/** og j-claim-transition.ts applyAccountJClaimTransition on the pending rows: conflict on either side refuses; stale prunes; the first side waits; the peer's matching record at any pending height finalizes. */
+/** og finality.ts: every AccountSettled names this pair and nonces never regress; the last one becomes jNonce. */
+const settledNonce = (a: AccountBody, events: readonly SettledEvent[]): Result<number, BodyError> => {
+  const left = a.account.id.left.toLowerCase();
+  const right = a.account.id.right.toLowerCase();
+  return foldResult(events, a.jNonce, (prev, e): Result<number, BodyError> => {
+    switch (true) {
+      case e.data.leftEntity !== left || e.data.rightEntity !== right: return err({ _tag: "settled_pair" });
+      case e.data.nonce < prev: return err({ _tag: "settled_nonce" });
+      default: return ok(e.data.nonce);
+    }
+  });
+};
+/**
+ * og finality.ts: collateral arriving against a pending request pays it down (or clears it and its fee state) and
+ * clears the submission marker.
+ */
+const creditRequest = (b: AccountBody, tk: TokenId, increase: bigint): AccountBody => {
+  const requested = b.requested.get(tk) ?? 0n;
+  if (requested <= 0n || increase <= 0n) return b;
+  const paidDown = requested > increase
+    ? { ...b, requested: mapSet(b.requested, tk, requested - increase) }
+    : { ...b, requested: mapDelete(b.requested, tk), requestFees: mapDelete(b.requestFees, tk) };
+  return clearSubmittedAt(paidDown, tk);
+};
+type AccountFold = Result<AccountBody, BodyError>;
+/** One token row takes the chain's collateral and ondelta. */
+const applySettledRow = (b: AccountBody, e: SettledEvent): Result<AccountBody, BodyError> =>
+  chain(mapErr(tokenId(String(e.data.tokenId)), (): BodyError => ({ _tag: "index" })), (tk): AccountFold => {
+    const fresh = !b.account.deltas.has(tk);
+    if (fresh && e.data.tokenId === 0) return err({ _tag: "index" });
+    if (fresh && b.account.deltas.size + 1 > MAX_ROWS) return err({ _tag: "too_many_rows" });
+    const was = getDelta(b.account, tk);
+    const now = settle(was, BigInt(e.data.collateral), BigInt(e.data.ondelta));
+    return ok(creditRequest(putState(b, setDelta(b.account, now)), tk, floor0(now.collateral - was.collateral)));
+  });
+const finalizeSettled = (
+  a: AccountBody, events: readonly SettledEvent[], dt?: DeltaTransformerRef,
+): Result<AccountBody, BodyError> =>
+  chain(settledNonce(a, events), (jNonce) =>
+    chain(foldResult(events, a, applySettledRow), (b) =>
+      map(activateWorkspace(b, jNonce, dt), (c) => ({ ...c, jNonce }))));
+type ClaimCursor = Readonly<{ claimRows?: readonly ClaimRow[] | undefined; finalizedJHeight: bigint }>;
+type ClaimStep = Readonly<{ claimRows: readonly ClaimRow[] | undefined; finalizedJHeight: bigint; finalizes: boolean }>;
+/**
+ * og applyAccountJClaimTransition on the pending rows: a conflict on either side refuses; a stale claim prunes;
+ * the first side waits; the peer's matching record at any pending height finalizes.
+ */
 const claimStep = (c: ClaimCursor, own: ClaimRow): Result<ClaimStep, ClaimError> => {
-  const held = c.claimRows ?? [], peer: ClaimRow = { ...own, onLeft: !own.onLeft };
-  const member = (r: ClaimRow): ClaimRow | undefined => held.find((h) => h.onLeft === r.onLeft && h.jHeight === r.jHeight);
-  const ownHeld = member(own), peerHeld = member(peer);
-  if ((ownHeld !== undefined && !sameEvidence(ownHeld, own)) || (peerHeld !== undefined && !sameEvidence(peerHeld, peer))) return err({ _tag: "claim_conflict" });
-  if (own.jHeight <= c.finalizedJHeight) return ok({ claimRows: pruneThrough(held, c.finalizedJHeight), finalizedJHeight: c.finalizedJHeight, finalizes: false });
-  if (peerHeld === undefined) return ok({ claimRows: ownHeld !== undefined ? c.claimRows : [...held, own], finalizedJHeight: c.finalizedJHeight, finalizes: false });
-  return ok({ claimRows: pruneThrough(held, own.jHeight), finalizedJHeight: own.jHeight, finalizes: true });
+  const held = c.claimRows ?? [];
+  const peer: ClaimRow = { ...own, onLeft: !own.onLeft };
+  const member = (
+    r: ClaimRow,
+  ): ClaimRow | undefined => held.find((h) => h.onLeft === r.onLeft && h.jHeight === r.jHeight);
+  const ownHeld = member(own);
+  const peerHeld = member(peer);
+  const conflicts = (ownHeld !== undefined && !sameEvidence(ownHeld, own))
+    || (peerHeld !== undefined && !sameEvidence(peerHeld, peer));
+  if (conflicts) return err({ _tag: "claim_conflict" });
+  const finalizedJHeight = c.finalizedJHeight;
+  switch (true) {
+    case own.jHeight <= finalizedJHeight:
+      return ok({ claimRows: pruneThrough(held, finalizedJHeight), finalizedJHeight, finalizes: false });
+    case peerHeld === undefined: {
+      const claimRows = ownHeld === undefined ? [...held, own] : c.claimRows;
+      return ok({ claimRows, finalizedJHeight, finalizes: false });
+    }
+    default:
+      return ok({ claimRows: pruneThrough(held, own.jHeight), finalizedJHeight: own.jHeight, finalizes: true });
+  }
 };
 type SettledFinal = Of<Effect, "account_settled_finalized_bilateral">;
-const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep<SettledFinal> => chain(claimRowOf(tx, ctx.byLeft), (own) => chain(claimStep(a, own), (s): BodyStep<SettledFinal> => {
-  if (!s.finalizes) return ok(step<AccountBody, SettledFinal>(s.claimRows === a.claimRows ? a : { ...a, claimRows: s.claimRows }));
-  return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events, ctx.settlement?.deltaTransformer), (b) => {
-    // og claim.ts: the first AccountSettled token (else 1) and its row after finality.
-    const tokenIdNum = Number(events.find((e) => e.type === "AccountSettled")?.data.tokenId ?? 1), row = [...b.account.deltas].find(([k]) => Number(k) === tokenIdNum)?.[1];
-    return step<AccountBody, SettledFinal>({ ...b, claimRows: s.claimRows, finalizedJHeight: s.finalizedJHeight },
-      [{ _tag: "account_settled_finalized_bilateral", tokenId: tokenIdNum, jHeight: Number(tx.jHeight), collateral: row?.collateral ?? 0n, ondelta: row?.ondelta ?? 0n }]);
+/** og claim.ts: the first AccountSettled token (else 1) and its row after finality. */
+const settledFinal = (b: AccountBody, events: readonly SettledEvent[], jHeight: bigint): SettledFinal => {
+  const firstToken = Number(events.find((e) => e.type === "AccountSettled")?.data.tokenId ?? 1);
+  const row = [...b.account.deltas].find(([k]) => Number(k) === firstToken)?.[1];
+  return {
+    _tag: "account_settled_finalized_bilateral", tokenId: firstToken, jHeight: Number(jHeight),
+    collateral: row?.collateral ?? 0n, ondelta: row?.ondelta ?? 0n,
+  };
+};
+const claimJ = (a: AccountBody, tx: TxOf<"j_event_claim">, ctx: FoldCtx): BodyStep<SettledFinal> =>
+  chain(claimRowOf(tx, ctx.byLeft), (own) => chain(claimStep(a, own), (s): BodyStep<SettledFinal> => {
+    if (!s.finalizes) {
+      return ok(step<AccountBody, SettledFinal>(s.claimRows === a.claimRows ? a : { ...a, claimRows: s.claimRows }));
+    }
+    const dt = ctx.settlement?.deltaTransformer;
+    return chain(claimEvidence(tx.events), ({ events }) => map(finalizeSettled(a, events, dt), (b) =>
+      step<AccountBody, SettledFinal>(
+        { ...b, claimRows: s.claimRows, finalizedJHeight: s.finalizedJHeight },
+        [settledFinal(b, events, tx.jHeight)],
+      )));
   }));
-}));
+
+// ---- settlement workspace: og protocol/settlement/operations.ts, account/settlement/transition.ts ----
+// Both sides draft one cooperative settlement: a list of ops compiled into per-token diffs. Once either side signs,
+// the Account freezes until the settlement lands. Signing binds the settlement hash at a nonce and the dispute proof
+// at the next nonce, so if the settlement never lands the post-settlement state can still be disputed.
 const settleErr = (reason: string): Result<never, BodyError> => err({ _tag: "settlement", reason });
-const settlementToken = (t: unknown): t is number => typeof t === "number" && Number.isSafeInteger(t) && t >= 0 && t <= 65_535;
+const settlementToken = (t: unknown): t is number =>
+  typeof t === "number" && Number.isSafeInteger(t) && t >= 0 && t <= 65_535;
 const MAX_SETTLEMENT_DIFFS = 32;
-type MutableDiff = { -readonly [K in keyof WorkspaceDiff]: WorkspaceDiff[K] };
-/** og protocol/settlement/operations.ts compileOps: ops merge per token in first-seen order; every diff conserves and fits SignedAmount. */
-export const compileOps = (ops: readonly SettlementOp[], proposerIsLeft: boolean): Result<{ readonly diffs: readonly WorkspaceDiff[]; readonly forgive: readonly number[] }, BodyError> => {
-  const diffs = new Map<number, MutableDiff>(), forgive: number[] = [];
-  for (const op of ops) {
-    if (!settlementToken(op.tokenId)) return settleErr("SETTLEMENT_TOKEN_INVALID");
-    if (op.type === "forgive") { if (forgive.includes(op.tokenId)) return settleErr("SETTLEMENT_DUPLICATE_FORGIVENESS_TOKEN"); forgive.push(op.tokenId); continue; }
-    if (!["rawDiff", "r2c", "c2r", "r2r"].includes(op.type)) return settleErr("SETTLEMENT_UNKNOWN_OP_TYPE");
-    const d = diffs.get(op.tokenId) ?? { tokenId: op.tokenId, leftDiff: 0n, rightDiff: 0n, collateralDiff: 0n, ondeltaDiff: 0n };
-    diffs.set(op.tokenId, d);
-    if (op.type === "rawDiff") { d.leftDiff += op.leftDiff; d.rightDiff += op.rightDiff; d.collateralDiff += op.collateralDiff; d.ondeltaDiff += op.ondeltaDiff; continue; }
-    const n = op.amount;
-    if (op.type === "r2c") { if (proposerIsLeft) { d.leftDiff -= n; d.collateralDiff += n; d.ondeltaDiff += n; } else { d.rightDiff -= n; d.collateralDiff += n; } }
-    else if (op.type === "c2r") { d.collateralDiff -= n; if (proposerIsLeft) { d.leftDiff += n; d.ondeltaDiff -= n; } else d.rightDiff += n; }
-    else if (proposerIsLeft) { d.leftDiff -= n; d.rightDiff += n; } else { d.rightDiff -= n; d.leftDiff += n; }
+type DiffParts = Omit<WorkspaceDiff, "tokenId">;
+type AmountOp = Extract<SettlementOp, { readonly amount: bigint }>;
+const noDiff: DiffParts = { leftDiff: 0n, rightDiff: 0n, collateralDiff: 0n, ondeltaDiff: 0n };
+/**
+ * What one amount op moves, seen from the proposer: r2c moves its reserve into collateral, c2r back out, r2r pays
+ * the other side. Only the left side's collateral moves also shift ondelta.
+ */
+const amountOpDiff = (op: AmountOp, proposerIsLeft: boolean): DiffParts => {
+  const n = op.amount;
+  switch (op.type) {
+    case "r2c": return proposerIsLeft
+      ? { ...noDiff, leftDiff: -n, collateralDiff: n, ondeltaDiff: n }
+      : { ...noDiff, rightDiff: -n, collateralDiff: n };
+    case "c2r": return proposerIsLeft
+      ? { ...noDiff, leftDiff: n, collateralDiff: -n, ondeltaDiff: -n }
+      : { ...noDiff, rightDiff: n, collateralDiff: -n };
+    case "r2r": return proposerIsLeft
+      ? { ...noDiff, leftDiff: -n, rightDiff: n }
+      : { ...noDiff, leftDiff: n, rightDiff: -n };
   }
-  const out = [...diffs.values()];
-  const wide = (v: bigint): boolean => v < -MAX_PAYMENT_AMOUNT || v > MAX_PAYMENT_AMOUNT;
-  if (out.some((d) => wide(d.leftDiff) || wide(d.rightDiff) || wide(d.collateralDiff) || wide(d.ondeltaDiff))) return settleErr("SETTLEMENT_SIGNED_AMOUNT_RANGE");
-  if (out.some((d) => d.leftDiff + d.rightDiff + d.collateralDiff !== 0n)) return settleErr("SETTLEMENT_INVARIANT_VIOLATION");
-  if (out.length > MAX_SETTLEMENT_DIFFS) return settleErr("SETTLEMENT_DIFF_LIMIT_EXCEEDED");
-  return forgive.length > MAX_SETTLEMENT_DIFFS ? settleErr("SETTLEMENT_FORGIVENESS_LIMIT_EXCEEDED") : ok({ diffs: out, forgive });
+};
+const addDiff = (d: WorkspaceDiff, x: DiffParts): WorkspaceDiff => ({
+  tokenId: d.tokenId, leftDiff: d.leftDiff + x.leftDiff, rightDiff: d.rightDiff + x.rightDiff,
+  collateralDiff: d.collateralDiff + x.collateralDiff, ondeltaDiff: d.ondeltaDiff + x.ondeltaDiff,
+});
+type Compiled = Readonly<{ diffs: readonly WorkspaceDiff[]; forgive: readonly number[] }>;
+type Compiling = Readonly<{ diffs: ReadonlyMap<number, WorkspaceDiff>; forgive: readonly number[] }>;
+const compileOp = (proposerIsLeft: boolean) => (c: Compiling, op: SettlementOp): Result<Compiling, BodyError> => {
+  if (!settlementToken(op.tokenId)) return settleErr("SETTLEMENT_TOKEN_INVALID");
+  const merged = (x: DiffParts): Compiling => {
+    const d = c.diffs.get(op.tokenId) ?? { tokenId: op.tokenId, ...noDiff };
+    return { ...c, diffs: mapSet(c.diffs, op.tokenId, addDiff(d, x)) };
+  };
+  switch (op.type) {
+    case "forgive":
+      if (c.forgive.includes(op.tokenId)) return settleErr("SETTLEMENT_DUPLICATE_FORGIVENESS_TOKEN");
+      return ok({ ...c, forgive: [...c.forgive, op.tokenId] });
+    case "rawDiff": return ok(merged(op));
+    case "r2c": case "c2r": case "r2r": return ok(merged(amountOpDiff(op, proposerIsLeft)));
+    default: return settleErr("SETTLEMENT_UNKNOWN_OP_TYPE");
+  }
+};
+/** og compileOps: ops merge per token in first-seen order; every diff conserves value and fits SignedAmount. */
+export const compileOps = (ops: readonly SettlementOp[], proposerIsLeft: boolean): Result<Compiled, BodyError> => {
+  const start: Compiling = { diffs: new Map(), forgive: [] };
+  return chain(foldResult(ops, start, compileOp(proposerIsLeft)), (c) => {
+    const diffs = [...c.diffs.values()];
+    const wide = (v: bigint): boolean => v < -MAX_PAYMENT_AMOUNT || v > MAX_PAYMENT_AMOUNT;
+    const anyWide = diffs.some((d) =>
+      wide(d.leftDiff) || wide(d.rightDiff) || wide(d.collateralDiff) || wide(d.ondeltaDiff));
+    if (anyWide) return settleErr("SETTLEMENT_SIGNED_AMOUNT_RANGE");
+    if (diffs.some((d) => d.leftDiff + d.rightDiff + d.collateralDiff !== 0n)) {
+      return settleErr("SETTLEMENT_INVARIANT_VIOLATION");
+    }
+    if (diffs.length > MAX_SETTLEMENT_DIFFS) return settleErr("SETTLEMENT_DIFF_LIMIT_EXCEEDED");
+    if (c.forgive.length > MAX_SETTLEMENT_DIFFS) return settleErr("SETTLEMENT_FORGIVENESS_LIMIT_EXCEEDED");
+    return ok({ diffs, forgive: c.forgive });
+  });
+};
+const opShapeIssue = (op: SettlementOp): string | undefined => {
+  if (!settlementToken(op.tokenId)) return "SETTLEMENT_TOKEN_INVALID";
+  switch (op.type) {
+    case "r2c": case "c2r": case "r2r":
+      return typeof op.amount !== "bigint" || op.amount <= 0n ? "SETTLEMENT_WORKSPACE_AMOUNT_INVALID" : undefined;
+    case "rawDiff": {
+      const parts = [op.leftDiff, op.rightDiff, op.collateralDiff, op.ondeltaDiff];
+      return parts.some((v) => typeof v !== "bigint") ? "SETTLEMENT_WORKSPACE_RAW_DIFF_INVALID" : undefined;
+    }
+    case "forgive": return undefined;
+    default: return "SETTLEMENT_WORKSPACE_OP_INVALID";
+  }
 };
 const checkOps = (ops: readonly SettlementOp[]): Result<void, BodyError> => {
   if (!Array.isArray(ops) || ops.length === 0) return settleErr("SETTLEMENT_WORKSPACE_OPS_EMPTY");
-  for (const op of ops) {
-    if (!settlementToken(op.tokenId)) return settleErr("SETTLEMENT_TOKEN_INVALID");
-    if (op.type === "r2c" || op.type === "c2r" || op.type === "r2r") { if (typeof op.amount !== "bigint" || op.amount <= 0n) return settleErr("SETTLEMENT_WORKSPACE_AMOUNT_INVALID"); continue; }
-    if (op.type === "rawDiff") { if ([op.leftDiff, op.rightDiff, op.collateralDiff, op.ondeltaDiff].some((v) => typeof v !== "bigint")) return settleErr("SETTLEMENT_WORKSPACE_RAW_DIFF_INVALID"); continue; }
-    if (op.type !== "forgive") return settleErr("SETTLEMENT_WORKSPACE_OP_INVALID");
-  }
-  return ok(undefined);
+  const issue = ops.map(opShapeIssue).find((x) => x !== undefined);
+  return issue === undefined ? ok(undefined) : settleErr(issue);
 };
 const WORKSPACE_LEAF_KEY = keccak256(utf8("xln.settlement.workspace.body"));
-/** og transition.ts createSettlementWorkspaceHash: the one-leaf keccak radix root of the canonical body under `xln.settlement.workspace.body`. */
-export const workspaceHashOf = (id: AccountId, w: Pick<SettlementWorkspace, "revision" | "ops" | "lastModifiedByLeft" | "executorIsLeft" | "memo">): Result<string, BodyError> => map(
-  mapErr(encodeCanonicalValue({ domain: "xln:settlement-workspace:v1", leftEntity: id.left.toLowerCase(), rightEntity: id.right.toLowerCase(), revision: w.revision, ops: w.ops, lastModifiedByLeft: w.lastModifiedByLeft, executorIsLeft: w.executorIsLeft, memo: w.memo }), (): BodyError => ({ _tag: "settlement", reason: "SETTLEMENT_WORKSPACE_ENCODING" })),
-  (enc) => keccak256Hex(concat([LEAF, WORKSPACE_LEAF_KEY, enc])));
+type WorkspaceBody = Pick<SettlementWorkspace, "revision" | "ops" | "lastModifiedByLeft" | "executorIsLeft" | "memo">;
+/**
+ * og createSettlementWorkspaceHash: the one-leaf keccak radix root of the canonical body under
+ * `xln.settlement.workspace.body`.
+ */
+export const workspaceHashOf = (id: AccountId, w: WorkspaceBody): Result<string, BodyError> => {
+  const body = encodeCanonicalValue({
+    domain: "xln:settlement-workspace:v1", leftEntity: id.left.toLowerCase(), rightEntity: id.right.toLowerCase(),
+    revision: w.revision, ops: w.ops, lastModifiedByLeft: w.lastModifiedByLeft, executorIsLeft: w.executorIsLeft,
+    memo: w.memo,
+  });
+  const encoded = mapErr(body, (): BodyError => ({ _tag: "settlement", reason: "SETTLEMENT_WORKSPACE_ENCODING" }));
+  return map(encoded, (enc) => keccak256Hex(concat([LEAF, WORKSPACE_LEAF_KEY, enc])));
+};
 /** og witness-projection.ts: the committed workspace keeps every decision and target, never the Hanko bytes. */
 export const workspaceWithoutHankos = (w: SettlementWorkspace | undefined): unknown => {
   if (w === undefined) return undefined;
@@ -5503,199 +5835,422 @@ export const workspaceWithoutHankos = (w: SettlementWorkspace | undefined): unkn
   const { leftHanko: _pl, rightHanko: _pr, ...postRest } = post;
   return { ...rest, postSettlementDisputeProof: postRest };
 };
-const signedWorkspace = (w: SettlementWorkspace): boolean => w.settlementHash !== undefined || w.leftHanko !== undefined || w.rightHanko !== undefined || w.postSettlementDisputeProof !== undefined;
-const workspaceDiffs = (w: SettlementWorkspace): readonly WorkspaceDiff[] => unwrapOr(map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs), () => []);
-/** og transition.ts:640 getSignedSettlementWorkspaceTxError: a signed workspace freezes the Account except j claims and settlement hanko/submit. */
+const signedWorkspace = (w: SettlementWorkspace): boolean =>
+  w.settlementHash !== undefined || w.leftHanko !== undefined || w.rightHanko !== undefined
+  || w.postSettlementDisputeProof !== undefined;
+const workspaceDiffs = (w: SettlementWorkspace): readonly WorkspaceDiff[] =>
+  unwrapOr(map(compileOps(w.ops, w.lastModifiedByLeft), (c) => c.diffs), () => []);
+/**
+ * og getSignedSettlementWorkspaceTxError: a signed workspace freezes the Account except J claims and settlement
+ * hanko/submit.
+ */
 const settlementFreeze = (a: AccountBody, tx: WireAccountTx): Result<void, BodyError> => {
   const w = a.settlement;
-  if (w === undefined || !signedWorkspace(w) || tx.type === "j_event_claim" || (tx.type === "settle_transition" && (tx.kind === "hanko" || tx.kind === "submit"))) return ok(undefined);
+  const finishesSettlement = tx.type === "settle_transition" && (tx.kind === "hanko" || tx.kind === "submit");
+  if (w === undefined || !signedWorkspace(w) || tx.type === "j_event_claim" || finishesSettlement) return ok(undefined);
   return err({ _tag: "settlement_frozen" });
 };
-/** og planWorkspaceHoldAdd: a negative side diff is a hold on an existing row, checked against capacity unless it funds collateral from reserve. */
-const workspaceRoom = (a: AccountBody, diffs: readonly WorkspaceDiff[]): Result<void, BodyError> => foldResult(diffs, undefined as void, (_, diff): Result<void, BodyError> => {
-  if (diff.leftDiff >= 0n && diff.rightDiff >= 0n) return ok(undefined);
-  const tk = String(diff.tokenId) as TokenId, d = a.account.deltas.get(tk);
-  if (d === undefined) return settleErr("SETTLEMENT_HOLD_DELTA_MISSING");
-  const t = sideTotals(a, tk);
-  return chain(chargeSettlement(d, diff, { left: holds(a, tk, true), right: holds(a, tk, false) }), (plan) =>
-    t.leftHold + plan.left > MAX_PAYMENT_AMOUNT || t.rightHold + plan.right > MAX_PAYMENT_AMOUNT ? settleErr("HOLD_ADD_OVERFLOW") : ok(undefined));
-});
-const WORKSPACE_HASH = /^0x[0-9a-fA-F]{64}$/;
+/**
+ * og planWorkspaceHoldAdd: a negative side diff holds on an existing row, checked against capacity unless it funds
+ * collateral.
+ */
+const workspaceRoom = (a: AccountBody, diffs: readonly WorkspaceDiff[]): Result<void, BodyError> =>
+  foldResult(diffs, undefined as void, (_, diff): Result<void, BodyError> => {
+    if (diff.leftDiff >= 0n && diff.rightDiff >= 0n) return ok(undefined);
+    const tk = String(diff.tokenId) as TokenId;
+    const d = a.account.deltas.get(tk);
+    if (d === undefined) return settleErr("SETTLEMENT_HOLD_DELTA_MISSING");
+    const t = sideTotals(a, tk);
+    const held = { left: holds(a, tk, true), right: holds(a, tk, false) };
+    return chain(chargeSettlement(d, diff, held), (plan) => {
+      const overflows = t.leftHold + plan.left > MAX_PAYMENT_AMOUNT || t.rightHold + plan.right > MAX_PAYMENT_AMOUNT;
+      return overflows ? settleErr("HOLD_ADD_OVERFLOW") : ok(undefined);
+    });
+  });
+const WORKSPACE_HASH = WORD;
 const currentWorkspace = (a: AccountBody, revision: number, hash: string): Result<SettlementWorkspace, BodyError> => {
   if (!Number.isSafeInteger(revision) || revision < 1) return settleErr("SETTLEMENT_WORKSPACE_VERSION_INVALID");
   const w = a.settlement;
   if (w === undefined) return settleErr("SETTLEMENT_WORKSPACE_MISSING");
-  if (typeof hash !== "string" || !WORKSPACE_HASH.test(hash)) return settleErr("SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID");
+  if (typeof hash !== "string" || !WORKSPACE_HASH.test(hash)) {
+    return settleErr("SETTLEMENT_WORKSPACE_TARGET_HASH_INVALID");
+  }
   if (w.revision !== revision) return settleErr("SETTLEMENT_WORKSPACE_VERSION_MISMATCH");
-  return w.workspaceHash.toLowerCase() !== hash.toLowerCase() ? settleErr("SETTLEMENT_WORKSPACE_TARGET_HASH_MISMATCH") : ok(w);
+  return sameHex(w.workspaceHash, hash) ? ok(w) : settleErr("SETTLEMENT_WORKSPACE_TARGET_HASH_MISMATCH");
 };
-const upsertWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_transition"; kind: "upsert" }>, ctx: FoldCtx): BodyStep => {
+type UpsertTx = Extract<SettleTransitionTx, { readonly kind: "upsert" }>;
+type HankoTx = Extract<SettleTransitionTx, { readonly kind: "hanko" }>;
+/** Revision 1 starts a workspace; each later revision links to the current unsigned one by its hash. */
+const workspaceLink = (cur: SettlementWorkspace | undefined, x: UpsertTx): Result<void, BodyError> => {
+  const prev = x.previousWorkspaceHash;
+  if (x.revision === 1) {
+    if (cur !== undefined) return settleErr("SETTLEMENT_WORKSPACE_ALREADY_EXISTS");
+    return prev === undefined ? ok(undefined) : settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_UNEXPECTED");
+  }
+  if (cur === undefined) return settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_MISSING");
+  if (cur.leftHanko !== undefined || cur.rightHanko !== undefined) {
+    return settleErr("SETTLEMENT_WORKSPACE_SIGNED_UPDATE_FORBIDDEN");
+  }
+  if (cur.revision + 1 !== x.revision) return settleErr("SETTLEMENT_WORKSPACE_NON_CONTIGUOUS_VERSION");
+  if (prev === undefined || !WORKSPACE_HASH.test(prev)) return settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_INVALID");
+  return sameHex(cur.workspaceHash, prev) ? ok(undefined) : settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_MISMATCH");
+};
+const upsertWorkspace = (a: AccountBody, x: UpsertTx, ctx: FoldCtx): BodyStep => {
   if (!Number.isSafeInteger(x.revision) || x.revision < 1) return settleErr("SETTLEMENT_WORKSPACE_VERSION_INVALID");
-  return chain(checkOps(x.ops), () => typeof x.executorIsLeft !== "boolean" ? settleErr("SETTLEMENT_WORKSPACE_EXECUTOR_INVALID") : chain(compileOps(x.ops, ctx.byLeft), ({ diffs }) => {
-    const cur = a.settlement, prev = x.previousWorkspaceHash;
-    const linked: Result<void, BodyError> = x.revision === 1
-      ? (cur !== undefined ? settleErr("SETTLEMENT_WORKSPACE_ALREADY_EXISTS") : prev !== undefined ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_UNEXPECTED") : ok(undefined))
-      : cur === undefined ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_MISSING")
-      : cur.leftHanko !== undefined || cur.rightHanko !== undefined ? settleErr("SETTLEMENT_WORKSPACE_SIGNED_UPDATE_FORBIDDEN")
-      : cur.revision + 1 !== x.revision ? settleErr("SETTLEMENT_WORKSPACE_NON_CONTIGUOUS_VERSION")
-      : prev === undefined || !WORKSPACE_HASH.test(prev) ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_INVALID")
-      : cur.workspaceHash.toLowerCase() !== prev.toLowerCase() ? settleErr("SETTLEMENT_WORKSPACE_PREVIOUS_HASH_MISMATCH") : ok(undefined);
-    const now = Number(ctx.nowMs);
-    const body = { ops: x.ops.map((op) => ({ ...op })), lastModifiedByLeft: ctx.byLeft, status: "awaiting_counterparty" as const, memo: x.memo, revision: x.revision, createdAt: cur?.createdAt ?? now, lastUpdatedAt: now, executorIsLeft: x.executorIsLeft };
-    return chain(linked, () => chain(workspaceHashOf(a.account.id, body), (workspaceHash) => map(workspaceRoom({ ...a, settlement: undefined }, diffs), () => step({ ...a, settlement: { workspaceHash, ...body } }))));
-  }));
-};
-/** og settlement-projection.ts: the post-settlement rows the dispute proof at nonce N+1 commits to. */
-const projectedProofHash = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[], dt?: DeltaTransformerRef): Result<string, BodyError> =>
-  chain(mapErr(committedView(a), uncommitted), (view) => {
-    const rows = new Map(view.deltas);
-    const row = (tokenId: number): Result<CommittedDelta, BodyError> => {
-      const held = rows.get(tokenId);
-      if (held !== undefined) return ok(held);
-      if (tokenId === 0) return settleErr("TOKEN_ID_INVALID");
-      if (rows.size + 1 > MAX_ROWS) return settleErr("ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED");
-      const fresh: CommittedDelta = { tokenId, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n, leftAllowance: 0n, rightAllowance: 0n, leftHold: 0n, rightHold: 0n };
-      rows.set(tokenId, fresh);
-      return ok(fresh);
-    };
-    return chain(foldResult(diffs, undefined as void, (_, diff) => chain(row(diff.tokenId), (d): Result<void, BodyError> => {
-      const collateral = d.collateral + diff.collateralDiff, ondelta = d.ondelta + diff.ondeltaDiff;
-      if (collateral < 0n || collateral > MAX_PAYMENT_AMOUNT) return settleErr("SETTLEMENT_PROJECTED_COLLATERAL_RANGE");
-      if (ondelta < INT512_MIN || ondelta > INT512_MAX) return settleErr("SETTLEMENT_PROJECTED_ONDELTA_RANGE");
-      rows.set(diff.tokenId, { ...d, collateral, ondelta });
-      return ok(undefined);
-    })), () => chain(traverse(forgive, row), () => map(mapErr(accountProofBody({ ...view, deltas: rows }, dt), (e): BodyError => ({ _tag: "settlement", reason: e._tag === "transformer" ? e.code : e._tag })), proofBodyHash)));
+  return chain(checkOps(x.ops), () => {
+    if (typeof x.executorIsLeft !== "boolean") return settleErr("SETTLEMENT_WORKSPACE_EXECUTOR_INVALID");
+    return chain(compileOps(x.ops, ctx.byLeft), ({ diffs }) => {
+      const cur = a.settlement;
+      const now = Number(ctx.nowMs);
+      const body = {
+        ops: x.ops.map((op) => ({ ...op })), lastModifiedByLeft: ctx.byLeft, status: "awaiting_counterparty" as const,
+        memo: x.memo, revision: x.revision, createdAt: cur?.createdAt ?? now, lastUpdatedAt: now,
+        executorIsLeft: x.executorIsLeft,
+      };
+      return chain(workspaceLink(cur, x), () => chain(workspaceHashOf(a.account.id, body), (workspaceHash) =>
+        map(workspaceRoom({ ...a, settlement: undefined }, diffs), () =>
+          step({ ...a, settlement: { workspaceHash, ...body } }))));
+    });
   });
-const settlementHashOf = (a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[], nonce: number): Result<string, BodyError> => {
-  const { domain } = a.terms, { left, right } = a.account.id;
-  if (/^0x0{40}$/i.test(domain.depositoryAddress) || !WORD.test(left) || !WORD.test(right)) return settleErr("SETTLEMENT_HASH_DOMAIN");
-  const text = (v: bigint): string => v.toString();
-  try {
-    return ok(encodeCooperativeUpdateHash({ messageType: 0, chainId: domain.chainId, contractAddress: domain.depositoryAddress, accountKey: joinHex([left, right]), nonce: String(nonce),
-      diffs: diffs.map((d) => ({ tokenId: String(d.tokenId), leftDiff: text(d.leftDiff), rightDiff: text(d.rightDiff), collateralDiff: text(d.collateralDiff), ondeltaDiff: text(d.ondeltaDiff) })), forgiveDebtsInTokenIds: forgive.map(String) }));
-  } catch { return settleErr("SETTLEMENT_HASH_ENCODING"); }
 };
-const exactHanko = (h: string | undefined): h is string => typeof h === "string" && h !== "0x" && /^0x(?:[0-9a-fA-F]{2})*$/.test(h);
-/** og transition.ts prepare/verify/commitSettlementHanko: exact workspace, exact nonce, recomputed targets, both authorities, then one write. */
-const hankoWorkspace = (a: AccountBody, x: Extract<AccountTx, { type: "settle_transition"; kind: "hanko" }>, ctx: FoldCtx): BodyStep => {
+type ProjectedRows = ReadonlyMap<number, CommittedDelta>;
+const zeroCommittedDelta = (tokenId: number): CommittedDelta => ({
+  tokenId, collateral: 0n, ondelta: 0n, offdelta: 0n, leftCreditLimit: 0n, rightCreditLimit: 0n,
+  leftAllowance: 0n, rightAllowance: 0n, leftHold: 0n, rightHold: 0n,
+});
+/** The rows with this token present: a missing one is added as a zero row, within the row limit. */
+const withRow = (rows: ProjectedRows, tokenId: number): Result<ProjectedRows, BodyError> => {
+  if (rows.has(tokenId)) return ok(rows);
+  if (tokenId === 0) return settleErr("TOKEN_ID_INVALID");
+  if (rows.size + 1 > MAX_ROWS) return settleErr("ACCOUNT_DELTA_ROW_LIMIT_EXCEEDED");
+  return ok(mapSet(rows, tokenId, zeroCommittedDelta(tokenId)));
+};
+const applyDiffRow = (rows: ProjectedRows, diff: WorkspaceDiff): Result<ProjectedRows, BodyError> =>
+  chain(withRow(rows, diff.tokenId), (rows) => {
+    const d = rows.get(diff.tokenId) ?? zeroCommittedDelta(diff.tokenId);
+    const collateral = d.collateral + diff.collateralDiff;
+    const ondelta = d.ondelta + diff.ondeltaDiff;
+    if (collateral < 0n || collateral > MAX_PAYMENT_AMOUNT) return settleErr("SETTLEMENT_PROJECTED_COLLATERAL_RANGE");
+    if (ondelta < INT512_MIN || ondelta > INT512_MAX) return settleErr("SETTLEMENT_PROJECTED_ONDELTA_RANGE");
+    return ok(mapSet(rows, diff.tokenId, { ...d, collateral, ondelta }));
+  });
+const settlementReason = (reason: string): BodyError => ({ _tag: "settlement", reason });
+const proofError = (e: ProofError): BodyError => settlementReason(e._tag === "transformer" ? e.code : e._tag);
+/** og settlement-projection.ts: the post-settlement rows the dispute proof at nonce N+1 commits to. */
+const projectedProofHash = (
+  a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[], dt?: DeltaTransformerRef,
+): Result<string, BodyError> =>
+  chain(mapErr(committedView(a), uncommitted), (view) => {
+    const settled = foldResult(diffs, view.deltas as ProjectedRows, applyDiffRow);
+    const projected = chain(settled, (rows) => foldResult(forgive, rows, withRow));
+    return chain(projected, (deltas) =>
+      map(mapErr(accountProofBody({ ...view, deltas }, dt), proofError), proofBodyHash));
+  });
+const postDisputeHash = (
+  a: AccountBody, bodyHash: string, nonce: number, proposerIsLeft: boolean,
+): Result<string, BodyError> =>
+  chain(mapErr(committedView(a), uncommitted), (view) =>
+    mapErr(accountDisputeHash(view, bodyHash, nonce, proposerIsLeft), (e) => settlementReason(e._tag)));
+const settlementHashOf = (
+  a: AccountBody, diffs: readonly WorkspaceDiff[], forgive: readonly number[], nonce: number,
+): Result<string, BodyError> => {
+  const { domain } = a.terms;
+  const { left, right } = a.account.id;
+  if (/^0x0{40}$/i.test(domain.depositoryAddress) || !WORD.test(left) || !WORD.test(right)) {
+    return settleErr("SETTLEMENT_HASH_DOMAIN");
+  }
+  const diffText = (d: WorkspaceDiff) => ({
+    tokenId: String(d.tokenId), leftDiff: d.leftDiff.toString(), rightDiff: d.rightDiff.toString(),
+    collateralDiff: d.collateralDiff.toString(), ondeltaDiff: d.ondeltaDiff.toString(),
+  });
+  try {
+    return ok(encodeCooperativeUpdateHash({
+      messageType: 0, chainId: domain.chainId, contractAddress: domain.depositoryAddress,
+      accountKey: joinHex([left, right]), nonce: String(nonce),
+      diffs: diffs.map(diffText), forgiveDebtsInTokenIds: forgive.map(String),
+    }));
+  } catch {
+    return settleErr("SETTLEMENT_HASH_ENCODING");
+  }
+};
+const exactHanko = (
+  h: string | undefined,
+): h is string => typeof h === "string" && h !== "0x" && /^0x(?:[0-9a-fA-F]{2})*$/.test(h);
+
+// ---- signing: og prepare/verify/commitSettlementHanko ----
+/** The signing nonce: pinned at first signature, else the account's minimum safe nonce. */
+const hankoNonce = (
+  a: AccountBody, w: SettlementWorkspace, auth: SettlementCtx, nonce: number,
+): Result<void, BodyError> => {
+  if (!Number.isSafeInteger(nonce) || nonce < 1) return settleErr("SETTLEMENT_HANKO_NONCE_INVALID");
+  const floor = Math.max(a.jNonce + 1, auth.proofNonceFloor);
+  if (floor >= Number.MAX_SAFE_INTEGER) return settleErr("SETTLEMENT_NONCE_EXHAUSTED");
+  const required = w.nonceAtSign ?? floor;
+  if (nonce === required) return ok(undefined);
+  const basis = w.nonceAtSign === undefined ? "account" : "workspace";
+  const mismatch = { supplied: nonce, required, basis } as const;
+  return err({ _tag: "settlement", reason: "SETTLEMENT_HANKO_NONCE_MISMATCH", nonce: mismatch });
+};
+/** The settlement hash recomputed at the nonce must equal the one signed and any one already pinned. */
+const agreedSettlementHash = (
+  a: AccountBody, w: SettlementWorkspace, claimed: string, c: Compiled, nonce: number,
+): Result<string, BodyError> =>
+  chain(settlementHashOf(a, c.diffs, c.forgive, nonce), (settlementHash) => {
+    if (typeof claimed !== "string" || !WORKSPACE_HASH.test(claimed)) return settleErr("SETTLEMENT_HANKO_HASH_INVALID");
+    if (!sameHex(claimed, settlementHash)) return settleErr("SETTLEMENT_HANKO_HASH_MISMATCH");
+    if (w.settlementHash !== undefined && !sameHex(w.settlementHash, settlementHash)) {
+      return settleErr("SETTLEMENT_HANKO_PINNED_HASH_MISMATCH");
+    }
+    return ok(settlementHash);
+  });
+type PostTargets = Readonly<{ bodyHash: string; disputeHash: string }>;
+/** The N+1 dispute proof: nonce, body hash and dispute hash recomputed, each equal to the claim and to any pin. */
+const agreedPostProof = (
+  a: AccountBody, w: SettlementWorkspace, post: PostProofClaim, nonce: number, c: Compiled,
+  dt: DeltaTransformerRef | undefined,
+): Result<PostTargets, BodyError> => {
+  if (!Number.isSafeInteger(post.nonce) || post.nonce < 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_INVALID");
+  if (post.nonce !== nonce + 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_MISMATCH");
+  return chain(projectedProofHash(a, c.diffs, c.forgive, dt), (bodyHash) => {
+    if (!sameHex(post.proofBodyHash, bodyHash)) return settleErr("POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH");
+    return chain(postDisputeHash(a, bodyHash, post.nonce, post.proposerIsLeft), (disputeHash) => {
+      if (!sameHex(post.disputeHash, disputeHash)) return settleErr("POST_SETTLEMENT_DISPUTE_HASH_MISMATCH");
+      const pin = w.postSettlementDisputeProof;
+      const pinAgrees = pin === undefined || (pin.nonce === post.nonce && sameHex(pin.proofBodyHash, bodyHash)
+        && sameHex(pin.disputeHash, disputeHash) && pin.proposerIsLeft === post.proposerIsLeft);
+      return pinAgrees ? ok({ bodyHash, disputeHash }) : settleErr("POST_SETTLEMENT_PROOF_PIN_MISMATCH");
+    });
+  });
+};
+/**
+ * og verifySettlementHankoHankos: the board authority resolves before any Hanko is read. The post-settlement proof
+ * admits the previous board's grace (Account.sol:1063); the cooperative settlement Hanko is current-board only
+ * (Account.sol:894), and only the non-executor gives one. A side may not sign twice with different bytes.
+ */
+const verifiedHankos = (
+  a: AccountBody, w: SettlementWorkspace, x: HankoTx, auth: SettlementCtx, byLeft: boolean,
+  hashes: Readonly<{ settlement: string; dispute: string }>,
+): Result<void, BodyError> => {
+  const source = (byLeft ? a.account.id.left : a.account.id.right) as EntityId;
+  const resolved = auth.registeredBoardHash
+    ? ok(auth.registeredBoardHash)
+    : auth.boardAuthority?.(source) ?? ok(undefined);
+  if (!resolved.ok) return settleErr(resolved.error);
+  const board = opt("registeredBoardHash", resolved.value);
+  const postHanko = x.postProof.hanko;
+  if (!exactHanko(postHanko)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
+  if (!auth.verify(hashes.dispute, postHanko, source, { ...board, allowPreviousBoard: true })) {
+    return settleErr("POST_SETTLEMENT_PROOF_HANKO_INVALID");
+  }
+  const executor = w.executorIsLeft === byLeft;
+  const settlementHanko = x.settlementHanko;
+  if (executor && settlementHanko !== undefined) return settleErr("SETTLEMENT_EXECUTOR_HANKO_FORBIDDEN");
+  if (!executor && !exactHanko(settlementHanko)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_MISSING");
+  const settlementValid = settlementHanko === undefined
+    || auth.verify(hashes.settlement, settlementHanko, source, { ...board, allowPreviousBoard: false });
+  if (!executor && !settlementValid) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
+  const pinnedOwn = byLeft ? w.postSettlementDisputeProof?.leftHanko : w.postSettlementDisputeProof?.rightHanko;
+  const ownSettlement = byLeft ? w.leftHanko : w.rightHanko;
+  if (pinnedOwn !== undefined && !sameHex(pinnedOwn, postHanko)) return settleErr("POST_SETTLEMENT_PROOF_EQUIVOCATION");
+  if (settlementHanko !== undefined && ownSettlement !== undefined && !sameHex(ownSettlement, settlementHanko)) {
+    return settleErr("SETTLEMENT_HANKO_EQUIVOCATION");
+  }
+  return ok(undefined);
+};
+type SignedTargets = Compiled & PostTargets & Readonly<{ nonce: number; settlementHash: string }>;
+/** The workspace with this side's signatures pinned; ready once the non-executor and both proof sides have signed. */
+const withSignatures = (
+  w: SettlementWorkspace, x: HankoTx, byLeft: boolean, t: SignedTargets, nowMs: bigint,
+): SettlementWorkspace => {
+  const post = x.postProof;
+  const pinned = w.postSettlementDisputeProof;
+  const settlementHanko = x.settlementHanko;
+  const proof: PostSettlementProof = {
+    disputeHash: t.disputeHash, proofBodyHash: t.bodyHash, nonce: post.nonce, proposerIsLeft: post.proposerIsLeft,
+    leftHanko: byLeft ? post.hanko : pinned?.leftHanko, rightHanko: byLeft ? pinned?.rightHanko : post.hanko,
+  };
+  const leftHanko = byLeft && settlementHanko !== undefined ? settlementHanko : w.leftHanko;
+  const rightHanko = !byLeft && settlementHanko !== undefined ? settlementHanko : w.rightHanko;
+  const nonExecutorSigned = (w.executorIsLeft ? rightHanko : leftHanko) !== undefined;
+  const ready = nonExecutorSigned && proof.leftHanko !== undefined && proof.rightHanko !== undefined;
+  return {
+    ...w, compiledDiffs: t.diffs, compiledForgiveTokenIds: t.forgive, nonceAtSign: t.nonce,
+    settlementHash: t.settlementHash, postSettlementDisputeProof: proof, leftHanko, rightHanko,
+    status: ready ? "ready_to_submit" : "awaiting_counterparty", lastUpdatedAt: Number(nowMs),
+  };
+};
+/**
+ * og prepare/verify/commitSettlementHanko: exact workspace, exact nonce, recomputed targets, both authorities, then one
+ * write.
+ */
+const hankoWorkspace = (a: AccountBody, x: HankoTx, ctx: FoldCtx): BodyStep => {
   const auth = ctx.settlement;
   if (auth === undefined) return settleErr("SETTLEMENT_HANKO_CONTEXT_MISSING");
   return chain(currentWorkspace(a, x.revision, x.workspaceHash), (w) => {
     if (w.status === "submitted") return settleErr("SETTLEMENT_HANKO_SUBMITTED_FORBIDDEN");
     const nonce = x.settlementNonce;
-    if (!Number.isSafeInteger(nonce) || nonce < 1) return settleErr("SETTLEMENT_HANKO_NONCE_INVALID");
-    const floor = Math.max(a.jNonce + 1, auth.proofNonceFloor);
-    if (floor >= Number.MAX_SAFE_INTEGER) return settleErr("SETTLEMENT_NONCE_EXHAUSTED");
-    if (nonce !== (w.nonceAtSign ?? floor)) return err({ _tag: "settlement", reason: "SETTLEMENT_HANKO_NONCE_MISMATCH", nonce: { supplied: nonce, required: w.nonceAtSign ?? floor, basis: w.nonceAtSign === undefined ? "account" : "workspace" } });
-    return chain(compileOps(w.ops, w.lastModifiedByLeft), ({ diffs, forgive }) => chain(settlementHashOf(a, diffs, forgive, nonce), (settlementHash) => {
-      if (typeof x.settlementHash !== "string" || !WORKSPACE_HASH.test(x.settlementHash)) return settleErr("SETTLEMENT_HANKO_HASH_INVALID");
-      if (x.settlementHash.toLowerCase() !== settlementHash.toLowerCase()) return settleErr("SETTLEMENT_HANKO_HASH_MISMATCH");
-      if (w.settlementHash !== undefined && w.settlementHash.toLowerCase() !== settlementHash.toLowerCase()) return settleErr("SETTLEMENT_HANKO_PINNED_HASH_MISMATCH");
-      const post = x.postProof, postNonce = post.nonce;
-      if (!Number.isSafeInteger(postNonce) || postNonce < 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_INVALID");
-      if (postNonce !== nonce + 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_MISMATCH");
-      return chain(projectedProofHash(a, diffs, forgive, auth.deltaTransformer), (bodyHash) => {
-        if (post.proofBodyHash.toLowerCase() !== bodyHash.toLowerCase()) return settleErr("POST_SETTLEMENT_PROOF_BODY_HASH_MISMATCH");
-        return chain(chain(mapErr(committedView(a), uncommitted), (view) => mapErr(accountDisputeHash(view, bodyHash, postNonce, post.proposerIsLeft), (e): BodyError => ({ _tag: "settlement", reason: e._tag }))), (disputeHash) => {
-          if (post.disputeHash.toLowerCase() !== disputeHash.toLowerCase()) return settleErr("POST_SETTLEMENT_DISPUTE_HASH_MISMATCH");
-          const pinned = w.postSettlementDisputeProof;
-          if (pinned !== undefined && (pinned.nonce !== postNonce || pinned.proofBodyHash.toLowerCase() !== bodyHash.toLowerCase() || pinned.disputeHash.toLowerCase() !== disputeHash.toLowerCase() || pinned.proposerIsLeft !== post.proposerIsLeft)) return settleErr("POST_SETTLEMENT_PROOF_PIN_MISMATCH");
-          const source = (ctx.byLeft ? a.account.id.left : a.account.id.right) as EntityId;
-          // og verifySettlementHankoHankos: the board authority resolves before the Hankos are read
-          const resolved = auth.registeredBoardHash ? ok(auth.registeredBoardHash) : auth.boardAuthority?.(source) ?? ok(undefined);
-          if (!resolved.ok) return settleErr(resolved.error);
-          const pin = resolved.value;
-          if (!exactHanko(post.hanko)) return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
-          // og verifySettlementHankoHankos: the post-settlement proof admits the previous board's grace (Account.sol:1063); the cooperative settlement Hanko is current-board only (Account.sol:894)
-          if (!auth.verify(disputeHash, post.hanko, source, { ...opt("registeredBoardHash", pin), allowPreviousBoard: true })) return settleErr("POST_SETTLEMENT_PROOF_HANKO_INVALID");
-          const executor = w.executorIsLeft === ctx.byLeft, settlementHanko = x.settlementHanko;
-          if (executor && settlementHanko !== undefined) return settleErr("SETTLEMENT_EXECUTOR_HANKO_FORBIDDEN");
-          if (!executor && !exactHanko(settlementHanko)) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_MISSING");
-          if (!executor && settlementHanko !== undefined && !auth.verify(settlementHash, settlementHanko, source, { ...opt("registeredBoardHash", pin), allowPreviousBoard: false })) return settleErr("SETTLEMENT_NONEXECUTOR_HANKO_INVALID");
-          const pinnedOwn = ctx.byLeft ? pinned?.leftHanko : pinned?.rightHanko, ownSettlement = ctx.byLeft ? w.leftHanko : w.rightHanko;
-          if (pinnedOwn !== undefined && pinnedOwn.toLowerCase() !== post.hanko.toLowerCase()) return settleErr("POST_SETTLEMENT_PROOF_EQUIVOCATION");
-          if (settlementHanko !== undefined && ownSettlement !== undefined && ownSettlement.toLowerCase() !== settlementHanko.toLowerCase()) return settleErr("SETTLEMENT_HANKO_EQUIVOCATION");
-          const proof: PostSettlementProof = { disputeHash, proofBodyHash: bodyHash, nonce: postNonce, proposerIsLeft: post.proposerIsLeft, leftHanko: ctx.byLeft ? post.hanko : pinned?.leftHanko, rightHanko: ctx.byLeft ? pinned?.rightHanko : post.hanko };
-          const leftHanko = ctx.byLeft && settlementHanko !== undefined ? settlementHanko : w.leftHanko, rightHanko = !ctx.byLeft && settlementHanko !== undefined ? settlementHanko : w.rightHanko;
-          const ready = (w.executorIsLeft ? rightHanko : leftHanko) !== undefined && proof.leftHanko !== undefined && proof.rightHanko !== undefined;
-          return ok(step({ ...a, settlement: { ...w, compiledDiffs: diffs, compiledForgiveTokenIds: forgive, nonceAtSign: nonce, settlementHash, postSettlementDisputeProof: proof, leftHanko, rightHanko, status: ready ? "ready_to_submit" : "awaiting_counterparty", lastUpdatedAt: Number(ctx.nowMs) } }));
-        });
-      });
-    }));
+    return chain(hankoNonce(a, w, auth, nonce), () =>
+      chain(compileOps(w.ops, w.lastModifiedByLeft), (compiled) =>
+        chain(agreedSettlementHash(a, w, x.settlementHash, compiled, nonce), (settlementHash) =>
+          chain(agreedPostProof(a, w, x.postProof, nonce, compiled, auth.deltaTransformer), (post) => {
+            const hashes = { settlement: settlementHash, dispute: post.disputeHash };
+            const targets: SignedTargets = { ...compiled, ...post, nonce, settlementHash };
+            return map(verifiedHankos(a, w, x, auth, ctx.byLeft, hashes), () =>
+              step({ ...a, settlement: withSignatures(w, x, ctx.byLeft, targets, ctx.nowMs) }));
+          }))));
   });
 };
-/** og buildSettlementHankoDraft / prepareSettlementExecution targets: compiled diffs, the settlement hash at `nonce`, and the post-settlement N+1 dispute proof. */
-export type SettlementTargets = { readonly diffs: readonly WorkspaceDiff[]; readonly forgive: readonly number[]; readonly settlementHash: string; readonly postProof: { readonly proofBodyHash: string; readonly disputeHash: string; readonly nonce: number; readonly proposerIsLeft: boolean } };
-export const settlementTargets = (a: AccountBody, w: SettlementWorkspace, nonce: number, proposerIsLeft: boolean, dt?: DeltaTransformerRef): Result<SettlementTargets, BodyError> =>
-  chain(compileOps(w.ops, w.lastModifiedByLeft), ({ diffs, forgive }) => chain(settlementHashOf(a, diffs, forgive, nonce), (settlementHash) => chain(projectedProofHash(a, diffs, forgive, dt), (proofBodyHash) =>
-    map(chain(mapErr(committedView(a), uncommitted), (view) => mapErr(accountDisputeHash(view, proofBodyHash, nonce + 1, proposerIsLeft), (e): BodyError => ({ _tag: "settlement", reason: e._tag }))),
-      (disputeHash) => ({ diffs, forgive, settlementHash, postProof: { proofBodyHash, disputeHash, nonce: nonce + 1, proposerIsLeft } })))));
-/** og assertCanonicalSettlementWorkspace: the stored hash is a 32-byte word equal to the recomputed body hash (returned lowercase). */
+type PostProofTarget = Readonly<{ proofBodyHash: string; disputeHash: string; nonce: number; proposerIsLeft: boolean }>;
+/**
+ * og buildSettlementHankoDraft / prepareSettlementExecution targets: compiled diffs, the settlement hash at `nonce`,
+ * and the N+1 proof.
+ */
+export type SettlementTargets = Compiled & Readonly<{ settlementHash: string; postProof: PostProofTarget }>;
+export const settlementTargets = (
+  a: AccountBody, w: SettlementWorkspace, nonce: number, proposerIsLeft: boolean, dt?: DeltaTransformerRef,
+): Result<SettlementTargets, BodyError> =>
+  chain(compileOps(w.ops, w.lastModifiedByLeft), ({ diffs, forgive }) =>
+    chain(settlementHashOf(a, diffs, forgive, nonce), (settlementHash) =>
+      chain(projectedProofHash(a, diffs, forgive, dt), (proofBodyHash) =>
+        map(postDisputeHash(a, proofBodyHash, nonce + 1, proposerIsLeft), (disputeHash) => ({
+          diffs, forgive, settlementHash, postProof: { proofBodyHash, disputeHash, nonce: nonce + 1, proposerIsLeft },
+        })))));
+/**
+ * og assertCanonicalSettlementWorkspace: the stored hash is a 32-byte word equal to the recomputed body hash (returned
+ * lowercase).
+ */
 export const canonicalWorkspaceHash = (a: AccountBody, w: SettlementWorkspace): Result<string, BodyError> => {
-  if (typeof w.workspaceHash !== "string" || !WORKSPACE_HASH.test(w.workspaceHash)) return settleErr("SETTLEMENT_WORKSPACE_HASH_INVALID");
-  return chain(workspaceHashOf(a.account.id, w), (h) => (h.toLowerCase() !== w.workspaceHash.toLowerCase() ? settleErr(`SETTLEMENT_WORKSPACE_HASH_CORRUPTION:${w.workspaceHash.toLowerCase()}:${h.toLowerCase()}`) : ok(h.toLowerCase())));
+  if (typeof w.workspaceHash !== "string" || !WORKSPACE_HASH.test(w.workspaceHash)) {
+    return settleErr("SETTLEMENT_WORKSPACE_HASH_INVALID");
+  }
+  return chain(workspaceHashOf(a.account.id, w), (h) => {
+    const stored = w.workspaceHash.toLowerCase();
+    const computed = h.toLowerCase();
+    return stored === computed ? ok(computed) : settleErr(`SETTLEMENT_WORKSPACE_HASH_CORRUPTION:${stored}:${computed}`);
+  });
 };
 /** og getNextSettlementNonce (getMinimumSafeSettlementNonce): the first proof nonce both sides may still sign. */
-export const nextSettlementNonce = (r: Pick<AccountReplica, "state" | "dispute">): number => Math.max(r.state.jNonce + 1, proofNonceFloor(r.dispute));
-const unsignedWorkspace = (w: SettlementWorkspace): boolean => (w.status === "draft" || w.status === "awaiting_counterparty") && w.compiledDiffs === undefined && w.compiledForgiveTokenIds === undefined && !signedWorkspace(w) && w.nonceAtSign === undefined;
-const settleTransition = (a: AccountBody, x: TxOf<"settle_transition">, ctx: FoldCtx): BodyStep => {
-  if (x.kind === "upsert") return upsertWorkspace(a, x, ctx);
-  if (x.kind === "hanko") return hankoWorkspace(a, x, ctx);
-  return chain(currentWorkspace(a, x.revision, x.workspaceHash), (w): BodyStep => {
-    if (x.kind === "submit") {
-      if (w.status === "submitted") return settleErr("SETTLEMENT_WORKSPACE_ALREADY_SUBMITTED");
-      if (ctx.byLeft !== w.executorIsLeft) return settleErr("SETTLEMENT_SUBMIT_EXECUTOR_MISMATCH");
-      if ((ctx.byLeft ? w.rightHanko : w.leftHanko) === undefined) return settleErr("SETTLEMENT_SUBMIT_COUNTERPARTY_HANKO_MISSING");
-      if (w.status !== "ready_to_submit" || w.postSettlementDisputeProof?.leftHanko === undefined || w.postSettlementDisputeProof.rightHanko === undefined) return settleErr("SETTLEMENT_SUBMIT_POST_PROOF_INCOMPLETE");
-      return ok(step({ ...a, settlement: { ...w, status: "submitted", lastUpdatedAt: Number(ctx.nowMs) } }));
-    }
-    if (w.status === "submitted") return settleErr("SETTLEMENT_CLEAR_SUBMITTED_FORBIDDEN");
-    return unsignedWorkspace(w) ? ok(step({ ...a, settlement: undefined })) : settleErr("SETTLEMENT_CLEAR_SIGNED_FORBIDDEN");
-  });
+export const nextSettlementNonce = (r: Pick<AccountReplica, "state" | "dispute">): number =>
+  Math.max(r.state.jNonce + 1, proofNonceFloor(r.dispute));
+const unsignedWorkspace = (w: SettlementWorkspace): boolean =>
+  (w.status === "draft" || w.status === "awaiting_counterparty") && w.compiledDiffs === undefined
+  && w.compiledForgiveTokenIds === undefined && !signedWorkspace(w) && w.nonceAtSign === undefined;
+/** The executor submits once the counterparty and both proof sides have signed. */
+const submitWorkspace = (a: AccountBody, w: SettlementWorkspace, ctx: FoldCtx): BodyStep => {
+  if (w.status === "submitted") return settleErr("SETTLEMENT_WORKSPACE_ALREADY_SUBMITTED");
+  if (ctx.byLeft !== w.executorIsLeft) return settleErr("SETTLEMENT_SUBMIT_EXECUTOR_MISMATCH");
+  if ((ctx.byLeft ? w.rightHanko : w.leftHanko) === undefined) {
+    return settleErr("SETTLEMENT_SUBMIT_COUNTERPARTY_HANKO_MISSING");
+  }
+  const proof = w.postSettlementDisputeProof;
+  if (w.status !== "ready_to_submit" || proof?.leftHanko === undefined || proof.rightHanko === undefined) {
+    return settleErr("SETTLEMENT_SUBMIT_POST_PROOF_INCOMPLETE");
+  }
+  return ok(step({ ...a, settlement: { ...w, status: "submitted", lastUpdatedAt: Number(ctx.nowMs) } }));
 };
-/** og finality.ts activatePostSettlementProof, body side: an unsigned workspace clears; a signed one clears once its nonce is final, after its N+1 proof checks out. */
-const activateWorkspace = (b: AccountBody, finalizedNonce: number, dt?: DeltaTransformerRef): Result<AccountBody, BodyError> => {
+/** Only an unsigned, unsubmitted workspace can be cleared. */
+const clearWorkspace = (a: AccountBody, w: SettlementWorkspace): BodyStep => {
+  if (w.status === "submitted") return settleErr("SETTLEMENT_CLEAR_SUBMITTED_FORBIDDEN");
+  if (!unsignedWorkspace(w)) return settleErr("SETTLEMENT_CLEAR_SIGNED_FORBIDDEN");
+  return ok(step({ ...a, settlement: undefined }));
+};
+const settleTransition = (a: AccountBody, x: TxOf<"settle_transition">, ctx: FoldCtx): BodyStep => {
+  switch (x.kind) {
+    case "upsert": return upsertWorkspace(a, x, ctx);
+    case "hanko": return hankoWorkspace(a, x, ctx);
+    case "submit": return chain(currentWorkspace(a, x.revision, x.workspaceHash), (w) => submitWorkspace(a, w, ctx));
+    default: return chain(currentWorkspace(a, x.revision, x.workspaceHash), (w) => clearWorkspace(a, w));
+  }
+};
+/**
+ * og finality.ts activatePostSettlementProof, body side: an unsigned workspace clears; a signed one clears once its
+ * nonce is final, after its N+1 proof checks out.
+ */
+const activateWorkspace = (
+  b: AccountBody, finalizedNonce: number, dt?: DeltaTransformerRef,
+): Result<AccountBody, BodyError> => {
   const w = b.settlement;
   if (w === undefined) return ok(b);
   if (!signedWorkspace(w)) return ok({ ...b, settlement: undefined });
   const signed = w.nonceAtSign;
-  if (signed === undefined || !Number.isSafeInteger(signed) || signed < 1) return settleErr("SETTLEMENT_SIGNED_NONCE_MISSING");
+  if (signed === undefined || !Number.isSafeInteger(signed) || signed < 1) {
+    return settleErr("SETTLEMENT_SIGNED_NONCE_MISSING");
+  }
   if (finalizedNonce < signed) return ok(b);
   if (finalizedNonce > signed) return ok({ ...b, settlement: undefined });
   const p = w.postSettlementDisputeProof;
   if (p === undefined) return settleErr("POST_SETTLEMENT_PROOF_MISSING");
   if (p.nonce !== signed + 1) return settleErr("POST_SETTLEMENT_PROOF_NONCE_MISMATCH");
-  if (p.leftHanko === undefined || p.rightHanko === undefined || p.leftHanko === "" || p.rightHanko === "") return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
+  if (!p.leftHanko || !p.rightHanko) return settleErr("POST_SETTLEMENT_PROOF_HANKO_MISSING");
   if (p.disputeHash === "" || p.proofBodyHash === "") return settleErr("POST_SETTLEMENT_DISPUTE_HASH_MISSING");
-  return chain(projectedProofHash(b, [], [], dt), (h) => h.toLowerCase() !== p.proofBodyHash.toLowerCase() ? settleErr("POST_SETTLEMENT_FINALIZED_PROOF_BODY_MISMATCH") : ok({ ...b, settlement: undefined }));
+  return chain(projectedProofHash(b, [], [], dt), (h) =>
+    (sameHex(h, p.proofBodyHash)
+      ? ok({ ...b, settlement: undefined })
+      : settleErr("POST_SETTLEMENT_FINALIZED_PROOF_BODY_MISMATCH")));
 };
-// ---- swaps: og handlers/swap/{offer,resolve}, account/swap/swap-net-authorization.ts, orderbook/types.ts quantization ----
+// ---- swaps: og handlers/swap/{offer,resolve}, swap-net-authorization.ts, orderbook/types.ts quantization ----
+// A maker rests an offer to give one token for another; the counterparty resolves it with a fill. Same-j offers hold
+// the maker's give until they close; cross-j offers settle through their paired pulls and only rest here.
 const swapErr = (reason: string): Result<never, BodyError> => err({ _tag: "swap", reason });
+const swapIssue = (issue: string | undefined): Result<void, BodyError> =>
+  issue === undefined ? ok(undefined) : swapErr(issue);
 const PRICE_SCALE = 10_000n;
 const MAX_ACCOUNT_SWAP_OFFERS = 50, MAX_ACCOUNT_SAME_J_SWAP_OFFERS = 32, MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET = 32;
+const inPaymentRange = (v: bigint): boolean => v >= 1n && v <= MAX_PAYMENT_AMOUNT;
+const decimalsOk = (d: number): boolean => Number.isSafeInteger(d) && d >= 0 && d <= 255;
+
+// ---- swap market geometry: pair orientation, lots and price ticks ----
 /** og account/utils.ts REFERENCE_STABLE_TOKEN_IDS (USDC, USDT): always the quote of a pair. */
 const REFERENCE_STABLES: ReadonlySet<number> = new Set([1, 3]);
-/** og getSwapPairOrientation + deriveSide: 1 when the give token is the pair's base. */
-export const swapSide = (give: number, want: number): 0 | 1 => {
-  const g = REFERENCE_STABLES.has(give), w = REFERENCE_STABLES.has(want);
-  return give === (g && !w ? want : !g && w ? give : Math.min(give, want)) ? 1 : 0;
+/** og getSwapPairOrientation: a reference stable is the quote; between two of a kind the lower id is the base. */
+const pairBase = (a: number, b: number): number => {
+  const aStable = REFERENCE_STABLES.has(a), bStable = REFERENCE_STABLES.has(b);
+  switch (true) {
+    case aStable && !bStable: return b;
+    case bStable && !aStable: return a;
+    default: return Math.min(a, b);
+  }
 };
+/** og deriveSide: 1 sells the base (the give token is the pair's base), 0 buys it. */
+export const swapSide = (give: number, want: number): 0 | 1 => (give === pairBase(give, want) ? 1 : 0);
 const pow10 = (d: number): bigint => 10n ** BigInt(d);
+/** Base amounts trade in lots of 10^(decimals - 6), so every token trades at micro-unit granularity. */
 const lotScale = (baseDecimals: number): bigint => pow10(Math.max(0, baseDecimals - 6));
-const gcd = (x: bigint, y: bigint): bigint => { let [p, q] = [x, y]; while (q !== 0n) [p, q] = [q, p % q]; return p; };
+const gcd = (x: bigint, y: bigint): bigint => (y === 0n ? x : gcd(y, x % y));
 const ceilDiv = (n: bigint, d: bigint): bigint => (n + d - 1n) / d;
-const quoteAt = (bd: number, qd: number, base: bigint, price: bigint): bigint => (base <= 0n || price <= 0n ? 0n : (base * price * pow10(qd)) / (PRICE_SCALE * pow10(bd)));
-const exactQuoteLots = (bd: number, qd: number, price: bigint): bigint => { const den = PRICE_SCALE * pow10(bd); return den / gcd(lotScale(bd) * price * pow10(qd), den); };
-type SwapDims = { readonly side: 0 | 1; readonly bd: number; readonly qd: number };
-const swapDims = (o: Pick<SwapOffer, "giveTokenId" | "wantTokenId" | "giveTokenDecimals" | "wantTokenDecimals">): SwapDims => {
-  const side = swapSide(Number(o.giveTokenId), Number(o.wantTokenId));
-  return side === 1 ? { side, bd: o.giveTokenDecimals, qd: o.wantTokenDecimals } : { side, bd: o.wantTokenDecimals, qd: o.giveTokenDecimals };
+/** The quote a base amount is worth at a price, rounded down. */
+const quoteAt = (bd: number, qd: number, base: bigint, price: bigint): bigint =>
+  base <= 0n || price <= 0n ? 0n : (base * price * pow10(qd)) / (PRICE_SCALE * pow10(bd));
+/** The fewest base lots whose quote at this price is a whole number of quote units. */
+const exactQuoteLots = (bd: number, qd: number, price: bigint): bigint => {
+  const den = PRICE_SCALE * pow10(bd);
+  return den / gcd(lotScale(bd) * price * pow10(qd), den);
 };
-/** og computePriceTicksForBaseQuoteDecimals under the one-tick step every og pair policy uses: bids round up, asks down. */
+/** An offer seen from its market: which side it takes and the base and quote decimals. */
+type SwapDims = Readonly<{ side: 0 | 1; bd: number; qd: number }>;
+type DimsSource = Pick<SwapOffer, "giveTokenId" | "wantTokenId" | "giveTokenDecimals" | "wantTokenDecimals">;
+const dimsAt = (side: 0 | 1, o: Omit<DimsSource, "giveTokenId" | "wantTokenId">): SwapDims =>
+  side === 1
+    ? { side, bd: o.giveTokenDecimals, qd: o.wantTokenDecimals }
+    : { side, bd: o.wantTokenDecimals, qd: o.giveTokenDecimals };
+const swapDims = (o: DimsSource): SwapDims => dimsAt(swapSide(Number(o.giveTokenId), Number(o.wantTokenId)), o);
+type MarketAmounts = Readonly<{ base: bigint; quote: bigint }>;
+type OfferAmounts = Readonly<{ give: bigint; want: bigint }>;
+const toMarket = (d: SwapDims, give: bigint, want: bigint): MarketAmounts =>
+  d.side === 1 ? { base: give, quote: want } : { base: want, quote: give };
+const toOffer = (d: SwapDims, base: bigint, quote: bigint): OfferAmounts =>
+  d.side === 1 ? { give: base, want: quote } : { give: quote, want: base };
+/**
+ * og computePriceTicksForBaseQuoteDecimals under the one-tick step every og pair policy uses: sells round up, buys
+ * down, so neither side is quoted a better price than it asked for.
+ */
 const priceTicksOf = (d: SwapDims, base: bigint, quote: bigint): bigint => {
   if (base <= 0n || quote <= 0n) return 0n;
-  const n = quote * pow10(d.bd) * PRICE_SCALE, den = base * pow10(d.qd), p = n / den + (d.side === 1 && n % den > 0n ? 1n : 0n);
-  return p > 0n ? p : 0n;
+  const n = quote * pow10(d.bd) * PRICE_SCALE;
+  const den = base * pow10(d.qd);
+  const roundsUp = d.side === 1 && n % den > 0n;
+  const price = n / den + (roundsUp ? 1n : 0n);
+  return price > 0n ? price : 0n;
 };
 /** og prepareSwapOrderWithDimensions: the canonical price, or undefined when the order quantizes to nothing. */
 const preparedPrice = (d: SwapDims, base: bigint, quote: bigint): bigint | undefined => {
@@ -5703,32 +6258,57 @@ const preparedPrice = (d: SwapDims, base: bigint, quote: bigint): bigint | undef
   if (base < lot || quote <= 0n) return undefined;
   const price = priceTicksOf(d, base, quote);
   if (price <= 0n) return undefined;
-  const unit = lot * exactQuoteLots(d.bd, d.qd, price), qb = (base / unit) * unit;
-  return qb <= 0n || quoteAt(d.bd, d.qd, qb, price) <= 0n ? undefined : price;
+  const unit = lot * exactQuoteLots(d.bd, d.qd, price);
+  const quantizedBase = (base / unit) * unit;
+  return quantizedBase <= 0n || quoteAt(d.bd, d.qd, quantizedBase, price) <= 0n ? undefined : price;
 };
-/** og requantizeRemainingSwapBaseAtPriceForDimensions. */
-const requantizeRemaining = (d: SwapDims, base: bigint, price: bigint): { readonly give: bigint; readonly want: bigint } | undefined => {
+/** og requantizeRemainingSwapBaseAtPriceForDimensions: the whole-unit part of a remaining base, back in offer terms. */
+const requantizeRemaining = (d: SwapDims, base: bigint, price: bigint): OfferAmounts | undefined => {
   if (base <= 0n || price <= 0n) return undefined;
-  const unit = lotScale(d.bd) * exactQuoteLots(d.bd, d.qd, price), qb = (base / unit) * unit;
-  if (qb <= 0n) return undefined;
-  const qq = quoteAt(d.bd, d.qd, qb, price);
-  return qq <= 0n ? undefined : d.side === 1 ? { give: qb, want: qq } : { give: qq, want: qb };
+  const unit = lotScale(d.bd) * exactQuoteLots(d.bd, d.qd, price);
+  const quantizedBase = (base / unit) * unit;
+  if (quantizedBase <= 0n) return undefined;
+  const quote = quoteAt(d.bd, d.qd, quantizedBase, price);
+  return quote <= 0n ? undefined : toOffer(d, quantizedBase, quote);
 };
-type NetAuth = { readonly maxFee: bigint; readonly minNetReceive: bigint };
-type Authorized = NetAuth & { readonly giveAmount: bigint; readonly wantAmount: bigint };
-const offerAuthError = (o: Authorized): string | undefined =>
-  typeof o.giveAmount !== "bigint" || typeof o.wantAmount !== "bigint" || o.giveAmount <= 0n || o.wantAmount <= 0n ? "SWAP_NET_AUTH_OFFER_AMOUNT_INVALID"
-  : typeof o.maxFee !== "bigint" || o.maxFee < 0n || o.maxFee > o.wantAmount ? "SWAP_NET_AUTH_MAX_FEE_INVALID"
-  : typeof o.minNetReceive !== "bigint" || o.minNetReceive < 0n || o.minNetReceive > o.wantAmount ? "SWAP_NET_AUTH_MIN_RECEIVE_INVALID" : undefined;
-/** og assertSwapNetAuthorization: fee and net receive stay inside the maker's pro-rata authority; a terminal fill may use want progress. */
-const netAuthError = (o: Authorized, fG: bigint, fW: bigint, fee: bigint, closes: boolean): string | undefined => {
+
+// ---- swap net authorization: og account/swap/swap-net-authorization.ts ----
+// The maker caps the fee it pays and floors what it nets, for the whole offer. Each fill may spend only its pro-rata
+// share of that authority, and requantizing the offer takes the removed share's authority with it.
+type NetAuth = Readonly<{ maxFee: bigint; minNetReceive: bigint }>;
+type Authorized = NetAuth & Readonly<{ giveAmount: bigint; wantAmount: bigint }>;
+type Fill = Readonly<{ give: bigint; want: bigint; fee: bigint }>;
+const NO_FILL: Fill = { give: 0n, want: 0n, fee: 0n };
+const offerAuthError = (o: Authorized): string | undefined => {
+  const positive = (v: unknown): boolean => typeof v === "bigint" && v > 0n;
+  const withinWant = (v: unknown): boolean => typeof v === "bigint" && v >= 0n && v <= o.wantAmount;
+  switch (true) {
+    case !positive(o.giveAmount) || !positive(o.wantAmount): return "SWAP_NET_AUTH_OFFER_AMOUNT_INVALID";
+    case !withinWant(o.maxFee): return "SWAP_NET_AUTH_MAX_FEE_INVALID";
+    case !withinWant(o.minNetReceive): return "SWAP_NET_AUTH_MIN_RECEIVE_INVALID";
+    default: return undefined;
+  }
+};
+/** The share of the offer a fill uses up: its give progress, or its want progress when that is larger and it closes. */
+const usedShare = (o: Authorized, f: Fill, closes: boolean): Readonly<{ num: bigint; den: bigint }> => {
+  const byGive = { num: f.give, den: o.giveAmount };
+  const wantProgress = f.want < o.wantAmount ? f.want : o.wantAmount;
+  return closes && wantProgress * o.giveAmount > f.give * o.wantAmount
+    ? { num: wantProgress, den: o.wantAmount }
+    : byGive;
+};
+/** og assertSwapNetAuthorization: the fill's fee and net receive stay inside its share of the maker's authority. */
+const netAuthError = (o: Authorized, f: Fill, closes: boolean): string | undefined => {
   const bad = offerAuthError(o);
   if (bad !== undefined) return bad;
-  if (fG < 0n || fG > o.giveAmount) return "SWAP_NET_AUTH_FILL_GIVE_INVALID";
-  if (fW < 0n || fee < 0n || fee > fW || (fW > 0n && fee >= fW)) return "SWAP_NET_AUTH_FILL_WANT_INVALID";
-  let num = fG, den = o.giveAmount;
-  if (closes) { const capped = fW < o.wantAmount ? fW : o.wantAmount; if (capped * den > num * o.wantAmount) { num = capped; den = o.wantAmount; } }
-  return fee > (o.maxFee * num) / den ? "SWAP_NET_AUTH_MAX_FEE_EXCEEDED" : fW - fee < ceilDiv(o.minNetReceive * num, den) ? "SWAP_NET_AUTH_MIN_RECEIVE_NOT_MET" : undefined;
+  if (f.give < 0n || f.give > o.giveAmount) return "SWAP_NET_AUTH_FILL_GIVE_INVALID";
+  if (f.want < 0n || f.fee < 0n || f.fee > f.want || (f.want > 0n && f.fee >= f.want)) {
+    return "SWAP_NET_AUTH_FILL_WANT_INVALID";
+  }
+  const { num, den } = usedShare(o, f, closes);
+  if (f.fee > (o.maxFee * num) / den) return "SWAP_NET_AUTH_MAX_FEE_EXCEEDED";
+  if (f.want - f.fee < ceilDiv(o.minNetReceive * num, den)) return "SWAP_NET_AUTH_MIN_RECEIVE_NOT_MET";
+  return undefined;
 };
 /** og requantizeSwapNetAuthorization: the removed give share takes its pro-rata fee and receive authority with it. */
 const requantizeAuth = (o: Authorized, give: bigint, want: bigint): Result<NetAuth, BodyError> => {
@@ -5736,161 +6316,310 @@ const requantizeAuth = (o: Authorized, give: bigint, want: bigint): Result<NetAu
   if (bad !== undefined) return swapErr(bad);
   if (give <= 0n || give > o.giveAmount || want <= 0n) return swapErr("SWAP_NET_AUTH_REMAINDER_INVALID");
   const removed = o.giveAmount - give;
-  const auth: NetAuth = { maxFee: o.maxFee - (o.maxFee * removed) / o.giveAmount, minNetReceive: o.minNetReceive - ceilDiv(o.minNetReceive * removed, o.giveAmount) };
-  const after = offerAuthError({ giveAmount: give, wantAmount: want, ...auth });
-  return after === undefined ? ok(auth) : swapErr(after);
+  const auth: NetAuth = {
+    maxFee: o.maxFee - (o.maxFee * removed) / o.giveAmount,
+    minNetReceive: o.minNetReceive - ceilDiv(o.minNetReceive * removed, o.giveAmount),
+  };
+  return map(swapIssue(offerAuthError({ giveAmount: give, wantAmount: want, ...auth })), () => auth);
 };
-const decimalsOk = (d: number): boolean => Number.isSafeInteger(d) && d >= 0 && d <= 255;
-/** og swap/offer: admission (limits, shape, market cap), quantization, capacity, hold. */
-/** og swap-limits.ts accountSwapMarketKey: same-j offers by token direction, cross-j offers by canonical venue and side. */
-const offerMarketKey = (o: { readonly giveTokenId: TokenId; readonly wantTokenId: TokenId; readonly crossJurisdiction?: CrossRoute | undefined }): Result<string, BodyError> =>
-  o.crossJurisdiction === undefined ? ok(`same:${Number(o.giveTokenId)}>${Number(o.wantTokenId)}`) : map(noteErr(crossMarket(o.crossJurisdiction)), (m) => `${m.venueId}:${m.sourceIsBase ? "base>quote" : "quote>base"}`);
-const swapOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx): BodyStep<Of<Effect, "swap_offer_upsert">> => {
+
+// ---- swap offer: og swap/offer admission, quantization, capacity and hold ----
+type OfferTx = TxOf<"swap_offer">;
+type UpsertEffect = Of<Effect, "swap_offer_upsert">;
+/** og swap-limits.ts: a colon-free id not already resting, under the account caps for its venue. */
+const offerSlot = (a: AccountBody, x: OfferTx): Result<void, BodyError> => {
+  const offers = [...a.offers.values()];
+  const sameJ = offers.filter((o) => o.crossJurisdiction === undefined).length;
+  const crossJ = offers.length - sameJ;
+  const isCrossJ = x.crossJurisdiction !== undefined;
+  switch (true) {
+    case x.offerId.includes(":"): return swapErr("SWAP_OFFER_ID_COLON");
+    case a.offers.has(x.offerId): return err({ _tag: "duplicate" });
+    case offers.length >= MAX_ACCOUNT_SWAP_OFFERS: return swapErr("SWAP_OFFER_LIMIT");
+    case !isCrossJ && sameJ >= MAX_ACCOUNT_SAME_J_SWAP_OFFERS: return swapErr("SWAP_SAME_J_OFFER_LIMIT");
+    case isCrossJ && crossJ >= MAX_ACCOUNT_CROSS_J_SWAP_OFFERS: return swapErr("SWAP_CROSS_J_OFFER_LIMIT");
+    default: return ok(undefined);
+  }
+};
+/** og admission.ts: sane decimals and amounts, and a fee cap below the want with a positive net floor. */
+const offerTerms = (x: OfferTx): Result<void, BodyError> => {
+  switch (true) {
+    case !decimalsOk(x.giveTokenDecimals) || !decimalsOk(x.wantTokenDecimals):
+      return swapErr("SWAP_TOKEN_DECIMALS_INVALID");
+    case !inPaymentRange(x.giveAmount) || !inPaymentRange(x.wantAmount): return swapErr("SWAP_OFFER_AMOUNT_INVALID");
+    case x.maxFee >= x.wantAmount || x.minNetReceive <= 0n: return swapErr("SWAP_NET_AUTH_INITIAL_TERMS_INVALID");
+    default: return swapIssue(netAuthError(x, NO_FILL, false));
+  }
+};
+/**
+ * og admission.ts venue rules: a same-j offer swaps two distinct tokens; a cross-j offer settles gross through its
+ * paired pulls, so it carries no fee authority, and its route must already be prepared and resting.
+ */
+const offerVenue = (x: OfferTx): Result<void, BodyError> => {
   const route = x.crossJurisdiction;
-  if (x.offerId.includes(":")) return swapErr("SWAP_OFFER_ID_COLON");
-  if (a.offers.has(x.offerId)) return err({ _tag: "duplicate" });
-  if (a.offers.size >= MAX_ACCOUNT_SWAP_OFFERS) return swapErr("SWAP_OFFER_LIMIT");
-  const sameJ = [...a.offers.values()].filter((o) => o.crossJurisdiction === undefined).length;
-  if (route === undefined && sameJ >= MAX_ACCOUNT_SAME_J_SWAP_OFFERS) return swapErr("SWAP_SAME_J_OFFER_LIMIT");
-  if (route !== undefined && a.offers.size - sameJ >= MAX_ACCOUNT_CROSS_J_SWAP_OFFERS) return swapErr("SWAP_CROSS_J_OFFER_LIMIT");
-  if (!decimalsOk(x.giveTokenDecimals) || !decimalsOk(x.wantTokenDecimals)) return swapErr("SWAP_TOKEN_DECIMALS_INVALID");
-  if (x.giveAmount < 1n || x.giveAmount > MAX_PAYMENT_AMOUNT || x.wantAmount < 1n || x.wantAmount > MAX_PAYMENT_AMOUNT) return swapErr("SWAP_OFFER_AMOUNT_INVALID");
-  if (x.maxFee >= x.wantAmount || x.minNetReceive <= 0n) return swapErr("SWAP_NET_AUTH_INITIAL_TERMS_INVALID");
-  const initial = netAuthError(x, 0n, 0n, 0n, false);
-  if (initial !== undefined) return swapErr(initial);
-  // og admission.ts: cross-j settles gross through its paired pulls, so no fee authority, and the route must already be prepared and resting.
-  if (route !== undefined && (x.maxFee !== 0n || x.minNetReceive !== x.wantAmount)) return swapErr("CROSS_J_SWAP_NET_AUTH_INVALID");
-  if (route === undefined && x.giveTokenId === x.wantTokenId) return swapErr("SWAP_SAME_TOKEN");
-  if (route !== undefined && (route.status !== "resting" || !route.sourcePull || !route.targetPull)) return swapErr("CROSS_J_SWAP_NOT_PREPARED");
-  if (x.timeInForce !== undefined && ![0, 1, 2].includes(x.timeInForce)) return swapErr("SWAP_TIME_IN_FORCE_INVALID");
-  const { left, right } = a.account.id, proposer = (ctx.byLeft ? left : right).toLowerCase();
-  const makerIsLeft = route === undefined ? ctx.byLeft : route.makerEntityId.toLowerCase() === left.toLowerCase();
-  if (route !== undefined && (route.makerEntityId.toLowerCase() !== (makerIsLeft ? left : right).toLowerCase() || ![route.makerEntityId, route.source.counterpartyEntityId].some((e) => e.toLowerCase() === proposer)))
-    return swapErr("CROSS_J_SWAP_PROPOSER");
-  return chain(offerMarketKey(x), (key) => chain(traverse([...a.offers.values()].filter((o) => o.makerIsLeft === makerIsLeft), offerMarketKey), (keys) =>
-    keys.filter((k) => k === key).length >= MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET ? swapErr("SWAP_MARKET_OFFER_LIMIT") : route === undefined ? sameJOffer(a, x, ctx, makerIsLeft) : crossJOffer(a, x, route, ctx, makerIsLeft)));
+  if (route === undefined) return x.giveTokenId === x.wantTokenId ? swapErr("SWAP_SAME_TOKEN") : ok(undefined);
+  if (x.maxFee !== 0n || x.minNetReceive !== x.wantAmount) return swapErr("CROSS_J_SWAP_NET_AUTH_INVALID");
+  const prepared = route.status === "resting" && route.sourcePull && route.targetPull;
+  return prepared ? ok(undefined) : swapErr("CROSS_J_SWAP_NOT_PREPARED");
 };
-/** og quantization.ts + cross-j-binding.ts + commit.ts for a cross-j offer: exact route amounts on the canonical side, lot-aligned base, the paired source pull, no second hold. */
-const crossJOffer = (a: AccountBody, x: TxOf<"swap_offer">, route: CrossRoute, ctx: FoldCtx, makerIsLeft: boolean): BodyStep => chain(noteErr(crossMarket(route)), (m) => {
-  const side = m.sourceIsBase ? 1 : 0, base = side === 1 ? x.giveAmount : x.wantAmount, quote = side === 1 ? x.wantAmount : x.giveAmount;
-  const d: SwapDims = side === 1 ? { side, bd: x.giveTokenDecimals, qd: x.wantTokenDecimals } : { side, bd: x.wantTokenDecimals, qd: x.giveTokenDecimals }, lot = lotScale(d.bd);
-  if (base < lot) return swapErr("SWAP_ORDER_BELOW_LOT");
-  if (base % lot !== 0n) return swapErr("CROSS_J_SWAP_LOT_ALIGNMENT");
-  const priceTicks = priceTicksOf(d, base, quote);
-  if (priceTicks <= 0n) return swapErr("SWAP_PRICE_INVALID");
-  if (x.giveAmount !== BigInt(route.source.amount) || x.wantAmount !== BigInt(route.target.amount)) return swapErr("CROSS_J_SWAP_AMOUNT_CHANGED");
-  return chain(noteErr(canonicalCrossRoute(route)), (canonical): BodyStep => {
-    const sp = route.sourcePull, paired = sp === undefined ? undefined : a.pulls?.get(sp.pullId);
-    if (sp === undefined || paired === undefined) return swapErr("CROSS_J_SWAP_SOURCE_PULL_MISSING");
-    if (paired.tokenId !== sp.tokenId || paired.tokenId !== Number(x.giveTokenId) || paired.amount !== sp.signedAmount
-      || (paired.fullHash || "").toLowerCase() !== sp.fullHash.toLowerCase() || (paired.partialRoot || "").toLowerCase() !== sp.partialRoot.toLowerCase()) return swapErr("CROSS_J_SWAP_SOURCE_PULL_MISMATCH");
-    const b = paired.crossJurisdiction;
-    if (!b || b.leg !== "source" || b.orderId !== canonical.orderId || (b.routeHash || "").toLowerCase() !== (canonical.routeHash || "").toLowerCase()) return swapErr("CROSS_J_SWAP_SOURCE_BINDING_MISMATCH");
-    return chain(requantizeAuth(x, x.giveAmount, x.wantAmount), (auth) => map(noteErr(cloneCrossRoute(route)), (publicRoute) => {
-      const offer: SwapOffer = {
-        offerId: x.offerId, giveTokenId: x.giveTokenId, giveTokenDecimals: x.giveTokenDecimals, giveAmount: x.giveAmount, wantTokenId: x.wantTokenId, wantTokenDecimals: x.wantTokenDecimals, wantAmount: x.wantAmount,
-        maxFee: auth.maxFee, minNetReceive: auth.minNetReceive, priceTicks, ...(x.timeInForce !== undefined ? { timeInForce: x.timeInForce } : {}), makerIsLeft,
-        createdHeight: Number(ctx.jHeight), quantizedGive: x.giveAmount, quantizedWant: x.wantAmount, crossJurisdiction: publicRoute,
-      };
-      return step({ ...a, offers: mapSet(a.offers, x.offerId, offer) });
-    }));
-  });
-});
-/** og same-j quantization and commit: canonical price, lot-quantized amounts, capacity, and the maker's give hold. */
-const sameJOffer = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx, makerIsLeft: boolean): BodyStep<Of<Effect, "swap_offer_upsert">> => {
-  const d = swapDims(x), base = d.side === 1 ? x.giveAmount : x.wantAmount, quote = d.side === 1 ? x.wantAmount : x.giveAmount, lot = lotScale(d.bd);
-  if (base < lot) return swapErr("SWAP_ORDER_BELOW_LOT");
-  const prepared = preparedPrice(d, base, quote);
-  if (prepared === undefined) return swapErr("SWAP_PRICE_INVALID");
-  const input = x.priceTicks;
-  if (input !== undefined && input <= 0n) return swapErr("SWAP_PRICE_TICKS_INVALID");
-  if (input !== undefined && (input > prepared ? input - prepared : prepared - input) > 1n) return swapErr("SWAP_PRICE_TICKS_MISMATCH");
-  const priceTicks = input ?? prepared, qb = (base / lot) * lot, qq = quoteAt(d.bd, d.qd, qb, priceTicks);
-  const give = d.side === 1 ? qb : qq, want = d.side === 1 ? qq : qb;
-  if (give < 1n || give > MAX_PAYMENT_AMOUNT || want < 1n || want > MAX_PAYMENT_AMOUNT) return swapErr("SWAP_QUANTIZED_AMOUNT_INVALID");
-  return chain(requantizeAuth(x, give, want), (auth) => chain(ensureRoom(a, x.giveTokenId, give, makerIsLeft), (): BodyStep<Of<Effect, "swap_offer_upsert">> => {
-    const totals = sideTotals(a, x.giveTokenId);
-    if ((makerIsLeft ? totals.leftHold : totals.rightHold) + give > MAX_PAYMENT_AMOUNT) return err({ _tag: "hold_overflow" });
-    const offer: SwapOffer = {
-      offerId: x.offerId, giveTokenId: x.giveTokenId, giveTokenDecimals: x.giveTokenDecimals, giveAmount: give, wantTokenId: x.wantTokenId, wantTokenDecimals: x.wantTokenDecimals, wantAmount: want,
-      maxFee: auth.maxFee, minNetReceive: auth.minNetReceive, priceTicks, ...(x.timeInForce !== undefined ? { timeInForce: x.timeInForce } : {}), makerIsLeft,
-      // og mutation.ts passes the frame's jHeight as the swap handlers' currentHeight.
-      createdHeight: Number(ctx.jHeight), quantizedGive: give, quantizedWant: want,
-    };
-    return ok(step({ ...a, offers: mapSet(a.offers, x.offerId, offer) }, [upserted(a, offer)]));
+const timeInForce = (x: OfferTx): Result<void, BodyError> =>
+  x.timeInForce === undefined || [0, 1, 2].includes(x.timeInForce)
+    ? ok(undefined)
+    : swapErr("SWAP_TIME_IN_FORCE_INVALID");
+/** og cross-j admission: the maker is a party to this Account, and the proposer is the maker or its source peer. */
+const crossJMaker = (a: AccountBody, route: CrossRoute, ctx: FoldCtx): Result<boolean, BodyError> => {
+  const { left, right } = a.account.id;
+  const proposer = at(left, right, ctx.byLeft);
+  const makerIsLeft = lowerText(route.makerEntityId) === lowerText(left);
+  const party = makerIsLeft || lowerText(route.makerEntityId) === lowerText(right);
+  const proposers = [route.makerEntityId, route.source.counterpartyEntityId];
+  const proposes = proposers.some((e) => lowerText(e) === lowerText(proposer));
+  return party && proposes ? ok(makerIsLeft) : swapErr("CROSS_J_SWAP_PROPOSER");
+};
+/** og swap-limits.ts accountSwapMarketKey: same-j offers by token direction, cross-j offers by venue and side. */
+const offerMarketKey = (
+  o: Pick<SwapOfferTerms, "giveTokenId" | "wantTokenId" | "crossJurisdiction">,
+): Result<string, BodyError> => {
+  const route = o.crossJurisdiction;
+  if (route === undefined) return ok(`same:${Number(o.giveTokenId)}>${Number(o.wantTokenId)}`);
+  return map(noteErr(crossMarket(route)), (m) => `${m.venueId}:${m.sourceIsBase ? "base>quote" : "quote>base"}`);
+};
+/** og swap-limits.ts: one maker rests at most MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET offers in one market. */
+const marketRoom = (a: AccountBody, x: OfferTx, makerIsLeft: boolean): Result<void, BodyError> => {
+  const makers = [...a.offers.values()].filter((o) => o.makerIsLeft === makerIsLeft);
+  return chain(offerMarketKey(x), (key) => chain(traverse(makers, offerMarketKey), (keys) => {
+    const resting = keys.filter((k) => k === key).length;
+    return resting >= MAX_SWAP_OFFERS_PER_SIDE_PER_MARKET ? swapErr("SWAP_MARKET_OFFER_LIMIT") : ok(undefined);
   }));
 };
-/** og collectSameJurisdictionSwapOutputs: a same-j offer that survives its transition is reported as the committed snapshot. */
-const upserted = (a: AccountBody, offer: SwapOffer): Of<Effect, "swap_offer_upsert"> => ({ _tag: "swap_offer_upsert", offer, left: a.account.id.left, right: a.account.id.right });
-/** og orderbook/swap-execution.ts deriveExactSwapFillRatio + exactFillRatioToUint16. */
+const swapOffer = (a: AccountBody, x: OfferTx, ctx: FoldCtx): BodyStep<UpsertEffect> => {
+  const route = x.crossJurisdiction;
+  const admitted = checks(offerSlot(a, x), offerTerms(x), offerVenue(x), timeInForce(x));
+  const maker = (): Result<boolean, BodyError> => (route === undefined ? ok(ctx.byLeft) : crossJMaker(a, route, ctx));
+  return chain(admitted, () => chain(maker(), (makerIsLeft) => chain(marketRoom(a, x, makerIsLeft), () =>
+    route === undefined ? sameJOffer(a, x, ctx, makerIsLeft) : crossJOffer(a, x, route, ctx, makerIsLeft))));
+};
+type Resting = NetAuth & OfferAmounts & Readonly<{ priceTicks: bigint }>;
+/** The offer both venues commit: the maker's tokens at the quantized amounts, price and authority. */
+const restingOffer = (x: OfferTx, r: Resting, makerIsLeft: boolean, ctx: FoldCtx): SwapOffer => ({
+  offerId: x.offerId,
+  giveTokenId: x.giveTokenId, giveTokenDecimals: x.giveTokenDecimals, giveAmount: r.give,
+  wantTokenId: x.wantTokenId, wantTokenDecimals: x.wantTokenDecimals, wantAmount: r.want,
+  maxFee: r.maxFee, minNetReceive: r.minNetReceive, priceTicks: r.priceTicks, ...opt("timeInForce", x.timeInForce),
+  makerIsLeft,
+  // og mutation.ts passes the frame's jHeight as the swap handlers' currentHeight.
+  createdHeight: Number(ctx.jHeight), quantizedGive: r.give, quantizedWant: r.want,
+});
+/** og cross-j-binding.ts: the source pull this offer pairs with carries the route's token, amount, hashes and order. */
+const pairedSourcePull = (
+  a: AccountBody, x: OfferTx, route: CrossRoute, canonical: CrossRoute,
+): Result<void, BodyError> => {
+  const sp = route.sourcePull;
+  const paired = sp === undefined ? undefined : a.pulls?.get(sp.pullId);
+  if (sp === undefined || paired === undefined) return swapErr("CROSS_J_SWAP_SOURCE_PULL_MISSING");
+  const sameAmount = paired.tokenId === sp.tokenId && paired.tokenId === Number(x.giveTokenId)
+    && paired.amount === sp.signedAmount;
+  const sameHashes = lowerText(paired.fullHash) === lowerText(sp.fullHash)
+    && lowerText(paired.partialRoot) === lowerText(sp.partialRoot);
+  if (!sameAmount || !sameHashes) return swapErr("CROSS_J_SWAP_SOURCE_PULL_MISMATCH");
+  const b = paired.crossJurisdiction;
+  const bound = b && b.leg === "source" && b.orderId === canonical.orderId
+    && lowerText(b.routeHash) === lowerText(canonical.routeHash);
+  return bound ? ok(undefined) : swapErr("CROSS_J_SWAP_SOURCE_BINDING_MISMATCH");
+};
+/**
+ * og quantization.ts + cross-j-binding.ts + commit.ts for a cross-j offer: the route's exact amounts on its canonical
+ * side, a lot-aligned base, and the paired source pull. The pull already holds the give, so there is no second hold.
+ */
+const crossJOffer = (a: AccountBody, x: OfferTx, route: CrossRoute, ctx: FoldCtx, makerIsLeft: boolean): BodyStep =>
+  chain(noteErr(crossMarket(route)), (m) => {
+    const d = dimsAt(m.sourceIsBase ? 1 : 0, x);
+    const { base, quote } = toMarket(d, x.giveAmount, x.wantAmount);
+    const lot = lotScale(d.bd);
+    const priceTicks = priceTicksOf(d, base, quote);
+    const sameAmounts = (): boolean =>
+      x.giveAmount === BigInt(route.source.amount) && x.wantAmount === BigInt(route.target.amount);
+    switch (true) {
+      case base < lot: return swapErr("SWAP_ORDER_BELOW_LOT");
+      case base % lot !== 0n: return swapErr("CROSS_J_SWAP_LOT_ALIGNMENT");
+      case priceTicks <= 0n: return swapErr("SWAP_PRICE_INVALID");
+      case !sameAmounts(): return swapErr("CROSS_J_SWAP_AMOUNT_CHANGED");
+    }
+    const paired = chain(noteErr(canonicalCrossRoute(route)), (canonical) => pairedSourcePull(a, x, route, canonical));
+    const committed = chain(paired, () => all({
+      auth: requantizeAuth(x, x.giveAmount, x.wantAmount),
+      publicRoute: noteErr(cloneCrossRoute(route)),
+    }));
+    return map(committed, ({ auth, publicRoute }) => {
+      const resting = { ...auth, give: x.giveAmount, want: x.wantAmount, priceTicks };
+      const offer: SwapOffer = { ...restingOffer(x, resting, makerIsLeft, ctx), crossJurisdiction: publicRoute };
+      return step({ ...a, offers: mapSet(a.offers, x.offerId, offer) });
+    });
+  });
+/** og price check: a maker-supplied tick may differ from the canonical price by at most one tick. */
+const offerPrice = (d: SwapDims, amounts: MarketAmounts, input: bigint | undefined): Result<bigint, BodyError> => {
+  const prepared = preparedPrice(d, amounts.base, amounts.quote);
+  if (prepared === undefined) return swapErr("SWAP_PRICE_INVALID");
+  if (input === undefined) return ok(prepared);
+  if (input <= 0n) return swapErr("SWAP_PRICE_TICKS_INVALID");
+  const drift = input > prepared ? input - prepared : prepared - input;
+  return drift > 1n ? swapErr("SWAP_PRICE_TICKS_MISMATCH") : ok(input);
+};
+/** og commit.ts: the maker has room for the give, and its total hold stays within one payment. */
+const makerHold = (a: AccountBody, token: TokenId, give: bigint, makerIsLeft: boolean): Result<void, BodyError> =>
+  chain(ensureRoom(a, token, give, makerIsLeft), () => {
+    const totals = sideTotals(a, token);
+    const held = makerIsLeft ? totals.leftHold : totals.rightHold;
+    return held + give > MAX_PAYMENT_AMOUNT ? err({ _tag: "hold_overflow" }) : ok(undefined);
+  });
+/** og same-j quantization and commit: canonical price, lot-quantized amounts, capacity, and the maker's give hold. */
+const sameJOffer = (a: AccountBody, x: OfferTx, ctx: FoldCtx, makerIsLeft: boolean): BodyStep<UpsertEffect> => {
+  const d = swapDims(x);
+  const amounts = toMarket(d, x.giveAmount, x.wantAmount);
+  const lot = lotScale(d.bd);
+  if (amounts.base < lot) return swapErr("SWAP_ORDER_BELOW_LOT");
+  return chain(offerPrice(d, amounts, x.priceTicks), (priceTicks) => {
+    const base = (amounts.base / lot) * lot;
+    const { give, want } = toOffer(d, base, quoteAt(d.bd, d.qd, base, priceTicks));
+    if (!inPaymentRange(give) || !inPaymentRange(want)) return swapErr("SWAP_QUANTIZED_AMOUNT_INVALID");
+    const hold = makerHold(a, x.giveTokenId, give, makerIsLeft);
+    const held = chain(requantizeAuth(x, give, want), (auth) => map(hold, () => auth));
+    return map(held, (auth) => {
+      const offer = restingOffer(x, { ...auth, give, want, priceTicks }, makerIsLeft, ctx);
+      return step({ ...a, offers: mapSet(a.offers, x.offerId, offer) }, [upserted(a, offer)]);
+    });
+  });
+};
+/** og collectSameJurisdictionSwapOutputs: a same-j offer that survives reports its committed snapshot. */
+const upserted = (a: AccountBody, offer: SwapOffer): UpsertEffect =>
+  ({ _tag: "swap_offer_upsert", offer, left: a.account.id.left, right: a.account.id.right });
+
+// ---- swap resolve: og swap/resolve ----
+// The counterparty fills a resting same-j offer: at or above the maker's limit, inside its fee authority, with room
+// for the want. The maker's give moves across, the want less the fee comes back, and a whole-unit remainder rests on.
+type ResolveTx = TxOf<"swap_resolve">;
+type ResolveEffect = Of<Effect, "swap_cancelled" | "swap_offer_upsert">;
+/** og orderbook/swap-execution.ts deriveExactSwapFillRatio: the executed share of the quantized give, reduced. */
 const exactFillRatio = (qG: bigint, fG: bigint): { readonly n: bigint; readonly d: bigint } => {
   if (qG <= 0n || fG <= 0n) return { n: 0n, d: 1n };
   if (fG >= qG) return { n: 1n, d: 1n };
   const g = gcd(fG, qG);
   return { n: fG / g, d: qG / g };
 };
+/**
+ * og exactFillRatioToUint16: the smallest ratio c whose floor share reaches the exact fill. Since n is whole,
+ * floor(d·c / MAX_FILL) ≥ n exactly when c ≥ n·MAX_FILL / d, so c is that bound rounded up.
+ */
 const fillRatioOf = (r: { readonly n: bigint; readonly d: bigint }): number => {
-  if (r.n <= 0n) return 0;
-  if (r.n >= r.d) return MAX_FILL;
-  const max = BigInt(MAX_FILL);
-  let c = Math.min(MAX_FILL, Math.max(0, Number((r.n * max + r.d - 1n) / r.d)));
-  while (c > 0 && (r.d * BigInt(c - 1)) / max >= r.n) c--;
-  while (c < MAX_FILL && (r.d * BigInt(c)) / max < r.n) c++;
-  return c;
+  switch (true) {
+    case r.n <= 0n: return 0;
+    case r.n >= r.d: return MAX_FILL;
+    default: return Number(ceilDiv(r.n * BigInt(MAX_FILL), r.d));
+  }
 };
-/** og swap/resolve: canonical offer, explicit execution at or above the maker's limit, fee authority, counterparty capacity, requantized remainder. */
-const swapResolve = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCtx): BodyStep<Of<Effect, "swap_cancelled" | "swap_offer_upsert">> => {
+/** og resolve: every resting term the taker quotes must be the offer's own. */
+const quotesResting = (x: ResolveTx, o: SwapOffer): boolean => {
+  const quoted = [
+    [x.restingGiveAmount, o.giveAmount], [x.restingWantAmount, o.wantAmount],
+    [x.restingQuantizedGive, o.quantizedGive], [x.restingQuantizedWant, o.quantizedWant],
+    [x.restingPriceTicks, o.priceTicks],
+  ] as const;
+  return quoted.every(([theirs, ours]) => theirs === undefined || theirs === ours);
+};
+type Execution = Readonly<{ provided: boolean; give: bigint; want: bigint; ratio: number }>;
+/** og resolve execution: both explicit amounts, whose exact share fixes the ratio; without them the ratio must be 0. */
+const executionOf = (x: ResolveTx, quantizedGive: bigint): Result<Execution, BodyError> => {
+  const give = x.executionGiveAmount, want = x.executionWantAmount;
+  if (give !== undefined && want !== undefined) {
+    return ok({ provided: true, give, want, ratio: fillRatioOf(exactFillRatio(quantizedGive, give)) });
+  }
+  if (give !== undefined || want !== undefined) return swapErr("SWAP_EXECUTION_PARTIAL");
+  if (x.fillRatio > 0) return swapErr("SWAP_EXECUTION_REQUIRED");
+  return ok({ provided: false, give: 0n, want: 0n, ratio: x.fillRatio });
+};
+/** og resolve exact ratio: an n/d the taker quotes must be exactly the executed share of the quantized give. */
+const exactRatio = (x: ResolveTx, quantizedGive: bigint, give: bigint): Result<void, BodyError> => {
+  const n = x.fillNumerator, d = x.fillDenominator;
+  if (n === undefined && d === undefined) return ok(undefined);
+  if (n === undefined || d === undefined) return swapErr("SWAP_EXACT_RATIO_PARTIAL");
+  if (d <= 0n || n < 0n || n > d) return swapErr("SWAP_EXACT_RATIO_RANGE");
+  return n * quantizedGive === give * d ? ok(undefined) : swapErr("SWAP_EXACT_RATIO_MISMATCH");
+};
+/** og resolve fee: in the want token, only on a real fill, and always less than the want it comes out of. */
+const feeOf = (x: ResolveTx, o: SwapOffer, e: Execution): Result<bigint, BodyError> => {
+  const fee = x.feeAmount ?? 0n;
+  const wrongToken = (x.feeTokenId ?? o.wantTokenId) !== o.wantTokenId;
+  const invalid = fee < 0n || (fee > 0n && (e.give <= 0n || wrongToken)) || (fee >= e.want && e.want > 0n);
+  return invalid ? swapErr("SWAP_FEE_INVALID") : ok(fee);
+};
+/** og resolve execution checks: a positive fill within the offer, at or above the maker's limit, at its own ratio. */
+const executionFits = (x: ResolveTx, o: SwapOffer, e: Execution): Result<void, BodyError> => {
+  const fills = e.give > 0n || e.want > 0n;
+  switch (true) {
+    case !e.provided: return ok(undefined);
+    case fills && (e.give <= 0n || e.want <= 0n): return swapErr("SWAP_EXECUTION_NOT_POSITIVE");
+    case x.fillRatio !== e.ratio: return swapErr("SWAP_FILL_RATIO_MISMATCH");
+    case fills && e.give > o.quantizedGive: return swapErr("SWAP_EXECUTION_ABOVE_OFFER");
+    case fills && e.want * o.quantizedGive < e.give * o.quantizedWant: return swapErr("SWAP_MAKER_LIMIT_PRICE");
+    case e.ratio > 0 && (!inPaymentRange(e.give) || !inPaymentRange(e.want)): return swapErr("SWAP_FILL_AMOUNT_BOUNDS");
+    default: return ok(undefined);
+  }
+};
+type Taken = Readonly<{ fill: Fill; ratio: number }>;
+/** og resolve admission: the counterparty quotes the resting terms and fills inside the maker's price and authority. */
+const takerFill = (o: SwapOffer, x: ResolveTx, ctx: FoldCtx): Result<Taken, BodyError> => {
+  if (o.crossJurisdiction !== undefined) return swapErr("SWAP_RESOLVE_CROSS_J");
+  if (!quotesResting(x, o)) return swapErr("SWAP_RESTING_TERMS_MISMATCH");
+  if (ctx.byLeft === o.makerIsLeft) return err({ _tag: "not_counterparty" });
+  if (!Number.isInteger(x.fillRatio) || x.fillRatio < 0 || x.fillRatio > MAX_FILL) return err({ _tag: "bad_ratio" });
+  return chain(executionOf(x, o.quantizedGive), (e) =>
+    chain(exactRatio(x, o.quantizedGive, e.give), () => chain(feeOf(x, o, e), (fee) => {
+      const fill: Fill = { give: e.give, want: e.want, fee };
+      const fits = chain(swapIssue(netAuthError(o, fill, x.cancelRemainder)), () => executionFits(x, o, e));
+      return map(fits, () => ({ fill, ratio: e.ratio }));
+    })));
+};
+/**
+ * og resolve settlement: the maker's give moves to the taker and the want, less the fee, moves back. The offer
+ * leaves the book here; holds follow live offers, so its filled give and any requantization dust are released.
+ */
+const settleFill = (a: AccountBody, o: SwapOffer, f: Fill): Result<AccountBody, BodyError> => {
+  const fromMaker = (n: bigint): bigint => (o.makerIsLeft ? -n : n);
+  const takerRoom = f.want > 0n ? ensureRoom(a, o.wantTokenId, f.want, other(o.makerIsLeft)) : ok(undefined);
+  return chain(takerRoom, () => {
+    const giveRow = shift(getDelta(a.account, o.giveTokenId), fromMaker(f.give));
+    const wantRow = shift(getDelta(a.account, o.wantTokenId), -fromMaker(f.want - f.fee));
+    return chain(checks(representable(a, giveRow), representable(a, wantRow)), () => {
+      const closed: AccountBody = { ...a, offers: mapDelete(a.offers, o.offerId) };
+      return ok(putState(closed, setDelta(setDelta(a.account, giveRow), wantRow)));
+    });
+  });
+};
+/** og remainder.ts: the unfilled part, requantized at the offer's price with its share of the authority. */
+const remainderOf = (o: SwapOffer, f: Fill): Result<SwapOffer | undefined, BodyError> => {
+  const d = swapDims(o);
+  const unfilledGive = o.quantizedGive - f.give;
+  const next = requantizeRemaining(d, toMarket(d, unfilledGive, o.quantizedWant - f.want).base, o.priceTicks);
+  if (next === undefined) return ok(undefined);
+  if (unfilledGive - next.give < 0n) return swapErr("SWAP_REMAINDER_EXCEEDS_HOLD");
+  return map(requantizeAuth(o, next.give, next.want), (auth): SwapOffer => ({
+    ...o, giveAmount: next.give, wantAmount: next.want, ...auth, quantizedGive: next.give, quantizedWant: next.want,
+  }));
+};
+const swapResolve = (a: AccountBody, x: ResolveTx, ctx: FoldCtx): BodyStep<ResolveEffect> => {
   const offer = a.offers.get(x.offerId);
   if (offer === undefined) return MISSING;
-  if (offer.crossJurisdiction !== undefined) return swapErr("SWAP_RESOLVE_CROSS_J");
-  if ((x.restingGiveAmount !== undefined && x.restingGiveAmount !== offer.giveAmount) || (x.restingWantAmount !== undefined && x.restingWantAmount !== offer.wantAmount)
-    || (x.restingQuantizedGive !== undefined && x.restingQuantizedGive !== offer.quantizedGive) || (x.restingQuantizedWant !== undefined && x.restingQuantizedWant !== offer.quantizedWant)
-    || (x.restingPriceTicks !== undefined && x.restingPriceTicks !== offer.priceTicks)) return swapErr("SWAP_RESTING_TERMS_MISMATCH");
-  if (ctx.byLeft === offer.makerIsLeft) return err({ _tag: "not_counterparty" });
-  if (!Number.isInteger(x.fillRatio) || x.fillRatio < 0 || x.fillRatio > MAX_FILL) return err({ _tag: "bad_ratio" });
-  const provided = x.executionGiveAmount !== undefined || x.executionWantAmount !== undefined;
-  if (provided && (x.executionGiveAmount === undefined || x.executionWantAmount === undefined)) return swapErr("SWAP_EXECUTION_PARTIAL");
-  if (x.fillRatio > 0 && !provided) return swapErr("SWAP_EXECUTION_REQUIRED");
-  const qG = offer.quantizedGive, qW = offer.quantizedWant, limitGive = (qG * BigInt(x.fillRatio)) / BigInt(MAX_FILL);
-  const fG = x.executionGiveAmount ?? limitGive, fW = x.executionWantAmount ?? ceilDiv(limitGive * qW, qG);
-  const canonical = provided ? fillRatioOf(exactFillRatio(qG, fG)) : x.fillRatio;
-  const exact = x.fillNumerator !== undefined || x.fillDenominator !== undefined;
-  if (exact) {
-    const n = x.fillNumerator, dd = x.fillDenominator;
-    if (n === undefined || dd === undefined) return swapErr("SWAP_EXACT_RATIO_PARTIAL");
-    if (dd <= 0n || n < 0n || n > dd) return swapErr("SWAP_EXACT_RATIO_RANGE");
-    if (n * qG !== fG * dd) return swapErr("SWAP_EXACT_RATIO_MISMATCH");
-  }
-  const fee = x.feeAmount ?? 0n;
-  if (fee < 0n || (fee > 0n && fG <= 0n) || (fee > 0n && (x.feeTokenId ?? offer.wantTokenId) !== offer.wantTokenId) || (fee >= fW && fW > 0n)) return swapErr("SWAP_FEE_INVALID");
-  const auth = netAuthError(offer, fG, fW, fee, x.cancelRemainder);
-  if (auth !== undefined) return swapErr(auth);
-  const hasFill = fG > 0n || fW > 0n;
-  if (provided && hasFill && (fG <= 0n || fW <= 0n)) return swapErr("SWAP_EXECUTION_NOT_POSITIVE");
-  if (provided && x.fillRatio !== canonical) return swapErr("SWAP_FILL_RATIO_MISMATCH");
-  if (provided && hasFill && fG > qG) return swapErr("SWAP_EXECUTION_ABOVE_OFFER");
-  if (provided && hasFill && fW * qG < fG * qW) return swapErr("SWAP_MAKER_LIMIT_PRICE");
-  if (canonical > 0 && (fG < 1n || fG > MAX_PAYMENT_AMOUNT || fW < 1n || fW > MAX_PAYMENT_AMOUNT)) return swapErr("SWAP_FILL_AMOUNT_BOUNDS");
-  // Holds are derived from live offers: dropping or replacing the offer releases the filled give and any requantization dust.
-  const closed: AccountBody = { ...a, offers: mapDelete(a.offers, offer.offerId) };
-  const byMaker = (n: bigint): bigint => (offer.makerIsLeft ? -n : n);
-  return chain(fW > 0n ? chain(ensureRoom(a, offer.wantTokenId, fW, !offer.makerIsLeft), () => ok(undefined)) : ok(undefined), () => {
-    const giveRow = shift(getDelta(a.account, offer.giveTokenId), fG > 0n ? byMaker(fG) : 0n);
-    const wantRow = shift(getDelta(a.account, offer.wantTokenId), (fG > 0n ? -byMaker(fW) : 0n) + (fee > 0n ? byMaker(fee) : 0n));
-    return chain(representable(a, giveRow), () => chain(representable(a, wantRow), (): BodyStep<Of<Effect, "swap_cancelled" | "swap_offer_upsert">> => {
-      const moved = putState(closed, setDelta(setDelta(a.account, giveRow), wantRow));
-      // og remainder.ts closeSwapOffer: every removal of the resting offer reports swap_cancelled with the maker's entity.
-      const removed = ok(step(moved, [{ _tag: "swap_cancelled" as const, offerId: offer.offerId, makerId: offer.makerIsLeft ? a.account.id.left : a.account.id.right }]));
-      if (x.cancelRemainder || x.fillRatio === 0 || canonical === MAX_FILL) return removed;
-      const d = swapDims(offer), remaining = d.side === 1 ? qG - fG : qW - fW, next = requantizeRemaining(d, remaining, offer.priceTicks);
-      if (next === undefined) return removed;
-      if (qG - fG - next.give < 0n) return swapErr("SWAP_REMAINDER_EXCEEDS_HOLD");
-      return map(requantizeAuth(offer, next.give, next.want), (na) => {
-        const rest: SwapOffer = { ...offer, giveAmount: next.give, wantAmount: next.want, maxFee: na.maxFee, minNetReceive: na.minNetReceive, quantizedGive: next.give, quantizedWant: next.want };
-        return step<AccountBody, Of<Effect, "swap_cancelled" | "swap_offer_upsert">>({ ...moved, offers: mapSet(moved.offers, offer.offerId, rest) }, [upserted(a, rest)]);
-      });
-    }));
-  });
+  const { left, right } = a.account.id;
+  // og remainder.ts closeSwapOffer: every removal of the resting offer reports swap_cancelled with the maker's entity.
+  const makerId = at(left, right, offer.makerIsLeft);
+  const cancelled = { _tag: "swap_cancelled" as const, offerId: offer.offerId, makerId };
+  return chain(takerFill(offer, x, ctx), ({ fill, ratio }) => chain(settleFill(a, offer, fill), (moved) => {
+    const closes = x.cancelRemainder || x.fillRatio === 0 || ratio === MAX_FILL;
+    const rest = closes ? ok(undefined) : remainderOf(offer, fill);
+    return map(rest, (r): Step<AccountBody, ResolveEffect> => r === undefined
+      ? step(moved, [cancelled])
+      : step({ ...moved, offers: mapSet(moved.offers, offer.offerId, r) }, [upserted(a, r)]));
+  }));
 };
 // ---- rebalance: og handlers/rebalance/{request-collateral,refund,policy}.ts ----
 const rebalanceErr = (reason: string): Result<never, BodyError> => err({ _tag: "rebalance", reason });
@@ -6416,7 +7145,7 @@ const swapOfferFailure = (a: AccountBody, x: TxOf<"swap_offer">, ctx: FoldCtx): 
     () => (x.giveAmount < 1n || x.giveAmount > MAX_PAYMENT_AMOUNT ? refusedTx(`Invalid giveAmount: ${x.giveAmount} (min 1, max ${U256})`) : null),
     () => (x.wantAmount < 1n || x.wantAmount > MAX_PAYMENT_AMOUNT ? refusedTx(`Invalid wantAmount: ${x.wantAmount} (min 1, max ${U256})`) : null),
     () => (x.maxFee >= x.wantAmount || x.minNetReceive <= 0n ? refusedTx("SWAP_NET_AUTH_INITIAL_TERMS_INVALID") : null),
-    () => { const e = netAuthError(x, 0n, 0n, 0n, false); return e === undefined ? null : refusedTx(e); },
+    () => { const e = netAuthError(x, NO_FILL, false); return e === undefined ? null : refusedTx(e); },
     () => (route !== undefined && (x.maxFee !== 0n || x.minNetReceive !== x.wantAmount) ? refusedTx("CROSS_J_SWAP_NET_AUTH_INVALID") : null),
     () => (route === undefined && x.giveTokenId === x.wantTokenId ? refusedTx(`Cannot swap same token: ${Number(x.giveTokenId)}`) : null),
     () => (route !== undefined && (route.status !== "resting" || !route.sourcePull || !route.targetPull) ? refusedTx("Cross-j swap must be prepared before entering the book") : null),
@@ -6500,7 +7229,7 @@ const swapResolveFailure = (a: AccountBody, x: TxOf<"swap_resolve">, ctx: FoldCt
     () => (fee > 0n && fG <= 0n ? refusedTx("Swap taker fee requires a non-zero fill") : null),
     () => (fee > 0n && feeToken !== offer.wantTokenId ? refusedTx(`Swap taker fee token mismatch: expected ${Number(offer.wantTokenId)}, got ${Number(feeToken)}`) : null),
     () => (fee >= fW && fW > 0n ? refusedTx(`Swap taker fee ${fee} exceeds or equals filled receive amount ${fW}`) : null),
-    () => { const e = netAuthError(offer, fG, fW, fee, x.cancelRemainder); return e === undefined ? null : refusedTx(e); },
+    () => { const e = netAuthError(offer, { give: fG, want: fW, fee }, x.cancelRemainder); return e === undefined ? null : refusedTx(e); },
     () => (provided && hasFill && (fG <= 0n || fW <= 0n) ? refusedTx("Execution amounts must both be positive for a fill") : null),
     () => (provided && x.fillRatio !== canonical ? refusedTx(`fillRatio ${x.fillRatio} does not match canonical execution ratio ${canonical}`) : null),
     () => (provided && hasFill && fG > qG ? refusedTx(`Execution give amount ${fG} exceeds offer limit ${qG}`) : null),
@@ -6619,6 +7348,7 @@ const claimFailure = (a: AccountBody, x: TxOf<"j_event_claim">, ctx: FoldCtx, e:
   }
   return threwTx(bodyErrorCode(e));
 };
+type MutableDiff = { -readonly [K in keyof WorkspaceDiff]: WorkspaceDiff[K] };
 /** og compileOps (protocol/settlement/operations.ts) messages in og's order: per op token, forgiveness, op type; then per diff range and conservation; then the caps. */
 const compileOpsText = (ops: readonly SettlementOp[], proposerIsLeft: boolean, context: string): string | null => {
   for (const [i, op] of ops.entries()) {
@@ -9923,7 +10653,7 @@ const sourceHubClaimForRoute = (h: CjHost, routeId: string, counterparty: string
 /** og queueSourceHubClaimRegistrationsForAccount: every live route whose Source pull this hub holds against `counterparty` and the signed body carries. */
 export const sourceHubClaims = (h: CjHost, counterparty: string, signedBody: Pick<ProofBody, "transformers">, transformer: string): Result<{ readonly host: CjHost; readonly claims: readonly SourceClaim[] }, EntityError> => {
   const self = lc(h.id), cp = counterparty.toLowerCase();
-  const ids = routesOf(h).filter((r) => !isCrossTerminal(r.status) && r.sourcePull !== undefined && r.source.counterpartyEntityId.toLowerCase() === self && r.source.entityId.toLowerCase() === cp).map((r) => r.orderId).sort(stableText);
+  const ids = routesOf(h).filter((r) => !isCrossTerminal(r.status) && r.sourcePull !== undefined && r.source.counterpartyEntityId.toLowerCase() === self && r.source.entityId.toLowerCase() === cp).map((r) => r.orderId).sort(asc);
   let host = h;
   const claims: SourceClaim[] = [];
   for (const id of ids) {
@@ -9941,7 +10671,7 @@ export const sourceHubClaims = (h: CjHost, counterparty: string, signedBody: Pic
 };
 /** og buildCrossJurisdictionEntityOutput batches, keyed by `${entity}\0${signer}` and emitted in stable text order. */
 const cjBatches = (batches: ReadonlyMap<string, { readonly entityId: string; readonly signerId: string; readonly txs: readonly EntityTx[] }>): readonly CjOut[] =>
-  [...batches.entries()].sort(([a], [b]) => stableText(a, b)).map(([, b]) => ({ kind: "cross", entityId: b.entityId.trim().toLowerCase(), signerId: b.signerId.trim().toLowerCase(), txs: b.txs }));
+  [...batches.entries()].sort(([a], [b]) => asc(a, b)).map(([, b]) => ({ kind: "cross", entityId: b.entityId.trim().toLowerCase(), signerId: b.signerId.trim().toLowerCase(), txs: b.txs }));
 /** og HashLadderRevealRegistered event data. */
 export type LadderRevealEvent = { readonly entity: string; readonly counterpartyEntity: string; readonly ladderHash: string; readonly fillRatio: number; readonly fullSecret: string; readonly reveals: readonly string[]; readonly targetRole: boolean; readonly revealedAt?: number | undefined };
 /**
@@ -9975,7 +10705,7 @@ export type TargetRecoveryPlan = { readonly recovery: CrossRecovery; readonly re
 const targetRecoveryRoutes = (h: CjHost, account: CjAccount, counterparty: string): Result<{ readonly routes: readonly CrossRoute[]; readonly frozen: readonly string[] }, EntityError> => {
   const self = lc(h.id), cp = lc(counterparty);
   const candidates = routesOf(h).filter((r) => lc(r.target.counterpartyEntityId) === self && lc(r.target.entityId) === cp && r.targetPull !== undefined && !isCrossTerminal(r.status))
-    .sort((a, b) => stableText(String(a.orderId || ""), String(b.orderId || "")));
+    .sort((a, b) => asc(String(a.orderId || ""), String(b.orderId || "")));
   if (candidates.length === 0) return ok({ routes: [], frozen: [] });
   const side = self === lc(account.left) ? account.leftPullIds : self === lc(account.right) ? account.rightPullIds : undefined;
   if (side === undefined) return invariant(`CROSS_J_TARGET_ACCOUNT_ROLE_MISMATCH:${h.id}`);
@@ -10573,7 +11303,7 @@ export const lendingLoanId = (i: { readonly hubEntityId: string; readonly borrow
 /** og selectBestLendingPool: the cheapest open pool of the token and term that covers the amount, then the oldest, then the position id. */
 const bestLendingPool = (book: LendingBook, tokenId: number, amount: bigint, termId: string, maxInterestBps: number): LendingPool | undefined =>
   [...book.pools.values()].filter((p) => p.status === "open" && p.tokenId === tokenId && p.termId === termId && p.availableAmount >= amount && p.interestBps <= maxInterestBps)
-    .sort((a, b) => a.interestBps - b.interestBps || a.createdAt - b.createdAt || stableText(a.positionId, b.positionId))[0];
+    .sort((a, b) => a.interestBps - b.interestBps || a.createdAt - b.createdAt || asc(a.positionId, b.positionId))[0];
 /** One committed Account frame and its proposer, as og applyCommittedAccountFrameFollowups sees it. */
 export type LendingFrame = { readonly frame: Pick<AccountFrame, "timestamp" | "txs">; readonly proposer: string };
 export type LendingFollowup = { readonly state: EntityState; readonly accountTxs: readonly AccountTxTarget[] };
@@ -12542,7 +13272,6 @@ export const preparedEntryOf = (b: Binary, previousKey: string): PreparedHtlcEnt
 };
 /** The proposer's (or a validator's) inbound decryption view: the pre-frame Entity, the frame clock, the Entity keypair and the liveness it asserts. */
 type HtlcInboundView = { readonly state: EntityState; readonly replicas: Replicas; readonly timestamp: number; readonly publicKey: string; readonly privateKey: string | undefined; readonly online: (entityId: string) => boolean };
-type HtlcLockTx = Extract<WireAccountTx, { type: "htlc_lock" }>;
 const preparedReject = (binding: PreparedHtlcBinding, reason: HtlcRejectReason): PreparedHtlcEntry => ({ binding, outcome: { kind: "reject", reason } });
 /** og buildInboundBinding + computeHtlcEnvelopeContextHash: a lock without an opaque layer, or whose id is not its hashlock, fails the whole frame. */
 const inboundBinding = (m: Extract<AccountPeerInput, { kind: "ack_frame" }>, lock: HtlcLockTx): Result<{ readonly binding: PreparedHtlcBinding; readonly contextHash: string }, EntityError> => {
@@ -21284,7 +22013,7 @@ const fillResolve = (pass: Pass, p: Prepared, book: Book, ref: SwapRef, orderId:
     };
     return chain(taker ? policyFee(o, executed ? eG : 0n, executed ? eW : 0n, pass.hub.takerFeeBps, cancelRemainder) : ok(0n), (fee): Result<SwapResolveTerms, FillFault> => {
       const data: SwapResolveTerms = fee > 0n ? { ...base, feeTokenId: String(o.wantTokenId) as TokenId, feeAmount: fee } : base;
-      return netAuthError(o, data.executionGiveAmount ?? 0n, data.executionWantAmount ?? 0n, data.feeAmount ?? 0n, cancelRemainder) === undefined ? ok(data) : err(AUTH);
+      return netAuthError(o, { give: data.executionGiveAmount ?? 0n, want: data.executionWantAmount ?? 0n, fee: data.feeAmount ?? 0n }, cancelRemainder) === undefined ? ok(data) : err(AUTH);
     });
   });
 };
