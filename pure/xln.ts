@@ -15934,9 +15934,11 @@ const accountInputsOf = (routed: RoutedEntityInput): readonly AccountPeerInput[]
 const proposedFrameOf = (input: AccountPeerInput): AccountFrame | undefined =>
   input.kind === "ack_frame" ? input.frame : undefined;
 const ackIn = (input: AccountPeerInput): { readonly height: bigint; readonly frameHash: string } | undefined => {
-  if (input.kind === "ack") return input;
-  if (input.kind === "ack_frame") return input.ack ?? undefined;
-  return undefined;
+  switch (input.kind) {
+    case "ack": return input;
+    case "ack_frame": return input.ack ?? undefined;
+    default: return undefined;
+  }
 };
 /** `local`, or the Runtime that transported the input. */
 const transportOrigin = (routed: RoutedEntityInput): string =>
@@ -16460,24 +16462,38 @@ export const matchedCrossPairs = (view: CrossAdmissionView, inputs: readonly Rou
   const paired = new Set(pairs.flatMap((pair) => [pair.sourceInputIndex, pair.targetInputIndex]));
   const committed = new Set(legs.filter((leg) => leg.committed).map((leg) => leg.at));
 
-  // A marked cohort survives only as an exact pair or an exact committed replay.
-  const cohortSurvives = (ats: readonly number[]): boolean => ats.length === 2
-    && (ats.every((at) => committed.has(at)) || pairs.some((pair) => ats.includes(pair.sourceInputIndex) && ats.includes(pair.targetInputIndex)));
-  const brokenCohorts = new Set([...markedCohorts.values()].flatMap((ats) => (cohortSurvives(ats) ? [] : ats)));
+  // Transport can deliver two inputs already marked as one atomic cohort. That cohort must come out
+  // as exactly the pair it claims to be, or as a replay of frames both inputs already committed.
+  // Anything else means the cohort was split on the way, and both inputs lose their legs.
+  const cohortHeld = (ats: readonly number[]): boolean => {
+    const bothCommitted = ats.every((at) => committed.has(at));
+    const pairedTogether = pairs.some((pair) =>
+      ats.includes(pair.sourceInputIndex) && ats.includes(pair.targetInputIndex));
+    return ats.length === 2 && (bothCommitted || pairedTogether);
+  };
+  const splitCohortInputs = new Set([...markedCohorts.values()].filter((ats) => !cohortHeld(ats)).flat());
 
-  const reasonAt = (at: number): CrossRejectedLeg["reason"] | undefined =>
-    multi.has(at) ? "multiple-candidates-per-input"
-    : defects.has(at) ? "candidate-invalid"
-    : failures.has(at) ? "pair-match-failed"
-    : brokenCohorts.has(at) ? "atomic-group-invalid"
-    : paired.has(at) ? undefined
-    : "unpaired";
-  const rejectedAts = sortWith(new Set([...live.map((leg) => leg.at), ...brokenCohorts]), ascending)
-    .filter((at) => reasonAt(at) !== undefined);
-  const rejectedLegs = rejectedAts.flatMap((at) => {
-    const reason = reasonAt(at) as CrossRejectedLeg["reason"];
+  // Why an input's legs are rejected, in og's order of precedence; undefined when it is admitted.
+  const rejectionOf = (at: number): CrossRejectedLeg["reason"] | undefined => {
+    switch (true) {
+      case multi.has(at): return "multiple-candidates-per-input";
+      case defects.has(at): return "candidate-invalid";
+      case failures.has(at): return "pair-match-failed";
+      case splitCohortInputs.has(at): return "atomic-group-invalid";
+      case paired.has(at): return undefined;
+      default: return "unpaired";
+    }
+  };
+  const judged = sortWith(new Set([...live.map((leg) => leg.at), ...splitCohortInputs]), ascending);
+  const rejections = judged.flatMap((at) => {
+    const reason = rejectionOf(at);
+    return reason === undefined ? [] : [{ at, reason }];
+  });
+  const rejectedAts = rejections.map(({ at }) => at);
+  const rejectedLegs = rejections.flatMap(({ at, reason }) => {
     const detail = (reason === "pair-match-failed" ? failures.get(at) : defects.get(at)) ?? [];
-    return lostAccountInputs(legs, inputs, at).map((accountInput): CrossRejectedLeg => ({ inputIndex: at, accountInput, reason, detail }));
+    return lostAccountInputs(legs, inputs, at).map((accountInput): CrossRejectedLeg =>
+      ({ inputIndex: at, accountInput, reason, detail }));
   });
 
   const kept = survivors(inputs, rejectedLegs);
@@ -16567,13 +16583,17 @@ const sameFrame = (a: CommittedFrame, b: CommittedFrame): boolean =>
 
 /** The one frame a marked leg must commit: its proposal, or for an ACK leg the frame it ACKs. */
 const expectedFrame = (routed: RoutedEntityInput): CommittedFrame | undefined => {
-  const proposing = routed.atomicCrossJurisdictionPair?.phase === "proposal";
   const framesOf = (account: AccountPeerInput): readonly CommittedFrame[] => {
-    const frame = proposing ? proposedFrameOf(account) : undefined;
-    const ack = proposing ? undefined : ackIn(account);
-    if (frame !== undefined) return [frameFrom(account, frame.height, frame.stateHash)];
-    if (ack !== undefined) return [frameFrom(account, ack.height, ack.frameHash)];
-    return [];
+    switch (routed.atomicCrossJurisdictionPair?.phase) {
+      case "proposal": {
+        const frame = proposedFrameOf(account);
+        return frame === undefined ? [] : [frameFrom(account, frame.height, frame.stateHash)];
+      }
+      default: {
+        const ack = ackIn(account);
+        return ack === undefined ? [] : [frameFrom(account, ack.height, ack.frameHash)];
+      }
+    }
   };
   return sole(accountInputsOf(routed).flatMap(framesOf));
 };
