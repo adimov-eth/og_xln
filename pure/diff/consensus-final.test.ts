@@ -1,11 +1,12 @@
 // consensus-final: Entity/Account consensus, admission, boards, orderbook and wire shapes (final wave). Every test runs og (core/ at 566c850) live.
 import { describe, expect, test } from "bun:test";
 import { x25519 } from "@noble/curves/ed25519";
+import { ethers } from "ethers";
 import { assertEntityEncryptionKeypair } from "../../core/protocol/htlc/multi-recipient.ts";
 import { requireEntityEncryptionPrivateKey } from "../../core/entity/auth/crypto.ts";
 import { computeEntityProfileHash } from "../../core/entity/profile/profile-descriptor.ts";
 import {
-  accountId as rwAccountId, applyEntityInput, createEntity, entityId, entityProfileHash, foldTxs, genesisReplica, quorumBoardHash,
+  accountId as rwAccountId, applyEntityInput, createEntity, entityId, entityProfileHash, foldTxs, genesisReplica, parseEvmTx, quorumBoardHash,
   type Address, type EntityId, type EntityInput, type EntityTx,
 } from "../xln.ts";
 import { TERMS, aliceAddr, unwrap, verifiers } from "../xln_run.ts";
@@ -89,4 +90,101 @@ describe("consensus-final: the profile descriptor is re-certified by the frame (
     expect(h1).not.toBe(h0);
     expect(renamed.profiles).toEqual([{ hash: h1, type: "profile", context: `profile:${h1}` }]);
   });
+});
+
+describe("consensus-final: ethers v6 Transaction.from for blob (type 3) and set-code (type 4) transactions (entity-j.md EJ-R4)", () => {
+  const erng = prng(0x3_4e_4);
+  const eri = (n: number) => Math.floor(erng() * n);
+  const epick = <X,>(xs: readonly X[]): X => xs[eri(xs.length)] as X;
+  const ehex = (bytes: number): string => `0x${Array.from({ length: bytes * 2 }, () => "0123456789abcdef"[eri(16)]).join("")}`;
+  const wallets = [1, 2].map((i) => new ethers.Wallet(`0x${String(i).padStart(2, "0").repeat(32)}`));
+  const versioned = (): string => `0x01${ehex(31).slice(2)}`;
+  /** A random signed type 3 (bare, EIP-4844 sidecar or EIP-7594 sidecar) or type 4 transaction, serialized by ethers. */
+  const signed = (): string => {
+    const type = epick([3, 3, 4, 4]);
+    const tx = ethers.Transaction.from({
+      type, chainId: epick([1n, 31337n, 8453n]), nonce: epick([0, 1, 300, 70_000]), gasLimit: 21_000n + BigInt(eri(500_000)), to: epick([ehex(20), ehex(20)]),
+      value: epick([0n, 1n, 10n ** 18n]), data: epick(["0x", ehex(4 + eri(40))]), maxPriorityFeePerGas: BigInt(eri(3)) * 1_000_000_000n, maxFeePerGas: 3_000_000_000n + BigInt(eri(1000)),
+      ...(eri(3) === 0 ? { accessList: [{ address: ehex(20), storageKeys: Array.from({ length: eri(3) }, () => ehex(32)) }] } : {}),
+      ...(type === 3 ? { maxFeePerBlobGas: BigInt(eri(1_000_000)), blobVersionedHashes: Array.from({ length: 1 + eri(3) }, versioned) } : {}),
+      ...(type === 4 ? { authorizationList: Array.from({ length: eri(3) }, () => ({ address: ehex(20), nonce: BigInt(eri(1000)), chainId: epick([0n, 1n, 31337n]), signature: epick(wallets).signingKey.sign(ehex(32)) })) } : {}),
+    });
+    if (type === 3 && eri(2) === 0) {
+      const eip7594 = eri(2) === 0, n = 1 + eri(2);
+      if (eip7594) tx.blobWrapperVersion = 1;
+      tx.blobs = Array.from({ length: n }, () => ({ data: ehex(1 + eri(64)), commitment: ehex(48), proof: eip7594 ? ehex(128 * 2) : ehex(48) }));
+    }
+    tx.signature = epick(wallets).signingKey.sign(tx.unsignedHash);
+    return tx.serialized;
+  };
+  type F = string | F[];
+  const be = (n: bigint): string => (n === 0n ? "0x" : ethers.toBeHex(n));
+  const arr = (x: F | undefined): F[] => (Array.isArray(x) ? x : []);
+  const big = (h: F | undefined): bigint => (typeof h !== "string" || h === "0x" ? 0n : BigInt(h));
+  /** One structural mutation of a type 3/4 transaction: its fields, its sidecar, its authorizations, or its raw bytes. */
+  const mutate = (raw: string): string => {
+    const bytes = ethers.getBytes(raw);
+    const flip = (): string => { const b = new Uint8Array(bytes); b[eri(b.length)] ^= 1 << eri(8); return ethers.hexlify(b); };
+    let decoded: F;
+    try { decoded = ethers.decodeRlp(bytes.slice(1)) as F; } catch { return flip(); }
+    if (!Array.isArray(decoded)) return flip();
+    const wrapped = Array.isArray(decoded[0]), outer = decoded as F[], fields = [...(wrapped ? (outer[0] as F[]) : outer)];
+    const encode = (fs: F[], wrap: F[] | null = wrapped ? [...outer] : null): string => ethers.concat([bytes.slice(0, 1), ethers.encodeRlp((wrap === null ? fs : [fs, ...wrap.slice(1)]) as never)]);
+    const set = (i: number, v: F): string => { const fs = [...fields]; fs[i] = v; return encode(fs); };
+    const type = bytes[0], sig = fields.length - 3, auths = type === 4 && Array.isArray(fields[9]) && Array.isArray((fields[9] as F[])[0]) ? (fields[9] as F[]) : [];
+    const setAuth = (j: number, v: F): string => { const a = [...auths], row = [...(a[0] as F[])]; row[j] = v; a[0] = row; return set(9, a); };
+    switch (eri(22)) {
+      case 0: return flip();
+      case 1: return ethers.hexlify(bytes.slice(0, Math.max(1, bytes.length - 1 - eri(4))));
+      case 2: return set(5, "0x");
+      case 3: return set(5, epick([ehex(19), ehex(21)]));
+      case 4: return type === 3 ? set(10, [...arr(fields[10]), epick([ehex(31), ehex(33), [ehex(32)]])]) : set(9, epick(["0x", [[ehex(20)]], [["0x01", ehex(20), "0x", "0x", "0x01", "0x01", "0x"]]]));
+      case 5: return type === 3 ? set(10, epick(["0x", ehex(32)])) : auths.length > 0 ? setAuth(1, epick(["0x", ehex(19), [ehex(20)]])) : set(9, [["0x01", ehex(20), "0x", "0x", ehex(32), ehex(32)]]);
+      case 6: return type === 3 ? set(9, epick([ehex(33), "0x00", "0x0001"])) : auths.length > 0 ? setAuth(3, epick(["0x02", "0x", "0x01", "0x0001"])) : encode(fields);
+      case 7: return auths.length > 0 ? setAuth(5, be(big((auths[0] as F[])[5]) | (1n << 255n))) : set(sig + 2, be(big(fields[sig + 2]) | (1n << 255n)));
+      case 8: return auths.length > 0 ? setAuth(4, epick(["0x", ehex(33), `0x00${ehex(32).slice(2)}`])) : encode(fields);
+      case 9: return set(sig, epick(["0x02", "0x00", "0x01", "0x", "0x0001"]));
+      case 10: return set(sig + 1, epick(["0x", ehex(33)]));
+      case 11: return set(sig + 2, "0x");
+      case 12: { const fs = [...fields]; fs[2] = be(big(fields[3]) + 1n); return encode(fs); }
+      case 13: return encode(fields.slice(0, sig));
+      case 14: return encode(eri(2) === 0 ? [...fields, "0x"] : fields.slice(0, -1));
+      case 15: return set(8, epick([[[ehex(20), [ehex(31)]]], [[ehex(19), []]], [ehex(20)]]));
+      case 16: if (wrapped) { const w = [...outer]; w[1] = epick(["0x02", "0x", "0x0001", [ehex(1)]]); return encode(fields, w); } return encode(fields, [fields, [ehex(4)], [ehex(48)], [ehex(48)]]);
+      case 17: if (wrapped) { const w = [...outer], k = 1 + eri(w.length - 1); w[k] = epick([[], [...arr(w[k]), ehex(48)], "0x"]); return encode(fields, w); } return encode(fields, [fields, "0x01", [ehex(4)], [ehex(48)], Array.from({ length: 128 }, () => ehex(2))]);
+      case 18: if (wrapped) { const w = [...outer], k = w.length - 3; w[k] = [[ehex(2)]]; return encode(fields, w); } return set(1, `0x00${fields[1] === "0x" ? "" : (fields[1] as string).slice(2)}`);
+      case 19: return ethers.concat([epick(["0x03", "0x04"]), bytes.slice(1)]);
+      case 20: return set(0, "0x");
+      default: return set(7, [fields[7] as F]);
+    }
+  };
+  const ethersView = (raw: string): unknown => {
+    try {
+      const t = ethers.Transaction.from(raw), hash = t.hash;
+      let from: string | null;
+      try { from = t.from?.toLowerCase() ?? null; } catch { from = "ERR"; }
+      return { type: t.type, hash, from, chainId: t.chainId, nonce: t.nonce, to: t.to?.toLowerCase() ?? null, value: t.value, data: t.data.toLowerCase() };
+    } catch { return "REFUSED"; }
+  };
+  const rewriteView = (raw: string): unknown => {
+    const r = parseEvmTx(raw);
+    if (!r.ok) return "REFUSED";
+    const t = r.value;
+    return { type: t.type, hash: t.hash, from: t.from === null ? null : t.from.ok ? t.from.value : "ERR", chainId: t.chainId, nonce: t.nonce, to: t.to, value: t.value, data: t.data };
+  };
+  test("MATCH (randomized): 1500 signed type 3 (bare, 4844 and 7594 sidecars) and type 4 transactions and their mutations -- same refusal, hash, sender, chain, nonce, to, value, data", () => {
+    const seen = { accepted3: 0, accepted4: 0, sidecar: 0, refused: 0 };
+    for (let i = 0; i < 1500; i++) {
+      let raw = signed();
+      if (ethers.decodeRlp(ethers.getBytes(raw).slice(1)).length < 6) seen.sidecar++;
+      for (let m = eri(3); m > 0; m--) raw = mutate(raw);
+      const og = ethersView(raw);
+      expect([i, raw, rewriteView(raw)]).toEqual([i, raw, og] as never);
+      if (og === "REFUSED") seen.refused++; else if ((og as { type: number }).type === 3) seen.accepted3++; else seen.accepted4++;
+    }
+    expect(seen.accepted3).toBeGreaterThan(150);
+    expect(seen.accepted4).toBeGreaterThan(150);
+    expect(seen.sidecar).toBeGreaterThan(150);
+    expect(seen.refused).toBeGreaterThan(300);
+  }, 120_000);
 });

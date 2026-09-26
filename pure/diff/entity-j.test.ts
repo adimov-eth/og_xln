@@ -240,8 +240,6 @@ describe("entity-j RJ-9: signed EVM transaction parser (ethers v6 Transaction.fr
     for (let i = 0; i < 1500; i++) {
       let raw = signedTx();
       for (let m = nri(3); m > 0; m--) { raw = mutateTx(raw); mutated++; }
-      // Blob (3) and set-code (4) transactions are outside the port (the registration intent is always a type 0/1/2 call).
-      if ([3, 4].includes(ethers.getBytes(raw)[0]!)) continue;
       const og = ethersView(raw);
       expect(rewriteView(raw)).toEqual(og as never);
       if (og === "REFUSED") refused++; else accepted++;

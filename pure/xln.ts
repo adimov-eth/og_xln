@@ -11948,7 +11948,7 @@ const recordAuthenticatedJAuthority = (rt: Runtime, e: RegistrationEvidence): Re
  * An EVM transaction as ethers Transaction.from reads it: `hash` / `from` are null for an unsigned transaction; `from` is ethers' lazy sender
  * recovery, so an unrecoverable signature is an error only when the sender is asked for.
  */
-export type EvmTx = { readonly type: 0 | 1 | 2; readonly hash: string | null; readonly from: Result<string, string> | null; readonly chainId: bigint; readonly nonce: number; readonly to: string | null; readonly value: bigint; readonly data: string };
+export type EvmTx = { readonly type: 0 | 1 | 2 | 3 | 4; readonly hash: string | null; readonly from: Result<string, string> | null; readonly chainId: bigint; readonly nonce: number; readonly to: string | null; readonly value: bigint; readonly data: string };
 type EvmRlp = Uint8Array | readonly EvmRlp[];
 /** ethers decodeRlp: length prefixes are taken as given (no canonical-form check), a child may not overrun its list, nothing may trail. */
 const evmRlpDecode = (data: Uint8Array): EvmRlp | null => {
@@ -11997,6 +11997,30 @@ const evmAccessList = (x: EvmRlp | undefined): Result<EvmRlp, string> => {
 /** ethers zeroPadValue(_, 32) then Signature.from: r / s are at most 32 bytes. */
 const evmSigWord = (x: EvmRlp | undefined, label: string): Result<bigint, string> => chain(bytesItem(x, label), (b) => (b.length > 32 ? err(`invalid ${label}`) : ok(b.length === 0 ? 0n : BigInt(bytesToHex(b)))));
 type EvmSig = { readonly r: bigint; readonly s: bigint; readonly yParity: number };
+/** ethers _parseEip4844 sidecar: the network format [tx, blobs, commitments, proofs] or EIP-7594 [tx, 1, blobs, commitments, cellProofs]; each blob's versioned hash is recomputed from its commitment (getVersionedHash). */
+const EVM_CELL_COUNT = 128;
+const evmBlobSidecar = (fields: EvmRlp | null): Result<{ readonly fields: EvmRlp | null; readonly hashes: readonly Uint8Array[] | null }, string> => {
+  if (!Array.isArray(fields) || !Array.isArray(fields[0]) || (fields.length !== 4 && fields.length !== 5)) return ok({ fields, hashes: null });
+  const f = fields as readonly EvmRlp[], seven = f.length === 5;
+  if (seven) { const version = f[1]; if (!(version instanceof Uint8Array) || version.length === 0 || BigInt(bytesToHex(version)) !== 1n) return err("unsupported EIP-7594 network format version"); }
+  const [blobs, commits, proofs] = seven ? [f[2], f[3], f[4]] : [f[1], f[2], f[3]];
+  if (!Array.isArray(blobs) || !Array.isArray(commits) || !Array.isArray(proofs)) return err("invalid network format");
+  if (blobs.length !== commits.length || blobs.length * (seven ? EVM_CELL_COUNT : 1) !== proofs.length) return err("invalid network format: length mismatch");
+  // ethers hexlify(blob.data / commitment / proof) and concat(cell proofs): every part is a byte string
+  if (![...blobs, ...commits, ...proofs].every((x) => x instanceof Uint8Array)) return err("invalid BytesLike value");
+  return ok({ fields: f[0] ?? null, hashes: (commits as readonly Uint8Array[]).map((c) => { const h = sha256(c); h[0] = 1; return h; }) });
+};
+/** ethers handleAuthorizationList then authorizationify: [chainId, address(20), nonce, yParity(0|1), r, s (unchecked: ethers encodes ._s)] rows, re-encoded minimal (formatAuthorizationList). */
+const evmAuthorizationList = (x: EvmRlp | undefined): Result<EvmRlp, string> => {
+  if (!Array.isArray(x)) return err("authorizationList: invalid array");
+  return traverse(x as readonly EvmRlp[], (auth): Result<EvmRlp, string> => {
+    if (!Array.isArray(auth) || auth.length !== 6) return err("invalid authorization");
+    const a = auth as readonly EvmRlp[];
+    return chain(bytesItem(a[1], "address"), (address) => (address.length !== 20 ? err("invalid address") : chain(evmUint(a[2], "nonce"), (nonce) => chain(evmUint(a[0], "chainId"), (chainId) =>
+      chain(evmNumber(a[3], "yParity"), (yParity) => (yParity !== 0 && yParity !== 1 ? err("invalid yParity") : chain(evmSigWord(a[4], "r"), (r) => chain(evmSigWord(a[5], "s"), (sw) =>
+        ok([evmBytes(chainId), address, evmBytes(nonce), evmBytes(BigInt(yParity)), evmBytes(r), evmBytes(sw)] as EvmRlp)))))))));
+  });
+};
 /** ethers Transaction.hash (keccak of the re-serialized signed form) and .from (recovery over the unsigned hash; a high s recovers the same key). */
 type EvmSigned = { readonly hash: string | null; readonly from: Result<string, string> | null };
 const evmSigned = (sig: EvmSig, unsigned: Uint8Array, signed: (sig: EvmSig) => Result<Uint8Array, string>): Result<EvmSigned, string> =>
@@ -12006,7 +12030,7 @@ const evmSigned = (sig: EvmSig, unsigned: Uint8Array, signed: (sig: EvmSig) => R
   });
 /**
  * ethers v6 Transaction.from(raw) for a legacy (pre-EIP-155 or EIP-155), EIP-2930 (type 1) or EIP-1559 (type 2) transaction: RLP-decode the fields,
- * derive the chain id from a legacy v, hash the re-serialized signed form, recover the sender. Blob (3) and set-code (4) transactions are refused.
+ * derive the chain id from a legacy v, hash the re-serialized signed form, recover the sender. Blob (3, with or without its network sidecar) and set-code (4) transactions too.
  */
 export const parseEvmTx = (raw: string): Result<EvmTx, string> => {
   if (!/^0x([0-9a-fA-F]{2})+$/.test(raw)) return err("invalid BytesLike value");
@@ -12034,14 +12058,25 @@ export const parseEvmTx = (raw: string): Result<EvmTx, string> => {
         })));
       }))))));
   }
-  if (first !== 1 && first !== 2) return err("unsupported transaction type");
-  const typed = first as 1 | 2, fields = evmRlpDecode(payload.subarray(1)), plain = typed === 1 ? 8 : 9;
+  if (first < 1 || first > 4) return err("unsupported transaction type");
+  const typed = first as 1 | 2 | 3 | 4, plain = typed === 1 ? 8 : typed === 2 ? 9 : typed === 3 ? 11 : 10, unwrapped = typed === 3 ? evmBlobSidecar(evmRlpDecode(payload.subarray(1))) : ok({ fields: evmRlpDecode(payload.subarray(1)), hashes: null });
+  if (!unwrapped.ok) return unwrapped;
+  const { fields, hashes: sidecarHashes } = unwrapped.value;
   if (!Array.isArray(fields) || (fields.length !== plain && fields.length !== plain + 3)) return err(`invalid field count for transaction type: ${typed}`);
-  const f = fields as readonly EvmRlp[], o = typed === 2 ? 1 : 0;
-  return chain(evmUint(f[0], "chainId"), (chainId) => chain(evmNumber(f[1], "nonce"), (nonce) => chain(evmUint(f[2], typed === 2 ? "maxPriorityFeePerGas" : "gasPrice"), (fee0) =>
-    chain(typed === 2 ? evmUint(f[3], "maxFeePerGas") : ok(0n), (fee1) => chain(evmUint(f[3 + o], "gasLimit"), (gasLimit) => chain(evmTo(f[4 + o]), (to) => chain(evmUint(f[5 + o], "value"), (value) =>
+  const f = fields as readonly EvmRlp[], o = typed >= 2 ? 1 : 0;
+  // ethers _parseEip4844: maxFeePerBlobGas, a non-null to, and 32-byte versioned hashes; _parseEip7702: the authorization list
+  const blob = typed !== 3 ? ok([] as EvmRlp[]) : chain(evmUint(f[9], "maxFeePerBlobGas"), (maxFeePerBlobGas): Result<EvmRlp[], string> => {
+    const hashes = f[10];
+    if (!Array.isArray(hashes) || (hashes as readonly EvmRlp[]).some((h) => !(h instanceof Uint8Array) || h.length !== 32)) return err("invalid blobVersionedHashes");
+    const t = f[5];
+    return t instanceof Uint8Array && t.length === 0 ? err("invalid address for transaction type: 3") : ok([evmBytes(maxFeePerBlobGas), sidecarHashes ?? hashes]);
+  });
+  const extra = typed === 4 ? map(evmAuthorizationList(f[9]), (auths): EvmRlp[] => [auths]) : blob;
+  if (!extra.ok) return extra;
+  return chain(evmUint(f[0], "chainId"), (chainId) => chain(evmNumber(f[1], "nonce"), (nonce) => chain(evmUint(f[2], typed >= 2 ? "maxPriorityFeePerGas" : "gasPrice"), (fee0) =>
+    chain(typed >= 2 ? evmUint(f[3], "maxFeePerGas") : ok(0n), (fee1) => chain(evmUint(f[3 + o], "gasLimit"), (gasLimit) => chain(evmTo(f[4 + o]), (to) => chain(evmUint(f[5 + o], "value"), (value) =>
       chain(bytesItem(f[6 + o], "data"), (data) => chain(evmAccessList(f[7 + o]), (accessList) => {
-        const body: EvmRlp[] = [evmBytes(chainId), evmBytes(BigInt(nonce)), evmBytes(fee0), ...(typed === 2 ? [evmBytes(fee1)] : []), evmBytes(gasLimit), to ?? new Uint8Array(0), evmBytes(value), data, accessList];
+        const body: EvmRlp[] = [evmBytes(chainId), evmBytes(BigInt(nonce)), evmBytes(fee0), ...(typed >= 2 ? [evmBytes(fee1)] : []), evmBytes(gasLimit), to ?? new Uint8Array(0), evmBytes(value), data, accessList, ...extra.value];
         const tx = (signed: EvmSigned): EvmTx => ({ type: typed, ...signed, chainId, nonce, to: to === null ? null : bytesToHex(to), value, data: bytesToHex(data) });
         const envelope = (items: readonly EvmRlp[]): Uint8Array => concat([Uint8Array.of(typed), rlpOf(items)]);
         if (f.length === plain) return ok(tx({ hash: null, from: null }));
@@ -12049,7 +12084,7 @@ export const parseEvmTx = (raw: string): Result<EvmTx, string> => {
           if (yParity !== 0 && yParity !== 1) return err("invalid yParity");
           return chain(evmSigWord(f[plain + 1], "r"), (r) => chain(evmSigWord(f[plain + 2], "s"), (s) =>
             // ethers inferTypes refuses an EIP-1559 fee cap below its priority fee, and Signature.s a word with its top bit set, when the signed form is serialized.
-            map(evmSigned({ r, s, yParity }, envelope(body), (sig) => (typed === 2 && fee1 < fee0 ? err("priorityFee cannot be more than maxFee") : sig.s >> 255n !== 0n ? err("non-canonical s; use ._s")
+            map(evmSigned({ r, s, yParity }, envelope(body), (sig) => (typed >= 2 && fee1 < fee0 ? err("priorityFee cannot be more than maxFee") : sig.s >> 255n !== 0n ? err("non-canonical s; use ._s")
               : ok(envelope([...body, evmBytes(BigInt(sig.yParity)), evmBytes(sig.r), evmBytes(sig.s)])))), tx)));
         });
       })))))))));
