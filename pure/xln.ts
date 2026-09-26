@@ -248,7 +248,7 @@ export const firstBy = <X, K>(
 
 // ---- canonical text: the deterministic spelling every hash in the rewrite is taken over ----
 
-export const asc = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+export const asc = <T extends string | number | bigint>(a: T, b: T): number => (a < b ? -1 : a > b ? 1 : 0);
 const sortedBy = <X>(xs: readonly X[], key: (x: X) => string): readonly X[] =>
   xs.map((x) => [key(x), x] as const).toSorted(([a], [b]) => asc(a, b)).map(([, x]) => x);
 const sortWith = <X>(xs: Iterable<X>, cmp: (a: X, b: X) => number): readonly X[] =>
@@ -5037,115 +5037,199 @@ export const quoteHtlcRoute = (
   return map(walked, (q) => ({ senderLockAmount: q.inbound, hopForwardAmounts: q.forwards }));
 };
 // ---- og pathfinding/{graph,pathfinding,capacity}.ts: the gossip network graph and the Dijkstra route finder behind htlcPayment route discovery ----
-export type AccountEdge = { readonly from: string; readonly to: string; readonly tokenId: number; readonly capacity: bigint; readonly baseFee: bigint; readonly feePPM: number; readonly disabled: boolean };
-export type NetworkGraph = { readonly nodes: ReadonlySet<string>; readonly edges: ReadonlyMap<string, readonly AccountEdge[]>; readonly accountCapacities: ReadonlyMap<string, { readonly outbound: bigint; readonly inbound: bigint }> };
-export type PaymentRoute = { readonly path: readonly string[]; readonly hops: readonly { readonly from: string; readonly to: string; readonly fee: bigint; readonly feePPM: number }[]; readonly totalFee: bigint; readonly totalAmount: bigint; readonly probability: number };
-type GraphCaps = { readonly inCapacity: bigint; readonly outCapacity: bigint };
-type GraphProfile = { readonly entityId: string; readonly name: string; readonly isHub: boolean; readonly routingFeePPM: unknown; readonly baseFee: bigint; readonly accounts: readonly { readonly counterpartyId: string; readonly caps: (tokenId: number) => GraphCaps | null }[] };
-/** og Profile fields buildNetworkGraph reads; og getTokenCapacity: a Map keyed by number or string, or a Record keyed by string. */
+// Gossip Profiles advertise each entity's Accounts with per-token capacities. One advertised row gives both
+// directions of a lane; the finder searches loop-free paths cheapest first and keeps those every lane can carry.
+export type AccountEdge = Readonly<{
+  from: string; to: string; tokenId: number; capacity: bigint; baseFee: bigint; feePPM: number; disabled: boolean;
+}>;
+type LaneBalance = Readonly<{ outbound: bigint; inbound: bigint }>;
+export type NetworkGraph = Readonly<{
+  nodes: ReadonlySet<string>; edges: ReadonlyMap<string, readonly AccountEdge[]>;
+  accountCapacities: ReadonlyMap<string, LaneBalance>;
+}>;
+type RouteHop = Readonly<{ from: string; to: string; fee: bigint; feePPM: number }>;
+export type PaymentRoute = Readonly<{
+  path: readonly string[]; hops: readonly RouteHop[]; totalFee: bigint; totalAmount: bigint; probability: number;
+}>;
+type GraphCaps = Readonly<{ inCapacity: bigint; outCapacity: bigint }>;
+type GraphAccount = Readonly<{ counterpartyId: string; caps: (tokenId: number) => GraphCaps | null }>;
+type GraphProfile = Readonly<{
+  entityId: string; name: string; isHub: boolean; routingFeePPM: unknown; baseFee: bigint;
+  accounts: readonly GraphAccount[];
+}>;
+/** og getTokenCapacity: a Map keyed by number or string, or a Record keyed by string; false or null is none. */
+const capsReader = (caps: unknown) => (tokenId: number): GraphCaps | null => {
+  if (caps === null || caps === undefined || typeof caps !== "object") return null;
+  const raw = caps instanceof Map
+    ? (caps.get(tokenId) ?? caps.get(String(tokenId)))
+    : (caps as Fields)[String(tokenId)];
+  return raw === null || raw === undefined || raw === false ? null : (raw as GraphCaps);
+};
+/** og Profile fields buildNetworkGraph reads. */
 const graphProfileOf = (b: Binary): GraphProfile | null => {
   if (b === null || typeof b !== "object" || Array.isArray(b) || b instanceof Map) return null;
-  const p = b as { readonly [k: string]: unknown }, meta = (p["metadata"] ?? {}) as { readonly [k: string]: unknown };
-  const accounts = Array.isArray(p["accounts"]) ? (p["accounts"] as readonly { readonly [k: string]: unknown }[]) : [];
+  const p = b as Fields;
+  const meta = (p["metadata"] ?? {}) as Fields;
+  const accounts = Array.isArray(p["accounts"]) ? (p["accounts"] as readonly Fields[]) : [];
   return {
-    entityId: String(p["entityId"] ?? ""), name: typeof p["name"] === "string" ? p["name"] : "", isHub: meta["isHub"] === true, routingFeePPM: meta["routingFeePPM"], baseFee: typeof meta["baseFee"] === "bigint" ? meta["baseFee"] : 0n,
-    accounts: accounts.map((a) => {
-      const caps = a["tokenCapacities"] as unknown;
-      return { counterpartyId: String(a["counterpartyId"] ?? ""), caps: (tokenId: number): GraphCaps | null => {
-        if (caps === null || caps === undefined || typeof caps !== "object") return null;
-        const raw = caps instanceof Map ? (caps.get(tokenId) ?? caps.get(String(tokenId))) : (caps as { readonly [k: string]: unknown })[String(tokenId)];
-        return raw === null || raw === undefined || raw === false ? null : (raw as GraphCaps);
-      } };
-    }),
+    entityId: String(p["entityId"] ?? ""), name: typeof p["name"] === "string" ? p["name"] : "",
+    isHub: meta["isHub"] === true, routingFeePPM: meta["routingFeePPM"],
+    baseFee: typeof meta["baseFee"] === "bigint" ? meta["baseFee"] : 0n,
+    accounts: accounts.map((a) => ({
+      counterpartyId: String(a["counterpartyId"] ?? ""), caps: capsReader(a["tokenCapacities"]),
+    })),
   };
 };
-const routingMetadataOk = (p: GraphProfile): boolean => { const ppm = Number(p.routingFeePPM); return p.name.trim() !== "" && Number.isFinite(ppm) && ppm >= 0; };
-/** og buildNetworkGraph: one advertised Account row gives both directions (the mirror only if not already advertised); a hub Profile without routing metadata is dropped. A later Profile for the same entity replaces the earlier one in place (og Map.set). */
-export const buildNetworkGraph = (profileRows: readonly Binary[], tokenId: number, funding?: { readonly sourceEntityId: string; readonly accountId: string }): NetworkGraph => {
-  const profiles = new Map<string, GraphProfile>();
-  for (const b of profileRows) { const p = graphProfileOf(b); if (p !== null) profiles.set(p.entityId, p); }
-  const nodes = new Set([...profiles.values()].map((p) => p.entityId)), byFrom = new Map<string, AccountEdge[]>(), capacities = new Map<string, { outbound: bigint; inbound: bigint }>();
-  const push = (e: AccountEdge): void => { const xs = byFrom.get(e.from); if (xs === undefined) byFrom.set(e.from, [e]); else xs.push(e); };
-  const nonNeg = (v: bigint): bigint => (v < 0n ? 0n : v);
-  for (const profile of profiles.values()) {
-    const from = profile.entityId, own: AccountEdge[] = [];
-    if (profile.isHub && !routingMetadataOk(profile)) continue;
-    for (const account of profile.accounts) {
-      const to = account.counterpartyId;
-      if (!nodes.has(to)) continue;
-      const toProfile = profiles.get(to);
-      if (toProfile !== undefined && toProfile.isHub && !routingMetadataOk(toProfile)) continue;
-      const cap = account.caps(tokenId);
-      if (cap === null) continue;
-      if (cap.outCapacity > 0n || (funding?.sourceEntityId === from && funding.accountId === to))
-        own.push({ from, to, tokenId, capacity: cap.outCapacity, baseFee: nonNeg(profile.baseFee), feePPM: directionalFeePpm(sanitizeFeePpm(profile.routingFeePPM, 1), cap.outCapacity, cap.inCapacity), disabled: false });
-      capacities.set(`${from}:${to}:${tokenId}`, { outbound: cap.outCapacity, inbound: cap.inCapacity });
-      const mirrorKey = `${to}:${from}:${tokenId}`;
-      if (capacities.has(mirrorKey)) continue;
-      capacities.set(mirrorKey, { outbound: cap.inCapacity, inbound: cap.outCapacity });
-      if (cap.inCapacity > 0n || (funding?.sourceEntityId === to && funding.accountId === from))
-        push({ from: to, to: from, tokenId, capacity: cap.inCapacity, baseFee: nonNeg(toProfile?.baseFee ?? 0n), feePPM: directionalFeePpm(sanitizeFeePpm(toProfile?.routingFeePPM ?? 1, 1), cap.inCapacity, cap.outCapacity), disabled: false });
-    }
-    for (const e of own) push(e);
-  }
-  return { nodes, edges: new Map([...byFrom].filter(([, xs]) => xs.length > 0)), accountCapacities: capacities };
+/** A hub is routable only with a name and a finite non-negative fee rate. */
+const unroutableHub = (p: GraphProfile): boolean => {
+  const ppm = Number(p.routingFeePPM);
+  return p.isHub && !(p.name.trim() !== "" && Number.isFinite(ppm) && ppm >= 0);
 };
-const graphEdge = (g: NetworkGraph, from: string, to: string, tokenId: number): AccountEdge | undefined => (g.edges.get(from) ?? []).find((e) => e.to === to && e.tokenId === tokenId);
-/** og PathFinder.buildRoute: the quoteHtlcPaymentRoute fee inversion over graph edges; the sender pays itself no fee. */
-const buildPaymentRoute = (g: NetworkGraph, path: readonly string[], amount: bigint, tokenId: number): Result<PaymentRoute | null, OnionError> => {
-  if (path.length < 2) return ok(null);
-  const edges: AccountEdge[] = [];
-  for (let i = 0; i < path.length - 1; i++) {
-    const e = graphEdge(g, path[i] ?? "", path[i + 1] ?? "", tokenId);
-    if (e === undefined || !Number.isInteger(e.feePPM) || e.feePPM < 0 || e.feePPM >= 1_000_000) return ok(null);
-    edges.push(e);
-  }
-  const amounts = edges.map(() => amount);
-  for (let i = edges.length - 1; i >= 1; i--) {
-    const e = edges[i] as AccountEdge, r = requiredInbound(amounts[i] as bigint, e.feePPM, e.baseFee);
-    if (!r.ok) return r;
-    amounts[i - 1] = r.value;
-  }
-  const hops = edges.map((e, i) => ({ from: e.from, to: e.to, fee: i === 0 ? 0n : (amounts[i - 1] as bigint) - (amounts[i] as bigint), feePPM: e.feePPM }));
-  const probability = edges.reduce((v, e, i) => (e.capacity > 0n ? v * Math.exp((-2 * Number(amounts[i] as bigint)) / Number(e.capacity)) : v), 1);
-  return ok({ path, hops, totalFee: (amounts[0] as bigint) - amount, totalAmount: amounts[0] as bigint, probability: Math.max(0.01, Math.min(1, probability)) });
+type Funding = Readonly<{ sourceEntityId: string; accountId: string }>;
+type GraphScope = Readonly<{
+  profiles: ReadonlyMap<string, GraphProfile>; nodes: ReadonlySet<string>;
+  tokenId: number; funding: Funding | undefined;
+}>;
+/** Lanes seen so far, and the edges this Profile adds: mirrored ones first, then its own. */
+type ProfileWalk = Readonly<{
+  capacities: ReadonlyMap<string, LaneBalance>; mirrors: readonly AccountEdge[]; owns: readonly AccountEdge[];
+}>;
+const graphLaneKey = (from: string, to: string, tokenId: number): string => `${from}:${to}:${tokenId}`;
+/** A lane is usable with capacity, or when it is the funding Account the source will top up. */
+const usableLane = (g: GraphScope, from: string, to: string, capacity: bigint): boolean =>
+  capacity > 0n || (g.funding?.sourceEntityId === from && g.funding.accountId === to);
+const laneEdge = (
+  g: GraphScope, from: string, to: string, fee: Readonly<{ base: bigint; ppm: unknown }>, send: bigint, receive: bigint,
+): AccountEdge => ({
+  from, to, tokenId: g.tokenId, capacity: send, baseFee: floor0(fee.base),
+  feePPM: directionalFeePpm(sanitizeFeePpm(fee.ppm, 1), send, receive), disabled: false,
+});
+/** One advertised row: our lane always, the mirror lane unless its own side was already advertised. */
+const sightAccount = (g: GraphScope, profile: GraphProfile) => (w: ProfileWalk, account: GraphAccount): ProfileWalk => {
+  const from = profile.entityId;
+  const to = account.counterpartyId;
+  const peer = g.profiles.get(to);
+  if (!g.nodes.has(to) || (peer !== undefined && unroutableHub(peer))) return w;
+  const cap = account.caps(g.tokenId);
+  if (cap === null) return w;
+  const ownFee = { base: profile.baseFee, ppm: profile.routingFeePPM };
+  const own = usableLane(g, from, to, cap.outCapacity)
+    ? [laneEdge(g, from, to, ownFee, cap.outCapacity, cap.inCapacity)]
+    : [];
+  const owns = [...w.owns, ...own];
+  const ours = { outbound: cap.outCapacity, inbound: cap.inCapacity };
+  const capacities = mapSet(w.capacities, graphLaneKey(from, to, g.tokenId), ours);
+  const mirrorKey = graphLaneKey(to, from, g.tokenId);
+  if (capacities.has(mirrorKey)) return { ...w, capacities, owns };
+  const peerFee = { base: peer?.baseFee ?? 0n, ppm: peer?.routingFeePPM ?? 1 };
+  const mirror = usableLane(g, to, from, cap.inCapacity)
+    ? [laneEdge(g, to, from, peerFee, cap.inCapacity, cap.outCapacity)]
+    : [];
+  return {
+    capacities: mapSet(capacities, mirrorKey, { outbound: cap.inCapacity, inbound: cap.outCapacity }),
+    mirrors: [...w.mirrors, ...mirror], owns,
+  };
 };
-/** og PathFinder.findRoutes: fee-ordered search (stable sort, at most 4096 pops) over loop-free paths; complete routes must fit every edge after each forwarder keeps its fee; results sorted by total fee. */
-export const findPaymentRoutes = (g: NetworkGraph, source: string, target: string, amount: bigint, tokenId: number, maxRoutes = 100, fundingAccountId?: string): Result<readonly PaymentRoute[], OnionError> => {
+type GraphWalk = Readonly<{ capacities: ReadonlyMap<string, LaneBalance>; edges: readonly AccountEdge[] }>;
+const sightProfile = (g: GraphScope) => (walk: GraphWalk, profile: GraphProfile): GraphWalk => {
+  if (unroutableHub(profile)) return walk;
+  const start: ProfileWalk = { capacities: walk.capacities, mirrors: [], owns: [] };
+  const seen = profile.accounts.reduce(sightAccount(g, profile), start);
+  return { capacities: seen.capacities, edges: [...walk.edges, ...seen.mirrors, ...seen.owns] };
+};
+/** og buildNetworkGraph: a later Profile for an entity replaces the earlier one in its place (og Map.set). */
+export const buildNetworkGraph = (profileRows: readonly Binary[], tokenId: number, funding?: Funding): NetworkGraph => {
+  const parsed = profileRows.flatMap((b) => graphProfileOf(b) ?? []);
+  const profiles = new Map(parsed.map((p) => [p.entityId, p] as const));
+  const nodes = new Set(profiles.keys());
+  const g: GraphScope = { profiles, nodes, tokenId, funding };
+  const walked = [...profiles.values()].reduce(sightProfile(g), { capacities: new Map(), edges: [] });
+  return { nodes, edges: Map.groupBy(walked.edges, (e) => e.from), accountCapacities: walked.capacities };
+};
+const graphEdge = (g: NetworkGraph, from: string, to: string, tokenId: number): AccountEdge | undefined =>
+  (g.edges.get(from) ?? []).find((e) => e.to === to && e.tokenId === tokenId);
+const pathEdges = (g: NetworkGraph, path: readonly string[], tokenId: number): readonly AccountEdge[] | null => {
+  const edges = path.slice(1).map((to, i) => graphEdge(g, path[i] ?? "", to, tokenId));
+  const usable = (e: AccountEdge | undefined): e is AccountEdge =>
+    e !== undefined && Number.isInteger(e.feePPM) && e.feePPM >= 0 && e.feePPM < 1_000_000;
+  return edges.every(usable) ? edges : null;
+};
+/** og PathFinder.buildRoute: quoteHtlcPaymentRoute's fee inversion over graph edges; the sender pays itself no fee. */
+const buildPaymentRoute = (
+  g: NetworkGraph, path: readonly string[], amount: bigint, tokenId: number,
+): Result<PaymentRoute | null, OnionError> => {
+  const edges = path.length < 2 ? null : pathEdges(g, path, tokenId);
+  if (edges === null) return ok(null);
+  // What each edge carries: the amount on the last, and on each earlier one what the next forwarder needs.
+  const carried = foldResult(edges.slice(1).toReversed(), [amount] as readonly bigint[], (later, e) =>
+    map(requiredInbound(later[0] ?? amount, e.feePPM, e.baseFee), (need) => [need, ...later]));
+  return map(carried, (amounts) => {
+    const at = (i: number): bigint => amounts[i] ?? 0n;
+    const feeAt = (i: number): bigint => (i === 0 ? 0n : at(i - 1) - at(i));
+    const hops = edges.map((e, i) => ({ from: e.from, to: e.to, fee: feeAt(i), feePPM: e.feePPM }));
+    const likelihood = edges.reduce(
+      (p, e, i) => (e.capacity > 0n ? p * Math.exp((-2 * Number(at(i))) / Number(e.capacity)) : p), 1);
+    const totalAmount = at(0);
+    const probability = Math.max(0.01, Math.min(1, likelihood));
+    return { path, hops, totalFee: totalAmount - amount, totalAmount, probability };
+  });
+};
+const MAX_SEARCH_POPS = 4_096;
+type SearchEntry = Readonly<{ cost: bigint; node: string; path: readonly string[] }>;
+type Search = Readonly<{ queue: readonly SearchEntry[]; routes: readonly PaymentRoute[] }>;
+/**
+ * og PathFinder.findRoutes: cheapest-first search (stable sort, at most 4096 pops) over loop-free paths. A complete
+ * route must fit every lane once each forwarder keeps its fee; the funding Account's first lane is exempt.
+ */
+export const findPaymentRoutes = (
+  g: NetworkGraph, source: string, target: string, amount: bigint, tokenId: number,
+  maxRoutes = 100, fundingAccountId?: string,
+): Result<readonly PaymentRoute[], OnionError> => {
   if (source === target || !g.nodes.has(source) || !g.nodes.has(target)) return ok([]);
-  const routes: PaymentRoute[] = [], funded = fundingAccountId !== undefined && fundingAccountId !== "";
+  const funded = fundingAccountId !== undefined && fundingAccountId !== "";
   const fits = (r: PaymentRoute): boolean => {
-    let required = r.totalAmount;
-    for (const [i, hop] of r.hops.entries()) { required -= hop.fee; const e = graphEdge(g, hop.from, hop.to, tokenId); if (e === undefined || (!(i === 0 && funded) && required > e.capacity)) return false; }
-    return true;
+    const [, remaining] = mapAccum(r.hops, r.totalAmount, (left, hop) => [left - hop.fee, left - hop.fee] as const);
+    return r.hops.every((hop, i) => {
+      const e = graphEdge(g, hop.from, hop.to, tokenId);
+      return e !== undefined && ((i === 0 && funded) || (remaining[i] ?? 0n) <= e.capacity);
+    });
   };
-  type Entry = { readonly cost: bigint; readonly node: string; readonly path: readonly string[] };
-  const queue: Entry[] = [{ cost: 0n, node: source, path: [source] }];
-  let pops = 0;
-  while (queue.length > 0 && routes.length < maxRoutes) {
-    if (++pops > 4_096) break;
-    queue.sort((a, b) => (a.cost < b.cost ? -1 : a.cost > b.cost ? 1 : 0));
-    const current = queue.shift() as Entry;
+  const extend = (current: SearchEntry, e: AccountEdge): Result<SearchEntry | null, OnionError> => {
+    const fromFundedSource = current.node === source && funded;
+    if (fromFundedSource && e.to !== fundingAccountId) return ok(null);
+    if (e.tokenId !== tokenId || e.disabled || current.path.includes(e.to)) return ok(null);
+    if (!fromFundedSource && amount > e.capacity) return ok(null);
+    const path = [...current.path, e.to];
+    return map(buildPaymentRoute(g, path, amount, tokenId), (prefix) =>
+      (prefix === null ? null : { cost: prefix.totalFee, node: e.to, path }));
+  };
+  const pop = (s: Search): Result<Search, OnionError> => {
+    const [current, ...rest] = s.queue.toSorted((a, b) => asc(a.cost, b.cost));
+    if (current === undefined) return ok(s);
     if (current.node === target) {
-      const r = buildPaymentRoute(g, current.path, amount, tokenId);
-      if (!r.ok) return r;
-      if (r.value !== null && fits(r.value)) routes.push(r.value);
-      continue;
+      return map(buildPaymentRoute(g, current.path, amount, tokenId), (r) =>
+        ({ queue: rest, routes: r !== null && fits(r) ? [...s.routes, r] : s.routes }));
     }
-    for (const e of g.edges.get(current.node) ?? []) {
-      if (current.node === source && funded && e.to !== fundingAccountId) continue;
-      if (e.tokenId !== tokenId || e.disabled || current.path.includes(e.to)) continue;
-      if (!(current.node === source && funded) && amount > e.capacity) continue;
-      const prefix = buildPaymentRoute(g, [...current.path, e.to], amount, tokenId);
-      if (!prefix.ok) return prefix;
-      if (prefix.value !== null) queue.push({ cost: prefix.value.totalFee, node: e.to, path: [...current.path, e.to] });
-    }
-  }
-  return ok([...routes].sort((a, b) => (a.totalFee < b.totalFee ? -1 : a.totalFee > b.totalFee ? 1 : 0)));
+    const next = traverse(g.edges.get(current.node) ?? [], (e) => extend(current, e));
+    return map(next, (entries) => ({ queue: [...rest, ...entries.flatMap((x) => x ?? [])], routes: s.routes }));
+  };
+  const searching = (s: Search): boolean => s.queue.length > 0 && s.routes.length < maxRoutes;
+  const start: Search = { queue: [{ cost: 0n, node: source, path: [source] }], routes: [] };
+  const pops = Array.from({ length: MAX_SEARCH_POPS }, (_, i) => i);
+  const searched = foldResult(pops, start, (s) => (searching(s) ? pop(s) : ok(s)));
+  return map(searched, (s) => s.routes.toSorted((a, b) => asc(a.totalFee, b.totalFee)));
 };
-/** og gossip getNetworkGraph().findPaths(source, target, amount ?? 1n, tokenId = 1, fundingAccountId): a fresh graph over the given Profiles. */
-export const findPaths = (profiles: readonly Binary[], source: string, target: string, amount = 1n, tokenId = 1, fundingAccountId?: string): Result<readonly PaymentRoute[], OnionError> =>
-  findPaymentRoutes(buildNetworkGraph(profiles, tokenId, fundingAccountId ? { sourceEntityId: source, accountId: fundingAccountId } : undefined), source, target, amount, tokenId, 100, fundingAccountId);
+/** og gossip getNetworkGraph().findPaths(source, target, amount ?? 1n, tokenId = 1, fundingAccountId). */
+export const findPaths = (
+  profiles: readonly Binary[], source: string, target: string, amount = 1n, tokenId = 1, fundingAccountId?: string,
+): Result<readonly PaymentRoute[], OnionError> => {
+  const funding = fundingAccountId ? { sourceEntityId: source, accountId: fundingAccountId } : undefined;
+  const graph = buildNetworkGraph(profiles, tokenId, funding);
+  return findPaymentRoutes(graph, source, target, amount, tokenId, 100, fundingAccountId);
+};
+
+
+// ---- account body: og types/account.ts ----
 /** og types/account.ts SwapOffer (same-jurisdiction): quantized amounts, canonical price and the maker's signed fee authority. */
 export type SwapOffer = {
   readonly offerId: string; readonly giveTokenId: TokenId; readonly giveTokenDecimals: number; readonly giveAmount: bigint; readonly wantTokenId: TokenId; readonly wantTokenDecimals: number; readonly wantAmount: bigint;
