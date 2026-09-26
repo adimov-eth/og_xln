@@ -12144,6 +12144,8 @@ export type Runtime = {
   readonly registrationEvidence: ReadonlyMap<string, RegistrationEvidence>;
   /** og infrastructure.numberedRegistrationIntents: durable numbered-registration intents (pending / completed / quarantined), keyed by intentId. */
   readonly numberedRegistrationIntents: ReadonlyMap<string, RuntimeData>;
+  /** og env.pendingNetworkOutputs: the retained network outbox (remote outputs still owed), committed as each frame's runtime outputs. */
+  readonly pendingNetworkOutputs?: readonly NetworkOutput[] | undefined;
 };
 /** A whole-frame refusal carries og's error code (og throws out of the Runtime reducer, so nothing of the frame applies). */
 export type RuntimeError = EntityError | Tagged<"no_such_entity", { id: EntityId }> | Tagged<"runtime_frame" | "runtime_tx", { code: string }>;
@@ -12156,8 +12158,20 @@ export type RuntimeCtx = Verifiers & { readonly replay?: boolean | undefined; re
   readonly runtimeSeed?: string | undefined;
   /** og env.infrastructure transport view (verified gossip profile routes), read when binding an outbox row's signer; never committed. */
   readonly routes?: RuntimeRoutes | undefined };
-/** og infrastructure.verifiedProfileRoutes: an Entity's verified gossip profile `runtimeSignerId`. */
-export type RuntimeRoutes = { readonly verifiedProfileSigner: (entityId: string) => string | undefined };
+/**
+ * og transport view (never committed): `verifiedProfileSigner` is an Entity's verified gossip profile runtime signer (og verifiedProfileRoutes /
+ * resolveGossipBoardSignerIds); `verifiedRuntime` og p2p getVerifiedRuntimeRoute; `resolvedRuntime` og resolveRuntimeIdForEntity; `crossJRuntime`
+ * og resolveRuntimeIdForCrossJurisdictionEntity; `replayRuntime` og resolveReplayOutputRuntimeRoute (a replayed frame's committed rows).
+ */
+export type RuntimeRoutes = {
+  readonly verifiedProfileSigner: (entityId: string) => string | undefined;
+  readonly verifiedRuntime?: ((entityId: string) => string | undefined) | undefined;
+  readonly resolvedRuntime?: ((entityId: string) => string | undefined) | undefined;
+  readonly crossJRuntime?: ((entityId: string, signerId: string) => string | undefined) | undefined;
+  readonly replayRuntime?: ((entityId: string, signerId: string) => string | undefined) | undefined;
+  /** og replayOutputSignerHint: the signer a replayed frame's own Account rows committed for an Entity. */
+  readonly replaySigner?: ((entityId: string) => string | undefined) | undefined;
+};
 export const ZERO_FRAME_HASH = `0x${"00".repeat(32)}`;
 export const replicaKey = (entity: EntityId, signer: string): string => `${entity}:${signerId(signer)}`;
 /** og buildJurisdictionImportAdapterConfig's bare replica: a name alone is an unconfigured J replica at block 0. */
@@ -16645,7 +16659,9 @@ export const runtimeView = (rt: Runtime): { readonly [key: string]: Binary } => 
     jReplicas: [...rt.jReplicas].map(([k, r]) => [k, jReplicaSnapshot(r)]),
   };
 };
-export type RuntimeFrameCommit = { readonly runtime: Runtime; readonly frame: StorageFrame; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[]; readonly jOutbox: readonly JInput[]; readonly queuedRetries: readonly RuntimeTx[]; readonly rejected: readonly RuntimeError[] };
+export type RuntimeFrameCommit = { readonly runtime: Runtime; readonly frame: StorageFrame; readonly applied: RuntimeInput; readonly outbox: readonly EntityOutput[];
+  /** og frame.runtimeOutputs: the retained network outbox this frame committed (its rows, in order). */
+  readonly runtimeOutputs: readonly NetworkOutput[]; readonly jOutbox: readonly JInput[]; readonly queuedRetries: readonly RuntimeTx[]; readonly rejected: readonly RuntimeError[] };
 /** og EntityInput wire lanes (entity/types.ts): `entityTxs`, `proposedFrame` (with a commit notice's `hankos`), `hashPrecommitFrame` + `hashPrecommits`, `leaderTimeoutVote`, `jPrefixAttestations`. The rewrite's Runtime-clock stamps are not wire fields. */
 const inputBinary = (input: EntityInput): Result<{ readonly [k: string]: Binary }, RuntimeError> => matchBy("kind", input, {
   txs: (i): Result<{ readonly [k: string]: Binary }, RuntimeError> => map(traverse(i.txs, entityFrameTx), (entityTxs) => ({ entityTxs: entityTxs as unknown as Binary })),
@@ -16671,7 +16687,8 @@ const certifiedCounterpartySigner = (rt: Runtime, from: string, to: EntityId): s
 };
 /**
  * og resolveEntityOutputSignerId for an Account message: the certified Account counterparty route first, then og resolveEntityProposerId: the
- * receiver's local active leader, else its first local replica, else the verified gossip profile's runtime signer (`routes`). None resolves:
+ * receiver's local active leader, else its first local replica, else a replayed frame's signer hint, else the verified gossip profile's runtime
+ * signer (`routes`). None resolves:
  * og SIGNER_RESOLUTION_FAILED.
  */
 const outputSigner = (rt: Runtime, o: Extract<EntityOutput, { readonly tx: EntityTx }>, routes?: RuntimeRoutes): Result<string, RuntimeError> => {
@@ -16679,8 +16696,8 @@ const outputSigner = (rt: Runtime, o: Extract<EntityOutput, { readonly tx: Entit
   const certified = from === undefined ? undefined : certifiedCounterpartySigner(rt, from, to);
   if (certified !== undefined) return ok(certified);
   const local = [...rt.entities.values()].filter((r) => lower(r.state.id) === lower(to));
-  const chosen = local.find(isActiveLeader) ?? local[0], gossip = routes?.verifiedProfileSigner(lower(to));
-  const signer = chosen !== undefined ? lower(chosen.signerId) : gossip === undefined ? undefined : lower(gossip);
+  const chosen = local.find(isActiveLeader) ?? local[0], hinted = routes?.replaySigner?.(lower(to)) ?? routes?.verifiedProfileSigner(lower(to));
+  const signer = chosen !== undefined ? lower(chosen.signerId) : hinted === undefined ? undefined : lower(hinted);
   return signer === undefined ? frameErr(`SIGNER_RESOLUTION_FAILED: Entity output ${from ?? "unknown"}->${to} entityId=${to}`) : ok(signer);
 };
 /** og RoutedEntityInput as prepareRuntimeOutputRows encodes it: destination, bound signer, the input's wire lane, the cohort marker. */
@@ -16691,9 +16708,283 @@ const outputBinary = (rt: Runtime, o: EntityOutput, routes?: RuntimeRoutes): Res
 };
 /** og prepareRuntimeOutputRows: one encodeBuffer row per outbox output, in order. */
 export const runtimeOutputRows = (rt: Runtime, outbox: readonly EntityOutput[], routes?: RuntimeRoutes): Result<readonly Uint8Array[], RuntimeError> => traverse(outbox, (o) => chain(outputBinary(rt, o, routes), encodeBinary));
+// ---- og runtime/delivery (identity.ts, pending.ts, plan.ts, recovery-output.ts): the retained network outbox a Runtime frame commits ----
+/** og RoutedEntityInput wire object as og keeps it in env.pendingNetworkOutputs and encodes it as one outbox row. */
+export type NetworkOutput = { readonly [k: string]: Binary };
+/** og LIMITS.MAX_PENDING_NETWORK_OUTPUTS. */
+export const MAX_PENDING_NETWORK_OUTPUTS = 10_000;
+type NetworkTx = { readonly type: string; readonly data: { readonly [k: string]: Binary } };
+const netText = (v: Binary | undefined): string => (typeof v === "string" ? v : v === undefined || v === null ? "" : String(v));
+const netTxs = (o: NetworkOutput): readonly NetworkTx[] => (Array.isArray(o["entityTxs"]) ? (o["entityTxs"] as unknown as readonly NetworkTx[]) : []);
+const netMap = (v: Binary | undefined): ReadonlyMap<Binary, Binary> | undefined => (v instanceof Map ? (v as ReadonlyMap<Binary, Binary>) : undefined);
+/** og netRuntimeId: a runtime id is a lowercased address; anything else is no id. */
+const netRuntimeId = (v: Binary | undefined): string => { const s = netText(v).trim(); return /^0x[0-9a-fA-F]{40}$/.test(s) ? s.toLowerCase() : ""; };
+const routeText = (v: Binary | undefined): string => netText(v).trim().toLowerCase();
+/** og getEffectiveEntityInputTxs: a runtimeOutput's nested txs stand in for it. */
+const netEffective = (o: NetworkOutput): readonly NetworkTx[] => netTxs(o).flatMap((tx) => (tx.type === "runtimeOutput" && Array.isArray(tx.data["entityTxs"]) ? (tx.data["entityTxs"] as unknown as readonly NetworkTx[]) : [tx]));
+type NetProposal = { readonly from: string; readonly to: string; readonly height: Binary; readonly stateHash: string; readonly frameHanko: boolean; readonly disputeHanko: boolean; readonly ack: boolean };
+/** og accountInputProposal / accountInputAck over an `accountInput` wire tx. */
+const netProposal = (tx: NetworkTx): NetProposal | undefined => {
+  const d = tx.data, proposal = d["proposal"] as { readonly [k: string]: Binary } | undefined;
+  if (tx.type !== "accountInput" || d["kind"] !== "ack_frame" || proposal === undefined || proposal === null) return undefined;
+  const frame = proposal["frame"] as { readonly [k: string]: Binary };
+  return { from: netText(d["fromEntityId"]), to: netText(d["toEntityId"]), height: frame["height"] ?? null, stateHash: netText(frame["stateHash"]), frameHanko: Boolean(proposal["frameHanko"]), disputeHanko: Boolean(proposal["disputeHanko"]), ack: Boolean(d["ack"]) };
+};
+const netProposals = (o: NetworkOutput): readonly NetProposal[] | null => {
+  const txs = netEffective(o);
+  if (txs.length === 0) return null;
+  const proposals = txs.flatMap((tx) => { const p = netProposal(tx); return p === undefined ? [] : [p]; });
+  return proposals.length === txs.length ? proposals : null;
+};
+/** og accountProposalOutputIdentity. */
+const proposalIdentity = (o: NetworkOutput): string | null => {
+  const proposals = netProposals(o);
+  if (proposals === null) return null;
+  return `ap|${netRuntimeId(o["runtimeId"])}|${routeText(o["entityId"])}|${routeText(o["signerId"])}|${netRuntimeId(o["from"])}|`
+    + proposals.map((p) => `${p.from.toLowerCase()}:${p.to.toLowerCase()}:${netText(p.height)}:${p.stateHash.toLowerCase()}`).join(",");
+};
+const netDigest = (v: Binary | undefined): Result<string, RuntimeError> => v === undefined ? ok("") : mapErr(map(encodeBinary(v), integrity), (): RuntimeError => ({ _tag: "runtime_frame", code: "ROUTE_OUTPUT_ENCODING_INVALID" }));
+/**
+ * og buildRouteOutputKey: an Account proposal by its identity, anything else by route, source frame and exact payload. og's tx fingerprints and
+ * leader-vote body hash are replaced by equality-equivalent content digests (the key is compared, never stored).
+ */
+const routeKeyOf = (o: NetworkOutput): Result<string, RuntimeError> => {
+  const identity = proposalIdentity(o);
+  if (identity !== null) return ok(identity);
+  const frame = o["sourceRuntimeFrame"] as { readonly height: Binary; readonly timestamp: Binary } | undefined, pf = o["proposedFrame"] as { readonly [k: string]: Binary } | undefined;
+  const pc = o["hashPrecommitFrame"] as { readonly [k: string]: Binary } | undefined, vote = o["leaderTimeoutVote"] as { readonly [k: string]: Binary } | undefined;
+  const voteBody = vote === undefined ? undefined : Object.fromEntries(Object.entries(vote).filter(([k]) => k !== "signature" && k !== "voterId")) as Binary;
+  return chain(netDigest(voteBody), (voteHash) => chain(traverse(netTxs(o), (tx) => netDigest(tx as unknown as Binary)), (fingerprints) => ok(
+    `ro|${netText(o["runtimeId"])}|${frame ? `${netText(frame.height)}:${netText(frame.timestamp)}` : ""}|${routeText(o["entityId"])}|${routeText(o["signerId"])}|${netText(o["from"])}`
+    + `|${pf ? `${netText(pf["height"])}:${netText(pf["hash"])}` : ""}`
+    + `|${pc ? `${netText(pc["height"])}:${netText(pc["frameHash"])}:${[...(netMap(o["hashPrecommits"])?.keys() ?? [])].map(netText).sort().join(",")}` : ""}`
+    + `|${vote ? `${routeText(vote["voterId"])}:${voteHash}` : ""}`
+    + `|${[...(netMap(o["jPrefixAttestations"])?.keys() ?? [])].map(netText).sort().join(",")}`
+    + `|${fingerprints.join("\u0001")}`)));
+};
+/** og splitRoutedOutputByDeliveryLane: one output per payload kind (frame, precommit bundle, vote, each J-prefix attestation, the txs together). */
+const splitLanes = (o: NetworkOutput): Result<readonly NetworkOutput[], RuntimeError> => {
+  const { entityTxs, proposedFrame, hashPrecommits, hashPrecommitFrame, jPrefixAttestations, leaderTimeoutVote, ...route } = o;
+  const split: NetworkOutput[] = [], precommits = netMap(hashPrecommits), jp = netMap(jPrefixAttestations), txs = Array.isArray(entityTxs) ? entityTxs : [];
+  if (proposedFrame !== undefined) split.push({ ...route, proposedFrame });
+  if (precommits !== undefined && precommits.size > 0) {
+    if (hashPrecommitFrame === undefined) return frameErr("ROUTE_PRECOMMIT_FRAME_REFERENCE_MISSING");
+    split.push({ ...route, hashPrecommitFrame, hashPrecommits: precommits });
+  } else if (hashPrecommitFrame !== undefined) return frameErr("ROUTE_PRECOMMIT_FRAME_REFERENCE_WITHOUT_SIGNATURES");
+  if (leaderTimeoutVote !== undefined) split.push({ ...route, leaderTimeoutVote });
+  for (const [signer, attestation] of jp ?? new Map()) split.push({ ...route, jPrefixAttestations: new Map([[signer, attestation]]) });
+  if (txs.length > 0 || split.length === 0) split.push({ ...route, entityTxs: txs });
+  return ok(split);
+};
+const compareConsensus = (a: Binary, b: Binary): Result<number, RuntimeError> => {
+  const x = encodeConsensus(a), y = encodeConsensus(b);
+  return x.ok && y.ok ? ok(compareBytes(x.value, y.value)) : frameErr("ROUTE_OUTPUT_ENCODING_INVALID");
+};
+const proposalRank = (o: NetworkOutput): number => netEffective(o).reduce((rank, tx) => { const p = netProposal(tx); return p === undefined ? rank : rank + Number(p.frameHanko) + Number(p.disputeHanko); }, 0);
+const isCommitNotice = (o: NetworkOutput): boolean => { const f = o["proposedFrame"] as { readonly [k: string]: Binary } | undefined; return Array.isArray(f?.["hankos"]) && (f["hankos"] as readonly Binary[]).length === 1; };
+/** og mergeAccountProposalOutput: more Hanko evidence, else the newer source frame, else the canonically smaller envelope. */
+const mergeProposal = (existing: NetworkOutput, incoming: NetworkOutput): Result<NetworkOutput, RuntimeError> => {
+  const delta = proposalRank(incoming) - proposalRank(existing);
+  if (delta !== 0) return ok(delta > 0 ? incoming : existing);
+  const ef = existing["sourceRuntimeFrame"] as SourceRuntimeFrame | undefined, inf = incoming["sourceRuntimeFrame"] as SourceRuntimeFrame | undefined;
+  if (inf !== undefined && (ef === undefined || inf.height > ef.height || (inf.height === ef.height && inf.timestamp > ef.timestamp))) return ok(incoming);
+  return map(compareConsensus(existing, incoming), (c) => (c <= 0 ? existing : incoming));
+};
+/** og normalizePrecommitBundles. */
+const precommitBundles = (m: ReadonlyMap<Binary, Binary>): Result<Map<string, readonly Binary[]>, RuntimeError> => {
+  const out = new Map<string, readonly Binary[]>();
+  for (const [raw, sigs] of m) {
+    const signer = routeText(raw);
+    if (out.has(signer)) return frameErr(`ROUTE_PRECOMMIT_DUPLICATE_SIGNER:${netText(raw)}`);
+    out.set(signer, Array.isArray(sigs) ? sigs : []);
+  }
+  return ok(out);
+};
+/** og mergeOrdinaryOutput: vote equivocation refuses; txs append; precommit bundles union (equivocation refuses); a commit notice replaces a bare frame. */
+const mergeOrdinary = (existing: NetworkOutput, incoming: NetworkOutput): Result<NetworkOutput, RuntimeError> => {
+  const ev = existing["leaderTimeoutVote"], iv = incoming["leaderTimeoutVote"];
+  const voteConflict: Result<boolean, RuntimeError> = ev === undefined && iv === undefined ? ok(false) : ev === undefined || iv === undefined ? ok(true) : map(compareConsensus(iv, ev), (c) => c !== 0);
+  return chain(voteConflict, (conflict) => {
+    if (conflict) return frameErr(`ROUTE_LEADER_VOTE_EQUIVOCATION:${netText((iv as { readonly [k: string]: Binary } | undefined)?.["voterId"]) || "missing"}`);
+    let next: { [k: string]: Binary } = { ...existing };
+    const itxs = netTxs(incoming);
+    if (itxs.length > 0) next = { ...next, entityTxs: [...netTxs(existing), ...itxs] as unknown as Binary };
+    const ipc = netMap(incoming["hashPrecommits"]);
+    const precommitStep: Result<{ [k: string]: Binary }, RuntimeError> = ipc === undefined || ipc.size === 0 ? ok(next) : chain(
+      existing["hashPrecommitFrame"] !== undefined ? map(compareConsensus(existing["hashPrecommitFrame"], incoming["hashPrecommitFrame"] ?? null), (c) => c !== 0) : ok(false), (clash) => {
+        if (clash) return frameErr("ROUTE_PRECOMMIT_FRAME_CONFLICT");
+        if (incoming["hashPrecommitFrame"] === undefined) return frameErr("ROUTE_PRECOMMIT_FRAME_REFERENCE_MISSING");
+        return chain(precommitBundles(netMap(existing["hashPrecommits"]) ?? new Map()), (merged) => chain(precommitBundles(ipc), (adds) => {
+          for (const [signer, sigs] of adds) {
+            const prev = merged.get(signer);
+            if (prev === undefined) merged.set(signer, [...sigs]);
+            else if (prev.length !== sigs.length || prev.some((s, i) => s !== sigs[i])) return frameErr(`ROUTE_PRECOMMIT_EQUIVOCATION:${signer}`);
+          }
+          return ok({ ...next, hashPrecommitFrame: incoming["hashPrecommitFrame"] as Binary, hashPrecommits: new Map([...merged].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) as unknown as Binary });
+        }));
+      });
+    return map(precommitStep, (n) => (incoming["proposedFrame"] !== undefined && (n["proposedFrame"] === undefined || (isCommitNotice(incoming) && !isCommitNotice(n))) ? { ...n, proposedFrame: incoming["proposedFrame"] } : n));
+  });
+};
+/** og buildPendingNetworkOutputs / dedupeEntityOutputs: split lanes, merge by route key into the first slot. */
+const dedupeNetwork = (outputs: readonly NetworkOutput[]): Result<readonly NetworkOutput[], RuntimeError> =>
+  chain(traverse(outputs, splitLanes), (lanes) => {
+    const slots = new Map<string, NetworkOutput>();
+    for (const o of lanes.flat()) {
+      const key = routeKeyOf(o);
+      if (!key.ok) return key;
+      const existing = slots.get(key.value);
+      if (existing === undefined) { slots.set(key.value, o); continue; }
+      const merged = proposalIdentity(existing) !== null && proposalIdentity(existing) === proposalIdentity(o) ? mergeProposal(existing, o) : mergeOrdinary(existing, o);
+      if (!merged.ok) return merged;
+      slots.set(key.value, merged.value);
+    }
+    return ok([...slots.values()]);
+  });
+const pendingNetwork = (outputs: readonly NetworkOutput[]): Result<readonly NetworkOutput[], RuntimeError> => chain(dedupeNetwork(outputs), (pending) =>
+  pending.length > MAX_PENDING_NETWORK_OUTPUTS ? frameErr(`NETWORK_OUTBOX_CAPACITY_EXCEEDED: pending=${pending.length} max=${MAX_PENDING_NETWORK_OUTPUTS}`) : ok(pending));
+/**
+ * og accountProposalSettledBySender / pruneSettledOutputs: a proposal-only output is settled once the sender's Account no longer holds that frame
+ * pending (committed or rolled back); an output that also carries an ACK is still owed.
+ */
+const pruneSettled = (rt: Runtime, outputs: readonly NetworkOutput[]): Result<readonly NetworkOutput[], RuntimeError> => {
+  const kept: NetworkOutput[] = [];
+  for (const o of outputs) {
+    const proposals = netEffective(o).flatMap((tx) => { const p = netProposal(tx); return p === undefined ? [] : [p]; });
+    if (proposals.length === 0 || proposals.some((p) => p.ack)) { kept.push(o); continue; }
+    let settled = true;
+    for (const p of proposals) {
+      const account = [...rt.entities.values()].filter((r) => lower(r.state.id) === lower(p.from)).map((r) => [...r.accountReplicas].find(([id]) => lower(id) === lower(p.to))?.[1]).find((a) => a !== undefined);
+      if (account === undefined) return frameErr(`ACCOUNT_PROPOSAL_OUTBOX_SOURCE_ACCOUNT_MISSING:${stableJson({ runtimeId: rt.runtimeId ?? null, fromEntityId: p.from, toEntityId: p.to, proposalHeight: p.height, proposalStateHash: p.stateHash })}`);
+      const pending = account._tag === "proposed" ? account.candidate.frame : undefined;
+      // og `every`: the first proposal still pending keeps the output, and later legs are not inspected
+      if (pending !== undefined && netText(p.height) === String(pending.height) && pending.stateHash.toLowerCase() === p.stateHash.toLowerCase()) { settled = false; break; }
+    }
+    if (!settled) kept.push(o);
+  }
+  return ok(kept);
+};
+const isTriggerOnly = (o: NetworkOutput): boolean => netTxs(o).length === 0 && o["proposedFrame"] === undefined && o["leaderTimeoutVote"] === undefined && (netMap(o["jPrefixAttestations"])?.size ?? 0) === 0 && (netMap(o["hashPrecommits"])?.size ?? 0) === 0;
+const txTypesOf = (o: NetworkOutput): string => netTxs(o).map((tx) => tx.type).join(",");
+/** og extensions/cross-j/boundary.ts CROSS_J_INTRA_RUNTIME_ENTITY_TX_TYPES: raw cross-j Entity effects never leave their Runtime. */
+const CROSS_J_INTRA_RUNTIME_TXS = new Set(["prepareCrossJurisdictionSwap", "materializeCrossJurisdictionSwap", "registerCrossJurisdictionSwap", "crossJurisdictionFillNotice", "requestCrossJurisdictionClear", "materializeCrossJurisdictionClear",
+  "crossPullClose", "crossJurisdictionSalvage", "crossJurisdictionForceSiblingDispute", "orderbookSweepCrossJurisdiction", "admitCrossJurisdictionBookOrder", "removeCrossJurisdictionBookOrder", "crossJurisdictionBookOrderRemoved"]);
+type NetworkPlan = { readonly local: readonly NetworkOutput[]; readonly remote: readonly NetworkOutput[] };
+/**
+ * og planEntityOutputs: a target with a local replica of the named signer is local (a trigger retargets to the sole local signer; anything else
+ * refuses ROUTE_LOCAL_SIGNER_MISMATCH); every other output is remote: its signer aligned with the verified profile, its Runtime bound (replay
+ * route, else the verified route, else the persisted or resolved one), with og's unknown-route, self-hint and cross-j refusals.
+ */
+const planNetwork = (rt: Runtime, outputs: readonly NetworkOutput[], routes: RuntimeRoutes | undefined): Result<NetworkPlan, RuntimeError> => chain(dedupeNetwork(outputs), (deduped) => {
+  const local: NetworkOutput[] = [], remote: NetworkOutput[] = [];
+  for (const initial of deduped) {
+    const entity = routeText(initial["entityId"]), signer = routeText(initial["signerId"]);
+    const signers = [...rt.entities.values()].filter((r) => lower(r.state.id) === entity).map((r) => lower(r.signerId));
+    if (signer !== "" && signers.includes(signer)) { local.push(initial); continue; }
+    if (signers.length === 1) {
+      if (isTriggerOnly(initial)) { local.push({ ...initial, signerId: signers[0]! }); continue; }
+      return frameErr(netTxs(initial).length > 0 ? `ROUTE_LOCAL_SIGNER_MISMATCH: entity=${netText(initial["entityId"])} signer=${netText(initial["signerId"])} txTypes=${txTypesOf(initial)}`
+        : `ROUTE_LOCAL_SIGNER_MISMATCH: entity=${netText(initial["entityId"])} signer=${netText(initial["signerId"])} resolved=${signers[0]} consensusOnly=true`);
+    }
+    // og alignRemoteOutputSigner
+    const preferred = routes?.verifiedProfileSigner(entity) ?? "", outSigner = netText(initial["signerId"]).trim();
+    let output = initial;
+    if (preferred !== "" && preferred.toLowerCase() !== outSigner.toLowerCase()) {
+      if (isTriggerOnly(initial)) output = { ...initial, signerId: preferred };
+      else if (netTxs(initial).length > 0) return frameErr(`ROUTE_REMOTE_SIGNER_MISMATCH: entity=${netText(initial["entityId"])} signer=${netText(initial["signerId"])} resolved=${preferred} txTypes=${txTypesOf(initial)}`);
+    }
+    // og bindVerifiedTargetRuntime
+    const outSignerId = netText(output["signerId"]), persisted = netRuntimeId(output["runtimeId"]), replay = netRuntimeId(routes?.replayRuntime?.(entity, routeText(outSignerId)));
+    let target: string;
+    if (replay !== "") {
+      if (persisted !== "" && persisted !== replay) return frameErr(`REPLAY_OUTPUT_RUNTIME_ROUTE_MISMATCH:${netText(output["entityId"])}:${outSignerId}`);
+      target = replay;
+    } else {
+      const resolved = routes?.resolvedRuntime?.(entity) ?? "", verified = netRuntimeId(routes?.verifiedRuntime?.(entity));
+      if (verified !== "" && persisted !== verified) output = { ...output, runtimeId: verified };
+      target = netRuntimeId(output["runtimeId"]) || verified || resolved;
+    }
+    if (target === "") return frameErr(`ROUTE_TARGET_RUNTIME_UNKNOWN: entity=${netText(output["entityId"])} txTypes=${txTypesOf(output)}`);
+    if (netRuntimeId(rt.runtimeId) !== "" && target === netRuntimeId(rt.runtimeId)) return frameErr(`ROUTE_STALE_SELF_HINT: entity=${netText(output["entityId"])} runtime=${target} txTypes=${txTypesOf(output)}`);
+    const txs = netTxs(output);
+    if (txs.length === 1 && txs[0]!.type === "runtimeOutput") {
+      const bound = netRuntimeId(replay !== "" ? replay : routes?.crossJRuntime?.(entity, routeText(outSignerId)));
+      if (bound === "" || bound !== target) return frameErr(`CROSS_J_RUNTIME_OUTPUT_TARGET_UNVERIFIED:${netText(output["entityId"])}:${outSignerId}:${target || "missing"}`);
+    } else if (txs.some((tx) => tx.type === "runtimeOutput" && tx.data["protocol"] === "cross-j") || netEffective(output).some((tx) => CROSS_J_INTRA_RUNTIME_TXS.has(tx.type))) {
+      return frameErr(`CROSS_J_REMOTE_OUTPUT_FORBIDDEN: entity=${routeText(output["entityId"])} targetRuntime=${target} txTypes=${txTypesOf(output)}`);
+    }
+    remote.push({ ...output, runtimeId: target });
+  }
+  return ok({ local, remote });
+});
+/**
+ * og applyRecoveryRuntimeOutputPlan after a frame: this frame's outputs are stamped with their source frame, joined to the retained outbox, pruned
+ * of settled proposals, deduplicated and planned; the local outputs are this Runtime's own continuations and the remote ones become the new
+ * retained outbox, which is exactly what og commits as the frame's runtime outputs.
+ */
+export const retainedNetworkOutbox = (rt: Runtime, outbox: readonly EntityOutput[], routes?: RuntimeRoutes): Result<readonly NetworkOutput[], RuntimeError> =>
+  chain(traverse(outbox, (o) => outputBinary(rt, o, routes)), (rows) => networkOutboxStep(rt, rows as readonly NetworkOutput[], routes));
+/** og applyRecoveryRuntimeOutputPlan over og-wire outputs: stamp, join the retained outbox, prune, dedupe, plan; the result is the new retained outbox. */
+export const networkOutboxStep = (rt: Runtime, outputs: readonly NetworkOutput[], routes?: RuntimeRoutes): Result<readonly NetworkOutput[], RuntimeError> =>
+  chain(frameNumber(rt.height), (height) => chain(frameNumber(rt.timestamp), (timestamp) => {
+    const originated = outputs.map((o) => (o["sourceRuntimeFrame"] ? o : { ...o, sourceRuntimeFrame: { height, timestamp } }));
+    return chain(chain(pruneSettled(rt, [...(rt.pendingNetworkOutputs ?? []), ...originated]), pendingNetwork), (pending) => chain(planNetwork(rt, pending, routes), (plan) => pendingNetwork(plan.remote)));
+  }));
+/** og dispatchEntityOutputs retirement: outputs a transport accepted leave the retained outbox (by route key); the rest stay owed. */
+export const retireNetworkOutputs = (rt: Runtime, accepted: (output: NetworkOutput) => boolean): Runtime => ({ ...rt, pendingNetworkOutputs: (rt.pendingNetworkOutputs ?? []).filter((o) => !accepted(o)) });
+/**
+ * og selectRetainedRecoveryOutbox: a frame's recorded rows from earlier frames must each be exact prior retained evidence (runtimeId aside), in
+ * prior order; this frame's own rows are regenerated by replay.
+ */
+export const selectRetainedRecovery = (previous: readonly NetworkOutput[], recorded: readonly NetworkOutput[], height: number): Result<readonly NetworkOutput[], RuntimeError> => {
+  const evidence = (o: NetworkOutput): NetworkOutput => ({ ...o, runtimeId: "" });
+  const prior = new Map<string, { readonly output: NetworkOutput; readonly index: number }>();
+  for (const [index, output] of previous.entries()) { const key = routeKeyOf(evidence(output)); if (!key.ok) return key; prior.set(key.value, { output, index }); }
+  const retained: NetworkOutput[] = [];
+  let priorIndex = -1;
+  for (const output of recorded) {
+    const source = output["sourceRuntimeFrame"] as SourceRuntimeFrame | undefined;
+    if (source === undefined || source.height > height || !output["runtimeId"]) return frameErr(`RECOVERY_OUTBOX_SOURCE_FRAME_INVALID:height=${height}`);
+    if (source.height === height) continue;
+    const key = routeKeyOf(evidence(output));
+    if (!key.ok) return key;
+    const verified = prior.get(key.value), same = verified === undefined ? ok(1) : compareConsensus(evidence(verified.output), evidence(output));
+    if (!same.ok) return same;
+    if (verified === undefined || same.value !== 0) return frameErr(`RECOVERY_OUTBOX_RETAINED_OUTPUT_UNPROVEN:height=${height}`);
+    if (verified.index <= priorIndex) return frameErr(`RECOVERY_OUTBOX_RETAINED_ORDER_INVALID:height=${height}`);
+    priorIndex = verified.index;
+    retained.push(verified.output["runtimeId"] === output["runtimeId"] ? verified.output : { ...verified.output, runtimeId: output["runtimeId"] as Binary });
+  }
+  return ok(retained);
+};
+/** og collectOutputSignerHints: each Account-bearing row of a replayed frame names its Entity's signer; two signers for one Entity conflict. */
+export const replaySignerHints = (rows: readonly NetworkOutput[], height: number): Result<ReadonlyMap<string, string>, RuntimeError> => {
+  const hints = new Map<string, string>();
+  for (const o of rows) {
+    if (!netTxs(o).some((tx) => tx.type === "accountInput")) continue;
+    const entity = routeText(o["entityId"]), signer = routeText(o["signerId"]);
+    if (entity === "" || signer === "") return frameErr(`RECOVERY_OUTPUT_SIGNER_HINT_INVALID:height=${height}`);
+    const existing = hints.get(entity);
+    if (existing !== undefined && existing !== signer) return frameErr(`RECOVERY_OUTPUT_SIGNER_HINT_CONFLICT:height=${height}:entity=${entity}:left=${existing}:right=${signer}`);
+    hints.set(entity, signer);
+  }
+  return ok(hints);
+};
+/** og installReplayOutputRuntimeRoutes: a replayed frame's own rows bind each (Entity, signer) to its committed Runtime. */
+export const replayOutputRoutes = (rows: readonly NetworkOutput[]): Result<ReadonlyMap<string, string>, RuntimeError> => {
+  const routes = new Map<string, string>();
+  for (const o of rows) {
+    const key = `${routeText(o["entityId"])}:${routeText(o["signerId"])}`, runtimeId = netRuntimeId(o["runtimeId"]);
+    if (key === ":" || runtimeId === "") return frameErr("REPLAY_OUTPUT_RUNTIME_ROUTE_INVALID");
+    const existing = routes.get(key);
+    if (existing !== undefined && existing !== runtimeId) return frameErr(`REPLAY_OUTPUT_RUNTIME_ROUTE_CONFLICT:${key}`);
+    routes.set(key, runtimeId);
+  }
+  return ok(routes);
+};
 const sealFrame = (rt: Runtime, step: RuntimeStep, routes?: RuntimeRoutes): Result<RuntimeFrameCommit, RuntimeError> => {
   const after = step.runtime;
-  return chain(frameNumber(after.height), (height) => chain(frameNumber(after.timestamp), (timestamp) => chain(runtimeOutputRows(after, step.outbox, routes), (rows) => chain(runtimeOutputsDigest(rows), (outputsDigest) =>
+  return chain(frameNumber(after.height), (height) => chain(frameNumber(after.timestamp), (timestamp) => chain(retainedNetworkOutbox(after, step.outbox, routes), (retained) => chain(traverse(retained, (o) => mapErr(encodeBinary(o), (): RuntimeError => ({ _tag: "runtime_frame", code: "ROUTE_OUTPUT_ENCODING_INVALID" }))), (rows) => chain(runtimeOutputsDigest(rows), (outputsDigest) =>
     chain(replicaMetaRows(after), (metaRows) => chain(replicaMetaDigest(metaRows), (metaDigest) => chain(runtimeComponentDigests(runtimeView(after)), (components) =>
       chain(storagePostStateHash({ height, timestamp, replicaMetaDigest: metaDigest, runtimeComponentDigests: components, runtimeOutputCount: rows.length, runtimeOutputsDigest: outputsDigest }), (postStateHash) =>
         chain(canonicalEntityHashes(after), (entityHashes) => {
@@ -16703,8 +16994,8 @@ const sealFrame = (rt: Runtime, step: RuntimeStep, routes?: RuntimeRoutes): Resu
             canonicalStateHash: canonicalRuntimeStateHash(height, timestamp, entityHashes), canonicalEntityHashes: entityHashes,
             runtimeInput: binaryOf(step.applied), runtimeOutputCount: rows.length, runtimeOutputsDigest: outputsDigest, touchedEntities: touched, touchedAccounts: [], touchedBookEntities: [],
           };
-          return map(storageFrameHash(body), (frameHash) => ({ runtime: { ...after, frameHash }, frame: { ...body, frameHash }, applied: step.applied, outbox: step.outbox, jOutbox: step.jOutbox, queuedRetries: step.queuedRetries, rejected: step.rejected }));
-        })))))))));
+          return map(storageFrameHash(body), (frameHash) => ({ runtime: { ...after, frameHash, pendingNetworkOutputs: retained }, frame: { ...body, frameHash }, applied: step.applied, outbox: step.outbox, runtimeOutputs: retained, jOutbox: step.jOutbox, queuedRetries: step.queuedRetries, rejected: step.rejected }));
+        }))))))))));
 };
 /**
  * og process + saveRuntimeFrame: apply one Runtime input and, when the frame advanced, seal its WAL row (prev hash chain from ZERO_FRAME_HASH,
@@ -16717,18 +17008,28 @@ export type RuntimeRecovery = { readonly runtime: Runtime; readonly outbox: read
  * og verifyStorageTailIntegrity + replay: every row continues the chain (height+1, prevFrameHash), its canonical state hash recomputes from its own
  * coordinates, and its frame hash recomputes; replaying its applied input (with replay capabilities) must reproduce the row byte-for-byte.
  * The recovered outbox is every replayed frame's ordered outputs (nothing is terminal without a receipt) and must equal the persisted rows positionally.
+ * `rows`, when given, are each frame's persisted runtime outputs (og frame.runtimeOutputs): og replayOneFrame seeds the retained outbox from
+ * the prior evidence they select (og selectRetainedRecoveryOutbox, so transport retirements between frames replay) and binds their Runtime routes.
  */
-export const recoverRuntime = (checkpoint: Runtime, frames: readonly StorageFrame[], inputs: readonly RuntimeInput[], outbox: readonly EntityOutput[], ctx: Verifiers & Pick<RuntimeCtx, "routes">): Result<RuntimeRecovery, RuntimeError> => {
+export const recoverRuntime = (checkpoint: Runtime, frames: readonly StorageFrame[], inputs: readonly RuntimeInput[], outbox: readonly EntityOutput[], ctx: Verifiers & Pick<RuntimeCtx, "routes">, rows?: readonly (readonly NetworkOutput[])[]): Result<RuntimeRecovery, RuntimeError> => {
   if (frames.length !== inputs.length) return frameErr("STORAGE_VERIFY_FRAME_INPUT_MISSING");
+  if (rows !== undefined && rows.length !== frames.length) return frameErr("STORAGE_VERIFY_FRAME_OUTPUTS_MISSING");
   type Replayed = { readonly runtime: Runtime; readonly outbox: readonly EntityOutput[] };
-  return chain(foldResult(frames.map((f, i) => [f, inputs[i] as RuntimeInput] as const), { runtime: checkpoint, outbox: [] } as Replayed, ({ runtime, outbox: pending }, [frame, input]): Result<Replayed, RuntimeError> => {
+  return chain(foldResult(frames.map((f, i) => [f, inputs[i] as RuntimeInput, i] as const), { runtime: checkpoint, outbox: [] } as Replayed, ({ runtime, outbox: pending }, [frame, input, index]): Result<Replayed, RuntimeError> => {
     if (BigInt(frame.height) !== runtime.height + 1n) return frameErr("STORAGE_VERIFY_FRAME_HEIGHT_MISMATCH");
     if (frame.prevFrameHash !== runtime.frameHash) return frameErr("STORAGE_VERIFY_FRAME_CHAIN_BROKEN");
     if (frame.canonicalStateHash !== undefined && frame.canonicalStateHash !== canonicalRuntimeStateHash(frame.height, frame.timestamp, frame.canonicalEntityHashes ?? [])) return frameErr("STORAGE_VERIFY_CANONICAL_HASH_MISMATCH");
     const own = storageFrameHash(frame);
     if (!own.ok || own.value !== frame.frameHash) return frameErr("STORAGE_VERIFY_FRAME_HASH_MISMATCH");
-    return chain(commitRuntimeFrame(runtime, { ...input, timestamp: BigInt(frame.timestamp) }, { ...ctx, replay: true }), (replayed): Result<Replayed, RuntimeError> =>
-      replayed === null || replayed.frame.frameHash !== frame.frameHash ? frameErr("STORAGE_REPLAY_POST_STATE_MISMATCH") : ok({ runtime: replayed.runtime, outbox: [...pending, ...replayed.outbox] }));
+    const recorded = rows?.[index];
+    const seeded: Result<{ readonly runtime: Runtime; readonly routes: RuntimeRoutes | undefined }, RuntimeError> = recorded === undefined ? ok({ runtime, routes: ctx.routes })
+      : chain(selectRetainedRecovery(runtime.pendingNetworkOutputs ?? [], recorded, frame.height), (retained) => chain(replaySignerHints(recorded, frame.height), (hints) => map(replayOutputRoutes(recorded), (bound): { readonly runtime: Runtime; readonly routes: RuntimeRoutes } => ({
+        runtime: { ...runtime, pendingNetworkOutputs: retained },
+        routes: { verifiedProfileSigner: (e) => ctx.routes?.verifiedProfileSigner(e), ...ctx.routes, replayRuntime: (e, sgn) => bound.get(`${lower(e)}:${lower(sgn)}`), replaySigner: (e) => hints.get(lower(e)) },
+      }))));
+    return chain(seeded, (seed) => chain(commitRuntimeFrame(seed.runtime, { ...input, timestamp: BigInt(frame.timestamp) }, { ...ctx, routes: seed.routes, replay: true }), (replayed): Result<Replayed, RuntimeError> =>
+      replayed === null || replayed.frame.frameHash !== frame.frameHash ? frameErr("STORAGE_REPLAY_POST_STATE_MISMATCH")
+        : ok({ runtime: recorded === undefined ? replayed.runtime : { ...replayed.runtime, pendingNetworkOutputs: recorded }, outbox: [...pending, ...replayed.outbox] })));
   }), (done) => (canon(done.outbox) !== canon(outbox) ? frameErr("STORAGE_RECOVERY_OUTBOX_MISMATCH") : ok(done)));
 };
 

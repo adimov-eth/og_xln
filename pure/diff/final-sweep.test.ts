@@ -14,6 +14,10 @@ import { createAccountConsensusContext as ogConsensusContext } from "../../core/
 import { applyCertifiedBoardRegistryEvent as ogApplyBoardEvent } from "../../core/jurisdiction/machine/board-registry/index.ts";
 import { applyBoardJEvent, createEntity, quorumBoardHash, settlementBoardAuthority, type EntityState, type JEvent } from "../xln.ts";
 import { carolAddr } from "../xln_run.ts";
+import { applyRecoveryRuntimeOutputPlan as ogOutputPlan } from "../../core/runtime/delivery/recovery-output.ts";
+import { encodeBuffer as ogEncodeBuffer } from "../../core/storage/codec/codec.ts";
+import { networkOutboxStep, retireNetworkOutputs, selectRetainedRecovery, type NetworkOutput, type RuntimeRoutes } from "../xln.ts";
+import { selectRetainedRecoveryOutbox as ogSelectRetained } from "../../core/storage/recovery/journal/verification.ts";
 import {
   accountId,
   accountTerms,
@@ -352,5 +356,94 @@ describe("final-sweep: SJ-18 settlement board authority fallback (og resolveSett
       seen.add((og as { ok: boolean; value?: string; error?: string }).ok ? `ok:${(og as { value?: string }).value === undefined ? "none" : "pin"}` : String((og as { error: string }).error).split(":")[0]);
     }
     expect(seen.size).toBeGreaterThanOrEqual(6);
+  });
+});
+
+// ---------- runtime-final RF-18: the retained network outbox a frame commits (og delivery/recovery-output.ts applyRecoveryRuntimeOutputPlan) ----------
+
+describe("final-sweep: RF-18 retained network outbox (og applyRecoveryRuntimeOutputPlan)", () => {
+  test("MATCH: 400 random frames (prior retained outputs + new outputs of every lane, local / remote / unroutable / self-hinted targets, settled and live proposals) commit og's retained outbox or og's refusal", () => {
+    const J = "local", SELF = "0x" + "5e".repeat(20), RT1 = "0x" + "a1".repeat(20), RT2 = "0x" + "a2".repeat(20);
+    const cfg = (a: string) => ({ mode: "proposer-based" as const, threshold: 1n, validators: [a], shares: { [a]: 1n }, jurisdiction: { name: J, chainId: TERMS.domain.chainId, depositoryAddress: TERMS.domain.depositoryAddress, entityProviderAddress: "0x" + "e1".repeat(20) } });
+    const A = unwrapR(lazyBoardEntityId(cfg(aliceAddr)) as never) as string, B = unwrapR(lazyBoardEntityId(cfg(bobAddr)) as never) as string, C = unwrapR(lazyBoardEntityId(cfg(carolAddr)) as never) as string;
+    const imp = (id: string, signer: string): RuntimeTx => ({ type: "importReplica", entityId: id, signerId: signer, data: { config: cfg(signer), isProposer: true, entitySeed: "0x" + "5e".repeat(64) } }) as never;
+    const now = 1_700_000_000_000n;
+    let rt: Runtime = unwrapR(applyRuntime(createRuntime([J], SELF), { runtimeTxs: [imp(A, aliceAddr), imp(B, bobAddr), imp(C, carolAddr)], entityInputs: [], timestamp: now }, verifiers) as never as { ok: true; value: { runtime: Runtime } }).runtime;
+    const open: RoutedEntityInput = { entityId: A as never, signerId: aliceAddr, input: { kind: "txs", timestamp: now + 1n, txs: [{ type: "openAccount", data: { targetEntityId: B, accountDomain: TERMS.domain, watchSeed: TERMS.watchSeed, disputeConfig: TERMS.disputeConfig } } as EntityTx] } };
+    rt = (unwrapR(applyRuntime(rt, { runtimeTxs: [], entityInputs: [open] }, verifiers) as never) as { runtime: Runtime }).runtime;
+    const alice = [...rt.entities.values()].find((r) => r.state.id === A)!, account = alice.accountReplicas.get(B as never)!;
+    expect(account._tag).toBe("proposed");
+    const pendingFrame = (account as Extract<typeof account, { _tag: "proposed" }>).candidate.frame;
+    rt = { ...rt, entities: new Map([...rt.entities].filter(([, r]) => r.state.id !== B)) };
+    const R1 = W("71"), R2 = W("72"), Z = W("7a"), local: readonly (readonly [string, string])[] = [[A, aliceAddr.toLowerCase()], [C, carolAddr.toLowerCase()]];
+    const ogReplicas = new Map([[`${A}:${aliceAddr}`, { entityId: A, state: { accounts: new Map([[B.toLowerCase(), { pendingFrame: { height: Number(pendingFrame.height), stateHash: pendingFrame.stateHash } }]]) } }], [`${C}:${carolAddr}`, { entityId: C, state: { accounts: new Map() } }]]);
+    const r = rng(4242), seen = new Set<string>();
+    const hx = (n: number) => hex(r, n);
+    const frameOf = (height: number, stateHash: string) => ({ height, timestamp: 5, jHeight: 0, prevFrameHash: W("01"), stateHash, accountStateRoot: W("02"), byLeft: true, accountTxs: [] });
+    const proposalTx = (): any => {
+      const from = r() < 0.08 ? Z : r() < 0.85 ? A : C, live = r() < 0.5;
+      return { type: "accountInput", data: { fromEntityId: from, toEntityId: B, kind: "ack_frame",
+        proposal: { frame: frameOf(live ? Number(pendingFrame.height) : Number(pendingFrame.height) + 1, live ? pendingFrame.stateHash : W("0e")), ...(r() < 0.6 ? { frameHanko: "0x" + "aa".repeat(40) } : {}), ...(r() < 0.4 ? { disputeHanko: { hash: W("0d"), hanko: "0x" + "bb".repeat(40) } } : {}) },
+        ...(r() < 0.25 ? { ack: { height: 1, frameHash: W("0c"), frameHanko: "0x" + "cc".repeat(40) } } : {}) } };
+    };
+    const lane = (): Record<string, unknown> => {
+      const k = r();
+      if (k < 0.3) return { entityTxs: Array.from({ length: 1 + Math.floor(r() * 2) }, proposalTx) };
+      if (k < 0.4) return { entityTxs: [{ type: "accountInput", data: { fromEntityId: A, toEntityId: B, kind: "ack", ack: { height: 1 + Math.floor(r() * 2), frameHash: W("0c") } } }] };
+      if (k < 0.5) return { entityTxs: [{ type: "j_event", data: { n: Math.floor(r() * 3) } }] };
+      if (k < 0.55) return { entityTxs: [{ type: "crossPullClose", data: { n: 1 } }] };
+      if (k < 0.6) return { entityTxs: [{ type: "runtimeOutput", data: { protocol: "cross-j", entityTxs: [{ type: "crossPullClose", data: { n: 1 } }] } }] };
+      if (k < 0.7) return { proposedFrame: { height: 3, hash: pick(r, [W("31"), W("32")]), ...(r() < 0.5 ? { hankos: ["0x" + "dd".repeat(40)] } : {}) } };
+      if (k < 0.8) return { hashPrecommitFrame: { height: 3, frameHash: pick(r, [W("41"), W("42")]) }, hashPrecommits: new Map(Array.from({ length: 1 + Math.floor(r() * 2) }, () => [pick(r, [aliceAddr.toLowerCase(), carolAddr.toLowerCase(), bobAddr.toLowerCase()]), [pick(r, ["0x" + "e1".repeat(65), "0x" + "e2".repeat(65)])]])) };
+      if (k < 0.9) return { leaderTimeoutVote: { entityId: C.toLowerCase(), targetHeight: 4, previousFrameHash: W("51"), fromView: 0, toView: 1, previousLeaderId: carolAddr.toLowerCase(), nextLeaderId: aliceAddr.toLowerCase(), voterId: pick(r, [aliceAddr.toLowerCase(), carolAddr.toLowerCase()]), signature: pick(r, ["0x" + "f1".repeat(65), "0x" + "f2".repeat(65)]) } };
+      if (k < 0.95) return { jPrefixAttestations: new Map(Array.from({ length: 1 + Math.floor(r() * 2) }, () => [pick(r, [aliceAddr.toLowerCase(), carolAddr.toLowerCase()]), { height: 2, root: pick(r, [W("61"), W("62")]) }])) };
+      return {};
+    };
+    const target = (): { entityId: string; signerId: string } => {
+      const e = pick(r, [A, C, B, B, R1, R2]), s = e === A ? pick(r, [aliceAddr, aliceAddr, carolAddr]) : e === C ? pick(r, [carolAddr, carolAddr, bobAddr]) : pick(r, [bobAddr, hx(20)]);
+      return { entityId: e, signerId: s.toLowerCase() };
+    };
+    // og validateDeliverableEntityInput checks a full Entity frame / attestation shape: these synthetic lanes stay on local targets (the rewrite emits only typed, valid wire)
+    const routed = (): Record<string, unknown> => { const l = lane(), t = target(); return "proposedFrame" in l || "jPrefixAttestations" in l ? { ...t, entityId: pick(r, [A, C]), ...l } : { ...t, ...l }; };
+    const output = (prior: boolean): any => ({ ...routed(), ...(r() < 0.1 ? { atomicCrossJurisdictionPair: { phase: "proposal", pairKey: W("91") } } : {}),
+      ...(prior ? { runtimeId: pick(r, [RT1, RT2]), sourceRuntimeFrame: { height: Number(rt.height) - 1 - Math.floor(r() * 2), timestamp: 7 } } : r() < 0.1 ? { sourceRuntimeFrame: { height: Number(rt.height), timestamp: Number(rt.timestamp) } } : {}) });
+    for (let trial = 0; trial < 400; trial++) {
+      const routeTable = (): Record<string, string> => Object.fromEntries([B, R1, R2].flatMap((e) => (r() < 0.6 ? [[e.toLowerCase(), pick(r, [RT1, RT2, RT1, SELF])]] : [])));
+      const resolved = routeTable(), verified = r() < 0.5 ? routeTable() : {}, crossJ = routeTable();
+      const prior = Array.from({ length: Math.floor(r() * 3) }, () => output(true)), outs = Array.from({ length: Math.floor(r() * 5) }, () => output(false));
+      const ogEnv: any = { runtimeId: SELF, state: { height: Number(rt.height), timestamp: Number(rt.timestamp), eReplicas: ogReplicas }, gossip: { getProfile: () => null }, pendingNetworkOutputs: structuredClone(prior), warn() {}, error() {}, info() {} };
+      const localSigners = (e: string) => local.filter(([id]) => id.toLowerCase() === e.toLowerCase()).map(([, s]) => s);
+      const deps: any = {
+        ensureRuntimeInfrastructure: (env: any) => (env.infrastructure ??= {}), getP2P: () => ({ getVerifiedRuntimeRoute: (e: string) => (verified[e.toLowerCase()] ? { runtimeId: verified[e.toLowerCase()], lastUpdated: 0 } : null), enqueueEntityInputsDelivery() { return { ok: true }; } }),
+        enqueueRuntimeInputs() {}, extractEntityId: (k: string) => k.split(":")[0], hasLocalSignerForEntity: (_: unknown, e: string) => localSigners(e).length > 0,
+        hasLocalSignerForEntitySigner: (_: unknown, e: string, s: string) => Boolean(s) && localSigners(e).includes(String(s).toLowerCase()), resolveSoleLocalSignerForEntity: (_: unknown, e: string) => (localSigners(e).length === 1 ? localSigners(e)[0] : null),
+        resolveRuntimeIdForEntity: (_: unknown, e: string) => resolved[e.toLowerCase()] ?? null, resolveRuntimeIdForCrossJurisdictionEntity: (_: unknown, e: string) => crossJ[e.toLowerCase()] ?? null,
+      };
+      let og: { ok: true; rows: string[] } | { ok: false; code: string };
+      try { ogOutputPlan(ogEnv, structuredClone(outs), deps, () => {}); og = { ok: true, rows: (ogEnv.pendingNetworkOutputs as unknown[]).map((o) => Buffer.from(ogEncodeBuffer(o, { omitSymbolKeys: true })).toString("hex")) }; } catch (e) { og = { ok: false, code: (e as Error).message }; }
+      const routes: RuntimeRoutes = { verifiedProfileSigner: () => undefined, verifiedRuntime: (e) => verified[e.toLowerCase()], resolvedRuntime: (e) => resolved[e.toLowerCase()], crossJRuntime: (e) => crossJ[e.toLowerCase()] };
+      const mine = networkOutboxStep({ ...rt, pendingNetworkOutputs: prior as NetworkOutput[] }, outs as NetworkOutput[], routes);
+      const got = mine.ok ? { ok: true as const, rows: mine.value.map((o) => Buffer.from(ogEncodeBuffer(o as never, { omitSymbolKeys: true })).toString("hex")) } : { ok: false as const, code: (mine.error as { code: string }).code };
+      if (!og.ok && og.code.startsWith("ACCOUNT_PROPOSAL_OUTBOX_SOURCE_ACCOUNT_MISSING") && !got.ok) expect(got.code.split(":")[0]).toBe("ACCOUNT_PROPOSAL_OUTBOX_SOURCE_ACCOUNT_MISSING");
+      else expect(got).toEqual(og);
+      seen.add(og.ok ? `ok:${og.rows.length > 0 ? "rows" : "empty"}` : og.code.split(/[: ]/)[0]!);
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(7);
+    expect([...seen].filter((k) => k.startsWith("ok:")).sort()).toEqual(["ok:empty", "ok:rows"]);
+  });
+
+  test("MATCH: transport retirement and og selectRetainedRecoveryOutbox (retained rows re-proven from prior evidence, in order; new rows skipped; forged or reordered rows refused)", () => {
+    const RT1 = "0x" + "a1".repeat(20), RT2 = "0x" + "a2".repeat(20);
+    const row = (n: number, height: number, runtimeId = RT1): NetworkOutput => ({ entityId: W("71"), signerId: bobAddr.toLowerCase(), entityTxs: [{ type: "j_event", data: { n } }] as never, runtimeId, sourceRuntimeFrame: { height, timestamp: 9 } });
+    const prior = [row(1, 3), row(2, 4), row(3, 4)];
+    const retired = retireNetworkOutputs({ pendingNetworkOutputs: prior } as Runtime, (o) => (o["entityTxs"] as any)[0].data.n === 2);
+    expect(retired.pendingNetworkOutputs).toEqual([prior[0]!, prior[2]!]);
+    const cases: NetworkOutput[][] = [[row(1, 3), row(3, 4), row(9, 5)], [row(1, 3, RT2)], [row(3, 4), row(1, 3)], [row(4, 4)], [{ ...row(1, 3), sourceRuntimeFrame: { height: 6, timestamp: 9 } }], [{ ...row(1, 3), runtimeId: "" }]];
+    for (const recorded of cases) {
+      let og: unknown;
+      try { og = { ok: true, value: ogSelectRetained(structuredClone(prior) as never, structuredClone(recorded) as never, 5) }; } catch (e) { og = { ok: false, code: (e as Error).message }; }
+      const mine = selectRetainedRecovery(prior, recorded, 5);
+      expect(mine.ok ? { ok: true, value: mine.value } : { ok: false, code: (mine.error as { code: string }).code }).toEqual(og as never);
+    }
   });
 });

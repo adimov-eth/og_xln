@@ -3,7 +3,7 @@ import {
   handleLendingBorrowEntityTx, handleLendingClosePositionEntityTx, handleLendingOfferEntityTx, handleLendingRepayEntityTx,
 } from "../../core/entity/tx/handlers/payments/lending.ts";
 import {
-  applyEntityInput, createEntity, isLeft, mapSet, ownWire, tokenId, wireOf, zeroDelta,
+  applyEntityInput, createEntity, isLeft, mapSet, ownWire, retireNetworkOutputs, tokenId, wireOf, zeroDelta,
   type AccountReplica, type EntityId, type EntityTx, type OpenEntity, type WireAccountTx,
 } from "../xln.ts";
 import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, unwrap, verifiers } from "../xln_run.ts";
@@ -387,7 +387,9 @@ describe("runtime-2: importReplica board authority (og runtime/tx/tx-handlers.ts
 describe("runtime-2: WAL frame commit and recover (og storage write + read/verify.ts + replay)", () => {
   test("MATCH: a committed WAL row chains from og ZERO_FRAME_HASH and its frameHash / canonicalStateHash recompute under og's functions; tampering is refused", () => {
     // og resolveEntityProposerId: BOB has no local replica and no certified Account route yet, so its verified gossip profile names the signer
-    const ctx = { ...verifiers, routes: { verifiedProfileSigner: (e: string) => (e === BOB.toLowerCase() ? bobAddr.toLowerCase() : undefined) } };
+    // og retains a remote output only once its Runtime resolves (og resolveRuntimeIdForEntity), else ROUTE_TARGET_RUNTIME_UNKNOWN
+    const BOB_RT = "0x" + "b0".repeat(20);
+    const ctx = { ...verifiers, routes: { verifiedProfileSigner: (e: string) => (e === BOB.toLowerCase() ? bobAddr.toLowerCase() : undefined), resolvedRuntime: (e: string) => (e === BOB.toLowerCase() ? BOB_RT : undefined) } };
     const config = importConfigOf([aliceAddr], { [aliceAddr]: 1n }, 1n);
     const id = unwrap(lazyBoardEntityId(config)) as EntityId;
     const importTx: RuntimeTx = { type: "importReplica", entityId: id, signerId: aliceAddr, data: { config, isProposer: true, entitySeed: SEED } };
@@ -406,9 +408,25 @@ describe("runtime-2: WAL frame commit and recover (og storage write + read/verif
     // og SIGNER_RESOLUTION_FAILED: no local replica, no certified route, no gossip profile
     expect(String(rwCode(commitRuntimeFrame(first.runtime, { runtimeTxs: [], entityInputs: [{ entityId: id, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW + 1n, txs: [openTo(BOB)] } }] }, verifiers)))).toStartWith("SIGNER_RESOLUTION_FAILED");
     expect(second.frame.prevFrameHash).toBe(frameHash ?? "");
+    expect(rwCode(commitRuntimeFrame(first.runtime, { runtimeTxs: [], entityInputs: [{ entityId: id, signerId: aliceAddr, input: { kind: "txs", timestamp: NOW + 1n, txs: [openTo(BOB)] } }] }, { ...verifiers, routes: { verifiedProfileSigner: ctx.routes.verifiedProfileSigner } }))).toStartWith("ROUTE_TARGET_RUNTIME_UNKNOWN");
+    // og commits only the retained network outbox: the remote proposal to BOB, bound to BOB's Runtime and stamped with its source frame
+    expect(first.runtimeOutputs).toEqual([]);
+    expect(second.runtimeOutputs.map((o) => [o["entityId"], o["runtimeId"], o["sourceRuntimeFrame"]])).toEqual([[BOB, BOB_RT, { height: 2, timestamp: Number(NOW + 1n) }]]);
+    expect(second.frame.runtimeOutputCount).toBe(1);
 
     const frames = [first.frame, second.frame], inputs = [first.applied, second.applied], outbox = [...first.outbox, ...second.outbox];
     expect(unwrap(recoverRuntime(start, frames, inputs, outbox, ctx)).runtime.frameHash).toBe(second.frame.frameHash ?? "");
+    // with og's per-frame rows, replay binds the recorded Runtime routes instead of live routing
+    expect(unwrap(recoverRuntime(start, frames, inputs, outbox, { ...verifiers }, [first.runtimeOutputs, second.runtimeOutputs])).runtime.pendingNetworkOutputs).toEqual(second.runtimeOutputs);
+    // A transport accepts the proposal between frames (og dispatchEntityOutputs retirement): the next frame commits without it, and only replay
+    // seeded from the recorded rows (og selectRetainedRecoveryOutbox) reproduces that frame.
+    const carolConfig = importConfigOf([carolAddr], { [carolAddr]: 1n }, 1n), carolId = unwrap(lazyBoardEntityId(carolConfig)) as EntityId;
+    const third = unwrap(commitRuntimeFrame(retireNetworkOutputs(second.runtime, () => true), { runtimeTxs: [{ type: "importReplica", entityId: carolId, signerId: carolAddr, data: { config: carolConfig, isProposer: true, entitySeed: SEED } }], entityInputs: [] }, ctx));
+    if (third === null) throw new Error("no frame");
+    expect(third.runtimeOutputs).toEqual([]);
+    const all = [...frames, third.frame], allInputs = [...inputs, third.applied], allOutbox = [...outbox, ...third.outbox];
+    expect(unwrap(recoverRuntime(start, all, allInputs, allOutbox, ctx, [first.runtimeOutputs, second.runtimeOutputs, third.runtimeOutputs])).runtime.frameHash).toBe(third.frame.frameHash ?? "");
+    expect(rwCode(recoverRuntime(start, all, allInputs, allOutbox, ctx))).toBe("STORAGE_REPLAY_POST_STATE_MISMATCH");
     const refuse = (f: readonly StorageFrame[], i = inputs): string | null => rwCode(recoverRuntime(start, f, i, outbox, ctx));
     expect(refuse([second.frame], [second.applied])).toBe("STORAGE_VERIFY_FRAME_HEIGHT_MISMATCH");
     expect(refuse([first.frame, { ...second.frame, prevFrameHash: hex(32) }])).toBe("STORAGE_VERIFY_FRAME_CHAIN_BROKEN");
