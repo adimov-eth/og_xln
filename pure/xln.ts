@@ -9461,10 +9461,14 @@ export const swapOfferEvent = (accountId: string, e: Of<Effect, "swap_offer_upse
 });
 /** The matcher's view of one hub Account (og hubState.accounts row): status, committed offers, and the resolves already queued (mempool + our pending frame). */
 export type HubAccount = { readonly active: boolean; readonly left: string; readonly right: string; readonly offers: ReadonlyMap<string, SwapOffer>; readonly queued: readonly WireAccountTx[] };
-export type Hub = { readonly id: string; readonly ext: OrderbookExt; readonly accounts: ReadonlyMap<string, HubAccount>; readonly takerFeeBps: number };
+export type Hub = {
+  readonly id: string; readonly ext: OrderbookExt; readonly accounts: ReadonlyMap<string, HubAccount>; readonly takerFeeBps: number;
+  /** og hubState.timestamp, crossJurisdictionSwaps and crossJurisdictionBookAdmissions: what the cross-j pass reads. */
+  readonly timestamp?: number | undefined; readonly crossSwaps?: ReadonlyMap<string, CrossRoute> | undefined; readonly crossAdmissions?: BookAdmissions | undefined;
+};
 export type BookTx = { readonly accountId: string; readonly tx: AccountTx };
 /** og MatchResult (same-j): Account txs in queue order, the final book of every touched pair in first-touch order, and the committed pair dimensions. */
-export type BookMatch = { readonly accountTxs: readonly BookTx[]; readonly books: ReadonlyMap<string, Book>; readonly pairDimensions: ReadonlyMap<string, PairDimensions> };
+export type BookMatch = { readonly accountTxs: readonly BookTx[]; readonly books: ReadonlyMap<string, Book>; readonly pairDimensions: ReadonlyMap<string, PairDimensions>; readonly crossFills: readonly CrossFillInstruction[] };
 /** og NormalizedOrderbookOffer (same-j). */
 type BookOffer = SwapRef & {
   readonly makerIsLeft: boolean; readonly fromEntity: string; readonly toEntity: string; readonly createdHeight: number;
@@ -9849,7 +9853,11 @@ const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 
 export const processOrderbookSwaps = (hub: Hub, offers: readonly BookOfferInput[], resumePairIds: readonly string[] = []): Result<BookMatch, EntityError> => {
   const pass = newPass(hub), minTradeSize = hub.ext.hubProfile.minTradeSize;
   const sorted = [...offers].sort((l, r) => l.createdHeight - r.createdHeight || compareText(l.accountId, r.accountId) || compareText(l.offerId, r.offerId));
+  // og runs the cross-j pass first, on the same hot book cache
+  const cross = processCrossOffers(pass, sorted.flatMap((o) => (o.crossJurisdiction === undefined ? [] : [{ ...o, crossJurisdiction: o.crossJurisdiction }])));
+  if (!cross.ok) return cross;
   for (const o of sorted) {
+    if (o.crossJurisdiction !== undefined) continue;
     const done = processSameOffer(pass, o, minTradeSize);
     if (!done.ok) return done;
   }
@@ -9861,9 +9869,9 @@ export const processOrderbookSwaps = (hub: Hub, offers: readonly BookOfferInput[
     const drained = drainSame(pass, seed.value, minTradeSize);
     if (!drained.ok) return drained;
   }
-  return ok({ accountTxs: pass.accountTxs, books: pass.updates, pairDimensions: pass.dims });
+  return ok({ accountTxs: pass.accountTxs, books: pass.updates, pairDimensions: pass.dims, crossFills: cross.value });
 };
-export type BookOfferInput = BookOffer;
+export type BookOfferInput = BookOffer & { readonly crossJurisdiction?: CrossRoute | undefined };
 /**
  * og collectOffersForMatching + admitOrderbookOfferForMatching (same-j): each committed offer once, keyed by the counterparty Account; a hub's own
  * maker offer is never listed in its own book; an inactive Account's offer is skipped; a missing Account halts.
@@ -9902,9 +9910,9 @@ export const applyCommittedSwapCancels = (ext: OrderbookExt, cancels: readonly S
   }
   return ok({ ext: books === ext.books ? ext : { ...ext, books }, resumePairIds: [...touched].sort() });
 };
-/** og processOrderbookCancels (same-j): take the row off its book and queue the zero-fill cancel resolve; a cross-j offer's clear is not ported. */
-export const processOrderbookCancels = (hub: Hub, cancels: readonly SwapRef[]): Result<{ readonly accountTxs: readonly BookTx[]; readonly books: ReadonlyMap<string, Book> }, EntityError> => {
-  const q = { hub, queued: new Set<string>(), accountTxs: [] as BookTx[] }, working = new Map<string, Book>();
+/** og processOrderbookCancels: take the row off its book; a same-j offer queues its zero-fill cancel resolve, a cross-j one a hub-internal cancel instruction at its admitted progress. */
+export const processOrderbookCancels = (hub: Hub, cancels: readonly SwapRef[]): Result<{ readonly accountTxs: readonly BookTx[]; readonly books: ReadonlyMap<string, Book>; readonly crossFills: readonly CrossFillInstruction[] }, EntityError> => {
+  const q = { hub, queued: new Set<string>(), accountTxs: [] as BookTx[] }, working = new Map<string, Book>(), crossFills: CrossFillInstruction[] = [];
   for (const { offerId, accountId } of cancels) {
     const account = hub.accounts.get(accountId);
     if (account === undefined || !account.offers.has(offerId)) continue;
@@ -9919,8 +9927,371 @@ export const processOrderbookCancels = (hub: Hub, cancels: readonly SwapRef[]): 
       if (!r.ok) return halt(r.error.code);
       working.set(pairId, r.value.state);
     }
-    if (account.offers.get(offerId)?.crossJurisdiction !== undefined) continue;
+    const route = account.offers.get(offerId)?.crossJurisdiction;
+    if (route !== undefined) {
+      const i = crossCancelInstruction(accountId, offerId, orderId, hub.crossAdmissions?.get(bookAdmissionKey(accountId, offerId))?.route ?? route);
+      if (!i.ok) return i;
+      crossFills.push(i.value);
+      continue;
+    }
     queueUniqueResolve(q, accountId, cancelTerms(offerId, "cancel_request"));
   }
-  return ok({ accountTxs: q.accountTxs, books: working });
+  return ok({ accountTxs: q.accountTxs, books: working, crossFills });
+};
+// ---- cross-j hub book: og extensions/cross-j/orderbook.ts (admissions, USD caps, market offer, fill and cancel instructions), orderbook/cross-j/*,
+// entity/tx/handlers/account/orderbook/cross/* and cancels.ts (cross branch). og throws from deep inside; here each halt is an `entity_invariant` with og's message. ----
+export type BookAdmissionStatus = "pending" | "admitted" | "resolving" | "closed";
+/** og CrossJurisdictionBookAdmission: the book owner's record of one admitted route, keyed by source user and order. */
+export type BookAdmission = {
+  readonly orderId: string; readonly routeHash: string; readonly sourceEntityId: string; readonly bookOwnerEntityId: string; readonly status: BookAdmissionStatus; readonly route: CrossRoute;
+  readonly admittedAt?: number | undefined; readonly resolvingAt?: number | undefined; readonly closedAt?: number | undefined; readonly closeReason?: string | undefined; readonly updatedAt: number;
+};
+export type BookAdmissions = ReadonlyMap<string, BookAdmission>;
+/** og crossJurisdictionBookAdmissionKeyFor (also the book's namespaced order id for a cross-j row). */
+export const bookAdmissionKey = (sourceEntityId: string, orderId: string): string => `${entityRef(sourceEntityId)}:${String(orderId || "")}`;
+/** og crossJurisdictionBookOwnerRef. */
+export const crossBookOwnerRef = (r: CrossRoute): string => entityRef(r.bookOwnerEntityId || r.source.counterpartyEntityId || r.hubEntityId || "");
+/** og withCanonicalCrossJurisdictionRouteHash where a throw is a halt. */
+const canonRoute = (r: CrossRoute): Result<CrossRoute, EntityError> => { const c = canonicalCrossRoute(r); return c.ok ? c : invariant(crossRouteErrorText(r, c.error.reason)); };
+const cloneRouteE = (r: CrossRoute): Result<CrossRoute, EntityError> => fatalCross(cloneCrossRoute(r));
+/** og cloneCrossJurisdictionBookAdmission: the collection forks a leaf through it before any in-place write. */
+export const cloneBookAdmission = (a: BookAdmission): Result<BookAdmission, EntityError> => map(cloneRouteE(a.route), (route): BookAdmission => ({
+  orderId: String(a.orderId || ""), routeHash: String(a.routeHash || ""), sourceEntityId: String(a.sourceEntityId || ""), bookOwnerEntityId: String(a.bookOwnerEntityId || ""), status: a.status, route,
+  updatedAt: Number(a.updatedAt || 0), ...opt("admittedAt", optNum(a.admittedAt)), ...opt("resolvingAt", optNum(a.resolvingAt)), ...opt("closedAt", optNum(a.closedAt)), ...opt("closeReason", optText(a.closeReason)),
+}));
+/** og getEntityCollectionValueForWrite + an in-place edit: a missing key is a no-op. */
+const writeAdmission = (admissions: BookAdmissions | undefined, key: string, edit: (a: BookAdmission) => BookAdmission | undefined): Result<BookAdmissions | undefined, EntityError> => {
+  const current = admissions?.get(key);
+  if (admissions === undefined || current === undefined) return ok(admissions);
+  return map(cloneBookAdmission(current), (forked) => { const next = edit(forked); return next === undefined ? admissions : mapSet(admissions, key, next); });
+};
+/** og mergeAdmissionRoute: the later route wins field by field, but never lowers the status or drops a pull or the hash. */
+const mergeAdmissionRoute = (existing: CrossRoute | undefined, next: CrossRoute): Result<CrossRoute, EntityError> => chain(cloneRouteE(next), (n) => existing === undefined ? ok(n) : map(cloneRouteE(existing), (e) => {
+  const merged: MutableRoute = { ...e, ...n };
+  if (compareCrossStatus(e.status, n.status) < 0) merged.status = e.status;
+  if (e.sourcePull && !merged.sourcePull) merged.sourcePull = e.sourcePull;
+  if (e.targetPull && !merged.targetPull) merged.targetPull = e.targetPull;
+  if (e.routeHash && !merged.routeHash) merged.routeHash = e.routeHash;
+  return merged;
+}));
+/** og mergeCrossJurisdictionBookAdmission: a new admission starts `pending`; an existing one keeps its status and takes the merged route. */
+export const mergeBookAdmission = (admissions: BookAdmissions | undefined, route: CrossRoute, now: number): Result<{ readonly admissions: BookAdmissions; readonly admission: BookAdmission }, EntityError> =>
+  chain(canonRoute(route), (c) => {
+    const key = bookAdmissionKey(c.source.entityId, c.orderId), existing = admissions?.get(key);
+    return map(mergeAdmissionRoute(existing?.route, c), (merged) => {
+      const admission: BookAdmission = existing !== undefined ? { ...existing, route: merged, updatedAt: now }
+        : { orderId: c.orderId, routeHash: c.routeHash || "", sourceEntityId: entityRef(c.source.entityId), bookOwnerEntityId: crossBookOwnerRef(c), status: "pending", route: merged, updatedAt: now };
+      return { admissions: mapSet(admissions ?? new Map<string, BookAdmission>(), key, admission), admission };
+    });
+  });
+/** og markCrossJurisdictionBookAdmissionResolving: a live (not closed) admission starts resolving. */
+export const markAdmissionResolving = (admissions: BookAdmissions | undefined, route: CrossRoute, now: number): Result<BookAdmissions | undefined, EntityError> =>
+  chain(canonRoute(route), (c) => writeAdmission(admissions, bookAdmissionKey(c.source.entityId, c.orderId), (a) => (a.status === "closed" ? undefined : { ...a, status: "resolving", resolvingAt: now, updatedAt: now })));
+/** og markCrossJurisdictionBookAdmissionClosed. */
+export const markAdmissionClosed = (admissions: BookAdmissions | undefined, sourceEntityId: string, orderId: string, now: number, reason: string): Result<BookAdmissions | undefined, EntityError> =>
+  writeAdmission(admissions, bookAdmissionKey(sourceEntityId, orderId), (a) => ({ ...a, status: "closed", closedAt: now, closeReason: reason, updatedAt: now }));
+/** og getCrossJurisdictionBookAdmissionError: owner, both pulls, expiry, then the admitted record for exactly this route. USD risk is not rechecked here. */
+export const bookAdmissionError = (entityId: string, admissions: BookAdmissions | undefined, route: CrossRoute, now: number): Result<string | null, EntityError> => map(canonRoute(route), (c) => {
+  const current = entityRef(entityId), owner = crossBookOwnerRef(c);
+  if (owner !== current) return `CROSS_J_ORDER_WRONG_BOOK_OWNER: order=${c.orderId} owner=${owner} current=${current}`;
+  if (!c.sourcePull || !c.targetPull) return `CROSS_J_ORDER_LOCK_REF_MISSING: order=${c.orderId}`;
+  if (isCrossExpired(c, now)) return `CROSS_J_ORDER_ROUTE_EXPIRED: order=${c.orderId}`;
+  const a = admissions?.get(bookAdmissionKey(c.source.entityId, c.orderId));
+  if (a === undefined) return `CROSS_J_BOOK_ADMISSION_PENDING: order=${c.orderId} leg=both`;
+  if (a.status === "closed") return `CROSS_J_BOOK_ADMISSION_CLOSED: order=${c.orderId} reason=${a.closeReason || ""}`;
+  if (a.status === "resolving") return `CROSS_J_BOOK_ADMISSION_RESOLVING: order=${c.orderId}`;
+  if (a.orderId !== c.orderId || a.routeHash.toLowerCase() !== (c.routeHash || "").toLowerCase() || entityRef(a.bookOwnerEntityId) !== owner) return `CROSS_J_BOOK_ADMISSION_ROUTE_MISMATCH: order=${c.orderId}`;
+  return null;
+});
+export type BookAdmissionFailure = { readonly kind: "pending" | "risk_reject" | "invalid"; readonly message: string };
+/** og getTypedCrossJurisdictionBookAdmissionFailure. */
+export const bookAdmissionFailure = (entityId: string, admissions: BookAdmissions | undefined, route: CrossRoute, now: number): Result<BookAdmissionFailure | null, EntityError> =>
+  map(bookAdmissionError(entityId, admissions, route, now), (message) => message === null ? null
+    : { kind: message.startsWith("CROSS_J_BOOK_ADMISSION_PENDING:") ? "pending" : message.startsWith("CROSS_J_BOOK_USD_CAP_EXCEEDED:") ? "risk_reject" : "invalid", message });
+/** og internalUsdPrice: a reference stable at par; any other token at the hub's last accepted USD authority ask against its reference token, when one exists. */
+const internalUsdPrice = (ext: OrderbookExt | undefined, tokenId: number): Result<bigint | null, EntityError> => {
+  if (REFERENCE_STABLES.has(tokenId)) return ok(PRICE_SCALE);
+  if (ext === undefined) return ok(null);
+  const reference = Number(ext.hubProfile.referenceTokenId);
+  if (!REFERENCE_STABLES.has(reference)) return invariant(`CROSS_J_BOOK_USD_REFERENCE_INVALID:token=${reference}`);
+  const price = ext.books.get(canonicalPairOf(tokenId, reference).pairId)?.lastAcceptedUsdAskPriceTicks ?? 0n;
+  return ok(price > 0n ? price : null);
+};
+const usdMicrosAt = (tokenId: number, amount: bigint, price: bigint): Result<bigint, EntityError> =>
+  amount <= 0n ? invariant(`CROSS_J_BOOK_USD_AMOUNT_INVALID:token=${tokenId}`) : map(tokenDecimals(tokenId), (d) => ceilDiv(amount * price * 1_000_000n, 10n ** d * PRICE_SCALE));
+/** og crossJurisdictionLegUsdMicros. */
+export const crossLegUsdMicros = (ext: OrderbookExt | undefined, tokenId: number, amount: bigint): Result<bigint, EntityError> =>
+  chain(internalUsdPrice(ext, tokenId), (price) => (price === null ? invariant(`CROSS_J_USD_PRICE_UNAVAILABLE:token=${tokenId}`) : usdMicrosAt(tokenId, amount, price)));
+/** og getCrossJurisdictionLegUsdCapError: only the leg this hub bears, and only once it has a price for it (unpriced is permissionless). */
+export const crossLegUsdCapError = (ext: OrderbookExt | undefined, route: CrossRoute, role: "source" | "target"): Result<string | null, EntityError> => {
+  const leg = route[role], tokenId = Number(leg.tokenId);
+  return chain(internalUsdPrice(ext, tokenId), (price) => price === null ? ok(null) : map(usdMicrosAt(tokenId, BigInt(leg.amount), price), (usdMicros) =>
+    usdMicros > CROSS_J_BOOK_MAX_USD_MICROS ? `CROSS_J_BOOK_USD_CAP_EXCEEDED:order=${route.orderId}:leg=${role}:usdMicros=${usdMicros}:cap=${CROSS_J_BOOK_MAX_USD_MICROS}` : null));
+};
+/** og getCrossJurisdictionLocalUsdCapError: exactly one local hub leg (by entity and stack), else a validator-leg error. */
+export const crossLocalUsdCapError = (v: { readonly id: string; readonly jurisdiction: Domain; readonly ext?: OrderbookExt | undefined }, route: CrossRoute): Result<string | null, EntityError> => {
+  const entity = entityRef(v.id), stack = stackIdOf(v.jurisdiction).toLowerCase(), roles: ("source" | "target")[] = [];
+  if (entity === entityRef(route.source.counterpartyEntityId) && stack === String(route.source.jurisdiction).toLowerCase()) roles.push("source");
+  if (entity === entityRef(route.target.entityId) && stack === String(route.target.jurisdiction).toLowerCase()) roles.push("target");
+  const role = roles[0];
+  return roles.length === 1 && role !== undefined ? crossLegUsdCapError(v.ext, route, role)
+    : ok(`CROSS_J_BOOK_USD_VALIDATOR_LEG_INVALID:order=${route.orderId}:entity=${entity}:stack=${stack}:matches=${roles.length}`);
+};
+/** og crossJurisdictionBookQtyLots: the floor of the base remainder in book lots. */
+export const crossBookQtyLots = (baseTokenId: number, baseAmount: bigint): Result<bigint, EntityError> =>
+  baseAmount <= 0n ? ok(0n) : map(tokenDecimals(baseTokenId), (d) => baseAmount / lotScale(Number(d)));
+export type CrossRemaining = { readonly sourceTotal: bigint; readonly targetTotal: bigint; readonly filledSourceAmount: bigint; readonly filledTargetAmount: bigint; readonly sourceRemaining: bigint; readonly targetRemaining: bigint; readonly fillRatio: number };
+/** og getCrossJurisdictionRouteRemainingAmounts. */
+export const crossRemaining = (r: CrossRoute): Result<CrossRemaining, EntityError> => {
+  const sourceTotal = BigInt(r.source.amount), targetTotal = BigInt(r.target.amount);
+  if (sourceTotal <= 0n || targetTotal <= 0n) return invariant(`CROSS_J_ROUTE_AMOUNT_INVALID: order=${r.orderId}`);
+  return chain(fatalCross(crossFillAmounts(r)), (c): Result<CrossRemaining, EntityError> => c.filledSourceAmount < 0n || c.filledTargetAmount < 0n || c.filledSourceAmount > sourceTotal || c.filledTargetAmount > targetTotal
+    ? invariant(`CROSS_J_ROUTE_FILL_INVALID: order=${r.orderId} source=${c.filledSourceAmount}/${sourceTotal} target=${c.filledTargetAmount}/${targetTotal}`)
+    : ok({ sourceTotal, targetTotal, filledSourceAmount: c.filledSourceAmount, filledTargetAmount: c.filledTargetAmount, sourceRemaining: sourceTotal - c.filledSourceAmount, targetRemaining: targetTotal - c.filledTargetAmount, fillRatio: c.fillRatio }));
+};
+/** og NormalizedOrderbookOffer carrying its cross-j route. */
+export type CrossBookOffer = BookOffer & { readonly crossJurisdiction: CrossRoute };
+/** og CrossMarketOffer: the route's committed remainder as one book order on the canonical cross venue. */
+export type CrossMarketOffer = {
+  readonly offer: CrossBookOffer; readonly route: CrossRoute; readonly pairId: string; readonly side: BookSide; readonly baseTokenId: number; readonly quoteTokenId: number;
+  readonly baseAmount: bigint; readonly quoteAmount: bigint; readonly priceTicks: bigint; readonly makerId: string;
+};
+/** og buildCrossJurisdictionMarketOffer: only this book owner's working route; side, amounts and price come from the route remainder, never from the Account offer. */
+export const crossMarketOffer = (offer: CrossBookOffer, hubEntityId: string): Result<CrossMarketOffer | null, EntityError> => {
+  const route = offer.crossJurisdiction, owner = entityRef(route.bookOwnerEntityId || route.source.counterpartyEntityId || route.hubEntityId);
+  if (owner && owner !== entityRef(hubEntityId)) return ok(null);
+  if (route.status !== "resting" && route.status !== "partially_filled") return ok(null);
+  return chain(fatalCross(crossMarket(route)), (m) => {
+    if (!m.sourceKey || !m.targetKey || m.sourceKey === m.targetKey) return ok(null);
+    const side: BookSide = m.sourceIsBase ? 1 : 0;
+    return chain(crossRemaining(route), (rem) => {
+      const baseTokenId = Number(m.sourceIsBase ? route.source.tokenId : route.target.tokenId), quoteTokenId = Number(m.sourceIsBase ? route.target.tokenId : route.source.tokenId);
+      const baseAmount = m.sourceIsBase ? rem.sourceRemaining : rem.targetRemaining, quoteAmount = m.sourceIsBase ? rem.targetRemaining : rem.sourceRemaining;
+      return chain(tokenDecimals(baseTokenId), (bd) => map(tokenDecimals(quoteTokenId), (qd): CrossMarketOffer | null => {
+        const priceTicks = priceTicksOf({ side, bd: Number(bd), qd: Number(qd) }, baseAmount, quoteAmount);
+        return baseAmount <= 0n || quoteAmount <= 0n || priceTicks <= 0n ? null
+          : { offer, route, pairId: m.venueId, side, baseTokenId, quoteTokenId, baseAmount, quoteAmount, priceTicks, makerId: offer.makerIsLeft ? offer.fromEntity : offer.toEntity };
+      }));
+    });
+  });
+};
+/** og resolveCrossJurisdictionExecutionPriceTicks: one price-improvement lane, so a cross-j trade always executes at the ask. */
+export const crossExecutionPrice = (first: CrossMarketOffer, second: CrossMarketOffer): Result<bigint, EntityError> => {
+  if (first.pairId !== second.pairId || first.baseTokenId !== second.baseTokenId || first.quoteTokenId !== second.quoteTokenId) return invariant(`CROSS_J_TRADE_PAIR_MISMATCH:${first.pairId}:${second.pairId}`);
+  if (first.side === second.side) return invariant(`CROSS_J_TRADE_SIDE_MISMATCH:${first.side}:${second.side}`);
+  const sell = first.side === 1 ? first : second, buy = first.side === 0 ? first : second;
+  return sell.priceTicks <= 0n || buy.priceTicks <= 0n || sell.priceTicks > buy.priceTicks ? invariant(`CROSS_J_TRADE_PRICE_NOT_CROSSED:ask=${sell.priceTicks}:bid=${buy.priceTicks}`) : ok(sell.priceTicks);
+};
+export type CrossBookFill = { readonly filledLots: bigint; readonly weightedCost: bigint; readonly cancelRemainder?: boolean | undefined };
+/** og crossJurisdictionExecutionAmounts: the executed book amounts of one aggregated fill in route (source/target) terms. */
+export const crossExecutionAmounts = (meta: CrossMarketOffer, fill: CrossBookFill): Result<{ readonly executionSourceAmount: bigint; readonly executionTargetAmount: bigint } | null, EntityError> => {
+  if (fill.filledLots <= 0n || fill.weightedCost <= 0n) return ok(null);
+  return chain(tokenDecimals(meta.baseTokenId), (bd) => map(tokenDecimals(meta.quoteTokenId), (qd) => {
+    const lot = lotScale(Number(bd)), base = fill.filledLots * lot, quote = quoteAt(Number(bd), Number(qd), lot, fill.weightedCost);
+    const executionSourceAmount = meta.side === 1 ? base : quote, executionTargetAmount = meta.side === 1 ? quote : base;
+    return executionSourceAmount <= 0n || executionTargetAmount <= 0n ? null : { executionSourceAmount, executionTargetAmount };
+  }));
+};
+/** og CrossJurisdictionFillInstruction: hub-internal progress of one order, one uint16 ratio; the exact executed amounts only feed conservation. */
+export type CrossFillInstruction = {
+  readonly accountId: string; readonly offerId: string; readonly orderId: string; readonly route: CrossRoute; readonly fillSeq: number; readonly fillRatio: number; readonly cancelRemainder: boolean;
+  readonly executionSourceAmount: bigint; readonly executionTargetAmount: bigint;
+};
+const currentFillSeq = (r: CrossRoute): number => Math.max(0, Math.floor(Number(r.fillSeq ?? 0) || 0));
+/** og buildCrossJurisdictionFillInstruction: the cumulative target-side ratio; a step that moves neither or only one leg's claim is absorbed by the hub (null). */
+export const crossFillInstruction = (accountId: string, offerId: string, orderId: string, meta: CrossMarketOffer, fill: CrossBookFill): Result<CrossFillInstruction | null, EntityError> =>
+  chain(crossExecutionAmounts(meta, fill), (execution) => execution === null ? ok(null) : map(fatalCross(crossFillAmounts(meta.route)), (c): CrossFillInstruction | null => {
+    const { executionSourceAmount, executionTargetAmount } = execution;
+    if (c.filledSourceAmount + executionSourceAmount > c.sourceTotal || c.filledTargetAmount + executionTargetAmount > c.targetTotal) return null;
+    const fillRatio = fillRatioOf(exactFillRatio(c.targetTotal, c.filledTargetAmount + executionTargetAmount));
+    if (fillRatio <= c.fillRatio) return null;
+    const ratio = BigInt(fillRatio), max = BigInt(MAX_FILL), project = (total: bigint): bigint => (ratio >= max ? total : (total * ratio) / max);
+    if (project(c.sourceTotal) <= c.filledSourceAmount || project(c.targetTotal) <= c.filledTargetAmount) return null;
+    return { accountId, offerId, orderId, route: meta.route, fillSeq: currentFillSeq(meta.route) + 1, fillRatio, cancelRemainder: fill.cancelRemainder === true, executionSourceAmount, executionTargetAmount };
+  }));
+/** og buildCrossJurisdictionCancelInstruction: a terminal cancel of the unfilled remainder at the committed progress. */
+export const crossCancelInstruction = (accountId: string, offerId: string, orderId: string, route: CrossRoute): Result<CrossFillInstruction, EntityError> =>
+  map(fatalCross(crossFillAmounts(route)), (c) => ({ accountId, offerId, orderId, route, fillSeq: currentFillSeq(route), fillRatio: c.fillRatio, cancelRemainder: true, executionSourceAmount: 0n, executionTargetAmount: 0n }));
+/** og normalizeSwapOfferForOrderbook for a cross-j offer: the book view keeps the route. */
+const normalizeCross = (o: Parameters<typeof normalizeOffer>[0], accountId: string, route: CrossRoute): Result<CrossBookOffer, EntityError> =>
+  map(normalizeOffer(o, accountId), (b) => ({ ...b, crossJurisdiction: route }));
+/** og buildCrossMarketOfferFromBookOrder: the Account offer at its progressed (admitted) route, else a remote admitted route without a local Account. */
+const crossMetaFromBookOrder = (hub: Hub, orderId: string): Result<CrossMarketOffer | null, EntityError> => chain(parseOrderId(orderId, "ORDERBOOK_CROSS_J_MALFORMED_BOOK_ORDER"), ({ accountId, offerId }) => {
+  const account = hub.accounts.get(accountId), o = account?.offers.get(offerId), admission = hub.crossAdmissions?.get(bookAdmissionKey(accountId, offerId));
+  if (account !== undefined && o?.crossJurisdiction !== undefined) {
+    return chain(normalizeCross({ offerId, makerIsLeft: o.makerIsLeft, fromEntity: account.left, toEntity: account.right, createdHeight: o.createdHeight, giveTokenId: Number(o.giveTokenId), giveTokenDecimals: o.giveTokenDecimals,
+      giveAmount: o.giveAmount, wantTokenId: Number(o.wantTokenId), wantTokenDecimals: o.wantTokenDecimals, wantAmount: o.wantAmount, maxFee: o.maxFee, minNetReceive: o.minNetReceive, priceTicks: o.priceTicks, timeInForce: o.timeInForce },
+    accountId, admission?.route ?? o.crossJurisdiction), (n) => crossMarketOffer(n, hub.id));
+  }
+  if (admission === undefined || admission.status !== "admitted") return ok(null);
+  const route = admission.route;
+  return chain(crossRemaining(route), (rem) => chain(tokenDecimals(Number(route.source.tokenId)), (gd) => chain(tokenDecimals(Number(route.target.tokenId)), (wd) =>
+    chain(normalizeCross({ offerId, makerIsLeft: true, fromEntity: route.source.entityId, toEntity: route.source.counterpartyEntityId, createdHeight: 0, giveTokenId: Number(route.source.tokenId), giveTokenDecimals: Number(gd),
+      giveAmount: rem.sourceRemaining, wantTokenId: Number(route.target.tokenId), wantTokenDecimals: Number(wd), wantAmount: rem.targetRemaining, maxFee: 0n, minNetReceive: rem.targetRemaining, ...opt("priceTicks", route.priceTicks === undefined ? undefined : BigInt(route.priceTicks)) },
+    accountId, route), (n) => crossMarketOffer(n, hub.id)))));
+});
+type CrossFillAgg = { filledLots: bigint; weightedCost: bigint; cancelRemainder: boolean };
+/** og CrossOrderbookPass: shares the same-j pass's hot book cache, touched books and queued resolves; working books stay speculative until committed. */
+type CrossPass = {
+  readonly pass: Pass; readonly meta: Map<string, CrossMarketOffer>; readonly fills: Map<string, CrossFillAgg>; readonly suspended: Set<string>;
+  readonly working: Map<string, Book>; readonly speculative: Set<string>; readonly aliased: Set<string>; readonly out: CrossFillInstruction[];
+};
+/** og rejectInvalidCrossOffer in live mode: every invalid cross-j offer halts the frame. */
+const liveReject = (accountId: string, offerId: string, reason: string): Result<never, EntityError> => halt(`ORDERBOOK_LIVE_PROJECTION_REJECT: account=${accountId} offer=${offerId} reason=${reason}`);
+/** og getCrossMarketOffer: the admitted route (or the hub's route mirror) carries the progressed remainder. */
+const crossMetaOf = (cp: CrossPass, o: CrossBookOffer): Result<CrossMarketOffer | null, EntityError> => {
+  const key = swapKeyOf(o.accountId, o.offerId), cached = cp.meta.get(key), hub = cp.pass.hub;
+  if (cached !== undefined) return ok(cached);
+  const progressed = hub.crossAdmissions?.get(bookAdmissionKey(o.accountId, o.offerId))?.route ?? hub.crossSwaps?.get(o.offerId) ?? o.crossJurisdiction;
+  return map(crossMarketOffer(progressed === o.crossJurisdiction ? o : { ...o, crossJurisdiction: progressed }, hub.id), (m) => { if (m !== null) cp.meta.set(key, m); return m; });
+};
+const crossMeta = (cp: CrossPass, orderId: string): Result<CrossMarketOffer | null, EntityError> => { const m = cp.meta.get(orderId); return m !== undefined ? ok(m) : crossMetaFromBookOrder(cp.pass.hub, orderId); };
+/** og committedCrossRouteStatus. */
+const committedCrossStatus = (hub: Hub, accountId: string, offerId: string): string | undefined => {
+  const admission = hub.crossAdmissions?.get(bookAdmissionKey(accountId, offerId));
+  if (admission !== undefined && admission.status !== "admitted") return `admission:${admission.status}`;
+  const mirror = hub.crossSwaps?.get(offerId);
+  if (mirror?.status) return mirror.status;
+  return hub.accounts.get(accountId)?.offers.get(offerId)?.crossJurisdiction?.status ?? admission?.route.status;
+};
+/** og classifyCrossBookMaker: a disputed local Account, a non-working or expired route cancels the row; a matched row is suspended; the row must equal its route remainder. */
+const classifyCrossMaker = (cp: CrossPass, pairId: string, order: BookOrder): Result<MakerDisposition, EntityError> => chain(parseOrderId(order.orderId, "ORDERBOOK_CROSS_J_MALFORMED_BOOK_ORDER"), ({ accountId, offerId }) => {
+  const hub = cp.pass.hub, account = hub.accounts.get(accountId);
+  if (account !== undefined && !account.active) return ok("cancel");
+  const status = committedCrossStatus(hub, accountId, offerId);
+  if (status && status !== "resting" && status !== "partially_filled") return ok("cancel");
+  return chain(crossMeta(cp, order.orderId), (meta): Result<MakerDisposition, EntityError> => {
+    if (meta === null) return halt(`ORDERBOOK_CROSS_J_SNAPSHOT_MISSING: pair=${pairId} order=${order.orderId} account=${accountId} offer=${offerId}`);
+    cp.meta.set(order.orderId, meta);
+    if (isCrossExpired(meta.route, Number(hub.timestamp ?? 0))) return ok("cancel");
+    if (cp.suspended.has(order.orderId)) return ok("suspended");
+    return chain(crossBookQtyLots(meta.baseTokenId, meta.baseAmount), (qty): Result<MakerDisposition, EntityError> => {
+      if (meta.pairId !== pairId || order.priceTicks !== meta.priceTicks || order.ownerId !== meta.makerId)
+        return halt(`ORDERBOOK_CROSS_J_CACHE_MISMATCH: pair=${pairId} order=${order.orderId} storedPair=${pairId} canonicalPair=${meta.pairId} storedOwner=${order.ownerId} canonicalOwner=${meta.makerId} `
+          + `storedQty=${order.qtyLots} canonicalQty=${qty} storedPrice=${order.priceTicks} canonicalPrice=${meta.priceTicks}`);
+      if (order.qtyLots !== qty) return halt(`ORDERBOOK_CROSS_J_CACHE_MISMATCH: pair=${pairId} order=${order.orderId} storedQty=${order.qtyLots} canonicalQty=${qty} storedPrice=${order.priceTicks} canonicalPrice=${meta.priceTicks}`);
+      return ok("eligible");
+    });
+  });
+});
+type PreparedCross = { readonly raw: CrossBookOffer; readonly orderId: string; readonly meta: CrossMarketOffer; readonly qtyLots: bigint; readonly bd: number; readonly qd: number; readonly book: Book };
+/** og prepareCrossOrderbookOffer: dust, size and exact-quote alignment; a resolving offer or an identical resting row is skipped, a changed row halts. */
+const prepareCross = (cp: CrossPass, raw: CrossBookOffer): Result<PreparedCross | null, EntityError> => {
+  const { accountId, offerId } = raw, orderId = swapKeyOf(accountId, offerId), pass = cp.pass;
+  return chain(crossMetaOf(cp, raw), (meta) => meta === null ? liveReject(accountId, offerId, "invalid-cross-j-route") : chain(crossBookQtyLots(meta.baseTokenId, meta.baseAmount), (qtyLots) => {
+    if (qtyLots <= 0n) return liveReject(accountId, offerId, `cross-dust-remainder:${meta.baseAmount}`);
+    if (qtyLots > MAX_ORDERBOOK_QTY_LOTS) return liveReject(accountId, offerId, `invalid-cross-qty:${qtyLots}`);
+    const n = meta.offer, bd = meta.side === 1 ? n.giveTokenDecimals : n.wantTokenDecimals, qd = meta.side === 1 ? n.wantTokenDecimals : n.giveTokenDecimals, multiple = exactQuoteLots(bd, qd, meta.priceTicks);
+    if (qtyLots % multiple !== 0n) return liveReject(accountId, offerId, `cross-quote-lot-misaligned:${qtyLots}:${multiple}`);
+    cp.meta.set(orderId, meta);
+    if (hasQueuedResolve(pass, accountId, offerId)) return ok(null);
+    const cached = pass.cache.get(meta.pairId), published = cached === undefined ? pass.hub.ext.books.get(meta.pairId) : undefined;
+    const fresh: Result<Book, EntityError> = cached !== undefined ? ok(cached) : published !== undefined ? ok(published)
+      : mapErr(createBook({ bucketWidthTicks: BigInt(Math.max(1, (PAIR_POLICIES.get(`${raw.giveTokenId}/${raw.wantTokenId}`) ?? DEFAULT_PAIR_POLICY).bucket)), maxOrders: MAX_ORDERBOOK_ORDERS_PER_PAIR, stpPolicy: 1 }), (e) => ({ _tag: "entity_invariant", reason: e.code }) as EntityError);
+    return chain(fresh, (book): Result<PreparedCross | null, EntityError> => {
+      pass.cache.set(meta.pairId, book);
+      const existing = book.orders.get(orderId);
+      if (existing === undefined) return ok({ raw, orderId, meta, qtyLots, bd, qd, book });
+      return existing.ownerId !== meta.makerId || existing.side !== meta.side || existing.priceTicks !== meta.priceTicks || existing.qtyLots !== qtyLots
+        ? halt(`ORDERBOOK_CROSS_J_DUPLICATE_SNAPSHOT_MISMATCH: pair=${meta.pairId} order=${orderId} storedOwner=${existing.ownerId} canonicalOwner=${meta.makerId} storedQty=${existing.qtyLots} canonicalQty=${qtyLots} `
+          + `storedPrice=${existing.priceTicks} canonicalPrice=${meta.priceTicks}`) : ok(null);
+    });
+  }));
+};
+/** og removeCrossBookOrderAfterFill: a terminal fill takes the row off its committed book. */
+const removeCrossRowAfterFill = (cp: CrossPass, pairId: string, orderId: string): Result<void, EntityError> => {
+  const pass = cp.pass, book = pass.cache.get(pairId) ?? pass.hub.ext.books.get(pairId), order = book?.orders.get(orderId);
+  if (book === undefined || order === undefined) return ok(undefined);
+  const r = applyBookCommand(book, { kind: 1, ownerId: order.ownerId, orderId });
+  if (!r.ok) return halt(r.error.code);
+  pass.cache.set(pairId, r.value.state);
+  pass.updates.set(pairId, r.value.state);
+  return ok(undefined);
+};
+const EXPECTED_CROSS_REJECTS: ReadonlySet<string> = new Set(["no fill", "FOK cannot fill entirely", "STP cancel taker"]);
+/** og processCrossOrderbookOffer: speculative placement on the working book; a resting-only placement commits, trades aggregate into hub-internal fills. */
+const processCrossOffer = (cp: CrossPass, raw: CrossBookOffer): Result<void, EntityError> => chain(prepareCross(cp, raw), (p): Result<void, EntityError> => {
+  if (p === null) return ok(undefined);
+  const { accountId, offerId } = raw, pairId = p.meta.pairId, pass = cp.pass;
+  const start = cp.working.get(pairId) ?? p.book;
+  cp.working.set(pairId, start);
+  let fault: EntityError | undefined;
+  const placed = applyBookCommand(start, { kind: 0, ownerId: p.meta.makerId, orderId: p.orderId, side: p.meta.side, tif: raw.timeInForce, postOnly: false, priceTicks: p.meta.priceTicks, qtyLots: p.qtyLots }, {
+    suspendedOrderIds: cp.suspended,
+    makerDisposition: (maker) => { if (fault !== undefined) return "suspended"; const d = classifyCrossMaker(cp, pairId, maker); if (!d.ok) { fault = d.error; return "suspended"; } return d.value; },
+    executionPriceTicksForMatch: (maker, taker, takerSide) => (takerSide === 1 ? taker : maker),
+    executionQtyMultipleAtPrice: (price) => exactQuoteLots(p.bd, p.qd, price),
+  });
+  if (fault !== undefined) return liveReject(accountId, offerId, `cross-pair-error:${haltMessage(fault)}`);
+  if (!placed.ok) return liveReject(accountId, offerId, `cross-pair-error:${placed.error.code}`);
+  const result = placed.value, rejects = result.events.flatMap((e) => (e.type === "REJECT" && e.orderId === p.orderId ? [e] : []));
+  const rawTrades = result.events.flatMap((e) => (e.type === "TRADE" ? [e] : []));
+  // og canonicalCrossTradeEvents: both sides' metadata must exist; the price is the ask
+  const trades = traverse(rawTrades, (t) => chain(crossMeta(cp, t.makerOrderId), (maker) => chain(crossMeta(cp, t.takerOrderId), (taker) => {
+    if (maker === null || taker === null) return halt(`ORDERBOOK_CROSS_J_TRADE_META_MISSING:maker=${t.makerOrderId}:taker=${t.takerOrderId}`);
+    cp.meta.set(t.makerOrderId, maker); cp.meta.set(t.takerOrderId, taker);
+    return map(crossExecutionPrice(maker, taker), (price) => ({ ...t, price }));
+  })));
+  if (!trades.ok) return trades;
+  const expected = rejects.length > 0 && rejects.every((e) => EXPECTED_CROSS_REJECTS.has(e.reason)), reasons = rejects.map((e) => e.reason).join(",");
+  if (rejects.length > 0 && trades.value.length === 0) {
+    if (!expected) return liveReject(accountId, offerId, `cross-post-only-reject:${reasons}`);
+    cp.suspended.add(p.orderId);
+    return map(crossCancelInstruction(accountId, offerId, p.orderId, p.meta.route), (i) => { cp.out.push(i); });
+  }
+  if (rejects.length > 0 && !expected) return liveReject(accountId, offerId, `cross-order-reject:${reasons}`);
+  cp.working.set(pairId, result.state);
+  // og commitRestingCrossOffer publishes the working overlay itself: from then on the pair's committed book and working book are one object, so later
+  // speculative trades on that pair land in the published book too (commitBookOverlay folds each step into the shared overlay)
+  if ((trades.value.length === 0 && !cp.speculative.has(pairId)) || cp.aliased.has(pairId)) { pass.cache.set(pairId, result.state); pass.updates.set(pairId, result.state); cp.aliased.add(pairId); }
+  if (trades.value.length > 0) cp.speculative.add(pairId);
+  // og aggregateCrossTrades: a matched route never matches again in this pass; the taker remainder is cancelled for IOC/FOK or an expected reject
+  const cancelTaker = raw.timeInForce !== 0 || expected;
+  for (const t of trades.value) { cp.suspended.add(t.makerOrderId); cp.suspended.add(t.takerOrderId); }
+  const perOrder = new Map<string, { filledLots: bigint; weightedCost: bigint }>();
+  for (const t of trades.value) for (const orderId of [t.makerOrderId, t.takerOrderId]) {
+    const e = perOrder.get(orderId), cost = t.price * t.qty;
+    if (e === undefined) perOrder.set(orderId, { filledLots: t.qty, weightedCost: cost }); else { e.filledLots += t.qty; e.weightedCost += cost; }
+  }
+  for (const [orderId, fill] of perOrder) {
+    const meta = crossMeta(cp, orderId);
+    if (!meta.ok) return meta;
+    if (meta.value === null) return halt(`ORDERBOOK_CROSS_J_FILL_META_MISSING: order=${orderId}`);
+    const current = cp.fills.get(orderId), cancels = orderId === p.orderId && cancelTaker;
+    if (current === undefined) cp.fills.set(orderId, { ...fill, cancelRemainder: cancels });
+    else { current.filledLots += fill.filledLots; current.weightedCost += fill.weightedCost; if (cancels) current.cancelRemainder = true; }
+  }
+  return ok(undefined);
+});
+/** og planCrossFills + commitCrossFill: fills in order-id order, conserved per asset across every executed amount; a terminal one leaves the book. */
+const finalizeCrossFills = (cp: CrossPass): Result<void, EntityError> => {
+  const net = new Map<string, bigint>(), planned: CrossFillInstruction[] = [];
+  for (const orderId of [...cp.fills.keys()].sort(compareText)) {
+    const fill = cp.fills.get(orderId);
+    if (fill === undefined) continue;
+    const step = chain(crossMeta(cp, orderId), (meta) => meta === null ? halt(`ORDERBOOK_CROSS_J_FILL_META_MISSING: order=${orderId}`) : chain(crossExecutionAmounts(meta, fill), (execution) => {
+      const netted = execution === null ? ok(undefined) : chain(fatalCross(assetKey(meta.route.source.jurisdiction, meta.route.source.tokenId)), (s) => map(fatalCross(assetKey(meta.route.target.jurisdiction, meta.route.target.tokenId)), (t) => {
+        net.set(s, (net.get(s) ?? 0n) - execution.executionSourceAmount); net.set(t, (net.get(t) ?? 0n) + execution.executionTargetAmount);
+      }));
+      return chain(netted, () => chain(parseOrderId(orderId, "ORDERBOOK_CROSS_J_MALFORMED_FILL_ORDER"), ({ accountId, offerId }) => chain(crossFillInstruction(accountId, offerId, orderId, meta, fill), (i) =>
+        i === null && fill.cancelRemainder ? map(crossCancelInstruction(accountId, offerId, orderId, meta.route), (c) => { planned.push(c); }) : ok(i === null ? undefined : (planned.push(i), undefined)))));
+    }));
+    if (!step.ok) return step;
+  }
+  const bad = [...net].filter(([, v]) => v !== 0n).sort(([a], [b]) => compareText(a, b));
+  if (bad.length > 0) return halt(`CROSS_J_TRADE_CONSERVATION_FAILED:${bad.map(([asset, v]) => `${asset}=${v}`).join(",")}`);
+  for (const i of planned) {
+    const meta = crossMeta(cp, i.orderId);
+    if (!meta.ok) return meta;
+    if (meta.value === null) return halt(`ORDERBOOK_CROSS_J_FILL_META_MISSING: order=${i.orderId}`);
+    if (i.cancelRemainder) { const removed = removeCrossRowAfterFill(cp, meta.value.pairId, i.orderId); if (!removed.ok) return removed; }
+    cp.out.push(i);
+  }
+  return ok(undefined);
+};
+/** og processCrossJurisdictionOrderbookOffers: each cross-j offer in book order, then the pass's fills. */
+const processCrossOffers = (pass: Pass, offers: readonly CrossBookOffer[]): Result<readonly CrossFillInstruction[], EntityError> => {
+  const cp: CrossPass = { pass, meta: new Map(), fills: new Map(), suspended: new Set(), working: new Map(), speculative: new Set(), aliased: new Set(), out: [] };
+  for (const o of offers) { const done = processCrossOffer(cp, o); if (!done.ok) return done; }
+  return map(finalizeCrossFills(cp), () => cp.out);
 };
