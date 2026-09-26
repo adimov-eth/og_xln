@@ -7223,6 +7223,8 @@ const originView = (state: EntityState, replicas: Replicas, timestamp: bigint): 
 export type CrossEntityView = {
   readonly id: EntityId; readonly timestamp: number; readonly validators: readonly string[]; readonly jurisdiction: Domain; readonly jurisdictionName?: string | undefined;
   readonly replicas: Replicas; readonly swaps?: ReadonlyMap<string, CrossRoute> | undefined; readonly auths?: ReadonlyMap<string, CrossRoute> | undefined;
+  /** og state.orderbookExt: prices a non-stable leg for the USD cap. */
+  readonly ext?: OrderbookExt | undefined;
 };
 /** og buildCrossJurisdictionEntityOutput / the raw proposer wake: a certified Entity command (or an empty wake) for one target signer. */
 export type CrossEntityOutput = { readonly entityId: string; readonly signerId: string; readonly txs: readonly EntityTx[] };
@@ -7234,7 +7236,7 @@ export type CrossSetup = {
 type CrossStep = Result<CrossSetup, EntityError>;
 const crossView = (state: EntityState, replicas: Replicas, timestamp: bigint): CrossEntityView => ({
   id: state.id, timestamp: Number(timestamp), validators: rootConfig(state).validators, jurisdiction: state.jurisdiction, jurisdictionName: state.jurisdictionConfig?.name,
-  replicas, swaps: state.crossJurisdictionSwaps, auths: state.crossJurisdictionAuthorizations,
+  replicas, swaps: state.crossJurisdictionSwaps, auths: state.crossJurisdictionAuthorizations, ext: state.orderbookExt,
 });
 const crossSetup = (v: CrossEntityView, o: Partial<CrossSetup> = {}): CrossSetup => ({ swaps: v.swaps, auths: v.auths, messages: [], outputs: [], accountTxs: [], ...o });
 const crossNote = (v: CrossEntityView, message: string, o: Partial<CrossSetup> = {}): CrossStep => ok(crossSetup(v, { ...o, messages: [message] }));
@@ -7341,24 +7343,8 @@ export const validatePreparedCrossRoute = (v: CrossEntityView, raw: CrossRoute):
 };
 /** og CROSS_J_BOOK_MAX_USD_MICROS. */
 const CROSS_J_BOOK_MAX_USD_MICROS = 6_500_000n * 1_000_000n;
-/**
- * og getCrossJurisdictionLocalUsdCapError: the local Hub leg's USD notional against the book cap. A reference stable is priced at par; any other
- * token needs og's orderbookExt authority ask, which the rewrite Entity does not hold, so it is unpriced (null, permissionless) like og without one.
- */
-export const crossUsdCapError = (v: CrossEntityView, route: CrossRoute): string | null => {
-  const entity = entityRef(v.id), stack = stackIdOf(v.jurisdiction).toLowerCase(), roles: ("source" | "target")[] = [];
-  if (entity === entityRef(route.source.counterpartyEntityId) && stack === String(route.source.jurisdiction).toLowerCase()) roles.push("source");
-  if (entity === entityRef(route.target.entityId) && stack === String(route.target.jurisdiction).toLowerCase()) roles.push("target");
-  const role = roles[0];
-  if (roles.length !== 1 || role === undefined) return `CROSS_J_BOOK_USD_VALIDATOR_LEG_INVALID:order=${route.orderId}:entity=${entity}:stack=${stack}:matches=${roles.length}`;
-  const leg = route[role], tokenId = Number(leg.tokenId);
-  if (!REFERENCE_STABLES.has(tokenId)) return null;
-  const amount = BigInt(leg.amount);
-  if (amount <= 0n) return `CROSS_J_BOOK_USD_AMOUNT_INVALID:token=${tokenId}`;
-  const decimals = BigInt(TOKEN_DECIMALS.get(tokenId) ?? 18), numerator = amount * PRICE_SCALE * 1_000_000n, denominator = 10n ** decimals * PRICE_SCALE;
-  const usdMicros = (numerator + denominator - 1n) / denominator;
-  return usdMicros > CROSS_J_BOOK_MAX_USD_MICROS ? `CROSS_J_BOOK_USD_CAP_EXCEEDED:order=${route.orderId}:leg=${role}:usdMicros=${usdMicros}:cap=${CROSS_J_BOOK_MAX_USD_MICROS}` : null;
-};
+/** og getCrossJurisdictionLocalUsdCapError on the Entity's own state: a reference stable at par, any other token at the hub's orderbookExt authority ask. */
+export const crossUsdCapError = (v: CrossEntityView, route: CrossRoute): Result<string | null, EntityError> => crossLocalUsdCapError({ id: v.id, jurisdiction: v.jurisdiction, ext: v.ext }, route);
 /** og buildCrossJurisdictionEntityOutput: a trimmed, lowercased Entity and signer, both required. */
 const crossOutput = (entityId: string, signer: string | undefined, txs: readonly EntityTx[]): Result<CrossEntityOutput, EntityError> => {
   const e = trimLower(entityId), s = trimLower(signer || "");
@@ -7439,9 +7425,8 @@ export const crossMaterialize = (v: CrossEntityView, data: { readonly proposerSi
   if (existing === undefined || existing.sourcePull || existing.targetPull || existing.status !== "intent") return invariant(`CROSS_J_MATERIALIZE_INTENT_MISSING:${id}`);
   return chain(materializedIntentBytes(data.route, existing), (a) => chain(exactRouteBytes(existing), (b): CrossStep => {
     if (a !== b) return invariant(`CROSS_J_MATERIALIZE_INTENT_MISMATCH:${id}`);
-    const cap = crossUsdCapError(v, data.route);
-    if (cap !== null) return cap.startsWith("CROSS_J_BOOK_USD_CAP_EXCEEDED:") ? crossNote(v, `🌉 Cross-j materialization ${id} rejected before Account lock: ${cap}`) : invariant(cap);
-    return crossPrepare(v, data.route, true);
+    return chain(crossUsdCapError(v, data.route), (cap): CrossStep => cap === null ? crossPrepare(v, data.route, true)
+      : cap.startsWith("CROSS_J_BOOK_USD_CAP_EXCEEDED:") ? crossNote(v, `🌉 Cross-j materialization ${id} rejected before Account lock: ${cap}`) : invariant(cap));
   }));
 };
 /** og buildSourceRegistrationTxs / buildTargetRegistrationTxs: the hub's pull lock (and, on the source leg, the cross-j swap offer). */

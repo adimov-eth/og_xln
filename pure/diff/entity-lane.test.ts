@@ -208,10 +208,10 @@ const acct = (self: EntityId, spec: AcctSpec): { rw: AccountReplica; og: unknown
   };
   return { rw, og };
 };
-type Fixture = { readonly self: EntityId; readonly validators: readonly string[]; readonly account?: AcctSpec | undefined; readonly swaps?: ReadonlyMap<string, CrossRoute>; readonly auths?: ReadonlyMap<string, CrossRoute>; readonly jurisdictionName?: string };
+type Fixture = { readonly self: EntityId; readonly validators: readonly string[]; readonly account?: AcctSpec | undefined; readonly swaps?: ReadonlyMap<string, CrossRoute>; readonly auths?: ReadonlyMap<string, CrossRoute>; readonly jurisdictionName?: string; readonly ext?: { readonly books: Map<string, { lastAcceptedUsdAskPriceTicks: bigint }>; readonly hubProfile: { referenceTokenId: number } } };
 const viewOf = (f: Fixture): CrossEntityView => {
   const a = f.account === undefined ? undefined : acct(f.self, f.account);
-  return { id: f.self, timestamp: T0, validators: f.validators, jurisdiction: JUR[f.self]!, jurisdictionName: f.jurisdictionName ?? "J-local", replicas: new Map(a === undefined ? [] : [[PEER[f.self]!, a.rw]]), swaps: f.swaps, auths: f.auths };
+  return { id: f.self, timestamp: T0, validators: f.validators, jurisdiction: JUR[f.self]!, jurisdictionName: f.jurisdictionName ?? "J-local", replicas: new Map(a === undefined ? [] : [[PEER[f.self]!, a.rw]]), swaps: f.swaps, auths: f.auths, ext: f.ext as never };
 };
 const ogCollection = (m: ReadonlyMap<string, CrossRoute> | undefined): unknown => {
   if (m === undefined) return undefined;
@@ -224,7 +224,7 @@ const ogStateOfFixture = (f: Fixture): any => {
   return {
     entityId: f.self, timestamp: T0, config: { mode: "proposer-based", threshold: 1n, validators: [...f.validators], shares: Object.fromEntries(f.validators.map((v) => [v, 1n])), jurisdiction: { name: f.jurisdictionName ?? "J-local", chainId: j.chainId, depositoryAddress: j.depositoryAddress } },
     accounts: new Map(a === undefined ? [] : [[PEER[f.self]!, a.og]]),
-    ...(f.swaps === undefined ? {} : { crossJurisdictionSwaps: ogCollection(f.swaps) }), ...(f.auths === undefined ? {} : { crossJurisdictionAuthorizations: ogCollection(f.auths) }),
+    ...(f.ext === undefined ? {} : { orderbookExt: f.ext }), ...(f.swaps === undefined ? {} : { crossJurisdictionSwaps: ogCollection(f.swaps) }), ...(f.auths === undefined ? {} : { crossJurisdictionAuthorizations: ogCollection(f.auths) }),
   };
 };
 const entriesOf = (m: unknown): unknown => (m === undefined ? null : [...(m as Map<string, unknown>).entries()].sort(([a], [b]) => (a < b ? -1 : 1)));
@@ -309,8 +309,10 @@ describe("entity-lane: cross-j setup handlers (og entity/tx/handlers/cross-j/set
       "❌ Cross-j prepare rejected", "CROSS_J_USER_AUTH_CONFLICT", "CROSS_J_RAW_PREPARE_CONFLICT", "CROSS_J_RAW_PREPARE_AFTER_MATERIALIZATION", "CROSS_J_USER_AUTH_PREPARED_FORBIDDEN"]) expect(`${m}:${kinds.has(m)}`).toBe(`${m}:true`);
   });
 
-  test("MATCH: materializeCrossJurisdictionSwap by the default proposer on 300 random stored intents, proposer ids, prepared routes and USD caps", () => {
+  test("MATCH: materializeCrossJurisdictionSwap by the default proposer on 300 random stored intents, proposer ids, prepared routes and USD caps (orderbookExt-priced non-stable legs)", () => {
     const r = rng(52), kinds = new Map<string, number>();
+    // og internalUsdPrice: a non-stable leg is priced at the hub's last accepted authority ask against its reference token
+    const extOf = () => r() < 0.3 ? undefined : { hubProfile: { referenceTokenId: pick(r, [1, 1, 1, 3, 2]) }, books: new Map([2, 4].map((t) => [`1/${t}`, { lastAcceptedUsdAskPriceTicks: pick(r, [0n, 10_000n, 25_000_000n, 10n ** 12n, 10n ** 20n, 10n ** 20n]) }])) };
     for (let i = 0; i < 300; i++) {
       const base = baseRoute(r), intent = ogCrossIndex.withCanonicalCrossJurisdictionRouteHash(base as never) as unknown as CrossRoute;
       const k = int(r, 8);
@@ -323,7 +325,7 @@ describe("entity-lane: cross-j setup handlers (og entity/tx/handlers/cross-j/set
       if (t === 2) prepared = { ...prepared, targetPull: { ...prepared.targetPull!, fullHash: "0x" + "12".repeat(32) } };
       if (t === 3) prepared = { ...prepared, sourcePull: { ...prepared.sourcePull!, pullId: "0x" + "34".repeat(32) } };
       const fixture: Fixture = {
-        self: H1, validators: [SIGNER[H1]!], swaps: stored,
+        self: H1, validators: [SIGNER[H1]!], swaps: stored, ...(() => { const ext = extOf(); return ext === undefined ? {} : { ext }; })(),
         ...(r() < 0.95 ? { account: { disputeConfig: r() < 0.93 ? CLOCK60 : { leftResponseSeconds: 60, rightResponseSeconds: 1 }, collateral: 0n, ondelta: 0n, leftCredit: 0n, rightCredit: 0n, pulls: [] } } : {}),
       };
       const proposerSignerId = r() < 0.9 ? SIGNER[H1]! : "0x" + "66".repeat(20);
@@ -332,8 +334,10 @@ describe("entity-lane: cross-j setup handlers (og entity/tx/handlers/cross-j/set
       const rw = rwOutcome(crossMaterialize(viewOf(fixture), data));
       expectSame(og, rw, `materialize${i}`);
       kinds.set(og.kind, (kinds.get(og.kind) ?? 0) + 1);
+      if (og.kind === "ok") for (const m of og.messages as { message: string }[]) if (m.message.includes("CROSS_J_BOOK_USD_CAP_EXCEEDED")) kinds.set(`cap:${Number(intent.source.tokenId) === 2 ? "priced" : "stable"}`, 1);
     }
     expect(kinds.get("ok") ?? 0).toBeGreaterThan(100);
+    expect([kinds.has("cap:priced"), kinds.has("cap:stable")]).toEqual([true, true]);
   });
 
   test("MATCH: registerCrossJurisdictionSwap at both hubs and a user on 300 random resting routes, pull pre-checks, capacities and stored routes", () => {
