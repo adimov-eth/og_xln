@@ -230,7 +230,8 @@ describe("entity-consensus-2: board Hanko refresh and the previous-board grace (
       const after = rw.value.replica;
       expect(after.head._tag === "installed" ? certifiedBy(after.head.certificate, partyIn(after, ALICE)).peer : undefined).toBe(account.counterpartyFrameHanko);
       expect(after.boardRefresh).toEqual(account.counterpartyBoardHankoRefresh);
-      expect(rw.value.outputs).toEqual([]);
+      // og returns accountInputApplied({ events }) and nothing to send; the status line is the Account's message output
+      expect(rw.value.outputs).toEqual(((og as any).events as string[]).map((message) => ({ kind: "message", message })));
       expect(seen).toEqual(ogSeen as HankoAuthority[]);
       expect(seen).toEqual([{ registeredBoardHash: BOARD.boardHash, allowPreviousBoard: false }]);
       verdicts.accepted += 1;

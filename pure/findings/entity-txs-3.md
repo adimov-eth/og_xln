@@ -20,7 +20,7 @@ Scope: the REMAINING entity-tx items in `entity-consensus-2.md` and `entity-runt
 | ER-4b | Quorum board binding (assertQuorumBoardBinding) | hanko/signing.ts | FIXED | Ported together with the certified-board registry; fixtures use og-valid lazy ids (see boards.md) |
 | AC-13b | certified-board registry, refresh producer | entity board rotation | REMAINING | The registry and receiving side are FIXED; the refresh producer (crontab hook) is REMAINING (see boards.md) |
 | T3-9 | Admission wrapper | local admission | REMAINING | og local admission only dedups lifecycle txs. The rewrite's admitAt runs a trial fold, so policy txs are admitted with a real clock timestamp |
-| T3-10 | Account-level frame events | account frame events | REMAINING | the Account reducer emits no og account events |
+| T3-10 | Account-level frame events | account frame events | FIXED (runtime-final.md RF-8, RF-9) | Account inputs and proposals now say og's status lines, and the Entity certifies them as frame events. Tests: account-tx.test.ts lockstep sequences (`accountTxMessages` vs og handler `events`); account-consensus.test.ts driven scenarios (vs og `applyAccountInput` `events`); runtime-final.test.ts "a full round says og's lines" |
 
 ## og EntityTx enumeration (63 types, `core/types/entity-tx.ts`, enumerated with ast-grep property_signature `type`)
 

@@ -271,7 +271,8 @@ describe("settle-jsubmit: settle_propose / update / approve / reject (og payment
       }
       const d = folded.draft, after = d.accountReplicas.get(BOB)!;
       const queued = [...after.mempool, ...(after._tag === "proposed" ? after.candidate.frame.txs : [])].filter((t: any) => t.type === "settle_transition" && !pendingTx.includes(t));
-      expect(d.events).toEqual(readEntityFrameEvents(og) as never);
+      // og routes a proposal's `🚀 Proposed frame` in proposePendingAccountFrames, after the tx and drain phases this og driver runs
+      expect((d.events ?? []).filter((e: any) => !String(e.message).startsWith("🚀 Proposed frame "))).toEqual(readEntityFrameEvents(og) as never);
       const rwDeferred = d.state.committed.deferredAccountProposals;
       if (ogDeferred.length > 0 && (rwDeferred === undefined || rwDeferred.size === 0)) {
         // the idle Account's deferred approval was materialized in the same frame: exactly one own hanko transition for og's approved workspace

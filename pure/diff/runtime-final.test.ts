@@ -12,10 +12,12 @@ import { applyAccountTxMutation } from "../../core/account/tx/mutation.ts";
 import { beginAccountTransition, accountTransitionView, commitAccountTransition, discardAccountTransition } from "../../core/account/state/candidate-overlay.ts";
 import { PersistentAccountStateMap } from "../../core/account/state/persistent-state-map.ts";
 import {
-  accountId, accountRuntimeEvents, accountTerms, applyAccountBody, applyRuntime, applyRuntimeTx, committed, convertOutput, createEntity, createRuntime, lazyBoardEntityId, spawn, entityId as rwEntityId, entityRootOf, genesisAccount, genesisAccountBody, replicaKey,
+  accountId, accountRuntimeEvents, accountTxMessages, accountTerms, applyAccountBody, applyRuntime, applyRuntimeTx, committed, convertOutput, createEntity, createRuntime, lazyBoardEntityId, spawn, entityId as rwEntityId, entityRootOf, genesisAccount, genesisAccountBody, replicaKey,
   type AccountBody, type Address, type EntityId, type EntityTx, type FoldCtx, type RoutedEntityInput, type ImportConfig, type JReplica, type Runtime, type RuntimeTx,
 } from "../xln.ts";
-import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, unwrap, verifiers } from "../xln_run.ts";
+import { ALICE, BOB, CAROL, NOW, TERMS, aliceAddr, bobAddr, unwrap, verifiers, genesisAB, proposeInput, offerOf, ackInput, hankoVerify } from "../xln_run.ts";
+import { admit, applyAccountInput, type AccountReplica, type AccountInput, type OpenAccount, type WireAccountTx } from "../xln.ts";
+import { runPostFrameAutoRebalanceCheck } from "../../core/account/consensus/helpers.ts";
 
 let seed = 71;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -144,6 +146,7 @@ describe("runtime-final: Account runtime events (og account/tx/mutation.ts, j-ev
   test("MATCH (randomized): a bilaterally finalized j_event_claim emits og's account_settled_finalized_bilateral event; pending, stale and refused claims emit none", () => {
     const jurisdictions = { jReplicas: new Map([["j", { chainId: 1, contracts: { depository: DEP, entityProvider: `0x${"c1".repeat(20)}`, account: `0x${"c2".repeat(20)}`, deltaTransformer: `0x${"c3".repeat(20)}` } }]]) } as never;
     let finalized = 0;
+    const seen = new Set<string>();
     for (let run = 0; run < 20; run++) {
       const state: Record<string, unknown> = { leftEntity: A, rightEntity: B, deltas: new PMap<number, unknown>([[1, { ...createDefaultDelta(1), leftCreditLimit: 10n ** 9n, rightCreditLimit: 10n ** 9n }], [2, { ...createDefaultDelta(2), leftCreditLimit: 10n ** 9n, rightCreditLimit: 10n ** 9n }]]),
         locks: new PMap(), swapOffers: new PMap(), requestedRebalance: new PMap(), requestedRebalanceFeeState: new PMap(), domain: { chainId: 1, depositoryAddress: DEP }, jNonce: 0, lastFinalizedJHeight: 0,
@@ -166,24 +169,30 @@ describe("runtime-final: Account runtime events (og account/tx/mutation.ts, j-ev
         const rwTx = { type: "j_event_claim", jHeight: BigInt(h), jBlockHash: blk, observedAt: 1n, events: rows.map((r) => ({ left: A, right: B, nonce: BigInt(r.nonce), tokens: [{ tokenId: BigInt(r.tokenId), leftReserve: 0n, rightReserve: 0n, collateral: r.collateral, ondelta: r.ondelta }] })) };
         const effects: { kind: string; eventName?: string; data?: unknown }[] = [];
         const before = { ...state, deltas: new PMap([...(state["deltas"] as Map<number, object>)].map(([k, v]) => [k, { ...v }])) };
-        let ogOk = false;
+        let ogOk = false, ogMessages: readonly string[] = [];
         try {
           const session = createAccountJClaimSession({ get: (x: string) => store.get(x) } as never);
           const prepared = prepareAccountJClaimTx(state as never, ogTx as never, { chainId: 1, depositoryAddress: DEP } as never, session);
-          ogOk = handleJEventClaim(account as never, prepared as never, byLeft, 1, A, effects as never, jurisdictions, session).ok;
+          const res = handleJEventClaim(account as never, prepared as never, byLeft, 1, A, effects as never, jurisdictions, session) as { ok: boolean; events?: string[] };
+          ogOk = res.ok; ogMessages = res.events ?? [];
           if (ogOk) for (const { hash, node } of session.changes()?.newNodes ?? []) store.set(hash, node);
         } catch { ogOk = false; }
         if (!ogOk) { Object.assign(state, before); effects.length = 0; }
         const rw = applyAccountBody(body, rwTx as never, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n }) as unknown as { ok: boolean; value: { state: AccountBody; effects: never[] } };
         expect(rw.ok).toBe(ogOk);
         if (!rw.ok) continue;
+        const prior = body;
         body = rw.value.state;
         const mine = rw.value.effects.flatMap((e) => accountRuntimeEvents(A, B, e));
         expect(mine).toEqual(eventsOf(effects) as never);
+        // og claim.ts handler messages: retained / idempotent / stale / finalized bilaterally
+        expect(accountTxMessages(prior, rwTx as never, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n }, body, A)).toEqual(ogMessages as never);
+        seen.add(ogMessages.join());
         finalized += mine.length;
       }
     }
     expect(finalized).toBeGreaterThan(5);
+    expect(seen.size).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -211,5 +220,54 @@ describe("runtime-final: RuntimeStep.events (og observability/env-events.ts publ
     const expected = [`AccountOpening:${BOB.toLowerCase()}`, `AccountOpening:${CAROL.toLowerCase()}`];
     expect(seen.filter((s) => !s.commits).every((s) => s.events.length === 0)).toBe(true);
     expect(seen.filter((s) => s.commits).map((s) => [s.signer, s.events]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))).toEqual([[aliceAddr.toLowerCase(), expected], [bobAddr.toLowerCase(), expected]].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+  });
+});
+
+// ---- og account/consensus: Account frame messages and runPostFrameAutoRebalanceCheck ----
+describe("runtime-final: Account frame messages and the post-commit auto-rebalance (og account/consensus)", () => {
+  const said = (outputs: readonly { readonly kind: string }[]): string[] => outputs.flatMap((o) => (o.kind === "message" ? [(o as { message: string }).message] : []));
+  const door = (self: EntityId, autoRebalance: boolean) => ({ verify: hankoVerify, self, now: NOW, autoRebalance });
+  test("MATCH (randomized): a full round says og's lines (`🚀`, handler lines + `🤝`, `✅`) and the ACK commit queues exactly og runPostFrameAutoRebalanceCheck's request_collateral", () => {
+    let queued = 0, quiet = 0;
+    for (let run = 0; run < 80; run++) {
+      const g = genesisAB(), selfIsLeft = g.state.account.id.left === ALICE, tk = "1" as never;
+      // usually Alice draws on Bob's credit (the side og rebalances), sometimes the other way
+      const lean = (selfIsLeft ? 1n : -1n) * (rng() < 0.8 ? 1n : -1n), delta = { tokenId: tk, collateral: BigInt(ri(3) * 500), ondelta: BigInt(ri(3) * 100) * lean, offdelta: BigInt(ri(6) * 600) * lean, leftCreditLimit: 10_000n, rightCreditLimit: 10_000n };
+      const fee = rng() < 0.85 ? { policyVersion: 1 + ri(3), baseFee: BigInt(ri(40)), liquidityFeeBps: BigInt(pick([0, 10, 100, 5000])), gasFee: BigInt(ri(20)), updatedAt: 1 } : undefined;
+      const policy = { r2cRequestSoftLimit: BigInt(pick([0, 100, 700, 2000])), hardLimit: BigInt(pick([100, 700, 5000])), maxAcceptableFee: BigInt(pick([0, 30, 500, 10_000])) };
+      const hub = rng() < 0.15;
+      const body = { ...g.state, account: { ...g.state.account, deltas: new Map([[tk, delta]]) }, feePolicies: fee === undefined ? new Map() : new Map([[tk, selfIsLeft ? { right: fee } : { left: fee }]]) } as AccountBody;
+      const alice = { ...g, state: body, rebalancePolicy: new Map([[1, policy]]) } as OpenAccount, bob = { ...g, state: body } as OpenAccount;
+      const TX = { type: "set_credit_limit", tokenId: "2", limit: BigInt(1 + ri(9)) } as WireAccountTx;
+      const queuedAlice = unwrap(admit(alice, [TX]) as never) as AccountReplica;
+      const proposed = unwrap(applyAccountInput(queuedAlice, proposeInput(queuedAlice, ALICE) as AccountInput, door(ALICE, !hub)) as never) as { replica: AccountReplica; outputs: { kind: string }[] };
+      if (proposed.replica._tag !== "proposed") throw new Error(proposed.replica._tag);
+      expect(said(proposed.outputs)).toEqual(["🚀 Proposed frame 1 with 1 transactions"]);
+      const received = unwrap(applyAccountInput(bob, offerOf(proposed.replica, ALICE) as AccountInput, door(BOB, true)) as never) as { replica: AccountReplica; outputs: { kind: string }[] };
+      expect(said(received.outputs)).toEqual([]);
+      const acked = unwrap(applyAccountInput(received.replica, ackInput(received.replica, BOB) as AccountInput, door(BOB, true)) as never) as { replica: AccountReplica; outputs: { kind: string }[] };
+      // og: the receiver's replayed handler lines (proposer's side), then `🤝`; Bob has no rebalance policy, so nothing queues on his side
+      expect(said(acked.outputs)).toEqual([...accountTxMessages(body, TX, { byLeft: selfIsLeft, nowMs: 0n, jHeight: 0n, accountHeight: 1n }, body, BOB), `🤝 Accepted frame 1 from Entity ${ALICE.slice(-4)}`]);
+      const ack = acked.outputs.find((o) => o.kind === "ack") as AccountInput;
+      const committedStep = unwrap(applyAccountInput(proposed.replica, ack, door(ALICE, !hub)) as never) as { replica: AccountReplica; outputs: { kind: string }[] };
+      const after = committedStep.replica;
+      if (after._tag !== "open") throw new Error(after._tag);
+      // og side: the committed Account as og's post-ACK check sees it (pendingFrame cleared, nothing queued yet)
+      const b = after.state, PAm = (ns: string, rows: readonly (readonly [unknown, unknown])[]) => PersistentAccountStateMap.fromEntries(ns as never, new Map(rows) as never);
+      const ogAcc = {
+        state: { leftEntity: b.account.id.left, rightEntity: b.account.id.right, deltas: PAm("deltas", [...b.account.deltas].map(([t, d]) => [Number(t), { ...d, tokenId: Number(t), leftAllowance: 0n, rightAllowance: 0n, leftHold: 0n, rightHold: 0n }])),
+          requestedRebalance: PAm("requestedRebalance", [...b.requested].map(([t, v]) => [Number(t), v])), rebalanceFeePolicies: PAm("rebalanceFeePolicies", [...b.feePolicies].map(([t, v]) => [Number(t), v])) },
+        shadow: { rebalance: { policy: PAm("rebalanceShadowPolicy", [[1, policy]]), submittedAtByToken: PAm("rebalanceShadowSubmitted", []) } }, pendingWithdrawals: PAm("pendingWithdrawals", []),
+        proofHeader: { fromEntity: ALICE, toEntity: BOB, nextProofNonce: 1 }, currentHeight: 1, status: "active", mempool: [],
+      };
+      const og = runPostFrameAutoRebalanceCheck(ogAcc as never, ALICE, BOB, 1, hub, []) as unknown as { type: string; data: Record<string, unknown> }[];
+      expect(after.mempool.map((t) => ({ type: t.type, data: { ...(t as Record<string, unknown>), type: undefined, tokenId: Number((t as { tokenId: string }).tokenId), feeTokenId: Number((t as { feeTokenId: string }).feeTokenId) } })))
+        .toEqual(og.map((t) => ({ type: t.type, data: { ...t.data, type: undefined } })) as never);
+      // og ack-commit.ts: `✅ Frame N confirmed and committed`, then `🔄 Auto-rebalance queued n tx(s) after ACK commit`
+      expect(said(committedStep.outputs)).toEqual(["✅ Frame 1 confirmed and committed", ...(og.length > 0 ? [`🔄 Auto-rebalance queued ${og.length} tx(s) after ACK commit`] : [])]);
+      if (og.length > 0) queued++; else quiet++;
+    }
+    expect(queued).toBeGreaterThan(5);
+    expect(quiet).toBeGreaterThan(5);
   });
 });

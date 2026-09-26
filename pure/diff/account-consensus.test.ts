@@ -78,6 +78,10 @@ const ogPeerDispute = (ctx: AccountConsensusContext, a: OgReplica, proposerIsLef
 };
 const scl = (tokenId: number, amount: bigint): OgTx => ({ type: "set_credit_limit", data: { tokenId, amount } }) as OgTx;
 
+/** The Account's status lines (og HandleAccountInputResult `events`), in output order. */
+const saidOf = (outputs: readonly { readonly kind: string }[]): string[] => outputs.flatMap((o) => (o.kind === "message" ? [(o as { message: string }).message] : []));
+/** og fixture ids (L/R) and the rewrite's (ALICE/BOB) differ; a message naming `Entity <tail>` is compared with the tail normalized. */
+const tails = (xs: readonly string[]): string[] => xs.map((m) => m.replace(/Entity [0-9a-fA-F]{4}/g, "Entity ****"));
 // ============ rewrite drivers ============
 const DOOR = (self: EntityId, now = NOW) => ({ verify: hankoVerify, self, now });
 const leftOf = (): EntityId => (partyIn(genesisAB(), ALICE).left ? ALICE : BOB);
@@ -186,7 +190,9 @@ describe("account-consensus: driven scenarios", () => {
     expect(received._tag).toBe("received");
     const acked = step(received, ackInput(received, self), self);
     expect(acked.replica.head.height).toBe(1n);
-    expect(acked.outputs.map((o) => o.kind)).toEqual(["ack"]);
+    expect(acked.outputs.map((o) => o.kind)).toEqual(["ack", "message"]);
+    // og consensus/index.ts: `🤝 Accepted frame 1 from Entity <peer>` (no tx messages for an empty frame)
+    expect(tails(saidOf(acked.outputs))).toEqual(tails((res as { events: string[] }).events));
   });
 
   test("MATCH: frame timestamp 0 is structurally valid on both sides (negative is refused)", () => {
@@ -355,7 +361,9 @@ describe("account-consensus: driven scenarios", () => {
     if (lp._tag !== "proposed" || rp._tag !== "proposed") throw new Error("setup");
     const out = step(lp, offerOf(rp, right), left);
     expect(out.replica._tag).toBe("proposed");
-    expect(out.outputs).toEqual([]);
+    expect(out.outputs.filter((o) => o.kind !== "message")).toEqual([]);
+    // og collision.ts: `📤 LEFT-WINS: Ignored RIGHT's frame 1 (waiting for their ACK)`
+    expect(saidOf(out.outputs)).toEqual((res as { events: string[] }).events);
   });
 
   test("MATCH: simultaneous proposals — RIGHT rolls back, restores its txs to the FRONT of the mempool and takes LEFT's frame", async () => {
@@ -375,9 +383,15 @@ describe("account-consensus: driven scenarios", () => {
     const lp = proposeFrom(genesisAB(), left, [TX]).replica;
     const rp = proposeFrom(genesisAB(), right, [TX2]).replica;
     if (lp._tag !== "proposed" || rp._tag !== "proposed") throw new Error("setup");
-    const out = step(rp, offerOf(lp, left), right).replica;
+    const taken = step(rp, offerOf(lp, left), right), out = taken.replica;
     expect(out._tag).toBe("received");
     expect(out.mempool).toEqual([TX2]);
+    // og collision.ts: `🔄 ROLLBACK: Discarded our frame 1, restored 1/1 txs to mempool`, `📥 Accepted LEFT's frame 1 ...`; og then commits at once (`🤝`), the rewrite at its local ACK
+    const acked = step(out, ackInput(out, right), right);
+    // (og's LEFT frame here is empty; the rewrite's carries TX, whose set_credit_limit lines og puts between `📥` and `🤝`)
+    const txLines = ["📊 Created delta for token 0", "💳 Right credit limit = 7 for token 0"];
+    expect(saidOf(acked.outputs).slice(0, 2)).toEqual(txLines);
+    expect(tails([...saidOf(taken.outputs), ...saidOf(acked.outputs).slice(2)])).toEqual(tails((res as { events: string[] }).events));
   });
 
   test("MATCH: ack_frame with a valid ACK and an invalid successor — both commit the ACK then reject the frame", async () => {
@@ -438,7 +452,10 @@ describe("account-consensus: driven scenarios", () => {
     // rewrite
     const { q, offer } = round(genesisAB(), genesisAB(), ALICE, BOB, [TX]);
     const again = step(q, offer as AccountInput, BOB);
-    expect(again.outputs.map((o) => o.kind)).toEqual(["ack"]);
+    expect(again.outputs.map((o) => o.kind)).toEqual(["ack", "message"]);
+    // og replay.ts: a retained ACK is re-sent; with none retained (this og fixture) it is rebuilt from the certified head
+    expect(saidOf(again.outputs)).toEqual(["↩️ Re-sent ACK for duplicate committed frame 1"]);
+    expect(saidOf(step({ ...q, acknowledged: undefined } as AccountReplica, offer as AccountInput, BOB).outputs)).toEqual((ok as { events: string[] }).events);
     if (offer.kind !== "ack_frame") throw new Error("setup");
     expect(unwrapErr(applyAccountInput(q, { ...offer, frameHanko: `0x${"99".repeat(65)}` }, DOOR(BOB)))).toEqual({ _tag: "ack_conflict", field: "frameHanko" });
   });
@@ -452,7 +469,8 @@ describe("account-consensus: driven scenarios", () => {
     let p = genesisAB(), q = genesisAB(), first: AccountInput | undefined;
     for (const tx of [TX, TX2, { ...TX, limit: 11n } as WireAccountTx]) { const r = round(p, q, ALICE, BOB, [tx]); p = r.p; q = r.q; first ??= r.ack; }
     expect(p.head.height).toBe(3n);
-    expect(step(p, first!, ALICE).outputs).toEqual([]);
+    // og ack-commit.ts handleObsoleteAck: `ℹ️ Ignored stale ACK 1 (current=3)` and nothing else
+    expect(step(p, first!, ALICE).outputs).toEqual((res as { events: string[] }).events.map((message) => ({ kind: "message", message })));
   });
 
   test("MATCH: peer frame with wrong prevFrameHash / wrong height is refused before any replay", () => {

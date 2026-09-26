@@ -32,6 +32,7 @@ import {
   accountTerms,
   accountFrameHash,
   applyAccountBody,
+  accountTxMessages,
   AccountKinds,
   committed,
   ownWire,
@@ -106,21 +107,21 @@ const apply = (b: AccountBody, tx: any, ctx: FoldCtx) => applyAccountBody(b, tx,
 
 const PA = (ns: string, m: ReadonlyMap<any, any> = new Map()) => PersistentAccountStateMap.fromEntries(ns as any, m);
 /** og side of a lockstep: a persistent og replica seeded from the rewrite's committed view, driven through the real transition overlay; each accepted tx yields og's Account root. */
-const ogHarness = (body: AccountBody) => {
+const ogHarness = (body: AccountBody, self: string = A) => {
   const v: any = unwrap(committed(body) as any).view;
   const state: any = { domain: v.domain, leftEntity: v.leftEntity, rightEntity: v.rightEntity, watchSeed: v.watchSeed, disputeConfig: v.disputeConfig, jNonce: v.jNonce, lastFinalizedJHeight: v.lastFinalizedJHeight,
     leftPendingJClaims: v.leftPendingJClaims, rightPendingJClaims: v.rightPendingJClaims,
     ...Object.fromEntries(["deltas", "locks", "pulls", "swapOffers", "subcontracts", "lendingIntents", "requestedRebalance", "requestedRebalanceFeeState", "rebalanceFeePolicies"].map((n) => [n, PA(n, v[n])])) };
-  let replica: any = { state, status: "active", currentHeight: 0, proofHeader: { fromEntity: A, toEntity: B, nextProofNonce: 1 }, currentFrame: { stateHash: "" }, pendingWithdrawals: PA("pendingWithdrawals"),
+  let replica: any = { state, status: "active", currentHeight: 0, proofHeader: { fromEntity: self, toEntity: self === A ? B : A, nextProofNonce: 1 }, currentFrame: { stateHash: "" }, pendingWithdrawals: PA("pendingWithdrawals"),
     shadow: { rebalance: { policy: PA("rebalanceShadowPolicy"), submittedAtByToken: PA("rebalanceShadowSubmitted") } }, mempool: [] };
-  const run = async (handler: (draft: any) => Promise<any> | any): Promise<{ ok: boolean; root?: string; error?: string }> => {
+  const run = async (handler: (draft: any) => Promise<any> | any): Promise<{ ok: boolean; root?: string; error?: string; events?: string[] }> => {
     const overlay = beginAccountTransition(replica);
     let r: any;
     try { r = await handler(accountTransitionView(overlay)); } catch (e) { r = { ok: false, rejection: { message: String(e) } }; }
     if (!r.ok) { discardAccountTransition(overlay); return { ok: false, error: r.rejection?.message }; }
     const c = commitAccountTransition(overlay, "diff");
     replica = c.account;
-    return { ok: true, root: c.accountStateRoot };
+    return { ok: true, root: c.accountStateRoot, events: r.events };
   };
   return { run, replica: () => replica, reset: (r: any) => { replica = r; } };
 };
@@ -230,6 +231,8 @@ describe("account-tx: direct_payment envelope (route, deliveryMode, trusted gate
       const { tokenId: _t, ...rest } = data;
       const r = apply(body, { type: "payment", tokenId: "1", ...rest }, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n });
       expect([i, r.ok]).toEqual([i, o.ok]);
+      // og direct-payment.ts appendPaymentEvent / forward: the handler's messages from this harness's side (A)
+      if (r.ok) { expect(accountTxMessages(body, { type: "payment", tokenId: "1", ...rest } as any, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n }, r.value.state, A)).toEqual(o.events as any); }
       if (r.ok) { body = r.value.state; accepted++; expect(unwrap(committed(body) as any).root).toBe(o.root); if (route.length === 2) n++; }
     }
     expect(accepted).toBeGreaterThan(15);
@@ -256,6 +259,9 @@ const prng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0
 const rng = prng(0xA7);
 const ri = (n: number) => Math.floor(rng() * n);
 const pick3 = <X,>(xs: readonly X[]): X => xs[ri(xs.length)] as X;
+/** Perspective picker for the og event MATCH checks, kept off the shared rng so the sequences stay as they were. */
+const selfRng = prng(0x5e1f);
+const pickSelf = (): string => (selfRng() < 0.5 ? A : B);
 const secretOf = (i: number) => `0x${i.toString(16).padStart(64, "0")}`;
 const rwLock = (secret: string, patch: Record<string, unknown> = {}) => ({ type: "htlc_lock", lockId: hashHtlcSecret(secret), hashlock: hashHtlcSecret(secret), timelock: 10n ** 15n, revealBeforeHeight: 5n, amount: 5n, tokenId: "1", ...patch });
 
@@ -341,6 +347,7 @@ describe("account-tx: htlc committed state", () => {
       let body = start;
       for (let i = 0; i < 10; i++) {
         const byLeft = ri(2) === 0, ts = 1 + ri(20), jh = ri(8), live = [...body.locks.values()];
+        const before = body;
         const secret = secretOf(1 + ri(6));
         const target = live.length === 0 ? undefined : pick3(live);
         const preimage = target === undefined ? secret : secretOf(1 + [0, 1, 2, 3, 4, 5].find((k) => rwHash(secretOf(1 + k)) === target.hashlock)!);
@@ -353,6 +360,7 @@ describe("account-tx: htlc committed state", () => {
         const o = await og.run((acc) => tx.type === "htlc_lock" ? handleHtlcLock(acc, ogTx, byLeft, ogClock(ts, jh)) : handleHtlcResolve(acc.state, ogTx, byLeft, jh, ts));
         const r = apply(body, tx, { byLeft, nowMs: BigInt(ts), jHeight: BigInt(jh), accountHeight: 1n });
         expect(r.ok).toBe(o.ok);
+        if (r.ok) expect(accountTxMessages(before, tx, { byLeft, nowMs: BigInt(ts), jHeight: BigInt(jh), accountHeight: 1n }, r.value.state, A)).toEqual(o.events as any);
         if (r.ok) { body = r.value.state; accepted++; expect(unwrap(committed(body) as any).root).toBe(o.root); }
       }
     }
@@ -378,6 +386,7 @@ const swapLockstep = (start: AccountBody) => {
     const o = await og.run((acc) => (handler as any)(acc, ogTx, byLeft, 3));
     const r = apply(body, tx, { byLeft, nowMs: 1n, jHeight: 3n, accountHeight: 1n });
     if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${r.ok ? "ok" : JSON.stringify(r.error, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
+    if (r.ok) expect(accountTxMessages(body, tx, { byLeft, nowMs: 1n, jHeight: 3n, accountHeight: 1n }, r.value.state, A)).toEqual(o.events as any);
     if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
     return r.ok;
   };
@@ -475,6 +484,7 @@ const rebalanceLockstep = (start: AccountBody) => {
     const o = await og.run((acc) => tx.type === "request_collateral" ? handleRequestCollateral(acc, ogTx, byLeft, ts) : tx.type === "rebalance_refund" ? handleRebalanceRefund(acc, ogTx, byLeft) : handleRebalancePolicy(acc.state, ogTx, byLeft, ts));
     const r = apply(body, tx, { byLeft, nowMs, jHeight: 0n, accountHeight: 1n });
     if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${r.ok ? "ok" : JSON.stringify(r.error, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
+    if (r.ok) expect(accountTxMessages(body, tx, { byLeft, nowMs, jHeight: 0n, accountHeight: 1n }, r.value.state, A)).toEqual(o.events as any);
     if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
     return r.ok;
   };
@@ -538,7 +548,7 @@ describe("account-tx: rebalance (og request_collateral / rebalance_refund / reba
 // ---------- Account-level lending ----------
 describe("account-tx: lending (og handlers/balance/lending.ts)", () => {
   const lendingLockstep = (start: AccountBody) => {
-    const og = ogHarness(start);
+    const self = pickSelf(), og = ogHarness(start, self);
     let body = start;
     const step = async (tx: any, byLeft: boolean): Promise<boolean> => {
       const ogTx = toOgTx(tx);
@@ -546,6 +556,7 @@ describe("account-tx: lending (og handlers/balance/lending.ts)", () => {
       const o = await og.run((acc) => handleLendingAccountTx(acc, ogTx, byLeft));
       const r = apply(body, tx, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n });
       if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${r.ok ? "ok" : JSON.stringify(r.error)} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
+      if (r.ok) expect(accountTxMessages(body, tx, { byLeft, nowMs: 1n, jHeight: 0n, accountHeight: 1n }, r.value.state, self)).toEqual(o.events as any);
       if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
       return r.ok;
     };
@@ -651,6 +662,7 @@ describe("account-tx: settlement + j_event_claim", () => {
     for (const { tx, byLeft, ts } of steps) {
       const o = await og.run(tx, byLeft, ts);
       const r = apply(body, { type: "settle_transition", ...tx.data }, { byLeft, nowMs: BigInt(ts), jHeight: 0n, accountHeight: 1n });
+      if (r.ok && o.ok) expect(accountTxMessages(body, { type: "settle_transition", ...tx.data }, { byLeft, nowMs: BigInt(ts), jHeight: 0n, accountHeight: 1n }, r.value.state, A)).toEqual(o.events as any);
     if (r.ok !== o.ok) throw new Error(`accept mismatch og=${o.ok}(${o.error}) rw=${JSON.stringify(r.ok ? "ok" : r.error)} tx=${JSON.stringify(tx, (_k, x) => (typeof x === "bigint" ? `${x}n` : x))}`);
       if (r.ok) {
         body = r.value.state;
@@ -726,6 +738,7 @@ describe("account-tx: settlement + j_event_claim", () => {
         const o = await og.run(tx, byLeft, ts);
         const r = apply(body, { type: "settle_transition", ...tx.data }, { byLeft, nowMs: BigInt(ts), jHeight: 0n, accountHeight: 1n });
         expect(r.ok).toBe(o.ok);
+        if (r.ok) expect(accountTxMessages(body, { type: "settle_transition", ...tx.data }, { byLeft, nowMs: BigInt(ts), jHeight: 0n, accountHeight: 1n }, r.value.state, A)).toEqual(o.events as any);
     if (r.ok) { body = r.value.state; expect(unwrap(committed(body) as any).root).toBe(o.root); }
       }
     }
