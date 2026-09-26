@@ -1594,9 +1594,9 @@ export const decodeHashLadderBinary = (binary?: string): Result<DecodedLadder, C
   if (!value.startsWith("0x") || value.length % 2 !== 0) return crossErr("HASHLADDER_BINARY_INVALID_HEX");
   const size = (value.length - 2) / 2;
   if (size === 32) return HEX32.test(value) ? ok({ fillRatio: MAX_FILL, fullSecret: value }) : crossErr("HASHLADDER_FULL_BINARY_INVALID");
-  if (size !== 130) return crossErr("HASHLADDER_BINARY_INVALID_LENGTH");
+  if (size !== 130) return crossErr(`HASHLADDER_BINARY_INVALID_LENGTH:${size}`);
   const fillRatio = Number.parseInt(value.slice(2, 6), 16);
-  if (!Number.isInteger(fillRatio) || fillRatio <= 0 || fillRatio >= MAX_FILL) return crossErr("HASHLADDER_PARTIAL_BINARY_RATIO_INVALID");
+  if (!Number.isInteger(fillRatio) || fillRatio <= 0 || fillRatio >= MAX_FILL) return crossErr(`HASHLADDER_PARTIAL_BINARY_RATIO_INVALID:${fillRatio}`);
   const reveals = [0, 1, 2, 3].map((i) => `0x${value.slice(6 + i * 64, 70 + i * 64)}`) as unknown as Reveals;
   return reveals.every((r) => HEX32.test(r)) ? ok({ fillRatio, reveals }) : crossErr("HASHLADDER_PARTIAL_BINARY_REVEALS_INVALID");
 };
@@ -4691,6 +4691,10 @@ export type EntityTx =
   /** og cross-j clear lifecycle (handlers/cross-j/{clear,sweep}.ts, payments/pull.ts): the proposer's public ladder reveal, a paired pull close, the book-TTL sweep. */
   | { readonly type: "materializeCrossJurisdictionClear"; readonly data: CrossClearReveal }
   | { readonly type: "crossPullClose"; readonly data: CrossPullCloseData }
+  /** og cross-j recovery (handlers/cross-j/{salvage,force-sibling-dispute}.ts, htlc/direct.ts): the Target reveal port, the sibling dispute clock, a verified HTLC resolve. */
+  | { readonly type: "crossJurisdictionSalvage"; readonly data: { readonly routeId: string; readonly binary: string; readonly fillRatio: number; readonly sourceEntityId: string; readonly sourceCounterpartyEntityId: string; readonly observedAt?: number | undefined } }
+  | { readonly type: "crossJurisdictionForceSiblingDispute"; readonly data: { readonly routeId: string; readonly observedCounterpartyEntityId: string; readonly observedAt?: number | undefined } }
+  | { readonly type: "resolveHtlcLock"; readonly data: { readonly counterpartyEntityId: string; readonly lockId: string; readonly secret: string; readonly crossJurisdictionRouteId?: string | undefined; readonly description?: string | undefined } }
   | { readonly type: "orderbookSweepCrossJurisdiction"; readonly data: { readonly reason?: string | undefined } }
   /** og certified Entity->Entity command lane: a committed source frame's cross-j commands, wrapped by its emitter (consensus/output/publication.ts). */
   | { readonly type: "runtimeOutput"; readonly data: RuntimeOutputData }
@@ -5364,7 +5368,7 @@ export const localTimeoutVote = (r: EntityReplica, timestamp: bigint): EntityInp
 };
 
 /** `activeJurisdiction`: og EntityRuntimeContext.activeJurisdiction (the Runtime's first imported J), the Htlc* jurisdictionId fallback. */
-type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined; readonly boardHandover?: HandoverConfig | undefined; readonly jReplicas?: ReadonlyMap<string, JReplica> | undefined };
+type FoldContext = { readonly verify: Verify; readonly timestamp: bigint; readonly htlc?: HtlcFrameInfra | undefined; readonly activeJurisdiction?: string | undefined; readonly boardHandover?: HandoverConfig | undefined; readonly jReplicas?: ReadonlyMap<string, JReplica> | undefined; readonly runtimeSeed?: string | undefined };
 /** og requireAccountDeltaTransformerAddress(env, account.state) for one of this Entity's Accounts. */
 const accountDt = (ctx: { readonly jReplicas?: ReadonlyMap<string, JReplica> | undefined }, child: AccountReplica): DeltaTransformerRef => deltaTransformerFor(ctx.jReplicas, child.state.terms.domain);
 type Replicas = ReadonlyMap<EntityId, AccountReplica>;
@@ -5379,7 +5383,7 @@ const peerOf = (tx: EntityTx, self: EntityId): EntityId => matchBy("type", tx, {
   htlcPayment: (x) => lower(x.data.route[1] ?? x.data.targetEntityId) as EntityId,
   settle_propose: (x) => x.data.counterpartyEntityId, settle_update: (x) => x.data.counterpartyEntityId, settle_approve: (x) => x.data.counterpartyEntityId, settle_execute: (x) => x.data.counterpartyEntityId, settle_reject: (x) => x.data.counterpartyEntityId,
   prepareCrossJurisdictionSwap: () => self, materializeCrossJurisdictionSwap: () => self, registerCrossJurisdictionSwap: () => self,
-  admitCrossJurisdictionBookOrder: () => self, removeCrossJurisdictionBookOrder: () => self, crossJurisdictionBookOrderRemoved: () => self, crossJurisdictionFillNotice: () => self, requestCrossJurisdictionClear: () => self, materializeCrossJurisdictionClear: () => self, crossPullClose: () => self, orderbookSweepCrossJurisdiction: () => self, runtimeOutput: () => self, proposeAccountsNow: () => self, initOrderbookExt: () => self,
+  admitCrossJurisdictionBookOrder: () => self, removeCrossJurisdictionBookOrder: () => self, crossJurisdictionBookOrderRemoved: () => self, crossJurisdictionFillNotice: () => self, requestCrossJurisdictionClear: () => self, materializeCrossJurisdictionClear: () => self, crossPullClose: () => self, crossJurisdictionSalvage: () => self, crossJurisdictionForceSiblingDispute: () => self, resolveHtlcLock: () => self, orderbookSweepCrossJurisdiction: () => self, runtimeOutput: () => self, proposeAccountsNow: () => self, initOrderbookExt: () => self,
   r2r: () => self, r2e: () => self, r2c: () => self, e2r: () => self, j_broadcast: () => self, j_rebroadcast: () => self, j_abort_sent_batch: () => self, j_clear_batch: () => self, mintReserves: () => self, j_event: () => self, boardHandover: () => self,
 });
 /** A peer's Account message names its sender in its envelope; everything else is this entity's own command. */
@@ -5943,6 +5947,454 @@ const finalizeDispute = (d: Draft, x: FinalizeIntent, ctx: FoldContext): Result<
   const jBatchState = { ...jb, batch: { ...jb.batch, disputeFinalizations: [...rows, row] } } as unknown as Binary;
   const queued: Folded = latchFinalize({ state: { ...admitted.state, committed: { ...admitted.state.committed, jBatchState } }, accountReplicas: admitted.accountReplicas }, peer, disputed, active, true);
   return ok(say({ ...admitted, ...queued }, `⚖️ Dispute finalized vs ${tag} ${x.description ? `(${x.description})` : ""} - use jBroadcast to commit`));
+};
+// ---- og entity/tx/j-events-htlc/index.ts: the hash-ladder reveal queue, Source hub claims, reveal ports, Target recovery, sibling dispute fanout ----
+type CjRows = { readonly [field: string]: readonly Binary[] };
+/** The committed og jBatchState fields the reveal queue reads and writes. */
+export type CjJBatch = { readonly batch: CjRows; readonly sentBatch?: { readonly batch: CjRows; readonly entityNonce: number } | undefined; readonly recoveryBatches?: readonly CjRows[] | undefined; readonly status?: string | undefined; readonly autoBroadcastDraft?: boolean | undefined };
+/** One Account as og's helpers read it: its sides, its bilateral response windows, and its activeDispute (queued or observed). */
+export type CjAccount = {
+  readonly left: string; readonly right: string; readonly leftResponseSeconds: number; readonly rightResponseSeconds: number;
+  readonly active?: { readonly observedOnChain: boolean; readonly disputeStartTimestamp?: number | undefined } | undefined;
+  /** og buildCurrentDisputeArgumentPlan's pull ids (left side: amount >= 0). */
+  readonly leftPullIds: readonly string[]; readonly rightPullIds: readonly string[];
+};
+/** The og EntityState fields j-events-htlc reads (Accounts keyed by lowercase counterparty) and writes (the route collection and jBatchState). */
+export type CjHost = {
+  readonly id: string; readonly timestamp: number; readonly validators: readonly string[]; readonly runtimeSeed?: string | undefined;
+  readonly swaps?: ReadonlyMap<string, CrossRoute> | undefined; readonly jb?: CjJBatch | undefined; readonly accounts: ReadonlyMap<string, CjAccount>;
+};
+/** og outputs of these helpers: a self `j_broadcast` for validators[0], or a cross-j Entity output (wrapped as a runtimeOutput at commit). */
+export type CjOut = { readonly kind: "j_broadcast"; readonly signerId: string } | { readonly kind: "cross"; readonly entityId: string; readonly signerId: string; readonly txs: readonly EntityTx[] };
+export type Cj = { readonly host: CjHost; readonly messages: readonly string[]; readonly outputs: readonly CjOut[] };
+export type CjStep<T> = Result<{ readonly cj: Cj; readonly value: T }, EntityError>;
+export type LadderRevealResult = "queued" | "already-queued" | "deferred-batch-pending" | "source-window-expired";
+export type LadderDecoded = { readonly fillRatio: number; readonly fullSecret?: string | undefined; readonly reveals?: Reveals | undefined };
+const lc = (v: unknown): string => String(v || "").toLowerCase();
+const cjSay = (cj: Cj, ...messages: readonly string[]): Cj => ({ ...cj, messages: [...cj.messages, ...messages] });
+const cjHost = (cj: Cj, host: CjHost): Cj => ({ ...cj, host });
+/** og PersistentEntityCollectionMap iteration: keys by their u16-length-prefixed UTF-8 bytes (length first, then bytes). */
+const radixOrder = (a: string, b: string): number => {
+  const x = utf8(a), y = utf8(b);
+  if (x.length !== y.length) return x.length - y.length;
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return (x[i] ?? 0) - (y[i] ?? 0);
+  return 0;
+};
+const routeKeys = (h: CjHost): readonly string[] => [...(h.swaps?.keys() ?? [])].sort(radixOrder);
+const routesOf = (h: CjHost): readonly CrossRoute[] => routeKeys(h).flatMap((k) => { const r = h.swaps?.get(k); return r === undefined ? [] : [r]; });
+const cjPutRoute = (h: CjHost, key: string, route: CrossRoute): CjHost => ({ ...h, swaps: mapSet(h.swaps ?? new Map<string, CrossRoute>(), key, route) });
+const LADDER_ZERO = ZERO_WORD, LADDER_ZERO_REVEALS: Reveals = [ZERO_WORD, ZERO_WORD, ZERO_WORD, ZERO_WORD];
+/** og ladderHashForPull: keccak256(solidityPacked(bytes32 fullHash, bytes32 partialRoot)), lowercase. */
+export const pullLadderHash = (p: { readonly fullHash: string; readonly partialRoot: string }): string => keccak256Hex(concat([hexToBytes(p.fullHash), hexToBytes(p.partialRoot)])).toLowerCase();
+/** og hashLadderRegistrationKey: keccak256(solidityPacked(bytes32 counterpartyEntity, fullHash, partialRoot)), lowercase. */
+const ladderRegistrationKey = (r: { readonly counterpartyEntity: string; readonly fullHash: string; readonly partialRoot: string }): string =>
+  keccak256Hex(concat([hexToBytes(r.counterpartyEntity), hexToBytes(r.fullHash), hexToBytes(r.partialRoot)])).toLowerCase();
+/** og counterpartyForRouteLeg. */
+const routeLegPeer = (h: CjHost, route: CrossRoute, targetRole: boolean): Result<string, EntityError> => {
+  const self = lc(h.id), leg = targetRole ? route.target : route.source, e = lc(leg.entityId), c = lc(leg.counterpartyEntityId);
+  return self === e ? ok(c) : self === c ? ok(e) : invariant(`J_HASH_LADDER_ACCOUNT_PARTY_MISMATCH:${route.orderId}:${self}`);
+};
+/** og sourceRevealWindowStatus: a local unobserved start is open; an observed one is open through its start second plus our own window. */
+const sourceRevealWindow = (h: CjHost, counterparty: string): Result<"open" | "expired", EntityError> => {
+  const cp = counterparty.toLowerCase(), account = h.accounts.get(cp), active = account?.active;
+  if (account === undefined || active === undefined) return invariant(`J_HASH_LADDER_SOURCE_ACTIVE_DISPUTE_MISSING:${cp}`);
+  if (!active.observedOnChain) return ok("open");
+  const startSec = Number(active.disputeStartTimestamp);
+  if (!Number.isSafeInteger(startSec) || startSec < 0) return invariant(`J_HASH_LADDER_SOURCE_DISPUTE_START_INVALID:${String(active.disputeStartTimestamp)}`);
+  const window = lc(account.left) === lc(h.id) ? account.leftResponseSeconds : account.rightResponseSeconds, nowSec = Math.floor(Number(h.timestamp) / 1000);
+  if (nowSec < startSec) return invariant(`J_HASH_LADDER_SOURCE_WINDOW_NOT_OPEN:${nowSec}:${startSec}`);
+  return ok(nowSec > startSec + window ? "expired" : "open");
+};
+const pendingReveal = (d: LadderDecoded): { readonly fillRatio: number; readonly fullSecret: string; readonly reveals: Reveals } => ({ fillRatio: d.fillRatio, fullSecret: d.fullSecret ?? LADDER_ZERO, reveals: d.reveals ?? LADDER_ZERO_REVEALS });
+/** og stashPendingRegistryReveal: Target always replaces its unsent reveal, Source keeps the first; every matching route's updatedAt moves. */
+const stashReveal = (h: CjHost, counterparty: string, pull: { readonly fullHash: string; readonly partialRoot: string }, decoded: LadderDecoded, targetRole: boolean): Result<CjHost, EntityError> => {
+  const ladder = pullLadderHash(pull), cp = String(counterparty).toLowerCase();
+  let host = h, matched = 0;
+  for (const key of routeKeys(h)) {
+    const route = host.swaps?.get(key), rolePull = targetRole ? route?.targetPull : route?.sourcePull;
+    if (route === undefined || rolePull === undefined || pullLadderHash(rolePull) !== ladder) continue;
+    const peer = routeLegPeer(host, route, targetRole);
+    if (!peer.ok) return peer;
+    if (peer.value !== cp) continue;
+    matched += 1;
+    const pending = pendingReveal(decoded), updatedAt = Number(host.timestamp || route.updatedAt || 0);
+    const next: CrossRoute = targetRole ? { ...route, pendingTargetRegistryReveal: pending, updatedAt } : route.pendingSourceRegistryReveal ? { ...route, updatedAt } : { ...route, pendingSourceRegistryReveal: pending, updatedAt };
+    host = cjPutRoute(host, key, next);
+  }
+  return matched === 0 ? invariant(`J_HASH_LADDER_ROUTE_SLOT_MISSING:${h.id}:${ladder}:${targetRole ? "target" : "source"}`) : ok(host);
+};
+/** og targetRevealHasActiveDispute: the Target witness is publishable once this Entity's Account with the target hub has an activeDispute. */
+const targetRevealLive = (h: CjHost, route: CrossRoute): boolean => h.accounts.get(lc(route.target.entityId))?.active !== undefined;
+/** og countDeferredHashLadderReveals: witnesses not yet in an immutable sent batch (a Target one only once its dispute defines S). */
+export const countDeferredReveals = (h: CjHost): number =>
+  routesOf(h).reduce((n, r) => n + (r.pendingSourceRegistryReveal ? 1 : 0) + (r.pendingTargetRegistryReveal && targetRevealLive(h, r) ? 1 : 0), 0);
+const cjRows = (rows: CjRows | undefined, field: string): readonly Binary[] => rows?.[field] ?? [];
+const cjOps = (rows: CjRows): number => BATCH_FIELDS.reduce((n, f) => n + cjRows(rows, f).length, 0);
+type LadderRow = { readonly counterpartyEntity: string; readonly targetRole: boolean; readonly fullHash: string; readonly partialRoot: string; readonly witness: { readonly fillRatio: number; readonly fullSecret: string; readonly reveals: Reveals } };
+const ladderRows = (rows: CjRows | undefined): readonly LadderRow[] => cjRows(rows, "hashLadderRegistrations") as unknown as readonly LadderRow[];
+/** og collectExistingRegistryRatios: confirmed and queued ratios for one (counterparty, ladder, role); seeds jBatchState. */
+const existingRegistryRatios = (h: CjHost, cp: string, ladder: string, targetRole: boolean): Result<{ readonly jb: CjJBatch; readonly confirmed: readonly number[]; readonly queued: readonly number[] }, EntityError> => {
+  const jb = h.jb ?? (initJBatch() as unknown as CjJBatch), confirmed: number[] = [], queued: number[] = [];
+  for (const route of routesOf(h)) {
+    const rolePull = targetRole ? route.targetPull : route.sourcePull;
+    if (rolePull === undefined || pullLadderHash(rolePull) !== ladder) continue;
+    const peer = routeLegPeer(h, route, targetRole);
+    if (!peer.ok) return peer;
+    if (peer.value !== cp) continue;
+    const c = targetRole ? route.targetRegistryFillRatio : route.sourceRegistryFillRatio, p = targetRole ? route.pendingTargetRegistryReveal : route.pendingSourceRegistryReveal;
+    if (c !== undefined) confirmed.push(c);
+    if (p) queued.push(p.fillRatio);
+  }
+  const collect = (rows: CjRows | undefined): void => {
+    for (const r of ladderRows(rows)) if (r.targetRole === targetRole && lc(r.counterpartyEntity) === cp && pullLadderHash(r) === ladder) queued.push(r.witness.fillRatio);
+  };
+  collect(jb.batch);
+  if (jb.sentBatch !== undefined) collect(jb.sentBatch.batch);
+  for (const b of jb.recoveryBatches ?? []) collect(b);
+  return ok({ jb, confirmed, queued });
+};
+/** og hasHashLadderRegistrationRoom: replacing an existing slot is free; a new slot needs array and total-op room. */
+const ladderRoom = (rows: CjRows, r: LadderRow): boolean => {
+  const key = ladderRegistrationKey(r);
+  if (ladderRows(rows).some((e) => e.targetRole === r.targetRole && ladderRegistrationKey(e) === key)) return true;
+  return ladderRows(rows).length < J_BATCH_LIMITS.maxHashLadderRegistrations && cjOps(rows) < J_BATCH_LIMITS.maxTotalOps;
+};
+/** og batchAddHashLadderRegistration + upsertHashLadderRegistration: an exact retry is a no-op, a Source change or a Target regression conflicts. */
+const upsertLadder = (jb: CjJBatch, r: LadderRow): Result<CjJBatch, EntityError> => {
+  const key = ladderRegistrationKey(r), rows = ladderRows(jb.batch), at = rows.findIndex((e) => e.targetRole === r.targetRole && lc(e.counterpartyEntity) === lc(r.counterpartyEntity) && ladderRegistrationKey(e) === key);
+  const normalized: LadderRow = { counterpartyEntity: r.counterpartyEntity.toLowerCase(), targetRole: r.targetRole, fullHash: r.fullHash, partialRoot: r.partialRoot, witness: { fillRatio: r.witness.fillRatio, fullSecret: r.witness.fullSecret, reveals: [...r.witness.reveals] as unknown as Reveals } };
+  const held = at >= 0 ? rows[at] : undefined;
+  if (held !== undefined) {
+    if (held.witness.fillRatio === r.witness.fillRatio) return ok(jb);
+    if (!r.targetRole || r.witness.fillRatio < held.witness.fillRatio) return invariant(`J_HASH_LADDER_REGISTRATION_CONFLICT:${key}:${r.targetRole ? "target" : "source"}:${held.witness.fillRatio}:${r.witness.fillRatio}`);
+  } else {
+    const total = cjOps(jb.batch) + 1;
+    if (total > J_BATCH_LIMITS.maxTotalOps) return invariant(`J_BATCH_LIMIT_EXCEEDED: hashLadderRegistration would exceed total ops ${total}/${J_BATCH_LIMITS.maxTotalOps}`);
+    if (rows.length + 1 > J_BATCH_LIMITS.maxHashLadderRegistrations) return invariant(`J_BATCH_LIMIT_EXCEEDED: hashLadderRegistrations ${rows.length + 1}/${J_BATCH_LIMITS.maxHashLadderRegistrations}`);
+  }
+  const next = held !== undefined ? rows.map((e, i) => (i === at ? normalized : e)) : [...rows, normalized];
+  return ok({ ...jb, batch: { ...jb.batch, hashLadderRegistrations: next as unknown as readonly Binary[] }, ...(jb.status === "empty" ? { status: "accumulating" } : {}) });
+};
+/**
+ * og queueHashLadderRevealRegistration: one signed-role registry write into the mutable draft. A retry of a queued or confirmed ratio is a no-op,
+ * a Source change or Target regression conflicts, an expired Source window refuses, a full draft stashes the witness on its routes.
+ */
+export const queueLadderReveal = (h: CjHost, counterparty: string, pull: { readonly fullHash: string; readonly partialRoot: string }, decoded: LadderDecoded, targetRole: boolean): Result<{ readonly host: CjHost; readonly result: LadderRevealResult }, EntityError> => {
+  if (!Number.isInteger(decoded.fillRatio) || decoded.fillRatio <= 0 || decoded.fillRatio > 0xffff) return invariant(`J_HASH_LADDER_FILL_RATIO_INVALID:${String(decoded.fillRatio)}`);
+  const ladder = pullLadderHash(pull), cp = String(counterparty).toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(cp)) return invariant(`J_HASH_LADDER_COUNTERPARTY_INVALID:${counterparty}`);
+  return chain(existingRegistryRatios(h, cp, ladder, targetRole), ({ jb, confirmed, queued }): Result<{ readonly host: CjHost; readonly result: LadderRevealResult }, EntityError> => {
+    const seeded: CjHost = { ...h, jb };
+    if (queued.includes(decoded.fillRatio) || (!targetRole && confirmed.includes(decoded.fillRatio))) return ok({ host: seeded, result: "already-queued" as const });
+    const existing = [...confirmed, ...queued];
+    if (existing.length > 0) {
+      const current = Math.max(...existing);
+      if (!targetRole || decoded.fillRatio < current) return invariant(`J_HASH_LADDER_REGISTRATION_CONFLICT:${ladder}:${targetRole ? "target" : "source"}:${current}:${decoded.fillRatio}`);
+    }
+    const windowOpen: Result<boolean, EntityError> = targetRole ? ok(true) : map(sourceRevealWindow(seeded, cp), (w) => w === "open");
+    return chain(windowOpen, (open): Result<{ readonly host: CjHost; readonly result: LadderRevealResult }, EntityError> => {
+      if (!open) return ok({ host: seeded, result: "source-window-expired" as const });
+      const row: LadderRow = { counterpartyEntity: cp, targetRole, fullHash: pull.fullHash, partialRoot: pull.partialRoot, witness: pendingReveal(decoded) };
+      if (!ladderRoom(jb.batch, row)) {
+        return map(stashReveal(seeded, cp, pull, decoded, targetRole), (stashed) => ({
+          host: { ...stashed, jb: jb.sentBatch !== undefined && cjOps(jb.batch) > 0 ? { ...jb, autoBroadcastDraft: true } : jb }, result: "deferred-batch-pending" as const,
+        }));
+      }
+      return map(upsertLadder(jb, row), (next) => ({ host: { ...seeded, jb: next.sentBatch !== undefined ? { ...next, autoBroadcastDraft: true } : next }, result: "queued" as const }));
+    });
+  });
+};
+/** og flushDeferredHashLadderReveals: once no batch is in flight, every stashed witness (a Target one only under its dispute) re-enters the queue. */
+export const flushDeferredReveals = (h: CjHost, scoped?: string): Result<{ readonly host: CjHost; readonly flushed: number }, EntityError> => {
+  if (h.jb?.sentBatch !== undefined) return ok({ host: h, flushed: 0 });
+  const scope = scoped?.toLowerCase();
+  let host = h, flushed = 0;
+  for (const key of routeKeys(h)) {
+    const found = host.swaps?.get(key);
+    if (found === undefined) continue;
+    const src = found.pendingSourceRegistryReveal, tgt = found.pendingTargetRegistryReveal;
+    if (!(src && found.sourcePull) && !(tgt && found.targetPull && targetRevealLive(host, found))) continue;
+    if (src && found.sourcePull) {
+      const peer = routeLegPeer(host, found, false);
+      if (!peer.ok) return peer;
+      if (scope && peer.value !== scope) continue;
+      const { pendingSourceRegistryReveal: _p, ...cleared } = found;
+      const q = queueLadderReveal(cjPutRoute(host, key, cleared as CrossRoute), peer.value, found.sourcePull, src, false);
+      if (!q.ok) return q;
+      host = q.value.host;
+      if (q.value.result === "queued") flushed += 1;
+    }
+    const route = host.swaps?.get(key) ?? found;
+    if (tgt && route.targetPull && targetRevealLive(host, route)) {
+      const peer = routeLegPeer(host, route, true);
+      if (!peer.ok) return peer;
+      if (scope && peer.value !== scope) continue;
+      const { pendingTargetRegistryReveal: _p, ...cleared } = route;
+      const q = queueLadderReveal(cjPutRoute(host, key, cleared as CrossRoute), peer.value, route.targetPull, tgt, true);
+      if (!q.ok) return q;
+      host = q.value.host;
+      if (q.value.result === "queued") flushed += 1;
+    }
+  }
+  return ok({ host, flushed });
+};
+export type SourceClaim = { readonly routeId: string; readonly fillRatio: number; readonly result: LadderRevealResult };
+/** og queueSourceHubClaimRegistrationForRoute: the Source hub's committed ratio, revealed from its private ladder seed, unless the beneficiary window closed. */
+const sourceHubClaimForRoute = (h: CjHost, routeId: string, counterparty: string): Result<{ readonly host: CjHost; readonly claim?: SourceClaim | undefined }, EntityError> => {
+  const route = h.swaps?.get(routeId);
+  if (route === undefined) return invariant(`CROSS_J_SOURCE_CLAIM_ROUTE_MISSING:${routeId}`);
+  if (isCrossTerminal(route.status) || route.sourcePull === undefined) return ok({ host: h });
+  const self = lc(h.id);
+  if (lc(route.source.counterpartyEntityId) !== self || lc(route.source.entityId) !== counterparty.toLowerCase()) return ok({ host: h });
+  return chain(fatalCross(crossProofRatio(route)), (fillRatio) => {
+    if (fillRatio <= 0) return ok({ host: h });
+    const account = h.accounts.get(counterparty.toLowerCase());
+    if (account === undefined) return invariant(`CROSS_J_SOURCE_CLAIM_ACCOUNT_MISSING:${routeId}:${counterparty}`);
+    const active = account.active;
+    if (active?.observedOnChain) {
+      const deadline = Number(active.disputeStartTimestamp) + (lc(account.left) === self ? account.leftResponseSeconds : account.rightResponseSeconds);
+      if (Math.floor(Number(h.timestamp) / 1000) > deadline) return ok({ host: h, claim: { routeId, fillRatio, result: "source-window-expired" as const } });
+    }
+    const pull = route.sourcePull as CrossPullLeg;
+    return chain(fatalCross(crossPrivateSeed(h.runtimeSeed, route)), (seed) => chain(fatalCross(crossPullReveal(fillRatio, seed)), (reveal) => chain(fatalCross(decodeHashLadderBinary(reveal.binary)), (decoded) =>
+      map(queueLadderReveal(h, counterparty, pull, decoded, false), (q) => ({ host: q.host, claim: { routeId, fillRatio, result: q.result } })))));
+  });
+};
+/** og queueSourceHubClaimRegistrationsForAccount: every live route whose Source pull this hub holds against `counterparty` and the signed body carries. */
+export const sourceHubClaims = (h: CjHost, counterparty: string, signedBody: Pick<ProofBody, "transformers">, transformer: string): Result<{ readonly host: CjHost; readonly claims: readonly SourceClaim[] }, EntityError> => {
+  const self = lc(h.id), cp = counterparty.toLowerCase();
+  const ids = routesOf(h).filter((r) => !isCrossTerminal(r.status) && r.sourcePull !== undefined && r.source.counterpartyEntityId.toLowerCase() === self && r.source.entityId.toLowerCase() === cp).map((r) => r.orderId).sort(stableText);
+  let host = h;
+  const claims: SourceClaim[] = [];
+  for (const id of ids) {
+    const route = host.swaps?.get(id);
+    if (route?.sourcePull === undefined) continue;
+    const signed = fatalCross(findSignedProofBodyPull(signedBody, route.sourcePull, false, transformer));
+    if (!signed.ok) return signed;
+    if (signed.value === undefined) continue;
+    const c = sourceHubClaimForRoute(host, id, counterparty);
+    if (!c.ok) return c;
+    host = c.value.host;
+    if (c.value.claim !== undefined) claims.push(c.value.claim);
+  }
+  return ok({ host, claims });
+};
+/** og buildCrossJurisdictionEntityOutput batches, keyed by `${entity}\0${signer}` and emitted in stable text order. */
+const cjBatches = (batches: ReadonlyMap<string, { readonly entityId: string; readonly signerId: string; readonly txs: readonly EntityTx[] }>): readonly CjOut[] =>
+  [...batches.entries()].sort(([a], [b]) => stableText(a, b)).map(([, b]) => ({ kind: "cross", entityId: b.entityId.trim().toLowerCase(), signerId: b.signerId.trim().toLowerCase(), txs: b.txs }));
+/** og HashLadderRevealRegistered event data. */
+export type LadderRevealEvent = { readonly entity: string; readonly counterpartyEntity: string; readonly ladderHash: string; readonly fillRatio: number; readonly fullSecret: string; readonly reveals: readonly string[]; readonly targetRole: boolean; readonly revealedAt?: number | undefined };
+/**
+ * og queueCrossJurisdictionRevealPorts: a Source registry reveal by our Source hub against us ports, per live route, to the target user as a
+ * crossJurisdictionSalvage; the verified ratio must equal the event's.
+ */
+export const revealPorts = (cj: Cj, e: LadderRevealEvent, blockNumber: number): CjStep<number> => {
+  const h = cj.host, self = lc(h.id), ladder = lc(e.ladderHash);
+  if (!self || !ladder || e.fillRatio <= 0 || e.targetRole) return ok({ cj, value: 0 });
+  const binary = (e.fillRatio >= MAX_FILL ? e.fullSecret : `0x${e.fillRatio.toString(16).padStart(4, "0")}${e.reveals.map((r) => r.slice(2)).join("")}`).toLowerCase();
+  const batches = new Map<string, { readonly entityId: string; readonly signerId: string; readonly txs: readonly EntityTx[] }>();
+  for (const route of routesOf(h)) {
+    if (lc(route.source?.entityId) !== self || lc(route.source?.counterpartyEntityId) !== lc(e.entity) || lc(route.source.entityId) !== lc(e.counterpartyEntity)) continue;
+    if (route.sourcePull === undefined || route.targetPull === undefined || isCrossTerminal(route.status) || pullLadderHash(route.sourcePull) !== ladder) continue;
+    const verified = fatalCross(verifyHashLadderBinary({ fullHash: route.targetPull.fullHash, partialRoot: route.targetPull.partialRoot }, binary));
+    if (!verified.ok) return verified;
+    if (verified.value.fillRatio !== e.fillRatio) return invariant(`CROSS_J_REVEAL_PORT_RATIO_MISMATCH:${route.orderId}:event=${e.fillRatio}:verified=${verified.value.fillRatio}`);
+    const entityId = lc(route.target.counterpartyEntityId), signerId = lc(route.targetSignerId);
+    if (!entityId || !signerId) return invariant(`CROSS_J_REVEAL_PORT_LANE_MISSING:${route.orderId}`);
+    const key = `${entityId}\0${signerId}`, held = batches.get(key);
+    const tx = { type: "crossJurisdictionSalvage", data: { routeId: route.orderId, binary, fillRatio: e.fillRatio, sourceEntityId: route.source.entityId, sourceCounterpartyEntityId: route.source.counterpartyEntityId, observedAt: blockNumber } } as EntityTx;
+    batches.set(key, { entityId, signerId, txs: [...(held?.txs ?? []), tx] });
+  }
+  const next: Cj = { ...cj, outputs: [...cj.outputs, ...cjBatches(batches)] };
+  return ok({ cj: batches.size > 0 ? cjSay(next, `🌉 Cross-j reveal observed: porting ratio ${e.fillRatio} to ${batches.size} target lane(s)`) : next, value: batches.size });
+};
+/** og CrossJurisdictionDisputeRecovery. */
+export type CrossRecovery = { readonly requiredPullIds: readonly string[]; readonly resultsByPullId: Readonly<Record<string, string>> };
+export type TargetRecoveryPlan = { readonly recovery: CrossRecovery; readonly representativeRouteId: string };
+/** og selectTargetRecoveryRoutes: live routes where we are the target user against this target hub, restricted to our own frozen Pull ids. */
+const targetRecoveryRoutes = (h: CjHost, account: CjAccount, counterparty: string): Result<{ readonly routes: readonly CrossRoute[]; readonly frozen: readonly string[] }, EntityError> => {
+  const self = lc(h.id), cp = lc(counterparty);
+  const candidates = routesOf(h).filter((r) => lc(r.target.counterpartyEntityId) === self && lc(r.target.entityId) === cp && r.targetPull !== undefined && !isCrossTerminal(r.status))
+    .sort((a, b) => stableText(String(a.orderId || ""), String(b.orderId || "")));
+  if (candidates.length === 0) return ok({ routes: [], frozen: [] });
+  const side = self === lc(account.left) ? account.leftPullIds : self === lc(account.right) ? account.rightPullIds : undefined;
+  if (side === undefined) return invariant(`CROSS_J_TARGET_ACCOUNT_ROLE_MISMATCH:${h.id}`);
+  const frozen = [...new Set(side)], set = new Set(frozen);
+  return ok({ routes: candidates.filter((r) => set.has((r.targetPull as CrossPullLeg).pullId)), frozen });
+};
+/** og planCrossJurisdictionTargetRecovery: the frozen Target pulls whose Source result this dispute must wait for, with the supplied results. */
+export const planTargetRecovery = (h: CjHost, account: CjAccount, counterparty: string, supplied: Readonly<Record<string, string>>): Result<TargetRecoveryPlan | null, EntityError> =>
+  chain(targetRecoveryRoutes(h, account, counterparty), ({ routes, frozen }) => {
+    if (routes.length === 0) return ok(null);
+    const required = new Set(routes.map((r) => (r.targetPull as CrossPullLeg).pullId)), results: Record<string, string> = {};
+    for (const [pullId, result] of Object.entries(supplied)) {
+      if (!required.has(pullId)) return invariant(`CROSS_J_TARGET_RECOVERY_RESULT_UNBOUND:${pullId}`);
+      results[pullId] = String(result || "0").toLowerCase();
+    }
+    return ok({ representativeRouteId: (routes[0] as CrossRoute).orderId, recovery: { requiredPullIds: frozen.filter((id) => required.has(id)), resultsByPullId: results } });
+  });
+/** og refreshCrossJurisdictionTargetRecovery: re-plan, keeping only results still required. */
+export const refreshTargetRecovery = (h: CjHost, account: CjAccount, counterparty: string, current: CrossRecovery): Result<TargetRecoveryPlan | null, EntityError> =>
+  chain(targetRecoveryRoutes(h, account, counterparty), ({ routes }) => {
+    const required = new Set(routes.map((r) => (r.targetPull as CrossPullLeg).pullId));
+    return planTargetRecovery(h, account, counterparty, Object.fromEntries(Object.entries(current.resultsByPullId).filter(([id]) => required.has(id))));
+  });
+/** og siblingDisputeTargetForRoute: users fan out user to user, hubs hub to hub. */
+const siblingOf = (route: CrossRoute, self: string): { readonly entityId: string; readonly signerId: string } | null => {
+  const su = lc(route.source?.entityId), sh = lc(route.source?.counterpartyEntityId), th = lc(route.target?.entityId), tu = lc(route.target?.counterpartyEntityId);
+  const pick = (signer: unknown, entity: string): { readonly entityId: string; readonly signerId: string } | null => { const s = lc(signer); return s && entity ? { entityId: entity, signerId: s } : null; };
+  if (self === su) return pick(route.targetSignerId, tu);
+  if (self === tu) return pick(route.sourceSignerId, su);
+  if (self === sh) return pick(route.targetHubSignerId, th);
+  if (self === th) return pick(route.sourceHubSignerId, sh);
+  return null;
+};
+/** og routeTouchesDisputedAccount. */
+const routeTouches = (route: CrossRoute, self: string, cp: string): boolean => {
+  const su = lc(route.source?.entityId), sh = lc(route.source?.counterpartyEntityId), th = lc(route.target?.entityId), tu = lc(route.target?.counterpartyEntityId);
+  return (self === su && cp === sh) || (self === sh && cp === su) || (self === tu && cp === th) || (self === th && cp === tu);
+};
+/**
+ * og queueCrossJurisdictionSiblingDisputeFanout: every live route leg on the disputed Account asks its sibling to start its own clock
+ * (crossJurisdictionForceSiblingDispute); a raw pull-less intent is cancelled instead; any other pull-less or signer-less route halts.
+ */
+export const siblingFanout = (cj: Cj, counterparty: string, observedAt?: number): CjStep<number> => {
+  const self = lc(cj.host.id), cp = lc(counterparty);
+  if (!self || !cp) return ok({ cj, value: 0 });
+  let host = cj.host;
+  const batches = new Map<string, { readonly entityId: string; readonly signerId: string; readonly txs: readonly EntityTx[] }>();
+  for (const key of routeKeys(cj.host)) {
+    const route = host.swaps?.get(key);
+    if (route === undefined || isCrossTerminal(route.status) || !routeTouches(route, self, cp)) continue;
+    if (route.sourcePull === undefined || route.targetPull === undefined) {
+      if (route.status === "intent" && route.sourcePull === undefined && route.targetPull === undefined) {
+        const cancelled = transitionCrossStatus(route, "cancelled", Number(host.timestamp || 0));
+        if (!cancelled.ok) return invariant(`CROSS_J_ROUTE_TRANSITION_INVALID: route=${route.orderId} ${route.status || "intent"}->cancelled`);
+        host = cjPutRoute(host, key, cancelled.value);
+        continue;
+      }
+      return invariant(`CROSS_J_SIBLING_DISPUTE_PULLS_MISSING:${route.orderId}`);
+    }
+    const sibling = siblingOf(route, self);
+    if (sibling === null) return invariant(`CROSS_J_SIBLING_DISPUTE_SIGNER_MISSING:${route.orderId}:self=${self}`);
+    const k = `${sibling.entityId}\0${sibling.signerId}`, held = batches.get(k);
+    const tx = { type: "crossJurisdictionForceSiblingDispute", data: { routeId: route.orderId, observedCounterpartyEntityId: cp, ...(observedAt !== undefined ? { observedAt } : {}) } } as EntityTx;
+    batches.set(k, { entityId: sibling.entityId, signerId: sibling.signerId, txs: [...(held?.txs ?? []), tx] });
+  }
+  const next: Cj = { ...cj, host, outputs: [...cj.outputs, ...cjBatches(batches)] };
+  return ok({ cj: batches.size > 0 ? cjSay(next, `⚔️ Cross-j dispute observed vs ${cp.slice(-4)}: fanning out to ${batches.size} sibling lane(s)`) : next, value: batches.size });
+};
+/** og queueLocalJBatchBroadcast: one self j_broadcast for validators[0] when unsent work exists and none is already in this step's outputs. */
+const localJBroadcast = (cj: Cj): Result<{ readonly cj: Cj; readonly value: boolean }, EntityError> => {
+  const jb = cj.host.jb;
+  if (jb === undefined || jb.sentBatch !== undefined || !((jb.recoveryBatches ?? []).some((b) => cjOps(b) > 0) || cjOps(jb.batch) > 0)) return ok({ cj, value: false });
+  if (cj.outputs.some((o) => o.kind === "j_broadcast")) return ok({ cj, value: false });
+  const signerId = cj.host.validators[0];
+  if (!signerId) return invariant("J_BATCH_AUTO_BROADCAST_SIGNER_MISSING");
+  return ok({ cj: { ...cj, outputs: [...cj.outputs, { kind: "j_broadcast", signerId }] }, value: true });
+};
+/** The Entity's og helper view: routes, committed jBatchState, and every Account's sides, windows, activeDispute and frozen Pull ids. */
+const cjHostOf = (state: EntityState, replicas: Replicas, timestamp: bigint | number, runtimeSeed?: string): CjHost => ({
+  id: state.id, timestamp: Number(timestamp), validators: rootConfig(state).validators, ...opt("runtimeSeed", runtimeSeed), ...opt("swaps", state.crossJurisdictionSwaps),
+  ...opt("jb", state.committed["jBatchState"] as unknown as CjJBatch | undefined),
+  accounts: new Map([...replicas].map(([peer, child]): [string, CjAccount] => {
+    const active = activeOf(child), plan = mapErr(committedView(child.state), () => undefined), pulls = plan.ok ? disputeArgumentPlan(plan.value) : { leftPullIds: [], rightPullIds: [] };
+    return [lc(peer), { left: child.state.account.id.left, right: child.state.account.id.right, leftResponseSeconds: child.state.terms.disputeConfig.leftResponseSeconds, rightResponseSeconds: child.state.terms.disputeConfig.rightResponseSeconds,
+      ...(active === undefined ? {} : { active: { observedOnChain: active.observedOnChain, ...opt("disputeStartTimestamp", "disputeStartTimestamp" in active ? active.disputeStartTimestamp : undefined) } }), leftPullIds: pulls.leftPullIds, rightPullIds: pulls.rightPullIds }];
+  })),
+});
+/** A Cj over the Draft's Entity, fresh messages and outputs. */
+const cjOf = (d: Draft, timestamp: bigint | number, runtimeSeed?: string): Cj => ({ host: cjHostOf(d.state, d.accountReplicas, timestamp, runtimeSeed), messages: [], outputs: [] });
+/** Write a Cj back into the Draft: routes, jBatchState, messages (og addMessage), then outputs (self j_broadcast, cross-j runtimeOutput). */
+const cjInto = (d: Draft, cj: Cj, timestamp: bigint): Draft => {
+  const h = cj.host, state: EntityState = { ...d.state, ...opt("crossJurisdictionSwaps", h.swaps), committed: h.jb === undefined ? d.state.committed : { ...d.state.committed, jBatchState: h.jb as unknown as Binary } };
+  const outputs = cj.outputs.map((o): EntityOutput => o.kind === "j_broadcast"
+    ? { to: state.id, signerId: o.signerId as Address, input: { kind: "txs", timestamp, txs: [{ type: "j_broadcast", data: {} }] } }
+    : { to: o.entityId as EntityId, signerId: o.signerId as Address, input: { kind: "txs", timestamp, txs: [{ type: "runtimeOutput", data: { protocol: "cross-j", sourceEntityId: lower(state.id), sourceSignerId: "", targetEntityId: o.entityId, entityTxs: o.txs } }] } });
+  return { ...d, state, outputs: [...d.outputs, ...outputs], events: [...(d.events ?? []), ...cj.messages.map(status)] };
+};
+// ---- og entity/tx/handlers/cross-j/{salvage,force-sibling-dispute}.ts, htlc/direct.ts handleResolveHtlcLockEntityTx, paybook/lifecycle.ts ----
+type SalvageData = Extract<EntityTx, { type: "crossJurisdictionSalvage" }>["data"];
+/** og handleCrossJurisdictionSalvageEntityTx: the Target user re-registers the Source chain's verified hash-ladder reveal on its own chain. */
+const crossSalvage = (d: Draft, x: SalvageData, ctx: FoldContext): Result<Draft, EntityError> => {
+  const { routeId, binary, fillRatio } = x, say = (m: string): Result<Draft, EntityError> => ok({ ...d, events: [...(d.events ?? []), status(m)] });
+  const claimed = Math.floor(Number(fillRatio) || 0);
+  if (!binary || claimed <= 0) return say(`🌉 Cross-j reveal port ignored for ${routeId}: invalid result`);
+  const route = d.state.crossJurisdictionSwaps?.get(routeId);
+  if (route === undefined || lc(route.target?.counterpartyEntityId) !== lc(d.state.id)) return say(`🌉 Cross-j reveal port ${routeId} skipped: route not owned here`);
+  const pull = route.targetPull;
+  if (pull === undefined) return halt(`CROSS_J_REVEAL_PORT_TARGET_PULL_MISSING:${routeId}:${d.state.id}`);
+  if (isCrossTerminal(route.status)) return ok(d);
+  if (binary === "0x") return say(`🌉 Cross-j reveal port ignored for ${routeId}: empty result`);
+  const verified = verifyHashLadderBinary({ fullHash: pull.fullHash, partialRoot: pull.partialRoot }, binary);
+  if (!verified.ok) return say(`❌ Cross-j reveal port ${routeId} invalid pull binary: ${verified.error.reason}`);
+  const ratio = verified.value.fillRatio;
+  if (ratio <= 0) return say(`🌉 Cross-j reveal port ignored for ${routeId}: zero fill`);
+  if (ratio !== claimed) return say(`❌ Cross-j reveal port ${routeId} fill mismatch: claimed ${claimed}, verified ${ratio}`);
+  const cj = cjOf(d, ctx.timestamp, ctx.runtimeSeed), decoded = verified.value;
+  if (cj.host.accounts.get(lc(route.target.entityId))?.active === undefined)
+    return map(stashReveal(cj.host, route.target.entityId, pull, decoded, true), (host) => cjInto(d, cjSay(cjHost(cj, host), `⏳ Cross-j reveal port ${routeId}: waiting for the target dispute clock`), ctx.timestamp));
+  return chain(queueLadderReveal(cj.host, route.target.entityId, pull, decoded, true), ({ host, result }): Result<Draft, EntityError> => {
+    const sent = host.jb?.sentBatch !== undefined, signer = cj.host.validators[0];
+    const broadcast = (c: Cj): Result<Cj, EntityError> => (signer ? ok({ ...c, outputs: [...c.outputs, { kind: "j_broadcast", signerId: signer }] }) : halt(`CROSS_J_REVEAL_PORT_SIGNER_MISSING:${routeId}`));
+    const base = cjHost(cj, host);
+    if (result === "queued")
+      return map(sent ? ok(base) : broadcast(base), (c) => cjInto(d, cjSay(c, sent ? `⏳ Cross-j reveal port ${routeId}: queued behind the pending jBatch` : `🌉 Cross-j reveal port ${routeId}: registering ratio ${ratio} on the target chain`), ctx.timestamp));
+    if (result === "deferred-batch-pending")
+      return map(!sent && host.jb !== undefined && cjOps(host.jb.batch) > 0 ? broadcast(base) : ok(base), (c) => cjInto(d, cjSay(c, `⏳ Cross-j reveal port ${routeId}: deferred until the pending jBatch is acknowledged`), ctx.timestamp));
+    return ok(cjInto(d, base, ctx.timestamp));
+  });
+};
+type ForceSiblingData = Extract<EntityTx, { type: "crossJurisdictionForceSiblingDispute" }>["data"];
+/** og localDisputeCounterparty: the Account this route participant disputes. */
+const siblingLocalCounterparty = (route: CrossRoute, self: string): string | null =>
+  lc(route.source.entityId) === self ? lc(route.source.counterpartyEntityId) : lc(route.source.counterpartyEntityId) === self ? lc(route.source.entityId)
+    : lc(route.target.counterpartyEntityId) === self ? lc(route.target.entityId) : lc(route.target.entityId) === self ? lc(route.target.counterpartyEntityId) : null;
+/** og observedIsOtherLegParticipant: the observed peer sits on the leg this Entity is not on. */
+const observedOtherLeg = (route: CrossRoute, self: string, observed: string): boolean => {
+  if (!observed || observed === self) return false;
+  const source = [lc(route.source.entityId), lc(route.source.counterpartyEntityId)], target = [lc(route.target.entityId), lc(route.target.counterpartyEntityId)];
+  const onSource = source.includes(self), onTarget = target.includes(self);
+  return onSource && !onTarget ? target.includes(observed) : onTarget && !onSource ? source.includes(observed) : false;
+};
+/** og handleCrossJurisdictionForceSiblingDisputeEntityTx: fail loud on a broken route mirror, then prepare the sibling Account's dispute. */
+const forceSiblingDispute = (d: Draft, x: ForceSiblingData, ctx: FoldContext): Result<Draft, EntityError> => {
+  const { routeId } = x, self = lc(d.state.id), route = d.state.crossJurisdictionSwaps?.get(routeId);
+  if (route === undefined) return halt(`CROSS_J_SIBLING_DISPUTE_ROUTE_MISSING:${routeId}`);
+  if (!route.sourcePull || !route.targetPull) return halt(`CROSS_J_SIBLING_DISPUTE_PULLS_MISSING:${routeId}`);
+  const local = siblingLocalCounterparty(route, self);
+  if (!local) return halt(`CROSS_J_SIBLING_DISPUTE_NOT_PARTICIPANT:${routeId}:self=${self}`);
+  const observed = lc(x.observedCounterpartyEntityId || "");
+  if (!observedOtherLeg(route, self, observed)) return halt(`CROSS_J_SIBLING_DISPUTE_OBSERVED_LEG_INVALID:${routeId}:observed=${observed}:self=${self}:local=${local}`);
+  return prepareDispute(d, { counterpartyEntityId: local as EntityId, description: `sibling-dispute:${routeId}`, crossJurisdictionRouteId: routeId }, ctx);
+};
+/** og persistVerifiedPaymentSecret: the canonical payment id, the entry's secret / token / amount / endpoint agree, then the secret and our side's endpoint. */
+export const persistVerifiedPaymentSecret = (paybook: Paybook, selfIsLeft: boolean, counterparty: string, lock: Pick<HtlcLock, "lockId" | "hashlock" | "tokenId" | "amount" | "senderIsLeft">, secret: string, timestamp: number): Result<Paybook, EntityError> => {
+  if (lock.lockId.toLowerCase() !== lock.hashlock.toLowerCase()) return invariant(`PAYBOOK_LOCK_ID_MUST_EQUAL_HASHLOCK:${lock.lockId}:${lock.hashlock}`);
+  const entry: PaybookEntry = paybook.entries.get(lock.hashlock) ?? { hashlock: lock.hashlock, tokenId: Number(lock.tokenId), amount: lock.amount, createdTimestamp: timestamp };
+  if (entry.secret && entry.secret.toLowerCase() !== secret.toLowerCase()) return invariant(`PAYBOOK_SECRET_CONFLICT:${lock.hashlock}`);
+  if (entry.tokenId !== undefined && entry.tokenId !== Number(lock.tokenId)) return invariant(`PAYBOOK_TOKEN_CONFLICT:${lock.hashlock}`);
+  if (entry.amount !== undefined && entry.amount !== lock.amount) return invariant(`PAYBOOK_AMOUNT_CONFLICT:${lock.hashlock}`);
+  const localSent = lock.senderIsLeft === selfIsLeft, endpoint = localSent ? entry.outboundEntity : entry.inboundEntity;
+  if (endpoint && endpoint.toLowerCase() !== counterparty.toLowerCase()) return invariant(`PAYBOOK_ENTITY_CONFLICT:${lock.hashlock}`);
+  const next: PaybookEntry = localSent ? { ...entry, secret, outboundEntity: counterparty } : { ...entry, secret, inboundEntity: counterparty };
+  return ok({ ...paybook, entries: mapSet(paybook.entries, lock.hashlock, next) });
+};
+type ResolveHtlcData = Extract<EntityTx, { type: "resolveHtlcLock" }>["data"];
+/** og handleResolveHtlcLockEntityTx: a verified preimage for one of the Account's locks; persist it, queue the secret resolve, wake the proposer. */
+const resolveHtlcLockTx = (d: Draft, x: ResolveHtlcData, ctx: FoldContext): Result<Draft, EntityError> => {
+  const { counterpartyEntityId, lockId, secret } = x, peer = lc(counterpartyEntityId) as EntityId, child = d.accountReplicas.get(peer);
+  if (child === undefined) return invariant(`HTLC_RESOLVE_ACCOUNT_MISSING:${counterpartyEntityId}`);
+  if (!/^0x[0-9a-fA-F]{64}$/.test(lockId)) return invariant(`HTLC_RESOLVE_LOCK_ID_INVALID:${lockId}`);
+  const expected = hashHtlcSecret(secret);
+  if (expected === null) return invariant("HTLC_RESOLVE_SECRET_INVALID");
+  const lock = child.state.locks.get(lockId);
+  if (lock === undefined) return invariant(`HTLC_RESOLVE_LOCK_MISSING:${peer}:${lockId}`);
+  if (lock.hashlock !== expected) return invariant(`HTLC_RESOLVE_HASHLOCK_MISMATCH:${lockId}`);
+  return map(persistVerifiedPaymentSecret(d.state.paybook ?? EMPTY_PAYBOOK, sameHex(child.state.account.id.left, d.state.id), peer, lock, secret, Number(ctx.timestamp)), (paybook) => {
+    const queued = queueReturned({ ...d, state: { ...d.state, paybook } }, { accountId: peer, tx: { type: "htlc_resolve", lockId, outcome: "secret", secret } });
+    return { ...queued, events: [...(queued.events ?? []), status(`🔓 HTLC resolve queued for ${peer}`)], outputs: [...queued.outputs, ...(rootConfig(d.state).validators[0] ? [wake(d.state, ctx.timestamp)] : [])], touched: [...(queued.touched ?? []), peer] };
+  });
 };
 // ---- og entity/scheduler/{index,types,hook-state,derived-deadlines,due-hooks,dispute-deadline-hook}.ts, scheduler/wake, runtime/mempool/scheduled-wake.ts ----
 /** og ScheduledHook (scheduler/types.ts): a deterministic one-shot hook, replaced by id, fired at the Entity's logical time (the frame timestamp). */
@@ -7545,6 +7997,7 @@ const isCollectiveTx = (tx: EntityTx): boolean => !isProtocolTx(tx) && !isIndivi
  */
 const laneRefusal = (tx: EntityTx, lane: TxLane): EntityError | undefined => {
   if (isProtocolTx(tx)) return undefined;
+  if (tx.type === "crossJurisdictionSalvage" && lane !== "runtime") return { _tag: "entity_invariant", reason: "CROSS_J_SALVAGE_RUNTIME_OUTPUT_REQUIRED" };
   if (lane === "command" && !isIndividualTx(tx)) return { _tag: "entity_invariant", reason: `ENTITY_COMMAND_COLLECTIVE_ACTION_REQUIRES_PROPOSAL:${tx.type}` };
   if (lane === "collective" && !isCollectiveTx(tx)) return { _tag: "entity_invariant", reason: `ENTITY_COLLECTIVE_ACTION_TX_FORBIDDEN:${tx.type}` };
   if (lane === "top" && (tx.type === "propose" || tx.type === "vote")) return { _tag: "entity_invariant", reason: `ENTITY_COMMAND_REQUIRED:${tx.type}` };
@@ -9073,6 +9526,39 @@ export const runtimeOutputAuthError = (state: EntityState, o: RuntimeOutputData)
       default: return undefined;
     }
   };
+  /** og assertRuntimeCrossJRecoveryAuthority (salvage, cross-j HTLC resolve, assertRuntimeCrossJSourceDispute); undefined for the rest. */
+  const recoveryAuthority = (tx: EntityTx): string | null | undefined => {
+    switch (tx.type) {
+      case "crossJurisdictionSalvage": {
+        const r = semanticRouteError(state, tx.data.routeId);
+        if ("error" in r) return r.error;
+        if (trimLower(tx.data.sourceEntityId) !== trimLower(r.route.source.entityId)) return `RUNTIME_OUTPUT_SALVAGE_SOURCE_ENTITY_MISMATCH:${tx.data.sourceEntityId}:${r.route.source.entityId}`;
+        if (trimLower(tx.data.sourceCounterpartyEntityId) !== trimLower(r.route.source.counterpartyEntityId)) return `RUNTIME_OUTPUT_SALVAGE_SOURCE_COUNTERPARTY_MISMATCH:${tx.data.sourceCounterpartyEntityId}:${r.route.source.counterpartyEntityId}`;
+        if (target === trimLower(r.route.target.counterpartyEntityId)) return srcOf(tx.type, [r.route.source.entityId]) ?? tgtOf(tx.type, r.route.target.counterpartyEntityId);
+        if (target === trimLower(r.route.source.entityId)) return srcOf(tx.type, [r.route.target.counterpartyEntityId]) ?? tgtOf(tx.type, r.route.source.entityId);
+        return `RUNTIME_OUTPUT_SALVAGE_TARGET_INVALID:${target}`;
+      }
+      case "resolveHtlcLock": {
+        const routeId = String(tx.data.crossJurisdictionRouteId ?? "");
+        if (!routeId) return "RUNTIME_OUTPUT_CROSS_J_HTLC_ROUTE_REQUIRED";
+        const r = semanticRouteError(state, routeId);
+        if ("error" in r) return r.error;
+        return srcOf(tx.type, [r.route.source.entityId]) ?? tgtOf(tx.type, r.route.target.counterpartyEntityId)
+          ?? (trimLower(tx.data.counterpartyEntityId) !== trimLower(r.route.target.entityId) ? `RUNTIME_OUTPUT_CROSS_J_HTLC_COUNTERPARTY_MISMATCH:${routeId}` : null);
+      }
+      case "disputeStart": {
+        const routeId = String(tx.data.crossJurisdictionRouteId ?? "");
+        if (!routeId) return "RUNTIME_OUTPUT_CROSS_J_DISPUTE_ROUTE_REQUIRED";
+        const r = semanticRouteError(state, routeId);
+        if ("error" in r) return r.error;
+        if (Object.keys(tx.data).some((k) => k !== "counterpartyEntityId" && k !== "crossJurisdictionRouteId")) return "RUNTIME_OUTPUT_CROSS_J_DISPUTE_DATA_FORBIDDEN";
+        if (isCrossTerminal(r.route.status) || !r.route.targetPull) return `RUNTIME_OUTPUT_CROSS_J_DISPUTE_ROUTE_INACTIVE:${r.route.orderId}:${r.route.status}`;
+        if (trimLower(tx.data.counterpartyEntityId) !== trimLower(r.route.source.counterpartyEntityId)) return `RUNTIME_OUTPUT_CROSS_J_DISPUTE_COUNTERPARTY_MISMATCH:${tx.data.counterpartyEntityId}:${r.route.source.counterpartyEntityId}`;
+        return srcOf(tx.type, [r.route.target.counterpartyEntityId]) ?? tgtOf(tx.type, r.route.source.entityId);
+      }
+      default: return undefined;
+    }
+  };
   // og assertSelfRuntimeContinuations
   if (source === target && o.entityTxs.every((tx) => SELF_CONTINUATIONS.has(tx.type))) {
     const board = new Set(rootConfig(state).validators);
@@ -9093,7 +9579,7 @@ export const runtimeOutputAuthError = (state: EntityState, o: RuntimeOutputData)
     if (isProtocolTx(tx)) return `RUNTIME_OUTPUT_NESTED_PROTOCOL_TX_FORBIDDEN:${tx.type}`;
     // og runtimeOutputRouteId / runtimeOutputSemanticRoute
     const routeId = tx.type === "crossJurisdictionFillNotice" || tx.type === "removeCrossJurisdictionBookOrder" || tx.type === "requestCrossJurisdictionClear" ? tx.data.orderId
-      : tx.type === "disputeStart" ? tx.data.crossJurisdictionRouteId : undefined;
+      : tx.type === "crossJurisdictionSalvage" ? tx.data.routeId : tx.type === "resolveHtlcLock" || tx.type === "disputeStart" ? tx.data.crossJurisdictionRouteId : undefined;
     const route = routeId ? state.crossJurisdictionSwaps?.get(routeId)
       : "data" in tx && tx.data !== null && typeof tx.data === "object" && "route" in tx.data ? (tx.data as { readonly route?: CrossRoute }).route : undefined;
     if (route === undefined || typeof route !== "object" || !isCrossRouteParticipant(route, source) || !isCrossRouteParticipant(route, target)) return `RUNTIME_OUTPUT_NON_SIBLING_FORBIDDEN:${tx.type}:${source}:${target}`;
@@ -9101,6 +9587,8 @@ export const runtimeOutputAuthError = (state: EntityState, o: RuntimeOutputData)
     if (!expected || expected !== signer) return `RUNTIME_OUTPUT_SOURCE_SIGNER_MISMATCH:${source}:${signer}:${expected || "missing"}`;
     const book = bookAuthority(tx);
     if (book !== undefined) { if (book) return book; continue; }
+    const recovery = recoveryAuthority(tx);
+    if (recovery !== undefined) { if (recovery) return recovery; continue; }
     if (tx.type === "prepareCrossJurisdictionSwap") {
       const e = srcOf(tx.type, [route.source.entityId]), want = trimLower(route.source.counterpartyEntityId);
       if (e) return e;
@@ -9259,6 +9747,9 @@ const foldTx = (state: EntityState, replicas: Replicas, tx: EntityTx, ctx: FoldC
     }),
     prepareDispute: (x) => prepareDispute(skip, x.data, ctx),
     disputeFinalize: (x) => finalizeDispute(skip, x.data, ctx),
+    crossJurisdictionSalvage: (x) => crossSalvage(skip, x.data, ctx),
+    crossJurisdictionForceSiblingDispute: (x) => forceSiblingDispute(skip, x.data, ctx),
+    resolveHtlcLock: (x) => resolveHtlcLockTx(skip, x.data, ctx),
     scheduledWake: (x) => foldWake(state, replicas, x.data, ctx),
     // og handleProcessHtlcTimeoutsEntityTx: each expired lock's timeout resolve through og applyLocalAccountEffects
     processHtlcTimeouts: (x) => ok((x.data.expiredLocks ?? []).reduce((d, l) => queueReturned(d, { accountId: l.accountId, tx: { type: "htlc_resolve", lockId: l.lockId, outcome: "error", reason: "timeout" } }), skip)),
@@ -9675,7 +10166,7 @@ const startProposal = (queued: OpenEntity, runtimeTimestamp: bigint, ctx: Entity
   // og materializeHtlcPreparedInfraContext: the proposer decrypts every inbound onion layer against the pre-frame state; validators replay the same bytes.
   const inbound = { state: queued.state, replicas: queued.accountReplicas, timestamp: Number(timestamp), publicKey: String(queued.state.committed["entityEncryptionPublicKey"] ?? ""), privateKey: ctx.htlc?.encryptionPrivateKey };
   return chain(htlcFrameTxs(txs) ? inboundHtlcEntries({ ...inbound, online: onlineObserver(ctx.htlc).online }, txs) : ok([]), (entries) =>
-  chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("jReplicas", ctx.jReplicas) }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
+  chain(foldTxs(queued.state, queued.accountReplicas, txs, { verify: ctx.verify, timestamp, htlc: { ...EMPTY_HTLC_INFRA, originated: prepared.originated, entries }, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("jReplicas", ctx.jReplicas), ...opt("runtimeSeed", ctx.runtimeSeed) }), ({ draft, included, evicted }) => chain(frameHtlcInfra(ctx.htlc, inbound, prepared.originated, included), (infra) => {
     const pool = withoutTxs(queued.mempool, [...prepared.refused.keys(), ...evicted]);
     return chain(buildFrame(queued, leader, leaderState, timestamp, included, draft, infra), (candidate) => chain(signManifest(candidate.frame.hashesToSign, queued.signerId, ctx, candidate.draft.state), (own) => chain(hashEntityFrame(candidate.frame), (frameHash): Result<EntityApply<OpenEntity | ProposedEntity>, EntityError> => {
       const proposed: ProposedEntity = { ...queued, _tag: "proposed", mempool: pool, ...candidate, signatures: new Map([[self, own]]) };
@@ -9711,7 +10202,7 @@ const replayFrame = (r: EntityEnv, frame: EntityFrame, frameHash: EntityFrameHas
   if (frame.timestamp < r.state.timestamp) return err({ _tag: "frame_timestamp_regression", timestamp: frame.timestamp });
   // og assertHtlcPreparedInfraContext: validators check the committed origins against public facts, never recreating proposer entropy.
   return chain(frameInfraOf(frame), (infra) => chain(assertInboundEntries(r, frame, infra, ctx), () => chain(assertOriginated(originView(r.state, r.accountReplicas, frame.timestamp), infra, frame.txs), () =>
-    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("jReplicas", ctx.jReplicas) }), ({ draft, evicted }) => {
+    chain(foldTxs(r.state, r.accountReplicas, frame.txs, { verify: ctx.verify, timestamp: frame.timestamp, htlc: infra, ...opt("activeJurisdiction", ctx.activeJurisdiction), ...opt("jReplicas", ctx.jReplicas), ...opt("runtimeSeed", ctx.runtimeSeed) }), ({ draft, evicted }) => {
       if (evicted.length > 0) return err({ _tag: "local_manifest_mismatch" });
       return chain(buildFrame(r, frame.leader, committedLeaderFor(r.state, frame), frame.timestamp, frame.txs, draft, infra), (candidate) => chain(hashEntityFrame(candidate.frame), (local) =>
         local !== frameHash || canon(candidate.frame.hashesToSign) !== canon(frame.hashesToSign) ? err({ _tag: "local_manifest_mismatch" }) : ok({ ...candidate, frame })));

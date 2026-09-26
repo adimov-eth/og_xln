@@ -12,6 +12,13 @@ import { buildDisputeArgumentsFromState } from "../../core/protocol/dispute/argu
 import { collectKnownDisputeSecretsForState } from "../../core/entity/dispute-arguments.ts";
 import { decodeDisputeStarterInitialSecrets } from "../../core/entity/tx/j-events-htlc/index.ts";
 import { ethers } from "ethers";
+import {
+  applyCrossFill, countDeferredReveals, crossPrivateSeed, crossPullReveal, decodeHashLadderBinary, flushDeferredReveals, initJBatch, prepareCrossRoute, queueLadderReveal, stableJson,
+  type CjAccount, type CjHost, type CjJBatch, type CrossRoute, type EntityError, type EntityId, type Result,
+} from "../xln.ts";
+import * as ogCrossIndex from "../../core/extensions/cross-j/index.ts";
+import { ensureEntityCollectionCandidate } from "../../core/entity/state/persistent-collection-map.ts";
+import { countDeferredHashLadderReveals, flushDeferredHashLadderReveals, queueHashLadderRevealRegistration } from "../../core/entity/tx/j-events-htlc/index.ts";
 
 let seed = 29;
 const rng = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -158,4 +165,119 @@ describe("disputes-final: dispute arguments (og protocol/dispute/arguments.ts, e
       expect([i, starterSecrets(blob)]).toEqual([i, decodeDisputeStarterInitialSecrets(blob)]);
     }
   });
+});
+
+// ---- cross-j recovery: the hash-ladder reveal queue (og entity/tx/j-events-htlc/index.ts) ----
+const xrng = (seed: number) => () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+type Rand = () => number;
+const xint = (r: Rand, n: number): number => Math.floor(r() * n);
+const xpick = <T,>(r: Rand, xs: readonly T[]): T => xs[xint(r, xs.length)] as T;
+type Out<T> = { ok: true; value: T } | { ok: false; message: string };
+const ogRun = <T,>(f: () => T): Out<T> => { try { return { ok: true, value: f() }; } catch (e) { return { ok: false, message: String((e as Error).message) }; } };
+const rwRun = <T,>(r: Result<T, EntityError>): Out<T> => (r.ok ? { ok: true, value: r.value } : { ok: false, message: r.error._tag === "entity_invariant" ? r.error.reason : r.error._tag });
+const same = (label: string, og: Out<unknown>, rw: Out<unknown>): void => { expect(`${label}:${stableJson(rw)}`).toBe(`${label}:${stableJson(og)}`); };
+const bump = (kinds: Map<string, number>, k: string) => kinds.set(k, (kinds.get(k) ?? 0) + 1);
+const expectKinds = (kinds: Map<string, number>, want: readonly string[]) => { for (const k of want) expect([k, [...kinds.keys()].some((x) => x.startsWith(k)), [...kinds].join(",")]).toEqual([k, true, [...kinds].join(",")]); };
+const W = (b: string) => ("0x" + b.repeat(32)) as EntityId;
+const U1 = W("01"), H1 = W("02"), H2 = W("03"), U2 = W("04");
+const XSIG: Readonly<Record<string, string>> = { [U1]: "0x" + "a1".repeat(20), [H1]: "0x" + "a2".repeat(20), [H2]: "0x" + "a3".repeat(20), [U2]: "0x" + "a4".repeat(20) };
+const XPEER: Readonly<Record<string, EntityId>> = { [U1]: H1, [H1]: U1, [H2]: U2, [U2]: H2 };
+const T0 = 1_700_000_050_000, CLOCK60 = { leftResponseSeconds: 60, rightResponseSeconds: 60 }, RUNTIME_SEED = "0x" + "5e".repeat(32);
+const Z32 = "0x" + "00".repeat(32);
+const baseRoute = (r: Rand, n: number): CrossRoute => ({
+  orderId: `C${n}`, makerEntityId: U1, hubEntityId: H1,
+  source: { jurisdiction: `stack:1:0x${"11".repeat(20)}`, entityId: U1, counterpartyEntityId: H1, tokenId: 1, amount: BigInt(1 + xint(r, 1e9)) },
+  target: { jurisdiction: `stack:31337:0x${"ab".repeat(20)}`, entityId: H2, counterpartyEntityId: U2, tokenId: 2, amount: BigInt(1 + xint(r, 1e12)) },
+  sourceDisputeConfig: CLOCK60, targetDisputeConfig: CLOCK60, status: "intent", createdAt: T0 - 1000, updatedAt: T0 - 1000, expiresAt: T0 + 60_000,
+  sourceSignerId: XSIG[U1], sourceHubSignerId: XSIG[H1], targetHubSignerId: XSIG[H2], targetSignerId: XSIG[U2],
+});
+const decodedAt = (r: Rand, ratio: number) => {
+  if (ratio <= 0 || ratio > 65_535 || !Number.isInteger(ratio)) return { fillRatio: ratio };
+  const reveal = crossPullReveal(ratio, "0x" + xint(r, 1e9).toString(16).padStart(64, "0"));
+  return reveal.ok ? unwrapOk(decodeHashLadderBinary(reveal.value.binary)) : { fillRatio: ratio };
+};
+const unwrapOk = <T,>(x: { ok: true; value: T } | { ok: false }): T => { if (!x.ok) throw new Error("unexpected"); return x.value; };
+const pendingOf = (r: Rand) => { const d = decodedAt(r, xpick(r, [1 + xint(r, 65_534), 65_535, 100, 200])) as { fillRatio: number; fullSecret?: string; reveals?: readonly string[] }; return { fillRatio: d.fillRatio, fullSecret: d.fullSecret ?? Z32, reveals: (d.reveals ?? [Z32, Z32, Z32, Z32]) as never }; };
+/** A prepared route with random status, committed fill, confirmed registry ratios and stashed reveals. */
+const recoveryRoute = (r: Rand, n: number): CrossRoute => {
+  let c = unwrapOk(prepareCrossRoute(baseRoute(r, n), { runtimeSeed: RUNTIME_SEED, now: T0 - 500 }));
+  if (xint(r, 3) === 0) { const num = BigInt(1 + xint(r, 999)), next = applyCrossFill(c, { cumulativeFillRatio: Number((num * 65_535n) / 1000n), fillNumerator: num, fillDenominator: 1000n }, T0 - 100); if (next.ok) c = next.value; }
+  return {
+    ...c, status: xpick(r, ["resting", "partially_filled", "clear_requested", "settled", "cancelled"] as const),
+    ...(xint(r, 5) === 0 ? { sourceRegistryFillRatio: xpick(r, [100, 200, 65_535]) } : {}), ...(xint(r, 5) === 0 ? { targetRegistryFillRatio: xpick(r, [100, 200, 65_535]) } : {}),
+    ...(xint(r, 4) === 0 ? { pendingSourceRegistryReveal: pendingOf(r) } : {}), ...(xint(r, 4) === 0 ? { pendingTargetRegistryReveal: pendingOf(r) } : {}),
+  };
+};
+const otherRows = (r: Rand, n: number): readonly unknown[] => Array.from({ length: n }, () => ({ transformer: "0x" + "cc".repeat(20), secret: "0x" + xint(r, 1e9).toString(16).padStart(64, "0") }));
+const ladderRow = (r: Rand, routes: readonly CrossRoute[], self: string) => {
+  const route = xpick(r, routes), targetRole = r() < 0.5, pull = targetRole ? route.targetPull! : route.sourcePull!, leg = targetRole ? route.target : route.source;
+  const cp = leg.entityId.toLowerCase() === self ? leg.counterpartyEntityId : leg.entityId;
+  return { counterpartyEntity: cp.toLowerCase(), targetRole, fullHash: pull.fullHash, partialRoot: pull.partialRoot, witness: pendingOf(r) };
+};
+const jbOf = (r: Rand, routes: readonly CrossRoute[], self: string): CjJBatch | undefined => {
+  if (xint(r, 6) === 0) return undefined;
+  const base = initJBatch() as unknown as { batch: Record<string, unknown[]> } & CjJBatch;
+  const fill = (): Record<string, unknown[]> => ({ ...base.batch, revealSecrets: [...otherRows(r, xpick(r, [0, 0, 0, 5, 49, 31]))] as never, hashLadderRegistrations: Array.from({ length: xpick(r, [0, 0, 1, 2, 32]) }, () => ladderRow(r, routes, self)) as never });
+  const batch = fill();
+  return { ...base, batch: batch as never, ...(xint(r, 3) === 0 ? { sentBatch: { batch: fill() as never, entityNonce: 3 } } : {}), ...(xint(r, 6) === 0 ? { recoveryBatches: [fill() as never] } : {}), status: "accumulating" } as unknown as CjJBatch;
+};
+const hostOf = (r: Rand, n: number, self: EntityId): { host: CjHost; routes: CrossRoute[] } => {
+  const routes = Array.from({ length: 1 + xint(r, 4) }, (_, k) => recoveryRoute(r, n * 10 + k));
+  const swaps = new Map([...routes].sort((a, b) => (a.orderId < b.orderId ? -1 : 1)).map((x) => [x.orderId, x] as const));
+  const nowSec = Math.floor(T0 / 1000);
+  const accountOf = (peer: string): CjAccount => {
+    const k = xint(r, 4), left = self < peer ? self : peer, right = self < peer ? peer : self;
+    return { left, right, leftResponseSeconds: xpick(r, [60, 10]), rightResponseSeconds: xpick(r, [60, 10]), leftPullIds: [], rightPullIds: [],
+      ...(k === 0 ? {} : k === 1 ? { active: { observedOnChain: false } } : { active: { observedOnChain: true, disputeStartTimestamp: nowSec - xpick(r, [0, 10, 30, 59, 60, 61, 200, -5]) } }) };
+  };
+  const peers = [...new Set([XPEER[self]!, ...(xint(r, 3) === 0 ? [xpick(r, [U1, H1, H2, U2].filter((x) => x !== self))] : [])])];
+  const accounts = new Map(peers.filter(() => xint(r, 10) > 0).map((p) => [p.toLowerCase(), accountOf(p)] as const));
+  const jb = jbOf(r, routes, self.toLowerCase());
+  return { host: { id: self, timestamp: T0, validators: [XSIG[self]!], swaps, ...(jb === undefined ? {} : { jb }), accounts }, routes };
+};
+const ogStateOf = (h: CjHost): any => {
+  const swaps = ensureEntityCollectionCandidate(undefined, ogCrossIndex.cloneCrossJurisdictionRoute as never) as Map<string, unknown>;
+  for (const [k, v] of h.swaps ?? []) swaps.set(k, ogCrossIndex.cloneCrossJurisdictionRoute(structuredClone(v) as never));
+  return {
+    entityId: h.id, timestamp: h.timestamp, config: { validators: [...h.validators] }, crossJurisdictionSwaps: swaps, ...(h.jb === undefined ? {} : { jBatchState: structuredClone(h.jb) }),
+    accounts: new Map([...h.accounts].map(([k, a]) => [k, { ...(a.active === undefined ? {} : { activeDispute: { ...a.active } }), state: { leftEntity: a.left, rightEntity: a.right, disputeConfig: { leftResponseSeconds: a.leftResponseSeconds, rightResponseSeconds: a.rightResponseSeconds } } }])),
+  };
+};
+/** The reveal-relevant route fields and the jBatchState, both sides. */
+const routeView = (routes: Iterable<[string, any]>) => [...routes].map(([k, v]) => [k, v.pendingSourceRegistryReveal ?? null, v.pendingTargetRegistryReveal ?? null, v.updatedAt]);
+const ogView = (s: any, value: unknown) => ({ value, routes: routeView(s.crossJurisdictionSwaps), jb: s.jBatchState ?? null });
+const rwView = (h: CjHost, value: unknown) => ({ value, routes: routeView((h.swaps ?? new Map()) as Map<string, any>), jb: h.jb ?? null });
+
+console.warn = () => {};
+describe("disputes-final: the hash-ladder reveal queue (og j-events-htlc queueHashLadderRevealRegistration / flushDeferredHashLadderReveals / countDeferredHashLadderReveals)", () => {
+  test("MATCH: queueHashLadderRevealRegistration on 250 random Entities (source and target roles, confirmed / queued / sent / recovery ratios, source windows, full batches): same result, routes, jBatchState and halts as og", () => {
+    const r = xrng(0x1add), kinds = new Map<string, number>();
+    for (let i = 0; i < 250; i++) {
+      const self = xpick(r, [H1, H1, U2, U2, U1, H2]), { host, routes } = hostOf(r, i, self), route = xpick(r, routes), targetRole = r() < 0.5;
+      const pull = (targetRole ? route.targetPull : route.sourcePull)!, leg = targetRole ? route.target : route.source;
+      const cp = xint(r, 12) === 0 ? xpick(r, ["0x12", U1, H2]) : leg.entityId.toLowerCase() === self ? leg.counterpartyEntityId : leg.entityId;
+      const existing = xint(r, 4) === 0 ? host.jb?.batch["hashLadderRegistrations"]?.[0] as { witness?: { fillRatio: number } } | undefined : undefined;
+      const ratio = existing?.witness?.fillRatio ?? xpick(r, [100, 200, 65_535, 1 + xint(r, 65_534), 0, 70_000, 1.5]);
+      const decoded = decodedAt(r, ratio) as never;
+      const og = ogRun(() => { const s = ogStateOf(host); const v = queueHashLadderRevealRegistration(s, cp, pull as never, decoded, targetRole); return ogView(s, v); });
+      const rw = rwRun(queueLadderReveal(host, cp, pull, decoded, targetRole));
+      same(`queue ${i}`, og, rw.ok ? { ok: true, value: rwView(rw.value.host, rw.value.result) } : rw);
+      bump(kinds, og.ok ? String((og.value as { value: string }).value) : og.message.split(":")[0]!);
+    }
+    expectKinds(kinds, ["queued", "already-queued", "deferred-batch-pending", "source-window-expired", "J_HASH_LADDER_FILL_RATIO_INVALID", "J_HASH_LADDER_COUNTERPARTY_INVALID", "J_HASH_LADDER_REGISTRATION_CONFLICT", "J_HASH_LADDER_SOURCE_ACTIVE_DISPUTE_MISSING"]);
+  }, 120_000);
+
+  test("MATCH: flushDeferredHashLadderReveals and countDeferredHashLadderReveals on 250 random Entities (scoped and unscoped, sent batch, stashed source / target witnesses): same count, flushed, routes, jBatchState and halts as og", () => {
+    const r = xrng(0xf1a5), kinds = new Map<string, number>();
+    for (let i = 0; i < 250; i++) {
+      const self = xpick(r, [H1, U2, H1, U2, U1, H2]), { host } = hostOf(r, i, self);
+      expect([i, countDeferredReveals(host)]).toEqual([i, countDeferredHashLadderReveals(ogStateOf(host))]);
+      const scope = xint(r, 3) === 0 ? xpick(r, [XPEER[self]!, XPEER[self]!.toUpperCase().replace("0X", "0x"), U1]) : undefined;
+      const og = ogRun(() => { const s = ogStateOf(host); const v = flushDeferredHashLadderReveals(s, scope); return ogView(s, v); });
+      const rw = rwRun(flushDeferredReveals(host, scope));
+      same(`flush ${i}`, og, rw.ok ? { ok: true, value: rwView(rw.value.host, rw.value.flushed) } : rw);
+      bump(kinds, og.ok ? `flushed:${Math.min(1, (og.value as { value: number }).value)}` : og.message.split(":")[0]!);
+    }
+    expectKinds(kinds, ["flushed:0", "flushed:1", "J_HASH_LADDER"]);
+  }, 120_000);
 });
