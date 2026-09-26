@@ -451,7 +451,7 @@ export const accountStateCommitment = (state: CommittedAccountState): Result<str
 
 export type WireTx = { readonly type: string; readonly data: unknown };
 export type AccountFrameInputs = { readonly height: number; readonly timestamp: number; readonly jHeight: number; readonly prevFrameHash: string; readonly accountStateRoot: string; readonly accountTxs: readonly WireTx[] };
-export type FrameHashError = CanonicalValueError | Tagged<"tx_unported", { type: string }> | Tagged<"policy_version" | "settle_witness_shape"> | ClaimError;
+export type FrameHashError = CanonicalValueError | Tagged<"policy_version" | "settle_witness_shape"> | ClaimError;
 const fieldOf = (data: unknown, name: string): unknown => (data !== null && typeof data === "object" && Object.hasOwn(data, name) ? (data as Record<string, unknown>)[name] : undefined);
 const withoutHankoWitness = (tx: WireTx): WireTx => {
   if (tx.type !== "settle_transition" || fieldOf(tx.data, "kind") !== "hanko" || tx.data === null || typeof tx.data !== "object") return tx;
@@ -8070,7 +8070,7 @@ export type RebalanceRun = Folded & { readonly outputs: readonly WakeOutput[] };
  * og hubRebalanceHandler: a pending sent batch blocks R→C (a stale one only queues og's persisted j_abort_sent_batch); the funded R→C requests
  * join the draft batch with their submitted markers; over-collateralized Accounts propose C→R, ready C→R workspaces execute; batch work
  * broadcasts. All to the committed leader. `runtimeNow` is og's env.state.timestamp, the clock `sentBatch.lastSubmittedAt` is written with.
- * og's REB_STEP debug candidate effects are diagnostics and not ported.
+ * og's REB_STEP debug candidate effects are log-only diagnostics (no state, output or frame effect).
  */
 export const hubRebalance = (d: Folded, now: number, runtimeNow: number, manualBroadcast: boolean): Result<RebalanceRun, EntityError> => {
   const config = hubConfigOf(d.state);
@@ -11405,7 +11405,7 @@ const messageHashes = (peer: EntityId, m: AccountPeerInput): readonly HashToSign
     ack_frame: (f) => [...(f.ack === null ? [] : acked(f.ack)), { hash: f.frame.stateHash, type: "accountFrame", context: `account:${tail}:frame:${f.frame.height}` },
       ...(f.disputeHanko === undefined ? [] : [{ hash: f.disputeHanko.hash, type: "dispute", context: `account:${tail}:dispute` } as const])],
     dispute: (d) => [{ hash: d.disputeHanko.hash, type: "dispute", context: `account:${tail}:dispute` }],
-    // og: a refresh re-Hankos an already committed frame; this Entity never originates one (the board-rotation flush is not ported)
+    // og: a refresh re-Hankos an already committed frame; its hashes are signed where the board-rotation hook drafts it (boardRefreshHook), not per message
     board_hanko_refresh: () => [],
   });
 };
@@ -17116,7 +17116,8 @@ const routeEntity = (tx: EntityRouteTx, self: EntityId, id: AccountId): Result<A
  * og j-events.ts applyDisputeStartedJEvent / applyDisputeFinalizedJEvent (J7 dispatch): a DisputeStarted / DisputeFinalized event whose account
  * (og resolveDisputeAccountContext: the counterentity when we sent it, else the sender) is the Host's one Account becomes that Account's
  * external_finality, built by disputeStartedInput / disputeFinalizedInput against the frozen Account's current proof body. Other Accounts' events are
- * og's `account_missing` no-op. The Host's jBatchState then takes og's J-batch retirement (hostDisputeJBatch). Not ported here: counter-proof selection, HTLC / cross-j follow-ups.
+ * og's `account_missing` no-op. The Host's jBatchState then takes og's J-batch retirement (hostDisputeJBatch). Counter-proof selection and HTLC / cross-j follow-ups run on the
+ * Entity path (disputeStartedJEvent); the one-Account Host holds no HTLC route or cross-j book to follow up on.
  */
 const disputeFinalityOf = (host: Host, op: JOp, peer: EntityId): Result<AccountFinality | undefined, HostError> => {
   if (op.type !== "j_event" || (op.event.type !== "DisputeStarted" && op.event.type !== "DisputeFinalized")) return ok(undefined);
