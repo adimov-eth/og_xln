@@ -30,7 +30,7 @@ og (`core/`, `jurisdictions/`) is the spec. Tests: `pure/diff/entity-consensus-2
 | setHubConfig, setRebalancePolicy | FIXED | entity-txs-3 T3-5/T3-6 |
 | proposeAccountsNow, scheduledWake / crontab | REMAINING | og crontab scheduler, and the rewrite does not keep pendingAccountInput bytes (entity-txs-3) |
 | initOrderbookExt, placeSwapOffer (og shape), proposeCancelSwap | REMAINING | Needs an orderbook extension subsystem |
-| prepareDispute, disputeStart, disputeFinalize | PARTIAL | prepare/start are FIXED (entity-txs-3 T3-7), except orderbook removal, argument override and cross-j. disputeFinalize is REMAINING (finalize-proof selection, crontab) |
+| prepareDispute, disputeStart, disputeFinalize | FIXED | Orderbook removal and cross-j recovery (1abcef3). The argument override matches og, including og's own DISPUTE_INCREMENTED_ARGUMENT_OVERRIDE_UNSUPPORTED halt (MATCH: 200 starts with real Hankos). disputeFinalize proof selection and the crontab hook are MATCHed in scheduler-disputes and in the 200 dispute-event MATCH (disputes-final.md, MATCH in diff/disputes-final.test.ts). |
 | settle_* | REMAINING | og payments/settle.ts entity settlement orchestration is not ported (entity-txs-3) |
 | entityProvider* | FIXED | boards.md EP-1..EP-5 |
 | boardHandover | FIXED | entity-j.md EJ-6 (consensus signing parts REMAINING: EJ-R3) |
