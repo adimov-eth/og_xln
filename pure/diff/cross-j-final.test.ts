@@ -66,7 +66,7 @@ const ogColl = (m: ReadonlyMap<string, CrossRoute>) => {
   return c;
 };
 const offerOf = (route: CrossRoute | undefined, id: string): SwapOffer => ({ offerId: id, giveTokenId: "1", giveTokenDecimals: 6, giveAmount: 1n, wantTokenId: "2", wantTokenDecimals: 18, wantAmount: 1n, maxFee: 0n, minNetReceive: 1n, priceTicks: 1n, makerIsLeft: true, createdHeight: 1, quantizedGive: 1n, quantizedWant: 1n, ...(route ? { crossJurisdiction: route } : {}) }) as unknown as SwapOffer;
-const ogAccountTx = (tx: WireAccountTx): unknown => { const { type, ...data } = tx as { type: string }; return { type, data }; };
+const ogAccountTx = (tx: WireAccountTx): unknown => { const { type, ...data } = tx as { type: string; tokenId?: unknown }; return { type, data: type === "cross_pull_lock" ? { ...data, tokenId: Number(data.tokenId) } : data }; };
 const flatAccountTx = (t: { accountId: string; tx: { type: string; data: object } }) => ({ accountId: t.accountId, tx: { type: t.tx.type, ...t.tx.data } });
 
 type World = { rw: BookHost; og: any; routes: CrossRoute[] };
@@ -222,5 +222,86 @@ describe("cross-j-final: clear lifecycle Entity txs", () => {
       bump(outcomes, og === null ? "ok" : og.replace(/:.*/, ""));
     }
     expectKinds(outcomes, ["ok", "RUNTIME_OUTPUT_CROSS_PULL_COUNTERPARTY_MISMATCH", "RUNTIME_OUTPUT_SEMANTIC_SOURCE_MISMATCH", "RUNTIME_OUTPUT_ROUTE_HASH_MISMATCH"]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// og account-cross-j-followups.ts applyCommittedCrossJurisdictionAccountTxFollowup: a committed cross_pull_lock / cross_pull_close on the Entity.
+import { applyCommittedCrossJurisdictionAccountTxFollowup } from "../../core/entity/tx/handlers/account-cross-j-followups.ts";
+import { committedCrossFollowup, crossPullBinding, type CommittedCrossHost, type CommittedCrossStep, type Crontab } from "../xln.ts";
+
+describe("cross-j-final: committed cross-j Account tx followups", () => {
+  type FWorld = { rw: CommittedCrossHost; og: any; route: CrossRoute };
+  /** A mirror at `self` for one prepared route: stored route / authorization / crontab / book at random stages. */
+  const fworld = (r: Rand, n: number, self: EntityId): FWorld => {
+    const route = liveRoute(r, n), peer = PEER[self]!;
+    const w = worldOf(r, n, self);
+    const stored = int(r, 4) === 0 ? undefined : int(r, 10) === 0 && route.routeHash ? { ...route, routeHash: "0x" + "dd".repeat(32) } : route;
+    const swaps = stored === undefined ? undefined : new Map([[route.orderId, stored]]);
+    const auths = self === U1 || self === U2 ? (int(r, 5) === 0 ? undefined : new Map([[route.orderId, int(r, 10) === 0 ? { ...route, routeHash: "0x" + "ee".repeat(32) } : route]])) : undefined;
+    const crontab: Crontab | undefined = int(r, 15) === 0 ? undefined : { tasks: new Map(), hooks: new Map(int(r, 2) === 0 ? [] : [[`cross-j-expiry:${route.orderId}`, { id: `cross-j-expiry:${route.orderId}`, triggerAt: T0 + 5, type: "cross_j_orderbook_sweep" as const, data: { reason: "x" } }]]) };
+    const account = w.rw.accounts.get(peer);
+    const offers = new Map([[route.orderId, offerOf(route, route.orderId)]]);
+    const rwAccounts = new Map(account === undefined ? [] : [[peer, { ...account, offers }]]);
+    const ogOffers = new Map([...offers].map(([k, o]) => [k, { ...o, giveTokenId: Number(o.giveTokenId), wantTokenId: Number(o.wantTokenId) }]));
+    w.og.accounts = new Map(account === undefined ? [] : [[peer, { ...w.og.accounts.get(peer), state: { ...w.og.accounts.get(peer).state, leftEntity: account.left, rightEntity: account.right, swapOffers: ogOffers } }]]);
+    if (swaps === undefined) delete w.og.crossJurisdictionSwaps; else w.og.crossJurisdictionSwaps = ogColl(swaps);
+    if (auths !== undefined) w.og.crossJurisdictionAuthorizations = ogColl(auths);
+    if (crontab !== undefined) w.og.crontabState = { tasks: new Map(), hooks: new Map(crontab.hooks) };
+    return { rw: { ...w.rw, swaps, accounts: rwAccounts, ...(auths ? { auths } : {}), ...(crontab ? { crontab } : {}) }, og: w.og, route };
+  };
+  type FSnap = { swaps: unknown; auths: unknown; hooks: unknown; admissions: unknown; books: unknown; messages: unknown; outputs: unknown; created: unknown; handled: unknown };
+  const ogF = (s: any, outputs: any[], created: unknown[], handled: boolean): FSnap => ({
+    swaps: entries(s.crossJurisdictionSwaps && new Map(s.crossJurisdictionSwaps)), auths: entries(s.crossJurisdictionAuthorizations && new Map(s.crossJurisdictionAuthorizations)), hooks: entries(s.crontabState && new Map(s.crontabState.hooks)),
+    admissions: entries(s.crossJurisdictionBookAdmissions && new Map(s.crossJurisdictionBookAdmissions)), books: [...s.orderbookExt.books].map(([p, b]: [string, any]) => [p, ogBook.getBookOrders(b).map((o: any) => [o.orderId, o.qtyLots])]).sort(),
+    messages: readEntityFrameEvents(s).map((e: any) => e.message), outputs: outputs.map((o) => ({ entityId: o.entityId, signerId: o.signerId, txs: o.entityTxs })), created, handled,
+  });
+  const rwF = (s: CommittedCrossStep): FSnap => ({
+    swaps: entries(s.host.swaps), auths: entries(s.host.auths), hooks: entries(s.host.crontab?.hooks), admissions: entries(s.host.admissions),
+    books: [...(s.host.ext?.books ?? new Map())].map(([p, b]) => [p, bookOrders(b).map((o) => [o.orderId, o.qtyLots])]).sort(), messages: s.messages, outputs: s.outputs, created: s.created, handled: s.handled,
+  });
+  const runBoth = (w: FWorld, cp: string, tx: WireAccountTx, label: string, kinds: Map<string, number>) => {
+    const og = ogRun(() => { const outputs: any[] = [], created: unknown[] = []; const handled = applyCommittedCrossJurisdictionAccountTxFollowup(ogEnv, w.og, cp, ogAccountTx(tx) as never, outputs, T0, created as never, []); return ogF(w.og, outputs, created, handled); });
+    const rw = rwRun(committedCrossFollowup(w.rw, cp, tx, T0));
+    same(label, og, rw.ok ? { ok: true, value: rwF(rw.value) } : rw);
+    bump(kinds, og.ok ? `ok:${(og.value.outputs as unknown[]).length}:${(og.value.created as unknown[]).length}:${String((og.value.messages as string[]).at(-1) ?? "").slice(0, 20)}` : og.message);
+  };
+
+  test("MATCH: committed cross_pull_lock at all four route participants on 500 random mirrors (carried route, conflict, leg binding, authorization, expiry hook, local or sibling book admission): same mirror, authorizations, hooks, admissions, outputs, created offers and halts as og", () => {
+    const r = rng(0x10c4), kinds = new Map<string, number>();
+    for (let i = 0; i < 500; i++) {
+      const self = pick(r, [H1, H1, U1, H2, U2]), w = fworld(r, i, self), route = { ...w.route, status: pick(r, ["target_prepared", "target_prepared", "resting", "intent", "settled"] as const) };
+      if (route.sourcePull === undefined || route.targetPull === undefined) continue;
+      const leg = self === H1 || self === U1 ? "source" : "target", pull = leg === "source" ? route.sourcePull : route.targetPull, binding = unwrap(crossPullBinding(route, int(r, 15) === 0 ? (leg === "source" ? "target" : "source") : leg));
+      const tx: WireAccountTx = { type: "cross_pull_lock", pullId: pull.pullId, tokenId: String(pull.tokenId) as never, amount: int(r, 15) === 0 ? pull.signedAmount + 1n : pull.signedAmount, fullHash: pull.fullHash, partialRoot: pull.partialRoot, crossJurisdiction: binding,
+        crossJurisdictionRoute: int(r, 10) === 0 ? { ...route, expiresAt: T0 - 1 } : route };
+      runBoth(w, int(r, 20) === 0 ? U2 : PEER[self]!, tx, `lock ${i}`, kinds);
+    }
+    expectKinds(kinds, ["ok:0:0:", "CROSS_J_COMMITTED_PULL_AUTH_MISSING", "CROSS_J_COMMITTED_PULL_ROUTE_MISMATCH", "CROSS_J_COMMITTED_PULL_ROUTE_CONFLICT", "CROSS_J_EXPIRY_INVALID"]);
+    expect([...kinds.keys()].some((k) => /^ok:0:1:/.test(k))).toBe(true);
+  });
+
+  test("MATCH: committed cross_pull_close at all four route participants on 500 random mirrors (terminal replay, economics, rollback, hub state fence, settle/cancel/expire, book removal or sibling removal request): same mirror, hooks, admissions, books, outputs and halts as og", () => {
+    const r = rng(0xc105e), kinds = new Map<string, number>();
+    for (let i = 0; i < 500; i++) {
+      const self = pick(r, [H1, H1, U1, H2, U2]), w = fworld(r, i, self), route = w.route;
+      if (route.sourcePull === undefined || route.targetPull === undefined) continue;
+      const cur = (() => { const f = ogRun(() => ogCrossIndex.getCrossJurisdictionCommittedProofRatio(route as never)); return f.ok ? f.value : 0; })();
+      const at = pick(r, [cur, cur, cur, 0, 65_535, Math.max(0, cur - 1), 1 + int(r, 65_534)]);
+      const binary = at > 0 ? unwrap(crossPullReveal(at, unwrap(crossPrivateSeed(RUNTIME_SEED, route)))).binary : "0x";
+      const project = (t: bigint) => (at >= 65_535 ? t : (t * BigInt(at)) / 65_535n);
+      const built = buildCrossCloseProof(withCloseProofProgress(route, { fillRatio: at, cumulativeSourceAmount: project(route.source.amount), cumulativeTargetAmount: project(route.target.amount) } as CrossCloseProof, route.updatedAt), binary);
+      if (!built.ok) continue;
+      const proof: CrossCloseProof = int(r, 12) === 0 ? { ...built.value, cumulativeSourceAmount: built.value.cumulativeSourceAmount + 1n } : int(r, 15) === 0 ? { ...built.value, routeHash: "0x" + "ee".repeat(32) } : built.value;
+      // a terminal mirror that already recorded exactly this close (a replay) or another one
+      if (int(r, 4) === 0 && w.rw.swaps !== undefined) {
+        const settled = unwrap(applyCrossFill(route, { fillSeq: Math.floor(Number(route.fillSeq ?? 0)), cumulativeFillRatio: at, fillNumerator: BigInt(at), fillDenominator: 65_535n }, T0).ok ? { ok: true as const, value: route } : { ok: true as const, value: route });
+        const replayed: CrossRoute = { ...withCloseProofProgress(settled, built.value, T0 - 1), sourceCloseProof: int(r, 5) === 0 ? { ...built.value, binaryHash: "0x" + "00".repeat(32) } : built.value, status: pick(r, ["settled", "cancelled"] as const) };
+        const next = new Map([[route.orderId, replayed]]); w.rw = { ...w.rw, swaps: next }; w.og.crossJurisdictionSwaps = ogColl(next);
+      }
+      const tx: WireAccountTx = { type: "cross_pull_close", pullId: int(r, 20) === 0 ? "none" : (self === H1 || self === U1 ? route.sourcePull.pullId : route.targetPull.pullId), binary, proof };
+      runBoth(w, PEER[self]!, tx, `close ${i}`, kinds);
+    }
+    expectKinds(kinds, ["ok:0:0:", "CROSS_J_PULL_CLOSE_ROUTE_MISSING", "CROSS_J_PULL_CLOSE_ECONOMICS_MISMATCH", "CROSS_J_PULL_CLOSE_PROOF_MISMATCH", "CROSS_J_TERMINAL_PULL_REPLAY_MISMATCH"]);
   });
 });
